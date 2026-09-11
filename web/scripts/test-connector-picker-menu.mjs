@@ -1,3 +1,4 @@
+import { rewriteConnectorPureImports, connectorPureImport } from './connector-pure-fixture.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -8,7 +9,8 @@ const transpile = relative =>
   ts.transpileModule(read(relative), {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   }).outputText;
-const url = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
+const url = source =>
+  `data:text/javascript;base64,${Buffer.from(rewriteConnectorPureImports(source)).toString('base64')}`;
 const metadataURL = url(transpile('src/components/connectors/connector-metadata.ts'));
 const setupURL = url(transpile('src/components/connectors/setup/app-setup-state.ts'));
 const pickerURL = url(
@@ -24,8 +26,8 @@ assert.deepEqual(
   ['dingtalk', 'web-search', 'feishu', 'github', 'weixin', 'wecom'].filter(
     visibility.isConnectorListed
   ),
-  ['web-search', 'feishu', 'github'],
-  'discovery lists only Exa, Feishu and GitHub'
+  ['dingtalk', 'web-search', 'feishu', 'github', 'weixin', 'wecom'],
+  'discovery lists every connector returned by the catalog'
 );
 const { isConnectorPickerSwitchCurrent } = pickerModel;
 const {
@@ -79,9 +81,32 @@ const target = { type: 'chat', id: 'conversation-a' };
 const connections = [connection('a'), connection('b'), connection('exa-a', 'ready', exa.id)];
 const groups = createConnectorPickerMenuGroups([github, exa], connections, [current], []);
 const pendingOnlyGroups = createConnectorPickerMenuGroups([exa], [], []);
-assert.equal(filterConnectorPickerGroups(pendingOnlyGroups, {query:'',status:'needs_attention'}, new Set([exa.id])).length, 1);
-assert.equal(filterConnectorPickerGroups(pendingOnlyGroups, {query:'',status:'connected'}, new Set([exa.id])).length, 0, 'pending is not connected');
-assert.equal(filterConnectorPickerGroups(pendingOnlyGroups, {query:'unrelated-name',status:'needs_attention'}, new Set([exa.id])).length, 0, 'pending preserves search filtering');
+assert.equal(
+  filterConnectorPickerGroups(
+    pendingOnlyGroups,
+    { query: '', status: 'needs_attention' },
+    new Set([exa.id])
+  ).length,
+  1
+);
+assert.equal(
+  filterConnectorPickerGroups(
+    pendingOnlyGroups,
+    { query: '', status: 'connected' },
+    new Set([exa.id])
+  ).length,
+  0,
+  'pending is not connected'
+);
+assert.equal(
+  filterConnectorPickerGroups(
+    pendingOnlyGroups,
+    { query: 'unrelated-name', status: 'needs_attention' },
+    new Set([exa.id])
+  ).length,
+  0,
+  'pending preserves search filtering'
+);
 const hiddenConnector = { ...github, id: 'dingtalk' };
 const hiddenConnection = connection('hidden', 'ready', hiddenConnector.id);
 const hiddenBinding = {
@@ -99,7 +124,10 @@ assert.deepEqual(
   listedGroups.map(group => group.id),
   sourceGroups.map(group => group.id)
 );
-assert.equal(listedGroups.find(group => group.id === hiddenConnector.id).createRow, undefined);
+assert.ok(
+  listedGroups.find(group => group.id === hiddenConnector.id).createRow,
+  'previously hidden connectors expose the create-connection action'
+);
 assert.equal(
   listedGroups.find(group => group.id === hiddenConnector.id).currentBinding,
   hiddenBinding
@@ -114,8 +142,8 @@ assert.deepEqual(
       createConnectorPickerMenuGroups([hiddenConnector, exa], [hiddenConnection], [])
     )
     .map(group => group.id),
-  [exa.id],
-  'hidden providers do not appear as new choices'
+  [hiddenConnector.id, exa.id],
+  'previously hidden providers appear as new choices without an existing binding'
 );
 assert.ok(
   visibility
@@ -126,8 +154,8 @@ assert.ok(
         [hiddenBinding]
       )
     )
-    .every(row => row.connector.id === exa.id || Boolean(row.binding)),
-  'flat pickers keep existing bindings but hide other entries for unlisted providers'
+    .some(row => row.connector.id === hiddenConnector.id && !row.binding),
+  'flat pickers expose new choices for previously hidden providers'
 );
 assert.equal(groups.length, 2, 'one top-level row per service, not per account');
 assert.equal(groups[0].accounts.length, 2);
@@ -239,7 +267,7 @@ assert.doesNotMatch(
 assert.match(menu, /<Menu\.Sub/);
 assert.match(menu, /<Menu\.SubTrigger/);
 assert.match(menu, /<Menu\.SubContent/);
-assert.match(menu, /classification=\{group\.classification \?\? 'connector'\}/);
+assert.match(menu, /group\.classification \?\? 'connector'/);
 assert.match(menu, /<Menu\.RadioItem/);
 assert.match(menu, /<Menu\.CheckboxItem/);
 assert.match(menu, /isConnectorPickerSwitchCurrent/);
@@ -385,6 +413,7 @@ function mountMenu(overrides = {}, mobile = false) {
   const module = { exports: {} };
   new Function('require', 'module', 'exports', compiled)(
     name => {
+      if (!imports[name] && connectorPureImport(name)) return connectorPureImport(name);
       assert.ok(imports[name], `unexpected import ${name}`);
       return imports[name];
     },

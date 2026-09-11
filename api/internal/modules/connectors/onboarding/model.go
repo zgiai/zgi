@@ -10,20 +10,23 @@ import (
 type State string
 
 const (
-	Starting          State = "starting"
-	Awaiting          State = "awaiting_authorization"
-	Verifying         State = "verifying"
-	Ready             State = "ready"
-	Cancelled         State = "cancelled"
-	Expired           State = "expired"
-	Failed            State = "failed"
-	RecoveryRequired  State = "recovery_required"
-	PendingCompletion State = "pending_completion"
+	Starting            State = "starting"
+	Awaiting            State = "awaiting_authorization"
+	Verifying           State = "verifying"
+	VerificationWaiting State = "verification_waiting"
+	Ready               State = "ready"
+	Cancelled           State = "cancelled"
+	Expired             State = "expired"
+	Failed              State = "failed"
+	RecoveryRequired    State = "recovery_required"
+	PendingCompletion   State = "pending_completion"
 )
 
-func (s State) Active() bool { return s == Starting || s == Awaiting || s == Verifying }
+func (s State) Active() bool {
+	return s == Starting || s == Awaiting || s == Verifying || s == VerificationWaiting
+}
 
-var activeStates = []State{Starting, Awaiting, Verifying}
+var activeStates = []State{Starting, Awaiting, Verifying, VerificationWaiting}
 
 // Flow is a private durable record. Transport must use Snapshot, never Flow.
 type Flow struct {
@@ -36,6 +39,13 @@ type Flow struct {
 	ExpectedPendingRevision    *int64
 	ManualVerification         bool
 	VerificationDeadline       *time.Time
+	CandidateConnectionID      *uuid.UUID
+	CandidateAcceptedAt        *time.Time
+	CandidateExpiresAt         *time.Time
+	VerificationPhase          string
+	DiagnosticTraceID          string
+	RetryKeyHash               *string `json:"-"`
+	RetryExpectedRevision      *int64  `json:"-"`
 	ConnectionID               *uuid.UUID
 	ExpectedConnectionRevision *int
 	ExpectedCredentialVersion  *int
@@ -87,26 +97,30 @@ type DeviceRecord struct {
 func (DeviceRecord) TableName() string { return "connector_onboarding_secrets" }
 
 type Snapshot struct {
-	ProtocolVersion    int             `json:"protocol_version,omitempty"`
-	Step               string          `json:"step,omitempty"`
-	ExpirySource       string          `json:"expiry_source,omitempty"`
-	QRPayload          string          `json:"qr_payload,omitempty"`
-	AllowedActions     []string        `json:"allowed_actions,omitempty"`
-	ChallengeRevision  int64           `json:"challenge_revision,omitempty"`
-	ID                 uuid.UUID       `json:"id"`
-	ConnectorID        string          `json:"connector_id"`
-	Intent             string          `json:"intent"`
-	State              State           `json:"state"`
-	Region             string          `json:"region"`
-	Revision           int64           `json:"revision"`
-	ExpiresAt          time.Time       `json:"expires_at"`
-	RetryAfter         int             `json:"retry_after"`
-	ErrorCode          *core.ErrorCode `json:"error_code,omitempty"`
-	VerificationURL    string          `json:"verification_url,omitempty"`
-	UserCode           string          `json:"user_code,omitempty"`
-	ResultConnectionID *uuid.UUID      `json:"result_connection_id,omitempty"`
-	PendingSetupID     *uuid.UUID      `json:"pending_setup_id,omitempty"`
-	QRExpiresAt        *time.Time      `json:"qr_expires_at,omitempty"`
+	CandidateExpiresAt   *time.Time      `json:"candidate_expires_at,omitempty"`
+	VerificationDeadline *time.Time      `json:"verification_deadline,omitempty"`
+	VerificationPhase    string          `json:"verification_phase,omitempty"`
+	DiagnosticTraceID    string          `json:"diagnostic_trace_id,omitempty"`
+	ProtocolVersion      int             `json:"protocol_version,omitempty"`
+	Step                 string          `json:"step,omitempty"`
+	ExpirySource         string          `json:"expiry_source,omitempty"`
+	QRPayload            string          `json:"qr_payload,omitempty"`
+	AllowedActions       []string        `json:"allowed_actions,omitempty"`
+	ChallengeRevision    int64           `json:"challenge_revision,omitempty"`
+	ID                   uuid.UUID       `json:"id"`
+	ConnectorID          string          `json:"connector_id"`
+	Intent               string          `json:"intent"`
+	State                State           `json:"state"`
+	Region               string          `json:"region"`
+	Revision             int64           `json:"revision"`
+	ExpiresAt            time.Time       `json:"expires_at"`
+	RetryAfter           int             `json:"retry_after"`
+	ErrorCode            *core.ErrorCode `json:"error_code,omitempty"`
+	VerificationURL      string          `json:"verification_url,omitempty"`
+	UserCode             string          `json:"user_code,omitempty"`
+	ResultConnectionID   *uuid.UUID      `json:"result_connection_id,omitempty"`
+	PendingSetupID       *uuid.UUID      `json:"pending_setup_id,omitempty"`
+	QRExpiresAt          *time.Time      `json:"qr_expires_at,omitempty"`
 }
 type Repository interface {
 	FindRequest(context.Context, uuid.UUID, uuid.UUID, string) (Flow, bool, error)

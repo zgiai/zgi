@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: ZGI Personal Connector API
-  version: 2.2.0
+  version: 2.4.0
   description:
     Native personal Connectors. Runtime contains no retired integrations implementation.
     Agent and Workflow mutations use their host save transactions; direct binding and reference
@@ -223,6 +223,35 @@ paths:
           $ref: "#/components/responses/ConnectorOnboardingSnapshot"
         "409":
           description: Flow revision changed; read status before cancelling again
+  /connectors/onboarding-flows/{flowId}/actions:
+    post:
+      operationId: actOnMessagingConnectorFlow
+      description: Explicit owner action. Retrying verification consumes the existing unexpired candidate or checkpoint; it does not create a QR flow or extend candidate lifetime. GET never advances verification.
+      parameters:
+        - {in: path, name: flowId, required: true, schema: {type: string, format: uuid}}
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [action, expected_revision]
+              properties:
+                action: {enum: [retry_verification, submit_code]}
+                expected_revision: {type: integer, minimum: 1}
+                challenge_revision: {type: integer, minimum: 1, description: Required only for submit_code.}
+                values:
+                  type: object
+                  additionalProperties: false
+                  writeOnly: true
+                  properties:
+                    code: {type: string, pattern: '^[0-9]{1,12}$', writeOnly: true}
+                  description: Only submit_code accepts values; retry_verification requires no values.
+      responses:
+        "202": {$ref: "#/components/responses/ConnectorOnboardingSnapshot"}
+        "409": {description: Stale revision, expired candidate, wrong flow state or invalid action.}
   /connector-preferences/chat/me:
     get:
       operationId: getPersonalChatConnectorDefaults
@@ -321,6 +350,7 @@ paths:
   /connectors/{connectorId}/key-setups:
     post:
       operationId: connectWithKey
+      description: Gmail also uses this endpoint with values.email, values.app_password and required mail_usage. It checks only the selected protocols and never sends mail during setup.
       parameters:
         - $ref: "#/components/parameters/ConnectorId"
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -457,6 +487,37 @@ paths:
           description: Removed by owner
         "409":
           description: References block normal removal; inspect removal impact
+  /connector-connections/{connectionId}/operation-policy:
+    put:
+      operationId: updateConnectionOperationPolicy
+      description: Owner-only local use restriction for ready Weixin and WeCom Connections. Select only previously accepted, currently known operations. An empty selection pauses all operations; this does not change provider permissions or bindings.
+      parameters:
+        - $ref: "#/components/parameters/ConnectionId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OperationPolicyUpdate"
+      responses:
+        "200":
+          description: Saved restriction, or the receipt of an identical retry
+          headers:
+            Cache-Control:
+              schema: { const: no-store }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperationPolicyResult"
+        "400":
+          description: Invalid revision, selection or idempotency key
+        "401":
+          description: Authentication required
+        "404":
+          description: Connection not owned by the authenticated user
+        "409":
+          description: Revision conflict or reuse of a key for a different request
   /connector-connections/{connectionId}/reconnect:
     post:
       operationId: reconnectWithCandidateKey
@@ -597,7 +658,8 @@ paths:
       operationId: readConnectorRuntimeConfirmationStatus
       description:
         Read-only status scoped to the authenticated organization and personal owner.
-        Accepts only the opaque receipt path parameter, without query parameters.
+        An optional presentation_version=1 query includes an owner-only frozen preview.
+        Without it the response shape is unchanged; other or duplicate parameters are rejected.
         Never invokes providers, submits a decision, records a terminal or resumes a host.
         Pending rows are unresolved and do not authorize retrying an uncertain operation.
       parameters:
@@ -607,6 +669,11 @@ paths:
           schema:
             type: string
             format: uuid
+        - in: query
+          name: presentation_version
+          required: false
+          schema: {type: integer, enum: [1]}
+          description: Opt-in private preview; never included in runtime events or shared transcripts.
       responses:
         "200":
           description: Credential-free status in the standard data envelope
@@ -635,8 +702,8 @@ paths:
       operationId: resolveConnectorRuntimeConfirmation
       description:
         Resolves one server-frozen interactive Connector operation. The client submits only the
-        opaque receipt and its one-shot decision; operation arguments, credentials, policy,
-        remember, and session fields are not accepted.
+        opaque receipt and its decision. `remember_for_session` is an optional explicit governance
+        choice; operation arguments, credentials and provider policy fields are not accepted.
       requestBody:
         required: true
         content:
@@ -819,7 +886,16 @@ components:
     NotFound:
       description: Resource is unavailable to this owner
     InvalidKey:
-      description: Invalid or insufficient Key; no usable Connection or partial Key retained
+      description: Invalid or insufficient credential. Gmail errors may include bounded per-protocol verification status; no partial connection or password is retained.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              code: {type: string}
+              message: {type: string}
+              retryable: {type: boolean}
+              mail_verification: {$ref: "#/components/schemas/MailVerification"}
   schemas:
     AppCredentialValues:
       type: object
@@ -859,13 +935,14 @@ components:
         connector_id:
           type: string
         intent:
-          enum: [create_app, update_app, resume_app]
+          enum: [create_app, update_app, resume_app, register_bot, login_session, reauthorize]
         state:
           enum:
             [
               starting,
               awaiting_authorization,
               verifying,
+              verification_waiting,
               ready,
               cancelled,
               expired,
@@ -874,7 +951,7 @@ components:
               pending_completion,
             ]
         region:
-          enum: [feishu, lark]
+          enum: [feishu, lark, ""]
         revision:
           type: integer
           minimum: 1
@@ -883,7 +960,17 @@ components:
           format: date-time
         retry_after:
           type: integer
-          minimum: 2
+          minimum: 1
+        protocol_version: {type: integer, enum: [1]}
+        step: {enum: [init, begin, poll, awaiting_code, verify, commit]}
+        expiry_source: {type: string}
+        qr_payload: {type: string, description: Transient official QR content; never persist or share it.}
+        allowed_actions: {type: array, items: {enum: [cancel, submit_code, retry_verification]}}
+        challenge_revision: {type: integer, minimum: 1}
+        candidate_expires_at: {type: string, format: date-time}
+        verification_deadline: {type: string, format: date-time}
+        verification_phase: {type: string}
+        diagnostic_trace_id: {type: string, format: uuid, description: Correlates bounded server diagnostics; no provider payload.}
         verification_url:
           type: string
           format: uri
@@ -933,7 +1020,7 @@ components:
       required: [name, label, required, secret, type, max_length]
       properties:
         name:
-          enum: [region, app_id, app_secret]
+          enum: [region, app_id, app_secret, client_id, client_secret, bot_id, secret, account_id, token, base_url, email, app_password]
         label:
           type: string
         label_i18n:
@@ -1074,8 +1161,19 @@ components:
       type: object
       additionalProperties: false
       properties:
+        mail:
+          $ref: "#/components/schemas/MailProviderEvidence"
+        messaging:
+          type: object
+          properties:
+            version: {const: 1}
+            provider: {enum: [weixin, wecom, dingtalk]}
+            subject: {enum: [account, bot, app]}
+            identity: {type: string}
+            credential_verified: {type: boolean}
+            operations: {type: array, items: {$ref: "#/components/schemas/ProviderOperationEvidence"}}
         region:
-          enum: [feishu, lark]
+          enum: [feishu, lark, ""]
         app_id:
           type: string
         app_name:
@@ -1088,13 +1186,45 @@ components:
           items:
             type: string
         scope_status:
-          enum: [unknown, verified]
+          enum: [unknown, verified, not_available]
         event_configuration:
-          const: unknown
+          enum: [unknown, ""]
         events_enabled:
           const: false
         user_authorization_enabled:
           const: false
+    ProviderOperationEvidence:
+      type: object
+      additionalProperties: false
+      properties:
+        id: {type: string}
+        availability: {enum: [verified, conditional, context_required, denied]}
+        permission: {type: string}
+        resource: {type: string}
+    MailVerification:
+      type: object
+      additionalProperties: false
+      required: [usage, imap_status, smtp_status]
+      description: Safe partial result returned only with the current failed setup/reconnect response. No credentials or login address; no connection is activated on partial success.
+      properties:
+        usage: {enum: [read, send, read_send]}
+        imap_status: {enum: [not_requested, verified, failed]}
+        smtp_status: {enum: [not_requested, verified, failed]}
+    MailProviderEvidence:
+      type: object
+      additionalProperties: false
+      properties:
+        version: {const: 1}
+        provider: {enum: [gmail, qqmail, netease163]}
+        identity_kind: {const: authenticated_login}
+        authenticated_login: {type: string, format: email}
+        credential_verified: {type: boolean}
+        usage: {enum: [read, send, read_send]}
+        imap_status: {enum: [not_requested, verified, failed]}
+        smtp_status: {enum: [not_requested, verified, failed]}
+        scope_granularity: {const: not_available}
+        operations: {type: array, items: {$ref: "#/components/schemas/ProviderOperationEvidence"}}
+        checked_at: {type: string, format: date-time}
     ChatConnectorPreferenceUpdate:
       type: object
       additionalProperties: false
@@ -1256,6 +1386,17 @@ components:
         - description
         - usable
       properties:
+        credential_subject:
+          type: string
+          description: Provider identity used by this catalog operation, when declared.
+        required_scopes:
+          type: array
+          description: Required provider permission groups; all groups are needed, with alternatives inside each group. Informational only.
+          items:
+            type: array
+            items: { type: string }
+        effect:
+          type: string
         id:
           type: string
         name:
@@ -1283,8 +1424,10 @@ components:
         - capabilities
         - connection_summary
       properties:
+        setup_method:
+          enum: [key, app_credentials, credentials, mail_credentials]
         extension_schema_version:
-          const: 1.1.0
+          enum: [1.1.0, 1.2.0, 1.3.0, 1.4.0, 1.5.0]
         credential_fields:
           type: array
           items:
@@ -1293,11 +1436,11 @@ components:
           type: object
           properties:
             handler:
-              const: feishu-app-registration-v1
+              enum: [feishu-app-registration-v1, dingtalk-registration-v1, wecom-registration-v1, weixin-registration-v1, gmail-app-password-v1, qqmail-authorization-code-v1, netease163-authorization-code-v1]
             methods:
               type: array
               items:
-                enum: [manual, qr_create, qr_update]
+                enum: [manual, qr_create, qr_update, qr_connect, qr_reauthorize]
             template_id:
               const: feishu-app-template-v3
             template_digest:
@@ -1380,6 +1523,9 @@ components:
       required:
         - values
       properties:
+        mail_usage:
+          enum: [read, send, read_send]
+          description: Required for Gmail, QQ Mail and 163 Mail setup; rejected for non-mail Connectors. A local operation restriction, not a remote permission. Gmail values are email and app_password; QQ/163 values are email and authorization_code. Only qq.com and 163.com logins respectively are accepted for the two client-mail profiles.
         values:
           type: object
           additionalProperties:
@@ -1394,6 +1540,9 @@ components:
       required:
         - values
       properties:
+        mail_usage:
+          enum: [read, send, read_send]
+          description: Mail Connectors only; omission preserves the saved use. Email must match the original authenticated login. QQ/163 use authorization_code; Gmail retains app_password.
         values:
           type: object
           additionalProperties:
@@ -1432,6 +1581,27 @@ components:
           type: boolean
         binding_warning:
           type: string
+    OperationPolicyUpdate:
+      type: object
+      additionalProperties: false
+      required: [expected_revision, operation_ids]
+      properties:
+        expected_revision: { type: integer, minimum: 1 }
+        operation_ids:
+          type: array
+          maxItems: 64
+          uniqueItems: true
+          items: { type: string }
+    OperationPolicyResult:
+      type: object
+      additionalProperties: false
+      required: [connection_id, revision, operation_ids]
+      properties:
+        connection_id: { type: string, format: uuid }
+        revision: { type: integer, minimum: 1 }
+        operation_ids:
+          type: array
+          items: { type: string }
     PersonalConnection:
       type: object
       additionalProperties: false
@@ -1445,6 +1615,10 @@ components:
         - created_at
         - updated_at
       properties:
+        allowed_operation_ids:
+          type: array
+          description: Optional saved local use restriction. An empty array denies all operations; omission means no projected restriction is available.
+          items: { type: string }
         provider_evidence:
           $ref: "#/components/schemas/AppProviderEvidence"
         id:
@@ -1568,6 +1742,10 @@ components:
           enum:
             - confirmed
             - cancelled
+        remember_for_session:
+          type: boolean
+          default: false
+          description: Store the approved Connector operation as a session grant for matching later calls.
     ConnectorRuntimeConsequence:
       type: object
       additionalProperties: false
@@ -1624,18 +1802,58 @@ components:
           enum:
             - high
             - unclassified
+    ConnectorConfirmationPresentation:
+      type: object
+      additionalProperties: false
+      required: [version, preview]
+      properties:
+        version: {type: integer, const: 1}
+        preview:
+          oneOf:
+            - {type: 'null'}
+            - {$ref: "#/components/schemas/ConnectorConfirmationPreview"}
+    ConnectorConfirmationPreview:
+      type: object
+      additionalProperties: false
+      description: Safe fields from the encrypted frozen request. Older v2 records return a null preview. Raw input and credentials are excluded.
+      required: [account_name, account_identity, kind, fields, complete]
+      properties:
+        account_name: {type: string, maxLength: 128}
+        account_identity: {type: string, maxLength: 512}
+        kind: {type: string, enum: [mail, message, resource]}
+        complete:
+          type: boolean
+          description: False if an essential identity or target is missing, altered or shortened, or the operation lacks a safe projection. The UI disables confirmation but permits verified cancellation.
+        fields:
+          type: array
+          maxItems: 32
+          items:
+            type: object
+            additionalProperties: false
+            required: [label, label_i18n, value, truncated]
+            properties:
+              label: {type: string, maxLength: 128}
+              label_i18n: {$ref: "#/components/schemas/LocalizedText"}
+              value: {type: string, maxLength: 8192}
+              truncated:
+                type: boolean
+                description: Content was shortened or unsafe controls removed; render a visible notice.
     ConnectorRuntimeStatusResponse:
       oneOf:
         - type: object
           additionalProperties: false
           required: [resolution]
           properties:
+            presentation:
+              $ref: "#/components/schemas/ConnectorConfirmationPresentation"
             resolution:
               enum: [unresolved]
         - type: object
           additionalProperties: false
           required: [resolution, state]
           properties:
+            presentation:
+              $ref: "#/components/schemas/ConnectorConfirmationPresentation"
             resolution:
               enum: [resolved]
             state:
@@ -1659,6 +1877,8 @@ components:
             decision_id:
               type: string
               format: uuid
+            remember_for_session:
+              type: boolean
         - type: object
           additionalProperties: false
           required:
@@ -1671,6 +1891,8 @@ components:
             decision_id:
               type: string
               format: uuid
+            remember_for_session:
+              type: boolean
             error_code:
               type: string
               minLength: 1

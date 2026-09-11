@@ -17,6 +17,29 @@ func nativeOutcomeRecord(ref connectortools.OperationRef, state, outcome string)
 	return map[string]interface{}{"kind": "tool_call", "runtime_source": "connector", "status": "success", "tool_name": "same_name", "result": map[string]interface{}{"operation": operation, "state": state, "outcome_id": uuid.NewString(), "outcome_status": outcome}}
 }
 
+func TestConnectorNewExecutionStatesCannotCompleteAPlan(t *testing.T) {
+	ref := connectortools.OperationRef{ConnectorID: "feishu", OperationID: "feishu.bot.get", BindingID: uuid.New(), ConnectionID: uuid.New(), Target: core.TargetRef{Type: core.TargetTypeChat, ID: "chat"}, LogicalOperationID: uuid.NewString()}
+	for _, tc := range []struct{ state, disposition, want string }{{"rejected", "not_submitted", "提交前被拒绝"}, {"unresolved", "in_progress", "请勿重复提交"}, {"unresolved", "unknown", "结果未知"}} {
+		record := nativeOutcomeRecord(ref, tc.state, "")
+		result := record["result"].(map[string]interface{})
+		delete(result, "outcome_id")
+		result["execution_evidence"] = map[string]any{"version": 1, "disposition": tc.disposition}
+		result["connector_presentation"] = connectortools.OperationPresentation{SchemaVersion: 1, SourceKind: "native", InvocationID: ref.LogicalOperationID, ConnectorID: ref.ConnectorID, OperationID: ref.OperationID, Title: "获取机器人信息", Summary: "请核查相关记录。"}
+		decision := connectorTerminalStateDecision(map[string]any{"user_request": "查询后发送消息", "skill_invocations": []map[string]any{record}}, "全部完成")
+		if decision == nil || decision.Path != terminalStateGuardAccepted || !strings.Contains(decision.FinalAnswer, tc.want) {
+			t.Fatalf("state %s: %+v", tc.state, decision)
+		}
+		if tc.disposition != "unknown" && !strings.Contains(decision.FinalAnswer, "获取机器人信息") {
+			t.Fatal("missing safe operation title")
+		}
+		delete(result, "execution_evidence")
+		decision = connectorTerminalStateDecision(map[string]any{"user_request": "查询", "skill_invocations": []map[string]any{record}}, "完成")
+		if decision == nil || !strings.Contains(decision.FinalAnswer, "结果未知") {
+			t.Fatal("missing proof was accepted as rejection")
+		}
+	}
+}
+
 func TestConnectorTerminalRequiresExactSuccessfulOutcome(t *testing.T) {
 	ref := connectortools.OperationRef{ConnectorID: "github", OperationID: "github.issue.create", BindingID: uuid.New(), ConnectionID: uuid.New(), Target: core.TargetRef{Type: core.TargetTypeChat, ID: uuid.NewString()}, LogicalOperationID: "server-action-1"}
 	success := nativeOutcomeRecord(ref, "completed", "successful")

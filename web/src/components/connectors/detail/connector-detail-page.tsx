@@ -1,15 +1,22 @@
 'use client';
 
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { ChevronRight } from 'lucide-react';
+
+import { Button } from '@/components/ui/button';
+
 import Link from 'next/link';
 import { useLocale } from 'next-intl';
-import { Info } from 'lucide-react';
 import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import {
   ConnectorPageLoading,
   ConnectorPageMessage,
 } from '@/components/connectors/connector-page-state';
-import { localizeConnectorCatalogItem } from '@/components/connectors/connector-metadata';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { connectorPurpose } from '../connector-presentation';
+import {
+  localizeConnectorCatalogItem,
+  resolveConnectorLocalizedText,
+} from '@/components/connectors/connector-metadata';
 import { Badge } from '@/components/ui/badge';
 import {
   Breadcrumb,
@@ -31,6 +38,9 @@ import { ConnectorExampleList } from './connector-example-list';
 import { ConnectorKeyRequirements } from './connector-key-requirements';
 import { ConnectorAppPermissions } from './connector-app-permissions';
 import { supportsAppSetup } from '@/components/connectors/setup/app-setup-state';
+import { supportsMessagingContract } from '@/components/connectors/setup/messaging-setup-state';
+import { supportsMailSetup } from '@/components/connectors/setup/mail-setup-state';
+import { ConnectorMailInformation } from './connector-mail-information';
 
 interface ConnectorDetailPageProps {
   connectorId: string;
@@ -130,20 +140,39 @@ export function ConnectorDetailPage({
               </div>
             </header>
 
-            <Alert>
-              <Info aria-hidden="true" className="size-4" />
-              <AlertTitle>{t('detail.pluginNoticeTitle')}</AlertTitle>
-              <AlertDescription>
-                {t(supportsAppSetup(connector) ? 'app.notice' : 'detail.pluginNoticeDescription')}
-              </AlertDescription>
-            </Alert>
-
             <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
               <div className="order-1 space-y-6">
+                {rawConnector && !connectorPurpose(connector.id, locale) && (
+                  <Collapsible className="rounded-xl border p-4">
+                    <CollapsibleTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        className="group h-auto max-w-full justify-start gap-2 whitespace-normal px-0 py-1 text-left hover:bg-transparent text-sm"
+                      >
+                        <ChevronRight
+                          aria-hidden="true"
+                          className="size-4 shrink-0 transition-transform group-data-[state=open]:rotate-90"
+                        />
+                        <span className="min-w-0">{t('detail.about')}</span>
+                      </Button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="space-y-3">
+                      <p className="mt-2 whitespace-pre-wrap break-words text-sm text-muted-foreground">
+                        {resolveConnectorLocalizedText(
+                          rawConnector.description_i18n,
+                          locale,
+                          rawConnector.description
+                        )}
+                      </p>
+                    </CollapsibleContent>
+                  </Collapsible>
+                )}
                 <ConnectorCapabilityList capabilities={connector.capabilities} />
-                {supportsAppSetup(connector) ? (
+                {supportsMailSetup(connector) ? (
+                  <ConnectorMailInformation provider={connector.id} />
+                ) : supportsAppSetup(connector) ? (
                   <ConnectorAppPermissions connector={connector} />
-                ) : (
+                ) : supportsMessagingContract(connector) ? null : (
                   <ConnectorKeyRequirements fields={connector.key_fields} />
                 )}
                 <ConnectorExampleList examples={connector.examples ?? []} />

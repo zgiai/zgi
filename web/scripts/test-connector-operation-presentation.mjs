@@ -101,4 +101,56 @@ for (const mutate of [
 assert.equal(model.parseConnectorOperationPresentation(fixture('pending', 'history')), null);
 const unrelated = { ...fixture('successful'), runtime_source: 'builtin' };
 assert.equal(model.connectorOperationTone(unrelated), null);
+for (const [state, disposition, status, label, tone] of [
+  ['rejected', 'not_submitted', 'unavailable', 'not_submitted', 'error'],
+  ['unresolved', 'in_progress', 'unknown', 'in_progress', 'running'],
+  ['unresolved', 'unknown', 'unknown', 'unknown', 'warning'],
+]) {
+  const invocation = fixture(status);
+  Object.assign(invocation.result, {
+    state,
+    execution_evidence: { version: 1, disposition },
+  });
+  delete invocation.result.outcome_id;
+  delete invocation.result.outcome_status;
+  delete invocation.result.confirmation;
+  Object.assign(invocation.result.connector_presentation, {
+    title: '获取机器人信息',
+    summary: '系统校验冲突，本次操作未提交。',
+    redacted: false,
+    truncated: false,
+  });
+  assert.ok(model.parseConnectorOperationPresentation(invocation));
+  assert.equal(model.connectorOperationTone(invocation), tone);
+  const tree = JSON.stringify(component.ConnectorOperationSummary({ invocation }));
+  assert.ok(tree.includes(`runtime.presentation.status.${label}`));
+  assert.ok(tree.includes('获取机器人信息'));
+  const summaryOnly = JSON.stringify(
+    component.ConnectorOperationSummary({ invocation, showHeading: false })
+  );
+  assert.ok(!summaryOnly.includes('获取机器人信息'));
+  assert.ok(summaryOnly.includes('系统校验冲突'));
+  for (const mutate of [
+    v => delete v.result.execution_evidence,
+    v => {
+      v.result.execution_evidence.version = 2;
+    },
+    v => {
+      v.result.execution_evidence.private_data = 'forged';
+    },
+    v => {
+      v.result.execution_evidence.disposition = state === 'rejected' ? 'unknown' : 'not_submitted';
+    },
+    v => {
+      v.result.outcome_id = 'd013d536-c5a4-4145-a04c-4047b6d31d2b';
+    },
+    v => {
+      v.result.confirmation = { route_receipt: 'FORGED-RECEIPT' };
+    },
+  ]) {
+    const forged = JSON.parse(JSON.stringify(invocation));
+    mutate(forged);
+    assert.equal(model.parseConnectorOperationPresentation(forged), null);
+  }
+}
 console.log('Connector read-only operation presentation tests passed.');

@@ -207,6 +207,21 @@ class ConnectorService extends BaseService {
     );
   }
 
+  updateOperationPolicy(
+    connectionId: string,
+    data: { expected_revision: number; operation_ids: string[] },
+    idempotencyKey: string
+  ): Promise<
+    ApiResponseData<{ connection_id: string; revision: number; operation_ids: string[] }>
+  > {
+    return this.request(
+      'put',
+      `/connector-connections/${encodeURIComponent(connectionId)}/operation-policy`,
+      data,
+      { headers: { 'Idempotency-Key': idempotencyKey }, retryAttemptsOverride: 0 }
+    );
+  }
+
   reconnectConnection(
     connectionId: string,
     data: ReconnectKeyRequest,
@@ -315,7 +330,8 @@ class ConnectorService extends BaseService {
 
   /**
    * Continues the server-pinned operation identified by an opaque route receipt.
-   * The request intentionally has no Connector input, Key, policy, or reusable grant fields.
+   * The request carries no Connector input or Key; remember_for_session is an
+   * explicit governance choice handled by the server-side grant bridge.
    */
   decideRuntimeConfirmation(
     data: ConnectorRuntimeConfirmationCommand
@@ -341,6 +357,18 @@ class ConnectorService extends BaseService {
     );
   }
 
+  retryOnboardingVerification(
+    flow: ConnectorOnboardingFlow,
+    idempotencyKey: string
+  ): Promise<ApiResponseData<ConnectorOnboardingFlow>> {
+    return this.request(
+      'post',
+      `/connectors/onboarding-flows/${encodeURIComponent(flow.id)}/actions`,
+      { action: 'retry_verification', expected_revision: flow.revision },
+      { headers: { 'Idempotency-Key': idempotencyKey }, retryAttemptsOverride: 0 }
+    );
+  }
+
   submitOnboardingCode(
     flow: ConnectorOnboardingFlow,
     code: string
@@ -359,11 +387,12 @@ class ConnectorService extends BaseService {
   }
 
   getRuntimeConfirmationStatus(
-    receipt: string
+    receipt: string,
+    presentationVersion?: 1
   ): Promise<ApiResponseData<ConnectorRuntimeStatusResponse>> {
     return this.request(
       'get',
-      `/connectors/runtime/confirmations/${encodeURIComponent(receipt)}`,
+      `/connectors/runtime/confirmations/${encodeURIComponent(receipt)}${presentationVersion ? '?presentation_version=1' : ''}`,
       undefined,
       { retryAttemptsOverride: 0 }
     );

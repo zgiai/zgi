@@ -119,11 +119,11 @@ func (s *capturingChatSurfaceService) PrepareChat(_ context.Context, _ runtimese
 func TestSkillResponsePreservesDisplayTaxonomy(t *testing.T) {
 	metadata := skills.SkillDiscoveryMetadata{
 		ID:             "taxonomy-test",
-		DependencyType: skills.SkillDependencyIntegration,
-		IntegrationRequirements: []skills.SkillIntegrationRequirement{{
-			IntegrationID: "github",
-			ActionIDs:     []string{"github.repository.list"},
-			Required:      true,
+		DependencyType: skills.SkillDependencyConnector,
+		ConnectorRequirements: []skills.SkillConnectorRequirement{{
+			ConnectorID:  "github",
+			OperationIDs: []string{"github.repository.list"},
+			Required:     true,
 		}},
 		Display: skills.SkillDisplayMetadata{
 			Category:  "document_processing",
@@ -138,14 +138,14 @@ func TestSkillResponsePreservesDisplayTaxonomy(t *testing.T) {
 	if !reflect.DeepEqual(response.Display.Scenarios, metadata.Display.Scenarios) {
 		t.Fatalf("scenarios = %#v, want %#v", response.Display.Scenarios, metadata.Display.Scenarios)
 	}
-	if response.DependencyType != skills.SkillDependencyIntegration {
-		t.Fatalf("dependency type = %q, want %q", response.DependencyType, skills.SkillDependencyIntegration)
+	if response.DependencyType != skills.SkillDependencyConnector {
+		t.Fatalf("dependency type = %q, want %q", response.DependencyType, skills.SkillDependencyConnector)
 	}
-	if len(response.IntegrationRequirements) != 1 || response.IntegrationRequirements[0].IntegrationID != "github" || !response.IntegrationRequirements[0].Required {
-		t.Fatalf("integration requirements = %#v", response.IntegrationRequirements)
+	if len(response.ConnectorRequirements) != 1 || response.ConnectorRequirements[0].ConnectorID != "github" || !response.ConnectorRequirements[0].Required {
+		t.Fatalf("integration requirements = %#v", response.ConnectorRequirements)
 	}
-	if !reflect.DeepEqual(response.IntegrationRequirements[0].ActionIDs, []string{"github.repository.list"}) {
-		t.Fatalf("integration action ids = %#v", response.IntegrationRequirements[0].ActionIDs)
+	if !reflect.DeepEqual(response.ConnectorRequirements[0].OperationIDs, []string{"github.repository.list"}) {
+		t.Fatalf("integration action ids = %#v", response.ConnectorRequirements[0].OperationIDs)
 	}
 }
 
@@ -215,15 +215,17 @@ func TestMessageResponseFiltersFinalAnswerInvocationMetadata(t *testing.T) {
 }
 
 func TestMessageResponseRedactsExternalActionArgumentsFromHistory(t *testing.T) {
+	fakeSlackToken := "xoxb-" + strings.Repeat("1", 20)
 	message := &runtimemodel.Message{
 		ID: uuid.New(), ConversationID: uuid.New(), Status: runtimemodel.MessageStatusWaitingApproval,
 		Metadata: map[string]interface{}{"skill_invocations": []interface{}{map[string]interface{}{
 			"kind": "tool_governance", "skill_id": "external-apps", "tool_name": "execute_action",
+			"arguments": map[string]interface{}{"body": fakeSlackToken, "title": "safe title"},
 			"governance": map[string]interface{}{"frozen_invocation": map[string]interface{}{
 				"skill_id": "external-apps", "tool_name": "execute_action", "provider_id": "external-integrations",
 				"arguments": map[string]interface{}{
 					"connector_id": "github", "action_id": "github.issue.create", "connection_id": "connection-a",
-					"arguments": map[string]interface{}{"body": "xoxb-" + "12345678901234567890", "title": "safe title"},
+					"arguments": map[string]interface{}{"body": fakeSlackToken, "title": "safe title"},
 				},
 			}},
 		}}},
@@ -237,8 +239,11 @@ func TestMessageResponseRedactsExternalActionArgumentsFromHistory(t *testing.T) 
 	if strings.Contains(string(encoded), "xoxb-") || !strings.Contains(string(encoded), "__zgi_redacted__") || !strings.Contains(string(encoded), "safe title") {
 		t.Fatalf("public history metadata = %s", encoded)
 	}
+	if strings.Contains(string(encoded), "frozen_invocation") || strings.Contains(string(encoded), "connection-a") {
+		t.Fatalf("public history exposed private replay state: %s", encoded)
+	}
 	original, _ := json.Marshal(message.Metadata)
-	if !strings.Contains(string(original), "xoxb-") {
+	if !strings.Contains(string(original), fakeSlackToken) {
 		t.Fatal("message response projection mutated stored metadata")
 	}
 }

@@ -13,14 +13,16 @@ const (
 )
 
 func (d Definition) IsMessagingCredentials() bool {
-	return d.ExtensionSchemaVersion == ZGIMetadataSchemaVersion12
+	return d.ExtensionSchemaVersion == ZGIMetadataSchemaVersion12 || d.IsDigitalHumanContract() && d.SetupMethod == SetupMethodCredentials
 }
-func (d Definition) UsesCredentials() bool { return d.IsAppCredentials() || d.IsMessagingCredentials() }
+func (d Definition) UsesCredentials() bool {
+	return d.IsAppCredentials() || d.IsMessagingCredentials() || d.IsMailCredentials()
+}
 
 // MessagingDefinitions are static platform contracts. Their presence does not
 // enable registration or establish provider admission for this deployment.
 func MessagingDefinitions() ([]Definition, error) {
-	result := []Definition{messagingDefinition("dingtalk"), messagingDefinition("wecom"), messagingDefinition("weixin")}
+	result := []Definition{messagingDefinition("dingtalk"), WeComReadDefinition(), messagingDefinition("weixin")}
 	for _, d := range result {
 		if err := Validate(d); err != nil {
 			return nil, err
@@ -32,6 +34,9 @@ func MessagingDefinitions() ([]Definition, error) {
 func MessagingDefinition(id string) (Definition, bool) {
 	if id != "dingtalk" && id != "wecom" && id != "weixin" {
 		return Definition{}, false
+	}
+	if id == "wecom" {
+		return WeComReadDefinition(), true
 	}
 	return messagingDefinition(id), true
 }
@@ -146,6 +151,9 @@ func textSchema(max int) map[string]any {
 
 func validateMessagingContract(d Definition) error {
 	canonical, ok := MessagingDefinition(d.ID)
+	if d.ID == "wecom" && d.PluginVersion != "1.1.0" && d.PluginVersion != "1.1.0-digitalhuman.1" {
+		canonical = messagingDefinition("wecom")
+	}
 	if !ok || d.ContractVersion != 3 || d.ProviderID != canonical.ProviderID || d.DriverID != canonical.DriverID || d.AuthMethodID != canonical.AuthMethodID || d.SetupMethod != SetupMethodCredentials || len(d.KeyFields) != 0 || d.Setup == nil {
 		return invalid("messaging_contract")
 	}
@@ -191,6 +199,9 @@ func validateMessagingContract(d Definition) error {
 
 // CredentialIdentity is an internal canonical subject, never an owner claim.
 func CredentialIdentity(d Definition, values map[string]string) string {
+	if d.IsMailCredentials() {
+		return values["email"]
+	}
 	switch d.ID {
 	case "dingtalk":
 		return "dingtalk:app:" + values["client_id"]

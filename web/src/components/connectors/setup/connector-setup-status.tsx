@@ -56,9 +56,6 @@ export function ConnectorSetupStatus({
       >
         <Loader2 aria-hidden="true" className="mx-auto size-6 animate-spin text-primary" />
         <h3 className="mt-3 text-sm font-semibold">{t('setup.verifyingTitle')}</h3>
-        <p className="mt-1 text-sm leading-5 text-muted-foreground">
-          {t('setup.verifyingDescription')}
-        </p>
       </div>
     );
   }
@@ -69,7 +66,6 @@ export function ConnectorSetupStatus({
         <CheckCircle2 aria-hidden="true" className="size-4 text-success" />
         <AlertTitle>{t('setup.readyTitle')}</AlertTitle>
         <AlertDescription>
-          <p>{t('setup.readyDescription')}</p>
           {state.connection?.external_display_name ? (
             <p className="mt-1 font-medium text-foreground">
               {t('setup.readyAs', { name: state.connection.external_display_name })}
@@ -79,17 +75,16 @@ export function ConnectorSetupStatus({
       </Alert>
       {showDefaultAction ? (
         <div className="space-y-2">
-          {state.connection ? (
-            <Button asChild className="w-full">
-              <Link
-                href={`/console/connectors/connections/${encodeURIComponent(state.connection.id)}?rename=1`}
-              >
-                {t('setup.nameConnection')}
-              </Link>
-            </Button>
-          ) : null}
           <Button asChild variant="outline" className="w-full">
-            <Link href="/console/connectors/connections">{t('manageConnections')}</Link>
+            <Link
+              href={
+                state.connection
+                  ? `/console/connectors/connections/${encodeURIComponent(state.connection.id)}`
+                  : '/console/connectors/connections'
+              }
+            >
+              {t('manageConnections')}
+            </Link>
           </Button>
         </div>
       ) : null}

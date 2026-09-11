@@ -8,6 +8,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/connectortools"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/dispatch"
+	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
 	llmadapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
@@ -41,13 +42,18 @@ func (runtime *Runtime) callConnectorTool(ctx context.Context, doc SkillDocument
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(docTimeoutSeconds(doc))*time.Second)
 	defer cancel()
 	start := time.Now()
-	result, err := runtime.connectorDispatcher.Dispatch(runCtx, dispatch.Invocation{Identity: identity, Input: arguments})
+	runCtx = connectorexecution.WithPresentationLocale(runCtx, execCtx.PresentationLocale)
+	governanceParams := governanceRuntimeParameters(execCtx.RuntimeParameters)
+	sessionGrants := governanceSessionGrants(execCtx.RuntimeParameters, governanceParams)
+	result, err := runtime.connectorDispatcher.Dispatch(runCtx, dispatch.Invocation{
+		Identity: identity, SessionGrants: sessionGrants, Input: arguments,
+	})
 	invocation.Trace.DurationMS = time.Since(start).Milliseconds()
 	if err != nil {
 		invocation.Trace.Status = "error"
 		invocation.Trace.Error, invocation.Trace.ErrorCode = skillTraceError(err)
 	}
-	invocation.Messages = connectortools.MessagesForInvocation(result, identity)
+	invocation.Messages = connectortools.MessagesForInvocation(result, identity, err)
 	if err == nil {
 		pending, handled, freezeErr := freezeConnectorConfirmation(ctx, tool, &identity, arguments, execCtx, invocation.Messages)
 		if freezeErr != nil {

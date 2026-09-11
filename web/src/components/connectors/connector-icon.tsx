@@ -6,7 +6,7 @@ import { Icons } from '@/components/ui/icons';
 import { FeishuIcon } from './feishu-icon';
 import { DingTalkIcon, WeComIcon, WeixinIcon } from './messaging-icons';
 import { connectorBrand, safeConnectorIconSource } from './connector-icon-model';
-import { Database, Plug } from 'lucide-react';
+import { Database, Plug, Mail } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { ConnectorClassification } from '@/services/types/connector';
 
@@ -50,7 +50,9 @@ export function ConnectorIcon({
   const brand = connectorBrand(connectorId, icon);
   const source = safeConnectorIconSource(icon);
   const mark =
-    brand === 'exa' ? (
+    connectorId === 'mail' ? (
+      <Mail aria-hidden="true" className={contentClassName} />
+    ) : brand === 'exa' ? (
       <Exa aria-hidden="true" className={contentClassName} />
     ) : brand === 'github' ? (
       <Icons.GitHub aria-hidden="true" className={contentClassName} />

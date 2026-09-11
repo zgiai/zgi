@@ -18,7 +18,11 @@ assert.match(dialog, /ConnectorPickerDialog/);
 assert.match(dialog, /groupByConnector/);
 assert.doesNotMatch(dialog, /ConnectorPickerMenu|PopoverAnchor|role="menu"/);
 assert.match(dialog, /anchorElement=\{anchorElement\}/);
-assert.doesNotMatch(dialog, /onRequestManageConnector/, 'consumer picker cannot manage other targets');
+assert.doesNotMatch(
+  dialog,
+  /onRequestManageConnector/,
+  'consumer picker cannot manage other targets'
+);
 const stateFocusHandler = dialog.match(
   /onCloseAutoFocus=\{event => \{\s*(event\.preventDefault\(\);\s*if \(!stateDialogOpenRef\.current && anchorElement\?\.isConnected\) \{\s*anchorElement\.focus\(\{ preventScroll: true \}\);\s*\})\s*\}\}/
 );
@@ -78,7 +82,7 @@ assert.equal(retainedAnchor, triggerElement);
 assert.equal(opened, true);
 toggle();
 assert.equal(opened, false, 'clicking the same trigger closes the menu');
-assert.match(dialog, /ConnectorKeySetupPanel/);
+assert.match(dialog, /ConnectorCreateContent/);
 assert.match(dialog, /pickerOpenRef\.current = open/);
 const setupFocusHandler = dialog.match(
   /onCloseAutoFocus=\{event => \{\s*(event\.preventDefault\(\);\s*if \(!pickerOpenRef\.current && anchorElement\?\.isConnected\) anchorElement\.focus\(\);)\s*\}\}/

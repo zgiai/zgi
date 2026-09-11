@@ -9,23 +9,34 @@ import (
 )
 
 type StatusQuery struct {
-	OrganizationID uuid.UUID
-	OwnerAccountID uuid.UUID
-	RouteReceipt   execution.RouteClaimReceipt
+	PresentationVersion int
+	OrganizationID      uuid.UUID
+	OwnerAccountID      uuid.UUID
+	RouteReceipt        execution.RouteClaimReceipt
 }
 
-// StatusResult contains only durable public facts, never credentials, input or host state.
+// StatusResult contains durable status and an opt-in, owner-only safe preview.
+// Raw input, credentials and host state are never returned.
 type StatusResult struct {
-	Resolution string         `json:"resolution"`
-	State      State          `json:"state,omitempty"`
-	DecisionID uuid.UUID      `json:"decision_id,omitempty,omitzero"`
-	ErrorCode  core.ErrorCode `json:"error_code,omitempty"`
+	Presentation *Presentation  `json:"presentation,omitempty"`
+	Resolution   string         `json:"resolution"`
+	State        State          `json:"state,omitempty"`
+	DecisionID   uuid.UUID      `json:"decision_id,omitempty,omitzero"`
+	ErrorCode    core.ErrorCode `json:"error_code,omitempty"`
+}
+
+type Presentation struct {
+	Version int                            `json:"version"`
+	Preview *execution.ConfirmationPreview `json:"preview"`
 }
 
 // ReadStatus is strictly observational. A pending row is unresolved, not a
 // failed operation. In particular, this method never routes, recovers by
 // submission, records a terminal, or resumes a Chat/Workflow host.
 func (service *Service) ReadStatus(ctx context.Context, query StatusQuery) (StatusResult, error) {
+	if query.PresentationVersion != 0 && query.PresentationVersion != 1 {
+		return StatusResult{}, core.NewError(core.ErrorCodeInvalidInput, false, nil)
+	}
 	if service == nil || service.store == nil {
 		return StatusResult{}, core.NewError(core.ErrorCodeInternal, false, nil)
 	}
@@ -40,8 +51,12 @@ func (service *Service) ReadStatus(ctx context.Context, query StatusQuery) (Stat
 	if err := authorizeFrozenRequest(command, continuation.Frozen); err != nil {
 		return StatusResult{}, err
 	}
+	var presentation *Presentation
+	if query.PresentationVersion == 1 {
+		presentation = &Presentation{Version: 1, Preview: continuation.Frozen.Preview}
+	}
 	if continuation.State == execution.ConfirmationContinuationPending {
-		return StatusResult{Resolution: "unresolved"}, nil
+		return StatusResult{Resolution: "unresolved", Presentation: presentation}, nil
 	}
 	if continuation.State == execution.ConfirmationContinuationCancelled {
 		command.Decision = execution.ConfirmationDecisionCancelled
@@ -50,5 +65,5 @@ func (service *Service) ReadStatus(ctx context.Context, query StatusQuery) (Stat
 	if err != nil {
 		return StatusResult{}, err
 	}
-	return StatusResult{Resolution: "resolved", State: result.State, DecisionID: result.DecisionID, ErrorCode: result.ErrorCode}, nil
+	return StatusResult{Resolution: "resolved", State: result.State, DecisionID: result.DecisionID, ErrorCode: result.ErrorCode, Presentation: presentation}, nil
 }

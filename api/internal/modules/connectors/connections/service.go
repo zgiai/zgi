@@ -30,14 +30,16 @@ type KeySetupCommand struct {
 	IdempotencyKey string            `json:"-"`
 	Values         map[string]string `json:"-"`
 	Target         *connectorcore.TargetRef
+	MailUsage      string
 }
 
 // KeySetupResult is transport-neutral and contains no submitted value,
 // credential envelope, request digest, provider cause, or policy state.
 type KeySetupResult struct {
-	Attempt    connectorcore.KeySetupAttempt
-	Connection *connectorcore.PersonalConnection
-	Retryable  bool
+	MailVerification *connectorcore.MailVerification
+	Attempt          connectorcore.KeySetupAttempt
+	Connection       *connectorcore.PersonalConnection
+	Retryable        bool
 }
 
 type Service struct {
@@ -85,6 +87,7 @@ func (service *Service) StartKeySetup(ctx context.Context, command KeySetupComma
 	}
 	requestFingerprint, err := service.hasher.RequestFingerprint(CommandFingerprintInput{
 		ConnectorID: connectorID.String(), Target: cloneTarget(command.Target), Values: command.Values,
+		MailUsage: command.MailUsage, DriverID: definition.DriverID, AuthMethodID: definition.AuthMethodID,
 	})
 	if err != nil {
 		return KeySetupResult{}, err
@@ -110,8 +113,14 @@ func (service *Service) StartKeySetup(ctx context.Context, command KeySetupComma
 		OrganizationID: command.OrganizationID, OwnerAccountID: command.OwnerAccountID,
 		ConnectionID: connectionID, ConnectorID: definition.ID, DriverID: definition.DriverID,
 		AuthMethodID: definition.AuthMethodID, Credentials: command.Values,
+		MailUsage: command.MailUsage, OperationIDs: catalog.MailOperationsFor(definition.ID, command.MailUsage),
 	})
 	if err != nil {
+		result, failure := service.failClaimedSetup(ctx, claimed, err)
+		result.MailVerification = verification.MailVerification.SafeCopy()
+		return result, failure
+	}
+	if err := validateMailVerification(definition, command.MailUsage, command.Values["email"], verification); err != nil {
 		return service.failClaimedSetup(ctx, claimed, err)
 	}
 	usable, unavailable, err := verifiedOperations(definition, verification.UsableOperationIDs)
@@ -218,6 +227,13 @@ func (service *Service) validateCommand(command KeySetupCommand) (catalog.Defini
 	definition, ok := service.catalog.Get(connectorID.String())
 	if !ok {
 		return catalog.Definition{}, "", connectorcore.NewError(connectorcore.ErrorCodeNotFound, false, nil)
+	}
+	if definition.IsMailCredentials() {
+		if len(catalog.MailOperationsFor(definition.ID, command.MailUsage)) == 0 || catalog.NormalizeMailValuesFor(definition.ID, command.Values) != nil {
+			return catalog.Definition{}, "", connectorcore.NewError(connectorcore.ErrorCodeInvalidInput, false, nil)
+		}
+	} else if command.MailUsage != "" {
+		return catalog.Definition{}, "", connectorcore.NewError(connectorcore.ErrorCodeInvalidInput, false, nil)
 	}
 	if err := catalog.Validate(definition); err != nil || definition.ID != connectorID.String() || !exactCredentialSchema(definition, command.Values) {
 		return catalog.Definition{}, "", connectorcore.NewError(connectorcore.ErrorCodeInvalidInput, false, nil)

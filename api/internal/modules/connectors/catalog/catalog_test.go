@@ -35,6 +35,31 @@ func TestCatalogAcceptsFirstReleaseContract(t *testing.T) {
 	}
 }
 
+func TestCatalogPreservesDigitalHumanSurfaceContract(t *testing.T) {
+	definition := validDefinition()
+	definition.ExtensionSchemaVersion, definition.ContractVersion = ZGIMetadataSchemaVersion13, 4
+	definition.Surfaces = append(definition.Surfaces, SurfaceDigitalHuman)
+	got, err := New(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, _ := got.Get(definition.ID)
+	if !reflect.DeepEqual(stored.Surfaces, definition.Surfaces) {
+		t.Fatalf("extension surfaces changed: %v", stored.Surfaces)
+	}
+	for _, surfaces := range [][]Surface{
+		{SurfaceAgent, SurfaceWorkflow, SurfaceDigitalHuman},
+		{SurfaceChat, SurfaceAgent, SurfaceWorkflow, SurfaceDigitalHuman, SurfaceDigitalHuman},
+		{SurfaceChat, SurfaceAgent, SurfaceWorkflow, "unknown"},
+		{SurfaceChat, SurfaceAgent, SurfaceChat},
+	} {
+		definition.Surfaces = surfaces
+		if err := Validate(definition); !errors.Is(err, ErrInvalidDefinition) {
+			t.Fatalf("Validate(%v) = %v, want invalid surfaces", surfaces, err)
+		}
+	}
+}
+
 func TestCatalogRejectsUnsupportedOrAmbiguousFirstReleaseDefinitions(t *testing.T) {
 	t.Parallel()
 

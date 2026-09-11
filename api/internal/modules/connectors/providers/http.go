@@ -3,22 +3,38 @@ package providers
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"io"
+	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode"
 
+	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
 )
 
 const responseLimit = 5 << 20
 
 type HTTP struct {
-	client *http.Client
-	origin string
+	client        *http.Client
+	origin        string
+	responseLimit int
+}
+
+// WithResponseLimit narrows the parser budget without mutating a shared client.
+func (client *HTTP) WithResponseLimit(limit int) *HTTP {
+	copy := *client
+	if limit > 0 && limit <= responseLimit {
+		copy.responseLimit = limit
+	}
+	return &copy
 }
 
 func NewHTTP(client *http.Client, origin string) *HTTP {
@@ -26,7 +42,7 @@ func NewHTTP(client *http.Client, origin string) *HTTP {
 }
 
 func NewBoundedHTTP(client *http.Client, origin string, timeout time.Duration) *HTTP {
-	if timeout < time.Second || timeout > 40*time.Second {
+	if timeout < time.Second || timeout > 50*time.Second {
 		timeout = 20 * time.Second
 	}
 	copy := http.Client{Timeout: timeout}
@@ -66,7 +82,11 @@ func (client *HTTP) JSON(ctx context.Context, method, path string, query url.Val
 	if len(query) > 0 {
 		endpoint += "?" + query.Encode()
 	}
-	request, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(data))
+	started := time.Now()
+	var written atomic.Bool
+	phase, _ := ctx.Value(diagnosticPhaseKey{}).(string)
+	trace := &httptrace.ClientTrace{WroteRequest: func(info httptrace.WroteRequestInfo) { written.Store(true) }}
+	request, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, trace), method, endpoint, bytes.NewReader(data))
 	if err != nil {
 		return nil, Invalid()
 	}
@@ -74,16 +94,42 @@ func (client *HTTP) JSON(ctx context.Context, method, path string, query url.Val
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Content-Type", "application/json")
 	response, err := client.client.Do(request)
+	diagnostic := &Diagnostic{TraceID: uuid.NewString(), Phase: phase, ElapsedMS: time.Since(started).Milliseconds(), RequestWritten: written.Load()}
 	if err != nil {
-		return nil, &Failure{Code: core.ErrorCodeProviderUnavailable, Unknown: true}
+		diagnostic.Category = "connect"
+		var dns *net.DNSError
+		var certificate *tls.CertificateVerificationError
+		var timeout net.Error
+		var connection *net.OpError
+		unknown := true
+		switch {
+		case errors.Is(err, context.Canceled):
+			diagnostic.Category = "cancelled"
+		case errors.Is(err, context.DeadlineExceeded):
+			diagnostic.Category = "deadline"
+		case errors.As(err, &dns):
+			diagnostic.Category = "dns"
+			unknown = written.Load()
+		case errors.As(err, &certificate):
+			diagnostic.Category = "tls"
+			unknown = written.Load()
+		case errors.As(err, &connection) && connection.Op == "dial":
+			unknown = written.Load()
+		case errors.As(err, &timeout) && timeout.Timeout():
+			diagnostic.Category = "deadline"
+		}
+		return nil, &Failure{Code: core.ErrorCodeProviderUnavailable, Unknown: unknown, Retryable: !unknown && diagnostic.Category != "cancelled", Diagnostic: diagnostic}
 	}
+	diagnostic.ResponseReceived = true
+	diagnostic.HTTPStatus = response.StatusCode
 	defer response.Body.Close()
 	requestID := SafeText(response.Header.Get("X-GitHub-Request-Id"), 128)
 	if requestID == "" {
 		requestID = SafeText(response.Header.Get("X-Request-Id"), 128)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		failure := &Failure{Code: core.ErrorCodeProviderUnavailable, RequestID: requestID}
+		diagnostic.Category = "http"
+		failure := &Failure{Code: core.ErrorCodeProviderUnavailable, RequestID: requestID, Diagnostic: diagnostic}
 		switch response.StatusCode {
 		case http.StatusUnauthorized:
 			failure.Code = core.ErrorCodeInvalidKey
@@ -102,12 +148,81 @@ func (client *HTTP) JSON(ctx context.Context, method, path string, query url.Val
 		}
 		return response.Header, failure
 	}
-	raw, err := io.ReadAll(io.LimitReader(response.Body, responseLimit+1))
+	limit := client.responseLimit
+	if limit == 0 {
+		limit = responseLimit
+	}
+	raw, err := io.ReadAll(io.LimitReader(response.Body, int64(limit)+1))
+	diagnostic.ElapsedMS = time.Since(started).Milliseconds()
 	defer clear(raw)
-	if err != nil || len(raw) > responseLimit || json.Unmarshal(raw, output) != nil {
-		return response.Header, &Failure{Code: core.ErrorCodeOutcomeUnknown, Unknown: true, RequestID: requestID}
+	if err != nil || len(raw) > limit || !validJSON(raw) || json.Unmarshal(raw, output) != nil {
+		diagnostic.Category = "response_unrecognized"
+		var timeout net.Error
+		if errors.Is(err, context.Canceled) {
+			diagnostic.Category = "cancelled"
+		} else if errors.Is(err, context.DeadlineExceeded) || errors.As(err, &timeout) && timeout.Timeout() {
+			diagnostic.Category = "deadline"
+		}
+		return response.Header, &Failure{Code: core.ErrorCodeOutcomeUnknown, Unknown: true, RequestID: requestID, Diagnostic: diagnostic}
 	}
 	return response.Header, nil
+}
+
+// ValidJSONObject rejects scalar/null envelopes, trailing values and duplicate
+// fields (including nested duplicates) before a typed decoder loses presence.
+func ValidJSONObject(raw []byte) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) > 0 && trimmed[0] == '{' && validJSON(raw)
+}
+func validJSON(raw []byte) bool {
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.UseNumber()
+	var value func() bool
+	value = func() bool {
+		t, err := d.Token()
+		if err != nil {
+			return false
+		}
+		delim, ok := t.(json.Delim)
+		if !ok {
+			return true
+		}
+		switch delim {
+		case '{':
+			keys := map[string]bool{}
+			for d.More() {
+				key, err := d.Token()
+				if err != nil {
+					return false
+				}
+				name, ok := key.(string)
+				if !ok || keys[name] {
+					return false
+				}
+				keys[name] = true
+				if !value() {
+					return false
+				}
+			}
+			end, err := d.Token()
+			return err == nil && end == json.Delim('}')
+		case '[':
+			for d.More() {
+				if !value() {
+					return false
+				}
+			}
+			end, err := d.Token()
+			return err == nil && end == json.Delim(']')
+		default:
+			return false
+		}
+	}
+	if !value() {
+		return false
+	}
+	_, err := d.Token()
+	return errors.Is(err, io.EOF)
 }
 
 func SafeText(value string, limit int) string {

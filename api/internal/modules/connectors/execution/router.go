@@ -2,6 +2,7 @@ package execution
 
 import (
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	"strings"
@@ -15,10 +16,11 @@ func (path Path) valid() bool { return path == PathConnectorNative }
 
 type RouteClaimReceipt string
 type PinnedExecution struct {
-	Snapshot *InvocationSnapshot
-	Request  ExecutionRequest
-	Path     Path
-	Receipt  RouteClaimReceipt
+	freshClaim bool
+	Snapshot   *InvocationSnapshot
+	Request    ExecutionRequest
+	Path       Path
+	Receipt    RouteClaimReceipt
 }
 
 func ValidatePinnedExecution(pinned PinnedExecution, expected Path) error {
@@ -29,6 +31,7 @@ func ValidatePinnedExecution(pinned PinnedExecution, expected Path) error {
 }
 
 type ExecutionRequest struct {
+	ConversationID     string
 	OrganizationID     uuid.UUID
 	OwnerAccountID     uuid.UUID
 	ActingPrincipalID  uuid.UUID
@@ -44,11 +47,14 @@ type ExecutionRequest struct {
 	// AcceptedOperation is the server-frozen catalog contract used only when
 	// resuming a runtime confirmation. It is sealed with Input and can never be
 	// supplied by the client or copied into route/audit/provider metadata.
-	AcceptedOperation *catalog.PinnedOperation `json:"-"`
-	Input             any                      `json:"-"`
+	AcceptedOperation *catalog.PinnedOperation      `json:"-"`
+	SessionGrants     []toolgovernance.SessionGrant `json:"-"`
+	Preauthorized     bool                          `json:"-"`
+	Input             any                           `json:"-"`
 }
 
 type RouteResolutionRequest struct {
+	ConversationID     string
 	OrganizationID     uuid.UUID
 	OwnerAccountID     uuid.UUID
 	ActingPrincipalID  uuid.UUID
@@ -63,6 +69,7 @@ type RouteResolutionRequest struct {
 
 func routeResolutionRequest(request ExecutionRequest) RouteResolutionRequest {
 	return RouteResolutionRequest{
+		ConversationID: request.ConversationID,
 		OrganizationID: request.OrganizationID, OwnerAccountID: request.OwnerAccountID,
 		ActingPrincipalID: request.ActingPrincipalID, BindingID: request.BindingID,
 		ConnectionID: request.ConnectionID, ConnectorID: request.ConnectorID,

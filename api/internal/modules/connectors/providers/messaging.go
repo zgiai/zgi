@@ -36,7 +36,8 @@ func (entry registration) safeMessagingEvidence(value *core.ProviderEvidence, in
 			}
 			// Conditional app-token admission is restricted to the frozen DingTalk
 			// v3 contract. Other providers need a successful business read.
-			if availability == "conditional" && (d.ID != "dingtalk" || d.Setup.VerificationPolicy != "credential_and_conditional_operations") {
+			wecomRead := d.ID == "wecom" && d.PluginVersion == "1.1.0" && catalog.IsWeComResourceRead(op.ID)
+			if availability == "conditional" && !wecomRead && (d.ID != "dingtalk" || d.Setup.VerificationPolicy != "credential_and_conditional_operations") {
 				continue
 			}
 			permission := "unknown"

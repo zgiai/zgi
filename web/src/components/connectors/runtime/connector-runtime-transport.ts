@@ -56,16 +56,21 @@ function normalizeDecisionResult(
   const state = result.state;
   const decisionID = result.decision_id;
   const errorCode = result.error_code;
+  const rememberForSession = result.remember_for_session;
   if (
-    Object.keys(result).some(key => !['state', 'decision_id', 'error_code'].includes(key)) ||
+    Object.keys(result).some(
+      key => !['state', 'decision_id', 'error_code', 'remember_for_session'].includes(key)
+    ) ||
     !safeErrorCode(errorCode) ||
-    !safeErrorCode(decisionID)
+    !safeErrorCode(decisionID) ||
+    (rememberForSession !== undefined && typeof rememberForSession !== 'boolean')
   ) {
     return unknownResult(command.route_receipt);
   }
   const common = {
     route_receipt: command.route_receipt,
     ...(decisionID ? { decision_id: decisionID } : {}),
+    ...(rememberForSession ? { remember_for_session: true } : {}),
   };
   switch (state) {
     case 'cancelled':

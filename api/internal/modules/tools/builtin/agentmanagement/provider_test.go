@@ -3881,10 +3881,6 @@ func (s *fakeAgentManagementService) ReplaceAgentMemorySlots(context.Context, st
 	return nil, nil
 }
 
-func (s *fakeAgentManagementService) UpdateAgentMemoryConfig(context.Context, string, string, dto.AgentMemoryConfigRequest) (*dto.AgentMemoryConfigResponse, error) {
-	return nil, nil
-}
-
 func (s *fakeAgentManagementService) ListAgentMemoryValues(context.Context, string, string) (*dto.AgentMemoryValuesResponse, error) {
 	return nil, nil
 }

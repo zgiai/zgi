@@ -15,9 +15,10 @@ import (
 // Connection lifecycle against this transaction; it must not create bindings.
 type CommitCandidate func(context.Context, *gorm.DB, Flow, map[string]string) (uuid.UUID, error)
 type GormRepository struct {
-	db     *gorm.DB
-	commit CommitCandidate
-	now    func() time.Time
+	db              *gorm.DB
+	commit          CommitCandidate
+	messagingCommit MessagingCommit
+	now             func() time.Time
 }
 
 func NewGormRepository(db *gorm.DB, commit CommitCandidate) *GormRepository {
@@ -104,11 +105,11 @@ func (r *GormRepository) Admit(ctx context.Context, input Flow) (Flow, error) {
 		}
 		var counts struct{ OwnerActive, OrgActive, OwnerRecent, OrgRecent, SameIntent int64 }
 		err = tx.Raw(`SELECT
- count(*) FILTER (WHERE state IN ('starting','awaiting_authorization','verifying') AND owner_account_id = ?) AS owner_active,
- count(*) FILTER (WHERE state IN ('starting','awaiting_authorization','verifying')) AS org_active,
+ count(*) FILTER (WHERE state IN ('starting','awaiting_authorization','verifying','verification_waiting') AND owner_account_id = ?) AS owner_active,
+ count(*) FILTER (WHERE state IN ('starting','awaiting_authorization','verifying','verification_waiting')) AS org_active,
  count(*) FILTER (WHERE created_at > ? AND owner_account_id = ?) AS owner_recent,
  count(*) FILTER (WHERE created_at > ?) AS org_recent,
- count(*) FILTER (WHERE state IN ('starting','awaiting_authorization','verifying') AND owner_account_id = ? AND
+ count(*) FILTER (WHERE state IN ('starting','awaiting_authorization','verifying','verification_waiting') AND owner_account_id = ? AND
  ((connection_id IS NULL AND ? IN ('create_app','resume_app','register_bot','login_session') AND connector_id = ?) OR (connection_id IS NOT NULL AND ? IN ('update_app','reauthorize') AND connection_id = ?))) AS same_intent
  FROM connector_onboarding_flows WHERE organization_id = ?`, input.OwnerAccountID, r.now().Add(-time.Minute), input.OwnerAccountID, r.now().Add(-time.Minute), input.OwnerAccountID, input.Intent, input.ConnectorID, input.Intent, input.ConnectionID, input.OrganizationID).Scan(&counts).Error
 		if err != nil {
@@ -182,15 +183,26 @@ func (r *GormRepository) terminal(tx *gorm.DB, f *Flow, state State, code core.E
 	if err := scoped(tx, f.OrganizationID, f.OwnerAccountID, f.ID).Select("state", "terminal_at", "updated_at", "revision", "lease_owner", "lease_until", "safe_error_code", "result_connection_id").Updates(f).Error; err != nil {
 		return err
 	}
+	if state != Ready && f.CandidateConnectionID != nil {
+		if err := tx.Table("connector_messaging_states").Where("flow_id = ? AND organization_id = ? AND owner_account_id = ?", f.ID, f.OrganizationID, f.OwnerAccountID).Delete(nil).Error; err != nil {
+			return err
+		}
+	}
 	return tx.Where("flow_id = ? AND organization_id = ? AND owner_account_id = ?", f.ID, f.OrganizationID, f.OwnerAccountID).Delete(&DeviceRecord{}).Error
 }
 func (r *GormRepository) cleanup(tx *gorm.DB) error {
 	now := r.now()
 	var stale []Flow
-	if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).Where("state IN ? AND ((CASE WHEN protocol_version = 0 AND state = 'verifying' AND verification_deadline IS NOT NULL THEN verification_deadline ELSE expires_at END) <= ? OR lease_until <= ?)", activeStates, now, now).Limit(128).Find(&stale).Error; err != nil {
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).Where("state IN ? AND ((CASE WHEN protocol_version = 1 AND candidate_expires_at IS NOT NULL THEN candidate_expires_at WHEN protocol_version = 0 AND state = 'verifying' AND verification_deadline IS NOT NULL THEN verification_deadline ELSE expires_at END) <= ? OR lease_until <= ?)", activeStates, now, now).Limit(128).Find(&stale).Error; err != nil {
 		return err
 	}
 	for i := range stale {
+		if recovered, err := r.recoverMessagingCommit(tx, &stale[i]); recovered || err != nil {
+			if err != nil {
+				return err
+			}
+			continue
+		}
 		state, code := Expired, core.ErrorCodeFlowExpired
 		if stale[i].LeaseUntil != nil {
 			state, code = RecoveryRequired, core.ErrorCodeOutcomeUnknown
@@ -233,7 +245,7 @@ func (r *GormRepository) Claim(ctx context.Context, worker uuid.UUID) (Flow, boo
 			return nil
 		}
 		var f Flow
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).Where("state IN ? AND next_poll_at <= ? AND lease_owner IS NULL AND protocol_version IN (0,1) AND step <> 'awaiting_code'", []State{Starting, Awaiting}, r.now()).Order("next_poll_at, id").Take(&f).Error
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).Where("state IN ? AND next_poll_at <= ? AND lease_owner IS NULL AND protocol_version IN (0,1) AND step <> 'awaiting_code'", []State{Starting, Awaiting, Verifying}, r.now()).Order("next_poll_at, id").Take(&f).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil
 		}
@@ -246,7 +258,21 @@ func (r *GormRepository) Claim(ctx context.Context, worker uuid.UUID) (Flow, boo
 		until := r.now().Add(45 * time.Second)
 		if f.ProtocolVersion != 0 {
 			until = r.now().Add(60 * time.Second)
+			if f.ConnectorID == "weixin" {
+				until = r.now().Add(75 * time.Second)
+			}
 			f.StepDispatched = true
+			if f.CandidateExpiresAt != nil {
+				f.State = Verifying
+				deadline := r.now().Add(50 * time.Second)
+				if f.ConnectorID == "weixin" {
+					deadline = r.now().Add(55 * time.Second)
+				}
+				if deadline.After(*f.CandidateExpiresAt) {
+					deadline = *f.CandidateExpiresAt
+				}
+				f.VerificationDeadline = &deadline
+			}
 		}
 		f.LeaseOwner = &worker
 		f.LeaseUntil = &until
@@ -280,7 +306,7 @@ func (r *GormRepository) Device(ctx context.Context, f Flow) (DeviceRecord, erro
 	if err != nil {
 		return DeviceRecord{}, err
 	}
-	if !current.State.Active() || current.Generation != f.Generation || !current.ExpiresAt.After(r.now()) {
+	if !current.State.Active() || current.Generation != f.Generation || !current.verificationExpiry().After(r.now()) {
 		return DeviceRecord{}, registrationError(core.ErrorCodeFlowExpired)
 	}
 	var record DeviceRecord

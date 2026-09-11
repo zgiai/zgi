@@ -32,6 +32,8 @@ interface ConnectionRemovalDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   connectionId: string;
+  connectionName: string;
+  accountIdentity?: string;
   onRemoved: () => void;
 }
 
@@ -39,6 +41,8 @@ export function ConnectionRemovalDialog({
   open,
   onOpenChange,
   connectionId,
+  connectionName,
+  accountIdentity,
   onRemoved,
 }: ConnectionRemovalDialogProps) {
   const t = useT('connectors');
@@ -86,6 +90,13 @@ export function ConnectionRemovalDialog({
           <DialogDescription>{t('removal.description')}</DialogDescription>
         </DialogHeader>
         <DialogBody className="space-y-4">
+          <div className="space-y-1 break-words">
+            <p className="font-medium">{connectionName}</p>
+            {accountIdentity ? (
+              <p className="text-sm text-muted-foreground">{accountIdentity}</p>
+            ) : null}
+          </div>
+          <p className="text-sm text-muted-foreground">{t('removal.providerAuthorization')}</p>
           {isDefault ? (
             <p className="rounded-lg border border-warning/30 bg-warning/5 p-3 text-sm">
               {t('defaults.deletionNotice')}

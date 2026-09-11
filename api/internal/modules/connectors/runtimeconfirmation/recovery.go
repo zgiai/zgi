@@ -68,11 +68,20 @@ func (recoverer *AuditTerminalRecoverer) RecoverTerminal(
 		request.OwnerAccountID,
 		connectoraudit.DecisionListFilter{
 			ConnectorID: request.ConnectorID, ConnectionID: request.ConnectionID,
-			CorrelationID: request.CorrelationID, Limit: 100,
+			LogicalOperationID: request.LogicalOperationID, ReceiptID: string(request.RouteReceipt),
 		},
 	)
 	if err != nil {
 		return execution.ConfirmationTerminal{}, err
+	}
+	if denied, ok := uniqueRecoveryDecision(decisions, request, "authorization", core.DecisionStatusDenied); ok && denied.Details["rejection_finalized"] == true {
+		for _, decision := range decisions {
+			if decision.Decision == "confirmation_finalization" || decision.Decision == "dispatch" {
+				return execution.ConfirmationTerminal{}, core.NewError(core.ErrorCodeConflict, false, nil)
+			}
+		}
+		stored, _ := denied.Details["diagnostic_code"].(string)
+		return execution.ConfirmationTerminal{State: execution.ConfirmationContinuationFailed, DecisionID: denied.ID, DiagnosticCode: string(safeStoredErrorCode(stored, core.ErrorCodeAccessDenied))}, nil
 	}
 	confirmed := request.Decision == execution.ConfirmationDecisionConfirmed
 	finalization, ok := uniqueRecoveryDecision(decisions, request, "confirmation_finalization", core.DecisionStatusSuccessful)

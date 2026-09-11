@@ -8,6 +8,7 @@ import { supportsConnectorSetup } from '../setup/app-setup-state';
 import { ArrowRight, ChevronDown, CircleAlert, CircleCheck, KeyRound, Plus } from 'lucide-react';
 import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -57,7 +58,10 @@ export function ConnectorCatalogRow({ item }: { item: ConnectorCatalogItem }) {
           : '';
 
   return (
-    <article className="flex h-full min-w-0 flex-col gap-4 rounded-xl border bg-background p-4 shadow-xs sm:p-5">
+    <Card
+      role="article"
+      className="flex h-full min-w-0 flex-col gap-4 bg-background p-4 shadow-xs sm:p-5"
+    >
       <div className="flex min-w-0 items-start gap-4">
         <ConnectorIcon
           connectorId={item.id}
@@ -175,6 +179,6 @@ export function ConnectorCatalogRow({ item }: { item: ConnectorCatalogItem }) {
         </div>
       </div>
       {adding && <ConnectorCreateDialog connector={item} open onOpenChange={setAdding} />}
-    </article>
+    </Card>
   );
 }

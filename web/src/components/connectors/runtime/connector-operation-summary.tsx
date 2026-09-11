@@ -12,14 +12,26 @@ import {
 export function ConnectorOperationSummary({
   invocation,
   className,
+  showHeading = true,
 }: {
   invocation: unknown;
   className?: string;
+  showHeading?: boolean;
 }) {
   const t = useT('connectors');
   const presentation = parseConnectorOperationPresentation(invocation);
-  const status = presentation?.display_status ?? 'unavailable';
+  const status = presentation?.execution_status ?? presentation?.display_status ?? 'unavailable';
   const tone = connectorOperationTone(invocation);
+  if (
+    !showHeading &&
+    presentation &&
+    !presentation.summary &&
+    presentation.source_kind !== 'history' &&
+    !presentation.truncated &&
+    !presentation.redacted
+  ) {
+    return null;
+  }
   return (
     <div
       role="status"
@@ -33,10 +45,12 @@ export function ConnectorOperationSummary({
         className
       )}
     >
-      <p className="font-medium">
-        {presentation?.title ?? t('runtime.presentation.title')} ·{' '}
-        {t(`runtime.presentation.status.${status}`)}
-      </p>
+      {showHeading && (
+        <p className="font-medium">
+          {presentation?.title ?? t('runtime.presentation.title')} ·{' '}
+          {t(`runtime.presentation.status.${status}`)}
+        </p>
+      )}
       {presentation?.summary && (
         <p className="whitespace-pre-wrap break-words">{presentation.summary}</p>
       )}

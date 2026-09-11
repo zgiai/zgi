@@ -17,14 +17,15 @@ var (
 // CatalogDefinitions owns new Connector errors. Existing Key error wire values
 // remain in their legacy transport adapter; no raw provider response is public.
 func CatalogDefinitions() []appcatalog.Definition {
-	return []appcatalog.Definition{
+	definitions := append([]appcatalog.Definition{
 		appDefinition(AppCodeInvalidAppCredentials, appcatalog.CategoryValidation, 422, "The App ID and App Secret could not be verified. Check that they belong to the same application.", "无法验证 App ID 和 App Secret，请确认它们属于同一个应用。"),
 		appDefinition(AppCodePermissionMissing, appcatalog.CategoryAuthorization, 403, "The application is missing a required permission. Grant it and verify the connection again.", "应用缺少所需权限，请授权后重新验证连接。"),
 		appDefinition(AppCodeResourceAccessDenied, appcatalog.CategoryAuthorization, 403, "The application cannot access this resource. Check its sharing and access restrictions.", "应用无法访问此资源，请检查共享范围与访问限制。"),
 		appDefinition(AppCodeApplicationNotReady, appcatalog.CategoryConflict, 409, "The application is not available. Check its activation, publication and authorization status.", "应用尚不可用，请检查启用、发布与授权状态。"),
 		appDefinition(AppCodeRateLimited, appcatalog.CategoryRateLimit, 429, "Too many connection requests. Wait before trying again.", "连接请求过于频繁，请稍后再试。"),
 		appDefinition(AppCodeFlowExpired, appcatalog.CategoryConflict, 410, "This registration has expired. Start a new registration when ready.", "本次扫码流程已过期，请重新开始。"),
-	}
+	}, authCatalogDefinitions()...)
+	return append(definitions, executionPresentationDefinitions()...)
 }
 
 func appDefinition(code apperror.Code, category appcatalog.Category, status int, en, zh string) appcatalog.Definition {
@@ -51,7 +52,7 @@ func ApplicationError(err error) (error, bool) {
 	case ErrorCodeFlowExpired:
 		code = AppCodeFlowExpired
 	default:
-		return nil, false
+		return authApplicationError(ErrorCodeOf(err))
 	}
 	return apperror.New(code), true
 }

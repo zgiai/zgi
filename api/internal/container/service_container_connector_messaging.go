@@ -16,7 +16,7 @@ func (c *ServiceContainer) messagingDrivers() []providers.Driver {
 	if err != nil {
 		panic("initialize DingTalk Connector contract")
 	}
-	w, err := wecom.New(nil, true, store)
+	w, err := wecom.NewWithHandleKey(nil, true, store, c.config.Connectors.CredentialKeys[c.config.Connectors.CredentialActiveKeyID])
 	if err != nil {
 		panic("initialize WeCom Connector contract")
 	}

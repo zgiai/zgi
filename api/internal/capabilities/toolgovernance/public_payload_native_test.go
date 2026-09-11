@@ -8,8 +8,11 @@ import (
 )
 
 func TestSanitizePublicValuePreservesSafeFactsAndRedactsSecrets(t *testing.T) {
+	fakeSlackToken := "xoxb-" + strings.Repeat("1", 20)
+	fakeAWSAccessKey := "AKIA" + strings.Repeat("1", 16)
+	fakeGoogleAPIKey := "AIza" + strings.Repeat("1", 35)
 	original := map[string]any{"kind": "tool_call", "runtime_source": "connector", "result": map[string]any{"operation": map[string]any{"connector_id": "github", "logical_operation_id": "server-operation"}, "outcome_status": "successful"}, "arguments": map[string]any{
-		"title": "Safe title", "url": "https://example.com/?access_token=secret-value-123456", "body": "notify xoxb-12345678901234567890", "aws": "AKIA1234567890123456", "google": "AIza12345678901234567890123456789012345", "credentials": map[string]any{"password": "private-password"}, "connection_name": "model supplied label",
+		"title": "Safe title", "url": "https://example.com/?access_token=secret-value-123456", "body": "notify " + fakeSlackToken, "aws": fakeAWSAccessKey, "google": fakeGoogleAPIKey, "credentials": map[string]any{"password": "private-password"}, "connection_name": "model supplied label",
 	}, "connector_action_instances": map[string]any{"private": "ledger"}, "governance": map[string]any{"frozen_invocation": map[string]any{"secret": "sealed input"}}}
 	before, _ := json.Marshal(original)
 	public := SanitizePublicValue(original).(map[string]any)

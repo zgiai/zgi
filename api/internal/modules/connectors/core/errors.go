@@ -47,8 +47,14 @@ func (code ErrorCode) Valid() bool {
 		ErrorCodeTargetNotReady,
 		ErrorCodeConfirmationRequired,
 		ErrorCodeOutcomeUnknown,
+		ErrorCodeWeixinAlreadyBound,
+		ErrorCodeWeixinRegionUnsupported,
 		ErrorCodeInternal, ErrorCodeInvalidAppCredentials, ErrorCodePermissionMissing,
-		ErrorCodeResourceAccessDenied, ErrorCodeApplicationNotReady, ErrorCodeRateLimited, ErrorCodeFlowExpired:
+		ErrorCodeResourceAccessDenied, ErrorCodeApplicationNotReady, ErrorCodeRateLimited, ErrorCodeFlowExpired,
+		ErrorCodeVerificationWaiting, ErrorCodeProviderResponseUnrecognized, ErrorCodeVerificationUncertain,
+		ErrorCodeMailAuthenticationRejected, ErrorCodeMailAppPasswordRequired, ErrorCodeMailTLSRequired,
+		ErrorCodeMailPolicyRestricted, ErrorCodeMailReferenceExpired, ErrorCodeMailSizeExceeded, ErrorCodeMailRecipientRejected, ErrorCodeMailSubmissionRejected,
+		ErrorCodeMailClientIdentityRequired, ErrorCodeMailAuthMechanismUnsupported:
 		return true
 	default:
 		return false
@@ -59,15 +65,16 @@ func (code ErrorCode) Valid() bool {
 // cause so callers can use a uniform construction pattern, but does not retain
 // it: provider failures can echo submitted credentials in their text.
 type Error struct {
-	Code      ErrorCode `json:"code"`
-	Retryable bool      `json:"retryable"`
+	Code       ErrorCode `json:"code"`
+	Retryable  bool      `json:"retryable"`
+	diagnostic *ProviderDiagnostic
 }
 
-func NewError(code ErrorCode, retryable bool, _ error) *Error {
+func NewError(code ErrorCode, retryable bool, cause error) *Error {
 	if !code.Valid() {
 		code = ErrorCodeInternal
 	}
-	return &Error{Code: code, Retryable: retryable}
+	return &Error{Code: code, Retryable: retryable, diagnostic: DiagnosticOf(cause)}
 }
 
 func (err *Error) Error() string {

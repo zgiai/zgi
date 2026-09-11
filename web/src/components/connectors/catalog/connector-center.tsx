@@ -1,11 +1,12 @@
 'use client';
 
+import { mailDisplayGroup } from '../mail-display-model';
 import { useDeferredValue } from 'react';
 import { usePendingSetups } from '@/hooks/connectors/use-pending-setups';
 import Link from 'next/link';
 import { useLocale } from 'next-intl';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { LockKeyhole, SlidersHorizontal } from 'lucide-react';
+import { SlidersHorizontal } from 'lucide-react';
 import { localizeConnectorCatalogItem } from '@/components/connectors/connector-metadata';
 import { isConnectorListed } from '@/components/connectors/connector-visibility';
 import {
@@ -121,9 +122,6 @@ export function ConnectorCenter({ enabled, featureLoading = false }: ConnectorCe
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
               <h1 className="text-2xl font-semibold tracking-tight">{t('title')}</h1>
-              <p className="mt-1.5 max-w-3xl text-sm leading-6 text-muted-foreground">
-                {t('description')}
-              </p>
             </div>
             <Button asChild variant="outline" className="w-full sm:w-auto">
               <Link href="/console/connectors/connections">
@@ -187,7 +185,11 @@ export function ConnectorCenter({ enabled, featureLoading = false }: ConnectorCe
           ) : null}
           {!catalogQuery.isLoading && !catalogQuery.isError && filteredItems.length > 0 ? (
             <div className="space-y-8">
-              <ConnectorCatalogSection classification="connector" items={partitioned.connectors} />
+              <ConnectorCatalogSection
+                classification="connector"
+                items={partitioned.connectors}
+                mailGroup={mailDisplayGroup(items)}
+              />
               <ConnectorCatalogSection
                 classification="data_source"
                 items={partitioned.dataSources}
@@ -195,11 +197,6 @@ export function ConnectorCenter({ enabled, featureLoading = false }: ConnectorCe
             </div>
           ) : null}
         </div>
-
-        <footer className="mt-8 flex items-start gap-2 border-t py-5 text-xs leading-5 text-muted-foreground">
-          <LockKeyhole aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
-          <span>{t('catalog.pluginNote')}</span>
-        </footer>
       </main>
     </div>
   );

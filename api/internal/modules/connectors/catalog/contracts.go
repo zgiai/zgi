@@ -174,8 +174,20 @@ func DefinitionContractDigest(definition Definition) (string, error) {
 	if err := Validate(definition); err != nil {
 		return "", err
 	}
+	if definition.IsDigitalHumanContract() {
+		return digestJSON(struct {
+			Version  int `json:"version"`
+			Contract any `json:"contract"`
+		}{4, canonicalDefinitionContractV2(definition)})
+	}
 	if definition.IsAppCredentials() {
 		return digestJSON(canonicalDefinitionContractV2(definition))
+	}
+	if definition.IsMailCredentials() {
+		return digestJSON(struct {
+			Version  int `json:"version"`
+			Contract any `json:"contract"`
+		}{definition.ContractVersion, canonicalDefinitionContractV2(definition)})
 	}
 	if definition.IsMessagingCredentials() {
 		return digestJSON(struct {

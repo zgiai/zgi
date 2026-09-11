@@ -8,6 +8,8 @@ export type ConnectorDisplayStatus =
   | 'pending';
 
 export interface ConnectorOperationPresentation {
+  /** Derived from the ordinary invocation evidence; never a wire authority. */
+  execution_status?: 'not_submitted' | 'in_progress';
   schema_version: 1;
   source_kind: 'native' | 'history';
   invocation_id: string;
@@ -57,8 +59,9 @@ function validTarget(value: unknown): boolean {
     !target ||
     !['chat', 'agent', 'workflow'].includes(String(target.type)) ||
     !safeText(target.id, 256)
-  )
-    {return false;}
+  ) {
+    return false;
+  }
   const scope = target.scope || (target.type === 'chat' ? 'live' : 'draft');
   if (target.type === 'chat') {
     if (scope !== 'live' || target.version_id) return false;
@@ -106,8 +109,9 @@ export function parseConnectorOperationPresentation(
     typeof presentation.truncated !== 'boolean' ||
     (presentation.title !== undefined && !safeText(presentation.title, 120)) ||
     (presentation.summary !== undefined && !safeText(presentation.summary, 800))
-  )
-    {return null;}
+  ) {
+    return null;
+  }
   if (source === 'native') {
     const operation = record(result?.operation);
     if (
@@ -120,26 +124,55 @@ export function parseConnectorOperationPresentation(
       operation.logical_operation_id !== presentation.invocation_id ||
       operation.connector_id !== presentation.connector_id ||
       operation.operation_id !== presentation.operation_id
-    )
-      {return null;}
+    ) {
+      return null;
+    }
+    if (result?.state === 'rejected' || result?.state === 'unresolved') {
+      const evidence = record(result.execution_evidence);
+      if (
+        !evidence ||
+        evidence.version !== 1 ||
+        Object.keys(evidence).some(key => !['version', 'disposition'].includes(key)) ||
+        (result.outcome_id != null &&
+          result.outcome_id !== '00000000-0000-0000-0000-000000000000') ||
+        (result.outcome_status != null && result.outcome_status !== '') ||
+        result.confirmation != null ||
+        (result.state === 'rejected'
+          ? evidence.disposition !== 'not_submitted' ||
+            presentation.display_status !== 'unavailable'
+          : !['in_progress', 'unknown'].includes(String(evidence.disposition)) ||
+            presentation.display_status !== 'unknown')
+      ) {
+        return null;
+      }
+    }
     // The durable outcome, rather than a generic tool-call status, proves success.
     if (
       presentation.display_status === 'successful' &&
       (result?.state !== 'completed' ||
         result.outcome_status !== 'successful' ||
         !validUUID(result.outcome_id))
-    )
-      {return null;}
+    ) {
+      return null;
+    }
   } else if (
     presentation.display_status === 'pending' ||
     presentation.invocation_id !== (invocation.invocation_id ?? invocation.runtime_id)
-  )
-    {return null;}
+  ) {
+    return null;
+  }
   return {
     schema_version: 1,
     source_kind: source,
     invocation_id: presentation.invocation_id,
     display_status: presentation.display_status as ConnectorDisplayStatus,
+    ...(source === 'native' && result?.state === 'rejected'
+      ? { execution_status: 'not_submitted' as const }
+      : source === 'native' &&
+          result?.state === 'unresolved' &&
+          record(result.execution_evidence)?.disposition === 'in_progress'
+        ? { execution_status: 'in_progress' as const }
+        : {}),
     ...(presentation.title !== undefined ? { title: presentation.title as string } : {}),
     ...(presentation.summary !== undefined ? { summary: presentation.summary as string } : {}),
     redacted: presentation.redacted,
@@ -151,7 +184,10 @@ export function connectorOperationTone(
   value: unknown
 ): 'success' | 'warning' | 'error' | 'running' | null {
   if (!isConnectorOperationInvocation(value)) return null;
-  switch (parseConnectorOperationPresentation(value)?.display_status) {
+  const presentation = parseConnectorOperationPresentation(value);
+  if (presentation?.execution_status === 'in_progress') return 'running';
+  if (presentation?.execution_status === 'not_submitted') return 'error';
+  switch (presentation?.display_status) {
     case 'successful':
       return 'success';
     case 'pending':

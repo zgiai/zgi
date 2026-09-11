@@ -17,6 +17,30 @@ type registration struct {
 }
 type Runtime struct{ drivers map[string]registration }
 
+// ReadConfirmationTarget reads a scoped local conversation without credentials
+// or an external request. It is deliberately separate from provider execution.
+func (runtime *Runtime) ReadConfirmationTarget(ctx context.Context, request execution.ProviderInvocation) (string, error) {
+	if runtime == nil {
+		return "", Invalid()
+	}
+	entry, ok := runtime.drivers[string(request.ConnectorID)]
+	if !ok {
+		return "", Invalid()
+	}
+	reader, ok := entry.driver.(interface {
+		ReadConfirmationTarget(context.Context, ResourceScope, string) (string, error)
+	})
+	input, valid := request.Input.(map[string]any)
+	if !ok || !valid {
+		return "", Invalid()
+	}
+	return reader.ReadConfirmationTarget(ctx, ResourceScope{
+		OrganizationID: request.OrganizationID, OwnerAccountID: request.OwnerAccountID,
+		ConnectionID: request.ConnectionID, CredentialVersion: request.CredentialVersion,
+		BindingID: request.BindingID, BindingRevision: request.BindingRevision, Target: request.Target,
+	}, Text(input, "context_handle"))
+}
+
 var _ connections.CandidateVerifier = (*Runtime)(nil)
 var _ execution.NativeProviderInvoker = (*Runtime)(nil)
 
@@ -51,7 +75,7 @@ func NewRuntime(drivers ...Driver) (*Runtime, error) {
 		}
 	}
 	for _, definition := range definitions {
-		if _, registered := runtime.drivers[definition.ID]; !registered && !definition.IsMessagingCredentials() {
+		if _, registered := runtime.drivers[definition.ID]; !registered && !definition.IsMessagingCredentials() && !definition.IsMailCredentials() {
 			return nil, Invalid()
 		}
 	}
@@ -96,17 +120,53 @@ func (runtime *Runtime) Verify(ctx context.Context, request connections.Candidat
 		seen[id] = true
 	}
 	credentials.ResourceScope = ResourceScope{OrganizationID: request.OrganizationID, OwnerAccountID: request.OwnerAccountID, ConnectionID: request.ConnectionID}
+	if entry.definition.IsMailCredentials() {
+		operations := catalog.MailOperationsFor(entry.definition.ID, request.MailUsage)
+		if len(operations) == 0 {
+			return connections.CandidateVerificationResult{}, connections.ErrCandidateContract
+		}
+		if len(seen) > 0 {
+			for _, id := range operations {
+				if !seen[id] {
+					return connections.CandidateVerificationResult{}, connections.ErrCandidateContract
+				}
+			}
+			if len(seen) != len(operations) {
+				return connections.CandidateVerificationResult{}, connections.ErrCandidateContract
+			}
+		}
+		seen = map[string]bool{}
+		for _, id := range operations {
+			seen[id] = true
+		}
+		credentials.MailUsage = request.MailUsage
+	} else if request.MailUsage != "" {
+		return connections.CandidateVerificationResult{}, connections.ErrCandidateContract
+	}
 	verified, err := entry.verify(ctx, credentials)
 	if err != nil {
 		failure := FailureOf(err)
 		code := failure.Code
 		if failure.Unknown {
 			code = core.ErrorCodeProviderUnavailable
+			if entry.definition.IsMessagingCredentials() {
+				code = core.ErrorCodeVerificationUncertain
+			}
 		}
-		return connections.CandidateVerificationResult{}, core.NewError(code, failure.Retryable, err)
+		result := connections.CandidateVerificationResult{}
+		if entry.definition.IsMailCredentials() && verified.Evidence != nil && verified.Evidence.Mail != nil {
+			m := verified.Evidence.Mail
+			if m.Usage == request.MailUsage {
+				result.MailVerification = (&core.MailVerification{Usage: m.Usage, IMAPStatus: m.IMAPStatus, SMTPStatus: m.SMTPStatus}).SafeCopy()
+			}
+		}
+		return result, core.NewError(code, failure.Retryable, err)
 	}
 	usable := []string{}
 	evidence := entry.safeEvidence(verified.Evidence, credentials)
+	if entry.definition.IsMailCredentials() && (evidence == nil || evidence.Mail == nil || !evidence.Mail.CredentialVerified || verified.AccountID != credentials.Values["email"]) {
+		return connections.CandidateVerificationResult{}, core.NewError(core.ErrorCodeMailAuthenticationRejected, false, nil)
+	}
 	eligible := map[string]bool{}
 	if entry.definition.IsMessagingCredentials() {
 		if evidence == nil || evidence.Messaging == nil || verified.AccountID != catalog.CredentialIdentity(entry.definition, credentials.Values) {
@@ -122,6 +182,9 @@ func (runtime *Runtime) Verify(ctx context.Context, request connections.Candidat
 		}
 	}
 	if len(usable) == 0 {
+		return connections.CandidateVerificationResult{}, core.NewError(core.ErrorCodeInsufficientKey, false, nil)
+	}
+	if entry.definition.IsMailCredentials() && len(usable) != len(seen) {
 		return connections.CandidateVerificationResult{}, core.NewError(core.ErrorCodeInsufficientKey, false, nil)
 	}
 	return connections.CandidateVerificationResult{ExternalAccountID: entry.redactText(verified.AccountID, credentials), ExternalDisplayName: entry.redactText(verified.DisplayName, credentials), UsableOperationIDs: usable, ProviderRequestID: entry.safeRequestID(verified.RequestID, credentials), CostUSD: verified.CostUSD, Evidence: evidence}, nil
@@ -223,6 +286,9 @@ func (entry registration) safeRequestID(value string, input CredentialInput) str
 }
 
 func (entry registration) safeEvidence(value *core.ProviderEvidence, input CredentialInput) *core.ProviderEvidence {
+	if entry.definition.IsMailCredentials() {
+		return entry.safeMailEvidence(value, input)
+	}
 	if value != nil && entry.definition.IsMessagingCredentials() {
 		return entry.safeMessagingEvidence(value, input)
 	}

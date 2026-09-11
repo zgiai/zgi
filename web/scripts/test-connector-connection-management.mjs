@@ -1,3 +1,4 @@
+import { connectorPureImport } from './connector-pure-fixture.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -15,11 +16,11 @@ import {
   getConnectionRemovalMode,
   sortConnectionBindings,
 } from '../src/components/connectors/connections/connection-management-model.ts';
-import {
+const {
   groupPersonalConnections,
   personalConnectionDisplayName,
   personalConnectionSecondaryIdentity,
-} from '../src/components/connectors/connections/personal-connections-model.ts';
+} = connectorPureImport('personal-connections-model');
 import {
   applyConnectionReconnectResult,
   beginConnectionReconnect,
@@ -532,11 +533,12 @@ assert.match(connectionsPanelSource, /ConnectorCreateDialog/);
 const createDialogSource = readSource(
   'src/components/connectors/setup/connector-create-dialog.tsx'
 );
-assert.match(createDialogSource, /setup\.addDescription/);
+assert.doesNotMatch(createDialogSource, /setup\.addDescription|mail\.notice/);
 assert.match(createDialogSource, /setup\.submit/);
 assert.doesNotMatch(createDialogSource, /target=|reconnectConnection/);
-assert.match(setupStatusSource, /setup\.nameConnection/);
-assert.match(setupStatusSource, /rename=1/);
+assert.match(setupStatusSource, /manageConnections/);
+assert.doesNotMatch(setupStatusSource, /rename=1/);
+assert.match(setupStatusSource, /encodeURIComponent\(state.connection.id\)/);
 assert.doesNotMatch(
   readSource('src/components/connectors/setup/connector-key-form.tsx'),
   /connection[_-]?name|account[_-]?name/i,

@@ -1,3 +1,5 @@
+import { mailConnectionName } from '../mail-connection-name';
+import { mailDisplayKey } from '../mail-display-model';
 import type { PersonalConnection } from '../../../services/types/connector.ts';
 
 export interface PersonalConnectionGroup {
@@ -7,9 +9,15 @@ export interface PersonalConnectionGroup {
 
 export function personalConnectionDisplayName(
   connection: PersonalConnection,
-  fallback: string
+  fallback: string,
+  locale = 'zh-Hans'
 ): string {
-  return connection.name.trim() || connection.external_display_name?.trim() || fallback;
+  return (
+    mailConnectionName(connection, locale) ||
+    connection.name.trim() ||
+    connection.external_display_name?.trim() ||
+    fallback
+  );
 }
 
 export function personalConnectionSecondaryIdentity(
@@ -26,7 +34,7 @@ export function groupPersonalConnections(
 ): PersonalConnectionGroup[] {
   const grouped = new Map<string, PersonalConnection[]>();
   connections.forEach(connection => {
-    const connectorID = connection.connector_id.trim();
+    const connectorID = mailDisplayKey(connection.connector_id.trim());
     if (!connectorID) return;
     const items = grouped.get(connectorID) ?? [];
     items.push(connection);

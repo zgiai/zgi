@@ -65,9 +65,14 @@ func definitionAdmissionRecord(definition Definition, now time.Time) (definition
 		"setup_method": definition.SetupMethod, "ownership": definition.Ownership,
 		"auth_method_id": definition.AuthMethodID, "fields": definition.KeyFields,
 	}
-	if definition.UsesCredentials() {
+	// Version metadata also belongs to Key-based V4 contracts.
+	if definition.ExtensionSchemaVersion != "" {
 		keyDocument["extension_schema_version"] = definition.ExtensionSchemaVersion
+	}
+	if definition.ContractVersion != 0 {
 		keyDocument["contract_version"] = definition.ContractVersion
+	}
+	if definition.UsesCredentials() {
 		keyDocument["credential_fields"] = definition.CredentialFields
 		keyDocument["setup"] = definition.Setup
 	}

@@ -1,3 +1,4 @@
+import { connectorPureImport } from './connector-pure-fixture.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
@@ -14,6 +15,8 @@ export function load(file, imports = {}, suffix = '') {
   const module = { exports: {} };
   new Function('require', 'module', 'exports', code + suffix)(
     name => {
+      if (!Object.hasOwn(imports, name) && connectorPureImport(name))
+        return connectorPureImport(name);
       assert.ok(Object.hasOwn(imports, name), `${file}: unexpected import ${name}`);
       return imports[name];
     },

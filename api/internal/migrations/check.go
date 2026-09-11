@@ -104,13 +104,13 @@ func checkMigrationFilenames() ([]string, error) {
 	slices.Sort(files)
 
 	allowed := map[string]struct{}{
-		"check.go":               {},
-		"legacy_bridge.go":       {},
-		"postgres_smoke_test.go": {},
-		"registry.go":            {},
-		"runner.go":              {},
-		"runner_test.go":         {},
-		"schema_executor.go":     {},
+		"check.go":                    {},
+		"legacy_bridge.go":            {},
+		"postgres_smoke_test.go":      {},
+		"registry.go":                 {},
+		"runner.go":                   {},
+		"runner_test.go":              {},
+		"schema_executor.go":          {},
 		"migration_source_history.go": {},
 	}
 	migrationIDs := make(map[string]struct{}, len(allMigrations()))
@@ -160,7 +160,6 @@ func checkMigrationSourceSafety(files []string) error {
 			}
 			continue
 		}
-
 		fset := token.NewFileSet()
 		parsed, err := parser.ParseFile(fset, file, data, 0)
 		if err != nil {

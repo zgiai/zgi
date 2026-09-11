@@ -75,6 +75,9 @@ func TestGormDefinitionRepositoryRejectsIncompatibleStoredIdentity(t *testing.T)
 func TestGormDefinitionRepositoryLoadsDurableActiveAndDisabledRuntimeState(t *testing.T) {
 	repository, mock := openDefinitionRepositoryMock(t)
 	active := pluginContractDefinitionFixture()
+	active.PluginVersion += "-digitalhuman.1"
+	active.ExtensionSchemaVersion, active.ContractVersion = ZGIMetadataSchemaVersion13, 4
+	active.Surfaces = append(active.Surfaces, SurfaceDigitalHuman)
 	disabled := cloneDefinition(active)
 	disabled.ID = "disabled-search"
 	disabled.PluginID = "zgi.disabled-search"
@@ -101,6 +104,9 @@ func TestGormDefinitionRepositoryLoadsDurableActiveAndDisabledRuntimeState(t *te
 		t.Fatalf("active definitions = %#v", state.ActiveDefinitions())
 	}
 	loaded := state.ActiveDefinitions()[0]
+	if !loaded.Supports(SurfaceDigitalHuman) || loaded.PluginVersion != active.PluginVersion {
+		t.Fatalf("durable extension contract changed: %#v", loaded)
+	}
 	if loaded.NameI18n["zh-Hans"] != active.NameI18n["zh-Hans"] ||
 		loaded.DescriptionI18n["zh-Hans"] != active.DescriptionI18n["zh-Hans"] ||
 		loaded.KeyFields[0].LabelI18n["zh-Hans"] != active.KeyFields[0].LabelI18n["zh-Hans"] ||

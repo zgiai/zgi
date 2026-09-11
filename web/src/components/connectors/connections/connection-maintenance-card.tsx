@@ -12,6 +12,7 @@ interface ConnectionMaintenanceCardProps {
   onDiagnose: () => void;
   isApp?: boolean;
   isMessaging?: boolean;
+  isMail?: boolean;
   onConfigure?: () => void;
 }
 
@@ -22,6 +23,7 @@ export function ConnectionMaintenanceCard({
   onDiagnose,
   isApp = false,
   isMessaging = false,
+  isMail = false,
   onConfigure,
 }: ConnectionMaintenanceCardProps) {
   const t = useT('connectors');
@@ -39,20 +41,24 @@ export function ConnectionMaintenanceCard({
             <div className="min-w-0">
               <p className="font-medium">
                 {t(
-                  isMessaging
-                    ? 'messaging.reauthorizeTitle'
-                    : isApp
-                      ? 'app.updateTitle'
-                      : 'maintenance.updateKeyTitle'
+                  isMail
+                    ? 'mail.reconnect'
+                    : isMessaging
+                      ? 'messaging.reauthorizeTitle'
+                      : isApp
+                        ? 'app.updateTitle'
+                        : 'maintenance.updateKeyTitle'
                 )}
               </p>
               <p className="mt-1 text-sm leading-5 text-muted-foreground">
                 {t(
-                  isMessaging
-                    ? 'messaging.reauthorizeHint'
-                    : isApp
-                      ? 'app.updateHint'
-                      : 'maintenance.updateKeyDescription'
+                  isMail
+                    ? 'mail.lockedEmail'
+                    : isMessaging
+                      ? 'messaging.reauthorizeHint'
+                      : isApp
+                        ? 'app.updateHint'
+                        : 'maintenance.updateKeyDescription'
                 )}
               </p>
             </div>
@@ -102,7 +108,9 @@ export function ConnectionMaintenanceCard({
         )}
         <div className="flex items-start gap-2 rounded-lg border border-primary/15 bg-primary/5 px-3 py-2.5 text-xs leading-5 text-primary">
           <ShieldCheck aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-          <span>{t(isApp ? 'app.secretNotice' : 'maintenance.securityNotice')}</span>
+          <span>
+            {t(isMail ? 'mail.secret' : isApp ? 'app.secretNotice' : 'maintenance.securityNotice')}
+          </span>
         </div>
       </CardContent>
     </Card>

@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/capabilities/connectortools"
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
 	connectorconfirmation "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeconfirmation"
@@ -19,16 +21,20 @@ import (
 // connectorConfirmationResolution contains the complete set of values that
 // may enter Chat metadata. It cannot carry the provider value or frozen input.
 type connectorConfirmationResolution struct {
-	routeReceipt   string
-	state          connectorconfirmation.State
-	decisionID     string
-	errorCode      string
-	surface        connectorcore.TargetType
-	conversationID uuid.UUID
-	messageID      uuid.UUID
-	agentID        uuid.UUID
-	operation      *connectortools.OperationRef
-	outcomeID      uuid.UUID
+	organizationID    uuid.UUID
+	ownerAccountID    uuid.UUID
+	routeReceipt      string
+	state             connectorconfirmation.State
+	decisionID        string
+	errorCode         string
+	surface           connectorcore.TargetType
+	conversationID    uuid.UUID
+	messageID         uuid.UUID
+	agentID           uuid.UUID
+	operation         *connectortools.OperationRef
+	authorization     *connectorconfirmation.AuthorizationSnapshot
+	outcomeID         uuid.UUID
+	presentationTitle string
 }
 
 // RecordConnectorConfirmationResolution projects a resolved Connector call
@@ -73,6 +79,19 @@ func (s *service) RecordConnectorConfirmationResolution(
 		}
 		switch message.Status {
 		case runtimemodel.MessageStatusWaitingApproval:
+			if command.RememberForSession {
+				grant := connectorSessionGrantFromResolution(resolution, time.Now().UTC())
+				if len(grant) == 0 {
+					return connectorResolutionError(connectorcore.ErrorCodeConflict)
+				}
+				conversationMetadata := appendToolGovernanceSessionGrant(
+					copyStringAnyMap(conversation.Metadata), grant,
+				)
+				if updateErr := repos.Conversation.UpdateMetadata(ctx, conversation.ID, conversationMetadata); updateErr != nil {
+					return connectorResolutionError(connectorcore.ErrorCodeInternal)
+				}
+				conversation.Metadata = conversationMetadata
+			}
 			if updateErr := repos.Message.UpdateCompleted(ctx, message.ID, message.Answer, metadata); updateErr != nil {
 				if errors.Is(updateErr, gorm.ErrRecordNotFound) {
 					return connectorResolutionError(connectorcore.ErrorCodeConflict)
@@ -109,7 +128,8 @@ func validateConnectorConfirmationResolution(
 ) (connectorConfirmationResolution, error) {
 	if command.OrganizationID == uuid.Nil || command.OwnerAccountID == uuid.Nil ||
 		(command.Decision != connectorexecution.ConfirmationDecisionConfirmed &&
-			command.Decision != connectorexecution.ConfirmationDecisionCancelled) {
+			command.Decision != connectorexecution.ConfirmationDecisionCancelled) ||
+		(command.RememberForSession && command.Decision != connectorexecution.ConfirmationDecisionConfirmed) {
 		return connectorConfirmationResolution{}, connectorResolutionError(connectorcore.ErrorCodeInvalidInput)
 	}
 	receipt, ok := canonicalConnectorResolutionUUID(string(command.RouteReceipt))
@@ -125,6 +145,8 @@ func validateConnectorConfirmationResolution(
 		return connectorConfirmationResolution{}, connectorResolutionError(connectorcore.ErrorCodeAccessDenied)
 	}
 	resolution := connectorConfirmationResolution{
+		organizationID: command.OrganizationID,
+		ownerAccountID: command.OwnerAccountID,
 		routeReceipt:   receipt.String(),
 		state:          result.State,
 		surface:        result.Origin.Surface,
@@ -133,6 +155,16 @@ func validateConnectorConfirmationResolution(
 		outcomeID:      result.OutcomeID,
 	}
 	identity := result.RequestIdentity
+	if authorization := result.Authorization; authorization != nil {
+		if authorization.ConnectionID != identity.ConnectionID ||
+			authorization.BindingID != identity.BindingID ||
+			authorization.ConnectorID != identity.ConnectorID ||
+			authorization.OperationID != identity.OperationID ||
+			authorization.Target != identity.Target {
+			return connectorConfirmationResolution{}, connectorResolutionError(connectorcore.ErrorCodeAccessDenied)
+		}
+		resolution.authorization = authorization
+	}
 	if identity.LogicalOperationID != "" {
 		operation := connectortools.OperationRef{ConnectorID: identity.ConnectorID, OperationID: identity.OperationID, BindingID: identity.BindingID, ConnectionID: identity.ConnectionID, Target: identity.Target, LogicalOperationID: identity.LogicalOperationID}
 		if !operation.Valid() || identity.OrganizationID != command.OrganizationID || identity.OwnerAccountID != command.OwnerAccountID || identity.ActingPrincipalID != command.OwnerAccountID || identity.CorrelationID != "connector-correlation-"+messageID.String() {
@@ -186,6 +218,55 @@ func validateConnectorResolutionTerminal(
 		return connectorResolutionError(connectorcore.ErrorCodeInvalidInput)
 	}
 	return nil
+}
+
+func connectorSessionGrantFromResolution(
+	resolution connectorConfirmationResolution,
+	now time.Time,
+) map[string]interface{} {
+	authorization := resolution.authorization
+	if authorization == nil || now.IsZero() || resolution.organizationID == uuid.Nil || resolution.ownerAccountID == uuid.Nil {
+		return nil
+	}
+	assetType := strings.TrimSpace(string(authorization.Target.Type))
+	if assetType == "" {
+		assetType = "connector_target"
+	}
+	riskLevel := toolgovernance.RiskLevelHigh
+	if authorization.Risk == connectorexecution.RiskTrustedLow {
+		riskLevel = toolgovernance.RiskLevelLow
+	}
+	grant := map[string]interface{}{
+		"conversation_id":         resolution.conversationID.String(),
+		"organization_id":         resolution.organizationID.String(),
+		"user_id":                 resolution.ownerAccountID.String(),
+		"provider_type":           "connector",
+		"provider_id":             authorization.ConnectorID.String(),
+		"connection_id":           authorization.ConnectionID.String(),
+		"binding_id":              authorization.BindingID.String(),
+		"tool_id":                 authorization.OperationID.String(),
+		"effect":                  string(authorization.Effect),
+		"asset_type":              assetType,
+		"data_egress":             authorization.DataEgress,
+		"sensitive_data_allowed":  authorization.SensitiveDataAllowed,
+		"risk_level":              string(riskLevel),
+		"granted_at":              now.Format(time.RFC3339),
+		"expires_at":              now.Add(toolgovernance.DefaultSessionGrantTTL).Format(time.RFC3339),
+		"approval_correlation_id": resolution.routeReceipt,
+	}
+	if skillID := strings.TrimSpace(authorization.SkillID); skillID != "" {
+		grant["skill_id"] = skillID
+	}
+	if destination := strings.TrimSpace(authorization.ExternalDestination); destination != "" {
+		grant["external_destination"] = destination
+	}
+	if authorization.Target.ID != "" {
+		grant["assets"] = []interface{}{map[string]interface{}{
+			"id":   authorization.Target.ID,
+			"type": assetType,
+		}}
+	}
+	return grant
 }
 
 func connectorResolutionConversationMatches(
@@ -262,6 +343,9 @@ func applyConnectorConfirmationResolution(
 				return nil, false, connectorResolutionError(connectorcore.ErrorCodeConflict)
 			}
 			resolution.operation.ActionStepID, resolution.operation.PlanPhaseID = operation.ActionStepID, operation.PlanPhaseID
+			if proof, native := connectortools.Evidence(invocations[match]); native && proof.Key() == prior.Key() {
+				resolution.presentationTitle = proof.Title
+			}
 		}
 	}
 	invocations[match]["result"] = resolution.terminalPayload()
@@ -322,7 +406,7 @@ func (resolution connectorConfirmationResolution) terminalPayload() map[string]i
 			}
 			payload["state"], payload["outcome_status"] = "completed", status
 		}
-		payload["connector_presentation"] = connectortools.OperationPresentation{SchemaVersion: 1, SourceKind: "native", InvocationID: resolution.operation.LogicalOperationID, ConnectorID: resolution.operation.ConnectorID, OperationID: resolution.operation.OperationID, DisplayStatus: status, Redacted: true}
+		payload["connector_presentation"] = connectortools.OperationPresentation{SchemaVersion: 1, SourceKind: "native", InvocationID: resolution.operation.LogicalOperationID, ConnectorID: resolution.operation.ConnectorID, OperationID: resolution.operation.OperationID, DisplayStatus: status, Title: resolution.presentationTitle}
 	}
 	if resolution.decisionID != "" {
 		payload["decision_id"] = resolution.decisionID

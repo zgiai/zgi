@@ -1,14 +1,15 @@
+import { load } from './connector-fixture.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import en from '../src/i18n/modules/connectors/en-US.ts';
 import zh from '../src/i18n/modules/connectors/zh-Hans.ts';
-import {
+const {
   formatConnectorDateTime,
   localizeConnectorCatalogItem,
   localizeConnectorRuntimeConfirmation,
   resolveConnectorLocalizedText,
-} from '../src/components/connectors/connector-metadata.ts';
+} = load('src/components/connectors/connector-metadata.ts');
 
 const root = process.cwd();
 
@@ -91,7 +92,7 @@ const zhExa = localizeConnectorCatalogItem(exa, 'zh-CN', {
 });
 assert.equal(zhExa.name, 'Exa 网页搜索');
 assert.equal(zhExa.classification, 'connector', 'localization must retain the Exa Connector type');
-assert.equal(zhExa.description, '通过 Exa 搜索并读取公开网页。');
+assert.equal(zhExa.description, '搜索网页，读取网页内容');
 assert.equal(zhExa.key_fields[0].label, 'Exa API 密钥');
 assert.equal(zhExa.key_fields[0].placeholder, '粘贴 Exa API 密钥');
 assert.equal(zhExa.capabilities[0].name, '搜索网页');
@@ -198,12 +199,34 @@ assert.match(routeModulesSource, /'connectors'/);
 
 // Legacy Key setup remains simple. Versioned application and messaging
 // onboarding may expose QR steps without adding a Key policy editor.
-const { app: enApp, messaging: enMessaging, pending: enPending, ...enKeyCopy } = en;
-const { app: zhApp, messaging: zhMessaging, pending: zhPending, ...zhKeyCopy } = zh;
-assert.match(enPending.qrUnavailable, /currently unavailable/);
-assert.match(zhPending.qrUnavailable, /暂不能/);
-assert.match(enPending.resumeQRHint, /has not been verified in a real tenant/);
-assert.match(zhPending.resumeQRHint, /尚未完成真实租户验证/);
+const {
+  app: enApp,
+  messaging: enMessaging,
+  pending: enPending,
+  platform: enPlatform,
+  ...enKeyCopy
+} = en;
+const {
+  app: zhApp,
+  messaging: zhMessaging,
+  pending: zhPending,
+  platform: zhPlatform,
+  ...zhKeyCopy
+} = zh;
+assert.match(enPlatform.dingtalk, /choose the original robot/);
+assert.match(zhPlatform.dingtalk, /请选择原机器人/);
+assert.match(enPlatform.wecom, /documents?|table/);
+assert.match(zhPlatform.feishu, /可能更新应用配置/);
+assert.match(enPlatform.resourceAtExecution, /checked when the operation runs/);
+assert.match(zhPlatform.resourceAtExecution, /执行操作时/);
+assert.match(en.mail.localUsage, /inside ZGI/);
+assert.match(zh.mail.localUsage, /限制 ZGI/);
+assert.match(en.mail.verifiedHint, /does not verify delivery/);
+assert.match(zh.mail.verifiedHint, /不代表投递已验证/);
+assert.match(enPending.qrUnavailable, /unavailable/);
+assert.match(zhPending.qrUnavailable, /暂时无法/);
+assert.doesNotMatch(enPending.resumeQRHint, /real tenant|has not been verified/);
+assert.doesNotMatch(zhPending.resumeQRHint, /真实租户验证/);
 assert.match(enPending.lastChecked, /\{date\}/);
 assert.match(zhPending.retention, /\{date\}/);
 const visibleCopy = `${JSON.stringify(enKeyCopy)}\n${JSON.stringify(zhKeyCopy)}`;

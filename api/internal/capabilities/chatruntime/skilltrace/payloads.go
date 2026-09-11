@@ -376,6 +376,9 @@ func summarizeConnectorRuntimeResult(messages []tools.ToolInvokeMessage) map[str
 		}
 		state := string(metadata.State)
 		result := map[string]interface{}{"state": state}
+		if metadata.ExecutionEvidence != nil {
+			result["execution_evidence"] = recordFromAny(metadata.ExecutionEvidence)
+		}
 		if metadata.Operation != nil {
 			result["operation"] = recordFromAny(metadata.Operation)
 		}

@@ -23,6 +23,8 @@ import { Label } from '@/components/ui/label';
 import { useRenamePersonalConnection } from '@/hooks/connectors/use-connectors';
 import { useT } from '@/i18n';
 import type { PersonalConnectionDetail } from '@/services/types/connector';
+import { mailConnectionAlias, mailProviderName } from '../mail-connection-name';
+import { isMailProvider } from '../mail-display-model';
 import { buildRenameConnectionRequest } from './connection-management-model';
 import {
   personalConnectionDisplayName,
@@ -53,13 +55,15 @@ export function ConnectionAccountCard({
   const t = useT('connectors');
   const locale = useLocale();
   const [renameOpen, setRenameOpen] = useState(renameInitiallyOpen);
-  const [name, setName] = useState(connection.name);
+  const alias = mailConnectionAlias(connection);
+  const [name, setName] = useState(alias);
   const renameMutation = useRenamePersonalConnection(connection.id);
   const request = buildRenameConnectionRequest(connection, name);
-  const unchanged = request?.name === connection.name.trim();
+  const unchanged = request?.name === mailConnectionAlias(connection);
   const connectionName = personalConnectionDisplayName(
     connection,
-    t('connections.unknownConnection')
+    t('connections.unknownConnection'),
+    locale
   );
   const identity = personalConnectionSecondaryIdentity(
     connection,
@@ -67,8 +71,8 @@ export function ConnectionAccountCard({
   );
 
   useEffect(() => {
-    if (renameOpen) setName(connection.name);
-  }, [connection.name, renameOpen]);
+    if (renameOpen) setName(alias);
+  }, [alias, renameOpen]);
 
   const submitRename = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -101,7 +105,10 @@ export function ConnectionAccountCard({
               {initials(connectionName)}
             </div>
             <div className="min-w-0">
-              <div className="flex items-center gap-2"><p className="truncate text-lg font-semibold">{connectionName}</p><ConnectionChatDefaultButton connection={connection} /></div>
+              <div className="flex items-center gap-2">
+                <p className="truncate text-lg font-semibold">{connectionName}</p>
+                <ConnectionChatDefaultButton connection={connection} />
+              </div>
               <p className="mt-1 truncate text-sm text-muted-foreground">{identity}</p>
               <p className="mt-1 truncate text-xs text-muted-foreground">
                 {t('account.externalAccount', { connector: connectorName })}
@@ -151,7 +158,11 @@ export function ConnectionAccountCard({
           <form onSubmit={submitRename}>
             <DialogHeader>
               <DialogTitle>{t('account.renameTitle')}</DialogTitle>
-              <DialogDescription>{t('account.renameDescription')}</DialogDescription>
+              <DialogDescription>
+                {isMailProvider(connection.connector_id)
+                  ? mailProviderName(connection.connector_id, locale)
+                  : connectorName}
+              </DialogDescription>
             </DialogHeader>
             <DialogBody>
               <div className="space-y-2">

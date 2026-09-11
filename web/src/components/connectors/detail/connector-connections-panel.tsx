@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useLocale } from 'next-intl';
 import { usePendingSetups } from '@/hooks/connectors/use-pending-setups';
 import { ConnectorPendingRows } from '@/components/connectors/setup/connector-pending-rows';
 import Link from 'next/link';
@@ -35,6 +36,7 @@ export function ConnectorConnectionsPanel({
   onRetry,
 }: ConnectorConnectionsPanelProps) {
   const t = useT('connectors');
+  const locale = useLocale();
   const [adding, setAdding] = useState(false);
   const [pendingID, setPendingID] = useState<string>();
   const pendingQuery = usePendingSetups(connector.id);
@@ -60,9 +62,6 @@ export function ConnectorConnectionsPanel({
               </Button>
             )}
           </div>
-          <p className="text-sm leading-5 text-muted-foreground">
-            {t('connections.groupDescription')}
-          </p>
         </CardHeader>
         <CardContent>
           {loading ? (
@@ -92,7 +91,8 @@ export function ConnectorConnectionsPanel({
               {connections.map(connection => {
                 const name = personalConnectionDisplayName(
                   connection,
-                  t('connections.unknownConnection')
+                  t('connections.unknownConnection'),
+                  locale
                 );
                 const identity = personalConnectionSecondaryIdentity(
                   connection,

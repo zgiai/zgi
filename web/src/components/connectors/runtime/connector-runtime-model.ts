@@ -26,6 +26,13 @@ export type {
   ConnectorRuntimeUnknownResult,
 } from '@/services/types/connector';
 
+/** Host callback for a single receipt decision, optionally remembered in-session. */
+export type ConnectorRuntimeDecisionHandler = (
+  command: ConnectorRuntimeConfirmationCommand,
+  scope?: string,
+  rememberForSession?: boolean
+) => Promise<ConnectorRuntimeDecisionResult>;
+
 export type ConnectorRuntimeDecisionState =
   | { status: 'idle' }
   | {

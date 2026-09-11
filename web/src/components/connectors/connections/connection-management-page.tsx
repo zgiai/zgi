@@ -1,21 +1,21 @@
 'use client';
 
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useLocale } from 'next-intl';
 import { useRouter } from 'next/navigation';
-import { Activity, KeyRound, Unplug } from 'lucide-react';
+import { Activity, ChevronRight, KeyRound, Unplug } from 'lucide-react';
 import { toast } from 'sonner';
 import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { localizeConnectorCatalogItem } from '@/components/connectors/connector-metadata';
 import {
   ConnectorPageLoading,
   ConnectorPageMessage,
-  ConnectorReadinessBanner,
 } from '@/components/connectors/connector-page-state';
 import { ConnectorStatusBadge } from '@/components/connectors/connector-status-badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -32,7 +32,6 @@ import {
 import { useT } from '@/i18n';
 import { ConnectionAccountCard } from './connection-account-card';
 import { getConnectionManagementPageState } from './connection-management-model';
-import { ConnectionMaintenanceCard } from './connection-maintenance-card';
 import { ConnectionReconnectDialog } from './connection-reconnect-dialog';
 import { ConnectionRemovalDialog } from './connection-removal-dialog';
 import { ConnectionUsageList } from './connection-usage-list';
@@ -42,6 +41,9 @@ import { supportsMessagingContract } from '@/components/connectors/setup/messagi
 import { ConnectorAppPermissions } from '@/components/connectors/detail/connector-app-permissions';
 import { ConnectorCapabilityList } from '@/components/connectors/detail/connector-capability-list';
 import { ConnectionAppDialog } from './connection-app-dialog';
+import { supportsMailSetup } from '../setup/mail-setup-state';
+import { connectionMailUsage, mailFailureMessage } from '../setup/mail-setup-state';
+import { ConnectionOperationPolicy } from './connection-operation-policy';
 
 interface ConnectionManagementPageProps {
   connectionId: string;
@@ -79,8 +81,9 @@ export function ConnectionManagementPage({
       !connection ||
       !connector ||
       credentialsOpened.current === connection.id
-    )
-      {return;}
+    ) {
+      return;
+    }
     credentialsOpened.current = connection.id;
     setReconnectOpen(true);
     router.replace(`/console/connectors/connections/${encodeURIComponent(connection.id)}`);
@@ -154,7 +157,8 @@ export function ConnectionManagementPage({
     connector?.name || connection.connector_id || t('connection.connectorFallback');
   const isMessaging = Boolean(connector && supportsMessagingContract(connector));
   const isApp = Boolean(connector && (supportsAppSetup(connector) || isMessaging));
-  const canReconnect = Boolean(connector && (connector.key_fields.length > 0 || isApp));
+  const isMail = Boolean(connector && supportsMailSetup(connector));
+  const canReconnect = Boolean(connector && (connector.key_fields.length > 0 || isApp || isMail));
   const runDiagnostics = async () => {
     try {
       await diagnoseMutation.mutateAsync();
@@ -163,21 +167,6 @@ export function ConnectionManagementPage({
       toast.error(t('feedback.diagnoseFailed'));
     }
   };
-  const bannerTitle =
-    connection.state === 'ready'
-      ? t('connection.banner.readyTitle')
-      : connection.state === 'reconnect_required'
-        ? t(isApp ? 'app.reconnectTitle' : 'connection.banner.reconnectTitle')
-        : t('connection.banner.unavailableTitle');
-  const defaultBannerDescription =
-    connection.state === 'ready'
-      ? t('connection.banner.readyDescription')
-      : connection.state === 'reconnect_required'
-        ? t(isApp ? 'app.reconnectDescription' : 'connection.banner.reconnectDescription')
-        : t('connection.banner.unavailableDescription');
-  const bannerDescription = connection.diagnostic_code
-    ? `${defaultBannerDescription} (${connection.diagnostic_code})`
-    : defaultBannerDescription;
 
   return (
     <div className="h-full overflow-y-auto bg-bg-canvas/50">
@@ -215,7 +204,11 @@ export function ConnectionManagementPage({
             />
             <div className="min-w-0 flex-1">
               <h1 className="truncate text-2xl font-semibold tracking-tight">
-                {personalConnectionDisplayName(connection, t('connections.unknownConnection'))}
+                {personalConnectionDisplayName(
+                  connection,
+                  t('connections.unknownConnection'),
+                  locale
+                )}
               </h1>
               <p className="mt-1 text-sm text-muted-foreground">
                 {connectorName} · {t('connection.subtitle')}
@@ -243,16 +236,59 @@ export function ConnectionManagementPage({
                 onClick={() => setReconnectOpen(true)}
               >
                 <KeyRound aria-hidden="true" className="size-4" />
-                {t(isApp ? 'app.updateTitle' : 'maintenance.updateKeyTitle')}
+                {t(
+                  isMail
+                    ? connectionMailUsage(connection) === 'read_send'
+                      ? 'mail.reconnect'
+                      : 'mail.upgradeReconnect'
+                    : isMessaging
+                      ? 'messaging.reauthorizeTitle'
+                      : isApp
+                        ? 'app.updateTitle'
+                        : 'maintenance.updateKeyTitle'
+                )}
               </Button>
             </div>
           </header>
 
-          <ConnectorReadinessBanner
-            status={connection.state}
-            title={bannerTitle}
-            description={bannerDescription}
-          />
+          {connection.state !== 'ready' && (
+            <p className="text-sm text-warning" role="status">
+              {t(
+                isMail && connection.diagnostic_code
+                  ? mailFailureMessage(connection.diagnostic_code)
+                  : connection.diagnostic_code === 'connector_provider_permission_missing'
+                    ? 'connection.banner.permissionDescription'
+                    : connection.diagnostic_code === 'connector_application_not_ready'
+                      ? 'connection.banner.applicationDescription'
+                      : connection.diagnostic_code === 'connector_resource_access_denied'
+                        ? 'connection.banner.resourceDescription'
+                        : connection.diagnostic_code === 'connector_rate_limited'
+                          ? 'connection.banner.rateLimitDescription'
+                          : connection.state === 'reconnect_required'
+                            ? 'connection.banner.reconnectDescription'
+                            : 'connection.banner.unavailableDescription'
+              )}
+            </p>
+          )}
+          {connection.state !== 'ready' && connection.diagnostic_code && (
+            <Collapsible className="text-xs text-muted-foreground">
+              <CollapsibleTrigger asChild>
+                <Button
+                  variant="ghost"
+                  className="group h-auto max-w-full justify-start gap-2 whitespace-normal px-0 py-1 text-left hover:bg-transparent text-xs"
+                >
+                  <ChevronRight
+                    aria-hidden="true"
+                    className="size-4 shrink-0 transition-transform group-data-[state=open]:rotate-90"
+                  />
+                  <span className="min-w-0">{t('connection.diagnosticDetails')}</span>
+                </Button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="space-y-3">
+                <code className="mt-2 block break-all">{connection.diagnostic_code}</code>
+              </CollapsibleContent>
+            </Collapsible>
+          )}
 
           <div className="grid items-stretch gap-5 lg:grid-cols-[minmax(280px,0.8fr)_minmax(0,1.7fr)]">
             <ConnectionAccountCard
@@ -263,20 +299,23 @@ export function ConnectionManagementPage({
             <ConnectionUsageList bindings={connection.bindings} />
           </div>
 
-          <ConnectionMaintenanceCard
-            isApp={isApp}
-            isMessaging={isMessaging}
-            onConfigure={isApp && !isMessaging ? () => setPermissionsOpen(true) : undefined}
-            canReconnect={canReconnect}
-            diagnosing={diagnoseMutation.isPending}
-            onReconnect={() => setReconnectOpen(true)}
-            onDiagnose={() => void runDiagnostics()}
-          />
+          {connector && <ConnectionOperationPolicy connection={connection} connector={connector} />}
 
-          {isApp && connector && (
+          {isApp && !isMessaging && (
+            <Button variant="outline" onClick={() => setPermissionsOpen(true)}>
+              {t('app.configure')}
+            </Button>
+          )}
+
+          {isMail && connectionMailUsage(connection) !== 'read_send' && (
+            <p className="text-sm text-muted-foreground">
+              {t('mail.currentUsage', { usage: t(`mail.${connectionMailUsage(connection)}`) })}
+            </p>
+          )}
+          {(isApp || isMail) && connector && (
             <>
               <ConnectorCapabilityList capabilities={connection.capabilities} />
-              {!isMessaging && (
+              {isApp && !isMessaging && (
                 <ConnectorAppPermissions
                   connector={connector}
                   evidence={connection.provider_evidence}
@@ -285,24 +324,10 @@ export function ConnectionManagementPage({
             </>
           )}
 
-          <Card className="border-destructive/40 bg-destructive/[0.02]">
-            <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center">
-              <div className="min-w-0 flex-1">
-                <h2 className="text-lg font-semibold text-destructive">{t('removal.trigger')}</h2>
-                <p className="mt-1 text-sm leading-5 text-muted-foreground">
-                  {t('removal.disconnectDescription', { count: connection.bindings.length })}
-                </p>
-              </div>
-              <Button
-                variant="outline"
-                className="w-full border-destructive/50 text-destructive hover:bg-destructive/5 hover:text-destructive sm:w-44"
-                onClick={() => setRemovalOpen(true)}
-              >
-                <Unplug aria-hidden="true" className="size-4" />
-                {t('removal.trigger')}
-              </Button>
-            </CardContent>
-          </Card>
+          <Button variant="ghost" className="text-destructive" onClick={() => setRemovalOpen(true)}>
+            <Unplug aria-hidden="true" className="size-4" />
+            {t('removal.trigger')}
+          </Button>
         </div>
       </main>
 
@@ -312,6 +337,7 @@ export function ConnectionManagementPage({
           onOpenChange={setReconnectOpen}
           connectionId={connection.id}
           connector={connector}
+          connection={connection}
         />
       ) : null}
       {connector && isApp && (
@@ -335,6 +361,12 @@ export function ConnectionManagementPage({
         open={removalOpen}
         onOpenChange={setRemovalOpen}
         connectionId={connection.id}
+        connectionName={personalConnectionDisplayName(
+          connection,
+          t('connections.unknownConnection'),
+          locale
+        )}
+        accountIdentity={connection.external_account_id ?? connection.external_display_name}
         onRemoved={() => router.replace('/console/connectors/connections')}
       />
     </div>

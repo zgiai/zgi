@@ -37,12 +37,14 @@ func TestExecutionRiskDefaultsSubmitOnlyEligibleLowOrExplicitlyConfirmedOperatio
 		{name: "unattended trusted low", risk: execution.RiskTrustedLow, interactive: false, wantState: execution.ExecutionStateCompleted, wantDecision: core.DecisionStatusSubmitted, wantDecisions: 1, wantProvider: 1, wantOutcome: 1},
 		{
 			name: "trusted low rejects injected confirmation", risk: execution.RiskTrustedLow, interactive: true,
+			wantState:     execution.ExecutionStateUnresolved,
 			confirmation:  confirmationCommand(execution.ConfirmationDecisionConfirmed),
 			wantErrorCode: core.ErrorCodeInvalidInput,
 			wantDecision:  core.DecisionStatusDenied, wantDecisions: 1,
 		},
 		{
 			name: "trusted low rejects injected cancellation", risk: execution.RiskTrustedLow, interactive: true,
+			wantState:     execution.ExecutionStateUnresolved,
 			confirmation:  confirmationCommand(execution.ConfirmationDecisionCancelled),
 			wantErrorCode: core.ErrorCodeInvalidInput,
 			wantDecision:  core.DecisionStatusDenied, wantDecisions: 1,

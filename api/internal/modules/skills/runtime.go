@@ -63,6 +63,7 @@ type skillLocation struct {
 }
 
 type ExecutionContext struct {
+	PresentationLocale         string           `json:"-"`
 	ConnectorTargetScope       core.TargetScope `json:"-"`
 	ConnectorTargetVersionID   string           `json:"-"`
 	OrganizationID             string
@@ -708,6 +709,7 @@ func resolveConnectorToolIdentity(
 	)
 	correlationID := "connector-correlation-" + strings.TrimSpace(execCtx.MessageID)
 	request := connectordispatch.IdentityResolutionRequest{
+		ConversationID: execCtx.ConversationID,
 		OrganizationID: organizationID, OwnerAccountID: ownerID, ActingPrincipalID: ownerID,
 		ConnectorID: connectorID, Target: target, OperationID: operationID,
 		LogicalOperationID: logicalOperationID, CorrelationID: correlationID, Interactive: interactive,

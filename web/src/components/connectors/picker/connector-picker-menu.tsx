@@ -1,5 +1,12 @@
 'use client';
 
+import {
+  groupMailPickerProviders,
+  isMailPickerGroup,
+  type PickerDisplayGroup,
+} from './mail-picker-groups';
+import { personalConnectionDisplayName } from '../connections/personal-connections-model';
+
 import { listedConnectorGroups } from '../connector-visibility';
 
 import { ConnectorUnavailableReferences } from '../unavailable-references';
@@ -53,8 +60,10 @@ const ITEM =
   'relative flex min-h-8 cursor-pointer select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden focus:bg-accent focus:text-accent-foreground data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50';
 const LABEL = 'px-2 py-1.5 text-xs text-muted-foreground';
 
-function accountName(row: ConnectorPickerRow): string {
-  return row.connection?.name.trim() || row.connection?.external_display_name || row.connector.name;
+function accountName(row: ConnectorPickerRow, locale?: string): string {
+  return row.connection
+    ? personalConnectionDisplayName(row.connection, row.connector.name, locale)
+    : row.connector.name;
 }
 
 export function ConnectorPickerMenu({
@@ -125,7 +134,8 @@ export function ConnectorPickerMenu({
     () => listedConnectorGroups(createConnectorPickerMenuGroups(catalog, connections, bindings)),
     [bindings, catalog, connections]
   );
-  const activeGroup = groups.find(group => group.id === activeConnectorID);
+  const displayGroups = groupMailPickerProviders(groups, t('mail.title'));
+  const activeGroup = displayGroups.find(group => group.id === activeConnectorID);
   const loading = catalogQuery.isLoading || connectionsQuery.isLoading;
   const failed = catalogQuery.isError || connectionsQuery.isError;
 
@@ -264,13 +274,15 @@ export function ConnectorPickerMenu({
     setActiveConnectorID(nextOpen ? groupID : undefined);
   };
 
-  const serviceLabel = (group: ConnectorPickerMenuGroup) => (
+  const serviceLabel = (group: PickerDisplayGroup) => (
     <>
       <ConnectorIcon
         connectorId={group.id}
         name={group.name}
-        icon={group.icon}
-        classification={group.classification ?? 'connector'}
+        icon={isMailPickerGroup(group) ? undefined : group.icon}
+        classification={
+          isMailPickerGroup(group) ? 'connector' : (group.classification ?? 'connector')
+        }
         size="sm"
         className="size-6 rounded-sm border-0 bg-transparent shadow-none [&_svg]:size-4 [&_img]:size-4"
       />
@@ -285,16 +297,16 @@ export function ConnectorPickerMenu({
     </>
   );
 
-  const renderAccounts = (group: ConnectorPickerMenuGroup) => {
+  const renderAccounts = (group: ConnectorPickerMenuGroup, hideCreate = false) => {
     const request = pendingSwitch?.connector.id === group.id ? pendingSwitch : undefined;
-    const sourceName =
-      request?.replacedConnection?.name.trim() ||
-      request?.replacedConnection?.external_display_name ||
-      t('status.unavailable');
-    const nextName =
-      request?.connection.name.trim() || request?.connection.external_display_name || group.name;
+    const sourceName = request?.replacedConnection
+      ? personalConnectionDisplayName(request.replacedConnection, group.name, locale)
+      : t('status.unavailable');
+    const nextName = request?.connection
+      ? personalConnectionDisplayName(request.connection, group.name, locale)
+      : group.name;
     const busy = pending || Boolean(request);
-    const createRow = group.createRow;
+    const createRow = hideCreate ? undefined : group.createRow;
     return (
       <>
         {actionFailed ? (
@@ -350,9 +362,9 @@ export function ConnectorPickerMenu({
                   {selected ? <Check aria-hidden="true" className="size-3.5" /> : null}
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate">{accountName(row)}</span>
+                  <span className="block truncate">{accountName(row, locale)}</span>
                   {row.connection?.external_display_name &&
-                  row.connection.external_display_name !== accountName(row) ? (
+                  row.connection.external_display_name !== accountName(row, locale) ? (
                     <span className="block truncate text-xs text-muted-foreground">
                       {row.connection.external_display_name}
                     </span>
@@ -374,7 +386,7 @@ export function ConnectorPickerMenu({
                 }}
                 value={row.connection?.id ?? row.key}
                 disabled={busy}
-                textValue={accountName(row)}
+                textValue={accountName(row, locale)}
                 className={ITEM}
                 onSelect={event => {
                   event.preventDefault();
@@ -387,9 +399,9 @@ export function ConnectorPickerMenu({
               <Menu.Item
                 key={row.key}
                 disabled={busy}
-                textValue={accountName(row)}
+                textValue={accountName(row, locale)}
                 className={ITEM}
-                aria-label={`${accountName(row)}: ${unavailableLabel}`}
+                aria-label={`${accountName(row, locale)}: ${unavailableLabel}`}
                 onSelect={event => {
                   event.preventDefault();
                   selectAccount(row);
@@ -468,6 +480,50 @@ export function ConnectorPickerMenu({
               : t('picker.actions.viewReason')}
           </Menu.Item>
         ) : null}
+      </>
+    );
+  };
+
+  const renderDisplayAccounts = (group: PickerDisplayGroup) => {
+    if (!isMailPickerGroup(group)) return renderAccounts(group);
+    const create = group.providers.flatMap(provider =>
+      provider.createRow ? [provider.createRow] : []
+    );
+    return (
+      <>
+        {group.providers
+          .filter(provider => provider.count > 0 || provider.currentBinding)
+          .map(provider => (
+            <Menu.Group key={provider.id}>
+              <Menu.Label className={LABEL}>{provider.name}</Menu.Label>
+              {renderAccounts(provider, true)}
+            </Menu.Group>
+          ))}
+        {create.length > 0 && (
+          <Menu.Sub>
+            <Menu.SubTrigger className={ITEM} disabled={pending || Boolean(pendingSwitch)}>
+              <Plus aria-hidden="true" className="size-4" />
+              {t('connections.addConnection')}
+              <ChevronRight className="ml-auto size-4" />
+            </Menu.SubTrigger>
+            <Menu.Portal>
+              <Menu.SubContent className={PANEL} collisionPadding={12}>
+                {create.map(row => (
+                  <Menu.Item
+                    key={row.connector.id}
+                    className={ITEM}
+                    onSelect={event => {
+                      event.preventDefault();
+                      selectAccount(row);
+                    }}
+                  >
+                    {row.connector.name}
+                  </Menu.Item>
+                ))}
+              </Menu.SubContent>
+            </Menu.Portal>
+          </Menu.Sub>
+        )}
       </>
     );
   };
@@ -562,7 +618,7 @@ export function ConnectorPickerMenu({
                 <span className="sr-only">{t('picker.menu.back')}</span>
               </Menu.Item>
               <Menu.Separator className="-mx-1 my-1 h-px bg-border" />
-              {renderAccounts(activeGroup)}
+              {renderDisplayAccounts(activeGroup)}
             </>
           ) : (
             <>
@@ -574,7 +630,7 @@ export function ConnectorPickerMenu({
               {groups.length === 0 ? (
                 <Menu.Label className={LABEL}>{t('picker.emptyTitle')}</Menu.Label>
               ) : null}
-              {groups.map(group =>
+              {displayGroups.map(group =>
                 isMobile ? (
                   <Menu.Item
                     key={group.id}
@@ -620,7 +676,7 @@ export function ConnectorPickerMenu({
                           }
                         }}
                       >
-                        {renderAccounts(group)}
+                        {renderDisplayAccounts(group)}
                       </Menu.SubContent>
                     </Menu.Portal>
                   </Menu.Sub>

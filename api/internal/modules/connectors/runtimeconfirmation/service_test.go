@@ -38,6 +38,11 @@ func TestServiceContinueRestoresFrozenRequestAndPersistsCompletedTerminal(t *tes
 		result.ExecutionResult.Outcome.ID != outcomeID {
 		t.Fatalf("trusted continuation result = %#v", result)
 	}
+	if result.Authorization == nil || result.Authorization.ConnectionID != store.continuation.Frozen.Request.ConnectionID ||
+		result.Authorization.BindingID != store.continuation.Frozen.Request.BindingID ||
+		result.Authorization.OperationID != store.continuation.Frozen.Request.OperationID {
+		t.Fatalf("authorization snapshot = %#v", result.Authorization)
+	}
 	frozenRequest := store.continuation.Frozen.Request
 	if result.RequestIdentity.OrganizationID != frozenRequest.OrganizationID ||
 		result.RequestIdentity.OwnerAccountID != frozenRequest.OwnerAccountID ||

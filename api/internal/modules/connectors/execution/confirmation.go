@@ -16,6 +16,8 @@ const (
 	ExecutionStateCancelled            ExecutionState = "cancelled"
 	ExecutionStateBlocked              ExecutionState = "blocked"
 	ExecutionStateCompleted            ExecutionState = "completed"
+	ExecutionStateRejected             ExecutionState = "rejected"
+	ExecutionStateUnresolved           ExecutionState = "unresolved"
 )
 
 // ConfirmationDecision is the only user choice accepted by the runtime
@@ -54,6 +56,7 @@ type RuntimeConsequence struct {
 // consequence required for informed consent. It deliberately contains no
 // member policy, credential, or operation input.
 type RuntimeConfirmation struct {
+	Preview           *ConfirmationPreview  `json:"-"`
 	RouteReceipt      RouteClaimReceipt     `json:"route_receipt"`
 	ConnectorID       core.Identifier       `json:"connector_id"`
 	ConnectorName     string                `json:"connector_name"`

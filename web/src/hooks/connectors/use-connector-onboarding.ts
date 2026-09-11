@@ -142,6 +142,8 @@ export function useConnectorOnboarding(
   const [refresh, setRefresh] = useState(0);
   const generation = useRef(0);
   const ticket = useRef<RecoveryTicket | undefined>(undefined);
+  const verificationCommand = useRef<{ flowID: string; revision: number; key: string }>();
+  const verificationInFlight = useRef(false);
   const activeScope = useRef(scope);
   const queryClient = useQueryClient();
   const current = useCallback(
@@ -161,6 +163,8 @@ export function useConnectorOnboarding(
     setConnection(undefined);
     setErrorCode(undefined);
     setBusy(false);
+    verificationCommand.current = undefined;
+    verificationInFlight.current = false;
     ticket.current = recover(scope);
     setRestored(Boolean(ticket.current));
     const controller = new AbortController();
@@ -372,6 +376,49 @@ export function useConnectorOnboarding(
     }
   }, [flow, busy, current, scope]);
 
+  const retryVerification = useCallback(async () => {
+    if (
+      !flow ||
+      busy ||
+      verificationInFlight.current ||
+      !flow.allowed_actions?.includes('retry_verification')
+    ) {
+      return;
+    }
+    const version = generation.current;
+    verificationInFlight.current = true;
+    setBusy(true);
+    setErrorCode(undefined);
+    try {
+      const latest = await connectorService.getOnboarding(flow.id);
+      if (!current(version)) return;
+      setFlow(latest.data);
+      if (!latest.data.allowed_actions?.includes('retry_verification')) return;
+      if (
+        verificationCommand.current?.flowID !== flow.id ||
+        verificationCommand.current.revision !== latest.data.revision
+      ) {
+        verificationCommand.current = {
+          flowID: flow.id,
+          revision: latest.data.revision,
+          key: crypto.randomUUID(),
+        };
+      }
+      const result = await connectorService.retryOnboardingVerification(
+        latest.data,
+        verificationCommand.current.key
+      );
+      if (current(version)) setFlow(result.data);
+    } catch (error) {
+      if (current(version)) setErrorCode(connectorRequestErrorDetails(error).code);
+    } finally {
+      if (current(version)) {
+        verificationInFlight.current = false;
+        setBusy(false);
+      }
+    }
+  }, [flow, busy, current]);
+
   const submitCode = useCallback(
     async (code: string) => {
       if (
@@ -416,6 +463,7 @@ export function useConnectorOnboarding(
       setRestored(false);
     },
     submitCode,
+    retryVerification,
     flow,
     connection,
     errorCode,

@@ -31,6 +31,9 @@ type CommandFingerprintInput struct {
 	ReconnectConnectionID uuid.UUID
 	Target                *connectorcore.TargetRef
 	Values                map[string]string `json:"-"`
+	MailUsage             string
+	DriverID              string
+	AuthMethodID          string
 }
 
 func NewCommandHasher(masterKey string) (*CommandHasher, error) {
@@ -84,6 +87,18 @@ func (hasher *CommandHasher) RequestFingerprint(input CommandFingerprintInput) (
 
 	mac := hmac.New(sha256.New, hasher.key[:])
 	writePart(mac, "request-fingerprint")
+	if input.ConnectorID == "gmail" {
+		writePart(mac, "mail-v5")
+		writePart(mac, input.MailUsage)
+		writePart(mac, input.DriverID)
+		writePart(mac, input.AuthMethodID)
+	}
+	if input.ConnectorID == "qqmail" || input.ConnectorID == "netease163" {
+		writePart(mac, "mail-v6")
+		writePart(mac, input.MailUsage)
+		writePart(mac, input.DriverID)
+		writePart(mac, input.AuthMethodID)
+	}
 	writePart(mac, connectorID.String())
 	writePart(mac, input.ReconnectConnectionID.String())
 	if input.Target == nil {

@@ -2,6 +2,26 @@ export type ConnectorClassification = 'connector' | 'data_source';
 export type ConnectorReadiness = 'ready' | 'reconnect_required' | 'unavailable';
 export type ConnectorCatalogStatus = 'all' | 'connected' | 'needs_attention';
 export type ConnectorTargetType = 'chat' | 'agent' | 'workflow';
+export type ConnectorMailUsage = 'read' | 'send' | 'read_send';
+export interface ConnectorMailVerification {
+  usage: ConnectorMailUsage;
+  imap_status: 'not_requested' | 'verified' | 'failed';
+  smtp_status: 'not_requested' | 'verified' | 'failed';
+}
+
+export interface ConnectorMailEvidence {
+  version: number;
+  provider: 'gmail' | 'qqmail' | 'netease163';
+  identity_kind: 'authenticated_login';
+  authenticated_login: string;
+  credential_verified: boolean;
+  imap_status: string;
+  smtp_status: string;
+  usage: ConnectorMailUsage;
+  scope_granularity: 'not_available';
+  operations: Array<{ id: string; availability: string; permission: string; resource: string }>;
+  checked_at: string;
+}
 
 export type ConnectorLocalizedText = Record<string, string>;
 
@@ -48,6 +68,7 @@ export interface ConnectorPermissionTemplate {
   }>;
 }
 export interface ConnectorProviderEvidence {
+  mail?: ConnectorMailEvidence;
   messaging?: {
     version: number;
     provider: string;
@@ -71,7 +92,11 @@ export interface ConnectorOnboardingFlow {
   step?: string;
   expiry_source?: string;
   qr_payload?: string;
-  allowed_actions?: Array<'cancel' | 'submit_code'>;
+  allowed_actions?: Array<'cancel' | 'submit_code' | 'retry_verification'>;
+  verification_phase?: 'token' | 'identity' | 'operation' | 'checkpoint' | 'commit';
+  candidate_expires_at?: string;
+  verification_deadline?: string;
+  diagnostic_trace_id?: string;
   challenge_revision?: number;
   id: string;
   connector_id: string;
@@ -86,6 +111,7 @@ export interface ConnectorOnboardingFlow {
     | 'starting'
     | 'awaiting_authorization'
     | 'verifying'
+    | 'verification_waiting'
     | 'ready'
     | 'cancelled'
     | 'expired'
@@ -132,6 +158,9 @@ export type ConnectorOnboardingRequest =
   | { intent: 'reauthorize'; protocol_version: 1; expected_revision: number };
 
 export interface ConnectorCapabilitySummary {
+  credential_subject?: string;
+  required_scopes?: string[][];
+  effect?: string;
   availability?: string;
   permission?: string;
   resource?: string;
@@ -162,7 +191,8 @@ export interface ConnectorCatalogItem {
   icon?: string;
   classification: ConnectorClassification;
   key_fields: ConnectorKeyField[];
-  extension_schema_version?: '1.1.0' | '1.2.0' | '1.3.0';
+  extension_schema_version?: '1.1.0' | '1.2.0' | '1.3.0' | '1.4.0' | '1.5.0';
+  setup_method?: string;
   setup_availability?: { enabled: boolean; methods: string[]; unavailable_reason?: string };
   credential_fields?: ConnectorCredentialField[];
   setup?: ConnectorSetupDescriptor;
@@ -185,6 +215,7 @@ export interface ConnectorTargetRef {
 }
 
 export interface PersonalConnection {
+  allowed_operation_ids?: string[];
   id: string;
   connector_id: string;
   name: string;
@@ -277,12 +308,14 @@ export interface RemovalImpact {
 }
 
 export interface KeySetupRequest {
+  mail_usage?: ConnectorMailUsage;
   /** Write-only. Callers must clear their local copy immediately after submission. */
   values: Record<string, string>;
   target?: ConnectorTargetRef;
 }
 
 export interface ReconnectKeyRequest {
+  mail_usage?: ConnectorMailUsage;
   /** Write-only. Callers must clear their local copy immediately after submission. */
   values: Record<string, string>;
   /** Explicit replacement consent only when the provider cannot return a stable identity. */
@@ -415,10 +448,11 @@ export type ConnectorRuntimeExecutionResult =
 
 export type ConnectorRuntimeConfirmationDecision = 'confirmed' | 'cancelled';
 
-/** The complete, one-shot request body accepted by the confirmation endpoint. */
+/** The request body accepted by the confirmation endpoint. */
 export interface ConnectorRuntimeConfirmationCommand {
   route_receipt: string;
   decision: ConnectorRuntimeConfirmationDecision;
+  remember_for_session?: boolean;
 }
 
 export type ConnectorRuntimeDecisionOutcomeState = 'cancelled' | 'completed' | 'failed' | 'unknown';
@@ -429,6 +463,7 @@ export type ConnectorRuntimeDecisionOutcomeState = 'cancelled' | 'completed' | '
  */
 interface ConnectorRuntimeConfirmationResponseBase {
   decision_id?: string;
+  remember_for_session?: boolean;
 }
 
 export interface ConnectorRuntimeConfirmationSettledResponse
@@ -448,9 +483,10 @@ export type ConnectorRuntimeConfirmationResponse =
   | ConnectorRuntimeConfirmationErrorResponse;
 
 /** Client-local result adds the consumed receipt without changing the server DTO. */
-export type ConnectorRuntimeStatusResponse =
+export type ConnectorRuntimeStatusResponse = { presentation?: unknown } & (
   | { resolution: 'unresolved' }
-  | (ConnectorRuntimeConfirmationResponse & { resolution: 'resolved' });
+  | (ConnectorRuntimeConfirmationResponse & { resolution: 'resolved' })
+);
 
 export type ConnectorRuntimeDecisionResult = (
   | ConnectorRuntimeConfirmationResponse
@@ -474,4 +510,17 @@ export interface ConnectorReferenceCommand {
   action: 'replace' | 'detach';
   connection_id?: string;
   operation_id?: string;
+}
+
+export interface ConnectorConfirmationPreview {
+  account_name: string;
+  account_identity: string;
+  kind: 'mail' | 'message' | 'resource';
+  complete: boolean;
+  fields: Array<{
+    label: string;
+    label_i18n: Record<string, string>;
+    value: string;
+    truncated: boolean;
+  }>;
 }

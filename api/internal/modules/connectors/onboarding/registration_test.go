@@ -201,7 +201,7 @@ func TestRegistrationExpiryAliasesAndResumeProfile(t *testing.T) {
 		{`,"expire_in":0`, 0, true}, {`,"expires_in":-1`, 0, true}, {`,"expire_in":900`, 600, false},
 	} {
 		client, _ := NewRegistrationClient(&http.Client{Transport: transportFunc(func(*http.Request) (*http.Response, error) {
-			return reply(`{"device_code":"device","verification_uri_complete":"https://accounts.feishu.cn/app?name=bad&avatar=bad&description=bad"` + tc.fields + `}`), nil
+			return reply(`{"device_code":"device","verification_uri_complete":"https://accounts.feishu.cn/app?name=bad&avatar=bad&description=bad&desc=bad"` + tc.fields + `}`), nil
 		})})
 		got, err := client.Begin(context.Background(), RegistrationRequest{Purpose: ResumeApplication, Region: "feishu", AppID: "cli_original"})
 		if tc.invalid {
@@ -215,7 +215,7 @@ func TestRegistrationExpiryAliasesAndResumeProfile(t *testing.T) {
 		}
 		u, _ := url.Parse(got.VerificationURL)
 		q := u.Query()
-		if q.Get("clientID") != "cli_original" || q.Has("createOnly") || q.Has("name") || q.Has("avatar") || q.Has("description") {
+		if q.Get("clientID") != "cli_original" || q.Has("createOnly") || q.Has("name") || q.Has("avatar") || q.Has("description") || q.Has("desc") {
 			t.Fatal("resume changes identity or creation fields")
 		}
 		b, _ := base64.RawURLEncoding.DecodeString(q.Get("addons"))

@@ -20,13 +20,14 @@ type ProtocolAdapter interface {
 	Advance(context.Context, Flow, ProtocolSecret) (ProtocolResult, error)
 }
 type ProtocolSecret struct {
-	Candidate  map[string]string `json:"candidate,omitempty"`
-	Nonce      string            `json:"nonce,omitempty"`
-	DeviceCode string            `json:"device_code,omitempty"`
-	QRPayload  string            `json:"qr_payload,omitempty"`
-	UserCode   string            `json:"user_code,omitempty"`
-	Origin     string            `json:"origin,omitempty"`
-	VerifyCode string            `json:"verify_code,omitempty"`
+	Checkpoint *messagingCheckpoint `json:"checkpoint,omitempty"`
+	Candidate  map[string]string    `json:"candidate,omitempty"`
+	Nonce      string               `json:"nonce,omitempty"`
+	DeviceCode string               `json:"device_code,omitempty"`
+	QRPayload  string               `json:"qr_payload,omitempty"`
+	UserCode   string               `json:"user_code,omitempty"`
+	Origin     string               `json:"origin,omitempty"`
+	VerifyCode string               `json:"verify_code,omitempty"`
 }
 type ProtocolResult struct {
 	Step         string
@@ -171,20 +172,31 @@ func (s *Service) sealProtocol(f Flow, secret ProtocolSecret) (DeviceRecord, err
 	if err != nil {
 		return DeviceRecord{}, registrationError(core.ErrorCodeInternal)
 	}
-	return DeviceRecord{FlowID: f.ID, OrganizationID: f.OrganizationID, OwnerAccountID: f.OwnerAccountID, Generation: f.Generation, EncryptedDevice: encrypted, ExpiresAt: f.ExpiresAt}, nil
+	return DeviceRecord{FlowID: f.ID, OrganizationID: f.OrganizationID, OwnerAccountID: f.OwnerAccountID, Generation: f.Generation, EncryptedDevice: encrypted, ExpiresAt: f.verificationExpiry()}, nil
 }
 func (s *Service) messagingSnapshot(ctx context.Context, f Flow, out Snapshot) (Snapshot, error) {
 	out.ProtocolVersion = f.ProtocolVersion
 	out.Step = f.Step
 	out.ExpirySource = f.ExpirySource
+	out.CandidateExpiresAt = f.CandidateExpiresAt
+	out.VerificationDeadline = f.VerificationDeadline
+	out.VerificationPhase = f.VerificationPhase
+	out.DiagnosticTraceID = f.DiagnosticTraceID
+	if f.CandidateExpiresAt != nil {
+		out.QRExpiresAt = &f.ExpiresAt
+		out.ExpiresAt = *f.CandidateExpiresAt
+	}
 	if f.ProtocolVersion != 1 {
 		return Snapshot{}, registrationError(core.ErrorCodeConnectorUnavailable)
 	}
-	if f.State.Active() && f.ExpiresAt.After(s.now()) {
+	if f.State.Active() && f.verificationExpiry().After(s.now()) {
 		if err := s.authority.Check(ctx, f); err != nil {
 			return Snapshot{}, err
 		}
 		out.AllowedActions = []string{"cancel"}
+		if f.State == VerificationWaiting {
+			out.AllowedActions = append(out.AllowedActions, "retry_verification")
+		}
 		if f.State == Awaiting {
 			secret, err := s.openProtocol(ctx, f)
 			if err != nil {
@@ -202,6 +214,9 @@ func (s *Service) messagingSnapshot(ctx context.Context, f Flow, out Snapshot) (
 }
 
 func (s *Service) processMessaging(ctx context.Context, f Flow) error {
+	if f.CandidateExpiresAt != nil && (f.ConnectorID == "weixin" || f.ConnectorID == "wecom") {
+		return s.processReliableMessaging(ctx, f)
+	}
 	bounded, cancel := context.WithTimeout(ctx, 40*time.Second)
 	defer cancel()
 	fail := func(err error) error {
@@ -296,6 +311,7 @@ func (s *Service) processMessaging(ctx context.Context, f Flow) error {
 }
 
 type ActionCommand struct {
+	IdempotencyKey                         string `json:"-"`
 	OrganizationID, OwnerAccountID, FlowID uuid.UUID
 	Action                                 string
 	ExpectedRevision, ChallengeRevision    int64
@@ -309,6 +325,36 @@ func (s *Service) Action(ctx context.Context, c ActionCommand) (Snapshot, error)
 	f, err := s.repository.Get(ctx, c.OrganizationID, c.OwnerAccountID, c.FlowID)
 	if err != nil {
 		return Snapshot{}, err
+	}
+	if c.Action == "retry_verification" {
+		if len(c.Values) != 0 || c.ChallengeRevision != 0 || c.ExpectedRevision < 1 || f.ProtocolVersion != 1 || f.CandidateExpiresAt == nil {
+			return Snapshot{}, registrationError(core.ErrorCodeConflict)
+		}
+		key, err := s.hasher.IdempotencyKeyHash(c.OrganizationID, c.OwnerAccountID, c.IdempotencyKey)
+		if err != nil {
+			return Snapshot{}, err
+		}
+		if f.RetryKeyHash != nil && *f.RetryKeyHash == key {
+			if f.RetryExpectedRevision == nil || *f.RetryExpectedRevision != c.ExpectedRevision {
+				return Snapshot{}, registrationError(core.ErrorCodeConflict)
+			}
+			return s.snapshot(ctx, f)
+		}
+		if !f.CandidateExpiresAt.After(s.now()) {
+			return Snapshot{}, registrationError(core.ErrorCodeConflict)
+		}
+		if err = s.authority.Check(ctx, f); err != nil {
+			return Snapshot{}, err
+		}
+		repo, ok := s.repository.(messagingReliabilityRepository)
+		if !ok {
+			return Snapshot{}, registrationError(core.ErrorCodeConnectorUnavailable)
+		}
+		f, err = repo.RetryMessaging(ctx, f, c.ExpectedRevision, key)
+		if err != nil {
+			return Snapshot{}, err
+		}
+		return s.snapshot(ctx, f)
 	}
 	if c.Action != "submit_code" || f.ConnectorID != "weixin" || f.ProtocolVersion != 1 || f.Step != "awaiting_code" || !f.State.Active() || !f.ExpiresAt.After(s.now()) || c.ExpectedRevision != f.Revision || c.ChallengeRevision != f.ChallengeRevision || f.ChallengeAttempts >= 3 || len(c.Values) != 1 || !challengeCode.MatchString(c.Values["code"]) {
 		return Snapshot{}, registrationError(core.ErrorCodeConflict)

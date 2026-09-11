@@ -1,15 +1,24 @@
 'use client';
 
+import { ConnectorFieldHelp } from './connector-key-form';
+
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import QRCode from 'react-qr-code';
 import { useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Loader2, LockKeyhole } from 'lucide-react';
+import { CheckCircle2, Loader2 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { ConnectorPermissionTemplateDetails } from '@/components/connectors/detail/connector-app-permissions';
 import { useT } from '@/i18n';
 import { useAuthStore } from '@/store/auth-store';
@@ -351,7 +360,6 @@ function ScopedConnectorAppSetupPanel({
               {pending.reason_code && pending.reason_code !== 'connector_application_not_ready' && (
                 <p className="mt-2">{t(appCredentialErrorKey(pending.reason_code))}</p>
               )}
-              <p className="mt-2 text-xs">{t('pending.secretHint')}</p>
               <Button variant="link" asChild className="h-auto px-0">
                 <a
                   href={
@@ -380,9 +388,6 @@ function ScopedConnectorAppSetupPanel({
             </AlertDescription>
           </Alert>
         )}
-        <p className="text-sm leading-6 text-muted-foreground">
-          {t(pending ? 'pending.closeHint' : updateConnection ? 'app.updateHint' : 'app.notice')}
-        </p>
         {ready ? (
           <div className="space-y-3">
             <Alert className="border-success/25 bg-success/5">
@@ -390,11 +395,8 @@ function ScopedConnectorAppSetupPanel({
               <AlertTitle>{t('app.ready')}</AlertTitle>
               <AlertDescription>
                 {ready.name}
-                <br />
-                {t(
-                  updateConnection && ready.id !== updateConnection.id
-                    ? 'app.newConnection'
-                    : 'app.readyHint'
+                {updateConnection && ready.id !== updateConnection.id && (
+                  <p>{t('app.newConnection')}</p>
                 )}
               </AlertDescription>
             </Alert>
@@ -457,16 +459,21 @@ function ScopedConnectorAppSetupPanel({
               >
                 <div className="space-y-2">
                   <Label htmlFor="connector-app-region">{t('app.region')}</Label>
-                  <select
-                    id="connector-app-region"
-                    className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                  <Select
                     disabled={busy || Boolean(updateConnection || pending)}
                     value={region}
-                    onChange={event => setRegion(event.target.value as 'feishu' | 'lark')}
+                    onValueChange={value => {
+                      if (value === 'feishu' || value === 'lark') setRegion(value);
+                    }}
                   >
-                    <option value="feishu">{t('app.feishu')}</option>
-                    <option value="lark">{t('app.lark')}</option>
-                  </select>
+                    <SelectTrigger id="connector-app-region">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="feishu">{t('app.feishu')}</SelectItem>
+                      <SelectItem value="lark">{t('app.lark')}</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
                 {connector.credential_fields
                   ?.filter(field => field.name !== 'region')
@@ -488,6 +495,7 @@ function ScopedConnectorAppSetupPanel({
                             : setAppID(event.target.value)
                         }
                       />
+                      <ConnectorFieldHelp url={field.help_url} />
                     </div>
                   ))}
                 <Button
@@ -590,14 +598,31 @@ function ScopedConnectorAppSetupPanel({
                     {t('app.expired')}
                   </p>
                 )}
-                {(state === 'starting' || state === 'verifying' || onboarding.busy) && (
+                {(state === 'starting' ||
+                  state === 'verifying' ||
+                  state === 'verification_waiting' ||
+                  onboarding.busy) && (
                   <div
                     className="flex items-center gap-2 rounded-lg border p-5 text-sm"
                     role="status"
                   >
                     <Loader2 aria-hidden="true" className="size-4 animate-spin" />
-                    {t(state === 'verifying' ? 'app.verifying' : 'app.starting')}
+                    {t(
+                      state === 'verification_waiting'
+                        ? 'messaging.verificationWaiting'
+                        : state === 'verifying'
+                          ? 'app.verifying'
+                          : 'app.starting'
+                    )}
                   </div>
+                )}
+                {onboarding.flow?.allowed_actions?.includes('retry_verification') && (
+                  <Button
+                    disabled={onboarding.busy}
+                    onClick={() => void onboarding.retryVerification()}
+                  >
+                    {t('messaging.retryVerification')}
+                  </Button>
                 )}
                 {state &&
                   !activeOnboarding(onboarding.flow) &&
@@ -659,10 +684,6 @@ function ScopedConnectorAppSetupPanel({
             )}
           </>
         )}
-        <p className="flex items-start gap-2 border-t pt-4 text-xs leading-5 text-muted-foreground">
-          <LockKeyhole className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-          {t('app.secretNotice')}
-        </p>
       </CardContent>
     </Card>
   );

@@ -25,12 +25,17 @@ const feishu = {
   connection_summary: { count: 0 },
 };
 const common = {
-  '@/hooks/connectors/use-pending-setups': { usePendingSetups: () => ({data: {data: {items: [],total_pending: 0}}}) },
+  '@/hooks/connectors/use-pending-setups': {
+    usePendingSetups: () => ({ data: { data: { items: [], total_pending: 0 } } }),
+  },
   'react/jsx-runtime': jsx,
   'lucide-react': ui,
   '@/components/ui/button': ui,
   '@/components/ui/badge': ui,
   '@/components/ui/card': ui,
+  '@/components/ui/label': ui,
+  '@/components/ui/select': ui,
+  '@/components/ui/collapsible': ui,
   '@/components/ui/dropdown-menu': ui,
   '@/i18n': {
     useT:
@@ -99,7 +104,8 @@ for (const count of [0, 1, 3]) {
   });
   h.render();
   const action = nodes(h.value).find(
-    node => (node.type === 'Button' && typeof node.props.onClick === 'function') ||
+    node =>
+      (node.type === 'Button' && typeof node.props.onClick === 'function') ||
       (node.type === 'DropdownMenuItem' && typeof node.props.onSelect === 'function')
   );
   (action.props.onClick ?? action.props.onSelect)();
@@ -163,7 +169,7 @@ for (const evidence of [
     connector: { ...feishu, permission_template: template },
     evidence,
   });
-  assert.equal(nodes(tree).filter(node => node.type === 'details').length, 1);
+  assert.equal(nodes(tree).filter(node => node.type === 'Collapsible').length, 1);
   assert.equal(tree.props.open, undefined);
   assert.doesNotMatch(JSON.stringify(tree), /capabilitiesTitle/);
 }
@@ -175,6 +181,7 @@ const h = harness(react => {
       react,
       'next-intl': { useLocale: () => 'zh-Hans' },
       '../connector-metadata': metadata,
+      './capability-groups': load('src/components/connectors/detail/capability-groups.ts'),
     }
   );
   return () =>

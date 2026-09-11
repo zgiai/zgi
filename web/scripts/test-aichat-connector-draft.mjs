@@ -148,18 +148,25 @@ const { AIChatConnectorDraftDialog } = load(
     '@/components/connectors/picker': ui,
     '@/components/connectors/picker/connector-first-use-dialog': ui,
     '@/components/ui/confirm-dialog': ui,
-    '@/components/connectors/setup/connector-key-setup-panel': ui,
+    '@/components/connectors/setup/connector-create-dialog': ui,
     '@/components/connectors/connector-metadata': { localizeConnectorCatalogItem: value => value },
     '@/components/ui/button': ui,
     '@/components/ui/dialog': ui,
     '@/hooks/use-locale': { useLocale: () => ({ locale: 'zh-Hans' }) },
     '@/hooks/connectors/use-chat-connector-preferences': {
-      useChatConnectorPreferences: () => ({ data: { data: { revision: 0, defaults: {} } }, scope: 'scope', isError: false }),
-      useSetChatConnectorPreference: () => ({ isPending: false, mutateAsync: async input => {
-        setupPreferenceWrites.push(input);
-        if (setupPreferenceFails) throw new Error('default conflict');
-        return { data: { revision: 1, defaults: {} } };
-      } }),
+      useChatConnectorPreferences: () => ({
+        data: { data: { revision: 0, defaults: {} } },
+        scope: 'scope',
+        isError: false,
+      }),
+      useSetChatConnectorPreference: () => ({
+        isPending: false,
+        mutateAsync: async input => {
+          setupPreferenceWrites.push(input);
+          if (setupPreferenceFails) throw new Error('default conflict');
+          return { data: { revision: 1, defaults: {} } };
+        },
+      }),
     },
     '@/i18n': { useT: () => key => key },
     './connector-draft-model': model,
@@ -191,7 +198,7 @@ tree.props.onRequestDetach({ binding: tree.props.bindings[0] });
 assert.deepEqual(changes.pop(), []);
 tree.props.onRequestConnectAndAdd({ connector: { id: 'github', name: 'GitHub' } });
 tree = renderDialog();
-const setup = nodes(tree).find(node => node.type === 'ConnectorKeySetupPanel');
+const setup = nodes(tree).find(node => node.type === 'ConnectorCreateContent');
 assert.equal(
   setup.props.target,
   undefined,
@@ -203,7 +210,7 @@ assert.equal(notices.length, 1);
 tree = renderDialog();
 tree.props.onRequestConnectAndAdd({ connector: { id: 'exa', name: 'Exa' } });
 tree = renderDialog();
-const lateReady = nodes(tree).find(node => node.type === 'ConnectorKeySetupPanel').props.onReady;
+const lateReady = nodes(tree).find(node => node.type === 'ConnectorCreateContent').props.onReady;
 renderDialog({ open: false });
 renderDialog({ open: true });
 lateReady({ id: 'b', connector_id: 'exa' });
@@ -213,7 +220,9 @@ tree = renderDialog({ draft: { ...initial, id: 'first-use-draft' } });
 tree = renderDialog();
 tree.props.onRequestConnectAndAdd({ connector: { id: 'exa', name: 'Exa' } });
 tree = renderDialog();
-nodes(tree).find(node => node.type === 'ConnectorKeySetupPanel').props.onReady({ id: 'b', connector_id: 'exa', name: 'My search account' });
+nodes(tree)
+  .find(node => node.type === 'ConnectorCreateContent')
+  .props.onReady({ id: 'b', connector_id: 'exa', name: 'My search account' });
 tree = renderDialog();
 assert.equal(tree.type, 'ConnectorPickerDialog');
 assert.deepEqual(changes.pop(), [exa], 'new connection fills only the empty draft slot');
@@ -384,7 +393,11 @@ assert.deepEqual(requests[3].initial_connector_bindings, [], 'explicit empty is 
 assert.equal(requests[3].initial_connector_defaults_revision, 0, 'empty still validates snapshot');
 stateRef.current = { ...stateRef.current, isSending: false, activeConversationId: null };
 await actions.send({ query: 'legacy client', model: input.model });
-assert.equal('initial_connector_bindings' in requests[4], false, 'old no-field request stays omitted');
+assert.equal(
+  'initial_connector_bindings' in requests[4],
+  false,
+  'old no-field request stays omitted'
+);
 assert.equal('initial_connector_defaults_revision' in requests[4], false);
 
 const picker = read('src/components/connectors/picker/connector-picker-dialog.tsx');

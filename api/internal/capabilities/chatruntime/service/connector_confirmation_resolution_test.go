@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
+	"github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
 	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
 	connectorconfirmation "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeconfirmation"
@@ -98,6 +100,64 @@ func TestRecordConnectorConfirmationResolutionRejectsOwnerMismatch(t *testing.T)
 	)
 	if !connectorcore.IsErrorCode(err, connectorcore.ErrorCodeAccessDenied) {
 		t.Fatalf("error = %v, want access denied", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestRecordConnectorConfirmationResolutionPersistsRememberedConnectorGrant(t *testing.T) {
+	db, mock := newConnectorConfirmationResolutionTestDB(t)
+	organizationID, ownerID := uuid.New(), uuid.New()
+	conversationID, messageID := uuid.New(), uuid.New()
+	connectionID, bindingID := uuid.New(), uuid.New()
+	receipt := uuid.NewString()
+	metadataJSON, err := json.Marshal(pendingConnectorResolutionMetadata(receipt))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)SELECT m\.\* FROM chat_runtime_messages AS m.*JOIN chat_runtime_conversations AS c.*FOR UPDATE`).
+		WithArgs(messageID, organizationID, ownerID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "conversation_id", "answer", "status", "metadata"}).
+			AddRow(messageID, conversationID, "", runtimemodel.MessageStatusWaitingApproval, metadataJSON))
+	mock.ExpectQuery(`(?s)SELECT \* FROM "chat_runtime_conversations".*organization_id.*account_id.*LIMIT`).
+		WithArgs(conversationID, organizationID, ownerID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "organization_id", "account_id", "caller_type", "conversation_type"}).
+			AddRow(conversationID, organizationID, ownerID, runtimemodel.ConversationCallerAIChat, runtimemodel.ConversationTypeChat))
+	mock.ExpectExec(`(?s)UPDATE "chat_runtime_conversations" SET .*"metadata"=.*WHERE .*id = .*deleted_at IS NULL`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`(?s)UPDATE "chat_runtime_messages" SET .*"status"=.*WHERE .*id = .*status IN`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	result := connectorconfirmation.Result{
+		State: connectorconfirmation.StateCompleted, DecisionID: uuid.New(),
+		Origin: connectorexecution.ConfirmationOrigin{Surface: connectorcore.TargetTypeChat, ConversationID: conversationID.String(), MessageID: messageID.String()},
+		RequestIdentity: connectorconfirmation.ConfirmationRequestIdentity{
+			OrganizationID: organizationID, OwnerAccountID: ownerID, ActingPrincipalID: ownerID,
+			BindingID: bindingID, ConnectionID: connectionID, ConnectorID: "qqmail",
+			Target:      connectorcore.TargetRef{Type: connectorcore.TargetTypeChat, ID: conversationID.String()},
+			OperationID: "qqmail.message.send", LogicalOperationID: "logical-1",
+			CorrelationID: "connector-correlation-" + messageID.String(), Interactive: true,
+		},
+		Authorization: &connectorconfirmation.AuthorizationSnapshot{
+			SkillID: "connector-runtime", ConnectionID: connectionID, BindingID: bindingID,
+			ConnectorID: "qqmail", OperationID: "qqmail.message.send",
+			Target: connectorcore.TargetRef{Type: connectorcore.TargetTypeChat, ID: conversationID.String()},
+			Effect: catalog.OperationEffectExternalSend, DataEgress: true,
+			ExternalDestination: "qqmail", SensitiveDataAllowed: true,
+			Risk: connectorexecution.RiskHigh,
+		},
+	}
+	err = (&service{repos: repository.NewRepositories(db)}).RecordConnectorConfirmationResolution(
+		context.Background(), connectorconfirmation.Command{
+			OrganizationID: organizationID, OwnerAccountID: ownerID,
+			RouteReceipt: connectorexecution.RouteClaimReceipt(receipt),
+			Decision:     connectorexecution.ConfirmationDecisionConfirmed, RememberForSession: true,
+		}, result)
+	if err != nil {
+		t.Fatalf("RecordConnectorConfirmationResolution() error = %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)
@@ -194,6 +254,33 @@ func TestApplyConnectorConfirmationResolutionDuplicateIsIdempotentAndConflictIsR
 	conflict.errorCode = string(connectorcore.ErrorCodeProviderUnavailable)
 	if _, _, err := applyConnectorConfirmationResolution(updated, conflict); !connectorcore.IsErrorCode(err, connectorcore.ErrorCodeConflict) {
 		t.Fatalf("conflict error = %v", err)
+	}
+}
+
+func TestConnectorSessionGrantFromResolutionKeepsConnectorIdentity(t *testing.T) {
+	now := time.Now().UTC()
+	organizationID, ownerID := uuid.New(), uuid.New()
+	conversationID := uuid.New()
+	connectionID, bindingID := uuid.New(), uuid.New()
+	resolution := connectorConfirmationResolution{
+		organizationID: organizationID, ownerAccountID: ownerID,
+		routeReceipt: uuid.NewString(), conversationID: conversationID,
+		authorization: &connectorconfirmation.AuthorizationSnapshot{
+			SkillID: "connector-runtime", ConnectionID: connectionID, BindingID: bindingID,
+			ConnectorID: "qqmail", OperationID: "qqmail.message.send",
+			Target: connectorcore.TargetRef{Type: connectorcore.TargetTypeChat, ID: conversationID.String()},
+			Effect: catalog.OperationEffectExternalSend, DataEgress: true,
+			ExternalDestination: "mail", SensitiveDataAllowed: true,
+			Risk: connectorexecution.RiskHigh,
+		},
+	}
+	grant := connectorSessionGrantFromResolution(resolution, now)
+	if grant["connection_id"] != connectionID.String() || grant["binding_id"] != bindingID.String() ||
+		grant["tool_id"] != "qqmail.message.send" || grant["remember_for_session"] != nil {
+		t.Fatalf("grant = %#v", grant)
+	}
+	if got := grant["expires_at"].(string); got == "" {
+		t.Fatal("grant expiry is empty")
 	}
 }
 

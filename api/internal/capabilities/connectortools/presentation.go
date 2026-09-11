@@ -7,6 +7,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/connectors/execution"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"strings"
+	"unicode"
 )
 
 // OperationRef is resolved by the host. A presentation never creates authority
@@ -37,9 +38,16 @@ type OperationPresentation struct {
 	DisplayStatus string          `json:"display_status"`
 	Redacted      bool            `json:"redacted"`
 	Truncated     bool            `json:"truncated"`
+	Title         string          `json:"title,omitempty"`
+	Summary       string          `json:"summary,omitempty"`
 }
 
-func MessagesForInvocation(result execution.ExecutionResult, identity dispatch.Identity) []tools.ToolInvokeMessage {
+func MessagesForInvocation(result execution.ExecutionResult, identity dispatch.Identity, causes ...error) []tools.ToolInvokeMessage {
+	if result.State == execution.ExecutionStateCompleted && result.Outcome.ID == uuid.Nil {
+		display := result.Display
+		result = execution.UnresolvedResult(core.ErrorCodeOutcomeUnknown)
+		result.Display = display
+	}
 	messages := Messages(result)
 	for i := range messages {
 		metadata, ok := ResultFromMessage(messages[i])
@@ -47,12 +55,27 @@ func MessagesForInvocation(result execution.ExecutionResult, identity dispatch.I
 			// Dispatch was attempted, but did not return a valid terminal or
 			// confirmation shape. Preserve its action identity as unknown so
 			// the host cannot send it through generic argument-error retries.
-			metadata = ResultMetadata{State: execution.ExecutionStateCompleted, OutcomeStatus: core.OutcomeStatusUnknown}
-			messages[i].Data = map[string]any{"state": string(metadata.State)}
+			code := core.ErrorCodeOutcomeUnknown
+			if len(causes) > 0 && causes[0] != nil {
+				code = core.ErrorCodeOf(causes[0])
+			}
+			unknown := Messages(execution.UnresolvedResult(code))[0]
+			metadata, _ = ResultFromMessage(unknown)
+			messages[i].Data = unknown.Data
 		}
 		metadata.Operation = &OperationRef{ConnectorID: identity.ConnectorID, OperationID: identity.OperationID, BindingID: identity.BindingID, ConnectionID: identity.ConnectionID, Target: identity.Target, LogicalOperationID: identity.LogicalOperationID}
 		metadata.Operation.ActionStepID, metadata.Operation.PlanPhaseID = identity.ActionStepID, identity.PlanPhaseID
-		metadata.Presentation = &OperationPresentation{SchemaVersion: 1, SourceKind: "native", InvocationID: identity.LogicalOperationID, ConnectorID: identity.ConnectorID, OperationID: identity.OperationID, DisplayStatus: presentationStatus(metadata), Redacted: true}
+		metadata.Presentation = &OperationPresentation{SchemaVersion: 1, SourceKind: "native", InvocationID: identity.LogicalOperationID, ConnectorID: identity.ConnectorID, OperationID: identity.OperationID, DisplayStatus: presentationStatus(metadata)}
+		if result.Display != nil {
+			name := result.Display.Name
+			if localized := result.Display.NameI18n[result.Display.Locale]; strings.TrimSpace(localized) != "" {
+				name = localized
+			}
+			metadata.Presentation.Title, metadata.Presentation.Truncated = boundedPresentationText(name, 120)
+			var summaryTruncated bool
+			metadata.Presentation.Summary, summaryTruncated = boundedPresentationText(result.Display.Summary, 800)
+			metadata.Presentation.Truncated = metadata.Presentation.Truncated || summaryTruncated
+		}
 		messages[i].Meta[ResultKey] = metadata
 	}
 	return messages
@@ -60,6 +83,10 @@ func MessagesForInvocation(result execution.ExecutionResult, identity dispatch.I
 
 func presentationStatus(result ResultMetadata) string {
 	switch result.State {
+	case execution.ExecutionStateRejected:
+		return "unavailable"
+	case execution.ExecutionStateUnresolved:
+		return "unknown"
 	case execution.ExecutionStateRequiresConfirmation:
 		return "pending"
 	case execution.ExecutionStateCancelled:
@@ -72,4 +99,25 @@ func presentationStatus(result ResultMetadata) string {
 		}
 	}
 	return "unknown"
+}
+
+func boundedPresentationText(value string, limit int) (string, bool) {
+	value = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.In(r, unicode.Cf) {
+			return -1
+		}
+		return r
+	}, value)
+	value = strings.TrimSpace(value)
+	units := 0
+	for offset, r := range value {
+		units++
+		if r > 0xffff {
+			units++
+		}
+		if units > limit {
+			return value[:offset], true
+		}
+	}
+	return value, false
 }

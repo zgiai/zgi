@@ -21,6 +21,7 @@ type CandidateVerificationRequest struct {
 	AuthMethodID   string
 	Credentials    map[string]string `json:"-"`
 	OperationIDs   []string
+	MailUsage      string
 }
 
 // CandidateVerificationResult is the non-secret evidence returned by one
@@ -32,6 +33,7 @@ type CandidateVerificationResult struct {
 	ProviderRequestID   string
 	CostUSD             *float64
 	Evidence            *connectorcore.ProviderEvidence
+	MailVerification    *connectorcore.MailVerification
 }
 
 type CandidateVerifier interface {

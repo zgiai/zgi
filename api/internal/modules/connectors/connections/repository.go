@@ -181,6 +181,7 @@ func (repository *GormRepository) UpdateConnection(
 	nextRevision := expectedRevision + 1
 	updatedAt := time.Now().UTC()
 	updates := map[string]any{
+		"connection_constraint":    record.Constraint,
 		"name":                     record.Name,
 		"external_account_id":      record.ExternalAccountID,
 		"external_display_name":    record.ExternalDisplayName,
@@ -282,6 +283,7 @@ func (repository *GormRepository) CompleteReconnectReady(
 					organizationID, ownerAccountID, completion.ExistingConnectionID, completion.ExpectedRevision,
 				).
 				Updates(map[string]any{
+					"connection_constraint":    resultRecord.Constraint,
 					"external_account_id":      resultRecord.ExternalAccountID,
 					"external_display_name":    resultRecord.ExternalDisplayName,
 					"encrypted_credentials":    resultRecord.EncryptedCredentials,

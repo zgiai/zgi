@@ -31,16 +31,18 @@ type StartCommand struct {
 	IdempotencyKey   string `json:"-"`
 }
 type Service struct {
-	repository  Repository
-	catalog     connections.DefinitionCatalog
-	connections ConnectionReader
-	secrets     *credentials.Store
-	hasher      *connections.CommandHasher
-	authority   Authority
-	registrar   Registrar
-	adapters    map[string]ProtocolAdapter
-	cleanup     func(context.Context) error
-	now         func() time.Time
+	repository         Repository
+	catalog            connections.DefinitionCatalog
+	connections        ConnectionReader
+	secrets            *credentials.Store
+	hasher             *connections.CommandHasher
+	authority          Authority
+	registrar          Registrar
+	adapters           map[string]ProtocolAdapter
+	messagingProbe     MessagingProbe
+	diagnosticObserver DiagnosticObserver
+	cleanup            func(context.Context) error
+	now                func() time.Time
 }
 
 func NewService(repo Repository, definitions connections.DefinitionCatalog, reader ConnectionReader, secrets *credentials.Store, hasher *connections.CommandHasher, authority Authority, registrar Registrar) (*Service, error) {

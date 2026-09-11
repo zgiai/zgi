@@ -79,6 +79,9 @@ func TestMessagingProtocolPostgresIsolation(t *testing.T) {
 	if err = upConnectorPendingSetups(mschema.New(db)); err != nil {
 		t.Fatal(err)
 	}
+	if err = upMessagingReliability(mschema.New(db)); err != nil {
+		t.Fatal(err)
+	}
 	var kept onboarding.Flow
 	if db.First(&kept, "id = ?", legacy.ID).Error != nil || kept.ProtocolVersion != 0 || kept.TemplateDigest != legacy.TemplateDigest {
 		t.Fatal("legacy row changed")
@@ -241,8 +244,8 @@ func TestMessagingProtocolPostgresIsolation(t *testing.T) {
 				s.Messages = []messaging.Message{{ID: "1", Recipient: "PRIVATE_RECIPIENT", ContextToken: "PRIVATE_CONTEXT"}}
 				return nil
 			})
-			if e != nil {
-				t.Fatal(e)
+			if providers.FailureOf(e).Code != core.ErrorCodeConflict {
+				t.Fatal("nested consuming read allowed", e)
 			}
 			return stop
 		})
@@ -291,9 +294,10 @@ func TestMessagingProtocolPostgresIsolation(t *testing.T) {
 		// A committed verification receipt authorizes the first explicit pull.
 		f := flowFixture("weixin")
 		f.OrganizationID, f.OwnerAccountID = scope.OrganizationID, scope.OwnerAccountID
-		f.State, f.ResultConnectionID = onboarding.Ready, &scope.ConnectionID
-		terminal := time.Now().UTC()
-		f.TerminalAt = &terminal
+		f.State, f.Step = onboarding.Verifying, "verify"
+		accepted := time.Now().UTC()
+		expires := accepted.Add(15 * time.Minute)
+		f.CandidateConnectionID, f.CandidateAcceptedAt, f.CandidateExpiresAt = &scope.ConnectionID, &accepted, &expires
 		if err = db.Create(&f).Error; err != nil {
 			t.Fatal(err)
 		}
@@ -303,21 +307,34 @@ func TestMessagingProtocolPostgresIsolation(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
+		terminal := time.Now().UTC()
+		if err = db.Model(&onboarding.Flow{}).Where("id = ?", f.ID).Updates(map[string]any{"state": onboarding.Ready, "result_connection_id": scope.ConnectionID, "terminal_at": terminal}).Error; err != nil {
+			t.Fatal(err)
+		}
 		var wg sync.WaitGroup
 		for i := 0; i < 10; i++ {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				if e := store.Update(ctx, scope, "weixin", digest, uuid.Nil, func(_ context.Context, s *messaging.State) error {
-					value, e := strconv.Atoi(s.Cursor)
-					if e != nil {
-						return e
+				for attempt := 0; attempt < 100; attempt++ {
+					e := store.Update(ctx, scope, "weixin", digest, uuid.Nil, func(_ context.Context, s *messaging.State) error {
+						value, e := strconv.Atoi(s.Cursor)
+						if e != nil {
+							return e
+						}
+						s.Cursor = strconv.Itoa(value + 1)
+						return nil
+					})
+					if e == nil {
+						return
 					}
-					s.Cursor = strconv.Itoa(value + 1)
-					return nil
-				}); e != nil {
-					t.Error(e)
+					if providers.FailureOf(e).Code != core.ErrorCodeVerificationWaiting {
+						t.Error(e)
+						return
+					}
+					time.Sleep(time.Millisecond)
 				}
+				t.Error("read lease did not release")
 			}()
 		}
 		wg.Wait()
@@ -330,6 +347,7 @@ func TestMessagingProtocolPostgresIsolation(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+	t.Run("messaging reliability", func(t *testing.T) { testMessagingReliabilityPostgres(t, db) })
 }
 
 func flowFixture(provider string) onboarding.Flow {

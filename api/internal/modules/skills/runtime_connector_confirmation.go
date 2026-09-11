@@ -61,6 +61,7 @@ func freezeConnectorConfirmation(
 		return nil, true, err
 	}
 	request := connectorexecution.ExecutionRequest{
+		ConversationID: execCtx.ConversationID,
 		OrganizationID: identity.OrganizationID, OwnerAccountID: identity.OwnerAccountID,
 		ActingPrincipalID: identity.ActingPrincipalID, BindingID: identity.BindingID,
 		ConnectionID: identity.ConnectionID, ConnectorID: identity.ConnectorID,
@@ -71,7 +72,7 @@ func freezeConnectorConfirmation(
 	acceptedOperation := *confirmation.AcceptedOperation
 	continuation, err := execCtx.ConnectorConfirmationStore.Freeze(ctx, connectorexecution.FrozenConfirmationRequest{
 		RouteReceipt: confirmation.RouteReceipt, Request: request, Origin: origin,
-		AcceptedOperation: acceptedOperation,
+		AcceptedOperation: acceptedOperation, Preview: confirmation.Preview,
 	})
 	if err != nil {
 		return nil, true, err

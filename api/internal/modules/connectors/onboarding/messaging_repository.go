@@ -2,6 +2,7 @@ package onboarding
 
 import (
 	"context"
+	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -27,7 +28,22 @@ func (r *GormRepository) SaveProtocolStep(ctx context.Context, lease Flow, devic
 				f.ExpirySource = next.ExpirySource
 			}
 		}
-		device.ExpiresAt = f.ExpiresAt
+		if next.Step == "verify" && (f.ConnectorID == "weixin" || f.ConnectorID == "wecom") {
+			now := r.now()
+			expires := now.Add(15 * time.Minute)
+			id := uuid.New()
+			if f.ConnectionID != nil {
+				id = *f.ConnectionID
+			}
+			f.CandidateConnectionID = &id
+			f.CandidateAcceptedAt = &now
+			f.CandidateExpiresAt = &expires
+			f.VerificationPhase = "operation"
+			if f.ConnectorID == "wecom" {
+				f.VerificationPhase = "token"
+			}
+		}
+		device.ExpiresAt = f.verificationExpiry()
 		if err = tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "flow_id"}}, DoUpdates: clause.AssignmentColumns([]string{"encrypted_device", "expires_at"})}).Create(&device).Error; err != nil {
 			return err
 		}

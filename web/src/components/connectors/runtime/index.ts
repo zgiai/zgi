@@ -1,9 +1,9 @@
 export { ConnectorRuntimeBlockedState } from './connector-runtime-blocked-state';
+export { ConnectorRuntimeConfirmationCard } from './connector-runtime-confirmation-card';
 export {
-  ConnectorRuntimeConfirmationCard,
-  type ConnectorRuntimeDecisionHandler,
-} from './connector-runtime-confirmation-card';
-export { ConnectorRuntimeSurface } from './connector-runtime-surface';
+  ConnectorRuntimeDialogApprovalBridge,
+  ConnectorRuntimeSurface,
+} from './connector-runtime-surface';
 export {
   beginConnectorRuntimeDecision,
   createConnectorRuntimeDecisionState,
@@ -21,6 +21,7 @@ export {
   type ConnectorRuntimeConfirmationRisk,
   type ConnectorRuntimeConsequence,
   type ConnectorRuntimeDecisionAttempt,
+  type ConnectorRuntimeDecisionHandler,
   type ConnectorRuntimeDecisionOutcomeState,
   type ConnectorRuntimeDecisionResult,
   type ConnectorRuntimeDecisionState,

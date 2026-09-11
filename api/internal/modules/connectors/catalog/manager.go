@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -114,6 +115,7 @@ func (manager *PluginManager) Bootstrap(ctx context.Context, pluginRoots []strin
 		}
 	}
 
+	var builtinFailures []PluginPackageFailure
 	for _, definitions := range definitionsByPlugin(initial) {
 		pluginID := definitions[0].PluginID
 		if status, exists := state.Statuses[pluginID]; exists {
@@ -125,13 +127,24 @@ func (manager *PluginManager) Bootstrap(ctx context.Context, pluginRoots []strin
 				(len(persisted) > 0 && persisted[0].PluginVersion == definitions[0].PluginVersion) {
 				continue
 			}
+			// A different server build may ship a contract that cannot replace
+			// the accepted package. Keep the validated durable authority and
+			// report the rejected update before attempting any persistence.
+			if err := manager.lifecycle.ValidatePackageActivation(definitions); errors.Is(err, ErrIncompatibleDefinitionUpdate) {
+				builtinFailures = append(builtinFailures, PluginPackageFailure{
+					Err: fmt.Errorf("retain accepted Connector plugin %s: %w", pluginID, err),
+				})
+				continue
+			}
 		}
 		if err := manager.activateLocked(ctx, definitions); err != nil {
 			return PluginAdmissionReport{}, fmt.Errorf("admit built-in Connector plugin %s: %w", pluginID, err)
 		}
 	}
 	manager.bootstrapped = true
-	return manager.admitDirectoriesLocked(ctx, pluginRoots), nil
+	report := manager.admitDirectoriesLocked(ctx, pluginRoots)
+	report.Failures = append(builtinFailures, report.Failures...)
+	return report, nil
 }
 
 func samePluginPackageIdentity(left, right []Definition) bool {

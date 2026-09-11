@@ -1,3 +1,4 @@
+import { personalConnectionDisplayName } from '../connections/personal-connections-model';
 import type {
   ConnectorCatalogItem,
   ConnectorChatDefault,
@@ -32,7 +33,8 @@ export interface ConnectorPickerMenuGroup {
 /** Current identity comes from the binding, including a bound but unusable account. */
 export function connectorPickerGroupSummary(
   group: ConnectorPickerMenuGroup,
-  preference?: ConnectorChatDefault
+  preference?: ConnectorChatDefault,
+  locale = 'zh-Hans'
 ) {
   const currentAccount = group.accounts.find(
     row => row.connection?.id === group.currentBinding?.connection_id
@@ -43,9 +45,9 @@ export function connectorPickerGroupSummary(
     inUse: group.currentBinding?.status === 'active',
     bindingStatus: group.currentBinding?.status,
     currentAccount,
-    name:
-      currentAccount?.connection?.name.trim() ||
-      currentAccount?.connection?.external_display_name?.trim(),
+    name: currentAccount?.connection
+      ? personalConnectionDisplayName(currentAccount.connection, group.name, locale)
+      : undefined,
     availability: !selected
       ? undefined
       : currentAccount?.state === 'reconnect'

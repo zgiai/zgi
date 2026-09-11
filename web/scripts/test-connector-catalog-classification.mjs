@@ -1,3 +1,4 @@
+import { rewriteConnectorPureImports, connectorPureImport } from './connector-pure-fixture.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -7,7 +8,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import ts from 'typescript';
 import Exa from 'modelicons/Exa';
 
-const moduleURL = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
+const moduleURL = source =>
+  `data:text/javascript;base64,${Buffer.from(rewriteConnectorPureImports(source)).toString('base64')}`;
 const transpile = source =>
   ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
@@ -20,26 +22,60 @@ const metadataURL = moduleURL(
     )
   )
 );
-const setupURL = moduleURL(transpile(readFileSync(path.join(process.cwd(), 'src/components/connectors/setup/app-setup-state.ts'), 'utf8')));
+const setupURL = moduleURL(
+  transpile(
+    readFileSync(
+      path.join(process.cwd(), 'src/components/connectors/setup/app-setup-state.ts'),
+      'utf8'
+    )
+  )
+);
 const catalogModelSource = transpile(
   readFileSync(
     path.join(process.cwd(), 'src/components/connectors/catalog/catalog-model.ts'),
     'utf8'
   )
-).replace("'@/components/connectors/connector-metadata'", JSON.stringify(metadataURL)).replace("'../setup/app-setup-state'", JSON.stringify(setupURL));
+)
+  .replace("'@/components/connectors/connector-metadata'", JSON.stringify(metadataURL))
+  .replace("'../setup/app-setup-state'", JSON.stringify(setupURL));
 const { filterConnectorCatalog, getConnectorCatalogRowState, partitionConnectorCatalog } =
   await import(moduleURL(catalogModelSource));
 const metadata = await import(metadataURL);
 
 const pendingOnly = {
-  id:'feishu',plugin_id:'feishu',name:'Feishu',description:'Application connector',
-  auth_type:'app_credentials',classification:'connector',key_fields:[],
-  capabilities:[{id:'message.send',name:'Send',description:'',usable:true}],
-  connection_summary:{count:0,state:'unavailable'},
+  id: 'feishu',
+  plugin_id: 'feishu',
+  name: 'Feishu',
+  description: 'Application connector',
+  auth_type: 'app_credentials',
+  classification: 'connector',
+  key_fields: [],
+  capabilities: [{ id: 'message.send', name: 'Send', description: '', usable: true }],
+  connection_summary: { count: 0, state: 'unavailable' },
 };
-assert.equal(filterConnectorCatalog([pendingOnly], {query:'',status:'needs_attention'}, new Set(['feishu'])).length,1);
-assert.equal(filterConnectorCatalog([pendingOnly], {query:'',status:'connected'}, new Set(['feishu'])).length,0,'pending does not increase connected counts');
-assert.equal(filterConnectorCatalog([pendingOnly], {query:'other-provider',status:'needs_attention'}, new Set(['feishu'])).length,0,'pending preserves catalog search');
+assert.equal(
+  filterConnectorCatalog(
+    [pendingOnly],
+    { query: '', status: 'needs_attention' },
+    new Set(['feishu'])
+  ).length,
+  1
+);
+assert.equal(
+  filterConnectorCatalog([pendingOnly], { query: '', status: 'connected' }, new Set(['feishu']))
+    .length,
+  0,
+  'pending does not increase connected counts'
+);
+assert.equal(
+  filterConnectorCatalog(
+    [pendingOnly],
+    { query: 'other-provider', status: 'needs_attention' },
+    new Set(['feishu'])
+  ).length,
+  0,
+  'pending preserves catalog search'
+);
 
 const catalog = [
   {
@@ -195,7 +231,10 @@ const loadComponent = (relativePath, dependencies) => {
   const module = { exports: {} };
   const localRequire = id => {
     if (Object.hasOwn(dependencies, id)) return dependencies[id];
-    if (['react', 'react/jsx-runtime', 'lucide-react', 'modelicons/Exa'].includes(id)) return require(id);
+    if (['react', 'react/jsx-runtime', 'lucide-react', 'modelicons/Exa'].includes(id))
+      return require(id);
+    if (id === 'next-intl') return { useLocale: () => 'en-US' };
+    if (connectorPureImport(id)) return connectorPureImport(id);
     throw new Error(`Unexpected display-test dependency: ${id}`);
   };
   new Function('require', 'module', 'exports', code)(localRequire, module, module.exports);
@@ -218,6 +257,12 @@ let activeItem;
 const sharedDisplayDependencies = {
   '@/components/connectors/connector-icon': icon,
   '@/components/ui/badge': presentation('Badge'),
+  '@/components/ui/button': presentation('Button'),
+  '@/components/ui/collapsible': presentation(
+    'Collapsible',
+    'CollapsibleTrigger',
+    'CollapsibleContent'
+  ),
   '@/i18n': {
     useT:
       () =>
@@ -258,6 +303,14 @@ const { ConnectorDetailPage } = loadComponent(
     './connector-example-list': presentation('ConnectorExampleList'),
     './connector-key-requirements': presentation('ConnectorKeyRequirements'),
     './connector-app-permissions': presentation('ConnectorAppPermissions'),
+    './connector-mail-information': presentation('ConnectorMailInformation'),
+    './connector-platform-notice': presentation('ConnectorPlatformNotice'),
+    '@/components/connectors/setup/messaging-setup-state': {
+      supportsMessagingContract: () => false,
+    },
+    '@/components/connectors/setup/mail-setup-state': {
+      supportsMailSetup: () => false,
+    },
     '@/components/connectors/setup/app-setup-state': {
       supportsAppSetup: item => item.setup_method === 'app_credentials',
     },
@@ -300,7 +353,8 @@ for (const locale of ['en-US', 'zh-Hans']) {
     for (const html of [detail, picker]) {
       assert.ok(html.includes(localized.name), `${locale}: provider name is localized`);
       assert.match(html, dataSource ? /lucide-database/ : /<svg/);
-      if (!dataSource) assert.doesNotMatch(html, /lucide-plug/, 'Exa uses its service mark, not a generic plug');
+      if (!dataSource)
+        assert.doesNotMatch(html, /lucide-plug/, 'Exa uses its service mark, not a generic plug');
       assert.doesNotMatch(html, dataSource ? /lucide-plug/ : /lucide-database/);
     }
   }

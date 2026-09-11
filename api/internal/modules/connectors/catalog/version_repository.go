@@ -3,7 +3,6 @@ package catalog
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -293,7 +292,7 @@ func (repository *GormDefinitionRepository) ListAcceptedVersions(
 		}
 		definition.PluginDigest = row.PluginDigest
 		if err := Validate(definition); err != nil {
-			return nil, errors.Join(ErrIncompatibleStoredDefinition, err)
+			return nil, fmt.Errorf("%w: %s accepted version: %w", ErrIncompatibleStoredDefinition, row.ConnectorID, err)
 		}
 		contractDigest, err := DefinitionContractDigest(definition)
 		if err != nil || !strings.EqualFold(contractDigest, row.ContractDigest) {
@@ -396,7 +395,7 @@ func (row storedDefinitionRow) definition() (Definition, error) {
 		CredentialFields: keySchema.CredentialFields, Setup: keySchema.Setup,
 	}
 	if err := Validate(definition); err != nil {
-		return Definition{}, errors.Join(ErrIncompatibleStoredDefinition, err)
+		return Definition{}, fmt.Errorf("%w: %s: %w", ErrIncompatibleStoredDefinition, row.ConnectorID, err)
 	}
 	digest, err := DefinitionContractDigest(definition)
 	if err != nil || !strings.EqualFold(digest, row.ContractDigest) {

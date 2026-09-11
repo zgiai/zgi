@@ -32,6 +32,7 @@ type ConfirmationOrigin struct {
 // public JSON representation deliberately omits Input. A continuation client
 // submits only RuntimeConfirmationCommand, never this snapshot.
 type FrozenConfirmationRequest struct {
+	Preview           *ConfirmationPreview    `json:"-"`
 	RouteReceipt      RouteClaimReceipt       `json:"route_receipt"`
 	Request           ExecutionRequest        `json:"request"`
 	Origin            ConfirmationOrigin      `json:"origin"`

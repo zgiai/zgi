@@ -1,3 +1,4 @@
+import { rewriteConnectorPureImports } from './connector-pure-fixture.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -9,15 +10,14 @@ const transpile = relativePath =>
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   }).outputText;
 const sourceModuleURL = source =>
-  `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
+  `data:text/javascript;base64,${Buffer.from(rewriteConnectorPureImports(source)).toString('base64')}`;
 const metadataURL = sourceModuleURL(transpile('src/components/connectors/connector-metadata.ts'));
 const { localizeConnectorCatalogItem } = await import(metadataURL);
 const setupURL = sourceModuleURL(transpile('src/components/connectors/setup/app-setup-state.ts'));
 const modelURL = sourceModuleURL(
-  transpile('src/components/connectors/picker/connector-picker-model.ts').replace("'../setup/app-setup-state'", JSON.stringify(setupURL)).replace(
-    "from '../connector-metadata';",
-    `from '${metadataURL}';`
-  )
+  transpile('src/components/connectors/picker/connector-picker-model.ts')
+    .replace("'../setup/app-setup-state'", JSON.stringify(setupURL))
+    .replace("from '../connector-metadata';", `from '${metadataURL}';`)
 );
 const {
   createConnectorPickerRows,

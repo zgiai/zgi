@@ -13,19 +13,39 @@ const ResultKey = "connector_execution"
 // It never carries operation input or credentials, and JSON cannot manufacture
 // this in-process type to control a confirmation.
 type ResultMetadata struct {
-	Operation      *OperationRef                  `json:"operation,omitempty"`
-	Presentation   *OperationPresentation         `json:"presentation,omitempty"`
-	State          execution.ExecutionState       `json:"state"`
-	Confirmation   *execution.RuntimeConfirmation `json:"confirmation,omitempty"`
-	DecisionID     uuid.UUID                      `json:"decision_id,omitempty,omitzero"`
-	OutcomeID      uuid.UUID                      `json:"outcome_id,omitempty,omitzero"`
-	OutcomeStatus  core.OutcomeStatus             `json:"outcome_status,omitempty"`
-	DiagnosticCode string                         `json:"diagnostic_code,omitempty"`
+	ExecutionEvidence *ExecutionEvidence             `json:"execution_evidence,omitempty"`
+	Operation         *OperationRef                  `json:"operation,omitempty"`
+	Presentation      *OperationPresentation         `json:"presentation,omitempty"`
+	State             execution.ExecutionState       `json:"state"`
+	Confirmation      *execution.RuntimeConfirmation `json:"confirmation,omitempty"`
+	DecisionID        uuid.UUID                      `json:"decision_id,omitempty,omitzero"`
+	OutcomeID         uuid.UUID                      `json:"outcome_id,omitempty,omitzero"`
+	OutcomeStatus     core.OutcomeStatus             `json:"outcome_status,omitempty"`
+	DiagnosticCode    string                         `json:"diagnostic_code,omitempty"`
+}
+
+// ExecutionEvidence belongs only to invocation display, never receipt payloads.
+type ExecutionEvidence struct {
+	Version     int                           `json:"version"`
+	Disposition execution.DispatchDisposition `json:"disposition"`
+}
+
+func (e *ExecutionEvidence) ValidFor(state execution.ExecutionState) bool {
+	return e != nil && e.Version == 1 && ((state == execution.ExecutionStateRejected && e.Disposition == execution.DispatchNotSubmitted) ||
+		(state == execution.ExecutionStateUnresolved && (e.Disposition == execution.DispatchInProgress || e.Disposition == execution.DispatchUnknown)))
 }
 
 func Messages(result execution.ExecutionResult) []tools.ToolInvokeMessage {
 	metadata := ResultMetadata{State: result.State, Confirmation: result.Confirmation, DecisionID: result.DecisionID, OutcomeID: result.Outcome.ID, OutcomeStatus: result.Outcome.Status, DiagnosticCode: result.Outcome.DiagnosticCode}
+	if result.Evidence.ValidFor(result.State) {
+		metadata.ExecutionEvidence = &ExecutionEvidence{Version: 1, Disposition: result.Evidence.Disposition}
+		metadata.DiagnosticCode = string(result.Evidence.DiagnosticCode)
+	}
 	data := map[string]any{"state": string(result.State)}
+	if metadata.ExecutionEvidence != nil {
+		data["execution_evidence"] = metadata.ExecutionEvidence
+		data["diagnostic_code"] = metadata.DiagnosticCode
+	}
 	if result.State == execution.ExecutionStateCompleted {
 		if value, ok := result.Value.(map[string]any); ok {
 			data = value
@@ -49,6 +69,8 @@ func ResultFromMessage(message tools.ToolInvokeMessage) (ResultMetadata, bool) {
 		return ResultMetadata{}, false
 	}
 	switch result.State {
+	case execution.ExecutionStateRejected, execution.ExecutionStateUnresolved:
+		ok = result.Confirmation == nil && result.OutcomeID == uuid.Nil && result.ExecutionEvidence.ValidFor(result.State)
 	case execution.ExecutionStateRequiresConfirmation:
 		ok = result.Confirmation != nil && result.OutcomeID == uuid.Nil && result.DecisionID == uuid.Nil
 	case execution.ExecutionStateBlocked:

@@ -46,6 +46,7 @@ const expectedPaths = [
   '/connectors/{connectorId}/onboarding-flows',
   '/connector-connections/{connectionId}/onboarding-flows',
   '/connectors/onboarding-flows/{flowId}',
+  '/connectors/onboarding-flows/{flowId}/actions',
   '/connector-preferences/chat/me',
   '/connector-preferences/chat/me/{connectorId}',
   '/connectors/catalog',
@@ -54,6 +55,7 @@ const expectedPaths = [
   '/connectors/key-setups/{attemptId}',
   '/connector-connections',
   '/connector-connections/{connectionId}',
+  '/connector-connections/{connectionId}/operation-policy',
   '/connector-connections/{connectionId}/reconnect',
   '/connector-connections/{connectionId}/diagnostics',
   '/connector-connections/{connectionId}/removal-impact',
@@ -72,6 +74,16 @@ assert.equal(
 );
 
 const schemas = contract.components.schemas;
+assert.equal(Object.keys(contract.paths).some(route => /oauth/i.test(route)), false);
+assert.deepEqual(schemas.MailProviderEvidence.properties.provider.enum, ['gmail', 'qqmail', 'netease163']);
+assert.deepEqual(schemas.OperationPolicyUpdate.required, ['expected_revision', 'operation_ids']);
+assert.equal(schemas.OperationPolicyUpdate.additionalProperties, false);
+assert.equal(schemas.OperationPolicyUpdate.properties.operation_ids.uniqueItems, true);
+assert.equal(schemas.PersonalConnection.properties.allowed_operation_ids.type, 'array');
+const policy = contract.paths['/connector-connections/{connectionId}/operation-policy'].put;
+assert.ok(policy.parameters.some(p => p.$ref === '#/components/parameters/IdempotencyKey'));
+assert.equal(policy.responses['200'].headers['Cache-Control'].schema.const, 'no-store');
+assert.ok(policy.responses['409']);
 assert.deepEqual(Object.keys(contract.paths['/connectors/pending-setups']), ['get']);
 assert.deepEqual(Object.keys(contract.paths['/connectors/pending-setups/{pendingId}']), ['parameters','get','delete']);
 assert.equal(schemas.ConnectorPendingSetup.additionalProperties,false);
@@ -103,7 +115,7 @@ assert.equal(schemas.AppCredentialValues.properties.app_secret.writeOnly, true);
 assert.equal(schemas.AppCredentialValues.additionalProperties, false);
 assert.deepEqual(schemas.AppCredentialValues.required, ['region', 'app_id', 'app_secret']);
 assert.equal(schemas.ConnectorCatalogItem.required.includes('extension_schema_version'), false);
-assert.equal(schemas.ConnectorCatalogItem.properties.extension_schema_version.const, '1.1.0');
+assert.deepEqual(schemas.ConnectorCatalogItem.properties.extension_schema_version.enum, ['1.1.0', '1.2.0', '1.3.0', '1.4.0', '1.5.0']);
 assert.equal(schemas.AppProviderEvidence.properties.events_enabled.const, false);
 assert.equal(schemas.AppProviderEvidence.properties.user_authorization_enabled.const, false);
 assert.equal(schemas.ConnectorOnboardingFlow.additionalProperties, false);
@@ -274,11 +286,16 @@ assert.deepEqual(schemas.ConnectorRuntimeConfirmationCommand.required, [
 assert.deepEqual(Object.keys(schemas.ConnectorRuntimeConfirmationCommand.properties), [
   'route_receipt',
   'decision',
+  'remember_for_session',
 ]);
 assert.deepEqual(schemas.ConnectorRuntimeConfirmationCommand.properties.decision.enum, [
   'confirmed',
   'cancelled',
 ]);
+assert.equal(
+  schemas.ConnectorRuntimeConfirmationCommand.properties.remember_for_session.type,
+  'boolean'
+);
 
 const responseRoots = [
   'ConnectorCatalogItem',
@@ -361,7 +378,6 @@ for (const property of forbiddenResponseProperties) {
 const publicContractText = JSON.stringify({ paths: contract.paths, schemas });
 for (const forbiddenConcept of [
   'complete-setup',
-  'oauth',
   'credential_source',
   'allowed_action_ids',
 ]) {

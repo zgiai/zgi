@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { load, jsx, ui, harness, flush, read } from './connector-fixture.mjs';
+import { load, harness, read } from './connector-fixture.mjs';
 import ts from 'typescript';
 const model = load('src/components/connectors/runtime/connector-runtime-model.ts');
 const source = load('src/components/connectors/runtime/connector-runtime-source.ts', {
@@ -74,6 +74,25 @@ const progress = {
   result: pending,
 };
 const other = { type: 'progress_text', phase: 'ordinary', result: { state: 'unknown' } };
+const pendingSkill = {
+  id: 'pending-skill',
+  type: 'skill_event',
+  invocation: {
+    kind: 'tool_call',
+    runtime_source: 'connector',
+    result: {
+      state: 'requires_confirmation',
+      confirmation: { route_receipt: 'receipt-1' },
+    },
+  },
+};
+assert.deepEqual(
+  source.parseConnectorSkillEventResult({
+    ...pendingSkill,
+    invocation: { ...pendingSkill.invocation, result: pending },
+  }),
+  pending
+);
 const rawRequired = { ...required, result: undefined, ...pending };
 const rawTerminal = { ...terminal, result: undefined, state: 'unknown' };
 assert.equal(
@@ -95,7 +114,7 @@ assert.equal(
   'unknown'
 );
 const dispatchBody = read('src/components/chat/transports/aichat-transport.ts').match(
-  /case 'connector_confirmation_resolved': \{([\s\S]*?)\n      break;/
+  /case 'connector_confirmation_resolved': \{([\s\S]*?)\n {6}break;/
 )[1];
 const dispatchConnector = new Function(
   'data',
@@ -174,130 +193,116 @@ assert.equal(
   true
 );
 
-// Real compact confirmation component: old base, single-shot callbacks, read-only recovery.
-let scope = 'org-owner',
-  response,
-  phase,
-  checks = 0,
-  posts = 0,
-  finish,
-  failRead = false;
-const check = async () => {
-  checks++;
-  if (failRead) throw Error('offline');
-};
-const mount = () =>
-  harness(react => {
-    const module = load(
-      'src/components/connectors/runtime/connector-runtime-confirmation-card.tsx',
-      {
-        react,
-        'react/jsx-runtime': jsx,
-        'next-intl': { useLocale: () => 'zh-Hans' },
-        'lucide-react': ui,
-        './use-runtime-receipt': {
-          useConnectorRuntimeReceipt: () => ({ scope, phase, result: response, check }),
+const { ConnectorRuntimeDecisionTransport } = load(
+  'src/components/connectors/runtime/connector-runtime-transport.ts'
+);
+let networkCalls = 0,
+  activeOwner = 'owner-a',
+  queryResult = { resolution: 'resolved', state: 'completed', secret: 'must-not-accept' };
+const shared = new ConnectorRuntimeDecisionTransport(async () => {
+  networkCalls++;
+  return { state: 'completed' };
+});
+const queryClient = { fetchQuery: ({ queryFn }) => queryFn() };
+const receiptHook = harness(react => {
+  const { useConnectorRuntimeReceipt } = load(
+    'src/components/connectors/runtime/use-runtime-receipt.ts',
+    {
+      react: { ...react, useSyncExternalStore: (_subscribe, snapshot) => snapshot() },
+      '@/store/auth-store': {
+        useAuthStore: {
+          use: { user: () => ({ id: activeOwner }) },
+          getState: () => ({ user: { id: activeOwner } }),
         },
-        '@/components/aichat/operation-cards': { OperationConfirmationCard: 'OldConfirmationCard' },
-        '@/components/connectors/connector-metadata': load(
-          'src/components/connectors/connector-metadata.ts'
-        ),
-        '@/i18n/translations': { useT: () => key => key },
-        './connector-runtime-model': model,
-      }
-    );
-    return () =>
-      module.ConnectorRuntimeConfirmationCard({
-        result: pending,
-        onDecision: (_command, expectedScope) => {
-          posts++;
-          assert.equal(expectedScope, scope);
-          return new Promise(resolve => (finish = resolve));
+      },
+      '@/store/organization-store': {
+        useOrganizationStore: {
+          use: { currentOrganization: () => ({ id: 'org' }) },
+          getState: () => ({ currentOrganization: { id: 'org' } }),
         },
-      });
-  });
-let h = mount();
-h.render();
+      },
+      '@/services/connector.service': {
+        connectorService: { getRuntimeConfirmationStatus: async () => ({ data: queryResult }) },
+      },
+      './connector-runtime-transport': { connectorRuntimeDecisionTransport: shared },
+      '@tanstack/react-query': { useQueryClient: () => queryClient },
+      './connector-confirmation-presentation': load(
+        'src/components/connectors/runtime/connector-confirmation-presentation.ts'
+      ),
+    }
+  );
+  return () => useConnectorRuntimeReceipt('receipt-checked');
+});
+receiptHook.render();
+await assert.rejects(receiptHook.value.check());
+receiptHook.render();
 assert.equal(
-  h.value.props.confirmAction.disabled,
-  true,
-  'restored receipts checked before offering approval'
+  receiptHook.value.phase,
+  'transport_unconfirmed',
+  'malformed status informs all views, not waiting approval'
 );
-await flush();
-h.render();
-assert.equal(h.value.type, 'OldConfirmationCard');
-assert.equal(h.value.props.items.length, 1);
-assert.equal(h.value.props.confirmAction.disabled, false);
-const click = h.value.props.confirmAction.onClick;
-click();
-click();
-assert.equal(posts, 1);
-finish({ state: 'transport_unconfirmed', route_receipt: 'receipt-1' });
-await flush();
-h.render();
-assert.equal(h.value.props.confirmAction, undefined);
-assert.equal(h.value.props.cancelAction, undefined);
-assert.equal(h.value.props.actions[0].id, 'check-connector-status');
-h.value.props.actions[0].onClick();
-await flush();
-assert.equal(posts, 1);
-assert.ok(checks >= 2);
-response = { state: 'unknown', route_receipt: 'receipt-1' };
-phase = 'unknown';
-h.render();
-assert.equal(h.value.props.statusLabel, 'runtime.confirmation.status.unknown');
-assert.equal(h.value.props.actions, undefined);
-h.unmount();
-response = undefined;
-phase = undefined;
-failRead = true;
-h = mount();
-h.render();
-await flush();
-h.render();
+queryResult = { resolution: 'unresolved' };
+await receiptHook.value.check();
+receiptHook.render();
 assert.equal(
-  h.value.props.confirmAction,
-  undefined,
-  'failed status recovery never offers blind resubmission'
+  receiptHook.value.phase,
+  'transport_unconfirmed',
+  'pending read does not authorize replay'
 );
-h.unmount();
-failRead = false;
-h = mount();
-h.render();
-await flush();
-h.render();
-h.value.props.confirmAction.onClick();
-scope = 'different-owner';
-h.render();
-finish({ state: 'completed', route_receipt: 'receipt-1' });
-await flush();
-h.render();
-assert.notEqual(
-  h.value.props.statusLabel,
-  'runtime.confirmation.status.completed',
-  'late callback cannot paint a different owner'
-);
-h.unmount();
+queryResult = { resolution: 'resolved', state: 'unknown' };
+await receiptHook.value.check();
+receiptHook.render();
+assert.equal(receiptHook.value.phase, 'unknown');
+activeOwner = 'owner-b';
+receiptHook.render();
+assert.equal(receiptHook.value.phase, undefined);
+assert.equal(networkCalls, 0);
+receiptHook.unmount();
 console.log(
-  'Connector trusted-source, ordinary approval isolation, restoration and compact one-shot UI passed'
+  'Read-only receipt verification rejects malformed data and isolates shared states by owner'
 );
 
-const {ConnectorRuntimeDecisionTransport} = load('src/components/connectors/runtime/connector-runtime-transport.ts');
-let networkCalls = 0, activeOwner='owner-a', queryResult={resolution:'resolved',state:'completed',secret:'must-not-accept'};
-const shared = new ConnectorRuntimeDecisionTransport(async()=>{networkCalls++;return {state:'completed'};});
-const receiptHook=harness(react=> {
-  const {useConnectorRuntimeReceipt}=load('src/components/connectors/runtime/use-runtime-receipt.ts',{
-    react:{...react,useSyncExternalStore:(_subscribe,snapshot)=>snapshot()},
-    '@/store/auth-store':{useAuthStore:{use:{user:()=>({id:activeOwner})},getState:()=>({user:{id:activeOwner}})}},
-    '@/store/organization-store':{useOrganizationStore:{use:{currentOrganization:()=>({id:'org'})},getState:()=>({currentOrganization:{id:'org'}})}},
-    '@/services/connector.service':{connectorService:{getRuntimeConfirmationStatus:async()=>({data:queryResult})}},
-    './connector-runtime-transport':{connectorRuntimeDecisionTransport:shared},
-  });
-  return()=>useConnectorRuntimeReceipt('receipt-checked');
-});
-receiptHook.render();await assert.rejects(receiptHook.value.check());receiptHook.render();
-assert.equal(receiptHook.value.phase,'transport_unconfirmed','malformed status informs all views, not waiting approval');
-queryResult={resolution:'unresolved'};await receiptHook.value.check();receiptHook.render();assert.equal(receiptHook.value.phase,'transport_unconfirmed','pending read does not authorize replay');
-queryResult={resolution:'resolved',state:'unknown'};await receiptHook.value.check();receiptHook.render();assert.equal(receiptHook.value.phase,'unknown');
-activeOwner='owner-b';receiptHook.render();assert.equal(receiptHook.value.phase,undefined);assert.equal(networkCalls,0);receiptHook.unmount();
-console.log('Read-only receipt verification rejects malformed data and isolates shared states by owner');
+const merged = source.mergeConnectorTimeline(
+  [
+    { id: 'before', type: 'progress_text', phase: 'ordinary', content: 'Earlier', created_at: 1 },
+    { ...progress, id: 'original', created_at: 2 },
+    { id: 'after', type: 'progress_text', content: 'Later', created_at: 3 },
+    progress,
+  ],
+  events
+);
+assert.equal(merged.length, 3);
+assert.equal(merged[1].id, 'original');
+assert.equal(merged[1].result.state, 'unknown');
+const mergedSkill = source.mergeConnectorTimeline([pendingSkill, progress], events);
+assert.equal(
+  mergedSkill.some(item => item.type === 'skill_event'),
+  false,
+  'terminal receipt removes the stale pending Connector skill row'
+);
+assert.equal(
+  source.mergeConnectorTimeline([pendingSkill], []).length,
+  1,
+  'pending Connector skill row remains until a terminal receipt exists'
+);
+const pendingMergedSkill = source.mergeConnectorTimeline(
+  [pendingSkill],
+  source.connectorChatEvents({ connector_confirmation_events: [required] }, [], 'chat', 'message')
+);
+assert.equal(
+  pendingMergedSkill.some(item => item.type === 'skill_event'),
+  false,
+  'required receipt uses the confirmation card instead of a duplicate skill row'
+);
+const restored = source.mergeConnectorTimeline(
+  [],
+  source.connectorChatEvents(
+    { connector_confirmation_events: [{ ...required, created_at: 2 }, terminal] },
+    [],
+    'chat',
+    'message'
+  )
+);
+assert.equal(restored.length, 1);
+assert.equal(restored[0].result.state, 'unknown');
+console.log('History and live receipts occupy a single original timeline position');

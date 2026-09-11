@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"strings"
+
 	"github.com/google/uuid"
 	connectorcatalog "github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
 	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
-	"io"
-	"strings"
 )
 
 const (
@@ -54,11 +55,23 @@ func (protector *ContinuationPayloadProtector) Seal(
 		return "", connectorContinuationProtectorError()
 	}
 	defer clear(payload)
+	var base connectorContinuationPayload
+	if json.Unmarshal(payload, &base) != nil {
+		return "", connectorContinuationProtectorError()
+	}
+	base.Version = 3
+	v3, marshalErr := json.Marshal(connectorContinuationPayloadV3{connectorContinuationPayload: base, Preview: frozen.Preview})
+	if marshalErr != nil {
+		return "", connectorContinuationProtectorError()
+	}
+	defer clear(v3)
+	payload = v3
+	aad.Version = 3
 	envelope, err := protector.cipher.Protect(aad, payload)
 	if err != nil || strings.TrimSpace(envelope) == "" {
 		return "", connectorContinuationProtectorError()
 	}
-	return connectorexecution.ContinuationPayloadEnvelope(envelope), nil
+	return connectorexecution.ContinuationPayloadEnvelope("v3:" + envelope), nil
 }
 
 func (protector *ContinuationPayloadProtector) Open(
@@ -75,17 +88,47 @@ func (protector *ContinuationPayloadProtector) Open(
 	if err != nil {
 		return connectorexecution.FrozenConfirmationRequest{}, connectorContinuationProtectorError()
 	}
-	payload, err := protector.cipher.Open(aad, string(envelope))
+	wireEnvelope := string(envelope)
+	isV3 := strings.HasPrefix(wireEnvelope, "v3:")
+	if isV3 {
+		aad.Version = 3
+		wireEnvelope = strings.TrimPrefix(wireEnvelope, "v3:")
+	}
+	payload, err := protector.cipher.Open(aad, wireEnvelope)
 	if err != nil {
 		return connectorexecution.FrozenConfirmationRequest{}, connectorContinuationProtectorError()
 	}
 	defer clear(payload)
+	var preview *connectorexecution.ConfirmationPreview
+	if isV3 {
+		var wire connectorContinuationPayloadV3
+		decoder := json.NewDecoder(bytes.NewReader(payload))
+		decoder.DisallowUnknownFields()
+		if decoder.Decode(&wire) != nil || decoder.Decode(&struct{}{}) != io.EOF || wire.Version != 3 {
+			return connectorexecution.FrozenConfirmationRequest{}, connectorContinuationProtectorError()
+		}
+		preview = wire.Preview
+		wire.Version = 2
+		legacy, marshalErr := json.Marshal(wire.connectorContinuationPayload)
+		if marshalErr != nil {
+			return connectorexecution.FrozenConfirmationRequest{}, connectorContinuationProtectorError()
+		}
+		defer clear(legacy)
+		payload = legacy
+	}
 	frozen, err := unmarshalConnectorContinuationPayload(payload)
 	if err != nil || frozen.RouteReceipt != receipt || frozen.Request.OrganizationID != organizationID ||
 		frozen.Request.Confirmation != nil {
 		return connectorexecution.FrozenConfirmationRequest{}, connectorContinuationProtectorError()
 	}
+	frozen.Preview = preview
 	return frozen, nil
+}
+
+// The original strict v2 payload remains unchanged.
+type connectorContinuationPayloadV3 struct {
+	connectorContinuationPayload
+	Preview *connectorexecution.ConfirmationPreview `json:"preview"`
 }
 
 type connectorContinuationPayload struct {

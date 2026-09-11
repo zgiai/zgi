@@ -1,8 +1,17 @@
 'use client';
 
 import { useState } from 'react';
+import { useLocale } from 'next-intl';
+import { personalConnectionDisplayName } from './connections/personal-connections-model';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { useT } from '@/i18n';
 import { connectorService } from '@/services/connector.service';
 import type {
@@ -37,6 +46,7 @@ export function ConnectorUnavailableReferences({
   pendingReferenceCommands = [],
 }: ConnectorReferenceRepairProps & { target: ConnectorTargetRef; enabled?: boolean }) {
   const t = useT('connectors');
+  const locale = useLocale();
   const client = useQueryClient();
   const key = ['connectors', 'unavailable-references', target];
   const references = useQuery({
@@ -150,40 +160,46 @@ export function ConnectorUnavailableReferences({
             </p>
             {mutable && !staged ? (
               <>
-                <select
-                  aria-label={t('references.connection')}
+                <Select
                   value={selection[item.id] ?? ''}
-                  className="w-full rounded border bg-background p-2"
-                  onChange={event => {
-                    setSelection(previous => ({ ...previous, [item.id]: event.target.value }));
+                  disabled={Boolean(pending)}
+                  onValueChange={value => {
+                    setSelection(previous => ({ ...previous, [item.id]: value }));
                     setOperation(previous => ({ ...previous, [item.id]: '' }));
                   }}
                 >
-                  <option value="">{t('references.connection')}</option>
-                  {(connections.data?.data.items ?? [])
-                    .filter(value => value.state === 'ready')
-                    .map(value => (
-                      <option key={value.id} value={value.id}>
-                        {value.name || value.external_display_name || value.connector_id}
-                      </option>
-                    ))}
-                </select>
+                  <SelectTrigger aria-label={t('references.connection')}>
+                    <SelectValue placeholder={t('references.connection')} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(connections.data?.data.items ?? [])
+                      .filter(value => value.state === 'ready')
+                      .map(value => (
+                        <SelectItem key={value.id} value={value.id}>
+                          {personalConnectionDisplayName(value, value.connector_id, locale)}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
                 {target.type === 'workflow' ? (
-                  <select
-                    aria-label={t('references.operation')}
-                    className="w-full rounded border bg-background p-2"
+                  <Select
                     value={operation[item.id] ?? ''}
-                    onChange={event =>
-                      setOperation(previous => ({ ...previous, [item.id]: event.target.value }))
+                    disabled={Boolean(pending) || !selection[item.id]}
+                    onValueChange={value =>
+                      setOperation(previous => ({ ...previous, [item.id]: value }))
                     }
                   >
-                    <option value="">{t('references.operation')}</option>
-                    {operations.map(value => (
-                      <option key={value.id} value={value.id}>
-                        {value.name}
-                      </option>
-                    ))}
-                  </select>
+                    <SelectTrigger aria-label={t('references.operation')}>
+                      <SelectValue placeholder={t('references.operation')} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {operations.map(value => (
+                        <SelectItem key={value.id} value={value.id}>
+                          {value.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 ) : null}
                 <div className="flex gap-2">
                   <Button

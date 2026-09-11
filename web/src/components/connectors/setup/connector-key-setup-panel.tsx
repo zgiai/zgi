@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { AlertCircle, LockKeyhole, UserRound } from 'lucide-react';
+import { AlertCircle } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -21,6 +21,8 @@ import { useCreationDefault } from './use-creation-default';
 import { supportsAppSetup } from './app-setup-state';
 import { supportsMessagingContract } from './messaging-setup-state';
 import { ConnectorMessagingSetupPanel } from './connector-messaging-setup-panel';
+import { supportsMailSetup } from './mail-setup-state';
+import { ConnectorMailSetupPanel } from './connector-mail-setup-panel';
 
 function errorText(t: ScopedTranslations<'connectors'>, code: string | undefined): string {
   if (
@@ -60,6 +62,7 @@ export interface ConnectorKeySetupPanelProps {
 }
 
 export function ConnectorKeySetupPanel(props: ConnectorKeySetupPanelProps) {
+  if (supportsMailSetup(props.connector)) return <ConnectorMailSetupPanel {...props} />;
   if (supportsMessagingContract(props.connector)) {
     return <ConnectorMessagingSetupPanel {...props} />;
   }
@@ -118,9 +121,7 @@ function LegacyConnectorKeySetupPanel({
       {!embedded ? (
         <CardHeader>
           <CardTitle>{title ?? t('setup.title')}</CardTitle>
-          <p className="text-sm leading-5 text-muted-foreground">
-            {description ?? t('setup.description')}
-          </p>
+          {description && <p className="text-sm text-muted-foreground">{description}</p>}
         </CardHeader>
       ) : null}
       <CardContent className={embedded ? 'space-y-5 p-0' : 'space-y-5'}>
@@ -164,7 +165,6 @@ function LegacyConnectorKeySetupPanel({
               }}
               submitLabel={submitLabel}
             />
-            <p className="text-xs leading-5 text-muted-foreground">{t('setup.nameAfterReady')}</p>
           </div>
         ) : null}
 
@@ -175,19 +175,6 @@ function LegacyConnectorKeySetupPanel({
           statusRefreshing={setup.statusRefreshing}
           onRetryStatus={setup.retryStatus}
         />
-
-        {setup.state.status !== 'ready' ? (
-          <div className="space-y-2 border-t pt-4 text-xs leading-5 text-muted-foreground">
-            <p className="flex items-start gap-2">
-              <LockKeyhole aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
-              <span>{t('setup.securityNotice')}</span>
-            </p>
-            <p className="flex items-start gap-2">
-              <UserRound aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
-              <span>{t('setup.ownerOnly')}</span>
-            </p>
-          </div>
-        ) : null}
       </CardContent>
     </Card>
   );

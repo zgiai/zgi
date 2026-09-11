@@ -1,5 +1,6 @@
 'use client';
 
+import { personalConnectionDisplayName } from '@/components/connectors/connections/personal-connections-model';
 import { Trash2 } from 'lucide-react';
 import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { localizeConnectorCatalogItem } from '@/components/connectors/connector-metadata';
@@ -73,86 +74,91 @@ export function AgentRuntimeConnectorSection({
     >
       <div className="space-y-2">
         {connectorBindings.map(binding => {
-              const connector = connectorCatalogByID.get(binding.connector_id);
-              const connection = connectorConnectionsByID.get(binding.connection_id);
-              const unavailable = !connector || !connection || connection.state !== 'ready';
-              const title = connection?.name ?? connector?.name ?? binding.connector_id;
-              const description = connection?.external_display_name
-                ? connectorT('picker.connectedAs', { name: connection.external_display_name })
-                : (connector?.description ?? connectorT('status.unavailable'));
-              const classification = connector?.classification ?? 'connector';
-              const status = connection?.state ?? 'unavailable';
+          const connector = connectorCatalogByID.get(binding.connector_id);
+          const connection = connectorConnectionsByID.get(binding.connection_id);
+          const unavailable = !connector || !connection || connection.state !== 'ready';
+          const title = connection
+            ? personalConnectionDisplayName(
+                connection,
+                connector?.name ?? binding.connector_id,
+                locale
+              )
+            : (connector?.name ?? binding.connector_id);
+          const description = connection?.external_display_name
+            ? connectorT('picker.connectedAs', { name: connection.external_display_name })
+            : (connector?.description ?? connectorT('status.unavailable'));
+          const classification = connector?.classification ?? 'connector';
+          const status = connection?.state ?? 'unavailable';
 
-              return (
-                <AgentRuntimeResourceCard
-                  key={`${binding.connector_id}:${binding.connection_id}`}
-                  icon={
-                    <ConnectorIcon
-                      connectorId={binding.connector_id}
-                      name={title}
-                      icon={connector?.icon}
-                      classification={classification}
-                      className="size-8 border-0 shadow-none"
-                    />
-                  }
-                  title={title}
-                  description={description}
-                  error={unavailable}
-                  healthItem={bindingHealth?.items.find(
-                    item =>
-                      item.binding_type === 'connector_connection' &&
-                      item.resource_id === binding.connection_id
-                  )}
-                  action={
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      isIcon
-                      className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
-                      aria-label={t('connector.remove', { name: title })}
-                      disabled={readOnly}
-                      onClick={() =>
-                        onChangeConnectorBindings(
-                          connectorBindings.filter(
-                            item =>
-                              item.connector_id !== binding.connector_id ||
-                              item.connection_id !== binding.connection_id
-                          )
-                        )
-                      }
-                    >
-                      <Trash2 className="size-4" />
-                    </Button>
+          return (
+            <AgentRuntimeResourceCard
+              key={`${binding.connector_id}:${binding.connection_id}`}
+              icon={
+                <ConnectorIcon
+                  connectorId={binding.connector_id}
+                  name={title}
+                  icon={connector?.icon}
+                  classification={classification}
+                  className="size-8 border-0 shadow-none"
+                />
+              }
+              title={title}
+              description={description}
+              error={unavailable}
+              healthItem={bindingHealth?.items.find(
+                item =>
+                  item.binding_type === 'connector_connection' &&
+                  item.resource_id === binding.connection_id
+              )}
+              action={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  isIcon
+                  className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
+                  aria-label={t('connector.remove', { name: title })}
+                  disabled={readOnly}
+                  onClick={() =>
+                    onChangeConnectorBindings(
+                      connectorBindings.filter(
+                        item =>
+                          item.connector_id !== binding.connector_id ||
+                          item.connection_id !== binding.connection_id
+                      )
+                    )
                   }
                 >
-                  <div className="flex flex-wrap gap-1">
-                    <Badge variant="outline" className="text-[10px]">
-                      {classification === 'data_source'
-                        ? connectorT('classification.dataSource')
-                        : connectorT('classification.connector')}
-                    </Badge>
-                    <Badge
-                      variant={
-                        status === 'ready'
-                          ? 'success'
-                          : status === 'reconnect_required'
-                            ? 'warning'
-                            : 'subtle'
-                      }
-                      className="text-[10px]"
-                    >
-                      {status === 'ready'
-                        ? connectorT('status.ready')
-                        : status === 'reconnect_required'
-                          ? connectorT('status.reconnectRequired')
-                          : connectorT('status.unavailable')}
-                    </Badge>
-                  </div>
-                </AgentRuntimeResourceCard>
-              );
-            })}
-
+                  <Trash2 className="size-4" />
+                </Button>
+              }
+            >
+              <div className="flex flex-wrap gap-1">
+                <Badge variant="outline" className="text-[10px]">
+                  {classification === 'data_source'
+                    ? connectorT('classification.dataSource')
+                    : connectorT('classification.connector')}
+                </Badge>
+                <Badge
+                  variant={
+                    status === 'ready'
+                      ? 'success'
+                      : status === 'reconnect_required'
+                        ? 'warning'
+                        : 'subtle'
+                  }
+                  className="text-[10px]"
+                >
+                  {status === 'ready'
+                    ? connectorT('status.ready')
+                    : status === 'reconnect_required'
+                      ? connectorT('status.reconnectRequired')
+                      : connectorT('status.unavailable')}
+                </Badge>
+              </div>
+            </AgentRuntimeResourceCard>
+          );
+        })}
       </div>
     </AgentRuntimeResourceSection>
   );

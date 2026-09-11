@@ -13,20 +13,13 @@ import type {
   ConnectorPickerBindingRef,
 } from '@/components/connectors/picker';
 import { localizeConnectorCatalogItem } from '@/components/connectors/connector-metadata';
-import { ConnectorKeySetupPanel } from '@/components/connectors/setup/connector-key-setup-panel';
+import { ConnectorCreateContent } from '@/components/connectors/setup/connector-create-dialog';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { Dialog, DialogContent } from '@/components/ui/dialog';
 import {
   Select,
   SelectTrigger,
@@ -43,7 +36,7 @@ import { useBuiltinTools } from '@/hooks/workflow/use-builtin-tools';
 import { mapParametersToFormFields, coerceValue } from '@/utils/tool-helpers';
 import { useLocale } from '@/hooks/use-locale';
 import type { WorkflowVariable } from '@/components/workflow/store';
-import { ArrowLeft, ChevronsUpDown, Wrench, Info, Variable } from 'lucide-react';
+import { ChevronsUpDown, Wrench, Info, Variable } from 'lucide-react';
 import { useWorkflowStore } from '../../../store';
 import OutputVariablesView from '../../../common/output-variables-view';
 import WorkflowValueEditor, {
@@ -208,6 +201,7 @@ const ToolManager: React.FC<ToolManagerProps> = ({ id: nodeId, className, readOn
   const { pickerBindings, selectedConnectionLabel } = useMemo(
     () =>
       workflowConnectorSelection({
+        locale,
         workflowID: workflowId,
         nodeID: nodeId,
         connectorID,
@@ -228,6 +222,7 @@ const ToolManager: React.FC<ToolManagerProps> = ({ id: nodeId, className, readOn
       nodeData?.connector?.revision,
       selectedPersonalConnection,
       workflowId,
+      locale,
     ]
   );
 
@@ -406,7 +401,13 @@ const ToolManager: React.FC<ToolManagerProps> = ({ id: nodeId, className, readOn
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center overflow-hidden">
             {isConnector ? (
-              <ConnectorIcon connectorId={connectorID} name={connectorID} icon={providerIcon} classification="connector" className="size-8 rounded-full border-0 shadow-none" />
+              <ConnectorIcon
+                connectorId={connectorID}
+                name={connectorID}
+                icon={providerIcon}
+                classification="connector"
+                className="size-8 rounded-full border-0 shadow-none"
+              />
             ) : providerIcon ? (
               // <ImageSafe
               //   src={providerIcon}
@@ -494,48 +495,28 @@ const ToolManager: React.FC<ToolManagerProps> = ({ id: nodeId, className, readOn
             }}
           >
             <DialogContent size="md" className="overflow-hidden p-0">
-              <DialogHeader className="border-b pb-4 pr-12">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="mb-2 w-fit px-2"
-                  onClick={() => setConnectorSetup(undefined)}
-                >
-                  <ArrowLeft aria-hidden="true" className="size-4" />
-                  {connectorT('picker.backToChoices')}
-                </Button>
-                <DialogTitle>
-                  {connectorT('picker.setupTitle', {
-                    connector: localizedSetupConnector.name,
-                  })}
-                </DialogTitle>
-                <DialogDescription>
-                  {connectorT('picker.subtitle', {
-                    target: nodeData?.title || connectorT('picker.targetTypes.workflow'),
-                  })}
-                </DialogDescription>
-              </DialogHeader>
-              <DialogBody className="p-5">
-                <ConnectorKeySetupPanel
-                  connector={localizedSetupConnector}
-                  submitLabel={connectorT(
-                    connectorSetup.replacedBinding
-                      ? 'picker.actions.addConnection'
-                      : 'picker.actions.connectAndAdd'
-                  )}
-                  onReady={connection => {
-                    if (connectorSetup.replacedBinding || currentConnectionID) {
-                      setConnectorSetup(undefined);
-                      toast.success(connectorT('picker.connectionReadyNotAdded'));
-                      return;
-                    }
-                    setConnectorConnection(connection.id);
+              <ConnectorCreateContent
+                onBack={() => setConnectorSetup(undefined)}
+                description={connectorT('picker.subtitle', {
+                  target: nodeData?.title || connectorT('picker.targetTypes.workflow'),
+                })}
+                connector={localizedSetupConnector}
+                submitLabel={connectorT(
+                  connectorSetup.replacedBinding
+                    ? 'picker.actions.addConnection'
+                    : 'picker.actions.connectAndAdd'
+                )}
+                onReady={connection => {
+                  if (connectorSetup.replacedBinding || currentConnectionID) {
                     setConnectorSetup(undefined);
-                    setShowConnectorPicker(false);
-                  }}
-                />
-              </DialogBody>
+                    toast.success(connectorT('picker.connectionReadyNotAdded'));
+                    return;
+                  }
+                  setConnectorConnection(connection.id);
+                  setConnectorSetup(undefined);
+                  setShowConnectorPicker(false);
+                }}
+              />
             </DialogContent>
           </Dialog>
         ) : (

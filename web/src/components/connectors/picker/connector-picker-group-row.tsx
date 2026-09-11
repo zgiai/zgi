@@ -1,6 +1,8 @@
 'use client';
 
 import { useRef } from 'react';
+import { useLocale } from 'next-intl';
+import { personalConnectionDisplayName } from '../connections/personal-connections-model';
 import { ChevronDown, CircleAlert, KeyRound, Minus, Plus, Star } from 'lucide-react';
 import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { Button } from '@/components/ui/button';
@@ -25,6 +27,7 @@ import type { ConnectorPickerRow } from './connector-picker-model';
 
 interface ConnectorPickerGroupRowProps {
   group: ConnectorPickerMenuGroup;
+  hideCreate?: boolean;
   targetLabel: string;
   disabled: boolean;
   preference?: ConnectorChatDefault;
@@ -36,6 +39,7 @@ interface ConnectorPickerGroupRowProps {
 
 export function ConnectorPickerGroupRow({
   group,
+  hideCreate = false,
   targetLabel,
   disabled,
   preference,
@@ -45,11 +49,12 @@ export function ConnectorPickerGroupRow({
   onResume,
 }: ConnectorPickerGroupRowProps) {
   const t = useT('connectors');
+  const locale = useLocale();
   const handoffRef = useRef(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const createRow = group.createRow;
+  const createRow = hideCreate ? undefined : group.createRow;
   const groupName = group.name || t('connection.connectorFallback');
-  const summary = connectorPickerGroupSummary(group, preference);
+  const summary = connectorPickerGroupSummary(group, preference, locale);
   const currentAccount = summary.currentAccount;
   const currentName =
     summary.name ||
@@ -190,10 +195,11 @@ export function ConnectorPickerGroupRow({
               {group.accounts.map(row => {
                 const connection = row.connection;
                 if (!connection) return null;
-                const name =
-                  connection.name.trim() ||
-                  connection.external_display_name ||
-                  t('connections.unknownConnection');
+                const name = personalConnectionDisplayName(
+                  connection,
+                  t('connections.unknownConnection'),
+                  locale
+                );
                 const usable = row.state === 'ready' || row.state === 'added';
                 const current =
                   summary.inUse && group.currentBinding?.connection_id === connection.id;

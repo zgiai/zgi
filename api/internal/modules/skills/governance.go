@@ -1112,6 +1112,8 @@ func sessionGrantFromMap(input map[string]interface{}) toolgovernance.SessionGra
 		SkillID:      stringMapValue(input, "skill_id", "skillId"),
 		ProviderType: stringMapValue(input, "provider_type", "providerType"),
 		ProviderID:   stringMapValue(input, "provider_id", "providerId"),
+		ConnectionID: stringMapValue(input, "connection_id", "connectionId"),
+		BindingID:    stringMapValue(input, "binding_id", "bindingId"),
 		ToolID:       stringMapValue(input, "tool_id", "toolId"),
 		Effect:       toolgovernance.Effect(stringMapValue(input, "effect")),
 		AssetType:    stringMapValue(input, "asset_type", "assetType"),

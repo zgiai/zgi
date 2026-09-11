@@ -12,6 +12,13 @@ func messagingRiskPolicies() []TrustedOperationRiskPolicy {
 		{"wecom", "wecom.identity.get", "wecom_identity_get", RiskTrustedLow},
 		{"wecom", "wecom.sessions.list", "wecom_sessions_list", RiskTrustedLow},
 		{"wecom", "wecom.messages.send", "wecom_messages_send", RiskHigh},
+		{"wecom", "wecom.documents.search", "wecom_documents_search", RiskTrustedLow},
+		{"wecom", "wecom.documents.get", "wecom_documents_get", RiskTrustedLow},
+		{"wecom", "wecom.calendar.list", "wecom_calendar_list", RiskTrustedLow},
+		{"wecom", "wecom.calendar.get", "wecom_calendar_get", RiskTrustedLow},
+		{"wecom", "wecom.calendar.search", "wecom_calendar_search", RiskTrustedLow},
+		{"wecom", "wecom.todos.list", "wecom_todos_list", RiskTrustedLow},
+		{"wecom", "wecom.todos.get", "wecom_todos_get", RiskTrustedLow},
 		{"weixin", "weixin.messages.pull", "weixin_messages_pull", RiskTrustedLow},
 		{"weixin", "weixin.messages.reply", "weixin_messages_reply", RiskHigh},
 	}

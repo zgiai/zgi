@@ -39,10 +39,14 @@ type SetupDescriptor struct {
 }
 
 func (d Definition) IsAppCredentials() bool {
-	return d.ExtensionSchemaVersion == ZGIMetadataSchemaVersion11
+	return d.ExtensionSchemaVersion == ZGIMetadataSchemaVersion11 || d.IsDigitalHumanContract() && d.SetupMethod == SetupMethodAppCredentials
 }
 
 func validateCredentialContract(d Definition) error {
+	d = credentialBase(d)
+	if d.IsMailCredentials() {
+		return validateMailContract(d)
+	}
 	if d.IsMessagingCredentials() {
 		return validateMessagingContract(d)
 	}
@@ -122,6 +126,14 @@ func validateCredentialContract(d Definition) error {
 func ValidateCredentialValues(d Definition, values map[string]string) error {
 	if err := validateCredentialContract(d); err != nil {
 		return err
+	}
+	if d.IsMailCredentials() {
+		copy := make(map[string]string, len(values))
+		for k, v := range values {
+			copy[k] = v
+		}
+		defer clear(copy)
+		return NormalizeMailValuesFor(d.ID, copy)
 	}
 	if d.UsesCredentials() {
 		if len(values) != len(d.CredentialFields) {

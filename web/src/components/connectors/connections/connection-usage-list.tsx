@@ -51,7 +51,6 @@ export function ConnectionUsageList({ bindings, className }: ConnectionUsageList
           <CardTitle>{t('usage.title')}</CardTitle>
           <Badge variant="default">{t('usage.count', { count: bindings.length })}</Badge>
         </div>
-        <p className="text-sm leading-5 text-muted-foreground">{t('usage.description')}</p>
       </CardHeader>
       <CardContent>
         {sortedBindings.length === 0 ? (

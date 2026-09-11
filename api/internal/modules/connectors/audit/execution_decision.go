@@ -28,6 +28,7 @@ type ExecutionDecisionRequest struct {
 	RiskClassification      string
 	Interactive             bool
 	Confirmation            bool
+	Preauthorized           bool
 	CreatedAt               time.Time
 	ExecutionLeaseExpiresAt time.Time
 }
@@ -48,7 +49,7 @@ func NewExecutionDecision(request ExecutionDecisionRequest, status core.Decision
 		}
 	case core.DecisionStatusSubmitted:
 		decisionName = "dispatch"
-		if (request.RiskClassification != "trusted_low" && !request.Confirmation) ||
+		if (request.RiskClassification != "trusted_low" && !request.Confirmation && !request.Preauthorized) ||
 			request.ExecutionLeaseExpiresAt.IsZero() ||
 			!request.ExecutionLeaseExpiresAt.After(request.CreatedAt) {
 			return core.LifecycleDecision{}, invalidInputError()
@@ -83,6 +84,7 @@ func NewExecutionDecision(request ExecutionDecisionRequest, status core.Decision
 			"risk_classification": request.RiskClassification,
 			"interactive":         request.Interactive,
 			"confirmation":        request.Confirmation,
+			"preauthorized":       request.Preauthorized,
 		},
 		CreatedAt: request.CreatedAt.UTC(),
 	}

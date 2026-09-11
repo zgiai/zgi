@@ -39,11 +39,13 @@ type Repository interface {
 }
 
 type DecisionListFilter struct {
-	ConnectorID   core.Identifier
-	ConnectionID  uuid.UUID
-	CorrelationID string
-	Statuses      []core.DecisionStatus
-	Limit         int
+	ConnectorID        core.Identifier
+	ConnectionID       uuid.UUID
+	CorrelationID      string
+	LogicalOperationID string
+	ReceiptID          string
+	Statuses           []core.DecisionStatus
+	Limit              int
 }
 
 type GormRepository struct {
@@ -75,14 +77,14 @@ func (repository *GormRepository) CreateDecision(ctx context.Context, decision c
 	if conflict, err := decisionIdentityExists(db, record); err != nil {
 		return internalError()
 	} else if conflict {
-		return conflictError()
+		return decisionNotWritten{conflictError()}
 	}
 	result := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&record)
 	if result.Error != nil {
 		return internalError()
 	}
 	if result.RowsAffected != 1 {
-		return conflictError()
+		return decisionNotWritten{conflictError()}
 	}
 	return nil
 }
@@ -124,6 +126,9 @@ func (repository *GormRepository) FinalizeConfirmation(
 		}
 		if count != 0 {
 			return conflictError()
+		}
+		if err := requireOpenExecutionClaim(tx, decision); err != nil {
+			return err
 		}
 		result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&record)
 		if result.Error != nil {
@@ -181,6 +186,10 @@ func (repository *GormRepository) ListDecisions(
 	if filter.CorrelationID != "" && !validRequiredText(filter.CorrelationID, 128) {
 		return nil, invalidInputError()
 	}
+	if (filter.LogicalOperationID != "" && !validRequiredText(filter.LogicalOperationID, 128)) ||
+		(filter.ReceiptID != "" && !validRequiredText(filter.ReceiptID, 128)) {
+		return nil, invalidInputError()
+	}
 	for _, status := range filter.Statuses {
 		if !status.Valid() {
 			return nil, invalidInputError()
@@ -204,6 +213,12 @@ func (repository *GormRepository) ListDecisions(
 	}
 	if filter.CorrelationID != "" {
 		query = query.Where("correlation_id = ?", filter.CorrelationID)
+	}
+	if filter.LogicalOperationID != "" {
+		query = query.Where("logical_operation_id = ?", filter.LogicalOperationID)
+	}
+	if filter.ReceiptID != "" {
+		query = query.Where("receipt_id = ?", filter.ReceiptID)
 	}
 	if len(filter.Statuses) > 0 {
 		query = query.Where("status IN ?", filter.Statuses)
@@ -432,7 +447,7 @@ func (repository *GormRepository) getOutcome(
 
 type lifecycleDecisionRecord struct {
 	ID                 uuid.UUID      `gorm:"column:id;type:uuid;primaryKey"`
-	OrganizationID     uuid.UUID      `gorm:"column:organization_id;type:uuid;not null;uniqueIndex:idx_connector_lifecycle_decisions_correlation_status,priority:1;index:idx_connector_lifecycle_decisions_owner_created,priority:1"`
+	OrganizationID     uuid.UUID      `gorm:"column:organization_id;type:uuid;not null;uniqueIndex:idx_connector_decisions_operation_identity,priority:1,where:logical_operation_id IS NOT NULL AND logical_operation_id <> '';uniqueIndex:idx_connector_decisions_lifecycle_identity,priority:1,where:logical_operation_id IS NULL OR logical_operation_id = '';uniqueIndex:idx_connector_decisions_finalization_identity,priority:1,where:decision = 'confirmation_finalization';index:idx_connector_lifecycle_decisions_owner_created,priority:1"`
 	OwnerAccountID     uuid.UUID      `gorm:"column:owner_account_id;type:uuid;not null;index:idx_connector_lifecycle_decisions_owner_created,priority:2"`
 	ActingPrincipalID  uuid.UUID      `gorm:"column:acting_principal_id;type:uuid;not null"`
 	ConnectorID        string         `gorm:"column:connector_id;type:varchar(128);not null"`
@@ -443,11 +458,11 @@ type lifecycleDecisionRecord struct {
 	TargetID           *string        `gorm:"column:target_id;type:varchar(255)"`
 	BindingInstanceID  *string        `gorm:"column:binding_instance_id;type:varchar(255)"`
 	OperationID        *string        `gorm:"column:operation_id;type:varchar(128)"`
-	LogicalOperationID *string        `gorm:"column:logical_operation_id;type:varchar(128)"`
-	Decision           string         `gorm:"column:decision;type:varchar(64);not null;uniqueIndex:idx_connector_lifecycle_decisions_correlation_status,priority:3"`
-	Status             string         `gorm:"column:status;type:varchar(32);not null;uniqueIndex:idx_connector_lifecycle_decisions_correlation_status,priority:4"`
-	CorrelationID      string         `gorm:"column:correlation_id;type:varchar(128);not null;uniqueIndex:idx_connector_lifecycle_decisions_correlation_status,priority:2"`
-	ReceiptID          *string        `gorm:"column:receipt_id;type:varchar(128)"`
+	LogicalOperationID *string        `gorm:"column:logical_operation_id;type:varchar(128);uniqueIndex:idx_connector_decisions_operation_identity,priority:2"`
+	Decision           string         `gorm:"column:decision;type:varchar(64);not null;uniqueIndex:idx_connector_decisions_operation_identity,priority:3;uniqueIndex:idx_connector_decisions_lifecycle_identity,priority:3"`
+	Status             string         `gorm:"column:status;type:varchar(32);not null;uniqueIndex:idx_connector_decisions_operation_identity,priority:4;uniqueIndex:idx_connector_decisions_lifecycle_identity,priority:4"`
+	CorrelationID      string         `gorm:"column:correlation_id;type:varchar(128);not null;uniqueIndex:idx_connector_decisions_lifecycle_identity,priority:2"`
+	ReceiptID          *string        `gorm:"column:receipt_id;type:varchar(128);uniqueIndex:idx_connector_decisions_finalization_identity,priority:2"`
 	Details            datatypes.JSON `gorm:"column:details;type:jsonb;not null"`
 	CreatedAt          time.Time      `gorm:"column:created_at;not null;index:idx_connector_lifecycle_decisions_owner_created,priority:3;index:idx_connector_lifecycle_decisions_connection_created,priority:2"`
 }
@@ -631,16 +646,15 @@ func outcomeMatchesSubmittedDecision(outcome core.OperationOutcome, decision cor
 
 func decisionIdentityExists(db *gorm.DB, record lifecycleDecisionRecord) (bool, error) {
 	var count int64
-	err := db.Model(&lifecycleDecisionRecord{}).
-		Where("organization_id = ? AND owner_account_id = ?", record.OrganizationID, record.OwnerAccountID).
-		Where(
-			"id = ? OR (correlation_id = ? AND decision = ? AND status = ?)",
-			record.ID,
-			record.CorrelationID,
-			record.Decision,
-			record.Status,
-		).
-		Count(&count).Error
+	query := db.Model(&lifecycleDecisionRecord{})
+	if record.LogicalOperationID != nil && *record.LogicalOperationID != "" {
+		query = query.Where("id = ? OR (organization_id = ? AND logical_operation_id = ? AND decision = ? AND status = ?)",
+			record.ID, record.OrganizationID, *record.LogicalOperationID, record.Decision, record.Status)
+	} else {
+		query = query.Where("id = ? OR (organization_id = ? AND (logical_operation_id IS NULL OR logical_operation_id = '') AND correlation_id = ? AND decision = ? AND status = ?)",
+			record.ID, record.OrganizationID, record.CorrelationID, record.Decision, record.Status)
+	}
+	err := query.Count(&count).Error
 	return count > 0, err
 }
 

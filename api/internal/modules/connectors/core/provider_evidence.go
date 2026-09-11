@@ -1,8 +1,11 @@
 package core
 
+import "time"
+
 // ProviderEvidence is a bounded, non-secret projection of a verified app.
 // Requested configuration is not evidence of a granted permission.
 type ProviderEvidence struct {
+	Mail                     *MailEvidence      `json:"mail,omitempty"`
 	Messaging                *MessagingEvidence `json:"messaging,omitempty"`
 	Region                   string             `json:"region"`
 	AppID                    string             `json:"app_id"`
@@ -20,12 +23,60 @@ func (value *ProviderEvidence) Clone() *ProviderEvidence {
 		return nil
 	}
 	result := *value
+	if value.Mail != nil {
+		copy := *value.Mail
+		copy.Operations = append([]OperationEvidence{}, value.Mail.Operations...)
+		result.Mail = &copy
+	}
 	if value.Messaging != nil {
 		copy := *value.Messaging
 		copy.Operations = append([]OperationEvidence{}, value.Messaging.Operations...)
 		result.Messaging = &copy
 	}
 	result.GrantedScopes = append([]string{}, value.GrantedScopes...)
+	return &result
+}
+
+// MailEvidence records protocol observations, never a Google stable subject or
+// remotely narrowed scope. Usage is informational; execution uses constraints.
+type MailEvidence struct {
+	Version            int                 `json:"version"`
+	Provider           string              `json:"provider"`
+	IdentityKind       string              `json:"identity_kind"`
+	AuthenticatedLogin string              `json:"authenticated_login"`
+	CredentialVerified bool                `json:"credential_verified"`
+	IMAPStatus         string              `json:"imap_status"`
+	SMTPStatus         string              `json:"smtp_status"`
+	Usage              string              `json:"usage"`
+	ScopeGranularity   string              `json:"scope_granularity"`
+	Operations         []OperationEvidence `json:"operations"`
+	CheckedAt          time.Time           `json:"checked_at"`
+}
+
+// MailVerification contains only the per-protocol status of the current
+// attempt. It can accompany a rejected setup without retaining credentials.
+type MailVerification struct {
+	Usage      string `json:"usage"`
+	IMAPStatus string `json:"imap_status"`
+	SMTPStatus string `json:"smtp_status"`
+}
+
+func (m *MailVerification) SafeCopy() *MailVerification {
+	if m == nil {
+		return nil
+	}
+	if m.Usage != "read" && m.Usage != "send" && m.Usage != "read_send" {
+		return nil
+	}
+	for _, status := range []string{m.IMAPStatus, m.SMTPStatus} {
+		if status != "not_requested" && status != "verified" && status != "failed" {
+			return nil
+		}
+	}
+	if m.Usage == "read" && m.SMTPStatus != "not_requested" || m.Usage == "send" && m.IMAPStatus != "not_requested" {
+		return nil
+	}
+	result := *m
 	return &result
 }
 

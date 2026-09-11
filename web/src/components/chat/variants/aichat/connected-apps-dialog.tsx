@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
-import { AlertCircle, ArrowLeft, RefreshCw } from 'lucide-react';
+import { AlertCircle, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { localizeConnectorCatalogItem } from '@/components/connectors/connector-metadata';
 import {
@@ -11,10 +11,8 @@ import {
   type ConnectorPickerActionRequest,
   type ConnectorPickerBindingRef,
 } from '@/components/connectors/picker';
-import { ConnectorKeySetupPanel } from '@/components/connectors/setup/connector-key-setup-panel';
-import {
-  useChatConnectorPreferences,
-} from '@/hooks/connectors/use-chat-connector-preferences';
+import { ConnectorCreateContent } from '@/components/connectors/setup/connector-create-dialog';
+import { useChatConnectorPreferences } from '@/hooks/connectors/use-chat-connector-preferences';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -290,55 +288,39 @@ function AIChatConnectorDialog({
             if (!pickerOpenRef.current && anchorElement?.isConnected) anchorElement.focus();
           }}
         >
-          <DialogHeader className="border-b pb-4 pr-12">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="mb-2 w-fit px-2"
-              onClick={() => setSetup(undefined)}
-            >
-              <ArrowLeft aria-hidden="true" className="size-4" />
-              {t('picker.backToChoices')}
-            </Button>
-            <DialogTitle>{t('picker.setupTitle', { connector: setupConnector.name })}</DialogTitle>
-            <DialogDescription>
-              {t('picker.subtitle', { target: setup.targetName })}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogBody className="p-5">
-            <ConnectorKeySetupPanel
-              connector={setupConnector}
-              target={setup.replacedBinding ? undefined : setup.target}
-              submitLabel={t(
-                setup.replacedBinding
-                  ? 'picker.actions.addConnection'
-                  : 'picker.actions.connectAndAdd'
-              )}
-              onReady={(connection, result) => {
-                if (sessionRef.current !== session || !pickerOpenRef.current) return;
-                if (
-                  result.attachment?.connection_id === connection.id &&
-                  result.attachment.target.type === setup.target.type &&
-                  result.attachment.target.id === setup.target.id
-                ) {
-                  void bindingsQuery.refetch().finally(() => {
-                    if (sessionRef.current !== session || !pickerOpenRef.current) return;
-                    setSetup(undefined);
-                  });
-                  return;
-                }
-                // A saved Key never replaces an occupied (or concurrently
-                // claimed) target slot. Return to the picker so the user can
-                // choose the new connection and confirm a CAS-protected switch.
+          <ConnectorCreateContent
+            onBack={() => setSetup(undefined)}
+            description={t('picker.subtitle', { target: setup.targetName })}
+            connector={setupConnector}
+            target={setup.replacedBinding ? undefined : setup.target}
+            submitLabel={t(
+              setup.replacedBinding
+                ? 'picker.actions.addConnection'
+                : 'picker.actions.connectAndAdd'
+            )}
+            onReady={(connection, result) => {
+              if (sessionRef.current !== session || !pickerOpenRef.current) return;
+              if (
+                result.attachment?.connection_id === connection.id &&
+                result.attachment.target.type === setup.target.type &&
+                result.attachment.target.id === setup.target.id
+              ) {
                 void bindingsQuery.refetch().finally(() => {
                   if (sessionRef.current !== session || !pickerOpenRef.current) return;
                   setSetup(undefined);
-                  toast.success(t('picker.connectionReadyNotAdded'));
                 });
-              }}
-            />
-          </DialogBody>
+                return;
+              }
+              // A saved Key never replaces an occupied (or concurrently
+              // claimed) target slot. Return to the picker so the user can
+              // choose the new connection and confirm a CAS-protected switch.
+              void bindingsQuery.refetch().finally(() => {
+                if (sessionRef.current !== session || !pickerOpenRef.current) return;
+                setSetup(undefined);
+                toast.success(t('picker.connectionReadyNotAdded'));
+              });
+            }}
+          />
         </DialogContent>
       </Dialog>
     );

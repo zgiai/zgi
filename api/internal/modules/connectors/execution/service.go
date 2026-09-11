@@ -12,6 +12,7 @@ import (
 	connectoraudit "github.com/zgiai/zgi/api/internal/modules/connectors/audit"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 )
 
 var diagnosticCodePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
@@ -70,8 +71,9 @@ const (
 )
 
 // RiskResolver supplies platform-owned execution risk. Trusted-low operations
-// run directly; high and unclassified operations require one-shot interactive
-// confirmation and fail closed unattended. Member settings cannot override it.
+// run directly; high and unclassified operations require interactive
+// confirmation unless the server matches an explicit session grant. Member
+// settings cannot manufacture a grant or alter the pinned operation.
 type RiskResolver interface {
 	ResolveRisk(context.Context, RiskRequest) (RiskClassification, error)
 }
@@ -148,6 +150,8 @@ type NativeProviderInvoker interface {
 }
 
 type ExecutionResult struct {
+	Evidence     *DispatchEvidence     `json:"-"`
+	Display      *OperationDisplay     `json:"-"`
 	State        ExecutionState        `json:"state"`
 	DecisionID   uuid.UUID             `json:"decision_id,omitempty,omitzero"`
 	Confirmation *RuntimeConfirmation  `json:"confirmation,omitempty"`
@@ -157,6 +161,7 @@ type ExecutionResult struct {
 
 // Service executes only a durably pinned Connector-native operation.
 type Service struct {
+	resultProjector  *apptransport.Projector
 	catalog          DefinitionCatalog
 	bindings         BindingReader
 	connections      ConnectionReader
@@ -179,13 +184,19 @@ func NewService(
 	credentials CredentialResolver,
 	auditRecorder DecisionOutcomeRecorder,
 	provider NativeProviderInvoker,
+	projectors ...*apptransport.Projector,
 ) (*Service, error) {
 	if definitionCatalog == nil || bindings == nil || connections == nil || targetAuthorizer == nil ||
 		risk == nil || credentials == nil || auditRecorder == nil || provider == nil {
 		return nil, connectorError(core.ErrorCodeInternal, false)
 	}
+	var projector *apptransport.Projector
+	if len(projectors) > 0 {
+		projector = projectors[0]
+	}
 	return &Service{
-		catalog: definitionCatalog, bindings: bindings, connections: connections,
+		resultProjector: projector,
+		catalog:         definitionCatalog, bindings: bindings, connections: connections,
 		targetAuthorizer: targetAuthorizer, risk: risk, credentials: credentials,
 		audit: auditRecorder, provider: provider,
 		now: func() time.Time { return time.Now().UTC() }, newID: uuid.New,
@@ -194,32 +205,63 @@ func NewService(
 }
 
 func (service *Service) InvokeConnector(ctx context.Context, pinned PinnedExecution) (ExecutionResult, error) {
-	result, err := service.invokePinned(ctx, pinned, PathConnectorNative)
+	progress := &dispatchProgress{}
+	result, err := service.invokePinned(ctx, pinned, PathConnectorNative, progress)
 	if pinned.Path != PathConnectorNative {
 		return result, err
 	}
-	return service.withPreSubmissionDenial(ctx, pinned, result, err)
+	result, err = service.withPreSubmissionDenial(ctx, pinned, result, err, progress)
+	result.Display = progress.display
+	return service.presentResult(ctx, result), err
 }
 
 // withPreSubmissionDenial records a real, valid acting identity without reading
 // the rejected connection. A durable submission, terminal outcome, or duplicate
 // confirmation cannot be reclassified as a denial by this boundary.
-func (service *Service) withPreSubmissionDenial(ctx context.Context, pinned PinnedExecution, result ExecutionResult, cause error) (ExecutionResult, error) {
-	if cause == nil || result.DecisionID != uuid.Nil || result.Outcome.ID != uuid.Nil || core.IsErrorCode(cause, core.ErrorCodeConflict) ||
-		service.available() != nil || !validReceipt(pinned.Receipt) || validateExecutionRequest(pinned.Request) != nil {
+func (service *Service) withPreSubmissionDenial(ctx context.Context, pinned PinnedExecution, result ExecutionResult, cause error, progress *dispatchProgress) (ExecutionResult, error) {
+	if cause == nil || result.State != "" || result.Outcome.ID != uuid.Nil {
 		return result, cause
+	}
+	if service.available() != nil || !validReceipt(pinned.Receipt) || validateExecutionRequest(pinned.Request) != nil {
+		return UnresolvedResult(core.ErrorCodeOf(cause)), cause
+	}
+	if progress.submissionAttempted && !(pinned.freshClaim && progress.definitelyNotWritten) {
+		return service.recoverAfterFailure(ctx, pinned, cause)
+	}
+	if progress.submissionAttempted {
+		prior, _ := service.RecoverInvocation(ctx, pinned)
+		if prior.State != ExecutionStateUnresolved || (prior.Evidence != nil && prior.Evidence.Disposition == DispatchInProgress) {
+			return prior, cause
+		}
 	}
 	decision, err := service.newExecutionDecision(pinned, RiskUnclassified, core.DecisionStatusDenied, false,
 		service.newID(), service.now().UTC(), time.Time{})
-	if err != nil || service.audit.CreateDecision(ctx, decision) != nil {
-		return ExecutionResult{}, connectorError(core.ErrorCodeInternal, false)
+	if err != nil {
+		return UnresolvedResult(core.ErrorCodeInternal), cause
 	}
-	return ExecutionResult{DecisionID: decision.ID}, cause
+	decision.Details["diagnostic_code"] = string(core.ErrorCodeOf(cause))
+	if rejector, ok := service.audit.(executionRejector); ok {
+		err = rejector.RejectExecution(ctx, decision)
+		if err == nil {
+			return rejectedResult(decision.ID, core.ErrorCodeOf(cause)), cause
+		}
+	} else if !core.IsErrorCode(cause, core.ErrorCodeConflict) {
+		err = service.audit.CreateDecision(ctx, decision)
+		if err == nil && pinned.freshClaim && pinned.Request.Confirmation == nil {
+			return rejectedResult(decision.ID, core.ErrorCodeOf(cause)), cause
+		}
+	} else {
+		err = connectorError(core.ErrorCodeConflict, false)
+	}
+	if pinned.freshClaim && !progress.submissionAttempted && pinned.Request.Confirmation == nil {
+		return rejectedResult(uuid.Nil, core.ErrorCodeInternal), cause
+	}
+	return service.recoverAfterFailure(ctx, pinned, cause)
 }
 
 // invokePinned retains the Router's immutable native claim and receipt through
 // authorization, confirmation and provider submission.
-func (service *Service) invokePinned(ctx context.Context, pinned PinnedExecution, expected Path) (ExecutionResult, error) {
+func (service *Service) invokePinned(ctx context.Context, pinned PinnedExecution, expected Path, progress *dispatchProgress) (ExecutionResult, error) {
 	if err := service.available(); err != nil {
 		return ExecutionResult{}, err
 	}
@@ -269,6 +311,7 @@ func (service *Service) invokePinned(ctx context.Context, pinned PinnedExecution
 	if err := authorizeDefinition(request, connection, definition); err != nil {
 		return ExecutionResult{}, err
 	}
+	progress.display = &OperationDisplay{Name: operation.Name, NameI18n: operation.NameI18n}
 
 	if err := service.targetAuthorizer.AuthorizeTarget(ctx, TargetAuthorizationRequest{
 		OrganizationID: request.OrganizationID, OwnerAccountID: request.OwnerAccountID,
@@ -295,7 +338,11 @@ func (service *Service) invokePinned(ctx context.Context, pinned PinnedExecution
 	if confirmation != nil && confirmation.RouteReceipt != pinned.Receipt {
 		return ExecutionResult{}, connectorError(core.ErrorCodeInvalidInput, false)
 	}
-	if risk != RiskTrustedLow {
+	_, sessionGrantMatched := connectorSessionGrantMatches(request, definition, operation, risk)
+	preauthorized := confirmation == nil && sessionGrantMatched
+	request.Preauthorized = preauthorized
+	pinned.Request.Preauthorized = preauthorized
+	if risk != RiskTrustedLow && !preauthorized {
 		if !request.Interactive {
 			decisionID, decisionErr := service.recordExecutionDecision(ctx, pinned, risk, core.DecisionStatusBlocked, false)
 			result := ExecutionResult{State: ExecutionStateBlocked, DecisionID: decisionID}
@@ -307,7 +354,7 @@ func (service *Service) invokePinned(ctx context.Context, pinned PinnedExecution
 		if confirmation == nil {
 			return ExecutionResult{
 				State:        ExecutionStateRequiresConfirmation,
-				Confirmation: runtimeConfirmation(pinned.Receipt, acceptedOperation, request.Target, risk),
+				Confirmation: service.confirmationWithPreview(ctx, pinned, acceptedOperation, binding, connection, risk),
 			}, nil
 		}
 		if confirmation.Decision == ConfirmationDecisionCancelled {
@@ -340,12 +387,13 @@ func (service *Service) invokePinned(ctx context.Context, pinned PinnedExecution
 
 	now := service.now().UTC()
 	outcomeID := service.newID()
-	executionLeaseExpiresAt := now.Add(service.providerTimeout)
+	executionLeaseExpiresAt := now.Add(service.invocationTimeout(connection, request.OperationID))
 	if outcomeID == uuid.Nil || now.IsZero() || !executionLeaseExpiresAt.After(now) {
 		return ExecutionResult{}, connectorError(core.ErrorCodeInternal, false)
 	}
 	var decision core.LifecycleDecision
 	if requiresConfirmedFinalization {
+		progress.submissionAttempted = true
 		decision, err = service.finalizeRuntimeConfirmation(
 			ctx, pinned, risk, true, now, executionLeaseExpiresAt,
 		)
@@ -358,7 +406,9 @@ func (service *Service) invokePinned(ctx context.Context, pinned PinnedExecution
 			pinned, risk, core.DecisionStatusSubmitted, false, decisionID, now, executionLeaseExpiresAt,
 		)
 		if err == nil {
+			progress.submissionAttempted = true
 			err = service.audit.CreateDecision(ctx, decision)
+			progress.definitelyNotWritten = connectoraudit.DecisionDefinitelyNotWritten(err)
 		}
 	}
 	if err != nil {
@@ -406,8 +456,9 @@ func (service *Service) invokePinned(ctx context.Context, pinned PinnedExecution
 		unknown.DiagnosticCode = string(core.ErrorCodeOutcomeUnknown)
 		durable, convergeErr := service.audit.ConvergeOutcome(ctx, unknown)
 		if convergeErr != nil {
-			return ExecutionResult{State: ExecutionStateCompleted, DecisionID: decisionID},
-				connectorError(core.ErrorCodeOutcomeUnknown, false)
+			unresolved := UnresolvedResult(core.ErrorCodeOutcomeUnknown)
+			unresolved.DecisionID = decisionID
+			return unresolved, connectorError(core.ErrorCodeOutcomeUnknown, false)
 		}
 		result.Outcome = durable
 		if durable.ID != outcome.ID || durable.Status != core.OutcomeStatusSuccessful {
@@ -549,7 +600,7 @@ func (service *Service) finalizeRuntimeConfirmation(
 		LogicalOperationID: request.LogicalOperationID, CorrelationID: request.CorrelationID,
 		ReceiptID: string(pinned.Receipt), ExecutionPath: string(pinned.Path),
 		RiskClassification: string(risk), Interactive: request.Interactive,
-		Confirmation: confirmed, CreatedAt: createdAt,
+		Confirmation: confirmed, Preauthorized: false, CreatedAt: createdAt,
 	}, confirmed)
 	if err != nil {
 		return core.LifecycleDecision{}, connectorError(core.ErrorCodeInternal, false)
@@ -587,7 +638,7 @@ func (service *Service) newExecutionDecision(
 		LogicalOperationID: request.LogicalOperationID, CorrelationID: request.CorrelationID,
 		ReceiptID: string(pinned.Receipt), ExecutionPath: string(pinned.Path),
 		RiskClassification: string(risk), Interactive: request.Interactive,
-		Confirmation: confirmed, CreatedAt: createdAt,
+		Confirmation: confirmed, Preauthorized: request.Preauthorized, CreatedAt: createdAt,
 		ExecutionLeaseExpiresAt: executionLeaseExpiresAt,
 	}, status)
 	if err != nil {

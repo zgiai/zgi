@@ -49,6 +49,25 @@ func lockInventory(tx *gorm.DB) error {
 	}
 	tables := append(append(RetiredTables(), NativeTables()...), hostTables()...)
 	tables = append(tables, "migrations")
+	// The fixed manifest includes tables introduced by later append-only
+	// migrations. A fresh database has not created those relations yet, so
+	// resolve the lock list against the current schema without weakening the
+	// retirement capability or accepting caller-supplied table names.
+	var existing []string
+	if err := tx.Raw(`SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name IN ?`, tables).Scan(&existing).Error; err != nil {
+		return fmt.Errorf("inspect Connector inventory: %w", err)
+	}
+	existingSet := make(map[string]struct{}, len(existing))
+	for _, table := range existing {
+		existingSet[table] = struct{}{}
+	}
+	filtered := tables[:0]
+	for _, table := range tables {
+		if _, ok := existingSet[table]; ok {
+			filtered = append(filtered, table)
+		}
+	}
+	tables = filtered
 	names := make([]string, 0, len(tables))
 	for _, table := range tables {
 		names = append(names, `public."`+table+`"`)

@@ -129,6 +129,42 @@ func TestPluginManagerBootstrapActivatesCompatibleNewBuiltinVersion(t *testing.T
 	}
 }
 
+func TestPluginManagerBootstrapRetainsIncompatibleAcceptedExtension(t *testing.T) {
+	builtin := pluginContractDefinitionFixture()
+	current := cloneDefinition(builtin)
+	current.PluginVersion += "-digitalhuman.1"
+	current.ExtensionSchemaVersion, current.ContractVersion = ZGIMetadataSchemaVersion13, 4
+	current.PluginDigest = strings.Repeat("b", 64)
+	current.Surfaces = append(current.Surfaces, SurfaceDigitalHuman)
+	catalog, err := New(builtin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &memoryPluginDefinitionStore{state: PluginRuntimeState{
+		Definitions: []Definition{current},
+		Statuses:    map[string]PluginDefinitionStatus{current.PluginID: PluginDefinitionStatusActive},
+	}}
+	manager, err := NewPluginManager(newPluginLoaderForTest(t), catalog, store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := manager.Bootstrap(context.Background(), nil)
+	if err != nil || len(report.Failures) != 1 || !errors.Is(report.Failures[0].Err, ErrIncompatibleDefinitionUpdate) {
+		t.Fatalf("Bootstrap() = %#v, %v", report, err)
+	}
+	active, found := manager.Get(current.ID)
+	if !found || active.PluginDigest != current.PluginDigest || !active.Supports(SurfaceDigitalHuman) || store.admitCalls != 0 {
+		t.Fatalf("accepted package replaced: %#v, admits=%d", active, store.admitCalls)
+	}
+	pin, err := manager.Pin(current.ID, current.Operations[0].ID)
+	if err != nil || pin.PluginVersion != current.PluginVersion {
+		t.Fatalf("accepted operation pin = %#v, %v", pin, err)
+	}
+	if _, err := manager.Bootstrap(context.Background(), nil); err != nil || store.admitCalls != 0 {
+		t.Fatalf("repeated Bootstrap() = %v, admits=%d", err, store.admitCalls)
+	}
+}
+
 func TestPluginManagerBootstrapDoesNotReactivateInactiveBuiltin(t *testing.T) {
 	definition := pluginContractDefinitionFixture()
 	catalog, err := New(definition)

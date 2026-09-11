@@ -421,10 +421,9 @@ func expectKeySetupLifecycleAudit(
 		status = core.DecisionStatusCancelled
 	}
 	correlationID := "key-setup:" + attempt.ID.String()
-	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "connector_lifecycle_decisions" WHERE \(organization_id = \$1 AND owner_account_id = \$2\) AND \(id = \$3 OR \(correlation_id = \$4 AND decision = \$5 AND status = \$6\)\)`).
+	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "connector_lifecycle_decisions" WHERE id = \$1 OR \(organization_id = \$2 AND \(logical_operation_id IS NULL OR logical_operation_id = ''\) AND correlation_id = \$3 AND decision = \$4 AND status = \$5\)`).
 		WithArgs(
-			attempt.OrganizationID, attempt.OwnerAccountID, sqlmock.AnyArg(),
-			correlationID, DecisionKeyCreation, status,
+			sqlmock.AnyArg(), attempt.OrganizationID, correlationID, DecisionKeyCreation, status,
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectExec(`(?s)INSERT INTO "connector_lifecycle_decisions" .*ON CONFLICT DO NOTHING`).

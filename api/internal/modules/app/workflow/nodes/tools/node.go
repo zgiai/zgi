@@ -248,7 +248,7 @@ func (n *Node) executeRun(ctx context.Context, eventChan chan *shared.NodeEventC
 		connectorIdentity = &persisted
 		native, err := n.connectorDispatcher.Dispatch(ctx, connectordispatch.Invocation{Identity: *connectorIdentity, Input: connectorInput})
 		invokeErr = err
-		result = &tools.InvokeResult{Success: err == nil, Messages: connectortools.MessagesForInvocation(native, *connectorIdentity)}
+		result = &tools.InvokeResult{Success: err == nil, Messages: connectortools.MessagesForInvocation(native, *connectorIdentity, err)}
 	} else {
 		result, invokeErr = n.toolEngine.InvokeForWorkflow(ctx, req)
 	}

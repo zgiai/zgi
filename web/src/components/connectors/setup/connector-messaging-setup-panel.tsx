@@ -1,5 +1,7 @@
 'use client';
 
+import { ConnectorFieldHelp } from './connector-key-form';
+
 import { useEffect, useRef, useState } from 'react';
 import { useLocale } from 'next-intl';
 import Link from 'next/link';
@@ -70,7 +72,9 @@ function MessagingSetup({ connector, updateConnection, onReady, initialMode = 'q
   const restored = manualResult?.state !== 'ready' && onboarding.restored;
   const payload = messagingQR(connector, onboarding.flow, clock);
   const localExpired = Boolean(
-    onboarding.flow && Date.parse(onboarding.flow.expires_at) <= clock && active
+    onboarding.flow &&
+      onboarding.flow.state === 'awaiting_authorization' &&
+      Date.parse(onboarding.flow.qr_expires_at ?? onboarding.flow.expires_at) <= clock
   );
   const error =
     mode === 'manual' ? manualError : (onboarding.errorCode ?? onboarding.flow?.error_code);
@@ -166,37 +170,28 @@ function MessagingSetup({ connector, updateConnection, onReady, initialMode = 'q
 
   const stateText = localExpired
     ? 'messaging.localExpired'
-    : onboarding.flow?.step === 'verify'
-      ? 'messaging.verifying'
-      : (
-          {
-            starting: 'messaging.starting',
-            awaiting_authorization: 'messaging.waiting',
-            verifying: 'messaging.verifying',
-            ready: 'messaging.ready',
-            cancelled: 'messaging.cancelled',
-            expired: 'messaging.localExpired',
-            failed: 'messaging.failed',
-            recovery_required: 'messaging.recovery',
-            // Not emitted by protocol 1; fail closed if a mixed-version server does.
-            pending_completion: 'messaging.recovery',
-          } as const
-        )[onboarding.flow?.state ?? 'starting'];
+    : onboarding.flow?.state === 'verification_waiting'
+      ? 'messaging.verificationWaiting'
+      : onboarding.flow?.step === 'verify'
+        ? 'messaging.verifying'
+        : (
+            {
+              starting: 'messaging.starting',
+              awaiting_authorization: 'messaging.waiting',
+              verifying: 'messaging.verifying',
+              verification_waiting: 'messaging.verificationWaiting',
+              ready: 'messaging.ready',
+              cancelled: 'messaging.cancelled',
+              expired: 'messaging.localExpired',
+              failed: 'messaging.failed',
+              recovery_required: 'messaging.recovery',
+              // Not emitted by protocol 1; fail closed if a mixed-version server does.
+              pending_completion: 'messaging.recovery',
+            } as const
+          )[onboarding.flow?.state ?? 'starting'];
 
   return (
     <div className="space-y-4">
-      <p className="text-sm leading-6 text-muted-foreground">
-        {t(updateConnection ? 'messaging.reauthorizeHint' : 'messaging.notice')}
-      </p>
-      <p className="text-sm leading-6">
-        {t(
-          connector.id === 'dingtalk'
-            ? 'messaging.dingtalk'
-            : connector.id === 'wecom'
-              ? 'messaging.wecom'
-              : 'messaging.weixin'
-        )}
-      </p>
       {ready ? (
         <div className="space-y-3">
           <Alert>
@@ -225,6 +220,16 @@ function MessagingSetup({ connector, updateConnection, onReady, initialMode = 'q
         </div>
       ) : (
         <>
+          {updateConnection && (
+            <p className="text-xs text-muted-foreground">
+              {t('messaging.originalSubject', {
+                name: updateConnection.external_display_name ?? updateConnection.name,
+                identity: updateConnection.external_account_id
+                  ? `…${updateConnection.external_account_id.slice(-6)}`
+                  : '—',
+              })}
+            </p>
+          )}
           {connector.setup_availability?.enabled === false && (
             <Alert>
               <AlertDescription>{t('messaging.unavailable')}</AlertDescription>
@@ -256,16 +261,43 @@ function MessagingSetup({ connector, updateConnection, onReady, initialMode = 'q
             <p className="text-sm text-muted-foreground">{t('messaging.qrUnavailable')}</p>
           )}
           {error && (
-            <Alert variant="destructive">
+            <Alert
+              variant={
+                onboarding.flow?.state === 'verification_waiting' ? 'default' : 'destructive'
+              }
+            >
               <AlertDescription>
                 {t(
-                  error === 'transport_unconfirmed' ||
-                    error === 'connector_operation_outcome_unknown'
-                    ? 'messaging.recovery'
-                    : 'messaging.failed'
+                  error === 'connector_weixin_already_bound' ||
+                    error === 'connector.weixin.already_bound'
+                    ? 'messaging.alreadyBound'
+                    : error === 'connector_weixin_region_unsupported' ||
+                        error === 'connector.weixin.region_unsupported'
+                      ? 'messaging.regionUnsupported'
+                      : onboarding.flow?.state === 'verification_waiting'
+                        ? 'messaging.verificationWaiting'
+                        : error === 'transport_unconfirmed' ||
+                            error === 'connector_operation_outcome_unknown' ||
+                            error === 'connector_verification_uncertain'
+                          ? 'messaging.recovery'
+                          : 'messaging.failed'
                 )}
               </AlertDescription>
             </Alert>
+          )}
+          {(error === 'connector_weixin_already_bound' ||
+            error === 'connector.weixin.already_bound') && (
+            <Button asChild variant="outline">
+              <Link
+                href={
+                  updateConnection
+                    ? `/console/connectors/connections/${updateConnection.id}`
+                    : '/console/connectors/connections'
+                }
+              >
+                {t('setup.checkConnections')}
+              </Link>
+            </Button>
           )}
           {mode === 'manual' && manual ? (
             <form
@@ -294,6 +326,7 @@ function MessagingSetup({ connector, updateConnection, onReady, initialMode = 'q
                       setValues(previous => ({ ...previous, [field.name]: event.target.value }))
                     }
                   />
+                  <ConnectorFieldHelp url={field.help_url} />
                 </div>
               ))}
               <Button type="submit" className="w-full" disabled={busy || Boolean(manualError)}>
@@ -356,7 +389,16 @@ function MessagingSetup({ connector, updateConnection, onReady, initialMode = 'q
               )}
               {payload && (
                 <p className="text-center text-xs text-muted-foreground">
-                  {t('messaging.scanHint')}
+                  {t(
+                    updateConnection
+                      ? connector.id === 'dingtalk'
+                        ? 'messaging.dingtalkReauthorize'
+                        : connector.id === 'wecom'
+                          ? 'messaging.wecomReauthorize'
+                          : 'messaging.weixinReauthorize'
+                      : 'messaging.scanHint',
+                    { platform: connector.name }
+                  )}
                 </p>
               )}
               {onboarding.flow?.step === 'awaiting_code' && !localExpired && (
@@ -395,6 +437,23 @@ function MessagingSetup({ connector, updateConnection, onReady, initialMode = 'q
                   {t('messaging.cancel')}
                 </Button>
               )}
+              {onboarding.flow?.allowed_actions?.includes('retry_verification') && (
+                <Button
+                  disabled={onboarding.busy}
+                  onClick={() => void onboarding.retryVerification()}
+                >
+                  {t('messaging.retryVerification')}
+                </Button>
+              )}
+              {(onboarding.flow?.state === 'verifying' ||
+                onboarding.flow?.state === 'verification_waiting') &&
+                onboarding.flow.verification_deadline && (
+                  <p className="text-xs text-muted-foreground">
+                    {t('messaging.verificationDeadline', {
+                      date: new Date(onboarding.flow.verification_deadline).toLocaleString(locale),
+                    })}
+                  </p>
+                )}
               {onboarding.hasRecovery && (
                 <Button
                   variant="outline"
@@ -432,9 +491,6 @@ function MessagingSetup({ connector, updateConnection, onReady, initialMode = 'q
           )}
         </>
       )}
-      <p className="border-t pt-3 text-xs leading-5 text-muted-foreground">
-        {t('messaging.secret')}
-      </p>
     </div>
   );
 }

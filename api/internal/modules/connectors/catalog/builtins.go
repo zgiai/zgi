@@ -39,7 +39,15 @@ func BuiltinDefinitions() ([]Definition, error) {
 	if err != nil {
 		return nil, err
 	}
-	return append(append(definitions, feishu), messaging...), nil
+	mail := []Definition{}
+	for _, id := range []string{"gmail", "qqmail", "netease163"} {
+		d, _ := MailDefinition(id)
+		if err := Validate(d); err != nil {
+			return nil, err
+		}
+		mail = append(mail, d)
+	}
+	return append(append(append(definitions, feishu), messaging...), mail...), nil
 }
 
 func ValidateBuiltinPackage(definitions []Definition) error {

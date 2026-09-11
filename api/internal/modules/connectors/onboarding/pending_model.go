@@ -75,6 +75,9 @@ type PendingRepository interface {
 }
 
 func (f Flow) verificationExpiry() time.Time {
+	if f.ProtocolVersion == 1 && f.CandidateExpiresAt != nil {
+		return *f.CandidateExpiresAt
+	}
 	if f.ProtocolVersion == 0 && f.State == Verifying && f.VerificationDeadline != nil {
 		return *f.VerificationDeadline
 	}

@@ -101,6 +101,7 @@ func (resolver *AgentResolver) ResolveConnectorIdentity(
 				continue
 			}
 			return connectordispatch.Identity{
+				ConversationID: request.ConversationID,
 				OrganizationID: request.OrganizationID, OwnerAccountID: request.OwnerAccountID,
 				ActingPrincipalID: request.ActingPrincipalID, BindingID: capability.BindingID,
 				ConnectionID: capability.ConnectionID, ConnectorID: capability.ConnectorID,

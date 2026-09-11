@@ -161,14 +161,27 @@ func (c *ServiceContainer) GetConnectorOnboardingService() *onboarding.Service {
 	if err != nil {
 		panic("initialize Connector registration: invalid template")
 	}
-	service, err := onboarding.NewService(onboarding.NewGormRepository(c.db, commit), c.GetConnectorPluginManager(), c.GetConnectorConnectionService(), c.getConnectorCredentialCipher(), c.connectorCommandHasher, authority, registrar)
+	repository := onboarding.NewGormRepository(c.db, commit).WithMessagingCommit(c.messagingCommit(authority))
+	service, err := onboarding.NewService(repository, c.GetConnectorPluginManager(), c.GetConnectorConnectionService(), c.getConnectorCredentialCipher(), c.connectorCommandHasher, authority, registrar)
 	if err != nil {
 		panic("initialize Connector registration: unavailable dependencies")
 	}
 	if err = service.WithMessagingAdapters(c.messagingAdapters()...); err != nil {
 		panic("initialize Connector registration adapters")
 	}
+	service.WithMessagingProbe(func(ctx context.Context, f onboarding.Flow, values map[string]string) (connections.CandidateVerificationResult, error) {
+		d, ok := c.GetConnectorPluginManager().Get(f.ConnectorID)
+		if !ok || f.CandidateConnectionID == nil {
+			return connections.CandidateVerificationResult{}, core.NewError(core.ErrorCodeConflict, false, nil)
+		}
+		ops := make([]string, 0, len(d.Operations))
+		for _, op := range d.Operations {
+			ops = append(ops, op.ID)
+		}
+		return c.GetConnectorNativeProviderInvoker().ProbeMessaging(ctx, connections.CandidateVerificationRequest{OrganizationID: f.OrganizationID, OwnerAccountID: f.OwnerAccountID, ConnectionID: *f.CandidateConnectionID, ConnectorID: d.ID, DriverID: d.DriverID, AuthMethodID: d.AuthMethodID, Credentials: values, OperationIDs: ops})
+	})
 	service.WithMessagingCleanup(messaging.NewStore(c.db, c.getConnectorCredentialCipher()).Cleanup)
+	service.WithDiagnosticObserver(logMessagingDiagnostic)
 	c.connectorOnboardingService = service
 	return service
 }
@@ -180,6 +193,8 @@ func (c *ServiceContainer) EnsureConnectorOnboardingSchema(ctx context.Context) 
  AND to_regclass('public.connector_connection_provider_evidence') IS NOT NULL
  AND to_regclass('public.connector_messaging_states') IS NOT NULL
  AND to_regclass('public.connector_messaging_contexts') IS NOT NULL
+	 AND to_regclass('public.connector_messaging_read_leases') IS NOT NULL
+	 AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='connector_onboarding_flows' AND column_name='candidate_expires_at')
  AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='connector_onboarding_flows' AND column_name='verification_deadline')`).Scan(&ready).Error
 	if err != nil || !ready {
 		return fmt.Errorf("Connector onboarding schema migration is required")

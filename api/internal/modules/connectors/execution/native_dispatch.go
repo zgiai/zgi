@@ -52,7 +52,7 @@ func (router *NativeRouter) Route(ctx context.Context, request ExecutionRequest)
 		return ExecutionResult{}, connectorError(core.ErrorCodeInternal, false)
 	}
 	if err := validateExecutionRequest(request); err != nil {
-		return ExecutionResult{}, err
+		return UnresolvedResult(core.ErrorCodeOf(err)), err
 	}
 	// Own a normalized input before hashing it; caller mutation cannot change
 	// the request after its claim is persisted.
@@ -66,7 +66,7 @@ func (router *NativeRouter) Route(ctx context.Context, request ExecutionRequest)
 	}
 	snapshot, err := router.service.PrepareInvocation(ctx, request)
 	if err != nil {
-		return ExecutionResult{}, err
+		return UnresolvedResult(core.ErrorCodeOf(err)), err
 	}
 	claim := InvocationClaim{Identity: routeResolutionRequest(request), Snapshot: snapshot}
 	var receipt RouteClaimReceipt
@@ -77,13 +77,28 @@ func (router *NativeRouter) Route(ctx context.Context, request ExecutionRequest)
 		err = router.store.Resume(ctx, claim, receipt)
 	}
 	if err != nil {
-		return ExecutionResult{}, preserveError(err, core.ErrorCodeConflict)
+		return router.recoverInvocation(ctx, request, claim, err)
 	}
 	if !validReceipt(receipt) {
 		return ExecutionResult{}, connectorError(core.ErrorCodeInternal, false)
 	}
 	return router.service.InvokeConnector(ctx, PinnedExecution{Request: request, Receipt: receipt, Path: PathConnectorNative,
-		Snapshot: &snapshot})
+		Snapshot: &snapshot, freshClaim: request.Confirmation == nil})
+}
+
+func (router *NativeRouter) recoverInvocation(ctx context.Context, request ExecutionRequest, claim InvocationClaim, cause error) (ExecutionResult, error) {
+	lookup, ok := router.store.(interface {
+		Lookup(context.Context, InvocationClaim) (RouteClaimReceipt, error)
+	})
+	recoverer, recoverOK := router.service.(interface {
+		RecoverInvocation(context.Context, PinnedExecution) (ExecutionResult, error)
+	})
+	if ok && recoverOK {
+		if receipt, err := lookup.Lookup(ctx, claim); err == nil {
+			return recoverer.RecoverInvocation(ctx, PinnedExecution{Request: request, Receipt: receipt, Path: PathConnectorNative, Snapshot: &claim.Snapshot})
+		}
+	}
+	return UnresolvedResult(core.ErrorCodeOf(cause)), preserveError(cause, core.ErrorCodeConflict)
 }
 
 func (service *Service) PrepareInvocation(ctx context.Context, request ExecutionRequest) (InvocationSnapshot, error) {

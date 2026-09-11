@@ -38,6 +38,7 @@ import {
   mergeRuntimeTimelineWithMessageTimeline,
   timelineFromAIChatMessage,
 } from '@/components/chat/controllers/aichat/selectors';
+import { applyConnectorRuntimeResolutionState } from '@/components/chat/controllers/aichat/state-reducers';
 import { Sidebar } from '@/components/chat/variants/common/sidebar';
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
@@ -435,10 +436,8 @@ export function AIChatShell({
   const connectorConversationId =
     activeConversationId && !activeConversationId.startsWith('draft-') ? activeConversationId : '';
   const inheritConnectorDefaults = connectorsEnabled && !connectorConversationId;
-  const {
-    data: connectorDefaultsResponse,
-    isError: connectorDefaultsError,
-  } = useChatConnectorPreferences(inheritConnectorDefaults);
+  const { data: connectorDefaultsResponse, isError: connectorDefaultsError } =
+    useChatConnectorPreferences(inheritConnectorDefaults);
   // Load on chat mount, not on picker open. Persisted chats and Agent surfaces
   // keep their explicit bindings and never acquire personal defaults.
   const connectorDraft = useChatConnectorDraft(
@@ -1041,9 +1040,7 @@ export function AIChatShell({
           operationContext: toolGovernanceOperationContext,
           runtimeSurface: effectiveRuntimeSurface,
           initialConnectorBindings:
-            connectorsEnabled && !connectorConversationId
-              ? connectorSnapshot?.bindings
-              : undefined,
+            connectorsEnabled && !connectorConversationId ? connectorSnapshot?.bindings : undefined,
         }
       );
     },
@@ -1291,14 +1288,39 @@ export function AIChatShell({
   const handleConnectorRuntimeDecision = useCallback(
     async (
       conversationId: string,
-      _messageId: string,
+      messageId: string,
       command: ConnectorRuntimeConfirmationCommand,
-      expectedScope?: string
+      expectedScope?: string,
+      rememberForSession = false
     ): Promise<ConnectorRuntimeDecisionResult> => {
-      const currentScope = () => JSON.stringify([useOrganizationStore.getState().currentOrganization?.id ?? '', useAuthStore.getState().user?.id ?? '']);
+      const currentScope = () =>
+        JSON.stringify([
+          useOrganizationStore.getState().currentOrganization?.id ?? '',
+          useAuthStore.getState().user?.id ?? '',
+        ]);
       const scope = expectedScope ?? currentScope();
-      const result = await submitConnectorRuntimeDecision(command, scope);
+      const result = await submitConnectorRuntimeDecision(
+        {
+          ...command,
+          ...(rememberForSession ? { remember_for_session: true } : {}),
+        },
+        scope
+      );
       if (currentScope() !== scope) return result;
+      controller.store.getState().update(current =>
+        applyConnectorRuntimeResolutionState(current, {
+          conversation_id: conversationId,
+          message_id: messageId,
+          progress_id: result.route_receipt,
+          state: result.state === 'transport_unconfirmed' ? 'unknown' : result.state,
+          ...(result.state !== 'transport_unconfirmed' && result.decision_id
+            ? { decision_id: result.decision_id }
+            : {}),
+          ...(result.state !== 'transport_unconfirmed' && result.error_code
+            ? { error_code: result.error_code }
+            : {}),
+        })
+      );
       try {
         await controller.recoverStreamingConversation(conversationId);
       } catch {
@@ -1707,8 +1729,8 @@ export function AIChatShell({
                 ? !connectorConversationId && connectorDraft.attention === 'loadFailed'
                   ? connectorT('defaultsDraft.loadFailed')
                   : connectorT('picker.toolbarAction', {
-                    count: connectorSelectedCount,
-                  })
+                      count: connectorSelectedCount,
+                    })
                 : t('consoleChat.connectedApps.action', {
                     count: connectorSelectedCount,
                   })

@@ -263,31 +263,62 @@ assert.equal((await malformedTransport.submit(malformedCommand)).state, 'transpo
 assert.equal(malformedSendCount, 1, 'a malformed terminal response still consumes the receipt');
 
 // Only read-only reconciliation can resolve an unconfirmed transport result.
-unknownTransport.acceptStatus(unknownCommand.route_receipt, {resolution: 'unresolved'});
+unknownTransport.acceptStatus(unknownCommand.route_receipt, { resolution: 'unresolved' });
 assert.equal(unknownTransport.getPhase(unknownCommand.route_receipt), 'transport_unconfirmed');
-unknownTransport.acceptStatus(unknownCommand.route_receipt, {resolution:'resolved', state:'completed', secret:'forbidden'});
+unknownTransport.acceptStatus(unknownCommand.route_receipt, {
+  resolution: 'resolved',
+  state: 'completed',
+  secret: 'forbidden',
+});
 assert.equal(unknownTransport.getPhase(unknownCommand.route_receipt), 'transport_unconfirmed');
-unknownTransport.acceptStatus(unknownCommand.route_receipt, {resolution:'resolved', state:'completed', decision_id:'checked'});
+unknownTransport.acceptStatus(unknownCommand.route_receipt, {
+  resolution: 'resolved',
+  state: 'completed',
+  decision_id: 'checked',
+});
 assert.equal(unknownTransport.getPhase(unknownCommand.route_receipt), 'completed');
-unknownTransport.acceptStatus(unknownCommand.route_receipt, {resolution:'resolved', state:'unknown'});
-assert.equal(unknownTransport.getPhase(unknownCommand.route_receipt), 'completed', 'late reads cannot downgrade durable evidence');
+unknownTransport.acceptStatus(unknownCommand.route_receipt, {
+  resolution: 'resolved',
+  state: 'unknown',
+});
+assert.equal(
+  unknownTransport.getPhase(unknownCommand.route_receipt),
+  'completed',
+  'late reads cannot downgrade durable evidence'
+);
 assert.equal(unknownSendCount, 1);
 assert.equal(unknownTransport.getPhase(unknownCommand.route_receipt, 'other-owner'), undefined);
-const knownUnknown = new ConnectorRuntimeDecisionTransport(async () => ({state:'unknown'}));
-assert.equal((await knownUnknown.submit({route_receipt:'known-unknown',decision:'confirmed'})).state, 'unknown', 'a server unknown is not a transport failure');
+const knownUnknown = new ConnectorRuntimeDecisionTransport(async () => ({ state: 'unknown' }));
+assert.equal(
+  (await knownUnknown.submit({ route_receipt: 'known-unknown', decision: 'confirmed' })).state,
+  'unknown',
+  'a server unknown is not a transport failure'
+);
+const remembered = new ConnectorRuntimeDecisionTransport(async () => ({
+  state: 'completed',
+  remember_for_session: true,
+}));
+const rememberedResult = await remembered.submit({
+  route_receipt: 'remembered-receipt',
+  decision: 'confirmed',
+  remember_for_session: true,
+});
+assert.equal(rememberedResult.state, 'completed');
+assert.equal(rememberedResult.remember_for_session, true);
 
 const root = process.cwd();
 const source = relativePath => readFileSync(path.join(root, relativePath), 'utf8');
 const confirmationSource = source(
   'src/components/connectors/runtime/connector-runtime-confirmation-card.tsx'
 );
+const dialogBridgeSource = source(
+  'src/components/connectors/runtime/connector-runtime-surface.tsx'
+);
 const blockedSource = source(
   'src/components/connectors/runtime/connector-runtime-blocked-state.tsx'
 );
-const terminalSource = source(
-  'src/components/connectors/runtime/connector-runtime-terminal-state.tsx'
-);
 const surfaceSource = source('src/components/connectors/runtime/connector-runtime-surface.tsx');
+const resultSource = source('src/components/aichat/operation-cards/operation-result-card.tsx');
 const modelSource = source('src/components/connectors/runtime/connector-runtime-model.ts');
 const transportSource = source('src/components/connectors/runtime/connector-runtime-transport.ts');
 const serviceSource = source('src/services/connector.service.ts');
@@ -304,23 +335,24 @@ const workflowNodeSource = source(
 const streamSource = source('src/components/chat/transports/aichat-transport.ts');
 const connectorRuntimeSource = [
   confirmationSource,
+  dialogBridgeSource,
   blockedSource,
-  terminalSource,
+  resultSource,
   surfaceSource,
   modelSource,
   transportSource,
 ].join('\n');
 
-for (const field of [
-  'connector_name',
-  'action_name',
-  'external_effect',
-  'data_egress',
-  'external_destination',
-  'risk_classification',
-]) {
+for (const field of ['connector_name', 'action_name', 'risk_classification']) {
+  assert.match(dialogBridgeSource, new RegExp(field));
+}
+for (const field of ['external_effect', 'data_egress']) {
   assert.match(confirmationSource, new RegExp(field));
 }
+assert.match(dialogBridgeSource, /ConnectorRuntimeDialogApprovalBridge/);
+assert.match(dialogBridgeSource, /publishToolGovernancePendingApproval/);
+assert.match(dialogBridgeSource, /ToolGovernancePendingApproval/);
+assert.doesNotMatch(confirmationSource, /ToolGovernanceDecisionCard|rememberForSession/);
 assert.match(surfaceSource, /result\.state === 'requires_confirmation'/);
 assert.match(surfaceSource, /result\.state === 'blocked'/);
 assert.match(surfaceSource, /result\.state === 'cancelled'/);
@@ -328,7 +360,7 @@ assert.match(surfaceSource, /result\.state === 'completed'/);
 assert.match(surfaceSource, /result\.state === 'failed'/);
 assert.match(surfaceSource, /result\.state === 'unknown'/);
 assert.match(surfaceSource, /return null;/);
-assert.match(terminalSource, /'cancelled' \| 'completed' \| 'failed' \| 'unknown'/);
+assert.match(surfaceSource, /<ConnectorRuntimeTerminalState/);
 assert.match(serviceSource, /post', '\/connectors\/runtime\/confirmations'/);
 assert.match(contractSource, /route_receipt: string;/);
 assert.match(contractSource, /decision: ConnectorRuntimeConfirmationDecision;/);
@@ -343,16 +375,17 @@ assert.match(agentSource, /surface="agent-draft"/);
 assert.match(agentSource, /<Chat/);
 assert.doesNotMatch(workflowResultSource, /ConnectorRuntime/);
 assert.doesNotMatch(workflowNodeSource, /ConnectorRuntime/);
-assert.match(source('src/components/workflow/ui/workflow-run-nodes-list/index.tsx'), /ConnectorWorkflowResult/);
+assert.match(
+  source('src/components/workflow/ui/workflow-run-nodes-list/index.tsx'),
+  /ConnectorWorkflowResult/
+);
 assert.match(streamSource, /connector_confirmation_required/);
 assert.match(streamSource, /connector_confirmation_resolved/);
 assert.match(streamSource, /error_code: envelope\.error_code/);
-assert.doesNotMatch(
-  connectorRuntimeSource,
-  /rememberForSession|localStorage|sessionStorage|components\/integrations|ToolGovernanceDecisionCard/
-);
+assert.match(dialogBridgeSource, /rememberForSession/);
+assert.doesNotMatch(connectorRuntimeSource, /localStorage|sessionStorage|components\/integrations/);
 assert.doesNotMatch(`${surfaceSource}\n${confirmationSource}`, /connectorService|axios|fetch\(/);
 assert.doesNotMatch(blockedSource, /onClick|onDecision|confirmAction|cancelAction/);
-assert.doesNotMatch(terminalSource, /onClick|onDecision|confirmAction|cancelAction/);
+assert.match(surfaceSource, /ConnectorRuntimeTerminalState/);
 
 console.log('Connector runtime one-shot confirmation contract checks passed.');

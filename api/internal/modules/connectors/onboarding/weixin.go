@@ -75,16 +75,18 @@ func (a *WeixinAdapter) Advance(ctx context.Context, f Flow, s ProtocolSecret) (
 	case "expired":
 		return ProtocolResult{}, registrationError(core.ErrorCodeFlowExpired)
 	case "binded_redirect":
-		return ProtocolResult{}, registrationError(core.ErrorCodeConflict)
+		// The authorized flow already records any original connection. No new
+		// token is returned, so this cannot create or replace a connection.
+		return ProtocolResult{}, registrationError(core.ErrorCodeWeixinAlreadyBound)
 	case "scaned_but_redirect":
 		// Additional IDC hosts require a separately verified credential-origin
 		// contract. Never forward a session to a suffix-matched or supplied URL.
 		if response.RedirectHost != "ilinkai.weixin.qq.com" {
-			return ProtocolResult{}, registrationError(core.ErrorCodeConnectorUnavailable)
+			return ProtocolResult{}, registrationError(core.ErrorCodeWeixinRegionUnsupported)
 		}
 		return pendingResult(f, s), nil
 	case "confirmed":
-		if !protocolText(response.Token, 16384) || !protocolText(response.BotID, 128) || (response.BaseURL != weixinOrigin && response.BaseURL != weixinOrigin+"/") {
+		if !protocolText(response.Token, 16384) || !protocolText(response.BotID, 128) || (response.BaseURL != "" && response.BaseURL != weixinOrigin && response.BaseURL != weixinOrigin+"/") {
 			return ProtocolResult{}, registrationError(core.ErrorCodeInvalidAppCredentials)
 		}
 		return ProtocolResult{Values: map[string]string{"account_id": response.BotID, "token": response.Token, "base_url": weixinOrigin}}, nil

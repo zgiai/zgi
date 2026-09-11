@@ -243,8 +243,8 @@ func TestGormRepositoryAllowsSameLogicalOperationInAnotherOrganization(t *testin
 func TestGormRepositoryRejectsDuplicateDecisionIdentity(t *testing.T) {
 	repository, mock := openAuditRepositoryMock(t)
 	decision := submittedDecision(uuid.New(), uuid.New(), uuid.New(), "logical-operation-original")
-	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "connector_lifecycle_decisions" WHERE \(organization_id = \$1 AND owner_account_id = \$2\) AND \(id = \$3 OR \(correlation_id = \$4 AND decision = \$5 AND status = \$6\)\)`).
-		WithArgs(decision.OrganizationID, decision.OwnerAccountID, decision.ID, decision.CorrelationID, decision.Decision, decision.Status).
+	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "connector_lifecycle_decisions" WHERE id = \$1 OR \(organization_id = \$2 AND logical_operation_id = \$3 AND decision = \$4 AND status = \$5\)`).
+		WithArgs(decision.ID, decision.OrganizationID, decision.LogicalOperationID, decision.Decision, decision.Status).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	if err := repository.CreateDecision(context.Background(), decision); !core.IsErrorCode(err, core.ErrorCodeConflict) {
 		t.Fatalf("CreateDecision() error = %v, want conflict", err)
@@ -319,6 +319,7 @@ func TestGormRepositoryFinalizesConfirmationOnceByRouteReceipt(t *testing.T) {
 	mock.ExpectQuery(`SELECT count\(\*\) FROM "connector_lifecycle_decisions" WHERE organization_id = \$1 AND receipt_id = \$2 AND decision = \$3`).
 		WithArgs(confirmed.OrganizationID, confirmed.ReceiptID, confirmed.Decision).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	expectOpenExecutionClaim(mock, confirmed)
 	mock.ExpectExec(`(?s)INSERT INTO "connector_lifecycle_decisions" .*ON CONFLICT DO NOTHING`).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`(?s)INSERT INTO "connector_lifecycle_decisions" .*ON CONFLICT DO NOTHING`).
@@ -364,6 +365,7 @@ func TestGormRepositoryRollsBackFinalizationWhenCompanionDecisionWriteFails(t *t
 	mock.ExpectQuery(`SELECT count\(\*\) FROM "connector_lifecycle_decisions" WHERE organization_id = \$1 AND receipt_id = \$2 AND decision = \$3`).
 		WithArgs(finalization.OrganizationID, finalization.ReceiptID, finalization.Decision).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	expectOpenExecutionClaim(mock, finalization)
 	mock.ExpectExec(`(?s)INSERT INTO "connector_lifecycle_decisions" .*ON CONFLICT DO NOTHING`).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`(?s)INSERT INTO "connector_lifecycle_decisions" .*ON CONFLICT DO NOTHING`).
@@ -477,12 +479,21 @@ func openAuditRepositoryMock(t *testing.T) (*GormRepository, sqlmock.Sqlmock) {
 }
 
 func expectCreateDecision(mock sqlmock.Sqlmock, decision core.LifecycleDecision) {
-	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "connector_lifecycle_decisions" WHERE \(organization_id = \$1 AND owner_account_id = \$2\) AND \(id = \$3 OR \(correlation_id = \$4 AND decision = \$5 AND status = \$6\)\)`).
-		WithArgs(decision.OrganizationID, decision.OwnerAccountID, decision.ID, decision.CorrelationID, decision.Decision, decision.Status).
+	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "connector_lifecycle_decisions" WHERE id = \$1 OR \(organization_id = \$2 AND logical_operation_id = \$3 AND decision = \$4 AND status = \$5\)`).
+		WithArgs(decision.ID, decision.OrganizationID, decision.LogicalOperationID, decision.Decision, decision.Status).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectBegin()
 	mock.ExpectExec(`(?s)INSERT INTO "connector_lifecycle_decisions" .*ON CONFLICT DO NOTHING`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
+}
+
+func expectOpenExecutionClaim(mock sqlmock.Sqlmock, decision core.LifecycleDecision) {
+	target := decision.Target
+	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "connector_invocation_claims" WHERE .*state IN`).
+		WithArgs(decision.OrganizationID, decision.OwnerAccountID, decision.ActingPrincipalID, decision.ReceiptID,
+			decision.LogicalOperationID, decision.ConnectorID, decision.ConnectionID, decision.OperationID,
+			target.Type, target.ID, target.EffectiveScope(), target.VersionID, target.BindingInstanceID, "claimed", "awaiting_confirmation").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 }
 
 func expectRecordOutcome(mock sqlmock.Sqlmock, decision core.LifecycleDecision, outcome core.OperationOutcome, conflictCount int64) {

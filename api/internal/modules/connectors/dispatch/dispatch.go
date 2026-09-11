@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/execution"
 )
@@ -17,6 +18,7 @@ import (
 // Input is deliberately kept on Invocation so identities can be logged or
 // compared without accidentally retaining operation content.
 type Identity struct {
+	ConversationID     string
 	OrganizationID     uuid.UUID
 	OwnerAccountID     uuid.UUID
 	ActingPrincipalID  uuid.UUID
@@ -39,6 +41,7 @@ type Identity struct {
 // request metadata, UI preferences, and model-authored arguments are never
 // sufficient authorization.
 type IdentityResolutionRequest struct {
+	ConversationID     string
 	OrganizationID     uuid.UUID
 	OwnerAccountID     uuid.UUID
 	ActingPrincipalID  uuid.UUID
@@ -61,8 +64,9 @@ type IdentityResolver interface {
 // Invocation adds the opaque provider input to one typed surface identity.
 // Neither this package nor the Router persists Input in route claims.
 type Invocation struct {
-	Identity Identity
-	Input    any `json:"-"`
+	Identity      Identity
+	SessionGrants []toolgovernance.SessionGrant `json:"-"`
+	Input         any                           `json:"-"`
 }
 
 // Router is the only execution dependency admitted by the surface adapter.
@@ -102,13 +106,15 @@ func (adapter *Adapter) Dispatch(
 
 	identity := invocation.Identity
 	return adapter.router.Route(ctx, execution.ExecutionRequest{
+		ConversationID: identity.ConversationID,
 		OrganizationID: identity.OrganizationID, OwnerAccountID: identity.OwnerAccountID,
 		ActingPrincipalID: identity.ActingPrincipalID, BindingID: identity.BindingID,
 		ConnectionID: identity.ConnectionID, ConnectorID: identity.ConnectorID,
 		Target: identity.Target, OperationID: identity.OperationID,
 		LogicalOperationID: identity.LogicalOperationID, CorrelationID: identity.CorrelationID,
 		Interactive: identity.Interactive, Confirmation: cloneConfirmation(identity.Confirmation),
-		Input: invocation.Input,
+		SessionGrants: invocation.SessionGrants,
+		Input:         invocation.Input,
 	})
 }
 

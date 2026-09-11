@@ -17,7 +17,9 @@ import { ConnectorKeyForm } from '@/components/connectors/setup/connector-key-fo
 import { ConnectorStatusQueryError } from '@/components/connectors/setup/connector-setup-status';
 import { useConnectorReconnect } from '@/hooks/connectors/use-connector-reconnect';
 import { useT, type ScopedTranslations } from '@/i18n';
-import type { ConnectorCatalogItem } from '@/services/types/connector';
+import type { ConnectorCatalogItem, PersonalConnection } from '@/services/types/connector';
+import { supportsMailSetup, connectionMailUsage } from '../setup/mail-setup-state';
+import { ConnectorMailSetupPanel } from '../setup/connector-mail-setup-panel';
 
 function errorText(t: ScopedTranslations<'connectors'>, code: string | undefined): string {
   if (
@@ -46,9 +48,47 @@ interface ConnectionReconnectDialogProps {
   onOpenChange: (open: boolean) => void;
   connectionId: string;
   connector: ConnectorCatalogItem;
+  connection?: PersonalConnection;
 }
 
-export function ConnectionReconnectDialog({
+export function ConnectionReconnectDialog(props: ConnectionReconnectDialogProps) {
+  const t = useT('connectors');
+  if (supportsMailSetup(props.connector)) {
+    return (
+      <Dialog open={props.open} onOpenChange={props.onOpenChange}>
+        <DialogContent size="md">
+          <DialogHeader>
+            <DialogTitle>
+              {t(
+                props.connection && connectionMailUsage(props.connection) !== 'read_send'
+                  ? 'mail.upgradeReconnect'
+                  : 'mail.reconnect'
+              )}
+            </DialogTitle>
+            <DialogDescription>{props.connection?.external_account_id}</DialogDescription>
+          </DialogHeader>
+          <DialogBody>
+            {props.open && props.connection && (
+              <ConnectorMailSetupPanel
+                connector={props.connector}
+                updateConnection={props.connection}
+                embedded
+              />
+            )}
+          </DialogBody>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => props.onOpenChange(false)}>
+              {t('reconnect.close')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+  return <KeyReconnectDialog {...props} />;
+}
+
+function KeyReconnectDialog({
   open,
   onOpenChange,
   connectionId,

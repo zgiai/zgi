@@ -13,6 +13,7 @@ import (
 // JSON, a tool name, or a completed model call cannot attest business success.
 func connectorTerminalStateDecision(evidence map[string]interface{}, answer string) *terminalStateGuardDecision {
 	states := map[string]string{}
+	details := map[string]string{}
 	for index, record := range terminalStateGuardInvocations(evidence) {
 		proof, native := connectortools.Evidence(record)
 		if !native {
@@ -29,6 +30,12 @@ func connectorTerminalStateDecision(evidence map[string]interface{}, answer stri
 			state = "unknown"
 		}
 		states[key] = state
+		if state != "successful" && state != "pending" && proof.Title != "" {
+			details[key] = proof.Title
+			if proof.Summary != "" {
+				details[key] += "：" + proof.Summary
+			}
+		}
 	}
 	counts := map[string]int{}
 	for _, state := range states {
@@ -54,7 +61,23 @@ func connectorTerminalStateDecision(evidence map[string]interface{}, answer stri
 		return nil
 	}
 	hint := evidenceStringFromAny(evidence["latest_user_request"]) + evidenceStringFromAny(evidence["user_request"]) + answer
-	return &terminalStateGuardDecision{Path: terminalStateGuardAccepted, Reason: "Connector outcomes do not prove every operation succeeded", FinalAnswer: connectorOutcomeAnswer(hint, counts)}
+	finalAnswer := connectorOutcomeAnswer(hint, counts)
+	if counts["rejected"] > 0 || counts["in_progress"] > 0 {
+		parts := []string{}
+		for _, record := range terminalStateGuardInvocations(evidence) {
+			proof, native := connectortools.Evidence(record)
+			if native {
+				if detail := details[proof.Key()]; detail != "" {
+					parts = append(parts, detail)
+					delete(details, proof.Key())
+				}
+			}
+		}
+		if len(parts) > 0 {
+			finalAnswer = strings.Join(parts, "\n") + "\n" + finalAnswer
+		}
+	}
+	return &terminalStateGuardDecision{Path: terminalStateGuardAccepted, Reason: "Connector outcomes do not prove every operation succeeded", FinalAnswer: finalAnswer}
 }
 
 // Once dispatched, a non-success result ends unattended business execution.
@@ -91,9 +114,21 @@ func connectorOutcomeAnswer(hint string, counts map[string]int) string {
 			break
 		}
 	}
+	if counts["rejected"] > 0 && counts["unknown"] == 0 && counts["in_progress"] == 0 {
+		if chinese {
+			return "有操作在提交前被拒绝，本轮已停止后续操作。"
+		}
+		return "An operation was rejected before submission. Further operations in this turn have stopped."
+	}
+	if counts["in_progress"] > 0 && counts["unknown"] == 0 {
+		if chinese {
+			return "已有操作仍在处理，请勿重复提交；本轮已停止后续操作。"
+		}
+		return "An existing operation is still processing. Do not submit it again; further operations have stopped."
+	}
 	parts := []string{}
 	for _, item := range []struct{ state, english, chinese string }{
-		{"successful", "succeeded", "成功"}, {"failed", "failed", "失败"}, {"unknown", "have an unknown result", "结果未知"}, {"cancelled", "were cancelled", "已取消"}, {"unavailable", "could not run", "未执行"},
+		{"successful", "succeeded", "成功"}, {"failed", "failed", "失败"}, {"unknown", "have an unknown result", "结果未知"}, {"cancelled", "were cancelled", "已取消"}, {"unavailable", "could not run", "未执行"}, {"rejected", "were rejected before submission", "提交前拒绝"}, {"in_progress", "are processing", "处理中"},
 	} {
 		if count := counts[item.state]; count > 0 {
 			if chinese {

@@ -1,11 +1,12 @@
 'use client';
 
 import { useState } from 'react';
+import { isMailProvider, selectMailProvider } from '../mail-display-model';
 import { usePendingSetups } from '@/hooks/connectors/use-pending-setups';
 import { ConnectorPendingRows } from '@/components/connectors/setup/connector-pending-rows';
 import Link from 'next/link';
 import { useLocale } from 'next-intl';
-import { ArrowLeft, ArrowRight, LockKeyhole, Plus } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Plus } from 'lucide-react';
 import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { isConnectorListed } from '@/components/connectors/connector-visibility';
 import {
@@ -35,26 +36,36 @@ import {
   personalConnectionSecondaryIdentity,
 } from './personal-connections-model';
 
-export function PersonalConnectionsPage() {
+export function PersonalConnectionsPage({
+  mailOnly = false,
+  preferredProvider,
+}: { mailOnly?: boolean; preferredProvider?: string } = {}) {
   const t = useT('connectors');
   const locale = useLocale();
   const [connectorFilter, setConnectorFilter] = useState('');
   const [addingConnectorID, setAddingConnectorID] = useState('');
   const [pendingID, setPendingID] = useState<string>();
   const pendingQuery = usePendingSetups();
-  const pendingItems = pendingQuery.data?.data.items ?? [];
+  const pendingItems = mailOnly ? [] : (pendingQuery.data?.data.items ?? []);
   const connectionsQuery = usePersonalConnections();
   const catalogQuery = useConnectorCatalog();
-  const connections = personalConnectionItems(connectionsQuery.data?.data);
+  const connections = personalConnectionItems(connectionsQuery.data?.data).filter(
+    item => !mailOnly || isMailProvider(item.connector_id)
+  );
   const catalog = connectorCatalogItems(catalogQuery.data?.data).map(item =>
     localizeConnectorCatalogItem(item, locale)
   );
   const catalogByID = new Map(catalog.map(item => [item.id, item]));
-  const addingConnector = catalogByID.get(addingConnectorID);
+  const addingConnector =
+    addingConnectorID === 'mail'
+      ? selectMailProvider(catalog, preferredProvider)
+      : catalogByID.get(addingConnectorID);
   const groups = groupPersonalConnections(connections);
-  for (const item of pendingItems)
-    {if (!groups.some(group => group.connectorID === item.connector_id))
-      {groups.push({ connectorID: item.connector_id, connections: [] });}}
+  for (const item of pendingItems) {
+    if (!groups.some(group => group.connectorID === item.connector_id)) {
+      groups.push({ connectorID: item.connector_id, connections: [] });
+    }
+  }
   const visibleGroups = connectorFilter
     ? groups.filter(group => group.connectorID === connectorFilter)
     : groups;
@@ -69,8 +80,18 @@ export function PersonalConnectionsPage() {
           </Link>
         </Button>
         <header className="mb-6 space-y-2">
-          <h1 className="text-2xl font-semibold tracking-tight">{t('connections.title')}</h1>
-          <p className="text-sm leading-6 text-muted-foreground">{t('connections.description')}</p>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            {t(mailOnly ? 'mail.title' : 'connections.title')}
+          </h1>
+          {mailOnly && (
+            <Button
+              disabled={!selectMailProvider(catalog)}
+              onClick={() => setAddingConnectorID('mail')}
+            >
+              <Plus className="size-4" />
+              {t('connections.addConnection')}
+            </Button>
+          )}
           {!connectionsQuery.isLoading && !connectionsQuery.isError ? (
             <div className="flex flex-wrap gap-2 pt-1">
               <Badge variant="subtle">
@@ -133,20 +154,28 @@ export function PersonalConnectionsPage() {
                   onClick={() => setConnectorFilter(group.connectorID)}
                   aria-pressed={connectorFilter === group.connectorID}
                 >
-                  {catalogByID.get(group.connectorID)?.name ?? group.connectorID}
+                  {group.connectorID === 'mail'
+                    ? t('mail.title')
+                    : (catalogByID.get(group.connectorID)?.name ?? group.connectorID)}
                 </Button>
               ))}
             </div>
             {visibleGroups.map(group => {
-              const connector = catalogByID.get(group.connectorID);
-              const connectorName = connector?.name ?? group.connectorID;
+              const connector =
+                group.connectorID === 'mail'
+                  ? selectMailProvider(catalog)
+                  : catalogByID.get(group.connectorID);
+              const connectorName =
+                group.connectorID === 'mail'
+                  ? t('mail.title')
+                  : (connector?.name ?? group.connectorID);
               return (
                 <Card key={group.connectorID}>
                   <CardHeader className="flex-row flex-wrap items-center gap-3 space-y-0">
                     <ConnectorIcon
                       connectorId={group.connectorID}
                       name={connectorName}
-                      icon={connector?.icon}
+                      icon={group.connectorID === 'mail' ? undefined : connector?.icon}
                       classification={connector?.classification ?? 'connector'}
                     />
                     <div className="min-w-0 flex-1">
@@ -155,7 +184,7 @@ export function PersonalConnectionsPage() {
                         {t('connections.count', { count: group.connections.length })}
                       </p>
                     </div>
-                    {isConnectorListed(group.connectorID) && (
+                    {!mailOnly && isConnectorListed(group.connectorID) && (
                       <Button
                         size="sm"
                         variant="outline"
@@ -177,7 +206,8 @@ export function PersonalConnectionsPage() {
                           <p className="truncate text-sm font-semibold">
                             {personalConnectionDisplayName(
                               connection,
-                              t('connections.unknownConnection')
+                              t('connections.unknownConnection'),
+                              locale
                             )}
                           </p>
                           <p className="mt-1 truncate text-sm text-muted-foreground">
@@ -223,10 +253,6 @@ export function PersonalConnectionsPage() {
             })}
           </div>
         )}
-        <p className="mt-6 flex items-start gap-2 border-t pt-5 text-xs leading-5 text-muted-foreground">
-          <LockKeyhole aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
-          {t('setup.ownerOnly')}
-        </p>
       </main>
       {addingConnector ? (
         <ConnectorCreateDialog

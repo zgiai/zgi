@@ -1,3 +1,4 @@
+import { connectorPureImport } from './connector-pure-fixture.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -45,7 +46,9 @@ function load(file, imports = {}) {
   const module = { exports: {} };
   new Function('require', 'module', 'exports', code)(
     name => {
-      if (name === '../setup/app-setup-state') return load('src/components/connectors/setup/app-setup-state.ts');
+      if (name === '../setup/app-setup-state')
+        return load('src/components/connectors/setup/app-setup-state.ts');
+      if (!imports[name] && connectorPureImport(name)) return connectorPureImport(name);
       assert.ok(imports[name], `${file}: unexpected import ${name}`);
       return imports[name];
     },
@@ -69,13 +72,24 @@ const translate = (key, values = {}) =>
 const ui = new Proxy({}, { get: (_, name) => name });
 let pendingRecords = [];
 const common = {
-  '@/hooks/connectors/use-pending-setups': { usePendingSetups: () => ({data: {data: {items: pendingRecords,total_pending: pendingRecords.length}}}) },
-  '@/components/connectors/setup/connector-key-setup-panel': {ConnectorKeySetupPanel: 'ConnectorKeySetupPanel'},
+  'next-intl': { useLocale: () => 'en-US' },
+  './mail-picker-group-row': { MailPickerGroupRow: 'MailPickerGroupRow' },
+  '@/hooks/connectors/use-pending-setups': {
+    usePendingSetups: () => ({
+      data: { data: { items: pendingRecords, total_pending: pendingRecords.length } },
+    }),
+  },
+  '@/components/connectors/setup/connector-key-setup-panel': {
+    ConnectorKeySetupPanel: 'ConnectorKeySetupPanel',
+  },
   'react/jsx-runtime': { jsx: element, jsxs: element, Fragment: 'Fragment' },
   'lucide-react': ui,
   '@/i18n': { useT: () => translate },
   '@/lib/utils': { cn: (...values) => values.filter(Boolean).join(' ') },
   '@/components/ui/button': ui,
+  '@/components/chat/ui/resource-selection-dialog-content': {
+    ResourceSelectionDialogContent: 'DialogContent',
+  },
   '@/components/ui/dialog': ui,
   '@/components/ui/input': ui,
   '@/components/ui/skeleton': ui,
@@ -100,11 +114,17 @@ const github = {
   connection_summary: { count: 3, state: 'ready', needs_attention_count: 1 },
 };
 const exa = { ...github, id: 'exa', name: 'Exa Web Search' };
-const feishu = { ...github, id: 'feishu', name: 'Feishu', key_fields: [],
+const feishu = {
+  ...github,
+  id: 'feishu',
+  name: 'Feishu',
+  key_fields: [],
   extension_schema_version: '1.1.0',
   setup: { handler: 'feishu-app-registration-v1', methods: ['manual', 'qr'] },
-  credential_fields: [{name: 'app_id'}, {name: 'app_secret'}, {name: 'region'}],
-  capabilities: [{id: 'feishu.messages.send', usable: false, unavailable_reason: 'connector_not_verified'}],
+  credential_fields: [{ name: 'app_id' }, { name: 'app_secret' }, { name: 'region' }],
+  capabilities: [
+    { id: 'feishu.messages.send', usable: false, unavailable_reason: 'connector_not_verified' },
+  ],
 };
 const connection = (id, state = 'ready', connector_id = 'github') => ({
   id,
@@ -252,7 +272,10 @@ groupRow
   .props.onSelect();
 assert.equal(selected.at(-1).state, 'reconnect');
 assert.equal(groupRow.all('DropdownMenuSub').length, 0);
-assert.equal(groupRow.all('DropdownMenuItem').some(node => text(node).includes('catalog.manageConnections')), false);
+assert.equal(
+  groupRow.all('DropdownMenuItem').some(node => text(node).includes('catalog.manageConnections')),
+  false
+);
 groupRow
   .all('DropdownMenuItem')
   .find(node => text(node).includes('picker.group.removeFromTarget'))
@@ -272,19 +295,27 @@ assert.equal(selected.at(-1).state, 'not_connected');
 for (const service of [github, { ...exa, id: 'web-search' }, feishu]) {
   for (const schema of [service.extension_schema_version, '1.3.0']) {
     const descriptor = {
-      ...service, extension_schema_version: schema,
+      ...service,
+      extension_schema_version: schema,
       capabilities: service.capabilities.map(capability => ({
-        ...capability, usable: true, unavailable_reason: undefined,
+        ...capability,
+        usable: true,
+        unavailable_reason: undefined,
       })),
     };
     const saved = connection('saved', 'ready', service.id);
     const current = { ...binding, connector_id: service.id, connection_id: saved.id };
     const [group] = groupModel.createConnectorPickerMenuGroups([descriptor], [saved], [current]);
     assert.equal(group.count, 1);
-    assert.equal(group.createRow?.state, 'not_connected', `${service.id}/${schema}: existing accounts retain creation`);
+    assert.equal(
+      group.createRow?.state,
+      'not_connected',
+      `${service.id}/${schema}: existing accounts retain creation`
+    );
     for (const status of ['all', 'connected']) {
       assert.equal(
-        groupModel.filterConnectorPickerGroups([group], { query: saved.name, status })[0]?.createRow,
+        groupModel.filterConnectorPickerGroups([group], { query: saved.name, status })[0]
+          ?.createRow,
         group.createRow,
         'searching existing accounts must retain the new-connection action'
       );
@@ -296,18 +327,27 @@ for (const service of [github, { ...exa, id: 'web-search' }, feishu]) {
         'src/components/connectors/picker/connector-picker-group-row.tsx',
         'ConnectorPickerGroupRow',
         {
-          group, targetLabel: type, disabled: false,
+          group,
+          targetLabel: type,
+          disabled: false,
           onSelect: candidate => {
-            selection = groupModel.requestConnectorPickerMenuAccount(candidate, {
-              onRequestConnectAndAdd: request => requests.push(request),
-              onRequestSwitch: () => assert.fail('creation must not switch the current account'),
-              onRequestUpdateKey: () => assert.fail('creation must not repair the current account'),
-            }, { type, id: 'target' });
+            selection = groupModel.requestConnectorPickerMenuAccount(
+              candidate,
+              {
+                onRequestConnectAndAdd: request => requests.push(request),
+                onRequestSwitch: () => assert.fail('creation must not switch the current account'),
+                onRequestUpdateKey: () =>
+                  assert.fail('creation must not repair the current account'),
+              },
+              { type, id: 'target' }
+            );
           },
           onDetach: () => assert.fail('creation must not remove the current account'),
         }
       );
-      const add = row.all('DropdownMenuItem').filter(node => text(node).includes('picker.actions.addConnection'));
+      const add = row
+        .all('DropdownMenuItem')
+        .filter(node => text(node).includes('picker.actions.addConnection'));
       assert.equal(add.length, 1, `${type}/${service.id}: one new-connection menu item`);
       add[0].props.onSelect();
       await selection;
@@ -419,7 +459,7 @@ const picker = mountPicker({ onRequestSwitch: () => switches++, onRequestDetach:
 assert.equal(picker.all('ConnectorPickerGroupRow').length, 3);
 assert.equal(picker.all('ConnectorPickerRow').length, 0);
 assert.ok(picker.find('SearchInput'));
-assert.match(text(picker.find('DialogFooter')), /picker.group.footer/);
+assert.equal(picker.find('DialogFooter'), undefined);
 groupView(picker).props.onSelect(groupView(picker).props.group.accounts[0]);
 await flush();
 picker.render();
@@ -525,7 +565,7 @@ loading = false;
 failed = true;
 loadState.render();
 assert.equal(loadState.all('ConnectorPickerGroupRow').length, 0);
-assert.match(text(loadState.find('DialogBody')), /picker.loadFailedTitle/);
+assert.match(text(loadState.find('DialogContent')), /picker.loadFailedTitle/);
 failed = false;
 
 // Current identity and default identity remain independent, even with broken credentials.
@@ -610,16 +650,22 @@ assert.equal(firstUseAdds, 1, 'first selection is immediate, with no default con
 assert.equal(firstUse.find('ConnectorFirstUseDialog'), undefined);
 assert.deepEqual(preferenceWrites, [], 'picker never writes a default');
 preferenceFailure = true;
-const failedBinding = mountPicker({ bindings: [], onRequestAdd: () => { throw new Error('binding conflict'); } });
+const failedBinding = mountPicker({
+  bindings: [],
+  onRequestAdd: () => {
+    throw new Error('binding conflict');
+  },
+});
 groupView(failedBinding).props.onSelect(groupView(failedBinding).props.group.accounts[0]);
 await flush();
 failedBinding.render();
-assert.match(text(failedBinding.find('DialogBody')), /picker.actionFailed/);
+assert.match(text(failedBinding.find('DialogContent')), /picker.actionFailed/);
 assert.deepEqual(preferenceWrites, []);
 preferenceFailure = false;
 
 const catalogCreateRequests = [];
 const catalogRow = load('src/components/connectors/catalog/connector-catalog-row.tsx', {
+  '@/components/ui/card': ui,
   ...common,
   'next/link': { default: 'Link' },
   './catalog-model': catalogModel,
@@ -639,8 +685,11 @@ const cards = [
 ].map(item => catalogRow({ item }));
 const layoutClasses = tree =>
   nodes(tree)
-    .filter(node => ['article', 'h3'].includes(node.type) ||
-      (node.type === 'div' && node.props.className === 'flex h-9 w-36 shrink-0'))
+    .filter(
+      node =>
+        ['Card', 'h3'].includes(node.type) ||
+        (node.type === 'div' && node.props.className === 'flex h-9 w-36 shrink-0')
+    )
     .map(node => node.props.className);
 for (const card of cards) {
   assert.deepEqual(
@@ -662,14 +711,25 @@ for (const count of [1, 2]) {
   const cardNodes = nodes(card);
   const mainAction = cardNodes.find(node => node.type === 'Button');
   assert.equal(text(mainAction), 'catalog.manageConnections');
-  assert.equal(nodes(mainAction).find(node => node.type === 'Link').props.href, '/console/connectors/github');
+  assert.equal(
+    nodes(mainAction).find(node => node.type === 'Link').props.href,
+    '/console/connectors/github'
+  );
   assert.equal(cardNodes.filter(node => node.type === 'DropdownMenuTrigger').length, 1);
   const menuItems = cardNodes.filter(node => node.type === 'DropdownMenuItem');
-  assert.equal(menuItems.length, 1, 'the dropdown only offers add; manage remains the primary action');
+  assert.equal(
+    menuItems.length,
+    1,
+    'the dropdown only offers add; manage remains the primary action'
+  );
   const beforeAdd = catalogCreateRequests.length;
   menuItems.find(node => text(node).includes('connections.addConnection')).props.onSelect();
   assert.equal(catalogCreateRequests.length, beforeAdd + 1);
-  assert.equal(catalogCreateRequests.at(-1), true, 'add opens the existing independent create dialog');
+  assert.equal(
+    catalogCreateRequests.at(-1),
+    true,
+    'add opens the existing independent create dialog'
+  );
 }
 const newCard = catalogRow({ item: { ...github, connection_summary: { count: 0 } } });
 assert.equal(nodes(newCard).filter(node => node.type === 'DropdownMenuTrigger').length, 0);
@@ -688,27 +748,71 @@ console.log(
   'Connector dialog grouping, account actions, switch races/focus, and uniform catalog-card layout checks passed.'
 );
 
-pendingRecords=[{kind:'pending_setup',id:'pending-original',connector_id:'feishu',app_id:'cli_original',region:'feishu',state:'awaiting_application',revision:2,allowed_actions:['resume_manual','cancel']}];
+pendingRecords = [
+  {
+    kind: 'pending_setup',
+    id: 'pending-original',
+    connector_id: 'feishu',
+    app_id: 'cli_original',
+    region: 'feishu',
+    state: 'awaiting_application',
+    revision: 2,
+    allowed_actions: ['resume_manual', 'cancel'],
+  },
+];
 let resumedPending;
-groupRow.render({group:groups[2],disabled:false,pendingSetups:pendingRecords,onResume:id=>{resumedPending=id;}});
-assert.equal(groupRow.all('DropdownMenuRadioItem').length,0,'pending is never a selectable connection');
-assert.match(text(groupRow.find('DropdownMenuTrigger')),/pending.continue/);
-groupRow.all('DropdownMenuItem').find(node=>text(node).includes('cli_original')).props.onSelect();
-assert.equal(resumedPending,'pending-original');
-assert.ok(groupRow.all('DropdownMenuItem').some(node=>text(node).includes('picker.actions.addConnection')),'new connection remains available');
-const pendingCard=catalogRow({item:{...feishu,connection_summary:{count:0}}});
-assert.deepEqual(layoutClasses(pendingCard),layoutClasses(cards[0]));
-assert.match(text(nodes(pendingCard).find(node=>node.type==='Button')),/pending.continue/);
-let latePendingAdds=0;
-const pendingPicker=mountPicker({onRequestAdd:()=>latePendingAdds++,onRequestSwitch:()=>latePendingAdds++});
-pendingPicker.all('ConnectorPickerGroupRow').find(node=>node.props.group.id==='feishu').props.onResume('pending-original');
+groupRow.render({
+  group: groups[2],
+  disabled: false,
+  pendingSetups: pendingRecords,
+  onResume: id => {
+    resumedPending = id;
+  },
+});
+assert.equal(
+  groupRow.all('DropdownMenuRadioItem').length,
+  0,
+  'pending is never a selectable connection'
+);
+assert.match(text(groupRow.find('DropdownMenuTrigger')), /pending.continue/);
+groupRow
+  .all('DropdownMenuItem')
+  .find(node => text(node).includes('cli_original'))
+  .props.onSelect();
+assert.equal(resumedPending, 'pending-original');
+assert.ok(
+  groupRow
+    .all('DropdownMenuItem')
+    .some(node => text(node).includes('picker.actions.addConnection')),
+  'new connection remains available'
+);
+const pendingCard = catalogRow({ item: { ...feishu, connection_summary: { count: 0 } } });
+assert.deepEqual(layoutClasses(pendingCard), layoutClasses(cards[0]));
+assert.match(text(nodes(pendingCard).find(node => node.type === 'Button')), /pending.continue/);
+let latePendingAdds = 0;
+const pendingPicker = mountPicker({
+  onRequestAdd: () => latePendingAdds++,
+  onRequestSwitch: () => latePendingAdds++,
+});
+pendingPicker
+  .all('ConnectorPickerGroupRow')
+  .find(node => node.props.group.id === 'feishu')
+  .props.onResume('pending-original');
 pendingPicker.render();
-assert.equal(pendingPicker.all('Dialog').length,1,'resume replaces content of original dialog');
-const resumedPanel=pendingPicker.find('ConnectorKeySetupPanel');
-assert.equal(resumedPanel.props.pendingSetupID,'pending-original');
-assert.equal(resumedPanel.props.target,undefined,'pending does not bind a target during credential creation');
-pendingPicker.render({open:false});
-resumedPanel.props.onReady(connection('new','ready','feishu'));
-await flush();assert.equal(latePendingAdds,0,'closed or stale picker cannot bind a late result');
-pendingPicker.unmount();pendingRecords=[];
-console.log('Pending menu actions, same-dialog recovery, card geometry and stale-host fencing checks passed.');
+assert.equal(pendingPicker.all('Dialog').length, 1, 'resume replaces content of original dialog');
+const resumedPanel = pendingPicker.find('ConnectorKeySetupPanel');
+assert.equal(resumedPanel.props.pendingSetupID, 'pending-original');
+assert.equal(
+  resumedPanel.props.target,
+  undefined,
+  'pending does not bind a target during credential creation'
+);
+pendingPicker.render({ open: false });
+resumedPanel.props.onReady(connection('new', 'ready', 'feishu'));
+await flush();
+assert.equal(latePendingAdds, 0, 'closed or stale picker cannot bind a late result');
+pendingPicker.unmount();
+pendingRecords = [];
+console.log(
+  'Pending menu actions, same-dialog recovery, card geometry and stale-host fencing checks passed.'
+);

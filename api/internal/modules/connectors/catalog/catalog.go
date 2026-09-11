@@ -52,6 +52,9 @@ const (
 	SurfaceChat     Surface = "chat"
 	SurfaceAgent    Surface = "agent"
 	SurfaceWorkflow Surface = "workflow"
+	// SurfaceDigitalHuman is retained in accepted extension contracts. Its
+	// presence does not enable a runtime binding target in this release.
+	SurfaceDigitalHuman Surface = "digital_human"
 )
 
 // CapabilityType is a connector-level summary. Classification controls where
@@ -218,7 +221,7 @@ func Validate(definition Definition) error {
 	if definition.Ownership != OwnershipPersonal {
 		return invalid("ownership")
 	}
-	if !hasAllFirstReleaseSurfaces(definition.Surfaces) {
+	if !validDefinitionSurfaces(definition) {
 		return invalid("surfaces")
 	}
 	if err := validateCredentialContract(definition); err != nil {

@@ -40,6 +40,7 @@ type ReconnectCommand struct {
 	ConnectionID            uuid.UUID
 	IdempotencyKey          string            `json:"-"`
 	Values                  map[string]string `json:"-"`
+	MailUsage               string
 	ConfirmUnstableIdentity bool
 }
 
@@ -160,6 +161,19 @@ func (service *MaintenanceService) Reconnect(ctx context.Context, command Reconn
 		return ReconnectResult{}, err
 	}
 	definition, found := service.catalog.Get(existing.ConnectorID.String())
+	if found && definition.IsMailCredentials() {
+		if catalog.NormalizeMailValuesFor(definition.ID, command.Values) != nil || existing.ExternalAccountID == nil || *existing.ExternalAccountID != command.Values["email"] || existing.AuthMethodID != connectorcore.Identifier(definition.AuthMethodID) {
+			return ReconnectResult{}, connectorcore.NewError(connectorcore.ErrorCodeConflict, false, nil)
+		}
+		if command.MailUsage == "" {
+			command.MailUsage = mailUsage(existing)
+		}
+		if len(catalog.MailOperationsFor(definition.ID, command.MailUsage)) == 0 {
+			return ReconnectResult{}, connectorcore.NewError(connectorcore.ErrorCodeInvalidInput, false, nil)
+		}
+	} else if command.MailUsage != "" {
+		return ReconnectResult{}, connectorcore.NewError(connectorcore.ErrorCodeInvalidInput, false, nil)
+	}
 	if !found || !exactCredentialSchema(definition, command.Values) {
 		return ReconnectResult{}, connectorcore.NewError(connectorcore.ErrorCodeInvalidInput, false, nil)
 	}
@@ -172,6 +186,7 @@ func (service *MaintenanceService) Reconnect(ctx context.Context, command Reconn
 	}
 	fingerprint, err := service.hasher.RequestFingerprint(CommandFingerprintInput{
 		ConnectorID: existing.ConnectorID.String(), ReconnectConnectionID: existing.ID, Values: command.Values,
+		MailUsage: command.MailUsage, DriverID: definition.DriverID, AuthMethodID: definition.AuthMethodID,
 	})
 	if err != nil {
 		return ReconnectResult{}, err
@@ -195,8 +210,14 @@ func (service *MaintenanceService) Reconnect(ctx context.Context, command Reconn
 		OrganizationID: command.OrganizationID, OwnerAccountID: command.OwnerAccountID,
 		ConnectionID: existing.ID, ConnectorID: definition.ID, DriverID: definition.DriverID,
 		AuthMethodID: definition.AuthMethodID, Credentials: command.Values,
+		MailUsage: command.MailUsage, OperationIDs: catalog.MailOperationsFor(definition.ID, command.MailUsage),
 	})
 	if err != nil {
+		result, failure := service.failReconnect(ctx, claimed, err)
+		result.MailVerification = verification.MailVerification.SafeCopy()
+		return result, failure
+	}
+	if err := validateMailVerification(definition, command.MailUsage, command.Values["email"], verification); err != nil {
 		return service.failReconnect(ctx, claimed, err)
 	}
 	usable, unavailable, err := verifiedOperations(definition, verification.UsableOperationIDs)
@@ -208,7 +229,7 @@ func (service *MaintenanceService) Reconnect(ctx context.Context, command Reconn
 		return service.failReconnect(ctx, claimed, err)
 	}
 	existingIdentity := optionalValue(existing.ExternalAccountID)
-	if definition.IsMessagingCredentials() && (externalAccountID == "" || externalAccountID != existingIdentity) {
+	if (definition.IsMessagingCredentials() || definition.IsMailCredentials()) && (externalAccountID == "" || externalAccountID != existingIdentity) {
 		return service.failReconnect(ctx, claimed, connectorcore.NewError(connectorcore.ErrorCodeConflict, false, nil))
 	}
 	stableIdentity := existingIdentity != "" && externalAccountID != ""
@@ -244,6 +265,11 @@ func (service *MaintenanceService) Reconnect(ctx context.Context, command Reconn
 	constraint := connectorcore.OwnerConstraint(command.OwnerAccountID, usable)
 	if replaceExisting {
 		constraint = existing.Constraint
+		if definition.IsMailCredentials() && constraint != nil {
+			copy := *constraint
+			copy.AllowedOperationIDs = append([]connectorcore.Identifier{}, usable...)
+			constraint = &copy
+		}
 	}
 	resultConnection := connectorcore.PersonalConnection{
 		Constraint: constraint,
@@ -315,9 +341,13 @@ func (service *MaintenanceService) Diagnose(
 		OrganizationID: organizationID, OwnerAccountID: ownerAccountID, ConnectionID: connection.ID,
 		ConnectorID: definition.ID, DriverID: definition.DriverID, AuthMethodID: definition.AuthMethodID,
 		Credentials: credentials,
+		MailUsage:   mailUsage(connection), OperationIDs: mailOperationIDs(connection),
 	})
 	if verifyErr != nil {
 		return service.persistDiagnostic(ctx, connection, connectorcore.ErrorCodeOf(verifyErr))
+	}
+	if err := validateMailVerification(definition, mailUsage(connection), optionalValue(connection.ExternalAccountID), verification); err != nil {
+		return service.persistDiagnostic(ctx, connection, connectorcore.ErrorCodeOf(err))
 	}
 	usable, unavailable, verifyErr := verifiedOperations(definition, verification.UsableOperationIDs)
 	if verifyErr != nil {
@@ -329,6 +359,29 @@ func (service *MaintenanceService) Diagnose(
 	}
 	now := service.now().UTC()
 	connection.State = connectorcore.ReadinessReady
+	// Diagnostics refresh evidence, but cannot accept newly shipped WeCom
+	// resource operations. Only explicit reconnect admits that larger set.
+	if isMessagingConnection(connection) && connection.ConnectorID == "wecom" {
+		accepted := make(map[connectorcore.Identifier]bool)
+		for _, id := range connection.UsableOperationIDs {
+			accepted[id] = true
+		}
+		for id := range connection.UnavailableOperations {
+			accepted[id] = true
+		}
+		filtered := make([]connectorcore.Identifier, 0, len(usable))
+		for _, id := range usable {
+			if !catalog.IsWeComResourceRead(id.String()) || accepted[id] {
+				filtered = append(filtered, id)
+			}
+		}
+		for id := range unavailable {
+			if catalog.IsWeComResourceRead(id.String()) && !accepted[id] {
+				delete(unavailable, id)
+			}
+		}
+		usable = filtered
+	}
 	connection.UsableOperationIDs = usable
 	connection.UnavailableOperations = unavailable
 	connection.DiagnosticCode = nil
@@ -484,7 +537,7 @@ func (service *MaintenanceService) persistDiagnostic(
 		code = connectorcore.ErrorCodeInternal
 	}
 	now := service.now().UTC()
-	if code == connectorcore.ErrorCodeInvalidKey || code == connectorcore.ErrorCodeInsufficientKey || code == connectorcore.ErrorCodeInvalidAppCredentials {
+	if code == connectorcore.ErrorCodeInvalidKey || code == connectorcore.ErrorCodeInsufficientKey || code == connectorcore.ErrorCodeInvalidAppCredentials || code == connectorcore.ErrorCodeMailAuthenticationRejected || code == connectorcore.ErrorCodeMailAppPasswordRequired {
 		connection.State = connectorcore.ReadinessReconnectRequired
 	} else {
 		connection.State = connectorcore.ReadinessUnavailable

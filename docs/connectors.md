@@ -4,8 +4,10 @@ Personal Connectors give one ZGI account a direct, reusable connection to an
 external service. GitHub and Exa use personal Keys. Feishu / Lark additionally
 supports a versioned self-built application credential contract and controlled
 QR registration. DingTalk, WeCom and WeChat use a versioned messaging
-credential contract. Connections remain personal: no organization-shared credentials,
-general-purpose OAuth editor, or member-managed permission policies are introduced.
+credential contract. Gmail supports IMAP/SMTP with a Google app password;
+QQ Mail and 163 Mail use their respective client authorization codes.
+Connections remain personal: no organization-shared credentials,
+general-purpose OAuth editor, or editable provider permission policies are introduced.
 
 GitHub and Exa both appear in the **Connectors** section. Exa is shown as
 **Exa Web Search** in English and **Exa 网页搜索** in Simplified Chinese: it is an
@@ -21,6 +23,14 @@ localized. Service brands, user-defined Connection names, external account
 identities, URLs, code, and provider-returned content remain unchanged.
 
 ## Runtime setup
+
+Startup restores validated, digest-checked Connector definitions from the database.
+Accepted schema `1.3.0` / contract V4 definitions retain the `digital_human`
+surface alongside Chat, Agent, and Workflow, with their original authentication
+family and contract digest; this does not enable an additional runtime binding target.
+If a bundled package cannot compatibly replace an accepted version, startup keeps
+the accepted version and reports the rejected update in the Connector admission
+log. Invalid stored contracts and database errors still fail startup.
 
 ### Feishu / Lark application Connector
 
@@ -193,6 +203,78 @@ Registration protocol reference: [official Go SDK registration scene](https://gi
 The driver uses bounded, injected HTTP requests instead of SDK-global clients,
 credential caches or implicit retry loops.
 
+### Gmail with a Google app password
+
+Choose Gmail in **Connectors**, enter the original Google login email and a
+16-character Google app password, then select **Read mail**, **Send mail**, or
+**Read and send**. Grouping spaces copied from Google's password display are
+accepted. Do not enter the Google account's ordinary password. ZGI does not
+require an OAuth client for this connection and does not use this password with
+the Gmail API.
+
+Google requires two-step verification before creating an app password. Some
+organization accounts, accounts configured with security keys only, and Advanced
+Protection accounts cannot use app passwords. ZGI cannot query eligibility in
+advance: follow Google's [app password instructions](https://support.google.com/accounts/answer/185833)
+and applicable administrator policy. Personal Gmail accounts do not need the
+old “enable IMAP” step; see Google's [mail client instructions](https://support.google.com/mail/answer/7126229).
+Google recommends OAuth for applications that support it; this Connector's
+current authentication method is explicitly the app-password option.
+
+The **Email** entry groups Gmail, QQ Mail and 163 Mail. Choose a provider and enter
+its mailbox address and app password or client authorization code. New connections
+always enable reading and sending; there is no separate use selector. Both IMAP
+and SMTP authentication must pass before the connection is saved. Setup does not
+send a test email, and partial verification never falls back to a single direction.
+
+Existing read-only and send-only connections remain unchanged when viewed,
+renamed or diagnosed. Their **Reconnect and enable read and send** action upgrades
+the same login only after both checks succeed. Failure leaves the saved credentials,
+uses, bindings and other restrictions intact. The API retains the historical
+`read`, `send` and `read_send` values; omitting use on credential maintenance retains
+the old use. These local restrictions do not change the provider password's scope.
+Dotted addresses, plus addresses, Googlemail addresses and Workspace aliases are
+not merged into another saved identity.
+
+Email account names show a provider prefix, such as `QQ Mail-Work mailbox`. If no
+custom alias was set, the name uses the authenticated login's local part. The full
+login remains visible separately. Prefixes are presentation only: language changes
+do not rename saved records. The combined entry does not combine credentials,
+connection IDs or target bindings. Chat and Agent can retain selections from
+multiple mail providers; Workflow operations still require their own provider.
+Existing provider detail links open the unified email view, while connection UUID
+management links continue to identify the original connection.
+
+The driver connects only to `imap.gmail.com:993` and `smtp.gmail.com:465` using
+verified TLS. The protocol driver also supports deployment-selected port 587
+with mandatory STARTTLS; the default container wiring uses 465. Hosts and TLS
+settings are not user inputs. Credentials use the existing encrypted personal
+Connection storage, independently of ZGI's notification-mail configuration.
+
+Four operations are available: list folders, list messages, read a message, and
+send a plain-text message. Message lists default to 20 and allow up to 50 items
+per page. Mailbox reads use read-only selection and do not mark messages read.
+Message references are scoped to the owner, connection, credential generation
+and target; a changed mailbox UID generation requires listing again. Returned
+body text is limited to 256 KiB. Attachment transfer, deletion, label changes,
+automatic replies and background mailbox synchronization are outside this release.
+
+Sending uses the existing interactive confirmation and durable invocation claim.
+If a recipient is rejected before message submission, the message is not sent to
+the remaining recipients. A successful result means **accepted by the mail
+server**, not delivered. When submission may have occurred but the final response
+is missing, the result stays unknown and ZGI does not resend automatically.
+Check the mailbox before explicitly attempting another send. Password revocation
+and account policy changes require reauthentication; removing a local Connection
+does not revoke the password at Google.
+
+The Gmail definition uses ZGI extension `1.4.0`, canonical contract V5 and
+authentication `gmail.app_password`. Deploy a reader that understands this
+contract before admitting it. It does not change the meaning of existing
+GitHub, Exa, Feishu or messaging credentials. QQ/163 authorization codes use
+separate profiles described below. Microsoft authorization and Gmail API OAuth
+are outside this implementation.
+
 ### DingTalk, WeCom and WeChat
 
 These three built-in definitions use extension `1.2.0`, canonical contract V3,
@@ -204,7 +286,7 @@ connection still requires user authorization and credential verification.
 | Provider | Default setup methods | Explicit operations | Verification boundary |
 | --- | --- | --- | --- |
 | DingTalk | QR or Client ID / Client Secret | Text/Markdown to specified users or a group | An application token verifies credentials; permissions and recipient eligibility remain checked when sending |
-| WeCom | QR or Bot ID / Secret | Read authorization description, list recent sessions, send to a returned session | Signed CLI token plus actual identity and session reads; public schema discovery is insufficient |
+| WeCom | QR or Bot ID / Secret | Read authorization description, list recent sessions, send to a returned session | Signed CLI token plus a verified identity read; session capability is checked separately, and public schema discovery is insufficient |
 | WeChat iLink | QR only | Pull direct messages, reply with the returned conversation handle | A successful upstream HTTP response is required; a local long-poll timeout cannot make a connection ready |
 
 Use **Connect** to add an independent personal connection. **Update connection
@@ -224,10 +306,41 @@ and saved connections before starting another one. WeChat verification codes are
 write-only, revision checked and limited to three submissions per flow.
 
 Registration lasts at most five minutes, shortened by a provider expiry when
-provided. All old and new intents share the owner/organization start and active
+provided. Once WeChat or WeCom returns candidate credentials, their verification
+window lasts at most fifteen minutes from acceptance, independently of the old
+QR expiry. Waiting does not extend that deadline. All old and new intents share the owner/organization start and active
 flow quotas described above. Eight bounded worker loops per API instance share
 the database-wide limit of 32 active leases. GET status never advances upstream
 registration. Expired or cancelled flows clear their private registration data.
+
+Apply migration `20260906120000_messaging_auth_reliability` before running the
+updated API. WeChat/WeCom verification now separates the external probe from
+the final database transaction. An encrypted checkpoint is promoted without
+calling the provider again, with flow generation, owner and original connection
+revision checked. A cancelled flow cannot promote late results. WeChat's first
+messages and cursor are saved together and remain available after activation.
+
+**Waiting for verification** keeps a valid candidate for an explicit retry.
+If a consuming WeChat request may have reached the provider without a reliable
+checkpoint, the flow requires a new authorization; it is not automatically
+replayed. Server diagnostics record only a trace ID, stage, error category,
+status/code numbers, elapsed time and transport completion flags. They exclude
+credentials, URLs, message bodies and raw provider errors. Already-failed flows
+whose candidate secrets were deleted cannot be restored by this migration.
+
+Repeated QR authorization has provider-specific semantics. Feishu resumes the
+fixed original App ID without resubmitting creation-only name, avatar or `desc`.
+DingTalk's official page allows selecting an existing application; select the
+original application when updating a connection, because a different AppKey is
+rejected. WeCom's original Bot ID/Secret can be updated manually; selecting the
+original bot through its QR page still requires validation in the applicable
+tenant. WeChat must return a usable session token for the original account;
+an “already bound” response alone is not proof of a ready connection.
+
+The platform capability notices describe the current subject and resource
+limits. They do not copy Feishu's scope template to other providers or request
+extra permissions automatically. New operations require a documented API,
+matching identity, permission and resource checks, and separate verification.
 
 WeCom session handles and WeChat reply handles expire after one hour and cannot
 cross owners, connections, credential generations, targets or binding revisions.
@@ -559,15 +672,116 @@ scan. Legacy `connection_id` detail links resolve ownership and open the origina
 manual credential dialog through `action=credentials`. They cannot automatically
 switch organizations or recreate a deleted connection.
 
+### QQ Mail and 163 Mail
+
+Open **Email**, choose **QQ Mail** or **163 Mail**, then enter the full mailbox
+login and its 16-character client authorization code. Reading and sending are
+enabled together. Use the mailbox provider's account settings to enable IMAP
+and SMTP and generate the code. A normal account password is not this code.
+The current profiles accept only `@qq.com` and `@163.com` respectively; enterprise,
+Foxmail, 126 and other domains are not inferred from these profiles.
+
+| Profile | Read endpoint | Send endpoint | Credential fields |
+| --- | --- | --- | --- |
+| QQ Mail (`qqmail`) | `imap.qq.com:993` | `smtp.qq.com:465` | `email`, `authorization_code` |
+| 163 Mail (`netease163`) | `imap.163.com:993` | `smtp.163.com:465` | `email`, `authorization_code` |
+
+Both endpoints require TLS with certificate validation. SMTP selects an advertised
+PLAIN or LOGIN mechanism after TLS; an authentication rejection does not trigger
+another mechanism or endpoint attempt. 163 IMAP identifies the client as ZGI using
+IMAP ID. Unsupported mechanisms and client-identity requirements have separate
+safe error messages. These new profiles use extension schema `1.5.0`; Gmail keeps
+its `1.4.0` definition, original credential field and existing handle format.
+
+The login's local part and plus suffix are preserved, while its domain is
+lowercased. QQ authorization codes keep their exact 16-character value; 163
+codes also accept whitespace separators copied from the provider page and remove
+those separators before authentication. New product connections require both
+IMAP and SMTP authentication.
+Historical single-direction API clients remain supported. Setup never sends a test email. Sending mail still
+requires runtime confirmation; a lost acknowledgement is not automatically
+resent. Credential verification does not guarantee later message delivery.
+
+Client codes do not supply separate provider-side read and send permissions.
+ZGI enforces the saved use locally. Regenerating or revoking a code happens in
+the provider's settings; reconnect the same mailbox afterward. Disconnecting ZGI
+removes the local connection and is not a provider-side code revocation.
+QQ/163 one-click authorization, QR authorization and platform application
+registration are outside this implementation.
+
+Provider instructions: [QQ Mail authorization codes](https://help.mail.qq.com/detail/106/985)
+and [NetEase authorization codes](https://help.mail.126.com/faqDetail.do?code=d7a5dc8471cd0c0e8b4b8f4f8e49998b374173cfe9171305fa1ce630d7f67ac286624f309a1a7089).
+
+### Messaging recovery and resource reads
+
+WeChat consuming reads honor bounded server polling hints, with request and
+durable lease budgets that cover the long poll. Concurrent readers wait, and a
+read whose consumption is uncertain requires recovery rather than automatic
+replay. A confirmed QR response without a base URL uses the fixed official origin;
+unrecognized origins and IDC routes are rejected. An already-bound QR result
+directs the owner back to their connections and does not manufacture credentials.
+The optional-field send receipt is accepted only as a valid, recognized JSON
+object; malformed or contradictory responses remain unconfirmed.
+
+The WeCom `1.1.0` catalog adds seven read operations while preserving the three
+original messaging operation contracts:
+
+| Operation | Fixed official CLI path |
+| --- | --- |
+| `wecom.documents.search` | `/cli/doc/search` |
+| `wecom.documents.get` | `/cli/doc/contents/get` |
+| `wecom.calendar.list` | `/cli/calendar/schedules/list` |
+| `wecom.calendar.get` | `/cli/calendar/schedules/get` |
+| `wecom.calendar.search` | `/cli/calendar/schedules/search` |
+| `wecom.todos.list` | `/cli/todo/list` |
+| `wecom.todos.get` | `/cli/todo/get` |
+
+These capabilities are conditional on the connected bot and resource access;
+discovering an API or verifying bot identity does not verify resource permission.
+Existing connections keep their saved usable operations and local restrictions.
+Owners must explicitly reconnect and accept new uses before execution. Diagnostics
+refresh evidence without admitting newly shipped resource operations.
+QQ/163 setup and these WeCom resource reads have protocol-fixture coverage;
+successful use with a real account must be validated separately in the deployment.
+
+Resource and cursor references are encrypted, expire after 15 minutes, and are
+bound to the owner, organization, connection, credential version, binding and
+target. Cursors also bind to the original query. Document results are decoded in
+memory with a 256 KiB text limit; a returned file-content field is never opened as
+a local path or fetched as a URL. Both documented long-task polling modes are
+supported, bounded by cancellation, a 120-second polling budget and a
+150-second document operation budget. Polling cannot restart the original task.
+Calendar listing does not invent pagination; absent time bounds default to the
+next seven days using the deployment's local clock. Partial get results report
+unreturned references without claiming that a resource was permanently deleted.
+
+The wire contracts follow the official
+[WeCom CLI source](https://github.com/WecomTeam/wecom-cli/tree/78c514b2afee7c0d3d7be715628478421f37ee63)
+and [WeChat adapter source](https://github.com/Tencent/openclaw-weixin/tree/2f4dcbf57bedf0e17e266fdedcf0cd2dd141b7d3).
+Feishu's 38 catalog operations are grouped for display into messaging, documents,
+people and resources, with credential subject and permission alternatives shown
+when declared. Its existing 40 tenant-scope template and seven-permission baseline
+are unchanged. DingTalk continues to expose its implemented messaging capabilities;
+no additional QR-template permissions are inferred from another platform.
+
 ### Execution safety
 
 There are no member-facing grants, scopes, action allowlists, audit switches,
 approval policies, or risk settings in Personal Connector setup.
 
+Owners of ready WeChat and WeCom connections can restrict their **local uses**
+from connection management. Saving uses a revision and idempotency key; clearing
+every selection pauses execution. Only operations already accepted for that
+connection can be selected. Newly cataloged operations do not automatically
+expand old connections. This setting cannot grant provider permissions, change
+target bindings, or bypass runtime send confirmation. A revision conflict requires
+refreshing the connection before editing again.
+
 - Trusted low-risk operations run immediately when the owner and binding remain
   eligible.
 - Interactive high-risk or unclassified operations require confirmation at the
-  moment of use.
+  moment of use unless the current conversation has a matching remembered
+  Connector authorization.
 - Unattended high-risk or unclassified operations are blocked.
 - Connector lifecycle and operation decisions are audited automatically.
 - An operation with an unknown provider outcome is not submitted again
@@ -576,9 +790,13 @@ approval policies, or risk settings in Personal Connector setup.
 These are platform defaults and cannot be weakened by plugin metadata or member
 configuration.
 
-Connector confirmation reuses the existing operation confirmation card with the
-action, destination and necessary risk information, without a separate confirmation
-framework. Ordinary tool session approvals are unchanged. Only trusted Connector
+Connector and Skill calls share the existing expandable invocation row. Connector
+details use their safe operation projection, without generic argument/debug dumps.
+In Chat, pending Connector approvals use the existing Tool Governance approval
+panel in the conversation input area, including approve/reject and the optional
+remember-for-session choice; the timeline does not add a second confirmation card.
+Completed, cancelled, failed and uncertain outcomes use the existing Connector
+terminal projection without confirmation actions. Ordinary tool session approval behavior is unchanged. Only trusted Connector
 events or Connector node execution metadata can select this UI; a tool-returned JSON
 object with `state: unknown` does not establish that authority.
 
@@ -590,6 +808,47 @@ server-confirmed **Unknown outcome**. The former exposes a read-only status chec
 not a submit-again button. Pending reads cannot prove an uncertain attempt safe to
 replay. Receipt state is shared across views for the same owner and terminal evidence
 does not regress to a replayed approval request.
+
+### Setup guidance and shared selection
+
+Setup keeps decision-relevant help beside its fields: official credential steps,
+the fixed read-and-send mail use, and the original identity when reconnecting.
+Connection management shows actionable causes for known failures, local-use
+scope, permission verification counts, and the specific account being removed.
+Removing a ZGI connection does not revoke the provider-side authorization.
+Detailed platform instructions remain in expandable help.
+
+Chat Skill and Connector selection share the existing dialog structure. Chat
+and Workflow creation share the existing setup content while retaining their
+own draft/save protocols. Provider choice remains limited to the directory's
+mail family; a host repairing a Gmail selection cannot bind a QQ Mail account.
+Agent selection dialogs retain their existing layout and saving behavior.
+
+### Private confirmation preview rollout
+
+The status query accepts optional `presentation_version=1`. With that parameter,
+`presentation` contains version 1 and a safe preview, or `preview: null` for an
+older record. Without it the response shape is unchanged. Unknown/duplicate
+query parameters are rejected. The authorized query is read-only and uses
+`Cache-Control: no-store`; pending reads never authorize retrying an uncertain send.
+
+Preview facts are captured from the accepted account and frozen operation input.
+Mail shows the sending account, all recipients, subject and a bounded plain-text
+body. Other supported operations use explicit field allowlists; conversation
+handles resolve through the existing scoped local store. Credentials and context
+tokens are excluded. Long content is marked as shortened; an incomplete or altered
+account/target prevents the new UI from enabling confirmation. Cancellation remains
+available for a verified pending record. Historical message cards are read-only.
+Unknown operation shapes also remain unavailable until a safe preview is implemented.
+
+The preview is encrypted with the continuation and is available only through the
+owner/organization-authorized query. It is not added to runtime events, message
+metadata, Workflow outputs, model context, or shared transcripts. New
+continuations always write the v3 envelope with the frozen preview; readers remain
+compatible with v2 envelopes created before this behavior was made mandatory.
+This follows the existing continuation retention policy and adds no database
+columns. Historical v2 pending records have no preview and cannot be confirmed in
+this UI; cancel them and initiate a new request.
 
 ## Complete runtime separation and upgrade
 
@@ -623,3 +882,11 @@ There is no dual execution, shadow call, rollout switch or online reversal.
 The public [OpenAPI contract](connectors-api.yaml) documents native endpoints.
 PostgreSQL upgrade tests require the dedicated `ZGI_CONNECTOR_FINALIZE_TEST_DSN`.
 Use an isolated test database.
+
+Optional Connector persistence tests use `ZGI_CONNECTOR_TEST_POSTGRES_DSN`:
+`go test ./internal/modules/connectors/connections ./internal/modules/connectors/providers/messaging -run Postgres -count=1` from
+`api/`. The suite creates a unique temporary schema, validates concurrency,
+receipt replay, audit rollback, provider evidence and consuming-read leases,
+then removes that schema.
+Supply credentials through the environment; do not place them in commands,
+logs or committed files. These tests do not replace real-provider acceptance.

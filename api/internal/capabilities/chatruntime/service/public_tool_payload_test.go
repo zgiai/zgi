@@ -7,14 +7,15 @@ import (
 )
 
 func TestPublicToolStreamEventRedactsWithoutMutatingStoredEvent(t *testing.T) {
-	original := StreamEvent{EventType: streamEventToolGovernanceDecision, Payload: map[string]any{"skill_id": "file-manager", "tool_name": "save_file", "correlation_id": "corr-1", "arguments": map[string]any{"filename": "safe.txt", "content": "xoxb-12345678901234567890"}, "governance": map[string]any{"frozen_invocation": map[string]any{"private": "input"}}}}
+	fakeSlackToken := "xoxb-" + strings.Repeat("1", 20)
+	original := StreamEvent{EventType: streamEventToolGovernanceDecision, Payload: map[string]any{"skill_id": "file-manager", "tool_name": "save_file", "correlation_id": "corr-1", "arguments": map[string]any{"filename": "safe.txt", "content": fakeSlackToken}, "governance": map[string]any{"frozen_invocation": map[string]any{"private": "input"}}}}
 	public := publicToolStreamEvent(original)
 	encoded, _ := json.Marshal(public.Payload)
 	if strings.Contains(string(encoded), "xoxb-") || strings.Contains(string(encoded), "frozen_invocation") || !strings.Contains(string(encoded), "corr-1") || !strings.Contains(string(encoded), "safe.txt") {
 		t.Fatal("invalid public tool projection")
 	}
 	stored, _ := json.Marshal(original.Payload)
-	if !strings.Contains(string(stored), "xoxb-") || !strings.Contains(string(stored), "frozen_invocation") {
+	if !strings.Contains(string(stored), fakeSlackToken) || !strings.Contains(string(stored), "frozen_invocation") {
 		t.Fatal("mutated durable event")
 	}
 }

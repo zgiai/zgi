@@ -138,20 +138,33 @@ assert.equal(
 );
 for (const descriptor of [
   { ...connector, extension_schema_version: '1.4.0' },
-  { ...connector, extension_schema_version: '1.3.0', setup: { ...connector.setup, handler: 'unknown' } },
+  {
+    ...connector,
+    extension_schema_version: '1.3.0',
+    setup: { ...connector.setup, handler: 'unknown' },
+  },
   { ...connector, extension_schema_version: '1.3.0', credential_fields: [] },
 ]) {
-  assert.equal(state.supportsAppSetup(descriptor), false, 'unsupported setup contracts remain rejected');
+  assert.equal(
+    state.supportsAppSetup(descriptor),
+    false,
+    'unsupported setup contracts remain rejected'
+  );
 }
 for (const schema of ['1.2.0', '1.3.0']) {
   const messaging = {
-    id: 'wecom', extension_schema_version: schema,
+    id: 'wecom',
+    extension_schema_version: schema,
     setup: { handler: 'wecom-registration-v1', protocol_version: 1, methods: ['manual'] },
   };
   assert.equal(state.supportsMessagingContract(messaging), true);
-  assert.equal(state.supportsMessagingContract({
-    ...messaging, setup: { ...messaging.setup, protocol_version: 2 },
-  }), false);
+  assert.equal(
+    state.supportsMessagingContract({
+      ...messaging,
+      setup: { ...messaging.setup, protocol_version: 2 },
+    }),
+    false
+  );
 }
 assert.equal(state.supportsAppSetup({ id: 'github', key_fields: [] }), false);
 for (const url of [
@@ -216,7 +229,7 @@ const imports = {
   './connector-request-error': errors,
   './connection-detail-query': { invalidatePersonalConnectionQueries() {} },
 };
-const queryClient = {invalidateQueries: async () => {}};
+const queryClient = { invalidateQueries: async () => {} };
 const mountHook = (update, pendingID) =>
   hooksHarness(react => {
     const { useConnectorOnboarding } = load('src/hooks/connectors/use-connector-onboarding.ts', {
@@ -316,7 +329,9 @@ service.startAppCredentialSetup = async (id, body) => {
   return manualPending.promise;
 };
 const panelImports = {
-  './use-creation-default': { useCreationDefault: () => ({ option: () => null, begin() {}, complete: async () => true }) },
+  './use-creation-default': {
+    useCreationDefault: () => ({ option: () => null, begin() {}, complete: async () => true }),
+  },
   ...imports,
   'react/jsx-runtime': { jsx: el, jsxs: el, Fragment: 'Fragment' },
   'next/link': { default: 'Link' },
@@ -325,14 +340,20 @@ const panelImports = {
   '@/components/ui/alert': ui,
   '@/components/ui/button': ui,
   '@/components/ui/card': ui,
+  '@/components/ui/collapsible': ui,
+  './connector-key-form': { ConnectorFieldHelp: 'ConnectorFieldHelp' },
   '@/components/ui/input': ui,
   '@/components/ui/label': ui,
+  '@/components/ui/select': ui,
   '@/components/connectors/detail/connector-app-permissions': {
     ConnectorPermissionTemplateDetails: 'TemplateDetails',
   },
   '@/i18n': { useT: () => key => key },
   '@/hooks/connectors/use-connector-onboarding': { useConnectorOnboarding: () => ({}) },
-  '@/hooks/connectors/use-pending-setups': {pendingSetupKeys: ['connectors','pending-setups'], usePendingSetup: () => ({})},
+  '@/hooks/connectors/use-pending-setups': {
+    pendingSetupKeys: ['connectors', 'pending-setups'],
+    usePendingSetup: () => ({}),
+  },
   '@/hooks/connectors/connector-request-error': errors,
   '@/hooks/connectors/connection-detail-query': { invalidatePersonalConnectionQueries() {} },
   './app-setup-state': state,
@@ -380,10 +401,15 @@ console.log('App setup hook and manual form checks passed.');
 const { ConnectorAppPermissions, ConnectorPermissionTemplateDetails } = load(
   'src/components/connectors/detail/connector-app-permissions.tsx',
   {
-    './permission-evidence-model': load('src/components/connectors/detail/permission-evidence-model.ts'),
+    './permission-evidence-model': load(
+      'src/components/connectors/detail/permission-evidence-model.ts'
+    ),
     'react/jsx-runtime': { jsx: el, jsxs: el, Fragment: 'Fragment' },
     'next-intl': { useLocale: () => 'zh-Hans' },
     '@/components/ui/card': ui,
+    '@/components/ui/button': ui,
+    '@/components/ui/collapsible': ui,
+    'lucide-react': ui,
     '@/components/ui/badge': ui,
     '@/i18n': { useT: () => key => key, useLocale: () => 'zh-Hans' },
     '@/components/connectors/connector-metadata': {
@@ -401,13 +427,19 @@ const permissionTemplate = JSON.parse(
   read('../api/internal/modules/connectors/catalog/definitions/feishu-permissions.json')
 );
 const templateTree = ConnectorPermissionTemplateDetails({ template: permissionTemplate });
-assert.equal(templateTree.type, 'details', 'template stays collapsed inside the existing UI');
+assert.equal(templateTree.type, 'Collapsible', 'template stays collapsed inside the existing UI');
 assert.equal(Boolean(templateTree.props.open), false);
 const templateText = JSON.stringify(templateTree);
 assert.doesNotMatch(templateText, /cardkit:card:read/);
 assert.match(templateText, /cardkit:card:write/);
 assert.match(templateText, /3\.0\.0/);
-for (const scope of ['tenant:tenant:readonly', 'im:message.group_msg', 'im:chat.members:read', 'directory:employee:search', 'directory:employee.base.name.name:read']) {
+for (const scope of [
+  'tenant:tenant:readonly',
+  'im:message.group_msg',
+  'im:chat.members:read',
+  'directory:employee:search',
+  'directory:employee.base.name.name:read',
+]) {
   assert.ok(templateText.includes(scope), `template preview omits ${scope}`);
 }
 assert.match(templateText, /app.templateIncrementalHint/);
@@ -475,80 +507,230 @@ console.log(
 );
 
 // Pending is a separate receipt, rendered inside the existing setup surface.
-let pendingRecord = {kind:'pending_setup',id:randomUUID(),connector_id:'feishu',app_id:'cli_original',region:'feishu',state:'awaiting_application',revision:3,resume_expires_at:new Date(Date.now()+86400000).toISOString(),allowed_actions:['resume_manual','cancel'],resume_qr_unavailable_reason:'same_app_resume_not_verified'};
-let manualResumes=0, pendingReads=0;
-let pendingOnboarding={};
-attached=[];
-service.resumePendingManual = async (id,revision,values) => {
-  manualResumes++;
-  assert.equal(id,pendingRecord.id);assert.equal(revision,3);
-  assert.deepEqual(values,{app_id:'cli_original',region:'feishu',app_secret:'PENDING-SECRET'});
-  return {data:{id:randomUUID(),state:'pending_completion',pending_setup_id:id,error_code:'connector_application_not_ready'}};
+let pendingRecord = {
+  kind: 'pending_setup',
+  id: randomUUID(),
+  connector_id: 'feishu',
+  app_id: 'cli_original',
+  region: 'feishu',
+  state: 'awaiting_application',
+  revision: 3,
+  resume_expires_at: new Date(Date.now() + 86400000).toISOString(),
+  allowed_actions: ['resume_manual', 'cancel'],
+  resume_qr_unavailable_reason: 'same_app_resume_not_verified',
 };
-h=hooksHarness(react=>{
-  const module=load('src/components/connectors/setup/connector-app-setup-panel.tsx', {...panelImports,react,
-    '@/hooks/connectors/use-connector-onboarding':{useConnectorOnboarding:()=>pendingOnboarding},
-    '@/hooks/connectors/use-pending-setups': {pendingSetupKeys:['connectors','pending-setups'],usePendingSetup:()=>({data:{data:pendingRecord},refetch:async()=>{pendingReads++;return {data:{data:pendingRecord}};}})},
-  },'\nexports.fixturePanel = ScopedConnectorAppSetupPanel;');
-  return ()=>module.fixturePanel({connector,pendingSetupID:pendingRecord.id,embedded:true,onReady:c=>attached.push(c)});
+let manualResumes = 0,
+  pendingReads = 0;
+let pendingOnboarding = {};
+attached = [];
+service.resumePendingManual = async (id, revision, values) => {
+  manualResumes++;
+  assert.equal(id, pendingRecord.id);
+  assert.equal(revision, 3);
+  assert.deepEqual(values, {
+    app_id: 'cli_original',
+    region: 'feishu',
+    app_secret: 'PENDING-SECRET',
+  });
+  return {
+    data: {
+      id: randomUUID(),
+      state: 'pending_completion',
+      pending_setup_id: id,
+      error_code: 'connector_application_not_ready',
+    },
+  };
+};
+h = hooksHarness(react => {
+  const module = load(
+    'src/components/connectors/setup/connector-app-setup-panel.tsx',
+    {
+      ...panelImports,
+      react,
+      '@/hooks/connectors/use-connector-onboarding': {
+        useConnectorOnboarding: () => pendingOnboarding,
+      },
+      '@/hooks/connectors/use-pending-setups': {
+        pendingSetupKeys: ['connectors', 'pending-setups'],
+        usePendingSetup: () => ({
+          data: { data: pendingRecord },
+          refetch: async () => {
+            pendingReads++;
+            return { data: { data: pendingRecord } };
+          },
+        }),
+      },
+    },
+    '\nexports.fixturePanel = ScopedConnectorAppSetupPanel;'
+  );
+  return () =>
+    module.fixturePanel({
+      connector,
+      pendingSetupID: pendingRecord.id,
+      embedded: true,
+      onReady: c => attached.push(c),
+    });
 });
-h.render();await h.settle();
-assert.equal(input(false).props.value,'cli_original');assert.equal(input(false).props.disabled,true);
-assert.equal(nodes(h.value).find(n=>n.type==='select').props.disabled,true);
-assert.equal(nodes(h.value).filter(n=>n.type==='QRCode'||n.type==='TemplateDetails').length,0);
-assert.ok(nodes(h.value).find(n=>n.type==='Button'&&n.props.children==='pending.resumeQR').props.disabled);
+h.render();
+await h.settle();
+assert.equal(input(false).props.value, 'cli_original');
+assert.equal(input(false).props.disabled, true);
+assert.equal(nodes(h.value).find(n => n.type === 'Select').props.disabled, true);
+assert.equal(
+  nodes(h.value).filter(n => n.type === 'QRCode' || n.type === 'TemplateDetails').length,
+  0
+);
+assert.ok(
+  nodes(h.value).find(n => n.type === 'Button' && n.props.children === 'pending.resumeQR').props
+    .disabled
+);
 const previousPosts = posts.length;
-await nodes(h.value).find(n=>n.type==='Button'&&n.props.children==='pending.refresh').props.onClick();
-assert.equal(pendingReads,1);assert.equal(manualResumes,0);assert.equal(posts.length,previousPosts,'refresh cannot start registration or verify credentials');
-input(true).props.onChange({target:{value:'PENDING-SECRET'}});h.render();
-nodes(h.value).find(n=>n.type==='form').props.onSubmit({preventDefault(){}});await h.settle();
-assert.equal(input(true).props.value,'');assert.equal(manualResumes,1);assert.equal(attached.length,0);
-assert.equal(nodes(h.value).filter(n=>n.type==='Alert'&&n.props.variant==='destructive').length,0,'approval wait is not a fatal error');
-assert.doesNotMatch([...saved.values()].join(''),/PENDING-SECRET/);
-pendingOnboarding={flow:{id:randomUUID(),state:'verifying'}};
-h.render();await h.settle();
-pendingOnboarding={flow:{...pendingOnboarding.flow,state:'pending_completion'}};
-h.render();await h.settle();
-assert.ok(nodes(h.value).some(n=>n.type==='form'),'a restored unfinished verification returns to the same manual recovery form');
-assert.doesNotMatch(JSON.stringify(h.value),/"app.failed"/,'pending is never presented as terminal setup failure');
-pendingRecord={...pendingRecord,allowed_actions:['resume_qr','resume_manual','cancel'],resume_qr_unavailable_reason:undefined};
-let qrStarts=[];
-pendingOnboarding={start:(...args)=>qrStarts.push(args)};
-h.render();await h.settle();
-const qrTab=nodes(h.value).find(n=>n.type==='Button'&&n.props.children==='pending.resumeQR');
-assert.equal(Boolean(qrTab.props.disabled),false,'server-advertised same-app scan is enabled');
-qrTab.props.onClick();h.render();await h.settle();
-assert.equal(qrStarts.length,0,'changing tabs does not create a QR session');
-assert.ok(nodes(h.value).some(n=>n.props.children==='pending.resumeQRHint'));
-assert.equal(nodes(h.value).filter(n=>n.type==='TemplateDetails').length,0,'resume does not offer the new-app permission template');
-const startQR=nodes(h.value).filter(n=>n.type==='Button'&&n.props.children==='pending.resumeQR').at(-1);
-startQR.props.onClick();assert.deepEqual(qrStarts, [['feishu',false,3]],'only explicit resume uses the original record revision');
-assert.equal(posts.length,previousPosts,'same-app scan never calls create-app');
+await nodes(h.value)
+  .find(n => n.type === 'Button' && n.props.children === 'pending.refresh')
+  .props.onClick();
+assert.equal(pendingReads, 1);
+assert.equal(manualResumes, 0);
+assert.equal(
+  posts.length,
+  previousPosts,
+  'refresh cannot start registration or verify credentials'
+);
+input(true).props.onChange({ target: { value: 'PENDING-SECRET' } });
+h.render();
+nodes(h.value)
+  .find(n => n.type === 'form')
+  .props.onSubmit({ preventDefault() {} });
+await h.settle();
+assert.equal(input(true).props.value, '');
+assert.equal(manualResumes, 1);
+assert.equal(attached.length, 0);
+assert.equal(
+  nodes(h.value).filter(n => n.type === 'Alert' && n.props.variant === 'destructive').length,
+  0,
+  'approval wait is not a fatal error'
+);
+assert.doesNotMatch([...saved.values()].join(''), /PENDING-SECRET/);
+pendingOnboarding = { flow: { id: randomUUID(), state: 'verifying' } };
+h.render();
+await h.settle();
+pendingOnboarding = { flow: { ...pendingOnboarding.flow, state: 'pending_completion' } };
+h.render();
+await h.settle();
+assert.ok(
+  nodes(h.value).some(n => n.type === 'form'),
+  'a restored unfinished verification returns to the same manual recovery form'
+);
+assert.doesNotMatch(
+  JSON.stringify(h.value),
+  /"app.failed"/,
+  'pending is never presented as terminal setup failure'
+);
+pendingRecord = {
+  ...pendingRecord,
+  allowed_actions: ['resume_qr', 'resume_manual', 'cancel'],
+  resume_qr_unavailable_reason: undefined,
+};
+let qrStarts = [];
+pendingOnboarding = { start: (...args) => qrStarts.push(args) };
+h.render();
+await h.settle();
+const qrTab = nodes(h.value).find(
+  n => n.type === 'Button' && n.props.children === 'pending.resumeQR'
+);
+assert.equal(Boolean(qrTab.props.disabled), false, 'server-advertised same-app scan is enabled');
+qrTab.props.onClick();
+h.render();
+await h.settle();
+assert.equal(qrStarts.length, 0, 'changing tabs does not create a QR session');
+assert.ok(nodes(h.value).some(n => n.props.children === 'pending.resumeQRHint'));
+assert.equal(
+  nodes(h.value).filter(n => n.type === 'TemplateDetails').length,
+  0,
+  'resume does not offer the new-app permission template'
+);
+const startQR = nodes(h.value)
+  .filter(n => n.type === 'Button' && n.props.children === 'pending.resumeQR')
+  .at(-1);
+startQR.props.onClick();
+assert.deepEqual(
+  qrStarts,
+  [['feishu', false, 3]],
+  'only explicit resume uses the original record revision'
+);
+assert.equal(posts.length, previousPosts, 'same-app scan never calls create-app');
 h.unmount();
-pendingRecord={...pendingRecord,state:'expired',allowed_actions:[]};
-h=hooksHarness(react=>{
-  const module=load('src/components/connectors/setup/connector-app-setup-panel.tsx',{...panelImports,react,'@/hooks/connectors/use-pending-setups':{pendingSetupKeys:[],usePendingSetup:()=>({data:{data:pendingRecord}})}},'\nexports.fixturePanel = ScopedConnectorAppSetupPanel;');
-  return ()=>module.fixturePanel({connector,pendingSetupID:pendingRecord.id,embedded:true});
+pendingRecord = { ...pendingRecord, state: 'expired', allowed_actions: [] };
+h = hooksHarness(react => {
+  const module = load(
+    'src/components/connectors/setup/connector-app-setup-panel.tsx',
+    {
+      ...panelImports,
+      react,
+      '@/hooks/connectors/use-pending-setups': {
+        pendingSetupKeys: [],
+        usePendingSetup: () => ({ data: { data: pendingRecord } }),
+      },
+    },
+    '\nexports.fixturePanel = ScopedConnectorAppSetupPanel;'
+  );
+  return () => module.fixturePanel({ connector, pendingSetupID: pendingRecord.id, embedded: true });
 });
-h.render();await h.settle();assert.equal(nodes(h.value).filter(n=>n.type==='form').length,0);
-assert.ok(nodes(h.value).some(n=>n.type==='Button'&&n.props.children==='pending.newManual'));
+h.render();
+await h.settle();
+assert.equal(nodes(h.value).filter(n => n.type === 'form').length, 0);
+assert.ok(
+  nodes(h.value).some(n => n.type === 'Button' && n.props.children === 'pending.newManual')
+);
 h.unmount();
-assert.equal(state.activeOnboarding({state:'pending_completion'}),false,'pending never polls registration');
-console.log('Pending app identity, manual recovery, gate, expiry, no-binding and write-only checks passed.');
+assert.equal(
+  state.activeOnboarding({ state: 'pending_completion' }),
+  false,
+  'pending never polls registration'
+);
+console.log(
+  'Pending app identity, manual recovery, gate, expiry, no-binding and write-only checks passed.'
+);
 
 saved.clear();
-const resumeID=randomUUID(), qrRequests=[];
-service.getPendingSetup=async()=>({data:{id:resumeID,allowed_actions:['resume_qr','resume_manual','cancel']}});
-serverFlow={...serverFlow,id:randomUUID(),state:'awaiting_authorization',pending_setup_id:resumeID};
-service.resumePendingSetup=async(id,revision,key)=>{qrRequests.push({id,revision,key});return {data:{...serverFlow}};};
-const createCount=posts.length;
-h=mountHook(undefined,resumeID);h.render();await h.settle();
-assert.equal(qrRequests.length,0,'opening pending record is GET-only');
-await h.value.start('lark',false,7);await h.settle();
-assert.equal(qrRequests.length,1);assert.equal(qrRequests[0].id,resumeID);assert.equal(qrRequests[0].revision,7);
-assert.equal(posts.length,createCount,'actual hook must use pending resume endpoint, not create-app');
-assert.doesNotMatch([...saved.values()].join(''),/verification_url|device_code|app_secret|clientID|addons/);
-h.unmount();h=mountHook(undefined,resumeID);h.render();await h.settle();
-assert.equal(qrRequests.length,1,'reopening recovers existing QR flow without starting another');
-assert.equal(h.value.flow.id,serverFlow.id);h.unmount();
+const resumeID = randomUUID(),
+  qrRequests = [];
+service.getPendingSetup = async () => ({
+  data: { id: resumeID, allowed_actions: ['resume_qr', 'resume_manual', 'cancel'] },
+});
+serverFlow = {
+  ...serverFlow,
+  id: randomUUID(),
+  state: 'awaiting_authorization',
+  pending_setup_id: resumeID,
+};
+service.resumePendingSetup = async (id, revision, key) => {
+  qrRequests.push({ id, revision, key });
+  return { data: { ...serverFlow } };
+};
+const createCount = posts.length;
+h = mountHook(undefined, resumeID);
+h.render();
+await h.settle();
+assert.equal(qrRequests.length, 0, 'opening pending record is GET-only');
+await h.value.start('lark', false, 7);
+await h.settle();
+assert.equal(qrRequests.length, 1);
+assert.equal(qrRequests[0].id, resumeID);
+assert.equal(qrRequests[0].revision, 7);
+assert.equal(
+  posts.length,
+  createCount,
+  'actual hook must use pending resume endpoint, not create-app'
+);
+assert.doesNotMatch(
+  [...saved.values()].join(''),
+  /verification_url|device_code|app_secret|clientID|addons/
+);
+h.unmount();
+h = mountHook(undefined, resumeID);
+h.render();
+await h.settle();
+assert.equal(qrRequests.length, 1, 'reopening recovers existing QR flow without starting another');
+assert.equal(h.value.flow.id, serverFlow.id);
+h.unmount();
 console.log('Enabled same-app QR hook, explicit admission and GET-only reopening passed.');

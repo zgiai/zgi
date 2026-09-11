@@ -39,7 +39,7 @@ func TestConnectorRuntimeConfirmationRouteAcceptsOnlyOpaqueDecisionAndProjectsSa
 	recorder := performConnectorRuntimeConfirmationRequest(
 		t,
 		router,
-		`{"route_receipt":"`+receipt+`","decision":"confirmed"}`,
+		`{"route_receipt":"`+receipt+`","decision":"confirmed","remember_for_session":true}`,
 	)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
@@ -49,7 +49,8 @@ func TestConnectorRuntimeConfirmationRouteAcceptsOnlyOpaqueDecisionAndProjectsSa
 	}
 	command := service.calls[0]
 	if command.OrganizationID != organizationID || command.OwnerAccountID != ownerID ||
-		string(command.RouteReceipt) != receipt || command.Decision != connectorexecution.ConfirmationDecisionConfirmed {
+		string(command.RouteReceipt) != receipt || command.Decision != connectorexecution.ConfirmationDecisionConfirmed ||
+		!command.RememberForSession {
 		t.Fatalf("service command = %#v", command)
 	}
 	if len(service.recordCalls) != 1 || service.recordCalls[0].result.ExecutionResult != nil ||
@@ -59,9 +60,10 @@ func TestConnectorRuntimeConfirmationRouteAcceptsOnlyOpaqueDecisionAndProjectsSa
 	var responseBody struct {
 		Code string `json:"code"`
 		Data struct {
-			State      connectorconfirmation.State `json:"state"`
-			DecisionID *uuid.UUID                  `json:"decision_id"`
-			ErrorCode  connectorcore.ErrorCode     `json:"error_code"`
+			State              connectorconfirmation.State `json:"state"`
+			DecisionID         *uuid.UUID                  `json:"decision_id"`
+			ErrorCode          connectorcore.ErrorCode     `json:"error_code"`
+			RememberForSession bool                        `json:"remember_for_session"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &responseBody); err != nil {
@@ -69,7 +71,7 @@ func TestConnectorRuntimeConfirmationRouteAcceptsOnlyOpaqueDecisionAndProjectsSa
 	}
 	if responseBody.Code != "0" || responseBody.Data.State != connectorconfirmation.StateCompleted ||
 		responseBody.Data.DecisionID == nil || *responseBody.Data.DecisionID != decisionID ||
-		responseBody.Data.ErrorCode != "" {
+		responseBody.Data.ErrorCode != "" || !responseBody.Data.RememberForSession {
 		t.Fatalf("response = %#v", responseBody)
 	}
 	for _, forbidden := range []string{
@@ -328,4 +330,22 @@ func (service *connectorRuntimeConfirmationServiceSpy) RecordConnectorConfirmati
 		result:  result,
 	})
 	return service.recordErr
+}
+
+func TestConnectorRuntimePresentationQueryIsExplicitAndReadOnly(t *testing.T) {
+	service := &connectorRuntimeConfirmationServiceSpy{}
+	router := newConnectorRuntimeConfirmationRouteTestRouter(service, uuid.New(), uuid.New())
+	for _, test := range []struct {
+		query string
+		valid bool
+	}{{"?presentation_version=1", true}, {"?presentation_version=2", false}, {"?presentation_version=1&presentation_version=1", false}, {"?presentation_version=1&decision=confirmed", false}, {"?presentation_version=%zz", false}} {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/console/api/connectors/runtime/confirmations/"+uuid.NewString()+test.query, nil))
+		if (response.Code == http.StatusOK) != test.valid {
+			t.Fatalf("unexpected status for %s: %d", test.query, response.Code)
+		}
+	}
+	if len(service.statusCalls) != 1 || service.statusCalls[0].PresentationVersion != 1 || len(service.calls) != 0 || len(service.recordCalls) != 0 {
+		t.Fatal("bad query dispatch")
+	}
 }

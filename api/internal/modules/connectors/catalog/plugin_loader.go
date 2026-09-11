@@ -410,7 +410,7 @@ func parseZGIConnectorExtension(
 	if version == "" {
 		version = ZGIMetadataSchemaVersion1
 	}
-	if version != ZGIMetadataSchemaVersion1 && version != ZGIMetadataSchemaVersion11 && version != ZGIMetadataSchemaVersion12 {
+	if version != ZGIMetadataSchemaVersion1 && version != ZGIMetadataSchemaVersion11 && version != ZGIMetadataSchemaVersion12 && version != ZGIMetadataSchemaVersion14 && version != ZGIMetadataSchemaVersion15 {
 		return nil, []PluginComponentFailure{{
 			PluginID: manifest.Name, ConnectorIndex: -1, Code: "unsupported_connector_extension_schema",
 			Err: ErrConnectorMetadataInvalid,
@@ -454,6 +454,14 @@ func parseZGIConnectorExtension(
 		if version == ZGIMetadataSchemaVersion12 {
 			definition.ExtensionSchemaVersion = version
 			definition.ContractVersion = 3
+		}
+		if version == ZGIMetadataSchemaVersion14 {
+			definition.ExtensionSchemaVersion = version
+			definition.ContractVersion = 5
+		}
+		if version == ZGIMetadataSchemaVersion15 {
+			definition.ExtensionSchemaVersion = version
+			definition.ContractVersion = 6
 		}
 		if err := ValidatePluginDefinition(definition); err != nil {
 			failures = append(failures, PluginComponentFailure{

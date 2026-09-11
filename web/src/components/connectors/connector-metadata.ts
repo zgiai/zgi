@@ -1,3 +1,4 @@
+import { connectorPurpose } from './connector-presentation';
 import type {
   ConnectorCatalogItem,
   ConnectorLocalizedText,
@@ -53,10 +54,7 @@ export function localizeConnectorCatalogItem(
   return {
     ...item,
     name: resolveConnectorLocalizedText(item.name_i18n, locale, item.name),
-    description:
-      resolveConnectorLocalizedText(item.description_i18n, locale, item.description) ||
-      fallbacks.description ||
-      '',
+    description: connectorPurpose(item.id, locale) ?? '',
     key_fields: item.key_fields.map(field => ({
       ...field,
       label: resolveConnectorLocalizedText(field.label_i18n, locale, field.label),
@@ -100,6 +98,7 @@ export function connectorCatalogSearchValues(item: ConnectorCatalogItem): string
     item.name,
     item.description,
     ...stableAliases,
+    ...(['gmail', 'qqmail', 'netease163'].includes(item.id) ? ['邮箱', 'email', 'mail'] : []),
     ...Object.values(item.name_i18n ?? {}),
     ...Object.values(item.description_i18n ?? {}),
     ...(item.examples ?? []),

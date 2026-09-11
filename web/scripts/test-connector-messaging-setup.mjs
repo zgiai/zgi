@@ -25,7 +25,10 @@ const connector = {
 };
 assert.equal(setup.supportsConnectorSetup(connector), true);
 assert.equal(setup.supportsConnectorSetup({ ...connector, setup_availability: undefined }), true);
-assert.equal(setup.messagingMethod({ ...connector, setup_availability: undefined }, 'qr_connect'), true);
+assert.equal(
+  setup.messagingMethod({ ...connector, setup_availability: undefined }, 'qr_connect'),
+  true
+);
 assert.equal(setup.messagingMethod(connector, 'manual'), false);
 const picker = load('src/components/connectors/picker/connector-picker-model.ts', {
   '../setup/app-setup-state': setup,
@@ -84,7 +87,7 @@ assert.equal(
   false
 );
 let server = {
-  id: crypto.randomUUID(),
+  id: globalThis.crypto.randomUUID(),
   connector_id: 'weixin',
   protocol_version: 1,
   intent: 'login_session',
@@ -226,7 +229,12 @@ server = {
   revision: 12,
   allowed_actions: ['submit_code', 'cancel'],
 };
-const existing = { id: crypto.randomUUID(), connector_id: 'weixin', state: 'ready', revision: 5 };
+const existing = {
+  id: globalThis.crypto.randomUUID(),
+  connector_id: 'weixin',
+  state: 'ready',
+  revision: 5,
+};
 h = mount(existing);
 h.render();
 await settle(h);
@@ -246,7 +254,9 @@ hold = new Promise(r => {
 const inFlight = h.value.submitCode('67890');
 h.unmount();
 actor = 'owner-2';
-resolve({ data: { ...server, state: 'ready', result_connection_id: crypto.randomUUID() } });
+resolve({
+  data: { ...server, state: 'ready', result_connection_id: globalThis.crypto.randomUUID() },
+});
 await inFlight;
 hold = undefined;
 const fresh = mount(existing);
@@ -270,6 +280,7 @@ const formHarness = harness(react => {
       'react-qr-code': { default: 'QRCode' },
       '@tanstack/react-query': { useQueryClient: () => queryClient },
       '@/components/ui/button': ui,
+      './connector-key-form': { ConnectorFieldHelp: 'ConnectorFieldHelp' },
       '@/components/ui/input': ui,
       '@/components/ui/label': ui,
       '@/components/ui/alert': ui,
@@ -320,19 +331,121 @@ assert.equal(
 let manualSubmissions = 0;
 service.startCredentialSetup = async (_provider, request) => {
   manualSubmissions++;
-  assert.deepEqual(request.values, { client_id: 'fixture-client', client_secret: 'PRIVATE_FORM_SECRET' });
+  assert.deepEqual(request.values, {
+    client_id: 'fixture-client',
+    client_secret: 'PRIVATE_FORM_SECRET',
+  });
   throw new Error('response lost after submission');
 };
 inputs[0].props.onChange({ target: { value: 'fixture-client' } });
 inputs[1].props.onChange({ target: { value: 'PRIVATE_FORM_SECRET' } });
 formHarness.render();
-nodes(formHarness.value).find(n => n.type === 'form').props.onSubmit({ preventDefault() {} });
+nodes(formHarness.value)
+  .find(n => n.type === 'form')
+  .props.onSubmit({ preventDefault() {} });
 await settle(formHarness);
 assert.equal(manualSubmissions, 1);
-assert.ok(nodes(formHarness.value).filter(n => n.type === 'Input').every(n => n.props.value === ''), 'submission clears the private form');
-assert.ok(nodes(formHarness.value).some(n => n.props?.href === '/console/connectors/connections'), 'unknown outcomes offer inspection of saved connections');
-assert.ok(nodes(formHarness.value).find(n => n.props?.type === 'submit').props.disabled, 'unknown results do not permit resubmission');
+assert.ok(
+  nodes(formHarness.value)
+    .filter(n => n.type === 'Input')
+    .every(n => n.props.value === ''),
+  'submission clears the private form'
+);
+assert.ok(
+  nodes(formHarness.value).some(n => n.props?.href === '/console/connectors/connections'),
+  'unknown outcomes offer inspection of saved connections'
+);
+assert.ok(
+  nodes(formHarness.value).find(n => n.props?.type === 'submit').props.disabled,
+  'unknown results do not permit resubmission'
+);
 formHarness.unmount();
+
+// A received credential outlives its QR. Restore/retry the same flow without registering again.
+actor = 'verification-owner';
+server = {
+  ...server,
+  state: 'verification_waiting',
+  step: 'verify',
+  revision: 20,
+  qr_expires_at: '2000-01-01T00:00:00Z',
+  expires_at: '2000-01-01T00:00:00Z',
+  candidate_expires_at: '2099-01-01T00:00:00Z',
+  verification_deadline: '2099-01-01T00:00:00Z',
+  verification_phase: 'identity',
+  allowed_actions: ['cancel', 'retry_verification'],
+};
+assert.equal(setup.activeOnboarding(server), true);
+assert.equal(messaging.messagingQR(connector, server), undefined);
+h = mount();
+h.render();
+await settle(h);
+await h.value.start();
+await settle(h);
+const beforeRetryStarts = posts.length;
+h.unmount();
+h = mount();
+h.render();
+await settle(h);
+assert.equal(h.value.flow.state, 'verification_waiting');
+await h.value.start();
+await settle(h);
+assert.equal(posts.length, beforeRetryStarts, 'waiting must not create another QR flow');
+const retries = [];
+let failRetry = true;
+service.retryOnboardingVerification = async (flow, key) => {
+  retries.push({ flow, key });
+  if (failRetry) throw new Error('lost retry response');
+  server = {
+    ...server,
+    revision: flow.revision + 1,
+    state: 'verifying',
+    allowed_actions: ['cancel'],
+  };
+  return { data: server };
+};
+server = { ...server, revision: 23 };
+await h.value.retryVerification();
+await settle(h);
+assert.equal(retries[0].flow.revision, 23, 'retry uses the latest server revision');
+failRetry = false;
+await h.value.retryVerification();
+await settle(h);
+assert.equal(
+  retries[0].key,
+  retries[1].key,
+  'uncertain retry preserves idempotency for the same revision'
+);
+assert.equal(h.value.flow.state, 'verifying');
+assert.equal(posts.length, beforeRetryStarts);
+assert.doesNotMatch(
+  [...storage.values()].join(''),
+  /token|qr_payload|candidate_expires_at|verification_phase/
+);
+h.unmount();
+
+const requests = [];
+const realService = load('src/services/connector.service.ts', {
+  '@/lib/http/services': {
+    BaseService: class {
+      request(...args) {
+        requests.push(args);
+        return Promise.resolve({});
+      }
+    },
+  },
+}).connectorService;
+await realService.retryOnboardingVerification(
+  { id: 'original-flow', revision: 23 },
+  'original-command'
+);
+assert.deepEqual(requests[0].slice(0, 3), [
+  'post',
+  '/connectors/onboarding-flows/original-flow/actions',
+  { action: 'retry_verification', expected_revision: 23 },
+]);
+assert.equal(requests[0][3].headers['Idempotency-Key'], 'original-command');
+assert.equal(requests[0][3].retryAttemptsOverride, 0);
 console.log(
   'Messaging default setup, QR expiry, restore, challenge CAS, account isolation, reauthorization and private form checks passed.'
 );

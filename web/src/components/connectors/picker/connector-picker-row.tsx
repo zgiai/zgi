@@ -1,6 +1,8 @@
 'use client';
 
-import { ArrowRightLeft, KeyRound, Minus, Plus } from 'lucide-react';
+import { ArrowRightLeft, Minus, Plus } from 'lucide-react';
+import { useLocale } from 'next-intl';
+import { personalConnectionDisplayName } from '../connections/personal-connections-model';
 import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -16,8 +18,11 @@ interface ConnectorPickerRowProps {
 
 export function ConnectorPickerRow({ row, pending = false, onAction }: ConnectorPickerRowProps) {
   const t = useT('connectors');
+  const locale = useLocale();
   const isApp = Boolean(row.connector.extension_schema_version && row.connector.setup);
-  const connectionName = row.connection?.name.trim();
+  const connectionName = row.connection
+    ? personalConnectionDisplayName(row.connection, row.connector.name, locale)
+    : undefined;
   const rowTitle = connectionName || row.connector.name;
   const summary = row.connection
     ? [
@@ -67,12 +72,6 @@ export function ConnectorPickerRow({ row, pending = false, onAction }: Connector
           ) : null}
         </div>
         <p className="mt-1 truncate text-xs leading-5 text-muted-foreground">{summary}</p>
-        {row.state === 'not_connected' ? (
-          <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-            <KeyRound aria-hidden="true" className="size-3.5 shrink-0" />
-            <span>{t(isApp ? 'app.credentialsRequired' : 'catalog.keyRequired')}</span>
-          </p>
-        ) : null}
       </div>
       <Button
         type="button"

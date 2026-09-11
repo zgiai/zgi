@@ -244,14 +244,14 @@ func (s *service) runPreparedToolLoop(
 		AdditionalSystemMessages:       additionalSystemMessages,
 		RuntimeStateSnapshot:           runtimeStateSnapshot,
 		CurrentMetadata:                skillLoopCurrentMetadata(prepared),
-		OnTerminalStateGuardDecision: onTerminalStateGuardDecision,
-		OnTerminalCompletion:         onTerminalCompletion,
-		OnChunk:                      onChunk,
-		PlanningOutputTokenLimit:     planningOutputTokenLimit(prepared),
-		AuthorizeSkillStep:           authorizeSkillStep,
-		PreferredRestoredSkillID:     prepared.PreferredRestoredSkillID,
-		ContinuationType:             prepared.ContinuationType,
-		TerminalOnly:                 prepared.TerminalOnly,
+		OnTerminalStateGuardDecision:   onTerminalStateGuardDecision,
+		OnTerminalCompletion:           onTerminalCompletion,
+		OnChunk:                        onChunk,
+		PlanningOutputTokenLimit:       planningOutputTokenLimit(prepared),
+		AuthorizeSkillStep:             authorizeSkillStep,
+		PreferredRestoredSkillID:       prepared.PreferredRestoredSkillID,
+		ContinuationType:               prepared.ContinuationType,
+		TerminalOnly:                   prepared.TerminalOnly,
 	})
 	if nativeSkillSession != nil {
 		prepared.Message.Metadata["native_skill_diagnostics"] = nativeSkillSessionDiagnostics(nativeSkillSession, prepared.Message.Metadata)
@@ -1538,7 +1538,9 @@ func operationPlanCompactPhasesForPrompt(value interface{}, limit int) []interfa
 			if target := mapFromOperationContext(expectedAction["target"]); len(target) > 0 {
 				action["target"] = target
 			}
-			if operation := mapFromOperationContext(expectedAction["connector_operation"]); len(operation) > 0 { action["connector_operation"] = operation }
+			if operation := mapFromOperationContext(expectedAction["connector_operation"]); len(operation) > 0 {
+				action["connector_operation"] = operation
+			}
 			if targetArguments := mapFromOperationContext(expectedAction["target_arguments"]); len(targetArguments) > 0 {
 				action["target_arguments"] = targetArguments
 			}
@@ -1949,14 +1951,24 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 	if authorizer := s.consoleNavigationRouteAuthorizer(prepared); authorizer != nil {
 		runtimeParameters = consolenavigation.WithRouteAuthorizer(runtimeParameters, authorizer)
 	}
+	presentationLocale := "en-US"
+	if prepared.parts != nil {
+		for _, character := range prepared.parts.Query {
+			if unicode.Is(unicode.Han, character) {
+				presentationLocale = "zh-Hans"
+				break
+			}
+		}
+	}
 	executionContext := skills.ExecutionContext{
-		OrganizationID:    prepared.Scope.OrganizationID.String(),
-		UserID:            prepared.Scope.AccountID.String(),
-		ConversationID:    prepared.Conversation.ID.String(),
-		AppID:             appID,
-		MessageID:         prepared.Message.ID.String(),
-		InvokeFrom:        invokeFrom,
-		RuntimeParameters: runtimeParameters,
+		PresentationLocale: presentationLocale,
+		OrganizationID:     prepared.Scope.OrganizationID.String(),
+		UserID:             prepared.Scope.AccountID.String(),
+		ConversationID:     prepared.Conversation.ID.String(),
+		AppID:              appID,
+		MessageID:          prepared.Message.ID.String(),
+		InvokeFrom:         invokeFrom,
+		RuntimeParameters:  runtimeParameters,
 	}
 	if invokeFrom == tools.ToolInvokeFromAIChat {
 		executionContext.ConnectorIdentityResolver = s.connectorChatRuntime

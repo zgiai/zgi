@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"net/http"
+	"net/url"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -38,7 +39,9 @@ type ConnectorRuntimeConfirmationRouteDeps struct {
 
 // RegisterConnectorRuntimeConfirmationRoutes registers authenticated one-shot
 // continuation and read-only status endpoints. It does not expose Connector policy or
-// accept a client-supplied provider operation payload.
+// accept a client-supplied provider operation payload. remember_for_session is
+// only a user-selected governance flag; the server builds the grant from the
+// frozen operation.
 func RegisterConnectorRuntimeConfirmationRoutes(
 	router *gin.RouterGroup,
 	deps ConnectorRuntimeConfirmationRouteDeps,
@@ -70,11 +73,16 @@ func (handler *connectorRuntimeConfirmationHandler) readStatus(c *gin.Context) {
 	}
 	receipt := c.Param("receipt")
 	receiptID, err := uuid.Parse(receipt)
-	if err != nil || receiptID == uuid.Nil || receiptID.String() != receipt || c.Request.URL.RawQuery != "" {
+	query, queryErr := url.ParseQuery(c.Request.URL.RawQuery)
+	version := 0
+	if len(query) == 1 && len(query["presentation_version"]) == 1 && query.Get("presentation_version") == "1" {
+		version = 1
+	}
+	if err != nil || receiptID == uuid.Nil || receiptID.String() != receipt || queryErr != nil || (c.Request.URL.RawQuery != "" && version != 1) {
 		connectorRouteError(c, connectorcore.NewError(connectorcore.ErrorCodeInvalidInput, false, nil))
 		return
 	}
-	result, err := handler.service.ReadStatus(c.Request.Context(), connectorconfirmation.StatusQuery{OrganizationID: organizationID, OwnerAccountID: accountID, RouteReceipt: connectorexecution.RouteClaimReceipt(receipt)})
+	result, err := handler.service.ReadStatus(c.Request.Context(), connectorconfirmation.StatusQuery{OrganizationID: organizationID, OwnerAccountID: accountID, RouteReceipt: connectorexecution.RouteClaimReceipt(receipt), PresentationVersion: version})
 	if err != nil {
 		connectorRouteError(c, err)
 		return
@@ -84,14 +92,16 @@ func (handler *connectorRuntimeConfirmationHandler) readStatus(c *gin.Context) {
 }
 
 type connectorRuntimeConfirmationRequest struct {
-	RouteReceipt string                                  `json:"route_receipt"`
-	Decision     connectorexecution.ConfirmationDecision `json:"decision"`
+	RouteReceipt       string                                  `json:"route_receipt"`
+	Decision           connectorexecution.ConfirmationDecision `json:"decision"`
+	RememberForSession bool                                    `json:"remember_for_session,omitempty"`
 }
 
 type connectorRuntimeConfirmationResponse struct {
-	State      connectorconfirmation.State `json:"state"`
-	DecisionID *uuid.UUID                  `json:"decision_id,omitempty"`
-	ErrorCode  connectorcore.ErrorCode     `json:"error_code,omitempty"`
+	State              connectorconfirmation.State `json:"state"`
+	DecisionID         *uuid.UUID                  `json:"decision_id,omitempty"`
+	ErrorCode          connectorcore.ErrorCode     `json:"error_code,omitempty"`
+	RememberForSession bool                        `json:"remember_for_session,omitempty"`
 }
 
 func (handler *connectorRuntimeConfirmationHandler) continueConfirmation(c *gin.Context) {
@@ -112,10 +122,11 @@ func (handler *connectorRuntimeConfirmationHandler) continueConfirmation(c *gin.
 		return
 	}
 	command := connectorconfirmation.Command{
-		OrganizationID: organizationID,
-		OwnerAccountID: accountID,
-		RouteReceipt:   connectorexecution.RouteClaimReceipt(request.RouteReceipt),
-		Decision:       request.Decision,
+		OrganizationID:     organizationID,
+		OwnerAccountID:     accountID,
+		RouteReceipt:       connectorexecution.RouteClaimReceipt(request.RouteReceipt),
+		Decision:           request.Decision,
+		RememberForSession: request.RememberForSession && request.Decision == connectorexecution.ConfirmationDecisionConfirmed,
 	}
 	result, err := handler.service.Continue(c.Request.Context(), command)
 	if err != nil {
@@ -132,6 +143,7 @@ func (handler *connectorRuntimeConfirmationHandler) continueConfirmation(c *gin.
 	}
 	projected := connectorRuntimeConfirmationResponse{
 		State: result.State, ErrorCode: result.ErrorCode,
+		RememberForSession: command.RememberForSession,
 	}
 	if result.DecisionID != uuid.Nil {
 		decisionID := result.DecisionID

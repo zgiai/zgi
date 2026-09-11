@@ -2,23 +2,14 @@
 
 import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   ConnectorPickerDialog,
   type ConnectorPickerBindingRef,
 } from '@/components/connectors/picker';
-import { ConnectorKeySetupPanel } from '@/components/connectors/setup/connector-key-setup-panel';
+import { ConnectorCreateContent } from '@/components/connectors/setup/connector-create-dialog';
 import { localizeConnectorCatalogItem } from '@/components/connectors/connector-metadata';
-import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { useLocale } from '@/hooks/use-locale';
 import { useT } from '@/i18n';
 import type { AIChatInitialConnectorBinding } from '@/services/types/aichat';
@@ -91,35 +82,22 @@ export function AIChatConnectorDraftDialog({
             if (!latest.current.open && anchorElement?.isConnected) anchorElement.focus();
           }}
         >
-          <DialogHeader className="border-b pb-4 pr-12">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="mb-2 w-fit px-2"
-              onClick={() => setSetup(undefined)}
-            >
-              <ArrowLeft aria-hidden="true" className="size-4" />
-              {t('picker.backToChoices')}
-            </Button>
-            <DialogTitle>{t('picker.setupTitle', { connector: connector.name })}</DialogTitle>
-            <DialogDescription>{t('picker.group.draftFooter')}</DialogDescription>
-          </DialogHeader>
-          <DialogBody className="p-5">
-            <ConnectorKeySetupPanel
-              connector={connector}
-              onReady={connection => {
-                if (sessionRef.current !== session || !latest.current.open) return;
-                if (
-                  latest.current.draft.bindings.some(
-                    binding => binding.connector_id === connection.connector_id
-                  )
-                ) {
-                  toast.success(t('picker.connectionReadyNotAdded'));
-                } else select(connection);
-                setSetup(undefined);
-              }}
-            />
-          </DialogBody>
+          <ConnectorCreateContent
+            onBack={() => setSetup(undefined)}
+            description={t('picker.group.draftFooter')}
+            connector={connector}
+            onReady={connection => {
+              if (sessionRef.current !== session || !latest.current.open) return;
+              if (
+                latest.current.draft.bindings.some(
+                  binding => binding.connector_id === connection.connector_id
+                )
+              ) {
+                toast.success(t('picker.connectionReadyNotAdded'));
+              } else select(connection);
+              setSetup(undefined);
+            }}
+          />
         </DialogContent>
       </Dialog>
     );

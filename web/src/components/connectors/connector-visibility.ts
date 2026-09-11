@@ -1,9 +1,9 @@
 import type { ConnectorPickerRow } from './picker/connector-picker-model';
 import type { ConnectorPickerMenuGroup } from './picker/connector-picker-menu-model';
 
-/** Product discovery only; saved connections and runtime authorization remain independent. */
+/** List every identified connector returned by the catalog; authorization remains independent. */
 export function isConnectorListed(connectorId: string): boolean {
-  return ['feishu', 'lark', 'web-search', 'exa', 'github'].includes(connectorId);
+  return connectorId.trim().length > 0;
 }
 
 export function listedConnectorRows(rows: ConnectorPickerRow[]): ConnectorPickerRow[] {

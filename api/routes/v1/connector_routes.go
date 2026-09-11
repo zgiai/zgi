@@ -128,6 +128,7 @@ func (handler *connectorHandler) register(group *gin.RouterGroup) {
 	group.GET("/connector-connections", handler.listConnections)
 	group.GET("/connector-connections/:connectionId", handler.getConnection)
 	group.PATCH("/connector-connections/:connectionId", handler.renameConnection)
+	group.PUT("/connector-connections/:connectionId/operation-policy", handler.updateOperationPolicy)
 	group.DELETE("/connector-connections/:connectionId", handler.removeConnection)
 	group.POST("/connector-connections/:connectionId/reconnect", handler.reconnectConnection)
 	group.GET("/connector-connections/:connectionId/diagnostics", handler.diagnoseConnection)
@@ -144,6 +145,7 @@ type connectorCatalogResponse struct {
 }
 
 type connectorCatalogItemResponse struct {
+	SetupMethod            connectorcatalog.SetupMethod            `json:"setup_method"`
 	SetupAvailability      *connectorcatalog.MessagingAvailability `json:"setup_availability,omitempty"`
 	ID                     string                                  `json:"id"`
 	PluginID               string                                  `json:"plugin_id"`
@@ -174,16 +176,19 @@ type connectorKeyFieldResponse struct {
 }
 
 type connectorCapabilityResponse struct {
-	Availability      string                         `json:"availability,omitempty"`
-	Permission        string                         `json:"permission,omitempty"`
-	Resource          string                         `json:"resource,omitempty"`
-	ID                string                         `json:"id"`
-	Name              string                         `json:"name"`
-	NameI18n          connectorcatalog.LocalizedText `json:"name_i18n,omitempty"`
-	Description       string                         `json:"description"`
-	DescriptionI18n   connectorcatalog.LocalizedText `json:"description_i18n,omitempty"`
-	Usable            bool                           `json:"usable"`
-	UnavailableReason string                         `json:"unavailable_reason,omitempty"`
+	CredentialSubject string                           `json:"credential_subject,omitempty"`
+	RequiredScopes    [][]string                       `json:"required_scopes,omitempty"`
+	Effect            connectorcatalog.OperationEffect `json:"effect,omitempty"`
+	Availability      string                           `json:"availability,omitempty"`
+	Permission        string                           `json:"permission,omitempty"`
+	Resource          string                           `json:"resource,omitempty"`
+	ID                string                           `json:"id"`
+	Name              string                           `json:"name"`
+	NameI18n          connectorcatalog.LocalizedText   `json:"name_i18n,omitempty"`
+	Description       string                           `json:"description"`
+	DescriptionI18n   connectorcatalog.LocalizedText   `json:"description_i18n,omitempty"`
+	Usable            bool                             `json:"usable"`
+	UnavailableReason string                           `json:"unavailable_reason,omitempty"`
 }
 
 type connectorConnectionSummaryResponse struct {
@@ -199,6 +204,7 @@ type connectorPersonalConnectionListResponse struct {
 }
 
 type connectorPersonalConnectionResponse struct {
+	AllowedOperationIDs  *[]string                       `json:"allowed_operation_ids,omitempty"`
 	ID                   uuid.UUID                       `json:"id"`
 	ConnectorID          string                          `json:"connector_id"`
 	Name                 string                          `json:"name"`
@@ -263,8 +269,9 @@ type connectorTargetBindingListResponse struct {
 }
 
 type connectorKeySetupRequest struct {
-	Values map[string]string       `json:"values"`
-	Target *connectorTargetRequest `json:"target,omitempty"`
+	MailUsage string                  `json:"mail_usage"`
+	Values    map[string]string       `json:"values"`
+	Target    *connectorTargetRequest `json:"target,omitempty"`
 }
 
 type connectorRenameConnectionRequest struct {
@@ -273,6 +280,7 @@ type connectorRenameConnectionRequest struct {
 }
 
 type connectorReconnectRequest struct {
+	MailUsage               string            `json:"mail_usage"`
 	Values                  map[string]string `json:"values"`
 	ConfirmUnstableIdentity bool              `json:"confirm_unstable_identity,omitempty"`
 }
@@ -357,6 +365,9 @@ func (handler *connectorHandler) getCatalogItem(c *gin.Context) {
 }
 
 func (handler *connectorHandler) startKeySetup(c *gin.Context) {
+	if d, ok := handler.catalog.Get(c.Param("connectorId")); ok && d.IsMailCredentials() {
+		c.Header("Cache-Control", "no-store")
+	}
 	if d, ok := handler.catalog.Get(c.Param("connectorId")); ok && d.IsMessagingCredentials() {
 		c.Header("Cache-Control", "no-store")
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 32*1024)
@@ -402,10 +413,11 @@ func (handler *connectorHandler) startParsedKeySetup(c *gin.Context, request con
 		ConnectorID:    connectorID,
 		IdempotencyKey: idempotencyKey,
 		Values:         request.Values,
+		MailUsage:      request.MailUsage,
 		Target:         target,
 	})
 	if err != nil {
-		handler.credentialError(c, err)
+		handler.mailCredentialError(c, err, result.MailVerification)
 		return
 	}
 	status := http.StatusAccepted
@@ -531,6 +543,7 @@ func (handler *connectorHandler) renameConnection(c *gin.Context) {
 }
 
 func (handler *connectorHandler) reconnectConnection(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
 	organizationID, accountID, ok := connectorActor(c)
 	if !ok {
 		return
@@ -556,10 +569,11 @@ func (handler *connectorHandler) reconnectConnection(c *gin.Context) {
 	result, err := handler.maintenance.Reconnect(c.Request.Context(), connectorconnections.ReconnectCommand{
 		OrganizationID: organizationID, OwnerAccountID: accountID, ConnectionID: connectionID,
 		IdempotencyKey: idempotencyKey, Values: request.Values,
+		MailUsage:               request.MailUsage,
 		ConfirmUnstableIdentity: request.ConfirmUnstableIdentity,
 	})
 	if err != nil {
-		handler.credentialError(c, err)
+		handler.mailCredentialError(c, err, result.MailVerification)
 		return
 	}
 	status := http.StatusAccepted
@@ -900,7 +914,8 @@ func projectCatalogItem(definition connectorcatalog.Definition, connections []co
 	}
 	capabilities := projectCapabilities(definition, connections)
 	item := connectorCatalogItemResponse{
-		ID: definition.ID, PluginID: definition.PluginID, Name: definition.Name,
+		SetupMethod: definition.SetupMethod,
+		ID:          definition.ID, PluginID: definition.PluginID, Name: definition.Name,
 		NameI18n: definition.NameI18n.Clone(), DescriptionI18n: definition.DescriptionI18n.Clone(),
 		Description: definition.Description, Icon: definition.Icon, Classification: definition.Classification,
 		KeyFields: keyFields, Capabilities: capabilities,
@@ -931,6 +946,7 @@ func projectCapabilities(definition connectorcatalog.Definition, connections []c
 	for _, operation := range definition.Operations {
 		usable := (len(connections) == 0 && !definition.UsesCredentials()) || operationUsable(connections, operation.ID)
 		capability := connectorCapabilityResponse{
+			CredentialSubject: operation.CredentialSubject, RequiredScopes: operation.RequiredScopes, Effect: operation.Effect,
 			ID: operation.ID, Name: operation.Name, Description: operation.Description, Usable: usable,
 			NameI18n: operation.NameI18n.Clone(), DescriptionI18n: operation.DescriptionI18n.Clone(),
 		}
@@ -938,6 +954,21 @@ func projectCapabilities(definition connectorcatalog.Definition, connections []c
 			capability.UnavailableReason = "connector_capability_unavailable"
 			if definition.UsesCredentials() && len(connections) == 0 {
 				capability.UnavailableReason = "connector_not_verified"
+			}
+		}
+		if definition.IsMailCredentials() {
+			capability.Availability = "unverified"
+			capability.Permission = "not_scoped"
+			capability.Resource = "evaluated_at_execution"
+			for _, connection := range connections {
+				if connection.State != connectorcore.ReadinessReady || connection.ProviderEvidence == nil || connection.ProviderEvidence.Mail == nil {
+					continue
+				}
+				for _, e := range connection.ProviderEvidence.Mail.Operations {
+					if e.ID == operation.ID && operationUsable([]connectorcore.PersonalConnection{connection}, operation.ID) {
+						capability.Availability = e.Availability
+					}
+				}
 			}
 		}
 		if definition.IsMessagingCredentials() {
@@ -1005,6 +1036,13 @@ func projectPersonalConnection(connection connectorcore.PersonalConnection) conn
 		ID: connection.ID, ConnectorID: connection.ConnectorID.String(), Name: connection.Name,
 		State: connection.State, CredentialConfigured: true, CredentialVersion: connection.CredentialVersion, ProviderEvidence: connection.ProviderEvidence.Clone(),
 		Revision: connection.Revision, CreatedAt: connection.CreatedAt, UpdatedAt: connection.UpdatedAt,
+	}
+	if connection.Constraint != nil && connection.Constraint.Validate() == nil {
+		ids := make([]string, 0, len(connection.Constraint.AllowedOperationIDs))
+		for _, id := range connection.Constraint.AllowedOperationIDs {
+			ids = append(ids, id.String())
+		}
+		result.AllowedOperationIDs = &ids
 	}
 	if connection.ExternalAccountID != nil {
 		result.ExternalAccountID = strings.TrimSpace(*connection.ExternalAccountID)
@@ -1103,6 +1141,36 @@ func connectorSuccess(c *gin.Context, status int, data any) {
 	c.JSON(status, response.Response{Code: "0", Message: "success", Data: data})
 }
 
+func (handler *connectorHandler) mailCredentialError(c *gin.Context, err error, verification *connectorcore.MailVerification) {
+	verification = verification.SafeCopy()
+	projectable, ok := connectorcore.ApplicationError(err)
+	if verification == nil {
+		handler.credentialError(c, err)
+		return
+	}
+	if !ok || handler.errorProjector == nil {
+		status, presentation := connectorLegacyError(err)
+		c.JSON(status, struct {
+			connectorErrorResponse
+			MailVerification *connectorcore.MailVerification `json:"mail_verification"`
+		}{presentation, verification})
+		return
+	}
+	projected := handler.errorProjector.Project(projectable, apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language"))).Presentation
+	retryable := false
+	var domainError *connectorcore.Error
+	if errors.As(err, &domainError) {
+		retryable = domainError.Retryable
+	}
+	c.Header(apptransport.HeaderApplicationErrorCode, projected.Code.String())
+	c.JSON(projected.HTTPStatus, struct {
+		Code             connectorcore.ErrorCode         `json:"code"`
+		Message          string                          `json:"message"`
+		Retryable        bool                            `json:"retryable"`
+		MailVerification *connectorcore.MailVerification `json:"mail_verification"`
+	}{connectorcore.ErrorCodeOf(err), projected.Message, retryable, verification})
+}
+
 func connectorAuthError(c *gin.Context) {
 	c.JSON(http.StatusUnauthorized, connectorErrorResponse{
 		Code: connectorcore.ErrorCodeAccessDenied, Message: connectorPublicMessage(connectorcore.ErrorCodeAccessDenied),
@@ -1110,6 +1178,11 @@ func connectorAuthError(c *gin.Context) {
 }
 
 func connectorRouteError(c *gin.Context, err error) {
+	status, presentation := connectorLegacyError(err)
+	c.JSON(status, presentation)
+}
+
+func connectorLegacyError(err error) (int, connectorErrorResponse) {
 	code := connectorcore.ErrorCodeOf(err)
 	retryable := false
 	var connectorError *connectorcore.Error
@@ -1131,7 +1204,7 @@ func connectorRouteError(c *gin.Context, err error) {
 	case connectorcore.ErrorCodeProviderUnavailable, connectorcore.ErrorCodeConnectorUnavailable:
 		status = http.StatusServiceUnavailable
 	}
-	c.JSON(status, connectorErrorResponse{Code: code, Message: connectorPublicMessage(code), Retryable: retryable})
+	return status, connectorErrorResponse{Code: code, Message: connectorPublicMessage(code), Retryable: retryable}
 }
 
 func connectorPublicMessage(code connectorcore.ErrorCode) string {

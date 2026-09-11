@@ -60,6 +60,27 @@ func TestNativeWorkflowNeverCompletesOnUnprovenOutcome(t *testing.T) {
 	}
 }
 
+func TestNativeWorkflowStopsOnRejectedOrUnresolvedDispatch(t *testing.T) {
+	for _, state := range []connectorexecution.ExecutionState{connectorexecution.ExecutionStateRejected, connectorexecution.ExecutionStateUnresolved} {
+		f := newNativeWorkflowFixture(t, false, "github.user.get")
+		f.expectGraph()
+		f.expectBinding(f.binding, true)
+		disposition := connectorexecution.DispatchUnknown
+		if state == connectorexecution.ExecutionStateRejected {
+			disposition = connectorexecution.DispatchNotSubmitted
+		}
+		capture := &workflowCatalogDispatchCapture{result: &connectorexecution.ExecutionResult{State: state, Evidence: &connectorexecution.DispatchEvidence{Version: 1, Disposition: disposition, DiagnosticCode: core.ErrorCodeConflict}}, err: core.NewError(core.ErrorCodeConflict, false, nil)}
+		f.node.connectorDispatcher = capture
+		result, err := f.node.executeRun(t.Context(), nil)
+		if err != nil || result == nil || result.Status != shared.FAILED || result.Err == nil || capture.calls != 1 || result.Outputs["execution_evidence"] == nil {
+			t.Fatalf("state=%s result=%+v err=%v", state, result, err)
+		}
+		if err := f.mock.ExpectationsWereMet(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestExecuteRunDispatchesActualNativeCatalogTool(t *testing.T) {
 	for _, published := range []bool{false, true} {
 		t.Run(map[bool]string{false: "draft", true: "published"}[published], func(t *testing.T) {

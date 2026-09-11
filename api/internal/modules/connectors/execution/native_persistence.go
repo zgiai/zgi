@@ -94,3 +94,23 @@ func (store *GormInvocationStore) Resume(ctx context.Context, claim InvocationCl
 	}
 	return nil
 }
+
+// Lookup checks the entire immutable action before allowing a read-only replay.
+// Correlation identifies a trace, not a different authorization or action.
+func (store *GormInvocationStore) Lookup(ctx context.Context, claim InvocationClaim) (RouteClaimReceipt, error) {
+	if store == nil || store.db == nil || !claim.valid() {
+		return "", connectorError(core.ErrorCodeInvalidInput, false)
+	}
+	var row invocationRecord
+	if err := store.db.WithContext(ctx).Where("organization_id = ? AND owner_account_id = ? AND logical_operation_id = ?", claim.Identity.OrganizationID, claim.Identity.OwnerAccountID, claim.Identity.LogicalOperationID).Take(&row).Error; err != nil {
+		return "", connectorError(core.ErrorCodeConflict, false)
+	}
+	receipt := RouteClaimReceipt(row.ReceiptID.String())
+	row.ReceiptID, row.State, row.CreatedAt, row.CorrelationID = uuid.Nil, "", time.Time{}, ""
+	expected := invocationRow(claim)
+	expected.CorrelationID = ""
+	if row != expected || !validReceipt(receipt) {
+		return "", connectorError(core.ErrorCodeConflict, false)
+	}
+	return receipt, nil
+}

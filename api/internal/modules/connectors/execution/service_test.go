@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
 )
@@ -48,6 +49,39 @@ func TestServiceAuthorizesBeforeCredentialResolutionAndRecordsOneOutcome(t *test
 	if strings.Contains(fmt.Sprint(decision), executionSecretSentinel) ||
 		strings.Contains(fmt.Sprint(harness.audit.outcomes[0]), executionSecretSentinel) {
 		t.Fatal("secret sentinel escaped into decision or outcome")
+	}
+}
+
+func TestServiceUsesMatchingSessionGrantWithoutConfirmation(t *testing.T) {
+	harness := newExecutionHarness(t)
+	harness.risk.classification = RiskHigh
+	definition := validDefinition()
+	definition.Operations[0].Effect = catalog.OperationEffectExternalSend
+	definition.Operations[0].DataEgress = true
+	definition.Operations[0].ExternalDestination = "github"
+	definition.Operations[0].InputSchema = map[string]interface{}{"type": "object"}
+	definition.Operations[0].OutputSchema = map[string]interface{}{"type": "object"}
+	definition.Operations[0].RiskHint = catalog.OperationRiskHintHigh
+	harness.service.catalog = &definitionCatalogStub{definition: definition}
+	request := &harness.pinned.Request
+	request.ConversationID = request.Target.ID
+	request.SessionGrants = []toolgovernance.SessionGrant{{
+		ConversationID: request.ConversationID,
+		OrganizationID: request.OrganizationID.String(), UserID: request.OwnerAccountID.String(),
+		ProviderType: "connector", ProviderID: definition.ID,
+		ConnectionID: request.ConnectionID.String(), BindingID: request.BindingID.String(),
+		ToolID: definition.Operations[0].ID, Effect: toolgovernance.EffectExternalSend,
+		AssetType: "chat", DataEgress: true, ExternalDestination: "github",
+		RiskLevel: toolgovernance.RiskLevelHigh,
+		Assets:    []toolgovernance.AssetRef{{ID: request.Target.ID, Type: "chat"}},
+		ExpiresAt: time.Now().Add(time.Hour),
+	}}
+	result, err := harness.service.InvokeConnector(context.Background(), harness.pinned)
+	if err != nil || result.State != ExecutionStateCompleted || result.Outcome.Status != core.OutcomeStatusSuccessful {
+		t.Fatalf("InvokeConnector() = %#v, %v", result, err)
+	}
+	if result.Confirmation != nil || harness.provider.calls != 1 || len(harness.audit.outcomes) != 1 {
+		t.Fatalf("session grant did not bypass confirmation: result=%#v provider=%d outcomes=%d", result, harness.provider.calls, len(harness.audit.outcomes))
 	}
 }
 
@@ -415,7 +449,7 @@ func TestServiceRuntimeConfirmationFinalizationFailureNeverSubmitsOrCancels(t *t
 			if !core.IsErrorCode(err, core.ErrorCodeInternal) {
 				t.Fatalf("InvokeConnector() = %#v, %v", result, err)
 			}
-			if result.State != "" || result.DecisionID != uuid.Nil || harness.provider.calls != 0 ||
+			if result.State != ExecutionStateUnresolved || !result.Evidence.ValidFor(result.State) || result.DecisionID != uuid.Nil || harness.provider.calls != 0 ||
 				len(harness.audit.decisions) != 0 || len(harness.audit.outcomes) != 0 {
 				t.Fatalf("failed finalization produced evidence/submission = %#v, provider=%d decisions=%#v outcomes=%#v",
 					result, harness.provider.calls, harness.audit.decisions, harness.audit.outcomes)

@@ -1,3 +1,4 @@
+import { rewriteConnectorPureImports } from './connector-pure-fixture.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -22,7 +23,7 @@ const transpile = relativePath =>
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   }).outputText;
 const sourceModuleURL = source =>
-  `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
+  `data:text/javascript;base64,${Buffer.from(rewriteConnectorPureImports(source)).toString('base64')}`;
 const { workflowConnectorSelection } = await import(
   sourceModuleURL(
     transpile('src/components/workflow/nodes/tool/manager/workflow-connector-selection.ts')
@@ -33,10 +34,9 @@ const metadataURL = sourceModuleURL(transpile('src/components/connectors/connect
 const { createConnectorPickerRows, requestConnectorPickerAction, isConnectorPickerSwitchCurrent } =
   await import(
     sourceModuleURL(
-      transpile('src/components/connectors/picker/connector-picker-model.ts').replace("'../setup/app-setup-state'", JSON.stringify(setupURL)).replace(
-        "from '../connector-metadata';",
-        `from '${metadataURL}';`
-      )
+      transpile('src/components/connectors/picker/connector-picker-model.ts')
+        .replace("'../setup/app-setup-state'", JSON.stringify(setupURL))
+        .replace("from '../connector-metadata';", `from '${metadataURL}';`)
     )
   );
 
@@ -128,7 +128,7 @@ assert.deepEqual(empty.pickerBindings, []);
 assert.equal(empty.selectedConnectionLabel, '');
 
 assert.match(manager, /ConnectorPickerDialog/);
-assert.match(manager, /ConnectorKeySetupPanel/);
+assert.match(manager, /ConnectorCreateContent/);
 assert.match(manager, /useWorkflowEditor/);
 assert.doesNotMatch(manager, /enable_connectors|connectorsEnabled/);
 assert.match(manager, /Boolean\(isConnector && connectorID && workflowId\)/);

@@ -3,6 +3,7 @@ package container
 import (
 	"context"
 	"fmt"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"sync"
 	"time"
 
@@ -34,6 +35,8 @@ import (
 	connectorexa "github.com/zgiai/zgi/api/internal/modules/connectors/providers/exa"
 	connectorfeishu "github.com/zgiai/zgi/api/internal/modules/connectors/providers/feishu"
 	connectorgithub "github.com/zgiai/zgi/api/internal/modules/connectors/providers/github"
+	connectorgmail "github.com/zgiai/zgi/api/internal/modules/connectors/providers/gmail"
+	connectormail "github.com/zgiai/zgi/api/internal/modules/connectors/providers/mailprotocol"
 	connectorruntimeconfirmation "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeconfirmation"
 	contentparsemodule "github.com/zgiai/zgi/api/internal/modules/contentparse"
 	datalibrarymodule "github.com/zgiai/zgi/api/internal/modules/datalibrary"
@@ -151,9 +154,10 @@ func (e *SimpleEventBus) Publish(ctx context.Context, topic string, payload inte
 }
 
 type ServiceContainer struct {
-	db       *gorm.DB
-	tokenMgr *helper.TokenManager
-	config   *config.Config
+	connectorResultProjector *apptransport.Projector
+	db                       *gorm.DB
+	tokenMgr                 *helper.TokenManager
+	config                   *config.Config
 
 	// Repositories
 	workspaceRepo       workspace_repo.WorkspaceRepository
@@ -536,18 +540,24 @@ func NewServiceContainer(
 	workspaceRepo workspace_repo.WorkspaceRepository,
 	workspaceMemberRepo workspace_repo.WorkspaceMemberRepository,
 	platformContainer *platform.Container,
+	projectors ...*apptransport.Projector,
 ) *ServiceContainer {
 	storageClient := storage.GetStorage()
 	tool_file.InitToolFileManager(db, storageClient)
 	tool_file.InitFileSignature(cfg)
 
+	var projector *apptransport.Projector
+	if len(projectors) > 0 {
+		projector = projectors[0]
+	}
 	return &ServiceContainer{
-		db:                  db,
-		tokenMgr:            tokenMgr,
-		config:              cfg,
-		workspaceRepo:       workspaceRepo,
-		workspaceMemberRepo: workspaceMemberRepo,
-		platformContainer:   platformContainer,
+		connectorResultProjector: projector,
+		db:                       db,
+		tokenMgr:                 tokenMgr,
+		config:                   cfg,
+		workspaceRepo:            workspaceRepo,
+		workspaceMemberRepo:      workspaceMemberRepo,
+		platformContainer:        platformContainer,
 	}
 }
 
@@ -1155,7 +1165,18 @@ func (c *ServiceContainer) GetConnectorCandidateVerifier() *connectorproviders.R
 		if err != nil {
 			panic("initialize Feishu Connector: invalid definition")
 		}
-		drivers := append([]connectorproviders.Driver{github, exa, feishu}, c.messagingDrivers()...)
+		gmail, err := connectorgmail.New(connectorgmail.Options{HandleKey: c.config.Connectors.CredentialKeys[c.config.Connectors.CredentialActiveKeyID]})
+		if err != nil {
+			panic("initialize Gmail Connector: invalid configuration")
+		}
+		drivers := append([]connectorproviders.Driver{github, exa, feishu, gmail}, c.messagingDrivers()...)
+		for _, id := range []string{"qqmail", "netease163"} {
+			driver, err := connectormail.New(connectormail.Options{Provider: id, HandleKey: c.config.Connectors.CredentialKeys[c.config.Connectors.CredentialActiveKeyID]})
+			if err != nil {
+				panic(err)
+			}
+			drivers = append(drivers, driver)
+		}
 		runtime, err := connectorproviders.NewRuntime(drivers...)
 		if err != nil {
 			panic(fmt.Sprintf("initialize Connector providers: %v", err))
@@ -1253,6 +1274,7 @@ func (c *ServiceContainer) GetConnectorExecutionService() *connectorexecution.Se
 			c.GetConnectorCredentialResolver(),
 			c.GetConnectorAuditRepository(),
 			c.GetConnectorNativeProviderInvoker(),
+			c.connectorResultProjector,
 		)
 		if err != nil {
 			panic(fmt.Sprintf("initialize Connector execution service: %v", err))

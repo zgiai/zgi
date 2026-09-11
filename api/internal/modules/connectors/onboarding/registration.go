@@ -141,6 +141,7 @@ func (c *RegistrationClient) Begin(ctx context.Context, request RegistrationRequ
 		q.Del("name")
 		q.Del("avatar")
 		q.Del("description")
+		q.Del("desc")
 	}
 	q.Del("createOnly")
 	q.Del("clientID")

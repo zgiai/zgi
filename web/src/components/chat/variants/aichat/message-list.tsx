@@ -44,7 +44,8 @@ interface AIChatMessageListProps {
     conversationId: string,
     messageId: string,
     command: ConnectorRuntimeConfirmationCommand,
-    scope?: string
+    scope?: string,
+    rememberForSession?: boolean
   ) => Promise<ConnectorRuntimeDecisionResult>;
   onSwitchBranch: (messageId: string) => void;
   onEditStart: (message: AIChatMessage) => void;
@@ -210,12 +211,13 @@ export function AIChatMessageList({
                 onToolGovernanceDecision={onToolGovernanceDecision}
                 onConnectorRuntimeDecision={
                   onConnectorRuntimeDecision
-                    ? (command, scope) =>
+                    ? (command, scope, rememberForSession) =>
                         onConnectorRuntimeDecision(
                           message.conversation_id,
                           message.id,
                           command,
-                          scope
+                          scope,
+                          rememberForSession
                         )
                     : undefined
                 }

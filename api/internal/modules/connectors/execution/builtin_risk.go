@@ -24,5 +24,6 @@ func BuiltinRiskPolicies() []TrustedOperationRiskPolicy {
 		result = append(result, TrustedOperationRiskPolicy{ConnectorID: core.Identifier(op.connector), ProviderID: core.Identifier(op.connector), DriverID: core.Identifier(op.driver), AuthMethodID: core.Identifier(op.auth), OperationID: core.Identifier(op.id), ToolName: op.tool, Classification: op.risk})
 	}
 	result = append(result, feishuRiskPolicies()...)
+	result = append(result, mailRiskPolicies()...)
 	return append(result, messagingRiskPolicies()...)
 }

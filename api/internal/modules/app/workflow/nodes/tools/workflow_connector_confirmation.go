@@ -90,7 +90,7 @@ func (n *Node) pauseForConnectorConfirmation(
 			Surface: connectorcore.TargetTypeWorkflow, WorkflowID: identity.Target.ID,
 			RunID: runID, NodeID: identity.Target.BindingInstanceID,
 		},
-		AcceptedOperation: acceptedOperation,
+		AcceptedOperation: acceptedOperation, Preview: confirmation.Preview,
 	})
 	if err != nil {
 		return nil, true, err

@@ -38,6 +38,8 @@ type KeyDriver interface {
 // The lifecycle owns the disposable values and clears them after completion.
 type CredentialInput struct {
 	Values map[string]string `json:"-"`
+	// Assigned by Runtime from the validated setup request, never tool arguments.
+	MailUsage string `json:"-"`
 	// Assigned by Runtime after native execution authorization, never from args.
 	ResourceScope ResourceScope `json:"-"`
 }
@@ -59,10 +61,25 @@ type CredentialDriver interface {
 }
 
 type Failure struct {
-	Code      core.ErrorCode
-	Retryable bool
-	Unknown   bool
-	RequestID string
+	Code       core.ErrorCode
+	Retryable  bool
+	Unknown    bool
+	RequestID  string
+	Diagnostic *Diagnostic
+}
+
+// Diagnostic contains only bounded protocol facts. It never retains a URL,
+// response body, credential, provider text, or a transport error string.
+type Diagnostic = core.ProviderDiagnostic
+
+func (failure *Failure) SafeDiagnostic() *core.ProviderDiagnostic {
+	return failure.Diagnostic.SafeCopy()
+}
+
+type diagnosticPhaseKey struct{}
+
+func WithDiagnosticPhase(ctx context.Context, phase string) context.Context {
+	return context.WithValue(ctx, diagnosticPhaseKey{}, phase)
 }
 
 func (failure *Failure) Error() string { return string(failure.Code) }

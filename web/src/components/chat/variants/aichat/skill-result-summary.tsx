@@ -252,7 +252,9 @@ export function AIChatSkillResultSummary({
   className,
 }: AIChatSkillResultSummaryProps) {
   const t = useT('webapp');
+  const connector = isConnectorOperationInvocation(invocation);
   const summary = useMemo(() => {
+    if (connector) return { rows: [], tone: null };
     const safeResult = sanitizeTimelineDisplayPayload(
       result,
       t('consoleChat.skills.trace.values.hidden'),
@@ -263,12 +265,18 @@ export function AIChatSkillResultSummary({
       rows: buildResultRows(safeResult, t),
       tone: null,
     };
-  }, [result, t]);
+  }, [connector, result, t]);
 
   const { rows, tone } = summary;
 
-  if (isConnectorOperationInvocation(invocation)) {
-    return <ConnectorOperationSummary invocation={invocation} className={className} />;
+  if (connector) {
+    return (
+      <ConnectorOperationSummary
+        invocation={invocation}
+        className={className}
+        showHeading={false}
+      />
+    );
   }
 
   if (!rows.length) return null;

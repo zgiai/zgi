@@ -266,7 +266,7 @@ func (h *connectorHandler) onboardingAction(c *gin.Context) {
 		h.credentialError(c, core.NewError(core.ErrorCodeConnectorUnavailable, false, nil))
 		return
 	}
-	result, err := service.Action(c.Request.Context(), onboarding.ActionCommand{OrganizationID: org, OwnerAccountID: owner, FlowID: id, Action: request.Action, ExpectedRevision: request.Revision, ChallengeRevision: request.ChallengeRevision, Values: request.Values})
+	result, err := service.Action(c.Request.Context(), onboarding.ActionCommand{OrganizationID: org, OwnerAccountID: owner, FlowID: id, IdempotencyKey: c.GetHeader("Idempotency-Key"), Action: request.Action, ExpectedRevision: request.Revision, ChallengeRevision: request.ChallengeRevision, Values: request.Values})
 	if err != nil {
 		h.credentialError(c, err)
 		return

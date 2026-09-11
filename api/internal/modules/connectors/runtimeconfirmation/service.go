@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/execution"
 )
@@ -22,12 +23,30 @@ const (
 
 // Command contains the authenticated owner scope and the only two values a
 // client may submit. The original operation identity and input are always
-// restored from ConfirmationContinuationStore.
+// restored from ConfirmationContinuationStore. RememberForSession is a
+// separate governance preference and never changes the frozen request.
 type Command struct {
-	OrganizationID uuid.UUID
-	OwnerAccountID uuid.UUID
-	RouteReceipt   execution.RouteClaimReceipt
-	Decision       execution.ConfirmationDecision
+	OrganizationID     uuid.UUID
+	OwnerAccountID     uuid.UUID
+	RouteReceipt       execution.RouteClaimReceipt
+	Decision           execution.ConfirmationDecision
+	RememberForSession bool
+}
+
+// AuthorizationSnapshot carries only the non-secret operation contract needed
+// to create a Tool Governance session grant after a user approval.
+type AuthorizationSnapshot struct {
+	SkillID              string
+	ConnectionID         uuid.UUID
+	BindingID            uuid.UUID
+	ConnectorID          core.Identifier
+	OperationID          core.Identifier
+	Target               core.TargetRef
+	Effect               catalog.OperationEffect
+	DataEgress           bool
+	ExternalDestination  string
+	SensitiveDataAllowed bool
+	Risk                 execution.RiskClassification
 }
 
 // ConfirmationRequestIdentity is the exact non-secret authority tuple restored
@@ -57,6 +76,7 @@ type Result struct {
 	ErrorCode       core.ErrorCode               `json:"error_code,omitempty"`
 	Origin          execution.ConfirmationOrigin `json:"-"`
 	RequestIdentity ConfirmationRequestIdentity  `json:"-"`
+	Authorization   *AuthorizationSnapshot       `json:"-"`
 	ExecutionResult *execution.ExecutionResult   `json:"-"`
 	OutcomeID       uuid.UUID                    `json:"-"`
 }
@@ -125,18 +145,24 @@ func (service *Service) Continue(ctx context.Context, command Command) (Result, 
 
 	request := continuation.Frozen.Request
 	acceptedOperation := continuation.Frozen.AcceptedOperation
+	authorization := authorizationSnapshot(request, acceptedOperation)
 	request.AcceptedOperation = &acceptedOperation
 	request.Confirmation = &execution.RuntimeConfirmationCommand{
 		RouteReceipt: command.RouteReceipt,
 		Decision:     command.Decision,
 	}
 	result, routeErr := service.router.Route(ctx, request)
+	if result.State == execution.ExecutionStateUnresolved {
+		return service.resolveConcurrentWinner(ctx, command, core.NewError(core.ErrorCodeOutcomeUnknown, false, nil))
+	}
 	if core.IsErrorCode(routeErr, core.ErrorCodeConflict) &&
 		result.State != execution.ExecutionStateCompleted &&
+		result.State != execution.ExecutionStateRejected &&
 		result.State != execution.ExecutionStateCancelled {
 		return service.resolveConcurrentWinner(ctx, command, routeErr)
 	}
 	if command.Decision == execution.ConfirmationDecisionCancelled &&
+		result.State != execution.ExecutionStateRejected &&
 		(result.State != execution.ExecutionStateCancelled || result.DecisionID == uuid.Nil) {
 		if routeErr != nil {
 			return Result{}, routeErr
@@ -172,6 +198,7 @@ func (service *Service) Continue(ctx context.Context, command Command) (Result, 
 	if executionResultMatchesTerminal(result, terminal) {
 		projected.ExecutionResult = &result
 	}
+	projected.Authorization = authorization
 	return projected, nil
 }
 
@@ -182,13 +209,16 @@ func (service *Service) terminalFromRoute(
 	result execution.ExecutionResult,
 	routeErr error,
 ) (execution.ConfirmationTerminal, error) {
-	if result.State == execution.ExecutionStateCancelled || result.State == execution.ExecutionStateCompleted {
+	if result.State == execution.ExecutionStateCancelled || result.State == execution.ExecutionStateCompleted || result.State == execution.ExecutionStateRejected {
 		terminal, err := service.recoverer.RecoverTerminal(
 			ctx,
 			terminalRecoveryRequest(command, continuation),
 		)
 		if err != nil {
 			return execution.ConfirmationTerminal{}, err
+		}
+		if result.State == execution.ExecutionStateRejected && (!result.Evidence.ValidFor(result.State) || result.DecisionID == uuid.Nil || terminal.DecisionID != result.DecisionID || terminal.State != execution.ConfirmationContinuationFailed || terminal.OutcomeID != uuid.Nil) {
+			return execution.ConfirmationTerminal{}, core.NewError(core.ErrorCodeConflict, false, nil)
 		}
 		if result.State == execution.ExecutionStateCancelled &&
 			terminal.State != execution.ConfirmationContinuationCancelled {
@@ -207,6 +237,9 @@ func executionResultMatchesTerminal(
 	result execution.ExecutionResult,
 	terminal execution.ConfirmationTerminal,
 ) bool {
+	if result.State == execution.ExecutionStateRejected {
+		return result.Evidence.ValidFor(result.State) && result.DecisionID != uuid.Nil && result.DecisionID == terminal.DecisionID && terminal.State == execution.ConfirmationContinuationFailed && terminal.OutcomeID == uuid.Nil
+	}
 	if result.State == execution.ExecutionStateCancelled {
 		return result.DecisionID != uuid.Nil && result.DecisionID == terminal.DecisionID &&
 			terminal.State == execution.ConfirmationContinuationCancelled
@@ -329,6 +362,8 @@ func authorizeFrozenRequest(command Command, frozen execution.FrozenConfirmation
 
 func terminalFromExecution(result execution.ExecutionResult, routeErr error) execution.ConfirmationTerminal {
 	switch result.State {
+	case execution.ExecutionStateRejected, execution.ExecutionStateUnresolved:
+		return execution.ConfirmationTerminal{State: execution.ConfirmationContinuationUnknown, DiagnosticCode: string(core.ErrorCodeOutcomeUnknown)}
 	case execution.ExecutionStateCancelled:
 		if result.DecisionID != uuid.Nil {
 			return execution.ConfirmationTerminal{
@@ -431,6 +466,7 @@ func projectExisting(
 			LogicalOperationID: request.LogicalOperationID, CorrelationID: request.CorrelationID,
 			Interactive: request.Interactive,
 		},
+		Authorization: authorizationSnapshot(request, continuation.Frozen.AcceptedOperation),
 	}
 	switch continuation.State {
 	case execution.ConfirmationContinuationCancelled:
@@ -447,6 +483,28 @@ func projectExisting(
 		return Result{}, core.NewError(core.ErrorCodeInternal, false, nil)
 	}
 	return result, nil
+}
+
+func authorizationSnapshot(
+	request execution.ExecutionRequest,
+	accepted catalog.PinnedOperation,
+) *AuthorizationSnapshot {
+	if accepted.Operation.ID == "" || request.ConnectionID == uuid.Nil || request.BindingID == uuid.Nil {
+		return nil
+	}
+	return &AuthorizationSnapshot{
+		SkillID:              accepted.Operation.SkillID,
+		ConnectionID:         request.ConnectionID,
+		BindingID:            request.BindingID,
+		ConnectorID:          request.ConnectorID,
+		OperationID:          request.OperationID,
+		Target:               request.Target,
+		Effect:               accepted.Operation.Effect,
+		DataEgress:           accepted.Operation.DataEgress,
+		ExternalDestination:  accepted.Operation.ExternalDestination,
+		SensitiveDataAllowed: accepted.Operation.SensitiveDataAllowed,
+		Risk:                 execution.RiskHigh,
+	}
 }
 
 func safeStoredErrorCode(value string, fallback core.ErrorCode) core.ErrorCode {

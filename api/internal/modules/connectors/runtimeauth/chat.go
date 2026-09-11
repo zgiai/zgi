@@ -241,6 +241,7 @@ func (resolver *ChatResolver) ResolveConnectorIdentity(
 				continue
 			}
 			identity := connectordispatch.Identity{
+				ConversationID: request.ConversationID,
 				OrganizationID: request.OrganizationID, OwnerAccountID: request.OwnerAccountID,
 				ActingPrincipalID: request.ActingPrincipalID, BindingID: capability.BindingID,
 				ConnectionID: capability.ConnectionID, ConnectorID: capability.ConnectorID,

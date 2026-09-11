@@ -51,17 +51,7 @@ export function ConnectorKeyForm({
               spellCheck={false}
               onChange={event => onValueChange(field.name, event.target.value)}
             />
-            {field.help_url ? (
-              <a
-                href={field.help_url}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-              >
-                {t('setup.helpLink')}
-                <ExternalLink aria-hidden="true" className="size-3" />
-              </a>
-            ) : null}
+            <ConnectorFieldHelp url={field.help_url} />
           </div>
         );
       })}
@@ -70,4 +60,19 @@ export function ConnectorKeyForm({
       </Button>
     </form>
   );
+}
+
+export function ConnectorFieldHelp({ url }: { url?: string }) {
+  const t = useT('connectors');
+  return url ? (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+    >
+      {t('setup.helpLink')}
+      <ExternalLink aria-hidden="true" className="size-3" />
+    </a>
+  ) : null;
 }

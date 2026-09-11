@@ -12,7 +12,6 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/connectors/credentials"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/providers"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 	"time"
 )
 
@@ -21,9 +20,11 @@ type Message struct {
 	ReceivedAt                        time.Time
 }
 type State struct {
-	Cursor   string
-	Messages []Message
-	Seen     []string
+	LongPollingTimeoutMS int `json:"long_polling_timeout_ms,omitempty"`
+	Verified             bool
+	Cursor               string
+	Messages             []Message
+	Seen                 []string
 }
 type Conversation struct{ Recipient, ContextToken string }
 type Store interface {
@@ -108,73 +109,6 @@ func targetDigest(s providers.ResourceScope) string {
 }
 func fail(c core.ErrorCode) error { return &providers.Failure{Code: c} }
 
-func (s *DBStore) Update(ctx context.Context, scope providers.ResourceScope, provider, digest string, flow uuid.UUID, fn func(context.Context, *State) error) error {
-	if !validScope(scope) || provider != "weixin" || len(digest) != 64 || fn == nil {
-		return fail(core.ErrorCodeAccessDenied)
-	}
-	return s.transaction(ctx, func(ctx context.Context, tx *gorm.DB) error {
-		key := scope.OrganizationID.String() + ":" + scope.OwnerAccountID.String() + ":" + scope.ConnectionID.String() + ":" + provider
-		if tx.Dialector.Name() == "postgres" {
-			if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtextextended(?,0))", key).Error; err != nil {
-				return err
-			}
-		}
-		var row stateRow
-		query := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("organization_id = ? AND owner_account_id = ? AND connection_id = ? AND connector_id = ? AND credential_digest = ?", scope.OrganizationID, scope.OwnerAccountID, scope.ConnectionID, provider, digest)
-		err := query.Take(&row).Error
-		state := State{Messages: []Message{}, Seen: []string{}}
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			if flow == uuid.Nil {
-				return fail(core.ErrorCodeConnectionNotReady)
-			}
-			row = stateRow{ID: uuid.New(), OrganizationID: scope.OrganizationID, OwnerAccountID: scope.OwnerAccountID, ConnectionID: scope.ConnectionID, ConnectorID: provider, CredentialDigest: digest, FlowID: &flow, Revision: 1}
-		} else if err != nil {
-			return err
-		} else {
-			if !row.ExpiresAt.After(time.Now()) {
-				return fail(core.ErrorCodeConnectionNotReady)
-			}
-			if flow == uuid.Nil && row.FlowID != nil {
-				var ready int64
-				if err = tx.Table("connector_onboarding_flows").Where("id = ? AND organization_id = ? AND owner_account_id = ? AND state = 'ready' AND result_connection_id = ?", *row.FlowID, scope.OrganizationID, scope.OwnerAccountID, scope.ConnectionID).Count(&ready).Error; err != nil {
-					return err
-				}
-				if ready != 1 {
-					return fail(core.ErrorCodeConnectionNotReady)
-				}
-				row.FlowID = nil
-			}
-			plain, err := s.secrets.Open(credentials.Subject{Purpose: credentials.MessagingState, OrganizationID: row.OrganizationID, ID: row.ID, ConnectorID: provider, Version: 1}, row.EncryptedState)
-			if err != nil {
-				return fail(core.ErrorCodeConnectionNotReady)
-			}
-			err = json.Unmarshal(plain, &state)
-			clear(plain)
-			if err != nil {
-				return fail(core.ErrorCodeConnectionNotReady)
-			}
-		}
-		if err = fn(ctx, &state); err != nil {
-			return err
-		}
-		if len(state.Messages) > 100 || len(state.Seen) > 256 || len(state.Cursor) > 32768 {
-			return fail(core.ErrorCodeProviderUnavailable)
-		}
-		plain, err := json.Marshal(state)
-		if err != nil {
-			return fail(core.ErrorCodeProviderUnavailable)
-		}
-		defer clear(plain)
-		row.EncryptedState, err = s.secrets.Protect(credentials.Subject{Purpose: credentials.MessagingState, OrganizationID: row.OrganizationID, ID: row.ID, ConnectorID: provider, Version: 1}, plain)
-		if err != nil {
-			return fail(core.ErrorCodeProviderUnavailable)
-		}
-		row.Revision++
-		row.UpdatedAt = time.Now().UTC()
-		row.ExpiresAt = row.UpdatedAt.Add(30 * 24 * time.Hour)
-		return tx.Save(&row).Error
-	})
-}
 func (s *DBStore) Put(ctx context.Context, scope providers.ResourceScope, provider string, value Conversation) (string, error) {
 	if s == nil || s.db == nil || s.secrets == nil {
 		return "", fail(core.ErrorCodeConnectorUnavailable)
@@ -231,7 +165,7 @@ func (s *DBStore) Cleanup(ctx context.Context) error {
 		return tx.Exec(`DELETE FROM connector_messaging_states WHERE id IN
  (SELECT s.id FROM connector_messaging_states s WHERE s.expires_at <= ? OR
  (NOT EXISTS (SELECT 1 FROM connector_connections c WHERE c.id=s.connection_id AND c.organization_id=s.organization_id AND c.owner_account_id=s.owner_account_id)
- AND NOT EXISTS (SELECT 1 FROM connector_onboarding_flows f WHERE f.id=s.flow_id AND f.state IN ('starting','awaiting_authorization','verifying')))
+ AND NOT EXISTS (SELECT 1 FROM connector_onboarding_flows f WHERE f.id=s.flow_id AND f.state IN ('starting','awaiting_authorization','verifying','verification_waiting')))
  ORDER BY s.expires_at LIMIT 100 FOR UPDATE SKIP LOCKED)`, time.Now()).Error
 	})
 }
