@@ -33,6 +33,7 @@ const RECHARGE_AMOUNTS = [
 ];
 
 const MIN_CUSTOM_AMOUNT = 1;
+const MAX_CUSTOM_AMOUNT = 9999999999.99;
 const ORDER_TIMEOUT_SECONDS = 600; // 10 minutes
 
 const PAYMENT_METHODS: Array<{
@@ -112,6 +113,14 @@ export function QrCodeRecharge({ onClose, onPendingOrderChange }: QrCodeRecharge
     }
     return selectedAmount || 0;
   }, [selectedAmount, customAmount]);
+
+  const isCustomAmountValid = useMemo(() => {
+    if (!customAmount) return true;
+    return /^\d+(\.\d{1,2})?$/.test(customAmount) &&
+      Number.isFinite(finalAmount) &&
+      finalAmount >= MIN_CUSTOM_AMOUNT &&
+      finalAmount <= MAX_CUSTOM_AMOUNT;
+  }, [customAmount, finalAmount]);
 
   const isFinalStatus = useMemo(
     () =>
@@ -319,6 +328,9 @@ export function QrCodeRecharge({ onClose, onPendingOrderChange }: QrCodeRecharge
               value={customAmount}
               onChange={e => handleCustomAmountChange(e.target.value)}
               min={MIN_CUSTOM_AMOUNT}
+              max={MAX_CUSTOM_AMOUNT}
+              step="0.01"
+              inputMode="decimal"
             />
             <p className="text-xs text-muted-foreground">
               {t('dashboard.costCenter.rechargeDialog.customAmountMinHint', {
@@ -362,7 +374,7 @@ export function QrCodeRecharge({ onClose, onPendingOrderChange }: QrCodeRecharge
           className="w-full mt-4"
           size="lg"
           onClick={initiatePayment}
-          disabled={finalAmount < MIN_CUSTOM_AMOUNT}
+          disabled={finalAmount < MIN_CUSTOM_AMOUNT || !isCustomAmountValid}
         >
           {t('dashboard.costCenter.rechargeDialog.payment.pay')}
         </Button>
