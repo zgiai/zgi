@@ -59,6 +59,14 @@ func TestConnectorRoutesCatalogContractAndOwnerScope(t *testing.T) {
 			t.Fatalf("catalog body missing %q: %s", expected, body)
 		}
 	}
+	if !strings.Contains(body, `"category":"developer"`) || !strings.Contains(body, `"tags":["code","repository","issues","collaboration"]`) {
+		t.Fatalf("catalog presentation metadata missing: %s", body)
+	}
+	for _, privateField := range []string{"source_urls", "publisher", "reviewed_at", "rationale"} {
+		if strings.Contains(body, `"`+privateField+`"`) {
+			t.Fatalf("catalog leaked private presentation evidence %q: %s", privateField, body)
+		}
+	}
 	if strings.Contains(body, `"id":"reference-data"`) || strings.Contains(body, otherDisplay) {
 		t.Fatalf("catalog classification/owner filter leaked data: %s", body)
 	}
@@ -259,6 +267,45 @@ func TestConnectorRoutesBuiltInExaIsConnectorWithoutChangingStableIdentity(t *te
 	}
 }
 
+func TestConnectorRoutesCatalogTaxonomyFilters(t *testing.T) {
+	definitions, err := connectorcatalog.BuiltinDefinitions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	definitionCatalog, err := connectorcatalog.New(definitions...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := newConnectorRouteTestRouter(definitionCatalog, &connectorRouteRecordingService{}, uuid.New(), uuid.New())
+	for _, test := range []struct {
+		query, want string
+	}{
+		{"category=information", "web-search"},
+		{"tag=code", "github"},
+	} {
+		recorder := connectorRouteRequest(t, router, http.MethodGet, "/console/api/connectors/catalog?"+test.query, "", nil)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("taxonomy filter %s status/body = %d %s", test.query, recorder.Code, recorder.Body.String())
+		}
+		if !strings.Contains(recorder.Body.String(), `"id":"`+test.want+`"`) {
+			t.Fatalf("taxonomy filter %s missing %s: %s", test.query, test.want, recorder.Body.String())
+		}
+		var envelope struct {
+			Data connectorCatalogResponse `json:"data"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
+			t.Fatal(err)
+		}
+		if len(envelope.Data.Items) != 1 || envelope.Data.Items[0].ID != test.want {
+			t.Fatalf("taxonomy filter %s = %#v", test.query, envelope.Data.Items)
+		}
+	}
+	bad := connectorRouteRequest(t, router, http.MethodGet, "/console/api/connectors/catalog?category=unknown", "", nil)
+	if bad.Code < 400 || bad.Code >= 500 {
+		t.Fatalf("unknown taxonomy filter status = %d", bad.Code)
+	}
+}
+
 func TestConnectorRoutesKeySetupContractDestroysSecretAndUsesActor(t *testing.T) {
 	definitionCatalog := newConnectorRouteTestCatalog(t)
 	organizationID, ownerID := uuid.New(), uuid.New()
@@ -285,7 +332,7 @@ func TestConnectorRoutesKeySetupContractDestroysSecretAndUsesActor(t *testing.T)
 	binding := connectorcore.TargetBinding{
 		ID: uuid.New(), OrganizationID: organizationID, OwnerAccountID: ownerID,
 		ConnectionID: connection.ID, ConnectorID: "github", Target: *attempt.Target,
-		Status: connectorcore.BindingStatusActive,
+		Status:   connectorcore.BindingStatusActive,
 		Revision: 1, CreatedAt: now, UpdatedAt: now,
 	}
 	bindingService := &connectorRouteRecordingBindingService{
@@ -398,8 +445,8 @@ func TestConnectorRoutesSetupAndConnectionReadsPassOrganizationAndOwner(t *testi
 	binding := connectorcore.TargetBinding{
 		ID: uuid.New(), OrganizationID: organizationID, OwnerAccountID: ownerID,
 		ConnectionID: ownerConnection.ID, ConnectorID: "github",
-		Target: connectorcore.TargetRef{Type: connectorcore.TargetTypeAgent, ID: "agent-1"},
-		Status: connectorcore.BindingStatusActive,
+		Target:   connectorcore.TargetRef{Type: connectorcore.TargetTypeAgent, ID: "agent-1"},
+		Status:   connectorcore.BindingStatusActive,
 		Revision: 1, CreatedAt: now, UpdatedAt: now,
 	}
 	bindingService := &connectorRouteRecordingBindingService{
@@ -453,8 +500,8 @@ func TestConnectorTargetBindingRoutesUseActorScopeAndStrictContract(t *testing.T
 	native := connectorcore.TargetBinding{
 		ID: uuid.New(), OrganizationID: organizationID, OwnerAccountID: ownerID,
 		ConnectionID: connectionID, ConnectorID: "github",
-		Target: connectorcore.TargetRef{Type: connectorcore.TargetTypeWorkflow, ID: "workflow-1", BindingInstanceID: "node-1"},
-		Status: connectorcore.BindingStatusActive,
+		Target:   connectorcore.TargetRef{Type: connectorcore.TargetTypeWorkflow, ID: "workflow-1", BindingInstanceID: "node-1"},
+		Status:   connectorcore.BindingStatusActive,
 		Revision: 1, CreatedAt: now, UpdatedAt: now,
 	}
 	unavailable := native
@@ -614,8 +661,8 @@ func TestConnectorConnectionMaintenanceRoutesUseOwnerScopeAndRemainSecretFree(t 
 	binding := connectorcore.TargetBinding{
 		ID: uuid.New(), OrganizationID: organizationID, OwnerAccountID: ownerID,
 		ConnectionID: connectionID, ConnectorID: "github",
-		Target: connectorcore.TargetRef{Type: connectorcore.TargetTypeAgent, ID: "agent-1"},
-		Status: connectorcore.BindingStatusActive,
+		Target:   connectorcore.TargetRef{Type: connectorcore.TargetTypeAgent, ID: "agent-1"},
+		Status:   connectorcore.BindingStatusActive,
 		Revision: 2, CreatedAt: now, UpdatedAt: now,
 	}
 	attempt := connectorcore.KeySetupAttempt{

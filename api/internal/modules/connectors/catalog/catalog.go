@@ -155,6 +155,8 @@ func FirstReleaseSurfaces() []Surface {
 type Filter struct {
 	Classification Classification
 	Query          string
+	Category       ConnectorCategory
+	Tag            ConnectorTag
 }
 
 // Catalog is the concurrency-safe active view of admitted definitions. Each
@@ -261,8 +263,21 @@ func (catalog *Catalog) List(filter Filter) []Definition {
 		if filter.Classification != "" && definition.Classification != filter.Classification {
 			continue
 		}
+		presentation, _ := PresentationFor(definition.ID)
+		if filter.Category != "" && (!filter.Category.Valid() || presentation.Category != filter.Category) {
+			continue
+		}
+		if filter.Tag != "" {
+			if !filter.Tag.Valid() || !slicesContainsConnectorTag(presentation.Tags, filter.Tag) {
+				continue
+			}
+		}
 		if query != "" {
-			haystack := strings.ToLower(definition.ID + "\n" + definition.Name + "\n" + definition.Description)
+			parts := []string{definition.ID, definition.Name, definition.Description, string(presentation.Category)}
+			for _, tag := range presentation.Tags {
+				parts = append(parts, string(tag))
+			}
+			haystack := strings.ToLower(strings.Join(parts, "\n"))
 			if !strings.Contains(haystack, query) {
 				continue
 			}
@@ -277,6 +292,15 @@ func (catalog *Catalog) List(filter Filter) []Definition {
 		return left < right
 	})
 	return result
+}
+
+func slicesContainsConnectorTag(values []ConnectorTag, want ConnectorTag) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 // ReplaceActive atomically installs a complete active catalog snapshot. It is

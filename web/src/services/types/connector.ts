@@ -1,4 +1,26 @@
 export type ConnectorClassification = 'connector' | 'data_source';
+export type ConnectorCategory =
+  | 'communication'
+  | 'productivity'
+  | 'information'
+  | 'developer'
+  | 'other';
+export type ConnectorTag =
+  | 'social'
+  | 'messaging'
+  | 'email'
+  | 'enterprise'
+  | 'collaboration'
+  | 'documents'
+  | 'tables'
+  | 'workflow'
+  | 'search'
+  | 'web'
+  | 'research'
+  | 'code'
+  | 'repository'
+  | 'issues'
+  | 'integration';
 export type ConnectorReadiness = 'ready' | 'reconnect_required' | 'unavailable';
 export type ConnectorCatalogStatus = 'all' | 'connected' | 'needs_attention';
 export type ConnectorTargetType = 'chat' | 'agent' | 'workflow';
@@ -190,6 +212,8 @@ export interface ConnectorCatalogItem {
   description_i18n?: ConnectorLocalizedText;
   icon?: string;
   classification: ConnectorClassification;
+  category?: ConnectorCategory;
+  tags?: ConnectorTag[];
   key_fields: ConnectorKeyField[];
   extension_schema_version?: '1.1.0' | '1.2.0' | '1.3.0' | '1.4.0' | '1.5.0';
   setup_method?: string;
@@ -355,6 +379,8 @@ export type KeySetupResult =
 
 export interface GetConnectorCatalogParams {
   classification?: ConnectorClassification;
+  category?: ConnectorCategory;
+  tag?: ConnectorTag;
   query?: string;
   status?: ConnectorCatalogStatus;
 }

@@ -96,7 +96,8 @@ for (const count of [0, 1, 3]) {
         'next/link': { default: 'Link' },
         '../setup/connector-create-dialog': ui,
         '../setup/app-setup-state': setup,
-        '@/components/connectors/connector-icon': ui,
+      '@/components/connectors/connector-icon': ui,
+      '../connector-taxonomy-badges': { ConnectorTaxonomyBadges: 'TaxonomyBadges' },
         './catalog-model': model,
       }
     );

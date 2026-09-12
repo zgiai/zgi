@@ -10,6 +10,7 @@ import type { MailDisplayGroup } from '../mail-display-model';
 import { selectMailProvider } from '../mail-display-model';
 import { mailSetupEnabled } from '../setup/mail-setup-state';
 import { ConnectorCreateDialog } from '../setup/connector-create-dialog';
+import { ConnectorTaxonomyBadges } from '../connector-taxonomy-badges';
 
 export function MailCatalogRow({
   group,
@@ -35,6 +36,10 @@ export function MailCatalogRow({
           <p className="mt-1 h-10 line-clamp-2 text-sm leading-5 text-muted-foreground">
             {t('mail.catalogDescription')}
           </p>
+          <ConnectorTaxonomyBadges
+            item={group.providers[0] ?? {}}
+            className="mt-2 flex min-w-0 flex-wrap gap-1.5"
+          />
         </div>
       </div>
       <div className="mt-auto flex flex-wrap items-center justify-between gap-2">

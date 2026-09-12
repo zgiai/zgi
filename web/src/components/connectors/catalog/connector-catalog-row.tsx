@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils';
 import { useT } from '@/i18n';
 import type { ConnectorCatalogItem } from '@/services/types/connector';
 import { getConnectorCatalogRowState } from './catalog-model';
+import { ConnectorTaxonomyBadges } from '../connector-taxonomy-badges';
 
 export function ConnectorCatalogRow({ item }: { item: ConnectorCatalogItem }) {
   const t = useT('connectors');
@@ -79,6 +80,7 @@ export function ConnectorCatalogRow({ item }: { item: ConnectorCatalogItem }) {
           >
             {item.description}
           </p>
+          <ConnectorTaxonomyBadges item={item} className="mt-2 flex min-w-0 flex-wrap gap-1.5" />
         </div>
       </div>
       <div className="mt-auto flex h-9 min-w-0 items-center justify-between gap-3">

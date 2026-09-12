@@ -1,5 +1,14 @@
-import type { ConnectorCatalogItem, ConnectorCatalogStatus } from '@/services/types/connector';
-import { connectorCatalogSearchValues } from '@/components/connectors/connector-metadata';
+import type {
+  ConnectorCatalogItem,
+  ConnectorCatalogStatus,
+  ConnectorCategory,
+  ConnectorTag,
+} from '@/services/types/connector';
+import {
+  connectorCatalogSearchValues,
+  connectorCategory,
+  connectorTags,
+} from '@/components/connectors/connector-metadata';
 import { supportsConnectorSetup } from '../setup/app-setup-state';
 
 export type ConnectorCatalogRowState =
@@ -11,6 +20,8 @@ export type ConnectorCatalogRowState =
 export interface ConnectorCatalogFilters {
   query: string;
   status: ConnectorCatalogStatus;
+  category?: ConnectorCategory;
+  tag?: ConnectorTag;
 }
 
 export interface PartitionedConnectorCatalog {
@@ -67,6 +78,12 @@ function matchesStatus(item: ConnectorCatalogItem, status: ConnectorCatalogStatu
   );
 }
 
+function matchesTaxonomy(item: ConnectorCatalogItem, filters: ConnectorCatalogFilters): boolean {
+  if (filters.category && connectorCategory(item) !== filters.category) return false;
+  if (filters.tag && !connectorTags(item).includes(filters.tag)) return false;
+  return true;
+}
+
 export function filterConnectorCatalog(
   items: readonly ConnectorCatalogItem[],
   filters: ConnectorCatalogFilters,
@@ -75,6 +92,7 @@ export function filterConnectorCatalog(
   return items.filter(
     item =>
       matchesQuery(item, filters.query) &&
+      matchesTaxonomy(item, filters) &&
       (matchesStatus(item, filters.status) ||
         (filters.status === 'needs_attention' && pendingConnectorIDs.has(item.id)))
   );

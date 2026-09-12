@@ -1,8 +1,10 @@
 import { connectorPurpose } from './connector-presentation';
 import type {
+  ConnectorCategory,
   ConnectorCatalogItem,
   ConnectorLocalizedText,
   ConnectorRuntimeConfirmation,
+  ConnectorTag,
 } from '../../services/types/connector.ts';
 
 interface ConnectorMetadataFallbacks {
@@ -44,6 +46,71 @@ export function resolveConnectorLocalizedText(
     if (typeof value === 'string' && value.trim()) return value.trim();
   }
   return fallback.trim();
+}
+
+export const CONNECTOR_CATEGORIES = [
+  'communication',
+  'productivity',
+  'information',
+  'developer',
+  'other',
+] as const satisfies readonly ConnectorCategory[];
+
+export const CONNECTOR_TAGS = [
+  'social',
+  'messaging',
+  'email',
+  'enterprise',
+  'collaboration',
+  'documents',
+  'tables',
+  'workflow',
+  'search',
+  'web',
+  'research',
+  'code',
+  'repository',
+  'issues',
+  'integration',
+] as const satisfies readonly ConnectorTag[];
+
+const CATEGORY_SEARCH_ALIASES: Record<ConnectorCategory, string[]> = {
+  communication: ['communication', 'social', '通讯', '社交', '沟通'],
+  productivity: ['productivity', 'tools', '办公', '工具', '协作'],
+  information: ['information', 'retrieval', '信息', '检索'],
+  developer: ['developer', 'development', '开发', '代码'],
+  other: ['other', '其他'],
+};
+
+const TAG_SEARCH_ALIASES: Record<ConnectorTag, string[]> = {
+  social: ['social', '社交'],
+  messaging: ['messaging', 'message', '消息'],
+  email: ['email', 'mail', '邮件'],
+  enterprise: ['enterprise', '企业'],
+  collaboration: ['collaboration', '协作'],
+  documents: ['documents', 'document', '文档'],
+  tables: ['tables', 'table', '表格'],
+  workflow: ['workflow', '流程'],
+  search: ['search', '搜索'],
+  web: ['web', '网页'],
+  research: ['research', '研究'],
+  code: ['code', '代码'],
+  repository: ['repository', '仓库', '代码仓库'],
+  issues: ['issues', 'issue', '问题'],
+  integration: ['integration', '集成'],
+};
+
+export function connectorCategory(item: Pick<ConnectorCatalogItem, 'category'>): ConnectorCategory {
+  return item.category && CONNECTOR_CATEGORIES.includes(item.category) ? item.category : 'other';
+}
+
+export function connectorTags(item: Pick<ConnectorCatalogItem, 'tags'>): ConnectorTag[] {
+  const seen = new Set<ConnectorTag>();
+  return (item.tags ?? []).filter(tag => {
+    if (!CONNECTOR_TAGS.includes(tag) || seen.has(tag)) return false;
+    seen.add(tag);
+    return true;
+  });
 }
 
 export function localizeConnectorCatalogItem(
@@ -93,12 +160,18 @@ export function connectorCatalogSearchValues(item: ConnectorCatalogItem): string
     item.id.trim().toLocaleLowerCase() === 'web-search'
       ? ['Exa', 'Exa Web Search', 'Exa 网页搜索', 'websearch', 'web search', '网页搜索']
       : [];
+  const category = connectorCategory(item);
+  const tags = connectorTags(item);
   return [
     item.id,
     item.name,
     item.description,
     ...stableAliases,
     ...(['gmail', 'qqmail', 'netease163'].includes(item.id) ? ['邮箱', 'email', 'mail'] : []),
+    category,
+    ...CATEGORY_SEARCH_ALIASES[category],
+    ...tags,
+    ...tags.flatMap(tag => TAG_SEARCH_ALIASES[tag]),
     ...Object.values(item.name_i18n ?? {}),
     ...Object.values(item.description_i18n ?? {}),
     ...(item.examples ?? []),

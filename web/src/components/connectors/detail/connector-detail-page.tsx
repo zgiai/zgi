@@ -41,6 +41,7 @@ import { supportsAppSetup } from '@/components/connectors/setup/app-setup-state'
 import { supportsMessagingContract } from '@/components/connectors/setup/messaging-setup-state';
 import { supportsMailSetup } from '@/components/connectors/setup/mail-setup-state';
 import { ConnectorMailInformation } from './connector-mail-information';
+import { ConnectorTaxonomyBadges } from '../connector-taxonomy-badges';
 
 interface ConnectorDetailPageProps {
   connectorId: string;
@@ -134,6 +135,10 @@ export function ConnectorDetailPage({
                     {t('connections.count', { count: connector.connection_summary.count })}
                   </Badge>
                 </div>
+                <ConnectorTaxonomyBadges
+                  item={connector}
+                  className="mt-2 flex min-w-0 flex-wrap gap-1.5"
+                />
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
                   {connector.description}
                 </p>

@@ -73,6 +73,7 @@ const ui = new Proxy({}, { get: (_, name) => name });
 let pendingRecords = [];
 const common = {
   'next-intl': { useLocale: () => 'en-US' },
+  '../connector-taxonomy-badges': { ConnectorTaxonomyBadges: 'TaxonomyBadges' },
   './mail-picker-group-row': { MailPickerGroupRow: 'MailPickerGroupRow' },
   '@/hooks/connectors/use-pending-setups': {
     usePendingSetups: () => ({

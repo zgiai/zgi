@@ -22,6 +22,32 @@ capability summaries, selectors, Workflow labels, and runtime confirmations are
 localized. Service brands, user-defined Connection names, external account
 identities, URLs, code, and provider-returned content remain unchanged.
 
+## Catalog categories and tags
+
+The catalog keeps its existing **Connector / Data Source** sections. It also
+shows one platform-curated product category and a small set of discovery tags.
+Categories describe the main user purpose: **Social & communication**,
+**Productivity tools**, **Information retrieval**, **Developer tools**, or
+**Other tools**. Tags add cross-cutting terms such as social, messaging, email,
+collaboration, documents, search, code and repositories.
+
+The first mappings are Weixin as Social & communication; WeCom as Social &
+communication with enterprise/messaging/collaboration tags; DingTalk and Feishu
+as Productivity tools; Gmail, QQ Mail and 163 Mail as Social & communication with
+the email tag; GitHub as Developer tools; and Exa Web Search as Information
+retrieval. These labels describe public product positioning and the capabilities
+currently integrated by ZGI. They do not grant access, change risk, or bypass
+confirmation. Unreviewed Connectors use Other tools with no tags.
+
+Sources used for the initial review include [Tencent's Weixin product page](https://www.tencent.com/zh-cn/products/weixin-wechat/),
+[Tencent's WeCom product page](https://www.tencent.com/zh-cn/products/wecom/),
+[Feishu documentation](https://docs.feishu.cn/docs), [DingTalk](https://www.dingtalk.com/),
+[GitHub documentation](https://docs.github.com/en/get-started/start-your-journey/what-is-github),
+and [Exa Search documentation](https://exa.ai/docs/reference/search). Mail mappings
+follow the providers' [QQ Mail help](https://help.mail.qq.com/detail/106/985) and
+[NetEase help](https://help.mail.126.com/faqDetail.do?code=d7a5dc8471cd0c0e8b4b8f4f8e49998b374173cfe9171305fa1ce630d7f67ac22532c23a1d70ca26)
+and Google's [Gmail learning center](https://support.google.com/a/users/answer/9259748).
+
 ## Runtime setup
 
 Startup restores validated, digest-checked Connector definitions from the database.

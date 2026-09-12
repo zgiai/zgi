@@ -44,6 +44,7 @@ import { ConnectionAppDialog } from './connection-app-dialog';
 import { supportsMailSetup } from '../setup/mail-setup-state';
 import { connectionMailUsage, mailFailureMessage } from '../setup/mail-setup-state';
 import { ConnectionOperationPolicy } from './connection-operation-policy';
+import { ConnectorTaxonomyBadges } from '../connector-taxonomy-badges';
 
 interface ConnectionManagementPageProps {
   connectionId: string;
@@ -213,6 +214,13 @@ export function ConnectionManagementPage({
               <p className="mt-1 text-sm text-muted-foreground">
                 {connectorName} · {t('connection.subtitle')}
               </p>
+              {connector ? (
+                <ConnectorTaxonomyBadges
+                  item={connector}
+                  maxTags={3}
+                  className="mt-2 flex min-w-0 flex-wrap gap-1.5"
+                />
+              ) : null}
               <ConnectorStatusBadge status={connection.state} className="mt-2" />
             </div>
             <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">

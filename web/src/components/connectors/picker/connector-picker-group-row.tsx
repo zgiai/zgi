@@ -24,6 +24,7 @@ import {
   type ConnectorPickerMenuGroup,
 } from './connector-picker-menu-model';
 import type { ConnectorPickerRow } from './connector-picker-model';
+import { ConnectorTaxonomyBadges } from '../connector-taxonomy-badges';
 
 interface ConnectorPickerGroupRowProps {
   group: ConnectorPickerMenuGroup;
@@ -93,6 +94,13 @@ export function ConnectorPickerGroupRow({
         <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
           {group.unavailable ? t('picker.group.serviceUnavailable') : group.connector?.description}
         </p>
+        {group.connector ? (
+          <ConnectorTaxonomyBadges
+            item={group.connector}
+            maxTags={2}
+            className="mt-2 flex min-w-0 flex-wrap gap-1"
+          />
+        ) : null}
       </div>
       {group.count > 0 || group.currentBinding || pendingSetups.length > 0 ? (
         <DropdownMenu

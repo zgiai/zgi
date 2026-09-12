@@ -256,6 +256,7 @@ let activeMessages;
 let activeItem;
 const sharedDisplayDependencies = {
   '@/components/connectors/connector-icon': icon,
+  '../connector-taxonomy-badges': presentation('ConnectorTaxonomyBadges'),
   '@/components/ui/badge': presentation('Badge'),
   '@/components/ui/button': presentation('Button'),
   '@/components/ui/collapsible': presentation(

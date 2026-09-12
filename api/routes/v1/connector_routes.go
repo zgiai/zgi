@@ -155,6 +155,8 @@ type connectorCatalogItemResponse struct {
 	DescriptionI18n        connectorcatalog.LocalizedText          `json:"description_i18n,omitempty"`
 	Icon                   string                                  `json:"icon,omitempty"`
 	Classification         connectorcatalog.Classification         `json:"classification"`
+	Category               connectorcatalog.ConnectorCategory      `json:"category"`
+	Tags                   []connectorcatalog.ConnectorTag         `json:"tags,omitempty"`
 	KeyFields              []connectorKeyFieldResponse             `json:"key_fields"`
 	ExtensionSchemaVersion string                                  `json:"extension_schema_version,omitempty"`
 	CredentialFields       []connectorcatalog.CredentialField      `json:"credential_fields,omitempty"`
@@ -799,7 +801,15 @@ func connectorCatalogFilter(c *gin.Context) (connectorcatalog.Filter, string, er
 	if status != "all" && status != "connected" && status != "needs_attention" {
 		return connectorcatalog.Filter{}, "", connectorcore.NewError(connectorcore.ErrorCodeInvalidInput, false, nil)
 	}
-	return connectorcatalog.Filter{Classification: classification, Query: query}, status, nil
+	category := connectorcatalog.ConnectorCategory(strings.TrimSpace(c.Query("category")))
+	if category != "" && !category.Valid() {
+		return connectorcatalog.Filter{}, "", connectorcore.NewError(connectorcore.ErrorCodeInvalidInput, false, nil)
+	}
+	tag := connectorcatalog.ConnectorTag(strings.TrimSpace(c.Query("tag")))
+	if tag != "" && !tag.Valid() {
+		return connectorcatalog.Filter{}, "", connectorcore.NewError(connectorcore.ErrorCodeInvalidInput, false, nil)
+	}
+	return connectorcatalog.Filter{Classification: classification, Query: query, Category: category, Tag: tag}, status, nil
 }
 
 func connectorConnectionFilter(c *gin.Context) (connectorconnections.ConnectionListFilter, *connectorbindings.TargetIdentity, error) {
@@ -922,6 +932,8 @@ func projectCatalogItem(definition connectorcatalog.Definition, connections []co
 		ExtensionSchemaVersion: definition.ExtensionSchemaVersion, CredentialFields: definition.CredentialFields, Setup: definition.Setup,
 		ConnectionSummary: connectorConnectionSummaryResponse{Count: len(connections)},
 	}
+	presentation, _ := connectorcatalog.PresentationFor(definition.ID)
+	item.Category, item.Tags = presentation.Category, presentation.Tags
 	if definition.IsAppCredentials() {
 		item.PermissionTemplate = connectorcatalog.FeishuPermissionTemplate()
 	}

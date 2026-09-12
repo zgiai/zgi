@@ -319,6 +319,14 @@ paths:
               - all
               - connected
               - needs_attention
+        - in: query
+          name: category
+          schema:
+            $ref: "#/components/schemas/ConnectorCategory"
+        - in: query
+          name: tag
+          schema:
+            $ref: "#/components/schemas/ConnectorTag"
       responses:
         "200":
           description: Owner-filtered catalog
@@ -1334,11 +1342,40 @@ components:
     ConnectorClassification:
       type: string
       description:
-        Primary presentation category, independent of data/action capability types. Built-in
-        GitHub and Exa Web Search (web-search) use connector; Exa is not a data_source item.
+        Catalog section classification, independent of product-purpose category and data/action
+        capability types. Built-in GitHub and Exa Web Search (web-search) use connector; Exa is
+        not a data_source item.
       enum:
         - connector
         - data_source
+    ConnectorCategory:
+      type: string
+      description: Curated product-purpose label; it does not grant permissions or capabilities.
+      enum:
+        - communication
+        - productivity
+        - information
+        - developer
+        - other
+    ConnectorTag:
+      type: string
+      description: Curated cross-category discovery label; it does not grant permissions or capabilities.
+      enum:
+        - social
+        - messaging
+        - email
+        - enterprise
+        - collaboration
+        - documents
+        - tables
+        - workflow
+        - search
+        - web
+        - research
+        - code
+        - repository
+        - issues
+        - integration
     ConnectorReadiness:
       type: string
       enum:
@@ -1463,6 +1500,13 @@ components:
           type: string
         classification:
           $ref: "#/components/schemas/ConnectorClassification"
+        category:
+          $ref: "#/components/schemas/ConnectorCategory"
+        tags:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/ConnectorTag"
         key_fields:
           type: array
           items:

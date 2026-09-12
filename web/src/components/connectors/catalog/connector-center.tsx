@@ -23,14 +23,38 @@ import {
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb';
 import { SearchInput } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { connectorCatalogItems, useConnectorCatalog } from '@/hooks/connectors/use-connectors';
 import { useT } from '@/i18n';
-import type { ConnectorCatalogStatus } from '@/services/types/connector';
+import type {
+  ConnectorCatalogStatus,
+  ConnectorCategory,
+  ConnectorTag,
+} from '@/services/types/connector';
+import { CONNECTOR_CATEGORIES, CONNECTOR_TAGS } from '@/components/connectors/connector-metadata';
 import { filterConnectorCatalog, partitionConnectorCatalog } from './catalog-model';
 import { ConnectorCatalogSection } from './connector-catalog-section';
 
 function catalogStatus(value: string | null): ConnectorCatalogStatus {
   return value === 'connected' || value === 'needs_attention' ? value : 'all';
+}
+
+function catalogCategory(value: string | null): ConnectorCategory | undefined {
+  return value && CONNECTOR_CATEGORIES.includes(value as ConnectorCategory)
+    ? (value as ConnectorCategory)
+    : undefined;
+}
+
+function catalogTag(value: string | null): ConnectorTag | undefined {
+  return value && CONNECTOR_TAGS.includes(value as ConnectorTag)
+    ? (value as ConnectorTag)
+    : undefined;
 }
 
 interface ConnectorCenterProps {
@@ -48,6 +72,8 @@ export function ConnectorCenter({ enabled, featureLoading = false }: ConnectorCe
   const query = searchParams.get('q') ?? '';
   const deferredQuery = useDeferredValue(query);
   const status = catalogStatus(searchParams.get('status'));
+  const category = catalogCategory(searchParams.get('category'));
+  const tag = catalogTag(searchParams.get('tag'));
   const catalogQuery = useConnectorCatalog(undefined, enabled);
   const pendingQuery = usePendingSetups('feishu', enabled);
   const items = connectorCatalogItems(catalogQuery.data?.data)
@@ -60,12 +86,17 @@ export function ConnectorCenter({ enabled, featureLoading = false }: ConnectorCe
     );
   const filteredItems = filterConnectorCatalog(
     items,
-    { query: deferredQuery, status },
+    { query: deferredQuery, status, category, tag },
     new Set((pendingQuery.data?.data.items ?? []).map(item => item.connector_id))
   );
   const partitioned = partitionConnectorCatalog(filteredItems);
 
-  const updateParams = (values: { q?: string; status?: ConnectorCatalogStatus }) => {
+  const updateParams = (values: {
+    q?: string;
+    status?: ConnectorCatalogStatus;
+    category?: ConnectorCategory;
+    tag?: ConnectorTag;
+  }) => {
     const params = new URLSearchParams(searchParams.toString());
     if (values.q !== undefined) {
       if (values.q) params.set('q', values.q);
@@ -75,6 +106,14 @@ export function ConnectorCenter({ enabled, featureLoading = false }: ConnectorCe
       if (values.status === 'all') params.delete('status');
       else params.set('status', values.status);
     }
+    if ('category' in values) {
+      if (values.category) params.set('category', values.category);
+      else params.delete('category');
+    }
+    if ('tag' in values) {
+      if (values.tag) params.set('tag', values.tag);
+      else params.delete('tag');
+    }
     const next = params.toString();
     router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
   };
@@ -83,6 +122,8 @@ export function ConnectorCenter({ enabled, featureLoading = false }: ConnectorCe
     const params = new URLSearchParams(searchParams.toString());
     params.delete('q');
     params.delete('status');
+    params.delete('category');
+    params.delete('tag');
     const next = params.toString();
     router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
   };
@@ -160,6 +201,46 @@ export function ConnectorCenter({ enabled, featureLoading = false }: ConnectorCe
                     : t('filters.needsAttention')}
               </Button>
             ))}
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Select
+              value={category ?? 'all'}
+              onValueChange={value =>
+                updateParams({
+                  category: value === 'all' ? undefined : (value as ConnectorCategory),
+                })
+              }
+            >
+              <SelectTrigger className="w-full sm:w-56" aria-label={t('filters.category')}>
+                <SelectValue placeholder={t('filters.category')} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t('filters.allCategories')}</SelectItem>
+                {CONNECTOR_CATEGORIES.map(value => (
+                  <SelectItem key={value} value={value}>
+                    {t(`categories.${value}`)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select
+              value={tag ?? 'all'}
+              onValueChange={value =>
+                updateParams({ tag: value === 'all' ? undefined : (value as ConnectorTag) })
+              }
+            >
+              <SelectTrigger className="w-full sm:w-56" aria-label={t('filters.tag')}>
+                <SelectValue placeholder={t('filters.tag')} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t('filters.allTags')}</SelectItem>
+                {CONNECTOR_TAGS.map(value => (
+                  <SelectItem key={value} value={value}>
+                    {t(`tags.${value}`)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </header>
 

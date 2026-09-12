@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type { ConnectorPickerRow as ConnectorPickerRowModel } from './connector-picker-model';
+import { ConnectorTaxonomyBadges } from '../connector-taxonomy-badges';
 
 interface ConnectorPickerRowProps {
   row: ConnectorPickerRowModel;
@@ -72,6 +73,11 @@ export function ConnectorPickerRow({ row, pending = false, onAction }: Connector
           ) : null}
         </div>
         <p className="mt-1 truncate text-xs leading-5 text-muted-foreground">{summary}</p>
+        <ConnectorTaxonomyBadges
+          item={row.connector}
+          maxTags={2}
+          className="mt-2 flex min-w-0 flex-wrap gap-1"
+        />
       </div>
       <Button
         type="button"
