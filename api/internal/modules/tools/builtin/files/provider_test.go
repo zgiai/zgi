@@ -356,6 +356,46 @@ func TestReadFileToolRejectsUnownedTemporaryFile(t *testing.T) {
 	}
 }
 
+func TestReadFileToolUsesExternalUserForTemporaryFile(t *testing.T) {
+	organizationID := uuid.NewString()
+	accountID := uuid.NewString()
+	externalUserID := uuid.NewString()
+	fileService := &fakeFileService{
+		files: map[string]*dto.UploadFile{
+			"file-1": {
+				ID:          "file-1",
+				IsTemporary: true,
+				Name:        "upload.txt",
+				CreatedBy:   externalUserID,
+			},
+		},
+		content: map[string]string{
+			"file-1": "external content",
+		},
+	}
+	provider := NewProvider(fileService, nil, nil)
+	tool, err := provider.GetTool(ToolReadFile)
+	if err != nil {
+		t.Fatalf("GetTool() error = %v", err)
+	}
+	tool = tool.ForkToolRuntime(&tools.ToolRuntime{
+		TenantID:   organizationID,
+		InvokeFrom: tools.ToolInvokeFromAgent,
+		RuntimeParameters: map[string]interface{}{
+			"organization_id":                    organizationID,
+			tools.ExternalUserIDRuntimeParameter: externalUserID,
+		},
+	})
+
+	messages, err := tool.Invoke(context.Background(), accountID, map[string]interface{}{"file_id": "file-1"}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if got := singleJSONPayload(t, messages)["content"]; got != "external content" {
+		t.Fatalf("content = %#v, want external content", got)
+	}
+}
+
 func TestReadFileToolRejectsUnownedOrganizationFileWithoutWorkspace(t *testing.T) {
 	organizationID := uuid.NewString()
 	accountID := uuid.NewString()

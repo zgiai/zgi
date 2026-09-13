@@ -39,9 +39,14 @@ const (
 )
 
 type SandboxScriptRunnerConfig struct {
-	RuntimeGrantsPath           string
-	Endpoint                    string
-	APIKey                      string
+	RuntimeGrantsPath string
+	Endpoint          string
+	APIKey            string
+	// FallbackDependencyProfile is used when the sandbox is configured for
+	// operator-managed dependency profiles and does not permit builds during
+	// a skill request. It should point at a prebuilt, verified profile such as
+	// scientific-data; an empty value preserves the dynamic-build behavior.
+	FallbackDependencyProfile   string
 	ConnectTimeout              time.Duration
 	CreateTimeout               time.Duration
 	UploadTimeout               time.Duration
@@ -55,14 +60,15 @@ type SandboxScriptRunnerConfig struct {
 }
 
 type SandboxScriptRunner struct {
-	runtimeGrants      []ScriptRuntimeGrant
-	runtimeGrantsError error
-	endpoint           string
-	apiKey             string
-	client             *http.Client
-	timeouts           sandboxScriptRunnerTimeouts
-	artifactPersister  SkillScriptArtifactPersister
-	inputFileProvider  SkillScriptInputFileProvider
+	runtimeGrants             []ScriptRuntimeGrant
+	runtimeGrantsError        error
+	endpoint                  string
+	apiKey                    string
+	fallbackDependencyProfile string
+	client                    *http.Client
+	timeouts                  sandboxScriptRunnerTimeouts
+	artifactPersister         SkillScriptArtifactPersister
+	inputFileProvider         SkillScriptInputFileProvider
 }
 
 type sandboxScriptRunnerTimeouts struct {
@@ -113,10 +119,11 @@ func NewSandboxScriptRunner(config SandboxScriptRunnerConfig) *SandboxScriptRunn
 	grants, grantsErr := loadScriptRuntimeGrants(config.RuntimeGrantsPath)
 	connectTimeout := durationOrDefault(config.ConnectTimeout, defaultSandboxConnectTimeout)
 	return &SandboxScriptRunner{
-		runtimeGrants:      grants,
-		runtimeGrantsError: grantsErr,
-		endpoint:           endpoint,
-		apiKey:             strings.TrimSpace(config.APIKey),
+		runtimeGrants:             grants,
+		runtimeGrantsError:        grantsErr,
+		endpoint:                  endpoint,
+		apiKey:                    strings.TrimSpace(config.APIKey),
+		fallbackDependencyProfile: strings.TrimSpace(config.FallbackDependencyProfile),
 		client: &http.Client{
 			Transport: sandboxHTTPTransport(connectTimeout),
 		},
@@ -241,10 +248,13 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 	}
 	dependencyProfile := manifest.DependencyProfile
 	if dependencyProfile == defaultSkillDependencyProfile && skillPackageHasDependencyHints(doc.Metadata.RootPath) {
-		resolvedProfile, err := r.prepareDependencyProfile(ctx, execCtx, archiveBase64, manifest.Language)
-		if err != nil {
-			recordSkillScriptError(&trace, start, err)
-			return &ToolInvocationResult{Trace: trace}, err
+		resolvedProfile, usedFallback := r.fallbackDependencyProfileForRuntime(ctx, execCtx, manifest.Language)
+		if !usedFallback {
+			resolvedProfile, err = r.prepareDependencyProfile(ctx, execCtx, archiveBase64, manifest.Language)
+			if err != nil {
+				recordSkillScriptError(&trace, start, err)
+				return &ToolInvocationResult{Trace: trace}, err
+			}
 		}
 		dependencyProfile = resolvedProfile
 		manifest.DependencyProfile = resolvedProfile

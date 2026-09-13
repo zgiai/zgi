@@ -798,6 +798,7 @@ func loadCodeExecConfig(cfg *Config, source *envSource) error {
 		CleanupTimeoutSeconds:        cleanupTimeout,
 		EnableNetwork:                enableNetwork,
 		SystemOfficeProfile:          source.string("skill-office", envCodeExecutionSystemOfficeProfile),
+		SystemDataProfile:            source.string("scientific-data", envCodeExecutionSystemDataProfile),
 		MaxNumber:                    maxNumber,
 		MinNumber:                    minNumber,
 		MaxStringLength:              maxStringLength,

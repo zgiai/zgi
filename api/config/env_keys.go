@@ -368,6 +368,8 @@ const (
 	envCodeExecutionEnableNetwork = "CODE_EXECUTION_ENABLE_NETWORK"
 	// envCodeExecutionSystemOfficeProfile sets the managed dependency profile used by system Office/PDF/PPTX file tools. Default: skill-office.
 	envCodeExecutionSystemOfficeProfile = "CODE_EXECUTION_SYSTEM_OFFICE_PROFILE"
+	// envCodeExecutionSystemDataProfile sets the prebuilt dependency profile used when runtime dependency builds are disabled. Default: scientific-data.
+	envCodeExecutionSystemDataProfile = "CODE_EXECUTION_SYSTEM_DATA_PROFILE"
 	// envSkillRuntimeGrantsPath points to administrator-owned organization/package grants.
 	envSkillRuntimeGrantsPath = "ZGI_SKILL_RUNTIME_GRANTS_PATH"
 

@@ -693,6 +693,58 @@ func TestSandboxScriptRunnerAutoBuildsDefaultDependencyProfile(t *testing.T) {
 	}
 }
 
+func TestSandboxScriptRunnerUsesReadyFallbackWhenRuntimeBuildsDisabled(t *testing.T) {
+	root := writeTestScriptSkill(t)
+	if err := os.WriteFile(filepath.Join(root, "requirements.txt"), []byte("pandas==2.2.3\n"), 0o644); err != nil {
+		t.Fatalf("write requirements: %v", err)
+	}
+
+	dependencyBuildRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/sandbox/dependencies":
+			writeSandboxOK(t, w, map[string]interface{}{
+				"language":     "python3",
+				"build_policy": map[string]interface{}{"builds_allowed_during_runtime": false},
+				"profiles": []map[string]interface{}{
+					{"name": "scientific-data", "version": "2026.09.14", "status": "ready", "enabled": true, "languages": []string{"python3"}},
+				},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/sandbox/dependencies/builds":
+			dependencyBuildRequests++
+			t.Fatalf("unexpected dynamic dependency build request")
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/sandboxes":
+			request := readJSONBody(t, r)
+			if request["dependency_profile"] != "scientific-data" {
+				t.Fatalf("dependency profile = %#v, want scientific-data", request["dependency_profile"])
+			}
+			writeSandboxOK(t, w, map[string]interface{}{"id": "sbx_test"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/files/upload-archive":
+			writeSandboxOK(t, w, map[string]interface{}{"file_count": 3})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/exec/command":
+			writeSandboxOK(t, w, map[string]interface{}{"stdout": "ok\n", "error": "", "exit_code": 0, "duration_ms": 1, "truncated": false, "command": "python3"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/files/tree":
+			writeSandboxOK(t, w, map[string]interface{}{"items": []map[string]interface{}{}})
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/sandboxes/sbx_test":
+			writeSandboxOK(t, w, map[string]interface{}{"deleted": true})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	runner := NewSandboxScriptRunner(SandboxScriptRunnerConfig{
+		Endpoint:                  server.URL,
+		FallbackDependencyProfile: "scientific-data",
+	})
+	if _, err := runner.RunSkillScript(context.Background(), scriptSkillDocument(root), map[string]interface{}{}, ExecutionContext{}, "call_1"); err != nil {
+		t.Fatalf("run skill script: %v", err)
+	}
+	if dependencyBuildRequests != 0 {
+		t.Fatalf("dynamic dependency build requests = %d, want 0", dependencyBuildRequests)
+	}
+}
+
 func TestSkillPackageDependencyHintsDetectThirdPartyImports(t *testing.T) {
 	root := writePythonScenarioSkill(t, "import json\nimport pandas as pd\nprint('ok')")
 	if !skillPackageHasDependencyHints(root) {

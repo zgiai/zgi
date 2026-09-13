@@ -2095,12 +2095,20 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 	return skills.ExecutionContext{
 		OrganizationID:    prepared.Scope.OrganizationID.String(),
 		UserID:            prepared.Scope.AccountID.String(),
+		ExternalUserID:    preparedExternalUserID(prepared),
 		ConversationID:    prepared.Conversation.ID.String(),
 		AppID:             appID,
 		MessageID:         prepared.Message.ID.String(),
 		InvokeFrom:        invokeFrom,
 		RuntimeParameters: runtimeParameters,
 	}
+}
+
+func preparedExternalUserID(prepared *PreparedChat) string {
+	if prepared == nil || prepared.Scope.ExternalUserID == nil || *prepared.Scope.ExternalUserID == uuid.Nil {
+		return ""
+	}
+	return prepared.Scope.ExternalUserID.String()
 }
 
 func (s *service) consoleNavigationRouteAuthorizer(prepared *PreparedChat) consolenavigation.RouteAuthorizer {
@@ -2203,6 +2211,9 @@ func skillRuntimeParameters(scope Scope, config RunConfig) map[string]interface{
 
 func skillRuntimeParametersForPrepared(prepared *PreparedChat) map[string]interface{} {
 	params := skillRuntimeParameters(prepared.Scope, prepared.RunConfig)
+	if externalUserID := preparedExternalUserID(prepared); externalUserID != "" {
+		params[tools.ExternalUserIDRuntimeParameter] = externalUserID
+	}
 	if prepared != nil {
 		if source := strings.TrimSpace(prepared.Caller.Source); source != "" {
 			// Built-in tools use the server-owned conversation source to decide

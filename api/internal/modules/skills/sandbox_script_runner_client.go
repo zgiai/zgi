@@ -354,8 +354,13 @@ type sandboxSkillRunResult struct {
 }
 
 type sandboxDependencyCatalog struct {
-	Language string                     `json:"language"`
-	Profiles []sandboxDependencyProfile `json:"profiles"`
+	Language    string                        `json:"language"`
+	Profiles    []sandboxDependencyProfile    `json:"profiles"`
+	BuildPolicy *sandboxDependencyBuildPolicy `json:"build_policy,omitempty"`
+}
+
+type sandboxDependencyBuildPolicy struct {
+	BuildsAllowedDuringRuntime bool `json:"builds_allowed_during_runtime"`
 }
 
 type sandboxDependencyProfile struct {

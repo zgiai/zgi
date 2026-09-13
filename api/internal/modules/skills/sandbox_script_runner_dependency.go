@@ -55,6 +55,33 @@ func (r *SandboxScriptRunner) prepareDependencyProfile(ctx context.Context, exec
 	return r.waitDependencyBuildReady(ctx, execCtx, build)
 }
 
+// fallbackDependencyProfileForRuntime returns a ready operator-managed profile
+// when the sandbox explicitly disallows dependency builds during execution.
+// Older sandbox versions omit build_policy, so they retain the existing
+// dynamic-build path for backwards compatibility.
+func (r *SandboxScriptRunner) fallbackDependencyProfileForRuntime(ctx context.Context, execCtx ExecutionContext, language string) (string, bool) {
+	profile := strings.TrimSpace(r.fallbackDependencyProfile)
+	if profile == "" || normalizeSkillScriptLanguage(language) != "python3" {
+		return "", false
+	}
+
+	var catalog sandboxDependencyCatalog
+	endpoint := "/v1/sandbox/dependencies?language=" + url.QueryEscape(normalizeSkillScriptLanguage(language))
+	endpoint = withOrganizationQuery(endpoint, execCtx)
+	if err := r.doIdempotentJSON(ctx, http.MethodGet, endpoint, nil, &catalog, r.timeouts.Create); err != nil {
+		return "", false
+	}
+	if catalog.BuildPolicy == nil || catalog.BuildPolicy.BuildsAllowedDuringRuntime {
+		return "", false
+	}
+	for _, item := range catalog.Profiles {
+		if item.Name == profile && item.Enabled && item.Status == "ready" {
+			return profile, true
+		}
+	}
+	return "", false
+}
+
 func (r *SandboxScriptRunner) waitDependencyBuildReady(ctx context.Context, execCtx ExecutionContext, build sandboxDependencyBuild) (string, error) {
 	if strings.TrimSpace(build.ProfileName) == "" {
 		return "", fmt.Errorf("skill dependency prepare failed: sandbox did not return a dependency profile")
