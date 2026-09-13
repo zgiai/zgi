@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/databaseauthorization"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/end"
@@ -93,6 +96,29 @@ func TestExecuteRunResolvesTablesFromSelectedDataSource(t *testing.T) {
 	if !ok || len(tableContext) != 1 || tableContext[0].ID != "table-1" {
 		t.Fatalf("table context = %#v, want resolved table", result.Outputs["table_context"])
 	}
+}
+
+func TestExecuteRunDoesNotResolveReadOnlyCTENamesAsTables(t *testing.T) {
+	sqlClient := &fakeSQLBase{executeFunc: func(_ context.Context, query string, _ []any, _ *audit.Context) (*sql_base.QueryResult, error) {
+		return &sql_base.QueryResult{}, nil
+	}}
+	authorizer := &fakeDatabaseAuthorizer{}
+	node := &Node{
+		NodeStruct: base.NodeStruct{
+			NodeID: "call-db-node", NodeType: shared.CallDatabase,
+			OrganizationID: "organization-1", WorkspaceID: "workspace-1", WorkflowID: "workflow-1",
+		},
+		NodeData: NodeData{DataSource: DataSourceConfig{ID: "db-1"}, ManualSQL: `WITH totals AS (
+			SELECT city, SUM(amount) AS total_amount FROM public.invoice_table GROUP BY city
+		) SELECT * FROM totals`},
+		sqlClient: sqlClient, authorizer: authorizer,
+	}
+
+	result, err := node.executeRun(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, authorizer.resolveRequests, 1)
+	require.Equal(t, []databaseauthorization.SQLRelation{{Schema: "public", Name: "invoice_table"}}, authorizer.resolveRequests[0].Relations)
 }
 
 func (f *fakeSQLBase) ExecuteSQL(ctx context.Context, query string, params []any, auditCtx *audit.Context) (*sql_base.QueryResult, error) {
