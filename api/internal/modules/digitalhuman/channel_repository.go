@@ -899,16 +899,22 @@ func (r *GormRepository) MarkStaleDeliveriesUnknown(ctx context.Context, claimed
 }
 
 func (r *GormRepository) CompleteRunWithDelivery(ctx context.Context, runID uuid.UUID, summary string, trace datatypes.JSON, now time.Time) error {
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	var completed Run
+	shouldDeliver := false
+	if err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var run Run
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", runID).Take(&run).Error; err != nil {
 			return err
 		}
 		if run.Status == RunStatusCanceling || run.CancelRequestedAt != nil {
-			return tx.Model(&Run{}).Where("id = ?", runID).Updates(map[string]any{
+			if err := tx.Model(&Run{}).Where("id = ?", runID).Updates(map[string]any{
 				"status": RunStatusCanceled, "result_summary": summary, "execution_trace": trace,
 				"completed_at": now, "updated_at": now,
-			}).Error
+			}).Error; err != nil {
+				return err
+			}
+			completed = run
+			return nil
 		}
 		if run.Status != RunStatusRunning {
 			return ErrRunConflict
@@ -919,8 +925,26 @@ func (r *GormRepository) CompleteRunWithDelivery(ctx context.Context, runID uuid
 		}).Error; err != nil {
 			return err
 		}
-		return createRunDelivery(ctx, tx, &run, summary, trace, now)
+		completed = run
+		shouldDeliver = true
+		return nil
+	}); err != nil {
+		return err
+	}
+	if !shouldDeliver {
+		return nil
+	}
+	// Completion is the execution-of-record. A channel binding can disappear
+	// between scheduling and delivery (for example, an installation may be
+	// revoked while the model is running). Keep the successful run committed so
+	// the task center remains a reliable fallback instead of turning a completed
+	// task into a phantom running task. Target-resolution errors are intentionally
+	// isolated to this outbox transaction and are surfaced as a failed delivery
+	// status by the task runs projection.
+	_ = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return createRunDelivery(ctx, tx, &completed, summary, trace, now)
 	})
+	return nil
 }
 
 func createRunDelivery(ctx context.Context, tx *gorm.DB, run *Run, summary string, trace datatypes.JSON, now time.Time) error {
@@ -935,10 +959,29 @@ func createRunDelivery(ctx context.Context, tx *gorm.DB, run *Run, summary strin
 	).Delete(&channelruntime.Delivery{}).Error; err != nil {
 		return fmt.Errorf("discard superseded channel progress deliveries: %w", err)
 	}
+	// Scheduled tasks execute outside the originating conversation. Make the
+	// result self-identifying when it is delivered back to that conversation;
+	// the task center still stores the unmodified result summary separately.
+	summary = decorateScheduledTaskResult(run, summary)
 	return createRunChannelDelivery(
 		ctx, tx, run, channelruntime.DeliveryKindFinal, "final", math.MaxInt64,
 		summary, channelDeliveryArtifacts(trace), now,
 	)
+}
+
+func decorateScheduledTaskResult(run *Run, summary string) string {
+	if run == nil || strings.TrimSpace(summary) == "" {
+		return summary
+	}
+	var event invocation.Event
+	if err := json.Unmarshal(run.InvocationEvent, &event); err != nil || event.Origin.Kind != invocation.OriginSchedule {
+		return summary
+	}
+	taskName := contextString(event.Context, "task_name")
+	if taskName == "" || strings.Contains(summary, taskName) {
+		return summary
+	}
+	return "任务“" + taskName + "”执行完成\n\n" + summary
 }
 
 func (r *GormRepository) EnqueueRunChannelDelivery(
@@ -967,6 +1010,31 @@ func (r *GormRepository) EnqueueRunChannelDelivery(
 			return nil
 		}
 		return createRunChannelDelivery(ctx, tx, &run, kind, deliveryKey, sequence, text, nil, now)
+	})
+}
+
+// EnqueueRunChannelFinalDelivery appends a follow-up final message to an
+// already completed channel run. It is used by approvals that complete after
+// the original model turn has delivered its proposal; the delivery remains
+// durable and uses the original run's immutable reply target.
+func (r *GormRepository) EnqueueRunChannelFinalDelivery(
+	ctx context.Context,
+	runID uuid.UUID,
+	deliveryKey string,
+	text string,
+	now time.Time,
+) error {
+	deliveryKey = strings.TrimSpace(deliveryKey)
+	text = boundedRunes(strings.TrimSpace(text), maxChannelDeliveryRunes)
+	if runID == uuid.Nil || deliveryKey == "" || utf8.RuneCountInString(deliveryKey) > 128 || text == "" {
+		return ErrInvalidRequest
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var run Run
+		if err := tx.Where("id = ?", runID).Take(&run).Error; err != nil {
+			return err
+		}
+		return createRunChannelDelivery(ctx, tx, &run, channelruntime.DeliveryKindFinal, deliveryKey, math.MaxInt64, text, nil, now)
 	})
 }
 

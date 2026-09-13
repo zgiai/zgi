@@ -36,18 +36,19 @@ const (
 type ExternalHandler struct {
 	runtime     *RuntimeService
 	access      *AccessService
+	tasks       TaskHandlerService
 	fileService interfaces.FileService
 	base        *Handler
 	sessions    *WebAppSessionSigner
 	pollEvery   time.Duration
 }
 
-func NewExternalHandler(runtime *RuntimeService, access *AccessService, fileService interfaces.FileService, projector *apptransport.Projector, sessions *WebAppSessionSigner) *ExternalHandler {
-	if runtime == nil || access == nil || fileService == nil || projector == nil {
-		panic("digital human external handler requires runtime, access, file service, and projector")
+func NewExternalHandler(runtime *RuntimeService, access *AccessService, tasks TaskHandlerService, fileService interfaces.FileService, projector *apptransport.Projector, sessions *WebAppSessionSigner) *ExternalHandler {
+	if runtime == nil || access == nil || tasks == nil || fileService == nil || projector == nil {
+		panic("digital human external handler requires runtime, access, tasks, file service, and projector")
 	}
 	return &ExternalHandler{
-		runtime: runtime, access: access, fileService: fileService,
+		runtime: runtime, access: access, tasks: tasks, fileService: fileService,
 		base: &Handler{projector: projector}, sessions: sessions, pollEvery: externalRunPollInterval,
 	}
 }
@@ -69,7 +70,17 @@ func (h *ExternalHandler) RegisterAPIRoutes(router *gin.RouterGroup) {
 	group.PATCH("/conversations/:conversation_id", h.UpdateConversation)
 	group.DELETE("/conversations/:conversation_id", h.DeleteConversation)
 	group.GET("/conversations/:conversation_id/messages", h.ListConversationMessages)
+	group.POST("/conversations/:conversation_id/messages/:message_id/regenerate", h.RegenerateAPIMessage)
+	group.POST("/conversations/:conversation_id/messages/:message_id/user-input/:request_id/continue", h.ContinueAPIUserInput)
+	group.POST("/conversations/:conversation_id/messages/:message_id/workflow-continuation", h.ContinueAPITaskApproval)
 	group.POST("/files/upload", h.UploadFile)
+	group.GET("/tasks", h.ListAPITasks)
+	group.POST("/tasks", h.CreateAPITask)
+	group.GET("/tasks/:task_id", h.GetAPITask)
+	group.PATCH("/tasks/:task_id", h.UpdateAPITask)
+	group.POST("/tasks/:task_id/actions/:action", h.ApplyAPITaskAction)
+	group.GET("/tasks/:task_id/runs", h.ListAPITaskRuns)
+	group.GET("/tasks/:task_id/activities", h.ListAPITaskActivities)
 }
 
 func (h *ExternalHandler) authenticateAPIKey(c *gin.Context) {
@@ -102,11 +113,11 @@ func (h *ExternalHandler) GetConfig(c *gin.Context) {
 		Name:           access.Definition.Name, Description: access.Definition.Description,
 		Icon: access.Definition.Icon, IconType: access.Definition.IconType, IconURL: access.Definition.IconURL,
 		HomeTitle: policy.HomeTitle, OpeningStatement: policy.OpeningStatement,
-		InputPlaceholder: policy.InputPlaceholder, ThemeColor: policy.ThemeColor,
+		InputPlaceholder:   policy.InputPlaceholder,
 		SuggestedQuestions: nonNilStrings(policy.SuggestedQuestions),
 		FileUploadEnabled:  true, RelationshipMemoryEnabled: true,
 		MemoryRequiresUser: true, ExternalUserRequired: true,
-		RuntimeInputEnabled: true, RegenerateEnabled: false,
+		RuntimeInputEnabled: true, RegenerateEnabled: true,
 		LandingPageEnabled: access.Settings.WebAppEnabled, APIEnabled: access.Settings.APIEnabled,
 		Version: strconv.Itoa(access.Version.VersionNumber), VersionUUID: access.Version.ID.String(),
 	})
@@ -375,6 +386,53 @@ func (h *ExternalHandler) ListConversationMessages(c *gin.Context) {
 	writeExternalData(c, http.StatusOK, runtimedto.ListResponse[runtimedto.MessageResponse]{
 		Data: responses, Page: page, Limit: limit, Total: total, HasMore: int64(page*limit) < total,
 	})
+}
+
+// RegenerateAPIMessage replays a root user turn through the same durable run
+// boundary used by /chat. The API user remains the data owner; the API key is
+// only the authenticated principal.
+func (h *ExternalHandler) RegenerateAPIMessage(c *gin.Context) {
+	key, access, ok := h.apiAccess(c)
+	if !ok {
+		return
+	}
+	var raw struct {
+		User string `json:"user"`
+		runtimedto.RegenerateMessageRequest
+	}
+	if !h.base.decode(c, &raw) {
+		return
+	}
+	scope, ok := h.apiUserScope(c, key, access, raw.User)
+	if !ok {
+		return
+	}
+	conversationID, ok := h.conversationID(c)
+	if !ok {
+		return
+	}
+	messageID, err := uuid.Parse(strings.TrimSpace(c.Param("message_id")))
+	if err != nil || messageID == uuid.Nil {
+		h.writeApplicationError(c, ErrInvalidRequest, "digital_human.external.message.regenerate")
+		return
+	}
+	run, _, err := h.runtime.SubmitRegeneration(c.Request.Context(), scope, access.Definition.ID, RegenerateInvocationRequest{
+		MessageID: messageID, ConversationID: &conversationID, Query: raw.Query, Surface: SurfaceAPI,
+		RuntimeContext: raw.RuntimeContext, OperationContext: raw.OperationContext,
+		Model: raw.Model, Provider: raw.Provider, Parameters: raw.Parameters, UseMemory: raw.UseMemory,
+	})
+	if err != nil {
+		h.writeApplicationError(c, err, "digital_human.external.message.regenerate")
+		return
+	}
+	c.Header("X-ZGI-Run-ID", run.ID.String())
+	c.Header("Access-Control-Expose-Headers", "X-ZGI-Run-ID")
+	writer := newDigitalHumanSSEWriter(c)
+	writer.start(c.Request.Context())
+	_ = writer.write(externalRunEventID(run.ID, "accepted"), "run_accepted", gin.H{
+		"run_id": run.ID.String(), "status": run.Status,
+	})
+	h.streamRun(c, writer, scope, access.Definition.ID, run.ID, SurfaceAPI, "")
 }
 
 func (h *ExternalHandler) UploadFile(c *gin.Context) {
@@ -715,7 +773,6 @@ type ExternalConfigResponse struct {
 	HomeTitle                 string   `json:"home_title"`
 	OpeningStatement          string   `json:"opening_statement"`
 	InputPlaceholder          string   `json:"input_placeholder"`
-	ThemeColor                string   `json:"theme_color"`
 	SuggestedQuestions        []string `json:"suggested_questions"`
 	FileUploadEnabled         bool     `json:"file_upload_enabled"`
 	RelationshipMemoryEnabled bool     `json:"relationship_memory_enabled"`

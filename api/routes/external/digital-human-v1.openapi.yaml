@@ -21,6 +21,8 @@ tags:
     description: End-user-scoped conversation and message history.
   - name: DigitalHuman files
     description: End-user-scoped chat file upload.
+  - name: DigitalHuman tasks
+    description: End-user-scoped task creation, lifecycle management, and result history.
 x-zgi-sse-event-data-schemas:
   run_accepted: '#/components/schemas/RunAcceptedEvent'
   message_start: '#/components/schemas/MessageStartEvent'
@@ -52,6 +54,7 @@ x-zgi-sse-event-data-schemas:
   runtime_input_follow_up_started: '#/components/schemas/RuntimeInputEvent'
   runtime_input_canceled: '#/components/schemas/RuntimeInputEvent'
   runtime_input_failed: '#/components/schemas/RuntimeInputEvent'
+  approval_result: '#/components/schemas/WorkflowEvent'
   workflow_started: '#/components/schemas/WorkflowEvent'
   node_started: '#/components/schemas/WorkflowEvent'
   node_finished: '#/components/schemas/WorkflowEvent'
@@ -312,6 +315,106 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/MessageListEnvelope'}
         default: {$ref: '#/components/responses/Error'}
+  /digital-humans/conversations/{conversation_id}/messages/{message_id}/regenerate:
+    parameters:
+      - $ref: '#/components/parameters/ConversationID'
+      - $ref: '#/components/parameters/MessageID'
+    post:
+      tags: [DigitalHuman conversations]
+      summary: Regenerate a root DigitalHuman answer
+      description: |
+        Replays the selected root user turn with an optional edited query. The
+        original message history is retained until ChatRuntime accepts the
+        root-replacement guard; the operation itself is durable and recoverable
+        through the same SSE event stream as chat. Non-root messages must be
+        replayed by submitting a new branch with `parent_message_id`.
+      operationId: regenerateDigitalHumanMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DigitalHumanRegenerateMessageRequest'}
+      responses:
+        '200':
+          description: Recoverable SSE stream for the regenerated message.
+          content:
+            text/event-stream:
+              schema: {type: string, description: Native SSE frames containing JSON event envelopes.}
+              x-zgi-sse-event-data-schemas:
+                run_accepted: {$ref: '#/components/schemas/RunAcceptedEvent'}
+                message_start: {$ref: '#/components/schemas/MessageStartEvent'}
+                message: {$ref: '#/components/schemas/MessageDeltaEvent'}
+                message_end: {$ref: '#/components/schemas/MessageEndEvent'}
+                error: {$ref: '#/components/schemas/StreamErrorEvent'}
+                run_end: {$ref: '#/components/schemas/RunEndEvent'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/conversations/{conversation_id}/messages/{message_id}/workflow-continuation:
+    parameters:
+      - $ref: '#/components/parameters/ConversationID'
+      - $ref: '#/components/parameters/MessageID'
+    post:
+      tags: [DigitalHuman conversations]
+      summary: Continue a paused DigitalHuman task approval
+      description: |
+        Resumes a paused task proposal or task mutation after the end user approves
+        or declines it. The `user` value must be the same opaque identity that owns
+        the conversation and pending approval. The response is a recoverable SSE
+        stream using the same message lifecycle as chat.
+      operationId: continueDigitalHumanTaskApproval
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DigitalHumanTaskApprovalRequest'}
+      responses:
+        '200':
+          description: Approval continuation event stream.
+          content:
+            text/event-stream:
+              schema: {type: string, description: Native SSE frames containing JSON event envelopes.}
+              x-zgi-sse-event-data-schemas:
+                message_start: {$ref: '#/components/schemas/MessageStartEvent'}
+                approval_result: {$ref: '#/components/schemas/WorkflowEvent'}
+                message: {$ref: '#/components/schemas/MessageDeltaEvent'}
+                message_end: {$ref: '#/components/schemas/MessageEndEvent'}
+                error: {$ref: '#/components/schemas/StreamErrorEvent'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue:
+    parameters:
+      - $ref: '#/components/parameters/ConversationID'
+      - $ref: '#/components/parameters/MessageID'
+      - name: request_id
+        in: path
+        required: true
+        description: Correlation identifier from the user_input_requested event.
+        schema: {type: string, minLength: 1, maxLength: 160}
+    post:
+      tags: [DigitalHuman conversations]
+      summary: Answer a paused DigitalHuman question
+      description: |
+        Answers a `user_input_requested` question and resumes the same Agent
+        Loop. This is not a new chat turn and must not be sent to the task
+        approval or workflow-continuation endpoint. The `user` value must be
+        the same opaque identity that owns the conversation.
+      operationId: continueDigitalHumanUserInput
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DigitalHumanUserInputContinuationRequest'}
+      responses:
+        '200':
+          description: Recoverable SSE stream for the resumed user question.
+          content:
+            text/event-stream:
+              schema: {type: string, description: Native SSE frames containing JSON event envelopes.}
+              x-zgi-sse-event-data-schemas:
+                message_start: {$ref: '#/components/schemas/MessageStartEvent'}
+                user_input_requested: {$ref: '#/components/schemas/UserInputRequestedEvent'}
+                message: {$ref: '#/components/schemas/MessageDeltaEvent'}
+                message_end: {$ref: '#/components/schemas/MessageEndEvent'}
+                error: {$ref: '#/components/schemas/StreamErrorEvent'}
+        default: {$ref: '#/components/responses/Error'}
   /digital-humans/files/upload:
     post:
       tags: [DigitalHuman files]
@@ -341,6 +444,133 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/FileEnvelope'}
         default: {$ref: '#/components/responses/Error'}
+  /digital-humans/tasks:
+    get:
+      tags: [DigitalHuman tasks]
+      summary: List the current user's DigitalHuman tasks
+      description: Lists only tasks owned by the supplied API user. Shared and other-user tasks are never returned.
+      operationId: listDigitalHumanTasks
+      parameters:
+        - $ref: '#/components/parameters/UserQuery'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/TaskPageSize'
+        - $ref: '#/components/parameters/TaskStatus'
+        - $ref: '#/components/parameters/TaskPriority'
+        - $ref: '#/components/parameters/TaskQuery'
+      responses:
+        '200':
+          description: User-owned task page.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DigitalHumanTaskListEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      tags: [DigitalHuman tasks]
+      summary: Create a task for the current API user
+      description: Creates a task in the supplied user's private namespace. Use `Idempotency-Key` for safe retries.
+      operationId: createDigitalHumanTask
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DigitalHumanTaskCreateRequest'}
+      responses:
+        '201':
+          description: Created task.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DigitalHumanTaskEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/tasks/{task_id}:
+    parameters:
+      - $ref: '#/components/parameters/TaskID'
+    get:
+      tags: [DigitalHuman tasks]
+      summary: Get one task owned by the current API user
+      parameters:
+        - $ref: '#/components/parameters/UserQuery'
+      responses:
+        '200':
+          description: Task details.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DigitalHumanTaskEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+    patch:
+      tags: [DigitalHuman tasks]
+      summary: Update a user-owned task
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DigitalHumanTaskUpdateRequest'}
+      responses:
+        '200':
+          description: Updated task.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DigitalHumanTaskEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/tasks/{task_id}/actions/{action}:
+    parameters:
+      - $ref: '#/components/parameters/TaskID'
+      - name: action
+        in: path
+        required: true
+        schema: {type: string, enum: [confirm, decline, run_now, pause, resume, retry, cancel, archive]}
+    post:
+      tags: [DigitalHuman tasks]
+      summary: Apply a lifecycle action to a user-owned task
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DigitalHumanTaskActionRequest'}
+      responses:
+        '200':
+          description: Updated task.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DigitalHumanTaskEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/tasks/{task_id}/runs:
+    parameters:
+      - $ref: '#/components/parameters/TaskID'
+      - $ref: '#/components/parameters/UserQuery'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/TaskPageSize'
+    get:
+      tags: [DigitalHuman tasks]
+      summary: List task executions and safe result summaries
+      responses:
+        '200':
+          description: Task execution history.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DigitalHumanTaskRunListEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/tasks/{task_id}/activities:
+    parameters:
+      - $ref: '#/components/parameters/TaskID'
+      - $ref: '#/components/parameters/UserQuery'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/TaskPageSize'
+    get:
+      tags: [DigitalHuman tasks]
+      summary: List task activity history
+      responses:
+        '200':
+          description: Task activity history.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DigitalHumanTaskActivityListEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
 components:
   securitySchemes:
     bearerAuth:
@@ -360,6 +590,12 @@ components:
       in: path
       required: true
       description: Conversation UUID returned by `message_start` or a conversation endpoint.
+      schema: {type: string, format: uuid}
+    MessageID:
+      name: message_id
+      in: path
+      required: true
+      description: Message UUID containing the pending task approval continuation.
       schema: {type: string, format: uuid}
     UserQuery:
       name: user
@@ -388,6 +624,37 @@ components:
       in: query
       description: Maximum number of search matches returned.
       schema: {type: integer, minimum: 1, maximum: 50, default: 20}
+    TaskID:
+      name: task_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    TaskPageSize:
+      name: page_size
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+    TaskStatus:
+      name: status
+      in: query
+      schema: {type: array, items: {type: string, enum: [proposed, pending, in_progress, waiting, blocked, completed, canceled]}}
+      style: form
+      explode: true
+    TaskPriority:
+      name: priority
+      in: query
+      schema: {type: array, items: {type: string, enum: [low, normal, high, urgent]}}
+      style: form
+      explode: true
+    TaskQuery:
+      name: query
+      in: query
+      schema: {type: string, maxLength: 200}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: UUID used to replay a mutation safely within the current user namespace.
+      schema: {type: string, format: uuid}
   responses:
     Error:
       description: Safe public error without internal stacks, prompts, model responses, or credentials.
@@ -428,6 +695,23 @@ components:
           description: Files uploaded by the same user for this DigitalHuman.
           items: {type: string, format: uuid, description: Uploaded file identifier.}
         response_mode: {type: string, enum: [streaming], default: streaming, description: DigitalHuman v1 supports only `streaming`.}
+    DigitalHumanRegenerateMessageRequest:
+      type: object
+      additionalProperties: false
+      required: [user]
+      description: Replays a root message for the supplied end user. Omit `query` to reuse the original question; set it to edit the historical question before replaying.
+      properties:
+        user:
+          allOf: [{$ref: '#/components/schemas/User'}]
+          description: End user that owns the target conversation.
+        query: {type: string, minLength: 1, maxLength: 32000, description: Optional edited user question.}
+        surface: {type: string, description: Trusted runtime surface; normally omitted by API clients.}
+        runtime_context: {type: string, description: Optional trusted runtime context.}
+        operation_context: {type: object, additionalProperties: true, description: Optional operation metadata.}
+        model: {type: string, description: Optional model override subject to the published policy.}
+        provider: {type: string, description: Optional provider override subject to the published policy.}
+        parameters: {type: object, additionalProperties: true, description: Optional model parameters.}
+        use_memory: {type: boolean, description: Optional relationship-memory preference.}
     RuntimeInputRequest:
       type: object
       additionalProperties: false
@@ -449,6 +733,172 @@ components:
           allOf: [{$ref: '#/components/schemas/User'}]
           description: End user that owns the conversation.
         title: {type: string, minLength: 1, maxLength: 50, description: New display title.}
+    DigitalHumanTaskSchedule:
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type: {type: string, enum: [manual, once, cron]}
+        run_at: {type: string, format: date-time}
+        cron: {type: string}
+        timezone: {type: string}
+    DigitalHumanTaskCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [user, name, goal, schedule]
+      properties:
+        user: {$ref: '#/components/schemas/User'}
+        name: {type: string, minLength: 1, maxLength: 200}
+        goal: {type: string, minLength: 1, maxLength: 4000}
+        success_criteria: {type: array, items: {type: string, maxLength: 500}}
+        priority: {type: string, enum: [low, normal, high, urgent], default: normal}
+        schedule: {$ref: '#/components/schemas/DigitalHumanTaskSchedule'}
+        delivery_mode: {type: string, enum: [task_only], default: task_only}
+        execution_timeout_seconds: {type: integer, minimum: 30, maximum: 1800}
+        max_attempts: {type: integer, minimum: 1, maximum: 3}
+    DigitalHumanTaskUpdateRequest:
+      type: object
+      additionalProperties: false
+      required: [user, expected_revision]
+      properties:
+        user: {$ref: '#/components/schemas/User'}
+        expected_revision: {type: integer, minimum: 1}
+        name: {type: string, minLength: 1, maxLength: 200}
+        goal: {type: string, minLength: 1, maxLength: 4000}
+        success_criteria: {type: array, items: {type: string, maxLength: 500}}
+        priority: {type: string, enum: [low, normal, high, urgent]}
+        schedule: {$ref: '#/components/schemas/DigitalHumanTaskSchedule'}
+        delivery_mode: {type: string, enum: [task_only]}
+        delivery_target: {type: string, enum: [task_center], description: Primary result destination for API-owned tasks.}
+        delivery_fallback: {type: string, enum: [task_center], description: Result remains available in task details.}
+        execution_timeout_seconds: {type: integer, minimum: 30, maximum: 1800}
+        max_attempts: {type: integer, minimum: 1, maximum: 3}
+    DigitalHumanTaskActionRequest:
+      type: object
+      additionalProperties: false
+      required: [user, expected_revision]
+      properties:
+        user: {$ref: '#/components/schemas/User'}
+        expected_revision: {type: integer, minimum: 1}
+    DigitalHumanTaskApprovalRequest:
+      type: object
+      additionalProperties: false
+      required: [type, user, approval_token, action]
+      description: |
+        Resumes a task approval created by a DigitalHuman conversation. The token
+        is returned only in the approval event and expires with the pending run.
+      properties:
+        type: {type: string, enum: [approval]}
+        user: {$ref: '#/components/schemas/User'}
+        approval_token: {type: string, minLength: 1}
+        action: {type: string, enum: [approve, decline]}
+        inputs:
+          type: object
+          description: Optional edited task fields submitted with approval.
+          additionalProperties: true
+    DigitalHumanUserInputContinuationRequest:
+      type: object
+      additionalProperties: false
+      required: [user, answers]
+      description: Answers a model-generated user question and resumes the same Agent Loop.
+      properties:
+        user:
+          allOf: [{$ref: '#/components/schemas/User'}]
+          description: End user that owns the target conversation.
+        answers:
+          type: object
+          minProperties: 1
+          additionalProperties:
+            type: string
+            maxLength: 4000
+          description: Answers keyed by the question ids returned in user_input_requested.
+        runtime_context: {type: string, maxLength: 8000, description: Optional trusted runtime context.}
+        operation_context: {type: object, additionalProperties: true, description: Optional operation metadata.}
+    DigitalHumanTask:
+      type: object
+      required: [id, digital_human_id, owner_kind, name, goal, work_status, lifecycle_status, priority, schedule, revision]
+      properties:
+        id: {type: string, format: uuid}
+        digital_human_id: {type: string, format: uuid}
+        owner_kind: {type: string, enum: [user_subject]}
+        name: {type: string}
+        goal: {type: string}
+        success_criteria: {type: array, items: {type: string}}
+        work_status: {type: string, enum: [proposed, pending, in_progress, waiting, blocked, completed, canceled]}
+        lifecycle_status: {type: string}
+        priority: {type: string}
+        schedule: {$ref: '#/components/schemas/DigitalHumanTaskSchedule'}
+        delivery_mode: {type: string, enum: [task_only]}
+        next_run_at: {type: string, format: date-time}
+        last_run_at: {type: string, format: date-time}
+        last_run_status: {type: string}
+        revision: {type: integer}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    DigitalHumanTaskListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                items: {type: array, items: {$ref: '#/components/schemas/DigitalHumanTask'}}
+                total: {type: integer}
+                page: {type: integer}
+                page_size: {type: integer}
+                has_more: {type: boolean}
+                counts: {type: object, additionalProperties: {type: integer}}
+    DigitalHumanTaskEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          properties:
+            data: {$ref: '#/components/schemas/DigitalHumanTask'}
+    DigitalHumanTaskRun:
+      type: object
+      required: [id, task_id, status, scheduled_for, created_at]
+      properties:
+        id: {type: string, format: uuid}
+        task_id: {type: string, format: uuid}
+        digital_human_run_id: {type: string, format: uuid}
+        trigger_source: {type: string}
+        attempt: {type: integer}
+        status: {type: string}
+        error_summary: {type: string}
+        result_summary: {type: string, description: Safe bounded result summary; execution trace is never exposed.}
+        result_delivery_status: {type: string, enum: [pending, processing, succeeded, failed, unknown, dismissed], description: Channel result delivery status when the task targets its source conversation.}
+        result_delivery_error: {type: string, description: Safe bounded delivery error; the task result remains available in the task center.}
+        scheduled_for: {type: string, format: date-time}
+        started_at: {type: string, format: date-time}
+        finished_at: {type: string, format: date-time}
+        created_at: {type: string, format: date-time}
+    DigitalHumanTaskRunListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                items: {type: array, items: {$ref: '#/components/schemas/DigitalHumanTaskRun'}}
+                total: {type: integer}
+                page: {type: integer}
+                page_size: {type: integer}
+                has_more: {type: boolean}
+    DigitalHumanTaskActivityListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                items: {type: array, items: {type: object}}
+                total: {type: integer}
+                page: {type: integer}
+                page_size: {type: integer}
+                has_more: {type: boolean}
     SuccessEnvelope:
       type: object
       required: [code, message, data]
@@ -489,7 +939,6 @@ components:
         home_title: {type: string, description: Landing hero title; fall back to `name` when empty.}
         opening_statement: {type: string, description: Markdown opening message.}
         input_placeholder: {type: string, description: Suggested composer placeholder.}
-        theme_color: {type: string, description: Six-digit hexadecimal accent color.}
         suggested_questions:
           type: array
           maxItems: 6
@@ -500,7 +949,7 @@ components:
         memory_requires_user: {type: boolean, description: Whether memory requires an explicit user identity.}
         external_user_required: {type: boolean, enum: [true], description: DigitalHuman v1 requires `user` on stateful calls.}
         runtime_input_enabled: {type: boolean, description: Whether runtime input is available.}
-        regenerate_enabled: {type: boolean, enum: [false], description: DigitalHuman v1 does not expose regeneration.}
+        regenerate_enabled: {type: boolean, enum: [true], description: Root-message regeneration and editing are available through the conversation SSE endpoint.}
         landing_page_enabled: {type: boolean, description: Whether the hosted landing page accepts new sessions.}
         api_enabled: {type: boolean, description: Whether API access is enabled.}
         version: {type: string, description: Human-readable published version.}
@@ -710,7 +1159,12 @@ components:
             download_url: {type: string, description: Download-specific URL when available.}
             lifecycle: {type: string, description: Retention or persistence state.}
     ToolGovernanceDecisionEvent:
-      description: Non-interactive authorization decision for a published tool invocation.
+      description: >-
+        Non-interactive authorization decision for a published tool invocation.
+        For DigitalHuman task mutations this event is retained internally for
+        audit and replay, but is not emitted on the public DigitalHuman SSE
+        stream; clients should handle the corresponding approval and workflow
+        events instead. Ordinary tool approvals continue to use this event.
       allOf:
         - $ref: '#/components/schemas/SkillEvent'
         - type: object

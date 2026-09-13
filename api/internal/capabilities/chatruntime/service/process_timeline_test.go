@@ -20,6 +20,79 @@ type countingTimelineMessageRepo struct {
 	metadata map[string]interface{}
 }
 
+func TestProcessTimelineTaskGovernanceKeepsTaskIdentity(t *testing.T) {
+	recorder := &processTimelineRecorder{runtimeCounters: map[string]int{}, openRuntimeIDs: map[string]string{}}
+	invocation := recorder.invocationFromEvent(streamEventToolGovernanceDecision, map[string]interface{}{
+		"kind":            "digital_human_task",
+		"workflow_run_id": "digital-human-task:run-1",
+		"task_id":         "task-1",
+		"task_action":     "resume",
+		"status":          "needs_approval",
+		"approval_event":  map[string]interface{}{"approval_form": map[string]interface{}{"node_id": "digital_human_task"}},
+	})
+	if invocation == nil {
+		t.Fatal("task governance invocation is nil")
+	}
+	if invocation["skill_id"] != "digital-human-tasks" || invocation["tool_name"] != "manage_digital_human_task" {
+		t.Fatalf("task governance identity = %#v, want DigitalHuman task tool", invocation)
+	}
+	result := mapFromOperationContext(invocation["result"])
+	if result["task_id"] != "task-1" || result["task_action"] != "resume" || result["workflow_run_id"] != "digital-human-task:run-1" {
+		t.Fatalf("task governance result = %#v, want task identity", result)
+	}
+
+	// Approval events emitted by the generic governance layer may only retain
+	// the frozen invocation. They must still resolve to the DigitalHuman task
+	// lane instead of the generic “run this tool” row.
+	frozen := recorder.invocationFromEvent(streamEventToolGovernanceDecision, map[string]interface{}{
+		"governance": map[string]interface{}{
+			"frozen_invocation": map[string]interface{}{
+				"skill_id":  "digital-human-tasks",
+				"tool_name": "manage_digital_human_task",
+				"arguments": map[string]interface{}{"task_id": "task-2", "task_action": "pause"},
+			},
+		},
+		"status": "needs_approval",
+	})
+	if frozen == nil || frozen["skill_id"] != "digital-human-tasks" || frozen["tool_name"] != "manage_digital_human_task" {
+		t.Fatalf("frozen task governance identity = %#v, want DigitalHuman task tool", frozen)
+	}
+}
+
+func TestProcessTimelineTaskGovernanceIsNotAddedToUserPresentation(t *testing.T) {
+	message := &runtimemodel.Message{ID: uuid.New(), Metadata: map[string]interface{}{}}
+	prepared := &PreparedChat{
+		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
+		Message:      message,
+		Caller: Caller{
+			Type: runtimemodel.ConversationCallerDigitalHuman,
+		},
+	}
+	recorder := newProcessTimelineRecorder(context.Background(), context.Background(), &service{}, prepared, nil)
+
+	if err := recorder.RecordEvent(streamEventToolGovernanceDecision, map[string]interface{}{
+		"skill_id":    "digital-human-tasks",
+		"tool_name":   "manage_digital_human_task",
+		"task_id":     "task-1",
+		"task_action": "pause",
+		"status":      "needs_approval",
+	}); err != nil {
+		t.Fatalf("RecordEvent() error = %v", err)
+	}
+
+	invocations := skillInvocationsFromMetadata(message.Metadata["skill_invocations"])
+	if len(invocations) != 1 {
+		t.Fatalf("skill_invocations = %#v, want one durable governance record", invocations)
+	}
+	if got := stringFromAny(invocations[0]["presentation_visibility"]); got != "internal" {
+		t.Fatalf("presentation_visibility = %q, want internal", got)
+	}
+	presentation := mapFromOperationContext(message.Metadata["presentation"])
+	if items := mapSliceFromAny(presentation["items"]); len(items) != 0 {
+		t.Fatalf("presentation items = %#v, want generic governance event omitted", items)
+	}
+}
+
 func (r *countingTimelineMessageRepo) UpdateMetadata(_ context.Context, _ uuid.UUID, metadata map[string]interface{}) error {
 	r.updates++
 	r.metadata = copyStringAnyMap(metadata)

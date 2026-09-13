@@ -54,6 +54,18 @@ type ChatRuntime interface {
 	StopMessage(context.Context, chatruntime.Scope, uuid.UUID) (*runtimemodel.Message, error)
 }
 
+type idempotentCompletedMessageWriter interface {
+	CreateCompletedMessageIfAbsent(context.Context, chatruntime.Scope, chatruntime.CreateCompletedMessageRequest) (*runtimemodel.Message, error)
+}
+
+type configuredRootRegenerationRuntime interface {
+	PrepareConfiguredRootRegeneration(context.Context, chatruntime.Scope, chatruntime.Caller, chatruntime.RunConfig, uuid.UUID, runtimedto.RegenerateMessageRequest) (*chatruntime.PreparedChat, error)
+}
+
+type digitalHumanTaskApprovalRuntime interface {
+	RunDigitalHumanTaskApprovalContinuation(context.Context, chatruntime.Scope, chatruntime.Caller, chatruntime.RunConfig, uuid.UUID, uuid.UUID, chatruntime.DigitalHumanTaskApprovalRequest, chatruntime.DigitalHumanTaskApprovalHandler, func(chatruntime.StreamEvent) error) (*chatruntime.ChatResult, error)
+}
+
 // RunDispatcher is a best-effort delivery accelerator. RunStore remains the
 // source of truth for accepted and canceled executions.
 type RunDispatcher interface {
@@ -71,6 +83,7 @@ type RuntimeService struct {
 	transient      ChannelTransientDispatcher
 	memory         MemoryRuntimeProvider
 	tasks          TaskRuntimeProvider
+	taskService    TaskHandlerService
 	channelContext ChannelContextRuntimeProvider
 	directSkills   DirectSkillRuntimeProvider
 	manualFiles    ManualInvocationFileValidator
@@ -103,7 +116,12 @@ func WithMemoryRuntime(provider MemoryRuntimeProvider) RuntimeServiceOption {
 
 // WithTaskRuntime exposes subject-owned task tools at the DigitalHuman edge.
 func WithTaskRuntime(provider TaskRuntimeProvider) RuntimeServiceOption {
-	return func(service *RuntimeService) { service.tasks = provider }
+	return func(service *RuntimeService) {
+		service.tasks = provider
+		if typed, ok := provider.(interface{ TaskService() TaskHandlerService }); ok {
+			service.taskService = typed.TaskService()
+		}
+	}
 }
 
 // WithChannelTransientDispatcher enables UX-only channel messages without
@@ -178,6 +196,105 @@ func (s *RuntimeService) SubmitAPI(ctx context.Context, scope Scope, digitalHuma
 // SubmitWebApp accepts an authenticated or anonymous hosted-page invocation.
 func (s *RuntimeService) SubmitWebApp(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, request ManualInvocationRequest) (*Run, bool, error) {
 	return s.submitExternalSurface(ctx, scope, digitalHumanID, request, SurfaceWebApp)
+}
+
+// SubmitRegeneration accepts a root-message replay request and persists it as
+// a normal durable invocation. The worker performs the actual root replacement
+// through ChatRuntime, so a queue retry or process restart cannot bypass the
+// DigitalHuman execution snapshot and access boundary.
+func (s *RuntimeService) SubmitRegeneration(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, request RegenerateInvocationRequest) (*Run, bool, error) {
+	if !validScope(scope) || digitalHumanID == uuid.Nil || request.MessageID == uuid.Nil {
+		return nil, false, ErrInvalidRequest
+	}
+	surface := strings.TrimSpace(scope.Surface)
+	if surface == "" {
+		surface = SurfaceConsole
+		scope.Surface = surface
+	}
+	if surface != SurfaceConsole && surface != SurfaceAPI && surface != SurfaceWebApp {
+		return nil, false, ErrInvalidRequest
+	}
+	if surface == SurfaceConsole {
+		scope.PrincipalType = string(invocation.PrincipalAccount)
+		scope.PrincipalID = scope.ActorID
+		subjectID := scope.ActorID
+		scope.UserSubjectKind = string(usersubject.Account)
+		scope.UserSubjectID = &subjectID
+	}
+
+	chatScope, caller := digitalHumanChatContext(scope, digitalHumanID)
+	source, conversation, err := s.chat.GetMessageByCaller(ctx, chatScope, caller, request.MessageID)
+	if err != nil {
+		return nil, false, mapConversationRuntimeError(err)
+	}
+	if source == nil || conversation == nil {
+		return nil, false, ErrConversationNotFound
+	}
+	if request.ConversationID != nil && *request.ConversationID != uuid.Nil && *request.ConversationID != conversation.ID {
+		return nil, false, ErrConversationNotFound
+	}
+	query := strings.TrimSpace(source.Query)
+	if request.Query != nil {
+		query = strings.TrimSpace(*request.Query)
+	}
+	if query == "" || !utf8.ValidString(query) || utf8.RuneCountInString(query) > maxManualQueryRunes {
+		return nil, false, ErrInvalidRequest
+	}
+
+	requestID := uuid.New()
+	eventType := invocation.EventTypeAPI
+	origin := invocation.Origin{Kind: invocation.OriginAPI, Provider: "zgi"}
+	senderType := invocation.PrincipalType(scope.PrincipalType)
+	if surface == SurfaceConsole {
+		eventType = invocation.EventTypeManual
+		origin = invocation.Origin{Kind: invocation.OriginManual}
+		senderType = invocation.PrincipalAccount
+		scope.PrincipalType = string(invocation.PrincipalAccount)
+		scope.PrincipalID = scope.ActorID
+	}
+	contextValues := map[string]any{
+		"query": query, "surface": surface, "request_id": requestID.String(),
+		"regenerate_message_id": request.MessageID.String(),
+	}
+	if request.RuntimeContext != "" {
+		contextValues["regenerate_runtime_context"] = request.RuntimeContext
+	}
+	if request.OperationContext != nil {
+		contextValues["regenerate_operation_context"] = request.OperationContext
+	}
+	if request.Model != nil {
+		contextValues["regenerate_model"] = *request.Model
+	}
+	if request.Provider != nil {
+		contextValues["regenerate_provider"] = *request.Provider
+	}
+	if request.Parameters != nil {
+		contextValues["regenerate_parameters"] = request.Parameters
+	}
+	if request.UseMemory != nil {
+		contextValues["regenerate_use_memory"] = *request.UseMemory
+	}
+	if surface == SurfaceWebApp && scope.WebAppID != nil && *scope.WebAppID != uuid.Nil {
+		contextValues["web_app_id"] = scope.WebAppID.String()
+	}
+	event := invocation.Event{
+		ID: requestID.String(), Type: eventType, Origin: origin,
+		Target:     runtimeidentity.SubjectRef{Type: runtimeidentity.SubjectTypeDigitalHuman, ID: digitalHumanID, OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID},
+		Sender:     invocation.PrincipalRef{Type: senderType, ID: scope.PrincipalID.String()},
+		OccurredAt: s.now(), Context: contextValues,
+	}
+	scope.Surface = surface
+	return s.SubmitInvocation(ctx, scope, event, query, &conversation.ID)
+}
+
+func digitalHumanChatContext(scope Scope, digitalHumanID uuid.UUID) (chatruntime.Scope, chatruntime.Caller) {
+	workspaceID := scope.WorkspaceID
+	chatScope := chatruntime.Scope{OrganizationID: scope.OrganizationID, WorkspaceID: &workspaceID, AccountID: scope.ActorID, SkipAccessCheck: scope.Surface == SurfaceAPI || scope.Surface == SurfaceWebApp}
+	caller := chatruntime.Caller{Type: runtimemodel.ConversationCallerDigitalHuman, ID: &digitalHumanID, Source: digitalHumanConversationSourceForSurface(scope.Surface)}
+	if scope.Surface == SurfaceWebApp && scope.WebAppID != nil && *scope.WebAppID != uuid.Nil {
+		caller.SourceWebAppID = cloneUUIDPointer(scope.WebAppID)
+	}
+	return chatScope, caller
 }
 
 func (s *RuntimeService) submitExternalSurface(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, request ManualInvocationRequest, surface string) (*Run, bool, error) {
@@ -335,6 +452,49 @@ func normalizedInvocationSurface(scope Scope, event invocation.Event) string {
 
 func (s *RuntimeService) GetRun(ctx context.Context, scope Scope, digitalHumanID, runID uuid.UUID) (*Run, error) {
 	return s.store.RunByID(ctx, scope, digitalHumanID, runID)
+}
+
+// DeliverTaskResult projects a completed scheduled task back into the
+// originating ChatRuntime conversation. The scheduler owns the retry; the
+// message writer owns idempotency via the task-run source ID.
+func (s *RuntimeService) DeliverTaskResult(ctx context.Context, req TaskResultDeliveryRequest) error {
+	if s == nil || s.chat == nil || req.OrganizationID == uuid.Nil || req.WorkspaceID == uuid.Nil ||
+		req.DigitalHumanID == uuid.Nil || req.TaskID == uuid.Nil || req.TaskRunID == uuid.Nil ||
+		req.ConversationID == uuid.Nil || strings.TrimSpace(req.Answer) == "" {
+		return ErrInvalidRequest
+	}
+	writer, ok := s.chat.(idempotentCompletedMessageWriter)
+	if !ok {
+		return fmt.Errorf("chat runtime does not support idempotent task result delivery")
+	}
+	workspaceID := req.WorkspaceID
+	scope := chatruntime.Scope{
+		OrganizationID:  req.OrganizationID,
+		WorkspaceID:     &workspaceID,
+		AccountID:       req.AccountID,
+		SkipAccessCheck: req.AccountID == uuid.Nil || req.UserSubjectKind == string(usersubject.APIEndUser),
+	}
+	metadata := map[string]interface{}{
+		"digital_human_task_result": true,
+		"digital_human_id":          req.DigitalHumanID.String(),
+		"task_id":                   req.TaskID.String(),
+		"task_run_id":               req.TaskRunID.String(),
+		"source":                    strings.TrimSpace(req.Source),
+	}
+	query := "任务执行结果"
+	if name := strings.TrimSpace(req.TaskName); name != "" {
+		query = "任务执行结果：" + name
+	}
+	_, err := writer.CreateCompletedMessageIfAbsent(ctx, scope, chatruntime.CreateCompletedMessageRequest{
+		ConversationID:  req.ConversationID,
+		Query:           query,
+		Answer:          strings.TrimSpace(req.Answer),
+		ModelProvider:   "digital-human-task",
+		ModelName:       "task-result",
+		Metadata:        metadata,
+		SourceMessageID: &req.TaskRunID,
+	})
+	return err
 }
 
 // GetRunRuntimeLog loads the ChatRuntime message linked to a durable run and
@@ -536,6 +696,16 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 			err = fmt.Errorf("digital human runtime input follow-up is unavailable")
 		} else {
 			prepared, err = followUpRuntime.PrepareRuntimeInputFollowUp(ctx, config, batchID)
+		}
+	} else if regenerateID, ok := stringContextValue(event.Context, "regenerate_message_id"); ok {
+		regenerateMessageID, parseErr := uuid.Parse(regenerateID)
+		if parseErr != nil || regenerateMessageID == uuid.Nil {
+			err = ErrInvalidRequest
+		} else if rootRuntime, rootOK := s.chat.(configuredRootRegenerationRuntime); !rootOK {
+			err = fmt.Errorf("digital human root regeneration is unavailable")
+		} else {
+			regenerateRequest := regenerateRequestFromContext(event.Context)
+			prepared, err = rootRuntime.PrepareConfiguredRootRegeneration(ctx, runtimeScope(run), caller, config, regenerateMessageID, regenerateRequest)
 		}
 	} else {
 		prepared, err = s.chat.PrepareConfiguredChat(ctx, runtimeScope(run), caller, config, chatRequest)
@@ -921,6 +1091,33 @@ func stringSliceContextValue(values map[string]any, key string) []string {
 		}
 	}
 	return result
+}
+
+func regenerateRequestFromContext(values map[string]any) runtimedto.RegenerateMessageRequest {
+	request := runtimedto.RegenerateMessageRequest{}
+	if query, ok := stringContextValue(values, "query"); ok {
+		request.Query = &query
+	}
+	if runtimeContext, ok := stringContextValue(values, "regenerate_runtime_context"); ok {
+		request.RuntimeContext = runtimeContext
+	}
+	if operationContext, ok := values["regenerate_operation_context"].(map[string]any); ok {
+		request.OperationContext = operationContext
+	}
+	if model, ok := stringContextValue(values, "regenerate_model"); ok {
+		request.Model = &model
+	}
+	if provider, ok := stringContextValue(values, "regenerate_provider"); ok {
+		request.Provider = &provider
+	}
+	if parameters, ok := values["regenerate_parameters"].(map[string]any); ok {
+		request.Parameters = parameters
+	}
+	if useMemory, ok := values["regenerate_use_memory"].(bool); ok {
+		request.UseMemory = &useMemory
+	}
+	request.Surface, _ = values["surface"].(string)
+	return request
 }
 
 func runScope(run *Run) Scope {

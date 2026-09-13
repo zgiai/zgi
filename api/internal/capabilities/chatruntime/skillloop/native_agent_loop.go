@@ -63,12 +63,13 @@ func handleRuntimeToolCall(ctx context.Context, call adapter.ToolCall, runtimeTo
 		}
 	}
 	trace := skills.SkillTrace{
-		Kind:      "tool_call",
-		SkillID:   strings.TrimSpace(runtimeTool.SkillID),
-		ToolName:  strings.TrimSpace(runtimeTool.Definition.Function.Name),
-		Status:    status,
-		Arguments: result.Arguments,
-		Result:    result.Result,
+		InvocationID: call.ID,
+		Kind:         "tool_call",
+		SkillID:      strings.TrimSpace(runtimeTool.SkillID),
+		ToolName:     strings.TrimSpace(runtimeTool.Definition.Function.Name),
+		Status:       status,
+		Arguments:    result.Arguments,
+		Result:       result.Result,
 	}
 	if result.Error != nil {
 		trace.Error = status
@@ -80,9 +81,11 @@ func handleRuntimeToolCall(ctx context.Context, call adapter.ToolCall, runtimeTo
 	message := skills.ToolResultMessage(call.ID, modelResult)
 	step := successfulSkillStep(trace, message, false, true)
 	step.toolResult = result.Result
+	step.pendingApproval = result.PendingApproval
 	if result.Recoverable {
 		step = recoverableSkillStep(trace, message, false, true)
 		step.toolResult = result.Result
+		step.pendingApproval = result.PendingApproval
 	}
 	return step
 }

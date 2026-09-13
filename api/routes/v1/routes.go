@@ -268,6 +268,9 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		CredentialCipher:    serviceContainer.GetIntegrationCredentialCipher(),
 		Tasks:               automationBundle.DigitalHumanTasks,
 	})
+	if automationBundle.DigitalHumanTaskReconciler != nil && digitalHumanRuntime.Runtime != nil {
+		automationBundle.DigitalHumanTaskReconciler.SetResultDeliverer(digitalHumanRuntime.Runtime)
+	}
 	digitalHumanRuntime.Access = digitalhuman.NewAccessService(db)
 	serviceContainer.SetDigitalHumanChannelReceiverManager(digitalHumanRuntime.Receivers)
 	RegisterDigitalHumanRoutes(v1, DigitalHumanRouteDeps{

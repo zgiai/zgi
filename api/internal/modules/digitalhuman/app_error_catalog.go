@@ -35,6 +35,10 @@ var (
 	AppCodeMemoryConflict               = apperror.MustCode("digital_human.memory.conflict")
 	AppCodeMemoryPolicyRejected         = apperror.MustCode("digital_human.memory.policy_rejected")
 	AppCodeMemoryUndoUnavailable        = apperror.MustCode("digital_human.memory.undo_unavailable")
+	AppCodeTaskNotFound                 = apperror.MustCode("digital_human.task.not_found")
+	AppCodeTaskInvalidRequest           = apperror.MustCode("digital_human.task.invalid_request")
+	AppCodeTaskConflict                 = apperror.MustCode("digital_human.task.conflict")
+	AppCodeTaskPolicyRejected           = apperror.MustCode("digital_human.task.policy_rejected")
 	AppCodeChannelInstallationNotFound  = apperror.MustCode("digital_human.channel.installation.not_found")
 	AppCodeChannelConflict              = apperror.MustCode("digital_human.channel.conflict")
 	AppCodeChannelNotReady              = apperror.MustCode("digital_human.channel.not_ready")
@@ -95,6 +99,14 @@ func CatalogDefinitions() []appcatalog.Definition {
 			"The memory proposal was rejected by evidence, privacy, or sensitivity policy.", "该记忆提议未通过证据、隐私或敏感信息策略。"),
 		digitalHumanDefinition(AppCodeMemoryUndoUnavailable, appcatalog.CategoryConflict, 409,
 			"This memory change can no longer be undone.", "该记忆变更已无法撤销。"),
+		digitalHumanDefinition(AppCodeTaskNotFound, appcatalog.CategoryNotFound, 404,
+			"The DigitalHuman task was not found or is not available to this user.", "未找到该任务，或该任务不属于当前用户。"),
+		digitalHumanDefinition(AppCodeTaskInvalidRequest, appcatalog.CategoryValidation, 400,
+			"The DigitalHuman task request is invalid. Check the fields and try again.", "数字人任务请求内容不正确，请检查字段后重试。"),
+		digitalHumanDefinition(AppCodeTaskConflict, appcatalog.CategoryConflict, 409,
+			"The DigitalHuman task changed or cannot transition from its current state. Refresh and try again.", "数字人任务已发生变化或无法从当前状态转换，请刷新后重试。"),
+		digitalHumanDefinition(AppCodeTaskPolicyRejected, appcatalog.CategoryValidation, 400,
+			"This DigitalHuman surface cannot create or manage tasks.", "当前数字人入口不允许创建或管理任务。"),
 		digitalHumanDefinition(AppCodeChannelInstallationNotFound, appcatalog.CategoryNotFound, 404,
 			"The channel installation was not found.", "未找到该渠道安装。"),
 		digitalHumanDefinition(AppCodeChannelConflict, appcatalog.CategoryConflict, 409,

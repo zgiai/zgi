@@ -806,6 +806,22 @@ func TestNativeAgentToolsForRunIncludesRuntimeToolWithoutSkills(t *testing.T) {
 	}
 }
 
+func TestHandleRuntimeToolCallPreservesInvocationID(t *testing.T) {
+	runtimeTool := RuntimeTool{
+		Definition: adapter.Tool{Type: "function", Function: adapter.Function{Name: "manage_digital_human_task"}},
+		Handler: func(context.Context, adapter.ToolCall) RuntimeToolResult {
+			return RuntimeToolResult{Status: "success", Result: map[string]interface{}{"status": "proposed"}}
+		},
+	}
+	step := handleRuntimeToolCall(context.Background(), adapter.ToolCall{
+		ID:       "call-task-1",
+		Function: adapter.FunctionCall{Name: "manage_digital_human_task"},
+	}, runtimeTool)
+	if step.trace.InvocationID != "call-task-1" {
+		t.Fatalf("runtime trace invocation id = %q, want call-task-1", step.trace.InvocationID)
+	}
+}
+
 func TestNativeExecutionCallWrapsActionArgumentsUnderFixedIdentity(t *testing.T) {
 	toolSet := &skills.NativeToolSet{ToolBindings: map[string]skills.NativeToolBinding{
 		"wecom_send_message": {

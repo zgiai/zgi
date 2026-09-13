@@ -740,7 +740,6 @@ func marshalPresentationPolicy(policy PresentationPolicy) (datatypes.JSON, error
 	policy.HomeTitle = strings.TrimSpace(policy.HomeTitle)
 	policy.OpeningStatement = strings.TrimSpace(policy.OpeningStatement)
 	policy.InputPlaceholder = strings.TrimSpace(policy.InputPlaceholder)
-	policy.ThemeColor = strings.TrimSpace(policy.ThemeColor)
 	policy.SuggestedQuestions = normalizeStringList(policy.SuggestedQuestions)
 	if !validRuneLength(policy.HomeTitle, maxPresentationTitleRunes) ||
 		!validRuneLength(policy.OpeningStatement, maxOpeningStatementRunes) ||
@@ -753,26 +752,11 @@ func marshalPresentationPolicy(policy PresentationPolicy) (datatypes.JSON, error
 			return nil, ErrInvalidRequest
 		}
 	}
-	if policy.ThemeColor != "" && !validThemeColor(policy.ThemeColor) {
-		return nil, ErrInvalidRequest
-	}
 	encoded, err := json.Marshal(policy)
 	if err != nil || len(encoded) > maxPolicyBytes {
 		return nil, ErrInvalidRequest
 	}
 	return datatypes.JSON(encoded), nil
-}
-
-func validThemeColor(value string) bool {
-	if len(value) != 7 || value[0] != '#' {
-		return false
-	}
-	for _, char := range value[1:] {
-		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F')) {
-			return false
-		}
-	}
-	return true
 }
 
 func configRevision(version *Version) (string, error) {
@@ -892,11 +876,11 @@ func applicationError(err error, operation string) error {
 	case errors.Is(err, ErrMemoryUndoUnavailable):
 		code = AppCodeMemoryUndoUnavailable
 	case errors.Is(err, ErrTaskNotFound):
-		code = AppCodeNotFound
+		code = AppCodeTaskNotFound
 	case errors.Is(err, ErrTaskConflict):
-		code = AppCodeRevisionConflict
+		code = AppCodeTaskConflict
 	case errors.Is(err, ErrTaskPolicyRejected):
-		code = AppCodeRequestInvalid
+		code = AppCodeTaskPolicyRejected
 	case errors.Is(err, ErrChannelInstallationNotFound):
 		code = AppCodeChannelInstallationNotFound
 	case errors.Is(err, ErrChannelConflict):
@@ -911,6 +895,31 @@ func applicationError(err error, operation string) error {
 		code = AppCodeChannelDeliveryConflict
 	default:
 		return fmt.Errorf("%s: %w", operation, err)
+	}
+	return apperror.Wrap(err, code, apperror.WithOperation(operation))
+}
+
+// taskApplicationError keeps the task REST contract stable without changing
+// the broader DigitalHuman error namespace used by configuration and chat.
+func taskApplicationError(err error, operation string) error {
+	if err == nil {
+		return nil
+	}
+	if _, ok := apperror.As(err); ok {
+		return err
+	}
+	var code apperror.Code
+	switch {
+	case errors.Is(err, ErrInvalidRequest):
+		code = AppCodeTaskInvalidRequest
+	case errors.Is(err, ErrTaskNotFound):
+		code = AppCodeTaskNotFound
+	case errors.Is(err, ErrTaskConflict), errors.Is(err, ErrRevisionConflict):
+		code = AppCodeTaskConflict
+	case errors.Is(err, ErrTaskPolicyRejected):
+		code = AppCodeTaskPolicyRejected
+	default:
+		return applicationError(err, operation)
 	}
 	return apperror.Wrap(err, code, apperror.WithOperation(operation))
 }

@@ -31,6 +31,7 @@ const (
 	channelAcknowledgementText = "⏳ 已收到，正在处理…"
 	channelWakeFallback        = "@DigitalHuman"
 	channelRuntimeInputReason  = "channel.runtime_input.accepted"
+	channelTaskApprovalReason  = "channel.task_approval.accepted"
 	channelConnectionTestTTL   = 5 * time.Minute
 )
 
@@ -908,6 +909,27 @@ func (service *ChannelService) handleInboundMessage(
 		return nil, err
 	}
 	route.Mapping.LocalConversationID = &conversationID
+	if approvalRuntime, ok := service.runtime.(interface {
+		ContinueChannelTaskApproval(context.Context, Scope, uuid.UUID, uuid.UUID, string) (bool, error)
+	}); ok {
+		handled, approvalErr := approvalRuntime.ContinueChannelTaskApproval(
+			ctx,
+			Scope{OrganizationID: installation.OrganizationID, WorkspaceID: installation.WorkspaceID, ActorID: installation.CreatedBy},
+			route.Binding.SubjectID,
+			conversationID,
+			channelInvocationQuery(message),
+		)
+		if approvalErr != nil {
+			_ = service.store.MarkInboundEvent(ctx, stored.ID, channelruntime.InboundEventFailed, "channel.task_approval.failed", nil, now)
+			return nil, approvalErr
+		}
+		if handled {
+			if err := service.store.MarkInboundEvent(ctx, stored.ID, channelruntime.InboundEventAccepted, channelTaskApprovalReason, nil, now); err != nil {
+				return nil, err
+			}
+			return &ChannelWebhookResult{Response: acknowledgement, Accepted: true, Duplicate: !created, EventID: stored.ID}, nil
+		}
+	}
 	acceptedAsRuntimeInput, err := service.runtime.SubmitChannelRuntimeInput(
 		ctx,
 		Scope{OrganizationID: installation.OrganizationID, WorkspaceID: installation.WorkspaceID, ActorID: installation.CreatedBy},

@@ -109,6 +109,24 @@ const (
 	TaskDeliverySourceConversation TaskDeliveryMode = "source_conversation"
 )
 
+// TaskDeliveryTarget is the durable user-facing destination for a task result.
+// The actual channel address remains private implementation data in the task
+// delivery config; callers only need to know which destination is primary.
+type TaskDeliveryTarget string
+
+const (
+	TaskDeliveryTargetTaskCenter         TaskDeliveryTarget = "task_center"
+	TaskDeliveryTargetSourceConversation TaskDeliveryTarget = "source_conversation"
+)
+
+// TaskDeliveryFallback describes where a result remains available when the
+// primary external delivery cannot be sent.
+type TaskDeliveryFallback string
+
+const (
+	TaskDeliveryFallbackTaskCenter TaskDeliveryFallback = "task_center"
+)
+
 // TaskSchedule is the typed public schedule contract for DigitalHuman tasks.
 type TaskSchedule struct {
 	Type     TaskScheduleType `json:"type"`
@@ -119,28 +137,34 @@ type TaskSchedule struct {
 
 // Task is the product-facing projection of a subject-owned automation task.
 type Task struct {
-	ID                      uuid.UUID        `json:"id"`
-	DigitalHumanID          uuid.UUID        `json:"digital_human_id"`
-	OwnerKind               TaskOwnerKind    `json:"owner_kind"`
-	Name                    string           `json:"name"`
-	Goal                    string           `json:"goal"`
-	SuccessCriteria         []string         `json:"success_criteria"`
-	WorkStatus              TaskWorkStatus   `json:"work_status"`
-	LifecycleStatus         string           `json:"lifecycle_status"`
-	Priority                TaskPriority     `json:"priority"`
-	Schedule                TaskSchedule     `json:"schedule"`
-	DeliveryMode            TaskDeliveryMode `json:"delivery_mode"`
-	ExecutionTimeoutSeconds int              `json:"execution_timeout_seconds"`
-	MaxAttempts             int              `json:"max_attempts"`
-	NextRunAt               *time.Time       `json:"next_run_at,omitempty"`
-	LastRunAt               *time.Time       `json:"last_run_at,omitempty"`
-	LastRunStatus           string           `json:"last_run_status,omitempty"`
-	Source                  string           `json:"source"`
-	SourceConversationType  string           `json:"source_conversation_type,omitempty"`
-	Revision                int64            `json:"revision"`
-	ProposalExpiresAt       *time.Time       `json:"proposal_expires_at,omitempty"`
-	CreatedAt               time.Time        `json:"created_at"`
-	UpdatedAt               time.Time        `json:"updated_at"`
+	ID               uuid.UUID            `json:"id"`
+	DigitalHumanID   uuid.UUID            `json:"digital_human_id"`
+	OwnerKind        TaskOwnerKind        `json:"owner_kind"`
+	Name             string               `json:"name"`
+	Goal             string               `json:"goal"`
+	SuccessCriteria  []string             `json:"success_criteria"`
+	WorkStatus       TaskWorkStatus       `json:"work_status"`
+	LifecycleStatus  string               `json:"lifecycle_status"`
+	Priority         TaskPriority         `json:"priority"`
+	Schedule         TaskSchedule         `json:"schedule"`
+	DeliveryMode     TaskDeliveryMode     `json:"delivery_mode"`
+	DeliveryTarget   TaskDeliveryTarget   `json:"delivery_target"`
+	DeliveryFallback TaskDeliveryFallback `json:"delivery_fallback,omitempty"`
+	// DeliveryReplyTo is an internal continuation value. It is intentionally
+	// excluded from every public response; channel addresses must never become
+	// client-controlled task owner data.
+	DeliveryReplyTo         *invocation.ReplyAddress `json:"-"`
+	ExecutionTimeoutSeconds int                      `json:"execution_timeout_seconds"`
+	MaxAttempts             int                      `json:"max_attempts"`
+	NextRunAt               *time.Time               `json:"next_run_at,omitempty"`
+	LastRunAt               *time.Time               `json:"last_run_at,omitempty"`
+	LastRunStatus           string                   `json:"last_run_status,omitempty"`
+	Source                  string                   `json:"source"`
+	SourceConversationType  string                   `json:"source_conversation_type,omitempty"`
+	Revision                int64                    `json:"revision"`
+	ProposalExpiresAt       *time.Time               `json:"proposal_expires_at,omitempty"`
+	CreatedAt               time.Time                `json:"created_at"`
+	UpdatedAt               time.Time                `json:"updated_at"`
 }
 
 // TaskListQuery contains bounded task filters.
@@ -184,15 +208,19 @@ type CreateTaskRequest struct {
 
 // UpdateTaskRequest updates a task using optimistic concurrency.
 type UpdateTaskRequest struct {
-	ExpectedRevision        int64             `json:"expected_revision"`
-	Name                    *string           `json:"name,omitempty"`
-	Goal                    *string           `json:"goal,omitempty"`
-	SuccessCriteria         *[]string         `json:"success_criteria,omitempty"`
-	Priority                *TaskPriority     `json:"priority,omitempty"`
-	Schedule                *TaskSchedule     `json:"schedule,omitempty"`
-	DeliveryMode            *TaskDeliveryMode `json:"delivery_mode,omitempty"`
-	ExecutionTimeoutSeconds *int              `json:"execution_timeout_seconds,omitempty"`
-	MaxAttempts             *int              `json:"max_attempts,omitempty"`
+	ExpectedRevision int64             `json:"expected_revision"`
+	Name             *string           `json:"name,omitempty"`
+	Goal             *string           `json:"goal,omitempty"`
+	SuccessCriteria  *[]string         `json:"success_criteria,omitempty"`
+	Priority         *TaskPriority     `json:"priority,omitempty"`
+	Schedule         *TaskSchedule     `json:"schedule,omitempty"`
+	DeliveryMode     *TaskDeliveryMode `json:"delivery_mode,omitempty"`
+	// LifecycleStatus is intentionally separate from WorkStatus. An approved
+	// update may reschedule a completed/paused task and reactivate its
+	// scheduler in the same atomic mutation.
+	LifecycleStatus         *string `json:"lifecycle_status,omitempty"`
+	ExecutionTimeoutSeconds *int    `json:"execution_timeout_seconds,omitempty"`
+	MaxAttempts             *int    `json:"max_attempts,omitempty"`
 }
 
 // TaskAction identifies an explicit lifecycle operation.
@@ -216,17 +244,20 @@ type ApplyTaskActionRequest struct {
 
 // TaskRun exposes one scheduler execution and its linked DigitalHuman run.
 type TaskRun struct {
-	ID                uuid.UUID  `json:"id"`
-	TaskID            uuid.UUID  `json:"task_id"`
-	DigitalHumanRunID *uuid.UUID `json:"digital_human_run_id,omitempty"`
-	TriggerSource     string     `json:"trigger_source"`
-	Attempt           int        `json:"attempt"`
-	Status            string     `json:"status"`
-	ErrorSummary      string     `json:"error_summary,omitempty"`
-	ScheduledFor      time.Time  `json:"scheduled_for"`
-	StartedAt         *time.Time `json:"started_at,omitempty"`
-	FinishedAt        *time.Time `json:"finished_at,omitempty"`
-	CreatedAt         time.Time  `json:"created_at"`
+	ID                   uuid.UUID  `json:"id"`
+	TaskID               uuid.UUID  `json:"task_id"`
+	DigitalHumanRunID    *uuid.UUID `json:"digital_human_run_id,omitempty"`
+	TriggerSource        string     `json:"trigger_source"`
+	Attempt              int        `json:"attempt"`
+	Status               string     `json:"status"`
+	ErrorSummary         string     `json:"error_summary,omitempty"`
+	ResultSummary        string     `json:"result_summary,omitempty"`
+	ResultDeliveryStatus string     `json:"result_delivery_status,omitempty"`
+	ResultDeliveryError  string     `json:"result_delivery_error,omitempty"`
+	ScheduledFor         time.Time  `json:"scheduled_for"`
+	StartedAt            *time.Time `json:"started_at,omitempty"`
+	FinishedAt           *time.Time `json:"finished_at,omitempty"`
+	CreatedAt            time.Time  `json:"created_at"`
 }
 
 // TaskRunListResult is a bounded page of task executions.
@@ -270,6 +301,33 @@ type TaskMutationContext struct {
 	SourceConversationType string
 	ReplyTo                *invocation.ReplyAddress
 	Proposed               bool
+}
+
+// TaskResultDeliveryRequest is the durable, user-visible result projection
+// emitted after a scheduled DigitalHuman run completes. ConversationID is
+// server-captured from the originating turn; it is never accepted from a
+// model tool argument or a public task response.
+type TaskResultDeliveryRequest struct {
+	OrganizationID uuid.UUID
+	WorkspaceID    uuid.UUID
+	AccountID      uuid.UUID
+	// UserSubjectKind distinguishes a normal account subject from an API end
+	// user subject. Both are stored in AccountID for ChatRuntime ownership,
+	// but API subjects must bypass account-membership checks.
+	UserSubjectKind string
+	DigitalHumanID  uuid.UUID
+	TaskID          uuid.UUID
+	TaskRunID       uuid.UUID
+	ConversationID  uuid.UUID
+	Source          string
+	TaskName        string
+	Answer          string
+}
+
+// TaskResultDeliverer is implemented by the DigitalHuman runtime and injected
+// into the scheduler reconciler after the runtime is initialized.
+type TaskResultDeliverer interface {
+	DeliverTaskResult(context.Context, TaskResultDeliveryRequest) error
 }
 
 // TaskHandlerService is the DigitalHuman task application boundary shared by

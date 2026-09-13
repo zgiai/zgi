@@ -1,6 +1,7 @@
 package digitalhuman
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,6 +18,8 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"gorm.io/gorm"
 )
+
+var errTaskOperationMemorySource = errors.New("task operation is not a memory source")
 
 const (
 	defaultMemoryExtractionBatch       = 100
@@ -194,6 +197,10 @@ func (r *MemoryExtractionRunner) RunJob(ctx context.Context, jobID uuid.UUID) er
 
 	run, event, source, err := r.loadSource(ctx, job)
 	if err != nil {
+		if errors.Is(err, errTaskOperationMemorySource) {
+			status, errorCode = MemoryExtractionJobCanceled, "task_operation_not_memory"
+			return nil
+		}
 		// Extraction jobs intentionally keep references instead of copying chat
 		// content. A user may remove the referenced conversation or message before
 		// the delayed worker runs. That source cannot reappear, so retrying only
@@ -309,6 +316,12 @@ func (r *MemoryExtractionRunner) loadSource(ctx context.Context, job *MemoryExtr
 		if json.Unmarshal(run.ExecutionSnapshot, &snapshot) == nil {
 			source.ModelName = snapshot.Model
 		}
+	}
+	// Task proposals and lifecycle mutations are operational state. They must
+	// never be promoted into the DigitalHuman's long-term self memory, even if
+	// the model also produced a successful conversational answer.
+	if bytes.Contains(run.ExecutionTrace, []byte("manage_digital_human_task")) {
+		return nil, invocation.Event{}, MemoryExtractionSource{}, errTaskOperationMemorySource
 	}
 	return run, event, source, nil
 }

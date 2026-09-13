@@ -26,11 +26,43 @@ func TestRegisterWebAppRoutesIncludesSharedChatRuntimeCompatibility(t *testing.T
 		http.MethodGet + " /api/v1/digital-human-webapps/:web_app_id/conversations/:conversation_id/events",
 		http.MethodPost + " /api/v1/digital-human-webapps/:web_app_id/conversations/:conversation_id/stop",
 		http.MethodPost + " /api/v1/digital-human-webapps/:web_app_id/conversations/:conversation_id/messages/:message_id/runtime-inputs",
+		http.MethodPost + " /api/v1/digital-human-webapps/:web_app_id/conversations/:conversation_id/messages/:message_id/user-input/:request_id/continue",
 		http.MethodGet + " /api/v1/digital-human-webapps/:web_app_id/files/upload",
 		http.MethodPost + " /api/v1/digital-human-webapps/:web_app_id/files/upload",
+		http.MethodGet + " /api/v1/digital-human-webapps/:web_app_id/tasks",
+		http.MethodPost + " /api/v1/digital-human-webapps/:web_app_id/tasks",
+		http.MethodGet + " /api/v1/digital-human-webapps/:web_app_id/tasks/:task_id",
+		http.MethodPatch + " /api/v1/digital-human-webapps/:web_app_id/tasks/:task_id",
+		http.MethodPost + " /api/v1/digital-human-webapps/:web_app_id/tasks/:task_id/actions/:action",
+		http.MethodGet + " /api/v1/digital-human-webapps/:web_app_id/tasks/:task_id/runs",
+		http.MethodGet + " /api/v1/digital-human-webapps/:web_app_id/tasks/:task_id/activities",
 	} {
 		if !routes[required] {
 			t.Fatalf("webapp route %q was not registered", required)
+		}
+	}
+}
+
+func TestRegisterAPIRoutesIncludesPrivateTaskContract(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	(&ExternalHandler{}).RegisterAPIRoutes(router.Group("/api"))
+	routes := make(map[string]bool)
+	for _, route := range router.Routes() {
+		routes[route.Method+" "+route.Path] = true
+	}
+	for _, required := range []string{
+		http.MethodGet + " /api/v1/digital-humans/tasks",
+		http.MethodPost + " /api/v1/digital-humans/tasks",
+		http.MethodGet + " /api/v1/digital-humans/tasks/:task_id",
+		http.MethodPatch + " /api/v1/digital-humans/tasks/:task_id",
+		http.MethodPost + " /api/v1/digital-humans/tasks/:task_id/actions/:action",
+		http.MethodGet + " /api/v1/digital-humans/tasks/:task_id/runs",
+		http.MethodGet + " /api/v1/digital-humans/tasks/:task_id/activities",
+		http.MethodPost + " /api/v1/digital-humans/conversations/:conversation_id/messages/:message_id/user-input/:request_id/continue",
+	} {
+		if !routes[required] {
+			t.Fatalf("API task route %q was not registered", required)
 		}
 	}
 }

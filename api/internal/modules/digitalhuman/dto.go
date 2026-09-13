@@ -33,7 +33,6 @@ type PresentationPolicy struct {
 	HomeTitle          string   `json:"home_title"`
 	OpeningStatement   string   `json:"opening_statement"`
 	InputPlaceholder   string   `json:"input_placeholder"`
-	ThemeColor         string   `json:"theme_color"`
 	SuggestedQuestions []string `json:"suggested_questions"`
 }
 

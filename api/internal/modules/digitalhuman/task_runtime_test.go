@@ -3,6 +3,7 @@ package digitalhuman
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/runtimeidentity"
+	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
@@ -86,6 +88,15 @@ func TestTaskRuntimeChannelIsWritableByDefault(t *testing.T) {
 			}
 		}
 	}
+	definition, err := json.Marshal(preparation.Tools[2].Definition)
+	if err != nil {
+		t.Fatalf("marshal task management tool: %v", err)
+	}
+	for _, action := range []string{`"pause"`, `"resume"`, `"retry"`, `"archive"`} {
+		if !strings.Contains(string(definition), action) {
+			t.Fatalf("task management tool does not expose %s: %s", action, definition)
+		}
+	}
 }
 
 func TestTaskRuntimeManualAndCurrentScheduleAreWritable(t *testing.T) {
@@ -137,7 +148,7 @@ func TestScheduledTaskRuntimeMayOnlyMarkCurrentTaskWaitingOrBlocked(t *testing.T
 	}
 }
 
-func TestTaskRuntimeCreatesExplicitRequestWithoutProposalRoundTrip(t *testing.T) {
+func TestTaskRuntimeRequiresApprovalForExplicitRequest(t *testing.T) {
 	created := []CreateTaskRequest{}
 	mutations := []TaskMutationContext{}
 	provider := NewTaskRuntimeProvider(taskRuntimeService{createCalls: &created, createMutations: &mutations})
@@ -154,15 +165,68 @@ func TestTaskRuntimeCreatesExplicitRequestWithoutProposalRoundTrip(t *testing.T)
 	if result.Status != "success" || len(created) != 1 || len(mutations) != 1 {
 		t.Fatalf("create result = %#v, requests = %#v, mutations = %#v", result, created, mutations)
 	}
-	if mutations[0].Proposed {
-		t.Fatal("explicit create was persisted as a proposal")
+	if !mutations[0].Proposed {
+		t.Fatal("explicit create was not persisted as a proposal")
 	}
 	if mutations[0].SourceConversationType != "group" {
 		t.Fatalf("create source conversation type = %q, want group", mutations[0].SourceConversationType)
 	}
 	data, ok := result.Result["data"].(map[string]any)
-	if !ok || data["status"] != "committed" {
+	if !ok || data["status"] != "proposed" || data["approval_required"] != true {
 		t.Fatalf("create result data = %#v", result.Result)
+	}
+}
+
+func TestTaskRuntimeExternalProposalFallsBackToTaskOnlyDelivery(t *testing.T) {
+	created := []CreateTaskRequest{}
+	provider := NewTaskRuntimeProvider(taskRuntimeService{createCalls: &created})
+	run, event := taskRuntimeFixture(invocation.OriginAPI)
+	run.Surface = SurfaceWebApp
+	event.ReplyTo = nil
+	event.Context = map[string]any{"surface": SurfaceWebApp}
+	prepared, err := provider.Prepare(t.Context(), run, event)
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	result := prepared.Tools[2].Handler(t.Context(), adapter.ToolCall{ID: "webapp-proposal", Function: adapter.FunctionCall{
+		Name:      taskManageToolName,
+		Arguments: `{"action":"create","name":"Morning report","goal":"Prepare the report","delivery_mode":"source_conversation"}`,
+	}})
+	if result.Status != "success" || len(created) != 1 {
+		t.Fatalf("external proposal result = %#v, requests = %#v", result, created)
+	}
+	if created[0].DeliveryMode != TaskDeliveryTaskOnly {
+		t.Fatalf("delivery mode = %q, want task_only", created[0].DeliveryMode)
+	}
+	if data, ok := result.Result["data"].(map[string]any); !ok || data["approval_required"] != true {
+		t.Fatalf("external proposal data = %#v", result.Result)
+	}
+}
+
+func TestTaskRuntimeExternalProposalKeepsSourceConversationDelivery(t *testing.T) {
+	created := []CreateTaskRequest{}
+	provider := NewTaskRuntimeProvider(taskRuntimeService{createCalls: &created})
+	run, event := taskRuntimeFixture(invocation.OriginAPI)
+	run.Surface = SurfaceWebApp
+	conversationID := uuid.New()
+	event.ReplyTo = nil
+	event.Context = map[string]any{"conversation_id": conversationID.String(), "surface": SurfaceWebApp}
+	prepared, err := provider.Prepare(t.Context(), run, event)
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	result := prepared.Tools[2].Handler(t.Context(), adapter.ToolCall{ID: "console-proposal", Function: adapter.FunctionCall{
+		Name:      taskManageToolName,
+		Arguments: `{"action":"create","name":"Console report","goal":"Send the report back to this conversation","delivery_mode":"source_conversation"}`,
+	}})
+	if result.Status != "success" || len(created) != 1 {
+		t.Fatalf("console proposal result = %#v, requests = %#v", result, created)
+	}
+	if created[0].DeliveryMode != TaskDeliverySourceConversation {
+		t.Fatalf("delivery mode = %q, want source_conversation", created[0].DeliveryMode)
+	}
+	if len(created[0].Schedule.Timezone) == 0 {
+		t.Fatalf("schedule timezone missing from source conversation proposal: %#v", created[0])
 	}
 }
 
@@ -179,6 +243,21 @@ func TestTaskRuntimeKeepsInferredWorkAsProposal(t *testing.T) {
 	}})
 	if result.Status != "success" || len(mutations) != 1 || !mutations[0].Proposed {
 		t.Fatalf("proposal result = %#v, mutations = %#v", result, mutations)
+	}
+}
+
+func TestUpdateRequestPreservesScheduleChanges(t *testing.T) {
+	schedule := &TaskSchedule{Type: TaskScheduleCron, Cron: "30 9 * * *", Timezone: "Asia/Shanghai"}
+	request := updateRequest(manageTaskArguments{
+		ExpectedRevision: 3,
+		Name:             "Morning report",
+		Schedule:         schedule,
+	})
+	if request.Schedule != schedule {
+		t.Fatalf("updateRequest() schedule = %#v, want %#v", request.Schedule, schedule)
+	}
+	if request.Name == nil || *request.Name != "Morning report" {
+		t.Fatalf("updateRequest() name = %#v, want Morning report", request.Name)
 	}
 }
 
@@ -290,6 +369,40 @@ func TestTaskAccessForRunIsolatesAccountAndChannelOwners(t *testing.T) {
 	other, err := taskAccessForRun(channelRun, otherEvent, taskBoundary(otherEvent))
 	if err != nil || other.Owner.ConversationID == first.Owner.ConversationID {
 		t.Fatalf("other channel owner = %#v, original = %s, error = %v", other.Owner, first.Owner.ConversationID, err)
+	}
+}
+
+func TestTaskAccessForRunAllowsAPIAndAuthenticatedWebAppOwners(t *testing.T) {
+	apiRun, apiEvent := taskRuntimeFixture(invocation.OriginAPI)
+	apiRun.Surface = SurfaceAPI
+	apiEvent.Context = map[string]any{}
+	apiEvent.Context["surface"] = SurfaceAPI
+	access, err := taskAccessForRun(apiRun, apiEvent, taskBoundary(apiEvent))
+	if err != nil || access.Owner.Kind != TaskOwnerUserSubject || access.Owner.Subject.Kind != usersubject.Account || access.Surface != SurfaceAPI {
+		t.Fatalf("API task access = %#v, error = %v", access, err)
+	}
+	apiRun.UserSubjectKind = string(usersubject.APIEndUser)
+	apiAccess, err := taskAccessForRun(apiRun, apiEvent, taskBoundary(apiEvent))
+	if err != nil || apiAccess.Owner.Subject.Kind != usersubject.APIEndUser {
+		t.Fatalf("API end-user task access = %#v, error = %v", apiAccess, err)
+	}
+
+	webAppRun, webAppEvent := taskRuntimeFixture(invocation.OriginAPI)
+	webAppRun.Surface = SurfaceWebApp
+	webAppEvent.Context = map[string]any{}
+	webAppEvent.Context["surface"] = SurfaceWebApp
+	webAppAccess, err := taskAccessForRun(webAppRun, webAppEvent, taskBoundary(webAppEvent))
+	if err != nil || webAppAccess.Owner.Kind != TaskOwnerUserSubject || webAppAccess.Owner.Subject.Kind != usersubject.Account || webAppAccess.Surface != SurfaceWebApp {
+		t.Fatalf("WebApp task access = %#v, error = %v", webAppAccess, err)
+	}
+
+	anonymousRun, anonymousEvent := taskRuntimeFixture(invocation.OriginAPI)
+	anonymousRun.Surface = SurfaceWebApp
+	anonymousRun.UserSubjectID = nil
+	anonymousRun.UserSubjectKind = ""
+	anonymousEvent.Context = map[string]any{"surface": SurfaceWebApp}
+	if _, err := taskAccessForRun(anonymousRun, anonymousEvent, taskBoundary(anonymousEvent)); !errors.Is(err, ErrTaskPolicyRejected) {
+		t.Fatalf("anonymous task access error = %v, want policy rejection", err)
 	}
 }
 

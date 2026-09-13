@@ -49,39 +49,68 @@ func TestDigitalHumanTaskPreflightRejectsRevokedWorkspaceAccess(t *testing.T) {
 	}
 }
 
-func TestDigitalHumanTaskPreflightRejectsUserOwnerOutsideConsole(t *testing.T) {
+func TestDigitalHumanTaskPreflightAllowsAccountOwnerOnWebApp(t *testing.T) {
 	db, mock := taskRunnerMockDB(t)
 	runner := &digitalHumanAutomationRunner{db: db}
 	organizationID, workspaceID, digitalHumanID, accountID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	mock.ExpectQuery(`SELECT count\(\*\) FROM "digital_humans"`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM "user_subjects"`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM workspace_members AS members`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 
 	err := runner.preflight(t.Context(), organizationID, workspaceID, digitalHumanID,
 		digitalhuman.UserTaskOwner(usersubject.AccountSubject(accountID)),
-		automationaction.DigitalHumanRunRequest{OriginSurface: digitalhuman.SurfaceAPI},
+		automationaction.DigitalHumanRunRequest{OriginSurface: digitalhuman.SurfaceWebApp},
 	)
-	if !errors.Is(err, errDigitalHumanTaskExecutionUnavailable) {
-		t.Fatalf("preflight error = %v, want execution unavailable", err)
+	if err != nil {
+		t.Fatalf("preflight error = %v, want account WebApp task to be executable", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestDigitalHumanTaskPreflightRejectsAPIEndUserOwner(t *testing.T) {
+func TestDigitalHumanTaskPreflightAllowsAPIEndUserOwnerOnAPI(t *testing.T) {
 	db, mock := taskRunnerMockDB(t)
 	runner := &digitalHumanAutomationRunner{db: db}
 	organizationID, workspaceID, digitalHumanID, subjectID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	mock.ExpectQuery(`SELECT count\(\*\) FROM "digital_humans"`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM "user_subjects"`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 
 	err := runner.preflight(t.Context(), organizationID, workspaceID, digitalHumanID,
 		digitalhuman.UserTaskOwner(usersubject.Ref{Kind: usersubject.APIEndUser, ID: subjectID}),
-		automationaction.DigitalHumanRunRequest{OriginSurface: digitalhuman.SurfaceConsole},
+		automationaction.DigitalHumanRunRequest{OriginSurface: digitalhuman.SurfaceAPI},
 	)
-	if !errors.Is(err, errDigitalHumanTaskExecutionUnavailable) {
-		t.Fatalf("preflight error = %v, want execution unavailable", err)
+	if err != nil {
+		t.Fatalf("preflight error = %v, want API end-user task to be executable", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDigitalHumanTaskPreflightRejectsMismatchedPrivateOwnerSurface(t *testing.T) {
+	tests := []struct {
+		name    string
+		owner   digitalhuman.TaskOwnerRef
+		surface string
+	}{
+		{name: "account on api", owner: digitalhuman.UserTaskOwner(usersubject.AccountSubject(uuid.New())), surface: digitalhuman.SurfaceAPI},
+		{name: "api user on console", owner: digitalhuman.UserTaskOwner(usersubject.Ref{Kind: usersubject.APIEndUser, ID: uuid.New()}), surface: digitalhuman.SurfaceConsole},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := taskRunnerMockDB(t)
+			runner := &digitalHumanAutomationRunner{db: db}
+			mock.ExpectQuery(`SELECT count\(\*\) FROM "digital_humans"`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+			err := runner.preflight(t.Context(), uuid.New(), uuid.New(), uuid.New(), tt.owner,
+				automationaction.DigitalHumanRunRequest{OriginSurface: tt.surface})
+			if !errors.Is(err, errDigitalHumanTaskExecutionUnavailable) {
+				t.Fatalf("preflight error = %v, want execution unavailable", err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 

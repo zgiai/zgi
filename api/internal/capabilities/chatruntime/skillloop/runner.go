@@ -640,6 +640,18 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			stepCount++
 			executionCall := call
 			runtimeTool, runtimeCall := runtimeToolForCall(req.RuntimeTools, call)
+			if runtimeCall {
+				// Runtime tools bypass the regular progressive-skill handler. Emit
+				// the same lifecycle events so durable runs and the shared chat UI
+				// expose their progress consistently with Agent tools.
+				r.emitEvent(prepared, EventSkillCallStart, skillCallStartPayload(
+					prepared,
+					call.ID,
+					runtimeTool.SkillID,
+					runtimeTool.Definition.Function.Name,
+					nil,
+				))
+			}
 			if req.NativeAgentLoop && !runtimeCall {
 				executionCall = nativeExecutionCall(call, nativeToolSet)
 			}
@@ -673,6 +685,10 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			}
 			if result.trace.Kind == "" && runtimeCall {
 				result = handleRuntimeToolCall(ctx, call, runtimeTool)
+				if strings.TrimSpace(result.trace.InvocationID) == "" {
+					result.trace.InvocationID = call.ID
+				}
+				r.emitEvent(prepared, EventSkillCallEnd, skillCallEndPayload(prepared, result.trace))
 			}
 			if result.trace.Kind == "" && userInputPlanRevisionRequiredForTool(req, callSkillID, callToolName) {
 				result = pendingUserInputPlanRevisionStep(executionCall.ID, callSkillID, callToolName, callToolArgs, resolved)

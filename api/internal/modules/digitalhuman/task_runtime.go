@@ -49,6 +49,15 @@ func NewTaskRuntimeProvider(service TaskHandlerService) *DefaultTaskRuntimeProvi
 	return &DefaultTaskRuntimeProvider{service: service, now: func() time.Time { return time.Now().UTC() }}
 }
 
+// TaskService exposes the task domain to the conversation continuation
+// adapter without coupling ChatRuntime to DigitalHuman internals.
+func (p *DefaultTaskRuntimeProvider) TaskService() TaskHandlerService {
+	if p == nil {
+		return nil
+	}
+	return p.service
+}
+
 type taskRuntimeBoundary struct {
 	source           string
 	conversationID   string
@@ -69,6 +78,11 @@ func (p *DefaultTaskRuntimeProvider) Prepare(ctx context.Context, run *Run, even
 		boundary.writable = true
 	case invocation.OriginManual:
 		boundary.writable = true
+	case invocation.OriginAPI:
+		// API and authenticated WebApp runs use the current UserSubject as
+		// their private task namespace. Anonymous WebApp runs have no subject
+		// and are rejected by taskAccessForRun below.
+		boundary.writable = run.UserSubjectID != nil && *run.UserSubjectID != uuid.Nil
 	case invocation.OriginSchedule:
 		boundary.writable = boundary.currentTaskID != uuid.Nil
 	}
@@ -89,14 +103,16 @@ func (p *DefaultTaskRuntimeProvider) Prepare(ctx context.Context, run *Run, even
 func taskRuntimeGuidance(boundary taskRuntimeBoundary) string {
 	guidance := []string{
 		"You can manage only the task namespace made visible to this invocation.",
-		"When the current user explicitly and unambiguously asks to create a task, reminder, or schedule, use create to commit it in one operation. Do not propose and then confirm the same explicit request.",
-		"When ordinary discussion merely suggests possible future work, use propose and ask the user to confirm it. Never silently turn inferred work into a confirmed task.",
-		"When the user confirms an earlier proposal, list proposed tasks from this conversation first. Confirm the single matching proposal using its returned ID and revision. If several proposals could match, ask which one instead of guessing.",
+		"Every conversational task creation requires a separate user approval. When the current user explicitly or implicitly asks for a task, reminder, or schedule, create a proposed task and ask the user to confirm it; never commit a new task in the same turn.",
+		"The create and propose actions both create a proposal. Treat create as a compatibility alias for propose, not as an approval bypass. This approval rule applies to console, API, WebApp, and channel conversations.",
+		"When the user confirms an earlier proposal, list proposed tasks from the current task namespace first; for a channel, prefer the current conversation. Confirm the single matching proposal using its returned ID and revision. If several proposals could match, ask which one instead of guessing.",
+		"When one request changes a paused task's schedule and also asks to restore, activate, or resume it, submit one update action with both schedule and lifecycle_status=active. Do not split that request into separate schedule and resume operations.",
 		"Task listing defaults to unfinished work. Read completed or canceled history only when the user asks about past work, a previous result is needed, a recurring task needs its prior outcome, or a duplicate check requires recent history.",
 		"Historical task lists are summaries. Get one task by ID only after identifying the relevant record; do not load unrelated completed work into the conversation.",
-		"Confirm, update, schedule, run, cancel, or change status only when the current user explicitly requests that operation.",
+		"Confirm, update, schedule, run, cancel, pause, resume, retry, archive, or change status only when the current user explicitly requests that operation.",
+		"Use pause and resume for the task's lifecycle. Do not use set_status to resume a paused task: set_status changes only the work status and does not reactivate scheduling.",
 		"A task is operational state, not long-term memory. Do not store task contents merely because a task exists.",
-		"Never claim a task mutation succeeded unless the task tool reports success. Use the returned revision for subsequent mutations.",
+		"Never claim a task was created, scheduled, or changed unless the task tool reports success. A successful proposal is not an approved or active task; tell the user that approval is still required. Use the returned revision for subsequent mutations.",
 	}
 	if boundary.currentTaskID != uuid.Nil {
 		guidance = append(guidance, "This is a scheduled execution. The scheduler owns successful completion: do not mark the task completed. You may only update the current task to waiting or blocked when the work genuinely cannot finish; do not create, confirm, reschedule, rerun, or cancel tasks from this run.")
@@ -124,6 +140,12 @@ func taskRuntimeGuidance(boundary taskRuntimeBoundary) string {
 
 func taskBoundary(event invocation.Event) taskRuntimeBoundary {
 	result := taskRuntimeBoundary{source: "console", replyTo: event.ReplyTo}
+	// Manual/API/WebApp runs carry the canonical ChatRuntime conversation in
+	// the signed invocation context. Capture it once so task delivery can
+	// return to the same conversation after a scheduled run completes.
+	if raw, ok := event.Context["conversation_id"].(string); ok {
+		result.conversationID = strings.TrimSpace(raw)
+	}
 	if event.Origin.Kind == invocation.OriginChannel {
 		result.source = "channel:" + event.Origin.Provider
 		if event.ReplyTo != nil {
@@ -140,6 +162,14 @@ func taskBoundary(event invocation.Event) taskRuntimeBoundary {
 		result.source = "schedule"
 		if raw, ok := event.Context["task_id"].(string); ok {
 			result.currentTaskID, _ = uuid.Parse(raw)
+		}
+	}
+	if event.Origin.Kind == invocation.OriginAPI {
+		result.source = "external-api"
+		if event.Context != nil {
+			if surface, ok := event.Context["surface"].(string); ok && strings.TrimSpace(surface) == SurfaceWebApp {
+				result.source = "webapp"
+			}
 		}
 	}
 	return result
@@ -163,6 +193,19 @@ func taskAccessForRun(run *Run, event invocation.Event, boundary taskRuntimeBoun
 		}
 		access.Owner = UserTaskOwner(usersubject.Ref{Kind: usersubject.Kind(run.UserSubjectKind), ID: *run.UserSubjectID})
 		access.Surface = SurfaceConsole
+	case invocation.OriginAPI:
+		if run.UserSubjectID == nil || *run.UserSubjectID == uuid.Nil {
+			return TaskAccessContext{}, ErrTaskPolicyRejected
+		}
+		kind := usersubject.Kind(run.UserSubjectKind)
+		if kind != usersubject.Account && kind != usersubject.APIEndUser {
+			return TaskAccessContext{}, ErrTaskPolicyRejected
+		}
+		if run.Surface != SurfaceAPI && run.Surface != SurfaceWebApp {
+			return TaskAccessContext{}, ErrTaskPolicyRejected
+		}
+		access.Owner = UserTaskOwner(usersubject.Ref{Kind: kind, ID: *run.UserSubjectID})
+		access.Surface = run.Surface
 	case invocation.OriginChannel:
 		conversationID, err := ChannelTaskConversationID(run.OrganizationID, run.WorkspaceID, run.DigitalHumanID, event.Origin.Provider, event.Origin.InstallationID, boundary.conversationID)
 		if err != nil {
@@ -377,11 +420,13 @@ type manageTaskArguments struct {
 	DeliveryMode            TaskDeliveryMode `json:"delivery_mode"`
 	ExecutionTimeoutSeconds int              `json:"execution_timeout_seconds"`
 	MaxAttempts             int              `json:"max_attempts"`
+	LifecycleStatus         string           `json:"lifecycle_status"`
 }
 
 func (p *DefaultTaskRuntimeProvider) manageTool(run *Run, boundary taskRuntimeBoundary) skillloop.RuntimeTool {
-	definition := adapter.Tool{Type: "function", Function: adapter.Function{Name: taskManageToolName, Description: "Create an explicitly requested task in one operation, propose inferred work for confirmation, or manage an existing task. Existing-task actions require its ID and current revision.", Parameters: map[string]any{"type": "object", "properties": map[string]any{
-		"action": map[string]any{"type": "string", "enum": []string{"create", "propose", "confirm", "decline", "update", "set_status", "schedule", "run_now", "cancel"}}, "task_id": map[string]any{"type": "string", "format": "uuid"}, "expected_revision": map[string]any{"type": "integer", "minimum": 0}, "name": map[string]any{"type": "string"}, "goal": map[string]any{"type": "string"}, "success_criteria": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "priority": map[string]any{"type": "string", "enum": []string{"low", "normal", "high", "urgent"}}, "status": map[string]any{"type": "string", "enum": taskStatusValues()}, "schedule": map[string]any{"type": "object", "properties": map[string]any{"type": map[string]any{"type": "string", "enum": []string{"manual", "once", "cron"}}, "run_at": map[string]any{"type": "string", "format": "date-time"}, "cron": map[string]any{"type": "string"}, "timezone": map[string]any{"type": "string"}}, "required": []string{"type"}, "additionalProperties": false}, "delivery_mode": map[string]any{"type": "string", "enum": []string{"task_only", "source_conversation"}}, "execution_timeout_seconds": map[string]any{"type": "integer", "minimum": 30, "maximum": 1800}, "max_attempts": map[string]any{"type": "integer", "minimum": 1, "maximum": 3},
+	description := "Create a task proposal that requires separate user approval, or manage an existing task. The create and propose actions are aliases. Existing-task actions require its ID and current revision. Use pause or resume to change whether a task is scheduled; use set_status only for the work status (waiting or blocked during a scheduled run)."
+	definition := adapter.Tool{Type: "function", Function: adapter.Function{Name: taskManageToolName, Description: description, Parameters: map[string]any{"type": "object", "properties": map[string]any{
+		"action": map[string]any{"type": "string", "enum": []string{"create", "propose", "confirm", "decline", "update", "set_status", "schedule", "run_now", "pause", "resume", "retry", "cancel", "archive"}}, "task_id": map[string]any{"type": "string", "format": "uuid"}, "expected_revision": map[string]any{"type": "integer", "minimum": 0}, "name": map[string]any{"type": "string"}, "goal": map[string]any{"type": "string"}, "success_criteria": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "priority": map[string]any{"type": "string", "enum": []string{"low", "normal", "high", "urgent"}}, "status": map[string]any{"type": "string", "enum": taskStatusValues()}, "lifecycle_status": map[string]any{"type": "string", "enum": []string{"paused", "active", "archived"}, "description": "When updating a paused task together with its schedule, set active to resume it in the same approved operation."}, "schedule": map[string]any{"type": "object", "properties": map[string]any{"type": map[string]any{"type": "string", "enum": []string{"manual", "once", "cron"}}, "run_at": map[string]any{"type": "string", "format": "date-time"}, "cron": map[string]any{"type": "string"}, "timezone": map[string]any{"type": "string"}}, "required": []string{"type"}, "additionalProperties": false}, "delivery_mode": map[string]any{"type": "string", "enum": []string{"task_only", "source_conversation"}}, "execution_timeout_seconds": map[string]any{"type": "integer", "minimum": 30, "maximum": 1800}, "max_attempts": map[string]any{"type": "integer", "minimum": 1, "maximum": 3},
 	}, "required": []string{"action"}, "additionalProperties": false}}}
 	handler := func(ctx context.Context, call adapter.ToolCall) skillloop.RuntimeToolResult {
 		var args manageTaskArguments
@@ -393,19 +438,40 @@ func (p *DefaultTaskRuntimeProvider) manageTool(run *Run, boundary taskRuntimeBo
 			return taskToolFailure("digital_human.task.policy_rejected", false)
 		}
 		if args.Action == "create" || args.Action == "propose" {
-			mutation.Proposed = args.Action == "propose"
+			// Conversational creation always enters the approval state. Explicit
+			// user intent is not enough to bypass confirmation because the same
+			// model-facing tool is used by channels and external surfaces.
+			mutation.Proposed = true
+			if args.DeliveryMode == TaskDeliverySourceConversation &&
+				boundary.replyTo == nil && !validTaskConversationID(boundary.conversationID) {
+				// A source conversation is a durable ChatRuntime conversation for
+				// console/API/WebApp runs, or a ReplyAddress for channels. If neither
+				// is present, fall back safely to the task center instead of storing an
+				// undeliverable target.
+				args.DeliveryMode = TaskDeliveryTaskOnly
+			}
 			result, err := p.service.CreateTask(ctx, boundary.access, CreateTaskRequest{Name: args.Name, Goal: args.Goal, SuccessCriteria: args.SuccessCriteria, Priority: args.Priority, Schedule: valueSchedule(args.Schedule), DeliveryMode: args.DeliveryMode, ExecutionTimeoutSeconds: args.ExecutionTimeoutSeconds, MaxAttempts: args.MaxAttempts}, mutation)
 			if err != nil {
 				return taskToolFailure(taskErrorCode(err), errors.Is(err, ErrInvalidRequest))
 			}
-			status := "committed"
-			if mutation.Proposed {
-				status = "proposed"
-			}
-			return taskToolSuccess(call, map[string]any{"status": status, "task": result})
+			return taskToolSuccessWithApproval(call, map[string]any{"status": "proposed", "approval_required": true, "task": result}, taskApprovalPayload(run, boundary, result, args, mutation.OperationID, "create"))
 		}
 		if args.TaskID == nil || *args.TaskID == uuid.Nil || args.ExpectedRevision < 1 || (boundary.currentTaskID != uuid.Nil && *args.TaskID != boundary.currentTaskID) {
 			return taskToolFailure("invalid_arguments", true)
+		}
+		// Scheduled runs are system-owned and are the one mutation path that
+		// cannot wait for a human approval. They may only move their current
+		// task to a recoverable waiting/blocked state.
+		if boundary.currentTaskID == uuid.Nil {
+			result, err := p.service.GetTask(ctx, boundary.access, *args.TaskID)
+			if err != nil {
+				return taskToolFailure(taskErrorCode(err), false)
+			}
+			approvalAction := taskApprovalActionForTask(args, result)
+			return taskToolSuccessWithApproval(call,
+				map[string]any{"status": "approval_required", "approval_required": true, "task": result},
+				taskApprovalPayload(run, boundary, result, args, mutation.OperationID, approvalAction),
+			)
 		}
 		var result *Task
 		var err error
@@ -416,8 +482,16 @@ func (p *DefaultTaskRuntimeProvider) manageTool(run *Run, boundary taskRuntimeBo
 			result, err = p.service.ApplyTaskAction(ctx, boundary.access, *args.TaskID, TaskActionDecline, ApplyTaskActionRequest{ExpectedRevision: args.ExpectedRevision}, mutation)
 		case "run_now":
 			result, err = p.service.ApplyTaskAction(ctx, boundary.access, *args.TaskID, TaskActionRunNow, ApplyTaskActionRequest{ExpectedRevision: args.ExpectedRevision}, mutation)
+		case "pause":
+			result, err = p.service.ApplyTaskAction(ctx, boundary.access, *args.TaskID, TaskActionPause, ApplyTaskActionRequest{ExpectedRevision: args.ExpectedRevision}, mutation)
+		case "resume":
+			result, err = p.service.ApplyTaskAction(ctx, boundary.access, *args.TaskID, TaskActionResume, ApplyTaskActionRequest{ExpectedRevision: args.ExpectedRevision}, mutation)
+		case "retry":
+			result, err = p.service.ApplyTaskAction(ctx, boundary.access, *args.TaskID, TaskActionRetry, ApplyTaskActionRequest{ExpectedRevision: args.ExpectedRevision}, mutation)
 		case "cancel":
 			result, err = p.service.ApplyTaskAction(ctx, boundary.access, *args.TaskID, TaskActionCancel, ApplyTaskActionRequest{ExpectedRevision: args.ExpectedRevision}, mutation)
+		case "archive":
+			result, err = p.service.ApplyTaskAction(ctx, boundary.access, *args.TaskID, TaskActionArchive, ApplyTaskActionRequest{ExpectedRevision: args.ExpectedRevision}, mutation)
 		case "set_status":
 			result, err = p.service.SetTaskWorkStatus(ctx, boundary.access, *args.TaskID, args.Status, args.ExpectedRevision, mutation)
 		case "schedule":
@@ -436,6 +510,21 @@ func (p *DefaultTaskRuntimeProvider) manageTool(run *Run, boundary taskRuntimeBo
 		return taskToolSuccess(call, map[string]any{"status": "committed", "task": result})
 	}
 	return skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillDigitalHumanTasks, Handler: handler}
+}
+
+// taskApprovalActionForTask keeps old model behavior compatible with the
+// explicit lifecycle contract. A paused task cannot become runnable by merely
+// changing its work status; pending/in-progress requests on a paused task are
+// therefore treated as a resume proposal.
+func taskApprovalActionForTask(args manageTaskArguments, task *Task) string {
+	action := strings.ToLower(strings.TrimSpace(args.Action))
+	if action == "set_status" && task != nil && task.LifecycleStatus == "paused" {
+		switch args.Status {
+		case TaskWorkStatusPending, TaskWorkStatusInProgress:
+			return "resume"
+		}
+	}
+	return action
 }
 
 func scheduledTaskMutationAllowed(args manageTaskArguments, currentTaskID uuid.UUID) bool {
@@ -473,6 +562,9 @@ func updateRequest(args manageTaskArguments) UpdateTaskRequest {
 	if args.MaxAttempts > 0 {
 		req.MaxAttempts = &args.MaxAttempts
 	}
+	if args.Schedule != nil {
+		req.Schedule = args.Schedule
+	}
 	return req
 }
 func valueSchedule(value *TaskSchedule) TaskSchedule {
@@ -481,6 +573,12 @@ func valueSchedule(value *TaskSchedule) TaskSchedule {
 	}
 	return *value
 }
+
+func validTaskConversationID(value string) bool {
+	id, err := uuid.Parse(strings.TrimSpace(value))
+	return err == nil && id != uuid.Nil
+}
+
 func runScopeWithActor(run *Run) Scope {
 	scope := runScope(run)
 	if scope.ActorID == uuid.Nil {
@@ -511,6 +609,274 @@ func taskToolOperationID(runID uuid.UUID, call adapter.ToolCall) uuid.UUID {
 }
 func taskToolSuccess(call adapter.ToolCall, result any) skillloop.RuntimeToolResult {
 	return skillloop.RuntimeToolResult{Status: "success", Arguments: map[string]any{"tool": call.Function.Name}, Result: map[string]any{"data": result}}
+}
+
+func taskToolSuccessWithApproval(call adapter.ToolCall, result any, approval map[string]interface{}) skillloop.RuntimeToolResult {
+	return skillloop.RuntimeToolResult{
+		Status:          "success",
+		Arguments:       map[string]any{"tool": call.Function.Name},
+		Result:          map[string]any{"data": result},
+		PendingApproval: approval,
+	}
+}
+
+func taskApprovalPayload(run *Run, boundary taskRuntimeBoundary, task *Task, args manageTaskArguments, operationID uuid.UUID, action string) map[string]interface{} {
+	token := uuid.NewString()
+	workflowRunID := "digital-human-task:" + task.ID.String() + ":" + token
+	fields := []map[string]interface{}{}
+	if action == "create" || action == "update" {
+		fields = append(fields,
+			map[string]interface{}{"key": "name", "label": "任务名称", "type": "text", "required": true},
+			map[string]interface{}{"key": "goal", "label": "任务目标", "type": "textarea", "required": true},
+			map[string]interface{}{"key": "supplement", "label": "补充要求", "type": "textarea", "required": false},
+		)
+	}
+	defaults := map[string]interface{}{"name": task.Name, "goal": task.Goal}
+	requestedInputs := taskApprovalRequestedInputs(args, action)
+	augmentTaskApprovalRequestedInputs(run, task, action, requestedInputs)
+	// Resuming a scheduler-blocked task changes both dimensions of state:
+	// lifecycle paused -> active and work blocked -> pending. Keep the latter
+	// in the approval preview so the user can see exactly what will be fixed.
+	if strings.EqualFold(strings.TrimSpace(stringValue(requestedInputs["lifecycle_status"])), "active") &&
+		task.WorkStatus == TaskWorkStatusBlocked {
+		requestedInputs["work_status"] = TaskWorkStatusPending
+	}
+	for key, value := range requestedInputs {
+		defaults[key] = value
+	}
+	if _, ok := defaults["schedule"]; !ok {
+		defaults["schedule"] = task.Schedule
+	}
+	taskBefore, taskAfter, changes := taskApprovalDiff(task, requestedInputs, action)
+	return map[string]interface{}{
+		"kind":                "digital_human_task",
+		"workflow_run_id":     workflowRunID,
+		"approval_token":      token,
+		"ui_approval_allowed": true,
+		"task_id":             task.ID.String(),
+		"task_name":           task.Name,
+		"task_revision":       task.Revision,
+		"task_action":         action,
+		"operation_id":        operationID.String(),
+		"source":              boundary.source,
+		"owner_kind":          string(boundary.access.Owner.Kind),
+		"owner_conversation_id": func() string {
+			if boundary.access.Owner.Kind == TaskOwnerConversation {
+				return boundary.access.Owner.ConversationID.String()
+			}
+			return ""
+		}(),
+		"task":             task,
+		"requested_inputs": requestedInputs,
+		"task_approval": map[string]interface{}{
+			"operation":          taskApprovalOperation(action),
+			"task_before":        taskBefore,
+			"task_after":         taskAfter,
+			"changes":            changes,
+			"supplement_allowed": action == "create" || action == "update",
+		},
+		"approval_form": map[string]interface{}{
+			"id":                      "digital-human-task-" + token,
+			"token":                   token,
+			"node_id":                 "digital_human_task",
+			"node_title":              "任务审批",
+			"content":                 "请确认这项任务操作，确认后才会生效。",
+			"fields":                  fields,
+			"actions":                 taskApprovalFormActions(action == "create" || action == "update"),
+			"resolved_default_values": defaults,
+			"task_approval": map[string]interface{}{
+				"operation":          taskApprovalOperation(action),
+				"task_before":        taskBefore,
+				"task_after":         taskAfter,
+				"changes":            changes,
+				"supplement_allowed": action == "create" || action == "update",
+			},
+		},
+	}
+}
+
+func taskApprovalFormActions(supplementAllowed bool) []map[string]interface{} {
+	actions := []map[string]interface{}{
+		{"id": "approve", "label": "确认并执行", "style": "primary"},
+	}
+	if supplementAllowed {
+		actions = append(actions, map[string]interface{}{
+			"id": "revise", "label": "补充要求并重新生成", "style": "secondary",
+		})
+	}
+	actions = append(actions, map[string]interface{}{"id": "decline", "label": "取消", "style": "secondary"})
+	return actions
+}
+
+func taskApprovalOperation(action string) string {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "create", "propose":
+		return "create"
+	case "update", "schedule":
+		return "update"
+	case "cancel":
+		return "cancel"
+	case "run_now":
+		return "run_now"
+	case "pause":
+		return "pause"
+	case "resume":
+		return "resume"
+	case "retry":
+		return "retry"
+	case "archive":
+		return "archive"
+	case "set_status":
+		return "status"
+	case "confirm":
+		return "confirm"
+	case "decline":
+		return "decline"
+	default:
+		return "action"
+	}
+}
+
+func taskApprovalDiff(task *Task, requestedInputs map[string]interface{}, action string) (map[string]interface{}, map[string]interface{}, []map[string]interface{}) {
+	if task == nil {
+		return nil, nil, nil
+	}
+	before := taskApprovalTaskMap(task)
+	after := make(map[string]interface{}, len(before))
+	for key, value := range before {
+		after[key] = value
+	}
+	if strings.EqualFold(taskApprovalOperation(action), "create") {
+		return nil, after, nil
+	}
+	for key, value := range requestedInputs {
+		if key == "supplement" || value == nil {
+			continue
+		}
+		after[key] = value
+	}
+	changes := make([]map[string]interface{}, 0)
+	labels := map[string]string{
+		"name": "任务名称", "goal": "任务目标", "success_criteria": "成功标准",
+		"priority": "优先级", "schedule": "执行计划", "delivery_mode": "结果去向",
+		"execution_timeout_seconds": "超时时间", "max_attempts": "最大尝试次数",
+		"work_status": "工作状态", "lifecycle_status": "运行状态", "next_run_at": "下次执行时间",
+	}
+	for key, label := range labels {
+		beforeValue := before[key]
+		afterValue := after[key]
+		beforeJSON, _ := json.Marshal(beforeValue)
+		afterJSON, _ := json.Marshal(afterValue)
+		if string(beforeJSON) == string(afterJSON) {
+			continue
+		}
+		changes = append(changes, map[string]interface{}{
+			"field": key, "label": label, "before": beforeValue, "after": afterValue,
+		})
+	}
+	return before, after, changes
+}
+
+func taskApprovalTaskMap(task *Task) map[string]interface{} {
+	encoded, err := json.Marshal(task)
+	if err != nil {
+		return map[string]interface{}{}
+	}
+	result := map[string]interface{}{}
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		return map[string]interface{}{}
+	}
+	return result
+}
+
+// taskApprovalRequestedInputs preserves the model's proposed mutation in the
+// durable continuation. The task itself is intentionally not mutated for
+// update/schedule/status actions until the user approves the continuation.
+func taskApprovalRequestedInputs(args manageTaskArguments, action string) map[string]interface{} {
+	inputs := map[string]interface{}{}
+	switch action {
+	case "create", "update":
+		if strings.TrimSpace(args.Name) != "" {
+			inputs["name"] = strings.TrimSpace(args.Name)
+		}
+		if strings.TrimSpace(args.Goal) != "" {
+			inputs["goal"] = strings.TrimSpace(args.Goal)
+		}
+		if args.SuccessCriteria != nil {
+			inputs["success_criteria"] = args.SuccessCriteria
+		}
+		if args.Priority != "" {
+			inputs["priority"] = args.Priority
+		}
+		if args.Schedule != nil {
+			inputs["schedule"] = args.Schedule
+		}
+		if args.DeliveryMode != "" {
+			inputs["delivery_mode"] = args.DeliveryMode
+		}
+		if args.ExecutionTimeoutSeconds > 0 {
+			inputs["execution_timeout_seconds"] = args.ExecutionTimeoutSeconds
+		}
+		if args.MaxAttempts > 0 {
+			inputs["max_attempts"] = args.MaxAttempts
+		}
+		if strings.TrimSpace(args.LifecycleStatus) != "" {
+			inputs["lifecycle_status"] = strings.TrimSpace(args.LifecycleStatus)
+		}
+	case "schedule":
+		if args.Schedule != nil {
+			inputs["schedule"] = args.Schedule
+		}
+	case "set_status":
+		if args.Status != "" {
+			inputs["work_status"] = args.Status
+			// Keep the legacy key in the continuation so approvals created by
+			// older clients remain readable by the apply path.
+			inputs["status"] = args.Status
+		}
+	case "pause":
+		inputs["lifecycle_status"] = "paused"
+	case "resume":
+		inputs["lifecycle_status"] = "active"
+	case "retry":
+		inputs["lifecycle_status"] = "active"
+		inputs["work_status"] = string(TaskWorkStatusInProgress)
+	case "archive":
+		inputs["lifecycle_status"] = "archived"
+	}
+	return inputs
+}
+
+// augmentTaskApprovalRequestedInputs turns the common compound request
+// "change the schedule and restore this paused task" into one approval plan.
+// The model can provide lifecycle_status explicitly; the query fallback keeps
+// older model snapshots from splitting the same user intent into two approvals.
+func augmentTaskApprovalRequestedInputs(run *Run, task *Task, action string, inputs map[string]interface{}) {
+	if run == nil || task == nil || inputs == nil || task.LifecycleStatus != "paused" {
+		return
+	}
+	if action != "schedule" && action != "update" {
+		return
+	}
+	if lifecycle := strings.TrimSpace(stringValue(inputs["lifecycle_status"])); lifecycle != "" {
+		return
+	}
+	query := strings.ToLower(strings.TrimSpace(run.Query))
+	if containsTaskResumeIntent(query) {
+		inputs["lifecycle_status"] = "active"
+	}
+}
+
+func containsTaskResumeIntent(query string) bool {
+	for _, phrase := range []string{"恢复", "重新启动", "重新启用", "resume", "reactivate", "activate"} {
+		if strings.Contains(query, phrase) &&
+			!strings.Contains(query, "不要"+phrase) &&
+			!strings.Contains(query, "不"+phrase) &&
+			!strings.Contains(query, "别"+phrase) {
+			return true
+		}
+	}
+	return false
 }
 func taskToolFailure(code string, recoverable bool) skillloop.RuntimeToolResult {
 	modelResult := map[string]any{"status": "rejected", "error_code": code, "retry_allowed": recoverable, "next_action": taskToolNextAction(code)}

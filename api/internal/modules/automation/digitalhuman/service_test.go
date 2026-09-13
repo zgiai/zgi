@@ -93,6 +93,71 @@ func TestServiceProposalLifecycleAndOptimisticRevision(t *testing.T) {
 	}
 }
 
+func TestServiceResumeClearsBlockedWorkStatus(t *testing.T) {
+	service, _, access, _ := newTaskService(t)
+	created, err := service.CreateTask(t.Context(), access, digitalhuman.CreateTaskRequest{
+		Name: "Blocked task", Goal: "Recover a task after a scheduler failure",
+		Schedule: digitalhuman.TaskSchedule{Type: digitalhuman.TaskScheduleOnce, RunAt: func() *time.Time {
+			value := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+			return &value
+		}(), Timezone: "UTC"},
+	}, digitalhuman.TaskMutationContext{ActorType: "account", ActorRef: access.Principal.ID, OperationID: uuid.New(), Source: "console"})
+	if err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	if _, err := service.ApplyTaskAction(t.Context(), access, created.ID, digitalhuman.TaskActionPause, digitalhuman.ApplyTaskActionRequest{ExpectedRevision: created.Revision}, mutationWithOperation(digitalhuman.TaskMutationContext{ActorType: "account", ActorRef: access.Principal.ID, OperationID: uuid.New(), Source: "console"})); err != nil {
+		t.Fatalf("Pause() error = %v", err)
+	}
+	blocked := automationmodel.AutomationWorkStatusBlocked
+	paused := automationmodel.AutomationTaskStatusPaused
+	if err := service.db.Model(&automationmodel.AutomationTask{}).Where("id = ?", created.ID).Updates(map[string]any{"work_status": blocked, "status": paused, "next_run_at": nil}).Error; err != nil {
+		t.Fatalf("seed blocked task: %v", err)
+	}
+	resumed, err := service.ApplyTaskAction(t.Context(), access, created.ID, digitalhuman.TaskActionResume, digitalhuman.ApplyTaskActionRequest{ExpectedRevision: created.Revision + 1}, mutationWithOperation(digitalhuman.TaskMutationContext{ActorType: "account", ActorRef: access.Principal.ID, OperationID: uuid.New(), Source: "console"}))
+	if err != nil {
+		t.Fatalf("Resume() error = %v", err)
+	}
+	if resumed.WorkStatus != digitalhuman.TaskWorkStatusPending || resumed.LifecycleStatus != string(automationmodel.AutomationTaskStatusActive) || resumed.NextRunAt == nil {
+		t.Fatalf("resumed task = %#v, want pending/active with next run", resumed)
+	}
+}
+
+func TestServiceApprovedLifecycleUpdateReactivatesCompletedTask(t *testing.T) {
+	service, _, access, _ := newTaskService(t)
+	created, err := service.CreateTask(t.Context(), access, digitalhuman.CreateTaskRequest{
+		Name: "Completed task", Goal: "Re-activate after approval",
+		Schedule: digitalhuman.TaskSchedule{Type: digitalhuman.TaskScheduleOnce, RunAt: func() *time.Time {
+			value := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+			return &value
+		}(), Timezone: "UTC"},
+	}, digitalhuman.TaskMutationContext{ActorType: "account", ActorRef: access.Principal.ID, OperationID: uuid.New(), Source: "console"})
+	if err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	completed := automationmodel.AutomationWorkStatusCompleted
+	status := automationmodel.AutomationTaskStatusCompleted
+	if err := service.db.Model(&automationmodel.AutomationTask{}).Where("id = ?", created.ID).Updates(map[string]any{
+		"work_status": completed,
+		"status":      status,
+		"next_run_at": nil,
+	}).Error; err != nil {
+		t.Fatalf("seed completed task: %v", err)
+	}
+	runAt := time.Now().UTC().Add(2 * time.Hour).Truncate(time.Second)
+	lifecycle := string(automationmodel.AutomationTaskStatusActive)
+	updated, err := service.UpdateTask(t.Context(), access, created.ID, digitalhuman.UpdateTaskRequest{
+		ExpectedRevision: created.Revision,
+		LifecycleStatus:  &lifecycle,
+		Schedule:         &digitalhuman.TaskSchedule{Type: digitalhuman.TaskScheduleOnce, RunAt: &runAt, Timezone: "UTC"},
+	}, digitalhuman.TaskMutationContext{ActorType: "account", ActorRef: access.Principal.ID, OperationID: uuid.New(), Source: "console"})
+	if err != nil {
+		t.Fatalf("UpdateTask() error = %v", err)
+	}
+	if updated.LifecycleStatus != string(automationmodel.AutomationTaskStatusActive) || updated.WorkStatus != digitalhuman.TaskWorkStatusPending || updated.NextRunAt == nil {
+		t.Fatalf("updated task = %#v, want active/pending with next run", updated)
+	}
+}
+
 func TestServiceStoresCanonicalCronSchedule(t *testing.T) {
 	service, _, access, _ := newTaskService(t)
 	created, err := service.CreateTask(t.Context(), access, digitalhuman.CreateTaskRequest{

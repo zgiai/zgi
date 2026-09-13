@@ -3,12 +3,14 @@ package digitalhumantask
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
+	digitalhuman "github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -30,11 +32,20 @@ type ReconcileHandler struct {
 	db         *gorm.DB
 	dispatcher RunDispatcher
 	provider   automationaction.DigitalHumanRunnerProvider
+	deliverer  digitalhuman.TaskResultDeliverer
 	now        func() time.Time
 }
 
 func NewReconcileHandler(db *gorm.DB, dispatcher RunDispatcher, provider automationaction.DigitalHumanRunnerProvider) *ReconcileHandler {
 	return &ReconcileHandler{db: db, dispatcher: dispatcher, provider: provider, now: func() time.Time { return time.Now().UTC() }}
+}
+
+// SetResultDeliverer is called once the DigitalHuman runtime is initialized.
+// The scheduler handler itself is registered earlier during route setup.
+func (h *ReconcileHandler) SetResultDeliverer(deliverer digitalhuman.TaskResultDeliverer) {
+	if h != nil {
+		h.deliverer = deliverer
+	}
 }
 
 func (h *ReconcileHandler) Handle(ctx context.Context, _ *asynq.Task) error {
@@ -135,6 +146,8 @@ func (h *ReconcileHandler) expireProposals(ctx context.Context) error {
 func (h *ReconcileHandler) finish(ctx context.Context, actionRunID, taskRunID, taskID string, state *automationaction.DigitalHumanRunState) error {
 	now := h.now()
 	retryRunID := ""
+	var delivery *digitalhuman.TaskResultDeliveryRequest
+	var deliveryAlreadyRecorded bool
 	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var actionRun automationmodel.AutomationActionRun
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", actionRunID).First(&actionRun).Error; err != nil {
@@ -150,6 +163,35 @@ func (h *ReconcileHandler) finish(ctx context.Context, actionRunID, taskRunID, t
 		var task automationmodel.AutomationTask
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", taskID).First(&task).Error; err != nil {
 			return err
+		}
+		if state.Status == "succeeded" && h.deliverer != nil {
+			var delivered int64
+			if err := tx.Model(&automationmodel.AutomationTaskActivity{}).
+				Where("task_id = ? AND action = ? AND operation_id = ?", task.ID, "result_delivered", taskRunID).
+				Count(&delivered).Error; err != nil {
+				return err
+			}
+			deliveryAlreadyRecorded = delivered > 0
+			if !deliveryAlreadyRecorded {
+				if conversationID, ok := uuidFromTaskDeliveryConfig(task.DeliveryConfig); ok {
+					accountID := uuid.Nil
+					subjectKind := ""
+					if task.OwnerSubjectKind != nil {
+						subjectKind = strings.TrimSpace(*task.OwnerSubjectKind)
+					}
+					// ChatRuntime stores both account and API-end-user
+					// conversations under AccountID. The runtime decides whether
+					// membership checks apply from UserSubjectKind.
+					if task.OwnerSubjectID != nil {
+						accountID, _ = uuid.Parse(strings.TrimSpace(*task.OwnerSubjectID))
+					}
+					delivery = &digitalhuman.TaskResultDeliveryRequest{
+						OrganizationID: mustUUID(task.OrganizationID), WorkspaceID: mustUUID(task.WorkspaceID), AccountID: accountID, UserSubjectKind: subjectKind,
+						DigitalHumanID: mustUUID(pointerValue(task.SubjectID)), TaskID: mustUUID(task.ID), TaskRunID: mustUUID(taskRunID),
+						ConversationID: conversationID, Source: pointerValue(task.OriginSurface), TaskName: task.Name, Answer: state.Result,
+					}
+				}
+			}
 		}
 		succeeded := state.Status == "succeeded"
 		actionRun.FinishedAt = &now
@@ -224,12 +266,49 @@ func (h *ReconcileHandler) finish(ctx context.Context, actionRunID, taskRunID, t
 	if err != nil {
 		return err
 	}
+	if delivery != nil && !deliveryAlreadyRecorded {
+		if err := h.deliverer.DeliverTaskResult(ctx, *delivery); err != nil {
+			// The task result remains queryable in the task center. Keep the
+			// scheduler run successful and leave a safe retry signal in its
+			// activity history instead of turning a completed task into failed.
+			_ = h.db.WithContext(ctx).Create(&automationmodel.AutomationTaskActivity{
+				TaskID: delivery.TaskID.String(), OperationID: delivery.TaskRunID.String(),
+				ActorType: automationmodel.AutomationTaskActivityActorSystem, ActorRef: "scheduler",
+				Action: "result_delivery_failed", Summary: "Task result could not be returned to the source conversation",
+				Changes: map[string]any{"error": "conversation delivery unavailable"},
+			}).Error
+		} else {
+			_ = h.db.WithContext(ctx).Create(&automationmodel.AutomationTaskActivity{
+				TaskID: delivery.TaskID.String(), OperationID: delivery.TaskRunID.String(),
+				ActorType: automationmodel.AutomationTaskActivityActorSystem, ActorRef: "scheduler",
+				Action: "result_delivered", Summary: "Task result returned to the source conversation",
+				Changes: map[string]any{"conversation_id": delivery.ConversationID.String()},
+			}).Error
+		}
+	}
 	if retryRunID != "" {
 		if err := h.dispatcher.DispatchTaskRun(ctx, retryRunID); err != nil {
 			return fmt.Errorf("enqueue digital human task retry: %w", err)
 		}
 	}
 	return nil
+}
+
+func uuidFromTaskDeliveryConfig(config map[string]interface{}) (uuid.UUID, bool) {
+	if config == nil || config["mode"] != string(digitalhuman.TaskDeliverySourceConversation) {
+		return uuid.Nil, false
+	}
+	value, ok := config["conversation_id"].(string)
+	if !ok {
+		return uuid.Nil, false
+	}
+	id, err := uuid.Parse(strings.TrimSpace(value))
+	return id, err == nil && id != uuid.Nil
+}
+
+func mustUUID(value string) uuid.UUID {
+	id, _ := uuid.Parse(strings.TrimSpace(value))
+	return id
 }
 
 func terminalDigitalHumanStatus(status string) bool {

@@ -296,6 +296,10 @@ type CreateCompletedMessageRequest struct {
 	ModelName       string
 	ModelParameters map[string]interface{}
 	Metadata        map[string]interface{}
+	// SourceMessageID provides an idempotency key for durable system
+	// deliveries (for example, a scheduled task result). It is not exposed
+	// as a user-facing message field.
+	SourceMessageID *uuid.UUID
 }
 
 type CreatePendingMessageRequest struct {

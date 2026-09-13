@@ -328,7 +328,8 @@ type LLMInvocationContentConfig struct {
 }
 
 type ModelMetaConfig struct {
-	APIURL string `json:"api_url"`
+	APIURL          string `json:"api_url"`
+	AutoSyncEnabled bool   `json:"auto_sync_enabled"`
 }
 
 type Neo4jConfig struct {

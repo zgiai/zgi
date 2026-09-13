@@ -45,6 +45,7 @@ func TestRunDigitalHumanExecutorReturnsPendingExternalRun(t *testing.T) {
 	}
 	if runner.request.ActionRunID != actionRun.ID || runner.request.DigitalHumanID != subjectID || runner.request.ReplyTo == nil ||
 		runner.request.ReplyTo.ConversationID != "chat-1" || runner.request.ReplyTo.RecipientID != "ou_creator" ||
+		runner.request.DeliveryMode != "source_conversation" ||
 		runner.request.OwnerKind != string(ownerKind) || runner.request.OwnerConversationID != ownerConversationID ||
 		runner.request.ChannelProvider != "feishu" || runner.request.ChannelInstallationID != "installation-1" || runner.request.ChannelConversationID != "chat-1" {
 		t.Fatalf("runner request = %#v", runner.request)

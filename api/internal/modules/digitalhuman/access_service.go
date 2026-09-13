@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -273,9 +272,6 @@ func (s *AccessService) DeleteAPIKey(ctx context.Context, scope Scope, digitalHu
 }
 
 func (s *AccessService) ResolveAPIKey(ctx context.Context, rawKey string) (*APIKey, *PublishedAccess, error) {
-	if !ExternalAPIRuntimeEnabled() {
-		return nil, nil, ErrPublishInvalid
-	}
 	var key APIKey
 	err := s.db.WithContext(ctx).Where("key_hash = ? AND status = ?", externalapikey.Hash(rawKey), APIKeyStatusActive).
 		Where("expires_at IS NULL OR expires_at > ?", s.now()).Take(&key).Error
@@ -300,7 +296,7 @@ func (s *AccessService) ResolveAPIKey(ctx context.Context, rawKey string) (*APIK
 }
 
 func (s *AccessService) ResolveWebApp(ctx context.Context, webAppID uuid.UUID) (*PublishedAccess, error) {
-	if !PublicWebAppRuntimeEnabled() || webAppID == uuid.Nil {
+	if webAppID == uuid.Nil {
 		return nil, ErrNotFound
 	}
 	var definition Definition
@@ -485,20 +481,4 @@ func presentationPolicy(version *Version, definition *Definition) PresentationPo
 		}
 	}
 	return policy
-}
-
-func externalFeatureEnabled(name string) bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
-	case "1", "true", "yes", "on":
-		return true
-	default:
-		return false
-	}
-}
-
-func ExternalAPIRuntimeEnabled() bool {
-	return externalFeatureEnabled("ZGI_DIGITAL_HUMAN_EXTERNAL_API_ENABLED")
-}
-func PublicWebAppRuntimeEnabled() bool {
-	return externalFeatureEnabled("ZGI_DIGITAL_HUMAN_PUBLIC_WEBAPP_ENABLED")
 }

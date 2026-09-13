@@ -50,6 +50,39 @@ func TestRuntimeServiceSubmitIsDurableAndIdempotent(t *testing.T) {
 	}
 }
 
+func TestRuntimeServiceSubmitRegenerationUsesSourceMessageAndDurableRun(t *testing.T) {
+	store, dispatcher, chat := newFakeRunStore(), &fakeRunDispatcher{}, &fakeDigitalHumanChat{}
+	service := newTestRuntimeService(t, store, dispatcher, chat)
+	scope, digitalHumanID := testRunScope(), uuid.New()
+	conversationID, messageID := uuid.New(), uuid.New()
+	chat.recoveryMessage = &runtimemodel.Message{ID: messageID, ConversationID: conversationID, Query: "original question"}
+
+	query := "edited question"
+	run, created, err := service.SubmitRegeneration(t.Context(), scope, digitalHumanID, RegenerateInvocationRequest{
+		MessageID: messageID, Query: &query,
+	})
+	if err != nil || !created {
+		t.Fatalf("SubmitRegeneration() = %#v, created %v, error %v", run, created, err)
+	}
+	if run.ConversationID == nil || *run.ConversationID != conversationID || run.Query != query {
+		t.Fatalf("regeneration run = %#v", run)
+	}
+	_, event, err := decodeAndVerifyRun(run)
+	if err != nil {
+		t.Fatalf("decode regeneration run: %v", err)
+	}
+	if got, ok := stringContextValue(event.Context, "regenerate_message_id"); !ok || got != messageID.String() {
+		t.Fatalf("regeneration source = %q, %v", got, ok)
+	}
+
+	if err := service.Execute(t.Context(), run.ID); err != nil {
+		t.Fatalf("Execute(regeneration) error = %v", err)
+	}
+	if chat.regenerationMessageID != messageID || chat.regenerationRequest.Query == nil || *chat.regenerationRequest.Query != query {
+		t.Fatalf("root regeneration request = %#v, message=%s", chat.regenerationRequest, chat.regenerationMessageID)
+	}
+}
+
 func TestRuntimeServiceValidatesConsoleFilesBeforeCreatingRun(t *testing.T) {
 	store, dispatcher, chat := newFakeRunStore(), &fakeRunDispatcher{}, &fakeDigitalHumanChat{}
 	service := newTestRuntimeService(t, store, dispatcher, chat)
@@ -987,6 +1020,8 @@ type fakeDigitalHumanChat struct {
 	followUpFailure       error
 	activeConversation    *runtimemodel.Conversation
 	submittedRuntimeInput *chatruntime.SubmitRuntimeInputRequest
+	regenerationRequest   runtimedto.RegenerateMessageRequest
+	regenerationMessageID uuid.UUID
 }
 
 func (c *fakeDigitalHumanChat) GetConversationByCaller(_ context.Context, _ chatruntime.Scope, _ chatruntime.Caller, conversationID uuid.UUID) (*runtimemodel.Conversation, error) {
@@ -1040,6 +1075,19 @@ func (c *fakeDigitalHumanChat) PrepareConfiguredChat(_ context.Context, _ chatru
 	return &chatruntime.PreparedChat{
 		Conversation: &runtimemodel.Conversation{ID: conversationID},
 		Message:      &runtimemodel.Message{ID: uuid.New()},
+	}, nil
+}
+
+func (c *fakeDigitalHumanChat) PrepareConfiguredRootRegeneration(_ context.Context, _ chatruntime.Scope, caller chatruntime.Caller, config chatruntime.RunConfig, messageID uuid.UUID, request runtimedto.RegenerateMessageRequest) (*chatruntime.PreparedChat, error) {
+	c.caller, c.config = caller, config
+	c.regenerationMessageID, c.regenerationRequest = messageID, request
+	conversationID := uuid.New()
+	if c.recoveryMessage != nil && c.recoveryMessage.ConversationID != uuid.Nil {
+		conversationID = c.recoveryMessage.ConversationID
+	}
+	return &chatruntime.PreparedChat{
+		Conversation: &runtimemodel.Conversation{ID: conversationID},
+		Message:      &runtimemodel.Message{ID: messageID},
 	}, nil
 }
 

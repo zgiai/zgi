@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
+	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 )
 
@@ -33,6 +34,14 @@ func (h *TaskHandler) RegisterRoutes(router *gin.RouterGroup) {
 	group.POST("/:task_id/actions/:action", h.applyAction)
 	group.GET("/:task_id/runs", h.runs)
 	group.GET("/:task_id/activities", h.activities)
+	private := router.Group("/digital-humans/:id/my-tasks")
+	private.GET("", h.myList)
+	private.POST("", h.myCreate)
+	private.GET("/:task_id", h.myGet)
+	private.PATCH("/:task_id", h.myUpdate)
+	private.POST("/:task_id/actions/:action", h.myApplyAction)
+	private.GET("/:task_id/runs", h.myRuns)
+	private.GET("/:task_id/activities", h.myActivities)
 }
 
 func (h *TaskHandler) list(c *gin.Context) {
@@ -44,12 +53,12 @@ func (h *TaskHandler) list(c *gin.Context) {
 	var err error
 	query.RunFinishedAfter, err = optionalRFC3339Query(c.Query("run_finished_after"))
 	if err != nil {
-		h.base.writeError(c, applicationError(ErrInvalidRequest, "digital_human.task.list"))
+		h.base.writeError(c, taskApplicationError(ErrInvalidRequest, "digital_human.task.list"))
 		return
 	}
 	query.RunFinishedBefore, err = optionalRFC3339Query(c.Query("run_finished_before"))
 	if err != nil || query.RunFinishedAfter != nil && query.RunFinishedBefore != nil && !query.RunFinishedBefore.After(*query.RunFinishedAfter) {
-		h.base.writeError(c, applicationError(ErrInvalidRequest, "digital_human.task.list"))
+		h.base.writeError(c, taskApplicationError(ErrInvalidRequest, "digital_human.task.list"))
 		return
 	}
 	for _, value := range append(c.QueryArray("status"), c.QueryArray("status[]")...) {
@@ -60,7 +69,7 @@ func (h *TaskHandler) list(c *gin.Context) {
 	}
 	result, err := h.service.ListTasks(c.Request.Context(), sharedTaskAccess(scope, id), query)
 	if err != nil {
-		h.base.writeError(c, applicationError(err, "digital_human.task.list"))
+		h.base.writeError(c, taskApplicationError(err, "digital_human.task.list"))
 		return
 	}
 	writeDigitalHumanData(c, http.StatusOK, result)
@@ -89,7 +98,7 @@ func (h *TaskHandler) create(c *gin.Context) {
 	}
 	result, err := h.service.CreateTask(c.Request.Context(), sharedTaskAccess(scope, id), req, accountMutation(scope))
 	if err != nil {
-		h.base.writeError(c, applicationError(err, "digital_human.task.create"))
+		h.base.writeError(c, taskApplicationError(err, "digital_human.task.create"))
 		return
 	}
 	writeDigitalHumanData(c, http.StatusCreated, result)
@@ -102,7 +111,7 @@ func (h *TaskHandler) get(c *gin.Context) {
 	}
 	result, err := h.service.GetTask(c.Request.Context(), sharedTaskAccess(scope, id), taskID)
 	if err != nil {
-		h.base.writeError(c, applicationError(err, "digital_human.task.get"))
+		h.base.writeError(c, taskApplicationError(err, "digital_human.task.get"))
 		return
 	}
 	writeDigitalHumanData(c, http.StatusOK, result)
@@ -118,7 +127,7 @@ func (h *TaskHandler) update(c *gin.Context) {
 	}
 	result, err := h.service.UpdateTask(c.Request.Context(), sharedTaskAccess(scope, id), taskID, req, accountMutation(scope))
 	if err != nil {
-		h.base.writeError(c, applicationError(err, "digital_human.task.update"))
+		h.base.writeError(c, taskApplicationError(err, "digital_human.task.update"))
 		return
 	}
 	writeDigitalHumanData(c, http.StatusOK, result)
@@ -136,7 +145,7 @@ func (h *TaskHandler) applyAction(c *gin.Context) {
 	}
 	result, err := h.service.ApplyTaskAction(c.Request.Context(), sharedTaskAccess(scope, id), taskID, action, req, accountMutation(scope))
 	if err != nil {
-		h.base.writeError(c, applicationError(err, "digital_human.task.action"))
+		h.base.writeError(c, taskApplicationError(err, "digital_human.task.action"))
 		return
 	}
 	writeDigitalHumanData(c, http.StatusOK, result)
@@ -149,7 +158,7 @@ func (h *TaskHandler) runs(c *gin.Context) {
 	}
 	result, err := h.service.ListTaskRuns(c.Request.Context(), sharedTaskAccess(scope, id), taskID, intQuery(c, "page"), intQuery(c, "page_size"))
 	if err != nil {
-		h.base.writeError(c, applicationError(err, "digital_human.task.runs"))
+		h.base.writeError(c, taskApplicationError(err, "digital_human.task.runs"))
 		return
 	}
 	writeDigitalHumanData(c, http.StatusOK, result)
@@ -161,7 +170,7 @@ func (h *TaskHandler) activities(c *gin.Context) {
 	}
 	result, err := h.service.ListTaskActivities(c.Request.Context(), sharedTaskAccess(scope, id), taskID, intQuery(c, "page"), intQuery(c, "page_size"))
 	if err != nil {
-		h.base.writeError(c, applicationError(err, "digital_human.task.activities"))
+		h.base.writeError(c, taskApplicationError(err, "digital_human.task.activities"))
 		return
 	}
 	writeDigitalHumanData(c, http.StatusOK, result)
@@ -174,7 +183,141 @@ func (h *TaskHandler) ids(c *gin.Context) (Scope, uuid.UUID, uuid.UUID, bool) {
 	}
 	taskID, err := uuid.Parse(strings.TrimSpace(c.Param("task_id")))
 	if err != nil || taskID == uuid.Nil {
-		h.base.writeError(c, applicationError(ErrInvalidRequest, "digital_human.task.request"))
+		h.base.writeError(c, taskApplicationError(ErrInvalidRequest, "digital_human.task.request"))
+		return Scope{}, uuid.Nil, uuid.Nil, false
+	}
+	return scope, id, taskID, true
+}
+
+func (h *TaskHandler) myList(c *gin.Context) {
+	scope, id, ok := h.base.scopeAndID(c)
+	if !ok {
+		return
+	}
+	query := TaskListQuery{Query: c.Query("query"), Source: c.Query("source"), ScheduleType: TaskScheduleType(c.Query("schedule_type")), Page: intQuery(c, "page"), PageSize: intQuery(c, "page_size")}
+	var err error
+	query.RunFinishedAfter, err = optionalRFC3339Query(c.Query("run_finished_after"))
+	if err != nil {
+		h.base.writeError(c, taskApplicationError(ErrInvalidRequest, "digital_human.task.list"))
+		return
+	}
+	query.RunFinishedBefore, err = optionalRFC3339Query(c.Query("run_finished_before"))
+	if err != nil || query.RunFinishedAfter != nil && query.RunFinishedBefore != nil && !query.RunFinishedBefore.After(*query.RunFinishedAfter) {
+		h.base.writeError(c, taskApplicationError(ErrInvalidRequest, "digital_human.task.list"))
+		return
+	}
+	for _, value := range append(c.QueryArray("status"), c.QueryArray("status[]")...) {
+		query.Statuses = append(query.Statuses, TaskWorkStatus(value))
+	}
+	for _, value := range append(c.QueryArray("priority"), c.QueryArray("priority[]")...) {
+		query.Priorities = append(query.Priorities, TaskPriority(value))
+	}
+	result, err := h.service.ListTasks(c.Request.Context(), userTaskAccess(scope, id), query)
+	if err != nil {
+		h.base.writeError(c, taskApplicationError(err, "digital_human.task.list"))
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, result)
+}
+
+func (h *TaskHandler) myCreate(c *gin.Context) {
+	scope, id, ok := h.base.scopeAndID(c)
+	if !ok {
+		return
+	}
+	var req CreateTaskRequest
+	if !h.base.decode(c, &req) {
+		return
+	}
+	result, err := h.service.CreateTask(c.Request.Context(), userTaskAccess(scope, id), req, accountMutation(scope))
+	if err != nil {
+		h.base.writeError(c, taskApplicationError(err, "digital_human.task.create"))
+		return
+	}
+	writeDigitalHumanData(c, http.StatusCreated, result)
+}
+
+func (h *TaskHandler) myGet(c *gin.Context) {
+	scope, id, taskID, ok := h.myIDs(c)
+	if !ok {
+		return
+	}
+	result, err := h.service.GetTask(c.Request.Context(), userTaskAccess(scope, id), taskID)
+	if err != nil {
+		h.base.writeError(c, taskApplicationError(err, "digital_human.task.get"))
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, result)
+}
+
+func (h *TaskHandler) myUpdate(c *gin.Context) {
+	scope, id, taskID, ok := h.myIDs(c)
+	if !ok {
+		return
+	}
+	var req UpdateTaskRequest
+	if !h.base.decode(c, &req) {
+		return
+	}
+	result, err := h.service.UpdateTask(c.Request.Context(), userTaskAccess(scope, id), taskID, req, accountMutation(scope))
+	if err != nil {
+		h.base.writeError(c, taskApplicationError(err, "digital_human.task.update"))
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, result)
+}
+
+func (h *TaskHandler) myApplyAction(c *gin.Context) {
+	scope, id, taskID, ok := h.myIDs(c)
+	if !ok {
+		return
+	}
+	var req ApplyTaskActionRequest
+	if !h.base.decode(c, &req) {
+		return
+	}
+	result, err := h.service.ApplyTaskAction(c.Request.Context(), userTaskAccess(scope, id), taskID, TaskAction(strings.TrimSpace(c.Param("action"))), req, accountMutation(scope))
+	if err != nil {
+		h.base.writeError(c, taskApplicationError(err, "digital_human.task.action"))
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, result)
+}
+
+func (h *TaskHandler) myRuns(c *gin.Context) {
+	scope, id, taskID, ok := h.myIDs(c)
+	if !ok {
+		return
+	}
+	result, err := h.service.ListTaskRuns(c.Request.Context(), userTaskAccess(scope, id), taskID, intQuery(c, "page"), intQuery(c, "page_size"))
+	if err != nil {
+		h.base.writeError(c, taskApplicationError(err, "digital_human.task.runs"))
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, result)
+}
+
+func (h *TaskHandler) myActivities(c *gin.Context) {
+	scope, id, taskID, ok := h.myIDs(c)
+	if !ok {
+		return
+	}
+	result, err := h.service.ListTaskActivities(c.Request.Context(), userTaskAccess(scope, id), taskID, intQuery(c, "page"), intQuery(c, "page_size"))
+	if err != nil {
+		h.base.writeError(c, taskApplicationError(err, "digital_human.task.activities"))
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, result)
+}
+
+func (h *TaskHandler) myIDs(c *gin.Context) (Scope, uuid.UUID, uuid.UUID, bool) {
+	scope, id, ok := h.base.scopeAndID(c)
+	if !ok {
+		return Scope{}, uuid.Nil, uuid.Nil, false
+	}
+	taskID, err := uuid.Parse(strings.TrimSpace(c.Param("task_id")))
+	if err != nil || taskID == uuid.Nil {
+		h.base.writeError(c, taskApplicationError(ErrInvalidRequest, "digital_human.task.request"))
 		return Scope{}, uuid.Nil, uuid.Nil, false
 	}
 	return scope, id, taskID, true
@@ -189,6 +332,21 @@ func sharedTaskAccess(scope Scope, digitalHumanID uuid.UUID) TaskAccessContext {
 		DigitalHumanID: digitalHumanID,
 		Principal:      invocation.PrincipalRef{Type: invocation.PrincipalAccount, ID: scope.ActorID.String()},
 		Owner:          SharedTaskOwner(),
+		Surface:        SurfaceConsole,
+	}
+}
+
+func userTaskAccess(scope Scope, digitalHumanID uuid.UUID) TaskAccessContext {
+	if scope.ActorID == uuid.Nil {
+		return TaskAccessContext{}
+	}
+	subject := usersubject.AccountSubject(scope.ActorID)
+	return TaskAccessContext{
+		OrganizationID: scope.OrganizationID,
+		WorkspaceID:    scope.WorkspaceID,
+		DigitalHumanID: digitalHumanID,
+		Principal:      invocation.PrincipalRef{Type: invocation.PrincipalAccount, ID: scope.ActorID.String()},
+		Owner:          UserTaskOwner(subject),
 		Surface:        SurfaceConsole,
 	}
 }

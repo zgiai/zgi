@@ -1079,6 +1079,7 @@ func clientVisibleMessageMetadata(source map[string]interface{}) map[string]inte
 	if len(metadata) == 0 {
 		return metadata
 	}
+	filterInternalDigitalHumanTaskGovernanceInvocations(metadata)
 	filtered, changed := filterFinalAnswerInvocations(metadata["skill_invocations"])
 	if !changed {
 		return metadata
@@ -1089,6 +1090,40 @@ func clientVisibleMessageMetadata(source map[string]interface{}) map[string]inte
 	}
 	metadata["skill_invocations"] = skillInvocationsToInterfaceSlice(filtered)
 	return metadata
+}
+
+// filterInternalDigitalHumanTaskGovernanceInvocations removes the generic
+// governance invocation from the public message projection. The durable
+// metadata keeps it for audit and continuation recovery, while DigitalHuman
+// clients receive the task-specific workflow/approval projection instead.
+func filterInternalDigitalHumanTaskGovernanceInvocations(metadata map[string]interface{}) {
+	if len(metadata) == 0 {
+		return
+	}
+	raw := mapSliceFromAny(metadata["skill_invocations"])
+	if len(raw) == 0 {
+		return
+	}
+	filtered := make([]map[string]interface{}, 0, len(raw))
+	changed := false
+	for _, invocation := range raw {
+		kind := strings.ToLower(strings.TrimSpace(stringFromAny(invocation["kind"])))
+		if kind == "tool_governance" &&
+			(strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["presentation_visibility"])), "internal") ||
+				isDigitalHumanTaskGovernancePayload(invocation)) {
+			changed = true
+			continue
+		}
+		filtered = append(filtered, invocation)
+	}
+	if !changed {
+		return
+	}
+	if len(filtered) == 0 {
+		delete(metadata, "skill_invocations")
+		return
+	}
+	metadata["skill_invocations"] = skillInvocationsToInterfaceSlice(filtered)
 }
 
 // ClientVisibleMessageMetadata returns the public projection of durable message

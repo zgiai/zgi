@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
+	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
@@ -220,6 +222,15 @@ func (s *Service) UpdateTask(ctx context.Context, access digitalhuman.TaskAccess
 	if access.CurrentTaskID != nil {
 		return nil, digitalhuman.ErrTaskPolicyRejected
 	}
+	if mutation.OperationID == uuid.Nil {
+		mutation.OperationID = uuid.New()
+	}
+	if existing, err := s.taskByActivityOperation(ctx, access, mutation.OperationID); err == nil {
+		if existing.ID != taskID.String() {
+			return nil, digitalhuman.ErrTaskConflict
+		}
+		return publicTask(existing)
+	}
 	if req.ExpectedRevision <= 0 {
 		return nil, digitalhuman.ErrInvalidRequest
 	}
@@ -275,16 +286,54 @@ func (s *Service) UpdateTask(ctx context.Context, access digitalhuman.TaskAccess
 			task.MaxAttempts = *req.MaxAttempts
 			changes["max_attempts"] = *req.MaxAttempts
 		}
+		var requestedScheduleNext *time.Time
 		if req.Schedule != nil {
 			st, tz, cfg, next, err := compileSchedule(*req.Schedule)
 			if err != nil {
 				return digitalhuman.ErrInvalidRequest
 			}
 			task.ScheduleType, task.Timezone, task.ScheduleConfig = st, tz, cfg
+			requestedScheduleNext = next
 			if task.Status == automationmodel.AutomationTaskStatusActive {
 				task.NextRunAt = next
 			}
 			changes["schedule"] = req.Schedule
+		}
+		if req.LifecycleStatus != nil {
+			lifecycle := automationmodel.AutomationTaskStatus(strings.ToLower(strings.TrimSpace(*req.LifecycleStatus)))
+			switch lifecycle {
+			case automationmodel.AutomationTaskStatusActive:
+				if task.Status == automationmodel.AutomationTaskStatusArchived || pointerValue(task.WorkStatus) == string(automationmodel.AutomationWorkStatusProposed) {
+					return digitalhuman.ErrTaskPolicyRejected
+				}
+				// Reactivation is an explicit approved mutation. It is allowed for
+				// completed/paused/canceled tasks and resets only the pending work
+				// state; historical last-run fields remain intact.
+				if pointerValue(task.WorkStatus) == string(automationmodel.AutomationWorkStatusCompleted) ||
+					pointerValue(task.WorkStatus) == string(automationmodel.AutomationWorkStatusCanceled) ||
+					pointerValue(task.WorkStatus) == string(automationmodel.AutomationWorkStatusBlocked) {
+					workStatus := automationmodel.AutomationWorkStatusPending
+					task.WorkStatus = &workStatus
+				}
+				task.Status = automationmodel.AutomationTaskStatusActive
+				task.NextRunAt = requestedScheduleNext
+				if req.Schedule == nil {
+					next, err := automationdefinition.CompileNextRunAt(task.ScheduleType, task.Timezone, task.ScheduleConfig)
+					if err != nil {
+						return digitalhuman.ErrInvalidRequest
+					}
+					task.NextRunAt = next
+				}
+			case automationmodel.AutomationTaskStatusPaused:
+				task.Status = automationmodel.AutomationTaskStatusPaused
+				task.NextRunAt = nil
+			case automationmodel.AutomationTaskStatusArchived:
+				task.Status = automationmodel.AutomationTaskStatusArchived
+				task.NextRunAt = nil
+			default:
+				return digitalhuman.ErrInvalidRequest
+			}
+			changes["lifecycle_status"] = lifecycle
 		}
 		if req.DeliveryMode != nil {
 			cfg, err := deliveryConfig(*req.DeliveryMode, mutation)
@@ -329,6 +378,15 @@ func (s *Service) UpdateTask(ctx context.Context, access digitalhuman.TaskAccess
 func (s *Service) ApplyTaskAction(ctx context.Context, access digitalhuman.TaskAccessContext, taskID uuid.UUID, action digitalhuman.TaskAction, req digitalhuman.ApplyTaskActionRequest, mutation digitalhuman.TaskMutationContext) (*digitalhuman.Task, error) {
 	if access.CurrentTaskID != nil {
 		return nil, digitalhuman.ErrTaskPolicyRejected
+	}
+	if mutation.OperationID == uuid.Nil {
+		mutation.OperationID = uuid.New()
+	}
+	if existing, err := s.taskByActivityOperation(ctx, access, mutation.OperationID); err == nil {
+		if existing.ID != taskID.String() {
+			return nil, digitalhuman.ErrTaskConflict
+		}
+		return publicTask(existing)
 	}
 	if req.ExpectedRevision <= 0 {
 		return nil, digitalhuman.ErrInvalidRequest
@@ -470,7 +528,8 @@ func (s *Service) setStatus(ctx context.Context, access digitalhuman.TaskAccessC
 }
 
 func (s *Service) ListTaskRuns(ctx context.Context, access digitalhuman.TaskAccessContext, taskID uuid.UUID, page, pageSize int) (*digitalhuman.TaskRunListResult, error) {
-	if _, err := s.loadTask(ctx, s.db, access, taskID, false); err != nil {
+	task, err := s.loadTask(ctx, s.db, access, taskID, false)
+	if err != nil {
 		return nil, err
 	}
 	page, pageSize = normalizePage(page, pageSize)
@@ -487,7 +546,7 @@ func (s *Service) ListTaskRuns(ctx context.Context, access digitalhuman.TaskAcce
 	for _, row := range rows {
 		item := &digitalhuman.TaskRun{ID: uuid.MustParse(row.ID), TaskID: uuid.MustParse(row.TaskID), TriggerSource: string(row.TriggerSource), Status: string(row.Status), ScheduledFor: row.ScheduledFor, StartedAt: row.StartedAt, FinishedAt: row.FinishedAt, CreatedAt: row.CreatedAt}
 		if row.ErrorSummary != nil {
-			item.ErrorSummary = *row.ErrorSummary
+			item.ErrorSummary = safeResultSummary(*row.ErrorSummary)
 		}
 		if attempt, ok := numericValue(row.RuntimeContext["attempt"]); ok {
 			item.Attempt = attempt
@@ -499,11 +558,58 @@ func (s *Service) ListTaskRuns(ctx context.Context, access digitalhuman.TaskAcce
 			id, parseErr := uuid.Parse(*actionRun.ExternalRunID)
 			if parseErr == nil {
 				item.DigitalHumanRunID = &id
+				var run digitalhuman.Run
+				if runErr := s.db.WithContext(ctx).Where("id = ? AND organization_id = ? AND workspace_id = ? AND digital_human_id = ?", id, access.OrganizationID, access.WorkspaceID, access.DigitalHumanID).First(&run).Error; runErr == nil {
+					item.ResultSummary = safeResultSummary(run.ResultSummary)
+					if deliveryMode(task.DeliveryConfig) == digitalhuman.TaskDeliverySourceConversation {
+						var delivery channelruntime.Delivery
+						if deliveryErr := s.db.WithContext(ctx).
+							Where("run_id = ? AND delivery_kind = ?", id, channelruntime.DeliveryKindFinal).
+							Order("created_at DESC").First(&delivery).Error; deliveryErr == nil {
+							item.ResultDeliveryStatus = string(delivery.Status)
+							item.ResultDeliveryError = safeResultSummary(delivery.ErrorMessage)
+						} else if run.Status == digitalhuman.RunStatusSucceeded {
+							// Console, API, and WebApp deliveries are ChatRuntime
+							// messages rather than channel_delivery rows. Project the
+							// durable delivery activity into the same public status so
+							// the task detail makes the result destination explicit.
+							var activity automationmodel.AutomationTaskActivity
+							activityErr := s.db.WithContext(ctx).
+								Where("task_id = ? AND operation_id = ? AND action IN ?", row.TaskID, row.ID, []string{"result_delivered", "result_delivery_failed"}).
+								Order("created_at DESC").First(&activity).Error
+							if activityErr == nil && activity.Action == "result_delivered" {
+								item.ResultDeliveryStatus = string(channelruntime.DeliverySucceeded)
+							} else if activityErr == nil && activity.Action == "result_delivery_failed" {
+								item.ResultDeliveryStatus = string(channelruntime.DeliveryFailed)
+								item.ResultDeliveryError = "The source conversation delivery could not be created; the result remains in task details."
+							} else if _, hasChannelReply := task.DeliveryConfig["reply_to"]; !hasChannelReply {
+								item.ResultDeliveryStatus = string(channelruntime.DeliveryPending)
+							} else {
+								item.ResultDeliveryStatus = string(channelruntime.DeliveryFailed)
+								item.ResultDeliveryError = "The source conversation delivery could not be created; the result remains in task details."
+							}
+						}
+					}
+				}
 			}
 		}
 		items = append(items, item)
 	}
 	return &digitalhuman.TaskRunListResult{Items: items, Total: total, Page: page, PageSize: pageSize, HasMore: int64(page*pageSize) < total}, nil
+}
+
+const maxPublicTaskResultSummaryRunes = 8000
+
+func safeResultSummary(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= maxPublicTaskResultSummaryRunes {
+		return value
+	}
+	return string(runes[:maxPublicTaskResultSummaryRunes])
 }
 
 func (s *Service) ListTaskActivities(ctx context.Context, access digitalhuman.TaskAccessContext, taskID uuid.UUID, page, pageSize int) (*digitalhuman.TaskActivityListResult, error) {
@@ -558,6 +664,21 @@ func (s *Service) taskByOperation(ctx context.Context, access digitalhuman.TaskA
 	return &task, err
 }
 
+func (s *Service) taskByActivityOperation(ctx context.Context, access digitalhuman.TaskAccessContext, operationID uuid.UUID) (*automationmodel.AutomationTask, error) {
+	if operationID == uuid.Nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+	var activity automationmodel.AutomationTaskActivity
+	if err := s.db.WithContext(ctx).Where("operation_id = ?", operationID).First(&activity).Error; err != nil {
+		return nil, err
+	}
+	taskID, err := uuid.Parse(activity.TaskID)
+	if err != nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return s.loadTask(ctx, s.db, access, taskID, false)
+}
+
 func compileSchedule(schedule digitalhuman.TaskSchedule) (automationmodel.AutomationScheduleType, string, map[string]any, *time.Time, error) {
 	typeValue := automationmodel.AutomationScheduleType(schedule.Type)
 	if typeValue == "" {
@@ -600,7 +721,8 @@ func publicTask(row *automationmodel.AutomationTask) (*digitalhuman.Task, error)
 	if ownerKind != digitalhuman.TaskOwnerDigitalHuman && ownerKind != digitalhuman.TaskOwnerUserSubject && ownerKind != digitalhuman.TaskOwnerConversation {
 		return nil, fmt.Errorf("invalid stored digital human task owner")
 	}
-	result := &digitalhuman.Task{ID: id, DigitalHumanID: subjectID, OwnerKind: ownerKind, Name: row.Name, Goal: pointerValue(row.Goal), SuccessCriteria: append([]string(nil), row.SuccessCriteria...), WorkStatus: digitalhuman.TaskWorkStatus(pointerValue(row.WorkStatus)), LifecycleStatus: string(row.Status), Priority: digitalhuman.TaskPriority(pointerValue(row.Priority)), Schedule: publicSchedule(row), DeliveryMode: deliveryMode(row.DeliveryConfig), ExecutionTimeoutSeconds: row.ExecutionTimeoutSeconds, MaxAttempts: row.MaxAttempts, NextRunAt: row.NextRunAt, LastRunAt: row.LastRunAt, Revision: row.Revision, ProposalExpiresAt: row.ProposalExpiresAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+	mode := deliveryMode(row.DeliveryConfig)
+	result := &digitalhuman.Task{ID: id, DigitalHumanID: subjectID, OwnerKind: ownerKind, Name: row.Name, Goal: pointerValue(row.Goal), SuccessCriteria: append([]string(nil), row.SuccessCriteria...), WorkStatus: digitalhuman.TaskWorkStatus(pointerValue(row.WorkStatus)), LifecycleStatus: string(row.Status), Priority: digitalhuman.TaskPriority(pointerValue(row.Priority)), Schedule: publicSchedule(row), DeliveryMode: mode, DeliveryTarget: deliveryTarget(row.DeliveryConfig), DeliveryFallback: deliveryFallback(row.DeliveryConfig), DeliveryReplyTo: replyAddress(row.DeliveryConfig), ExecutionTimeoutSeconds: row.ExecutionTimeoutSeconds, MaxAttempts: row.MaxAttempts, NextRunAt: row.NextRunAt, LastRunAt: row.LastRunAt, Revision: row.Revision, ProposalExpiresAt: row.ProposalExpiresAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
 	if row.LastRunStatus != nil {
 		result.LastRunStatus = *row.LastRunStatus
 	}
@@ -648,7 +770,7 @@ func publicSchedule(row *automationmodel.AutomationTask) digitalhuman.TaskSchedu
 
 func deliveryConfig(mode digitalhuman.TaskDeliveryMode, mutation digitalhuman.TaskMutationContext) (map[string]any, error) {
 	if mode == "" {
-		if mutation.ReplyTo != nil {
+		if mutation.ReplyTo != nil || validConversationID(mutation.SourceConversationID) {
 			mode = digitalhuman.TaskDeliverySourceConversation
 		} else {
 			mode = digitalhuman.TaskDeliveryTaskOnly
@@ -657,24 +779,38 @@ func deliveryConfig(mode digitalhuman.TaskDeliveryMode, mutation digitalhuman.Ta
 	config := map[string]any{"mode": string(mode)}
 	switch mode {
 	case digitalhuman.TaskDeliveryTaskOnly:
+		config["target"] = string(digitalhuman.TaskDeliveryTargetTaskCenter)
 		return config, nil
 	case digitalhuman.TaskDeliverySourceConversation:
-		if mutation.ReplyTo == nil {
+		if mutation.ReplyTo != nil {
+			encoded, err := json.Marshal(mutation.ReplyTo)
+			if err != nil {
+				return nil, err
+			}
+			var reply map[string]any
+			if err := json.Unmarshal(encoded, &reply); err != nil {
+				return nil, err
+			}
+			config["reply_to"] = reply
+		} else if validConversationID(mutation.SourceConversationID) {
+			// Console, WebApp, and API runs do not have a channel ReplyAddress.
+			// Persist the server-captured ChatRuntime conversation separately so
+			// the scheduler can append the completed result there.
+			config["conversation_id"] = strings.TrimSpace(mutation.SourceConversationID)
+		} else {
 			return nil, digitalhuman.ErrTaskPolicyRejected
 		}
-		encoded, err := json.Marshal(mutation.ReplyTo)
-		if err != nil {
-			return nil, err
-		}
-		var reply map[string]any
-		if err := json.Unmarshal(encoded, &reply); err != nil {
-			return nil, err
-		}
-		config["reply_to"] = reply
+		config["target"] = string(digitalhuman.TaskDeliveryTargetSourceConversation)
+		config["fallback"] = string(digitalhuman.TaskDeliveryFallbackTaskCenter)
 		return config, nil
 	default:
 		return nil, digitalhuman.ErrInvalidRequest
 	}
+}
+
+func validConversationID(value string) bool {
+	id, err := uuid.Parse(strings.TrimSpace(value))
+	return err == nil && id != uuid.Nil
 }
 
 func deliveryMode(config map[string]any) digitalhuman.TaskDeliveryMode {
@@ -682,6 +818,48 @@ func deliveryMode(config map[string]any) digitalhuman.TaskDeliveryMode {
 		return digitalhuman.TaskDeliveryMode(value)
 	}
 	return digitalhuman.TaskDeliveryTaskOnly
+}
+
+func replyAddress(config map[string]any) *invocation.ReplyAddress {
+	if deliveryMode(config) != digitalhuman.TaskDeliverySourceConversation {
+		return nil
+	}
+	raw, ok := config["reply_to"]
+	if !ok {
+		return nil
+	}
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return nil
+	}
+	var reply invocation.ReplyAddress
+	if err := json.Unmarshal(encoded, &reply); err != nil || strings.TrimSpace(reply.Provider) == "" || strings.TrimSpace(reply.ConversationID) == "" {
+		return nil
+	}
+	return &reply
+}
+
+func deliveryTarget(config map[string]any) digitalhuman.TaskDeliveryTarget {
+	if value, ok := config["target"].(string); ok {
+		switch digitalhuman.TaskDeliveryTarget(value) {
+		case digitalhuman.TaskDeliveryTargetTaskCenter, digitalhuman.TaskDeliveryTargetSourceConversation:
+			return digitalhuman.TaskDeliveryTarget(value)
+		}
+	}
+	if deliveryMode(config) == digitalhuman.TaskDeliverySourceConversation {
+		return digitalhuman.TaskDeliveryTargetSourceConversation
+	}
+	return digitalhuman.TaskDeliveryTargetTaskCenter
+}
+
+func deliveryFallback(config map[string]any) digitalhuman.TaskDeliveryFallback {
+	if value, ok := config["fallback"].(string); ok && value == string(digitalhuman.TaskDeliveryFallbackTaskCenter) {
+		return digitalhuman.TaskDeliveryFallbackTaskCenter
+	}
+	if deliveryMode(config) == digitalhuman.TaskDeliverySourceConversation {
+		return digitalhuman.TaskDeliveryFallbackTaskCenter
+	}
+	return ""
 }
 func sourceSnapshot(m digitalhuman.TaskMutationContext) map[string]any {
 	result := map[string]any{}
@@ -751,6 +929,14 @@ func applyTransition(task *automationmodel.AutomationTask, action digitalhuman.T
 		next, err := automationdefinition.CompileNextRunAt(task.ScheduleType, task.Timezone, task.ScheduleConfig)
 		if err != nil {
 			return err
+		}
+		// A blocked task is paused by the scheduler after an execution
+		// preflight/runtime failure. Resuming it must clear the recoverable
+		// work-state as well as the lifecycle pause; otherwise the scheduler
+		// keeps returning the task as blocked even though it has a new run time.
+		if current == automationmodel.AutomationWorkStatusBlocked {
+			value := automationmodel.AutomationWorkStatusPending
+			task.WorkStatus = &value
 		}
 		task.Status, task.NextRunAt = automationmodel.AutomationTaskStatusActive, next
 	case digitalhuman.TaskActionRunNow, digitalhuman.TaskActionRetry:

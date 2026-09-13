@@ -336,6 +336,13 @@ func (s *service) StreamConversationEventsForCaller(ctx context.Context, scope S
 		}
 		for _, event := range events {
 			lastID = event.ID
+			// DigitalHuman task mutations have their own approval/workflow
+			// projection. The generic governance decision is retained in the
+			// durable event store for audit and recovery, but must not be replayed
+			// to DigitalHuman clients as a duplicate "run this tool" event.
+			if shouldSuppressDigitalHumanTaskGovernanceEvent(caller, event.EventType, event.Payload) {
+				continue
+			}
 			event = hydrateStreamEventGeneratedFileURL(event)
 			event = publicExternalActionStreamEvent(event)
 			if err := onEvent(event); err != nil {
@@ -997,6 +1004,9 @@ func (s *service) emitPreparedEvent(ctx context.Context, prepared *PreparedChat,
 		}
 		event.hydratePayloadEnvelope()
 	}
+	if shouldSuppressDigitalHumanTaskGovernanceEvent(prepared.Caller, event.EventType, event.Payload) {
+		return nil
+	}
 	if aichatTimelineDebugEnabled() {
 		logger.DebugContext(ctx, "aichat timeline stream delivered",
 			"message_id", prepared.Message.ID.String(),
@@ -1113,6 +1123,12 @@ func suppressClientStreamEvent(eventType string, payload map[string]interface{})
 	default:
 		return false
 	}
+}
+
+func shouldSuppressDigitalHumanTaskGovernanceEvent(caller Caller, eventType string, payload map[string]interface{}) bool {
+	return isDigitalHumanCaller(caller.Type) &&
+		strings.TrimSpace(eventType) == streamEventToolGovernanceDecision &&
+		isDigitalHumanTaskGovernancePayload(payload)
 }
 
 // BuildStreamErrorPayload returns the public SSE error payload for an AIChat turn.

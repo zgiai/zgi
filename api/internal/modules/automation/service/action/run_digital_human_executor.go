@@ -29,6 +29,7 @@ type DigitalHumanRunRequest struct {
 	Name                  string
 	Goal                  string
 	SuccessCriteria       []string
+	DeliveryMode          string
 	TimeoutSeconds        int
 	ReplyTo               *invocation.ReplyAddress
 }
@@ -83,6 +84,7 @@ func (e *RunDigitalHumanExecutor) ExecuteAction(ctx context.Context, req ActionE
 		ChannelInstallationID: mapStringValue(req.Task.SourceSnapshot, "installation_id"),
 		ChannelConversationID: mapStringValue(req.Task.SourceSnapshot, "conversation_id"),
 		Name:                  req.Task.Name, Goal: stringValue(req.Task.Goal), SuccessCriteria: append([]string(nil), req.Task.SuccessCriteria...),
+		DeliveryMode:   mapStringValue(req.Task.DeliveryConfig, "mode"),
 		TimeoutSeconds: req.Task.ExecutionTimeoutSeconds, ReplyTo: replyAddress(req.Task.DeliveryConfig),
 	}
 	result, err := runner.RunDigitalHuman(ctx, request)

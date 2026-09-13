@@ -81,6 +81,7 @@ func RegisterRoutes(r *gin.Engine, serviceContainer *container.ServiceContainer,
 		ActionProjections:       externalActionProjections,
 		DigitalHumanRuntime:     digitalHumanRuntime.Runtime,
 		DigitalHumanAccess:      digitalHumanRuntime.Access,
+		DigitalHumanTasks:       digitalHumanRuntime.Tasks,
 		ApplicationErrorCatalog: applicationErrorCatalog,
 	})
 

@@ -495,6 +495,8 @@ const (
 	// Dependency services.
 	// envModelMetaAPIURL sets the ModelMeta-compatible API base URL. Default: https://models.zgi.ai.
 	envModelMetaAPIURL = "MODELMETA_API_URL"
+	// envModelMetaAutoSyncEnabled controls the one-shot local ModelMeta sync at startup. Default: true.
+	envModelMetaAutoSyncEnabled = "MODELMETA_AUTO_SYNC_ENABLED"
 	// envNeo4jURI sets the Neo4j connection URI. Default: empty, which disables GraphFlow Neo4j integration.
 	envNeo4jURI = "NEO4J_URI"
 	// envNeo4jUsername sets the Neo4j username. Default: neo4j.

@@ -39,8 +39,9 @@ type AutomationRouteDeps struct {
 }
 
 type AutomationRouteBundle struct {
-	Definition        automationdefinition.Service
-	DigitalHumanTasks *digitalhumantask.Service
+	Definition                 automationdefinition.Service
+	DigitalHumanTasks          *digitalhumantask.Service
+	DigitalHumanTaskReconciler *digitalhumantask.ReconcileHandler
 }
 
 // RegisterAutomationRoutes wires automation MVP routes, workers, and scheduler registration.
@@ -88,11 +89,12 @@ func RegisterAutomationRoutes(router *gin.RouterGroup, deps AutomationRouteDeps)
 	} else {
 		logger.Info("Automation scheduled dispatch disabled by configuration", nil)
 	}
-	if err := deps.Scheduler.RegisterTask(&digitalhumantask.ReconcileTask{}, digitalhumantask.NewReconcileHandler(deps.DB, digitalHumanTaskDispatcher, deps.DigitalHumanRunnerProvider)); err != nil {
+	digitalHumanTaskReconciler := digitalhumantask.NewReconcileHandler(deps.DB, digitalHumanTaskDispatcher, deps.DigitalHumanRunnerProvider)
+	if err := deps.Scheduler.RegisterTask(&digitalhumantask.ReconcileTask{}, digitalHumanTaskReconciler); err != nil {
 		panic("register DigitalHuman task reconciler: " + err.Error())
 	}
 
-	return &AutomationRouteBundle{Definition: definitionService, DigitalHumanTasks: digitalHumanTasks}
+	return &AutomationRouteBundle{Definition: definitionService, DigitalHumanTasks: digitalHumanTasks, DigitalHumanTaskReconciler: digitalHumanTaskReconciler}
 }
 
 func validateAutomationRouteDeps(deps AutomationRouteDeps) {

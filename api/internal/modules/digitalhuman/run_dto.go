@@ -17,6 +17,23 @@ type ManualInvocationRequest struct {
 	FileIDs         []string   `json:"file_ids,omitempty"`
 }
 
+// RegenerateInvocationRequest replays a root user turn through the durable
+// DigitalHuman runtime. The original message is replaced only after the
+// ChatRuntime root-replacement guard has accepted the request; the durable run
+// remains the audit and recovery boundary for the operation.
+type RegenerateInvocationRequest struct {
+	MessageID        uuid.UUID              `json:"-"`
+	ConversationID   *uuid.UUID             `json:"-"`
+	Query            *string                `json:"query,omitempty"`
+	Surface          string                 `json:"surface,omitempty"`
+	RuntimeContext   string                 `json:"runtime_context,omitempty"`
+	OperationContext map[string]interface{} `json:"operation_context,omitempty"`
+	Model            *string                `json:"model,omitempty"`
+	Provider         *string                `json:"provider,omitempty"`
+	Parameters       map[string]interface{} `json:"parameters,omitempty"`
+	UseMemory        *bool                  `json:"use_memory,omitempty"`
+}
+
 type RunListResult struct {
 	Items    []*Run `json:"items"`
 	Total    int64  `json:"total"`

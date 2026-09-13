@@ -51,11 +51,21 @@ func (h *ExternalHandler) RegisterWebAppRoutes(router *gin.RouterGroup) {
 	protected.PATCH("/conversations/:conversation_id", h.UpdateWebAppConversation)
 	protected.DELETE("/conversations/:conversation_id", h.DeleteWebAppConversation)
 	protected.GET("/conversations/:conversation_id/messages", h.ListWebAppConversationMessages)
+	protected.POST("/conversations/:conversation_id/messages/:message_id/regenerate", h.RegenerateWebAppMessage)
 	protected.GET("/conversations/:conversation_id/events", h.StreamWebAppConversationEvents)
 	protected.POST("/conversations/:conversation_id/stop", h.StopWebAppConversation)
 	protected.POST("/conversations/:conversation_id/messages/:message_id/runtime-inputs", h.SubmitWebAppConversationRuntimeInput)
+	protected.POST("/conversations/:conversation_id/messages/:message_id/user-input/:request_id/continue", h.ContinueWebAppUserInput)
+	protected.POST("/conversations/:conversation_id/messages/:message_id/workflow-continuation", h.ContinueWebAppTaskApproval)
 	protected.GET("/files/upload", h.GetWebAppUploadConfig)
 	protected.POST("/files/upload", h.UploadWebAppFile)
+	protected.GET("/tasks", h.ListWebAppTasks)
+	protected.POST("/tasks", h.CreateWebAppTask)
+	protected.GET("/tasks/:task_id", h.GetWebAppTask)
+	protected.PATCH("/tasks/:task_id", h.UpdateWebAppTask)
+	protected.POST("/tasks/:task_id/actions/:action", h.ApplyWebAppTaskAction)
+	protected.GET("/tasks/:task_id/runs", h.ListWebAppTaskRuns)
+	protected.GET("/tasks/:task_id/activities", h.ListWebAppTaskActivities)
 }
 
 func (h *ExternalHandler) GetWebAppConfig(c *gin.Context) {
@@ -69,7 +79,7 @@ func (h *ExternalHandler) GetWebAppConfig(c *gin.Context) {
 		Name: access.Definition.Name, Description: access.Definition.Description,
 		Icon: access.Definition.Icon, IconType: access.Definition.IconType, IconURL: access.Definition.IconURL,
 		HomeTitle: policy.HomeTitle, OpeningStatement: policy.OpeningStatement,
-		InputPlaceholder: policy.InputPlaceholder, ThemeColor: policy.ThemeColor,
+		InputPlaceholder:     policy.InputPlaceholder,
 		SuggestedQuestions:   nonNilStrings(policy.SuggestedQuestions),
 		AnonymousChatEnabled: true, LoginRequired: false,
 		FileUploadEnabled: true, FileUploadRequiresLogin: true,
@@ -174,6 +184,50 @@ func (h *ExternalHandler) ChatWebApp(c *gin.Context) {
 	writer.start(c.Request.Context())
 	_ = writer.write(externalRunEventID(run.ID, "accepted"), "run_accepted", gin.H{
 		"run_id": run.ID.String(), "request_id": request.RequestID.String(), "status": run.Status, "created": created,
+	})
+	h.streamRun(c, writer, scope, access.Definition.ID, run.ID, SurfaceWebApp, "")
+}
+
+// RegenerateWebAppMessage is available only to authenticated WebApp users.
+// Anonymous sessions intentionally cannot replace messages because they have
+// no stable user subject or relationship-memory owner.
+func (h *ExternalHandler) RegenerateWebAppMessage(c *gin.Context) {
+	scope, access, _, ok := h.webAppConversationRequest(c)
+	if !ok {
+		return
+	}
+	if scope.UserSubjectID == nil || *scope.UserSubjectID == uuid.Nil {
+		h.writeAuthError(c, true)
+		return
+	}
+	messageID, err := uuid.Parse(strings.TrimSpace(c.Param("message_id")))
+	if err != nil || messageID == uuid.Nil {
+		h.writeApplicationError(c, ErrInvalidRequest, "digital_human.webapp.message.regenerate")
+		return
+	}
+	conversationID, ok := h.conversationID(c)
+	if !ok {
+		return
+	}
+	var request runtimedto.RegenerateMessageRequest
+	if !h.base.decode(c, &request) {
+		return
+	}
+	run, _, err := h.runtime.SubmitRegeneration(c.Request.Context(), scope, access.Definition.ID, RegenerateInvocationRequest{
+		MessageID: messageID, ConversationID: &conversationID, Query: request.Query, Surface: SurfaceWebApp,
+		RuntimeContext: request.RuntimeContext, OperationContext: request.OperationContext,
+		Model: request.Model, Provider: request.Provider, Parameters: request.Parameters, UseMemory: request.UseMemory,
+	})
+	if err != nil {
+		h.writeApplicationError(c, err, "digital_human.webapp.message.regenerate")
+		return
+	}
+	c.Header("X-ZGI-Run-ID", run.ID.String())
+	c.Header("Access-Control-Expose-Headers", "X-ZGI-Run-ID")
+	writer := newDigitalHumanSSEWriter(c)
+	writer.start(c.Request.Context())
+	_ = writer.write(externalRunEventID(run.ID, "accepted"), "run_accepted", gin.H{
+		"run_id": run.ID.String(), "status": run.Status,
 	})
 	h.streamRun(c, writer, scope, access.Definition.ID, run.ID, SurfaceWebApp, "")
 }
@@ -615,7 +669,6 @@ type WebAppConfigResponse struct {
 	HomeTitle                 string   `json:"home_title"`
 	OpeningStatement          string   `json:"opening_statement"`
 	InputPlaceholder          string   `json:"input_placeholder"`
-	ThemeColor                string   `json:"theme_color"`
 	SuggestedQuestions        []string `json:"suggested_questions"`
 	AnonymousChatEnabled      bool     `json:"anonymous_chat_enabled"`
 	LoginRequired             bool     `json:"login_required"`

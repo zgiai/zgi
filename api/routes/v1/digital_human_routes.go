@@ -67,6 +67,7 @@ type DigitalHumanRuntimeDeps struct {
 type DigitalHumanRuntimeBundle struct {
 	Runtime   *digitalhuman.RuntimeService
 	Access    *digitalhuman.AccessService
+	Tasks     digitalhuman.TaskHandlerService
 	Channels  *digitalhuman.ChannelService
 	Receivers *digitalhuman.ChannelReceiverManager
 }
@@ -97,7 +98,9 @@ func RegisterDigitalHumanRoutes(router *gin.RouterGroup, deps DigitalHumanRouteD
 func digitalHumanPermissionMiddleware(organizationService interfaces.OrganizationService, projector *apptransport.Projector) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		permission := digitalHumanPermissionForRequest(c.Request.Method, c.FullPath())
-		if strings.Contains(c.FullPath(), "/tasks/:task_id/actions/:action") {
+		if strings.Contains(c.FullPath(), "/my-tasks") {
+			permission = workspacemodel.WorkspacePermissionDigitalHumanRun
+		} else if strings.Contains(c.FullPath(), "/tasks/:task_id/actions/:action") {
 			switch digitalhuman.TaskAction(strings.TrimSpace(c.Param("action"))) {
 			case digitalhuman.TaskActionRunNow, digitalhuman.TaskActionRetry, digitalhuman.TaskActionCancel:
 				permission = workspacemodel.WorkspacePermissionDigitalHumanRun
@@ -129,7 +132,13 @@ func digitalHumanPermissionForRequest(method, routePath string) workspacemodel.W
 	if path == "" {
 		return ""
 	}
-	if strings.Contains(path, "/tasks") {
+	// Private tasks are part of the formal run surface. A user who can run a
+	// DigitalHuman may manage only their own task namespace from chat; viewers
+	// must not discover it through a direct URL.
+	if strings.Contains(path, "/my-tasks") {
+		return workspacemodel.WorkspacePermissionDigitalHumanRun
+	}
+	if strings.Contains(path, "/tasks") || strings.Contains(path, "/my-tasks") {
 		switch method {
 		case http.MethodGet:
 			return workspacemodel.WorkspacePermissionDigitalHumanView
@@ -327,5 +336,5 @@ func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRu
 	); err != nil {
 		panic("register DigitalHuman channel delivery sweep: " + err.Error())
 	}
-	return &DigitalHumanRuntimeBundle{Runtime: runtime, Channels: channels, Receivers: receivers}
+	return &DigitalHumanRuntimeBundle{Runtime: runtime, Tasks: deps.Tasks, Channels: channels, Receivers: receivers}
 }

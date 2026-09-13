@@ -206,8 +206,13 @@ type RuntimeToolResult struct {
 	Arguments   map[string]interface{}
 	Result      map[string]interface{}
 	ModelResult map[string]interface{}
-	Error       error
-	Recoverable bool
+	// PendingApproval pauses the current run and is projected into the
+	// durable workflow-continuation metadata. Runtime tools use this instead
+	// of returning a normal success result so callers can render the approval
+	// interaction in the composer.
+	PendingApproval map[string]interface{}
+	Error           error
+	Recoverable     bool
 }
 
 type TerminalStateGuardDecisionRecord struct {

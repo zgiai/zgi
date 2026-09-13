@@ -42,6 +42,7 @@ type ExternalRouteDeps struct {
 	ActionProjections       integrationmetatools.ActionProjectionResolver
 	DigitalHumanRuntime     *digitalhuman.RuntimeService
 	DigitalHumanAccess      *digitalhuman.AccessService
+	DigitalHumanTasks       digitalhuman.TaskHandlerService
 	ApplicationErrorCatalog *appcatalog.Catalog
 }
 
@@ -54,7 +55,7 @@ func RegisterExternalRoutes(r *gin.Engine, deps ExternalRouteDeps) {
 	{
 		// Public APIs that don't require authentication
 		RegisterPublicRoutes(externalV1)
-		RegisterDigitalHumanExternalRoutes(externalV1, deps.DigitalHumanRuntime, deps.DigitalHumanAccess, deps.FileService, deps.ApplicationErrorCatalog)
+		RegisterDigitalHumanExternalRoutes(externalV1, deps.DigitalHumanRuntime, deps.DigitalHumanAccess, deps.DigitalHumanTasks, deps.FileService, deps.ApplicationErrorCatalog)
 
 		// APIs that require API key authentication
 		RegisterAPIKeyRoutes(
@@ -122,7 +123,7 @@ func validateExternalRouteDeps(deps ExternalRouteDeps) {
 	if deps.WorkflowEngineFactory == nil {
 		panic("external routes require workflow engine factory")
 	}
-	if deps.DigitalHumanRuntime == nil || deps.DigitalHumanAccess == nil || deps.ApplicationErrorCatalog == nil {
-		panic("external routes require DigitalHuman runtime, access, and error catalog")
+	if deps.DigitalHumanRuntime == nil || deps.DigitalHumanAccess == nil || deps.DigitalHumanTasks == nil || deps.ApplicationErrorCatalog == nil {
+		panic("external routes require DigitalHuman runtime, access, tasks, and error catalog")
 	}
 }

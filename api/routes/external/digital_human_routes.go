@@ -15,6 +15,7 @@ func RegisterDigitalHumanExternalRoutes(
 	router *gin.RouterGroup,
 	runtime *digitalhuman.RuntimeService,
 	access *digitalhuman.AccessService,
+	tasks digitalhuman.TaskHandlerService,
 	fileService interfaces.FileService,
 	catalog *appcatalog.Catalog,
 ) {
@@ -26,7 +27,7 @@ func RegisterDigitalHumanExternalRoutes(
 	if current := config.Current(); current != nil {
 		sessions, _ = digitalhuman.NewWebAppSessionSigner(current.JWT.Secret)
 	}
-	handler := digitalhuman.NewExternalHandler(runtime, access, fileService, projector, sessions)
+	handler := digitalhuman.NewExternalHandler(runtime, access, tasks, fileService, projector, sessions)
 	handler.RegisterAPIRoutes(router)
 	handler.RegisterWebAppRoutes(router)
 }

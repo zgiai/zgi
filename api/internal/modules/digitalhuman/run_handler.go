@@ -2,9 +2,11 @@ package digitalhuman
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -34,6 +36,10 @@ type RuntimeHandlerService interface {
 	SubmitRuntimeInput(context.Context, Scope, uuid.UUID, runtimeservice.SubmitRuntimeInputRequest) (*runtimeservice.SubmitRuntimeInputResult, error)
 	StopConversation(context.Context, Scope, uuid.UUID, uuid.UUID) (*runtimeservice.StopConversationResult, error)
 	StreamConversationEvents(context.Context, Scope, uuid.UUID, uuid.UUID, uuid.UUID, string, func(runtimeservice.StreamEvent) error) error
+}
+
+type runtimeRegenerationService interface {
+	SubmitRegeneration(context.Context, Scope, uuid.UUID, RegenerateInvocationRequest) (*Run, bool, error)
 }
 
 type RuntimeHandler struct {
@@ -68,8 +74,71 @@ func (h *RuntimeHandler) RegisterRoutes(router *gin.RouterGroup) {
 	group.DELETE("/runtime/conversations/:conversation_id", h.DeleteConversation)
 	group.GET("/runtime/conversations/:conversation_id/messages", h.ListConversationMessages)
 	group.POST("/runtime/conversations/:conversation_id/messages/:message_id/runtime-inputs", h.SubmitRuntimeInput)
+	group.POST("/runtime/conversations/:conversation_id/messages/:message_id/user-input/:request_id/continue", h.ContinueUserInput)
 	group.POST("/runtime/conversations/:conversation_id/stop", h.StopConversation)
 	group.GET("/runtime/conversations/:conversation_id/events", h.StreamConversationEvents)
+	group.POST("/runtime/conversations/:conversation_id/messages/:message_id/workflow-continuation", h.ContinueTaskApproval)
+	group.POST("/runtime/messages/:message_id/regenerate", h.RegenerateMessage)
+}
+
+func (h *RuntimeHandler) RegenerateMessage(c *gin.Context) {
+	scope, digitalHumanID, ok := h.base.scopeAndID(c)
+	if !ok {
+		return
+	}
+	messageID, err := uuid.Parse(strings.TrimSpace(c.Param("message_id")))
+	if err != nil || messageID == uuid.Nil {
+		h.base.writeError(c, applicationError(ErrInvalidRequest, "digital_human.message.regenerate"))
+		return
+	}
+	var request runtimedto.RegenerateMessageRequest
+	if !h.base.decode(c, &request) {
+		return
+	}
+	service, ok := h.service.(runtimeRegenerationService)
+	if !ok {
+		h.base.writeError(c, applicationError(ErrRunConflict, "digital_human.message.regenerate"))
+		return
+	}
+	run, _, err := service.SubmitRegeneration(c.Request.Context(), scope, digitalHumanID, RegenerateInvocationRequest{
+		MessageID: messageID, Query: request.Query, Surface: request.Surface,
+		RuntimeContext: request.RuntimeContext, OperationContext: request.OperationContext,
+		Model: request.Model, Provider: request.Provider, Parameters: request.Parameters, UseMemory: request.UseMemory,
+	})
+	if err != nil {
+		h.base.writeError(c, applicationError(err, "digital_human.message.regenerate"))
+		return
+	}
+	c.Header("X-ZGI-Run-ID", run.ID.String())
+	c.Header("Access-Control-Expose-Headers", "X-ZGI-Run-ID")
+	writer := newDigitalHumanSSEWriter(c)
+	writer.start(c.Request.Context())
+	if err := streamRegeneratedRun(c, h.service, writer, scope, digitalHumanID, run.ID); err != nil && c.Request.Context().Err() == nil {
+		_ = writer.write("", "error", gin.H{"error": "digital human message replay failed"})
+	}
+}
+
+func streamRegeneratedRun(c *gin.Context, service RuntimeHandlerService, writer *digitalHumanSSEWriter, scope Scope, digitalHumanID, runID uuid.UUID) error {
+	for {
+		run, err := service.GetRun(c.Request.Context(), scope, digitalHumanID, runID)
+		if err != nil {
+			return err
+		}
+		if run.ConversationID != nil && run.MessageID != nil {
+			err = service.StreamConversationEvents(c.Request.Context(), scope, digitalHumanID, *run.ConversationID, *run.MessageID, "", func(event runtimeservice.StreamEvent) error {
+				return writer.write(event.ID, event.EventType, redactConversationValue(event.Payload))
+			})
+			return err
+		}
+		if isTerminalRunStatus(run.Status) {
+			return fmt.Errorf("regenerated message did not start")
+		}
+		select {
+		case <-c.Request.Context().Done():
+			return c.Request.Context().Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 }
 
 func (h *RuntimeHandler) GetExaWebSearchConfiguration(c *gin.Context) {

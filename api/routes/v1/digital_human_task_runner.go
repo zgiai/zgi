@@ -66,7 +66,7 @@ func (r *digitalHumanAutomationRunner) RunDigitalHuman(ctx context.Context, req 
 		criteria = "\nSuccess criteria:\n- " + strings.Join(req.SuccessCriteria, "\n- ")
 	}
 	query := fmt.Sprintf("Execute the confirmed task %q.\nGoal: %s%s\nWhen finished, provide the final result and any generated files.", req.Name, req.Goal, criteria)
-	event := invocation.Event{ID: req.ActionRunID, Type: invocation.EventTypeSchedule, Origin: invocation.Origin{Kind: invocation.OriginSchedule}, Target: runtimeidentity.SubjectRef{Type: runtimeidentity.SubjectTypeDigitalHuman, ID: digitalHumanID, OrganizationID: organizationID, WorkspaceID: workspaceID}, Sender: invocation.PrincipalRef{Type: invocation.PrincipalSystem, ID: "digital-human-task-scheduler"}, OccurredAt: time.Now().UTC(), Context: map[string]any{"task_id": req.TaskID, "task_run_id": req.TaskRunID, "action_run_id": req.ActionRunID, "task_owner_kind": req.OwnerKind, "origin_surface": req.OriginSurface}, ReplyTo: req.ReplyTo}
+	event := invocation.Event{ID: req.ActionRunID, Type: invocation.EventTypeSchedule, Origin: invocation.Origin{Kind: invocation.OriginSchedule}, Target: runtimeidentity.SubjectRef{Type: runtimeidentity.SubjectTypeDigitalHuman, ID: digitalHumanID, OrganizationID: organizationID, WorkspaceID: workspaceID}, Sender: invocation.PrincipalRef{Type: invocation.PrincipalSystem, ID: "digital-human-task-scheduler"}, OccurredAt: time.Now().UTC(), Context: map[string]any{"task_id": req.TaskID, "task_run_id": req.TaskRunID, "action_run_id": req.ActionRunID, "task_owner_kind": req.OwnerKind, "origin_surface": req.OriginSurface, "task_name": req.Name, "delivery_mode": req.DeliveryMode}, ReplyTo: req.ReplyTo}
 	run, _, err := r.runtime.SubmitInvocation(ctx, scope, event, query, nil)
 	if err != nil {
 		return nil, err
@@ -114,10 +114,21 @@ func (r *digitalHumanAutomationRunner) preflight(ctx context.Context, organizati
 			return errDigitalHumanTaskExecutionUnavailable
 		}
 	case digitalhuman.TaskOwnerUserSubject:
-		// API/WebApp task tools are deliberately unavailable in this release.
-		// A scheduled private task must therefore belong to an account and have
-		// originated from the authenticated console surface.
-		if req.OriginSurface != digitalhuman.SurfaceConsole || owner.Subject.Kind != usersubject.Account {
+		// A private task keeps the subject that created it when the scheduler
+		// runs. Console and authenticated WebApp tasks are account-owned, while
+		// API tasks are owned by the derived API end-user subject. Anonymous
+		// WebApp tasks never have a user_subject owner and are rejected by the
+		// task service before reaching this runner.
+		switch req.OriginSurface {
+		case digitalhuman.SurfaceConsole, digitalhuman.SurfaceWebApp:
+			if owner.Subject.Kind != usersubject.Account {
+				return errDigitalHumanTaskExecutionUnavailable
+			}
+		case digitalhuman.SurfaceAPI:
+			if owner.Subject.Kind != usersubject.APIEndUser {
+				return errDigitalHumanTaskExecutionUnavailable
+			}
+		default:
 			return errDigitalHumanTaskExecutionUnavailable
 		}
 		count = 0
