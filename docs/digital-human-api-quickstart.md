@@ -333,11 +333,18 @@ ZGI also emits the same typed process-event families used by the Agent API. They
 | --- | --- |
 | Progress | `agent_progress`, `agent_intermediate_answer`, `message_retract` |
 | User interaction | `user_input_requested`, `runtime_input_*`, `client_action_required` |
-| Files and tools | `file_parse_*`, `skill_*`, `tool_governance_decision` |
+| Files and tools | `file_parse_*`, `skill_*`, `tool_governance_decision` (ordinary tools) |
 | Relationship memory | `memory_create`, `memory_update`, `memory_delete`, `memory_clear` |
 | Workflow | `workflow_*`, `node_*`, `approval_*`, `question_answer_*`, `iteration_*`, `loop_*`, `text_chunk`, `text_replace` |
 
 A basic client can ignore these after saving the event id. A richer client should render only the documented public summaries, treat host actions as allow-listed data, and never display hidden reasoning or arbitrary HTML.
+
+DigitalHuman task mutations are the exception to the generic tool-governance
+row: their internal `tool_governance_decision` event is retained for audit and
+replay but is not emitted on the public DigitalHuman SSE stream. Clients should
+render the corresponding `approval_*` / workflow events and then refresh the
+task projection. Ordinary tool approvals continue to use
+`tool_governance_decision`.
 
 ## 5. Build the client state machine
 
@@ -507,7 +514,6 @@ type Config = {
   home_title: string;
   opening_statement: string;
   input_placeholder: string;
-  theme_color: string;
   suggested_questions: string[];
   file_upload_enabled: boolean;
 };
@@ -644,7 +650,7 @@ export default function DigitalHumanPage() {
           rows={4}
           style={{ display: 'block', width: '100%' }}
         />
-        <button disabled={busy || !query.trim()} style={{ background: config.theme_color || '#6366f1' }}>
+        <button disabled={busy || !query.trim()}>
           Send
         </button>
         {busy && <button type="button" onClick={stop}>Stop</button>}
@@ -695,13 +701,80 @@ Implement these operations through the same authenticated BFF pattern:
 | Rename conversation | `PATCH /digital-humans/conversations/{id}` | JSON `user` |
 | Delete conversation | `DELETE /digital-humans/conversations/{id}` | Query `user` |
 | Load messages | `GET /digital-humans/conversations/{id}/messages?page=1&limit=100` | Query `user` |
+| Continue a task approval | `POST /digital-humans/conversations/{conversation_id}/messages/{message_id}/workflow-continuation` | JSON `user`, `approval_token`, and `action` |
+| Answer a model-generated question | `POST /digital-humans/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue` | JSON `user` and `answers`; resumes the same Agent Loop |
 | Upload a file | `POST /digital-humans/files/upload` with multipart `file` | Multipart `user` |
+| List or create private tasks | `GET/POST /digital-humans/tasks` | Query/body `user` |
+| Read or update a private task | `GET/PATCH /digital-humans/tasks/{task_id}` | Query/body `user` |
+| Apply a task action | `POST /digital-humans/tasks/{task_id}/actions/{action}` | JSON `user` and `expected_revision` |
+| Read task runs and results | `GET /digital-humans/tasks/{task_id}/runs` | Query `user` |
+| Read task activities | `GET /digital-humans/tasks/{task_id}/activities` | Query `user` |
 
-DigitalHuman v1 intentionally does not expose regeneration, task management, or relationship-memory management endpoints.
+DigitalHuman v1 intentionally does not expose regeneration or relationship-memory management endpoints. Conversation-created task proposals and updates pause for explicit approval; continue them through the workflow-continuation endpoint using the approval token from the SSE event. Task management is available only for the current user's private task namespace; shared DigitalHuman tasks remain a console-only capability.
+
+If the stream emits `user_input_requested` and ends in `waiting_question`, answer
+it through `/user-input/{request_id}/continue`. Do not send a new chat message
+or use `/workflow-continuation`: the endpoint restores the same Agent Loop and
+continues the pending question in place.
+
+### Private task example
+
+Create a task with the same stable identity used by chat:
+
+```bash
+curl --request POST "https://zgi.example.com/api/v1/digital-humans/tasks" \
+  --header "Authorization: Bearer $ZGI_DIGITAL_HUMAN_API_KEY" \
+  --header "Idempotency-Key: 8e5a6f5a-7b5d-4d20-8b63-cc47a40fba0e" \
+  --header "Content-Type: application/json" \
+  --data '{"user":"customer_123","name":"Follow up","goal":"Summarize the latest requirements","schedule":{"type":"manual"},"delivery_mode":"task_only"}'
+```
+
+Use the returned `revision` for optimistic updates and lifecycle actions. A
+stale revision returns `409 digital_human.task.conflict`; refresh the task and
+retry with the new revision. The runs endpoint returns a bounded
+`result_summary`, not model output or execution traces:
+
+For API-created tasks, results are intentionally kept in the task center. For a
+task created from a connected channel, the same execution is delivered back to
+the original private/group conversation and remains available in the task
+details if channel delivery is unavailable.
+
+```bash
+curl "https://zgi.example.com/api/v1/digital-humans/tasks/$TASK_ID/runs?user=customer_123" \
+  --header "Authorization: Bearer $ZGI_DIGITAL_HUMAN_API_KEY"
+```
+
+Authenticated landing pages use
+`/api/v1/digital-human-webapps/{web_app_id}/tasks...`; the server derives the
+account subject from the signed session and the browser must not send a
+`user`. Anonymous landing-page sessions cannot create tasks or register task
+tools. API keys are not exposed to the landing page.
 
 When loading history, message pages are newest-first. Sort by `created_at` before rendering chronological chat. If conversation detail reports a non-terminal runtime and you retained its `run_id`, recover the run after history renders. On a full reload, replaying from the beginning is safer than applying a stale cursor to a new DOM; deduplicate by `(message_id, SSE id)`.
 
 For file upload, construct multipart in the BFF so the server—not the browser—adds `user`. Send the returned `data.id` in a later chat request's `file_ids`. Files are scoped to the same DigitalHuman and derived user subject; do not share ids across users or DigitalHumans.
+
+## 8.1 Edit and regenerate a historical question
+
+Root-message replay is available for the API, console, and authenticated
+landing page. Use the conversation and message ids returned by `message_start`
+and history. Omitting `query` reuses the original question; providing `query`
+edits it before execution:
+
+```bash
+curl --request POST \
+  "https://zgi.example.com/api/v1/digital-humans/conversations/$CONVERSATION_ID/messages/$MESSAGE_ID/regenerate" \
+  --header "Authorization: Bearer $ZGI_DIGITAL_HUMAN_API_KEY" \
+  --header "Content-Type: application/json" \
+  --data '{"user":"customer_123","query":"Compare the three options again and highlight risk"}'
+```
+
+The response is a recoverable SSE stream. It starts with `run_accepted`, then
+emits a `message_start` with `replace: true`, the normal process and answer
+events, `message_end`, and `run_end`. A non-root historical message is not
+destructively replaced; replay it as a new branch by calling `/chat` with its
+`parent_message_id`. The same owner checks apply to the conversation, message,
+and `user`, and an API key rotation does not change ownership.
 
 ## 8. Retry and failure behavior
 

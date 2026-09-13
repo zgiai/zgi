@@ -18,15 +18,9 @@ the surfaces independently:
 - **Public landing page** exposes `/digital-human/{web_app_id}`.
 - **API access** enables API keys bound to this DigitalHuman.
 
-The deployment must also enable the corresponding global gates:
-
-```env
-ZGI_DIGITAL_HUMAN_PUBLIC_WEBAPP_ENABLED=true
-ZGI_DIGITAL_HUMAN_EXTERNAL_API_ENABLED=true
-```
-
-Both gates default to `false`. Disabling a surface rejects new calls
-immediately without deleting conversations, runs, or API keys.
+No deployment-wide feature flag is required. Access is controlled per published
+DigitalHuman from the standalone **External access** page. Disabling a surface
+rejects new calls immediately without deleting conversations, runs, or API keys.
 
 ### Authentication and end-user identity
 
@@ -91,6 +85,12 @@ message_end
 error
 run_end
 ```
+
+For DigitalHuman task mutations, the generic `tool_governance_decision` audit
+event is kept internally for recovery and audit but is not sent to the public
+DigitalHuman SSE stream. Handle the task's `approval_*` / workflow events and
+the resulting task projection instead. Ordinary skill and tool approvals still
+use `tool_governance_decision`.
 
 `message_start` supplies the durable `conversation_id` and `message_id`.
 `run_end` is emitted once and is the terminal event for the run. An `error`
@@ -193,15 +193,8 @@ The landing page never receives or stores a DigitalHuman API key.
 - **公开落地页**：访问路径为 `/digital-human/{web_app_id}`；
 - **API 访问**：允许使用绑定到该数字人的 API Key。
 
-部署环境还需开启对应的全局开关：
-
-```env
-ZGI_DIGITAL_HUMAN_PUBLIC_WEBAPP_ENABLED=true
-ZGI_DIGITAL_HUMAN_EXTERNAL_API_ENABLED=true
-```
-
-两个开关默认均为 `false`。关闭入口会立即拒绝新调用，但不会删除已有会话、
-运行记录或 API Key。
+不需要额外开启部署级全局开关。访问权限由数字人独立“外接”页面按数字人
+逐个控制。关闭入口会立即拒绝新调用，但不会删除已有会话、运行记录或 API Key。
 
 ### 认证与终端用户身份
 
@@ -260,6 +253,10 @@ message_end
 error
 run_end
 ```
+
+数字人任务变更的通用 `tool_governance_decision` 事件仍会在服务端保留，用于审计和断线恢复，
+但不会发送到数字人公开 SSE。客户端应处理任务对应的 `approval_*` / workflow 事件以及最终任务结果。
+普通技能和工具审批仍使用 `tool_governance_decision`。
 
 `message_start` 会返回持久化后的 `conversation_id` 和 `message_id`；
 `run_end` 只发送一次，是运行的最终事件。`error` 只包含安全错误码、消息和是否
@@ -336,4 +333,152 @@ curl --request POST \
 | GET | `/api/v1/digital-humans/conversations/search` | Search conversations / 搜索会话 |
 | GET/PATCH/DELETE | `/api/v1/digital-humans/conversations/{id}` | Manage a conversation / 管理会话 |
 | GET | `/api/v1/digital-humans/conversations/{id}/messages` | Message history / 消息历史 |
+| POST | `/api/v1/digital-humans/conversations/{conversation_id}/messages/{message_id}/workflow-continuation` | Submit a task approval and resume the paused chat / 提交任务审批并恢复暂停的对话 |
+| POST | `/api/v1/digital-humans/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue` | Answer a model-generated question and resume the same Agent Loop / 回答模型问题并继续原 Agent Loop |
 | POST | `/api/v1/digital-humans/files/upload` | Upload a chat file / 上传聊天文件 |
+| GET/POST | `/api/v1/digital-humans/tasks` | List or create user-owned tasks / 查询或创建用户私有任务 |
+| GET/PATCH | `/api/v1/digital-humans/tasks/{task_id}` | Read or update one user-owned task / 查询或更新用户私有任务 |
+| POST | `/api/v1/digital-humans/tasks/{task_id}/actions/{action}` | Change task lifecycle / 执行任务生命周期操作 |
+| GET | `/api/v1/digital-humans/tasks/{task_id}/runs` | Read safe task runs and result summaries / 查询执行记录和安全结果摘要 |
+| GET | `/api/v1/digital-humans/tasks/{task_id}/activities` | Read task activity history / 查询任务活动记录 |
+
+### User-owned task management / 用户私有任务
+
+Tasks created through the API belong to the supplied `user`, never to the API
+key itself. The same key can safely serve many users. Every task request uses
+the same `user` value as chat and conversation requests, and the value is
+validated but never returned or persisted as raw text.
+
+API-created tasks use the task center as their primary result destination. The
+returned task includes `delivery_target: "task_center"` and keeps
+`delivery_fallback: "task_center"` for clients that share the same response
+model with channel-created tasks. Channel-created tasks instead bind a private
+or group conversation as their primary destination; their results are sent back
+to that conversation while the task center remains the fallback record.
+
+Create a manual task:
+
+```bash
+curl --request POST "https://zgi.example.com/api/v1/digital-humans/tasks" \
+  --header "Authorization: Bearer $ZGI_DIGITAL_HUMAN_API_KEY" \
+  --header "Idempotency-Key: 8e5a6f5a-7b5d-4d20-8b63-cc47a40fba0e" \
+  --header "Content-Type: application/json" \
+  --data '{
+    "user": "customer_123",
+    "name": "Follow up on requirements",
+    "goal": "Summarize the latest requirement changes and propose next steps",
+    "schedule": {"type": "manual"},
+    "priority": "normal",
+    "delivery_mode": "task_only"
+  }'
+```
+
+List and update only that user's tasks:
+
+```bash
+curl "https://zgi.example.com/api/v1/digital-humans/tasks?user=customer_123&page=1&page_size=20" \
+  --header "Authorization: Bearer $ZGI_DIGITAL_HUMAN_API_KEY"
+
+curl --request PATCH "https://zgi.example.com/api/v1/digital-humans/tasks/$TASK_ID" \
+  --header "Authorization: Bearer $ZGI_DIGITAL_HUMAN_API_KEY" \
+  --header "Idempotency-Key: 2d6a6e90-6fe8-4ac7-a605-08c424ce9d31" \
+  --header "Content-Type: application/json" \
+  --data '{
+    "user": "customer_123",
+    "expected_revision": 1,
+    "priority": "high"
+  }'
+```
+
+Lifecycle actions use the task's current `revision` and return `409` with
+`digital_human.task.conflict` when another request changed it. Supported
+actions are `confirm`, `decline`, `run_now`, `pause`, `resume`, `retry`,
+`cancel`, and `archive`:
+
+For a task created from a connected channel, the runs response also includes
+`result_delivery_status`. A failed or unknown channel delivery does not erase
+the execution result: `result_summary` remains available in the task center and
+`result_delivery_error` contains a bounded safe explanation.
+
+```bash
+curl --request POST \
+  "https://zgi.example.com/api/v1/digital-humans/tasks/$TASK_ID/actions/run_now" \
+  --header "Authorization: Bearer $ZGI_DIGITAL_HUMAN_API_KEY" \
+  --header "Idempotency-Key: 7c5e1774-2b2b-4d6e-9e7f-9a5e0b66509c" \
+  --header "Content-Type: application/json" \
+  --data '{"user":"customer_123","expected_revision":2}'
+```
+
+### Conversational task approvals / 对话任务审批
+
+Task proposals and task mutations produced by a DigitalHuman conversation are
+paused until the end user approves them. The chat SSE contains an
+`approval_requested` event and the message ends in `waiting_approval`. A client
+must render the approval form in place of the composer, then continue the same
+message; do not send a second natural-language confirmation message:
+
+```bash
+curl --request POST \
+  "https://zgi.example.com/api/v1/digital-humans/conversations/$CONVERSATION_ID/messages/$MESSAGE_ID/workflow-continuation" \
+  --header "Authorization: Bearer $ZGI_DIGITAL_HUMAN_API_KEY" \
+  --header "Content-Type: application/json" \
+  --data '{
+    "type": "approval",
+    "user": "customer_123",
+    "approval_token": "<token-from-approval_requested>",
+    "action": "approve",
+    "inputs": {"name": "Optional edited task name", "goal": "Optional edited goal"}
+  }'
+```
+
+The continuation returns the normal `message_start`, `approval_result`,
+`message`, `message_end`, and `error` SSE events. `decline` cancels a new
+proposal; declining an update leaves the existing task unchanged. The token,
+conversation, message, and `user` are checked together, so a token cannot be
+used to approve another user's task.
+
+### Model-generated user questions / 模型追问
+
+When the SSE stream ends with `waiting_question` and emits
+`user_input_requested`, the client must answer the question through the
+dedicated continuation endpoint below. This is not a new chat request and is
+not a task/workflow approval:
+
+```bash
+curl --request POST \
+  "https://zgi.example.com/api/v1/digital-humans/conversations/$CONVERSATION_ID/messages/$MESSAGE_ID/user-input/$REQUEST_ID/continue" \
+  --header "Authorization: Bearer $ZGI_DIGITAL_HUMAN_API_KEY" \
+  --header "Content-Type: application/json" \
+  --data '{
+    "user": "customer_123",
+    "answers": {"water_reminder_intent": "keep_active"}
+  }'
+```
+
+The server validates the conversation, message leaf, request id, and user
+identity, then resumes the original Agent Loop and returns the normal SSE
+events. Answers are not appended as a synthetic user message.
+
+The runs endpoint exposes bounded execution metadata and a safe
+`result_summary`; it never exposes execution traces, tool arguments, model
+responses, prompts, API keys, or another user's context:
+
+```bash
+curl "https://zgi.example.com/api/v1/digital-humans/tasks/$TASK_ID/runs?user=customer_123" \
+  --header "Authorization: Bearer $ZGI_DIGITAL_HUMAN_API_KEY"
+```
+
+For the hosted landing page, authenticated sessions use the equivalent
+`/api/v1/digital-human-webapps/{web_app_id}/tasks...` endpoints. The browser
+does not send `user`; the server derives the account subject from the signed
+WebApp session. Anonymous sessions receive an authentication error and never
+register task tools. The console chat page uses the same owner boundary at
+`/console/api/digital-humans/{digital_human_id}/my-tasks...`; the existing
+`/console/api/digital-humans/{digital_human_id}/tasks` page remains the shared
+DigitalHuman task manager.
+
+The API, console, and authenticated landing page therefore share task
+ownership semantics while keeping channel-conversation tasks and DigitalHuman
+shared tasks out of user-private lists. Task results are available in task
+details and run history; they are not automatically injected into another
+conversation.
