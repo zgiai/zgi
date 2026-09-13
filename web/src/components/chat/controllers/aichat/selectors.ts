@@ -46,7 +46,7 @@ function normalizeSkillInvocation(invocation: AIChatSkillInvocation): AIChatSkil
   // Older persisted governance records did not retain the skill/tool fields
   // for DigitalHuman task approvals. Normalize them before timeline grouping
   // so they join the task workflow lane instead of becoming a duplicate
-  // generic "运行此工具" row.
+  // generic tool-execution row.
   if (normalized.kind === 'tool_governance' && isDigitalHumanTaskMutationInvocation(normalized)) {
     return {
       ...normalized,
@@ -323,8 +323,8 @@ export function sanitizeTimelineForMessage(
     }
 
     // A completely unnamed governance row is the legacy/live fallback that
-    // renders as "运行此工具。". Once a task workflow is present, it belongs
-    // to the dedicated task workflow card and should not be shown separately.
+    // renders as a generic tool-execution row. Once a task workflow is present,
+    // it belongs to the dedicated task workflow card and should not be shown separately.
     const event = timelineRecord(item.event);
     const governance = timelineRecord(event.governance);
     const approvalEvent = firstTimelineRecord(event.approval_event, governance.approval_event);
