@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { AppWindow } from 'lucide-react';
-import { toast } from 'sonner';
 import { DigitalHumanAccessPanel } from '@/components/digital-human/digital-human-access-panel';
 import {
   useDigitalHumanDraftStore,
@@ -52,14 +51,11 @@ function ExternalAccessEditor({ id }: { id: string }) {
       .filter(Boolean)
       .slice(0, 6),
   };
-  const presentationValid =
-    !normalizedPresentation.theme_color.trim() ||
-    /^#[0-9a-f]{6}$/i.test(normalizedPresentation.theme_color.trim());
   const persistence = useDigitalHumanDraftPersistence({
     currentPayload: normalizedPresentation,
     initialPayload: initialPresentation,
     enabled: editingEnabled && Boolean(detail),
-    canSave: () => presentationValid,
+    canSave: () => true,
     savePayload: async value => {
       const result = await mutations.updateDraft.mutateAsync({
         digitalHumanId: id,
@@ -75,10 +71,6 @@ function ExternalAccessEditor({ id }: { id: string }) {
 
   const saveNow = async () => {
     if (versionPreview) return false;
-    if (!presentationValid) {
-      toast.error(t('access.invalidThemeColor'));
-      return false;
-    }
     return persistence.saveNow({ force: true });
   };
 
@@ -97,7 +89,7 @@ function ExternalAccessEditor({ id }: { id: string }) {
     : presentation;
 
   return (
-    <div className="mx-auto min-h-full w-full max-w-[1200px] px-4 py-6 md:px-8 xl:py-8">
+    <div className="mx-auto min-h-full w-full max-w-[1440px] px-4 py-5 md:px-8 xl:py-6">
       {versionPreview ? (
         <div className="mb-5 rounded-lg border border-primary/20 bg-primary/[0.04] px-4 py-3 text-sm text-primary">
           {t('versionHistory.previewBanner', {
@@ -116,6 +108,18 @@ function ExternalAccessEditor({ id }: { id: string }) {
           </p>
         </div>
       </header>
+      {!versionPreview ? (
+        <div className="mt-4 rounded-lg border border-primary/15 bg-primary/[0.035] px-4 py-3 text-xs leading-5">
+          <span className="font-medium text-primary">
+            {detail.published ? t('access.draftModeLabel') : t('access.firstPublishLabel')}
+          </span>
+          <span className="ml-2 text-muted-foreground">
+            {detail.published
+              ? t('access.draftModeDescription')
+              : t('access.firstPublishDescription')}
+          </span>
+        </div>
+      ) : null}
       <DigitalHumanAccessPanel
         id={id}
         definition={detail.definition}
@@ -131,7 +135,7 @@ function ExternalAccessEditor({ id }: { id: string }) {
 
 function DigitalHumanExternalAccessLoading() {
   return (
-    <div className="mx-auto w-full max-w-[1200px] space-y-5 px-4 py-6 md:px-8 xl:py-8">
+    <div className="mx-auto w-full max-w-[1440px] space-y-5 px-4 py-5 md:px-8 xl:py-6">
       <div className="h-12 w-72 animate-pulse rounded-lg bg-muted" />
       <div className="h-[560px] animate-pulse rounded-xl bg-muted/50" />
     </div>
@@ -145,7 +149,6 @@ function normalizePresentationPolicy(
     home_title: policy?.home_title ?? '',
     opening_statement: policy?.opening_statement ?? '',
     input_placeholder: policy?.input_placeholder ?? '',
-    theme_color: policy?.theme_color ?? '',
     suggested_questions: (policy?.suggested_questions ?? []).slice(0, 6),
   };
 }

@@ -12,7 +12,10 @@ import type { AIChatConversation, AIChatMessage, AIChatMessageFile } from '@/ser
 import type { AIChatStreamingMessageState } from '@/components/chat/controllers/aichat';
 import { AIChatMessageBubble } from '@/components/chat/variants/aichat/message-bubble';
 import type { AIChatSkillDisplayMap } from '@/components/chat/variants/aichat/skill-display';
-import type { AIChatToolGovernanceDecisionSubmitPayload } from '@/components/chat/variants/aichat/agentic-timeline';
+import type {
+  AIChatToolGovernanceDecisionSubmitPayload,
+  AITaskProposalActionPayload,
+} from '@/components/chat/variants/aichat/agentic-timeline';
 import { presentationProjectionFromMetadata } from '@/components/chat/controllers/aichat/presentation-order';
 import type { AIChatSpeechPlaybackController } from '@/components/chat/variants/aichat/voice/use-agent-speech-playback';
 
@@ -36,6 +39,8 @@ interface AIChatMessageListProps {
   onToolGovernanceDecision?: (
     payload: AIChatToolGovernanceDecisionSubmitPayload
   ) => void | Promise<void>;
+  onTaskProposalAction?: (payload: AITaskProposalActionPayload) => void | Promise<void>;
+  onTaskMutation?: () => void;
   onSwitchBranch: (messageId: string) => void;
   onEditStart?: (message: AIChatMessage) => void;
   onEditChange: (value: string) => void;
@@ -43,6 +48,7 @@ interface AIChatMessageListProps {
   onEditSubmit: (message: AIChatMessage) => void;
   showAssistantModelMeta?: boolean;
   layout?: 'full' | 'embedded';
+  messageDensity?: 'default' | 'compact';
   showMemoryKey?: boolean;
   showSkillEventDetails?: boolean;
   showWorkflowFailureDetails?: boolean;
@@ -123,6 +129,8 @@ export function AIChatMessageList({
   onScroll,
   onRegenerate,
   onToolGovernanceDecision,
+  onTaskProposalAction,
+  onTaskMutation,
   onSwitchBranch,
   onEditStart,
   onEditChange,
@@ -130,6 +138,7 @@ export function AIChatMessageList({
   onEditSubmit,
   showAssistantModelMeta = true,
   layout = 'full',
+  messageDensity = 'default',
   showMemoryKey = true,
   showSkillEventDetails = true,
   showWorkflowFailureDetails = true,
@@ -154,7 +163,11 @@ export function AIChatMessageList({
       <div
         className={cn(
           'mx-auto flex min-h-full w-full min-w-0 flex-col pb-4',
-          layout === 'embedded' ? 'max-w-full px-4 pt-5' : 'max-w-5xl px-4 pt-20 sm:px-6 lg:px-8'
+          layout === 'embedded'
+            ? 'max-w-full px-4 pt-5'
+            : messageDensity === 'compact'
+              ? 'max-w-6xl px-4 pt-8 sm:px-6 lg:px-8'
+              : 'max-w-5xl px-4 pt-20 sm:px-6 lg:px-8'
         )}
       >
         {isLoadingMessages ? (
@@ -197,6 +210,8 @@ export function AIChatMessageList({
                 )}
                 onRegenerate={onRegenerate}
                 onToolGovernanceDecision={onToolGovernanceDecision}
+                onTaskProposalAction={onTaskProposalAction}
+                onTaskMutation={onTaskMutation}
                 branchNavigation={branchNavigationByMessageId.get(message.id)}
                 onSwitchBranch={onSwitchBranch}
                 isEditing={editingMessageId === message.id}

@@ -179,22 +179,25 @@ export function useWorkflowContinuationActions({
       const shouldSyncContinuationOnClose =
         Boolean(toolGovernanceDecision) ||
         Boolean(clientActionResult) ||
-        Boolean(userInputContinuation);
+        Boolean(userInputContinuation) ||
+        Boolean(approvalPayload) ||
+        Boolean(questionInputs);
       const syncContinuationState = () => {
         if (!shouldSyncContinuationOnClose) return;
         refreshConversationSilently(conversationId);
         refreshMessagesSilently(conversationId);
       };
 
-      const restoreWorkflowApprovalContinuation = (errorMessage?: string) => {
+      const restoreWorkflowApprovalContinuation = (errorMessage?: string, clearError = false) => {
         setControllerState(current => {
           const nextStreamingByMessageId = { ...current.streamingByMessageId };
           delete nextStreamingByMessageId[messageId];
 
           return {
             ...current,
-            error:
-              errorMessage && current.activeConversationId === conversationId
+            error: clearError
+              ? null
+              : errorMessage && current.activeConversationId === conversationId
                 ? errorMessage
                 : current.error,
             isSending: getNextActiveSendingState(current, conversationId, false),
@@ -503,21 +506,31 @@ export function useWorkflowContinuationActions({
             if (isRecoverableStreamTransportError(error) && requestStreamRecovery()) return;
             if (!streamStarted) {
               const suppressError =
-                (toolGovernanceDecision || clientActionResult || userInputContinuation) &&
-                isContinuationLikelyStartedError(error);
+                Boolean(userInputContinuation) ||
+                ((toolGovernanceDecision || clientActionResult) &&
+                  isContinuationLikelyStartedError(error));
               if (!suppressError) {
                 startError = error;
               }
-              restoreWorkflowApprovalContinuation(suppressError ? undefined : error.message);
-              if (suppressError) {
-                syncContinuationState();
-              }
+              restoreWorkflowApprovalContinuation(
+                suppressError ? undefined : error.message,
+                Boolean(userInputContinuation)
+              );
+              // Approval continuations are persisted server-side. Always
+              // refresh after a failed request so a restored waiting form is
+              // visible instead of leaving the local message in a stale
+              // generating state.
+              syncContinuationState();
               return;
             }
             const suppressError =
-              (toolGovernanceDecision || clientActionResult || userInputContinuation) &&
-              isContinuationLikelyStartedError(error);
+              Boolean(userInputContinuation) ||
+              ((toolGovernanceDecision || clientActionResult) &&
+                isContinuationLikelyStartedError(error));
             if (suppressError) {
+              if (userInputContinuation) {
+                restoreWorkflowApprovalContinuation(undefined, true);
+              }
               syncContinuationState();
               return;
             }
@@ -613,8 +626,8 @@ export function useWorkflowContinuationActions({
               (toolGovernanceDecision || clientActionResult || userInputContinuation) &&
               isContinuationLikelyStartedError(error);
             restoreWorkflowApprovalContinuation(suppressError ? undefined : errorMessage);
+            syncContinuationState();
             if (suppressError) {
-              syncContinuationState();
               return;
             }
             if (clientActionResult || toolGovernanceDecision || userInputContinuation) {
@@ -628,6 +641,9 @@ export function useWorkflowContinuationActions({
           ) {
             syncContinuationState();
             return;
+          }
+          if (approvalPayload) {
+            syncContinuationState();
           }
           setControllerState(current => ({
             ...current,

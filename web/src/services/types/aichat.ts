@@ -252,6 +252,8 @@ export interface AIChatSkillInvocation {
   tool_name?: string;
   title?: string;
   status: AIChatSkillActivityStatus;
+  /** Durable governance records may be retained for recovery but hidden from user timelines. */
+  presentation_visibility?: 'user' | 'internal' | string;
   duration_ms?: number;
   arguments?: Record<string, unknown> | null;
   result?: Record<string, unknown> | null;
@@ -315,11 +317,15 @@ export interface AIChatWorkflowRunApprovalMetadata extends Record<string, unknow
   approval_form?: unknown;
   ui_approval_allowed?: boolean;
   status?: string;
+  task_name?: string;
+  task_id?: string;
 }
 
 export interface AIChatWorkflowRunMetadata {
+  kind?: string;
   workflow_run_id?: string;
   task_id?: string;
+  task_name?: string;
   id?: string;
   workflow_id?: string;
   agent_id?: string;
@@ -1224,6 +1230,7 @@ export interface AIChatWorkflowPausedEventData extends AIChatWorkflowEventData {
   approval_url?: string;
   approval_form?: unknown;
   ui_approval_allowed?: boolean;
+  task_name?: string;
 }
 
 export interface AIChatFileParseStartEventData {

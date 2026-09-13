@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
   ChevronDown,
   CircleHelp,
   Loader2,
+  ListTodo,
   MessageSquarePlus,
 } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -182,6 +183,15 @@ interface AIChatAgenticTimelineProps {
   onToolGovernanceDecision?: (
     payload: AIChatToolGovernanceDecisionSubmitPayload
   ) => void | Promise<void>;
+  onTaskProposalAction?: (payload: AITaskProposalActionPayload) => void | Promise<void>;
+  onTaskMutation?: () => void;
+}
+
+export interface AITaskProposalActionPayload {
+  action: 'confirm' | 'edit' | 'decline';
+  taskId: string;
+  taskName: string;
+  revision: number;
 }
 
 export interface AIChatToolGovernanceDecisionSubmitPayload {
@@ -994,6 +1004,11 @@ function SkillTimelineRow({
   const t = useT('webapp');
   const { locale } = useLocale();
   const [isOpen, setIsOpen] = useState(false);
+  if (event.item.invocation.tool_name?.trim() === 'manage_digital_human_task') {
+    // Task mutations are represented by the blocking approval composer. Do
+    // not render a second generic tool row in the assistant timeline.
+    return null;
+  }
   const duration = getDurationText(event.item.invocation.duration_ms, t);
   const detail = event.detail ? sanitizeDisplayString(event.detail) : null;
   const displayResult = sanitizeTimelineResultForDisplay(event.item.invocation.result);
@@ -3106,6 +3121,30 @@ function WorkflowTimelineRow({
   item: WorkflowTimelineItem;
   showFailureDetails: boolean;
 }) {
+  const t = useT('webapp');
+  if (item.kind === 'digital_human_task') {
+    const label =
+      item.status === 'pending_approval'
+        ? t('consoleChat.taskApproval.timelinePending')
+        : item.status === 'completed'
+          ? t('consoleChat.taskApproval.timelineCompleted')
+          : item.status === 'error'
+            ? t('consoleChat.taskApproval.timelineFailed')
+            : t('consoleChat.taskApproval.timelineRunning');
+    const approvalRecord =
+      item.approval && typeof item.approval === 'object'
+        ? (item.approval as Record<string, unknown>)
+        : {};
+    const taskName =
+      item.taskName?.trim() ||
+      (typeof approvalRecord.task_name === 'string' ? approvalRecord.task_name.trim() : '');
+    return (
+      <div className="flex min-w-0 items-center gap-2 border-l-2 border-warning/40 py-1 pl-3 text-xs text-muted-foreground">
+        <ListTodo className="size-3.5 shrink-0 text-warning-foreground" />
+        <span>{taskName ? `${label} · ${taskName}` : label}</span>
+      </div>
+    );
+  }
   const nodes: WorkflowRunNodeListItem[] = item.nodes.map((node, index) => ({
     title: node.title ?? node.nodeId ?? node.nodeType ?? '',
     nodeId: node.nodeId ?? `workflow-node-${index}`,
@@ -3677,9 +3716,26 @@ function filterTimelineForRendering(
       item.type === 'workflow_run' && item.invocationId ? [item.invocationId] : []
     )
   );
+  const compactedDigitalHumanTaskRuns = compactDigitalHumanTaskWorkflowTimelineItems(timeline);
+  const hasDigitalHumanTaskWorkflow = compactedDigitalHumanTaskRuns.some(
+    item =>
+      item.type === 'workflow_run' &&
+      (item.kind === 'digital_human_task' || item.workflowRunId.startsWith('digital-human-task:'))
+  );
+  // The generic governance placeholder can arrive before the dedicated task
+  // workflow event on the live stream. A task mutation invocation is already
+  // enough context to suppress that placeholder; otherwise users briefly see
+  // a meaningless yellow "运行此工具" row before it disappears on refresh.
+  const hasDigitalHumanTaskContext =
+    hasDigitalHumanTaskWorkflow ||
+    compactedDigitalHumanTaskRuns.some(
+      item =>
+        item.type === 'skill_event' &&
+        item.invocation.tool_name?.trim() === 'manage_digital_human_task'
+    );
   return compactDuplicateRouteNavigationEvents(
     compactTerminalProgressText(
-      compactTerminalIntermediateAnswers(timeline, messageStatus),
+      compactTerminalIntermediateAnswers(compactedDigitalHumanTaskRuns, messageStatus),
       messageStatus
     ).filter(
       item =>
@@ -3702,9 +3758,104 @@ function filterTimelineForRendering(
           enableToolGovernanceApprovals &&
           item.type === 'tool_governance_decision' &&
           isToolGovernanceNeedsApproval(item)
-        )
+        ) &&
+        // DigitalHuman task mutations have a dedicated approval/workflow
+        // presentation. Never render their generic governance audit row,
+        // even when the workflow item is missing during live SSE or when an
+        // older persisted message has incomplete workflow metadata.
+        !isDigitalHumanTaskGovernanceItem(item, hasDigitalHumanTaskContext)
     )
   );
+}
+
+function isDigitalHumanTaskGovernanceItem(
+  item: AIChatAgenticTimelineItem,
+  hasDigitalHumanTaskWorkflow = false
+): boolean {
+  if (item.type !== 'tool_governance_decision') return false;
+  const event = item.event as unknown as Record<string, unknown>;
+  const governance = governanceRecord(event.governance);
+  const approvalEvent =
+    governanceRecord(event.approval_event) ?? governanceRecord(governance?.approval_event);
+  const approvalForm = governanceRecord(approvalEvent?.approval_form);
+  const frozenInvocation =
+    governanceRecord(event.frozen_invocation) ??
+    governanceRecord(approvalEvent?.frozen_invocation) ??
+    governanceRecord(governance?.frozen_invocation);
+  const result =
+    governanceRecord(event.result) ??
+    governanceRecord(event.execution_result) ??
+    governanceRecord(governance?.execution_result);
+  const resultData = governanceRecord(result?.data);
+  const resultTask = governanceRecord(result?.task) ?? governanceRecord(resultData?.task);
+  const frozenArguments = governanceRecord(frozenInvocation?.arguments);
+  const sources = [
+    event,
+    governance,
+    approvalEvent,
+    approvalForm,
+    frozenInvocation,
+    frozenArguments,
+    result,
+    resultData,
+    resultTask,
+  ].filter((record): record is Record<string, unknown> => Boolean(record));
+  return sources.some(record => {
+    const skill = String(record.skill_id ?? '').trim().toLowerCase();
+    const tool = String(record.tool_name ?? '').trim().toLowerCase();
+    const node = String(record.node_id ?? '').trim().toLowerCase();
+    const runID = String(record.workflow_run_id ?? '').trim().toLowerCase();
+    const genericTool = !tool || tool === 'tool-governance' || tool === 'tool_governance';
+    const genericSkill = skill === 'tool-governance' || skill === 'tool_governance';
+    return (
+      (skill === 'digital-human-tasks' && tool === 'manage_digital_human_task') ||
+      tool === 'manage_digital_human_task' ||
+      node === 'digital_human_task' ||
+      runID.startsWith('digital-human-task:') ||
+      String(record.task_action ?? '').trim() !== '' ||
+      (hasDigitalHumanTaskWorkflow && (genericTool || genericSkill))
+    );
+  });
+}
+
+function digitalHumanTaskTimelineID(item: WorkflowTimelineItem): string | undefined {
+  if (item.taskId?.trim()) return item.taskId.trim();
+  const match = /^digital-human-task:([^:]+):/.exec(item.workflowRunId);
+  return match?.[1];
+}
+
+function compactDigitalHumanTaskWorkflowTimelineItems(
+  timeline: AIChatAgenticTimelineItem[]
+): AIChatAgenticTimelineItem[] {
+  const result: AIChatAgenticTimelineItem[] = [];
+  const indexByTaskID = new Map<string, number>();
+  timeline.forEach(item => {
+    if (item.type !== 'workflow_run' || item.kind !== 'digital_human_task') {
+      result.push(item);
+      return;
+    }
+    const taskID = digitalHumanTaskTimelineID(item);
+    if (!taskID) {
+      result.push(item);
+      return;
+    }
+    const existingIndex = indexByTaskID.get(taskID);
+    if (existingIndex === undefined) {
+      indexByTaskID.set(taskID, result.length);
+      result.push(item);
+      return;
+    }
+    const existing = result[existingIndex];
+    if (existing.type !== 'workflow_run') {
+      result[existingIndex] = item;
+      return;
+    }
+    // Approval continuations create a new workflow run for the same task.
+    // Keep the newest projection so the timeline cannot show an old approval
+    // and a newer applied/failed state as two unrelated operations.
+    result[existingIndex] = item;
+  });
+  return result;
 }
 
 function skillTimelineViewModel(
@@ -3847,11 +3998,11 @@ function TimelineRenderRow({
   switch (item.renderType) {
     case 'transient_progress':
       return (
-		<div
-		  className="border-l-2 border-muted-foreground/15 py-0.5 pl-3 text-xs text-muted-foreground/70 animate-pulse"
-		  role="status"
-		  aria-live="polite"
-		>
+        <div
+          className="border-l-2 border-muted-foreground/15 py-0.5 pl-3 text-xs text-muted-foreground/70 animate-pulse"
+          role="status"
+          aria-live="polite"
+        >
           <span>{item.content}</span>
         </div>
       );
@@ -4025,11 +4176,39 @@ export function AIChatAgenticTimeline({
   suppressPendingToolGovernanceApprovals = false,
   messageStatus,
   onToolGovernanceDecision,
+  onTaskMutation,
 }: AIChatAgenticTimelineProps) {
   const t = useT('webapp');
   const { locale } = useLocale();
   const [isOpen, setIsOpen] = useState(defaultOpen);
+  const notifiedTaskMutationKeysRef = useRef(new Set<string>());
   const pendingApprovalScopeId = useToolGovernancePendingApprovalScope();
+
+  useEffect(() => {
+    if (!onTaskMutation) return;
+    timeline.forEach(item => {
+      if (item.type === 'workflow_run' && item.kind === 'digital_human_task') {
+        if (!['completed', 'error', 'stopped', 'expired'].includes(item.status)) return;
+        const key = `task-workflow:${item.workflowRunId}:${item.status}`;
+        if (notifiedTaskMutationKeysRef.current.has(key)) return;
+        notifiedTaskMutationKeysRef.current.add(key);
+        onTaskMutation();
+        return;
+      }
+      if (item.type !== 'skill_event') return;
+      const invocation = item.invocation;
+      if (
+        invocation.tool_name?.trim() !== 'manage_digital_human_task' ||
+        !['success', 'succeeded', 'completed'].includes(String(invocation.status).toLowerCase())
+      ) {
+        return;
+      }
+      const key = `${item.id}:${invocation.status}`;
+      if (notifiedTaskMutationKeysRef.current.has(key)) return;
+      notifiedTaskMutationKeysRef.current.add(key);
+      onTaskMutation();
+    });
+  }, [onTaskMutation, timeline]);
 
   const pendingGovernanceApprovals = useMemo(() => {
     if (!enableToolGovernanceApprovals) return [];

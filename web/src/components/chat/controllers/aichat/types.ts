@@ -194,7 +194,10 @@ export type AIChatAgenticTimelineItem =
   | {
       id: string;
       type: 'workflow_run';
+      kind?: string;
       workflowRunId: string;
+      taskId?: string;
+      taskName?: string;
       status: RunStatus;
       elapsedTime?: number;
       error?: string;

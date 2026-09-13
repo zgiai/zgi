@@ -222,6 +222,9 @@ function visibleSkillInvocations(
 ): AIChatSkillInvocation[] {
   return (invocations ?? []).filter(invocation => {
     const status = String(invocation.status ?? '').toLowerCase();
+    if (invocation.presentation_visibility?.toLowerCase() === 'internal') {
+      return false;
+    }
     const record = invocation as unknown as Record<string, unknown>;
     const result =
       invocation.result &&

@@ -411,6 +411,44 @@ class DigitalHumanService extends BaseService {
     return this.request('get', `/digital-humans/${id}/tasks`, undefined, { params });
   }
 
+  listMyTasks(
+    id: string,
+    params?: {
+      page?: number;
+      page_size?: number;
+      query?: string;
+      status?: string[];
+      priority?: string[];
+      schedule_type?: string;
+    }
+  ): Promise<ApiResponseData<DigitalHumanTaskList>> {
+    return this.request('get', `/digital-humans/${id}/my-tasks`, undefined, { params });
+  }
+
+  createMyTask(id: string, data: CreateDigitalHumanTaskRequest): Promise<ApiResponseData<DigitalHumanTask>> {
+    return this.request('post', `/digital-humans/${id}/my-tasks`, data);
+  }
+
+  getMyTask(id: string, taskId: string): Promise<ApiResponseData<DigitalHumanTask>> {
+    return this.request('get', `/digital-humans/${id}/my-tasks/${taskId}`);
+  }
+
+  updateMyTask(id: string, taskId: string, data: UpdateDigitalHumanTaskRequest): Promise<ApiResponseData<DigitalHumanTask>> {
+    return this.request('patch', `/digital-humans/${id}/my-tasks/${taskId}`, data);
+  }
+
+  applyMyTaskAction(id: string, taskId: string, action: string, expectedRevision: number): Promise<ApiResponseData<DigitalHumanTask>> {
+    return this.request('post', `/digital-humans/${id}/my-tasks/${taskId}/actions/${action}`, { expected_revision: expectedRevision });
+  }
+
+  listMyTaskRuns(id: string, taskId: string): Promise<ApiResponseData<DigitalHumanTaskPage<DigitalHumanTaskRun>>> {
+    return this.request('get', `/digital-humans/${id}/my-tasks/${taskId}/runs`);
+  }
+
+  listMyTaskActivities(id: string, taskId: string): Promise<ApiResponseData<DigitalHumanTaskPage<DigitalHumanTaskActivity>>> {
+    return this.request('get', `/digital-humans/${id}/my-tasks/${taskId}/activities`);
+  }
+
   createTask(
     id: string,
     data: CreateDigitalHumanTaskRequest

@@ -3,7 +3,13 @@ import type { AgentRuntimeRunDetail, AgentRuntimeStep } from './agent-runtime-lo
 export type DigitalHumanStatus = 'draft' | 'active' | 'disabled';
 export type DigitalHumanVersionState = 'draft' | 'published';
 export type DigitalHumanRunStatus =
-  'queued' | 'running' | 'canceling' | 'succeeded' | 'failed' | 'canceled' | 'unknown';
+  | 'queued'
+  | 'running'
+  | 'canceling'
+  | 'succeeded'
+  | 'failed'
+  | 'canceled'
+  | 'unknown';
 
 export interface DigitalHumanChannelResponsePolicy {
   intermediate_messages_enabled?: boolean;
@@ -19,7 +25,6 @@ export interface DigitalHumanPresentationPolicy {
   home_title: string;
   opening_statement: string;
   input_placeholder: string;
-  theme_color: string;
   suggested_questions: string[];
 }
 
@@ -195,7 +200,6 @@ export interface DigitalHumanWebAppConfig {
   home_title: string;
   opening_statement: string;
   input_placeholder: string;
-  theme_color: string;
   suggested_questions: string[];
   anonymous_chat_enabled: boolean;
   login_required: boolean;
@@ -267,10 +271,8 @@ export interface DigitalHumanResourceBindingInput {
   metadata: Record<string, unknown>;
 }
 
-export interface DigitalHumanResourceBinding extends Omit<
-  DigitalHumanResourceBindingInput,
-  'type'
-> {
+export interface DigitalHumanResourceBinding
+  extends Omit<DigitalHumanResourceBindingInput, 'type'> {
   id: string;
   binding_type: DigitalHumanBindingType;
   binding_revision: string;
@@ -366,9 +368,18 @@ export interface ManualDigitalHumanInvocationResponse {
 
 export type DigitalHumanMemoryClass = 'self' | 'business';
 export type DigitalHumanMemoryType =
-  'identity' | 'experience' | 'decision' | 'fact' | 'open_loop' | 'reflection';
+  | 'identity'
+  | 'experience'
+  | 'decision'
+  | 'fact'
+  | 'open_loop'
+  | 'reflection';
 export type DigitalHumanMemoryScopeType =
-  'workspace' | 'project' | 'customer' | 'campaign' | 'channel';
+  | 'workspace'
+  | 'project'
+  | 'customer'
+  | 'campaign'
+  | 'channel';
 export type DigitalHumanMemoryStatus = 'active' | 'invalidated' | 'archived';
 
 export interface DigitalHumanMemoryEvidence {
@@ -465,7 +476,12 @@ export interface DigitalHumanMemoryMutationResult {
 export type DigitalHumanChannelInstallationStatus = 'active' | 'disabled';
 export type DigitalHumanChannelEventStatus = 'received' | 'ignored' | 'accepted' | 'failed';
 export type DigitalHumanChannelDeliveryStatus =
-  'pending' | 'processing' | 'succeeded' | 'failed' | 'unknown' | 'dismissed';
+  | 'pending'
+  | 'processing'
+  | 'succeeded'
+  | 'failed'
+  | 'unknown'
+  | 'dismissed';
 
 export interface DigitalHumanChannelInstallation {
   id: string;
@@ -660,7 +676,13 @@ export interface DigitalHumanChannelPage<T> {
 }
 
 export type DigitalHumanTaskStatus =
-  'proposed' | 'pending' | 'in_progress' | 'waiting' | 'blocked' | 'completed' | 'canceled';
+  | 'proposed'
+  | 'pending'
+  | 'in_progress'
+  | 'waiting'
+  | 'blocked'
+  | 'completed'
+  | 'canceled';
 export type DigitalHumanTaskPriority = 'low' | 'normal' | 'high' | 'urgent';
 export type DigitalHumanTaskScheduleType = 'manual' | 'once' | 'cron';
 export type DigitalHumanTaskOwnerKind = 'digital_human' | 'user_subject' | 'conversation';
@@ -684,6 +706,8 @@ export interface DigitalHumanTask {
   priority: DigitalHumanTaskPriority;
   schedule: DigitalHumanTaskSchedule;
   delivery_mode: 'task_only' | 'source_conversation';
+  delivery_target?: 'task_center' | 'source_conversation';
+  delivery_fallback?: 'task_center';
   execution_timeout_seconds: number;
   max_attempts: number;
   next_run_at?: string;
@@ -730,6 +754,9 @@ export interface DigitalHumanTaskRun {
   attempt: number;
   status: string;
   error_summary?: string;
+  result_summary?: string;
+  result_delivery_status?: 'pending' | 'processing' | 'succeeded' | 'failed' | 'unknown' | 'dismissed';
+  result_delivery_error?: string;
   scheduled_for: string;
   started_at?: string;
   finished_at?: string;

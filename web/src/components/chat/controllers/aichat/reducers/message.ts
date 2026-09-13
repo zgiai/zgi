@@ -31,7 +31,7 @@ import {
   upsertAIChatMessage,
 } from '@/components/chat/utils/aichat-message';
 import { applyAuthoritativeRuntimeInputSnapshot } from '@/components/chat/utils/runtime-input-reconcile';
-import { getNextActiveSendingState } from '../selectors';
+import { getNextActiveSendingState, sanitizeTimelineForMessage } from '../selectors';
 import {
   createAIChatFileMetadata,
   mergeMessageMetadata,
@@ -849,7 +849,16 @@ export function applyMessageEndState(
   if (isStaleAIChatStreamEvent(eventId, previousStreaming?.last_event_id)) {
     return current;
   }
-  const nextTimeline = removeTransientProgressItems(previousStreaming?.timeline);
+  const rawNextTimeline = removeTransientProgressItems(previousStreaming?.timeline);
+  const timelineMessage = endedMessage
+    ? {
+        ...endedMessage,
+        metadata: mergeMessageMetadata(endedMessage.metadata, payload.metadata),
+      }
+    : undefined;
+  const nextTimeline = timelineMessage
+    ? sanitizeTimelineForMessage(timelineMessage, rawNextTimeline)
+    : rawNextTimeline;
   let endedPresentationState = presentationStateFromMetadata(payload.metadata);
   const nextMessages = messages.map(message => {
     if (message.id !== payload.message_id) {

@@ -38,15 +38,30 @@ type PersistedSkillInvocation = AIChatSkillInvocation & {
 
 function normalizeSkillInvocation(invocation: AIChatSkillInvocation): AIChatSkillInvocation {
   const persisted = invocation as PersistedSkillInvocation;
-  return {
+  const normalized: AIChatSkillInvocation = {
     ...invocation,
     status: invocation.status === 'loaded' ? 'success' : invocation.status,
     arguments: invocation.arguments ?? persisted.arguments_summary,
   };
+  // Older persisted governance records did not retain the skill/tool fields
+  // for DigitalHuman task approvals. Normalize them before timeline grouping
+  // so they join the task workflow lane instead of becoming a duplicate
+  // generic "运行此工具" row.
+  if (normalized.kind === 'tool_governance' && isDigitalHumanTaskMutationInvocation(normalized)) {
+    return {
+      ...normalized,
+      skill_id: 'digital-human-tasks',
+      tool_name: 'manage_digital_human_task',
+    };
+  }
+  return normalized;
 }
 
 function isVisibleSkillInvocation(invocation: AIChatSkillInvocation): boolean {
   const status = String(invocation.status ?? '').toLowerCase();
+  if (invocation.presentation_visibility?.toLowerCase() === 'internal') {
+    return false;
+  }
   const record = invocation as unknown as Record<string, unknown>;
   const result =
     invocation.result && typeof invocation.result === 'object' && !Array.isArray(invocation.result)
@@ -110,6 +125,219 @@ function isTerminalGovernedSkillInvocation(invocation: AIChatSkillInvocation): b
 
 function isTerminalGovernedToolExecutionInvocation(invocation: AIChatSkillInvocation): boolean {
   return invocation.kind === 'tool_call' && isTerminalGovernedSkillInvocation(invocation);
+}
+
+function isDigitalHumanTaskMutationInvocation(invocation: AIChatSkillInvocation): boolean {
+  if (
+    invocation.skill_id === 'digital-human-tasks' &&
+    invocation.tool_name === 'manage_digital_human_task'
+  ) {
+    return true;
+  }
+  const result =
+    invocation.result && typeof invocation.result === 'object'
+      ? (invocation.result as Record<string, unknown>)
+      : undefined;
+  const resultData =
+    result?.data && typeof result.data === 'object'
+      ? (result.data as Record<string, unknown>)
+      : undefined;
+  const resultTask =
+    (result?.task && typeof result.task === 'object'
+      ? (result.task as Record<string, unknown>)
+      : undefined) ??
+    (resultData?.task && typeof resultData.task === 'object'
+      ? (resultData.task as Record<string, unknown>)
+      : undefined);
+  const argumentsRecord =
+    invocation.arguments && typeof invocation.arguments === 'object'
+      ? invocation.arguments
+      : undefined;
+  const governance = invocation.governance;
+  const approvalForm =
+    governance?.approval_event && typeof governance.approval_event === 'object'
+      ? (governance.approval_event as Record<string, unknown>).approval_form
+      : undefined;
+  const governanceApproval =
+    governance?.approval_event && typeof governance.approval_event === 'object'
+      ? (governance.approval_event as Record<string, unknown>)
+      : undefined;
+  const frozenInvocation =
+    governance?.frozen_invocation && typeof governance.frozen_invocation === 'object'
+      ? (governance.frozen_invocation as Record<string, unknown>)
+      : undefined;
+  const frozenArguments =
+    frozenInvocation?.arguments && typeof frozenInvocation.arguments === 'object'
+      ? (frozenInvocation.arguments as Record<string, unknown>)
+      : undefined;
+  const nodeID =
+    approvalForm && typeof approvalForm === 'object'
+      ? workflowString((approvalForm as Record<string, unknown>).node_id)
+      : undefined;
+  const workflowRunID =
+    workflowString(result?.workflow_run_id) || workflowString(invocation.runtime_id);
+  return (
+    nodeID === 'digital_human_task' ||
+    workflowString(governanceApproval?.node_id) === 'digital_human_task' ||
+    workflowString(frozenInvocation?.skill_id) === 'digital-human-tasks' ||
+    workflowString(frozenInvocation?.tool_name) === 'manage_digital_human_task' ||
+    typeof frozenArguments?.task_id === 'string' ||
+    typeof frozenArguments?.task_action === 'string' ||
+    /^digital-human-task:/.test(workflowRunID ?? '') ||
+    typeof result?.task_id === 'string' ||
+    typeof result?.task_action === 'string' ||
+    typeof resultTask?.id === 'string' ||
+    typeof resultTask?.task_id === 'string' ||
+    typeof argumentsRecord?.task_id === 'string' ||
+    typeof argumentsRecord?.task_action === 'string'
+  );
+}
+
+function isDigitalHumanTaskGovernanceEvent(event: unknown): boolean {
+  const root = timelineRecord(event);
+  const governance = timelineRecord(root.governance);
+  const approvalEvent = firstTimelineRecord(root.approval_event, governance.approval_event);
+  const approvalForm = timelineRecord(approvalEvent.approval_form);
+  const frozenInvocation = firstTimelineRecord(
+    root.frozen_invocation,
+    approvalEvent.frozen_invocation,
+    governance.frozen_invocation
+  );
+  const frozenArguments = timelineRecord(frozenInvocation.arguments);
+  const result = firstTimelineRecord(
+    root.result,
+    root.execution_result,
+    governance.execution_result
+  );
+  const resultData = timelineRecord(result.data);
+  const resultTask = firstTimelineRecord(result.task, resultData.task);
+  const sources = [
+    root,
+    governance,
+    approvalEvent,
+    approvalForm,
+    frozenInvocation,
+    frozenArguments,
+    result,
+    resultData,
+    resultTask,
+  ];
+
+  return sources.some(record => {
+    const skill = timelineString(record.skill_id).toLowerCase();
+    const tool = timelineString(record.tool_name).toLowerCase();
+    const node = timelineString(record.node_id).toLowerCase();
+    const workflowRunID = timelineString(record.workflow_run_id).toLowerCase();
+    return (
+      (skill === 'digital-human-tasks' && tool === 'manage_digital_human_task') ||
+      tool === 'manage_digital_human_task' ||
+      node === 'digital_human_task' ||
+      workflowRunID.startsWith('digital-human-task:') ||
+      Boolean(timelineString(record.task_id)) ||
+      Boolean(timelineString(record.task_action))
+    );
+  });
+}
+
+function isGenericDigitalHumanTaskGovernanceEvent(event: unknown): boolean {
+  const root = timelineRecord(event);
+  const governance = timelineRecord(root.governance);
+  const approvalEvent = firstTimelineRecord(root.approval_event, governance.approval_event);
+  const records = [root, governance, approvalEvent];
+  const skill = records
+    .map(record => timelineString(record.skill_id).toLowerCase())
+    .find(Boolean);
+  const tool = records
+    .map(record => timelineString(record.tool_name || record.tool_id).toLowerCase())
+    .find(Boolean);
+  return (
+    !tool ||
+    tool === 'tool-governance' ||
+    tool === 'tool_governance' ||
+    skill === 'tool-governance' ||
+    skill === 'tool_governance'
+  );
+}
+
+function firstTimelineRecord(...values: unknown[]): Record<string, unknown> {
+  for (const value of values) {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const record = value as Record<string, unknown>;
+      if (Object.keys(record).length > 0) return record;
+    }
+  }
+  return {};
+}
+
+function hasDigitalHumanTaskWorkflowContext(
+  message: AIChatMessage,
+  timeline: AIChatAgenticTimelineItem[]
+): boolean {
+  return Boolean(
+    (message.metadata?.workflow_runs ?? []).some(
+      run => workflowRunKind(run) === 'digital_human_task'
+    ) ||
+      (message.metadata?.skill_invocations ?? []).some(isDigitalHumanTaskMutationInvocation) ||
+      timeline.some(
+        item =>
+          item.type === 'workflow_run' &&
+          (item.kind === 'digital_human_task' ||
+            item.workflowRunId.startsWith('digital-human-task:'))
+      ) ||
+      timeline.some(
+        item => item.type === 'skill_event' && isDigitalHumanTaskMutationInvocation(item.invocation)
+      )
+  );
+}
+
+/**
+ * Removes only the generic governance placeholders emitted for a digital-human
+ * task mutation. Real skill calls, workflow runs, and named governance events
+ * remain in the timeline so reconnecting a stream cannot erase the history the
+ * user already saw.
+ */
+export function sanitizeTimelineForMessage(
+  message: AIChatMessage,
+  timeline: AIChatAgenticTimelineItem[]
+): AIChatAgenticTimelineItem[] {
+  const hasTaskContext = hasDigitalHumanTaskWorkflowContext(message, timeline);
+  if (!hasTaskContext) return timeline;
+
+  return timeline.filter(item => {
+    if (item.type === 'skill_event') {
+      const invocation = item.invocation;
+      if (invocation.kind === 'tool_governance') {
+        if (isDigitalHumanTaskMutationInvocation(invocation)) return false;
+        const skill = timelineString(invocation.skill_id).toLowerCase();
+        const tool = timelineString(invocation.tool_name).toLowerCase();
+        if (!tool || skill === 'tool-governance' || skill === 'tool_governance') return false;
+      }
+      return true;
+    }
+    if (item.type !== 'tool_governance_decision') return true;
+    if (
+      isDigitalHumanTaskGovernanceEvent(item.event) ||
+      isGenericDigitalHumanTaskGovernanceEvent(item.event)
+    ) {
+      return false;
+    }
+
+    // A completely unnamed governance row is the legacy/live fallback that
+    // renders as "运行此工具。". Once a task workflow is present, it belongs
+    // to the dedicated task workflow card and should not be shown separately.
+    const event = timelineRecord(item.event);
+    const governance = timelineRecord(event.governance);
+    const approvalEvent = firstTimelineRecord(event.approval_event, governance.approval_event);
+    const hasNamedTool = [event, governance, approvalEvent].some(record => {
+      const skill = timelineString(record.skill_id).toLowerCase();
+      const tool = timelineString(record.tool_name || record.tool_id).toLowerCase();
+      return (
+        (Boolean(skill) && skill !== 'tool-governance' && skill !== 'tool_governance') ||
+        (Boolean(tool) && tool !== 'tool-governance' && tool !== 'tool_governance')
+      );
+    });
+    return hasNamedTool;
+  });
 }
 
 function isSuccessfulToolGovernanceAuditInvocation(invocation: AIChatSkillInvocation): boolean {
@@ -201,6 +429,42 @@ function workflowRunId(run: AIChatWorkflowRunMetadata): string {
   );
 }
 
+function workflowRunKind(run: AIChatWorkflowRunMetadata): string | undefined {
+  const explicitKind = workflowString(run.kind);
+  if (explicitKind) return explicitKind;
+
+  // Older persisted task approval runs did not carry `kind`, but their
+  // durable run id is namespaced. Infer the kind before timeline grouping so
+  // those runs still collapse into the task approval lane and do not render
+  // as a generic workflow/tool event.
+  const workflowRunID = workflowString(run.workflow_run_id);
+  if (/^digital-human-task:/.test(workflowRunID ?? '')) {
+    return 'digital_human_task';
+  }
+
+  const approvalForm =
+    run.approval?.approval_form && typeof run.approval.approval_form === 'object'
+      ? (run.approval.approval_form as Record<string, unknown>)
+      : undefined;
+  if (workflowString(approvalForm?.node_id) === 'digital_human_task') {
+    return 'digital_human_task';
+  }
+
+  return undefined;
+}
+
+function workflowRunTaskId(run: AIChatWorkflowRunMetadata): string | undefined {
+  const direct = workflowString(run.task_id);
+  if (direct) return direct;
+  const approval = run.approval && typeof run.approval === 'object' ? run.approval : undefined;
+  const approvalTaskID = approval && typeof approval.task_id === 'string' ? approval.task_id : '';
+  const approvalID = workflowString(approvalTaskID);
+  if (approvalID) return approvalID;
+  const runID = workflowString(run.workflow_run_id);
+  const match = /^digital-human-task:([^:]+):/.exec(runID ?? '');
+  return match?.[1];
+}
+
 function normalizeWorkflowRunStatus(status: unknown): RunStatus {
   switch (String(status ?? '').toLowerCase()) {
     case 'running':
@@ -244,6 +508,19 @@ function normalizePersistedWorkflowRunStatus(run: AIChatWorkflowRunMetadata): Ru
     return run.approval_expired ? 'expired' : 'running';
   }
   return status;
+}
+
+function persistedWorkflowRunStatusForMessage(
+  run: AIChatWorkflowRunMetadata,
+  kind: string | undefined,
+  messageStatus: AIChatMessage['status']
+): RunStatus {
+  if (kind === 'digital_human_task') {
+    if (messageStatus === 'completed') return 'completed';
+    if (messageStatus === 'error') return 'error';
+    if (messageStatus === 'stopped') return 'stopped';
+  }
+  return normalizePersistedWorkflowRunStatus(run);
 }
 
 function normalizeWorkflowNodeStatus(status: unknown): NodeInfo['status'] {
@@ -342,16 +619,24 @@ function mapPersistedWorkflowNode(node: AIChatWorkflowRunNodeMetadata): NodeInfo
 }
 
 function workflowTimelineFromMessage(message: AIChatMessage): AIChatAgenticTimelineItem[] {
-  const runs = message.metadata?.workflow_runs ?? [];
+  const runs = compactDigitalHumanTaskWorkflowRuns(message.metadata?.workflow_runs ?? []);
   return runs
     .map((run, index): AIChatAgenticTimelineItem | null => {
       const runId = workflowRunId(run);
       if (!runId) return null;
+      const kind = workflowRunKind(run);
       return {
         id: `history-workflow-${message.id}-${runId}-${index}`,
         type: 'workflow_run',
+        kind,
         workflowRunId: runId,
-        status: normalizePersistedWorkflowRunStatus(run),
+        taskId: workflowRunTaskId(run),
+        taskName: workflowString(run.task_name),
+        // A completed chat message is the terminal projection for a task
+        // approval continuation. Older metadata can leave the workflow run
+        // itself as "running" after a second approval replaced it; do not
+        // resurrect that stale state in the timeline.
+        status: persistedWorkflowRunStatusForMessage(run, kind, message.status),
         elapsedTime: workflowElapsedMs(run.elapsed_time),
         error: workflowString(run.error),
         nodes: (run.nodes ?? []).map(mapPersistedWorkflowNode),
@@ -360,6 +645,41 @@ function workflowTimelineFromMessage(message: AIChatMessage): AIChatAgenticTimel
       };
     })
     .filter((item): item is AIChatAgenticTimelineItem => item !== null);
+}
+
+function compactDigitalHumanTaskWorkflowRuns(
+  runs: AIChatWorkflowRunMetadata[]
+): AIChatWorkflowRunMetadata[] {
+  const result: AIChatWorkflowRunMetadata[] = [];
+  const indexByTaskID = new Map<string, number>();
+  for (const run of runs) {
+    if (workflowRunKind(run) !== 'digital_human_task') {
+      result.push(run);
+      continue;
+    }
+    const taskID = workflowRunTaskId(run);
+    if (!taskID) {
+      result.push(run);
+      continue;
+    }
+    const key = `digital-human-task:${taskID}`;
+    const existingIndex = indexByTaskID.get(key);
+    if (existingIndex === undefined) {
+      indexByTaskID.set(key, result.length);
+      result.push(run);
+      continue;
+    }
+    const existing = result[existingIndex];
+    const existingCreatedAt = typeof existing.created_at === 'number' ? existing.created_at : 0;
+    const incomingCreatedAt = typeof run.created_at === 'number' ? run.created_at : 0;
+    // An approval continuation creates a replacement workflow run for the
+    // same task. Keep the newest run so historical messages do not show the
+    // superseded approval as an additional active operation.
+    if (incomingCreatedAt >= existingCreatedAt) {
+      result[existingIndex] = run;
+    }
+  }
+  return result;
 }
 
 function memoryMutationEventFromInvocation(
@@ -547,11 +867,16 @@ export function timelineFromAIChatMessage(message: AIChatMessage): AIChatAgentic
       const correlationId = governanceCorrelationIdFromInvocation(invocation) ?? String(index);
       const hasGovernance = Boolean(invocation.governance);
       const shouldRenderAsGovernanceDecision =
-        invocation.kind === 'tool_governance' ||
-        (!isTerminalGovernedToolExecutionInvocation(invocation) &&
+        (!isDigitalHumanTaskMutationInvocation(invocation) &&
+          invocation.kind === 'tool_governance') ||
+        (!isDigitalHumanTaskMutationInvocation(invocation) &&
+          !isTerminalGovernedToolExecutionInvocation(invocation) &&
           isTerminalGovernedSkillInvocation(invocation)) ||
-        (hasGovernance && !governanceCorrelationIds.has(correlationId)) ||
-        (isPendingToolGovernanceInvocation(invocation) &&
+        (!isDigitalHumanTaskMutationInvocation(invocation) &&
+          hasGovernance &&
+          !governanceCorrelationIds.has(correlationId)) ||
+        (!isDigitalHumanTaskMutationInvocation(invocation) &&
+          isPendingToolGovernanceInvocation(invocation) &&
           !governanceCorrelationIds.has(correlationId));
 
       if (shouldRenderAsGovernanceDecision) {
@@ -641,16 +966,15 @@ export function timelineFromAIChatMessage(message: AIChatMessage): AIChatAgentic
     })
     .filter((item): item is AIChatAgenticTimelineItem => item !== null);
 
-  return sortTimelineItems(
-    dedupeTimelineItems([
-      ...runtimeInputTimelineFromMessage(message),
-      ...skillTimeline,
-      ...memoryTimeline,
-      ...pendingUserInputTimeline,
-      ...userInputTimeline,
-      ...workflowTimelineFromMessage(message),
-    ])
-  );
+  const timeline = dedupeTimelineItems([
+    ...runtimeInputTimelineFromMessage(message),
+    ...skillTimeline,
+    ...memoryTimeline,
+    ...pendingUserInputTimeline,
+    ...userInputTimeline,
+    ...workflowTimelineFromMessage(message),
+  ]);
+  return sortTimelineItems(sanitizeTimelineForMessage(message, timeline));
 }
 
 function timelineEventIdOrderValue(eventId?: string | null): number | null {

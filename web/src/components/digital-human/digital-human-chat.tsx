@@ -1,9 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { Bot, Brain, Settings2 } from 'lucide-react';
+import { Bot, Brain, ListTodo, Settings2 } from 'lucide-react';
 import { useStore } from 'zustand';
 import { toast } from 'sonner';
 import {
@@ -19,8 +19,15 @@ import {
 import { isConversationRouteRestoring } from '@/components/chat/runtime/conversation-route-state';
 import { isDraftAIChatConversationId } from '@/components/chat/utils/aichat-message';
 import { Button } from '@/components/ui/button';
+import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
+import {
+  DigitalHumanTaskPanel,
+  type DigitalHumanTaskPanelClient,
+} from '@/components/digital-human/digital-human-task-panel';
 import { useDigitalHuman } from '@/hooks/digital-human/use-digital-humans';
+import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useT } from '@/i18n';
+import { digitalHumanService } from '@/services/digital-human.service';
 
 const conversationParam = 'conversation';
 
@@ -30,8 +37,26 @@ export function DigitalHumanChat({ id }: { id: string }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const detail = useDigitalHuman(id).data?.data;
+  const permissions = useAccountPermissions();
+  const canRun = permissions.hasPermission('digital_human.run');
+  const [mobileTasksOpen, setMobileTasksOpen] = useState(false);
+  const [taskRefreshKey, setTaskRefreshKey] = useState(0);
+  const taskRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const published = detail?.published;
   const transport = useMemo(() => createDigitalHumanRuntimeTransport(id), [id]);
+  const taskClient = useMemo<DigitalHumanTaskPanelClient>(
+    () => ({
+      list: params => digitalHumanService.listMyTasks(id, params),
+      create: request => digitalHumanService.createMyTask(id, request),
+      get: taskId => digitalHumanService.getMyTask(id, taskId),
+      update: (taskId, request) => digitalHumanService.updateMyTask(id, taskId, request),
+      action: (taskId, action, revision) =>
+        digitalHumanService.applyMyTaskAction(id, taskId, action, revision),
+      runs: taskId => digitalHumanService.listMyTaskRuns(id, taskId),
+      activities: taskId => digitalHumanService.listMyTaskActivities(id, taskId),
+    }),
+    [id]
+  );
   const controller = useChatRuntimeController({
     transport,
     requireModel: false,
@@ -125,6 +150,30 @@ export function DigitalHumanChat({ id }: { id: string }) {
     replaceConversationParam(null, 'draft-persistence');
   }, [replaceConversationParam]);
 
+  const modelSelectorValue = useMemo(
+    () => ({
+      provider: '',
+      model: published?.default_model ?? '',
+      params: {},
+    }),
+    [published?.default_model]
+  );
+
+  const handleTaskMutation = useCallback(() => {
+    if (taskRefreshTimerRef.current) clearTimeout(taskRefreshTimerRef.current);
+    taskRefreshTimerRef.current = setTimeout(() => {
+      setTaskRefreshKey(value => value + 1);
+      taskRefreshTimerRef.current = null;
+    }, 250);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (taskRefreshTimerRef.current) clearTimeout(taskRefreshTimerRef.current);
+    },
+    []
+  );
+
   if (!published) {
     return (
       <div className="mx-auto flex h-full max-w-5xl items-center justify-center px-4 py-10 md:px-8">
@@ -147,67 +196,88 @@ export function DigitalHumanChat({ id }: { id: string }) {
     );
   }
 
-  const modelSelectorValue = {
-    provider: '',
-    model: published.default_model,
-    params: {},
-  };
-
   return (
-    <div className="h-full min-h-0 overflow-hidden bg-background">
-      <AIChatShell
-        controller={controller}
-        modelSelectorValue={modelSelectorValue}
-        onModelChange={() => undefined}
-        beforeSend={() => {
-          if (published) return true;
-          toast.error(t('configuration.notPublished'));
-          return false;
-        }}
-        showModelSelector={false}
-        variant="full"
-        requireModel={false}
-        showMemoryToggle={false}
-        forcedUseMemory={false}
-        enableUpload
-        uploadScope={{ type: 'console' }}
-        showFileLibraryPicker={false}
-        allowWorkspaceSwitch={false}
-        enableMessageReplay={false}
-        showAssistantModelMeta={false}
-        surface="digital-human"
-        runtimeSurface="external_page_chat"
-        defaultSidebarOpen
-        routeConversationId={initialConversationId}
-        isConversationTransitioning={isRestoringConversationRoute}
-        conversationListTitle={t('chat.conversations')}
-        conversationListDescription={t('chat.conversationListDescription')}
-        homeBrand={
-          <div className="flex size-14 items-center justify-center rounded-2xl bg-primary/10 text-primary shadow-sm">
-            <Bot className="size-7" />
-          </div>
-        }
-        homeTitle={t('chat.homeTitle', { name: detail?.definition.name ?? t('title') })}
-        homeDescription={t('chat.homeDescription')}
-        suggestions={[
-          t('chat.suggestions.introduce'),
-          t('chat.suggestions.capabilities'),
-          t('chat.suggestions.plan'),
-        ]}
-        inputPlaceholder={t('chat.placeholder')}
-        onSelectConversation={selectConversation}
-        onStartNewConversation={handleStartNewConversation}
-        headerRightAction={
-          <Button variant="ghost" size="sm" asChild>
-            <Link
-              href={`/profile/memory?consumer_type=digital_human&consumer_id=${encodeURIComponent(id)}`}
-            >
-              <Brain className="mr-2 size-4" />
-              {t('chat.manageMemory')}
-            </Link>
-          </Button>
-        }
-      />
+    <div className="relative flex h-full min-h-0 overflow-hidden bg-background">
+      <div className="min-w-0 flex-1">
+        <AIChatShell
+          controller={controller}
+          modelSelectorValue={modelSelectorValue}
+          onModelChange={() => undefined}
+          beforeSend={() => {
+            if (published) return true;
+            toast.error(t('configuration.notPublished'));
+            return false;
+          }}
+          showModelSelector={false}
+          variant="full"
+          requireModel={false}
+          showMemoryToggle={false}
+          forcedUseMemory={false}
+          enableUpload
+          uploadScope={{ type: 'console' }}
+          showFileLibraryPicker={false}
+          allowWorkspaceSwitch={false}
+          enableMessageReplay
+          showAssistantModelMeta={false}
+          surface="digital-human"
+          runtimeSurface="external_page_chat"
+          defaultSidebarOpen
+          routeConversationId={initialConversationId}
+          isConversationTransitioning={isRestoringConversationRoute}
+          conversationListTitle={t('chat.conversations')}
+          conversationListDescription={t('chat.conversationListDescription')}
+          homeBrand={
+            <div className="flex size-14 items-center justify-center rounded-2xl bg-primary/10 text-primary shadow-sm">
+              <Bot className="size-7" />
+            </div>
+          }
+          homeTitle={t('chat.homeTitle', { name: detail?.definition.name ?? t('title') })}
+          homeDescription={t('chat.homeDescription')}
+          suggestions={[
+            t('chat.suggestions.introduce'),
+            t('chat.suggestions.capabilities'),
+            t('chat.suggestions.plan'),
+          ]}
+          inputPlaceholder={t('chat.placeholder')}
+          onSelectConversation={selectConversation}
+          onStartNewConversation={handleStartNewConversation}
+          headerRightAction={
+            <Button variant="ghost" size="sm" asChild>
+              <Link
+                href={`/profile/memory?consumer_type=digital_human&consumer_id=${encodeURIComponent(id)}`}
+              >
+                <Brain className="mr-2 size-4" />
+                {t('chat.manageMemory')}
+              </Link>
+            </Button>
+          }
+          onTaskMutation={handleTaskMutation}
+        />
+      </div>
+      {canRun ? (
+        <div className="hidden w-[22rem] shrink-0 xl:block">
+          <DigitalHumanTaskPanel client={taskClient} compact refreshKey={taskRefreshKey} />
+        </div>
+      ) : null}
+      {canRun ? (
+        <Button
+          variant="outline"
+          size="sm"
+          className="absolute bottom-4 right-4 z-10 gap-2 shadow-md xl:hidden"
+          onClick={() => setMobileTasksOpen(true)}
+        >
+          <ListTodo className="size-4" />
+          {t('tasks.myTitle')}
+        </Button>
+      ) : null}
+      {canRun ? (
+        <Sheet open={mobileTasksOpen} onOpenChange={setMobileTasksOpen}>
+          <SheetContent side="right" className="w-full max-w-none p-0 sm:max-w-lg">
+            <SheetTitle className="sr-only">{t('tasks.myTitle')}</SheetTitle>
+            <DigitalHumanTaskPanel client={taskClient} compact refreshKey={taskRefreshKey} />
+          </SheetContent>
+        </Sheet>
+      ) : null}
     </div>
   );
 }

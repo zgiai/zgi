@@ -4,7 +4,7 @@ import type {
   AIChatStreamCallbacks,
 } from '@/components/chat/transports/aichat-transport';
 import { digitalHumanService } from '@/services/digital-human.service';
-import type { AIChatChatRequest, AIChatRegenerateMessageRequest } from '@/services/types/aichat';
+import type { AIChatChatRequest } from '@/services/types/aichat';
 import type { DigitalHumanRun } from '@/services/types/digital-human';
 
 const RUN_LINK_POLL_INTERVAL_MS = 400;
@@ -78,17 +78,6 @@ export class DigitalHumanRuntimeTransport
       if (!handedOffToEventStream) callbacks.onClose();
       throw error;
     }
-  }
-
-  override async regenerateMessage(
-    _messageId: string,
-    _payload: AIChatRegenerateMessageRequest,
-    callbacks: AIChatStreamCallbacks
-  ): Promise<{ close: () => void }> {
-    const error = new Error('Digital human message replay is not available yet.');
-    callbacks.onRequestError(error);
-    callbacks.onClose();
-    throw error;
   }
 
   private async waitForMessageLink(

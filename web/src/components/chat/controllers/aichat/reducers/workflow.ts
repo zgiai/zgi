@@ -25,6 +25,7 @@ import {
   captureAnswerTimelineBoundary,
   presentationPositionFromPayload,
 } from '../presentation-order';
+import { sanitizeTimelineForMessage } from '../selectors';
 import { normalizeWorkflowRuntimeEvent } from '@/utils/workflow/runtime-event-envelope.js';
 import { parseWorkflowPausedEvent } from '@/components/workflow/runtime/pause-events';
 
@@ -45,6 +46,25 @@ function workflowRunId(payload: AIChatWorkflowEventData): string {
     workflowString(payload.id) ??
     ''
   );
+}
+
+function workflowTaskId(payload: AIChatWorkflowEventData): string | undefined {
+  const direct = workflowString(payload.task_id);
+  if (direct) return direct;
+  const runID = workflowString(payload.workflow_run_id);
+  const match = /^digital-human-task:([^:]+):/.exec(runID ?? '');
+  return match?.[1];
+}
+
+function workflowKind(payload: AIChatWorkflowEventData): string | undefined {
+  const explicit = workflowString(payload.kind);
+  if (explicit) return explicit;
+  const form = payload.approval_form;
+  if (form && typeof form === 'object' && !Array.isArray(form)) {
+    const nodeId = workflowString((form as Record<string, unknown>).node_id);
+    if (nodeId === 'digital_human_task') return 'digital_human_task';
+  }
+  return undefined;
 }
 
 function workflowElapsedMs(value: unknown): number | undefined {
@@ -492,7 +512,10 @@ function upsertWorkflowTimelineItem(
       {
         id: eventId ?? `workflow-${runId}`,
         type: 'workflow_run',
+        kind: workflowKind(payload),
         workflowRunId: runId,
+        taskId: workflowTaskId(payload),
+        taskName: workflowString(payload.task_name),
         status: nextStatus,
         elapsedTime: workflowElapsedMs(payload.elapsed_time),
         error: workflowString(payload.error),
@@ -524,6 +547,9 @@ function upsertWorkflowTimelineItem(
   next[index] = {
     ...previous,
     status: nextStatus,
+    kind: workflowKind(payload) ?? previous.kind,
+    taskId: workflowTaskId(payload) ?? previous.taskId,
+    taskName: workflowString(payload.task_name) ?? previous.taskName,
     elapsedTime: workflowElapsedMs(payload.elapsed_time) ?? previous.elapsedTime,
     error: workflowString(payload.error) ?? previous.error,
     nodes: terminalizeWorkflowNodes(
@@ -581,6 +607,25 @@ function applyWorkflowTimelineState(
   if (isStaleAIChatStreamEvent(eventId, previousStreaming.last_event_id)) {
     return current;
   }
+  const nextTimeline = upsertWorkflowTimelineItem(
+    previousStreaming.timeline,
+    payload,
+    eventId,
+    status,
+    node,
+    approval,
+    nodeFinished
+  );
+  // A task approval can emit a generic tool-governance placeholder before the
+  // dedicated workflow event arrives. Once the workflow lane is present, the
+  // task approval card is the source of truth and the placeholder must not
+  // survive into the completed message (or be duplicated after reconnect).
+  const message = (current.messagesByConversation[payload.conversation_id] ?? []).find(
+    item => item.id === payload.message_id
+  );
+  const sanitizedTimeline = message
+    ? sanitizeTimelineForMessage(message, nextTimeline)
+    : nextTimeline;
   return {
     ...current,
     streamingByMessageId: {
@@ -588,15 +633,7 @@ function applyWorkflowTimelineState(
       [payload.message_id]: {
         ...previousStreaming,
         modelProcessing: undefined,
-        timeline: upsertWorkflowTimelineItem(
-          previousStreaming.timeline,
-          payload,
-          eventId,
-          status,
-          node,
-          approval,
-          nodeFinished
-        ),
+        timeline: sanitizedTimeline,
         answer_before_timeline_length:
           previousStreaming.presentationVersion === 2
             ? previousStreaming.answer_before_timeline_length
@@ -677,6 +714,8 @@ export function applyWorkflowApprovalRequestedState(
     approval_url: payload.approval_url,
     approval_form: payload.approval_form,
     ui_approval_allowed: payload.ui_approval_allowed,
+    task_name: payload.task_name,
+    task_id: payload.task_id,
   });
 }
 

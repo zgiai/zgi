@@ -92,6 +92,7 @@ import {
 import {
   resolvePendingToolGovernanceApprovalFromTimeline,
   type AIChatToolGovernanceDecisionSubmitPayload,
+  type AITaskProposalActionPayload,
 } from '@/components/chat/variants/aichat/agentic-timeline';
 import {
   buildAIChatSkillDisplayMap,
@@ -200,10 +201,13 @@ interface AIChatShellProps {
   defaultSidebarOpen?: boolean;
   showAssistantModelMeta?: boolean;
   enableMessageReplay?: boolean;
+  messageDensity?: 'default' | 'compact';
   surface?: 'aichat' | 'agent-draft' | 'agent-webapp' | 'digital-human';
   runtimeSurface?: AIChatRuntimeSurface;
   themeColor?: string;
   enableToolGovernance?: boolean;
+  onTaskProposalAction?: (payload: AITaskProposalActionPayload) => void | Promise<void>;
+  onTaskMutation?: () => void;
   voiceTranscriber?: AIChatVoiceTranscriber;
   speechSynthesizer?: AIChatSpeechSynthesizer;
   headerRightAction?: React.ReactNode;
@@ -339,10 +343,13 @@ export function AIChatShell({
   defaultSidebarOpen = true,
   showAssistantModelMeta = true,
   enableMessageReplay = true,
+  messageDensity = 'default',
   surface = 'aichat',
   runtimeSurface = 'work_chat',
   themeColor,
   enableToolGovernance = false,
+  onTaskProposalAction,
+  onTaskMutation,
   voiceTranscriber,
   speechSynthesizer,
   headerRightAction,
@@ -454,8 +461,8 @@ export function AIChatShell({
     const matchesSelection = (candidate: ModelSelectorModelProps | null | undefined) =>
       Boolean(
         candidate &&
-        candidate.provider === modelSelectorValue.provider &&
-        candidate.model === modelSelectorValue.model
+          candidate.provider === modelSelectorValue.provider &&
+          candidate.model === modelSelectorValue.model
       );
 
     if (matchesSelection(modelProps)) return modelProps ?? null;
@@ -702,8 +709,8 @@ export function AIChatShell({
   );
   const canStopPendingWorkflowInteraction = Boolean(
     activeWorkflowApprovalRequest ||
-    (activeUserInputMessage?.status === 'waiting_question' &&
-      activeUserInputRequest?.source === AGENT_WORKFLOW_QUESTION_SOURCE)
+      (activeUserInputMessage?.status === 'waiting_question' &&
+        activeUserInputRequest?.source === AGENT_WORKFLOW_QUESTION_SOURCE)
   );
   const contextBlockedMessage = useMemo(() => {
     const leafMessageId = activeConversation?.current_leaf_message_id;
@@ -900,14 +907,14 @@ export function AIChatShell({
       const conversation = activeConversation;
       return Boolean(
         conversation &&
-        conversation.runtime_status === 'idle' &&
-        conversation.dialogue_count === 1 &&
-        !message.parent_id &&
-        conversation.current_leaf_message_id === message.id &&
-        (message.status === 'completed' ||
-          message.status === 'stopped' ||
-          message.status === 'error') &&
-        activeMessages.length === 1
+          conversation.runtime_status === 'idle' &&
+          conversation.dialogue_count === 1 &&
+          !message.parent_id &&
+          conversation.current_leaf_message_id === message.id &&
+          (message.status === 'completed' ||
+            message.status === 'stopped' ||
+            message.status === 'error') &&
+          activeMessages.length === 1
       );
     },
     [activeConversation, activeMessages.length]
@@ -1399,13 +1406,21 @@ export function AIChatShell({
   const handleWorkflowApprovalSubmit = useCallback(
     (request: AIChatWorkflowApprovalRequest, payload: AIChatWorkflowApprovalSubmitPayload) => {
       if (!controller.continueWorkflowApproval) return;
-      void controller.continueWorkflowApproval(request.conversationId, request.messageId, {
-        approvalToken: request.approvalToken,
-        inputs: payload.inputs,
-        action: payload.action,
-      });
+      void controller
+        .continueWorkflowApproval(request.conversationId, request.messageId, {
+          approvalToken: request.approvalToken,
+          inputs: payload.inputs,
+          action: payload.action,
+        })
+        .then(() => onTaskMutation?.())
+        .catch(error => {
+          toast.error(
+            error instanceof Error ? error.message : t('consoleChat.workflow.approvalSubmitFailed')
+          );
+          onTaskMutation?.();
+        });
     },
-    [controller]
+    [controller, onTaskMutation, t]
   );
 
   const handleToolGovernanceDecision = useCallback(
@@ -1681,6 +1696,7 @@ export function AIChatShell({
             <AIChatHeader
               isHome={isHome}
               title={activeConversation?.title || ''}
+              position={surface === 'digital-human' ? 'static' : 'overlay'}
               onToggleSidebar={handleToggleSidebar}
               onStartNew={handleNewChat}
               rightAction={
@@ -1735,6 +1751,8 @@ export function AIChatShell({
                 ? handleToolGovernanceDecision
                 : undefined
             }
+            onTaskProposalAction={onTaskProposalAction}
+            onTaskMutation={onTaskMutation}
             enableToolGovernanceApprovals={enableToolGovernanceApprovals}
             suppressPendingToolGovernanceApprovals={isRecoveringMessages}
             onSwitchBranch={handleSwitchBranch}
@@ -1744,6 +1762,7 @@ export function AIChatShell({
             onEditSubmit={handleEditSubmit}
             showAssistantModelMeta={showAssistantModelMeta}
             layout={isEmbedded ? 'embedded' : 'full'}
+            messageDensity={messageDensity}
             showMemoryKey={surface !== 'agent-webapp' && surface !== 'digital-human'}
             showSkillEventDetails={surface !== 'agent-webapp'}
             showWorkflowFailureDetails={surface !== 'agent-webapp'}
@@ -2042,12 +2061,15 @@ function resolveActiveWorkflowApprovalRequest(
   if (
     !runWithApproval &&
     runForContinuation &&
+    continuationStatus !== 'waiting_approval' &&
     !isActiveWorkflowApprovalRun(runForContinuation, continuationWorkflowRunId, continuationStatus)
   ) {
     return null;
   }
-  const approval = runWithApproval?.approval;
-  const inlineApprovalForm = normalizeApprovalRuntimeForm(approval?.approval_form);
+  const approval = runWithApproval?.approval ?? runForContinuation?.approval;
+  const inlineApprovalForm =
+    normalizeApprovalRuntimeForm(approval?.approval_form) ||
+    normalizeApprovalRuntimeForm(stringRecordValue(continuation, 'approval_form'));
   const approvalToken =
     resolveApprovalToken(approval) ||
     stringFromRecord(continuation, 'approval_token') ||
@@ -2069,6 +2091,11 @@ function resolveActiveWorkflowApprovalRequest(
     approvalForm: inlineApprovalForm,
     canSubmitInline,
   };
+}
+
+function stringRecordValue(record: unknown, key: string): unknown {
+  if (!record || typeof record !== 'object') return undefined;
+  return (record as Record<string, unknown>)[key];
 }
 
 function workflowApprovalUIAccess(approval: unknown, continuation: unknown): boolean | undefined {

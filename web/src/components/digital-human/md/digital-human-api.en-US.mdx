@@ -47,7 +47,7 @@ The browser sends no API key and should not be allowed to choose another account
 
 ### Minimum production flow
 
-1. Fetch `/digital-humans/config` and render `home_title`, `opening_statement`, `suggested_questions`, `input_placeholder`, and `theme_color`.
+1. Fetch `/digital-humans/config` and render `home_title`, `opening_statement`, `suggested_questions`, and `input_placeholder`.
 2. Generate a UUID `request_id`, send `/digital-humans/chat`, and save `X-ZGI-Run-ID` immediately.
 3. Parse SSE incrementally. Save `conversation_id`, `message_id`, and the latest non-empty SSE `id`.
 4. Append `message.data.answer`; finish the message on `message_end`; finish durable execution on the single `run_end`.
@@ -199,16 +199,16 @@ Dispatch by the JSON `event` or native SSE event. Treat event ids as opaque stri
 
 The same event names and payload families used by the Agent API are available for a richer process UI:
 
-| Event family | Events | Recommended rendering |
-| ------------ | ------ | --------------------- |
-| Answer correction | `message_retract` | Move or discard provisional answer text according to `presentation_disposition` |
-| Progress | `agent_progress`, `agent_intermediate_answer` | Show a compact activity indicator and a separate interim-answer card; never invent reasoning text |
-| User input | `user_input_requested`, `runtime_input_accepted`, `runtime_input_applied`, `runtime_input_follow_up_started`, `runtime_input_canceled`, `runtime_input_failed` | Render questions, submit with a new `client_input_id`, and show the returned disposition |
-| File preparation | `file_parse_start`, `file_parse_end`, `file_parse_error` | Update one file row by `file_id`; show only the safe error message |
-| Skills and tools | `skill_load_start`, `skill_load_end`, `skill_reference_read`, `skill_call_start`, `skill_call_end`, `skill_call_error`, `skill_artifact_created` | Group by `invocation_id`; render public summaries and downloadable artifacts |
-| Governance and host actions | `tool_governance_decision`, `client_action_required` | Show the decision; perform host actions only from an explicit allow-list and honor `blocking` |
-| Relationship memory | `memory_create`, `memory_update`, `memory_delete`, `memory_clear` | Show a small confirmation; do not expose a memory-management editor in the public client |
-| Workflow lifecycle | `workflow_started`, `node_started`, `node_finished`, `workflow_paused`, `workflow_resumed`, `approval_requested`, `approval_result_filled`, `approval_expired`, `question_answer_requested`, `question_answer_submitted`, `iteration_started`, `iteration_next`, `iteration_completed`, `iteration_succeeded`, `iteration_failed`, `loop_started`, `loop_next`, `loop_completed`, `loop_succeeded`, `loop_failed`, `workflow_finished`, `workflow_failed`, `workflow_stopped`, `text_chunk`, `text_replace` | Build a process timeline keyed by `workflow_run_id`; preserve unknown fields and use only advertised continuation controls |
+| Event family                | Events                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Recommended rendering                                                                                                      |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Answer correction           | `message_retract`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Move or discard provisional answer text according to `presentation_disposition`                                            |
+| Progress                    | `agent_progress`, `agent_intermediate_answer`                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Show a compact activity indicator and a separate interim-answer card; never invent reasoning text                          |
+| User input                  | `user_input_requested`, `runtime_input_accepted`, `runtime_input_applied`, `runtime_input_follow_up_started`, `runtime_input_canceled`, `runtime_input_failed`                                                                                                                                                                                                                                                                                                                                              | Render questions, submit with a new `client_input_id`, and show the returned disposition                                   |
+| File preparation            | `file_parse_start`, `file_parse_end`, `file_parse_error`                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Update one file row by `file_id`; show only the safe error message                                                         |
+| Skills and tools            | `skill_load_start`, `skill_load_end`, `skill_reference_read`, `skill_call_start`, `skill_call_end`, `skill_call_error`, `skill_artifact_created`                                                                                                                                                                                                                                                                                                                                                            | Group by `invocation_id`; render public summaries and downloadable artifacts                                               |
+| Governance and host actions | `tool_governance_decision`, `client_action_required`                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Show the decision; perform host actions only from an explicit allow-list and honor `blocking`                              |
+| Relationship memory         | `memory_create`, `memory_update`, `memory_delete`, `memory_clear`                                                                                                                                                                                                                                                                                                                                                                                                                                           | Show a small confirmation; do not expose a memory-management editor in the public client                                   |
+| Workflow lifecycle          | `workflow_started`, `node_started`, `node_finished`, `workflow_paused`, `workflow_resumed`, `approval_requested`, `approval_result_filled`, `approval_expired`, `question_answer_requested`, `question_answer_submitted`, `iteration_started`, `iteration_next`, `iteration_completed`, `iteration_succeeded`, `iteration_failed`, `loop_started`, `loop_next`, `loop_completed`, `loop_succeeded`, `loop_failed`, `workflow_finished`, `workflow_failed`, `workflow_stopped`, `text_chunk`, `text_replace` | Build a process timeline keyed by `workflow_run_id`; preserve unknown fields and use only advertised continuation controls |
 
 ### Event payload fields
 
@@ -289,10 +289,20 @@ The same event names and payload families used by the Agent API are available fo
 | `message_start` received                  | Generating              | Render deltas and save the latest SSE id                                                                             |
 | Network drops while run is non-terminal   | Reconnecting            | Call Run Events with `Last-Event-ID`                                                                                 |
 | `message_end=completed`, no `run_end` yet | Finalizing              | Keep listening until `run_end`                                                                                       |
-| `message_end=waiting_*`                   | Unsupported interaction | Retain ids and show a safe fallback; specialized approval/question continuation APIs are not part of DigitalHuman v1 |
+| `message_end=waiting_approval`            | Task approval         | Replace the composer with the approval form and continue the original message through workflow-continuation; do not send a new natural-language confirmation |
+| `message_end=waiting_question`            | User input            | Keep the ids and render the question control described by `user_input_requested` |
 | `run_end` with a terminal status          | Terminal                | Stop reconnecting; history is the source of truth                                                                    |
 
 On a full page reload, fetch conversation messages first. If a run is still active, reconnect without assuming that a locally stored cursor matches what the fresh DOM rendered. De-duplicate by non-empty SSE id and by `(message_id, event id)`.
+
+When a conversation creates or changes a task, the run pauses in
+`waiting_approval`. Read the approval form from `approval_requested` or message
+metadata, replace the composer with the approval controls, and submit
+`POST /api/v1/digital-humans/conversations/{conversation_id}/messages/{message_id}/workflow-continuation` with the same `user`, `approval_token`, and `action`. Continue consuming SSE events for the same message after the approval completes.
+
+When the stream ends in `waiting_question` and emits `user_input_requested`,
+submit the answer to
+`POST /api/v1/digital-humans/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue` with the same `user` and an `answers` object keyed by question id. This resumes the original Agent Loop in place; do not send a new chat message or route it through workflow-continuation.
 
 ---
 
@@ -324,7 +334,7 @@ On a full page reload, fetch conversation messages first. If a run is still acti
     </CodeGroup>
     <CodeGroup title="Response">
     ```json
-    {"code":"0","message":"success","data":{"digital_human_id":"11111111-1111-4111-8111-111111111111","web_app_id":"22222222-2222-4222-8222-222222222222","name":"Research Partner","description":"Turns research into decisions","home_title":"What should we investigate?","opening_statement":"I can compare evidence and propose next steps.","input_placeholder":"Ask a research question","theme_color":"#6366f1","suggested_questions":["Compare three options"],"file_upload_enabled":true,"relationship_memory_enabled":true,"memory_requires_user":true,"external_user_required":true,"runtime_input_enabled":true,"regenerate_enabled":false,"landing_page_enabled":true,"api_enabled":true,"version":"3","version_uuid":"33333333-3333-4333-8333-333333333333"}}
+    {"code":"0","message":"success","data":{"digital_human_id":"11111111-1111-4111-8111-111111111111","web_app_id":"22222222-2222-4222-8222-222222222222","name":"Research Partner","description":"Turns research into decisions","home_title":"What should we investigate?","opening_statement":"I can compare evidence and propose next steps.","input_placeholder":"Ask a research question","suggested_questions":["Compare three options"],"file_upload_enabled":true,"relationship_memory_enabled":true,"memory_requires_user":true,"external_user_required":true,"runtime_input_enabled":true,"regenerate_enabled":true,"landing_page_enabled":true,"api_enabled":true,"version":"3","version_uuid":"33333333-3333-4333-8333-333333333333"}}
     ```
     </CodeGroup>
   </Col>
@@ -405,10 +415,8 @@ On a full page reload, fetch conversation messages first. If a run is still acti
 </Properties>
 
 <CodeGroup title="Request">
-```bash
-curl '{apibase}/digital-humans/runs/{run_id}?user=customer_123' \
-  --header 'Authorization: Bearer {api_key}'
-```
+  ```bash curl '{apibase}/digital-humans/runs/{run_id}?user=customer_123' \ --header 'Authorization:
+  Bearer {api_key}' ```
 </CodeGroup>
 
 <CodeGroup title="Response">
@@ -437,11 +445,8 @@ curl '{apibase}/digital-humans/runs/{run_id}?user=customer_123' \
 </Properties>
 
 <CodeGroup title="Request">
-```bash
-curl --no-buffer '{apibase}/digital-humans/runs/{run_id}/events?user=customer_123' \
-  --header 'Authorization: Bearer {api_key}' \
-  --header 'Last-Event-ID: 1715750400000-0'
-```
+  ```bash curl --no-buffer '{apibase}/digital-humans/runs/{run_id}/events?user=customer_123' \
+  --header 'Authorization: Bearer {api_key}' \ --header 'Last-Event-ID: 1715750400000-0' ```
 </CodeGroup>
 
 <CodeGroup title="Response">
@@ -453,7 +458,7 @@ data: {"event":"message","data":{"conversation_id":"...","message_id":"...","ans
 event: run_end
 data: {"event":"run_end","data":{"run_id":"...","status":"succeeded"}}
 
-```
+````
 </CodeGroup>
 
 <Heading
@@ -474,7 +479,7 @@ curl --request POST '{apibase}/digital-humans/runs/{run_id}/stop' \
   --header 'Authorization: Bearer {api_key}' \
   --header 'Content-Type: application/json' \
   --data '{"user":"customer_123"}'
-```
+````
 
 </CodeGroup>
 
@@ -523,6 +528,37 @@ curl --request POST '{apibase}/digital-humans/runs/{run_id}/runtime-input' \
 
 ---
 
+## Edit and Regenerate a Historical Question
+
+<Heading
+  url="/api/v1/digital-humans/conversations/{conversation_id}/messages/{message_id}/regenerate"
+  method="POST"
+  title="Edit or regenerate a root message"
+  name="#Regenerate-DigitalHuman-Message"
+/>
+
+This endpoint uses the same Durable Run and recoverable SSE flow as the console and hosted landing page. Omit `query` to replay the original question; provide `query` to edit the historical question before replaying it. The original message is replaced only after the ChatRuntime root guard accepts the request. For non-root messages, create a branch through chat with `parent_message_id`.
+
+<Properties>
+  <Property name="conversation_id" type="uuid path" propKey="conversation_id">Required owning conversation.</Property>
+  <Property name="message_id" type="uuid path" propKey="message_id">Required root message to edit or replay.</Property>
+  <Property name="user" type="string body" propKey="user">Required and must match the conversation owner.</Property>
+  <Property name="query" type="string body" propKey="query">Optional edited question; omit to keep the original.</Property>
+</Properties>
+
+<CodeGroup title="Request">
+```bash
+curl --request POST '{apibase}/digital-humans/conversations/{conversation_id}/messages/{message_id}/regenerate' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'Content-Type: application/json' \
+  --data '{"user":"customer_123","query":"Compare the three options again and highlight risk"}'
+```
+</CodeGroup>
+
+The response is a recoverable SSE stream: `run_accepted`, a `message_start` with `replace=true`, intermediate events, `message_delta`, `message_end`, and `run_end`. Reconnect through the conversation events endpoint with `Last-Event-ID` after a disconnect.
+
+---
+
 ## Conversation Management
 
 <Heading
@@ -545,10 +581,8 @@ curl --request POST '{apibase}/digital-humans/runs/{run_id}/runtime-input' \
 </Properties>
 
 <CodeGroup title="Request">
-```bash
-curl '{apibase}/digital-humans/conversations?user=customer_123&page=1&limit=20' \
-  --header 'Authorization: Bearer {api_key}'
-```
+  ```bash curl '{apibase}/digital-humans/conversations?user=customer_123&page=1&limit=20' \ --header
+  'Authorization: Bearer {api_key}' ```
 </CodeGroup>
 
 <CodeGroup title="Response">
@@ -577,10 +611,9 @@ curl '{apibase}/digital-humans/conversations?user=customer_123&page=1&limit=20' 
 </Properties>
 
 <CodeGroup title="Request">
-```bash
-curl '{apibase}/digital-humans/conversations/search?user=customer_123&query=option&limit=20' \
-  --header 'Authorization: Bearer {api_key}'
-```
+  ```bash curl '{apibase}
+  /digital-humans/conversations/search?user=customer_123&query=option&limit=20' \ --header
+  'Authorization: Bearer {api_key}' ```
 </CodeGroup>
 
 <CodeGroup title="Response">
@@ -606,10 +639,8 @@ curl '{apibase}/digital-humans/conversations/search?user=customer_123&query=opti
 </Properties>
 
 <CodeGroup title="Request">
-```bash
-curl '{apibase}/digital-humans/conversations/{conversation_id}?user=customer_123' \
-  --header 'Authorization: Bearer {api_key}'
-```
+  ```bash curl '{apibase}/digital-humans/conversations/{conversation_id}?user=customer_123' \
+  --header 'Authorization: Bearer {api_key}' ```
 </CodeGroup>
 
 <CodeGroup title="Response">
@@ -669,10 +700,8 @@ curl --request PATCH '{apibase}/digital-humans/conversations/{conversation_id}' 
 </Properties>
 
 <CodeGroup title="Request">
-```bash
-curl --request DELETE '{apibase}/digital-humans/conversations/{conversation_id}?user=customer_123' \
-  --header 'Authorization: Bearer {api_key}'
-```
+  ```bash curl --request DELETE '{apibase}/digital-humans/conversations/{conversation_id}
+  ?user=customer_123' \ --header 'Authorization: Bearer {api_key}' ```
 </CodeGroup>
 
 <CodeGroup title="Response">
@@ -704,10 +733,8 @@ curl --request DELETE '{apibase}/digital-humans/conversations/{conversation_id}?
 </Properties>
 
 <CodeGroup title="Request">
-```bash
-curl '{apibase}/digital-humans/conversations/{conversation_id}/messages?user=customer_123&page=1&limit=100' \
-  --header 'Authorization: Bearer {api_key}'
-```
+  ```bash curl '{apibase}/digital-humans/conversations/{conversation_id}
+  /messages?user=customer_123&page=1&limit=100' \ --header 'Authorization: Bearer {api_key}' ```
 </CodeGroup>
 
 <CodeGroup title="Response">
@@ -740,12 +767,8 @@ curl '{apibase}/digital-humans/conversations/{conversation_id}/messages?user=cus
 </Properties>
 
 <CodeGroup title="Request">
-```bash
-curl --request POST '{apibase}/digital-humans/files/upload' \
-  --header 'Authorization: Bearer {api_key}' \
-  --form 'user=customer_123' \
-  --form 'file=@./brief.pdf'
-```
+  ```bash curl --request POST '{apibase}/digital-humans/files/upload' \ --header 'Authorization:
+  Bearer {api_key}' \ --form 'user=customer_123' \ --form 'file=@./brief.pdf' ```
 </CodeGroup>
 
 <CodeGroup title="Response">
@@ -753,6 +776,79 @@ curl --request POST '{apibase}/digital-humans/files/upload' \
 {"code":"0","message":"success","data":{"id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","name":"brief.pdf","size":48231,"extension":"pdf","mime_type":"application/pdf","created_at":1715750600}}
 ```
 </CodeGroup>
+
+---
+
+## Private Tasks
+
+DigitalHuman tasks created through the public API belong to `user`, not to the
+API key. One key can serve many users, and rotating a key does not move task
+ownership. Shared DigitalHuman tasks remain available only in the console
+shared-task page.
+
+<Heading
+  url="/api/v1/digital-humans/tasks"
+  method="POST"
+  title="Create a private task"
+  name="#Create-DigitalHuman-Task"
+/>
+
+<Properties>
+  <Property name="user" type="string body" propKey="user">
+    Required stable, opaque end-user identifier.
+  </Property>
+  <Property name="name" type="string body" propKey="name">
+    Required task name.
+  </Property>
+  <Property name="goal" type="string body" propKey="goal">
+    Required outcome to deliver.
+  </Property>
+  <Property name="schedule.type" type="string body" propKey="schedule">
+    Use `manual`, `once`, or `cron`.
+  </Property>
+  <Property name="Idempotency-Key" type="uuid header" propKey="idempotency_key">
+    Recommended for safe retries.
+  </Property>
+</Properties>
+
+<CodeGroup title="Request">
+```bash
+curl --request POST '{apibase}/digital-humans/tasks' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'Idempotency-Key: 8e5a6f5a-7b5d-4d20-8b63-cc47a40fba0e' \
+  --header 'Content-Type: application/json' \
+  --data '{"user":"customer_123","name":"Follow up","goal":"Summarize the latest requirements","schedule":{"type":"manual"},"delivery_mode":"task_only"}'
+```
+</CodeGroup>
+
+List tasks with `GET /digital-humans/tasks?user=customer_123`. Read, update,
+and action a task using its `revision`:
+
+```bash
+curl --request POST '{apibase}/digital-humans/tasks/{task_id}/actions/run_now' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'Content-Type: application/json' \
+  --data '{"user":"customer_123","expected_revision":2}'
+```
+
+Supported actions are `confirm`, `decline`, `run_now`, `pause`, `resume`,
+`retry`, `cancel`, and `archive`. A stale revision returns
+`409 digital_human.task.conflict`; refresh and retry with the latest revision.
+`GET /digital-humans/tasks/{task_id}/runs?user=customer_123` returns bounded
+run metadata and a safe `result_summary`, never execution traces or model
+responses. Activities redact trusted actor references such as API key ids.
+
+When a conversation proposes or changes a task, the SSE emits
+`approval_requested` and the message enters `waiting_approval`. Replace the
+composer with the approval form and call
+`POST /digital-humans/conversations/{conversation_id}/messages/{message_id}/workflow-continuation`
+with the same `user`, `approval_token`, and `action`; do not send a second
+natural-language “confirm” message.
+
+Authenticated landing pages expose equivalent
+`/api/v1/digital-human-webapps/{web_app_id}/tasks...` endpoints. They derive
+the account subject from the signed session and do not accept a browser
+`user`. Anonymous sessions cannot create tasks or register task tools.
 
 ---
 
@@ -783,5 +879,5 @@ After HTTP 200 SSE begins, consume `error` and `run_end`; there is no second HTT
 - The API runs the latest published version. Draft configuration is never exposed.
 - An API key can access only the DigitalHuman it is bound to.
 - Relationship memory follows the same `user` identity but has no public management endpoint in this release.
-- Message regeneration is intentionally unavailable; `regenerate_enabled` is `false`.
+- Root-message regeneration and editing are available through the conversation SSE endpoint; `regenerate_enabled` is `true`. Non-root messages should be replayed as a new branch with `parent_message_id`.
 - The machine-readable contract is available at `/api/digital-human-openapi.yaml`.

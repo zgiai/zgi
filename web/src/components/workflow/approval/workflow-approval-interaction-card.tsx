@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { AlertCircle, Clock3, Loader2, Send, ShieldCheck } from 'lucide-react';
 
@@ -53,6 +54,13 @@ export function WorkflowApprovalInteractionCard({
   className,
 }: WorkflowApprovalInteractionCardProps) {
   const t = useT();
+  const taskApprovalRef = useRef<HTMLDivElement>(null);
+  const isDigitalHumanTaskApproval = mode === 'form' && form?.node_id === 'digital_human_task';
+
+  useEffect(() => {
+    if (!isDigitalHumanTaskApproval || !form?.id) return;
+    taskApprovalRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [form?.id, isDigitalHumanTaskApproval]);
 
   if (mode === 'completed' || mode === 'expired') {
     return (
@@ -67,24 +75,29 @@ export function WorkflowApprovalInteractionCard({
   if (mode === 'form' && form && onSubmit) {
     return (
       <div
+        ref={isDigitalHumanTaskApproval ? taskApprovalRef : undefined}
         className={cn(
-          'max-h-[45vh] overflow-y-auto rounded-xl border border-warning/30 bg-card p-3 shadow-sm',
+          'scroll-mt-6 rounded-xl border border-warning/30 bg-card p-3 shadow-sm',
+          !isDigitalHumanTaskApproval && 'max-h-[45vh] overflow-y-auto',
+          isDigitalHumanTaskApproval && 'p-4 sm:p-5',
           className
         )}
       >
-        <div className="mb-3 flex items-start gap-2.5 px-1 text-sm">
-          <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-warning/15 text-warning-foreground">
-            <ShieldCheck className="size-4" />
-          </div>
-          <div className="min-w-0 pt-0.5">
-            <div className="font-medium text-foreground">
-              {t('webapp.consoleChat.workflow.approvalPending')}
+        {!isDigitalHumanTaskApproval ? (
+          <div className="mb-3 flex items-start gap-2.5 px-1 text-sm">
+            <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-warning/15 text-warning-foreground">
+              <ShieldCheck className="size-4" />
             </div>
-            <div className="mt-1 text-xs leading-5 text-muted-foreground">
-              {t('webapp.consoleChat.workflow.approvalInlineHint')}
+            <div className="min-w-0 pt-0.5">
+              <div className="font-medium text-foreground">
+                {t('webapp.consoleChat.workflow.approvalPending')}
+              </div>
+              <div className="mt-1 text-xs leading-5 text-muted-foreground">
+                {t('webapp.consoleChat.workflow.approvalInlineHint')}
+              </div>
             </div>
           </div>
-        </div>
+        ) : null}
         <ApprovalRuntimeForm
           form={form}
           isSubmitting={isSubmitting}

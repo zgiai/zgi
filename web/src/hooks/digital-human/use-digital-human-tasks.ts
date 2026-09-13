@@ -25,6 +25,15 @@ export function useDigitalHumanTasks(id: string, filters: DigitalHumanTaskFilter
   });
 }
 
+export function useDigitalHumanMyTasks(id: string, filters: DigitalHumanTaskFilters = {}) {
+  return useQuery({
+    queryKey: [...DIGITAL_HUMAN_KEYS.tasks(id), 'mine', filters],
+    queryFn: () => digitalHumanService.listMyTasks(id, { page: 1, page_size: 100, ...filters }),
+    enabled: Boolean(id),
+    refetchInterval: current => current.state.data?.data.items.some(item => item.work_status === 'in_progress') ? 3_000 : 15_000,
+  });
+}
+
 export function useDigitalHumanTaskDetail(id: string, taskId: string) {
   const task = useQuery({ queryKey: DIGITAL_HUMAN_KEYS.task(id, taskId), queryFn: () => digitalHumanService.getTask(id, taskId), enabled: Boolean(id && taskId) });
   const runs = useQuery({ queryKey: DIGITAL_HUMAN_KEYS.taskRuns(id, taskId), queryFn: () => digitalHumanService.listTaskRuns(id, taskId), enabled: Boolean(id && taskId) });
@@ -39,5 +48,15 @@ export function useDigitalHumanTaskMutations(id: string) {
   const create = useMutation({ mutationFn: (request: CreateDigitalHumanTaskRequest) => digitalHumanService.createTask(id, request), onSuccess: invalidate, onError: handleError });
   const update = useMutation({ mutationFn: ({ taskId, request }: { taskId: string; request: UpdateDigitalHumanTaskRequest }) => digitalHumanService.updateTask(id, taskId, request), onSuccess: invalidate, onError: handleError });
   const action = useMutation({ mutationFn: ({ taskId, action, revision }: { taskId: string; action: string; revision: number }) => digitalHumanService.applyTaskAction(id, taskId, action, revision), onSuccess: invalidate, onError: handleError });
+  return { create, update, action };
+}
+
+export function useDigitalHumanMyTaskMutations(id: string) {
+  const client = useQueryClient();
+  const invalidate = () => client.invalidateQueries({ queryKey: [...DIGITAL_HUMAN_KEYS.tasks(id), 'mine'] });
+  const handleError = (error: unknown) => toast.error(getErrorMessage(error) || 'Request failed');
+  const create = useMutation({ mutationFn: (request: CreateDigitalHumanTaskRequest) => digitalHumanService.createMyTask(id, request), onSuccess: invalidate, onError: handleError });
+  const update = useMutation({ mutationFn: ({ taskId, request }: { taskId: string; request: UpdateDigitalHumanTaskRequest }) => digitalHumanService.updateMyTask(id, taskId, request), onSuccess: invalidate, onError: handleError });
+  const action = useMutation({ mutationFn: ({ taskId, action, revision }: { taskId: string; action: string; revision: number }) => digitalHumanService.applyMyTaskAction(id, taskId, action, revision), onSuccess: invalidate, onError: handleError });
   return { create, update, action };
 }

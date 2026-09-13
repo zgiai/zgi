@@ -30,6 +30,7 @@ import {
 } from '../presentation-order';
 import { modelProcessingStateFromEvent } from '../model-processing';
 import { applyRuntimeInputApplication } from '@/components/chat/utils/runtime-input-reconcile';
+import { sanitizeTimelineForMessage } from '../selectors';
 
 function preserveLegacyAnswerBoundary(
   previousStreaming: AIChatControllerState['streamingByMessageId'][string]
@@ -1111,11 +1112,15 @@ export function applyToolGovernanceDecisionState(
           [payload.message_id]: {
             ...previousStreaming,
             modelProcessing: undefined,
-            timeline: upsertToolGovernanceTimelineItem(
-              previousStreaming.timeline,
-              payload,
-              eventId
-            ),
+            timeline: (() => {
+              const timeline = upsertToolGovernanceTimelineItem(
+                previousStreaming.timeline,
+                payload,
+                eventId
+              );
+              const message = nextMessages.find(item => item.id === payload.message_id);
+              return message ? sanitizeTimelineForMessage(message, timeline) : timeline;
+            })(),
             answer_before_timeline_length: preserveLegacyAnswerBoundary(previousStreaming),
             last_event_id: eventId ?? previousStreaming.last_event_id,
           },

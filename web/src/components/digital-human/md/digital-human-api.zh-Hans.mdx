@@ -47,7 +47,7 @@ API Key 不能进入浏览器代码、移动端安装包、日志、分析系统
 
 ### 最小生产闭环
 
-1. 读取 `/digital-humans/config`，渲染标题、开场白、建议问题、输入提示和主题色。
+1. 读取 `/digital-humans/config`，渲染标题、开场白、建议问题和输入提示。
 2. 生成 UUID `request_id`，调用 `/digital-humans/chat`，立即保存 `X-ZGI-Run-ID`。
 3. 增量解析 SSE，保存 `conversation_id`、`message_id` 和最近一个非空事件 `id`。
 4. 追加 `message.data.answer`；`message_end` 结束消息阶段；唯一的 `run_end` 结束 Durable Run。
@@ -199,15 +199,15 @@ data: {"event":"message","data":{"conversation_id":"...","message_id":"...","ans
 
 数字人 API 同时提供与 Agent API 一致的过程事件和载荷分组，可用于实现更完整的运行过程界面：
 
-| 事件分组 | 事件 | 推荐呈现方式 |
-| -------- | ---- | ------------ |
-| 回答修正 | `message_retract` | 根据 `presentation_disposition` 把候选回答移入过程区或丢弃 |
-| 运行进度 | `agent_progress`、`agent_intermediate_answer` | 展示简洁活动状态和独立的阶段答案卡片，禁止自行补写推理过程 |
-| 用户输入 | `user_input_requested`、`runtime_input_accepted`、`runtime_input_applied`、`runtime_input_follow_up_started`、`runtime_input_canceled`、`runtime_input_failed` | 渲染问题，使用新的 `client_input_id` 提交，并展示返回的处理方式 |
-| 文件准备 | `file_parse_start`、`file_parse_end`、`file_parse_error` | 按 `file_id` 更新单个文件状态，只展示安全错误信息 |
-| Skill 与工具 | `skill_load_start`、`skill_load_end`、`skill_reference_read`、`skill_call_start`、`skill_call_end`、`skill_call_error`、`skill_artifact_created` | 按 `invocation_id` 分组，展示公开摘要和可下载产物 |
-| 治理与宿主动作 | `tool_governance_decision`、`client_action_required` | 展示决策；仅按宿主白名单执行动作，并遵守 `blocking` |
-| 用户关系记忆 | `memory_create`、`memory_update`、`memory_delete`、`memory_clear` | 展示轻量确认，不在公开客户端提供记忆管理编辑器 |
+| 事件分组       | 事件                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | 推荐呈现方式                                                                      |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| 回答修正       | `message_retract`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | 根据 `presentation_disposition` 把候选回答移入过程区或丢弃                        |
+| 运行进度       | `agent_progress`、`agent_intermediate_answer`                                                                                                                                                                                                                                                                                                                                                                                                                                                               | 展示简洁活动状态和独立的阶段答案卡片，禁止自行补写推理过程                        |
+| 用户输入       | `user_input_requested`、`runtime_input_accepted`、`runtime_input_applied`、`runtime_input_follow_up_started`、`runtime_input_canceled`、`runtime_input_failed`                                                                                                                                                                                                                                                                                                                                              | 渲染问题，使用新的 `client_input_id` 提交，并展示返回的处理方式                   |
+| 文件准备       | `file_parse_start`、`file_parse_end`、`file_parse_error`                                                                                                                                                                                                                                                                                                                                                                                                                                                    | 按 `file_id` 更新单个文件状态，只展示安全错误信息                                 |
+| Skill 与工具   | `skill_load_start`、`skill_load_end`、`skill_reference_read`、`skill_call_start`、`skill_call_end`、`skill_call_error`、`skill_artifact_created`                                                                                                                                                                                                                                                                                                                                                            | 按 `invocation_id` 分组，展示公开摘要和可下载产物                                 |
+| 治理与宿主动作 | `tool_governance_decision`、`client_action_required`                                                                                                                                                                                                                                                                                                                                                                                                                                                        | 展示决策；仅按宿主白名单执行动作，并遵守 `blocking`                               |
+| 用户关系记忆   | `memory_create`、`memory_update`、`memory_delete`、`memory_clear`                                                                                                                                                                                                                                                                                                                                                                                                                                           | 展示轻量确认，不在公开客户端提供记忆管理编辑器                                    |
 | 工作流生命周期 | `workflow_started`、`node_started`、`node_finished`、`workflow_paused`、`workflow_resumed`、`approval_requested`、`approval_result_filled`、`approval_expired`、`question_answer_requested`、`question_answer_submitted`、`iteration_started`、`iteration_next`、`iteration_completed`、`iteration_succeeded`、`iteration_failed`、`loop_started`、`loop_next`、`loop_completed`、`loop_succeeded`、`loop_failed`、`workflow_finished`、`workflow_failed`、`workflow_stopped`、`text_chunk`、`text_replace` | 按 `workflow_run_id` 构建过程时间线；保留未知字段，只使用服务端明确给出的续接控件 |
 
 ### 事件载荷字段
@@ -289,10 +289,17 @@ data: {"event":"message","data":{"conversation_id":"...","message_id":"...","ans
 | 已收到 `message_start`                  | 生成中         | 渲染增量并保存最近 SSE id                                       |
 | Run 未终止但网络断开                    | 重连中         | 通过 Run Events 和 `Last-Event-ID` 恢复                         |
 | `message_end=completed`，尚无 `run_end` | 收尾中         | 继续监听到 `run_end`                                            |
-| `message_end=waiting_*`                 | 暂不支持的交互 | 保留标识并展示安全兜底；数字人 v1 尚未开放审批/问题专用续接接口 |
+| `message_end=waiting_approval`          | 等待任务审批   | 用审批表单替换输入框，调用 workflow-continuation 续接原消息；不要发送新的自然语言确认 |
+| `message_end=waiting_question`          | 等待用户输入   | 保留标识并按 `user_input_requested` 展示问题控件 |
 | `run_end` 携带终态                      | 已终止         | 停止重连，以历史记录为准                                        |
 
 页面完全刷新后先读取消息历史。Run 仍在执行时，不要假设浏览器保存的游标与全新 DOM 已渲染内容一致；应按非空 SSE id 及 `(message_id, event id)` 去重。
+
+对话中创建或修改待办任务时，运行会在 `waiting_approval` 暂停。客户端应从 `approval_requested` 或消息元数据读取审批表单，在输入框位置展示确认/取消和可编辑字段；提交到
+`POST /api/v1/digital-humans/conversations/{conversation_id}/messages/{message_id}/workflow-continuation`，请求中携带同一个 `user`、`approval_token` 和 `action`。审批完成后继续消费同一条消息的 SSE 事件。
+
+如果消息以 `waiting_question` 结束并收到 `user_input_requested`，应调用
+`POST /api/v1/digital-humans/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue`，提交同一个 `user` 和按问题 id 对应的 `answers`。该接口会恢复原 Agent Loop，不会创建新的对话消息，也不能替代任务审批接口。
 
 ---
 
@@ -322,7 +329,7 @@ data: {"event":"message","data":{"conversation_id":"...","message_id":"...","ans
     </CodeGroup>
     <CodeGroup title="响应">
     ```json
-    {"code":"0","message":"success","data":{"digital_human_id":"11111111-1111-4111-8111-111111111111","web_app_id":"22222222-2222-4222-8222-222222222222","name":"研究伙伴","description":"把调研转化为决策","home_title":"今天研究什么？","opening_statement":"我可以比较证据并给出下一步。","input_placeholder":"输入研究问题","theme_color":"#6366f1","suggested_questions":["比较三个方案"],"file_upload_enabled":true,"relationship_memory_enabled":true,"memory_requires_user":true,"external_user_required":true,"runtime_input_enabled":true,"regenerate_enabled":false,"landing_page_enabled":true,"api_enabled":true,"version":"3","version_uuid":"33333333-3333-4333-8333-333333333333"}}
+    {"code":"0","message":"success","data":{"digital_human_id":"11111111-1111-4111-8111-111111111111","web_app_id":"22222222-2222-4222-8222-222222222222","name":"研究伙伴","description":"把调研转化为决策","home_title":"今天研究什么？","opening_statement":"我可以比较证据并给出下一步。","input_placeholder":"输入研究问题","suggested_questions":["比较三个方案"],"file_upload_enabled":true,"relationship_memory_enabled":true,"memory_requires_user":true,"external_user_required":true,"runtime_input_enabled":true,"regenerate_enabled":true,"landing_page_enabled":true,"api_enabled":true,"version":"3","version_uuid":"33333333-3333-4333-8333-333333333333"}}
     ```
     </CodeGroup>
   </Col>
@@ -401,10 +408,8 @@ data: {"event":"message","data":{"conversation_id":"...","message_id":"...","ans
 </Properties>
 
 <CodeGroup title="请求">
-```bash
-curl '{apibase}/digital-humans/runs/{run_id}?user=customer_123' \
-  --header 'Authorization: Bearer {api_key}'
-```
+  ```bash curl '{apibase}/digital-humans/runs/{run_id}?user=customer_123' \ --header 'Authorization:
+  Bearer {api_key}' ```
 </CodeGroup>
 
 <CodeGroup title="响应">
@@ -433,11 +438,8 @@ curl '{apibase}/digital-humans/runs/{run_id}?user=customer_123' \
 </Properties>
 
 <CodeGroup title="请求">
-```bash
-curl --no-buffer '{apibase}/digital-humans/runs/{run_id}/events?user=customer_123' \
-  --header 'Authorization: Bearer {api_key}' \
-  --header 'Last-Event-ID: 1715750400000-0'
-```
+  ```bash curl --no-buffer '{apibase}/digital-humans/runs/{run_id}/events?user=customer_123' \
+  --header 'Authorization: Bearer {api_key}' \ --header 'Last-Event-ID: 1715750400000-0' ```
 </CodeGroup>
 
 <CodeGroup title="响应">
@@ -449,7 +451,7 @@ data: {"event":"message","data":{"conversation_id":"...","message_id":"...","ans
 event: run_end
 data: {"event":"run_end","data":{"run_id":"...","status":"succeeded"}}
 
-```
+````
 </CodeGroup>
 
 <Heading url="/api/v1/digital-humans/runs/{run_id}/stop" method="POST" title="停止 Run" name="#Stop-DigitalHuman-Run" />
@@ -465,7 +467,7 @@ curl --request POST '{apibase}/digital-humans/runs/{run_id}/stop' \
   --header 'Authorization: Bearer {api_key}' \
   --header 'Content-Type: application/json' \
   --data '{"user":"customer_123"}'
-```
+````
 
 </CodeGroup>
 
@@ -514,6 +516,37 @@ curl --request POST '{apibase}/digital-humans/runs/{run_id}/runtime-input' \
 
 ---
 
+## 编辑与重新生成历史问题
+
+<Heading
+  url="/api/v1/digital-humans/conversations/{conversation_id}/messages/{message_id}/regenerate"
+  method="POST"
+  title="编辑或重新生成根消息"
+  name="#Regenerate-DigitalHuman-Message"
+/>
+
+该接口与控制台/落地页的“编辑问题”和“重新生成”使用同一套 Durable Run + SSE。省略 `query` 会重用原问题；传入 `query` 会以编辑后的问题替换当前根消息并重新执行。原始消息只有在 ChatRuntime 校验通过后才替换，非根消息请使用聊天接口的 `parent_message_id` 创建分支。
+
+<Properties>
+  <Property name="conversation_id" type="uuid path" propKey="conversation_id">必填，所属用户会话。</Property>
+  <Property name="message_id" type="uuid path" propKey="message_id">必填，要编辑或重放的根消息。</Property>
+  <Property name="user" type="string body" propKey="user">必填，必须与会话所属用户一致。</Property>
+  <Property name="query" type="string body" propKey="query">可选，编辑后的问题；不传则保持原问题。</Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl --request POST '{apibase}/digital-humans/conversations/{conversation_id}/messages/{message_id}/regenerate' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'Content-Type: application/json' \
+  --data '{"user":"customer_123","query":"请重新比较三个方案并给出风险"}'
+```
+</CodeGroup>
+
+响应是可恢复 SSE，先收到 `run_accepted`，随后收到带 `replace=true` 的 `message_start`、中间事件、`message_delta`、`message_end` 和 `run_end`。断线后按同一会话的事件接口和 `Last-Event-ID` 恢复。
+
+---
+
 ## 会话管理
 
 <Heading
@@ -536,10 +569,8 @@ curl --request POST '{apibase}/digital-humans/runs/{run_id}/runtime-input' \
 </Properties>
 
 <CodeGroup title="请求">
-```bash
-curl '{apibase}/digital-humans/conversations?user=customer_123&page=1&limit=20' \
-  --header 'Authorization: Bearer {api_key}'
-```
+  ```bash curl '{apibase}/digital-humans/conversations?user=customer_123&page=1&limit=20' \ --header
+  'Authorization: Bearer {api_key}' ```
 </CodeGroup>
 
 <CodeGroup title="响应">
@@ -568,10 +599,8 @@ curl '{apibase}/digital-humans/conversations?user=customer_123&page=1&limit=20' 
 </Properties>
 
 <CodeGroup title="请求">
-```bash
-curl '{apibase}/digital-humans/conversations/search?user=customer_123&query=方案&limit=20' \
-  --header 'Authorization: Bearer {api_key}'
-```
+  ```bash curl '{apibase}/digital-humans/conversations/search?user=customer_123&query=方案&limit=20'
+  \ --header 'Authorization: Bearer {api_key}' ```
 </CodeGroup>
 
 <CodeGroup title="响应">
@@ -597,10 +626,8 @@ curl '{apibase}/digital-humans/conversations/search?user=customer_123&query=方�
 </Properties>
 
 <CodeGroup title="请求">
-```bash
-curl '{apibase}/digital-humans/conversations/{conversation_id}?user=customer_123' \
-  --header 'Authorization: Bearer {api_key}'
-```
+  ```bash curl '{apibase}/digital-humans/conversations/{conversation_id}?user=customer_123' \
+  --header 'Authorization: Bearer {api_key}' ```
 </CodeGroup>
 
 <CodeGroup title="响应">
@@ -660,10 +687,8 @@ curl --request PATCH '{apibase}/digital-humans/conversations/{conversation_id}' 
 </Properties>
 
 <CodeGroup title="请求">
-```bash
-curl --request DELETE '{apibase}/digital-humans/conversations/{conversation_id}?user=customer_123' \
-  --header 'Authorization: Bearer {api_key}'
-```
+  ```bash curl --request DELETE '{apibase}/digital-humans/conversations/{conversation_id}
+  ?user=customer_123' \ --header 'Authorization: Bearer {api_key}' ```
 </CodeGroup>
 
 <CodeGroup title="响应">
@@ -695,10 +720,8 @@ curl --request DELETE '{apibase}/digital-humans/conversations/{conversation_id}?
 </Properties>
 
 <CodeGroup title="请求">
-```bash
-curl '{apibase}/digital-humans/conversations/{conversation_id}/messages?user=customer_123&page=1&limit=100' \
-  --header 'Authorization: Bearer {api_key}'
-```
+  ```bash curl '{apibase}/digital-humans/conversations/{conversation_id}
+  /messages?user=customer_123&page=1&limit=100' \ --header 'Authorization: Bearer {api_key}' ```
 </CodeGroup>
 
 <CodeGroup title="响应">
@@ -731,12 +754,8 @@ curl '{apibase}/digital-humans/conversations/{conversation_id}/messages?user=cus
 </Properties>
 
 <CodeGroup title="请求">
-```bash
-curl --request POST '{apibase}/digital-humans/files/upload' \
-  --header 'Authorization: Bearer {api_key}' \
-  --form 'user=customer_123' \
-  --form 'file=@./brief.pdf'
-```
+  ```bash curl --request POST '{apibase}/digital-humans/files/upload' \ --header 'Authorization:
+  Bearer {api_key}' \ --form 'user=customer_123' \ --form 'file=@./brief.pdf' ```
 </CodeGroup>
 
 <CodeGroup title="响应">
@@ -744,6 +763,73 @@ curl --request POST '{apibase}/digital-humans/files/upload' \
 {"code":"0","message":"success","data":{"id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","name":"brief.pdf","size":48231,"extension":"pdf","mime_type":"application/pdf","created_at":1715750600}}
 ```
 </CodeGroup>
+
+---
+
+## 用户私有待办
+
+通过公开 API 创建的待办归属于 `user`，而不是 API Key。一个 Key 可以服务多个
+用户，轮换 Key 不会改变任务归属。数字人共享任务仍只在控制台的共享任务页管理。
+
+<Heading
+  url="/api/v1/digital-humans/tasks"
+  method="POST"
+  title="创建用户私有待办"
+  name="#Create-DigitalHuman-Task"
+/>
+
+<Properties>
+  <Property name="user" type="string body" propKey="user">
+    必填、稳定且不透明的终端用户标识。
+  </Property>
+  <Property name="name" type="string body" propKey="name">
+    必填待办名称。
+  </Property>
+  <Property name="goal" type="string body" propKey="goal">
+    必填交付目标。
+  </Property>
+  <Property name="schedule.type" type="string body" propKey="schedule">
+    可选 `manual`、`once` 或 `cron`。
+  </Property>
+  <Property name="Idempotency-Key" type="uuid header" propKey="idempotency_key">
+    建议用于安全重试。
+  </Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl --request POST '{apibase}/digital-humans/tasks' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'Idempotency-Key: 8e5a6f5a-7b5d-4d20-8b63-cc47a40fba0e' \
+  --header 'Content-Type: application/json' \
+  --data '{"user":"customer_123","name":"跟进需求","goal":"总结最新需求变化","schedule":{"type":"manual"},"delivery_mode":"task_only"}'
+```
+</CodeGroup>
+
+使用 `GET /digital-humans/tasks?user=customer_123` 查询任务；读取、更新和执行
+动作时传入任务返回的 `revision`：
+
+```bash
+curl --request POST '{apibase}/digital-humans/tasks/{task_id}/actions/run_now' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'Content-Type: application/json' \
+  --data '{"user":"customer_123","expected_revision":2}'
+```
+
+支持 `confirm`、`decline`、`run_now`、`pause`、`resume`、`retry`、`cancel` 和
+`archive`。revision 过期时返回 `409 digital_human.task.conflict`，应刷新任务后使用
+最新 revision 重试。`GET /digital-humans/tasks/{task_id}/runs?user=customer_123` 返回
+有长度上限的执行元数据和安全 `result_summary`，不会返回执行 Trace 或模型原始响应。
+活动记录会隐藏 API Key ID 等可信审计引用。
+
+如果待办是由对话中的数字人提出或修改，SSE 会返回 `approval_requested`，消息进入
+`waiting_approval`，并在输入框位置显示审批表单。客户端应调用
+`POST /digital-humans/conversations/{conversation_id}/messages/{message_id}/workflow-continuation`，提交同一个
+`user`、`approval_token` 和 `action`；不要再发送一条“确认”消息。
+
+已登录落地页提供等价的
+`/api/v1/digital-human-webapps/{web_app_id}/tasks...` 接口，服务端从签名会话解析账号
+主体，不接受浏览器传入的 `user`。匿名会话不能创建任务，也不会注册任务工具。
 
 ---
 

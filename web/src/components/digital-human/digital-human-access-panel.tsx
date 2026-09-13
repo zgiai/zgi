@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, type CSSProperties } from 'react';
+import { useMemo, useState } from 'react';
 import { Copy, ExternalLink, Globe2, SendHorizontal, Settings2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ChatOpeningGuideView } from '@/components/chat/ui/chat-opening-guide-view';
@@ -98,12 +98,16 @@ export function DigitalHumanAccessPanel({
           />
         </div>
         <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/20 p-3">
-          <Input
-            value={landingURL}
-            readOnly
-            className="min-w-0 flex-1"
+          <div
+            role="textbox"
+            tabIndex={0}
+            aria-readonly="true"
+            title={landingURL}
             aria-label={t('landingURL')}
-          />
+            className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap rounded-md border bg-background px-3 py-2 font-mono text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {landingURL}
+          </div>
           <Button type="button" variant="outline" size="sm" onClick={() => void copy(landingURL)}>
             <Copy className="mr-2 size-4" />
             {t('copy')}
@@ -172,26 +176,6 @@ export function DigitalHumanAccessPanel({
                 showCharacterCount
               />
             </AccessField>
-
-            <AccessField label={t('themeColor')} description={t('themeColorDescription')}>
-              <div className="flex items-center gap-2">
-                <input
-                  type="color"
-                  value={resolvedThemeColor(presentation.theme_color)}
-                  onChange={event => updatePresentation('theme_color', event.target.value)}
-                  disabled={!canUpdatePresentation}
-                  className="size-9 cursor-pointer rounded-md border bg-background p-1 disabled:cursor-not-allowed"
-                  aria-label={t('themeColor')}
-                />
-                <Input
-                  value={presentation.theme_color}
-                  onChange={event => updatePresentation('theme_color', event.target.value)}
-                  disabled={!canUpdatePresentation}
-                  placeholder="#6366f1"
-                  maxLength={32}
-                />
-              </div>
-            </AccessField>
           </div>
 
           <div className="space-y-2 xl:sticky xl:top-4">
@@ -242,14 +226,8 @@ function DigitalHumanLandingPreview({
   openingGuideBrand: OpeningGuideBrand;
 }) {
   const t = useT('digitalHumans.access');
-  const themeColor = resolvedThemeColor(presentation.theme_color);
-  const style = { '--digital-human-preview-theme': themeColor } as CSSProperties;
-
   return (
-    <div
-      style={style}
-      className="flex min-h-[520px] flex-col overflow-hidden rounded-xl border bg-muted/20 shadow-sm"
-    >
+    <div className="flex min-h-[420px] flex-col overflow-hidden rounded-xl border bg-muted/20 shadow-sm">
       <div className="flex h-14 shrink-0 items-center gap-2.5 border-b bg-background px-4">
         <IconPreview
           iconType={openingGuideBrand.iconType === 'image' ? 'image' : 'text'}
@@ -268,7 +246,7 @@ function DigitalHumanLandingPreview({
         </div>
       </div>
       <div className="flex min-h-0 flex-1 flex-col bg-background p-4">
-        <div className="flex flex-1 items-center justify-center overflow-y-auto px-2 py-6">
+        <div className="flex flex-1 items-center justify-center overflow-y-auto px-2 py-4">
           <ChatOpeningGuideView
             title={presentation.home_title.trim() || definition.name}
             message={presentation.opening_statement}
@@ -283,10 +261,7 @@ function DigitalHumanLandingPreview({
           <div className="min-w-0 flex-1 truncate px-2 text-sm text-muted-foreground">
             {presentation.input_placeholder.trim() || t('previewInputPlaceholder')}
           </div>
-          <span
-            className="flex size-8 shrink-0 items-center justify-center rounded-lg text-white"
-            style={{ backgroundColor: 'var(--digital-human-preview-theme)' }}
-          >
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
             <SendHorizontal className="size-4" />
           </span>
         </div>
@@ -312,13 +287,21 @@ function AccessSwitch({
   disabled: boolean;
   onCheckedChange: (checked: boolean) => void;
 }) {
+  const t = useT('digitalHumans.access');
   return (
     <div className="flex items-start justify-between gap-5 py-4">
-      <div>
+      <div className="min-w-0">
         <div className="text-sm font-medium">{title}</div>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p>
       </div>
-      <Switch checked={checked} onCheckedChange={onCheckedChange} disabled={disabled} />
+      <div className="flex shrink-0 items-center gap-2.5">
+        <span
+          className={`text-xs font-medium ${checked ? 'text-emerald-600' : 'text-muted-foreground'}`}
+        >
+          {checked ? t('enabled') : t('disabled')}
+        </span>
+        <Switch checked={checked} onCheckedChange={onCheckedChange} disabled={disabled} />
+      </div>
     </div>
   );
 }
@@ -368,8 +351,4 @@ function resolveOpeningGuideBrand(definition: DigitalHumanDefinition): OpeningGu
         ? definition.icon_url || definition.avatar || definition.icon
         : undefined,
   };
-}
-
-function resolvedThemeColor(value: string): string {
-  return /^#[0-9a-f]{6}$/i.test(value.trim()) ? value.trim() : '#6366f1';
 }

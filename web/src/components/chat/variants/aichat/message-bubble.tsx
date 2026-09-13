@@ -42,7 +42,10 @@ import { MarkdownImage } from '@/components/common/markdown-image';
 import { isOriginalPreviewImage } from '@/utils/file-helpers';
 import { API_URL } from '@/lib/config';
 import { AIChatAgenticTimeline } from '@/components/chat/variants/aichat/agentic-timeline';
-import type { AIChatToolGovernanceDecisionSubmitPayload } from '@/components/chat/variants/aichat/agentic-timeline';
+import type {
+  AIChatToolGovernanceDecisionSubmitPayload,
+  AITaskProposalActionPayload,
+} from '@/components/chat/variants/aichat/agentic-timeline';
 import {
   getAIChatMessageErrorInput,
   resolveAIChatErrorMessage,
@@ -53,7 +56,8 @@ import type {
   AIChatStreamingMessageState,
 } from '@/components/chat/controllers/aichat';
 import {
-  dedupeTimelineItems,
+  mergeRuntimeTimelineWithMessageTimeline,
+  sanitizeTimelineForMessage,
   timelineFromAIChatMessage,
 } from '@/components/chat/controllers/aichat/selectors';
 import {
@@ -82,6 +86,8 @@ interface AIChatMessageBubbleProps {
   onToolGovernanceDecision?: (
     payload: AIChatToolGovernanceDecisionSubmitPayload
   ) => void | Promise<void>;
+  onTaskProposalAction?: (payload: AITaskProposalActionPayload) => void | Promise<void>;
+  onTaskMutation?: () => void;
   branchNavigation?: ChatBranchNavigation;
   onSwitchBranch?: (messageId: string) => void;
   isEditing?: boolean;
@@ -1218,6 +1224,8 @@ export function AIChatMessageBubble({
   canReplaceRoot = false,
   onRegenerate,
   onToolGovernanceDecision,
+  onTaskProposalAction,
+  onTaskMutation,
   branchNavigation,
   onSwitchBranch,
   isEditing = false,
@@ -1292,8 +1300,12 @@ export function AIChatMessageBubble({
   );
   const runtimeTimeline = timeline;
   const displayTimeline = useMemo(
-    () => dedupeTimelineItems(runtimeTimeline.length > 0 ? runtimeTimeline : historicalTimeline),
-    [historicalTimeline, runtimeTimeline]
+    () =>
+      sanitizeTimelineForMessage(
+        message,
+        mergeRuntimeTimelineWithMessageTimeline(historicalTimeline, runtimeTimeline)
+      ),
+    [historicalTimeline, message, runtimeTimeline]
   );
   useEffect(() => {
     debugAIChatTimeline('render:message_bubble', {
@@ -1627,6 +1639,8 @@ export function AIChatMessageBubble({
             suppressPendingToolGovernanceApprovals={suppressPendingToolGovernanceApprovals}
             messageStatus={message.status}
             onToolGovernanceDecision={onToolGovernanceDecision}
+            onTaskProposalAction={onTaskProposalAction}
+            onTaskMutation={onTaskMutation}
           />
         ) : null}
 
