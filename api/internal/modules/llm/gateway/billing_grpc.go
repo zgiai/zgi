@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -14,6 +15,7 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -23,8 +25,10 @@ import (
 // since it only needs read access to zgi-api DB.
 // This is used in CLOUD mode where console-api is the billing authority.
 type RemoteBilling struct {
-	localService *BillingService
-	grpcClient   quotaClient
+	localService      *BillingService
+	grpcClient        quotaClient
+	consoleAPIBaseURL string
+	reconcileWorkerID string
 }
 
 type quotaClient interface {
@@ -66,8 +70,12 @@ func NewRemoteBilling(grpcAddr string, localService *BillingService) (*RemoteBil
 	logger.Info("remote billing connected", "grpc_addr", grpcAddr)
 
 	rb := &RemoteBilling{
-		localService: localService,
-		grpcClient:   client,
+		localService:      localService,
+		grpcClient:        client,
+		reconcileWorkerID: "pre-settlement-" + uuid.NewString(),
+	}
+	if base, baseErr := resolveOfficialRouteBaseURL(); baseErr == nil {
+		rb.consoleAPIBaseURL = base
 	}
 	go rb.startPartialSettleReconcileWorker(context.Background())
 
@@ -428,7 +436,10 @@ func (s *RemoteBilling) prepareRemoteSettlement(ctx context.Context, bc *Billing
 			return err
 		}
 		invocation := invocationResultFromBillingStatus(bc.Status)
-		return s.localService.updateAttemptStatus(ctx, tx, bc, billingAttemptStatusSettlePending, &invocation, nil, nil)
+		if err := s.localService.updateAttemptStatus(ctx, tx, bc, billingAttemptStatusSettlePending, &invocation, nil, nil); err != nil {
+			return err
+		}
+		return tx.WithContext(ctx).Model(&BillingAttempt{}).Where("attempt_id = ?", bc.AttemptID).Updates(map[string]interface{}{"settlement_state": billingAttemptStatusSettling, "settlement_version": gorm.Expr("settlement_version + 1"), "updated_at": time.Now()}).Error
 	})
 	return alreadyFinalized, err
 }
@@ -465,6 +476,13 @@ func (s *RemoteBilling) finalizeRemoteSettlement(ctx context.Context, bc *Billin
 			return err
 		}
 		if err := s.localService.updateAttemptStatus(ctx, tx, bc, status, &invocation, nil, nil); err != nil {
+			return err
+		}
+		settlementState := billingAttemptStatusSettled
+		if status == billingAttemptStatusRolledBack {
+			settlementState = billingAttemptStatusRolledBack
+		}
+		if err := tx.WithContext(ctx).Model(&BillingAttempt{}).Where("attempt_id = ?", bc.AttemptID).Updates(map[string]interface{}{"settlement_state": settlementState, "console_settlement_id": strings.TrimSpace(bc.DeductionID), "console_settlement_status": settlementState, "settlement_next_retry_at": nil, "settlement_last_error_code": nil, "settlement_last_error_message": nil, "settlement_version": gorm.Expr("settlement_version + 1"), "updated_at": time.Now()}).Error; err != nil {
 			return err
 		}
 		if shouldMirrorRemoteUsageBill(bc) {
@@ -518,6 +536,9 @@ func (s *RemoteBilling) startPartialSettleReconcileWorker(ctx context.Context) {
 			logger.InfoContext(ctx, "remote billing reconcile worker stopped")
 			return
 		case <-ticker.C:
+			if err := s.reconcilePendingSettlementQueries(ctx); err != nil {
+				logger.ErrorContext(ctx, "remote billing settlement query sweep failed", err)
+			}
 			if err := s.recoverStaleRemoteInitAttempts(ctx); err != nil {
 				logger.ErrorContext(ctx, "remote billing stale init recovery failed", err)
 			}
@@ -532,6 +553,156 @@ func (s *RemoteBilling) startPartialSettleReconcileWorker(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// reconcilePendingSettlementQueries confirms attempts whose stream did not
+// carry a settlement event. A positive Console response is recorded as
+// authoritative evidence, but local ledger mirroring remains a separate
+// transaction and is never assumed complete.
+func (s *RemoteBilling) reconcilePendingSettlementQueries(ctx context.Context) error {
+	now := time.Now()
+	attempts, err := s.claimPendingSettlementAttempts(ctx, now)
+	if err != nil {
+		return err
+	}
+	for _, attempt := range attempts {
+		logger.InfoContext(ctx, "settlement query reconcile attempt", zap.String("attempt_id", attempt.AttemptID), zap.String("request_id", attempt.RequestID), zap.String("settlement_state", attempt.SettlementState), zap.Int("retry_count", attempt.SettlementRetryCount))
+		result, err := queryConsoleSettlement(ctx, s.consoleAPIBaseURL+"/billing/settlements/by-attempt", attempt.OrganizationID.String(), attempt.AttemptID)
+		if err != nil {
+			logger.WarnContext(ctx, "settlement query failed; queued for retry", zap.String("attempt_id", attempt.AttemptID), zap.String("request_id", attempt.RequestID), zap.Int("retry_count", attempt.SettlementRetryCount+1), zap.Error(err))
+			_ = s.localService.db.WithContext(ctx).Model(&BillingAttempt{}).Where("attempt_id = ? AND settlement_claimed_by = ?", attempt.AttemptID, s.reconcileWorkerID).Updates(map[string]interface{}{"settlement_state": billingAttemptStatusFailedRetryable, "settlement_last_error_code": "SETTLEMENT_QUERY_FAILED", "settlement_last_error_message": err.Error(), "settlement_retry_count": gorm.Expr("settlement_retry_count + 1"), "settlement_next_retry_at": now.Add(reconcileBackoff(attempt.SettlementRetryCount + 1)), "settlement_version": gorm.Expr("settlement_version + 1"), "updated_at": now})
+			s.releaseSettlementClaim(ctx, attempt.AttemptID)
+			continue
+		}
+		updates := map[string]interface{}{"console_settlement_status": result.SettlementStatus, "settlement_next_retry_at": nil, "settlement_version": gorm.Expr("settlement_version + 1"), "updated_at": now}
+		if strings.TrimSpace(result.SettlementID) != "" {
+			updates["console_settlement_id"] = result.SettlementID
+		}
+		if result.Found && strings.EqualFold(result.SettlementStatus, "SETTLED") {
+			updates["settlement_state"] = billingAttemptStatusPartial
+			// Console is authoritative, but local mirroring is still required.
+			// Rebuild the minimal billing context from the durable attempt ledger;
+			// no stream metadata is trusted for this recovery path.
+			if err := s.mirrorQueriedSettlement(ctx, &attempt, result); err != nil {
+				logger.ErrorContext(ctx, "authoritative settlement found but local mirror failed", err, zap.String("attempt_id", attempt.AttemptID), zap.String("settlement_id", result.SettlementID), zap.String("result", "partial"))
+				updates["settlement_last_error_code"] = "LOCAL_MIRROR_FAILED"
+				updates["settlement_last_error_message"] = err.Error()
+				updates["settlement_retry_count"] = gorm.Expr("settlement_retry_count + 1")
+			} else {
+				logger.InfoContext(ctx, "settlement reconciliation completed", zap.String("attempt_id", attempt.AttemptID), zap.String("settlement_id", result.SettlementID), zap.String("result", "mirrored"))
+				updates["settlement_state"] = billingAttemptStatusSettled
+			}
+		} else if !result.Found {
+			retry := attempt.SettlementRetryCount + 1
+			updates["settlement_state"] = billingAttemptStatusFailedRetryable
+			updates["settlement_last_error_code"] = "SETTLEMENT_NOT_FOUND"
+			updates["settlement_last_error_message"] = "console settlement not found"
+			updates["settlement_retry_count"] = gorm.Expr("settlement_retry_count + 1")
+			updates["settlement_next_retry_at"] = now.Add(reconcileBackoff(retry))
+			if retry >= defaultReconcileMaxRetries {
+				updates["settlement_state"] = billingAttemptStatusFailedFinal
+			}
+		} else if result.Found && !result.Retryable {
+			updates["settlement_state"] = billingAttemptStatusFailedFinal
+		}
+		updates["settlement_claimed_by"] = nil
+		updates["settlement_claimed_until"] = nil
+		_ = s.localService.db.WithContext(ctx).Model(&BillingAttempt{}).Where("attempt_id = ? AND settlement_claimed_by = ?", attempt.AttemptID, s.reconcileWorkerID).Updates(updates)
+		s.releaseSettlementClaim(ctx, attempt.AttemptID)
+	}
+	return nil
+}
+
+func (s *RemoteBilling) claimPendingSettlementAttempts(ctx context.Context, now time.Time) ([]BillingAttempt, error) {
+	var attempts []BillingAttempt
+	err := s.localService.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).Where("lane = ? AND settlement_state IN ? AND (settlement_next_retry_at IS NULL OR settlement_next_retry_at <= ?) AND (settlement_claimed_until IS NULL OR settlement_claimed_until < ?)", billingAttemptLaneRemote, []string{"PENDING", billingAttemptStatusSettlePending, billingAttemptStatusSettling, billingAttemptStatusPartial, billingAttemptStatusFailedRetryable}, now, now).Order("updated_at ASC").Limit(defaultReconcileBatchSize).Find(&attempts).Error; err != nil {
+			return err
+		}
+		leaseUntil := now.Add(2 * time.Minute)
+		for i := range attempts {
+			if err := tx.Model(&BillingAttempt{}).Where("attempt_id = ?", attempts[i].AttemptID).Updates(map[string]interface{}{"settlement_claimed_by": s.reconcileWorkerID, "settlement_claimed_until": leaseUntil, "settlement_version": gorm.Expr("settlement_version + 1"), "updated_at": now}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return attempts, err
+}
+
+func (s *RemoteBilling) releaseSettlementClaim(ctx context.Context, attemptID string) {
+	_ = s.localService.db.WithContext(ctx).Model(&BillingAttempt{}).Where("attempt_id = ? AND settlement_claimed_by = ?", attemptID, s.reconcileWorkerID).Updates(map[string]interface{}{"settlement_claimed_by": nil, "settlement_claimed_until": nil})
+}
+
+func (s *RemoteBilling) mirrorQueriedSettlement(ctx context.Context, attempt *BillingAttempt, result *settlementQueryResponse) error {
+	if attempt == nil || result == nil || strings.TrimSpace(result.SettlementID) == "" {
+		return fmt.Errorf("incomplete authoritative settlement result")
+	}
+	if result.AttemptID != "" && result.AttemptID != attempt.AttemptID {
+		return fmt.Errorf("settlement attempt mismatch: got=%s want=%s", result.AttemptID, attempt.AttemptID)
+	}
+	if result.OrganizationID != "" && !strings.EqualFold(result.OrganizationID, attempt.OrganizationID.String()) {
+		return fmt.Errorf("settlement organization mismatch: got=%s want=%s", result.OrganizationID, attempt.OrganizationID)
+	}
+	if result.DeductionID != "" && result.DeductionID != result.SettlementID {
+		return fmt.Errorf("settlement deduction mismatch: settlement_id=%s deduction_id=%s", result.SettlementID, result.DeductionID)
+	}
+	if result.SettledCredits < 0 || result.RefundedCredits < 0 {
+		return fmt.Errorf("negative settlement amounts")
+	}
+	if result.RequestID != "" && result.RequestID != attempt.RequestID {
+		return fmt.Errorf("settlement request mismatch: got=%s want=%s", result.RequestID, attempt.RequestID)
+	}
+	if result.ActualQuantity < 0 || result.EstimatedQuantity < 0 {
+		return fmt.Errorf("negative settlement quantity")
+	}
+	if len(result.PricingSnapshot) > 0 && !json.Valid(result.PricingSnapshot) {
+		return fmt.Errorf("invalid settlement pricing snapshot")
+	}
+	return s.localService.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var current BillingAttempt
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("attempt_id = ?", attempt.AttemptID).First(&current).Error; err != nil {
+			return err
+		}
+		if current.ConsoleSettlementID != nil && strings.TrimSpace(*current.ConsoleSettlementID) != "" && strings.TrimSpace(*current.ConsoleSettlementID) != strings.TrimSpace(result.SettlementID) {
+			return fmt.Errorf("settlement_id mismatch: stored=%s received=%s", *current.ConsoleSettlementID, result.SettlementID)
+		}
+		var fund BillingAttemptEntry
+		if err := tx.Where("attempt_id = ? AND entry_type = ? AND ledger_type = ?", current.AttemptID, billingEntryTypeFund, billingLedgerTypeOrgFunds).First(&fund).Error; err != nil {
+			return err
+		}
+		if fund.ReservedAmount > 0 && result.SettledCredits+result.RefundedCredits > fund.ReservedAmount {
+			return fmt.Errorf("settlement amounts exceed reserved credits: reserved=%d settled=%d refunded=%d", fund.ReservedAmount, result.SettledCredits, result.RefundedCredits)
+		}
+		bc := &BillingContext{OrganizationID: current.OrganizationID.String(), RequestID: current.RequestID, AttemptID: current.AttemptID, QuotaSubjectType: current.QuotaSubjectType, QuotaSubjectID: current.QuotaSubjectID, DeductionID: strings.TrimSpace(derefString(fund.IdempotencyKey)), EstimatedCredits: fund.ReservedAmount, ActualCredits: result.SettledCredits, Status: "success", BillingLane: UsageBillingLanePlatform, UseSystemProvider: true, RequestCreatedAt: current.CreatedAt, SettledAt: time.Now().UTC()}
+		if len(result.PricingSnapshot) > 0 && string(result.PricingSnapshot) != "null" {
+			bc.PricingSnapshot = datatypes.JSON(result.PricingSnapshot)
+		}
+		restoreBillingContextAttribution(bc, &current)
+		if current.ModelID != nil {
+			bc.ModelID = *current.ModelID
+		}
+		if current.ProviderID != nil {
+			bc.ProviderID = *current.ProviderID
+		}
+		if err := s.localService.settleSubjectQuota(ctx, tx, bc); err != nil {
+			return err
+		}
+		if err := s.localService.updateAttemptEntriesAfterSettle(ctx, tx, bc, billingLedgerTypeOrgFunds, current.OrganizationID.String()); err != nil {
+			return err
+		}
+		if err := tx.Model(&BillingAttempt{}).Where("attempt_id = ?", current.AttemptID).Updates(map[string]interface{}{"status": billingAttemptStatusSettled, "settlement_state": billingAttemptStatusSettled, "console_settlement_id": result.SettlementID, "console_settlement_status": result.SettlementStatus, "next_reconcile_at": nil, "settlement_next_retry_at": nil, "settlement_version": gorm.Expr("settlement_version + 1"), "updated_at": time.Now()}).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+func derefString(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
 }
 
 func (s *RemoteBilling) persistRemoteCompensationPending(
@@ -1362,6 +1533,9 @@ func (s *RemoteBilling) markAttemptSettleFailed(ctx context.Context, bc *Billing
 			&code,
 			&msg,
 		); err != nil {
+			return err
+		}
+		if err := tx.WithContext(ctx).Model(&BillingAttempt{}).Where("attempt_id = ?", bc.AttemptID).Updates(map[string]interface{}{"settlement_state": billingAttemptStatusFailedRetryable, "settlement_last_error_code": code, "settlement_last_error_message": msg, "settlement_retry_count": gorm.Expr("settlement_retry_count + 1"), "settlement_version": gorm.Expr("settlement_version + 1"), "updated_at": time.Now()}).Error; err != nil {
 			return err
 		}
 		return s.localService.upsertUsageBill(ctx, tx, bc, usageBillStatusPartial, &code, &msg)

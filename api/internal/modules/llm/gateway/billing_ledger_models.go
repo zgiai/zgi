@@ -24,6 +24,9 @@ const (
 	billingAttemptStatusCompensationPending = "COMPENSATION_PENDING"
 	billingAttemptStatusPredeductFailed     = "PREDEDUCT_FAILED"
 	billingAttemptStatusDeadLetter          = "DEAD_LETTER"
+	billingAttemptStatusSettling            = "SETTLING"
+	billingAttemptStatusFailedRetryable     = "FAILED_RETRYABLE"
+	billingAttemptStatusFailedFinal         = "FAILED_FINAL"
 	billingAttemptStatusCompensated         = "COMPENSATED"
 
 	billingEntryTypeSubject = "subject"
@@ -61,33 +64,43 @@ func billingAttemptStatusIsFinalized(status string) bool {
 }
 
 type BillingAttempt struct {
-	AttemptID                 string           `gorm:"column:attempt_id;primaryKey;size:120"`
-	RequestID                 string           `gorm:"column:request_id;size:100;not null;index"`
-	OrganizationID            uuid.UUID        `gorm:"column:organization_id;type:uuid;not null;index"`
-	Lane                      string           `gorm:"column:lane;size:20;not null"`
-	RouteID                   *uuid.UUID       `gorm:"column:route_id;type:uuid"`
-	ProviderID                *uuid.UUID       `gorm:"column:provider_id;type:uuid"`
-	ModelID                   *uuid.UUID       `gorm:"column:model_id;type:uuid"`
-	InvocationSource          InvocationSource `gorm:"column:invocation_source;size:20;not null;default:'unknown'"`
-	QuotaSubjectType          string           `gorm:"column:quota_subject_type;size:20;not null"`
-	QuotaSubjectID            string           `gorm:"column:quota_subject_id;size:64;not null"`
-	APIKeyID                  *uuid.UUID       `gorm:"column:api_key_id;type:uuid"`
-	WorkspaceID               *uuid.UUID       `gorm:"column:workspace_id;type:uuid"`
-	AccountID                 *uuid.UUID       `gorm:"column:account_id;type:uuid"`
-	PrincipalType             *string          `gorm:"column:principal_type;size:32"`
-	PrincipalID               *string          `gorm:"column:principal_id;size:255"`
-	AccessGrantID             *uuid.UUID       `gorm:"column:access_grant_id;type:uuid"`
-	GrantAuthorizationVersion *int64           `gorm:"column:grant_authorization_version"`
-	AuthMethod                string           `gorm:"column:auth_method;size:32;not null;default:'legacy_api_key'"`
-	Status                    string           `gorm:"column:status;size:30;not null;index"`
-	InvocationResult          *string          `gorm:"column:invocation_result;size:20"`
-	ErrorCode                 *string          `gorm:"column:error_code;size:100"`
-	ErrorMessage              *string          `gorm:"column:error_message;type:text"`
-	ReconcileAttempts         int              `gorm:"column:reconcile_attempts;not null;default:0"`
-	NextReconcileAt           *time.Time       `gorm:"column:next_reconcile_at"`
-	LastReconcileAt           *time.Time       `gorm:"column:last_reconcile_at"`
-	CreatedAt                 time.Time        `gorm:"column:created_at;not null"`
-	UpdatedAt                 time.Time        `gorm:"column:updated_at;not null"`
+	AttemptID                  string           `gorm:"column:attempt_id;primaryKey;size:120"`
+	RequestID                  string           `gorm:"column:request_id;size:100;not null;index"`
+	OrganizationID             uuid.UUID        `gorm:"column:organization_id;type:uuid;not null;index"`
+	Lane                       string           `gorm:"column:lane;size:20;not null"`
+	RouteID                    *uuid.UUID       `gorm:"column:route_id;type:uuid"`
+	ProviderID                 *uuid.UUID       `gorm:"column:provider_id;type:uuid"`
+	ModelID                    *uuid.UUID       `gorm:"column:model_id;type:uuid"`
+	InvocationSource           InvocationSource `gorm:"column:invocation_source;size:20;not null;default:'unknown'"`
+	QuotaSubjectType           string           `gorm:"column:quota_subject_type;size:20;not null"`
+	QuotaSubjectID             string           `gorm:"column:quota_subject_id;size:64;not null"`
+	APIKeyID                   *uuid.UUID       `gorm:"column:api_key_id;type:uuid"`
+	WorkspaceID                *uuid.UUID       `gorm:"column:workspace_id;type:uuid"`
+	AccountID                  *uuid.UUID       `gorm:"column:account_id;type:uuid"`
+	PrincipalType              *string          `gorm:"column:principal_type;size:32"`
+	PrincipalID                *string          `gorm:"column:principal_id;size:255"`
+	AccessGrantID              *uuid.UUID       `gorm:"column:access_grant_id;type:uuid"`
+	GrantAuthorizationVersion  *int64           `gorm:"column:grant_authorization_version"`
+	AuthMethod                 string           `gorm:"column:auth_method;size:32;not null;default:'legacy_api_key'"`
+	Status                     string           `gorm:"column:status;size:30;not null;index"`
+	InvocationResult           *string          `gorm:"column:invocation_result;size:20"`
+	ErrorCode                  *string          `gorm:"column:error_code;size:100"`
+	ErrorMessage               *string          `gorm:"column:error_message;type:text"`
+	ReconcileAttempts          int              `gorm:"column:reconcile_attempts;not null;default:0"`
+	SettlementState            string           `gorm:"column:settlement_state;size:32;not null;default:'INIT';index"`
+	ConsoleSettlementID        *string          `gorm:"column:console_settlement_id;size:120"`
+	ConsoleSettlementStatus    *string          `gorm:"column:console_settlement_status;size:32"`
+	SettlementLastErrorCode    *string          `gorm:"column:settlement_last_error_code;size:100"`
+	SettlementLastErrorMessage *string          `gorm:"column:settlement_last_error_message;type:text"`
+	SettlementNextRetryAt      *time.Time       `gorm:"column:settlement_next_retry_at"`
+	SettlementRetryCount       int              `gorm:"column:settlement_retry_count;not null;default:0"`
+	SettlementVersion          int64            `gorm:"column:settlement_version;not null;default:1"`
+	SettlementClaimedBy        *string          `gorm:"column:settlement_claimed_by;size:120"`
+	SettlementClaimedUntil     *time.Time       `gorm:"column:settlement_claimed_until"`
+	NextReconcileAt            *time.Time       `gorm:"column:next_reconcile_at"`
+	LastReconcileAt            *time.Time       `gorm:"column:last_reconcile_at"`
+	CreatedAt                  time.Time        `gorm:"column:created_at;not null"`
+	UpdatedAt                  time.Time        `gorm:"column:updated_at;not null"`
 }
 
 func restoreBillingContextAttribution(bc *BillingContext, attempt *BillingAttempt) {

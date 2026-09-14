@@ -587,6 +587,7 @@ func (s *llmGatewayServiceImpl) handleNativeStreamBilling(
 
 	var lastUsage *adapter.Usage
 	var lastSettlement *adapter.SettlementResult
+	doneSeen := false
 	var lastError error
 	var pendingTerminal *adapter.RawStreamEvent
 	var pendingFailure *adapter.RawStreamEvent
@@ -616,7 +617,14 @@ func (s *llmGatewayServiceImpl) handleNativeStreamBilling(
 			break
 		}
 		if event.Done {
-			break
+			// Providers/proxies may append settlement metadata after the model
+			// completion frame. Keep draining until the producer closes the
+			// stream; settlement events remain internal and are never emitted.
+			doneSeen = true
+			continue
+		}
+		if doneSeen {
+			continue
 		}
 		event.Data = sanitizePublicNativeBody(event.Data, model)
 		if failed {

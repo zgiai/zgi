@@ -8,6 +8,7 @@ import (
 	"time"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -17,6 +18,58 @@ func (s *RemoteBilling) FinalizePlatformProxySettlement(
 	bc *BillingContext,
 	settlement *adapter.SettlementResult,
 ) error {
+	if settlement == nil {
+		if bc == nil || strings.TrimSpace(bc.OrganizationID) == "" || strings.TrimSpace(bc.AttemptID) == "" {
+			return fmt.Errorf("missing billing identity for console settlement query")
+		}
+		var result *settlementQueryResponse
+		var err error
+		for attempt := 0; attempt < 3; attempt++ {
+			result, err = queryConsoleSettlement(ctx, s.consoleAPIBaseURL+"/billing/settlements/by-attempt", bc.OrganizationID, bc.AttemptID)
+			if err == nil && result.Found && strings.EqualFold(result.SettlementStatus, "SETTLED") {
+				break
+			}
+			if attempt < 2 {
+				delay := time.Duration(100*(1<<attempt)) * time.Millisecond
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(delay):
+				}
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("query console settlement: %w", err)
+		}
+		if !result.Found {
+			return fmt.Errorf("console settlement not found for attempt %s", bc.AttemptID)
+		}
+		if !strings.EqualFold(result.AttemptID, "") && result.AttemptID != bc.AttemptID {
+			return fmt.Errorf("console settlement attempt mismatch: got=%s want=%s", result.AttemptID, bc.AttemptID)
+		}
+		if !strings.EqualFold(result.OrganizationID, "") && !strings.EqualFold(result.OrganizationID, bc.OrganizationID) {
+			return fmt.Errorf("console settlement organization mismatch: got=%s want=%s", result.OrganizationID, bc.OrganizationID)
+		}
+		if result.RequestID != "" && result.RequestID != bc.RequestID {
+			return fmt.Errorf("console settlement request mismatch: got=%s want=%s", result.RequestID, bc.RequestID)
+		}
+		if result.ActualQuantity < 0 || result.EstimatedQuantity < 0 || (len(result.PricingSnapshot) > 0 && !json.Valid(result.PricingSnapshot)) {
+			return fmt.Errorf("invalid console settlement usage or pricing snapshot")
+		}
+		if len(result.PricingSnapshot) > 0 && string(result.PricingSnapshot) != "null" {
+			bc.PricingSnapshot = datatypes.JSON(result.PricingSnapshot)
+		}
+		if !strings.EqualFold(result.SettlementStatus, "SETTLED") {
+			return fmt.Errorf("console settlement is not terminal: status=%s retryable=%t", result.SettlementStatus, result.Retryable)
+		}
+		if result.SettledCredits < 0 || result.RefundedCredits < 0 || (result.ReservedCredits > 0 && result.SettledCredits+result.RefundedCredits > result.ReservedCredits) {
+			return fmt.Errorf("invalid console settlement amounts: reserved=%d settled=%d refunded=%d", result.ReservedCredits, result.SettledCredits, result.RefundedCredits)
+		}
+		settlement = &adapter.SettlementResult{SettlementID: result.SettlementID, OfficialPoints: result.SettledCredits, Status: result.SettlementStatus}
+		if result.DeductionID != "" && result.DeductionID != result.SettlementID {
+			return fmt.Errorf("console settlement deduction mismatch: settlement_id=%s deduction_id=%s", result.SettlementID, result.DeductionID)
+		}
+	}
 	if err := validatePlatformProxySettlement(bc, settlement); err != nil {
 		if bc != nil && strings.TrimSpace(bc.AttemptID) != "" {
 			_ = s.markAttemptSettleFailed(ctx, bc, "PROXY_SETTLE_INVALID_RESPONSE", err.Error())
