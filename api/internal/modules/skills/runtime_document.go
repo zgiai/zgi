@@ -183,6 +183,9 @@ func normalizeSkillCallers(id string, source string, callers []string) []string 
 	if len(out) > 0 {
 		return out
 	}
+	if normalizeSkillSource(source) == SkillSourceCustom {
+		return []string{SkillCallerAIChat, SkillCallerAgent, SkillCallerDigitalHuman}
+	}
 	switch normalizeSkillID(id) {
 	case SkillInternalKnowledge, SkillInternalDatabase:
 		return []string{SkillCallerAIChat}

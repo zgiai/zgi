@@ -1213,6 +1213,60 @@ This custom skill should not be allowed to declare tools.
 	}
 }
 
+func TestCustomSkillCallerDefaultsIncludeDigitalHuman(t *testing.T) {
+	tests := []struct {
+		name             string
+		supportedCallers string
+		want             []string
+	}{
+		{
+			name: "omitted callers use portable custom defaults",
+			want: []string{SkillCallerAIChat, SkillCallerAgent, SkillCallerDigitalHuman},
+		},
+		{
+			name:             "explicit agent caller remains restricted",
+			supportedCallers: "supported_callers:\n  - agent\n",
+			want:             []string{SkillCallerAgent},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			content := `---
+name: caller-default-test
+description: Test custom skill caller defaults.
+when_to_use: Use when testing caller defaults.
+runtime_type: prompt
+` + tt.supportedCallers + `---
+
+# Caller defaults
+
+Follow the test instructions.
+`
+			if err := os.WriteFile(filepath.Join(root, "SKILL.md"), []byte(content), 0o600); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+
+			doc, err := LoadCustomSkillDocument(root)
+			if err != nil {
+				t.Fatalf("LoadCustomSkillDocument() error = %v", err)
+			}
+			if !sameStrings(doc.Metadata.SupportedCallers, tt.want) {
+				t.Fatalf("supported callers = %#v, want %#v", doc.Metadata.SupportedCallers, tt.want)
+			}
+		})
+	}
+}
+
+func TestSystemSkillCallerDefaultsDoNotIncludeDigitalHuman(t *testing.T) {
+	got := normalizeSkillCallers("system-default-test", SkillSourceSystem, nil)
+	want := []string{SkillCallerAIChat, SkillCallerAgent}
+	if !sameStrings(got, want) {
+		t.Fatalf("supported callers = %#v, want %#v", got, want)
+	}
+}
+
 func TestCalculatorMetaToolArgumentsExposeRequiredExpressionSchema(t *testing.T) {
 	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
 	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillCalculator})

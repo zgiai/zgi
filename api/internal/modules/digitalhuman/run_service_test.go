@@ -725,6 +725,11 @@ func TestRuntimeServiceListsOnlySafeDigitalHumanSkills(t *testing.T) {
 				Description: map[string]string{"zh_Hans": "查询当前时间。"},
 			},
 			Enabled: true, Status: skills.SkillStatusActive,
+			SupportedCallers: []string{skills.SkillCallerDigitalHuman},
+		},
+		{
+			ID: "agent-only", Name: "Agent only", Enabled: true, Status: skills.SkillStatusActive,
+			SupportedCallers: []string{skills.SkillCallerAgent},
 		},
 		{ID: skills.SkillAgentMemory, Name: "Agent memory", Enabled: true, Status: skills.SkillStatusActive},
 		{ID: "broken", Name: "Broken", Enabled: true, Status: skills.SkillStatusInvalid},

@@ -157,8 +157,7 @@ func skillResourceCandidates(items []skills.SkillDiscoveryMetadata) ([]ResourceC
 		_, denied := forbidden[id]
 		if id == "" || denied || !item.Enabled || item.Status == skills.SkillStatusInvalid ||
 			!profile.UserSelectable || profile.RuntimeManaged || profile.SystemAsset ||
-			(!skills.SkillSupportsCaller(item.SupportedCallers, skills.SkillCallerDigitalHuman) &&
-				!skills.SkillSupportsCaller(item.SupportedCallers, skills.SkillCallerAgent)) {
+			!skills.SkillSupportsCaller(item.SupportedCallers, skills.SkillCallerDigitalHuman) {
 			continue
 		}
 		revision, err := hashRevision(struct {
