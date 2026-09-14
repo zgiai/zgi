@@ -128,10 +128,7 @@ assert.equal(
 
 assert.equal(audio.formatVoiceRecordingDuration(0), '00:00');
 assert.equal(audio.formatVoiceRecordingDuration(9), '00:09');
-assert.equal(
-  audio.formatVoiceRecordingDuration(audio.VOICE_RECORDING_LIMIT_SECONDS),
-  '00:59'
-);
+assert.equal(audio.formatVoiceRecordingDuration(audio.VOICE_RECORDING_LIMIT_SECONDS), '00:59');
 
 const draftCalls = [];
 const webAppCalls = [];
@@ -362,6 +359,10 @@ const inputAreaSource = readFileSync(
   path.join(root, 'src/components/chat/variants/aichat/input-area.tsx'),
   'utf8'
 );
+const imageInputAreaSource = readFileSync(
+  path.join(root, 'src/components/chat/variants/img/input-area.tsx'),
+  'utf8'
+);
 const voiceControlSource = readFileSync(
   path.join(root, 'src/components/chat/variants/aichat/voice/voice-input-control.tsx'),
   'utf8'
@@ -387,6 +388,16 @@ assert.match(
 );
 assert.match(inputAreaSource, /hasUploadError \|\| voiceInputBusy/);
 assert.match(inputAreaSource, /canClickSend && !voiceInputBusy/);
+assert.match(
+  imageInputAreaSource,
+  /<WorkspaceVoiceInputControl[\s\S]*value=\{input\}[\s\S]*onChange=\{setInput\}/,
+  'The image workbench must expose workspace voice input for its prompt.'
+);
+assert.match(
+  imageInputAreaSource,
+  /disabled=\{isSending \|\| isReferenceUploading\}/,
+  'Image voice input must be disabled while generation or reference upload is busy.'
+);
 assert.match(
   voiceControlSource,
   /formatVoiceRecordingDuration\(elapsedSeconds\)/,

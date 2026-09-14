@@ -181,7 +181,6 @@ func (h *RAGEvaluationHandler) checkRetrievalPermission(ctx context.Context, sco
 		workspaceID,
 		strings.TrimSpace(scope.AccountID),
 		workspace_model.WorkspacePermissionKnowledgeBaseRetrievalTest,
-		workspace_model.WorkspacePermissionKnowledgeBaseManage,
 	)
 }
 

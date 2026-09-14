@@ -9,25 +9,28 @@ import (
 
 const (
 	quotaSubjectTypeAPIKey       = "key"
+	quotaSubjectTypeAccessGrant  = "developer_grant"
 	quotaSubjectTypeWorkspace    = "workspace"
 	quotaSubjectTypeOrganization = "organization"
 
-	billingAttemptLaneRemote            = "remote"
-	billingAttemptLaneLocal             = "local"
-	billingAttemptStatusInit            = "INIT"
-	billingAttemptStatusPre             = "PREDEDUCTED"
-	billingAttemptStatusSettlePending   = "SETTLE_PENDING"
-	billingAttemptStatusSettled         = "SETTLED"
-	billingAttemptStatusRolledBack      = "ROLLED_BACK"
-	billingAttemptStatusPartial         = "PARTIAL_SETTLED"
-	billingAttemptStatusPredeductFailed = "PREDEDUCT_FAILED"
-	billingAttemptStatusDeadLetter      = "DEAD_LETTER"
-	billingAttemptStatusCompensated     = "COMPENSATED"
+	billingAttemptLaneRemote                = "remote"
+	billingAttemptLaneLocal                 = "local"
+	billingAttemptStatusInit                = "INIT"
+	billingAttemptStatusPre                 = "PREDEDUCTED"
+	billingAttemptStatusSettlePending       = "SETTLE_PENDING"
+	billingAttemptStatusSettled             = "SETTLED"
+	billingAttemptStatusRolledBack          = "ROLLED_BACK"
+	billingAttemptStatusPartial             = "PARTIAL_SETTLED"
+	billingAttemptStatusCompensationPending = "COMPENSATION_PENDING"
+	billingAttemptStatusPredeductFailed     = "PREDEDUCT_FAILED"
+	billingAttemptStatusDeadLetter          = "DEAD_LETTER"
+	billingAttemptStatusCompensated         = "COMPENSATED"
 
 	billingEntryTypeSubject = "subject"
 	billingEntryTypeFund    = "fund"
 
 	billingLedgerTypeAPIKeyQuota   = "key_quota"
+	billingLedgerTypeGrantQuota    = "developer_grant_quota"
 	billingLedgerTypeOrgFunds      = "org_funds"
 	billingLedgerTypeChannelWallet = "channel_wallet"
 
@@ -53,29 +56,68 @@ const (
 func billingAttemptStatusIsFinalized(status string) bool {
 	return status == billingAttemptStatusSettled ||
 		status == billingAttemptStatusRolledBack ||
+		status == billingAttemptStatusPredeductFailed ||
 		status == billingAttemptStatusCompensated
 }
 
 type BillingAttempt struct {
-	AttemptID         string           `gorm:"column:attempt_id;primaryKey;size:120"`
-	RequestID         string           `gorm:"column:request_id;size:100;not null;index"`
-	OrganizationID    uuid.UUID        `gorm:"column:organization_id;type:uuid;not null;index"`
-	Lane              string           `gorm:"column:lane;size:20;not null"`
-	RouteID           *uuid.UUID       `gorm:"column:route_id;type:uuid"`
-	ProviderID        *uuid.UUID       `gorm:"column:provider_id;type:uuid"`
-	ModelID           *uuid.UUID       `gorm:"column:model_id;type:uuid"`
-	InvocationSource  InvocationSource `gorm:"column:invocation_source;size:20;not null;default:'unknown'"`
-	QuotaSubjectType  string           `gorm:"column:quota_subject_type;size:20;not null"`
-	QuotaSubjectID    string           `gorm:"column:quota_subject_id;size:64;not null"`
-	Status            string           `gorm:"column:status;size:30;not null;index"`
-	InvocationResult  *string          `gorm:"column:invocation_result;size:20"`
-	ErrorCode         *string          `gorm:"column:error_code;size:100"`
-	ErrorMessage      *string          `gorm:"column:error_message;type:text"`
-	ReconcileAttempts int              `gorm:"column:reconcile_attempts;not null;default:0"`
-	NextReconcileAt   *time.Time       `gorm:"column:next_reconcile_at"`
-	LastReconcileAt   *time.Time       `gorm:"column:last_reconcile_at"`
-	CreatedAt         time.Time        `gorm:"column:created_at;not null"`
-	UpdatedAt         time.Time        `gorm:"column:updated_at;not null"`
+	AttemptID                 string           `gorm:"column:attempt_id;primaryKey;size:120"`
+	RequestID                 string           `gorm:"column:request_id;size:100;not null;index"`
+	OrganizationID            uuid.UUID        `gorm:"column:organization_id;type:uuid;not null;index"`
+	Lane                      string           `gorm:"column:lane;size:20;not null"`
+	RouteID                   *uuid.UUID       `gorm:"column:route_id;type:uuid"`
+	ProviderID                *uuid.UUID       `gorm:"column:provider_id;type:uuid"`
+	ModelID                   *uuid.UUID       `gorm:"column:model_id;type:uuid"`
+	InvocationSource          InvocationSource `gorm:"column:invocation_source;size:20;not null;default:'unknown'"`
+	QuotaSubjectType          string           `gorm:"column:quota_subject_type;size:20;not null"`
+	QuotaSubjectID            string           `gorm:"column:quota_subject_id;size:64;not null"`
+	APIKeyID                  *uuid.UUID       `gorm:"column:api_key_id;type:uuid"`
+	WorkspaceID               *uuid.UUID       `gorm:"column:workspace_id;type:uuid"`
+	AccountID                 *uuid.UUID       `gorm:"column:account_id;type:uuid"`
+	PrincipalType             *string          `gorm:"column:principal_type;size:32"`
+	PrincipalID               *string          `gorm:"column:principal_id;size:255"`
+	AccessGrantID             *uuid.UUID       `gorm:"column:access_grant_id;type:uuid"`
+	GrantAuthorizationVersion *int64           `gorm:"column:grant_authorization_version"`
+	AuthMethod                string           `gorm:"column:auth_method;size:32;not null;default:'legacy_api_key'"`
+	Status                    string           `gorm:"column:status;size:30;not null;index"`
+	InvocationResult          *string          `gorm:"column:invocation_result;size:20"`
+	ErrorCode                 *string          `gorm:"column:error_code;size:100"`
+	ErrorMessage              *string          `gorm:"column:error_message;type:text"`
+	ReconcileAttempts         int              `gorm:"column:reconcile_attempts;not null;default:0"`
+	NextReconcileAt           *time.Time       `gorm:"column:next_reconcile_at"`
+	LastReconcileAt           *time.Time       `gorm:"column:last_reconcile_at"`
+	CreatedAt                 time.Time        `gorm:"column:created_at;not null"`
+	UpdatedAt                 time.Time        `gorm:"column:updated_at;not null"`
+}
+
+func restoreBillingContextAttribution(bc *BillingContext, attempt *BillingAttempt) {
+	if bc == nil || attempt == nil {
+		return
+	}
+	if attempt.APIKeyID != nil {
+		bc.APIKeyID = attempt.APIKeyID.String()
+	}
+	if attempt.WorkspaceID != nil {
+		bc.WorkspaceID = attempt.WorkspaceID.String()
+	}
+	if attempt.AccountID != nil {
+		accountID := *attempt.AccountID
+		bc.AccountID = &accountID
+	}
+	if attempt.PrincipalType != nil {
+		bc.PrincipalType = *attempt.PrincipalType
+	}
+	if attempt.PrincipalID != nil {
+		bc.PrincipalID = *attempt.PrincipalID
+	}
+	if attempt.AccessGrantID != nil {
+		bc.AccessGrantID = attempt.AccessGrantID.String()
+	}
+	if attempt.GrantAuthorizationVersion != nil {
+		version := *attempt.GrantAuthorizationVersion
+		bc.GrantAuthorizationVersion = &version
+	}
+	bc.AuthMethod = attempt.AuthMethod
 }
 
 func (BillingAttempt) TableName() string {

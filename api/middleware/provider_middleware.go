@@ -47,7 +47,7 @@ func JWTWithProvider() gin.HandlerFunc {
 		userID, err := jwtpkg.GetUserIDFromToken(token)
 		if err != nil {
 			logger.Error("JWT parse error: %v", err)
-			response.Fail(c, response.ErrTokenInvalid)
+			failJWTValidation(c, err)
 			c.Abort()
 			return
 		}

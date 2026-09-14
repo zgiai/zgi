@@ -30,6 +30,7 @@ func TestTaskRepositoryListPaginatesCountsAndSearchesAllRecords(t *testing.T) {
 		prompt text,
 		status text,
 		video_url text,
+		poster_url text,
 		error_message text,
 		duration_seconds integer,
 		resolution text,

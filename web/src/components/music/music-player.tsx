@@ -29,6 +29,7 @@ import { useMusicWaveform } from './use-music-waveform';
 interface MusicPlayerProps {
   task: MusicTask | null;
   source: string | null;
+  sourceKey: string | null;
   playRequestToken: number;
   playRequestAction: 'play' | 'toggle';
   seekRequestToken: number;
@@ -81,6 +82,7 @@ function SeekStepIcon({ direction }: { direction: 'backward' | 'forward' }) {
 export function MusicPlayer({
   task,
   source,
+  sourceKey,
   playRequestToken,
   playRequestAction,
   seekRequestToken,
@@ -92,6 +94,7 @@ export function MusicPlayer({
 }: MusicPlayerProps) {
   const t = useT('music');
   const audioRef = React.useRef<HTMLAudioElement | null>(null);
+  const currentAudioSourceKeyRef = React.useRef<string | null>(null);
   const handledPlayRequestTokenRef = React.useRef(0);
   const [playing, setPlaying] = React.useState(false);
   const [muted, setMuted] = React.useState(false);
@@ -122,12 +125,29 @@ export function MusicPlayer({
     setMediaDurationMS(task?.duration_ms ?? 0);
     setWaveformLoadSource(null);
     updatePlaying(false);
-  }, [source, task?.duration_ms, updatePlaying]);
+  }, [sourceKey, task?.duration_ms, updatePlaying]);
 
   React.useEffect(() => {
     preloadMusicAudio(source);
     if (audioRef.current) audioRef.current.volume = volume / 100;
   }, [source, volume]);
+
+  React.useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const normalizedSource = source?.trim() || '';
+    const nextSourceKey = sourceKey?.trim() || normalizedSource || null;
+    if (currentAudioSourceKeyRef.current === nextSourceKey) return;
+
+    currentAudioSourceKeyRef.current = nextSourceKey;
+    audio.pause();
+    audio.removeAttribute('src');
+    if (normalizedSource) {
+      audio.src = normalizedSource;
+    }
+    audio.load();
+  }, [source, sourceKey]);
 
   React.useEffect(() => {
     if (task && waveform.peaks.length > 0) onWaveformChange(task.id, waveform);
@@ -204,7 +224,6 @@ export function MusicPlayer({
     <footer className="shrink-0 border-t border-border bg-background/95 px-4 py-2 backdrop-blur lg:px-8">
       <audio
         ref={audioRef}
-        src={source ?? undefined}
         preload="metadata"
         muted={muted}
         onPlay={() => updatePlaying(true)}

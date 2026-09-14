@@ -344,6 +344,20 @@ func (s *modelService) ConfigureModel(ctx context.Context, organizationID uuid.U
 		}
 		config.CacheWritePriceOverride = cost
 	}
+	if req.CacheWrite5mPriceOverride != nil {
+		cost, err := parseOptionalModelPriceOverride(*req.CacheWrite5mPriceOverride, "cache_write_5m_price_override")
+		if err != nil {
+			return nil, err
+		}
+		config.CacheWrite5mPriceOverride = cost
+	}
+	if req.CacheWrite1hPriceOverride != nil {
+		cost, err := parseOptionalModelPriceOverride(*req.CacheWrite1hPriceOverride, "cache_write_1h_price_override")
+		if err != nil {
+			return nil, err
+		}
+		config.CacheWrite1hPriceOverride = cost
+	}
 	if req.SortOrder != nil {
 		config.SortOrder = *req.SortOrder
 	}
@@ -430,6 +444,14 @@ func (s *modelService) CreateCustom(ctx context.Context, organizationID uuid.UUI
 	if err != nil {
 		return nil, err
 	}
+	costCacheWrite5m, err := parseOptionalModelPrice(req.CacheWrite5mPrice, "cache_write_5m_price")
+	if err != nil {
+		return nil, err
+	}
+	costCacheWrite1h, err := parseOptionalModelPrice(req.CacheWrite1hPrice, "cache_write_1h_price")
+	if err != nil {
+		return nil, err
+	}
 
 	useCases := model.EnsureUseCases(req.UseCases, req.Endpoints)
 
@@ -456,30 +478,34 @@ func (s *modelService) CreateCustom(ctx context.Context, organizationID uuid.UUI
 	}
 
 	m := &model.CustomModel{
-		OrganizationID:            organizationID,
-		ProviderID:                providerID,
-		Provider:                  req.Provider,
-		Name:                      req.Name,
-		DisplayName:               req.DisplayName,
-		UseCases:                  model.StringArray(useCases),
-		ContextWindow:             req.ContextWindow,
-		MaxOutputTokens:           req.MaxOutputTokens,
-		InputPrice:                costInput,
-		OutputPrice:               costOutput,
-		CostCacheRead:             costCacheRead,
-		CostCacheWrite:            costCacheWrite,
-		InputPriceConfigured:      modelPriceConfigured(req.InputPrice),
-		OutputPriceConfigured:     modelPriceConfigured(req.OutputPrice),
-		CacheReadPriceConfigured:  modelPriceConfigured(req.CacheReadPrice),
-		CacheWritePriceConfigured: modelPriceConfigured(req.CacheWritePrice),
-		KnowledgeCutoff:           req.KnowledgeCutoff,
-		Description:               req.Description,
-		IsActive:                  true,
-		Endpoints:                 endpoints,
-		Features:                  features,
-		Tools:                     tools,
-		Parameters:                parameters,
-		ConfigParameters:          configParameters,
+		OrganizationID:              organizationID,
+		ProviderID:                  providerID,
+		Provider:                    req.Provider,
+		Name:                        req.Name,
+		DisplayName:                 req.DisplayName,
+		UseCases:                    model.StringArray(useCases),
+		ContextWindow:               req.ContextWindow,
+		MaxOutputTokens:             req.MaxOutputTokens,
+		InputPrice:                  costInput,
+		OutputPrice:                 costOutput,
+		CostCacheRead:               costCacheRead,
+		CostCacheWrite:              costCacheWrite,
+		CostCacheWrite5m:            costCacheWrite5m,
+		CostCacheWrite1h:            costCacheWrite1h,
+		InputPriceConfigured:        modelPriceConfigured(req.InputPrice),
+		OutputPriceConfigured:       modelPriceConfigured(req.OutputPrice),
+		CacheReadPriceConfigured:    modelPriceConfigured(req.CacheReadPrice),
+		CacheWritePriceConfigured:   modelPriceConfigured(req.CacheWritePrice),
+		CacheWrite5mPriceConfigured: modelPriceConfigured(req.CacheWrite5mPrice),
+		CacheWrite1hPriceConfigured: modelPriceConfigured(req.CacheWrite1hPrice),
+		KnowledgeCutoff:             req.KnowledgeCutoff,
+		Description:                 req.Description,
+		IsActive:                    true,
+		Endpoints:                   endpoints,
+		Features:                    features,
+		Tools:                       tools,
+		Parameters:                  parameters,
+		ConfigParameters:            configParameters,
 	}
 
 	if err := s.customRepo.Create(ctx, m); err != nil {
@@ -566,6 +592,22 @@ func (s *modelService) UpdateCustom(ctx context.Context, organizationID, id uuid
 		}
 		m.CostCacheWrite = price
 		m.CacheWritePriceConfigured = modelPriceConfigured(*req.CacheWritePrice)
+	}
+	if req.CacheWrite5mPrice != nil {
+		price, err := parseOptionalModelPrice(*req.CacheWrite5mPrice, "cache_write_5m_price")
+		if err != nil {
+			return nil, err
+		}
+		m.CostCacheWrite5m = price
+		m.CacheWrite5mPriceConfigured = modelPriceConfigured(*req.CacheWrite5mPrice)
+	}
+	if req.CacheWrite1hPrice != nil {
+		price, err := parseOptionalModelPrice(*req.CacheWrite1hPrice, "cache_write_1h_price")
+		if err != nil {
+			return nil, err
+		}
+		m.CostCacheWrite1h = price
+		m.CacheWrite1hPriceConfigured = modelPriceConfigured(*req.CacheWrite1hPrice)
 	}
 	if req.KnowledgeCutoff != nil {
 		m.KnowledgeCutoff = *req.KnowledgeCutoff
@@ -735,12 +777,20 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 		cachedInputPrice, _ := m.CachedInputPrice.Float64()
 		cacheReadPrice, _ := m.CostCacheRead.Float64()
 		cacheWritePrice, _ := m.CostCacheWrite.Float64()
-		var syncedCacheReadPrice, syncedCacheWritePrice *float64
+		cacheWrite5mPrice, _ := m.CostCacheWrite5m.Float64()
+		cacheWrite1hPrice, _ := m.CostCacheWrite1h.Float64()
+		var syncedCacheReadPrice, syncedCacheWritePrice, syncedCacheWrite5mPrice, syncedCacheWrite1hPrice *float64
 		if m.CacheReadPriceConfigured {
 			syncedCacheReadPrice = &cacheReadPrice
 		}
 		if m.CacheWritePriceConfigured {
 			syncedCacheWritePrice = &cacheWritePrice
+		}
+		if m.CacheWrite5mPriceConfigured {
+			syncedCacheWrite5mPrice = &cacheWrite5mPrice
+		}
+		if m.CacheWrite1hPriceConfigured {
+			syncedCacheWrite1hPrice = &cacheWrite1hPrice
 		}
 
 		// Check if model is available (has enabled channels for this tenant)
@@ -771,19 +821,27 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 			OpenWeights:   m.OpenWeights,
 
 			// Pricing (per million tokens)
-			Currency:              getCurrencyOrDefault(m.Currency),
-			InputPrice:            costInput,
-			OutputPrice:           costOutput,
-			InputPriceConfigured:  m.InputPriceConfigured,
-			OutputPriceConfigured: m.OutputPriceConfigured,
-			CachedInputPrice:      cachedInputPrice,
-			CacheReadPrice:        cacheReadPrice,
-			CacheWritePrice:       cacheWritePrice,
-			SyncedInputPrice:      &costInput,
-			SyncedOutputPrice:     &costOutput,
-			SyncedCacheReadPrice:  syncedCacheReadPrice,
-			SyncedCacheWritePrice: syncedCacheWritePrice,
-			Pricing:               append([]byte(nil), m.Pricing...),
+			Currency:                    getCurrencyOrDefault(m.Currency),
+			InputPrice:                  costInput,
+			OutputPrice:                 costOutput,
+			InputPriceConfigured:        m.InputPriceConfigured,
+			OutputPriceConfigured:       m.OutputPriceConfigured,
+			CachedInputPrice:            cachedInputPrice,
+			CacheReadPrice:              cacheReadPrice,
+			CacheWritePrice:             cacheWritePrice,
+			CacheWrite5mPrice:           cacheWrite5mPrice,
+			CacheWrite1hPrice:           cacheWrite1hPrice,
+			CacheReadPriceConfigured:    m.CacheReadPriceConfigured,
+			CacheWritePriceConfigured:   m.CacheWritePriceConfigured,
+			CacheWrite5mPriceConfigured: m.CacheWrite5mPriceConfigured,
+			CacheWrite1hPriceConfigured: m.CacheWrite1hPriceConfigured,
+			SyncedInputPrice:            &costInput,
+			SyncedOutputPrice:           &costOutput,
+			SyncedCacheReadPrice:        syncedCacheReadPrice,
+			SyncedCacheWritePrice:       syncedCacheWritePrice,
+			SyncedCacheWrite5mPrice:     syncedCacheWrite5mPrice,
+			SyncedCacheWrite1hPrice:     syncedCacheWrite1hPrice,
+			Pricing:                     append([]byte(nil), m.Pricing...),
 
 			// Context
 			ContextWindow:   m.ContextWindow,
@@ -884,11 +942,25 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 				override, _ := cfg.CacheReadPriceOverride.Float64()
 				view.CacheReadPriceOverride = &override
 				view.CacheReadPrice = override
+				view.CacheReadPriceConfigured = true
 			}
 			if cfg.CacheWritePriceOverride != nil {
 				override, _ := cfg.CacheWritePriceOverride.Float64()
 				view.CacheWritePriceOverride = &override
 				view.CacheWritePrice = override
+				view.CacheWritePriceConfigured = true
+			}
+			if cfg.CacheWrite5mPriceOverride != nil {
+				override, _ := cfg.CacheWrite5mPriceOverride.Float64()
+				view.CacheWrite5mPriceOverride = &override
+				view.CacheWrite5mPrice = override
+				view.CacheWrite5mPriceConfigured = true
+			}
+			if cfg.CacheWrite1hPriceOverride != nil {
+				override, _ := cfg.CacheWrite1hPriceOverride.Float64()
+				view.CacheWrite1hPriceOverride = &override
+				view.CacheWrite1hPrice = override
+				view.CacheWrite1hPriceConfigured = true
 			}
 		}
 		view.Callable = view.IsAvailable && view.IsEnabled
@@ -925,6 +997,8 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 		customOutputPrice, _ := m.OutputPrice.Float64()
 		customCacheReadPrice, _ := m.CostCacheRead.Float64()
 		customCacheWritePrice, _ := m.CostCacheWrite.Float64()
+		customCacheWrite5mPrice, _ := m.CostCacheWrite5m.Float64()
+		customCacheWrite1hPrice, _ := m.CostCacheWrite1h.Float64()
 
 		// Custom models are available if they have routes configured
 		customIsAvailable := availableModels.Supports(m.Provider, m.Name)
@@ -943,15 +1017,19 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 			OpenWeights:   false,
 
 			// Pricing (per million tokens)
-			Currency:                  "USD",
-			InputPrice:                customInputPrice,
-			OutputPrice:               customOutputPrice,
-			InputPriceConfigured:      m.InputPriceConfigured,
-			OutputPriceConfigured:     m.OutputPriceConfigured,
-			CacheReadPrice:            customCacheReadPrice,
-			CacheWritePrice:           customCacheWritePrice,
-			CacheReadPriceConfigured:  m.CacheReadPriceConfigured,
-			CacheWritePriceConfigured: m.CacheWritePriceConfigured,
+			Currency:                    "USD",
+			InputPrice:                  customInputPrice,
+			OutputPrice:                 customOutputPrice,
+			InputPriceConfigured:        m.InputPriceConfigured,
+			OutputPriceConfigured:       m.OutputPriceConfigured,
+			CacheReadPrice:              customCacheReadPrice,
+			CacheWritePrice:             customCacheWritePrice,
+			CacheWrite5mPrice:           customCacheWrite5mPrice,
+			CacheWrite1hPrice:           customCacheWrite1hPrice,
+			CacheReadPriceConfigured:    m.CacheReadPriceConfigured,
+			CacheWritePriceConfigured:   m.CacheWritePriceConfigured,
+			CacheWrite5mPriceConfigured: m.CacheWrite5mPriceConfigured,
+			CacheWrite1hPriceConfigured: m.CacheWrite1hPriceConfigured,
 
 			// Context
 			ContextWindow:   m.ContextWindow,

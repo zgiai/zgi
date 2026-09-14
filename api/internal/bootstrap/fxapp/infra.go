@@ -220,6 +220,7 @@ func provideGinEngine(cfg *config.Config, reporter *observability.ZGIReporter, o
 		ExposeHeaders: []string{
 			"Content-Length",
 			"X-Request-ID",
+			"X-ZGI-Request-ID",
 			apptransport.HeaderApplicationErrorCode,
 			"X-ZGI-Conversation-ID",
 			"X-ZGI-Message-ID",

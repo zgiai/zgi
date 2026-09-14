@@ -123,7 +123,7 @@ func JWT() gin.HandlerFunc {
 		user_id, err := jwtpkg.GetUserIDFromToken(parts[1])
 		if err != nil {
 			logger.Error("Failed to parse token", err)
-			response.Fail(c, response.ErrTokenInvalid)
+			failJWTValidation(c, err)
 			c.Abort()
 			return
 		}
@@ -160,7 +160,7 @@ func JWTWithTenant() gin.HandlerFunc {
 		user_id, err := jwtpkg.GetUserIDFromToken(parts[1])
 		if err != nil {
 			logger.Error("Failed to parse token", err)
-			response.Fail(c, response.ErrTokenInvalid)
+			failJWTValidation(c, err)
 			c.Abort()
 			return
 		}
@@ -416,7 +416,7 @@ func JWTWithOrganizationAndService(accountService interfaces.AccountService) gin
 		user_id, err := jwtpkg.GetUserIDFromToken(parts[1])
 		if err != nil {
 			logger.Error("Failed to parse token", err)
-			response.Fail(c, response.ErrTokenInvalid)
+			failJWTValidation(c, err)
 			c.Abort()
 			return
 		}
@@ -659,7 +659,7 @@ func SystemAdminRequired(accountService interfaces.AccountService) gin.HandlerFu
 		userID, err := jwtpkg.GetUserIDFromToken(parts[1])
 		if err != nil {
 			logger.Error("SystemAdminRequired: failed to parse token", err)
-			response.Fail(c, response.ErrTokenInvalid)
+			failJWTValidation(c, err)
 			c.Abort()
 			return
 		}
@@ -805,7 +805,7 @@ func WebAppAuthMiddleware() gin.HandlerFunc {
 				userID, err := jwtpkg.GetUserIDFromToken(token)
 				if err != nil {
 					logger.Error("WebAppAuth: Failed to parse JWT token", err)
-					response.Fail(c, response.ErrTokenInvalid)
+					failJWTValidation(c, err)
 					c.Abort()
 					return
 				}

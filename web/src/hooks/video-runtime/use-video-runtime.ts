@@ -26,6 +26,7 @@ export const VIDEO_RUNTIME_KEYS = {
 };
 
 const VIDEO_TASK_DETAIL_STALE_TIME = 10 * 1000;
+const VIDEO_TASK_LIST_PAGE_SIZE = 10;
 
 function createCachedVideoTaskResponse(task: VideoRuntimeTask): VideoRuntimeTaskResponse {
   return {
@@ -188,7 +189,7 @@ export function useVideoRuntimeTasks(search = '') {
     queryKey,
     queryFn: ({ pageParam }) =>
       VideoRuntimeService.listTasks({
-        limit: 20,
+        limit: VIDEO_TASK_LIST_PAGE_SIZE,
         search: normalizedSearch || undefined,
         cursor: typeof pageParam === 'string' && pageParam ? pageParam : undefined,
       }),

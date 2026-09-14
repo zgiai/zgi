@@ -23,6 +23,10 @@ type APIKeyRepository interface {
 	// GetByKeyHash gets an API key by key hash
 	GetByKeyHash(ctx context.Context, keyHash string) (*model.TenantAPIKey, error)
 
+	// ValidatePrincipalAccess checks dynamic workspace, grant, policy, and
+	// membership state for principal-bound keys. Legacy organization keys pass.
+	ValidatePrincipalAccess(ctx context.Context, apiKey *model.TenantAPIKey) error
+
 	// List lists API keys with filters and pagination
 	List(ctx context.Context, organizationID string, filters map[string]interface{}, page, limit int) ([]*model.TenantAPIKey, int64, error)
 

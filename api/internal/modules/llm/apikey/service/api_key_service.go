@@ -291,7 +291,7 @@ func (s *apiKeyServiceImpl) ListAPIKeys(ctx context.Context, req *dto.ListAPIKey
 	var total int64
 
 	query := s.db.WithContext(ctx).Model(&model.TenantAPIKey{}).
-		Where("is_internal = ?", false)
+		Where("is_internal = ? AND principal_type IS NULL", false)
 
 	// Filter by multiple tenant IDs (for group-level queries)
 	if len(req.OrganizationIDs) > 0 {
@@ -447,6 +447,16 @@ func (s *apiKeyServiceImpl) ValidateAPIKey(ctx context.Context, key string) (*dt
 		return nil, fmt.Errorf("failed to validate API key: %w", err)
 	}
 
+	// Principal-bound keys depend on live workspace, grant, policy, and
+	// membership state. Apply the same authoritative checks as the gateway so
+	// this endpoint never reports a key as valid when an invocation rejects it.
+	if (apiKey.PrincipalType != nil || apiKey.PrincipalID != nil) && s.apiKeyRepo.ValidatePrincipalAccess(ctx, apiKey) != nil {
+		return &dto.ValidateAPIKeyResponse{
+			Valid:   false,
+			Message: "API key principal access is not active",
+		}, nil
+	}
+
 	if !apiKey.IsActive() {
 		return &dto.ValidateAPIKeyResponse{
 			Valid:   false,
@@ -454,7 +464,9 @@ func (s *apiKeyServiceImpl) ValidateAPIKey(ctx context.Context, key string) (*dt
 		}, nil
 	}
 
-	if !apiKey.HasQuota() {
+	// A principal's live grant was validated above; the independent quota is
+	// deliberately zero to deny authentication by older, grant-unaware code.
+	if apiKey.PrincipalType == nil && apiKey.PrincipalID == nil && !apiKey.HasQuota() {
 		return &dto.ValidateAPIKeyResponse{
 			Valid:   false,
 			Message: "API key has no remaining quota",
@@ -468,8 +480,10 @@ func (s *apiKeyServiceImpl) ValidateAPIKey(ctx context.Context, key string) (*dt
 
 	// Fetch organization name
 	organizationName := ""
-	if org, err := s.organizationService.GetOrganizationByID(ctx, apiKey.OrganizationID); err == nil && org != nil {
-		organizationName = org.Name
+	if s.organizationService != nil {
+		if org, err := s.organizationService.GetOrganizationByID(ctx, apiKey.OrganizationID); err == nil && org != nil {
+			organizationName = org.Name
+		}
 	}
 
 	return &dto.ValidateAPIKeyResponse{

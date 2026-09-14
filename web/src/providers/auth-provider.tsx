@@ -5,10 +5,11 @@ import { queryClient } from '@/lib/query-client';
 import { useAuthStore } from '@/store/auth-store';
 import { useOrganizationStore } from '@/store/organization-store';
 import { useWorkspaceStore } from '@/store/workspace-store';
-import { clearSessionBoundClientState } from '@/lib/auth/client-state';
+import { clearSessionBoundClientState, clearSessionBoundQueryState } from '@/lib/auth/client-state';
 import { sessionManager, type AuthSyncEvent } from '@/lib/auth/session-manager';
 import { PROFILE_KEYS } from '@/hooks/query-keys';
 import { clearProfileClientCache } from '@/utils/client-cache';
+import { isLogoutInProgress } from '@/lib/auth/logout-state';
 
 interface AuthProviderProps {
   children: React.ReactNode;
@@ -97,7 +98,7 @@ async function handleCrossTabEvent(event: AuthSyncEvent): Promise<void> {
       } else {
         await useAuthStore.getState().initializeAuth({ force: true });
       }
-      queryClient.clear();
+      clearSessionBoundQueryState();
       return;
     }
     default:
@@ -121,9 +122,20 @@ export function AuthProvider({ children }: AuthProviderProps) {
       return;
     }
 
-    return sessionManager.subscribeToCrossTabEvents(event => {
+    const unsubscribeLocal = sessionManager.subscribe(event => {
+      if (event.type !== 'SIGNED_OUT' || isLogoutInProgress()) return;
+
+      useAuthStore.getState().reset({ clearSession: false });
+      void clearSessionBoundClientState();
+    });
+    const unsubscribeCrossTab = sessionManager.subscribeToCrossTabEvents(event => {
       void handleCrossTabEvent(event);
     });
+
+    return () => {
+      unsubscribeLocal();
+      unsubscribeCrossTab();
+    };
   }, []);
 
   return <>{children}</>;

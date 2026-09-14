@@ -65,7 +65,8 @@ import {
   getTemplateCopy,
   type TemplateTranslator,
 } from '@/components/agents/templates/template-labels';
-import { WORKFLOW_VISIBLE_PERMISSION_CODES } from '@/constants/permissions';
+import { WORKFLOW_PERMISSION_ACTIONS, WORKFLOW_VISIBLE_PERMISSION_CODES } from '@/constants/permissions';
+import { getAgentDetailBaseHref } from '@/utils/agent-detail-routes';
 import type {
   CreatePromptRequest,
   PromptOptimizationRun,
@@ -92,6 +93,14 @@ export default function PromptDetailPage() {
   } = useAccountPermissions();
   const canUseWorkspaceTools = hasWorkspaceAccess();
   const canOpenWorkflowAssets = hasAnyPermission(WORKFLOW_VISIBLE_PERMISSION_CODES);
+  const canOpenWorkflowReference =
+    hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.create) ||
+    hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.import) ||
+    hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.update) ||
+    hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runDraft) ||
+    hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.publish) ||
+    hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runtimeConfigManage) ||
+    hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runtimeAccessManage);
   const canView = canUseWorkspaceTools;
   const canManage = canUseWorkspaceTools;
   const currentWorkspace = useCurrentWorkspace();
@@ -702,12 +711,8 @@ export default function PromptDetailPage() {
                             const isLatestReference =
                               reference.reference_mode === 'label' &&
                               reference.label?.toLowerCase() === 'latest';
-                            return (
-                              <Link
-                                key={`${reference.workflow_id}-${reference.node_id}`}
-                                href={`/console/agents/${reference.agent_id}/workflow?nodeId=${reference.node_id}`}
-                                className="block rounded-md border bg-background px-3 py-2 text-xs transition-colors hover:border-primary/40 hover:text-primary"
-                              >
+                            const referenceContent = (
+                              <>
                                 <span className="flex items-center justify-between gap-2">
                                   <span className="font-medium text-foreground">
                                     {reference.agent_name}
@@ -726,7 +731,23 @@ export default function PromptDetailPage() {
                                     {t('detail.referenceTarget', { target: referenceTarget })}
                                   </span>
                                 ) : null}
+                              </>
+                            );
+                            return canOpenWorkflowReference ? (
+                              <Link
+                                key={`${reference.workflow_id}-${reference.node_id}`}
+                                href={`${getAgentDetailBaseHref(reference.agent_id, 'workflow')}?nodeId=${reference.node_id}`}
+                                className="block rounded-md border bg-background px-3 py-2 text-xs transition-colors hover:border-primary/40 hover:text-primary"
+                              >
+                                {referenceContent}
                               </Link>
+                            ) : (
+                              <div
+                                key={`${reference.workflow_id}-${reference.node_id}`}
+                                className="rounded-md border bg-background px-3 py-2 text-xs"
+                              >
+                                {referenceContent}
+                              </div>
                             );
                           })}
                           {hiddenReferenceCount > 0 ? (

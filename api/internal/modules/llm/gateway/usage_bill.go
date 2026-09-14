@@ -25,6 +25,11 @@ type UsageBill struct {
 	AppType           *string          `gorm:"column:app_type;type:varchar(50);index:idx_usage_bills_org_app_type_created,priority:2"`
 	InvocationSource  InvocationSource `gorm:"column:invocation_source;type:varchar(20);not null;default:'unknown'"`
 	WorkspaceID       *string          `gorm:"column:workspace_id;type:varchar(255)"`
+	AccountID         *uuid.UUID       `gorm:"column:account_id;type:uuid"`
+	PrincipalType     *string          `gorm:"column:principal_type;type:varchar(32)"`
+	PrincipalID       *string          `gorm:"column:principal_id;type:varchar(255)"`
+	AccessGrantID     *uuid.UUID       `gorm:"column:access_grant_id;type:uuid"`
+	AuthMethod        string           `gorm:"column:auth_method;type:varchar(32);not null;default:'legacy_api_key'"`
 	APIKeyID          string           `gorm:"column:api_key_id;type:uuid"`
 	QuotaSubjectType  *string          `gorm:"column:quota_subject_type;type:varchar(20)"`
 	QuotaSubjectID    *string          `gorm:"column:quota_subject_id;type:varchar(255)"`

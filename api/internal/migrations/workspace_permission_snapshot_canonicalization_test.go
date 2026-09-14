@@ -109,3 +109,15 @@ func TestCanonicalWorkspaceAssignablePermissionJSONRejectsInvalidJSON(t *testing
 		t.Fatal("expected object permission payload to be rejected")
 	}
 }
+
+func TestWorkspacePermissionDependencyRepairHasNewMigrationID(t *testing.T) {
+	if migrationRepairWorkspacePermissionSnapshotDependenciesID <= migration20260629120000ID {
+		t.Fatalf("repair migration %q must run after original migration %q", migrationRepairWorkspacePermissionSnapshotDependenciesID, migration20260629120000ID)
+	}
+	for _, migration := range registeredMigrations() {
+		if migration.ID == migrationRepairWorkspacePermissionSnapshotDependenciesID {
+			return
+		}
+	}
+	t.Fatalf("migration %q is not registered", migrationRepairWorkspacePermissionSnapshotDependenciesID)
+}

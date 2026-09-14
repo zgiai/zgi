@@ -11,10 +11,12 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   WorkspaceVoiceInputControl,
   type WorkspaceVoiceInputControlHandle,
 } from '@/components/chat/variants/aichat/voice/workspace-voice-input-control';
+import { ModelPriceSummary } from '@/components/model/model-price-summary';
 import { useCreateMusicTasks } from '@/hooks/music/use-music-tasks';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
@@ -405,9 +407,7 @@ export function MusicComposer({
                 </SelectTrigger>
                 <SelectContent>
                   {models.map(item => (
-                    <SelectItem key={`${item.provider}:${item.model}`} value={item.model}>
-                      {item.model_name || item.model}
-                    </SelectItem>
+                    <MusicModelSelectItem key={`${item.provider}:${item.model}`} item={item} />
                   ))}
                 </SelectContent>
               </Select>
@@ -432,5 +432,24 @@ export function MusicComposer({
         </div>
       </form>
     </section>
+  );
+}
+
+function MusicModelSelectItem({ item }: { item: ModelItem }) {
+  const itemNode = (
+    <SelectItem value={item.model} className="h-9 cursor-pointer">
+      <span className="truncate">{item.model_name || item.model}</span>
+    </SelectItem>
+  );
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{itemNode}</TooltipTrigger>
+      <TooltipContent side="right" className="p-3">
+        <div className="min-w-[220px]">
+          <ModelPriceSummary model={item} />
+        </div>
+      </TooltipContent>
+    </Tooltip>
   );
 }
