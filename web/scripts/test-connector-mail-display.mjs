@@ -41,7 +41,75 @@ assert.equal(
 );
 assert.equal(names.mailConnectionAlias({ ...account, name: 'QQ邮箱-工作邮箱' }), '工作邮箱');
 assert.equal(account.name, '123@qq.com', 'presentation never mutates saved names');
-console.log('Mail display grouping, real providers, counts and localized names passed.');
+
+const catalogRow = harness(react => {
+  const component = load('src/components/connectors/catalog/mail-catalog-row.tsx', {
+    react,
+    'react/jsx-runtime': jsx,
+    'next/link': { default: 'Link' },
+    'lucide-react': ui,
+    '@/components/ui/button': ui,
+    '@/components/ui/card': ui,
+    '@/components/ui/dropdown-menu': ui,
+    '@/i18n': {
+      useT:
+        () =>
+        (key, values = {}) =>
+          values.count === undefined ? key : `${key}:${values.count}`,
+    },
+    '@/lib/utils': { cn: (...values) => values.filter(Boolean).join(' ') },
+    '../connector-icon': { ConnectorIcon: 'ConnectorIcon' },
+    '../mail-display-model': model,
+    '../setup/mail-setup-state': { mailSetupEnabled: () => true },
+    '../setup/connector-create-dialog': { ConnectorCreateDialog: 'ConnectorCreateDialog' },
+    '../connector-taxonomy-badges': { ConnectorTaxonomyBadges: 'ConnectorTaxonomyBadges' },
+  });
+  return currentGroup => component.MailCatalogRow({ group: currentGroup });
+});
+
+let catalogTree = nodes(catalogRow.render({ ...group, count: 0, attentionCount: 0 }));
+assert.ok(
+  catalogTree.some(node => node.type === 'KeyRound'),
+  'empty mail uses not-connected icon'
+);
+assert.ok(
+  catalogTree.some(
+    node => node.type === 'p' && node.props.children === 'picker.states.notConnected'
+  ),
+  'empty mail uses the shared not-connected label instead of a zero count'
+);
+assert.match(
+  catalogTree.find(node => node.type === 'Button').props.className,
+  /w-full/,
+  'empty mail connect action fills the same fixed action rail as other catalog cards'
+);
+
+catalogTree = nodes(catalogRow.render({ ...group, attentionCount: 0 }));
+assert.ok(
+  catalogTree.some(node => node.type === 'CircleCheck'),
+  'connected mail uses success icon'
+);
+assert.ok(
+  catalogTree.some(node => node.type === 'p' && node.props.children === 'catalog.connectedCount:6'),
+  'connected mail uses the shared connected summary'
+);
+assert.ok(
+  catalogTree.some(node => node.type === 'DropdownMenuItem'),
+  'connected mail keeps add-connection in the shared secondary action menu'
+);
+
+catalogTree = nodes(catalogRow.render(group));
+assert.ok(
+  catalogTree.some(node => node.type === 'CircleAlert'),
+  'mail attention uses warning icon'
+);
+assert.ok(
+  catalogTree.some(
+    node => node.type === 'p' && node.props.children === 'catalog.needsAttentionCount:3'
+  ),
+  'mail attention count remains visible'
+);
+console.log('Mail display grouping, catalog states, actions and localized names passed.');
 
 const metadata = load('src/components/connectors/connector-metadata.ts');
 const setup = load('src/components/connectors/setup/app-setup-state.ts');

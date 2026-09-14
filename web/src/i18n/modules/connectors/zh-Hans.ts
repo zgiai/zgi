@@ -356,7 +356,7 @@ const messages: ConnectorMessages = {
     repository: '代码仓库',
     issues: 'Issue',
     integration: '集成',
-    more: '更多标签：{count}',
+    more: '+{count}',
   },
   status: {
     ready: '可用',

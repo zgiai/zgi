@@ -18,7 +18,9 @@ export function ConnectorTaxonomyBadges({
   const category = connectorCategory(item);
   const tags = connectorTags(item);
   const visibleTags = tags.slice(0, Math.max(0, maxTags));
-  const hiddenCount = Math.max(0, tags.length - visibleTags.length);
+  const hiddenTags = tags.slice(visibleTags.length);
+  const hiddenCount = hiddenTags.length;
+  const hiddenTitle = hiddenTags.map(tag => t(`tags.${tag}`)).join('、');
   if (visibleTags.length === 0 && category === 'other' && !className) {
     return <Badge variant="subtle">{t(`categories.${category}`)}</Badge>;
   }
@@ -33,10 +35,9 @@ export function ConnectorTaxonomyBadges({
       {hiddenCount > 0 ? (
         <Badge
           variant="subtle"
-          title={tags
-            .slice(visibleTags.length)
-            .map(tag => t(`tags.${tag}`))
-            .join('、')}
+          className="px-1.5 text-[11px]"
+          title={hiddenTitle}
+          aria-label={hiddenTitle}
         >
           {t('tags.more', { count: hiddenCount })}
         </Badge>

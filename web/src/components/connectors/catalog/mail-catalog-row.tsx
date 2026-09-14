@@ -1,11 +1,18 @@
 'use client';
 import { useState } from 'react';
 import Link from 'next/link';
-import { Plus } from 'lucide-react';
+import { ChevronDown, CircleAlert, CircleCheck, KeyRound, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { ConnectorIcon } from '../connector-icon';
 import { useT } from '@/i18n';
+import { cn } from '@/lib/utils';
 import type { MailDisplayGroup } from '../mail-display-model';
 import { selectMailProvider } from '../mail-display-model';
 import { mailSetupEnabled } from '../setup/mail-setup-state';
@@ -22,6 +29,12 @@ export function MailCatalogRow({
   const t = useT('connectors');
   const [adding, setAdding] = useState(false);
   const provider = selectMailProvider(group.providers, preferredProvider);
+  const canConnect = group.providers.some(mailSetupEnabled);
+  const hasConnections = group.count > 0;
+  const needsAttention = group.attentionCount > 0;
+  const summary = hasConnections
+    ? t('catalog.connectedCount', { count: group.count })
+    : t('picker.states.notConnected');
   return (
     <Card
       role="article"
@@ -42,29 +55,77 @@ export function MailCatalogRow({
           />
         </div>
       </div>
-      <div className="mt-auto flex flex-wrap items-center justify-between gap-2">
-        <div className="text-xs text-muted-foreground">
-          <p>{t('connections.count', { count: group.count })}</p>
-          {group.attentionCount > 0 && (
-            <p className="text-warning">
-              {t('catalog.needsAttentionCount', { count: group.attentionCount })}
-            </p>
+      <div className="mt-auto flex h-9 min-w-0 items-center justify-between gap-3">
+        <div
+          className={cn(
+            'flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground',
+            needsAttention && 'text-warning'
           )}
+        >
+          {needsAttention ? (
+            <CircleAlert aria-hidden="true" className="size-3.5 shrink-0" />
+          ) : hasConnections ? (
+            <CircleCheck aria-hidden="true" className="size-3.5 shrink-0 text-success" />
+          ) : (
+            <KeyRound aria-hidden="true" className="size-3.5 shrink-0" />
+          )}
+          <div className="min-w-0">
+            <p className="truncate" title={summary}>
+              {summary}
+            </p>
+            {needsAttention ? (
+              <p
+                className="truncate text-[11px]"
+                title={t('catalog.needsAttentionCount', { count: group.attentionCount })}
+              >
+                {t('catalog.needsAttentionCount', { count: group.attentionCount })}
+              </p>
+            ) : null}
+          </div>
         </div>
-        <div className="flex gap-2">
-          {group.count > 0 && (
-            <Button asChild size="sm" variant="outline">
-              <Link href="/console/connectors/groups/mail">{t('catalog.manageConnections')}</Link>
+        <div className="flex h-9 w-36 shrink-0">
+          {hasConnections ? (
+            <>
+              <Button
+                asChild
+                variant="outline"
+                className={cn('h-9 min-w-0 flex-1 px-3', canConnect && 'rounded-r-none')}
+              >
+                <Link href="/console/connectors/groups/mail">
+                  <span className="truncate">{t('catalog.manageConnections')}</span>
+                </Link>
+              </Button>
+              {canConnect ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="outline"
+                      isIcon
+                      className="h-9 w-9 rounded-l-none border-l-0"
+                      aria-label={`${t('catalog.connectionActions')}: ${t('mail.title')}`}
+                    >
+                      <ChevronDown aria-hidden="true" className="size-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onSelect={() => setAdding(true)}>
+                      <Plus aria-hidden="true" className="size-4" />
+                      {t('connections.addConnection')}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : null}
+            </>
+          ) : (
+            <Button
+              className="h-9 w-full px-3"
+              disabled={!canConnect}
+              onClick={() => setAdding(true)}
+            >
+              <Plus aria-hidden="true" className="size-4 shrink-0" />
+              <span className="truncate">{t('actions.connect')}</span>
             </Button>
           )}
-          <Button
-            size="sm"
-            disabled={!group.providers.some(mailSetupEnabled)}
-            onClick={() => setAdding(true)}
-          >
-            <Plus aria-hidden="true" className="size-4" />
-            {t(group.count > 0 ? 'connections.addConnection' : 'actions.connect')}
-          </Button>
         </div>
       </div>
       {adding && provider && (

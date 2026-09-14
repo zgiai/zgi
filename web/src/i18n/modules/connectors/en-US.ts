@@ -393,7 +393,7 @@ const messages = {
     repository: 'Repository',
     issues: 'Issues',
     integration: 'Integration',
-    more: '{count} more tags',
+    more: '+{count}',
   },
   status: {
     ready: 'Ready',
