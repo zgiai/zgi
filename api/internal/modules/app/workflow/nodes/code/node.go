@@ -179,7 +179,7 @@ func (n *Node) executeRun(ctx context.Context, eventChan chan *shared.NodeEventC
 		codeexec.NewPythonTransformer(),
 		codeexec.NewJavaScriptTransformer(),
 	)
-	executionResult, err := executor.ExecuteWorkflowCodeTemplate(ctx, lang, code, variables)
+	executionResult, err := executor.ExecuteWorkflowCodeTemplateWithProfile(ctx, lang, code, variables, n.DependencyProfile)
 	if err != nil {
 		return nil, fmt.Errorf("code execution failed: %w", err)
 	}

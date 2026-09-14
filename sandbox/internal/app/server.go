@@ -1337,7 +1337,16 @@ func (s *Server) handleDownloadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := s.executor.DownloadFile(r.URL.Query().Get("sandbox_id"), r.URL.Query().Get("path"), r.URL.Query().Get("encoding"))
+	var maxBytes int64
+	if raw := r.URL.Query().Get("max_bytes"); raw != "" {
+		var err error
+		maxBytes, err = strconv.ParseInt(raw, 10, 64)
+		if err != nil || maxBytes < 1 || maxBytes > 1024*1024 {
+			writeEnvelopeWithMessage(w, http.StatusBadRequest, -400, "invalid download max_bytes", nil)
+			return
+		}
+	}
+	result, err := s.executor.DownloadFileWithLimit(r.URL.Query().Get("sandbox_id"), r.URL.Query().Get("path"), r.URL.Query().Get("encoding"), maxBytes)
 	if err != nil {
 		writeKnownError(w, err)
 		return

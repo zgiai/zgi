@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/gin-gonic/gin"
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimerepo "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
@@ -26,6 +27,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/middleware"
+	"github.com/zgiai/zgi/api/pkg/response"
 	"gorm.io/gorm"
 )
 
@@ -65,9 +67,6 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 		internalWorkflowHandler.SetDiagnoser(diagnosis.NewDiagnoser(context.Background(), llmClientTyped))
 	}
 
-	// Create external workflow handler (kept for other endpoints)
-	externalWorkflowHandler := NewExternalWorkflowHandler(workflowService, fileService, contentExtractor, enterpriseService, quotaService, db)
-
 	agentMemoryService := agentmemory.NewService(db)
 	chatRuntimeService := runtimeservice.NewServiceWithSkillRuntime(
 		runtimerepo.NewRepositories(db),
@@ -91,6 +90,10 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 	agentHandler.SetFileService(fileService)
 	agentHandler.SetWorkflowContinuationRunner(internalWorkflowHandler)
 
+	// Create external workflow handler after the Agent runtime service so the
+	// compatibility metadata endpoints can return the real published app data.
+	externalWorkflowHandler := NewExternalWorkflowHandler(workflowService, fileService, contentExtractor, enterpriseService, quotaService, db, agentsRepo, agentService)
+
 	externalGroup := r.Group("/v1")
 	externalGroup.Use(middleware.APIKeyAuthMiddleware(db))
 	externalGroup.Use(middleware.APIKeyUsageLoggingMiddleware(db)) // Log API key usage
@@ -99,7 +102,8 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 			value, exists := c.Get("api_key_info")
 			keyInfo, ok := value.(*middleware.APIKeyInfo)
 			if !exists || !ok || keyInfo == nil {
-				c.AbortWithStatus(401)
+				response.Fail(c, response.ErrUnauthorized)
+				c.Abort()
 				return
 			}
 			util.SetWorkspaceScopeCompat(c, keyInfo.TenantID.String())
@@ -115,6 +119,7 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 			}
 			c.Set("account_id", keyInfo.ID.String())
 			c.Set("agent_id", keyInfo.AgentID.String())
+			c.Set("invoke_from", runtimemodel.ConversationSourceExternalAPI)
 			handler(c)
 		}
 	}
@@ -174,68 +179,24 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 			internalWorkflowHandler.RunAdvancedChatWorkflow(c)
 		})
 
-		externalGroup.POST("/agents/chat", func(c *gin.Context) {
-			if v, exists := c.Get("api_key_info"); exists {
-				if keyInfo, ok := v.(*middleware.APIKeyInfo); ok {
-					util.SetWorkspaceScopeCompat(c, keyInfo.TenantID.String())
-					if enterpriseService != nil {
-						if org, err := enterpriseService.GetOrganizationByWorkspaceID(c.Request.Context(), keyInfo.TenantID.String()); err == nil && org != nil && org.ID != "" {
-							util.SetOrganizationID(c, org.ID)
-						} else {
-							util.SetOrganizationID(c, keyInfo.TenantID.String())
-						}
-					} else {
-						util.SetOrganizationID(c, keyInfo.TenantID.String())
-					}
-					c.Set("account_id", keyInfo.ID.String())
-					c.Set("agent_id", keyInfo.AgentID.String())
-				}
-			}
-			agentHandler.ChatAPIKeyAgent(c)
-		})
+		externalGroup.POST("/agents/chat", withAgentAPIKeyContext(agentHandler.ChatAPIKeyAgent))
+		externalGroup.GET("/agents/config", withAgentAPIKeyContext(agentHandler.GetAPIKeyAgentRuntimeConfig))
 		externalGroup.GET("/agents/memory", withAgentAPIKeyContext(agentHandler.GetAPIKeyAgentMemory))
 		externalGroup.GET("/agents/memory/export", withAgentAPIKeyContext(agentHandler.ExportAPIKeyAgentMemory))
 		externalGroup.PUT("/agents/memory/:key", withAgentAPIKeyContext(agentHandler.PutAPIKeyAgentMemory))
 		externalGroup.DELETE("/agents/memory/:key", withAgentAPIKeyContext(agentHandler.DeleteAPIKeyAgentMemoryValue))
 		externalGroup.DELETE("/agents/memory", withAgentAPIKeyContext(agentHandler.DeleteAllAPIKeyAgentMemory))
 		externalGroup.POST("/agents/memory/operations/:operation_id/undo", withAgentAPIKeyContext(agentHandler.UndoAPIKeyAgentMemoryOperation))
-		externalGroup.GET("/agents/conversations/:conversation_id/events", func(c *gin.Context) {
-			if v, exists := c.Get("api_key_info"); exists {
-				if keyInfo, ok := v.(*middleware.APIKeyInfo); ok {
-					util.SetWorkspaceScopeCompat(c, keyInfo.TenantID.String())
-					if enterpriseService != nil {
-						if org, err := enterpriseService.GetOrganizationByWorkspaceID(c.Request.Context(), keyInfo.TenantID.String()); err == nil && org != nil && org.ID != "" {
-							util.SetOrganizationID(c, org.ID)
-						} else {
-							util.SetOrganizationID(c, keyInfo.TenantID.String())
-						}
-					} else {
-						util.SetOrganizationID(c, keyInfo.TenantID.String())
-					}
-					c.Set("account_id", keyInfo.ID.String())
-					c.Set("agent_id", keyInfo.AgentID.String())
-				}
-			}
-			agentHandler.StreamAPIKeyAgentRuntimeEvents(c)
-		})
-		externalGroup.POST("/agents/conversations/:conversation_id/messages/:message_id/workflow-continuation", func(c *gin.Context) {
-			if v, exists := c.Get("api_key_info"); exists {
-				if keyInfo, ok := v.(*middleware.APIKeyInfo); ok {
-					util.SetWorkspaceScopeCompat(c, keyInfo.TenantID.String())
-					if enterpriseService != nil {
-						if org, err := enterpriseService.GetOrganizationByWorkspaceID(c.Request.Context(), keyInfo.TenantID.String()); err == nil && org != nil && org.ID != "" {
-							util.SetOrganizationID(c, org.ID)
-						} else {
-							util.SetOrganizationID(c, keyInfo.TenantID.String())
-						}
-					} else {
-						util.SetOrganizationID(c, keyInfo.TenantID.String())
-					}
-					c.Set("account_id", keyInfo.ID.String())
-					c.Set("agent_id", keyInfo.AgentID.String())
-				}
-			}
-			agentHandler.ContinueAPIKeyAgentRuntimeWorkflowContinuation(c)
-		})
+		externalGroup.GET("/agents/conversations", withAgentAPIKeyContext(agentHandler.ListAPIKeyAgentRuntimeConversations))
+		externalGroup.GET("/agents/conversations/search", withAgentAPIKeyContext(agentHandler.SearchAPIKeyAgentRuntimeConversations))
+		externalGroup.GET("/agents/conversations/:conversation_id", withAgentAPIKeyContext(agentHandler.GetAPIKeyAgentRuntimeConversation))
+		externalGroup.PATCH("/agents/conversations/:conversation_id", withAgentAPIKeyContext(agentHandler.UpdateAPIKeyAgentRuntimeConversation))
+		externalGroup.DELETE("/agents/conversations/:conversation_id", withAgentAPIKeyContext(agentHandler.DeleteAPIKeyAgentRuntimeConversation))
+		externalGroup.GET("/agents/conversations/:conversation_id/messages", withAgentAPIKeyContext(agentHandler.ListAPIKeyAgentRuntimeMessages))
+		externalGroup.GET("/agents/conversations/:conversation_id/events", withAgentAPIKeyContext(agentHandler.StreamAPIKeyAgentRuntimeEvents))
+		externalGroup.POST("/agents/conversations/:conversation_id/stop", withAgentAPIKeyContext(agentHandler.StopAPIKeyAgentRuntimeConversation))
+		externalGroup.POST("/agents/messages/:message_id/regenerate", withAgentAPIKeyContext(agentHandler.RegenerateAPIKeyAgentRuntimeMessage))
+		externalGroup.POST("/agents/conversations/:conversation_id/messages/:message_id/workflow-continuation", withAgentAPIKeyContext(agentHandler.ContinueAPIKeyAgentRuntimeWorkflowContinuation))
+		externalGroup.POST("/agents/conversations/:conversation_id/messages/:message_id/user-input/:request_id/continue", withAgentAPIKeyContext(agentHandler.ContinueAPIKeyAgentRuntimeUserInput))
 	}
 }

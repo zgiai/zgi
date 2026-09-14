@@ -21,7 +21,7 @@ import (
 )
 
 func TestRuntimeLoadsCustomScriptSkillWhenRunnerConfigured(t *testing.T) {
-	root := writeRuntimeScriptSkill(t)
+	root := writeRuntimeScriptSkillWithSchema(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer server.Close()
 
@@ -33,8 +33,12 @@ func TestRuntimeLoadsCustomScriptSkillWhenRunnerConfigured(t *testing.T) {
 	if !doc.Metadata.HasScripts || !doc.Metadata.ScriptsSupported {
 		t.Fatalf("expected scripts to be supported, metadata=%+v", doc.Metadata)
 	}
-	if _, ok := findSkillTool(doc, SkillScriptToolRun); !ok {
+	tool, ok := findSkillTool(doc, SkillScriptToolRun)
+	if !ok {
 		t.Fatal("expected run_script tool")
+	}
+	if len(tool.InputSchema) == 0 {
+		t.Fatal("expected run_script input schema")
 	}
 }
 
@@ -50,6 +54,29 @@ func TestRuntimeDoesNotExposeScriptToolWithoutRunner(t *testing.T) {
 	}
 	if _, ok := findSkillTool(doc, SkillScriptToolRun); ok {
 		t.Fatal("did not expect run_script tool without configured runner")
+	}
+}
+
+func TestRuntimeDoesNotExposeSchemaBackedScriptToolWithoutRunner(t *testing.T) {
+	root := writeRuntimeScriptSkillWithSchema(t)
+	runtime := NewRuntime(nil, nil)
+
+	doc, err := runtime.LoadCustomSkillDocument(root)
+	if err != nil {
+		t.Fatalf("load custom skill: %v", err)
+	}
+	if !doc.Metadata.HasScripts || doc.Metadata.ScriptsSupported {
+		t.Fatalf("expected scripts to be present but unsupported, metadata=%+v", doc.Metadata)
+	}
+	if _, ok := findSkillTool(doc, SkillScriptToolRun); ok {
+		t.Fatal("did not expect schema-backed run_script tool without configured runner")
+	}
+
+	toolSet := runtime.BuildNativeToolSet(t.Context(), &ResolvedSkills{Skills: []SkillDocument{doc}}, NativeToolSetOptions{BudgetChars: 100000})
+	for _, tool := range toolSet.ProviderTools {
+		if tool.Function.Name == SkillScriptToolRun {
+			t.Fatal("did not expect native run_script projection without configured runner")
+		}
 	}
 }
 
@@ -522,11 +549,17 @@ func TestSandboxScriptRunnerNonzeroExitReturnsToolMessage(t *testing.T) {
 	if len(result.Messages) < 2 || result.Messages[0].Type != tools.ToolInvokeMessageTypeText || result.Messages[1].Type != tools.ToolInvokeMessageTypeLog {
 		t.Fatalf("messages = %#v, want text stdout and stderr log", result.Messages)
 	}
+	if result.Trace.Result["package_sha256"] == nil || result.Trace.Result["package_sha256"] == "" {
+		t.Fatal("failed script lost its verified package identity")
+	}
+	if result.Trace.Status != "error" || result.Trace.Result["exit_code"] != 2 {
+		t.Fatalf("trace = %#v, want failed execution with retained exit code", result.Trace)
+	}
 }
 
 func TestSandboxScriptRunnerAutoBuildsManifestSkillDependencies(t *testing.T) {
 	root := writeTestScriptSkill(t)
-	if err := os.WriteFile(filepath.Join(root, "skill.manifest.json"), []byte(`{"entrypoint":"scripts/run.py","language":"python3","dependency_profile":"workflow-safe"}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "skill.manifest.json"), []byte(`{"entrypoint":"scripts/run.py","language":"python3","dependency_profile":"stdlib"}`), 0o644); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "requirements.txt"), []byte("openpyxl==3.1.5\n"), 0o644); err != nil {
@@ -687,6 +720,58 @@ func TestSandboxScriptRunnerAutoBuildsDefaultDependencyProfile(t *testing.T) {
 	}
 }
 
+func TestSandboxScriptRunnerUsesReadyFallbackWhenRuntimeBuildsDisabled(t *testing.T) {
+	root := writeTestScriptSkill(t)
+	if err := os.WriteFile(filepath.Join(root, "requirements.txt"), []byte("pandas==2.2.3\n"), 0o644); err != nil {
+		t.Fatalf("write requirements: %v", err)
+	}
+
+	dependencyBuildRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/sandbox/dependencies":
+			writeSandboxOK(t, w, map[string]interface{}{
+				"language":     "python3",
+				"build_policy": map[string]interface{}{"builds_allowed_during_runtime": false},
+				"profiles": []map[string]interface{}{
+					{"name": "scientific-data", "version": "2026.09.14", "status": "ready", "enabled": true, "languages": []string{"python3"}},
+				},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/sandbox/dependencies/builds":
+			dependencyBuildRequests++
+			t.Fatalf("unexpected dynamic dependency build request")
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/sandboxes":
+			request := readJSONBody(t, r)
+			if request["dependency_profile"] != "scientific-data" {
+				t.Fatalf("dependency profile = %#v, want scientific-data", request["dependency_profile"])
+			}
+			writeSandboxOK(t, w, map[string]interface{}{"id": "sbx_test"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/files/upload-archive":
+			writeSandboxOK(t, w, map[string]interface{}{"file_count": 3})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/exec/command":
+			writeSandboxOK(t, w, map[string]interface{}{"stdout": "ok\n", "error": "", "exit_code": 0, "duration_ms": 1, "truncated": false, "command": "python3"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/files/tree":
+			writeSandboxOK(t, w, map[string]interface{}{"items": []map[string]interface{}{}})
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/sandboxes/sbx_test":
+			writeSandboxOK(t, w, map[string]interface{}{"deleted": true})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	runner := NewSandboxScriptRunner(SandboxScriptRunnerConfig{
+		Endpoint:                  server.URL,
+		FallbackDependencyProfile: "scientific-data",
+	})
+	if _, err := runner.RunSkillScript(context.Background(), scriptSkillDocument(root), map[string]interface{}{}, ExecutionContext{}, "call_1"); err != nil {
+		t.Fatalf("run skill script: %v", err)
+	}
+	if dependencyBuildRequests != 0 {
+		t.Fatalf("dynamic dependency build requests = %d, want 0", dependencyBuildRequests)
+	}
+}
+
 func TestSkillPackageDependencyHintsDetectThirdPartyImports(t *testing.T) {
 	root := writePythonScenarioSkill(t, "import json\nimport pandas as pd\nprint('ok')")
 	if !skillPackageHasDependencyHints(root) {
@@ -699,57 +784,43 @@ func TestSkillPackageDependencyHintsDetectThirdPartyImports(t *testing.T) {
 	}
 }
 
-func TestSandboxScriptRunnerIgnoresManifestDependencyProfile(t *testing.T) {
+// These tests use an HTTP test double only to assert rejection before network I/O.
+func TestSandboxScriptRunnerRejectsUngrantedProfileRegardlessOfSource(t *testing.T) {
+	for _, source := range []string{SkillSourceCustom, SkillSourceSystem} {
+		t.Run(source, func(t *testing.T) {
+			root := writeTestScriptSkill(t)
+			if err := os.WriteFile(filepath.Join(root, "skill.manifest.json"), []byte(`{"entrypoint":"scripts/run.py","dependency_profile":"workflow-safe"}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { t.Error("unauthorized package reached sandbox") }))
+			defer server.Close()
+			runner := NewSandboxScriptRunner(SandboxScriptRunnerConfig{Endpoint: server.URL})
+			doc := scriptSkillDocument(root)
+			doc.Metadata.Source = source
+			if _, err := runner.RunSkillScript(context.Background(), doc, map[string]interface{}{}, ExecutionContext{OrganizationID: "org-1"}, "call"); err == nil || !strings.Contains(err.Error(), "not authorized") {
+				t.Fatalf("expected profile denial, got %v", err)
+			}
+		})
+	}
+}
+
+func TestSandboxScriptRunnerAllowsOmittedOptionalInputWithoutFileProvider(t *testing.T) {
 	root := writeTestScriptSkill(t)
-	if err := os.WriteFile(filepath.Join(root, "skill.manifest.json"), []byte(`{"entrypoint":"scripts/run.py","language":"python3","dependency_profile":"missing-profile"}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "skill.manifest.json"), []byte(`{
+		"entrypoint":"scripts/run.py",
+		"language":"python3",
+		"input_files":[{"name":"dataset","argument":"data_file_id","required":false,"extensions":[".csv"]}]
+	}`), 0o644); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/sandbox/dependencies":
-			writeSandboxDependencyCatalog(t, w)
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/sandboxes":
-			var req map[string]interface{}
-			decodeJSON(t, r, &req)
-			if req["dependency_profile"] != "stdlib" {
-				t.Fatalf("expected manifest dependency profile to be ignored, got %#v", req)
-			}
-			writeSandboxOK(t, w, map[string]interface{}{"id": "sbx_test"})
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/files/upload-archive":
-			var req map[string]interface{}
-			decodeJSON(t, r, &req)
-			manifestContent := archiveFileContent(t, req["archive_base64"].(string), "skill.manifest.json")
-			if strings.Contains(manifestContent, "missing-profile") || !strings.Contains(manifestContent, `"dependency_profile":"stdlib"`) {
-				t.Fatalf("expected normalized manifest to use platform-selected stdlib, got %s", manifestContent)
-			}
-			writeSandboxOK(t, w, map[string]interface{}{"file_count": 3})
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/exec/skill":
-			writeSandboxOK(t, w, map[string]interface{}{
-				"command": map[string]interface{}{
-					"stdout":      "{\"result\":\"ok\"}\n",
-					"error":       "",
-					"exit_code":   0,
-					"duration_ms": 12,
-					"truncated":   false,
-					"command":     "python3",
-				},
-				"artifact_manifests": []map[string]interface{}{},
-			})
-		case r.Method == http.MethodDelete && r.URL.Path == "/v1/sandboxes/sbx_test":
-			writeSandboxOK(t, w, map[string]interface{}{"deleted": true})
-		default:
-			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	defer server.Close()
+	fake := newFakeSandboxServer(t)
+	defer fake.server.Close()
 
-	runner := NewSandboxScriptRunner(SandboxScriptRunnerConfig{Endpoint: server.URL})
-	result, err := runner.RunSkillScript(context.Background(), scriptSkillDocument(root), map[string]interface{}{"input": "hello"}, ExecutionContext{}, "call_1")
-	if err != nil {
-		t.Fatalf("manifest dependency profile should be ignored and reset to stdlib, got %v", err)
-	}
-	if result == nil {
-		t.Fatal("expected result")
+	runner := NewSandboxScriptRunner(SandboxScriptRunnerConfig{Endpoint: fake.server.URL})
+	doc := scriptSkillDocument(root)
+	doc.Metadata.Source = SkillSourceSystem
+	if _, err := runner.RunSkillScript(context.Background(), doc, map[string]interface{}{"data_payload": "value\n1\n"}, ExecutionContext{}, "call_1"); err != nil {
+		t.Fatalf("run without optional file argument: %v", err)
 	}
 }
 
@@ -905,6 +976,35 @@ func TestSandboxScriptRunnerAppliesManifestRuntimePolicies(t *testing.T) {
 	}
 	if len(downloaded) != 1 || downloaded[0] != "artifacts/public/ok.txt" {
 		t.Fatalf("expected only allowed artifact within count limit to be downloaded, got %#v", downloaded)
+	}
+}
+
+func TestGrantedSkillManifestAllowsBoundedLargeFileLimits(t *testing.T) {
+	root := writeTestScriptSkill(t)
+	manifest := fmt.Sprintf(`{
+  "entrypoint":"scripts/run.py",
+  "language":"python3",
+  "dependency_profile":"example-data",
+  "max_artifact_count":%d,
+  "max_artifact_bytes":%d,
+  "input_files":[{"name":"dataset","argument":"data_file_id","extensions":[".h5ad"],"max_bytes":%d}]
+}`, maxManagedSkillScriptArtifactCount, maxManagedSkillScriptArtifactBytes, maxManagedSkillScriptInputFileBytes)
+	if err := os.WriteFile(filepath.Join(root, "skill.manifest.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	prepared, err := prepareSkillScriptManifest(root, 180, true)
+	if err != nil {
+		t.Fatalf("prepare managed manifest: %v", err)
+	}
+	if prepared.Manifest.MaxArtifactCount != maxManagedSkillScriptArtifactCount || prepared.Manifest.MaxArtifactBytes != maxManagedSkillScriptArtifactBytes {
+		t.Fatalf("managed artifact limits = %#v", prepared.Manifest)
+	}
+	if len(prepared.Manifest.InputFiles) != 1 || prepared.Manifest.InputFiles[0].MaxBytes != maxManagedSkillScriptInputFileBytes {
+		t.Fatalf("managed input limits = %#v", prepared.Manifest.InputFiles)
+	}
+
+	if _, err := prepareSkillScriptManifest(root, 180, false); err == nil || !strings.Contains(err.Error(), "not authorized") {
+		t.Fatalf("custom skill should retain conservative limits, got %v", err)
 	}
 }
 
@@ -1346,6 +1446,28 @@ Use the script to process structured input.
 	}
 	if err := os.WriteFile(filepath.Join(root, "scripts", "run.py"), []byte("import json, os, sys\nargs = json.loads(sys.stdin.read() or '{}')\nos.makedirs('artifacts', exist_ok=True)\nopen('artifacts/report.txt', 'w').write('report\\n')\nprint(json.dumps({'echo': args.get('input', '')}))\n"), 0o644); err != nil {
 		t.Fatalf("write script: %v", err)
+	}
+	return root
+}
+
+func writeRuntimeScriptSkillWithSchema(t *testing.T) string {
+	t.Helper()
+	root := writeRuntimeScriptSkill(t)
+	content := `---
+name: script-skill
+description: Script skill
+runtime_type: prompt
+script_input_schema:
+  type: object
+  additionalProperties: false
+  properties:
+    input:
+      type: string
+---
+Use the script to process structured input.
+`
+	if err := os.WriteFile(filepath.Join(root, "SKILL.md"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write schema-backed skill: %v", err)
 	}
 	return root
 }

@@ -176,6 +176,7 @@ make dev-web
 ## Documentation
 
 - [LLM invocation content audit](docs/llm-invocation-content-audit.md)
+- [External Agent API landing-page quickstart](docs/agent-api-quickstart.md)
 
 Read the product documentation at [`docs.zgi.ai`](https://docs.zgi.ai).
 

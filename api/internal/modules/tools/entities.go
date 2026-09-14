@@ -198,6 +198,11 @@ type ToolRuntime struct {
 	InvokeFrom        ToolInvokeFrom         `json:"invoke_from"`
 }
 
+// ExternalUserIDRuntimeParameter is the server-owned runtime parameter used
+// to scope temporary files for external Agent callers without replacing the
+// internal account identity carried by ToolRuntime invocations.
+const ExternalUserIDRuntimeParameter = "external_user_id"
+
 // ============================================
 // Tool Invoke Message Types
 // ============================================

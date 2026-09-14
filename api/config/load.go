@@ -787,6 +787,7 @@ func loadCodeExecConfig(cfg *Config, source *envSource) error {
 	}
 
 	cfg.CodeExec = CodeExecConfig{
+		SkillRuntimeGrantsPath:       source.string("", envSkillRuntimeGrantsPath),
 		Endpoint:                     source.string("", envCodeExecutionEndpoint),
 		APIKey:                       source.string("", envCodeExecutionAPIKey),
 		ConnectTimeoutSeconds:        connectTimeout,
@@ -797,6 +798,7 @@ func loadCodeExecConfig(cfg *Config, source *envSource) error {
 		CleanupTimeoutSeconds:        cleanupTimeout,
 		EnableNetwork:                enableNetwork,
 		SystemOfficeProfile:          source.string("skill-office", envCodeExecutionSystemOfficeProfile),
+		SystemDataProfile:            source.string("scientific-data", envCodeExecutionSystemDataProfile),
 		MaxNumber:                    maxNumber,
 		MinNumber:                    minNumber,
 		MaxStringLength:              maxStringLength,

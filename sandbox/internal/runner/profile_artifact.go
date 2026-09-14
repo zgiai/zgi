@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 )
 
 const secureProfileBasePath = "/opt/zgi/profiles"
@@ -22,6 +23,40 @@ type dependencyProfileActivation struct {
 	ProfileChecksum     string
 	ProfileSizeBytes    int64
 	ProfileEnv          map[string]string
+}
+
+type dependencyProfileActivationCache struct {
+	mu      sync.RWMutex
+	entries map[string]dependencyProfileActivation
+}
+
+func newDependencyProfileActivationCache() *dependencyProfileActivationCache {
+	return &dependencyProfileActivationCache{entries: make(map[string]dependencyProfileActivation)}
+}
+
+func (c *dependencyProfileActivationCache) resolve(defaultRootFS string, dependencyRootFSDir string, dependencyProfile string, dependencyArtifactChecksum string) (dependencyProfileActivation, error) {
+	// Profile artifacts are operator-built, fully verified on first activation,
+	// and mounted read-only by the production runtime. Cache that activation for
+	// the backend lifetime so a large scientific environment is not re-hashed
+	// for every short analysis. Direct validation APIs remain uncached for build,
+	// catalog refresh, and tamper checks.
+	checksum := strings.TrimSpace(dependencyArtifactChecksum)
+	if c == nil || strings.TrimSpace(dependencyProfile) == "" || strings.TrimSpace(dependencyRootFSDir) == "" {
+		return resolveDependencyProfileActivation(defaultRootFS, dependencyRootFSDir, dependencyProfile, checksum)
+	}
+	key := strings.Join([]string{defaultRootFS, dependencyRootFSDir, strings.TrimSpace(dependencyProfile), checksum}, "\x00")
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	activation, ok := c.entries[key]
+	if ok {
+		return activation, nil
+	}
+	activation, err := resolveDependencyProfileActivation(defaultRootFS, dependencyRootFSDir, dependencyProfile, checksum)
+	if err != nil {
+		return dependencyProfileActivation{}, err
+	}
+	c.entries[key] = activation
+	return activation, nil
 }
 
 type builtProfileManifest struct {
@@ -104,6 +139,42 @@ func ListDependencyProfileArtifacts(dependencyRootFSDir string) ([]DependencyPro
 	return artifacts, nil
 }
 
+// DependencyProfileArtifactPresent checks whether a previously built artifact is
+// still installed. It deliberately does not re-hash every installed environment:
+// activation validates the selected artifact before execution. This lightweight
+// check is used when reusing a ready build, not to grant trust to an artifact.
+func DependencyProfileArtifactPresent(root string, checksum string) (bool, error) {
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read dependency profile rootfs directory: %w", err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || !safeDependencyProfileName(entry.Name()) {
+			continue
+		}
+		profileDir := filepath.Join(root, entry.Name(), strings.TrimPrefix(secureProfileBasePath, "/"), entry.Name())
+		if err := validateProfileDir(profileDir); err != nil {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(profileDir, "manifest.json"))
+		if err != nil {
+			continue
+		}
+		var manifest builtProfileManifest
+		if json.Unmarshal(raw, &manifest) != nil {
+			continue
+		}
+		if manifest.Name == entry.Name() && manifest.Build.Checksum == checksum && checksum != "" &&
+			manifest.Build.VerificationPassed && manifest.Build.SizeBytes > 0 && strings.TrimSpace(manifest.Version) != "" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func dependencyProfileArtifactFromManifest(manifest builtProfileManifest) DependencyProfileArtifact {
 	packages := make([]DependencyProfileArtifactPackage, 0, len(manifest.Packages))
 	for _, item := range manifest.Packages {
@@ -114,17 +185,19 @@ func dependencyProfileArtifactFromManifest(manifest builtProfileManifest) Depend
 		})
 	}
 	return DependencyProfileArtifact{
-		Name:           manifest.Name,
-		Version:        manifest.Version,
-		OwnerScope:     defaultString(manifest.OwnerScope, "global"),
-		Languages:      append([]string(nil), manifest.Languages...),
-		Packages:       packages,
-		BaseRuntime:    defaultString(manifest.BaseRuntime, "linux-secure"),
-		Checksum:       manifest.Build.Checksum,
-		SizeBytes:      manifest.Build.SizeBytes,
-		Description:    strings.TrimSpace(manifest.Description),
-		PublicReusable: manifest.PublicReusable || strings.HasPrefix(manifest.Name, "auto-"),
-		Pinned:         manifest.Pinned || strings.HasPrefix(manifest.Name, "auto-"),
+		Name:        manifest.Name,
+		Version:     manifest.Version,
+		OwnerScope:  defaultString(manifest.OwnerScope, "global"),
+		Languages:   append([]string(nil), manifest.Languages...),
+		Packages:    packages,
+		BaseRuntime: defaultString(manifest.BaseRuntime, "linux-secure"),
+		Checksum:    manifest.Build.Checksum,
+		SizeBytes:   manifest.Build.SizeBytes,
+		Description: strings.TrimSpace(manifest.Description),
+		// Reuse and pinning are trust decisions recorded by the operator-managed
+		// build. A profile name prefix must never grant those permissions.
+		PublicReusable: manifest.PublicReusable,
+		Pinned:         manifest.Pinned,
 	}
 }
 

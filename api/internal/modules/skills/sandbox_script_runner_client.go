@@ -354,8 +354,13 @@ type sandboxSkillRunResult struct {
 }
 
 type sandboxDependencyCatalog struct {
-	Language string                     `json:"language"`
-	Profiles []sandboxDependencyProfile `json:"profiles"`
+	Language    string                        `json:"language"`
+	Profiles    []sandboxDependencyProfile    `json:"profiles"`
+	BuildPolicy *sandboxDependencyBuildPolicy `json:"build_policy,omitempty"`
+}
+
+type sandboxDependencyBuildPolicy struct {
+	BuildsAllowedDuringRuntime bool `json:"builds_allowed_during_runtime"`
 }
 
 type sandboxDependencyProfile struct {
@@ -410,6 +415,7 @@ type sandboxFileInfo struct {
 }
 
 type sandboxFileContent struct {
+	MaxBytes int64  `json:"max_bytes,omitempty"`
 	Path     string `json:"path"`
 	Content  string `json:"content"`
 	Encoding string `json:"encoding"`

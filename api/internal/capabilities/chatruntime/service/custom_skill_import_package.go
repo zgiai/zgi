@@ -11,8 +11,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-
-	"github.com/google/uuid"
 )
 
 func readUploadedSkillPackage(fileHeader *multipart.FileHeader) ([]byte, error) {
@@ -167,39 +165,4 @@ func extractZipFile(file *zip.File, root string, relativePath string) error {
 type publishedCustomSkillDirectory struct {
 	rollback func()
 	cleanup  func()
-}
-
-func replaceCustomSkillDirectory(sourceRoot string, finalRoot string) (*publishedCustomSkillDirectory, error) {
-	parent := filepath.Dir(finalRoot)
-	if err := os.MkdirAll(parent, 0o755); err != nil {
-		return nil, fmt.Errorf("failed to create custom skill directory: %w", err)
-	}
-	backup := finalRoot + ".backup-" + uuid.New().String()
-	hasExisting := false
-	if _, err := os.Stat(finalRoot); err == nil {
-		hasExisting = true
-		if err := os.Rename(finalRoot, backup); err != nil {
-			return nil, fmt.Errorf("failed to backup existing custom skill: %w", err)
-		}
-	}
-	if err := os.Rename(sourceRoot, finalRoot); err != nil {
-		if hasExisting {
-			_ = os.Rename(backup, finalRoot)
-		}
-		return nil, fmt.Errorf("failed to publish custom skill: %w", err)
-	}
-	published := &publishedCustomSkillDirectory{
-		rollback: func() {
-			_ = os.RemoveAll(finalRoot)
-			if hasExisting {
-				_ = os.Rename(backup, finalRoot)
-			}
-		},
-		cleanup: func() {
-			if hasExisting {
-				_ = os.RemoveAll(backup)
-			}
-		},
-	}
-	return published, nil
 }

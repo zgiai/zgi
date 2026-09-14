@@ -495,7 +495,7 @@ func operationPlanAgentResourceBindingFieldForCapability(capabilityID string) st
 
 func operationPlanIsTerminalFailure(plan map[string]interface{}) bool {
 	switch strings.ToLower(strings.TrimSpace(stringFromAny(plan["status"]))) {
-	case operationPlanStatusFailed, "error", "rejected", "blocked":
+	case operationPlanStatusFailed, "error", "rejected", "blocked", "canceled", "cancelled", "stopped":
 		return true
 	default:
 		return false
@@ -1379,6 +1379,15 @@ func operationPlanAppendEvidenceLedgerEntry(plan map[string]interface{}, invocat
 	}
 	ledger := mapSliceFromAny(plan[operationPlanEvidenceLedgerKey])
 	if operationPlanEvidenceLedgerHasEntry(ledger, entry) {
+		for _, existing := range ledger {
+			if operationPlanEvidenceLedgerHasEntry([]map[string]interface{}{existing}, entry) {
+				if id := stringFromAny(entry["invocation_id"]); id != "" && id != stringFromAny(existing["invocation_id"]) {
+					existing["invocation_aliases"] = appendUniqueStrings(stringSliceFromAny(existing["invocation_aliases"]), id)
+				}
+				break
+			}
+		}
+		plan[operationPlanEvidenceLedgerKey] = mapsToInterfaceSlice(ledger)
 		return
 	}
 	revision := operationPlanCurrentEvidenceRevision(plan) + 1
@@ -1657,6 +1666,7 @@ func applyOperationPlanInvocationState(metadata map[string]interface{}, invocati
 		operationPlanRecordInvocationEvidence(plan, invocation, status)
 		operationPlanRecordActionAttempt(plan, invocation, status)
 		operationPlanRecordInvocationEffects(plan, invocation, status)
+		operationPlanBindReferencedPhaseActions(plan)
 		if operationPlanHasStructuredOutcomes(plan) {
 			operationPlanReconcileOutcomes(plan)
 		} else {
@@ -2440,6 +2450,15 @@ func finalizeOperationPlanForCompletedResult(metadata map[string]interface{}) {
 	if len(plan) == 0 {
 		return
 	}
+	if operationPlanIsTerminalFailure(plan) {
+		syncOperationPlanCompletionMetadata(metadata)
+		return
+	}
+	operationPlanReconcileOutcomes(plan)
+	if operationPlanFinalizeFailedBindings(plan) {
+		syncOperationPlanCompletionMetadata(metadata)
+		return
+	}
 	operationPlanCompleteFinalAnswerOutcomes(plan)
 	if outcomes := mapSliceFromAny(plan[operationPlanOutcomesKey]); len(outcomes) > 0 && !operationPlanOutcomesTerminal(outcomes) {
 		plan["completion_verification"] = map[string]interface{}{
@@ -2524,6 +2543,10 @@ func applyOperationPlanTerminalCompletionResultWithSource(metadata map[string]in
 	plan["completion_verification"] = verification
 	switch {
 	case operationPlanCompletionVerificationPassStatus(status):
+		operationPlanReconcileOutcomes(plan)
+		if operationPlanFinalizeFailedBindings(plan) {
+			break
+		}
 		operationPlanCompleteFinalAnswerOutcomes(plan)
 		if outcomes := mapSliceFromAny(plan[operationPlanOutcomesKey]); len(outcomes) > 0 && !operationPlanOutcomesTerminal(outcomes) {
 			verification["status"] = "incomplete"
@@ -2565,7 +2588,7 @@ func operationPlanCompleteModelReconciliationPhases(plan map[string]interface{},
 	changed := false
 	for _, phase := range phases {
 		if !operationPlanPhaseOpen(phase) ||
-			!strings.EqualFold(strings.TrimSpace(stringFromAny(phase["verification_mode"])), "model_reconciliation") {
+			!operationPlanPhaseCanCompleteWithFinalAnswer(phase) {
 			continue
 		}
 		phase["status"] = operationPlanStepStatusCompleted
@@ -2585,6 +2608,27 @@ func operationPlanCompleteModelReconciliationPhases(plan map[string]interface{},
 		operationPlanAdvanceNextPendingPhase(phases)
 	}
 	return changed
+}
+
+func operationPlanPhaseCanCompleteWithFinalAnswer(phase map[string]interface{}) bool {
+	// An answer can finish an explicitly non-tool phase, but cannot replace a
+	// bound action or an outcome's server-owned runtime acceptance conditions.
+	if len(mapFromOperationContext(phase["expected_action"])) > 0 ||
+		strings.TrimSpace(stringFromAny(phase["outcome_id"])) != "" {
+		return false
+	}
+	verification := strings.ToLower(strings.TrimSpace(stringFromAny(phase["verification_mode"])))
+	if verification != "" && verification != "model_reconciliation" && verification != "final_answer" {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(stringFromAny(phase["completion_mode"]))) {
+	case "tool":
+		return false
+	case "final_answer", "non_tool":
+		return true
+	default:
+		return verification == "model_reconciliation"
+	}
 }
 
 func phasesRemainIncomplete(plan map[string]interface{}) bool {

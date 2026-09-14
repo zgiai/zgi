@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	goruntime "runtime"
+	"slices"
 	"sort"
 	"strings"
 
@@ -100,6 +101,17 @@ func buildSkillDocument(id string, root string, source string, frontmatter Skill
 	if err != nil {
 		return SkillDocument{}, err
 	}
+	if len(frontmatter.ScriptInputSchema) > 0 {
+		if !scriptPresent {
+			return SkillDocument{}, fmt.Errorf("script_input_schema requires package scripts")
+		}
+		if err := validatePackageScriptSchema(frontmatter.ScriptInputSchema); err != nil {
+			return SkillDocument{}, err
+		}
+		def := scriptToolDefinition()
+		def.InputSchema = frontmatter.ScriptInputSchema
+		tools = append(tools, def)
+	}
 	return SkillDocument{
 		Metadata: SkillMetadata{
 			ID:                      normalizeSkillID(id),
@@ -127,7 +139,14 @@ func buildSkillDocument(id string, root string, source string, frontmatter Skill
 }
 
 func (r *Runtime) applyScriptSupport(doc *SkillDocument) {
-	if r == nil || doc == nil || !doc.Metadata.HasScripts || !r.ScriptsSupported() {
+	if doc == nil || !doc.Metadata.HasScripts {
+		return
+	}
+	doc.Metadata.ScriptsSupported = r.ScriptsSupported()
+	if !doc.Metadata.ScriptsSupported {
+		doc.Tools = slices.DeleteFunc(doc.Tools, func(tool SkillToolDefinition) bool {
+			return strings.TrimSpace(tool.Name) == SkillScriptToolRun
+		})
 		return
 	}
 	doc.Metadata.ScriptsSupported = true

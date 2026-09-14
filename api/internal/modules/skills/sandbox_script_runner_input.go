@@ -26,9 +26,6 @@ func (r *SandboxScriptRunner) resolveInputFiles(ctx context.Context, arguments m
 	if len(manifest.InputFiles) == 0 {
 		return nil, nil
 	}
-	if r.inputFileProvider == nil {
-		return nil, fmt.Errorf("skill script input file provider is not configured")
-	}
 	prepared := make([]preparedSkillInputFile, 0, len(manifest.InputFiles))
 	for _, spec := range manifest.InputFiles {
 		fileIDs, ok := skillScriptInputFileIDs(arguments, spec.Argument)
@@ -37,6 +34,9 @@ func (r *SandboxScriptRunner) resolveInputFiles(ctx context.Context, arguments m
 				return nil, fmt.Errorf("skill input file %s requires argument %s", spec.Name, spec.Argument)
 			}
 			continue
+		}
+		if r.inputFileProvider == nil {
+			return nil, fmt.Errorf("skill script input file provider is not configured")
 		}
 		if !spec.Multiple && len(fileIDs) > 1 {
 			return nil, fmt.Errorf("skill input file %s accepts one file, got %d", spec.Name, len(fileIDs))

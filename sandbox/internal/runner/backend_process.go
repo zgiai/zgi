@@ -14,6 +14,7 @@ import (
 
 type processBackend struct {
 	dependencyRootFSDir string
+	profileCache        *dependencyProfileActivationCache
 }
 
 func newProcessBackend(dependencyRootFSDir ...string) backend {
@@ -21,7 +22,7 @@ func newProcessBackend(dependencyRootFSDir ...string) backend {
 	if len(dependencyRootFSDir) > 0 {
 		root = strings.TrimSpace(dependencyRootFSDir[0])
 	}
-	return &processBackend{dependencyRootFSDir: root}
+	return &processBackend{dependencyRootFSDir: root, profileCache: newDependencyProfileActivationCache()}
 }
 
 func (b *processBackend) Name() string {
@@ -65,7 +66,7 @@ func (b *processBackend) Run(parent context.Context, req Request, workDir string
 	if req.Stdin != "" {
 		cmd.Stdin = strings.NewReader(req.Stdin)
 	}
-	cmd.Env = processEnv(nil, activation.ProfileEnv)
+	cmd.Env = processEnv(nil, processRuntimeProfileEnv(activation.ProfileEnv, root))
 
 	stdout := newCappedBuffer(stdoutLimit)
 	stderr := newCappedBuffer(stderrLimit)
@@ -109,6 +110,9 @@ func (b *processBackend) ExecuteCommand(parent context.Context, spec CommandSpec
 	if err != nil {
 		return CommandResult{}, err
 	}
+	if err := seedDependencyProfileRuntimeCache(activation.ProfileHostDir, spec.WorkDir); err != nil {
+		return CommandResult{}, err
+	}
 	command := processProfileCommandPath(activation.ProfileHostDir, spec.Command)
 	var cmd *exec.Cmd
 	if len(spec.Args) > 0 {
@@ -122,7 +126,7 @@ func (b *processBackend) ExecuteCommand(parent context.Context, spec CommandSpec
 	if spec.Stdin != "" {
 		cmd.Stdin = strings.NewReader(spec.Stdin)
 	}
-	cmd.Env = processEnv(spec.Env, activation.ProfileEnv)
+	cmd.Env = processEnv(spec.Env, processRuntimeProfileEnv(activation.ProfileEnv, spec.WorkDir))
 
 	stdout := newCappedBuffer(spec.StdoutLimit)
 	stderr := newCappedBuffer(spec.StderrLimit)
@@ -167,25 +171,12 @@ func (b *processBackend) resolveDependencyProfile(dependencyProfile string, depe
 	if !safeDependencyProfileName(dependencyProfile) {
 		return dependencyProfileActivation{}, ErrUnsafeDependencyProfileName{Profile: dependencyProfile}
 	}
-	root, err := rootFSSelector{
-		defaultRootFS:       b.dependencyRootFSDir,
-		dependencyRootFSDir: b.dependencyRootFSDir,
-	}.resolve(dependencyProfile, dependencyArtifactChecksum)
+	activation, err := b.profileCache.resolve(b.dependencyRootFSDir, b.dependencyRootFSDir, dependencyProfile, dependencyArtifactChecksum)
 	if err != nil {
 		return dependencyProfileActivation{}, err
 	}
-	profileDir, manifest, err := findRuntimeProfileArtifact(root, dependencyProfile, dependencyArtifactChecksum)
-	if err != nil {
-		return dependencyProfileActivation{}, err
-	}
-	return dependencyProfileActivation{
-		RootFS:           root,
-		ProfileName:      dependencyProfile,
-		ProfileHostDir:   profileDir,
-		ProfileChecksum:  manifest.Build.Checksum,
-		ProfileSizeBytes: manifest.Build.SizeBytes,
-		ProfileEnv:       processDependencyProfileEnv(profileDir),
-	}, nil
+	activation.ProfileEnv = processDependencyProfileEnv(activation.ProfileHostDir)
+	return activation, nil
 }
 
 func processDependencyProfileEnv(profileDir string) map[string]string {
@@ -198,10 +189,26 @@ func processDependencyProfileEnv(profileDir string) map[string]string {
 		path += string(os.PathListSeparator) + existing
 	}
 	return map[string]string{
-		"PATH":             path,
-		"PYTHONNOUSERSITE": "1",
-		"NODE_PATH":        filepath.Join(profileDir, "node_modules"),
+		"PATH":                    path,
+		"PYTHONDONTWRITEBYTECODE": "1",
+		"PYTHONNOUSERSITE":        "1",
+		"NODE_PATH":               filepath.Join(profileDir, "node_modules"),
 	}
+}
+
+func processRuntimeProfileEnv(profileEnv map[string]string, workDir string) map[string]string {
+	if len(profileEnv) == 0 {
+		return nil
+	}
+	result := make(map[string]string, len(profileEnv)+3)
+	for key, value := range profileEnv {
+		result[key] = value
+	}
+	cacheRoot := filepath.Join(workDir, ".zgi-runtime-cache")
+	result["XDG_CACHE_HOME"] = cacheRoot
+	result["MPLCONFIGDIR"] = filepath.Join(cacheRoot, "matplotlib")
+	result["NUMBA_CACHE_DIR"] = filepath.Join(cacheRoot, "numba")
+	return result
 }
 
 func processProfileCommandPath(profileDir string, command string) string {
@@ -262,6 +269,13 @@ func setProcessEnv(env []string, key string, value string) []string {
 
 func runProcessGroup(ctx context.Context, cmd *exec.Cmd) error {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// CommandContext also watches cancellation. Its default Cancel kills only
+	// the direct process and can win the race with our context select, leaving
+	// children (including a secure-runtime supervisor) behind.
+	cmd.Cancel = func() error {
+		killProcessGroup(cmd)
+		return nil
+	}
 	if err := cmd.Start(); err != nil {
 		return err
 	}
@@ -273,6 +287,10 @@ func runProcessGroup(ctx context.Context, cmd *exec.Cmd) error {
 
 	select {
 	case err := <-done:
+		if ctx.Err() != nil {
+			killProcessGroup(cmd)
+			return ctx.Err()
+		}
 		return err
 	case <-ctx.Done():
 		killProcessGroup(cmd)

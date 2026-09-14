@@ -282,6 +282,20 @@ func NewService(cfg config.Config) *Service {
 				Description: "Reserved managed document automation profile that is not available until build artifacts are verified.",
 			},
 			{
+				Name:        "scientific-data",
+				Version:     "2026.09.04",
+				Status:      "disabled",
+				Enabled:     false,
+				OwnerScope:  "global",
+				Scope:       "global",
+				Languages:   []string{"python3"},
+				Packages:    []DependencyPackage{{Ecosystem: "python3", Name: "data-tools", Version: "managed"}},
+				BaseRuntime: "linux-secure",
+				Checksum:    "profile-source:scientific-data:2026.09.04",
+				SizeBytes:   512 * 1024 * 1024,
+				Description: "Reserved managed scientific-computing profile that becomes available only after its locked artifact passes verification.",
+			},
+			{
 				Name:        "python-data-preview",
 				Version:     "2026.05.01",
 				Status:      "disabled",
@@ -876,7 +890,7 @@ func (s *Service) NormalizeCreate(profile string, ttlSeconds int, networkEnabled
 	}
 
 	artifactChecksum := ""
-	if dependency.ArtifactChecksum != "" && dependency.ArtifactChecksum != dependency.Checksum {
+	if dependency.ArtifactChecksum != "" && (dependency.ArtifactChecksum != dependency.Checksum || strings.HasPrefix(dependency.ArtifactChecksum, "sha256:")) {
 		artifactChecksum = dependency.ArtifactChecksum
 	}
 

@@ -334,12 +334,27 @@ func TestPostgresV2ConcurrentSequenceAndResumeClaim(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	submissionEventIDs := map[string]string{}
+	for index, formID := range []string{"form-a", "form-b"} {
+		eventID := uuid.NewString()
+		submissionEventIDs[formID] = eventID
+		now := time.Now()
+		if err := db.Create(&RunEvent{
+			ID: eventID, TenantID: "00000000-0000-0000-0000-000000000201",
+			AppID: "00000000-0000-0000-0000-000000000301", WorkflowRunID: multiRunID,
+			Sequence: index + 1, EventType: EventApprovalResultFilled,
+			EventData: `{"form_id":"` + formID + `"}`, CreatedAt: now,
+			SchemaVersion: 2, Category: EventCategoryInteraction, OccurredAt: now,
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
 	completeResults := make(chan error, 2)
 	for _, formID := range []string{"form-a", "form-b"} {
 		go func(formID string) {
 			_, _, err := service.CompleteReasons(context.Background(), CompleteReasonsParams{
 				WorkflowRunID: multiRunID, PauseID: multiPauseID, ReasonType: ReasonTypeApprovalRequired,
-				FormID: formID, SubmissionEventID: uuid.NewString(), TriggerID: formID,
+				FormID: formID, SubmissionEventID: submissionEventIDs[formID], TriggerID: formID,
 			})
 			completeResults <- err
 		}(formID)
