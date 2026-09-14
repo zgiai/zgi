@@ -57,6 +57,9 @@ type skillLocation struct {
 }
 
 type ExecutionContext struct {
+	// ScriptModel is server-owned and never serialized into tool arguments.
+	ScriptModel       *ScriptModelChannel `json:"-"`
+	scriptModelPath   string
 	OrganizationID    string
 	UserID            string
 	ConversationID    string
@@ -64,6 +67,9 @@ type ExecutionContext struct {
 	MessageID         string
 	InvokeFrom        tools.ToolInvokeFrom
 	RuntimeParameters map[string]interface{}
+	// ExternalUserID is the server-derived external caller identity. It is
+	// distinct from UserID, which remains the internal account/API-key identity.
+	ExternalUserID string `json:"-"`
 }
 
 type ToolInvocationResult struct {

@@ -136,6 +136,13 @@ func (s *service) ListModels(ctx context.Context, scope Scope) ([]registry.Image
 			Model:             strings.TrimSpace(item.Name),
 			ModelLabel:        label,
 			GenerationProfile: s.registry.Resolve(item.Provider, item.Name, routes),
+			Currency:          strings.TrimSpace(item.Currency),
+			InputPrice:        item.InputPrice,
+			OutputPrice:       item.OutputPrice,
+			InputConfigured:   item.InputPriceConfigured,
+			OutputConfigured:  item.OutputPriceConfigured,
+			Pricing:           append([]byte(nil), item.Pricing...),
+			ImagePrices:       append([]byte(nil), item.ImagePrices...),
 		})
 	}
 	return result, nil

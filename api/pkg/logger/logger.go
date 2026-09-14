@@ -133,6 +133,19 @@ func Init() {
 	SetLogger(l)
 }
 
+// InitConsole initializes structured logging without requiring a writable
+// filesystem. CLI maintenance commands run in read-only release containers and
+// must still be able to report database errors instead of panicking while
+// attempting to create the default logs directory.
+func InitConsole() {
+	l, err := New(&appconfig.Config{Log: appconfig.LogConfig{Level: "debug"}})
+	if err != nil {
+		panic("failed to initialize console logger: " + err.Error())
+	}
+
+	SetLogger(l)
+}
+
 // L returns the package logger.
 func L() *zap.Logger {
 	if logInstance == nil {

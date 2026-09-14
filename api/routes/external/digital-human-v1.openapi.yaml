@@ -54,7 +54,6 @@ x-zgi-sse-event-data-schemas:
   runtime_input_follow_up_started: '#/components/schemas/RuntimeInputEvent'
   runtime_input_canceled: '#/components/schemas/RuntimeInputEvent'
   runtime_input_failed: '#/components/schemas/RuntimeInputEvent'
-  approval_result: '#/components/schemas/WorkflowEvent'
   workflow_started: '#/components/schemas/WorkflowEvent'
   node_started: '#/components/schemas/WorkflowEvent'
   node_finished: '#/components/schemas/WorkflowEvent'
@@ -489,6 +488,8 @@ paths:
     get:
       tags: [DigitalHuman tasks]
       summary: Get one task owned by the current API user
+      description: Returns one task only when it belongs to the supplied API user and the DigitalHuman bound to the API key.
+      operationId: getDigitalHumanTask
       parameters:
         - $ref: '#/components/parameters/UserQuery'
       responses:
@@ -501,6 +502,8 @@ paths:
     patch:
       tags: [DigitalHuman tasks]
       summary: Update a user-owned task
+      description: Replaces the supplied mutable task fields after validating the owning API user and current revision.
+      operationId: updateDigitalHumanTask
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -525,6 +528,8 @@ paths:
     post:
       tags: [DigitalHuman tasks]
       summary: Apply a lifecycle action to a user-owned task
+      description: Applies one supported lifecycle action after validating the owning API user and current revision.
+      operationId: actionDigitalHumanTask
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -548,6 +553,8 @@ paths:
     get:
       tags: [DigitalHuman tasks]
       summary: List task executions and safe result summaries
+      description: Lists bounded execution metadata and safe result summaries for one task owned by the supplied API user.
+      operationId: listDigitalHumanTaskRuns
       responses:
         '200':
           description: Task execution history.
@@ -564,6 +571,8 @@ paths:
     get:
       tags: [DigitalHuman tasks]
       summary: List task activity history
+      description: Lists the redacted activity history for one task owned by the supplied API user.
+      operationId: listDigitalHumanTaskActivities
       responses:
         '200':
           description: Task activity history.
@@ -738,48 +747,48 @@ components:
       additionalProperties: false
       required: [type]
       properties:
-        type: {type: string, enum: [manual, once, cron]}
-        run_at: {type: string, format: date-time}
-        cron: {type: string}
-        timezone: {type: string}
+        type: {type: string, enum: [manual, once, cron], description: Scheduling mode for the task.}
+        run_at: {type: string, format: date-time, description: One-time execution timestamp when type is once.}
+        cron: {type: string, description: Cron expression when type is cron.}
+        timezone: {type: string, description: IANA timezone used to interpret the schedule.}
     DigitalHumanTaskCreateRequest:
       type: object
       additionalProperties: false
       required: [user, name, goal, schedule]
       properties:
         user: {$ref: '#/components/schemas/User'}
-        name: {type: string, minLength: 1, maxLength: 200}
-        goal: {type: string, minLength: 1, maxLength: 4000}
-        success_criteria: {type: array, items: {type: string, maxLength: 500}}
-        priority: {type: string, enum: [low, normal, high, urgent], default: normal}
+        name: {type: string, minLength: 1, maxLength: 200, description: User-visible task name.}
+        goal: {type: string, minLength: 1, maxLength: 4000, description: Work the DigitalHuman should complete.}
+        success_criteria: {type: array, items: {type: string, maxLength: 500}, description: Optional verifiable completion criteria.}
+        priority: {type: string, enum: [low, normal, high, urgent], default: normal, description: Task priority.}
         schedule: {$ref: '#/components/schemas/DigitalHumanTaskSchedule'}
-        delivery_mode: {type: string, enum: [task_only], default: task_only}
-        execution_timeout_seconds: {type: integer, minimum: 30, maximum: 1800}
-        max_attempts: {type: integer, minimum: 1, maximum: 3}
+        delivery_mode: {type: string, enum: [task_only], default: task_only, description: Result storage mode for API-owned tasks.}
+        execution_timeout_seconds: {type: integer, minimum: 30, maximum: 1800, description: Maximum duration of each execution attempt.}
+        max_attempts: {type: integer, minimum: 1, maximum: 3, description: Maximum execution attempts.}
     DigitalHumanTaskUpdateRequest:
       type: object
       additionalProperties: false
       required: [user, expected_revision]
       properties:
         user: {$ref: '#/components/schemas/User'}
-        expected_revision: {type: integer, minimum: 1}
-        name: {type: string, minLength: 1, maxLength: 200}
-        goal: {type: string, minLength: 1, maxLength: 4000}
-        success_criteria: {type: array, items: {type: string, maxLength: 500}}
-        priority: {type: string, enum: [low, normal, high, urgent]}
+        expected_revision: {type: integer, minimum: 1, description: Current revision used for optimistic concurrency control.}
+        name: {type: string, minLength: 1, maxLength: 200, description: Replacement task name.}
+        goal: {type: string, minLength: 1, maxLength: 4000, description: Replacement task goal.}
+        success_criteria: {type: array, items: {type: string, maxLength: 500}, description: Replacement completion criteria.}
+        priority: {type: string, enum: [low, normal, high, urgent], description: Replacement task priority.}
         schedule: {$ref: '#/components/schemas/DigitalHumanTaskSchedule'}
-        delivery_mode: {type: string, enum: [task_only]}
+        delivery_mode: {type: string, enum: [task_only], description: Replacement result storage mode.}
         delivery_target: {type: string, enum: [task_center], description: Primary result destination for API-owned tasks.}
         delivery_fallback: {type: string, enum: [task_center], description: Result remains available in task details.}
-        execution_timeout_seconds: {type: integer, minimum: 30, maximum: 1800}
-        max_attempts: {type: integer, minimum: 1, maximum: 3}
+        execution_timeout_seconds: {type: integer, minimum: 30, maximum: 1800, description: Replacement execution timeout.}
+        max_attempts: {type: integer, minimum: 1, maximum: 3, description: Replacement maximum attempt count.}
     DigitalHumanTaskActionRequest:
       type: object
       additionalProperties: false
       required: [user, expected_revision]
       properties:
         user: {$ref: '#/components/schemas/User'}
-        expected_revision: {type: integer, minimum: 1}
+        expected_revision: {type: integer, minimum: 1, description: Current revision used for optimistic concurrency control.}
     DigitalHumanTaskApprovalRequest:
       type: object
       additionalProperties: false
@@ -788,10 +797,10 @@ components:
         Resumes a task approval created by a DigitalHuman conversation. The token
         is returned only in the approval event and expires with the pending run.
       properties:
-        type: {type: string, enum: [approval]}
+        type: {type: string, enum: [approval], description: Continuation payload discriminator.}
         user: {$ref: '#/components/schemas/User'}
-        approval_token: {type: string, minLength: 1}
-        action: {type: string, enum: [approve, decline]}
+        approval_token: {type: string, minLength: 1, description: Opaque token from the approval request event.}
+        action: {type: string, enum: [approve, decline], description: User decision for the pending task change.}
         inputs:
           type: object
           description: Optional edited task fields submitted with approval.
@@ -818,23 +827,23 @@ components:
       type: object
       required: [id, digital_human_id, owner_kind, name, goal, work_status, lifecycle_status, priority, schedule, revision]
       properties:
-        id: {type: string, format: uuid}
-        digital_human_id: {type: string, format: uuid}
-        owner_kind: {type: string, enum: [user_subject]}
-        name: {type: string}
-        goal: {type: string}
-        success_criteria: {type: array, items: {type: string}}
-        work_status: {type: string, enum: [proposed, pending, in_progress, waiting, blocked, completed, canceled]}
-        lifecycle_status: {type: string}
-        priority: {type: string}
+        id: {type: string, format: uuid, description: Task identifier.}
+        digital_human_id: {type: string, format: uuid, description: DigitalHuman that owns the task capability.}
+        owner_kind: {type: string, enum: [user_subject], description: Private task ownership model.}
+        name: {type: string, description: User-visible task name.}
+        goal: {type: string, description: Work assigned to the DigitalHuman.}
+        success_criteria: {type: array, items: {type: string}, description: Verifiable completion criteria.}
+        work_status: {type: string, enum: [proposed, pending, in_progress, waiting, blocked, completed, canceled], description: Current work state.}
+        lifecycle_status: {type: string, description: Current scheduling lifecycle state.}
+        priority: {type: string, description: Task priority.}
         schedule: {$ref: '#/components/schemas/DigitalHumanTaskSchedule'}
-        delivery_mode: {type: string, enum: [task_only]}
-        next_run_at: {type: string, format: date-time}
-        last_run_at: {type: string, format: date-time}
-        last_run_status: {type: string}
-        revision: {type: integer}
-        created_at: {type: string, format: date-time}
-        updated_at: {type: string, format: date-time}
+        delivery_mode: {type: string, enum: [task_only], description: Result storage mode.}
+        next_run_at: {type: string, format: date-time, description: Next scheduled execution timestamp.}
+        last_run_at: {type: string, format: date-time, description: Most recent execution timestamp.}
+        last_run_status: {type: string, description: Most recent execution state.}
+        revision: {type: integer, description: Monotonic task revision.}
+        created_at: {type: string, format: date-time, description: Task creation timestamp.}
+        updated_at: {type: string, format: date-time, description: Most recent task update timestamp.}
     DigitalHumanTaskListEnvelope:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -842,13 +851,14 @@ components:
           properties:
             data:
               type: object
+              description: Paginated private task collection.
               properties:
-                items: {type: array, items: {$ref: '#/components/schemas/DigitalHumanTask'}}
-                total: {type: integer}
-                page: {type: integer}
-                page_size: {type: integer}
-                has_more: {type: boolean}
-                counts: {type: object, additionalProperties: {type: integer}}
+                items: {type: array, items: {$ref: '#/components/schemas/DigitalHumanTask'}, description: Tasks in the current page.}
+                total: {type: integer, description: Total matching task count.}
+                page: {type: integer, description: One-based page number.}
+                page_size: {type: integer, description: Requested page size.}
+                has_more: {type: boolean, description: Whether another page is available.}
+                counts: {type: object, additionalProperties: {type: integer}, description: Status counters for the current filter scope.}
     DigitalHumanTaskEnvelope:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -859,20 +869,20 @@ components:
       type: object
       required: [id, task_id, status, scheduled_for, created_at]
       properties:
-        id: {type: string, format: uuid}
-        task_id: {type: string, format: uuid}
-        digital_human_run_id: {type: string, format: uuid}
-        trigger_source: {type: string}
-        attempt: {type: integer}
-        status: {type: string}
-        error_summary: {type: string}
+        id: {type: string, format: uuid, description: Task execution identifier.}
+        task_id: {type: string, format: uuid, description: Owning task identifier.}
+        digital_human_run_id: {type: string, format: uuid, description: Linked DigitalHuman durable run when present.}
+        trigger_source: {type: string, description: Source that started this execution.}
+        attempt: {type: integer, description: One-based execution attempt number.}
+        status: {type: string, description: Execution state.}
+        error_summary: {type: string, description: Safe bounded failure summary.}
         result_summary: {type: string, description: Safe bounded result summary; execution trace is never exposed.}
         result_delivery_status: {type: string, enum: [pending, processing, succeeded, failed, unknown, dismissed], description: Channel result delivery status when the task targets its source conversation.}
         result_delivery_error: {type: string, description: Safe bounded delivery error; the task result remains available in the task center.}
-        scheduled_for: {type: string, format: date-time}
-        started_at: {type: string, format: date-time}
-        finished_at: {type: string, format: date-time}
-        created_at: {type: string, format: date-time}
+        scheduled_for: {type: string, format: date-time, description: Intended execution timestamp.}
+        started_at: {type: string, format: date-time, description: Actual execution start timestamp.}
+        finished_at: {type: string, format: date-time, description: Execution completion timestamp.}
+        created_at: {type: string, format: date-time, description: Run record creation timestamp.}
     DigitalHumanTaskRunListEnvelope:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -880,12 +890,13 @@ components:
           properties:
             data:
               type: object
+              description: Paginated task execution collection.
               properties:
-                items: {type: array, items: {$ref: '#/components/schemas/DigitalHumanTaskRun'}}
-                total: {type: integer}
-                page: {type: integer}
-                page_size: {type: integer}
-                has_more: {type: boolean}
+                items: {type: array, items: {$ref: '#/components/schemas/DigitalHumanTaskRun'}, description: Runs in the current page.}
+                total: {type: integer, description: Total matching run count.}
+                page: {type: integer, description: One-based page number.}
+                page_size: {type: integer, description: Requested page size.}
+                has_more: {type: boolean, description: Whether another page is available.}
     DigitalHumanTaskActivityListEnvelope:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -893,12 +904,13 @@ components:
           properties:
             data:
               type: object
+              description: Paginated task activity collection.
               properties:
-                items: {type: array, items: {type: object}}
-                total: {type: integer}
-                page: {type: integer}
-                page_size: {type: integer}
-                has_more: {type: boolean}
+                items: {type: array, items: {type: object}, description: Activity records in the current page.}
+                total: {type: integer, description: Total matching activity count.}
+                page: {type: integer, description: One-based page number.}
+                page_size: {type: integer, description: Requested page size.}
+                has_more: {type: boolean, description: Whether another page is available.}
     SuccessEnvelope:
       type: object
       required: [code, message, data]

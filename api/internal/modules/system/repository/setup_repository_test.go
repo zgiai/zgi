@@ -4,6 +4,7 @@ import (
 	"errors"
 	"regexp"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"gorm.io/driver/postgres"
@@ -80,6 +81,57 @@ func TestGetSetupStatus_PropagatesUnexpectedErrors(t *testing.T) {
 	}
 }
 
+func TestGetSetupStatus_ReturnsPersistedDefaultScope(t *testing.T) {
+	db, mock, cleanup := newSetupRepositoryTestDB(t)
+	defer cleanup()
+
+	repo := NewSetupRepository(db)
+	setupAt := time.Now().UTC()
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "zgi_setups" ORDER BY "zgi_setups"."version" LIMIT $1`)).
+		WithArgs(1).
+		WillReturnRows(sqlmock.NewRows([]string{"version", "setup_at", "organization_id", "workspace_id"}).
+			AddRow("1.0", setupAt, "org-1", "workspace-1"))
+
+	setup, err := repo.GetSetupStatus()
+	if err != nil {
+		t.Fatalf("GetSetupStatus() error = %v, want nil", err)
+	}
+	if setup == nil || setup.OrganizationID == nil || *setup.OrganizationID != "org-1" ||
+		setup.WorkspaceID == nil || *setup.WorkspaceID != "workspace-1" {
+		t.Fatalf("GetSetupStatus() setup = %+v, want persisted default scope", setup)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet sql expectations: %v", err)
+	}
+}
+
+func TestGetSetupStatusForUpdate_LocksSetupMarker(t *testing.T) {
+	db, mock, cleanup := newSetupRepositoryTestDB(t)
+	defer cleanup()
+
+	repo := NewSetupRepository(db)
+	setupAt := time.Now().UTC()
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "zgi_setups" ORDER BY "zgi_setups"."version" LIMIT $1 FOR UPDATE`)).
+		WithArgs(1).
+		WillReturnRows(sqlmock.NewRows([]string{"version", "setup_at", "organization_id", "workspace_id"}).
+			AddRow("1.0", setupAt, nil, nil))
+
+	setup, err := repo.GetSetupStatusForUpdate()
+	if err != nil {
+		t.Fatalf("GetSetupStatusForUpdate() error = %v, want nil", err)
+	}
+	if setup == nil || setup.Version != "1.0" {
+		t.Fatalf("GetSetupStatusForUpdate() setup = %+v, want setup marker", setup)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet sql expectations: %v", err)
+	}
+}
+
 func TestCreateSetup_PersistsSetupMarker(t *testing.T) {
 	db, mock, cleanup := newSetupRepositoryTestDB(t)
 	defer cleanup()
@@ -87,15 +139,47 @@ func TestCreateSetup_PersistsSetupMarker(t *testing.T) {
 	repo := NewSetupRepository(db)
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO "zgi_setups" ("version","setup_at") VALUES ($1,$2)`)).
-		WithArgs("1.0", sqlmock.AnyArg()).
+	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO "zgi_setups" ("version","setup_at","organization_id","workspace_id") VALUES ($1,$2,$3,$4)`)).
+		WithArgs("1.0", sqlmock.AnyArg(), "org-1", "workspace-1").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
-	if err := repo.CreateSetup(); err != nil {
+	if err := repo.CreateSetup("org-1", "workspace-1"); err != nil {
 		t.Fatalf("CreateSetup() error = %v, want nil", err)
 	}
 
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet sql expectations: %v", err)
+	}
+}
+
+func TestCreateSetup_RejectsMissingDefaultScope(t *testing.T) {
+	db, mock, cleanup := newSetupRepositoryTestDB(t)
+	defer cleanup()
+
+	repo := NewSetupRepository(db)
+	if err := repo.CreateSetup(" ", "workspace-1"); err == nil {
+		t.Fatal("CreateSetup() error = nil, want missing organization error")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet sql expectations: %v", err)
+	}
+}
+
+func TestUpdateSetupScope_PersistsResolvedScope(t *testing.T) {
+	db, mock, cleanup := newSetupRepositoryTestDB(t)
+	defer cleanup()
+
+	repo := NewSetupRepository(db)
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta(`UPDATE "zgi_setups" SET "organization_id"=$1,"workspace_id"=$2 WHERE version = $3`)).
+		WithArgs("org-1", "workspace-1", "1.0").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	if err := repo.UpdateSetupScope("1.0", "org-1", "workspace-1"); err != nil {
+		t.Fatalf("UpdateSetupScope() error = %v, want nil", err)
+	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet sql expectations: %v", err)
 	}

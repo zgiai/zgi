@@ -6,6 +6,7 @@ import (
 	digitalhuman "github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	musicmodule "github.com/zgiai/zgi/api/internal/modules/music"
+	authservice "github.com/zgiai/zgi/api/internal/modules/user/auth/service"
 	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
 )
 
@@ -48,6 +49,18 @@ func TestProvideApplicationErrorCatalogComposesDomainDefinitions(t *testing.T) {
 	}
 	if digitalHumanPresentation.HTTPStatus != 409 || digitalHumanPresentation.Message != "数字人配置已发生变化，请刷新后重试。" {
 		t.Fatalf("DigitalHuman presentation = %#v", digitalHumanPresentation)
+	}
+
+	registrationPresentation, err := productCatalog.Present(
+		authservice.AppCodeRegistrationInvitationUnavailable,
+		appcatalog.LocaleChineseSimplified,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Present(registration code) error = %v", err)
+	}
+	if registrationPresentation.HTTPStatus != 401 || registrationPresentation.Message != "该邀请已失效或无法使用，请联系管理员获取新的邀请链接。" {
+		t.Fatalf("registration presentation = %#v", registrationPresentation)
 	}
 
 	sharedCatalog, err := appcatalog.NewDefault()

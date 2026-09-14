@@ -186,6 +186,11 @@ const messages: ChannelsMessages = {
           description: '接入 DashScope 原生能力，适合通义文本、视觉、图片、重排和多模态模型。',
           capabilities: '文本、视觉、图片、重排',
         },
+        minimax: {
+          label: 'MiniMax',
+          description: '接入 MiniMax 官方模型服务，支持文本、视觉、图片和音乐生成。',
+          capabilities: '文本、视觉、图片、音乐',
+        },
         doubao: {
           label: '火山引擎豆包',
           description: '接入火山方舟原生能力，支持豆包文本、向量、图片和视频模型。',
@@ -350,6 +355,7 @@ const messages: ChannelsMessages = {
       mistral: 'Mistral AI',
       cohere: 'Cohere',
       openrouter: 'OpenRouter',
+      siliconflow: '硅基流动',
       anthropic: 'Anthropic',
       qwen: '阿里云（通义千问）',
       moonshotaiCn: '月之暗面（Kimi）',

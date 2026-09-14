@@ -9,9 +9,14 @@ import (
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/bootstrap/fxapp"
 	"github.com/zgiai/zgi/api/internal/migrations"
+	workflowtoolfile "github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
+	musicmodule "github.com/zgiai/zgi/api/internal/modules/music"
 	_ "github.com/zgiai/zgi/api/internal/modules/payment"
+	videoservice "github.com/zgiai/zgi/api/internal/modules/video/service"
 	"github.com/zgiai/zgi/api/internal/seeders"
 	"github.com/zgiai/zgi/api/pkg/database"
+	applogger "github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/storage"
 )
 
 // @title ZGI-GinKit API
@@ -28,6 +33,8 @@ func main() {
 	seedOpts := seeders.SeedOptions{}
 	migrateOpts := migrations.RunOptions{}
 	rollbackOpts := migrations.RollbackOptions{}
+	videoPosterBackfillOpts := videoservice.VideoPosterBackfillOptions{}
+	musicWaveformBackfillOpts := musicmodule.WaveformBackfillOptions{}
 
 	// Add start command (contains original functionality)
 	rootCmd.AddCommand(&cobra.Command{
@@ -43,6 +50,7 @@ func main() {
 		Use:   "migrate",
 		Short: "Run database migrations",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			applogger.InitConsole()
 			if migrateOpts.DryRun {
 				return migrations.PrintStatus()
 			}
@@ -68,6 +76,7 @@ func main() {
 		Use:   "migrate:status",
 		Short: "Show database migration status",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			applogger.InitConsole()
 			return migrations.PrintStatus()
 		},
 	})
@@ -76,6 +85,7 @@ func main() {
 		Use:   "migrate:rollback",
 		Short: "Rollback the last database migration",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			applogger.InitConsole()
 			cfg, err := config.Load()
 			if err != nil {
 				return err
@@ -130,6 +140,34 @@ func main() {
 	seedCmd.Flags().StringVar(&seedOpts.DatabaseURL, "db", "", "Database connection string")
 	rootCmd.AddCommand(seedCmd)
 
+	videoPosterBackfillCmd := &cobra.Command{
+		Use:   "video:poster-backfill",
+		Short: "Backfill poster_url for completed video runtime tasks",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runVideoPosterBackfill(cmd.Context(), videoPosterBackfillOpts)
+		},
+	}
+	videoPosterBackfillCmd.Flags().BoolVar(&videoPosterBackfillOpts.Apply, "apply", false, "Write poster_url updates; without this flag the command only previews matched tasks")
+	videoPosterBackfillCmd.Flags().IntVar(&videoPosterBackfillOpts.Limit, "limit", 50, "Maximum number of tasks to inspect")
+	videoPosterBackfillCmd.Flags().StringSliceVar(&videoPosterBackfillOpts.TaskIDs, "task-id", nil, "Only backfill the given task_id; can be repeated or comma-separated")
+	videoPosterBackfillCmd.Flags().StringVar(&videoPosterBackfillOpts.OrganizationID, "organization-id", "", "Only backfill tasks for the given organization UUID")
+	videoPosterBackfillCmd.Flags().StringVar(&videoPosterBackfillOpts.AccountID, "account-id", "", "Only backfill tasks for the given account UUID")
+	rootCmd.AddCommand(videoPosterBackfillCmd)
+
+	musicWaveformBackfillCmd := &cobra.Command{
+		Use:   "music:waveform-backfill",
+		Short: "Backfill duration_ms and waveform_peaks for completed music tasks",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runMusicWaveformBackfill(cmd.Context(), musicWaveformBackfillOpts)
+		},
+	}
+	musicWaveformBackfillCmd.Flags().BoolVar(&musicWaveformBackfillOpts.Apply, "apply", false, "Write duration_ms and waveform_peaks updates; without this flag the command only previews matched tasks")
+	musicWaveformBackfillCmd.Flags().IntVar(&musicWaveformBackfillOpts.Limit, "limit", 50, "Maximum number of tasks to inspect")
+	musicWaveformBackfillCmd.Flags().StringSliceVar(&musicWaveformBackfillOpts.TaskIDs, "task-id", nil, "Only backfill the given task ID; can be repeated or comma-separated")
+	musicWaveformBackfillCmd.Flags().StringVar(&musicWaveformBackfillOpts.OrganizationID, "organization-id", "", "Only backfill tasks for the given organization UUID")
+	musicWaveformBackfillCmd.Flags().StringVar(&musicWaveformBackfillOpts.AccountID, "account-id", "", "Only backfill tasks for the given account UUID")
+	rootCmd.AddCommand(musicWaveformBackfillCmd)
+
 	// Add db:check-connection command
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "db:check-connection",
@@ -155,6 +193,106 @@ func startServer() error {
 	}
 
 	app.Run()
+	return nil
+}
+
+func runVideoPosterBackfill(ctx context.Context, opts videoservice.VideoPosterBackfillOptions) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	db, err := database.InitDB(cfg.Database)
+	if err != nil {
+		return fmt.Errorf("init db: %w", err)
+	}
+	sqlDB, err := db.DB()
+	if err == nil {
+		defer sqlDB.Close()
+	}
+
+	if opts.Apply {
+		workflowtoolfile.InitToolFileManager(db, storage.GetStorage())
+		workflowtoolfile.InitFileSignature(cfg)
+	}
+
+	result, err := videoservice.BackfillVideoTaskPosters(ctx, db, opts)
+	if err != nil {
+		return err
+	}
+
+	mode := "dry-run"
+	if opts.Apply {
+		mode = "apply"
+	}
+	fmt.Printf("Video poster backfill %s: scanned=%d updated=%d failed=%d skipped=%d\n", mode, result.Scanned, result.Updated, result.Failed, result.Skipped)
+	for index, item := range result.Items {
+		if index >= 20 {
+			fmt.Printf("... %d more task(s) omitted\n", len(result.Items)-index)
+			break
+		}
+		line := fmt.Sprintf("  %s status=%s", item.TaskID, item.Status)
+		if item.PosterURL != "" {
+			line += fmt.Sprintf(" poster_url=%s", item.PosterURL)
+		}
+		if item.Error != "" {
+			line += fmt.Sprintf(" error=%s", item.Error)
+		}
+		fmt.Println(line)
+	}
+	if result.DryRun {
+		fmt.Println("Dry-run only. Re-run with --apply to write poster_url.")
+	}
+	return nil
+}
+
+func runMusicWaveformBackfill(ctx context.Context, opts musicmodule.WaveformBackfillOptions) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	db, err := database.InitDB(cfg.Database)
+	if err != nil {
+		return fmt.Errorf("init db: %w", err)
+	}
+	sqlDB, err := db.DB()
+	if err == nil {
+		defer sqlDB.Close()
+	}
+
+	if opts.Apply {
+		workflowtoolfile.InitToolFileManager(db, storage.GetStorage())
+	}
+
+	result, err := musicmodule.BackfillMusicTaskWaveforms(ctx, db, opts)
+	if err != nil {
+		return err
+	}
+
+	mode := "dry-run"
+	if opts.Apply {
+		mode = "apply"
+	}
+	fmt.Printf("Music waveform backfill %s: scanned=%d updated=%d failed=%d skipped=%d\n", mode, result.Scanned, result.Updated, result.Failed, result.Skipped)
+	for index, item := range result.Items {
+		if index >= 20 {
+			fmt.Printf("... %d more task(s) omitted\n", len(result.Items)-index)
+			break
+		}
+		line := fmt.Sprintf("  %s status=%s", item.TaskID, item.Status)
+		if item.DurationMS > 0 {
+			line += fmt.Sprintf(" duration_ms=%d", item.DurationMS)
+		}
+		if item.PeakCount > 0 {
+			line += fmt.Sprintf(" peaks=%d", item.PeakCount)
+		}
+		if item.Error != "" {
+			line += fmt.Sprintf(" error=%s", item.Error)
+		}
+		fmt.Println(line)
+	}
+	if result.DryRun {
+		fmt.Println("Dry-run only. Re-run with --apply to write duration_ms and waveform_peaks.")
+	}
 	return nil
 }
 

@@ -227,11 +227,15 @@ export function formatRecordedCurrencyAmount(
   }
 }
 
-export function formatCatalogCurrencyAmount(
+/**
+ * Formats a monetary amount in the organization's selected display currency.
+ * The source amount remains unchanged; conversion is presentation-only.
+ */
+export function formatCurrencyAmountForBillingDisplay(
   amount: number | string | null | undefined,
   sourceCurrency: string | null | undefined,
   settings: BillingDisplaySettings,
-  options: UsageAmountFormatOptions = {}
+  options: RecordedCurrencyFormatOptions = {}
 ): string {
   if (amount === undefined || amount === null) return '-';
   const source = sourceCurrency?.trim().toUpperCase();
@@ -253,6 +257,15 @@ export function formatCatalogCurrencyAmount(
   } catch {
     return formatRecordedCurrencyAmount(amount, source, options);
   }
+}
+
+export function formatCatalogCurrencyAmount(
+  amount: number | string | null | undefined,
+  sourceCurrency: string | null | undefined,
+  settings: BillingDisplaySettings,
+  options: UsageAmountFormatOptions = {}
+): string {
+  return formatCurrencyAmountForBillingDisplay(amount, sourceCurrency, settings, options);
 }
 
 export function billingDisplayInputValueFromUSD(

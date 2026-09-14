@@ -39,19 +39,20 @@ func TestCatalogLegacyNamespacesPreserveConflictingMeanings(t *testing.T) {
 		wantCode   string
 		wantStatus int
 	}{
-		"llm.gateway:40001": {wantCode: AppCodeRequestInvalid.String(), wantStatus: 400},
-		"llm.gateway:40101": {wantCode: AppCodeAPIKeyInvalid.String(), wantStatus: 401},
-		"llm.gateway:40102": {wantCode: AppCodeAPIKeyExpired.String(), wantStatus: 401},
-		"llm.gateway:40103": {wantCode: AppCodeAPIKeyInactive.String(), wantStatus: 401},
-		"llm.domain:40102":  {wantCode: AppCodeAPIKeyInactive.String(), wantStatus: 401},
-		"llm.domain:40103":  {wantCode: AppCodeAPIKeyExpired.String(), wantStatus: 401},
-		"llm.domain:40301":  {wantCode: AppCodeBalanceInsufficient.String(), wantStatus: 403},
-		"llm.gateway:40303": {wantCode: AppCodeModelForbidden.String(), wantStatus: 403},
-		"llm.gateway:40401": {wantCode: AppCodeModelNotFound.String(), wantStatus: 404},
-		"llm.gateway:50301": {wantCode: AppCodeProviderUnavailable.String(), wantStatus: 503},
-		"llm.domain:40502":  {wantCode: AppCodeProviderRateLimited.String(), wantStatus: 429},
-		"llm.domain:40507":  {wantCode: AppCodePrivateChannelUnavailable.String(), wantStatus: 502},
-		"llm.domain:40901":  {wantCode: AppCodeRateLimitExceeded.String(), wantStatus: 429},
+		"llm.gateway:40001":                           {wantCode: AppCodeRequestInvalid.String(), wantStatus: 400},
+		"llm.gateway:40101":                           {wantCode: AppCodeAPIKeyInvalid.String(), wantStatus: 401},
+		"llm.gateway:40102":                           {wantCode: AppCodeAPIKeyExpired.String(), wantStatus: 401},
+		"llm.gateway:40103":                           {wantCode: AppCodeAPIKeyInactive.String(), wantStatus: 401},
+		"llm.domain:40102":                            {wantCode: AppCodeAPIKeyInactive.String(), wantStatus: 401},
+		"llm.domain:40103":                            {wantCode: AppCodeAPIKeyExpired.String(), wantStatus: 401},
+		"llm.domain:40301":                            {wantCode: AppCodeBalanceInsufficient.String(), wantStatus: 403},
+		"llm.gateway:40303":                           {wantCode: AppCodeModelForbidden.String(), wantStatus: 403},
+		"llm.gateway:40401":                           {wantCode: AppCodeModelNotFound.String(), wantStatus: 404},
+		"llm.gateway:50301":                           {wantCode: AppCodeProviderUnavailable.String(), wantStatus: 503},
+		"llm.domain:40502":                            {wantCode: AppCodeProviderRateLimited.String(), wantStatus: 429},
+		"llm.domain:40507":                            {wantCode: AppCodePrivateChannelUnavailable.String(), wantStatus: 502},
+		"llm.domain:40901":                            {wantCode: AppCodeRateLimitExceeded.String(), wantStatus: 429},
+		"llm.developer_access.quota_exhausted:501002": {wantCode: AppCodeDeveloperQuotaExhausted.String(), wantStatus: 429},
 	}
 	for legacy, test := range tests {
 		got, ok := productCatalog.CodeFromLegacy(appcatalog.MustLegacyKey(legacy))

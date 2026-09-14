@@ -62,6 +62,7 @@ const defaultState = {
 };
 
 const authService = new AuthenticationService();
+let initializationVersion = 0;
 
 function isSuperAdminUser(user: User | null | undefined): boolean {
   if (IS_CLOUD) {
@@ -102,6 +103,7 @@ const useAuthStoreBase = create<AuthState>()((set, get) => ({
   ...defaultState,
 
   setUser: user => {
+    initializationVersion++;
     syncAccountContextStores(user);
     set({
       user,
@@ -132,7 +134,9 @@ const useAuthStoreBase = create<AuthState>()((set, get) => ({
   setLoggingOut: isLoggingOut => set({ isLoggingOut }),
 
   refreshProfile: async (options?: { refresh?: boolean }) => {
+    if (get().isLoggingOut) return null;
     const token = authService.getToken();
+    const version = initializationVersion;
     if (!token) {
       set({
         user: null,
@@ -160,6 +164,7 @@ const useAuthStoreBase = create<AuthState>()((set, get) => ({
       // this request became stale. Keep the stale-request guard for cached
       // profile refreshes, where a token change still indicates a race.
       if (
+        version !== initializationVersion ||
         get().isLoggingOut ||
         !currentToken ||
         (!forceRefresh && currentToken !== token)
@@ -178,6 +183,15 @@ const useAuthStoreBase = create<AuthState>()((set, get) => ({
       });
       return user;
     } catch (error) {
+      // A failed request belongs to the session that started it, just like a
+      // successful response. An old 401 must never reset a newer login.
+      if (
+        version !== initializationVersion ||
+        get().isLoggingOut ||
+        authService.getToken() !== token
+      ) {
+        return null;
+      }
       console.error('Profile refresh failed:', error);
 
       if (isNetworkError(error)) {
@@ -203,6 +217,7 @@ const useAuthStoreBase = create<AuthState>()((set, get) => ({
   },
 
   initializeAuth: async (options?: { force?: boolean }) => {
+    if (get().isLoggingOut) return;
     if (get().isLoading && !options?.force) {
       return;
     }
@@ -210,6 +225,11 @@ const useAuthStoreBase = create<AuthState>()((set, get) => ({
     if (get().isInitialized && !options?.force) {
       return;
     }
+
+    const token = authService.getToken();
+    const version = ++initializationVersion;
+    const ownsSession = () =>
+      version === initializationVersion && !get().isLoggingOut && authService.getToken() === token;
 
     set({
       isLoading: true,
@@ -219,8 +239,6 @@ const useAuthStoreBase = create<AuthState>()((set, get) => ({
     });
 
     try {
-      const token = authService.getToken();
-
       if (!token) {
         set({
           user: null,
@@ -240,8 +258,10 @@ const useAuthStoreBase = create<AuthState>()((set, get) => ({
       });
 
       await get().refreshProfile({ refresh: true });
+      if (version !== initializationVersion || get().isLoggingOut) return;
       await get().refreshSystemFeatures(false);
     } catch (error) {
+      if (!ownsSession()) return;
       console.error('Auth initialization failed:', error);
 
       const networkError = isNetworkError(error);
@@ -261,11 +281,15 @@ const useAuthStoreBase = create<AuthState>()((set, get) => ({
         networkError,
       }));
     } finally {
-      set({ isLoading: false });
+      // A newer login/initialization owns its own loading state.
+      // Token refresh may rotate the token within this same initialization.
+      // Use operation ownership, not token equality, to finish loading.
+      if (version === initializationVersion && !get().isLoggingOut) set({ isLoading: false });
     }
   },
 
   reset: (options?: { clearSession?: boolean }) => {
+    initializationVersion++;
     if (options?.clearSession !== false) {
       sessionManager.clearSession({ type: 'SIGNED_OUT' });
     }
@@ -280,6 +304,9 @@ const useAuthStoreBase = create<AuthState>()((set, get) => ({
 
     set({
       ...defaultState,
+      // Public login capabilities are not account data. Keep the last known
+      // snapshot while the login page revalidates it through useSystemFeatures.
+      systemFeatures: get().systemFeatures,
       isInitialized: true,
       isSystemReady: true,
       sessionStatus: 'guest',

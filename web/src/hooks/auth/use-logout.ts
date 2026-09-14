@@ -13,6 +13,7 @@ import {
   getAuthBusinessErrorMessage,
 } from '@/utils/auth-errors';
 import { normalizeToastDescription } from '@/utils/error-notifications';
+import { reportLogoutPhase } from '@/lib/auth/logout-diagnostics';
 
 export function useLogout() {
   const t = useT('auth');
@@ -23,6 +24,7 @@ export function useLogout() {
     onMutate: async () => {
       setLogoutInProgress(true);
       useAuthStore.getState().setLoggingOut(true);
+      reportLogoutPhase('started');
       setQueryClientQueriesEnabled(false);
       await queryClient.cancelQueries({ type: 'active' });
     },
@@ -33,6 +35,7 @@ export function useLogout() {
       try {
         await clearSessionBoundClientState();
         useAuthStore.getState().reset({ clearSession: false });
+        reportLogoutPhase('client_state_cleared');
         if (!error) {
           toast.success(t('logoutSuccess'));
         }
@@ -43,6 +46,7 @@ export function useLogout() {
       }
     },
     onError: error => {
+      reportLogoutPhase('cleanup_failed', error);
       const title = t('logoutFailed');
       const descriptionKey = getAuthBusinessErrorDescriptionKey(error);
       const description = descriptionKey ? t(descriptionKey) : getAuthBusinessErrorMessage(error);

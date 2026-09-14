@@ -5,11 +5,11 @@ import (
 	"fmt"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/zgiai/zgi/api/internal/infra/platform/console"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
-	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 // OrganizationServiceImpl implements interfaces.OrganizationService
@@ -35,17 +35,6 @@ func (s *OrganizationServiceImpl) CreateOrganization(ctx context.Context, name s
 
 	if err := s.db.WithContext(ctx).Create(organization).Error; err != nil {
 		return nil, fmt.Errorf("failed to create organization: %w", err)
-	}
-
-	// Async sync to Console-API (non-blocking, best-effort)
-	if s.consoleProvider != nil && s.consoleProvider.IsAvailable() {
-		if err := s.consoleProvider.RegisterOrganization(ctx, &console.RegisterOrganizationRequest{
-			OrganizationID: organization.ID,
-			Name:           organization.Name,
-			CreatedAt:      organization.CreatedAt,
-		}); err != nil {
-			logger.Warn("Failed to sync organization to console: %v", err)
-		}
 	}
 
 	return organization, nil
@@ -99,7 +88,23 @@ func (s *OrganizationServiceImpl) UpsertOrganizationRole(ctx context.Context, or
 
 // AddWorkspace adds a tenant to a organization
 func (s *OrganizationServiceImpl) AddWorkspace(ctx context.Context, organizationID string, workspaceID string) error {
-	if err := s.db.WithContext(ctx).Table("workspaces").Where("id = ?", workspaceID).Update("organization_id", organizationID).Error; err != nil {
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var workspace model.Workspace
+		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", workspaceID).First(&workspace).Error; err != nil {
+			return err
+		}
+		if workspace.OrganizationID != nil && *workspace.OrganizationID == organizationID {
+			return nil
+		}
+		if err := retireWorkspaceDeveloperAccessForOrganizationChange(ctx, tx, workspaceID); err != nil {
+			return err
+		}
+		return tx.WithContext(ctx).Model(&model.Workspace{}).Where("id = ?", workspaceID).Updates(map[string]any{
+			"organization_id": organizationID,
+			"department_id":   nil,
+			"api_key_id":      nil,
+		}).Error
+	}); err != nil {
 		return fmt.Errorf("failed to add tenant to organization: %w", err)
 	}
 

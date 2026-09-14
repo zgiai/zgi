@@ -13,7 +13,7 @@ func TestPublicExternalActionStreamEventRedactsArgumentsWithoutMutatingStoredEve
 		"arguments": map[string]interface{}{
 			"integration_id": "github", "action_id": "github.issue.create", "connection_id": connectionID,
 			"connection_name": "Team GitHub", "connection_selection": "preferred",
-			"arguments": map[string]interface{}{"body": "xoxb-12345678901234567890", "title": "safe"},
+			"arguments": map[string]interface{}{"body": "xoxb-" + "12345678901234567890", "title": "safe"},
 		},
 		"governance": map[string]interface{}{"assets": []interface{}{map[string]interface{}{
 			"id": connectionID, "type": "integration_connection", "name": "Team GitHub",

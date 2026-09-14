@@ -10,6 +10,7 @@ import (
 	shared_dto "github.com/zgiai/zgi/api/internal/dto"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	workspace_repo "github.com/zgiai/zgi/api/internal/modules/workspace/repository"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -144,6 +145,7 @@ func TestDirectAddOrganizationMemberRollsBackWhenWorkspaceAddFails(t *testing.T)
 	require.NoError(t, db.AutoMigrate(
 		&auth_model.Account{},
 		&auth_model.AccountContext{},
+		&model.Organization{},
 		&model.OrganizationMember{},
 		&model.Workspace{},
 		&model.WorkspaceMember{},
@@ -155,6 +157,7 @@ func TestDirectAddOrganizationMemberRollsBackWhenWorkspaceAddFails(t *testing.T)
 	ownerID := uuid.New().String()
 	workspaceID := uuid.New().String()
 	departmentID := uuid.New().String()
+	require.NoError(t, db.Create(&model.Organization{ID: organizationID, Name: "Organization", Status: model.OrganizationStatusActive}).Error)
 
 	require.NoError(t, db.Create(&auth_model.Account{
 		ID:            ownerID,
@@ -213,6 +216,7 @@ func TestDirectAddOrganizationMemberAllowsMissingWorkspace(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(
 		&auth_model.Account{},
 		&auth_model.AccountContext{},
+		&model.Organization{},
 		&model.OrganizationMember{},
 		&model.Workspace{},
 		&model.WorkspaceMember{},
@@ -223,6 +227,7 @@ func TestDirectAddOrganizationMemberAllowsMissingWorkspace(t *testing.T) {
 	organizationID := uuid.New().String()
 	ownerID := uuid.New().String()
 	departmentID := uuid.New().String()
+	require.NoError(t, db.Create(&model.Organization{ID: organizationID, Name: "Organization", Status: model.OrganizationStatusActive}).Error)
 
 	require.NoError(t, db.Create(&auth_model.Account{
 		ID:            ownerID,
@@ -280,6 +285,7 @@ func TestInviteCurrentOrganizationMemberAllowsMissingWorkspace(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(
 		&auth_model.Account{},
 		&auth_model.AccountContext{},
+		&model.Organization{},
 		&model.OrganizationMember{},
 		&model.Workspace{},
 		&model.WorkspaceMember{},
@@ -289,6 +295,7 @@ func TestInviteCurrentOrganizationMemberAllowsMissingWorkspace(t *testing.T) {
 	now := time.Now()
 	organizationID := uuid.New().String()
 	ownerID := uuid.New().String()
+	require.NoError(t, db.Create(&model.Organization{ID: organizationID, Name: "Organization", Status: model.OrganizationStatusActive}).Error)
 
 	require.NoError(t, db.Create(&auth_model.Account{
 		ID:            ownerID,
@@ -328,6 +335,87 @@ func TestInviteCurrentOrganizationMemberAllowsMissingWorkspace(t *testing.T) {
 	require.NotNil(t, accountContext.CurrentOrganizationID)
 	require.Equal(t, organizationID, *accountContext.CurrentOrganizationID)
 	require.Nil(t, accountContext.CurrentWorkspaceID)
+}
+
+func TestUpdateMemberInfoNormalizesAndRejectsDuplicateNames(t *testing.T) {
+	t.Parallel()
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Organization{}, &model.OrganizationMember{}))
+	organizationID := uuid.NewString()
+	firstAccountID := uuid.NewString()
+	secondAccountID := uuid.NewString()
+	require.NoError(t, db.Create(&model.Organization{
+		ID: organizationID, Name: "Organization", Status: model.OrganizationStatusActive,
+	}).Error)
+	existingName := "Alice"
+	require.NoError(t, db.Create(&model.OrganizationMember{
+		OrganizationID: organizationID, AccountID: firstAccountID, Role: model.OrganizationRoleNormal, Name: &existingName,
+	}).Error)
+	require.NoError(t, db.Model(&model.OrganizationMember{}).
+		Where("organization_id = ? AND account_id = ?", organizationID, firstAccountID).
+		UpdateColumn("name", "\t\u00a0Alice\u00a0\t").Error)
+	require.NoError(t, db.Create(&model.OrganizationMember{
+		OrganizationID: organizationID, AccountID: secondAccountID, Role: model.OrganizationRoleNormal,
+	}).Error)
+
+	repository := workspace_repo.NewOrganizationRepository(db)
+	exists, err := repository.ExistsMemberByName(t.Context(), organizationID, "\u00a0Alice\t", secondAccountID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	svc := &organizationService{db: db, organizationRepo: repository}
+	duplicateName := "  Alice  "
+	err = svc.UpdateMemberInfo(t.Context(), &shared_dto.UpdateOrganizationMemberRequest{
+		OrganizationID: organizationID,
+		AccountID:      secondAccountID,
+		Name:           &duplicateName,
+	})
+	require.ErrorIs(t, err, ErrMemberNameExists)
+
+	availableName := "  Bob  "
+	require.NoError(t, svc.UpdateMemberInfo(t.Context(), &shared_dto.UpdateOrganizationMemberRequest{
+		OrganizationID: organizationID,
+		AccountID:      secondAccountID,
+		Name:           &availableName,
+	}))
+	var updated model.OrganizationMember
+	require.NoError(t, db.Where("organization_id = ? AND account_id = ?", organizationID, secondAccountID).First(&updated).Error)
+	require.NotNil(t, updated.Name)
+	require.Equal(t, "Bob", *updated.Name)
+}
+
+func TestOrganizationMemberRoleUpdateDoesNotOverwriteConcurrentName(t *testing.T) {
+	t.Parallel()
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.OrganizationMember{}))
+	organizationID := uuid.NewString()
+	accountID := uuid.NewString()
+	paddedName := "  Alice  "
+	require.NoError(t, db.Create(&model.OrganizationMember{
+		OrganizationID: organizationID,
+		AccountID:      accountID,
+		Role:           model.OrganizationRoleNormal,
+		Name:           &paddedName,
+	}).Error)
+	var stale model.OrganizationMember
+	require.NoError(t, db.Where("organization_id = ? AND account_id = ?", organizationID, accountID).First(&stale).Error)
+	require.NotNil(t, stale.Name)
+	require.Equal(t, "Alice", *stale.Name)
+	require.NoError(t, db.Model(&model.OrganizationMember{}).
+		Where("organization_id = ? AND account_id = ?", organizationID, accountID).
+		UpdateColumn("name", "Bob").Error)
+
+	stale.Role = model.OrganizationRoleAdmin
+	repository := workspace_repo.NewOrganizationRepository(db)
+	require.NoError(t, repository.UpdateAccountJoin(t.Context(), &stale))
+	var updated model.OrganizationMember
+	require.NoError(t, db.Where("organization_id = ? AND account_id = ?", organizationID, accountID).First(&updated).Error)
+	require.Equal(t, model.OrganizationRoleAdmin, updated.Role)
+	require.NotNil(t, updated.Name)
+	require.Equal(t, "Bob", *updated.Name)
 }
 
 func createDirectAddInviteDepartmentTables(db *gorm.DB) error {

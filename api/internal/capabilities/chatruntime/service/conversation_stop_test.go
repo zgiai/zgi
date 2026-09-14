@@ -216,6 +216,10 @@ func TestStopMessageDoesNotOverwriteNewerAnswerFromStaleSnapshot(t *testing.T) {
 		Status: runtimemodel.MessageStatusStreaming, ModelName: "test",
 		Metadata: map[string]interface{}{
 			"agent_workflow_continuation": map[string]interface{}{"workflow_run_id": "workflow-run-stale"},
+			"operation_plan": map[string]interface{}{"status": "running", "phases": []interface{}{
+				map[string]interface{}{"id": "done", "status": "completed"},
+				map[string]interface{}{"id": "unfinished", "status": "in_progress"},
+			}},
 		},
 	}
 	if err := db.Create(conversation).Error; err != nil {
@@ -244,6 +248,12 @@ func TestStopMessageDoesNotOverwriteNewerAnswerFromStaleSnapshot(t *testing.T) {
 	}
 	if stopped.Answer != fullAnswer {
 		t.Fatalf("stale snapshot %q overwrote final answer %q; persisted %q", stale.Answer, fullAnswer, stopped.Answer)
+	}
+	plan := mapFromOperationContext(stopped.Metadata["operation_plan"])
+	phases := mapSliceFromAny(plan["phases"])
+	if plan["status"] != "cancelled" || mapFromOperationContext(stopped.Metadata["completion_verification"])["status"] != "cancelled" ||
+		phases[0]["status"] != "completed" || phases[1]["status"] != "cancelled" {
+		t.Fatalf("persisted stop did not preserve completed work and cancel the remaining plan: %#v", plan)
 	}
 }
 

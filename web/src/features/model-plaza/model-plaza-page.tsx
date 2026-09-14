@@ -3,7 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useQueries } from '@tanstack/react-query';
-import { Activity, Brain, Copy, Loader2, Search, Sparkles } from 'lucide-react';
+import { Activity, Brain, Copy, KeyRound, Loader2, Search, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAllModelsInfinite, useProviderModelsInfinite } from '@/hooks/model/use-model';
 import { useCustomProviders, useProviders } from '@/hooks/provider/use-provider';
@@ -22,6 +22,7 @@ import { getModelPriceDisplay } from '@/utils/model-price';
 import { useOrganizationStore } from '@/store/organization-store';
 import { getBillingDisplaySettings } from '@/utils/billing-display';
 import { useT } from '@/i18n';
+import { getModelExperienceHref } from './experience-route';
 import { useLocale } from '@/hooks/use-locale';
 
 const USE_CASE_VALUES: ModelUseCase[] = [
@@ -67,7 +68,12 @@ function modelManufacturer(model: ModelItem, locale: string): ManufacturerFilter
 
   return {
     ...(configured ?? { value: vendor }),
-    label: localizedName?.trim() || configured?.label || model.vendor?.trim() || vendor,
+    label:
+      nonEmptyText(localizedName) ||
+      configured?.label ||
+      nonEmptyText(model.vendor) ||
+      vendor ||
+      '-',
     iconKey: configured?.iconKey || vendor,
   };
 }
@@ -88,8 +94,8 @@ interface StructuredModelPricing {
   } | null;
 }
 
-function normalizeSearchValue(value: string): string {
-  return value.trim().toLowerCase();
+function normalizeSearchValue(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
 }
 
 function getProviderAliases(provider: string, label?: string, rawName?: string): string[] {
@@ -101,7 +107,19 @@ function getProviderAliases(provider: string, label?: string, rawName?: string):
 }
 
 function modelDisplayName(model: ModelItem): string {
-  return model.model_name || model.model || model.id;
+  return (
+    nonEmptyText(model.model_name) || nonEmptyText(model.model) || nonEmptyText(model.id) || '-'
+  );
+}
+
+function nonEmptyText(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const text = value.trim();
+  return text || undefined;
+}
+
+function isPositiveFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }
 
 function modelMatchesSearch(
@@ -152,18 +170,23 @@ async function fetchAllProviderModels(
       provider,
       page,
       page_size: pageSize,
+      available_only: true,
       use_case: useCase === 'all' ? undefined : useCase,
     });
     const list = response.data;
     totalPages =
       typeof list.total_pages === 'number' && list.total_pages > 0 ? list.total_pages : page;
 
-    (list.items ?? []).map(normalizeModel).forEach(model => {
-      const key = `${model.provider}:${model.model}`;
-      if (seen.has(key)) return;
-      seen.add(key);
-      models.push(model);
-    });
+    const items = Array.isArray(list?.items) ? list.items : [];
+    items
+      .filter(isModelRecord)
+      .map(normalizeModel)
+      .forEach(model => {
+        const key = `${model.provider}:${model.model}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        models.push(model);
+      });
 
     page += 1;
   }
@@ -171,16 +194,13 @@ async function fetchAllProviderModels(
   return models;
 }
 
-function getExperienceHref(model: ModelItem): string {
-  const params = `provider=${encodeURIComponent(model.provider)}&model=${encodeURIComponent(model.model)}`;
-  const basePath = model.use_cases?.includes('image-gen')
-    ? '/console/work/image'
-    : '/console/work/chat';
-  return `${basePath}?${params}`;
+function isModelRecord(value: unknown): value is ModelItem {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 export function ModelPlazaPage() {
   const t = useT('models');
+  const tAccess = useT('apikeys.developerAccess');
   const { locale } = useLocale();
   const [search, setSearch] = React.useState('');
   const debouncedSearch = useDebouncedValue(search, 500);
@@ -268,6 +288,7 @@ export function ModelPlazaPage() {
     refetch: refetchAllModels,
   } = useAllModelsInfinite({
     limit: 100,
+    available_only: true,
     use_case: useCaseFilter === 'all' ? undefined : useCaseFilter,
   });
   const manufacturerFilters = React.useMemo<ManufacturerFilterItem[]>(() => {
@@ -301,6 +322,7 @@ export function ModelPlazaPage() {
     refetch: refetchProviderModels,
   } = useProviderModelsInfinite(selectedProvider, {
     limit: 100,
+    available_only: true,
     use_case: useCaseFilter === 'all' ? undefined : useCaseFilter,
   });
   const providerSearchResults = useQueries({
@@ -455,6 +477,12 @@ export function ModelPlazaPage() {
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              <Button asChild>
+                <Link href="/console/api-keys">
+                  <KeyRound className="size-4" />
+                  {tAccess('createKey')}
+                </Link>
+              </Button>
               <Button variant="outline" onClick={() => void handleRefresh()} disabled={isFetching}>
                 {isFetching ? (
                   <Loader2 className="size-4 animate-spin" />
@@ -506,12 +534,17 @@ export function ModelPlazaPage() {
           <div className="space-y-5">
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {filteredModels.map(model => (
-                <ModelCard
-                  key={`${model.provider}:${model.model}`}
-                  model={model}
-                  useCaseLabels={useCaseLabels}
-                  manufacturerLabel={modelManufacturer(model, locale).label}
-                />
+                <ModelCardErrorBoundary
+                  key={`${normalizeSearchValue(model.provider)}:${normalizeSearchValue(model.model)}:${modelDisplayName(model)}`}
+                  fallbackLabel={modelDisplayName(model)}
+                  fallbackMessage={t('plaza.metadataUnavailable')}
+                >
+                  <ModelCard
+                    model={model}
+                    useCaseLabels={useCaseLabels}
+                    manufacturerLabel={modelManufacturer(model, locale).label}
+                  />
+                </ModelCardErrorBoundary>
               ))}
             </div>
             {isFetching ? (
@@ -535,6 +568,35 @@ export function ModelPlazaPage() {
       </div>
     </div>
   );
+}
+
+class ModelCardErrorBoundary extends React.Component<
+  React.PropsWithChildren<{ fallbackLabel: string; fallbackMessage: string }>,
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    console.error('Failed to render model plaza card', error);
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <Card className="min-h-64 border-border/70 bg-background shadow-none">
+        <CardContent className="flex h-full flex-col justify-center gap-2 p-5">
+          <h2 className="truncate text-lg font-medium" title={this.props.fallbackLabel}>
+            {this.props.fallbackLabel}
+          </h2>
+          <p className="text-sm text-muted-foreground">{this.props.fallbackMessage}</p>
+        </CardContent>
+      </Card>
+    );
+  }
 }
 
 function FilterRow({
@@ -594,12 +656,48 @@ function ModelCard({
   const displayName = modelDisplayName(model);
   const manufacturer = modelManufacturer(model, locale);
   const displayManufacturer = manufacturerLabel ?? manufacturer.label;
-  const experienceHref = getExperienceHref(model);
+  const experienceHref = getModelExperienceHref(model);
   const priceItems = getModelPriceDisplay({
     inputPrice: model.input_price,
     outputPrice: model.output_price,
+    cacheReadPrice:
+      model.cache_read_price_override ??
+      model.cache_read_price ??
+      model.cached_input_price ??
+      model.synced_cache_read_price,
+    cacheWritePrice:
+      model.cache_write_price_override ?? model.cache_write_price ?? model.synced_cache_write_price,
+    cacheWrite5mPrice:
+      model.cache_write_5m_price_override ??
+      model.cache_write_5m_price ??
+      model.synced_cache_write_5m_price,
+    cacheWrite1hPrice:
+      model.cache_write_1h_price_override ??
+      model.cache_write_1h_price ??
+      model.synced_cache_write_1h_price,
     inputPriceConfigured: model.input_price_configured,
     outputPriceConfigured: model.output_price_configured,
+    cacheReadPriceConfigured:
+      model.cache_read_price_override != null ||
+      model.cache_read_price_configured ||
+      isPositiveFiniteNumber(model.cache_read_price) ||
+      isPositiveFiniteNumber(model.cached_input_price) ||
+      isPositiveFiniteNumber(model.synced_cache_read_price),
+    cacheWritePriceConfigured:
+      model.cache_write_price_override != null ||
+      model.cache_write_price_configured ||
+      isPositiveFiniteNumber(model.cache_write_price) ||
+      isPositiveFiniteNumber(model.synced_cache_write_price),
+    cacheWrite5mPriceConfigured:
+      model.cache_write_5m_price_override != null ||
+      model.cache_write_5m_price_configured ||
+      isPositiveFiniteNumber(model.cache_write_5m_price) ||
+      isPositiveFiniteNumber(model.synced_cache_write_5m_price),
+    cacheWrite1hPriceConfigured:
+      model.cache_write_1h_price_override != null ||
+      model.cache_write_1h_price_configured ||
+      isPositiveFiniteNumber(model.cache_write_1h_price) ||
+      isPositiveFiniteNumber(model.synced_cache_write_1h_price),
     useCases: model.use_cases,
     currency: model.currency,
     pricing: model.pricing,
@@ -611,6 +709,10 @@ function ModelCard({
       image: t('plaza.image'),
       input: t('plaza.input'),
       output: t('plaza.output'),
+      cacheRead: t('plaza.cacheRead'),
+      cacheWrite: t('plaza.cacheWrite'),
+      cacheWrite5m: t('plaza.cacheWrite5m'),
+      cacheWrite1h: t('plaza.cacheWrite1h'),
       speechGeneration: t('plaza.speechGeneration'),
       transcription: t('plaza.transcription'),
       musicGeneration: t('plaza.musicGeneration'),
@@ -627,17 +729,21 @@ function ModelCard({
     },
   });
   const structuredPricing = model.pricing as StructuredModelPricing | null | undefined;
+  const videoRates = Array.isArray(structuredPricing?.video_generation?.resolution_rates)
+    ? structuredPricing.video_generation.resolution_rates
+    : [];
   const videoResolutions = Array.from(
     new Set(
-      (structuredPricing?.video_generation?.resolution_rates ?? [])
+      videoRates
+        .filter(item => item !== null && typeof item === 'object' && !Array.isArray(item))
         .map(item => item.resolution)
         .filter((resolution): resolution is string => Boolean(resolution))
     )
   );
-  const videoRates = structuredPricing?.video_generation?.resolution_rates ?? [];
   const videoPriceVariesByResolution = [true, false].some(inputVideo => {
     const prices = videoRates.flatMap(item =>
-      (item.rates ?? [])
+      (Array.isArray(item?.rates) ? item.rates : [])
+        .filter(rate => rate !== null && typeof rate === 'object' && !Array.isArray(rate))
         .filter(rate => rate.input_video === inputVideo)
         .map(rate => rate.price_per_million_tokens)
         .filter((price): price is number => typeof price === 'number' && Number.isFinite(price))
@@ -674,7 +780,9 @@ function ModelCard({
             size="sm"
             className="h-7 shrink-0 gap-1 px-2 text-xs text-muted-foreground"
             onClick={() => {
-              void navigator.clipboard.writeText(model.model);
+              void navigator.clipboard.writeText(
+                typeof model.model === 'string' ? model.model : displayName
+              );
               toast.success(t('plaza.copySuccess'));
             }}
             title={t('plaza.copyTitle')}
@@ -686,9 +794,6 @@ function ModelCard({
 
         <div className="flex min-h-6 flex-wrap gap-1.5">
           {model.is_recommended ? <Badge>{t('plaza.recommended')}</Badge> : null}
-          <Badge variant={model.is_available ? 'success' : 'subtle'}>
-            {model.is_available ? t('plaza.available') : t('plaza.unavailable')}
-          </Badge>
           {capabilityLabels.length > 0 ? (
             capabilityLabels.map(label => (
               <Badge key={label} variant="secondary">
@@ -728,7 +833,11 @@ function ModelCard({
                       ? t('plaza.input')
                       : item.label === 'output'
                         ? t('plaza.output')
-                        : t('plaza.video'))
+                        : item.label === 'cacheRead'
+                          ? t('plaza.cacheRead')
+                          : item.label === 'cacheWrite'
+                            ? t('plaza.cacheWrite')
+                            : t('plaza.video'))
                 }
                 value={item.formattedValue}
                 unit={
@@ -759,19 +868,9 @@ function ModelCard({
             </span>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {model.is_available ? (
-              <Button asChild size="sm" variant="ghost">
-                <Link href={experienceHref}>{t('plaza.tryNow')}</Link>
-              </Button>
-            ) : (
-              <Button asChild size="sm" variant="ghost">
-                <Link
-                  href={`/dashboard/provider/${encodeURIComponent(model.provider)}?model=${encodeURIComponent(model.model)}`}
-                >
-                  {t('plaza.enable')}
-                </Link>
-              </Button>
-            )}
+            <Button asChild size="sm" variant="ghost">
+              <Link href={experienceHref}>{t('plaza.tryNow')}</Link>
+            </Button>
           </div>
         </div>
       </CardContent>

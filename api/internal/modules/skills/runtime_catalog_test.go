@@ -824,6 +824,9 @@ func TestImageGeneratorSystemSkillMetadata(t *testing.T) {
 	if !ok {
 		t.Fatalf("image generator skill was not resolved")
 	}
+	if doc.Metadata.MaxCallsPerTurn != 15 {
+		t.Fatalf("image generator max calls = %d, want 15", doc.Metadata.MaxCallsPerTurn)
+	}
 	if doc.Metadata.RuntimeType != SkillRuntimeTypeTool {
 		t.Fatalf("runtime type = %q, want tool", doc.Metadata.RuntimeType)
 	}

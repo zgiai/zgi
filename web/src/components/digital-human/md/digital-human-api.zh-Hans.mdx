@@ -408,8 +408,10 @@ data: {"event":"message","data":{"conversation_id":"...","message_id":"...","ans
 </Properties>
 
 <CodeGroup title="请求">
-  ```bash curl '{apibase}/digital-humans/runs/{run_id}?user=customer_123' \ --header 'Authorization:
-  Bearer {api_key}' ```
+```bash
+curl '{apibase}/digital-humans/runs/{run_id}?user=customer_123' \
+  --header 'Authorization: Bearer {api_key}'
+```
 </CodeGroup>
 
 <CodeGroup title="响应">
@@ -438,8 +440,11 @@ data: {"event":"message","data":{"conversation_id":"...","message_id":"...","ans
 </Properties>
 
 <CodeGroup title="请求">
-  ```bash curl --no-buffer '{apibase}/digital-humans/runs/{run_id}/events?user=customer_123' \
-  --header 'Authorization: Bearer {api_key}' \ --header 'Last-Event-ID: 1715750400000-0' ```
+```bash
+curl --no-buffer '{apibase}/digital-humans/runs/{run_id}/events?user=customer_123' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'Last-Event-ID: 1715750400000-0'
+```
 </CodeGroup>
 
 <CodeGroup title="响应">
@@ -451,7 +456,7 @@ data: {"event":"message","data":{"conversation_id":"...","message_id":"...","ans
 event: run_end
 data: {"event":"run_end","data":{"run_id":"...","status":"succeeded"}}
 
-````
+```
 </CodeGroup>
 
 <Heading url="/api/v1/digital-humans/runs/{run_id}/stop" method="POST" title="停止 Run" name="#Stop-DigitalHuman-Run" />
@@ -467,7 +472,7 @@ curl --request POST '{apibase}/digital-humans/runs/{run_id}/stop' \
   --header 'Authorization: Bearer {api_key}' \
   --header 'Content-Type: application/json' \
   --data '{"user":"customer_123"}'
-````
+```
 
 </CodeGroup>
 
@@ -543,7 +548,94 @@ curl --request POST '{apibase}/digital-humans/conversations/{conversation_id}/me
 ```
 </CodeGroup>
 
-响应是可恢复 SSE，先收到 `run_accepted`，随后收到带 `replace=true` 的 `message_start`、中间事件、`message_delta`、`message_end` 和 `run_end`。断线后按同一会话的事件接口和 `Last-Event-ID` 恢复。
+<CodeGroup title="响应">
+```text
+event: run_accepted
+data: {"event":"run_accepted","data":{"run_id":"...","status":"accepted"}}
+
+event: message_start
+data: {"event":"message_start","data":{"conversation_id":"...","message_id":"...","replace":true}}
+
+event: message
+data: {"event":"message","data":{"message_id":"...","answer":"更新后的回答"}}
+
+event: message_end
+data: {"event":"message_end","data":{"message_id":"...","status":"completed"}}
+
+event: run_end
+data: {"event":"run_end","data":{"run_id":"...","status":"succeeded"}}
+```
+</CodeGroup>
+
+响应是可恢复 SSE，先收到 `run_accepted`，随后收到带 `replace=true` 的 `message_start`、中间事件、`message`、`message_end` 和 `run_end`。断线后按同一会话的事件接口和 `Last-Event-ID` 恢复。
+
+<Heading
+  url="/api/v1/digital-humans/conversations/{conversation_id}/messages/{message_id}/workflow-continuation"
+  method="POST"
+  title="继续处理任务审批"
+  name="#Continue-DigitalHuman-Task-Approval"
+/>
+
+<Properties>
+  <Property name="conversation_id" type="uuid path" propKey="conversation_id">必填，所属会话。</Property>
+  <Property name="message_id" type="uuid path" propKey="message_id">必填，暂停中的助手消息。</Property>
+  <Property name="user" type="string body" propKey="user">必填，必须与会话所属用户一致。</Property>
+  <Property name="approval_token" type="string body" propKey="approval_token">必填，来自 `approval_requested` 的不透明令牌。</Property>
+  <Property name="action" type="string body" propKey="action">填写 `approve` 或 `decline`。</Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl --request POST '{apibase}/digital-humans/conversations/{conversation_id}/messages/{message_id}/workflow-continuation' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'Content-Type: application/json' \
+  --data '{"type":"approval","user":"customer_123","approval_token":"opaque-token","action":"approve"}'
+```
+</CodeGroup>
+
+<CodeGroup title="响应">
+```text
+event: approval_result
+data: {"event":"approval_result","data":{"action":"approve"}}
+
+event: message_end
+data: {"event":"message_end","data":{"message_id":"...","status":"completed"}}
+```
+</CodeGroup>
+
+<Heading
+  url="/api/v1/digital-humans/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue"
+  method="POST"
+  title="继续提交用户补充信息"
+  name="#Continue-DigitalHuman-User-Input"
+/>
+
+<Properties>
+  <Property name="conversation_id" type="uuid path" propKey="conversation_id">必填，所属会话。</Property>
+  <Property name="message_id" type="uuid path" propKey="message_id">必填，暂停中的助手消息。</Property>
+  <Property name="request_id" type="string path" propKey="request_id">必填，来自 `user_input_requested` 的请求标识。</Property>
+  <Property name="user" type="string body" propKey="user">必填，必须与会话所属用户一致。</Property>
+  <Property name="answers" type="object body" propKey="answers">必填，按问题 id 组织的回答。</Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl --request POST '{apibase}/digital-humans/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'Content-Type: application/json' \
+  --data '{"user":"customer_123","answers":{"question_1":"采用保守方案"}}'
+```
+</CodeGroup>
+
+<CodeGroup title="响应">
+```text
+event: message
+data: {"event":"message","data":{"message_id":"...","answer":"将按保守方案继续处理。"}}
+
+event: message_end
+data: {"event":"message_end","data":{"message_id":"...","status":"completed"}}
+```
+</CodeGroup>
 
 ---
 
@@ -569,8 +661,10 @@ curl --request POST '{apibase}/digital-humans/conversations/{conversation_id}/me
 </Properties>
 
 <CodeGroup title="请求">
-  ```bash curl '{apibase}/digital-humans/conversations?user=customer_123&page=1&limit=20' \ --header
-  'Authorization: Bearer {api_key}' ```
+```bash
+curl '{apibase}/digital-humans/conversations?user=customer_123&page=1&limit=20' \
+  --header 'Authorization: Bearer {api_key}'
+```
 </CodeGroup>
 
 <CodeGroup title="响应">
@@ -599,8 +693,10 @@ curl --request POST '{apibase}/digital-humans/conversations/{conversation_id}/me
 </Properties>
 
 <CodeGroup title="请求">
-  ```bash curl '{apibase}/digital-humans/conversations/search?user=customer_123&query=方案&limit=20'
-  \ --header 'Authorization: Bearer {api_key}' ```
+```bash
+curl '{apibase}/digital-humans/conversations/search?user=customer_123&query=方案&limit=20' \
+  --header 'Authorization: Bearer {api_key}'
+```
 </CodeGroup>
 
 <CodeGroup title="响应">
@@ -626,8 +722,10 @@ curl --request POST '{apibase}/digital-humans/conversations/{conversation_id}/me
 </Properties>
 
 <CodeGroup title="请求">
-  ```bash curl '{apibase}/digital-humans/conversations/{conversation_id}?user=customer_123' \
-  --header 'Authorization: Bearer {api_key}' ```
+```bash
+curl '{apibase}/digital-humans/conversations/{conversation_id}?user=customer_123' \
+  --header 'Authorization: Bearer {api_key}'
+```
 </CodeGroup>
 
 <CodeGroup title="响应">
@@ -687,8 +785,10 @@ curl --request PATCH '{apibase}/digital-humans/conversations/{conversation_id}' 
 </Properties>
 
 <CodeGroup title="请求">
-  ```bash curl --request DELETE '{apibase}/digital-humans/conversations/{conversation_id}
-  ?user=customer_123' \ --header 'Authorization: Bearer {api_key}' ```
+```bash
+curl --request DELETE '{apibase}/digital-humans/conversations/{conversation_id}?user=customer_123' \
+  --header 'Authorization: Bearer {api_key}'
+```
 </CodeGroup>
 
 <CodeGroup title="响应">
@@ -720,8 +820,10 @@ curl --request PATCH '{apibase}/digital-humans/conversations/{conversation_id}' 
 </Properties>
 
 <CodeGroup title="请求">
-  ```bash curl '{apibase}/digital-humans/conversations/{conversation_id}
-  /messages?user=customer_123&page=1&limit=100' \ --header 'Authorization: Bearer {api_key}' ```
+```bash
+curl '{apibase}/digital-humans/conversations/{conversation_id}/messages?user=customer_123&page=1&limit=100' \
+  --header 'Authorization: Bearer {api_key}'
+```
 </CodeGroup>
 
 <CodeGroup title="响应">
@@ -754,8 +856,12 @@ curl --request PATCH '{apibase}/digital-humans/conversations/{conversation_id}' 
 </Properties>
 
 <CodeGroup title="请求">
-  ```bash curl --request POST '{apibase}/digital-humans/files/upload' \ --header 'Authorization:
-  Bearer {api_key}' \ --form 'user=customer_123' \ --form 'file=@./brief.pdf' ```
+```bash
+curl --request POST '{apibase}/digital-humans/files/upload' \
+  --header 'Authorization: Bearer {api_key}' \
+  --form 'user=customer_123' \
+  --form 'file=@./brief.pdf'
+```
 </CodeGroup>
 
 <CodeGroup title="响应">
@@ -806,15 +912,215 @@ curl --request POST '{apibase}/digital-humans/tasks' \
 ```
 </CodeGroup>
 
-使用 `GET /digital-humans/tasks?user=customer_123` 查询任务；读取、更新和执行
-动作时传入任务返回的 `revision`：
+<CodeGroup title="响应">
+```json
+{"code":"0","message":"success","data":{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","digital_human_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","owner_kind":"user_subject","name":"跟进需求","goal":"总结最新需求变化","work_status":"pending","lifecycle_status":"active","priority":"normal","schedule":{"type":"manual"},"delivery_mode":"task_only","revision":1}}
+```
+</CodeGroup>
 
+<Heading
+  url="/api/v1/digital-humans/tasks"
+  method="GET"
+  title="查询用户私有待办"
+  name="#List-DigitalHuman-Tasks"
+/>
+
+<Properties>
+  <Property name="user" type="string query" propKey="user">
+    必填所属终端用户。
+  </Property>
+  <Property name="page" type="integer query" propKey="page">
+    可选，从 1 开始的页码。
+  </Property>
+  <Property name="page_size" type="integer query" propKey="page_size">
+    可选页大小，取值 1 至 100。
+  </Property>
+  <Property name="status, priority, q" type="string query" propKey="filters">
+    可选工作状态、优先级和文本筛选条件。
+  </Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl '{apibase}/digital-humans/tasks?user=customer_123&page=1&page_size=20' \
+  --header 'Authorization: Bearer {api_key}'
+```
+</CodeGroup>
+
+<CodeGroup title="响应">
+```json
+{"code":"0","message":"success","data":{"items":[],"total":0,"page":1,"page_size":20,"has_more":false,"counts":{}}}
+```
+</CodeGroup>
+
+<Heading
+  url="/api/v1/digital-humans/tasks/{task_id}"
+  method="GET"
+  title="查询单个用户私有待办"
+  name="#Get-DigitalHuman-Task"
+/>
+
+<Properties>
+  <Property name="task_id" type="uuid path" propKey="task_id">
+    必填待办标识。
+  </Property>
+  <Property name="user" type="string query" propKey="user">
+    必填所属终端用户。
+  </Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl '{apibase}/digital-humans/tasks/{task_id}?user=customer_123' \
+  --header 'Authorization: Bearer {api_key}'
+```
+</CodeGroup>
+
+<CodeGroup title="响应">
+```json
+{"code":"0","message":"success","data":{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","digital_human_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","owner_kind":"user_subject","name":"跟进需求","goal":"总结最新需求变化","work_status":"pending","lifecycle_status":"active","priority":"normal","schedule":{"type":"manual"},"delivery_mode":"task_only","revision":1}}
+```
+</CodeGroup>
+
+<Heading
+  url="/api/v1/digital-humans/tasks/{task_id}"
+  method="PATCH"
+  title="更新用户私有待办"
+  name="#Update-DigitalHuman-Task"
+/>
+
+<Properties>
+  <Property name="task_id" type="uuid path" propKey="task_id">
+    必填待办标识。
+  </Property>
+  <Property name="user" type="string body" propKey="user">
+    必填所属终端用户。
+  </Property>
+  <Property name="expected_revision" type="integer body" propKey="expected_revision">
+    必填当前 revision，用于乐观并发控制。
+  </Property>
+  <Property name="name, goal, schedule, priority" type="body fields" propKey="changes">
+    只传需要替换的可修改字段。
+  </Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl --request PATCH '{apibase}/digital-humans/tasks/{task_id}' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'Content-Type: application/json' \
+  --data '{"user":"customer_123","expected_revision":1,"name":"复核需求"}'
+```
+</CodeGroup>
+
+<CodeGroup title="响应">
+```json
+{"code":"0","message":"success","data":{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","digital_human_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","owner_kind":"user_subject","name":"复核需求","goal":"总结最新需求变化","work_status":"pending","lifecycle_status":"active","priority":"normal","schedule":{"type":"manual"},"delivery_mode":"task_only","revision":2}}
+```
+</CodeGroup>
+
+<Heading
+  url="/api/v1/digital-humans/tasks/{task_id}/actions/{action}"
+  method="POST"
+  title="执行待办动作"
+  name="#Action-DigitalHuman-Task"
+/>
+
+<Properties>
+  <Property name="task_id" type="uuid path" propKey="task_id">
+    必填待办标识。
+  </Property>
+  <Property name="action" type="string path" propKey="action">
+    可选 `confirm`、`decline`、`run_now`、`pause`、`resume`、`retry`、`cancel` 或 `archive`。
+  </Property>
+  <Property name="user" type="string body" propKey="user">
+    必填所属终端用户。
+  </Property>
+  <Property name="expected_revision" type="integer body" propKey="expected_revision">
+    必填当前 revision。
+  </Property>
+</Properties>
+
+<CodeGroup title="请求">
 ```bash
 curl --request POST '{apibase}/digital-humans/tasks/{task_id}/actions/run_now' \
   --header 'Authorization: Bearer {api_key}' \
   --header 'Content-Type: application/json' \
   --data '{"user":"customer_123","expected_revision":2}'
 ```
+</CodeGroup>
+
+<CodeGroup title="响应">
+```json
+{"code":"0","message":"success","data":{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","digital_human_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","owner_kind":"user_subject","name":"复核需求","goal":"总结最新需求变化","work_status":"pending","lifecycle_status":"active","priority":"normal","schedule":{"type":"manual"},"delivery_mode":"task_only","revision":3}}
+```
+</CodeGroup>
+
+<Heading
+  url="/api/v1/digital-humans/tasks/{task_id}/runs"
+  method="GET"
+  title="查询待办执行记录"
+  name="#List-DigitalHuman-Task-Runs"
+/>
+
+<Properties>
+  <Property name="task_id" type="uuid path" propKey="task_id">
+    必填待办标识。
+  </Property>
+  <Property name="user" type="string query" propKey="user">
+    必填所属终端用户。
+  </Property>
+  <Property name="page, page_size" type="integer query" propKey="pagination">
+    可选分页参数。
+  </Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl '{apibase}/digital-humans/tasks/{task_id}/runs?user=customer_123&page=1&page_size=20' \
+  --header 'Authorization: Bearer {api_key}'
+```
+</CodeGroup>
+
+<CodeGroup title="响应">
+```json
+{"code":"0","message":"success","data":{"items":[{"id":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee","task_id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","trigger_source":"manual","attempt":1,"status":"succeeded","result_summary":"需求总结已完成。","scheduled_for":"2026-09-14T02:00:00Z","created_at":"2026-09-14T02:00:00Z"}],"total":1,"page":1,"page_size":20,"has_more":false}}
+```
+</CodeGroup>
+
+<Heading
+  url="/api/v1/digital-humans/tasks/{task_id}/activities"
+  method="GET"
+  title="查询待办活动记录"
+  name="#List-DigitalHuman-Task-Activities"
+/>
+
+<Properties>
+  <Property name="task_id" type="uuid path" propKey="task_id">
+    必填待办标识。
+  </Property>
+  <Property name="user" type="string query" propKey="user">
+    必填所属终端用户。
+  </Property>
+  <Property name="page, page_size" type="integer query" propKey="pagination">
+    可选分页参数。
+  </Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl '{apibase}/digital-humans/tasks/{task_id}/activities?user=customer_123&page=1&page_size=20' \
+  --header 'Authorization: Bearer {api_key}'
+```
+</CodeGroup>
+
+<CodeGroup title="响应">
+```json
+{"code":"0","message":"success","data":{"items":[{"event":"created","actor":"current_user","created_at":"2026-09-14T02:00:00Z"}],"total":1,"page":1,"page_size":20,"has_more":false}}
+```
+</CodeGroup>
+
+读取、更新和执行动作时，需要传入任务返回的 `revision`。
 
 支持 `confirm`、`decline`、`run_now`、`pause`、`resume`、`retry`、`cancel` 和
 `archive`。revision 过期时返回 `409 digital_human.task.conflict`，应刷新任务后使用

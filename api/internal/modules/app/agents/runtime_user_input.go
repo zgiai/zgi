@@ -74,6 +74,7 @@ func (h *AgentsHandler) continueRuntimeUserInput(c *gin.Context, runtimeCtx agen
 	_ = writeAgentSSEEvent(c, "", "error", gin.H{
 		"conversation_id": conversationID.String(),
 		"message_id":      messageID.String(),
-		"message":         err.Error(),
+		"message":         response.ErrSystemError.Message,
+		"code":            response.ErrSystemError.Code,
 	})
 }

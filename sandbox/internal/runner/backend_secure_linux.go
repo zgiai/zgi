@@ -22,6 +22,7 @@ type linuxSecureBackend struct {
 	prlimitBin          string
 	limits              secureRuntimeLimits
 	allowShell          bool
+	profileCache        *dependencyProfileActivationCache
 }
 
 func newLinuxSecureBackend(cfg config.Config) (backend, error) {
@@ -58,6 +59,7 @@ func newLinuxSecureBackend(cfg config.Config) (backend, error) {
 		prlimitBin:          prlimitBin,
 		limits:              limits,
 		allowShell:          true,
+		profileCache:        newDependencyProfileActivationCache(),
 	}, nil
 }
 
@@ -127,8 +129,11 @@ func (b *linuxSecureBackend) ExecuteCommand(parent context.Context, spec Command
 }
 
 func (b *linuxSecureBackend) exec(ctx context.Context, workDir string, dependencyProfile string, dependencyArtifactChecksum string, binary string, args []string, enableNetwork bool, stdoutLimit int, stderrLimit int, stdin string, env map[string]string) (Result, error) {
-	activation, err := resolveDependencyProfileActivation(b.rootfs, b.dependencyRootFSDir, dependencyProfile, dependencyArtifactChecksum)
+	activation, err := b.profileCache.resolve(b.rootfs, b.dependencyRootFSDir, dependencyProfile, dependencyArtifactChecksum)
 	if err != nil {
+		return Result{}, err
+	}
+	if err := seedDependencyProfileRuntimeCache(activation.ProfileHostDir, workDir); err != nil {
 		return Result{}, err
 	}
 
@@ -146,12 +151,14 @@ func (b *linuxSecureBackend) exec(ctx context.Context, workDir string, dependenc
 
 	command := b.bwrapBin
 	commandArgs := bwrapArgs
+	bwrapArgIndex := 0
 	if limitArgs := b.limits.prlimitArgs(); len(limitArgs) > 0 {
 		command = b.prlimitBin
 		commandArgs = make([]string, 0, len(limitArgs)+2+len(bwrapArgs))
 		commandArgs = append(commandArgs, limitArgs...)
 		commandArgs = append(commandArgs, "--", b.bwrapBin)
 		commandArgs = append(commandArgs, bwrapArgs...)
+		bwrapArgIndex = len(limitArgs) + 2
 	}
 
 	cmd := exec.CommandContext(ctx, command, commandArgs...)
@@ -164,7 +171,7 @@ func (b *linuxSecureBackend) exec(ctx context.Context, workDir string, dependenc
 	cmd.Stderr = stderr
 
 	started := time.Now()
-	err = cmd.Run()
+	err = runSecureProcess(ctx, cmd, bwrapArgIndex)
 	duration := time.Since(started).Milliseconds()
 
 	exitCode := 0

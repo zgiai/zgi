@@ -8,10 +8,7 @@ import { toast } from 'sonner';
 import { useAuthStore } from '@/store/auth-store';
 import { clearSessionBoundClientState } from '@/lib/auth/client-state';
 import { sessionManager } from '@/lib/auth/session-manager';
-import {
-  getAuthBusinessErrorDescriptionKey,
-  getAuthBusinessErrorMessage,
-} from '@/utils/auth-errors';
+import { getRegistrationErrorDescription } from '@/utils/auth-errors';
 import { normalizeToastDescription } from '@/utils/error-notifications';
 
 export function useFinishRegister() {
@@ -38,12 +35,10 @@ export function useFinishRegister() {
       }
       toast.success(t('registerSuccess'));
     },
-    onError: error => {
+    onError: (error, variables) => {
       const title = t('registrationFailed');
-      const descriptionKey = getAuthBusinessErrorDescriptionKey(error, {
-        context: 'register',
-      });
-      const description = descriptionKey ? t(descriptionKey) : getAuthBusinessErrorMessage(error);
+      const errorDescription = getRegistrationErrorDescription(error, variables.invite_token);
+      const description = errorDescription.key ? t(errorDescription.key) : errorDescription.message;
       toast.error(title, {
         description: normalizeToastDescription(title, description),
       });

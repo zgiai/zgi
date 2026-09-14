@@ -30,7 +30,7 @@ const (
 )
 
 func main() {
-	logger.Init()
+	logger.InitConsole()
 
 	// Parse command line arguments
 	if len(os.Args) < 2 {

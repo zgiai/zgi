@@ -10,8 +10,12 @@ import (
 // The DigitalHuman contract has its own source file so it can evolve without
 // conflicting with the Agent external-v1 specification. Both products share
 // envelope, error, pagination, and SSE event conventions.
+//
 //go:embed digital-human-v1.openapi.yaml
 var digitalHumanV1OpenAPI []byte
+
+//go:embed external-v1.openapi.yaml
+var externalV1OpenAPI []byte
 
 // RegisterPublicRoutes registers public API routes that don't require authentication
 func RegisterPublicRoutes(r *gin.RouterGroup) {
@@ -27,22 +31,58 @@ func RegisterPublicRoutes(r *gin.RouterGroup) {
 	// API documentation endpoint
 	r.GET("/docs", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
-			"message":       "ZGI External API Documentation",
-			"openapi":       "/api/digital-human-openapi.yaml",
-			"openapi_scope": "DigitalHuman external-v1 contract aligned with Agent conventions",
-			"sse_contract":  "OpenAPI x-zgi-sse-event-data-schemas",
+			"message":               "ZGI External API Documentation",
+			"openapi":               "/api/openapi.yaml",
+			"digital_human_openapi": "/api/digital-human-openapi.yaml",
+			"openapi_scope":         "Agent and DigitalHuman APIs",
+			"sse_contract":          "OpenAPI x-zgi-sse-event-data-schemas",
+			"swagger":               "/swagger/index.html",
 			"endpoints": gin.H{
-				"health":         "/api/health",
-				"agents":         "/api/v1/agents (requires Agent API key)",
-				"digital_humans": "/api/v1/digital-humans (requires DigitalHuman API key)",
-				"workflows":      "/api/v1/workflows (requires Agent API key)",
+				"agent": []string{
+					"GET /api/v1/agents/config",
+					"POST /api/v1/agents/chat",
+					"GET /api/v1/agents/conversations",
+					"GET /api/v1/agents/conversations/search",
+					"GET|PATCH|DELETE /api/v1/agents/conversations/{conversation_id}",
+					"GET /api/v1/agents/conversations/{conversation_id}/messages",
+					"GET /api/v1/agents/conversations/{conversation_id}/events",
+					"POST /api/v1/agents/conversations/{conversation_id}/stop",
+					"POST /api/v1/agents/messages/{message_id}/regenerate",
+					"POST /api/v1/agents/conversations/{conversation_id}/messages/{message_id}/workflow-continuation",
+					"POST /api/v1/agents/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue",
+				},
+				"memory": []string{
+					"GET|DELETE /api/v1/agents/memory",
+					"GET /api/v1/agents/memory/export",
+					"PUT|DELETE /api/v1/agents/memory/{key}",
+					"POST /api/v1/agents/memory/operations/{operation_id}/undo",
+				},
+				"files_and_metadata": []string{
+					"POST /api/v1/files/upload",
+					"GET /api/v1/info",
+					"GET /api/v1/parameters",
+				},
+				"workflow": []string{
+					"POST /api/v1/workflows/run",
+					"POST /api/v1/workflows/{workflow_id}/run",
+					"GET /api/v1/workflows/runs/{run_id}",
+					"GET /api/v1/workflows/runs/{run_id}/events",
+					"POST /api/v1/workflows/tasks/{task_id}/stop",
+					"POST /api/v1/chat-workflows/run",
+				},
+				"digital_human": []string{
+					"POST /api/v1/digital-humans/chat",
+					"GET /api/v1/digital-humans/runs/{run_id}/events",
+					"GET /api/v1/digital-humans/conversations/{conversation_id}/messages",
+					"POST /api/v1/digital-humans/files/upload",
+				},
 			},
-			"authentication": "Use Authorization: Bearer <api_key>",
+			"authentication": "Use X-API-Key or Authorization: Bearer <api_key>",
 		})
 	})
 
 	r.GET("/openapi.yaml", func(c *gin.Context) {
-		c.Data(http.StatusOK, "application/yaml; charset=utf-8", digitalHumanV1OpenAPI)
+		c.Data(http.StatusOK, "application/yaml; charset=utf-8", externalV1OpenAPI)
 	})
 	r.GET("/digital-human-openapi.yaml", func(c *gin.Context) {
 		c.Data(http.StatusOK, "application/yaml; charset=utf-8", digitalHumanV1OpenAPI)

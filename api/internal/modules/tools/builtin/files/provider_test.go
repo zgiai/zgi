@@ -356,6 +356,46 @@ func TestReadFileToolRejectsUnownedTemporaryFile(t *testing.T) {
 	}
 }
 
+func TestReadFileToolUsesExternalUserForTemporaryFile(t *testing.T) {
+	organizationID := uuid.NewString()
+	accountID := uuid.NewString()
+	externalUserID := uuid.NewString()
+	fileService := &fakeFileService{
+		files: map[string]*dto.UploadFile{
+			"file-1": {
+				ID:          "file-1",
+				IsTemporary: true,
+				Name:        "upload.txt",
+				CreatedBy:   externalUserID,
+			},
+		},
+		content: map[string]string{
+			"file-1": "external content",
+		},
+	}
+	provider := NewProvider(fileService, nil, nil)
+	tool, err := provider.GetTool(ToolReadFile)
+	if err != nil {
+		t.Fatalf("GetTool() error = %v", err)
+	}
+	tool = tool.ForkToolRuntime(&tools.ToolRuntime{
+		TenantID:   organizationID,
+		InvokeFrom: tools.ToolInvokeFromAgent,
+		RuntimeParameters: map[string]interface{}{
+			"organization_id":                    organizationID,
+			tools.ExternalUserIDRuntimeParameter: externalUserID,
+		},
+	})
+
+	messages, err := tool.Invoke(context.Background(), accountID, map[string]interface{}{"file_id": "file-1"}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if got := singleJSONPayload(t, messages)["content"]; got != "external content" {
+		t.Fatalf("content = %#v, want external content", got)
+	}
+}
+
 func TestReadFileToolRejectsUnownedOrganizationFileWithoutWorkspace(t *testing.T) {
 	organizationID := uuid.NewString()
 	accountID := uuid.NewString()
@@ -505,7 +545,7 @@ func TestDeleteFileToolDeletesManageableWorkspaceFile(t *testing.T) {
 	if len(fileService.deleted) != 1 || fileService.deleted[0] != "file-1" {
 		t.Fatalf("deleted = %#v, want file-1", fileService.deleted)
 	}
-	if len(perms.codes) != 1 || perms.codes[0] != workspacemodel.WorkspacePermissionFileManage {
+	if len(perms.codes) != 1 || perms.codes[0] != workspacemodel.WorkspacePermissionFileDelete {
 		t.Fatalf("permission codes = %#v, want file.manage", perms.codes)
 	}
 	payload := singleJSONPayload(t, messages)
@@ -660,8 +700,8 @@ func TestSaveFileToolSavesGeneratedToolFileWithAdvancedPermission(t *testing.T) 
 	if upload.filename != "saved-draft.md" || string(upload.content) != "# Draft\nHello" || upload.workspaceID != workspaceID {
 		t.Fatalf("upload = %#v, want saved markdown into workspace", upload)
 	}
-	if len(perms.codes) != 1 || perms.codes[0] != workspacemodel.WorkspacePermissionFileUploadCreate {
-		t.Fatalf("permission codes = %#v, want file upload create", perms.codes)
+	if len(perms.codes) != 1 || perms.codes[0] != workspacemodel.WorkspacePermissionFileUpload {
+		t.Fatalf("permission codes = %#v, want file upload", perms.codes)
 	}
 	if len(messages) != 1 || messages[0].Type != tools.ToolInvokeMessageTypeJSON {
 		t.Fatalf("messages = %#v, want json message only", messages)
@@ -1134,10 +1174,14 @@ func (e *fakeContentExtractor) ExtractMultipleFiles(_ context.Context, fileIDs [
 
 type fakeWorkspacePermissionService struct {
 	allowed bool
+	granted []workspacemodel.WorkspacePermissionCode
 	codes   []workspacemodel.WorkspacePermissionCode
 }
 
 func (s *fakeWorkspacePermissionService) CheckWorkspacePermission(_ context.Context, _, _, _ string, code workspacemodel.WorkspacePermissionCode) (bool, error) {
 	s.codes = append(s.codes, code)
+	if s.granted != nil {
+		return workspacemodel.WorkspacePermissionCodesAllow(s.granted, code), nil
+	}
 	return s.allowed, nil
 }

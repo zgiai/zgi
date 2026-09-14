@@ -559,6 +559,8 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 		billingCtx.PromptTokens = 0
 		billingCtx.CacheReadTokens = 0
 		billingCtx.CacheWriteTokens = 0
+		billingCtx.CacheWrite5mTokens = 0
+		billingCtx.CacheWrite1hTokens = 0
 		billingCtx.CompletionTokens = 0
 		billingCtx.TotalTokens = 0
 		billingCtx.ActualCredits = 0
@@ -608,6 +610,8 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 			billingCtx.PromptTokens = 0
 			billingCtx.CacheReadTokens = 0
 			billingCtx.CacheWriteTokens = 0
+			billingCtx.CacheWrite5mTokens = 0
+			billingCtx.CacheWrite1hTokens = 0
 			billingCtx.CompletionTokens = 0
 			billingCtx.TotalTokens = 0
 			billingCtx.ActualCredits = 0
@@ -662,6 +666,8 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 				billingCtx.PromptTokens = latestUsage.UncachedInputTokens
 				billingCtx.CacheReadTokens = latestUsage.CacheReadTokens
 				billingCtx.CacheWriteTokens = latestUsage.CacheWriteTokens
+				billingCtx.CacheWrite5mTokens = latestUsage.CacheWrite5mTokens
+				billingCtx.CacheWrite1hTokens = latestUsage.CacheWrite1hTokens
 			} else {
 				billingCtx.PromptTokens = totalPromptTokens
 			}
@@ -674,7 +680,8 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 		if !useSystemProvider {
 			quote, err := s.quoteTokenPricingForSettlementUsage(ctx, billingCtx, pricingModelRefFromBillingContext(billingCtx), TokenUsage{
 				InputTokens: billingCtx.PromptTokens, CacheReadTokens: billingCtx.CacheReadTokens,
-				CacheWriteTokens: billingCtx.CacheWriteTokens, OutputTokens: billingCtx.CompletionTokens,
+				CacheWriteTokens: billingCtx.CacheWriteTokens, CacheWrite5mTokens: billingCtx.CacheWrite5mTokens,
+				CacheWrite1hTokens: billingCtx.CacheWrite1hTokens, OutputTokens: billingCtx.CompletionTokens,
 			})
 			if err != nil {
 				wrappedErr := wrapPricingCalculationError(err)

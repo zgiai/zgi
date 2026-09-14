@@ -73,6 +73,9 @@ func TestWorkflowContinuationUnavailableBindingDeniedAcrossAgentSurfaces(t *test
 				c, _ := gin.CreateTestContext(w)
 				c.Request = httptest.NewRequest(http.MethodPost, "/workflow-continuation", bytes.NewBufferString(body))
 				c.Request.Header.Set("Content-Type", "application/json")
+				if surface == "api" {
+					c.Request.Header.Set(ExternalUserIDHeader, "end-user-1")
+				}
 				c.Params = gin.Params{
 					{Key: "agent_id", Value: ids.agentID.String()},
 					{Key: "web_app_id", Value: ids.webAppID.String()},
@@ -94,8 +97,12 @@ func TestWorkflowContinuationUnavailableBindingDeniedAcrossAgentSurfaces(t *test
 					handler.ContinueAPIKeyAgentRuntimeWorkflowContinuation(c)
 				}
 
-				if w.Code != http.StatusOK {
-					t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusOK, w.Body.String())
+				wantStatus := http.StatusOK
+				if surface == "api" {
+					wantStatus = http.StatusConflict
+				}
+				if w.Code != wantStatus {
+					t.Fatalf("status = %d, want %d; body=%s", w.Code, wantStatus, w.Body.String())
 				}
 				var responseBody map[string]interface{}
 				if err := json.Unmarshal(w.Body.Bytes(), &responseBody); err != nil {

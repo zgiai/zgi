@@ -93,7 +93,7 @@ func FromEnv() Config {
 		MaxArtifactManifestBytes:                   getEnvInt64AllowZero("ZGI_SANDBOX_MAX_ARTIFACT_MANIFEST_BYTES", 0),
 		MaxArtifactBytesPerOrganization:            getEnvInt64AllowZero("ZGI_SANDBOX_MAX_ARTIFACT_BYTES_PER_ORGANIZATION", 0),
 		MaxDependencyProfilesPerOrganization:       getEnvIntAllowZero("ZGI_SANDBOX_MAX_DEPENDENCY_PROFILES_PER_ORGANIZATION", 0),
-		MaxDependencyProfileSizeBytes:              getEnvInt64("ZGI_SANDBOX_MAX_DEPENDENCY_PROFILE_SIZE_BYTES", 1024*1024*1024),
+		MaxDependencyProfileSizeBytes:              getEnvInt64("ZGI_SANDBOX_MAX_DEPENDENCY_PROFILE_SIZE_BYTES", 3*1024*1024*1024),
 		DependencyProfileBuildTimeoutSeconds:       getEnvInt("ZGI_SANDBOX_DEPENDENCY_PROFILE_BUILD_TIMEOUT_SECONDS", 600),
 		DependencyBuildCommand:                     getEnv("ZGI_SANDBOX_DEPENDENCY_BUILD_COMMAND", ""),
 		DependencyBuildWorkerEnabled:               getEnvBool("ZGI_SANDBOX_DEPENDENCY_BUILD_WORKER_ENABLED", true),

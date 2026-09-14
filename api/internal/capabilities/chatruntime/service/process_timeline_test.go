@@ -1036,3 +1036,16 @@ func TestProcessTimelineRecorderPersistsManagedFileLinkAfterApprovedInvocation(t
 		t.Fatalf("managed content_chars = %d, want 4096", got)
 	}
 }
+
+func TestProcessTimelineScriptFailureKeepsExecutionIdentity(t *testing.T) {
+	prepared := &PreparedChat{Conversation: &runtimemodel.Conversation{ID: uuid.New()}, Message: &runtimemodel.Message{ID: uuid.New(), Metadata: map[string]interface{}{}}}
+	recorder := newProcessTimelineRecorder(t.Context(), t.Context(), &service{}, prepared, nil)
+	trace := skills.SkillTrace{Kind: "tool_call", InvocationID: "failed-call", SkillID: "script-test", ToolName: skills.SkillScriptToolRun, Status: "error", Result: map[string]interface{}{"exit_code": 2, "package_sha256": "verified-package"}}
+	if err := recorder.RecordEvent(streamEventSkillCallError, skillCallErrorPayload(prepared, trace)); err != nil {
+		t.Fatal(err)
+	}
+	calls := skillInvocationsFromMetadata(prepared.Message.Metadata["skill_invocations"])
+	if len(calls) != 1 || calls[0]["status"] != "error" || mapFromOperationContext(calls[0]["result"])["package_sha256"] != "verified-package" {
+		t.Fatalf("failure lost identity: %#v", calls)
+	}
+}

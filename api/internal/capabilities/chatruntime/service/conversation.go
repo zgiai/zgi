@@ -93,6 +93,7 @@ func (s *service) createConversationForCaller(ctx context.Context, scope Scope, 
 		AccountID:        scope.AccountID,
 		CallerType:       normalizeCallerType(caller.Type),
 		CallerID:         normalizeCallerID(caller.ID),
+		ExternalUserID:   normalizeCallerID(scope.ExternalUserID),
 		ConversationType: normalizeConversationType(caller.ConversationType),
 		Title:            title,
 		Status:           runtimemodel.ConversationStatusNormal,
@@ -173,6 +174,7 @@ func (s *service) getConversationByCallerScoped(ctx context.Context, scope Scope
 		scope.AccountID,
 		normalizeCallerType(caller.Type),
 		normalizeCallerID(caller.ID),
+		normalizeCallerID(scope.ExternalUserID),
 		normalizeConversationType(caller.ConversationType),
 	)
 	if err != nil {
@@ -181,7 +183,25 @@ func (s *service) getConversationByCallerScoped(ctx context.Context, scope Scope
 	if !conversationMatchesCallerSource(conversation, caller) {
 		return nil, ErrNotFound
 	}
+	if !conversationMatchesExternalUser(conversation, scope.ExternalUserID) {
+		return nil, ErrNotFound
+	}
 	return conversation, nil
+}
+
+func conversationMatchesExternalUser(conversation *runtimemodel.Conversation, externalUserID *uuid.UUID) bool {
+	expected := normalizeCallerID(externalUserID)
+	if expected == nil {
+		return true
+	}
+	return conversation != nil && conversation.ExternalUserID != nil && *conversation.ExternalUserID == *expected
+}
+
+func (s *service) getInteractiveContinuationConversation(ctx context.Context, scope Scope, caller Caller, id uuid.UUID) (*runtimemodel.Conversation, error) {
+	if normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAIChat && caller.ID == nil && strings.TrimSpace(caller.Source) == "" {
+		return s.getConversation(ctx, scope, id)
+	}
+	return s.getConversationByCallerScoped(ctx, scope, caller, id)
 }
 
 func conversationMatchesCallerSource(conversation *runtimemodel.Conversation, caller Caller) bool {
@@ -541,6 +561,7 @@ func (s *service) ListConversationsByCaller(ctx context.Context, scope Scope, ca
 			scope.AccountID,
 			normalizeCallerType(caller.Type),
 			normalizeCallerID(caller.ID),
+			normalizeCallerID(scope.ExternalUserID),
 			conversationType,
 			normalizeConversationSource(caller.Source),
 			normalizeCallerID(caller.SourceWebAppID),
@@ -552,7 +573,7 @@ func (s *service) ListConversationsByCaller(ctx context.Context, scope Scope, ca
 		}
 		return conversations, total, err
 	}
-	conversations, total, err := s.repos.Conversation.ListByCallerScoped(ctx, scope.OrganizationID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID), conversationType, limit, offset)
+	conversations, total, err := s.repos.Conversation.ListByCallerScoped(ctx, scope.OrganizationID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID), normalizeCallerID(scope.ExternalUserID), conversationType, limit, offset)
 	if err == nil {
 		s.enqueueConversationTitleBackfills(ctx, scope, caller, conversations)
 	}
@@ -622,6 +643,7 @@ func (s *service) searchByCallerSurface(ctx context.Context, scope Scope, caller
 		scope.AccountID,
 		normalizeCallerType(caller.Type),
 		normalizeCallerID(caller.ID),
+		normalizeCallerID(scope.ExternalUserID),
 		normalizeConversationType(caller.ConversationType),
 		strings.TrimSpace(caller.Source),
 		normalizeCallerID(caller.SourceWebAppID),
@@ -981,6 +1003,7 @@ func (s *service) StopMessage(ctx context.Context, scope Scope, id uuid.UUID) (*
 		}
 
 		metadata := workflowContinuationMetadataWithoutUserInputRequest(message.Metadata)
+		markOperationPlanStopped(metadata)
 		continuation := workflowApprovalContinuationFromMetadata(metadata)
 		isWorkflowContinuation := continuation.WorkflowRunID != ""
 		if isWorkflowContinuation {

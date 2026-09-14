@@ -68,3 +68,9 @@ Thumbs.db
 
 # Dependencies (will be downloaded in container)
 vendor/
+
+# Runtime and local-only data
+storage/
+**/__pycache__/
+**/*.pyc
+**/.venv/

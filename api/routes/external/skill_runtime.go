@@ -25,15 +25,17 @@ func newExternalSkillRuntimeWithSandbox(toolEngine *tools.ToolEngine, toolManage
 		return runtime
 	}
 	return runtime.WithScriptRunner(skills.NewSandboxScriptRunner(skills.SandboxScriptRunnerConfig{
-		Endpoint:              appconfig.GlobalConfig.CodeExec.Endpoint,
-		APIKey:                appconfig.GlobalConfig.CodeExec.APIKey,
-		ConnectTimeout:        externalSecondsDuration(appconfig.GlobalConfig.CodeExec.ConnectTimeoutSeconds),
-		CreateTimeout:         externalSecondsDuration(appconfig.GlobalConfig.CodeExec.CreateTimeoutSeconds),
-		UploadTimeout:         externalSecondsDuration(appconfig.GlobalConfig.CodeExec.UploadTimeoutSeconds),
-		CommandTimeoutPadding: externalSecondsDuration(appconfig.GlobalConfig.CodeExec.CommandTimeoutPaddingSeconds),
-		ArtifactTimeout:       externalSecondsDuration(appconfig.GlobalConfig.CodeExec.ArtifactTimeoutSeconds),
-		CleanupTimeout:        externalSecondsDuration(appconfig.GlobalConfig.CodeExec.CleanupTimeoutSeconds),
-		InputFileProvider:     externalSkillInputFileProvider{fileService: fileService, organizationService: organizationService},
+		RuntimeGrantsPath:         appconfig.GlobalConfig.CodeExec.SkillRuntimeGrantsPath,
+		Endpoint:                  appconfig.GlobalConfig.CodeExec.Endpoint,
+		APIKey:                    appconfig.GlobalConfig.CodeExec.APIKey,
+		FallbackDependencyProfile: appconfig.GlobalConfig.CodeExec.SystemDataProfile,
+		ConnectTimeout:            externalSecondsDuration(appconfig.GlobalConfig.CodeExec.ConnectTimeoutSeconds),
+		CreateTimeout:             externalSecondsDuration(appconfig.GlobalConfig.CodeExec.CreateTimeoutSeconds),
+		UploadTimeout:             externalSecondsDuration(appconfig.GlobalConfig.CodeExec.UploadTimeoutSeconds),
+		CommandTimeoutPadding:     externalSecondsDuration(appconfig.GlobalConfig.CodeExec.CommandTimeoutPaddingSeconds),
+		ArtifactTimeout:           externalSecondsDuration(appconfig.GlobalConfig.CodeExec.ArtifactTimeoutSeconds),
+		CleanupTimeout:            externalSecondsDuration(appconfig.GlobalConfig.CodeExec.CleanupTimeoutSeconds),
+		InputFileProvider:         externalSkillInputFileProvider{fileService: fileService, organizationService: organizationService},
 	}))
 }
 
@@ -76,7 +78,10 @@ func (p externalSkillInputFileProvider) GetSkillScriptInputFile(ctx context.Cont
 		return skills.SkillScriptInputFile{}, fmt.Errorf("file is not accessible")
 	}
 	if file.IsTemporary {
-		expectedUser := strings.TrimSpace(execCtx.UserID)
+		expectedUser := strings.TrimSpace(execCtx.ExternalUserID)
+		if expectedUser == "" {
+			expectedUser = strings.TrimSpace(execCtx.UserID)
+		}
 		if expectedUser == "" || strings.TrimSpace(file.CreatedBy) != expectedUser {
 			return skills.SkillScriptInputFile{}, fmt.Errorf("file is not accessible")
 		}

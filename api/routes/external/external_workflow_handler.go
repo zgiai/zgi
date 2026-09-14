@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/app/agents"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow"
 	workflow_file "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/model"
@@ -54,6 +55,14 @@ type externalWorkflowService interface {
 	WorkflowRunElapsedMillisecondsForEvent(ctx context.Context, workflowRunID string, fallback float64) float64
 }
 
+type externalAgentRepository interface {
+	GetByID(ctx context.Context, id string) (*agents.Agent, error)
+}
+
+type externalAgentRuntimeConfigService interface {
+	GetPublishedAgentRuntimeConfig(ctx context.Context, agentID string) (*dto.AgentWebAppRuntimeConfigResponse, error)
+}
+
 // ExternalWorkflowHandler handles external workflow API requests with API key authentication
 type ExternalWorkflowHandler struct {
 	workflowService   externalWorkflowService
@@ -62,10 +71,12 @@ type ExternalWorkflowHandler struct {
 	enterpriseService interfaces.OrganizationService
 	quotaService      interfaces.QuotaService
 	db                *gorm.DB
+	agentRepository   externalAgentRepository
+	agentRuntime      externalAgentRuntimeConfigService
 }
 
 // NewExternalWorkflowHandler creates a new external workflow handler
-func NewExternalWorkflowHandler(workflowService *workflow.WorkflowService, fileService interfaces.FileService, contentExtractor workflow_file.ContentExtractor, enterpriseService interfaces.OrganizationService, quotaService interfaces.QuotaService, db *gorm.DB) *ExternalWorkflowHandler {
+func NewExternalWorkflowHandler(workflowService *workflow.WorkflowService, fileService interfaces.FileService, contentExtractor workflow_file.ContentExtractor, enterpriseService interfaces.OrganizationService, quotaService interfaces.QuotaService, db *gorm.DB, agentRepository externalAgentRepository, agentRuntime externalAgentRuntimeConfigService) *ExternalWorkflowHandler {
 	return &ExternalWorkflowHandler{
 		workflowService:   workflowService,
 		fileService:       fileService,
@@ -73,6 +84,8 @@ func NewExternalWorkflowHandler(workflowService *workflow.WorkflowService, fileS
 		enterpriseService: enterpriseService,
 		quotaService:      quotaService,
 		db:                db,
+		agentRepository:   agentRepository,
+		agentRuntime:      agentRuntime,
 	}
 }
 
@@ -942,42 +955,43 @@ func (h *ExternalWorkflowHandler) StopWorkflowTask(c *gin.Context) {
 }
 
 func (h *ExternalWorkflowHandler) UploadFile(c *gin.Context) {
-	user := c.PostForm("user")
-	if user == "" {
-		c.JSON(400, gin.H{"message": "user parameter is required"})
+	keyInfo, agent, ok := h.externalAgent(c)
+	if !ok {
 		return
+	}
+	user, usedLegacyUser, err := agents.ResolveExternalUserID(c.GetHeader(agents.ExternalUserIDHeader), c.PostForm("user"))
+	if err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, agents.ExternalUserIDErrorMessage(err))
+		return
+	}
+	if usedLegacyUser {
+		c.Header("Deprecation", "true")
+		c.Header("Warning", `299 - "the user form field is deprecated; use X-External-User-ID"`)
 	}
 
 	file, err := c.FormFile("file")
 	if err != nil {
-		c.JSON(400, gin.H{"message": "file is required"})
+		response.FailWithMessage(c, response.ErrInvalidParam, "file is required")
 		return
 	}
 
-	// Get API key info for tenant and user context
-	apiKeyInfo, exists := c.Get("api_key_info")
-	if !exists {
-		c.JSON(401, gin.H{"message": "API key info not found"})
-		return
-	}
-
-	keyInfo, _ := apiKeyInfo.(*middleware.APIKeyInfo)
 	tenantID := keyInfo.TenantID.String()
-	// Use API Key ID as user ID for external API calls
 	userID := keyInfo.ID.String()
+	if externalAppMode(agent.AgentsType) == "agent" {
+		userID = agents.DeriveExternalUserID(keyInfo.TenantID, keyInfo.AgentID, user).String()
+	}
 
 	logger.Info("External API - File upload started",
 		"filename", file.Filename,
 		"size", file.Size,
 		"tenant_id", tenantID,
-		"user", user,
 	)
 
 	// Open uploaded file
 	fileContent, err := file.Open()
 	if err != nil {
 		logger.CriticalContext(c.Request.Context(), "external api failed to open uploaded file", "tenant_id", tenantID, "filename", file.Filename, err)
-		c.JSON(500, gin.H{"message": "failed to open uploaded file"})
+		response.Fail(c, response.ErrSystemError)
 		return
 	}
 	defer fileContent.Close()
@@ -986,7 +1000,7 @@ func (h *ExternalWorkflowHandler) UploadFile(c *gin.Context) {
 	content, err := io.ReadAll(fileContent)
 	if err != nil {
 		logger.CriticalContext(c.Request.Context(), "external api failed to read file content", "tenant_id", tenantID, "filename", file.Filename, err)
-		c.JSON(500, gin.H{"message": "failed to read file content"})
+		response.Fail(c, response.ErrSystemError)
 		return
 	}
 
@@ -1020,7 +1034,10 @@ func (h *ExternalWorkflowHandler) UploadFile(c *gin.Context) {
 				"filename", file.Filename,
 				"size", file.Size,
 			)
-			c.JSON(413, gin.H{"message": "file too large"})
+			c.JSON(http.StatusRequestEntityTooLarge, response.Response{
+				Code:    fmt.Sprint(response.ErrFileTooLarge.Code),
+				Message: response.ErrFileTooLarge.Message,
+			})
 			return
 		}
 		if errors.Is(err, model.ErrUnsupportedFileType) {
@@ -1028,11 +1045,14 @@ func (h *ExternalWorkflowHandler) UploadFile(c *gin.Context) {
 				"filename", file.Filename,
 				"mime_type", mimeType,
 			)
-			c.JSON(415, gin.H{"message": "unsupported file type"})
+			c.JSON(http.StatusUnsupportedMediaType, response.Response{
+				Code:    fmt.Sprint(response.ErrUnsupportedFileType.Code),
+				Message: response.ErrUnsupportedFileType.Message,
+			})
 			return
 		}
 		logger.CriticalContext(c.Request.Context(), "external api failed to upload file", "tenant_id", tenantID, "filename", file.Filename, err)
-		c.JSON(500, gin.H{"message": "failed to upload file"})
+		response.Fail(c, response.ErrSystemError)
 		return
 	}
 
@@ -1047,7 +1067,6 @@ func (h *ExternalWorkflowHandler) UploadFile(c *gin.Context) {
 		"filename", file.Filename,
 		"size", uploadedFile.Size,
 		"tenant_id", tenantID,
-		"user", user,
 		"content_extraction", "triggered_async",
 	)
 
@@ -1064,61 +1083,279 @@ func (h *ExternalWorkflowHandler) UploadFile(c *gin.Context) {
 }
 
 func (h *ExternalWorkflowHandler) GetAppInfo(c *gin.Context) {
-	// Get API key info
-	apiKeyInfo, exists := c.Get("api_key_info")
-	if !exists {
-		c.JSON(401, gin.H{"message": "API key info not found"})
+	keyInfo, agent, ok := h.externalAgent(c)
+	if !ok {
 		return
 	}
 
-	keyInfo, _ := apiKeyInfo.(*middleware.APIKeyInfo)
-	agentID := keyInfo.AgentID.String()
+	mode := externalAppMode(agent.AgentsType)
+	version, versionUUID := "", ""
+	if mode == "agent" {
+		if h.agentRuntime == nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		published, err := h.agentRuntime.GetPublishedAgentRuntimeConfig(c.Request.Context(), agent.ID.String())
+		if err != nil {
+			logger.ErrorContext(c.Request.Context(), "external api failed to load published Agent info", "agent_id", agent.ID.String(), err)
+			response.Fail(c, response.ErrAppNotFound)
+			return
+		}
+		version, versionUUID = published.Version, published.VersionUUID
+	} else {
+		if h.workflowService == nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		workflowData, err := h.workflowService.GetLatestPublishedWorkflow(c.Request.Context(), keyInfo.TenantID.String(), agent.ID.String(), true)
+		if err != nil {
+			logger.ErrorContext(c.Request.Context(), "external api failed to load published workflow info", "agent_id", agent.ID.String(), err)
+			response.Fail(c, response.ErrAppNotFound)
+			return
+		}
+		if workflowMap, mapOK := workflowData.(map[string]interface{}); mapOK {
+			version = stringValue(workflowMap["version"])
+			versionUUID = stringValue(workflowMap["version_uuid"])
+		}
+	}
 
-	// TODO: Get actual agent info from database
-	c.JSON(200, gin.H{
-		"name":        "My Workflow App",
-		"description": "Workflow application",
-		"tags":        []string{"workflow"},
-		"mode":        "workflow",
-		"author_name": "ZGI",
-		"agent_id":    agentID,
+	icon, iconType, iconURL := "", "", ""
+	if agent.Icon != nil {
+		icon = *agent.Icon
+	}
+	if agent.IconType != nil {
+		iconType = *agent.IconType
+	}
+	if iconType == "image" && icon != "" && h.fileService != nil {
+		if resolved, err := h.fileService.GetFileURL(c.Request.Context(), icon); err == nil {
+			iconURL = resolved
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"name":         agent.Name,
+		"description":  agent.Description,
+		"tags":         []string{mode},
+		"mode":         mode,
+		"author_name":  "ZGI",
+		"agent_id":     agent.ID.String(),
+		"icon":         icon,
+		"icon_type":    iconType,
+		"icon_url":     iconURL,
+		"version":      version,
+		"version_uuid": versionUUID,
 	})
 }
 
 func (h *ExternalWorkflowHandler) GetAppParameters(c *gin.Context) {
-	// Get API key info
-	_, exists := c.Get("api_key_info")
-	if !exists {
-		c.JSON(401, gin.H{"message": "API key info not found"})
+	keyInfo, agent, ok := h.externalAgent(c)
+	if !ok {
 		return
 	}
 
-	// TODO: Get actual workflow parameters from database
-	c.JSON(200, gin.H{
-		"user_input_form": []interface{}{
-			gin.H{
-				"paragraph": gin.H{
-					"label":    "Query",
-					"variable": "query",
-					"required": true,
-					"default":  "",
-				},
-			},
-		},
+	variables := []map[string]interface{}{}
+	features := map[string]interface{}{}
+	fileUploadEnabled := false
+	supportsVision := false
+	memoryEnabled := false
+	memoryRequiresUser := false
+	if externalAppMode(agent.AgentsType) == "agent" {
+		if h.agentRuntime == nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		published, err := h.agentRuntime.GetPublishedAgentRuntimeConfig(c.Request.Context(), agent.ID.String())
+		if err != nil {
+			logger.ErrorContext(c.Request.Context(), "external api failed to load published Agent parameters", "agent_id", agent.ID.String(), err)
+			response.Fail(c, response.ErrAppNotFound)
+			return
+		}
+		fileUploadEnabled = published.Config.FileUpload
+		supportsVision = published.Config.SupportsVision
+		memoryEnabled = published.Config.AgentMemoryEnabled
+		memoryRequiresUser = externalAgentMemoryRequiresUser(published.Config)
+		features = map[string]interface{}{
+			"home_title":          published.Config.HomeTitle,
+			"opening_statement":   published.Config.OpeningStatement,
+			"input_placeholder":   published.Config.InputPlaceholder,
+			"theme_color":         published.Config.ThemeColor,
+			"suggested_questions": published.Config.SuggestedQuestions,
+			"supports_vision":     published.Config.SupportsVision,
+		}
+	} else {
+		if h.workflowService == nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		workflowData, err := h.workflowService.GetLatestPublishedWorkflow(c.Request.Context(), keyInfo.TenantID.String(), agent.ID.String(), true)
+		if err != nil {
+			logger.ErrorContext(c.Request.Context(), "external api failed to load published workflow parameters", "agent_id", agent.ID.String(), err)
+			response.Fail(c, response.ErrAppNotFound)
+			return
+		}
+		workflowMap, mapOK := workflowData.(map[string]interface{})
+		if !mapOK {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		variables, err = externalWorkflowStartVariables(workflowMap["graph"])
+		if err != nil {
+			logger.ErrorContext(c.Request.Context(), "external api failed to parse published workflow parameters", "agent_id", agent.ID.String(), err)
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if value, ok := workflowMap["features"].(map[string]interface{}); ok {
+			features = value
+			fileUploadEnabled = externalFileUploadEnabled(value["file_upload"])
+			supportsVision = fileUploadEnabled
+		}
+	}
+
+	var uploadConfig *interfaces.FileUploadConfigResponse
+	if h.fileService != nil {
+		uploadConfig = h.fileService.GetUploadConfig()
+	}
+	systemParameters := gin.H{}
+	fileLimit := 0
+	if uploadConfig != nil {
+		fileLimit = uploadConfig.WorkflowFileUploadLimit
+		systemParameters = gin.H{
+			"file_size_limit":         uploadConfig.FileSizeLimit,
+			"image_file_size_limit":   uploadConfig.ImageFileSizeLimit,
+			"audio_file_size_limit":   uploadConfig.AudioFileSizeLimit,
+			"video_file_size_limit":   uploadConfig.VideoFileSizeLimit,
+			"file_upload_count_limit": uploadConfig.WorkflowFileUploadLimit,
+		}
+	}
+
+	allowedFileTypes := []string{}
+	if h.fileService != nil {
+		allowedFileTypes = h.fileService.GetSupportedFileTypes()
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"user_input_form": variables,
+		"features":        features,
 		"file_upload": gin.H{
+			"enabled":            fileUploadEnabled,
+			"number_limits":      fileLimit,
+			"allowed_file_types": allowedFileTypes,
+			"transfer_methods":   []string{"local_file"},
 			"image": gin.H{
-				"enabled":          false,
-				"number_limits":    3,
-				"transfer_methods": []string{"remote_url", "local_file"},
+				"enabled":          fileUploadEnabled && supportsVision,
+				"number_limits":    fileLimit,
+				"transfer_methods": []string{"local_file"},
 			},
 		},
-		"system_parameters": gin.H{
-			"file_size_limit":       50,
-			"image_file_size_limit": 10,
-			"audio_file_size_limit": 50,
-			"video_file_size_limit": 100,
+		"agent_memory": gin.H{
+			"enabled":       memoryEnabled,
+			"requires_user": memoryRequiresUser,
 		},
+		"system_parameters": systemParameters,
 	})
+}
+
+func (h *ExternalWorkflowHandler) externalAgent(c *gin.Context) (*middleware.APIKeyInfo, *agents.Agent, bool) {
+	value, exists := c.Get("api_key_info")
+	keyInfo, valid := value.(*middleware.APIKeyInfo)
+	if !exists || !valid || keyInfo == nil {
+		response.Fail(c, response.ErrUnauthorized)
+		return nil, nil, false
+	}
+	if h.agentRepository == nil {
+		response.Fail(c, response.ErrSystemError)
+		return nil, nil, false
+	}
+	agent, err := h.agentRepository.GetByID(c.Request.Context(), keyInfo.AgentID.String())
+	if err != nil || agent == nil {
+		logger.ErrorContext(c.Request.Context(), "external api failed to load API-key Agent", "agent_id", keyInfo.AgentID.String(), err)
+		response.Fail(c, response.ErrAppNotFound)
+		return nil, nil, false
+	}
+	return keyInfo, agent, true
+}
+
+func externalAppMode(agentType string) string {
+	switch strings.ToUpper(strings.TrimSpace(agentType)) {
+	case "AGENT", "CONVERSATIONAL_AGENT":
+		return "agent"
+	case "CONVERSATIONAL_WORKFLOW", "CHAT_AGENT":
+		return "chat-workflow"
+	default:
+		return "workflow"
+	}
+}
+
+func externalAgentMemoryRequiresUser(config dto.AgentConfigResponse) bool {
+	if !config.AgentMemoryEnabled {
+		return false
+	}
+	for _, slot := range config.AgentMemorySlots {
+		if slot.Enabled && strings.TrimSpace(slot.Key) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func externalWorkflowStartVariables(value interface{}) ([]map[string]interface{}, error) {
+	var graph map[string]interface{}
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		graph = typed
+	case string:
+		if strings.TrimSpace(typed) == "" {
+			return []map[string]interface{}{}, nil
+		}
+		if err := json.Unmarshal([]byte(typed), &graph); err != nil {
+			return nil, fmt.Errorf("invalid graph JSON: %w", err)
+		}
+	default:
+		return []map[string]interface{}{}, nil
+	}
+
+	nodes, _ := graph["nodes"].([]interface{})
+	for _, rawNode := range nodes {
+		node, _ := rawNode.(map[string]interface{})
+		data, _ := node["data"].(map[string]interface{})
+		if !strings.EqualFold(stringValue(data["type"]), "start") {
+			continue
+		}
+		rawVariables, _ := data["variables"].([]interface{})
+		variables := make([]map[string]interface{}, 0, len(rawVariables))
+		for _, rawVariable := range rawVariables {
+			if variable, ok := rawVariable.(map[string]interface{}); ok {
+				variables = append(variables, variable)
+			}
+		}
+		return variables, nil
+	}
+	return []map[string]interface{}{}, nil
+}
+
+func externalFileUploadEnabled(value interface{}) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case map[string]interface{}:
+		enabled, _ := typed["enabled"].(bool)
+		return enabled
+	default:
+		return false
+	}
+}
+
+func stringValue(value interface{}) string {
+	if value == nil {
+		return ""
+	}
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case fmt.Stringer:
+		return typed.String()
+	default:
+		return fmt.Sprint(value)
+	}
 }
 
 // validateAndProcessFileVariables validates file variables in workflow inputs

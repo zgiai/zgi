@@ -150,6 +150,32 @@ redis.call('DEL', KEYS[1])
 return raw
 `)
 
+// bindTokenToAccountScript binds an otherwise account-less one-time token to
+// exactly one account while preserving its remaining TTL. A different account
+// can never replace an existing binding.
+var bindTokenToAccountScript = redis.NewScript(`
+local raw = redis.call('GET', KEYS[1])
+if not raw then
+  return 0
+end
+local ttl = redis.call('PTTL', KEYS[1])
+if ttl <= 0 then
+  redis.call('DEL', KEYS[1])
+  return 0
+end
+local data = cjson.decode(raw)
+if data['token_type'] == nil or tostring(data['token_type']) ~= ARGV[1] then
+  return -2
+end
+local existing = data['account_id']
+if existing ~= nil and tostring(existing) ~= '' and tostring(existing) ~= ARGV[2] then
+  return -1
+end
+data['account_id'] = ARGV[2]
+redis.call('SET', KEYS[1], cjson.encode(data), 'PX', ttl)
+return 1
+`)
+
 // TokenData represents token-related data
 type TokenData struct {
 	AccountID *string                `json:"account_id"`
@@ -277,6 +303,38 @@ func (tm *TokenManager) GenerateDataToken(
 		return "", fmt.Errorf("failed to store token: %w", err)
 	}
 	return token, nil
+}
+
+// BindTokenToAccount atomically records which account was created by a
+// one-time flow. It is used to distinguish a legitimate retry from an attempt
+// to use a registration credential to sign in to a pre-existing account.
+func (tm *TokenManager) BindTokenToAccount(ctx context.Context, token, tokenType, accountID string) error {
+	token = strings.TrimSpace(token)
+	tokenType = strings.TrimSpace(tokenType)
+	accountID = strings.TrimSpace(accountID)
+	if token == "" || tokenType == "" || accountID == "" {
+		return errors.New("token, token type, and account are required")
+	}
+	status, err := bindTokenToAccountScript.Run(
+		ctx,
+		redisUtil.GetClient(),
+		[]string{tm.getTokenKey(token, tokenType)},
+		tokenType,
+		accountID,
+	).Int()
+	if err != nil {
+		return fmt.Errorf("bind token to account: %w", err)
+	}
+	switch status {
+	case 1:
+		return nil
+	case -1:
+		return errors.New("token is already bound to another account")
+	case -2:
+		return errors.New("token type mismatch")
+	default:
+		return errors.New("token not found")
+	}
 }
 
 // getTokenExpiryMinutes get expiry time from configuration

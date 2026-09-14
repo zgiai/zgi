@@ -16,7 +16,12 @@ PUBLIC_DEPLOYMENT_ENABLED=true
 ALLOW_REGISTER=true
 ```
 
-`PUBLIC_DEPLOYMENT_ENABLED` keeps account/workspace creation in public-deployment mode. `ALLOW_REGISTER` is the operator-controlled signup switch.
+`PUBLIC_DEPLOYMENT_ENABLED` exposes the public registration flow and `ALLOW_REGISTER` is the operator-controlled signup switch. `ZGI_RUN_MODE` determines how a verified self-service registration is placed:
+
+- `SELF_HOSTED` (the default) joins the user to the organization and workspace created during Setup as an organization `normal` user and workspace `member`. Organization model channels are shared, so the new user can immediately use models configured by the administrator.
+- `CLOUD` creates a personal organization and default workspace, assigns the user as Owner, and initializes the platform model route for that organization.
+
+An accepted invitation always takes precedence over this run-mode default and places the account in the invited organization/workspace without creating a duplicate personal organization.
 
 ## Resend or a compatible API
 
@@ -45,6 +50,8 @@ EMAIL_CONSOLE_WEB_URL=https://console.example.com
 ```
 
 ## SMTP
+
+For local development, an SMTP debugging server may be used at `127.0.0.1:2525` with TLS disabled. It captures messages for inspection but does not relay them to Gmail or another public mailbox. Use a real SMTP relay or Resend configuration when inbox delivery is required.
 
 STARTTLS on port 587 is the usual server configuration:
 

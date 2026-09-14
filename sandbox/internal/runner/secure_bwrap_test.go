@@ -77,6 +77,15 @@ func TestBuildSecureBwrapArgsAddsProfileEnvAfterRequestEnv(t *testing.T) {
 	if lastSetenvValue(args, "PYTHONNOUSERSITE") != "1" {
 		t.Fatalf("expected python user site isolation, got %#v", args)
 	}
+	if lastSetenvValue(args, "PYTHONDONTWRITEBYTECODE") != "1" {
+		t.Fatalf("expected immutable Python profile protection, got %#v", args)
+	}
+	if lastSetenvValue(args, "NUMBA_CACHE_DIR") != secureWorkspacePath+"/.zgi-runtime-cache/numba" {
+		t.Fatalf("expected Numba cache to use the workspace, got %#v", args)
+	}
+	if lastSetenvValue(args, "MPLCONFIGDIR") != secureWorkspacePath+"/.zgi-runtime-cache/matplotlib" {
+		t.Fatalf("expected Matplotlib cache to use the workspace, got %#v", args)
+	}
 	expectedPath := "/opt/zgi/profiles/skill-office/venv/bin:/opt/zgi/profiles/skill-office/node_modules/.bin:" + defaultSecurePath
 	if lastSetenvValue(args, "PATH") != expectedPath {
 		t.Fatalf("expected profile PATH, got %#v", args)

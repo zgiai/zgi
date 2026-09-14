@@ -494,8 +494,8 @@ func TestRunToolGovernanceDecisionStreamApproveEveryInvocationExecutesFrozenCall
 	if len(fileService.deleted) != 1 || fileService.deleted[0] != "file-1" {
 		t.Fatalf("deleted files = %#v, want one delete for approved file-1", fileService.deleted)
 	}
-	if len(workspacePerms.codes) != 1 || workspacePerms.codes[0] != workspacemodel.WorkspacePermissionFileManage {
-		t.Fatalf("workspace permission checks = %#v, want file manage check", workspacePerms.codes)
+	if len(workspacePerms.codes) != 1 || workspacePerms.codes[0] != workspacemodel.WorkspacePermissionFileDelete {
+		t.Fatalf("workspace permission checks = %#v, want the exact file delete permission", workspacePerms.codes)
 	}
 	if len(llm.appChatRequests) != 0 {
 		t.Fatalf("AppChat requests = %d, want no model tool-planning calls", len(llm.appChatRequests))
@@ -2188,7 +2188,7 @@ func (r *toolGovernanceStreamConversationRepo) GetScoped(context.Context, uuid.U
 	return r.conversation, nil
 }
 
-func (r *toolGovernanceStreamConversationRepo) GetByCallerScoped(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ uuid.UUID, _ string, _ *uuid.UUID, _ string) (*runtimemodel.Conversation, error) {
+func (r *toolGovernanceStreamConversationRepo) GetByCallerScoped(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ uuid.UUID, _ string, _, _ *uuid.UUID, _ string) (*runtimemodel.Conversation, error) {
 	return r.conversation, nil
 }
 

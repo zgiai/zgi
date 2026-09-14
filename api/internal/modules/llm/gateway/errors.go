@@ -49,6 +49,30 @@ type reportedProviderFailureError struct {
 	cause error
 }
 
+type clientIOError struct {
+	cause error
+}
+
+func (e *clientIOError) Error() string { return e.cause.Error() }
+
+func (e *clientIOError) Unwrap() error { return e.cause }
+
+// NewClientIOError marks a failure caused by reading from or writing to the
+// calling client rather than by the selected model provider.
+func NewClientIOError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &clientIOError{cause: err}
+}
+
+// IsClientIOError prevents client disconnects and truncated uploads from being
+// reported as provider or ZGI incidents by outer protocol middleware.
+func IsClientIOError(err error) bool {
+	var clientErr *clientIOError
+	return errors.As(err, &clientErr)
+}
+
 func (e *reportedProviderFailureError) Error() string {
 	return "all providers failed: " + e.cause.Error()
 }

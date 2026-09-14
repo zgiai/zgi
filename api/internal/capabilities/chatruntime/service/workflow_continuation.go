@@ -717,6 +717,7 @@ func (s *service) CompleteWorkflowApprovalContinuation(ctx context.Context, cont
 	metadata = workflowContinuationMetadataWithStatus(metadata, status)
 	continuation.Metadata = metadata
 	if status == runtimemodel.MessageStatusStopped || status == workflowContinuationStatusStopped {
+		markOperationPlanStopped(metadata)
 		continuation.answerMu.Lock()
 		answerObserved := continuation.answerObserved
 		if answerObserved {

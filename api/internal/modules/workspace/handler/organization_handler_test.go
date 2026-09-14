@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,6 +39,9 @@ type fakeOrganizationService struct {
 	getMembersPaginatedFn            func(ctx context.Context, organizationID string, page, limit int, keyword string) (*shared_dto.OrganizationMemberPaginationResponse, error)
 	getVisibleMembersPaginatedFn     func(ctx context.Context, organizationID, accountID string, page, limit int, keyword string) (*shared_dto.OrganizationMemberPaginationResponse, error)
 	getMemberByAccountIDFn           func(ctx context.Context, organizationID, accountID string) (*shared_dto.OrganizationMemberWithExtensionResponse, error)
+	getInviteLinkByTokenFn           func(ctx context.Context, token string) (*model.OrganizationInviteLink, error)
+	acceptInviteByTokenFn            func(ctx context.Context, token, accountID string, name *string) (*model.OrganizationJoinRequest, error)
+	approveDepartmentJoinRequestFn   func(ctx context.Context, organizationID, joinRequestID, reviewerAccountID string) (*model.OrganizationJoinRequest, error)
 	existsMemberByNameFn             func(ctx context.Context, organizationID string, name string, excludeAccountID string) (bool, error)
 	isOrganizationMemberFn           func(ctx context.Context, organizationID, accountID string) (bool, error)
 	addMemberFn                      func(ctx context.Context, req *shared_dto.AddOrganizationMemberRequest) error
@@ -143,6 +147,27 @@ func (f fakeOrganizationService) GetVisibleOrganizationMembersPaginated(ctx cont
 func (f fakeOrganizationService) GetOrganizationMemberByAccountID(ctx context.Context, organizationID, accountID string) (*shared_dto.OrganizationMemberWithExtensionResponse, error) {
 	if f.getMemberByAccountIDFn != nil {
 		return f.getMemberByAccountIDFn(ctx, organizationID, accountID)
+	}
+	return nil, nil
+}
+
+func (f fakeOrganizationService) GetInviteLinkByToken(ctx context.Context, token string) (*model.OrganizationInviteLink, error) {
+	if f.getInviteLinkByTokenFn != nil {
+		return f.getInviteLinkByTokenFn(ctx, token)
+	}
+	return nil, nil
+}
+
+func (f fakeOrganizationService) AcceptInviteByToken(ctx context.Context, token, accountID string, name *string) (*model.OrganizationJoinRequest, error) {
+	if f.acceptInviteByTokenFn != nil {
+		return f.acceptInviteByTokenFn(ctx, token, accountID, name)
+	}
+	return nil, nil
+}
+
+func (f fakeOrganizationService) ApproveDepartmentJoinRequest(ctx context.Context, organizationID, joinRequestID, reviewerAccountID string) (*model.OrganizationJoinRequest, error) {
+	if f.approveDepartmentJoinRequestFn != nil {
+		return f.approveDepartmentJoinRequestFn(ctx, organizationID, joinRequestID, reviewerAccountID)
 	}
 	return nil, nil
 }
@@ -288,7 +313,7 @@ type fakeAccountService struct {
 	ensureAccountContextForWorkspaceFn func(ctx context.Context, accountID, organizationID, workspaceID string) (*auth_model.AccountContext, bool, error)
 	isOrganizationAdminOrOwnerFn       func(ctx context.Context, organizationID, accountID string) (bool, error)
 	isEmailSendIPLimitFn               func(ctx context.Context, ipAddress string) (bool, error)
-	sendDirectAddMemberEmailFn         func(ctx context.Context, account *auth_model.Account, groupID, groupName, departmentName, language string) error
+	sendDirectAddMemberEmailFn         func(ctx context.Context, account *auth_model.Account, inviterID, groupID, workspaceID, groupName, departmentName, language string) error
 }
 
 func (f fakeAccountService) GetUserThroughEmail(ctx context.Context, email string) (*auth_model.Account, error) {
@@ -340,9 +365,9 @@ func (f fakeAccountService) IsEmailSendIPLimit(ctx context.Context, ipAddress st
 	return false, nil
 }
 
-func (f fakeAccountService) SendDirectAddMemberEmail(ctx context.Context, account *auth_model.Account, inviterID, groupID, groupName, departmentName, language string) error {
+func (f fakeAccountService) SendDirectAddMemberEmail(ctx context.Context, account *auth_model.Account, inviterID, groupID, workspaceID, groupName, departmentName, language string) error {
 	if f.sendDirectAddMemberEmailFn != nil {
-		return f.sendDirectAddMemberEmailFn(ctx, account, groupID, groupName, departmentName, language)
+		return f.sendDirectAddMemberEmailFn(ctx, account, inviterID, groupID, workspaceID, groupName, departmentName, language)
 	}
 	return nil
 }
@@ -1681,6 +1706,49 @@ func TestDirectAddMemberAllowsMissingWorkspace(t *testing.T) {
 	require.NotContains(t, recorder.Body.String(), `"workspace"`)
 }
 
+func TestDirectAddMemberEmailUsesCommittedWorkspace(t *testing.T) {
+	for _, workspaceID := range []string{"committed-workspace", ""} {
+		t.Run("workspace="+workspaceID, func(t *testing.T) {
+			emailSent := false
+			handler := &OrganizationHandler{
+				organizationService: fakeOrganizationService{
+					isOrganizationAdminOrOwnerFn: func(context.Context, string, string) (bool, error) { return true, nil },
+					directAddMemberFn: func(context.Context, *shared_dto.DirectAddOrganizationMemberRequest) (*shared_dto.DirectAddOrganizationMemberResponse, error) {
+						result := &shared_dto.DirectAddOrganizationMemberResponse{AccountID: "member-1", Email: "alice@example.com", Name: "Alice"}
+						if workspaceID != "" {
+							result.Workspace = &shared_dto.MemberWorkspaceInfo{ID: workspaceID}
+						}
+						return result, nil
+					},
+				},
+				accountService: fakeAccountService{
+					getAccountByIDFn: func(context.Context, string) (*auth_model.Account, error) {
+						return &auth_model.Account{ID: "member-1", Email: "alice@example.com"}, nil
+					},
+					sendDirectAddMemberEmailFn: func(_ context.Context, account *auth_model.Account, inviterID, organizationID, invitedWorkspaceID, _, _, _ string) error {
+						emailSent = true
+						require.Equal(t, "member-1", account.ID)
+						require.Equal(t, "owner-1", inviterID)
+						require.Equal(t, "org-1", organizationID)
+						require.Equal(t, workspaceID, invitedWorkspaceID, "use committed membership, never an unchecked request hint")
+						return nil
+					},
+				},
+			}
+			c, recorder := newOrganizationHandlerTestContext(http.MethodPost, "/organizations/org-1/members/direct-add")
+			c.Set("account_id", "owner-1")
+			c.Set("organization_id", "org-1")
+			c.Params = gin.Params{{Key: "organization_id", Value: "org-1"}}
+			c.Request.Body = io.NopCloser(strings.NewReader(`{"name":"Alice","email":"alice@example.com","workspace_id":"request-hint","send_email":true}`))
+			c.Request.Header.Set("Content-Type", "application/json")
+			handler.DirectAddMember(c)
+			require.Equal(t, http.StatusOK, recorder.Code)
+			require.True(t, emailSent)
+			require.Contains(t, recorder.Body.String(), `"email_delivery_status":"sent"`)
+		})
+	}
+}
+
 func TestDirectAddMemberReportsEmailFailureAfterMemberWasCreated(t *testing.T) {
 	handler := &OrganizationHandler{
 		organizationService: fakeOrganizationService{
@@ -1699,7 +1767,7 @@ func TestDirectAddMemberReportsEmailFailureAfterMemberWasCreated(t *testing.T) {
 			getAccountByIDFn: func(context.Context, string) (*auth_model.Account, error) {
 				return &auth_model.Account{ID: "member-1", Email: "alice@example.com"}, nil
 			},
-			sendDirectAddMemberEmailFn: func(context.Context, *auth_model.Account, string, string, string, string) error {
+			sendDirectAddMemberEmailFn: func(context.Context, *auth_model.Account, string, string, string, string, string, string) error {
 				return errors.New("provider unavailable")
 			},
 		},
@@ -2155,8 +2223,130 @@ func TestOrganizationRoutesRegisterCurrentMemberDetail(t *testing.T) {
 	t.Fatalf("GET /organizations/current/members/:member_id route was not registered")
 }
 
+func TestAcceptInviteLinkDelegatesApprovedEffectsToTransactionalService(t *testing.T) {
+	t.Parallel()
+
+	departmentID := "department-1"
+	acceptCalls := 0
+	legacyEffectsCalls := 0
+	handler := &OrganizationHandler{
+		organizationService: fakeOrganizationService{
+			getInviteLinkByTokenFn: func(_ context.Context, token string) (*model.OrganizationInviteLink, error) {
+				require.Equal(t, "invite-token", token)
+				return &model.OrganizationInviteLink{OrganizationID: "org-1", Status: "active"}, nil
+			},
+			existsMemberByNameFn: func(_ context.Context, organizationID, name, excludeAccountID string) (bool, error) {
+				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, "Invitee", name)
+				require.Equal(t, "account-1", excludeAccountID)
+				return false, nil
+			},
+			acceptInviteByTokenFn: func(_ context.Context, token, accountID string, name *string) (*model.OrganizationJoinRequest, error) {
+				acceptCalls++
+				require.Equal(t, "invite-token", token)
+				require.Equal(t, "account-1", accountID)
+				require.NotNil(t, name)
+				require.Equal(t, "Invitee", *name)
+				return &model.OrganizationJoinRequest{
+					OrganizationID: "org-1",
+					AccountID:      accountID,
+					DepartmentID:   &departmentID,
+					Status:         model.OrganizationJoinRequestStatusApproved,
+				}, nil
+			},
+			isOrganizationMemberFn: func(context.Context, string, string) (bool, error) {
+				legacyEffectsCalls++
+				return false, nil
+			},
+			addMemberFn: func(context.Context, *shared_dto.AddOrganizationMemberRequest) error {
+				legacyEffectsCalls++
+				return nil
+			},
+		},
+		departmentService: fakeDepartmentService{
+			addMemberFn: func(context.Context, string, string, string) (*model.DepartmentMember, error) {
+				legacyEffectsCalls++
+				return nil, nil
+			},
+		},
+	}
+
+	c, recorder := newOrganizationHandlerTestContext(http.MethodPost, "/organizations/invites/invite-token/accept")
+	c.Request.Body = io.NopCloser(bytes.NewBufferString(`{"name":"Invitee"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "token", Value: "invite-token"}}
+	c.Set("account_id", "account-1")
+
+	handler.AcceptInviteLink(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, 1, acceptCalls)
+	require.Zero(t, legacyEffectsCalls)
+}
+
+func TestApproveDepartmentJoinRequestMapsDuplicateNameAsInvalidInput(t *testing.T) {
+	t.Parallel()
+
+	handler := &OrganizationHandler{organizationService: fakeOrganizationService{
+		isOrganizationAdminOrOwnerFn: func(context.Context, string, string) (bool, error) {
+			return true, nil
+		},
+		approveDepartmentJoinRequestFn: func(context.Context, string, string, string) (*model.OrganizationJoinRequest, error) {
+			return nil, workspace_service.ErrMemberNameExists
+		},
+	}}
+	c, recorder := newOrganizationHandlerTestContext(http.MethodPost, "/organizations/org-1/join-requests/request-1/approve")
+	c.Params = gin.Params{{Key: "organization_id", Value: "org-1"}, {Key: "id", Value: "request-1"}}
+	c.Set("account_id", "admin-1")
+
+	handler.ApproveDepartmentJoinRequest(c)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	var body response.Response
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
+	require.Equal(t, strconv.Itoa(response.ErrInvalidParam.Code), body.Code)
+	require.Equal(t, "member name already exists", body.Message)
+}
+
+func TestBatchApproveDepartmentJoinRequestsDoesNotLeakInternalErrors(t *testing.T) {
+	t.Parallel()
+
+	handler := &OrganizationHandler{organizationService: fakeOrganizationService{
+		isOrganizationAdminOrOwnerFn: func(context.Context, string, string) (bool, error) {
+			return true, nil
+		},
+		approveDepartmentJoinRequestFn: func(_ context.Context, _ string, requestID string, _ string) (*model.OrganizationJoinRequest, error) {
+			if requestID == "duplicate" {
+				return nil, workspace_service.ErrMemberNameExists
+			}
+			return nil, errors.New("database password appeared in an internal error")
+		},
+	}}
+	c, recorder := newOrganizationHandlerTestContext(http.MethodPost, "/organizations/org-1/join-requests/batch-approve")
+	c.Request.Body = io.NopCloser(bytes.NewBufferString(`{"request_ids":["duplicate","internal"]}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "organization_id", Value: "org-1"}}
+	c.Set("account_id", "admin-1")
+
+	handler.BatchApproveDepartmentJoinRequests(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var envelope struct {
+		Data struct {
+			Failed []struct {
+				ID    string `json:"id"`
+				Error string `json:"error"`
+			} `json:"failed"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &envelope))
+	require.Equal(t, "member name already exists", envelope.Data.Failed[0].Error)
+	require.Equal(t, "approval failed", envelope.Data.Failed[1].Error)
+	require.NotContains(t, recorder.Body.String(), "database password")
+}
+
 func newOrganizationHandlerTestContext(method, target string) (*gin.Context, *httptest.ResponseRecorder) {
-	gin.SetMode(gin.TestMode)
+	// Parallel callers must not write Gin's process-global mode.
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(method, target, nil)

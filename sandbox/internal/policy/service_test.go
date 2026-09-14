@@ -247,6 +247,9 @@ func TestBuildDependencyProfilePromotesReservedProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected promoted profile to be selectable, got %v", err)
 	}
+	if decision.DependencyArtifactChecksum != "sha256:skill-office" {
+		t.Fatalf("managed artifact identity was dropped: %+v", decision)
+	}
 	if decision.DependencyProfile != "skill-office" || decision.DependencyProfileVersion != "2026.05.31" {
 		t.Fatalf("expected promoted profile in decision, got %+v", decision)
 	}

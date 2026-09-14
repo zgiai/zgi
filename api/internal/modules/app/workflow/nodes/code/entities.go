@@ -78,11 +78,12 @@ type Dependency struct {
 
 type NodeData struct {
 	base.NodeData
-	Variables    []VariableSelector `json:"variables"`
-	CodeLanguage CodeLanguage       `json:"code_language"`
-	Code         string             `json:"code"`
-	Outputs      map[string]Output  `json:"outputs"`
-	Dependencies []Dependency       `json:"dependencies,omitempty"`
+	Variables         []VariableSelector `json:"variables"`
+	CodeLanguage      CodeLanguage       `json:"code_language"`
+	Code              string             `json:"code"`
+	Outputs           map[string]Output  `json:"outputs"`
+	Dependencies      []Dependency       `json:"dependencies,omitempty"`
+	DependencyProfile string             `json:"dependency_profile,omitempty"`
 }
 
 // ValidateOutputs validates all output configurations

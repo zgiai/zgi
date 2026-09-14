@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +20,22 @@ import (
 )
 
 const transcriptionTestModel = "volc.seedasr.sauc.duration"
+
+var errTranscriptionUploadInterrupted = errors.New("transcription upload interrupted")
+
+type failingTranscriptionReader struct{}
+
+func (failingTranscriptionReader) Read([]byte) (int, error) {
+	return 0, errTranscriptionUploadInterrupted
+}
+
+func TestClientReadTrackerCapturesUploadFailure(t *testing.T) {
+	tracker := &clientReadTracker{src: failingTranscriptionReader{}}
+	_, err := tracker.Read(make([]byte, 1))
+	if !errors.Is(err, errTranscriptionUploadInterrupted) || !errors.Is(tracker.readErr, errTranscriptionUploadInterrupted) {
+		t.Fatalf("read error = %v, tracked = %v, want interrupted upload", err, tracker.readErr)
+	}
+}
 
 func TestTranscribeUsesOfficialHTTPRouteAndReturnsFinalText(t *testing.T) {
 	organizationID := uuid.New()

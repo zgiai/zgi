@@ -45,10 +45,12 @@ import {
   formatBillingDisplayAmountFromNormalizedCredits,
   formatRecordedBillingAmount,
   formatRecordedBillingAmountFromUSD,
-  DEFAULT_BILLING_DISPLAY,
   type BillingDisplaySettings,
 } from '@/utils/billing-display';
-import { formatAiCreditValue } from '@/utils/ai-credits';
+import {
+  formatAiCreditValue,
+  MODEL_USAGE_AI_CREDITS_INTERNAL_PRECISION,
+} from '@/utils/ai-credits';
 import { formatNumber } from '@/utils/format';
 import { normalizeModelUsageAppType } from '@/utils/model-usage-app-type';
 import { formatTokenCount } from '@/utils/token-format';
@@ -509,7 +511,10 @@ function InvocationDetailSheet({
                 [
                   t('usage.invocations.details.pointsAndPrice'),
                   t('usage.invocations.details.pointsAndPriceValue', {
-                    points: formatAiCreditValue(item.total_points, { locale }),
+                    points: formatAiCreditValue(item.total_points, {
+                      locale,
+                      maximumFractionDigits: MODEL_USAGE_AI_CREDITS_INTERNAL_PRECISION,
+                    }),
                     price: formatInvocationCost(item, billingDisplay, locale),
                   }),
                 ],
@@ -813,7 +818,7 @@ function formatInvocationCost(
   }
   return formatBillingDisplayAmountFromNormalizedCredits(
     item.total_points,
-    DEFAULT_BILLING_DISPLAY,
+    billingDisplay,
     { locale }
   );
 }

@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import Image from 'next/image';
+import { useSearchParams } from 'next/navigation';
 import {
   CalendarClock,
   CheckCircle2,
@@ -79,7 +80,7 @@ const retainedPreloadedVideoElements = new Map<string, HTMLVideoElement>();
 const mountedRetainedVideoUrls = new Set<string>();
 const videoPosterCache = new Map<string, string>();
 const videoPosterPromises = new Map<string, Promise<string | null>>();
-const HISTORY_AUTO_PREFETCH_COUNT = 6;
+const VIDEO_HISTORY_PAGE_SIZE = 10;
 const MAX_RETAINED_VIDEO_PRELOADS = 12;
 const REFERENCE_KIND_ORDER: ReferenceKind[] = ['image', 'video', 'audio'];
 const REFERENCE_ACCEPT_BY_KIND: Record<ReferenceKind, string> = {
@@ -155,6 +156,7 @@ const DEFAULT_VIDEO_GENERATION_OPTIONS: VideoGenerationOptions = {
 
 export function VideoWorkbench() {
   const t = useT('webapp');
+  const searchParams = useSearchParams();
   const { models, isLoading, error } = useAvailableModels({
     use_case: 'video-gen',
   });
@@ -174,10 +176,12 @@ export function VideoWorkbench() {
   const generateMutation = useGenerateVideoTask();
   const deleteTaskMutation = useDeleteVideoTask();
   const prefetchTaskDetail = usePrefetchVideoRuntimeTask();
-  const [selectedModel, setSelectedModel] = React.useState<ModelSelectorValue>({
-    provider: '',
-    model: '',
-  });
+  const requestedProvider = searchParams.get('provider')?.trim() ?? '';
+  const requestedModel = searchParams.get('model')?.trim() ?? '';
+  const [selectedModel, setSelectedModel] = React.useState<ModelSelectorValue>(() => ({
+    provider: requestedProvider,
+    model: requestedModel,
+  }));
   const [prompt, setPrompt] = React.useState('');
   const [settings, setSettings] = React.useState<VideoGenerationSettings>(DEFAULT_VIDEO_SETTINGS);
   const [selectedTaskId, setSelectedTaskId] = React.useState<string | null>(null);
@@ -280,6 +284,8 @@ export function VideoWorkbench() {
   }, []);
 
   React.useEffect(() => {
+    if (isLoading) return;
+
     if (selectedModel.model) {
       const stillAvailable = models.some(
         model => model.provider === selectedModel.provider && model.model === selectedModel.model
@@ -296,7 +302,7 @@ export function VideoWorkbench() {
     }
 
     setSelectedModel({ provider: fallback.provider, model: fallback.model });
-  }, [models, selectedModel.model, selectedModel.provider]);
+  }, [isLoading, models, selectedModel.model, selectedModel.provider]);
 
   const handleGenerate = React.useCallback(async () => {
     if (submitLockRef.current) return;
@@ -524,10 +530,6 @@ function GenerationRecordsSidebar({
   const [deleteTargetTask, setDeleteTargetTask] = React.useState<VideoRuntimeTask | null>(null);
   const searchInputRef = React.useRef<HTMLInputElement>(null);
   const listRef = React.useRef<HTMLDivElement>(null);
-  const autoPrefetchTasks = React.useMemo(
-    () => tasks.slice(0, HISTORY_AUTO_PREFETCH_COUNT),
-    [tasks]
-  );
   const loadMoreRef = useInfiniteObserver({
     hasNextPage,
     isFetchingNextPage,
@@ -540,18 +542,6 @@ function GenerationRecordsSidebar({
   React.useEffect(() => {
     listRef.current?.scrollTo({ top: 0 });
   }, [query]);
-
-  React.useEffect(() => {
-    if (isLoading || isError || isSearchPending || autoPrefetchTasks.length === 0) return;
-
-    const timeoutIds = autoPrefetchTasks.map((task, index) =>
-      window.setTimeout(() => onPrefetchTask(task), 120 + index * 80)
-    );
-
-    return () => {
-      timeoutIds.forEach(timeoutId => window.clearTimeout(timeoutId));
-    };
-  }, [autoPrefetchTasks, isError, isLoading, isSearchPending, onPrefetchTask]);
 
   return (
     <aside className="hidden h-full w-[328px] shrink-0 flex-col border-r border-border bg-background md:flex">
@@ -679,7 +669,7 @@ function GenerationRecordsSidebar({
                 >
                   {t('chat.videoWorkbench.loadMoreRecords')}
                 </Button>
-              ) : total > 20 ? (
+              ) : total > VIDEO_HISTORY_PAGE_SIZE ? (
                 <span className="text-[11px] text-muted-foreground">
                   {t('chat.videoWorkbench.allRecordsLoaded')}
                 </span>
@@ -725,8 +715,7 @@ function VideoTaskCard({
   const status = getTaskDisplayStatus(task);
   const isLoadingStatus = status === 'pending' || status === 'running';
   const deleteDisabled = isDeleting || isActiveVideoTaskStatus(task.status);
-  const videoUrl = toDirectToolFileDeliveryUrl(status === 'succeeded' ? task.video_url : undefined);
-  const posterUrl = useVideoPoster(videoUrl);
+  const posterUrl = status === 'succeeded' ? taskPosterURL(task) : '';
   const Icon = isLoadingStatus
     ? Loader2
     : status === 'succeeded'
@@ -759,18 +748,8 @@ function VideoTaskCard({
       )}
     >
       <div className="relative h-[72px] w-[92px] shrink-0 overflow-hidden rounded-lg border border-white/10 bg-gradient-to-br from-slate-800 via-slate-900 to-black shadow-sm">
-        {videoUrl ? (
-          posterUrl ? (
-            <img src={posterUrl} alt="" className="h-full w-full object-cover opacity-90" />
-          ) : (
-            <video
-              src={videoUrl}
-              muted
-              playsInline
-              preload="metadata"
-              className="h-full w-full object-cover opacity-90"
-            />
-          )
+        {posterUrl ? (
+          <img src={posterUrl} alt="" className="h-full w-full object-cover opacity-90" />
         ) : (
           <Image
             src="/assets/video/default-video-cover.webp"
@@ -1137,6 +1116,10 @@ function ComposerPanel({
 
 function RetainedVideoPlayer({ src, posterUrl }: { src: string; posterUrl: string }) {
   const containerRef = React.useRef<HTMLDivElement>(null);
+  const videoRef = React.useRef<HTMLVideoElement | null>(null);
+  const latestPosterUrlRef = React.useRef(posterUrl);
+
+  latestPosterUrlRef.current = posterUrl;
 
   React.useEffect(() => {
     const normalizedUrl = src.trim();
@@ -1153,22 +1136,28 @@ function RetainedVideoPlayer({ src, posterUrl }: { src: string; posterUrl: strin
     video.playsInline = true;
     video.preload = 'auto';
     video.className = 'h-full w-full bg-black object-contain';
-    if (posterUrl) {
-      video.poster = posterUrl;
-    } else {
-      video.removeAttribute('poster');
-    }
+    applyVideoPoster(video, latestPosterUrlRef.current);
 
+    videoRef.current = video;
     container.replaceChildren(video);
 
     return () => {
       mountedRetainedVideoUrls.delete(normalizedUrl);
+      if (videoRef.current === video) {
+        videoRef.current = null;
+      }
       video.pause();
       if (video.parentElement === container) {
         container.removeChild(video);
       }
     };
-  }, [posterUrl, src]);
+  }, [src]);
+
+  React.useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    applyVideoPoster(video, posterUrl);
+  }, [posterUrl]);
 
   return (
     <div
@@ -1176,6 +1165,14 @@ function RetainedVideoPlayer({ src, posterUrl }: { src: string; posterUrl: strin
       className="aspect-video w-full overflow-hidden rounded-lg border border-border bg-black"
     />
   );
+}
+
+function applyVideoPoster(video: HTMLVideoElement, posterUrl: string) {
+  if (posterUrl) {
+    video.poster = posterUrl;
+  } else {
+    video.removeAttribute('poster');
+  }
 }
 function TaskDetailSheet({
   task,
@@ -1189,8 +1186,10 @@ function TaskDetailSheet({
   const [downloadingTaskId, setDownloadingTaskId] = React.useState<string | null>(null);
   const status = task ? getTaskDisplayStatus(task) : normalizeStatus('');
   const isDownloadingVideo = Boolean(task?.task_id && downloadingTaskId === task.task_id);
-  const videoUrl = toDirectToolFileDeliveryUrl(task?.video_url);
-  const posterUrl = useVideoPoster(videoUrl);
+  const videoUrl = taskPlaybackURL(task);
+  const storedPosterUrl = taskPosterURL(task);
+  const generatedPosterUrl = useVideoPoster(storedPosterUrl ? undefined : videoUrl);
+  const posterUrl = storedPosterUrl || generatedPosterUrl;
   const displayErrorMessage = React.useMemo(
     () => formatVideoTaskErrorMessage(task?.error_message, locale),
     [locale, task?.error_message]
@@ -1519,16 +1518,20 @@ function useVideoPoster(url: string | undefined) {
 function preloadTaskMedia(task: VideoRuntimeTask, options: { eagerVideo?: boolean } = {}) {
   if (typeof window === 'undefined') return;
 
-  const videoUrl = toDirectToolFileDeliveryUrl(task.video_url);
-  preloadVideo(videoUrl, options.eagerVideo ? 'auto' : 'metadata');
-  if (options.eagerVideo) void ensureVideoPoster(videoUrl);
+  const posterUrl = taskPosterURL(task);
+  preloadImage(posterUrl);
+  const videoUrl = taskPlaybackURL(task);
+  if (options.eagerVideo) {
+    preloadVideo(videoUrl, 'auto');
+    if (!posterUrl) void ensureVideoPoster(videoUrl);
+  }
   getTaskReferenceMaterials(task, '', '').forEach(material => {
     if (material.kind === 'image') {
       preloadImage(material.url);
-    } else if (material.kind === 'video') {
+    } else if (material.kind === 'video' && options.eagerVideo) {
       const materialVideoUrl = toDirectToolFileDeliveryUrl(material.url);
-      preloadVideo(materialVideoUrl, options.eagerVideo ? 'auto' : 'metadata');
-      if (options.eagerVideo) void ensureVideoPoster(materialVideoUrl);
+      preloadVideo(materialVideoUrl, 'auto');
+      void ensureVideoPoster(materialVideoUrl);
     }
   });
 }
@@ -1640,6 +1643,14 @@ function ensureVideoPoster(url: string | undefined): Promise<string | null> {
 
   videoPosterPromises.set(normalizedUrl, posterPromise);
   return posterPromise;
+}
+
+function taskPlaybackURL(task: VideoRuntimeTask | null | undefined) {
+  return task?.playback_url?.trim() || toDirectToolFileDeliveryUrl(task?.video_url);
+}
+
+function taskPosterURL(task: VideoRuntimeTask | null | undefined) {
+  return task?.poster_url?.trim() || '';
 }
 
 function toDirectToolFileDeliveryUrl(url: string | undefined) {

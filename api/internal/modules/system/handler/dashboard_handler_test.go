@@ -160,7 +160,7 @@ func TestDashboardRecentWorkWorkspaceScopeFallsBackToCurrentWorkspace(t *testing
 }
 
 func TestDashboardStatsUsesVisibleWorkspaceScopes(t *testing.T) {
-	recorder, c := newDashboardStatsContext("org-1", "acc-1")
+	recorder, c := newDashboardStatsContext("org-1", "acc-1", "")
 	dashboardSvc := &dashboardHandlerService{
 		stats: &systemmodel.DashboardStatsResponse{
 			Models: systemmodel.ModelsStats{
@@ -230,11 +230,36 @@ func TestDashboardStatsUsesVisibleWorkspaceScopes(t *testing.T) {
 	require.Equal(t, int64(7), payload.Data.Resources.DataSources)
 }
 
-func newDashboardStatsContext(organizationID string, accountID string) (*httptest.ResponseRecorder, *gin.Context) {
+func TestDashboardStatsWorkspaceScopeUsesOnlyRequestedWorkspace(t *testing.T) {
+	recorder, c := newDashboardStatsContext("org-1", "acc-1", "?scope=workspace&workspace_id=ws-1")
+	dashboardSvc := &dashboardHandlerService{}
+	permissionSvc := &dashboardHandlerWorkspacePermissionService{
+		userWorkspaceIDs: []string{"ws-1", "ws-2"},
+		allowed:          true,
+	}
+	h := &DashboardHandler{
+		dashboardService:  dashboardSvc,
+		enterpriseService: permissionSvc,
+		accountService:    &dashboardHandlerAccountContextService{},
+	}
+
+	h.GetDashboardStats(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.True(t, dashboardSvc.statsCalled)
+	require.Equal(t, []string{"ws-1"}, dashboardSvc.statsScopes.WorkspaceIDs)
+	require.Equal(t, []string{"ws-1"}, dashboardSvc.statsScopes.AgentWorkspaceIDs)
+	require.Equal(t, []string{"ws-1"}, dashboardSvc.statsScopes.WorkflowWorkspaceIDs)
+	require.Equal(t, []string{"ws-1"}, dashboardSvc.statsScopes.DatasetWorkspaceIDs)
+	require.Equal(t, []string{"ws-1"}, dashboardSvc.statsScopes.DataSourceWorkspaceIDs)
+	require.Equal(t, []string{"ws-1"}, dashboardSvc.statsScopes.FileWorkspaceIDs)
+}
+
+func newDashboardStatsContext(organizationID string, accountID string, query string) (*httptest.ResponseRecorder, *gin.Context) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
-	c.Request = httptest.NewRequest(http.MethodGet, "/console/api/dashboard/stats", nil)
+	c.Request = httptest.NewRequest(http.MethodGet, "/console/api/dashboard/stats"+query, nil)
 	util.SetOrganizationID(c, organizationID)
 	c.Set("account_id", accountID)
 	return recorder, c

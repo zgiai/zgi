@@ -55,12 +55,16 @@ func (s *agentsService) GetAgentRuntimeSurfaces(ctx context.Context, agentID, ac
 	if organizationID == "" {
 		organizationID = workspaceID
 	}
+	surfaceDTOs := agentRuntimeSurfaceAuthorizationDTOs(auth.Surfaces)
+	if err := s.attachAgentRuntimeGrantSubjectDetails(ctx, organizationID, surfaceDTOs); err != nil {
+		return nil, err
+	}
 
 	return &dto.AgentRuntimeSurfaceAuthorizationResponse{
 		AgentID:        ag.ID.String(),
 		WorkspaceID:    workspaceID,
 		OrganizationID: organizationID,
-		Surfaces:       agentRuntimeSurfaceAuthorizationDTOs(auth.Surfaces),
+		Surfaces:       surfaceDTOs,
 	}, nil
 }
 
@@ -893,4 +897,115 @@ func agentRuntimeSurfaceGrantDTOs(grants []runtimeauth.SurfaceGrant) []dto.Agent
 		})
 	}
 	return out
+}
+
+func (s *agentsService) attachAgentRuntimeGrantSubjectDetails(ctx context.Context, organizationID string, surfaces []dto.AgentRuntimeSurfaceAuthorization) error {
+	if s.db == nil || strings.TrimSpace(organizationID) == "" {
+		return nil
+	}
+
+	accountIDs := make([]string, 0)
+	departmentIDs := make([]string, 0)
+	workspaceIDs := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, surface := range surfaces {
+		for _, grant := range surface.Grants {
+			if !grant.Enabled || grant.SubjectID == nil {
+				continue
+			}
+			subjectID := strings.TrimSpace(*grant.SubjectID)
+			key := grant.SubjectType + ":" + subjectID
+			if subjectID == "" {
+				continue
+			}
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			switch grant.SubjectType {
+			case string(runtimeauth.PublishedRuntimeSubjectAccount):
+				accountIDs = append(accountIDs, subjectID)
+			case string(runtimeauth.PublishedRuntimeSubjectDepartment):
+				departmentIDs = append(departmentIDs, subjectID)
+			case string(runtimeauth.PublishedRuntimeSubjectWorkspace):
+				workspaceIDs = append(workspaceIDs, subjectID)
+			}
+		}
+	}
+
+	details := make(map[string]*dto.AgentRuntimeSurfaceGrantSubjectDetail, len(seen))
+	if len(accountIDs) > 0 {
+		var rows []struct {
+			ID          string  `gorm:"column:id"`
+			AccountName string  `gorm:"column:account_name"`
+			MemberName  *string `gorm:"column:member_name"`
+		}
+		if err := s.db.WithContext(ctx).
+			Table("members").
+			Select("members.account_id AS id, accounts.name AS account_name, members.name AS member_name").
+			Joins("JOIN accounts ON accounts.id = members.account_id").
+			Where("members.organization_id = ? AND members.status = ?", organizationID, workspacemodel.OrganizationMemberStatusActive).
+			Where("members.account_id IN ?", accountIDs).
+			Scan(&rows).Error; err != nil {
+			return fmt.Errorf("failed to resolve runtime grant account display details: %w", err)
+		}
+		for _, row := range rows {
+			displayName := strings.TrimSpace(row.AccountName)
+			if row.MemberName != nil && strings.TrimSpace(*row.MemberName) != "" {
+				displayName = strings.TrimSpace(*row.MemberName)
+			}
+			if displayName != "" {
+				details[string(runtimeauth.PublishedRuntimeSubjectAccount)+":"+row.ID] = &dto.AgentRuntimeSurfaceGrantSubjectDetail{DisplayName: displayName}
+			}
+		}
+	}
+	if len(departmentIDs) > 0 {
+		var rows []struct {
+			ID   string `gorm:"column:id"`
+			Name string `gorm:"column:name"`
+		}
+		if err := s.db.WithContext(ctx).
+			Table("departments").
+			Select("id, name").
+			Where("group_id = ? AND status = ?", organizationID, workspacemodel.DepartmentStatusActive).
+			Where("id IN ?", departmentIDs).
+			Scan(&rows).Error; err != nil {
+			return fmt.Errorf("failed to resolve runtime grant department display details: %w", err)
+		}
+		for _, row := range rows {
+			if displayName := strings.TrimSpace(row.Name); displayName != "" {
+				details[string(runtimeauth.PublishedRuntimeSubjectDepartment)+":"+row.ID] = &dto.AgentRuntimeSurfaceGrantSubjectDetail{DisplayName: displayName}
+			}
+		}
+	}
+	if len(workspaceIDs) > 0 {
+		var rows []struct {
+			ID   string `gorm:"column:id"`
+			Name string `gorm:"column:name"`
+		}
+		if err := s.db.WithContext(ctx).
+			Table("workspaces").
+			Select("id, name").
+			Where("organization_id = ? AND status = ?", organizationID, workspacemodel.WorkspaceStatusNormal).
+			Where("id IN ?", workspaceIDs).
+			Scan(&rows).Error; err != nil {
+			return fmt.Errorf("failed to resolve runtime grant workspace display details: %w", err)
+		}
+		for _, row := range rows {
+			if displayName := strings.TrimSpace(row.Name); displayName != "" {
+				details[string(runtimeauth.PublishedRuntimeSubjectWorkspace)+":"+row.ID] = &dto.AgentRuntimeSurfaceGrantSubjectDetail{DisplayName: displayName}
+			}
+		}
+	}
+
+	for surfaceIndex := range surfaces {
+		for grantIndex := range surfaces[surfaceIndex].Grants {
+			grant := &surfaces[surfaceIndex].Grants[grantIndex]
+			if grant.SubjectID == nil {
+				continue
+			}
+			grant.SubjectDetail = details[grant.SubjectType+":"+strings.TrimSpace(*grant.SubjectID)]
+		}
+	}
+	return nil
 }

@@ -887,6 +887,17 @@ func (r *Runtime) nativeSkillCandidate(ctx context.Context, doc SkillDocument, t
 }
 
 func (r *Runtime) nativeToolSchema(ctx context.Context, skillID string, definition SkillToolDefinition, tenantID string) (map[string]interface{}, string, bool) {
+	if len(definition.InputSchema) > 0 {
+		schema := tools.ModelVisibleJSONSchema(definition.InputSchema)
+		if !validNativeObjectSchema(schema) {
+			return nil, "", false
+		}
+		description := strings.TrimSpace(definition.RuntimeDescription)
+		if description == "" {
+			description = "Use " + definition.Name + " from the " + skillID + " skill."
+		}
+		return schema, description, true
+	}
 	if contract, ok := SkillToolArgumentContractFor(skillID, definition.Name); ok && validNativeObjectSchema(contract.Schema) {
 		description := strings.TrimSpace(contract.Description)
 		if description == "" {

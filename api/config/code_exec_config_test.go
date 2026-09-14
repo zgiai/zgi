@@ -26,6 +26,8 @@ func TestLoadCodeExecConfigLoadsAdapterTimeouts(t *testing.T) {
 			return "true", true
 		case envCodeExecutionSystemOfficeProfile:
 			return "system-office", true
+		case envCodeExecutionSystemDataProfile:
+			return "system-data", true
 		default:
 			return "", false
 		}
@@ -44,7 +46,8 @@ func TestLoadCodeExecConfigLoadsAdapterTimeouts(t *testing.T) {
 		cfg.CodeExec.ArtifactTimeoutSeconds != 6 ||
 		cfg.CodeExec.CleanupTimeoutSeconds != 7 ||
 		!cfg.CodeExec.EnableNetwork ||
-		cfg.CodeExec.SystemOfficeProfile != "system-office" {
+		cfg.CodeExec.SystemOfficeProfile != "system-office" ||
+		cfg.CodeExec.SystemDataProfile != "system-data" {
 		t.Fatalf("unexpected code execution timeouts: %+v", cfg.CodeExec)
 	}
 }
@@ -63,7 +66,8 @@ func TestLoadCodeExecConfigUsesAdapterTimeoutDefaults(t *testing.T) {
 		cfg.CodeExec.ArtifactTimeoutSeconds != 10 ||
 		cfg.CodeExec.CleanupTimeoutSeconds != 5 ||
 		cfg.CodeExec.EnableNetwork ||
-		cfg.CodeExec.SystemOfficeProfile != "skill-office" {
+		cfg.CodeExec.SystemOfficeProfile != "skill-office" ||
+		cfg.CodeExec.SystemDataProfile != "scientific-data" {
 		t.Fatalf("unexpected default code execution timeouts: %+v", cfg.CodeExec)
 	}
 }

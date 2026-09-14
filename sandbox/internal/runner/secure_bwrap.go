@@ -82,8 +82,12 @@ func secureDependencyProfileEnv(profile string) (map[string]string, error) {
 	}
 	base := "/opt/zgi/profiles/" + profile
 	return map[string]string{
-		"PATH":             base + "/venv/bin:" + base + "/node_modules/.bin:" + defaultSecurePath,
-		"PYTHONNOUSERSITE": "1",
-		"NODE_PATH":        base + "/node_modules",
+		"PATH":                    base + "/venv/bin:" + base + "/node_modules/.bin:" + defaultSecurePath,
+		"PYTHONDONTWRITEBYTECODE": "1",
+		"PYTHONNOUSERSITE":        "1",
+		"XDG_CACHE_HOME":          secureWorkspacePath + "/.zgi-runtime-cache",
+		"MPLCONFIGDIR":            secureWorkspacePath + "/.zgi-runtime-cache/matplotlib",
+		"NUMBA_CACHE_DIR":         secureWorkspacePath + "/.zgi-runtime-cache/numba",
+		"NODE_PATH":               base + "/node_modules",
 	}, nil
 }

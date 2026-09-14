@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/dto"
 	workflowfile "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
@@ -201,7 +202,11 @@ func normalizeAttachmentFileIDs(fileIDs []string, limit int) ([]string, error) {
 func (s *service) ensureAttachmentReadable(ctx context.Context, scope Scope, file *dto.UploadFile) error {
 	accountID := scope.AccountID.String()
 	if file.IsTemporary {
-		if strings.TrimSpace(file.CreatedBy) != accountID {
+		expectedOwnerID := accountID
+		if scope.ExternalUserID != nil && *scope.ExternalUserID != uuid.Nil {
+			expectedOwnerID = scope.ExternalUserID.String()
+		}
+		if strings.TrimSpace(file.CreatedBy) != expectedOwnerID {
 			return fmt.Errorf("%w: file is not accessible", ErrPermissionDenied)
 		}
 		return nil

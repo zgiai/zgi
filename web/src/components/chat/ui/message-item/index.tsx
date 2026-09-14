@@ -98,7 +98,11 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   const hasAddon = Boolean(messageAddon);
   const generatedImages = useMemo(() => message.generatedImages || [], [message.generatedImages]);
   const hasImages = generatedImages.length > 0;
-  const imageGenerationStatus = useMemo(() => getImageGenerationStatus(message), [message]);
+  const hasImageGenerationContext = useMemo(() => isImageGenerationMessage(message), [message]);
+  const imageGenerationStatus = useMemo(
+    () => (hasImageGenerationContext ? getImageGenerationStatus(message) : ''),
+    [hasImageGenerationContext, message]
+  );
   const imageGenerationErrorText = useMemo(
     () => getImageGenerationErrorText(message, imageGenerationStatus, tWebapp),
     [message, imageGenerationStatus, tWebapp]
@@ -507,6 +511,21 @@ function getImageGenerationStatus(message: Message): string {
     return 'failed';
   }
   return status;
+}
+
+function isImageGenerationMessage(message: Message): boolean {
+  const metadata = objectValue(message.messageData?.metadata);
+  return Boolean(
+    stringValue(message.messageData?.image_runtime_kind) === 'generation' ||
+      stringValue(metadata?.image_runtime_kind) === 'generation' ||
+      stringValue(message.messageData?.image_task_id) ||
+      stringValue(metadata?.image_task_id) ||
+      objectValue(message.messageData?.image_task) ||
+      objectValue(metadata?.image_task) ||
+      objectValue(message.messageData?.image_generation) ||
+      objectValue(metadata?.image_generation) ||
+      (message.generatedImages?.length ?? 0) > 0
+  );
 }
 
 function isActiveImageGenerationStatus(status: string): boolean {

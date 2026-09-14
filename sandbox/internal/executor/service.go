@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"text/template"
 	"text/template/parse"
 	"time"
@@ -166,6 +167,7 @@ type FileInfo struct {
 }
 
 type FileContent struct {
+	MaxBytes  int64  `json:"max_bytes,omitempty"`
 	SandboxID string `json:"sandbox_id"`
 	Path      string `json:"path"`
 	Content   string `json:"content"`
@@ -1496,6 +1498,13 @@ func (s *Service) UploadArchive(req ArchiveUploadRequest) (*ArchiveUploadResult,
 }
 
 func (s *Service) DownloadFile(sandboxID string, relativePath string, encoding string) (*FileContent, error) {
+	return s.DownloadFileWithLimit(sandboxID, relativePath, encoding, 0)
+}
+
+func (s *Service) DownloadFileWithLimit(sandboxID string, relativePath string, encoding string, maxBytes int64) (*FileContent, error) {
+	if maxBytes < 0 || maxBytes > 1024*1024 {
+		return nil, errors.New("download max_bytes must be between 1 and 1048576 when specified")
+	}
 	box, err := s.lifecycle.GetActive(sandboxID)
 	if err != nil {
 		return nil, err
@@ -1506,7 +1515,28 @@ func (s *Service) DownloadFile(sandboxID string, relativePath string, encoding s
 		return nil, err
 	}
 
-	content, err := os.ReadFile(target)
+	var content []byte
+	if maxBytes > 0 {
+		// Do not block opening a FIFO or follow a last-moment symlink swap.
+		file, openErr := os.OpenFile(target, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+		if openErr != nil {
+			return nil, openErr
+		}
+		defer file.Close()
+		info, statErr := file.Stat()
+		if statErr != nil {
+			return nil, statErr
+		}
+		if !info.Mode().IsRegular() || info.Size() > maxBytes {
+			return nil, errors.New("bounded download requires a regular file within max_bytes")
+		}
+		content, err = io.ReadAll(io.LimitReader(file, maxBytes+1))
+		if int64(len(content)) > maxBytes {
+			return nil, errors.New("file exceeds download max_bytes")
+		}
+	} else {
+		content, err = os.ReadFile(target)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1521,6 +1551,7 @@ func (s *Service) DownloadFile(sandboxID string, relativePath string, encoding s
 	addOwnershipMetadata(metadata, box)
 	s.observer.Record("files.download", sandboxID, "file downloaded", metadata)
 	return &FileContent{
+		MaxBytes:  maxBytes,
 		SandboxID: sandboxID,
 		Path:      relativePath,
 		Content:   string(content),

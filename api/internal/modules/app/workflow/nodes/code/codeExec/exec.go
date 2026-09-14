@@ -87,10 +87,11 @@ func (e *Executor) RegisterTransformer(transformer TemplateTransformer) {
 }
 
 type executionRequest struct {
-	Language      string `json:"language"`
-	Code          string `json:"code"`
-	Preload       string `json:"preload"`
-	EnableNetwork bool   `json:"enable_network"`
+	Language          string `json:"language"`
+	Code              string `json:"code"`
+	Preload           string `json:"preload"`
+	EnableNetwork     bool   `json:"enable_network"`
+	DependencyProfile string `json:"dependency_profile,omitempty"`
 }
 
 type executionResponseData struct {
@@ -111,6 +112,19 @@ func (e *Executor) ExecuteWorkflowCodeTemplate(
 	code string,
 	inputs map[string]any,
 ) (map[string]any, error) {
+	return e.ExecuteWorkflowCodeTemplateWithProfile(ctx, lang, code, inputs, "")
+}
+
+// ExecuteWorkflowCodeTemplateWithProfile executes a workflow code template
+// inside an operator-managed dependency profile. An empty profile preserves
+// the standard-library-only behavior.
+func (e *Executor) ExecuteWorkflowCodeTemplateWithProfile(
+	ctx context.Context,
+	lang Language,
+	code string,
+	inputs map[string]any,
+	dependencyProfile string,
+) (map[string]any, error) {
 	if e == nil {
 		return nil, errors.New("executor is nil")
 	}
@@ -125,7 +139,7 @@ func (e *Executor) ExecuteWorkflowCodeTemplate(
 		return nil, fmt.Errorf("transform caller failed: %w", err)
 	}
 
-	raw, err := e.ExecuteCode(ctx, lang, preload, runner)
+	raw, err := e.ExecuteCodeWithProfile(ctx, lang, preload, runner, dependencyProfile)
 	if err != nil {
 		return nil, err
 	}
@@ -139,6 +153,13 @@ func (e *Executor) ExecuteWorkflowCodeTemplate(
 
 // ExecuteCode calls remote sandbox to execute code
 func (e *Executor) ExecuteCode(ctx context.Context, lang Language, preload, runner string) (string, error) {
+	return e.ExecuteCodeWithProfile(ctx, lang, preload, runner, "")
+}
+
+// ExecuteCodeWithProfile calls the remote sandbox using an operator-managed
+// dependency profile. The Sandbox remains responsible for validating that the
+// profile exists, is enabled, and has a verified artifact.
+func (e *Executor) ExecuteCodeWithProfile(ctx context.Context, lang Language, preload, runner, dependencyProfile string) (string, error) {
 	if e == nil {
 		return "", errors.New("executor is nil")
 	}
@@ -159,10 +180,11 @@ func (e *Executor) ExecuteCode(ctx context.Context, lang Language, preload, runn
 	}
 
 	payload := executionRequest{
-		Language:      runtime,
-		Code:          runner,
-		Preload:       preload,
-		EnableNetwork: cfg.CodeExec.EnableNetwork,
+		Language:          runtime,
+		Code:              runner,
+		Preload:           preload,
+		EnableNetwork:     cfg.CodeExec.EnableNetwork,
+		DependencyProfile: strings.TrimSpace(dependencyProfile),
 	}
 
 	body, err := json.Marshal(payload)

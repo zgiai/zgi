@@ -624,6 +624,11 @@ export interface AgentRuntimeSurfaceGrant {
   subject_type: AgentRuntimeGrantSubject;
   subject_id: string | null;
   enabled: boolean;
+  subject_detail?: AgentRuntimeSurfaceGrantSubjectDetail;
+}
+
+export interface AgentRuntimeSurfaceGrantSubjectDetail {
+  display_name: string;
 }
 
 export interface AgentRuntimeSurfaceAuthorization {

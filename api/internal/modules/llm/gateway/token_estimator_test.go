@@ -66,6 +66,82 @@ func TestTokenEstimator_EstimateChatPromptTokensAddsStructure(t *testing.T) {
 	}
 }
 
+func TestTokenEstimator_EstimateChatRequestTokensIncludesToolsAndOutputLimit(t *testing.T) {
+	estimator := NewTokenEstimator()
+	maxTokens := 7
+	completionCount := 3
+	req := &adapter.ChatRequest{
+		Model:     "gpt-4o",
+		MaxTokens: &maxTokens,
+		N:         &completionCount,
+		Messages:  []adapter.Message{{Role: "user", Content: "hello"}},
+		Tools: []adapter.Tool{{
+			Type:     "function",
+			Function: adapter.Function{Name: "lookup"},
+		}},
+	}
+
+	promptTokens, completionTokens, totalTokens := estimator.EstimateChatRequestTokens(req)
+	messageOnly := estimator.EstimatePromptTokens(req.Messages, req.Model)
+	if promptTokens <= messageOnly {
+		t.Fatalf("prompt tokens = %d, want above message-only estimate %d", promptTokens, messageOnly)
+	}
+	wantCompletion := maxTokens * completionCount
+	if completionTokens != wantCompletion || totalTokens != promptTokens+wantCompletion {
+		t.Fatalf("completion/total = %d/%d, want %d/%d", completionTokens, totalTokens, wantCompletion, promptTokens+wantCompletion)
+	}
+}
+
+func TestTokenEstimator_EstimateChatRequestTokensIncludesMessageToolPayloadsAndImageReservation(t *testing.T) {
+	estimator := NewTokenEstimator()
+	maxTokens := 3
+	base := &adapter.ChatRequest{
+		Model:     "gpt-4o",
+		MaxTokens: &maxTokens,
+		Messages:  []adapter.Message{{Role: "user", Content: "hello"}},
+	}
+	basePrompt, _, _ := estimator.EstimateChatRequestTokens(base)
+
+	withPayloads := &adapter.ChatRequest{
+		Model:     "gpt-4o",
+		MaxTokens: &maxTokens,
+		Messages: []adapter.Message{
+			{
+				Role: "assistant",
+				Content: []adapter.MessageContentPart{
+					{Type: "text", Text: "hello"},
+					{Type: "image_url", ImageURL: &adapter.ImageURL{URL: "https://example.invalid/image.png", Detail: "high"}},
+				},
+				ToolCalls: []adapter.ToolCall{{
+					ID:   "call-1",
+					Type: "function",
+					Function: adapter.FunctionCall{
+						Name:      "lookup",
+						Arguments: strings.Repeat("x", 256),
+					},
+				}},
+			},
+			{Role: "tool", ToolCallID: "call-1", Content: strings.Repeat("result", 64)},
+		},
+		ToolChoice: map[string]interface{}{"type": "function", "function": map[string]string{"name": "lookup"}},
+	}
+	prompt, completion, total := estimator.EstimateChatRequestTokens(withPayloads)
+	if prompt < basePrompt+multimodalImageReservationTokens {
+		t.Fatalf("prompt tokens = %d, want at least base %d plus image reservation %d", prompt, basePrompt, multimodalImageReservationTokens)
+	}
+	if completion != maxTokens || total != prompt+maxTokens {
+		t.Fatalf("completion/total = %d/%d, want %d/%d", completion, total, maxTokens, prompt+maxTokens)
+	}
+
+	rawJSONShape := []interface{}{
+		map[string]interface{}{"type": "text", "text": "hello"},
+		map[string]interface{}{"type": "image_url", "image_url": map[string]interface{}{"url": "https://example.invalid/image.png"}},
+	}
+	if rawTokens := estimator.estimateMessageContentTokens("gpt-4o", rawJSONShape); rawTokens < multimodalImageReservationTokens {
+		t.Fatalf("raw JSON content tokens = %d, want image reservation at least %d", rawTokens, multimodalImageReservationTokens)
+	}
+}
+
 func TestTokenEstimator_EmbeddingAndRerankUseModelSpecificCounter(t *testing.T) {
 	estimator := NewTokenEstimator()
 

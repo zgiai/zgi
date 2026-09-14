@@ -748,6 +748,18 @@ func (r *Runner) handleCallSkillTool(
 			errorPayload["error"] = code
 			errorPayload["error_code"] = code
 		}
+		if toolName == skills.SkillScriptToolRun && invocation.Trace.Result["exit_code"] != nil && len(invocation.Messages) > 0 {
+			// A failed script can still produce authorized diagnostic output.
+			// Preserve it without treating the execution or its artifacts as
+			// successful completion evidence. Other provider errors retain their
+			// existing public error/redaction boundary.
+			errorPayload["execution_output"] = invocation.Messages
+			for _, artifact := range skillArtifactsFromToolMessages(prepared, invocation.Trace, invocation.Messages) {
+				artifact = enrichGeneratedArtifactContentMetadata(artifact, invocation.Trace)
+				r.recordArtifact(artifact)
+				r.emitEvent(prepared, EventSkillArtifactCreated, artifact)
+			}
+		}
 		return recoverableSkillStep(invocation.Trace, skills.ToolResultMessage(callID, errorPayload), true, false)
 	}
 	if !traceHasGovernanceArgumentRewrite(invocation.Trace) {

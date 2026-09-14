@@ -65,7 +65,30 @@ func (h *DashboardHandler) GetDashboardStats(c *gin.Context) {
 	}
 
 	accountID := util.GetAccountID(c)
-	scopes, err := h.buildDashboardWorkspaceScopes(ctx, organizationID, accountID)
+	var scopes systemmodel.DashboardWorkspaceScopes
+	var err error
+	if strings.TrimSpace(c.DefaultQuery("scope", "overview")) == "workspace" {
+		workspaceID := strings.TrimSpace(c.Query("workspace_id"))
+		if workspaceID == "" {
+			if h.accountService == nil {
+				response.Fail(c, response.ErrWorkspaceJoinedNotFound)
+				return
+			}
+			accountContext, contextErr := h.accountService.GetAccountContext(ctx, accountID)
+			if contextErr != nil || accountContext == nil || accountContext.CurrentWorkspaceID == nil {
+				response.Fail(c, response.ErrWorkspaceJoinedNotFound)
+				return
+			}
+			workspaceID = strings.TrimSpace(*accountContext.CurrentWorkspaceID)
+		}
+		if workspaceID == "" {
+			response.Fail(c, response.ErrWorkspaceJoinedNotFound)
+			return
+		}
+		scopes, err = h.buildSingleWorkspaceRecentWorkScopes(ctx, organizationID, workspaceID, accountID)
+	} else {
+		scopes, err = h.buildDashboardWorkspaceScopes(ctx, organizationID, accountID)
+	}
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
 		return

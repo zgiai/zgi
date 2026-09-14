@@ -33,6 +33,18 @@ type fakeBillingProvider struct {
 	settleErr          error
 	checkBalanceResult bool
 	checkBalanceErr    error
+	platformQuote      PricingQuote
+	platformQuoteErr   error
+	platformModel      PricingModelRef
+	platformPrompt     int
+	platformCompletion int
+}
+
+func (f *fakeBillingProvider) QuotePlatformTokenPricing(_ context.Context, model PricingModelRef, promptTokens, completionTokens int) (PricingQuote, error) {
+	f.platformModel = model
+	f.platformPrompt = promptTokens
+	f.platformCompletion = completionTokens
+	return f.platformQuote, f.platformQuoteErr
 }
 
 func TestApplyPlatformSettlementCostSnapshotRecordsCallTimeCurrencyFacts(t *testing.T) {
@@ -137,23 +149,27 @@ func (f *fakeBillingProvider) CheckPrivateChannelBalance(ctx context.Context, or
 }
 
 type fakePricingEngine struct {
-	tokenQuote       PricingQuote
-	imageQuote       PricingQuote
-	meteredQuote     PricingQuote
-	tokenErr         error
-	imageErr         error
-	meteredErr       error
-	meteredQuoteFunc func(MeteredUsage) (PricingQuote, error)
-	lastModel        PricingModelRef
-	lastMeteredUsage MeteredUsage
-	meteredUsages    []MeteredUsage
-	tokenCalls       int
-	meteredCalls     int
+	tokenQuote           PricingQuote
+	imageQuote           PricingQuote
+	meteredQuote         PricingQuote
+	tokenErr             error
+	imageErr             error
+	meteredErr           error
+	meteredQuoteFunc     func(MeteredUsage) (PricingQuote, error)
+	lastModel            PricingModelRef
+	lastPromptTokens     int
+	lastCompletionTokens int
+	lastMeteredUsage     MeteredUsage
+	meteredUsages        []MeteredUsage
+	tokenCalls           int
+	meteredCalls         int
 }
 
 func (f *fakePricingEngine) QuoteTokens(ctx context.Context, model PricingModelRef, promptTokens, completionTokens int) (PricingQuote, error) {
 	f.tokenCalls++
 	f.lastModel = model
+	f.lastPromptTokens = promptTokens
+	f.lastCompletionTokens = completionTokens
 	if f.tokenErr != nil {
 		return PricingQuote{}, f.tokenErr
 	}
@@ -2127,7 +2143,7 @@ func TestBillingRouting_BeginBillingAttempt_OfficialCheckBalanceFailThenPrivateS
 		Provider:          providermodel.LLMProvider{ID: uuid.New(), Provider: "openai"},
 	}
 
-	_, err := s.beginBillingAttempt(context.Background(), apiKey, nil, official, shadowOrgID, ownerID, 100, false, time.Now(), "req-official", "req-official-a1")
+	_, err := s.beginBillingAttempt(context.Background(), apiKey, nil, official, shadowOrgID, ownerID, 100, false, time.Now(), "req-official", "req-official-a1", "")
 	if err == nil {
 		t.Fatalf("expected official beginBillingAttempt to fail")
 	}
@@ -2147,7 +2163,7 @@ func TestBillingRouting_BeginBillingAttempt_OfficialCheckBalanceFailThenPrivateS
 		t.Fatalf("local PreDeduct calls = %d, want 0 before private attempt", local.preDeductCalls)
 	}
 
-	if _, err := s.beginBillingAttempt(context.Background(), apiKey, nil, private, shadowOrgID, ownerID, 100, false, time.Now(), "req-private", "req-private-a1"); err != nil {
+	if _, err := s.beginBillingAttempt(context.Background(), apiKey, nil, private, shadowOrgID, ownerID, 100, false, time.Now(), "req-private", "req-private-a1", ""); err != nil {
 		t.Fatalf("expected private beginBillingAttempt to succeed, got: %v", err)
 	}
 	if local.preDeductCalls != 1 {
@@ -2155,6 +2171,29 @@ func TestBillingRouting_BeginBillingAttempt_OfficialCheckBalanceFailThenPrivateS
 	}
 	if remote.preDeductCalls != 0 {
 		t.Fatalf("remote PreDeduct calls = %d, want 0", remote.preDeductCalls)
+	}
+}
+
+func TestBeginBillingAttemptPropagatesReservationPolicy(t *testing.T) {
+	remote := &fakeBillingProvider{checkBalanceResult: true}
+	s := &llmGatewayServiceImpl{billing: remote, localBilling: &fakeBillingProvider{checkBalanceResult: true}}
+	apiKey := &apikeymodel.TenantAPIKey{ID: "key-1", OrganizationID: uuid.NewString()}
+	selection := &ProviderSelection{
+		UseSystemProvider: true,
+		RouteID:           uuid.New(),
+		Model:             llmmodel.LLMModel{ID: uuid.New(), Model: "gpt-4o-mini"},
+		Provider:          providermodel.LLMProvider{ID: uuid.New(), Provider: "openai"},
+	}
+
+	ctx, err := s.beginBillingAttempt(
+		context.Background(), apiKey, nil, selection, uuid.New(), uuid.New(),
+		100, false, time.Now(), "request-1", "attempt-1", reservationPolicyAuthoritativeQuoteV1,
+	)
+	if err != nil {
+		t.Fatalf("beginBillingAttempt() error = %v", err)
+	}
+	if ctx.ReservationPolicy != reservationPolicyAuthoritativeQuoteV1 || remote.lastPreDeduct == nil || remote.lastPreDeduct.ReservationPolicy != reservationPolicyAuthoritativeQuoteV1 {
+		t.Fatalf("reservation policy was not propagated: context=%q prededuct=%#v", ctx.ReservationPolicy, remote.lastPreDeduct)
 	}
 }
 
@@ -2190,7 +2229,7 @@ func TestBillingRouting_BeginBillingAttempt_OfficialPreDeductFailThenPrivateSucc
 		Provider:          providermodel.LLMProvider{ID: uuid.New(), Provider: "openai"},
 	}
 
-	_, err := s.beginBillingAttempt(context.Background(), apiKey, nil, official, shadowOrgID, ownerID, 100, false, time.Now(), "req-official", "req-official-a1")
+	_, err := s.beginBillingAttempt(context.Background(), apiKey, nil, official, shadowOrgID, ownerID, 100, false, time.Now(), "req-official", "req-official-a1", "")
 	if err == nil {
 		t.Fatalf("expected official beginBillingAttempt to fail")
 	}
@@ -2201,7 +2240,7 @@ func TestBillingRouting_BeginBillingAttempt_OfficialPreDeductFailThenPrivateSucc
 		t.Fatalf("remote PreDeduct calls = %d, want 1", remote.preDeductCalls)
 	}
 
-	if _, err := s.beginBillingAttempt(context.Background(), apiKey, nil, private, shadowOrgID, ownerID, 100, false, time.Now(), "req-private", "req-private-a1"); err != nil {
+	if _, err := s.beginBillingAttempt(context.Background(), apiKey, nil, private, shadowOrgID, ownerID, 100, false, time.Now(), "req-private", "req-private-a1", ""); err != nil {
 		t.Fatalf("expected private beginBillingAttempt to succeed, got: %v", err)
 	}
 	if local.preDeductCalls != 1 {

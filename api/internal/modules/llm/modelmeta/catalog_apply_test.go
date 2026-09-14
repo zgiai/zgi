@@ -636,15 +636,28 @@ func TestResolvePublishedTokenPricesUsesStructuredCachePrices(t *testing.T) {
 		Pricing:        json.RawMessage(`{"token_tiers":[{"min_input_tokens":0,"input_price_per_million":2,"output_price_per_million":8,"cached_input_price_per_million":0,"cache_write_price_per_million":3}]}`),
 		CacheReadPrice: &zero,
 	}
-	input, output, cacheRead, cacheWrite, inputConfigured, outputConfigured := resolvePublishedTokenPrices(model)
-	require.Equal(t, 2.0, input)
-	require.Equal(t, 8.0, output)
-	require.True(t, inputConfigured)
-	require.True(t, outputConfigured)
-	require.NotNil(t, cacheRead)
-	require.Zero(t, *cacheRead)
-	require.NotNil(t, cacheWrite)
-	require.Equal(t, 3.0, *cacheWrite)
+	prices := resolvePublishedTokenPrices(model)
+	require.Equal(t, 2.0, prices.input)
+	require.Equal(t, 8.0, prices.output)
+	require.True(t, prices.inputConfigured)
+	require.True(t, prices.outputConfigured)
+	require.NotNil(t, prices.cacheRead)
+	require.Zero(t, *prices.cacheRead)
+	require.NotNil(t, prices.cacheWrite)
+	require.Equal(t, 3.0, *prices.cacheWrite)
+}
+
+func TestResolvePublishedTokenPricesUsesStructuredCacheWriteTTLPrices(t *testing.T) {
+	model := PublishedModel{
+		Pricing: json.RawMessage(`{"token_tiers":[{"cache_write_5m_price_per_million":3.75,"cache_creation_1h_price_per_million":7.5}]}`),
+	}
+
+	prices := resolvePublishedTokenPrices(model)
+
+	require.NotNil(t, prices.cacheWrite5m)
+	require.Equal(t, 3.75, *prices.cacheWrite5m)
+	require.NotNil(t, prices.cacheWrite1h)
+	require.Equal(t, 7.5, *prices.cacheWrite1h)
 }
 
 func insertCatalogApplyProvider(t *testing.T, db *gorm.DB, provider string, deleted bool) {

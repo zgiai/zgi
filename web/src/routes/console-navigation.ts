@@ -7,6 +7,12 @@ export type ZGIConsoleNavigationAccessStatus =
   | 'workspace_required'
   | 'permissions_loading'
   | 'permission_denied';
+export type ZGIConsoleNavigationDisplayState =
+  | 'available'
+  | 'setup_required'
+  | 'forbidden'
+  | 'loading'
+  | 'error';
 
 export interface ZGIConsoleNavigationAccessContext {
   workspaceStatus: 'loading' | 'ready' | 'workspace_required';
@@ -196,6 +202,13 @@ export const ZGI_CONSOLE_SITE_MAP = [
     label: 'Model Plaza',
     purpose: 'browse and use models available to the organization',
     scope: 'organization',
+    permissions: NO_PERMISSIONS,
+  },
+  {
+    href: '/console/api-keys',
+    label: 'API Keys',
+    purpose: 'request developer access and manage personal workspace API keys',
+    scope: 'workspace',
     permissions: NO_PERMISSIONS,
   },
   {
@@ -630,6 +643,9 @@ export function getZGIConsoleNavigationAccess(
       route
     );
   }
+  if (route.permissions.length === 0 && !route.workspaceManagerOnly) {
+    return accessResult('allowed', route);
+  }
   if (!context.permissionsSettled) return accessResult('permissions_loading', route);
   if (route.workspaceManagerOnly && !isWorkspaceManager(context)) {
     return accessResult('permission_denied', route);
@@ -645,6 +661,25 @@ export function getZGIConsoleNavigationAccess(
       : 'permission_denied',
     route
   );
+}
+
+export function getZGIConsoleNavigationDisplayState(
+  access: ZGIConsoleNavigationAccessResult,
+  permissionsFailed = false
+): ZGIConsoleNavigationDisplayState {
+  if (access.allowed) return 'available';
+  if (access.status === 'workspace_required') return 'setup_required';
+  if (access.status === 'permissions_loading') {
+    return permissionsFailed ? 'error' : 'loading';
+  }
+  return 'forbidden';
+}
+
+export function getZGIConsoleNavigationTarget(
+  href: string,
+  displayState: ZGIConsoleNavigationDisplayState
+): string {
+  return displayState === 'setup_required' ? '/console/workspace' : href;
 }
 
 export function getAccessibleZGIConsoleSiteMap(

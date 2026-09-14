@@ -11,7 +11,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/observability"
 )
 
-func TestProvideGinEngine_AllowsSSEConnectionHeaderPreflight(t *testing.T) {
+func TestProvideGinEngine_AllowsExternalAPIPreflightHeaders(t *testing.T) {
 	previousConfig := config.GlobalConfig
 	defer func() {
 		config.GlobalConfig = previousConfig
@@ -29,7 +29,7 @@ func TestProvideGinEngine_AllowsSSEConnectionHeaderPreflight(t *testing.T) {
 	req := httptest.NewRequest(http.MethodOptions, "/console/api/aichat/chat", nil)
 	req.Header.Set("Origin", origin)
 	req.Header.Set("Access-Control-Request-Method", http.MethodPost)
-	req.Header.Set("Access-Control-Request-Headers", "authorization,cache-control,connection,content-type")
+	req.Header.Set("Access-Control-Request-Headers", "authorization,cache-control,connection,content-type,x-api-key,x-external-user-id")
 
 	recorder := httptest.NewRecorder()
 	engine.ServeHTTP(recorder, req)
@@ -38,8 +38,10 @@ func TestProvideGinEngine_AllowsSSEConnectionHeaderPreflight(t *testing.T) {
 		t.Fatalf("preflight status = %d, want %d", recorder.Code, http.StatusNoContent)
 	}
 	allowHeaders := strings.ToLower(recorder.Header().Get("Access-Control-Allow-Headers"))
-	if !strings.Contains(allowHeaders, "connection") {
-		t.Fatalf("Access-Control-Allow-Headers = %q, want connection", allowHeaders)
+	for _, header := range []string{"connection", "x-api-key", "x-external-user-id"} {
+		if !strings.Contains(allowHeaders, header) {
+			t.Fatalf("Access-Control-Allow-Headers = %q, want %q", allowHeaders, header)
+		}
 	}
 }
 
@@ -70,7 +72,7 @@ func TestProvideGinEngine_ExposesAgentSSEIdentityHeaders(t *testing.T) {
 	engine.ServeHTTP(recorder, req)
 
 	exposed := strings.ToLower(recorder.Header().Get("Access-Control-Expose-Headers"))
-	for _, header := range []string{"x-zgi-conversation-id", "x-zgi-message-id"} {
+	for _, header := range []string{"x-request-id", "x-zgi-request-id", "x-zgi-app-error-code", "x-zgi-conversation-id", "x-zgi-message-id"} {
 		if !strings.Contains(exposed, header) {
 			t.Fatalf("Access-Control-Expose-Headers = %q, want %q", exposed, header)
 		}

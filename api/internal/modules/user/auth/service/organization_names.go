@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 )
 
 const maxOwnedOrganizationNameAttempts = 100
@@ -22,7 +21,11 @@ func ownedOrganizationName(accountName string, language *string) string {
 	return fmt.Sprintf("%s's Organization", name)
 }
 
-func uniqueOwnedOrganizationName(ctx context.Context, organizationService interfaces.OrganizationManagementService, accountName string, language *string) (string, error) {
+type organizationNameAvailabilityChecker interface {
+	CheckOrganizationNameExists(ctx context.Context, name string) (bool, error)
+}
+
+func uniqueOwnedOrganizationName(ctx context.Context, organizationService organizationNameAvailabilityChecker, accountName string, language *string) (string, error) {
 	baseName := ownedOrganizationName(accountName, language)
 	for attempt := 0; attempt < maxOwnedOrganizationNameAttempts; attempt++ {
 		candidate := baseName

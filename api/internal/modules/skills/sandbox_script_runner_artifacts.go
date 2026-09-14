@@ -63,8 +63,8 @@ func artifactFromFileInfo(artifactPath string, size int64, contentType string) s
 }
 
 func (r *SandboxScriptRunner) prepareArtifacts(ctx context.Context, sandboxID string, artifacts []skillScriptArtifact, execCtx ExecutionContext, maxArtifactBytes int64) {
-	if maxArtifactBytes <= 0 || maxArtifactBytes > maxSkillScriptArtifactBytes {
-		maxArtifactBytes = maxSkillScriptArtifactBytes
+	if maxArtifactBytes <= 0 || maxArtifactBytes > maxManagedSkillScriptArtifactBytes {
+		maxArtifactBytes = maxManagedSkillScriptArtifactBytes
 	}
 	for index := range artifacts {
 		r.prepareArtifact(ctx, sandboxID, &artifacts[index], execCtx, maxArtifactBytes)

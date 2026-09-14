@@ -103,7 +103,7 @@ function AuthLayoutContent({ children }: PropsWithChildren) {
       sessionManager.syncRootCookiesForCurrentSession();
       const params = new URLSearchParams(window.location.search);
       const redirectUrl = withBasePathIfInternal(
-        params.get('redirect') || '/onboarding/organization'
+        params.get('redirect') || '/console'
       );
       window.location.replace(redirectUrl);
     }

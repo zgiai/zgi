@@ -8,11 +8,16 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/middleware"
 	"github.com/zgiai/zgi/api/pkg/database"
 	jwtpkg "github.com/zgiai/zgi/api/pkg/jwt"
+	redisutil "github.com/zgiai/zgi/api/pkg/redis"
 	"github.com/zgiai/zgi/api/pkg/response"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -152,7 +157,8 @@ func TestModelMetaJWTAndSuperAdminChainDoesNotRequireTenant(t *testing.T) {
 	defer cleanup()
 	setModelMetaAuthTestDB(t, db)
 
-	accountID := "11111111-1111-1111-1111-111111111111"
+	accountID := uuid.NewString()
+	expectLastActiveTouch(mock)
 	token := newModelMetaAuthTestToken(t, accountID)
 	expectJWTAccountQuery(mock, accountID).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "status"}).AddRow(accountID, "active"))
@@ -166,9 +172,7 @@ func TestModelMetaJWTAndSuperAdminChainDoesNotRequireTenant(t *testing.T) {
 	if !called {
 		t.Fatalf("expected protected handler to be called")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("unmet sql expectations: %v", err)
-	}
+	require.Eventually(t, func() bool { return mock.ExpectationsWereMet() == nil }, time.Second, time.Millisecond)
 }
 
 func TestModelMetaJWTAndSuperAdminChainDeniesRegularAccount(t *testing.T) {
@@ -176,7 +180,8 @@ func TestModelMetaJWTAndSuperAdminChainDeniesRegularAccount(t *testing.T) {
 	defer cleanup()
 	setModelMetaAuthTestDB(t, db)
 
-	accountID := "22222222-2222-2222-2222-222222222222"
+	accountID := uuid.NewString()
+	expectLastActiveTouch(mock)
 	token := newModelMetaAuthTestToken(t, accountID)
 	expectJWTAccountQuery(mock, accountID).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "status"}).AddRow(accountID, "active"))
@@ -190,9 +195,16 @@ func TestModelMetaJWTAndSuperAdminChainDeniesRegularAccount(t *testing.T) {
 	if called {
 		t.Fatalf("expected protected handler not to be called")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("unmet sql expectations: %v", err)
-	}
+	require.Eventually(t, func() bool { return mock.ExpectationsWereMet() == nil }, time.Second, time.Millisecond)
+}
+
+// JWT authentication schedules a last-active write. Wait for it before closing
+// the mocked DB instead of letting a background goroutine outlive the fixture.
+func expectLastActiveTouch(mock sqlmock.Sqlmock) {
+	mock.MatchExpectationsInOrder(false)
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE "accounts"`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
 }
 
 func setModelMetaAuthTestDB(t *testing.T, db *gorm.DB) {
@@ -207,6 +219,11 @@ func setModelMetaAuthTestDB(t *testing.T, db *gorm.DB) {
 
 func newModelMetaAuthTestToken(t *testing.T, accountID string) string {
 	t.Helper()
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	previousClient := redisutil.GetClient()
+	redisutil.SetClient(client)
+	t.Cleanup(func() { redisutil.SetClient(previousClient); _ = client.Close() })
 
 	jwtpkg.Init(&config.Config{
 		JWT: config.JWTConfig{

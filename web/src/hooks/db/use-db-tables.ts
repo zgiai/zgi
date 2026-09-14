@@ -3,13 +3,18 @@
 // DB table hooks powered by React Query
 // All comments are in English for clarity and maintainability
 
+import { useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query';
 import { useT } from '@/i18n';
 import { toast } from 'sonner';
 import { dbService } from '@/services';
 import type { AgentBindingMutationConfirmation, ApiResponseData } from '@/services/types/common';
 import type { DbTable, CreateDbTableRequest, UpdateDbTableRequest } from '@/services/types/db';
-import { getErrorMessage } from '@/utils/error-notifications';
+import {
+  getErrorMessage,
+  isAuthSessionError,
+  isCanceledRequestError,
+} from '@/utils/error-notifications';
 import { DB_KEYS } from '@/hooks/query-keys';
 import { workspaceInvalidatePredicate } from '@/hooks/query-utils';
 import { useCurrentWorkspace } from '@/store/workspace-store';
@@ -70,10 +75,12 @@ export function useDbTables(
     retry: false,
   });
 
-  if (error) {
-    const message = getErrorMessage(error);
-    toast.error(message || 'Failed to load tables');
-  }
+  useEffect(() => {
+    if (!dbId || !enabled || !error || isAuthSessionError(error) || isCanceledRequestError(error)) {
+      return;
+    }
+    toast.error(getErrorMessage(error), { id: 'database-table-list-error' });
+  }, [dbId, enabled, error]);
 
   return {
     tables: data?.data ?? [],

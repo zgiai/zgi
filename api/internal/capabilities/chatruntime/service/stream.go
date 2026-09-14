@@ -912,6 +912,7 @@ func (s *service) clearPreparedRuntime(ctx context.Context, prepared *PreparedCh
 func (s *service) persistStoppedAnswer(ctx context.Context, prepared *PreparedChat, answer string, usage *adapter.Usage) error {
 	metadata := preparedResultMetadataForPrepared(prepared, prepared.Message.Metadata, usage)
 	metadata["stopped"] = true
+	markOperationPlanStopped(metadata)
 	if err := s.repos.Message.UpdateStoppedAnswer(ctx, prepared.Message.ID, answer, metadata); err != nil {
 		return err
 	}
@@ -1144,6 +1145,8 @@ func BuildStreamErrorPayload(prepared *PreparedChat, err error) map[string]inter
 		if len(params) > 0 {
 			payload["params"] = params
 		}
+	} else {
+		payload["code"] = response.ErrSystemError.Code
 	}
 	return payload
 }
@@ -1158,11 +1161,8 @@ func publicAichatErrorMessage(err error) string {
 	return streamFallbackErrorMessage(err)
 }
 
-func streamFallbackErrorMessage(err error) string {
-	if err == nil {
-		return "unknown error"
-	}
-	return err.Error()
+func streamFallbackErrorMessage(error) string {
+	return response.ErrSystemError.Message
 }
 
 func publicAichatErrorCodeAndMessage(err error) (int, string, bool) {

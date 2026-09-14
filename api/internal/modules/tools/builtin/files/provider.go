@@ -162,6 +162,7 @@ type fileScope struct {
 	OrganizationID string
 	WorkspaceID    string
 	AccountID      string
+	ExternalUserID string
 	InvokeFrom     tools.ToolInvokeFrom
 }
 
@@ -764,7 +765,7 @@ func (t *saveFileTool) ForkToolRuntime(runtime *tools.ToolRuntime) tools.Tool {
 }
 
 func (t *deleteFileTool) ensureFileManageable(ctx context.Context, scope fileScope, file *dto.UploadFile) error {
-	return ensureScopedFilePermission(ctx, scope, file, t.workspacePerms, workspacemodel.WorkspacePermissionFileManage)
+	return ensureScopedFilePermission(ctx, scope, file, t.workspacePerms, workspacemodel.WorkspacePermissionFileDelete)
 }
 
 func (t *deleteFileTool) ensureGovernedDeleteApproved(scope fileScope, file *dto.UploadFile, conversationID *string) error {
@@ -1056,7 +1057,7 @@ func (t *saveFileTool) ensureFileCreatable(ctx context.Context, scope fileScope,
 	if t.workspacePerms == nil {
 		return fmt.Errorf("workspace permission service is not configured")
 	}
-	allowed, err := t.workspacePerms.CheckWorkspacePermission(ctx, scope.OrganizationID, workspaceID, scope.AccountID, workspacemodel.WorkspacePermissionFileUploadCreate)
+	allowed, err := t.workspacePerms.CheckWorkspacePermission(ctx, scope.OrganizationID, workspaceID, scope.AccountID, workspacemodel.WorkspacePermissionFileUpload)
 	if err != nil {
 		return fmt.Errorf("failed to check workspace file creation permission: %w", err)
 	}
@@ -1245,6 +1246,7 @@ func fileScopeFromRuntime(runtime *tools.ToolRuntime, tenantID string, userID st
 	tenantID = strings.TrimSpace(tenantID)
 	organizationID := ""
 	workspaceID := ""
+	externalUserID := ""
 	invokeFrom := tools.ToolInvokeFromAIChat
 	if runtime != nil {
 		if strings.TrimSpace(runtime.TenantID) != "" {
@@ -1252,6 +1254,7 @@ func fileScopeFromRuntime(runtime *tools.ToolRuntime, tenantID string, userID st
 		}
 		organizationID = strings.TrimSpace(stringValue(runtime.RuntimeParameters, "organization_id"))
 		workspaceID = strings.TrimSpace(stringValue(runtime.RuntimeParameters, "workspace_id"))
+		externalUserID = strings.TrimSpace(stringValue(runtime.RuntimeParameters, tools.ExternalUserIDRuntimeParameter))
 		if runtime.InvokeFrom != "" {
 			invokeFrom = runtime.InvokeFrom
 		}
@@ -1270,6 +1273,7 @@ func fileScopeFromRuntime(runtime *tools.ToolRuntime, tenantID string, userID st
 		OrganizationID: organizationID,
 		WorkspaceID:    workspaceID,
 		AccountID:      accountID,
+		ExternalUserID: externalUserID,
 		InvokeFrom:     invokeFrom,
 	}, nil
 }
@@ -1283,7 +1287,11 @@ func ensureScopedFilePermission(ctx context.Context, scope fileScope, file *dto.
 		return fmt.Errorf("file is not accessible")
 	}
 	if file.IsTemporary {
-		if strings.TrimSpace(file.CreatedBy) != scope.AccountID {
+		expectedOwnerID := scope.AccountID
+		if strings.TrimSpace(scope.ExternalUserID) != "" {
+			expectedOwnerID = scope.ExternalUserID
+		}
+		if strings.TrimSpace(file.CreatedBy) != expectedOwnerID {
 			return fmt.Errorf("file is not accessible")
 		}
 		return nil

@@ -13,6 +13,11 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
+// Remote image dimensions and provider-specific vision tokenizers are not
+// available before dispatch. Reserve a deliberately large input allowance per
+// image so principal-bound budgets do not rely on the URL text length.
+const multimodalImageReservationTokens = 32_768
+
 // TokenEstimator estimates token usage for requests
 type TokenEstimator struct {
 	cache sync.Map // Cache for tokenizers
@@ -44,9 +49,21 @@ func (te *TokenEstimator) EstimateChatPromptTokens(req *adapter.ChatRequest) int
 	totalTokens := 0
 	for _, msg := range req.Messages {
 		totalTokens += 3
-		totalTokens += te.estimateTextTokensForModel(req.Model, messageContentForTokenCount(msg.Content))
+		totalTokens += te.estimateMessageContentTokens(req.Model, msg.Content)
 		if strings.TrimSpace(msg.Name) != "" {
 			totalTokens += 3
+		}
+		if msg.FunctionCall != nil {
+			totalTokens += 4 + te.estimateJSONTokens(req.Model, msg.FunctionCall)
+		}
+		if len(msg.ToolCalls) > 0 {
+			totalTokens += 4 + te.estimateJSONTokens(req.Model, msg.ToolCalls)
+		}
+		if strings.TrimSpace(msg.ToolCallID) != "" {
+			totalTokens += 2 + te.estimateTextTokensForModel(req.Model, msg.ToolCallID)
+		}
+		if strings.TrimSpace(msg.ReasoningContent) != "" {
+			totalTokens += te.estimateTextTokensForModel(req.Model, msg.ReasoningContent)
 		}
 	}
 	if len(req.Tools) > 0 {
@@ -65,8 +82,75 @@ func (te *TokenEstimator) EstimateChatPromptTokens(req *adapter.ChatRequest) int
 		totalTokens += 4
 		totalTokens += te.estimateJSONTokens(req.Model, req.ResponseFormat)
 	}
+	if req.FunctionCall != nil {
+		totalTokens += 4 + te.estimateJSONTokens(req.Model, req.FunctionCall)
+	}
+	if req.ToolChoice != nil {
+		totalTokens += 4 + te.estimateJSONTokens(req.Model, req.ToolChoice)
+	}
 	totalTokens += 3
 	return totalTokens
+}
+
+func (te *TokenEstimator) estimateMessageContentTokens(model string, content interface{}) int {
+	switch value := content.(type) {
+	case nil:
+		return 0
+	case string:
+		return te.estimateTextTokensForModel(model, value)
+	case []adapter.MessageContentPart:
+		total := 0
+		for _, part := range value {
+			total += te.estimateTextTokensForModel(model, part.Text)
+			if part.ImageURL != nil || strings.Contains(strings.ToLower(strings.TrimSpace(part.Type)), "image") {
+				total += multimodalImageReservationTokens
+			}
+		}
+		return total
+	case []interface{}:
+		total := 0
+		for _, rawPart := range value {
+			part, ok := rawPart.(map[string]interface{})
+			if !ok {
+				total += te.estimateJSONTokens(model, rawPart)
+				continue
+			}
+			if text, ok := part["text"].(string); ok {
+				total += te.estimateTextTokensForModel(model, text)
+			}
+			partType, _ := part["type"].(string)
+			if _, hasImageURL := part["image_url"]; hasImageURL || strings.Contains(strings.ToLower(strings.TrimSpace(partType)), "image") {
+				total += multimodalImageReservationTokens
+			}
+		}
+		return total
+	default:
+		return te.estimateJSONTokens(model, value)
+	}
+}
+
+// EstimateChatRequestTokens estimates the complete billable chat request,
+// including tools and response formatting that are not present in messages.
+func (te *TokenEstimator) EstimateChatRequestTokens(req *adapter.ChatRequest) (promptTokens, completionTokens, totalTokens int) {
+	if req == nil {
+		return 0, 0, 0
+	}
+	promptTokens = te.EstimateChatPromptTokens(req)
+	completionTokens = te.EstimateCompletionTokens(req.MaxTokens, req.Model)
+	completionCount := 1
+	if req.N != nil && *req.N > completionCount {
+		completionCount = *req.N
+	}
+	if completionTokens > 0 && completionCount > math.MaxInt/completionTokens {
+		completionTokens = math.MaxInt
+	} else {
+		completionTokens *= completionCount
+	}
+	totalTokens = math.MaxInt
+	if promptTokens <= math.MaxInt-completionTokens {
+		totalTokens = promptTokens + completionTokens
+	}
+	return promptTokens, completionTokens, totalTokens
 }
 
 // EstimateCompletionTokens estimates completion tokens based on max_tokens or default

@@ -226,6 +226,7 @@ type ETLConfig struct {
 }
 
 type CodeExecConfig struct {
+	SkillRuntimeGrantsPath       string `json:"skill_runtime_grants_path"`
 	Endpoint                     string `json:"endpoint"`
 	APIKey                       string `json:"-"`
 	ConnectTimeoutSeconds        int    `json:"connect_timeout_seconds"`
@@ -236,6 +237,7 @@ type CodeExecConfig struct {
 	CleanupTimeoutSeconds        int    `json:"cleanup_timeout_seconds"`
 	EnableNetwork                bool   `json:"enable_network"`
 	SystemOfficeProfile          string `json:"system_office_profile"`
+	SystemDataProfile            string `json:"system_data_profile"`
 	MaxNumber                    int64  `json:"max_number"`
 	MinNumber                    int64  `json:"min_number"`
 	MaxStringLength              int    `json:"max_string_length"`

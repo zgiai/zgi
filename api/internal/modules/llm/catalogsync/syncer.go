@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
@@ -61,6 +62,7 @@ type Synchronizer struct {
 	grpcAddr       string
 	newClient      func(addr string) (catalogRPCClient, io.Closer, error)
 	reconnectDelay time.Duration
+	catalogLoaded  atomic.Bool
 }
 
 func NewSynchronizer(db *gorm.DB, grpcAddr string) *Synchronizer {
@@ -150,7 +152,7 @@ func (s *Synchronizer) connect(ctx context.Context) (catalogRPCClient, io.Closer
 	}
 
 	stream, err := client.WatchCatalogPublishes(ctx, &pb.WatchCatalogPublishesRequest{
-		LastSeenVersion: lastSeenVersion,
+		LastSeenVersion: s.watchStartVersion(lastSeenVersion),
 	})
 	if err != nil {
 		return nil, closer, nil, err
@@ -222,8 +224,19 @@ func (s *Synchronizer) applyPublishedVersion(ctx context.Context, client catalog
 		_ = service.RecordPublishedCatalogSyncError(ctx, err.Error())
 		return err
 	}
+	s.catalogLoaded.Store(true)
 
 	return nil
+}
+
+// watchStartVersion forces the latest published catalog to be replayed once
+// per process. The database remembers the applied version, while vendor display
+// metadata is intentionally held in memory and must be restored after restart.
+func (s *Synchronizer) watchStartVersion(lastAppliedVersion int64) int64 {
+	if !s.catalogLoaded.Load() {
+		return 0
+	}
+	return lastAppliedVersion
 }
 
 func catalogFromResponse(resp *pb.GetPublishedCatalogResponse) modelmeta.PublishedCatalog {

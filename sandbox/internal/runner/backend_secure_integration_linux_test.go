@@ -4,6 +4,8 @@ package runner
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -265,4 +267,87 @@ func defaultBwrap(value string) string {
 		return "bwrap"
 	}
 	return strings.TrimSpace(value)
+}
+
+func TestLinuxSecureBackendCancellationAndTimeoutReapChildren(t *testing.T) {
+	rootfs := os.Getenv("ZGI_SANDBOX_TEST_SECURE_ROOTFS")
+	if rootfs == "" {
+		t.Skip("ZGI_SANDBOX_TEST_SECURE_ROOTFS is not set")
+	}
+	for _, mode := range []string{"cancel", "timeout"} {
+		t.Run(mode, func(t *testing.T) {
+			cfg := config.FromEnv()
+			cfg.RuntimeBackend = "linux-secure"
+			cfg.SecureRootFS = rootfs
+			cfg.TimeoutSeconds = 10
+			if mode == "timeout" {
+				cfg.TimeoutSeconds = 1
+			}
+			service, err := NewServiceFromConfig(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			workDir := t.TempDir()
+			if err := os.Chmod(workDir, 0o777); err != nil {
+				t.Fatal(err)
+			}
+			marker := "child-heartbeat-" + token()
+			childCode := "import pathlib,sys,time\np=pathlib.Path(sys.argv[1])\nwhile True:\n p.write_text(str(time.monotonic_ns()))\n time.sleep(.01)"
+			code := fmt.Sprintf("import subprocess,sys\nsubprocess.run([sys.executable,'-c',%q,%q],check=True)", childCode, marker)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			type outcome struct {
+				result Result
+				err    error
+			}
+			done := make(chan outcome, 1)
+			go func() {
+				result, err := service.RunInDir(ctx, Request{Language: "python3", Code: code}, workDir)
+				done <- outcome{result, err}
+			}()
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				if _, err := os.Stat(filepath.Join(workDir, marker)); err == nil {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("child never wrote its heartbeat")
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			if mode == "cancel" {
+				cancel()
+			}
+			select {
+			case got := <-done:
+				if mode == "cancel" && !errors.Is(got.err, context.Canceled) {
+					t.Fatalf("expected cancellation, got %#v", got)
+				}
+				if mode == "timeout" && (got.err != nil || got.result.ExitCode != 124) {
+					t.Fatalf("expected timeout result, got %#v", got)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("cancellation left the secure runtime waiting for a child")
+			}
+			for attempt := 0; attempt < 100; attempt++ {
+				entries, err := os.ReadDir("/proc")
+				if err != nil {
+					t.Fatal(err)
+				}
+				alive := false
+				for _, entry := range entries {
+					raw, _ := os.ReadFile(filepath.Join("/proc", entry.Name(), "cmdline"))
+					if strings.Contains(string(raw), marker) {
+						alive = true
+						break
+					}
+				}
+				if !alive {
+					return
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			t.Fatal("statistical/script child remains after secure runtime termination")
+		})
+	}
 }

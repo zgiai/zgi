@@ -99,6 +99,10 @@ func (a *AccountServiceAdapter) RegisterEx(ctx context.Context, email string, na
 	return a.accountService.RegisterEx(ctx, email, name, password, openID, provider, language, status, isSetup, createWorkspaceRequired)
 }
 
+func (a *AccountServiceAdapter) DeleteUnboundAccountPermanently(ctx context.Context, account *auth_model.Account) (bool, error) {
+	return a.accountService.DeleteUnboundAccountPermanently(ctx, account)
+}
+
 // All other required methods with placeholder implementations
 
 // GetAccountExtensionByID implements shared.AccountService interface
@@ -376,6 +380,15 @@ func (a *AccountServiceAdapter) IsOrganizationMember(ctx context.Context, organi
 type AccountServiceAdapter struct {
 	accountService  *auth_service.AccountService
 	registerService interfaces.RegisterService
+}
+
+// SetRegistrationProvisioningOutboxDispatcher forwards the optional durable
+// registration post-commit dispatcher without widening the shared account API.
+func (a *AccountServiceAdapter) SetRegistrationProvisioningOutboxDispatcher(dispatcher func(context.Context, string) error) {
+	if a == nil || a.accountService == nil {
+		return
+	}
+	a.accountService.SetRegistrationProvisioningOutboxDispatcher(dispatcher)
 }
 
 func NewAccountServiceAdapter(accountService *auth_service.AccountService, registerService interfaces.RegisterService) interfaces.AccountService {
@@ -711,8 +724,8 @@ func (a *AccountServiceAdapter) IsEmailSendIPLimit(ctx context.Context, ipAddres
 	return a.accountService.IsEmailSendIPLimit(ctx, ipAddress)
 }
 
-func (a *AccountServiceAdapter) SendDirectAddMemberEmail(ctx context.Context, account *auth_model.Account, inviterID, groupID, groupName, departmentName, language string) error {
-	return a.accountService.SendDirectAddMemberEmail(ctx, account, inviterID, groupID, groupName, departmentName, language)
+func (a *AccountServiceAdapter) SendDirectAddMemberEmail(ctx context.Context, account *auth_model.Account, inviterID, groupID, workspaceID, groupName, departmentName, language string) error {
+	return a.accountService.SendDirectAddMemberEmail(ctx, account, inviterID, groupID, workspaceID, groupName, departmentName, language)
 }
 
 // RefreshToken implements shared.AccountService interface

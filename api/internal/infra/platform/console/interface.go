@@ -18,7 +18,7 @@ type ConsoleProvider interface {
 	// GetBaseURL returns the Console-API base URL (e.g. "http://localhost:2625")
 	GetBaseURL() string
 
-	// RegisterOrganization registers a new organization to Console-API (async)
+	// RegisterOrganization preserves the legacy asynchronous best-effort behavior.
 	RegisterOrganization(ctx context.Context, req *RegisterOrganizationRequest) error
 
 	// NotifyOfficialSignup tells Console-API that a cloud signup completed.
@@ -83,6 +83,14 @@ type ConsoleProvider interface {
 
 	// GetBankTransferVoucher loads voucher binary from console.
 	GetBankTransferVoucher(ctx context.Context, key string) (*BankTransferVoucherFile, error)
+}
+
+// OrganizationRegistrationSyncer is the narrow, synchronous organization
+// registration capability required by durable registration provisioning. It is
+// intentionally separate from ConsoleProvider so legacy best-effort callers do
+// not accidentally depend on synchronous remote behavior.
+type OrganizationRegistrationSyncer interface {
+	RegisterOrganizationSync(ctx context.Context, req *RegisterOrganizationRequest) error
 }
 
 // RegisterOrganizationRequest represents organization registration request.

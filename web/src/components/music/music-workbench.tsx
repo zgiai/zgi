@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useMusicModels } from '@/hooks/music/use-music-models';
@@ -29,12 +30,19 @@ import type { MusicWaveformData } from './music-waveform-data';
 
 const PAGE_SIZE = 20;
 
+function getMusicPlaybackSourceKey(task: MusicTask, source: string): string {
+  return task.file_id?.trim() || task.id || source;
+}
+
 export function MusicWorkbench() {
   const t = useT('music');
+  const searchParams = useSearchParams();
   const workspaceId = useCurrentWorkspace()?.id;
   const modelsQuery = useMusicModels();
   const models = modelsQuery.models;
-  const [model, setModel] = React.useState('');
+  const requestedProvider = searchParams.get('provider')?.trim() ?? '';
+  const requestedModel = searchParams.get('model')?.trim() ?? '';
+  const [model, setModel] = React.useState(requestedModel);
   const [selectedTaskId, setSelectedTaskId] = React.useState<string | null>(null);
   const [page, setPage] = React.useState(1);
   const [searchInput, setSearchInput] = React.useState('');
@@ -45,6 +53,7 @@ export function MusicWorkbench() {
   const [pendingPlaybackId, setPendingPlaybackId] = React.useState<string | null>(null);
   const [playerTask, setPlayerTask] = React.useState<MusicTask | null>(null);
   const [playerSource, setPlayerSource] = React.useState<string | null>(null);
+  const [playerSourceKey, setPlayerSourceKey] = React.useState<string | null>(null);
   const [playRequestToken, setPlayRequestToken] = React.useState(0);
   const [playRequestAction, setPlayRequestAction] = React.useState<'play' | 'toggle'>('play');
   const [seekRequestToken, setSeekRequestToken] = React.useState(0);
@@ -58,9 +67,10 @@ export function MusicWorkbench() {
   const playbackSnapshotRef = React.useRef<{
     taskId: string | null;
     source: string | null;
+    sourceKey: string | null;
     playing: boolean;
     progress: number;
-  }>({ taskId: null, source: null, playing: false, progress: 0 });
+  }>({ taskId: null, source: null, sourceKey: null, playing: false, progress: 0 });
   const [downloadingTaskId, setDownloadingTaskId] = React.useState<string | null>(null);
   const [waveformDataByTaskId, setWaveformDataByTaskId] = React.useState<
     Record<string, MusicWaveformData>
@@ -77,9 +87,21 @@ export function MusicWorkbench() {
   const deleteTaskMutation = useDeleteMusicTask();
 
   React.useEffect(() => {
-    if (models.some(item => item.model === model)) return;
+    if (modelsQuery.isLoading) return;
+
+    const requestedModelIsAvailable = models.some(
+      item =>
+        item.model === requestedModel &&
+        (!requestedProvider || item.provider === requestedProvider)
+    );
+    if (
+      models.some(item => item.model === model) &&
+      (model !== requestedModel || requestedModelIsAvailable)
+    ) {
+      return;
+    }
     setModel(models[0]?.model ?? '');
-  }, [model, models]);
+  }, [model, models, modelsQuery.isLoading, requestedModel, requestedProvider]);
 
   React.useEffect(() => {
     setSelectedTaskId(null);
@@ -88,9 +110,16 @@ export function MusicWorkbench() {
     setPendingPlaybackId(null);
     setPlayerTask(null);
     setPlayerSource(null);
+    setPlayerSourceKey(null);
     setPendingSeek(null);
     setPlaybackProgress(0);
-    playbackSnapshotRef.current = { taskId: null, source: null, playing: false, progress: 0 };
+    playbackSnapshotRef.current = {
+      taskId: null,
+      source: null,
+      sourceKey: null,
+      playing: false,
+      progress: 0,
+    };
     setDownloadingTaskId(null);
     setDeletingTask(null);
     setWaveformDataByTaskId({});
@@ -106,10 +135,12 @@ export function MusicWorkbench() {
     if (!selectedTask || !shouldPrepareMusicTask(selectedTask.status, selectedTask.url)) return;
     const source = selectedTask.url ? toMusicAssetURL(selectedTask.url, API_URL) : null;
     if (!source) return;
+    const sourceKey = getMusicPlaybackSourceKey(selectedTask, source);
 
     const snapshot = playbackSnapshotRef.current;
     const sameTask = snapshot.taskId !== null && snapshot.taskId === selectedTask.id;
-    const sourceChanged = snapshot.source !== source;
+    const sourceChanged = snapshot.sourceKey !== sourceKey;
+    const nextSource = sourceChanged || !snapshot.source ? source : snapshot.source;
     const transition = resolveMusicSourcePlaybackTransition(
       snapshot.taskId,
       selectedTask.id,
@@ -118,11 +149,13 @@ export function MusicWorkbench() {
     );
     const shouldPlay = pendingPlaybackId === selectedTask.id;
     snapshot.taskId = selectedTask.id;
-    snapshot.source = source;
+    snapshot.source = nextSource;
+    snapshot.sourceKey = sourceKey;
     snapshot.progress = transition.progress;
     if (!sameTask) snapshot.playing = false;
     setPlayerTask(selectedTask);
-    setPlayerSource(source);
+    setPlayerSource(current => (current === nextSource ? current : nextSource));
+    setPlayerSourceKey(current => (current === sourceKey ? current : sourceKey));
     if (pendingSeek?.taskId === selectedTask.id) {
       setSeekRequestProgress(pendingSeek.progress);
       setSeekRequestToken(token => token + 1);
@@ -220,11 +253,13 @@ export function MusicWorkbench() {
       if (playerTask?.id === task.id) {
         setPlayerTask(null);
         setPlayerSource(null);
+        setPlayerSourceKey(null);
         setPlaybackProgress(0);
         setIsPlaying(false);
         playbackSnapshotRef.current = {
           taskId: null,
           source: null,
+          sourceKey: null,
           playing: false,
           progress: 0,
         };
@@ -324,6 +359,7 @@ export function MusicWorkbench() {
       <MusicPlayer
         task={playerTask}
         source={playerSource}
+        sourceKey={playerSourceKey}
         playRequestToken={playRequestToken}
         playRequestAction={playRequestAction}
         seekRequestToken={seekRequestToken}
