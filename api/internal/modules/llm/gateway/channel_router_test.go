@@ -290,6 +290,29 @@ func TestHydratePlatformModelIdentityFallsBackToSelectionProvider(t *testing.T) 
 	require.Equal(t, modelID, selection.ModelVendorModelID)
 }
 
+func TestHydratePlatformModelIdentityFallsBackWhenVendorIdentityIsMissing(t *testing.T) {
+	db := openGatewayCatalogDB(t)
+	insertGatewayCatalogModel(t, db, uuid.New(), "supplier-cloud", "general-chat-model")
+	catalogvendor.Replace([]catalogvendor.Entry{{
+		Provider: "supplier-cloud",
+		Model:    "general-chat-model",
+		Vendor:   "missing-vendor",
+	}})
+	t.Cleanup(func() { catalogvendor.Replace(nil) })
+
+	selection := &ProviderSelection{
+		UseSystemProvider: true,
+		Model: llmmodel.LLMModel{
+			Provider: "supplier-cloud",
+			Model:    "general-chat-model",
+		},
+	}
+	require.NoError(t, hydratePlatformModelIdentity(t.Context(), db, selection))
+	require.Empty(t, selection.ModelVendor)
+	require.Equal(t, uuid.Nil, selection.ModelVendorProviderID)
+	require.Equal(t, uuid.Nil, selection.ModelVendorModelID)
+}
+
 func TestBuildChannelSelection_UsesModelListAsSourceOfTruth(t *testing.T) {
 	router := &ChannelRouter{}
 	route := &channelmodel.LLMRoute{

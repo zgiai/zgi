@@ -1377,10 +1377,18 @@ func hydratePlatformModelIdentity(ctx context.Context, db *gorm.DB, selection *P
 
 	var provider providermodel.LLMProvider
 	if err := db.WithContext(ctx).Unscoped().Where("provider = ?", vendor).Take(&provider).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			logger.WarnContext(ctx, "catalog model vendor provider identity is unavailable; using supplier identity", zap.String("vendor", vendor), zap.String("model", selection.Model.Model))
+			return nil
+		}
 		return fmt.Errorf("resolve catalog model vendor provider %q: %w", vendor, err)
 	}
 	var model llmmodel.LLMModel
 	if err := db.WithContext(ctx).Unscoped().Where("provider = ? AND name = ?", vendor, selection.Model.Model).Take(&model).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			logger.WarnContext(ctx, "catalog model vendor identity is unavailable; using supplier identity", zap.String("vendor", vendor), zap.String("model", selection.Model.Model))
+			return nil
+		}
 		return fmt.Errorf("resolve catalog model vendor model %q/%q: %w", vendor, selection.Model.Model, err)
 	}
 	selection.ModelVendor = vendor
