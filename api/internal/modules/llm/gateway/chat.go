@@ -91,6 +91,7 @@ func (s *llmGatewayServiceImpl) chatCompletionInternal(
 
 	// Tag the request category so the router can apply capability-aware matching.
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, "chat")
+	ctx = context.WithValue(ctx, shared.ContextKeyModelOperation, operationChatCompletions)
 	if useCase := modelUseCaseForAppContext(appCtx); useCase != "" {
 		ctx = context.WithValue(ctx, shared.ContextKeyModelUseCase, useCase)
 	}
@@ -336,6 +337,7 @@ func (s *llmGatewayServiceImpl) chatCompletionStreamInternal(
 
 	// Tag the request category so the router can apply capability-aware matching.
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, "chat")
+	ctx = context.WithValue(ctx, shared.ContextKeyModelOperation, operationChatCompletions)
 	if useCase := modelUseCaseForAppContext(appCtx); useCase != "" {
 		ctx = context.WithValue(ctx, shared.ContextKeyModelUseCase, useCase)
 	}

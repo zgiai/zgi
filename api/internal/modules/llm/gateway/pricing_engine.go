@@ -399,6 +399,9 @@ func (e *pricingEngine) QuoteImage(ctx context.Context, ref PricingModelRef, req
 		if quote, ok := quoteConfiguredOrganizationImageUnitPrice(model, &r, count); ok {
 			return quote, nil
 		}
+		if quote, ok := quoteConfiguredStructuredImagePrice(model, &r, count); ok {
+			return quote, nil
+		}
 		prices, configured, err := configuredImagePricingRules(model)
 		if err != nil {
 			return PricingQuote{}, err
@@ -633,6 +636,39 @@ func quoteConfiguredImageUnitPrice(model *pricingModelRecord, req *adapter.Image
 	totalUSD := price.Mul(decimal.NewFromInt(count))
 	snapshot := configuredImageUnitPriceSnapshot(model, req, count, price, column)
 	return newOutputOnlyUSDQuote(totalUSD, PricingSourceUpstreamModelPrice, "", UsageSourceRequestParameters, snapshot), true
+}
+
+// quoteConfiguredStructuredImagePrice reads the canonical model pricing
+// snapshot written by Console. This bridges the newer price_per_image field
+// to the legacy image_prices/output_price runtime projections.
+func quoteConfiguredStructuredImagePrice(model *pricingModelRecord, req *adapter.ImageRequest, count int64) (PricingQuote, bool) {
+	if model == nil || len(model.Pricing) == 0 || string(model.Pricing) == "null" {
+		return PricingQuote{}, false
+	}
+	var pricing struct {
+		PricePerImage *float64 `json:"price_per_image"`
+	}
+	if err := json.Unmarshal(model.Pricing, &pricing); err != nil || pricing.PricePerImage == nil || *pricing.PricePerImage < 0 {
+		return PricingQuote{}, false
+	}
+	price := decimal.NewFromFloat(*pricing.PricePerImage)
+	totalUSD := price.Mul(decimal.NewFromInt(count))
+	provider, modelName := pricingModelIdentity(PricingModelRef{}, model, true)
+	snapshot := buildPricingSnapshot(map[string]interface{}{
+		"pricing_source": PricingSourceUpstreamModelPrice,
+		"usage_source":   UsageSourceRequestParameters,
+		"operation":      PricingOperationImage,
+		"model_id":       pricingModelID(model),
+		"provider":       provider,
+		"model":          modelName,
+		"request_model":  strings.TrimSpace(req.Model),
+		"size":           strings.TrimSpace(req.Size),
+		"quality":        strings.TrimSpace(req.Quality),
+		"image_count":    count,
+		"usd_per_image":  price.String(),
+		"price_column":   "pricing.price_per_image",
+	})
+	return newOutputOnlyUSDQuote(totalUSD, PricingSourceUpstreamModelPrice, "pricing.price_per_image", UsageSourceRequestParameters, snapshot), true
 }
 
 func quoteConfiguredOrganizationImageUnitPrice(model *pricingModelRecord, req *adapter.ImageRequest, count int64) (PricingQuote, bool) {

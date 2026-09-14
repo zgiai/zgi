@@ -18,6 +18,7 @@ type OfficialChannel struct {
 	Weight             int
 	SupportedProtocols []string
 	ModelProtocols     map[string][]string
+	ModelOperations    map[string][]string
 	APIBaseURL         string // console-api internal endpoint (e.g. "https://console.zgi.ai/v1/internal")
 }
 
@@ -44,6 +45,7 @@ func (o *OfficialChannel) ToTenantRoute(tenantID uuid.UUID) *channelmodel.LLMRou
 		IsEnabled:              true,
 		IsOfficial:             true,
 		OfficialModelProtocols: cloneModelProtocols(o.ModelProtocols),
+		ModelOperations:        cloneModelProtocols(o.ModelOperations),
 	}
 }
 

@@ -342,6 +342,38 @@ func TestAvailableModels_ReturnsMusicGenerationCapability(t *testing.T) {
 	}
 }
 
+func TestAvailableModels_InfersImageGenerationUseCaseFromEndpoint(t *testing.T) {
+	organizationID := uuid.New()
+	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{{
+		ID:              uuid.New(),
+		Provider:        "doubao",
+		Model:           "doubao-seedream-2-0-260128",
+		ModelName:       "Doubao Seedream 2.0",
+		IsActive:        true,
+		ImageGeneration: true,
+		// Simulate a legacy publication with no use_cases backfill.
+		UseCases: types.StringArray{},
+	}}}
+	routeRepo := &availableRouteRepoFake{routes: []*channelmodel.LLMRoute{{
+		Type:                   shared.RouteTypeZGICloud,
+		IsOfficial:             true,
+		Models:                 []string{"doubao-seedream-2-0-260128"},
+		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "doubao", Model: "doubao-seedream-2-0-260128"}},
+	}}}
+	svc := NewAvailableModelsService(modelRepo, &availableConfigRepoFake{}, &availableCustomRepoFake{}, routeRepo)
+
+	models, err := svc.ListAvailable(t.Context(), organizationID, "doubao", string(llmmodel.UseCaseImageGen))
+	if err != nil {
+		t.Fatalf("ListAvailable() error = %v", err)
+	}
+	if len(models) != 1 {
+		t.Fatalf("models length = %d, want 1", len(models))
+	}
+	if !containsUseCase(types.StringArray(models[0].UseCases), string(llmmodel.UseCaseImageGen)) {
+		t.Fatalf("use_cases = %v, want image-gen", models[0].UseCases)
+	}
+}
+
 func TestAvailableModels_CloudOfficialRouteUsesPlatformChannelCatalog(t *testing.T) {
 	catalogvendor.Replace([]catalogvendor.Entry{{Provider: "openai", Model: "gpt-cloud", Vendor: "openai"}})
 	catalogvendor.ReplaceMetadata([]catalogvendor.Metadata{{Vendor: "openai", VendorName: "OpenAI"}})

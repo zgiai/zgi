@@ -691,6 +691,8 @@ func (r *ChannelRouter) filterCandidateRoutes(
 	modelUseCase, _ := ctx.Value(shared.ContextKeyModelUseCase).(string)
 	validRoutes = filterRoutesForModelScene(validRoutes, modelName, llmModel, modelUseCase, isPrivateCustomModel)
 	modelCategory, _ := ctx.Value(shared.ContextKeyModelCategory).(string)
+	modelOperation, _ := ctx.Value(shared.ContextKeyModelOperation).(string)
+	validRoutes = filterRoutesForOperation(validRoutes, modelName, modelOperation)
 	validRoutes, err := filterRoutesForNativeProtocolOrError(validRoutes, llmModel, modelCategory)
 	if err != nil {
 		return nil, err
@@ -699,6 +701,38 @@ func (r *ChannelRouter) filterCandidateRoutes(
 		return nil, llmerrors.NewModelNotFoundErrorWithName(modelName)
 	}
 	return validRoutes, nil
+}
+
+// filterRoutesForOperation enforces channel capability boundaries. Missing
+// metadata is intentionally treated as legacy-compatible so existing routes
+// continue to work until their channel capabilities are edited.
+func filterRoutesForOperation(routes []*channelmodel.LLMRoute, modelName, operation string) []*channelmodel.LLMRoute {
+	operation = strings.TrimSpace(operation)
+	if operation == "" {
+		return routes
+	}
+	filtered := make([]*channelmodel.LLMRoute, 0, len(routes))
+	for _, route := range routes {
+		if route == nil {
+			continue
+		}
+		operations, declared := route.ModelOperations[modelName]
+		if !declared {
+			// Some routes use a wildcard model declaration.
+			operations, declared = route.ModelOperations["*"]
+		}
+		if !declared || len(operations) == 0 {
+			filtered = append(filtered, route)
+			continue
+		}
+		for _, candidate := range operations {
+			if strings.EqualFold(strings.TrimSpace(candidate), operation) {
+				filtered = append(filtered, route)
+				break
+			}
+		}
+	}
+	return filtered
 }
 
 func (r *ChannelRouter) prepareCandidateRoutes(
@@ -1327,6 +1361,13 @@ func hydratePlatformModelIdentity(ctx context.Context, db *gorm.DB, selection *P
 		return nil
 	}
 	vendor := strings.TrimSpace(catalogvendor.Lookup(selection.Model.Provider, selection.Model.Model))
+	if vendor == "" {
+		// The catalog vendor projection is process-local and may not have been
+		// hydrated yet after a Pre restart. Official model identity still has a
+		// stable provider/model pair, so use the selected provider as the
+		// fallback owner and resolve the catalog row directly.
+		vendor = strings.TrimSpace(selection.Model.Provider)
+	}
 	if vendor == "" {
 		vendor = strings.TrimSpace(selection.Model.Vendor)
 	}

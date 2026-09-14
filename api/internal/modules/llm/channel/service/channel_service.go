@@ -231,6 +231,7 @@ func (s *channelService) CreateRoute(ctx context.Context, organizationID uuid.UU
 		Models:           normalizedModels,
 		APIBaseURL:       req.APIBaseURL,
 		NativeProtocols:  req.NativeProtocols,
+		ModelOperations:  req.ModelOperations,
 		ModelMaps:        req.ModelMaps,
 		ParamOverride:    req.ParamOverride,
 		HeaderOverride:   req.HeaderOverride,
@@ -454,6 +455,7 @@ func (s *channelService) buildChannelView(route *model.LLMRoute, walletBalances 
 		RemainingFunds:   walletBalances[route.ID],
 		APIBaseURL:       route.APIBaseURL,
 		NativeProtocols:  route.NativeProtocols,
+		ModelOperations:  route.ModelOperations,
 		ValidationReport: route.ValidationReport,
 		Warnings:         channelprovider.WarningMessages(route.ValidationReport),
 		Priority:         route.Priority,
@@ -831,6 +833,9 @@ func (s *channelService) UpdateRoute(ctx context.Context, organizationID, id uui
 	}
 	if req.NativeProtocols != nil {
 		route.NativeProtocols = *req.NativeProtocols
+	}
+	if req.ModelOperations != nil {
+		route.ModelOperations = req.ModelOperations
 	}
 	if req.ModelMaps != nil {
 		route.ModelMaps = req.ModelMaps

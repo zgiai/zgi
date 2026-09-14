@@ -35,6 +35,7 @@ type LLMRoute struct {
 	ChannelProvider  string                 `gorm:"column:provider;type:varchar(100)" json:"channel_provider,omitempty"`
 	APIBaseURL       string                 `gorm:"type:varchar(500)" json:"api_base_url,omitempty"`
 	NativeProtocols  NativeProtocolConfig   `gorm:"type:jsonb;serializer:json;default:'{}'" json:"native_protocols,omitempty"`
+	ModelOperations  map[string][]string    `gorm:"type:jsonb;serializer:json;default:'{}'" json:"model_operations,omitempty"`
 	ModelMaps        map[string]interface{} `gorm:"type:jsonb;serializer:json;default:'{}'" json:"model_maps,omitempty"`
 	ParamOverride    map[string]interface{} `gorm:"type:jsonb;serializer:json;default:'{}'" json:"param_override,omitempty"`
 	HeaderOverride   map[string]interface{} `gorm:"type:jsonb;serializer:json;default:'{}'" json:"header_override,omitempty"`

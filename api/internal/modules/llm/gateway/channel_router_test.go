@@ -271,6 +271,25 @@ func TestHydratePlatformModelIdentityUsesGenericCatalogVendorMapping(t *testing.
 	require.Equal(t, ownerModelID, selection.ModelVendorModelID)
 }
 
+func TestHydratePlatformModelIdentityFallsBackToSelectionProvider(t *testing.T) {
+	db := openGatewayCatalogDB(t)
+	modelID := uuid.New()
+	insertGatewayCatalogModel(t, db, modelID, "doubao", "doubao-seedream-4-0-250828")
+	catalogvendor.Replace(nil)
+	t.Cleanup(func() { catalogvendor.Replace(nil) })
+
+	selection := &ProviderSelection{
+		UseSystemProvider: true,
+		Model: llmmodel.LLMModel{
+			Provider: "doubao",
+			Model:    "doubao-seedream-4-0-250828",
+		},
+	}
+	require.NoError(t, hydratePlatformModelIdentity(t.Context(), db, selection))
+	require.Equal(t, "doubao", selection.ModelVendor)
+	require.Equal(t, modelID, selection.ModelVendorModelID)
+}
+
 func TestBuildChannelSelection_UsesModelListAsSourceOfTruth(t *testing.T) {
 	router := &ChannelRouter{}
 	route := &channelmodel.LLMRoute{

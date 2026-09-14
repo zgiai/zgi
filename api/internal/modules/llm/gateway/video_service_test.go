@@ -218,3 +218,20 @@ func TestVideoCreateResponseMissingTaskIDUsesWrappedUpstreamError(t *testing.T) 
 		t.Fatalf("videoResponseFailureError() = %v, want %q", err, want)
 	}
 }
+
+func TestDefaultVideoPredeductQuoteUsesModelTokenEstimation(t *testing.T) {
+	selection := &ProviderSelection{Model: llmmodel.LLMModel{
+		ID:       uuid.New(),
+		Provider: "qwen",
+		Model:    "wan-video",
+		Pricing:  datatypes.JSON(`{"video_generation":{"currency":"USD","billing_unit":"million_video_tokens","rates":[{"price_per_million_tokens":10}],"token_estimation":{"unit":"video_tokens","rules":[{"tokens_per_second":1000}]}}}`),
+	}}
+	quote := defaultVideoPredeductQuote(selection, "wan-video", 5, 2)
+	if quote.PricingSource != PricingSourceUpstreamModelPrice {
+		t.Fatalf("pricing source = %q, want model price", quote.PricingSource)
+	}
+	// 5s * 2 * 1000 tokens/s at $10 per million = $0.10.
+	if quote.TotalCredits != 100000 {
+		t.Fatalf("total credits = %d, want 100000", quote.TotalCredits)
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
@@ -224,6 +225,7 @@ func (s *llmGatewayServiceImpl) createEmbeddingsInternal(
 		return nil, err
 	}
 	ctx = withRoutingTokenEstimate(ctx, promptTokens, 0, PricingOperationEmbedding)
+	ctx = context.WithValue(ctx, shared.ContextKeyModelOperation, operationEmbeddings)
 	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, req.Provider, req.Model, 3)
 	if err != nil {
 		reportLLMSelectionFailure(ctx, err, req.Model, organizationID.String(), shadowOrganizationID.String())
@@ -359,6 +361,7 @@ func (s *llmGatewayServiceImpl) rerankInternal(
 		return nil, err
 	}
 	ctx = withRoutingTokenEstimate(ctx, promptTokens, 0, PricingOperationRerank)
+	ctx = context.WithValue(ctx, shared.ContextKeyModelOperation, operationRerank)
 	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, "", req.Model, 3)
 	if err != nil {
 		reportLLMSelectionFailure(ctx, err, req.Model, organizationID.String(), shadowOrganizationID.String())

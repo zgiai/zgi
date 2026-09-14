@@ -46,6 +46,11 @@ const (
 	PricingSourceAdminFallback             PricingSource = "admin_fallback"
 	PricingSourceCodeDefaultFallback       PricingSource = "code_default_fallback"
 	PricingSourcePlatformPredeductEstimate PricingSource = "platform_prededuct_estimate"
+	// PricingSourcePlatformRemoteAuthority marks an image request whose price
+	// is resolved by the remote Cloud billing authority.  It deliberately does
+	// not contain a local estimate; the remote reservation/settlement owns the
+	// authoritative amount.
+	PricingSourcePlatformRemoteAuthority PricingSource = "platform_remote_authority"
 )
 
 type UsageSource string

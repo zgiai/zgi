@@ -48,6 +48,7 @@ func (s *llmGatewayServiceImpl) CreateResponseRaw(
 		return nil, err
 	}
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, modelCategoryResponses)
+	ctx = context.WithValue(ctx, shared.ContextKeyModelOperation, operationResponses)
 
 	return s.createNativeResponse(ctx, apiKey, effectiveReq)
 }
@@ -69,6 +70,7 @@ func (s *llmGatewayServiceImpl) CreateResponseStream(
 		return nil, err
 	}
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, modelCategoryResponses)
+	ctx = context.WithValue(ctx, shared.ContextKeyModelOperation, operationResponses)
 
 	return s.createNativeResponseStream(ctx, apiKey, effectiveReq)
 }
@@ -90,6 +92,7 @@ func (s *llmGatewayServiceImpl) CreateAnthropicMessage(
 		return nil, err
 	}
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, modelCategoryAnthropicMessages)
+	ctx = context.WithValue(ctx, shared.ContextKeyModelOperation, operationAnthropicMessages)
 
 	return s.createNativeAnthropicMessage(ctx, apiKey, effectiveReq)
 }
@@ -111,6 +114,7 @@ func (s *llmGatewayServiceImpl) CreateAnthropicMessageStream(
 		return nil, err
 	}
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, modelCategoryAnthropicMessages)
+	ctx = context.WithValue(ctx, shared.ContextKeyModelOperation, operationAnthropicMessages)
 
 	return s.createNativeAnthropicMessageStream(ctx, apiKey, effectiveReq)
 }
@@ -124,6 +128,7 @@ func (s *llmGatewayServiceImpl) CreateGeminiContent(
 		return nil, err
 	}
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, modelCategoryGemini)
+	ctx = context.WithValue(ctx, shared.ContextKeyModelOperation, operationGeminiGenerate)
 	return s.runNativeNonStream(ctx, apiKey, req.Model, req.Body, "llm.gemini.generate_content", nativeUsageBodyFormatGemini, func(callCtx context.Context, providerAdapter adapter.LLMProviderAdapter) (*adapter.RawResponse, error) {
 		capable, ok := providerAdapter.(adapter.GeminiGenerateContentCapable)
 		if !ok {
@@ -142,6 +147,7 @@ func (s *llmGatewayServiceImpl) CreateGeminiContentStream(
 		return nil, err
 	}
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, modelCategoryGemini)
+	ctx = context.WithValue(ctx, shared.ContextKeyModelOperation, operationGeminiGenerate)
 	return s.runNativeStream(ctx, apiKey, req.Model, req.Body, "llm.gemini.stream_generate_content", nativeUsageBodyFormatGemini, func(callCtx context.Context, providerAdapter adapter.LLMProviderAdapter) (<-chan adapter.RawStreamEvent, error) {
 		capable, ok := providerAdapter.(adapter.GeminiGenerateContentCapable)
 		if !ok {

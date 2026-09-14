@@ -697,6 +697,30 @@ func TestPricingEngineQuoteImageUsesConfiguredImagePrices(t *testing.T) {
 	}
 }
 
+func TestPricingEngineQuoteImageUsesStructuredModelPrice(t *testing.T) {
+	db := openPricingEngineTestDB(t)
+	modelID := uuid.New()
+	insertPricingModel(t, db, modelID, "openai", "0", "0", false, false, "[]")
+	if err := db.Exec(`UPDATE llm_models SET pricing = ? WHERE id = ?`,
+		`{"deployment_scope":"global","price_per_image":0.04}`, modelID.String()).Error; err != nil {
+		t.Fatal(err)
+	}
+	n := 3
+	quote, err := NewPricingEngine(db).QuoteImage(context.Background(), PricingModelRef{
+		ModelID: modelID,
+		Source:  PricingModelSourceGlobal,
+	}, &adapter.ImageRequest{Model: "gpt-image", N: &n})
+	if err != nil {
+		t.Fatalf("QuoteImage returned error: %v", err)
+	}
+	if !quote.TotalUSD.Equal(decimal.RequireFromString("0.12")) {
+		t.Fatalf("total USD = %s, want 0.12", quote.TotalUSD)
+	}
+	if quote.RuleID != "pricing.price_per_image" {
+		t.Fatalf("rule id = %q, want pricing.price_per_image", quote.RuleID)
+	}
+}
+
 func TestPricingEngineQuoteImageFailsWithoutOrganizationFallback(t *testing.T) {
 	db := openPricingEngineTestDB(t)
 	modelID := uuid.New()

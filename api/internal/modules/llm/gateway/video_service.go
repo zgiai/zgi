@@ -54,6 +54,7 @@ func (s *llmGatewayServiceImpl) CreateVideoWithAppContext(
 	}
 
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, "video")
+	ctx = context.WithValue(ctx, shared.ContextKeyModelOperation, operationVideoCreate)
 	if useCase := modelUseCaseForAppContext(appCtx); useCase != "" {
 		ctx = context.WithValue(ctx, shared.ContextKeyModelUseCase, useCase)
 	}
@@ -152,6 +153,7 @@ func (s *llmGatewayServiceImpl) GetVideoTaskWithAppContext(
 	}
 
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, "video")
+	ctx = context.WithValue(ctx, shared.ContextKeyModelOperation, operationVideoRetrieve)
 	if useCase := modelUseCaseForAppContext(appCtx); useCase != "" {
 		ctx = context.WithValue(ctx, shared.ContextKeyModelUseCase, useCase)
 	}
@@ -276,6 +278,9 @@ func defaultVideoPredeductQuote(selection *ProviderSelection, requestModel strin
 	if count <= 0 {
 		count = 1
 	}
+	if quote, ok := quoteVideoFromModelPricing(selection, requestModel, seconds, count); ok {
+		return quote
+	}
 	totalCredits := int64(seconds) * int64(count) * defaultVideoPredeductPointsPerSecond * internalCreditsPerPoint
 	totalUSD := decimal.NewFromInt(totalCredits).Div(decimal.NewFromInt(pricingCreditsPerUSD))
 	provider := ""
@@ -304,6 +309,84 @@ func defaultVideoPredeductQuote(selection *ProviderSelection, requestModel strin
 		"internal_credits_per_point": internalCreditsPerPoint,
 	})
 	return newOutputOnlyUSDQuote(totalUSD, PricingSourceCodeDefaultFallback, "video.default.per_second", UsageSourceRequestParameters, snapshot)
+}
+
+// quoteVideoFromModelPricing derives the reservation from the selected model's
+// structured video rule. The historical 143 points/s estimate is retained only
+// as a migration fallback when no usable model rule exists.
+func quoteVideoFromModelPricing(selection *ProviderSelection, requestModel string, seconds, count int) (PricingQuote, bool) {
+	if selection == nil || len(selection.Model.Pricing) == 0 {
+		return PricingQuote{}, false
+	}
+	var root map[string]any
+	if err := json.Unmarshal(selection.Model.Pricing, &root); err != nil {
+		return PricingQuote{}, false
+	}
+	video, ok := root["video_generation"].(map[string]any)
+	if !ok {
+		return PricingQuote{}, false
+	}
+	billingUnit, _ := video["billing_unit"].(string)
+	var rate map[string]any
+	if rates, ok := video["rates"].([]any); ok && len(rates) > 0 {
+		rate, _ = rates[0].(map[string]any)
+	}
+	if rate == nil {
+		return PricingQuote{}, false
+	}
+	quantity := float64(count)
+	var unitPrice float64
+	switch billingUnit {
+	case "second":
+		unitPrice, _ = rate["price_per_second"].(float64)
+		quantity = float64(seconds * count)
+	case "task":
+		unitPrice, _ = rate["price_per_task"].(float64)
+	case "million_video_tokens":
+		price, _ := rate["price_per_million_tokens"].(float64)
+		estimation, _ := video["token_estimation"].(map[string]any)
+		var tokensPerSecond float64
+		if rules, ok := estimation["rules"].([]any); ok && len(rules) > 0 {
+			if first, ok := rules[0].(map[string]any); ok {
+				tokensPerSecond, _ = first["tokens_per_second"].(float64)
+			}
+		}
+		if price <= 0 || tokensPerSecond <= 0 {
+			return PricingQuote{}, false
+		}
+		unitPrice = price
+		quantity = tokensPerSecond * float64(seconds*count) / 1_000_000
+	default:
+		return PricingQuote{}, false
+	}
+	if unitPrice < 0 || quantity <= 0 {
+		return PricingQuote{}, false
+	}
+	currency, _ := video["currency"].(string)
+	if strings.TrimSpace(currency) != "" && !strings.EqualFold(strings.TrimSpace(currency), "USD") {
+		// Currency conversion belongs to the billing snapshot; do not guess a
+		// rate during reservation when the model rule is not USD.
+		return PricingQuote{}, false
+	}
+	totalUSD := decimal.NewFromFloat(unitPrice * quantity)
+	modelName := strings.TrimSpace(requestModel)
+	if strings.TrimSpace(selection.Model.Model) != "" {
+		modelName = strings.TrimSpace(selection.Model.Model)
+	}
+	snapshot := buildPricingSnapshot(map[string]any{
+		"pricing_source":     PricingSourceUpstreamModelPrice,
+		"usage_source":       UsageSourceRequestParameters,
+		"operation":          PricingOperationVideo,
+		"model_id":           selection.Model.ID.String(),
+		"provider":           selection.Model.Provider,
+		"model":              modelName,
+		"billing_unit":       billingUnit,
+		"unit_price":         unitPrice,
+		"estimated_quantity": quantity,
+		"duration_seconds":   seconds,
+		"count":              count,
+	})
+	return newOutputOnlyUSDQuote(totalUSD, PricingSourceUpstreamModelPrice, "model.video_generation", UsageSourceRequestParameters, snapshot), true
 }
 
 func reqModelName(req *adapter.VideoRequest) string {

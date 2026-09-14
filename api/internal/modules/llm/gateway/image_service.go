@@ -152,6 +152,7 @@ func (s *llmGatewayServiceImpl) createImageInternal(
 	// Note: We use maxSelections=1 because we don't support fallback for image generation yet (or maybe later)
 	// Tag the request category so the router can apply capability-aware matching.
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, modelCategoryImage)
+	ctx = context.WithValue(ctx, shared.ContextKeyModelOperation, operationImageGeneration)
 	selections, err := s.selectProvidersWithChannelRouter(ctx, billingOrganizationID, effectiveReq.Provider, effectiveReq.Model, 1)
 	if err != nil {
 		reportLLMSelectionFailure(ctx, err, effectiveReq.Model, orgUUID.String(), billingOrganizationID.String())
@@ -166,6 +167,10 @@ func (s *llmGatewayServiceImpl) createImageInternal(
 	if err != nil {
 		return nil, fmt.Errorf("failed to calculate image credits: %w", err)
 	}
+	// Platform image pricing is intentionally zero here: the remote Cloud
+	// authority owns the image price and returns the authoritative settlement.
+	// Private selections still return a concrete local quote and therefore stay
+	// fail-closed when their model/channel price is missing.
 	estimatedCredits := estimatedQuote.TotalCredits
 
 	// 5. Begin billing attempt using the shared billing pipeline.

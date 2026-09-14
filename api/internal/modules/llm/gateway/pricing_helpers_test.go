@@ -191,7 +191,7 @@ func TestQuoteTokenPricingForSelectionUsesConservativeReasoningReservation(t *te
 	}
 }
 
-func TestQuoteImagePricingForSelectionUsesSafeFallbackForOfficialRoute(t *testing.T) {
+func TestQuoteImagePricingForSelectionUsesRemoteAuthorityForOfficialRoute(t *testing.T) {
 	svc := &llmGatewayServiceImpl{pricingEngine: &fakePricingEngine{imageErr: ErrPricingNotConfigured}}
 	selection := &ProviderSelection{
 		UseSystemProvider: true,
@@ -207,8 +207,8 @@ func TestQuoteImagePricingForSelectionUsesSafeFallbackForOfficialRoute(t *testin
 	if err != nil {
 		t.Fatalf("quoteImagePricingForSelection() error = %v, want nil", err)
 	}
-	if quote.TotalCredits <= 0 || quote.PricingSource != PricingSourcePlatformPredeductEstimate {
-		t.Fatalf("quote = %#v, want positive platform estimate", quote)
+	if quote.TotalCredits != 0 || !quote.TotalUSD.IsZero() || quote.PricingSource != PricingSourcePlatformRemoteAuthority {
+		t.Fatalf("quote = %#v, want zero local quote owned by remote authority", quote)
 	}
 }
 
@@ -252,6 +252,27 @@ func TestPricingModelRefFromSelectionIncludesProviderAndModel(t *testing.T) {
 		ref.Provider != "qwen" ||
 		ref.Model != "qwen-plus" {
 		t.Fatalf("ref = %#v, want provider and model from selection", ref)
+	}
+}
+
+func TestPricingModelRefFromOfficialSelectionUsesVendorModelID(t *testing.T) {
+	routeModelID := uuid.New()
+	vendorModelID := uuid.New()
+	selection := &ProviderSelection{
+		UseSystemProvider: true,
+		Model: llmmodel.LLMModel{
+			ID:       routeModelID,
+			Provider: "doubao",
+			Model:    "doubao-seedream-4-0-250828",
+		},
+		ModelSource:        PricingModelSourceGlobal,
+		ModelVendor:        "doubao",
+		ModelVendorModelID: vendorModelID,
+	}
+
+	ref := pricingModelRefFromSelection(selection)
+	if ref.ModelID != vendorModelID {
+		t.Fatalf("ref.ModelID = %s, want hydrated vendor model ID %s", ref.ModelID, vendorModelID)
 	}
 }
 

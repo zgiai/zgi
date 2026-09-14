@@ -666,6 +666,7 @@ func TestCreateRoute_UsesExplicitChannelProvider(t *testing.T) {
 		APIKey:          "test-key",
 		APIBaseURL:      "https://api.cohere.com",
 		Models:          []string{"command-r"},
+		ModelOperations: map[string][]string{"command-r": {"chat.completions"}},
 	})
 
 	require.NoError(t, err)
@@ -676,6 +677,7 @@ func TestCreateRoute_UsesExplicitChannelProvider(t *testing.T) {
 	require.Equal(t, "cohere", credSvc.createdReq.ChannelProvider)
 	require.NotNil(t, repo.created)
 	require.Equal(t, "cohere", repo.created.ChannelProvider)
+	require.Equal(t, map[string][]string{"command-r": {"chat.completions"}}, repo.created.ModelOperations)
 	require.Equal(t, "cohere", view.ChannelProvider)
 }
 

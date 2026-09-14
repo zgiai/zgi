@@ -41,7 +41,8 @@ const (
 
 // Context keys
 const (
-	ContextKeyModelCategory = "llm_model_category" // "chat", "image", "embedding", etc.
-	ContextKeyModelUseCase  = "llm_model_use_case" // "agent", "text-chat", etc.
-	ContextKeyRequestID     = "llm_request_id"
+	ContextKeyModelCategory  = "llm_model_category" // "chat", "image", "embedding", etc.
+	ContextKeyModelOperation = "llm_model_operation"
+	ContextKeyModelUseCase   = "llm_model_use_case" // "agent", "text-chat", etc.
+	ContextKeyRequestID      = "llm_request_id"
 )

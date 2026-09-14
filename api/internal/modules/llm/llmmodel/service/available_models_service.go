@@ -416,11 +416,16 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 		if !visibility.Allows(m.Provider) {
 			continue
 		}
-		// Contract: every model must have provider + use_cases
-		if m.Provider == "" || len(m.UseCases) == 0 {
+		// Contract: every model must have provider + a usable capability label.
+		// Endpoint flags are also accepted because older catalog publications may
+		// not have had their use_cases array backfilled yet.
+		if m.Provider == "" {
 			continue
 		}
-		effectiveUseCases := effectiveModelUseCasesForRoutes(enabledRoutes, m.Model, m.UseCases)
+		effectiveUseCases := effectiveModelUseCasesForRoutes(enabledRoutes, m.Model, modelUseCases(m))
+		if len(effectiveUseCases) == 0 {
+			continue
+		}
 		if !modelMatchesAvailableUseCase(effectiveUseCases, useCase) {
 			continue
 		}
@@ -621,11 +626,29 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 		if !visibility.Allows(m.Provider) {
 			continue
 		}
-		// Contract: every model must have provider + use_cases
-		if m.Provider == "" || len(m.UseCases) == 0 {
+		// Endpoint flags are accepted for legacy custom models whose use_cases
+		// metadata was not populated when the model was created.
+		if m.Provider == "" {
 			continue
 		}
-		effectiveUseCases := effectiveModelUseCasesForRoutes(enabledRoutes, m.Name, types.StringArray(m.UseCases))
+		customUseCases := append([]string(nil), []string(m.UseCases)...)
+		customUseCases = append(customUseCases, model.InferUseCasesFromEndpoints(model.ModelEndpoints{
+			ChatCompletions:  m.ChatCompletions,
+			Responses:        m.Responses,
+			Realtime:         m.Realtime,
+			Assistants:       m.Assistants,
+			Embeddings:       m.Embeddings,
+			ImageGeneration:  m.ImageGeneration,
+			Vision:           m.SupportsVision,
+			SpeechGeneration: m.SpeechGeneration,
+			Transcription:    m.Transcription,
+			Translation:      m.Translation,
+			Moderation:       m.Moderation,
+		})...)
+		effectiveUseCases := effectiveModelUseCasesForRoutes(enabledRoutes, m.Name, types.StringArray(model.NormalizeUseCases(customUseCases)))
+		if len(effectiveUseCases) == 0 {
+			continue
+		}
 		if !modelMatchesAvailableUseCase(effectiveUseCases, useCase) {
 			continue
 		}
@@ -1061,6 +1084,32 @@ func containsUseCase(useCases types.StringArray, target string) bool {
 		}
 	}
 	return false
+}
+
+// modelUseCases returns canonical use cases while preserving compatibility
+// with legacy catalog rows that only stored endpoint capability booleans.
+func modelUseCases(m *model.LLMModel) types.StringArray {
+	if m == nil {
+		return nil
+	}
+	values := append([]string(nil), []string(m.UseCases)...)
+	values = append(values, model.InferUseCasesFromEndpoints(model.ModelEndpoints{
+		ChatCompletions:  m.ChatCompletions,
+		Responses:        m.Responses,
+		Realtime:         m.Realtime,
+		Assistants:       m.Assistants,
+		Embeddings:       m.Embeddings,
+		ImageGeneration:  m.ImageGeneration,
+		ImageEdit:        m.ImageEdit,
+		Vision:           m.SupportsVision,
+		SpeechGeneration: m.SpeechGeneration,
+		Transcription:    m.Transcription,
+		Translation:      m.Translation,
+		Moderation:       m.Moderation,
+		Videos:           m.Videos,
+		MusicGeneration:  m.MusicGeneration,
+	})...)
+	return types.StringArray(model.NormalizeUseCases(values))
 }
 
 func routeBacksModelForUseCase(routes []*channelmodel.LLMRoute, modelProvider, modelName, useCase string, useCases types.StringArray, customModel bool) bool {

@@ -128,7 +128,14 @@ func (r *modelRepository) availableModelQuery(ctx context.Context, provider stri
 		query = query.Where("provider = ?", provider)
 	}
 	if useCase != "" {
-		query = query.Where("? = ANY(use_cases)", useCase)
+		// Older catalog rows may have the endpoint capability populated while
+		// their use_cases array was never backfilled. Keep capability queries
+		// compatible with those rows (especially image generation models).
+		if useCase == string(model.UseCaseImageGen) {
+			query = query.Where("? = ANY(use_cases) OR image_generation = TRUE OR image_edit = TRUE", useCase)
+		} else {
+			query = query.Where("? = ANY(use_cases)", useCase)
+		}
 	}
 	return query
 }

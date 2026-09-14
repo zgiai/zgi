@@ -133,6 +133,7 @@ func (c *Cloud) fetchFromConsole(ctx context.Context) ([]*OfficialChannel, error
 				Weight             int                 `json:"weight"`
 				SupportedProtocols []string            `json:"supported_protocols"`
 				ModelProtocols     map[string][]string `json:"model_protocols"`
+				ModelOperations    map[string][]string `json:"model_operations"`
 			} `json:"channels"`
 		} `json:"data"`
 	}
@@ -155,6 +156,7 @@ func (c *Cloud) fetchFromConsole(ctx context.Context) ([]*OfficialChannel, error
 			Weight:             ch.Weight,
 			SupportedProtocols: append([]string(nil), ch.SupportedProtocols...),
 			ModelProtocols:     cloneModelProtocols(ch.ModelProtocols),
+			ModelOperations:    cloneModelProtocols(ch.ModelOperations),
 			APIBaseURL:         c.baseURL + "/v1/internal", // console-api internal endpoint acts as OpenAI-compatible base
 		})
 	}
@@ -186,6 +188,7 @@ func (c *Cloud) deepCopy() []*OfficialChannel {
 		copy(copied.Models, ch.Models)
 		copied.SupportedProtocols = append([]string(nil), ch.SupportedProtocols...)
 		copied.ModelProtocols = cloneModelProtocols(ch.ModelProtocols)
+		copied.ModelOperations = cloneModelProtocols(ch.ModelOperations)
 		result[i] = &copied
 	}
 	return result

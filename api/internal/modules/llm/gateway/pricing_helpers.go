@@ -171,12 +171,14 @@ func (s *llmGatewayServiceImpl) quoteImagePricingForSelection(
 		return PricingQuote{}, fmt.Errorf("failed to resolve billing lane for image pricing: %w", err)
 	}
 	if lane == UsageBillingLanePlatform {
-		quote, quoteErr := s.quoteImagePricing(ctx, model, req)
-		if quoteErr != nil {
-			quote = fallbackPlatformImagePredeductQuote(req)
-		}
-		quote.PricingSource = PricingSourcePlatformPredeductEstimate
-		return quote, nil
+		// Cloud/official image prices are owned by Console.  Do not consult the
+		// Pre pricing engine and do not manufacture a uniform image estimate:
+		// the remote proxy performs the authoritative deduction and returns the
+		// settlement facts after the upstream call.
+		return PricingQuote{
+			PricingSource: PricingSourcePlatformRemoteAuthority,
+			UsageSource:   UsageSourceRequestParameters,
+		}, nil
 	}
 	return s.quoteImagePricing(ctx, model, req)
 }
@@ -234,6 +236,14 @@ func pricingModelRefFromSelection(selection *ProviderSelection) PricingModelRef 
 	if selection == nil {
 		return PricingModelRef{Source: PricingModelSourceGlobal}
 	}
+	modelID := selection.Model.ID
+	// Official/platform selections are represented by a route model and do
+	// not carry the catalog model ID in selection.Model.ID.  The catalog
+	// identity is hydrated separately so pricing lookup must use it; otherwise
+	// QuoteImage/QuoteTokens fall back as if pricing were not configured.
+	if selection.UseSystemProvider && selection.ModelVendorModelID != uuid.Nil {
+		modelID = selection.ModelVendorModelID
+	}
 	provider := strings.TrimSpace(selection.Model.Provider)
 	if provider == "" {
 		provider = strings.TrimSpace(selection.ChannelProvider)
@@ -246,7 +256,7 @@ func pricingModelRefFromSelection(selection *ProviderSelection) PricingModelRef 
 		model = strings.TrimSpace(selection.Model.ModelName)
 	}
 	return normalizePricingModelRef(PricingModelRef{
-		ModelID:        selection.Model.ID,
+		ModelID:        modelID,
 		OrganizationID: selection.OrganizationID,
 		Source:         selection.ModelSource,
 		Provider:       provider,
