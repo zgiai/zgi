@@ -1,11 +1,17 @@
 package runner
 
 import (
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+)
+
+const (
+	runtimeCacheRootName       = ".zgi-runtime-cache"
+	matplotlibRuntimeCacheName = "matplotlib"
 )
 
 // seedDependencyProfileRuntimeCache copies trusted, build-time generated cache
@@ -27,29 +33,51 @@ func seedDependencyProfileRuntimeCache(profileDir string, workDir string) error 
 		return errors.New("dependency profile matplotlib runtime cache must be a directory")
 	}
 
-	cacheRoot := filepath.Join(workDir, ".zgi-runtime-cache")
-	destination := filepath.Join(cacheRoot, "matplotlib")
-	if _, err := os.Stat(destination); err == nil {
+	workspaceRoot, err := os.OpenRoot(workDir)
+	if err != nil {
+		return fmt.Errorf("open workspace root: %w", err)
+	}
+	defer func() { _ = workspaceRoot.Close() }()
+
+	cacheRoot, err := openWorkspaceRuntimeCacheRoot(workspaceRoot)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = cacheRoot.Close() }()
+
+	if info, err := cacheRoot.Lstat(matplotlibRuntimeCacheName); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("workspace matplotlib runtime cache must not be a symbolic link")
+		}
+		if !info.IsDir() {
+			return errors.New("workspace matplotlib runtime cache must be a directory")
+		}
 		return nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("inspect workspace runtime cache: %w", err)
 	}
-	if err := os.MkdirAll(cacheRoot, 0o777); err != nil {
-		return fmt.Errorf("prepare workspace runtime cache: %w", err)
-	}
-	temporary, err := os.MkdirTemp(cacheRoot, ".matplotlib-seed-")
-	if err != nil {
+	temporary := ".matplotlib-seed-" + rand.Text()
+	if err := cacheRoot.Mkdir(temporary, 0o700); err != nil {
 		return fmt.Errorf("prepare workspace matplotlib cache: %w", err)
 	}
-	defer os.RemoveAll(temporary)
-	if err := copyTrustedRuntimeCache(source, temporary); err != nil {
+	defer func() { _ = cacheRoot.RemoveAll(temporary) }()
+	temporaryRoot, err := cacheRoot.OpenRoot(temporary)
+	if err != nil {
+		return fmt.Errorf("open workspace matplotlib cache: %w", err)
+	}
+	if err := copyTrustedRuntimeCache(source, temporaryRoot); err != nil {
+		_ = temporaryRoot.Close()
 		return err
 	}
-	if err := os.Chmod(temporary, 0o777); err != nil {
+	if err := temporaryRoot.Chmod(".", 0o777); err != nil {
+		_ = temporaryRoot.Close()
 		return fmt.Errorf("make workspace matplotlib cache writable: %w", err)
 	}
-	if err := os.Rename(temporary, destination); err != nil {
-		if _, statErr := os.Stat(destination); statErr == nil {
+	if err := temporaryRoot.Close(); err != nil {
+		return fmt.Errorf("close workspace matplotlib cache: %w", err)
+	}
+	if err := cacheRoot.Rename(temporary, matplotlibRuntimeCacheName); err != nil {
+		if info, statErr := cacheRoot.Lstat(matplotlibRuntimeCacheName); statErr == nil && info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
 			return nil
 		}
 		return fmt.Errorf("activate workspace matplotlib cache: %w", err)
@@ -57,7 +85,30 @@ func seedDependencyProfileRuntimeCache(profileDir string, workDir string) error 
 	return nil
 }
 
-func copyTrustedRuntimeCache(source string, destination string) error {
+func openWorkspaceRuntimeCacheRoot(workspaceRoot *os.Root) (*os.Root, error) {
+	info, err := workspaceRoot.Lstat(runtimeCacheRootName)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := workspaceRoot.Mkdir(runtimeCacheRootName, 0o777); err != nil {
+			return nil, fmt.Errorf("prepare workspace runtime cache: %w", err)
+		}
+	} else if err != nil {
+		return nil, fmt.Errorf("inspect workspace runtime cache root: %w", err)
+	} else {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil, errors.New("workspace runtime cache root must not be a symbolic link")
+		}
+		if !info.IsDir() {
+			return nil, errors.New("workspace runtime cache root must be a directory")
+		}
+	}
+	cacheRoot, err := workspaceRoot.OpenRoot(runtimeCacheRootName)
+	if err != nil {
+		return nil, fmt.Errorf("open workspace runtime cache root: %w", err)
+	}
+	return cacheRoot, nil
+}
+
+func copyTrustedRuntimeCache(source string, destination *os.Root) error {
 	return filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -69,7 +120,6 @@ func copyTrustedRuntimeCache(source string, destination string) error {
 		if relative == "." {
 			return nil
 		}
-		target := filepath.Join(destination, relative)
 		info, err := entry.Info()
 		if err != nil {
 			return err
@@ -78,22 +128,20 @@ func copyTrustedRuntimeCache(source string, destination string) error {
 			return fmt.Errorf("dependency profile runtime cache contains unsupported entry: %s", relative)
 		}
 		if info.IsDir() {
-			return os.MkdirAll(target, 0o777)
+			return destination.MkdirAll(relative, 0o777)
 		}
 		input, err := os.Open(path)
 		if err != nil {
 			return err
 		}
-		defer input.Close()
-		output, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o666)
+		output, err := destination.OpenFile(relative, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o666)
 		if err != nil {
+			_ = input.Close()
 			return err
 		}
 		_, copyErr := io.Copy(output, input)
-		closeErr := output.Close()
-		if copyErr != nil {
-			return copyErr
-		}
-		return closeErr
+		inputCloseErr := input.Close()
+		outputCloseErr := output.Close()
+		return errors.Join(copyErr, inputCloseErr, outputCloseErr)
 	})
 }

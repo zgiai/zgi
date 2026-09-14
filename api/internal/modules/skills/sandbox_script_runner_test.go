@@ -21,7 +21,7 @@ import (
 )
 
 func TestRuntimeLoadsCustomScriptSkillWhenRunnerConfigured(t *testing.T) {
-	root := writeRuntimeScriptSkill(t)
+	root := writeRuntimeScriptSkillWithSchema(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer server.Close()
 
@@ -33,8 +33,12 @@ func TestRuntimeLoadsCustomScriptSkillWhenRunnerConfigured(t *testing.T) {
 	if !doc.Metadata.HasScripts || !doc.Metadata.ScriptsSupported {
 		t.Fatalf("expected scripts to be supported, metadata=%+v", doc.Metadata)
 	}
-	if _, ok := findSkillTool(doc, SkillScriptToolRun); !ok {
+	tool, ok := findSkillTool(doc, SkillScriptToolRun)
+	if !ok {
 		t.Fatal("expected run_script tool")
+	}
+	if len(tool.InputSchema) == 0 {
+		t.Fatal("expected run_script input schema")
 	}
 }
 
@@ -50,6 +54,29 @@ func TestRuntimeDoesNotExposeScriptToolWithoutRunner(t *testing.T) {
 	}
 	if _, ok := findSkillTool(doc, SkillScriptToolRun); ok {
 		t.Fatal("did not expect run_script tool without configured runner")
+	}
+}
+
+func TestRuntimeDoesNotExposeSchemaBackedScriptToolWithoutRunner(t *testing.T) {
+	root := writeRuntimeScriptSkillWithSchema(t)
+	runtime := NewRuntime(nil, nil)
+
+	doc, err := runtime.LoadCustomSkillDocument(root)
+	if err != nil {
+		t.Fatalf("load custom skill: %v", err)
+	}
+	if !doc.Metadata.HasScripts || doc.Metadata.ScriptsSupported {
+		t.Fatalf("expected scripts to be present but unsupported, metadata=%+v", doc.Metadata)
+	}
+	if _, ok := findSkillTool(doc, SkillScriptToolRun); ok {
+		t.Fatal("did not expect schema-backed run_script tool without configured runner")
+	}
+
+	toolSet := runtime.BuildNativeToolSet(t.Context(), &ResolvedSkills{Skills: []SkillDocument{doc}}, NativeToolSetOptions{BudgetChars: 100000})
+	for _, tool := range toolSet.ProviderTools {
+		if tool.Function.Name == SkillScriptToolRun {
+			t.Fatal("did not expect native run_script projection without configured runner")
+		}
 	}
 }
 
@@ -1419,6 +1446,28 @@ Use the script to process structured input.
 	}
 	if err := os.WriteFile(filepath.Join(root, "scripts", "run.py"), []byte("import json, os, sys\nargs = json.loads(sys.stdin.read() or '{}')\nos.makedirs('artifacts', exist_ok=True)\nopen('artifacts/report.txt', 'w').write('report\\n')\nprint(json.dumps({'echo': args.get('input', '')}))\n"), 0o644); err != nil {
 		t.Fatalf("write script: %v", err)
+	}
+	return root
+}
+
+func writeRuntimeScriptSkillWithSchema(t *testing.T) string {
+	t.Helper()
+	root := writeRuntimeScriptSkill(t)
+	content := `---
+name: script-skill
+description: Script skill
+runtime_type: prompt
+script_input_schema:
+  type: object
+  additionalProperties: false
+  properties:
+    input:
+      type: string
+---
+Use the script to process structured input.
+`
+	if err := os.WriteFile(filepath.Join(root, "SKILL.md"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write schema-backed skill: %v", err)
 	}
 	return root
 }

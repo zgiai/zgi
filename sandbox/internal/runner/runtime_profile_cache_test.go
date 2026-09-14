@@ -66,3 +66,58 @@ func TestSeedDependencyProfileRuntimeCacheRejectsSymlink(t *testing.T) {
 		t.Fatal("expected symlink rejection")
 	}
 }
+
+func TestSeedDependencyProfileRuntimeCacheRejectsSymlinkedWorkspaceCacheRoot(t *testing.T) {
+	profile := t.TempDir()
+	workspace := t.TempDir()
+	outside := t.TempDir()
+	writeRuntimeCacheFixture(t, profile)
+	if err := os.Symlink(outside, filepath.Join(workspace, runtimeCacheRootName)); err != nil {
+		t.Fatal(err)
+	}
+
+	err := seedDependencyProfileRuntimeCache(profile, workspace)
+	if err == nil {
+		t.Fatal("expected workspace cache root symlink rejection")
+	}
+	if _, statErr := os.Stat(filepath.Join(outside, matplotlibRuntimeCacheName)); !os.IsNotExist(statErr) {
+		t.Fatalf("outside cache path was modified: %v", statErr)
+	}
+}
+
+func TestSeedDependencyProfileRuntimeCacheRejectsSymlinkedWorkspaceDestination(t *testing.T) {
+	profile := t.TempDir()
+	workspace := t.TempDir()
+	outside := t.TempDir()
+	writeRuntimeCacheFixture(t, profile)
+	cacheRoot := filepath.Join(workspace, runtimeCacheRootName)
+	if err := os.Mkdir(cacheRoot, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(cacheRoot, matplotlibRuntimeCacheName)); err != nil {
+		t.Fatal(err)
+	}
+
+	err := seedDependencyProfileRuntimeCache(profile, workspace)
+	if err == nil {
+		t.Fatal("expected workspace cache destination symlink rejection")
+	}
+	entries, readErr := os.ReadDir(outside)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("outside directory contains %d entries, want 0", len(entries))
+	}
+}
+
+func writeRuntimeCacheFixture(t *testing.T, profile string) {
+	t.Helper()
+	source := filepath.Join(profile, "runtime-cache", matplotlibRuntimeCacheName)
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "fontlist.json"), []byte("trusted"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+}

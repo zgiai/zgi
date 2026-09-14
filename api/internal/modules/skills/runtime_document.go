@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	goruntime "runtime"
+	"slices"
 	"sort"
 	"strings"
 
@@ -138,7 +139,14 @@ func buildSkillDocument(id string, root string, source string, frontmatter Skill
 }
 
 func (r *Runtime) applyScriptSupport(doc *SkillDocument) {
-	if r == nil || doc == nil || !doc.Metadata.HasScripts || !r.ScriptsSupported() {
+	if doc == nil || !doc.Metadata.HasScripts {
+		return
+	}
+	doc.Metadata.ScriptsSupported = r.ScriptsSupported()
+	if !doc.Metadata.ScriptsSupported {
+		doc.Tools = slices.DeleteFunc(doc.Tools, func(tool SkillToolDefinition) bool {
+			return strings.TrimSpace(tool.Name) == SkillScriptToolRun
+		})
 		return
 	}
 	doc.Metadata.ScriptsSupported = true
