@@ -24,15 +24,12 @@ export function RechargeDialog({ open, onOpenChange, onPaymentSuccess }: Recharg
 
   const handleOpenChange = (nextOpen: boolean) => {
     if (!nextOpen && pendingOrderId) {
-      void payService
-        .cancelOrder(pendingOrderId)
-        .then(() => {
-          setPendingOrderId(null);
-          onOpenChange(false);
-        })
-        .catch(() => {
-          // Keep the dialog open until the provider order is safely closed.
-        });
+      const orderId = pendingOrderId;
+      setPendingOrderId(null);
+      onOpenChange(false);
+      void payService.cancelOrder(orderId).catch(() => {
+        // Closing the dialog must not depend on provider cancellation.
+      });
       return;
     }
     onOpenChange(nextOpen);

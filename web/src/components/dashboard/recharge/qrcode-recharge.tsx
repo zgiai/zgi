@@ -203,10 +203,31 @@ export function QrCodeRecharge({ onClose, onPendingOrderChange }: QrCodeRecharge
     setCustomAmount('');
   }, []);
 
-  const handleCustomAmountChange = useCallback((value: string) => {
-    setCustomAmount(value);
-    setSelectedAmount(null);
-  }, []);
+  const handleCustomAmountChange = useCallback(
+    (value: string) => {
+      if (!/^\d*(?:\.\d{0,2})?$/.test(value)) {
+        toast.warning(
+          t('dashboard.costCenter.rechargeDialog.customAmountPrecisionLimit'),
+          { id: 'recharge-amount-precision-limit' }
+        );
+        return;
+      }
+
+      if (value && Number(value) > MAX_CUSTOM_AMOUNT) {
+        toast.warning(
+          t('dashboard.costCenter.rechargeDialog.customAmountMaxHint', {
+            max: MAX_CUSTOM_AMOUNT,
+          }),
+          { id: 'recharge-amount-max-limit' }
+        );
+        return;
+      }
+
+      setCustomAmount(value);
+      setSelectedAmount(null);
+    },
+    [t]
+  );
 
   const initiatePayment = useCallback(() => {
     if (finalAmount <= 0) return;
@@ -251,22 +272,17 @@ export function QrCodeRecharge({ onClose, onPendingOrderChange }: QrCodeRecharge
   }, [initiatePayment]);
 
   const handleBack = useCallback(() => {
-    if (order.orderNo && order.status === 'pending') {
-      void payService
-        .cancelOrder(order.orderNo)
-        .then(() => {
-          onPendingOrderChange?.(null);
-          setStep('selection');
-          setOrder({ orderNo: null, qrcodeUrl: null, status: null });
-        })
-        .catch(() => {
-          // Keep the QR code visible until the provider order is safely closed.
-        });
-      return;
-    }
+    const pendingOrderNo = order.status === 'pending' ? order.orderNo : null;
+
     onPendingOrderChange?.(null);
     setStep('selection');
     setOrder({ orderNo: null, qrcodeUrl: null, status: null });
+
+    if (pendingOrderNo) {
+      void payService.cancelOrder(pendingOrderNo).catch(() => {
+        // Leaving the payment view must not depend on provider cancellation.
+      });
+    }
   }, [onPendingOrderChange, order.orderNo, order.status]);
 
   const formatTime = (seconds: number) => {
@@ -323,7 +339,7 @@ export function QrCodeRecharge({ onClose, onPendingOrderChange }: QrCodeRecharge
               {t('dashboard.costCenter.rechargeDialog.customAmount')}
             </label>
             <Input
-              type="number"
+              type="text"
               placeholder={t('dashboard.costCenter.rechargeDialog.customAmountPlaceholder')}
               value={customAmount}
               onChange={e => handleCustomAmountChange(e.target.value)}
