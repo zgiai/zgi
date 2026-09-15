@@ -56,7 +56,10 @@ adds file metadata:
 ```
 
 Scripts should read only from the provided `inputs/` paths and write generated
-files to the manifest's allowed `artifacts/` paths.
+files to the manifest's allowed `artifacts/` paths. See
+[`script-skill-output-files.md`](script-skill-output-files.md) for the complete
+artifact persistence, chat event, frontend rendering, and troubleshooting
+contract.
 
 For multi-file skills, declare a separate input item with `multiple: true`.
 The argument must contain an array of uploaded file IDs. `max_count` may tighten
