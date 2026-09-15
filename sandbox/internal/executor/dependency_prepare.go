@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	pathpkg "path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -171,12 +172,11 @@ func scanDependencyRequest(entries []archiveEntry, requestedLanguage string, bas
 		addPackageSpecs(packages, sourceSet, "nodejs", specs, "package.json")
 	}
 
-	localPythonModules := pythonArchiveLocalModules(files)
 	for path, file := range files {
 		switch filepath.Ext(path) {
 		case ".py":
 			if strings.HasPrefix(path, "scripts/") {
-				specs, err := scanPythonImports(file, localPythonModules)
+				specs, err := scanPythonImports(file, path, files)
 				if err != nil {
 					return DependencyPrepareResult{}, err
 				}
@@ -398,7 +398,7 @@ func isUnsupportedNodeDependencyVersion(version string) bool {
 var pythonImportRE = regexp.MustCompile(`(?m)^\s*(?:from\s+([A-Za-z_][A-Za-z0-9_\.]*)\s+import|import\s+([A-Za-z_][A-Za-z0-9_\.]*))`)
 var nodeImportRE = regexp.MustCompile(`(?m)(?:import\s+(?:[^'"]+\s+from\s+)?|import\s*\(|require\s*\()\s*['"]([^'"]+)['"]`)
 
-func scanPythonImports(file *zip.File, localModules map[string]bool) ([]string, error) {
+func scanPythonImports(file *zip.File, sourcePath string, files map[string]*zip.File) ([]string, error) {
 	content, err := readZipFile(file, 256*1024)
 	if err != nil {
 		return nil, err
@@ -411,7 +411,7 @@ func scanPythonImports(file *zip.File, localModules map[string]bool) ([]string, 
 			module = match[2]
 		}
 		module = strings.Split(module, ".")[0]
-		if module == "" || pythonStdlibModules[module] || localModules[module] {
+		if module == "" || pythonStdlibModules[module] || pythonArchiveImportIsLocal(files, sourcePath, module) {
 			continue
 		}
 		specSet[normalizePackageName("python3", module)] = struct{}{}
@@ -419,21 +419,32 @@ func scanPythonImports(file *zip.File, localModules map[string]bool) ([]string, 
 	return sortedSourceSet(specSet), nil
 }
 
-func pythonArchiveLocalModules(files map[string]*zip.File) map[string]bool {
-	modules := map[string]bool{}
-	for path := range files {
-		path = filepath.ToSlash(strings.TrimSpace(path))
-		if !strings.HasPrefix(path, "scripts/") || filepath.Ext(path) != ".py" {
-			continue
+func pythonArchiveImportIsLocal(files map[string]*zip.File, sourcePath string, module string) bool {
+	sourcePath = filepath.ToSlash(strings.TrimSpace(sourcePath))
+	module = strings.TrimSpace(module)
+	if !strings.HasPrefix(sourcePath, "scripts/") || module == "" {
+		return false
+	}
+
+	directory := pathpkg.Dir(sourcePath)
+	for directory == "scripts" || strings.HasPrefix(directory, "scripts/") {
+		modulePath := pathpkg.Join(directory, module)
+		if files[modulePath+".py"] != nil || files[modulePath+"/__init__.py"] != nil {
+			return true
 		}
-		relative := strings.TrimSuffix(strings.TrimPrefix(path, "scripts/"), ".py")
-		for module := range strings.SplitSeq(relative, "/") {
-			if module != "" && module != "__init__" {
-				modules[module] = true
+		prefix := modulePath + "/"
+		for archivePath := range files {
+			archivePath = filepath.ToSlash(strings.TrimSpace(archivePath))
+			if strings.HasPrefix(archivePath, prefix) && filepath.Ext(archivePath) == ".py" {
+				return true
 			}
 		}
+		if directory == "scripts" {
+			break
+		}
+		directory = pathpkg.Dir(directory)
 	}
-	return modules
+	return false
 }
 
 func scanNodeImports(file *zip.File) ([]string, error) {

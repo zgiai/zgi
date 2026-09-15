@@ -1945,7 +1945,7 @@ func TestPrepareDependenciesIgnoresPythonStdlibAndLocalModules(t *testing.T) {
 		ArchiveBase64: zipBase64(t, map[string]string{
 			"SKILL.md":                                      "Skill package\n",
 			"requirements.txt":                              "pandas==2.2.3\n",
-			"scripts/run.py":                                "import enum\nimport importlib.metadata\nimport warnings\nfrom backend import execute\nfrom eda import SKILL_VERSION\nimport pandas as pd\n",
+			"scripts/run.py":                                "import enum\nimport importlib.metadata\nimport warnings\nfrom tpl_core.backend import execute\nfrom eda import SKILL_VERSION\nimport pandas as pd\n",
 			"scripts/eda/__init__.py":                       "SKILL_VERSION = '1.0.0'\n",
 			"scripts/eda/lineage.py":                        "from dataclasses import dataclass, field\n",
 			"scripts/eda/descriptive.py":                    "import pandas as pd\n",
@@ -1968,13 +1968,37 @@ func TestPrepareDependenciesIgnoresPythonStdlibAndLocalModules(t *testing.T) {
 	}
 	assertDetectedDependency(t, result.Packages, "python3", "pandas", "==2.2.3")
 	assertMissingDependency(t, result.Packages, "python3", "dataclasses")
-	assertMissingDependency(t, result.Packages, "python3", "backend")
 	assertMissingDependency(t, result.Packages, "python3", "enum")
 	assertMissingDependency(t, result.Packages, "python3", "importlib")
 	assertMissingDependency(t, result.Packages, "python3", "eda")
 	assertMissingDependency(t, result.Packages, "python3", "operator-library")
 	assertMissingDependency(t, result.Packages, "python3", "operator-pipeline")
+	assertMissingDependency(t, result.Packages, "python3", "tpl-core")
 	assertMissingDependency(t, result.Packages, "python3", "warnings")
+}
+
+func TestPrepareDependenciesDoesNotTreatUnrelatedNestedModuleAsLocal(t *testing.T) {
+	service := NewService(nil, nil, nil, policy.NewService(config.FromEnv()))
+
+	result, err := service.PrepareDependencies(DependencyPrepareRequest{
+		ArchiveBase64: zipBase64(t, map[string]string{
+			"SKILL.md":                   "Skill package\n",
+			"scripts/run.py":             "import requests\n",
+			"scripts/vendor/requests.py": "VALUE = 'not importable from scripts root'\n",
+		}),
+		Format:      "zip",
+		BaseRuntime: "linux-secure",
+	})
+	if err != nil {
+		t.Fatalf("prepare dependencies: %v", err)
+	}
+	if result.Status != "build_required" {
+		t.Fatalf("expected build_required, got %q", result.Status)
+	}
+	if result.PackageCount != 1 {
+		t.Fatalf("expected the third-party import to be detected, got %#v", result.Packages)
+	}
+	assertDetectedDependency(t, result.Packages, "python3", "requests", "")
 }
 
 func TestPrepareDependenciesRejectsSymlinkArchive(t *testing.T) {
