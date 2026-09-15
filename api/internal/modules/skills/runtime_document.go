@@ -211,7 +211,11 @@ func normalizeSkillCallers(id string, source string, callers []string) []string 
 	case SkillAgentKnowledge, SkillAgentDatabase, SkillAgentWorkflow:
 		return []string{SkillCallerAgent}
 	default:
-		return []string{SkillCallerAIChat, SkillCallerAgent}
+		// A general-purpose system skill that does not restrict its callers is
+		// available to every conversational surface, including digital humans.
+		// Skills that must stay off a surface declare `supported_callers`
+		// explicitly, which short-circuits the branch above.
+		return []string{SkillCallerAIChat, SkillCallerAgent, SkillCallerDigitalHuman}
 	}
 }
 

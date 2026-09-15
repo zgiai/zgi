@@ -1262,9 +1262,12 @@ Follow the test instructions.
 	}
 }
 
-func TestSystemSkillCallerDefaultsDoNotIncludeDigitalHuman(t *testing.T) {
+// A general-purpose system skill that does not declare `supported_callers` is
+// available to every conversational surface, including digital humans. Skills
+// that must stay off a surface declare their callers explicitly.
+func TestSystemSkillCallerDefaultsIncludeDigitalHuman(t *testing.T) {
 	got := normalizeSkillCallers("system-default-test", SkillSourceSystem, nil)
-	want := []string{SkillCallerAIChat, SkillCallerAgent}
+	want := []string{SkillCallerAIChat, SkillCallerAgent, SkillCallerDigitalHuman}
 	if !sameStrings(got, want) {
 		t.Fatalf("supported callers = %#v, want %#v", got, want)
 	}
