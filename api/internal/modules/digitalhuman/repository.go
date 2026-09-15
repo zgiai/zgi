@@ -342,10 +342,17 @@ func (r *GormRepository) PublishedVersionCount(ctx context.Context, scope Scope,
 	return count, nil
 }
 
-// SoftDeleteCAS deletes only an unpublished aggregate at the expected revision.
+// SoftDeleteCAS soft-deletes an aggregate at the expected revision. Published
+// versions are immutable, so an aggregate that still points at a published
+// version must be taken offline (status=disabled) before it can be removed.
 func (r *GormRepository) SoftDeleteCAS(ctx context.Context, scope Scope, id uuid.UUID, expectedRevision int64, now time.Time) error {
 	result := r.scopedDefinitions(ctx, scope).
-		Where("id = ? AND revision = ? AND published_version_id IS NULL", id, expectedRevision).
+		Where(
+			"id = ? AND revision = ? AND (published_version_id IS NULL OR status = ?)",
+			id,
+			expectedRevision,
+			StatusDisabled,
+		).
 		Updates(map[string]any{
 			"deleted_at": now,
 			"updated_at": now,

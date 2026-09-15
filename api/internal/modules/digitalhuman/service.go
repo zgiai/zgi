@@ -360,7 +360,8 @@ func (s *Service) DeleteImpact(ctx context.Context, scope Scope, id uuid.UUID) (
 	if !validScope(scope) || id == uuid.Nil {
 		return nil, applicationError(ErrInvalidRequest, "digital_human.delete_impact")
 	}
-	if _, err := s.repo.Definition(ctx, scope, id); err != nil {
+	definition, err := s.repo.Definition(ctx, scope, id)
+	if err != nil {
 		return nil, applicationError(err, "digital_human.delete_impact")
 	}
 	count, err := s.repo.PublishedVersionCount(ctx, scope, id)
@@ -368,7 +369,10 @@ func (s *Service) DeleteImpact(ctx context.Context, scope Scope, id uuid.UUID) (
 		return nil, applicationError(err, "digital_human.delete_impact")
 	}
 	blockers := make([]string, 0, 1)
-	if count > 0 {
+	// Published versions are immutable, so an online digital human cannot be
+	// removed. Taking it offline (status=disabled) is the operator step that
+	// unlocks deletion.
+	if count > 0 && definition.Status != StatusDisabled {
 		blockers = append(blockers, "published_versions")
 	}
 	return &DeleteImpact{CanDelete: len(blockers) == 0, PublishedVersionCount: count, Blockers: blockers}, nil
@@ -391,7 +395,9 @@ func (s *Service) Delete(ctx context.Context, scope Scope, id uuid.UUID, expecte
 		if err != nil {
 			return err
 		}
-		if count > 0 {
+		// Published versions are immutable, so deletion requires taking the
+		// digital human offline first.
+		if count > 0 && definition.Status != StatusDisabled {
 			return ErrDeleteBlocked
 		}
 		return tx.SoftDeleteCAS(ctx, scope, id, expectedRevision, s.now())

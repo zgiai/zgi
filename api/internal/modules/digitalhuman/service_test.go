@@ -247,6 +247,55 @@ func TestServiceDeleteImpactBlocksPublishedAndDeletesUnpublished(t *testing.T) {
 	}
 }
 
+func TestServiceDeleteAllowsDisabledPublishedDigitalHuman(t *testing.T) {
+	service, _ := newTestService(t)
+	scope := testScope()
+	draft := createPublishableDigitalHuman(t, service, scope, "Juno")
+	published, err := service.Publish(t.Context(), scope, draft.Definition.ID, PublishRequest{
+		ExpectedRevision:         draft.Definition.Revision,
+		ExpectedDraftLockVersion: draft.Draft.LockVersion,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	impact, err := service.DeleteImpact(t.Context(), scope, published.Definition.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if impact.CanDelete || len(impact.Blockers) != 1 {
+		t.Fatalf("DeleteImpact(online) = %#v, want blocked by published versions", impact)
+	}
+
+	disabled := StatusDisabled
+	offline, err := service.Update(t.Context(), scope, published.Definition.ID, UpdateRequest{
+		ExpectedRevision: published.Definition.Revision,
+		Status:           &disabled,
+	})
+	if err != nil {
+		t.Fatalf("Update(status=disabled) error = %v", err)
+	}
+	if offline.Definition.Status != StatusDisabled {
+		t.Fatalf("status = %q, want disabled", offline.Definition.Status)
+	}
+
+	// Taking the digital human offline is the operator step that unlocks deletion;
+	// the immutable published version is still reported.
+	impact, err = service.DeleteImpact(t.Context(), scope, offline.Definition.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !impact.CanDelete || impact.PublishedVersionCount != 1 || len(impact.Blockers) != 0 {
+		t.Fatalf("DeleteImpact(disabled) = %#v, want deletable", impact)
+	}
+	if err := service.Delete(t.Context(), scope, offline.Definition.ID, offline.Definition.Revision); err != nil {
+		t.Fatalf("Delete(disabled) error = %v", err)
+	}
+	if _, err := service.Get(t.Context(), scope, offline.Definition.ID); !apperror.IsCode(err, AppCodeNotFound) {
+		t.Fatalf("Get(deleted) error = %v, want not found", err)
+	}
+}
+
 func TestServiceRejectsDuplicateWorkspaceName(t *testing.T) {
 	service, _ := newTestService(t)
 	scope := testScope()
