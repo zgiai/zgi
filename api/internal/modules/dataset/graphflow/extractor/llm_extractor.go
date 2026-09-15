@@ -18,9 +18,15 @@ import (
 
 const (
 	globalEntityExtractionMaxTokens = 1024
-	segmentExtractionMaxTokens      = 4096
-	globalEntityExtractionTimeout   = 30 * time.Second
-	segmentExtractionTimeout        = 45 * time.Second
+	// Graph extraction only needs a compact JSON document, but reasoning models
+	// spend part of the completion budget on hidden reasoning tokens. A small cap
+	// truncates the JSON and surfaces as "unexpected end of JSON input", so the
+	// budget must leave room for both reasoning and the entity/relationship list.
+	segmentExtractionMaxTokens    = 16384
+	globalEntityExtractionTimeout = 30 * time.Second
+	// Reasoning models answer a single segment in tens of seconds; this budget has
+	// to cover the slowest accepted model rather than the median one.
+	segmentExtractionTimeout = 120 * time.Second
 )
 
 type LLMExtractor struct {
@@ -70,7 +76,7 @@ func (e *LLMExtractor) GenerateGlobalEntities(ctx context.Context, tenantID stri
 			Type: "json_object",
 		},
 	}
-	disableQwenThinking(req)
+	applyThinkingPolicy(req)
 
 	requestCtx, cancel := context.WithTimeout(ctx, globalEntityExtractionTimeout)
 	defer cancel()
@@ -145,7 +151,7 @@ func (e *LLMExtractor) Extract(ctx context.Context, tenantID string, text string
 			Type: "json_object",
 		},
 	}
-	disableQwenThinking(req)
+	applyThinkingPolicy(req)
 
 	requestCtx, cancel := context.WithTimeout(ctx, segmentExtractionTimeout)
 	defer cancel()
@@ -187,15 +193,69 @@ func (e *LLMExtractor) Extract(ctx context.Context, tenantID string, text string
 	return &result, nil
 }
 
-func disableQwenThinking(req *adapter.ChatRequest) {
+// thinkingDisablingParameters returns the provider-specific request fields that
+// turn hidden reasoning off for a model that would otherwise emit it.
+//
+// Graph extraction asks for one compact JSON document per segment, so reasoning
+// output only burns the completion budget and can truncate that JSON. Providers
+// spell this differently: Alibaba-compatible endpoints use enable_thinking,
+// while DeepSeek-compatible endpoints use thinking. Providers without a known
+// switch get no extra field, so an unknown parameter can never break the call.
+func thinkingDisablingParameters(provider, model string) map[string]interface{} {
+	normalizedProvider := strings.ToLower(strings.TrimSpace(provider))
+	normalizedModel := strings.ToLower(strings.TrimSpace(model))
+
+	switch normalizedProvider {
+	case "qwen", "dashscope", "deepseek":
+		// Known switch; apply it even though the model name may not advertise it.
+	case "openai":
+		// Only the o-series always reasons; plain GPT models reject the field.
+		if !isReasoningModelName(normalizedModel) {
+			return nil
+		}
+	default:
+		if !isReasoningModelName(normalizedModel) {
+			return nil
+		}
+	}
+
+	parameters := map[string]interface{}{"enable_thinking": false}
+	if normalizedProvider != "qwen" && normalizedProvider != "dashscope" {
+		parameters["thinking"] = map[string]interface{}{"type": "disabled"}
+	}
+	return parameters
+}
+
+// isReasoningModelName reports whether a model identifier names a family that
+// always reasons, such as OpenAI o-series or Kimi thinking variants.
+func isReasoningModelName(model string) bool {
+	for _, marker := range []string{"thinking", "reasoner", "reasoning"} {
+		if strings.Contains(model, marker) {
+			return true
+		}
+	}
+	for _, prefix := range []string{"o1", "o3", "o4"} {
+		if strings.HasPrefix(model, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// applyThinkingPolicy rewrites req so the model answers without hidden reasoning.
+func applyThinkingPolicy(req *adapter.ChatRequest) {
 	if req == nil {
 		return
 	}
-	if strings.EqualFold(req.Provider, "qwen") || strings.EqualFold(req.Provider, "dashscope") {
-		if req.AdditionalParameters == nil {
-			req.AdditionalParameters = make(map[string]interface{})
-		}
-		req.AdditionalParameters["enable_thinking"] = false
+	parameters := thinkingDisablingParameters(req.Provider, req.Model)
+	if len(parameters) == 0 {
+		return
+	}
+	if req.AdditionalParameters == nil {
+		req.AdditionalParameters = make(map[string]interface{}, len(parameters))
+	}
+	for key, value := range parameters {
+		req.AdditionalParameters[key] = value
 	}
 }
 
