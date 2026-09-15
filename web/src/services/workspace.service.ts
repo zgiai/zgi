@@ -95,7 +95,7 @@ class WorkspaceService extends BaseService {
   }
 
   // Create new workspace in organization
-  async createWorkspace(organizationId: string, data: CreateWorkspaceRequest | { name: string }) {
+  async createWorkspace(organizationId: string, data: CreateWorkspaceRequest) {
     const response = await this.request<ApiResponseData<CreateWorkspaceResponse>>(
       'post',
       `/organizations/${organizationId}/workspaces`,
