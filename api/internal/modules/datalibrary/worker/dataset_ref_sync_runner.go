@@ -211,12 +211,19 @@ func (r *DatasetRefSyncRunner) copyAssetToDataset(ctx context.Context, ref *data
 		return err
 	}
 
-	document, err := r.createDatasetDocument(ctx, ref, asset, chunks, embeddingProvider, embeddingModel)
+	// The vectors actually copied into the dataset define the embedding space.
+	// Asset-level embedding metadata may still describe an earlier generation,
+	// so every downstream consumer must use the resolved dimension instead.
+	embeddingDimension, err := resolveStoredEmbeddingDimension(embeddings)
 	if err != nil {
 		return err
 	}
-	copyErr := r.copyChunksToDataset(ctx, dataset, document, chunks, embeddings)
-	if copyErr != nil {
+
+	document, err := r.createDatasetDocument(ctx, ref, asset, chunks, embeddingProvider, embeddingModel, embeddingDimension)
+	if err != nil {
+		return err
+	}
+	if _, copyErr := r.copyChunksToDataset(ctx, dataset, document, chunks, embeddings); copyErr != nil {
 		_ = r.deleteDatasetDocumentTree(ctx, document.ID)
 		return copyErr
 	}
@@ -253,7 +260,7 @@ func (r *DatasetRefSyncRunner) copyAssetToDataset(ctx context.Context, ref *data
 		return fmt.Errorf("mark ref synced: %w", err)
 	}
 	if dataset.EnableGraphFlow && r.graph != nil {
-		if err := r.enqueueGraphReplacement(ctx, dataset, ref, documentID, oldDocumentID, syncRunID, asset); err != nil {
+		if err := r.enqueueGraphReplacement(ctx, dataset, ref, documentID, oldDocumentID, syncRunID, asset, embeddingDimension); err != nil {
 			rollback, ok := r.refs.(datasetRefSyncRefRollbackStore)
 			if !ok {
 				return fmt.Errorf("%w; ref store does not support document snapshot rollback", err)
@@ -290,6 +297,7 @@ func (r *DatasetRefSyncRunner) enqueueGraphReplacement(
 	oldDocumentID string,
 	syncRunID uuid.UUID,
 	asset *datalibModel.DocumentAsset,
+	embeddingDimension int,
 ) error {
 	organizationID, err := uuid.Parse(ref.OrganizationID)
 	if err != nil {
@@ -333,7 +341,7 @@ func (r *DatasetRefSyncRunner) enqueueGraphReplacement(
 			AssetGenerationNo:  &generationNo,
 			EmbeddingProvider:  stringPtrValue(dataset.EmbeddingModelProvider),
 			EmbeddingModel:     stringPtrValue(dataset.EmbeddingModel),
-			EmbeddingDimension: intPtrValue(asset.EmbeddingDimension),
+			EmbeddingDimension: embeddingDimension,
 		}); err != nil {
 			return fmt.Errorf("register graph sync batch document: %w", err)
 		}
@@ -351,7 +359,7 @@ func (r *DatasetRefSyncRunner) enqueueGraphReplacement(
 		IdempotencyKey:     fmt.Sprintf("ref-sync:%s:%s:build", ref.ID, syncRunID),
 		EmbeddingProvider:  stringPtrValue(dataset.EmbeddingModelProvider),
 		EmbeddingModel:     stringPtrValue(dataset.EmbeddingModel),
-		EmbeddingDimension: intPtrValue(asset.EmbeddingDimension),
+		EmbeddingDimension: embeddingDimension,
 	}
 	if oldDocumentID == "" || oldDocumentID == documentID.String() {
 		if _, _, err := r.graph.StartBuild(ctx, build); err != nil {
@@ -397,7 +405,7 @@ func (r *DatasetRefSyncRunner) tryStartGraphSyncBatch(ctx context.Context, ref *
 	_ = batchLifecycle.TryStartSyncBatch(ctx, organizationID, datasetID, syncBatchID)
 }
 
-func (r *DatasetRefSyncRunner) createDatasetDocument(ctx context.Context, ref *datalibModel.KnowledgeBaseAssetRef, asset *datalibModel.DocumentAsset, chunks []*datalibModel.DocumentChunk, embeddingProvider string, embeddingModel string) (*datasetModel.Document, error) {
+func (r *DatasetRefSyncRunner) createDatasetDocument(ctx context.Context, ref *datalibModel.KnowledgeBaseAssetRef, asset *datalibModel.DocumentAsset, chunks []*datalibModel.DocumentChunk, embeddingProvider string, embeddingModel string, embeddingDimension int) (*datasetModel.Document, error) {
 	position, err := r.documents.GetNextPosition(ctx, ref.DatasetID)
 	if err != nil {
 		return nil, fmt.Errorf("get next document position: %w", err)
@@ -452,7 +460,7 @@ func (r *DatasetRefSyncRunner) createDatasetDocument(ctx context.Context, ref *d
 			"generation_no":       asset.GenerationNo,
 			"embedding_provider":  embeddingProvider,
 			"embedding_model":     embeddingModel,
-			"embedding_dimension": intPtrValue(asset.EmbeddingDimension),
+			"embedding_dimension": embeddingDimension,
 		},
 		ProcessingStartedAt: &now,
 	}
@@ -462,8 +470,13 @@ func (r *DatasetRefSyncRunner) createDatasetDocument(ctx context.Context, ref *d
 	return document, nil
 }
 
-func (r *DatasetRefSyncRunner) copyChunksToDataset(ctx context.Context, dataset *datasetModel.Dataset, document *datasetModel.Document, chunks []*datalibModel.DocumentChunk, embeddings map[uuid.UUID]*datalibModel.DocumentChunkEmbedding) error {
+// copyChunksToDataset copies the asset chunks into the dataset and returns the
+// embedding dimension of the vectors it actually stored. The dimension must come
+// from the stored vectors: asset-level embedding metadata can still describe an
+// earlier embedding space after the asset was re-embedded for a knowledge base.
+func (r *DatasetRefSyncRunner) copyChunksToDataset(ctx context.Context, dataset *datasetModel.Dataset, document *datasetModel.Document, chunks []*datalibModel.DocumentChunk, embeddings map[uuid.UUID]*datalibModel.DocumentChunkEmbedding) (int, error) {
 	className := datasetModel.GenCollectionNameByID(document.DatasetID)
+	embeddingDimension := 0
 
 	childrenByParent := groupChildChunksByParent(chunks)
 	position := 0
@@ -499,12 +512,12 @@ func (r *DatasetRefSyncRunner) copyChunksToDataset(ctx context.Context, dataset 
 			CompletedAt:         timePtr(time.Now()),
 		}
 		if err := r.documents.CreateDocumentSegment(ctx, segment); err != nil {
-			return fmt.Errorf("create segment: %w", err)
+			return 0, fmt.Errorf("create segment: %w", err)
 		}
 		if len(childChunks) == 0 {
 			embedding := embeddings[chunk.ID]
 			if embedding == nil {
-				return fmt.Errorf("missing embedding for chunk %s", chunk.ID)
+				return 0, fmt.Errorf("missing embedding for chunk %s", chunk.ID)
 			}
 			if err := r.storeVector(ctx, className, datasetRefSyncVectorSource{
 				IndexNodeID:   indexNodeID,
@@ -520,14 +533,19 @@ func (r *DatasetRefSyncRunner) copyChunksToDataset(ctx context.Context, dataset 
 				GenerationNo:  chunk.GenerationNo,
 				ContentHash:   sourceContentHash(chunk),
 			}, embedding); err != nil {
-				return err
+				return 0, err
+			}
+			if embeddingDimension == 0 {
+				embeddingDimension = len(embedding.EmbeddingVector)
+			} else if len(embedding.EmbeddingVector) != embeddingDimension {
+				return 0, fmt.Errorf("inconsistent embedding dimension for chunk %s: got %d, want %d", chunk.ID, len(embedding.EmbeddingVector), embeddingDimension)
 			}
 			continue
 		}
 		for childPosition, child := range childChunks {
 			embedding := embeddings[child.ID]
 			if embedding == nil {
-				return fmt.Errorf("missing embedding for child chunk %s", child.ID)
+				return 0, fmt.Errorf("missing embedding for child chunk %s", child.ID)
 			}
 			childIndexNodeID := uuid.New().String()
 			childIndexNodeHash := contentHash(child.Content)
@@ -548,7 +566,7 @@ func (r *DatasetRefSyncRunner) copyChunksToDataset(ctx context.Context, dataset 
 				CompletedAt:    timePtr(time.Now()),
 			}
 			if err := r.documents.CreateChildChunk(ctx, childChunk); err != nil {
-				return fmt.Errorf("create child chunk: %w", err)
+				return 0, fmt.Errorf("create child chunk: %w", err)
 			}
 			if err := r.storeVector(ctx, className, datasetRefSyncVectorSource{
 				IndexNodeID:   childIndexNodeID,
@@ -565,14 +583,22 @@ func (r *DatasetRefSyncRunner) copyChunksToDataset(ctx context.Context, dataset 
 				GenerationNo:  child.GenerationNo,
 				ContentHash:   sourceContentHash(child),
 			}, embedding); err != nil {
-				return err
+				return 0, err
+			}
+			if embeddingDimension == 0 {
+				embeddingDimension = len(embedding.EmbeddingVector)
+			} else if len(embedding.EmbeddingVector) != embeddingDimension {
+				return 0, fmt.Errorf("inconsistent embedding dimension for child chunk %s: got %d, want %d", child.ID, len(embedding.EmbeddingVector), embeddingDimension)
 			}
 		}
 	}
 	if position == 0 {
-		return fmt.Errorf("asset has no primary chunks")
+		return 0, fmt.Errorf("asset has no primary chunks")
 	}
-	return nil
+	if embeddingDimension == 0 {
+		return 0, fmt.Errorf("dataset embedding dimension could not be determined for document %s", document.ID)
+	}
+	return embeddingDimension, nil
 }
 
 type datasetRefSyncVectorSource struct {
@@ -830,11 +856,31 @@ func stringPtrValue(value *string) string {
 	return *value
 }
 
-func intPtrValue(value *int) int {
-	if value == nil {
-		return 0
+// resolveStoredEmbeddingDimension returns the embedding dimension shared by the
+// vectors selected for this sync. It fails closed when the selection is empty or
+// mixes dimensions, because either case would corrupt the graph embedding space.
+func resolveStoredEmbeddingDimension(embeddings map[uuid.UUID]*datalibModel.DocumentChunkEmbedding) (int, error) {
+	dimension := 0
+	for chunkID, embedding := range embeddings {
+		if embedding == nil {
+			continue
+		}
+		size := len(embedding.EmbeddingVector)
+		if size == 0 {
+			return 0, fmt.Errorf("empty embedding vector for chunk %s", chunkID)
+		}
+		if dimension == 0 {
+			dimension = size
+			continue
+		}
+		if size != dimension {
+			return 0, fmt.Errorf("inconsistent embedding dimension for chunk %s: got %d, want %d", chunkID, size, dimension)
+		}
 	}
-	return *value
+	if dimension == 0 {
+		return 0, fmt.Errorf("no embeddings available to determine the dataset embedding dimension")
+	}
+	return dimension, nil
 }
 
 func boolPtr(value bool) *bool {
