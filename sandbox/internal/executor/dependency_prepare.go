@@ -426,11 +426,11 @@ func pythonArchiveLocalModules(files map[string]*zip.File) map[string]bool {
 		if !strings.HasPrefix(path, "scripts/") || filepath.Ext(path) != ".py" {
 			continue
 		}
-		relative := strings.TrimPrefix(path, "scripts/")
-		root, _, _ := strings.Cut(relative, "/")
-		root = strings.TrimSuffix(root, ".py")
-		if root != "" && root != "__init__" {
-			modules[root] = true
+		relative := strings.TrimSuffix(strings.TrimPrefix(path, "scripts/"), ".py")
+		for module := range strings.SplitSeq(relative, "/") {
+			if module != "" && module != "__init__" {
+				modules[module] = true
+			}
 		}
 	}
 	return modules
@@ -560,12 +560,12 @@ var pythonImportPackageMap = map[string]string{
 
 var pythonStdlibModules = map[string]bool{
 	"argparse": true, "base64": true, "collections": true, "contextlib": true,
-	"csv": true, "dataclasses": true, "datetime": true, "decimal": true, "functools": true,
+	"csv": true, "dataclasses": true, "datetime": true, "decimal": true, "enum": true, "functools": true,
 	"hashlib": true, "importlib": true, "io": true, "itertools": true, "json": true,
 	"logging": true, "math": true, "os": true, "pathlib": true, "random": true,
 	"re": true, "shutil": true, "statistics": true, "string": true,
 	"subprocess": true, "sys": true, "tempfile": true, "time": true,
-	"typing": true, "uuid": true, "zipfile": true,
+	"typing": true, "uuid": true, "warnings": true, "zipfile": true,
 }
 
 var nodeBuiltinModules = map[string]bool{
