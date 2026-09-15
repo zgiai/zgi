@@ -13,7 +13,7 @@ import (
 // ============================================================================
 
 // LLMProvider represents a global LLM provider (e.g., OpenAI, Anthropic)
-// Schema aligned with ModelMeta API: https://api.modelmeta.dev/v1/providers
+// Schema aligned with the ModelMeta-compatible API: https://models.zgi.ai/v1/providers
 // Database column names and JSON tags are aligned with ModelMeta standard
 type LLMProvider struct {
 	// ModelMeta standard fields
