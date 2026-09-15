@@ -6,6 +6,28 @@ const list = await readFile(
   new URL('../src/components/digital-human/digital-human-list.tsx', import.meta.url),
   'utf8'
 );
+const createFlow = await readFile(
+  new URL('../src/components/digital-human/create/digital-human-create-flow.tsx', import.meta.url),
+  'utf8'
+);
+const createForm = await readFile(
+  new URL(
+    '../src/components/digital-human/create/digital-human-template-form.tsx',
+    import.meta.url
+  ),
+  'utf8'
+);
+const templates = await readFile(
+  new URL('../src/components/digital-human/create/digital-human-templates.ts', import.meta.url),
+  'utf8'
+);
+const createSuccessDialog = await readFile(
+  new URL(
+    '../src/components/digital-human/create/digital-human-create-success-dialog.tsx',
+    import.meta.url
+  ),
+  'utf8'
+);
 const configuration = await readFile(
   new URL('../src/components/digital-human/digital-human-configuration.tsx', import.meta.url),
   'utf8'
@@ -163,8 +185,8 @@ const taskHooks = await readFile(
 );
 
 for (const [name, source] of [
-  ['list', list],
   ['configuration', configuration],
+  ['create flow', createFlow],
 ]) {
   assert.match(
     source,
@@ -177,6 +199,11 @@ for (const [name, source] of [
     `${name} must not filter the compact available-model response by its omitted callable field`
   );
 }
+assert.doesNotMatch(
+  list,
+  /useAvailableModels/,
+  'The list page must not load models now that creation moved to its own route'
+);
 
 assert.doesNotMatch(
   service,
@@ -272,8 +299,68 @@ assert.match(
 );
 assert.match(
   list,
-  /item\.published_version_id[\s\S]*digital-humans\/\$\{item\.id\}[\s\S]*digital-humans\/\$\{item\.id\}\/configuration[\s\S]*router\.push\(`\/console\/digital-humans\/\$\{id\}\/configuration`\)/,
+  /item\.published_version_id[\s\S]*digital-humans\/\$\{item\.id\}[\s\S]*digital-humans\/\$\{item\.id\}\/configuration/,
   'Unpublished DigitalHumans must enter initial configuration instead of the operational workspace'
+);
+assert.match(
+  list,
+  /href="\/console\/digital-humans\/create"/,
+  'The list must link to the dedicated creation route instead of opening a dialog'
+);
+assert.match(
+  list,
+  /list\.takeOffline[\s\S]*list\.bringOnline/,
+  'The list must offer taking a digital human offline and bringing it back online'
+);
+assert.match(
+  list,
+  /list\.offline/,
+  'The list must show the offline state instead of only published/draft'
+);
+assert.match(
+  list,
+  /canDelete = !isPublished \|\| isOffline/,
+  'Deleting must stay gated until the digital human is taken offline'
+);
+assert.match(
+  list,
+  /request: \{ expected_revision: item\.revision, status \}/,
+  'Offline/online must go through the update API with optimistic concurrency'
+);
+assert.match(
+  list,
+  /digitalHumanService\.delete\(item\.id, item\.revision\)/,
+  'The list must delete through the digital human delete API'
+);
+assert.match(
+  createFlow,
+  /created[\s\S]*draftBase[\s\S]*router\.push\(`\$\{draftBase\}\/configuration`\)/,
+  'A freshly created draft must continue into initial configuration'
+);
+assert.match(
+  createFlow,
+  /mutations\.create\.mutateAsync/,
+  'Creation must use the existing create mutation'
+);
+assert.doesNotMatch(
+  createFlow,
+  /mutations\.(update|remove)|trigger_policy:\s*\{\s*manual:\s*false/,
+  'Creation must not use the update or delete mutations, nor pre-enable autonomous triggers'
+);
+assert.match(
+  createFlow,
+  /digitalHumanService\.publish\(/,
+  'Creation must publish the first version through the publish API'
+);
+assert.match(
+  createFlow,
+  /replaceDraftBindings/,
+  'Creation must bind the template skills through the bindings API'
+);
+assert.match(
+  templates,
+  /SHARED_RULE_KEYS[\s\S]*credentials/,
+  'Every template must carry the shared credential safety rule'
 );
 assert.match(
   layout,
@@ -581,10 +668,12 @@ assert.doesNotMatch(
   /<Card className="min-w-0 overflow-hidden"|<CardTitle>\{t\('bindings\.title'\)\}/,
   'DigitalHuman capability categories must not be wrapped in a redundant available-resources card'
 );
+// Skill display metadata, icons, the bound card and the picker body all come
+// from the shared module rather than a section-local copy.
 assert.match(
   resourceBindings,
-  /getAIChatSkillDisplayInfo[\s\S]*AIChatSkillIcon[\s\S]*skillSourceFilter/,
-  'DigitalHuman Skills must reuse Agent display metadata, icons, and source filters'
+  /DigitalHumanSkillBindingCard[\s\S]*DigitalHumanSkillDialogBody[\s\S]*DigitalHumanSkillSourceSelect/,
+  'DigitalHuman Skills must reuse the shared card, dialog body, and source filter'
 );
 assert.doesNotMatch(
   resourceBindings,
@@ -621,6 +710,42 @@ assert.doesNotMatch(
   /role="checkbox"/,
   'DigitalHuman resource cards must not nest interactive controls inside checkbox roles'
 );
+// The draft editor and the creation form must share one skill picker, so cards,
+// search, and the source filter cannot drift between the two surfaces.
+assert.match(
+  resourceBindings,
+  /<DigitalHumanSkillBindingCard[\s\S]*<DigitalHumanSkillDialogBody/,
+  'the draft editor must render the shared bound-skill card and picker body'
+);
+assert.match(
+  resourceBindings,
+  /<DigitalHumanSkillSourceSelect[\s\S]*value=\{skillSourceFilter\}/,
+  'the draft editor must render the shared skill source filter'
+);
+assert.match(
+  resourceBindings,
+  /filterDigitalHumanSkills\(availableCandidates, \{/,
+  'the draft editor must use the shared skill matching'
+);
+assert.doesNotMatch(
+  resourceBindings,
+  /function getDigitalHumanSkillDisplay|function skillSource\(/,
+  'skill display and source helpers must live in the shared picker module only'
+);
+// The integration catalog is loaded for every section (bound cards render provider
+// names), but a catalog failure must only blank the external-apps picker: otherwise
+// a stack with external integrations disabled shows "no bindable resources" for
+// skills, knowledge, databases and workflows too.
+assert.match(
+  resourceBindings,
+  /error=\{\s*activeCandidateQuery\.isError \|\|\s*\(activeDefinition\.key === 'integrations' && integrationCatalogQuery\.isError\)\s*\}/,
+  'a picker section must only report an error from the query that backs that section'
+);
+assert.match(
+  resourceBindings,
+  /loading=\{\s*activeCandidateQuery\.isLoading \|\|\s*\(activeDefinition\.key === 'integrations' && integrationCatalogQuery\.isLoading\)\s*\}/,
+  'a picker section must only wait for the query that backs that section'
+);
 for (const section of ['skills', 'knowledge', 'databases', 'workflows', 'integrations']) {
   assert.match(
     resourceBindings,
@@ -633,12 +758,22 @@ assert.doesNotMatch(
   /fields\.persona|fields\.rules|fields\.model/,
   'DigitalHuman creation must defer detailed configuration until after creation'
 );
+assert.doesNotMatch(
+  createForm,
+  /fields\.persona|fields\.rules|fields\.goals/,
+  'Creation may write template persona, goals, and rules but must not expose them as editable fields'
+);
 for (const [name, source] of [
-  ['list', list],
+  ['creation success dialog', createSuccessDialog],
   ['configuration', configuration],
 ]) {
   assert.match(source, /DialogBody/, `${name} dialogs must use the shared padded body`);
 }
+assert.doesNotMatch(
+  list,
+  /<Dialog/,
+  'The list page must not own a creation dialog now that creation has its own route'
+);
 for (const primitive of ['StickyDataTable', 'RunStatusBadge', 'DigitalHumanRunDetailDrawer']) {
   assert.match(runs, new RegExp(primitive), `DigitalHuman run history must use ${primitive}`);
 }

@@ -146,6 +146,12 @@ export interface UpdateDigitalHumanRequest {
   icon_type?: 'text' | 'image';
   icon?: string;
   description?: string;
+  /**
+   * Publication status. `disabled` takes a published digital human offline
+   * (下架) so it can no longer be run or reached, and is the prerequisite for
+   * deleting it; `active` brings it back online.
+   */
+  status?: DigitalHumanDefinition['status'];
   autonomy_level?: DigitalHumanDefinition['autonomy_level'];
   visibility?: DigitalHumanDefinition['visibility'];
 }
@@ -299,20 +305,6 @@ export interface DigitalHumanResourceCandidate {
 export interface DigitalHumanResourceCandidateList {
   items: DigitalHumanResourceCandidate[];
   total: number;
-}
-
-export interface DigitalHumanDirectSkillConfiguration {
-  skill_id: string;
-  configured: boolean;
-  enabled: boolean;
-  revision: number;
-  updated_at?: string;
-}
-
-export interface UpdateDigitalHumanDirectSkillConfigurationRequest {
-  api_token?: string;
-  enabled: boolean;
-  expected_revision: number;
 }
 
 export interface DigitalHumanRun {

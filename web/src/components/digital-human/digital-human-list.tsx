@@ -1,50 +1,40 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { Bot, Clock3, MoreHorizontal, Pencil, Plus, Search } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
+import { Bot, Clock3, MoreHorizontal, Pencil, Plus, Power, PowerOff, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { DigitalHumanBasicInfoDialog } from '@/components/digital-human/digital-human-basic-info-dialog';
-import { IconInput } from '@/components/common/icon-input';
 import { IconPreview } from '@/components/common/icon-input/icon-preview';
-import { createTextIconValue, type IconValue } from '@/components/common/icon-input/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
 import {
-  useDigitalHumans,
   useDigitalHumanMutations,
+  useDigitalHumans,
 } from '@/hooks/digital-human/use-digital-humans';
-import { useAvailableModels } from '@/hooks/model/use-model';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
+import { DIGITAL_HUMAN_KEYS } from '@/hooks/query-keys';
 import { useT } from '@/i18n';
-import { ICON_BG, ICON_TEXT } from '@/lib/config';
+import { digitalHumanService } from '@/services/digital-human.service';
 import type { DigitalHumanDefinition } from '@/services/types/digital-human';
+import { getErrorMessage } from '@/utils/error-notifications';
 import { getAgentTextIconDisplay } from '@/components/agents/agent-runtime/utils';
 
+/** Creation lives on its own route; this page only links to it. */
 export function DigitalHumanList() {
   const t = useT('digitalHumans');
   const permissions = useAccountPermissions();
   const [search, setSearch] = useState('');
-  const [createOpen, setCreateOpen] = useState(false);
   const list = useDigitalHumans(true, search.trim());
   const items = list.data?.data?.items ?? [];
   const canCreate = permissions.hasPermission('digital_human.create');
@@ -65,9 +55,11 @@ export function DigitalHumanList() {
             />
           </div>
           {canCreate ? (
-            <Button className="w-full sm:w-auto" onClick={() => setCreateOpen(true)}>
-              <Plus className="size-4" />
-              {t('list.create')}
+            <Button asChild className="w-full sm:w-auto">
+              <Link href="/console/digital-humans/create">
+                <Plus className="size-4" />
+                {t('list.create')}
+              </Link>
             </Button>
           ) : null}
         </div>
@@ -91,8 +83,6 @@ export function DigitalHumanList() {
           ))}
         </div>
       )}
-
-      <CreateDigitalHumanDialog open={createOpen} onOpenChange={setCreateOpen} />
     </div>
   );
 }
@@ -105,8 +95,85 @@ function DigitalHumanCard({
   canUpdate: boolean;
 }) {
   const t = useT('digitalHumans');
+  const queryClient = useQueryClient();
+  const mutations = useDigitalHumanMutations();
   const [editOpen, setEditOpen] = useState(false);
+  const [confirm, setConfirm] = useState<'offline' | 'online' | 'delete' | null>(null);
+  const [pending, setPending] = useState(false);
   const textIcon = getAgentTextIconDisplay(item.icon_type, item.icon, item.name);
+  const isOffline = item.status === 'disabled';
+  const isPublished = Boolean(item.published_version_id);
+  // Published versions are immutable, so an online digital human must be taken
+  // offline before it can be deleted.
+  const canDelete = !isPublished || isOffline;
+  const badge = isOffline
+    ? {
+        className:
+          'border-amber-500/40 bg-amber-500/10 text-[11px] font-normal text-amber-700 dark:text-amber-300',
+        label: t('list.offline'),
+      }
+    : isPublished
+      ? {
+          className: 'border-success/40 bg-success/10 text-[11px] font-normal text-success',
+          label: t('list.published'),
+        }
+      : {
+          className: 'bg-muted text-[11px] font-normal text-muted-foreground',
+          label: t('status.draft'),
+        };
+
+  const refreshList = () => queryClient.invalidateQueries({ queryKey: DIGITAL_HUMAN_KEYS.lists() });
+
+  const applyStatus = async (status: 'active' | 'disabled') => {
+    setPending(true);
+    try {
+      await mutations.update.mutateAsync({
+        digitalHumanId: item.id,
+        request: { expected_revision: item.revision, status },
+      });
+      await refreshList();
+    } catch {
+      // The mutation surfaces the failure toast itself.
+    } finally {
+      setPending(false);
+      setConfirm(null);
+    }
+  };
+
+  const removeDigitalHuman = async () => {
+    setPending(true);
+    try {
+      await digitalHumanService.delete(item.id, item.revision);
+      await refreshList();
+    } catch (error) {
+      toast.error(getErrorMessage(error) || t('list.deleteBlocked'));
+    } finally {
+      setPending(false);
+      setConfirm(null);
+    }
+  };
+
+  const confirmCopy =
+    confirm === 'delete'
+      ? {
+          title: t('list.deleteTitle'),
+          description: t('list.deleteDescription'),
+          confirmText: t('list.delete'),
+          variant: 'warning' as const,
+        }
+      : confirm === 'offline'
+        ? {
+            title: t('list.takeOfflineTitle'),
+            description: t('list.takeOfflineDescription'),
+            confirmText: t('list.takeOffline'),
+            variant: 'warning' as const,
+          }
+        : {
+            title: t('list.bringOnlineTitle'),
+            description: t('list.bringOnlineDescription'),
+            confirmText: t('list.bringOnline'),
+            variant: 'default' as const,
+          };
 
   return (
     <div className="relative h-48">
@@ -131,15 +198,8 @@ function DigitalHumanCard({
                   size="sm"
                 />
               </div>
-              <Badge
-                variant="outline"
-                className={
-                  item.published_version_id
-                    ? 'border-success/40 bg-success/10 text-[11px] font-normal text-success'
-                    : 'bg-muted text-[11px] font-normal text-muted-foreground'
-                }
-              >
-                {item.published_version_id ? t('list.published') : t('status.draft')}
+              <Badge variant="outline" className={badge.className}>
+                {badge.label}
               </Badge>
             </div>
             <h2
@@ -180,154 +240,56 @@ function DigitalHumanCard({
                 <Pencil className="size-4" />
                 {t('basicInfo.edit')}
               </DropdownMenuItem>
+              {isPublished ? (
+                <DropdownMenuItem
+                  inset
+                  onSelect={() => setConfirm(isOffline ? 'online' : 'offline')}
+                >
+                  {isOffline ? <Power className="size-4" /> : <PowerOff className="size-4" />}
+                  {isOffline ? t('list.bringOnline') : t('list.takeOffline')}
+                </DropdownMenuItem>
+              ) : null}
+              <DropdownMenuItem
+                inset
+                disabled={!canDelete}
+                onSelect={() => {
+                  if (canDelete) setConfirm('delete');
+                }}
+              >
+                <Trash2 className="size-4" />
+                <span className="flex min-w-0 flex-col">
+                  <span>{t('list.delete')}</span>
+                  {!canDelete ? (
+                    <span className="text-[11px] text-muted-foreground">
+                      {t('list.deleteBlocked')}
+                    </span>
+                  ) : null}
+                </span>
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
       ) : null}
 
       <DigitalHumanBasicInfoDialog definition={item} open={editOpen} onOpenChange={setEditOpen} />
+
+      <ConfirmDialog
+        open={confirm !== null}
+        onOpenChange={open => {
+          if (!open) setConfirm(null);
+        }}
+        variant={confirmCopy.variant}
+        title={confirmCopy.title}
+        description={confirmCopy.description}
+        cancelText={t('common.cancel')}
+        confirmText={confirmCopy.confirmText}
+        loading={pending}
+        onConfirm={() => {
+          if (confirm === 'delete') void removeDigitalHuman();
+          else if (confirm === 'offline') void applyStatus('disabled');
+          else if (confirm === 'online') void applyStatus('active');
+        }}
+      />
     </div>
-  );
-}
-
-function CreateDigitalHumanDialog({
-  open,
-  onOpenChange,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const t = useT('digitalHumans');
-  const router = useRouter();
-  const mutations = useDigitalHumanMutations();
-  const availableModels = useAvailableModels({ use_case: 'agent-runtime' });
-  const [name, setName] = useState('');
-  const [purpose, setPurpose] = useState('');
-  const [iconValue, setIconValue] = useState<IconValue>(createTextIconValue('', ICON_BG));
-  const previousNameRef = useRef('');
-  // The available-models endpoint already applies the agent-runtime capability
-  // filter. Its compact response intentionally omits the ModelItem `callable`
-  // projection used by the full model catalog.
-  const defaultModel = availableModels.models[0]?.model ?? '';
-
-  useEffect(() => {
-    const previousDefault = previousNameRef.current.slice(0, 2).toUpperCase() || ICON_TEXT;
-    previousNameRef.current = name;
-    if (!name) return;
-    setIconValue(current => {
-      if (current.type !== 'text' || (current.icon && current.icon !== previousDefault)) {
-        return current;
-      }
-      return createTextIconValue(
-        name.slice(0, 2).toUpperCase() || ICON_TEXT,
-        current.iconBackground || ICON_BG
-      );
-    });
-  }, [name]);
-
-  const submit = async () => {
-    if (!name.trim() || !purpose.trim() || !defaultModel) {
-      toast.error(t('errors.required'));
-      return;
-    }
-    const response = await mutations.create.mutateAsync({
-      name: name.trim(),
-      description: purpose.trim(),
-      icon_type: iconValue.type,
-      icon:
-        iconValue.type === 'text'
-          ? JSON.stringify({
-              icon: iconValue.icon || name.trim().slice(0, 2).toUpperCase() || ICON_TEXT,
-              icon_background: iconValue.iconBackground || ICON_BG,
-            })
-          : iconValue.imageId || iconValue.iconUrl,
-      identity_name: name.trim(),
-      persona: purpose.trim(),
-      goals: [],
-      rules: [],
-      default_model: defaultModel,
-      autonomy_level: 'supervised',
-      visibility: 'workspace',
-      memory_policy: {
-        enabled: false,
-        ownership: 'digital_human',
-      },
-      trigger_policy: { manual: true },
-    });
-    const id = response.data?.definition.id;
-    onOpenChange(false);
-    if (id) router.push(`/console/digital-humans/${id}/configuration`);
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-xl">
-        <DialogHeader>
-          <DialogTitle>{t('create.title')}</DialogTitle>
-          <DialogDescription>{t('create.description')}</DialogDescription>
-        </DialogHeader>
-        <DialogBody className="space-y-4">
-          <Field label={t('fields.name')}>
-            <Input
-              value={name}
-              onChange={event => setName(event.target.value)}
-              placeholder={t('create.namePlaceholder')}
-              autoFocus
-            />
-          </Field>
-          <Field label={t('create.purpose')}>
-            <Textarea
-              value={purpose}
-              onChange={event => setPurpose(event.target.value)}
-              placeholder={t('create.purposePlaceholder')}
-              rows={4}
-            />
-          </Field>
-          <Field label={t('basicInfo.avatar')}>
-            <IconInput
-              showAvatarPresets
-              value={iconValue}
-              defaultValue={createTextIconValue(
-                name.slice(0, 2).toUpperCase() || ICON_TEXT,
-                ICON_BG
-              )}
-              onChange={setIconValue}
-            />
-          </Field>
-          <p className="text-xs text-muted-foreground">{t('create.followupHint')}</p>
-          {!availableModels.isLoading && !defaultModel ? (
-            <p className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
-              {t('create.modelUnavailable')}
-            </p>
-          ) : null}
-        </DialogBody>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            {t('common.cancel')}
-          </Button>
-          <Button
-            onClick={() => void submit()}
-            disabled={
-              !name.trim() ||
-              !purpose.trim() ||
-              !defaultModel ||
-              availableModels.isLoading ||
-              mutations.create.isPending
-            }
-          >
-            {mutations.create.isPending ? t('create.submitting') : t('create.submit')}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="block space-y-1.5 text-sm font-medium">
-      <span>{label}</span>
-      {children}
-    </label>
   );
 }
