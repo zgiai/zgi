@@ -108,8 +108,8 @@ export const DIGITAL_HUMAN_KEYS = {
   draftBindings: (id: string) => [...DIGITAL_HUMAN_KEYS.detail(id), 'draft-bindings'] as const,
   bindingCandidates: (id: string, params: unknown) =>
     [...DIGITAL_HUMAN_KEYS.detail(id), 'binding-candidates', params] as const,
-  exaWebSearchConfiguration: (id: string) =>
-    [...DIGITAL_HUMAN_KEYS.detail(id), 'direct-skills', 'exa-web-search'] as const,
+  /** Workspace skills a new digital human may bind, available before creation. */
+  skillCandidates: () => [...DIGITAL_HUMAN_KEYS.all, 'skill-candidates'] as const,
   runs: (id: string, params?: unknown) =>
     [...DIGITAL_HUMAN_KEYS.detail(id), 'runs', params].filter(Boolean),
   run: (id: string, runId: string) => [...DIGITAL_HUMAN_KEYS.detail(id), 'run', runId] as const,

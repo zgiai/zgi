@@ -14,6 +14,19 @@ const messages = {
     published: 'Published',
     updatedAt: 'Updated {date}',
     actions: 'Digital human actions',
+    offline: 'Offline',
+    takeOffline: 'Take offline',
+    bringOnline: 'Bring online',
+    takeOfflineTitle: 'Take this digital human offline?',
+    takeOfflineDescription:
+      'It can no longer be run, chatted with, or reached through channels until you bring it online again. Published versions stay intact, and deleting it becomes possible.',
+    bringOnlineTitle: 'Bring this digital human online?',
+    bringOnlineDescription: 'Workspace members can run and reach it again.',
+    delete: 'Delete',
+    deleteTitle: 'Delete this digital human?',
+    deleteDescription:
+      'This removes the digital human from the workspace. A digital human that is still online has to be taken offline first.',
+    deleteBlocked: 'Take it offline before deleting.',
   },
   create: {
     title: 'Create digital human',
@@ -26,6 +39,130 @@ const messages = {
     modelUnavailable: 'Configure an Agent Runtime model before creating a digital human.',
     submit: 'Create',
     submitting: 'Creating…',
+  },
+  createFlow: {
+    title: 'Create digital human',
+    subtitle: 'Pick a template, or start from a blank digital human. Templates bind real skills.',
+    invalidRole: 'That template does not exist. Choose one from the list.',
+    backToGallery: 'Back to templates',
+    gallery: {
+      customEntry: 'Custom digital human',
+      customHint: 'Fill in a name and responsibilities to create a basic digital human.',
+      details: 'View details',
+      create: 'Create',
+      createWithRole: 'Create a {role} digital human',
+      use: 'Use this template',
+      empty: 'No templates are available yet. Start from a blank digital human instead.',
+    },
+    detail: {
+      responsibility: 'What I own',
+      goals: 'Working goals',
+      rules: 'Safety rules',
+      skills: 'Skills bound on creation',
+      defaults: 'Preset defaults',
+      defaultsValue: 'Supervised autonomy · Workspace visibility · Memory off · Manual trigger',
+      close: 'Close',
+    },
+    form: {
+      name: 'Name',
+      namePlaceholder: 'Enter a digital human name',
+      responsibility: 'What I am responsible for',
+      responsibilityPlaceholder: 'Describe the outcome this digital human should own.',
+      avatar: 'Avatar',
+      skillsLoading: 'Loading the Skills this workspace offers…',
+      skillsLoadFailed: 'The Skills this workspace offers could not be loaded.',
+      skillsOptional: 'You can create it without Skills and add them later.',
+      skillsHint:
+        'Pick the Skills this digital human may use. They are bound when creation finishes and version 1 is published; the template only pre-selects its own. Adjust them later in Configuration → Capabilities.',
+      skillsPending: 'Resolved against the skills available in this workspace when you create.',
+      advanced: 'Advanced settings',
+      model: 'Agent Runtime model',
+      currentModel: 'Current model',
+      submit: 'Create and publish',
+      submitting: 'Creating…',
+      back: 'Back to templates',
+      discardTitle: 'Discard your edits?',
+      discardDescription: 'Your unsaved changes will be lost.',
+      discardConfirm: 'Discard',
+      discardCancel: 'Keep editing',
+      modelUnavailable: 'Configure an Agent Runtime model before creating a digital human.',
+      modelLoading: 'Loading available models…',
+      modelLoadFailed: 'Could not load the model list.',
+      retry: 'Retry',
+      requiredName: 'Enter a name.',
+      requiredResponsibility: 'Describe what this digital human is responsible for.',
+      errorSummary: 'Fix the highlighted fields and try again.',
+      createFailed: 'Could not create the digital human. Your input is kept so you can retry.',
+      bindingFailed:
+        'The digital human was created, but binding its skills failed. Continue in Configuration → Capabilities to bind them by hand.',
+      publishFailed:
+        'The digital human and its skills are in place, but publishing failed. Publish it from the configuration page.',
+      draftCreatedNotice: 'This digital human already exists. Continue setup, or go back to the list.',
+    },
+    preview: {
+      title: 'Preview',
+      published: 'Published',
+      noResponsibility: 'No responsibility added yet.',
+    },
+    sharedRules: {
+      credentials:
+        'Never ask the user to paste passwords, tokens, private keys, or other secrets into the conversation, the name, or the responsibility description.',
+      authorization:
+        'Without explicit user authorisation, do not perform operations that may interrupt a service, modify data, delete resources, or widen permissions.',
+      verifyResult:
+        'Never treat "executed" as "succeeded". Check the result, status, or logs before reporting an outcome.',
+      stateBlockers:
+        'When information is missing, the environment does not match, or the risk is unacceptable, stop and state the blocker and what is needed next.',
+    },
+    templates: {
+      fileGeneration: {
+        title: 'File generation assistant',
+        shortDescription: 'Turns a request into a deliverable document, spreadsheet, or deck.',
+        responsibility:
+          'Confirm the deliverable type and structure first, then produce a downloadable file and explain what it contains and how to update it.',
+        persona:
+          'You are a delivery-focused assistant with a file generation skill. Confirm the file type (document, spreadsheet, or deck) and the structure before generating, and offer a structure outline when the request is vague. After generating, explain what the file contains, where it was written, and how to revise it. When a format is not supported, say so and propose the closest supported alternative.',
+        tags: {
+          fileOutput: 'File output',
+          structure: 'Structure design',
+          deliveryNotes: 'Delivery notes',
+        },
+        goals: {
+          confirmFormat: 'Confirm the file type and structure before generating.',
+          produceFile: 'Produce a downloadable, ready-to-use file.',
+          explainOutput: 'Explain what the file contains and how to revise it.',
+          fallbackFormat: 'Offer a supported alternative when a format is unavailable.',
+        },
+        rules: {
+          confirmBeforeGenerating:
+            'Confirm the file type and structure before generating, and never promise a format that cannot be produced.',
+        },
+        skills: {
+          fileGenerator: 'File generation (documents, spreadsheets, decks)',
+        },
+      },
+    },
+    success: {
+      title: '{name} is published',
+      intro: 'Hi, I am {name}, a {role}. {responsibility}',
+      written:
+        'The persona, working goals, safety rules, runtime model, and skills below are in place, and the first version is published.',
+      boundSkills: 'Bound skills',
+      strengths: 'What I am good at',
+      completedTitle: 'Done',
+      completedItems:
+        'Basic info, persona, working goals, safety rules, runtime model, skills, published version',
+      pendingTitle: 'Still to do',
+      pendingItems: 'Channels, autonomous tasks, knowledge and project context',
+      nextTitle: 'Next, choose how to start working together',
+      imTitle: 'Mention me in IM',
+      imDescription: 'Distribute work to me from DingTalk, Feishu, and other IM channels.',
+      imNote: 'Requires IM application setup first.',
+      autonomyTitle: 'Set up autonomous work',
+      autonomyDescription: 'Let me keep working on a schedule, event, or API trigger.',
+      continueSetup: 'Continue setup',
+      backToList: 'Back to digital humans',
+    },
   },
   fields: {
     name: 'Name',
@@ -507,32 +644,6 @@ const messages = {
       custom: 'Custom Skills',
       noMatch: 'No matching Skills.',
       save: 'Save',
-    },
-    exa: {
-      credentialTitle: 'Exa API token',
-      loading: 'Loading configuration…',
-      loadFailed: 'Configuration could not be loaded. Try again later.',
-      notConfigured: 'Not configured; web search remains unavailable after publishing',
-      enabled: 'Configured and enabled',
-      disabled: 'Configured but disabled',
-      configureCredential: 'Configure token',
-      editCredential: 'Manage token',
-      retry: 'Retry',
-      dialogTitle: 'Configure Exa web search',
-      dialogDescription:
-        'The token is used only by this digital human at runtime and is never written to published versions or conversations.',
-      apiToken: 'API token',
-      openDocs: 'Open Exa API docs',
-      tokenPlaceholder: 'Paste an Exa API token',
-      keepTokenPlaceholder: 'Leave blank to keep the current token',
-      tokenHint:
-        'The token will not be shown again. Enter a new token whenever it needs replacing.',
-      enableTitle: 'Allow runtime use',
-      enableDescription:
-        'Turning this off keeps the token but removes web search from the runtime.',
-      save: 'Save configuration',
-      saving: 'Saving…',
-      errors: { save: 'Exa web search configuration could not be saved.' },
     },
     knowledge: {
       dialogDescription: 'Choose knowledge bases this digital human may search and reference.',

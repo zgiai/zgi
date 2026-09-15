@@ -15,8 +15,6 @@ import {
   BookOpen,
   Check,
   Database,
-  ExternalLink,
-  KeyRound,
   Plus,
   PlugZap,
   Puzzle,
@@ -27,14 +25,19 @@ import {
   Workflow,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { getAIChatSkillDisplayInfo } from '@/components/chat/variants/aichat/skill-display';
-import { AIChatSkillIcon } from '@/components/chat/variants/aichat/skill-icon';
 import {
   AgentWorkflowTypeBadge,
   AgentWorkflowTypeIcon,
 } from '@/components/agents/agent-runtime/workflow-type-display';
 import { ResourceBindingCard } from '@/components/common/resource-binding';
 import { useDigitalHumanDraftStore } from '@/components/digital-human/digital-human-draft-store';
+import {
+  DigitalHumanSkillBindingCard,
+  DigitalHumanSkillDialogBody,
+  DigitalHumanSkillSourceSelect,
+  filterDigitalHumanSkills,
+  type DigitalHumanSkillSourceFilter,
+} from '@/components/digital-human/digital-human-skill-picker';
 import {
   ResourceSelectionCardIcon,
   ResourceSelectionDialog,
@@ -48,38 +51,17 @@ import { useIntegrationMetadata } from '@/components/integrations/metadata-i18n'
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { integrationCatalogItems, useIntegrationCatalog } from '@/hooks';
 import {
   useDigitalHumanBindingCandidates,
   useDigitalHumanDraftBindings,
-  useDigitalHumanExaWebSearchConfiguration,
   useDigitalHumanMutations,
-  useUpdateDigitalHumanExaWebSearchConfiguration,
 } from '@/hooks/digital-human/use-digital-humans';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useLocale } from '@/hooks/use-locale';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
-import type { AIChatSkillDisplayMetadata, AIChatSkillMetadata } from '@/services/types/aichat';
 import type { IntegrationCatalogItem } from '@/services/types/integration';
 import type {
   DigitalHumanBindingType,
@@ -91,10 +73,7 @@ import { formatDate } from '@/utils/format';
 
 type BindingSectionKey = 'skills' | 'knowledge' | 'databases' | 'workflows' | 'integrations';
 type AccessMode = DigitalHumanResourceBindingInput['access_mode'];
-type SkillSourceFilter = 'all' | 'system' | 'custom';
 type DatabasePickerStep = 'databases' | 'tables';
-
-const DIGITAL_HUMAN_EXA_SKILL_ID = 'digital-human-exa-web-search';
 
 interface BindingSectionDefinition {
   key: BindingSectionKey;
@@ -122,7 +101,8 @@ export function DigitalHumanResourceBindings({ id }: { id: string }) {
   const [databaseStep, setDatabaseStep] = useState<DatabasePickerStep>('databases');
   const [selectedDatabaseIds, setSelectedDatabaseIds] = useState<string[]>([]);
   const [search, setSearch] = useState('');
-  const [skillSourceFilter, setSkillSourceFilter] = useState<SkillSourceFilter>('all');
+  const [skillSourceFilter, setSkillSourceFilter] =
+    useState<DigitalHumanSkillSourceFilter>('all');
   const deferredSearch = useDeferredValue(search.trim());
   const versionPreview = useDigitalHumanDraftStore(state => state.versionPreviews[id]);
   const canUpdate = permissions.hasPermission('digital_human.update');
@@ -224,20 +204,10 @@ export function DigitalHumanResourceBindings({ id }: { id: string }) {
       );
     }
 
-    return availableCandidates.filter(candidate => {
-      const source = skillSource(candidate);
-      if (skillSourceFilter !== 'all' && source !== skillSourceFilter) return false;
-      if (!normalizedSearch) return true;
-
-      const display = getDigitalHumanSkillDisplay(candidate, locale);
-      return [
-        display.label,
-        display.description,
-        display.whenToUse,
-        candidate.display_name,
-        candidate.description,
-        candidate.resource_id,
-      ].some(value => value?.toLocaleLowerCase().includes(normalizedSearch));
+    return filterDigitalHumanSkills(availableCandidates, {
+      search: deferredSearch,
+      source: skillSourceFilter,
+      locale,
     });
   }, [
     activeDefinition?.key,
@@ -579,8 +549,6 @@ export function DigitalHumanResourceBindings({ id }: { id: string }) {
                         })}
                         onRemove={() => void remove(item)}
                         disabled={!canConfigure || mutations.replaceBindings.isPending}
-                        digitalHumanId={id}
-                        canConfigure={canConfigure}
                       />
                     ))}
                   </div>
@@ -636,19 +604,10 @@ export function DigitalHumanResourceBindings({ id }: { id: string }) {
           }
           toolbar={
             activeDefinition.key === 'skills' ? (
-              <Select
+              <DigitalHumanSkillSourceSelect
                 value={skillSourceFilter}
-                onValueChange={value => setSkillSourceFilter(value as SkillSourceFilter)}
-              >
-                <SelectTrigger className="h-9 w-full shrink-0 bg-background sm:w-48">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">{t('bindings.skills.all')}</SelectItem>
-                  <SelectItem value="system">{t('bindings.skills.system')}</SelectItem>
-                  <SelectItem value="custom">{t('bindings.skills.custom')}</SelectItem>
-                </SelectContent>
-              </Select>
+                onChange={setSkillSourceFilter}
+              />
             ) : undefined
           }
           footer={
@@ -717,8 +676,14 @@ export function DigitalHumanResourceBindings({ id }: { id: string }) {
             databaseCandidates={databaseCandidatesQuery.data?.data?.items ?? []}
             integrationCatalogById={integrationCatalogById}
             integrationMetadata={integrationMetadata}
-            loading={activeCandidateQuery.isLoading || integrationCatalogQuery.isLoading}
-            error={activeCandidateQuery.isError || integrationCatalogQuery.isError}
+            loading={
+              activeCandidateQuery.isLoading ||
+              (activeDefinition.key === 'integrations' && integrationCatalogQuery.isLoading)
+            }
+            error={
+              activeCandidateQuery.isError ||
+              (activeDefinition.key === 'integrations' && integrationCatalogQuery.isError)
+            }
             emptyTitle={t('bindings.noCandidates')}
             emptyDescription={
               deferredSearch ? t('bindings.noSearchResults') : t('bindings.noCandidatesDescription')
@@ -757,8 +722,6 @@ function BindingCard({
   removeLabel,
   onRemove,
   disabled,
-  digitalHumanId,
-  canConfigure,
 }: {
   item: DigitalHumanResourceBindingInput;
   locale: string;
@@ -768,12 +731,21 @@ function BindingCard({
   removeLabel: string;
   onRemove: () => void;
   disabled: boolean;
-  digitalHumanId: string;
-  canConfigure: boolean;
 }) {
   const t = useT('digitalHumans');
+  // A bound skill uses the shared card, which the creation form renders too.
+  if (item.type === 'skill') {
+    return (
+      <DigitalHumanSkillBindingCard
+        item={item}
+        locale={locale}
+        removeLabel={removeLabel}
+        onRemove={onRemove}
+        disabled={disabled}
+      />
+    );
+  }
   const Icon = bindingIcon(item.type);
-  const skillDisplay = item.type === 'skill' ? getDigitalHumanSkillDisplay(item, locale) : null;
   const workflowType = metadataString(item.metadata, 'agent_type');
   const integrationId = item.parent_resource_id || '';
   const integrationName = catalogItem
@@ -781,15 +753,13 @@ function BindingCard({
     : integrationMetadata.providerName(integrationId, t('bindings.integrations.unknownApp'));
   const actionIds = metadataStringArray(item.metadata, 'allowed_action_ids');
   const title =
-    skillDisplay?.label ||
-    (item.type === 'integration_connection'
+    item.type === 'integration_connection'
       ? safeIntegrationDisplayText(item.display_name, t('bindings.integrations.unnamedConnection'))
-      : item.display_name || item.resource_id);
+      : item.display_name || item.resource_id;
   const description =
-    skillDisplay?.description ||
-    (item.type === 'integration_connection'
+    item.type === 'integration_connection'
       ? integrationName
-      : metadataString(item.metadata, 'description'));
+      : metadataString(item.metadata, 'description');
   const status =
     item.type === 'workflow' ? (
       <AgentWorkflowTypeBadge agentType={workflowType} />
@@ -797,15 +767,13 @@ function BindingCard({
       <Badge variant="subtle">
         {t('bindings.integrations.actionCount', { count: actionIds.length })}
       </Badge>
-    ) : item.type === 'skill' || item.type === 'knowledge_dataset' ? undefined : (
+    ) : item.type === 'knowledge_dataset' ? undefined : (
       <Badge variant="subtle">{accessLabel}</Badge>
     );
   return (
     <ResourceBindingCard
       icon={
-        skillDisplay ? (
-          <AIChatSkillIcon icon={skillDisplay.icon} className="size-4" />
-        ) : item.type === 'workflow' ? (
+        item.type === 'workflow' ? (
           <AgentWorkflowTypeIcon agentType={workflowType} />
         ) : (
           <Icon className="size-4" />
@@ -852,160 +820,7 @@ function BindingCard({
           })}
         </div>
       ) : null}
-      {item.type === 'skill' && item.resource_id === DIGITAL_HUMAN_EXA_SKILL_ID ? (
-        <ExaWebSearchConfiguration
-          digitalHumanId={digitalHumanId}
-          disabled={disabled || !canConfigure}
-        />
-      ) : null}
     </ResourceBindingCard>
-  );
-}
-
-function ExaWebSearchConfiguration({
-  digitalHumanId,
-  disabled,
-}: {
-  digitalHumanId: string;
-  disabled: boolean;
-}) {
-  const t = useT('digitalHumans');
-  const configurationQuery = useDigitalHumanExaWebSearchConfiguration(digitalHumanId);
-  const updateConfiguration = useUpdateDigitalHumanExaWebSearchConfiguration(digitalHumanId);
-  const configuration = configurationQuery.data?.data;
-  const [open, setOpen] = useState(false);
-  const [token, setToken] = useState('');
-  const [enabled, setEnabled] = useState(true);
-
-  const changeOpen = (nextOpen: boolean) => {
-    setOpen(nextOpen);
-    if (nextOpen) {
-      setToken('');
-      setEnabled(configuration?.configured ? configuration.enabled : true);
-    }
-  };
-
-  const save = async () => {
-    if (!configuration?.configured && !token.trim()) return;
-    try {
-      await updateConfiguration.mutateAsync({
-        api_token: token.trim() || undefined,
-        enabled,
-        expected_revision: configuration?.revision ?? 0,
-      });
-      changeOpen(false);
-    } catch {
-      // The shared mutation handler presents the localized error.
-    }
-  };
-
-  const statusLabel = configurationQuery.isLoading
-    ? t('bindings.exa.loading')
-    : configurationQuery.isError
-      ? t('bindings.exa.loadFailed')
-      : !configuration?.configured
-        ? t('bindings.exa.notConfigured')
-        : configuration.enabled
-          ? t('bindings.exa.enabled')
-          : t('bindings.exa.disabled');
-
-  return (
-    <>
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/20 px-3 py-2.5">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <KeyRound className="size-4 shrink-0 text-muted-foreground" />
-          <div className="min-w-0">
-            <p className="text-xs font-medium">{t('bindings.exa.credentialTitle')}</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">{statusLabel}</p>
-          </div>
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={disabled || configurationQuery.isLoading}
-          onClick={() => {
-            if (configurationQuery.isError) {
-              void configurationQuery.refetch();
-              return;
-            }
-            changeOpen(true);
-          }}
-        >
-          {configurationQuery.isError
-            ? t('bindings.exa.retry')
-            : configuration?.configured
-              ? t('bindings.exa.editCredential')
-              : t('bindings.exa.configureCredential')}
-        </Button>
-      </div>
-
-      <Dialog open={open} onOpenChange={changeOpen}>
-        <DialogContent size="md">
-          <DialogHeader>
-            <DialogTitle>{t('bindings.exa.dialogTitle')}</DialogTitle>
-            <DialogDescription>{t('bindings.exa.dialogDescription')}</DialogDescription>
-          </DialogHeader>
-          <DialogBody className="space-y-5 pb-2">
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-3">
-                <Label htmlFor="digital-human-exa-token">{t('bindings.exa.apiToken')}</Label>
-                <a
-                  href="https://exa.ai/docs/reference/search"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-                >
-                  {t('bindings.exa.openDocs')}
-                  <ExternalLink className="size-3" />
-                </a>
-              </div>
-              <Input
-                id="digital-human-exa-token"
-                type="password"
-                autoComplete="off"
-                value={token}
-                placeholder={
-                  configuration?.configured
-                    ? t('bindings.exa.keepTokenPlaceholder')
-                    : t('bindings.exa.tokenPlaceholder')
-                }
-                onChange={event => setToken(event.target.value)}
-              />
-              <p className="text-xs leading-5 text-muted-foreground">
-                {t('bindings.exa.tokenHint')}
-              </p>
-            </div>
-            <div className="flex items-center justify-between gap-4 rounded-lg border px-3 py-3">
-              <div>
-                <Label htmlFor="digital-human-exa-enabled">{t('bindings.exa.enableTitle')}</Label>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {t('bindings.exa.enableDescription')}
-                </p>
-              </div>
-              <Switch
-                id="digital-human-exa-enabled"
-                checked={enabled}
-                onCheckedChange={setEnabled}
-              />
-            </div>
-          </DialogBody>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => changeOpen(false)}>
-              {t('common.cancel')}
-            </Button>
-            <Button
-              disabled={
-                updateConfiguration.isPending || (!configuration?.configured && !token.trim())
-              }
-              onClick={() => void save()}
-            >
-              {updateConfiguration.isPending ? t('bindings.exa.saving') : t('bindings.exa.save')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
   );
 }
 
@@ -1197,6 +1012,25 @@ function ResourceCandidateContent({
   onRetry: () => void;
 }) {
   const t = useT('digitalHumans');
+  // Skills own their body so the creation dialog renders exactly the same one.
+  if (section === 'skills') {
+    return (
+      <DigitalHumanSkillDialogBody
+        candidates={candidates}
+        selectedIds={selectedItems.map(item => item.resource_id)}
+        onToggle={candidate => onToggle(candidate, !selectedItems.some(item => item.resource_id === candidate.resource_id))}
+        locale={locale}
+        loading={loading}
+        error={error}
+        search={Boolean(search)}
+        emptyTitle={emptyTitle}
+        emptyDescription={emptyDescription}
+        skillNoMatchLabel={skillNoMatchLabel}
+        retryLabel={retryLabel}
+        onRetry={onRetry}
+      />
+    );
+  }
   if (loading) return <ResourceSelectionSkeleton />;
   if (error) {
     return (
@@ -1227,53 +1061,6 @@ function ResourceCandidateContent({
         description={emptyDescription}
         variant={search ? 'search' : 'resource'}
       />
-    );
-  }
-
-  if (section === 'skills') {
-    return (
-      <ResourceSelectionGrid>
-        {candidates.map(candidate => {
-          const selected = selectedItems.find(item => resourceKey(item) === resourceKey(candidate));
-          const display = getDigitalHumanSkillDisplay(candidate, locale);
-          return (
-            <button
-              key={resourceKey(candidate)}
-              type="button"
-              aria-pressed={Boolean(selected)}
-              disabled={!candidate.available}
-              className={cn(
-                'flex min-h-36 cursor-pointer flex-col rounded-lg border bg-background p-3.5 text-left shadow-sm transition-colors',
-                selected
-                  ? 'border-primary bg-primary/5 hover:bg-primary/10'
-                  : 'hover:border-primary/40 hover:bg-muted/20',
-                !candidate.available && 'cursor-not-allowed opacity-60'
-              )}
-              onClick={() => onToggle(candidate, !selected)}
-            >
-              <span className="flex min-h-8 items-center gap-3">
-                <ResourceSelectionCardIcon>
-                  <AIChatSkillIcon icon={display.icon} />
-                </ResourceSelectionCardIcon>
-                <span className="flex min-h-8 min-w-0 flex-1 items-center">
-                  <span className="block truncate text-sm font-semibold">{display.label}</span>
-                </span>
-                <span
-                  className={cn(
-                    'flex size-5 shrink-0 items-center justify-center rounded-full border',
-                    selected ? 'border-primary bg-primary text-primary-foreground' : 'bg-background'
-                  )}
-                >
-                  {selected ? <Check className="size-3.5" /> : null}
-                </span>
-              </span>
-              <span className="mt-2.5 line-clamp-3 text-xs leading-5 text-muted-foreground">
-                {display.description || candidate.description || noDescriptionLabel}
-              </span>
-            </button>
-          );
-        })}
-      </ResourceSelectionGrid>
     );
   }
 
@@ -1750,55 +1537,4 @@ function metadataStringArray(metadata: Record<string, unknown>, key: string) {
   const value = metadata[key];
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === 'string' && Boolean(item.trim()));
-}
-
-function skillSource(item: { metadata: Record<string, unknown> }): 'system' | 'custom' {
-  return metadataString(item.metadata, 'source') === 'custom' ? 'custom' : 'system';
-}
-
-function getDigitalHumanSkillDisplay(
-  item: {
-    resource_id: string;
-    display_name?: string;
-    description?: string;
-    metadata: Record<string, unknown>;
-  },
-  locale: string
-) {
-  return getAIChatSkillDisplayInfo(digitalHumanSkillToMetadata(item), locale);
-}
-
-function digitalHumanSkillToMetadata(item: {
-  resource_id: string;
-  display_name?: string;
-  description?: string;
-  metadata: Record<string, unknown>;
-}): AIChatSkillMetadata {
-  const displayName = item.display_name?.trim() || item.resource_id;
-  return {
-    skill_id: item.resource_id,
-    source: skillSource(item),
-    name: displayName,
-    description: item.description?.trim() || metadataString(item.metadata, 'description') || '',
-    when_to_use: metadataString(item.metadata, 'when_to_use') || '',
-    runtime_type: (metadataString(item.metadata, 'runtime_type') ||
-      'prompt') as AIChatSkillMetadata['runtime_type'],
-    enabled: true,
-    display: skillDisplayMetadata(item.metadata.display),
-    has_tools: metadataBoolean(item.metadata, 'has_tools'),
-    has_references: metadataBoolean(item.metadata, 'has_references'),
-    has_scripts: metadataBoolean(item.metadata, 'has_scripts'),
-    scripts_supported: metadataBoolean(item.metadata, 'scripts_supported'),
-    max_calls_per_turn: 0,
-    timeout_seconds: 0,
-  };
-}
-
-function skillDisplayMetadata(value: unknown): AIChatSkillDisplayMetadata | undefined {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  return value as AIChatSkillDisplayMetadata;
-}
-
-function metadataBoolean(metadata: Record<string, unknown>, key: string) {
-  return metadata[key] === true;
 }

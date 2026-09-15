@@ -252,6 +252,32 @@ assert.equal(
   'allowed'
 );
 assert.equal(
+  normalizeZGIConsoleNavigationHref('/console/digital-humans/create'),
+  '/console/digital-humans/create',
+  'the creation route must stay navigable'
+);
+assert.equal(
+  getZGIConsoleNavigationAccess('/console/digital-humans/create', {
+    ...readyContext,
+    permissions: ['digital_human.view', 'digital_human.create'],
+  }).status,
+  'allowed',
+  'view + create must be enough to open the creation route'
+);
+assert.equal(
+  getZGIConsoleNavigationAccess('/console/digital-humans/create', digitalHumanViewer).status,
+  'permission_denied',
+  'view alone must not open the creation route'
+);
+assert.equal(
+  getZGIConsoleNavigationAccess('/console/digital-humans/create', {
+    ...readyContext,
+    permissions: ['digital_human.view', 'digital_human.update', 'digital_human.publish'],
+  }).status,
+  'permission_denied',
+  'the creation route must not fall through to the digital human detail permissions'
+);
+assert.equal(
   getZGIConsoleNavigationAccess('/console/agents/legacy-workflow/workflow', workflowEditor).status,
   'allowed',
   'legacy workflow editor routes must use workflow permissions'

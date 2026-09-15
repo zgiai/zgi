@@ -19,7 +19,6 @@ import type {
   UpdateDigitalHumanDraftRequest,
   UpdateDigitalHumanRequest,
   UpdateDigitalHumanPersonaTemplateRequest,
-  UpdateDigitalHumanDirectSkillConfigurationRequest,
 } from '@/services/types/digital-human';
 import { getErrorMessage } from '@/utils/error-notifications';
 
@@ -98,6 +97,21 @@ export function useDigitalHumanDraftBindings(id: string, enabled = true) {
   });
 }
 
+/**
+ * Skills a new digital human may bind, fetched before creation.
+ *
+ * It uses the same server-side eligibility gate as the draft editor, so the
+ * creation form can never offer a skill the configuration page would hide.
+ */
+export function useDigitalHumanSkillCandidates(enabled = true) {
+  return useQuery({
+    queryKey: DIGITAL_HUMAN_KEYS.skillCandidates(),
+    queryFn: () => digitalHumanService.listSkillCandidates(),
+    enabled,
+    staleTime: 30_000,
+  });
+}
+
 export function useDigitalHumanBindingCandidates(
   id: string,
   params: {
@@ -116,29 +130,6 @@ export function useDigitalHumanBindingCandidates(
       Boolean(id) &&
       (params.type !== 'database_table' || Boolean(params.parent_resource_id)),
     staleTime: 15_000,
-  });
-}
-
-export function useDigitalHumanExaWebSearchConfiguration(id: string, enabled = true) {
-  return useQuery({
-    queryKey: DIGITAL_HUMAN_KEYS.exaWebSearchConfiguration(id),
-    queryFn: () => digitalHumanService.getExaWebSearchConfiguration(id),
-    enabled: enabled && Boolean(id),
-    staleTime: 10_000,
-  });
-}
-
-export function useUpdateDigitalHumanExaWebSearchConfiguration(id: string) {
-  const t = useT('digitalHumans');
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (request: UpdateDigitalHumanDirectSkillConfigurationRequest) =>
-      digitalHumanService.updateExaWebSearchConfiguration(id, request),
-    onSuccess: () =>
-      queryClient.invalidateQueries({
-        queryKey: DIGITAL_HUMAN_KEYS.exaWebSearchConfiguration(id),
-      }),
-    onError: error => mutationError(error, t('bindings.exa.errors.save')),
   });
 }
 

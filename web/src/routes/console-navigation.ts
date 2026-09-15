@@ -226,6 +226,17 @@ export const ZGI_CONSOLE_SITE_MAP = [
     permissions: DIGITAL_HUMAN_PAGE_PERMISSIONS,
   },
   {
+    // Must stay an exact entry: '/console/digital-humans/create' also matches the
+    // dynamic detail pattern below, which would demand update and publish rights.
+    // Route permissions are matched with `some()`, so listing view here would let
+    // a view-only user open the create page.
+    href: '/console/digital-humans/create',
+    label: 'Digital Human Create',
+    purpose: 'create a digital human draft from a role template',
+    scope: 'workspace',
+    permissions: ['digital_human.create'],
+  },
+  {
     href: '/console/workflows',
     label: 'Workflows',
     purpose: 'create, configure, debug, and publish workflows',

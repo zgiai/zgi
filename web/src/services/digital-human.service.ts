@@ -43,8 +43,6 @@ import type {
   DigitalHumanTaskRun,
   DigitalHumanTaskActivity,
   DigitalHumanTaskPage,
-  DigitalHumanDirectSkillConfiguration,
-  UpdateDigitalHumanDirectSkillConfigurationRequest,
   DigitalHumanAccessSettings,
   DigitalHumanAPIKey,
   DigitalHumanAPIKeyCreated,
@@ -66,6 +64,17 @@ class DigitalHumanService extends BaseService {
 
   create(data: CreateDigitalHumanRequest): Promise<ApiResponseData<DigitalHumanDetail>> {
     return this.request('post', '/digital-humans', data);
+  }
+
+  /**
+   * Soft-deletes a digital human. A digital human that still has an online
+   * published version must be taken offline first (see `update` with
+   * `status: 'disabled'`); the API answers 409 otherwise.
+   */
+  delete(id: string, expectedRevision: number): Promise<ApiResponseData<{ deleted: true }>> {
+    return this.request('delete', `/digital-humans/${id}`, undefined, {
+      params: { expected_revision: expectedRevision },
+    });
   }
 
   get(id: string): Promise<ApiResponseData<DigitalHumanDetail>> {
@@ -200,6 +209,17 @@ class DigitalHumanService extends BaseService {
     });
   }
 
+  /**
+   * The skills a brand new digital human may bind.
+   *
+   * The create flow runs before any draft exists, so it cannot use
+   * `listBindingCandidates`; the server applies the same eligibility gate, which
+   * keeps the creation and configuration pickers in sync.
+   */
+  listSkillCandidates(): Promise<ApiResponseData<DigitalHumanResourceCandidateList>> {
+    return this.request('get', '/digital-human-skill-candidates');
+  }
+
   replaceDraftBindings(
     id: string,
     expectedDraftLockVersion: number,
@@ -209,19 +229,6 @@ class DigitalHumanService extends BaseService {
       expected_draft_lock_version: expectedDraftLockVersion,
       items,
     });
-  }
-
-  getExaWebSearchConfiguration(
-    id: string
-  ): Promise<ApiResponseData<DigitalHumanDirectSkillConfiguration>> {
-    return this.request('get', `/digital-humans/${id}/direct-skills/exa-web-search`);
-  }
-
-  updateExaWebSearchConfiguration(
-    id: string,
-    data: UpdateDigitalHumanDirectSkillConfigurationRequest
-  ): Promise<ApiResponseData<DigitalHumanDirectSkillConfiguration>> {
-    return this.request('put', `/digital-humans/${id}/direct-skills/exa-web-search`, data);
   }
 
   submitInvocation(

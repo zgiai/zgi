@@ -101,6 +101,7 @@
     "test:native-process-commentary": "node scripts/test-native-process-commentary.mjs",
     "test:workspace-role-templates": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-workspace-role-templates.mjs",
     "test:digital-human-console": "node scripts/test-digital-human-console.mjs",
+    "test:digital-human-create-flow": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-digital-human-create-flow.mjs",
     "test:digital-human-chat-route-sync": "node scripts/test-digital-human-chat-route-sync.mjs",
     "type-check": "node scripts/customer/prepare.mjs && node scripts/generate-sensitive-word-filter.mjs && node scripts/check-i18n-route-modules.mjs && tsc --noEmit",
     "check:i18n-routes": "node scripts/check-i18n-route-modules.mjs",
