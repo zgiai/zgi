@@ -56,21 +56,21 @@ func TestBrainAdapterBuildsDigitalHumanRunConfigWithoutAgentIdentityOrMemory(t *
 	}
 }
 
-func TestBrainAdapterLeavesDirectSkillForRequestScopedRuntime(t *testing.T) {
+func TestBrainAdapterProjectsSkillBindingsThroughSharedCatalog(t *testing.T) {
 	subject := runtimeidentity.SubjectRef{Type: runtimeidentity.SubjectTypeDigitalHuman, ID: uuid.New(), OrganizationID: uuid.New(), WorkspaceID: uuid.New()}
 	resolved := &ResolvedExecution{Snapshot: ExecutionSnapshot{
 		SchemaVersion: executionSnapshotSchemaV1, Revision: "sha256:snapshot", Subject: subject,
 		DigitalHumanVersion: uuid.New(), IdentityName: "Atlas", Persona: "Search carefully", Model: "gpt-5",
 		Bindings: []resourcebindings.Binding{{
-			Type: resourcebindings.BindingTypeSkill, ResourceID: DirectSkillExaWebSearch,
-			AccessMode: resourcebindings.AccessModeExecute, Revision: "sha256:exa",
+			Type: resourcebindings.BindingTypeSkill, ResourceID: "file-generator",
+			AccessMode: resourcebindings.AccessModeExecute, Revision: "sha256:files",
 		}},
 	}}
 	config, err := NewBrainAdapter(&resolverStoreStub{}).RunConfig(resolved)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(config.EnabledSkillIDs) != 0 || len(config.BindingAuthorizations) != 1 {
-		t.Fatalf("direct Skill was projected through shared catalog: %#v", config)
+	if len(config.EnabledSkillIDs) != 1 || config.EnabledSkillIDs[0] != "file-generator" || len(config.BindingAuthorizations) != 1 {
+		t.Fatalf("skill binding was not projected through the shared catalog: %#v", config)
 	}
 }

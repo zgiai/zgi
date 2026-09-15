@@ -65,29 +65,9 @@ func (s *RuntimeService) ListResourceCandidates(ctx context.Context, scope Scope
 		if _, err := store.ListResourceCandidates(ctx, scope, digitalHumanID, query); err != nil {
 			return nil, applicationError(err, "digital_human.bindings.candidates")
 		}
-		catalog, ok := s.chat.(skillCandidateCatalog)
-		if !ok {
-			return nil, applicationError(ErrResourceBindingInvalid, "digital_human.bindings.candidates")
-		}
-		workspaceID := scope.WorkspaceID
-		metadata, err := catalog.ListSkills(ctx, chatruntime.Scope{
-			OrganizationID: scope.OrganizationID,
-			WorkspaceID:    &workspaceID,
-			AccountID:      scope.ActorID,
-		})
+		candidates, err = s.skillCandidates(ctx, scope)
 		if err != nil {
 			return nil, applicationError(err, "digital_human.bindings.candidates")
-		}
-		candidates, err = skillResourceCandidates(metadata)
-		if err != nil {
-			return nil, applicationError(err, "digital_human.bindings.candidates")
-		}
-		if s.directSkills != nil {
-			directCandidates, directErr := s.directSkills.Candidates()
-			if directErr != nil {
-				return nil, applicationError(directErr, "digital_human.bindings.candidates")
-			}
-			candidates = append(candidates, directCandidates...)
 		}
 	} else {
 		candidates, err = store.ListResourceCandidates(ctx, scope, digitalHumanID, query)
@@ -102,21 +82,63 @@ func (s *RuntimeService) ListResourceCandidates(ctx context.Context, scope Scope
 			filtered = append(filtered, candidate)
 		}
 	}
-	sort.SliceStable(filtered, func(i, j int) bool {
-		if filtered[i].Available != filtered[j].Available {
-			return filtered[i].Available
-		}
-		left, right := strings.ToLower(filtered[i].DisplayName), strings.ToLower(filtered[j].DisplayName)
-		if left != right {
-			return left < right
-		}
-		return filtered[i].ResourceID < filtered[j].ResourceID
-	})
+	sortResourceCandidates(filtered)
 	total := len(filtered)
 	if total > query.Limit {
 		filtered = filtered[:query.Limit]
 	}
 	return &ResourceCandidateList{Items: filtered, Total: total}, nil
+}
+
+// ListSkillCandidates returns the skills a brand new digital human may bind.
+//
+// Creation happens before the draft exists, so this mirrors
+// ListResourceCandidates for the skill type without requiring an id. Both paths
+// call skillCandidates, so the creation flow can never offer a skill the draft
+// editor would hide.
+func (s *RuntimeService) ListSkillCandidates(ctx context.Context, scope Scope) (*ResourceCandidateList, error) {
+	if !validScope(scope) {
+		return nil, applicationError(ErrInvalidRequest, "digital_human.bindings.candidates")
+	}
+	candidates, err := s.skillCandidates(ctx, scope)
+	if err != nil {
+		return nil, applicationError(err, "digital_human.bindings.candidates")
+	}
+	sortResourceCandidates(candidates)
+	return &ResourceCandidateList{Items: candidates, Total: len(candidates)}, nil
+}
+
+// skillCandidates projects the workspace's real skills through the exposure and
+// caller gate shared by every digital human binding surface.
+func (s *RuntimeService) skillCandidates(ctx context.Context, scope Scope) ([]ResourceCandidate, error) {
+	catalog, ok := s.chat.(skillCandidateCatalog)
+	if !ok {
+		return nil, ErrResourceBindingInvalid
+	}
+	workspaceID := scope.WorkspaceID
+	metadata, err := catalog.ListSkills(ctx, chatruntime.Scope{
+		OrganizationID: scope.OrganizationID,
+		WorkspaceID:    &workspaceID,
+		AccountID:      scope.ActorID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return skillResourceCandidates(metadata)
+}
+
+// sortResourceCandidates puts bindable candidates first, then orders by name.
+func sortResourceCandidates(candidates []ResourceCandidate) {
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].Available != candidates[j].Available {
+			return candidates[i].Available
+		}
+		left, right := strings.ToLower(candidates[i].DisplayName), strings.ToLower(candidates[j].DisplayName)
+		if left != right {
+			return left < right
+		}
+		return candidates[i].ResourceID < candidates[j].ResourceID
+	})
 }
 
 func normalizeResourceCandidateQuery(query ResourceCandidateQuery) (ResourceCandidateQuery, error) {

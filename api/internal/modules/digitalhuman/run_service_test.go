@@ -751,6 +751,30 @@ func TestRuntimeServiceListsOnlySafeDigitalHumanSkills(t *testing.T) {
 	}
 }
 
+func TestRuntimeServiceListsSkillCandidatesBeforeCreation(t *testing.T) {
+	store, dispatcher := newFakeRunStore(), &fakeRunDispatcher{}
+	chat := &fakeDigitalHumanChat{skills: []skills.SkillDiscoveryMetadata{
+		{
+			ID: skills.SkillFileGenerator, Name: "File generation", Enabled: true,
+			Status: skills.SkillStatusActive,
+			SupportedCallers: []string{skills.SkillCallerAIChat, skills.SkillCallerAgent, skills.SkillCallerDigitalHuman},
+		},
+		{
+			ID: "aichat-only", Name: "AIChat only", Enabled: true, Status: skills.SkillStatusActive,
+			SupportedCallers: []string{skills.SkillCallerAIChat},
+		},
+		{ID: "disabled", Name: "Disabled", Enabled: false, Status: skills.SkillStatusActive},
+	}}
+	service := newTestRuntimeService(t, store, dispatcher, chat)
+	result, err := service.ListSkillCandidates(t.Context(), testRunScope())
+	if err != nil {
+		t.Fatalf("ListSkillCandidates() error = %v", err)
+	}
+	if result.Total != 1 || len(result.Items) != 1 || result.Items[0].ResourceID != skills.SkillFileGenerator {
+		t.Fatalf("pre-creation skill candidates = %#v, want only the digital-human skill", result)
+	}
+}
+
 type fakeRunStore struct {
 	mu         sync.Mutex
 	runs       map[uuid.UUID]*Run

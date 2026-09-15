@@ -132,6 +132,14 @@ func digitalHumanPermissionForRequest(method, routePath string) workspacemodel.W
 	if path == "" {
 		return ""
 	}
+	// Creation needs the workspace's bindable skills before the draft exists, so
+	// this route is owned by the create permission rather than the view one.
+	if strings.Contains(path, "digital-human-skill-candidates") {
+		if method == http.MethodGet {
+			return workspacemodel.WorkspacePermissionDigitalHumanCreate
+		}
+		return ""
+	}
 	// Private tasks are part of the formal run surface. A user who can run a
 	// DigitalHuman may manage only their own task namespace from chat; viewers
 	// must not discover it through a direct URL.
@@ -296,7 +304,6 @@ func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRu
 		digitalhuman.WithTaskRuntime(digitalhuman.NewTaskRuntimeProvider(deps.Tasks)),
 		digitalhuman.WithChannelTransientDispatcher(transientDispatcher),
 		digitalhuman.WithChannelContextRuntime(digitalhuman.NewChannelContextRuntime(repository, channelAdapters, modelSpecResolver)),
-		digitalhuman.WithDirectSkillRuntime(digitalhuman.NewExaDirectSkillProvider(repository, deps.CredentialCipher, nil)),
 		digitalhuman.WithManualInvocationFileValidator(digitalhuman.NewConsoleFileValidator(deps.FileService)),
 	)
 	digitalhuman.RegisterRunTaskHandler(deps.TaskRegistry, deps.TaskManager, runtime)

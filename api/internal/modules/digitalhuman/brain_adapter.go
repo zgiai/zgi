@@ -55,11 +55,7 @@ func (a *BrainAdapter) RunConfig(resolved *ResolvedExecution) (chatruntime.RunCo
 		config.BindingAuthorizations = append(config.BindingAuthorizations, authorization)
 		switch binding.Type {
 		case resourcebindings.BindingTypeSkill:
-			// Direct DigitalHuman Skills are injected as request-scoped runtime
-			// tools. They must not be resolved through the shared Agent catalog.
-			if !isDirectDigitalHumanSkill(binding.ResourceID) {
-				config.EnabledSkillIDs = append(config.EnabledSkillIDs, binding.ResourceID)
-			}
+			config.EnabledSkillIDs = append(config.EnabledSkillIDs, binding.ResourceID)
 		case resourcebindings.BindingTypeKnowledgeDataset:
 			config.KnowledgeDatasetIDs = append(config.KnowledgeDatasetIDs, binding.ResourceID)
 		case resourcebindings.BindingTypeDatabase:
@@ -109,10 +105,6 @@ func (a *BrainAdapter) RunConfig(resolved *ResolvedExecution) (chatruntime.RunCo
 		config.IntegrationSelectedConnectionIDs[key] = normalizedUniqueStrings(values)
 	}
 	return config, nil
-}
-
-func isDirectDigitalHumanSkill(skillID string) bool {
-	return strings.EqualFold(strings.TrimSpace(skillID), DirectSkillExaWebSearch)
 }
 
 func buildDigitalHumanSystemPrompt(snapshot ExecutionSnapshot) string {

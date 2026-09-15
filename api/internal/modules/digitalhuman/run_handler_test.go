@@ -27,8 +27,7 @@ type runtimeHandlerServiceStub struct {
 	runtimeLog         func(context.Context, Scope, uuid.UUID, uuid.UUID) (*RunRuntimeLog, error)
 	cancel             func(context.Context, Scope, uuid.UUID, uuid.UUID) (*Run, error)
 	candidates         func(context.Context, Scope, uuid.UUID, ResourceCandidateQuery) (*ResourceCandidateList, error)
-	directSkillGet     func(context.Context, Scope, uuid.UUID, string) (*DirectSkillConfiguration, error)
-	directSkillUpdate  func(context.Context, Scope, uuid.UUID, string, UpdateDirectSkillConfigurationRequest) (*DirectSkillConfiguration, error)
+	skillCandidates    func(context.Context, Scope) (*ResourceCandidateList, error)
 	listConversations  func(context.Context, Scope, uuid.UUID, int, int) ([]*runtimemodel.Conversation, int64, error)
 	submitRuntimeInput func(context.Context, Scope, uuid.UUID, runtimeservice.SubmitRuntimeInputRequest) (*runtimeservice.SubmitRuntimeInputResult, error)
 }
@@ -53,12 +52,8 @@ func (s runtimeHandlerServiceStub) ListResourceCandidates(ctx context.Context, s
 	return s.candidates(ctx, scope, id, query)
 }
 
-func (s runtimeHandlerServiceStub) GetDirectSkillConfiguration(ctx context.Context, scope Scope, id uuid.UUID, skillID string) (*DirectSkillConfiguration, error) {
-	return s.directSkillGet(ctx, scope, id, skillID)
-}
-
-func (s runtimeHandlerServiceStub) UpdateDirectSkillConfiguration(ctx context.Context, scope Scope, id uuid.UUID, skillID string, request UpdateDirectSkillConfigurationRequest) (*DirectSkillConfiguration, error) {
-	return s.directSkillUpdate(ctx, scope, id, skillID, request)
+func (s runtimeHandlerServiceStub) ListSkillCandidates(ctx context.Context, scope Scope) (*ResourceCandidateList, error) {
+	return s.skillCandidates(ctx, scope)
 }
 
 func (s runtimeHandlerServiceStub) ListConversations(ctx context.Context, scope Scope, id uuid.UUID, page, limit int) ([]*runtimemodel.Conversation, int64, error) {
@@ -199,26 +194,6 @@ func TestRuntimeHandlerListsScopedResourceCandidates(t *testing.T) {
 
 	if recorder.Code != http.StatusOK || !bytes.Contains(recorder.Body.Bytes(), []byte("Published workflow")) {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
-	}
-}
-
-func TestRuntimeHandlerUpdatesExaConfigurationWithoutReturningToken(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	scope, digitalHumanID := testScope(), uuid.New()
-	service := runtimeHandlerServiceStub{directSkillUpdate: func(_ context.Context, gotScope Scope, gotID uuid.UUID, skillID string, request UpdateDirectSkillConfigurationRequest) (*DirectSkillConfiguration, error) {
-		if gotScope != scope || gotID != digitalHumanID || skillID != DirectSkillExaWebSearch || request.APIToken != "exa-secret" || !request.Enabled || request.ExpectedRevision != 2 {
-			t.Fatalf("direct Skill update = scope %#v, id %s, skill %q, request %#v", gotScope, gotID, skillID, request)
-		}
-		return &DirectSkillConfiguration{SkillID: DirectSkillExaWebSearch, Configured: true, Enabled: true, Revision: 3}, nil
-	}}
-	router := digitalHumanRuntimeHandlerRouter(t, service, scope)
-	request := httptest.NewRequest(http.MethodPut, "/digital-humans/"+digitalHumanID.String()+"/direct-skills/exa-web-search", bytes.NewBufferString(`{"api_token":"exa-secret","enabled":true,"expected_revision":2}`))
-	request.Header.Set("Content-Type", "application/json")
-	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, request)
-
-	if recorder.Code != http.StatusOK || !bytes.Contains(recorder.Body.Bytes(), []byte(`"configured":true`)) || bytes.Contains(recorder.Body.Bytes(), []byte("exa-secret")) || bytes.Contains(recorder.Body.Bytes(), []byte("api_token")) {
-		t.Fatalf("unsafe direct Skill response: status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
 

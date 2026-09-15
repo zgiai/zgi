@@ -155,19 +155,6 @@ func (s *RuntimeService) userInputContinuationConfig(
 			config.RuntimeTools = append(config.RuntimeTools, preparation.Tools...)
 		}
 	}
-	if s.directSkills != nil {
-		preparation, prepareErr := s.directSkills.Prepare(ctx, run, resolved, event)
-		if prepareErr != nil {
-			return runtimeservice.RunConfig{}, cleanup, prepareErr
-		}
-		if preparation != nil {
-			if addendum := strings.TrimSpace(preparation.SystemPromptAddendum); addendum != "" {
-				config.SystemPrompt = strings.TrimSpace(config.SystemPrompt) + "\n\n" + addendum
-			}
-			config.RuntimeTools = append(config.RuntimeTools, preparation.Tools...)
-			cleanup = preparation.Destroy
-		}
-	}
 	return config, cleanup, nil
 }
 

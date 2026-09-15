@@ -24,8 +24,7 @@ type RuntimeHandlerService interface {
 	ListRuns(context.Context, Scope, uuid.UUID, ListQuery) (*RunListResult, error)
 	CancelRun(context.Context, Scope, uuid.UUID, uuid.UUID) (*Run, error)
 	ListResourceCandidates(context.Context, Scope, uuid.UUID, ResourceCandidateQuery) (*ResourceCandidateList, error)
-	GetDirectSkillConfiguration(context.Context, Scope, uuid.UUID, string) (*DirectSkillConfiguration, error)
-	UpdateDirectSkillConfiguration(context.Context, Scope, uuid.UUID, string, UpdateDirectSkillConfigurationRequest) (*DirectSkillConfiguration, error)
+	ListSkillCandidates(context.Context, Scope) (*ResourceCandidateList, error)
 	ListConversations(context.Context, Scope, uuid.UUID, int, int) ([]*runtimemodel.Conversation, int64, error)
 	SearchConversations(context.Context, Scope, uuid.UUID, string, int) ([]*runtimeservice.SearchResult, error)
 	GetConversation(context.Context, Scope, uuid.UUID, uuid.UUID) (*runtimemodel.Conversation, error)
@@ -58,11 +57,12 @@ func NewRuntimeHandler(service RuntimeHandlerService, projector *apptransport.Pr
 }
 
 func (h *RuntimeHandler) RegisterRoutes(router *gin.RouterGroup) {
+	// Registered beside the id-scoped group: creation needs the choices before a
+	// digital human exists.
+	router.GET("/digital-human-skill-candidates", h.ListSkillCandidates)
 	group := router.Group("/digital-humans/:id")
 	group.POST("/invocations", h.SubmitManual)
 	group.GET("/draft/binding-candidates", h.ListResourceCandidates)
-	group.GET("/direct-skills/exa-web-search", h.GetExaWebSearchConfiguration)
-	group.PUT("/direct-skills/exa-web-search", h.UpdateExaWebSearchConfiguration)
 	group.GET("/runs", h.ListRuns)
 	group.GET("/runs/:run_id", h.GetRun)
 	group.GET("/runs/:run_id/runtime-log", h.GetRunRuntimeLog)
@@ -141,36 +141,6 @@ func streamRegeneratedRun(c *gin.Context, service RuntimeHandlerService, writer 
 	}
 }
 
-func (h *RuntimeHandler) GetExaWebSearchConfiguration(c *gin.Context) {
-	scope, digitalHumanID, ok := h.base.scopeAndID(c)
-	if !ok {
-		return
-	}
-	result, err := h.service.GetDirectSkillConfiguration(c.Request.Context(), scope, digitalHumanID, DirectSkillExaWebSearch)
-	if err != nil {
-		h.base.writeError(c, applicationError(err, "digital_human.direct_skill.exa.get"))
-		return
-	}
-	writeDigitalHumanData(c, http.StatusOK, result)
-}
-
-func (h *RuntimeHandler) UpdateExaWebSearchConfiguration(c *gin.Context) {
-	scope, digitalHumanID, ok := h.base.scopeAndID(c)
-	if !ok {
-		return
-	}
-	var request UpdateDirectSkillConfigurationRequest
-	if !h.base.decode(c, &request) {
-		return
-	}
-	result, err := h.service.UpdateDirectSkillConfiguration(c.Request.Context(), scope, digitalHumanID, DirectSkillExaWebSearch, request)
-	if err != nil {
-		h.base.writeError(c, applicationError(err, "digital_human.direct_skill.exa.update"))
-		return
-	}
-	writeDigitalHumanData(c, http.StatusOK, result)
-}
-
 // ListResourceCandidates returns safe, version-pinned choices for the draft editor.
 func (h *RuntimeHandler) ListResourceCandidates(c *gin.Context) {
 	scope, digitalHumanID, ok := h.base.scopeAndID(c)
@@ -192,6 +162,21 @@ func (h *RuntimeHandler) ListResourceCandidates(c *gin.Context) {
 		Search:           c.Query("query"),
 		Limit:            limit,
 	})
+	if err != nil {
+		h.base.writeError(c, err)
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, result)
+}
+
+// ListSkillCandidates returns the skills a new digital human may bind, so the
+// creation flow offers the same choices the draft editor offers.
+func (h *RuntimeHandler) ListSkillCandidates(c *gin.Context) {
+	scope, ok := h.base.scope(c)
+	if !ok {
+		return
+	}
+	result, err := h.service.ListSkillCandidates(c.Request.Context(), scope)
 	if err != nil {
 		h.base.writeError(c, err)
 		return
