@@ -65,8 +65,9 @@ func TestBuildSecureBwrapArgsAddsProfileEnvAfterRequestEnv(t *testing.T) {
 		ProfileHostDir:      "/runtime/rootfs/opt/zgi/profiles/skill-office",
 		ProfileContainerDir: "/opt/zgi/profiles/skill-office",
 		Env: map[string]string{
-			"NODE_PATH": "/workspace/node_modules",
-			"Z_VAR":     "z",
+			"NODE_PATH":            "/workspace/node_modules",
+			"OPENBLAS_NUM_THREADS": "8",
+			"Z_VAR":                "z",
 		},
 		ProfileEnv: profileEnv,
 	})
@@ -85,6 +86,11 @@ func TestBuildSecureBwrapArgsAddsProfileEnvAfterRequestEnv(t *testing.T) {
 	}
 	if lastSetenvValue(args, "MPLCONFIGDIR") != secureWorkspacePath+"/.zgi-runtime-cache/matplotlib" {
 		t.Fatalf("expected Matplotlib cache to use the workspace, got %#v", args)
+	}
+	for _, name := range []string{"OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"} {
+		if lastSetenvValue(args, name) != numericalLibraryThreadLimit {
+			t.Fatalf("expected %s to limit numerical library threads, got %#v", name, args)
+		}
 	}
 	expectedPath := "/opt/zgi/profiles/skill-office/venv/bin:/opt/zgi/profiles/skill-office/node_modules/.bin:" + defaultSecurePath
 	if lastSetenvValue(args, "PATH") != expectedPath {
