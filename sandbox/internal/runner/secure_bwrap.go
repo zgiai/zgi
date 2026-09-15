@@ -7,6 +7,7 @@ import (
 
 const secureWorkspacePath = "/tmp/workspace"
 const defaultSecurePath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+const numericalLibraryThreadLimit = "1"
 
 type secureBwrapSpec struct {
 	RootFS              string
@@ -83,6 +84,10 @@ func secureDependencyProfileEnv(profile string) (map[string]string, error) {
 	base := "/opt/zgi/profiles/" + profile
 	return map[string]string{
 		"PATH":                    base + "/venv/bin:" + base + "/node_modules/.bin:" + defaultSecurePath,
+		"OPENBLAS_NUM_THREADS":    numericalLibraryThreadLimit,
+		"OMP_NUM_THREADS":         numericalLibraryThreadLimit,
+		"MKL_NUM_THREADS":         numericalLibraryThreadLimit,
+		"NUMEXPR_NUM_THREADS":     numericalLibraryThreadLimit,
 		"PYTHONDONTWRITEBYTECODE": "1",
 		"PYTHONNOUSERSITE":        "1",
 		"XDG_CACHE_HOME":          secureWorkspacePath + "/.zgi-runtime-cache",
