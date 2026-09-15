@@ -1950,8 +1950,8 @@ func TestPrepareDependenciesIgnoresPythonStdlibAndLocalModules(t *testing.T) {
 			"scripts/eda/lineage.py":                        "from dataclasses import dataclass, field\n",
 			"scripts/eda/descriptive.py":                    "import pandas as pd\n",
 			"scripts/tpl_core/backend/__init__.py":          "def execute(): pass\n",
-			"scripts/tpl_core/backend/template_executor.py": "from operator_library import contract\n",
-			"scripts/tpl_core/operator_library/contract.py": "from operator_pipeline import run\n",
+			"scripts/tpl_core/backend/template_executor.py": "from tpl_core.operator_library import contract\n",
+			"scripts/tpl_core/operator_library/contract.py": "from tpl_core import operator_pipeline\n",
 			"scripts/tpl_core/operator_pipeline.py":         "def run(): pass\n",
 		}),
 		Format:      "zip",
@@ -1971,20 +1971,44 @@ func TestPrepareDependenciesIgnoresPythonStdlibAndLocalModules(t *testing.T) {
 	assertMissingDependency(t, result.Packages, "python3", "enum")
 	assertMissingDependency(t, result.Packages, "python3", "importlib")
 	assertMissingDependency(t, result.Packages, "python3", "eda")
-	assertMissingDependency(t, result.Packages, "python3", "operator-library")
-	assertMissingDependency(t, result.Packages, "python3", "operator-pipeline")
 	assertMissingDependency(t, result.Packages, "python3", "tpl-core")
 	assertMissingDependency(t, result.Packages, "python3", "warnings")
 }
 
-func TestPrepareDependenciesDoesNotTreatUnrelatedNestedModuleAsLocal(t *testing.T) {
+func TestPrepareDependenciesUsesManifestEntrypointDirectoryAsPythonImportRoot(t *testing.T) {
+	service := NewService(nil, nil, nil, policy.NewService(config.FromEnv()))
+
+	result, err := service.PrepareDependencies(DependencyPrepareRequest{
+		ArchiveBase64: zipBase64(t, map[string]string{
+			"SKILL.md":               "Skill package\n",
+			"skill.manifest.json":    `{"entrypoint":"scripts/app/run.py","language":"python3"}`,
+			"scripts/app/run.py":     "import helpers\n",
+			"scripts/app/helpers.py": "VALUE = 'local to the entrypoint import root'\n",
+		}),
+		Format:      "zip",
+		BaseRuntime: "linux-secure",
+	})
+	if err != nil {
+		t.Fatalf("prepare dependencies: %v", err)
+	}
+	if result.Status != "ready" {
+		t.Fatalf("expected ready, got %q", result.Status)
+	}
+	if result.PackageCount != 0 {
+		t.Fatalf("expected entrypoint-local helper to be ignored, got %#v", result.Packages)
+	}
+}
+
+func TestPrepareDependenciesDoesNotUseImportedModuleDirectoryAsPythonImportRoot(t *testing.T) {
 	service := NewService(nil, nil, nil, policy.NewService(config.FromEnv()))
 
 	result, err := service.PrepareDependencies(DependencyPrepareRequest{
 		ArchiveBase64: zipBase64(t, map[string]string{
 			"SKILL.md":                   "Skill package\n",
-			"scripts/run.py":             "import requests\n",
-			"scripts/vendor/requests.py": "VALUE = 'not importable from scripts root'\n",
+			"skill.manifest.json":        `{"entrypoint":"scripts/run.py","language":"python3"}`,
+			"scripts/run.py":             "import plugin.main\n",
+			"scripts/plugin/main.py":     "import requests\n",
+			"scripts/plugin/requests.py": "VALUE = 'not on the entrypoint import root'\n",
 		}),
 		Format:      "zip",
 		BaseRuntime: "linux-secure",
@@ -1996,9 +2020,10 @@ func TestPrepareDependenciesDoesNotTreatUnrelatedNestedModuleAsLocal(t *testing.
 		t.Fatalf("expected build_required, got %q", result.Status)
 	}
 	if result.PackageCount != 1 {
-		t.Fatalf("expected the third-party import to be detected, got %#v", result.Packages)
+		t.Fatalf("expected only the third-party import, got %#v", result.Packages)
 	}
 	assertDetectedDependency(t, result.Packages, "python3", "requests", "")
+	assertMissingDependency(t, result.Packages, "python3", "plugin")
 }
 
 func TestPrepareDependenciesRejectsSymlinkArchive(t *testing.T) {

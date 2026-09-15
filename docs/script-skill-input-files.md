@@ -37,6 +37,11 @@ package, for example `openpyxl==3.1.5`. The package list is only a dependency
 request; the sandbox still installs it outside request execution through the
 managed build flow.
 
+The dependency scanner resolves absolute local Python imports from the directory
+that contains the manifest `entrypoint`, matching `python3 <entrypoint>` runtime
+semantics. Code in nested packages should use package-qualified or relative
+imports. Dynamic `sys.path` changes do not expand the scanner's local import root.
+
 When `confirmation_file_id` is supplied, stdin keeps the original arguments and
 adds file metadata:
 

@@ -61,6 +61,7 @@ type manifestDependencyBlock struct {
 }
 
 type dependencyScanManifest struct {
+	Entrypoint   string                  `json:"entrypoint"`
 	Language     string                  `json:"language"`
 	Dependencies manifestDependencyBlock `json:"dependencies"`
 }
@@ -129,6 +130,7 @@ func scanDependencyRequest(entries []archiveEntry, requestedLanguage string, bas
 	packages := map[string]DetectedDependency{}
 	sourceSet := map[string]struct{}{}
 	warnings := []string{}
+	pythonEntrypoint := "scripts/run.py"
 
 	if file := files["skill.manifest.json"]; file != nil {
 		content, err := readZipFile(file, 64*1024)
@@ -141,6 +143,9 @@ func scanDependencyRequest(entries []archiveEntry, requestedLanguage string, bas
 		}
 		if language == "" {
 			language = normalizeSkillLanguage(manifest.Language)
+		}
+		if strings.TrimSpace(manifest.Entrypoint) != "" {
+			pythonEntrypoint = manifest.Entrypoint
 		}
 		addPackageSpecs(packages, sourceSet, "python3", manifest.Dependencies.Python, "skill.manifest.json")
 		nodeSpecs := append([]string{}, manifest.Dependencies.Node...)
@@ -172,11 +177,12 @@ func scanDependencyRequest(entries []archiveEntry, requestedLanguage string, bas
 		addPackageSpecs(packages, sourceSet, "nodejs", specs, "package.json")
 	}
 
+	pythonImportRoot := pythonEntrypointImportRoot(pythonEntrypoint)
 	for path, file := range files {
 		switch filepath.Ext(path) {
 		case ".py":
 			if strings.HasPrefix(path, "scripts/") {
-				specs, err := scanPythonImports(file, path, files)
+				specs, err := scanPythonImports(file, pythonImportRoot, files)
 				if err != nil {
 					return DependencyPrepareResult{}, err
 				}
@@ -398,7 +404,7 @@ func isUnsupportedNodeDependencyVersion(version string) bool {
 var pythonImportRE = regexp.MustCompile(`(?m)^\s*(?:from\s+([A-Za-z_][A-Za-z0-9_\.]*)\s+import|import\s+([A-Za-z_][A-Za-z0-9_\.]*))`)
 var nodeImportRE = regexp.MustCompile(`(?m)(?:import\s+(?:[^'"]+\s+from\s+)?|import\s*\(|require\s*\()\s*['"]([^'"]+)['"]`)
 
-func scanPythonImports(file *zip.File, sourcePath string, files map[string]*zip.File) ([]string, error) {
+func scanPythonImports(file *zip.File, importRoot string, files map[string]*zip.File) ([]string, error) {
 	content, err := readZipFile(file, 256*1024)
 	if err != nil {
 		return nil, err
@@ -411,7 +417,7 @@ func scanPythonImports(file *zip.File, sourcePath string, files map[string]*zip.
 			module = match[2]
 		}
 		module = strings.Split(module, ".")[0]
-		if module == "" || pythonStdlibModules[module] || pythonArchiveImportIsLocal(files, sourcePath, module) {
+		if module == "" || pythonStdlibModules[module] || pythonArchiveImportIsLocal(files, importRoot, module) {
 			continue
 		}
 		specSet[normalizePackageName("python3", module)] = struct{}{}
@@ -419,30 +425,31 @@ func scanPythonImports(file *zip.File, sourcePath string, files map[string]*zip.
 	return sortedSourceSet(specSet), nil
 }
 
-func pythonArchiveImportIsLocal(files map[string]*zip.File, sourcePath string, module string) bool {
-	sourcePath = filepath.ToSlash(strings.TrimSpace(sourcePath))
+func pythonEntrypointImportRoot(entrypoint string) string {
+	entrypoint = filepath.ToSlash(strings.TrimSpace(entrypoint))
+	if entrypoint == "" || unsafeArchivePath(entrypoint) || !strings.HasPrefix(entrypoint, "scripts/") {
+		return "scripts"
+	}
+	return pathpkg.Dir(entrypoint)
+}
+
+func pythonArchiveImportIsLocal(files map[string]*zip.File, importRoot string, module string) bool {
+	importRoot = filepath.ToSlash(strings.TrimSpace(importRoot))
 	module = strings.TrimSpace(module)
-	if !strings.HasPrefix(sourcePath, "scripts/") || module == "" {
+	if (importRoot != "scripts" && !strings.HasPrefix(importRoot, "scripts/")) || module == "" {
 		return false
 	}
 
-	directory := pathpkg.Dir(sourcePath)
-	for directory == "scripts" || strings.HasPrefix(directory, "scripts/") {
-		modulePath := pathpkg.Join(directory, module)
-		if files[modulePath+".py"] != nil || files[modulePath+"/__init__.py"] != nil {
+	modulePath := pathpkg.Join(importRoot, module)
+	if files[modulePath+".py"] != nil || files[modulePath+"/__init__.py"] != nil {
+		return true
+	}
+	prefix := modulePath + "/"
+	for archivePath := range files {
+		archivePath = filepath.ToSlash(strings.TrimSpace(archivePath))
+		if strings.HasPrefix(archivePath, prefix) && filepath.Ext(archivePath) == ".py" {
 			return true
 		}
-		prefix := modulePath + "/"
-		for archivePath := range files {
-			archivePath = filepath.ToSlash(strings.TrimSpace(archivePath))
-			if strings.HasPrefix(archivePath, prefix) && filepath.Ext(archivePath) == ".py" {
-				return true
-			}
-		}
-		if directory == "scripts" {
-			break
-		}
-		directory = pathpkg.Dir(directory)
 	}
 	return false
 }
