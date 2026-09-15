@@ -36,6 +36,65 @@ type settlementQueryResponse struct {
 
 // queryConsoleSettlement uses the same internal API base URL as official model
 // forwarding, so model and settlement traffic cannot drift to different hosts.
+const (
+	settlementQueryInitialBackoff = 100 * time.Millisecond
+	settlementQueryMaxBackoff     = 2 * time.Second
+	settlementQueryDeadline       = 8 * time.Second
+)
+
+func consoleSettlementInFlight(status string) bool {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "PENDING", "SETTLING":
+		return true
+	default:
+		return false
+	}
+}
+
+func waitForConsoleSettlement(ctx context.Context, queryURL, organizationID, attemptID string) (*settlementQueryResponse, error) {
+	deadline := time.Now().Add(settlementQueryDeadline)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
+	backoff := settlementQueryInitialBackoff
+	var result *settlementQueryResponse
+	var err error
+	for {
+		result, err = queryConsoleSettlement(ctx, queryURL, organizationID, attemptID)
+		if err == nil && result != nil && result.Found {
+			status := result.SettlementStatus
+			if strings.EqualFold(status, "SETTLED") {
+				return result, nil
+			}
+			if strings.EqualFold(status, "FAILED_FINAL") || !result.Retryable || !consoleSettlementInFlight(status) {
+				return result, nil
+			}
+		} else if err != nil && ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if !time.Now().Add(backoff).Before(deadline) {
+			if err != nil {
+				return nil, err
+			}
+			if result == nil {
+				return &settlementQueryResponse{}, nil
+			}
+			return result, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(backoff):
+		}
+		if backoff < settlementQueryMaxBackoff {
+			backoff *= 2
+			if backoff > settlementQueryMaxBackoff {
+				backoff = settlementQueryMaxBackoff
+			}
+		}
+	}
+}
+
 func queryConsoleSettlement(ctx context.Context, base, organizationID, attemptID string) (*settlementQueryResponse, error) {
 	base = strings.TrimRight(strings.TrimSpace(base), "/")
 	if base == "" {

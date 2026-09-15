@@ -156,7 +156,7 @@ func (s *llmGatewayServiceImpl) GenerateSpeech(
 			startedAt,
 			requestID,
 			buildAttemptID(requestID, attemptIndex),
-			"",
+			quote,
 		)
 		if err != nil {
 			return err

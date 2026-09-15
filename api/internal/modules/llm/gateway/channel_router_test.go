@@ -323,6 +323,7 @@ func TestBuildChannelSelection_UsesModelListAsSourceOfTruth(t *testing.T) {
 		APIBaseURL:      "https://api.agicto.cn/v1",
 		Models:          []string{"gpt-4o", "deepseek-v3"},
 		IsEnabled:       true,
+		AutoBan:         true,
 	}
 	model := &llmmodel.LLMModel{
 		ID:        uuid.New(),
@@ -347,6 +348,9 @@ func TestBuildChannelSelection_UsesModelListAsSourceOfTruth(t *testing.T) {
 	}
 	if selection.ModelSource != channelModelSourceGlobal {
 		t.Fatalf("selection.ModelSource = %q, want %q", selection.ModelSource, channelModelSourceGlobal)
+	}
+	if !selection.AutoBan {
+		t.Fatal("selection.AutoBan = false, want route auto_ban")
 	}
 }
 

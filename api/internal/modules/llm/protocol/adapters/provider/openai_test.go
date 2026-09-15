@@ -688,3 +688,48 @@ func TestNewAdapter_OpenAICompatibleKeyResolvesToOpenAIAdapter(t *testing.T) {
 		t.Fatalf("instance type = %T, want *OpenAIAdapter", instance)
 	}
 }
+
+func TestBuildChatPayloadToolChoice(t *testing.T) {
+	req := &adapter.ChatRequest{
+		Model: "deepseek-v4-pro",
+		Messages: []adapter.Message{
+			{Role: "user", Content: "查询北京明天天气"},
+		},
+		Tools: []adapter.Tool{{
+			Type: "function",
+			Function: adapter.Function{
+				Name: "get_weather",
+			},
+		}},
+		ToolChoice: map[string]interface{}{
+			"type":     "function",
+			"function": map[string]interface{}{"name": "get_weather"},
+		},
+	}
+
+	agicto, err := NewOpenAIAdapter(&adapter.AdapterConfig{
+		APIKey:       "test-key",
+		ProviderName: "agicto",
+		BaseURL:      "https://api.agicto.cn/v1",
+	})
+	if err != nil {
+		t.Fatalf("NewOpenAIAdapter(agicto) error = %v", err)
+	}
+	if got := agicto.buildChatPayload(req)["tool_choice"]; got != "required" {
+		t.Fatalf("agicto tool_choice = %#v, want required", got)
+	}
+
+	openai, err := NewOpenAIAdapter(&adapter.AdapterConfig{
+		APIKey:       "test-key",
+		ProviderName: "openai",
+		BaseURL:      "https://api.openai.com/v1",
+	})
+	if err != nil {
+		t.Fatalf("NewOpenAIAdapter(openai) error = %v", err)
+	}
+	got, _ := openai.buildChatPayload(req)["tool_choice"].(map[string]interface{})
+	function, _ := got["function"].(map[string]string)
+	if got["type"] != "function" || function["name"] != "get_weather" {
+		t.Fatalf("openai tool_choice = %#v, want named function object", openai.buildChatPayload(req)["tool_choice"])
+	}
+}

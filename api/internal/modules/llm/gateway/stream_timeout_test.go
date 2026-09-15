@@ -30,7 +30,7 @@ func TestHandleStreamBillingNormalizesPostConnectProviderDeadline(t *testing.T) 
 		ProviderName:      "openai",
 	}
 
-	s.handleStreamBilling(context.Background(), input, output, billingContext, nil, nil, time.Now(), nil)
+	s.handleStreamBilling(context.Background(), input, output, billingContext, nil, nil, time.Now(), nil, false)
 
 	responses := collectStreamResponses(output)
 	if len(responses) != 1 {

@@ -159,6 +159,23 @@ func (s *RemoteBilling) QuotePlatformTokenPricing(
 		OutputTokenPriceUSDPer1M: outputPrice,
 		InputTokenPriceResolved:  inputResolved,
 		OutputTokenPriceResolved: outputResolved,
+		PricingSnapshot: buildPricingSnapshot(map[string]interface{}{
+			"pricing_source":                 PricingSourceUpstreamModelPrice,
+			"usage_source":                   UsageSourceEstimatedUsage,
+			"reservation_policy":             reservationPolicyAuthoritativeQuoteV1,
+			"provider":                       model.Provider,
+			"model":                          model.Model,
+			"prompt_tokens":                  promptTokens,
+			"completion_tokens":              completionTokens,
+			"input_credits":                  resp.InputCredits,
+			"output_credits":                 resp.OutputCredits,
+			"total_credits":                  resp.TotalCredits,
+			"input_usd":                      resp.InputUSD,
+			"output_usd":                     resp.OutputUSD,
+			"total_usd":                      resp.TotalUSD,
+			"input_price_usd_per_1m_tokens":  inputPrice.String(),
+			"output_price_usd_per_1m_tokens": outputPrice.String(),
+		}),
 	}, nil
 }
 
@@ -220,6 +237,7 @@ func (s *RemoteBilling) preDeductViaGRPC(ctx context.Context, bc *BillingContext
 		RequestID:         bc.RequestID,
 		AttemptID:         bc.AttemptID,
 		ReservationPolicy: bc.ReservationPolicy,
+		PricingSnapshot:   pricingSnapshotJSON(bc.PricingSnapshot),
 	}
 
 	resp, err := s.grpcClient.PreDeductQuota(ctx, req)
@@ -311,6 +329,17 @@ func (s *RemoteBilling) preDeductViaGRPC(ctx context.Context, bc *BillingContext
 	}
 
 	return nil
+}
+
+func pricingSnapshotJSON(snapshot datatypes.JSON) string {
+	raw := strings.TrimSpace(string(snapshot))
+	if raw == "" || raw == "null" {
+		return ""
+	}
+	if !json.Valid(snapshot) {
+		return ""
+	}
+	return raw
 }
 
 func (s *RemoteBilling) settleViaGRPC(ctx context.Context, bc *BillingContext) error {

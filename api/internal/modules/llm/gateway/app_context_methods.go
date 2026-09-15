@@ -112,13 +112,12 @@ func (s *llmGatewayServiceImpl) createResponseInternal(
 			startTime,
 			requestID,
 			attemptID,
-			quote.ReservationPolicy,
+			quote,
 		)
 		if err != nil {
 			lastErr = err
 			continue
 		}
-		lockTokenPricingQuote(billingCtx, quote)
 		billingCtx.EstimatedInputTokens = promptTokens
 		billingCtx.EstimatedOutputTokens = completionTokens
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, "llm.responses")
@@ -263,14 +262,13 @@ func (s *llmGatewayServiceImpl) createEmbeddingsInternal(
 			startTime,
 			requestID,
 			attemptID,
-			quote.ReservationPolicy,
+			quote,
 		)
 		if err != nil {
 			lastErr = err
 			continue
 		}
 		billingCtx.PricingOperation = PricingOperationEmbedding
-		lockTokenPricingQuote(billingCtx, quote)
 		billingCtx.EstimatedInputTokens = promptTokens
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, "llm.embeddings")
 		ctx = withPlatformProxyMetadata(ctx, billingCtx)
@@ -399,14 +397,13 @@ func (s *llmGatewayServiceImpl) rerankInternal(
 			startTime,
 			requestID,
 			attemptID,
-			quote.ReservationPolicy,
+			quote,
 		)
 		if err != nil {
 			lastErr = err
 			continue
 		}
 		billingCtx.PricingOperation = PricingOperationRerank
-		lockTokenPricingQuote(billingCtx, quote)
 		billingCtx.EstimatedInputTokens = promptTokens
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, "llm.rerank")
 		ctx = withPlatformProxyMetadata(ctx, billingCtx)

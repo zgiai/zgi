@@ -208,6 +208,11 @@ const messages = {
     tags: {
       agent: 'Recommended',
     },
+    pricingMissing: 'No price',
+    pricingMissingHint:
+      'This model has no sale price configured, so calls cannot be billed correctly. Configure pricing in model management first.',
+    pricingMissingConfigure: 'Configure pricing',
+    pricingMissingContactAdmin: 'Ask an admin to configure pricing before using this model.',
     empty: {
       noModelsTitle: 'Model setup required',
       noResults: 'No models found matching',

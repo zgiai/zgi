@@ -1161,19 +1161,28 @@ func generateID() string {
 }
 
 func convertToolChoice(toolChoice interface{}) interface{} {
-	switch v := toolChoice.(type) {
+	normalized := adapter.NormalizeChatToolChoice(toolChoice)
+	switch typed := normalized.(type) {
 	case string:
-		switch v {
-		case "auto":
-			return map[string]string{"type": "auto"}
+		switch typed {
 		case "none":
 			return map[string]string{"type": "none"}
 		case "required":
 			return map[string]string{"type": "any"}
+		case "auto":
+			return map[string]string{"type": "auto"}
 		}
 	case map[string]interface{}:
-		if t, ok := v["type"].(string); ok && t == "function" {
-			if name, ok := v["function"].(map[string]interface{})["name"].(string); ok {
+		if function, ok := typed["function"].(map[string]string); ok {
+			if name := strings.TrimSpace(function["name"]); name != "" {
+				return map[string]interface{}{
+					"type": "tool",
+					"name": name,
+				}
+			}
+		}
+		if function, ok := typed["function"].(map[string]interface{}); ok {
+			if name := strings.TrimSpace(asToolChoiceString(function["name"])); name != "" {
 				return map[string]interface{}{
 					"type": "tool",
 					"name": name,
@@ -1182,4 +1191,9 @@ func convertToolChoice(toolChoice interface{}) interface{} {
 		}
 	}
 	return map[string]string{"type": "auto"}
+}
+
+func asToolChoiceString(value interface{}) string {
+	text, _ := value.(string)
+	return text
 }

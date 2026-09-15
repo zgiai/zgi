@@ -135,6 +135,9 @@ func TestRemoteBillingQuotePlatformTokenPricingUsesAuthoritativeCredits(t *testi
 	if repriced.TotalCredits != 30 {
 		t.Fatalf("repriced credits = %d, want 30", repriced.TotalCredits)
 	}
+	if len(quote.PricingSnapshot) == 0 || string(quote.PricingSnapshot) == "{}" || string(quote.PricingSnapshot) == "null" {
+		t.Fatalf("pricing snapshot = %s, want authoritative quote snapshot", string(quote.PricingSnapshot))
+	}
 }
 
 func TestRemoteBillingQuotePlatformTokenPricingRequiresCanonicalIdentity(t *testing.T) {

@@ -187,7 +187,7 @@ func (s *llmGatewayServiceImpl) createImageInternal(
 		startTime,
 		requestID,
 		attemptID,
-		"",
+		estimatedQuote,
 	)
 	if err != nil {
 		return nil, err

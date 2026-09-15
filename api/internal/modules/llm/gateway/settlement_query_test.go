@@ -24,3 +24,24 @@ func TestQueryConsoleSettlementUsesAttemptAndOrganization(t *testing.T) {
 		t.Fatalf("unexpected response: %+v", got)
 	}
 }
+
+func TestWaitForConsoleSettlementReturnsFailedFinalImmediately(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"found":true,"settlement_id":"s-1","deduction_id":"s-1","attempt_id":"attempt-1","organization_id":"org-1","settlement_status":"FAILED_FINAL","retryable":false}`))
+	}))
+	defer server.Close()
+
+	got, err := waitForConsoleSettlement(context.Background(), server.URL+"/settlements", "org-1", "attempt-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("FAILED_FINAL queries = %d, want 1", calls)
+	}
+	if !got.Found || got.SettlementStatus != "FAILED_FINAL" || got.Retryable {
+		t.Fatalf("response = %+v", got)
+	}
+}

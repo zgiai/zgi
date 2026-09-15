@@ -26,6 +26,7 @@ message PreDeductQuotaRequest {
   string resource_id = 10;
   string resource_name = 11;
   string reservation_policy = 12;
+  string pricing_snapshot = 13;
 }
 
 message PreDeductQuotaResponse {

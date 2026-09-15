@@ -257,7 +257,7 @@ func (s *llmGatewayServiceImpl) runNativeNonStream(
 		return nil, err
 	}
 
-	promptTokens, completionTokens := s.estimateNativeProtocolTokens(body, model)
+	promptTokens, completionTokens := s.estimateNativeProtocolTokens(body, model, nil)
 	organizationID, err := uuid.Parse(apiKey.OrganizationID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid organizationID: %w", err)
@@ -279,7 +279,8 @@ func (s *llmGatewayServiceImpl) runNativeNonStream(
 	requestID := gatewayRequestIDFromContext(ctx)
 	var lastErr error
 	for attemptIdx, providerSelection := range providerSelections {
-		quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, pricingModelRefFromSelection(providerSelection), promptTokens, completionTokens)
+		reservedPrompt, reservedCompletion := conservativeReasoningReservationTokens(providerSelection, promptTokens, completionTokens)
+		quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, pricingModelRefFromSelection(providerSelection), reservedPrompt, reservedCompletion)
 		if err != nil {
 			lastErr = wrapPricingCalculationError(err)
 			continue
@@ -298,17 +299,16 @@ func (s *llmGatewayServiceImpl) runNativeNonStream(
 			startTime,
 			requestID,
 			buildAttemptID(requestID, attemptIdx),
-			quote.ReservationPolicy,
+			quote,
 		)
 		if err != nil {
 			lastErr = err
 			continue
 		}
-		billingCtx.PromptTokens = promptTokens
-		billingCtx.CompletionTokens = completionTokens
-		billingCtx.EstimatedInputTokens = promptTokens
-		billingCtx.EstimatedOutputTokens = completionTokens
-		lockTokenPricingQuote(billingCtx, quote)
+		billingCtx.PromptTokens = reservedPrompt
+		billingCtx.CompletionTokens = reservedCompletion
+		billingCtx.EstimatedInputTokens = reservedPrompt
+		billingCtx.EstimatedOutputTokens = reservedCompletion
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, traceName)
 		ctx = withPlatformProxyMetadata(ctx, billingCtx)
 		traceCtx = ctx
@@ -434,7 +434,7 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 		return nil, err
 	}
 
-	promptTokens, completionTokens := s.estimateNativeProtocolTokens(body, model)
+	promptTokens, completionTokens := s.estimateNativeProtocolTokens(body, model, nil)
 	organizationID, err := uuid.Parse(apiKey.OrganizationID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid organizationID: %w", err)
@@ -456,7 +456,8 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 	requestID := gatewayRequestIDFromContext(ctx)
 	var lastErr error
 	for attemptIdx, providerSelection := range providerSelections {
-		quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, pricingModelRefFromSelection(providerSelection), promptTokens, completionTokens)
+		reservedPrompt, reservedCompletion := conservativeReasoningReservationTokens(providerSelection, promptTokens, completionTokens)
+		quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, pricingModelRefFromSelection(providerSelection), reservedPrompt, reservedCompletion)
 		if err != nil {
 			lastErr = wrapPricingCalculationError(err)
 			continue
@@ -475,17 +476,16 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 			startTime,
 			requestID,
 			buildAttemptID(requestID, attemptIdx),
-			quote.ReservationPolicy,
+			quote,
 		)
 		if err != nil {
 			lastErr = err
 			continue
 		}
-		lockTokenPricingQuote(billingCtx, quote)
-		billingCtx.PromptTokens = promptTokens
-		billingCtx.CompletionTokens = completionTokens
-		billingCtx.EstimatedInputTokens = promptTokens
-		billingCtx.EstimatedOutputTokens = completionTokens
+		billingCtx.PromptTokens = reservedPrompt
+		billingCtx.CompletionTokens = reservedCompletion
+		billingCtx.EstimatedInputTokens = reservedPrompt
+		billingCtx.EstimatedOutputTokens = reservedCompletion
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, traceName)
 		ctx = withPlatformProxyMetadata(ctx, billingCtx)
 		traceCtx = ctx
@@ -699,16 +699,18 @@ func (s *llmGatewayServiceImpl) handleNativeStreamBilling(
 	emit(adapter.RawStreamEvent{Done: true, Usage: lastUsage})
 }
 
-func (s *llmGatewayServiceImpl) estimateNativeProtocolTokens(body json.RawMessage, model string) (int, int) {
+func (s *llmGatewayServiceImpl) estimateNativeProtocolTokens(body json.RawMessage, model string, selection *ProviderSelection) (int, int) {
 	var payload map[string]json.RawMessage
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return 1, s.tokenEstimator.EstimateCompletionTokens(nil, model)
+		promptTokens, completionTokens := 1, s.tokenEstimator.EstimateCompletionTokens(nil, model)
+		promptTokens, completionTokens = conservativeReasoningReservationTokens(selection, promptTokens, completionTokens)
+		return promptTokens, completionTokens
 	}
 
 	promptTokens := s.tokenEstimator.EstimateTextTokensForModel(model, nativePromptTokenSource(body, payload))
 	promptTokens = saturatingAddPositive(promptTokens, nativeProtocolInputReservationOverheadTokens)
 	completionTokens := s.tokenEstimator.EstimateCompletionTokens(rawMaxTokens(payload), model)
-	return promptTokens, completionTokens
+	return conservativeReasoningReservationTokens(selection, promptTokens, completionTokens)
 }
 
 func saturatingAddPositive(value, overhead int) int {

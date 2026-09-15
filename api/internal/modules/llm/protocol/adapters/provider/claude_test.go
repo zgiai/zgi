@@ -519,3 +519,17 @@ func TestClaudeAdapterListModels_PreservesExplicitBaseQuery(t *testing.T) {
 		t.Fatal("limit query is empty, want explicit pagination limit")
 	}
 }
+
+func TestConvertToolChoiceForcedFunction(t *testing.T) {
+	got := convertToolChoice(map[string]interface{}{
+		"type":     "function",
+		"function": map[string]interface{}{"name": "get_weather"},
+	})
+	want := map[string]interface{}{"type": "tool", "name": "get_weather"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("convertToolChoice() = %#v, want %#v", got, want)
+	}
+	if got := convertToolChoice(map[string]interface{}{"type": "function"}); fmt.Sprint(got) != fmt.Sprint(map[string]string{"type": "any"}) {
+		t.Fatalf("missing function name = %#v, want type=any", got)
+	}
+}

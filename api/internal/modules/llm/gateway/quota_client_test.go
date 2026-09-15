@@ -43,6 +43,25 @@ func TestQuotaClientPropagatesReservationPolicy(t *testing.T) {
 	}
 }
 
+func TestQuotaClientPropagatesPricingSnapshot(t *testing.T) {
+	rpcClient := &recordingQuotaRPCClient{}
+	client := &QuotaClient{client: rpcClient}
+
+	_, err := client.PreDeductQuota(context.Background(), &PreDeductQuotaRequest{
+		OrganizationID:   "organization-1",
+		EstimatedCredits: 10,
+		RequestID:        "request-1",
+		AttemptID:        "attempt-1",
+		PricingSnapshot:  `{"reservation_policy":"authoritative_quote_v1"}`,
+	})
+	if err != nil {
+		t.Fatalf("PreDeductQuota() error = %v", err)
+	}
+	if rpcClient.request == nil || rpcClient.request.GetPricingSnapshot() != `{"reservation_policy":"authoritative_quote_v1"}` {
+		t.Fatalf("pricing snapshot request = %#v", rpcClient.request)
+	}
+}
+
 func TestQuotaClientPropagatesCanonicalModelIdentity(t *testing.T) {
 	rpcClient := &recordingQuotaRPCClient{}
 	client := &QuotaClient{client: rpcClient}

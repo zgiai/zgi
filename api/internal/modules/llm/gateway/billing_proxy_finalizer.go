@@ -22,22 +22,7 @@ func (s *RemoteBilling) FinalizePlatformProxySettlement(
 		if bc == nil || strings.TrimSpace(bc.OrganizationID) == "" || strings.TrimSpace(bc.AttemptID) == "" {
 			return fmt.Errorf("missing billing identity for console settlement query")
 		}
-		var result *settlementQueryResponse
-		var err error
-		for attempt := 0; attempt < 3; attempt++ {
-			result, err = queryConsoleSettlement(ctx, s.consoleAPIBaseURL+"/billing/settlements/by-attempt", bc.OrganizationID, bc.AttemptID)
-			if err == nil && result.Found && strings.EqualFold(result.SettlementStatus, "SETTLED") {
-				break
-			}
-			if attempt < 2 {
-				delay := time.Duration(100*(1<<attempt)) * time.Millisecond
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(delay):
-				}
-			}
-		}
+		result, err := waitForConsoleSettlement(ctx, s.consoleAPIBaseURL+"/billing/settlements/by-attempt", bc.OrganizationID, bc.AttemptID)
 		if err != nil {
 			return fmt.Errorf("query console settlement: %w", err)
 		}

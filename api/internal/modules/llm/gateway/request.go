@@ -273,7 +273,7 @@ func (s *llmGatewayServiceImpl) beginBillingAttempt(
 	requestCreatedAt time.Time,
 	requestID string,
 	attemptID string,
-	reservationPolicy string,
+	quote PricingQuote,
 ) (*BillingContext, error) {
 	channelID := getChannelID(providerSelection)
 
@@ -290,7 +290,11 @@ func (s *llmGatewayServiceImpl) beginBillingAttempt(
 		attemptID,
 	)
 	billingCtx.InvocationSource = resolveInvocationSource(ctx, appCtx)
-	billingCtx.ReservationPolicy = strings.TrimSpace(reservationPolicy)
+	billingCtx.ReservationPolicy = strings.TrimSpace(quote.ReservationPolicy)
+	applyPricingQuoteToBillingContext(billingCtx, quote)
+	if pricingQuoteHasTokenLock(quote) {
+		lockTokenPricingQuote(billingCtx, quote)
+	}
 	switch useCase, _ := ctx.Value(shared.ContextKeyModelUseCase).(string); llmmodel.UseCase(useCase) {
 	case llmmodel.UseCaseTextToSpeech:
 		billingCtx.PricingOperation = PricingOperationSpeech
@@ -554,7 +558,7 @@ func (s *llmGatewayServiceImpl) handleProviderError(
 	s.logProviderError(ctx, attemptIdx, providerSelection, err, "provider_call_failed")
 
 	if channelID != nil {
-		autoBan := providerSelection.HasRoute() && providerSelection.AutoBan
+		autoBan := providerSelection != nil && providerSelection.HasRoute() && providerSelection.AutoBan
 		if trackErr := s.healthTracker.RecordFailure(ctx, *channelID, autoBan); trackErr != nil {
 			logger.WarnContext(ctx, "failed to record channel failure",
 				"provider", providerSelection.Provider.Provider,

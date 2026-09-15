@@ -218,7 +218,7 @@ func (s *llmGatewayServiceImpl) beginVideoPredeductAttempt(
 		startTime,
 		requestID,
 		attemptID,
-		"",
+		quote,
 	)
 	if err != nil {
 		return nil, err

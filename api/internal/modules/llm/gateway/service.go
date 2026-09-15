@@ -453,6 +453,7 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 	llmModel *llmmodel.LLMModel,
 	startTime time.Time,
 	channelID *uuid.UUID,
+	autoBan bool,
 ) {
 	defer close(outputChan)
 
@@ -569,7 +570,6 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 
 		// Record failure for health tracking
 		if channelID != nil {
-			autoBan := billingCtx.ChannelID != nil
 			s.healthTracker.RecordFailure(ctx, *channelID, autoBan)
 		}
 	} else {
@@ -625,7 +625,6 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 			billingCtx.ResponseTime = responseTime
 
 			if channelID != nil {
-				autoBan := billingCtx.ChannelID != nil
 				s.healthTracker.RecordFailure(ctx, *channelID, autoBan)
 			}
 
@@ -1007,7 +1006,7 @@ func (s *llmGatewayServiceImpl) createAdapterConfig(selection *ProviderSelection
 		ProviderName:        adapterProvider,
 		ProviderID:          selection.Provider.ID.String(),
 		BaseURL:             selection.Provider.APIBaseURL,
-		Timeout:             500 * time.Second,
+		Timeout:             adapterTimeoutFromSelection(selection),
 		MaxRetries:          3,
 		GuardOutboundURL:    llmConfig.OutboundURLGuardEnabled(),
 		GuardOutboundDNS:    llmConfig.GuardOutboundDNS,

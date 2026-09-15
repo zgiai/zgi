@@ -251,8 +251,38 @@ func TestQuoteTokenPricingForSelectionUsesConservativeReasoningReservation(t *te
 	); err != nil {
 		t.Fatal(err)
 	}
-	if engine.lastPromptTokens != 100 || engine.lastCompletionTokens != 0 {
-		t.Fatalf("non-generation quote tokens = (%d, %d), want (100, 0)", engine.lastPromptTokens, engine.lastCompletionTokens)
+	if engine.lastPromptTokens != 100 || engine.lastCompletionTokens != reasoningCompletionReservationFloor {
+		t.Fatalf("zero-completion reasoning quote tokens = (%d, %d), want (100, %d)", engine.lastPromptTokens, engine.lastCompletionTokens, reasoningCompletionReservationFloor)
+	}
+}
+
+func TestQuoteTokenPricingForSelectionUsesCatalogMaxOutputForDoubaoReasoning(t *testing.T) {
+	billing := &fakeBillingProvider{platformQuote: PricingQuote{TotalCredits: 1}}
+	svc := &llmGatewayServiceImpl{billing: billing}
+	selection := &ProviderSelection{
+		UseSystemProvider: true,
+		BillingLane:       UsageBillingLanePlatform,
+		Model: llmmodel.LLMModel{
+			ID:                uuid.New(),
+			SupportsReasoning: true,
+			MaxOutputTokens:   32768,
+			Provider:          "doubao",
+			Model:             "doubao-seed-2-0-mini-260215",
+		},
+	}
+
+	if _, err := svc.quoteTokenPricingForSelection(
+		context.Background(),
+		selection,
+		PricingModelRef{ModelID: selection.Model.ID, Provider: "doubao", Model: "doubao-seed-2-0-mini-260215"},
+		12,
+		8,
+	); err != nil {
+		t.Fatal(err)
+	}
+	wantCompletion := min(32768, reasoningCompletionReservationCap)
+	if billing.platformPrompt != 80 || billing.platformCompletion != wantCompletion {
+		t.Fatalf("doubao reasoning quote tokens = (%d, %d), want (80, %d)", billing.platformPrompt, billing.platformCompletion, wantCompletion)
 	}
 }
 

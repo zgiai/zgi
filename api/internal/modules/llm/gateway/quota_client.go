@@ -54,6 +54,7 @@ func (c *QuotaClient) PreDeductQuota(ctx context.Context, req *PreDeductQuotaReq
 		RequestId:         req.RequestID,
 		AttemptId:         req.AttemptID,
 		ReservationPolicy: req.ReservationPolicy,
+		PricingSnapshot:   req.PricingSnapshot,
 	}
 
 	resp, err := c.client.PreDeductQuota(ctx, grpcReq)
@@ -171,6 +172,7 @@ type PreDeductQuotaRequest struct {
 	RequestID         string
 	AttemptID         string
 	ReservationPolicy string
+	PricingSnapshot   string
 }
 
 type PreDeductQuotaResponse struct {

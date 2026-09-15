@@ -114,6 +114,7 @@ type ChannelSelection struct {
 	Model                       *llmmodel.LLMModel
 	Priority                    int
 	Weight                      int
+	AutoBan                     bool
 	BillingLane                 UsageBillingLane
 	UseSystemProvider           bool
 	IsOfficial                  bool // True for official aggregated routes
@@ -1045,6 +1046,7 @@ func (r *ChannelRouter) buildChannelSelection(
 		ModelName:                   targetModelName,
 		Priority:                    route.Priority,
 		Weight:                      route.Weight,
+		AutoBan:                     route.AutoBan,
 		BillingLane:                 billingLane,
 		UseSystemProvider:           usageBillingLaneUsesSystemProvider(billingLane),
 		IsOfficial:                  isOfficial,
@@ -1280,6 +1282,7 @@ func (cs *ChannelSelection) ConvertToProviderSelectionWithCache(ctx context.Cont
 			HeaderOverride:              cs.HeaderOverride,
 			Priority:                    cs.Priority,
 			Weight:                      cs.Weight,
+			AutoBan:                     cs.AutoBan,
 			CredentialID:                cs.CredentialID,
 			CredentialGeneration:        cs.CredentialGeneration,
 			UpstreamWouldGuard:          cs.UpstreamWouldGuard,
@@ -1348,6 +1351,7 @@ func (cs *ChannelSelection) ConvertToProviderSelectionWithCache(ctx context.Cont
 		HeaderOverride:              cs.HeaderOverride,
 		Priority:                    cs.Priority,
 		Weight:                      cs.Weight,
+		AutoBan:                     cs.AutoBan,
 		CredentialID:                cs.CredentialID,
 		CredentialGeneration:        cs.CredentialGeneration,
 		UpstreamWouldGuard:          cs.UpstreamWouldGuard,

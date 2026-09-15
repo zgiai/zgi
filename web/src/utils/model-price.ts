@@ -160,6 +160,103 @@ export function isInputOnlyPriceModel(useCases?: ModelUseCase[] | null): boolean
   );
 }
 
+export interface ModelPricingConfiguredInput {
+  use_cases?: ModelUseCase[] | null;
+  pricing?: StructuredModelPricing | Record<string, unknown> | null;
+  image_prices?: ModelImagePriceRule[] | null;
+  input_price_configured?: boolean | null;
+  output_price_configured?: boolean | null;
+}
+
+/**
+ * True when the model has a usable sale price for billing.
+ * Matches catalog publish: structured pricing, or both token columns
+ * (input-only / image models can use a single column).
+ */
+export function isModelPricingConfigured(
+  model: ModelPricingConfiguredInput | null | undefined
+): boolean {
+  if (!model) return false;
+  if (hasStructuredSalePricing(model.pricing)) return true;
+  if (Array.isArray(model.image_prices) && model.image_prices.length > 0) {
+    return model.image_prices.some(rule => hasNumericPrice(rule?.price?.amount));
+  }
+  if (isImageGenerationModel(model.use_cases)) {
+    return Boolean(model.output_price_configured || model.input_price_configured);
+  }
+  if (isVideoGenerationModel(model.use_cases)) {
+    return false;
+  }
+  if (isInputOnlyPriceModel(model.use_cases)) {
+    return Boolean(model.input_price_configured);
+  }
+  return Boolean(model.input_price_configured && model.output_price_configured);
+}
+
+function hasStructuredSalePricing(pricing: unknown): boolean {
+  if (!isRecord(pricing)) return false;
+  if (hasNumericPrice(pricing.price_per_image)) return true;
+  if (Array.isArray(pricing.token_tiers) && pricing.token_tiers.some(isPricedTokenTier)) {
+    return true;
+  }
+  if (isRecord(pricing.video_generation)) {
+    const video = pricing.video_generation;
+    const rates = Array.isArray(video.rates) ? video.rates : [];
+    const grouped = Array.isArray(video.resolution_rates) ? video.resolution_rates : [];
+    if (rates.some(isPricedVideoRate)) return true;
+    if (
+      grouped.some(
+        group => isRecord(group) && Array.isArray(group.rates) && group.rates.some(isPricedVideoRate)
+      )
+    ) {
+      return true;
+    }
+  }
+  if (Array.isArray(pricing.metered) && pricing.metered.some(isPricedMeteredEntry)) {
+    return true;
+  }
+  if (isRecord(pricing.token_pricing)) {
+    return Object.values(pricing.token_pricing).some(entry => {
+      if (!isRecord(entry)) return false;
+      return (
+        hasNumericPrice(entry.input_price_per_million) ||
+        hasNumericPrice(entry.output_price_per_million)
+      );
+    });
+  }
+  return false;
+}
+
+function isPricedTokenTier(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return (
+    hasNumericPrice(value.input_price_per_million) ||
+    hasNumericPrice(value.output_price_per_million)
+  );
+}
+
+function isPricedVideoRate(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return (
+    hasNumericPrice(value.price_per_second) ||
+    hasNumericPrice(value.price_per_task) ||
+    hasNumericPrice(value.price_per_million_tokens)
+  );
+}
+
+function isPricedMeteredEntry(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return isRecord(value.price) && hasNumericPrice(value.price.amount);
+}
+
+function hasNumericPrice(value: unknown): boolean {
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (typeof value === 'string' && value.trim() !== '') {
+    return Number.isFinite(Number(value));
+  }
+  return false;
+}
+
 /**
  * @util Build price display lines for model management tables.
  */

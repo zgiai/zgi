@@ -113,7 +113,7 @@ func (a *ZGICloudAdapter) Name() string {
 
 func (a *ZGICloudAdapter) ChatCompletion(ctx context.Context, request *adapter.ChatRequest) (*adapter.ChatResponse, error) {
 	url := fmt.Sprintf("%s/chat/completions", a.baseURL)
-	httpResp, err := a.httpClient.DoRequestDetailed(ctx, "POST", url, a.buildHeaders(), buildOpenAICompatibleChatPayload(request))
+	httpResp, err := a.httpClient.DoRequestDetailed(ctx, "POST", url, a.buildHeaders(), buildCompatibleProviderChatPayload(request))
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -140,7 +140,7 @@ func (a *ZGICloudAdapter) ChatCompletionStream(ctx context.Context, request *ada
 		}
 	})
 
-	resp, err := a.httpClient.DoStreamRequest(transportCtx, "POST", url, a.buildHeaders(), buildOpenAICompatibleChatPayload(request))
+	resp, err := a.httpClient.DoStreamRequest(transportCtx, "POST", url, a.buildHeaders(), buildCompatibleProviderChatPayload(request))
 	if err != nil {
 		stopTransportCancellation()
 		cancelTransport()

@@ -13,7 +13,9 @@ import { useProviderI18n } from '@/hooks/provider/use-provider-i18n';
 import { useLocale } from '@/hooks/use-locale';
 import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
 import { getModelDisplayName } from '@/utils/model-label';
+import { isModelPricingConfigured } from '@/utils/model-price';
 import { AlertTriangle } from 'lucide-react';
+import Link from 'next/link';
 
 import type {
   ModelSelectorValue,
@@ -614,7 +616,12 @@ export function ModelSelector({
           .slice(0, 6)
           .map(([key]) => key)
       : [];
-    return { modelId: selected.model, label, features };
+    return {
+      modelId: selected.model,
+      label,
+      features,
+      pricingConfigured: m ? isModelPricingConfigured(m) : true,
+    };
   }, [
     isControlledByValue,
     isControlledByModelProps,
@@ -625,6 +632,12 @@ export function ModelSelector({
     resolveSelectedModel,
   ]);
 
+  const pricingMissingWarning =
+    selectedResolved && selectedResolved.pricingConfigured === false
+      ? t('models.selector.pricingMissingHint')
+      : undefined;
+  const effectiveSelectedModelWarning = selectedModelWarning || pricingMissingWarning;
+
   return (
     <div className="relative">
       <Select
@@ -634,12 +647,12 @@ export function ModelSelector({
         onOpenChange={handleOpenChange}
       >
         <SelectTrigger
-          data-model-warning={selectedModelWarning ? 'true' : undefined}
-          title={selectedModelWarning}
+          data-model-warning={effectiveSelectedModelWarning ? 'true' : undefined}
+          title={effectiveSelectedModelWarning}
           className={cn(
             'w-full',
             className,
-            selectedModelWarning &&
+            effectiveSelectedModelWarning &&
               'border-warning/50 bg-warning/5 hover:bg-warning/10 focus:ring-warning/30',
             hasError && 'border-destructive focus:ring-destructive'
           )}
@@ -655,10 +668,10 @@ export function ModelSelector({
                   size={20}
                 />
                 <span className="truncate text-[13px]">{selectedResolved.label}</span>
-                {selectedModelWarning ? (
+                {effectiveSelectedModelWarning ? (
                   <>
                     <AlertTriangle className="size-3.5 shrink-0 text-warning" aria-hidden="true" />
-                    <span className="sr-only">{selectedModelWarning}</span>
+                    <span className="sr-only">{effectiveSelectedModelWarning}</span>
                   </>
                 ) : null}
                 {showCapabilities &&
@@ -749,6 +762,7 @@ export function ModelSelector({
                             'models.selector.tooltip.replacementSuggestion'
                           )}
                           useCaseLabel={t('models.selector.tooltip.useCases')}
+                          pricingMissingHint={t('models.selector.pricingMissingHint')}
                           featureLabels={featureLabels}
                           useCaseLabels={useCaseLabels}
                           locale={locale}
@@ -762,6 +776,7 @@ export function ModelSelector({
                                 ? useCaseLabels[preferredUseCase]
                                 : undefined
                           }
+                          pricingMissingLabel={t('models.selector.pricingMissing')}
                         />
                       );
                     })}
@@ -798,6 +813,20 @@ export function ModelSelector({
           </div>
         </SelectContent>
       </Select>
+      {pricingMissingWarning ? (
+        <p className="mt-1 text-[11px] leading-4 text-warning">
+          {canManageModelConfig ? (
+            <>
+              {t('models.selector.pricingMissingHint')}{' '}
+              <Link href="/dashboard/provider" className="underline-offset-2 hover:underline">
+                {t('models.selector.pricingMissingConfigure')}
+              </Link>
+            </>
+          ) : (
+            t('models.selector.pricingMissingContactAdmin')
+          )}
+        </p>
+      ) : null}
     </div>
   );
 }

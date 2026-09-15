@@ -20,7 +20,8 @@ const (
 	// requested max_tokens value. These floors keep pre-deduction conservative
 	// without reserving a model's entire output window.
 	reasoningPromptReservationFloor     = 64
-	reasoningCompletionReservationFloor = 32
+	reasoningCompletionReservationFloor = 512
+	reasoningCompletionReservationCap   = 4096
 )
 
 func (s *llmGatewayServiceImpl) pricing() PricingEngine {
@@ -114,10 +115,20 @@ func conservativeReasoningReservationTokens(selection *ProviderSelection, prompt
 	if promptTokens > 0 && promptTokens < reasoningPromptReservationFloor {
 		promptTokens = reasoningPromptReservationFloor
 	}
-	if completionTokens > 0 && completionTokens < reasoningCompletionReservationFloor {
-		completionTokens = reasoningCompletionReservationFloor
-	}
+	completionTokens = conservativeReasoningCompletionTokens(selection.Model.MaxOutputTokens, completionTokens)
 	return promptTokens, completionTokens
+}
+
+func conservativeReasoningCompletionTokens(maxOutputTokens, completionTokens int) int {
+	if completionTokens < 0 {
+		completionTokens = 0
+	}
+	reserved := max(completionTokens, reasoningCompletionReservationFloor)
+	if maxOutputTokens > 0 {
+		catalogBound := min(maxOutputTokens, reasoningCompletionReservationCap)
+		reserved = max(reserved, catalogBound)
+	}
+	return reserved
 }
 
 func (s *llmGatewayServiceImpl) quoteTokenPricingForSettlement(
@@ -322,7 +333,13 @@ func applyPricingQuoteToBillingContext(bc *BillingContext, quote PricingQuote) {
 	if bc.UsageSource != UsageSourceEstimatedUsage && quote.UsageSource != "" {
 		bc.UsageSource = quote.UsageSource
 	}
-	bc.PricingSnapshot = quote.PricingSnapshot
+	if len(quote.PricingSnapshot) > 0 && string(quote.PricingSnapshot) != "null" {
+		bc.PricingSnapshot = quote.PricingSnapshot
+	}
+}
+
+func pricingQuoteHasTokenLock(quote PricingQuote) bool {
+	return quote.InputTokenPriceResolved || quote.OutputTokenPriceResolved
 }
 
 func lockTokenPricingQuote(bc *BillingContext, quote PricingQuote) {

@@ -1131,7 +1131,38 @@ func (a *OpenAIAdapter) enrichModelInfo(model *adapter.Model) {
 
 // buildChatPayload builds the final JSON payload for OpenAI API
 func (a *OpenAIAdapter) buildChatPayload(request *adapter.ChatRequest) map[string]interface{} {
-	return buildOpenAICompatibleChatPayload(request)
+	payload := buildOpenAICompatibleChatPayload(request)
+	if !preservesNamedChatToolChoice(a.config) {
+		applyCompatibleChatToolChoice(payload)
+	}
+	return payload
+}
+
+func buildCompatibleProviderChatPayload(request *adapter.ChatRequest) map[string]interface{} {
+	payload := buildOpenAICompatibleChatPayload(request)
+	applyCompatibleChatToolChoice(payload)
+	return payload
+}
+
+func applyCompatibleChatToolChoice(payload map[string]interface{}) {
+	if payload == nil {
+		return
+	}
+	if toolChoice, ok := payload["tool_choice"]; ok {
+		payload["tool_choice"] = adapter.CompatibleChatToolChoice(toolChoice)
+	}
+}
+
+func preservesNamedChatToolChoice(config *adapter.AdapterConfig) bool {
+	if config == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(config.ProviderName)) {
+	case "openai", "azure", "azure-openai":
+		return true
+	default:
+		return false
+	}
 }
 
 func buildOpenAICompatibleChatPayload(request *adapter.ChatRequest) map[string]interface{} {
@@ -1171,7 +1202,7 @@ func buildOpenAICompatibleChatPayload(request *adapter.ChatRequest) map[string]i
 	if len(request.Tools) > 0 {
 		payload["tools"] = request.Tools
 		if request.ToolChoice != nil {
-			payload["tool_choice"] = request.ToolChoice
+			payload["tool_choice"] = adapter.NormalizeChatToolChoice(request.ToolChoice)
 		}
 	}
 	if request.ResponseFormat != nil {

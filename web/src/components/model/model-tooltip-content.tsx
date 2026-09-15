@@ -10,6 +10,7 @@ import { formatTokens } from '@/utils/format';
 import { cn } from '@/lib/utils';
 import { USE_CASE_BADGE_COLORS } from '@/config/model-colors';
 import { ModelPriceSummary } from '@/components/model/model-price-summary';
+import { isModelPricingConfigured } from '@/utils/model-price';
 
 // Priority order for displaying features (most important first)
 const FEATURE_PRIORITY = [
@@ -34,6 +35,7 @@ export interface ModelTooltipContentProps {
     features: string;
     replacementSuggestion: string;
     useCases: string;
+    pricingMissing?: string;
   };
   featureLabels: Record<string, string>;
   useCaseLabels: Record<string, string>;
@@ -108,6 +110,12 @@ export const ModelTooltipContent = memo(function ModelTooltipContent({
           )}
         </div>
       )}
+
+      {!isModelPricingConfigured(model) && labels.pricingMissing ? (
+        <div className="rounded-md border border-warning/30 bg-warning/10 px-2 py-1 text-xs text-warning-foreground">
+          {labels.pricingMissing}
+        </div>
+      ) : null}
 
       {/* Use Cases grid */}
       {hasUseCases && (

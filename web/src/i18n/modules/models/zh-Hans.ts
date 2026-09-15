@@ -197,6 +197,10 @@ const messages: ModelsMessages = {
     tags: {
       agent: '推荐',
     },
+    pricingMissing: '未定价',
+    pricingMissingHint: '该模型未配置价格，调用将无法正确计费。请先在模型管理中配置价格。',
+    pricingMissingConfigure: '去配置价格',
+    pricingMissingContactAdmin: '请联系管理员配置价格后再使用该模型。',
     empty: {
       noModelsTitle: '需要先配置模型',
       noResults: '没有符合搜索条件的模型',

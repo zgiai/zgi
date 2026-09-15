@@ -497,7 +497,7 @@ func TestBillingRouting_HandleStreamBilling_Private_UsesLocalBilling(t *testing.
 	close(in)
 
 	bc := &BillingContext{UseSystemProvider: false}
-	s.handleStreamBilling(context.Background(), in, out, bc, nil, nil, time.Now(), nil)
+	s.handleStreamBilling(context.Background(), in, out, bc, nil, nil, time.Now(), nil, false)
 
 	if local.settleCalls != 1 {
 		t.Fatalf("local Settle calls = %d, want 1", local.settleCalls)
@@ -1548,7 +1548,7 @@ func TestBillingRouting_HandleStreamBilling_SettleFailure_EmitsErrorWithoutDone(
 	}
 	model := &llmmodel.LLMModel{ID: uuid.New()}
 
-	s.handleStreamBilling(context.Background(), in, out, bc, nil, model, time.Now(), nil)
+	s.handleStreamBilling(context.Background(), in, out, bc, nil, model, time.Now(), nil, false)
 
 	var got []adapter.StreamResponse
 	for resp := range out {
@@ -1594,7 +1594,7 @@ func TestBillingRouting_HandleStreamBilling_ReportsSettlementFailureAfterProvide
 		ProviderName:      "dashscope",
 	}
 
-	s.handleStreamBilling(context.Background(), in, out, bc, nil, nil, time.Now(), nil)
+	s.handleStreamBilling(context.Background(), in, out, bc, nil, nil, time.Now(), nil, false)
 
 	var got []adapter.StreamResponse
 	for response := range out {
@@ -1644,7 +1644,7 @@ func TestBillingRouting_HandleStreamBilling_ReportsPersistentProviderFrameError(
 		ChannelID:         &channelID,
 	}
 
-	s.handleStreamBilling(context.Background(), in, out, bc, nil, nil, time.Now(), &channelID)
+	s.handleStreamBilling(context.Background(), in, out, bc, nil, nil, time.Now(), &channelID, false)
 	for range out {
 	}
 
@@ -1742,7 +1742,7 @@ func TestBillingRouting_HandleStreamBilling_EstimatesMissingUsageFromContent(t *
 	}
 	model := &llmmodel.LLMModel{ID: uuid.New(), Model: "qwen3.5:4b"}
 
-	s.handleStreamBilling(context.Background(), in, out, bc, nil, model, time.Now(), nil)
+	s.handleStreamBilling(context.Background(), in, out, bc, nil, model, time.Now(), nil, false)
 
 	var got []adapter.StreamResponse
 	for resp := range out {
@@ -1810,7 +1810,7 @@ func TestBillingRouting_HandleStreamBilling_MissingUsageMarksPartialAndEmitsErro
 	}
 	model := &llmmodel.LLMModel{ID: uuid.New(), Model: "qwen3.5:4b"}
 
-	s.handleStreamBilling(context.Background(), in, out, bc, nil, model, time.Now(), nil)
+	s.handleStreamBilling(context.Background(), in, out, bc, nil, model, time.Now(), nil, false)
 
 	var got []adapter.StreamResponse
 	for resp := range out {
@@ -2157,7 +2157,7 @@ func TestBillingRouting_HandleStreamBilling_UsesPricingEngineQuote(t *testing.T)
 	bc.ModelID = model.ID
 	bc.ModelSource = PricingModelSourceCustom
 
-	s.handleStreamBilling(context.Background(), in, out, bc, nil, model, time.Now(), nil)
+	s.handleStreamBilling(context.Background(), in, out, bc, nil, model, time.Now(), nil, false)
 
 	for range out {
 	}
@@ -2221,7 +2221,7 @@ func TestBillingRouting_HandleStreamBilling_UsesLockedQuote(t *testing.T) {
 		"out",
 	))
 
-	s.handleStreamBilling(context.Background(), in, out, bc, nil, nil, time.Now(), nil)
+	s.handleStreamBilling(context.Background(), in, out, bc, nil, nil, time.Now(), nil, false)
 
 	for range out {
 	}
@@ -2268,7 +2268,7 @@ func TestBillingRouting_BeginBillingAttempt_OfficialCheckBalanceFailThenPrivateS
 		Provider:          providermodel.LLMProvider{ID: uuid.New(), Provider: "openai"},
 	}
 
-	_, err := s.beginBillingAttempt(context.Background(), apiKey, nil, official, shadowOrgID, ownerID, 100, false, time.Now(), "req-official", "req-official-a1", "")
+	_, err := s.beginBillingAttempt(context.Background(), apiKey, nil, official, shadowOrgID, ownerID, 100, false, time.Now(), "req-official", "req-official-a1", PricingQuote{})
 	if err == nil {
 		t.Fatalf("expected official beginBillingAttempt to fail")
 	}
@@ -2288,7 +2288,7 @@ func TestBillingRouting_BeginBillingAttempt_OfficialCheckBalanceFailThenPrivateS
 		t.Fatalf("local PreDeduct calls = %d, want 0 before private attempt", local.preDeductCalls)
 	}
 
-	if _, err := s.beginBillingAttempt(context.Background(), apiKey, nil, private, shadowOrgID, ownerID, 100, false, time.Now(), "req-private", "req-private-a1", ""); err != nil {
+	if _, err := s.beginBillingAttempt(context.Background(), apiKey, nil, private, shadowOrgID, ownerID, 100, false, time.Now(), "req-private", "req-private-a1", PricingQuote{}); err != nil {
 		t.Fatalf("expected private beginBillingAttempt to succeed, got: %v", err)
 	}
 	if local.preDeductCalls != 1 {
@@ -2312,13 +2312,45 @@ func TestBeginBillingAttemptPropagatesReservationPolicy(t *testing.T) {
 
 	ctx, err := s.beginBillingAttempt(
 		context.Background(), apiKey, nil, selection, uuid.New(), uuid.New(),
-		100, false, time.Now(), "request-1", "attempt-1", reservationPolicyAuthoritativeQuoteV1,
+		100, false, time.Now(), "request-1", "attempt-1", PricingQuote{ReservationPolicy: reservationPolicyAuthoritativeQuoteV1},
 	)
 	if err != nil {
 		t.Fatalf("beginBillingAttempt() error = %v", err)
 	}
 	if ctx.ReservationPolicy != reservationPolicyAuthoritativeQuoteV1 || remote.lastPreDeduct == nil || remote.lastPreDeduct.ReservationPolicy != reservationPolicyAuthoritativeQuoteV1 {
 		t.Fatalf("reservation policy was not propagated: context=%q prededuct=%#v", ctx.ReservationPolicy, remote.lastPreDeduct)
+	}
+}
+
+func TestBillingRouting_BeginBillingAttemptAppliesPricingSnapshotBeforePrededuct(t *testing.T) {
+	remote := &fakeBillingProvider{checkBalanceResult: true}
+	s := &llmGatewayServiceImpl{billing: remote}
+	apiKey := &apikeymodel.TenantAPIKey{ID: "key-1", OrganizationID: uuid.NewString()}
+	selection := &ProviderSelection{
+		UseSystemProvider: true,
+		RouteID:           uuid.New(),
+		Model:             llmmodel.LLMModel{ID: uuid.New(), Model: "gpt-4o-mini"},
+		Provider:          providermodel.LLMProvider{ID: uuid.New(), Provider: "openai"},
+	}
+	snapshot := []byte(`{"reservation_policy":"authoritative_quote_v1","total_credits":100}`)
+
+	ctx, err := s.beginBillingAttempt(
+		context.Background(), apiKey, nil, selection, uuid.New(), uuid.New(),
+		100, false, time.Now(), "request-snapshot", "attempt-snapshot",
+		PricingQuote{
+			ReservationPolicy: reservationPolicyAuthoritativeQuoteV1,
+			TotalCredits:      100,
+			PricingSnapshot:   snapshot,
+		},
+	)
+	if err != nil {
+		t.Fatalf("beginBillingAttempt() error = %v", err)
+	}
+	if string(ctx.PricingSnapshot) != string(snapshot) {
+		t.Fatalf("billing context snapshot = %s, want %s", string(ctx.PricingSnapshot), string(snapshot))
+	}
+	if remote.lastPreDeduct == nil || string(remote.lastPreDeduct.PricingSnapshot) != string(snapshot) {
+		t.Fatalf("prededuct snapshot = %#v, want %s", remote.lastPreDeduct, string(snapshot))
 	}
 }
 
@@ -2354,7 +2386,7 @@ func TestBillingRouting_BeginBillingAttempt_OfficialPreDeductFailThenPrivateSucc
 		Provider:          providermodel.LLMProvider{ID: uuid.New(), Provider: "openai"},
 	}
 
-	_, err := s.beginBillingAttempt(context.Background(), apiKey, nil, official, shadowOrgID, ownerID, 100, false, time.Now(), "req-official", "req-official-a1", "")
+	_, err := s.beginBillingAttempt(context.Background(), apiKey, nil, official, shadowOrgID, ownerID, 100, false, time.Now(), "req-official", "req-official-a1", PricingQuote{})
 	if err == nil {
 		t.Fatalf("expected official beginBillingAttempt to fail")
 	}
@@ -2365,7 +2397,7 @@ func TestBillingRouting_BeginBillingAttempt_OfficialPreDeductFailThenPrivateSucc
 		t.Fatalf("remote PreDeduct calls = %d, want 1", remote.preDeductCalls)
 	}
 
-	if _, err := s.beginBillingAttempt(context.Background(), apiKey, nil, private, shadowOrgID, ownerID, 100, false, time.Now(), "req-private", "req-private-a1", ""); err != nil {
+	if _, err := s.beginBillingAttempt(context.Background(), apiKey, nil, private, shadowOrgID, ownerID, 100, false, time.Now(), "req-private", "req-private-a1", PricingQuote{}); err != nil {
 		t.Fatalf("expected private beginBillingAttempt to succeed, got: %v", err)
 	}
 	if local.preDeductCalls != 1 {

@@ -194,12 +194,11 @@ func (s *llmGatewayServiceImpl) tryChatCompletion(
 		startTime,
 		requestID,
 		attemptID,
-		quote.ReservationPolicy,
+		quote,
 	)
 	if err != nil {
 		return nil, err
 	}
-	lockTokenPricingQuote(billingCtx, quote)
 	billingCtx.EstimatedInputTokens = promptTokens
 	billingCtx.EstimatedOutputTokens = completionTokens
 	ctx = withLLMLangfuseTraceContext(ctx, billingCtx, "llm.chat")
@@ -230,7 +229,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletion(
 		return nil, fmt.Errorf("failed to create adapter: %w", adapterErr)
 	}
 
-	normalizedReq := cloneChatRequestWithNormalizedModel(req)
+	normalizedReq := shapeChatRequestForUpstream(cloneChatRequestWithNormalizedModel(req), providerSelection)
 
 	if err := s.activateUpstreamProbeForAttempt(ctx, providerSelection, billingCtx); err != nil {
 		return nil, err
@@ -444,12 +443,11 @@ func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 		startTime,
 		requestID,
 		attemptID,
-		quote.ReservationPolicy,
+		quote,
 	)
 	if err != nil {
 		return nil, err
 	}
-	lockTokenPricingQuote(billingCtx, quote)
 	billingCtx.EstimatedInputTokens = promptTokens
 	billingCtx.EstimatedOutputTokens = completionTokens
 	billingCtx.PromptTokens = promptTokens
@@ -470,7 +468,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 		return nil, fmt.Errorf("failed to create adapter: %w", err)
 	}
 
-	normalizedReq := cloneChatRequestWithNormalizedModel(req)
+	normalizedReq := shapeChatRequestForUpstream(cloneChatRequestWithNormalizedModel(req), providerSelection)
 
 	if normalizedReq.StreamOptions == nil {
 		normalizedReq.StreamOptions = &adapter.StreamOptions{IncludeUsage: true}
@@ -506,7 +504,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 	outputChan := make(chan adapter.StreamResponse)
 	// Preserve trace values while allowing billing and tracing to finish after request cancellation.
 	billingBgCtx := context.WithoutCancel(ctx)
-	go s.handleStreamBilling(billingBgCtx, streamChan, outputChan, billingCtx, traceReq, &providerSelection.Model, startTime, channelID)
+	go s.handleStreamBilling(billingBgCtx, streamChan, outputChan, billingCtx, traceReq, &providerSelection.Model, startTime, channelID, providerSelection.HasRoute() && providerSelection.AutoBan)
 
 	return outputChan, nil
 }
