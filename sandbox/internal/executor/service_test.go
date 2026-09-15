@@ -1938,6 +1938,94 @@ func TestPrepareDependenciesReturnsReadyForStdlibArchive(t *testing.T) {
 	}
 }
 
+func TestPrepareDependenciesIgnoresPythonStdlibAndLocalModules(t *testing.T) {
+	service := NewService(nil, nil, nil, policy.NewService(config.FromEnv()))
+
+	result, err := service.PrepareDependencies(DependencyPrepareRequest{
+		ArchiveBase64: zipBase64(t, map[string]string{
+			"SKILL.md":                                      "Skill package\n",
+			"requirements.txt":                              "pandas==2.2.3\n",
+			"scripts/run.py":                                "import enum\nimport importlib.metadata\nimport warnings\nfrom tpl_core.backend import execute\nfrom eda import SKILL_VERSION\nimport pandas as pd\n",
+			"scripts/eda/__init__.py":                       "SKILL_VERSION = '1.0.0'\n",
+			"scripts/eda/lineage.py":                        "from dataclasses import dataclass, field\n",
+			"scripts/eda/descriptive.py":                    "import pandas as pd\n",
+			"scripts/tpl_core/backend/__init__.py":          "def execute(): pass\n",
+			"scripts/tpl_core/backend/template_executor.py": "from tpl_core.operator_library import contract\n",
+			"scripts/tpl_core/operator_library/contract.py": "from tpl_core import operator_pipeline\n",
+			"scripts/tpl_core/operator_pipeline.py":         "def run(): pass\n",
+		}),
+		Format:      "zip",
+		BaseRuntime: "linux-secure",
+	})
+	if err != nil {
+		t.Fatalf("prepare dependencies: %v", err)
+	}
+	if result.Status != "build_required" {
+		t.Fatalf("expected build_required, got %q", result.Status)
+	}
+	if result.PackageCount != 1 {
+		t.Fatalf("expected only the declared third-party package, got %#v", result.Packages)
+	}
+	assertDetectedDependency(t, result.Packages, "python3", "pandas", "==2.2.3")
+	assertMissingDependency(t, result.Packages, "python3", "dataclasses")
+	assertMissingDependency(t, result.Packages, "python3", "enum")
+	assertMissingDependency(t, result.Packages, "python3", "importlib")
+	assertMissingDependency(t, result.Packages, "python3", "eda")
+	assertMissingDependency(t, result.Packages, "python3", "tpl-core")
+	assertMissingDependency(t, result.Packages, "python3", "warnings")
+}
+
+func TestPrepareDependenciesUsesManifestEntrypointDirectoryAsPythonImportRoot(t *testing.T) {
+	service := NewService(nil, nil, nil, policy.NewService(config.FromEnv()))
+
+	result, err := service.PrepareDependencies(DependencyPrepareRequest{
+		ArchiveBase64: zipBase64(t, map[string]string{
+			"SKILL.md":               "Skill package\n",
+			"skill.manifest.json":    `{"entrypoint":"scripts/app/run.py","language":"python3"}`,
+			"scripts/app/run.py":     "import helpers\n",
+			"scripts/app/helpers.py": "VALUE = 'local to the entrypoint import root'\n",
+		}),
+		Format:      "zip",
+		BaseRuntime: "linux-secure",
+	})
+	if err != nil {
+		t.Fatalf("prepare dependencies: %v", err)
+	}
+	if result.Status != "ready" {
+		t.Fatalf("expected ready, got %q", result.Status)
+	}
+	if result.PackageCount != 0 {
+		t.Fatalf("expected entrypoint-local helper to be ignored, got %#v", result.Packages)
+	}
+}
+
+func TestPrepareDependenciesDoesNotUseImportedModuleDirectoryAsPythonImportRoot(t *testing.T) {
+	service := NewService(nil, nil, nil, policy.NewService(config.FromEnv()))
+
+	result, err := service.PrepareDependencies(DependencyPrepareRequest{
+		ArchiveBase64: zipBase64(t, map[string]string{
+			"SKILL.md":                   "Skill package\n",
+			"skill.manifest.json":        `{"entrypoint":"scripts/run.py","language":"python3"}`,
+			"scripts/run.py":             "import plugin.main\n",
+			"scripts/plugin/main.py":     "import requests\n",
+			"scripts/plugin/requests.py": "VALUE = 'not on the entrypoint import root'\n",
+		}),
+		Format:      "zip",
+		BaseRuntime: "linux-secure",
+	})
+	if err != nil {
+		t.Fatalf("prepare dependencies: %v", err)
+	}
+	if result.Status != "build_required" {
+		t.Fatalf("expected build_required, got %q", result.Status)
+	}
+	if result.PackageCount != 1 {
+		t.Fatalf("expected only the third-party import, got %#v", result.Packages)
+	}
+	assertDetectedDependency(t, result.Packages, "python3", "requests", "")
+	assertMissingDependency(t, result.Packages, "python3", "plugin")
+}
+
 func TestPrepareDependenciesRejectsSymlinkArchive(t *testing.T) {
 	service := NewService(nil, nil, nil, policy.NewService(config.FromEnv()))
 

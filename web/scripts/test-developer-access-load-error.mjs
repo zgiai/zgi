@@ -156,7 +156,11 @@ assert.equal(
   organizationsHook.match(/shouldRetryAccessLoadError\(failureCount, queryError\)/g)?.length,
   2
 );
-assert.match(organizationsHook, /id: 'organization-load-error'/);
+assert.doesNotMatch(
+  organizationsHook,
+  /fetchOrgFailed|shouldShowAccessLoadToast|organization-load-error/,
+  'background organization reads must not show a global toast'
+);
 const developerAccessHook = await readFile(
   new URL('../src/hooks/developer-access/use-developer-access.ts', import.meta.url),
   'utf8'

@@ -46,6 +46,7 @@ manifest and read-only binds `/opt/zgi/profiles/<profile>` before execution.
 | `ZGI_SANDBOX_BWRAP_BINARY` | Bubblewrap binary used by the secure Linux backend. | `bwrap` | Set to the installed binary name or absolute path. |
 | `ZGI_SANDBOX_CACHE_TTL_SECONDS` | Sandbox endpoint cache TTL. | `30` | Keep small enough for endpoint updates to propagate quickly. |
 | `ZGI_SANDBOX_COMMAND_TIMEOUT_SECONDS` | Default command execution timeout. | `15` | Keep bounded for workflow use. |
+| `ZGI_SANDBOX_CONTAINER_PRIVILEGED` | Compose-only opt-in for nested Bubblewrap namespaces. | `false` | Required by the `linux-secure` backend when Sandbox itself runs inside Docker; prefer a dedicated worker and never share this container with application processes. A direct Linux-host deployment does not use this setting. |
 | `ZGI_SANDBOX_DATABASE_URL` | PostgreSQL connection URL. | empty in `.env.example`; composed in Docker Compose. | Required for production metadata persistence. |
 | `ZGI_SANDBOX_DATA_DIR` | Local data directory for sandbox files and metadata. | `/var/lib/zgi-sandbox` | Use persistent storage. |
 | `ZGI_SANDBOX_DEPENDENCY_ROOTFS_DIR` | Optional parent directory for dependency-profile-specific secure rootfs directories. | empty | Set when dependency profiles are materialized as separate rootfs directories. |
@@ -69,9 +70,9 @@ manifest and read-only binds `/opt/zgi/profiles/<profile>` before execution.
 | `ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS_PER_ORGANIZATION` | Optional concurrent execution limit per organization. | `0` disabled | Set for shared deployments. |
 | `ZGI_SANDBOX_MAX_CONCURRENT_EXECUTIONS_PER_PROFILE` | Optional concurrent execution limit per command profile. | `0` disabled | Set when specific profiles are expensive. |
 | `ZGI_SANDBOX_MAX_DEPENDENCY_PROFILES_PER_ORGANIZATION` | Optional active dependency profile limit per organization. | `0` disabled | Set for shared deployments. |
-| `ZGI_SANDBOX_MAX_DEPENDENCY_PROFILE_SIZE_BYTES` | Maximum managed dependency profile size. | `1073741824` | Tune to artifact storage and startup budget. |
+| `ZGI_SANDBOX_MAX_DEPENDENCY_PROFILE_SIZE_BYTES` | Maximum managed dependency profile size. | `3221225472` | The managed scientific profile currently builds to about 2.22 GB on Linux ARM64; retain headroom and tune to artifact storage and startup budget. |
 | `ZGI_SANDBOX_MAX_EXECUTIONS_PER_MINUTE_PER_ORGANIZATION` | Optional execution rate limit per organization. | `0` disabled | Set for shared deployments. |
-| `ZGI_SANDBOX_MAX_FILE_SIZE_KB` | Maximum uploaded file size. | `256` | Keep aligned with API upload policy. |
+| `ZGI_SANDBOX_MAX_FILE_SIZE_KB` | Maximum uploaded file size. | `256` | Keep aligned with API upload policy. The shipped deployment examples use `262144` (256 MB) for governed scientific H5AD/CSV inputs; lower it for deployments that do not enable that Skill. |
 | `ZGI_SANDBOX_MAX_NETWORK_REQUESTS_PER_MINUTE_PER_ORGANIZATION` | Optional egress proxy request rate limit per organization. | `0` disabled | Set for shared deployments that enable network egress. |
 | `ZGI_SANDBOX_MAX_QUEUED_EXECUTIONS_PER_ORGANIZATION` | Optional queued execution limit per organization. | `0` disabled | Set to prevent queue buildup. |
 | `ZGI_SANDBOX_MAX_WORKSPACE_BYTES` | Optional workspace byte limit per sandbox. | `0` disabled | Set for disk protection. |
@@ -87,8 +88,8 @@ manifest and read-only binds `/opt/zgi/profiles/<profile>` before execution.
 | `ZGI_SANDBOX_REDIS_DB` | Redis database number. | `0` | Use an isolated database where needed. |
 | `ZGI_SANDBOX_REDIS_PASSWORD` | Redis password. | empty | Set when Redis requires authentication. |
 | `ZGI_SANDBOX_RUNTIME_BACKEND` | Runtime backend selector. | `preview` | Use `linux-secure` in production. |
-| `ZGI_SANDBOX_SECURE_RUNTIME_CPU_SECONDS` | Secure Linux backend CPU time limit in seconds. | `2` | Use at least `10` for the managed Office profile and tune to command profile timeouts. |
-| `ZGI_SANDBOX_SECURE_RUNTIME_MEMORY_BYTES` | Secure Linux backend address-space memory limit. | `268435456` | Use at least `1073741824` for Node.js and managed Office workloads. |
+| `ZGI_SANDBOX_SECURE_RUNTIME_CPU_SECONDS` | Secure Linux backend CPU time limit in seconds. | `2` | Use at least `300` for the managed scientific profile and tune to command profile timeouts. |
+| `ZGI_SANDBOX_SECURE_RUNTIME_MEMORY_BYTES` | Secure Linux backend address-space memory limit. | `268435456` | Use at least `4294967296` for the managed scientific profile; size worker concurrency from this per-execution ceiling. |
 | `ZGI_SANDBOX_SECURE_RUNTIME_OPEN_FILE_LIMIT` | Secure Linux backend open file descriptor limit. | `128` | Keep low unless a managed profile needs more descriptors. |
 | `ZGI_SANDBOX_SECURE_RUNTIME_PROCESS_LIMIT` | Secure Linux backend process count limit. | `64` | Keep low enough to contain fork-heavy workloads. |
 | `ZGI_SANDBOX_SECURE_ROOTFS` | Root filesystem path for the secure Linux backend. | empty | Required when using `linux-secure`. |
@@ -105,3 +106,28 @@ examples:
 ```bash
 make -C sandbox check-config-docs
 ```
+
+## Container child-process cleanup
+
+Use `init: true` with Compose (enabled in the supplied configuration), or pass
+`--init` to `docker run`. Interpreter subprocesses can outlive their immediate
+parent after cancellation or a crash. An init process reaps these orphaned
+children so repeated executions do not consume the worker process quota with
+zombie processes. This does not replace per-execution resource limits.
+
+For the secure Linux backend, cancellation and command timeouts terminate the
+bubblewrap PID namespace, including children that create another process group.
+The runner obtains its namespace init PID through bubblewrap's private
+`--info-fd` descriptor. This also works when the setuid outer monitor has a
+different host UID from the server. Run the integration test on Linux with a
+usable root filesystem and bubblewrap:
+
+```bash
+ZGI_SANDBOX_TEST_SECURE_ROOTFS=/ go test -tags=integration ./internal/runner -run TestLinuxSecureBackendCancellationAndTimeoutReapChildren
+```
+
+The container image copies prepared dependency root filesystems directly into
+their final paths with the service user's ownership, avoiding a second copy of
+large dependency layers. Set `ZGI_SANDBOX_DEPENDENCY_ROOTFS_DIR` to
+`/opt/zgi/prebuilt-dependency-rootfs` to use those image contents directly;
+otherwise the entrypoint seeds the configured writable dependency directory.

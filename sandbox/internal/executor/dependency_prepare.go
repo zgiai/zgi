@@ -8,13 +8,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	pathpkg "path"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 )
 
-const dependencyPrepareSchemaVersion = 1
+const dependencyPrepareSchemaVersion = 2
 
 type DependencyPrepareRequest struct {
 	OrganizationID string `json:"organization_id,omitempty"`
@@ -60,6 +61,7 @@ type manifestDependencyBlock struct {
 }
 
 type dependencyScanManifest struct {
+	Entrypoint   string                  `json:"entrypoint"`
 	Language     string                  `json:"language"`
 	Dependencies manifestDependencyBlock `json:"dependencies"`
 }
@@ -128,6 +130,7 @@ func scanDependencyRequest(entries []archiveEntry, requestedLanguage string, bas
 	packages := map[string]DetectedDependency{}
 	sourceSet := map[string]struct{}{}
 	warnings := []string{}
+	pythonEntrypoint := "scripts/run.py"
 
 	if file := files["skill.manifest.json"]; file != nil {
 		content, err := readZipFile(file, 64*1024)
@@ -140,6 +143,9 @@ func scanDependencyRequest(entries []archiveEntry, requestedLanguage string, bas
 		}
 		if language == "" {
 			language = normalizeSkillLanguage(manifest.Language)
+		}
+		if strings.TrimSpace(manifest.Entrypoint) != "" {
+			pythonEntrypoint = manifest.Entrypoint
 		}
 		addPackageSpecs(packages, sourceSet, "python3", manifest.Dependencies.Python, "skill.manifest.json")
 		nodeSpecs := append([]string{}, manifest.Dependencies.Node...)
@@ -171,11 +177,12 @@ func scanDependencyRequest(entries []archiveEntry, requestedLanguage string, bas
 		addPackageSpecs(packages, sourceSet, "nodejs", specs, "package.json")
 	}
 
+	pythonImportRoot := pythonEntrypointImportRoot(pythonEntrypoint)
 	for path, file := range files {
 		switch filepath.Ext(path) {
 		case ".py":
 			if strings.HasPrefix(path, "scripts/") {
-				specs, err := scanPythonImports(file)
+				specs, err := scanPythonImports(file, pythonImportRoot, files)
 				if err != nil {
 					return DependencyPrepareResult{}, err
 				}
@@ -397,7 +404,7 @@ func isUnsupportedNodeDependencyVersion(version string) bool {
 var pythonImportRE = regexp.MustCompile(`(?m)^\s*(?:from\s+([A-Za-z_][A-Za-z0-9_\.]*)\s+import|import\s+([A-Za-z_][A-Za-z0-9_\.]*))`)
 var nodeImportRE = regexp.MustCompile(`(?m)(?:import\s+(?:[^'"]+\s+from\s+)?|import\s*\(|require\s*\()\s*['"]([^'"]+)['"]`)
 
-func scanPythonImports(file *zip.File) ([]string, error) {
+func scanPythonImports(file *zip.File, importRoot string, files map[string]*zip.File) ([]string, error) {
 	content, err := readZipFile(file, 256*1024)
 	if err != nil {
 		return nil, err
@@ -410,12 +417,41 @@ func scanPythonImports(file *zip.File) ([]string, error) {
 			module = match[2]
 		}
 		module = strings.Split(module, ".")[0]
-		if module == "" || pythonStdlibModules[module] {
+		if module == "" || pythonStdlibModules[module] || pythonArchiveImportIsLocal(files, importRoot, module) {
 			continue
 		}
 		specSet[normalizePackageName("python3", module)] = struct{}{}
 	}
 	return sortedSourceSet(specSet), nil
+}
+
+func pythonEntrypointImportRoot(entrypoint string) string {
+	entrypoint = filepath.ToSlash(strings.TrimSpace(entrypoint))
+	if entrypoint == "" || unsafeArchivePath(entrypoint) || !strings.HasPrefix(entrypoint, "scripts/") {
+		return "scripts"
+	}
+	return pathpkg.Dir(entrypoint)
+}
+
+func pythonArchiveImportIsLocal(files map[string]*zip.File, importRoot string, module string) bool {
+	importRoot = filepath.ToSlash(strings.TrimSpace(importRoot))
+	module = strings.TrimSpace(module)
+	if (importRoot != "scripts" && !strings.HasPrefix(importRoot, "scripts/")) || module == "" {
+		return false
+	}
+
+	modulePath := pathpkg.Join(importRoot, module)
+	if files[modulePath+".py"] != nil || files[modulePath+"/__init__.py"] != nil {
+		return true
+	}
+	prefix := modulePath + "/"
+	for archivePath := range files {
+		archivePath = filepath.ToSlash(strings.TrimSpace(archivePath))
+		if strings.HasPrefix(archivePath, prefix) && filepath.Ext(archivePath) == ".py" {
+			return true
+		}
+	}
+	return false
 }
 
 func scanNodeImports(file *zip.File) ([]string, error) {
@@ -542,12 +578,12 @@ var pythonImportPackageMap = map[string]string{
 
 var pythonStdlibModules = map[string]bool{
 	"argparse": true, "base64": true, "collections": true, "contextlib": true,
-	"csv": true, "datetime": true, "decimal": true, "functools": true,
-	"hashlib": true, "io": true, "itertools": true, "json": true,
+	"csv": true, "dataclasses": true, "datetime": true, "decimal": true, "enum": true, "functools": true,
+	"hashlib": true, "importlib": true, "io": true, "itertools": true, "json": true,
 	"logging": true, "math": true, "os": true, "pathlib": true, "random": true,
 	"re": true, "shutil": true, "statistics": true, "string": true,
 	"subprocess": true, "sys": true, "tempfile": true, "time": true,
-	"typing": true, "uuid": true, "zipfile": true,
+	"typing": true, "uuid": true, "warnings": true, "zipfile": true,
 }
 
 var nodeBuiltinModules = map[string]bool{

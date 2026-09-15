@@ -35,7 +35,12 @@ export function Heading({ url, method, title, name }: HeadingProps) {
   const anchorId = (name || '')?.replace(/^#/, '') || undefined;
   return (
     <div className="space-y-2">
-      <h2 id={anchorId} className="text-[28px] font-semibold tracking-tight mt-8 group">
+      <h2
+        id={anchorId}
+        data-toc-entry="true"
+        data-toc-level="3"
+        className="text-[28px] font-semibold tracking-tight mt-8 group"
+      >
         {title}
         {anchorId ? (
           <a
@@ -118,6 +123,89 @@ export function Paragraph({ children, className, ...props }: ParagraphProps) {
   );
 }
 
+export function Table({
+  children,
+  className,
+  ...props
+}: React.TableHTMLAttributes<HTMLTableElement>) {
+  return (
+    <div className="not-prose my-4 w-full overflow-x-auto rounded-md border bg-background">
+      <table
+        className={cn('w-full min-w-[760px] border-collapse text-left text-sm', className)}
+        {...props}
+      >
+        {children}
+      </table>
+    </div>
+  );
+}
+
+export function TableHead({
+  children,
+  className,
+  ...props
+}: React.HTMLAttributes<HTMLTableSectionElement>) {
+  return (
+    <thead className={cn('bg-muted/60 text-foreground', className)} {...props}>
+      {children}
+    </thead>
+  );
+}
+
+export function TableBody({
+  children,
+  className,
+  ...props
+}: React.HTMLAttributes<HTMLTableSectionElement>) {
+  return (
+    <tbody className={cn('divide-y', className)} {...props}>
+      {children}
+    </tbody>
+  );
+}
+
+export function TableRow({
+  children,
+  className,
+  ...props
+}: React.HTMLAttributes<HTMLTableRowElement>) {
+  return (
+    <tr className={cn('transition-colors hover:bg-muted/25', className)} {...props}>
+      {children}
+    </tr>
+  );
+}
+
+export function TableHeaderCell({
+  children,
+  className,
+  ...props
+}: React.ThHTMLAttributes<HTMLTableCellElement>) {
+  return (
+    <th
+      className={cn('px-3 py-2.5 align-top text-xs font-semibold whitespace-nowrap', className)}
+      {...props}
+    >
+      {children}
+    </th>
+  );
+}
+
+export function TableCell({
+  children,
+  className,
+  ...props
+}: React.TdHTMLAttributes<HTMLTableCellElement>) {
+  return (
+    <td
+      className={cn('px-3 py-3 align-top leading-6 text-secondary-foreground', className)}
+      {...props}
+    >
+      {children}
+    </td>
+  );
+}
+
 // helpers: extract text and create slug
 function childrenToText(children: React.ReactNode): string {
   if (children == null) return '';
@@ -132,7 +220,7 @@ function slugify(text: string): string {
   return text
     .toLowerCase()
     .replace(/[\s\u3000]+/g, '-') // spaces (including full-width)
-    .replace(/[^a-z0-9-]/g, '') // keep alphanum and hyphen
+    .replace(/[^\p{L}\p{N}-]/gu, '') // keep Unicode letters, numbers, and hyphens
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
 }
@@ -162,6 +250,8 @@ export function H1({ children, id, className }: BaseHeadingProps) {
   return (
     <h1
       id={computedId}
+      data-toc-entry="true"
+      data-toc-level="1"
       className={cn('group scroll-m-20 text-[34px] font-bold tracking-tight', className)}
     >
       {children}
@@ -175,6 +265,8 @@ export function H2({ children, id, className }: BaseHeadingProps) {
   return (
     <h2
       id={computedId}
+      data-toc-entry="true"
+      data-toc-level="2"
       className={cn('group scroll-m-20 text-[28px] font-semibold tracking-tight mt-8', className)}
     >
       {children}
@@ -303,6 +395,12 @@ export default {
   Property,
   SubProperty,
   Paragraph,
+  Table,
+  TableHead,
+  TableBody,
+  TableRow,
+  TableHeaderCell,
+  TableCell,
   Ul,
   Ol,
   Li,

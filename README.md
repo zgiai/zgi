@@ -176,6 +176,7 @@ make dev-web
 ## Documentation
 
 - [LLM invocation content audit](docs/llm-invocation-content-audit.md)
+- [External Agent API landing-page quickstart](docs/agent-api-quickstart.md)
 
 Read the product documentation at [`docs.zgi.ai`](https://docs.zgi.ai).
 
@@ -198,11 +199,14 @@ For security-sensitive reports, follow [`SECURITY.md`](SECURITY.md).
 
 ## Star History
 
+Charts are updated automatically on the `star-history` branch to keep generated
+asset commits off `main`.
+
 <a href="https://github.com/zgiai/zgi/stargazers">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./assets/star-history-dark.svg" />
-    <source media="(prefers-color-scheme: light)" srcset="./assets/star-history.svg" />
-    <img alt="ZGI Star History" src="./assets/star-history.svg" width="900" />
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/zgiai/zgi/star-history/assets/star-history-dark.svg" />
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/zgiai/zgi/star-history/assets/star-history.svg" />
+    <img alt="ZGI Star History" src="https://raw.githubusercontent.com/zgiai/zgi/star-history/assets/star-history.svg" width="900" />
   </picture>
 </a>
 

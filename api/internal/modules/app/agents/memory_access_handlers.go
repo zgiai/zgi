@@ -141,9 +141,8 @@ func (h *AgentsHandler) apiKeyMemoryAccess(c *gin.Context) (memoryAccessScope, b
 		response.Fail(c, response.ErrWorkspaceNotFound)
 		return memoryAccessScope{}, false
 	}
-	externalUser := strings.TrimSpace(c.Query("user"))
-	if externalUser == "" {
-		response.FailWithMessage(c, response.ErrInvalidParam, externalAgentMemoryUserRequiredMessage)
+	externalUser, ok := externalUserFromRequest(c, c.Query("user"))
+	if !ok {
 		return memoryAccessScope{}, false
 	}
 	published, err := h.appService.GetPublishedAgentRuntimeConfig(c.Request.Context(), agentID.String())
@@ -152,7 +151,8 @@ func (h *AgentsHandler) apiKeyMemoryAccess(c *gin.Context) (memoryAccessScope, b
 		return memoryAccessScope{}, false
 	}
 	writeSlots := agentMemoryRuntimeStoreSlots(agentMemoryRuntimeSlots(published.Config.AgentMemorySlots))
-	privacySlots, err := h.memoryService().PrivacySlots(c.Request.Context(), workspaceID, agentID, writeSlots, agentmemory.UserScopeEndUser, externalAgentMemoryUserID(workspaceID, agentID, externalUser))
+	externalUserID := DeriveExternalUserID(workspaceID, agentID, externalUser)
+	privacySlots, err := h.memoryService().PrivacySlots(c.Request.Context(), workspaceID, agentID, writeSlots, agentmemory.UserScopeEndUser, externalUserID)
 	if err != nil {
 		h.failRuntime(c, err)
 		return memoryAccessScope{}, false
@@ -161,7 +161,7 @@ func (h *AgentsHandler) apiKeyMemoryAccess(c *gin.Context) (memoryAccessScope, b
 		workspaceID:    workspaceID,
 		agentID:        agentID,
 		userScope:      agentmemory.UserScopeEndUser,
-		userID:         externalAgentMemoryUserID(workspaceID, agentID, externalUser),
+		userID:         externalUserID,
 		slots:          privacySlots,
 		writeSlots:     writeSlots,
 		writesEnabled:  published.Config.AgentMemoryEnabled,

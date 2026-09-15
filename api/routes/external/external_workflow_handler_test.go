@@ -1,8 +1,10 @@
 package external
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/dto"
+	agentapp "github.com/zgiai/zgi/api/internal/modules/app/agents"
 	workflow_file "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
@@ -151,6 +154,51 @@ func TestExternalValidateAndProcessFileVariablesUsesCanonicalContentExtractionSc
 	}
 	if extractor.listScope != wantScope {
 		t.Fatalf("file list extraction scope = %#v, want %#v", extractor.listScope, wantScope)
+	}
+}
+
+func TestUploadAgentFileUsesDerivedExternalUserOwner(t *testing.T) {
+	keyInfo := &middleware.APIKeyInfo{ID: uuid.New(), AgentID: uuid.New(), TenantID: uuid.New()}
+	fileService := &externalFileAccessService{uploaded: &dto.UploadFile{
+		ID:        uuid.NewString(),
+		Name:      "report.txt",
+		Size:      5,
+		MimeType:  "text/plain",
+		CreatedAt: time.Now(),
+	}}
+	handler := &ExternalWorkflowHandler{
+		fileService:     fileService,
+		agentRepository: externalAgentRepoStub{agent: &agentapp.Agent{ID: keyInfo.AgentID, AgentsType: "AGENT"}},
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", "report.txt")
+	if err != nil {
+		t.Fatalf("CreateFormFile: %v", err)
+	}
+	if _, err := part.Write([]byte("hello")); err != nil {
+		t.Fatalf("write multipart file: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/files/upload", &body)
+	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
+	c.Request.Header.Set(agentapp.ExternalUserIDHeader, "customer-42")
+	c.Set("api_key_info", keyInfo)
+
+	handler.UploadFile(c)
+
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d, body=%s", recorder.Code, http.StatusCreated, recorder.Body.String())
+	}
+	wantOwner := agentapp.DeriveExternalUserID(keyInfo.TenantID, keyInfo.AgentID, "customer-42").String()
+	if fileService.uploadUserID != wantOwner {
+		t.Fatalf("upload owner = %q, want %q", fileService.uploadUserID, wantOwner)
 	}
 }
 
@@ -325,7 +373,18 @@ func externalTemporaryFile(id string, createdBy string) *dto.UploadFile {
 }
 
 type externalFileAccessService struct {
-	files map[string]*dto.UploadFile
+	files        map[string]*dto.UploadFile
+	uploaded     *dto.UploadFile
+	uploadUserID string
+}
+
+type externalAgentRepoStub struct {
+	agent *agentapp.Agent
+	err   error
+}
+
+func (s externalAgentRepoStub) GetByID(context.Context, string) (*agentapp.Agent, error) {
+	return s.agent, s.err
 }
 
 type externalScopeContentExtractor struct {
@@ -368,8 +427,9 @@ func (s *externalFileAccessService) GetUploadConfig() *interfaces.FileUploadConf
 	return nil
 }
 
-func (s *externalFileAccessService) UploadFile(context.Context, string, []byte, string, string, string, filemodel.CreatedByRole, *interfaces.FileSource, *string, bool, bool) (*dto.UploadFile, error) {
-	return nil, nil
+func (s *externalFileAccessService) UploadFile(_ context.Context, _ string, _ []byte, _ string, userID, _ string, _ filemodel.CreatedByRole, _ *interfaces.FileSource, _ *string, _ bool, _ bool) (*dto.UploadFile, error) {
+	s.uploadUserID = userID
+	return s.uploaded, nil
 }
 
 func (s *externalFileAccessService) ReplaceFileContent(context.Context, string, string, []byte, string, string, string) (*dto.UploadFile, error) {

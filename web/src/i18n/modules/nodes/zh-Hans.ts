@@ -1427,6 +1427,12 @@ const messages: NodesMessages = {
     editor: '代码编辑器',
     noOutputs: '暂无输出变量',
     varNamePlaceholder: '输入变量名',
+    dependencyProfile: {
+      label: '运行环境',
+      stdlib: '标准库',
+      scientificData: '科学数据分析（pandas、SciPy、statsmodels、scikit-learn、lifelines）',
+      description: '为当前代码节点选择由平台统一构建、可复现的依赖环境。',
+    },
     languageChange: {
       title: '切换编程语言',
       description: '您正在从 {from} 切换到 {to}。是否使用新语言的默认模板覆盖当前代码？',

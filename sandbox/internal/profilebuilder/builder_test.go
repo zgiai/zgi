@@ -160,6 +160,21 @@ func TestManagedOfficePackagesUsesAllowedBundleNames(t *testing.T) {
 	}
 }
 
+func TestManagedScientificDataPackagesUsesAllowedBundleName(t *testing.T) {
+	packages := managedScientificDataPackages([]string{"python3"})
+	raw, err := json.Marshal(packages)
+	if err != nil {
+		t.Fatalf("marshal packages: %v", err)
+	}
+	text := string(raw)
+	if !strings.Contains(text, `"ecosystem":"python3"`) || !strings.Contains(text, `"name":"data-tools"`) || !strings.Contains(text, `"version":"managed"`) {
+		t.Fatalf("expected managed scientific data package, got %s", text)
+	}
+	if strings.Contains(text, "statsmodels") || strings.Contains(text, "lifelines") {
+		t.Fatalf("expected implementation packages to be hidden from policy manifest, got %s", text)
+	}
+}
+
 func TestBuildRejectsProfileSourceSymlink(t *testing.T) {
 	sourceDir := t.TempDir()
 	profileDir := filepath.Join(sourceDir, "bad-profile")

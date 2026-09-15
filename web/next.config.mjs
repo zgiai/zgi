@@ -1,9 +1,15 @@
 import createNextIntlPlugin from 'next-intl/plugin';
+import createMDX from '@next/mdx';
 import { withSentryConfig } from '@sentry/nextjs';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const withNextIntl = createNextIntlPlugin('./src/i18n/request.ts');
+const withMDX = createMDX({
+  options: {
+    remarkPlugins: ['remark-gfm'],
+  },
+});
 
 function readBasePathFromEnvFiles() {
   const envFiles = ['.env.local', '.env'];
@@ -110,12 +116,6 @@ const nextConfig = {
   },
   pageExtensions: ['js', 'jsx', 'md', 'mdx', 'ts', 'tsx'],
   turbopack: {
-    rules: {
-      '*.mdx': {
-        loaders: ['@mdx-js/loader'],
-        as: '*.js',
-      },
-    },
     resolveExtensions: [
       '.mdx',
       '.tsx',
@@ -134,7 +134,7 @@ const nextConfig = {
     : {}),
 };
 
-const withPlugins = withNextIntl(nextConfig);
+const withPlugins = withNextIntl(withMDX(nextConfig));
 
 const configuredReporters = process.env.ZGI_REPORTERS || process.env.NEXT_PUBLIC_ZGI_REPORTERS;
 const selectedReporters = configuredReporters

@@ -26,15 +26,17 @@ func newSkillRuntimeWithSandbox(toolEngine *tools.ToolEngine, toolManager *tools
 		return runtime
 	}
 	return runtime.WithScriptRunner(skills.NewSandboxScriptRunner(skills.SandboxScriptRunnerConfig{
-		Endpoint:              appconfig.GlobalConfig.CodeExec.Endpoint,
-		APIKey:                appconfig.GlobalConfig.CodeExec.APIKey,
-		ConnectTimeout:        secondsDuration(appconfig.GlobalConfig.CodeExec.ConnectTimeoutSeconds),
-		CreateTimeout:         secondsDuration(appconfig.GlobalConfig.CodeExec.CreateTimeoutSeconds),
-		UploadTimeout:         secondsDuration(appconfig.GlobalConfig.CodeExec.UploadTimeoutSeconds),
-		CommandTimeoutPadding: secondsDuration(appconfig.GlobalConfig.CodeExec.CommandTimeoutPaddingSeconds),
-		ArtifactTimeout:       secondsDuration(appconfig.GlobalConfig.CodeExec.ArtifactTimeoutSeconds),
-		CleanupTimeout:        secondsDuration(appconfig.GlobalConfig.CodeExec.CleanupTimeoutSeconds),
-		InputFileProvider:     skillInputFileProvider{fileService: fileService, organizationService: organizationService},
+		RuntimeGrantsPath:         appconfig.GlobalConfig.CodeExec.SkillRuntimeGrantsPath,
+		Endpoint:                  appconfig.GlobalConfig.CodeExec.Endpoint,
+		APIKey:                    appconfig.GlobalConfig.CodeExec.APIKey,
+		FallbackDependencyProfile: appconfig.GlobalConfig.CodeExec.SystemDataProfile,
+		ConnectTimeout:            secondsDuration(appconfig.GlobalConfig.CodeExec.ConnectTimeoutSeconds),
+		CreateTimeout:             secondsDuration(appconfig.GlobalConfig.CodeExec.CreateTimeoutSeconds),
+		UploadTimeout:             secondsDuration(appconfig.GlobalConfig.CodeExec.UploadTimeoutSeconds),
+		CommandTimeoutPadding:     secondsDuration(appconfig.GlobalConfig.CodeExec.CommandTimeoutPaddingSeconds),
+		ArtifactTimeout:           secondsDuration(appconfig.GlobalConfig.CodeExec.ArtifactTimeoutSeconds),
+		CleanupTimeout:            secondsDuration(appconfig.GlobalConfig.CodeExec.CleanupTimeoutSeconds),
+		InputFileProvider:         skillInputFileProvider{fileService: fileService, organizationService: organizationService},
 	}))
 }
 

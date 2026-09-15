@@ -25,7 +25,7 @@ code == 0
 data.status == "build_required"
 data.next_action == "queue_dependency_build"
 data.package_count == 5
-data.dependency_request.schema_version == 1
+data.dependency_request.schema_version == 2
 data.dependency_request.language == "python3"
 data.dependency_request.base_runtime == "linux-secure"
 data.packages.0.ecosystem == "nodejs"
@@ -71,7 +71,7 @@ data.next_action == "wait_for_dependency_build"
 data.organization_id == "organization_dependency_prepare_kest"
 data.package_count == 5
 data.profile_name != ""
-data.dependency_request.schema_version == 1
+data.dependency_request.schema_version == 2
 data.dependency_request.base_runtime == "linux-secure"
 ```
 

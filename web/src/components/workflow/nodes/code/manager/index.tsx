@@ -2,6 +2,14 @@ import React, { useCallback, useMemo, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { CodeEditor, type EditorLanguage } from '@/components/ui/code-editor';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   Dialog,
   DialogBody,
@@ -13,7 +21,7 @@ import {
 import { useT } from '@/i18n';
 import { ensureUniqueIdentifier, sanitizeIdentifier } from '@/utils/validation';
 
-import { useLocalNodeData } from '../../../hooks';
+import { useLocalNodeData, useNodeData, useNodeDataUpdate } from '../../../hooks';
 import {
   selectorsEqual,
   VariableBindingEditor,
@@ -103,6 +111,8 @@ const CODE_INPUT_ADAPTER: VariableBindingEditorAdapter<CodeInputRow> = {
  */
 const CodeManager: React.FC<CodeManagerProps> = ({ id, readOnly = false }) => {
   const t = useT('nodes');
+  const nodeData = useNodeData<CodeNodeData>(id);
+  const updateNodeData = useNodeDataUpdate<CodeNodeData>(id);
 
   const [confirmState, setConfirmState] = useState<LanguageChangeConfirmState>({
     open: false,
@@ -192,6 +202,32 @@ const CodeManager: React.FC<CodeManagerProps> = ({ id, readOnly = false }) => {
         nodeId={id}
         readOnly={readOnly}
       />
+
+      <div className="space-y-2">
+        <Label>{t('code.dependencyProfile.label')}</Label>
+        <Select
+          value={nodeData?.dependency_profile ?? 'stdlib'}
+          onValueChange={value =>
+            updateNodeData({
+              dependency_profile: value as NonNullable<CodeNodeData['dependency_profile']>,
+            })
+          }
+          disabled={readOnly}
+        >
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="stdlib">{t('code.dependencyProfile.stdlib')}</SelectItem>
+            <SelectItem value="scientific-data">
+              {t('code.dependencyProfile.scientificData')}
+            </SelectItem>
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground">
+          {t('code.dependencyProfile.description')}
+        </p>
+      </div>
 
       <div className="space-y-2">
         <div className="text-sm font-medium">{t('code.editor')}</div>

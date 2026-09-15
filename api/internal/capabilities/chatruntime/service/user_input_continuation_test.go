@@ -533,7 +533,7 @@ type fixedUserInputConversationRepo struct {
 	callerID     *uuid.UUID
 }
 
-func (r *fixedUserInputConversationRepo) GetByCallerScoped(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ uuid.UUID, callerType string, callerID *uuid.UUID, _ string) (*runtimemodel.Conversation, error) {
+func (r *fixedUserInputConversationRepo) GetByCallerScoped(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ uuid.UUID, callerType string, callerID, _ *uuid.UUID, _ string) (*runtimemodel.Conversation, error) {
 	r.callerType = callerType
 	r.callerID = normalizeCallerID(callerID)
 	return r.conversation, nil

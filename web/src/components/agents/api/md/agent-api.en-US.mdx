@@ -3,6 +3,8 @@
 Use this API to call the latest published version of the current Agent from an external system.
 The API is streaming-only and runs under the Agent API Key that is bound to this Agent.
 
+## Integration Overview
+
 <div>
   ### Base URL
 
@@ -29,7 +31,171 @@ X-API-Key: {API_KEY}
 
 Keep API Keys on your server side. Do not expose them in browser code or public clients.
 
+For every stateful Agent operation, your trusted server must also send `X-External-User-ID`. Derive one stable, opaque id (1–128 Unicode characters, case-sensitive) from the authenticated application user. Do not use an email address, phone number, or other PII. ZGI stores only a workspace-and-Agent-scoped derived UUID, and uses it to isolate conversations, stream recovery, continuations, files, and Agent Memory.
+
+### Minimum landing-page flow
+
+1. Call `GET /agents/config` on your server to load the title, opening statement, theme, suggested questions, file capability, and memory flags.
+2. If the user selects a file, call `POST /files/upload`, then include the returned file id in the chat request's `file_ids`.
+3. Call `POST /agents/chat` through your own server-side proxy. Save `conversation_id`, `message_id`, and the latest SSE `id`.
+4. Restore history through the conversation and message APIs; reconnect through events and cancel through stop.
+5. Route the two public pause types: workflow approval/question and Skill user input. Each resumes the same message through its own continuation endpoint.
+
+Normal Agent JSON success responses use `{ "code": "0", "message": "success", "data": ... }`. Errors use `{ "code": "...", "message": "..." }` with the matching HTTP `4xx/5xx` status. File upload and the legacy-compatible `/info` and `/parameters` success responses return objects directly; successful streaming endpoints return `text/event-stream` directly.
+
 </div>
+
+---
+
+## Core Runtime and Continuations
+
+<Heading
+  url="/api/v1/agents/config"
+  method="GET"
+  title="Get Published Landing-Page Configuration"
+  name="#Get-Agent-Config"
+/>
+
+<Row>
+  <Col>
+    Returns only the latest published fields needed by a public landing page; model credentials and draft configuration are never returned.
+
+    ### Request Headers
+
+    <Properties>
+      <Property name='Authorization' type='string' propKey='Authorization'>
+        Required. `Bearer {'{api_key}'}`. `X-API-Key` is an alternative.
+      </Property>
+    </Properties>
+
+    ### Response `data`
+
+    <Properties>
+      <Property name='agent_id / web_app_id' type='uuid' propKey='agent_id'>Published Agent and landing-page identifiers.</Property>
+      <Property name='agent_type' type='string' propKey='agent_type'>Published Agent type.</Property>
+      <Property name='name / description' type='string' propKey='name'>Public name and description.</Property>
+      <Property name='icon / icon_type / icon_url' type='string' propKey='icon_url'>Icon source values and resolved URL.</Property>
+      <Property name='home_title / opening_statement / input_placeholder' type='string' propKey='home_title'>Landing-page copy.</Property>
+      <Property name='theme_color' type='string' propKey='theme_color'>Published theme color.</Property>
+      <Property name='suggested_questions' type='array[string]' propKey='suggested_questions'>Starter questions in display order.</Property>
+      <Property name='file_upload_enabled / supports_vision' type='boolean' propKey='file_upload_enabled'>File and vision capability switches.</Property>
+      <Property name='agent_memory_enabled / memory_requires_user' type='boolean' propKey='agent_memory_enabled'>Published Agent Memory switches.</Property>
+      <Property name='external_user_required' type='boolean' propKey='external_user_required'>Always `true` for stateful external Agent operations.</Property>
+      <Property name='version / version_uuid' type='string' propKey='version'>Published version identifiers.</Property>
+    </Properties>
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="Request">
+
+    ```bash
+    curl '{apibase}/agents/config' \
+      --header 'Authorization: Bearer {api_key}'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="Response" label="200 JSON">
+
+    ```json
+    {
+      "code": "0",
+      "message": "success",
+      "data": {
+        "agent_id": "4c2c...",
+        "web_app_id": "f8d1...",
+        "agent_type": "AGENT",
+        "name": "Research Assistant",
+        "description": "Evidence-backed answers",
+        "icon_url": "https://example.com/icon.png",
+        "home_title": "Start your research",
+        "opening_statement": "What should I investigate?",
+        "input_placeholder": "Ask a question",
+        "theme_color": "#4F46E5",
+        "suggested_questions": ["Compare the evidence"],
+        "file_upload_enabled": true,
+        "supports_vision": true,
+        "agent_memory_enabled": true,
+        "memory_requires_user": true,
+        "external_user_required": true,
+        "version": "v12",
+        "version_uuid": "7b0d..."
+      }
+    }
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+`external_user_required` is always `true` for stateful external Agent operations. `memory_requires_user` only describes whether the published Memory configuration itself needs a user identity. The legacy chat JSON, query, and multipart `user` values remain temporarily accepted; using one returns deprecation headers, and sending a value that differs from `X-External-User-ID` returns `400`.
+
+---
+
+<Heading
+  url="/api/v1/files/upload"
+  method="POST"
+  title="Upload a Chat File"
+  name="#Upload-Agent-File"
+/>
+
+<Row>
+  <Col>
+    Upload a temporary file and put the returned `id` in a later chat request's `file_ids`. The compatibility endpoint `GET /api/v1/parameters` returns allowed types and limits.
+
+    ### Request Headers and Form
+
+    <Properties>
+      <Property name='Authorization' type='string' propKey='Authorization'>Required Agent API Key.</Property>
+      <Property name='X-External-User-ID' type='string' propKey='X-External-User-ID'>Required stable external user id; it owns the temporary file.</Property>
+      <Property name='file' type='binary' propKey='file'>Required `multipart/form-data` file part.</Property>
+      <Property name='user' type='string' propKey='user'>Deprecated multipart compatibility field. If supplied with the header, values must match.</Property>
+    </Properties>
+
+    ### Direct `201` Response
+
+    <Properties>
+      <Property name='id' type='uuid' propKey='id'>Use this value in `file_ids`.</Property>
+      <Property name='name / extension / mime_type' type='string' propKey='name'>Normalized file metadata.</Property>
+      <Property name='size' type='integer' propKey='size'>File size in bytes.</Property>
+      <Property name='created_by' type='string' propKey='created_by'>The external user id supplied by this request.</Property>
+      <Property name='created_at' type='integer' propKey='created_at'>Unix timestamp in seconds.</Property>
+    </Properties>
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="Request">
+
+    ```bash
+    curl '{apibase}/files/upload' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1' \
+      --form 'file=@./report.pdf'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="Response" label="201 JSON">
+
+    ```json
+    {
+      "id": "be24...",
+      "name": "report.pdf",
+      "size": 204800,
+      "extension": "pdf",
+      "mime_type": "application/pdf",
+      "created_by": "external-user-1",
+      "created_at": 1788854400
+    }
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
 
 ---
 
@@ -43,6 +209,14 @@ Keep API Keys on your server side. Do not expose them in browser code or public 
 <Row>
   <Col>
     Create a message in the published Agent runtime.
+
+    ### Request Headers
+
+    <Properties>
+      <Property name='Authorization' type='string' propKey='Authorization'>Required Agent API Key. Use `Bearer {'{api_key}'}` or the alternative `X-API-Key` header.</Property>
+      <Property name='X-External-User-ID' type='string' propKey='X-External-User-ID'>Required stable, opaque owner id. Reuse it for every later operation on this conversation.</Property>
+      <Property name='Content-Type' type='string' propKey='Content-Type'>Required. Use `application/json`.</Property>
+    </Properties>
 
     ### Request Body
 
@@ -63,11 +237,23 @@ Keep API Keys on your server side. Do not expose them in browser code or public 
         Optional. Defaults to `streaming`. Any other value returns `400`.
       </Property>
       <Property name='user' type='string' propKey='user'>
-        Required when Agent Memory is enabled with at least one enabled slot. Used to isolate long-term memory for the external end user. Optional otherwise, and still useful for traceability.
+        Deprecated compatibility field. Send the same value through `X-External-User-ID`; if both are present they must match exactly.
       </Property>
     </Properties>
 
     `model`, `provider`, `parameters`, and `use_memory` are not public controls for this endpoint. The Agent uses the latest published configuration. `parameters` and `use_memory` are accepted only for compatibility and are not applied as external overrides.
+
+    ### `200` Response
+
+    <Properties>
+      <Property name='Content-Type' type='text/event-stream' propKey='Content-Type'>Native SSE stream; process it incrementally instead of waiting for the complete body.</Property>
+      <Property name='X-ZGI-Conversation-ID' type='uuid' propKey='X-ZGI-Conversation-ID'>Conversation id known before the first SSE frame. Save it even if the client disconnects before `message_start`.</Property>
+      <Property name='X-ZGI-Message-ID' type='uuid' propKey='X-ZGI-Message-ID'>New assistant message id known before the first SSE frame.</Property>
+      <Property name='event' type='string' propKey='event'>Native SSE event name. The complete event-name catalog is below.</Property>
+      <Property name='data.event' type='string' propKey='data.event'>JSON envelope event name; it matches the native SSE `event:` line.</Property>
+      <Property name='data.data' type='object' propKey='data.data'>Event-specific payload. Common and event-specific fields are documented below.</Property>
+      <Property name='id' type='string' propKey='id'>Optional recoverable SSE event id. Persist the latest value for stream recovery.</Property>
+    </Properties>
 
     ### Streaming Format
 
@@ -83,35 +269,15 @@ Keep API Keys on your server side. Do not expose them in browser code or public 
 
     Dispatch by the native `event:` value or by the JSON `event` field. For response text, concatenate `message.data.answer` by `message_id`. Recoverable `message` and progress events include an SSE `id`; keep the latest id for reconnects.
 
-    ### Core Events
+    ### Event Handling
 
-    - `message_start`: the assistant message was created. Save `conversation_id` and `message_id` for recovery and later continuation.
-    - `message`: answer chunk. Append `data.answer` to the visible answer.
-    - `message_end`: terminal state for the current assistant message. `data.status` can be `completed`, `stopped`, `error`, `waiting_approval`, or `waiting_question`.
-    - `error`: stream or runtime error. Treat it as terminal unless a later `message_end` is received.
+    Chat, stream recovery, and both continuation endpoints share the same Agent SSE contract. A minimum implementation handles `message_start`, `message`, `message_retract`, `message_end`, and `error`, and persists the latest non-empty SSE `id`. Add the matching request event when supporting Skill user input or workflow pauses.
 
-    ### Agent Runtime Events
-
-    The Agent may emit additional progress events before the final answer:
-
-    - File events: `file_parse_start`, `file_parse_end`, `file_parse_error`.
-    - Skill and tool events: `skill_reference_read`, `skill_call_start`, `skill_call_end`, `skill_call_error`, `skill_artifact_created`. Legacy execution modes may also emit `skill_load_start` and `skill_load_end`; native tool loops keep routine skill discovery and activation internal.
-    - Agent progress events: `agent_progress`, `agent_intermediate_answer`, `message_retract`, memory mutation events such as `memory_create` or `memory_update`. A native tool loop may first stream provisional text through `message`, then classify it through `message_retract.presentation_disposition`: `process` retracts it from the final answer and retains it as process text, while `discard` retracts it without retaining it. During a long model call, `agent_progress` may use `phase=model_processing` with staged runtime-only waiting state. Its `activity` reflects runtime context or observed Provider stream signals for awaiting a response, reasoning, preparing an action, or reviewing tool results, while `source` distinguishes runtime inference from a Provider signal. The event contains no reasoning text, tool arguments, or localized body and is not part of the persisted answer or chat history.
-    - Workflow events from an Agent-bound workflow: `workflow_started`, `node_started`, `node_finished`, `iteration_started`, `iteration_next`, `iteration_completed`, `loop_started`, `loop_next`, `loop_completed`, `workflow_paused`, `approval_requested`, `question_answer_requested`, `question_answer_submitted`, `workflow_finished`, `workflow_failed`.
-
-    Workflow events in an Agent stream are progress events. Use them to render execution traces or waiting states; keep the visible assistant answer driven by `message` / `message_end`. For detailed workflow node, loop, and iteration fields, see the Workflow API document.
-
-    ### Waiting for User Input
-
-    If the Agent calls a workflow that pauses, the stream may emit `approval_requested`, `question_answer_requested`, or `user_input_requested`, and `message_end.status` may be `waiting_approval` or `waiting_question`.
-
-    - For question-answer pauses, render `user_input_requested.data.questions` when present. Submit the answer through the workflow continuation endpoint below.
-    - For approval pauses, use the `approval_requested` payload. Submit `approval_token`, `action`, and `inputs` through the workflow continuation endpoint below.
-    - Do not start a brand-new `/agents/chat` request to answer a pending workflow pause. Continue the same `conversation_id` and `message_id`.
+    See “Agent Event Integration Guide” below for each event's purpose, trigger, client action, payload shape, and integration example. Ignore unknown events and unknown payload fields for forward compatibility.
 
     ### Errors
 
-    - `400`: invalid request body, invalid ids, non-streaming `response_mode`, or missing `user` when Agent Memory is enabled
+    - `400`: invalid request body, invalid ids, non-streaming `response_mode`, missing/invalid `X-External-User-ID`, or a mismatch with legacy `user`
     - `401`: missing, invalid, inactive, expired, or revoked API Key
     - `404`: Agent has no published version or cannot be found
     - `500`: internal service error
@@ -119,15 +285,15 @@ Keep API Keys on your server side. Do not expose them in browser code or public 
   </Col>
 
   <Col sticky>
-    <CodeGroup title="Request" tag="POST" label="/api/v1/agents/chat" targetCode={`curl --location --no-buffer '{apibase}/agents/chat' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: Bearer {api_key}' \\\n--data '{\n  "query": "Hello, please answer in one sentence.",\n  "user": "external-user-1"\n}'`}>
+    <CodeGroup title="Request" tag="POST" label="/api/v1/agents/chat" targetCode={`curl --location --no-buffer '{apibase}/agents/chat' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: Bearer {api_key}' \\\n--header 'X-External-User-ID: external-user-1' \\\n--data '{\n  "query": "Hello, please answer in one sentence."\n}'`}>
 
     ```bash {{ title: 'cURL' }}
     curl --location --no-buffer '{apibase}/agents/chat' \
     --header 'Content-Type: application/json' \
     --header 'Authorization: Bearer {api_key}' \
+    --header 'X-External-User-ID: external-user-1' \
     --data '{
-      "query": "Hello, please answer in one sentence.",
-      "user": "external-user-1"
+      "query": "Hello, please answer in one sentence."
     }'
     ```
 
@@ -165,6 +331,14 @@ Keep API Keys on your server side. Do not expose them in browser code or public 
   <Col>
     Use this endpoint when the client disconnects while an Agent message is still running.
 
+    ### Path and Headers
+
+    <Properties>
+      <Property name='conversation_id' type='uuid' propKey='conversation_id'>Required conversation id returned by chat.</Property>
+      <Property name='Authorization' type='string' propKey='Authorization'>Required Agent API Key.</Property>
+      <Property name='X-External-User-ID' type='string' propKey='X-External-User-ID'>Required original conversation owner; a different user cannot replay the stream.</Property>
+    </Properties>
+
     ### Query Parameters
 
     <Properties>
@@ -178,22 +352,95 @@ Keep API Keys on your server side. Do not expose them in browser code or public 
 
     The event store is short-lived. Current runtime stores Agent stream events for 24 hours. If the stream is still active but the event store is unavailable or expired, the server emits `error` with `message: "stream events expired"`.
 
+    ### `200` Response
+
+    `text/event-stream` containing persisted events after `after_id`, in order. It uses the same native event names, JSON envelopes, and event field definitions as Send Chat Message. The endpoint stays connected while the message is active and ends after the terminal event. It does not create a new message.
+
     ### Recovery Flow
 
     - Save `conversation_id`, `message_id`, and the latest SSE `id` from every Agent event that includes `id:`.
-    - On reconnect, call this endpoint with the same API Key.
+    - On reconnect, call this endpoint with the same API Key and `X-External-User-ID`.
     - Resume from `after_id`. De-duplicate events by SSE `id` if your client may retry.
     - If an event has no SSE `id`, treat it as a non-recoverable fallback event and do not use it as `after_id`.
     - Stop listening after `message_end` with `completed`, `stopped`, `error`, or `failed`, or after an `error` event.
 
+    ### Page reload and in-page reconnect are different
+
+    During an in-page network interruption, the client still owns the rendered text. Resume incrementally with the latest `after_id` and deduplicate by SSE `id`. After a page or application restart, do not trust a local cursor by itself: load message history first, then replay the newest running or waiting message from the event-stream beginning without `after_id`.
+
+| Current state | Detection | Recovery action |
+| --- | --- | --- |
+| Running | `runtime_status=running` with `active_message_id` | Replay from the beginning and keep the connection open; use the newest `after_id` for later in-page reconnects |
+| Waiting for approval | Latest message has `status=waiting_approval` | Replay that message to rebuild `approval_requested`; message metadata may provide an immediate form fallback |
+| Waiting for workflow answer | `question_answer_requested`, or `user_input_requested.source=agent_workflow_question_answer` | Render the question/choices and call workflow continuation |
+| Waiting for Skill input | Any other `user_input_requested` | Key answers by question id and call user-input continuation |
+| Completed or failed | `completed`, `stopped`, `error`, or `failed` | Render history only; do not open a recovery stream |
+
+    Waiting conversations are normally no longer `running`, so checking only `active_message_id` is insufficient. Inspect the newest message status and recover that same `message_id`. If retained events and message metadata cannot reconstruct the form, actions, or request id, show an unrecoverable-state UI instead of inventing approval actions.
+
+    ### Automatic reconnect rules
+
+    Keep the last completely processed SSE id, de-duplicate every replayed id, and retry network failures, `429`, and retryable `5xx` responses with bounded exponential backoff. Do not retry `400/401/403/404`. Abort both the reader and pending delay when the user navigates away. Never repeat an uncertain chat POST; once conversation/message ids exist, switch to the events endpoint.
+
+    ```ts
+    async function reconnectStream({ conversationId, messageId, lastEventId, signal }) {
+      const seen = new Set<string>();
+      let cursor = lastEventId;
+
+      for (let attempt = 0; attempt <= 5; attempt += 1) {
+        const query = new URLSearchParams({ message_id: messageId });
+        if (cursor) query.set('after_id', cursor);
+        const response = await fetch(
+          `/api/v1/agents/conversations/${conversationId}/events?${query}`,
+          { headers: agentHeaders, signal },
+        );
+        if ([400, 401, 403, 404].includes(response.status)) throw new Error('not retryable');
+        if (!response.ok && response.status !== 429 && response.status < 500) throw new Error('not retryable');
+
+        let terminal = false;
+        try {
+          await consumeSSE(response, (event) => {
+            if (event.id && seen.has(event.id)) return;
+            if (event.id) {
+              seen.add(event.id);
+              cursor = event.id;
+            }
+            renderAgentEvent(event);
+            terminal = event.event === 'message_end' || event.event === 'error';
+          });
+          if (terminal) return;
+        } catch (error) {
+          if (signal.aborted) throw error;
+        }
+        if (attempt === 5) throw new Error('automatic recovery exhausted');
+        await delay(Math.min(800 * 2 ** attempt, 8000), signal);
+      }
+    }
+    ```
+
   </Col>
 
   <Col sticky>
-    <CodeGroup title="Recover" tag="GET" label="/api/v1/agents/conversations/{conversation_id}/events" targetCode={`curl --location --no-buffer '{apibase}/agents/conversations/{conversation_id}/events?message_id={message_id}&after_id={last_event_id}' \\\n--header 'Authorization: Bearer {api_key}'`}>
+    <CodeGroup title="Recover" tag="GET" label="/api/v1/agents/conversations/{conversation_id}/events" targetCode={`curl --location --no-buffer '{apibase}/agents/conversations/{conversation_id}/events?message_id={message_id}&after_id={last_event_id}' \\\n--header 'Authorization: Bearer {api_key}' \\\n--header 'X-External-User-ID: external-user-1'`}>
 
     ```bash {{ title: 'cURL' }}
     curl --location --no-buffer '{apibase}/agents/conversations/{conversation_id}/events?message_id={message_id}&after_id={last_event_id}' \
-    --header 'Authorization: Bearer {api_key}'
+    --header 'Authorization: Bearer {api_key}' \
+    --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="Response" label="200 SSE">
+
+    ```text
+    id: 1788854400123-0
+    event: message
+    data: {"event":"message","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","message_id":"d57058bd-50f1-4bc2-931d-e22a739190e6","answer":"replayed chunk","event_id":"1788854400123-0","sequence":0,"created_at":1788854400,"created_at_ms":1788854400123}}
+
+    id: 1788854400456-0
+    event: message_end
+    data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","message_id":"d57058bd-50f1-4bc2-931d-e22a739190e6","status":"completed","event_id":"1788854400456-0","sequence":0,"created_at":1788854400,"created_at_ms":1788854400456}}
     ```
 
     </CodeGroup>
@@ -212,7 +459,17 @@ Keep API Keys on your server side. Do not expose them in browser code or public 
 
 <Row>
   <Col>
-    Continue an Agent message that is waiting on a workflow approval or question-answer node.
+    Continue an Agent message that is waiting on a workflow approval or question-answer node. This also handles `user_input_requested` when `source=agent_workflow_question_answer`.
+
+    ### Path and Headers
+
+    <Properties>
+      <Property name='conversation_id' type='uuid' propKey='conversation_id'>Required waiting conversation id.</Property>
+      <Property name='message_id' type='uuid' propKey='message_id'>Required waiting message id. The continuation resumes this message; it does not create another turn.</Property>
+      <Property name='Authorization' type='string' propKey='Authorization'>Required Agent API Key.</Property>
+      <Property name='X-External-User-ID' type='string' propKey='X-External-User-ID'>Required original conversation owner.</Property>
+      <Property name='Content-Type' type='string' propKey='Content-Type'>Required. Use `application/json`.</Property>
+    </Properties>
 
     ### Question Answer Body
 
@@ -221,7 +478,7 @@ Keep API Keys on your server side. Do not expose them in browser code or public 
         Required. Use `question_answer`.
       </Property>
       <Property name='inputs' type='object' propKey='inputs'>
-        Required. Include `query`; include `question_answer_option_id` when the user selected an option from `user_input_requested`.
+        Required non-empty object. Send the answer values expected by `question_answer_requested`; `query` and `question_answer_option_id` are the common text and selected-choice fields.
       </Property>
     </Properties>
 
@@ -232,7 +489,7 @@ Keep API Keys on your server side. Do not expose them in browser code or public 
         Required. Use `approval`.
       </Property>
       <Property name='approval_token' type='string' propKey='approval_token'>
-        Required. Token from `approval_requested`.
+        Required. Copy the top-level `approval_token` from the `approval_requested` payload. Use `approval_form.token` only as a compatibility fallback.
       </Property>
       <Property name='action' type='string' propKey='action'>
         Required. Approval action id.
@@ -244,15 +501,87 @@ Keep API Keys on your server side. Do not expose them in browser code or public 
 
     The response is another Agent SSE stream for the same `message_id`. It may emit more workflow events, another waiting `message_end`, or the final answer and completed `message_end`.
 
+    ### Rendering approval UI
+
+    Treat `approval_requested` as the live source of truth. Its credential is the top-level `approval_token`; display content, fields, actions, and expiration are nested under `approval_form`. Do not mistakenly read them from `data.actions`, `data.fields`, or `data.expires_at`.
+
+    ```text
+    event: approval_requested
+    data: {"event":"approval_requested","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","message_id":"d57058bd-50f1-4bc2-931d-e22a739190e6","workflow_run_id":"run-01","approval_form_id":"form-01","approval_token":"{approval_token}","ui_approval_allowed":true,"approval_form":{"id":"form-01","node_id":"approval-node","node_title":"Human review","content":"Review the information and submit a decision.","fields":[],"actions":[{"id":"approve","label":"Approve"},{"id":"reject","label":"Reject","style":"danger"}],"submit_methods":{"webapp":{"enabled":true}},"expiration_at":1789002351,"token":"{approval_token}"}}}
+    ```
+
+    Normalize the live event into one approval UI model. On page reload, pass `metadata.agent_workflow_continuation` as the envelope and `metadata.workflow_runs[].approval.approval_form` as the form to the same normalizer, so live handling and durable recovery cannot drift to different field paths.
+
+    ```tsx
+    function approvalFromEvent(event) {
+      const data = event.data;
+      const form = data.approval_form ?? {};
+      return {
+        ...form,
+        form_id: data.approval_form_id ?? form.id,
+        token: data.approval_token ?? form.token,
+        ui_allowed: data.ui_approval_allowed !== false,
+      };
+    }
+
+    function ApprovalCard({ approval, submit }) {
+      const [inputs, setInputs] = useState({});
+      const expired = toTime(approval.expiration_at) <= Date.now();
+      if (!approval.ui_allowed) return <OutOfBandApprovalNotice />;
+      return <section>
+        <h3>{approval.node_title || 'Approval required'}</h3>
+        <p>{renderSafeContent(approval.content)}</p>
+        {approval.fields?.map(field => (
+          <Field key={field.id || field.key || field.name}
+            definition={field}
+            onChange={value => setInputs(current => ({
+              ...current,
+              [field.id || field.key || field.name]: value,
+            }))} />
+        ))}
+        {approval.actions?.map(action => (
+          <button key={action.id} disabled={expired}
+            onClick={() => submit({
+              type: 'approval',
+              approval_token: approval.token,
+              action: action.id,
+              inputs,
+            })}>
+            {action.label || action.id}
+          </button>
+        ))}
+      </section>;
+    }
+    ```
+
+    Render `content` only as safe text or structured data, and render only the actions returned in `approval_form.actions`. Enable the controls as soon as the matching `message_end.status=waiting_approval` arrives; do not wait for the HTTP response body to close. Disable all actions after `approval_form.expiration_at`, after `approval_expired`, or while the continuation request is in flight.
+
+    When `ui_approval_allowed=false`, the API redacts both the top-level `approval_token` and the form `token`. Direct the user to the workflow's configured approval channel instead of constructing an API request. On page reload, the latest message metadata can provide `workflow_runs[].approval.approval_form` as a temporary snapshot while the event stream is replayed. If neither the retained events nor metadata contain a token and advertised actions, show an unrecoverable-state prompt rather than constructing a request.
+
+    ### Distinguishing workflow questions from Skill input
+
+    A workflow question can emit `question_answer_requested` and then a projected `user_input_requested`. When the projected event has `source=agent_workflow_question_answer`, it still uses this workflow continuation endpoint. Only other `user_input_requested` events use the Skill user-input continuation endpoint.
+
+    ```ts
+    const workflowQuestion = event.event === 'question_answer_requested'
+      || (event.event === 'user_input_requested'
+        && event.data.source === 'agent_workflow_question_answer');
+    ```
+
+    ### `200` Response
+
+    `text/event-stream` using the same SSE envelope and event catalog as chat. A continuation normally starts with `message_start` carrying `continuation: true`, followed by `workflow_resumed`, progress/output events, and either another waiting or terminal `message_end`.
+
   </Col>
 
   <Col sticky>
-    <CodeGroup title="Question Answer" tag="POST" label="/api/v1/agents/.../workflow-continuation" targetCode={`curl --location --no-buffer '{apibase}/agents/conversations/{conversation_id}/messages/{message_id}/workflow-continuation' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: Bearer {api_key}' \\\n--data '{\n  "type": "question_answer",\n  "inputs": {\n    "query": "Continue",\n    "question_answer_option_id": "continue"\n  }\n}'`}>
+    <CodeGroup title="Question Answer" tag="POST" label="/api/v1/agents/.../workflow-continuation" targetCode={`curl --location --no-buffer '{apibase}/agents/conversations/{conversation_id}/messages/{message_id}/workflow-continuation' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: Bearer {api_key}' \\\n--header 'X-External-User-ID: external-user-1' \\\n--data '{\n  "type": "question_answer",\n  "inputs": {\n    "query": "Continue",\n    "question_answer_option_id": "continue"\n  }\n}'`}>
 
     ```bash {{ title: 'cURL - Question Answer' }}
     curl --location --no-buffer '{apibase}/agents/conversations/{conversation_id}/messages/{message_id}/workflow-continuation' \
     --header 'Content-Type: application/json' \
     --header 'Authorization: Bearer {api_key}' \
+    --header 'X-External-User-ID: external-user-1' \
     --data '{
       "type": "question_answer",
       "inputs": {
@@ -264,12 +593,13 @@ Keep API Keys on your server side. Do not expose them in browser code or public 
 
     </CodeGroup>
 
-    <CodeGroup title="Approval" tag="POST" label="/api/v1/agents/.../workflow-continuation" targetCode={`curl --location --no-buffer '{apibase}/agents/conversations/{conversation_id}/messages/{message_id}/workflow-continuation' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: Bearer {api_key}' \\\n--data '{\n  "type": "approval",\n  "approval_token": "{approval_token}",\n  "action": "approve",\n  "inputs": {}\n}'`}>
+    <CodeGroup title="Approval" tag="POST" label="/api/v1/agents/.../workflow-continuation" targetCode={`curl --location --no-buffer '{apibase}/agents/conversations/{conversation_id}/messages/{message_id}/workflow-continuation' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: Bearer {api_key}' \\\n--header 'X-External-User-ID: external-user-1' \\\n--data '{\n  "type": "approval",\n  "approval_token": "{approval_token}",\n  "action": "approve",\n  "inputs": {}\n}'`}>
 
     ```bash {{ title: 'cURL - Approval' }}
     curl --location --no-buffer '{apibase}/agents/conversations/{conversation_id}/messages/{message_id}/workflow-continuation' \
     --header 'Content-Type: application/json' \
     --header 'Authorization: Bearer {api_key}' \
+    --header 'X-External-User-ID: external-user-1' \
     --data '{
       "type": "approval",
       "approval_token": "{approval_token}",
@@ -280,11 +610,1625 @@ Keep API Keys on your server side. Do not expose them in browser code or public 
 
     </CodeGroup>
 
+    <CodeGroup title="Response" label="200 SSE">
+
+    ```text
+    event: message_start
+    data: {"event":"message_start","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","message_id":"d57058bd-50f1-4bc2-931d-e22a739190e6","workflow_run_id":"run-01","continuation":true,"created_at":1788854400}}
+
+    id: 1788854400123-0
+    event: workflow_resumed
+    data: {"event":"workflow_resumed","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","message_id":"d57058bd-50f1-4bc2-931d-e22a739190e6","workflow_run_id":"run-01","status":"running"}}
+
+    event: message_end
+    data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","message_id":"d57058bd-50f1-4bc2-931d-e22a739190e6","status":"completed","metadata":{}}}
+    ```
+
+    </CodeGroup>
+
   </Col>
 </Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue"
+  method="POST"
+  title="Answer a Skill User-Input Request"
+  name="#Continue-Agent-User-Input"
+/>
+
+<Row>
+  <Col>
+    Use this only for a Skill `user_input_requested` whose `source` is absent or is not `agent_workflow_question_answer`. That projected workflow source must use workflow continuation, as do `question_answer_requested` and approval events.
+
+    ### Path and Headers
+
+    <Properties>
+      <Property name='conversation_id' type='uuid' propKey='conversation_id'>Required waiting conversation id.</Property>
+      <Property name='message_id' type='uuid' propKey='message_id'>Required waiting message id.</Property>
+      <Property name='request_id' type='string' propKey='request_id'>Required. Copy `request_id` from the active `user_input_requested` event.</Property>
+      <Property name='Authorization' type='string' propKey='Authorization'>Required Agent API Key.</Property>
+      <Property name='X-External-User-ID' type='string' propKey='X-External-User-ID'>Required original conversation owner.</Property>
+      <Property name='Content-Type' type='string' propKey='Content-Type'>Required. Use `application/json`.</Property>
+    </Properties>
+
+    ### Request Body
+
+    <Properties>
+      <Property name='answers' type='object&lt;string,string&gt;' propKey='answers'>Required non-empty map. Each key is a `questions[].id` from the event; each value is the user's answer or selected option value.</Property>
+    </Properties>
+
+    ### `200` Response
+
+    `text/event-stream` for the same message. The resumed model may complete, emit another `user_input_requested`, or enter a different documented waiting state. Continue until `message_end.status` is terminal.
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="Request">
+
+    ```bash
+    curl --no-buffer '{apibase}/agents/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue' \
+      --header 'Content-Type: application/json' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1' \
+      --data '{"answers":{"target":"production"}}'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="Response" label="200 SSE">
+
+    ```text
+    id: 1788854400123-0
+    event: message
+    data: {"event":"message","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","message_id":"d57058bd-50f1-4bc2-931d-e22a739190e6","answer":"I will deploy to production."}}
+
+    event: message_end
+    data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","message_id":"d57058bd-50f1-4bc2-931d-e22a739190e6","status":"completed","metadata":{}}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+## Agent Event Integration Guide
+
+This section defines the SSE contract shared by chat, stream recovery, and continuation endpoints. Dispatch on the native `event:` field first, then read the event payload from `data.data` in the JSON envelope. Do not parse the whole response as one JSON document or wait for the connection to close before rendering.
+
+### Common Envelope and Recovery Fields
+
+<Properties>
+  <Property name="id" type="string?" propKey="SSE id">
+    The SSE transport id outside the JSON envelope. Persist every non-empty value as `lastEventID`;
+    after a disconnect, pass it as `after_id` to the events endpoint. Initial or fallback events may
+    not have an id.
+  </Property>
+  <Property name="event" type="AgentEventName" propKey="SSE event">
+    The native SSE event name and the discriminator your client should switch on.
+  </Property>
+  <Property name="data.event" type="AgentEventName" propKey="event">
+    The event name repeated inside the JSON envelope. It should match the native `event:` field.
+  </Property>
+  <Property name="data.data" type="object" propKey="data">
+    The event payload. Every “Key fields” column below describes fields inside this object.
+  </Property>
+  <Property name="conversation_id" type="uuid" propKey="conversation_id">
+    The conversation that owns the event. Use it when updating local state and calling recovery,
+    stop, or continuation endpoints.
+  </Property>
+  <Property name="message_id" type="uuid" propKey="message_id">
+    The assistant execution that produced the event. Isolate text assembly, deduplication, and
+    waiting state by this id.
+  </Property>
+  <Property name="event_id / sequence" type="string? / integer?" propKey="event_id">
+    The recovery id and sequence of a persisted event. `event_id` matches the SSE `id`. Do not
+    replace it with a timestamp comparison or a client-generated id.
+  </Property>
+  <Property name="created_at / created_at_ms" type="integer?" propKey="created_at">
+    Unix seconds and optional Unix milliseconds for display and diagnostics. They are not
+    deduplication keys.
+  </Property>
+</Properties>
+
+### Recommended Client State Machine
+
+1. On `message_start`, persist `conversation_id` and `message_id` from the response headers or event.
+2. Persist every non-empty SSE `id` immediately and deduplicate by id.
+3. Build the visible answer only from `message`, `message_retract`, and `message_end.answer`; never append progress events to the final answer.
+4. Treat `completed`, `stopped`, `error`, and `failed` as terminal `message_end.status` values. For `waiting_approval` or `waiting_question`, keep the same message and call the matching continuation endpoint.
+5. After a disconnect, recover from the events endpoint. Do not submit the original chat request again.
+
+<CodeGroup title="TypeScript Event Dispatcher">
+
+```ts
+type AgentEvent = { event: string; data: Record<string, unknown> };
+
+function applyAgentEvent(frame: AgentEvent) {
+  const data = frame.data;
+  switch (frame.event) {
+    case 'message_start':
+      saveMessageIdentity(String(data.conversation_id), String(data.message_id));
+      break;
+    case 'message':
+      appendAnswer(String(data.message_id), String(data.answer ?? ''));
+      break;
+    case 'message_retract':
+      retractCandidate(String(data.message_id), String(data.presentation_disposition));
+      break;
+    case 'user_input_requested':
+    case 'approval_requested':
+    case 'question_answer_requested':
+      renderPendingInteraction(frame);
+      break;
+    case 'message_end':
+      transitionMessage(String(data.message_id), String(data.status));
+      break;
+    case 'error':
+      showSafeError(String(data.message ?? 'Agent execution failed'));
+      break;
+    default:
+      updateOptionalProgress(frame); // Unknown events must be safe to ignore.
+  }
+}
+```
+
+</CodeGroup>
+
+### Core Message Events
+
+| Event             | When it appears                                                         | Client action                                                                                               | Key fields                                             |
+| ----------------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `message_start`   | After the assistant message record is created and before answer text    | Save the conversation and message ids immediately; initialize an empty answer                               | `parent_id`, `title`, `model`, `replace`, `created_at` |
+| `message`         | The model produces a new visible answer fragment                        | Append `answer` to the current answer for this `message_id`                                                 | `answer`                                               |
+| `message_retract` | Previously emitted candidate text no longer belongs to the final answer | For `process`, move it out of the final answer and optionally into a process view; for `discard`, remove it | `presentation_disposition`, `answer?`                  |
+| `message_end`     | The current SSE phase ends                                              | Enter a terminal or waiting state from `status`; when present, use `answer` to reconcile the complete text  | `status`, `metadata`, `answer?`                        |
+| `error`           | Streaming or the runtime produces a client-safe error                   | Display `message`, log `code`, and terminate as failed if no later `message_end` arrives                    | `message`, `code?`, `params?`                          |
+
+An empty `message_start.parent_id` identifies a root message. `replace=true` means regeneration is replacing the result on the previous branch. Terminal `message_end.status` values are `completed`, `stopped`, `error`, and `failed`; waiting values are `waiting_approval` and `waiting_question`. `metadata` is an extensible public object, so read known fields and tolerate unknown ones.
+
+<Properties>
+  <Property name="parent_id" type="uuid | empty string" propKey="parent_id">
+    Required. The user or previous message id; a root message uses an empty string.
+  </Property>
+  <Property name="title / model" type="string" propKey="title">
+    Required. The conversation title at message creation and the published model used for this
+    execution.
+  </Property>
+  <Property name="replace" type="boolean" propKey="replace">
+    Required. When `true`, this is a regeneration and the client should replace the prior branch
+    result rather than add a parallel answer.
+  </Property>
+  <Property name="answer" type="string" propKey="answer">
+    A delta to append in `message`, the affected candidate in `message_retract`, or the optional
+    complete stored answer in `message_end`.
+  </Property>
+  <Property
+    name="presentation_disposition"
+    type="process | discard"
+    propKey="presentation_disposition"
+  >
+    Required in `message_retract`. `process` allows moving the candidate to a process view;
+    `discard` removes it completely.
+  </Property>
+  <Property
+    name="status"
+    type="completed | stopped | error | failed | waiting_approval | waiting_question"
+    propKey="status"
+  >
+    Required in `message_end`. The first four terminate the message; the final two require
+    continuing the same message.
+  </Property>
+  <Property name="metadata" type="object" propKey="metadata">
+    Required in `message_end`. Public runtime metadata that may contain usage and waiting context;
+    unknown keys may be added.
+  </Property>
+  <Property name="message / code / params" type="string / (string | number)? / object?" propKey="message">
+    The `error` event's safe text, optional stable error code, and optional structured context. Accept both legacy numeric application codes and string runtime codes.
+  </Property>
+</Properties>
+
+<CodeGroup title="Successful Answer SSE">
+
+```text
+event: message_start
+data: {"event":"message_start","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","message_id":"d57058bd-50f1-4bc2-931d-e22a739190e6","parent_id":"","title":"Quarterly analysis","model":"published-model","replace":false,"created_at":1788854400}}
+
+id: 1788854400123-0
+event: message
+data: {"event":"message","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","message_id":"d57058bd-50f1-4bc2-931d-e22a739190e6","answer":"First conclusion.","event_id":"1788854400123-0","sequence":0,"created_at":1788854400,"created_at_ms":1788854400123}}
+
+event: message_end
+data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","message_id":"d57058bd-50f1-4bc2-931d-e22a739190e6","status":"completed","metadata":{"usage":{"total_tokens":128}}}}
+```
+
+</CodeGroup>
+
+### Model Progress and File Parsing Events
+
+| Event                       | Purpose and trigger                                                            | Client action                                                                                          | Key fields                                                                                                  |
+| --------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `agent_progress`            | The model is still processing, reviewing a tool result, or preparing an action | Show a non-sensitive loading state; never treat it as model reasoning text                             | `phase`, `progress_id`, `activity`, `stage`, `source`, `status`, `round`, `elapsed_ms`                      |
+| `agent_intermediate_answer` | The Agent emits a separately presentable intermediate answer                   | Group by `answer_id`; append when `delta=true`, replace otherwise, and close the item when `done=true` | `answer_id`, `title?`, `content`, `delta`, `index`, `done`, `status`                                        |
+| `file_parse_start`          | Parsing starts for one uploaded file                                           | Show parse progress for file `index` of `total`                                                        | Common file-parse fields and `status=parsing`                                                               |
+| `file_parse_end`            | File parsing completes or content is policy-filtered                           | Complete the file progress and inspect `content_status` before using the content                       | Common fields plus `content_status?`, `content_chars?`, `from_cache?`, `vision_detail?`, `filtered_reason?` |
+| `file_parse_error`          | Parsing fails for one file                                                     | Mark that file as failed and display the safe `message`; do not automatically fail other files         | Common fields plus `message`, `status=error`                                                                |
+
+<Properties>
+  <Property name="agent_progress.phase" type="model_processing" propKey="phase">
+    The fixed progress event family.
+  </Property>
+  <Property name="agent_progress.progress_id" type="string" propKey="progress_id">
+    A stable identifier for one message and model round. Update the existing progress item instead
+    of creating duplicates.
+  </Property>
+  <Property
+    name="agent_progress.activity"
+    type="awaiting_response | reviewing_tool_result | reasoning | preparing_action"
+    propKey="activity"
+  >
+    A safe high-level activity label. `reasoning` names a phase; it does not contain or imply
+    displayable chain-of-thought.
+  </Property>
+  <Property name="agent_progress.stage" type="initial | extended | long_running" propKey="stage">
+    A duration-based display stage that can select increasingly explicit “still working” copy.
+  </Property>
+  <Property name="agent_progress.source" type="runtime | provider_signal" propKey="source">
+    Whether progress was inferred by the runtime or emitted as a provider signal.
+  </Property>
+  <Property
+    name="agent_progress.status / round / elapsed_ms"
+    type="running / integer / integer"
+    propKey="round"
+  >
+    The fixed running status, one-based model round, and milliseconds elapsed in that round.
+  </Property>
+  <Property name="answer_id / title" type="string / string?" propKey="answer_id">
+    The intermediate-answer grouping id and optional display title.
+  </Property>
+  <Property name="content / delta" type="string / boolean" propKey="content">
+    Intermediate content and whether to append it or replace the current grouped content.
+  </Property>
+  <Property name="index / done / status" type="integer / boolean / string" propKey="done">
+    The zero-based chunk index, completion flag, and intermediate-answer lifecycle status.
+  </Property>
+  <Property name="file_id / name / kind" type="uuid / string / string" propKey="file_id">
+    The file being parsed, its original name, and parse category.
+  </Property>
+  <Property name="index / total" type="integer" propKey="index">
+    The one-based file position and total number of files in this request.
+  </Property>
+  <Property name="status" type="parsing | completed | error" propKey="status">
+    The current parse result, corresponding to start, successful completion, or failure.
+  </Property>
+  <Property
+    name="content_status / content_chars"
+    type="string? / integer?"
+    propKey="content_status"
+  >
+    Extracted-content availability and character count.
+  </Property>
+  <Property name="from_cache / vision_detail" type="boolean? / string?" propKey="from_cache">
+    Whether cached content was reused and the vision-processing detail for image-like files.
+  </Property>
+  <Property name="filtered_reason / message" type="string?" propKey="filtered_reason">
+    Why content was unavailable or filtered, and the safe error text for `file_parse_error`.
+  </Property>
+</Properties>
+
+### Skill and Tool Events
+
+| Event                      | Purpose and trigger                                                                 | Client action                                                                        | Key fields                                                                                                  |
+| -------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `skill_load_start`         | Compatibility execution begins loading Skill instructions                           | Optionally show loading progress; native tool loops usually do not emit this event   | `skill_id`, `status?`, `effective_version?`                                                                 |
+| `skill_load_end`           | Compatibility execution finishes loading the Skill                                  | Finish the load indicator; this does not mean a tool has run                         | `skill_id`, `status?`, `instruction_digest?`, `instruction_chars?`                                          |
+| `skill_reference_read`     | A Skill reads one of its public references                                          | Optionally show it in the execution trace                                            | `skill_id`, `path`, `status?`, `access_status?`                                                             |
+| `skill_call_start`         | A Skill tool invocation begins                                                      | Create a run step keyed by `invocation_id` and show summarized `arguments`           | `skill_id`, `tool_name`, `invocation_id`, `arguments?`, `arguments_summary?`, `status?`                     |
+| `skill_call_end`           | A tool invocation succeeds                                                          | Complete the matching `invocation_id` step and read the public `result`              | `skill_id`, `tool_name`, `invocation_id`, `result?`, `duration_ms?`, `status`                               |
+| `skill_call_error`         | A tool invocation fails                                                             | Mark the invocation failed and show the safe `message`; the model may still continue | `skill_id`, `tool_name`, `invocation_id`, `message?`, `error_code?`, `duration_ms?`, `status`               |
+| `skill_artifact_created`   | A Skill creates a downloadable file artifact                                        | Render a file card, prefer `download_url`, and honor `expires_at`                    | Invocation ids plus `artifact_id?`, `file_id?`, `filename?`, `mime_type?`, `size?`, `url?`, `download_url?` |
+| `tool_governance_decision` | The published Agent makes a non-interactive authorization decision for a bound tool | Optionally show or log the allow/deny reason; never open a human approval dialog     | `correlation_id`, `decision`, `requires_approval=false`, `reason?`, `risk_level?`, `effect?`, `asset_type?` |
+
+`arguments`, `arguments_summary`, `result`, and `governance` are public summaries, not stable raw provider objects. They may be displayed or logged, but business logic must not depend on undocumented nested fields.
+
+<Properties>
+  <Property name="skill_id" type="string" propKey="skill_id">
+    The Skill that emitted the event.
+  </Property>
+  <Property name="tool_name / invocation_id" type="string?" propKey="invocation_id">
+    The tool name and one invocation id. Start, end, error, and artifact events use the same
+    `invocation_id` for correlation.
+  </Property>
+  <Property name="kind / path" type="string?" propKey="kind">
+    An event subtype and public reference path.
+  </Property>
+  <Property name="arguments / arguments_summary" type="object?" propKey="arguments">
+    Public tool arguments and a redacted compact display summary. Prefer the summary for UI.
+  </Property>
+  <Property name="status / duration_ms" type="string? / integer?" propKey="status">
+    Invocation status and elapsed milliseconds.
+  </Property>
+  <Property name="result / governance" type="object?" propKey="result">
+    Public tool result and governance metadata. Both may gain unknown keys.
+  </Property>
+  <Property name="message / error_code" type="string?" propKey="error_code">
+    A client-safe error description and stable error code.
+  </Property>
+  <Property
+    name="instruction_digest / instruction_chars / effective_version"
+    type="string? / integer? / string?"
+    propKey="instruction_digest"
+  >
+    The digest, character count, and version of effective Skill instructions in compatibility mode.
+    Use these fields for diagnostics, not for displaying the original instructions.
+  </Property>
+  <Property name="policy_state / access_status" type="string?" propKey="access_status">
+    Skill policy evaluation and reference or tool access results.
+  </Property>
+  <Property name="artifact_id / artifact_type" type="string? / file?" propKey="artifact_id">
+    The runtime artifact id and fixed file category.
+  </Property>
+  <Property name="file_id / tool_file_id / upload_file_id" type="string?" propKey="file_id">
+    Persisted file, tool-runtime file, and related upload record identifiers.
+  </Property>
+  <Property
+    name="file_type / filename / extension / mime_type / size"
+    type="string? / string? / string? / string? / integer?"
+    propKey="filename"
+  >
+    Application file category, suggested download name, extension without a dot, media type, and
+    size in bytes.
+  </Property>
+  <Property name="url / download_url / transfer_method" type="string?" propKey="download_url">
+    Display or download addresses and retrieval method. Prefer `download_url` when present.
+  </Property>
+  <Property name="lifecycle / expires_at" type="string? / unknown?" propKey="expires_at">
+    Artifact retention state and runtime-provided expiration representation.
+  </Property>
+  <Property name="target / workspace_id / folder_id" type="string?" propKey="target">
+    Asset destination category, workspace, and folder.
+  </Property>
+  <Property
+    name="operation_id / asset_operation_audit"
+    type="string? / object?"
+    propKey="operation_id"
+  >
+    Asset operation id and public audit summary.
+  </Property>
+  <Property name="correlation_id" type="string" propKey="correlation_id">
+    Correlates a governance decision, tool invocation, and asset audit. It is not a continuation
+    parameter.
+  </Property>
+  <Property name="decision" type="string" propKey="decision">
+    Usually an allow or deny decision. A denial means the tool did not run; the final answer may
+    still complete normally.
+  </Property>
+  <Property name="requires_approval" type="false" propKey="requires_approval">
+    Always `false` in the published Agent API.
+  </Property>
+  <Property name="approval_every_invocation" type="boolean?" propKey="approval_every_invocation">
+    Whether policy forbids reusing one authorization for later invocations. This is an audit field;
+    it never puts the external user into an approval flow.
+  </Property>
+  <Property name="reason / risk_level / effect / asset_type" type="string?" propKey="reason">
+    A displayable decision reason, risk level, expected external side effect, and affected asset
+    type.
+  </Property>
+  <Property name="tool_id / governed_tool_id" type="string?" propKey="governed_tool_id">
+    The runtime tool id and stable governed-tool definition id.
+  </Property>
+  <Property
+    name="provider_type / provider_id / integration_id / action_id"
+    type="string?"
+    propKey="provider_id"
+  >
+    Integration provider, configuration, and action identifiers.
+  </Property>
+  <Property
+    name="external_destination / connection_name / connection_display_name"
+    type="string?"
+    propKey="external_destination"
+  >
+    The external destination, internal connection name, and user-facing connection label.
+  </Property>
+  <Property name="approval_event / asset_operation_audit" type="object?" propKey="approval_event">
+    Optional public authorization metadata and asset-operation audit summary. Unknown keys may be
+    added.
+  </Property>
+</Properties>
+
+### User-Input Event and Routing
+
+| Event                  | Purpose and trigger                                                           | Client action                                                                                                                                     | Key fields                                                                                                 |
+| ---------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `user_input_requested` | A Skill needs input, or a workflow question is projected into the common input shape | Render the questions and route by `source`; use workflow continuation for `agent_workflow_question_answer`, otherwise submit `answers` through user-input continuation | `request_id`, `message?`, `questions[]`, `created_at`, `source?`, `workflow_run_id?`, `node_id?`, `round?` |
+
+<Properties>
+  <Property name="request_id" type="string" propKey="request_id">
+    The unique id of this pending request. Copy it into the Skill continuation path only when
+    `source` is not `agent_workflow_question_answer`.
+  </Property>
+  <Property name="message" type="string?" propKey="message">
+    Optional context shown before the questions.
+  </Property>
+  <Property name="questions" type="array&lt;UserInputQuestion&gt;" propKey="questions">
+    At least one question, rendered in array order.
+  </Property>
+  <SubProperty name="questions[].id" type="string">
+    The question id and the key used in the continuation request's `answers` object.
+  </SubProperty>
+  <SubProperty name="questions[].question" type="string">
+    The question text shown to the end user.
+  </SubProperty>
+  <SubProperty name="questions[].options" type="array&lt;string | { label, description? }&gt;?">
+    Render choices when present; otherwise render free-form input.
+  </SubProperty>
+  <Property
+    name="source / workflow_run_id / node_id / round"
+    type="string? / integer?"
+    propKey="source"
+  >
+    `source=agent_workflow_question_answer` is a routing discriminator: submit through workflow
+    continuation with `type=question_answer`. Other or absent values use Skill user-input
+    continuation. The remaining fields correlate workflow context and repeated rounds.
+  </Property>
+</Properties>
+
+<CodeGroup title="Pending User Input SSE">
+
+```text
+event: user_input_requested
+data: {"event":"user_input_requested","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","message_id":"d57058bd-50f1-4bc2-931d-e22a739190e6","request_id":"ask-target","message":"Choose a target environment","questions":[{"id":"target","question":"Where should this be deployed?","options":[{"label":"Staging","description":"Validation only"},{"label":"Production"}]}],"created_at":1788854400}}
+
+event: message_end
+data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","message_id":"d57058bd-50f1-4bc2-931d-e22a739190e6","status":"waiting_question","metadata":{}}}
+```
+
+</CodeGroup>
+
+### Agent Memory Events
+
+| Event           | Purpose and trigger                                                           | Client action                                    | Event-specific value |
+| --------------- | ----------------------------------------------------------------------------- | ------------------------------------------------ | -------------------- |
+| `memory_create` | An Agent Memory slot receives its first value                                 | Refresh that slot and optionally offer undo      | `action=create`      |
+| `memory_update` | An existing slot is replaced or automatically updated                         | Use the new `revision` to invalidate local cache | `action=update`      |
+| `memory_delete` | One slot value is deleted                                                     | Clear that slot in the UI                        | `action=delete`      |
+| `memory_clear`  | Writable Agent Memory slots for the current external user are cleared in bulk | Refresh the complete Agent Memory view           | `action=clear`       |
+
+<Properties>
+  <Property name="memory_scope" type="agent" propKey="memory_scope">
+    Always `agent` in this API. Account-level memory is outside this contract.
+  </Property>
+  <Property
+    name="action / status"
+    type="create | update | delete | clear / string"
+    propKey="action"
+  >
+    The mutation action and overall execution status.
+  </Property>
+  <Property name="key / display_name" type="string?" propKey="key">
+    The published slot key and display name. A bulk clear may omit a single key.
+  </Property>
+  <Property name="mutation_status / source_kind" type="string?" propKey="mutation_status">
+    The detailed mutation result and source, such as explicit management or automatic extraction.
+  </Property>
+  <Property name="operation_id" type="uuid?" propKey="operation_id">
+    When present, it can be passed to the Memory undo endpoint.
+  </Property>
+  <Property name="revision" type="integer?" propKey="revision">
+    The slot revision after the mutation, used for concurrency control and cache invalidation.
+  </Property>
+  <Property name="undoable_until" type="date-time?" propKey="undoable_until">
+    The undo deadline. Hide or disable undo after this time.
+  </Property>
+</Properties>
+
+### Agent-Bound Workflow Events
+
+Workflow events describe execution traces and pending interactions. Maintain the final assistant answer only from core message events. Each event below uses the common envelope and adds the listed workflow fields.
+
+| Event                       | Meaning and client action                                               | Key fields                                                                                                                                   |
+| --------------------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `workflow_started`          | The workflow starts; create a top-level run step                        | `workflow_run_id` or `id`, `workflow_id`, `status`                                                                                           |
+| `workflow_resumed`          | A paused workflow resumes; mark the top-level run as running            | `workflow_run_id`, `status`                                                                                                                  |
+| `workflow_paused`           | The workflow pauses; wait for the adjacent approval or question event   | `workflow_run_id`, `status`, `reasons?`, `paused_at?`                                                                                        |
+| `workflow_finished`         | The workflow succeeds; complete the top-level step                      | `workflow_run_id`, `status`, `outputs?`, `elapsed_time?`, `total_tokens?`, `total_steps?`, `finished_at?`                                    |
+| `workflow_failed`           | The workflow fails; show a client-safe error summary                    | Terminal fields above plus `error?`                                                                                                          |
+| `workflow_stopped`          | A user or the system stops the workflow                                 | Terminal fields above plus `reasons?`                                                                                                        |
+| `node_started`              | A workflow node starts; create a child step                             | `id`, `node_id`, `node_type`, `title?`, `index?`, `inputs?`, `created_at?`                                                                   |
+| `node_finished`             | A workflow node ends; complete it or mark it failed                     | Start fields plus `status?`, `process_data?`, `outputs?`, `output_handle?`, `error?`, `elapsed_time?`, `execution_metadata?`, `finished_at?` |
+| `approval_requested`        | The workflow needs human approval; render the nested form              | `approval_form_id`, `approval_token?`, `approval_url?`, `ui_approval_allowed`, `approval_form.{id,node_id,node_title,content,fields,actions,submit_methods,expiration_at,token?}` |
+| `approval_result_filled`    | An approval result was submitted; render the form as a read-only result | `form_id`, `action_id`, `action_label?`, `inputs?`, `rendered_content?`                                                                      |
+| `approval_expired`          | An approval expired; disable submission                                 | `form_id`, `expires_at?`, `status?`                                                                                                          |
+| `question_answer_requested` | The workflow needs an answer; render the question and choices           | `workflow_run_id`, `node_id`, `node_title?`, `question`, `choices?`, `round?`                                                                |
+| `question_answer_submitted` | The answer was submitted; display the selected answer                   | `workflow_run_id`, `node_id`, `answer`, `trigger_id?`, `round?`                                                                              |
+| `iteration_started`         | An iteration container starts                                           | `id`, `node_id`, `node_type`, `title?`, `inputs?`, `status?`                                                                                 |
+| `iteration_next`            | The next iteration item starts; update the current index                | Container fields plus `index` or `iteration_index`                                                                                           |
+| `iteration_completed`       | All iteration items ran and the container is ready to aggregate         | Container fields plus `steps?`, `outputs?`                                                                                                   |
+| `iteration_succeeded`       | The iteration container terminates successfully                         | Completed fields plus `elapsed_time?`, `finished_at?`                                                                                        |
+| `iteration_failed`          | The iteration container terminates with failure                         | Completed fields plus `error?`, `elapsed_time?`, `finished_at?`                                                                              |
+| `loop_started`              | A loop container starts                                                 | `id`, `node_id`, `node_type`, `title?`, `inputs?`, `status?`                                                                                 |
+| `loop_next`                 | The next loop round starts; update the current index                    | Container fields plus `index` or `loop_index`                                                                                                |
+| `loop_completed`            | The loop condition ends and the container is ready to aggregate         | Container fields plus `steps?`, `outputs?`                                                                                                   |
+| `loop_succeeded`            | The loop container terminates successfully                              | Completed fields plus `elapsed_time?`, `finished_at?`                                                                                        |
+| `loop_failed`               | The loop container terminates with failure                              | Completed fields plus `error?`, `elapsed_time?`, `finished_at?`                                                                              |
+| `text_chunk`                | A conversational workflow appends visible text                          | `workflow_run_id?`, `text?`, `answer?`, `data?`                                                                                              |
+| `text_replace`              | A conversational workflow replaces previously emitted text              | `workflow_run_id?`, `text?`, `answer?`, `data?`                                                                                              |
+
+<Properties>
+  <Property
+    name="id / workflow_run_id / workflow_id / task_id"
+    type="string?"
+    propKey="workflow_run_id"
+  >
+    Workflow run, definition, and task identifiers. Prefer `workflow_run_id` when correlating one
+    run.
+  </Property>
+  <Property name="node_id / node_type / title / node_title" type="string?" propKey="node_id">
+    Node identity, type, and display titles.
+  </Property>
+  <Property
+    name="status / round / index / iteration_index / loop_index"
+    type="string? / integer?"
+    propKey="status"
+  >
+    Lifecycle status, a one-based interaction round, and zero-based container indexes.
+  </Property>
+  <Property name="iteration / pre_loop_output" type="integer? / unknown?" propKey="iteration">
+    A runtime iteration counter and the value captured before a loop begins.
+  </Property>
+  <Property name="approval_form_id / approval_token / approval_url / ui_approval_allowed" type="string? / boolean" propKey="approval_token">
+    Top-level approval identity, credential, optional out-of-band URL, and inline API permission.
+    Copy `approval_token` unchanged into continuation. When `ui_approval_allowed=false`, the
+    credential is redacted and `approval_url` or another configured approval channel must be used.
+  </Property>
+  <Property name="approval_form" type="object" propKey="approval_form">
+    Nested display model for `approval_requested`, containing `id`, `node_id`, `node_title`,
+    `content`, `fields`, `actions`, `submit_methods`, `expiration_at`, and compatibility `token`.
+  </Property>
+  <Property
+    name="approval_form.fields / approval_form.actions / approval_form.submit_methods"
+    type="array? / array? / object?"
+    propKey="actions"
+  >
+    Approval field definitions, server-advertised actions, and runtime submission methods. Render
+    only the actions returned here.
+  </Property>
+  <Property name="approval_form.fields[]" type="object" propKey="required">
+    A field can provide stable `id`, `key`, or `name`, plus `label`, control `type`, `required`,
+    `default` / `default_value`, and `options`. Preserve unknown fields for future control types.
+  </Property>
+  <Property name="approval_form.actions[]" type="object" propKey="style">
+    Each action has the submitted `id`, display `label`, and optional `style`. Submit only ids
+    advertised by the server.
+  </Property>
+  <Property name="approval_form.submit_methods.webapp.enabled / resolved_default_values" type="boolean? / object?" propKey="enabled">
+    `webapp.enabled` controls inline approval for published WebApp and Agent API clients;
+    `resolved_default_values` can initialize form controls.
+  </Property>
+  <Property name="approval_form.expiration_at / approval_form.token" type="unknown? / string?" propKey="expiration_at">
+    Form expiration and compatibility credential. Prefer the top-level `approval_token`, and
+    disable continuation after expiration.
+  </Property>
+  <Property name="action_id / action_label / rendered_content" type="string?" propKey="action_id">
+    The submitted approval action id, display label, and rendered result.
+  </Property>
+  <Property
+    name="question / choices / answer"
+    type="string? / array? / unknown?"
+    propKey="question"
+  >
+    The user-facing question, optional choices, and runtime-defined scalar or structured answer.
+  </Property>
+  <Property name="trigger_id" type="string?" propKey="trigger_id">
+    A runtime trigger id supplied for the submitted answer.
+  </Property>
+  <Property name="inputs / outputs / process_data" type="object?" propKey="outputs">
+    Public node or workflow input, output, and process summaries. Large objects may be truncated.
+  </Property>
+  <Property
+    name="inputs_truncated / outputs_truncated / output_handle"
+    type="boolean? / string?"
+    propKey="outputs_truncated"
+  >
+    Signals truncated payloads and provides an optional correlation handle for larger output.
+  </Property>
+  <Property name="error / reasons" type="unknown? / array?" propKey="error">
+    Failure or pause reasons. Use them for display and diagnostics, not to guess a continuation
+    endpoint.
+  </Property>
+  <Property
+    name="elapsed_time / total_tokens / total_steps / steps"
+    type="number?"
+    propKey="elapsed_time"
+  >
+    Execution statistics.
+  </Property>
+  <Property name="paused_at / finished_at / finished_at_ms" type="integer?" propKey="finished_at">
+    Runtime-provided pause or completion timestamps.
+  </Property>
+  <Property name="extras / metadata / execution_metadata" type="object?" propKey="metadata">
+    Forward-compatible extension objects. Clients must tolerate new keys.
+  </Property>
+  <Property name="text / answer / data" type="string? / string? / object?" propKey="text">
+    Primary text, compatibility answer, and additional metadata for `text_chunk` and `text_replace`.
+    Prefer `text`, then fall back to `answer` when absent.
+  </Property>
+</Properties>
+
+### Continuing Public Wait States
+
+| Request event / source | `message_end.status` | Persist | Call |
+| --- | --- | --- | --- |
+| `approval_requested` | `waiting_approval` | `conversation_id`, `message_id`, top-level `approval_token`, `ui_approval_allowed`, nested `approval_form`, and selected `action` | Workflow continuation with `type=approval` |
+| `question_answer_requested` | `waiting_question` | `conversation_id`, `message_id`, the answer, and optional choice id | Workflow continuation with `type=question_answer` |
+| `user_input_requested` with `source=agent_workflow_question_answer` | `waiting_question` | Conversation/message ids, answer, and optional choice id | Workflow continuation with `type=question_answer` |
+| Other `user_input_requested` | `waiting_question` | Conversation/message/request ids and `answers` keyed by question id | Skill user-input continuation |
+
+The continuation response is another SSE stream for the same message and may pause again. Do not create a new message; keep processing until a terminal status. Tool governance is non-interactive for a published Agent: `tool_governance_decision.requires_approval` is always `false` and has no human continuation endpoint.
+
+---
+
+## Conversation Management
+
+Every operation in this section requires the same API Key and `X-External-User-ID` that created the conversation. Conversations created before external-user scoping was introduced have no user assignment and are not returned by these user-scoped operations.
+
+<Heading
+  url="/api/v1/agents/conversations"
+  method="GET"
+  title="List Conversations"
+  name="#List-Agent-Conversations"
+/>
+
+<Row>
+  <Col>
+    Returns the current external user's conversations ordered by most recently updated.
+
+    ### Query and Headers
+
+    <Properties>
+      <Property name='Authorization' type='string' propKey='Authorization'>Required Agent API Key.</Property>
+      <Property name='X-External-User-ID' type='string' propKey='X-External-User-ID'>Required conversation owner.</Property>
+      <Property name='page' type='integer' propKey='page'>Optional, minimum `1`, default `1`.</Property>
+      <Property name='limit' type='integer' propKey='limit'>Optional, range `1`–`100`, default `20`.</Property>
+    </Properties>
+
+    ### Response `data`
+
+    `data.data[]` contains conversation objects. `page`, `limit`, `total`, and `has_more` describe pagination.
+
+    <Properties>
+      <Property name='id' type='uuid' propKey='id'>Conversation id used by detail, message, recovery, stop, and continuation endpoints.</Property>
+      <Property name='organization_id / workspace_id / account_id' type='uuid' propKey='organization_id'>Server-side ownership scope identifiers. `workspace_id` can be `null`.</Property>
+      <Property name='title / status / runtime_status' type='string' propKey='title'>Display title, lifecycle status, and current execution state.</Property>
+      <Property name='conversation_type / source' type='string' propKey='conversation_type'>Conversation kind and creation surface.</Property>
+      <Property name='source_conversation_id / source_web_app_id' type='string | uuid | null' propKey='source_conversation_id'>Optional identifiers linking the conversation to its source surface.</Property>
+      <Property name='current_leaf_message_id / active_message_id' type='uuid | null' propKey='current_leaf_message_id'>Selected branch leaf and currently running message.</Property>
+      <Property name='dialogue_count' type='integer' propKey='dialogue_count'>Number of dialogue turns.</Property>
+      <Property name='metadata' type='object' propKey='metadata'>Runtime presentation metadata; ignore unknown keys.</Property>
+      <Property name='created_at / updated_at' type='integer' propKey='created_at'>Unix timestamps in seconds.</Property>
+    </Properties>
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="Request">
+
+    ```bash
+    curl '{apibase}/agents/conversations?page=1&limit=20' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="Response" label="200 JSON">
+
+    ```json
+    {
+      "code": "0",
+      "message": "success",
+      "data": {
+        "data": [{
+          "id": "c4a9...",
+          "organization_id": "42ce...",
+          "workspace_id": "711e...",
+          "account_id": "5c50...",
+          "title": "Quarterly report",
+          "status": "normal",
+          "runtime_status": "idle",
+          "conversation_type": "chat",
+          "current_leaf_message_id": "fd41...",
+          "dialogue_count": 3,
+          "source": "external-api",
+          "metadata": {"surface":"external_page_chat"},
+          "created_at": 1788854400,
+          "updated_at": 1788854460
+        }],
+        "page": 1,
+        "limit": 20,
+        "total": 1,
+        "has_more": false
+      }
+    }
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/conversations/search"
+  method="GET"
+  title="Search Conversations and Messages"
+  name="#Search-Agent-Conversations"
+/>
+
+<Row>
+  <Col>
+    Searches conversation titles and message text within the current external user's scope.
+
+    ### Query and Headers
+
+    <Properties>
+      <Property name='Authorization' type='string' propKey='Authorization'>Required Agent API Key.</Property>
+      <Property name='X-External-User-ID' type='string' propKey='X-External-User-ID'>Required conversation owner.</Property>
+      <Property name='query' type='string' propKey='query'>Search text. Blank input returns an empty array.</Property>
+      <Property name='limit' type='integer' propKey='limit'>Optional result limit, default `20`, maximum `50`.</Property>
+    </Properties>
+
+    ### Response `data[]`
+
+    <Properties>
+      <Property name='type' type='conversation | message' propKey='type'>Where the match occurred.</Property>
+      <Property name='conversation_id / conversation_title' type='string' propKey='conversation_id'>Owning conversation.</Property>
+      <Property name='message_id' type='uuid' propKey='message_id'>Present for message matches.</Property>
+      <Property name='snippet' type='string' propKey='snippet'>Matched title or text excerpt.</Property>
+      <Property name='updated_at' type='integer' propKey='updated_at'>Unix timestamp in seconds.</Property>
+    </Properties>
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="Request">
+
+    ```bash
+    curl --get '{apibase}/agents/conversations/search' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1' \
+      --data-urlencode 'query=quarterly revenue' \
+      --data-urlencode 'limit=20'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="Response" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":[{"type":"message","conversation_id":"c4a9...","conversation_title":"Quarterly report","message_id":"fd41...","snippet":"Quarterly revenue increased...","updated_at":1788854460}]}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/conversations/{conversation_id}"
+  method="GET"
+  title="Get Conversation"
+  name="#Get-Agent-Conversation"
+/>
+
+<Row>
+  <Col>
+    ### Path and Headers
+
+    <Properties>
+      <Property name='conversation_id' type='uuid' propKey='conversation_id'>Required conversation id.</Property>
+      <Property name='Authorization' type='string' propKey='Authorization'>Required Agent API Key.</Property>
+      <Property name='X-External-User-ID' type='string' propKey='X-External-User-ID'>Required owner; another user's conversation returns `404`.</Property>
+    </Properties>
+
+    ### Response
+
+    `data` is one conversation object with the fields documented by List Conversations, including branch ids, runtime status, metadata, and timestamps.
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="Request">
+
+    ```bash
+    curl '{apibase}/agents/conversations/{conversation_id}' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="Response" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"id":"c4a9...","title":"Quarterly report","status":"normal","runtime_status":"idle","conversation_type":"chat","current_leaf_message_id":"fd41...","dialogue_count":3,"source":"external-api","created_at":1788854400,"updated_at":1788854460}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/conversations/{conversation_id}"
+  method="PATCH"
+  title="Update Conversation"
+  name="#Update-Agent-Conversation"
+/>
+
+<Row>
+  <Col>
+    Updates one or more conversation fields. Omitted fields remain unchanged.
+
+    ### Path, Headers, and Body
+
+    <Properties>
+      <Property name='conversation_id' type='uuid' propKey='conversation_id'>Required conversation id.</Property>
+      <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>Required API Key and owner identity.</Property>
+      <Property name='title' type='string' propKey='title'>Optional display title. Blank input becomes the default title.</Property>
+      <Property name='status' type='normal | archived' propKey='status'>Optional conversation lifecycle status.</Property>
+      <Property name='current_leaf_message_id' type='uuid' propKey='current_leaf_message_id'>Optional message in this conversation to select as the active branch leaf.</Property>
+    </Properties>
+
+    ### Response
+
+    `data` is the complete updated conversation object.
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="Request">
+
+    ```bash
+    curl --request PATCH '{apibase}/agents/conversations/{conversation_id}' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1' \
+      --header 'Content-Type: application/json' \
+      --data '{"title":"FY 2026 analysis","status":"archived"}'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="Response" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"id":"c4a9...","title":"FY 2026 analysis","status":"archived","runtime_status":"idle","conversation_type":"chat","dialogue_count":3,"source":"external-api","created_at":1788854400,"updated_at":1788854520}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/conversations/{conversation_id}"
+  method="DELETE"
+  title="Delete Conversation"
+  name="#Delete-Agent-Conversation"
+/>
+
+<Row>
+  <Col>
+    Soft-deletes a conversation owned by the current API Key and external user.
+
+    ### Path and Headers
+
+    <Properties>
+      <Property name='conversation_id' type='uuid' propKey='conversation_id'>Required conversation id.</Property>
+      <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>Required API Key and owner identity.</Property>
+    </Properties>
+
+    ### Response
+
+    `data.result` is `success` after deletion.
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="Request">
+
+    ```bash
+    curl --request DELETE '{apibase}/agents/conversations/{conversation_id}' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="Response" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"result":"success"}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/conversations/{conversation_id}/messages"
+  method="GET"
+  title="List Conversation Messages"
+  name="#List-Agent-Messages"
+/>
+
+<Row>
+  <Col>
+    Restores a conversation's persisted message history.
+
+    ### Path, Query, and Headers
+
+    <Properties>
+      <Property name='conversation_id' type='uuid' propKey='conversation_id'>Required conversation id.</Property>
+      <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>Required API Key and owner identity.</Property>
+      <Property name='page' type='integer' propKey='page'>Optional, default `1`.</Property>
+      <Property name='limit' type='integer' propKey='limit'>Optional, range `1`–`200`, default `100`.</Property>
+    </Properties>
+
+    ### Response `data.data[]`
+
+    <Properties>
+      <Property name='id / conversation_id / parent_id' type='uuid' propKey='id'>Message, conversation, and optional parent identifiers.</Property>
+      <Property name='query / answer' type='string' propKey='query'>User input and persisted assistant answer.</Property>
+      <Property name='status / error' type='string' propKey='status'>Lifecycle status and optional error.</Property>
+      <Property name='model_provider / model_name' type='string' propKey='model_name'>Published model metadata.</Property>
+      <Property name='billing_reason_source / source_message_id' type='string | null' propKey='billing_reason_source'>Optional billing attribution and upstream message identifier.</Property>
+      <Property name='model_parameters / metadata' type='object' propKey='metadata'>Recorded runtime values; ignore unknown keys.</Property>
+      <Property name='created_at / updated_at' type='integer' propKey='created_at'>Unix timestamps in seconds.</Property>
+    </Properties>
+
+    Pagination uses `page`, `limit`, `total`, and `has_more` beside `data.data[]`.
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="Request">
+
+    ```bash
+    curl '{apibase}/agents/conversations/{conversation_id}/messages?page=1&limit=100' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="Response" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"data":[{"id":"fd41...","conversation_id":"c4a9...","query":"Summarize the report","answer":"Revenue increased 18%.","status":"completed","model_provider":"openai","model_name":"gpt-5","metadata":{"usage":{"total_tokens":321}},"created_at":1788854400,"updated_at":1788854460}],"page":1,"limit":100,"total":1,"has_more":false}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/conversations/{conversation_id}/stop"
+  method="POST"
+  title="Stop Active Conversation Run"
+  name="#Stop-Agent-Conversation"
+/>
+
+<Row>
+  <Col>
+    Stops the active model generation, Skill execution, or workflow continuation.
+
+    ### Path and Headers
+
+    <Properties>
+      <Property name='conversation_id' type='uuid' propKey='conversation_id'>Required conversation id.</Property>
+      <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>Required API Key and owner identity.</Property>
+    </Properties>
+
+    ### Response `data`
+
+    <Properties>
+      <Property name='conversation_id' type='uuid' propKey='conversation_id'>Stopped conversation.</Property>
+      <Property name='message_id' type='uuid' propKey='message_id'>Present when a message was actively stopped.</Property>
+      <Property name='runtime_status' type='string' propKey='runtime_status'>Conversation execution state after the operation.</Property>
+      <Property name='status' type='string' propKey='status'>Stopped message status, or conversation runtime status when no message was active.</Property>
+    </Properties>
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="Request">
+
+    ```bash
+    curl --request POST '{apibase}/agents/conversations/{conversation_id}/stop' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="Response" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"conversation_id":"c4a9...","message_id":"fd41...","runtime_status":"idle","status":"stopped"}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/messages/{message_id}/regenerate"
+  method="POST"
+  title="Regenerate Root Message"
+  name="#Regenerate-Agent-Message"
+/>
+
+<Row>
+  <Col>
+    Regenerates a root message with the latest published Agent model and parameters.
+
+    ### Path, Headers, and Optional Body
+
+    <Properties>
+      <Property name='message_id' type='uuid' propKey='message_id'>Required root message id.</Property>
+      <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>Required API Key and owner identity.</Property>
+      <Property name='query' type='string' propKey='query'>Optional replacement user question. Omit to reuse the original query.</Property>
+    </Properties>
+
+    ### Response
+
+    `200 text/event-stream`. It creates a new assistant message and uses the same SSE envelope and event fields as Send Chat Message. Save the new `message_id` from `message_start`.
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="Request">
+
+    ```bash
+    curl --no-buffer --request POST '{apibase}/agents/messages/{message_id}/regenerate' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1' \
+      --header 'Content-Type: application/json' \
+      --data '{"query":"Give me a shorter answer"}'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="Response" label="200 SSE">
+
+    ```text
+    event: message_start
+    data: {"event":"message_start","data":{"conversation_id":"c4a9...","message_id":"new-message-id","parent_id":"original-parent-id"}}
+
+    event: message_end
+    data: {"event":"message_end","data":{"conversation_id":"c4a9...","message_id":"new-message-id","status":"completed","metadata":{"usage":{"total_tokens":128}}}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+## Agent Memory
+
+Every Memory endpoint requires `X-External-User-ID` and can only address slots declared by the latest published Agent configuration. Use the same id as chat so conversation and long-term Memory ownership stay aligned.
+
+<Heading
+  url="/api/v1/agents/memory"
+  method="GET"
+  title="Read Agent Memory"
+  name="#Read-Agent-Memory"
+/>
+
+<Row>
+  <Col>
+    ### Request Headers
+
+    <Properties>
+      <Property name='Authorization' type='string' propKey='Authorization'>Required Agent API Key.</Property>
+      <Property name='X-External-User-ID' type='string' propKey='X-External-User-ID'>Required external Memory owner.</Property>
+    </Properties>
+
+    ### Response `data`
+
+    <Properties>
+      <Property name='agent_id' type='uuid' propKey='agent_id'>Published Agent id.</Property>
+      <Property name='user_scope / user_id' type='string' propKey='user_scope'>`end_user` and ZGI's derived internal user UUID; this is not the raw external id.</Property>
+      <Property name='exported_at' type='integer' propKey='exported_at'>Unix timestamp in seconds.</Property>
+      <Property name='values[]' type='array' propKey='values'>Visible published Memory slots.</Property>
+      <Property name='values[].key / name / description' type='string' propKey='key'>Slot identity and presentation.</Property>
+      <Property name='values[].content / max_chars / revision' type='string / integer' propKey='content'>Stored content, limit, and optimistic-lock revision.</Property>
+      <Property name='values[].source_kind / last_operation_id / undoable_until' type='string / integer' propKey='source_kind'>Mutation provenance and optional undo metadata.</Property>
+      <Property name='values[].created_at / updated_at' type='integer' propKey='created_at'>Unix timestamps in seconds; ISO and display variants can also be present.</Property>
+    </Properties>
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="Request">
+
+    ```bash
+    curl '{apibase}/agents/memory' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="Response" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"agent_id":"4c2c...","user_scope":"end_user","user_id":"derived-user-uuid","exported_at":1788854400,"values":[{"id":"slot-id","key":"profile","name":"User profile","description":"Stable preferences","max_chars":2000,"enabled":true,"sort_order":1,"content":"Prefers concise answers","revision":3,"source_kind":"manager","last_operation_id":"operation-uuid","created_at":1788850000,"updated_at":1788854400}]}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/memory/export"
+  method="GET"
+  title="Export Agent Memory"
+  name="#Export-Agent-Memory"
+/>
+
+<Row>
+  <Col>
+    Returns the same JSON structure as Read Agent Memory and adds `Content-Disposition: attachment; filename="agent-memory.json"` so a BFF can forward it as a download.
+
+    ### Request Headers
+
+    <Properties>
+      <Property name='Authorization' type='string' propKey='Authorization'>Required Agent API Key.</Property>
+      <Property name='X-External-User-ID' type='string' propKey='X-External-User-ID'>Required external Memory owner.</Property>
+    </Properties>
+
+    ### Response
+
+    `data.agent_id`, `data.user_scope`, `data.user_id`, `data.exported_at`, and `data.values[]` use the fields documented by Read Agent Memory.
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="Request">
+
+    ```bash
+    curl '{apibase}/agents/memory/export' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1' \
+      --output agent-memory.json
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="Response Body" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"agent_id":"4c2c...","user_scope":"end_user","user_id":"derived-user-uuid","exported_at":1788854400,"values":[]}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/memory/{key}"
+  method="PUT"
+  title="Set Memory Slot"
+  name="#Set-Agent-Memory"
+/>
+
+<Row>
+  <Col>
+    Writes one enabled slot declared by the published Agent. Agent Memory must be enabled.
+
+    ### Path, Headers, and Body
+
+    <Properties>
+      <Property name='key' type='string' propKey='key'>Required published slot key.</Property>
+      <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>Required API Key and Memory owner.</Property>
+      <Property name='content' type='string' propKey='content'>Required content within the slot's `max_chars` limit.</Property>
+      <Property name='expected_revision' type='integer' propKey='expected_revision'>Optional optimistic concurrency check. A stale revision is rejected.</Property>
+    </Properties>
+
+    ### Response
+
+    `data` is the updated slot value, including its new `revision`, `source_kind`, `last_operation_id`, and possible `undoable_until`.
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="Request">
+
+    ```bash
+    curl --request PUT '{apibase}/agents/memory/profile' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1' \
+      --header 'Content-Type: application/json' \
+      --data '{"content":"Prefers concise answers","expected_revision":2}'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="Response" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"id":"slot-id","key":"profile","name":"User profile","description":"Stable preferences","max_chars":2000,"enabled":true,"sort_order":1,"content":"Prefers concise answers","revision":3,"source_kind":"manager","last_operation_id":"operation-uuid","created_at":1788850000,"updated_at":1788854400}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/memory/{key}"
+  method="DELETE"
+  title="Clear Memory Slot"
+  name="#Clear-Agent-Memory-Slot"
+/>
+
+<Row>
+  <Col>
+    Clears one visible published slot for the current external user.
+
+    ### Path, Query, and Headers
+
+    <Properties>
+      <Property name='key' type='string' propKey='key'>Required published slot key.</Property>
+      <Property name='expected_revision' type='integer' propKey='expected_revision'>Optional optimistic concurrency check.</Property>
+      <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>Required API Key and Memory owner.</Property>
+    </Properties>
+
+    ### Response
+
+    `data` is the cleared slot value. `content` is empty and `revision` reflects the clear operation.
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="Request">
+
+    ```bash
+    curl --request DELETE '{apibase}/agents/memory/profile?expected_revision=3' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="Response" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"id":"slot-id","key":"profile","name":"User profile","content":"","revision":4,"source_kind":"manager","last_operation_id":"operation-uuid","updated_at":1788854460}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/memory"
+  method="DELETE"
+  title="Clear All Agent Memory"
+  name="#Clear-All-Agent-Memory"
+/>
+
+<Row>
+  <Col>
+    Clears all writable Memory values for the current external user. This does not alter the Agent's slot definitions.
+
+    ### Request Headers
+
+    <Properties>
+      <Property name='Authorization' type='string' propKey='Authorization'>Required Agent API Key.</Property>
+      <Property name='X-External-User-ID' type='string' propKey='X-External-User-ID'>Required external Memory owner.</Property>
+    </Properties>
+
+    ### Response
+
+    `data.deleted` is `true` when the clear operation succeeds.
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="Request">
+
+    ```bash
+    curl --request DELETE '{apibase}/agents/memory' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="Response" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"deleted":true}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/memory/operations/{operation_id}/undo"
+  method="POST"
+  title="Undo Memory Operation"
+  name="#Undo-Agent-Memory"
+/>
+
+<Row>
+  <Col>
+    Restores the value snapshot associated with an undoable operation while that operation is still the current revision and has not expired.
+
+    ### Path and Headers
+
+    <Properties>
+      <Property name='operation_id' type='uuid' propKey='operation_id'>Required `last_operation_id` from a Memory value or `operation_id` from a `memory_*` event.</Property>
+      <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>Required API Key and Memory owner.</Property>
+    </Properties>
+
+    ### Response `data`
+
+    <Properties>
+      <Property name='operation_id' type='uuid' propKey='operation_id'>The undone operation.</Property>
+      <Property name='value' type='object' propKey='value'>Restored slot value; omitted when the restored state has no value.</Property>
+    </Properties>
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="Request">
+
+    ```bash
+    curl --request POST '{apibase}/agents/memory/operations/{operation_id}/undo' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="Response" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"operation_id":"operation-uuid","value":{"key":"profile","content":"Previous value","revision":4,"source_kind":"manager","updated_at":1788854520}}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+## Compatibility Metadata
+
+These two read-only endpoints are retained for clients that share integrations with published workflows. For a new Agent landing page, prefer `/agents/config`; use `/parameters` when you need the server's current upload limits and supported extensions.
+
+<Heading
+  url="/api/v1/info"
+  method="GET"
+  title="Get Published Application Info"
+  name="#Get-Agent-App-Info"
+/>
+
+<Row>
+  <Col>
+    ### Request Headers
+
+    <Properties>
+      <Property name='Authorization' type='string' propKey='Authorization'>Required Agent API Key. No external-user header is needed because this endpoint does not access user state.</Property>
+    </Properties>
+
+    ### Direct `200` Response
+
+    <Properties>
+      <Property name='name / description' type='string' propKey='name'>Published application identity and description.</Property>
+      <Property name='tags' type='array[string]' propKey='tags'>Contains the resolved application mode.</Property>
+      <Property name='mode' type='agent | workflow | chat-workflow' propKey='mode'>Runtime mode inferred from the API Key's bound application.</Property>
+      <Property name='author_name' type='string' propKey='author_name'>Currently `ZGI`.</Property>
+      <Property name='agent_id' type='uuid' propKey='agent_id'>Bound application id; the field name is retained for compatibility.</Property>
+      <Property name='icon / icon_type / icon_url' type='string' propKey='icon_url'>Stored icon values and resolved image URL when applicable.</Property>
+      <Property name='version / version_uuid' type='string' propKey='version'>Latest published version label and UUID.</Property>
+    </Properties>
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="Request">
+
+    ```bash
+    curl '{apibase}/info' \
+      --header 'Authorization: Bearer {api_key}'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="Response" label="200 JSON">
+
+    ```json
+    {
+      "name": "Research Assistant",
+      "description": "Evidence-backed answers",
+      "tags": ["agent"],
+      "mode": "agent",
+      "author_name": "ZGI",
+      "agent_id": "4c2cb782-748e-4ff4-a34d-796b40f98f16",
+      "icon": "bot",
+      "icon_type": "emoji",
+      "icon_url": "",
+      "version": "v12",
+      "version_uuid": "7b0df140-fbc1-41ef-9234-611172283b23"
+    }
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/parameters"
+  method="GET"
+  title="Get Published Inputs and Upload Limits"
+  name="#Get-Agent-App-Parameters"
+/>
+
+<Row>
+  <Col>
+    ### Request Headers
+
+    <Properties>
+      <Property name='Authorization' type='string' propKey='Authorization'>Required Agent API Key. No external-user header is needed because this endpoint does not access user state.</Property>
+    </Properties>
+
+    ### Direct `200` Response
+
+    <Properties>
+      <Property name='user_input_form' type='array[object]' propKey='user_input_form'>Published workflow start variables. It is empty for an Agent. Workflow variable objects retain their published graph fields, commonly identifier, label, type, required/default values, and options.</Property>
+      <Property name='features' type='object' propKey='features'>Published presentation features. For an Agent: `home_title`, `opening_statement`, `input_placeholder`, `theme_color`, `suggested_questions`, and `supports_vision`.</Property>
+      <Property name='file_upload.enabled' type='boolean' propKey='file_upload.enabled'>Whether public file upload is enabled.</Property>
+      <Property name='file_upload.number_limits' type='integer' propKey='file_upload.number_limits'>Maximum files accepted by one invocation.</Property>
+      <Property name='file_upload.allowed_file_types' type='array[string]' propKey='file_upload.allowed_file_types'>Supported filename extensions/types returned by the current server.</Property>
+      <Property name='file_upload.transfer_methods' type='array[string]' propKey='file_upload.transfer_methods'>Currently `local_file`.</Property>
+      <Property name='file_upload.image' type='object' propKey='file_upload.image'>Image-specific `enabled`, `number_limits`, and `transfer_methods` values.</Property>
+      <Property name='agent_memory.enabled / requires_user' type='boolean' propKey='agent_memory.enabled'>Published Agent Memory flags.</Property>
+      <Property name='system_parameters.*_file_size_limit' type='integer' propKey='system_parameters.file_size_limit'>General, image, audio, and video size limits in MB.</Property>
+      <Property name='system_parameters.file_upload_count_limit' type='integer' propKey='system_parameters.file_upload_count_limit'>Server-side file count limit.</Property>
+    </Properties>
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="Request">
+
+    ```bash
+    curl '{apibase}/parameters' \
+      --header 'Authorization: Bearer {api_key}'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="Response" label="200 JSON">
+
+    ```json
+    {
+      "user_input_form": [],
+      "features": {
+        "home_title": "Start your research",
+        "opening_statement": "What should I investigate?",
+        "input_placeholder": "Ask a question",
+        "theme_color": "#4F46E5",
+        "suggested_questions": ["Compare the evidence"],
+        "supports_vision": true
+      },
+      "file_upload": {
+        "enabled": true,
+        "number_limits": 10,
+        "allowed_file_types": ["pdf", "png", "jpg"],
+        "transfer_methods": ["local_file"],
+        "image": {"enabled": true, "number_limits": 10, "transfer_methods": ["local_file"]}
+      },
+      "agent_memory": {"enabled": true, "requires_user": true},
+      "system_parameters": {
+        "file_size_limit": 50,
+        "image_file_size_limit": 20,
+        "audio_file_size_limit": 100,
+        "video_file_size_limit": 500,
+        "file_upload_count_limit": 10
+      }
+    }
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+## JSON Errors
+
+Before an SSE stream starts, every endpoint returns errors as JSON with the matching HTTP status. `code` is a stable ZGI error code and `message` is safe to display or log. Validation can add endpoint-specific wording; clients must tolerate additional fields.
+
+<Properties>
+  <Property name="code" type="string" propKey="code">
+    Machine-readable ZGI error code. Success uses `0`; errors use a nonzero code.
+  </Property>
+  <Property name="message" type="string" propKey="message">
+    Client-safe error description.
+  </Property>
+</Properties>
+
+<CodeGroup title="Error Response" label="400 JSON">
+
+```json
+{
+  "code": "199001",
+  "message": "Invalid parameter"
+}
+```
+
+</CodeGroup>
+
+- `400`: malformed JSON, invalid ids or enum values, missing external user, stale Memory revision, or a legacy `user` mismatch.
+- `401`: missing, invalid, inactive, expired, or revoked API Key.
+- `403`: authenticated caller is not allowed to perform the operation.
+- `404`: no published Agent, conversation/message not owned by this user, unknown Memory slot, or expired/already-resolved continuation.
+- `409`: conflicting runtime state or optimistic-concurrency conflict when surfaced separately.
+- `500`: internal service error. Do not expose upstream/internal details to end users.
+
+## Retry, Security, and CORS
+
+- Use a browser → your BFF/server → ZGI architecture and inject the API Key on the server. Do not send the Key to browser code even when the deployment allows your Origin through CORS.
+- Before SSE starts, handle `4xx/5xx` as normal JSON errors. After it starts, handle `error` / `message_end`. Apply exponential backoff only to network errors, `429`, and recoverable `5xx`; do not automatically retry `400/401/403/404`.
+- An uncertain retry of the chat POST can create a duplicate message. After `message_start`, prefer recovery through the events endpoint and deduplicate by SSE `id`.
+- The machine-readable contract is at `/api/openapi.yaml`; the interactive view is at `/swagger/index.html`.
 
 ## Notes
 
 - This API runs the latest published Agent version. Draft configuration is not available.
 - An API Key can only access the Agent it is bound to.
-- Use `conversation_id` for multi-turn context, `message_id` for stream recovery and workflow continuation, and `workflow_run_id` for workflow troubleshooting.
+- Use `conversation_id` for multi-turn context, `message_id` for stream recovery, both continuation types, and regeneration, and `workflow_run_id` for workflow troubleshooting.
+- A complete Next.js server proxy, SSE state machine, and page wiring example is available in the repository at `docs/agent-api-quickstart.md`.
