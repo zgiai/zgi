@@ -192,6 +192,7 @@ func (s *llmGatewayServiceImpl) createImageInternal(
 	if err != nil {
 		return nil, err
 	}
+	billingCtx.PricingOperation = PricingOperationImage
 	ctx = withLLMLangfuseTraceContext(ctx, billingCtx, "llm.images")
 	ctx = withPlatformProxyMetadata(ctx, billingCtx)
 
@@ -223,7 +224,7 @@ func (s *llmGatewayServiceImpl) createImageInternal(
 
 		// Record failure for health tracking
 		if selection.HasRoute() {
-			autoBan := selection.RouteID != uuid.Nil
+			autoBan := selection.AutoBan
 			s.healthTracker.RecordFailure(ctx, selection.RouteID, autoBan)
 		}
 

@@ -947,6 +947,28 @@ func TestCandidateRoutesForModel_FiltersNativeProtocolLikeRealSelection(t *testi
 	}
 }
 
+func TestFilterRoutesForNativeProtocolHonorsModelCapabilityForCustomRoutes(t *testing.T) {
+	model := &llmmodel.LLMModel{Model: "image-only", ChatCompletions: false}
+	routes := []*channelmodel.LLMRoute{
+		{ID: uuid.New(), Type: shared.RouteTypePrivate, IsOfficial: false},
+	}
+
+	got := filterRoutesForNativeProtocol(routes, model, "chat")
+	if len(got) != 0 {
+		t.Fatalf("chat routes = %d, want 0 for a model with Chat Completions disabled", len(got))
+	}
+}
+
+func TestFilterRoutesForNativeProtocolKeepsChatWhenModelCapabilityEnabled(t *testing.T) {
+	model := &llmmodel.LLMModel{Model: "chat-model", ChatCompletions: true}
+	route := &channelmodel.LLMRoute{ID: uuid.New(), Type: shared.RouteTypePrivate}
+
+	got := filterRoutesForNativeProtocol([]*channelmodel.LLMRoute{route}, model, "chat")
+	if len(got) != 1 || got[0] != route {
+		t.Fatalf("chat routes = %#v, want the enabled route", got)
+	}
+}
+
 func TestCandidateRoutesForResolvedModelKeepsExplicitHintForOfficialPassthrough(t *testing.T) {
 	organizationID := uuid.New()
 	modelName := "new-official-model"

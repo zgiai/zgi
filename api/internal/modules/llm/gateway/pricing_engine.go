@@ -980,6 +980,126 @@ func withTokenPricingBasis(
 	return quote
 }
 
+func (e *pricingEngine) enrichTokenQuoteWithCachePricingBasis(
+	ctx context.Context,
+	ref PricingModelRef,
+	quote PricingQuote,
+) (PricingQuote, error) {
+	model, found, err := e.loadModel(ctx, ref)
+	if err != nil {
+		return PricingQuote{}, err
+	}
+	if !found || model == nil {
+		return quote, nil
+	}
+	if model.CacheReadPriceConfigured {
+		quote.CacheReadPriceUSDPer1M = model.CacheReadPrice
+		quote.CacheReadPriceResolved = true
+	}
+	if model.CacheWritePriceConfigured {
+		quote.CacheWritePriceUSDPer1M = model.CacheWritePrice
+		quote.CacheWritePriceResolved = true
+	}
+	if cacheWrite5mPrice, resolved, _ := resolveCacheWrite5mPrice(model); resolved {
+		quote.CacheWrite5mPriceUSDPer1M = cacheWrite5mPrice
+		quote.CacheWrite5mPriceResolved = true
+	}
+	if cacheWrite1hPrice, resolved, _ := resolveCacheWrite1hPrice(model); resolved {
+		quote.CacheWrite1hPriceUSDPer1M = cacheWrite1hPrice
+		quote.CacheWrite1hPriceResolved = true
+	}
+	return quote, nil
+}
+
+func lockedTokenQuoteSupportsUsage(quote PricingQuote, usage TokenUsage) bool {
+	usage = normalizeGatewayTokenUsage(usage)
+	if usage.InputTokens > 0 && !quote.InputTokenPriceResolved {
+		return false
+	}
+	if usage.OutputTokens > 0 && !quote.OutputTokenPriceResolved {
+		return false
+	}
+	if usage.CacheReadTokens > 0 && !quote.CacheReadPriceResolved {
+		return false
+	}
+	cacheWriteLegacy := legacyCacheWriteTokens(usage)
+	if cacheWriteLegacy > 0 && !quote.CacheWritePriceResolved {
+		return false
+	}
+	if usage.CacheWrite5mTokens > 0 && !quote.CacheWrite5mPriceResolved {
+		return false
+	}
+	if usage.CacheWrite1hTokens > 0 && !quote.CacheWrite1hPriceResolved {
+		return false
+	}
+	return true
+}
+
+func repriceLockedTokenUsage(quote PricingQuote, usage TokenUsage) (PricingQuote, error) {
+	usage = normalizeGatewayTokenUsage(usage)
+	if usage.CacheReadTokens == 0 && usage.CacheWriteTokens == 0 && usage.CacheWrite5mTokens == 0 && usage.CacheWrite1hTokens == 0 {
+		return repriceLockedTokenQuote(quote, usage.InputTokens, usage.OutputTokens)
+	}
+	if !lockedTokenQuoteSupportsUsage(quote, usage) {
+		return PricingQuote{}, fmt.Errorf("locked token pricing does not cover usage components")
+	}
+
+	uncachedInputUSD := tokenUSD(quote.InputTokenPriceUSDPer1M, usage.InputTokens)
+	cacheReadUSD := tokenUSD(quote.CacheReadPriceUSDPer1M, usage.CacheReadTokens)
+	cacheWriteLegacy := legacyCacheWriteTokens(usage)
+	cacheWriteLegacyUSD := tokenUSD(quote.CacheWritePriceUSDPer1M, cacheWriteLegacy)
+	cacheWrite5mUSD := tokenUSD(quote.CacheWrite5mPriceUSDPer1M, usage.CacheWrite5mTokens)
+	cacheWrite1hUSD := tokenUSD(quote.CacheWrite1hPriceUSDPer1M, usage.CacheWrite1hTokens)
+	cacheWriteUSD := cacheWriteLegacyUSD.Add(cacheWrite5mUSD).Add(cacheWrite1hUSD)
+	inputUSD := uncachedInputUSD.Add(cacheReadUSD).Add(cacheWriteUSD)
+	outputUSD := tokenUSD(quote.OutputTokenPriceUSDPer1M, usage.OutputTokens)
+
+	usageSource := quote.UsageSource
+	if usageSource == "" {
+		usageSource = UsageSourceProviderUsage
+	}
+	snapshot := buildPricingSnapshot(map[string]interface{}{
+		"pricing_source":                      quote.PricingSource,
+		"usage_source":                        usageSource,
+		"prompt_tokens":                       usage.InputTokens,
+		"cache_read_tokens":                   usage.CacheReadTokens,
+		"cache_write_tokens":                  usage.CacheWriteTokens,
+		"cache_write_legacy_tokens":           cacheWriteLegacy,
+		"cache_write_5m_tokens":               usage.CacheWrite5mTokens,
+		"cache_write_1h_tokens":               usage.CacheWrite1hTokens,
+		"completion_tokens":                   usage.OutputTokens,
+		"input_price_usd_per_1m_tokens":       quote.InputTokenPriceUSDPer1M.String(),
+		"cache_read_price_usd_per_1m_tokens":  quote.CacheReadPriceUSDPer1M.String(),
+		"cache_write_price_usd_per_1m_tokens": quote.CacheWritePriceUSDPer1M.String(),
+		"cache_write_5m_price_usd_per_1m_tokens": quote.CacheWrite5mPriceUSDPer1M.String(),
+		"cache_write_1h_price_usd_per_1m_tokens": quote.CacheWrite1hPriceUSDPer1M.String(),
+		"output_price_usd_per_1m_tokens":      quote.OutputTokenPriceUSDPer1M.String(),
+		"input_cost_usd":                      uncachedInputUSD.String(),
+		"cache_read_cost_usd":                 cacheReadUSD.String(),
+		"cache_write_cost_usd":                cacheWriteUSD.String(),
+		"output_cost_usd":                     outputUSD.String(),
+		"locked_pricing":                      true,
+	})
+	repriced := newUSDQuote(inputUSD, outputUSD, quote.PricingSource, quote.RuleID, usageSource, snapshot)
+	repriced.CacheReadUSD = cacheReadUSD
+	repriced.CacheWriteUSD = cacheWriteUSD
+	repriced.InputTokenPriceUSDPer1M = quote.InputTokenPriceUSDPer1M
+	repriced.OutputTokenPriceUSDPer1M = quote.OutputTokenPriceUSDPer1M
+	repriced.CacheReadPriceUSDPer1M = quote.CacheReadPriceUSDPer1M
+	repriced.CacheWritePriceUSDPer1M = quote.CacheWritePriceUSDPer1M
+	repriced.CacheWrite5mPriceUSDPer1M = quote.CacheWrite5mPriceUSDPer1M
+	repriced.CacheWrite1hPriceUSDPer1M = quote.CacheWrite1hPriceUSDPer1M
+	repriced.InputTokenPriceResolved = quote.InputTokenPriceResolved
+	repriced.OutputTokenPriceResolved = quote.OutputTokenPriceResolved
+	repriced.CacheReadPriceResolved = quote.CacheReadPriceResolved
+	repriced.CacheWritePriceResolved = quote.CacheWritePriceResolved
+	repriced.CacheWrite5mPriceResolved = quote.CacheWrite5mPriceResolved
+	repriced.CacheWrite1hPriceResolved = quote.CacheWrite1hPriceResolved
+	repriced.InputRuleID = quote.InputRuleID
+	repriced.OutputRuleID = quote.OutputRuleID
+	return repriced, nil
+}
+
 func repriceLockedTokenQuote(quote PricingQuote, promptTokens, completionTokens int) (PricingQuote, error) {
 	if promptTokens < 0 || completionTokens < 0 {
 		return PricingQuote{}, fmt.Errorf("token count must be greater than or equal to zero")

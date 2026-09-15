@@ -79,7 +79,7 @@ func NewZGICloudAdapter(config *adapter.AdapterConfig) (*ZGICloudAdapter, error)
 
 	timeout := config.Timeout
 	if timeout == 0 {
-		timeout = 60 * time.Second
+		timeout = 120 * time.Second
 	}
 
 	maxRetries := config.MaxRetries

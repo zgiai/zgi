@@ -73,7 +73,28 @@ func (s *llmGatewayServiceImpl) quoteTokenPricingForSelection(
 		return authority.QuotePlatformTokenPricing(ctx, model, promptTokens, completionTokens)
 	}
 	promptTokens, completionTokens = conservativeReasoningReservationTokens(selection, promptTokens, completionTokens)
-	return s.quoteTokenPricing(ctx, model, promptTokens, completionTokens)
+	quote, err := s.quoteTokenPricing(ctx, model, promptTokens, completionTokens)
+	if err != nil {
+		return PricingQuote{}, err
+	}
+	return s.enrichPrivateTokenQuoteForSettlement(ctx, model, quote)
+}
+
+type privateTokenQuoteEnricher interface {
+	enrichTokenQuoteWithCachePricingBasis(context.Context, PricingModelRef, PricingQuote) (PricingQuote, error)
+}
+
+func (s *llmGatewayServiceImpl) enrichPrivateTokenQuoteForSettlement(
+	ctx context.Context,
+	model PricingModelRef,
+	quote PricingQuote,
+) (PricingQuote, error) {
+	engine := s.pricing()
+	enricher, ok := engine.(privateTokenQuoteEnricher)
+	if !ok {
+		return quote, nil
+	}
+	return enricher.enrichTokenQuoteWithCachePricingBasis(ctx, model, quote)
 }
 
 func conservativePlatformReservationTokens(selection *ProviderSelection, promptTokens, completionTokens int) (int, int) {
@@ -122,6 +143,10 @@ func (s *llmGatewayServiceImpl) quoteTokenPricingForSettlementUsage(
 	model PricingModelRef,
 	usage TokenUsage,
 ) (PricingQuote, error) {
+	usage = normalizeGatewayTokenUsage(usage)
+	if bc != nil && bc.LockedTokenQuote != nil && lockedTokenQuoteSupportsUsage(*bc.LockedTokenQuote, usage) {
+		return repriceLockedTokenUsage(*bc.LockedTokenQuote, usage)
+	}
 	if usage.CacheReadTokens == 0 && usage.CacheWriteTokens == 0 && usage.CacheWrite5mTokens == 0 && usage.CacheWrite1hTokens == 0 {
 		return s.quoteTokenPricingForSettlement(ctx, bc, model, usage.InputTokens, usage.OutputTokens)
 	}

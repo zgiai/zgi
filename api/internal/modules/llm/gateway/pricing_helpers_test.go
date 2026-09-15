@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	providermodel "github.com/zgiai/zgi/api/internal/modules/llm/provider/model"
@@ -123,6 +124,70 @@ func TestQuoteTokenPricingForSelectionUsesReasoningFloorAndPlatformSlack(t *test
 	}
 	if billing.platformPrompt != 80 || billing.platformCompletion != reasoningCompletionReservationFloor {
 		t.Fatalf("authoritative reasoning quote tokens = (%d, %d), want (80, %d)", billing.platformPrompt, billing.platformCompletion, reasoningCompletionReservationFloor)
+	}
+}
+
+func TestQuoteTokenPricingForSelectionPrivateNeverUsesPlatformAuthority(t *testing.T) {
+	billing := &fakeBillingProvider{platformQuote: PricingQuote{TotalCredits: 999, ReservationPolicy: reservationPolicyAuthoritativeQuoteV1}}
+	engine := &fakePricingEngine{tokenQuote: PricingQuote{TotalCredits: 42}}
+	svc := &llmGatewayServiceImpl{billing: billing, pricingEngine: engine}
+	selection := &ProviderSelection{
+		UseSystemProvider: false,
+		BillingLane:       UsageBillingLanePrivate,
+	}
+
+	quote, err := svc.quoteTokenPricingForSelection(
+		context.Background(),
+		selection,
+		PricingModelRef{Provider: "openai", Model: "gpt-4o-mini"},
+		10,
+		5,
+	)
+	if err != nil {
+		t.Fatalf("quoteTokenPricingForSelection() error = %v", err)
+	}
+	if quote.TotalCredits != 42 || quote.ReservationPolicy != "" {
+		t.Fatalf("quote = %#v, want local private quote without reservation policy", quote)
+	}
+	if billing.platformPrompt != 0 || billing.platformCompletion != 0 {
+		t.Fatalf("platform authority was consulted: tokens = (%d, %d)", billing.platformPrompt, billing.platformCompletion)
+	}
+	if engine.tokenCalls != 1 {
+		t.Fatalf("local pricing calls = %d, want 1", engine.tokenCalls)
+	}
+}
+
+func TestQuoteTokenPricingForSettlementUsagePrefersLockedCacheQuote(t *testing.T) {
+	engine := &fakePricingEngine{tokenErr: errors.New("pricing changed during request")}
+	svc := &llmGatewayServiceImpl{pricingEngine: engine}
+	bc := &BillingContext{}
+	lockTokenPricingQuote(bc, PricingQuote{
+		PricingSource:            PricingSourceUpstreamModelPrice,
+		UsageSource:              UsageSourceEstimatedUsage,
+		InputTokenPriceUSDPer1M:  decimal.RequireFromString("1"),
+		OutputTokenPriceUSDPer1M: decimal.RequireFromString("2"),
+		CacheReadPriceUSDPer1M:   decimal.RequireFromString("0.25"),
+		CacheWritePriceUSDPer1M:  decimal.RequireFromString("1.25"),
+		InputTokenPriceResolved:  true,
+		OutputTokenPriceResolved: true,
+		CacheReadPriceResolved:   true,
+		CacheWritePriceResolved:  true,
+	})
+
+	quote, err := svc.quoteTokenPricingForSettlementUsage(
+		context.Background(),
+		bc,
+		PricingModelRef{Provider: "openai", Model: "gpt-4o-mini"},
+		TokenUsage{InputTokens: 400, CacheReadTokens: 300, CacheWriteTokens: 100, OutputTokens: 200},
+	)
+	if err != nil {
+		t.Fatalf("quoteTokenPricingForSettlementUsage() error = %v", err)
+	}
+	if engine.tokenCalls != 0 {
+		t.Fatalf("pricing engine calls = %d, want 0 when locked cache quote is reused", engine.tokenCalls)
+	}
+	if quote.TotalCredits != 1000 {
+		t.Fatalf("total credits = %d, want 1000", quote.TotalCredits)
 	}
 }
 

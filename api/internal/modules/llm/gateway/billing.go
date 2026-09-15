@@ -347,6 +347,8 @@ func (b *BillingService) Settle(ctx context.Context, bc *BillingContext) error {
 		if err := b.updateAttemptStatus(ctx, tx, bc, attemptStatus, &invocation, nil, nil); err != nil {
 			return fmt.Errorf("failed to update billing attempt status: %w", err)
 		}
+		b.applyRouteAttributionWithLookup(ctx, bc)
+		finalizeMediaTimingSnapshot(bc)
 		if err := b.upsertUsageBill(ctx, tx, bc, usageBillStatusFromBillingContext(bc.Status), nil, nil); err != nil {
 			return fmt.Errorf("failed to upsert usage bill: %w", err)
 		}
@@ -377,6 +379,8 @@ func (b *BillingService) Settle(ctx context.Context, bc *BillingContext) error {
 			); err != nil {
 				return err
 			}
+			b.applyRouteAttributionWithLookup(ctx, bc)
+			finalizeMediaTimingSnapshot(bc)
 			return b.upsertUsageBill(ctx, tx, bc, usageBillStatusPartial, &code, &msg)
 		})
 		if markErr != nil {

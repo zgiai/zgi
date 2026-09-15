@@ -433,19 +433,8 @@ func baseLLMAttributes(payload llmTracePayload) []attribute.KeyValue {
 	}
 	if bc.UseSystemProvider {
 		attrs = append(attrs, attribute.String("zgi.logical_channel", "ZGI Cloud"))
-		var snapshot map[string]interface{}
-		if len(bc.PricingSnapshot) > 0 && json.Unmarshal(bc.PricingSnapshot, &snapshot) == nil {
-			for key, attributeKey := range map[string]string{
-				"actual_channel_id": "zgi.actual_channel_id", "actual_channel_name": "zgi.actual_channel_name",
-				"actual_provider": "zgi.actual_provider", "actual_protocol": "zgi.actual_protocol",
-				"actual_upstream_model": "zgi.actual_upstream_model",
-			} {
-				if value, ok := snapshot[key].(string); ok && strings.TrimSpace(value) != "" {
-					attrs = append(attrs, attribute.String(attributeKey, value))
-				}
-			}
-		}
 	}
+	attrs = append(attrs, routeAttributionAttributes(bc)...)
 
 	if llmLangfuseAttributesEnabled() {
 		observationType := payload.ObservationType

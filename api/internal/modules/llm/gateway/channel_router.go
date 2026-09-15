@@ -328,6 +328,12 @@ func filterRoutesForNativeProtocol(routes []*channelmodel.LLMRoute, llmModel *ll
 	switch modelCategory {
 	case "chat":
 		return filterRoutesByCapability(routes, func(route *channelmodel.LLMRoute) bool {
+			// For organization-owned routes the model capability is authoritative.
+			// Without this check a legacy route with no protocol declaration could
+			// make an image/audio-only custom model enter Chat Completions.
+			if !isOfficialRoute(route) && llmModel != nil && !llmModel.ChatCompletions {
+				return false
+			}
 			if supported, declared := routeProtocolDeclaration(route, modelName, protocolOpenAIChatCompletions); declared {
 				return supported
 			}

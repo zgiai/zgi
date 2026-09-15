@@ -1342,3 +1342,68 @@ func TestRepriceLockedTokenQuoteFailsWhenOutputPriceWasNotLocked(t *testing.T) {
 		t.Fatalf("repriceLockedTokenQuote error = nil, want missing output price error")
 	}
 }
+
+func TestEnrichTokenQuoteWithCachePricingBasisLocksCacheUnitPrices(t *testing.T) {
+	db := openPricingEngineTestDB(t)
+	if err := db.Exec(`ALTER TABLE llm_models ADD COLUMN cost_cache_read decimal`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`ALTER TABLE llm_models ADD COLUMN cost_cache_write decimal`).Error; err != nil {
+		t.Fatal(err)
+	}
+	modelID := uuid.New()
+	insertPricingModel(t, db, modelID, "openai", "1", "2", true, true, `[]`)
+	if err := db.Exec(`UPDATE llm_models SET cost_cache_read = ?, cost_cache_write = ? WHERE id = ?`, "0.25", "1.25", modelID).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	engine := NewPricingEngine(db).(*pricingEngine)
+	base := withTokenPricingBasis(
+		newUSDQuote(decimal.Zero, decimal.Zero, PricingSourceUpstreamModelPrice, "", UsageSourceEstimatedUsage, nil),
+		decimal.RequireFromString("1"),
+		decimal.RequireFromString("2"),
+		true,
+		true,
+		"",
+		"",
+	)
+	enriched, err := engine.enrichTokenQuoteWithCachePricingBasis(context.Background(), PricingModelRef{ModelID: modelID}, base)
+	if err != nil {
+		t.Fatalf("enrichTokenQuoteWithCachePricingBasis() error = %v", err)
+	}
+	if !enriched.CacheReadPriceResolved || !enriched.CacheWritePriceResolved {
+		t.Fatalf("cache prices were not locked: %#v", enriched)
+	}
+	if !enriched.CacheReadPriceUSDPer1M.Equal(decimal.RequireFromString("0.25")) {
+		t.Fatalf("cache read price = %s, want 0.25", enriched.CacheReadPriceUSDPer1M)
+	}
+}
+
+func TestRepriceLockedTokenUsageUsesLockedCacheUnitPrices(t *testing.T) {
+	locked := withTokenPricingBasis(
+		newUSDQuote(decimal.Zero, decimal.Zero, PricingSourceUpstreamModelPrice, "", UsageSourceEstimatedUsage, nil),
+		decimal.RequireFromString("1"),
+		decimal.RequireFromString("2"),
+		true,
+		true,
+		"",
+		"",
+	)
+	locked.CacheReadPriceUSDPer1M = decimal.RequireFromString("0.25")
+	locked.CacheWritePriceUSDPer1M = decimal.RequireFromString("1.25")
+	locked.CacheReadPriceResolved = true
+	locked.CacheWritePriceResolved = true
+
+	quote, err := repriceLockedTokenUsage(locked, TokenUsage{
+		InputTokens: 400, CacheReadTokens: 300, CacheWriteTokens: 100, OutputTokens: 200,
+	})
+	if err != nil {
+		t.Fatalf("repriceLockedTokenUsage() error = %v", err)
+	}
+	if quote.TotalCredits != 1000 {
+		t.Fatalf("total credits = %d, want 1000", quote.TotalCredits)
+	}
+	if !quote.CacheReadUSD.Equal(decimal.RequireFromString("0.000075")) || !quote.CacheWriteUSD.Equal(decimal.RequireFromString("0.000125")) {
+		t.Fatalf("cache costs read/write = %s/%s", quote.CacheReadUSD, quote.CacheWriteUSD)
+	}
+}

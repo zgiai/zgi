@@ -65,7 +65,7 @@ func (s *RemoteBilling) FinalizePlatformProxySettlement(
 		if result.SettledCredits < 0 || result.RefundedCredits < 0 || (result.ReservedCredits > 0 && result.SettledCredits+result.RefundedCredits > result.ReservedCredits) {
 			return fmt.Errorf("invalid console settlement amounts: reserved=%d settled=%d refunded=%d", result.ReservedCredits, result.SettledCredits, result.RefundedCredits)
 		}
-		settlement = &adapter.SettlementResult{SettlementID: result.SettlementID, OfficialPoints: result.SettledCredits, Status: result.SettlementStatus}
+		settlement = settlementFromQueryResult(result)
 		if result.DeductionID != "" && result.DeductionID != result.SettlementID {
 			return fmt.Errorf("console settlement deduction mismatch: settlement_id=%s deduction_id=%s", result.SettlementID, result.DeductionID)
 		}
@@ -88,6 +88,8 @@ func (s *RemoteBilling) FinalizePlatformProxySettlement(
 	bc.UseSystemProvider = true
 	bc.ActualCredits = settlement.OfficialPoints
 	applyPlatformSettlementCostSnapshot(bc, settlement)
+	s.localService.applyRouteAttributionWithLookup(ctx, bc)
+	finalizeMediaTimingSnapshot(bc)
 	bc.SettledAt = time.Now().UTC()
 	if bc.RequestCreatedAt.IsZero() {
 		bc.RequestCreatedAt = time.Now().UTC()
@@ -131,6 +133,8 @@ func (s *RemoteBilling) MirrorPlatformMediaSettlement(ctx context.Context, bc *B
 	bc.Status = "success"
 	bc.SettledAt = time.Now().UTC()
 	applyPlatformSettlementCostSnapshot(bc, settlement)
+	s.localService.applyRouteAttributionWithLookup(ctx, bc)
+	finalizeMediaTimingSnapshot(bc)
 	return s.localService.db.Transaction(func(tx *gorm.DB) error {
 		if err := s.localService.upsertAttemptInit(ctx, tx, bc); err != nil {
 			return err
@@ -200,6 +204,7 @@ func applyPlatformSettlementCostSnapshot(bc *BillingContext, settlement *adapter
 	if changed {
 		bc.PricingSnapshot = buildPricingSnapshot(values)
 	}
+	applyRouteAttributionSnapshot(bc, "")
 }
 
 func validatePlatformProxySettlement(bc *BillingContext, settlement *adapter.SettlementResult) error {
