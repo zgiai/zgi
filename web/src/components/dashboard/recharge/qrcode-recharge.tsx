@@ -33,7 +33,10 @@ const RECHARGE_AMOUNTS = [
 ];
 
 const MIN_CUSTOM_AMOUNT = 10;
-const MAX_CUSTOM_AMOUNT = 9999999999.99;
+// WeChat Pay rejects prepay requests above the merchant's per-transaction limit
+// (currently 10,000,000 CNY), so cap the input here instead of letting the order
+// reach the gateway and fail with an opaque upstream error.
+const MAX_CUSTOM_AMOUNT = 10_000_000;
 const ORDER_TIMEOUT_SECONDS = 600; // 10 minutes
 
 const PAYMENT_METHODS: Array<{
