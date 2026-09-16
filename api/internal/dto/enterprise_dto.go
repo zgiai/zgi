@@ -220,6 +220,7 @@ type CurrentOrganizationResponse struct {
 	Status                 model.OrganizationStatus     `json:"status"`
 	BillingDisplayCurrency model.BillingDisplayCurrency `json:"billing_display_currency"`
 	USDToCNYRate           float64                      `json:"usd_to_cny_rate"`
+	PointsPerUSD           int64                        `json:"points_per_usd"`
 	LLMRoutingStrategy     model.LLMRoutingStrategy     `json:"llm_routing_strategy"`
 	CreatedAt              int64                        `json:"created_at"`
 	OrganizationRole       model.OrganizationRole       `json:"organization_role"`

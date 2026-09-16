@@ -701,6 +701,7 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 			CacheWritePriceConfigured:   m.CacheWritePriceConfigured,
 			CacheWrite5mPriceConfigured: m.CacheWrite5mPriceConfigured,
 			CacheWrite1hPriceConfigured: m.CacheWrite1hPriceConfigured,
+			Pricing:                     cloneRawJSON(m.Pricing),
 
 			// ModelHub-aligned nested structures (aligned with global models)
 			Endpoints: model.ModelEndpoints{

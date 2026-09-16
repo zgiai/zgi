@@ -310,6 +310,7 @@ export interface CreateCustomModelRequest {
   cache_write_price?: string;
   cache_write_5m_price?: string;
   cache_write_1h_price?: string;
+  pricing?: ModelPricing;
   knowledge_cutoff?: string;
   description?: string;
   endpoints?: ModelEndpoints;
@@ -393,6 +394,27 @@ export interface PricingFallbackRule {
   price_usd_per_1m_tokens?: string;
   credits?: number;
   pricing_source?: PricingFallbackSource;
+}
+
+export interface ModelPricingIssueItem {
+  use_case: string;
+  operation: string;
+  meter: string;
+}
+
+export interface ModelPricingIssue {
+  id: string;
+  provider: string;
+  model: string;
+  model_name: string;
+  use_cases: string[];
+  missing: ModelPricingIssueItem[];
+  configured: boolean;
+}
+
+export interface ModelPricingIssuesResponse {
+  items: ModelPricingIssue[];
+  total: number;
 }
 
 export interface PricingFallbackConfig {

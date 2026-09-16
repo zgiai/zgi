@@ -545,6 +545,11 @@ func llmModelFromPrivateModel(customModel *llmmodel.CustomModel) *llmmodel.LLMMo
 		MaxOutputTokens:   customModel.MaxOutputTokens,
 		InputPrice:        customModel.InputPrice,
 		OutputPrice:       customModel.OutputPrice,
+		CostCacheRead:     customModel.CostCacheRead,
+		CostCacheWrite:    customModel.CostCacheWrite,
+		CostCacheWrite5m:  customModel.CostCacheWrite5m,
+		CostCacheWrite1h:  customModel.CostCacheWrite1h,
+		Pricing:           append([]byte(nil), customModel.Pricing...),
 		IsActive:          customModel.IsActive,
 	}
 }

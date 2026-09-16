@@ -1,7 +1,9 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,10 +14,12 @@ import (
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/dto"
 	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	modelpricing "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/pricing"
 	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/repository"
 	officialmodel "github.com/zgiai/zgi/api/internal/modules/llm/officialmodel"
 	providerrepo "github.com/zgiai/zgi/api/internal/modules/llm/provider/repository"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -41,6 +45,62 @@ func parseOptionalModelPrice(value string, field string) (decimal.Decimal, error
 
 func modelPriceConfigured(value string) bool {
 	return strings.TrimSpace(value) != ""
+}
+
+func optionalCustomModelScalar(value string) (*float64, error) {
+	return modelpricing.OptionalFloatFromString(value)
+}
+
+func applyCustomModelPricing(m *model.CustomModel, raw []byte, useCases []string) error {
+	if m == nil {
+		return nil
+	}
+	scalars := modelpricing.ScalarsFromDecimalPrices(
+		m.InputPrice,
+		m.OutputPrice,
+		m.CostCacheRead,
+		m.CostCacheWrite,
+		m.CostCacheWrite5m,
+		m.CostCacheWrite1h,
+		m.InputPriceConfigured,
+		m.OutputPriceConfigured,
+		m.CacheReadPriceConfigured,
+		m.CacheWritePriceConfigured,
+		m.CacheWrite5mPriceConfigured,
+		m.CacheWrite1hPriceConfigured,
+	)
+	prepared, derivedScalars, err := modelpricing.PrepareCustomModelPricing(raw, m.Currency, useCases, scalars)
+	if err != nil {
+		return fmt.Errorf("invalid pricing: %w", err)
+	}
+	if len(prepared) == 0 || string(prepared) == "null" {
+		return nil
+	}
+	m.Pricing = datatypes.JSON(prepared)
+	applyDerivedCustomScalars(m, derivedScalars)
+	m.PopulateConfiguredFromPricing()
+	return nil
+}
+
+func applyDerivedCustomScalars(m *model.CustomModel, scalars modelpricing.CustomModelScalars) {
+	if scalars.InputPrice != nil {
+		m.InputPrice = decimal.NewFromFloat(*scalars.InputPrice)
+	}
+	if scalars.OutputPrice != nil {
+		m.OutputPrice = decimal.NewFromFloat(*scalars.OutputPrice)
+	}
+	if scalars.CacheReadPrice != nil {
+		m.CostCacheRead = decimal.NewFromFloat(*scalars.CacheReadPrice)
+	}
+	if scalars.CacheWritePrice != nil {
+		m.CostCacheWrite = decimal.NewFromFloat(*scalars.CacheWritePrice)
+	}
+	if scalars.CacheWrite5mPrice != nil {
+		m.CostCacheWrite5m = decimal.NewFromFloat(*scalars.CacheWrite5mPrice)
+	}
+	if scalars.CacheWrite1hPrice != nil {
+		m.CostCacheWrite1h = decimal.NewFromFloat(*scalars.CacheWrite1hPrice)
+	}
 }
 
 func parseOptionalModelPriceOverride(value string, field string) (*decimal.Decimal, error) {
@@ -358,6 +418,16 @@ func (s *modelService) ConfigureModel(ctx context.Context, organizationID uuid.U
 		}
 		config.CacheWrite1hPriceOverride = cost
 	}
+	if req.PricingOverride != nil {
+		raw := bytes.TrimSpace(*req.PricingOverride)
+		if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+			config.PricingOverride = nil
+		} else if !json.Valid(raw) {
+			return nil, fmt.Errorf("pricing_override must be valid JSON")
+		} else {
+			config.PricingOverride = datatypes.JSON(raw)
+		}
+	}
 	if req.SortOrder != nil {
 		config.SortOrder = *req.SortOrder
 	}
@@ -508,6 +578,10 @@ func (s *modelService) CreateCustom(ctx context.Context, organizationID uuid.UUI
 		ConfigParameters:            configParameters,
 	}
 
+	if err := applyCustomModelPricing(m, req.Pricing, useCases); err != nil {
+		return nil, err
+	}
+
 	if err := s.customRepo.Create(ctx, m); err != nil {
 		return nil, fmt.Errorf("failed to create custom model: %w", err)
 	}
@@ -644,6 +718,20 @@ func (s *modelService) UpdateCustom(ctx context.Context, organizationID, id uuid
 		m.ConfigParameters = configParameters
 	}
 	m.UseCases = model.StringArray(model.EnsureUseCases([]string(m.UseCases), m.Endpoints))
+
+	pricingChanged := len(req.Pricing) > 0
+	priceFieldsChanged := req.InputPrice != nil || req.OutputPrice != nil ||
+		req.CacheReadPrice != nil || req.CacheWritePrice != nil ||
+		req.CacheWrite5mPrice != nil || req.CacheWrite1hPrice != nil
+	if pricingChanged || priceFieldsChanged {
+		pricingRaw := req.Pricing
+		if !pricingChanged {
+			pricingRaw = m.Pricing
+		}
+		if err := applyCustomModelPricing(m, pricingRaw, []string(m.UseCases)); err != nil {
+			return nil, err
+		}
+	}
 
 	if err := s.customRepo.Update(ctx, m); err != nil {
 		return nil, fmt.Errorf("failed to update custom model: %w", err)
@@ -962,6 +1050,9 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 				view.CacheWrite1hPrice = override
 				view.CacheWrite1hPriceConfigured = true
 			}
+			if len(cfg.PricingOverride) > 0 && string(cfg.PricingOverride) != "null" {
+				view.PricingOverride = append(datatypes.JSON(nil), cfg.PricingOverride...)
+			}
 		}
 		view.Callable = view.IsAvailable && view.IsEnabled
 
@@ -1030,6 +1121,7 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 			CacheWritePriceConfigured:   m.CacheWritePriceConfigured,
 			CacheWrite5mPriceConfigured: m.CacheWrite5mPriceConfigured,
 			CacheWrite1hPriceConfigured: m.CacheWrite1hPriceConfigured,
+			Pricing:                     append([]byte(nil), m.Pricing...),
 
 			// Context
 			ContextWindow:   m.ContextWindow,

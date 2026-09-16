@@ -20,6 +20,7 @@ type modelUsageFilters struct {
 	AppType           *string
 	AppID             *uuid.UUID
 	ModelName         *string
+	Operation         *string
 	BillingLane       *string
 	UseSystemProvider *bool
 }
@@ -101,6 +102,7 @@ func (r *statisticsRepositoryImpl) GetModelUsage(ctx context.Context, organizati
 		AppType:           req.AppType,
 		AppID:             req.AppID,
 		ModelName:         req.ModelName,
+		Operation:         req.Operation,
 		BillingLane:       req.BillingLane,
 		UseSystemProvider: req.UseSystemProvider,
 	}
@@ -324,6 +326,9 @@ func applyUsageBillFilters(query *gorm.DB, alias string, filters modelUsageFilte
 	}
 	if hasText(filters.ModelName) {
 		query = query.Where(column(alias, "model_name")+" = ?", strings.TrimSpace(*filters.ModelName))
+	}
+	if hasText(filters.Operation) {
+		query = query.Where(column(alias, "operation")+" = ?", strings.TrimSpace(*filters.Operation))
 	}
 	if hasText(filters.BillingLane) {
 		query = query.Where(column(alias, "billing_lane")+" = ?", strings.TrimSpace(*filters.BillingLane))

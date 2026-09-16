@@ -1,6 +1,8 @@
 package dto
 
 import (
+	"encoding/json"
+
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 )
@@ -81,6 +83,7 @@ type ConfigureModelRequest struct {
 	CacheWritePriceOverride   *string   `json:"cache_write_price_override"`
 	CacheWrite5mPriceOverride *string   `json:"cache_write_5m_price_override"`
 	CacheWrite1hPriceOverride *string   `json:"cache_write_1h_price_override"`
+	PricingOverride           *json.RawMessage `json:"pricing_override"`
 	AccessScope               string    `json:"access_scope"`
 	VisibleGroups             []string  `json:"visible_groups"`
 	VisibleUsers              []string  `json:"visible_users"`
@@ -109,6 +112,7 @@ type CreateCustomModelRequest struct {
 	CacheWritePrice   string `json:"cache_write_price"`
 	CacheWrite5mPrice string `json:"cache_write_5m_price"`
 	CacheWrite1hPrice string `json:"cache_write_1h_price"`
+	Pricing           []byte `json:"pricing"`
 	KnowledgeCutoff   string `json:"knowledge_cutoff"`
 	Description       string `json:"description"`
 
@@ -131,6 +135,7 @@ type UpdateCustomModelRequest struct {
 	CacheWritePrice   *string  `json:"cache_write_price"`
 	CacheWrite5mPrice *string  `json:"cache_write_5m_price"`
 	CacheWrite1hPrice *string  `json:"cache_write_1h_price"`
+	Pricing           []byte   `json:"pricing"`
 	KnowledgeCutoff   *string  `json:"knowledge_cutoff"`
 	Description       *string  `json:"description"`
 	IsActive          *bool    `json:"is_active"`
@@ -209,4 +214,25 @@ type BatchModelAvailabilityRequest struct {
 // BatchModelAvailabilityResponse is the response for batch model availability check
 type BatchModelAvailabilityResponse struct {
 	Items map[string]*ModelAvailabilityResponse `json:"items"`
+}
+
+type PricingIssueItem struct {
+	UseCase   string `json:"use_case"`
+	Operation string `json:"operation"`
+	Meter     string `json:"meter"`
+}
+
+type PricingIssueResponse struct {
+	ID         uuid.UUID        `json:"id"`
+	Provider   string           `json:"provider"`
+	Model      string           `json:"model"`
+	ModelName  string           `json:"model_name"`
+	UseCases   []string         `json:"use_cases"`
+	Missing    []PricingIssueItem `json:"missing"`
+	Configured bool             `json:"configured"`
+}
+
+type PricingIssuesListResponse struct {
+	Items []PricingIssueResponse `json:"items"`
+	Total int                    `json:"total"`
 }

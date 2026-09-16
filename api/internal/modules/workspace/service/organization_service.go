@@ -28,6 +28,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	workspacecache "github.com/zgiai/zgi/api/internal/modules/workspace/cache"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
@@ -2087,6 +2088,7 @@ func currentOrganizationResponse(organization *model.Organization, role model.Or
 		Status:                 organization.Status,
 		BillingDisplayCurrency: organizationBillingDisplayCurrency(organization),
 		USDToCNYRate:           organizationUSDToCNYRate(organization),
+		PointsPerUSD:           gateway.NormalizedPointsPerUSD(),
 		LLMRoutingStrategy:     organizationLLMRoutingStrategy(organization),
 		CreatedAt:              organization.CreatedAt.Unix(),
 		OrganizationRole:       role,

@@ -74,6 +74,11 @@ import {
   getBillingDisplaySettings,
 } from '@/utils/billing-display';
 import { useOrganizationStore } from '@/store/organization-store';
+import {
+  buildCustomModelPricing,
+  readCustomModelPricePerImage,
+  readCustomModelVideoPricePerSecond,
+} from '@/utils/build-custom-model-pricing';
 
 const useCases: ModelUseCase[] = USE_CASE_ORDER;
 const EXCLUSIVE_USE_CASES: string[] = ['text-chat', 'embedding', 'rerank'];
@@ -307,6 +312,8 @@ const createSchema = (t: (key: string, values?: Record<string, string | number>)
       cache_write_price: z.string().optional(),
       cache_write_5m_price: z.string().optional(),
       cache_write_1h_price: z.string().optional(),
+      price_per_image: z.string().optional(),
+      video_price_per_second: z.string().optional(),
 
       input_modalities: z.array(z.string()).min(1),
       output_modalities: z.array(z.string()).min(1),
@@ -424,6 +431,7 @@ export function CustomModelDialog({
       ? 'aiProviders.models.priceDialog.cnyPerMillion'
       : 'aiProviders.models.priceDialog.usdPerMillion'
   );
+  const pointsPerUsd = currentOrganization?.points_per_usd ?? 1000;
   const formSchema = createSchema((key, values) => t(key as never, values));
   type CustomModelFormInput = z.input<typeof formSchema>;
   type CustomModelFormValues = z.output<typeof formSchema>;
@@ -449,6 +457,8 @@ export function CustomModelDialog({
       cache_write_price: '',
       cache_write_5m_price: '',
       cache_write_1h_price: '',
+      price_per_image: '',
+      video_price_per_second: '',
       input_modalities: ['text'],
       output_modalities: ['text'],
       knowledge_cutoff: '',
@@ -594,6 +604,8 @@ export function CustomModelDialog({
           initialData.cache_write_1h_price_configured,
           billingDisplay
         ),
+        price_per_image: readCustomModelPricePerImage(initialData.pricing),
+        video_price_per_second: readCustomModelVideoPricePerSecond(initialData.pricing),
         input_modalities: initialData.input_modalities || ['text'],
         output_modalities: initialData.output_modalities || ['text'],
         knowledge_cutoff: initialData.training_data?.cutoff_date || '',
@@ -729,6 +741,13 @@ export function CustomModelDialog({
       max_stop_sequences: parameters?.max_stop_sequences || 4,
     };
 
+    const pricing = buildCustomModelPricing({
+      useCases: values.use_cases,
+      currency: billingDisplay.currency,
+      pricePerImage: billingDisplayInputToUSD(values.price_per_image ?? '', billingDisplay),
+      videoPricePerSecond: billingDisplayInputToUSD(values.video_price_per_second ?? '', billingDisplay),
+    });
+
     const data = {
       ...rest,
       input_price: billingDisplayInputToUSD(values.input_price ?? '', billingDisplay),
@@ -743,6 +762,7 @@ export function CustomModelDialog({
         values.cache_write_1h_price ?? '',
         billingDisplay
       ),
+      pricing,
       use_cases: values.use_cases as ModelUseCase[],
       parameters: mappedParameters,
       config_parameters: buildConfigParameters(config_parameters),
@@ -1077,6 +1097,9 @@ export function CustomModelDialog({
                       <CreditCard className="h-4 w-4 text-primary" />
                       {t('aiProviders.models.sections.pricing')}
                     </h3>
+                    <p className="text-xs text-muted-foreground">
+                      {t('aiProviders.models.fields.pointsPerUsdHint', { points: pointsPerUsd })}
+                    </p>
                     <div className="grid grid-cols-2 gap-4">
                       <FormField
                         control={form.control}
@@ -1263,6 +1286,48 @@ export function CustomModelDialog({
                         )}
                       />
                     </div>
+
+                    {useCasesValue?.includes('image-gen') && (
+                      <FormField
+                        control={form.control}
+                        name="price_per_image"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>{t('aiProviders.models.fields.pricePerImage')}</FormLabel>
+                            <FormControl>
+                              <div className="relative">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">
+                                  {currencySymbol}
+                                </span>
+                                <Input className="pl-6" type="number" min="0" step="any" {...field} />
+                              </div>
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    )}
+
+                    {useCasesValue?.includes('video-gen') && (
+                      <FormField
+                        control={form.control}
+                        name="video_price_per_second"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>{t('aiProviders.models.fields.videoPricePerSecond')}</FormLabel>
+                            <FormControl>
+                              <div className="relative">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">
+                                  {currencySymbol}
+                                </span>
+                                <Input className="pl-6" type="number" min="0" step="any" {...field} />
+                              </div>
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    )}
                   </div>
 
                   <div className="space-y-4 border-t pt-4">

@@ -776,18 +776,6 @@ func buildPublishedModelColumns(db *gorm.DB, model PublishedModel) map[string]in
 	if hasColumn(db, "llm_models", "cost_cache_write_1h") {
 		values["cost_cache_write_1h"] = nullablePublishedPrice(tokenPrices.cacheWrite1h)
 	}
-	if hasColumn(db, "llm_models", "cache_read_price_configured") {
-		values["cache_read_price_configured"] = tokenPrices.cacheRead != nil
-	}
-	if hasColumn(db, "llm_models", "cache_write_price_configured") {
-		values["cache_write_price_configured"] = tokenPrices.cacheWrite != nil
-	}
-	if hasColumn(db, "llm_models", "cache_write_5m_price_configured") {
-		values["cache_write_5m_price_configured"] = tokenPrices.cacheWrite5m != nil
-	}
-	if hasColumn(db, "llm_models", "cache_write_1h_price_configured") {
-		values["cache_write_1h_price_configured"] = tokenPrices.cacheWrite1h != nil
-	}
 	if hasColumn(db, "llm_models", "is_active") {
 		values["is_active"] = model.IsActive
 	}
@@ -795,12 +783,6 @@ func buildPublishedModelColumns(db *gorm.DB, model PublishedModel) map[string]in
 		values["is_system_enabled"] = model.IsSystemEnabled
 	}
 
-	if hasColumn(db, "llm_models", "input_price_configured") {
-		values["input_price_configured"] = tokenPrices.inputConfigured
-	}
-	if hasColumn(db, "llm_models", "output_price_configured") {
-		values["output_price_configured"] = tokenPrices.outputConfigured
-	}
 	if hasColumn(db, "llm_models", "pricing") {
 		values["pricing"] = serializePricing(model.Pricing)
 	}

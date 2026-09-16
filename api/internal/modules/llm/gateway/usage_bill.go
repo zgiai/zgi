@@ -35,6 +35,7 @@ type UsageBill struct {
 	QuotaSubjectID    *string          `gorm:"column:quota_subject_id;type:varchar(255)"`
 	ModelID           uuid.UUID        `gorm:"column:model_id;type:uuid;not null"`
 	ModelName         string           `gorm:"column:model_name;type:varchar(100);not null;index:idx_usage_bills_org_model_created,priority:2"`
+	Operation         string           `gorm:"column:operation;type:varchar(64);index:idx_usage_bills_org_operation_created,priority:2"`
 	ProviderID        uuid.UUID        `gorm:"column:provider_id;type:uuid;not null"`
 	ProviderName      string           `gorm:"column:provider_name;type:varchar(100);not null"`
 	RouteID           *uuid.UUID       `gorm:"column:route_id;type:uuid"`

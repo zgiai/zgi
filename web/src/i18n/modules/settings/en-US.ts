@@ -75,7 +75,7 @@ const messages = {
   pricingFallback: {
     title: 'Missing-price billing policy',
     description:
-      'Model prices are used first. Missing prices use admin policy, then system defaults.',
+      'Model prices are used first. This policy is a legacy compatibility layer for missing prices; when no model price matches, admin policy and system defaults apply.',
     enableFallback: 'Enable missing-price policy',
     enableFallbackDesc:
       'When disabled, requests without upstream model prices fail before provider calls.',

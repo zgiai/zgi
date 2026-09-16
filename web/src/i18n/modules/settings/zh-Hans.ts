@@ -67,7 +67,8 @@ const messages: SettingsMessages = {
   },
   pricingFallback: {
     title: '模型缺价计费策略',
-    description: '模型已配置价格时优先使用模型价格；缺少价格时，按管理配置和系统默认策略计费。',
+    description:
+      '模型已配置价格时优先使用模型价格。此项为存量兼容层，用于补齐缺价模型；缺少价格时，按管理配置和系统默认策略计费。',
     enableFallback: '启用缺价计费策略',
     enableFallbackDesc: '关闭后，缺少上游价格的请求会在调用服务商前失败。',
     missingRuleTitle: '未匹配到计费规则',

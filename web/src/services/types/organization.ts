@@ -7,6 +7,7 @@ export interface Organization {
   status: 'active' | 'inactive';
   billing_display_currency?: 'USD' | 'CNY';
   usd_to_cny_rate?: number | string | null;
+  points_per_usd?: number;
   llm_routing_strategy?: LLMRoutingStrategy;
   created_at: number;
   organization_role?: 'owner' | 'admin' | 'normal';

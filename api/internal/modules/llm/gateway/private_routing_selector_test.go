@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	credentialmodel "github.com/zgiai/zgi/api/internal/modules/llm/credential/model"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
@@ -31,12 +32,14 @@ func openPrivateRoutingTestDB(t *testing.T) *gorm.DB {
 			id TEXT PRIMARY KEY, organization_id TEXT, provider TEXT, name TEXT,
 			input_price NUMERIC, output_price NUMERIC,
 			input_price_configured BOOLEAN, output_price_configured BOOLEAN,
+			pricing TEXT DEFAULT '{}',
 			deleted_at DATETIME
 		)`,
 		`CREATE TABLE llm_models (
 			id TEXT PRIMARY KEY, provider TEXT, name TEXT,
 			input_price NUMERIC, output_price NUMERIC,
 			input_price_configured BOOLEAN, output_price_configured BOOLEAN,
+			pricing TEXT DEFAULT '{}',
 			deleted_at DATETIME
 		)`,
 		`CREATE TABLE llm_model_configs (
@@ -65,9 +68,16 @@ func privateRoutingRoute(orgID uuid.UUID, provider string, priority, weight int)
 
 func insertCustomRoutingPrice(t *testing.T, db *gorm.DB, orgID uuid.UUID, provider, model string, input, output float64, inputConfigured, outputConfigured bool) {
 	t.Helper()
+	pricing := buildTokenPricingJSON(
+		decimal.NewFromFloat(input).String(),
+		decimal.NewFromFloat(output).String(),
+		inputConfigured,
+		outputConfigured,
+		"", "", "", "",
+	)
 	if err := db.Exec(`INSERT INTO llm_custom_models
-		(id, organization_id, provider, name, input_price, output_price, input_price_configured, output_price_configured)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, uuid.NewString(), orgID.String(), provider, model, input, output, inputConfigured, outputConfigured).Error; err != nil {
+		(id, organization_id, provider, name, input_price, output_price, input_price_configured, output_price_configured, pricing)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, uuid.NewString(), orgID.String(), provider, model, input, output, inputConfigured, outputConfigured, pricing).Error; err != nil {
 		t.Fatal(err)
 	}
 }

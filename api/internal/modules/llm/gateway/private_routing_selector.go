@@ -11,6 +11,8 @@ import (
 	"github.com/shopspring/decimal"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	modelpricing "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/pricing"
+	"gorm.io/datatypes"
 )
 
 const (
@@ -41,8 +43,9 @@ type routeModelPriceRow struct {
 	Provider              string          `gorm:"column:provider"`
 	InputPrice            decimal.Decimal `gorm:"column:input_price"`
 	OutputPrice           decimal.Decimal `gorm:"column:output_price"`
-	InputPriceConfigured  bool            `gorm:"column:input_price_configured"`
-	OutputPriceConfigured bool            `gorm:"column:output_price_configured"`
+	Pricing               datatypes.JSON  `gorm:"column:pricing"`
+	InputPriceConfigured  bool            `gorm:"-"`
+	OutputPriceConfigured bool            `gorm:"-"`
 }
 
 type routeModelPriceOverrideRow struct {
@@ -365,13 +368,19 @@ func (r *ChannelRouter) loadRoutePrices(ctx context.Context, organizationID uuid
 	}
 	var rows []routeModelPriceRow
 	query := r.db.WithContext(ctx).Table(table).
-		Select("id, provider, input_price, output_price, input_price_configured, output_price_configured").
+		Select("id, provider, input_price, output_price, pricing").
 		Where("name = ? AND provider IN ? AND deleted_at IS NULL", strings.TrimSpace(modelName), providers)
 	if custom {
 		query = query.Where("organization_id = ?", organizationID.String())
 	}
 	if err := query.Find(&rows).Error; err != nil {
 		return
+	}
+
+	for index := range rows {
+		resolved := modelpricing.ResolveConfigured([]byte(rows[index].Pricing))
+		rows[index].InputPriceConfigured = resolved.Input
+		rows[index].OutputPriceConfigured = resolved.Output
 	}
 
 	if !custom && len(rows) > 0 {

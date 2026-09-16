@@ -11,12 +11,19 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	modelpricing "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/pricing"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
 const pricingCreditsPerUSD = int64(1_000_000)
+
+// NormalizedPointsPerUSD is the display conversion rate exposed to organization
+// settings readers for fiat-to-points previews in the console UI.
+func NormalizedPointsPerUSD() int64 {
+	return pricingCreditsPerUSD / 1000
+}
 
 var (
 	ErrPricingNotConfigured  = errors.New("model pricing is not configured")
@@ -407,9 +414,12 @@ func (e *pricingEngine) QuoteImage(ctx context.Context, ref PricingModelRef, req
 			return PricingQuote{}, err
 		}
 		if configured {
-			var matched llmmodel.PricingRule
-			if matchImagePricingRule(&r, prices, &matched) {
-				return quoteConfiguredImageRule(model, &r, matched, count)
+			matched, err := matchImagePricingRule(&r, prices)
+			if err != nil {
+				return PricingQuote{}, err
+			}
+			if matched != nil {
+				return quoteConfiguredImageRule(model, &r, *matched, count)
 			}
 		}
 		if !configured {
@@ -777,6 +787,7 @@ type pricingModelConfigOverride struct {
 	CacheWritePriceOverride   *decimal.Decimal `gorm:"column:cache_write_price_override"`
 	CacheWrite5mPriceOverride *decimal.Decimal `gorm:"column:cache_write_5m_price_override"`
 	CacheWrite1hPriceOverride *decimal.Decimal `gorm:"column:cache_write_1h_price_override"`
+	PricingOverride           datatypes.JSON   `gorm:"column:pricing_override"`
 }
 
 func (e *pricingEngine) applyOrganizationPriceOverride(ctx context.Context, record *pricingModelRecord, organizationID uuid.UUID) error {
@@ -798,34 +809,37 @@ func (e *pricingEngine) applyOrganizationPriceOverride(ctx context.Context, reco
 	}
 	if cfg.InputPriceOverride != nil {
 		record.InputPrice = *cfg.InputPriceOverride
-		record.InputPriceConfigured = true
 		record.InputPriceOrganizationOverride = true
 	}
 	if cfg.OutputPriceOverride != nil {
 		record.OutputPrice = *cfg.OutputPriceOverride
-		record.OutputPriceConfigured = true
 		record.OutputPriceOrganizationOverride = true
 	}
 	if cfg.CacheReadPriceOverride != nil {
 		record.CacheReadPrice = *cfg.CacheReadPriceOverride
-		record.CacheReadPriceConfigured = true
 		record.CacheReadOrganizationOverride = true
 	}
 	if cfg.CacheWritePriceOverride != nil {
 		record.CacheWritePrice = *cfg.CacheWritePriceOverride
-		record.CacheWritePriceConfigured = true
 		record.CacheWriteOrganizationOverride = true
 	}
 	if cfg.CacheWrite5mPriceOverride != nil {
 		record.CacheWrite5mPrice = *cfg.CacheWrite5mPriceOverride
-		record.CacheWrite5mPriceConfigured = true
 		record.CacheWrite5mOrganizationOverride = true
 	}
 	if cfg.CacheWrite1hPriceOverride != nil {
 		record.CacheWrite1hPrice = *cfg.CacheWrite1hPriceOverride
-		record.CacheWrite1hPriceConfigured = true
 		record.CacheWrite1hOrganizationOverride = true
 	}
+	if len(cfg.PricingOverride) > 0 && string(cfg.PricingOverride) != "null" {
+		merged := modelpricing.MergeOrganizationPricingOverride(
+			json.RawMessage(record.Pricing),
+			json.RawMessage(cfg.PricingOverride),
+			"",
+		)
+		record.Pricing = datatypes.JSON(merged)
+	}
+	applyResolvedConfiguredToRecord(record)
 	return nil
 }
 
@@ -837,6 +851,11 @@ func (e *pricingEngine) modelConfigOverrideColumns() string {
 		} else {
 			columns = append(columns, "NULL AS "+column)
 		}
+	}
+	if e.hasColumn("llm_model_configs", "pricing_override") {
+		columns = append(columns, "pricing_override")
+	} else {
+		columns = append(columns, "NULL AS pricing_override")
 	}
 	return strings.Join(columns, ", ")
 }
@@ -855,35 +874,16 @@ func normalizePricingModelRef(ref PricingModelRef) PricingModelRef {
 
 func (e *pricingEngine) loadModelFromTable(ctx context.Context, table string, modelID uuid.UUID) (*pricingModelRecord, bool, error) {
 	selects := []string{"id", "provider", "name", "input_price", "output_price"}
-	if e.hasColumn(table, "input_price_configured") {
-		selects = append(selects, "input_price_configured")
-	} else {
-		selects = append(selects, "false AS input_price_configured")
-	}
-	if e.hasColumn(table, "output_price_configured") {
-		selects = append(selects, "output_price_configured")
-	} else {
-		selects = append(selects, "false AS output_price_configured")
-	}
 	if e.hasColumn(table, "image_prices") {
 		selects = append(selects, "image_prices")
 	} else {
 		selects = append(selects, "'[]' AS image_prices")
 	}
-	for _, pricingColumn := range []struct{ column, configuredAlias string }{
-		{"cost_cache_read", "cache_read_price_configured"},
-		{"cost_cache_write", "cache_write_price_configured"},
-		{"cost_cache_write_5m", "cache_write_5m_price_configured"},
-		{"cost_cache_write_1h", "cache_write_1h_price_configured"},
-	} {
-		if e.hasColumn(table, pricingColumn.column) {
-			configuredExpr := pricingColumn.column + " IS NOT NULL AS " + pricingColumn.configuredAlias
-			if e.hasColumn(table, pricingColumn.configuredAlias) {
-				configuredExpr = pricingColumn.configuredAlias
-			}
-			selects = append(selects, pricingColumn.column, configuredExpr)
+	for _, column := range []string{"cost_cache_read", "cost_cache_write", "cost_cache_write_5m", "cost_cache_write_1h"} {
+		if e.hasColumn(table, column) {
+			selects = append(selects, column)
 		} else {
-			selects = append(selects, "0 AS "+pricingColumn.column, "false AS "+pricingColumn.configuredAlias)
+			selects = append(selects, "0 AS "+column)
 		}
 	}
 	if e.hasColumn(table, "pricing") {
@@ -904,7 +904,29 @@ func (e *pricingEngine) loadModelFromTable(ctx context.Context, table string, mo
 		}
 		return nil, false, err
 	}
+	applyResolvedConfiguredToRecord(&model)
 	return &model, true, nil
+}
+
+func applyResolvedConfiguredToRecord(record *pricingModelRecord) {
+	if record == nil {
+		return
+	}
+	overrides := modelpricing.OrganizationOverrides{
+		Input:        record.InputPriceOrganizationOverride,
+		Output:       record.OutputPriceOrganizationOverride,
+		CacheRead:    record.CacheReadOrganizationOverride,
+		CacheWrite:   record.CacheWriteOrganizationOverride,
+		CacheWrite5m: record.CacheWrite5mOrganizationOverride,
+		CacheWrite1h: record.CacheWrite1hOrganizationOverride,
+	}
+	resolved := modelpricing.ApplyOrganizationOverrides(modelpricing.ResolveConfigured([]byte(record.Pricing)), overrides)
+	record.InputPriceConfigured = resolved.Input
+	record.OutputPriceConfigured = resolved.Output
+	record.CacheReadPriceConfigured = resolved.CacheRead
+	record.CacheWritePriceConfigured = resolved.CacheWrite
+	record.CacheWrite5mPriceConfigured = resolved.CacheWrite5m
+	record.CacheWrite1hPriceConfigured = resolved.CacheWrite1h
 }
 
 func (e *pricingEngine) hasColumn(table, column string) bool {
@@ -1159,17 +1181,57 @@ func creditsFromUSD(totalUSD decimal.Decimal) int64 {
 	return totalUSD.Mul(decimal.NewFromInt(pricingCreditsPerUSD)).Ceil().IntPart()
 }
 
-func matchImagePricingRule(req *adapter.ImageRequest, prices []llmmodel.PricingRule, matched *llmmodel.PricingRule) bool {
-	if matched == nil {
-		return false
-	}
-	for _, rule := range prices {
-		if matchImageCondition(req, rule.Conditions) {
-			*matched = rule
-			return true
+func matchImagePricingRule(req *adapter.ImageRequest, prices []llmmodel.PricingRule) (*llmmodel.PricingRule, error) {
+	bestScore := -1
+	var best *llmmodel.PricingRule
+	ambiguous := false
+	for index := range prices {
+		rule := prices[index]
+		score, ok := scoreImagePricingRule(rule.Conditions, req)
+		if !ok {
+			continue
+		}
+		if score > bestScore {
+			best = &prices[index]
+			bestScore = score
+			ambiguous = false
+			continue
+		}
+		if score == bestScore && best != nil && rule.ID != best.ID {
+			ambiguous = true
 		}
 	}
-	return false
+	if ambiguous {
+		return nil, fmt.Errorf("%w: ambiguous image pricing rules", ErrPricingNotConfigured)
+	}
+	return best, nil
+}
+
+func scoreImagePricingRule(conditions map[string]interface{}, req *adapter.ImageRequest) (int, bool) {
+	if len(conditions) == 0 {
+		return 0, true
+	}
+	score := 0
+	for key, expected := range conditions {
+		switch key {
+		case "size":
+			if !matchStringOrArray(req.Size, expected) {
+				return 0, false
+			}
+		case "quality":
+			if !matchStringOrArray(req.Quality, expected) {
+				return 0, false
+			}
+		case "style":
+			if !matchStringOrArray(req.Style, expected) {
+				return 0, false
+			}
+		default:
+			return 0, false
+		}
+		score++
+	}
+	return score, true
 }
 
 func newOutputOnlyUSDQuote(totalUSD decimal.Decimal, source PricingSource, ruleID string, usageSource UsageSource, snapshot datatypes.JSON) PricingQuote {

@@ -823,6 +823,47 @@ func insertCatalogApplyProvider(t *testing.T, db *gorm.DB, provider string, dele
 	}).Error)
 }
 
+func TestApplyPublishedCatalogPreservesRulesInPricingJSON(t *testing.T) {
+	db := newCatalogApplyTestDB(t)
+	svc := NewService(db)
+	pricing := `{"deployment_scope":"global","price_per_image":0.02,"rules":[{"operation":"image_generation","meter":"image","unit":"per_image","price":"0.02","configured":true}]}`
+
+	err := svc.ApplyPublishedCatalog(t.Context(), PublishedCatalog{
+		Version:     1,
+		PublishedAt: time.Now().UTC(),
+		Providers: []PublishedProvider{{
+			Provider:        "qwen",
+			ProviderName:    "Qwen",
+			Status:          "active",
+			IsActive:        true,
+			IsSystemEnabled: true,
+		}},
+		Models: []PublishedModel{{
+			Provider:               "qwen",
+			Model:                  "qwen-image",
+			ModelName:              "Qwen Image",
+			Status:                 "active",
+			IsActive:               true,
+			IsSystemEnabled:        true,
+			UseCases:               []string{"image-gen"},
+			Pricing:                []byte(pricing),
+			InputPriceConfigured:   true,
+			OutputPriceConfigured:  true,
+			EndpointsAuthoritative: true,
+			Endpoints:              &llmmodel.ModelEndpoints{ImageGeneration: true},
+		}},
+	})
+	require.NoError(t, err)
+
+	var stored string
+	require.NoError(t, db.Table("llm_models").
+		Select("pricing").
+		Where("provider = ? AND name = ?", "qwen", "qwen-image").
+		Scan(&stored).Error)
+	require.Contains(t, stored, `"rules"`)
+	require.Contains(t, stored, `"price_per_image"`)
+}
+
 func insertCatalogApplyModel(t *testing.T, db *gorm.DB, provider, name, status string, deleted bool) {
 	t.Helper()
 	var deletedAt interface{}

@@ -87,6 +87,15 @@ func (h *ModelHandler) ListGlobal(c *gin.Context) {
 	response.Success(c, gin.H{"list": models, "total": total, "page": req.Page, "page_size": req.PageSize})
 }
 
+func (h *ModelHandler) ListPricingIssues(c *gin.Context) {
+	result, err := h.service.ListPricingIssues(c.Request.Context())
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	response.Success(c, result)
+}
+
 func (h *ModelHandler) UpdateGlobal(c *gin.Context) {
 	if h.denyPlatformCatalogWrite(c) {
 		return

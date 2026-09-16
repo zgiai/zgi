@@ -39,6 +39,7 @@ type ModelService interface {
 
 	// Official models (provided by system channels)
 	ListOfficialModels(ctx context.Context) ([]*model.LLMModel, error)
+	ListPricingIssues(ctx context.Context) (*dto.PricingIssuesListResponse, error)
 
 	// Availability testing
 	CheckAvailability(ctx context.Context, organizationID uuid.UUID, modelID uuid.UUID) (*dto.ModelAvailabilityResponse, error)
