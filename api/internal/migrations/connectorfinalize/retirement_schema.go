@@ -36,6 +36,39 @@ func retirementDDL(tx *gorm.DB) error {
 	return nil
 }
 
+// lockInventoryTables is the closed fixed lock manifest. It is the retirement
+// inventory plus the two surviving channel scope tables whose row counts the
+// channel function transition inspects. The channel tables are lock-only: they
+// are never added to a Source, Native or Host snapshot manifest and never
+// receive retirement DDL, but Apply and FinalizeEmpty must hold ACCESS
+// EXCLUSIVE on them before inspect reads the counts, otherwise a concurrent
+// insert can appear between the observation and the transition.
+func lockInventoryTables() []string {
+	tables := make([]string, 0, len(RetiredTables())+len(NativeTables())+len(hostTables())+3)
+	tables = append(tables, RetiredTables()...)
+	tables = append(tables, NativeTables()...)
+	tables = append(tables, hostTables()...)
+	tables = append(tables, channelInstallationsTable, channelInstallationCredentialsTable)
+	tables = append(tables, "migrations")
+	return dedupeTables(tables)
+}
+
+// dedupeTables keeps the first occurrence of every relation so a future manifest
+// change can never list one table twice in the fixed LOCK TABLE statement, and
+// the resulting lock order stays deterministic.
+func dedupeTables(tables []string) []string {
+	seen := make(map[string]struct{}, len(tables))
+	result := make([]string, 0, len(tables))
+	for _, table := range tables {
+		if _, ok := seen[table]; ok {
+			continue
+		}
+		seen[table] = struct{}{}
+		result = append(result, table)
+	}
+	return result
+}
+
 func lockInventory(tx *gorm.DB) error {
 	if err := tx.Exec(`SET LOCAL lock_timeout = '10s'`).Error; err != nil {
 		return err
@@ -47,8 +80,7 @@ func lockInventory(tx *gorm.DB) error {
 	if !locked {
 		return fmt.Errorf("another migration owns the maintenance lock")
 	}
-	tables := append(append(RetiredTables(), NativeTables()...), hostTables()...)
-	tables = append(tables, "migrations")
+	tables := lockInventoryTables()
 	// The fixed manifest includes tables introduced by later append-only
 	// migrations. A fresh database has not created those relations yet, so
 	// resolve the lock list against the current schema without weakening the

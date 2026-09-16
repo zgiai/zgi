@@ -47,7 +47,7 @@ func verify(db *gorm.DB, option Options, requireMarker bool) (Report, error) {
 		return r, fmt.Errorf("schema2 still contains retired relations")
 	}
 	var err error
-	if r.Native, err = readTables(db, NativeTables(), data, &size); err != nil {
+	if r.Native, r.DeferredNativeTables, err = readNativeTables(db, data, &size); err != nil {
 		return r, err
 	}
 	if r.Hosts, err = readTables(db, hostTables(), data, &size); err != nil {
@@ -136,6 +136,9 @@ func verify(db *gorm.DB, option Options, requireMarker bool) (Report, error) {
 	}
 	if !continuationFK {
 		addIssue(&r, "connector_confirmation_continuations", "validated_native_claim_fk_missing")
+	}
+	if err := verifyChannelScopeFunction(db, &r); err != nil {
+		return r, err
 	}
 	validateNative(data, &r)
 	validateNativeCatalog(db, data, &r)
