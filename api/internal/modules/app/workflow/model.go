@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"encoding/json"
+	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	"time"
 
 	"github.com/google/uuid"
@@ -52,22 +53,23 @@ const (
 
 // Workflow represents workflow model
 type Workflow struct {
-	ID                    string           `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
-	TenantID              string           `gorm:"type:uuid;not null;index:idx_workflow_version" json:"tenant_id"` // Legacy tenant_id column; stores workspace scope in workflow domain.
-	AppID                 string           `gorm:"type:uuid;not null;index:idx_workflow_version" json:"app_id"`
-	AgentID               string           `gorm:"type:uuid;not null" json:"agent_id"`
-	Type                  dto.WorkflowType `gorm:"type:varchar(255);not null" json:"type"`
-	Version               string           `gorm:"type:varchar(255);not null;index:idx_workflow_version" json:"version"`
-	VersionUUID           uuid.NullUUID    `gorm:"column:version_uuid;type:uuid" json:"version_uuid,omitempty"`
-	Graph                 string           `gorm:"type:text" json:"graph"`
-	Features              string           `gorm:"type:text" json:"features"`
-	CreatedBy             string           `gorm:"type:uuid;not null" json:"created_by"`
-	CreatedAt             time.Time        `gorm:"not null;default:CURRENT_TIMESTAMP" json:"created_at"`
-	UpdatedBy             *string          `gorm:"type:uuid" json:"updated_by"`
-	UpdatedAt             time.Time        `gorm:"not null;default:CURRENT_TIMESTAMP" json:"updated_at"`
-	EnvironmentVariables  string           `gorm:"type:text;not null;default:'[]'" json:"environment_variables"`
-	ConversationVariables string           `gorm:"type:text;not null;default:'[]'" json:"conversation_variables"`
-	Internal              bool             `gorm:"type:boolean;not null;default:false" json:"internal"`
+	ConnectorReferenceCommands []connectorcore.ReferenceCommand `gorm:"-" json:"-"`
+	ID                         string                           `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
+	TenantID                   string                           `gorm:"type:uuid;not null;index:idx_workflow_version" json:"tenant_id"` // Legacy tenant_id column; stores workspace scope in workflow domain.
+	AppID                      string                           `gorm:"type:uuid;not null;index:idx_workflow_version" json:"app_id"`
+	AgentID                    string                           `gorm:"type:uuid;not null" json:"agent_id"`
+	Type                       dto.WorkflowType                 `gorm:"type:varchar(255);not null" json:"type"`
+	Version                    string                           `gorm:"type:varchar(255);not null;index:idx_workflow_version" json:"version"`
+	VersionUUID                uuid.NullUUID                    `gorm:"column:version_uuid;type:uuid" json:"version_uuid,omitempty"`
+	Graph                      string                           `gorm:"type:text" json:"graph"`
+	Features                   string                           `gorm:"type:text" json:"features"`
+	CreatedBy                  string                           `gorm:"type:uuid;not null" json:"created_by"`
+	CreatedAt                  time.Time                        `gorm:"not null;default:CURRENT_TIMESTAMP" json:"created_at"`
+	UpdatedBy                  *string                          `gorm:"type:uuid" json:"updated_by"`
+	UpdatedAt                  time.Time                        `gorm:"not null;default:CURRENT_TIMESTAMP" json:"updated_at"`
+	EnvironmentVariables       string                           `gorm:"type:text;not null;default:'[]'" json:"environment_variables"`
+	ConversationVariables      string                           `gorm:"type:text;not null;default:'[]'" json:"conversation_variables"`
+	Internal                   bool                             `gorm:"type:boolean;not null;default:false" json:"internal"`
 }
 
 // BeforeCreate GORM hook

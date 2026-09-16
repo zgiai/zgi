@@ -79,6 +79,33 @@ ZGI follows Laravel's production-safety ideas but adapts them to PostgreSQL:
 
 ## Writing Migrations
 
+### Connector decision identity repair
+
+`202609070512481192_fix_connector_decision_identity` separates operation audit
+identity (`organization_id`, `logical_operation_id`, `decision`, `status`) from
+lifecycle identity (the same fields with `correlation_id` for records without a
+logical operation). Confirmation finalization is also unique per organization
+and receipt. A correlation identifies a trace and may contain multiple operations.
+
+The migration checks actual index definitions and existing duplicates before
+atomically replacing the old correlation-wide barrier. Correct manually applied
+partial indexes are accepted; conflicting definitions or invalid historical
+identities stop the migration without rewriting audit records. The trigger change
+only advances future, identity-matched durable rejections. The migration source
+check permits state transitions inside trigger definitions, while continuing to
+reject historical data rewrites outside those definitions.
+
+Deploy readers for the new ordinary execution result states first. Run the
+migration in a maintenance window, then switch all API and worker processes to
+the fixed audit/execution code. The table lock has a five-second wait limit;
+measure index creation time against production table size before scheduling the
+window. Mixed application versions can still reject legitimate same-trace calls.
+Existing confirmation preview flags and receipt contracts do not change.
+
+This repair is forward-only. Keep the corrected indexes if rolling application
+code back, and use a build that retains the corrected decision identity. Do not
+delete audit rows or replay historical operations to resolve an unknown result.
+
 Future migrations should follow the Laravel-style structure: one timestamped file, one `up` function, one `down` function, and a schema blueprint for common table work. The migration generator creates the ID and failing `up` / `down` stubs; do not hand-write migration IDs.
 
 ```go

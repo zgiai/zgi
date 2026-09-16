@@ -17,6 +17,8 @@ esac
 if [[ "${mode}" != "--frontend-only" ]]; then
   echo "Running registration and invitation backend tests"
   (
+    export CONNECTOR_CREDENTIAL_ACTIVE_KEY_ID="registration-auth-ci"
+    export CONNECTOR_CREDENTIAL_KEYS_JSON='{"registration-auth-ci":"registration-auth-test-key-00001"}'
     cd "${repo_root}/api"
     go test ./internal/modules/user/auth/... ./internal/util ./pkg/email ./pkg/jwt -count=1
     go test ./middleware \

@@ -21,15 +21,15 @@ func skillTraceError(err error) (message string, code string) {
 	var coded publicErrorCoder
 	if errors.As(err, &coded) {
 		code = strings.TrimSpace(coded.PublicErrorCode())
-		if validIntegrationErrorCode(code) {
+		if validConnectorErrorCode(code) {
 			return code, code
 		}
 	}
 	return err.Error(), ""
 }
 
-func validIntegrationErrorCode(code string) bool {
-	if !strings.HasPrefix(code, "integration_") || len(code) > 80 {
+func validConnectorErrorCode(code string) bool {
+	if !strings.HasPrefix(code, "connector_") || len(code) > 80 {
 		return false
 	}
 	for _, character := range code {
@@ -73,23 +73,6 @@ func PublicToolErrorRecoveryForInvocation(
 		out[key] = value
 	}
 	if strings.TrimSpace(recoveryString(out["recovery_kind"])) != "action_schema" {
-		return out
-	}
-	actionExpected, _ := out["expected_arguments"].(map[string]interface{})
-	if strings.EqualFold(strings.TrimSpace(skillID), SkillExternalApps) &&
-		strings.EqualFold(strings.TrimSpace(toolName), "execute_action") {
-		wrapped := map[string]interface{}{
-			"tool_name":      "execute_action",
-			"integration_id": recoveryString(out["integration_id"]),
-			"action_id":      recoveryString(out["action_id"]),
-			"arguments_path": "arguments",
-		}
-		if schema, ok := actionExpected["schema"]; ok {
-			wrapped["schema"] = schema
-		}
-		out["expected_arguments"] = wrapped
-		out["recovery_action"] = "get_action_guide"
-		out["retry_action"] = "Call get_action_guide for this integration and action, then retry execute_action once with corrected arguments."
 		return out
 	}
 	if len(expected) > 0 {

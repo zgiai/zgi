@@ -59,6 +59,10 @@ func (s *agentsService) publishedAgentRuntimeConfig(ctx context.Context, ag *Age
 	if version == nil {
 		return nil, errAgentWebAppNotPublished
 	}
+	return s.agentRuntimeConfigForPublishedVersion(ctx, ag, version, failOnOrganizationError, "")
+}
+
+func (s *agentsService) agentRuntimeConfigForPublishedVersion(ctx context.Context, ag *Agent, version *AgentPublishedVersion, failOnOrganizationError bool, bindingAccountID string) (*dto.AgentWebAppRuntimeConfigResponse, error) {
 	workspaceID := ag.TenantID.String()
 	organizationID := workspaceID
 	if s.enterpriseService != nil {
@@ -73,6 +77,9 @@ func (s *agentsService) publishedAgentRuntimeConfig(ctx context.Context, ag *Age
 		}
 	}
 	cfg := agentConfigResponseFromSnapshot(ag.ID.String(), version.ConfigSnapshot)
+	cfg.ConnectorTargetScope = "published"
+	cfg.ConnectorTargetVersionID = version.VersionUUID.String()
+	cfg.ConnectorBindings = nil
 	if indexed, _ := version.ConfigSnapshot["binding_indexed"].(bool); indexed {
 		if s.agentBindings == nil {
 			return nil, fmt.Errorf("agent binding index is not configured")
@@ -86,7 +93,7 @@ func (s *agentsService) publishedAgentRuntimeConfig(ctx context.Context, ag *Age
 			return nil, err
 		}
 		applyAgentBindingAuthorizationsFromRows(cfg, rows)
-		cfg.BindingHealth = s.resolveAgentBindingHealth(ctx, ag, "", cfg, rows)
+		cfg.BindingHealth = s.resolveAgentBindingHealth(ctx, ag, bindingAccountID, cfg, rows)
 		cfg.BindingRevision = agentBindingRevision(rows)
 		cfg = configResponsePtr(filterAgentConfigByBindingHealth(*cfg))
 	}

@@ -801,6 +801,11 @@ export function clearRuntimeMessageMetadata(
 export function isTransientProgressItem(item: AIChatAgenticTimelineItem): boolean {
   return (
     item.type === 'progress_text' &&
+    !(
+      item.transient === false &&
+      (item.phase === 'connector_confirmation_required' ||
+        item.phase === 'connector_confirmation_resolved')
+    ) &&
     item.status !== 'completed' &&
     !item.content.trim() &&
     (item.transient === true || Boolean(item.phase))

@@ -31,6 +31,7 @@ const messages: NavigationMessages = {
   prompts: '提示词',
   skills: '技能',
   integrations: '连接中心',
+  connectors: '连接器',
   dbs: '数据库',
   files: '文件管理',
   chat: '对话',

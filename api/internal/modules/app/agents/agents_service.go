@@ -8,9 +8,9 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
+	connectorbindings "github.com/zgiai/zgi/api/internal/modules/connectors/bindings"
 	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
 	datasourceservice "github.com/zgiai/zgi/api/internal/modules/datasource/service"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
 	channelrepo "github.com/zgiai/zgi/api/internal/modules/llm/channel/repository"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
@@ -27,12 +27,6 @@ var errCurrentOrganizationNotFound = errors.New("current organization not found"
 
 type agentModelEligibility interface {
 	ListAvailable(ctx context.Context, organizationID uuid.UUID, provider string, useCase string) ([]*llmmodelservice.AvailableModel, error)
-}
-
-type IntegrationActionCatalog interface {
-	HasAction(integrationID, actionID string) bool
-	ActionDetail(integrationID, actionID string) (integrations.ActionDefinition, bool)
-	Actions(integrationID string) []integrations.ActionDefinition
 }
 
 type agentsService struct {
@@ -52,11 +46,8 @@ type agentsService struct {
 	llmClient                 llmclient.LLMClient
 	defaultModelResolver      llmdefaultservice.DefaultModelResolver
 	agentBindings             *agentbindings.Repository
+	connectorTargetBindings   connectorbindings.Repository
 	agentModels               agentModelEligibility
-	integrationActions        IntegrationActionCatalog
-	integrationActionPolicies integrations.ActionPolicyResolver
-	integrationConnections    integrations.ConnectionRepository
-	integrationAccess         *integrations.DefaultConnectionAccessService
 	db                        *gorm.DB
 }
 
@@ -76,7 +67,6 @@ func NewAgentsService(
 	llmClient llmclient.LLMClient,
 	defaultModelResolver llmdefaultservice.DefaultModelResolver,
 	db *gorm.DB,
-	integrationActionCatalogs ...IntegrationActionCatalog,
 ) AgentsService {
 	var agentModels agentModelEligibility
 	if db != nil {
@@ -87,18 +77,10 @@ func NewAgentsService(
 			channelrepo.NewTenantRouteRepository(db),
 		)
 	}
-	var integrationActions IntegrationActionCatalog
-	if len(integrationActionCatalogs) > 0 {
-		integrationActions = integrationActionCatalogs[0]
-	}
-	var integrationConnections integrations.ConnectionRepository
-	var integrationAccess *integrations.DefaultConnectionAccessService
-	var integrationActionPolicies integrations.ActionPolicyResolver
+	var connectorTargetBindings connectorbindings.Repository
 	var relationshipMemory *relationshipmemory.AgentAdapter
 	if db != nil {
-		integrationConnections = integrations.NewGormConnectionRepository(db)
-		integrationAccess = integrations.NewConnectionAccessService(integrationConnections, integrations.NewGormConnectionGrantRepository(db))
-		integrationActionPolicies = integrations.NewActionPolicyService(integrations.NewGormActionPolicyRepository(db), nil)
+		connectorTargetBindings = connectorbindings.NewGormRepository(db)
 		relationshipMemory = relationshipmemory.NewAgentAdapter(db)
 	}
 	return &agentsService{
@@ -118,11 +100,8 @@ func NewAgentsService(
 		llmClient:                 llmClient,
 		defaultModelResolver:      defaultModelResolver,
 		agentBindings:             agentbindings.NewRepository(db),
+		connectorTargetBindings:   connectorTargetBindings,
 		agentModels:               agentModels,
-		integrationActions:        integrationActions,
-		integrationActionPolicies: integrationActionPolicies,
-		integrationConnections:    integrationConnections,
-		integrationAccess:         integrationAccess,
 		db:                        db,
 	}
 }

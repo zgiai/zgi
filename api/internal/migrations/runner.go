@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/migrations/connectorfinalize"
 	"github.com/zgiai/zgi/api/pkg/database"
 )
 
@@ -60,6 +61,12 @@ func RunWithDB(db *gorm.DB) error {
 }
 
 func RunWithOptions(db *gorm.DB, options RunOptions) error {
+	// Session advisory locks must be acquired and released on the same physical
+	// PostgreSQL connection, including the final transaction's marker write.
+	return db.Connection(func(conn *gorm.DB) error { return runOnConnection(conn.Session(&gorm.Session{NewDB: true}), options) })
+}
+
+func runOnConnection(db *gorm.DB, options RunOptions) error {
 	normalizeMigrationTableColumns(db)
 
 	unlock, err := migrationLock(db, options.NoLock)
@@ -88,8 +95,7 @@ func RunWithOptions(db *gorm.DB, options RunOptions) error {
 		}
 	}
 
-	m := gormigrate.New(db, migrationOptions(plan.validateUnknownMigrations), plan.migrations)
-	if err := m.Migrate(); err != nil {
+	if err := runMigrationChain(db, plan); err != nil {
 		log.Printf("migrations failed: %v", err)
 		return err
 	}
@@ -103,6 +109,60 @@ func RunWithOptions(db *gorm.DB, options RunOptions) error {
 
 	log.Println("migrations completed successfully")
 	return nil
+}
+
+func runMigrationChain(db *gorm.DB, plan migrationPlan) error {
+	options := migrationOptions(plan.validateUnknownMigrations)
+	m := gormigrate.New(db, options, plan.migrations)
+	applied, err := appliedMigrationIDs(db)
+	if err != nil {
+		return err
+	}
+	if _, done := applied[connectorfinalize.MigrationID]; !done {
+		// Preserve historical transaction boundaries. Only the final maintenance
+		// step and its migration marker require this additional atomic boundary.
+		if err := m.MigrateTo(connectorfinalize.CheckpointID); err != nil {
+			return err
+		}
+		options.UseTransaction = true
+		m = gormigrate.New(db, options, plan.migrations)
+	}
+	return m.Migrate()
+}
+
+// RunToConnectorCheckpoint supports the two published maintenance boundaries.
+// It never skips unknown migrations or guesses a checkpoint from an ID prefix.
+func RunToConnectorCheckpoint(db *gorm.DB, id string) error {
+	if id != "20260902190000_detach_connector_runtime" && id != connectorfinalize.CheckpointID {
+		return fmt.Errorf("unsupported Connector upgrade checkpoint")
+	}
+	return db.Connection(func(conn *gorm.DB) error {
+		conn = conn.Session(&gorm.Session{NewDB: true})
+		unlock, err := migrationLock(conn, false)
+		if err != nil {
+			return err
+		}
+		defer unlock()
+		plan, err := resolveMigrationPlan(conn)
+		if err != nil {
+			return err
+		}
+		applied, err := appliedMigrationIDs(conn)
+		if err != nil {
+			return err
+		}
+		for appliedID := range applied {
+			if appliedID > id && migrationIDPattern.MatchString(appliedID) {
+				return fmt.Errorf("database has advanced beyond the requested checkpoint")
+			}
+		}
+		if plan.beforeRun != nil {
+			if err := plan.beforeRun(conn); err != nil {
+				return err
+			}
+		}
+		return gormigrate.New(conn, migrationOptions(plan.validateUnknownMigrations), plan.migrations).MigrateTo(id)
+	})
 }
 
 func migrationLock(db *gorm.DB, noLock bool) (func(), error) {

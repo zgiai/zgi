@@ -1183,7 +1183,7 @@ const messages: WebappMessages = {
           description: '通过 GitHub REST API 读取已授权的仓库、议题和当前账户信息。',
         },
         webSearch: {
-          name: '网页搜索',
+          name: 'Exa 网页搜索',
           description: '通过 Exa 搜索公开网页并读取相关内容。',
         },
         genericDescription: '通过已授权连接，让 AIChat 安全使用该外部应用。',
@@ -1235,6 +1235,9 @@ const messages: WebappMessages = {
         running: '正在使用 {skill} {tool}',
         success: '{skill} {tool} 已完成',
         error: '{skill} 调用失败',
+        externalActionPartiallySucceeded: '{skill} {tool} 部分成功',
+        externalActionOutcomeUnknown: '{skill} {tool} 结果待确认',
+        externalActionFailed: '{skill} {tool} 操作失败',
         eventCount: '{count} 个事件',
         summarySuccess: '已完成 {count} 个 Skill 事件',
         debug: {
@@ -1270,6 +1273,32 @@ const messages: WebappMessages = {
           action: '操作',
           connection: '连接',
           attemptCount: '尝试次数',
+          operationStatus: '业务状态',
+          errorCode: '错误类型',
+          reasonCode: '原因代码',
+          providerErrorCode: '服务商错误码',
+          retrySafe: '可安全重试',
+          diagnostic: '说明',
+          summaryTitles: {
+            success: '操作结果',
+            running: '操作仍在执行',
+            warning: '操作需要注意',
+            failed: '操作失败',
+          },
+          operationStatuses: {
+            completed: '操作成功',
+            already_completed: '操作已完成（复用已有结果）',
+            succeeded: '操作成功',
+            executing: '外部服务仍在处理',
+            failed_safe: '操作失败，确认未产生副作用',
+            partially_succeeded: '部分成功',
+            failed: '操作失败',
+            outcome_unknown: '结果待确认，请勿立即重试',
+          },
+          providerDiagnostics: {
+            wecom81013:
+              '企业微信未接受任何接收人（81013）。请检查成员是否存在、是否在应用可见范围内，以及是否具备基础接口许可。',
+          },
           statuses: {
             success: '成功',
             running: '进行中',
@@ -1375,6 +1404,10 @@ const messages: WebappMessages = {
         callingTool: '调用 {skill} {tool}',
         toolSucceeded: '{skill} {tool} 调用成功',
         toolFailed: '{skill} {tool} 调用失败',
+        externalActionExecuting: '{skill} {tool} 正在执行',
+        externalActionPartiallySucceeded: '{skill} {tool} 部分成功',
+        externalActionOutcomeUnknown: '{skill} {tool} 结果待确认',
+        externalActionFailed: '{skill} {tool} 操作失败',
         invalidArgumentsCorrected: '已自动纠正 {skill} · {tool} 的参数',
         invalidArgumentsCorrectedDetail:
           '较早的一次调用未通过参数校验；模型已纠正参数，后续调用成功。',

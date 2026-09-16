@@ -88,6 +88,9 @@ interface AIChatInputToolbarProps {
   connectedAppsLabel?: string;
   connectedAppsSelectedCount?: number;
   connectedAppsAttentionRequired?: boolean;
+  connectedAppsDisabled?: boolean;
+  connectedAppsOpen?: boolean;
+  connectedAppsPopup?: 'menu' | 'dialog';
   showSkillManagement?: boolean;
   skillManagementLabel?: string;
   surface?: AIChatComposerSurface;
@@ -96,7 +99,7 @@ interface AIChatInputToolbarProps {
   onUploadDocument: () => void;
   onUploadImage: () => void;
   onSelectFromFiles: () => void;
-  onOpenConnectedApps?: () => void;
+  onOpenConnectedApps?: (anchorElement: HTMLElement) => void;
   onOpenSkillManagement?: () => void;
   onMemoryEnabledChange: (enabled: boolean) => void;
   onToggleComposerExpanded?: () => void;
@@ -201,6 +204,9 @@ export function AIChatInputToolbar({
   connectedAppsLabel,
   connectedAppsSelectedCount = 0,
   connectedAppsAttentionRequired = false,
+  connectedAppsDisabled = false,
+  connectedAppsOpen = false,
+  connectedAppsPopup = 'dialog',
   showSkillManagement = false,
   skillManagementLabel,
   surface = 'aichat',
@@ -431,8 +437,11 @@ export function AIChatInputToolbar({
                   'relative size-8 rounded-full',
                   connectedAppsAttentionRequired && 'text-warning'
                 )}
-                onClick={onOpenConnectedApps}
+                onClick={event => onOpenConnectedApps(event.currentTarget)}
+                disabled={connectedAppsDisabled}
                 aria-label={connectedAppsLabel}
+                aria-haspopup={connectedAppsPopup}
+                aria-expanded={connectedAppsOpen}
               >
                 <PlugZap className="size-4" />
                 {connectedAppsSelectedCount > 0 ? (

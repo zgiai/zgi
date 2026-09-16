@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+	connectortools "github.com/zgiai/zgi/api/internal/capabilities/connectortools"
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
@@ -47,6 +49,9 @@ func SkillCallEndPayload(ids PayloadIDs, trace skills.SkillTrace, includeKind bo
 	})
 	if includeKind {
 		payload["kind"] = trace.Kind
+	}
+	if trace.ConnectorNative {
+		payload["runtime_source"] = "connector"
 	}
 	if invocationID := strings.TrimSpace(trace.InvocationID); invocationID != "" {
 		payload["invocation_id"] = invocationID
@@ -186,6 +191,12 @@ func SkillCallErrorPayload(ids PayloadIDs, trace skills.SkillTrace, status strin
 	})
 	if includeKind {
 		payload["kind"] = trace.Kind
+	}
+	if trace.ConnectorNative {
+		payload["runtime_source"] = "connector"
+		if len(trace.Result) > 0 {
+			payload["result"] = trace.Result
+		}
 	}
 	if invocationID := strings.TrimSpace(trace.InvocationID); invocationID != "" {
 		payload["invocation_id"] = invocationID
@@ -349,78 +360,82 @@ var resultSummaryBuilders = map[string]resultSummaryBuilder{
 	skills.SkillAgentDatabase:     summarizeDatabaseResult,
 	skills.SkillAgentWorkflow:     summarizeWorkflowResult,
 	skills.SkillAgentManagement:   summarizeAgentManagementResult,
-	skills.SkillExternalApps:      summarizeExternalAppsResult,
 	skills.SkillFileManager:       summarizeFileReaderResult,
 	skills.SkillFileReader:        summarizeFileReaderResult,
 }
 
-func summarizeExternalAppsResult(toolName string, payload map[string]interface{}) map[string]interface{} {
-	if len(payload) == 0 {
-		return nil
-	}
-	switch strings.TrimSpace(toolName) {
-	case "execute_action":
-		result := compactFields(payload,
-			"integration_id", "action_id", "plan_phase_id", "integration_name", "action_name",
-			"connection_name", "connection_display_name", "connection_selection",
-			"operation_status", "result_count", "attempt_count", "provider_request_id",
-			"retry_safe", "result_truncated",
-		)
-		operationStatus := strings.ToLower(strings.TrimSpace(firstNonEmptyString(payload["operation_status"])))
-		switch operationStatus {
-		case "completed", "already_completed", "succeeded":
-			result["provider_success_confirmed"] = true
-		}
-		if providerResult := compactExternalAppsProviderResult(recordFromAny(payload["result"])); len(providerResult) > 0 {
-			result["provider_result"] = providerResult
-		}
-		if batch := recordFromAny(payload["batch"]); len(batch) > 0 {
-			result["batch"] = compactFields(batch,
-				"status", "item_count", "succeeded_count", "failed_safe_count",
-				"outcome_unknown_count", "executing_count",
-			)
-		}
-		return result
-	case "list_connections":
-		return map[string]interface{}{"connections_count": collectionLen(payload["connections"])}
-	case "search_actions":
-		return compactFields(payload, "count", "query", "integration_id")
-	case "get_action_guide":
-		result := compactFields(payload,
-			"integration_id", "action_id", "plan_phase_id", "name", "effect", "risk_level", "supports_batch",
-			"connection_name", "availability", "can_execute", "requires_approval",
-		)
-		result["required_argument_count"] = collectionLen(payload["required_arguments"])
-		return result
-	default:
-		return nil
-	}
-}
-
-func compactExternalAppsProviderResult(payload map[string]interface{}) map[string]interface{} {
-	if len(payload) == 0 {
-		return nil
-	}
-	result := compactFields(payload, "status", "provider", "request_id", "result_code", "content_truncated")
-	if event := recordFromAny(payload["event"]); len(event) > 0 {
-		result["event"] = compactFields(event,
-			"event_id", "organizer_calendar_id", "summary", "start_time", "end_time",
-			"status", "visibility", "free_busy_status", "location_name", "app_link",
-		)
-	}
-	if message := recordFromAny(payload["message"]); len(message) > 0 {
-		result["message"] = compactFields(message, "message_id", "root_id", "parent_id", "create_time")
-	}
-	return result
-}
-
 // SummarizeToolResult returns the compact trace-visible result for known skill tools.
 func SummarizeToolResult(skillID string, toolName string, messages []tools.ToolInvokeMessage) map[string]interface{} {
+	if result := summarizeConnectorRuntimeResult(messages); len(result) > 0 {
+		return result
+	}
 	builder := resultSummaryBuilders[strings.TrimSpace(skillID)]
 	if builder == nil {
 		return nil
 	}
 	return builder(strings.TrimSpace(toolName), firstJSONToolPayload(messages))
+}
+
+// summarizeConnectorRuntimeResult recognizes only server-marked Connector Tool
+// messages. Dynamic Plugin Skill IDs cannot be registered in the static summary
+// table, and an untrusted Tool payload must not be able to manufacture a runtime
+// confirmation by merely returning a similarly shaped JSON object.
+func summarizeConnectorRuntimeResult(messages []tools.ToolInvokeMessage) map[string]interface{} {
+	for _, message := range messages {
+		metadata, ok := connectortools.ResultFromMessage(message)
+		if !ok {
+			continue
+		}
+		state := string(metadata.State)
+		result := map[string]interface{}{"state": state}
+		if metadata.ExecutionEvidence != nil {
+			result["execution_evidence"] = recordFromAny(metadata.ExecutionEvidence)
+		}
+		if metadata.Operation != nil {
+			result["operation"] = recordFromAny(metadata.Operation)
+		}
+		if metadata.Presentation != nil {
+			result["connector_presentation"] = recordFromAny(metadata.Presentation)
+		}
+		if metadata.DecisionID != uuid.Nil {
+			result["decision_id"] = metadata.DecisionID.String()
+		}
+		if state == "requires_confirmation" {
+			confirmation := recordFromAny(metadata.Confirmation)
+			if len(confirmation) == 0 || strings.TrimSpace(stringFromAny(confirmation["route_receipt"])) == "" {
+				return nil
+			}
+			result["confirmation"] = compactConnectorRuntimeConfirmation(confirmation)
+		}
+		if metadata.OutcomeID != uuid.Nil {
+			result["outcome_id"] = metadata.OutcomeID.String()
+		}
+		if metadata.OutcomeStatus != "" {
+			result["outcome_status"] = string(metadata.OutcomeStatus)
+		}
+		if metadata.DiagnosticCode != "" {
+			result["diagnostic_code"] = metadata.DiagnosticCode
+		}
+		return result
+	}
+	return nil
+}
+
+func compactConnectorRuntimeConfirmation(confirmation map[string]interface{}) map[string]interface{} {
+	result := compactFields(
+		confirmation,
+		"route_receipt", "connector_id", "connector_name", "operation_id", "action_name", "risk_classification",
+	)
+	if target := compactFields(recordFromAny(confirmation["target"]), "type", "id", "binding_instance_id"); len(target) > 0 {
+		result["target"] = target
+	}
+	if consequence := compactFields(
+		recordFromAny(confirmation["consequence"]),
+		"external_effect", "description", "data_egress", "external_destination",
+	); len(consequence) > 0 {
+		result["consequence"] = consequence
+	}
+	return result
 }
 
 func summarizeMemoryResult(toolName string, payload map[string]interface{}) map[string]interface{} {

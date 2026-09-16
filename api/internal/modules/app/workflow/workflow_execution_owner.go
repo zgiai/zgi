@@ -7,6 +7,7 @@ import (
 	"time"
 
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 )
 
 const workflowExecutionLeaseSafetyMargin = 10 * time.Second
@@ -32,6 +33,7 @@ func withWorkflowExecutionOwner(ctx context.Context, owner workflowExecutionOwne
 		return ctx
 	}
 	ctx = context.WithValue(ctx, workflowExecutionOwnerContextKey{}, owner)
+	ctx = shared.WithExecutionOwner(ctx, shared.ExecutionOwner{RunID: owner.WorkflowRunID, ExecutionID: owner.ExecutionID, Generation: owner.Generation})
 	return withWorkflowDBStatementMetrics(ctx, owner.WorkflowRunID)
 }
 

@@ -18,6 +18,8 @@ import (
 	workflowruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/runtime"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 	automationdefinition "github.com/zgiai/zgi/api/internal/modules/automation/service/definition"
+	connectordispatch "github.com/zgiai/zgi/api/internal/modules/connectors/dispatch"
+	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/service/extractor"
 	notificationsms "github.com/zgiai/zgi/api/internal/modules/notification/sms"
@@ -41,6 +43,9 @@ type WorkflowExecutor struct {
 	conversationAccessService   webAppConversationAccessService
 	llmClient                   interface{} // LLM client for LLM nodes
 	toolEngine                  interface{} // Tool engine for tools nodes
+	connectorConfirmationStore  connectorexecution.ConfirmationContinuationStore
+	connectorDispatcher         connectordispatch.Dispatcher
+	connectorCatalog            connectorexecution.DefinitionCatalog
 	graphFlowService            *graphflow.Service
 	promptResolver              promptservice.PromptService
 	automationDefinitionService automationdefinition.Service
@@ -52,6 +57,9 @@ type WorkflowExecutorDeps struct {
 	ContentExtractor            file.ContentExtractor
 	LLMClient                   interface{}
 	ToolEngine                  interface{}
+	ConnectorConfirmationStore  connectorexecution.ConfirmationContinuationStore
+	ConnectorDispatcher         connectordispatch.Dispatcher
+	ConnectorCatalog            connectorexecution.DefinitionCatalog
 	GraphFlowService            *graphflow.Service
 	PromptResolver              promptservice.PromptService
 	AutomationDefinitionService automationdefinition.Service
@@ -81,15 +89,17 @@ func NewWorkflowExecutorWithRuntimeDeps(deps WorkflowExecutorDeps) *WorkflowExec
 	conversationAccessService := conversation.NewAgentConversationService(conversationRepo, messageRepo)
 
 	executor := &WorkflowExecutor{
-		maxConcurrency:              graph_engine.DefaultMaxConcurrency,
-		activeEngines:               make(map[string]*graph_engine.WorkflowEngine),
-		engineFactory:               deps.EngineFactory,
-		contentExtractor:            deps.ContentExtractor,
-		fileService:                 deps.FileService,
-		variableService:             variableService,
-		conversationAccessService:   conversationAccessService,
-		llmClient:                   deps.LLMClient,
-		toolEngine:                  deps.ToolEngine,
+		maxConcurrency:             graph_engine.DefaultMaxConcurrency,
+		activeEngines:              make(map[string]*graph_engine.WorkflowEngine),
+		engineFactory:              deps.EngineFactory,
+		contentExtractor:           deps.ContentExtractor,
+		fileService:                deps.FileService,
+		variableService:            variableService,
+		conversationAccessService:  conversationAccessService,
+		llmClient:                  deps.LLMClient,
+		toolEngine:                 deps.ToolEngine,
+		connectorConfirmationStore: deps.ConnectorConfirmationStore,
+		connectorDispatcher:        deps.ConnectorDispatcher, connectorCatalog: deps.ConnectorCatalog,
 		graphFlowService:            deps.GraphFlowService,
 		promptResolver:              deps.PromptResolver,
 		automationDefinitionService: deps.AutomationDefinitionService,
@@ -188,9 +198,11 @@ func (e *WorkflowExecutor) SetNotificationSMSService(service notificationsms.Ser
 
 func (e *WorkflowExecutor) runtimeDependencies() workflowruntime.Dependencies {
 	return workflowruntime.Dependencies{
-		ContentExtractor:            e.contentExtractor,
-		LLMClient:                   e.llmClient,
-		ToolEngine:                  e.toolEngine,
+		ContentExtractor:           e.contentExtractor,
+		LLMClient:                  e.llmClient,
+		ToolEngine:                 e.toolEngine,
+		ConnectorConfirmationStore: e.connectorConfirmationStore,
+		ConnectorDispatcher:        e.connectorDispatcher, ConnectorCatalog: e.connectorCatalog,
 		GraphFlowService:            e.graphFlowService,
 		FileService:                 e.fileService,
 		PromptResolver:              e.promptResolver,

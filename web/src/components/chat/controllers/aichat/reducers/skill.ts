@@ -31,6 +31,11 @@ import {
 import { modelProcessingStateFromEvent } from '../model-processing';
 import { applyRuntimeInputApplication } from '@/components/chat/utils/runtime-input-reconcile';
 import { sanitizeTimelineForMessage } from '../selectors';
+import {
+  connectorReceiptFromTimelineItem,
+  isPendingConnectorSkillEvent,
+  parseConnectorProgressResult,
+} from '@/components/connectors/runtime/connector-runtime-source';
 
 function preserveLegacyAnswerBoundary(
   previousStreaming: AIChatControllerState['streamingByMessageId'][string]
@@ -783,7 +788,10 @@ export function applyAgentProgressState(
     status: 'streaming' as const,
     timeline: [],
   };
-  if (!previousStreaming.conversation_id) {
+  if (
+    !previousStreaming.conversation_id ||
+    previousStreaming.conversation_id !== payload.conversation_id
+  ) {
     return current;
   }
 
@@ -846,6 +854,60 @@ export function applyAgentProgressState(
         [payload.message_id]: {
           ...previousStreaming,
           timeline: nextTimeline,
+          last_event_id: eventId ?? previousStreaming.last_event_id,
+        },
+      },
+    };
+  }
+  const connectorResult = parseConnectorProgressResult(payload);
+  const receipt =
+    connectorResult?.state === 'requires_confirmation'
+      ? connectorResult.confirmation.route_receipt
+      : payload.progress_id;
+  if (connectorResult && receipt) {
+    const existingIndex = timeline.findIndex(item => {
+      if (item.type !== 'progress_text') return false;
+      const result = parseConnectorProgressResult(item);
+      return (
+        result &&
+        (result.state === 'requires_confirmation'
+          ? result.confirmation.route_receipt
+          : item.progress_id) === receipt
+      );
+    });
+    const previous = existingIndex < 0 ? undefined : timeline[existingIndex];
+    const previousResult =
+      previous?.type === 'progress_text' ? parseConnectorProgressResult(previous) : null;
+    const nextTimeline = [...timeline];
+    // A terminal receipt cannot be reopened by a replayed required event.
+    if (!previousResult || previousResult.state === 'requires_confirmation') {
+      const item: AIChatAgenticTimelineItem = {
+        id: previous?.id ?? eventId ?? `connector-${receipt}`,
+        type: 'progress_text',
+        content: '',
+        phase: payload.phase,
+        progress_id: receipt,
+        result: { ...connectorResult },
+        transient: false,
+        status: payload.status,
+        created_at: previous?.created_at ?? payload.created_at,
+        event_id: eventId ?? null,
+        ...presentationPositionFromPayload(previous ?? payload),
+      };
+      if (existingIndex < 0) nextTimeline.push(item);
+      else nextTimeline[existingIndex] = item;
+    }
+    const resolvedTimeline = nextTimeline.filter(item => {
+      const itemReceipt = connectorReceiptFromTimelineItem(item);
+      return !(itemReceipt === receipt && isPendingConnectorSkillEvent(item));
+    });
+    return {
+      ...current,
+      streamingByMessageId: {
+        ...current.streamingByMessageId,
+        [payload.message_id]: {
+          ...previousStreaming,
+          timeline: resolvedTimeline,
           last_event_id: eventId ?? previousStreaming.last_event_id,
         },
       },
@@ -927,6 +989,38 @@ export function applyAgentProgressState(
       },
     },
   };
+}
+
+/**
+ * Applies a Connector confirmation response returned by the HTTP decision
+ * endpoint when no continuation stream is available (the waiting message has
+ * already moved the conversation back to idle).
+ */
+export function applyConnectorRuntimeResolutionState(
+  current: AIChatControllerState,
+  payload: {
+    conversation_id: string;
+    message_id: string;
+    progress_id: string;
+    state: 'cancelled' | 'completed' | 'failed' | 'unknown';
+    decision_id?: string;
+    error_code?: string;
+  }
+): AIChatControllerState {
+  if (!payload.conversation_id || !payload.message_id || !payload.progress_id) return current;
+  return applyAgentProgressState(current, {
+    conversation_id: payload.conversation_id,
+    message_id: payload.message_id,
+    phase: 'connector_confirmation_resolved',
+    progress_id: payload.progress_id,
+    status: payload.state,
+    content: '',
+    result: {
+      state: payload.state,
+      ...(payload.decision_id ? { decision_id: payload.decision_id } : {}),
+      ...(payload.error_code ? { error_code: payload.error_code } : {}),
+    },
+  });
 }
 
 export function applyMemoryMutationState(
@@ -1215,6 +1309,7 @@ export function applySkillCallEndState(
     eventId,
     {
       kind: payload.kind ?? 'tool_call',
+      runtime_source: payload.runtime_source,
       invocation_id: payload.invocation_id,
       runtime_id: payload.runtime_id,
       action_id: payload.action_id,
@@ -1260,6 +1355,7 @@ export function applySkillCallErrorState(
     eventId,
     {
       kind: payload.kind ?? (payload.tool_name ? 'tool_call' : 'skill_load'),
+      runtime_source: payload.runtime_source,
       invocation_id: payload.invocation_id,
       runtime_id: payload.runtime_id,
       action_id: payload.action_id,
@@ -1275,6 +1371,7 @@ export function applySkillCallErrorState(
       duration_ms: payload.duration_ms,
       message: payload.message,
       error: payload.status === 'blocked' ? undefined : payload.message,
+      result: payload.result,
       error_code: payload.error_code,
       governance: payload.governance,
       asset_operation_audit: payload.asset_operation_audit,

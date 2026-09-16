@@ -47,6 +47,20 @@ func registerApprovalTaskHandlers(registry approvalTaskRegistry, taskManager *qu
 			"task_type": questionTaskType,
 		})
 	}
+	connectorTaskType := approvalruntime.TypeConnectorResume
+	if taskManager != nil {
+		connectorTaskType = taskManager.GetTaskTypeWithPrefix(connectorTaskType)
+	}
+	connectorTaskHandler := approvalruntime.NewConnectorResumeTaskHandler(handler.ResumeConnectorWorkflow)
+	if isNew := registry.Register(connectorTaskType, connectorTaskHandler); isNew {
+		logger.Info("Registered Connector resume handler", map[string]interface{}{
+			"task_type": connectorTaskType,
+		})
+	} else {
+		logger.Warn("Connector resume handler was replaced", map[string]interface{}{
+			"task_type": connectorTaskType,
+		})
+	}
 }
 
 func registerApprovalScheduledTasks(scheduler *pkgscheduler.Scheduler, service *approvalruntime.Service, handler *workflowHandlerPkg.WorkflowHandler, taskManager *queue.TaskManager) {

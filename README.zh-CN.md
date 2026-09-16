@@ -164,7 +164,7 @@ make dev-web
 
 请访问 [`docs.zgi.ai`](https://docs.zgi.ai) 阅读产品文档。
 
-仓库中的其他 README 文件主要用于记录开发与贡献说明。有关内置系统技能目录等部署行为，请参阅 [`docker/README.md`](docker/README.md#system-skill-catalog)。
+仓库中的其他 README 文件主要用于记录开发与贡献说明。有关仅支持 Key 的个人 Connector，请参阅 [`docs/connectors.md`](docs/connectors.md)；旧版组织/共享外部连接仍记录在 [`docs/external-integrations.md`](docs/external-integrations.md)。有关内置系统技能目录等部署行为，请参阅 [`docker/README.md`](docker/README.md#system-skill-catalog)。
 
 ## 参与贡献
 

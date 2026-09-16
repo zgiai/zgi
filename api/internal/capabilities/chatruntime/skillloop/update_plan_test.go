@@ -31,6 +31,11 @@ func TestNormalizePlanSnapshotEnforcesStructuralProgressRules(t *testing.T) {
 	if err != nil || len(phasesWithoutEvidence) != 2 {
 		t.Fatalf("normalizePlanSnapshot() = %#v, %v; want advisory phases accepted", phasesWithoutEvidence, err)
 	}
+	for _, phase := range phasesWithoutEvidence {
+		if got := evidenceStringFromAny(phase[operationPlanPhaseSourceKey]); got != operationPlanPhaseSourceModelAdvisory {
+			t.Fatalf("normalized model phase source = %q, want %q: %#v", got, operationPlanPhaseSourceModelAdvisory, phase)
+		}
+	}
 
 	phases, err := normalizePlanSnapshot([]interface{}{
 		map[string]interface{}{
@@ -58,6 +63,37 @@ func TestNormalizePlanSnapshotEnforcesStructuralProgressRules(t *testing.T) {
 	target := evidenceMapFromAny(expectedAction["target"])
 	if target["file_id"] != "file-1" || target["secret"] != nil {
 		t.Fatalf("expected_action.target = %#v, want allowlisted target only", target)
+	}
+}
+
+func TestHandleUpdatePlanCallPreservesServerPhaseAuthority(t *testing.T) {
+	state := map[string]interface{}{"operation_plan": map[string]interface{}{
+		"phases": []interface{}{map[string]interface{}{
+			"id": "phase-outcome", "outcome_id": "outcome-send", "step": "Send", "status": "in_progress",
+			"required": true, operationPlanPhaseSourceKey: operationPlanPhaseSourceServerOutcome,
+		}},
+		"outcomes": []interface{}{map[string]interface{}{
+			"id": "outcome-send", "required": true, "verification_mode": "runtime_effects",
+		}},
+	}}
+	step := (&Runner{}).handleUpdatePlanCall("call-plan", map[string]interface{}{
+		"plan": []interface{}{map[string]interface{}{
+			"id": "phase-outcome", "step": "Rename the model progress item", "status": "in_progress",
+			operationPlanPhaseSourceKey: operationPlanPhaseSourceModelAdvisory,
+		}},
+	}, state, 1)
+	if step.recoverable || step.fatalErr != nil || step.trace.Status != "success" {
+		t.Fatalf("handleUpdatePlanCall() = %#v", step)
+	}
+	phase := evidenceMapsFromAny(step.trace.Result["plan"])[0]
+	if got := evidenceStringFromAny(phase[operationPlanPhaseSourceKey]); got != operationPlanPhaseSourceServerOutcome {
+		t.Fatalf("server phase source = %q, want preserved server_outcome: %#v", got, phase)
+	}
+	if got := evidenceStringFromAny(phase["outcome_id"]); got != "outcome-send" {
+		t.Fatalf("server outcome linkage = %q, want outcome-send: %#v", got, phase)
+	}
+	if required, ok := phase["required"].(bool); !ok || !required {
+		t.Fatalf("server required classification was not preserved: %#v", phase)
 	}
 }
 
@@ -152,150 +188,8 @@ func TestHandleUpdatePlanCallRecordsUnavailableEvidenceAsAuditWarning(t *testing
 	}
 }
 
-func TestHandleUpdatePlanCallRejectsNewTerminalProjectedPhaseWithoutExecution(t *testing.T) {
-	for _, testCase := range []struct {
-		status       string
-		wantAccepted bool
-	}{
-		{status: "completed"},
-		{status: "skipped"},
-		{status: "pending", wantAccepted: true},
-		{status: "in_progress", wantAccepted: true},
-	} {
-		t.Run(testCase.status, func(t *testing.T) {
-			state := projectedExternalActionPlanTestState(nil)
-			step := (&Runner{}).handleUpdatePlanCall("call-plan", map[string]interface{}{
-				"plan": []interface{}{map[string]interface{}{
-					"id": "phase-send", "step": "Send message", "status": testCase.status,
-					"expected_action": projectedExternalActionPlanExpectedAction("alice"),
-				}},
-			}, state, 1)
-			accepted := !step.recoverable && step.fatalErr == nil && step.trace.Status == "success"
-			if accepted != testCase.wantAccepted {
-				t.Fatalf("handleUpdatePlanCall(status=%q) = %#v; accepted=%v, want %v", testCase.status, step, accepted, testCase.wantAccepted)
-			}
-			if !testCase.wantAccepted && (!step.recoverable || step.trace.Status != "error") {
-				t.Fatalf("terminal projected phase rejection was not recoverable: %#v", step)
-			}
-		})
-	}
-}
-
-func TestHandleUpdatePlanCallRejectsShrinkingCompoundProjectedActionBaseline(t *testing.T) {
-	state := projectedExternalActionPlanTestState([]interface{}{
-		map[string]interface{}{"id": "phase-a", "step": "Send first message", "status": "in_progress", "required": true},
-		map[string]interface{}{"id": "phase-b", "step": "Send second message", "status": "pending", "required": true},
-	})
-	step := (&Runner{}).handleUpdatePlanCall("call-plan", map[string]interface{}{
-		"plan": []interface{}{map[string]interface{}{
-			"id": "phase-a", "step": "Send first message", "status": "in_progress",
-			"expected_action": projectedExternalActionPlanExpectedAction("alice"),
-		}},
-	}, state, 1)
-	if !step.recoverable || step.trace.Status != "error" {
-		t.Fatalf("handleUpdatePlanCall() = %#v, want recoverable baseline-shrink rejection", step)
-	}
-}
-
-func TestHandleUpdatePlanCallRejectsSkippingOrReclassifyingRequiredProjectedPhase(t *testing.T) {
-	state := projectedExternalActionPlanTestState([]interface{}{
-		map[string]interface{}{"id": "phase-a", "step": "Send first message", "status": "in_progress", "required": true},
-		map[string]interface{}{"id": "phase-b", "step": "Send second message", "status": "pending", "required": true},
-	})
-	for _, malicious := range []map[string]interface{}{
-		{"id": "phase-b", "step": "Pretend second message is optional", "status": "skipped", "completion_mode": "non_tool"},
-		{"id": "phase-b", "step": "Answer instead of sending", "status": "pending", "completion_mode": "final_answer"},
-	} {
-		step := (&Runner{}).handleUpdatePlanCall("call-plan", map[string]interface{}{
-			"plan": []interface{}{
-				map[string]interface{}{
-					"id": "phase-a", "step": "Send first message", "status": "in_progress",
-					"expected_action": projectedExternalActionPlanExpectedAction("alice"),
-				},
-				malicious,
-			},
-		}, state, 1)
-		if !step.recoverable || step.trace.Status != "error" {
-			t.Fatalf("handleUpdatePlanCall(%#v) = %#v, want recoverable required-phase rejection", malicious, step)
-		}
-	}
-}
-
-func TestHandleUpdatePlanCallAcceptsCompleteCanonicalProjectedActionLedger(t *testing.T) {
-	state := projectedExternalActionPlanTestState([]interface{}{
-		map[string]interface{}{"id": "phase-a", "step": "Send first message", "status": "in_progress", "required": true},
-		map[string]interface{}{"id": "phase-b", "step": "Send second message", "status": "pending", "required": true},
-	})
-	step := (&Runner{}).handleUpdatePlanCall("call-plan", map[string]interface{}{
-		"plan": []interface{}{
-			map[string]interface{}{
-				"id": "phase-a", "step": "Send first message", "status": "in_progress",
-				"expected_action": projectedExternalActionPlanExpectedAction("alice"),
-			},
-			map[string]interface{}{
-				"id": "phase-b", "step": "Send second message", "status": "pending",
-				"expected_action": projectedExternalActionPlanExpectedAction("bob"),
-			},
-		},
-	}, state, 1)
-	if step.recoverable || step.fatalErr != nil || step.trace.Status != "success" {
-		t.Fatalf("handleUpdatePlanCall() = %#v, want complete projected Action ledger accepted", step)
-	}
-}
-
-func TestHandleUpdatePlanCallRejectsReplacingExistingProjectedActionTarget(t *testing.T) {
-	baseline := projectedExternalActionPlanTestPhase("phase-send", "in_progress", "recipient_ref", "bob")
-	baseline["step"] = "Send Bob a message"
-	state := projectedExternalActionPlanTestState([]interface{}{baseline})
-	step := (&Runner{}).handleUpdatePlanCall("call-plan", map[string]interface{}{
-		"plan": []interface{}{map[string]interface{}{
-			"id": "phase-send", "step": "Send someone else a message", "status": "in_progress",
-			"expected_action": projectedExternalActionPlanExpectedAction("alice"),
-		}},
-	}, state, 1)
-	if !step.recoverable || step.trace.Status != "error" {
-		t.Fatalf("handleUpdatePlanCall() = %#v, want projected target replacement rejection", step)
-	}
-}
-
-func TestHandleUpdatePlanCallAcceptsProjectedActionWithServerFinalAnswerOutcome(t *testing.T) {
-	state := projectedExternalActionPlanTestState([]interface{}{
-		map[string]interface{}{
-			"id": "phase-send", "outcome_id": "outcome-send", "step": "Send message", "status": "pending",
-		},
-		map[string]interface{}{
-			"id": "phase-explain", "outcome_id": "outcome-explain", "step": "Explain result", "status": "pending",
-		},
-	})
-	state["operation_plan"].(map[string]interface{})["outcomes"] = []interface{}{
-		map[string]interface{}{"id": "outcome-send", "required": true, "verification_mode": "runtime_effects"},
-		map[string]interface{}{"id": "outcome-explain", "required": true, "verification_mode": "final_answer"},
-	}
-	step := (&Runner{}).handleUpdatePlanCall("call-plan", map[string]interface{}{
-		"plan": []interface{}{
-			map[string]interface{}{
-				"id": "phase-send", "step": "Send message", "status": "in_progress",
-				"expected_action": projectedExternalActionPlanExpectedAction("alice"),
-			},
-			map[string]interface{}{
-				"id": "phase-explain", "step": "Explain result", "status": "pending", "completion_mode": "final_answer",
-			},
-		},
-	}, state, 1)
-	if step.recoverable || step.fatalErr != nil || step.trace.Status != "success" {
-		t.Fatalf("handleUpdatePlanCall() = %#v, want mixed projected/final-answer outcome accepted", step)
-	}
-	phases := evidenceMapsFromAny(step.trace.Result["plan"])
-	if evidenceStringFromAny(phases[1]["outcome_id"]) != "outcome-explain" {
-		t.Fatalf("server outcome linkage was not preserved: %#v", phases)
-	}
-}
-
 func TestHandleUpdatePlanCallWithAvailableProjectionsAcceptsOrdinaryMultiPhaseRevision(t *testing.T) {
-	state := projectedExternalActionPlanTestState([]interface{}{
-		map[string]interface{}{"id": "phase-file", "step": "Read file", "status": "in_progress", "required": true},
-		map[string]interface{}{"id": "phase-agent", "step": "Update agent", "status": "pending", "required": true},
-	})
+	state := map[string]interface{}{}
 	step := (&Runner{}).handleUpdatePlanCall("call-plan", map[string]interface{}{
 		"plan": []interface{}{
 			map[string]interface{}{"id": "phase-file", "step": "Read file", "status": "in_progress"},
@@ -307,55 +201,35 @@ func TestHandleUpdatePlanCallWithAvailableProjectionsAcceptsOrdinaryMultiPhaseRe
 	}
 }
 
-func TestHandleUpdatePlanCallRejectsTwoStepFinalAnswerClassificationLaundering(t *testing.T) {
-	state := projectedExternalActionPlanTestState([]interface{}{
-		map[string]interface{}{"id": "phase-a", "outcome_id": "outcome-a", "step": "Send first", "status": "in_progress"},
+func TestHandleUpdatePlanCallRestoresServerOutcomeClassification(t *testing.T) {
+	serverBound := nativeRunnerPhase("phase-a", "in_progress")
+	serverBound["outcome_id"] = "outcome-a"
+	state := map[string]interface{}{"operation_plan": map[string]interface{}{"phases": []interface{}{
+		serverBound,
 		map[string]interface{}{"id": "phase-b", "outcome_id": "outcome-b", "step": "Send second", "status": "pending"},
-	})
+	}}}
 	state["operation_plan"].(map[string]interface{})["outcomes"] = []interface{}{
 		map[string]interface{}{"id": "outcome-a", "required": true, "verification_mode": "runtime_effects"},
 		map[string]interface{}{"id": "outcome-b", "required": true, "verification_mode": "runtime_effects"},
 	}
 
-	first := (&Runner{}).handleUpdatePlanCall("call-plan-1", map[string]interface{}{
-		"plan": []interface{}{
-			map[string]interface{}{"id": "phase-a", "step": "Send first", "status": "in_progress"},
-			map[string]interface{}{"id": "phase-b", "step": "Pretend second is explanation", "status": "pending", "completion_mode": "final_answer"},
-		},
-	}, state, 1)
-	if first.recoverable || first.fatalErr != nil || first.trace.Status != "success" {
-		t.Fatalf("first ordinary revision = %#v, want accepted before projected-ledger mode", first)
-	}
-	state["operation_plan"] = map[string]interface{}{
-		"phases":   first.trace.Result["plan"],
-		"outcomes": state["operation_plan"].(map[string]interface{})["outcomes"],
-	}
-
-	second := (&Runner{}).handleUpdatePlanCall("call-plan-2", map[string]interface{}{
+	step := (&Runner{}).handleUpdatePlanCall("call-plan", map[string]interface{}{
 		"plan": []interface{}{
 			map[string]interface{}{
 				"id": "phase-a", "step": "Send first", "status": "in_progress",
-				"expected_action": projectedExternalActionPlanExpectedAction("alice"),
+				"expected_action": nativeRunnerExpectedAction(),
 			},
-			map[string]interface{}{"id": "phase-b", "step": "Still pretend explanation", "status": "pending", "completion_mode": "final_answer"},
+			map[string]interface{}{"id": "phase-b", "step": "Pretend second is explanation", "status": "pending", "completion_mode": "final_answer"},
 		},
-	}, state, 2)
-	if !second.recoverable || second.trace.Status != "error" {
-		t.Fatalf("second projected revision = %#v, want laundering rejection", second)
+	}, state, 1)
+	if step.recoverable || step.fatalErr != nil || step.trace.Status != "success" {
+		t.Fatalf("projected revision = %#v, want server policy restored", step)
 	}
-}
-
-func projectedExternalActionPlanExpectedAction(recipient string) map[string]interface{} {
-	return map[string]interface{}{
-		"skill_id":                            skills.SkillExternalApps,
-		"tool_name":                           "execute_action",
-		"projected_tool_name":                 "wecom_send_message",
-		planExpectedActionServerProjectionKey: "wecom_send_message",
-		"target": map[string]interface{}{
-			"integration_id": "wecom",
-			"action_id":      "wecom.message.send",
-		},
-		"target_arguments": map[string]interface{}{"recipient_ref": recipient},
+	phases := evidenceMapsFromAny(step.trace.Result["plan"])
+	if got := evidenceStringFromAny(phases[1][operationPlanPhaseSourceKey]); got != operationPlanPhaseSourceServerOutcome ||
+		evidenceStringFromAny(phases[1]["outcome_id"]) != "outcome-b" ||
+		evidenceStringFromAny(phases[1]["completion_mode"]) != "" {
+		t.Fatalf("model final-answer classification overrode server runtime Outcome: %#v", phases[1])
 	}
 }
 

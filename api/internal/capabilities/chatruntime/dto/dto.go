@@ -20,18 +20,22 @@ type UpdateConversationRequest struct {
 }
 
 type ChatRequest struct {
-	ConversationID   string                 `json:"conversation_id,omitempty"`
-	ParentID         string                 `json:"parent_id,omitempty"`
-	Query            string                 `json:"query" binding:"required"`
-	Surface          string                 `json:"surface,omitempty"`
-	RuntimeContext   string                 `json:"runtime_context,omitempty"`
-	OperationContext map[string]interface{} `json:"operation_context,omitempty"`
-	FileIDs          []string               `json:"file_ids,omitempty"`
-	Model            string                 `json:"model,omitempty"`
-	Provider         string                 `json:"provider,omitempty"`
-	ResponseMode     string                 `json:"response_mode,omitempty"`
-	Parameters       map[string]interface{} `json:"parameters,omitempty"`
-	UseMemory        bool                   `json:"use_memory,omitempty"`
+	InitialConnectorBindings []InitialConnectorBinding `json:"initial_connector_bindings,omitempty"`
+	// InitialConnectorDefaultsRevision validates the reviewed defaults snapshot;
+	// it never asks the server to infer or populate connection selections.
+	InitialConnectorDefaultsRevision *int64                 `json:"initial_connector_defaults_revision,omitempty"`
+	ConversationID                   string                 `json:"conversation_id,omitempty"`
+	ParentID                         string                 `json:"parent_id,omitempty"`
+	Query                            string                 `json:"query" binding:"required"`
+	Surface                          string                 `json:"surface,omitempty"`
+	RuntimeContext                   string                 `json:"runtime_context,omitempty"`
+	OperationContext                 map[string]interface{} `json:"operation_context,omitempty"`
+	FileIDs                          []string               `json:"file_ids,omitempty"`
+	Model                            string                 `json:"model,omitempty"`
+	Provider                         string                 `json:"provider,omitempty"`
+	ResponseMode                     string                 `json:"response_mode,omitempty"`
+	Parameters                       map[string]interface{} `json:"parameters,omitempty"`
+	UseMemory                        bool                   `json:"use_memory,omitempty"`
 	// SourceMessageID is a server-owned idempotency link. HTTP decoders never populate it.
 	SourceMessageID *uuid.UUID `json:"-"`
 	// HistoryPolicy is supplied only by trusted subject adapters. It cannot be
@@ -53,6 +57,13 @@ type ConversationHistoryPolicy struct {
 	Mode          string
 	MaxTurns      int
 	ExcludedTexts []string
+}
+
+// InitialConnectorBinding is a first-turn selection, never a credential or an
+// instruction to replace a binding on an existing conversation.
+type InitialConnectorBinding struct {
+	ConnectorID  string `json:"connector_id"`
+	ConnectionID string `json:"connection_id"`
 }
 
 type RegenerateMessageRequest struct {
@@ -107,33 +118,33 @@ type StopConversationResponse struct {
 }
 
 type SkillResponse struct {
-	SkillID                 string                                `json:"skill_id"`
-	Source                  string                                `json:"source"`
-	Name                    string                                `json:"name"`
-	Description             string                                `json:"description"`
-	WhenToUse               string                                `json:"when_to_use"`
-	Display                 SkillDisplayResponse                  `json:"display"`
-	RuntimeType             string                                `json:"runtime_type"`
-	Enabled                 bool                                  `json:"enabled"`
-	HasTools                bool                                  `json:"has_tools"`
-	HasReferences           bool                                  `json:"has_references"`
-	HasScripts              bool                                  `json:"has_scripts"`
-	ScriptsSupported        bool                                  `json:"scripts_supported"`
-	MaxCallsPerTurn         int                                   `json:"max_calls_per_turn"`
-	TimeoutSeconds          int                                   `json:"timeout_seconds"`
-	Status                  string                                `json:"status"`
-	ValidationError         string                                `json:"validation_error,omitempty"`
-	SupportedCallers        []string                              `json:"supported_callers,omitempty"`
-	RequiredConfig          []string                              `json:"required_config,omitempty"`
-	DependencyType          string                                `json:"dependency_type"`
-	IntegrationRequirements []SkillIntegrationRequirementResponse `json:"integration_requirements,omitempty"`
-	Exposure                SkillExposureResponse                 `json:"exposure"`
+	SkillID               string                              `json:"skill_id"`
+	Source                string                              `json:"source"`
+	Name                  string                              `json:"name"`
+	Description           string                              `json:"description"`
+	WhenToUse             string                              `json:"when_to_use"`
+	Display               SkillDisplayResponse                `json:"display"`
+	RuntimeType           string                              `json:"runtime_type"`
+	Enabled               bool                                `json:"enabled"`
+	HasTools              bool                                `json:"has_tools"`
+	HasReferences         bool                                `json:"has_references"`
+	HasScripts            bool                                `json:"has_scripts"`
+	ScriptsSupported      bool                                `json:"scripts_supported"`
+	MaxCallsPerTurn       int                                 `json:"max_calls_per_turn"`
+	TimeoutSeconds        int                                 `json:"timeout_seconds"`
+	Status                string                              `json:"status"`
+	ValidationError       string                              `json:"validation_error,omitempty"`
+	SupportedCallers      []string                            `json:"supported_callers,omitempty"`
+	RequiredConfig        []string                            `json:"required_config,omitempty"`
+	DependencyType        string                              `json:"dependency_type"`
+	ConnectorRequirements []SkillConnectorRequirementResponse `json:"connector_requirements,omitempty"`
+	Exposure              SkillExposureResponse               `json:"exposure"`
 }
 
-type SkillIntegrationRequirementResponse struct {
-	IntegrationID string   `json:"integration_id"`
-	ActionIDs     []string `json:"action_ids,omitempty"`
-	Required      bool     `json:"required"`
+type SkillConnectorRequirementResponse struct {
+	ConnectorID  string   `json:"connector_id"`
+	OperationIDs []string `json:"operation_ids,omitempty"`
+	Required     bool     `json:"required"`
 }
 
 type SkillExposureResponse struct {

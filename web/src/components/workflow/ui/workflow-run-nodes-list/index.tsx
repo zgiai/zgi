@@ -18,6 +18,7 @@ import {
   serializeForClipboard,
 } from './utils';
 import { RuntimeStructuredView, RuntimeValuePreview } from './runtime-structured-view';
+import { ConnectorWorkflowResult } from '@/components/connectors/runtime/connector-workflow-result';
 
 export type { NodeRunStatus, WorkflowRunNodeListItem } from './types';
 const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
@@ -457,6 +458,7 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                   );
                 })()}
 
+                <ConnectorWorkflowResult metadata={raw.executionMetadata} value={raw.nodeOutput} />
                 {hasDebugDetails ? (
                   <button
                     type="button"

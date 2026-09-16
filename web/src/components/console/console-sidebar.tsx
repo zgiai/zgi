@@ -18,7 +18,7 @@ import {
   AppWindow,
   Clock3,
   ChevronDown,
-  PlugZap,
+  Cable,
   Workflow,
   ContactRound,
   LayoutGrid,
@@ -39,7 +39,6 @@ import { withBasePathIfInternal } from '@/lib/config';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { useWorkflowDebugFocusMode } from '@/components/workflow/hooks/use-debug-focus-mode';
 import { usePersistentSidebarCollapse } from '@/hooks/use-persistent-sidebar-collapse';
-import { useSystemFeatures } from '@/hooks/auth/use-system-features';
 import {
   getZGIConsoleNavigationAccess,
   getZGIConsoleNavigationDisplayState,
@@ -165,17 +164,6 @@ export function ConsoleSidebar({
     error: permissionsError,
   } = useAccountPermissions();
   const contextStatus = useWorkspaceStore.use.contextStatus();
-  const systemFeatures = useSystemFeatures();
-  const externalIntegrationsAccessState: NavAccessState | undefined =
-    systemFeatures.data !== undefined
-      ? systemFeatures.data?.enable_external_integrations
-        ? undefined
-        : 'forbidden'
-      : systemFeatures.isLoading
-        ? 'loading'
-        : systemFeatures.error
-          ? 'error'
-          : 'forbidden';
   const isDebugFocusMode = useWorkflowDebugFocusMode();
 
   // Collapsed state persisted via ui-local helpers
@@ -302,12 +290,9 @@ export function ConsoleSidebar({
         title: t('tools'),
         items: [
           {
-            title: t('integrations'),
-            href: '/console/integrations',
-            icon: PlugZap,
-            forcedAccessState: externalIntegrationsAccessState,
-            blockedReason:
-              externalIntegrationsAccessState === 'forbidden' ? t('featureDisabled') : undefined,
+            title: t('connectors'),
+            href: '/console/connectors',
+            icon: Cable,
           },
           {
             title: t('skills'),
@@ -328,7 +313,7 @@ export function ConsoleSidebar({
         ],
       },
     ],
-    [externalIntegrationsAccessState, t]
+    [t]
   );
 
   const navigationAccessContext = React.useMemo<ZGIConsoleNavigationAccessContext>(
@@ -712,17 +697,6 @@ export function ConsoleMobileSidebar({
     error: permissionsError,
   } = useAccountPermissions();
   const contextStatus = useWorkspaceStore.use.contextStatus();
-  const systemFeatures = useSystemFeatures();
-  const externalIntegrationsAccessState: NavAccessState | undefined =
-    systemFeatures.data !== undefined
-      ? systemFeatures.data?.enable_external_integrations
-        ? undefined
-        : 'forbidden'
-      : systemFeatures.isLoading
-        ? 'loading'
-        : systemFeatures.error
-          ? 'error'
-          : 'forbidden';
   const [openGroups, setOpenGroups] = React.useState<Record<string, boolean>>({
     work: true,
     resources: true,
@@ -827,12 +801,9 @@ export function ConsoleMobileSidebar({
         title: t('tools'),
         items: [
           {
-            title: t('integrations'),
-            href: '/console/integrations',
-            icon: PlugZap,
-            forcedAccessState: externalIntegrationsAccessState,
-            blockedReason:
-              externalIntegrationsAccessState === 'forbidden' ? t('featureDisabled') : undefined,
+            title: t('connectors'),
+            href: '/console/connectors',
+            icon: Cable,
           },
           {
             title: t('skills'),
@@ -855,7 +826,7 @@ export function ConsoleMobileSidebar({
     ];
 
     return resolveConsoleNavGroups(groups, navigationAccessContext, permissionsError !== null);
-  }, [externalIntegrationsAccessState, navigationAccessContext, permissionsError, t]);
+  }, [navigationAccessContext, permissionsError, t]);
 
   const closeSidebar = () => onOpenChange(false);
   const toggleGroup = (key: string) => setOpenGroups(prev => ({ ...prev, [key]: !prev[key] }));

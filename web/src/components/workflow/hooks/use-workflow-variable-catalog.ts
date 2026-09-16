@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo } from 'react';
 import { useT, type NodesSuffix } from '@/i18n';
+import { useLocale } from '@/hooks/use-locale';
 import { useWorkflowStore } from '../store';
 import type { UpstreamExportItem } from '../store';
 import type { StructuredTypeField } from '../types/input-var';
@@ -75,9 +76,8 @@ function matchesVariableType(
   if (!typeFilter) return true;
   if (typeFilter(variable.type)) return true;
 
-  return hasMatchingStructuredField(
-    variable.children,
-    field => typeFilter(field.type as WorkflowPrimitiveType)
+  return hasMatchingStructuredField(variable.children, field =>
+    typeFilter(field.type as WorkflowPrimitiveType)
   );
 }
 
@@ -88,6 +88,7 @@ function buildSelectionEntry(args: {
   sourceNodeTitle?: string;
   isSpecialSource: boolean;
   key: string;
+  displayKey?: string;
   type: WorkflowPrimitiveType;
   writable?: boolean;
   description?: string;
@@ -103,7 +104,7 @@ function buildSelectionEntry(args: {
     sourceNodeType: args.sourceNodeType,
     sourceNodeTitle: args.sourceNodeTitle,
     key: args.key,
-    displayKey: args.valuePath[args.valuePath.length - 1] || args.key,
+    displayKey: args.displayKey || args.valuePath[args.valuePath.length - 1] || args.key,
     type: args.type,
     writable: args.writable,
     description: args.description,
@@ -128,11 +129,15 @@ export function useWorkflowVariableCatalog({
   hideSystem = false,
 }: WorkflowVariableCatalogOptions): WorkflowVariableCatalogResult {
   const t = useT();
+  const { locale } = useLocale();
   const getUpstreamVariables = useWorkflowStore.use.getUpstreamVariables();
   const getUpstreamWritableVariables = useWorkflowStore.use.getUpstreamWritableVariables?.();
   const graphVersion = useWorkflowStore(state => state.graphVersion);
 
   const upstreamsRaw = useMemo<UpstreamExportItem[]>(() => {
+    // Graph mutations can change exported variables while selector function
+    // identities remain stable; reading the version keeps this catalog fresh.
+    void graphVersion;
     if (Array.isArray(upstreamsOverride)) return upstreamsOverride;
     if (!nodeId) return [];
 
@@ -165,7 +170,7 @@ export function useWorkflowVariableCatalog({
   );
 
   const catalog = useMemo<WorkflowVariableCatalogResult>(() => {
-    let systemGroup: WorkflowVariableCatalogGroup | null = hideSystem
+    const systemGroup: WorkflowVariableCatalogGroup | null = hideSystem
       ? null
       : {
           sourceId: 'sys',
@@ -204,7 +209,11 @@ export function useWorkflowVariableCatalog({
           });
           selectionIndex.set(nestedEntry.selectionKey, nestedEntry);
 
-          if (!field.type.startsWith('array') && Array.isArray(field.children) && field.children.length) {
+          if (
+            !field.type.startsWith('array') &&
+            Array.isArray(field.children) &&
+            field.children.length
+          ) {
             walkChildren(field.children, [...parentPath, field.key]);
           }
         });
@@ -227,11 +236,19 @@ export function useWorkflowVariableCatalog({
 
       (group.variables || []).forEach(variable => {
         const sourceId =
-          typeof variable.key === 'string' && variable.key.startsWith('sys.') ? 'sys' : group.nodeId;
+          typeof variable.key === 'string' && variable.key.startsWith('sys.')
+            ? 'sys'
+            : group.nodeId;
         const key =
           sourceId === 'sys' && typeof variable.key === 'string'
             ? variable.key.slice(4)
             : String(variable.key);
+        const localeKey = locale.replace('-', '_');
+        const localizedLabel =
+          variable.label?.[localeKey] ||
+          variable.label?.[locale] ||
+          variable.label?.en_US ||
+          variable.label?.zh_Hans;
         const catalogVariable: WorkflowVariableCatalogVariable = {
           sourceId,
           sourceTitle:
@@ -239,7 +256,7 @@ export function useWorkflowVariableCatalog({
           sourceNodeType: sourceId === 'sys' ? 'start' : group.nodeType,
           sourceNodeTitle: sourceId === 'sys' ? undefined : group.nodeTitle,
           key,
-          displayKey: key,
+          displayKey: localizedLabel || key,
           type: variable.type as WorkflowPrimitiveType,
           writable: variable.writable,
           description: variable.description,
@@ -262,6 +279,7 @@ export function useWorkflowVariableCatalog({
             sourceNodeTitle: catalogVariable.sourceNodeTitle,
             isSpecialSource: catalogVariable.isSpecialSource,
             key: catalogVariable.key,
+            displayKey: catalogVariable.displayKey,
             type: catalogVariable.type,
             writable: catalogVariable.writable,
             description: catalogVariable.description,
@@ -328,7 +346,7 @@ export function useWorkflowVariableCatalog({
       selectionIndex,
       totalSelectableCount: topLevelOptions.length,
     };
-  }, [getSourceTitle, hideSystem, pinGroupsFirst, t, typeFilter, upstreams]);
+  }, [getSourceTitle, hideSystem, locale, pinGroupsFirst, t, typeFilter, upstreams]);
 
   return catalog;
 }

@@ -41,6 +41,10 @@ var corsAllowHeaders = []string{
 	"X-Requested-With",
 	"X-Request-ID",
 	"X-User-Account-Id",
+	// Connector mutations use these headers for replay protection and
+	// confirmation of the current disconnection impact.
+	"Idempotency-Key",
+	"X-Impact-Token",
 	"Cache-Control",
 	"Connection",
 }

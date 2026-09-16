@@ -140,12 +140,12 @@ func TestNativeSkillSessionActivatesCompleteSkillsIncrementally(t *testing.T) {
 
 func TestNativeSkillSessionPreservesActionProjectionAcrossLaterActivation(t *testing.T) {
 	resolved := &ResolvedSkills{Skills: []SkillDocument{
-		{Metadata: SkillMetadata{ID: SkillExternalApps, RuntimeType: SkillRuntimeTypePrompt}, Instructions: "Use connected applications safely."},
+		{Metadata: SkillMetadata{ID: SkillConnectorRuntime, RuntimeType: SkillRuntimeTypePrompt}, Instructions: "Use connected applications safely."},
 		{Metadata: SkillMetadata{ID: "later", RuntimeType: SkillRuntimeTypePrompt}, Instructions: "Use the later capability."},
 	}}
 	catalog := BuildNativeSkillCatalog(resolved, nil, DefaultNativeSkillCatalogBudgetChars, 0, nil)
 	session := NewNativeSkillSession(NewRuntime(nil, nil), resolved, catalog, NativeToolSetOptions{BudgetChars: 10000})
-	if activated := session.Activate(context.Background(), []string{SkillExternalApps}, "preload"); len(activated.ActivatedSkillIDs) != 1 {
+	if activated := session.Activate(context.Background(), []string{SkillConnectorRuntime}, "preload"); len(activated.ActivatedSkillIDs) != 1 {
 		t.Fatalf("initial activation = %#v", activated)
 	}
 	projection := NativeToolProjection{
@@ -156,8 +156,8 @@ func TestNativeSkillSessionPreservesActionProjectionAcrossLaterActivation(t *tes
 			"properties":           map[string]interface{}{},
 		},
 		Binding: NativeToolBinding{
-			SkillID: SkillExternalApps, ToolName: "execute_action", ArgumentEnvelope: "arguments",
-			FixedArguments: map[string]interface{}{"integration_id": "wecom", "action_id": "wecom.contact.list"},
+			SkillID: SkillConnectorRuntime, ToolName: "wecom.contact.list",
+			ConnectorOperation: &NativeConnectorOperation{ConnectorID: "wecom", OperationID: "wecom.contact.list"},
 		},
 	}
 	if added := session.AddToolProjections([]NativeToolProjection{projection}, NativeToolProjectionOptions{}); added != 1 {
@@ -171,7 +171,7 @@ func TestNativeSkillSessionPreservesActionProjectionAcrossLaterActivation(t *tes
 		t.Fatalf("provider tools after later activation = %#v", toolSet.ProviderTools)
 	}
 	binding, ok := toolSet.ToolBindings[projection.Name]
-	if !ok || binding.FixedArguments["action_id"] != "wecom.contact.list" {
+	if !ok || binding.ConnectorOperation == nil || binding.ConnectorOperation.OperationID != "wecom.contact.list" {
 		t.Fatalf("projection binding after later activation = %#v, %v", binding, ok)
 	}
 }

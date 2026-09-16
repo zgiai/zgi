@@ -1,0 +1,93 @@
+{
+  "profile_id": "feishu-app-template-v3",
+  "profile_version": "3.0.0",
+  "addons": {
+    "preset": false,
+    "scopes": {
+      "tenant": [
+        "application:application:self_manage",
+        "application:bot.menu:write",
+        "cardkit:card:write",
+        "contact:contact.base:readonly",
+        "directory:employee:search",
+        "directory:employee.base.name.name:read",
+        "docs:document.comment:create",
+        "docs:document.comment:delete",
+        "docs:document.comment:read",
+        "docs:document.comment:update",
+        "docs:document.comment:write_only",
+        "docx:document.block:convert",
+        "docx:document:readonly",
+        "docx:document:write_only",
+        "drive:drive.metadata:readonly",
+        "im:chat.members:bot_access",
+        "im:chat.members:read",
+        "im:chat:read",
+        "im:chat:update",
+        "im:chat:create",
+        "im:message.group_at_msg.include_bot:readonly",
+        "im:message.group_at_msg:readonly",
+        "im:message.group_msg",
+        "im:message.p2p_msg:readonly",
+        "im:message.pins:read",
+        "im:message.pins:write_only",
+        "im:message.reactions:read",
+        "im:message.reactions:write_only",
+        "im:message",
+        "im:message:readonly",
+        "im:message:send_as_bot",
+        "im:message:send_multi_users",
+        "im:message:send_sys_msg",
+        "im:message:update",
+        "im:resource",
+        "application:bot.basic_info:read",
+        "tenant:tenant:readonly",
+        "wiki:node:read",
+        "application:app_slash_command:read",
+        "application:app_slash_command:write"
+      ],
+      "user": [
+        "offline_access"
+      ]
+    },
+    "events": {
+      "items": {
+        "tenant": [
+          "im.message.receive_v1",
+          "im.message.reaction.created_v1",
+          "im.message.reaction.deleted_v1",
+          "im.chat.member.bot.added_v1",
+          "im.chat.member.bot.deleted_v1",
+          "drive.notice.comment_add_v1"
+        ],
+        "user": [
+          "vc.note.generated_v1",
+          "minutes.minute.generated_v1",
+          "vc.meeting.participant_meeting_ended_v1"
+        ]
+      }
+    },
+    "callbacks": {
+      "items": [
+        "card.action.trigger"
+      ]
+    }
+  },
+  "user_event_dependencies": [
+    {
+      "event_id": "vc.note.generated_v1",
+      "user_scope": "vc:note:read",
+      "subscription_api": "/open-apis/vc/v1/notes/subscription"
+    },
+    {
+      "event_id": "minutes.minute.generated_v1",
+      "user_scope": "minutes:minutes.basic:read",
+      "subscription_api": "/open-apis/minutes/v1/minutes/subscription"
+    },
+    {
+      "event_id": "vc.meeting.participant_meeting_ended_v1",
+      "user_scope": "vc:meeting.meetingevent:read",
+      "subscription_api": "/open-apis/vc/v1/meetings/subscription"
+    }
+  ]
+}

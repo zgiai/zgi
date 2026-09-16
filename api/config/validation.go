@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"net"
 	"net/mail"
 	"net/url"
 	"strings"
@@ -128,76 +127,40 @@ func validateConfig(cfg *Config) error {
 		return fmt.Errorf("%s must be exactly 32 bytes long, got %d bytes", envLLMEncryptionKey, len(cfg.LLM.EncryptionKey))
 	}
 
-	if cfg.ExternalIntegrations.Enabled {
-		if err := validateWebSearchConfig(cfg.WebSearch); err != nil {
-			return err
-		}
-	}
-	if err := validateExternalIntegrationsConfig(cfg.ExternalIntegrations); err != nil {
-		return err
-	}
-	if err := validateExternalIntegrationOAuthDeployment(cfg); err != nil {
+	if err := validateConnectorsConfig(cfg.Connectors); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func validateExternalIntegrationsConfig(cfg ExternalIntegrationsConfig) error {
-	if !cfg.Enabled {
-		return nil
-	}
+func validateConnectorsConfig(cfg ConnectorsConfig) error {
 	if len(cfg.CredentialKeys) == 0 {
-		return fmt.Errorf("%s must configure at least one credential key", envIntegrationCredentialKeysJSON)
+		return fmt.Errorf("%s must configure at least one Connector credential key", envConnectorCredentialKeysJSON)
 	}
 	if strings.TrimSpace(cfg.CredentialActiveKeyID) == "" {
-		return fmt.Errorf("%s is required when %s is enabled", envIntegrationCredentialActiveKeyID, envExternalIntegrationsEnabled)
+		return fmt.Errorf("%s is required", envConnectorCredentialActiveKeyID)
 	}
 	if _, ok := cfg.CredentialKeys[cfg.CredentialActiveKeyID]; !ok {
-		return fmt.Errorf("%s must reference a key in %s", envIntegrationCredentialActiveKeyID, envIntegrationCredentialKeysJSON)
+		return fmt.Errorf("%s must reference a key in %s", envConnectorCredentialActiveKeyID, envConnectorCredentialKeysJSON)
 	}
 	for keyID, key := range cfg.CredentialKeys {
 		if strings.TrimSpace(keyID) == "" {
-			return fmt.Errorf("%s contains an empty key id", envIntegrationCredentialKeysJSON)
+			return fmt.Errorf("%s contains an empty key id", envConnectorCredentialKeysJSON)
 		}
 		if len(key) != 32 {
-			return fmt.Errorf("credential key %q in %s must be exactly 32 bytes long", keyID, envIntegrationCredentialKeysJSON)
+			return fmt.Errorf("credential key %q in %s must be exactly 32 bytes long", keyID, envConnectorCredentialKeysJSON)
 		}
 	}
-	positive := []struct {
-		key   string
-		value int
-	}{
-		{envIntegrationOrgDailyLimit, cfg.OrgDailyLimit},
-		{envIntegrationTimeoutSeconds, cfg.TimeoutSeconds},
-		{envIntegrationHealthFailureThreshold, cfg.Health.FailureThreshold},
-		{envIntegrationOAuthRefreshWindowSeconds, cfg.OAuth.RefreshWindowSeconds},
-		{envIntegrationOAuthFlowTTLSeconds, cfg.OAuth.FlowTTLSeconds},
-	}
-	for _, item := range positive {
-		if item.value <= 0 {
-			return fmt.Errorf("%s must be greater than 0", item.key)
+	seenDirectories := make(map[string]struct{}, len(cfg.PluginDirectories))
+	for _, directory := range cfg.PluginDirectories {
+		if strings.TrimSpace(directory) == "" || directory != strings.TrimSpace(directory) {
+			return fmt.Errorf("%s contains an invalid directory", envConnectorPluginDirectoriesJSON)
 		}
-	}
-	if cfg.OAuth.FlowTTLSeconds > 1800 {
-		return fmt.Errorf("%s must not exceed 1800", envIntegrationOAuthFlowTTLSeconds)
-	}
-	if !validIntegrationOAuthURL(cfg.OAuth.CallbackURL) {
-		return fmt.Errorf("%s must be an HTTPS URL or a loopback HTTP URL", envIntegrationOAuthCallbackURL)
-	}
-	if !validIntegrationOAuthURL(cfg.OAuth.ResultURL) {
-		return fmt.Errorf("%s must be an HTTPS URL or a loopback HTTP URL", envIntegrationOAuthResultURL)
-	}
-	for key, client := range cfg.OAuth.Clients {
-		if strings.TrimSpace(key) == "" || len(key) > 128 {
-			return fmt.Errorf("%s contains an invalid provider key", envIntegrationOAuthClientsJSON)
+		if _, duplicate := seenDirectories[directory]; duplicate {
+			return fmt.Errorf("%s contains a duplicate directory", envConnectorPluginDirectoriesJSON)
 		}
-		if strings.TrimSpace(client.ClientID) == "" {
-			return fmt.Errorf("%s client %q is missing client_id", envIntegrationOAuthClientsJSON, key)
-		}
-		if strings.TrimSpace(client.ClientSecret) == "" && !integrationOAuthPublicClientSupported(key) {
-			return fmt.Errorf("%s client %q is missing client_secret", envIntegrationOAuthClientsJSON, key)
-		}
+		seenDirectories[directory] = struct{}{}
 	}
 	return nil
 }
@@ -206,94 +169,6 @@ func validateExternalIntegrationsConfig(cfg ExternalIntegrationsConfig) error {
 // providers currently use confidential web applications and must retain a
 // client secret. Keep this allowlist narrow so a typo cannot silently weaken
 // an unrelated provider's client authentication.
-func integrationOAuthPublicClientSupported(providerKey string) bool {
-	key := strings.ToLower(strings.TrimSpace(providerKey))
-	key = strings.ReplaceAll(key, "/", ":")
-	return key == "x" || key == "x:x"
-}
-
-func validIntegrationOAuthURL(value string) bool {
-	parsed, err := url.ParseRequestURI(strings.TrimSpace(value))
-	if err != nil || parsed == nil || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
-		return false
-	}
-	if strings.EqualFold(parsed.Scheme, "https") {
-		return true
-	}
-	if !strings.EqualFold(parsed.Scheme, "http") {
-		return false
-	}
-	host := strings.ToLower(parsed.Hostname())
-	if host == "localhost" {
-		return true
-	}
-	address := net.ParseIP(host)
-	return address != nil && address.IsLoopback()
-}
-
-func validateExternalIntegrationOAuthDeployment(cfg *Config) error {
-	if cfg == nil || !cfg.ExternalIntegrations.Enabled || isDevelopmentMode(cfg) {
-		return nil
-	}
-	urls := []struct {
-		key   string
-		value string
-	}{
-		{envIntegrationOAuthCallbackURL, cfg.ExternalIntegrations.OAuth.CallbackURL},
-		{envIntegrationOAuthResultURL, cfg.ExternalIntegrations.OAuth.ResultURL},
-	}
-	for _, item := range urls {
-		parsed, err := url.ParseRequestURI(strings.TrimSpace(item.value))
-		if err != nil || parsed == nil ||
-			!strings.EqualFold(parsed.Scheme, "https") ||
-			isLoopbackIntegrationOAuthHost(parsed.Hostname()) {
-			return fmt.Errorf("%s must be an externally reachable HTTPS URL outside development", item.key)
-		}
-	}
-	return nil
-}
-
-func isLoopbackIntegrationOAuthHost(host string) bool {
-	host = strings.ToLower(strings.TrimSpace(host))
-	if host == "localhost" {
-		return true
-	}
-	address := net.ParseIP(host)
-	return address != nil && address.IsLoopback()
-}
-
-func validateWebSearchConfig(cfg WebSearchConfig) error {
-	if !strings.EqualFold(strings.TrimSpace(cfg.Provider), "exa") {
-		return fmt.Errorf("%s must be exa", envWebSearchProvider)
-	}
-	if cfg.Exa.TimeoutSeconds <= 0 {
-		return fmt.Errorf("%s must be greater than 0", envExaTimeoutSeconds)
-	}
-	if cfg.Exa.MaxResults <= 0 {
-		return fmt.Errorf("%s must be greater than 0", envExaMaxResults)
-	}
-	if cfg.Exa.MaxResults > 10 {
-		return fmt.Errorf("%s must be less than or equal to 10", envExaMaxResults)
-	}
-	switch strings.ToLower(strings.TrimSpace(cfg.Exa.DefaultSearchType)) {
-	case "auto", "fast", "instant":
-	default:
-		return fmt.Errorf("%s must be one of: auto, fast, instant", envExaDefaultSearchType)
-	}
-	if cfg.Exa.MaxFetchURLs <= 0 {
-		return fmt.Errorf("%s must be greater than 0", envExaMaxFetchURLs)
-	}
-	if cfg.Exa.MaxFetchURLs > 5 {
-		return fmt.Errorf("%s must be less than or equal to 5", envExaMaxFetchURLs)
-	}
-	if cfg.Exa.MaxContentCharacters <= 0 {
-		return fmt.Errorf("%s must be greater than 0", envExaMaxContentCharacters)
-	}
-	if cfg.Exa.MaxContentCharacters > 20000 {
-		return fmt.Errorf("%s must be less than or equal to 20000", envExaMaxContentCharacters)
-	}
-	return nil
-}
 
 // HasEmailDeliveryConfig reports whether the configured mail backend has enough
 // settings to attempt delivery.

@@ -65,8 +65,7 @@ func (s *service) prepareConfiguredChatDefinition(ctx context.Context, scope Sco
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return RunConfig{}, nil, nil, nil, err
 	}
-	var err error
-	config, err = s.refreshAIChatIntegrationRunConfig(ctx, scope, caller, config)
+	initialConnections, err := initialChatConnections(caller, req)
 	if err != nil {
 		return RunConfig{}, nil, nil, nil, err
 	}
@@ -90,6 +89,17 @@ func (s *service) prepareConfiguredChatDefinition(ctx context.Context, scope Sco
 	}
 	applyProtocolToolsPolicy(caller, parts)
 	applyCallerMemoryPolicy(caller, parts)
+	if hasInitialChatConnections(req) {
+		conversation, err := s.createChatWithInitialConnections(ctx, scope, caller, parts, initialConnections, req.InitialConnectorDefaultsRevision)
+		if err != nil {
+			return RunConfig{}, nil, nil, nil, err
+		}
+		// Skill discovery happens below: first-turn choices must already be
+		// committed and addressed by the real conversation ID at that boundary.
+		req.ConversationID = conversation.ID.String()
+		parts.ConversationID = req.ConversationID
+		parts.RequiredInitialConnectorBindings = initialConnections
+	}
 	if err := s.applySkillConfig(ctx, scope, caller, &config, parts); err != nil {
 		return RunConfig{}, nil, nil, nil, err
 	}
@@ -125,10 +135,6 @@ func (s *service) prepareRootRegeneration(ctx context.Context, scope Scope, call
 		return nil, err
 	}
 	var err error
-	config, err = s.refreshAIChatIntegrationRunConfig(ctx, scope, caller, config)
-	if err != nil {
-		return nil, err
-	}
 	message, err := s.repos.Message.GetScoped(ctx, id, scope.OrganizationID, scope.AccountID)
 	if err != nil {
 		return nil, mapRepoError(err)
@@ -587,7 +593,7 @@ func executionModeForModel(caller Caller, parts *chatRequestParts) string {
 	if isAutonomousSubjectCaller(caller.Type) {
 		return executionModeNativeAgentLoop
 	}
-	if len(parts.SkillIDs) == 0 && !parts.AgentMemoryToolsEnabled {
+	if len(parts.SkillIDs) == 0 && !parts.AgentMemoryToolsEnabled && !parts.ConnectorToolsEnabled {
 		return executionModeDirectChat
 	}
 	return executionModeNativeToolLoop
@@ -597,10 +603,10 @@ func finalizeExecutionMode(caller Caller, parts *chatRequestParts) error {
 	if parts == nil {
 		return nil
 	}
-	if parts.ExecutionMode == executionModeDirectChat && parts.AgentMemoryToolsEnabled {
+	if parts.ExecutionMode == executionModeDirectChat && (parts.AgentMemoryToolsEnabled || parts.ConnectorToolsEnabled) {
 		parts.ExecutionMode = ""
 	}
-	if parts.ExecutionMode == executionModeNativeToolLoop && len(parts.SkillIDs) == 0 && !parts.ProtocolToolsEnabled && !parts.AgentMemoryToolsEnabled {
+	if parts.ExecutionMode == executionModeNativeToolLoop && len(parts.SkillIDs) == 0 && !parts.ProtocolToolsEnabled && !parts.AgentMemoryToolsEnabled && !parts.ConnectorToolsEnabled {
 		parts.ExecutionMode = ""
 	}
 	if executionModeRequiresFunctionCalling(parts.ExecutionMode) && !parts.ModelSupportsFunctionCalling {
@@ -642,6 +648,7 @@ func logExecutionRoute(ctx context.Context, caller Caller, parts *chatRequestPar
 		"model_use_case", executionModeModelUseCase(parts.ExecutionMode),
 		"function_calling_supported", parts.ModelSupportsFunctionCalling,
 		"effective_skill_count", len(parts.SkillIDs),
+		"connector_tools_enabled", parts.ConnectorToolsEnabled,
 		"agent_memory_tools_enabled", parts.AgentMemoryToolsEnabled,
 	)
 }
@@ -710,12 +717,10 @@ func (s *service) applySkillConfig(ctx context.Context, scope Scope, caller Call
 	if parts == nil {
 		return nil
 	}
-	if parts.ExecutionMode == executionModeDirectChat {
-		parts.SkillMode = skillModeDisabled
-		parts.SkillIDs = nil
-		parts.ToolSkillIDs = nil
-		return nil
-	}
+	parts.BaseSkillIDs = nil
+	parts.BaseToolSkillIDs = nil
+	parts.ConnectorSkillIDs = nil
+	parts.ConnectorToolsEnabled = false
 	if s.skillRuntime == nil {
 		parts.SkillMode = skillModeDisabled
 		parts.SkillIDs = nil
@@ -737,6 +742,21 @@ func (s *service) applySkillConfig(ctx context.Context, scope Scope, caller Call
 			"supports_function_calling", parts.ModelSupportsFunctionCalling,
 		)
 		return nil
+	}
+	if err := s.applyConnectorSkillConfig(ctx, scope, caller, parts); err != nil {
+		return err
+	}
+	if parts.ExecutionMode == executionModeDirectChat && !parts.ConnectorToolsEnabled {
+		parts.SkillMode = skillModeDisabled
+		parts.SkillIDs = nil
+		parts.ToolSkillIDs = nil
+		return nil
+	}
+	if parts.ExecutionMode == executionModeDirectChat && parts.ConnectorToolsEnabled {
+		// A persisted direct-chat route predates the newly attached Connector.
+		// Recompute the execution mode from current capabilities instead of
+		// suppressing an explicitly authorized native operation.
+		parts.ExecutionMode = ""
 	}
 	catalog, err := s.catalogSkillMetadata(ctx, scope.OrganizationID)
 	if err != nil {
@@ -766,9 +786,10 @@ func (s *service) applySkillConfig(ctx context.Context, scope Scope, caller Call
 		enabled = filterAIChatSkillIDsForSurface(enabled, parts)
 		trustedCapabilities := s.trustedContextualAIChatSkillCapabilities(ctx, scope, parts)
 		enabled = addContextualAIChatSkillIDsWithCapabilities(enabled, orgEnabled, catalog, parts, trustedCapabilities)
-		enabled = addAIChatExternalAppsSkillID(enabled, catalog, config)
 	}
-	parts.SkillIDs, parts.ToolSkillIDs = filterSkillsForModel(enabled, catalog, parts)
+	parts.BaseSkillIDs, parts.BaseToolSkillIDs = filterSkillsForModel(enabled, catalog, parts)
+	parts.SkillIDs = mergeNormalizedSkillIDs(parts.BaseSkillIDs, parts.ConnectorSkillIDs)
+	parts.ToolSkillIDs = mergeNormalizedSkillIDs(parts.BaseToolSkillIDs, parts.ConnectorSkillIDs)
 	if len(parts.SkillIDs) == 0 {
 		parts.SkillMode = skillModeDisabled
 		return nil

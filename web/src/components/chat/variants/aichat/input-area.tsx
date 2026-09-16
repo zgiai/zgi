@@ -243,7 +243,10 @@ interface AIChatInputAreaProps {
   connectedAppsLabel?: string;
   connectedAppsSelectedCount?: number;
   connectedAppsAttentionRequired?: boolean;
-  onOpenConnectedApps?: () => void;
+  connectedAppsDisabled?: boolean;
+  connectedAppsOpen?: boolean;
+  connectedAppsPopup?: 'menu' | 'dialog';
+  onOpenConnectedApps?: (anchorElement: HTMLElement) => void;
   showSkillManagement?: boolean;
   skillManagementLabel?: string;
   onOpenSkillManagement?: () => void;
@@ -340,6 +343,9 @@ export function AIChatInputArea({
   connectedAppsLabel,
   connectedAppsSelectedCount = 0,
   connectedAppsAttentionRequired = false,
+  connectedAppsDisabled = false,
+  connectedAppsOpen = false,
+  connectedAppsPopup = 'dialog',
   onOpenConnectedApps,
   showSkillManagement = false,
   skillManagementLabel,
@@ -1571,6 +1577,9 @@ export function AIChatInputArea({
                 connectedAppsLabel={connectedAppsLabel}
                 connectedAppsSelectedCount={connectedAppsSelectedCount}
                 connectedAppsAttentionRequired={connectedAppsAttentionRequired}
+                connectedAppsDisabled={connectedAppsDisabled}
+                connectedAppsOpen={connectedAppsOpen}
+                connectedAppsPopup={connectedAppsPopup}
                 showSkillManagement={showSkillManagement}
                 skillManagementLabel={skillManagementLabel}
                 surface={surface}

@@ -46,9 +46,10 @@ export function buildAgentRuntimeSignature(payload: UpdateAgentRuntimeConfigRequ
     workflow_bindings: [...(payload.workflow_bindings ?? [])].sort((left, right) =>
       left.binding_id.localeCompare(right.binding_id)
     ),
-    integration_bindings: [...(payload.integration_bindings ?? [])].sort((left, right) =>
-      left.integration_id.localeCompare(right.integration_id)
+    connector_bindings: [...(payload.connector_bindings ?? [])].sort((left, right) =>
+      left.connector_id.localeCompare(right.connector_id)
     ),
+    connector_reference_commands: payload.connector_reference_commands ?? [],
     agent_memory_slots: editableMemorySlots.sort((left, right) =>
       left.key.localeCompare(right.key)
     ),

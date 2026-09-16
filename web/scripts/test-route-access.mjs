@@ -1345,8 +1345,9 @@ const {
 const organizationRoutes = [
   '/console',
   '/console/skills',
-  '/console/integrations',
-  '/console/integrations/oauth/result',
+  '/console/connectors',
+  '/console/connectors/github',
+  '/console/connectors/connections/connection-1',
   '/console/work',
   '/console/work/chat',
   '/console/work/image',
@@ -1360,8 +1361,10 @@ const workRouteRoot = path.join(rootDir, 'src', 'app', 'console', 'work');
 const consoleRouteRoot = path.join(rootDir, 'src', 'app', 'console');
 const expectedOrganizationConsolePageRoutes = [
   '/console',
-  '/console/integrations',
-  '/console/integrations/oauth/result',
+  '/console/connectors',
+  '/console/connectors/:connectorId',
+  '/console/connectors/connections',
+  '/console/connectors/connections/:connectionId',
   '/console/model',
   '/console/skills',
   '/console/work',
@@ -1502,8 +1505,8 @@ assert.deepEqual(
   [
     '/console',
     '/console/skills',
-    '/console/integrations',
     '/console/model',
+    '/console/connectors',
     '/console/work',
     '/console/work/chat',
     '/console/work/image',
@@ -1515,7 +1518,7 @@ assert.deepEqual(
 );
 assert.deepEqual(
   [...ORGANIZATION_SCOPED_CONSOLE_ROUTE_PREFIXES],
-  ['/console/integrations/', '/console/work/app/'],
+  ['/console/connectors/', '/console/work/app/'],
   'console organization-scoped prefix metadata should include connection and app detail routes'
 );
 assert.deepEqual(

@@ -59,7 +59,8 @@ func contextPromptDumpPath() string {
 }
 
 func runningUnderGoTest() bool {
-	executable := strings.TrimSuffix(filepath.Base(os.Args[0]), ".exe")
+	executable := strings.ToLower(filepath.Base(os.Args[0]))
+	executable = strings.TrimSuffix(executable, ".exe")
 	return strings.HasSuffix(executable, ".test")
 }
 

@@ -7,36 +7,16 @@ import (
 
 type recoverableActionSchemaError struct{}
 
-func (recoverableActionSchemaError) Error() string { return "integration_invalid_input" }
+func (recoverableActionSchemaError) Error() string { return "connector_invalid_input" }
 
 func (recoverableActionSchemaError) PublicErrorRecovery() map[string]interface{} {
 	return map[string]interface{}{
-		"recovery_kind":  "action_schema",
-		"integration_id": "feishu",
-		"action_id":      "feishu.contact.search",
+		"recovery_kind": "action_schema",
+		"connector_id":  "github",
+		"operation_id":  "github.user.get",
 		"expected_arguments": map[string]interface{}{
 			"schema": map[string]interface{}{"type": "object"},
 		},
-	}
-}
-
-func TestPublicToolErrorRecoveryForExternalAppsAddsMetaToolInstructions(t *testing.T) {
-	recovery := PublicToolErrorRecoveryForInvocation(
-		recoverableActionSchemaError{},
-		SkillExternalApps,
-		"execute_action",
-		nil,
-	)
-	if recovery["recovery_action"] != "get_action_guide" {
-		t.Fatalf("external-apps recovery = %#v", recovery)
-	}
-	retryInstruction, _ := recovery["retry_action"].(string)
-	if !strings.Contains(retryInstruction, "execute_action") {
-		t.Fatalf("external-apps retry instruction = %q", retryInstruction)
-	}
-	expected, _ := recovery["expected_arguments"].(map[string]interface{})
-	if expected["tool_name"] != "execute_action" || expected["arguments_path"] != "arguments" {
-		t.Fatalf("external-apps expected arguments = %#v", expected)
 	}
 }
 

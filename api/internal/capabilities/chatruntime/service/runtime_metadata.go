@@ -13,6 +13,7 @@ import (
 
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
+	"github.com/zgiai/zgi/api/internal/modules/connectors/dispatch"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -421,6 +422,7 @@ func applyPlanUpdateTraceMetadata(metadata map[string]interface{}, trace skills.
 	if len(outcomeSnapshot) > 0 {
 		outcomes := reconcileOperationPlanOutcomeSnapshot(plan, outcomeSnapshot)
 		plan[operationPlanOutcomesKey] = mapsToInterfaceSlice(outcomes)
+		outcomePhases := operationPlanPhasesFromOutcomeSnapshot(mapSliceFromAny(plan["phases"]), outcomes)
 		if len(phases) > 0 {
 			// A joint snapshot supplies the execution contract as well as goals.
 			// Legacy joint arrays pair by position; explicit outcome_id supports
@@ -430,10 +432,13 @@ func applyPlanUpdateTraceMetadata(metadata map[string]interface{}, trace skills.
 					phase["outcome_id"] = outcomes[index]["id"]
 				}
 			}
-			plan["phases"] = mapsToInterfaceSlice(reconcileOperationPlanPhaseSnapshot(mapSliceFromAny(plan["phases"]), phases))
-		} else {
-			plan["phases"] = mapsToInterfaceSlice(operationPlanPhasesFromOutcomeSnapshot(mapSliceFromAny(plan["phases"]), outcomes))
+			// Internal server plan updates may atomically declare Outcomes and
+			// attach canonical Action bindings. Reconcile the supplied phases onto
+			// the generated Outcome phases so expected_action, ledger epoch, and
+			// other server execution facts are not discarded by Outcome creation.
+			outcomePhases = reconcileOperationPlanOutcomePhaseSnapshot(outcomePhases, phases)
 		}
+		plan["phases"] = mapsToInterfaceSlice(outcomePhases)
 		operationPlanReconcileOutcomes(plan)
 	} else {
 		phases = reconcileOperationPlanPhaseSnapshot(mapSliceFromAny(plan["phases"]), phases)
@@ -488,6 +493,49 @@ func applyPlanUpdateTraceMetadata(metadata map[string]interface{}, trace skills.
 	metadata["operation_plan"] = plan
 }
 
+func reconcileOperationPlanOutcomePhaseSnapshot(generated []map[string]interface{}, supplied []map[string]interface{}) []map[string]interface{} {
+	if len(generated) == 0 {
+		return supplied
+	}
+	if len(supplied) == 0 {
+		return generated
+	}
+	used := make([]bool, len(supplied))
+	out := make([]map[string]interface{}, 0, len(generated)+len(supplied))
+	for _, baseline := range generated {
+		match := -1
+		baselineOutcomeID := strings.TrimSpace(stringFromAny(baseline["outcome_id"]))
+		baselineID := strings.TrimSpace(stringFromAny(baseline["id"]))
+		for index, phase := range supplied {
+			if used[index] {
+				continue
+			}
+			outcomeID := strings.TrimSpace(stringFromAny(phase["outcome_id"]))
+			phaseID := strings.TrimSpace(stringFromAny(phase["id"]))
+			if (baselineOutcomeID != "" && outcomeID == baselineOutcomeID) ||
+				(baselineID != "" && phaseID == baselineID) {
+				match = index
+				break
+			}
+		}
+		if match < 0 {
+			out = append(out, baseline)
+			continue
+		}
+		used[match] = true
+		out = append(out, reconcileOperationPlanPhaseSnapshot(
+			[]map[string]interface{}{baseline},
+			[]map[string]interface{}{supplied[match]},
+		)[0])
+	}
+	for index, phase := range supplied {
+		if !used[index] {
+			out = append(out, phase)
+		}
+	}
+	return out
+}
+
 func reconcileOperationPlanPhaseSnapshot(current []map[string]interface{}, next []map[string]interface{}) []map[string]interface{} {
 	if len(current) == 0 || len(next) == 0 {
 		return next
@@ -513,12 +561,26 @@ func reconcileOperationPlanPhaseSnapshot(current []map[string]interface{}, next 
 		if len(refs) > 0 {
 			phase["evidence_refs"] = refs
 		}
-		for _, key := range []string{"outcome_id", "verification_mode", "completion_source", "completed_at", "action_binding_source", operationPlanRuntimeBindingKey} {
+		for _, key := range []string{
+			"outcome_id", "required", "verification_mode", "completion_source", "completed_at",
+			operationPlanRuntimeBindingKey,
+		} {
 			if _, exists := phase[key]; exists {
 				continue
 			}
 			if value, exists := previous[key]; exists && value != nil {
 				phase[key] = value
+			}
+		}
+		previousSource := strings.ToLower(strings.TrimSpace(stringFromAny(previous[operationPlanPhaseSourceKey])))
+		switch previousSource {
+		case operationPlanPhaseSourceServerOutcome:
+			// A model snapshot cannot demote or replace an existing server-owned
+			// phase source. The server source remains authoritative across updates.
+			phase[operationPlanPhaseSourceKey] = previousSource
+		default:
+			if _, exists := phase[operationPlanPhaseSourceKey]; !exists && previousSource != "" {
+				phase[operationPlanPhaseSourceKey] = previousSource
 			}
 		}
 		if refs := appendUniqueStrings(stringSliceFromAny(previous["effect_refs"]), stringSliceFromAny(phase["effect_refs"])...); len(refs) > 0 {
@@ -1108,7 +1170,7 @@ func mergeSkillInvocationMetadata(source map[string]interface{}, invocations []m
 }
 
 func clientVisibleMessageMetadata(source map[string]interface{}) map[string]interface{} {
-	metadata := publicExternalActionPayload(copyStringAnyMap(source))
+	metadata := publicToolPayload(copyStringAnyMap(source))
 	if len(metadata) == 0 {
 		return metadata
 	}
@@ -1198,6 +1260,7 @@ func RedactPrivateContextMetadata(source map[string]interface{}) map[string]inte
 	metadata := copyStringAnyMap(source)
 	delete(metadata, agentTranscriptMetadataKey)
 	delete(metadata, agentTranscriptVersionMetadataKey)
+	delete(metadata, dispatch.ActionInstancesMetadataKey)
 	return metadata
 }
 
@@ -2441,6 +2504,17 @@ func skillInvocationsToInterfaceSlice(invocations []map[string]interface{}) []in
 }
 
 func skillInvocationFromTrace(trace skills.SkillTrace, index int) map[string]interface{} {
+	arguments := trace.Arguments
+	if trace.ConnectorNative {
+		argumentCount := len(trace.Arguments)
+		if trace.Arguments["schema_bound_arguments_redacted"] == true {
+			argumentCount = intValueFromAny(trace.Arguments["argument_count"])
+		}
+		arguments = map[string]interface{}{
+			"schema_bound_arguments_redacted": true,
+			"argument_count":                  argumentCount,
+		}
+	}
 	invocation := map[string]interface{}{
 		"kind":          trace.Kind,
 		"invocation_id": trace.InvocationID,
@@ -2449,28 +2523,31 @@ func skillInvocationFromTrace(trace skills.SkillTrace, index int) map[string]int
 		"title":         trace.Title,
 		"status":        trace.Status,
 		"duration_ms":   trace.DurationMS,
-		"arguments":     trace.Arguments,
+		"arguments":     arguments,
 		"result":        trace.Result,
 		"message":       trace.Message,
 		"error":         trace.Error,
 		"error_code":    trace.ErrorCode,
 		"runtime_id":    traceRuntimeID(trace, index),
 	}
+	if trace.ConnectorNative {
+		invocation["runtime_source"] = "connector"
+	}
 	if trace.Governance != nil {
 		invocation["governance"] = trace.Governance
 	}
-	if path := firstNonEmptyString(valueFromMap(trace.Arguments, "path"), valueFromMap(trace.Result, "path")); path != "" {
+	if path := firstNonEmptyString(valueFromMap(arguments, "path"), valueFromMap(trace.Result, "path")); path != "" {
 		invocation["path"] = path
 	}
-	if answerID := firstNonEmptyString(valueFromMap(trace.Arguments, "answer_id"), valueFromMap(trace.Result, "answer_id")); answerID != "" {
+	if answerID := firstNonEmptyString(valueFromMap(arguments, "answer_id"), valueFromMap(trace.Result, "answer_id")); answerID != "" {
 		invocation["answer_id"] = answerID
 	}
-	if createdAt := numericValueFromMap(trace.Arguments, "created_at"); createdAt != nil {
+	if createdAt := numericValueFromMap(arguments, "created_at"); createdAt != nil {
 		invocation["created_at"] = createdAt
 	} else if createdAt := numericValueFromMap(trace.Result, "created_at"); createdAt != nil {
 		invocation["created_at"] = createdAt
 	}
-	if createdAtMS := numericValueFromMap(trace.Arguments, "created_at_ms"); createdAtMS != nil {
+	if createdAtMS := numericValueFromMap(arguments, "created_at_ms"); createdAtMS != nil {
 		invocation["created_at_ms"] = createdAtMS
 	} else if createdAtMS := numericValueFromMap(trace.Result, "created_at_ms"); createdAtMS != nil {
 		invocation["created_at_ms"] = createdAtMS

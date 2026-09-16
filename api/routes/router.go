@@ -6,13 +6,10 @@ import (
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
-	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/container"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
 	contentparsemodule "github.com/zgiai/zgi/api/internal/modules/contentparse"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
-	integrationmetatools "github.com/zgiai/zgi/api/internal/modules/integrations/metatools"
 	"github.com/zgiai/zgi/api/middleware"
 	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -64,34 +61,30 @@ func RegisterRoutes(r *gin.Engine, serviceContainer *container.ServiceContainer,
 	v1Group := r.Group("/console/api")
 	digitalHumanRuntime := v1.RegisterRoutes(r, v1Group, serviceContainer, workflowEngineFactory, applicationErrorCatalog)
 
-	var externalActionProjections integrationmetatools.ActionProjectionResolver
-	if currentConfig := config.Current(); currentConfig != nil && currentConfig.ExternalIntegrations.Enabled {
-		externalActionProjections = serviceContainer.GetIntegrationActionProjectionService()
-	}
 	external.RegisterExternalRoutes(r, external.ExternalRouteDeps{
-		DB:                      serviceContainer.GetDB(),
-		AccountService:          serviceContainer.GetAccountService(),
-		FileService:             serviceContainer.GetFileService(),
-		ContentExtractor:        serviceContainer.GetContentExtractor(),
-		QuotaService:            serviceContainer.GetQuotaService(),
-		OrganizationService:     serviceContainer.GetOrganizationService(),
-		LLMClient:               serviceContainer.GetLLMClient(),
-		ToolEngine:              serviceContainer.GetToolEngine(),
-		ToolManager:             serviceContainer.GetToolManager(),
-		MemoryService:           serviceContainer.GetMemoryService(),
-		GraphFlowService:        serviceContainer.GetGraphFlowService(),
-		PromptResolver:          serviceContainer.GetPromptService(),
-		DataSourceService:       serviceContainer.GetDataSourceService(),
-		KnowledgeService:        serviceContainer.GetKnowledgeRetrievalService(),
-		ResourcePermission:      serviceContainer.GetResourcePermissionService(),
-		WorkflowEngineFactory:   workflowEngineFactory,
-		SkillManifestResolver:   integrations.NewGovernanceManifestResolver(serviceContainer.GetIntegrationRegistry(), serviceContainer.GetIntegrationActionPolicyService()),
-		IntegrationRegistry:     serviceContainer.GetIntegrationRegistry(),
-		ActionProjections:       externalActionProjections,
-		DigitalHumanRuntime:     digitalHumanRuntime.Runtime,
-		DigitalHumanAccess:      digitalHumanRuntime.Access,
-		DigitalHumanTasks:       digitalHumanRuntime.Tasks,
-		ApplicationErrorCatalog: applicationErrorCatalog,
+		DB:                         serviceContainer.GetDB(),
+		AccountService:             serviceContainer.GetAccountService(),
+		FileService:                serviceContainer.GetFileService(),
+		ContentExtractor:           serviceContainer.GetContentExtractor(),
+		QuotaService:               serviceContainer.GetQuotaService(),
+		OrganizationService:        serviceContainer.GetOrganizationService(),
+		LLMClient:                  serviceContainer.GetLLMClient(),
+		ToolEngine:                 serviceContainer.GetToolEngine(),
+		ToolManager:                serviceContainer.GetToolManager(),
+		MemoryService:              serviceContainer.GetMemoryService(),
+		GraphFlowService:           serviceContainer.GetGraphFlowService(),
+		PromptResolver:             serviceContainer.GetPromptService(),
+		DataSourceService:          serviceContainer.GetDataSourceService(),
+		KnowledgeService:           serviceContainer.GetKnowledgeRetrievalService(),
+		ResourcePermission:         serviceContainer.GetResourcePermissionService(),
+		WorkflowEngineFactory:      workflowEngineFactory,
+		ConnectorDispatcher:        serviceContainer.GetConnectorSurfaceDispatcher(),
+		ConnectorAgentRuntime:      serviceContainer.GetConnectorAgentRuntimeResolver(),
+		ConnectorConfirmationStore: serviceContainer.GetConnectorConfirmationContinuationStore(),
+		DigitalHumanRuntime:        digitalHumanRuntime.Runtime,
+		DigitalHumanAccess:         digitalHumanRuntime.Access,
+		DigitalHumanTasks:          digitalHumanRuntime.Tasks,
+		ApplicationErrorCatalog:    applicationErrorCatalog,
 	})
 
 	registerConsoleInternalRoutes(r, serviceContainer.GetDB())

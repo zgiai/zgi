@@ -1,8 +1,13 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { ResourceBindingCard, ResourceBindingSection } from '@/components/common/resource-binding';
+import { Plus } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useT } from '@/i18n';
+import { RuntimeSection } from './runtime-section';
 import type { AgentConfigSection } from './types';
 import type { AgentBindingHealthItem } from '@/services/types/agent';
 import { AgentBindingHealthBadge } from './binding-health';
@@ -17,8 +22,9 @@ interface AgentRuntimeResourceSectionProps {
   emptyText: string;
   isLoading: boolean;
   onToggleSection: (section: AgentConfigSection) => void;
-  onAdd: () => void;
+  onAdd: (anchorElement: HTMLElement) => void;
   addTooltip?: string;
+  addMenuOpen?: boolean;
   readOnly?: boolean;
   children: ReactNode;
 }
@@ -45,28 +51,51 @@ export function AgentRuntimeResourceSection({
   onToggleSection,
   onAdd,
   addTooltip,
+  addMenuOpen,
   readOnly = false,
   children,
 }: AgentRuntimeResourceSectionProps) {
   const t = useT('agents.agentRuntime');
+  const action = (
+    <div className="flex items-center gap-2">
+      <Badge variant="subtle">{t('selectedCount', { count })}</Badge>
+      <ResourceAddButton
+        label={addLabel}
+        tooltip={addTooltip}
+        onAdd={onAdd}
+        menuOpen={addMenuOpen}
+        disabled={readOnly}
+      />
+    </div>
+  );
+
   return (
-    <ResourceBindingSection
-      id={`agent-config-section-${section}`}
+    <RuntimeSection
       title={title}
+      section={section}
       open={open}
-      count={count}
-      countLabel={t('selectedCount', { count })}
-      addLabel={addLabel}
-      addTooltip={addTooltip}
-      helpText={helpText}
-      emptyText={emptyText}
-      isLoading={isLoading}
-      onToggle={() => onToggleSection(section)}
-      onAdd={onAdd}
-      readOnly={readOnly}
+      onToggle={onToggleSection}
+      action={action}
     >
-      {children}
-    </ResourceBindingSection>
+      <div className="space-y-3">
+        <div className="rounded-md border bg-muted/25 p-3 text-xs leading-5 text-muted-foreground">
+          {helpText}
+        </div>
+
+        {isLoading ? (
+          <div className="space-y-2">
+            <Skeleton className="h-20 w-full" />
+            <Skeleton className="h-20 w-full" />
+          </div>
+        ) : count === 0 ? (
+          <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+            {emptyText}
+          </div>
+        ) : (
+          children
+        )}
+      </div>
+    </RuntimeSection>
   );
 }
 
@@ -80,15 +109,69 @@ export function AgentRuntimeResourceCard({
   healthItem,
 }: AgentRuntimeResourceCardProps) {
   return (
-    <ResourceBindingCard
-      icon={icon}
-      title={title}
-      description={description}
-      action={action}
-      status={<AgentBindingHealthBadge item={healthItem} />}
-      error={error}
+    <div className="rounded-md border bg-background p-3">
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted text-primary">
+          <span className={error ? 'text-destructive' : undefined}>{icon}</span>
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="min-w-0 truncate text-sm font-medium">{title}</div>
+            <AgentBindingHealthBadge item={healthItem} />
+          </div>
+          {description ? (
+            <div className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
+              {description}
+            </div>
+          ) : null}
+        </div>
+        {action}
+      </div>
+      {children ? <div className="mt-3">{children}</div> : null}
+    </div>
+  );
+}
+
+function ResourceAddButton({
+  label,
+  tooltip,
+  onAdd,
+  menuOpen,
+  disabled = false,
+}: {
+  label: string;
+  tooltip?: string;
+  onAdd: (anchorElement: HTMLElement) => void;
+  menuOpen?: boolean;
+  disabled?: boolean;
+}) {
+  const button = (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      isIcon
+      className="size-8"
+      aria-label={label}
+      aria-haspopup={menuOpen === undefined ? undefined : 'dialog'}
+      aria-expanded={menuOpen}
+      disabled={disabled}
+      onClick={event => {
+        event.stopPropagation();
+        if (disabled) return;
+        onAdd(event.currentTarget);
+      }}
     >
-      {children}
-    </ResourceBindingCard>
+      <Plus className="size-4" />
+    </Button>
+  );
+
+  if (!tooltip) return button;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{button}</TooltipTrigger>
+      <TooltipContent>{tooltip}</TooltipContent>
+    </Tooltip>
   );
 }

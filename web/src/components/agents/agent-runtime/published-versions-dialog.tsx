@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import { CheckCircle2, History, Loader2, RotateCcw, X } from 'lucide-react';
-import { safeIntegrationDisplayText } from '@/components/integrations/display-utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -176,11 +175,8 @@ export function AgentRuntimeVersionPopover({
                         <div className="max-h-28 space-y-1 overflow-y-auto rounded-md border p-2">
                           {removedBindings.map((item, index) => {
                             const displayName =
-                              item.binding_type === 'integration_connection'
-                                ? safeIntegrationDisplayText(
-                                    item.display_name,
-                                    t('integration.unavailableConnection')
-                                  )
+                              item.binding_type === 'connector_connection'
+                                ? (item.display_name || t('bindingHealth.types.connector_connection'))
                                 : item.display_name || item.resource_id;
                             return (
                               <div
