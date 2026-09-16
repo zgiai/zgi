@@ -157,6 +157,189 @@ func TestOrderHandler_CreateWalletRechargeAndPay_ProxiesWechatNativePayment(t *t
 	require.Equal(t, currencyCNY, consoleProvider.checkoutReq.Currency)
 }
 
+func TestOrderHandler_CreateWalletRechargeAndPay_RejectsAmountBelowMinimum(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	consoleProvider := &capturingConsoleProvider{Standalone: platformconsole.NewStandalone()}
+	handler := &OrderHandler{
+		consoleProvider: consoleProvider,
+		organizationAdminChecker: func(ctx context.Context, organizationID, accountID string) (bool, error) {
+			return true, nil
+		},
+	}
+
+	c, w := newOrderPermissionContext(http.MethodPost, "/orders/recharge/pay", `{
+		"amount":9,
+		"payment_method":"wechat",
+		"payment_sub_method":"native"
+	}`)
+	handler.CreateWalletRechargeAndPay(c)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Contains(t, w.Body.String(), "recharge amount must be at least 10")
+	require.Nil(t, consoleProvider.checkoutReq)
+}
+
+func TestOrderHandler_CreateWalletRechargeAndPay_AcceptsAmountAtMinimum(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	consoleProvider := &capturingConsoleProvider{Standalone: platformconsole.NewStandalone()}
+	handler := &OrderHandler{
+		consoleProvider: consoleProvider,
+		organizationAdminChecker: func(ctx context.Context, organizationID, accountID string) (bool, error) {
+			return true, nil
+		},
+	}
+
+	c, w := newOrderPermissionContext(http.MethodPost, "/orders/recharge/pay", `{
+		"amount":10,
+		"payment_method":"wechat",
+		"payment_sub_method":"native"
+	}`)
+	handler.CreateWalletRechargeAndPay(c)
+
+	require.Equal(t, http.StatusCreated, w.Code)
+	require.NotNil(t, consoleProvider.checkoutReq)
+	require.Equal(t, float64(10), consoleProvider.checkoutReq.Amount)
+}
+
+func TestOrderHandler_CreateWalletRechargeAndPay_RejectsSubCentPrecision(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	consoleProvider := &capturingConsoleProvider{Standalone: platformconsole.NewStandalone()}
+	handler := &OrderHandler{
+		consoleProvider: consoleProvider,
+		organizationAdminChecker: func(ctx context.Context, organizationID, accountID string) (bool, error) {
+			return true, nil
+		},
+	}
+
+	c, w := newOrderPermissionContext(http.MethodPost, "/orders/recharge/pay", `{
+		"amount":10.999,
+		"payment_method":"wechat",
+		"payment_sub_method":"native"
+	}`)
+	handler.CreateWalletRechargeAndPay(c)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Contains(t, w.Body.String(), "recharge amount supports at most 2 decimal places")
+	require.Nil(t, consoleProvider.checkoutReq)
+}
+
+func TestOrderHandler_CreateWalletRechargeAndPay_AcceptsTwoDecimalAmount(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	consoleProvider := &capturingConsoleProvider{Standalone: platformconsole.NewStandalone()}
+	handler := &OrderHandler{
+		consoleProvider: consoleProvider,
+		organizationAdminChecker: func(ctx context.Context, organizationID, accountID string) (bool, error) {
+			return true, nil
+		},
+	}
+
+	c, w := newOrderPermissionContext(http.MethodPost, "/orders/recharge/pay", `{
+		"amount":10.99,
+		"payment_method":"wechat",
+		"payment_sub_method":"native"
+	}`)
+	handler.CreateWalletRechargeAndPay(c)
+
+	require.Equal(t, http.StatusCreated, w.Code)
+	require.NotNil(t, consoleProvider.checkoutReq)
+	require.Equal(t, float64(10.99), consoleProvider.checkoutReq.Amount)
+}
+
+func TestValidateWalletRechargeAmount(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		amount  float64
+		wantErr string
+	}{
+		{name: "below minimum", amount: 9.99, wantErr: "must be at least 10"},
+		{name: "above maximum", amount: 10000000.01, wantErr: "must not exceed 10000000"},
+		{name: "three decimal places", amount: 10.999, wantErr: "at most 2 decimal places"},
+		{name: "sub-cent fraction", amount: 1000.001, wantErr: "at most 2 decimal places"},
+		{name: "minimum", amount: 10},
+		{name: "maximum", amount: 10000000},
+		// Values whose float64 representation is inexact; a naive equality check
+		// against Round(2) would wrongly reject these. Keep them above the minimum
+		// so the precision rule, not the minimum rule, is what gets exercised.
+		{name: "two decimals ending in 7", amount: 10.07},
+		{name: "two decimals ending in 9", amount: 10.29},
+		{name: "two decimals ending in 3", amount: 10.03},
+		{name: "large amount with cents", amount: 9999999.99},
+		{name: "integer", amount: 100},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := validateWalletRechargeAmount(tt.amount)
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}
+
+func TestOrderHandler_CreateWalletRechargeAndPay_RejectsAmountAboveLimit(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	consoleProvider := &capturingConsoleProvider{Standalone: platformconsole.NewStandalone()}
+	handler := &OrderHandler{
+		consoleProvider: consoleProvider,
+		organizationAdminChecker: func(ctx context.Context, organizationID, accountID string) (bool, error) {
+			return true, nil
+		},
+	}
+
+	c, w := newOrderPermissionContext(http.MethodPost, "/orders/recharge/pay", `{
+		"amount":10000001,
+		"payment_method":"wechat",
+		"payment_sub_method":"native"
+	}`)
+	handler.CreateWalletRechargeAndPay(c)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Contains(t, w.Body.String(), "recharge amount must not exceed 10000000")
+	require.Nil(t, consoleProvider.checkoutReq)
+}
+
+func TestOrderHandler_CreateWalletRechargeAndPay_AcceptsAmountAtLimit(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	consoleProvider := &capturingConsoleProvider{Standalone: platformconsole.NewStandalone()}
+	handler := &OrderHandler{
+		consoleProvider: consoleProvider,
+		organizationAdminChecker: func(ctx context.Context, organizationID, accountID string) (bool, error) {
+			return true, nil
+		},
+	}
+
+	c, w := newOrderPermissionContext(http.MethodPost, "/orders/recharge/pay", `{
+		"amount":10000000,
+		"payment_method":"wechat",
+		"payment_sub_method":"native"
+	}`)
+	handler.CreateWalletRechargeAndPay(c)
+
+	require.Equal(t, http.StatusCreated, w.Code)
+	require.NotNil(t, consoleProvider.checkoutReq)
+	require.Equal(t, float64(10000000), consoleProvider.checkoutReq.Amount)
+}
+
 func TestAICreditHandler_ListProducts_ProxiesConsoleProducts(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
