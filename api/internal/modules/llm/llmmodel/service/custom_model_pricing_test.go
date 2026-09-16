@@ -15,7 +15,7 @@ func TestApplyCustomModelPricingPersistsRulesAndScalars(t *testing.T) {
 	custom.InputPriceConfigured = true
 	custom.OutputPriceConfigured = true
 
-	if err := applyCustomModelPricing(custom, nil, []string{"text-chat"}); err != nil {
+	if err := applyCustomModelPricing(custom, nil, []string{"text-chat"}, customModelScalarsFromModel(custom)); err != nil {
 		t.Fatalf("applyCustomModelPricing returned error: %v", err)
 	}
 	if len(custom.Pricing) == 0 {
@@ -35,11 +35,12 @@ func TestResolveConfiguredTreatsExplicitZeroAsConfigured(t *testing.T) {
 	custom.InputPriceConfigured = true
 	custom.OutputPriceConfigured = true
 
-	if err := applyCustomModelPricing(custom, nil, []string{"text-chat"}); err != nil {
+	if err := applyCustomModelPricing(custom, nil, []string{"text-chat"}, customModelScalarsFromModel(custom)); err != nil {
 		t.Fatalf("applyCustomModelPricing returned error: %v", err)
 	}
 	custom.InputPrice = decimal.Zero
 	custom.OutputPrice = decimal.Zero
+	freeOverride := modelpricing.CustomModelScalars{InputPrice: float64Ptr(0), OutputPrice: float64Ptr(0)}
 	if err := applyCustomModelPricing(custom, []byte(`{
 		"deployment_scope": "organization",
 		"rules": [{
@@ -50,7 +51,7 @@ func TestResolveConfiguredTreatsExplicitZeroAsConfigured(t *testing.T) {
 			"price": "0",
 			"configured": true
 		}]
-	}`), []string{"text-chat"}); err != nil {
+	}`), []string{"text-chat"}, freeOverride); err != nil {
 		t.Fatalf("applyCustomModelPricing returned error: %v", err)
 	}
 	resolved := modelpricing.ResolveConfigured([]byte(custom.Pricing))
@@ -58,3 +59,31 @@ func TestResolveConfiguredTreatsExplicitZeroAsConfigured(t *testing.T) {
 		t.Fatalf("input configured = false, want explicit free price")
 	}
 }
+
+// A scalar token price edit must win over the rules already stored on the
+// model; otherwise editing input/output price in the dialog silently keeps the
+// previous billed price.
+func TestApplyCustomModelPricingScalarOverrideWinsOverStoredRules(t *testing.T) {
+	custom := &model.CustomModel{Currency: "USD"}
+	custom.Pricing = []byte(`{"version":2,"deployment_scope":"organization","rules":[
+		{"id":"chat-input","operation":"chat","meter":"input_token","unit":"per_1m_tokens","price":"1","configured":true},
+		{"id":"chat-output","operation":"chat","meter":"output_token","unit":"per_1m_tokens","price":"2","configured":true}
+	]}`)
+	custom.InputPrice = decimal.RequireFromString("9")
+	custom.OutputPrice = decimal.RequireFromString("9")
+	custom.InputPriceConfigured = true
+	custom.OutputPriceConfigured = true
+
+	overrides := modelpricing.CustomModelScalars{InputPrice: float64Ptr(9), OutputPrice: float64Ptr(9)}
+	if err := applyCustomModelPricing(custom, custom.Pricing, []string{"text-chat"}, overrides); err != nil {
+		t.Fatalf("applyCustomModelPricing returned error: %v", err)
+	}
+	if !custom.InputPrice.Equal(decimal.RequireFromString("9")) || !custom.OutputPrice.Equal(decimal.RequireFromString("9")) {
+		t.Fatalf("derived scalars = %s/%s, want 9/9", custom.InputPrice, custom.OutputPrice)
+	}
+	if resolved := modelpricing.ResolveConfigured([]byte(custom.Pricing)); !resolved.Input || !resolved.Output {
+		t.Fatalf("resolved configured = %+v, want input/output true", resolved)
+	}
+}
+
+func float64Ptr(value float64) *float64 { return &value }

@@ -23,6 +23,7 @@ import type {
   ResolvedDefaultModelList,
   UpsertDefaultModelRequest,
   PricingFallbackConfig,
+  PricingFallbackTemplate,
   ModelPricingIssuesResponse,
   UpdatePricingFallbackConfigRequest,
 } from './types/model';
@@ -145,6 +146,11 @@ export class ModelService extends BaseService {
     data: UpdatePricingFallbackConfigRequest
   ): Promise<ApiResponseData<PricingFallbackConfig>> {
     return this.request('put', '/pricing/fallback', data);
+  }
+
+  // GET /console/api/llm/pricing/fallback/template
+  getPricingFallbackTemplate(): Promise<ApiResponseData<PricingFallbackTemplate>> {
+    return this.request('get', '/pricing/fallback/template');
   }
 }
 

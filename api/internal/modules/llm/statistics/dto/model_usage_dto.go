@@ -38,6 +38,7 @@ type ModelUsageByModelItem struct {
 	ModelName        string    `json:"model_name"`
 	ProviderID       uuid.UUID `json:"provider_id"`
 	ProviderName     string    `json:"provider_name"`
+	Operation        string    `json:"operation"`
 	AttemptCount     int64     `json:"attempt_count"`
 	SuccessCount     int64     `json:"success_count"`
 	FailedCount      int64     `json:"failed_count"`

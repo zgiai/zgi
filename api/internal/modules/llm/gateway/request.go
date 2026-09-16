@@ -200,6 +200,9 @@ func (s *llmGatewayServiceImpl) createBillingContext(
 		UpstreamWouldGuard:   providerSelection.UpstreamWouldGuard,
 		UpstreamHalfOpen:     providerSelection.UpstreamHalfOpen,
 		RoutingStrategy:      normalizeConsoleRoutingStrategy(providerSelection.RoutingStrategy),
+		// Chat is the default billing operation; embedding/rerank/audio/image/
+		// video/music callers override it explicitly right after creation.
+		PricingOperation:     PricingOperationChat,
 		EstimatedCredits:     estimatedCredits,
 		BillingLane:          billingLane,
 		UseSystemProvider:    usageBillingLaneUsesSystemProvider(billingLane),

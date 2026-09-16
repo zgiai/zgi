@@ -24,12 +24,14 @@ type CustomModelScalars struct {
 
 // PrepareCustomModelPricing normalizes inbound pricing, synthesizes rules[] when
 // missing, derives legacy projections, and projects scalar columns for Pre's
-// existing quote paths.
+// existing quote paths. overrides carries the price columns explicitly present
+// in the request so scalar edits stay authoritative over stored rules.
 func PrepareCustomModelPricing(
 	raw json.RawMessage,
 	currency string,
 	useCases []string,
 	scalars CustomModelScalars,
+	overrides CustomModelScalars,
 ) (json.RawMessage, CustomModelScalars, error) {
 	legacyScalars := LegacyScalarPrices{
 		InputPrice:        scalars.InputPrice,
@@ -42,6 +44,9 @@ func PrepareCustomModelPricing(
 	opts := PricingWriteOptions{
 		UseCases:     useCases,
 		UserAuthored: true,
+	}
+	if legacyOverrides := CustomScalarsToLegacy(overrides); legacyScalarsHaveValues(legacyOverrides) {
+		opts.ScalarOverrides = &legacyOverrides
 	}
 	prepared := PrepareStructuredPricingForWrite(raw, currency, legacyScalars, opts)
 	if len(prepared) == 0 || string(prepared) == "null" {
@@ -90,6 +95,20 @@ func customScalarsFromLegacy(scalars LegacyScalarPrices) CustomModelScalars {
 		InputPrice:        scalars.InputPrice,
 		OutputPrice:       scalars.OutputPrice,
 		CacheReadPrice:    scalars.CacheReadPrice,
+		CacheWritePrice:   scalars.CacheWritePrice,
+		CacheWrite5mPrice: scalars.CacheWrite5mPrice,
+		CacheWrite1hPrice: scalars.CacheWrite1hPrice,
+	}
+}
+
+// CustomScalarsToLegacy converts request-level scalar prices into the legacy
+// scalar shape used for rule synthesis and overrides.
+func CustomScalarsToLegacy(scalars CustomModelScalars) LegacyScalarPrices {
+	return LegacyScalarPrices{
+		InputPrice:        scalars.InputPrice,
+		OutputPrice:       scalars.OutputPrice,
+		CacheReadPrice:    scalars.CacheReadPrice,
+		CachedInputPrice:  scalars.CacheReadPrice,
 		CacheWritePrice:   scalars.CacheWritePrice,
 		CacheWrite5mPrice: scalars.CacheWrite5mPrice,
 		CacheWrite1hPrice: scalars.CacheWrite1hPrice,

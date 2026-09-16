@@ -48,6 +48,9 @@ func TestPrepareCustomModelPricingFromScalars(t *testing.T) {
 	prepared, derived, err := PrepareCustomModelPricing(nil, "USD", []string{"text-chat"}, CustomModelScalars{
 		InputPrice:  &input,
 		OutputPrice: &output,
+	}, CustomModelScalars{
+		InputPrice:  &input,
+		OutputPrice: &output,
 	})
 	if err != nil {
 		t.Fatalf("PrepareCustomModelPricing returned error: %v", err)

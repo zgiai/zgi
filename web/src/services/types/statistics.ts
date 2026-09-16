@@ -207,6 +207,7 @@ export interface GetInvocationLogParams {
   invocation_source?: InvocationSource;
   app_type?: string;
   model_name?: string;
+  attempt_id?: string;
   cursor_time?: string;
   cursor_id?: string;
   limit?: number;

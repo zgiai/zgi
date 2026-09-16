@@ -18,6 +18,11 @@ type MissingPricingItem struct {
 type PricingWriteOptions struct {
 	UseCases     []string
 	UserAuthored bool
+	// ScalarOverrides carries price columns the caller explicitly provided.
+	// Each non-nil value is authoritative for its chat token meter and
+	// replaces any existing rule for that meter, so a legacy client editing
+	// only the scalar columns still changes the billed price.
+	ScalarOverrides *LegacyScalarPrices
 }
 
 type pricingRequirement struct {

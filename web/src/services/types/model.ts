@@ -428,3 +428,7 @@ export interface UpdatePricingFallbackConfigRequest {
   enabled: boolean;
   override_rules: PricingFallbackRule[];
 }
+
+export interface PricingFallbackTemplate {
+  rules: PricingFallbackRule[];
+}

@@ -45,6 +45,7 @@ type modelUsageModelRow struct {
 	ModelName         string    `gorm:"column:model_name"`
 	ProviderID        uuid.UUID `gorm:"column:provider_id"`
 	ProviderName      string    `gorm:"column:provider_name"`
+	Operation         string    `gorm:"column:operation"`
 	UseSystemProvider bool      `gorm:"column:use_system_provider"`
 	AttemptCount      int64     `gorm:"column:attempt_count"`
 	SuccessCount      int64     `gorm:"column:success_count"`
@@ -187,6 +188,7 @@ func (r *statisticsRepositoryImpl) queryModelUsageByModel(ctx context.Context, f
 			b.model_name,
 			b.provider_id,
 			b.provider_name,
+			COALESCE(b.operation, '') as operation,
 			b.use_system_provider,
 			COUNT(*) as attempt_count,
 			COALESCE(SUM(CASE WHEN b.status = 'success' THEN 1 ELSE 0 END), 0) as success_count,
@@ -202,7 +204,7 @@ func (r *statisticsRepositoryImpl) queryModelUsageByModel(ctx context.Context, f
 			COALESCE(SUM(b.total_points), 0) as total_points
 		`)
 	query = applyUsageBillFilters(query, "b", filters).
-		Group("b.model_id, b.model_name, b.provider_id, b.provider_name, b.use_system_provider").
+		Group("b.model_id, b.model_name, b.provider_id, b.provider_name, COALESCE(b.operation, ''), b.use_system_provider").
 		Order("total_points DESC").
 		Order("total_tokens DESC")
 	if err := query.Scan(&rows).Error; err != nil {
@@ -226,7 +228,7 @@ func (r *statisticsRepositoryImpl) normalizePlatformModelUsageRows(ctx context.C
 				_ = r.db.WithContext(ctx).Unscoped().Table("llm_models").Select("id").Where("provider = ? AND name = ?", vendor, row.ModelName).Scan(&row.ModelID).Error
 			}
 		}
-		key := row.ModelID.String() + "\x00" + row.ProviderID.String() + "\x00" + row.ModelName + "\x00" + row.ProviderName
+		key := row.ModelID.String() + "\x00" + row.ProviderID.String() + "\x00" + row.ModelName + "\x00" + row.ProviderName + "\x00" + row.Operation
 		if current, ok := merged[key]; ok {
 			current.AttemptCount += row.AttemptCount
 			current.SuccessCount += row.SuccessCount
@@ -357,6 +359,7 @@ func buildModelUsageByModelItems(rows []modelUsageModelRow, totalPoints int64) [
 			ModelName:        row.ModelName,
 			ProviderID:       row.ProviderID,
 			ProviderName:     row.ProviderName,
+			Operation:        row.Operation,
 			AttemptCount:     row.AttemptCount,
 			SuccessCount:     row.SuccessCount,
 			FailedCount:      row.FailedCount,

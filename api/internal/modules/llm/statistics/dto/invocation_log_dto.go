@@ -6,6 +6,7 @@ type InvocationLogRequest struct {
 	InvocationSource *string `form:"invocation_source" binding:"omitempty,oneof=api product unknown"`
 	AppType          *string `form:"app_type" binding:"omitempty,max=50"`
 	ModelName        *string `form:"model_name" binding:"omitempty,max=100"`
+	AttemptID        *string `form:"attempt_id" binding:"omitempty,max=100"`
 	CursorTime       *string `form:"cursor_time"`
 	CursorID         *string `form:"cursor_id" binding:"omitempty,max=100"`
 	Limit            int     `form:"limit" binding:"omitempty,min=1,max=100"`

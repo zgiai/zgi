@@ -121,7 +121,85 @@ func PrepareStructuredPricingForWrite(raw json.RawMessage, currency string, scal
 	}
 	normalized := NormalizeStructuredPricing(raw)
 	withRules := SynthesizeRulesFromLegacyPricing(scalars, normalized, opts)
+	withRules = applyScalarOverridesToRules(withRules, opts)
 	return DeriveLegacyProjections(withRules, currency)
+}
+
+// applyScalarOverridesToRules makes caller-provided scalar token prices
+// authoritative for their chat token meter. Without this, a payload that
+// already carries rules[] (or token_tiers, which normalize into rules[]) would
+// silently ignore a scalar price edit coming from a legacy client.
+func applyScalarOverridesToRules(raw json.RawMessage, opts PricingWriteOptions) json.RawMessage {
+	if opts.ScalarOverrides == nil || !legacyScalarsHaveValues(*opts.ScalarOverrides) {
+		return raw
+	}
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return raw
+	}
+	var pricing structuredPricing
+	if err := json.Unmarshal(trimmed, &pricing); err != nil {
+		return raw
+	}
+	operation := tokenOperationForUseCases(opts.UseCases)
+	if operation == "" {
+		operation = "chat"
+	}
+	cacheRead := opts.ScalarOverrides.CacheReadPrice
+	if cacheRead == nil {
+		cacheRead = opts.ScalarOverrides.CachedInputPrice
+	}
+	type scalarOverride struct {
+		id    string
+		meter string
+		price *float64
+	}
+	overrides := []scalarOverride{
+		{id: operation + "-input", meter: "input_token", price: opts.ScalarOverrides.InputPrice},
+	}
+	if operation == "chat" {
+		overrides = append(overrides,
+			scalarOverride{id: operation + "-output", meter: "output_token", price: opts.ScalarOverrides.OutputPrice},
+			scalarOverride{id: operation + "-cache-read", meter: "cache_read_token", price: cacheRead},
+			scalarOverride{id: operation + "-cache-write", meter: "cache_write_token", price: opts.ScalarOverrides.CacheWritePrice},
+			scalarOverride{id: operation + "-cache-write-5m", meter: "cache_write_5m_token", price: opts.ScalarOverrides.CacheWrite5mPrice},
+			scalarOverride{id: operation + "-cache-write-1h", meter: "cache_write_1h_token", price: opts.ScalarOverrides.CacheWrite1hPrice},
+		)
+	}
+	for _, override := range overrides {
+		if override.price == nil {
+			continue
+		}
+		pricing.Rules = upsertTokenRule(pricing.Rules, structuredRule{
+			ID:         override.id,
+			Operation:  operation,
+			Meter:      override.meter,
+			Unit:       "per_1m_tokens",
+			Price:      formatPricingDecimal(*override.price),
+			Configured: boolPtr(true),
+		})
+	}
+	if pricing.Version == 0 {
+		pricing.Version = pricingRulesSchemaVersion
+	}
+	next, err := json.Marshal(pricing)
+	if err != nil {
+		return raw
+	}
+	return next
+}
+
+// upsertTokenRule replaces every rule for the same operation+meter (including
+// conditional variants) with the explicit scalar rule.
+func upsertTokenRule(rules []structuredRule, rule structuredRule) []structuredRule {
+	next := make([]structuredRule, 0, len(rules)+1)
+	for _, existing := range rules {
+		if existing.Operation == rule.Operation && existing.Meter == rule.Meter {
+			continue
+		}
+		next = append(next, existing)
+	}
+	return append(next, rule)
 }
 
 // DeriveScalarsFromPricing projects the seven nullable model price columns from

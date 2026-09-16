@@ -305,7 +305,9 @@ function displayImageProvider(rule: PricingFallbackRule, t: (key: SettingsKey) =
     : displayPattern(rule.provider, t('settings.pricingFallback.allProviders'));
 }
 
-export function PricingFallbackPanel() {
+export function PricingFallbackPanel({
+  defaultCollapsed = true,
+}: { defaultCollapsed?: boolean } = {}) {
   const t = useT();
   const currentOrganization = useOrganizationStore.use.currentOrganization();
   const billingDisplay = useMemo(
@@ -314,7 +316,10 @@ export function PricingFallbackPanel() {
   );
   const [pricingFallback, setPricingFallback] = useState<PricingFallbackConfig | null>(null);
   const [overrideRules, setOverrideRules] = useState<PricingFallbackRule[]>([]);
-  const [fallbackEnabled, setFallbackEnabled] = useState(true);
+  // The fallback policy is a compatibility layer, so the panel starts from the
+  // loaded configuration instead of an optimistic default.
+  const [fallbackEnabled, setFallbackEnabled] = useState(false);
+  const [collapsed, setCollapsed] = useState(defaultCollapsed);
   const [fallbackLoading, setFallbackLoading] = useState(true);
   const [fallbackSaving, setFallbackSaving] = useState(false);
   const [overrideRulesError, setOverrideRulesError] = useState('');
@@ -339,6 +344,30 @@ export function PricingFallbackPanel() {
   useEffect(() => {
     void loadPricingFallback();
   }, [loadPricingFallback]);
+
+  // Loads the deployment-level fallback template into the editable override
+  // rules; the admin still reviews and saves through the normal PUT.
+  const loadPricingFallbackTemplate = useCallback(async () => {
+    try {
+      const resp = await modelService.getPricingFallbackTemplate();
+      const templateRules = resp.data?.rules ?? [];
+      if (templateRules.length === 0) {
+        toast.error(t('settings.pricingFallback.templateEmpty'));
+        return;
+      }
+      setOverrideRules(current => {
+        const existing = new Set(current.map(rule => rule.id));
+        const additions = templateRules
+          .filter(rule => !existing.has(rule.id))
+          .map(rule => normalizeRuleForSave(rule));
+        return [...current, ...additions];
+      });
+      setOverrideRulesError('');
+      toast.success(t('settings.pricingFallback.templateLoaded'));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : fallbackLoadFailedText);
+    }
+  }, [fallbackLoadFailedText, t]);
 
   const findOverrideRule = useCallback(
     (baseRule: PricingFallbackRule) => overrideRules.find(rule => sameRuleTarget(rule, baseRule)),
@@ -435,6 +464,32 @@ export function PricingFallbackPanel() {
         </div>
         <div className="flex items-center gap-2">
           <Button
+            variant="ghost"
+            size="sm"
+            className="gap-2"
+            aria-expanded={!collapsed}
+            onClick={() => setCollapsed(value => !value)}
+          >
+            {collapsed ? (
+              <ChevronDown className="h-4 w-4" />
+            ) : (
+              <ChevronUp className="h-4 w-4" />
+            )}
+            {collapsed
+              ? t('settings.pricingFallback.expand')
+              : t('settings.pricingFallback.collapse')}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            onClick={() => void loadPricingFallbackTemplate()}
+            disabled={isBusy}
+          >
+            <Type className="h-4 w-4" />
+            {t('settings.pricingFallback.loadTemplate')}
+          </Button>
+          <Button
             variant="outline"
             size="sm"
             className="gap-2"
@@ -460,11 +515,13 @@ export function PricingFallbackPanel() {
         </div>
       </div>
 
-      <PolicyStrip
-        enabled={fallbackEnabled}
-        disabled={isBusy}
-        onEnabledChange={setFallbackEnabled}
-      />
+      {collapsed ? null : (
+        <>
+          <PolicyStrip
+            enabled={fallbackEnabled}
+            disabled={isBusy}
+            onEnabledChange={setFallbackEnabled}
+          />
 
       {overrideRulesError ? (
         <p className="mt-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
@@ -532,6 +589,8 @@ export function PricingFallbackPanel() {
           </div>
         ) : null}
       </section>
+        </>
+      )}
     </div>
   );
 }

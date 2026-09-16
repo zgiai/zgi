@@ -24,6 +24,7 @@ type invocationLogFilters struct {
 	InvocationSource *string
 	AppType          *string
 	ModelName        *string
+	AttemptID        *string
 }
 
 type invocationLogSummaryRow struct {
@@ -116,6 +117,7 @@ func (r *statisticsRepositoryImpl) GetInvocationLog(ctx context.Context, organiz
 		InvocationSource: req.InvocationSource,
 		AppType:          req.AppType,
 		ModelName:        req.ModelName,
+		AttemptID:        req.AttemptID,
 	}
 
 	var summary dto.InvocationLogSummary
@@ -368,6 +370,10 @@ func applyInvocationLogFilters(query *gorm.DB, alias string, filters invocationL
 	}
 	if hasText(filters.ModelName) {
 		query = query.Where(column(alias, "model_name")+" = ?", strings.TrimSpace(*filters.ModelName))
+	}
+	// attempt_id may be absent in older deployments; only filter when present.
+	if hasText(filters.AttemptID) && query.Migrator().HasColumn(usageBillTable, "attempt_id") {
+		query = query.Where(column(alias, "attempt_id")+" = ?", strings.TrimSpace(*filters.AttemptID))
 	}
 	return query
 }

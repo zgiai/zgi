@@ -390,8 +390,24 @@ func savePricingFallbackForOrg(t *testing.T, db *gorm.DB, organizationID uuid.UU
 	}
 }
 
+// pricingFallbackDefaultPricesJSON is the deployment configuration tests use
+// for the built-in fallback skeletons; the prices are no longer hardcoded.
+const pricingFallbackDefaultPricesJSON = `{
+	"token.chat.input.default": "1",
+	"token.chat.output.default": "2",
+	"token.embedding.input.default": "1",
+	"token.rerank.input.default": "1",
+	"image.qwen.default": 160,
+	"image.doubao.default": 100,
+	"image.openai.default": 200,
+	"image.gcp.default": 180,
+	"image.midjourney.default": 300,
+	"image.generic.default": 200
+}`
+
 func enableDefaultPricingFallbackForOrg(t *testing.T, db *gorm.DB, organizationID uuid.UUID) {
 	t.Helper()
+	t.Setenv(PricingFallbackDefaultPricesEnv, pricingFallbackDefaultPricesJSON)
 	savePricingFallbackForOrg(t, db, organizationID, UpdatePricingFallbackRequest{Enabled: true})
 }
 
@@ -1150,6 +1166,7 @@ func TestPricingEngineQuoteTokensUsesPassthroughIdentityForFallback(t *testing.T
 func TestPricingEngineQuoteImageAdminWildcardDoesNotOverrideSpecificDefault(t *testing.T) {
 	db := openPricingEngineTestDB(t)
 	organizationID := uuid.New()
+	t.Setenv(PricingFallbackDefaultPricesEnv, pricingFallbackDefaultPricesJSON)
 	savePricingFallbackForOrg(t, db, organizationID, UpdatePricingFallbackRequest{
 		Enabled: true,
 		OverrideRules: []PricingFallbackRule{

@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -116,6 +119,14 @@ func RegisterPricingFallbackRoutes(group *gin.RouterGroup, handler *PricingFallb
 	}
 	group.GET("/pricing/fallback", handler.Get)
 	group.PUT("/pricing/fallback", handler.Update)
+	group.GET("/pricing/fallback/template", handler.Template)
+}
+
+// Template returns the built-in fallback skeletons plus this deployment's
+// configured prices, so admins can load them into the organization overrides
+// with one click instead of retyping them.
+func (h *PricingFallbackHandler) Template(c *gin.Context) {
+	response.Success(c, PricingFallbackTemplate{Rules: DefaultPricingFallbackRules()})
 }
 
 func (h *PricingFallbackHandler) Get(c *gin.Context) {
@@ -158,34 +169,62 @@ func pricingFallbackOrganizationIDFromContext(c *gin.Context) (uuid.UUID, bool) 
 	return organizationID, true
 }
 
+// PricingFallbackDefaultPricesEnv carries the deployment-level price values for
+// the built-in fallback skeletons. Prices are intentionally not hardcoded: the
+// skeletons only describe what can be covered, and each deployment decides the
+// amounts, e.g.
+//
+//	PRICING_FALLBACK_DEFAULT_PRICES='{"token.chat.input.default":"1","image.qwen.default":160}'
+const PricingFallbackDefaultPricesEnv = "PRICING_FALLBACK_DEFAULT_PRICES"
+
+// DefaultPricingFallbackRules returns the built-in fallback skeletons enriched
+// with this deployment's configured prices. Skeletons without a configured
+// price carry no amount and cannot produce a code-default quote.
 func DefaultPricingFallbackRules() []PricingFallbackRule {
+	rules := defaultPricingFallbackSkeletons()
+	values := loadPricingFallbackDefaultPrices()
+	for index := range rules {
+		raw, ok := values[rules[index].ID]
+		if !ok {
+			continue
+		}
+		applyPricingFallbackDefaultValue(&rules[index], raw)
+	}
+	return rules
+}
+
+// PricingFallbackTemplate is the loadable price template returned to the UI.
+type PricingFallbackTemplate struct {
+	Rules []PricingFallbackRule `json:"rules"`
+}
+
+func defaultPricingFallbackSkeletons() []PricingFallbackRule {
 	return []PricingFallbackRule{
-		tokenFallbackRule("token.chat.input.default", PricingOperationChat, PricingMeterInputToken, "1"),
-		tokenFallbackRule("token.chat.output.default", PricingOperationChat, PricingMeterOutputToken, "2"),
-		tokenFallbackRule("token.embedding.input.default", PricingOperationEmbedding, PricingMeterInputToken, "1"),
-		tokenFallbackRule("token.rerank.input.default", PricingOperationRerank, PricingMeterInputToken, "1"),
-		imageFallbackRule("image.qwen.default", "qwen", 160),
-		imageFallbackRule("image.doubao.default", "doubao", 100),
-		imageFallbackRule("image.openai.default", "openai", 200),
-		imageFallbackRule("image.gcp.default", "gcp", 180),
-		imageFallbackRule("image.midjourney.default", "midjourney", 300),
-		imageFallbackRule("image.generic.default", "*", 200),
+		tokenFallbackRule("token.chat.input.default", PricingOperationChat, PricingMeterInputToken),
+		tokenFallbackRule("token.chat.output.default", PricingOperationChat, PricingMeterOutputToken),
+		tokenFallbackRule("token.embedding.input.default", PricingOperationEmbedding, PricingMeterInputToken),
+		tokenFallbackRule("token.rerank.input.default", PricingOperationRerank, PricingMeterInputToken),
+		imageFallbackRule("image.qwen.default", "qwen"),
+		imageFallbackRule("image.doubao.default", "doubao"),
+		imageFallbackRule("image.openai.default", "openai"),
+		imageFallbackRule("image.gcp.default", "gcp"),
+		imageFallbackRule("image.midjourney.default", "midjourney"),
+		imageFallbackRule("image.generic.default", "*"),
 	}
 }
 
-func tokenFallbackRule(id string, operation PricingOperation, meter PricingMeter, price string) PricingFallbackRule {
+func tokenFallbackRule(id string, operation PricingOperation, meter PricingMeter) PricingFallbackRule {
 	return PricingFallbackRule{
-		ID:                  id,
-		Enabled:             boolPtr(true),
-		Operation:           operation,
-		Meter:               meter,
-		Unit:                "usd_per_1m_tokens",
-		PriceUSDPer1MTokens: price,
-		PricingSource:       PricingSourceCodeDefaultFallback,
+		ID:            id,
+		Enabled:       boolPtr(true),
+		Operation:     operation,
+		Meter:         meter,
+		Unit:          "usd_per_1m_tokens",
+		PricingSource: PricingSourceCodeDefaultFallback,
 	}
 }
 
-func imageFallbackRule(id string, provider string, credits int64) PricingFallbackRule {
+func imageFallbackRule(id string, provider string) PricingFallbackRule {
 	return PricingFallbackRule{
 		ID:            id,
 		Enabled:       boolPtr(true),
@@ -193,8 +232,53 @@ func imageFallbackRule(id string, provider string, credits int64) PricingFallbac
 		Meter:         PricingMeterImage,
 		Provider:      provider,
 		Unit:          "credits_per_image",
-		Credits:       credits,
 		PricingSource: PricingSourceCodeDefaultFallback,
+	}
+}
+
+func loadPricingFallbackDefaultPrices() map[string]json.RawMessage {
+	raw := strings.TrimSpace(os.Getenv(PricingFallbackDefaultPricesEnv))
+	if raw == "" {
+		return nil
+	}
+	var values map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &values); err != nil {
+		log.Printf("pricing fallback default prices are invalid JSON: %v", err)
+		return nil
+	}
+	return values
+}
+
+func applyPricingFallbackDefaultValue(rule *PricingFallbackRule, raw json.RawMessage) {
+	if rule == nil {
+		return
+	}
+	value := strings.TrimSpace(string(raw))
+	if value == "" || value == "null" {
+		return
+	}
+	if rule.Operation == PricingOperationImage {
+		var credits int64
+		if err := json.Unmarshal(raw, &credits); err == nil {
+			rule.Credits = credits
+			return
+		}
+		var text string
+		if err := json.Unmarshal(raw, &text); err == nil {
+			if parsed, parseErr := strconv.ParseInt(strings.TrimSpace(text), 10, 64); parseErr == nil {
+				rule.Credits = parsed
+			}
+		}
+		return
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		rule.PriceUSDPer1MTokens = strings.TrimSpace(text)
+		return
+	}
+	var number float64
+	if err := json.Unmarshal(raw, &number); err == nil {
+		rule.PriceUSDPer1MTokens = strconv.FormatFloat(number, 'f', -1, 64)
 	}
 }
 

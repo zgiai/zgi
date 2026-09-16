@@ -34,3 +34,20 @@ LLM 调用按四个互斥分项统计和计费：普通输入、缓存读取、�
 旧表无法区分“未提供缓存价”和“明确配置为 0”。迁移只把已有非零缓存价标记为已配置；升级后应执行一次模型目录同步，让上游明确提供的免费价格重新以“已配置 0”落库。
 
 每次结算的 `pricing_snapshot` 保存四类 Token、四类实际价格、四类费用以及缓存价格来源。后续模型同步或组织配置变化不会重新解释已结算账单。
+
+## 缓存价格回落倍率（2026-09）
+
+未显式配置缓存价时的回落倍率由 **Console 侧**结算器
+（`zgi-console/api/internal/modules/billing/cache_multiplier.go`）按 provider 决定
+（未知 provider 恒为 1），并写入共享的 `pricing_snapshot`
+（`cache_read_price_multiplier` / `cache_write_price_multiplier` / `provider`）。
+Pre 侧仍按同步到的显式缓存价或“未配置”处理，行为不变。
+
+## `*_price_configured` 列下线（2026-09）
+
+`llm_models` / `llm_custom_models` 的 6 个 `*_price_configured` 布尔列由迁移
+`20260916151000_drop_price_configured_booleans` 删除，「已配置」判定改由 `pricing`
+派生。删列之前必须先执行 `20260916150500_backfill_price_configured_pricing`，把布尔列
+表达的显式配置投影到 `pricing.rules[].configured`；详见
+[multimodal-pricing-operations.md](./multimodal-pricing-operations.md)。
+

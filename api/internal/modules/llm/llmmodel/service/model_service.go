@@ -51,11 +51,13 @@ func optionalCustomModelScalar(value string) (*float64, error) {
 	return modelpricing.OptionalFloatFromString(value)
 }
 
-func applyCustomModelPricing(m *model.CustomModel, raw []byte, useCases []string) error {
+// customModelScalarsFromModel collects the model's current scalar prices using
+// the configured flags as presence.
+func customModelScalarsFromModel(m *model.CustomModel) modelpricing.CustomModelScalars {
 	if m == nil {
-		return nil
+		return modelpricing.CustomModelScalars{}
 	}
-	scalars := modelpricing.ScalarsFromDecimalPrices(
+	return modelpricing.ScalarsFromDecimalPrices(
 		m.InputPrice,
 		m.OutputPrice,
 		m.CostCacheRead,
@@ -69,7 +71,52 @@ func applyCustomModelPricing(m *model.CustomModel, raw []byte, useCases []string
 		m.CacheWrite5mPriceConfigured,
 		m.CacheWrite1hPriceConfigured,
 	)
-	prepared, derivedScalars, err := modelpricing.PrepareCustomModelPricing(raw, m.Currency, useCases, scalars)
+}
+
+// customModelScalarOverrides collects only the scalar prices explicitly present
+// in an update request; those are authoritative over stored rules.
+func customModelScalarOverrides(req *dto.UpdateCustomModelRequest) (modelpricing.CustomModelScalars, error) {
+	overrides := modelpricing.CustomModelScalars{}
+	var err error
+	if req.InputPrice != nil {
+		if overrides.InputPrice, err = modelpricing.OptionalFloatFromString(*req.InputPrice); err != nil {
+			return overrides, err
+		}
+	}
+	if req.OutputPrice != nil {
+		if overrides.OutputPrice, err = modelpricing.OptionalFloatFromString(*req.OutputPrice); err != nil {
+			return overrides, err
+		}
+	}
+	if req.CacheReadPrice != nil {
+		if overrides.CacheReadPrice, err = modelpricing.OptionalFloatFromString(*req.CacheReadPrice); err != nil {
+			return overrides, err
+		}
+	}
+	if req.CacheWritePrice != nil {
+		if overrides.CacheWritePrice, err = modelpricing.OptionalFloatFromString(*req.CacheWritePrice); err != nil {
+			return overrides, err
+		}
+	}
+	if req.CacheWrite5mPrice != nil {
+		if overrides.CacheWrite5mPrice, err = modelpricing.OptionalFloatFromString(*req.CacheWrite5mPrice); err != nil {
+			return overrides, err
+		}
+	}
+	if req.CacheWrite1hPrice != nil {
+		if overrides.CacheWrite1hPrice, err = modelpricing.OptionalFloatFromString(*req.CacheWrite1hPrice); err != nil {
+			return overrides, err
+		}
+	}
+	return overrides, nil
+}
+
+func applyCustomModelPricing(m *model.CustomModel, raw []byte, useCases []string, overrides modelpricing.CustomModelScalars) error {
+	if m == nil {
+		return nil
+	}
+	scalars := customModelScalarsFromModel(m)
+	prepared, derivedScalars, err := modelpricing.PrepareCustomModelPricing(raw, m.Currency, useCases, scalars, overrides)
 	if err != nil {
 		return fmt.Errorf("invalid pricing: %w", err)
 	}
@@ -578,7 +625,7 @@ func (s *modelService) CreateCustom(ctx context.Context, organizationID uuid.UUI
 		ConfigParameters:            configParameters,
 	}
 
-	if err := applyCustomModelPricing(m, req.Pricing, useCases); err != nil {
+	if err := applyCustomModelPricing(m, req.Pricing, useCases, customModelScalarsFromModel(m)); err != nil {
 		return nil, err
 	}
 
@@ -728,7 +775,11 @@ func (s *modelService) UpdateCustom(ctx context.Context, organizationID, id uuid
 		if !pricingChanged {
 			pricingRaw = m.Pricing
 		}
-		if err := applyCustomModelPricing(m, pricingRaw, []string(m.UseCases)); err != nil {
+		overrides, err := customModelScalarOverrides(req)
+		if err != nil {
+			return nil, err
+		}
+		if err := applyCustomModelPricing(m, pricingRaw, []string(m.UseCases), overrides); err != nil {
 			return nil, err
 		}
 	}

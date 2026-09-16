@@ -812,11 +812,17 @@ func (s *llmGatewayServiceImpl) settleVideoTaskSuccess(
 		return nil
 	}
 
+	lane, err := usageBillingLaneFromContext(selection, nil)
+	if err != nil {
+		return fmt.Errorf("failed to resolve billing lane for video settlement: %w", err)
+	}
 	quote, err := s.quoteVideoPricingForSelection(ctx, selection, req, resp)
 	if err != nil {
 		return err
 	}
-	if quote.TotalCredits <= 0 {
+	// Platform lane settles from Console authority (resp.Settlement), so a zero
+	// local quote is expected; only the private lane must fail closed here.
+	if videoSettlementRequiresLocalPrice(lane) && quote.TotalCredits <= 0 {
 		return fmt.Errorf("%w: video pricing is not configured", ErrPricingNotConfigured)
 	}
 	predeductQuote, err := s.videoPredeductQuoteFromTask(ctx, selection, req)
@@ -1050,6 +1056,13 @@ func (s *llmGatewayServiceImpl) findSettledVideoUsageBill(ctx context.Context, a
 		return 0, false, err
 	}
 	return row.TotalPoints, true, nil
+}
+
+// videoSettlementRequiresLocalPrice reports whether a billing lane settles from
+// local model pricing. Platform-lane video settles from Console authority, so a
+// zero local quote is expected there and must not fail closed.
+func videoSettlementRequiresLocalPrice(lane UsageBillingLane) bool {
+	return lane != UsageBillingLanePlatform
 }
 
 func (s *llmGatewayServiceImpl) quoteVideoPricingForSelection(ctx context.Context, selection *ProviderSelection, req *adapter.VideoTaskRequest, resp *adapter.VideoResponse) (PricingQuote, error) {
