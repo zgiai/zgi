@@ -2,7 +2,6 @@ package interfaces
 
 import (
 	"context"
-	"time"
 
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/model"
@@ -51,7 +50,6 @@ type FileService interface {
 	DeleteFiles(ctx context.Context, fileIDs []string) error
 	// UpdateContentText updates the cached content text for a file
 	UpdateContentText(ctx context.Context, fileID string, contentText string) error
-	CleanupExpiredTemporaryFiles(ctx context.Context, ttl time.Duration) (int64, error)
 	// GetFileURL gets the URL for a file by its ID
 	GetFileURL(ctx context.Context, fileID string) (string, error)
 }

@@ -329,7 +329,7 @@ func newSaveFileTool(fileService FileService, workspacePerms WorkspacePermission
 			Human: tools.I18nText{
 				"en_US": "Save a generated file or external file URL into File Management.",
 			},
-			LLM: "Copy an already generated tool file or a public external file URL into File Management. The source tool file remains available until its original expiry time; this tool does not move, consume, delete, or extend the source. Use this only when the user explicitly asks to save, create, upload, import, or add the file to File Management/current Files page. If the file content still needs to be generated, first call file-generator to create a temporary artifact, then call this tool with source_type=tool_file and the generated tool_file_id. This operation mutates File Management and is governed by file.create approval.",
+			LLM: "Copy an already generated tool file or a public external file URL into File Management. The source tool file remains available until its original expiry time; this tool does not move, consume, delete, or extend the source. Use this only when the user explicitly asks to save, create, upload, import, or add the file to File Management/current Files page. If the file content still needs to be generated, first call file-generator to create a generated artifact, then call this tool with source_type=tool_file and the generated tool_file_id. This operation mutates File Management and is governed by file.create approval.",
 		},
 		Parameters: []tools.ToolParameter{
 			{

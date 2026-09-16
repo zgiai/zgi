@@ -419,10 +419,10 @@ func svgEsc(value string) string {
 
 func resolveChartFileLifecycle(raw string) (tool_file.ToolFileLifecycle, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "", "temporary":
-		return tool_file.ToolFileLifecycleTemporary, nil
-	case "persistent":
+	case "", "persistent":
 		return tool_file.ToolFileLifecyclePersistent, nil
+	case "temporary":
+		return tool_file.ToolFileLifecycleTemporary, nil
 	default:
 		return "", fmt.Errorf("unsupported lifecycle: %s", raw)
 	}

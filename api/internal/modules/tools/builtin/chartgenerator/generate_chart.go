@@ -41,7 +41,7 @@ func NewGenerateChartTool(tenantID string) *GenerateChartTool {
 				"en_US":   "Generate a downloadable SVG chart from structured data.",
 				"zh_Hans": "Generate a downloadable SVG chart from structured data.",
 			},
-			LLM: "Generate a temporary downloadable SVG chart artifact from structured data. This tool does not write to File Management. Supports radar, bar, line, pie, doughnut, scatter, and score_distribution charts. For casual, vague, incomplete, or non-structured chart requests, use prompt-professionalizer before this tool. For generic requests such as 'generate a chart' or 'generate visualization', do not infer the chart type, title, or style; ask the user to confirm those decisions before calling. When the user asks to save the chart into File Management, generate the chart first and then use file-manager/save_file_to_management.",
+			LLM: "Generate a retained downloadable SVG chart artifact from structured data. This tool does not write to File Management. Supports radar, bar, line, pie, doughnut, scatter, and score_distribution charts. For casual, vague, incomplete, or non-structured chart requests, use prompt-professionalizer before this tool. For generic requests such as 'generate a chart' or 'generate visualization', do not infer the chart type, title, or style; ask the user to confirm those decisions before calling. When the user asks to save the chart into File Management, generate the chart first and then use file-manager/save_file_to_management.",
 		},
 		Parameters: []tools.ToolParameter{
 			{
@@ -108,11 +108,11 @@ func NewGenerateChartTool(tenantID string) *GenerateChartTool {
 				Name:             "lifecycle",
 				Label:            tools.I18nText{"en_US": "Lifecycle", "zh_Hans": "Lifecycle"},
 				HumanDescription: tools.I18nText{"en_US": "Whether the generated chart is persistent or temporary.", "zh_Hans": "Whether the generated chart is persistent or temporary."},
-				LLMDescription:   "Temporary artifact lifecycle: persistent or temporary. Defaults to temporary.",
+				LLMDescription:   "Generated files default to persistent. Temporary is only honored for explicitly configured workflow outputs.",
 				Type:             tools.ToolParameterTypeSelect,
 				Form:             tools.ToolParameterFormLLM,
 				Required:         false,
-				Default:          "temporary",
+				Default:          "persistent",
 				SupportVariable:  true,
 				Options: []tools.ToolParameterOption{
 					{Value: "persistent", Label: tools.I18nText{"en_US": "Persistent", "zh_Hans": "Persistent"}},
@@ -225,36 +225,32 @@ func (t *GenerateChartTool) Invoke(
 		fileMeta["expires_at"] = toolFile.ExpiresAt.Unix()
 	}
 
+	chartData := map[string]interface{}{
+		"file_id":      toolFile.ID,
+		"tool_file_id": toolFile.ID,
+		"filename":     toolFile.Name,
+		"chart_type":   meta.ChartType,
+		"format":       "svg",
+		"mime_type":    svgMimeType,
+		"size":         toolFile.Size,
+		"url":          url,
+		"download_url": downloadURL,
+		"target":       "temporary_artifact",
+		"lifecycle":    toolFile.Lifecycle,
+		"x_count":      meta.XCount,
+		"series_count": meta.SeriesCount,
+	}
+	if toolFile.ExpiresAt != nil {
+		chartData["expires_at"] = toolFile.ExpiresAt.Unix()
+	}
 	return []tools.ToolInvokeMessage{
 		{
 			Type: tools.ToolInvokeMessageTypeFile,
 			Text: downloadURL,
 			Meta: map[string]interface{}{"file": fileMeta},
 		},
-		builtin.CreateJSONMessage(map[string]interface{}{
-			"file_id":      toolFile.ID,
-			"tool_file_id": toolFile.ID,
-			"filename":     toolFile.Name,
-			"chart_type":   meta.ChartType,
-			"format":       "svg",
-			"mime_type":    svgMimeType,
-			"size":         toolFile.Size,
-			"url":          url,
-			"download_url": downloadURL,
-			"target":       "temporary_artifact",
-			"lifecycle":    toolFile.Lifecycle,
-			"expires_at":   chartToolFileExpiresAt(toolFile),
-			"x_count":      meta.XCount,
-			"series_count": meta.SeriesCount,
-		}),
+		builtin.CreateJSONMessage(chartData),
 	}, nil
-}
-
-func chartToolFileExpiresAt(toolFile *tool_file.ToolFile) interface{} {
-	if toolFile == nil || toolFile.ExpiresAt == nil {
-		return nil
-	}
-	return toolFile.ExpiresAt.Unix()
 }
 
 func normalizeChartType(raw string) string {

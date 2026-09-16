@@ -64,7 +64,7 @@ func (s *service) buildTokenBudgetMessages(
 		s.tokenEstimator = newTokenEstimator()
 	}
 	applyRecentAssetCandidatesFromBranch(parts, parentMessages)
-	applyRecentGeneratedArtifactsFromBranch(parts, parentMessages)
+	applyRecentGeneratedArtifactsFromBranch(ctx, parts, parentMessages)
 	applyRecentOperationPlansFromBranch(parts, parentMessages)
 	recentExecutionContext, recentExecutionMetadata := buildRecentExecutionContextMessageForRequest(parts, parentMessages)
 	continuationContext := buildContinuationTaskStateMessage(parts, parentMessages)
