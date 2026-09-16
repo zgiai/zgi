@@ -63,9 +63,9 @@ const RESPONSIBILITY_ERROR_ID = 'digital-human-create-responsibility-error';
  * Configure step: basic info, the skills creation will bind, the advanced model
  * setting, live preview and the fixed bottom action bar.
  *
- * Skill selection is the user's: a template only seeds it. The list never
- * renders a connect, test, or deploy action, and binding happens through the
- * bindings API after the digital human exists.
+ * Skill selection is the user's: a template only seeds skills. This form only
+ * records the choice; creation binds the selected capabilities once the digital
+ * human exists. The list never renders a connect, test, or deploy action.
  */
 export function DigitalHumanTemplateForm({
   templateTitle,

@@ -47,14 +47,23 @@ export function DigitalHumanTagList({ tags }: { tags: readonly string[] }) {
   );
 }
 
-export function DigitalHumanSkillList({ skills }: { skills: readonly string[] }) {
-  if (skills.length === 0) return null;
+/**
+ * Read-only bullet list of display-ready strings.
+ *
+ * It renders whatever items it is given — skill labels or connection resource
+ * labels — and never parses metadata or adds interaction.
+ */
+export function DigitalHumanCapabilityList({ items }: { items: readonly string[] }) {
+  if (items.length === 0) return null;
   return (
     <ul className="space-y-1.5">
-      {skills.map(skill => (
-        <li key={skill} className="flex items-center gap-2 text-sm leading-6">
+      {items.map((item, index) => (
+        <li
+          key={`${index}:${item}`}
+          className="flex items-center gap-2 text-sm leading-6"
+        >
           <span className="size-1.5 shrink-0 rounded-full bg-success" aria-hidden />
-          <span className="min-w-0 break-words">{skill}</span>
+          <span className="min-w-0 break-words">{item}</span>
         </li>
       ))}
     </ul>
@@ -64,8 +73,8 @@ export function DigitalHumanSkillList({ skills }: { skills: readonly string[] })
 /**
  * Live preview of what creation will produce.
  *
- * It only reflects what is written into the create request plus the skills the
- * template binds; no device, online, or connection state is shown.
+ * It only reflects the fields written into the create request. Capability
+ * sources, bindings, and connection state are not shown in this preview.
  */
 export function DigitalHumanTemplatePreview({
   icon,

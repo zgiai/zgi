@@ -20,8 +20,8 @@ import {
 } from './digital-human-templates';
 import {
   DigitalHumanAvatar,
+  DigitalHumanCapabilityList,
   DigitalHumanDetailSection,
-  DigitalHumanSkillList,
   DigitalHumanTagList,
 } from './digital-human-template-preview';
 import { useRoleTextResolver } from './use-role-texts';
@@ -30,9 +30,9 @@ import { useRoleTextResolver } from './use-role-texts';
  * Template selection step.
  *
  * The card actions are revealed on hover *and* on keyboard focus, and stay
- * visible on small screens where hover does not exist. The skills shown here are
- * what the template asks for; they are matched against the workspace's real
- * binding candidates when the digital human is created.
+ * visible on small screens where hover does not exist. The detail drawer shows
+ * the workspace skills a template declares, which are matched against the
+ * workspace's real candidates when the digital human is created.
  */
 export function DigitalHumanTemplateGallery({
   onSelectTemplate,
@@ -193,12 +193,14 @@ export function DigitalHumanTemplateGallery({
                   </ul>
                 </DigitalHumanDetailSection>
 
-                <DigitalHumanDetailSection title={t('createFlow.detail.skills')}>
-                  <DigitalHumanSkillList skills={templateSkills(detailTemplate)} />
-                  <p className="text-xs leading-5 text-muted-foreground">
-                    {t('createFlow.form.skillsPending')}
-                  </p>
-                </DigitalHumanDetailSection>
+                {detailTemplate.skills.length > 0 ? (
+                  <DigitalHumanDetailSection title={t('createFlow.detail.skills')}>
+                    <DigitalHumanCapabilityList items={templateSkills(detailTemplate)} />
+                    <p className="text-xs leading-5 text-muted-foreground">
+                      {t('createFlow.form.skillsPending')}
+                    </p>
+                  </DigitalHumanDetailSection>
+                ) : null}
 
                 <DigitalHumanDetailSection title={t('createFlow.detail.defaults')}>
                   <p className="text-xs leading-5 text-muted-foreground">

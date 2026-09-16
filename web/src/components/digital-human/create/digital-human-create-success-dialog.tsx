@@ -14,16 +14,18 @@ import {
 import { useT } from '@/i18n';
 import {
   DigitalHumanAvatar,
-  DigitalHumanSkillList,
+  DigitalHumanCapabilityList,
   DigitalHumanTagList,
 } from './digital-human-template-preview';
 
 /**
  * Created-and-published dialog.
  *
- * Creation now binds the template's skills and publishes version 1, so the
- * dialog reports a published digital human and lists the skills that were really
- * bound. Every destination is reachable for a published digital human.
+ * Creation replaces the draft bindings once with only the items actually bound —
+ * the skills the user selected and the workspace really offers — and then
+ * publishes version 1, so the dialog reports a published digital human and lists
+ * the capabilities and resources that were really bound. Every destination is
+ * reachable for a published digital human.
  */
 export function DigitalHumanCreateSuccessDialog({
   open,
@@ -32,7 +34,7 @@ export function DigitalHumanCreateSuccessDialog({
   templateTitle,
   responsibility,
   tags,
-  boundSkillNames,
+  boundCapabilityNames,
   icon,
   onContinueSetup,
   onChannels,
@@ -45,7 +47,8 @@ export function DigitalHumanCreateSuccessDialog({
   templateTitle: string;
   responsibility: string;
   tags: readonly string[];
-  boundSkillNames: readonly string[];
+  /** Display names of the items that were actually bound, in bind order. */
+  boundCapabilityNames: readonly string[];
   icon: IconValue;
   onContinueSetup: () => void;
   onChannels: () => void;
@@ -75,12 +78,12 @@ export function DigitalHumanCreateSuccessDialog({
             {t('createFlow.success.written')}
           </p>
 
-          {boundSkillNames.length > 0 ? (
+          {boundCapabilityNames.length > 0 ? (
             <div className="space-y-2 rounded-lg border border-success/30 bg-success/5 p-3">
               <p className="text-xs font-medium text-success">
-                {t('createFlow.success.boundSkills')}
+                {t('createFlow.success.boundCapabilities')}
               </p>
-              <DigitalHumanSkillList skills={boundSkillNames} />
+              <DigitalHumanCapabilityList items={boundCapabilityNames} />
             </div>
           ) : null}
 

@@ -72,6 +72,8 @@ const messages: DigitalHumansMessages = {
       skillsHint:
         '选择这个数字人可以使用的技能。创建完成后会按所选技能绑定并发布第 1 个版本；模板只会预选自己的技能。后续可在「配置 → 能力」中调整。',
       skillsPending: '创建时会按工作区中实际可用的技能进行匹配。',
+      templateNotEnabled:
+        '该模板目前只是设计目标，尚未接入服务器。在完成目标授权与只读能力验证之前，不能连接目标、采集状态或执行操作；涉及部署或配置变更的操作还需要单独审批。可以先创建数字人，之后再补充能力。',
       advanced: '高级设置',
       model: 'Agent Runtime 模型',
       currentModel: '当前模型',
@@ -90,8 +92,8 @@ const messages: DigitalHumansMessages = {
       requiredResponsibility: '请描述这个数字人负责什么。',
       errorSummary: '请先修正标出的字段，然后重试。',
       createFailed: '创建数字人失败，已保留你填写的内容，可重试。',
-      bindingFailed: '数字人已创建，但技能绑定失败。可在「配置 → 能力」中手动绑定。',
-      publishFailed: '数字人与技能已就绪，但发布失败。请在配置页完成发布。',
+      bindingFailed: '数字人已创建，但所选能力或资源绑定失败。可到「配置 → 能力」手动处理。',
+      publishFailed: '数字人与所选能力/资源已就绪，但发布失败。请在配置页完成发布。',
       draftCreatedNotice: '该数字人已存在，可继续配置或返回列表。',
     },
     preview: {
@@ -133,15 +135,40 @@ const messages: DigitalHumansMessages = {
           fileGenerator: '文件生成（文档、表格、演示）',
         },
       },
+      opsSpecialist: {
+        title: '运维专员',
+        shortDescription: '运维职责的设计目标：当前尚未接入服务器，不能连接、巡检或部署。',
+        responsibility:
+          '这个模板描述的是运维专员的职责方向：接入经过验证的服务器后，以只读方式采集主机系统、负载、内存和磁盘状态，整理环境问题证据并给出可复核的处理建议。当前尚未接入服务器，也还没有已配置并验证的工具与授权；在完成配置与验证之前，不得连接目标、不得采集数据，也不得声称实测结论。不执行部署、重启、配置修改或任意命令。',
+        persona:
+          '你是一名谨慎、证据优先的运维专员。这个角色目前是设计目标，尚未接入任何服务器：在工具与授权尚未配置并验证之前，不得连接目标、不得采集系统状态，也不得声称实测结论；启用之后，仅可在已批准范围内按已验证动作操作。开始前先确认目标服务器和用户授权范围，只使用已绑定连接中后端验证允许的动作。启用前需要先完成目标服务器授权与只读能力验证，涉及部署或配置变更的操作还需要单独审批。启用后先采集系统快照，再根据主机、操作系统、内核、运行时长、负载、内存和磁盘数据识别环境风险；结论必须区分已观察事实、推断和建议。不得声称已完成部署、重启、配置修改、服务状态检查或日志读取；需要这些能力时明确说明尚未授权或验证，并给出下一步。',
+        tags: {
+          serverInspection: '服务器巡检',
+          evidenceFirst: '证据优先',
+          readOnlySafety: '只读安全',
+        },
+        goals: {
+          confirmTarget: '确认目标服务器、用户授权和检查边界。',
+          collectSnapshot: '采集主机系统、负载、内存和磁盘快照。',
+          assessEnvironment: '基于可验证数据识别资源与环境风险。',
+          recommendNext: '给出可复核的处理建议和下一步。',
+        },
+        rules: {
+          verifiedReadOnly:
+            '仅执行已绑定连接中后端验证允许的只读动作，不执行部署、重启、配置修改或任意命令。',
+          targetBoundary: '执行前确认目标服务器，不把一个服务器的结果当作另一个服务器的证据。',
+          noOverclaim: '没有已验证动作或结果证据时，不声称已检查服务状态、读取日志或解决问题。',
+        },
+      },
     },
     success: {
       title: '{name} 已发布',
       intro: '你好，我是 {name}，一名{role}。{responsibility}',
-      written: '人设、工作目标、安全规则、运行模型与下方技能均已就绪，第 1 个版本已发布。',
-      boundSkills: '已绑定技能',
+      written: '人设、工作目标、安全规则与运行模型均已就绪，第 1 个版本已发布。',
+      boundCapabilities: '已绑定能力与资源',
       strengths: '我擅长',
       completedTitle: '已完成',
-      completedItems: '基础信息、人设、工作目标、安全规则、运行模型、技能、发布版本',
+      completedItems: '基础信息、人设、工作目标、安全规则、运行模型、发布版本',
       pendingTitle: '待完成',
       pendingItems: '渠道分发、自动化任务、知识与项目上下文',
       nextTitle: '接下来，选择一种方式开始协作',

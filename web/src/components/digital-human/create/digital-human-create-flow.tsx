@@ -105,17 +105,18 @@ interface CreatedState {
   published: boolean;
   /** Set when creation succeeded but a later step failed. */
   notice: string | null;
-  boundSkillNames: string[];
+  boundCapabilityNames: string[];
 }
 
 /**
  * Configure step for one template (or the custom entry).
  *
  * It owns the form state and the whole creation sequence: create the digital
- * human, bind the skills the template declares against the workspace's real
- * candidates, then publish version 1. Being remounted per template via `key`
- * keeps the seeding out of an effect, so a late model list can never wipe what
- * the user typed.
+ * human, then replace the draft bindings once with the selected capabilities
+ * (the template's skills) resolved against the workspace's real candidates, then
+ * publish version 1. The form only records that choice; nothing is bound while it
+ * renders. Being remounted per template via `key` keeps the seeding out of an
+ * effect, so a late model list can never wipe what the user typed.
  */
 function DigitalHumanConfigureStep({
   template,
@@ -152,6 +153,12 @@ function DigitalHumanConfigureStep({
   const selectedSkillIds = skillSelection ?? defaultSkillIds;
   const changeSkillSelection = (resourceIds: string[]) => setSkillSelection(resourceIds);
 
+  // A template that declares no skill has no capability this product can bind
+  // yet, so creation cannot deliver what its copy promises. The form says so
+  // instead of letting the user expect a working server connection. The custom
+  // entry picks its own skills, so it carries no such notice.
+  const templateWithoutSkills = Boolean(template && template.skills.length === 0);
+
   const [initialValue] = useState<DigitalHumanTemplateFormValue>(() => ({
     name: template ? texts(template.titleKey) : '',
     responsibility: template ? texts(template.responsibilityKey) : '',
@@ -174,6 +181,8 @@ function DigitalHumanConfigureStep({
     skillSelection !== null &&
     (skillSelection.length !== defaultSkillIds.length ||
       skillSelection.some(id => !defaultSkillIds.includes(id)));
+  // Only an explicit skill edit counts; leaving the template's seed untouched
+  // keeps the form in its clean state.
   const dirty =
     value.name !== initialValue.name ||
     value.responsibility !== initialValue.responsibility ||
@@ -208,10 +217,14 @@ function DigitalHumanConfigureStep({
   };
 
   /**
-   * Bind exactly the skills the user selected, resolved against the candidates
-   * the workspace really offers. Nothing selected means nothing to bind.
+   * Bind exactly the capabilities the user selected: the workspace skills,
+   * resolved against the real candidates.
+   *
+   * Nothing selected means nothing to bind; the create request itself never
+   * carries a credential, and this never fabricates a binding for a capability
+   * the workspace does not offer.
    */
-  const bindSelectedSkills = async (id: string, lockVersion: number) => {
+  const bindSelectedCapabilities = async (id: string, lockVersion: number) => {
     const items = selectCandidateBindings(selectedSkillIds, skillCandidates);
     if (items.length === 0) return [];
     const bound = await digitalHumanService.replaceDraftBindings(id, lockVersion, items);
@@ -242,10 +255,13 @@ function DigitalHumanConfigureStep({
       if (!id) throw new Error('missing digital human id');
 
       let notice: string | null = null;
-      let boundSkillNames: string[] = [];
+      let boundCapabilityNames: string[] = [];
 
       try {
-        boundSkillNames = await bindSelectedSkills(id, detail?.draft?.lock_version ?? 1);
+        boundCapabilityNames = await bindSelectedCapabilities(
+          id,
+          detail?.draft?.lock_version ?? 1
+        );
       } catch {
         notice = t('createFlow.form.bindingFailed');
       }
@@ -269,7 +285,7 @@ function DigitalHumanConfigureStep({
         ]);
       }
 
-      setCreated({ id, published: !notice, notice, boundSkillNames });
+      setCreated({ id, published: !notice, notice, boundCapabilityNames });
       if (!notice) setDialogOpen(true);
     } catch {
       // Keep every field so the user can retry.
@@ -305,7 +321,14 @@ function DigitalHumanConfigureStep({
         onSubmit={() => void submit()}
         onBack={requestBack}
         submitLabel={created ? t('createFlow.success.continueSetup') : undefined}
-        notice={notice ?? (created ? t('createFlow.form.draftCreatedNotice') : null)}
+        notice={
+          notice ??
+          (created
+            ? t('createFlow.form.draftCreatedNotice')
+            : templateWithoutSkills
+              ? t('createFlow.form.templateNotEnabled')
+              : null)
+        }
       />
 
       <DigitalHumanCreateSuccessDialog
@@ -315,7 +338,7 @@ function DigitalHumanConfigureStep({
         templateTitle={templateTitle}
         responsibility={value.responsibility}
         tags={tags}
-        boundSkillNames={created?.boundSkillNames ?? []}
+        boundCapabilityNames={created?.boundCapabilityNames ?? []}
         icon={value.icon}
         onContinueSetup={() => router.push(`${draftBase}/configuration`)}
         onChannels={() => router.push(`${draftBase}/channels`)}

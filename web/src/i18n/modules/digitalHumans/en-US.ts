@@ -75,6 +75,8 @@ const messages = {
       skillsHint:
         'Pick the Skills this digital human may use. They are bound when creation finishes and version 1 is published; the template only pre-selects its own. Adjust them later in Configuration → Capabilities.',
       skillsPending: 'Resolved against the skills available in this workspace when you create.',
+      templateNotEnabled:
+        'This template is still a design target and is not connected to a server yet. Until target authorization and read-only verification are complete, it cannot connect to a target, collect state, or run operations; deployment or configuration changes need separate approval. You can create the digital human now and add capabilities later.',
       advanced: 'Advanced settings',
       model: 'Agent Runtime model',
       currentModel: 'Current model',
@@ -94,9 +96,9 @@ const messages = {
       errorSummary: 'Fix the highlighted fields and try again.',
       createFailed: 'Could not create the digital human. Your input is kept so you can retry.',
       bindingFailed:
-        'The digital human was created, but binding its skills failed. Continue in Configuration → Capabilities to bind them by hand.',
+        'The digital human was created, but binding the selected capabilities or resources failed. Continue in Configuration → Capabilities to handle them by hand.',
       publishFailed:
-        'The digital human and its skills are in place, but publishing failed. Publish it from the configuration page.',
+        'The digital human and its selected capabilities/resources are in place, but publishing failed. Publish it from the configuration page.',
       draftCreatedNotice: 'This digital human already exists. Continue setup, or go back to the list.',
     },
     preview: {
@@ -141,17 +143,45 @@ const messages = {
           fileGenerator: 'File generation (documents, spreadsheets, decks)',
         },
       },
+      opsSpecialist: {
+        title: 'Operations specialist',
+        shortDescription:
+          'The intended operations role: not connected to a server yet, so it cannot connect, inspect, or deploy.',
+        responsibility:
+          'This template describes the intended operations specialist role: once a verified server is connected, collect host, load, memory, and disk state read-only, organize evidence for environment issues, and recommend verifiable next steps. It is not connected to a server yet and has no configured, verified tools or authorization; until those are in place it must not connect to a target, collect data, or claim measured findings. Deployment, restarts, configuration changes, and arbitrary commands are not performed.',
+        persona:
+          'You are a cautious, evidence-first operations specialist. This role is currently a design target and is not connected to any server: until its tools and authorization are configured and verified, it must not connect to a target, collect system state, or claim measured findings, and once enabled it operates only within the approved scope using verified actions. Confirm the target server and the user-authorized boundary before starting, and use only actions the backend verified for the bound connection. Enabling it requires target authorization and read-only verification first, and deployment or configuration changes need separate approval. Once enabled, collect a system snapshot first, then assess environment risks from the host, operating system, kernel, uptime, load, memory, and disk data. Separate observed facts, inferences, and recommendations. It must never claim to have deployed, restarted, changed configuration, checked service status, or read logs; when those capabilities are needed, state that they are not yet authorized or verified and explain the next step.',
+        tags: {
+          serverInspection: 'Server inspection',
+          evidenceFirst: 'Evidence first',
+          readOnlySafety: 'Read-only safety',
+        },
+        goals: {
+          confirmTarget: 'Confirm the target server, user authorization, and inspection boundary.',
+          collectSnapshot: 'Collect host, load, memory, and disk state.',
+          assessEnvironment: 'Identify resource and environment risks from verifiable data.',
+          recommendNext: 'Recommend verifiable next steps.',
+        },
+        rules: {
+          verifiedReadOnly:
+            'Use only backend-verified read-only actions on the bound connection. Never deploy, restart, change configuration, or run arbitrary commands.',
+          targetBoundary:
+            "Confirm the target server before acting, and never use one server's result as evidence for another.",
+          noOverclaim:
+            'Without a verified action and result evidence, never claim to have checked service status, read logs, or resolved the issue.',
+        },
+      },
     },
     success: {
       title: '{name} is published',
       intro: 'Hi, I am {name}, a {role}. {responsibility}',
       written:
-        'The persona, working goals, safety rules, runtime model, and skills below are in place, and the first version is published.',
-      boundSkills: 'Bound skills',
+        'The persona, working goals, safety rules, and runtime model are in place, and the first version is published.',
+      boundCapabilities: 'Bound capabilities and resources',
       strengths: 'What I am good at',
       completedTitle: 'Done',
       completedItems:
-        'Basic info, persona, working goals, safety rules, runtime model, skills, published version',
+        'Basic info, persona, working goals, safety rules, runtime model, published version',
       pendingTitle: 'Still to do',
       pendingItems: 'Channels, autonomous tasks, knowledge and project context',
       nextTitle: 'Next, choose how to start working together',

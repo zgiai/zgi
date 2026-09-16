@@ -756,7 +756,7 @@ func TestRuntimeServiceListsSkillCandidatesBeforeCreation(t *testing.T) {
 	chat := &fakeDigitalHumanChat{skills: []skills.SkillDiscoveryMetadata{
 		{
 			ID: skills.SkillFileGenerator, Name: "File generation", Enabled: true,
-			Status: skills.SkillStatusActive,
+			Status:           skills.SkillStatusActive,
 			SupportedCallers: []string{skills.SkillCallerAIChat, skills.SkillCallerAgent, skills.SkillCallerDigitalHuman},
 		},
 		{

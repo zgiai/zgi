@@ -1,19 +1,23 @@
 /**
  * Digital human templates for the creation flow.
  *
- * Each template declares the real skills it binds. The skill ids are workspace
- * binding candidates resolved at creation time, so a template never claims a
- * capability the workspace cannot actually provide: the create flow looks the
- * ids up, binds what exists, and reports what it bound.
+ * Each template declares the workspace skills it offers at creation. Skill ids
+ * are resolved against the backend's real binding candidates when the digital
+ * human is created, so a template never claims a capability the workspace cannot
+ * actually provide and only ever binds user-selected skills the backend judged
+ * available.
  *
- * See `docs/superpowers/plans/2026-09-15-digital-human-ops-specialist-create-interaction.md`.
+ * The operations template is a design target only: no server-operations skill or
+ * connection exists yet, so it declares no skill and creation binds nothing for
+ * it. Enabling it later requires the connector work, explicit target
+ * authorization, and read-only verification first.
  *
  * IMPORTANT: this module must stay free of runtime imports (type-only imports
  * are erased) so `scripts/test-digital-human-create-flow.mjs` can load it with
  * Node's type stripping.
  */
 
-export type DigitalHumanTemplateId = 'fileGeneration';
+export type DigitalHumanTemplateId = 'fileGeneration' | 'opsSpecialist';
 
 export interface DigitalHumanTemplateSkill {
   /** Real skill id, matched against `draft/binding-candidates?type=skill`. */
@@ -107,6 +111,17 @@ const TEMPLATE_SEEDS: readonly TemplateSeed[] = [
     tagNames: ['fileOutput', 'structure', 'deliveryNotes'],
     goalNames: ['confirmFormat', 'produceFile', 'explainOutput', 'fallbackFormat'],
     ruleNames: ['confirmBeforeGenerating'],
+  },
+  {
+    // Design target only: no server-operations skill exists yet, so the template
+    // declares none and creation binds nothing for it. Enabling it later requires
+    // the connector work plus explicit authorization and read-only verification.
+    id: 'opsSpecialist',
+    iconBackground: '#0f766e',
+    skills: [],
+    tagNames: ['serverInspection', 'evidenceFirst', 'readOnlySafety'],
+    goalNames: ['confirmTarget', 'collectSnapshot', 'assessEnvironment', 'recommendNext'],
+    ruleNames: ['verifiedReadOnly', 'targetBoundary', 'noOverclaim'],
   },
 ];
 
