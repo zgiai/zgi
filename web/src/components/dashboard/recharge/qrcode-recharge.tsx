@@ -32,7 +32,7 @@ const RECHARGE_AMOUNTS = [
   { cny: 10000 },
 ];
 
-const MIN_CUSTOM_AMOUNT = 1;
+const MIN_CUSTOM_AMOUNT = 10;
 const MAX_CUSTOM_AMOUNT = 9999999999.99;
 const ORDER_TIMEOUT_SECONDS = 600; // 10 minutes
 
