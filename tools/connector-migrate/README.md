@@ -9,7 +9,8 @@ performs no provider requests, and never modifies original Skill files.
 Fresh installations use normal API migrations and reach schema2 directly. A
 current schema1 database already marked `ready` skips the historical converter:
 advance to `20260903120000_messaging_connector_protocol` if needed, then follow
-step 7. The independent converter accepts only the older checkpoint below.
+step 7. The independent converter accepts only the older checkpoint below unless
+the operator explicitly opts in to an advanced checkpoint (see below).
 
 1. Stop API writers, workers and scheduled jobs. Drain running work and confirmations.
 2. Take a consistent database backup and a backup of Skill storage and the old/new keyrings.
@@ -40,7 +41,9 @@ step 7. The independent converter accepts only the older checkpoint below.
    Resolve every issue before apply. Apply checks that the reviewed source is unchanged,
    locks the conversion tables, performs all database writes in one serializable
    transaction, verifies the result, validates the continuation ownership FK, and marks
-   readiness `ready` only before commit. A failure rolls back all database changes.
+   readiness `ready` only before commit. A failure rolls back all database changes and
+   never updates readiness. In advanced mode apply locks `public.migrations` before it
+   locks the conversion tables (see the advanced section).
 7. After the historical converter verifies schema1, use the API-owned finalizer from
    `api/` while all writers remain stopped. Keep all paths outside the repository:
 
@@ -59,6 +62,51 @@ step 7. The independent converter accepts only the older checkpoint below.
 The JSON report contains identifiers, counts, digests and bounded result codes. It
 does not contain Keys, decrypted payloads, SQL driver messages or Skill text. Treat
 reports as operational data and keep them outside source control.
+
+## Advanced checkpoint (explicit opt-in)
+
+A schema1 database that advanced past `20260902190000_detach_connector_runtime`
+but has not applied `202609031410353961_finalize_connector_detachment` sits
+outside the default checkpoint. The converter refuses it unless the operator
+explicitly names the exact applied migration head:
+
+```text
+go run . inventory --skills-root <skill-storage-root> --advanced-checkpoint <applied-migration-id>
+go run . dry-run --keys-file <private-keyrings.json> --skills-root <skill-storage-root> --advanced-checkpoint <applied-migration-id>
+go run . apply --keys-file <private-keyrings.json> --skills-root <skill-storage-root> --advanced-checkpoint <applied-migration-id> --expected-report <reviewed-source-digest>
+go run . verify --keys-file <private-keyrings.json> --skills-root <skill-storage-root> --advanced-checkpoint <applied-migration-id>
+```
+
+The flag is an explicit opt-in, never a silent skip. It is rejected for an empty
+value, for an identifier at or before the historical checkpoint, and unless the
+named identifier is exactly the applied migration head. The converter also
+requires `20260902190000_detach_connector_runtime` to be applied and
+`202609031410353961_finalize_connector_detachment` to be absent. In addition, it
+requires all 22 retired Connector tables, the `connector_target_bindings`
+`compatibility`/`compatibility_state` columns and their check constraints, the
+`agent_resource_bindings_type_check` check constraint, and the
+`connector_confirmation_continuations_native_claim_fk` foreign key to still
+exist, proving the API-owned retirement finalizer has not run. The native claim
+FK only has to exist: it may still be `NOT VALID`, because converter apply
+validates it after conversion.
+
+Every transaction reads the complete ordered migration ledger alongside the
+conversion source. The dry-run source digest therefore includes the migration
+history, and apply refuses a reviewed digest whose ledger changed, even when the
+applied head still matches. Advanced apply also locks `public.migrations` in
+`SHARE ROW EXCLUSIVE` mode as the first statement of its transaction, before any
+read and before the conversion advisory lock. That blocks a concurrent migration
+marker insert while the ledger is read, so the reviewed ledger cannot change
+under apply. `inventory`, `dry-run` and `verify` stay read-only and take no lock,
+and the default historical apply keeps its existing lock order.
+
+Review an advanced dry-run as carefully as a normal one. The opt-in covers a
+specific, manually reviewed ahead-of-checkpoint database, not an open-ended
+migration skip, and it does not bypass the retirement finalizer or justify
+skipping migrations. In that database, 7 stored Skill files are missing or
+unreadable; the converter may mark those Skills `invalid`, so confirm those
+`issues`, the per-source `results` and the unavailable reference counts in the
+dry-run before apply.
 
 ## Conversion behavior
 
@@ -97,6 +145,11 @@ reversal or second provider execution path. Do not mix old and new runtime write
 source digest stability, host/paused snapshots, terminal barriers, file boundaries and
 sanitized database errors. Command tests also cover read-only transaction modes, stale
 reports, immediate rollback on write/verification failures and ambiguous commit errors.
+Checkpoint tests cover the strict default head, the explicit advanced opt-in, a missing
+historical checkpoint, an already-applied finalizer marker, a mismatched head, a stale
+digest caused by a changed migration ledger, the advanced migration-ledger lock ordering
+and its absence for read-only runs, and a missing retained-schema fingerprint (including
+`agent_resource_bindings_type_check` and the unvalidated native claim FK).
 These use transaction fixtures and do not prove PostgreSQL durability.
 API tests named `TestConnectorFinalizationPostgres` and
 `TestConnectorHistoricalUpgradePostgres` use the isolated
