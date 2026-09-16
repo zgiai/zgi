@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	mschema "github.com/zgiai/zgi/api/internal/migrations/schema"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -31,7 +32,7 @@ func TestPersistConversationToolFilesPreservesWorkflowExpiry(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := persistConversationToolFiles(db); err != nil {
+	if err := upPersistConversationToolFiles(mschema.New(db)); err != nil {
 		t.Fatal(err)
 	}
 	for _, row := range []struct {

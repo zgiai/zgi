@@ -495,6 +495,78 @@ func TestGeneratedFileLifecycleLookupCandidatesIncludesImageGenerationFiles(t *t
 	}
 }
 
+func TestGeneratedFileLifecycleLookupCandidatesIncludesConversationArtifacts(t *testing.T) {
+	message := &runtimemodel.Message{Metadata: map[string]interface{}{
+		"conversation_artifacts": []interface{}{map[string]interface{}{
+			"tool_file_id": "tool-history", "lifecycle": "temporary",
+		}},
+	}}
+	files := generatedFileLifecycleLookupCandidates(message)
+	if len(files) != 1 || generatedArtifactToolFileID(files[0]) != "tool-history" {
+		t.Fatalf("lifecycle lookup candidates = %#v, want conversation artifact tool-history", files)
+	}
+}
+
+func TestHydrateConversationArtifactsRestoresMigratedFileForRecentSelection(t *testing.T) {
+	restoreToolFileSignature(t)
+	past := time.Now().Add(-time.Hour).Unix()
+	message := &runtimemodel.Message{
+		ID:     uuid.MustParse("66666666-6666-6666-6666-666666666666"),
+		Status: runtimemodel.MessageStatusCompleted,
+		Metadata: map[string]interface{}{
+			"generated_files": []interface{}{map[string]interface{}{
+				"file_id": "tool-migrated", "filename": "saved.txt", "extension": ".txt",
+				"transfer_method": "tool_file", "lifecycle": "temporary", "expires_at": past,
+			}},
+			"conversation_artifacts": []interface{}{map[string]interface{}{
+				"artifact_id": "tool_file:tool-migrated", "tool_file_id": "tool-migrated",
+				"filename": "saved.txt", "transfer_method": "tool_file",
+				"lifecycle": "temporary", "expires_at": past, "availability": conversationArtifactAvailabilityGone,
+			}},
+		},
+	}
+	hydrateMessageGeneratedFileURLsWithLookup(message, map[string]*tool_file.ToolFile{
+		"tool-migrated": {ID: "tool-migrated", Lifecycle: string(tool_file.ToolFileLifecyclePersistent)},
+	}, true, time.Now())
+	for _, file := range append(
+		generatedFilesFromMetadata(message.Metadata["generated_files"]),
+		conversationArtifactsFromMetadata(message.Metadata["conversation_artifacts"])...,
+	) {
+		if file["lifecycle"] != "persistent" || file["expires_at"] != nil || file["availability"] != conversationArtifactAvailabilityLive {
+			t.Fatalf("hydrated migrated artifact = %#v, want available persistent file without expiry", file)
+		}
+	}
+	recent := recentGeneratedArtifactsFromBranch([]*runtimemodel.Message{message})
+	if len(recent) != 1 || recent[0]["tool_file_id"] != "tool-migrated" {
+		t.Fatalf("recent generated artifacts = %#v, want migrated file", recent)
+	}
+}
+
+func TestHydrateConversationArtifactsStillExpiresWorkflowTemporaryFile(t *testing.T) {
+	restoreToolFileSignature(t)
+	expiresAt := time.Now().Add(-time.Hour)
+	message := &runtimemodel.Message{
+		ID:     uuid.MustParse("77777777-7777-7777-7777-777777777777"),
+		Status: runtimemodel.MessageStatusCompleted,
+		Metadata: map[string]interface{}{
+			"conversation_artifacts": []interface{}{map[string]interface{}{
+				"tool_file_id": "workflow-temp", "filename": "workflow.txt",
+				"lifecycle": "temporary", "expires_at": expiresAt.Unix(),
+			}},
+		},
+	}
+	hydrateMessageGeneratedFileURLsWithLookup(message, map[string]*tool_file.ToolFile{
+		"workflow-temp": {ID: "workflow-temp", Lifecycle: string(tool_file.ToolFileLifecycleTemporary), ExpiresAt: &expiresAt},
+	}, true, time.Now())
+	artifact := conversationArtifactsFromMetadata(message.Metadata["conversation_artifacts"])[0]
+	if artifact["lifecycle"] != "temporary" || artifact["expires_at"] != expiresAt.Unix() || artifact["availability"] != conversationArtifactAvailabilityGone {
+		t.Fatalf("workflow artifact = %#v, want expired temporary output", artifact)
+	}
+	if recent := recentGeneratedArtifactsFromBranch([]*runtimemodel.Message{message}); len(recent) != 0 {
+		t.Fatalf("recent generated artifacts = %#v, want expired workflow output excluded", recent)
+	}
+}
+
 func TestGeneratedFileNeedsLifecycleLookupEvenForPersistentMetadata(t *testing.T) {
 	file := map[string]interface{}{
 		"file_id":         "tool-image",

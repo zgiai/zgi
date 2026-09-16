@@ -1,17 +1,18 @@
 package migrations
 
 import (
-	"github.com/go-gormigrate/gormigrate/v2"
+	mschema "github.com/zgiai/zgi/api/internal/migrations/schema"
 	"gorm.io/gorm"
 )
 
 const migrationPersistConversationToolFilesID = "20260916183000_persist_conversation_tool_files"
 
 func init() {
-	registerMigration(&gormigrate.Migration{
-		ID:      migrationPersistConversationToolFilesID,
-		Migrate: persistConversationToolFiles,
-	})
+	registerSchemaMigration(migrationPersistConversationToolFilesID, upPersistConversationToolFiles, nil)
+}
+
+func upPersistConversationToolFiles(schema *mschema.Builder) error {
+	return schema.DataFix("persist conversation-bound tool files", persistConversationToolFiles)
 }
 
 // Conversation-bound tool files come from chat/Agent generation. Workflow image
