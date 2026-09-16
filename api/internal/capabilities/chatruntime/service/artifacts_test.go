@@ -495,15 +495,33 @@ func TestGeneratedFileLifecycleLookupCandidatesIncludesImageGenerationFiles(t *t
 	}
 }
 
-func TestGeneratedFileNeedsLifecycleLookupSkipsPersistentImageFile(t *testing.T) {
+func TestGeneratedFileNeedsLifecycleLookupEvenForPersistentMetadata(t *testing.T) {
 	file := map[string]interface{}{
 		"file_id":         "tool-image",
 		"filename":        "image.png",
 		"transfer_method": "tool_file",
 		"lifecycle":       string(tool_file.ToolFileLifecyclePersistent),
 	}
-	if generatedFileNeedsLifecycleLookup(file) {
-		t.Fatalf("persistent file should not need lifecycle lookup: %#v", file)
+	if !generatedFileNeedsLifecycleLookup(file) {
+		t.Fatalf("stored lifecycle may be stale and needs lookup: %#v", file)
+	}
+}
+
+func TestHydrateGeneratedFileURLsClearsMigratedExpiry(t *testing.T) {
+	restoreToolFileSignature(t)
+	message := &runtimemodel.Message{Metadata: map[string]interface{}{
+		"generated_files": []interface{}{map[string]interface{}{
+			"file_id": "tool-migrated", "filename": "saved.txt", "extension": ".txt",
+			"mime_type": "text/plain", "transfer_method": "tool_file",
+			"lifecycle": "temporary", "expires_at": time.Now().Add(-time.Hour).Unix(),
+		}},
+	}}
+	hydrateMessageGeneratedFileURLsWithLookup(message, map[string]*tool_file.ToolFile{
+		"tool-migrated": {ID: "tool-migrated", Lifecycle: string(tool_file.ToolFileLifecyclePersistent)},
+	}, true, time.Now())
+	file := generatedFilesFromMetadata(message.Metadata["generated_files"])[0]
+	if file["lifecycle"] != "persistent" || file["expires_at"] != nil || file["availability"] != conversationArtifactAvailabilityLive {
+		t.Fatalf("migrated file = %#v, want available persistent file without expiry", file)
 	}
 }
 

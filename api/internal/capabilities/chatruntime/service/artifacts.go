@@ -138,14 +138,9 @@ func generatedFileLifecycleLookupCandidates(message *runtimemodel.Message) []map
 }
 
 func generatedFileNeedsLifecycleLookup(file map[string]interface{}) bool {
-	lifecycle := strings.TrimSpace(stringFromAny(file["lifecycle"]))
-	if lifecycle == "" {
-		return true
-	}
-	if lifecycle == string(tool_file.ToolFileLifecycleTemporary) || lifecycle == conversationArtifactLifecycleTemp {
-		return file["expires_at"] == nil
-	}
-	return false
+	// Persisted message metadata may contain a pre-migration expiry. The tool
+	// file row is authoritative for both availability and current lifecycle.
+	return generatedArtifactToolFileID(file) != ""
 }
 
 func hydrateGeneratedFileURL(file map[string]interface{}) map[string]interface{} {
@@ -168,6 +163,7 @@ func hydrateGeneratedFileURLWithLookup(file map[string]interface{}, toolFiles ma
 	}
 	if toolFile := toolFiles[fileID]; toolFile != nil {
 		hydrated["lifecycle"] = string(toolFile.LifecycleValue())
+		delete(hydrated, "expires_at")
 		if toolFile.ExpiresAt != nil {
 			hydrated["expires_at"] = toolFile.ExpiresAt.Unix()
 		}
@@ -576,10 +572,11 @@ func normalizedFileExtension(value interface{}) string {
 	return "." + extension
 }
 
-func applyRecentGeneratedArtifactsFromBranch(parts *chatRequestParts, branch []*runtimemodel.Message) {
+func applyRecentGeneratedArtifactsFromBranch(ctx context.Context, parts *chatRequestParts, branch []*runtimemodel.Message) {
 	if parts == nil || len(parts.RecentGeneratedArtifacts) > 0 {
 		return
 	}
+	hydrateMessagesGeneratedFileState(ctx, branch)
 	parts.RecentGeneratedArtifacts = recentGeneratedArtifactsFromBranch(branch)
 }
 

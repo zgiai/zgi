@@ -121,7 +121,6 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		DataLibraryModule:          serviceContainer.GetDataLibraryModule(),
 		TaskManager:                serviceContainer.GetTaskManager(),
 		Scheduler:                  serviceContainer.GetScheduler(),
-		ScheduledFileService:       serviceContainer.GetFileService(),
 	})
 
 	// ---------- Memory (common) ----------

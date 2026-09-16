@@ -415,7 +415,7 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 		}
 		branch := contextState.RawMessages
 		applyRecentAssetCandidatesFromBranch(parts, branch)
-		applyRecentGeneratedArtifactsFromBranch(parts, branch)
+		applyRecentGeneratedArtifactsFromBranch(ctx, parts, branch)
 		applyRecentOperationPlansFromBranch(parts, branch)
 		result, err := s.buildTokenBudgetMessages(ctx, resolvedSpec, parts, systemPrompt, branch)
 		if err != nil {
@@ -474,7 +474,7 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 			messages = append(messages, *turnBoundaryContext)
 		}
 		applyRecentAssetCandidatesFromBranch(parts, branch)
-		applyRecentGeneratedArtifactsFromBranch(parts, branch)
+		applyRecentGeneratedArtifactsFromBranch(ctx, parts, branch)
 	}
 	messages = append(messages, adapter.Message{Role: "user", Content: currentContent})
 	return &contextBudgetResult{Messages: messages, Metadata: contextMetadata}, nil

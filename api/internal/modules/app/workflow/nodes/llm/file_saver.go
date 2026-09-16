@@ -192,12 +192,13 @@ func (fs *FileSaverImpl) SaveRemoteURL(fileURL string, fileType file.FileType) (
 	// Use ToolFileManager to create file from URL
 	ctx := context.Background()
 	toolFile, err := fs.toolFileManager.CreateFileByURL(ctx, tool_file.CreateFileByURLParams{
-		UserID:         fs.userID,
-		TenantID:       fs.tenantID,
-		ConversationID: fs.conversationID,
-		FileURL:        fileURL,
-		Lifecycle:      fs.lifecycle,
-		ExpiresAt:      fs.expiresAt,
+		UserID:                    fs.userID,
+		TenantID:                  fs.tenantID,
+		ConversationID:            fs.conversationID,
+		FileURL:                   fileURL,
+		Lifecycle:                 fs.lifecycle,
+		ExpiresAt:                 fs.expiresAt,
+		ExplicitWorkflowLifecycle: fs.lifecycle == tool_file.ToolFileLifecycleTemporary,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create tool file from URL: %w", err)
@@ -260,14 +261,15 @@ func (fs *FileSaverImpl) SaveBinaryString(
 	// Use ToolFileManager to create file
 	ctx := context.Background()
 	toolFile, err := fs.toolFileManager.CreateFileByRaw(ctx, tool_file.CreateFileByRawParams{
-		UserID:         fs.userID,
-		TenantID:       fs.tenantID,
-		ConversationID: fs.conversationID,
-		FileData:       data,
-		MimeType:       mimeType,
-		Filename:       filename,
-		Lifecycle:      fs.lifecycle,
-		ExpiresAt:      fs.expiresAt,
+		UserID:                    fs.userID,
+		TenantID:                  fs.tenantID,
+		ConversationID:            fs.conversationID,
+		FileData:                  data,
+		MimeType:                  mimeType,
+		Filename:                  filename,
+		Lifecycle:                 fs.lifecycle,
+		ExpiresAt:                 fs.expiresAt,
+		ExplicitWorkflowLifecycle: fs.lifecycle == tool_file.ToolFileLifecycleTemporary,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create tool file: %w", err)

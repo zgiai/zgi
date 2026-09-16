@@ -12,7 +12,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	textpdf "github.com/ledongthuc/pdf"
@@ -83,13 +82,13 @@ func TestResolveFormatSupportsOfficeAndPDF(t *testing.T) {
 	}
 }
 
-func TestResolveToolFileLifecycleDefaultsToTemporary(t *testing.T) {
+func TestResolveToolFileLifecycleDefaultsToPersistent(t *testing.T) {
 	lifecycle, err := resolveToolFileLifecycle("")
 	require.NoError(t, err)
-	require.Equal(t, workflowtoolfile.ToolFileLifecycleTemporary, lifecycle)
+	require.Equal(t, workflowtoolfile.ToolFileLifecyclePersistent, lifecycle)
 }
 
-func TestCreateGeneratedFileForRuntimeKeepsTemporaryDefaultOnConsoleFilesPage(t *testing.T) {
+func TestCreateGeneratedFileForRuntimeKeepsPersistentDefaultOnConsoleFilesPage(t *testing.T) {
 	db, mock, cleanup := openFileGeneratorMockDB(t)
 	defer cleanup()
 	mock.ExpectBegin()
@@ -114,7 +113,6 @@ func TestCreateGeneratedFileForRuntimeKeepsTemporaryDefaultOnConsoleFilesPage(t 
 		},
 	})
 
-	beforeExpiry := time.Now().Add(workflowtoolfile.DefaultTemporaryToolFileTTL)
 	messages, err := createGeneratedFileForRuntime(context.Background(), "org-1", &tools.ToolRuntime{
 		TenantID: "org-1",
 		RuntimeParameters: map[string]interface{}{
@@ -138,12 +136,10 @@ func TestCreateGeneratedFileForRuntimeKeepsTemporaryDefaultOnConsoleFilesPage(t 
 	require.Empty(t, messages[1].Data["upload_file_id"])
 	require.NotEmpty(t, messages[1].Data["file_id"])
 	require.Equal(t, messages[1].Data["file_id"], messages[1].Data["tool_file_id"])
-	require.Equal(t, string(workflowtoolfile.ToolFileLifecycleTemporary), messages[1].Data["lifecycle"])
-	expiresAt, ok := messages[1].Data["expires_at"].(int64)
-	require.True(t, ok)
-	require.WithinDuration(t, beforeExpiry, time.Unix(expiresAt, 0), 2*time.Second)
+	require.Equal(t, string(workflowtoolfile.ToolFileLifecyclePersistent), messages[1].Data["lifecycle"])
+	require.NotContains(t, messages[1].Data, "expires_at")
 	fileMeta := messages[0].Meta["file"].(map[string]interface{})
-	require.Equal(t, expiresAt, fileMeta["expires_at"])
+	require.NotContains(t, fileMeta, "expires_at")
 	require.NotEmpty(t, fileStorage.onlyFileData(t))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
