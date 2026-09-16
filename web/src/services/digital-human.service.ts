@@ -25,6 +25,7 @@ import type {
   DigitalHumanResourceBindingInput,
   DigitalHumanResourceCandidateList,
   DraftResourceBindings,
+  ReplaceDigitalHumanResourceBindingsRequest,
   ManualDigitalHumanInvocationRequest,
   ManualDigitalHumanInvocationResponse,
   CreateDigitalHumanChannelInstallationRequest,
@@ -223,12 +224,15 @@ class DigitalHumanService extends BaseService {
   replaceDraftBindings(
     id: string,
     expectedDraftLockVersion: number,
-    items: DigitalHumanResourceBindingInput[]
+    items: DigitalHumanResourceBindingInput[],
+    expectedDraftVersionId?: string
   ): Promise<ApiResponseData<DraftResourceBindings>> {
-    return this.request('put', `/digital-humans/${id}/draft/bindings`, {
+    const body: ReplaceDigitalHumanResourceBindingsRequest = {
       expected_draft_lock_version: expectedDraftLockVersion,
+      expected_draft_version_id: expectedDraftVersionId,
       items,
-    });
+    };
+    return this.request('put', `/digital-humans/${id}/draft/bindings`, body);
   }
 
   submitInvocation(

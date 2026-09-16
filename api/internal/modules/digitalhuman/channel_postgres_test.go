@@ -13,12 +13,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
+	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime/providers/feishu"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/runspec"
 	"github.com/zgiai/zgi/api/internal/capabilities/runtimeidentity"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
-	"github.com/zgiai/zgi/api/internal/modules/integrations/adapters/feishu"
+	credentialcrypto "github.com/zgiai/zgi/api/internal/infra/credentialcrypto"
 	"gorm.io/datatypes"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -52,29 +52,19 @@ func TestDigitalHumanChannelPostgresConcurrentReplayAndDeliveryIntent(t *testing
 	}
 
 	now := time.Date(2026, 8, 19, 11, 0, 0, 0, time.UTC)
-	cipher, err := integrations.NewCredentialCipher("12345678901234567890123456789012")
-	if err != nil {
-		t.Fatal(err)
-	}
-	encryptedCredentials, err := cipher.EncryptCredentials(map[string]string{
-		"app_id": "cli_channel_test", "app_secret": "test-only-secret",
-		"verification_token": "test-only-token", "encrypt_key": "test-only-encrypt-key",
-	}, integrations.CredentialAAD{
-		OrganizationID: organizationID, ConnectionID: connectionIDForChannelFixture(organizationID),
-		IntegrationID: feishu.IntegrationID, CredentialVersion: 1,
-	})
+	cipher, err := credentialcrypto.NewCredentialCipher("12345678901234567890123456789012")
 	if err != nil {
 		t.Fatal(err)
 	}
 	connectionID := connectionIDForChannelFixture(organizationID)
-	connection := &integrations.IntegrationConnection{
-		ID: connectionID, OrganizationID: organizationID, IntegrationID: feishu.IntegrationID, DriverID: feishu.DriverID,
-		Name: "Channel integration", CredentialSource: integrations.ConnectionCredentialSourceOrganization,
-		AuthType: integrations.ConnectionAuthTypeServiceAccount, AuthMethodID: feishu.TenantAppAuthMethodID,
-		EncryptedCredentials: &encryptedCredentials,
-		Status:               integrations.ConnectionStatusActive, CreatedBy: &actorID, UpdatedBy: &actorID, CreatedAt: now, UpdatedAt: now,
-	}
-	if err := db.Create(connection).Error; err != nil {
+	encryptedCredentials, err := cipher.EncryptCredentials(map[string]string{
+		"app_id": "cli_channel_test", "app_secret": "test-only-secret",
+		"verification_token": "test-only-token", "encrypt_key": "test-only-encrypt-key",
+	}, credentialcrypto.CredentialAAD{
+		OrganizationID: organizationID, ConnectionID: connectionID,
+		IntegrationID: feishu.IntegrationID, CredentialVersion: 1,
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -97,15 +87,20 @@ func TestDigitalHumanChannelPostgresConcurrentReplayAndDeliveryIntent(t *testing
 	}
 
 	installation := &channelruntime.Installation{
-		ID: uuid.New(), OrganizationID: organizationID, WorkspaceID: workspaceID,
-		Provider: feishu.IntegrationID, ConnectionID: connection.ID, Name: "Feishu test",
+		ID: connectionID, OrganizationID: organizationID, WorkspaceID: workspaceID,
+		Provider: feishu.IntegrationID, ConnectorID: feishu.IntegrationID, ConnectionID: connectionID,
+		ConnectionOwnerID: actorID, CredentialSource: channelruntime.CredentialSourceEmbedded, Name: "Feishu test",
 		ExternalTenantID: "tenant-test", ExternalBotID: "ou_bot_test", Status: channelruntime.InstallationStatusActive,
 		Revision: 1, CreatedBy: actorID, UpdatedBy: actorID, CreatedAt: now, UpdatedAt: now,
 	}
 	defaultSubjectType := runtimeidentity.SubjectTypeDigitalHuman
 	installation.DefaultSubjectType = &defaultSubjectType
 	installation.DefaultSubjectID = &detail.Definition.ID
-	if err := repository.CreateChannelInstallation(t.Context(), installation); err != nil {
+	if err := repository.CreateChannelInstallationWithCredential(t.Context(), installation, &ChannelInstallationCredential{
+		InstallationID: installation.ID, OrganizationID: organizationID, WorkspaceID: workspaceID,
+		Provider: feishu.IntegrationID, EncryptedCredentials: encryptedCredentials, CredentialVersion: 1,
+		CreatedBy: actorID, UpdatedBy: actorID, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	mapping := &channelruntime.ConversationMapping{
@@ -406,8 +401,12 @@ func TestDigitalHumanChannelPostgresConcurrentReplayAndDeliveryIntent(t *testing
 		t.Fatal("database accepted a scheduled delivery address that does not match its run")
 	}
 
-	if err := integrations.NewGormConnectionRepository(db).DeleteAs(t.Context(), organizationID, connection.ID, &actorID); !errors.Is(err, integrations.ErrConnectionInUse) {
-		t.Fatalf("DeleteAs(bound channel connection) error = %v", err)
+	stored, err := repository.ChannelInstallationCredentialByID(t.Context(), organizationID, installation.ID)
+	if err != nil || stored.CredentialVersion != 1 {
+		t.Fatalf("installation credential unavailable: %v", err)
+	}
+	if _, err := repository.ChannelInstallationCredentialByID(t.Context(), uuid.New(), installation.ID); !errors.Is(err, ErrChannelCredentialNotFound) {
+		t.Fatalf("cross-organization credential lookup: %v", err)
 	}
 
 	if err := repository.DeleteChannelInstallation(t.Context(), scope, detail.Definition.ID, installation.ID); err != nil {
@@ -475,10 +474,10 @@ func cleanupChannelPostgresFixture(db *gorm.DB, organizationID, actorID uuid.UUI
 		return
 	}
 	for _, table := range []string{
-		"channel_processing_markers", "channel_delivery_outbox", "channel_inbound_events", "channel_bindings", "external_conversation_mappings", "channel_installations",
+		"channel_processing_markers", "channel_delivery_outbox", "channel_inbound_events", "channel_bindings", "external_conversation_mappings", "channel_installation_credentials", "channel_installations",
 		"digital_human_run_outbox", "digital_human_memory_jobs", "digital_human_action_ledger", "digital_human_memory_undo_records",
 		"digital_human_memory_events", "digital_human_memories", "digital_human_memory_states", "digital_human_resource_bindings",
-		"digital_human_runs", "digital_human_versions", "digital_humans", "integration_connections", "workspaces", "organizations",
+		"digital_human_runs", "digital_human_versions", "digital_humans", "workspaces", "organizations",
 	} {
 		column := "organization_id"
 		if table == "organizations" {

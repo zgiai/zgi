@@ -52,3 +52,58 @@ func TestStoredDigitalHumanContractsPreserveAuthenticationAndDigest(t *testing.T
 		})
 	}
 }
+
+func TestWithDigitalHumanSurfaceAdmitsSeparateContract(t *testing.T) {
+	base := validDefinition()
+	candidate, err := WithDigitalHumanSurface(base, "1.0.0-digitalhuman.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !candidate.IsDigitalHumanContract() || !candidate.Supports(SurfaceDigitalHuman) {
+		t.Fatalf("digital human contract not admitted: %+v", candidate)
+	}
+	if candidate.PluginVersion != "1.0.0-digitalhuman.1" || candidate.PluginDigest != "" {
+		t.Fatalf("plugin identity = %q/%q", candidate.PluginVersion, candidate.PluginDigest)
+	}
+	if base.IsDigitalHumanContract() || base.PluginVersion != "1.0.0" {
+		t.Fatalf("source definition mutated: %+v", base)
+	}
+	if err := Validate(candidate); err != nil {
+		t.Fatalf("admitted contract no longer validates: %v", err)
+	}
+	for _, pluginVersion := range []string{"", candidate.PluginVersion} {
+		if _, err := WithDigitalHumanSurface(candidate, pluginVersion); !errors.Is(err, ErrInvalidDefinition) {
+			t.Fatalf("WithDigitalHumanSurface(%q) = %v, want invalid plugin version", pluginVersion, err)
+		}
+	}
+}
+
+func TestAdditiveDigitalHumanSurfaceOnlyExtendsFirstReleaseContracts(t *testing.T) {
+	current := validDefinition()
+	candidate, err := WithDigitalHumanSurface(current, "1.0.0-digitalhuman.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !additiveDigitalHumanSurface(current, candidate) {
+		t.Fatal("first-release contract rejected a digital human extension")
+	}
+
+	next, err := WithDigitalHumanSurface(current, "1.0.0-digitalhuman.2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if additiveDigitalHumanSurface(candidate, next) {
+		t.Fatal("digital human contract admitted a second extension")
+	}
+	if additiveDigitalHumanSurface(current, current) {
+		t.Fatal("identical definitions admitted as an extension")
+	}
+	if additiveDigitalHumanSurface(current, validDefinition()) {
+		t.Fatal("non-digital-human candidate admitted as an extension")
+	}
+	appCredentials := current
+	appCredentials.ExtensionSchemaVersion, appCredentials.ContractVersion = ZGIMetadataSchemaVersion11, 2
+	if additiveDigitalHumanSurface(appCredentials, candidate) {
+		t.Fatal("credential dialect mismatch admitted as an extension")
+	}
+}

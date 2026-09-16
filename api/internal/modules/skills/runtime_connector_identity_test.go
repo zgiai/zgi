@@ -2,6 +2,7 @@ package skills
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -83,6 +84,152 @@ func TestConnectorNativeSkillToolResolvesAndCarriesCurrentIdentity(t *testing.T)
 	}
 	if router.requests[1].LogicalOperationID != invocation.LogicalOperationID {
 		t.Fatal("new tool call ID created another action")
+	}
+}
+
+// A DigitalHuman host is not an AIChat or Agent caller even though it reuses
+// the chat runtime. The exact host id, published version, owner and persisted
+// binding instance must survive into the Connector identity, and the host's
+// own interactivity must be the only source of the interactive flag.
+func TestConnectorDigitalHumanToolCarriesExactHostBindingIdentity(t *testing.T) {
+	t.Parallel()
+
+	for _, interactive := range []bool{true, false} {
+		interactive := interactive
+		t.Run(fmt.Sprintf("interactive=%t", interactive), func(t *testing.T) {
+			t.Parallel()
+
+			definition := connectorSkillTestDefinition()
+			router := &connectorSkillRouterSpy{}
+			dispatcher, err := connectordispatch.New(router)
+			if err != nil {
+				t.Fatal(err)
+			}
+			provider, err := toolprovider.NewProvider(definition)
+			if err != nil {
+				t.Fatal(err)
+			}
+			manager := tools.NewToolManager(nil)
+			if err := manager.RegisterProvider(provider); err != nil {
+				t.Fatal(err)
+			}
+			runtime := NewRuntime(tools.NewToolEngine(manager), manager).WithConnectorDispatcher(dispatcher)
+			operation := definition.Operations[0]
+			resolved := connectorSkillResolved(definition, operation, true)
+			instanceID := uuid.NewString()
+			resolved.Skills[0].Tools[0].ConnectorBindingInstanceID = instanceID
+
+			organizationID := uuid.New()
+			ownerID := uuid.New()
+			digitalHumanID := uuid.NewString()
+			versionID := uuid.NewString()
+			resolver := &connectorIdentityResolverSpy{}
+			execCtx := ExecutionContext{
+				OrganizationID: organizationID.String(), UserID: ownerID.String(),
+				ConversationID: uuid.NewString(), AppID: digitalHumanID, MessageID: uuid.NewString(),
+				InvokeFrom:                tools.ToolInvokeFromAIChat,
+				ConnectorTargetType:       core.TargetTypeDigitalHuman,
+				ConnectorTargetScope:      core.ScopePublished,
+				ConnectorTargetVersionID:  versionID,
+				ConnectorInteractive:      interactive,
+				ConnectorIdentityResolver: resolver,
+				ConnectorActionResolver:   newConnectorActionResolverForTest(),
+			}
+			result, err := runtime.CallSkillTool(
+				context.Background(), resolved, SkillConnectorRuntime, operation.ToolName,
+				map[string]interface{}{}, execCtx, "call-digital-human",
+			)
+			if err != nil || result == nil || resolver.calls != 1 || router.calls != 1 {
+				t.Fatalf(
+					"digital human call = (%#v, %v), resolver calls = %d, router calls = %d",
+					result, err, resolver.calls, router.calls,
+				)
+			}
+			wantTarget := core.TargetRef{
+				Type: core.TargetTypeDigitalHuman, ID: digitalHumanID,
+				Scope: core.ScopePublished, VersionID: versionID, BindingInstanceID: instanceID,
+			}
+			request := resolver.requests[0]
+			if request.Target != wantTarget {
+				t.Fatalf("digital human target = %#v, want %#v", request.Target, wantTarget)
+			}
+			switch request.Target.Type {
+			case core.TargetTypeChat, core.TargetTypeAgent, core.TargetTypeWorkflow:
+				t.Fatalf("digital human target impersonated another surface: %#v", request.Target)
+			}
+			if request.OrganizationID != organizationID || request.OwnerAccountID != ownerID ||
+				request.ActingPrincipalID != ownerID {
+				t.Fatalf("digital human owner identity = %#v", request)
+			}
+			if request.Interactive != interactive {
+				t.Fatalf("interactive = %v, want %v", request.Interactive, interactive)
+			}
+			if invocation := router.requests[0]; invocation.Target != wantTarget {
+				t.Fatalf("dispatched target = %#v, want %#v", invocation.Target, wantTarget)
+			}
+		})
+	}
+}
+
+// ConnectorBindingInstanceID is meaningful only for a DigitalHuman host. A Chat
+// or Agent caller must keep producing its existing target, so a projected
+// instance can never leak into another surface's identity.
+func TestConnectorBindingInstanceIDDoesNotChangeChatOrAgentTargets(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name       string
+		invokeFrom tools.ToolInvokeFrom
+		targetType core.TargetType
+	}{
+		{name: "chat", invokeFrom: tools.ToolInvokeFromAIChat, targetType: core.TargetTypeChat},
+		{name: "agent", invokeFrom: tools.ToolInvokeFromAgent, targetType: core.TargetTypeAgent},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			definition := connectorSkillTestDefinition()
+			router := &connectorSkillRouterSpy{}
+			dispatcher, err := connectordispatch.New(router)
+			if err != nil {
+				t.Fatal(err)
+			}
+			provider, err := toolprovider.NewProvider(definition)
+			if err != nil {
+				t.Fatal(err)
+			}
+			manager := tools.NewToolManager(nil)
+			if err := manager.RegisterProvider(provider); err != nil {
+				t.Fatal(err)
+			}
+			runtime := NewRuntime(tools.NewToolEngine(manager), manager).WithConnectorDispatcher(dispatcher)
+			operation := definition.Operations[0]
+			resolved := connectorSkillResolved(definition, operation, true)
+			resolved.Skills[0].Tools[0].ConnectorBindingInstanceID = uuid.NewString()
+
+			appID := uuid.NewString()
+			resolver := &connectorIdentityResolverSpy{}
+			execCtx := ExecutionContext{
+				OrganizationID: uuid.NewString(), UserID: uuid.NewString(),
+				ConversationID: uuid.NewString(), AppID: appID, MessageID: uuid.NewString(),
+				InvokeFrom: test.invokeFrom, ConnectorIdentityResolver: resolver,
+				ConnectorActionResolver: newConnectorActionResolverForTest(),
+			}
+			if test.invokeFrom == tools.ToolInvokeFromAgent {
+				execCtx.RuntimeParameters = map[string]interface{}{"agent_runtime_source": "console"}
+			}
+			if _, err := runtime.CallSkillTool(
+				context.Background(), resolved, SkillConnectorRuntime, operation.ToolName,
+				map[string]interface{}{}, execCtx, "call-shared-surface",
+			); err != nil {
+				t.Fatal(err)
+			}
+			request := resolver.requests[0]
+			if request.Target.Type != test.targetType || request.Target.BindingInstanceID != "" {
+				t.Fatalf("target = %#v, want type %s without a binding instance", request.Target, test.targetType)
+			}
+		})
 	}
 }
 

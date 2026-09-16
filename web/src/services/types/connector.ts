@@ -23,7 +23,7 @@ export type ConnectorTag =
   | 'integration';
 export type ConnectorReadiness = 'ready' | 'reconnect_required' | 'unavailable';
 export type ConnectorCatalogStatus = 'all' | 'connected' | 'needs_attention';
-export type ConnectorTargetType = 'chat' | 'agent' | 'workflow';
+export type ConnectorTargetType = 'chat' | 'agent' | 'workflow' | 'digital_human';
 export type ConnectorMailUsage = 'read' | 'send' | 'read_send';
 export interface ConnectorMailVerification {
   usage: ConnectorMailUsage;

@@ -6,6 +6,14 @@ import { toast } from 'sonner';
 import { DIGITAL_HUMAN_KEYS } from '@/hooks/query-keys';
 import { useT } from '@/i18n';
 import { digitalHumanService } from '@/services/digital-human.service';
+import { useAuthStore } from '@/store/auth-store';
+import { useOrganizationStore } from '@/store/organization-store';
+import { useWorkspaceStore } from '@/store/workspace-store';
+import {
+  queriedConnectorDraft,
+  savedConnectorDraft,
+} from '@/components/digital-human/digital-human-connector-model';
+import type { ApiResponseData } from '@/services/types/common';
 import type {
   CreateDigitalHumanRequest,
   CreateDigitalHumanPersonaTemplateRequest,
@@ -13,6 +21,7 @@ import type {
   DigitalHumanMemoryListParams,
   DigitalHumanMemoryProposalRequest,
   DigitalHumanResourceBindingInput,
+  DraftResourceBindings,
   ManualDigitalHumanInvocationRequest,
   PublishDigitalHumanRequest,
   RestoreDigitalHumanVersionRequest,
@@ -30,6 +39,18 @@ function isRevisionConflict(error: unknown) {
   if (!isAxiosError(error)) return false;
   const code = (error.response?.data as { code?: string } | undefined)?.code;
   return error.response?.status === 409 || code === 'digital_human.revision.conflict';
+}
+
+/**
+ * Identity of the active workspace context. A response that resolves after the
+ * account, organization, or workspace switched must never land in the cache.
+ */
+function digitalHumanRequestScope() {
+  return JSON.stringify([
+    useAuthStore.getState().user?.id,
+    useOrganizationStore.getState().currentOrganization?.id,
+    useWorkspaceStore.getState().currentWorkspace?.id,
+  ]);
 }
 
 export function useDigitalHumans(enabled = true, search = '') {
@@ -90,9 +111,21 @@ export function useDigitalHumanPersonaTemplates(
 }
 
 export function useDigitalHumanDraftBindings(id: string, enabled = true) {
+  const queryClient = useQueryClient();
+  const queryKey = DIGITAL_HUMAN_KEYS.draftBindings(id);
   return useQuery({
-    queryKey: DIGITAL_HUMAN_KEYS.draftBindings(id),
-    queryFn: () => digitalHumanService.getDraftBindings(id),
+    queryKey,
+    queryFn: async () => {
+      const scope = digitalHumanRequestScope();
+      const started =
+        queryClient.getQueryData<ApiResponseData<DraftResourceBindings>>(queryKey)?.data
+          .draft_version_id;
+      const response = await digitalHumanService.getDraftBindings(id);
+      if (scope !== digitalHumanRequestScope()) throw new Error('Digital human scope changed');
+      const cached = queryClient.getQueryData<ApiResponseData<DraftResourceBindings>>(queryKey);
+      // A delayed GET from an older draft generation must not overwrite a newer one.
+      return { ...response, data: queriedConnectorDraft(response.data, cached?.data, started) };
+    },
     enabled: enabled && Boolean(id),
   });
 }
@@ -321,18 +354,39 @@ export function useDigitalHumanMutations(id?: string) {
     onError: error => mutationError(error, t('errors.role')),
   });
   const replaceBindings = useMutation({
+    onMutate: () => ({ scope: digitalHumanRequestScope() }),
     mutationFn: ({
       digitalHumanId,
       expectedDraftLockVersion,
+      expectedDraftVersionId,
       items,
     }: {
       digitalHumanId: string;
       expectedDraftLockVersion: number;
+      expectedDraftVersionId?: string;
       items: DigitalHumanResourceBindingInput[];
-    }) => digitalHumanService.replaceDraftBindings(digitalHumanId, expectedDraftLockVersion, items),
-    onSuccess: (_, variables) => invalidateDetail(variables.digitalHumanId),
-    onError: (error, variables) =>
-      handleConflict(error, variables.digitalHumanId, t('errors.binding')),
+    }) =>
+      digitalHumanService.replaceDraftBindings(
+        digitalHumanId,
+        expectedDraftLockVersion,
+        items,
+        expectedDraftVersionId
+      ),
+    onSuccess: async (response, variables, context) => {
+      if (context?.scope !== digitalHumanRequestScope()) return;
+      const queryKey = DIGITAL_HUMAN_KEYS.draftBindings(variables.digitalHumanId);
+      // Install the canonical response without downgrading a newer draft that
+      // was published or saved while this request was in flight.
+      queryClient.setQueryData<ApiResponseData<DraftResourceBindings>>(queryKey, previous => ({
+        ...response,
+        data: savedConnectorDraft(response.data, previous?.data),
+      }));
+      await invalidateDetail(variables.digitalHumanId);
+    },
+    onError: (error, variables, context) => {
+      if (context?.scope !== digitalHumanRequestScope()) return;
+      handleConflict(error, variables.digitalHumanId, t('errors.binding'));
+    },
   });
   const invoke = useMutation({
     mutationFn: ({

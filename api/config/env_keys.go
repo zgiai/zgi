@@ -628,6 +628,14 @@ const (
 	// JSON array of trusted local Agent Plugin package roots.
 	envConnectorPluginDirectoriesJSON = "CONNECTOR_PLUGIN_DIRECTORIES_JSON"
 
+	// Legacy DigitalHuman channel credential keyring. Independent from the
+	// Connector keyring; API_KEY_ENCRYPTION_KEY is retained as key id "legacy"
+	// so pre-Connector v1/v2 channel envelopes stay readable.
+	// envDigitalHumanCredentialKeysJSON sets the optional legacy JSON keyring. Default: empty.
+	envDigitalHumanCredentialKeysJSON = "DIGITAL_HUMAN_CREDENTIAL_KEYS_JSON"
+	// envDigitalHumanCredentialActiveKeyID selects the key used for new DigitalHuman envelopes. Default: legacy.
+	envDigitalHumanCredentialActiveKeyID = "DIGITAL_HUMAN_CREDENTIAL_ACTIVE_KEY_ID"
+
 	// Knowledge retrieval limit switch.
 	// envKnowledgeRateLimitEnabled controls whether knowledge retrieval rate limiting is enabled. Default: false.
 	envKnowledgeRateLimitEnabled = "KNOWLEDGE_RATE_LIMIT_ENABLED"

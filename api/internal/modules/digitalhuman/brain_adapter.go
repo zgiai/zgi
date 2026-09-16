@@ -38,13 +38,13 @@ func (a *BrainAdapter) RunConfig(resolved *ResolvedExecution) (chatruntime.RunCo
 		RuntimeInputPolicy: chatruntime.RuntimeInputPolicyCheckpointAndFollowUp,
 		UseMemory:          false, AgentMemoryEnabled: false, AgentMemoryAutoExtractionEnabled: false,
 		BindingReader: a.bindingReader, BindingSnapshot: snapshotRef,
-		IntegrationConnectionIDs: make(map[string]string), IntegrationSelectedConnectionIDs: make(map[string][]string),
+		ConnectorTargetScope: "published", ConnectorTargetVersionID: resolved.Snapshot.DigitalHumanVersion.String(),
 	}
 	databaseByID := make(map[string]*chatruntime.AgentDatabaseBinding)
 	for _, binding := range resolved.Snapshot.Bindings {
 		authorization := chatruntime.ResourceBindingAuthorization{
 			BindingType: string(binding.Type), ResourceID: binding.ResourceID, ParentResourceID: binding.ParentResourceID,
-			AccessMode: string(binding.AccessMode), AllowedActionIDs: resourcebindings.AllowedIntegrationActions(binding.Metadata),
+			AccessMode: string(binding.AccessMode),
 		}
 		if binding.Authorization.AuthorizedBy != nil {
 			authorization.BoundByAccountID = binding.Authorization.AuthorizedBy.String()
@@ -83,12 +83,8 @@ func (a *BrainAdapter) RunConfig(resolved *ResolvedExecution) (chatruntime.RunCo
 			}
 			config.WorkflowBindings = append(config.WorkflowBindings, workflow)
 		case resourcebindings.BindingTypeIntegrationConnection:
-			integrationID := strings.ToLower(strings.TrimSpace(binding.ParentResourceID))
-			if integrationID == "" {
-				return chatruntime.RunConfig{}, fmt.Errorf("%w: integration binding requires parent resource", ErrResourceBindingInvalid)
-			}
-			config.IntegrationConnectionIDs[integrationID] = binding.ResourceID
-			config.IntegrationSelectedConnectionIDs[integrationID] = append(config.IntegrationSelectedConnectionIDs[integrationID], binding.ResourceID)
+			// Published legacy rows remain immutable. Only an independently
+			// authorized native companion binding may expose external operations.
 		}
 	}
 	for _, database := range databaseByID {
@@ -101,9 +97,6 @@ func (a *BrainAdapter) RunConfig(resolved *ResolvedExecution) (chatruntime.RunCo
 	})
 	config.EnabledSkillIDs = normalizedUniqueStrings(config.EnabledSkillIDs)
 	config.KnowledgeDatasetIDs = normalizedUniqueStrings(config.KnowledgeDatasetIDs)
-	for key, values := range config.IntegrationSelectedConnectionIDs {
-		config.IntegrationSelectedConnectionIDs[key] = normalizedUniqueStrings(values)
-	}
 	return config, nil
 }
 

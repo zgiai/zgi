@@ -14,7 +14,8 @@ import (
 
 // GormRepository persists DigitalHuman aggregates and their versions.
 type GormRepository struct {
-	db *gorm.DB
+	db               *gorm.DB
+	connectorCatalog ConnectorCatalog
 }
 
 // NewRepository constructs a DigitalHuman repository.
@@ -31,7 +32,7 @@ func (r *GormRepository) Transaction(ctx context.Context, fn func(*GormRepositor
 		return ErrInvalidRequest
 	}
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return fn(&GormRepository{db: tx})
+		return fn(&GormRepository{db: tx, connectorCatalog: r.connectorCatalog})
 	})
 }
 

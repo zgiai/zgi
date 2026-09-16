@@ -72,6 +72,9 @@ type ChannelConnectionTestStore interface {
 // opening competing receivers for the same installation.
 type ChannelReceiverStore interface {
 	ListActiveChannelInstallations(context.Context) ([]*channelruntime.Installation, error)
+	// The key is the installation ID for embedded channels and the
+	// PersonalConnection ID for Connector-backed channels, preventing competing
+	// SDK clients for one provider application across workspaces.
 	TryAcquireChannelReceiverLease(context.Context, uuid.UUID) (*ChannelReceiverLease, bool, error)
 }
 
@@ -122,7 +125,33 @@ type ChannelTransientTarget struct {
 }
 
 func (r *GormRepository) CreateChannelInstallation(ctx context.Context, installation *channelruntime.Installation) error {
-	if installation == nil || installation.ID == uuid.Nil || installation.OrganizationID == uuid.Nil || installation.WorkspaceID == uuid.Nil {
+	if installation == nil || installation.ID == uuid.Nil || installation.OrganizationID == uuid.Nil ||
+		installation.WorkspaceID == uuid.Nil {
+		return ErrInvalidRequest
+	}
+	if installation.CredentialSource == "" {
+		if installation.ConnectionID == installation.ID {
+			installation.CredentialSource = channelruntime.CredentialSourceEmbedded
+		} else {
+			installation.CredentialSource = channelruntime.CredentialSourceLegacy
+		}
+	}
+	if installation.CredentialSource == channelruntime.CredentialSourceEmbedded {
+		if installation.ConnectionID != installation.ID {
+			return ErrInvalidRequest
+		}
+		if installation.ConnectionOwnerID == uuid.Nil {
+			installation.ConnectionOwnerID = installation.CreatedBy
+		}
+		if installation.ConnectorID == "" {
+			installation.ConnectorID = strings.ToLower(strings.TrimSpace(installation.Provider))
+		}
+	}
+	if installation.CredentialSource == channelruntime.CredentialSourcePersonalConnection &&
+		(installation.ConnectionID == installation.ID || installation.ConnectionOwnerID == uuid.Nil ||
+			strings.TrimSpace(installation.ConnectorID) == "" ||
+			!strings.EqualFold(strings.TrimSpace(installation.Provider), strings.TrimSpace(installation.ConnectorID)) ||
+			installation.ConnectionRevision < 1 || installation.ConnectionCredentialVersion < 1) {
 		return ErrInvalidRequest
 	}
 	if err := r.db.WithContext(ctx).Create(installation).Error; err != nil {
@@ -145,6 +174,10 @@ func (r *GormRepository) CreateChannelInstallationWithCredential(
 		!strings.EqualFold(credential.Provider, installation.Provider) {
 		return ErrInvalidRequest
 	}
+	installation.CredentialSource = channelruntime.CredentialSourceEmbedded
+	installation.ConnectionOwnerID = installation.CreatedBy
+	installation.ConnectorID = strings.ToLower(strings.TrimSpace(installation.Provider))
+	installation.ConnectionCredentialVersion = credential.CredentialVersion
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(installation).Error; err != nil {
 			if isUniqueViolation(err) {
@@ -200,8 +233,11 @@ func (r *GormRepository) ReplaceChannelInstallationCredential(
 			installation.ID, scope.OrganizationID, scope.WorkspaceID,
 			runtimeidentity.SubjectTypeDigitalHuman, *installation.DefaultSubjectID, expectedRevision,
 		).Updates(map[string]any{
-			"connection_id": installation.ID, "external_tenant_id": installation.ExternalTenantID,
-			"external_bot_id": installation.ExternalBotID, "updated_by": scope.ActorID,
+			"connector_id":  strings.ToLower(strings.TrimSpace(installation.Provider)),
+			"connection_id": installation.ID, "connection_owner_id": installation.CreatedBy,
+			"credential_source": string(channelruntime.CredentialSourceEmbedded), "connection_revision": 0,
+			"connection_credential_version": credential.CredentialVersion,
+			"external_tenant_id":            installation.ExternalTenantID, "external_bot_id": installation.ExternalBotID, "updated_by": scope.ActorID,
 			"revision": gorm.Expr("revision + 1"), "updated_at": installation.UpdatedAt,
 		})
 		if result.Error != nil {
@@ -288,9 +324,9 @@ func (r *GormRepository) ListActiveChannelInstallations(ctx context.Context) ([]
 
 func (r *GormRepository) TryAcquireChannelReceiverLease(
 	ctx context.Context,
-	installationID uuid.UUID,
+	receiverKey uuid.UUID,
 ) (*ChannelReceiverLease, bool, error) {
-	if installationID == uuid.Nil {
+	if receiverKey == uuid.Nil {
 		return nil, false, ErrInvalidRequest
 	}
 	// PostgreSQL advisory locks are bound to one physical connection and are
@@ -307,7 +343,7 @@ func (r *GormRepository) TryAcquireChannelReceiverLease(
 	if err != nil {
 		return nil, false, fmt.Errorf("reserve channel receiver connection: %w", err)
 	}
-	key := channelReceiverLeaseKey(installationID)
+	key := channelReceiverLeaseKey(receiverKey)
 	var acquired bool
 	if err := connection.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1)", key).Scan(&acquired); err != nil {
 		_ = connection.Close()
@@ -323,9 +359,9 @@ func (r *GormRepository) TryAcquireChannelReceiverLease(
 	}, true, nil
 }
 
-func channelReceiverLeaseKey(installationID uuid.UUID) int64 {
+func channelReceiverLeaseKey(receiverKey uuid.UUID) int64 {
 	hash := fnv.New64a()
-	_, _ = hash.Write([]byte("digital-human-channel-receiver:" + installationID.String()))
+	_, _ = hash.Write([]byte("digital-human-channel-receiver:" + receiverKey.String()))
 	return int64(hash.Sum64())
 }
 
@@ -414,20 +450,39 @@ func (r *GormRepository) UpdateChannelInstallation(ctx context.Context, scope Sc
 		!isDigitalHumanChannelInstallation(installation) {
 		return ErrInvalidRequest
 	}
-	result := r.db.WithContext(ctx).Model(&channelruntime.Installation{}).Where(
-		"id = ? AND organization_id = ? AND workspace_id = ? AND default_subject_type = ? AND default_subject_id = ? AND revision = ? AND deleted_at IS NULL",
-		installation.ID, scope.OrganizationID, scope.WorkspaceID,
-		runtimeidentity.SubjectTypeDigitalHuman, *installation.DefaultSubjectID, expectedRevision,
-	).Updates(map[string]any{
-		"name": installation.Name, "external_tenant_id": installation.ExternalTenantID,
-		"external_bot_id": installation.ExternalBotID, "status": installation.Status,
-		"updated_by": scope.ActorID, "revision": gorm.Expr("revision + 1"), "updated_at": installation.UpdatedAt,
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&channelruntime.Installation{}).Where(
+			"id = ? AND organization_id = ? AND workspace_id = ? AND default_subject_type = ? AND default_subject_id = ? AND revision = ? AND deleted_at IS NULL",
+			installation.ID, scope.OrganizationID, scope.WorkspaceID,
+			runtimeidentity.SubjectTypeDigitalHuman, *installation.DefaultSubjectID, expectedRevision,
+		).Updates(map[string]any{
+			"connector_id": installation.ConnectorID, "connection_id": installation.ConnectionID,
+			"connection_owner_id": installation.ConnectionOwnerID, "credential_source": installation.CredentialSource,
+			"connection_revision": installation.ConnectionRevision, "connection_credential_version": installation.ConnectionCredentialVersion,
+			"name": installation.Name, "external_tenant_id": installation.ExternalTenantID,
+			"external_bot_id": installation.ExternalBotID, "status": installation.Status,
+			"updated_by": scope.ActorID, "revision": gorm.Expr("revision + 1"), "updated_at": installation.UpdatedAt,
+		})
+		if result.Error != nil {
+			return fmt.Errorf("update channel installation: %w", result.Error)
+		}
+		if result.RowsAffected != 1 {
+			return ErrChannelConflict
+		}
+		if installation.CredentialSource == channelruntime.CredentialSourcePersonalConnection {
+			// A Connector-backed installation leases its credential through the
+			// PersonalConnection, so the stale embedded envelope must not survive
+			// the switch and shadow the owner-scoped credential.
+			if err := tx.Where(
+				"organization_id = ? AND installation_id = ?", scope.OrganizationID, installation.ID,
+			).Delete(&ChannelInstallationCredential{}).Error; err != nil {
+				return fmt.Errorf("remove embedded credential after connector switch: %w", err)
+			}
+		}
+		return nil
 	})
-	if result.Error != nil {
-		return fmt.Errorf("update channel installation: %w", result.Error)
-	}
-	if result.RowsAffected != 1 {
-		return ErrChannelConflict
+	if err != nil {
+		return err
 	}
 	installation.Revision = expectedRevision + 1
 	return nil

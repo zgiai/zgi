@@ -5,7 +5,6 @@ import type {
   DigitalHumanChannelInstallation,
   DigitalHumanChannelInstallationVerification,
 } from '@/services/types/digital-human';
-import type { IntegrationConnection } from '@/services/types/integration';
 
 export type ChannelCredentialDraft = Record<string, string>;
 
@@ -23,10 +22,6 @@ export interface ChannelCredentialDialogProps {
 }
 
 export interface ChannelCredentialUI {
-  createEmptyDraft: () => ChannelCredentialDraft;
-  serialize: (value: ChannelCredentialDraft) => Record<string, string>;
-  isComplete: (value: ChannelCredentialDraft) => boolean;
-  Fields: ComponentType<ChannelCredentialFieldsProps>;
   Dialog: ComponentType<ChannelCredentialDialogProps>;
 }
 
@@ -55,19 +50,9 @@ export interface ChannelInstallationUI {
 
 export interface DigitalHumanChannelProviderBase {
   id: string;
-  integrationId: string;
-  driverId: string;
-  authMethodId: string;
-  credentialSource: 'organization';
-  authType: 'service_account';
-  region: string;
   nameKey: string;
-  descriptionKey: string;
-  defaultBotNameKey: string;
-  enabled: boolean;
   accentClassName: string;
   connectionTestMode: 'basic' | 'message_round_trip';
   credentialUI: ChannelCredentialUI;
   installationUI?: ChannelInstallationUI;
-  connectionFilter?: (connection: IntegrationConnection) => boolean;
 }

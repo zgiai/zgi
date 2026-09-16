@@ -280,6 +280,10 @@ type SkillToolDefinition struct {
 	// never member-authored Skill metadata.
 	ConnectorNative      bool   `json:"-" yaml:"-"`
 	ConnectorOperationID string `json:"-" yaml:"-"`
+	// ConnectorBindingInstanceID is the exact persisted Target Binding
+	// instance selected by the server-side projection. It is required to build
+	// a DigitalHuman target and is never member-authored.
+	ConnectorBindingInstanceID string `json:"-" yaml:"-"`
 }
 
 type SkillFrontmatter struct {

@@ -61,6 +61,12 @@ var (
 	ErrChannelConflict = errors.New("digital human channel conflict")
 	// ErrChannelNotReady indicates an invalid or incomplete provider connection.
 	ErrChannelNotReady = errors.New("digital human channel is not ready")
+	// ErrChannelTransportUnsupported indicates that a Connector is not backed by
+	// a registered receiver for the selected channel transport.
+	ErrChannelTransportUnsupported = errors.New("digital human channel transport is unsupported")
+	// ErrChannelCredentialManaged indicates that a connection-backed channel
+	// must be rotated through Connector maintenance rather than embedded input.
+	ErrChannelCredentialManaged = errors.New("digital human channel credential is managed by Connector")
 	// ErrCredentialStorageUnavailable indicates that the deployment cannot
 	// securely persist DigitalHuman-owned channel or direct Skill credentials.
 	ErrCredentialStorageUnavailable = errors.New("digital human credential storage is unavailable")

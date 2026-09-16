@@ -12,7 +12,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
 	"github.com/zgiai/zgi/api/internal/capabilities/runtimeidentity"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
 )
 
 type providerBoundaryStore struct {
@@ -179,12 +178,9 @@ func TestRegisteredProviderRunsEndToEndWithoutDigitalHumanProviderBranch(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	cipher, err := integrations.NewCredentialCipher("12345678901234567890123456789012")
-	if err != nil {
-		t.Fatal(err)
-	}
+	cipher := newTestChannelCredentialCipher(t)
 	store := &providerBoundaryStore{channelStoreStub: newChannelStoreStub()}
-	credentials := NewIntegrationChannelCredentialResolver(store, &connectionResolverStub{}, cipher, registry)
+	credentials := NewInstallationCredentialResolver(store, cipher, registry)
 	scope := testScope()
 	digitalHumanID := uuid.New()
 	runtime := &channelRuntimeStub{}

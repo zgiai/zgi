@@ -10,9 +10,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
+	providertransport "github.com/zgiai/zgi/api/internal/capabilities/channelruntime/providertransport"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/runtimeidentity"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
 )
 
 func TestChannelWebhookReplayedTenTimesCreatesOneInvocation(t *testing.T) {
@@ -607,6 +607,123 @@ func TestChannelInstallationsAreIsolatedByDigitalHuman(t *testing.T) {
 	}
 }
 
+func TestChannelPersonalConnectionInstallationRemembersConnectionAndOwner(t *testing.T) {
+	service, store, _, _, scope, digitalHumanID := newChannelTestService(t)
+	connectionID := uuid.New()
+	installation, err := service.CreateInstallation(t.Context(), scope, digitalHumanID, CreateChannelInstallationRequest{
+		Provider: "feishu", ConnectorID: "feishu", ConnectionID: connectionID, Name: "Feishu personal",
+	})
+	if err != nil {
+		t.Fatalf("CreateInstallation() error = %v", err)
+	}
+	if installation.ConnectionID != connectionID || installation.ConnectionID == installation.ID {
+		t.Fatalf("installation connection = %s, want personal connection %s", installation.ConnectionID, connectionID)
+	}
+	if installation.CreatedBy != scope.ActorID || installation.ConnectionOwnerID != scope.ActorID {
+		t.Fatalf("installation owner = creator %s / connection owner %s, want actor %s",
+			installation.CreatedBy, installation.ConnectionOwnerID, scope.ActorID)
+	}
+	if installation.CredentialSource != channelruntime.CredentialSourcePersonalConnection || installation.ConnectorID != "feishu" {
+		t.Fatalf("installation credential metadata = source %q connector %q", installation.CredentialSource, installation.ConnectorID)
+	}
+	if installation.ConnectionRevision < 1 || installation.ConnectionCredentialVersion < 1 {
+		t.Fatalf("installation did not persist the connection revision/version: %#v", installation)
+	}
+	stored := store.installations[installation.ID]
+	if stored == nil || stored.ConnectionID != connectionID || stored.ConnectionOwnerID != scope.ActorID {
+		t.Fatalf("stored installation = %#v", stored)
+	}
+	views, err := service.ListInstallations(t.Context(), scope, digitalHumanID)
+	if err != nil || len(views) != 1 || views[0].CredentialMode != "connection" {
+		t.Fatalf("ListInstallations() = %#v, %v", views, err)
+	}
+}
+
+func TestChannelInstallationCreateRejectsConnectorProviderMismatch(t *testing.T) {
+	service, _, _, _, scope, digitalHumanID := newChannelTestService(t)
+	if _, err := service.CreateInstallation(t.Context(), scope, digitalHumanID, CreateChannelInstallationRequest{
+		Provider: "feishu", ConnectorID: "dingtalk", ConnectionID: uuid.New(), Name: "Mismatch",
+	}); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("CreateInstallation(connector mismatch) error = %v, want ErrInvalidRequest", err)
+	}
+}
+
+func TestChannelInstallationCreateFailsClosedWhenOwnerCannotLeaseConnection(t *testing.T) {
+	service, _, _, _, scope, digitalHumanID := newChannelTestService(t)
+	connectionID := uuid.New()
+	service.credentials = rejectingChannelCredentialStub{
+		channelCredentialStub: channelCredentialStub{},
+		rejectConnectionID:    connectionID,
+	}
+	if _, err := service.CreateInstallation(t.Context(), scope, digitalHumanID, CreateChannelInstallationRequest{
+		Provider: "feishu", ConnectionID: connectionID, Name: "Owner mismatch",
+	}); !errors.Is(err, ErrChannelNotReady) {
+		t.Fatalf("CreateInstallation(owner mismatch) error = %v, want ErrChannelNotReady", err)
+	}
+}
+
+func TestChannelInstallationSwitchReassignsPersonalConnectionOwner(t *testing.T) {
+	service, store, _, _, scope, digitalHumanID := newChannelTestService(t)
+	installation, err := service.CreateInstallation(t.Context(), scope, digitalHumanID, CreateChannelInstallationRequest{
+		Provider: "feishu", ConnectionID: uuid.New(), Name: "Feishu initial",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	switchedConnectionID := uuid.New()
+	connectorID := "feishu"
+	updated, err := service.UpdateInstallation(t.Context(), scope, digitalHumanID, installation.ID, UpdateChannelInstallationRequest{
+		ExpectedRevision: installation.Revision,
+		ConnectorID:      &connectorID,
+		ConnectionID:     &switchedConnectionID,
+	})
+	if err != nil {
+		t.Fatalf("UpdateInstallation(switch) error = %v", err)
+	}
+	if updated.ConnectionID != switchedConnectionID || updated.ConnectionOwnerID != scope.ActorID {
+		t.Fatalf("switched installation = %#v", updated)
+	}
+	if updated.CredentialSource != channelruntime.CredentialSourcePersonalConnection || updated.ConnectorID != "feishu" {
+		t.Fatalf("switched credential metadata = source %q connector %q", updated.CredentialSource, updated.ConnectorID)
+	}
+	if stored := store.installations[installation.ID]; stored == nil || stored.ConnectionID != switchedConnectionID {
+		t.Fatalf("stored switched installation = %#v", stored)
+	}
+}
+
+func TestChannelInstallationSwitchRejectsPartialConnectorRequest(t *testing.T) {
+	service, _, _, _, scope, digitalHumanID := newChannelTestService(t)
+	installation, err := service.CreateInstallation(t.Context(), scope, digitalHumanID, CreateChannelInstallationRequest{
+		Provider: "feishu", ConnectionID: uuid.New(), Name: "Feishu partial",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	switchedConnectionID := uuid.New()
+	if _, err := service.UpdateInstallation(t.Context(), scope, digitalHumanID, installation.ID, UpdateChannelInstallationRequest{
+		ExpectedRevision: installation.Revision,
+		ConnectionID:     &switchedConnectionID,
+	}); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("UpdateInstallation(partial) error = %v, want ErrInvalidRequest", err)
+	}
+}
+
+func TestChannelConnectionBackedCredentialIsManagedByConnector(t *testing.T) {
+	service, _, _, _, scope, digitalHumanID := newChannelTestService(t)
+	installation, err := service.CreateInstallation(t.Context(), scope, digitalHumanID, CreateChannelInstallationRequest{
+		Provider: "feishu", ConnectionID: uuid.New(), Name: "Feishu managed",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.UpdateInstallationCredential(t.Context(), scope, digitalHumanID, installation.ID, UpdateChannelInstallationCredentialRequest{
+		ExpectedRevision: installation.Revision,
+		Credentials:      map[string]string{"app_secret": "replacement"},
+	}); !errors.Is(err, ErrChannelCredentialManaged) {
+		t.Fatalf("UpdateInstallationCredential(managed) error = %v, want ErrChannelCredentialManaged", err)
+	}
+}
+
 func TestChannelInstallationVerificationRechecksCredentialAndBotIdentity(t *testing.T) {
 	service, store, _, _, scope, digitalHumanID := newChannelTestService(t)
 	installation, err := service.CreateInstallation(t.Context(), scope, digitalHumanID, CreateChannelInstallationRequest{
@@ -636,12 +753,12 @@ func TestChannelInstallationVerificationReturnsActionableProviderFailure(t *test
 	service, store, _, _, scope, digitalHumanID := newChannelTestService(t)
 	service.credentials = failingChannelCredentialStub{
 		channelCredentialStub: channelCredentialStub{},
-		err: integrations.NewProviderErrorWithReason(
-			integrations.ErrorCodeAccessDenied,
+		err: providertransport.NewProviderErrorWithReason(
+			providertransport.ErrorCodeAccessDenied,
 			"permission_missing",
 			"provider denied identity lookup",
 			nil,
-			integrations.ProviderDiagnostics{ErrorCode: "230027", RequestID: "req-safe", HTTPStatus: 403},
+			providertransport.ProviderDiagnostics{ErrorCode: "230027", RequestID: "req-safe", HTTPStatus: 403},
 		),
 	}
 	installation, err := service.CreateInstallation(t.Context(), scope, digitalHumanID, CreateChannelInstallationRequest{
@@ -933,8 +1050,8 @@ func TestDeliveryConfirmedProviderFailureIsNotRetried(t *testing.T) {
 		Status: channelruntime.DeliveryPending, AvailableAt: now, CreatedAt: now, UpdatedAt: now,
 	}
 	store.deliveries[delivery.ID] = delivery
-	adapter.deliveryErr = integrations.NewErrorWithReason(
-		integrations.ErrorCodeAccessDenied,
+	adapter.deliveryErr = providertransport.NewErrorWithReason(
+		providertransport.ErrorCodeAccessDenied,
 		"send_not_allowed",
 		"temporary provider failure with sensitive upstream detail",
 		nil,
@@ -969,8 +1086,8 @@ func TestDeliveryTransientFailureRetriesWithoutSubmittingInvocationAgain(t *test
 	now := time.Now().UTC()
 	delivery := newChannelTestDelivery(t, scope, digitalHumanID, installation, binding, now)
 	store.deliveries[delivery.ID] = delivery
-	adapter.deliveryErr = integrations.NewError(
-		integrations.ErrorCodeUpstream,
+	adapter.deliveryErr = providertransport.NewError(
+		providertransport.ErrorCodeUpstream,
 		"temporary provider failure with sensitive upstream detail",
 		nil,
 	)
@@ -1281,11 +1398,25 @@ func (channelCredentialStub) ResolveIdentity(context.Context, *channelruntime.In
 	return "tenant-1", "ou_bot", nil
 }
 func (channelCredentialStub) ResolveCredential(context.Context, *channelruntime.Installation) (*channelruntime.ResolvedChannelCredential, error) {
-	return &channelruntime.ResolvedChannelCredential{Values: map[string]string{"safe": "value"}}, nil
+	return &channelruntime.ResolvedChannelCredential{Values: map[string]string{"safe": "value"}, Version: 1, Revision: 1}, nil
 }
 
 func (channelCredentialStub) ContextReadiness(context.Context, *channelruntime.Installation) ChannelContextReadiness {
 	return ChannelContextReadiness{Status: ChannelContextReadinessReady, MessageHistoryAvailable: true, MemberNamesAvailable: true}
+}
+
+// rejectingChannelCredentialStub fails one connection locator, mirroring an
+// owner-scope rejection without weakening the other channel tests.
+type rejectingChannelCredentialStub struct {
+	channelCredentialStub
+	rejectConnectionID uuid.UUID
+}
+
+func (stub rejectingChannelCredentialStub) ResolveCredential(_ context.Context, installation *channelruntime.Installation) (*channelruntime.ResolvedChannelCredential, error) {
+	if installation != nil && installation.ConnectionID == stub.rejectConnectionID {
+		return nil, ErrChannelNotReady
+	}
+	return stub.channelCredentialStub.ResolveCredential(context.Background(), installation)
 }
 
 type failingChannelCredentialStub struct {

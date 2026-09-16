@@ -8,6 +8,7 @@ import (
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/resourcebindings"
 	"github.com/zgiai/zgi/api/internal/capabilities/runtimeidentity"
+	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
@@ -187,5 +188,97 @@ func TestDigitalHumanBindingVerifierRejectsUnboundResourceBeforeProvider(t *test
 	})
 	if err != nil || allowed {
 		t.Fatalf("unbound resource verifier = %v, %v; provider must not run", allowed, err)
+	}
+}
+
+func TestDigitalHumanSkillExecutionContextKeepsAgentProfileWithDigitalHumanTarget(t *testing.T) {
+	digitalHumanID := uuid.New()
+	runID := uuid.NewString()
+	versionID := uuid.NewString()
+	config := RunConfig{
+		ConnectorTargetScope:     "published",
+		ConnectorTargetVersionID: versionID,
+		ConnectorRunID:           runID,
+		ConnectorInteractive:     true,
+	}
+	parts := &chatRequestParts{}
+	applyRunConfigToParts(config, parts)
+	prepared := &PreparedChat{
+		Scope:        Scope{OrganizationID: uuid.New(), AccountID: uuid.New()},
+		Caller:       Caller{Type: runtimemodel.ConversationCallerDigitalHuman, ID: &digitalHumanID},
+		RunConfig:    config,
+		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
+		Message:      &runtimemodel.Message{ID: uuid.New()},
+		parts:        parts,
+	}
+
+	runtime := &service{}
+	execution := runtime.skillExecutionContext(prepared)
+	if execution.InvokeFrom != tools.ToolInvokeFromAgent {
+		t.Fatalf("InvokeFrom = %q, want the existing autonomous profile", execution.InvokeFrom)
+	}
+	if execution.ConnectorTargetType != connectorcore.TargetTypeDigitalHuman {
+		t.Fatalf("ConnectorTargetType = %q, want explicit DigitalHuman", execution.ConnectorTargetType)
+	}
+	if execution.AppID != digitalHumanID.String() {
+		t.Fatalf("AppID = %q, want host %q", execution.AppID, digitalHumanID)
+	}
+	if execution.ConnectorTargetScope != "published" || execution.ConnectorTargetVersionID != versionID {
+		t.Fatalf("published binding coordinates lost: scope=%q version=%q", execution.ConnectorTargetScope, execution.ConnectorTargetVersionID)
+	}
+	if execution.ConnectorRunID != runID || !execution.ConnectorInteractive {
+		t.Fatalf("run coordinates lost: runID=%q interactive=%v", execution.ConnectorRunID, execution.ConnectorInteractive)
+	}
+}
+
+func TestDigitalHumanSkillExecutionContextUsesDigitalHumanIdentityResolver(t *testing.T) {
+	digitalHumanID := uuid.New()
+	prepared := &PreparedChat{
+		Scope:        Scope{OrganizationID: uuid.New(), AccountID: uuid.New()},
+		Caller:       Caller{Type: runtimemodel.ConversationCallerDigitalHuman, ID: &digitalHumanID},
+		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
+		Message:      &runtimemodel.Message{ID: uuid.New()},
+		parts:        &chatRequestParts{},
+	}
+
+	agentResolver := &connectorNativeLoopAgentResolver{}
+	dhResolver := &digitalHumanRuntimeResolverStub{}
+	runtime := &service{connectorAgentRuntime: agentResolver, connectorDigitalHumanRuntime: dhResolver}
+	execution := runtime.skillExecutionContext(prepared)
+	if execution.InvokeFrom != tools.ToolInvokeFromAgent {
+		t.Fatalf("InvokeFrom = %q, want the compatibility autonomous profile", execution.InvokeFrom)
+	}
+	if execution.ConnectorIdentityResolver != dhResolver {
+		t.Fatalf("ConnectorIdentityResolver = %#v, want the DigitalHuman resolver", execution.ConnectorIdentityResolver)
+	}
+	if execution.ConnectorIdentityResolver == agentResolver {
+		t.Fatal("DigitalHuman execution borrowed the Agent identity resolver")
+	}
+
+	// A missing DigitalHuman resolver must fail closed instead of falling back to
+	// the Agent resolver implied by the compatibility InvokeFrom profile.
+	runtime = &service{connectorAgentRuntime: agentResolver}
+	execution = runtime.skillExecutionContext(prepared)
+	if execution.ConnectorIdentityResolver != nil {
+		t.Fatalf("missing DigitalHuman resolver fell back to %#v", execution.ConnectorIdentityResolver)
+	}
+}
+
+func TestChatAndAgentSkillExecutionContextKeepsConnectorTargetDerived(t *testing.T) {
+	for _, callerType := range []string{runtimemodel.ConversationCallerAIChat, runtimemodel.ConversationCallerAgent} {
+		callerID := uuid.New()
+		prepared := &PreparedChat{
+			Scope:        Scope{OrganizationID: uuid.New(), AccountID: uuid.New()},
+			Caller:       Caller{Type: callerType, ID: &callerID},
+			Conversation: &runtimemodel.Conversation{ID: uuid.New()},
+			Message:      &runtimemodel.Message{ID: uuid.New()},
+			parts:        &chatRequestParts{},
+		}
+
+		runtime := &service{}
+		execution := runtime.skillExecutionContext(prepared)
+		if execution.ConnectorTargetType != "" || execution.ConnectorRunID != "" || execution.ConnectorInteractive {
+			t.Fatalf("%s execution context inherited DigitalHuman coordinates: %#v", callerType, execution)
+		}
 	}
 }

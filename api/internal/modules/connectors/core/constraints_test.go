@@ -50,3 +50,28 @@ func TestDraftBoundaryDoesNotAuthorizePublishedVersion(t *testing.T) {
 		t.Fatal("incomplete constraint accepted")
 	}
 }
+
+func TestDigitalHumanRequiresExactBindingWithoutRewritingConnectionConstraint(t *testing.T) {
+	owner := uuid.New()
+	now := time.Now().UTC()
+	target := TargetRef{
+		Type: TargetTypeDigitalHuman, ID: uuid.NewString(), Scope: ScopePublished,
+		VersionID: uuid.NewString(), BindingInstanceID: uuid.NewString(),
+	}
+	connection := OwnerConstraint(owner, []Identifier{"web.search"})
+	if connection.Allows(owner, "web.search", target, now) {
+		t.Fatal("historical connection constraint silently granted DigitalHuman access")
+	}
+	binding := OwnerConstraint(owner, []Identifier{"web.search"})
+	binding.TargetBoundaries = []TargetBoundary{{
+		Type: target.Type, ID: target.ID, Scope: string(target.Scope), VersionID: target.VersionID,
+	}}
+	if !ConstraintsAllow(connection, binding, owner, "web.search", target, now) {
+		t.Fatal("exact owner-created DigitalHuman binding did not supply the V4 host boundary")
+	}
+	other := target
+	other.ID = uuid.NewString()
+	if ConstraintsAllow(connection, binding, owner, "web.search", other, now) {
+		t.Fatal("DigitalHuman binding authorized another target")
+	}
+}

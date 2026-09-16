@@ -37,10 +37,12 @@ type ChannelInboundMessageService interface {
 }
 
 type channelReceiverRun struct {
-	revision int64
-	mode     string
-	cancel   context.CancelCauseFunc
-	lease    *ChannelReceiverLease
+	revision           int64
+	connectionRevision int
+	credentialVersion  int
+	mode               string
+	cancel             context.CancelCauseFunc
+	lease              *ChannelReceiverLease
 }
 
 func NewChannelReceiverManager(store ChannelReceiverStore, providers *channelruntime.Registry, credentials ChannelCredentialResolver, channels ChannelInboundMessageService) *ChannelReceiverManager {
@@ -163,6 +165,38 @@ func (manager *ChannelReceiverManager) ensureReceiver(ctx context.Context, insta
 	if current := manager.running[installation.ID]; current != nil {
 		if current.revision != installation.Revision {
 			current.cancel(context.Canceled)
+			manager.mu.Unlock()
+			return
+		}
+		manager.mu.Unlock()
+		// An installation revision does not change when the owner-scoped
+		// PersonalConnection backing its credential is rotated or revoked, so a
+		// running transport must revalidate the live lease. The credential is
+		// resolved only to compare its connection revision and version, and is
+		// destroyed before this method returns.
+		credential, err := manager.credentials.ResolveCredential(ctx, installation)
+		if err == nil {
+			unchanged := current.connectionRevision == credential.Revision && current.credentialVersion == credential.Version
+			credential.Destroy()
+			if unchanged {
+				return
+			}
+		}
+		manager.mu.Lock()
+		if manager.running[installation.ID] == current {
+			// Stop the stale transport and let the next reconcile reconnect.
+			// Its lease is only released after Run returns, so the replacement
+			// cannot overlap the previous connection.
+			current.cancel(context.Canceled)
+			delete(manager.running, installation.ID)
+			status := channelruntime.ReceiverStatus{
+				Mode: current.mode, Revision: installation.Revision, State: channelruntime.ReceiverStateConnecting, UpdatedAt: time.Now().UTC(),
+			}
+			if err != nil {
+				status.State = channelruntime.ReceiverStateError
+				status.ErrorCode = "credential_unavailable"
+			}
+			manager.statuses[installation.ID] = status
 		}
 		manager.mu.Unlock()
 		return
@@ -181,19 +215,17 @@ func (manager *ChannelReceiverManager) ensureReceiver(ctx context.Context, insta
 		return
 	}
 	mode := strings.TrimSpace(receiver.Mode(*credential))
-	if mode == "webhook" {
+	if mode == "" || mode == "webhook" {
 		credential.Destroy()
 		manager.mu.Lock()
 		manager.observed[installation.ID] = installation.Revision
-		manager.statuses[installation.ID] = channelruntime.ReceiverStatus{Mode: mode, Revision: installation.Revision, State: channelruntime.ReceiverStateNotApplicable}
+		manager.statuses[installation.ID] = channelruntime.ReceiverStatus{
+			Mode: "webhook", Revision: installation.Revision, State: channelruntime.ReceiverStateNotApplicable,
+		}
 		manager.mu.Unlock()
 		return
 	}
-	leaseID := installation.ID
-	if scoped, ok := receiver.(channelruntime.ReceiverLeaseScope); ok {
-		leaseID = uuid.NewSHA1(uuid.NameSpaceOID, []byte(scoped.LeaseScope(*credential)))
-	}
-	lease, acquired, err := manager.store.TryAcquireChannelReceiverLease(ctx, leaseID)
+	lease, acquired, err := manager.store.TryAcquireChannelReceiverLease(ctx, channelReceiverLeaseID(installation, receiver, credential))
 	if err != nil || !acquired {
 		credential.Destroy()
 		code := "connection_in_use"
@@ -204,7 +236,10 @@ func (manager *ChannelReceiverManager) ensureReceiver(ctx context.Context, insta
 		return
 	}
 	runCtx, cancel := context.WithCancelCause(ctx)
-	entry := &channelReceiverRun{revision: installation.Revision, mode: mode, cancel: cancel, lease: lease}
+	entry := &channelReceiverRun{
+		revision: installation.Revision, connectionRevision: credential.Revision, credentialVersion: credential.Version,
+		mode: mode, cancel: cancel, lease: lease,
+	}
 	manager.mu.Lock()
 	manager.running[installation.ID] = entry
 	manager.observed[installation.ID] = installation.Revision
@@ -214,6 +249,23 @@ func (manager *ChannelReceiverManager) ensureReceiver(ctx context.Context, insta
 	}
 	manager.mu.Unlock()
 	manager.workers.Go(func() { manager.runReceiver(runCtx, installation, receiver, credential, entry) })
+}
+
+// channelReceiverLeaseID selects the receiver ownership key. A provider
+// application scope wins so installations that share one provider app cannot
+// open competing transports; otherwise a Connector-backed installation leases
+// the owner-scoped PersonalConnection, and an embedded installation keeps its
+// installation ID. The returned key carries no credential material.
+func channelReceiverLeaseID(installation *channelruntime.Installation, receiver channelruntime.Receiver, credential *channelruntime.ResolvedChannelCredential) uuid.UUID {
+	if scoped, ok := receiver.(channelruntime.ReceiverLeaseScope); ok {
+		if scope := strings.TrimSpace(scoped.LeaseScope(*credential)); scope != "" {
+			return uuid.NewSHA1(uuid.NameSpaceOID, []byte(scope))
+		}
+	}
+	if installation.ConnectionID != uuid.Nil && installation.ConnectionID != installation.ID {
+		return installation.ConnectionID
+	}
+	return installation.ID
 }
 
 func (manager *ChannelReceiverManager) runReceiver(ctx context.Context, installation *channelruntime.Installation, receiver channelruntime.Receiver, credential *channelruntime.ResolvedChannelCredential, entry *channelReceiverRun) {

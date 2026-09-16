@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	providertransport "github.com/zgiai/zgi/api/internal/capabilities/channelruntime/providertransport"
 )
 
 func TestDingTalkChannelPrepareCredentials(t *testing.T) {
@@ -116,7 +116,7 @@ func TestDingTalkChannelDeliverUsesRobotAPI(t *testing.T) {
 		t.Fatalf("NewDirectChannelAdapter() error = %v", err)
 	}
 	receipt, err := adapter.Deliver(t.Context(), channelruntime.DeliveryRequest{
-		OrganizationID: uuid.New(), WorkspaceID: uuid.New(), ActorID: uuid.New(), ConnectionID: connectionID,
+		OrganizationID: uuid.New(), WorkspaceID: uuid.New(), ActorID: uuid.New(), InstallationID: connectionID, ConnectionID: uuid.New(),
 		RunID: uuid.New(), DeliveryID: uuid.New(), ExternalConversationID: "group:cid-9", Text: "处理完成",
 		Mentions: []channelruntime.DeliveryMention{{ExternalID: "user-1", DisplayName: "康源"}},
 	})
@@ -141,14 +141,13 @@ type dingTalkChannelConnectionResolverStub struct {
 	connectionID uuid.UUID
 }
 
-func (stub dingTalkChannelConnectionResolverStub) Resolve(_ context.Context, request integrations.ConnectionResolveRequest) (*integrations.ResolvedConnection, error) {
-	if request.ConnectionID != stub.connectionID.String() || request.IntegrationID != IntegrationID || request.DriverID != DriverID {
-		return nil, integrations.NewError(integrations.ErrorCodeConnectionNotFound, "connection not found", nil)
+func (stub dingTalkChannelConnectionResolverStub) Resolve(_ context.Context, request providertransport.CredentialRequest) (*providertransport.CredentialLease, error) {
+	if request.InstallationID != stub.connectionID.String() || request.ProviderID != IntegrationID || request.DriverID != DriverID || request.WorkspaceID == "" {
+		return nil, providertransport.NewError(providertransport.ErrorCodeConnectionNotFound, "connection not found", nil)
 	}
-	return &integrations.ResolvedConnection{
-		ID: stub.connectionID.String(), IntegrationID: IntegrationID, DriverID: DriverID, AuthMethodID: AuthMethodID,
-		CredentialSource: integrations.ConnectionCredentialSourceOrganization,
-		Credentials:      map[string]string{"app_key": "ding-app", "app_secret": "secret"},
-		Config:           map[string]interface{}{},
+	return &providertransport.CredentialLease{
+		ID: stub.connectionID.String(), ProviderID: IntegrationID, DriverID: DriverID, AuthMethodID: AuthMethodID,
+		Credentials: map[string]string{"app_key": "ding-app", "app_secret": "secret"},
+		Config:      map[string]interface{}{},
 	}, nil
 }

@@ -264,15 +264,26 @@ export type DigitalHumanBindingType =
   | 'database'
   | 'database_table'
   | 'workflow'
-  | 'integration_connection';
+  | 'integration_connection'
+  | 'connector';
 
 export interface DigitalHumanResourceBindingInput {
+  /**
+   * Existing row in this digital human's current draft; omitted for a new
+   * resource. Sending it lets the server retain row identity instead of
+   * re-authorizing the binding.
+   */
+  id?: string;
   type: DigitalHumanBindingType;
   resource_id: string;
   parent_resource_id?: string;
   display_name?: string;
   access_mode: 'read' | 'write' | 'execute';
   resource_revision: string;
+  /**
+   * Opaque server-side reference. Connector bindings must leave it empty so no
+   * credential value or handle ever travels through the browser DTO.
+   */
   credential_ref?: string;
   metadata: Record<string, unknown>;
 }
@@ -285,8 +296,16 @@ export interface DigitalHumanResourceBinding
 }
 
 export interface DraftResourceBindings {
+  /** Draft generation; changes at publication while lock versions stay local to it. */
+  draft_version_id?: string;
   draft_lock_version: number;
   items: DigitalHumanResourceBinding[];
+}
+
+export interface ReplaceDigitalHumanResourceBindingsRequest {
+  expected_draft_lock_version: number;
+  expected_draft_version_id?: string;
+  items: DigitalHumanResourceBindingInput[];
 }
 
 export interface DigitalHumanResourceCandidate {
@@ -480,7 +499,11 @@ export interface DigitalHumanChannelInstallation {
   organization_id: string;
   workspace_id: string;
   provider: 'feishu' | (string & {});
+  connector_id?: string;
   connection_id: string;
+  credential_source?: 'embedded' | 'personal_connection' | 'legacy' | (string & {});
+  connection_revision?: number;
+  connection_credential_version?: number;
   credential_mode: 'embedded' | 'connection';
   identity_verified: boolean;
   name: string;
@@ -498,6 +521,7 @@ export interface DigitalHumanChannelInstallation {
       | 'disconnected'
       | 'error';
     error_code?: string;
+    last_event_at?: string;
     updated_at?: string;
   };
   default_subject_type?: 'digital_human';
@@ -521,6 +545,7 @@ export interface DigitalHumanChannelInstallation {
 
 export interface CreateDigitalHumanChannelInstallationRequest {
   provider: string;
+  connector_id?: string;
   connection_id?: string;
   credentials?: Record<string, string>;
   name: string;
@@ -535,6 +560,8 @@ export interface UpdateDigitalHumanChannelInstallationRequest {
   expected_revision: number;
   name?: string;
   status?: DigitalHumanChannelInstallationStatus;
+  connector_id?: string;
+  connection_id?: string;
 }
 
 export interface DigitalHumanChannelInstallationVerification {

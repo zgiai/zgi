@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"sort"
 	"strings"
@@ -16,7 +17,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
 
-const connectorNativeSkillInstructions = `Connector operations in this Skill are projected from the Personal Connections explicitly attached to the current chat or Agent.
+const connectorNativeSkillInstructions = `Connector operations in this Skill are projected from the Personal Connections explicitly attached to the current chat, Agent, or Digital Human.
 
 Call the named operation Tool directly with only its declared business arguments. Never request, display, infer, or pass API keys, tokens, credential envelopes, connection IDs, binding IDs, or authorization headers. The server resolves the current Connection and rechecks ownership, readiness, operation availability, and risk immediately before dispatch.
 
@@ -51,6 +52,20 @@ func (s *service) resolveConnectorCapabilities(
 			OrganizationID: scope.OrganizationID,
 			OwnerAccountID: scope.AccountID,
 			ConversationID: targetID,
+		})
+	case runtimemodel.ConversationCallerDigitalHuman:
+		// A DigitalHuman host is resolved by its own id plus the pinned
+		// scope/version. It never falls back to the Chat or Agent resolver, so
+		// bindings owned by another host, version or ordinary chat cannot leak in.
+		if s.connectorDigitalHumanRuntime == nil {
+			return connectorruntimeauth.ChatCapabilitySnapshot{}, nil
+		}
+		return s.connectorDigitalHumanRuntime.ResolveDigitalHumanCapabilities(ctx, connectorruntimeauth.DigitalHumanCapabilityRequest{
+			OrganizationID: scope.OrganizationID,
+			OwnerAccountID: scope.AccountID,
+			DigitalHumanID: targetID,
+			Scope:          targetScope,
+			VersionID:      versionID,
 		})
 	case runtimemodel.ConversationCallerAgent:
 		if s.connectorAgentRuntime == nil {
@@ -269,6 +284,7 @@ func projectConnectorOperations(
 	type operationProjection struct {
 		skillID     string
 		connectorID string
+		instanceID  string
 		operation   catalog.Operation
 		description string
 	}
@@ -287,7 +303,7 @@ func projectConnectorOperations(
 				return nil, fmt.Errorf("%w: incomplete Connector operation projection", ErrInvalidInput)
 			}
 			projections = append(projections, operationProjection{
-				skillID: skillID, connectorID: connectorID, operation: operation,
+				skillID: skillID, connectorID: connectorID, instanceID: strings.TrimSpace(capability.Target.BindingInstanceID), operation: operation,
 				description: connectortools.OperationRuntimeDescription(capability.Definition, operation),
 			})
 		}
@@ -319,6 +335,20 @@ func projectConnectorOperations(
 			return nil, err
 		}
 		toolName := strings.TrimSpace(projection.operation.ToolName)
+		// Only a DigitalHuman host may bind the same Connector operation more
+		// than once. Each persisted binding instance must keep a distinct Tool
+		// name and instance identity so one connection can never stand in for
+		// another at the model boundary. Chat and Agent keep exactly one binding
+		// per Connector, so their public Tool names and surface identity are
+		// unchanged even if a capability unexpectedly carries an instance.
+		instanceID := ""
+		if surface == catalog.SurfaceDigitalHuman {
+			instanceID = projection.instanceID
+			if instanceID != "" {
+				digest := sha256.Sum256([]byte(instanceID))
+				toolName = fmt.Sprintf("%s_%x", toolName, digest[:6])
+			}
+		}
 		duplicate := false
 		for _, existing := range doc.Tools {
 			if !strings.EqualFold(strings.TrimSpace(existing.Name), toolName) {
@@ -341,14 +371,15 @@ func projectConnectorOperations(
 			continue
 		}
 		doc.Tools = append(doc.Tools, skills.SkillToolDefinition{
-			Name:                 toolName,
-			ProviderType:         tools.ToolProviderTypeConnector,
-			ProviderID:           projection.connectorID,
-			InputSchema:          cloneConnectorSchema(projection.operation.InputSchema),
-			OutputSchema:         cloneConnectorSchema(projection.operation.OutputSchema),
-			RuntimeDescription:   projection.description,
-			ConnectorNative:      true,
-			ConnectorOperationID: strings.TrimSpace(projection.operation.ID),
+			Name:                       toolName,
+			ProviderType:               tools.ToolProviderTypeConnector,
+			ProviderID:                 projection.connectorID,
+			InputSchema:                cloneConnectorSchema(projection.operation.InputSchema),
+			OutputSchema:               cloneConnectorSchema(projection.operation.OutputSchema),
+			RuntimeDescription:         projection.description,
+			ConnectorNative:            true,
+			ConnectorOperationID:       strings.TrimSpace(projection.operation.ID),
+			ConnectorBindingInstanceID: instanceID,
 		})
 		doc.Metadata.Tools = appendUniqueStrings(doc.Metadata.Tools, toolName)
 		doc.Metadata.RuntimeType = skills.SkillRuntimeTypeTool
@@ -387,7 +418,9 @@ func prepareConnectorSkillDocument(doc *skills.SkillDocument, skillID string) er
 
 func connectorNativeSkillDocument(skillID string, surface catalog.Surface) skills.SkillDocument {
 	supportedCallers := []string{skills.SkillCallerAIChat}
-	if surface == catalog.SurfaceAgent {
+	if surface == catalog.SurfaceDigitalHuman {
+		supportedCallers = []string{skills.SkillCallerDigitalHuman}
+	} else if surface == catalog.SurfaceAgent {
 		supportedCallers = []string{skills.SkillCallerAgent}
 	}
 	return skills.SkillDocument{
@@ -410,6 +443,11 @@ func connectorTargetForCaller(caller Caller, parts *chatRequestParts) (string, c
 	switch normalizeCallerType(caller.Type) {
 	case runtimemodel.ConversationCallerAIChat:
 		return strings.TrimSpace(parts.ConversationID), catalog.SurfaceChat, true
+	case runtimemodel.ConversationCallerDigitalHuman:
+		if caller.ID != nil && *caller.ID != uuid.Nil {
+			return caller.ID.String(), catalog.SurfaceDigitalHuman, true
+		}
+		return "", "", false
 	case runtimemodel.ConversationCallerAgent:
 		if caller.ID != nil && *caller.ID != uuid.Nil {
 			return caller.ID.String(), catalog.SurfaceAgent, true

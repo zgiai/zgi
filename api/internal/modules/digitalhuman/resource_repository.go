@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/resourcebindings"
 	"github.com/zgiai/zgi/api/internal/capabilities/runtimeidentity"
+	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	"gorm.io/gorm"
 )
 
@@ -60,6 +61,29 @@ func (r *GormRepository) ListResourceBindingRows(ctx context.Context, scope Scop
 }
 
 func (r *GormRepository) ReplaceDraftResourceBindings(ctx context.Context, scope Scope, digitalHumanID, draftID uuid.UUID, items []*ResourceBinding) error {
+	return r.replaceDraftResourceBindings(ctx, scope, digitalHumanID, draftID, items, false)
+}
+
+// preserveUnchanged is used only for an explicit read/modify/write of this draft.
+// Version restoration must validate every new binding instance instead.
+func (r *GormRepository) replaceDraftResourceBindings(ctx context.Context, scope Scope, digitalHumanID, draftID uuid.UUID, items []*ResourceBinding, preserveUnchanged bool) error {
+	existing, err := r.ListResourceBindingRows(ctx, scope, digitalHumanID, draftID)
+	if err != nil {
+		return err
+	}
+	keepOnly := make(map[uuid.UUID]bool)
+	for _, item := range items {
+		for _, old := range existing {
+			if preserveUnchanged && old.ID == item.ID && sameResourceBindingContent(old, item) {
+				keepOnly[item.ID] = true
+				item.ID, item.AuthorizedBy, item.AuthorizedAt, item.CreatedAt = old.ID, old.AuthorizedBy, old.AuthorizedAt, old.CreatedAt
+				break
+			}
+		}
+	}
+	if err := r.syncConnectorBindings(ctx, scope, digitalHumanID, draftID, core.ScopeDraft, items, keepOnly); err != nil {
+		return err
+	}
 	query := r.db.WithContext(ctx).Where(
 		"organization_id = ? AND workspace_id = ? AND digital_human_id = ? AND digital_human_version_id = ?",
 		scope.OrganizationID, scope.WorkspaceID, digitalHumanID, draftID,
@@ -84,10 +108,19 @@ func (r *GormRepository) CloneVersionResources(ctx context.Context, scope Scope,
 	if err != nil {
 		return err
 	}
+	if err := validateVersionResourceBindings(bindings); err != nil {
+		return err
+	}
+	if err := r.syncConnectorBindings(ctx, scope, digitalHumanID, fromVersionID, core.ScopePublished, bindings, nil); err != nil {
+		return err
+	}
 	for _, item := range bindings {
 		item.ID = uuid.New()
 		item.DigitalHumanVersionID = toVersionID
 		item.CreatedAt, item.UpdatedAt = now, now
+	}
+	if err := r.syncConnectorBindings(ctx, scope, digitalHumanID, toVersionID, core.ScopeDraft, bindings, nil); err != nil {
+		return err
 	}
 	if len(bindings) > 0 {
 		if err := r.db.WithContext(ctx).Create(&bindings).Error; err != nil {
@@ -103,17 +136,33 @@ func (r *GormRepository) RestoreDraftResourceBindings(ctx context.Context, scope
 	if err != nil {
 		return nil, err
 	}
+	if err := validateVersionResourceBindings(bindings); err != nil {
+		return nil, err
+	}
 	for _, item := range bindings {
 		item.ID = uuid.New()
 		item.DigitalHumanVersionID = draftID
-		item.AuthorizedBy = &actorID
-		item.AuthorizedAt = &now
+		if item.BindingType != resourcebindings.BindingTypeConnector && item.BindingType != resourcebindings.BindingTypeIntegrationConnection {
+			item.AuthorizedBy = &actorID
+			item.AuthorizedAt = &now
+		}
 		item.CreatedAt, item.UpdatedAt = now, now
 	}
 	if err := r.ReplaceDraftResourceBindings(ctx, scope, digitalHumanID, draftID, bindings); err != nil {
 		return nil, err
 	}
 	return bindings, nil
+}
+
+// Historical integration references can only be retained in their existing
+// draft or read from history. Publishing/restoring must not create new instances.
+func validateVersionResourceBindings(rows []*ResourceBinding) error {
+	for _, row := range rows {
+		if row.BindingType == resourcebindings.BindingTypeIntegrationConnection {
+			return ErrResourceBindingInvalid
+		}
+	}
+	return nil
 }
 
 func (r *GormRepository) ListSnapshot(ctx context.Context, ref resourcebindings.SnapshotRef) ([]resourcebindings.Binding, error) {

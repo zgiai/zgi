@@ -58,6 +58,7 @@ const TARGET_TYPE_ORDER: Record<ConnectorTargetBinding['target']['type'], number
   chat: 0,
   agent: 1,
   workflow: 2,
+  digital_human: 3,
 };
 
 export function sortConnectionBindings(
@@ -88,6 +89,9 @@ export function connectorBindingTargetHref(binding: ConnectorTargetBinding): str
     return `/console/work/chat${queryString({ convId: binding.target.id })}`;
   }
   if (binding.target.type === 'agent') return `/console/agents/${targetID}`;
+  if (binding.target.type === 'digital_human') {
+    return `/console/digital-humans/${targetID}/configuration`;
+  }
   return `/console/workflows/${targetID}${queryString({
     nodeId: binding.target.binding_instance_id,
   })}`;

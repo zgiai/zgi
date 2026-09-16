@@ -5,7 +5,6 @@ import { toast } from 'sonner';
 import { DIGITAL_HUMAN_KEYS } from '@/hooks/query-keys';
 import { useT } from '@/i18n';
 import { digitalHumanService } from '@/services/digital-human.service';
-import { integrationService } from '@/services/integration.service';
 import type {
   CreateDigitalHumanChannelInstallationRequest,
   UpdateDigitalHumanChannelInstallationRequest,
@@ -148,22 +147,4 @@ export function useDigitalHumanChannelMutations(id: string) {
     retryDelivery,
     dismissDelivery,
   };
-}
-
-export function useDigitalHumanChannelCredentials(integrationIDs: string[], enabled = true) {
-  const normalizedIntegrationIDs = [...new Set(integrationIDs)].sort();
-  return useQuery({
-    queryKey: [...DIGITAL_HUMAN_KEYS.all, 'channel-credentials', normalizedIntegrationIDs],
-    queryFn: async () => {
-      const responses = await Promise.all(
-        normalizedIntegrationIDs.map(integrationID =>
-          integrationService.getAllConnections({ integration_id: integrationID })
-        )
-      );
-      return responses.flatMap(response => response.data.items ?? response.data.data ?? []);
-    },
-    staleTime: 30_000,
-    retry: false,
-    enabled: enabled && normalizedIntegrationIDs.length > 0,
-  });
 }

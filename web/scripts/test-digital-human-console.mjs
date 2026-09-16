@@ -151,6 +151,18 @@ const channels = await readFile(
   new URL('../src/components/digital-human/digital-human-channels.tsx', import.meta.url),
   'utf8'
 );
+const channelLayout = await readFile(
+  new URL('../src/components/digital-human/channel-layout.tsx', import.meta.url),
+  'utf8'
+);
+const channelSetup = await readFile(
+  new URL('../src/components/digital-human/channel-installation-setup-dialog.tsx', import.meta.url),
+  'utf8'
+);
+const connectorPickerDialog = await readFile(
+  new URL('../src/components/connectors/picker/connector-picker-dialog.tsx', import.meta.url),
+  'utf8'
+);
 const channelHooks = await readFile(
   new URL('../src/hooks/digital-human/use-digital-human-channels.ts', import.meta.url),
   'utf8'
@@ -702,8 +714,13 @@ assert.match(
 );
 assert.match(
   resourceBindings,
-  /useIntegrationCatalog[\s\S]*allowed_action_ids[\s\S]*toggleIntegrationAction[\s\S]*allowedActions/,
-  'DigitalHuman external apps must bind a connection and an explicit minimum action set'
+  /DigitalHumanConnectorSection[\s\S]*<DigitalHumanConnectorSection[\s\S]*id=\{id\}/,
+  'DigitalHuman resources must delegate Connector selection to its native host adapter'
+);
+assert.doesNotMatch(
+  resourceBindings,
+  /integrationCatalog|selectIntegrationCandidate|toggleIntegrationAction|bindings\.integrations/,
+  'The retired external-app grid and operation handlers must not remain active'
 );
 assert.doesNotMatch(
   resourceBindings,
@@ -732,21 +749,9 @@ assert.doesNotMatch(
   /function getDigitalHumanSkillDisplay|function skillSource\(/,
   'skill display and source helpers must live in the shared picker module only'
 );
-// The integration catalog is loaded for every section (bound cards render provider
-// names), but a catalog failure must only blank the external-apps picker: otherwise
-// a stack with external integrations disabled shows "no bindable resources" for
-// skills, knowledge, databases and workflows too.
-assert.match(
-  resourceBindings,
-  /error=\{\s*activeCandidateQuery\.isError \|\|\s*\(activeDefinition\.key === 'integrations' && integrationCatalogQuery\.isError\)\s*\}/,
-  'a picker section must only report an error from the query that backs that section'
-);
-assert.match(
-  resourceBindings,
-  /loading=\{\s*activeCandidateQuery\.isLoading \|\|\s*\(activeDefinition\.key === 'integrations' && integrationCatalogQuery\.isLoading\)\s*\}/,
-  'a picker section must only wait for the query that backs that section'
-);
-for (const section of ['skills', 'knowledge', 'databases', 'workflows', 'integrations']) {
+// Connector binding is owned by the dedicated host adapter section, so the
+// resource grid must only offer the first-party capability categories.
+for (const section of ['skills', 'knowledge', 'databases', 'workflows']) {
   assert.match(
     resourceBindings,
     new RegExp(`bindings\\.sections\\.${section}`),
@@ -887,22 +892,57 @@ assert.doesNotMatch(
 assert.match(
   channels,
   /useDigitalHumanChannels\(id,\s*canViewActivity\)/,
-  'DigitalHuman primary UI must load only installation and audit data'
+  'DigitalHuman channels must keep loading installation and audit data'
 );
 assert.match(
-  channelProviders,
-  /driverId: 'feishu-open-api'[\s\S]*authMethodId: 'feishu_tenant_app'[\s\S]*credentialSource: 'organization'[\s\S]*connectionFilter:/,
-  'DigitalHuman channels must define provider-owned credential contracts instead of accepting arbitrary connections'
+  channels,
+  /ChannelHeader[\s\S]*ChannelMetrics[\s\S]*ChannelInstallationSetupDialog/,
+  'DigitalHuman channels must use the unified external-connection header, metrics, and setup flow'
 );
 assert.match(
-  channelProviders,
-  /id: 'dingtalk'[\s\S]*driverId: 'dingtalk-open-api'[\s\S]*authMethodId: 'organization_dingtalk_internal_app'[\s\S]*DingTalkCredentialFields/,
-  'DigitalHuman channels must register DingTalk through the same provider-owned UI boundary'
+  channels,
+  /<InstallationPanel[\s\S]*?<ActivityPanel[\s\S]*?<ChannelInstallationSetupDialog/,
+  'DigitalHuman channels must retain installation management and activity records alongside the new picker'
+);
+assert.match(
+  channels,
+  /credential\.source\.personal_connection[\s\S]*credential\.enterprise[\s\S]*credential\.managed/,
+  'DigitalHuman installation cards must show connector source and route managed credentials to Connector settings'
+);
+assert.match(
+  channels,
+  /installation\.receiver\?\.mode[\s\S]*endsWith\('long_connection'\)[\s\S]*longConnection/,
+  'DigitalHuman channels must present PersonalConnection installations as long connections'
 );
 assert.doesNotMatch(
   channels,
-  /Feishu|feishu|app_id|app_secret|verification_token|encrypt_key/,
-  'The generic DigitalHuman channel page must not contain Feishu-specific branches or credential fields'
+  /CreateChannelDialog|ChannelProviderSelector|ENABLED_DIGITAL_HUMAN_CHANNEL_PROVIDERS|ChannelCredentialDraft/,
+  'DigitalHuman channels must not expose the provider-owned legacy creation flow'
+);
+assert.match(
+  channelProviders,
+  /id: 'feishu'[\s\S]*credentialUI:\s*\{\s*Dialog: FeishuCredentialDialog/,
+  'DigitalHuman channels must retain Feishu maintenance UI for existing installations'
+);
+assert.doesNotMatch(
+  channelProviders,
+  /ENABLED_DIGITAL_HUMAN_CHANNEL_PROVIDERS|\benabled:\s*(?:true|false)/,
+  'DigitalHuman legacy provider metadata must not expose a static addable catalog'
+);
+assert.doesNotMatch(
+  channelProviders,
+  /connectionFilter|integrationId|driverId|authMethodId|credentialSource|authType|defaultBotNameKey|descriptionKey|createEmptyDraft|serialize:|isComplete:|Fields:/,
+  'DigitalHuman legacy provider metadata must not retain the retired creation contract'
+);
+assert.match(
+  channelProviders,
+  /id: 'dingtalk'[\s\S]*credentialUI:\s*\{\s*Dialog: DingTalkCredentialDialog/,
+  'DigitalHuman channels must retain DingTalk metadata for existing installation maintenance'
+);
+assert.doesNotMatch(
+  channels,
+  /app_id|app_secret|verification_token|encrypt_key/,
+  'The generic DigitalHuman channel page must not contain provider credential fields'
 );
 assert.match(
   feishuChannelProvider,
@@ -934,25 +974,50 @@ assert.match(
   /function FeishuCredentialDialog[\s\S]*<DialogContent size="xl" className="w-\[calc\(100vw-2rem\)\] p-0">/,
   'Feishu credential editing must use a wider dialog while keeping narrow-screen gutters'
 );
-assert.match(
-  channels,
-  /\) : usesWebhook \? \(/,
-  'Long connections must not display a stale callback address'
+assert.doesNotMatch(
+  channelSetup,
+  /throw new Error\('channel installation creation failed'\)/,
+  'Channel setup must preserve the backend-safe failure message instead of replacing it with a generic error'
 );
 assert.match(
-  channels,
-  /const wasOpen = useRef\(false\)[\s\S]*open && !wasOpen\.current[\s\S]*createInstallation\.mutateAsync[\s\S]*connection_id: selectedConnectionID[\s\S]*credentials: provider\.credentialUI\.serialize/,
-  'DigitalHuman channel creation must reset the form and submit either an installation credential or a provider-filtered Connection Center reference'
+  channelLayout,
+  /export function ChannelHeader[\s\S]*export function ChannelMetrics/,
+  'DigitalHuman channel layout must centralize the reusable header and metric presentation'
 );
 assert.match(
-  channels,
-  /provider\?\.connectionFilter[\s\S]*credentials\.filter\(provider\.connectionFilter\)/,
-  'DigitalHuman channel creation must delegate optional Connection Center filtering to the selected provider'
+  channelSetup,
+  /ConnectorPickerDialog[\s\S]*catalogParams=\{\{ tag: ENTERPRISE_TAG \}\}[\s\S]*catalogFilter[\s\S]*showUnavailableReferences/,
+  'Channel setup must select enterprise messaging connections and create a connection-backed installation'
 );
 assert.match(
-  channels,
-  /<Select[\s\S]*<SelectTrigger[\s\S]*<SelectValue[\s\S]*<SelectContent[\s\S]*<SelectItem/,
-  'DigitalHuman Connection Center selection must use the shared system Select component'
+  channelSetup,
+  /createInstallation[\s\S]*connection_id: connection\.id/,
+  'Channel setup must send the selected PersonalConnection reference without copying credentials'
+);
+assert.match(
+  channelSetup,
+  /ConnectorKeySetupPanel[\s\S]*ConnectionAppDialog[\s\S]*ConnectionReconnectDialog/,
+  'Channel setup must reuse Connector setup and maintenance flows'
+);
+assert.match(
+  channelSetup,
+  /tags\.includes\(ENTERPRISE_TAG\)[\s\S]*tags\.includes\(MESSAGING_TAG\)|category === 'communication'/,
+  'Channel setup must limit the picker to enterprise messaging connectors'
+);
+assert.match(
+  connectorPickerDialog,
+  /catalogParams\?: GetConnectorCatalogParams[\s\S]*catalogFilter\?: \(item: ConnectorCatalogItem\) => boolean[\s\S]*useConnectorCatalog\(catalogParams, open\)/,
+  'ConnectorPicker must support host-owned catalog filtering without persisting channel bindings'
+);
+assert.match(
+  digitalHumanZhHans,
+  /channels:\s*\{\s*title: '外部连接',\s*description:\s*'管理数字人在飞书、钉钉、企业微信等外部平台上的身份和消息渠道。'[\s\S]*addDialog:\s*\{[\s\S]*title: '添加渠道连接器'[\s\S]*target: '这个数字人'[\s\S]*setupDescription:/,
+  'DigitalHuman Chinese navigation and page copy must describe external channel connections'
+);
+assert.match(
+  digitalHumanEnUS,
+  /channels:\s*\{\s*title: 'External connections',\s*description:\s*'Manage this digital human’s identity and messaging channels[\s\S]*addDialog:\s*\{[\s\S]*title: 'Add channel connector'[\s\S]*target: 'this digital human'[\s\S]*setupDescription:/,
+  'DigitalHuman English navigation and page copy must describe external channel connections'
 );
 assert.doesNotMatch(
   channels,
@@ -1062,12 +1127,12 @@ assert.doesNotMatch(
 assert.match(
   channels,
   /installation\.webhook_url[\s\S]*webhookDescription[\s\S]*webhookUnavailableHint/,
-  'DigitalHuman channel setup must render the server-provided public webhook URL with actionable guidance'
+  'DigitalHuman channel setup must retain legacy webhook guidance'
 );
 assert.match(
   channels,
-  /usesStream = installation\.provider === 'dingtalk'[\s\S]*usesStream \?[\s\S]*RadioTower[\s\S]*ChannelContextStatus/,
-  'DingTalk installations must show Stream state and provider context capability without HTTP callback setup'
+  /receiverMode[\s\S]*usesStream = receiverMode === 'stream'[\s\S]*usesLongConnection[\s\S]*RadioTower[\s\S]*ChannelContextStatus/,
+  'Channel installations must render Stream and long-connection state without removing context capability'
 );
 assert.match(
   channels,

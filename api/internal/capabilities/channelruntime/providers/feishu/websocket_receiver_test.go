@@ -22,7 +22,7 @@ import (
 const websocketEventFixture = `{"schema":"2.0","header":{"event_id":"event-1","app_id":"cli_test","event_type":"im.message.receive_v1","tenant_key":"tenant-1","create_time":"1787116200000"},"event":{"sender":{"sender_id":{"open_id":"ou_sender"}},"message":{"message_id":"message-1","create_time":"1787116200000","chat_id":"oc_group","chat_type":"group","message_type":"text","parent_id":"parent-1","content":"{\"text\":\"@_user_1 hello\"}","mentions":[{"key":"@_user_1","id":{"open_id":"ou_bot"},"name":"Bot"}]}}}`
 
 func TestFeishuConnectionModesAndMigration(t *testing.T) {
-	adapter := NewChannelAdapter(nil)
+	adapter := newWebhookTestAdapter()
 	receiver := NewWebSocketReceiver(adapter)
 	legacy := map[string]string{"app_id": "cli_test", "app_secret": "secret", "verification_token": "verify"}
 	if mode := receiver.Mode(channelruntime.ResolvedChannelCredential{Values: legacy}); mode != "webhook" {
@@ -69,7 +69,7 @@ func TestFeishuConnectionModesAndMigration(t *testing.T) {
 }
 
 func TestFeishuWebSocketNormalizesAndChecksIdentity(t *testing.T) {
-	receiver := NewWebSocketReceiver(NewChannelAdapter(nil))
+	receiver := NewWebSocketReceiver(newWebhookTestAdapter())
 	identity := channelruntime.InstallationIdentity{ExternalTenantID: "tenant-1", ExternalSelfID: "ou_bot"}
 	for _, test := range []struct {
 		name, payload     string
@@ -113,7 +113,7 @@ func TestFeishuWebSocketNormalizesAndChecksIdentity(t *testing.T) {
 }
 
 func TestFeishuWebSocketRejectsNonDurableAcceptance(t *testing.T) {
-	receiver := NewWebSocketReceiver(NewChannelAdapter(nil))
+	receiver := NewWebSocketReceiver(newWebhookTestAdapter())
 	var event larkim.P2MessageReceiveV1
 	if err := json.Unmarshal([]byte(websocketEventFixture), &event); err != nil {
 		t.Fatal(err)
@@ -181,7 +181,7 @@ func TestFeishuWebSocketSDKReconnectAcknowledgementAndShutdown(t *testing.T) {
 			return // Drop the first socket only after its durable acknowledgement.
 		}
 	})
-	receiver := NewWebSocketReceiver(NewChannelAdapter(nil))
+	receiver := NewWebSocketReceiver(newWebhookTestAdapter())
 	receiver.options = []larkws.ClientOption{larkws.WithDomain(server.URL)}
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
 	defer cancel()
@@ -240,7 +240,7 @@ func TestFeishuWebSocketSDKPermanentFailureIsNotRetried(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(larkws.EndpointResp{Code: 19001, Msg: "invalid secret must not be exposed"})
 	}))
 	defer server.Close()
-	receiver := NewWebSocketReceiver(NewChannelAdapter(nil))
+	receiver := NewWebSocketReceiver(newWebhookTestAdapter())
 	receiver.options = []larkws.ClientOption{larkws.WithDomain(server.URL)}
 	err := receiver.Run(t.Context(), channelruntime.ReceiverRequest{
 		Credential: channelruntime.ResolvedChannelCredential{Values: map[string]string{"app_id": "cli_test", "app_secret": "secret", "connection_mode": "websocket"}},

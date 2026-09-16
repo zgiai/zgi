@@ -16,28 +16,54 @@ const (
 	InstallationStatusDisabled InstallationStatus = "disabled"
 )
 
+// CredentialSource identifies where an installation leases provider secret
+// material from. It is an enum only and never carries secret material itself.
+type CredentialSource string
+
+const (
+	// CredentialSourceEmbedded is an installation-owned encrypted credential.
+	CredentialSourceEmbedded CredentialSource = "embedded"
+	// CredentialSourcePersonalConnection is an owner-scoped Connector
+	// PersonalConnection credential opened through the Connector security
+	// boundary.
+	CredentialSourcePersonalConnection CredentialSource = "personal_connection"
+	// CredentialSourceLegacy marks an installation persisted before credential
+	// source tracking existed. It keeps resolving through the embedded
+	// credential path so existing installations keep working.
+	CredentialSourceLegacy CredentialSource = "legacy"
+)
+
 // Installation binds one provider application to a workspace. ConnectionID is
 // a credential locator: it equals the installation ID for installation-owned
-// credentials, or references Connection Center when an existing credential is
-// selected. Secret material never crosses into this table.
+// credentials, or references an owner-scoped Connector PersonalConnection when
+// an existing credential is selected. ConnectorID, ConnectionOwnerID,
+// ConnectionRevision, and ConnectionCredentialVersion describe that reference
+// so the credential resolver can validate a lease without interpreting
+// provider semantics. ConnectionOwnerID is private and is never serialized.
+// Secret material never crosses into this table.
 type Installation struct {
-	ID                 uuid.UUID                    `gorm:"type:uuid;primaryKey" json:"id"`
-	OrganizationID     uuid.UUID                    `gorm:"type:uuid;not null" json:"organization_id"`
-	WorkspaceID        uuid.UUID                    `gorm:"type:uuid;not null" json:"workspace_id"`
-	Provider           string                       `gorm:"type:varchar(32);not null" json:"provider"`
-	ConnectionID       uuid.UUID                    `gorm:"type:uuid;not null" json:"connection_id"`
-	Name               string                       `gorm:"type:varchar(128);not null" json:"name"`
-	ExternalTenantID   string                       `gorm:"type:varchar(255);not null" json:"external_tenant_id,omitempty"`
-	ExternalBotID      string                       `gorm:"type:varchar(255);not null" json:"external_bot_id,omitempty"`
-	DefaultSubjectType *runtimeidentity.SubjectType `gorm:"type:varchar(32)" json:"default_subject_type,omitempty"`
-	DefaultSubjectID   *uuid.UUID                   `gorm:"type:uuid" json:"default_subject_id,omitempty"`
-	Status             InstallationStatus           `gorm:"type:varchar(16);not null" json:"status"`
-	Revision           int64                        `gorm:"not null" json:"revision"`
-	CreatedBy          uuid.UUID                    `gorm:"type:uuid;not null" json:"created_by"`
-	UpdatedBy          uuid.UUID                    `gorm:"type:uuid;not null" json:"updated_by"`
-	CreatedAt          time.Time                    `gorm:"not null" json:"created_at"`
-	UpdatedAt          time.Time                    `gorm:"not null" json:"updated_at"`
-	DeletedAt          gorm.DeletedAt               `gorm:"index" json:"-"`
+	ID                          uuid.UUID                    `gorm:"type:uuid;primaryKey" json:"id"`
+	OrganizationID              uuid.UUID                    `gorm:"type:uuid;not null" json:"organization_id"`
+	WorkspaceID                 uuid.UUID                    `gorm:"type:uuid;not null" json:"workspace_id"`
+	Provider                    string                       `gorm:"type:varchar(32);not null" json:"provider"`
+	ConnectorID                 string                       `gorm:"type:varchar(128)" json:"connector_id,omitempty"`
+	ConnectionID                uuid.UUID                    `gorm:"type:uuid;not null" json:"connection_id"`
+	ConnectionOwnerID           uuid.UUID                    `gorm:"type:uuid" json:"-"`
+	CredentialSource            CredentialSource             `gorm:"type:varchar(32);not null;default:legacy" json:"credential_source"`
+	ConnectionRevision          int                          `gorm:"not null;default:0" json:"connection_revision,omitempty"`
+	ConnectionCredentialVersion int                          `gorm:"not null;default:0" json:"connection_credential_version,omitempty"`
+	Name                        string                       `gorm:"type:varchar(128);not null" json:"name"`
+	ExternalTenantID            string                       `gorm:"type:varchar(255);not null" json:"external_tenant_id,omitempty"`
+	ExternalBotID               string                       `gorm:"type:varchar(255);not null" json:"external_bot_id,omitempty"`
+	DefaultSubjectType          *runtimeidentity.SubjectType `gorm:"type:varchar(32)" json:"default_subject_type,omitempty"`
+	DefaultSubjectID            *uuid.UUID                   `gorm:"type:uuid" json:"default_subject_id,omitempty"`
+	Status                      InstallationStatus           `gorm:"type:varchar(16);not null" json:"status"`
+	Revision                    int64                        `gorm:"not null" json:"revision"`
+	CreatedBy                   uuid.UUID                    `gorm:"type:uuid;not null" json:"created_by"`
+	UpdatedBy                   uuid.UUID                    `gorm:"type:uuid;not null" json:"updated_by"`
+	CreatedAt                   time.Time                    `gorm:"not null" json:"created_at"`
+	UpdatedAt                   time.Time                    `gorm:"not null" json:"updated_at"`
+	DeletedAt                   gorm.DeletedAt               `gorm:"index" json:"-"`
 }
 
 func (Installation) TableName() string { return "channel_installations" }

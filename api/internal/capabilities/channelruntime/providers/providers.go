@@ -6,13 +6,13 @@ import (
 	"fmt"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
-	"github.com/zgiai/zgi/api/internal/modules/integrations/adapters/dingtalk"
-	"github.com/zgiai/zgi/api/internal/modules/integrations/adapters/feishu"
+	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime/providers/dingtalk"
+	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime/providers/feishu"
+	providertransport "github.com/zgiai/zgi/api/internal/capabilities/channelruntime/providertransport"
 )
 
 // RegisterProduction installs every production channel provider.
-func RegisterProduction(registry *channelruntime.Registry, connections integrations.ConnectionResolver) error {
+func RegisterProduction(registry *channelruntime.Registry, connections providertransport.CredentialResolver) error {
 	if registry == nil || connections == nil {
 		return fmt.Errorf("register channel providers: registry and credential resolver are required")
 	}
@@ -24,7 +24,9 @@ func RegisterProduction(registry *channelruntime.Registry, connections integrati
 	if err != nil {
 		return fmt.Errorf("initialize Feishu channel adapter: %w", err)
 	}
-	if err := registry.Register(channelruntime.Provider{Adapter: adapter, Provisioner: adapter, Receiver: feishu.NewWebSocketReceiver(adapter)}); err != nil {
+	if err := registry.Register(channelruntime.Provider{
+		Adapter: adapter, Provisioner: adapter, Receiver: feishu.NewWebSocketReceiver(adapter),
+	}); err != nil {
 		return fmt.Errorf("register Feishu channel provider: %w", err)
 	}
 	dingTalkProvider, err := dingtalk.New(nil)

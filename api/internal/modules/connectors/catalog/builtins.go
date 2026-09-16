@@ -63,6 +63,12 @@ func ValidateBuiltinPackage(definitions []Definition) error {
 		if accepted.ID != candidate.ID || accepted.PluginID != candidate.PluginID {
 			continue
 		}
+		if candidate.IsDigitalHumanContract() {
+			accepted, err = WithDigitalHumanSurface(accepted, accepted.PluginVersion+"-digitalhuman.1")
+			if err != nil || candidate.PluginVersion != accepted.PluginVersion {
+				return ErrInvalidDefinition
+			}
+		}
 		if err = CheckCompatibleUpdate(accepted, candidate); err != nil {
 			return err
 		}

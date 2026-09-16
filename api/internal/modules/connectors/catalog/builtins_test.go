@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"testing"
 )
@@ -58,5 +59,35 @@ func TestOwnedBuiltinsPreserveAcceptedExecutableContracts(t *testing.T) {
 	}
 	if count != 10 {
 		t.Fatalf("operations=%d", count)
+	}
+}
+
+func TestValidateBuiltinPackageAdmitsDigitalHumanProjection(t *testing.T) {
+	definitions, err := BuiltinDefinitions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var base Definition
+	for _, definition := range definitions {
+		if definition.ID == "github" {
+			base = definition
+			break
+		}
+	}
+	if base.ID == "" {
+		t.Fatal("github builtin missing")
+	}
+	candidate, err := WithDigitalHumanSurface(base, base.PluginVersion+"-digitalhuman.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateBuiltinPackage([]Definition{candidate}); err != nil {
+		t.Fatalf("digital human builtin projection rejected: %v", err)
+	}
+
+	// The host release is bound to the exact version derived from the builtin.
+	candidate.PluginVersion = base.PluginVersion + "-digitalhuman.2"
+	if err := ValidateBuiltinPackage([]Definition{candidate}); !errors.Is(err, ErrInvalidDefinition) {
+		t.Fatalf("unbound digital human version = %v, want invalid definition", err)
 	}
 }

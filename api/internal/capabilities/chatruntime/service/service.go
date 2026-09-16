@@ -18,6 +18,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/resourcebindings"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	connectorbindings "github.com/zgiai/zgi/api/internal/modules/connectors/bindings"
+	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
 	connectorruntimeauth "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeauth"
 	connectorconfirmation "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeconfirmation"
@@ -168,12 +169,18 @@ type RunConfig struct {
 	AgentMemoryUserScope             string
 	ConnectorTargetScope             string
 	ConnectorTargetVersionID         string
-	AgentMemoryConfigScope           string
-	AgentMemoryConfigRevision        string
-	BillingAppID                     string
-	BillingAppType                   string
-	BindingReader                    resourcebindings.Reader
-	BindingSnapshot                  resourcebindings.SnapshotRef
+	// ConnectorTargetType, ConnectorRunID and ConnectorInteractive are
+	// server-owned DigitalHuman host coordinates. They are never populated from
+	// a user-facing request DTO.
+	ConnectorTargetType       connectorcore.TargetType
+	ConnectorRunID            string
+	ConnectorInteractive      bool
+	AgentMemoryConfigScope    string
+	AgentMemoryConfigRevision string
+	BillingAppID              string
+	BillingAppType            string
+	BindingReader             resourcebindings.Reader
+	BindingSnapshot           resourcebindings.SnapshotRef
 	// RuntimeTools are caller-scoped first-party capabilities supplied by a
 	// subject adapter. They remain separate from installable Skills.
 	RuntimeTools []skillloop.RuntimeTool
@@ -460,6 +467,7 @@ type service struct {
 	agentMemoryExtractionScheduler AgentMemoryExtractionScheduler
 	connectorChatRuntime           connectorruntimeauth.ChatRuntimeResolver
 	connectorAgentRuntime          connectorruntimeauth.AgentRuntimeResolver
+	connectorDigitalHumanRuntime   connectorruntimeauth.DigitalHumanRuntimeResolver
 	connectorConfirmationStore     connectorexecution.ConfirmationContinuationStore
 	connectorActionResolverFactory repository.ConnectorActionResolverFactory
 	runtimeInputDispatcher         RuntimeInputFollowUpDispatcher
@@ -514,6 +522,7 @@ func NewServiceWithSkillRuntime(
 	var agentMemoryExtractionScheduler AgentMemoryExtractionScheduler
 	var connectorChatRuntime connectorruntimeauth.ChatRuntimeResolver
 	var connectorAgentRuntime connectorruntimeauth.AgentRuntimeResolver
+	var connectorDigitalHumanRuntime connectorruntimeauth.DigitalHumanRuntimeResolver
 	var connectorConfirmationStore connectorexecution.ConfirmationContinuationStore
 	var connectorActionResolverFactory repository.ConnectorActionResolverFactory
 	if repos != nil && repos.DB != nil {
@@ -539,6 +548,9 @@ func NewServiceWithSkillRuntime(
 		if typed, ok := item.(connectorruntimeauth.AgentRuntimeResolver); ok && connectorAgentRuntime == nil {
 			connectorAgentRuntime = typed
 		}
+		if typed, ok := item.(connectorruntimeauth.DigitalHumanRuntimeResolver); ok && connectorDigitalHumanRuntime == nil {
+			connectorDigitalHumanRuntime = typed
+		}
 		if typed, ok := item.(connectorexecution.ConfirmationContinuationStore); ok && connectorConfirmationStore == nil {
 			connectorConfirmationStore = typed
 		}
@@ -563,6 +575,7 @@ func NewServiceWithSkillRuntime(
 		agentMemoryExtractionScheduler: agentMemoryExtractionScheduler,
 		connectorChatRuntime:           connectorChatRuntime,
 		connectorAgentRuntime:          connectorAgentRuntime,
+		connectorDigitalHumanRuntime:   connectorDigitalHumanRuntime,
 		connectorConfirmationStore:     connectorConfirmationStore,
 		connectorActionResolverFactory: connectorActionResolverFactory,
 		runtimeInputDispatcher:         runtimeInputDispatcher,
@@ -713,15 +726,21 @@ type chatRequestParts struct {
 	AgentMemoryUserScope             string
 	ConnectorTargetScope             string
 	ConnectorTargetVersionID         string
-	AgentMemoryConfigScope           string
-	AgentMemoryConfigRevision        string
-	AgentMemoryAgentID               string
-	AgentMemoryRuntimeState          *AgentMemoryRuntimeState
-	AgentMemoryContext               string
-	RuntimeTools                     []skillloop.RuntimeTool
-	SourceMessageID                  *uuid.UUID
-	BillingSource                    string
-	ModelTurnIntent                  *AIChatModelTurnIntent
-	ModelTurnIntentError             string
-	HistoryPolicy                    *runtimedto.ConversationHistoryPolicy
+	// ConnectorTargetType, ConnectorRunID and ConnectorInteractive carry
+	// server-owned DigitalHuman host coordinates from RunConfig into the Skill
+	// execution boundary. A user request DTO cannot set them.
+	ConnectorTargetType       connectorcore.TargetType
+	ConnectorRunID            string
+	ConnectorInteractive      bool
+	AgentMemoryConfigScope    string
+	AgentMemoryConfigRevision string
+	AgentMemoryAgentID        string
+	AgentMemoryRuntimeState   *AgentMemoryRuntimeState
+	AgentMemoryContext        string
+	RuntimeTools              []skillloop.RuntimeTool
+	SourceMessageID           *uuid.UUID
+	BillingSource             string
+	ModelTurnIntent           *AIChatModelTurnIntent
+	ModelTurnIntentError      string
+	HistoryPolicy             *runtimedto.ConversationHistoryPolicy
 }

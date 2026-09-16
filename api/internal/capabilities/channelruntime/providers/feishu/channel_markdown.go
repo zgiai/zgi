@@ -14,7 +14,7 @@ import (
 	extast "github.com/yuin/goldmark/extension/ast"
 	"github.com/yuin/goldmark/text"
 	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	providertransport "github.com/zgiai/zgi/api/internal/capabilities/channelruntime/providertransport"
 )
 
 const (
@@ -52,7 +52,7 @@ type feishuPost struct {
 // History and outbox payloads retain the original model output.
 func (adapter *ChannelAdapter) sendChannelMessage(ctx context.Context, region, token string, request channelruntime.DeliveryRequest) (string, responseMeta, error) {
 	if !validFeishuToken(strings.TrimSpace(request.ExternalConversationID)) {
-		return "", responseMeta{}, integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu channel recipient is invalid", nil)
+		return "", responseMeta{}, providertransport.NewError(providertransport.ErrorCodeInvalidInput, "Feishu channel recipient is invalid", nil)
 	}
 	body, err := buildChannelMessage(request, false)
 	if err != nil {
@@ -130,7 +130,7 @@ func buildChannelMessage(request channelruntime.DeliveryRequest, plain bool) (ch
 		return buildChannelMessage(request, true)
 	}
 	if plain && len(wire) > maxChannelTextBytes {
-		return channelMessageBody{}, integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu channel message exceeds the text size limit", nil)
+		return channelMessageBody{}, providertransport.NewError(providertransport.ErrorCodeInvalidInput, "Feishu channel message exceeds the text size limit", nil)
 	}
 	return body, nil
 }

@@ -44,7 +44,7 @@ func TestBrainAdapterBuildsDigitalHumanRunConfigWithoutAgentIdentityOrMemory(t *
 	if len(config.EnabledSkillIDs) != 1 || config.EnabledSkillIDs[0] != "calculator" || len(config.KnowledgeDatasetIDs) != 1 {
 		t.Fatalf("capability projection = %#v", config)
 	}
-	if config.IntegrationConnectionIDs["feishu"] != "connection-1" || len(config.BindingAuthorizations) != 3 {
+	if config.ConnectorTargetScope != "published" || config.ConnectorTargetVersionID != resolved.Snapshot.DigitalHumanVersion.String() || len(config.BindingAuthorizations) != 3 {
 		t.Fatalf("integration projection = %#v", config)
 	}
 	if strings.Contains(config.SystemPrompt, "agent_id") ||

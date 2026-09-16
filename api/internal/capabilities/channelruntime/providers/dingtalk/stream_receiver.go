@@ -8,7 +8,7 @@ import (
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/chatbot"
 	streamclient "github.com/open-dingtalk/dingtalk-stream-sdk-go/client"
 	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	providertransport "github.com/zgiai/zgi/api/internal/capabilities/channelruntime/providertransport"
 )
 
 // StreamReceiver owns DingTalk's outbound WebSocket connection while reusing
@@ -32,7 +32,7 @@ func (receiver *StreamReceiver) Run(
 	handle channelruntime.InboundMessageHandler,
 ) error {
 	if receiver == nil || receiver.adapter == nil || handle == nil || !validDingTalkChannelCredentials(request.Credential.Values) {
-		return integrations.NewError(integrations.ErrorCodeConnectionInvalid, "DingTalk Stream credentials are unavailable", nil)
+		return providertransport.NewError(providertransport.ErrorCodeConnectionInvalid, "DingTalk Stream credentials are unavailable", nil)
 	}
 	appKey := strings.TrimSpace(request.Credential.Values["app_key"])
 	appSecret := strings.TrimSpace(request.Credential.Values["app_secret"])
@@ -63,8 +63,7 @@ func (receiver *StreamReceiver) Run(
 		request.OnConnected()
 	}
 	<-ctx.Done()
-	// Disable the SDK's automatic reconnect before closing so shutdown cannot
-	// create an orphan connection after the installation is disabled.
+
 	client.AutoReconnect = false
 	client.Close()
 	return ctx.Err()

@@ -40,3 +40,33 @@ func validDefinitionSurfaces(d Definition) bool {
 	}
 	return hasAllFirstReleaseSurfaces(base)
 }
+
+// WithDigitalHumanSurface creates a separately admitted contract. Callers must
+// persist/activate it through catalog version admission before exposing it.
+func WithDigitalHumanSurface(d Definition, pluginVersion string) (Definition, error) {
+	if err := Validate(d); err != nil {
+		return Definition{}, err
+	}
+	if pluginVersion == "" || pluginVersion == d.PluginVersion {
+		return Definition{}, invalid("plugin_version")
+	}
+	d = cloneDefinition(d)
+	d.ExtensionSchemaVersion, d.ContractVersion = ZGIMetadataSchemaVersion13, 4
+	d.PluginVersion, d.PluginDigest = pluginVersion, ""
+	if !slices.Contains(d.Surfaces, SurfaceDigitalHuman) {
+		d.Surfaces = append(d.Surfaces, SurfaceDigitalHuman)
+	}
+	return d, Validate(d)
+}
+
+func additiveDigitalHumanSurface(current, candidate Definition) bool {
+	if current.IsDigitalHumanContract() || !candidate.IsDigitalHumanContract() || current.PluginVersion == candidate.PluginVersion {
+		return false
+	}
+	base := credentialBase(candidate)
+	currentBase := credentialBase(current)
+	if currentBase.ExtensionSchemaVersion == "" {
+		currentBase.ExtensionSchemaVersion = ZGIMetadataSchemaVersion1
+	}
+	return base.ExtensionSchemaVersion == currentBase.ExtensionSchemaVersion && validDefinitionSurfaces(candidate) && hasAllFirstReleaseSurfaces(current.Surfaces)
+}

@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"html"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,8 +21,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
-	"github.com/zgiai/zgi/api/internal/modules/tools"
+	providertransport "github.com/zgiai/zgi/api/internal/capabilities/channelruntime/providertransport"
 )
 
 const (
@@ -33,35 +31,21 @@ const (
 	webhookTimestampSkew      = 5 * time.Minute
 )
 
-type channelActionExecutor interface {
-	Execute(context.Context, integrations.ActionRequest) (*integrations.ActionResult, error)
-}
-
 // ChannelAdapter implements the transport-neutral channel contract. DigitalHuman
-// production traffic resolves request-scoped credentials and calls Feishu
-// directly; executor is retained only for compatibility with legacy callers.
+// traffic resolves installation-owned credentials and calls Feishu directly.
 type ChannelAdapter struct {
-	executor      channelActionExecutor
 	provider      *Adapter
-	connections   integrations.ConnectionResolver
+	connections   providertransport.CredentialResolver
 	now           func() time.Time
 	memberCacheMu sync.Mutex
 	memberCache   map[string]feishuMemberCacheEntry
-}
-
-func NewChannelAdapter(executor channelActionExecutor) *ChannelAdapter {
-	return &ChannelAdapter{
-		executor:    executor,
-		now:         func() time.Time { return time.Now().UTC() },
-		memberCache: make(map[string]feishuMemberCacheEntry),
-	}
 }
 
 // NewDirectChannelAdapter creates the DigitalHuman channel adapter without the
 // generic integration executor. The connection resolver is used only as a
 // request-scoped credential store; provider calls, retries, and failures are
 // handled directly by the Feishu adapter.
-func NewDirectChannelAdapter(provider *Adapter, connections integrations.ConnectionResolver) (*ChannelAdapter, error) {
+func NewDirectChannelAdapter(provider *Adapter, connections providertransport.CredentialResolver) (*ChannelAdapter, error) {
 	if provider == nil || provider.client == nil || connections == nil {
 		return nil, fmt.Errorf("initialize direct Feishu channel adapter: provider and credential resolver are required")
 	}
@@ -75,114 +59,12 @@ func NewDirectChannelAdapter(provider *Adapter, connections integrations.Connect
 
 func (*ChannelAdapter) Provider() string { return IntegrationID }
 
-func (adapter *ChannelAdapter) Capabilities() channelruntime.ProviderCapabilities {
+func (*ChannelAdapter) Capabilities() channelruntime.ProviderCapabilities {
 	return channelruntime.ProviderCapabilities{
 		ContextRead:                true,
-		ProcessingMarker:           adapter.directProviderAvailable(),
 		MessageRoundTripTest:       true,
 		ConversationCapabilityTest: true,
 	}
-}
-
-const feishuProcessingEmoji = "Typing"
-
-type feishuMessageReaction struct {
-	ReactionID string `json:"reaction_id"`
-	Operator   struct {
-		OperatorID   string `json:"operator_id"`
-		OperatorType string `json:"operator_type"`
-	} `json:"operator"`
-	ReactionType struct {
-		EmojiType string `json:"emoji_type"`
-	} `json:"reaction_type"`
-}
-
-func (adapter *ChannelAdapter) AddProcessingMarker(ctx context.Context, request channelruntime.ProcessingMarkerRequest) (*channelruntime.ProcessingMarkerReceipt, error) {
-	if !adapter.directProviderAvailable() || request.OrganizationID == uuid.Nil || request.ConnectionID == uuid.Nil ||
-		request.RunID == uuid.Nil || strings.TrimSpace(request.InboundMessageID) == "" {
-		return nil, channelruntime.ErrInvalidWebhook
-	}
-	connection, cleanup, err := adapter.resolveDirectConnection(ctx, request.OrganizationID, request.ConnectionID)
-	if err != nil {
-		return nil, err
-	}
-	defer cleanup()
-	region, err := feishuRegion(connection)
-	if err != nil {
-		return nil, err
-	}
-	token, tokenMeta, err := adapter.provider.tenantAccessToken(ctx, connection, region)
-	if err != nil {
-		return nil, err
-	}
-	var reaction feishuMessageReaction
-	meta, err := adapter.provider.client.addMessageReaction(ctx, region, token, strings.TrimSpace(request.InboundMessageID), map[string]any{
-		"reaction_type": map[string]string{"emoji_type": feishuProcessingEmoji},
-	}, &reaction)
-	if err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(reaction.ReactionID) == "" {
-		return nil, integrations.NewError(integrations.ErrorCodeResponseInvalid, "Feishu reaction response is incomplete", nil)
-	}
-	return &channelruntime.ProcessingMarkerReceipt{
-		ProviderMarkerID:  strings.TrimSpace(reaction.ReactionID),
-		ProviderRequestID: firstNonEmpty(meta.RequestID, tokenMeta.RequestID),
-	}, nil
-}
-
-func (adapter *ChannelAdapter) RemoveProcessingMarker(ctx context.Context, request channelruntime.ProcessingMarkerRequest, providerMarkerID string) error {
-	if !adapter.directProviderAvailable() || request.OrganizationID == uuid.Nil || request.ConnectionID == uuid.Nil ||
-		request.RunID == uuid.Nil || strings.TrimSpace(request.InboundMessageID) == "" {
-		return channelruntime.ErrInvalidWebhook
-	}
-	connection, cleanup, err := adapter.resolveDirectConnection(ctx, request.OrganizationID, request.ConnectionID)
-	if err != nil {
-		return err
-	}
-	defer cleanup()
-	region, err := feishuRegion(connection)
-	if err != nil {
-		return err
-	}
-	token, _, err := adapter.provider.tenantAccessToken(ctx, connection, region)
-	if err != nil {
-		return err
-	}
-	appID := feishuConnectionAppID(connection)
-	pageToken := ""
-	for page := 0; page < 10; page++ {
-		query := url.Values{"reaction_type": []string{feishuProcessingEmoji}, "page_size": []string{"50"}}
-		if pageToken != "" {
-			query.Set("page_token", pageToken)
-		}
-		var response struct {
-			Items     []feishuMessageReaction `json:"items"`
-			HasMore   bool                    `json:"has_more"`
-			PageToken string                  `json:"page_token"`
-		}
-		if _, err := adapter.provider.client.listMessageReactions(ctx, region, token, strings.TrimSpace(request.InboundMessageID), query, &response); err != nil {
-			return err
-		}
-		for _, reaction := range response.Items {
-			ownedByApp := strings.EqualFold(strings.TrimSpace(reaction.Operator.OperatorType), "app") &&
-				strings.TrimSpace(reaction.Operator.OperatorID) == appID
-			matchesSavedID := strings.TrimSpace(providerMarkerID) != "" && strings.TrimSpace(reaction.ReactionID) == strings.TrimSpace(providerMarkerID)
-			if !matchesSavedID && !ownedByApp {
-				continue
-			}
-			if _, err := adapter.provider.client.deleteMessageReaction(
-				ctx, region, token, strings.TrimSpace(request.InboundMessageID), strings.TrimSpace(reaction.ReactionID), nil,
-			); err != nil {
-				return err
-			}
-		}
-		if !response.HasMore || strings.TrimSpace(response.PageToken) == "" {
-			return nil
-		}
-		pageToken = strings.TrimSpace(response.PageToken)
-	}
-	return integrations.NewError(integrations.ErrorCodeResponseInvalid, "Feishu reaction pagination did not terminate", nil)
 }
 
 func (*ChannelAdapter) ConnectionSpec() channelruntime.ConnectionSpec {
@@ -199,7 +81,7 @@ func (*ChannelAdapter) PrepareCredentials(current, updates map[string]string) (m
 		key = strings.ToLower(strings.TrimSpace(key))
 		if !isChannelCredentialKey(key) {
 			destroyCredentialValues(prepared)
-			return nil, integrations.NewError(integrations.ErrorCodeInvalidInput, "unsupported Feishu channel credential field", nil)
+			return nil, providertransport.NewError(providertransport.ErrorCodeInvalidInput, "unsupported Feishu channel credential field", nil)
 		}
 		if value = strings.TrimSpace(value); value != "" {
 			prepared[key] = value
@@ -209,7 +91,7 @@ func (*ChannelAdapter) PrepareCredentials(current, updates map[string]string) (m
 		key = strings.ToLower(strings.TrimSpace(key))
 		if !isChannelCredentialKey(key) {
 			destroyCredentialValues(prepared)
-			return nil, integrations.NewError(integrations.ErrorCodeInvalidInput, "unsupported Feishu channel credential field", nil)
+			return nil, providertransport.NewError(providertransport.ErrorCodeInvalidInput, "unsupported Feishu channel credential field", nil)
 		}
 		if value = strings.TrimSpace(value); value != "" {
 			prepared[key] = value
@@ -226,19 +108,19 @@ func (*ChannelAdapter) PrepareCredentials(current, updates map[string]string) (m
 	}
 	if prepared["connection_mode"] != "websocket" && prepared["connection_mode"] != "webhook" {
 		destroyCredentialValues(prepared)
-		return nil, integrations.NewError(integrations.ErrorCodeInvalidInput, "unsupported Feishu connection mode", nil)
+		return nil, providertransport.NewError(providertransport.ErrorCodeInvalidInput, "unsupported Feishu connection mode", nil)
 	}
 	if prepared["app_id"] == "" || prepared["app_secret"] == "" ||
 		(prepared["connection_mode"] == "webhook" && prepared["verification_token"] == "") {
 		destroyCredentialValues(prepared)
-		return nil, integrations.NewError(integrations.ErrorCodeInvalidInput, "required Feishu credentials are missing for the selected transport", nil)
+		return nil, providertransport.NewError(providertransport.ErrorCodeInvalidInput, "required Feishu credentials are missing for the selected transport", nil)
 	}
 	return prepared, nil
 }
 
 func (adapter *ChannelAdapter) ResolveIdentity(ctx context.Context, credential channelruntime.ResolvedChannelCredential) (channelruntime.InstallationIdentity, error) {
 	if adapter == nil || adapter.provider == nil || len(credential.Values) == 0 {
-		return channelruntime.InstallationIdentity{}, integrations.NewError(integrations.ErrorCodeConnectionInvalid, "Feishu channel credentials are unavailable", nil)
+		return channelruntime.InstallationIdentity{}, providertransport.NewError(providertransport.ErrorCodeConnectionInvalid, "Feishu channel credentials are unavailable", nil)
 	}
 	connection := resolvedConnectionFromChannelCredential(credential)
 	defer connection.Destroy()
@@ -425,38 +307,12 @@ func (*ChannelAdapter) Acknowledgement() channelruntime.WebhookResponse {
 }
 
 func (adapter *ChannelAdapter) Deliver(ctx context.Context, request channelruntime.DeliveryRequest) (*channelruntime.DeliveryReceipt, error) {
-	if adapter == nil || (adapter.executor == nil && !adapter.directProviderAvailable()) || request.OrganizationID == uuid.Nil || request.WorkspaceID == uuid.Nil ||
+	if adapter == nil || !adapter.directProviderAvailable() || request.OrganizationID == uuid.Nil || request.WorkspaceID == uuid.Nil ||
 		request.ActorID == uuid.Nil || request.ConnectionID == uuid.Nil || request.RunID == uuid.Nil ||
 		request.DeliveryID == uuid.Nil || strings.TrimSpace(request.ExternalConversationID) == "" || strings.TrimSpace(request.Text) == "" {
 		return nil, channelruntime.ErrInvalidWebhook
 	}
-	if adapter.directProviderAvailable() {
-		return adapter.deliverDirect(ctx, request)
-	}
-	request.Text = renderFeishuDeliveryText(request.Text, request.Mentions)
-	result, err := adapter.executor.Execute(ctx, integrations.ActionRequest{
-		OrganizationID: request.OrganizationID.String(), WorkspaceID: request.WorkspaceID.String(), UserID: request.ActorID.String(),
-		ConversationID: request.RunID.String(), MessageID: request.DeliveryID.String(), ConnectionID: request.ConnectionID.String(),
-		AppID: request.Subject.ID.String(), OperationItemID: request.DeliveryID.String(), InvokeFrom: tools.ToolInvokeFromAPI,
-		IntegrationID: IntegrationID, ActionID: ActionSendBotMessage,
-		Input: map[string]interface{}{
-			"recipient_type": "chat_id", "recipient_id": strings.TrimSpace(request.ExternalConversationID), "text": strings.TrimSpace(request.Text),
-		},
-	})
-	if err != nil {
-		if status, _, handled := integrations.GuardedOperationErrorStatus(err); handled && status == integrations.OperationReceiptStatusOutcomeUnknown {
-			return nil, errors.Join(channelruntime.ErrDeliveryOutcomeUnknown, err)
-		}
-		return nil, err
-	}
-	if result == nil {
-		return nil, channelruntime.ErrDeliveryOutcomeUnknown
-	}
-	messageID := nestedString(result.Output, "message", "message_id")
-	if messageID == "" {
-		return nil, channelruntime.ErrDeliveryOutcomeUnknown
-	}
-	return &channelruntime.DeliveryReceipt{ProviderMessageID: messageID, ProviderRequestID: result.ProviderRequestID, Replayed: result.Replayed}, nil
+	return adapter.deliverDirect(ctx, request)
 }
 
 func renderFeishuDeliveryText(text string, mentions []channelruntime.DeliveryMention) string {
@@ -490,7 +346,7 @@ func renderFeishuDeliveryText(text string, mentions []channelruntime.DeliveryMen
 }
 
 func (adapter *ChannelAdapter) deliverDirect(ctx context.Context, request channelruntime.DeliveryRequest) (*channelruntime.DeliveryReceipt, error) {
-	connection, cleanup, err := adapter.resolveDirectConnection(ctx, request.OrganizationID, request.ConnectionID)
+	connection, cleanup, err := adapter.resolveDirectConnection(ctx, request.OrganizationID, request.WorkspaceID, request.InstallationID)
 	if err != nil {
 		return nil, err
 	}
@@ -506,10 +362,9 @@ func (adapter *ChannelAdapter) deliverDirect(ctx context.Context, request channe
 	messageID, meta, err := adapter.sendChannelMessage(ctx, region, token, request)
 	meta.Attempts += tokenMeta.Attempts
 	if err != nil {
-		// Feishu's UUID deduplication expires after one hour. It is not a
-		// durable delivery guarantee: never resend an ambiguous provider write.
-		switch integrations.ErrorCode(err) {
-		case integrations.ErrorCodeTimeout, integrations.ErrorCodeUpstream, integrations.ErrorCodeResponseInvalid:
+
+		switch providertransport.ErrorCode(err) {
+		case providertransport.ErrorCodeTimeout, providertransport.ErrorCodeUpstream, providertransport.ErrorCodeResponseInvalid:
 			return nil, errors.Join(channelruntime.ErrDeliveryOutcomeUnknown, err)
 		default:
 			return nil, err
@@ -526,16 +381,16 @@ func (adapter *ChannelAdapter) directProviderAvailable() bool {
 	return adapter != nil && adapter.provider != nil && adapter.provider.client != nil && adapter.connections != nil
 }
 
-func (adapter *ChannelAdapter) resolveDirectConnection(ctx context.Context, organizationID, connectionID uuid.UUID) (*integrations.ResolvedConnection, func(), error) {
-	if !adapter.directProviderAvailable() || organizationID == uuid.Nil || connectionID == uuid.Nil {
+func (adapter *ChannelAdapter) resolveDirectConnection(ctx context.Context, organizationID, workspaceID, installationID uuid.UUID) (*providertransport.CredentialLease, func(), error) {
+	if !adapter.directProviderAvailable() || organizationID == uuid.Nil || workspaceID == uuid.Nil || installationID == uuid.Nil {
 		return nil, func() {}, channelruntime.ErrInvalidWebhook
 	}
-	connection, err := adapter.connections.Resolve(ctx, integrations.ConnectionResolveRequest{
-		OrganizationID:            organizationID.String(),
-		IntegrationID:             IntegrationID,
-		DriverID:                  DriverID,
-		ConnectionID:              connectionID.String(),
-		DisallowAccountCredential: true,
+	connection, err := adapter.connections.Resolve(ctx, providertransport.CredentialRequest{
+		OrganizationID: organizationID.String(),
+		ProviderID:     IntegrationID,
+		DriverID:       DriverID,
+		InstallationID: installationID.String(),
+		WorkspaceID:    workspaceID.String(),
 	})
 	if err != nil {
 		return nil, func() {}, err
@@ -543,8 +398,8 @@ func (adapter *ChannelAdapter) resolveDirectConnection(ctx context.Context, orga
 	cleanup := func() { connection.Destroy() }
 	if !isTenantAppConnection(connection) {
 		cleanup()
-		return nil, func() {}, integrations.NewError(
-			integrations.ErrorCodeConnectionInvalid,
+		return nil, func() {}, providertransport.NewError(
+			providertransport.ErrorCodeConnectionInvalid,
 			"Feishu tenant app credentials are required for a DigitalHuman channel",
 			nil,
 		)
@@ -714,12 +569,10 @@ func destroyCredentialValues(values map[string]string) {
 	}
 }
 
-func resolvedConnectionFromChannelCredential(credential channelruntime.ResolvedChannelCredential) *integrations.ResolvedConnection {
-	return &integrations.ResolvedConnection{
-		IntegrationID:     IntegrationID,
+func resolvedConnectionFromChannelCredential(credential channelruntime.ResolvedChannelCredential) *providertransport.CredentialLease {
+	return &providertransport.CredentialLease{
+		ProviderID:        IntegrationID,
 		DriverID:          DriverID,
-		CredentialSource:  integrations.ConnectionCredentialSourceOrganization,
-		AuthType:          integrations.ConnectionAuthTypeCustomCredential,
 		AuthMethodID:      TenantAppAuthMethodID,
 		Credentials:       cloneCredentialValues(credential.Values),
 		Config:            map[string]any{},
@@ -742,17 +595,4 @@ func jsonWebhookResponse(body []byte) channelruntime.WebhookResponse {
 		Headers:    http.Header{"Content-Type": []string{"application/json; charset=utf-8"}},
 		Body:       append([]byte(nil), body...),
 	}
-}
-
-func nestedString(value map[string]interface{}, path ...string) string {
-	var current interface{} = value
-	for _, segment := range path {
-		object, ok := current.(map[string]interface{})
-		if !ok {
-			return ""
-		}
-		current = object[segment]
-	}
-	result, _ := current.(string)
-	return strings.TrimSpace(result)
 }

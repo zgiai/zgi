@@ -203,6 +203,37 @@ func (r *GormRepository) CompleteRun(ctx context.Context, runID uuid.UUID, summa
 	})
 }
 
+func (r *GormRepository) MarkRunWaiting(ctx context.Context, runID uuid.UUID, reason string, now time.Time) error {
+	if reason != runtimemodel.MessageStatusWaitingApproval && reason != runtimemodel.MessageStatusWaitingQuestion && reason != runtimemodel.MessageStatusWaitingClientAction {
+		return ErrInvalidRequest
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var run Run
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND status = ?", runID, RunStatusRunning).Take(&run).Error; err != nil {
+			return ErrRunConflict
+		}
+		var receipt *uuid.UUID
+		if reason == runtimemodel.MessageStatusWaitingApproval {
+			var rows []struct{ RouteReceipt uuid.UUID }
+			if err := tx.Table("connector_confirmation_continuations").
+				Where("origin_version = ? AND origin_surface = ? AND run_id = ? AND digital_human_id = ? AND state = ?", 2, "digital_human", runID.String(), run.DigitalHumanID.String(), "pending").
+				Limit(2).Find(&rows).Error; err != nil || len(rows) != 1 {
+				return ErrRunConflict
+			}
+			receipt = &rows[0].RouteReceipt
+		}
+		result := tx.Model(&Run{}).Where("id = ? AND status = ?", runID, RunStatusRunning).
+			Updates(map[string]any{"status": RunStatusWaiting, "waiting_reason": reason, "waiting_receipt": receipt, "updated_at": now})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrRunConflict
+		}
+		return nil
+	})
+}
+
 func (r *GormRepository) FailRun(ctx context.Context, runID uuid.UUID, code, message string, now time.Time) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var run Run
@@ -236,7 +267,7 @@ func (r *GormRepository) RequestRunCancel(ctx context.Context, scope Scope, digi
 			return err
 		}
 		switch result.Status {
-		case RunStatusQueued:
+		case RunStatusQueued, RunStatusWaiting:
 			result.Status, result.CompletedAt = RunStatusCanceled, &now
 		case RunStatusRunning:
 			result.Status = RunStatusCanceling

@@ -9,8 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
-	"github.com/zgiai/zgi/api/internal/modules/tools"
+	providertransport "github.com/zgiai/zgi/api/internal/capabilities/channelruntime/providertransport"
 )
 
 const (
@@ -27,7 +26,7 @@ type feishuMemberCacheEntry struct {
 // group and direct conversations. The model cannot select the installation or
 // chat.
 func (adapter *ChannelAdapter) ReadContext(ctx context.Context, request channelruntime.ChannelContextRequest) (*channelruntime.ChannelContextPack, error) {
-	if adapter == nil || (adapter.executor == nil && !adapter.directProviderAvailable()) || request.OrganizationID == uuid.Nil || request.WorkspaceID == uuid.Nil ||
+	if adapter == nil || !adapter.directProviderAvailable() || request.OrganizationID == uuid.Nil || request.WorkspaceID == uuid.Nil ||
 		request.ActorID == uuid.Nil || request.InstallationID == uuid.Nil || request.ConnectionID == uuid.Nil ||
 		request.RunID == uuid.Nil || strings.TrimSpace(request.ExternalConversationID) == "" ||
 		strings.TrimSpace(request.CurrentMessageID) == "" {
@@ -44,9 +43,7 @@ func (adapter *ChannelAdapter) ReadContext(ctx context.Context, request channelr
 		"sort_type": "newest_first",
 		"end_time":  request.OccurredAt.Unix(),
 	}
-	// After marks the previous successful DigitalHuman delivery. It is a
-	// selection-priority hint, not a provider query boundary: relevant nearby
-	// messages can precede that reply and still be required by the current ask.
+
 	input["start_time"] = request.OccurredAt.Add(-feishuContextLookback).Unix()
 	if token := strings.TrimSpace(request.PageToken); token != "" {
 		input["page_token"] = token
@@ -74,7 +71,7 @@ func (adapter *ChannelAdapter) ReadContext(ctx context.Context, request channelr
 		itemResult, itemErr := adapter.executeContextAction(ctx, request, ActionGetMessage, map[string]interface{}{"message_id": messageID})
 		if itemErr != nil {
 			pack.Status = channelruntime.ContextStatusPartial
-			pack.ErrorCode = integrations.ErrorCode(itemErr)
+			pack.ErrorCode = providertransport.ErrorCode(itemErr)
 			continue
 		}
 		pack.ProviderRequestIDs = appendRequestID(pack.ProviderRequestIDs, itemResult.ProviderRequestID)
@@ -92,7 +89,7 @@ func (adapter *ChannelAdapter) ReadContext(ctx context.Context, request channelr
 	if namesErr != nil {
 		pack.Status = channelruntime.ContextStatusPartial
 		if pack.ErrorCode == "" {
-			pack.ErrorCode = integrations.ErrorCode(namesErr)
+			pack.ErrorCode = providertransport.ErrorCode(namesErr)
 		}
 	}
 	for index := range pack.Messages {
@@ -106,25 +103,8 @@ func (adapter *ChannelAdapter) ReadContext(ctx context.Context, request channelr
 	return pack, nil
 }
 
-func (adapter *ChannelAdapter) executeContextAction(ctx context.Context, request channelruntime.ChannelContextRequest, actionID string, input map[string]interface{}) (*integrations.ActionResult, error) {
-	if adapter.directProviderAvailable() {
-		return adapter.executeDirectContextAction(ctx, request, actionID, input)
-	}
-	operationID := uuid.New().String()
-	return adapter.executor.Execute(ctx, integrations.ActionRequest{
-		OrganizationID:  request.OrganizationID.String(),
-		WorkspaceID:     request.WorkspaceID.String(),
-		UserID:          request.ActorID.String(),
-		ConversationID:  request.RunID.String(),
-		MessageID:       operationID,
-		ConnectionID:    request.ConnectionID.String(),
-		AppID:           request.Subject.ID.String(),
-		OperationItemID: operationID,
-		InvokeFrom:      tools.ToolInvokeFromAPI,
-		IntegrationID:   IntegrationID,
-		ActionID:        actionID,
-		Input:           input,
-	})
+func (adapter *ChannelAdapter) executeContextAction(ctx context.Context, request channelruntime.ChannelContextRequest, actionID string, input map[string]interface{}) (*providertransport.ContextResult, error) {
+	return adapter.executeDirectContextAction(ctx, request, actionID, input)
 }
 
 func (adapter *ChannelAdapter) executeDirectContextAction(
@@ -132,8 +112,8 @@ func (adapter *ChannelAdapter) executeDirectContextAction(
 	request channelruntime.ChannelContextRequest,
 	actionID string,
 	input map[string]interface{},
-) (*integrations.ActionResult, error) {
-	connection, cleanup, err := adapter.resolveDirectConnection(ctx, request.OrganizationID, request.ConnectionID)
+) (*providertransport.ContextResult, error) {
+	connection, cleanup, err := adapter.resolveDirectConnection(ctx, request.OrganizationID, request.WorkspaceID, request.InstallationID)
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +136,7 @@ func (adapter *ChannelAdapter) executeDirectContextAction(
 	case ActionListChatMembers:
 		output, meta, err = adapter.provider.listChatMembers(ctx, region, token, input)
 	default:
-		return nil, integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu channel context action is not supported", nil)
+		return nil, providertransport.NewError(providertransport.ErrorCodeInvalidInput, "Feishu channel context action is not supported", nil)
 	}
 	meta.Attempts += tokenMeta.Attempts
 	return feishuActionResult(output, meta, outputCountForChannelAction(actionID, output)), err

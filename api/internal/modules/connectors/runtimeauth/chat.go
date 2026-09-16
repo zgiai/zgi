@@ -41,6 +41,7 @@ type ChatCapabilityRequest struct {
 // identities required to expose currently usable operations. A Connection's
 // encrypted credential envelope is deliberately not retained here.
 type ChatCapability struct {
+	Target       core.TargetRef
 	BindingID    uuid.UUID
 	ConnectionID uuid.UUID
 	ConnectorID  core.Identifier
@@ -143,11 +144,21 @@ func (resolver *ChatResolver) resolveTargetCapabilities(
 		if binding.Status != core.BindingStatusActive {
 			continue
 		}
-		if !binding.Target.SameIdentity(target) ||
+		// A DigitalHuman host owns several independent binding instances of the
+		// same Connector. The caller identifies only the host and version, so the
+		// persisted instance is compared against each binding instead of a
+		// caller-supplied placeholder.
+		comparisonTarget := target
+		if target.Type == core.TargetTypeDigitalHuman {
+			comparisonTarget.BindingInstanceID = binding.Target.BindingInstanceID
+		}
+		if binding.Target.Validate() != nil || !binding.Target.SameIdentity(comparisonTarget) ||
 			binding.OrganizationID != organizationID || binding.OwnerAccountID != ownerAccountID {
 			return ChatCapabilitySnapshot{}, core.NewError(core.ErrorCodeInternal, false, nil)
 		}
-		if _, duplicate := seenConnectors[binding.ConnectorID]; duplicate {
+		// Chat, Agent and Workflow keep one active binding per Connector; only a
+		// DigitalHuman host may legitimately bind the same Connector repeatedly.
+		if _, duplicate := seenConnectors[binding.ConnectorID]; duplicate && target.Type != core.TargetTypeDigitalHuman {
 			return ChatCapabilitySnapshot{}, core.NewError(core.ErrorCodeConflict, false, nil)
 		}
 
@@ -169,17 +180,21 @@ func (resolver *ChatResolver) resolveTargetCapabilities(
 		if !ok || catalog.Validate(definition) != nil || !definition.Supports(surface) {
 			continue
 		}
-		operations := permittedOperations(definition, connection, binding.Constraint, ownerAccountID, target, time.Now())
+		operations := permittedOperations(definition, connection, binding.Constraint, ownerAccountID, binding.Target, time.Now())
 		if len(operations) == 0 {
 			continue
 		}
 		seenConnectors[binding.ConnectorID] = struct{}{}
 		capabilities = append(capabilities, ChatCapability{
+			Target:    binding.Target,
 			BindingID: binding.ID, ConnectionID: binding.ConnectionID,
 			ConnectorID: binding.ConnectorID, Definition: definition, Operations: operations,
 		})
 	}
 	sort.Slice(capabilities, func(i, j int) bool {
+		if capabilities[i].ConnectorID == capabilities[j].ConnectorID {
+			return capabilities[i].Target.BindingInstanceID < capabilities[j].Target.BindingInstanceID
+		}
 		return capabilities[i].ConnectorID.String() < capabilities[j].ConnectorID.String()
 	})
 	return ChatCapabilitySnapshot{Capabilities: capabilities}, nil
@@ -202,7 +217,7 @@ func permittedOperations(definition catalog.Definition, connection core.Personal
 		if _, unavailable := connection.UnavailableOperations[core.Identifier(operation.ID)]; unavailable {
 			continue
 		}
-		if !connection.Constraint.Allows(owner, core.Identifier(operation.ID), target, now) || !bindingConstraint.Allows(owner, core.Identifier(operation.ID), target, now) {
+		if !core.ConstraintsAllow(connection.Constraint, bindingConstraint, owner, core.Identifier(operation.ID), target, now) {
 			continue
 		}
 		operations = append(operations, operation)

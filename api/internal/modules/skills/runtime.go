@@ -69,13 +69,20 @@ type ExecutionContext struct {
 	PresentationLocale       string           `json:"-"`
 	ConnectorTargetScope     core.TargetScope `json:"-"`
 	ConnectorTargetVersionID string           `json:"-"`
-	OrganizationID           string
-	UserID                   string
-	ConversationID           string
-	AppID                    string
-	MessageID                string
-	InvokeFrom               tools.ToolInvokeFrom
-	RuntimeParameters        map[string]interface{}
+	// ConnectorTargetType selects the DigitalHuman host boundary. It is empty
+	// for Chat, Agent, and Workflow callers, whose target is derived from
+	// InvokeFrom.
+	ConnectorTargetType  core.TargetType `json:"-"`
+	ConnectorInteractive bool            `json:"-"`
+	// ConnectorRunID identifies the DigitalHuman run a confirmation belongs to.
+	ConnectorRunID    string `json:"-"`
+	OrganizationID    string
+	UserID            string
+	ConversationID    string
+	AppID             string
+	MessageID         string
+	InvokeFrom        tools.ToolInvokeFrom
+	RuntimeParameters map[string]interface{}
 	// ExternalUserID is the server-derived external caller identity. It is
 	// distinct from UserID, which remains the internal account/API-key identity.
 	ExternalUserID             string                                           `json:"-"`
@@ -702,6 +709,19 @@ func resolveConnectorToolIdentity(
 		}
 	default:
 		return nil, core.NewError(core.ErrorCodeInvalidInput, false, nil)
+	}
+	if execCtx.ConnectorTargetType == core.TargetTypeDigitalHuman {
+		// A DigitalHuman host never borrows the Chat or Agent target implied by
+		// InvokeFrom. Its host identity, exact scope/version and persisted
+		// binding instance all come from the server-owned execution context.
+		target = core.TargetRef{
+			Type:              core.TargetTypeDigitalHuman,
+			ID:                strings.TrimSpace(execCtx.AppID),
+			Scope:             execCtx.ConnectorTargetScope,
+			VersionID:         strings.TrimSpace(execCtx.ConnectorTargetVersionID),
+			BindingInstanceID: strings.TrimSpace(toolDef.ConnectorBindingInstanceID),
+		}
+		interactive = execCtx.ConnectorInteractive
 	}
 	if err := target.Validate(); err != nil {
 		return nil, core.NewError(core.ErrorCodeInvalidInput, false, nil)

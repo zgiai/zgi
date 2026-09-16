@@ -10,11 +10,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
+	channelproviders "github.com/zgiai/zgi/api/internal/capabilities/channelruntime/providers"
 	runtimerepo "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	credentialcrypto "github.com/zgiai/zgi/api/internal/infra/credentialcrypto"
+	connectordispatch "github.com/zgiai/zgi/api/internal/modules/connectors/dispatch"
+	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
+	connectorruntimeauth "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeauth"
 	digitalhuman "github.com/zgiai/zgi/api/internal/modules/digitalhuman"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
-	"github.com/zgiai/zgi/api/internal/modules/integrations/channelproviders"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
@@ -46,20 +49,25 @@ type DigitalHumanRouteDeps struct {
 // DigitalHumanRuntimeDeps contains the shared bottom-layer runtime and durable
 // worker dependencies.
 type DigitalHumanRuntimeDeps struct {
-	DB                  *gorm.DB
-	LLMClient           llmclient.LLMClient
-	FileService         interfaces.FileService
-	ContentExtractor    runtimeservice.ContentExtractionService
-	OrganizationService interfaces.OrganizationService
-	ToolEngine          *tools.ToolEngine
-	ToolManager         *tools.ToolManager
-	TaskManager         *queue.TaskManager
-	TaskRegistry        digitalhuman.RunTaskRegistry
-	Scheduler           *pkgscheduler.Scheduler
-	ManifestResolver    skills.ToolGovernanceManifestResolver
-	ConnectionResolver  integrations.ConnectionResolver
-	CredentialCipher    integrations.CredentialCipher
-	Tasks               digitalhuman.TaskHandlerService
+	DB                                  *gorm.DB
+	LLMClient                           llmclient.LLMClient
+	FileService                         interfaces.FileService
+	ContentExtractor                    runtimeservice.ContentExtractionService
+	OrganizationService                 interfaces.OrganizationService
+	ToolEngine                          *tools.ToolEngine
+	ToolManager                         *tools.ToolManager
+	TaskManager                         *queue.TaskManager
+	TaskRegistry                        digitalhuman.RunTaskRegistry
+	Scheduler                           *pkgscheduler.Scheduler
+	ManifestResolver                    skills.ToolGovernanceManifestResolver
+	CredentialCipher                    credentialcrypto.CredentialCipher
+	ConnectorRuntime                    connectorruntimeauth.DigitalHumanRuntimeResolver
+	ConnectorDispatcher                 connectordispatch.Dispatcher
+	ConnectorCatalog                    digitalhuman.ConnectorCatalog
+	ConnectorPersonalConnectionResolver digitalhuman.PersonalConnectionCredentialResolver
+	WorkspaceMembership                 digitalhuman.WorkspaceMembershipChecker
+	ConnectorConfirmationStore          connectorexecution.ConfirmationContinuationStore
+	Tasks                               digitalhuman.TaskHandlerService
 }
 
 // DigitalHumanRuntimeBundle keeps the model runtime and channel application
@@ -247,20 +255,41 @@ func writeDigitalHumanRouteError(c *gin.Context, projector *apptransport.Project
 	})
 }
 
+// validateDigitalHumanConnectorDependencies enforces the complete Connector
+// boundary before the runtime touches any database, queue, or provider, so a
+// missing dependency fails fast instead of degrading to an unauthenticated run.
+func validateDigitalHumanConnectorDependencies(deps DigitalHumanRuntimeDeps) {
+	if deps.ConnectorDispatcher == nil || deps.ConnectorRuntime == nil || deps.ConnectorCatalog == nil ||
+		deps.ConnectorConfirmationStore == nil {
+		panic("DigitalHuman runtime requires complete Connector dependencies")
+	}
+}
+
+// newDigitalHumanSkillRuntime installs the owner-scoped Connector dispatcher on
+// the same skill runtime used for tool governance and sandbox scripts.
+func newDigitalHumanSkillRuntime(deps DigitalHumanRuntimeDeps) *skills.Runtime {
+	validateDigitalHumanConnectorDependencies(deps)
+	return newSkillRuntimeWithSandbox(
+		deps.ToolEngine, deps.ToolManager, deps.FileService, deps.OrganizationService, deps.ManifestResolver,
+	).WithConnectorDispatcher(deps.ConnectorDispatcher)
+}
+
 func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRuntimeBundle {
+	validateDigitalHumanConnectorDependencies(deps)
 	if deps.DB == nil || deps.LLMClient == nil || deps.FileService == nil || deps.ContentExtractor == nil ||
 		deps.OrganizationService == nil || deps.ToolEngine == nil || deps.ToolManager == nil || deps.TaskManager == nil ||
-		deps.TaskRegistry == nil || deps.Scheduler == nil || deps.ConnectionResolver == nil || deps.CredentialCipher == nil || deps.Tasks == nil {
+		deps.TaskRegistry == nil || deps.Scheduler == nil || deps.CredentialCipher == nil || deps.Tasks == nil {
 		panic("DigitalHuman runtime requires database, model, tool, queue, scheduler, and credential dependencies")
 	}
 	repository := digitalhuman.NewRepository(deps.DB)
+	repository.SetConnectorCatalog(deps.ConnectorCatalog)
 	channelAdapters, err := channelruntime.NewRegistry()
 	if err != nil {
 		panic("initialize DigitalHuman channel registry: " + err.Error())
 	}
-	channelCredentials := digitalhuman.NewIntegrationChannelCredentialResolver(
-		repository, deps.ConnectionResolver, deps.CredentialCipher, channelAdapters,
-	)
+	channelCredentials := digitalhuman.NewInstallationCredentialResolver(
+		repository, deps.CredentialCipher, channelAdapters,
+	).WithPersonalConnectionResolver(deps.ConnectorPersonalConnectionResolver, deps.WorkspaceMembership)
 	if err := channelproviders.RegisterProduction(channelAdapters, channelCredentials); err != nil {
 		panic("register DigitalHuman channel providers: " + err.Error())
 	}
@@ -275,9 +304,9 @@ func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRu
 		deps.FileService,
 		deps.ContentExtractor,
 		deps.OrganizationService,
-		newSkillRuntimeWithSandbox(deps.ToolEngine, deps.ToolManager, deps.FileService, deps.OrganizationService, deps.ManifestResolver),
+		newDigitalHumanSkillRuntime(deps),
 		nil,
-		runtimeInputDispatcher,
+		runtimeInputDispatcher, deps.ConnectorRuntime, deps.ConnectorConfirmationStore,
 	)
 	dispatcher := digitalhuman.NewAsynqRunDispatcher(deps.TaskManager)
 	memoryService := digitalhuman.NewService(repository)

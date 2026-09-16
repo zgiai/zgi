@@ -11,7 +11,6 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	"github.com/zgiai/zgi/api/internal/modules/digitalhuman"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 	agentmanagement_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/agentmanagement"
 	workspace_service "github.com/zgiai/zgi/api/internal/modules/workspace/service"
@@ -245,20 +244,25 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 
 	// ---------- DigitalHuman ----------
 	digitalHumanRuntime = InitializeDigitalHumanRuntime(DigitalHumanRuntimeDeps{
-		DB:                  db,
-		LLMClient:           serviceContainer.GetLLMClient(),
-		FileService:         serviceContainer.GetFileService(),
-		ContentExtractor:    serviceContainer.GetContentExtractor(),
-		OrganizationService: serviceContainer.GetOrganizationService(),
-		ToolEngine:          serviceContainer.GetToolEngine(),
-		ToolManager:         serviceContainer.GetToolManager(),
-		TaskManager:         serviceContainer.GetTaskManager(),
-		TaskRegistry:        serviceContainer.GetTaskHandlerRegistry(),
-		Scheduler:           serviceContainer.GetScheduler(),
-		ManifestResolver:    integrations.NewGovernanceManifestResolver(serviceContainer.GetIntegrationRegistry(), serviceContainer.GetIntegrationActionPolicyService()),
-		ConnectionResolver:  serviceContainer.GetIntegrationRuntimeConnectionResolver(),
-		CredentialCipher:    serviceContainer.GetIntegrationCredentialCipher(),
-		Tasks:               automationBundle.DigitalHumanTasks,
+		DB:                                  db,
+		LLMClient:                           serviceContainer.GetLLMClient(),
+		FileService:                         serviceContainer.GetFileService(),
+		ContentExtractor:                    serviceContainer.GetContentExtractor(),
+		OrganizationService:                 serviceContainer.GetOrganizationService(),
+		ToolEngine:                          serviceContainer.GetToolEngine(),
+		ToolManager:                         serviceContainer.GetToolManager(),
+		TaskManager:                         serviceContainer.GetTaskManager(),
+		TaskRegistry:                        serviceContainer.GetTaskHandlerRegistry(),
+		Scheduler:                           serviceContainer.GetScheduler(),
+		ManifestResolver:                    nil,
+		CredentialCipher:                    serviceContainer.GetDigitalHumanCredentialCipher(),
+		ConnectorRuntime:                    serviceContainer.GetConnectorDigitalHumanRuntimeResolver(),
+		ConnectorDispatcher:                 serviceContainer.GetConnectorSurfaceDispatcher(),
+		ConnectorCatalog:                    serviceContainer.GetConnectorPluginManager(),
+		ConnectorPersonalConnectionResolver: serviceContainer.GetConnectorPersonalConnectionResolver(),
+		WorkspaceMembership:                 serviceContainer.GetWorkspaceMemberRepository(),
+		ConnectorConfirmationStore:          serviceContainer.GetConnectorConfirmationContinuationStore(),
+		Tasks:                               automationBundle.DigitalHumanTasks,
 	})
 	if automationBundle.DigitalHumanTaskReconciler != nil && digitalHumanRuntime.Runtime != nil {
 		automationBundle.DigitalHumanTaskReconciler.SetResultDeliverer(digitalHumanRuntime.Runtime)

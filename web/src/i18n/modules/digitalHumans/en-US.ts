@@ -857,7 +857,7 @@ const messages = {
   channels: {
     title: 'External connections',
     description:
-      'Manage this digital human’s bot identities and message channels across Feishu, DingTalk, WeCom, and other external platforms.',
+      'Manage this digital human’s identity and messaging channels across Feishu, DingTalk, and other enterprise platforms.',
     loadErrorTitle: 'Channel data could not be loaded',
     loadErrorDescription: 'Check your connection and permissions, then try again.',
     summary: {
@@ -880,8 +880,12 @@ const messages = {
       },
     },
     addDialog: {
-      title: 'Add external channel',
-      description: 'Choose a messaging platform, then enter the app credentials and bot details.',
+      title: 'Add channel connector',
+      description:
+        'Choose a messaging platform from your enterprise connectors, then add it as a channel.',
+      target: 'this digital human',
+      setupDescription:
+        'After the connector is ready, its verified connection will be added as a channel automatically.',
       providerLabel: 'Messaging platform',
     },
     installations: {
@@ -1204,12 +1208,33 @@ const messages = {
         },
         errorHint: 'Check the AppKey, AppSecret, robot capability, and app publication status.',
       },
+      longConnection: {
+        title: 'Long connection',
+        state: {
+          not_applicable: 'Waiting for the server to establish a long connection…',
+          pending: 'Waiting for the server to establish a long connection…',
+          connecting: 'Connecting to Feishu…',
+          connected: 'Connected. No public callback URL is required.',
+          reconnecting: 'Reconnecting to Feishu…',
+          disconnected: 'The connection dropped; the server will reconnect automatically.',
+          error: 'Feishu is temporarily unreachable.',
+        },
+        errorHint:
+          'Check the enterprise app permissions, event subscription, and publication status.',
+      },
       name: 'Bot name',
       create: 'Connect',
       credential: {
         label: 'Feishu app credential',
         defaultName: 'Feishu app credential',
         name: 'Credential name',
+        managed: 'Manage in Connector settings',
+        enterprise: 'Enterprise connector',
+        source: {
+          embedded: 'Embedded credential',
+          personal_connection: 'Connector connection',
+          legacy: 'Compatible connection',
+        },
         directConfig: 'Configure directly',
         connectionCenter: 'Choose from Connection Center',
         selectConnection: 'Credential',

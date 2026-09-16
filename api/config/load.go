@@ -173,6 +173,7 @@ func loadDomainConfig(cfg *Config, source *envSource) error {
 		optionalConfigLoader("marketplace", loadMarketplaceConfig),
 
 		requiredConfigLoader("connectors", loadConnectorsConfig),
+		requiredConfigLoader("digital_human_credentials", loadDigitalHumanCredentialsConfig),
 		optionalConfigLoader("knowledge", loadKnowledgeConfig),
 		optionalConfigLoader("graph flow", loadGraphFlowConfig),
 		optionalConfigLoader("content parse", loadContentParseConfig),

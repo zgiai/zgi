@@ -893,6 +893,10 @@ func applicationError(err error, operation string) error {
 		code = AppCodeChannelConflict
 	case errors.Is(err, ErrChannelNotReady):
 		code = AppCodeChannelNotReady
+	case errors.Is(err, ErrChannelTransportUnsupported):
+		code = AppCodeChannelTransportUnsupported
+	case errors.Is(err, ErrChannelCredentialManaged):
+		code = AppCodeChannelCredentialManaged
 	case errors.Is(err, ErrCredentialStorageUnavailable):
 		code = AppCodeCredentialStorageUnavailable
 	case errors.Is(err, ErrChannelDeliveryNotFound):

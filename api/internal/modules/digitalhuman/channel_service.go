@@ -14,9 +14,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
+	providertransport "github.com/zgiai/zgi/api/internal/capabilities/channelruntime/providertransport"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/runtimeidentity"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	"github.com/zgiai/zgi/api/pkg/apperror"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
@@ -128,9 +129,13 @@ func (service *ChannelService) CreateInstallation(ctx context.Context, scope Sco
 		return nil, applicationError(err, "digital_human.channel.installation.create")
 	}
 	request.Provider = strings.ToLower(strings.TrimSpace(request.Provider))
+	request.ConnectorID = strings.ToLower(strings.TrimSpace(request.ConnectorID))
+	if request.ConnectorID == "" {
+		request.ConnectorID = request.Provider
+	}
 	request.Name = strings.TrimSpace(request.Name)
 	hasEmbeddedCredential := len(request.Credentials) > 0
-	if request.Provider == "" || request.Name == "" ||
+	if request.Provider == "" || request.ConnectorID == "" || request.Provider != request.ConnectorID || request.Name == "" ||
 		(hasEmbeddedCredential == (request.ConnectionID != uuid.Nil)) ||
 		!validRuneLength(request.Name, maxChannelNameRunes) {
 		return nil, applicationError(ErrInvalidRequest, "digital_human.channel.installation.create")
@@ -148,12 +153,15 @@ func (service *ChannelService) CreateInstallation(ctx context.Context, scope Sco
 	}
 	installation := &channelruntime.Installation{
 		ID: installationID, OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
-		Provider: request.Provider, ConnectionID: connectionID, Name: request.Name,
+		Provider: request.Provider, ConnectorID: request.ConnectorID, ConnectionID: connectionID,
+		ConnectionOwnerID: scope.ActorID, CredentialSource: channelruntime.CredentialSourcePersonalConnection,
+		Name:               request.Name,
 		DefaultSubjectType: &defaultSubjectType, DefaultSubjectID: &defaultSubjectID,
 		Status: channelruntime.InstallationStatusActive, Revision: 1,
 		CreatedBy: scope.ActorID, UpdatedBy: scope.ActorID, CreatedAt: now, UpdatedAt: now,
 	}
 	if hasEmbeddedCredential {
+		installation.CredentialSource = channelruntime.CredentialSourceEmbedded
 		manager, ok := service.credentials.(embeddedChannelCredentialManager)
 		if !ok {
 			return nil, applicationError(ErrChannelNotReady, "digital_human.channel.installation.create")
@@ -167,6 +175,8 @@ func (service *ChannelService) CreateInstallation(ctx context.Context, scope Sco
 	if err != nil {
 		return nil, applicationError(err, "digital_human.channel.installation.create")
 	}
+	installation.ConnectionRevision = credential.Revision
+	installation.ConnectionCredentialVersion = credential.Version
 	credential.Destroy()
 	if err := service.store.CreateChannelInstallation(ctx, installation); err != nil {
 		return nil, applicationError(err, "digital_human.channel.installation.create")
@@ -187,8 +197,12 @@ func (service *ChannelService) ListInstallations(ctx context.Context, scope Scop
 	}
 	views := make([]*ChannelInstallationView, 0, len(items))
 	for _, installation := range items {
+		normalizeChannelInstallationMetadata(installation)
+		// Keep the historic two-state response contract; credential_source
+		// carries the additive distinction between PersonalConnection and
+		// legacy rows.
 		credentialMode := "connection"
-		if installation.ConnectionID == installation.ID {
+		if installation.CredentialSource == channelruntime.CredentialSourceEmbedded || installation.ConnectionID == installation.ID {
 			credentialMode = "embedded"
 		}
 		receiver := service.receiverStatus(ctx, installation)
@@ -206,6 +220,30 @@ func (service *ChannelService) ListInstallations(ctx context.Context, scope Scop
 		})
 	}
 	return views, nil
+}
+
+// normalizeChannelInstallationMetadata fills the additive credential metadata
+// for rows persisted before Connector-backed channels existed. It is read-only
+// normalization and never overwrites a stored source.
+func normalizeChannelInstallationMetadata(installation *channelruntime.Installation) {
+	if installation == nil {
+		return
+	}
+	if installation.CredentialSource == "" {
+		if installation.ConnectionID == installation.ID {
+			installation.CredentialSource = channelruntime.CredentialSourceEmbedded
+		} else {
+			installation.CredentialSource = channelruntime.CredentialSourceLegacy
+		}
+	}
+	if installation.CredentialSource == channelruntime.CredentialSourceEmbedded {
+		if installation.ConnectionOwnerID == uuid.Nil {
+			installation.ConnectionOwnerID = installation.CreatedBy
+		}
+		if strings.TrimSpace(installation.ConnectorID) == "" {
+			installation.ConnectorID = strings.ToLower(strings.TrimSpace(installation.Provider))
+		}
+	}
 }
 
 func (service *ChannelService) receiverStatus(ctx context.Context, installation *channelruntime.Installation) channelruntime.ReceiverStatus {
@@ -263,6 +301,37 @@ func (service *ChannelService) UpdateInstallation(ctx context.Context, scope Sco
 		return nil, applicationError(err, "digital_human.channel.installation.update")
 	}
 	changed := false
+	if (request.ConnectorID == nil) != (request.ConnectionID == nil) {
+		return nil, applicationError(ErrInvalidRequest, "digital_human.channel.installation.update")
+	}
+	if request.ConnectionID != nil {
+		if *request.ConnectionID == uuid.Nil || request.ConnectorID == nil {
+			return nil, applicationError(ErrInvalidRequest, "digital_human.channel.installation.update")
+		}
+		connectorID := strings.ToLower(strings.TrimSpace(*request.ConnectorID))
+		if connectorID == "" || connectorID != strings.ToLower(strings.TrimSpace(installation.Provider)) {
+			return nil, applicationError(ErrInvalidRequest, "digital_human.channel.installation.update")
+		}
+		// Switching to a Connector PersonalConnection also transfers the
+		// credential owner: the account that selected the connection becomes the
+		// only one allowed to lease it at runtime.
+		candidate := *installation
+		candidate.ConnectorID = connectorID
+		candidate.ConnectionID = *request.ConnectionID
+		candidate.ConnectionOwnerID = scope.ActorID
+		candidate.CredentialSource = channelruntime.CredentialSourcePersonalConnection
+		candidate.ConnectionRevision = 0
+		candidate.ConnectionCredentialVersion = 0
+		credential, resolveErr := service.credentials.ResolveCredential(ctx, &candidate)
+		if resolveErr != nil {
+			return nil, applicationError(resolveErr, "digital_human.channel.installation.update")
+		}
+		candidate.ConnectionRevision = credential.Revision
+		candidate.ConnectionCredentialVersion = credential.Version
+		credential.Destroy()
+		*installation = candidate
+		changed = true
+	}
 	if request.Name != nil {
 		value := strings.TrimSpace(*request.Name)
 		if value == "" || !validRuneLength(value, maxChannelNameRunes) {
@@ -301,6 +370,18 @@ func (service *ChannelService) UpdateInstallationCredential(
 	installation, err := service.store.ScopedChannelInstallationByID(ctx, scope, digitalHumanID, installationID)
 	if err != nil {
 		return nil, applicationError(err, "digital_human.channel.installation.credential.update")
+	}
+	// A Connector-backed channel manages its credential in Connector settings;
+	// accepting an embedded credential here would silently detach the connection.
+	// Project the catalog code directly so the guarded transition stays a 409
+	// even though the shared DigitalHuman error mapper is owned elsewhere.
+	if installation.CredentialSource == channelruntime.CredentialSourcePersonalConnection ||
+		(installation.CredentialSource == "" && installation.ConnectionID != installation.ID) {
+		return nil, apperror.Wrap(
+			ErrChannelCredentialManaged,
+			AppCodeChannelCredentialManaged,
+			apperror.WithOperation("digital_human.channel.installation.credential.update"),
+		)
 	}
 	manager, ok := service.credentials.(embeddedChannelCredentialManager)
 	if !ok {
@@ -367,25 +448,25 @@ func (service *ChannelService) VerifyInstallation(
 }
 
 func failedChannelInstallationVerification(err error, readiness ChannelContextReadiness, checkedAt time.Time) *ChannelInstallationVerification {
-	code := integrations.ErrorCode(err)
-	reasonCode := integrations.ErrorReasonCode(err)
-	diagnostics := integrations.ProviderDiagnosticsFromError(err)
+	code := providertransport.ErrorCode(err)
+	reasonCode := providertransport.ErrorReasonCode(err)
+	diagnostics := providertransport.ProviderDiagnosticsFromError(err)
 	failureCode := "temporarily_unavailable"
 	retryable := false
 	switch code {
-	case integrations.ErrorCodeAuthInvalid, integrations.ErrorCodeConnectionExpired, integrations.ErrorCodeReconnectRequired:
+	case providertransport.ErrorCodeAuthInvalid, providertransport.ErrorCodeConnectionExpired, providertransport.ErrorCodeReconnectRequired:
 		failureCode = "credentials_invalid"
-	case integrations.ErrorCodeAccessDenied, integrations.ErrorCodeInsufficientScope:
+	case providertransport.ErrorCodeAccessDenied, providertransport.ErrorCodeInsufficientScope:
 		failureCode = "access_denied"
-	case integrations.ErrorCodeInvalidInput:
+	case providertransport.ErrorCodeInvalidInput:
 		failureCode = "configuration_invalid"
-	case integrations.ErrorCodeRateLimited:
+	case providertransport.ErrorCodeRateLimited:
 		failureCode, retryable = "rate_limited", true
-	case integrations.ErrorCodeTimeout, integrations.ErrorCodeUpstream:
+	case providertransport.ErrorCodeTimeout, providertransport.ErrorCodeUpstream:
 		failureCode, retryable = "temporarily_unavailable", true
-	case integrations.ErrorCodeResponseInvalid:
+	case providertransport.ErrorCodeResponseInvalid:
 		failureCode = "response_invalid"
-	case integrations.ErrorCodeProviderRejected:
+	case providertransport.ErrorCodeProviderRejected:
 		failureCode = "provider_rejected"
 	}
 	return &ChannelInstallationVerification{
@@ -1285,15 +1366,15 @@ func channelDeliveryRetryable(err error) bool {
 	if err == nil || errors.Is(err, channelruntime.ErrDeliveryOutcomeUnknown) {
 		return false
 	}
-	var integrationError *integrations.Error
+	var integrationError *providertransport.Error
 	if !errors.As(err, &integrationError) {
 		return true
 	}
 	switch integrationError.Code {
-	case integrations.ErrorCodeRateLimited,
-		integrations.ErrorCodeTimeout,
-		integrations.ErrorCodeUpstream,
-		integrations.ErrorCodeOperationInProgress:
+	case providertransport.ErrorCodeRateLimited,
+		providertransport.ErrorCodeTimeout,
+		providertransport.ErrorCodeUpstream,
+		providertransport.ErrorCodeOperationInProgress:
 		return true
 	default:
 		return false
@@ -1509,7 +1590,7 @@ func channelErrorCode(err error) string {
 	if errors.Is(err, channelruntime.ErrDeliveryOutcomeUnknown) {
 		return "channel.delivery.outcome_unknown"
 	}
-	switch reason := integrations.ErrorReasonCode(err); reason {
+	switch reason := providertransport.ErrorReasonCode(err); reason {
 	case "credentials_invalid", "bot_not_in_chat", "bot_capability_disabled", "app_unavailable",
 		"permission_missing", "send_not_allowed", "permission_or_resource_denied":
 		return "channel.provider." + reason

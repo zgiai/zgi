@@ -30,6 +30,8 @@ import {
   AgentWorkflowTypeIcon,
 } from '@/components/agents/agent-runtime/workflow-type-display';
 import { ResourceBindingCard } from '@/components/common/resource-binding';
+import { DigitalHumanConnectorSection } from '@/components/digital-human/digital-human-connector-section';
+import { digitalHumanBindingInput } from '@/components/digital-human/digital-human-connector-model';
 import { useDigitalHumanDraftStore } from '@/components/digital-human/digital-human-draft-store';
 import {
   DigitalHumanSkillBindingCard,
@@ -45,14 +47,9 @@ import {
   ResourceSelectionGrid,
   ResourceSelectionSkeleton,
 } from '@/components/common/resource-selection-dialog';
-import { actionSupportsAuthMethod } from '@/components/integrations/action-auth-compatibility';
-import { safeIntegrationDisplayText } from '@/components/integrations/display-utils';
-import { useIntegrationMetadata } from '@/components/integrations/metadata-i18n';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Switch } from '@/components/ui/switch';
-import { integrationCatalogItems, useIntegrationCatalog } from '@/hooks';
 import {
   useDigitalHumanBindingCandidates,
   useDigitalHumanDraftBindings,
@@ -62,7 +59,6 @@ import { useAccountPermissions } from '@/hooks/organization/use-account-permissi
 import { useLocale } from '@/hooks/use-locale';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
-import type { IntegrationCatalogItem } from '@/services/types/integration';
 import type {
   DigitalHumanBindingType,
   DigitalHumanResourceBinding,
@@ -71,7 +67,7 @@ import type {
 } from '@/services/types/digital-human';
 import { formatDate } from '@/utils/format';
 
-type BindingSectionKey = 'skills' | 'knowledge' | 'databases' | 'workflows' | 'integrations';
+type BindingSectionKey = 'skills' | 'knowledge' | 'databases' | 'workflows';
 type AccessMode = DigitalHumanResourceBindingInput['access_mode'];
 type DatabasePickerStep = 'databases' | 'tables';
 
@@ -88,8 +84,6 @@ interface BindingSectionDefinition {
 export function DigitalHumanResourceBindings({ id }: { id: string }) {
   const t = useT('digitalHumans');
   const { locale } = useLocale();
-  const integrationMetadata = useIntegrationMetadata();
-  const integrationCatalogQuery = useIntegrationCatalog(true, 'shared');
   const permissions = useAccountPermissions();
   const query = useDigitalHumanDraftBindings(id);
   const mutations = useDigitalHumanMutations(id);
@@ -109,17 +103,6 @@ export function DigitalHumanResourceBindings({ id }: { id: string }) {
   const canConfigure = canUpdate && !versionPreview;
   const displayedItems = versionPreview?.bindings?.map(toBindingInput) ?? items;
   const isPreviewLoading = Boolean(versionPreview && !versionPreview.bindings);
-  const integrationCatalog = useMemo(
-    () => integrationCatalogItems(integrationCatalogQuery.data?.data),
-    [integrationCatalogQuery.data?.data]
-  );
-  const integrationCatalogById = useMemo(
-    () =>
-      new Map(
-        integrationCatalog.map(item => [(item.integration_id || item.id).toLocaleLowerCase(), item])
-      ),
-    [integrationCatalog]
-  );
 
   const sections: BindingSectionDefinition[] = useMemo(
     () => [
@@ -158,15 +141,6 @@ export function DigitalHumanResourceBindings({ id }: { id: string }) {
         pickerTitle: t('bindings.sections.workflows.pickerTitle'),
         types: ['workflow'],
         icon: Workflow,
-      },
-      {
-        key: 'integrations',
-        title: t('bindings.sections.integrations.title'),
-        empty: t('bindings.sections.integrations.empty'),
-        add: t('bindings.sections.integrations.add'),
-        pickerTitle: t('bindings.sections.integrations.pickerTitle'),
-        types: ['integration_connection'],
-        icon: PlugZap,
       },
     ],
     [t]
@@ -277,9 +251,9 @@ export function DigitalHumanResourceBindings({ id }: { id: string }) {
       await mutations.replaceBindings.mutateAsync({
         digitalHumanId: id,
         expectedDraftLockVersion: lockVersion,
+        expectedDraftVersionId: query.data?.data?.draft_version_id,
         items: nextItems,
       });
-      setItems(nextItems.map(item => ({ ...item, metadata: { ...item.metadata } })));
       return true;
     } catch {
       return false;
@@ -350,77 +324,7 @@ export function DigitalHumanResourceBindings({ id }: { id: string }) {
     setDatabaseStep('databases');
   };
 
-  const selectIntegrationCandidate = (candidate: DigitalHumanResourceCandidate) => {
-    const integrationId = (candidate.parent_resource_id || '').toLocaleLowerCase();
-    const existing = pendingItems.find(
-      item => item.type === 'integration_connection' && item.resource_id === candidate.resource_id
-    );
-    if (existing) {
-      setPendingItems(current => current.filter(item => bindingKey(item) !== bindingKey(existing)));
-      return;
-    }
-
-    const catalogItem = integrationCatalogById.get(integrationId);
-    const availableIds = new Set(metadataStringArray(candidate.metadata, 'allowed_action_ids'));
-    const authMethodId = metadataString(candidate.metadata, 'auth_method_id');
-    const availableActions = (catalogItem?.actions ?? []).filter(
-      action =>
-        availableIds.has(action.id) &&
-        (!authMethodId || actionSupportsAuthMethod(action, authMethodId))
-    );
-    const readActionIds = availableActions
-      .filter(action => action.effect === 'read')
-      .map(action => action.id);
-    const selectedActionIds =
-      readActionIds.length > 0 ? readActionIds : availableActions.map(action => action.id);
-    const next = candidateToBinding(candidate, 'execute');
-    next.metadata = { ...next.metadata, allowed_action_ids: selectedActionIds };
-    setPendingItems(current => [
-      ...current.filter(
-        item =>
-          item.type !== 'integration_connection' ||
-          (item.parent_resource_id || '').toLocaleLowerCase() !== integrationId
-      ),
-      next,
-    ]);
-  };
-
-  const toggleIntegrationAction = (
-    candidate: DigitalHumanResourceCandidate,
-    actionId: string,
-    checked: boolean
-  ) => {
-    setPendingItems(current =>
-      current.map(item => {
-        if (item.type !== 'integration_connection' || item.resource_id !== candidate.resource_id) {
-          return item;
-        }
-        const actionIds = metadataStringArray(item.metadata, 'allowed_action_ids');
-        return {
-          ...item,
-          metadata: {
-            ...item.metadata,
-            allowed_action_ids: checked
-              ? Array.from(new Set([...actionIds, actionId]))
-              : actionIds.filter(id => id !== actionId),
-          },
-        };
-      })
-    );
-  };
-
   const saveSelection = async () => {
-    if (
-      activeDefinition?.key === 'integrations' &&
-      pendingItems.some(
-        item =>
-          item.type === 'integration_connection' &&
-          metadataStringArray(item.metadata, 'allowed_action_ids').length === 0
-      )
-    ) {
-      toast.error(t('bindings.integrations.actionRequired'));
-      return;
-    }
     if (activeDefinition?.key === 'databases') {
       const incompleteDatabase = selectedDatabaseIds.some(
         databaseId =>
@@ -459,13 +363,6 @@ export function DigitalHumanResourceBindings({ id }: { id: string }) {
             (item.type === 'database' && item.resource_id === databaseId) ||
             (item.type === 'database_table' && item.parent_resource_id === databaseId)
         )
-    );
-  const integrationSelectionInvalid =
-    activeDefinition?.key === 'integrations' &&
-    pendingItems.some(
-      item =>
-        item.type === 'integration_connection' &&
-        metadataStringArray(item.metadata, 'allowed_action_ids').length === 0
     );
 
   return (
@@ -539,10 +436,6 @@ export function DigitalHumanResourceBindings({ id }: { id: string }) {
                         key={bindingKey(item)}
                         item={item}
                         locale={locale}
-                        catalogItem={integrationCatalogById.get(
-                          (item.parent_resource_id || '').toLocaleLowerCase()
-                        )}
-                        integrationMetadata={integrationMetadata}
                         accessLabel={t(`bindings.accessModes.${item.access_mode}`)}
                         removeLabel={t('bindings.removeNamed', {
                           name: item.display_name || item.resource_id,
@@ -557,6 +450,11 @@ export function DigitalHumanResourceBindings({ id }: { id: string }) {
             </section>
           );
         })}
+        <DigitalHumanConnectorSection
+          id={id}
+          preview={versionPreview?.bindings}
+          readOnly={!canConfigure}
+        />
       </div>
 
       {activeDefinition ? (
@@ -578,9 +476,7 @@ export function DigitalHumanResourceBindings({ id }: { id: string }) {
                         ? 'bindings.databases.dialogDescription'
                         : 'bindings.databases.tableDialogDescription'
                     )
-                  : activeDefinition.key === 'workflows'
-                    ? t('bindings.workflows.dialogDescription')
-                    : t('bindings.integrations.dialogDescription')
+                  : t('bindings.workflows.dialogDescription')
           }
           selectedCountLabel={t('bindings.selectedCount', { count: pendingSectionCount })}
           search={search}
@@ -595,9 +491,7 @@ export function DigitalHumanResourceBindings({ id }: { id: string }) {
                         ? 'bindings.databases.searchDatabase'
                         : 'bindings.databases.searchTable'
                     )
-                  : activeDefinition.key === 'workflows'
-                    ? t('bindings.workflows.searchPlaceholder')
-                    : t('bindings.integrations.searchPlaceholder')
+                  : t('bindings.workflows.searchPlaceholder')
           }
           isSearching={
             type !== 'skill' && activeCandidateQuery.isFetching && !activeCandidateQuery.isLoading
@@ -637,9 +531,7 @@ export function DigitalHumanResourceBindings({ id }: { id: string }) {
                   mutations.replaceBindings.isPending ||
                   (activeDefinition.key === 'databases' && databaseStep === 'databases'
                     ? selectedDatabaseIds.length === 0 && !selectionChanged
-                    : !selectionChanged ||
-                      Boolean(databaseSelectionIncomplete) ||
-                      Boolean(integrationSelectionInvalid))
+                    : !selectionChanged || Boolean(databaseSelectionIncomplete))
                 }
               >
                 {mutations.replaceBindings.isPending
@@ -674,16 +566,8 @@ export function DigitalHumanResourceBindings({ id }: { id: string }) {
             selectedItems={pendingItems}
             selectedDatabaseIds={selectedDatabaseIds}
             databaseCandidates={databaseCandidatesQuery.data?.data?.items ?? []}
-            integrationCatalogById={integrationCatalogById}
-            integrationMetadata={integrationMetadata}
-            loading={
-              activeCandidateQuery.isLoading ||
-              (activeDefinition.key === 'integrations' && integrationCatalogQuery.isLoading)
-            }
-            error={
-              activeCandidateQuery.isError ||
-              (activeDefinition.key === 'integrations' && integrationCatalogQuery.isError)
-            }
+            loading={activeCandidateQuery.isLoading}
+            error={activeCandidateQuery.isError}
             emptyTitle={t('bindings.noCandidates')}
             emptyDescription={
               deferredSearch ? t('bindings.noSearchResults') : t('bindings.noCandidatesDescription')
@@ -698,13 +582,8 @@ export function DigitalHumanResourceBindings({ id }: { id: string }) {
             onChangeAccess={changeCandidateAccess}
             onToggleDatabase={toggleDatabaseCandidate}
             onChangeDatabase={setParentId}
-            onSelectIntegration={selectIntegrationCandidate}
-            onToggleIntegrationAction={toggleIntegrationAction}
             onRetry={() => {
               void activeCandidateQuery.refetch();
-              if (activeDefinition.key === 'integrations') {
-                void integrationCatalogQuery.refetch();
-              }
             }}
           />
         </ResourceSelectionDialog>
@@ -716,8 +595,6 @@ export function DigitalHumanResourceBindings({ id }: { id: string }) {
 function BindingCard({
   item,
   locale,
-  catalogItem,
-  integrationMetadata,
   accessLabel,
   removeLabel,
   onRemove,
@@ -725,14 +602,11 @@ function BindingCard({
 }: {
   item: DigitalHumanResourceBindingInput;
   locale: string;
-  catalogItem?: IntegrationCatalogItem;
-  integrationMetadata: ReturnType<typeof useIntegrationMetadata>;
   accessLabel: string;
   removeLabel: string;
   onRemove: () => void;
   disabled: boolean;
 }) {
-  const t = useT('digitalHumans');
   // A bound skill uses the shared card, which the creation form renders too.
   if (item.type === 'skill') {
     return (
@@ -747,26 +621,11 @@ function BindingCard({
   }
   const Icon = bindingIcon(item.type);
   const workflowType = metadataString(item.metadata, 'agent_type');
-  const integrationId = item.parent_resource_id || '';
-  const integrationName = catalogItem
-    ? integrationMetadata.providerName(catalogItem, t('bindings.integrations.unknownApp'))
-    : integrationMetadata.providerName(integrationId, t('bindings.integrations.unknownApp'));
-  const actionIds = metadataStringArray(item.metadata, 'allowed_action_ids');
-  const title =
-    item.type === 'integration_connection'
-      ? safeIntegrationDisplayText(item.display_name, t('bindings.integrations.unnamedConnection'))
-      : item.display_name || item.resource_id;
-  const description =
-    item.type === 'integration_connection'
-      ? integrationName
-      : metadataString(item.metadata, 'description');
+  const title = item.display_name || item.resource_id;
+  const description = metadataString(item.metadata, 'description');
   const status =
     item.type === 'workflow' ? (
       <AgentWorkflowTypeBadge agentType={workflowType} />
-    ) : item.type === 'integration_connection' ? (
-      <Badge variant="subtle">
-        {t('bindings.integrations.actionCount', { count: actionIds.length })}
-      </Badge>
     ) : item.type === 'knowledge_dataset' ? undefined : (
       <Badge variant="subtle">{accessLabel}</Badge>
     );
@@ -797,30 +656,7 @@ function BindingCard({
           <Trash2 className="size-4" />
         </Button>
       }
-    >
-      {item.type === 'integration_connection' && actionIds.length > 0 ? (
-        <div className="flex flex-wrap gap-1.5">
-          {actionIds.map(actionId => {
-            const action = catalogItem?.actions.find(candidate => candidate.id === actionId);
-            return (
-              <Badge key={actionId} variant="outline" className="max-w-full font-normal">
-                <span className="truncate">
-                  {action
-                    ? integrationMetadata.actionName(
-                        action,
-                        t('bindings.integrations.unknownAction')
-                      )
-                    : integrationMetadata.actionNameByID(
-                        actionId,
-                        t('bindings.integrations.unknownAction')
-                      )}
-                </span>
-              </Badge>
-            );
-          })}
-        </div>
-      ) : null}
-    </ResourceBindingCard>
+    />
   );
 }
 
@@ -958,8 +794,6 @@ function ResourceCandidateContent({
   selectedItems,
   selectedDatabaseIds,
   databaseCandidates,
-  integrationCatalogById,
-  integrationMetadata,
   loading,
   error,
   emptyTitle,
@@ -974,8 +808,6 @@ function ResourceCandidateContent({
   onChangeAccess,
   onToggleDatabase,
   onChangeDatabase,
-  onSelectIntegration,
-  onToggleIntegrationAction,
   onRetry,
 }: {
   section: BindingSectionKey;
@@ -987,8 +819,6 @@ function ResourceCandidateContent({
   selectedItems: DigitalHumanResourceBindingInput[];
   selectedDatabaseIds: string[];
   databaseCandidates: DigitalHumanResourceCandidate[];
-  integrationCatalogById: Map<string, IntegrationCatalogItem>;
-  integrationMetadata: ReturnType<typeof useIntegrationMetadata>;
   loading: boolean;
   error: boolean;
   emptyTitle: string;
@@ -1003,12 +833,6 @@ function ResourceCandidateContent({
   onChangeAccess: (candidate: DigitalHumanResourceCandidate, mode: AccessMode) => void;
   onToggleDatabase: (candidate: DigitalHumanResourceCandidate, checked: boolean) => void;
   onChangeDatabase: (id: string) => void;
-  onSelectIntegration: (candidate: DigitalHumanResourceCandidate) => void;
-  onToggleIntegrationAction: (
-    candidate: DigitalHumanResourceCandidate,
-    actionId: string,
-    checked: boolean
-  ) => void;
   onRetry: () => void;
 }) {
   const t = useT('digitalHumans');
@@ -1047,11 +871,7 @@ function ResourceCandidateContent({
       />
     );
   }
-  if (
-    candidates.length === 0 &&
-    !(section === 'databases' && databaseStep === 'tables') &&
-    section !== 'integrations'
-  ) {
+  if (candidates.length === 0 && !(section === 'databases' && databaseStep === 'tables')) {
     return (
       <ResourceSelectionEmptyState
         icon={
@@ -1211,147 +1031,6 @@ function ResourceCandidateContent({
     );
   }
 
-  if (section === 'integrations') {
-    const selectedConnectionIds = new Set(
-      selectedItems
-        .filter(item => item.type === 'integration_connection')
-        .map(item => item.resource_id)
-    );
-    const visibleCandidates = candidates.filter(
-      candidate => candidate.available || selectedConnectionIds.has(candidate.resource_id)
-    );
-    if (visibleCandidates.length === 0) {
-      return (
-        <ResourceSelectionEmptyState
-          icon={search ? <SearchX /> : <PlugZap />}
-          title={emptyTitle}
-          description={emptyDescription}
-          variant={search ? 'search' : 'resource'}
-        />
-      );
-    }
-    return (
-      <ResourceSelectionGrid>
-        {visibleCandidates.map(candidate => {
-          const selected = selectedItems.find(
-            item =>
-              item.type === 'integration_connection' && item.resource_id === candidate.resource_id
-          );
-          const integrationId = (candidate.parent_resource_id || '').toLocaleLowerCase();
-          const catalogItem = integrationCatalogById.get(integrationId);
-          const allowed = new Set(metadataStringArray(candidate.metadata, 'allowed_action_ids'));
-          const authMethodId = metadataString(candidate.metadata, 'auth_method_id');
-          const selectedActionIds = selected
-            ? metadataStringArray(selected.metadata, 'allowed_action_ids')
-            : [];
-          const actions = (catalogItem?.actions ?? []).filter(
-            action =>
-              (allowed.has(action.id) &&
-                (!authMethodId || actionSupportsAuthMethod(action, authMethodId))) ||
-              selectedActionIds.includes(action.id)
-          );
-          const providerName = catalogItem
-            ? integrationMetadata.providerName(catalogItem, t('bindings.integrations.unknownApp'))
-            : integrationMetadata.providerName(
-                integrationId,
-                t('bindings.integrations.unknownApp')
-              );
-          const connectionName = safeIntegrationDisplayText(
-            candidate.display_name,
-            t('bindings.integrations.unnamedConnection')
-          );
-          return (
-            <div
-              key={candidate.resource_id}
-              className={cn(
-                'rounded-lg border bg-background p-3.5 shadow-sm transition-colors',
-                selected && 'border-primary bg-primary/5',
-                !candidate.available && 'opacity-60'
-              )}
-            >
-              <button
-                type="button"
-                aria-pressed={Boolean(selected)}
-                disabled={!candidate.available && !selected}
-                className="flex w-full items-start gap-3 text-left"
-                onClick={() => onSelectIntegration(candidate)}
-              >
-                <ResourceSelectionCardIcon className="text-primary">
-                  <PlugZap />
-                </ResourceSelectionCardIcon>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-semibold">{connectionName}</span>
-                  <span className="mt-1 block text-xs text-muted-foreground">
-                    {t('bindings.integrations.connectionStatus', {
-                      integration: providerName,
-                      status: candidate.available
-                        ? t('bindings.integrations.status.active')
-                        : t('bindings.integrations.status.unavailable'),
-                    })}
-                  </span>
-                </span>
-                <SelectionMark selected={Boolean(selected)} />
-              </button>
-              {selected ? (
-                <div className="mt-3 space-y-2 border-t pt-3">
-                  <div className="text-xs font-medium">
-                    {t('bindings.integrations.allowedActions')}
-                  </div>
-                  {actions.length === 0 ? (
-                    <p className="text-xs text-destructive">
-                      {t('bindings.integrations.noAvailableActions')}
-                    </p>
-                  ) : (
-                    actions.map(action => {
-                      const checked = selectedActionIds.includes(action.id);
-                      const available = allowed.has(action.id);
-                      return (
-                        <label
-                          key={action.id}
-                          className={cn(
-                            'flex items-start gap-2 rounded-md p-1.5',
-                            available || checked
-                              ? 'cursor-pointer hover:bg-muted/50'
-                              : 'cursor-not-allowed opacity-60'
-                          )}
-                        >
-                          <Checkbox
-                            checked={checked}
-                            disabled={!available && !checked}
-                            onCheckedChange={value =>
-                              onToggleIntegrationAction(candidate, action.id, value === true)
-                            }
-                          />
-                          <span className="min-w-0">
-                            <span className="block text-xs font-medium">
-                              {integrationMetadata.actionName(
-                                action,
-                                t('bindings.integrations.unknownAction')
-                              )}
-                            </span>
-                            <span className="mt-0.5 block text-[11px] leading-4 text-muted-foreground">
-                              {integrationMetadata.actionDescription(action) ||
-                                t('bindings.integrations.noActionDescription')}
-                            </span>
-                          </span>
-                        </label>
-                      );
-                    })
-                  )}
-                  {selectedActionIds.length === 0 ? (
-                    <p className="text-xs text-destructive">
-                      {t('bindings.integrations.actionRequired')}
-                    </p>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-          );
-        })}
-      </ResourceSelectionGrid>
-    );
-  }
-
   return (
     <ResourceSelectionGrid>
       {candidates.map(candidate => {
@@ -1485,16 +1164,9 @@ function candidateToBinding(
 }
 
 function toBindingInput(item: DigitalHumanResourceBinding): DigitalHumanResourceBindingInput {
-  return {
-    type: item.binding_type,
-    resource_id: item.resource_id,
-    parent_resource_id: item.parent_resource_id,
-    display_name: item.display_name,
-    access_mode: item.access_mode,
-    resource_revision: item.resource_revision,
-    credential_ref: item.credential_ref,
-    metadata: { ...(item.metadata ?? {}) },
-  };
+  // Carries the row id so a replacement keeps binding identity instead of
+  // re-authorizing it as a brand new resource.
+  return digitalHumanBindingInput(item);
 }
 
 function resourceKey(item: {
@@ -1531,10 +1203,4 @@ function bindingsEqual(
 function metadataString(metadata: Record<string, unknown>, key: string) {
   const value = metadata[key];
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
-}
-
-function metadataStringArray(metadata: Record<string, unknown>, key: string) {
-  const value = metadata[key];
-  if (!Array.isArray(value)) return [];
-  return value.filter((item): item is string => typeof item === 'string' && Boolean(item.trim()));
 }

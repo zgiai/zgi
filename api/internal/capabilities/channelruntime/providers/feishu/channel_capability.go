@@ -6,7 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	providertransport "github.com/zgiai/zgi/api/internal/capabilities/channelruntime/providertransport"
 )
 
 const (
@@ -35,7 +35,7 @@ func (adapter *ChannelAdapter) TestConversationCapabilities(
 		return failFeishuCapabilityChecks(checks, "configuration_invalid")
 	}
 
-	connection, cleanup, err := adapter.resolveDirectConnection(ctx, request.OrganizationID, request.ConnectionID)
+	connection, cleanup, err := adapter.resolveDirectConnection(ctx, request.OrganizationID, request.WorkspaceID, request.InstallationID)
 	if err != nil {
 		return failFeishuCapabilityChecks(checks, feishuCapabilityFailureCode(err))
 	}
@@ -103,7 +103,7 @@ func failFeishuCapabilityChecks(
 }
 
 func feishuCapabilityFailureCode(err error) string {
-	switch integrations.ErrorReasonCode(err) {
+	switch providertransport.ErrorReasonCode(err) {
 	case "credentials_invalid":
 		return "credentials_invalid"
 	case "bot_not_in_chat":
@@ -113,16 +113,16 @@ func feishuCapabilityFailureCode(err error) string {
 	case "permission_missing", "permission_or_resource_denied":
 		return "permission_missing"
 	}
-	switch integrations.ErrorCode(err) {
-	case integrations.ErrorCodeAuthInvalid:
+	switch providertransport.ErrorCode(err) {
+	case providertransport.ErrorCodeAuthInvalid:
 		return "credentials_invalid"
-	case integrations.ErrorCodeAccessDenied:
+	case providertransport.ErrorCodeAccessDenied:
 		return "permission_missing"
-	case integrations.ErrorCodeRateLimited:
+	case providertransport.ErrorCodeRateLimited:
 		return "rate_limited"
-	case integrations.ErrorCodeTimeout, integrations.ErrorCodeUpstream:
+	case providertransport.ErrorCodeTimeout, providertransport.ErrorCodeUpstream:
 		return "temporarily_unavailable"
-	case integrations.ErrorCodeInvalidInput, integrations.ErrorCodeConnectionInvalid:
+	case providertransport.ErrorCodeInvalidInput, providertransport.ErrorCodeConnectionInvalid:
 		return "configuration_invalid"
 	default:
 		return "provider_rejected"

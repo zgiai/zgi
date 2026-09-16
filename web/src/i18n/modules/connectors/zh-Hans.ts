@@ -463,6 +463,7 @@ const messages: ConnectorMessages = {
       chat: 'AI Chat',
       agent: '智能体',
       workflow: '工作流',
+      digitalHuman: '数字人',
     },
     status: {
       active: '使用中',
@@ -641,6 +642,7 @@ const messages: ConnectorMessages = {
       chat: '当前对话',
       agent: '当前智能体',
       workflow: '当前工作流',
+      digital_human: '当前数字人',
     },
     searchPlaceholder: '搜索连接器',
     searchAria: '搜索可用的连接器和数据源',
@@ -767,6 +769,7 @@ const messages: ConnectorMessages = {
       chat: 'AI Chat',
       agent: '智能体',
       workflow: '工作流',
+      digital_human: '数字人',
     },
     effects: {
       read: '读取外部数据',

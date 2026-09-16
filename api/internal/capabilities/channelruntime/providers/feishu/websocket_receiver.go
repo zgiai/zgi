@@ -13,7 +13,7 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	providertransport "github.com/zgiai/zgi/api/internal/capabilities/channelruntime/providertransport"
 )
 
 // WebSocketReceiver owns a Feishu SDK connection, not a second message pipeline.
@@ -143,12 +143,12 @@ func feishuReceiverError(err error) *channelruntime.ReceiverError {
 		}
 		return result
 	}
-	switch integrations.ErrorCode(err) {
-	case integrations.ErrorCodeAuthInvalid, integrations.ErrorCodeConnectionExpired, integrations.ErrorCodeReconnectRequired:
+	switch providertransport.ErrorCode(err) {
+	case providertransport.ErrorCodeAuthInvalid, providertransport.ErrorCodeConnectionExpired, providertransport.ErrorCodeReconnectRequired:
 		result.Code, result.Retryable = "credentials_invalid", false
-	case integrations.ErrorCodeAccessDenied, integrations.ErrorCodeInsufficientScope:
+	case providertransport.ErrorCodeAccessDenied, providertransport.ErrorCodeInsufficientScope:
 		result.Code, result.Retryable = "permission_missing", false
-	case integrations.ErrorCodeInvalidInput:
+	case providertransport.ErrorCodeInvalidInput, providertransport.ErrorCodeConnectionInvalid:
 		result.Code, result.Retryable = "configuration_invalid", false
 	}
 	return result

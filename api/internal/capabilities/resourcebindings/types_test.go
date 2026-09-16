@@ -27,7 +27,7 @@ func (s agentReaderStub) FindBinding(_ context.Context, _ agentbindings.ScopeRef
 	return nil, nil
 }
 
-func TestAgentAdapterPreservesAgentStoreAndNeutralizesProjection(t *testing.T) {
+func TestAgentAdapterPreservesAgentStoreProjection(t *testing.T) {
 	agentID := uuid.New()
 	versionID := uuid.New()
 	ref := SnapshotRef{Subject: runtimeidentity.SubjectRef{
@@ -35,8 +35,8 @@ func TestAgentAdapterPreservesAgentStoreAndNeutralizesProjection(t *testing.T) {
 	}, Phase: PhasePublished, VersionID: &versionID}
 	adapter := NewAgentAdapter(agentReaderStub{rows: []agentbindings.Binding{{
 		ID: uuid.New(), AgentID: agentID, BindingScope: agentbindings.ScopePublished,
-		BindingType: agentbindings.BindingTypeIntegrationConnection, ResourceID: "connection-1", ParentResourceID: "feishu",
-		AccessMode: "execute", Metadata: map[string]interface{}{IntegrationAllowedActionIDsMetadataKey: []string{"message.send"}},
+		BindingType: agentbindings.BindingTypeSkill, ResourceID: "skill-1",
+		AccessMode: "execute", Metadata: map[string]interface{}{"source": "agent"},
 	}}})
 
 	bindings, err := adapter.ListSnapshot(t.Context(), ref)
@@ -47,17 +47,15 @@ func TestAgentAdapterPreservesAgentStoreAndNeutralizesProjection(t *testing.T) {
 		t.Fatalf("bindings = %#v", bindings)
 	}
 	decision, err := adapter.Verify(t.Context(), ref, Match{
-		Type: BindingTypeIntegrationConnection, ResourceID: "connection-1", ParentResourceID: "feishu",
-		AccessMode: AccessModeExecute, ActionID: "message.send",
+		Type: BindingTypeSkill, ResourceID: "skill-1", AccessMode: AccessModeExecute,
 	})
 	if err != nil || !decision.Allowed {
 		t.Fatalf("Verify(allowed) = %#v, %v", decision, err)
 	}
 	denied, err := adapter.Verify(t.Context(), ref, Match{
-		Type: BindingTypeIntegrationConnection, ResourceID: "connection-1", ParentResourceID: "feishu",
-		AccessMode: AccessModeExecute, ActionID: "admin.delete",
+		Type: BindingTypeSkill, ResourceID: "skill-2", AccessMode: AccessModeExecute,
 	})
-	if err != nil || denied.Allowed || denied.Reason != "integration_action_not_allowed" {
+	if err != nil || denied.Allowed || denied.Reason != "resource_not_bound" {
 		t.Fatalf("Verify(denied) = %#v, %v", denied, err)
 	}
 }

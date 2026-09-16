@@ -809,7 +809,7 @@ const messages: DigitalHumansMessages = {
   },
   channels: {
     title: '外部连接',
-    description: '管理数字人在飞书、钉钉、企业微信等外部平台中的机器人身份和消息通道。',
+    description: '管理数字人在飞书、钉钉、企业微信等外部平台上的身份和消息渠道。',
     loadErrorTitle: '无法加载渠道数据',
     loadErrorDescription: '请检查网络和权限后重试。',
     summary: {
@@ -830,8 +830,10 @@ const messages: DigitalHumansMessages = {
       },
     },
     addDialog: {
-      title: '添加外部渠道',
-      description: '选择消息平台，然后填写该机器人的应用凭证和基本信息。',
+      title: '添加渠道连接器',
+      description: '从企业连接器中选择可收发消息的平台，再创建数字人渠道。',
+      target: '这个数字人',
+      setupDescription: '完成连接器设置后，系统会自动把已验证的连接添加为渠道。',
       providerLabel: '消息平台',
     },
     installations: {
@@ -1121,12 +1123,32 @@ const messages: DigitalHumansMessages = {
         },
         errorHint: '请检查 AppKey、AppSecret、机器人能力和应用发布状态。',
       },
+      longConnection: {
+        title: '长连接',
+        state: {
+          not_applicable: '等待服务端建立长连接…',
+          pending: '等待服务端建立长连接…',
+          connecting: '正在连接飞书…',
+          connected: '已连接，无需配置公网回调地址。',
+          reconnecting: '正在重新连接飞书…',
+          disconnected: '连接已断开，服务端将自动重连。',
+          error: '暂时无法连接飞书。',
+        },
+        errorHint: '请检查企业自建应用权限、事件订阅和应用发布状态。',
+      },
       name: '机器人名称',
       create: '连接',
       credential: {
         label: '飞书应用凭证',
         defaultName: '飞书应用凭证',
         name: '凭证名称',
+        managed: '在连接器设置中管理',
+        enterprise: '企业连接器',
+        source: {
+          embedded: '内置凭证',
+          personal_connection: '连接器连接',
+          legacy: '兼容连接',
+        },
         directConfig: '直接配置',
         connectionCenter: '从连接中心选择',
         selectConnection: '选择凭证',

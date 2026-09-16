@@ -1989,12 +1989,35 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 		InvokeFrom:         invokeFrom,
 		RuntimeParameters:  runtimeParameters,
 	}
+	if s == nil {
+		return executionContext
+	}
 	if invokeFrom == tools.ToolInvokeFromAIChat {
 		executionContext.ConnectorIdentityResolver = s.connectorChatRuntime
 	} else if invokeFrom == tools.ToolInvokeFromAgent {
 		executionContext.ConnectorIdentityResolver = s.connectorAgentRuntime
 		executionContext.ConnectorTargetScope = connectorcore.TargetScope(prepared.RunConfig.ConnectorTargetScope)
 		executionContext.ConnectorTargetVersionID = prepared.RunConfig.ConnectorTargetVersionID
+	}
+	// ConnectorTargetType is server-owned and empty for Chat, Agent and Workflow
+	// callers, whose Connector target is derived from InvokeFrom.
+	executionContext.ConnectorTargetType = prepared.RunConfig.ConnectorTargetType
+	if isDigitalHumanCaller(prepared.Caller.Type) {
+		// A DigitalHuman host keeps the compatibility ToolInvokeFromAgent profile
+		// so its existing Skill surface is unchanged, but it must never borrow the
+		// Agent target implied by InvokeFrom. The explicit host type plus the
+		// published scope/version carried above and the run id below let the Skills
+		// layer validate the exact bound instance before dispatch.
+		executionContext.ConnectorTargetType = connectorcore.TargetTypeDigitalHuman
+		// The compatibility ToolInvokeFromAgent profile above would otherwise leave
+		// the Agent identity resolver in place; select the DigitalHuman resolver
+		// explicitly so its absence fails closed instead of borrowing Agent identity.
+		executionContext.ConnectorIdentityResolver = s.connectorDigitalHumanRuntime
+		executionContext.ConnectorRunID = strings.TrimSpace(prepared.RunConfig.ConnectorRunID)
+		executionContext.ConnectorInteractive = prepared.RunConfig.ConnectorInteractive
+		if prepared.Caller.ID != nil {
+			executionContext.AppID = prepared.Caller.ID.String()
+		}
 	}
 	executionContext.ConnectorConfirmationStore = s.connectorConfirmationStore
 	if s.connectorActionResolverFactory != nil {

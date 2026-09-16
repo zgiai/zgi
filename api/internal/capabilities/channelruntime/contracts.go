@@ -24,10 +24,20 @@ var (
 
 // ResolvedChannelCredential is request-scoped provider secret material. Values
 // are owned by the recipient and must never be serialized, cached, logged, or
-// persisted by channelruntime consumers.
+// persisted by channelruntime consumers. Revision and Source describe the lease
+// an owner-scoped PersonalConnection resolved from; they carry no secret and no
+// owner identifier.
 type ResolvedChannelCredential struct {
 	Values  map[string]string
 	Version int
+	// Revision is the source connection revision the lease was read at. It is
+	// zero for an installation-owned credential and lets a consumer detect a
+	// stale owner-scoped PersonalConnection lease.
+	Revision int
+	// Source distinguishes embedded legacy credentials from an owner-scoped
+	// Connector PersonalConnection so receiver selection cannot accidentally
+	// run a Webhook install on a long-connection transport.
+	Source CredentialSource
 }
 
 // Destroy clears request-scoped provider secret material after use.
@@ -40,6 +50,8 @@ func (credential *ResolvedChannelCredential) Destroy() {
 		delete(credential.Values, key)
 	}
 	credential.Version = 0
+	credential.Revision = 0
+	credential.Source = ""
 }
 
 // WebhookRequest contains one bounded HTTP callback. Headers and Query are

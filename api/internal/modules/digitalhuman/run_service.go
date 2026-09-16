@@ -579,6 +579,8 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 		_ = s.store.FailRun(ctx, run.ID, AppCodeRunConflict.String(), "Stored execution configuration is not executable.", s.now())
 		return err
 	}
+	config.ConnectorRunID = run.ID.String()
+	config.ConnectorInteractive = event.Origin.Kind == invocation.OriginManual
 	var channelContextPreparation *ChannelContextPreparation
 	if s.channelContext != nil {
 		channelContextPreparation, err = s.channelContext.Prepare(ctx, run, resolved, event, config.ModelProvider, config.Model)
@@ -733,6 +735,15 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 		}
 		_ = s.store.FailRun(ctx, run.ID, "digital_human.run.execution_failed", "The DigitalHuman execution did not complete.", s.now())
 		return err
+	}
+	if result != nil && (result.Status == runtimemodel.MessageStatusWaitingApproval || result.Status == runtimemodel.MessageStatusWaitingQuestion || result.Status == runtimemodel.MessageStatusWaitingClientAction) {
+		waiter, ok := s.store.(interface {
+			MarkRunWaiting(context.Context, uuid.UUID, string, time.Time) error
+		})
+		if !ok {
+			return ErrRunConflict
+		}
+		return waiter.MarkRunWaiting(ctx, run.ID, result.Status, s.now())
 	}
 	if channelContextPreparation != nil {
 		if result.Metadata == nil {
@@ -931,7 +942,7 @@ func (s *RuntimeService) recoverCompletedRuns(ctx context.Context, updatedBefore
 			continue
 		}
 		callerID := run.DigitalHumanID
-		message, _, loadErr := s.chat.GetMessageByCaller(ctx, runtimeScope(run), chatruntime.Caller{
+		message, conversation, loadErr := s.chat.GetMessageByCaller(ctx, runtimeScope(run), chatruntime.Caller{
 			Type: runtimemodel.ConversationCallerDigitalHuman, ID: &callerID, Source: digitalHumanConversationSourceForRun(run),
 		}, *run.MessageID)
 		if loadErr != nil {
@@ -940,6 +951,14 @@ func (s *RuntimeService) recoverCompletedRuns(ctx context.Context, updatedBefore
 		}
 		if message == nil || message.Status != runtimemodel.MessageStatusCompleted {
 			continue
+		}
+		if finalizer, ok := s.memory.(memoryRuntimeFinalizer); ok {
+			prepared := &chatruntime.PreparedChat{Conversation: conversation, Message: message}
+			result := &chatruntime.ChatResult{Answer: message.Answer, Metadata: message.Metadata, Status: message.Status}
+			if finalizeErr := finalizer.Finalize(ctx, run, prepared, result); finalizeErr != nil {
+				combined = errors.Join(combined, finalizeErr)
+				continue
+			}
 		}
 		if completeErr := s.store.CompleteRunWithDelivery(
 			ctx, run.ID, message.Answer, executionTraceFromMetadata(message.Metadata), s.now(),

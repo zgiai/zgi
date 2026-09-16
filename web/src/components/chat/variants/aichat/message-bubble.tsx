@@ -56,7 +56,6 @@ import type {
   AIChatStreamingMessageState,
 } from '@/components/chat/controllers/aichat';
 import {
-  mergeRuntimeTimelineWithMessageTimeline,
   sanitizeTimelineForMessage,
   timelineFromAIChatMessage,
 } from '@/components/chat/controllers/aichat/selectors';
@@ -1336,7 +1335,7 @@ export function AIChatMessageBubble({
     () =>
       sanitizeTimelineForMessage(
         message,
-        mergeRuntimeTimelineWithMessageTimeline(historicalTimeline, runtimeTimeline)
+        runtimeTimeline.length > 0 ? runtimeTimeline : historicalTimeline
       ),
     [historicalTimeline, message, runtimeTimeline]
   );

@@ -1,6 +1,9 @@
 package digitalhuman
 
-import "github.com/zgiai/zgi/api/internal/capabilities/resourcebindings"
+import (
+	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/resourcebindings"
+)
 
 type CreatePersonaTemplateRequest struct {
 	Name    string   `json:"name"`
@@ -26,6 +29,7 @@ type PersonaTemplateListResult struct {
 }
 
 type ResourceBindingInput struct {
+	ID               *uuid.UUID                   `json:"id,omitempty"`
 	Type             resourcebindings.BindingType `json:"type"`
 	ResourceID       string                       `json:"resource_id"`
 	ParentResourceID string                       `json:"parent_resource_id,omitempty"`
@@ -37,11 +41,13 @@ type ResourceBindingInput struct {
 }
 
 type ReplaceResourceBindingsRequest struct {
+	ExpectedDraftVersionID   *uuid.UUID             `json:"expected_draft_version_id,omitempty"`
 	ExpectedDraftLockVersion int64                  `json:"expected_draft_lock_version"`
 	Items                    []ResourceBindingInput `json:"items"`
 }
 
 type DraftResourceBindings struct {
+	DraftVersionID   uuid.UUID          `json:"draft_version_id"`
 	DraftLockVersion int64              `json:"draft_lock_version"`
 	Items            []*ResourceBinding `json:"items"`
 }

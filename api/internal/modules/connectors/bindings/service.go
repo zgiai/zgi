@@ -35,6 +35,9 @@ func (target TargetIdentity) Validate() error {
 	if target.Type == core.TargetTypeWorkflow {
 		ref.BindingInstanceID = "authority"
 	}
+	if target.Type == core.TargetTypeDigitalHuman {
+		ref.BindingInstanceID = "00000000-0000-0000-0000-000000000001"
+	}
 	if ref.Validate() != nil || !validExactText(target.ID) {
 		return core.NewError(core.ErrorCodeInvalidInput, false, nil)
 	}

@@ -147,8 +147,12 @@ func normalizeResourceCandidateQuery(query ResourceCandidateQuery) (ResourceCand
 	if query.Limit <= 0 {
 		query.Limit = defaultResourceCandidateLimit
 	}
-	if query.Limit > maxPageSize {
-		query.Limit = maxPageSize
+	maximum := maxPageSize
+	if query.Type == resourcebindings.BindingTypeConnector {
+		maximum = maxResourceBindings
+	}
+	if query.Limit > maximum {
+		query.Limit = maximum
 	}
 	switch query.Type {
 	case resourcebindings.BindingTypeSkill,
@@ -156,7 +160,7 @@ func normalizeResourceCandidateQuery(query ResourceCandidateQuery) (ResourceCand
 		resourcebindings.BindingTypeDatabase,
 		resourcebindings.BindingTypeDatabaseTable,
 		resourcebindings.BindingTypeWorkflow,
-		resourcebindings.BindingTypeIntegrationConnection:
+		resourcebindings.BindingTypeConnector:
 	default:
 		return ResourceCandidateQuery{}, ErrInvalidRequest
 	}

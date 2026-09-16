@@ -57,6 +57,27 @@ func OwnerConstraint(owner uuid.UUID, operations []Identifier) *AccessConstraint
 	}
 }
 
+// ConstraintsAllow preserves the historical Connection boundary while allowing
+// an owner-created, exact DigitalHuman Target Binding to supply the newly added
+// host boundary. All operation, expiry, deny and owner restrictions still come
+// from both layers; a persisted binding is therefore required before V4 access.
+func ConstraintsAllow(connection, binding *AccessConstraint, owner uuid.UUID, operation Identifier, target TargetRef, now time.Time) bool {
+	if connection == nil || binding == nil || !binding.Allows(owner, operation, target, now) {
+		return false
+	}
+	if connection.Allows(owner, operation, target, now) {
+		return true
+	}
+	if target.Type != TargetTypeDigitalHuman || connection.Validate() != nil {
+		return false
+	}
+	projected := *connection
+	projected.TargetBoundaries = append(append([]TargetBoundary{}, connection.TargetBoundaries...), TargetBoundary{
+		Type: target.Type, ID: target.ID, Scope: string(target.EffectiveScope()), VersionID: target.VersionID,
+	})
+	return projected.Allows(owner, operation, target, now)
+}
+
 func (constraint *AccessConstraint) Validate() error {
 	if constraint == nil || constraint.SchemaVersion != 1 || constraint.AudienceOwner == uuid.Nil ||
 		constraint.AllowedOperationIDs == nil || constraint.TargetBoundaries == nil || constraint.DenyReasons == nil {

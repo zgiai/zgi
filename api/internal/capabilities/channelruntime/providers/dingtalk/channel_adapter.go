@@ -13,7 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	providertransport "github.com/zgiai/zgi/api/internal/capabilities/channelruntime/providertransport"
 )
 
 const (
@@ -27,12 +27,12 @@ const (
 // exposing DingTalk protocol details to DigitalHuman.
 type ChannelAdapter struct {
 	provider    *Adapter
-	connections integrations.ConnectionResolver
+	connections providertransport.CredentialResolver
 }
 
 // NewDirectChannelAdapter creates a DingTalk channel provider backed by the
 // installation credential resolver. Credentials remain request scoped.
-func NewDirectChannelAdapter(provider *Adapter, connections integrations.ConnectionResolver) (*ChannelAdapter, error) {
+func NewDirectChannelAdapter(provider *Adapter, connections providertransport.CredentialResolver) (*ChannelAdapter, error) {
 	if provider == nil || provider.client == nil || connections == nil {
 		return nil, fmt.Errorf("initialize direct DingTalk channel adapter: provider and credential resolver are required")
 	}
@@ -60,13 +60,12 @@ func (*ChannelAdapter) PrepareCredentials(current, updates map[string]string) (m
 	for key, value := range current {
 		key = strings.ToLower(strings.TrimSpace(key))
 		if key == "reception_mode" {
-			// Drop the legacy HTTP/Stream selector when an existing credential is
-			// updated. DingTalk installations now always use Stream mode.
+
 			continue
 		}
 		if !isDingTalkChannelCredentialKey(key) {
 			destroyDingTalkChannelCredentials(prepared)
-			return nil, integrations.NewError(integrations.ErrorCodeInvalidInput, "unsupported DingTalk channel credential field", nil)
+			return nil, providertransport.NewError(providertransport.ErrorCodeInvalidInput, "unsupported DingTalk channel credential field", nil)
 		}
 		if value = strings.TrimSpace(value); value != "" {
 			prepared[key] = value
@@ -76,7 +75,7 @@ func (*ChannelAdapter) PrepareCredentials(current, updates map[string]string) (m
 		key = strings.ToLower(strings.TrimSpace(key))
 		if !isDingTalkChannelCredentialKey(key) {
 			destroyDingTalkChannelCredentials(prepared)
-			return nil, integrations.NewError(integrations.ErrorCodeInvalidInput, "unsupported DingTalk channel credential field", nil)
+			return nil, providertransport.NewError(providertransport.ErrorCodeInvalidInput, "unsupported DingTalk channel credential field", nil)
 		}
 		if value = strings.TrimSpace(value); value != "" {
 			prepared[key] = value
@@ -84,14 +83,14 @@ func (*ChannelAdapter) PrepareCredentials(current, updates map[string]string) (m
 	}
 	if !validDingTalkChannelCredentials(prepared) {
 		destroyDingTalkChannelCredentials(prepared)
-		return nil, integrations.NewError(integrations.ErrorCodeInvalidInput, "DingTalk AppKey and AppSecret are required", nil)
+		return nil, providertransport.NewError(providertransport.ErrorCodeInvalidInput, "DingTalk AppKey and AppSecret are required", nil)
 	}
 	return prepared, nil
 }
 
 func (adapter *ChannelAdapter) ResolveIdentity(ctx context.Context, credential channelruntime.ResolvedChannelCredential) (channelruntime.InstallationIdentity, error) {
 	if adapter == nil || adapter.provider == nil || !validDingTalkChannelCredentials(credential.Values) {
-		return channelruntime.InstallationIdentity{}, integrations.NewError(integrations.ErrorCodeConnectionInvalid, "DingTalk channel credentials are unavailable", nil)
+		return channelruntime.InstallationIdentity{}, providertransport.NewError(providertransport.ErrorCodeConnectionInvalid, "DingTalk channel credentials are unavailable", nil)
 	}
 	appKey := strings.TrimSpace(credential.Values["app_key"])
 	creds := credentials{
@@ -166,16 +165,16 @@ func (adapter *ChannelAdapter) Deliver(ctx context.Context, request channelrunti
 		request.ConnectionID == uuid.Nil || request.DeliveryID == uuid.Nil || strings.TrimSpace(request.Text) == "" {
 		return nil, channelruntime.ErrInvalidWebhook
 	}
-	connection, err := adapter.connections.Resolve(ctx, integrations.ConnectionResolveRequest{
-		OrganizationID: request.OrganizationID.String(), IntegrationID: IntegrationID, DriverID: DriverID,
-		ConnectionID: request.ConnectionID.String(), DisallowAccountCredential: true,
+	connection, err := adapter.connections.Resolve(ctx, providertransport.CredentialRequest{
+		OrganizationID: request.OrganizationID.String(), ProviderID: IntegrationID, DriverID: DriverID,
+		InstallationID: request.InstallationID.String(), WorkspaceID: request.WorkspaceID.String(),
 	})
 	if err != nil {
 		return nil, err
 	}
 	defer connection.Destroy()
 	if !validDingTalkChannelCredentials(connection.Credentials) {
-		return nil, integrations.NewError(integrations.ErrorCodeConnectionInvalid, "DingTalk channel credentials are unavailable", nil)
+		return nil, providertransport.NewError(providertransport.ErrorCodeConnectionInvalid, "DingTalk channel credentials are unavailable", nil)
 	}
 	creds := credentials{
 		AppKey: strings.TrimSpace(connection.Credentials["app_key"]), AppSecret: strings.TrimSpace(connection.Credentials["app_secret"]),
@@ -187,8 +186,8 @@ func (adapter *ChannelAdapter) Deliver(ctx context.Context, request channelrunti
 	}
 	response, err := adapter.sendRobotMessage(ctx, creds, path, body)
 	if err != nil {
-		switch integrations.ErrorCode(err) {
-		case integrations.ErrorCodeTimeout, integrations.ErrorCodeUpstream:
+		switch providertransport.ErrorCode(err) {
+		case providertransport.ErrorCodeTimeout, providertransport.ErrorCodeUpstream:
 			return nil, errors.Join(channelruntime.ErrDeliveryOutcomeUnknown, err)
 		default:
 			return nil, err
@@ -217,7 +216,7 @@ func (adapter *ChannelAdapter) sendRobotMessage(ctx context.Context, creds crede
 			var response dingTalkRobotSendResponse
 			if len(strings.TrimSpace(string(raw))) > 0 && string(raw) != "null" {
 				if err := json.Unmarshal(raw, &response); err != nil {
-					return dingTalkRobotSendResponse{}, dingError(integrations.ErrorCodeResponseInvalid, "DingTalk robot response is invalid", err)
+					return dingTalkRobotSendResponse{}, dingError(providertransport.ErrorCodeResponseInvalid, "DingTalk robot response is invalid", err)
 				}
 			}
 			return response, nil
@@ -230,7 +229,7 @@ func (adapter *ChannelAdapter) sendRobotMessage(ctx context.Context, creds crede
 		}
 		return dingTalkRobotSendResponse{}, mapAPIError(status, envelope)
 	}
-	return dingTalkRobotSendResponse{}, dingError(integrations.ErrorCodeAuthInvalid, "DingTalk access token is invalid", nil)
+	return dingTalkRobotSendResponse{}, dingError(providertransport.ErrorCodeAuthInvalid, "DingTalk access token is invalid", nil)
 }
 
 func (*ChannelAdapter) Edit(context.Context, channelruntime.DeliveryRequest, string) (*channelruntime.DeliveryReceipt, error) {

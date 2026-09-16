@@ -13,7 +13,7 @@ import {
   type ConnectorReferenceRepairProps,
 } from '../unavailable-references';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { usePendingSetups } from '@/hooks/connectors/use-pending-setups';
 import { ConnectorKeySetupPanel } from '@/components/connectors/setup/connector-key-setup-panel';
 import { AlertCircle, RefreshCw, SearchX } from 'lucide-react';
@@ -39,7 +39,12 @@ import {
 } from '@/hooks/connectors/use-connectors';
 import { useLocale } from '@/hooks/use-locale';
 import { useT } from '@/i18n';
-import type { ConnectorCatalogStatus, ConnectorTargetRef } from '@/services/types/connector';
+import type {
+  ConnectorCatalogItem,
+  ConnectorCatalogStatus,
+  ConnectorTargetRef,
+  GetConnectorCatalogParams,
+} from '@/services/types/connector';
 import {
   createConnectorPickerRows,
   filterConnectorPickerRows,
@@ -64,6 +69,10 @@ export interface ConnectorPickerDialogProps extends ConnectorReferenceRepairProp
   open: boolean;
   target: ConnectorTargetRef;
   targetName: string;
+  /** Host-owned heading; defaults to the shared Connector picker copy. */
+  title?: string;
+  /** Host-owned description; defaults to the shared Connector picker copy. */
+  description?: string;
   /** Limit choices to one Connector when the host already owns the capability tuple. */
   connectorId?: string;
   bindings: readonly ConnectorPickerBindingRef[];
@@ -71,6 +80,14 @@ export interface ConnectorPickerDialogProps extends ConnectorReferenceRepairProp
   groupByConnector?: boolean;
   /** Local first-turn selection: query personal connections without a persisted target. */
   draft?: boolean;
+  /** Optional server-side catalog filter used by host-specific pickers. */
+  catalogParams?: GetConnectorCatalogParams;
+  /** Additional host-owned catalog predicate applied after the server-side filter. */
+  catalogFilter?: (item: ConnectorCatalogItem) => boolean;
+  /** Hide the unavailable-reference survey when the host does not persist bindings. */
+  showUnavailableReferences?: boolean;
+  /** Host-owned status content rendered beneath the picker body. */
+  children?: ReactNode;
   anchorElement?: HTMLElement | null;
   onOpenChange: (open: boolean) => void;
   onRequestAdd: NonNullable<ConnectorPickerActionHandlers['onRequestAdd']>;
@@ -87,10 +104,16 @@ export function ConnectorPickerDialog({
   open,
   target,
   targetName,
+  title,
+  description,
   connectorId,
   bindings,
   groupByConnector = false,
   draft = false,
+  catalogParams,
+  catalogFilter,
+  showUnavailableReferences = true,
+  children,
   anchorElement,
   onOpenChange,
   onRequestAdd,
@@ -126,11 +149,12 @@ export function ConnectorPickerDialog({
     target.id,
     target.binding_instance_id,
     connectorId,
+    catalogParams,
   ]);
   const sessionRef = useRef({ scope });
   if (sessionRef.current.scope !== scope) sessionRef.current = { scope };
   const session = sessionRef.current;
-  const catalogQuery = useConnectorCatalog(undefined, open);
+  const catalogQuery = useConnectorCatalog(catalogParams, open);
   const connectionsQuery = usePersonalConnections(
     {
       connector_id: connectorId,
@@ -140,13 +164,15 @@ export function ConnectorPickerDialog({
   );
   const catalog = useMemo(
     () =>
-      connectorCatalogItems(catalogQuery.data?.data).map(item =>
-        localizeConnectorCatalogItem(item, locale, {
-          description: t('metadata.descriptionUnavailable'),
-          capabilityDescription: t('metadata.capabilityDescriptionUnavailable'),
-        })
-      ),
-    [catalogQuery.data?.data, locale, t]
+      connectorCatalogItems(catalogQuery.data?.data)
+        .filter(item => !catalogFilter || catalogFilter(item))
+        .map(item =>
+          localizeConnectorCatalogItem(item, locale, {
+            description: t('metadata.descriptionUnavailable'),
+            capabilityDescription: t('metadata.capabilityDescriptionUnavailable'),
+          })
+        ),
+    [catalogFilter, catalogQuery.data?.data, locale, t]
   );
   const connections = personalConnectionItems(connectionsQuery.data?.data);
   const targetLabel = targetName.trim() || t(`picker.targetTypes.${target.type}`);
@@ -459,10 +485,11 @@ export function ConnectorPickerDialog({
           </p>
           <ConnectorUnavailableReferences
             target={target}
-            enabled={open && !draft}
+            enabled={open && !draft && showUnavailableReferences}
             onReferenceCommand={onReferenceCommand}
             pendingReferenceCommands={pendingReferenceCommands}
           />
+          {children}
         </>
       )}
     </>
@@ -485,11 +512,12 @@ export function ConnectorPickerDialog({
             }}
           >
             <DialogHeader className="shrink-0 pb-3 pr-12">
-              <DialogTitle>{t('picker.title')}</DialogTitle>
+              <DialogTitle>{title ?? t('picker.title')}</DialogTitle>
               <DialogDescription>
-                {t(groupByConnector ? 'picker.group.subtitle' : 'picker.subtitle', {
-                  target: targetLabel,
-                })}
+                {description ??
+                  t(groupByConnector ? 'picker.group.subtitle' : 'picker.subtitle', {
+                    target: targetLabel,
+                  })}
               </DialogDescription>
             </DialogHeader>
 
@@ -509,10 +537,13 @@ export function ConnectorPickerDialog({
                 }
               }
             }}
-            title={t('picker.title')}
-            description={t(groupByConnector ? 'picker.group.subtitle' : 'picker.subtitle', {
-              target: targetLabel,
-            })}
+            title={title ?? t('picker.title')}
+            description={
+              description ??
+              t(groupByConnector ? 'picker.group.subtitle' : 'picker.subtitle', {
+                target: targetLabel,
+              })
+            }
             headerClassName="shrink-0 pb-3 pr-12"
             bodyClassName="flex min-h-0 flex-1 flex-col overflow-hidden p-0"
           >

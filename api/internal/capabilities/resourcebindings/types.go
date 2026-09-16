@@ -31,6 +31,7 @@ const (
 	BindingTypeDatabase              BindingType = "database"
 	BindingTypeDatabaseTable         BindingType = "database_table"
 	BindingTypeWorkflow              BindingType = "workflow"
+	BindingTypeConnector             BindingType = "connector"
 	BindingTypeIntegrationConnection BindingType = "integration_connection"
 )
 

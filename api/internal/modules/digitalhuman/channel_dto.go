@@ -128,6 +128,7 @@ type StartChannelConnectionTestRequest struct {
 
 type CreateChannelInstallationRequest struct {
 	Provider     string            `json:"provider"`
+	ConnectorID  string            `json:"connector_id,omitempty"`
 	ConnectionID uuid.UUID         `json:"connection_id,omitempty"`
 	Credentials  map[string]string `json:"credentials,omitempty"`
 	Name         string            `json:"name"`
@@ -142,6 +143,8 @@ type UpdateChannelInstallationRequest struct {
 	ExpectedRevision int64                              `json:"expected_revision"`
 	Name             *string                            `json:"name,omitempty"`
 	Status           *channelruntime.InstallationStatus `json:"status,omitempty"`
+	ConnectorID      *string                            `json:"connector_id,omitempty"`
+	ConnectionID     *uuid.UUID                         `json:"connection_id,omitempty"`
 }
 
 type ChannelEventListResult struct {

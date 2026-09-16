@@ -112,6 +112,10 @@ func (repository *GormRepository) UpsertBindingWithLifecycle(
 	expectedRevision int,
 	mutation BindingLifecycleMutation,
 ) (core.TargetBinding, bool, error) {
+	return repository.upsertBindingWithLifecycle(ctx, organizationID, ownerAccountID, binding, expectedRevision, mutation, false)
+}
+
+func (repository *GormRepository) upsertBindingWithLifecycle(ctx context.Context, organizationID, ownerAccountID uuid.UUID, binding core.TargetBinding, expectedRevision int, mutation BindingLifecycleMutation, replaceAuthorizedConstraint bool) (core.TargetBinding, bool, error) {
 	if err := repository.available(); err != nil {
 		return core.TargetBinding{}, false, err
 	}
@@ -155,9 +159,25 @@ func (repository *GormRepository) UpsertBindingWithLifecycle(
 		}
 
 		nested := &GormRepository{db: tx.Session(&gorm.Session{DisableNestedTransaction: true})}
+		if replaceAuthorizedConstraint {
+			if before == nil || before.ID != prepared.ID || before.ConnectionID != prepared.ConnectionID || before.Revision != expectedRevision {
+				return conflictError("replace DigitalHuman binding authority")
+			}
+			// Only the explicitly selected operation subset is replaceable. Existing
+			// expiry, deny reasons, owner and host boundaries remain restrictive.
+			constraint, err := core.IntersectConstraints(before.Constraint, prepared.Constraint)
+			if err != nil {
+				return err
+			}
+			constraint.AllowedOperationIDs = append([]core.Identifier{}, prepared.Constraint.AllowedOperationIDs...)
+			prepared.Constraint = constraint
+			if err := requireAuthorizedDigitalHumanConnection(ctx, tx, prepared); err != nil {
+				return err
+			}
+		}
 		var writeErr error
-		stored, created, writeErr = nested.UpsertBinding(
-			ctx, organizationID, ownerAccountID, prepared, expectedRevision,
+		stored, created, writeErr = nested.upsertBinding(
+			ctx, organizationID, ownerAccountID, prepared, expectedRevision, replaceAuthorizedConstraint,
 		)
 		if writeErr != nil {
 			return writeErr
@@ -252,6 +272,10 @@ func (repository *GormRepository) UpsertBinding(
 	binding core.TargetBinding,
 	expectedRevision int,
 ) (core.TargetBinding, bool, error) {
+	return repository.upsertBinding(ctx, organizationID, ownerAccountID, binding, expectedRevision, false)
+}
+
+func (repository *GormRepository) upsertBinding(ctx context.Context, organizationID, ownerAccountID uuid.UUID, binding core.TargetBinding, expectedRevision int, replaceAuthorizedConstraint bool) (core.TargetBinding, bool, error) {
 	if err := repository.available(); err != nil {
 		return core.TargetBinding{}, false, err
 	}
@@ -305,11 +329,14 @@ func (repository *GormRepository) UpsertBinding(
 		if constraintErr != nil {
 			return constraintErr
 		}
+		if replaceAuthorizedConstraint {
+			narrowed = prepared.Constraint
+		}
 		record.Constraint, constraintErr = json.Marshal(narrowed)
 		if constraintErr != nil {
 			return internalError("encode Connector restrictions")
 		}
-		if equivalentNativeBinding(existing, record) {
+		if equivalentNativeBinding(existing, record) && !replaceAuthorizedConstraint {
 			stored, lookupErr = existing.toDomain()
 			return lookupErr
 		}

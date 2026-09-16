@@ -116,6 +116,94 @@ func TestConnectorConfirmationFreezesAuthoritativeInvocationBeforePendingResult(
 	}
 }
 
+// A DigitalHuman confirmation keeps the host surface, run and pinned target.
+// It must never be rewritten into the Chat or Agent origin the shared runtime
+// would resume as a different turn.
+func TestConnectorConfirmationDigitalHumanOriginStaysOnHostSurface(t *testing.T) {
+	t.Parallel()
+
+	definition := connectorSkillTestDefinition()
+	definition.Operations[0].InputSchema = map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"query": map[string]interface{}{"type": "string"},
+		},
+		"required":             []interface{}{"query"},
+		"additionalProperties": false,
+	}
+	operation := definition.Operations[0]
+	router := &connectorConfirmationRouterSpy{
+		receipt:  execution.RouteClaimReceipt(uuid.NewString()),
+		accepted: mustConnectorSkillAcceptedOperation(t, definition, operation),
+	}
+	dispatcher, err := connectordispatch.New(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, err := toolprovider.NewProvider(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(provider); err != nil {
+		t.Fatal(err)
+	}
+	runtime := NewRuntime(tools.NewToolEngine(manager), manager).WithConnectorDispatcher(dispatcher)
+	resolver := &connectorIdentityResolverSpy{}
+	store := &confirmationContinuationStoreSpy{}
+	organizationID := uuid.NewString()
+	ownerID := uuid.NewString()
+	conversationID := uuid.NewString()
+	digitalHumanID := uuid.NewString()
+	versionID := uuid.NewString()
+	instanceID := uuid.NewString()
+	runID := uuid.NewString()
+	resolved := connectorSkillResolved(definition, operation, true)
+	resolved.Skills[0].Tools[0].ConnectorBindingInstanceID = instanceID
+	sentinel := "private-provider-input-sentinel"
+	execCtx := ExecutionContext{
+		OrganizationID: organizationID, UserID: ownerID,
+		ConversationID: conversationID, AppID: digitalHumanID, MessageID: uuid.NewString(),
+		InvokeFrom:                 tools.ToolInvokeFromAIChat,
+		ConnectorTargetType:        core.TargetTypeDigitalHuman,
+		ConnectorTargetScope:       core.ScopePublished,
+		ConnectorTargetVersionID:   versionID,
+		ConnectorInteractive:       true,
+		ConnectorRunID:             runID,
+		ConnectorIdentityResolver:  resolver,
+		ConnectorActionResolver:    newConnectorActionResolverForTest(),
+		ConnectorConfirmationStore: store,
+	}
+	result, err := runtime.CallSkillTool(
+		context.Background(), resolved, SkillConnectorRuntime, operation.ToolName,
+		map[string]interface{}{"query": sentinel}, execCtx, "call-digital-human-confirmation",
+	)
+	if err != nil || result == nil || result.ConnectorConfirmation == nil || store.freezeCalls != 1 {
+		t.Fatalf("digital human pending result = (%#v, %v), freeze calls = %d", result, err, store.freezeCalls)
+	}
+	if result.Trace.Status != "pending_confirmation" || router.calls != 1 {
+		t.Fatalf("digital human trace/router = %#v/%d", result.Trace, router.calls)
+	}
+	wantTarget := core.TargetRef{
+		Type: core.TargetTypeDigitalHuman, ID: digitalHumanID,
+		Scope: core.ScopePublished, VersionID: versionID, BindingInstanceID: instanceID,
+	}
+	frozen := store.frozen
+	if frozen.Request.Target != wantTarget || !frozen.Request.Interactive {
+		t.Fatalf("frozen digital human request = %#v", frozen.Request)
+	}
+	if frozen.Origin.Surface != core.TargetTypeDigitalHuman || frozen.Origin.RunID != runID ||
+		frozen.Origin.ConversationID != conversationID || frozen.Origin.MessageID != execCtx.MessageID {
+		t.Fatalf("frozen digital human origin = %#v", frozen.Origin)
+	}
+	if frozen.Origin.AgentID != "" || frozen.Origin.WorkflowID != "" || frozen.Origin.NodeID != "" {
+		t.Fatalf("digital human origin impersonated another surface: %#v", frozen.Origin)
+	}
+	if strings.Contains(result.ToolMessage.Content.(string), sentinel) {
+		t.Fatalf("model Tool message exposed frozen input: %s", result.ToolMessage.Content)
+	}
+}
+
 func TestConnectorConfirmationWithoutContinuationStoreFailsClosed(t *testing.T) {
 	t.Parallel()
 

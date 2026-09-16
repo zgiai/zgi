@@ -42,6 +42,8 @@ var (
 	AppCodeChannelInstallationNotFound  = apperror.MustCode("digital_human.channel.installation.not_found")
 	AppCodeChannelConflict              = apperror.MustCode("digital_human.channel.conflict")
 	AppCodeChannelNotReady              = apperror.MustCode("digital_human.channel.not_ready")
+	AppCodeChannelTransportUnsupported  = apperror.MustCode("digital_human.channel.transport.unsupported")
+	AppCodeChannelCredentialManaged     = apperror.MustCode("digital_human.channel.credential.managed")
 	AppCodeCredentialStorageUnavailable = apperror.MustCode("digital_human.credential_storage.unavailable")
 	AppCodeChannelDeliveryNotFound      = apperror.MustCode("digital_human.channel.delivery.not_found")
 	AppCodeChannelDeliveryConflict      = apperror.MustCode("digital_human.channel.delivery.conflict")
@@ -113,6 +115,10 @@ func CatalogDefinitions() []appcatalog.Definition {
 			"The channel configuration changed or is already in use.", "渠道配置已变化或已被占用。"),
 		digitalHumanDefinition(AppCodeChannelNotReady, appcatalog.CategoryValidation, 400,
 			"The channel connection, webhook security, or bot identity could not be verified.", "无法验证渠道连接、Webhook 安全配置或机器人身份。"),
+		digitalHumanDefinition(AppCodeChannelTransportUnsupported, appcatalog.CategoryValidation, 400,
+			"This Connector does not support the selected channel transport.", "该连接器暂不支持当前渠道传输方式。"),
+		digitalHumanDefinition(AppCodeChannelCredentialManaged, appcatalog.CategoryConflict, 409,
+			"This channel uses a Connector connection. Manage its credential in Connector settings.", "该渠道使用连接器连接，请在连接器设置中管理凭证。"),
 		digitalHumanDefinition(AppCodeCredentialStorageUnavailable, appcatalog.CategoryInternal, 503,
 			"Secure credential storage is not configured. Ask an administrator to configure it before saving channel or web-search credentials.",
 			"安全凭证存储尚未配置，请联系管理员完成配置后，再保存渠道或网页搜索凭证。"),

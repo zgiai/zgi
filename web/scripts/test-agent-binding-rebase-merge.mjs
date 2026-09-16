@@ -36,13 +36,6 @@ const workflow = (bindingId, timeoutSeconds = 10) => ({
   timeout_seconds: timeoutSeconds,
 });
 
-const integration = (integrationId, connectionId, actionId = 'message.send') => ({
-  integration_id: integrationId,
-  connection_id: connectionId,
-  access_mode: 'write',
-  allowed_action_ids: [actionId],
-});
-
 const basePayload = {
   system_prompt: 'submitted prompt',
   model_provider: 'provider',
@@ -192,76 +185,97 @@ const basePayload = {
 {
   const submitted = {
     ...basePayload,
-    integration_bindings: [integration('wecom', 'connection-a')],
+    connector_bindings: [connector('wecom', 'connection-a')],
   };
-  const current = { ...submitted, integration_bindings: [] };
+  const current = { ...submitted, connector_bindings: [] };
   const saved = {
     ...submitted,
-    integration_bindings: [integration('wecom', 'connection-a')],
+    connector_bindings: [connector('wecom', 'connection-a')],
     binding_revision: 'revision-saved',
   };
 
   const merged = mergeSupersededAgentRuntimePayload(submitted, current, saved);
-  assert.deepEqual(merged.integration_bindings, []);
+  assert.deepEqual(
+    merged.connector_bindings,
+    [],
+    'a local removal survives a server payload that still selects the old connection'
+  );
+  assert.deepEqual(getAgentConnectorBindingConflicts(submitted, current, saved), []);
 }
 
 {
   const submitted = {
     ...basePayload,
-    integration_bindings: [integration('wecom', 'connection-a')],
+    connector_bindings: [connector('wecom', 'connection-a')],
   };
   const current = { ...submitted };
   const saved = {
     ...submitted,
-    integration_bindings: [integration('wecom', 'connection-b')],
+    connector_bindings: [connector('wecom', 'connection-b')],
     binding_revision: 'revision-saved',
   };
 
   const merged = mergeSupersededAgentRuntimePayload(submitted, current, saved);
-  assert.deepEqual(merged.integration_bindings, [integration('wecom', 'connection-b')]);
+  assert.deepEqual(
+    merged.connector_bindings,
+    [connector('wecom', 'connection-b')],
+    'an untouched local slot adopts the server selection'
+  );
+  assert.deepEqual(getAgentConnectorBindingConflicts(submitted, current, saved), []);
 }
 
 {
   const submitted = {
     ...basePayload,
-    integration_bindings: [integration('wecom', 'connection-a')],
+    connector_bindings: [connector('wecom', 'connection-a')],
   };
-  const current = { ...submitted, integration_bindings: [] };
+  const current = { ...submitted, connector_bindings: [] };
   const saved = {
     ...submitted,
-    integration_bindings: [integration('wecom', 'connection-b')],
+    connector_bindings: [connector('wecom', 'connection-b')],
     binding_revision: 'revision-saved',
   };
 
   const merged = mergeSupersededAgentRuntimePayload(submitted, current, saved);
-  assert.deepEqual(merged.integration_bindings, []);
+  assert.deepEqual(
+    getAgentConnectorBindingConflicts(submitted, current, saved),
+    ['wecom'],
+    'a local removal and a different server switch must be reported as a conflict'
+  );
+  assert.deepEqual(
+    merged.connector_bindings,
+    [connector('wecom', 'connection-b')],
+    'the conflicting local removal must not overwrite the server selection before confirmation'
+  );
 }
 
 {
   const submitted = {
     ...basePayload,
-    integration_bindings: [
-      integration('wecom', 'connection-a'),
-      integration('mail', 'connection-mail-a', 'mail.search'),
+    connector_bindings: [
+      connector('wecom', 'connection-a'),
+      connector('mail', 'connection-mail-a'),
     ],
   };
   const current = {
     ...submitted,
-    integration_bindings: [integration('mail', 'connection-mail-a', 'mail.search')],
+    connector_bindings: [connector('mail', 'connection-mail-a')],
   };
   const saved = {
     ...submitted,
-    integration_bindings: [
-      integration('wecom', 'connection-a'),
-      integration('mail', 'connection-mail-b', 'mail.search'),
+    connector_bindings: [
+      connector('wecom', 'connection-a'),
+      connector('mail', 'connection-mail-b'),
     ],
     binding_revision: 'revision-saved',
   };
 
   const merged = mergeSupersededAgentRuntimePayload(submitted, current, saved);
-  assert.deepEqual(merged.integration_bindings, [
-    integration('mail', 'connection-mail-b', 'mail.search'),
-  ]);
+  assert.deepEqual(
+    merged.connector_bindings,
+    [connector('mail', 'connection-mail-b')],
+    'unrelated local removals and untouched server switches merge per Connector'
+  );
 }
 
 // Execute the production save callback without mounting React: the API stub

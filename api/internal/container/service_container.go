@@ -11,6 +11,7 @@ import (
 	"github.com/zgiai/zgi/api/config"
 	shortlinkcap "github.com/zgiai/zgi/api/internal/capabilities/shortlink"
 	"github.com/zgiai/zgi/api/internal/contracts"
+	credentialcrypto "github.com/zgiai/zgi/api/internal/infra/credentialcrypto"
 	"github.com/zgiai/zgi/api/internal/infra/platform"
 	"github.com/zgiai/zgi/api/internal/infra/platform/console"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
@@ -37,6 +38,7 @@ import (
 	connectorgithub "github.com/zgiai/zgi/api/internal/modules/connectors/providers/github"
 	connectorgmail "github.com/zgiai/zgi/api/internal/modules/connectors/providers/gmail"
 	connectormail "github.com/zgiai/zgi/api/internal/modules/connectors/providers/mailprotocol"
+	connectorruntimeauth "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeauth"
 	connectorruntimeconfirmation "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeconfirmation"
 	contentparsemodule "github.com/zgiai/zgi/api/internal/modules/contentparse"
 	datalibrarymodule "github.com/zgiai/zgi/api/internal/modules/datalibrary"
@@ -251,6 +253,8 @@ type ServiceContainer struct {
 	connectorBindingService              *connectorbindings.Service
 	connectorAuditRepo                   *connectoraudit.GormRepository
 	connectorCredentialCipher            *connectorcredentials.Store
+	connectorPersonalConnectionResolver  *connectorcredentials.PersonalConnectionResolver
+	digitalHumanCredentialCipher         credentialcrypto.CredentialCipher
 	connectorCandidateVerifier           *connectorproviders.Runtime
 	connectorRiskResolver                *connectorexecution.TrustedRiskResolver
 	connectorExecutionService            *connectorexecution.Service
@@ -1154,6 +1158,72 @@ func (c *ServiceContainer) GetConnectorCredentialSealer() *connectorcredentials.
 func (c *ServiceContainer) GetConnectorCredentialResolver() *connectorcredentials.Store {
 	return c.getConnectorCredentialCipher()
 }
+
+// GetConnectorPersonalConnectionResolver exposes only the owner-scoped,
+// request-time credential resolution boundary needed by DigitalHuman channels.
+// It never returns a public connection DTO or a persistent secret.
+func (c *ServiceContainer) GetConnectorPersonalConnectionResolver() *connectorcredentials.PersonalConnectionResolver {
+	if c.connectorPersonalConnectionResolver == nil {
+		c.connectorPersonalConnectionResolver = connectorcredentials.NewPersonalConnectionResolver(
+			c.GetConnectorConnectionRepository(), c.GetConnectorCredentialResolver(),
+		)
+	}
+	return c.connectorPersonalConnectionResolver
+}
+
+// GetWorkspaceMemberRepository exposes the workspace membership checker used to
+// revoke a stale credential lease once its owner leaves the workspace.
+func (c *ServiceContainer) GetWorkspaceMemberRepository() workspace_repo.WorkspaceMemberRepository {
+	return c.workspaceMemberRepo
+}
+
+// GetConnectorDigitalHumanRuntimeResolver returns the owner-scoped resolver that
+// projects only current DigitalHuman Target Bindings and ready Personal
+// Connections into a DigitalHuman run.
+func (c *ServiceContainer) GetConnectorDigitalHumanRuntimeResolver() *connectorruntimeauth.DigitalHumanResolver {
+	if c == nil || c.config == nil {
+		return nil
+	}
+	resolver, err := connectorruntimeauth.NewDigitalHumanResolver(
+		c.GetConnectorBindingService(), c.GetConnectorConnectionService(), c.GetConnectorPluginManager(),
+	)
+	if err != nil {
+		panic(fmt.Sprintf("initialize DigitalHuman Connector resolver: %v", err))
+	}
+	return resolver
+}
+
+// GetDigitalHumanCredentialCipher returns the purpose-separated cipher used for
+// installation-owned channel credentials. It is built from the dedicated
+// DigitalHuman keyring so historical v1/v2 channel envelopes stay readable and
+// never borrow the Connector c1 key material. Deployments without key material
+// get an unavailable cipher so every encrypt or decrypt fails closed instead of
+// silently storing plaintext.
+func (c *ServiceContainer) GetDigitalHumanCredentialCipher() credentialcrypto.CredentialCipher {
+	if c.digitalHumanCredentialCipher == nil {
+		if c.config == nil || len(c.config.DigitalHumanCredentials.Keys) == 0 {
+			return unavailableDigitalHumanCipher{}
+		}
+		cipher, err := credentialcrypto.NewCredentialKeyring(
+			c.config.DigitalHumanCredentials.ActiveKeyID, c.config.DigitalHumanCredentials.Keys,
+		)
+		if err != nil {
+			panic(fmt.Sprintf("initialize DigitalHuman credential cipher: %v", err))
+		}
+		c.digitalHumanCredentialCipher = cipher
+	}
+	return c.digitalHumanCredentialCipher
+}
+
+type unavailableDigitalHumanCipher struct{}
+
+func (unavailableDigitalHumanCipher) EncryptCredentials(map[string]string, credentialcrypto.CredentialAAD) (string, error) {
+	return "", credentialcrypto.ErrCredentialCipherUnavailable
+}
+func (unavailableDigitalHumanCipher) DecryptCredentials(string, credentialcrypto.CredentialAAD) (map[string]string, error) {
+	return nil, credentialcrypto.ErrCredentialCipherUnavailable
+}
+
 func (c *ServiceContainer) GetConnectorCandidateVerifier() *connectorproviders.Runtime {
 	if c.connectorCandidateVerifier == nil {
 		github, err := connectorgithub.New(nil)

@@ -508,6 +508,7 @@ const messages = {
       chat: 'AI Chat',
       agent: 'Agent',
       workflow: 'Workflow',
+      digitalHuman: 'DigitalHuman',
     },
     status: {
       active: 'In use',
@@ -705,6 +706,7 @@ const messages = {
       chat: 'this AI Chat',
       agent: 'this Agent',
       workflow: 'this Workflow',
+      digital_human: 'this DigitalHuman',
     },
     searchPlaceholder: 'Search Connectors',
     searchAria: 'Search eligible Connectors and Data Sources',
@@ -841,6 +843,7 @@ const messages = {
       chat: 'AI Chat',
       agent: 'Agent',
       workflow: 'Workflow',
+      digital_human: 'DigitalHuman',
     },
     effects: {
       read: 'Read external data',
