@@ -127,6 +127,36 @@ func TestOrderHandler_CreateAICreditAndPay_RejectsProductCodeOnly(t *testing.T) 
 	require.Nil(t, consoleProvider.checkoutReq)
 }
 
+func TestOrderHandler_CreateWalletRechargeAndPay_ProxiesWechatNativePayment(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	consoleProvider := &capturingConsoleProvider{Standalone: platformconsole.NewStandalone()}
+	handler := &OrderHandler{
+		consoleProvider: consoleProvider,
+		organizationAdminChecker: func(ctx context.Context, organizationID, accountID string) (bool, error) {
+			return true, nil
+		},
+	}
+
+	c, w := newOrderPermissionContext(http.MethodPost, "/orders/recharge/pay", `{
+		"amount":100,
+		"payment_method":"wechat",
+		"payment_sub_method":"native"
+	}`)
+	handler.CreateWalletRechargeAndPay(c)
+
+	require.Equal(t, http.StatusCreated, w.Code)
+	require.NotNil(t, consoleProvider.checkoutReq)
+	require.Equal(t, testPermissionOrganizationID, consoleProvider.checkoutReq.TenantID)
+	require.Equal(t, testPermissionAccountID, consoleProvider.checkoutReq.AccountID)
+	require.Equal(t, orderTypeWalletRecharge, consoleProvider.checkoutReq.OrderType)
+	require.Equal(t, "wechat", consoleProvider.checkoutReq.PaymentMethod)
+	require.Equal(t, "native", consoleProvider.checkoutReq.PaymentSubMethod)
+	require.Equal(t, float64(100), consoleProvider.checkoutReq.Amount)
+	require.Equal(t, currencyCNY, consoleProvider.checkoutReq.Currency)
+}
+
 func TestAICreditHandler_ListProducts_ProxiesConsoleProducts(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)

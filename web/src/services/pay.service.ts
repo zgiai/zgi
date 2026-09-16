@@ -59,15 +59,17 @@ class PayService extends BaseService {
     return this.request('get', `/orders/${orderNo}/payment-status`);
   }
 
+  /** Cancel a pending payment order. */
+  cancelOrder(orderId: string): Promise<ApiResponseData<{ message: string }>> {
+    return this.request('post', `/orders/${orderId}/cancel`, {});
+  }
+
   /**
    * Get AI credit products
-   * GET /v1/public/credit-products
+   * GET /console/api/ai-credit-products
    */
   getAiCreditProducts(): Promise<ApiResponseData<AiCreditProduct[]>> {
-    return this.request('get', 'v1/public/credit-products', undefined, {
-      endpoint: 'market',
-      skipAuth: true,
-    });
+    return this.request('get', '/ai-credit-products');
   }
 
   /**
