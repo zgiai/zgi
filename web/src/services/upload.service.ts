@@ -35,7 +35,9 @@ export interface MultipleUploadResponse {
   failed: number;
 }
 
-function isUploadCanceledError(error: unknown): boolean {
+// Exported so callers that cancel an upload can tell a deliberate cancellation apart
+// from a genuine failure.
+export function isUploadCanceledError(error: unknown): boolean {
   if (!error || typeof error !== 'object') {
     return false;
   }
@@ -112,6 +114,7 @@ export class UploadService extends BaseService {
     file: File,
     options: {
       onProgress?: (progress: number) => void;
+      signal?: AbortSignal;
     } = {}
   ): Promise<UploadResponse> {
     const formData = new FormData();
@@ -129,6 +132,7 @@ export class UploadService extends BaseService {
         // the browser and a batch of images can legitimately take minutes, so use the
         // shared upload budget instead of aborting mid-flight.
         timeout: UPLOAD_TIMEOUT_MS,
+        signal: options.signal,
         onUploadProgress: options.onProgress
           ? progressEvent => {
               // Guard against an unknown body size; see BaseService.uploadFile.

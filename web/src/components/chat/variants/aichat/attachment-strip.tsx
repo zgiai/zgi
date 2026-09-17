@@ -284,7 +284,6 @@ function AIChatDocumentAttachmentChip({
         variant="ghost"
         className="size-5 shrink-0 hover:bg-destructive/10 hover:text-destructive"
         onClick={() => onRemove(attachment.id)}
-        disabled={attachment.status === 'uploading'}
         title={t('consoleChat.attachments.remove')}
       >
         <Trash2 className="size-3" />
@@ -384,7 +383,6 @@ function AIChatImageAttachmentPreview({
             event.stopPropagation();
             onRemove(attachment.id);
           }}
-          disabled={attachment.status === 'uploading'}
           title={t('consoleChat.attachments.remove')}
         >
           <Trash2 className="size-3" />

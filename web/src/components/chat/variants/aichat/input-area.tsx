@@ -28,7 +28,7 @@ import { useApprovalForm, useSubmitApprovalForm } from '@/hooks/workflow/use-app
 import { useUploadConfig } from '@/hooks/use-upload';
 import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
-import { uploadService } from '@/services/upload.service';
+import { isUploadCanceledError, uploadService } from '@/services/upload.service';
 import { isApprovalFormAlreadySubmittedError } from '@/services/approval.service';
 import { useCurrentWorkspace } from '@/store/workspace-store';
 import type { FileItem } from '@/services/types/file';
@@ -359,6 +359,9 @@ export function AIChatInputArea({
   const isComposingRef = useRef(false);
   const ignoreEnterAfterCompositionRef = useRef(false);
   const compositionEndTimerRef = useRef<number | null>(null);
+  // In-flight attachment uploads, keyed by the id the attempt started with. Uploads can
+  // legitimately run for minutes, so they stay cancellable.
+  const uploadControllersRef = useRef<Map<string, AbortController>>(new Map());
   const [attachments, setAttachments] = useState<AIChatInputAttachment[]>([]);
   const [isFileSelectorOpen, setIsFileSelectorOpen] = useState(false);
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
@@ -762,6 +765,10 @@ export function AIChatInputArea({
 
   const uploadOneFile = useCallback(
     async (file: File, localId: string, kind: AIChatAttachmentUploadKind) => {
+      // A fresh controller per attempt so the request can be aborted when the user
+      // removes the attachment or the composer unmounts.
+      const controller = new AbortController();
+      uploadControllersRef.current.set(localId, controller);
       try {
         const onProgress = (progress: number) =>
           setAttachments(current =>
@@ -771,11 +778,15 @@ export function AIChatInputArea({
           );
         const response =
           uploadScope.type === 'webapp'
-            ? await uploadService.uploadWebAppSingle(uploadScope.webAppId, file, { onProgress })
+            ? await uploadService.uploadWebAppSingle(uploadScope.webAppId, file, {
+                onProgress,
+                signal: controller.signal,
+              })
             : await uploadService.uploadSingle(file, {
                 is_temporary: true,
                 workspace_id: currentWorkspace?.id,
                 onProgress,
+                signal: controller.signal,
               });
         const uploadedFile = toAIChatMessageFile(response, kind);
         setAttachments(current =>
@@ -798,6 +809,9 @@ export function AIChatInputArea({
           )
         );
       } catch (error) {
+        // A cancelled upload has no attachment left to mark as failed: the user
+        // removed it, or the composer unmounted.
+        if (isUploadCanceledError(error)) return;
         const message =
           error instanceof Error ? error.message : t('consoleChat.attachments.uploadFailed');
         setAttachments(current =>
@@ -812,6 +826,12 @@ export function AIChatInputArea({
               : attachment
           )
         );
+      } finally {
+        // The attachment id changes on success, so release the entry this attempt owns
+        // and leave a newer attempt's controller alone.
+        if (uploadControllersRef.current.get(localId) === controller) {
+          uploadControllersRef.current.delete(localId);
+        }
       }
     },
     [currentWorkspace?.id, t, uploadScope]
@@ -886,8 +906,21 @@ export function AIChatInputArea({
   );
 
   const handleRemoveAttachment = useCallback((id: string) => {
+    // Removing an attachment that is still uploading cancels its request instead of
+    // leaving the user waiting on a response nobody wants.
+    uploadControllersRef.current.get(id)?.abort();
+    uploadControllersRef.current.delete(id);
     setAttachments(current => current.filter(attachment => attachment.id !== id));
   }, []);
+
+  // Abandon in-flight uploads when the composer goes away.
+  useEffect(
+    () => () => {
+      uploadControllersRef.current.forEach(controller => controller.abort());
+      uploadControllersRef.current.clear();
+    },
+    []
+  );
 
   const handleRetryAttachment = useCallback(
     (id: string) => {
