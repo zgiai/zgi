@@ -21,14 +21,21 @@
   }
   ```
 
+  > ⚠️ 该变量由 `os.Getenv` 读取，**写进 `api/.env` 文件里不生效**（Pre 其余配置走 viper 读
+  > `.env`，两条路径不互通，`.env` 的内容不会进入进程环境）。必须作为**进程环境变量**注入：
+  > docker-compose 的 `environment:`、k8s 的 `env:`、systemd 的 `Environment=`，或启动前 `export`。
+
 - 代码内置价仍受组织总开关约束：只有该组织在设置页打开「缺失价格计费策略」后，
   `code_default_fallback` 才会产生报价。
-- `GET /console/api/llm/pricing/fallback/template` 返回「规则 + 内置金额 + 本环境覆盖值」。
-  设置页「缺失价格计费策略」面板新增「载入模板」按钮：把模板写入当前组织的
-  `override_rules`（保存后来源标记为 `admin_fallback`），模板与手工规则不可区分
-  （已知限制）。
-- 该面板默认折叠，展开后功能不变；`fallbackEnabled` 初始值改为跟随接口加载结果，
-  不再乐观置为 `true`。
+- `GET /console/api/llm/pricing/fallback/template` 返回「规则 + 内置金额 + 本环境覆盖值」，
+  仍可供接口调用；但设置页「模型缺价计费策略」面板**已降级为只读展示**：不再提供
+  「载入模板 / 保存」，也不能在表格里改价，只显示生效规则与系统默认金额，并提示到
+  「模型接入」按模型配置价格。调价统一收敛到模型模块，避免兜底覆盖价与模型价两处打架。
+- 后端 `override_rules` 能力保留：`PUT /pricing/fallback` 仍可写入组织覆盖，且 `effective`
+  合并仍以「组织覆盖 > 部署默认」为序，已有覆盖会在只读面板里如实展示。
+- 该面板默认折叠；「启用缺价计费策略」开关是面板上唯一的可交互项，**切换即保存**
+  （回传当前已存的 `override_rules`，不会清空历史覆盖）。`fallbackEnabled` 初始值跟随
+  接口加载结果，不再乐观置为 `true`。
 
 ## 2. 缓存价格回落倍率（跨仓，Console 侧实现）
 
