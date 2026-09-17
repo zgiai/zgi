@@ -86,25 +86,29 @@ func preAlterColumnsStatement(table string, columns []string, toPoints bool) str
 	}
 
 	condition := "(data_type = 'bigint' OR (data_type = 'numeric' AND COALESCE(numeric_scale, 0) <> 3))"
-	action := "ALTER TABLE public.%I ALTER COLUMN %I TYPE numeric(20,3) USING (%I::numeric / 1000)"
+	clause := "ALTER COLUMN %I TYPE numeric(20,3) USING (%I::numeric / 1000)"
 	if !toPoints {
 		condition = "(data_type = 'numeric' AND numeric_scale = 3)"
-		action = "ALTER TABLE public.%I ALTER COLUMN %I TYPE bigint USING ((%I * 1000)::bigint)"
+		clause = "ALTER COLUMN %I TYPE bigint USING ((%I * 1000)::bigint)"
 	}
 
+	// Build one ALTER TABLE per table so every column changes in a single
+	// statement. Altering them one by one would trip cross-column CHECK
+	// constraints (e.g. total_points = official_points + private_points)
+	// between column changes.
 	return fmt.Sprintf(`
 DO $$
-DECLARE credit_column record;
+DECLARE credit_clauses text;
 BEGIN
-  FOR credit_column IN
-    SELECT column_name
-    FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name = '%s'
-      AND column_name IN (%s)
-      AND %s
-  LOOP
-    EXECUTE format('%s', '%s', credit_column.column_name, credit_column.column_name);
-  END LOOP;
-END $$;`, table, strings.Join(quoted, ", "), condition, action, table)
+  SELECT string_agg(format('%s', column_name, column_name), ', ')
+  INTO credit_clauses
+  FROM information_schema.columns
+  WHERE table_schema = 'public'
+    AND table_name = '%s'
+    AND column_name IN (%s)
+    AND %s;
+  IF credit_clauses IS NOT NULL AND credit_clauses <> '' THEN
+    EXECUTE format('ALTER TABLE public.%%I %%s', '%s', credit_clauses);
+  END IF;
+END $$;`, clause, table, strings.Join(quoted, ", "), condition, table)
 }

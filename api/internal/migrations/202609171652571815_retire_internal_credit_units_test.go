@@ -12,7 +12,7 @@ func TestRetireInternalCreditUnitsPreMigration(t *testing.T) {
 	db, mock := openMigrationMockDB(t)
 
 	for i := 0; i < 10; i++ {
-		mock.ExpectExec("(?s)DO \\$\\$.*information_schema.columns.*numeric\\(20,3\\).*END \\$\\$").
+		mock.ExpectExec("(?s)DO \\$\\$.*TYPE numeric\\(20,3\\).*END \\$\\$").
 			WillReturnResult(sqlmock.NewResult(0, 0))
 	}
 	mock.ExpectExec("(?s)UPDATE llm_usage_bills SET pricing_snapshot = jsonb_set.*charged_credits.*").
@@ -33,7 +33,7 @@ func TestRetireInternalCreditUnitsPreRollback(t *testing.T) {
 	db, mock := openMigrationMockDB(t)
 
 	for i := 0; i < 10; i++ {
-		mock.ExpectExec("(?s)DO \\$\\$.*numeric_scale = 3.*bigint.*END \\$\\$").
+		mock.ExpectExec("(?s)DO \\$\\$.*TYPE bigint.*END \\$\\$").
 			WillReturnResult(sqlmock.NewResult(0, 0))
 	}
 	mock.ExpectExec("(?s)UPDATE llm_usage_bills SET pricing_snapshot = jsonb_set.*charged_credits.*").
