@@ -84,3 +84,18 @@
 - 模型用量统计按 operation 分组返回；调用日志支持 `attempt_id` 过滤，
   输出中的 `settlement_id` 在无远端扣费 ID 时即 attempt_id。
 - 已应用的迁移不做原地修改（Pre README 规则 40：schema 变更一律追加迁移）。
+
+## 6. 点单位与倍率下发（单位统一）
+
+- **唯一账本单位 = 点**（`numeric(20,3)`）。内部单位（= 点 × 1000）退役；`llm_usage_bills`、
+  `channel_wallets`、`billing_attempt_entries`、开发者配额等列均为点。
+- **扣减倍率 `points_per_usd` 的权威在 Console**（`billing_configs`，全环境单值，当前 1000），
+  随 catalog 发布 payload 下发：
+  `CatalogService.GetPublishedCatalog → catalogsync.Synchronizer → public.llm_billing_settings`。
+  Pre 本地报价/本地扣点**只读本地副本**（`llm/billingsettings`）。
+- **离线行为**：Console 不可达时沿用上次同步值；首次无值（或行值非法）用编译默认
+  `1000` 并打告警日志；catalog 不带该字段（旧 Console）时忽略，不清零本地值。
+- **快照**：`llm_usage_bills.pricing_snapshot.charged_credits` 为点；`points_per_usd` 随结算快照留痕，
+  便于对账复核。
+- **计量预扣衔接（P2/W15）**：`PreDeductMeteredUsage` 的字段名不变，值语义为点；
+  验收数字按点（$0.10 图片 = `estimated = reserved = 100`）。
