@@ -169,20 +169,24 @@ func pricingFallbackOrganizationIDFromContext(c *gin.Context) (uuid.UUID, bool) 
 	return organizationID, true
 }
 
-// PricingFallbackDefaultPricesEnv carries the deployment-level price values for
-// the built-in fallback skeletons. Prices are intentionally not hardcoded: the
-// skeletons only describe what can be covered, and each deployment decides the
-// amounts, e.g.
+// PricingFallbackDefaultPricesEnv overrides the built-in fallback prices for
+// this deployment. The historical amounts ship as code defaults
+// (builtInPricingFallbackDefaultPrices), so a fresh install can quote unpriced
+// models without adding this variable; anything listed here wins, e.g.
 //
 //	PRICING_FALLBACK_DEFAULT_PRICES='{"token.chat.input.default":"1","image.qwen.default":160}'
 const PricingFallbackDefaultPricesEnv = "PRICING_FALLBACK_DEFAULT_PRICES"
 
-// DefaultPricingFallbackRules returns the built-in fallback skeletons enriched
-// with this deployment's configured prices. Skeletons without a configured
-// price carry no amount and cannot produce a code-default quote.
+// DefaultPricingFallbackRules returns the built-in fallback rules carrying the
+// built-in amounts, with any PRICING_FALLBACK_DEFAULT_PRICES entry overriding
+// them. A code-default quote additionally requires the organization to enable
+// its own fallback switch.
 func DefaultPricingFallbackRules() []PricingFallbackRule {
 	rules := defaultPricingFallbackSkeletons()
-	values := loadPricingFallbackDefaultPrices()
+	values := builtInPricingFallbackDefaultPrices()
+	for id, raw := range loadPricingFallbackDefaultPrices() {
+		values[id] = raw
+	}
 	for index := range rules {
 		raw, ok := values[rules[index].ID]
 		if !ok {
@@ -191,6 +195,25 @@ func DefaultPricingFallbackRules() []PricingFallbackRule {
 		applyPricingFallbackDefaultValue(&rules[index], raw)
 	}
 	return rules
+}
+
+// builtInPricingFallbackDefaultPrices are the historical deployment defaults.
+// They live in code so the fallback panel and the code-default quote path work
+// out of the box without an extra environment variable; setting
+// PRICING_FALLBACK_DEFAULT_PRICES overrides any individual entry.
+func builtInPricingFallbackDefaultPrices() map[string]json.RawMessage {
+	return map[string]json.RawMessage{
+		"token.chat.input.default":      json.RawMessage(`"1"`),
+		"token.chat.output.default":     json.RawMessage(`"2"`),
+		"token.embedding.input.default": json.RawMessage(`"1"`),
+		"token.rerank.input.default":    json.RawMessage(`"1"`),
+		"image.qwen.default":            json.RawMessage(`160`),
+		"image.doubao.default":          json.RawMessage(`100`),
+		"image.openai.default":          json.RawMessage(`200`),
+		"image.gcp.default":             json.RawMessage(`180`),
+		"image.midjourney.default":      json.RawMessage(`300`),
+		"image.generic.default":         json.RawMessage(`200`),
+	}
 }
 
 // PricingFallbackTemplate is the loadable price template returned to the UI.

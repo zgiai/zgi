@@ -6,28 +6,24 @@
 
 ## 1. 报价兜底模板（P-2）
 
-- 代码里不再保存任何兜底价格。`DefaultPricingFallbackRules()` 只返回骨架
-  （id / operation / meter / provider / enabled）。
-- 价格来自部署配置环境变量 `PRICING_FALLBACK_DEFAULT_PRICES`，取值形如：
+- 兜底价随代码内置（`builtInPricingFallbackDefaultPrices()`），**无需任何环境变量**即可
+  生效，金额与改造前的硬编码值一致：
+  - token：聊天输入 `1`、聊天输出 `2`、向量化输入 `1`、重排序输入 `1`（`usd_per_1m_tokens`）；
+  - 图片：qwen `160`、doubao `100`、openai `200`、gcp `180`、midjourney `300`、
+    未匹配服务商 `200`（`credits_per_image`）。
+- 环境变量 `PRICING_FALLBACK_DEFAULT_PRICES` 降级为**可选覆盖**：只覆盖其中列出的条目，
+  未列出的沿用内置金额；JSON 非法时整体回退到内置金额并记录日志。取值形如：
 
   ```json
   {
-    "token.chat.input.default": "1",
-    "token.chat.output.default": "2",
-    "token.embedding.input.default": "1",
-    "token.rerank.input.default": "1",
-    "image.qwen.default": 160,
-    "image.doubao.default": 100,
-    "image.openai.default": 200,
-    "image.gcp.default": 180,
-    "image.midjourney.default": 300,
-    "image.generic.default": 200
+    "token.chat.input.default": "1.5",
+    "image.openai.default": 250
   }
   ```
 
-  未配置价格（或 JSON 非法）时，对应骨架不带金额，**不会**产生
-  `code_default_fallback` 报价；缺价请求按既有语义 fail-closed。
-- `GET /console/api/llm/pricing/fallback/template` 返回「骨架 + 本环境配置值」。
+- 代码内置价仍受组织总开关约束：只有该组织在设置页打开「缺失价格计费策略」后，
+  `code_default_fallback` 才会产生报价。
+- `GET /console/api/llm/pricing/fallback/template` 返回「规则 + 内置金额 + 本环境覆盖值」。
   设置页「缺失价格计费策略」面板新增「载入模板」按钮：把模板写入当前组织的
   `override_rules`（保存后来源标记为 `admin_fallback`），模板与手工规则不可区分
   （已知限制）。
