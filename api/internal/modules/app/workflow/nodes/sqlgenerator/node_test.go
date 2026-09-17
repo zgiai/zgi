@@ -234,6 +234,58 @@ func TestNodeExecuteRunUsesEngineSystemPrompt(t *testing.T) {
 	}
 }
 
+func TestNodeExecuteRunTellsModelToUseStoredEncodingForValues(t *testing.T) {
+	ctx := context.Background()
+	state := entities.NewGraphRuntimeStateWithDefaults()
+
+	mockLLM := &stubLLMInvoker{response: `{"sql":"SELECT COUNT(*) FROM public.users WHERE status = 'completed'"}`}
+	node := &Node{
+		NodeStruct: base.NodeStruct{
+			NodeID:            "sql-node",
+			NodeType:          shared.SQLGenerator,
+			TenantID:          "tenant-1",
+			UserID:            "user-1",
+			GraphRuntimeState: state,
+		},
+		NodeData: NodeData{
+			Model: ModelSection{
+				Provider:   "stub-provider",
+				Name:       "stub-model",
+				Mode:       "chat",
+				Parameters: map[string]any{},
+			},
+			DataSource: DataSourceSection{Source: calldatabase.DataSourceConfig{ID: "ds-1"}, Tables: []calldatabase.TableRef{{TableID: 7, Schema: "public", Name: "users"}}},
+			Prompt: PromptSection{
+				User: "已经完成的用户有多少？",
+			},
+			Execution: ExecutionConfig{TimeoutSeconds: 5},
+		},
+		llmInvoker: mockLLM,
+		sqlClient:  &sqlGeneratorFakeSQLBase{table: &sql_base.Table{ID: 7, Schema: "public", Name: "users", Columns: []sql_base.Column{{Name: "id"}, {Name: "status"}}}},
+	}
+	attachText2SQLTestDependencies(node)
+	node.NodeData.ensureDefaults()
+
+	result, err := node.executeRun(ctx)
+	if err != nil {
+		t.Fatalf("executeRun returned error: %v", err)
+	}
+	if result.Status != shared.SUCCEEDED {
+		t.Fatalf("status = %s, want %s", result.Status, shared.SUCCEEDED)
+	}
+	system := mockLLM.lastReq.Messages[0].Content
+	if !strings.Contains(system, "encoding actually stored in the database") {
+		t.Fatalf("system prompt = %#v, want the stored-encoding rule", system)
+	}
+	if !strings.Contains(system, "never copy a non-English word from the question into a value") {
+		t.Fatalf("system prompt = %#v, want the no-translated-values rule", system)
+	}
+	// The rule must not weaken the pre-existing contracts.
+	if !strings.Contains(system, "Return one JSON object") || !strings.Contains(system, "Use only the supplied database schema") {
+		t.Fatalf("system prompt = %#v, want existing contracts preserved", system)
+	}
+}
+
 func TestNodeExecuteRunIgnoresLegacyNodeSystemPrompt(t *testing.T) {
 	ctx := context.Background()
 	state := entities.NewGraphRuntimeStateWithDefaults()

@@ -25,7 +25,7 @@ func (g workflowGenerator) Generate(ctx context.Context, request text2sql.Genera
 	if g.node == nil || g.node.llmInvoker == nil {
 		return "", ErrInvokerNotConfigured
 	}
-	const coreSystem = `You generate PostgreSQL SQL. Return one JSON object with a non-empty "sql" string and optional "analysis" string and "used_fields" string array. Do not use Markdown. Use only the supplied database schema.`
+	const coreSystem = `You generate PostgreSQL SQL. Return one JSON object with a non-empty "sql" string and optional "analysis" string and "used_fields" string array. Do not use Markdown. Use only the supplied database schema. Values in WHERE, HAVING and CASE must use the encoding actually stored in the database: a word from the question is not necessarily the stored value, so use the raw stored value (for example the literal completed) rather than a translated equivalent, and never copy a non-English word from the question into a value. If the stored encoding is not evident from the schema, choose the most likely encoding for that column and state the assumption in "analysis".`
 	system := coreSystem
 	if additional := strings.TrimSpace(request.AdditionalPrompt); additional != "" {
 		system += "\n\nAdditional workflow instructions:\n" + additional +
