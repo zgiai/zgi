@@ -91,7 +91,10 @@ const messages = {
     effectiveRules: 'Effective rules',
     effectiveSummaryTitle: 'Effective billing rules',
     effectiveSummaryDesc:
-      'Edit prices in the table and save. Unchanged rows keep system defaults, and model prices still take priority.',
+      'Summarises the fallback rules that are actually in effect. Rows without an override keep the system defaults, and model prices still take priority. This panel is read-only.',
+    readOnlyHint:
+      'Fallback prices are display-only and are used only when a model has no price. To adjust prices, configure them per model in the model module.',
+    readOnlyHintLink: 'Go to model access',
     emptyDefaultRules: 'No system default rules.',
     emptyEffectiveRules: 'No effective rules.',
     emptyOverrideRules: 'No admin override rules yet. Add a token or image rule.',

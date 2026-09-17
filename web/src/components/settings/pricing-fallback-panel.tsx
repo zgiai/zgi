@@ -1,18 +1,16 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import {
   ChevronDown,
   ChevronUp,
   ImageIcon,
-  Loader2,
   RefreshCw,
   RotateCcw,
-  Save,
   Type,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import Decimal from 'decimal.js-light';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -76,66 +74,6 @@ function matchText(value: string | undefined) {
   return v || '*';
 }
 
-function ruleIdentityPart(value: string | undefined) {
-  return matchText(value).replace(/[^a-zA-Z0-9_.-]+/g, '_');
-}
-
-function sameRuleTarget(a: PricingFallbackRule, b: PricingFallbackRule) {
-  return (
-    a.operation === b.operation &&
-    a.meter === b.meter &&
-    matchText(a.provider) === matchText(b.provider) &&
-    matchText(a.model) === matchText(b.model) &&
-    matchText(a.size) === matchText(b.size) &&
-    matchText(a.quality) === matchText(b.quality) &&
-    matchText(a.style) === matchText(b.style)
-  );
-}
-
-function adminRuleIDFrom(rule: PricingFallbackRule) {
-  const kind = rule.meter === 'image' ? 'image' : 'token';
-  return [
-    'admin',
-    kind,
-    rule.operation,
-    rule.meter,
-    ruleIdentityPart(rule.provider),
-    ruleIdentityPart(rule.model),
-    ruleIdentityPart(rule.size),
-    ruleIdentityPart(rule.quality),
-    ruleIdentityPart(rule.style),
-  ].join('.');
-}
-
-function mergeEditableRule(baseRule: PricingFallbackRule, overrideRule?: PricingFallbackRule) {
-  if (!overrideRule) return baseRule;
-  return {
-    ...baseRule,
-    ...overrideRule,
-    pricing_source: 'admin_fallback' as PricingFallbackSource,
-  };
-}
-
-function buildOverrideRule(
-  baseRule: PricingFallbackRule,
-  patch: Partial<PricingFallbackRule>,
-  existingRule?: PricingFallbackRule
-) {
-  const id =
-    baseRule.pricing_source === 'code_default_fallback'
-      ? baseRule.id
-      : existingRule?.id || baseRule.id || adminRuleIDFrom(baseRule);
-  const nextRule: PricingFallbackRule = {
-    ...baseRule,
-    ...existingRule,
-    ...patch,
-    id,
-    enabled: true,
-  };
-  delete nextRule.pricing_source;
-  return nextRule;
-}
-
 function displayPattern(value: string | undefined, allLabel: string) {
   const v = cleanText(value);
   return !v || v === '*' ? allLabel : v;
@@ -178,40 +116,6 @@ function normalizeRuleForSave(rule: PricingFallbackRule): PricingFallbackRule {
   if (provider) normalized.provider = provider;
   if (model) normalized.model = model;
   return normalized;
-}
-
-function isValidNonNegativeNumber(value: string | undefined) {
-  if (!value || value.trim() === '') return false;
-  try {
-    return !new Decimal(value).isNegative();
-  } catch {
-    return false;
-  }
-}
-
-function validateRules(rules: PricingFallbackRule[], t: (key: SettingsKey) => string) {
-  const seen = new Set<string>();
-
-  for (const rule of rules) {
-    const id = cleanText(rule.id);
-    if (!id) return t('settings.pricingFallback.validationRuleID');
-    if (seen.has(id)) return t('settings.pricingFallback.validationDuplicateID');
-    seen.add(id);
-
-    if (rule.meter === 'image') {
-      const credits = Number(rule.credits ?? 0);
-      if (!Number.isFinite(credits) || credits <= 0) {
-        return t('settings.pricingFallback.validationImageCredits');
-      }
-      continue;
-    }
-
-    if (!isValidNonNegativeNumber(rule.price_usd_per_1m_tokens)) {
-      return t('settings.pricingFallback.validationTokenPrice');
-    }
-  }
-
-  return '';
 }
 
 function sourceVariant(source: PricingFallbackSource | undefined) {
@@ -345,93 +249,32 @@ export function PricingFallbackPanel({
     void loadPricingFallback();
   }, [loadPricingFallback]);
 
-  // Loads the deployment-level fallback template into the editable override
-  // rules; the admin still reviews and saves through the normal PUT.
-  const loadPricingFallbackTemplate = useCallback(async () => {
-    try {
-      const resp = await modelService.getPricingFallbackTemplate();
-      const templateRules = resp.data?.rules ?? [];
-      if (templateRules.length === 0) {
-        toast.error(t('settings.pricingFallback.templateEmpty'));
-        return;
-      }
-      setOverrideRules(current => {
-        const existing = new Set(current.map(rule => rule.id));
-        const additions = templateRules
-          .filter(rule => !existing.has(rule.id))
-          .map(rule => normalizeRuleForSave(rule));
-        return [...current, ...additions];
-      });
+  // The panel is display-only; the policy switch is the only interactive
+  // control and it persists immediately. The stored override rules are sent
+  // back unchanged so toggling the policy never drops existing overrides.
+  const persistFallbackEnabled = useCallback(
+    async (enabled: boolean) => {
       setOverrideRulesError('');
-      toast.success(t('settings.pricingFallback.templateLoaded'));
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : fallbackLoadFailedText);
-    }
-  }, [fallbackLoadFailedText, t]);
-
-  const findOverrideRule = useCallback(
-    (baseRule: PricingFallbackRule) => overrideRules.find(rule => sameRuleTarget(rule, baseRule)),
-    [overrideRules]
-  );
-
-  const getEditableRule = useCallback(
-    (baseRule: PricingFallbackRule) => mergeEditableRule(baseRule, findOverrideRule(baseRule)),
-    [findOverrideRule]
-  );
-
-  const hasOverrideRule = useCallback(
-    (baseRule: PricingFallbackRule) => Boolean(findOverrideRule(baseRule)),
-    [findOverrideRule]
-  );
-
-  const upsertOverrideRule = useCallback(
-    (baseRule: PricingFallbackRule, patch: Partial<PricingFallbackRule>) => {
-      setOverrideRules(rules => {
-        const index = rules.findIndex(rule => sameRuleTarget(rule, baseRule));
-        const existingRule = index >= 0 ? rules[index] : undefined;
-        const nextRule = buildOverrideRule(baseRule, patch, existingRule);
-
-        if (index < 0) {
-          return [...rules, nextRule];
-        }
-
-        return rules.map((rule, ruleIndex) => (ruleIndex === index ? nextRule : rule));
-      });
+      setFallbackSaving(true);
+      try {
+        const resp = await modelService.updatePricingFallback({
+          enabled,
+          override_rules: overrideRules.map(normalizeRuleForSave),
+        });
+        setPricingFallback(resp.data);
+        setFallbackEnabled(resp.data.enabled);
+        setOverrideRules(resp.data.override_rules ?? []);
+        toast.success(t('settings.pricingFallback.saved'));
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : t('settings.pricingFallback.saveFailed')
+        );
+      } finally {
+        setFallbackSaving(false);
+      }
     },
-    []
+    [overrideRules, t]
   );
-
-  const resetOverrideRule = useCallback((baseRule: PricingFallbackRule) => {
-    setOverrideRules(rules => rules.filter(rule => !sameRuleTarget(rule, baseRule)));
-  }, []);
-
-  const savePricingFallback = async () => {
-    setOverrideRulesError('');
-    const normalizedRules = overrideRules.map(normalizeRuleForSave);
-    const validationError = validateRules(normalizedRules, t);
-    if (validationError) {
-      setOverrideRulesError(validationError);
-      return;
-    }
-
-    setFallbackSaving(true);
-    try {
-      const resp = await modelService.updatePricingFallback({
-        enabled: fallbackEnabled,
-        override_rules: normalizedRules,
-      });
-      setPricingFallback(resp.data);
-      setFallbackEnabled(resp.data.enabled);
-      setOverrideRules(resp.data.override_rules ?? []);
-      toast.success(t('settings.pricingFallback.saved'));
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : t('settings.pricingFallback.saveFailed')
-      );
-    } finally {
-      setFallbackSaving(false);
-    }
-  };
 
   const isBusy = fallbackLoading || fallbackSaving;
   const defaultRules = pricingFallback?.default_rules ?? [];
@@ -483,34 +326,11 @@ export function PricingFallbackPanel({
             variant="outline"
             size="sm"
             className="gap-2"
-            onClick={() => void loadPricingFallbackTemplate()}
-            disabled={isBusy}
-          >
-            <Type className="h-4 w-4" />
-            {t('settings.pricingFallback.loadTemplate')}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-2"
             onClick={() => void loadPricingFallback()}
             disabled={isBusy}
           >
             <RefreshCw className={`h-4 w-4 ${fallbackLoading ? 'animate-spin' : ''}`} />
             {t('settings.pricingFallback.refresh')}
-          </Button>
-          <Button
-            size="sm"
-            className="gap-2"
-            onClick={() => void savePricingFallback()}
-            disabled={isBusy}
-          >
-            {fallbackSaving ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Save className="h-4 w-4" />
-            )}
-            {t('settings.pricingFallback.save')}
           </Button>
         </div>
       </div>
@@ -520,7 +340,7 @@ export function PricingFallbackPanel({
           <PolicyStrip
             enabled={fallbackEnabled}
             disabled={isBusy}
-            onEnabledChange={setFallbackEnabled}
+            onEnabledChange={enabled => void persistFallbackEnabled(enabled)}
           />
 
       {overrideRulesError ? (
@@ -528,6 +348,13 @@ export function PricingFallbackPanel({
           {overrideRulesError}
         </p>
       ) : null}
+
+      <p className="mt-4 rounded-md border border-border bg-background px-3 py-2 text-xs leading-5 text-muted-foreground">
+        {t('settings.pricingFallback.readOnlyHint')}{' '}
+        <Link href="/dashboard/provider" className="font-medium text-primary hover:underline">
+          {t('settings.pricingFallback.readOnlyHintLink')}
+        </Link>
+      </p>
 
       <section className="mt-4 rounded-md border border-border bg-background p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -547,12 +374,6 @@ export function PricingFallbackPanel({
             rules={effectiveRules}
             emptyText={t('settings.pricingFallback.emptyEffectiveRules')}
             billingDisplay={billingDisplay}
-            editable
-            disabled={isBusy}
-            getEditableRule={getEditableRule}
-            hasOverrideRule={hasOverrideRule}
-            onRuleChange={upsertOverrideRule}
-            onRuleReset={resetOverrideRule}
           />
         )}
       </section>

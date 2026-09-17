@@ -81,7 +81,9 @@ const messages: SettingsMessages = {
     effectiveRules: '最终生效规则',
     effectiveSummaryTitle: '生效计费规则',
     effectiveSummaryDesc:
-      '直接修改表格中的价格并保存；未修改的条目继续使用系统默认策略，模型自身价格仍然优先。',
+      '汇总当前实际生效的兜底规则；未覆盖的条目继续使用系统默认策略，模型自身价格仍然优先。此处为只读展示。',
+    readOnlyHint: '兜底价格只读展示，仅在模型未配价时用于兜底计费；如需调整价格，请到模型模块按模型配置。',
+    readOnlyHintLink: '前往模型接入',
     emptyDefaultRules: '暂无系统默认规则。',
     emptyEffectiveRules: '暂无生效规则。',
     emptyOverrideRules: '暂无管理端覆盖规则。可以添加 token 或图片规则。',
