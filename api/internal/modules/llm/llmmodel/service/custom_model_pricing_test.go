@@ -87,3 +87,22 @@ func TestApplyCustomModelPricingScalarOverrideWinsOverStoredRules(t *testing.T) 
 }
 
 func float64Ptr(value float64) *float64 { return &value }
+
+// Clearing every price on a custom model must persist "not configured" so the
+// previous image price cannot keep billing.
+func TestApplyCustomModelPricingClearsStoredPricingWhenEveryPriceIsCleared(t *testing.T) {
+	custom := &model.CustomModel{Currency: "USD"}
+	custom.Pricing = []byte(`{"version":2,"deployment_scope":"organization","catalog_origin":"pre_custom","rules":[{"id":"image-default","operation":"image_generation","meter":"image","unit":"per_image","price":"0.3","configured":true}],"price_per_image":0.3}`)
+
+	// What the dialog now submits when the tenant empties the image price.
+	raw := []byte(`{"deployment_scope":"global","catalog_origin":"pre_custom","price_per_image":null}`)
+	if err := applyCustomModelPricing(custom, raw, []string{"image-gen"}, modelpricing.CustomModelScalars{}); err != nil {
+		t.Fatalf("applyCustomModelPricing returned error: %v", err)
+	}
+	if string(custom.Pricing) != "{}" {
+		t.Fatalf("pricing = %s, want {} (not configured)", custom.Pricing)
+	}
+	if resolved := modelpricing.ResolveConfigured([]byte(custom.Pricing)); resolved.Input || resolved.Output {
+		t.Fatalf("resolved configured = %+v, want everything unconfigured", resolved)
+	}
+}

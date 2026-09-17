@@ -70,3 +70,55 @@ func TestPrepareCustomModelPricingVideoProjectionOverride(t *testing.T) {
 		t.Fatalf("video rule prices = %v, want [0.05]", prices)
 	}
 }
+
+// Clearing the custom model's image price must drop the stored price. The
+// dialog rebuilds the payload from the form, so a cleared field arrives as an
+// explicit null with no rules[]; before this was handled the payload produced a
+// valueless envelope that the strict validator rejected, leaving the stored
+// price untouched.
+func TestPrepareCustomModelPricingClearedImagePriceYieldsEmptyPricing(t *testing.T) {
+	raw := json.RawMessage(`{"deployment_scope":"global","catalog_origin":"pre_custom","price_per_image":null}`)
+
+	prepared, _, err := PrepareCustomModelPricing(raw, "USD", []string{"image-gen"}, CustomModelScalars{}, CustomModelScalars{})
+	if err != nil {
+		t.Fatalf("PrepareCustomModelPricing returned error: %v", err)
+	}
+	// "{}" is this package's "not configured" value: it carries no rules and no
+	// price projections, so nothing can keep billing the cleared price.
+	if string(prepared) != "{}" {
+		t.Fatalf("prepared = %s, want {} once the last price is cleared", prepared)
+	}
+	var envelope structuredPricing
+	if err := json.Unmarshal(prepared, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if len(envelope.Rules) != 0 || envelope.PricePerImage != nil || envelope.VideoGeneration != nil {
+		t.Fatalf("cleared pricing still carries a price: %s", prepared)
+	}
+}
+
+// A cleared image price must not disturb the token prices that remain.
+func TestPrepareCustomModelPricingClearKeepsTokenPrices(t *testing.T) {
+	raw := json.RawMessage(`{"deployment_scope":"global","catalog_origin":"pre_custom","price_per_image":null}`)
+	scalars := CustomModelScalars{InputPrice: floatPtr(1), OutputPrice: floatPtr(2)}
+
+	prepared, _, err := PrepareCustomModelPricing(raw, "USD", []string{"text-chat", "image-gen"}, scalars, CustomModelScalars{})
+	if err != nil {
+		t.Fatalf("PrepareCustomModelPricing returned error: %v", err)
+	}
+	var envelope structuredPricing
+	if err := json.Unmarshal(prepared, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.PricePerImage != nil {
+		t.Fatalf("price_per_image = %v, want cleared", envelope.PricePerImage)
+	}
+	for _, rule := range envelope.Rules {
+		if rule.Operation == "image_generation" {
+			t.Fatalf("image rule present after a cleared image price: %+v", rule)
+		}
+	}
+	if len(envelope.Rules) == 0 {
+		t.Fatal("token rules must survive clearing the image price")
+	}
+}

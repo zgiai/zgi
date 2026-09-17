@@ -1,6 +1,7 @@
 package pricing
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -51,6 +52,13 @@ func PrepareCustomModelPricing(
 	prepared := PrepareStructuredPricingForWrite(raw, currency, legacyScalars, opts)
 	if len(prepared) == 0 || string(prepared) == "null" {
 		return prepared, scalars, nil
+	}
+	if !pricingHasAnyPrice(prepared) {
+		// The tenant cleared the last price. Persist "not configured" instead of
+		// a valueless envelope: leaving the stored pricing untouched would keep
+		// billing the previous image/video price, and the strict validator would
+		// reject a valueless envelope as half-written.
+		return json.RawMessage(`{}`), scalars, nil
 	}
 	if _, err := ValidateStructuredPricing(prepared); err != nil {
 		return nil, scalars, err
@@ -140,4 +148,23 @@ func ScalarsFromDecimalPrices(
 		scalars.CacheWrite1hPrice = DecimalPtr(cacheWrite1h)
 	}
 	return scalars
+}
+
+// pricingHasAnyPrice reports whether a pricing envelope still carries at least
+// one price, mirroring the structural validator's notion of "priced".
+func pricingHasAnyPrice(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return false
+	}
+	var envelope structuredPricing
+	if err := json.Unmarshal(trimmed, &envelope); err != nil {
+		// Malformed payloads are left for the validator to report.
+		return true
+	}
+	return len(envelope.Rules) > 0 ||
+		len(envelope.TokenTiers) > 0 ||
+		envelope.PricePerImage != nil ||
+		envelope.VideoGeneration != nil ||
+		len(envelope.Metered) > 0
 }

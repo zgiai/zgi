@@ -8,25 +8,32 @@ type CustomModelPricingInput = {
 };
 
 export function buildCustomModelPricing(input: CustomModelPricingInput): ModelPricing | undefined {
+  const tracksImage = input.useCases.includes('image-gen');
+  const tracksVideo = input.useCases.includes('video-gen');
+  if (!tracksImage && !tracksVideo) {
+    return undefined;
+  }
+
   const pricing: ModelPricing = {
     deployment_scope: 'global',
     catalog_origin: 'pre_custom',
   };
 
-  if (input.useCases.includes('image-gen') && input.pricePerImage?.trim()) {
-    pricing.price_per_image = Number(input.pricePerImage);
+  if (tracksImage) {
+    // An explicit null tells the backend the field was cleared. Omitting the key
+    // instead reads as "this editor did not run", so the stored image price
+    // would keep billing.
+    pricing.price_per_image = input.pricePerImage?.trim() ? Number(input.pricePerImage) : null;
   }
 
-  if (input.useCases.includes('video-gen') && input.videoPricePerSecond?.trim()) {
-    pricing.video_generation = {
-      currency: input.currency || 'USD',
-      billing_unit: 'second',
-      rates: [{ resolution: '720p', price_per_second: Number(input.videoPricePerSecond) }],
-    };
-  }
-
-  if (pricing.price_per_image === undefined && !pricing.video_generation) {
-    return undefined;
+  if (tracksVideo) {
+    pricing.video_generation = input.videoPricePerSecond?.trim()
+      ? {
+          currency: input.currency || 'USD',
+          billing_unit: 'second',
+          rates: [{ resolution: '720p', price_per_second: Number(input.videoPricePerSecond) }],
+        }
+      : null;
   }
 
   return pricing;
