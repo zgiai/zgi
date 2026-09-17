@@ -282,6 +282,15 @@ func renderCatalog(catalog Catalog, options SchemaRenderOptions) string {
 		} else {
 			fmt.Fprintf(&builder, "TABLE %s.%s\n", item.Table.Schema, item.Table.Name)
 		}
+		// Render the business description on the table-level header so the model
+		// can tell apart tables that share an identical column layout. It must
+		// stay outside the column block: the DDL branch relies on the column
+		// index to decide trailing commas.
+		if options.IncludeComments {
+			if description := item.BusinessDescription(); description != "" {
+				fmt.Fprintf(&builder, "  -- %s\n", description)
+			}
+		}
 		columnCount := len(item.Table.Columns)
 		if options.MaxColumns > 0 && columnCount > options.MaxColumns {
 			columnCount = options.MaxColumns

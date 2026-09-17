@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/zgiai/zgi/api/pkg/sql_base"
@@ -80,6 +81,75 @@ func TestRenderCatalogHonorsModeColumnLimitAndComments(t *testing.T) {
 	limited := renderCatalog(catalog, SchemaRenderOptions{Mode: "columns", MaxColumns: 1})
 	if limited != "TABLE public.customers\n  id uuid\n  ... more columns omitted" {
 		t.Fatalf("limited renderCatalog() = %q", limited)
+	}
+}
+
+func TestRenderCatalogPutsBusinessDescriptionOnTableHeader(t *testing.T) {
+	t.Parallel()
+
+	// Two tables with an identical column layout, distinguished only by the
+	// operator-maintained business description.
+	catalog := Catalog{Tables: []CatalogTable{
+		{
+			Table:       &sql_base.Table{Schema: "public", Name: "zgi_base_tbl_marketing_campaigns_abc123", Columns: []sql_base.Column{{Name: "campaign_id", DataType: "bigint"}}},
+			Description: "营销域campaigns业务表",
+		},
+		{
+			Table:       &sql_base.Table{Schema: "public", Name: "zgi_base_tbl_promotion_campaigns_def456", Columns: []sql_base.Column{{Name: "campaign_id", DataType: "bigint"}}},
+			Description: "促销域campaigns业务表",
+		},
+	}}
+
+	rendered := renderCatalog(catalog, SchemaRenderOptions{Mode: "columns", IncludeComments: true})
+	want := "TABLE public.zgi_base_tbl_marketing_campaigns_abc123\n" +
+		"  -- 营销域campaigns业务表\n" +
+		"  campaign_id bigint\n" +
+		"TABLE public.zgi_base_tbl_promotion_campaigns_def456\n" +
+		"  -- 促销域campaigns业务表\n" +
+		"  campaign_id bigint"
+	if rendered != want {
+		t.Fatalf("renderCatalog() =\n%q\nwant\n%q", rendered, want)
+	}
+}
+
+func TestRenderCatalogDDLKeepsDescriptionOutsideColumnBlock(t *testing.T) {
+	t.Parallel()
+	comment := "legacy physical comment"
+	catalog := Catalog{Tables: []CatalogTable{{
+		Table:       &sql_base.Table{Schema: "public", Name: "orders", Comment: &comment, Columns: []sql_base.Column{{Name: "id", DataType: "uuid"}, {Name: "amount", DataType: "numeric"}}},
+		Description: "订单主表",
+	}}}
+
+	rendered := renderCatalog(catalog, SchemaRenderOptions{Mode: "ddl", IncludeComments: true})
+	want := "CREATE TABLE public.orders (\n  -- 订单主表\n  id uuid,\n  amount numeric\n);"
+	if rendered != want {
+		t.Fatalf("renderCatalog() = %q, want %q", rendered, want)
+	}
+}
+
+func TestRenderCatalogFallsBackToPhysicalComment(t *testing.T) {
+	t.Parallel()
+	comment := "Table created for organization org, data source ds"
+	withComment := Catalog{Tables: []CatalogTable{{Table: &sql_base.Table{Schema: "public", Name: "customers", Comment: &comment, Columns: []sql_base.Column{{Name: "id", DataType: "uuid"}}}}}}
+	if rendered := renderCatalog(withComment, SchemaRenderOptions{IncludeComments: true}); !strings.Contains(rendered, "-- "+comment) {
+		t.Fatalf("renderCatalog() = %q, want physical comment fallback", rendered)
+	}
+
+	// A blank description must not emit an empty comment line.
+	blank := Catalog{Tables: []CatalogTable{{Table: &sql_base.Table{Schema: "public", Name: "customers", Columns: []sql_base.Column{{Name: "id", DataType: "uuid"}}}}}}
+	if rendered := renderCatalog(blank, SchemaRenderOptions{IncludeComments: true}); rendered != "TABLE public.customers\n  id uuid" {
+		t.Fatalf("renderCatalog() = %q, want no comment line", rendered)
+	}
+}
+
+func TestRenderCatalogOmitsDescriptionWhenCommentsDisabled(t *testing.T) {
+	t.Parallel()
+	catalog := Catalog{Tables: []CatalogTable{{
+		Table:       &sql_base.Table{Schema: "public", Name: "customers", Columns: []sql_base.Column{{Name: "id", DataType: "uuid"}}},
+		Description: "客户主数据",
+	}}}
+	if rendered := renderCatalog(catalog, SchemaRenderOptions{}); strings.Contains(rendered, "客户主数据") {
+		t.Fatalf("renderCatalog() = %q, want description suppressed", rendered)
 	}
 }
 

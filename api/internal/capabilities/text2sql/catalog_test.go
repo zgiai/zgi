@@ -28,8 +28,8 @@ func TestSQLCatalogLoaderUsesServerMetadataForMappedTable(t *testing.T) {
 	defer closeDB()
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT "id" FROM "data_sources"`)).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("ds-1"))
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, table_id FROM "data_source_tables"`)).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "table_id"}).AddRow("table-1", 7))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, table_id, description FROM "data_source_tables"`)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "table_id", "description"}).AddRow("table-1", 7, "营销域campaigns业务表"))
 	sqlClient := &recordingCatalogSQLBase{table: &sql_base.Table{ID: 7, Schema: "public", Name: "customers"}}
 	loader := NewSQLCatalogLoader(db, sqlClient)
 
@@ -56,8 +56,8 @@ func TestSQLCatalogLoaderSupportsLegacyPhysicalIDWithinDataSource(t *testing.T) 
 	defer closeDB()
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT "id" FROM "data_sources"`)).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("ds-1"))
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, table_id FROM "data_source_tables"`)).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "table_id"}).AddRow("table-1", 7))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, table_id, description FROM "data_source_tables"`)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "table_id", "description"}).AddRow("table-1", 7, "营销域campaigns业务表"))
 	sqlClient := &recordingCatalogSQLBase{table: &sql_base.Table{ID: 7, Schema: "public", Name: "customers"}}
 	loader := NewSQLCatalogLoader(db, sqlClient)
 
@@ -81,8 +81,8 @@ func TestSQLCatalogLoaderRejectsTableOutsideDataSource(t *testing.T) {
 	defer closeDB()
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT "id" FROM "data_sources"`)).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("ds-1"))
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, table_id FROM "data_source_tables"`)).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "table_id"}))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, table_id, description FROM "data_source_tables"`)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "table_id", "description"}))
 	loader := NewSQLCatalogLoader(db, &recordingCatalogSQLBase{})
 
 	_, err := loader.Load(context.Background(), CatalogRequest{
@@ -102,8 +102,8 @@ func TestSQLCatalogLoaderPrefersBusinessIDWhenPhysicalIDIsStale(t *testing.T) {
 	defer closeDB()
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT "id" FROM "data_sources"`)).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("ds-1"))
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, table_id FROM "data_source_tables"`)).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "table_id"}).AddRow("table-1", 7))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, table_id, description FROM "data_source_tables"`)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "table_id", "description"}).AddRow("table-1", 7, "营销域campaigns业务表"))
 	sqlClient := &recordingCatalogSQLBase{table: &sql_base.Table{ID: 7, Schema: "public", Name: "customers"}}
 	loader := NewSQLCatalogLoader(db, sqlClient)
 
@@ -120,6 +120,51 @@ func TestSQLCatalogLoaderPrefersBusinessIDWhenPhysicalIDIsStale(t *testing.T) {
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestSQLCatalogLoaderCarriesBusinessDescription(t *testing.T) {
+	db, mock, closeDB := newCatalogTestDB(t)
+	defer closeDB()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT "id" FROM "data_sources"`)).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("ds-1"))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, table_id, description FROM "data_source_tables"`)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "table_id", "description"}).
+			AddRow("table-1", 7, "营销域campaigns业务表").
+			AddRow("table-2", 8, nil))
+	comment := "Table created for organization org, data source ds"
+	sqlClient := &catalogStubSQLBase{tables: map[int]*sql_base.Table{
+		7: {ID: 7, Schema: "public", Name: "marketing_campaigns"},
+		8: {ID: 8, Schema: "public", Name: "orders", Comment: &comment},
+	}}
+	loader := NewSQLCatalogLoader(db, sqlClient)
+
+	catalog, err := loader.Load(context.Background(), CatalogRequest{
+		Scope: Scope{OrganizationID: "org-1", WorkspaceID: "workspace-1"}, DataSourceID: "ds-1",
+		Tables: []TableRef{{AssetID: "table-1", PhysicalID: 7}, {AssetID: "table-2", PhysicalID: 8}},
+	})
+	if err != nil {
+		t.Fatalf("Load error = %v", err)
+	}
+	if got := catalog.Tables[0].Description; got != "营销域campaigns业务表" {
+		t.Fatalf("Description = %q, want the operator description", got)
+	}
+	if got := catalog.Tables[0].BusinessDescription(); got != "营销域campaigns业务表" {
+		t.Fatalf("BusinessDescription() = %q, want the operator description", got)
+	}
+	// A nil description must fall back to the physical comment rather than
+	// rendering an empty label.
+	if got := catalog.Tables[1].BusinessDescription(); got != comment {
+		t.Fatalf("BusinessDescription() = %q, want physical comment fallback", got)
+	}
+}
+
+type catalogStubSQLBase struct {
+	sql_base.SQLBase
+	tables map[int]*sql_base.Table
+}
+
+func (f *catalogStubSQLBase) GetTable(_ context.Context, id int) (*sql_base.Table, error) {
+	return f.tables[id], nil
 }
 
 func newCatalogTestDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock, func()) {

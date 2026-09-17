@@ -66,13 +66,14 @@ func (l *SQLCatalogLoader) Load(ctx context.Context, req CatalogRequest) (Catalo
 	}
 
 	type tableMapping struct {
-		ID      string
-		TableID int
+		ID          string
+		TableID     int
+		Description *string
 	}
 	var mappings []tableMapping
 	if err := l.db.WithContext(ctx).
 		Table("data_source_tables").
-		Select("id, table_id").
+		Select("id, table_id, description").
 		Where("organization_id = ? AND data_source_id = ?", req.Scope.OrganizationID, req.DataSourceID).
 		Where("("+strings.Join(filters, " OR ")+")", filterArgs...).
 		Find(&mappings).Error; err != nil {
@@ -106,9 +107,17 @@ func (l *SQLCatalogLoader) Load(ctx context.Context, req CatalogRequest) (Catalo
 			return Catalog{}, fmt.Errorf("%w: table %s", ErrSchemaLoad, matched.ID)
 		}
 		catalog.Tables = append(catalog.Tables, CatalogTable{
-			Ref:   TableRef{AssetID: matched.ID, PhysicalID: matched.TableID, Schema: table.Schema, Name: table.Name},
-			Table: table,
+			Ref:         TableRef{AssetID: matched.ID, PhysicalID: matched.TableID, Schema: table.Schema, Name: table.Name},
+			Table:       table,
+			Description: stringValue(matched.Description),
 		})
 	}
 	return catalog, nil
+}
+
+func stringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }

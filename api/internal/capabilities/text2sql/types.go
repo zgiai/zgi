@@ -1,6 +1,7 @@
 package text2sql
 
 import (
+	"strings"
 	"time"
 
 	"github.com/zgiai/zgi/api/pkg/sql_base"
@@ -91,4 +92,24 @@ type Catalog struct {
 type CatalogTable struct {
 	Ref   TableRef
 	Table *sql_base.Table
+
+	// Description is the operator-facing business description stored on
+	// data_source_tables. It carries the domain wording used by end users
+	// (for example "营销域campaigns业务表"), which the physical table comment
+	// does not. It is metadata only: it is never part of the schema
+	// fingerprint, so filling it does not invalidate built schema indexes.
+	Description string
+}
+
+// BusinessDescription returns the wording that best identifies the table in
+// business terms, preferring the operator-maintained description and falling
+// back to the physical table comment.
+func (t CatalogTable) BusinessDescription() string {
+	if description := strings.TrimSpace(t.Description); description != "" {
+		return description
+	}
+	if t.Table != nil && t.Table.Comment != nil {
+		return strings.TrimSpace(*t.Table.Comment)
+	}
+	return ""
 }

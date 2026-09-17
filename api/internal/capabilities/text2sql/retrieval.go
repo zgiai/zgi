@@ -36,7 +36,11 @@ type RetrievalService struct {
 }
 
 func NewRetrievalService(repo *IndexRepository, models EmbeddingModelResolver, embedder Embedder, vectors vectordb.VectorDB, sql ...sql_base.SQLBase) *RetrievalService {
-	service := &RetrievalService{repo: repo, models: models, embedder: embedder, vectors: vectors, vectorTopK: 20, bm25TopK: 20, finalTopK: 8}
+	// finalTopK is deliberately larger than the number of tables a single
+	// question needs: on wide multi-domain sources the correct table is often
+	// outranked by structurally identical tables from neighbouring domains, and
+	// the generation prompt is where the business description can settle it.
+	service := &RetrievalService{repo: repo, models: models, embedder: embedder, vectors: vectors, vectorTopK: 40, bm25TopK: 40, finalTopK: 16}
 	if len(sql) > 0 {
 		service.sql = sql[0]
 	}
@@ -89,7 +93,7 @@ func (s *RetrievalService) Retrieve(ctx context.Context, req Request) (SchemaSel
 	if vectorErr != nil || bm25Err != nil {
 		return SchemaSelection{}, fmt.Errorf("schema retrieval unavailable: vector=%v bm25=%v", vectorErr, bm25Err)
 	}
-	ranked := fuseRRF(vectorResults, bm25Results, defaultRRFK)
+	ranked := fuseRRF(vectorResults, bm25Results, defaultRRFK, req.Question)
 	byAsset := make(map[string]SchemaIndex, len(rows))
 	for _, row := range rows {
 		byAsset[row.AssetTableID] = row
@@ -151,8 +155,9 @@ type rankedCandidate struct {
 	Score float64
 }
 
-func fuseRRF(vector, bm25 []map[string]interface{}, k float64) []rankedCandidate {
+func fuseRRF(vector, bm25 []map[string]interface{}, k float64, question string) []rankedCandidate {
 	scores := map[string]float64{}
+	evidence := map[string]float64{}
 	add := func(results []map[string]interface{}) {
 		for rank, result := range results {
 			id := resultString(result, "asset_table_id")
@@ -160,6 +165,9 @@ func fuseRRF(vector, bm25 []map[string]interface{}, k float64) []rankedCandidate
 				continue
 			}
 			scores[id] += 1 / (k + float64(rank+1))
+			if _, seen := evidence[id]; !seen {
+				evidence[id] = lexicalOverlap(question, searchableText(result))
+			}
 		}
 	}
 	add(vector)
@@ -169,11 +177,61 @@ func fuseRRF(vector, bm25 []map[string]interface{}, k float64) []rankedCandidate
 		out = append(out, rankedCandidate{ID: id, Score: score})
 	}
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].Score == out[j].Score {
-			return out[i].ID < out[j].ID
+		if out[i].Score != out[j].Score {
+			return out[i].Score > out[j].Score
 		}
-		return out[i].Score > out[j].Score
+		// RRF ties are common when neighbouring domains hold structurally
+		// identical tables. Break them with the amount of literal lexical
+		// evidence between the question and the indexed document instead of the
+		// asset id, whose ordering is effectively random. The id stays as the
+		// final key so the result remains deterministic.
+		if left, right := evidence[out[i].ID], evidence[out[j].ID]; left != right {
+			return left > right
+		}
+		return out[i].ID < out[j].ID
 	})
+	return out
+}
+
+// searchableText concatenates the indexed text a search result exposes.
+func searchableText(result map[string]interface{}) string {
+	var builder strings.Builder
+	for _, field := range []string{"table_name", "content"} {
+		if value := resultString(result, field); value != "" {
+			builder.WriteString(value)
+			builder.WriteString("\n")
+		}
+	}
+	return builder.String()
+}
+
+// lexicalOverlap scores how much of the document is literally present in the
+// question, using character bigrams so that it works for Chinese text, where
+// whitespace tokenisation carries no signal.
+func lexicalOverlap(question, document string) float64 {
+	documentBigrams := bigrams(document)
+	if len(documentBigrams) == 0 {
+		return 0
+	}
+	questionBigrams := bigrams(question)
+	shared := 0
+	for bigram := range documentBigrams {
+		if _, ok := questionBigrams[bigram]; ok {
+			shared++
+		}
+	}
+	return float64(shared) / float64(len(documentBigrams))
+}
+
+func bigrams(text string) map[string]struct{} {
+	runes := []rune(strings.ToLower(text))
+	if len(runes) < 2 {
+		return nil
+	}
+	out := make(map[string]struct{}, len(runes)-1)
+	for index := 0; index+1 < len(runes); index++ {
+		out[string(runes[index:index+2])] = struct{}{}
+	}
 	return out
 }
 

@@ -134,9 +134,12 @@ func (nd *NodeData) ValidateConfiguration() error {
 }
 
 var defaultMetadataConfig = MetadataConfig{
-	Mode:            MetadataModeColumns,
-	MaxColumns:      30,
-	IncludeComments: false,
+	Mode:       MetadataModeColumns,
+	MaxColumns: 30,
+	// Enabled by default: without table-level business descriptions the model
+	// cannot distinguish tables that share an identical column layout, which is
+	// the dominant failure mode on wide multi-domain data sources.
+	IncludeComments: true,
 }
 
 // ensureDefaults normalises optional fields.
