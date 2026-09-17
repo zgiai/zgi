@@ -43,8 +43,10 @@ const UPLOAD_SETTLE_STEP_MS = 5000;
  * @function useUploadPercent
  * @category Hook
  * @description Percentage to render for an attachment. Real transfer progress wins
- * while the body is uploading; once it parks at the transfer cap the value creeps
- * towards the settle cap so a slow server-side store never looks frozen.
+ * while the body is uploading; once it parks at the transfer cap the value steps to the
+ * settle cap after a short delay, and then holds there until the server answers. The
+ * step exists so a slow server-side store stops looking like a frozen 98%, not to imply
+ * measurable progress during that wait.
  * @usage Use in place of reading attachment.progress directly
  * @example
  * const percent = useUploadPercent(attachment.progress, isUploading);
