@@ -368,21 +368,21 @@ func (s *fileService) UploadFileWithOptions(ctx context.Context, filename string
 		SourceURL:      "",
 	}
 
-	// Step 4: Execute upload and record usage in a transaction
-	err := s.db.Transaction(func(tx *gorm.DB) error {
-		// Save file to storage
-		if err := s.storage.Save(fileKey, content); err != nil {
-			return fmt.Errorf("failed to save file to storage: %w", err)
-		}
+	// Step 4: Persist the object before opening the transaction. Saving to storage
+	// is a network call that can take seconds, and holding a database transaction
+	// (and its connection) across it serializes concurrent uploads.
+	if err := s.storage.Save(fileKey, content); err != nil {
+		return nil, fmt.Errorf("failed to save file to storage: %w", err)
+	}
 
+	// Step 5: Record the file and its quota usage in a transaction
+	err := s.db.Transaction(func(tx *gorm.DB) error {
 		// Save to database using transaction
 		if err := s.fileRepo.WithTx(tx).Create(ctx, localUploadFile); err != nil {
-			// If database save fails, delete uploaded file
-			s.storage.Delete(fileKey)
 			return fmt.Errorf("failed to save file record: %w", err)
 		}
 
-		// Step 5: Record usage history if groupID exists
+		// Step 6: Record usage history if groupID exists
 		if groupID != nil && s.quotaService != nil {
 			logger.Info("Recording quota usage: groupID=%s, fileSize=%d, fileUUID=%s", groupID.String(), fileSize, fileUUID)
 
@@ -444,6 +444,11 @@ func (s *fileService) UploadFileWithOptions(ctx context.Context, filename string
 	})
 
 	if err != nil {
+		// The object was already written, so remove it to avoid an orphan when the
+		// record (or its quota usage) failed to persist.
+		if deleteErr := s.storage.Delete(fileKey); deleteErr != nil {
+			logger.Warn("Failed to delete file after DB rollback", "key", fileKey, "error", deleteErr.Error())
+		}
 		return nil, err
 	}
 
