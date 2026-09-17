@@ -108,7 +108,10 @@ export abstract class BaseService {
       },
       onUploadProgress: options.onProgress
         ? (progressEvent: ProgressEvent) => {
-            const progress = Math.round((progressEvent.loaded * 98) / (progressEvent.total || 1));
+            // `total` is 0 when the browser cannot determine the body size. Dividing
+            // by it produced runaway percentages, so report 0 until the size is known.
+            const total = progressEvent.total || 0;
+            const progress = total > 0 ? Math.round((progressEvent.loaded * 98) / total) : 0;
             if (options.onProgress) {
               options.onProgress(progress);
             }

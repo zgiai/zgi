@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AlertCircle, FileImage, FileText, Loader2, RotateCcw, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -13,6 +13,116 @@ import {
   type ScopedTranslatorWithHas,
   tWithFallback,
 } from '@/components/chat/variants/aichat/input-area-utils';
+
+/**
+ * @function clampUploadPercent
+ * @category Utility
+ * @description Normalizes a tracked upload progress value into a 0-100 integer so the
+ * attachment UI never renders an out-of-range percentage.
+ * @usage Use when rendering attachment.progress
+ * @example
+ * const percent = clampUploadPercent(attachment.progress);
+ */
+function clampUploadPercent(progress: number | undefined): number {
+  if (typeof progress !== 'number' || !Number.isFinite(progress)) return 0;
+  return Math.min(100, Math.max(0, Math.round(progress)));
+}
+
+// The browser can only observe the transfer to our API, which the progress callbacks
+// cap here. After the body is sent the request waits on server-side storage, so the
+// indicator would otherwise sit at 98% for the whole storage write.
+const UPLOAD_TRANSFER_CAP = 98;
+// Never claim completion before the server confirms; stop one point short.
+const UPLOAD_SETTLE_CAP = 99;
+// Hold the transfer cap for 5s before creeping, so an ordinary server-side store
+// finishes without the number ever moving past 98%.
+const UPLOAD_SETTLE_STEP_MS = 5000;
+// Re-check the wall clock this often. Only a change in the derived step re-renders,
+// so an unchanged value costs nothing.
+const UPLOAD_SETTLE_POLL_MS = 1000;
+
+/**
+ * @function useUploadPercent
+ * @category Hook
+ * @description Percentage to render for an attachment. Real transfer progress wins
+ * while the body is uploading; once it parks at the transfer cap the value creeps
+ * towards the settle cap so a slow server-side store never looks frozen.
+ * @usage Use in place of reading attachment.progress directly
+ * @example
+ * const percent = useUploadPercent(attachment.progress, isUploading);
+ */
+function useUploadPercent(progress: number | undefined, isUploading: boolean): number {
+  const transferred = clampUploadPercent(progress);
+  const isSettling = isUploading && transferred >= UPLOAD_TRANSFER_CAP;
+  const [settleSteps, setSettleSteps] = useState(0);
+
+  useEffect(() => {
+    // Reset when the attempt ends or restarts, so a retry starts the creep over.
+    if (!isSettling) {
+      setSettleSteps(0);
+      return;
+    }
+
+    // Derive the step from elapsed wall-clock time instead of counting timer ticks.
+    // Browsers throttle timers in hidden tabs (down to roughly once a minute), so a
+    // tick counter would keep the indicator at the transfer cap long after the delay,
+    // and a returning user would still be looking at a frozen number.
+    const startedAt = Date.now();
+    const maxSteps = UPLOAD_SETTLE_CAP - UPLOAD_TRANSFER_CAP;
+    const sync = () => {
+      const next = Math.min(
+        maxSteps,
+        Math.floor((Date.now() - startedAt) / UPLOAD_SETTLE_STEP_MS)
+      );
+      setSettleSteps(previous => (previous === next ? previous : next));
+    };
+
+    sync();
+    const timer = window.setInterval(sync, UPLOAD_SETTLE_POLL_MS);
+    // Timers may not have run while the tab was hidden; catch up as soon as it is
+    // visible again rather than waiting for the next throttled tick.
+    document.addEventListener('visibilitychange', sync);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', sync);
+    };
+  }, [isSettling]);
+
+  if (!isSettling) return transferred;
+  // Never report less than the real value, so a late progress event cannot move
+  // the indicator backwards.
+  return Math.max(transferred, UPLOAD_TRANSFER_CAP + settleSteps);
+}
+
+interface AttachmentUploadBarProps {
+  percent: number;
+  className?: string;
+}
+
+/**
+ * @component AttachmentUploadBar
+ * @category Feature
+ * @description Thin progress bar pinned to the bottom edge of an uploading attachment.
+ * @usage Render while attachment.status === 'uploading'
+ * @example
+ * <AttachmentUploadBar percent={percent} className="h-1" />
+ */
+function AttachmentUploadBar({ percent, className }: AttachmentUploadBarProps) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        'pointer-events-none absolute inset-x-0 bottom-0 bg-muted-foreground/20',
+        className
+      )}
+    >
+      <span
+        className="block h-full bg-primary transition-[width] duration-300 ease-out"
+        style={{ width: `${percent}%` }}
+      />
+    </span>
+  );
+}
 
 interface AIChatDragUploadOverlayProps {
   isSending: boolean;
@@ -137,6 +247,8 @@ function AIChatDocumentAttachmentChip({
   onRetry,
 }: AIChatDocumentAttachmentChipProps) {
   const t = useT('webapp');
+  const isUploading = attachment.status === 'uploading';
+  const percent = useUploadPercent(attachment.progress, isUploading);
 
   return (
     <div
@@ -148,7 +260,7 @@ function AIChatDocumentAttachmentChip({
       )}
       title={attachment.error || attachment.name}
     >
-      {attachment.status === 'uploading' ? (
+      {isUploading ? (
         <Loader2 className="size-3.5 shrink-0 animate-spin" />
       ) : attachment.status === 'error' ? (
         <AlertCircle className="size-3.5 shrink-0" />
@@ -156,10 +268,8 @@ function AIChatDocumentAttachmentChip({
         <FileText className="size-3.5 shrink-0" />
       )}
       <span className="truncate text-foreground">{attachment.name}</span>
-      <span className="shrink-0">
-        {attachment.status === 'uploading'
-          ? `${Math.round(attachment.progress)}%`
-          : formatFileSize(attachment.size)}
+      <span className="shrink-0 tabular-nums">
+        {isUploading ? `${percent}%` : formatFileSize(attachment.size)}
       </span>
       {attachment.status === 'error' && attachment.sourceFile ? (
         <Button
@@ -182,6 +292,7 @@ function AIChatDocumentAttachmentChip({
       >
         <Trash2 className="size-3" />
       </Button>
+      {isUploading ? <AttachmentUploadBar percent={percent} className="h-0.5" /> : null}
     </div>
   );
 }
@@ -212,6 +323,8 @@ function AIChatImageAttachmentPreview({
     enabled: attachment.status === 'uploaded' && Boolean(attachment.file?.id),
   });
   const isError = attachment.status === 'error' || Boolean(error);
+  const isUploading = attachment.status === 'uploading';
+  const percent = useUploadPercent(attachment.progress, isUploading);
   const canOpenPreview = Boolean(previewUrl || isError);
   const errorMessage =
     attachment.error ||
@@ -249,8 +362,15 @@ function AIChatImageAttachmentPreview({
         {previewUrl ? (
           <img src={previewUrl} alt={attachment.name} className="h-full w-full object-cover" />
         ) : (
-          <div className="flex h-full w-full items-center justify-center text-muted-foreground">
-            {attachment.status === 'uploading' || isLoading ? (
+          <div className="flex h-full w-full flex-col items-center justify-center gap-1 text-muted-foreground">
+            {isUploading ? (
+              <>
+                <Loader2 className="size-5 animate-spin" />
+                <span className="text-[11px] font-medium tabular-nums text-foreground/80">
+                  {percent}%
+                </span>
+              </>
+            ) : isLoading ? (
               <Loader2 className="size-5 animate-spin" />
             ) : isError ? (
               <AlertCircle className="size-5 text-destructive" />
@@ -286,6 +406,7 @@ function AIChatImageAttachmentPreview({
             <RotateCcw className="size-3" />
           </Button>
         ) : null}
+        {isUploading ? <AttachmentUploadBar percent={percent} className="h-1" /> : null}
       </div>
       <Dialog open={isPreviewOpen} onOpenChange={setIsPreviewOpen}>
         <DialogContent className="max-h-[90vh] max-w-[90vw] overflow-hidden p-0">

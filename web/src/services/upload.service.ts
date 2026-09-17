@@ -131,7 +131,9 @@ export class UploadService extends BaseService {
         timeout: getEndpointConfig('upload').timeout,
         onUploadProgress: options.onProgress
           ? progressEvent => {
-              const progress = Math.round((progressEvent.loaded * 98) / (progressEvent.total || 1));
+              // Guard against an unknown body size; see BaseService.uploadFile.
+              const total = progressEvent.total || 0;
+              const progress = total > 0 ? Math.round((progressEvent.loaded * 98) / total) : 0;
               options.onProgress?.(progress);
             }
           : undefined,
