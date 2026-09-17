@@ -444,11 +444,7 @@ func (s *fileService) UploadFileWithOptions(ctx context.Context, filename string
 	})
 
 	if err != nil {
-		// The object was already written, so remove it to avoid an orphan when the
-		// record (or its quota usage) failed to persist.
-		if deleteErr := s.storage.Delete(fileKey); deleteErr != nil {
-			logger.Warn("Failed to delete file after DB rollback", "key", fileKey, "error", deleteErr.Error())
-		}
+		s.compensateFailedUpload(ctx, fileKey, fileUUID)
 		return nil, err
 	}
 
@@ -458,6 +454,41 @@ func (s *fileService) UploadFileWithOptions(ctx context.Context, filename string
 	}
 
 	return s.convertToInterfaceUploadFile(localUploadFile), nil
+}
+
+// uploadRollbackReconcileTimeout bounds the record lookup that decides whether an
+// object may be removed. The request context is usually already canceled at that
+// point, so the lookup runs on a detached context with its own budget.
+const uploadRollbackReconcileTimeout = 3 * time.Second
+
+// compensateFailedUpload removes the object written for an upload whose database
+// transaction reported a failure.
+//
+// A transaction can report an error after the database actually committed, for
+// example when the connection drops while the commit acknowledgement is in flight.
+// Deleting unconditionally would then leave a durable record pointing at a missing
+// blob, which is worse for the user than a stray object. Reconcile the record first
+// and only remove the object once it is confirmed absent; when the outcome cannot be
+// established, keep the object.
+func (s *fileService) compensateFailedUpload(ctx context.Context, fileKey, fileID string) {
+	reconcileCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), uploadRollbackReconcileTimeout)
+	defer cancel()
+
+	record, err := s.fileRepo.GetByID(reconcileCtx, fileID)
+	switch {
+	case err == nil && record != nil:
+		logger.Warn("Keeping uploaded object: its record persisted despite the transaction error",
+			"key", fileKey, "file_id", fileID)
+		return
+	case err != nil && !errors.Is(err, gorm.ErrRecordNotFound):
+		logger.Warn("Keeping uploaded object: could not confirm the record was rolled back",
+			"key", fileKey, "file_id", fileID, "error", err.Error())
+		return
+	}
+
+	if deleteErr := s.storage.Delete(fileKey); deleteErr != nil {
+		logger.Warn("Failed to delete file after DB rollback", "key", fileKey, "error", deleteErr.Error())
+	}
 }
 
 // AddFileToFolder adds a file to a folder
