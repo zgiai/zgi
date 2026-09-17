@@ -461,6 +461,10 @@ func (s *fileService) UploadFileWithOptions(ctx context.Context, filename string
 // point, so the lookup runs on a detached context with its own budget.
 const uploadRollbackReconcileTimeout = 3 * time.Second
 
+// pendingObjectDeletionClearTimeout bounds clearing the object-deletion handoff after a
+// successful removal, which also runs detached because the caller may already be gone.
+const pendingObjectDeletionClearTimeout = 3 * time.Second
+
 // compensateFailedUpload removes the object written for an upload whose database
 // transaction reported a failure.
 //
@@ -960,6 +964,12 @@ func (s *fileService) DeleteFiles(ctx context.Context, fileIDs []string) error {
 			return err
 		}
 
+		// The object removal is recorded in the same transaction that deletes the record,
+		// so a storage rejection or a crash after the commit can never lose track of the
+		// object. The row is cleared as soon as the object is really gone.
+		pendingDeletion := model.NewFileObjectDeletion(file.Key, time.Now().UTC())
+		pendingDeletion.ID = fileObjectDeletionID()
+
 		// Execute deletion and record usage in a transaction. The object is deliberately
 		// left in place until the transaction commits: removing it first meant a rolled
 		// back delete kept the record while its content was already gone.
@@ -978,6 +988,12 @@ func (s *fileService) DeleteFiles(ctx context.Context, fileIDs []string) error {
 			// Delete file record from database
 			if err := s.fileRepo.WithTx(tx).Delete(ctx, fileID); err != nil {
 				return fmt.Errorf("failed to delete file %s record: %w", fileID, err)
+			}
+
+			// Durable handoff for the object: written here so it is either recorded
+			// together with the record deletion or not at all.
+			if err := tx.WithContext(ctx).Create(pendingDeletion).Error; err != nil {
+				return fmt.Errorf("failed to record pending file object deletion for %s: %w", fileID, err)
 			}
 
 			// Record usage decrease if groupID exists
@@ -1040,16 +1056,30 @@ func (s *fileService) DeleteFiles(ctx context.Context, fileIDs []string) error {
 			return err
 		}
 
-		// The record is gone, so nothing can reach the object any more. Removing it is
-		// best effort: an orphan object is harmless, while failing here would report a
-		// failed delete for a file that is already gone.
-		if err := s.storage.Delete(file.Key); err != nil {
-			logger.Warn("Failed to remove file object after its record was deleted",
-				"file_id", fileID, "key", file.Key, "error", err.Error())
+		// The record is gone, so nothing can reach the object any more. Remove it now, and
+		// fall back to the retry worker when storage refuses: leaving the pending row
+		// behind is what makes the removal recoverable instead of silently skipped.
+		if deleteErr := s.storage.Delete(file.Key); deleteErr != nil {
+			logger.Warn("File object deletion deferred to the retry worker",
+				"file_id", fileID, "key", file.Key, "pending_id", pendingDeletion.ID, "error", deleteErr.Error())
+		} else if clearErr := s.clearPendingObjectDeletion(ctx, pendingDeletion.ID); clearErr != nil {
+			// Harmless: the worker deletes an already missing object and clears the row.
+			logger.Warn("Failed to clear the completed file object deletion",
+				"id", pendingDeletion.ID, "error", clearErr.Error())
 		}
 	}
 
 	return nil
+}
+
+// clearPendingObjectDeletion drops the handoff row once the object is really gone.
+func (s *fileService) clearPendingObjectDeletion(ctx context.Context, id string) error {
+	clearCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), pendingObjectDeletionClearTimeout)
+	defer cancel()
+
+	return s.db.WithContext(clearCtx).
+		Where("id = ?", id).
+		Delete(&model.FileObjectDeletion{}).Error
 }
 
 // deletionPreparation holds everything a delete transaction needs that has to be resolved
