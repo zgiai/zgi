@@ -2,11 +2,9 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"gorm.io/gorm"
 
@@ -47,9 +45,10 @@ func NewFileObjectDeletionProcessor(db *gorm.DB, backend storage.Storage) *FileO
 // ProcessPending removes pending objects, earliest deadline first, and reports how many
 // were cleared.
 //
-// Removing an object is idempotent, so two workers racing on the same row is harmless and
-// no lease is required: the loser deletes an object that is already gone and clears a row
-// that is already gone.
+// An absent object counts as done. The backends disagree about a missing key - S3 and OSS
+// report success, while the local and OpenDAL backends return ENOENT - so a plain "delete
+// succeeded" test would leave rows that can never clear on the default self-hosted
+// storage. Two workers racing on the same row is harmless for the same reason.
 func (p *FileObjectDeletionProcessor) ProcessPending(ctx context.Context, limit int) (int, error) {
 	if p == nil || p.db == nil || p.storage == nil {
 		return 0, nil
@@ -69,6 +68,11 @@ func (p *FileObjectDeletionProcessor) ProcessPending(ctx context.Context, limit 
 
 	removed := 0
 	for i := range pending {
+		if ctx.Err() != nil {
+			// A storage delete cannot be interrupted, so stop before starting more of
+			// them; the remaining rows stay pending for the next sweep.
+			break
+		}
 		if err := p.process(ctx, &pending[i]); err != nil {
 			// One unreachable key must not stall the rest of the batch.
 			logger.Warn("File object deletion retry failed",
@@ -84,28 +88,36 @@ func (p *FileObjectDeletionProcessor) ProcessPending(ctx context.Context, limit 
 	return removed, nil
 }
 
-// ProcessOne retries a single pending removal, so a caller that just failed can wake the
-// work without waiting for the next sweep.
-func (p *FileObjectDeletionProcessor) ProcessOne(ctx context.Context, id string) error {
-	if p == nil || p.db == nil || p.storage == nil || id == "" {
-		return nil
+func (p *FileObjectDeletionProcessor) process(ctx context.Context, entry *model.FileObjectDeletion) error {
+	if entry.ObjectKey == "" {
+		// Nothing to remove, and an empty key would only make a backend fail forever.
+		logger.Warn("Dropping a pending file object deletion without an object key", "id", entry.ID)
+		return p.clear(ctx, entry)
 	}
 
-	var entry model.FileObjectDeletion
-	if err := p.db.WithContext(ctx).Where("id = ?", id).First(&entry).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil
+	if err := p.storage.Delete(entry.ObjectKey); err != nil {
+		absent, checkErr := p.objectIsAbsent(entry.ObjectKey)
+		if checkErr != nil || !absent {
+			return p.reschedule(ctx, entry, err)
 		}
-		return fmt.Errorf("load pending file object deletion: %w", err)
+		// The removal is fulfilled whatever the backend reported.
+		logger.Info("File object was already absent", "id", entry.ID, "key", entry.ObjectKey)
 	}
-	return p.process(ctx, &entry)
+
+	return p.clear(ctx, entry)
 }
 
-func (p *FileObjectDeletionProcessor) process(ctx context.Context, entry *model.FileObjectDeletion) error {
-	if err := p.storage.Delete(entry.ObjectKey); err != nil {
-		return p.reschedule(ctx, entry, err)
+// objectIsAbsent asks the backend whether the object is really gone. Only an explicit
+// answer counts; a backend that cannot say leaves the row pending for another attempt.
+func (p *FileObjectDeletionProcessor) objectIsAbsent(key string) (bool, error) {
+	exists, err := p.storage.Exists(key)
+	if err != nil {
+		return false, err
 	}
+	return !exists, nil
+}
 
+func (p *FileObjectDeletionProcessor) clear(ctx context.Context, entry *model.FileObjectDeletion) error {
 	if err := p.db.WithContext(ctx).
 		Where("id = ?", entry.ID).
 		Delete(&model.FileObjectDeletion{}).Error; err != nil {
@@ -159,11 +171,6 @@ func fileObjectDeletionErrorText(cause error) string {
 		return message[:fileObjectDeletionMaxErrorLength]
 	}
 	return message
-}
-
-// fileObjectDeletionID keeps id generation in one place for the enqueue path.
-func fileObjectDeletionID() string {
-	return uuid.NewString()
 }
 
 // FileObjectDeletionTask sweeps pending object removals. The deleting request already

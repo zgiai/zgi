@@ -10,7 +10,7 @@ import (
 
 func TestCreateFileObjectDeletionsExecutesThroughSchemaBuilder(t *testing.T) {
 	db, mock := openMigrationMockDB(t)
-	mock.ExpectExec("(?s)CREATE TABLE IF NOT EXISTS public.file_object_deletions.*idx_file_object_deletions_object_key").
+	mock.ExpectExec("(?s)CREATE TABLE IF NOT EXISTS public.file_object_deletions.*idx_file_object_deletions_ready").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	if err := upCreateFileObjectDeletions(mschema.New(db)); err != nil {
 		t.Fatalf("up migration error = %v", err)

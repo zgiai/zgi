@@ -21,10 +21,10 @@ const createFileObjectDeletionsSQL = `
 		CONSTRAINT file_object_deletions_attempt_check
 			CHECK (attempt_count >= 0)
 	);
+	-- The sweep only queries by deadline; the table holds failures, not traffic, so it stays
+	-- small enough that a lookup by object key does not need its own index.
 	CREATE INDEX IF NOT EXISTS idx_file_object_deletions_ready
 		ON public.file_object_deletions (next_attempt_at, created_at);
-	CREATE INDEX IF NOT EXISTS idx_file_object_deletions_object_key
-		ON public.file_object_deletions (object_key);
 `
 
 const rollbackFileObjectDeletionsSQL = `

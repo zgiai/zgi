@@ -1,6 +1,10 @@
 package model
 
-import "time"
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
 
 // FileObjectDeletion records an object whose file record is already gone but whose content
 // could not be removed from storage yet.
@@ -23,8 +27,12 @@ func (FileObjectDeletion) TableName() string {
 }
 
 // NewFileObjectDeletion builds a due-now pending removal for an object key.
+//
+// The identifier is assigned here rather than by the database, so the value is already
+// valid before it is persisted and a caller cannot accidentally insert an empty uuid.
 func NewFileObjectDeletion(objectKey string, now time.Time) *FileObjectDeletion {
 	return &FileObjectDeletion{
+		ID:            uuid.NewString(),
 		ObjectKey:     objectKey,
 		NextAttemptAt: now,
 		CreatedAt:     now,

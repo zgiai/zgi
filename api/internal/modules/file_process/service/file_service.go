@@ -181,6 +181,13 @@ func (s *fileService) ReplaceFileContent(ctx context.Context, fileID string, fil
 		return nil, fmt.Errorf("failed to save replacement file to storage: %w", err)
 	}
 
+	// The replaced object stops being referenced the moment the record points at the new
+	// key, so its removal is recorded in the same transaction as that switch.
+	var pendingOldObject *model.FileObjectDeletion
+	if oldKey != "" && oldKey != newKey {
+		pendingOldObject = model.NewFileObjectDeletion(oldKey, time.Now().UTC())
+	}
+
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		updates := map[string]interface{}{
 			"storage_type": storageType,
@@ -200,6 +207,12 @@ func (s *fileService) ReplaceFileContent(ctx context.Context, fileID string, fil
 		}
 		if err := s.fileRepo.WithTx(tx).DeleteExtractionCaches(ctx, fileID); err != nil {
 			return fmt.Errorf("failed to clear file extraction caches: %w", err)
+		}
+
+		if pendingOldObject != nil {
+			if err := tx.WithContext(ctx).Create(pendingOldObject).Error; err != nil {
+				return fmt.Errorf("failed to record pending file object deletion for %s: %w", oldKey, err)
+			}
 		}
 
 		if delta != 0 && groupID != nil && s.quotaService != nil {
@@ -250,11 +263,9 @@ func (s *fileService) ReplaceFileContent(ctx context.Context, fileID string, fil
 		return nil, err
 	}
 
-	if oldKey != "" && oldKey != newKey {
-		if err := s.storage.Delete(oldKey); err != nil {
-			logger.Warn("Failed to delete old file content after replacement", "file_id", fileID, "key", oldKey, "error", err.Error())
-		}
-	}
+	// The record points at the new object now, so the replaced one is unreachable and can be
+	// removed. A storage failure leaves the pending row for the retry worker.
+	s.removeObjectWithRetry(ctx, pendingOldObject)
 
 	replaced, err := s.fileRepo.GetByTenantAndID(ctx, organizationID, fileID)
 	if err != nil {
@@ -968,7 +979,6 @@ func (s *fileService) DeleteFiles(ctx context.Context, fileIDs []string) error {
 		// so a storage rejection or a crash after the commit can never lose track of the
 		// object. The row is cleared as soon as the object is really gone.
 		pendingDeletion := model.NewFileObjectDeletion(file.Key, time.Now().UTC())
-		pendingDeletion.ID = fileObjectDeletionID()
 
 		// Execute deletion and record usage in a transaction. The object is deliberately
 		// left in place until the transaction commits: removing it first meant a rolled
@@ -1056,20 +1066,36 @@ func (s *fileService) DeleteFiles(ctx context.Context, fileIDs []string) error {
 			return err
 		}
 
-		// The record is gone, so nothing can reach the object any more. Remove it now, and
-		// fall back to the retry worker when storage refuses: leaving the pending row
-		// behind is what makes the removal recoverable instead of silently skipped.
-		if deleteErr := s.storage.Delete(file.Key); deleteErr != nil {
-			logger.Warn("File object deletion deferred to the retry worker",
-				"file_id", fileID, "key", file.Key, "pending_id", pendingDeletion.ID, "error", deleteErr.Error())
-		} else if clearErr := s.clearPendingObjectDeletion(ctx, pendingDeletion.ID); clearErr != nil {
-			// Harmless: the worker deletes an already missing object and clears the row.
-			logger.Warn("Failed to clear the completed file object deletion",
-				"id", pendingDeletion.ID, "error", clearErr.Error())
-		}
+		// The record is gone, so nothing can reach the object any more.
+		s.removeObjectWithRetry(ctx, pendingDeletion)
 	}
 
 	return nil
+}
+
+// removeObjectWithRetry removes an object that has a pending deletion row and clears the row
+// once the object is really gone.
+//
+// The row is the only record of the object, so it is cleared only on a successful removal;
+// a storage failure leaves it to the retry worker. This is what makes the removal
+// recoverable instead of silently skipped.
+func (s *fileService) removeObjectWithRetry(ctx context.Context, pending *model.FileObjectDeletion) {
+	if pending == nil {
+		return
+	}
+
+	if deleteErr := s.storage.Delete(pending.ObjectKey); deleteErr != nil {
+		logger.Warn("File object deletion deferred to the retry worker",
+			"key", pending.ObjectKey, "pending_id", pending.ID, "error", deleteErr.Error())
+		return
+	}
+
+	if clearErr := s.clearPendingObjectDeletion(ctx, pending.ID); clearErr != nil {
+		// Harmless on its own: the worker asks the backend whether the object is still
+		// there and clears the row when it is gone.
+		logger.Warn("Failed to clear the completed file object deletion",
+			"id", pending.ID, "error", clearErr.Error())
+	}
 }
 
 // clearPendingObjectDeletion drops the handoff row once the object is really gone.

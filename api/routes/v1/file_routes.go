@@ -37,11 +37,17 @@ type FileRouteDeps struct {
 	Scheduler                  *pkgscheduler.Scheduler
 }
 
+// fileObjectDeletionTaskRegistrar is the slice of the scheduler the retry worker needs,
+// which keeps the registration branch testable without a running scheduler.
+type fileObjectDeletionTaskRegistrar interface {
+	RegisterTask(pkgscheduler.ScheduledTask, pkgscheduler.TaskHandler) error
+}
+
 // registerFileObjectDeletionRetry schedules the worker that finishes the object removals a
 // delete request could not complete. It is a safety net rather than a hard dependency: a
 // deployment without a scheduler keeps serving, it only loses the automatic retry.
 func registerFileObjectDeletionRetry(
-	scheduler *pkgscheduler.Scheduler,
+	scheduler fileObjectDeletionTaskRegistrar,
 	db *gorm.DB,
 	backend storage.Storage,
 ) {

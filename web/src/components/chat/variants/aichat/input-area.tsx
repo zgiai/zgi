@@ -809,9 +809,10 @@ export function AIChatInputArea({
           )
         );
       } catch (error) {
-        // A cancelled upload has no attachment left to mark as failed: the user
-        // removed it, or the composer unmounted.
-        if (isUploadCanceledError(error)) return;
+        // A cancelled upload has no attachment left to mark as failed: the user removed it,
+        // or the composer unmounted. Trust the controller, which cannot be misread, and
+        // fall back to the error shape for cancellations raised elsewhere.
+        if (controller.signal.aborted || isUploadCanceledError(error)) return;
         const message =
           error instanceof Error ? error.message : t('consoleChat.attachments.uploadFailed');
         setAttachments(current =>
