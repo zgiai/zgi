@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { AlertCircle, FileImage, FileText, Loader2, RotateCcw, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Progress } from '@/components/ui/progress';
 import { useFileOriginalPreviewUrl } from '@/hooks/file/use-file-original-preview-url';
 import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
@@ -37,9 +38,6 @@ const UPLOAD_SETTLE_CAP = 99;
 // Hold the transfer cap for 5s before creeping, so an ordinary server-side store
 // finishes without the number ever moving past 98%.
 const UPLOAD_SETTLE_STEP_MS = 5000;
-// Re-check the wall clock this often. Only a change in the derived step re-renders,
-// so an unchanged value costs nothing.
-const UPLOAD_SETTLE_POLL_MS = 1000;
 
 /**
  * @function useUploadPercent
@@ -63,27 +61,26 @@ function useUploadPercent(progress: number | undefined, isUploading: boolean): n
       return;
     }
 
-    // Derive the step from elapsed wall-clock time instead of counting timer ticks.
-    // Browsers throttle timers in hidden tabs (down to roughly once a minute), so a
-    // tick counter would keep the indicator at the transfer cap long after the delay,
-    // and a returning user would still be looking at a frozen number.
+    // Creeping from the transfer cap to the settle cap is a single step, so schedule
+    // it once instead of polling. The callback checks the wall clock rather than
+    // trusting the timer: browsers throttle timers in hidden tabs (down to roughly
+    // once a minute), and visibilitychange catches up as soon as the tab is visible
+    // again, so a returning user never sees a frozen number.
     const startedAt = Date.now();
-    const maxSteps = UPLOAD_SETTLE_CAP - UPLOAD_TRANSFER_CAP;
+    const settleStep = UPLOAD_SETTLE_CAP - UPLOAD_TRANSFER_CAP;
+    let timer = 0;
+
     const sync = () => {
-      const next = Math.min(
-        maxSteps,
-        Math.floor((Date.now() - startedAt) / UPLOAD_SETTLE_STEP_MS)
-      );
-      setSettleSteps(previous => (previous === next ? previous : next));
+      if (Date.now() - startedAt < UPLOAD_SETTLE_STEP_MS) return;
+      setSettleSteps(settleStep);
+      window.clearTimeout(timer);
+      timer = 0;
     };
 
-    sync();
-    const timer = window.setInterval(sync, UPLOAD_SETTLE_POLL_MS);
-    // Timers may not have run while the tab was hidden; catch up as soon as it is
-    // visible again rather than waiting for the next throttled tick.
+    timer = window.setTimeout(sync, UPLOAD_SETTLE_STEP_MS);
     document.addEventListener('visibilitychange', sync);
     return () => {
-      window.clearInterval(timer);
+      window.clearTimeout(timer);
       document.removeEventListener('visibilitychange', sync);
     };
   }, [isSettling]);
@@ -103,24 +100,24 @@ interface AttachmentUploadBarProps {
  * @component AttachmentUploadBar
  * @category Feature
  * @description Thin progress bar pinned to the bottom edge of an uploading attachment.
+ * Wraps the shared Progress primitive, so the bar carries a progressbar role and an
+ * accessible value instead of being a decorative element.
  * @usage Render while attachment.status === 'uploading'
  * @example
  * <AttachmentUploadBar percent={percent} className="h-1" />
  */
 function AttachmentUploadBar({ percent, className }: AttachmentUploadBarProps) {
+  const t = useT('webapp');
+
   return (
-    <span
-      aria-hidden
+    <Progress
+      value={percent}
+      aria-label={t('consoleChat.attachments.uploading')}
       className={cn(
-        'pointer-events-none absolute inset-x-0 bottom-0 bg-muted-foreground/20',
+        'pointer-events-none absolute inset-x-0 bottom-0 h-1 rounded-none bg-muted-foreground/20',
         className
       )}
-    >
-      <span
-        className="block h-full bg-primary transition-[width] duration-300 ease-out"
-        style={{ width: `${percent}%` }}
-      />
-    </span>
+    />
   );
 }
 
