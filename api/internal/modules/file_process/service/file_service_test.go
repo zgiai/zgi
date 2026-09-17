@@ -5,11 +5,13 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/repository"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/pkg/storage"
 )
 
@@ -25,15 +27,42 @@ func (f fakeUploadRecordRepo) GetByID(context.Context, string) (*model.UploadFil
 	return f.record, f.err
 }
 
-// fakeUploadStorage records deletions instead of reaching a real bucket.
+// fakeUploadStorage records deletions and reads instead of reaching a real bucket.
 type fakeUploadStorage struct {
 	storage.Storage
 	deleted []string
+	loaded  []string
+	content []byte
+	loadErr error
 }
 
 func (f *fakeUploadStorage) Delete(key string) error {
 	f.deleted = append(f.deleted, key)
 	return nil
+}
+
+func (f *fakeUploadStorage) Load(key string) ([]byte, error) {
+	f.loaded = append(f.loaded, key)
+	if f.loadErr != nil {
+		return nil, f.loadErr
+	}
+	return f.content, nil
+}
+
+// fakeQuotaService only has to be non-nil: the deletion preparation resolves identifiers,
+// it does not record anything.
+type fakeQuotaService struct {
+	interfaces.QuotaService
+}
+
+// withETLType pins the ETL backend, which gates whether OCR quota is involved at all.
+func withETLType(t *testing.T, etlType string) {
+	t.Helper()
+	previous := config.GlobalConfig
+	config.GlobalConfig = &config.Config{ETL: config.ETLConfig{Type: etlType}}
+	t.Cleanup(func() {
+		config.GlobalConfig = previous
+	})
 }
 
 func TestIsAssetProcessableExtension(t *testing.T) {
@@ -140,5 +169,102 @@ func TestCompensateFailedUploadKeepsObjectWhenRepoAnswersAmbiguously(t *testing.
 
 	if len(store.deleted) != 0 {
 		t.Fatalf("deleted = %v, want nothing removed when absence is unconfirmed", store.deleted)
+	}
+}
+
+func uploadFileForDeletion(extension string) (*model.UploadFile, *uuid.UUID) {
+	groupID := uuid.New()
+	return &model.UploadFile{
+		ID:             "file-1",
+		Key:            "upload_files/org/file-1." + extension,
+		Name:           "file-1." + extension,
+		Extension:      extension,
+		Size:           1024,
+		CreatedBy:      uuid.New().String(),
+		OrganizationID: groupID.String(),
+	}, &groupID
+}
+
+// The object is read while it still exists. Reading it after removal is exactly what made
+// the OCR refund collapse to a single page for every PDF.
+func TestPrepareDeletionReadsTheObjectBeforeAnythingIsRemoved(t *testing.T) {
+	withETLType(t, "Reducto")
+	store := &fakeUploadStorage{}
+	svc := &fileService{storage: store, quotaService: fakeQuotaService{}}
+	file, groupID := uploadFileForDeletion("pdf")
+
+	prep, err := svc.prepareDeletion(file, groupID)
+	if err != nil {
+		t.Fatalf("prepareDeletion: %v", err)
+	}
+
+	if !prep.quotaEnabled || !prep.countOCR {
+		t.Fatalf("prep = %+v, want quota and OCR accounting enabled", prep)
+	}
+	if prep.ocrPages < 1 {
+		t.Fatalf("ocrPages = %d, want at least one page", prep.ocrPages)
+	}
+	if len(store.loaded) != 1 || store.loaded[0] != file.Key {
+		t.Fatalf("loaded = %v, want the file object read for its page count", store.loaded)
+	}
+	if len(store.deleted) != 0 {
+		t.Fatalf("deleted = %v, preparation must not remove anything", store.deleted)
+	}
+}
+
+// Images and the other OCR formats count as a single page and need no read at all.
+func TestPrepareDeletionDoesNotReadNonPDFFormats(t *testing.T) {
+	withETLType(t, "Reducto")
+	store := &fakeUploadStorage{}
+	svc := &fileService{storage: store, quotaService: fakeQuotaService{}}
+	file, groupID := uploadFileForDeletion("png")
+
+	prep, err := svc.prepareDeletion(file, groupID)
+	if err != nil {
+		t.Fatalf("prepareDeletion: %v", err)
+	}
+
+	if !prep.quotaEnabled || !prep.countOCR || prep.ocrPages != 1 {
+		t.Fatalf("prep = %+v, want one OCR page for an image", prep)
+	}
+	if len(store.loaded) != 0 {
+		t.Fatalf("loaded = %v, want no read for an image", store.loaded)
+	}
+}
+
+// OCR quota only moves under the Reducto and Mixed backends.
+func TestPrepareDeletionSkipsOCROutsideReductoETL(t *testing.T) {
+	withETLType(t, "zgi")
+	store := &fakeUploadStorage{}
+	svc := &fileService{storage: store, quotaService: fakeQuotaService{}}
+	file, groupID := uploadFileForDeletion("pdf")
+
+	prep, err := svc.prepareDeletion(file, groupID)
+	if err != nil {
+		t.Fatalf("prepareDeletion: %v", err)
+	}
+
+	if !prep.quotaEnabled || prep.countOCR {
+		t.Fatalf("prep = %+v, want storage quota only", prep)
+	}
+	if len(store.loaded) != 0 {
+		t.Fatalf("loaded = %v, want no OCR page read outside Reducto", store.loaded)
+	}
+}
+
+// An unparseable creator used to fail inside the transaction, after the object had already
+// been removed. It now fails before anything is touched.
+func TestPrepareDeletionRejectsUnparseableCreatorWithoutTouchingStorage(t *testing.T) {
+	withETLType(t, "Reducto")
+	store := &fakeUploadStorage{}
+	svc := &fileService{storage: store, quotaService: fakeQuotaService{}}
+	file, groupID := uploadFileForDeletion("pdf")
+	file.CreatedBy = "not-a-uuid"
+
+	if _, err := svc.prepareDeletion(file, groupID); err == nil {
+		t.Fatal("prepareDeletion = nil error, want a parse failure")
+	}
+	if len(store.deleted) != 0 || len(store.loaded) != 0 {
+		t.Fatalf("deleted = %v loaded = %v, want storage untouched", store.deleted, store.loaded)
 	}
 }

@@ -952,13 +952,20 @@ func (s *fileService) DeleteFiles(ctx context.Context, fileIDs []string) error {
 			logger.Info("File deletion: using tenantID as groupID=%s", groupID.String())
 		}
 
-		// Execute deletion and record usage in a transaction
-		err = s.db.Transaction(func(tx *gorm.DB) error {
-			// Delete file from storage
-			if err := s.storage.Delete(file.Key); err != nil {
-				return fmt.Errorf("failed to delete file %s from storage: %w", fileID, err)
-			}
+		// Resolve everything that depends on the object still being present, and fail
+		// before anything is destroyed. A parse failure used to abort a delete that had
+		// already removed the object, and the page count was read after it was gone.
+		prep, err := s.prepareDeletion(file, groupID)
+		if err != nil {
+			return err
+		}
 
+		// Execute deletion and record usage in a transaction. The object is deliberately
+		// left in place until the transaction commits: removing it first meant a rolled
+		// back delete kept the record while its content was already gone.
+		err = s.db.Transaction(func(tx *gorm.DB) error {
+			// Runs before every destructive step: this is the check that can still refuse
+			// the delete.
 			if s.assetDeletion != nil {
 				if err := s.assetDeletion.DeleteBySourceFileInTx(ctx, tx, file.OrganizationID, fileID); err != nil {
 					if errors.Is(err, datalibraryservice.ErrFileAssetDeletionBlocked) {
@@ -974,25 +981,13 @@ func (s *fileService) DeleteFiles(ctx context.Context, fileIDs []string) error {
 			}
 
 			// Record usage decrease if groupID exists
-			if groupID != nil && s.quotaService != nil {
-				// Parse createdBy to UUID
-				accountUUID, err := uuid.Parse(file.CreatedBy)
-				if err != nil {
-					return fmt.Errorf("failed to parse user ID: %w", err)
-				}
-
-				// Parse tenantID to UUID
-				tenantUUID, err := uuid.Parse(file.OrganizationID)
-				if err != nil {
-					return fmt.Errorf("failed to parse tenant ID: %w", err)
-				}
-
+			if prep.quotaEnabled {
 				// Create usage history record with negative delta
 				usageRecord := &quota_model.QuotaUsageHistory{
 					ID:           uuid.New().String(),
 					GroupID:      *groupID,
-					AccountID:    accountUUID,
-					TenantID:     &tenantUUID,
+					AccountID:    prep.accountUUID,
+					TenantID:     &prep.tenantUUID,
 					ResourceType: quota_model.ResourceTypeStorage,
 					Delta:        -file.Size, // Negative delta for deletion
 					ResourceID:   &fileID,
@@ -1010,45 +1005,22 @@ func (s *fileService) DeleteFiles(ctx context.Context, fileIDs []string) error {
 				}
 
 				// Record OCR quota decrease for PDF and image files
-				if s.shouldCheckOCRQuota(file.Extension) {
-					// Calculate OCR pages (same logic as upload)
-					expectedPages := int64(1) // Default to 1 page for images
-
-					// For PDF files, try to get accurate page count
-					if file.Extension == "pdf" {
-						// Load file content from storage
-						content, err := s.storage.Load(file.Key)
-						if err == nil {
-							tempDir, err := os.MkdirTemp("", "pdf_ocr_delete")
-							if err == nil {
-								defer os.RemoveAll(tempDir)
-
-								tempFile := filepath.Join(tempDir, "temp.pdf")
-								if err := os.WriteFile(tempFile, content, 0644); err == nil {
-									pageCount, err := s.getQuickPDFPageCount(tempFile)
-									if err == nil {
-										expectedPages = int64(pageCount)
-									}
-								}
-							}
-						}
-					}
-
+				if prep.countOCR {
 					// Create OCR usage history record with negative delta
 					ocrUsageRecord := &quota_model.QuotaUsageHistory{
 						ID:           uuid.New().String(),
 						GroupID:      *groupID,
-						AccountID:    accountUUID,
-						TenantID:     &tenantUUID,
+						AccountID:    prep.accountUUID,
+						TenantID:     &prep.tenantUUID,
 						ResourceType: quota_model.ResourceTypeOCRPages,
-						Delta:        -expectedPages, // Negative delta for deletion
+						Delta:        -prep.ocrPages, // Negative delta for deletion
 						ResourceID:   &fileID,
 						ResourceName: &file.Name,
 						Metadata: &quota_model.JSONMap{
 							"file_id":   fileID,
 							"file_name": file.Name,
 							"file_size": file.Size,
-							"pages":     expectedPages,
+							"pages":     prep.ocrPages,
 							"action":    "deleted",
 						},
 					}
@@ -1057,7 +1029,7 @@ func (s *fileService) DeleteFiles(ctx context.Context, fileIDs []string) error {
 						return fmt.Errorf("failed to record OCR usage decrease: %w", err)
 					}
 
-					logger.Info("Successfully recorded OCR quota decrease: %d pages", expectedPages)
+					logger.Info("Successfully recorded OCR quota decrease: %d pages", prep.ocrPages)
 				}
 			}
 
@@ -1067,9 +1039,92 @@ func (s *fileService) DeleteFiles(ctx context.Context, fileIDs []string) error {
 		if err != nil {
 			return err
 		}
+
+		// The record is gone, so nothing can reach the object any more. Removing it is
+		// best effort: an orphan object is harmless, while failing here would report a
+		// failed delete for a file that is already gone.
+		if err := s.storage.Delete(file.Key); err != nil {
+			logger.Warn("Failed to remove file object after its record was deleted",
+				"file_id", fileID, "key", file.Key, "error", err.Error())
+		}
 	}
 
 	return nil
+}
+
+// deletionPreparation holds everything a delete transaction needs that has to be resolved
+// while the file object is still readable.
+type deletionPreparation struct {
+	quotaEnabled bool
+	accountUUID  uuid.UUID
+	tenantUUID   uuid.UUID
+	countOCR     bool
+	ocrPages     int64
+}
+
+// prepareDeletion resolves the quota identifiers and the OCR page count before the delete
+// touches anything. Both used to be evaluated inside the transaction, where an
+// unparseable id aborted a delete that had already removed the object, and where the page
+// count was read back after the object was gone and therefore always fell back to one.
+func (s *fileService) prepareDeletion(file *model.UploadFile, groupID *uuid.UUID) (deletionPreparation, error) {
+	var prep deletionPreparation
+	if groupID == nil || s.quotaService == nil {
+		return prep, nil
+	}
+
+	accountUUID, err := uuid.Parse(file.CreatedBy)
+	if err != nil {
+		return prep, fmt.Errorf("failed to parse user ID: %w", err)
+	}
+	tenantUUID, err := uuid.Parse(file.OrganizationID)
+	if err != nil {
+		return prep, fmt.Errorf("failed to parse tenant ID: %w", err)
+	}
+
+	prep.quotaEnabled = true
+	prep.accountUUID = accountUUID
+	prep.tenantUUID = tenantUUID
+
+	if !s.shouldCheckOCRQuota(file.Extension) {
+		return prep, nil
+	}
+
+	prep.countOCR = true
+	prep.ocrPages = s.expectedOCRPagesOnDelete(file)
+	return prep, nil
+}
+
+// expectedOCRPagesOnDelete reports how many OCR pages to credit back for a deleted file.
+// It reads the object, so it has to run before the object is removed.
+func (s *fileService) expectedOCRPagesOnDelete(file *model.UploadFile) int64 {
+	// Images and every other OCR format count as a single page.
+	if file.Extension != "pdf" {
+		return 1
+	}
+
+	content, err := s.storage.Load(file.Key)
+	if err != nil {
+		logger.Warn("Falling back to one OCR page: could not read the file to count its pages",
+			"file_id", file.ID, "key", file.Key, "error", err.Error())
+		return 1
+	}
+
+	tempDir, err := os.MkdirTemp("", "pdf_ocr_delete")
+	if err != nil {
+		return 1
+	}
+	defer os.RemoveAll(tempDir)
+
+	tempFile := filepath.Join(tempDir, "temp.pdf")
+	if err := os.WriteFile(tempFile, content, 0644); err != nil {
+		return 1
+	}
+
+	pageCount, err := s.getQuickPDFPageCount(tempFile)
+	if err != nil || pageCount <= 0 {
+		return 1
+	}
+	return int64(pageCount)
 }
 
 // GetStorageUsage gets the storage usage for a tenant
