@@ -25,6 +25,11 @@ const DEFAULT_TIMEOUTS = {
   market: 60000,
 } as const;
 
+// Budget for a single upload request. A multipart body streams from the browser and a
+// batch of files can legitimately take minutes, so every upload path uses this instead
+// of the JSON-sized per-endpoint timeout.
+export const UPLOAD_TIMEOUT_MS = DEFAULT_TIMEOUTS.upload;
+
 // Generate endpoint URLs based on main API URL and environment variables
 function generateEndpointUrls(baseApiUrl: string) {
   // Use environment variables first, fall back to derived URLs

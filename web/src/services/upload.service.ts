@@ -1,6 +1,6 @@
 import { BaseService } from '@/lib/http/services';
 import { webappHttp } from '@/lib/http';
-import { getEndpointConfig } from '@/lib/http/config';
+import { UPLOAD_TIMEOUT_MS } from '@/lib/http/config';
 import type { ApiResponseData } from './types/common';
 import type { FileParseProviderKey, FileUploadProcessingMode } from './types/file';
 
@@ -125,10 +125,10 @@ export class UploadService extends BaseService {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
-        // The default client timeout is sized for JSON calls. Uploads are streamed
-        // from the browser and a batch of images can legitimately take minutes, so
-        // reuse the dedicated upload endpoint timeout instead of aborting mid-flight.
-        timeout: getEndpointConfig('upload').timeout,
+        // The default client timeout is sized for JSON calls. An upload streams from
+        // the browser and a batch of images can legitimately take minutes, so use the
+        // shared upload budget instead of aborting mid-flight.
+        timeout: UPLOAD_TIMEOUT_MS,
         onUploadProgress: options.onProgress
           ? progressEvent => {
               // Guard against an unknown body size; see BaseService.uploadFile.

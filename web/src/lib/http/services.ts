@@ -1,7 +1,7 @@
 // Service abstraction layer for type-safe API interactions
 
 import { httpClientFactory, type ExtendedRequestConfig } from './client';
-import { buildApiUrl } from './config';
+import { buildApiUrl, UPLOAD_TIMEOUT_MS } from './config';
 
 // Generic service configuration
 export interface ServiceConfig {
@@ -29,6 +29,22 @@ export interface PaginationParams {
   limit?: number;
   sort?: string;
   order?: 'asc' | 'desc';
+}
+
+// Multipart bodies stream from the browser and can take minutes, while the
+// per-endpoint timeout is sized for JSON calls. Give a FormData request the upload
+// budget unless the caller already asked for a specific timeout.
+function withUploadTimeout(
+  data: unknown,
+  options: ExtendedRequestConfig
+): ExtendedRequestConfig {
+  if (options.timeout !== undefined || typeof FormData === 'undefined') {
+    return options;
+  }
+  if (!(data instanceof FormData)) {
+    return options;
+  }
+  return { ...options, timeout: UPLOAD_TIMEOUT_MS };
 }
 
 // Base service class with common functionality and error handling
@@ -65,18 +81,19 @@ export abstract class BaseService {
         : httpClientFactory.getClient(endpointName);
 
     const url = this.buildUrl(path, endpointName);
+    const requestOptions = withUploadTimeout(data, options);
 
     switch (method) {
       case 'get':
-        return await client.get<T>(url, options);
+        return await client.get<T>(url, requestOptions);
       case 'post':
-        return await client.post<T>(url, data, options);
+        return await client.post<T>(url, data, requestOptions);
       case 'put':
-        return await client.put<T>(url, data, options);
+        return await client.put<T>(url, data, requestOptions);
       case 'patch':
-        return await client.patch<T>(url, data, options);
+        return await client.patch<T>(url, data, requestOptions);
       case 'delete':
-        return await client.delete<T>(url, options);
+        return await client.delete<T>(url, requestOptions);
       default:
         throw new Error(`Unsupported HTTP method: ${method}`);
     }
