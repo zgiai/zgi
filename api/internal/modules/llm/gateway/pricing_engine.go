@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"github.com/zgiai/zgi/api/internal/modules/llm/billingsettings"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	modelpricing "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/pricing"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
@@ -22,7 +23,7 @@ const pricingCreditsPerUSD = int64(1_000_000)
 // NormalizedPointsPerUSD is the display conversion rate exposed to organization
 // settings readers for fiat-to-points previews in the console UI.
 func NormalizedPointsPerUSD() int64 {
-	return pricingCreditsPerUSD / 1000
+	return billingsettings.Default().PointsPerUSD()
 }
 
 var (

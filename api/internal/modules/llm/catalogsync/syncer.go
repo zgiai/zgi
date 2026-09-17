@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/zgiai/zgi/api/internal/modules/llm/billingsettings"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/modelmeta"
 	"github.com/zgiai/zgi/api/internal/observability"
@@ -63,6 +64,7 @@ type Synchronizer struct {
 	newClient      func(addr string) (catalogRPCClient, io.Closer, error)
 	reconnectDelay time.Duration
 	catalogLoaded  atomic.Bool
+	settings       *billingsettings.Store
 }
 
 func NewSynchronizer(db *gorm.DB, grpcAddr string) *Synchronizer {
@@ -86,7 +88,12 @@ func newSynchronizerWithClient(db *gorm.DB, client catalogRPCClient) *Synchroniz
 }
 
 func (s *Synchronizer) Start(ctx context.Context) error {
-	if s == nil || s.db == nil || s.grpcAddr == "" {
+	if s == nil || s.db == nil {
+		return nil
+	}
+
+	s.ensureSettings(ctx)
+	if s.grpcAddr == "" {
 		return nil
 	}
 
@@ -165,6 +172,7 @@ func (s *Synchronizer) connect(ctx context.Context) (catalogRPCClient, io.Closer
 			_ = service.RecordPublishedCatalogSyncError(ctx, err.Error())
 			return nil, closer, nil, err
 		}
+		s.applyBillingSettings(ctx, catalog)
 	}
 
 	stream, err := client.WatchCatalogPublishes(ctx, &pb.WatchCatalogPublishesRequest{
@@ -240,6 +248,7 @@ func (s *Synchronizer) applyPublishedVersion(ctx context.Context, client catalog
 		_ = service.RecordPublishedCatalogSyncError(ctx, err.Error())
 		return err
 	}
+	s.applyBillingSettings(ctx, catalog)
 	s.catalogLoaded.Store(true)
 
 	return nil
@@ -255,13 +264,37 @@ func (s *Synchronizer) watchStartVersion(lastAppliedVersion int64) int64 {
 	return lastAppliedVersion
 }
 
+// ensureSettings installs the local billing settings store used for offline
+// private/custom lane billing. Safe to call once per synchronizer.
+func (s *Synchronizer) ensureSettings(ctx context.Context) {
+	if s == nil || s.settings != nil {
+		return
+	}
+	s.settings = billingsettings.Init(ctx, s.db)
+}
+
+// applyBillingSettings mirrors the rate carried by the catalog into Pre's local
+// copy. It is a no-op when the catalog predates the points_per_usd field.
+func (s *Synchronizer) applyBillingSettings(ctx context.Context, catalog modelmeta.PublishedCatalog) {
+	if s == nil || s.settings == nil || catalog.PointsPerUSD <= 0 {
+		return
+	}
+	if err := s.settings.StoreCatalogRate(ctx, catalog.PointsPerUSD); err != nil {
+		logger.WarnContext(ctx, "Failed to persist points_per_usd from published catalog",
+			zap.Int64("points_per_usd", catalog.PointsPerUSD),
+			zap.Error(err),
+		)
+	}
+}
+
 func catalogFromResponse(resp *pb.GetPublishedCatalogResponse) modelmeta.PublishedCatalog {
 	catalog := modelmeta.PublishedCatalog{
-		Version:     resp.GetVersion(),
-		PublishedAt: time.UnixMilli(resp.GetPublishedAt()).UTC(),
-		Providers:   make([]modelmeta.PublishedProvider, 0, len(resp.GetProviders())),
-		Models:      make([]modelmeta.PublishedModel, 0, len(resp.GetModels())),
-		Vendors:     make([]modelmeta.PublishedVendor, 0, len(resp.GetVendors())),
+		Version:      resp.GetVersion(),
+		PublishedAt:  time.UnixMilli(resp.GetPublishedAt()).UTC(),
+		PointsPerUSD: resp.GetPointsPerUsd(),
+		Providers:    make([]modelmeta.PublishedProvider, 0, len(resp.GetProviders())),
+		Models:       make([]modelmeta.PublishedModel, 0, len(resp.GetModels())),
+		Vendors:      make([]modelmeta.PublishedVendor, 0, len(resp.GetVendors())),
 	}
 
 	for _, vendor := range resp.GetVendors() {

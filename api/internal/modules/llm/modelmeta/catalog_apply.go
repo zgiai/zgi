@@ -22,11 +22,12 @@ const (
 )
 
 type PublishedCatalog struct {
-	Version     int64
-	PublishedAt time.Time
-	Providers   []PublishedProvider
-	Models      []PublishedModel
-	Vendors     []PublishedVendor
+	Version      int64
+	PublishedAt  time.Time
+	PointsPerUSD int64
+	Providers    []PublishedProvider
+	Models       []PublishedModel
+	Vendors      []PublishedVendor
 }
 
 type PublishedVendor struct {

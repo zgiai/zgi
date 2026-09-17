@@ -28,6 +28,9 @@ message GetPublishedCatalogResponse {
     repeated CatalogProvider providers = 3;
     repeated CatalogModel models = 4;
     repeated CatalogVendor vendors = 5;
+    // points_per_usd is Console's authoritative discount rate. Pre mirrors it
+    // locally so private/custom lanes keep billing while Console is down.
+    int64 points_per_usd = 6;
 }
 
 message CatalogVendor {
