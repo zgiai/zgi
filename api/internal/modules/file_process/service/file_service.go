@@ -480,9 +480,17 @@ func (s *fileService) compensateFailedUpload(ctx context.Context, fileKey, fileI
 		logger.Warn("Keeping uploaded object: its record persisted despite the transaction error",
 			"key", fileKey, "file_id", fileID)
 		return
-	case err != nil && !errors.Is(err, gorm.ErrRecordNotFound):
-		logger.Warn("Keeping uploaded object: could not confirm the record was rolled back",
-			"key", fileKey, "file_id", fileID, "error", err.Error())
+	case !errors.Is(err, gorm.ErrRecordNotFound):
+		// Either the lookup failed or it returned a shape we cannot read as "absent"
+		// (a nil record without an error). Only a positive not-found result justifies
+		// removing the object. Record the lookup error when there is one.
+		fields := []interface{}{"key", fileKey, "file_id", fileID}
+		if err != nil {
+			fields = append(fields, "error", err.Error())
+		} else {
+			fields = append(fields, "record", "nil")
+		}
+		logger.Warn("Keeping uploaded object: could not confirm the record was rolled back", fields...)
 		return
 	}
 

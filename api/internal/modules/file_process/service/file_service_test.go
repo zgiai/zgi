@@ -125,3 +125,20 @@ func TestCompensateFailedUploadKeepsObjectWhenLookupFails(t *testing.T) {
 		t.Fatalf("deleted = %v, want nothing removed while the outcome is unknown", store.deleted)
 	}
 }
+
+// A repository that answers with a nil record and no error cannot be read as "the
+// record is gone". Only a positive not-found result may remove the object, otherwise
+// the guard would silently fall back to deleting on any unexpected shape.
+func TestCompensateFailedUploadKeepsObjectWhenRepoAnswersAmbiguously(t *testing.T) {
+	store := &fakeUploadStorage{}
+	svc := &fileService{
+		fileRepo: fakeUploadRecordRepo{},
+		storage:  store,
+	}
+
+	svc.compensateFailedUpload(context.Background(), "upload_files/org/file-1.png", "file-1")
+
+	if len(store.deleted) != 0 {
+		t.Fatalf("deleted = %v, want nothing removed when absence is unconfirmed", store.deleted)
+	}
+}
