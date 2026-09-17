@@ -47,6 +47,7 @@ ALTER TABLE chat_runtime_messages
 id               uuid PRIMARY KEY,          -- 应用侧生成（先有 id，才能把 ref 拼进 preview）
 message_id       uuid NOT NULL REFERENCES chat_runtime_messages(id) ON DELETE CASCADE,
 conversation_id  uuid NOT NULL,             -- 冗余：按会话批量取 + 权限校验
+organization_id  uuid NOT NULL,             -- 冗余：取回原文时直接校验归属，不用三段 join
 cseq             bigint NOT NULL,           -- 会话内单调递增；摘要边界与投影切片都用它
 seq              int    NOT NULL,           -- 轮内序号（人读、调试）
 kind             varchar(32) NOT NULL,      -- user / assistant / tool
@@ -58,6 +59,7 @@ created_at       timestamptz NOT NULL DEFAULT now()
 UNIQUE (message_id, seq)
 UNIQUE (conversation_id, cseq)
 INDEX  (conversation_id, message_id, cseq)
+INDEX  (organization_id, conversation_id)
 ```
 
 **不变量**
@@ -191,11 +193,12 @@ project(conversation, at = 当前 tail):
 
 | 做法 | 说明 | 代价 |
 |---|---|---|
-| **① 整会话删除**（建议先做这个） | 按时间（如只保留最近 90 天）、按配额（超限淘汰最老的冷会话）、或用户主动删除；靠 `ON DELETE CASCADE` 一路删 entries | 零降级 |
-| **② 冷归档** | 老会话的 `payload` 搬到对象存储（TOS/S3），entry 行只留 `preview` + 对象 key | 取原文 / 从该会话分支时需先把 payload 拉回来（慢一次，不丢数据） |
-| **③ 按 entry 删除**（不推荐） | 省得最多 | 必须保护「最后一个摘要之后的全部 entry + 所有 summary」，还要处理分支依赖；风险高、收益低 |
+| **① 整会话删除** ✅ **已定（第一阶段只做这个）** | 触发方式：**用户主动删除会话** → 整会话级联删除（`ON DELETE CASCADE` 一路删 entries） | 零降级 |
+| **② 冷归档**（暂不做） | 老会话的 `payload` 搬到对象存储（TOS/S3），entry 行只留 `preview` + 对象 key | 取原文 / 从该会话分支时需先把 payload 拉回来（慢一次，不丢数据） |
+| **③ 按 entry 删除**（不做） | 省得最多 | 必须保护「最后一个摘要之后的全部 entry + 所有 summary」，还要处理分支依赖；风险高、收益低 |
 
-> 待定：先只做 ①，还是 ① + ②。① 落地前不需要额外机制（后台任务 + 配置 + 级联删除即可）。
+**已定：第一阶段只做 ①，并且只由用户主动删除触发；不做按时间/配额的自动清理。**
+含义与代价：存储会随会话总量持续增长，没有自动上限。将来要加自动清理时，位置已经留好（一个后台任务 + 配置项），不需要改表结构。
 
 ---
 
@@ -241,10 +244,29 @@ project(conversation, at = 当前 tail):
 
 ---
 
-## 13. 开放项
+## 13. 已定决策 / 剩余开放项
 
-- ✅ 已定：压缩保留窗口**目标 8 条**，实际条数**动态调整**（`tool_call` / `tool_result` 不可中间截断，见 §4）。纯压缩参数，与重建无关。
-- 会话级保留策略：先只做「整会话删除」，还是同时做「冷归档」（见 §9）；
+**已定**
+
+- ✅ 压缩保留窗口**目标 8 条**，实际条数**动态调整**（`tool_call` / `tool_result` 不可中间截断，见 §4）。纯压缩参数，与重建无关。
+- ✅ 保留策略：**只做用户主动删除会话 → 整会话级联删除**；暂不做自动清理、暂不做冷归档（见 §9）。
+- ✅ entry 表**冗余 `organization_id`**（取回原文时直接校验归属，不做三段 join，见 §2.2）。
+- ✅ **第一个 PR 只做持久化层**（entry 表 + 投影 + 裁剪写 `preview` + 摘要边界 + 重建/分支）；**工具执行状态机与悬空 tool_call 补齐放第二个 PR**（见 §14）。
+- ✅ 老会话**不做数据回填**：没有 entry 时读时兜底，按 `query` / `answer` 降级重建（见 §5）。
+
+**剩余开放项（不阻塞开工）**
+
 - 取回工具的名字与描述文案；
 - 摘要的长度上限与提示词；
-- 是否为 entry 冗余 `organization_id`（让取回校验更便宜）。
+- `transcript_format_version` 的演进规则（当前 1）；
+- 分支复制时是否打 `inherited` 标记。
+
+---
+
+## 14. 落地顺序
+
+| 阶段 | 内容 | 说明 |
+|---|---|---|
+| **①（第一个 PR）** | entry 表 + 迁移 + repository；上下文投影（`摘要 + cseq > 边界`）；工具结果裁剪写回 `preview`；摘要与 `summary_through_seq`；重建与分支复制 | 纯持久化层，不动 agent loop 的执行路径 |
+| **②（第二个 PR）** | 工具执行状态机（派发前 fail-closed 写意图）+ 悬空 `tool_call` 确定性补齐 | 唯一「不做就一定出事」的一条（防重复副作用），必须紧跟 |
+| **③（收尾）** | 窄查询白名单、禁止删中间轮落到接口层、lossy recovery 计数、老数据兜底打磨 | 护栏与可观测性 |
