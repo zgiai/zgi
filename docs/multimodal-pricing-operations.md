@@ -44,17 +44,22 @@
 - Pre 侧仍按同步到的显式缓存价或「未配置」处理；不做 provider 倍率注册表、不做模型级倍率覆盖
   （按需求 §0.1 C2）。
 
-## 3. `*_price_configured` 布尔列下线（C′/C3）
+## 3. `*_price_configured` 布尔列：保留但不再使用（C′/C3）
 
 - 迁移顺序（ID 升序执行）：
   1. `20260916150000` 给 `llm_custom_models` 加 `pricing` 列；
   2. `20260916150500` **回填**：把 6 个布尔列表达的「显式配置」投影为
-     `pricing.rules[].configured=true` 并派生 `token_tiers`；幂等，重跑跳过；
-  3. `20260916151000` 删除 `llm_models` / `llm_custom_models` 的 6 个布尔列。
-- 「已配置」判定改为只读 `pricing`（`ResolveConfigured`），并叠加组织 override。
-  因此 **不要**跳过 150500 直接执行删列，否则存量自定义模型会被判定为未配置。
-- 回滚顺序相反：删列的 down 会把布尔列加回（值为 false，原值不可恢复），
-  再回滚回填迁移不会销毁已生成的 pricing。
+     `pricing.rules[].configured=true` 并派生 `token_tiers`；幂等，重跑跳过。
+- 6 个 `*_price_configured` 列**不做 DROP COLUMN**。项目迁移规约
+  （`api/internal/migrations/README.md` 规则 10）要求破坏性 schema 操作必须显式
+  `AllowDestructive`，普通 up 迁移不得使用；保留这些空列不影响运行，也避免
+  本地/生产库出现未受控的破坏性变更。原 `20260916151000_drop_price_configured_booleans`
+  迁移已移除。
+- 运行时只读 `pricing`（`ResolveConfigured`）并叠加组织 override；模型结构体上的
+  `*_price_configured` 是 `gorm:"-"` 派生 JSON 字段，不读写数据库列。
+- **150500 回填仍必须执行**：否则存量自定义模型（`pricing` 为默认 `'{}'`）没有
+  rules，会被判定为「未配置」，缺价时 fail-closed 或按 fallback 计费。
+- 升级顺序：先执行迁移（含 150500）再发新代码；列是否保留与判定无关。
 
 ## 4. 视频预扣与结算的 lane 语义（P-1 / P-4）
 

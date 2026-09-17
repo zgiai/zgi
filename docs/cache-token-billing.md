@@ -43,11 +43,13 @@ LLM 调用按四个互斥分项统计和计费：普通输入、缓存读取、�
 （`cache_read_price_multiplier` / `cache_write_price_multiplier` / `provider`）。
 Pre 侧仍按同步到的显式缓存价或“未配置”处理，行为不变。
 
-## `*_price_configured` 列下线（2026-09）
+## `*_price_configured` 列保留但不再使用（2026-09）
 
-`llm_models` / `llm_custom_models` 的 6 个 `*_price_configured` 布尔列由迁移
-`20260916151000_drop_price_configured_booleans` 删除，「已配置」判定改由 `pricing`
-派生。删列之前必须先执行 `20260916150500_backfill_price_configured_pricing`，把布尔列
-表达的显式配置投影到 `pricing.rules[].configured`；详见
+`llm_models` / `llm_custom_models` 的 6 个 `*_price_configured` 布尔列**不删除**
+（项目迁移规约禁止普通 up 迁移执行破坏性 schema 操作）。「已配置」判定改由 `pricing`
+派生，结构体上的同名 JSON 字段是 `gorm:"-"` 派生值。
+
+升级时必须执行 `20260916150500_backfill_price_configured_pricing`，把布尔列表达的显式
+配置投影到 `pricing.rules[].configured`，否则存量自定义模型会被判定为「未配置」；详见
 [multimodal-pricing-operations.md](./multimodal-pricing-operations.md)。
 
