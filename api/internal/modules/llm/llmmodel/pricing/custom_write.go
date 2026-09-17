@@ -151,7 +151,10 @@ func ScalarsFromDecimalPrices(
 }
 
 // pricingHasAnyPrice reports whether a pricing envelope still carries at least
-// one price, mirroring the structural validator's notion of "priced".
+// one real price. A projection that is merely present (for example a
+// video_generation whose rates were all cleared) does not count: the strict
+// validator rejects those as "contains no price", so they must collapse to the
+// unpriced state instead of being persisted as a half-written price.
 func pricingHasAnyPrice(raw json.RawMessage) bool {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
@@ -162,9 +165,46 @@ func pricingHasAnyPrice(raw json.RawMessage) bool {
 		// Malformed payloads are left for the validator to report.
 		return true
 	}
-	return len(envelope.Rules) > 0 ||
-		len(envelope.TokenTiers) > 0 ||
-		envelope.PricePerImage != nil ||
-		envelope.VideoGeneration != nil ||
-		len(envelope.Metered) > 0
+	for _, rule := range envelope.Rules {
+		if hasRulePrice(rule) {
+			return true
+		}
+	}
+	for _, tier := range envelope.TokenTiers {
+		if tokenTierHasPrice(tier) {
+			return true
+		}
+	}
+	if envelope.PricePerImage != nil {
+		return true
+	}
+	if videoGenerationHasPrice(envelope.VideoGeneration) {
+		return true
+	}
+	for _, metered := range envelope.Metered {
+		if meteredHasPrice(metered) {
+			return true
+		}
+	}
+	return false
+}
+
+// tokenTierHasPrice mirrors the structural validator: a tier is priced when at
+// least one of its price fields is set.
+func tokenTierHasPrice(tier structuredPriceTier) bool {
+	for _, price := range []*float64{
+		tier.InputPricePerMillion,
+		tier.CachedInputPricePerMillion,
+		tier.CacheWritePricePerMillion,
+		tier.CacheWrite5mPricePerMillion,
+		tier.CacheWrite1hPricePerMillion,
+		tier.OutputPricePerMillion,
+		tier.BatchInputPricePerMillion,
+		tier.BatchOutputPricePerMillion,
+	} {
+		if price != nil {
+			return true
+		}
+	}
+	return false
 }

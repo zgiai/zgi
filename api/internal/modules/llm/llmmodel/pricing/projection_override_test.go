@@ -122,3 +122,35 @@ func TestPrepareCustomModelPricingClearKeepsTokenPrices(t *testing.T) {
 		t.Fatal("token rules must survive clearing the image price")
 	}
 }
+
+// A video_generation projection whose rates lost their prices is a clear, not a
+// half-written price: a video-only custom model must collapse to "not
+// configured" instead of failing validation.
+func TestPrepareCustomModelPricingClearedVideoPriceYieldsEmptyPricing(t *testing.T) {
+	raw := json.RawMessage(`{"deployment_scope":"global","catalog_origin":"pre_custom","video_generation":{"currency":"USD","billing_unit":"second","rates":[{"resolution":"720p"}]}}`)
+
+	prepared, _, err := PrepareCustomModelPricing(raw, "USD", []string{"video-gen"}, CustomModelScalars{}, CustomModelScalars{})
+	if err != nil {
+		t.Fatalf("PrepareCustomModelPricing returned error: %v", err)
+	}
+	if string(prepared) != "{}" {
+		t.Fatalf("prepared = %s, want {} once the last video price is cleared", prepared)
+	}
+}
+
+// An explicit zero is a free price, not an absent one.
+func TestPrepareCustomModelPricingZeroPriceIsNotCleared(t *testing.T) {
+	raw := json.RawMessage(`{"deployment_scope":"global","catalog_origin":"pre_custom","rules":[{"id":"image-default","operation":"image_generation","meter":"image","unit":"per_image","price":"0","configured":true}],"price_per_image":0}`)
+
+	prepared, _, err := PrepareCustomModelPricing(raw, "USD", []string{"image-gen"}, CustomModelScalars{}, CustomModelScalars{})
+	if err != nil {
+		t.Fatalf("PrepareCustomModelPricing returned error: %v", err)
+	}
+	var envelope structuredPricing
+	if err := json.Unmarshal(prepared, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.PricePerImage == nil || *envelope.PricePerImage != 0 {
+		t.Fatalf("price_per_image = %v, want an explicit free price of 0", envelope.PricePerImage)
+	}
+}
