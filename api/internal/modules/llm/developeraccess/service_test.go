@@ -962,7 +962,7 @@ func TestDeveloperAuditIsScopedAndHydrated(t *testing.T) {
 		itemsByAttempt[item.AttemptID] = item
 	}
 	ordinary := itemsByAttempt["attempt-1"]
-	if ordinary.PrincipalEmail != "member@example.test" || ordinary.APIKeyName != "audited key" || ordinary.QuotaChargedPoints != 15 || ordinary.QuotaOveragePoints != 5 {
+	if ordinary.PrincipalEmail != "member@example.test" || ordinary.APIKeyName != "audited key" || ordinary.QuotaChargedPoints != 15000 || ordinary.QuotaOveragePoints != 5000 {
 		t.Fatalf("unexpected ordinary audit item: %#v", ordinary)
 	}
 	compensated := itemsByAttempt["attempt-compensated"]

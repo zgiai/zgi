@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	"math"
 	"strings"
 	"time"
@@ -1595,7 +1596,7 @@ func (s *RemoteBilling) rollbackLocalSubjectQuotaAndMarkFailed(ctx context.Conte
 		if err := tx.WithContext(ctx).Model(&BillingAttemptEntry{}).
 			Where("attempt_id = ? AND entry_type = ?", rollbackCtx.AttemptID, billingEntryTypeSubject).
 			Updates(map[string]any{
-				"actual_amount": 0, "refunded_amount": subjectReservedCredits(&rollbackCtx),
+				"actual_amount": 0, "refunded_amount": millipoints.MilliPoints(subjectReservedCredits(&rollbackCtx)),
 				"status": billingEntryStatusRolled, "error_code": code, "error_message": msg, "updated_at": now,
 			}).Error; err != nil {
 			return err

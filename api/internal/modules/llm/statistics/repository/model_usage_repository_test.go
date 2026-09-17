@@ -87,14 +87,14 @@ func TestQueryModelUsageByAppTypeKeepsKnownTypesAndBucketsUnknownTypes(t *testin
 	if got["unknown"].AttemptCount != 5 {
 		t.Fatalf("unknown attempt count = %d, want 5", got["unknown"].AttemptCount)
 	}
-	if got["unknown"].TotalTokens != 30 || got["unknown"].TotalPoints != 50 {
+	if got["unknown"].TotalTokens != 30 || got["unknown"].TotalPoints != 50000 {
 		t.Fatalf(
 			"unknown totals = tokens:%d points:%d, want tokens:30 points:50",
 			got["unknown"].TotalTokens,
 			got["unknown"].TotalPoints,
 		)
 	}
-	if totalAttempts != 15 || totalTokens != 90 || totalPoints != 150 {
+	if totalAttempts != 15 || totalTokens != 90 || totalPoints != 150000 {
 		t.Fatalf(
 			"group totals = attempts:%d tokens:%d points:%d, want attempts:15 tokens:90 points:150",
 			totalAttempts,

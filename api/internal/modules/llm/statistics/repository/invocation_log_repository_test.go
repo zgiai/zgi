@@ -301,7 +301,7 @@ func TestGetInvocationLogGroupsAttemptsAndIsolatesOrganization(t *testing.T) {
 	if result.Summary.InvocationCount != 2 || result.Summary.APICount != 1 || result.Summary.ProductCount != 1 {
 		t.Fatalf("unexpected summary: %#v", result.Summary)
 	}
-	if result.Summary.TotalTokens != 50 || result.Summary.TotalPoints != 20 {
+	if result.Summary.TotalTokens != 50 || result.Summary.TotalPoints != 20000 {
 		t.Fatalf("unexpected totals: %#v", result.Summary)
 	}
 	if len(result.Items) != 2 {
@@ -434,14 +434,14 @@ func TestGetInvocationLogKeepsRetryAttemptsInsideSelectedTimeRange(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Summary.InvocationCount != 1 || result.Summary.TotalTokens != 20 || result.Summary.TotalPoints != 8 {
+	if result.Summary.InvocationCount != 1 || result.Summary.TotalTokens != 20 || result.Summary.TotalPoints != 8000 {
 		t.Fatalf("unexpected summary: %#v", result.Summary)
 	}
 	if len(result.Items) != 1 {
 		t.Fatalf("items = %d, want 1", len(result.Items))
 	}
 	item := result.Items[0]
-	if item.AttemptCount != 1 || item.TotalTokens != 20 || item.TotalPoints != 8 || item.StartedAt < boundary.UnixMilli() {
+	if item.AttemptCount != 1 || item.TotalTokens != 20 || item.TotalPoints != 8000 || item.StartedAt < boundary.UnixMilli() {
 		t.Fatalf("out-of-range retry leaked into item: %#v", item)
 	}
 }

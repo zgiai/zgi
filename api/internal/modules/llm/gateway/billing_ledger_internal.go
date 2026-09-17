@@ -356,15 +356,15 @@ func (b *BillingService) updateAttemptEntriesAfterSettle(
 		)
 	}
 
-	subjectActual := bc.ActualCredits
+	subjectActual := millipoints.MilliPoints(bc.ActualCredits)
 	if bc.QuotaChargedCredits != nil {
-		subjectActual = *bc.QuotaChargedCredits
+		subjectActual = millipoints.MilliPoints(*bc.QuotaChargedCredits)
 	}
-	subjectRefunded := subjectReservedCredits(bc) - subjectActual
+	subjectRefunded := millipoints.MilliPoints(subjectReservedCredits(bc)) - subjectActual
 	if subjectRefunded < 0 {
 		subjectRefunded = 0
 	}
-	fundRefunded := bc.EstimatedCredits - bc.ActualCredits
+	fundRefunded := millipoints.MilliPoints(bc.EstimatedCredits) - millipoints.MilliPoints(bc.ActualCredits)
 	if fundRefunded < 0 {
 		fundRefunded = 0
 	}
@@ -393,7 +393,7 @@ func (b *BillingService) updateAttemptEntriesAfterSettle(
 		Model(&BillingAttemptEntry{}).
 		Where("attempt_id = ? AND entry_type = ? AND ledger_type = ? AND ledger_ref_id = ?", attemptID, billingEntryTypeFund, fundLedgerType, fundLedgerRefID).
 		Updates(map[string]interface{}{
-			"actual_amount":   bc.ActualCredits,
+			"actual_amount":   millipoints.MilliPoints(bc.ActualCredits),
 			"refunded_amount": fundRefunded,
 			"status":          entryStatus,
 			"updated_at":      time.Now(),
@@ -417,17 +417,17 @@ func (b *BillingService) recordAttemptSettleInput(
 		return err
 	}
 
-	subjectRefunded := subjectReservedCredits(bc) - bc.ActualCredits
+	subjectRefunded := millipoints.MilliPoints(subjectReservedCredits(bc)) - millipoints.MilliPoints(bc.ActualCredits)
 	if subjectRefunded < 0 {
 		subjectRefunded = 0
 	}
-	fundRefunded := bc.EstimatedCredits - bc.ActualCredits
+	fundRefunded := millipoints.MilliPoints(bc.EstimatedCredits) - millipoints.MilliPoints(bc.ActualCredits)
 	if fundRefunded < 0 {
 		fundRefunded = 0
 	}
 
 	subjectUpdates := map[string]interface{}{
-		"actual_amount":   bc.ActualCredits,
+		"actual_amount":   millipoints.MilliPoints(bc.ActualCredits),
 		"refunded_amount": subjectRefunded,
 		"updated_at":      time.Now(),
 	}
@@ -444,7 +444,7 @@ func (b *BillingService) recordAttemptSettleInput(
 	}
 
 	fundUpdates := map[string]interface{}{
-		"actual_amount":   bc.ActualCredits,
+		"actual_amount":   millipoints.MilliPoints(bc.ActualCredits),
 		"refunded_amount": fundRefunded,
 		"updated_at":      time.Now(),
 	}

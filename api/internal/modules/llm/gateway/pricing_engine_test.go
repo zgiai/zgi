@@ -178,7 +178,7 @@ func TestPricingEngineQuoteTokenUsageSeparatesCacheComponents(t *testing.T) {
 	if err := json.Unmarshal(quote.PricingSnapshot, &snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if snapshot["total_cost_usd"] != "0.001" || snapshot["charged_credits"] != float64(1000) {
+	if snapshot["total_cost_usd"] != "0.001" || snapshot["charged_credits"] != "1.000" || snapshot["points_per_usd"] != float64(1000) {
 		t.Fatalf("exact total and charged credits missing from snapshot: %#v", snapshot)
 	}
 }
