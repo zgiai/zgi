@@ -509,15 +509,37 @@ func invocationPricingDetails(bill invocationBillRow) *dto.InvocationPricingDeta
 	details.CacheReadPriceSource = snapshotString(values["cache_read_price_source"])
 	details.CacheWritePriceSource = snapshotString(values["cache_write_price_source"])
 	details.OutputPriceSource = snapshotString(values["output_price_source"])
+	details.MeteredOperation = snapshotString(values["media_operation"])
+	details.MeteredUnit = meteredUnitForOperation(details.MeteredOperation)
 
 	if details.BillingLane == "" && details.PricingSource == "" && details.UsageSource == "" &&
 		details.InputPriceUSDPer1MTokens == nil && details.CacheReadPriceUSDPer1MTokens == nil &&
 		details.CacheWritePriceUSDPer1MTokens == nil && details.OutputPriceUSDPer1MTokens == nil &&
 		details.InputCostUSD == nil && details.CacheReadCostUSD == nil && details.CacheWriteCostUSD == nil &&
-		details.OutputCostUSD == nil && details.CNYPerUSD == nil && details.BillingDisplayCurrency == "" {
+		details.OutputCostUSD == nil && details.CNYPerUSD == nil && details.BillingDisplayCurrency == "" &&
+		details.MeteredOperation == "" {
 		return nil
 	}
 	return details
+}
+
+// meteredUnitForOperation maps a media operation to the unit the platform bills
+// it by, so the UI can render an honest non-token dimension.
+func meteredUnitForOperation(operation string) string {
+	switch strings.TrimSpace(operation) {
+	case "image_generation", "image_edit":
+		return "per_image"
+	case "video_generation":
+		return "per_second"
+	case "music_generation":
+		return "per_track"
+	case "speech_generation":
+		return "per_character"
+	case "transcription":
+		return "per_millisecond"
+	default:
+		return ""
+	}
 }
 
 func pricingSnapshotValues(snapshot datatypes.JSON) map[string]interface{} {

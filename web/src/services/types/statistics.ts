@@ -188,6 +188,10 @@ export interface InvocationPricingDetails {
   cache_read_price_source?: string;
   cache_write_price_source?: string;
   output_price_source?: string;
+  // Non-token (metered) operations carry no per-token price. When this is set
+  // the UI must render a metered dimension instead of a token formula.
+  metered_operation?: string;
+  metered_unit?: string;
 }
 
 export interface InvocationLogCursor {

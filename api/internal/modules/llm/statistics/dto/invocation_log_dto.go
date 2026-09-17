@@ -72,6 +72,11 @@ type InvocationPricingDetails struct {
 	CacheReadPriceSource          string  `json:"cache_read_price_source,omitempty"`
 	CacheWritePriceSource         string  `json:"cache_write_price_source,omitempty"`
 	OutputPriceSource             string  `json:"output_price_source,omitempty"`
+
+	// Metered (non-token) operations carry no per-token prices, so the UI must
+	// not render a token formula for them.
+	MeteredOperation string `json:"metered_operation,omitempty"`
+	MeteredUnit      string `json:"metered_unit,omitempty"`
 }
 
 type InvocationLogCursor struct {

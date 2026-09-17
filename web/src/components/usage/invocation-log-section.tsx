@@ -576,6 +576,42 @@ function BillingBreakdown({
   const formulaTotalCost = formatInvocationCost(item, billingDisplay, locale);
   const isPlatform = details?.billing_lane === 'platform';
   const components = pricingComponents(item, details);
+
+  // Non-token operations (image / video / audio / music) are priced per unit.
+  // Rendering the token formula for them fabricates a "$0 / 1M tokens" line that
+  // contradicts the settled amount.
+  const meteredUnit = details?.metered_unit ?? '';
+  const isMeteredBilling =
+    Boolean(details?.metered_operation) || (meteredUnit !== '' && meteredUnit !== 'per_1m_tokens');
+  if (isMeteredBilling) {
+    return (
+      <div className="mt-3 space-y-3 rounded-lg border p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="text-sm font-medium">
+            {t('usage.invocations.details.settlementDetails')}
+          </div>
+          <div className="text-xs text-muted-foreground">
+            {t('usage.invocations.details.meteredTitle')}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+          <span>
+            {t('usage.invocations.details.meteredOperation', {
+              operation: details?.metered_operation ?? '',
+            })}
+          </span>
+          <span className="text-muted-foreground">·</span>
+          <span className="font-mono">
+            {t('usage.invocations.details.meteredTotalFormula', { cost: formulaTotalCost })}
+          </span>
+        </div>
+        <div className="text-xs text-muted-foreground">
+          {t(pricingSourceKey(details?.pricing_source, isPlatform))}
+        </div>
+      </div>
+    );
+  }
+
   const completeComponents = components.filter(isCompletePricingComponent);
   if (completeComponents.length === 0) {
     return (

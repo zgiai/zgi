@@ -201,6 +201,51 @@ func TestInvocationPricingDetailsKeepPlatformSettlementWithoutInventingPrices(t 
 	}
 }
 
+func TestInvocationPricingDetailsExposeMeteredOperation(t *testing.T) {
+	bill := invocationBillRow{
+		BillingLane:   "platform",
+		PricingSource: "platform_remote_authority",
+		PricingSnapshot: datatypes.JSON(`{
+			"actual_provider":"zgi-cloud",
+			"media_operation":"image_generation",
+			"actual_channel_name":"ZGI Cloud",
+			"actual_upstream_model":"gpt-image-2"
+		}`),
+	}
+
+	details := invocationPricingDetails(bill)
+	if details == nil {
+		t.Fatal("invocationPricingDetails() = nil")
+	}
+	if details.MeteredOperation != "image_generation" {
+		t.Fatalf("metered operation = %q, want image_generation", details.MeteredOperation)
+	}
+	if details.MeteredUnit != "per_image" {
+		t.Fatalf("metered unit = %q, want per_image", details.MeteredUnit)
+	}
+	if details.InputPriceUSDPer1MTokens != nil || details.OutputPriceUSDPer1MTokens != nil {
+		t.Fatalf("metered details must not invent token prices: %#v", details)
+	}
+}
+
+func TestMeteredUnitForOperation(t *testing.T) {
+	tests := map[string]string{
+		"image_generation":  "per_image",
+		"image_edit":        "per_image",
+		"video_generation":  "per_second",
+		"music_generation":  "per_track",
+		"speech_generation": "per_character",
+		"transcription":     "per_millisecond",
+		"chat":              "",
+		"":                  "",
+	}
+	for operation, want := range tests {
+		if got := meteredUnitForOperation(operation); got != want {
+			t.Fatalf("meteredUnitForOperation(%q) = %q, want %q", operation, got, want)
+		}
+	}
+}
+
 func TestGetInvocationLogGroupsAttemptsAndIsolatesOrganization(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
