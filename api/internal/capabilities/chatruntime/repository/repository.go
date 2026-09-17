@@ -80,6 +80,7 @@ type TranscriptEntryRepository interface {
 	MaxCSeq(ctx context.Context, conversationID uuid.UUID) (int64, error)
 	ListPreviewsByConversation(ctx context.Context, conversationID uuid.UUID, afterCSeq int64, limit int) ([]*runtimemodel.TranscriptEntryPreview, error)
 	ListPreviewsByMessage(ctx context.Context, messageID uuid.UUID) ([]*runtimemodel.TranscriptEntryPreview, error)
+	ListForCopy(ctx context.Context, conversationID uuid.UUID, throughCSeq int64) ([]*runtimemodel.TranscriptEntry, error)
 	GetPayload(ctx context.Context, id, organizationID uuid.UUID) (*runtimemodel.TranscriptEntry, error)
 	UpdatePreview(ctx context.Context, id uuid.UUID, preview map[string]interface{}, byteSize int) error
 	DeleteByMessage(ctx context.Context, messageID uuid.UUID) (int64, error)

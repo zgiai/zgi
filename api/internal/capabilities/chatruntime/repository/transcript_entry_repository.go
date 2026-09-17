@@ -131,6 +131,21 @@ func (r *transcriptEntryRepository) ListPreviewsByMessage(ctx context.Context, m
 	return previews, nil
 }
 
+// ListForCopy reads whole entries, the payload included, for branching a
+// conversation. It is the only read path that selects payload, and it exists
+// because a branch must own its own facts instead of referencing the source.
+func (r *transcriptEntryRepository) ListForCopy(ctx context.Context, conversationID uuid.UUID, throughCSeq int64) ([]*runtimemodel.TranscriptEntry, error) {
+	var entries []*runtimemodel.TranscriptEntry
+	err := r.db.WithContext(ctx).
+		Where("conversation_id = ? AND cseq <= ?", conversationID, throughCSeq).
+		Order("cseq ASC").
+		Find(&entries).Error
+	if err != nil {
+		return nil, fmt.Errorf("list conversation transcript entries for copy: %w", err)
+	}
+	return entries, nil
+}
+
 func (r *transcriptEntryRepository) GetPayload(ctx context.Context, id, organizationID uuid.UUID) (*runtimemodel.TranscriptEntry, error) {
 	var entry runtimemodel.TranscriptEntry
 	err := r.db.WithContext(ctx).

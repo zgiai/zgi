@@ -270,3 +270,23 @@ project(conversation, at = 当前 tail):
 | **①（第一个 PR）** | entry 表 + 迁移 + repository；上下文投影（`摘要 + cseq > 边界`）；工具结果裁剪写回 `preview`；摘要与 `summary_through_seq`；重建与分支复制 | 纯持久化层，不动 agent loop 的执行路径 |
 | **②（第二个 PR）** | 工具执行状态机（派发前 fail-closed 写意图）+ 悬空 `tool_call` 确定性补齐 | 唯一「不做就一定出事」的一条（防重复副作用），必须紧跟 |
 | **③（收尾）** | 窄查询白名单、禁止删中间轮落到接口层、lossy recovery 计数、老数据兜底打磨 | 护栏与可观测性 |
+
+---
+
+## 15. 实现落点与当前状态（2026-09-17）
+
+| 设计要素 | 落点 | 状态 |
+|---|---|---|
+| entry 表 + messages 三列（summary / summary_through_seq / transcript_format_version） | 迁移 `20260917120000` | ✅ |
+| 追加写入（每个检查点） | `service/context_entries.go` → `syncAgentTranscriptEntries`：模型调用前（`stream.go`）、压缩前与压缩成功后（`agent_context_manager.go`）、终态（`skill_loop.go`） | ✅ |
+| 上下文投影（摘要 + `cseq > 边界`） | `service/context_projection.go` → `projectContextMessages`（只读 preview；摘要按当时的 user 形态包装） | ✅ |
+| 工具结果裁剪写回 preview | 写入时按阈值归档（`pruneTranscriptMessageForWrite`，ref = entry id + 前 200 字 + 原始长度） | ✅ |
+| 摘要 + 精确边界 | `persistCompactionSummary`：边界 = 摘要器实际收到的最后一条 entry，**取值保守**（宁可重复不可丢失） | ✅ |
+| 悬空 `tool_call` 补齐 | `closeDanglingToolCalls`，投影必然过一遍（合成结果明确写"结果未记录、不要盲目重试"） | ✅ |
+| 重建 | `loadProjectedConversationContext`（没有 entry 时返回 miss，调用方走兜底） | ✅ |
+| 分支复制 | `copyConversationTranscriptForBranch`（重铸 entry id、保留 seq/cseq、重写 preview 里的 ref） | ✅ 供分支流程调用 |
+| 读取切换（entry 优先、metadata 兜底） | `historicalAgentTranscript` / `appendPersistedAgentTranscript`（历史组装 + 4 个续跑入口） | ✅ |
+| 只允许删除最后一轮 | `DeleteMessage` 用 `CountChildren` 拦截，中间轮提示"从该轮开分支" | ✅ |
+| 会话删除清理 entry | `DeleteConversation` 在同一事务里 `DeleteByConversation`（会话是软删，外键级联不会触发） | ✅ |
+| 窄查询白名单 | `transcriptEntryPreviewColumns` + SQL 守卫测试（payload 不进投影/列表查询） | ✅ |
+| **工具执行状态机**：派发前 fail-closed 写"已开始"意图，区分"未开始 / 结果未知" | 需要在 `skillloop` 的 `handleProgressiveSkillCall` 之前提供 dispatch 钩子（`RunRequest` 上加回调），service 侧写 intent entry（log-only，kind 不进投影） | ⏳ 第二个 PR |

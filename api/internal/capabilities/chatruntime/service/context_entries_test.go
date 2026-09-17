@@ -296,3 +296,98 @@ func TestHistoricalAgentTranscriptPrefersEntriesOverLegacyMetadata(t *testing.T)
 		t.Fatalf("entries did not win over metadata: %+v", projected[3])
 	}
 }
+
+func TestCopyConversationTranscriptForBranchRemintsIdsAndRewritesRefs(t *testing.T) {
+	svc, message, conversation := newContextEntryTestService(t, "context-entry-branch")
+	ctx := context.Background()
+	prepared := &PreparedChat{Message: message, Conversation: conversation}
+	writer, err := svc.agentContextEntrySync(ctx, prepared)
+	if err != nil {
+		t.Fatalf("agentContextEntrySync: %v", err)
+	}
+	// One oversized tool result so the preview carries a ref that must be
+	// repointed at the copy.
+	big := strings.Repeat("工具结果", 4000)
+	transcript := []adapter.Message{
+		{Role: "user", Content: "帮我退款"},
+		{Role: "assistant", ToolCalls: []adapter.ToolCall{{ID: "call-1", Function: adapter.FunctionCall{Name: "refund_query"}}}},
+		{Role: "tool", ToolCallID: "call-1", Content: big},
+	}
+	if err := writer.sync(ctx, svc.repos, transcript); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	sourceEntries, err := svc.repos.TranscriptEntry.ListPreviewsByMessage(ctx, message.ID)
+	if err != nil {
+		t.Fatalf("ListPreviewsByMessage: %v", err)
+	}
+	if len(sourceEntries) != 3 {
+		t.Fatalf("source entries = %d, want 3", len(sourceEntries))
+	}
+
+	branchConversationID := uuid.New()
+	branch := &runtimemodel.Conversation{
+		ID:             branchConversationID,
+		OrganizationID: conversation.OrganizationID,
+		AccountID:      conversation.AccountID,
+		Title:          "branch",
+		Metadata:       map[string]interface{}{},
+	}
+	if err := svc.repos.DB.Create(branch).Error; err != nil {
+		t.Fatalf("create branch conversation: %v", err)
+	}
+	branchMessage := &runtimemodel.Message{
+		ID:              uuid.New(),
+		ConversationID:  branchConversationID,
+		Query:           message.Query,
+		Status:          runtimemodel.MessageStatusCompleted,
+		ModelName:       message.ModelName,
+		ModelParameters: map[string]interface{}{},
+		Metadata:        map[string]interface{}{},
+	}
+	if err := svc.repos.DB.Create(branchMessage).Error; err != nil {
+		t.Fatalf("create branch message: %v", err)
+	}
+
+	copied, err := svc.copyConversationTranscriptForBranch(ctx, conversation.ID, branchConversationID,
+		map[uuid.UUID]uuid.UUID{message.ID: branchMessage.ID}, conversation.OrganizationID, sourceEntries[2].CSeq)
+	if err != nil {
+		t.Fatalf("copyConversationTranscriptForBranch: %v", err)
+	}
+	if copied != 3 {
+		t.Fatalf("copied entries = %d, want 3", copied)
+	}
+
+	branchEntries, err := svc.repos.TranscriptEntry.ListPreviewsByMessage(ctx, branchMessage.ID)
+	if err != nil {
+		t.Fatalf("branch entries: %v", err)
+	}
+	if len(branchEntries) != 3 {
+		t.Fatalf("branch entries = %d, want 3", len(branchEntries))
+	}
+	for index := range branchEntries {
+		if branchEntries[index].CSeq != sourceEntries[index].CSeq || branchEntries[index].Seq != sourceEntries[index].Seq {
+			t.Fatalf("positions changed at %d: %+v vs %+v", index, branchEntries[index], sourceEntries[index])
+		}
+		if branchEntries[index].ID == sourceEntries[index].ID {
+			t.Fatalf("entry %d kept the source id", index)
+		}
+	}
+
+	// The branch must own its archived result: the ref now names the copy.
+	prunedContent := messageContentText(branchEntries[2].Preview["content"])
+	if strings.Contains(prunedContent, sourceEntries[2].ID.String()) {
+		t.Fatalf("branch preview still points at the source entry: %s", prunedContent)
+	}
+	if !strings.Contains(prunedContent, branchEntries[2].ID.String()) {
+		t.Fatalf("branch preview ref was not rewritten: %s", prunedContent)
+	}
+
+	// Branching must reproduce the source context at the boundary.
+	branchMessages, ok, err := svc.loadProjectedConversationContext(ctx, branchConversationID, 0)
+	if err != nil || !ok {
+		t.Fatalf("branch projection = (%v, %v)", ok, err)
+	}
+	if len(branchMessages) != 3 || messageContentText(branchMessages[0].Content) != "帮我退款" {
+		t.Fatalf("branch context does not match the source boundary: %+v", branchMessages)
+	}
+}
