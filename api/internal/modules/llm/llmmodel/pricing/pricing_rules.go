@@ -122,7 +122,143 @@ func PrepareStructuredPricingForWrite(raw json.RawMessage, currency string, scal
 	normalized := NormalizeStructuredPricing(raw)
 	withRules := SynthesizeRulesFromLegacyPricing(scalars, normalized, opts)
 	withRules = applyScalarOverridesToRules(withRules, opts)
+	withRules = applyLegacyProjectionOverrides(withRules, opts)
 	return DeriveLegacyProjections(withRules, currency)
+}
+
+// applyLegacyProjectionOverrides keeps the interactive price editors working
+// when the payload already carries rules[]. The image/video/metered editors
+// still submit the legacy projections, so a projection that differs from what
+// rules[] implies is the user's edit and is folded back into rules[]. Machine
+// writers keep rules[] authoritative.
+func applyLegacyProjectionOverrides(raw json.RawMessage, opts PricingWriteOptions) json.RawMessage {
+	if !opts.UserAuthored {
+		return raw
+	}
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return raw
+	}
+	var pricing structuredPricing
+	if err := json.Unmarshal(trimmed, &pricing); err != nil {
+		return raw
+	}
+	currency := inferPricingCurrency(pricing)
+	changed := false
+
+	if pricing.PricePerImage != nil {
+		derived := derivePricePerImageFromRules(pricing.Rules)
+		if derived == nil || *derived != *pricing.PricePerImage {
+			pricing.Rules = upsertImageDefaultRule(pricing.Rules, *pricing.PricePerImage)
+			pricing.PricePerImage = nil
+			changed = true
+		}
+	}
+
+	if pricing.VideoGeneration != nil && !videoProjectionMatchesRules(pricing.VideoGeneration, pricing.Rules, currency) {
+		videoRules := synthesizeVideoRulesFromLegacy(pricing.VideoGeneration)
+		for index := range videoRules {
+			videoRules[index].Configured = boolPtr(true)
+		}
+		pricing.Rules = append(filterRulesByOperation(pricing.Rules, "video_generation"), videoRules...)
+		changed = true
+	}
+
+	if len(pricing.Metered) > 0 && !meteredProjectionMatchesRules(pricing.Metered, pricing.Rules, currency) {
+		operations := make(map[string]bool, len(pricing.Metered))
+		meteredRules := make([]structuredRule, 0, len(pricing.Metered))
+		for _, metered := range pricing.Metered {
+			operations[metered.Operation] = true
+			rule, ok := synthesizeMeteredRule(metered)
+			if !ok {
+				continue
+			}
+			rule.Configured = boolPtr(true)
+			meteredRules = append(meteredRules, rule)
+		}
+		kept := make([]structuredRule, 0, len(pricing.Rules))
+		for _, rule := range pricing.Rules {
+			if operations[rule.Operation] {
+				continue
+			}
+			kept = append(kept, rule)
+		}
+		pricing.Rules = append(kept, meteredRules...)
+		changed = true
+	}
+
+	if !changed {
+		return raw
+	}
+	if pricing.Version == 0 {
+		pricing.Version = pricingRulesSchemaVersion
+	}
+	next, err := json.Marshal(pricing)
+	if err != nil {
+		return raw
+	}
+	return next
+}
+
+func upsertImageDefaultRule(rules []structuredRule, price float64) []structuredRule {
+	next := make([]structuredRule, 0, len(rules)+1)
+	for _, rule := range rules {
+		if rule.Operation == "image_generation" && rule.Meter == "image" && len(rule.Conditions) == 0 {
+			continue
+		}
+		next = append(next, rule)
+	}
+	return append(next, structuredRule{
+		ID:         "image-default",
+		Operation:  "image_generation",
+		Meter:      "image",
+		Unit:       "per_image",
+		Price:      formatPricingDecimal(price),
+		Configured: boolPtr(true),
+	})
+}
+
+func filterRulesByOperation(rules []structuredRule, operation string) []structuredRule {
+	kept := make([]structuredRule, 0, len(rules))
+	for _, rule := range rules {
+		if rule.Operation == operation {
+			continue
+		}
+		kept = append(kept, rule)
+	}
+	return kept
+}
+
+// videoProjectionMatchesRules reports whether the submitted video projection is
+// already what rules[] implies (i.e. it was not edited by the user).
+func videoProjectionMatchesRules(video *structuredVideoGenerationPricing, rules []structuredRule, currency string) bool {
+	derived := deriveVideoGenerationFromRules(rules, currency)
+	if derived == nil {
+		return false
+	}
+	if strings.TrimSpace(derived.BillingUnit) != strings.TrimSpace(video.BillingUnit) {
+		return false
+	}
+	return jsonValueEqual(flattenVideoGenerationRates(derived), flattenVideoGenerationRates(video))
+}
+
+// meteredProjectionMatchesRules reports whether the submitted metered projection
+// is already what rules[] implies (i.e. it was not edited by the user).
+func meteredProjectionMatchesRules(metered []structuredMeteredPricing, rules []structuredRule, currency string) bool {
+	derived := preserveMeteredPerQuantity(deriveMeteredFromRules(rules, currency), metered)
+	return jsonValueEqual(derived, metered)
+}
+
+func jsonValueEqual(left, right interface{}) bool {
+	leftJSON, err := json.Marshal(left)
+	if err != nil {
+		return false
+	}
+	rightJSON, err := json.Marshal(right)
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(leftJSON, rightJSON)
 }
 
 // applyScalarOverridesToRules makes caller-provided scalar token prices
