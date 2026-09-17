@@ -210,3 +210,13 @@ func (f fakeWaitingMessageRepo) ListStaleActiveIDs(context.Context, time.Time) (
 func (f fakeWaitingMessageRepo) MarkStaleActiveAsError(context.Context, time.Time, string) (int64, error) {
 	panic("not implemented")
 }
+
+func (f fakeWaitingMessageRepo) UpdateContextSummary(context.Context, uuid.UUID, string, int64) error {
+	panic("not implemented")
+}
+
+// ContextSummaryAt reports "no summary yet", which is the projection fallback:
+// every entry is replayed from the beginning.
+func (f fakeWaitingMessageRepo) ContextSummaryAt(context.Context, uuid.UUID, int64) (*runtimemodel.MessageContextSummary, error) {
+	return nil, nil
+}

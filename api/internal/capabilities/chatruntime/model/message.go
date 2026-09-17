@@ -36,9 +36,16 @@ type Message struct {
 	SourceMessageID     *uuid.UUID             `gorm:"type:uuid;uniqueIndex:idx_chat_runtime_messages_source_message" json:"source_message_id,omitempty"`
 	RuntimeRunID        *uuid.UUID             `gorm:"type:uuid" json:"-"`
 	RuntimeHeartbeatAt  *time.Time             `json:"-"`
-	CreatedAt           time.Time              `gorm:"not null;default:CURRENT_TIMESTAMP;index:idx_chat_runtime_messages_conversation_created,priority:2" json:"created_at"`
-	UpdatedAt           time.Time              `gorm:"not null;default:CURRENT_TIMESTAMP" json:"updated_at"`
-	DeletedAt           *time.Time             `gorm:"index" json:"deleted_at,omitempty"`
+	// Summary is the compaction summary produced during this turn. It covers
+	// every transcript entry of this conversation whose cseq is at most
+	// SummaryThroughSeq. Both fields are model-internal: they never leave the
+	// service through a client payload.
+	Summary                 *string    `gorm:"type:text" json:"-"`
+	SummaryThroughSeq       *int64     `json:"-"`
+	TranscriptFormatVersion int        `gorm:"not null;default:1" json:"-"`
+	CreatedAt               time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP;index:idx_chat_runtime_messages_conversation_created,priority:2" json:"created_at"`
+	UpdatedAt               time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP" json:"updated_at"`
+	DeletedAt               *time.Time `gorm:"index" json:"deleted_at,omitempty"`
 }
 
 func (Message) TableName() string {
