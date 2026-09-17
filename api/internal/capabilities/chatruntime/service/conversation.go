@@ -767,7 +767,18 @@ func (s *service) DeleteConversation(ctx context.Context, scope Scope, id uuid.U
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return err
 	}
-	return mapRepoError(s.repos.Conversation.DeleteScoped(ctx, id, scope.OrganizationID, scope.AccountID))
+	// Deleting a conversation is the retention path: the conversation row is
+	// soft-deleted, so its transcript entries are removed explicitly in the same
+	// transaction instead of relying on the foreign-key cascade.
+	err := s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		txRepos := repository.NewRepositories(tx)
+		if err := txRepos.Conversation.DeleteScoped(ctx, id, scope.OrganizationID, scope.AccountID); err != nil {
+			return err
+		}
+		_, err := txRepos.TranscriptEntry.DeleteByConversation(ctx, id)
+		return err
+	})
+	return mapRepoError(err)
 }
 
 func (s *service) DeleteConversationByCaller(ctx context.Context, scope Scope, caller Caller, id uuid.UUID) error {
@@ -917,8 +928,20 @@ func (s *service) DeleteMessage(ctx context.Context, scope Scope, id uuid.UUID) 
 	}
 	err := s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txRepos := repository.NewRepositories(tx)
+		children, err := txRepos.Message.CountChildren(ctx, id)
+		if err != nil {
+			return err
+		}
+		if children > 0 {
+			// Deleting a middle turn would silently change the context every
+			// later turn was built on. Branch from that turn instead.
+			return fmt.Errorf("%w: only the last turn can be deleted; branch from that turn to explore another direction", ErrInvalidInput)
+		}
 		result, err := txRepos.Message.DeleteSubtreeScoped(ctx, id, scope.OrganizationID, scope.AccountID)
 		if err != nil {
+			return err
+		}
+		if _, err := txRepos.TranscriptEntry.DeleteByMessage(ctx, id); err != nil {
 			return err
 		}
 		return txRepos.Conversation.RefreshAfterMessageDelete(ctx, result.ConversationID)

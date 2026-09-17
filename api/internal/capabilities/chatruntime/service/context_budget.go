@@ -415,7 +415,7 @@ func (s *service) historyMessageGroups(ctx context.Context, branch []*runtimemod
 			group = append(group, *userMessage)
 		}
 		if isUsableAgentTranscriptHistoryStatus(item.Status) {
-			group = append(group, agentTranscriptFromMetadata(item.Metadata, item.Answer)...)
+			group = append(group, s.historicalAgentTranscript(ctx, item)...)
 		}
 		if isUsableAssistantHistoryStatus(item.Status) && item.Answer != "" {
 			group = append(group, adapter.Message{Role: "assistant", Content: item.Answer})

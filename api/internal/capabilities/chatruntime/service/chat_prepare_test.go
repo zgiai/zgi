@@ -211,6 +211,10 @@ func (f fakeWaitingMessageRepo) MarkStaleActiveAsError(context.Context, time.Tim
 	panic("not implemented")
 }
 
+func (f fakeWaitingMessageRepo) CountChildren(context.Context, uuid.UUID) (int64, error) {
+	return 0, nil
+}
+
 func (f fakeWaitingMessageRepo) UpdateContextSummary(context.Context, uuid.UUID, string, int64) error {
 	panic("not implemented")
 }

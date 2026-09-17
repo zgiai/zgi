@@ -169,6 +169,19 @@ func (r *transcriptEntryRepository) UpdatePreview(ctx context.Context, id uuid.U
 	return nil
 }
 
+// DeleteByMessage hard-deletes the retained facts of one deleted turn. A turn
+// can only be removed as a whole (leaf deletion), so this never truncates a
+// context that is still in use.
+func (r *transcriptEntryRepository) DeleteByMessage(ctx context.Context, messageID uuid.UUID) (int64, error) {
+	result := r.db.WithContext(ctx).
+		Where("message_id = ?", messageID).
+		Delete(&runtimemodel.TranscriptEntry{})
+	if result.Error != nil {
+		return 0, fmt.Errorf("delete message transcript entries: %w", result.Error)
+	}
+	return result.RowsAffected, nil
+}
+
 // DeleteByConversation hard-deletes the retained facts of a conversation. It is
 // the retention path; it is never part of the agent request path.
 func (r *transcriptEntryRepository) DeleteByConversation(ctx context.Context, conversationID uuid.UUID) (int64, error) {

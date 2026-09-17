@@ -68,6 +68,7 @@ type MessageRepository interface {
 	MarkStaleActiveAsError(ctx context.Context, cutoff time.Time, message string) (int64, error)
 	UpdateContextSummary(ctx context.Context, id uuid.UUID, summary string, throughSeq int64) error
 	ContextSummaryAt(ctx context.Context, conversationID uuid.UUID, throughCSeq int64) (*runtimemodel.MessageContextSummary, error)
+	CountChildren(ctx context.Context, parentID uuid.UUID) (int64, error)
 }
 
 // TranscriptEntryRepository stores the append-only protocol messages of a turn.
@@ -81,6 +82,7 @@ type TranscriptEntryRepository interface {
 	ListPreviewsByMessage(ctx context.Context, messageID uuid.UUID) ([]*runtimemodel.TranscriptEntryPreview, error)
 	GetPayload(ctx context.Context, id, organizationID uuid.UUID) (*runtimemodel.TranscriptEntry, error)
 	UpdatePreview(ctx context.Context, id uuid.UUID, preview map[string]interface{}, byteSize int) error
+	DeleteByMessage(ctx context.Context, messageID uuid.UUID) (int64, error)
 	DeleteByConversation(ctx context.Context, conversationID uuid.UUID) (int64, error)
 }
 
@@ -1497,6 +1499,20 @@ func (r *messageRepository) MarkStaleActiveAsError(ctx context.Context, cutoff t
 		return 0, fmt.Errorf("failed to mark stale aichat messages error: %w", result.Error)
 	}
 	return result.RowsAffected, nil
+}
+
+// CountChildren reports how many live messages hang below one message. The
+// conversation is a tree, so a turn that still has children is not a leaf.
+func (r *messageRepository) CountChildren(ctx context.Context, parentID uuid.UUID) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).
+		Model(&runtimemodel.Message{}).
+		Where("parent_id = ?", parentID).
+		Count(&count).Error
+	if err != nil {
+		return 0, fmt.Errorf("count child messages: %w", err)
+	}
+	return count, nil
 }
 
 // UpdateContextSummary records one compaction summary together with its precise

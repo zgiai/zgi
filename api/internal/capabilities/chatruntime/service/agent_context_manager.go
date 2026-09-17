@@ -12,6 +12,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/contextmgr"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 func (s *service) newAgentContextManager(ctx context.Context, prepared *PreparedChat) (*contextmgr.Manager, error) {
@@ -110,6 +111,7 @@ func (c *serviceContextCompactor) Compact(ctx context.Context, request *adapter.
 	if c == nil || c.service == nil || c.service.llmClient == nil || c.prepared == nil {
 		return "", nil, errors.New("context compaction model client is unavailable")
 	}
+	c.service.syncAgentTranscriptEntries(ctx, c.prepared, c.prepared.contextManager)
 	startedAt := time.Now()
 	callCtx, cancel := context.WithTimeout(ctx, c.service.modelIdleTimeoutValue())
 	defer cancel()
@@ -142,7 +144,29 @@ func (c *serviceContextCompactor) Compact(ctx context.Context, request *adapter.
 		return "", response.Usage, err
 	}
 	c.persistInvocation(call, request, &choice.Message, response.Usage, startedAt, nil)
+	c.persistCompactionSummary(ctx, request, summary)
 	return summary, response.Usage, nil
+}
+
+// persistCompactionSummary records one summary together with its exact boundary:
+// the cseq of the last entry the summarizer received. The boundary is
+// conservative by construction (it can only under-claim), so the rebuild slice
+// never leaves a gap and never overlaps the summary.
+func (c *serviceContextCompactor) persistCompactionSummary(ctx context.Context, compactRequest *adapter.ChatRequest, summary string) {
+	if c == nil || c.prepared == nil || compactRequest == nil {
+		return
+	}
+	writer, err := c.service.agentContextEntrySync(ctx, c.prepared)
+	if err != nil || writer == nil {
+		return
+	}
+	boundary, ok := writer.boundaryForCompactInput(compactRequest.Messages)
+	if !ok {
+		logger.WarnContext(ctx, "agent context summary boundary is unresolved; keeping the summary in memory only",
+			"message_id", messageIDString(c.prepared))
+		return
+	}
+	c.service.persistAgentContextSummary(ctx, c.prepared, summary, boundary)
 }
 
 func (c *serviceContextCompactor) persistInvocation(call contextmgr.CompactCall, request *adapter.ChatRequest, response *adapter.Message, usage *adapter.Usage, startedAt time.Time, callErr error) {
