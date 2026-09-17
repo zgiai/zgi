@@ -95,9 +95,10 @@ type CatalogTable struct {
 
 	// Description is the operator-facing business description stored on
 	// data_source_tables. It carries the domain wording used by end users
-	// (for example "营销域campaigns业务表"), which the physical table comment
-	// does not. It is metadata only: it is never part of the schema
-	// fingerprint, so filling it does not invalidate built schema indexes.
+	// (for example "marketing-domain campaigns business table"), which the
+	// physical table comment does not. It is metadata only: it is never part
+	// of the schema fingerprint, so filling it does not invalidate built
+	// schema indexes.
 	Description string
 }
 
