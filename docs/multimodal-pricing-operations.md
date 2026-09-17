@@ -71,8 +71,13 @@
 
 ## 5. 统计维度（X-4）
 
-- `llm_usage_bills.operation` 为 `varchar(64) NOT NULL DEFAULT ''`，索引
-  `(organization_id, operation, request_created_at DESC)`。
+- `llm_usage_bills.operation`：由 `20260916120000` 追加列（`varchar(64)`，可空），
+  再由追加迁移 `20260916153000_harden_usage_bills_operation` 收紧为
+  `NOT NULL DEFAULT ''`（历史 NULL 行统一回填为 `''`，历史 operation 无法推断）。
+  索引仍沿用 `20260916120000` 创建的
+  `(organization_id, operation, request_created_at)`；PostgreSQL 可反向扫描该索引
+  满足倒序查询，因此未再建 DESC 索引。
 - 默认 operation 为 `chat`；embedding/rerank/image/video/music/audio 在其路径上显式覆盖。
 - 模型用量统计按 operation 分组返回；调用日志支持 `attempt_id` 过滤，
   输出中的 `settlement_id` 在无远端扣费 ID 时即 attempt_id。
+- 已应用的迁移不做原地修改（Pre README 规则 40：schema 变更一律追加迁移）。

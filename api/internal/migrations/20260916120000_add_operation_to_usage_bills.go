@@ -6,10 +6,10 @@ const migrationAddOperationToUsageBillsID = "20260916120000_add_operation_to_usa
 
 const addOperationToUsageBillsSQL = `
 	ALTER TABLE public.llm_usage_bills
-		ADD COLUMN IF NOT EXISTS operation varchar(64) NOT NULL DEFAULT '';
+		ADD COLUMN IF NOT EXISTS operation varchar(64);
 
 	CREATE INDEX IF NOT EXISTS idx_usage_bills_org_operation_created
-		ON public.llm_usage_bills (organization_id, operation, request_created_at DESC);
+		ON public.llm_usage_bills (organization_id, operation, request_created_at);
 `
 
 const rollbackOperationFromUsageBillsSQL = `
