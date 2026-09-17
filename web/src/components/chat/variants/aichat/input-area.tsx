@@ -896,7 +896,10 @@ export function AIChatInputArea({
         toast.error(t('consoleChat.attachments.retryUnavailable'));
         return;
       }
-      if (isSending || isUploading) {
+      // Only sending blocks a retry. Another attachment finishing its upload must
+      // not serialize independent retries, otherwise every retry has to wait for
+      // the previous one to settle.
+      if (isSending || attachment.status === 'uploading') {
         toast.error(t('consoleChat.attachments.uploadUnavailable'));
         return;
       }
@@ -921,7 +924,7 @@ export function AIChatInputArea({
       );
       void uploadOneFile(attachment.sourceFile, id, attachment.kind);
     },
-    [attachments, isSending, isUploading, t, uploadOneFile, validateFile]
+    [attachments, isSending, t, uploadOneFile, validateFile]
   );
 
   const handleImageUpload = useCallback(() => {
