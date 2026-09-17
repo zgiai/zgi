@@ -5,6 +5,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	"strings"
 	"time"
 
@@ -28,17 +29,17 @@ type invocationLogFilters struct {
 }
 
 type invocationLogSummaryRow struct {
-	InvocationCount  int64  `gorm:"column:invocation_count"`
-	APICount         int64  `gorm:"column:api_count"`
-	ProductCount     int64  `gorm:"column:product_count"`
-	UnknownCount     int64  `gorm:"column:unknown_count"`
-	TotalTokens      int64  `gorm:"column:total_tokens"`
-	TotalPoints      int64  `gorm:"column:total_points"`
-	CostBearingCount int64  `gorm:"column:cost_bearing_count"`
-	ExactUSDCount    int64  `gorm:"column:exact_usd_count"`
-	ExactCNYCount    int64  `gorm:"column:exact_cny_count"`
-	TotalCostUSD     string `gorm:"column:total_cost_usd"`
-	TotalCostCNY     string `gorm:"column:total_cost_cny"`
+	InvocationCount  int64                   `gorm:"column:invocation_count"`
+	APICount         int64                   `gorm:"column:api_count"`
+	ProductCount     int64                   `gorm:"column:product_count"`
+	UnknownCount     int64                   `gorm:"column:unknown_count"`
+	TotalTokens      int64                   `gorm:"column:total_tokens"`
+	TotalPoints      millipoints.MilliPoints `gorm:"column:total_points"`
+	CostBearingCount int64                   `gorm:"column:cost_bearing_count"`
+	ExactUSDCount    int64                   `gorm:"column:exact_usd_count"`
+	ExactCNYCount    int64                   `gorm:"column:exact_cny_count"`
+	TotalCostUSD     string                  `gorm:"column:total_cost_usd"`
+	TotalCostCNY     string                  `gorm:"column:total_cost_cny"`
 }
 
 type invocationPageRow struct {
@@ -78,30 +79,30 @@ func (value dbTime) Value() (driver.Value, error) {
 }
 
 type invocationBillRow struct {
-	RequestID         string         `gorm:"column:request_id"`
-	AppID             *string        `gorm:"column:app_id"`
-	AppType           *string        `gorm:"column:app_type"`
-	InvocationSource  string         `gorm:"column:invocation_source"`
-	ModelName         string         `gorm:"column:model_name"`
-	ProviderName      string         `gorm:"column:provider_name"`
-	ChannelName       string         `gorm:"column:channel_name"`
-	SupplierName      string         `gorm:"column:supplier_name"`
-	ActualChannelName string         `gorm:"column:actual_channel_name"`
-	SettlementID      string         `gorm:"column:settlement_id"`
-	Status            string         `gorm:"column:status"`
-	PromptTokens      int64          `gorm:"column:prompt_tokens"`
-	CacheReadTokens   int64          `gorm:"column:cache_read_tokens"`
-	CacheWriteTokens  int64          `gorm:"column:cache_write_tokens"`
-	CompletionTokens  int64          `gorm:"column:completion_tokens"`
-	TotalTokens       int64          `gorm:"column:total_tokens"`
-	TotalPoints       int64          `gorm:"column:total_points"`
-	BillingLane       string         `gorm:"column:billing_lane"`
-	PricingSource     string         `gorm:"column:pricing_source"`
-	UsageSource       string         `gorm:"column:usage_source"`
-	PricingSnapshot   datatypes.JSON `gorm:"column:pricing_snapshot"`
-	ErrorCode         *string        `gorm:"column:error_code"`
-	RequestCreatedAt  time.Time      `gorm:"column:request_created_at"`
-	SettledAt         time.Time      `gorm:"column:settled_at"`
+	RequestID         string                  `gorm:"column:request_id"`
+	AppID             *string                 `gorm:"column:app_id"`
+	AppType           *string                 `gorm:"column:app_type"`
+	InvocationSource  string                  `gorm:"column:invocation_source"`
+	ModelName         string                  `gorm:"column:model_name"`
+	ProviderName      string                  `gorm:"column:provider_name"`
+	ChannelName       string                  `gorm:"column:channel_name"`
+	SupplierName      string                  `gorm:"column:supplier_name"`
+	ActualChannelName string                  `gorm:"column:actual_channel_name"`
+	SettlementID      string                  `gorm:"column:settlement_id"`
+	Status            string                  `gorm:"column:status"`
+	PromptTokens      int64                   `gorm:"column:prompt_tokens"`
+	CacheReadTokens   int64                   `gorm:"column:cache_read_tokens"`
+	CacheWriteTokens  int64                   `gorm:"column:cache_write_tokens"`
+	CompletionTokens  int64                   `gorm:"column:completion_tokens"`
+	TotalTokens       int64                   `gorm:"column:total_tokens"`
+	TotalPoints       millipoints.MilliPoints `gorm:"column:total_points"`
+	BillingLane       string                  `gorm:"column:billing_lane"`
+	PricingSource     string                  `gorm:"column:pricing_source"`
+	UsageSource       string                  `gorm:"column:usage_source"`
+	PricingSnapshot   datatypes.JSON          `gorm:"column:pricing_snapshot"`
+	ErrorCode         *string                 `gorm:"column:error_code"`
+	RequestCreatedAt  time.Time               `gorm:"column:request_created_at"`
+	SettledAt         time.Time               `gorm:"column:settled_at"`
 }
 
 type invocationContentAvailabilityRow struct {
@@ -216,7 +217,7 @@ func (r *statisticsRepositoryImpl) queryInvocationLogSummary(ctx context.Context
 		ProductCount:    row.ProductCount,
 		UnknownCount:    row.UnknownCount,
 		TotalTokens:     row.TotalTokens,
-		TotalPoints:     row.TotalPoints,
+		TotalPoints:     row.TotalPoints.Int64(),
 	}
 	if hasPricingSnapshot && row.CostBearingCount == row.ExactUSDCount {
 		value := row.TotalCostUSD
@@ -405,7 +406,7 @@ func aggregateInvocationBills(page []invocationPageRow, bills []invocationBillRo
 		acc.item.CacheWriteTokens += bill.CacheWriteTokens
 		acc.item.CompletionTokens += bill.CompletionTokens
 		acc.item.TotalTokens += bill.TotalTokens
-		acc.item.TotalPoints += bill.TotalPoints
+		acc.item.TotalPoints += bill.TotalPoints.Int64()
 		if costUSD, ok := pricingSnapshotCostUSD(bill.PricingSnapshot); ok {
 			acc.totalCostUSD = acc.totalCostUSD.Add(costUSD)
 			acc.hasExactCost = true

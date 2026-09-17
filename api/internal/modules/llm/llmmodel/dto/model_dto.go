@@ -74,20 +74,20 @@ type ListModelRequest struct {
 
 // ConfigureModelRequest is the request for configuring a tenant's model
 type ConfigureModelRequest struct {
-	ModelID                   uuid.UUID `json:"model_id" binding:"required"`
-	IsEnabled                 *bool     `json:"is_enabled"`
-	CustomDisplayName         string    `json:"custom_display_name"`
-	InputPriceOverride        *string   `json:"input_price_override"`
-	OutputPriceOverride       *string   `json:"output_price_override"`
-	CacheReadPriceOverride    *string   `json:"cache_read_price_override"`
-	CacheWritePriceOverride   *string   `json:"cache_write_price_override"`
-	CacheWrite5mPriceOverride *string   `json:"cache_write_5m_price_override"`
-	CacheWrite1hPriceOverride *string   `json:"cache_write_1h_price_override"`
+	ModelID                   uuid.UUID        `json:"model_id" binding:"required"`
+	IsEnabled                 *bool            `json:"is_enabled"`
+	CustomDisplayName         string           `json:"custom_display_name"`
+	InputPriceOverride        *string          `json:"input_price_override"`
+	OutputPriceOverride       *string          `json:"output_price_override"`
+	CacheReadPriceOverride    *string          `json:"cache_read_price_override"`
+	CacheWritePriceOverride   *string          `json:"cache_write_price_override"`
+	CacheWrite5mPriceOverride *string          `json:"cache_write_5m_price_override"`
+	CacheWrite1hPriceOverride *string          `json:"cache_write_1h_price_override"`
 	PricingOverride           *json.RawMessage `json:"pricing_override"`
-	AccessScope               string    `json:"access_scope"`
-	VisibleGroups             []string  `json:"visible_groups"`
-	VisibleUsers              []string  `json:"visible_users"`
-	SortOrder                 *int      `json:"sort_order"`
+	AccessScope               string           `json:"access_scope"`
+	VisibleGroups             []string         `json:"visible_groups"`
+	VisibleUsers              []string         `json:"visible_users"`
+	SortOrder                 *int             `json:"sort_order"`
 }
 
 // CreateCustomModelRequest is the request for creating a tenant's custom model.
@@ -223,13 +223,13 @@ type PricingIssueItem struct {
 }
 
 type PricingIssueResponse struct {
-	ID         uuid.UUID        `json:"id"`
-	Provider   string           `json:"provider"`
-	Model      string           `json:"model"`
-	ModelName  string           `json:"model_name"`
-	UseCases   []string         `json:"use_cases"`
+	ID         uuid.UUID          `json:"id"`
+	Provider   string             `json:"provider"`
+	Model      string             `json:"model"`
+	ModelName  string             `json:"model_name"`
+	UseCases   []string           `json:"use_cases"`
 	Missing    []PricingIssueItem `json:"missing"`
-	Configured bool             `json:"configured"`
+	Configured bool               `json:"configured"`
 }
 
 type PricingIssuesListResponse struct {

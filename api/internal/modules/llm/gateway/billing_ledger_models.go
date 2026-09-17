@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	"gorm.io/gorm"
 )
 
@@ -138,20 +139,20 @@ func (BillingAttempt) TableName() string {
 }
 
 type BillingAttemptEntry struct {
-	ID             uuid.UUID `gorm:"column:id;type:uuid;primaryKey"`
-	AttemptID      string    `gorm:"column:attempt_id;size:120;not null;index"`
-	EntryType      string    `gorm:"column:entry_type;size:20;not null"`
-	LedgerType     string    `gorm:"column:ledger_type;size:30;not null"`
-	LedgerRefID    string    `gorm:"column:ledger_ref_id;size:120;not null"`
-	ReservedAmount int64     `gorm:"column:reserved_amount;not null;default:0"`
-	ActualAmount   int64     `gorm:"column:actual_amount;not null;default:0"`
-	RefundedAmount int64     `gorm:"column:refunded_amount;not null;default:0"`
-	Status         string    `gorm:"column:status;size:20;not null;index"`
-	ErrorCode      *string   `gorm:"column:error_code;size:100"`
-	ErrorMessage   *string   `gorm:"column:error_message;type:text"`
-	IdempotencyKey *string   `gorm:"column:idempotency_key;size:160"`
-	CreatedAt      time.Time `gorm:"column:created_at;not null"`
-	UpdatedAt      time.Time `gorm:"column:updated_at;not null"`
+	ID             uuid.UUID               `gorm:"column:id;type:uuid;primaryKey"`
+	AttemptID      string                  `gorm:"column:attempt_id;size:120;not null;index"`
+	EntryType      string                  `gorm:"column:entry_type;size:20;not null"`
+	LedgerType     string                  `gorm:"column:ledger_type;size:30;not null"`
+	LedgerRefID    string                  `gorm:"column:ledger_ref_id;size:120;not null"`
+	ReservedAmount millipoints.MilliPoints `gorm:"column:reserved_amount;not null;default:0"`
+	ActualAmount   millipoints.MilliPoints `gorm:"column:actual_amount;not null;default:0"`
+	RefundedAmount millipoints.MilliPoints `gorm:"column:refunded_amount;not null;default:0"`
+	Status         string                  `gorm:"column:status;size:20;not null;index"`
+	ErrorCode      *string                 `gorm:"column:error_code;size:100"`
+	ErrorMessage   *string                 `gorm:"column:error_message;type:text"`
+	IdempotencyKey *string                 `gorm:"column:idempotency_key;size:160"`
+	CreatedAt      time.Time               `gorm:"column:created_at;not null"`
+	UpdatedAt      time.Time               `gorm:"column:updated_at;not null"`
 }
 
 func (BillingAttemptEntry) TableName() string {
@@ -166,12 +167,12 @@ func (e *BillingAttemptEntry) BeforeCreate(tx *gorm.DB) error {
 }
 
 type ChannelWallet struct {
-	ChannelID      uuid.UUID `gorm:"column:channel_id;type:uuid;primaryKey"`
-	OrganizationID uuid.UUID `gorm:"column:organization_id;type:uuid;not null;index"`
-	Balance        int64     `gorm:"column:balance;not null;default:0"`
-	Status         string    `gorm:"column:status;size:20;not null;default:'ACTIVE';index"`
-	CreatedAt      time.Time `gorm:"column:created_at;not null"`
-	UpdatedAt      time.Time `gorm:"column:updated_at;not null"`
+	ChannelID      uuid.UUID               `gorm:"column:channel_id;type:uuid;primaryKey"`
+	OrganizationID uuid.UUID               `gorm:"column:organization_id;type:uuid;not null;index"`
+	Balance        millipoints.MilliPoints `gorm:"column:balance;not null;default:0"`
+	Status         string                  `gorm:"column:status;size:20;not null;default:'ACTIVE';index"`
+	CreatedAt      time.Time               `gorm:"column:created_at;not null"`
+	UpdatedAt      time.Time               `gorm:"column:updated_at;not null"`
 }
 
 func (ChannelWallet) TableName() string {
@@ -179,15 +180,15 @@ func (ChannelWallet) TableName() string {
 }
 
 type ChannelWalletTransaction struct {
-	ID            uuid.UUID              `gorm:"column:id;type:uuid;primaryKey"`
-	ChannelID     uuid.UUID              `gorm:"column:channel_id;type:uuid;not null;index"`
-	AttemptID     *string                `gorm:"column:attempt_id;size:120;index"`
-	Type          string                 `gorm:"column:type;size:40;not null"`
-	Amount        int64                  `gorm:"column:amount;not null"`
-	BalanceBefore int64                  `gorm:"column:balance_before;not null"`
-	BalanceAfter  int64                  `gorm:"column:balance_after;not null"`
-	Metadata      map[string]interface{} `gorm:"column:metadata;type:jsonb;serializer:json"`
-	CreatedAt     time.Time              `gorm:"column:created_at;not null"`
+	ID            uuid.UUID               `gorm:"column:id;type:uuid;primaryKey"`
+	ChannelID     uuid.UUID               `gorm:"column:channel_id;type:uuid;not null;index"`
+	AttemptID     *string                 `gorm:"column:attempt_id;size:120;index"`
+	Type          string                  `gorm:"column:type;size:40;not null"`
+	Amount        millipoints.MilliPoints `gorm:"column:amount;not null"`
+	BalanceBefore millipoints.MilliPoints `gorm:"column:balance_before;not null"`
+	BalanceAfter  millipoints.MilliPoints `gorm:"column:balance_after;not null"`
+	Metadata      map[string]interface{}  `gorm:"column:metadata;type:jsonb;serializer:json"`
+	CreatedAt     time.Time               `gorm:"column:created_at;not null"`
 }
 
 func (ChannelWalletTransaction) TableName() string {
@@ -203,13 +204,13 @@ func (tx *ChannelWalletTransaction) BeforeCreate(db *gorm.DB) error {
 
 // WorkspaceQuota stores LLM quota limits and usage for workspace-subject billing.
 type WorkspaceQuota struct {
-	WorkspaceID    string    `gorm:"column:workspace_id;type:varchar(255);primaryKey"`
-	OrganizationID uuid.UUID `gorm:"column:organization_id;type:uuid;not null;index"`
-	UsedQuota      int64     `gorm:"column:used_quota;not null;default:0"`
-	RemainQuota    int64     `gorm:"column:remain_quota;not null;default:0"`
-	QuotaLimit     *int64    `gorm:"column:quota_limit"`
-	CreatedAt      time.Time `gorm:"column:created_at;not null"`
-	UpdatedAt      time.Time `gorm:"column:updated_at;not null"`
+	WorkspaceID    string                   `gorm:"column:workspace_id;type:varchar(255);primaryKey"`
+	OrganizationID uuid.UUID                `gorm:"column:organization_id;type:uuid;not null;index"`
+	UsedQuota      millipoints.MilliPoints  `gorm:"column:used_quota;not null;default:0"`
+	RemainQuota    millipoints.MilliPoints  `gorm:"column:remain_quota;not null;default:0"`
+	QuotaLimit     *millipoints.MilliPoints `gorm:"column:quota_limit"`
+	CreatedAt      time.Time                `gorm:"column:created_at;not null"`
+	UpdatedAt      time.Time                `gorm:"column:updated_at;not null"`
 }
 
 func (WorkspaceQuota) TableName() string {

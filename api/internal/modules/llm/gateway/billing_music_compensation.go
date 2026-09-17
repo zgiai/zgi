@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	"strings"
 	"time"
 
@@ -81,13 +82,13 @@ func (b *BillingService) CompensatePrivateMusicDelivery(ctx context.Context, org
 		if subjectRefundCredits > fundRefundCredits || bill.PrivatePoints != fundRefundCredits || bill.TotalPoints != fundRefundCredits || bill.OfficialPoints != 0 {
 			return fmt.Errorf("private music compensation amount mismatch for attempt %s", attempt.AttemptID)
 		}
-		if err := refundPrivateMusicSubject(ctx, tx, attempt, subjectRefundCredits); err != nil {
+		if err := refundPrivateMusicSubject(ctx, tx, attempt, subjectRefundCredits.Int64()); err != nil {
 			return err
 		}
-		if err := b.refundPrivateMusicWallet(ctx, tx, attempt, fundEntry, fundRefundCredits); err != nil {
+		if err := b.refundPrivateMusicWallet(ctx, tx, attempt, fundEntry, fundRefundCredits.Int64()); err != nil {
 			return err
 		}
-		if err := markPrivateMusicEntriesRefunded(ctx, tx, subjectEntry, fundEntry, subjectRefundCredits, fundRefundCredits); err != nil {
+		if err := markPrivateMusicEntriesRefunded(ctx, tx, subjectEntry, fundEntry, subjectRefundCredits.Int64(), fundRefundCredits.Int64()); err != nil {
 			return err
 		}
 		if err := markPrivateMusicUsageBillCompensated(ctx, tx, bill); err != nil {
@@ -194,12 +195,12 @@ func refundPrivateMusicSubject(ctx context.Context, tx *gorm.DB, attempt Billing
 			First(&quota).Error; err != nil {
 			return fmt.Errorf("load workspace quota for music compensation: %w", err)
 		}
-		if quota.UsedQuota < amount {
+		if quota.UsedQuota < millipoints.MilliPoints(amount) {
 			return fmt.Errorf("workspace used quota is smaller than music refund")
 		}
-		quota.UsedQuota -= amount
+		quota.UsedQuota -= millipoints.MilliPoints(amount)
 		if quota.QuotaLimit != nil {
-			quota.RemainQuota += amount
+			quota.RemainQuota += millipoints.MilliPoints(amount)
 		}
 		quota.UpdatedAt = time.Now()
 		return tx.WithContext(ctx).Save(&quota).Error
@@ -252,7 +253,7 @@ func (b *BillingService) refundPrivateMusicWallet(
 		return fmt.Errorf("load channel wallet for music compensation: %w", err)
 	}
 	before := wallet.Balance
-	after := before + amount
+	after := before + millipoints.MilliPoints(amount)
 	status := channelWalletStatusActive
 	if after < 0 {
 		status = channelWalletStatusDebt
@@ -266,7 +267,7 @@ func (b *BillingService) refundPrivateMusicWallet(
 	if result.RowsAffected != 1 {
 		return fmt.Errorf("refund private music channel wallet affected %d rows", result.RowsAffected)
 	}
-	if err := b.syncRouteBalanceSnapshot(ctx, tx, channelID, after); err != nil {
+	if err := b.syncRouteBalanceSnapshot(ctx, tx, channelID, after.Int64()); err != nil {
 		return err
 	}
 	if amount == 0 {
@@ -278,7 +279,7 @@ func (b *BillingService) refundPrivateMusicWallet(
 		channelID,
 		attempt.AttemptID,
 		channelWalletTxTypeRefund,
-		amount,
+		millipoints.MilliPoints(amount),
 		before,
 		after,
 		map[string]any{
@@ -311,7 +312,7 @@ func markPrivateMusicEntriesRefunded(
 		result := tx.WithContext(ctx).Model(&BillingAttemptEntry{}).
 			Where("id = ? AND attempt_id = ?", entry.ID, entry.AttemptID).
 			Updates(map[string]any{
-				"refunded_amount": entry.RefundedAmount + item.amount,
+				"refunded_amount": entry.RefundedAmount + millipoints.MilliPoints(item.amount),
 				"status":          billingEntryStatusRefunded,
 				"updated_at":      time.Now(),
 			})

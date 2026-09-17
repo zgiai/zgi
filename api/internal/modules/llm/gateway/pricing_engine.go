@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	"strings"
 	"sync"
 
@@ -18,12 +19,18 @@ import (
 	"gorm.io/gorm"
 )
 
-const pricingCreditsPerUSD = int64(1_000_000)
-
 // NormalizedPointsPerUSD is the display conversion rate exposed to organization
 // settings readers for fiat-to-points previews in the console UI.
 func NormalizedPointsPerUSD() int64 {
 	return billingsettings.Default().PointsPerUSD()
+}
+
+// localMilliPointsPerUSD is the local points_per_usd expressed in milli-points
+// (points_per_usd x 1000), so USD -> milli-points stays exact. It replaces the
+// retired compiled-in internal-unit constant and follows the catalog-synced
+// points_per_usd instead.
+func localMilliPointsPerUSD() int64 {
+	return NormalizedPointsPerUSD() * millipoints.UnitsPerPoint
 }
 
 var (
@@ -981,7 +988,10 @@ func enrichPricingSnapshotTotal(snapshot datatypes.JSON, totalUSD decimal.Decima
 		_ = json.Unmarshal(snapshot, &values)
 	}
 	values["total_cost_usd"] = totalUSD.String()
-	values["charged_credits"] = chargedCredits
+	// Snapshot credit amounts are stored in points (numeric(20,3)); the wire
+	// and in-process amounts stay milli-points.
+	values["charged_credits"] = millipoints.MilliPoints(chargedCredits).String()
+	values["points_per_usd"] = NormalizedPointsPerUSD()
 	return buildPricingSnapshot(values)
 }
 
@@ -1179,7 +1189,7 @@ func creditsFromUSD(totalUSD decimal.Decimal) int64 {
 	if !totalUSD.IsPositive() {
 		return 0
 	}
-	return totalUSD.Mul(decimal.NewFromInt(pricingCreditsPerUSD)).Ceil().IntPart()
+	return millipoints.FromUSD(totalUSD, NormalizedPointsPerUSD()).Int64()
 }
 
 func matchImagePricingRule(req *adapter.ImageRequest, prices []llmmodel.PricingRule) (*llmmodel.PricingRule, error) {
@@ -1488,8 +1498,9 @@ func splitCreditsByUSD(inputUSD, outputUSD decimal.Decimal, totalCredits int64) 
 		return totalCredits, 0
 	}
 
-	rawInputCredits := inputUSD.Mul(decimal.NewFromInt(pricingCreditsPerUSD))
-	rawOutputCredits := outputUSD.Mul(decimal.NewFromInt(pricingCreditsPerUSD))
+	multiplier := decimal.NewFromInt(localMilliPointsPerUSD())
+	rawInputCredits := inputUSD.Mul(multiplier)
+	rawOutputCredits := outputUSD.Mul(multiplier)
 
 	inputFloor := rawInputCredits.Floor().IntPart()
 	outputFloor := rawOutputCredits.Floor().IntPart()

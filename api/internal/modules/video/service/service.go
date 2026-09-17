@@ -7,8 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	"math"
+	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -43,8 +44,6 @@ const (
 	videoPosterMIMEType          = "image/jpeg"
 	videoPosterExtension         = ".jpg"
 	videoPosterMaxBytes          = 10 << 20
-
-
 )
 
 type LLMVideoClient interface {
@@ -217,7 +216,7 @@ func (s *service) Generate(ctx context.Context, scope Scope, req GenerateRequest
 		ResponsePayload:  jsonData(map[string]any{}),
 		CreatedAt:        now,
 		UpdatedAt:        now,
-		EstimatedCredits: estimateVideoTaskCredits(model, options),
+		EstimatedCredits: millipoints.MilliPoints(estimateVideoTaskCredits(model, options)),
 		ActualCredits:    0,
 	}
 	if err := s.tasks.create(operationCtx, record); err != nil {
@@ -341,10 +340,10 @@ func (s *service) startUpstreamVideoTask(record videoTaskRecord, appCtx *llmclie
 		}
 
 		if resp.EstimatedCredits > 0 {
-			record.EstimatedCredits = resp.EstimatedCredits
+			record.EstimatedCredits = millipoints.MilliPoints(resp.EstimatedCredits)
 		}
 		if resp.ActualCredits > 0 {
-			record.ActualCredits = resp.ActualCredits
+			record.ActualCredits = millipoints.MilliPoints(resp.ActualCredits)
 		}
 
 		upstreamID := upstreamTaskID(resp)
@@ -568,10 +567,10 @@ func (s *service) refreshTask(ctx context.Context, scope Scope, record *videoTas
 		record.VideoURL = videoURL
 	}
 	if record.Status != "failed" && resp.EstimatedCredits > 0 {
-		record.EstimatedCredits = resp.EstimatedCredits
+		record.EstimatedCredits = millipoints.MilliPoints(resp.EstimatedCredits)
 	}
 	if record.Status != "failed" && resp.ActualCredits > 0 {
-		record.ActualCredits = resp.ActualCredits
+		record.ActualCredits = millipoints.MilliPoints(resp.ActualCredits)
 	}
 	record.ResponsePayload = jsonData(payload)
 	record.UpdatedAt = time.Now().UTC()
@@ -1168,8 +1167,8 @@ func taskFromRecord(record videoTaskRecord) VideoTask {
 		HasInputVideo:    record.HasInputVideo,
 		GenerateAudio:    record.GenerateAudio,
 		Voice:            record.Voice,
-		EstimatedCredits: record.EstimatedCredits,
-		ActualCredits:    record.ActualCredits,
+		EstimatedCredits: record.EstimatedCredits.Int64(),
+		ActualCredits:    record.ActualCredits.Int64(),
 		RequestPayload:   mapFromJSON(record.RequestPayload),
 		ResponsePayload:  mapFromJSON(record.ResponsePayload),
 		CreatedAt:        record.CreatedAt,

@@ -34,15 +34,15 @@ type structuredRule struct {
 }
 
 var pricingRuleOperations = map[string]struct{}{
-	"chat":               {},
-	"embedding":          {},
-	"rerank":             {},
-	"image_generation":   {},
-	"video_generation":   {},
-	"speech_generation":  {},
-	"transcription":      {},
-	"music_generation":   {},
-	"lyrics_generation":  {},
+	"chat":              {},
+	"embedding":         {},
+	"rerank":            {},
+	"image_generation":  {},
+	"video_generation":  {},
+	"speech_generation": {},
+	"transcription":     {},
+	"music_generation":  {},
+	"lyrics_generation": {},
 }
 
 var pricingRuleMeterUnits = map[string]map[string]string{

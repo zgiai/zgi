@@ -202,14 +202,14 @@ func (s *llmGatewayServiceImpl) createBillingContext(
 		RoutingStrategy:      normalizeConsoleRoutingStrategy(providerSelection.RoutingStrategy),
 		// Chat is the default billing operation; embedding/rerank/audio/image/
 		// video/music callers override it explicitly right after creation.
-		PricingOperation:     PricingOperationChat,
-		EstimatedCredits:     estimatedCredits,
-		BillingLane:          billingLane,
-		UseSystemProvider:    usageBillingLaneUsesSystemProvider(billingLane),
-		IsStreaming:          isStreaming,
-		RequestID:            requestID,
-		RequestCreatedAt:     requestCreatedAt,
-		AttemptID:            attemptID,
+		PricingOperation:  PricingOperationChat,
+		EstimatedCredits:  estimatedCredits,
+		BillingLane:       billingLane,
+		UseSystemProvider: usageBillingLaneUsesSystemProvider(billingLane),
+		IsStreaming:       isStreaming,
+		RequestID:         requestID,
+		RequestCreatedAt:  requestCreatedAt,
+		AttemptID:         attemptID,
 	}
 	if apiKey.AccessGrantID != nil && apiKey.PrincipalType != nil && apiKey.PrincipalID != nil && apiKey.WorkspaceID != nil {
 		keyAuthorizationVersion := apiKey.AuthorizationVersion

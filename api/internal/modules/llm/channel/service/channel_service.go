@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	"math/rand"
 	"slices"
 	"strings"
@@ -328,7 +329,7 @@ func (s *channelService) createRouteWithInitialFunds(
 		wallet := &channelWalletRecord{
 			ChannelID:      route.ID,
 			OrganizationID: route.OrganizationID,
-			Balance:        initialFunds,
+			Balance:        millipoints.MilliPoints(initialFunds),
 			Status:         channelWalletStatusActive,
 			CreatedAt:      now,
 			UpdatedAt:      now,
@@ -604,7 +605,7 @@ func (s *channelService) loadChannelWalletBalances(
 		return nil, err
 	}
 	for _, wallet := range wallets {
-		walletBalances[wallet.ChannelID] = wallet.Balance
+		walletBalances[wallet.ChannelID] = wallet.Balance.Int64()
 	}
 	return walletBalances, nil
 }

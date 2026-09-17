@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	"strings"
 	"time"
 
@@ -1497,10 +1498,10 @@ func (s *Service) ListAudit(ctx context.Context, workspaceID, accountID string, 
 		keysByID[keys[i].ID] = keyToView(&keys[i])
 	}
 	type subjectCharge struct {
-		AttemptID      string `gorm:"column:attempt_id"`
-		ReservedAmount int64  `gorm:"column:reserved_amount"`
-		ActualAmount   int64  `gorm:"column:actual_amount"`
-		RefundedAmount int64  `gorm:"column:refunded_amount"`
+		AttemptID      string                  `gorm:"column:attempt_id"`
+		ReservedAmount millipoints.MilliPoints `gorm:"column:reserved_amount"`
+		ActualAmount   millipoints.MilliPoints `gorm:"column:actual_amount"`
+		RefundedAmount millipoints.MilliPoints `gorm:"column:refunded_amount"`
 	}
 	attemptIDs := make([]string, 0, len(items))
 	for _, item := range items {
@@ -1518,7 +1519,7 @@ func (s *Service) ListAudit(ctx context.Context, workspaceID, accountID string, 
 			return nil, fmt.Errorf("load developer access quota charges: %w", err)
 		}
 		for _, charge := range charges {
-			chargesByAttempt[charge.AttemptID] = netSubjectCharge(charge.ReservedAmount, charge.ActualAmount, charge.RefundedAmount)
+			chargesByAttempt[charge.AttemptID] = netSubjectCharge(charge.ReservedAmount.Int64(), charge.ActualAmount.Int64(), charge.RefundedAmount.Int64())
 		}
 	}
 	for i := range items {

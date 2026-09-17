@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	"strings"
 	"time"
 
@@ -26,73 +27,73 @@ type modelUsageFilters struct {
 }
 
 type modelUsageSummaryRow struct {
-	AttemptCount     int64 `gorm:"column:attempt_count"`
-	SuccessCount     int64 `gorm:"column:success_count"`
-	FailedCount      int64 `gorm:"column:failed_count"`
-	PartialCount     int64 `gorm:"column:partial_count"`
-	PromptTokens     int64 `gorm:"column:prompt_tokens"`
-	CacheReadTokens  int64 `gorm:"column:cache_read_tokens"`
-	CacheWriteTokens int64 `gorm:"column:cache_write_tokens"`
-	CompletionTokens int64 `gorm:"column:completion_tokens"`
-	TotalTokens      int64 `gorm:"column:total_tokens"`
-	OfficialPoints   int64 `gorm:"column:official_points"`
-	PrivatePoints    int64 `gorm:"column:private_points"`
-	TotalPoints      int64 `gorm:"column:total_points"`
+	AttemptCount     int64                   `gorm:"column:attempt_count"`
+	SuccessCount     int64                   `gorm:"column:success_count"`
+	FailedCount      int64                   `gorm:"column:failed_count"`
+	PartialCount     int64                   `gorm:"column:partial_count"`
+	PromptTokens     int64                   `gorm:"column:prompt_tokens"`
+	CacheReadTokens  int64                   `gorm:"column:cache_read_tokens"`
+	CacheWriteTokens int64                   `gorm:"column:cache_write_tokens"`
+	CompletionTokens int64                   `gorm:"column:completion_tokens"`
+	TotalTokens      int64                   `gorm:"column:total_tokens"`
+	OfficialPoints   millipoints.MilliPoints `gorm:"column:official_points"`
+	PrivatePoints    millipoints.MilliPoints `gorm:"column:private_points"`
+	TotalPoints      millipoints.MilliPoints `gorm:"column:total_points"`
 }
 
 type modelUsageModelRow struct {
-	ModelID           uuid.UUID `gorm:"column:model_id"`
-	ModelName         string    `gorm:"column:model_name"`
-	ProviderID        uuid.UUID `gorm:"column:provider_id"`
-	ProviderName      string    `gorm:"column:provider_name"`
-	Operation         string    `gorm:"column:operation"`
-	UseSystemProvider bool      `gorm:"column:use_system_provider"`
-	AttemptCount      int64     `gorm:"column:attempt_count"`
-	SuccessCount      int64     `gorm:"column:success_count"`
-	FailedCount       int64     `gorm:"column:failed_count"`
-	PartialCount      int64     `gorm:"column:partial_count"`
-	PromptTokens      int64     `gorm:"column:prompt_tokens"`
-	CacheReadTokens   int64     `gorm:"column:cache_read_tokens"`
-	CacheWriteTokens  int64     `gorm:"column:cache_write_tokens"`
-	CompletionTokens  int64     `gorm:"column:completion_tokens"`
-	TotalTokens       int64     `gorm:"column:total_tokens"`
-	OfficialPoints    int64     `gorm:"column:official_points"`
-	PrivatePoints     int64     `gorm:"column:private_points"`
-	TotalPoints       int64     `gorm:"column:total_points"`
+	ModelID           uuid.UUID               `gorm:"column:model_id"`
+	ModelName         string                  `gorm:"column:model_name"`
+	ProviderID        uuid.UUID               `gorm:"column:provider_id"`
+	ProviderName      string                  `gorm:"column:provider_name"`
+	Operation         string                  `gorm:"column:operation"`
+	UseSystemProvider bool                    `gorm:"column:use_system_provider"`
+	AttemptCount      int64                   `gorm:"column:attempt_count"`
+	SuccessCount      int64                   `gorm:"column:success_count"`
+	FailedCount       int64                   `gorm:"column:failed_count"`
+	PartialCount      int64                   `gorm:"column:partial_count"`
+	PromptTokens      int64                   `gorm:"column:prompt_tokens"`
+	CacheReadTokens   int64                   `gorm:"column:cache_read_tokens"`
+	CacheWriteTokens  int64                   `gorm:"column:cache_write_tokens"`
+	CompletionTokens  int64                   `gorm:"column:completion_tokens"`
+	TotalTokens       int64                   `gorm:"column:total_tokens"`
+	OfficialPoints    millipoints.MilliPoints `gorm:"column:official_points"`
+	PrivatePoints     millipoints.MilliPoints `gorm:"column:private_points"`
+	TotalPoints       millipoints.MilliPoints `gorm:"column:total_points"`
 }
 
 type modelUsageAppTypeRow struct {
-	AppType          string `gorm:"column:app_type"`
-	AttemptCount     int64  `gorm:"column:attempt_count"`
-	SuccessCount     int64  `gorm:"column:success_count"`
-	FailedCount      int64  `gorm:"column:failed_count"`
-	PartialCount     int64  `gorm:"column:partial_count"`
-	PromptTokens     int64  `gorm:"column:prompt_tokens"`
-	CacheReadTokens  int64  `gorm:"column:cache_read_tokens"`
-	CacheWriteTokens int64  `gorm:"column:cache_write_tokens"`
-	CompletionTokens int64  `gorm:"column:completion_tokens"`
-	TotalTokens      int64  `gorm:"column:total_tokens"`
-	OfficialPoints   int64  `gorm:"column:official_points"`
-	PrivatePoints    int64  `gorm:"column:private_points"`
-	TotalPoints      int64  `gorm:"column:total_points"`
+	AppType          string                  `gorm:"column:app_type"`
+	AttemptCount     int64                   `gorm:"column:attempt_count"`
+	SuccessCount     int64                   `gorm:"column:success_count"`
+	FailedCount      int64                   `gorm:"column:failed_count"`
+	PartialCount     int64                   `gorm:"column:partial_count"`
+	PromptTokens     int64                   `gorm:"column:prompt_tokens"`
+	CacheReadTokens  int64                   `gorm:"column:cache_read_tokens"`
+	CacheWriteTokens int64                   `gorm:"column:cache_write_tokens"`
+	CompletionTokens int64                   `gorm:"column:completion_tokens"`
+	TotalTokens      int64                   `gorm:"column:total_tokens"`
+	OfficialPoints   millipoints.MilliPoints `gorm:"column:official_points"`
+	PrivatePoints    millipoints.MilliPoints `gorm:"column:private_points"`
+	TotalPoints      millipoints.MilliPoints `gorm:"column:total_points"`
 }
 
 type modelUsageDailyRow struct {
-	Date             string `gorm:"column:date"`
-	AttemptCount     int64  `gorm:"column:attempt_count"`
-	SuccessCount     int64  `gorm:"column:success_count"`
-	FailedCount      int64  `gorm:"column:failed_count"`
-	PartialCount     int64  `gorm:"column:partial_count"`
-	PromptTokens     int64  `gorm:"column:prompt_tokens"`
-	CacheReadTokens  int64  `gorm:"column:cache_read_tokens"`
-	CacheWriteTokens int64  `gorm:"column:cache_write_tokens"`
-	CompletionTokens int64  `gorm:"column:completion_tokens"`
-	TotalTokens      int64  `gorm:"column:total_tokens"`
-	OfficialTokens   int64  `gorm:"column:official_tokens"`
-	PrivateTokens    int64  `gorm:"column:private_tokens"`
-	OfficialPoints   int64  `gorm:"column:official_points"`
-	PrivatePoints    int64  `gorm:"column:private_points"`
-	TotalPoints      int64  `gorm:"column:total_points"`
+	Date             string                  `gorm:"column:date"`
+	AttemptCount     int64                   `gorm:"column:attempt_count"`
+	SuccessCount     int64                   `gorm:"column:success_count"`
+	FailedCount      int64                   `gorm:"column:failed_count"`
+	PartialCount     int64                   `gorm:"column:partial_count"`
+	PromptTokens     int64                   `gorm:"column:prompt_tokens"`
+	CacheReadTokens  int64                   `gorm:"column:cache_read_tokens"`
+	CacheWriteTokens int64                   `gorm:"column:cache_write_tokens"`
+	CompletionTokens int64                   `gorm:"column:completion_tokens"`
+	TotalTokens      int64                   `gorm:"column:total_tokens"`
+	OfficialTokens   int64                   `gorm:"column:official_tokens"`
+	PrivateTokens    int64                   `gorm:"column:private_tokens"`
+	OfficialPoints   millipoints.MilliPoints `gorm:"column:official_points"`
+	PrivatePoints    millipoints.MilliPoints `gorm:"column:private_points"`
+	TotalPoints      millipoints.MilliPoints `gorm:"column:total_points"`
 }
 
 func (r *statisticsRepositoryImpl) GetModelUsage(ctx context.Context, organizationID string, req *dto.ModelUsageRequest) (*dto.ModelUsageResponse, error) {
@@ -173,9 +174,9 @@ func (r *statisticsRepositoryImpl) queryModelUsageSummary(ctx context.Context, f
 		CacheWriteTokens: row.CacheWriteTokens,
 		CompletionTokens: row.CompletionTokens,
 		TotalTokens:      row.TotalTokens,
-		OfficialPoints:   row.OfficialPoints,
-		PrivatePoints:    row.PrivatePoints,
-		TotalPoints:      row.TotalPoints,
+		OfficialPoints:   row.OfficialPoints.Int64(),
+		PrivatePoints:    row.PrivatePoints.Int64(),
+		TotalPoints:      row.TotalPoints.Int64(),
 	}, nil
 }
 
@@ -369,10 +370,10 @@ func buildModelUsageByModelItems(rows []modelUsageModelRow, totalPoints int64) [
 			CacheWriteTokens: row.CacheWriteTokens,
 			CompletionTokens: row.CompletionTokens,
 			TotalTokens:      row.TotalTokens,
-			OfficialPoints:   row.OfficialPoints,
-			PrivatePoints:    row.PrivatePoints,
-			TotalPoints:      row.TotalPoints,
-			PointsShare:      usageBillShare(row.TotalPoints, totalPoints),
+			OfficialPoints:   row.OfficialPoints.Int64(),
+			PrivatePoints:    row.PrivatePoints.Int64(),
+			TotalPoints:      row.TotalPoints.Int64(),
+			PointsShare:      usageBillShare(row.TotalPoints.Int64(), totalPoints),
 		})
 	}
 	return items
@@ -392,10 +393,10 @@ func buildModelUsageByAppTypeItems(rows []modelUsageAppTypeRow, totalPoints int6
 			CacheWriteTokens: row.CacheWriteTokens,
 			CompletionTokens: row.CompletionTokens,
 			TotalTokens:      row.TotalTokens,
-			OfficialPoints:   row.OfficialPoints,
-			PrivatePoints:    row.PrivatePoints,
-			TotalPoints:      row.TotalPoints,
-			PointsShare:      usageBillShare(row.TotalPoints, totalPoints),
+			OfficialPoints:   row.OfficialPoints.Int64(),
+			PrivatePoints:    row.PrivatePoints.Int64(),
+			TotalPoints:      row.TotalPoints.Int64(),
+			PointsShare:      usageBillShare(row.TotalPoints.Int64(), totalPoints),
 		})
 	}
 	return items
@@ -417,9 +418,9 @@ func buildModelUsageDailyItems(rows []modelUsageDailyRow) []dto.ModelUsageDailyI
 			TotalTokens:      row.TotalTokens,
 			OfficialTokens:   row.OfficialTokens,
 			PrivateTokens:    row.PrivateTokens,
-			OfficialPoints:   row.OfficialPoints,
-			PrivatePoints:    row.PrivatePoints,
-			TotalPoints:      row.TotalPoints,
+			OfficialPoints:   row.OfficialPoints.Int64(),
+			PrivatePoints:    row.PrivatePoints.Int64(),
+			TotalPoints:      row.TotalPoints.Int64(),
 		})
 	}
 	return items

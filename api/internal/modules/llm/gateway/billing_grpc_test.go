@@ -679,7 +679,7 @@ func TestRemoteBillingRecoversStaleInitWithoutBoundDeduction(t *testing.T) {
 	if err := db.Where("attempt_id = ? AND entry_type = ?", bc.AttemptID, billingEntryTypeFund).First(&fundEntry).Error; err != nil {
 		t.Fatal(err)
 	}
-	if subjectEntry.Status != billingEntryStatusRolled || subjectEntry.ActualAmount != 0 || subjectEntry.RefundedAmount != quota {
+	if subjectEntry.Status != billingEntryStatusRolled || subjectEntry.ActualAmount != 0 || subjectEntry.RefundedAmount.Int64() != quota {
 		t.Fatalf("stale INIT subject entry = %#v", subjectEntry)
 	}
 	if fundEntry.Status != billingEntryStatusFailed || fundEntry.RefundedAmount != 0 {
@@ -787,7 +787,7 @@ func TestRemoteBillingPersistsAndRetriesFailedLateDeductionCompensation(t *testi
 	if err := db.First(&fundEntry, "id = ?", fundEntryID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if fundEntry.Status != billingEntryStatusRolled || fundEntry.ActualAmount != 0 || fundEntry.RefundedAmount != quota {
+	if fundEntry.Status != billingEntryStatusRolled || fundEntry.ActualAmount != 0 || fundEntry.RefundedAmount.Int64() != quota {
 		t.Fatalf("reconciled compensation fund entry = %#v", fundEntry)
 	}
 	if err := db.First(&grant, "id = ?", grant.ID).Error; err != nil {

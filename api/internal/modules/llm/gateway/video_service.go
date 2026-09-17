@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	"strings"
 	"time"
 
@@ -1041,7 +1042,7 @@ func (s *llmGatewayServiceImpl) findSettledVideoUsageBill(ctx context.Context, a
 		return 0, false, nil
 	}
 	var row struct {
-		TotalPoints int64 `gorm:"column:total_points"`
+		TotalPoints millipoints.MilliPoints `gorm:"column:total_points"`
 	}
 	err := s.db.WithContext(ctx).
 		Table("llm_usage_bills").
@@ -1055,7 +1056,7 @@ func (s *llmGatewayServiceImpl) findSettledVideoUsageBill(ctx context.Context, a
 		}
 		return 0, false, err
 	}
-	return row.TotalPoints, true, nil
+	return row.TotalPoints.Int64(), true, nil
 }
 
 // videoSettlementRequiresLocalPrice reports whether a billing lane settles from

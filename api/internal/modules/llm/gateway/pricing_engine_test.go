@@ -350,9 +350,9 @@ func buildTokenPricingJSON(inputPrice, outputPrice string, inputConfigured, outp
 		rules = append(rules, tokenPricingRule("chat-cache-write-1h", "cache_write_1h_token", cacheWrite1h, true))
 	}
 	payload := map[string]interface{}{
-		"version":           2,
-		"deployment_scope":  "global",
-		"token_tiers":       []map[string]interface{}{tier},
+		"version":          2,
+		"deployment_scope": "global",
+		"token_tiers":      []map[string]interface{}{tier},
 	}
 	if len(rules) > 0 {
 		payload["rules"] = rules

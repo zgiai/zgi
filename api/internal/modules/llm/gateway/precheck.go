@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	"strings"
 	"time"
 
@@ -366,12 +367,12 @@ func (s *llmGatewayServiceImpl) buildWorkspaceQuotaWarning(ctx context.Context, 
 	if quota == nil || quota.QuotaLimit == nil {
 		return nil, nil
 	}
-	if quota.RemainQuota >= workflowWorkspaceLowQuotaThreshold {
+	if quota.RemainQuota >= millipoints.MilliPoints(workflowWorkspaceLowQuotaThreshold) {
 		return nil, nil
 	}
 	return &AppModelRouteWarning{
 		Kind:         AppModelRouteWarningKindWorkspaceQuotaLow,
-		CurrentValue: quota.RemainQuota,
+		CurrentValue: quota.RemainQuota.Int64(),
 		Threshold:    workflowWorkspaceLowQuotaThreshold,
 	}, nil
 }
@@ -408,7 +409,7 @@ func (s *llmGatewayServiceImpl) loadPrivateChannelWalletBalance(ctx context.Cont
 		}
 		return 0, err
 	}
-	return wallet.Balance, nil
+	return wallet.Balance.Int64(), nil
 }
 
 func dedupeAppModelRefsPreserveOrder(values []AppModelRouteRef) []AppModelRouteRef {

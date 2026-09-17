@@ -709,7 +709,7 @@ func (s *RemoteBilling) mirrorQueriedSettlement(ctx context.Context, attempt *Bi
 		if err := tx.Where("attempt_id = ? AND entry_type = ? AND ledger_type = ?", current.AttemptID, billingEntryTypeFund, billingLedgerTypeOrgFunds).First(&fund).Error; err != nil {
 			return err
 		}
-		if fund.ReservedAmount > 0 && result.SettledCredits+result.RefundedCredits > fund.ReservedAmount {
+		if fund.ReservedAmount > 0 && result.SettledCredits+result.RefundedCredits > fund.ReservedAmount.Int64() {
 			return fmt.Errorf("settlement amounts exceed reserved credits: reserved=%d settled=%d refunded=%d", fund.ReservedAmount, result.SettledCredits, result.RefundedCredits)
 		}
 		bc := &BillingContext{
@@ -719,7 +719,7 @@ func (s *RemoteBilling) mirrorQueriedSettlement(ctx context.Context, attempt *Bi
 			QuotaSubjectType:  current.QuotaSubjectType,
 			QuotaSubjectID:    current.QuotaSubjectID,
 			DeductionID:       strings.TrimSpace(firstNonEmptyString(result.SettlementID, derefString(fund.IdempotencyKey))),
-			EstimatedCredits:  fund.ReservedAmount,
+			EstimatedCredits:  fund.ReservedAmount.Int64(),
 			ActualCredits:     result.SettledCredits,
 			Status:            "success",
 			BillingLane:       UsageBillingLanePlatform,
@@ -922,7 +922,7 @@ func (s *RemoteBilling) reconcileRemoteCompensationAttempt(ctx context.Context, 
 	}
 	bc := &BillingContext{
 		OrganizationID: attempt.OrganizationID.String(), AttemptID: attempt.AttemptID, RequestID: attempt.RequestID,
-		DeductionID: strings.TrimSpace(*fundEntry.IdempotencyKey), EstimatedCredits: fundEntry.ReservedAmount,
+		DeductionID: strings.TrimSpace(*fundEntry.IdempotencyKey), EstimatedCredits: fundEntry.ReservedAmount.Int64(),
 		BillingLane: UsageBillingLanePlatform, UseSystemProvider: true, Status: "error",
 	}
 	restoreBillingContextAttribution(bc, &attempt)
@@ -1047,8 +1047,8 @@ func (s *RemoteBilling) recoverStaleRemoteInitAttempt(ctx context.Context, attem
 		bc := &BillingContext{
 			OrganizationID: attempt.OrganizationID.String(), AttemptID: attempt.AttemptID, RequestID: attempt.RequestID,
 			InvocationSource: normalizeInvocationSource(attempt.InvocationSource), QuotaSubjectType: attempt.QuotaSubjectType,
-			QuotaSubjectID: attempt.QuotaSubjectID, EstimatedCredits: fundEntry.ReservedAmount,
-			SubjectReservedCredits: subjectEntry.ReservedAmount, ActualCredits: 0,
+			QuotaSubjectID: attempt.QuotaSubjectID, EstimatedCredits: fundEntry.ReservedAmount.Int64(),
+			SubjectReservedCredits: subjectEntry.ReservedAmount.Int64(), ActualCredits: 0,
 			BillingLane: UsageBillingLanePlatform, UseSystemProvider: true, Status: "error",
 			ErrorMessage: "stale remote pre-deduct without a bound deduction id was rolled back",
 		}
@@ -1197,8 +1197,8 @@ func (s *RemoteBilling) recoverStalePredeductedRemoteAttempt(ctx context.Context
 		AttemptID:              attempt.AttemptID,
 		RequestID:              attempt.RequestID,
 		InvocationSource:       normalizeInvocationSource(attempt.InvocationSource),
-		EstimatedCredits:       fundEntry.ReservedAmount,
-		SubjectReservedCredits: subjectEntry.ReservedAmount,
+		EstimatedCredits:       fundEntry.ReservedAmount.Int64(),
+		SubjectReservedCredits: subjectEntry.ReservedAmount.Int64(),
 		ActualCredits:          0,
 		QuotaSubjectType:       attempt.QuotaSubjectType,
 		QuotaSubjectID:         attempt.QuotaSubjectID,
@@ -1294,14 +1294,14 @@ func (s *RemoteBilling) reconcileAttempt(ctx context.Context, attemptID string) 
 		AttemptID:        attempt.AttemptID,
 		RequestID:        attempt.RequestID,
 		InvocationSource: normalizeInvocationSource(attempt.InvocationSource),
-		EstimatedCredits: fundEntry.ReservedAmount,
+		EstimatedCredits: fundEntry.ReservedAmount.Int64(),
 		SubjectReservedCredits: func() int64 {
 			if subjectEntry != nil {
-				return subjectEntry.ReservedAmount
+				return subjectEntry.ReservedAmount.Int64()
 			}
-			return fundEntry.ReservedAmount
+			return fundEntry.ReservedAmount.Int64()
 		}(),
-		ActualCredits:     actualCredits,
+		ActualCredits:     actualCredits.Int64(),
 		QuotaSubjectType:  attempt.QuotaSubjectType,
 		QuotaSubjectID:    attempt.QuotaSubjectID,
 		BillingLane:       UsageBillingLanePlatform,

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	"math"
 	"slices"
 
@@ -3043,10 +3044,10 @@ func (s *organizationService) buildOrganizationWorkspaceResponses(ctx context.Co
 	}
 
 	type workspaceQuotaInfo struct {
-		WorkspaceID string `gorm:"column:workspace_id"`
-		UsedQuota   int64  `gorm:"column:used_quota"`
-		RemainQuota int64  `gorm:"column:remain_quota"`
-		QuotaLimit  *int64 `gorm:"column:quota_limit"`
+		WorkspaceID string                   `gorm:"column:workspace_id"`
+		UsedQuota   millipoints.MilliPoints  `gorm:"column:used_quota"`
+		RemainQuota millipoints.MilliPoints  `gorm:"column:remain_quota"`
+		QuotaLimit  *millipoints.MilliPoints `gorm:"column:quota_limit"`
 	}
 
 	var quotas []workspaceQuotaInfo
@@ -3106,9 +3107,15 @@ func (s *organizationService) buildOrganizationWorkspaceResponses(ctx context.Co
 			APIKeyName:      apiKeyNamePtr,
 			MemberCount:     memberCountByWorkspace[workspace.ID],
 			QuotaConfigured: quotaConfigured,
-			UsedQuota:       quota.UsedQuota,
-			RemainQuota:     quota.RemainQuota,
-			QuotaLimit:      quota.QuotaLimit,
+			UsedQuota:       quota.UsedQuota.Int64(),
+			RemainQuota:     quota.RemainQuota.Int64(),
+			QuotaLimit: func() *int64 {
+				if quota.QuotaLimit == nil {
+					return nil
+				}
+				value := quota.QuotaLimit.Int64()
+				return &value
+			}(),
 		}
 
 		items = append(items, item)

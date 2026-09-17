@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	"strings"
 	"sync"
 	"time"
@@ -596,11 +597,11 @@ func (b *BillingService) preDeductWorkspaceQuota(
 	if workspaceQuota.QuotaLimit == nil {
 		return nil
 	}
-	if workspaceQuota.RemainQuota < bc.EstimatedCredits {
+	if workspaceQuota.RemainQuota < millipoints.MilliPoints(bc.EstimatedCredits) {
 		return ErrInsufficientQuota
 	}
 
-	workspaceQuota.RemainQuota -= bc.EstimatedCredits
+	workspaceQuota.RemainQuota -= millipoints.MilliPoints(bc.EstimatedCredits)
 	workspaceQuota.UpdatedAt = time.Now()
 	return tx.WithContext(ctx).Save(workspaceQuota).Error
 }
@@ -723,15 +724,15 @@ func (b *BillingService) settleWorkspaceQuota(
 	}
 
 	if workspaceQuota.QuotaLimit == nil {
-		workspaceQuota.UsedQuota += bc.ActualCredits
+		workspaceQuota.UsedQuota += millipoints.MilliPoints(bc.ActualCredits)
 		workspaceQuota.UpdatedAt = time.Now()
 		return tx.WithContext(ctx).Save(workspaceQuota).Error
 	}
 
 	diff := bc.EstimatedCredits - bc.ActualCredits
 	// Subject quota must never go below zero.
-	workspaceQuota.RemainQuota = clampQuotaRemainAtZero(workspaceQuota.RemainQuota + diff)
-	workspaceQuota.UsedQuota += bc.ActualCredits
+	workspaceQuota.RemainQuota = millipoints.MilliPoints(clampQuotaRemainAtZero(workspaceQuota.RemainQuota.Int64() + diff))
+	workspaceQuota.UsedQuota += millipoints.MilliPoints(bc.ActualCredits)
 	workspaceQuota.UpdatedAt = time.Now()
 	return tx.WithContext(ctx).Save(workspaceQuota).Error
 }

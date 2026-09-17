@@ -15,28 +15,28 @@ func TestNormalizeChatToolChoice(t *testing.T) {
 		{name: "auto string", input: "auto", want: "auto"},
 		{name: "required alias", input: "any", want: "required"},
 		{name: "bare function name", input: "get_weather", want: map[string]interface{}{
-			"type": "function",
+			"type":     "function",
 			"function": map[string]string{"name": "get_weather"},
 		}},
 		{name: "openai function object", input: map[string]interface{}{
 			"type":     "function",
 			"function": map[string]interface{}{"name": "get_weather"},
 		}, want: map[string]interface{}{
-			"type": "function",
+			"type":     "function",
 			"function": map[string]string{"name": "get_weather"},
 		}},
 		{name: "anthropic tool object", input: map[string]interface{}{
 			"type": "tool",
 			"name": "get_weather",
 		}, want: map[string]interface{}{
-			"type": "function",
+			"type":     "function",
 			"function": map[string]string{"name": "get_weather"},
 		}},
 		{name: "responses function object", input: map[string]interface{}{
 			"type": "function",
 			"name": "get_weather",
 		}, want: map[string]interface{}{
-			"type": "function",
+			"type":     "function",
 			"function": map[string]string{"name": "get_weather"},
 		}},
 		{name: "missing function name stays required", input: map[string]interface{}{
@@ -69,7 +69,7 @@ func TestCompatibleChatToolChoiceDowngradesNamedFunction(t *testing.T) {
 func TestParseChatToolChoiceFromRawMessage(t *testing.T) {
 	got := NormalizeChatToolChoice(json.RawMessage(`{"type":"function","function":{"name":"get_weather"}}`))
 	want := map[string]interface{}{
-		"type": "function",
+		"type":     "function",
 		"function": map[string]string{"name": "get_weather"},
 	}
 	if !reflect.DeepEqual(got, want) {

@@ -114,8 +114,8 @@ type LLMModel struct {
 	CostRate            JSONObject           `gorm:"type:jsonb;default:'{\"input\":1, \"output\":1}'" json:"cost_rate,omitempty"` // Cost multipliers (kept for billing core)
 
 	// Pricing (per million tokens in USD) - OpenAI naming (ModelMeta aligned)
-	InputPrice                  decimal.Decimal `gorm:"column:input_price;type:decimal(24,12)" json:"input_price,omitempty"`               // Price per million input tokens
-	OutputPrice                 decimal.Decimal `gorm:"column:output_price;type:decimal(24,12)" json:"output_price,omitempty"`             // Price per million output tokens
+	InputPrice                  decimal.Decimal `gorm:"column:input_price;type:decimal(24,12)" json:"input_price,omitempty"`   // Price per million input tokens
+	OutputPrice                 decimal.Decimal `gorm:"column:output_price;type:decimal(24,12)" json:"output_price,omitempty"` // Price per million output tokens
 	InputPriceConfigured        bool            `gorm:"-" json:"input_price_configured"`
 	OutputPriceConfigured       bool            `gorm:"-" json:"output_price_configured"`
 	CachedInputPrice            decimal.Decimal `gorm:"column:cached_input_price;type:decimal(24,12)" json:"cached_input_price,omitempty"` // Price per million cached input tokens (ModelMeta aligned)

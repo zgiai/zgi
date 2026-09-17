@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	"strings"
 	"time"
 
@@ -182,9 +183,9 @@ func (b *BillingService) buildUsageBill(
 		CacheWriteTokens:  cacheWriteTokens,
 		CompletionTokens:  completionTokens,
 		TotalTokens:       totalTokens,
-		OfficialPoints:    officialPoints,
-		PrivatePoints:     privatePoints,
-		TotalPoints:       officialPoints + privatePoints,
+		OfficialPoints:    millipoints.MilliPoints(officialPoints),
+		PrivatePoints:     millipoints.MilliPoints(privatePoints),
+		TotalPoints:       millipoints.MilliPoints(officialPoints + privatePoints),
 		PricingSource:     bc.PricingSource,
 		UsageSource:       bc.UsageSource,
 		PricingSnapshot:   pricingSnapshot,

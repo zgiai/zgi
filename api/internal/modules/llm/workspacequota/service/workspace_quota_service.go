@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	"math"
 	"strings"
 	"time"
@@ -176,12 +177,12 @@ func (s *workspaceQuotaServiceImpl) UpdateWorkspaceQuota(
 		case dto.QuotaTypeUnlimited:
 			quota.QuotaLimit = nil
 		case dto.QuotaTypeCustom:
-			limit := *req.QuotaAmount
+			limit := millipoints.MilliPoints(*req.QuotaAmount)
 			quota.QuotaLimit = &limit
 		}
 
 		if req.RemainQuota != nil {
-			quota.RemainQuota = *req.RemainQuota
+			quota.RemainQuota = millipoints.MilliPoints(*req.RemainQuota)
 		} else if req.QuotaType == dto.QuotaTypeCustom && quota.QuotaLimit != nil && quota.RemainQuota > *quota.QuotaLimit {
 			quota.RemainQuota = *quota.QuotaLimit
 		}
@@ -263,11 +264,17 @@ func toWorkspaceQuotaResponse(row *gateway.WorkspaceQuota, configured bool) *dto
 	return &dto.WorkspaceQuotaResponse{
 		WorkspaceID:    row.WorkspaceID,
 		OrganizationID: row.OrganizationID.String(),
-		UsedQuota:      row.UsedQuota,
-		RemainQuota:    row.RemainQuota,
-		QuotaLimit:     row.QuotaLimit,
-		Configured:     configured,
-		CreatedAt:      &createdAt,
-		UpdatedAt:      &updatedAt,
+		UsedQuota:      row.UsedQuota.Int64(),
+		RemainQuota:    row.RemainQuota.Int64(),
+		QuotaLimit: func() *int64 {
+			if row.QuotaLimit == nil {
+				return nil
+			}
+			value := row.QuotaLimit.Int64()
+			return &value
+		}(),
+		Configured: configured,
+		CreatedAt:  &createdAt,
+		UpdatedAt:  &updatedAt,
 	}
 }

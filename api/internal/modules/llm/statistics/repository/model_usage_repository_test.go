@@ -74,7 +74,7 @@ func TestQueryModelUsageByAppTypeKeepsKnownTypesAndBucketsUnknownTypes(t *testin
 		got[row.AppType] = row
 		totalAttempts += row.AttemptCount
 		totalTokens += row.TotalTokens
-		totalPoints += row.TotalPoints
+		totalPoints += row.TotalPoints.Int64()
 	}
 	if len(got) != len(knownTypes)+1 {
 		t.Fatalf("app type groups = %#v, want %d known groups plus unknown", got, len(knownTypes))

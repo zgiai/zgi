@@ -16,13 +16,13 @@ type pricingIssueRow struct {
 	ModelName         string    `gorm:"column:display_name"`
 	UseCases          string    `gorm:"column:use_cases"`
 	Pricing           []byte    `gorm:"column:pricing"`
-	InputPrice          *float64  `gorm:"column:input_price"`
-	OutputPrice         *float64  `gorm:"column:output_price"`
-	CachedInputPrice    *float64  `gorm:"column:cached_input_price"`
-	CacheReadPrice      *float64  `gorm:"column:cache_read_price"`
-	CacheWritePrice     *float64  `gorm:"column:cache_write_price"`
-	CacheWrite5mPrice   *float64  `gorm:"column:cache_write_5m_price"`
-	CacheWrite1hPrice   *float64  `gorm:"column:cache_write_1h_price"`
+	InputPrice        *float64  `gorm:"column:input_price"`
+	OutputPrice       *float64  `gorm:"column:output_price"`
+	CachedInputPrice  *float64  `gorm:"column:cached_input_price"`
+	CacheReadPrice    *float64  `gorm:"column:cache_read_price"`
+	CacheWritePrice   *float64  `gorm:"column:cache_write_price"`
+	CacheWrite5mPrice *float64  `gorm:"column:cache_write_5m_price"`
+	CacheWrite1hPrice *float64  `gorm:"column:cache_write_1h_price"`
 }
 
 func (s *modelService) ListPricingIssues(ctx context.Context) (*dto.PricingIssuesListResponse, error) {

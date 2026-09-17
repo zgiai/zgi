@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	"time"
 
 	"github.com/google/uuid"
@@ -166,14 +167,14 @@ func (r *groupAICreditAccountRepository) DeductCredits(ctx context.Context, acco
 			return fmt.Errorf("failed to lock account: %w", err)
 		}
 
-		if account.PurchasedCredits < amount {
+		if account.PurchasedCredits < millipoints.MilliPoints(amount) {
 			return fmt.Errorf("insufficient credits")
 		}
 
 		updates := map[string]interface{}{
 			"updated_at":        time.Now(),
-			"total_spent":       gorm.Expr("total_spent + ?", amount),
-			"purchased_credits": gorm.Expr("purchased_credits - ?", amount),
+			"total_spent":       gorm.Expr("total_spent + ?", millipoints.MilliPoints(amount)),
+			"purchased_credits": gorm.Expr("purchased_credits - ?", millipoints.MilliPoints(amount)),
 		}
 
 		if err := tx.Model(&model.GroupAICreditAccount{}).
@@ -197,12 +198,12 @@ func (r *groupAICreditAccountRepository) DeductCreditsByGroupID(ctx context.Cont
 		return nil, fmt.Errorf("failed to lock account: %w", err)
 	}
 
-	if account.PurchasedCredits < amount {
+	if account.PurchasedCredits < millipoints.MilliPoints(amount) {
 		return nil, fmt.Errorf("insufficient credits: have %d, need %d", account.GetTotalCredits(), amount)
 	}
 
-	account.PurchasedCredits -= amount
-	account.TotalSpent += amount
+	account.PurchasedCredits -= millipoints.MilliPoints(amount)
+	account.TotalSpent += millipoints.MilliPoints(amount)
 	account.UpdatedAt = time.Now()
 
 	// Save the updated account

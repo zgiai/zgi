@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	"strings"
 	"time"
 
@@ -198,7 +199,7 @@ func (b *BillingService) upsertAttemptBaseEntries(
 		EntryType:      billingEntryTypeSubject,
 		LedgerType:     subjectLedgerType,
 		LedgerRefID:    subjectID,
-		ReservedAmount: subjectReserved,
+		ReservedAmount: millipoints.MilliPoints(subjectReserved),
 		Status:         billingEntryStatusPending,
 		CreatedAt:      now,
 		UpdatedAt:      now,
@@ -214,7 +215,7 @@ func (b *BillingService) upsertAttemptBaseEntries(
 			EntryType:      billingEntryTypeFund,
 			LedgerType:     billingLedgerTypeOrgFunds,
 			LedgerRefID:    bc.OrganizationID,
-			ReservedAmount: estimated,
+			ReservedAmount: millipoints.MilliPoints(estimated),
 			Status:         billingEntryStatusPending,
 			CreatedAt:      now,
 			UpdatedAt:      now,
@@ -233,7 +234,7 @@ func (b *BillingService) upsertAttemptBaseEntries(
 			EntryType:      billingEntryTypeFund,
 			LedgerType:     billingLedgerTypeChannelWallet,
 			LedgerRefID:    bc.ChannelID.String(),
-			ReservedAmount: estimated,
+			ReservedAmount: millipoints.MilliPoints(estimated),
 			Status:         billingEntryStatusPending,
 			CreatedAt:      now,
 			UpdatedAt:      now,
@@ -510,12 +511,12 @@ func (b *BillingService) preDeductPrivateChannelWallet(
 	if wallet.Status == channelWalletStatusDebt {
 		return ErrInsufficientBalance
 	}
-	if wallet.Balance < bc.EstimatedCredits {
+	if wallet.Balance < millipoints.MilliPoints(bc.EstimatedCredits) {
 		return ErrInsufficientBalance
 	}
 
 	before := wallet.Balance
-	after := before - bc.EstimatedCredits
+	after := before - millipoints.MilliPoints(bc.EstimatedCredits)
 	updateRes := tx.WithContext(ctx).
 		Model(&ChannelWallet{}).
 		Where("channel_id = ? AND organization_id = ?", wallet.ChannelID, wallet.OrganizationID).
@@ -535,7 +536,7 @@ func (b *BillingService) preDeductPrivateChannelWallet(
 			wallet.OrganizationID,
 		)
 	}
-	if err := b.syncRouteBalanceSnapshot(ctx, tx, wallet.ChannelID, after); err != nil {
+	if err := b.syncRouteBalanceSnapshot(ctx, tx, wallet.ChannelID, after.Int64()); err != nil {
 		return fmt.Errorf("sync route balance snapshot: %w", err)
 	}
 
@@ -545,7 +546,7 @@ func (b *BillingService) preDeductPrivateChannelWallet(
 		wallet.ChannelID,
 		bc.AttemptID,
 		channelWalletTxTypePreDeduct,
-		-bc.EstimatedCredits,
+		-millipoints.MilliPoints(bc.EstimatedCredits),
 		before,
 		after,
 		map[string]interface{}{
@@ -578,7 +579,7 @@ func (b *BillingService) CheckPrivateChannelBalance(
 		return false, fmt.Errorf("load private channel wallet balance: %w", err)
 	}
 
-	return wallet.Balance >= estimatedCredits, nil
+	return wallet.Balance >= millipoints.MilliPoints(estimatedCredits), nil
 }
 
 func (b *BillingService) settlePrivateChannelWallet(
@@ -599,7 +600,7 @@ func (b *BillingService) settlePrivateChannelWallet(
 		return "", "", err
 	}
 
-	delta := bc.EstimatedCredits - bc.ActualCredits
+	delta := millipoints.MilliPoints(bc.EstimatedCredits - bc.ActualCredits)
 	before := wallet.Balance
 	after := before + delta
 	newStatus := channelWalletStatusActive
@@ -609,9 +610,9 @@ func (b *BillingService) settlePrivateChannelWallet(
 			zap.String("channel_id", wallet.ChannelID.String()),
 			zap.String("attempt_id", bc.AttemptID),
 			zap.String("request_id", bc.RequestID),
-			zap.Int64("balance_before", before),
-			zap.Int64("delta", delta),
-			zap.Int64("balance_after", after),
+			zap.Int64("balance_before", before.Int64()),
+			zap.Int64("delta", delta.Int64()),
+			zap.Int64("balance_after", after.Int64()),
 		)
 	}
 
@@ -634,7 +635,7 @@ func (b *BillingService) settlePrivateChannelWallet(
 			wallet.OrganizationID,
 		)
 	}
-	if err := b.syncRouteBalanceSnapshot(ctx, tx, wallet.ChannelID, after); err != nil {
+	if err := b.syncRouteBalanceSnapshot(ctx, tx, wallet.ChannelID, after.Int64()); err != nil {
 		return "", "", fmt.Errorf("sync route balance snapshot: %w", err)
 	}
 
@@ -713,7 +714,7 @@ func (b *BillingService) getOrCreateChannelWalletForUpdate(
 	wallet = ChannelWallet{
 		ChannelID:      channelID,
 		OrganizationID: organizationID,
-		Balance:        initialBalance,
+		Balance:        millipoints.MilliPoints(initialBalance),
 		Status:         status,
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
@@ -730,9 +731,9 @@ func (b *BillingService) createChannelWalletTransaction(
 	channelID uuid.UUID,
 	attemptID string,
 	txType string,
-	amount int64,
-	before int64,
-	after int64,
+	amount millipoints.MilliPoints,
+	before millipoints.MilliPoints,
+	after millipoints.MilliPoints,
 	metadata map[string]interface{},
 ) error {
 	aid := strings.TrimSpace(attemptID)
