@@ -1404,15 +1404,15 @@ func (s *modelService) ListOfficialModels(ctx context.Context) ([]*model.LLMMode
 		return nil, fmt.Errorf("failed to hydrate official route models: %w", err)
 	}
 
-	// Collect exact provider-model pairs while retaining names for the compatibility query.
+	// Collect advertised model names for the compatibility query. Exact
+	// supplier/model membership is validated per route below so a catalog row
+	// from a same-vendor supplier is not hidden.
 	modelNameSet := make(map[string]bool)
-	providerModelSet := make(map[channelmodel.ProviderModel]struct{})
 	for _, route := range routes {
 		for _, pair := range route.OfficialProviderModels {
 			if pair.Provider == "" || pair.Model == "" {
 				continue
 			}
-			providerModelSet[pair] = struct{}{}
 			modelNameSet[pair.Model] = true
 		}
 	}
@@ -1440,8 +1440,14 @@ func (s *modelService) ListOfficialModels(ctx context.Context) ([]*model.LLMMode
 
 	filtered := make([]*model.LLMModel, 0, len(models))
 	for _, candidate := range models {
-		if _, ok := providerModelSet[channelmodel.ProviderModel{Provider: candidate.Provider, Model: candidate.Model}]; ok {
-			filtered = append(filtered, candidate)
+		for i := range routes {
+			// Match by logical vendor as well as exact supplier: a route may
+			// advertise the model owner's adapter while the catalog row is
+			// keyed by the supplier that fronts that vendor.
+			if routes[i].SupportsPlatformModel(candidate.Provider, candidate.Model) {
+				filtered = append(filtered, candidate)
+				break
+			}
 		}
 	}
 	return filtered, nil

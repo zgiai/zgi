@@ -600,7 +600,10 @@ func (r *ChannelRouter) resolveCatalogModelForRoutes(ctx context.Context, routes
 	}
 	for _, route := range routes {
 		for i := range models {
-			if route.SupportsOfficialProviderModel(models[i].Provider, modelName) {
+			// Same-vendor suppliers are interchangeable here: the route
+			// advertises an adapter/model pair while the catalog row may be
+			// keyed by the commercial supplier of the same logical vendor.
+			if route.SupportsPlatformModel(models[i].Provider, modelName) {
 				return &models[i], nil
 			}
 		}
@@ -1022,18 +1025,16 @@ func (r *ChannelRouter) buildChannelSelection(
 
 	isOfficial := route.IsOfficial || route.Type == shared.RouteTypeZGICloud
 	if llmModel != nil {
-		if isOfficial && !route.SupportsOfficialProviderModel(llmModel.Provider, targetModelName) {
-			resolvedModel, err := r.resolveSameVendorModelForOfficialRoute(ctx, route, llmModel, targetModelName)
-			if err != nil {
-				return nil, err
-			}
-			llmModel = resolvedModel
-		}
+		// Keep the selected supplier model identity: billing and price lookup
+		// must follow the supplier that owns the configured price. Official
+		// routes accept it when the adapter/model pair they advertise belongs
+		// to the same logical vendor, so one supplier can front several
+		// vendors' models without a per-supplier route change.
 		modelProvider = llmModel.Provider
 	}
 	supportsModel := route.SupportsModelForProvider(modelProvider, targetModelName)
 	if isOfficial {
-		supportsModel = route.SupportsOfficialProviderModel(modelProvider, targetModelName)
+		supportsModel = route.SupportsPlatformModel(modelProvider, targetModelName)
 	}
 	if !supportsModel {
 		return nil, fmt.Errorf("model %s not supported by route %s (supported: %v)", targetModelName, route.ID, models)
@@ -1102,44 +1103,6 @@ func (r *ChannelRouter) buildChannelSelection(
 	}
 
 	return selection, nil
-}
-
-// resolveSameVendorModelForOfficialRoute replaces a stale representative
-// supplier with one currently advertised by Console, but only when both rows
-// belong to the same logical model vendor. This keeps model-only selection
-// independent from supplier availability without allowing cross-vendor matches.
-func (r *ChannelRouter) resolveSameVendorModelForOfficialRoute(
-	ctx context.Context,
-	route *channelmodel.LLMRoute,
-	current *llmmodel.LLMModel,
-	modelName string,
-) (*llmmodel.LLMModel, error) {
-	if r == nil || r.db == nil || route == nil || current == nil {
-		return current, nil
-	}
-	currentVendor := logicalCatalogModelVendor(current.Provider, modelName)
-	for _, pair := range route.OfficialProviderModels {
-		pairProvider := strings.TrimSpace(pair.Provider)
-		pairModel := strings.TrimSpace(pair.Model)
-		if pairProvider == "" || pairModel != modelName || logicalCatalogModelVendor(pairProvider, pairModel) != currentVendor {
-			continue
-		}
-		candidate, err := r.getModelForProvider(ctx, pairProvider, modelName)
-		if err == nil {
-			return candidate, nil
-		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("resolve current supplier model %q/%q: %w", pairProvider, modelName, err)
-		}
-	}
-	return current, nil
-}
-
-func logicalCatalogModelVendor(provider, modelName string) string {
-	if vendor := strings.TrimSpace(catalogvendor.Lookup(provider, modelName)); vendor != "" {
-		return strings.ToLower(vendor)
-	}
-	return strings.ToLower(strings.TrimSpace(provider))
 }
 
 func resolveChannelModelSource(privateModel *llmmodel.CustomModel, isPassthroughMode bool) (channelModelSource, uuid.UUID) {

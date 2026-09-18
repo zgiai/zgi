@@ -782,7 +782,7 @@ func TestSelectChannelsForProviderResolvesProviderlessCatalogModelFromEnabledRou
 	}
 }
 
-func TestSelectChannelsForProviderReplacesUnavailableRepresentativeWithinSameVendor(t *testing.T) {
+func TestSelectChannelsForProviderKeepsSupplierIdentityWithinSameVendor(t *testing.T) {
 	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
 	db := openGatewayCatalogDB(t)
 	organizationID := uuid.New()
@@ -814,7 +814,51 @@ func TestSelectChannelsForProviderReplacesUnavailableRepresentativeWithinSameVen
 	require.NoError(t, err)
 	require.Len(t, selections, 1)
 	require.NotNil(t, selections[0].Model)
-	require.Equal(t, "supplier-b", selections[0].Model.Provider)
+	// Routing matches the advertised same-vendor adapter pair, but the
+	// selected model keeps the requested supplier so billing and price lookup
+	// stay on the supplier row.
+	require.Equal(t, "supplier-a", selections[0].Model.Provider)
+	require.Equal(t, UsageBillingLanePlatform, selections[0].BillingLane)
+}
+
+func TestSelectChannelsForProviderMatchesSupplierToAdapterByVendor(t *testing.T) {
+	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
+	db := openGatewayCatalogDB(t)
+	organizationID := uuid.New()
+	const (
+		modelName = "doubao-seedance-2-0-mini-260615"
+		supplier  = "agicto 供应商"
+		adapter   = "doubao"
+	)
+	insertGatewayCatalogModel(t, db, uuid.New(), supplier, modelName)
+	catalogvendor.Replace([]catalogvendor.Entry{{
+		Provider: supplier,
+		Model:    modelName,
+		Vendor:   adapter,
+	}})
+	t.Cleanup(func() { catalogvendor.Replace(nil) })
+
+	router := &ChannelRouter{
+		db: db,
+		organizationIDRouteRepo: &fakeCandidateRouteRepo{routes: []*channelmodel.LLMRoute{{
+			ID:                     uuid.New(),
+			OrganizationID:         organizationID,
+			Type:                   shared.RouteTypeZGICloud,
+			ChannelProvider:        "zgi-cloud",
+			Models:                 []string{modelName},
+			OfficialProviderModels: []channelmodel.ProviderModel{{Provider: adapter, Model: modelName}},
+			IsEnabled:              true,
+			IsOfficial:             true,
+		}}},
+		strategyFactory: NewStrategyFactory(),
+	}
+
+	selections, err := router.SelectChannelsForProvider(t.Context(), organizationID, "", modelName, 1)
+	require.NoError(t, err)
+	require.Len(t, selections, 1)
+	require.NotNil(t, selections[0].Model)
+	require.Equal(t, supplier, selections[0].Model.Provider)
+	require.Equal(t, UsageBillingLanePlatform, selections[0].BillingLane)
 }
 
 func TestSelectChannelsForProviderUsesHintForAmbiguousCatalogModel(t *testing.T) {

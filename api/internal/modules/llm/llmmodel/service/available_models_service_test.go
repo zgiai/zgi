@@ -1583,7 +1583,7 @@ func TestModelServiceOfficialAvailabilityUsesLogicalModel(t *testing.T) {
 	}
 }
 
-func TestListOfficialModelsRequiresExactProviderModelPair(t *testing.T) {
+func TestListOfficialModelsRejectsDifferentVendor(t *testing.T) {
 	db := openOfficialModelServiceDB(t)
 	organizationID := uuid.New()
 	modelName := "same-name"
@@ -1604,6 +1604,34 @@ func TestListOfficialModelsRequiresExactProviderModelPair(t *testing.T) {
 	}
 	if len(models) != 1 || models[0].Provider != "openai" || models[0].Model != modelName {
 		t.Fatalf("official models = %#v, want only openai/%s", models, modelName)
+	}
+}
+
+func TestListOfficialModelsIncludesSameVendorSupplier(t *testing.T) {
+	db := openOfficialModelServiceDB(t)
+	organizationID := uuid.New()
+	modelName := "doubao-seedance-2-0-mini-260615"
+	insertOfficialRouteAndSnapshot(t, db, organizationID, modelName, []channelmodel.ProviderModel{{Provider: "doubao", Model: modelName}})
+	catalogvendor.Replace([]catalogvendor.Entry{{
+		Provider: "agicto 供应商",
+		Model:    modelName,
+		Vendor:   "doubao",
+	}})
+	t.Cleanup(func() { catalogvendor.Replace(nil) })
+	if err := db.Exec(
+		"INSERT INTO llm_models (id, provider, name, is_active, sort_order) VALUES (?, ?, ?, ?, ?)",
+		uuid.New().String(), "agicto 供应商", modelName, true, 0,
+	).Error; err != nil {
+		t.Fatalf("insert supplier model: %v", err)
+	}
+	svc := &modelService{db: db}
+
+	models, err := svc.ListOfficialModels(context.Background())
+	if err != nil {
+		t.Fatalf("ListOfficialModels returned error: %v", err)
+	}
+	if len(models) != 1 || models[0].Provider != "agicto 供应商" || models[0].Model != modelName {
+		t.Fatalf("official models = %#v, want supplier agicto 供应商/%s", models, modelName)
 	}
 }
 
