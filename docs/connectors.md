@@ -51,12 +51,55 @@ and Google's [Gmail learning center](https://support.google.com/a/users/answer/9
 ## Runtime setup
 
 Startup restores validated, digest-checked Connector definitions from the database.
-Accepted schema `1.3.0` / contract V4 definitions retain the `digital_human`
-surface alongside Chat, Agent, and Workflow, with their original authentication
-family and contract digest; this does not enable an additional runtime binding target.
+Older accepted schema `1.3.0` / contract V4 definitions retain the
+`digital_human` surface alongside Chat, Agent, and Workflow, with their original
+authentication family and contract digest. The newer `serverops_ssh` V4 built-in
+declares the `digital_human` surface only: its SSH credential dialect has no
+earlier published base to project onto. The `digital_human` surface supports a
+runtime binding target for the phase-one operations specialist. That target is
+admitted per Connector: retaining the surface on an existing definition, or
+admitting a DigitalHuman-only built-in, does not by itself add the capability,
+grant runtime access, or change any existing connection or binding.
 If a bundled package cannot compatibly replace an accepted version, startup keeps
 the accepted version and reports the rejected update in the Connector admission
 log. Invalid stored contracts and database errors still fail startup.
+
+### SSH Server Operations Connector
+
+The SSH connector creates and verifies a per-owner Linux server connection using
+the server `host`, `port`, `username`, and exactly one authentication method:
+password or SSH private key (with an optional private-key passphrase). The same
+setup panel is available in Connector Center and can be opened in place from an
+Agent or DigitalHuman connection picker, so users do not have to leave the
+current task to create a credential.
+
+Host identity verification is automatic by default. The first test connects
+with the submitted credential, reads the server's SHA256 host-key fingerprint,
+and asks the user to confirm the observed identity before saving. The confirmed
+fingerprint is pinned and checked on every later connection. If an operator
+already has a trusted fingerprint, it remains available under Advanced settings
+for strict verification during the test; the normal form does not require users
+to find and paste one. A changed host key blocks the connection and requires a
+new test and explicit confirmation.
+
+The private key, password, and passphrase are write-only setup values. They are
+used for the probe and final verification, then cleared from the form and are
+never placed in URLs or browser storage. The connection becomes usable only
+after the user confirms the server identity and the strict credential save
+succeeds.
+
+One DigitalHuman can bind multiple independently named, verified server connections
+and select an operation subset for each. When a request could match more than one
+bound server, the operations specialist template instructs the agent to ask the
+owner to clarify the target instead of choosing one. That is template guidance,
+not a platform-enforced deterministic selection, so name the intended target in
+the request. The current release provides exactly three read-only operations:
+system snapshot, systemd service status, and a bounded journal tail. Every
+invocation shows a complete target and action preview and requires fresh owner
+approval; no session grant is created or remembered. SSH operations that require
+fresh owner approval do not run non-interactively; that runtime policy does not
+globally disable other DigitalHuman background features. Deploy, restart, file
+writes, and arbitrary shell commands are not available.
 
 ### Feishu / Lark application Connector
 
