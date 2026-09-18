@@ -8,6 +8,7 @@ import (
 	connectorcredentials "github.com/zgiai/zgi/api/internal/modules/connectors/credentials"
 	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
 	connectorruntimeconfirmation "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeconfirmation"
+	digitalhuman "github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 )
 
 // ConnectorRuntimeConfirmationService is the runtime boundary consumed by the
@@ -89,9 +90,27 @@ func (c *ServiceContainer) getConnectorRuntimeConfirmationCore() *connectorrunti
 		if err != nil {
 			panic(fmt.Sprintf("initialize Connector runtime confirmation service: %v", err))
 		}
+		service = service.WithDigitalHumanContinuationGuard(
+			c.getConnectorDigitalHumanContinuationGuard(),
+		)
 		c.connectorRuntimeConfirmation = service
 	}
 	return c.connectorRuntimeConfirmation
+}
+
+// getConnectorDigitalHumanContinuationGuard returns the fail-closed durable
+// gate that re-reads the waiting DigitalHuman run before a confirmed
+// continuation may route. It reads only durable host state and carries no
+// credential or request input, so it stays unexported as internal wiring.
+func (c *ServiceContainer) getConnectorDigitalHumanContinuationGuard() connectorruntimeconfirmation.DigitalHumanContinuationGuard {
+	if c == nil || c.config == nil || c.db == nil {
+		return nil
+	}
+	guard, err := digitalhuman.NewConnectorConfirmationGuard(c.db)
+	if err != nil {
+		panic(fmt.Sprintf("initialize Connector confirmation DigitalHuman guard: %v", err))
+	}
+	return guard
 }
 
 type connectorRuntimeConfirmationBoundary struct {

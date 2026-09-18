@@ -53,6 +53,9 @@ func (authority *connectorTargetAuthority) authorize(ctx context.Context, org, a
 	if err != nil || id == uuid.Nil || id.String() != target.ID {
 		return targetDenied()
 	}
+	if target.Type == core.TargetTypeDigitalHuman {
+		target.BindingInstanceID = "00000000-0000-0000-0000-000000000001"
+	}
 	if target.Type == core.TargetTypeWorkflow {
 		target.BindingInstanceID = "authority-check"
 	}
@@ -76,6 +79,26 @@ func (authority *connectorTargetAuthority) authorize(ctx context.Context, org, a
 	workspaceID := ""
 	permission := workspace.WorkspacePermissionAgentUpdate
 	switch target.Type {
+	case core.TargetTypeDigitalHuman:
+		var host struct{ WorkspaceID uuid.UUID }
+		query := c.db.WithContext(ctx).
+			Table("digital_humans AS d").
+			Select("d.workspace_id").
+			Joins("JOIN digital_human_versions AS v ON v.digital_human_id = d.id AND v.organization_id = d.organization_id AND v.workspace_id = d.workspace_id").
+			Where("d.id = ? AND d.organization_id = ? AND d.deleted_at IS NULL", id, org)
+		if target.EffectiveScope() == core.ScopePublished {
+			query = query.Where("v.id = ? AND v.state = ?", target.VersionID, "published")
+		} else {
+			query = query.Where("v.id = d.draft_version_id AND v.state = ?", "draft")
+		}
+		if query.Take(&host).Error != nil || host.WorkspaceID == uuid.Nil {
+			return targetDenied()
+		}
+		workspaceID = host.WorkspaceID.String()
+		permission = workspace.WorkspacePermissionDigitalHumanRun
+		if edit {
+			permission = workspace.WorkspacePermissionDigitalHumanUpdate
+		}
 	case core.TargetTypeAgent:
 		agent, err := agentRepository.GetByID(ctx, id.String())
 		if err != nil || agent == nil || agent.ID != id || agent.DeletedAt != nil || agent.TenantID == uuid.Nil {

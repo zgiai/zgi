@@ -1,6 +1,10 @@
 package execution
 
-import "github.com/zgiai/zgi/api/internal/modules/connectors/core"
+import (
+	"github.com/zgiai/zgi/api/internal/capabilities/serverops"
+	"github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
+	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
+)
 
 // BuiltinRiskPolicies is a platform policy, never inferred from plugin hints.
 func BuiltinRiskPolicies() []TrustedOperationRiskPolicy {
@@ -25,5 +29,40 @@ func BuiltinRiskPolicies() []TrustedOperationRiskPolicy {
 	}
 	result = append(result, feishuRiskPolicies()...)
 	result = append(result, mailRiskPolicies()...)
-	return append(result, messagingRiskPolicies()...)
+	result = append(result, messagingRiskPolicies()...)
+	return append(result, serverOpsSSHRiskPolicies()...)
+}
+
+// serverOpsSSHRiskPolicies classifies exactly the three read-only SSH Server
+// Operations actions as RiskHigh, pinned to the complete stable leaf identity
+// frozen by catalog.ServerOpsSSHDefinition.
+//
+// Read-only is the operation Effect, not a risk claim. An SSH read exposes
+// sensitive remote host state (kernel and service inventory, unit state, and
+// journal content that routinely contains secrets), so the platform does not
+// present it as a trusted low-risk read. RiskHigh makes the DigitalHuman surface
+// require a mandatory per-call approval for every use; an operation, tool,
+// driver, auth method, or connector that does not match this exact identity
+// stays unclassified and therefore fails closed.
+func serverOpsSSHRiskPolicies() []TrustedOperationRiskPolicy {
+	rows := []struct {
+		operation, tool string
+	}{
+		{serverops.ActionSystemSnapshot, "serverops_ssh_system_snapshot"},
+		{serverops.ActionServiceStatus, "serverops_ssh_service_status"},
+		{serverops.ActionJournalTail, "serverops_ssh_journal_tail"},
+	}
+	result := make([]TrustedOperationRiskPolicy, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, TrustedOperationRiskPolicy{
+			ConnectorID:    core.Identifier(catalog.ServerOpsSSHConnectorID),
+			ProviderID:     core.Identifier(catalog.ServerOpsSSHProviderID),
+			DriverID:       core.Identifier(catalog.ServerOpsSSHDriverID),
+			AuthMethodID:   core.Identifier(catalog.ServerOpsSSHAuthMethodID),
+			OperationID:    core.Identifier(row.operation),
+			ToolName:       row.tool,
+			Classification: RiskHigh,
+		})
+	}
+	return result
 }

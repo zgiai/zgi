@@ -302,9 +302,26 @@ func projectConnectorOperations(
 				strings.TrimSpace(operation.ToolName) == "" || len(operation.InputSchema) == 0 {
 				return nil, fmt.Errorf("%w: incomplete Connector operation projection", ErrInvalidInput)
 			}
+			// A DigitalHuman host may bind the same Connector operation more than
+			// once. Its model-visible description therefore carries a short opaque
+			// server target marker for the exact bound Connection, while Chat and
+			// Agent keep their unchanged description. A malformed or nil identity
+			// fails the whole projection closed rather than leaking a raw id.
+			description := connectortools.OperationRuntimeDescription(capability.Definition, operation)
+			if surface == catalog.SurfaceDigitalHuman {
+				projected, projectionErr := connectortools.DigitalHumanConnectionRuntimeDescription(
+					description,
+					capability.ConnectionID.String(),
+					capability.ConnectionLabel,
+				)
+				if projectionErr != nil {
+					return nil, fmt.Errorf("%w: %v", ErrInvalidInput, projectionErr)
+				}
+				description = projected
+			}
 			projections = append(projections, operationProjection{
 				skillID: skillID, connectorID: connectorID, instanceID: strings.TrimSpace(capability.Target.BindingInstanceID), operation: operation,
-				description: connectortools.OperationRuntimeDescription(capability.Definition, operation),
+				description: description,
 			})
 		}
 	}

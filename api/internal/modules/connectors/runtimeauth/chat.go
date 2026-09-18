@@ -39,14 +39,18 @@ type ChatCapabilityRequest struct {
 
 // ChatCapability contains only the safe catalog and stable relationship
 // identities required to expose currently usable operations. A Connection's
-// encrypted credential envelope is deliberately not retained here.
+// encrypted credential envelope is deliberately not retained here. The
+// optional user-controlled display label is metadata only: it never
+// participates in authorization or dispatch and is sanitized before it reaches
+// a model-visible description.
 type ChatCapability struct {
-	Target       core.TargetRef
-	BindingID    uuid.UUID
-	ConnectionID uuid.UUID
-	ConnectorID  core.Identifier
-	Definition   catalog.Definition
-	Operations   []catalog.Operation
+	Target          core.TargetRef
+	BindingID       uuid.UUID
+	ConnectionID    uuid.UUID
+	ConnectionLabel string
+	ConnectorID     core.Identifier
+	Definition      catalog.Definition
+	Operations      []catalog.Operation
 }
 
 type ChatCapabilitySnapshot struct {
@@ -188,7 +192,10 @@ func (resolver *ChatResolver) resolveTargetCapabilities(
 		capabilities = append(capabilities, ChatCapability{
 			Target:    binding.Target,
 			BindingID: binding.ID, ConnectionID: binding.ConnectionID,
-			ConnectorID: binding.ConnectorID, Definition: definition, Operations: operations,
+			// Only the owner-scoped display name is copied. Credentials, host
+			// values and other private connection metadata stay in persistence.
+			ConnectionLabel: connection.Name,
+			ConnectorID:     binding.ConnectorID, Definition: definition, Operations: operations,
 		})
 	}
 	sort.Slice(capabilities, func(i, j int) bool {

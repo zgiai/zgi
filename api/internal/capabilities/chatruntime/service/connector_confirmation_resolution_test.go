@@ -282,6 +282,22 @@ func TestRecordConnectorConfirmationResolutionDigitalHumanRunMismatchConflicts(t
 	}
 }
 
+func TestRecordConnectorConfirmationResolutionRejectsDigitalHumanRememberForSession(t *testing.T) {
+	db, mock := newConnectorConfirmationResolutionTestDB(t)
+	command, result, _, _ := digitalHumanConfirmationResolutionFixture()
+	command.RememberForSession = true
+
+	err := (&service{repos: repository.NewRepositories(db)}).RecordConnectorConfirmationResolution(
+		context.Background(), command, result,
+	)
+	if !connectorcore.IsErrorCode(err, connectorcore.ErrorCodeAccessDenied) {
+		t.Fatalf("error = %v, want access denied", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
 func TestConnectorConfirmationResolutionValidatesDigitalHumanHostVersionAndRun(t *testing.T) {
 	command, result, digitalHumanID, conversationID := digitalHumanConfirmationResolutionFixture()
 

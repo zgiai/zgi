@@ -2,6 +2,8 @@ package runtimeauth_test
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -276,6 +278,47 @@ func TestDigitalHumanResolverRejectsInvalidIdentityRequests(t *testing.T) {
 		t.Fatal("invalid identity request reached a dependency")
 	}
 }
+
+// TestDigitalHumanResolverProjectsOnlyTheConnectionDisplayLabel proves that the
+// model-visible capability carries only the owner-scoped display name, never the
+// credential envelope or other private connection metadata.
+func TestDigitalHumanResolverProjectsOnlyTheConnectionDisplayLabel(t *testing.T) {
+	t.Parallel()
+
+	const (
+		label                = "Team GitHub"
+		credentialSentinel   = "opaque-credential-envelope-sentinel"
+		externalIDSentinel   = "private-external-account-sentinel"
+		externalNameSentinel = "private-external-display-name-sentinel"
+	)
+	harness := newDigitalHumanHarness(t)
+	harness.connection.Name = label
+	harness.connection.EncryptedCredentials = credentialSentinel
+	harness.connection.ExternalAccountID = stringPointer(externalIDSentinel)
+	harness.connection.ExternalDisplayName = stringPointer(externalNameSentinel)
+
+	snapshot, err := harness.resolver.ResolveDigitalHumanCapabilities(
+		context.Background(), harness.capabilityRequest(core.ScopeDraft, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Capabilities) != 1 {
+		t.Fatalf("capabilities = %#v", snapshot.Capabilities)
+	}
+	capability := snapshot.Capabilities[0]
+	if capability.ConnectionLabel != label || capability.ConnectionID != harness.connection.ID ||
+		capability.BindingID != harness.binding.ID {
+		t.Fatalf("capability = %#v, want label %q for connection %s", capability, label, harness.connection.ID)
+	}
+	rendered := fmt.Sprintf("%#v", snapshot)
+	for _, forbidden := range []string{credentialSentinel, externalIDSentinel, externalNameSentinel} {
+		if strings.Contains(rendered, forbidden) {
+			t.Fatalf("capability snapshot leaked private connection data %q", forbidden)
+		}
+	}
+}
+
+func stringPointer(value string) *string { return &value }
 
 type digitalHumanHarness struct {
 	organizationID uuid.UUID

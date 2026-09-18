@@ -146,6 +146,14 @@ func validateConnectorConfirmationResolution(
 		(command.RememberForSession && command.Decision != connectorexecution.ConfirmationDecisionConfirmed) {
 		return connectorConfirmationResolution{}, connectorResolutionError(connectorcore.ErrorCodeInvalidInput)
 	}
+	// Defense in depth: a DigitalHuman continuation is always one-shot and never
+	// carries a session grant. The continuation service already rejects this
+	// combination, but this layer must not mint a grant even if it is reached
+	// directly with an impossible command. Reject narrowly instead of silently
+	// ignoring the flag or changing any other surface.
+	if command.RememberForSession && result.Origin.Surface == connectorcore.TargetTypeDigitalHuman {
+		return connectorConfirmationResolution{}, connectorResolutionError(connectorcore.ErrorCodeAccessDenied)
+	}
 	receipt, ok := canonicalConnectorResolutionUUID(string(command.RouteReceipt))
 	if !ok {
 		return connectorConfirmationResolution{}, connectorResolutionError(connectorcore.ErrorCodeInvalidInput)

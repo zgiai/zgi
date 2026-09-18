@@ -24,7 +24,8 @@ const (
 // Command contains the authenticated owner scope and the only two values a
 // client may submit. The original operation identity and input are always
 // restored from ConfirmationContinuationStore. RememberForSession is a
-// separate governance preference and never changes the frozen request.
+// separate governance preference and never changes the frozen request; it is
+// rejected for a DigitalHuman origin, whose continuation is always one-shot.
 type Command struct {
 	OrganizationID     uuid.UUID
 	OwnerAccountID     uuid.UUID
@@ -95,12 +96,41 @@ type TerminalRecoverer interface {
 	RecoverTerminal(context.Context, TerminalRecoveryRequest) (execution.ConfirmationTerminal, error)
 }
 
+// digitalHumanOriginVersion is the sealed origin schema version of a
+// DigitalHuman host continuation. The hosting run is resumed only when the
+// restored origin and the durable run both carry this version.
+const digitalHumanOriginVersion = 2
+
+// DigitalHumanContinuationGuardRequest is the complete non-secret identity a
+// durable DigitalHuman hosting run must still match before a confirmation
+// continuation may reach the execution Router. It deliberately carries no
+// credential, provider value, frozen operation, or request input.
+type DigitalHumanContinuationGuardRequest struct {
+	OrganizationID        uuid.UUID
+	OwnerAccountID        uuid.UUID
+	DigitalHumanID        uuid.UUID
+	DigitalHumanVersionID uuid.UUID
+	RunID                 uuid.UUID
+	ConversationID        uuid.UUID
+	MessageID             uuid.UUID
+	RouteReceipt          execution.RouteClaimReceipt
+}
+
+// DigitalHumanContinuationGuard is the fail-closed boundary that verifies the
+// current durable DigitalHuman run is still waiting for this exact receipt.
+// Implementations own only a read-only durable lookup; they must never resolve
+// credentials or invoke a provider.
+type DigitalHumanContinuationGuard interface {
+	AuthorizeContinuation(context.Context, DigitalHumanContinuationGuardRequest) error
+}
+
 // Service owns terminal continuation semantics around the shared execution
 // Router and the durable owner-scoped continuation store.
 type Service struct {
-	store     execution.ConfirmationContinuationStore
-	router    ExecutionRouter
-	recoverer TerminalRecoverer
+	store             execution.ConfirmationContinuationStore
+	router            ExecutionRouter
+	recoverer         TerminalRecoverer
+	digitalHumanGuard DigitalHumanContinuationGuard
 }
 
 func NewService(
@@ -112,6 +142,22 @@ func NewService(
 		return nil, core.NewError(core.ErrorCodeInternal, false, nil)
 	}
 	return &Service{store: store, router: router, recoverer: recoverer}, nil
+}
+
+// WithDigitalHumanContinuationGuard attaches the durable gate that must
+// authorize every origin DigitalHuman continuation before the Router may
+// resolve credentials or invoke a provider. Production wiring always attaches
+// it. Chat, Agent, and Workflow callers keep their existing flow because the
+// gate is only consulted for a DigitalHuman origin. A nil guard keeps the
+// Service constructible for those callers but makes any DigitalHuman
+// continuation fail closed.
+func (service *Service) WithDigitalHumanContinuationGuard(
+	guard DigitalHumanContinuationGuard,
+) *Service {
+	if service != nil {
+		service.digitalHumanGuard = guard
+	}
+	return service
 }
 
 // Continue restores the server-authoritative request, adds only the submitted
@@ -136,10 +182,27 @@ func (service *Service) Continue(ctx context.Context, command Command) (Result, 
 	if err != nil {
 		return Result{}, err
 	}
+	// The surface is selected only by the trusted frozen origin. Remembering a
+	// session grant is a Chat/Agent/Workflow governance preference that the
+	// DigitalHuman surface never supports: execution ignores session grants for
+	// it, the UI never offers the flag, and the host resumes exactly one pinned
+	// run. Reject the forged preference against the restored origin before the
+	// durable host guard or Router.Route so no continuation state can resolve
+	// credentials, invoke a provider, or mint a session grant. The error is
+	// deliberately sanitized.
+	if err := rejectDigitalHumanSessionGrant(command, continuation.Frozen.Origin); err != nil {
+		return Result{}, err
+	}
 	if continuation.State != execution.ConfirmationContinuationPending {
 		return projectExisting(continuation, command.Decision)
 	}
 	if err := authorizeFrozenRequest(command, continuation.Frozen); err != nil {
+		return Result{}, err
+	}
+	// A DigitalHuman host may only resume the exact waiting run that owns the
+	// receipt. This check is performed before Router.Route so an invalid or
+	// stale host state can never reach credential resolution or a provider.
+	if err := service.authorizeDigitalHumanContinuation(ctx, continuation); err != nil {
 		return Result{}, err
 	}
 
@@ -358,6 +421,107 @@ func authorizeFrozenRequest(command Command, frozen execution.FrozenConfirmation
 		return core.NewError(core.ErrorCodeAccessDenied, false, nil)
 	}
 	return nil
+}
+
+// rejectDigitalHumanSessionGrant denies a client-submitted session-remember
+// preference when the trusted frozen origin is a DigitalHuman surface.
+// DigitalHuman confirmations are always one-shot; only the server-restored
+// origin may select the surface, so a forged remember_for_session flag can
+// never widen governance. Every rejection is a sanitized access-denied error.
+func rejectDigitalHumanSessionGrant(
+	command Command,
+	origin execution.ConfirmationOrigin,
+) error {
+	if command.RememberForSession && origin.Surface == core.TargetTypeDigitalHuman {
+		return core.NewError(core.ErrorCodeAccessDenied, false, nil)
+	}
+	return nil
+}
+
+// authorizeDigitalHumanContinuation runs the fail-closed durable host gate for
+// DigitalHuman origins before any credential resolution or provider access.
+// Chat, Agent, and Workflow origins return immediately, preserving their
+// existing flow. A DigitalHuman origin with no wired guard is denied rather
+// than routed.
+//
+// In-flight semantic: the guard reads durable state once, immediately before
+// routing. It denies a run that is already canceled when the confirmation
+// arrives, but it cannot stop a cancellation requested after this read while
+// the approved operation is already in flight. That race belongs to the
+// existing run cancellation semantics; this service must not hold a
+// transaction open across provider access to close it.
+func (service *Service) authorizeDigitalHumanContinuation(
+	ctx context.Context,
+	continuation execution.ConfirmationContinuation,
+) error {
+	if continuation.Frozen.Origin.Surface != core.TargetTypeDigitalHuman {
+		return nil
+	}
+	request, err := digitalHumanGuardRequest(continuation)
+	if err != nil {
+		return err
+	}
+	if service.digitalHumanGuard == nil {
+		return core.NewError(core.ErrorCodeInternal, false, nil)
+	}
+	return service.digitalHumanGuard.AuthorizeContinuation(ctx, request)
+}
+
+// digitalHumanGuardRequest restores and validates the exact non-secret host
+// identity sealed with the continuation. It rejects any origin that is not the
+// version-2 DigitalHuman schema, any value that is not a canonical UUID, and
+// any disagreement between the origin and the published request target before
+// the guard is allowed to read durable state. Every rejection is a sanitized
+// access-denied error.
+func digitalHumanGuardRequest(
+	continuation execution.ConfirmationContinuation,
+) (DigitalHumanContinuationGuardRequest, error) {
+	frozen := continuation.Frozen
+	origin := frozen.Origin
+	request := frozen.Request
+	if origin.Surface != core.TargetTypeDigitalHuman ||
+		origin.OriginVersion != digitalHumanOriginVersion ||
+		origin.AgentID != "" || origin.WorkflowID != "" || origin.NodeID != "" ||
+		request.Target.Type != core.TargetTypeDigitalHuman ||
+		request.Target.EffectiveScope() != core.ScopePublished ||
+		request.Target.Validate() != nil {
+		return DigitalHumanContinuationGuardRequest{}, core.NewError(core.ErrorCodeAccessDenied, false, nil)
+	}
+	digitalHumanID, ok := canonicalDigitalHumanUUID(origin.DigitalHumanID)
+	if !ok {
+		return DigitalHumanContinuationGuardRequest{}, core.NewError(core.ErrorCodeAccessDenied, false, nil)
+	}
+	runID, ok := canonicalDigitalHumanUUID(origin.RunID)
+	if !ok {
+		return DigitalHumanContinuationGuardRequest{}, core.NewError(core.ErrorCodeAccessDenied, false, nil)
+	}
+	conversationID, ok := canonicalDigitalHumanUUID(origin.ConversationID)
+	if !ok {
+		return DigitalHumanContinuationGuardRequest{}, core.NewError(core.ErrorCodeAccessDenied, false, nil)
+	}
+	messageID, ok := canonicalDigitalHumanUUID(origin.MessageID)
+	if !ok {
+		return DigitalHumanContinuationGuardRequest{}, core.NewError(core.ErrorCodeAccessDenied, false, nil)
+	}
+	versionID, ok := canonicalDigitalHumanUUID(request.Target.VersionID)
+	if !ok || request.Target.ID != origin.DigitalHumanID {
+		return DigitalHumanContinuationGuardRequest{}, core.NewError(core.ErrorCodeAccessDenied, false, nil)
+	}
+	return DigitalHumanContinuationGuardRequest{
+		OrganizationID:        request.OrganizationID,
+		OwnerAccountID:        request.OwnerAccountID,
+		DigitalHumanID:        digitalHumanID,
+		DigitalHumanVersionID: versionID,
+		RunID:                 runID,
+		ConversationID:        conversationID,
+		MessageID:             messageID,
+		RouteReceipt:          frozen.RouteReceipt,
+	}, nil
+}
+
+func canonicalDigitalHumanUUID(value string) (uuid.UUID, bool) {
+	parsed, err := uuid.Parse(value)
+	return parsed, err == nil && parsed != uuid.Nil && parsed.String() == value
 }
 
 func terminalFromExecution(result execution.ExecutionResult, routeErr error) execution.ConfirmationTerminal {

@@ -50,7 +50,7 @@ func TestConnectorServicesInitializeWithoutLegacyExternalIntegrations(t *testing
 		t.Fatalf("GitHub Connector definition = %#v, found=%v", githubDefinition, githubFound)
 	}
 	if !exaFound || exaDefinition.Classification != connectorcatalog.ClassificationConnector ||
-		exaDefinition.PluginVersion != "1.2.1" || len(exaDefinition.CapabilityTypes) != 1 ||
+		exaDefinition.PluginVersion != "1.2.1-digitalhuman.1" || len(exaDefinition.CapabilityTypes) != 1 ||
 		exaDefinition.CapabilityTypes[0] != connectorcatalog.CapabilityTypeData {
 		t.Fatalf("Exa Connector definition = %#v, found=%v", exaDefinition, exaFound)
 	}
@@ -80,6 +80,83 @@ func TestConnectorServicesInitializeWithoutLegacyExternalIntegrations(t *testing
 	}
 	if container.GetConnectorChatRuntimeResolver() == nil || container.GetConnectorAgentRuntimeResolver() == nil {
 		t.Fatal("Connector Chat/Agent runtime resolvers must be available without an opt-in flag")
+	}
+}
+
+func TestBuiltinConnectorCatalogProjectsSupportedSurfacesForDigitalHumans(t *testing.T) {
+	container := &ServiceContainer{}
+	catalog := container.GetConnectorCatalog()
+
+	for _, id := range []string{"github", "web-search", "feishu", "dingtalk", "wecom", "weixin", "serverops_ssh"} {
+		definition, found := catalog.Get(id)
+		if !found {
+			t.Fatalf("builtin connector %q is missing from the catalog", id)
+		}
+		if !definition.Supports(connectorcatalog.SurfaceDigitalHuman) {
+			t.Fatalf("builtin connector %q does not support the Digital-Human surface: %v", id, definition.Surfaces)
+		}
+	}
+
+	// Mail providers retain their separate mail credential contract and are not
+	// silently exposed as Digital-Human host connectors by the projection.
+	for _, id := range []string{"gmail", "qqmail", "netease163"} {
+		definition, found := catalog.Get(id)
+		if !found {
+			t.Fatalf("builtin mail connector %q is missing from the catalog", id)
+		}
+		if definition.Supports(connectorcatalog.SurfaceDigitalHuman) {
+			t.Fatalf("mail connector %q was unexpectedly projected to Digital-Human: %v", id, definition.Surfaces)
+		}
+	}
+}
+
+// TestConnectorCandidateVerifierRegistersNetworkFreeSSHServerOpsDriver pins the
+// production SSH Server Operations wiring. providers.NewRuntime fails closed
+// when any non-messaging, non-mail built-in lacks its driver, so a successful
+// verifier assembly while the SSH contract is admitted proves the SSH driver is
+// registered. Assembly builds the capability through serverops.New, which is
+// constructor-only and never dials, so the whole graph is constructed without
+// network work and remains the single cached instance.
+func TestConnectorCandidateVerifierRegistersNetworkFreeSSHServerOpsDriver(t *testing.T) {
+	container := &ServiceContainer{config: connectorOnlyTestConfig()}
+	if _, admitted := container.GetConnectorCatalog().Get(connectorcatalog.ServerOpsSSHConnectorID); !admitted {
+		t.Fatal("SSH Server Operations contract is not admitted")
+	}
+	verifier := container.GetConnectorCandidateVerifier()
+	if verifier == nil {
+		t.Fatal("candidate verifier did not register the SSH Server Operations driver")
+	}
+	if container.GetConnectorCandidateVerifier() != verifier {
+		t.Fatal("candidate verifier getter is not stable")
+	}
+}
+
+// TestServerOpsSSHHostKeyProbeReusesCandidateCapability pins the shared SSH
+// capability wiring: the probe getter returns the cached adapter client, and
+// assembling the candidate verifier reuses the exact same *serverops.Service
+// instead of building a second capability for probing.
+func TestServerOpsSSHHostKeyProbeReusesCandidateCapability(t *testing.T) {
+	container := &ServiceContainer{config: connectorOnlyTestConfig()}
+	probe := container.GetServerOpsSSHHostKeyProbe()
+	if probe == nil {
+		t.Fatal("host-key probe is not wired")
+	}
+	if container.GetServerOpsSSHHostKeyProbe() != probe {
+		t.Fatal("host-key probe getter is not stable")
+	}
+	service := container.connectorServerOpsService
+	client := container.connectorServerOpsSSHClient
+	if service == nil || client == nil {
+		t.Fatal("server operations capability/client was not cached")
+	}
+	if any(probe) != any(client) {
+		t.Fatal("probe does not return the cached adapter client")
+	}
+	if container.GetConnectorCandidateVerifier() == nil {
+		t.Fatal("candidate verifier did not register the SSH driver")
+	}
+	if container.connectorServerOpsService != service || container.connectorServerOpsSSHClient != client {
+		t.Fatal("candidate verifier built a second server operations capability")
 	}
 }
 

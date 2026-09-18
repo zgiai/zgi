@@ -188,6 +188,12 @@ func connectorLocalizedCatalogSnapshot(t *testing.T, surface catalog.Surface) (*
 	}
 	snapshot := connectorruntimeauth.ChatCapabilitySnapshot{}
 	for _, definition := range definitions {
+		// Only built-ins that support the requested surface belong in a
+		// surface-scoped capability snapshot. The DigitalHuman-only SSH
+		// contract is projected by its own DigitalHuman host instead.
+		if !definition.Supports(surface) {
+			continue
+		}
 		snapshot.Capabilities = append(snapshot.Capabilities, connectorruntimeauth.ChatCapability{
 			BindingID: uuid.New(), ConnectionID: uuid.New(), ConnectorID: core.Identifier(definition.ID),
 			Definition: definition, Operations: definition.Operations,

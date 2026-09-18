@@ -88,6 +88,9 @@ func TestConnectorRoutesCatalogContractAndOwnerScope(t *testing.T) {
 		item.Capabilities[0].NameI18n["zh-Hans"] != "列出仓库" || item.Capabilities[0].DescriptionI18n["zh-Hans"] != "列出可用仓库" {
 		t.Fatalf("catalog localized metadata or multi-connection summary = %#v", item)
 	}
+	if len(item.SupportedSurfaces) != len(connectorcatalog.FirstReleaseSurfaces()) {
+		t.Fatalf("catalog supported surfaces = %#v", item.SupportedSurfaces)
+	}
 
 	detail := connectorRouteRequest(t, router, http.MethodGet, "/console/api/connectors/catalog/github", "", nil)
 	if detail.Code != http.StatusOK || !strings.Contains(detail.Body.String(), ownerConnection.ID.String()) {
@@ -113,6 +116,13 @@ func TestConnectorRoutesCatalogContractAndOwnerScope(t *testing.T) {
 		t.Fatalf("same-account connections were collapsed or leaked: %s", listed.Body.String())
 	}
 	assertConnectorRouteBodyIsSecretFree(t, listed.Body.String())
+}
+
+func TestConnectorCatalogProjectsDigitalHumanSurface(t *testing.T) {
+	item := projectCatalogItem(connectorcatalog.ServerOpsSSHDefinition(), nil)
+	if len(item.SupportedSurfaces) != 1 || item.SupportedSurfaces[0] != connectorcatalog.SurfaceDigitalHuman {
+		t.Fatalf("serverops supported surfaces = %#v", item.SupportedSurfaces)
+	}
 }
 
 func TestConnectorRoutesCatalogCountsEveryConnectionNeedingAttention(t *testing.T) {
