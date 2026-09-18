@@ -178,6 +178,9 @@ func pricingHasAnyPrice(raw json.RawMessage) bool {
 	if envelope.PricePerImage != nil {
 		return true
 	}
+	if envelope.ImageTokenPricing != nil && imageTokenPricingHasPrice(*envelope.ImageTokenPricing) {
+		return true
+	}
 	if videoGenerationHasPrice(envelope.VideoGeneration) {
 		return true
 	}

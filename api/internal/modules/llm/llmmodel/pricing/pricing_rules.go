@@ -57,7 +57,10 @@ var pricingRuleMeterUnits = map[string]map[string]string{
 	"embedding": {"input_token": "per_1m_tokens"},
 	"rerank":    {"input_token": "per_1m_tokens"},
 	"image_generation": {
-		"image": "per_image",
+		"image":             "per_image",
+		"input_text_token":  "per_1m_tokens",
+		"input_image_token": "per_1m_tokens",
+		"output_token":      "per_1m_tokens",
 	},
 	"video_generation": {
 		"output_video_second": "second",
@@ -153,6 +156,15 @@ func applyLegacyProjectionOverrides(raw json.RawMessage, opts PricingWriteOption
 			pricing.PricePerImage = nil
 			changed = true
 		}
+	}
+
+	if pricing.ImageTokenPricing != nil && !imageTokenPricingProjectionMatchesRules(pricing.ImageTokenPricing, pricing.Rules) {
+		imageRules := synthesizeImageTokenRulesFromLegacy(*pricing.ImageTokenPricing)
+		for index := range imageRules {
+			imageRules[index].Configured = boolPtr(true)
+		}
+		pricing.Rules = append(filterOutImageTokenRules(pricing.Rules), imageRules...)
+		changed = true
 	}
 
 	if pricing.VideoGeneration != nil && !videoProjectionMatchesRules(pricing.VideoGeneration, pricing.Rules, currency) {
@@ -513,6 +525,9 @@ func synthesizeRulesFromLegacyProjections(pricing structuredPricing, scalars Leg
 			Configured: boolPtr(false),
 		})
 	}
+	if pricing.ImageTokenPricing != nil {
+		rules = append(rules, synthesizeImageTokenRulesFromLegacy(*pricing.ImageTokenPricing)...)
+	}
 	if pricing.VideoGeneration != nil {
 		rules = append(rules, synthesizeVideoRulesFromLegacy(pricing.VideoGeneration)...)
 	}
@@ -584,6 +599,106 @@ func synthesizeTokenRulesFromTokenTiers(tiers []structuredPriceTier, operation s
 		appendTokenRule(prefix+"-cache-write-1h", "cache_write_1h_token", tier.CacheWrite1hPricePerMillion)
 	}
 	return rules
+}
+
+// synthesizeImageTokenRulesFromLegacy converts the image_token_pricing block
+// into canonical image_generation token rules. Absent prices are skipped so the
+// resolver fallback stays the single source of the input-tier mirroring.
+func synthesizeImageTokenRulesFromLegacy(pricing structuredImageTokenPricing) []structuredRule {
+	prices := []struct {
+		id    string
+		meter string
+		price *float64
+	}{
+		{id: "image-token-text-input", meter: "input_text_token", price: pricing.TextInputPricePerMillion},
+		{id: "image-token-image-input", meter: "input_image_token", price: pricing.ImageInputPricePerMillion},
+		{id: "image-token-output", meter: "output_token", price: pricing.OutputPricePerMillion},
+	}
+	rules := make([]structuredRule, 0, len(prices))
+	for _, entry := range prices {
+		if entry.price == nil {
+			continue
+		}
+		rules = append(rules, structuredRule{
+			ID:         entry.id,
+			Operation:  "image_generation",
+			Meter:      entry.meter,
+			Unit:       "per_1m_tokens",
+			Price:      formatPricingDecimal(*entry.price),
+			Configured: boolPtr(false),
+		})
+	}
+	return rules
+}
+
+// deriveImageTokenPricingFromRules rebuilds the image_token_pricing projection
+// from image_generation token rules. It returns nil when none are present.
+func deriveImageTokenPricingFromRules(rules []structuredRule) *structuredImageTokenPricing {
+	block := structuredImageTokenPricing{}
+	found := false
+	for _, rule := range rules {
+		if rule.Operation != "image_generation" || !isImageTokenMeter(rule.Meter) {
+			continue
+		}
+		value, ok := parsePricingDecimal(rule.Price)
+		if !ok {
+			continue
+		}
+		switch rule.Meter {
+		case "input_text_token":
+			block.TextInputPricePerMillion = floatPtr(value)
+		case "input_image_token":
+			block.ImageInputPricePerMillion = floatPtr(value)
+		case "output_token":
+			block.OutputPricePerMillion = floatPtr(value)
+		}
+		found = true
+	}
+	if !found {
+		return nil
+	}
+	return &block
+}
+
+func imageTokenPricingHasPrice(pricing structuredImageTokenPricing) bool {
+	return pricing.TextInputPricePerMillion != nil ||
+		pricing.ImageInputPricePerMillion != nil ||
+		pricing.OutputPricePerMillion != nil
+}
+
+func imageTokenPricingProjectionMatchesRules(block *structuredImageTokenPricing, rules []structuredRule) bool {
+	if block == nil {
+		return false
+	}
+	derived := deriveImageTokenPricingFromRules(rules)
+	if derived == nil {
+		return false
+	}
+	// Currency is informational: rules[] do not carry it, so compare only the
+	// price fields to avoid needless rewrites on every authoring pass.
+	candidate := *block
+	candidate.Currency = ""
+	return jsonValueEqual(derived, candidate)
+}
+
+func isImageTokenMeter(meter string) bool {
+	switch meter {
+	case "input_text_token", "input_image_token", "output_token":
+		return true
+	default:
+		return false
+	}
+}
+
+func filterOutImageTokenRules(rules []structuredRule) []structuredRule {
+	kept := make([]structuredRule, 0, len(rules))
+	for _, rule := range rules {
+		if rule.Operation == "image_generation" && isImageTokenMeter(rule.Meter) {
+			continue
+		}
+		kept = append(kept, rule)
+	}
+	return kept
 }
 
 func synthesizeTokenRulesFromScalars(scalars LegacyScalarPrices, operation string, existing []structuredRule) []structuredRule {
@@ -750,6 +865,7 @@ func applyDerivedLegacyProjections(pricing *structuredPricing, currency string) 
 
 	pricing.TokenTiers = deriveTokenTiersFromRules(pricing.Rules)
 	pricing.PricePerImage = derivePricePerImageFromRules(pricing.Rules)
+	pricing.ImageTokenPricing = deriveImageTokenPricingFromRules(pricing.Rules)
 	pricing.VideoGeneration = deriveVideoGenerationFromRules(pricing.Rules, currency)
 	if pricing.VideoGeneration != nil && originalVideo != nil {
 		pricing.VideoGeneration.TokenEstimation = originalVideo.TokenEstimation

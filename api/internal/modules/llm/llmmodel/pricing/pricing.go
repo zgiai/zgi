@@ -26,6 +26,18 @@ type structuredPricing struct {
 	PricePerImage   *float64                          `json:"price_per_image,omitempty"`
 	VideoGeneration *structuredVideoGenerationPricing `json:"video_generation,omitempty"`
 	Metered         []structuredMeteredPricing        `json:"metered,omitempty"`
+	// ImageTokenPricing, when present, is the explicit switch that moves image
+	// generation from the flat per-image price onto upstream token usage.
+	ImageTokenPricing *structuredImageTokenPricing `json:"image_token_pricing,omitempty"`
+}
+
+// structuredImageTokenPricing carries the three per-million-token prices used
+// to bill token-metered image generation: text input, image input, and output.
+type structuredImageTokenPricing struct {
+	Currency                  string   `json:"currency,omitempty"`
+	TextInputPricePerMillion  *float64 `json:"text_input_price_per_million,omitempty"`
+	ImageInputPricePerMillion *float64 `json:"image_input_price_per_million,omitempty"`
+	OutputPricePerMillion     *float64 `json:"output_price_per_million,omitempty"`
 }
 
 type structuredMeteredPricing struct {
@@ -170,6 +182,17 @@ type ImageGenerationPrice struct {
 	Conditions     map[string]string
 }
 
+// ImageTokenPricing is the resolved three-tier source price for token-metered
+// image generation. Prices are per one million tokens in the model pricing
+// currency.
+type ImageTokenPricing struct {
+	TextInputPricePerMillion  float64
+	ImageInputPricePerMillion float64
+	OutputPricePerMillion     float64
+	RuleID                    string
+	PricingVersion            string
+}
+
 // ValidateStructuredPricing reports whether pricing is present and valid.
 func ValidateStructuredPricing(raw json.RawMessage) (bool, error) {
 	raw = bytes.TrimSpace(raw)
@@ -186,14 +209,15 @@ func ValidateStructuredPricing(raw json.RawMessage) (bool, error) {
 	hasImagePrice := pricing.PricePerImage != nil
 	hasVideoGeneration := pricing.VideoGeneration != nil
 	hasMeteredPricing := len(pricing.Metered) > 0
+	hasImageTokenPricing := pricing.ImageTokenPricing != nil
 	kindCount := 0
-	for _, present := range []bool{hasTokenTiers, hasImagePrice, hasVideoGeneration, hasMeteredPricing} {
+	for _, present := range []bool{hasTokenTiers, hasImagePrice, hasVideoGeneration, hasMeteredPricing, hasImageTokenPricing} {
 		if present {
 			kindCount++
 		}
 	}
 	if kindCount == 0 && !hasRules {
-		return true, fmt.Errorf("invalid pricing: at least one of rules, token_tiers, price_per_image, video_generation, or metered is required")
+		return true, fmt.Errorf("invalid pricing: at least one of rules, token_tiers, price_per_image, image_token_pricing, video_generation, or metered is required")
 	}
 	if hasRules {
 		if err := validatePricingRules(pricing.Rules); err != nil {
@@ -218,6 +242,11 @@ func ValidateStructuredPricing(raw json.RawMessage) (bool, error) {
 	}
 	if hasMeteredPricing {
 		if err := validateMeteredPricing(pricing.Metered); err != nil {
+			return true, err
+		}
+	}
+	if hasImageTokenPricing {
+		if err := validateImageTokenPricing(*pricing.ImageTokenPricing); err != nil {
 			return true, err
 		}
 	}
@@ -265,6 +294,33 @@ func ValidateStructuredPricing(raw json.RawMessage) (bool, error) {
 		}
 	}
 	return true, nil
+}
+
+// validateImageTokenPricing accepts a block with at least one non-negative
+// per-million-token price and an optional uppercase currency code.
+func validateImageTokenPricing(pricing structuredImageTokenPricing) error {
+	if currency := strings.TrimSpace(pricing.Currency); currency != "" && !isUppercaseCurrencyCode(currency) {
+		return fmt.Errorf("invalid pricing: image_token_pricing.currency must be a three-letter uppercase code")
+	}
+	prices := []*float64{
+		pricing.TextInputPricePerMillion,
+		pricing.ImageInputPricePerMillion,
+		pricing.OutputPricePerMillion,
+	}
+	hasPrice := false
+	for _, price := range prices {
+		if price == nil {
+			continue
+		}
+		hasPrice = true
+		if *price < 0 {
+			return fmt.Errorf("invalid pricing: image_token_pricing contains a negative price")
+		}
+	}
+	if !hasPrice {
+		return fmt.Errorf("invalid pricing: image_token_pricing contains no price")
+	}
+	return nil
 }
 
 func validateMeteredPricing(prices []structuredMeteredPricing) error {
@@ -706,6 +762,49 @@ func ResolveImageGenerationPriceDetail(raw json.RawMessage, req ImageGenerationP
 		}, true, nil
 	}
 	return ImageGenerationPrice{}, true, fmt.Errorf("%w: image pricing is not configured", ErrPricingNotConfigured)
+}
+
+// ResolveImageTokenPricing returns the explicit image token price when the
+// model declares image_token_pricing. The boolean is false (with a nil error)
+// when the block is absent, which keeps the flat per-image price authoritative
+// for every other image model.
+func ResolveImageTokenPricing(raw json.RawMessage) (ImageTokenPricing, bool, error) {
+	raw = NormalizeStructuredPricing(raw)
+	present, err := ValidateStructuredPricing(raw)
+	if !present || err != nil {
+		return ImageTokenPricing{}, present, err
+	}
+	var pricing structuredPricing
+	if err := json.Unmarshal(raw, &pricing); err != nil {
+		return ImageTokenPricing{}, true, fmt.Errorf("invalid pricing: %w", err)
+	}
+	block := pricing.ImageTokenPricing
+	if block == nil {
+		return ImageTokenPricing{}, false, nil
+	}
+	resolved := ImageTokenPricing{
+		TextInputPricePerMillion:  float64OrZero(block.TextInputPricePerMillion),
+		ImageInputPricePerMillion: float64OrZero(block.ImageInputPricePerMillion),
+		OutputPricePerMillion:     float64OrZero(block.OutputPricePerMillion),
+		RuleID:                    "pricing.image_token_pricing",
+		PricingVersion:            strings.TrimSpace(pricing.PricingVersion),
+	}
+	// The two input tiers fall back to each other so a model that only knows one
+	// input price stays usable instead of silently charging zero.
+	if block.TextInputPricePerMillion == nil && block.ImageInputPricePerMillion != nil {
+		resolved.TextInputPricePerMillion = *block.ImageInputPricePerMillion
+	}
+	if block.ImageInputPricePerMillion == nil && block.TextInputPricePerMillion != nil {
+		resolved.ImageInputPricePerMillion = *block.TextInputPricePerMillion
+	}
+	return resolved, true, nil
+}
+
+func float64OrZero(value *float64) float64 {
+	if value == nil {
+		return 0
+	}
+	return *value
 }
 
 func resolveImagePriceFromRules(rules []structuredRule, conditions map[string]string) (float64, bool, error) {
