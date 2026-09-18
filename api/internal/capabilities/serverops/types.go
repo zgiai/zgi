@@ -37,6 +37,7 @@ const (
 const (
 	maxHostBytes        = 255
 	maxUsernameBytes    = 128
+	maxPasswordBytes    = 4096
 	maxPrivateKeyBytes  = 1 << 20
 	maxPassphraseBytes  = 4096
 	maxFingerprintBytes = 128
@@ -167,15 +168,26 @@ type Limits struct {
 // It deliberately carries no registry identity: integration id, driver id,
 // auth-method id, credential source, and connection config belong to the caller
 // that builds a Connection, and the capability never persists or learns them.
-// PrivateKey and Passphrase are secret; the capability copies them, never
-// mutates the caller's slices, and zeroes its own copies before returning.
+// Password, PrivateKey, and Passphrase are secret; the capability copies them,
+// never mutates the caller's slices, and zeroes its own copies before returning.
 type Connection struct {
-	Host          string
-	Port          int
-	Username      string
-	PrivateKey    []byte
-	Passphrase    []byte
+	Host       string
+	Port       int
+	Username   string
+	Password   []byte
+	PrivateKey []byte
+	Passphrase []byte
+	// HostKeySHA256 is the pinned canonical OpenSSH SHA-256 host key
+	// fingerprint. It is required for every strict connection and is verified
+	// constant-time against the key the server presents.
 	HostKeySHA256 string
+	// CaptureHostKey opts this one request into host-key discovery instead of
+	// verification: the transport records the presented key's fingerprint and
+	// returns it on the result. It is accepted only when explicitly true and
+	// HostKeySHA256 is empty. Only the fixed read-only connection validation
+	// returns an observed fingerprint; every other action refuses a capture
+	// connection, and every mixed or empty combination fails closed.
+	CaptureHostKey bool
 }
 
 // Attempt is the non-secret execution metadata of one call.
@@ -232,9 +244,13 @@ type JournalTail struct {
 
 // ValidationProfile is the secret-free result of one connection test. Hostname
 // is the remote host's own reported name, never the configured SSH host.
+// HostKeyFingerprint is the canonical OpenSSH SHA-256 fingerprint observed
+// during an explicitly opted-in capture probe; it is empty for every strict
+// verification, where the presented key is compared instead of recorded.
 type ValidationProfile struct {
 	Attempt
-	Hostname string
+	Hostname           string
+	HostKeyFingerprint string
 }
 
 // JournalOptions selects the bounded journal window. A zero field takes the

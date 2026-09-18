@@ -9,6 +9,7 @@ import (
 
 	"github.com/hibiken/asynq"
 	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/capabilities/serverops"
 	shortlinkcap "github.com/zgiai/zgi/api/internal/capabilities/shortlink"
 	"github.com/zgiai/zgi/api/internal/contracts"
 	credentialcrypto "github.com/zgiai/zgi/api/internal/infra/credentialcrypto"
@@ -38,6 +39,7 @@ import (
 	connectorgithub "github.com/zgiai/zgi/api/internal/modules/connectors/providers/github"
 	connectorgmail "github.com/zgiai/zgi/api/internal/modules/connectors/providers/gmail"
 	connectormail "github.com/zgiai/zgi/api/internal/modules/connectors/providers/mailprotocol"
+	connectorserveropsssh "github.com/zgiai/zgi/api/internal/modules/connectors/providers/serveropsssh"
 	connectorruntimeauth "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeauth"
 	connectorruntimeconfirmation "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeconfirmation"
 	contentparsemodule "github.com/zgiai/zgi/api/internal/modules/contentparse"
@@ -256,6 +258,8 @@ type ServiceContainer struct {
 	connectorPersonalConnectionResolver  *connectorcredentials.PersonalConnectionResolver
 	digitalHumanCredentialCipher         credentialcrypto.CredentialCipher
 	connectorCandidateVerifier           *connectorproviders.Runtime
+	connectorServerOpsService            *serverops.Service
+	connectorServerOpsSSHClient          *connectorserveropsssh.Client
 	connectorRiskResolver                *connectorexecution.TrustedRiskResolver
 	connectorExecutionService            *connectorexecution.Service
 	connectorExecutionRouter             *connectorexecution.NativeRouter
@@ -1242,7 +1246,16 @@ func (c *ServiceContainer) GetConnectorCandidateVerifier() *connectorproviders.R
 		if err != nil {
 			panic("initialize Gmail Connector: invalid configuration")
 		}
-		drivers := append([]connectorproviders.Driver{github, exa, feishu, gmail}, c.messagingDrivers()...)
+		// The SSH Server Operations capability and its adapter are built once and
+		// cached so the same *serverops.Service serves both candidate
+		// verification and the read-only host-key probe. serverops.New is
+		// constructor-only: it normalizes limits and stores the production
+		// runner factory without parsing key material or dialing. The SSH
+		// adapter therefore opens no network connection during assembly, and no
+		// connection is attempted until a candidate verification, an approved
+		// invocation, or a host-key probe reaches the capability.
+		_, serverOpsSSH := c.getServerOpsSSHClient()
+		drivers := append([]connectorproviders.Driver{github, exa, feishu, gmail, serverOpsSSH}, c.messagingDrivers()...)
 		for _, id := range []string{"qqmail", "netease163"} {
 			driver, err := connectormail.New(connectormail.Options{Provider: id, HandleKey: c.config.Connectors.CredentialKeys[c.config.Connectors.CredentialActiveKeyID]})
 			if err != nil {
@@ -1257,6 +1270,39 @@ func (c *ServiceContainer) GetConnectorCandidateVerifier() *connectorproviders.R
 		c.connectorCandidateVerifier = runtime
 	}
 	return c.connectorCandidateVerifier
+}
+
+// getServerOpsSSHClient builds and caches the single SSH Server Operations
+// capability and its adapter. It is constructor-only and never dials, parses key
+// material, or stores a credential. The candidate verifier and the host-key
+// probe share the exact same *serverops.Service.
+func (c *ServiceContainer) getServerOpsSSHClient() (*serverops.Service, *connectorserveropsssh.Client) {
+	if c.connectorServerOpsService == nil {
+		service, err := serverops.New(serverops.Limits{})
+		if err != nil {
+			panic(fmt.Sprintf("initialize SSH Server Operations capability: %v", err))
+		}
+		c.connectorServerOpsService = service
+	}
+	if c.connectorServerOpsSSHClient == nil {
+		client, err := connectorserveropsssh.New(c.connectorServerOpsService)
+		if err != nil {
+			panic("initialize SSH Server Operations Connector: invalid definition")
+		}
+		c.connectorServerOpsSSHClient = client
+	}
+	return c.connectorServerOpsService, c.connectorServerOpsSSHClient
+}
+
+// GetServerOpsSSHHostKeyProbe returns the cached, read-only host-key probe seam
+// backed by the same Server Operations capability used to construct the
+// candidate verifier. It never instantiates a second capability.
+func (c *ServiceContainer) GetServerOpsSSHHostKeyProbe() connectorserveropsssh.HostKeyProbe {
+	if c == nil {
+		return nil
+	}
+	_, client := c.getServerOpsSSHClient()
+	return client
 }
 
 func (c *ServiceContainer) GetConnectorConnectionService() *connectorconnections.Service {

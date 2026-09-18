@@ -44,6 +44,9 @@ func (d Definition) IsAppCredentials() bool {
 
 func validateCredentialContract(d Definition) error {
 	d = credentialBase(d)
+	if d.IsServerOpsSSHCredentials() {
+		return validateServerOpsSSHContract(d)
+	}
 	if d.IsMailCredentials() {
 		return validateMailContract(d)
 	}
@@ -126,6 +129,9 @@ func validateCredentialContract(d Definition) error {
 func ValidateCredentialValues(d Definition, values map[string]string) error {
 	if err := validateCredentialContract(d); err != nil {
 		return err
+	}
+	if d.IsServerOpsSSHCredentials() {
+		return validateServerOpsSSHCredentialValues(values)
 	}
 	if d.IsMailCredentials() {
 		copy := make(map[string]string, len(values))

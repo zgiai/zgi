@@ -2,11 +2,14 @@ package v1
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/onboarding"
+	connectorproviders "github.com/zgiai/zgi/api/internal/modules/connectors/providers"
 	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"net/http"
 	"strconv"
@@ -228,13 +231,82 @@ func (h *connectorHandler) projectCatalog(d catalog.Definition, connections []co
 	out.SetupAvailability = &a
 	return out
 }
+
+// startCredentialSetup is the manual credential-setup surface. It admits exactly
+// two dialects: the published messaging credential contract and the inert,
+// Digital-Human-only Server Operations SSH contract. Every other connector
+// dialect (Key, app, mail, and unknown) stays rejected.
 func (h *connectorHandler) startCredentialSetup(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
 	d, ok := h.catalog.Get(c.Param("connectorId"))
-	if !ok || !d.IsMessagingCredentials() {
+	if !ok {
+		h.credentialError(c, core.NewError(core.ErrorCodeInvalidInput, false, nil))
+		return
+	}
+	if d.IsServerOpsSSHCredentials() {
+		h.startServerOpsSSHCredentialSetup(c, d)
+		return
+	}
+	if !d.IsMessagingCredentials() {
 		h.credentialError(c, core.NewError(core.ErrorCodeInvalidInput, false, nil))
 		return
 	}
 	h.startKeySetup(c)
+}
+
+// connectorServerOpsSSHSetupRequest is the credential-setup body for the SSH
+// dialect. MailUsage and Target are json.RawMessage rather than typed fields so
+// the handler can distinguish an absent key from an explicitly supplied one: a
+// missing key leaves the slice nil, while any supplied JSON value — null, "",
+// whitespace, or a populated object — leaves raw bytes behind. Only Values is
+// ever forwarded to the shared parsed setup flow.
+type connectorServerOpsSSHSetupRequest struct {
+	MailUsage json.RawMessage   `json:"mail_usage"`
+	Values    map[string]string `json:"values"`
+	Target    json.RawMessage   `json:"target"`
+}
+
+// startServerOpsSSHCredentialSetup parses one SSH credential-setup body and
+// hands only its Values to the existing startParsedKeySetup flow. It reuses
+// decodeConnectorJSON, so the strict one-object/unknown-field contract, the
+// connectorActor owner scope, the Idempotency-Key rule, and secret destruction
+// are unchanged.
+//
+// It cannot delegate to startKeySetup: that path leaves MailUsage and Target
+// admissible, and both are forbidden here. The request DTO keeps those two
+// fields as raw JSON so a supplied key is detected exactly — a missing key is
+// nil, while null, an empty or whitespace string, or any object is rejected
+// outright. A Target must be bound through the generic connection create/attach
+// flow, never as a credential-setup side effect, and mail usage does not apply
+// to SSH.
+func (h *connectorHandler) startServerOpsSSHCredentialSetup(c *gin.Context, d catalog.Definition) {
+	// Bound the credential body to 32 KiB before any JSON decoding.
+	// decodeConnectorJSON then installs the shared connectorRequestBodyMaxBytes
+	// reader on top of this one, but the outer 32 KiB reader still trips
+	// first, so this surface's effective streaming ceiling is 32 KiB. Nothing
+	// from an oversized body is retained: the decode fails before the parsed
+	// Values map is handed anywhere.
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 32*1024)
+	org, owner, ok := connectorActor(c)
+	if !ok {
+		return
+	}
+	var request connectorServerOpsSSHSetupRequest
+	defer func() { core.DestroySecretValues(request.Values) }()
+	if decodeConnectorJSON(c, &request) != nil {
+		h.credentialError(c, core.NewError(core.ErrorCodeInvalidInput, false, nil))
+		return
+	}
+	// Presence is tested on the raw JSON bytes, never on decoded values, so
+	// target:null and mail_usage:null are rejected exactly like a populated
+	// target or a non-blank mail_usage.
+	if len(request.Target) > 0 || len(request.MailUsage) > 0 {
+		h.credentialError(c, core.NewError(core.ErrorCodeInvalidInput, false, nil))
+		return
+	}
+	// Forward only Values: the shared setup flow never observes a target or
+	// mail usage on this surface, not even as a zero value.
+	h.startParsedKeySetup(c, connectorKeySetupRequest{Values: request.Values}, org, owner, d.ID)
 }
 func (h *connectorHandler) onboardingAction(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
@@ -330,4 +402,83 @@ func (h *connectorHandler) credentialError(c *gin.Context, err error) {
 	projected := h.errorProjector.Project(projectable, apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language"))).Presentation
 	c.Header(apptransport.HeaderApplicationErrorCode, projected.Code.String())
 	c.JSON(projected.HTTPStatus, gin.H{"code": string(core.ErrorCodeOf(err)), "message": projected.Message, "retryable": core.ErrorCodeOf(err) == core.ErrorCodeRateLimited})
+}
+
+// connectorHostKeyTestRequest is the host-key probe body. MailUsage and Target
+// are json.RawMessage rather than typed fields so the handler can distinguish an
+// absent key from an explicitly supplied one: a missing key leaves the slice
+// nil, while any supplied JSON value — null, "", whitespace, or a populated
+// object — leaves raw bytes behind and is rejected.
+type connectorHostKeyTestRequest struct {
+	MailUsage json.RawMessage   `json:"mail_usage"`
+	Values    map[string]string `json:"values"`
+	Target    json.RawMessage   `json:"target"`
+}
+
+// connectorHostKeyTestResponse is the non-secret probe result. It carries only
+// the observed canonical fingerprint, the redacted/bounded remote hostname, and
+// the safe request id.
+type connectorHostKeyTestResponse struct {
+	HostKeySHA256 string `json:"host_key_sha256"`
+	Hostname      string `json:"hostname"`
+	RequestID     string `json:"request_id"`
+}
+
+// probeConnectorHostKey serves POST /connectors/:connectorId/host-key-tests. It
+// is a read-only surface scoped to the exact SSH Server Operations credential
+// contract: it never requires an Idempotency-Key and never creates or mutates a
+// setup attempt or Connection. The 32 KiB body ceiling, one-object/unknown-field
+// decode contract, owner scope, and secret destruction match the strict
+// credential-setup route, and the probe seam is only reached after a valid
+// request. Failures are projected through credentialError and never echo a
+// submitted private key/passphrase or provider error text.
+func (h *connectorHandler) probeConnectorHostKey(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	d, ok := h.catalog.Get(c.Param("connectorId"))
+	if !ok || !d.IsServerOpsSSHCredentials() {
+		connectorRouteError(c, core.NewError(core.ErrorCodeInvalidInput, false, nil))
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 32*1024)
+	if _, _, ok := connectorActor(c); !ok {
+		return
+	}
+	if h.hostKeyProbe == nil {
+		h.credentialError(c, core.NewError(core.ErrorCodeConnectorUnavailable, false, nil))
+		return
+	}
+	var request connectorHostKeyTestRequest
+	defer func() { core.DestroySecretValues(request.Values) }()
+	if decodeConnectorJSON(c, &request) != nil {
+		h.credentialError(c, core.NewError(core.ErrorCodeInvalidInput, false, nil))
+		return
+	}
+	// Presence is tested on the raw JSON bytes, never on decoded values, so
+	// target:null and mail_usage:null are rejected exactly like a populated
+	// target or a non-blank mail_usage.
+	if len(request.Target) > 0 || len(request.MailUsage) > 0 {
+		h.credentialError(c, core.NewError(core.ErrorCodeInvalidInput, false, nil))
+		return
+	}
+	observation, err := h.hostKeyProbe.ProbeHostKey(c.Request.Context(), request.Values)
+	if err != nil {
+		h.credentialError(c, hostKeyProbeError(err))
+		return
+	}
+	connectorSuccess(c, http.StatusOK, connectorHostKeyTestResponse{
+		HostKeySHA256: observation.Fingerprint,
+		Hostname:      observation.Hostname,
+		RequestID:     observation.RequestID,
+	})
+}
+
+// hostKeyProbeError projects a probe failure onto the Connector error contract.
+// It retains only the stable code and retryability and never carries the
+// provider cause, which may echo submitted credential text.
+func hostKeyProbeError(err error) error {
+	var failure *connectorproviders.Failure
+	if errors.As(err, &failure) && failure != nil && failure.Code.Valid() {
+		return core.NewError(failure.Code, failure.Retryable, nil)
+	}
+	return core.NewError(core.ErrorCodeProviderUnavailable, false, nil)
 }

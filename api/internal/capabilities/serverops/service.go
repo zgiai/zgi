@@ -31,9 +31,9 @@ type runner interface {
 }
 
 // runnerFactory is the private synchronous construction seam. A factory must
-// consume config synchronously during the call and must not retain the raw
-// PrivateKey or Passphrase byte slices; the service zeroes them as soon as the
-// call returns.
+// consume config synchronously during the call and must not retain raw
+// Password, PrivateKey, or Passphrase bytes; the service zeroes them as soon
+// as the call returns.
 type runnerFactory func(config sshClientConfig) (runner, error)
 
 // requestIDGenerator is the private request-id seam, injectable for
@@ -279,15 +279,32 @@ func (s *Service) ValidateConnection(ctx context.Context, connection Connection)
 	if err != nil {
 		return nil, newError(ErrResponseInvalid, requestID, err)
 	}
-	return &ValidationProfile{
+	profile := &ValidationProfile{
 		Attempt:  Attempt{RequestID: requestID, AttemptCount: 1},
 		Hostname: snapshot.Hostname,
-	}, nil
+	}
+	// A capture probe must yield a canonical, bounded fingerprint before it is
+	// exposed; a missing or malformed observation fails closed. A strict probe
+	// never surfaces an observed value.
+	if connection.CaptureHostKey {
+		fingerprint, fingerprintErr := canonicalObservedHostKeyFingerprint(result.HostKeyFingerprint)
+		if fingerprintErr != nil {
+			return nil, newError(ErrResponseInvalid, requestID, fingerprintErr)
+		}
+		profile.HostKeyFingerprint = fingerprint
+	}
+	return profile, nil
 }
 
 // prepareRunner builds one fresh runner and one request id. Connection and
 // credential failures never reach this point, and no raw secret survives it.
+// Capture mode is a probe-only opt-in: a read action must never run with
+// host-key verification switched to discovery, so a capture connection is
+// rejected before any credential work or factory call.
 func (s *Service) prepareRunner(connection Connection) (runner, string, error) {
+	if connection.CaptureHostKey {
+		return nil, "", newError(ErrConnectionInvalid, "", errServerOpsConnection)
+	}
 	executionRunner, err := s.buildRunner(connection)
 	if err != nil {
 		return nil, "", err
@@ -319,12 +336,14 @@ func (s *Service) buildRunner(connection Connection) (runner, error) {
 
 	factory := s.newRunner
 	if factory == nil {
+		zeroBytes(config.Password)
 		zeroBytes(config.PrivateKey)
 		zeroBytes(config.Passphrase)
 		return nil, newError(ErrUpstream, "", errServerOpsFactory)
 	}
 
 	created, factoryErr := factory(config)
+	zeroBytes(config.Password)
 	zeroBytes(config.PrivateKey)
 	zeroBytes(config.Passphrase)
 
@@ -363,18 +382,29 @@ func (s *Service) connectionConfig(connection Connection) (sshClientConfig, erro
 	if connection.Port < 1 || connection.Port > 65535 {
 		return sshClientConfig{}, errServerOpsConnection
 	}
-	// private_key is required and may not be blank, but is never trimmed or
-	// normalized: only TrimSpace decides blankness.
-	if len(connection.PrivateKey) == 0 || len(connection.PrivateKey) > maxPrivateKeyBytes ||
-		len(bytes.TrimSpace(connection.PrivateKey)) == 0 {
+	hasPassword := len(connection.Password) > 0
+	hasPrivateKey := len(connection.PrivateKey) > 0
+	if hasPassword == hasPrivateKey {
 		return sshClientConfig{}, errServerOpsConnection
 	}
-	// passphrase is optional; an empty value means an unencrypted key.
-	if len(connection.Passphrase) > maxPassphraseBytes {
+	if hasPassword && (len(connection.Password) > maxPasswordBytes || hasASCIIControl(string(connection.Password)) || len(bytes.TrimSpace(connection.Password)) == 0) {
+		return sshClientConfig{}, errServerOpsConnection
+	}
+	if hasPrivateKey && (len(connection.PrivateKey) > maxPrivateKeyBytes || len(bytes.TrimSpace(connection.PrivateKey)) == 0) {
+		return sshClientConfig{}, errServerOpsConnection
+	}
+	// passphrase is optional only for an unencrypted/private key connection.
+	if len(connection.Passphrase) > maxPassphraseBytes || (len(connection.Passphrase) > 0 && !hasPrivateKey) {
 		return sshClientConfig{}, errServerOpsConnection
 	}
 	fingerprint := connection.HostKeySHA256
-	if fingerprint == "" || hasSurroundingWhitespace(fingerprint) ||
+	if connection.CaptureHostKey {
+		// Capture is opt-in host-key discovery, so a supplied fingerprint is a
+		// contradictory request and is rejected rather than silently ignored.
+		if fingerprint != "" {
+			return sshClientConfig{}, errServerOpsConnection
+		}
+	} else if fingerprint == "" || hasSurroundingWhitespace(fingerprint) ||
 		len(fingerprint) > maxFingerprintBytes || hasASCIIControlOrSpace(fingerprint) {
 		return sshClientConfig{}, errServerOpsConnection
 	}
@@ -383,9 +413,11 @@ func (s *Service) connectionConfig(connection Connection) (sshClientConfig, erro
 		Host:           host,
 		Port:           connection.Port,
 		Username:       username,
+		Password:       append([]byte(nil), connection.Password...),
 		PrivateKey:     append([]byte(nil), connection.PrivateKey...),
 		Passphrase:     append([]byte(nil), connection.Passphrase...),
 		HostKeySHA256:  fingerprint,
+		CaptureHostKey: connection.CaptureHostKey,
 		ConnectTimeout: s.limits.ConnectTimeout,
 		CommandTimeout: s.limits.CommandTimeout,
 		MaxOutputBytes: s.limits.MaxOutputBytes,

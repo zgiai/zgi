@@ -119,6 +119,15 @@ func serviceTestConnection() Connection {
 	}
 }
 
+// serviceTestCaptureConnection is the explicitly opted-in capture form of the
+// canonical test connection: CaptureHostKey true and no pinned fingerprint.
+func serviceTestCaptureConnection() Connection {
+	connection := serviceTestConnection()
+	connection.HostKeySHA256 = ""
+	connection.CaptureHostKey = true
+	return connection
+}
+
 func validSnapshotOutput() []byte {
 	return readActionJoinLines(readActionValidSnapshotLines())
 }
@@ -736,6 +745,145 @@ func TestValidateConnectionUsesFixedSnapshotCommand(t *testing.T) {
 	}
 	if canceledFactory.callCount() != 0 {
 		t.Errorf("canceled context: factory calls = %d, want 0", canceledFactory.callCount())
+	}
+}
+
+// TestValidateConnectionCapturesObservedHostKey proves the opted-in capture
+// probe surfaces the canonical fingerprint the transport recorded and that the
+// factory received an explicit capture config with no pinned fingerprint.
+func TestValidateConnectionCapturesObservedHostKey(t *testing.T) {
+	observed := serviceTestConnection().HostKeySHA256
+	factory := &serviceFakeFactory{result: sshRunResult{Stdout: validSnapshotOutput(), HostKeyFingerprint: observed}}
+	service := newFakeService(t, factory)
+
+	profile, err := service.ValidateConnection(context.Background(), serviceTestCaptureConnection())
+	if err != nil {
+		t.Fatalf("ValidateConnection() error = %v", err)
+	}
+	if profile.Hostname != "server-1" || profile.HostKeyFingerprint != observed {
+		t.Fatalf("profile = %#v", profile)
+	}
+	config := factory.configsSnapshot()[0]
+	if !config.CaptureHostKey || config.HostKeySHA256 != "" {
+		t.Fatalf("capture factory config = %#v", config)
+	}
+}
+
+// TestValidateConnectionCaptureRequiresObservedFingerprint proves a capture
+// probe that yields no usable observation fails closed instead of returning an
+// empty fingerprint as a successful result.
+func TestValidateConnectionCaptureRequiresObservedFingerprint(t *testing.T) {
+	factory := &serviceFakeFactory{result: sshRunResult{Stdout: validSnapshotOutput()}}
+	service := newFakeService(t, factory)
+
+	if _, err := service.ValidateConnection(context.Background(), serviceTestCaptureConnection()); !errors.Is(err, ErrResponseInvalid) {
+		t.Fatalf("capture without an observation: error = %v, want ErrResponseInvalid", err)
+	}
+}
+
+// TestValidateConnectionCaptureRejectsMalformedObservation proves an observed
+// value that is not the canonical bounded form is never surfaced.
+func TestValidateConnectionCaptureRejectsMalformedObservation(t *testing.T) {
+	for name, observed := range map[string]string{
+		"missing prefix": "not-a-fingerprint",
+		"padded base64":  serviceTestConnection().HostKeySHA256 + "=",
+		"too long":       "SHA256:" + strings.Repeat("A", maxFingerprintBytes),
+	} {
+		factory := &serviceFakeFactory{result: sshRunResult{Stdout: validSnapshotOutput(), HostKeyFingerprint: observed}}
+		service := newFakeService(t, factory)
+		if _, err := service.ValidateConnection(context.Background(), serviceTestCaptureConnection()); !errors.Is(err, ErrResponseInvalid) {
+			t.Errorf("%s: error = %v, want ErrResponseInvalid", name, err)
+		}
+	}
+}
+
+// TestValidateConnectionStrictModeDoesNotSurfaceObservedFingerprint proves a
+// strict connection keeps its exact fingerprint config and never surfaces an
+// observed value, so capture mode cannot weaken the ordinary path.
+func TestValidateConnectionStrictModeDoesNotSurfaceObservedFingerprint(t *testing.T) {
+	connection := serviceTestConnection()
+	factory := &serviceFakeFactory{result: sshRunResult{Stdout: validSnapshotOutput(), HostKeyFingerprint: connection.HostKeySHA256}}
+	service := newFakeService(t, factory)
+
+	profile, err := service.ValidateConnection(context.Background(), connection)
+	if err != nil {
+		t.Fatalf("ValidateConnection() error = %v", err)
+	}
+	if profile.HostKeyFingerprint != "" {
+		t.Fatalf("strict profile surfaced an observed fingerprint: %#v", profile)
+	}
+	config := factory.configsSnapshot()[0]
+	if config.CaptureHostKey || config.HostKeySHA256 != connection.HostKeySHA256 {
+		t.Fatalf("strict factory config = %#v", config)
+	}
+}
+
+// TestCaptureModeRequiresEmptyFingerprint proves a capture request carrying a
+// pinned fingerprint is rejected before the factory runs rather than silently
+// dropping the pin.
+func TestCaptureModeRequiresEmptyFingerprint(t *testing.T) {
+	factory := &serviceFakeFactory{result: sshRunResult{Stdout: validSnapshotOutput()}}
+	service := newFakeService(t, factory)
+	connection := serviceTestConnection()
+	connection.CaptureHostKey = true
+
+	_, err := service.ValidateConnection(context.Background(), connection)
+	if !errors.Is(err, ErrConnectionInvalid) {
+		t.Fatalf("capture with a pinned fingerprint: error = %v, want ErrConnectionInvalid", err)
+	}
+	if factory.callCount() != 0 {
+		t.Fatalf("factory calls = %d, want 0", factory.callCount())
+	}
+}
+
+// TestReadActionsRejectCaptureModeBeforeFactory proves capture mode is confined
+// to the fixed validation probe: no read action may run with host-key
+// verification switched to discovery.
+func TestReadActionsRejectCaptureModeBeforeFactory(t *testing.T) {
+	cases := []struct {
+		name string
+		call func(*Service) error
+	}{
+		{"system snapshot", func(s *Service) error {
+			_, err := s.SystemSnapshot(context.Background(), serviceTestCaptureConnection())
+			return err
+		}},
+		{"service status", func(s *Service) error {
+			_, err := s.ServiceStatus(context.Background(), serviceTestCaptureConnection(), "nginx.service")
+			return err
+		}},
+		{"journal tail", func(s *Service) error {
+			_, err := s.JournalTail(context.Background(), serviceTestCaptureConnection(), "nginx.service", JournalOptions{})
+			return err
+		}},
+	}
+	for _, testCase := range cases {
+		factory := &serviceFakeFactory{result: sshRunResult{Stdout: validSnapshotOutput()}}
+		service := newFakeService(t, factory)
+		if err := testCase.call(service); !errors.Is(err, ErrConnectionInvalid) {
+			t.Errorf("%s: error = %v, want ErrConnectionInvalid", testCase.name, err)
+		}
+		if factory.callCount() != 0 {
+			t.Errorf("%s: factory calls = %d, want 0", testCase.name, factory.callCount())
+		}
+	}
+}
+
+// TestCaptureModeMalformedKeyStillFails proves capture mode does not bypass
+// private-key parsing on either the probe or the local credential validation.
+func TestCaptureModeMalformedKeyStillFails(t *testing.T) {
+	service := newTestService(t, Limits{}, productionRunnerFactory, func() string { return serviceTestRequestID })
+
+	probeConnection := serviceTestCaptureConnection()
+	probeConnection.PrivateKey = []byte("not a pem key")
+	if _, err := service.ValidateConnection(context.Background(), probeConnection); !errors.Is(err, ErrConnectionInvalid) {
+		t.Errorf("capture probe with a malformed key: error = %v, want ErrConnectionInvalid", err)
+	}
+
+	credentialConnection := serviceTestCaptureConnection()
+	credentialConnection.PrivateKey = []byte("not a pem key")
+	if err := service.ValidateCredential(context.Background(), credentialConnection); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("capture credential with a malformed key: error = %v, want ErrInvalidInput", err)
 	}
 }
 

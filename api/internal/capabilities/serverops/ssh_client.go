@@ -35,16 +35,23 @@ const sshSHA256FingerprintPrefix = "SHA256:"
 
 // sshClientConfig is the immutable input used to construct one sshClient.
 //
-// PrivateKey and Passphrase are consumed during construction and never
-// retained; the client keeps only the parsed ssh.Signer. The slices are not
-// mutated.
+// Password, PrivateKey, and Passphrase are consumed during construction and
+// never retained as caller-owned slices; the client keeps only the SSH auth
+// method needed for one request-scoped runner. The slices are not mutated.
+//
+// HostKeySHA256 and CaptureHostKey form one mutually exclusive host-key policy:
+// a canonical fingerprint is strictly verified, while CaptureHostKey records
+// the presented fingerprint instead. CaptureHostKey is valid only with an empty
+// HostKeySHA256; newSSHClient rejects every other combination.
 type sshClientConfig struct {
 	Host           string
 	Port           int
 	Username       string
+	Password       []byte
 	PrivateKey     []byte
 	Passphrase     []byte
 	HostKeySHA256  string
+	CaptureHostKey bool
 	ConnectTimeout time.Duration
 	CommandTimeout time.Duration
 	MaxOutputBytes int
@@ -60,15 +67,16 @@ type dialContextFunc func(ctx context.Context, network, address string) (net.Con
 type sshClient struct {
 	address            string
 	username           string
-	signer             ssh.Signer
+	auth               ssh.AuthMethod
 	hostKeyFingerprint string
+	captureHostKey     bool
 	connectTimeout     time.Duration
 	commandTimeout     time.Duration
 	maxOutputBytes     int
 	dial               dialContextFunc
 }
 
-// newSSHClient validates an sshClientConfig, parses the private key once, and
+// newSSHClient validates an sshClientConfig, parses the selected credential once, and
 // returns an immutable client. The optional dial function defaults to
 // net.Dialer.DialContext; tests inject a loopback transport through it.
 func newSSHClient(config sshClientConfig, dial dialContextFunc) (*sshClient, error) {
@@ -87,8 +95,10 @@ func newSSHClient(config sshClientConfig, dial dialContextFunc) (*sshClient, err
 	if config.Port < 1 || config.Port > 65535 {
 		return nil, fmt.Errorf("%w: port %d is outside 1..65535", errSSHInvalidConfig, config.Port)
 	}
-	if len(bytes.TrimSpace(config.PrivateKey)) == 0 {
-		return nil, fmt.Errorf("%w: private key is blank", errSSHInvalidConfig)
+	hasPassword := len(config.Password) > 0
+	hasPrivateKey := len(config.PrivateKey) > 0
+	if hasPassword == hasPrivateKey {
+		return nil, fmt.Errorf("%w: exactly one authentication method is required", errSSHInvalidConfig)
 	}
 	if config.ConnectTimeout <= 0 {
 		return nil, fmt.Errorf("%w: connect timeout must be positive", errSSHInvalidConfig)
@@ -99,15 +109,24 @@ func newSSHClient(config sshClientConfig, dial dialContextFunc) (*sshClient, err
 	if config.MaxOutputBytes <= 0 {
 		return nil, fmt.Errorf("%w: max output bytes must be positive", errSSHInvalidConfig)
 	}
-	fingerprint, err := canonicalHostKeyFingerprint(config.HostKeySHA256)
+	fingerprint, err := hostKeyPolicy(config.CaptureHostKey, config.HostKeySHA256)
 	if err != nil {
 		return nil, err
 	}
-	signer, err := parseSSHSigner(config.PrivateKey, config.Passphrase)
-	if err != nil {
-		// The wrapped parse error is diagnostic and never contains key or
-		// passphrase material.
-		return nil, fmt.Errorf("%w: parse private key: %w", errSSHInvalidConfig, err)
+	var auth ssh.AuthMethod
+	if hasPassword {
+		if len(config.Password) > maxPasswordBytes || hasASCIIControl(string(config.Password)) || len(bytes.TrimSpace(config.Password)) == 0 {
+			return nil, fmt.Errorf("%w: password is invalid", errSSHInvalidConfig)
+		}
+		auth = ssh.Password(string(config.Password))
+	} else {
+		signer, parseErr := parseSSHSigner(config.PrivateKey, config.Passphrase)
+		if parseErr != nil {
+			// The wrapped parse error is diagnostic and never contains key or
+			// passphrase material.
+			return nil, fmt.Errorf("%w: parse private key: %w", errSSHInvalidConfig, parseErr)
+		}
+		auth = ssh.PublicKeys(signer)
 	}
 	if dial == nil {
 		dial = (&net.Dialer{}).DialContext
@@ -115,13 +134,28 @@ func newSSHClient(config sshClientConfig, dial dialContextFunc) (*sshClient, err
 	return &sshClient{
 		address:            net.JoinHostPort(host, strconv.Itoa(config.Port)),
 		username:           username,
-		signer:             signer,
+		auth:               auth,
 		hostKeyFingerprint: fingerprint,
+		captureHostKey:     config.CaptureHostKey,
 		connectTimeout:     config.ConnectTimeout,
 		commandTimeout:     config.CommandTimeout,
 		maxOutputBytes:     config.MaxOutputBytes,
 		dial:               dial,
 	}, nil
+}
+
+// hostKeyPolicy resolves the one accepted host-key mode. A strict request must
+// supply a canonical fingerprint that is verified constant-time; capture mode
+// is accepted only when it is explicitly requested and no fingerprint was
+// supplied. Every mixed or empty combination fails closed.
+func hostKeyPolicy(capture bool, value string) (string, error) {
+	if !capture {
+		return canonicalHostKeyFingerprint(value)
+	}
+	if value != "" {
+		return "", fmt.Errorf("%w: host key capture requires an empty fingerprint", errSSHInvalidConfig)
+	}
+	return "", nil
 }
 
 // canonicalHostKeyFingerprint accepts only canonical OpenSSH SHA-256
@@ -149,6 +183,23 @@ func canonicalHostKeyFingerprint(value string) (string, error) {
 	return canonical, nil
 }
 
+// canonicalObservedHostKeyFingerprint validates one fingerprint produced by the
+// transport before it is exposed to a caller. ssh.FingerprintSHA256 always emits
+// the canonical form, so this is a defensive canonicality and bound gate: an
+// unexpected value fails closed as an authentication failure instead of being
+// returned. Observed values are classified separately from caller-supplied
+// configuration so they can never be confused with an invalid Connection.
+func canonicalObservedHostKeyFingerprint(value string) (string, error) {
+	canonical, err := canonicalHostKeyFingerprint(value)
+	if err != nil {
+		return "", fmt.Errorf("%w: presented host key fingerprint is not canonical", errSSHHostKeyMismatch)
+	}
+	if len(canonical) > maxFingerprintBytes {
+		return "", fmt.Errorf("%w: presented host key fingerprint exceeds %d bytes", errSSHHostKeyMismatch, maxFingerprintBytes)
+	}
+	return canonical, nil
+}
+
 // parseSSHSigner parses the private key from private copies so the caller-owned
 // slices are never mutated, and returns only the signer. Every internal copy is
 // zeroed before the function returns, on both the success and the error path, so
@@ -164,22 +215,45 @@ func parseSSHSigner(privateKey, passphrase []byte) (ssh.Signer, error) {
 	return ssh.ParsePrivateKeyWithPassphrase(keyCopy, passCopy)
 }
 
+// hostKeyCapture is the per-run sink for an opted-in host-key capture. It is a
+// local value owned by exactly one run, so concurrent runs never share or
+// overwrite each other's observed fingerprint.
+type hostKeyCapture struct {
+	fingerprint string
+}
+
 // clientConfig builds the per-connection SSH client configuration. Host key
-// verification is mandatory and has no insecure option.
-func (c *sshClient) clientConfig() *ssh.ClientConfig {
+// verification is mandatory: a strict client compares the presented key against
+// its pinned fingerprint, while a capture client records the presented
+// fingerprint into the per-run capture sink. There is no skip or insecure
+// option.
+func (c *sshClient) clientConfig(capture *hostKeyCapture) *ssh.ClientConfig {
 	return &ssh.ClientConfig{
 		User: c.username,
-		Auth: []ssh.AuthMethod{ssh.PublicKeys(c.signer)},
+		Auth: []ssh.AuthMethod{c.auth},
 		HostKeyCallback: func(_ string, _ net.Addr, key ssh.PublicKey) error {
-			return c.verifyHostKey(key)
+			return c.verifyHostKey(key, capture)
 		},
 	}
 }
 
-// verifyHostKey compares the presented key fingerprint with the configured
-// canonical fingerprint in constant time.
-func (c *sshClient) verifyHostKey(key ssh.PublicKey) error {
+// verifyHostKey handles the configured host-key mode for one handshake. Strict
+// clients compare the presented fingerprint with the configured canonical
+// fingerprint in constant time. Capture clients validate and record the
+// presented fingerprint into their own per-run sink and accept the key for this
+// one probe only.
+func (c *sshClient) verifyHostKey(key ssh.PublicKey, capture *hostKeyCapture) error {
 	presented := ssh.FingerprintSHA256(key)
+	if c.captureHostKey {
+		observed, err := canonicalObservedHostKeyFingerprint(presented)
+		if err != nil {
+			return err
+		}
+		if capture != nil {
+			capture.fingerprint = observed
+		}
+		return nil
+	}
 	if subtle.ConstantTimeCompare([]byte(presented), []byte(c.hostKeyFingerprint)) != 1 {
 		return fmt.Errorf("%w: presented %s", errSSHHostKeyMismatch, presented)
 	}
@@ -200,7 +274,7 @@ func (c *sshClient) verifyHostKey(key ssh.PublicKey) error {
 // ssh.NewClientConn returns. If the watcher closed the raw connection, the
 // successful-or-failed handshake is discarded and the connect context's cause
 // is returned instead of a client.
-func (c *sshClient) dialContext(ctx context.Context) (*ssh.Client, error) {
+func (c *sshClient) dialContext(ctx context.Context, capture *hostKeyCapture) (*ssh.Client, error) {
 	// WithTimeout keeps the earlier of the caller deadline and the configured
 	// connect timeout, so caller cancellation always wins.
 	connectCtx, cancel := context.WithTimeout(ctx, c.connectTimeout)
@@ -230,7 +304,7 @@ func (c *sshClient) dialContext(ctx context.Context) (*ssh.Client, error) {
 	// stalled handshake on either caller cancellation or the connect budget.
 	stopWatcher := watchContext(connectCtx, func() { _ = rawConn.Close() })
 
-	sshConn, channels, requests, err := ssh.NewClientConn(rawConn, c.address, c.clientConfig())
+	sshConn, channels, requests, err := ssh.NewClientConn(rawConn, c.address, c.clientConfig(capture))
 	// Arbitrate the handshake exactly once. stopWatcher reports whether the
 	// connect watcher already invoked its closer: if it did, the watcher won
 	// the cancellation race and rawConn may be closed, so a successful
@@ -292,11 +366,14 @@ func watchContext(ctx context.Context, closeOwned func()) (stop func() (closerDi
 
 // sshRunResult is the bounded output of one command. Stdout and Stderr are
 // always separate byte slices; Truncated reports that the combined budget was
-// exhausted.
+// exhausted; HostKeyFingerprint carries the canonical OpenSSH SHA-256
+// fingerprint observed during an opted-in capture handshake and is empty for
+// every strict verification.
 type sshRunResult struct {
-	Stdout    []byte
-	Stderr    []byte
-	Truncated bool
+	Stdout             []byte
+	Stderr             []byte
+	Truncated          bool
+	HostKeyFingerprint string
 }
 
 // run executes one trusted command on a fresh connection. trustedCommand is
@@ -307,7 +384,11 @@ func (c *sshClient) run(ctx context.Context, trustedCommand string) (sshRunResul
 		return sshRunResult{}, err
 	}
 
-	client, err := c.dialContext(ctx)
+	// The capture sink is constructed for this run only, so the host-key
+	// callback writes request-scoped state and concurrent runs never share or
+	// overwrite each other's observation.
+	var capture hostKeyCapture
+	client, err := c.dialContext(ctx, &capture)
 	if err != nil {
 		return sshRunResult{}, err
 	}
@@ -315,7 +396,11 @@ func (c *sshClient) run(ctx context.Context, trustedCommand string) (sshRunResul
 	// whole post-handshake lifecycle, including NewSession, is bounded.
 	ownedClient := &ownedSSHClient{client: client}
 	defer ownedClient.close()
-	return c.runCmd(ctx, ownedClient, trustedCommand)
+	result, err := c.runCmd(ctx, ownedClient, trustedCommand)
+	if c.captureHostKey {
+		result.HostKeyFingerprint = capture.fingerprint
+	}
+	return result, err
 }
 
 // runCmd executes one trusted command on an already-dialed connection. The

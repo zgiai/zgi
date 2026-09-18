@@ -233,6 +233,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		References:              serviceContainer.GetConnectorReferenceService(),
 		Maintenance:             serviceContainer.GetConnectorMaintenanceService(),
 		Onboarding:              serviceContainer.GetConnectorOnboardingService(),
+		HostKeyProbe:            serviceContainer.GetServerOpsSSHHostKeyProbe(),
 		Preferences:             serviceContainer.GetConnectorChatPreferenceService(),
 		ApplicationErrorCatalog: applicationErrorCatalog,
 		AccountService:          accountService,

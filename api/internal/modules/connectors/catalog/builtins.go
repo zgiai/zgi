@@ -47,9 +47,23 @@ func BuiltinDefinitions() ([]Definition, error) {
 		}
 		mail = append(mail, d)
 	}
-	return append(append(append(definitions, feishu), messaging...), mail...), nil
+	// The SSH Server Operations contract is the last built-in. Catalog
+	// admission here is contract-only and never dials a host: this function
+	// builds no provider or driver and wires no approval. The serveropsssh
+	// driver and the Digital-Human surface gate are wired elsewhere, and a
+	// runtime operation still requires a user-set-up credential, an exact bound
+	// target, and fresh per-invocation approval.
+	serveropsSSH := ServerOpsSSHDefinition()
+	if err := Validate(serveropsSSH); err != nil {
+		return nil, err
+	}
+	return append(append(append(definitions, feishu), messaging...), append(mail, serveropsSSH)...), nil
 }
 
+// ValidateBuiltinPackage admits exactly one package for a built-in plugin as
+// either the exact current built-in contract or the reviewed Digital-Human
+// projection of a pre-V4 built-in. A forged plugin version, operation,
+// credential, or other immutable contract field is rejected.
 func ValidateBuiltinPackage(definitions []Definition) error {
 	baseline, err := BuiltinDefinitions()
 	if err != nil {
@@ -63,16 +77,40 @@ func ValidateBuiltinPackage(definitions []Definition) error {
 		if accepted.ID != candidate.ID || accepted.PluginID != candidate.PluginID {
 			continue
 		}
-		if candidate.IsDigitalHumanContract() {
-			accepted, err = WithDigitalHumanSurface(accepted, accepted.PluginVersion+"-digitalhuman.1")
-			if err != nil || candidate.PluginVersion != accepted.PluginVersion {
-				return ErrInvalidDefinition
-			}
-		}
-		if err = CheckCompatibleUpdate(accepted, candidate); err != nil {
-			return err
-		}
-		return CheckCompatibleUpdate(candidate, accepted)
+		return validateBuiltinPackageCandidate(accepted, candidate)
 	}
 	return ErrInvalidDefinition
+}
+
+// validateBuiltinPackageCandidate accepts the candidate as an exact update of
+// the accepted built-in or, for a pre-V4 built-in, as the additive Digital-Human
+// projection at the single derived version. An already-admitted V4
+// Digital-Human-only built-in is its own current package: it is compared
+// exactly and is never upgraded a second time through WithDigitalHumanSurface
+// with a derived version suffix.
+func validateBuiltinPackageCandidate(accepted, candidate Definition) error {
+	if alreadyV4DigitalHumanOnly(accepted) {
+		if candidate.PluginVersion != accepted.PluginVersion {
+			return ErrInvalidDefinition
+		}
+	} else if candidate.IsDigitalHumanContract() {
+		projected, err := WithDigitalHumanSurface(accepted, accepted.PluginVersion+"-digitalhuman.1")
+		if err != nil || candidate.PluginVersion != projected.PluginVersion {
+			return ErrInvalidDefinition
+		}
+		accepted = projected
+	}
+	if err := CheckCompatibleUpdate(accepted, candidate); err != nil {
+		return err
+	}
+	return CheckCompatibleUpdate(candidate, accepted)
+}
+
+// alreadyV4DigitalHumanOnly reports whether the accepted built-in is itself the
+// current V4 Digital-Human-only contract. Such a built-in has no earlier
+// published base to project onto, so its version identity must be preserved
+// exactly instead of being replaced by a derived Digital-Human suffix.
+func alreadyV4DigitalHumanOnly(definition Definition) bool {
+	return definition.IsDigitalHumanContract() &&
+		len(definition.Surfaces) == 1 && definition.Surfaces[0] == SurfaceDigitalHuman
 }

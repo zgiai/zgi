@@ -95,6 +95,7 @@ func newLoopbackSSHServer(t *testing.T, clientPublicKey ssh.PublicKey, handler t
 type serverFixtureOptions struct {
 	honorChannelOpen bool
 	authHook         func(ssh.ConnMetadata, ssh.PublicKey) (*ssh.Permissions, error)
+	password         string
 }
 
 func newLoopbackSSHServerWithOptions(
@@ -105,8 +106,9 @@ func newLoopbackSSHServerWithOptions(
 ) *loopbackSSHServer {
 	t.Helper()
 	hostIdentity := newTestIdentity(t, "")
-	config := &ssh.ServerConfig{
-		PublicKeyCallback: func(metadata ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+	config := &ssh.ServerConfig{}
+	if clientPublicKey != nil {
+		config.PublicKeyCallback = func(metadata ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 			if subtle.ConstantTimeCompare(key.Marshal(), clientPublicKey.Marshal()) != 1 {
 				return nil, errors.New("serverops test: unknown client public key")
 			}
@@ -114,7 +116,15 @@ func newLoopbackSSHServerWithOptions(
 				return options.authHook(metadata, key)
 			}
 			return &ssh.Permissions{}, nil
-		},
+		}
+	}
+	if options.password != "" {
+		config.PasswordCallback = func(metadata ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
+			if metadata.User() != "operator" || subtle.ConstantTimeCompare(password, []byte(options.password)) != 1 {
+				return nil, errors.New("serverops test: invalid password")
+			}
+			return &ssh.Permissions{}, nil
+		}
 	}
 	config.AddHostKey(hostIdentity.signer)
 
@@ -307,6 +317,43 @@ func testSSHClientConfig(server *loopbackSSHServer, identity testIdentity, passp
 		ConnectTimeout: 5 * time.Second,
 		CommandTimeout: 5 * time.Second,
 		MaxOutputBytes: 1 << 20,
+	}
+}
+
+func newPasswordLoopbackSSHServer(t *testing.T, password string, handler testExecHandler) *loopbackSSHServer {
+	t.Helper()
+	return newLoopbackSSHServerWithOptions(t, nil, handler, serverFixtureOptions{
+		honorChannelOpen: true,
+		password:         password,
+	})
+}
+
+func testSSHPasswordClientConfig(server *loopbackSSHServer, password string) sshClientConfig {
+	return sshClientConfig{
+		Host:           "127.0.0.1",
+		Port:           server.port(),
+		Username:       "operator",
+		Password:       []byte(password),
+		HostKeySHA256:  server.hostFingerprint,
+		ConnectTimeout: 5 * time.Second,
+		CommandTimeout: 5 * time.Second,
+		MaxOutputBytes: 1 << 20,
+	}
+}
+
+func TestSSHClientPasswordAuthentication(t *testing.T) {
+	const password = "server-password"
+	server := newPasswordLoopbackSSHServer(t, password, execWrites("password-ok", "", 0))
+	client, err := newSSHClient(testSSHPasswordClientConfig(server, password), nil)
+	if err != nil {
+		t.Fatalf("newSSHClient() error = %v", err)
+	}
+	result, err := client.run(context.Background(), "server.system.snapshot")
+	if err != nil {
+		t.Fatalf("password-authenticated run error = %v", err)
+	}
+	if string(result.Stdout) != "password-ok" {
+		t.Fatalf("stdout = %q, want password-ok", result.Stdout)
 	}
 }
 
@@ -657,23 +704,134 @@ func TestSSHClientRejectsMismatchedHostKeyFingerprint(t *testing.T) {
 	waitForServerClose(t, server)
 }
 
+// TestSSHClientCaptureModeRecordsPresentedFingerprint proves the explicitly
+// opted-in capture mode accepts the presented host key for one probe and returns
+// its canonical OpenSSH SHA-256 fingerprint instead of comparing it.
+func TestSSHClientCaptureModeRecordsPresentedFingerprint(t *testing.T) {
+	identity := newTestIdentity(t, "")
+	server := newLoopbackSSHServer(t, identity.publicKey, execWrites("ok", "", 0))
+
+	config := testSSHClientConfig(server, identity, "")
+	config.HostKeySHA256 = ""
+	config.CaptureHostKey = true
+
+	client, err := newSSHClient(config, nil)
+	if err != nil {
+		t.Fatalf("newSSHClient in capture mode: %v", err)
+	}
+	result, err := client.run(t.Context(), "capture the host key")
+	if err != nil {
+		t.Fatalf("run in capture mode: %v", err)
+	}
+	if result.HostKeyFingerprint != server.hostFingerprint {
+		t.Fatalf("observed fingerprint = %q, want %q", result.HostKeyFingerprint, server.hostFingerprint)
+	}
+	canonical, err := canonicalHostKeyFingerprint(result.HostKeyFingerprint)
+	if err != nil || canonical != result.HostKeyFingerprint {
+		t.Fatalf("observed fingerprint %q is not canonical: %v", result.HostKeyFingerprint, err)
+	}
+	waitForServerClose(t, server)
+}
+
+// TestSSHClientCaptureModeRejectsPinnedFingerprint proves capture mode is never
+// a way to relax a strict connection: supplying both a fingerprint and the
+// capture opt-in is rejected as invalid configuration.
+func TestSSHClientCaptureModeRejectsPinnedFingerprint(t *testing.T) {
+	identity := newTestIdentity(t, "")
+	server := newLoopbackSSHServer(t, identity.publicKey, execWrites("", "", 0))
+
+	config := testSSHClientConfig(server, identity, "")
+	config.CaptureHostKey = true
+
+	if _, err := newSSHClient(config, nil); !errors.Is(err, errSSHInvalidConfig) {
+		t.Fatalf("capture with a pinned fingerprint: error = %v, want errSSHInvalidConfig", err)
+	}
+}
+
+// TestSSHClientStrictModeDoesNotRecordFingerprint proves a strict client still
+// verifies constant-time and never surfaces an observed fingerprint, so capture
+// mode cannot weaken the ordinary path.
+func TestSSHClientStrictModeDoesNotRecordFingerprint(t *testing.T) {
+	identity := newTestIdentity(t, "")
+	server := newLoopbackSSHServer(t, identity.publicKey, execWrites("ok", "", 0))
+
+	client, err := newSSHClient(testSSHClientConfig(server, identity, ""), nil)
+	if err != nil {
+		t.Fatalf("newSSHClient: %v", err)
+	}
+	result, err := client.run(t.Context(), "strict")
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if result.HostKeyFingerprint != "" {
+		t.Fatalf("strict run surfaced fingerprint %q, want empty", result.HostKeyFingerprint)
+	}
+	waitForServerClose(t, server)
+}
+
+// TestSSHClientCaptureIsPerRunUnderConcurrency proves the capture sink is
+// request-scoped: concurrent runs on one immutable capture client each observe
+// the presented fingerprint, and under the race detector this also proves the
+// callback never writes shared client state.
+func TestSSHClientCaptureIsPerRunUnderConcurrency(t *testing.T) {
+	identity := newTestIdentity(t, "")
+	server := newLoopbackSSHServer(t, identity.publicKey, execEchoCommand())
+
+	config := testSSHClientConfig(server, identity, "")
+	config.HostKeySHA256 = ""
+	config.CaptureHostKey = true
+	client, err := newSSHClient(config, nil)
+	if err != nil {
+		t.Fatalf("newSSHClient in capture mode: %v", err)
+	}
+
+	ctx := t.Context()
+	const runs = 4
+	var waitGroup sync.WaitGroup
+	errs := make([]error, runs)
+	observed := make([]string, runs)
+	for index := 0; index < runs; index++ {
+		waitGroup.Add(1)
+		go func(index int) {
+			defer waitGroup.Done()
+			result, runErr := client.run(ctx, fmt.Sprintf("capture-%d", index))
+			errs[index] = runErr
+			observed[index] = result.HostKeyFingerprint
+		}(index)
+	}
+	waitGroup.Wait()
+
+	for index := 0; index < runs; index++ {
+		if errs[index] != nil {
+			t.Errorf("run %d: %v", index, errs[index])
+			continue
+		}
+		if observed[index] != server.hostFingerprint {
+			t.Errorf("run %d observed fingerprint = %q, want %q", index, observed[index], server.hostFingerprint)
+		}
+	}
+	waitForServerClose(t, server)
+}
+
 func TestSSHClientConfigValidation(t *testing.T) {
 	identity := newTestIdentity(t, "")
 	server := newLoopbackSSHServer(t, identity.publicKey, execWrites("", "", 0))
 	valid := testSSHClientConfig(server, identity, "")
 
 	cases := map[string]func(*sshClientConfig){
-		"blank host":           func(c *sshClientConfig) { c.Host = "   " },
-		"port zero":            func(c *sshClientConfig) { c.Port = 0 },
-		"port too large":       func(c *sshClientConfig) { c.Port = 65536 },
-		"blank username":       func(c *sshClientConfig) { c.Username = "  " },
-		"blank private key":    func(c *sshClientConfig) { c.PrivateKey = nil },
-		"whitespace key":       func(c *sshClientConfig) { c.PrivateKey = []byte(" \n\t") },
-		"zero connect timeout": func(c *sshClientConfig) { c.ConnectTimeout = 0 },
-		"zero command timeout": func(c *sshClientConfig) { c.CommandTimeout = 0 },
-		"negative command":     func(c *sshClientConfig) { c.CommandTimeout = -time.Second },
-		"zero output budget":   func(c *sshClientConfig) { c.MaxOutputBytes = 0 },
-		"bad fingerprint":      func(c *sshClientConfig) { c.HostKeySHA256 = "SHA256:short" },
+		"blank host":               func(c *sshClientConfig) { c.Host = "   " },
+		"port zero":                func(c *sshClientConfig) { c.Port = 0 },
+		"port too large":           func(c *sshClientConfig) { c.Port = 65536 },
+		"blank username":           func(c *sshClientConfig) { c.Username = "  " },
+		"blank private key":        func(c *sshClientConfig) { c.PrivateKey = nil },
+		"whitespace key":           func(c *sshClientConfig) { c.PrivateKey = []byte(" \n\t") },
+		"zero connect timeout":     func(c *sshClientConfig) { c.ConnectTimeout = 0 },
+		"zero command timeout":     func(c *sshClientConfig) { c.CommandTimeout = 0 },
+		"negative command":         func(c *sshClientConfig) { c.CommandTimeout = -time.Second },
+		"zero output budget":       func(c *sshClientConfig) { c.MaxOutputBytes = 0 },
+		"bad fingerprint":          func(c *sshClientConfig) { c.HostKeySHA256 = "SHA256:short" },
+		"empty fingerprint":        func(c *sshClientConfig) { c.HostKeySHA256 = "" },
+		"capture with fingerprint": func(c *sshClientConfig) { c.CaptureHostKey = true },
 	}
 	for name, mutate := range cases {
 		config := valid

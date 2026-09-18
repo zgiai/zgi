@@ -19,26 +19,42 @@ func credentialBase(d Definition) Definition {
 		d.ExtensionSchemaVersion, d.ContractVersion = ZGIMetadataSchemaVersion11, 2
 	case SetupMethodCredentials:
 		d.ExtensionSchemaVersion, d.ContractVersion = ZGIMetadataSchemaVersion12, 3
+	case SetupMethodSSHCredentials:
+		// The SSH credential dialect is native to the V4 contract. It has no
+		// earlier published base to project onto, so its version identity is
+		// preserved exactly for the digest and compatibility checks.
 	default:
 		d.ExtensionSchemaVersion, d.ContractVersion = ZGIMetadataSchemaVersion1, 0
 	}
 	return d
 }
 
-func validDefinitionSurfaces(d Definition) bool {
-	if !d.IsDigitalHumanContract() {
-		return hasAllFirstReleaseSurfaces(d.Surfaces)
-	}
-	if len(d.Surfaces) != 4 || !slices.Contains(d.Surfaces, SurfaceDigitalHuman) {
+// hasAdditiveDigitalHumanSurfaces reports whether values is the four-surface
+// additive form: the complete first-release set plus exactly one Digital Human
+// surface. Duplicate, unknown, and partial mixed sets are rejected.
+func hasAdditiveDigitalHumanSurfaces(values []Surface) bool {
+	if len(values) != 4 || !slices.Contains(values, SurfaceDigitalHuman) {
 		return false
 	}
 	base := make([]Surface, 0, 3)
-	for _, surface := range d.Surfaces {
+	for _, surface := range values {
 		if surface != SurfaceDigitalHuman {
 			base = append(base, surface)
 		}
 	}
 	return hasAllFirstReleaseSurfaces(base)
+}
+
+func validDefinitionSurfaces(d Definition) bool {
+	if !d.IsDigitalHumanContract() {
+		return hasAllFirstReleaseSurfaces(d.Surfaces)
+	}
+	// A V4 Digital Human contract may be admitted as Digital-Human-only. The
+	// additive four-surface form is retained for already accepted contracts.
+	if len(d.Surfaces) == 1 && d.Surfaces[0] == SurfaceDigitalHuman {
+		return true
+	}
+	return hasAdditiveDigitalHumanSurfaces(d.Surfaces)
 }
 
 // WithDigitalHumanSurface creates a separately admitted contract. Callers must
@@ -68,5 +84,5 @@ func additiveDigitalHumanSurface(current, candidate Definition) bool {
 	if currentBase.ExtensionSchemaVersion == "" {
 		currentBase.ExtensionSchemaVersion = ZGIMetadataSchemaVersion1
 	}
-	return base.ExtensionSchemaVersion == currentBase.ExtensionSchemaVersion && validDefinitionSurfaces(candidate) && hasAllFirstReleaseSurfaces(current.Surfaces)
+	return base.ExtensionSchemaVersion == currentBase.ExtensionSchemaVersion && hasAdditiveDigitalHumanSurfaces(candidate.Surfaces) && hasAllFirstReleaseSurfaces(current.Surfaces)
 }
