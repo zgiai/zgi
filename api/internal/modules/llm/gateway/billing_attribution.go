@@ -99,10 +99,21 @@ func applyRouteAttributionSnapshot(bc *BillingContext, routeName string) {
 	values := pricingSnapshotMap(bc.PricingSnapshot)
 	patch := map[string]interface{}{}
 
+	// Platform-lane traffic is served through the ZGI Cloud aggregation route,
+	// whose ChannelProvider is the platform adapter ("zgi-cloud"), not the
+	// upstream supplier. Attribute the billed supplier instead, and do not
+	// stamp the platform route name as the upstream channel: Console owns the
+	// real channel identity and reports it through settlement headers when
+	// available.
+	providerFallback := strings.TrimSpace(bc.ChannelProvider)
+	channelFallback := strings.TrimSpace(routeName)
+	if bc.UseSystemProvider {
+		providerFallback = firstNonEmptyString(strings.TrimSpace(bc.ProviderName), strings.TrimSpace(bc.ChannelProvider))
+		channelFallback = ""
+	}
 	actualProvider := firstNonEmptyString(
 		pricingSnapshotString(values, "actual_provider"),
-		strings.TrimSpace(bc.ChannelProvider),
-		strings.TrimSpace(bc.ProviderName),
+		providerFallback,
 	)
 	if actualProvider != "" && pricingSnapshotString(values, "actual_provider") == "" {
 		patch["actual_provider"] = actualProvider
@@ -115,7 +126,7 @@ func applyRouteAttributionSnapshot(bc *BillingContext, routeName string) {
 
 	actualChannelName := firstNonEmptyString(
 		pricingSnapshotString(values, "actual_channel_name"),
-		strings.TrimSpace(routeName),
+		channelFallback,
 	)
 	if actualChannelName != "" && pricingSnapshotString(values, "actual_channel_name") == "" {
 		patch["actual_channel_name"] = actualChannelName

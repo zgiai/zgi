@@ -135,3 +135,23 @@ func TestApplyPlatformSettlementCostSnapshotFallsBackToBillingContext(t *testing
 		t.Fatalf("actual_upstream_model = %q", snapshot["actual_upstream_model"])
 	}
 }
+
+func TestApplyRouteAttributionPlatformLanePrefersSupplierOverRouteAdapter(t *testing.T) {
+	bc := &BillingContext{
+		UseSystemProvider: true,
+		ProviderName:      "agicto 供应商",
+		ChannelProvider:   "zgi-cloud",
+	}
+	applyRouteAttributionSnapshot(bc, "ZGI Cloud")
+
+	var snapshot map[string]string
+	if err := json.Unmarshal(bc.PricingSnapshot, &snapshot); err != nil {
+		t.Fatalf("unmarshal snapshot: %v", err)
+	}
+	if snapshot["actual_provider"] != "agicto 供应商" {
+		t.Fatalf("actual_provider = %q, want billed supplier", snapshot["actual_provider"])
+	}
+	if value := snapshot["actual_channel_name"]; value != "" {
+		t.Fatalf("actual_channel_name = %q, want empty fallback rather than the platform route name", value)
+	}
+}
