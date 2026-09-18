@@ -3,7 +3,6 @@ package gateway
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -13,50 +12,26 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestMeteredPredeductEnabledForSwitchAndWhitelist(t *testing.T) {
+func TestMeteredPredeductEligibleIsDataDriven(t *testing.T) {
+	platform := &BillingContext{BillingLane: UsageBillingLanePlatform, UseSystemProvider: true}
+	private := &BillingContext{BillingLane: UsageBillingLanePrivate}
 	fact := shared.MeteredUsageFact{Operation: string(PricingOperationImage), Meter: string(PricingMeterImage), BaseUnit: "per_image", Quantity: 1}
-	tokenFact := shared.MeteredUsageFact{Operation: operationChatCompletions, Meter: string(PricingMeterInputToken), BaseUnit: "per_1m_tokens", Quantity: 1}
 
-	t.Run("off", func(t *testing.T) {
-		t.Setenv(meteredPredeductEnv, "off")
-		if meteredPredeductEnabledFor(fact, true) {
-			t.Fatal("off must reject the metered branch")
-		}
-		t.Setenv(meteredPredeductEnv, "")
-		if meteredPredeductEnabledFor(fact, true) {
-			t.Fatal("empty must fail closed to off")
-		}
-	})
-
-	t.Run("image", func(t *testing.T) {
-		t.Setenv(meteredPredeductEnv, "image")
-		if !meteredPredeductEnabledFor(fact, true) {
-			t.Fatal("image must allow images.generations")
-		}
-		if !meteredPredeductEnabledFor(shared.MeteredUsageFact{Operation: string(PricingOperationImage)}, true) {
-			t.Fatal("image edits share the image_generation billing operation")
-		}
-		if meteredPredeductEnabledFor(tokenFact, true) {
-			t.Fatal("token lane must never enter the metered branch")
-		}
-	})
-
-	t.Run("all", func(t *testing.T) {
-		t.Setenv(meteredPredeductEnv, "all")
-		if !meteredPredeductEnabledFor(fact, true) {
-			t.Fatal("all must allow images")
-		}
-		if meteredPredeductEnabledFor(tokenFact, true) {
-			t.Fatal("all must still reject token operations")
-		}
-	})
-
-	t.Run("no fact", func(t *testing.T) {
-		t.Setenv(meteredPredeductEnv, "all")
-		if meteredPredeductEnabledFor(shared.MeteredUsageFact{}, false) {
-			t.Fatal("a missing metered fact must not open the branch")
-		}
-	})
+	if meteredPredeductEligible(platform, shared.MeteredUsageFact{}, false) {
+		t.Fatal("a missing metered fact must not open the branch")
+	}
+	if !meteredPredeductEligible(platform, fact, true) {
+		t.Fatal("a declared fact on the platform lane must open the branch")
+	}
+	if meteredPredeductEligible(platform, shared.MeteredUsageFact{}, true) {
+		t.Fatal("an empty operation must not open the branch")
+	}
+	if meteredPredeductEligible(private, fact, true) {
+		t.Fatal("non-platform lanes must stay on the local path")
+	}
+	if meteredPredeductEligible(nil, fact, true) {
+		t.Fatal("a nil billing context must not open the branch")
+	}
 }
 
 func TestWithImageMeteredUsageMapsRequestIdentity(t *testing.T) {
@@ -169,7 +144,6 @@ func seedMeteredAccessGrant(t *testing.T, db *gorm.DB) (accessmodel.Grant, int64
 }
 
 func TestPreDeductUsesMeteredBranchForImagePlatformLane(t *testing.T) {
-	t.Setenv(meteredPredeductEnv, "image")
 	db := openRemoteBillingTestDB(t)
 	if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {
 		t.Fatalf("migrate developer grant: %v", err)
@@ -253,7 +227,6 @@ func (c *failingMeteredQuotaClient) CheckCreditBalance(context.Context, string, 
 func (c *failingMeteredQuotaClient) Close() error { return nil }
 
 func TestPreDeductMeteredInsufficiencyRollsBackWithoutUpstream(t *testing.T) {
-	t.Setenv(meteredPredeductEnv, "image")
 	db := openRemoteBillingTestDB(t)
 	if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {
 		t.Fatalf("migrate developer grant: %v", err)
@@ -295,22 +268,17 @@ func TestPreDeductMeteredInsufficiencyRollsBackWithoutUpstream(t *testing.T) {
 	}
 }
 
-func TestPreDeductKeepsLegacyBranchWhenSwitchOff(t *testing.T) {
-	t.Setenv(meteredPredeductEnv, "off")
+func TestPreDeductKeepsLegacyBranchWithoutMeteredFact(t *testing.T) {
 	db := openRemoteBillingTestDB(t)
 	remote := &RemoteBilling{localService: &BillingService{db: db}, grpcClient: failingSettleQuotaClient{}}
 	bc := &BillingContext{
 		OrganizationID: uuid.NewString(), AttemptID: uuid.NewString(), RequestID: uuid.NewString(),
 		BillingLane: UsageBillingLanePlatform, UseSystemProvider: true, EstimatedCredits: 0,
 	}
-	ctx := withImageMeteredUsage(context.Background(), &adapter.ImageRequest{})
-	err := remote.preDeductViaGRPC(ctx, bc)
-	// The legacy branch fails on the missing quota subject; the metered branch
-	// would not even reach the RPC client, so this proves the branch was skipped.
+	// No metered fact on the context: the request must stay on the token path,
+	// which fails here on the missing quota subject.
+	err := remote.preDeductViaGRPC(context.Background(), bc)
 	if err == nil {
 		t.Fatal("legacy branch unexpectedly succeeded without a quota subject")
-	}
-	if strings.Contains(err.Error(), "grpc metered pre-deduct") {
-		t.Fatalf("switch off must not reach the metered path: %v", err)
 	}
 }

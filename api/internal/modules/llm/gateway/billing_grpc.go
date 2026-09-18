@@ -231,7 +231,7 @@ func (s *RemoteBilling) preDeductViaGRPC(ctx context.Context, bc *BillingContext
 	}
 
 	fact, hasMeteredFact := shared.MeteredUsageFromContext(ctx)
-	if meteredPredeductEnabledForRequest(ctx, bc, fact, hasMeteredFact) {
+	if meteredPredeductEligible(bc, fact, hasMeteredFact) {
 		return s.preDeductMeteredViaGRPC(ctx, bc, fact)
 	}
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
+	"strconv"
 	"strings"
 	"time"
 
@@ -216,6 +217,7 @@ func (s *llmGatewayServiceImpl) beginVideoPredeductAttempt(
 		}
 	}
 	requestID, attemptID := videoPredeductIDs(appCtx, attemptIdx)
+	ctx = withVideoMeteredUsage(ctx, selection, req)
 	billingCtx, err := s.beginBillingAttempt(
 		ctx,
 		apiKey,
@@ -361,6 +363,65 @@ func quoteVideoFromModelPricing(selection *ProviderSelection, requestModel strin
 		ruleID = "model.video_generation"
 	}
 	return newOutputOnlyUSDQuote(totalUSD, PricingSourceUpstreamModelPrice, ruleID, UsageSourceRequestParameters, snapshot), true
+}
+
+// videoMeteredFact declares the video metered identity used by the unified
+// metered pre-deduct. The billing unit and the integer base-unit quantity come
+// from the synced catalog, so the platform lane reserves exactly what the
+// catalogue defines; when the model has no video price there is no identity to
+// declare and the caller keeps the legacy path.
+func videoMeteredFact(pricing json.RawMessage, req *adapter.VideoRequest) (shared.MeteredUsageFact, bool) {
+	seconds := defaultVideoPredeductDurationSeconds
+	if req != nil && req.Duration != nil && *req.Duration > 0 {
+		seconds = *req.Duration
+	}
+	count := 1
+	if req != nil && req.N != nil && *req.N > 0 {
+		count = *req.N
+	}
+	if len(pricing) == 0 {
+		return shared.MeteredUsageFact{}, false
+	}
+	costReq := videoGenerationCostRequestFromCreate(req, seconds, count)
+	cost, present, err := modelpricing.ResolveVideoGenerationCost(pricing, costReq)
+	if err != nil || !present || strings.TrimSpace(cost.BillingUnit) == "" {
+		return shared.MeteredUsageFact{}, false
+	}
+	quantity := int64(cost.Quantity)
+	if cost.BillingUnit == "million_video_tokens" {
+		quantity = int64(cost.VideoTokens)
+	}
+	if quantity <= 0 {
+		return shared.MeteredUsageFact{}, false
+	}
+	fact := shared.MeteredUsageFact{
+		Operation: string(PricingOperationVideo),
+		Meter:     "video",
+		BaseUnit:  cost.BillingUnit,
+		Quantity:  quantity,
+		Dimensions: map[string]string{
+			"resolution":       cost.Resolution,
+			"input_video":      strconv.FormatBool(cost.InputVideo),
+			"audio":            strconv.FormatBool(cost.Audio),
+			"duration_seconds": strconv.FormatFloat(cost.DurationSeconds, 'f', -1, 64),
+			"count":            strconv.Itoa(costReq.Count),
+		},
+	}
+	if costReq.VideoTokens > 0 {
+		fact.Dimensions["video_tokens"] = strconv.Itoa(costReq.VideoTokens)
+	}
+	return fact, true
+}
+
+func withVideoMeteredUsage(ctx context.Context, selection *ProviderSelection, req *adapter.VideoRequest) context.Context {
+	if selection == nil {
+		return ctx
+	}
+	fact, ok := videoMeteredFact(json.RawMessage(selection.Model.Pricing), req)
+	if !ok {
+		return ctx
+	}
+	return context.WithValue(ctx, shared.ContextKeyMeteredUsage, &fact)
 }
 
 func videoGenerationCostRequestFromCreate(req *adapter.VideoRequest, seconds, count int) modelpricing.VideoGenerationCostRequest {
