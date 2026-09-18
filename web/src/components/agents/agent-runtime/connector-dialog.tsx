@@ -140,6 +140,8 @@ function EnabledAgentRuntimeConnectorDialog({
           <DialogBody className="p-5">
             <ConnectorKeySetupPanel
               connector={setupConnector}
+              embedded
+              target={{ type: 'agent', id: agentId }}
               submitLabel={t(
                 setup.replacedBinding
                   ? 'picker.actions.addConnection'

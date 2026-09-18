@@ -16,4 +16,7 @@ export type {
   ConnectorPickerRow,
   ConnectorPickerRowState,
   ConnectorPickerSwitchRequest,
+  ConnectorPickerHostEligibility,
+  ConnectorPickerOptions,
+  ConnectorPickerSelectionMode,
 } from './connector-picker-model';

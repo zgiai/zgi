@@ -30,6 +30,8 @@ import type {
   RemovalImpact,
   RemovePersonalConnectionOptions,
   RenamePersonalConnectionRequest,
+  ServerOpsSSHHostKeyTestRequest,
+  ServerOpsSSHHostKeyTestResult,
 } from '@/services/types/connector';
 
 class ConnectorService extends BaseService {
@@ -222,16 +224,26 @@ class ConnectorService extends BaseService {
     );
   }
 
+  /**
+   * Repairs an existing connection with fresh credentials. Pass
+   * `sensitiveRequest` when `data` carries write-only secrets so the shared
+   * HTTP client never forwards the submitted payload to error reporting.
+   */
   reconnectConnection(
     connectionId: string,
     data: ReconnectKeyRequest,
-    idempotencyKey: string
+    idempotencyKey: string,
+    sensitiveRequest = false
   ): Promise<ApiResponseData<KeySetupResult>> {
     return this.request(
       'post',
       `/connector-connections/${encodeURIComponent(connectionId)}/reconnect`,
       data,
-      { headers: { 'Idempotency-Key': idempotencyKey }, retryAttemptsOverride: 0 }
+      {
+        headers: { 'Idempotency-Key': idempotencyKey },
+        retryAttemptsOverride: 0,
+        ...(sensitiveRequest ? { skipErrorHandling: true } : {}),
+      }
     );
   }
 
@@ -341,10 +353,16 @@ class ConnectorService extends BaseService {
     });
   }
 
+  /**
+   * Creates a connection from submitted credentials. Pass `sensitiveRequest`
+   * when `data` carries write-only secrets so the shared HTTP client never
+   * forwards the submitted payload to error reporting.
+   */
   startCredentialSetup(
     connectorId: string,
     data: KeySetupRequest,
-    idempotencyKey: string
+    idempotencyKey: string,
+    sensitiveRequest = false
   ): Promise<ApiResponseData<KeySetupResult>> {
     return this.request(
       'post',
@@ -353,7 +371,26 @@ class ConnectorService extends BaseService {
       {
         headers: { 'Idempotency-Key': idempotencyKey },
         retryAttemptsOverride: 0,
+        ...(sensitiveRequest ? { skipErrorHandling: true } : {}),
       }
+    );
+  }
+
+  /**
+   * Reads the SSH server host key without creating or mutating a setup attempt
+   * or Connection. The request carries write-only secrets, so it always opts
+   * out of shared error reporting, never retries, and deliberately sends no
+   * Idempotency-Key.
+   */
+  testServerOpsSSHHostKey(
+    connectorId: string,
+    data: ServerOpsSSHHostKeyTestRequest
+  ): Promise<ApiResponseData<ServerOpsSSHHostKeyTestResult>> {
+    return this.request(
+      'post',
+      `/connectors/${encodeURIComponent(connectorId)}/host-key-tests`,
+      data,
+      { retryAttemptsOverride: 0, skipErrorHandling: true }
     );
   }
 

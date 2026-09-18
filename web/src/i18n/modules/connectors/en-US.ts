@@ -588,6 +588,10 @@ const messages = {
     title: 'Connect your account',
     description: 'Enter the required Key once. ZGI verifies it before creating a connection.',
     addTitle: 'Add {connector} connection',
+    createConnectionTitle: 'Create a connection',
+    createConnectionDescription: 'Choose the Connector to create in this context.',
+    inlineDescription: 'After the connection is created, you will return to the current context.',
+    noConnectorsAvailable: 'No Connectors can be created here.',
     addDescription: 'Save a separate connection without changing any existing Key.',
     securityNotice: 'Your Key is write-only and is never shown again after submission.',
     ownerOnly: 'This connection belongs only to you and cannot be used by another member.',
@@ -619,6 +623,97 @@ const messages = {
         'The connection request could not be completed. Check its status before trying again.',
       resultUnknown:
         'No response confirmed the result. A network interruption or cross-origin configuration may be responsible. Refresh the connection list to check its status before deciding whether to enter the Key again. The request will not be resubmitted automatically.',
+    },
+  },
+  serveropsSsh: {
+    createTitle: 'Connect an SSH server',
+    createDescription:
+      'Save one verified connection to a single Linux server. Name and usage stay in Connection Center.',
+    reconnectTitle: 'Update this SSH server connection',
+    reconnectDescription:
+      'Re-enter the credentials for the same server. A matching server identity updates this connection; a different identity is reported instead of silently replacing it.',
+    host: 'Server host',
+    hostHint: 'Hostname or IP address of one server. One connection serves one server.',
+    port: 'SSH port',
+    portHint: 'Whole-number TCP port between 1 and 65535. The default is 22.',
+    username: 'Username',
+    authMethod: 'SSH authentication method',
+    authMethodHint: 'Choose the login method supported by the server. Use exactly one method.',
+    passwordMethod: 'Password login',
+    privateKeyMethod: 'SSH private key',
+    password: 'Login password',
+    passwordHint:
+      'Used only to verify this connection. It is never displayed or returned after saving.',
+    privateKey: 'SSH private key',
+    privateKeyHint:
+      'Paste the PEM or OpenSSH private key for this user. It stays in the form through the test and is cleared only after the final save or when this panel closes.',
+    passphrase: 'Private key passphrase (optional)',
+    passphraseHint:
+      'Leave empty for an unencrypted key. A blank passphrase is omitted and never sent.',
+    hostVerification: 'Host identity verification',
+    hostVerificationHint:
+      'The first test reads the server fingerprint automatically. After confirmation, later connections verify it strictly.',
+    showVerificationSettings: 'Advanced settings',
+    hideVerificationSettings: 'Hide settings',
+    fingerprint: 'Known host key SHA-256 fingerprint (optional)',
+    fingerprintHelp:
+      'Optional, in the SHA256: form. Leave it empty to let the test read the host key the server presents. If you already have a trusted fingerprint, enter it here and the test strictly verifies it. Host-key verification is never skipped.',
+    probe: 'Test server and host key',
+    probingTitle: 'Testing the SSH server…',
+    probingDescription:
+      'Connecting with the submitted credentials to read the server host key. Nothing is saved yet, and the password, private key, and passphrase stay in the form until you confirm.',
+    confirmationTitle: 'Confirm this server identity',
+    confirmationDescription:
+      'The test completed. Review the observed host key, then confirm to save this connection.',
+    confirmationTarget: 'Server and user',
+    observedHostname: 'Remote hostname',
+    observedFingerprint: 'Observed host key SHA-256 fingerprint',
+    observedFingerprintUnavailable: 'Not observed; enter a verified fingerprint above.',
+    confirmationWarningTitle: 'Check the server identity before saving',
+    confirmationWarning:
+      'A first connection cannot prove the server identity from the network alone. Check the host, port, and username; compare the fingerprint with a trusted source when one is available. After you confirm, this fingerprint is pinned and a later host-key change will block the connection and require a new test.',
+    confirm: 'Confirm and save connection',
+    reTest: 'Re-test',
+    verifyingTitle: 'Verifying the SSH connection…',
+    verifyingDescription:
+      'Connecting with the confirmed host key. Credential fields were cleared and are not resubmitted automatically.',
+    checkStatus: 'Check status again',
+    readyTitle: 'SSH server connected',
+    readyDescription: 'The server identity and confirmed host key were verified.',
+    newConnectionTitle: 'A different server was connected',
+    newConnectionDescription:
+      'The submitted identity does not match this connection, so a separate connection was created instead of replacing it. Review it before switching usage.',
+    failedTitle: 'SSH connection could not be verified',
+    retry: 'Enter credentials again',
+    manage: 'Manage this connection',
+    externalTitle: 'Create this connection in Connector Center',
+    externalDescription:
+      'SSH server connections are created and managed only in Connector Center, where the credentials and the pinned host key are verified. Open the connector page there to add or repair this server connection.',
+    externalAction: 'Open in Connector Center',
+    ownerNotice:
+      'This connection belongs only to you. Rename it and review its usage in Connection Center.',
+    secretNotice:
+      'The password, private key, and passphrase are write-only. They are cleared from the form after the final save or closing and are never written to a URL or browser storage.',
+    errors: {
+      host: 'Enter one server host with no spaces or surrounding whitespace.',
+      port: 'Enter a whole-number TCP port between 1 and 65535.',
+      username: 'Enter the SSH username with no surrounding whitespace.',
+      password: 'Enter the login password.',
+      privateKey: 'Paste a non-empty PEM or OpenSSH private key.',
+      passphrase: 'Leave the passphrase empty or enter a single-line value.',
+      fingerprint: 'Enter the canonical SHA256: fingerprint without spaces or padding.',
+      rejected:
+        'The server rejected the connection. Check the username, login password, or private key. If the server was rebuilt or moved, ask its administrator whether the host fingerprint changed. A new host key is never accepted automatically.',
+      unreachable:
+        'The server could not be reached or authenticated. Check the host, port, network access, and credentials.',
+      staleObservation:
+        'The server details changed after this host key was observed. Test the server again before saving.',
+      fingerprintChanged:
+        'The fingerprint changed after this host key was observed. Test the server again and confirm the new fingerprint before saving.',
+      resultUnknown:
+        'No response confirmed the result. Check the connection list before entering the credentials again. The request will not be resubmitted automatically.',
+      requestFailed:
+        'The connection request could not be completed. Check its status before trying again.',
     },
   },
   defaultsDraft: {
@@ -664,6 +759,10 @@ const messages = {
   },
   picker: {
     group: {
+      selectedCount: '{count} connections selected',
+      chooseMultipleForTarget: 'Choose connections for {target}.',
+      multipleSubtitle: 'Choose services and connections for {target}.',
+      removeConnectionFromTarget: 'Remove {name} from {target}',
       currentLabel: '{connector}: currently using {name}, {status}. Choose a connection.',
       savedLabel: '{connector}: saved reference {name}, {status}. Choose a connection.',
       chooseConnection: 'Choose connection',

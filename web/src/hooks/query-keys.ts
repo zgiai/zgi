@@ -108,6 +108,13 @@ export const DIGITAL_HUMAN_KEYS = {
     [...DIGITAL_HUMAN_KEYS.detail(id), 'binding-candidates', params] as const,
   /** Workspace skills a new digital human may bind, available before creation. */
   skillCandidates: () => [...DIGITAL_HUMAN_KEYS.all, 'skill-candidates'] as const,
+  /**
+   * Owner Connector connections a new digital human may attach, available
+   * before creation. Query and limit are part of the key so a server search and
+   * the full 512-candidate page never share a cache entry.
+   */
+  connectorCandidates: (params: { query?: string; limit?: number }) =>
+    [...DIGITAL_HUMAN_KEYS.all, 'connector-candidates', params] as const,
   runs: (id: string, params?: unknown) =>
     [...DIGITAL_HUMAN_KEYS.detail(id), 'runs', params].filter(Boolean),
   run: (id: string, runId: string) => [...DIGITAL_HUMAN_KEYS.detail(id), 'run', runId] as const,
