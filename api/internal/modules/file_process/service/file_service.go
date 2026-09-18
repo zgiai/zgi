@@ -520,27 +520,25 @@ func (s *fileService) compensateFailedUpload(ctx context.Context, fileKey, fileI
 // never became a record. It runs on a detached context because the request is already gone.
 const orphanedObjectRetryTimeout = 3 * time.Second
 
-// removeOrphanedObject removes an object that no upload record references any more, and
-// hands the key to the deletion retry worker when storage refuses.
+// removeOrphanedObject removes an object that no upload record references any more.
 //
-// Logging the failure is not enough: at this point there is neither an upload_files row nor
-// a pending-removal row, so a storage outage - or a process that dies before the retry -
-// would leave the object untracked for good.
+// The pending row is written before the removal is attempted: at this point nothing else
+// names the object, so the intent has to be durable first. A process that dies between the
+// two then still leaves a row the retry worker finishes, instead of an object nothing can
+// find again.
 func (s *fileService) removeOrphanedObject(ctx context.Context, objectKey string) {
-	if deleteErr := s.storage.Delete(objectKey); deleteErr == nil {
-		return
-	} else {
-		logger.Warn("Deferring an orphaned object to the retry worker", "key", objectKey, "error", deleteErr.Error())
-	}
-
-	pending := model.NewFileObjectDeletion(objectKey, time.Now().UTC())
 	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), orphanedObjectRetryTimeout)
 	defer cancel()
 
+	pending := model.NewFileObjectDeletion(objectKey, time.Now().UTC())
 	if err := s.db.WithContext(recordCtx).Create(pending).Error; err != nil {
+		// The object is unreferenced either way, so the removal is still worth attempting;
+		// it just has no durable backing if it fails as well.
 		logger.Error("Failed to record a pending file object deletion for an orphaned object",
 			"key", objectKey, "error", err.Error())
 	}
+
+	s.removeObjectWithRetry(recordCtx, pending)
 }
 
 // replacementObjectIsReferenced reports whether the new object of a replacement must be

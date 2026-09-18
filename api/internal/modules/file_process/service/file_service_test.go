@@ -33,14 +33,32 @@ type fakeUploadStorage struct {
 	storage.Storage
 	deleted   []string
 	deleteErr error
+	saved     []string
+	saveErr   error
 	loaded    []string
 	content   []byte
 	loadErr   error
+
+	// beforeDelete lets a test observe when the removal happens.
+	beforeDelete func()
+	// afterSave lets a test follow the key the replacement wrote.
+	afterSave func(key string)
 }
 
 func (f *fakeUploadStorage) Delete(key string) error {
+	if f.beforeDelete != nil {
+		f.beforeDelete()
+	}
 	f.deleted = append(f.deleted, key)
 	return f.deleteErr
+}
+
+func (f *fakeUploadStorage) Save(key string, data []byte) error {
+	f.saved = append(f.saved, key)
+	if f.afterSave != nil {
+		f.afterSave(key)
+	}
+	return f.saveErr
 }
 
 func (f *fakeUploadStorage) Load(key string) ([]byte, error) {
@@ -128,16 +146,25 @@ func TestCompensateFailedUploadKeepsObjectWhenRecordPersisted(t *testing.T) {
 }
 
 func TestCompensateFailedUploadDeletesObjectWhenRecordIsAbsent(t *testing.T) {
+	db, mock := openFileObjectDeletionMockDB(t)
 	store := &fakeUploadStorage{}
 	svc := &fileService{
 		fileRepo: fakeUploadRecordRepo{err: gorm.ErrRecordNotFound},
 		storage:  store,
+		db:       db,
 	}
+	// The removal is recorded before it is attempted, so it can be retried after a crash,
+	// and the row is cleared again once the object is really gone.
+	mock.ExpectExec(`(?s)INSERT INTO "file_object_deletions".*`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`(?s)DELETE FROM "file_object_deletions".*`).WillReturnResult(sqlmock.NewResult(0, 1))
 
 	svc.compensateFailedUpload(context.Background(), "upload_files/org/file-1.png", "file-1")
 
 	if len(store.deleted) != 1 || store.deleted[0] != "upload_files/org/file-1.png" {
 		t.Fatalf("deleted = %v, want the uploaded object removed", store.deleted)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -193,22 +220,145 @@ func TestCompensateFailedUploadRecordsAPendingRemovalWhenStorageRefuses(t *testi
 	}
 }
 
-// A removal that succeeds needs no pending row.
-func TestRemoveOrphanedObjectKeepsTheOutboxOutOfTheHappyPath(t *testing.T) {
+// The intent is durable before the removal is attempted, so a process that dies in between
+// leaves a row the worker can finish. A removal that succeeds clears that row again.
+func TestRemoveOrphanedObjectRecordsTheIntentBeforeRemoving(t *testing.T) {
 	db, mock := openFileObjectDeletionMockDB(t)
 	store := &fakeUploadStorage{}
 	svc := &fileService{storage: store, db: db}
-	// Registered only to prove it stays unmatched: an insert here would mean the object was
-	// handed to the worker even though the removal already succeeded.
+
+	order := make([]string, 0, 2)
+	// GORM callbacks are the only way to observe where the write sits relative to the
+	// storage call, since the storage is a test double rather than a driver.
+	if err := db.Callback().Create().After("gorm:create").Register("test:record-intent", func(*gorm.DB) {
+		order = append(order, "record-intent")
+	}); err != nil {
+		t.Fatalf("register callback: %v", err)
+	}
+	store.beforeDelete = func() {
+		order = append(order, "remove-object")
+	}
+
 	mock.ExpectExec(`(?s)INSERT INTO "file_object_deletions".*`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`(?s)DELETE FROM "file_object_deletions".*`).WillReturnResult(sqlmock.NewResult(0, 1))
+
+	svc.removeOrphanedObject(context.Background(), "upload_files/org/file-1.png")
+
+	if len(order) != 2 || order[0] != "record-intent" || order[1] != "remove-object" {
+		t.Fatalf("call order = %v, want the pending row written before the removal", order)
+	}
+	if len(store.deleted) != 1 || store.deleted[0] != "upload_files/org/file-1.png" {
+		t.Fatalf("deleted = %v, want the object removed inline", store.deleted)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("the pending row was not cleared after the removal: %v", err)
+	}
+}
+
+// Even when the intent cannot be recorded, the object is still unreferenced: attempting the
+// removal cannot make things worse, and skipping it would guarantee the leak.
+func TestRemoveOrphanedObjectStillRemovesTheObjectWhenTheIntentCannotBeRecorded(t *testing.T) {
+	db, mock := openFileObjectDeletionMockDB(t)
+	store := &fakeUploadStorage{}
+	svc := &fileService{storage: store, db: db}
+	mock.ExpectExec(`(?s)INSERT INTO "file_object_deletions".*`).WillReturnError(errors.New("database unavailable"))
 
 	svc.removeOrphanedObject(context.Background(), "upload_files/org/file-1.png")
 
 	if len(store.deleted) != 1 {
-		t.Fatalf("deleted = %v, want the object removed inline", store.deleted)
+		t.Fatalf("deleted = %v, want the object removed even without a pending row", store.deleted)
 	}
-	if err := mock.ExpectationsWereMet(); err == nil {
-		t.Fatal("a pending row was recorded for an object that was already removed")
+}
+
+// fakeReplacementRepo serves the replacement flow: the record the caller reads before the
+// transaction, and whatever state the record is in afterwards.
+type fakeReplacementRepo struct {
+	repository.FileRepository
+	current   *model.UploadFile
+	after     *model.UploadFile
+	updateErr error
+}
+
+func (r *fakeReplacementRepo) WithTx(*gorm.DB) repository.FileRepository { return r }
+
+func (r *fakeReplacementRepo) GetByTenantAndID(context.Context, string, string) (*model.UploadFile, error) {
+	return r.current, nil
+}
+
+func (r *fakeReplacementRepo) GetByID(context.Context, string) (*model.UploadFile, error) {
+	return r.after, nil
+}
+
+func (r *fakeReplacementRepo) Update(context.Context, string, map[string]interface{}) error {
+	return r.updateErr
+}
+
+// The transaction reported an error, but the database actually committed: the record points
+// at the new object, so removing it would leave the file with no content at all.
+func TestReplaceFileContentKeepsTheNewObjectWhenTheCommitOutcomeIsUnknown(t *testing.T) {
+	withStorageType(t, "aliyun-oss")
+	db, mock := openFileObjectDeletionMockDB(t)
+	organizationID := uuid.NewString()
+	oldKey := "upload_files/" + organizationID + "/old.png"
+	repo := &fakeReplacementRepo{
+		current:   &model.UploadFile{ID: "file-1", Key: oldKey, Size: 100, Extension: "png"},
+		updateErr: errors.New("connection reset by peer"),
+	}
+	store := &fakeUploadStorage{}
+	// The transaction reported an error, but the record already points at the object the
+	// replacement wrote, which is what a lost commit acknowledgement looks like.
+	store.afterSave = func(key string) {
+		repo.after = &model.UploadFile{ID: "file-1", Key: key, Size: 6, Extension: "png"}
+	}
+	svc := &fileService{fileRepo: repo, storage: store, db: db}
+
+	mock.ExpectBegin()
+	mock.ExpectRollback()
+
+	if _, err := svc.ReplaceFileContent(context.Background(), "file-1", "new.png", []byte("pixels"), "image/png", uuid.NewString(), organizationID); err == nil {
+		t.Fatal("ReplaceFileContent = nil error, want the transaction failure reported")
+	}
+
+	if len(store.deleted) != 0 {
+		t.Fatalf("deleted = %v, want the object the record points at kept", store.deleted)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The transaction failed before the record switched over, so the new object is unreachable
+// and gets the same durable handoff as any other orphan.
+func TestReplaceFileContentRemovesTheNewObjectWhenTheRecordStillPointsAtTheOld(t *testing.T) {
+	withStorageType(t, "aliyun-oss")
+	db, mock := openFileObjectDeletionMockDB(t)
+	organizationID := uuid.NewString()
+	oldKey := "upload_files/" + organizationID + "/old.png"
+	repo := &fakeReplacementRepo{
+		current:   &model.UploadFile{ID: "file-1", Key: oldKey, Size: 100, Extension: "png"},
+		after:     &model.UploadFile{ID: "file-1", Key: oldKey, Size: 100, Extension: "png"},
+		updateErr: errors.New("connection reset by peer"),
+	}
+	store := &fakeUploadStorage{}
+	svc := &fileService{fileRepo: repo, storage: store, db: db}
+
+	mock.ExpectBegin()
+	mock.ExpectRollback()
+	mock.ExpectExec(`(?s)INSERT INTO "file_object_deletions".*`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`(?s)DELETE FROM "file_object_deletions".*`).WillReturnResult(sqlmock.NewResult(0, 1))
+
+	if _, err := svc.ReplaceFileContent(context.Background(), "file-1", "new.png", []byte("pixels"), "image/png", uuid.NewString(), organizationID); err == nil {
+		t.Fatal("ReplaceFileContent = nil error, want the transaction failure reported")
+	}
+
+	if len(store.deleted) != 1 {
+		t.Fatalf("deleted = %v, want the unreferenced replacement object removed", store.deleted)
+	}
+	if store.deleted[0] == oldKey {
+		t.Fatalf("deleted = %v, want the new object removed rather than the one still in use", store.deleted)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -258,6 +408,27 @@ func TestReplacementObjectIsReferencedKeepsTheObjectWhenTheLookupFails(t *testin
 	if !svc.replacementObjectIsReferenced(context.Background(), "file-1", "upload_files/org/new.png") {
 		t.Fatal("replacementObjectIsReferenced = false, want the new object kept while the outcome is unknown")
 	}
+}
+
+// withStorageType pins the storage backend and the upload limits the replacement flow reads.
+func withStorageType(t *testing.T, storageType string) {
+	t.Helper()
+	previous := config.GlobalConfig
+	config.GlobalConfig = &config.Config{
+		Storage: config.StorageConfig{Type: storageType},
+		ETL:     config.ETLConfig{Type: "zgi"},
+		Upload: config.UploadConfig{
+			FileSizeLimit:    10,
+			ImageSizeLimit:   10,
+			VideoSizeLimit:   10,
+			AudioSizeLimit:   10,
+			FileBatchLimit:   10,
+			BatchUploadLimit: 10,
+		},
+	}
+	t.Cleanup(func() {
+		config.GlobalConfig = previous
+	})
 }
 
 func uploadFileForDeletion(extension string) (*model.UploadFile, *uuid.UUID) {
