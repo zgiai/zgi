@@ -72,6 +72,7 @@ export class UploadService extends BaseService {
       is_icon?: boolean;
       processing_mode?: FileUploadProcessingMode;
       parse_provider?: FileParseProviderKey;
+      upload_attempt_id?: string;
       onProgress?: (progress: number) => void;
       signal?: AbortSignal;
     } = {}
@@ -89,6 +90,7 @@ export class UploadService extends BaseService {
           ...(options.is_icon !== undefined && { is_icon: String(options.is_icon) }),
           ...(options.processing_mode && { processing_mode: options.processing_mode }),
           ...(options.parse_provider && { parse_provider: options.parse_provider }),
+          ...(options.upload_attempt_id && { upload_attempt_id: options.upload_attempt_id }),
         },
         signal: options.signal,
       });
@@ -115,11 +117,13 @@ export class UploadService extends BaseService {
     options: {
       onProgress?: (progress: number) => void;
       signal?: AbortSignal;
+      upload_attempt_id?: string;
     } = {}
   ): Promise<UploadResponse> {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('is_temporary', 'true');
+    if (options.upload_attempt_id) formData.append('upload_attempt_id', options.upload_attempt_id);
 
     const response = await webappHttp.post<ApiResponseData<UploadResponse>>(
       `/console/api/webapps/${webAppId}/files/upload`,
@@ -147,6 +151,14 @@ export class UploadService extends BaseService {
       return response.data;
     }
     throw new Error(response.message || 'Failed to upload file');
+  }
+
+  async cancelUploadAttempt(attemptID: string): Promise<void> {
+    await this.request('delete', `/upload-attempts/${encodeURIComponent(attemptID)}`);
+  }
+
+  async cancelWebAppUploadAttempt(webAppId: string, attemptID: string): Promise<void> {
+    await webappHttp.delete(`/console/api/webapps/${webAppId}/files/upload-attempts/${encodeURIComponent(attemptID)}`);
   }
 
   // Get upload configuration

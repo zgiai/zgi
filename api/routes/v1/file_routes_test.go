@@ -79,3 +79,29 @@ func TestRegisterFileObjectDeletionRetrySkipsIncompleteWiring(t *testing.T) {
 		t.Fatalf("registered tasks = %d, want 0 without scheduler, DB, or storage", skipped.registered)
 	}
 }
+
+func TestRegisterTemporaryUploadCleanupSchedulesTheScopedSweep(t *testing.T) {
+	registrar := &recordingFileObjectDeletionRegistrar{}
+
+	registerTemporaryUploadCleanup(registrar, &gorm.DB{})
+
+	if registrar.registered != 1 {
+		t.Fatalf("registered tasks = %d, want 1", registrar.registered)
+	}
+	if got, want := registrar.taskType, "files:temporary_upload_cleanup"; got != want {
+		t.Fatalf("task type = %q, want %q", got, want)
+	}
+	if registrar.interval <= 0 {
+		t.Fatalf("interval = %v, want a positive sweep interval", registrar.interval)
+	}
+}
+
+func TestRegisterTemporaryUploadCleanupSkipsIncompleteWiring(t *testing.T) {
+	registrar := &recordingFileObjectDeletionRegistrar{}
+	registerTemporaryUploadCleanup(nil, &gorm.DB{})
+	registerTemporaryUploadCleanup(registrar, nil)
+
+	if registrar.registered != 0 {
+		t.Fatalf("registered tasks = %d, want 0 without scheduler or DB", registrar.registered)
+	}
+}

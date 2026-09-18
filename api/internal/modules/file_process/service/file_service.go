@@ -47,6 +47,9 @@ type fileService struct {
 
 type UploadFileOptions struct {
 	StartLegacyContentExtraction bool
+	// UploadAttemptID is set only for chat attachment uploads. It gives cancellation
+	// and cleanup a scoped lifecycle without changing retention for ordinary temporary files.
+	UploadAttemptID string
 }
 
 func isAssetProcessableExtension(ext string) bool {
@@ -357,6 +360,14 @@ func (s *fileService) UploadFileWithOptions(ctx context.Context, filename string
 	fileUUID := uuid.New().String()
 	storageType := config.Current().Storage.Type
 	fileKey := fmt.Sprintf("upload_files/%s/%s.%s", uploadOrganizationID, fileUUID, extension)
+	if isTemporary && strings.TrimSpace(options.UploadAttemptID) != "" {
+		if _, err := uuid.Parse(strings.TrimSpace(options.UploadAttemptID)); err != nil {
+			return nil, fmt.Errorf("invalid upload attempt id: %w", err)
+		}
+		if err := s.beginTemporaryUploadAttempt(ctx, strings.TrimSpace(options.UploadAttemptID), userID, fileUUID, fileKey); err != nil {
+			return nil, err
+		}
+	}
 
 	// Calculate file hash
 	hash := fmt.Sprintf("%x", sha256.Sum256(content))
@@ -390,6 +401,11 @@ func (s *fileService) UploadFileWithOptions(ctx context.Context, filename string
 
 	// Step 5: Record the file and its quota usage in a transaction
 	err := s.db.Transaction(func(tx *gorm.DB) error {
+		if isTemporary && strings.TrimSpace(options.UploadAttemptID) != "" {
+			if err := s.ensureTemporaryUploadAttemptPending(ctx, tx, strings.TrimSpace(options.UploadAttemptID), userID, fileUUID); err != nil {
+				return err
+			}
+		}
 		// Save to database using transaction
 		if err := s.fileRepo.WithTx(tx).Create(ctx, localUploadFile); err != nil {
 			return fmt.Errorf("failed to save file record: %w", err)
@@ -450,6 +466,12 @@ func (s *fileService) UploadFileWithOptions(ctx context.Context, filename string
 			}
 			if s.quotaService == nil {
 				logger.Warn("Skipping quota recording: quotaService is nil")
+			}
+		}
+
+		if isTemporary && strings.TrimSpace(options.UploadAttemptID) != "" {
+			if err := s.markTemporaryUploadCompleted(ctx, tx, strings.TrimSpace(options.UploadAttemptID)); err != nil {
+				return err
 			}
 		}
 
@@ -1193,6 +1215,11 @@ type deletionPreparation struct {
 // count was read back after the object was gone and therefore always fell back to one.
 func (s *fileService) prepareDeletion(file *model.UploadFile, groupID *uuid.UUID) (deletionPreparation, error) {
 	var prep deletionPreparation
+	if file != nil && file.IsTemporary {
+		// Temporary uploads do not consume organization quota at creation time, so their
+		// cleanup must not emit negative storage or OCR usage either.
+		return prep, nil
+	}
 	if groupID == nil || s.quotaService == nil {
 		return prep, nil
 	}

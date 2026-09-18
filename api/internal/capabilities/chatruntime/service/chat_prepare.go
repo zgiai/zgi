@@ -16,6 +16,10 @@ import (
 	"gorm.io/gorm"
 )
 
+type temporaryFileClaimer interface {
+	ClaimTemporaryFilesInTx(ctx context.Context, tx *gorm.DB, fileIDs []string, ownerID, usedBy string) error
+}
+
 func (s *service) PrepareChat(ctx context.Context, scope Scope, req runtimedto.ChatRequest) (*PreparedChat, error) {
 	return s.PrepareConfiguredChat(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, RunConfig{
 		BillingAppType: runtimemodel.MessageBillingReasonSourceAIChat,
@@ -72,10 +76,22 @@ func (s *service) PrepareConfiguredChat(ctx context.Context, scope Scope, caller
 	}
 
 	message := newStreamingMessage(conversation.ID, parentID, parts)
+	temporaryFileIDs := temporaryAttachmentIDs(attachments)
 	if err := s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txRepos := repository.NewRepositories(tx)
 		if err := txRepos.Message.Create(ctx, message); err != nil {
 			return err
+		}
+		if len(temporaryFileIDs) > 0 {
+			if claimer, ok := s.fileService.(temporaryFileClaimer); ok {
+				ownerID := scope.AccountID.String()
+				if scope.ExternalUserID != nil && *scope.ExternalUserID != uuid.Nil {
+					ownerID = scope.ExternalUserID.String()
+				}
+				if err := claimer.ClaimTemporaryFilesInTx(ctx, tx, temporaryFileIDs, ownerID, message.ID.String()); err != nil {
+					return err
+				}
+			}
 		}
 		if err := txRepos.Conversation.StartStreaming(ctx, conversation.ID, scope.OrganizationID, scope.AccountID, message.ID); err != nil {
 			return err

@@ -56,6 +56,19 @@ type attachmentBundle struct {
 	Files []attachmentFile
 }
 
+func temporaryAttachmentIDs(bundle *attachmentBundle) []string {
+	if bundle == nil {
+		return nil
+	}
+	ids := make([]string, 0, len(bundle.Files))
+	for _, file := range bundle.Files {
+		if file.IsTemporary && file.ID != "" {
+			ids = append(ids, file.ID)
+		}
+	}
+	return ids
+}
+
 type attachmentFile struct {
 	ID             string
 	Name           string

@@ -359,9 +359,11 @@ export function AIChatInputArea({
   const isComposingRef = useRef(false);
   const ignoreEnterAfterCompositionRef = useRef(false);
   const compositionEndTimerRef = useRef<number | null>(null);
-  // In-flight attachment uploads, keyed by the id the attempt started with. Uploads can
-  // legitimately run for minutes, so they stay cancellable.
-  const uploadControllersRef = useRef<Map<string, AbortController>>(new Map());
+  // Upload attempts, keyed by the current attachment id. In-flight uploads can legitimately
+  // run for minutes, and completed-but-unsent drafts stay cancellable until they are claimed.
+  const uploadControllersRef = useRef<
+    Map<string, { controller: AbortController; attemptID: string; webAppID?: string }>
+  >(new Map());
   const [attachments, setAttachments] = useState<AIChatInputAttachment[]>([]);
   const [isFileSelectorOpen, setIsFileSelectorOpen] = useState(false);
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
@@ -768,7 +770,12 @@ export function AIChatInputArea({
       // A fresh controller per attempt so the request can be aborted when the user
       // removes the attachment or the composer unmounts.
       const controller = new AbortController();
-      uploadControllersRef.current.set(localId, controller);
+      const attemptID = crypto.randomUUID();
+      uploadControllersRef.current.set(localId, {
+        controller,
+        attemptID,
+        webAppID: uploadScope.type === 'webapp' ? uploadScope.webAppId : undefined,
+      });
       try {
         const onProgress = (progress: number) =>
           setAttachments(current =>
@@ -781,14 +788,25 @@ export function AIChatInputArea({
             ? await uploadService.uploadWebAppSingle(uploadScope.webAppId, file, {
                 onProgress,
                 signal: controller.signal,
+                upload_attempt_id: attemptID,
               })
             : await uploadService.uploadSingle(file, {
                 is_temporary: true,
                 workspace_id: currentWorkspace?.id,
                 onProgress,
                 signal: controller.signal,
+                upload_attempt_id: attemptID,
               });
         const uploadedFile = toAIChatMessageFile(response, kind);
+        const upload = uploadControllersRef.current.get(localId);
+        if (upload?.controller === controller) {
+          // Keep the attempt handle attached to the uploaded attachment until the
+          // message is sent or the user removes it. An upload can finish after the
+          // abort request raced it, and a completed-but-unsent draft still needs a
+          // cancellation signal instead of waiting for the server sweep.
+          uploadControllersRef.current.delete(localId);
+          uploadControllersRef.current.set(uploadedFile.id, upload);
+        }
         setAttachments(current =>
           current.map(attachment =>
             attachment.id === localId
@@ -813,6 +831,15 @@ export function AIChatInputArea({
         // or the composer unmounted. Trust the controller, which cannot be misread, and
         // fall back to the error shape for cancellations raised elsewhere.
         if (controller.signal.aborted || isUploadCanceledError(error)) return;
+        const upload = uploadControllersRef.current.get(localId);
+        if (upload?.controller === controller) {
+          const cancel = upload.webAppID
+            ? uploadService.cancelWebAppUploadAttempt(upload.webAppID, upload.attemptID)
+            : uploadService.cancelUploadAttempt(upload.attemptID);
+          void cancel.catch(cancelError =>
+            console.warn('Failed to cancel failed upload attempt', cancelError)
+          );
+        }
         const message =
           error instanceof Error ? error.message : t('consoleChat.attachments.uploadFailed');
         setAttachments(current =>
@@ -828,9 +855,9 @@ export function AIChatInputArea({
           )
         );
       } finally {
-        // The attachment id changes on success, so release the entry this attempt owns
-        // and leave a newer attempt's controller alone.
-        if (uploadControllersRef.current.get(localId) === controller) {
+        // A successful upload is moved to the server file id above; failed or cancelled
+        // attempts still release the local id without touching a newer retry.
+        if (uploadControllersRef.current.get(localId)?.controller === controller) {
           uploadControllersRef.current.delete(localId);
         }
       }
@@ -909,7 +936,14 @@ export function AIChatInputArea({
   const handleRemoveAttachment = useCallback((id: string) => {
     // Removing an attachment that is still uploading cancels its request instead of
     // leaving the user waiting on a response nobody wants.
-    uploadControllersRef.current.get(id)?.abort();
+    const upload = uploadControllersRef.current.get(id);
+    upload?.controller.abort();
+    if (upload) {
+      const cancel = upload.webAppID
+        ? uploadService.cancelWebAppUploadAttempt(upload.webAppID, upload.attemptID)
+        : uploadService.cancelUploadAttempt(upload.attemptID);
+      void cancel.catch(error => console.warn('Failed to cancel upload attempt', error));
+    }
     uploadControllersRef.current.delete(id);
     setAttachments(current => current.filter(attachment => attachment.id !== id));
   }, []);
@@ -917,7 +951,13 @@ export function AIChatInputArea({
   // Abandon in-flight uploads when the composer goes away.
   useEffect(
     () => () => {
-      uploadControllersRef.current.forEach(controller => controller.abort());
+      uploadControllersRef.current.forEach(upload => {
+        upload.controller.abort();
+        const cancel = upload.webAppID
+          ? uploadService.cancelWebAppUploadAttempt(upload.webAppID, upload.attemptID)
+          : uploadService.cancelUploadAttempt(upload.attemptID);
+        void cancel.catch(error => console.warn('Failed to cancel upload attempt', error));
+      });
       uploadControllersRef.current.clear();
     },
     []
@@ -1045,6 +1085,7 @@ export function AIChatInputArea({
     try {
       const sent = await onSend(uploadedFiles, useMemory);
       if (sent !== false) {
+        uploadedFiles.forEach(file => uploadControllersRef.current.delete(file.id));
         setAttachments([]);
       }
     } finally {

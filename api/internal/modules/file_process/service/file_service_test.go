@@ -526,6 +526,27 @@ func TestPrepareDeletionSkipsOCROutsideReductoETL(t *testing.T) {
 	}
 }
 
+// Temporary uploads never consume organization quota. Their cancellation/expiry path
+// must therefore avoid manufacturing a negative storage or OCR usage entry.
+func TestPrepareDeletionSkipsQuotaForTemporaryUploads(t *testing.T) {
+	withETLType(t, "Reducto")
+	store := &fakeUploadStorage{}
+	svc := &fileService{storage: store, quotaService: fakeQuotaService{}}
+	file, groupID := uploadFileForDeletion("pdf")
+	file.IsTemporary = true
+
+	prep, err := svc.prepareDeletion(file, groupID)
+	if err != nil {
+		t.Fatalf("prepareDeletion: %v", err)
+	}
+	if prep != (deletionPreparation{}) {
+		t.Fatalf("prep = %+v, want no quota accounting for a temporary upload", prep)
+	}
+	if len(store.loaded) != 0 || len(store.deleted) != 0 {
+		t.Fatalf("storage calls = loaded %v deleted %v, want none", store.loaded, store.deleted)
+	}
+}
+
 // An unparseable creator used to fail inside the transaction, after the object had already
 // been removed. It now fails before anything is touched.
 func TestPrepareDeletionRejectsUnparseableCreatorWithoutTouchingStorage(t *testing.T) {

@@ -68,6 +68,20 @@ func registerFileObjectDeletionRetry(
 	logger.Info("File object deletion retry task registered", "interval", task.Interval().String())
 }
 
+func registerTemporaryUploadCleanup(scheduler fileObjectDeletionTaskRegistrar, db *gorm.DB) {
+	if scheduler == nil || db == nil {
+		return
+	}
+	processor := fileProcessService.NewFileUploadAttemptCleanupProcessor(db)
+	task := &fileProcessService.FileUploadAttemptCleanupTask{}
+	handler := fileProcessService.NewFileUploadAttemptCleanupTaskHandler(processor)
+	if err := scheduler.RegisterTask(task, handler); err != nil {
+		logger.Error("Failed to register temporary upload cleanup task", "error", err.Error())
+		return
+	}
+	logger.Info("Temporary upload cleanup task registered", "interval", task.Interval().String())
+}
+
 // registerFileRoutesLegacy keeps original implementation details.
 func registerFileRoutesLegacy(v1 *gin.RouterGroup, deps FileRouteDeps) {
 	fileRepo := fileProcessRepo.NewFileRepository(deps.DB)
@@ -116,6 +130,7 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, deps FileRouteDeps) {
 	toolFileHandler := tool_file.NewHTTPHandler(tool_file.GlobalToolFileManager)
 
 	registerFileObjectDeletionRetry(deps.Scheduler, deps.DB, deps.Storage)
+	registerTemporaryUploadCleanup(deps.Scheduler, deps.DB)
 
 	files := v1.Group("/files",
 		jwtMiddleware.JWTWithOrganizationAndService(deps.AccountService),
@@ -124,6 +139,7 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, deps FileRouteDeps) {
 		files.GET("/upload", fileHandler.GetUploadConfig)
 
 		files.POST("/upload", fileHandler.UploadFile)
+		files.DELETE("/upload-attempts/:attempt_id", fileHandler.CancelUploadAttempt)
 
 		files.POST("/text", fileHandler.CreateTextFile)
 
