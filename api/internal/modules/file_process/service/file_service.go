@@ -257,8 +257,10 @@ func (s *fileService) ReplaceFileContent(ctx context.Context, fileID string, fil
 		return nil
 	})
 	if err != nil {
-		if deleteErr := s.storage.Delete(newKey); deleteErr != nil {
-			logger.Warn("Failed to delete replacement file after DB rollback", "key", newKey, "error", deleteErr.Error())
+		if !s.replacementObjectIsReferenced(ctx, fileID, newKey) {
+			// The record still points at the object being replaced, so the new one is
+			// unreachable and can be removed.
+			s.removeOrphanedObject(ctx, newKey)
 		}
 		return nil, err
 	}
@@ -509,8 +511,69 @@ func (s *fileService) compensateFailedUpload(ctx context.Context, fileKey, fileI
 		return
 	}
 
-	if deleteErr := s.storage.Delete(fileKey); deleteErr != nil {
-		logger.Warn("Failed to delete file after DB rollback", "key", fileKey, "error", deleteErr.Error())
+	// The record is confirmed absent, so the object is unreferenced. Removals that storage
+	// refuses are recorded for the retry worker rather than dropped after a log line.
+	s.removeOrphanedObject(ctx, fileKey)
+}
+
+// orphanedObjectRetryTimeout bounds recording a pending removal for an object whose upload
+// never became a record. It runs on a detached context because the request is already gone.
+const orphanedObjectRetryTimeout = 3 * time.Second
+
+// removeOrphanedObject removes an object that no upload record references any more, and
+// hands the key to the deletion retry worker when storage refuses.
+//
+// Logging the failure is not enough: at this point there is neither an upload_files row nor
+// a pending-removal row, so a storage outage - or a process that dies before the retry -
+// would leave the object untracked for good.
+func (s *fileService) removeOrphanedObject(ctx context.Context, objectKey string) {
+	if deleteErr := s.storage.Delete(objectKey); deleteErr == nil {
+		return
+	} else {
+		logger.Warn("Deferring an orphaned object to the retry worker", "key", objectKey, "error", deleteErr.Error())
+	}
+
+	pending := model.NewFileObjectDeletion(objectKey, time.Now().UTC())
+	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), orphanedObjectRetryTimeout)
+	defer cancel()
+
+	if err := s.db.WithContext(recordCtx).Create(pending).Error; err != nil {
+		logger.Error("Failed to record a pending file object deletion for an orphaned object",
+			"key", objectKey, "error", err.Error())
+	}
+}
+
+// replacementObjectIsReferenced reports whether the new object of a replacement must be
+// kept after the transaction reported a failure.
+//
+// A transaction can report an error after the database actually committed, and the record
+// then points at the new object: removing it would leave the file with no content at all.
+// Reconcile the record first, and keep the object whenever the answer cannot be trusted.
+func (s *fileService) replacementObjectIsReferenced(ctx context.Context, fileID, newKey string) bool {
+	reconcileCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), uploadRollbackReconcileTimeout)
+	defer cancel()
+
+	record, err := s.fileRepo.GetByID(reconcileCtx, fileID)
+	switch {
+	case err == nil && record != nil:
+		if record.Key == newKey {
+			logger.Warn("Keeping replacement object: its record persisted despite the transaction error",
+				"file_id", fileID, "key", newKey)
+			return true
+		}
+		return false
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		// Nothing references the new object any more.
+		return false
+	default:
+		fields := []interface{}{"file_id", fileID, "key", newKey}
+		if err != nil {
+			fields = append(fields, "error", err.Error())
+		} else {
+			fields = append(fields, "record", "nil")
+		}
+		logger.Warn("Keeping replacement object: could not confirm the record still points at the old key", fields...)
+		return true
 	}
 }
 

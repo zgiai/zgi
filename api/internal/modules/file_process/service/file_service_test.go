@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
@@ -30,15 +31,16 @@ func (f fakeUploadRecordRepo) GetByID(context.Context, string) (*model.UploadFil
 // fakeUploadStorage records deletions and reads instead of reaching a real bucket.
 type fakeUploadStorage struct {
 	storage.Storage
-	deleted []string
-	loaded  []string
-	content []byte
-	loadErr error
+	deleted   []string
+	deleteErr error
+	loaded    []string
+	content   []byte
+	loadErr   error
 }
 
 func (f *fakeUploadStorage) Delete(key string) error {
 	f.deleted = append(f.deleted, key)
-	return nil
+	return f.deleteErr
 }
 
 func (f *fakeUploadStorage) Load(key string) ([]byte, error) {
@@ -169,6 +171,92 @@ func TestCompensateFailedUploadKeepsObjectWhenRepoAnswersAmbiguously(t *testing.
 
 	if len(store.deleted) != 0 {
 		t.Fatalf("deleted = %v, want nothing removed when absence is unconfirmed", store.deleted)
+	}
+}
+
+// A storage outage right after the rollback would leave the object with no record and no
+// pending row at all, so the key has to reach the retry worker instead of a log line.
+func TestCompensateFailedUploadRecordsAPendingRemovalWhenStorageRefuses(t *testing.T) {
+	db, mock := openFileObjectDeletionMockDB(t)
+	store := &fakeUploadStorage{deleteErr: errors.New("storage unavailable")}
+	svc := &fileService{
+		fileRepo: fakeUploadRecordRepo{err: gorm.ErrRecordNotFound},
+		storage:  store,
+		db:       db,
+	}
+	mock.ExpectExec(`(?s)INSERT INTO "file_object_deletions".*`).WillReturnResult(sqlmock.NewResult(0, 1))
+
+	svc.compensateFailedUpload(context.Background(), "upload_files/org/file-1.png", "file-1")
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("the failed removal was not handed to the retry worker: %v", err)
+	}
+}
+
+// A removal that succeeds needs no pending row.
+func TestRemoveOrphanedObjectKeepsTheOutboxOutOfTheHappyPath(t *testing.T) {
+	db, mock := openFileObjectDeletionMockDB(t)
+	store := &fakeUploadStorage{}
+	svc := &fileService{storage: store, db: db}
+	// Registered only to prove it stays unmatched: an insert here would mean the object was
+	// handed to the worker even though the removal already succeeded.
+	mock.ExpectExec(`(?s)INSERT INTO "file_object_deletions".*`).WillReturnResult(sqlmock.NewResult(0, 1))
+
+	svc.removeOrphanedObject(context.Background(), "upload_files/org/file-1.png")
+
+	if len(store.deleted) != 1 {
+		t.Fatalf("deleted = %v, want the object removed inline", store.deleted)
+	}
+	if err := mock.ExpectationsWereMet(); err == nil {
+		t.Fatal("a pending row was recorded for an object that was already removed")
+	}
+}
+
+// The replacement object must survive a transaction that reported an error after the
+// database actually committed, because the record then points at it.
+func TestReplacementObjectIsReferencedKeepsTheObjectWhenTheRecordPointsAtIt(t *testing.T) {
+	svc := &fileService{
+		fileRepo: fakeUploadRecordRepo{record: &model.UploadFile{ID: "file-1", Key: "upload_files/org/new.png"}},
+	}
+
+	if !svc.replacementObjectIsReferenced(context.Background(), "file-1", "upload_files/org/new.png") {
+		t.Fatal("replacementObjectIsReferenced = false, want the new object kept")
+	}
+}
+
+func TestReplacementObjectIsReferencedRemovesTheObjectWhenTheRecordStillPointsAtTheOld(t *testing.T) {
+	tests := []struct {
+		name string
+		repo fakeUploadRecordRepo
+	}{
+		{
+			name: "the replacement did not land",
+			repo: fakeUploadRecordRepo{record: &model.UploadFile{ID: "file-1", Key: "upload_files/org/old.png"}},
+		},
+		{
+			name: "the record is gone",
+			repo: fakeUploadRecordRepo{err: gorm.ErrRecordNotFound},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &fileService{fileRepo: tt.repo}
+
+			if svc.replacementObjectIsReferenced(context.Background(), "file-1", "upload_files/org/new.png") {
+				t.Fatal("replacementObjectIsReferenced = true, want the unreferenced object removed")
+			}
+		})
+	}
+}
+
+// When the record cannot be read, the outcome of the replacement is unknown: a stray object
+// is the safer failure, so the new object is kept.
+func TestReplacementObjectIsReferencedKeepsTheObjectWhenTheLookupFails(t *testing.T) {
+	svc := &fileService{fileRepo: fakeUploadRecordRepo{err: errors.New("connection reset by peer")}}
+
+	if !svc.replacementObjectIsReferenced(context.Background(), "file-1", "upload_files/org/new.png") {
+		t.Fatal("replacementObjectIsReferenced = false, want the new object kept while the outcome is unknown")
 	}
 }
 
