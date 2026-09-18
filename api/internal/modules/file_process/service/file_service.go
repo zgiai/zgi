@@ -532,10 +532,18 @@ func (s *fileService) removeOrphanedObject(ctx context.Context, objectKey string
 
 	pending := model.NewFileObjectDeletion(objectKey, time.Now().UTC())
 	if err := s.db.WithContext(recordCtx).Create(pending).Error; err != nil {
-		// The object is unreferenced either way, so the removal is still worth attempting;
-		// it just has no durable backing if it fails as well.
-		logger.Error("Failed to record a pending file object deletion for an orphaned object",
+		// Nothing durable names the object now, so no worker can pick this up: the removal
+		// below is a plain best effort, and the object is unreferenced either way, so
+		// skipping it would only guarantee the leak. Report it as the untracked removal it
+		// is, rather than as work the retry worker owns.
+		logger.Error("Failed to record a pending file object deletion; removing the object untracked",
 			"key", objectKey, "error", err.Error())
+
+		if deleteErr := s.storage.Delete(objectKey); deleteErr != nil {
+			logger.Error("Failed to remove an untracked file object",
+				"key", objectKey, "error", deleteErr.Error())
+		}
+		return
 	}
 
 	s.removeObjectWithRetry(recordCtx, pending)

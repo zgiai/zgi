@@ -28,6 +28,12 @@ func (f fakeUploadRecordRepo) GetByID(context.Context, string) (*model.UploadFil
 	return f.record, f.err
 }
 
+// WithTx and Create let the same fake serve the upload transaction, which never reaches the
+// database itself: the test only decides what the record looks like afterwards.
+func (f fakeUploadRecordRepo) WithTx(*gorm.DB) repository.FileRepository { return f }
+
+func (f fakeUploadRecordRepo) Create(context.Context, *model.UploadFile) error { return nil }
+
 // fakeUploadStorage records deletions and reads instead of reaching a real bucket.
 type fakeUploadStorage struct {
 	storage.Storage
@@ -256,17 +262,24 @@ func TestRemoveOrphanedObjectRecordsTheIntentBeforeRemoving(t *testing.T) {
 }
 
 // Even when the intent cannot be recorded, the object is still unreferenced: attempting the
-// removal cannot make things worse, and skipping it would guarantee the leak.
+// removal cannot make things worse, and skipping it would guarantee the leak. Nothing may
+// claim the retry worker owns this removal either.
 func TestRemoveOrphanedObjectStillRemovesTheObjectWhenTheIntentCannotBeRecorded(t *testing.T) {
 	db, mock := openFileObjectDeletionMockDB(t)
 	store := &fakeUploadStorage{}
 	svc := &fileService{storage: store, db: db}
 	mock.ExpectExec(`(?s)INSERT INTO "file_object_deletions".*`).WillReturnError(errors.New("database unavailable"))
+	// Registered only to prove it stays unmatched: clearing a row that was never written
+	// would mean the code still treated the removal as owned by the retry worker.
+	mock.ExpectExec(`(?s)DELETE FROM "file_object_deletions".*`).WillReturnResult(sqlmock.NewResult(0, 1))
 
 	svc.removeOrphanedObject(context.Background(), "upload_files/org/file-1.png")
 
 	if len(store.deleted) != 1 {
 		t.Fatalf("deleted = %v, want the object removed even without a pending row", store.deleted)
+	}
+	if err := mock.ExpectationsWereMet(); err == nil {
+		t.Fatal("a removal without a pending row claimed the row the retry worker owns")
 	}
 }
 
@@ -292,6 +305,8 @@ func (r *fakeReplacementRepo) GetByID(context.Context, string) (*model.UploadFil
 func (r *fakeReplacementRepo) Update(context.Context, string, map[string]interface{}) error {
 	return r.updateErr
 }
+
+func (r *fakeReplacementRepo) DeleteExtractionCaches(context.Context, string) error { return nil }
 
 // The transaction reported an error, but the database actually committed: the record points
 // at the new object, so removing it would leave the file with no content at all.
@@ -525,5 +540,69 @@ func TestPrepareDeletionRejectsUnparseableCreatorWithoutTouchingStorage(t *testi
 	}
 	if len(store.deleted) != 0 || len(store.loaded) != 0 {
 		t.Fatalf("deleted = %v loaded = %v, want storage untouched", store.deleted, store.loaded)
+	}
+}
+
+// The replacement ambiguity that matters is a commit that fails after every statement ran:
+// the row is written, the record points at the new object, and the caller still sees an
+// error. The new object must survive that.
+func TestReplaceFileContentKeepsTheNewObjectWhenCommitFailsAfterTheStatementsRan(t *testing.T) {
+	withStorageType(t, "aliyun-oss")
+	db, mock := openFileObjectDeletionMockDB(t)
+	organizationID := uuid.NewString()
+	oldKey := "upload_files/" + organizationID + "/old.png"
+	repo := &fakeReplacementRepo{
+		current: &model.UploadFile{ID: "file-1", Key: oldKey, Size: 100, Extension: "png"},
+	}
+	store := &fakeUploadStorage{}
+	// Every statement succeeded, so the record points at the object the replacement wrote.
+	store.afterSave = func(key string) {
+		repo.after = &model.UploadFile{ID: "file-1", Key: key, Size: 6, Extension: "png"}
+	}
+	svc := &fileService{fileRepo: repo, storage: store, db: db}
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`(?s)INSERT INTO "file_object_deletions".*`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit().WillReturnError(errors.New("connection reset by peer"))
+
+	if _, err := svc.ReplaceFileContent(context.Background(), "file-1", "new.png", []byte("pixels"), "image/png", uuid.NewString(), organizationID); err == nil {
+		t.Fatal("ReplaceFileContent = nil error, want the lost commit acknowledgement reported")
+	}
+
+	if len(store.deleted) != 0 {
+		t.Fatalf("deleted = %v, want the object the record points at kept", store.deleted)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The same ambiguity on the upload path: the record was written, the commit acknowledgement
+// was lost, and the compensating delete must not remove the object the record points at.
+func TestUploadKeepsTheObjectWhenCommitFailsAfterTheRecordWasWritten(t *testing.T) {
+	withStorageType(t, "aliyun-oss")
+	db, mock := openFileObjectDeletionMockDB(t)
+	// The reconciliation reads the record back, and it is there because the commit landed.
+	repo := fakeUploadRecordRepo{record: &model.UploadFile{ID: "file-1", Key: "upload_files/org/file-1.png"}}
+	store := &fakeUploadStorage{}
+	svc := &fileService{fileRepo: repo, storage: store, db: db}
+
+	mock.ExpectBegin()
+	mock.ExpectCommit().WillReturnError(errors.New("connection reset by peer"))
+
+	file, err := svc.UploadFileWithOptions(context.Background(), "pixel.png", []byte("pixels"), "image/png",
+		uuid.NewString(), uuid.NewString(), model.CreatedByRoleAccount, nil, nil, true, false, UploadFileOptions{})
+	if err == nil {
+		t.Fatal("UploadFileWithOptions = nil error, want the lost commit acknowledgement reported")
+	}
+	if file != nil {
+		t.Fatalf("file = %+v, want none for a failed upload", file)
+	}
+
+	if len(store.deleted) != 0 {
+		t.Fatalf("deleted = %v, want the object of the committed record kept", store.deleted)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
