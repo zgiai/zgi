@@ -519,7 +519,6 @@ const OPS_PHASE_ONE_COPY = {
       /has been remembered/i,
       /Separate observation from inference/i,
     ],
-    notice: [/does not bind a Skill on its own/i, /verified and bound to this digital human/i],
   },
   'zh-Hans': {
     shortDescription: [
@@ -543,7 +542,6 @@ const OPS_PHASE_ONE_COPY = {
       /已被记住/,
       /把观察与推断分开/,
     ],
-    notice: [/该模板本身不会绑定技能/, /通过验证并绑定到这个数字人/],
   },
 };
 for (const [locale, dictionary] of [
@@ -556,9 +554,8 @@ for (const [locale, dictionary] of [
     ['shortDescription', expected.shortDescription],
     ['responsibility', expected.responsibility],
     ['persona', expected.persona],
-    ['notice', expected.notice],
   ]) {
-    const text = field === 'notice' ? dictionary.createFlow.form.templateNotEnabled : copy[field];
+    const text = copy[field];
     assert.equal(typeof text, 'string', `${locale} opsSpecialist.${field} must be copy`);
     assert.ok(text.trim().length > 0, `${locale} opsSpecialist.${field} must not be empty`);
     for (const pattern of patterns) {
@@ -569,6 +566,11 @@ for (const [locale, dictionary] of [
       );
     }
   }
+  assert.equal(
+    dictionary.createFlow.form.templateNotEnabled,
+    undefined,
+    `${locale} must not expose the removed template capability warning`
+  );
 }
 
 // Custom (blank) entry keeps the previous behaviour.
@@ -1648,10 +1650,10 @@ assert.match(
   /<DigitalHumanConnectorOperationDetails[\s\S]*onOperation=/,
   'the create picker must scope operations on selected connections'
 );
-assert.match(
+assert.doesNotMatch(
   connectorCreatePickerSource,
   /\/console\/connectors\/connections/,
-  'the picker must link to Connector Center for creation, verification, and maintenance'
+  'the template picker must not expose a redundant Connector Center link'
 );
 
 // The create page may open the shared credential/reconnect surfaces directly
@@ -2003,39 +2005,22 @@ assert.doesNotMatch(
   'the form must not render the removed placeholder capability list'
 );
 
-// A template that seeds no skill must warn the user only while nothing is
-// selected: the generic form can bind a Skill or a Connector connection, and
-// once one is selected the notice must disappear instead of denying a capability
-// creation can now deliver.
-assert.match(
+// A template that seeds no skill uses the same generic form as every other
+// template. There is no template-specific capability warning or extra gate.
+assert.doesNotMatch(
   flowSource,
-  /const templateWithoutSkills = Boolean\(template && template\.skills\.length === 0\)/,
-  'the flow must detect a template that declares no skill'
-);
-assert.match(
-  flowSource,
-  /const hasSelectedCapability = selectedSkillIds\.length > 0 \|\| connectorSelections\.length > 0/,
-  'a selected skill or Connector connection must count as a selected capability'
-);
-assert.match(
-  flowSource,
-  /const showTemplateNotEnabled = templateWithoutSkills && !hasSelectedCapability/,
-  'the not-enabled notice must require a zero-seed-skill template with nothing selected'
-);
-assert.match(
-  flowSource,
-  /showTemplateNotEnabled\s*\?\s*t\('createFlow\.form\.templateNotEnabled'\)/,
-  'such a template must surface the localized not-enabled notice'
+  /templateWithoutSkills|hasSelectedCapability|showTemplateNotEnabled|templateNotEnabled/,
+  'the flow must not render the removed template capability warning'
 );
 assert.match(
   formSource,
   /notice\?: string \| null;/,
-  'the form must accept the inline notice copy'
+  'the form must retain the generic result notice for create errors or drafts'
 );
 assert.match(
   formSource,
   /notice \? \([\s\S]*role="status"[\s\S]*\{notice\}/,
-  'the form must render the notice as a status message and never as a silent hint'
+  'the form must render the generic result notice as a status message'
 );
 
 // Gallery: catalogue driven, keyboard reachable, and it never claims a skill is bound yet.
