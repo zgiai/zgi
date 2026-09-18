@@ -173,7 +173,13 @@ func (s *llmGatewayServiceImpl) createImageInternal(
 	// fail-closed when their model/channel price is missing.
 	estimatedCredits := estimatedQuote.TotalCredits
 
-	// 5. Begin billing attempt using the shared billing pipeline.
+	// 5. Declare the metered billing identity before beginBillingAttempt so the
+	// platform lane can reserve the real image price. Platform image pricing is
+	// intentionally zero in the local quote, so without this the reservation
+	// would be zero and a zero-balance organization could run a priced image.
+	ctx = withImageMeteredUsage(ctx, effectiveReq)
+
+	// 6. Begin billing attempt using the shared billing pipeline.
 	attemptID := buildAttemptID(requestID, 0)
 	billingCtx, err := s.beginBillingAttempt(
 		ctx,
@@ -257,6 +263,45 @@ func (s *llmGatewayServiceImpl) createImageInternal(
 
 	s.traceImageGeneration(ctx, req, resp, startTime, time.Now(), billingCtx, nil)
 	return resp, nil
+}
+
+// maxImageMeteredQuantity caps the per-image reservation so a malformed n
+// cannot freeze an absurd amount. It mirrors the conservative reservation cap
+// used when the platform owns the price.
+const maxImageMeteredQuantity = 50
+
+// withImageMeteredUsage attaches the image metered identity to ctx. Both
+// images.generations and images.edits map to operation image_generation, meter
+// image, base unit per_image.
+func withImageMeteredUsage(ctx context.Context, req *adapter.ImageRequest) context.Context {
+	fact := shared.MeteredUsageFact{
+		Operation: string(PricingOperationImage),
+		Meter:     string(PricingMeterImage),
+		BaseUnit:  "per_image",
+		Quantity:  1,
+		Dimensions: map[string]string{
+			"size":    "1024x1024",
+			"quality": "standard",
+		},
+	}
+	if req != nil {
+		if req.N != nil && *req.N > 1 {
+			fact.Quantity = int64(*req.N)
+		}
+		if fact.Quantity > maxImageMeteredQuantity {
+			fact.Quantity = maxImageMeteredQuantity
+		}
+		if size := strings.TrimSpace(req.Size); size != "" {
+			fact.Dimensions["size"] = size
+		}
+		if quality := strings.TrimSpace(req.Quality); quality != "" {
+			fact.Dimensions["quality"] = quality
+		}
+		if style := strings.TrimSpace(req.Style); style != "" {
+			fact.Dimensions["style"] = style
+		}
+	}
+	return context.WithValue(ctx, shared.ContextKeyMeteredUsage, &fact)
 }
 
 func (s *llmGatewayServiceImpl) quoteImagePricingForSettlement(

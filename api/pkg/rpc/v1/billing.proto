@@ -11,6 +11,38 @@ service BillingService {
   rpc SettleUsageWithDualTrack(SettleUsageRequest) returns (SettleUsageResponse);
   rpc GetBillingMode(GetBillingModeRequest) returns (BillingModeResponse);
   rpc CheckCreditBalance(CheckCreditBalanceRequest) returns (CheckCreditBalanceResponse);
+  rpc PreDeductMeteredUsage(PreDeductMeteredUsageRequest) returns (PreDeductMeteredUsageResponse);
+}
+
+message MeteredUsageFact {
+  string operation = 1;
+  string meter = 2;
+  string base_unit = 3;
+  int64 quantity = 4;
+  map<string, string> dimensions = 5;
+}
+
+message PreDeductMeteredUsageRequest {
+  string organization_id = 1;
+  string model_id = 2;
+  string request_id = 3;
+  string attempt_id = 4;
+  string resource_type = 5;
+  string resource_id = 6;
+  string resource_name = 7;
+  MeteredUsageFact usage = 8;
+  // Cross-service model identity; see console billing.proto.
+  string provider_name = 9;
+  string model_name = 10;
+}
+
+message PreDeductMeteredUsageResponse {
+  bool success = 1;
+  string error_message = 2;
+  string deduction_id = 3;
+  int64 estimated_credits = 4;
+  int64 reserved_credits = 5;
+  int64 remaining_credits = 6;
 }
 
 message PreDeductQuotaRequest {

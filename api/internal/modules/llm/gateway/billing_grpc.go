@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	"math"
 	"strings"
 	"time"
@@ -34,6 +35,7 @@ type RemoteBilling struct {
 
 type quotaClient interface {
 	PreDeductQuota(ctx context.Context, req *PreDeductQuotaRequest) (*PreDeductQuotaResponse, error)
+	PreDeductMeteredUsage(ctx context.Context, req *PreDeductMeteredUsageRequest) (*PreDeductMeteredUsageResponse, error)
 	SettleQuota(ctx context.Context, req *SettleQuotaRequest) (*SettleQuotaResponse, error)
 	CheckCreditBalance(ctx context.Context, organizationID string, estimatedCredits int64) (bool, int64, error)
 	Close() error
@@ -228,6 +230,11 @@ func (s *RemoteBilling) preDeductViaGRPC(ctx context.Context, bc *BillingContext
 		return fmt.Errorf("pre-deduct subject quota failed: %w", err)
 	}
 
+	fact, hasMeteredFact := shared.MeteredUsageFromContext(ctx)
+	if meteredPredeductEnabledForRequest(ctx, bc, fact, hasMeteredFact) {
+		return s.preDeductMeteredViaGRPC(ctx, bc, fact)
+	}
+
 	req := &PreDeductQuotaRequest{
 		OrganizationID:    bc.OrganizationID,
 		EstimatedCredits:  bc.EstimatedCredits,
@@ -265,14 +272,25 @@ func (s *RemoteBilling) preDeductViaGRPC(ctx context.Context, bc *BillingContext
 		}
 	}
 
-	if strings.TrimSpace(resp.DeductionID) == "" {
+	if err := s.finalizeRemotePreDeductBinding(ctx, bc, resp.DeductionID); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// finalizeRemotePreDeductBinding is the shared tail of both remote pre-deduct
+// paths: it validates the non-empty deduction id, binds it to the local attempt,
+// and compensates the remote reservation when that binding cannot commit.
+func (s *RemoteBilling) finalizeRemotePreDeductBinding(ctx context.Context, bc *BillingContext, deductionID string) error {
+	if strings.TrimSpace(deductionID) == "" {
 		invalidResponseErr := fmt.Errorf("pre-deduct succeeded but deduction_id is empty (request_id=%s)", bc.RequestID)
 		if rollbackErr := s.rollbackLocalSubjectQuotaAndMarkFailed(ctx, bc, "PREDEDUCT_INVALID_RESPONSE", invalidResponseErr.Error()); rollbackErr != nil {
 			return fmt.Errorf("%v (local subject rollback failed: %w)", invalidResponseErr, rollbackErr)
 		}
 		return invalidResponseErr
 	}
-	bc.DeductionID = strings.TrimSpace(resp.DeductionID)
+	bc.DeductionID = strings.TrimSpace(deductionID)
 	if err := s.localService.db.Transaction(func(tx *gorm.DB) error {
 		var attempt BillingAttempt
 		if err := tx.WithContext(ctx).
@@ -328,7 +346,6 @@ func (s *RemoteBilling) preDeductViaGRPC(ctx context.Context, bc *BillingContext
 		}
 		return fmt.Errorf("persist remote deduction binding failed: %w", err)
 	}
-
 	return nil
 }
 
@@ -1469,6 +1486,63 @@ func reconcileBackoff(reconcileAttempts int) time.Duration {
 		return defaultReconcileMaxBackoff
 	}
 	return backoff
+}
+
+// preDeductMeteredViaGRPC reserves a metered price on the platform billing
+// authority. It mirrors preDeductViaGRPC: local subject pre-deduct first,
+// remote metered reservation second, then the shared binding tail with the
+// same compensation and rollback behavior.
+func (s *RemoteBilling) preDeductMeteredViaGRPC(ctx context.Context, bc *BillingContext, fact shared.MeteredUsageFact) error {
+	// The caller already reserved the local subject quota (preDeductViaGRPC does
+	// that before branching), so this function owns only the remote reservation
+	// and must not reserve again.
+	req := &PreDeductMeteredUsageRequest{
+		OrganizationID: bc.OrganizationID,
+		ModelID:        bc.ModelID.String(),
+		ProviderName:   bc.ProviderName,
+		ModelName:      bc.ModelName,
+		RequestID:      bc.RequestID,
+		AttemptID:      bc.AttemptID,
+		Usage: MeteredUsageFact{
+			Operation:  fact.Operation,
+			Meter:      fact.Meter,
+			BaseUnit:   fact.BaseUnit,
+			Quantity:   fact.Quantity,
+			Dimensions: fact.Dimensions,
+		},
+	}
+
+	resp, err := s.grpcClient.PreDeductMeteredUsage(ctx, req)
+	if err != nil {
+		if rollbackErr := s.rollbackLocalSubjectQuotaAndMarkFailed(ctx, bc, "PREDEDUCT_FAILED", err.Error()); rollbackErr != nil {
+			return fmt.Errorf("grpc metered pre-deduct failed: %v (local subject rollback failed: %w)", err, rollbackErr)
+		}
+		return fmt.Errorf("grpc metered pre-deduct failed: %w", err)
+	}
+	if !resp.Success {
+		if rollbackErr := s.rollbackLocalSubjectQuotaAndMarkFailed(ctx, bc, "PREDEDUCT_FAILED", resp.ErrorMessage); rollbackErr != nil {
+			return fmt.Errorf("metered pre-deduct failed: %s (local subject rollback failed: %w)", resp.ErrorMessage, rollbackErr)
+		}
+		return mapMeteredPreDeductError(resp.ErrorMessage)
+	}
+	return s.finalizeRemotePreDeductBinding(ctx, bc, resp.DeductionID)
+}
+
+// mapMeteredPreDeductError mirrors the legacy PreDeductQuota error-code map.
+// PreDeductMeteredUsage reports failures through error_message only, so the
+// sentinels are detected by substring; anything else stays a generic error.
+func mapMeteredPreDeductError(message string) error {
+	lowered := strings.ToLower(strings.TrimSpace(message))
+	switch {
+	case strings.Contains(lowered, "insufficient"):
+		return ErrInsufficientBalance
+	case strings.Contains(lowered, "organization") && strings.Contains(lowered, "not found"):
+		return ErrBalanceNotFound
+	case strings.Contains(lowered, "invalid"):
+		return ErrInvalidRequest
+	default:
+		return fmt.Errorf("pre-deduct failed: %s", message)
+	}
 }
 
 func (s *RemoteBilling) preDeductLocalSubjectQuota(ctx context.Context, bc *BillingContext) error {

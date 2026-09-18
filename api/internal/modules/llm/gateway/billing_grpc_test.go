@@ -24,6 +24,10 @@ func (failingSettleQuotaClient) PreDeductQuota(context.Context, *PreDeductQuotaR
 	return nil, errors.New("unexpected pre-deduct")
 }
 
+func (failingSettleQuotaClient) PreDeductMeteredUsage(context.Context, *PreDeductMeteredUsageRequest) (*PreDeductMeteredUsageResponse, error) {
+	return nil, errors.New("unexpected metered pre-deduct")
+}
+
 func (failingSettleQuotaClient) SettleQuota(context.Context, *SettleQuotaRequest) (*SettleQuotaResponse, error) {
 	return nil, errors.New("quota service unavailable")
 }
@@ -40,6 +44,10 @@ func (successfulPreDeductFailingSettleClient) PreDeductQuota(context.Context, *P
 	return &PreDeductQuotaResponse{Success: true, DeductionID: uuid.NewString()}, nil
 }
 
+func (successfulPreDeductFailingSettleClient) PreDeductMeteredUsage(context.Context, *PreDeductMeteredUsageRequest) (*PreDeductMeteredUsageResponse, error) {
+	return nil, errors.New("unexpected metered pre-deduct")
+}
+
 func (successfulPreDeductFailingSettleClient) SettleQuota(context.Context, *SettleQuotaRequest) (*SettleQuotaResponse, error) {
 	return nil, errors.New("temporary quota service outage")
 }
@@ -54,6 +62,10 @@ type successfulSettleQuotaClient struct{ settledCredits int64 }
 
 func (successfulSettleQuotaClient) PreDeductQuota(context.Context, *PreDeductQuotaRequest) (*PreDeductQuotaResponse, error) {
 	return nil, errors.New("unexpected pre-deduct")
+}
+
+func (successfulSettleQuotaClient) PreDeductMeteredUsage(context.Context, *PreDeductMeteredUsageRequest) (*PreDeductMeteredUsageResponse, error) {
+	return nil, errors.New("unexpected metered pre-deduct")
 }
 
 func (c successfulSettleQuotaClient) SettleQuota(context.Context, *SettleQuotaRequest) (*SettleQuotaResponse, error) {
@@ -76,6 +88,10 @@ type authoritativeQuoteQuotaClient struct {
 
 func (c *authoritativeQuoteQuotaClient) PreDeductQuota(context.Context, *PreDeductQuotaRequest) (*PreDeductQuotaResponse, error) {
 	return nil, errors.New("unexpected pre-deduct")
+}
+
+func (c *authoritativeQuoteQuotaClient) PreDeductMeteredUsage(context.Context, *PreDeductMeteredUsageRequest) (*PreDeductMeteredUsageResponse, error) {
+	return nil, errors.New("unexpected metered pre-deduct")
 }
 
 func (c *authoritativeQuoteQuotaClient) SettleQuota(context.Context, *SettleQuotaRequest) (*SettleQuotaResponse, error) {
@@ -161,6 +177,10 @@ func (c *capturingFailingSettleQuotaClient) PreDeductQuota(context.Context, *Pre
 	return nil, errors.New("unexpected pre-deduct")
 }
 
+func (c *capturingFailingSettleQuotaClient) PreDeductMeteredUsage(context.Context, *PreDeductMeteredUsageRequest) (*PreDeductMeteredUsageResponse, error) {
+	return nil, errors.New("unexpected metered pre-deduct")
+}
+
 func (c *capturingFailingSettleQuotaClient) SettleQuota(_ context.Context, req *SettleQuotaRequest) (*SettleQuotaResponse, error) {
 	copy := *req
 	c.settleRequest = &copy
@@ -177,6 +197,10 @@ type emptyDeductionIDQuotaClient struct{}
 
 func (emptyDeductionIDQuotaClient) PreDeductQuota(context.Context, *PreDeductQuotaRequest) (*PreDeductQuotaResponse, error) {
 	return &PreDeductQuotaResponse{Success: true}, nil
+}
+
+func (emptyDeductionIDQuotaClient) PreDeductMeteredUsage(context.Context, *PreDeductMeteredUsageRequest) (*PreDeductMeteredUsageResponse, error) {
+	return nil, errors.New("unexpected metered pre-deduct")
 }
 
 func (emptyDeductionIDQuotaClient) SettleQuota(context.Context, *SettleQuotaRequest) (*SettleQuotaResponse, error) {
@@ -202,6 +226,10 @@ func (c *lateDeductionQuotaClient) PreDeductQuota(ctx context.Context, _ *PreDed
 	return &PreDeductQuotaResponse{Success: true, DeductionID: "remote-deduction-after-timeout"}, nil
 }
 
+func (c *lateDeductionQuotaClient) PreDeductMeteredUsage(context.Context, *PreDeductMeteredUsageRequest) (*PreDeductMeteredUsageResponse, error) {
+	return nil, errors.New("unexpected metered pre-deduct")
+}
+
 func (c *lateDeductionQuotaClient) SettleQuota(_ context.Context, req *SettleQuotaRequest) (*SettleQuotaResponse, error) {
 	copy := *req
 	c.requests = append(c.requests, &copy)
@@ -220,7 +248,9 @@ func (c *lateDeductionQuotaClient) Close() error { return nil }
 
 func openRemoteBillingTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	// A shared-cache memory database keeps every pooled connection on the same
+	// database; a bare ":memory:" DSN gives each connection its own.
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open sqlite db: %v", err)
 	}

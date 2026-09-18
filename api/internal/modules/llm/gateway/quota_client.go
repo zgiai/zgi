@@ -71,6 +71,43 @@ func (c *QuotaClient) PreDeductQuota(ctx context.Context, req *PreDeductQuotaReq
 	}, nil
 }
 
+func (c *QuotaClient) PreDeductMeteredUsage(ctx context.Context, req *PreDeductMeteredUsageRequest) (*PreDeductMeteredUsageResponse, error) {
+	grpcReq := &pb.PreDeductMeteredUsageRequest{
+		OrganizationId: req.OrganizationID,
+		ModelId:        req.ModelID,
+		ProviderName:   req.ProviderName,
+		ModelName:      req.ModelName,
+		RequestId:      req.RequestID,
+		AttemptId:      req.AttemptID,
+		ResourceType:   req.ResourceType,
+		ResourceId:     req.ResourceID,
+		ResourceName:   req.ResourceName,
+	}
+	if req.Usage.Operation != "" || req.Usage.Meter != "" || req.Usage.BaseUnit != "" || req.Usage.Quantity != 0 || len(req.Usage.Dimensions) > 0 {
+		grpcReq.Usage = &pb.MeteredUsageFact{
+			Operation:  req.Usage.Operation,
+			Meter:      req.Usage.Meter,
+			BaseUnit:   req.Usage.BaseUnit,
+			Quantity:   req.Usage.Quantity,
+			Dimensions: req.Usage.Dimensions,
+		}
+	}
+
+	resp, err := c.client.PreDeductMeteredUsage(ctx, grpcReq)
+	if err != nil {
+		return nil, fmt.Errorf("grpc call failed: %w", err)
+	}
+
+	return &PreDeductMeteredUsageResponse{
+		Success:          resp.Success,
+		ErrorMessage:     resp.ErrorMessage,
+		DeductionID:      resp.DeductionId,
+		EstimatedCredits: resp.EstimatedCredits,
+		ReservedCredits:  resp.ReservedCredits,
+		RemainingCredits: resp.RemainingCredits,
+	}, nil
+}
+
 func (c *QuotaClient) SettleQuota(ctx context.Context, req *SettleQuotaRequest) (*SettleQuotaResponse, error) {
 	grpcReq := &pb.SettleQuotaRequest{
 		OrganizationId:    req.OrganizationID,
@@ -181,6 +218,38 @@ type PreDeductQuotaResponse struct {
 	ErrorMessage   string
 	RemainingQuota int64
 	DeductionID    string
+}
+
+// MeteredUsageFact declares a non-token billing identity. Quantity is a raw
+// base-unit count, never a point or token amount.
+type MeteredUsageFact struct {
+	Operation  string
+	Meter      string
+	BaseUnit   string
+	Quantity   int64
+	Dimensions map[string]string
+}
+
+type PreDeductMeteredUsageRequest struct {
+	OrganizationID string
+	ModelID        string
+	ProviderName   string
+	ModelName      string
+	RequestID      string
+	AttemptID      string
+	ResourceType   string
+	ResourceID     string
+	ResourceName   string
+	Usage          MeteredUsageFact
+}
+
+type PreDeductMeteredUsageResponse struct {
+	Success          bool
+	ErrorMessage     string
+	DeductionID      string
+	EstimatedCredits int64
+	ReservedCredits  int64
+	RemainingCredits int64
 }
 
 type SettleQuotaRequest struct {
