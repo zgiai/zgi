@@ -350,15 +350,15 @@ func TestPricingModelRefFromSelectionIncludesProviderAndModel(t *testing.T) {
 	}
 }
 
-func TestPricingModelRefFromOfficialSelectionUsesVendorModelID(t *testing.T) {
+func TestPricingModelRefFromOfficialSelectionKeepsSupplierModelID(t *testing.T) {
 	routeModelID := uuid.New()
 	vendorModelID := uuid.New()
 	selection := &ProviderSelection{
 		UseSystemProvider: true,
 		Model: llmmodel.LLMModel{
 			ID:       routeModelID,
-			Provider: "doubao",
-			Model:    "doubao-seedream-4-0-250828",
+			Provider: "agicto 供应商",
+			Model:    "doubao/doubao-seedance-2-0-mini-260615",
 		},
 		ModelSource:        PricingModelSourceGlobal,
 		ModelVendor:        "doubao",
@@ -366,8 +366,8 @@ func TestPricingModelRefFromOfficialSelectionUsesVendorModelID(t *testing.T) {
 	}
 
 	ref := pricingModelRefFromSelection(selection)
-	if ref.ModelID != vendorModelID {
-		t.Fatalf("ref.ModelID = %s, want hydrated vendor model ID %s", ref.ModelID, vendorModelID)
+	if ref.ModelID != routeModelID {
+		t.Fatalf("ref.ModelID = %s, want supplier model ID %s", ref.ModelID, routeModelID)
 	}
 }
 

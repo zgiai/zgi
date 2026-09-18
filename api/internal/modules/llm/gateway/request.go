@@ -227,15 +227,11 @@ func (s *llmGatewayServiceImpl) createBillingContext(
 	} else {
 		billingCtx.AuthMethod = "legacy_api_key"
 	}
-	if billingCtx.UseSystemProvider && strings.TrimSpace(providerSelection.ModelVendor) != "" {
-		billingCtx.ProviderName = strings.TrimSpace(providerSelection.ModelVendor)
-		if providerSelection.ModelVendorProviderID != uuid.Nil {
-			billingCtx.ProviderID = providerSelection.ModelVendorProviderID
-		}
-		if providerSelection.ModelVendorModelID != uuid.Nil {
-			billingCtx.ModelID = providerSelection.ModelVendorModelID
-		}
-	}
+	// Billing identity follows the selected supplier model, not the logical
+	// model vendor. A route may call a Doubao model through an Agicto supplier;
+	// the supplier owns the configured price and must be sent to Console for
+	// metered settlement. ModelVendor remains routing/catalog metadata and must
+	// not overwrite ProviderName/ProviderID/ModelID here.
 	if appCtx != nil {
 		billingCtx.AppID = appCtx.AppID
 		billingCtx.AppType = appCtx.AppType

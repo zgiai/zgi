@@ -272,14 +272,10 @@ func pricingModelRefFromSelection(selection *ProviderSelection) PricingModelRef 
 	if selection == nil {
 		return PricingModelRef{Source: PricingModelSourceGlobal}
 	}
+	// Supplier catalog rows are the source of configured prices. The hydrated
+	// ModelVendor identity is a logical owner row and is intentionally created
+	// without pricing, so it must not replace the selected supplier model here.
 	modelID := selection.Model.ID
-	// Official/platform selections are represented by a route model and do
-	// not carry the catalog model ID in selection.Model.ID.  The catalog
-	// identity is hydrated separately so pricing lookup must use it; otherwise
-	// QuoteImage/QuoteTokens fall back as if pricing were not configured.
-	if selection.UseSystemProvider && selection.ModelVendorModelID != uuid.Nil {
-		modelID = selection.ModelVendorModelID
-	}
 	provider := strings.TrimSpace(selection.Model.Provider)
 	if provider == "" {
 		provider = strings.TrimSpace(selection.ChannelProvider)
