@@ -23,6 +23,8 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	"github.com/zgiai/zgi/api/internal/dto"
 	workflowapp "github.com/zgiai/zgi/api/internal/modules/app/workflow"
+	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
+	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
 	"gorm.io/datatypes"
 )
 
@@ -512,9 +514,194 @@ func (s *RuntimeService) GetRunRuntimeLog(ctx context.Context, scope Scope, digi
 	detail := workflowapp.BuildAgentRuntimeRunDetail(message, conversation)
 	steps := workflowapp.BuildAgentRuntimeSteps(message)
 	return &RunRuntimeLog{
-		Detail: &detail,
-		Steps:  channelContextRuntimeSteps(run, steps),
+		Detail:                       &detail,
+		Steps:                        channelContextRuntimeSteps(run, steps),
+		PendingConnectorConfirmation: pendingRunConnectorConfirmation(run, message, conversation),
 	}, nil
+}
+
+const (
+	connectorConfirmationRequiredEventType = "connector_confirmation_required"
+	connectorConfirmationResolvedEventType = "connector_confirmation_resolved"
+	connectorConfirmationEventsMetadataKey = "connector_confirmation_events"
+)
+
+// pendingRunConnectorConfirmation projects the safe Connector confirmation that
+// is holding a durable DigitalHuman run. It returns nil unless every server-
+// owned coordinate agrees, so an ordinary absence never fails the endpoint. The
+// projection is deliberately narrower than the stored event: it never returns
+// the raw event, message metadata, provider output, operation input, or
+// credentials, and Preview stays absent because the owner-scoped receipt status
+// endpoint owns it.
+func pendingRunConnectorConfirmation(
+	run *Run,
+	message *runtimemodel.Message,
+	conversation *runtimemodel.Conversation,
+) *connectorexecution.RuntimeConfirmation {
+	if run == nil || message == nil || conversation == nil {
+		return nil
+	}
+	if run.Status != RunStatusWaiting || run.WaitingReason != runtimemodel.MessageStatusWaitingApproval ||
+		run.WaitingReceipt == nil || *run.WaitingReceipt == uuid.Nil {
+		return nil
+	}
+	if run.DigitalHumanID == uuid.Nil || run.DigitalHumanVersionID == uuid.Nil ||
+		run.ConversationID == nil || *run.ConversationID == uuid.Nil ||
+		run.MessageID == nil || *run.MessageID == uuid.Nil {
+		return nil
+	}
+	if message.ID == uuid.Nil || message.ConversationID == uuid.Nil || conversation.ID == uuid.Nil ||
+		message.Status != runtimemodel.MessageStatusWaitingApproval {
+		return nil
+	}
+	// The loaded message and conversation must be exactly the ones the run
+	// linked, otherwise a stale or unrelated turn could borrow the projection.
+	if message.ID != *run.MessageID || message.ConversationID != conversation.ID ||
+		conversation.ID != *run.ConversationID {
+		return nil
+	}
+
+	receipt := run.WaitingReceipt.String()
+	events := connectorConfirmationEventRecords(message.Metadata)
+	if len(events) == 0 || connectorConfirmationEventResolved(events, receipt) {
+		return nil
+	}
+	var matched *connectorexecution.RuntimeConfirmation
+	for _, event := range events {
+		if strings.TrimSpace(metadataEventString(event["event_type"])) != connectorConfirmationRequiredEventType ||
+			metadataEventString(event["route_receipt"]) != receipt {
+			continue
+		}
+		if metadataEventString(event["conversation_id"]) != conversation.ID.String() ||
+			metadataEventString(event["message_id"]) != message.ID.String() {
+			return nil
+		}
+		// A second required event for the same receipt is ambiguous, so nothing
+		// is trustworthy and the projection is withheld.
+		if matched != nil {
+			return nil
+		}
+		confirmation, ok := safeRunConnectorConfirmation(event, run, receipt)
+		if !ok {
+			return nil
+		}
+		matched = confirmation
+	}
+	return matched
+}
+
+// connectorConfirmationEventRecords extracts the stored confirmation events.
+// Any element that is not a JSON object makes the whole list untrustworthy.
+func connectorConfirmationEventRecords(metadata map[string]interface{}) []map[string]interface{} {
+	if metadata == nil {
+		return nil
+	}
+	raw, ok := metadata[connectorConfirmationEventsMetadataKey]
+	if !ok || raw == nil {
+		return nil
+	}
+	switch typed := raw.(type) {
+	case []interface{}:
+		records := make([]map[string]interface{}, 0, len(typed))
+		for _, item := range typed {
+			record, ok := item.(map[string]interface{})
+			if !ok || record == nil {
+				return nil
+			}
+			records = append(records, record)
+		}
+		return records
+	case []map[string]interface{}:
+		records := make([]map[string]interface{}, 0, len(typed))
+		for _, item := range typed {
+			if item == nil {
+				return nil
+			}
+			records = append(records, item)
+		}
+		return records
+	default:
+		return nil
+	}
+}
+
+func connectorConfirmationEventResolved(events []map[string]interface{}, receipt string) bool {
+	for _, event := range events {
+		if strings.TrimSpace(metadataEventString(event["event_type"])) == connectorConfirmationResolvedEventType &&
+			metadataEventString(event["route_receipt"]) == receipt {
+			return true
+		}
+	}
+	return false
+}
+
+func metadataEventString(value interface{}) string {
+	text, _ := value.(string)
+	return text
+}
+
+// safeRunConnectorConfirmation decodes only the public RuntimeConfirmation
+// fields from the server-authored event and re-validates them against the run.
+// It never trusts event framing, provider output, or inferred presentation.
+func safeRunConnectorConfirmation(
+	event map[string]interface{},
+	run *Run,
+	receipt string,
+) (*connectorexecution.RuntimeConfirmation, bool) {
+	raw, ok := event["confirmation"]
+	if !ok || raw == nil {
+		return nil, false
+	}
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return nil, false
+	}
+	var confirmation connectorexecution.RuntimeConfirmation
+	if err := json.Unmarshal(encoded, &confirmation); err != nil {
+		return nil, false
+	}
+	if !validRunConnectorConfirmation(confirmation, run, receipt) {
+		return nil, false
+	}
+	// Preview and the frozen operation authority are never part of this
+	// projection. The JSON tags already omit them; drop them explicitly so no
+	// in-memory copy can travel with the response.
+	confirmation.Preview = nil
+	confirmation.AcceptedOperation = nil
+	return &confirmation, true
+}
+
+func validRunConnectorConfirmation(
+	confirmation connectorexecution.RuntimeConfirmation,
+	run *Run,
+	receipt string,
+) bool {
+	if run == nil || run.DigitalHumanID == uuid.Nil || receipt == "" {
+		return false
+	}
+	// The receipt must be the run's own frozen receipt, byte for byte.
+	if string(confirmation.RouteReceipt) != receipt {
+		return false
+	}
+	if confirmation.Risk != connectorexecution.RiskHigh && confirmation.Risk != connectorexecution.RiskUnclassified {
+		return false
+	}
+	// Complete server-authored presentation is required for informed consent.
+	// It is never reconstructed from provider output or event framing.
+	if !confirmation.ConnectorID.Valid() || !confirmation.OperationID.Valid() ||
+		strings.TrimSpace(confirmation.ConnectorName) == "" || strings.TrimSpace(confirmation.ActionName) == "" ||
+		strings.TrimSpace(confirmation.Consequence.ExternalEffect) == "" {
+		return false
+	}
+	target := confirmation.Target
+	if target.Type != connectorcore.TargetTypeDigitalHuman ||
+		target.ID != run.DigitalHumanID.String() ||
+		target.EffectiveScope() != connectorcore.ScopePublished ||
+		target.VersionID != run.DigitalHumanVersionID.String() ||
+		target.Validate() != nil {
+		return false
+	}
+	return true
 }
 
 func (s *RuntimeService) ListRuns(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, query ListQuery) (*RunListResult, error) {

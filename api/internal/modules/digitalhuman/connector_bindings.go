@@ -200,7 +200,12 @@ func connectorBindingMutationError(err error) error {
 	return fmt.Errorf("%w: %w", ErrResourceBindingInvalid, err)
 }
 
-func (r *GormRepository) listConnectorCandidates(ctx context.Context, scope Scope, digitalHumanID uuid.UUID) ([]ResourceCandidate, error) {
+// ListConnectorCandidates projects the caller's own Connector connections for
+// the pre-creation surface. It applies the same Digital Human eligibility,
+// readiness, and operation constraints as the draft editor, so creation and
+// configuration can never offer different connections. It is exported because
+// creation happens before a draft id exists.
+func (r *GormRepository) ListConnectorCandidates(ctx context.Context, scope Scope) ([]ResourceCandidate, error) {
 	result := []ResourceCandidate{}
 	if r.connectorCatalog == nil {
 		return result, nil

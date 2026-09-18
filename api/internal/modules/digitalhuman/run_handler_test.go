@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/capabilities/resourcebindings"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/util"
 	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
@@ -22,14 +23,15 @@ import (
 
 type runtimeHandlerServiceStub struct {
 	RuntimeHandlerService
-	submit             func(context.Context, Scope, uuid.UUID, ManualInvocationRequest) (*Run, bool, error)
-	get                func(context.Context, Scope, uuid.UUID, uuid.UUID) (*Run, error)
-	runtimeLog         func(context.Context, Scope, uuid.UUID, uuid.UUID) (*RunRuntimeLog, error)
-	cancel             func(context.Context, Scope, uuid.UUID, uuid.UUID) (*Run, error)
-	candidates         func(context.Context, Scope, uuid.UUID, ResourceCandidateQuery) (*ResourceCandidateList, error)
-	skillCandidates    func(context.Context, Scope) (*ResourceCandidateList, error)
-	listConversations  func(context.Context, Scope, uuid.UUID, int, int) ([]*runtimemodel.Conversation, int64, error)
-	submitRuntimeInput func(context.Context, Scope, uuid.UUID, runtimeservice.SubmitRuntimeInputRequest) (*runtimeservice.SubmitRuntimeInputResult, error)
+	submit              func(context.Context, Scope, uuid.UUID, ManualInvocationRequest) (*Run, bool, error)
+	get                 func(context.Context, Scope, uuid.UUID, uuid.UUID) (*Run, error)
+	runtimeLog          func(context.Context, Scope, uuid.UUID, uuid.UUID) (*RunRuntimeLog, error)
+	cancel              func(context.Context, Scope, uuid.UUID, uuid.UUID) (*Run, error)
+	candidates          func(context.Context, Scope, uuid.UUID, ResourceCandidateQuery) (*ResourceCandidateList, error)
+	skillCandidates     func(context.Context, Scope) (*ResourceCandidateList, error)
+	connectorCandidates func(context.Context, Scope, ResourceCandidateQuery) (*ResourceCandidateList, error)
+	listConversations   func(context.Context, Scope, uuid.UUID, int, int) ([]*runtimemodel.Conversation, int64, error)
+	submitRuntimeInput  func(context.Context, Scope, uuid.UUID, runtimeservice.SubmitRuntimeInputRequest) (*runtimeservice.SubmitRuntimeInputResult, error)
 }
 
 func (s runtimeHandlerServiceStub) SubmitManual(ctx context.Context, scope Scope, id uuid.UUID, request ManualInvocationRequest) (*Run, bool, error) {
@@ -54,6 +56,10 @@ func (s runtimeHandlerServiceStub) ListResourceCandidates(ctx context.Context, s
 
 func (s runtimeHandlerServiceStub) ListSkillCandidates(ctx context.Context, scope Scope) (*ResourceCandidateList, error) {
 	return s.skillCandidates(ctx, scope)
+}
+
+func (s runtimeHandlerServiceStub) ListConnectorCandidates(ctx context.Context, scope Scope, query ResourceCandidateQuery) (*ResourceCandidateList, error) {
+	return s.connectorCandidates(ctx, scope, query)
 }
 
 func (s runtimeHandlerServiceStub) ListConversations(ctx context.Context, scope Scope, id uuid.UUID, page, limit int) ([]*runtimemodel.Conversation, int64, error) {
@@ -173,6 +179,85 @@ func TestRuntimeHandlerRedactsCredentialReferences(t *testing.T) {
 		bytes.Contains(recorder.Body.Bytes(), []byte("secret")) || !bytes.Contains(recorder.Body.Bytes(), []byte("safe")) {
 		t.Fatalf("unsafe run response: status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
+}
+
+// TestRuntimeHandlerListsPreCreationConnectorCandidates proves the pre-creation
+// route needs no draft id and returns only the service's credential-free
+// projection for the caller's scope.
+func TestRuntimeHandlerListsPreCreationConnectorCandidates(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	scope := testScope()
+	service := runtimeHandlerServiceStub{connectorCandidates: func(_ context.Context, gotScope Scope, query ResourceCandidateQuery) (*ResourceCandidateList, error) {
+		if gotScope != scope {
+			t.Fatalf("connector candidate scope = %#v, want %#v", gotScope, scope)
+		}
+		if query.Type != resourcebindings.BindingTypeConnector || query.Search != "" || query.Limit != 0 {
+			t.Fatalf("default connector candidate query = %#v, want forced connector with service defaults", query)
+		}
+		return &ResourceCandidateList{Items: []ResourceCandidate{{
+			Type: "connector", ResourceID: uuid.NewString(), ParentResourceID: "feishu",
+			DisplayName: "Owner connection", Description: "Owner-scoped connection",
+			ResourceRevision: "connector:1", Metadata: map[string]any{"allowed_operation_ids": []string{"search"}},
+			Status: "ready", Available: true,
+		}}, Total: 1}, nil
+	}}
+	router := digitalHumanRuntimeHandlerRouter(t, service, scope)
+	request := httptest.NewRequest(http.MethodGet, "/digital-human-connector-candidates", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	body := recorder.Body.String()
+	if recorder.Code != http.StatusOK || !bytes.Contains(recorder.Body.Bytes(), []byte("Owner connection")) {
+		t.Fatalf("status = %d, body = %s", recorder.Code, body)
+	}
+	for _, forbidden := range []string{"credential", "encrypted", "secret", "token"} {
+		if bytes.Contains(recorder.Body.Bytes(), []byte(forbidden)) {
+			t.Fatalf("connector candidate response exposed %q: %s", forbidden, body)
+		}
+	}
+}
+
+// TestRuntimeHandlerPassesPreCreationConnectorCandidateQuery proves the
+// creation surface accepts query/limit with the same semantics as the id-scoped
+// draft route while forcing the Connector type and ignoring a caller override.
+func TestRuntimeHandlerPassesPreCreationConnectorCandidateQuery(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	scope := testScope()
+	service := runtimeHandlerServiceStub{connectorCandidates: func(_ context.Context, gotScope Scope, query ResourceCandidateQuery) (*ResourceCandidateList, error) {
+		if gotScope != scope || query.Type != resourcebindings.BindingTypeConnector ||
+			query.Search != "55" || query.ParentResourceID != "feishu" || query.Limit != 512 {
+			t.Fatalf("connector candidate request = scope %#v, query %#v", gotScope, query)
+		}
+		return &ResourceCandidateList{Items: []ResourceCandidate{{
+			Type: "connector", ResourceID: uuid.NewString(), DisplayName: "Connection 55", Available: true,
+		}}, Total: 51}, nil
+	}}
+	router := digitalHumanRuntimeHandlerRouter(t, service, scope)
+	request := httptest.NewRequest(http.MethodGet, "/digital-human-connector-candidates?query=55&limit=512&parent_resource_id=feishu&type=skill", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK || !bytes.Contains(recorder.Body.Bytes(), []byte("Connection 55")) {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+// TestRuntimeHandlerRejectsMalformedPreCreationConnectorCandidateLimit proves
+// the creation surface rejects a malformed limit before the service is called,
+// matching the id-scoped draft route.
+func TestRuntimeHandlerRejectsMalformedPreCreationConnectorCandidateLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	scope := testScope()
+	service := runtimeHandlerServiceStub{connectorCandidates: func(context.Context, Scope, ResourceCandidateQuery) (*ResourceCandidateList, error) {
+		t.Fatal("malformed limit reached the service")
+		return nil, nil
+	}}
+	router := digitalHumanRuntimeHandlerRouter(t, service, scope)
+	request := httptest.NewRequest(http.MethodGet, "/digital-human-connector-candidates?limit=abc", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	assertDigitalHumanError(t, recorder, http.StatusBadRequest, AppCodeRequestInvalid.String())
 }
 
 func TestRuntimeHandlerListsScopedResourceCandidates(t *testing.T) {

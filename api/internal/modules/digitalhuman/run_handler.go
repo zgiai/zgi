@@ -25,6 +25,7 @@ type RuntimeHandlerService interface {
 	CancelRun(context.Context, Scope, uuid.UUID, uuid.UUID) (*Run, error)
 	ListResourceCandidates(context.Context, Scope, uuid.UUID, ResourceCandidateQuery) (*ResourceCandidateList, error)
 	ListSkillCandidates(context.Context, Scope) (*ResourceCandidateList, error)
+	ListConnectorCandidates(context.Context, Scope, ResourceCandidateQuery) (*ResourceCandidateList, error)
 	ListConversations(context.Context, Scope, uuid.UUID, int, int) ([]*runtimemodel.Conversation, int64, error)
 	SearchConversations(context.Context, Scope, uuid.UUID, string, int) ([]*runtimeservice.SearchResult, error)
 	GetConversation(context.Context, Scope, uuid.UUID, uuid.UUID) (*runtimemodel.Conversation, error)
@@ -57,9 +58,10 @@ func NewRuntimeHandler(service RuntimeHandlerService, projector *apptransport.Pr
 }
 
 func (h *RuntimeHandler) RegisterRoutes(router *gin.RouterGroup) {
-	// Registered beside the id-scoped group: creation needs the choices before a
-	// digital human exists.
+	// Registered beside the id-scoped group: creation needs the bindable skills
+	// and owner Connector connections before a digital human exists.
 	router.GET("/digital-human-skill-candidates", h.ListSkillCandidates)
+	router.GET("/digital-human-connector-candidates", h.ListConnectorCandidates)
 	group := router.Group("/digital-humans/:id")
 	group.POST("/invocations", h.SubmitManual)
 	group.GET("/draft/binding-candidates", h.ListResourceCandidates)
@@ -147,14 +149,10 @@ func (h *RuntimeHandler) ListResourceCandidates(c *gin.Context) {
 	if !ok {
 		return
 	}
-	limit := 0
-	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil {
-			h.base.writeError(c, applicationError(ErrInvalidRequest, "digital_human.bindings.candidates"))
-			return
-		}
-		limit = parsed
+	limit, ok := candidateLimit(c)
+	if !ok {
+		h.base.writeError(c, applicationError(ErrInvalidRequest, "digital_human.bindings.candidates"))
+		return
 	}
 	result, err := h.service.ListResourceCandidates(c.Request.Context(), scope, digitalHumanID, ResourceCandidateQuery{
 		Type:             resourcebindings.BindingType(strings.TrimSpace(c.Query("type"))),
@@ -169,6 +167,22 @@ func (h *RuntimeHandler) ListResourceCandidates(c *gin.Context) {
 	writeDigitalHumanData(c, http.StatusOK, result)
 }
 
+// candidateLimit parses the shared optional "limit" query parameter. An absent
+// value keeps the service default; a present non-integer value is rejected the
+// same way on every candidate surface. Range clamping stays in the service so
+// the per-type maximum has one owner.
+func candidateLimit(c *gin.Context) (int, bool) {
+	raw := strings.TrimSpace(c.Query("limit"))
+	if raw == "" {
+		return 0, true
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, false
+	}
+	return parsed, true
+}
+
 // ListSkillCandidates returns the skills a new digital human may bind, so the
 // creation flow offers the same choices the draft editor offers.
 func (h *RuntimeHandler) ListSkillCandidates(c *gin.Context) {
@@ -177,6 +191,34 @@ func (h *RuntimeHandler) ListSkillCandidates(c *gin.Context) {
 		return
 	}
 	result, err := h.service.ListSkillCandidates(c.Request.Context(), scope)
+	if err != nil {
+		h.base.writeError(c, err)
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, result)
+}
+
+// ListConnectorCandidates returns the owner Connector connections a new digital
+// human may attach, so the creation flow offers the same choices the draft
+// editor offers without needing a draft id. It accepts the shared query/limit
+// parameters, but the Connector binding type is forced server-side and a
+// caller-supplied "type" is ignored.
+func (h *RuntimeHandler) ListConnectorCandidates(c *gin.Context) {
+	scope, ok := h.base.scope(c)
+	if !ok {
+		return
+	}
+	limit, ok := candidateLimit(c)
+	if !ok {
+		h.base.writeError(c, applicationError(ErrInvalidRequest, "digital_human.bindings.candidates"))
+		return
+	}
+	result, err := h.service.ListConnectorCandidates(c.Request.Context(), scope, ResourceCandidateQuery{
+		Type:             resourcebindings.BindingTypeConnector,
+		ParentResourceID: c.Query("parent_resource_id"),
+		Search:           c.Query("query"),
+		Limit:            limit,
+	})
 	if err != nil {
 		h.base.writeError(c, err)
 		return

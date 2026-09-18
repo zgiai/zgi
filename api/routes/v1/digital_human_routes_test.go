@@ -42,6 +42,10 @@ func TestDigitalHumanPermissionForRequest(t *testing.T) {
 		// needs the create permission; only GET is allowed.
 		{http.MethodGet, "/console/api/digital-human-skill-candidates", workspacemodel.WorkspacePermissionDigitalHumanCreate},
 		{http.MethodPost, "/console/api/digital-human-skill-candidates", ""},
+		// The pre-creation connector candidate route has the same contract: the
+		// creation flow needs the caller's own connections before a draft exists.
+		{http.MethodGet, "/console/api/digital-human-connector-candidates", workspacemodel.WorkspacePermissionDigitalHumanCreate},
+		{http.MethodPost, "/console/api/digital-human-connector-candidates", ""},
 		{http.MethodGet, "/console/api/digital-humans/:id/draft/binding-candidates", workspacemodel.WorkspacePermissionDigitalHumanView},
 		{http.MethodGet, "/console/api/digital-humans/:id/runs/:run_id", workspacemodel.WorkspacePermissionDigitalHumanLogsView},
 		{http.MethodGet, "/console/api/digital-humans/:id/memory", workspacemodel.WorkspacePermissionDigitalHumanMemoryView},
@@ -96,11 +100,12 @@ func TestRegisterDigitalHumanRoutesRegistersLifecycleAPI(t *testing.T) {
 	})
 
 	routes := router.Routes()
-	if got, want := len(routes), 76; got != want {
+	if got, want := len(routes), 77; got != want {
 		t.Fatalf("registered route count = %d, want %d", got, want)
 	}
 	want := map[string]bool{
 		"GET /console/api/digital-human-skill-candidates":                                                                 false,
+		"GET /console/api/digital-human-connector-candidates":                                                             false,
 		"POST /console/api/digital-humans":                                                                                false,
 		"GET /console/api/digital-humans":                                                                                 false,
 		"GET /console/api/digital-humans/:id":                                                                             false,

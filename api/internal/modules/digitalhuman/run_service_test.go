@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -775,13 +776,86 @@ func TestRuntimeServiceListsSkillCandidatesBeforeCreation(t *testing.T) {
 	}
 }
 
+func TestRuntimeServiceListsConnectorCandidatesBeforeCreation(t *testing.T) {
+	store, dispatcher := newFakeRunStore(), &fakeRunDispatcher{}
+	store.connectorCandidates = connectorCandidateFixtures(defaultResourceCandidateLimit + 1)
+	service := newTestRuntimeService(t, store, dispatcher, &fakeDigitalHumanChat{})
+	result, err := service.ListConnectorCandidates(t.Context(), testRunScope(), ResourceCandidateQuery{})
+	if err != nil {
+		t.Fatalf("ListConnectorCandidates() error = %v", err)
+	}
+	if result.Total != defaultResourceCandidateLimit+1 || len(result.Items) != defaultResourceCandidateLimit {
+		t.Fatalf("connector candidates = total %d, items %d, want bounded %d", result.Total, len(result.Items), defaultResourceCandidateLimit)
+	}
+	if result.Items[0].DisplayName != "Connection 00" || result.Items[len(result.Items)-1].DisplayName != fmt.Sprintf("Connection %02d", defaultResourceCandidateLimit-1) {
+		t.Fatalf("connector candidate ordering = %q .. %q", result.Items[0].DisplayName, result.Items[len(result.Items)-1].DisplayName)
+	}
+}
+
+// TestRuntimeServiceSearchesConnectorCandidatesBeyondDefaultPage proves a
+// candidate after the first default page is reachable through search, which a
+// projection hard-capped before filtering could never return.
+func TestRuntimeServiceSearchesConnectorCandidatesBeyondDefaultPage(t *testing.T) {
+	store, dispatcher := newFakeRunStore(), &fakeRunDispatcher{}
+	store.connectorCandidates = connectorCandidateFixtures(defaultResourceCandidateLimit + 10)
+	service := newTestRuntimeService(t, store, dispatcher, &fakeDigitalHumanChat{})
+
+	beyond := fmt.Sprintf("Connection %02d", defaultResourceCandidateLimit+5)
+	result, err := service.ListConnectorCandidates(t.Context(), testRunScope(), ResourceCandidateQuery{Search: beyond})
+	if err != nil {
+		t.Fatalf("ListConnectorCandidates(search) error = %v", err)
+	}
+	if result.Total != 1 || len(result.Items) != 1 || result.Items[0].DisplayName != beyond {
+		t.Fatalf("searched connector candidates = %#v, want only %q", result, beyond)
+	}
+}
+
+// TestRuntimeServiceHonorsConnectorCandidateLimitUpToConnectorMaximum proves
+// the creation surface can page past the old default and is clamped by the
+// same connector maximum the binding editor enforces.
+func TestRuntimeServiceHonorsConnectorCandidateLimitUpToConnectorMaximum(t *testing.T) {
+	store, dispatcher := newFakeRunStore(), &fakeRunDispatcher{}
+	total := defaultResourceCandidateLimit + 10
+	store.connectorCandidates = connectorCandidateFixtures(total)
+	service := newTestRuntimeService(t, store, dispatcher, &fakeDigitalHumanChat{})
+
+	result, err := service.ListConnectorCandidates(t.Context(), testRunScope(), ResourceCandidateQuery{Limit: maxResourceBindings})
+	if err != nil {
+		t.Fatalf("ListConnectorCandidates(limit) error = %v", err)
+	}
+	if result.Total != total || len(result.Items) != total {
+		t.Fatalf("connector candidates = total %d, items %d, want %d", result.Total, len(result.Items), total)
+	}
+
+	// The Connector type is forced server-side, so an unsupported caller type
+	// cannot switch the projection or make the request fail.
+	forced, err := service.ListConnectorCandidates(t.Context(), testRunScope(), ResourceCandidateQuery{Type: resourcebindings.BindingType("bogus"), Limit: maxResourceBindings})
+	if err != nil || forced.Total != total || len(forced.Items) != total {
+		t.Fatalf("connector candidates with overridden type = %#v, %v", forced, err)
+	}
+}
+
+func connectorCandidateFixtures(count int) []ResourceCandidate {
+	candidates := make([]ResourceCandidate, 0, count)
+	for index := 0; index < count; index++ {
+		candidates = append(candidates, ResourceCandidate{
+			Type: resourcebindings.BindingTypeConnector, ResourceID: uuid.NewString(),
+			ParentResourceID: "feishu", DisplayName: fmt.Sprintf("Connection %02d", index),
+			ResourceRevision: "connector:1", Metadata: map[string]any{"allowed_operation_ids": []string{"search"}},
+			Status: "ready", Available: true,
+		})
+	}
+	return candidates
+}
+
 type fakeRunStore struct {
-	mu         sync.Mutex
-	runs       map[uuid.UUID]*Run
-	outbox     []*RunOutbox
-	candidates []ResourceCandidate
-	progress   []fakeChannelProgress
-	inbound    map[uuid.UUID]*channelruntime.InboundEvent
+	mu                  sync.Mutex
+	runs                map[uuid.UUID]*Run
+	outbox              []*RunOutbox
+	candidates          []ResourceCandidate
+	connectorCandidates []ResourceCandidate
+	progress            []fakeChannelProgress
+	inbound             map[uuid.UUID]*channelruntime.InboundEvent
 }
 
 type fakeChannelProgress struct {
@@ -863,6 +937,10 @@ func (s *fakeRunStore) ListRuns(_ context.Context, scope Scope, digitalHumanID u
 
 func (s *fakeRunStore) ListResourceCandidates(context.Context, Scope, uuid.UUID, ResourceCandidateQuery) ([]ResourceCandidate, error) {
 	return append([]ResourceCandidate(nil), s.candidates...), nil
+}
+
+func (s *fakeRunStore) ListConnectorCandidates(context.Context, Scope) ([]ResourceCandidate, error) {
+	return append([]ResourceCandidate(nil), s.connectorCandidates...), nil
 }
 
 func (s *fakeRunStore) ClaimRun(_ context.Context, runID uuid.UUID, now time.Time) (*Run, bool, error) {

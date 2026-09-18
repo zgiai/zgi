@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/dto"
+	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
 	"gorm.io/datatypes"
 )
 
@@ -51,6 +52,12 @@ type RunCancelResult struct {
 type RunRuntimeLog struct {
 	Detail *dto.AgentRuntimeRunDetail `json:"detail,omitempty"`
 	Steps  []dto.AgentRuntimeStep     `json:"steps"`
+	// PendingConnectorConfirmation is populated only while the loaded run is
+	// durably waiting for a server-authored Connector confirmation that matches
+	// the run, message, conversation, and waiting receipt. It carries only the
+	// public RuntimeConfirmation presentation fields; the frozen Preview and
+	// operation input stay behind the owner-scoped receipt status endpoint.
+	PendingConnectorConfirmation *connectorexecution.RuntimeConfirmation `json:"pending_connector_confirmation,omitempty"`
 }
 
 func publicRun(run *Run) *Run {

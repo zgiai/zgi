@@ -43,6 +43,9 @@ type ResourceCandidateList struct {
 
 type resourceCandidateStore interface {
 	ListResourceCandidates(context.Context, Scope, uuid.UUID, ResourceCandidateQuery) ([]ResourceCandidate, error)
+	// ListConnectorCandidates is the pre-creation projection: the same
+	// owner-scoped Connector choices without requiring a draft id.
+	ListConnectorCandidates(context.Context, Scope) ([]ResourceCandidate, error)
 }
 
 type skillCandidateCatalog interface {
@@ -76,6 +79,12 @@ func (s *RuntimeService) ListResourceCandidates(ctx context.Context, scope Scope
 		}
 	}
 
+	return finalizeResourceCandidates(candidates, query), nil
+}
+
+// finalizeResourceCandidates applies the shared search filter, stable ordering,
+// and bounded limit used by every candidate surface.
+func finalizeResourceCandidates(candidates []ResourceCandidate, query ResourceCandidateQuery) *ResourceCandidateList {
 	filtered := make([]ResourceCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
 		if resourceCandidateMatches(candidate, query.Search) {
@@ -87,7 +96,7 @@ func (s *RuntimeService) ListResourceCandidates(ctx context.Context, scope Scope
 	if total > query.Limit {
 		filtered = filtered[:query.Limit]
 	}
-	return &ResourceCandidateList{Items: filtered, Total: total}, nil
+	return &ResourceCandidateList{Items: filtered, Total: total}
 }
 
 // ListSkillCandidates returns the skills a brand new digital human may bind.
@@ -106,6 +115,32 @@ func (s *RuntimeService) ListSkillCandidates(ctx context.Context, scope Scope) (
 	}
 	sortResourceCandidates(candidates)
 	return &ResourceCandidateList{Items: candidates, Total: len(candidates)}, nil
+}
+
+// ListConnectorCandidates returns the owner-scoped Connector connections a
+// brand new digital human may attach.
+//
+// Creation happens before the draft exists, so this reuses the draft editor's
+// repository projection (Digital Human surface, readiness, and operation
+// constraints) without requiring an id, then applies the same bounded filter,
+// ordering, and limit as every other candidate surface. The binding type is
+// forced to Connector server-side: callers may narrow and page the connector
+// projection, but can never switch it to another resource type.
+func (s *RuntimeService) ListConnectorCandidates(ctx context.Context, scope Scope, query ResourceCandidateQuery) (*ResourceCandidateList, error) {
+	query.Type = resourcebindings.BindingTypeConnector
+	query, err := normalizeResourceCandidateQuery(query)
+	if err != nil || !validScope(scope) {
+		return nil, applicationError(ErrInvalidRequest, "digital_human.bindings.candidates")
+	}
+	store, ok := s.store.(resourceCandidateStore)
+	if !ok {
+		return nil, applicationError(ErrResourceBindingInvalid, "digital_human.bindings.candidates")
+	}
+	candidates, err := store.ListConnectorCandidates(ctx, scope)
+	if err != nil {
+		return nil, applicationError(err, "digital_human.bindings.candidates")
+	}
+	return finalizeResourceCandidates(candidates, query), nil
 }
 
 // skillCandidates projects the workspace's real skills through the exposure and

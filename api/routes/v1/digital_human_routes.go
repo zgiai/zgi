@@ -140,9 +140,10 @@ func digitalHumanPermissionForRequest(method, routePath string) workspacemodel.W
 	if path == "" {
 		return ""
 	}
-	// Creation needs the workspace's bindable skills before the draft exists, so
-	// this route is owned by the create permission rather than the view one.
-	if strings.Contains(path, "digital-human-skill-candidates") {
+	// Creation needs the workspace's bindable skills and owner Connector
+	// connections before the draft exists, so these routes are owned by the
+	// create permission rather than the view one.
+	if strings.Contains(path, "digital-human-skill-candidates") || strings.Contains(path, "digital-human-connector-candidates") {
 		if method == http.MethodGet {
 			return workspacemodel.WorkspacePermissionDigitalHumanCreate
 		}

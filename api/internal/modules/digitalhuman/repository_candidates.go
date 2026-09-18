@@ -27,7 +27,7 @@ func (r *GormRepository) ListResourceCandidates(ctx context.Context, scope Scope
 	case resourcebindings.BindingTypeWorkflow:
 		return r.listWorkflowCandidates(ctx, scope)
 	case resourcebindings.BindingTypeConnector:
-		return r.listConnectorCandidates(ctx, scope, digitalHumanID)
+		return r.ListConnectorCandidates(ctx, scope)
 	default:
 		return nil, ErrInvalidRequest
 	}
