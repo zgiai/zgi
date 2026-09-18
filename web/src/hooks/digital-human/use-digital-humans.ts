@@ -13,6 +13,7 @@ import {
   queriedConnectorDraft,
   savedConnectorDraft,
 } from '@/components/digital-human/digital-human-connector-model';
+import { isActiveDigitalHumanRunStatus } from '@/components/digital-human/digital-human-run-presentation';
 import type { ApiResponseData } from '@/services/types/common';
 import type {
   CreateDigitalHumanRequest,
@@ -145,6 +146,30 @@ export function useDigitalHumanSkillCandidates(enabled = true) {
   });
 }
 
+/**
+ * Owner Connector connections a new digital human may attach, fetched before
+ * creation.
+ *
+ * Query and limit are passed into the service and into the query key, so a
+ * server search and the full 512-candidate page are requested and cached
+ * independently.
+ */
+export function useDigitalHumanConnectorCandidates(
+  params: { query?: string; limit?: number } = {},
+  enabled = true
+) {
+  const queryParams = {
+    query: params.query?.trim() || undefined,
+    limit: params.limit,
+  };
+  return useQuery({
+    queryKey: DIGITAL_HUMAN_KEYS.connectorCandidates(queryParams),
+    queryFn: () => digitalHumanService.listConnectorCandidates(queryParams),
+    enabled,
+    staleTime: 30_000,
+  });
+}
+
 export function useDigitalHumanBindingCandidates(
   id: string,
   params: {
@@ -173,7 +198,7 @@ export function useDigitalHumanRuns(id: string, enabled = true) {
     enabled: enabled && Boolean(id),
     refetchInterval: query => {
       const active = query.state.data?.data?.items.some(run =>
-        ['queued', 'running', 'canceling'].includes(run.status)
+        isActiveDigitalHumanRunStatus(run.status)
       );
       return active ? 1_500 : 10_000;
     },
@@ -187,7 +212,7 @@ export function useDigitalHumanRun(id: string, runId: string, enabled = true) {
     enabled: enabled && Boolean(id) && Boolean(runId),
     refetchInterval: query => {
       const status = query.state.data?.data?.status;
-      return status && ['queued', 'running', 'canceling'].includes(status) ? 1_500 : false;
+      return status && isActiveDigitalHumanRunStatus(status) ? 1_500 : false;
     },
   });
 }
@@ -204,9 +229,7 @@ export function useDigitalHumanRunRuntimeLog(
     enabled: enabled && Boolean(id) && Boolean(runId),
     refetchInterval: query => {
       const status = query.state.data?.data?.detail?.status;
-      return pollWhilePending || (status && ['queued', 'running', 'canceling'].includes(status))
-        ? 1_500
-        : false;
+      return pollWhilePending || (status && isActiveDigitalHumanRunStatus(status)) ? 1_500 : false;
     },
   });
 }

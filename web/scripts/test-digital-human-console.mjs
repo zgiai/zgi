@@ -441,7 +441,7 @@ assert.match(
 );
 assert.match(
   dashboard,
-  /runs\.filter\(item => activeRunStatuses\.has\(item\.status\)\)/,
+  /runs\.filter\(item => isActiveDigitalHumanRunStatus\(item\.status\)\)/,
   'DigitalHuman live activity must only include currently active runs'
 );
 assert.match(

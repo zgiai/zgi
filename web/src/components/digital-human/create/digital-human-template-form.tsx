@@ -19,6 +19,8 @@ import { useT } from '@/i18n';
 import type { DigitalHumanResourceCandidate } from '@/services/types/digital-human';
 import type { ModelItem } from '@/services/types/model';
 import { cn } from '@/lib/utils';
+import { DigitalHumanConnectorCreateSection } from './digital-human-connector-create-picker';
+import type { DigitalHumanCreateConnectorSelection } from './digital-human-connector-create-model';
 import { DigitalHumanTemplatePreview } from './digital-human-template-preview';
 
 export interface DigitalHumanTemplateFormValue {
@@ -40,6 +42,10 @@ interface DigitalHumanTemplateFormProps {
   skillsLoading: boolean;
   skillsError: boolean;
   onRetrySkills: () => void;
+  /** Owner Connector connections the user selected for creation. */
+  connectorSelections: readonly DigitalHumanCreateConnectorSelection[];
+  /** Commits the selection made in the Connector picker. */
+  onChangeConnectorSelections: (selections: DigitalHumanCreateConnectorSelection[]) => void;
   value: DigitalHumanTemplateFormValue;
   onChange: (patch: Partial<DigitalHumanTemplateFormValue>) => void;
   models: ModelItem[];
@@ -76,6 +82,8 @@ export function DigitalHumanTemplateForm({
   skillsLoading,
   skillsError,
   onRetrySkills,
+  connectorSelections,
+  onChangeConnectorSelections,
   value,
   onChange,
   models,
@@ -333,6 +341,14 @@ export function DigitalHumanTemplateForm({
                 </div>
               </section>
             </div>
+
+            {/* The same generic Connector picker for every template and the
+                custom entry: it only records the choice; creation binds it. */}
+            <DigitalHumanConnectorCreateSection
+              selections={connectorSelections}
+              onChangeSelections={onChangeConnectorSelections}
+              disabled={submitting}
+            />
 
             <DigitalHumanSkillPickerDialog
               open={skillPickerOpen}

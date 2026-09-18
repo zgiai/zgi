@@ -7,10 +7,10 @@
  * actually provide and only ever binds user-selected skills the backend judged
  * available.
  *
- * The operations template is a design target only: no server-operations skill or
- * connection exists yet, so it declares no skill and creation binds nothing for
- * it. Enabling it later requires the connector work, explicit target
- * authorization, and read-only verification first.
+ * The operations template seeds no skill because no server-operations skill
+ * exists yet; it still lets the user bind one or more Connector connections in
+ * the generic create form, and each connection stays usable only after it is
+ * verified in Connector Center and bound to the digital human.
  *
  * IMPORTANT: this module must stay free of runtime imports (type-only imports
  * are erased) so `scripts/test-digital-human-create-flow.mjs` can load it with
@@ -113,9 +113,9 @@ const TEMPLATE_SEEDS: readonly TemplateSeed[] = [
     ruleNames: ['confirmBeforeGenerating'],
   },
   {
-    // Design target only: no server-operations skill exists yet, so the template
-    // declares none and creation binds nothing for it. Enabling it later requires
-    // the connector work plus explicit authorization and read-only verification.
+    // No server-operations skill exists, so the template seeds none. The user can
+    // still bind one or more Connector connections in the generic create form;
+    // each connection stays usable only after it is verified and bound.
     id: 'opsSpecialist',
     iconBackground: '#0f766e',
     skills: [],

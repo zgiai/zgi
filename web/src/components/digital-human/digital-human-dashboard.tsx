@@ -27,6 +27,10 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { digitalHumanChannelProvider } from '@/components/digital-human/digital-human-channel-providers';
 import { digitalHumanTaskDisplayStatus } from '@/components/digital-human/digital-human-task-presentation';
 import {
+  digitalHumanRunStatusLabelKey,
+  isActiveDigitalHumanRunStatus,
+} from '@/components/digital-human/digital-human-run-presentation';
+import {
   useDigitalHumanChannelMutations,
   useDigitalHumanChannels,
 } from '@/hooks/digital-human/use-digital-human-channels';
@@ -41,12 +45,10 @@ import type {
   DigitalHumanChannelDelivery,
   DigitalHumanChannelInstallation,
   DigitalHumanRun,
-  DigitalHumanRunStatus,
   DigitalHumanTask,
   DigitalHumanTaskStatus,
 } from '@/services/types/digital-human';
 
-const activeRunStatuses = new Set<DigitalHumanRunStatus>(['queued', 'running', 'canceling']);
 const attentionPageSize = 3;
 const taskStatusOrder: Record<DigitalHumanTaskStatus, number> = {
   proposed: 0,
@@ -154,7 +156,7 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
   const runItems = runs.data?.data.items ?? [];
   const installations = channels.installations.data?.data ?? [];
   const deliveries = channels.deliveries.data?.data.items ?? [];
-  const activeRun = runItems.find(run => activeRunStatuses.has(run.status));
+  const activeRun = runItems.find(run => isActiveDigitalHumanRunStatus(run.status));
   const currentTask = taskItems.find(task => task.work_status === 'in_progress');
   const nextTask = [...taskItems]
     .filter(task => task.work_status === 'pending' && task.lifecycle_status === 'active')
@@ -319,7 +321,7 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
             currentTask
               ? t(`tasks.status.${digitalHumanTaskDisplayStatus(currentTask)}`)
               : activeRun
-                ? t(`status.${activeRun.status}`)
+                ? t(digitalHumanRunStatusLabelKey(activeRun.status, activeRun.waiting_reason))
                 : undefined
           }
           active={Boolean(currentTask || activeRun)}
@@ -729,10 +731,9 @@ function buildDashboardLiveEvents({
     });
   }
 
-  for (const run of newestFirst(runs.filter(item => activeRunStatuses.has(item.status))).slice(
-    0,
-    4
-  )) {
+  for (const run of newestFirst(
+    runs.filter(item => isActiveDigitalHumanRunStatus(item.status))
+  ).slice(0, 4)) {
     events.push({
       id: `run-${run.id}-${run.status}-${run.updated_at}`,
       title: t('dashboard.live.runActive'),
@@ -1125,12 +1126,9 @@ function ConnectionRow({ installation }: { installation: DigitalHumanChannelInst
 
 function RecentRunRow({ id, run, locale }: { id: string; run: DigitalHumanRun; locale: string }) {
   const t = useT('digitalHumans');
-  const Icon =
-    run.status === 'succeeded'
-      ? CheckCircle2
-      : activeRunStatuses.has(run.status)
-        ? CircleDashed
-        : AlertCircle;
+  const active = isActiveDigitalHumanRunStatus(run.status);
+  const statusLabel = t(digitalHumanRunStatusLabelKey(run.status, run.waiting_reason));
+  const Icon = run.status === 'succeeded' ? CheckCircle2 : active ? CircleDashed : AlertCircle;
   return (
     <Link
       href={`/console/digital-humans/${id}/runs?run=${run.id}`}
@@ -1142,11 +1140,7 @@ function RecentRunRow({ id, run, locale }: { id: string; run: DigitalHumanRun; l
       <Icon
         className={cn(
           'size-4',
-          run.status === 'succeeded'
-            ? 'text-success'
-            : activeRunStatuses.has(run.status)
-              ? 'text-primary'
-              : 'text-destructive'
+          run.status === 'succeeded' ? 'text-success' : active ? 'text-primary' : 'text-destructive'
         )}
       />
       <div className="min-w-0">
@@ -1154,12 +1148,10 @@ function RecentRunRow({ id, run, locale }: { id: string; run: DigitalHumanRun; l
           {run.query || t('dashboard.automaticRun')}
         </p>
         <p className="mt-0.5 truncate text-xs text-muted-foreground">
-          {run.result_summary || run.error_message || t(`status.${run.status}`)}
+          {run.result_summary || run.error_message || statusLabel}
         </p>
       </div>
-      <span className="hidden text-xs text-muted-foreground sm:block">
-        {t(`status.${run.status}`)}
-      </span>
+      <span className="hidden text-xs text-muted-foreground sm:block">{statusLabel}</span>
     </Link>
   );
 }

@@ -18,6 +18,10 @@ import {
 import { TableCell, TableRow } from '@/components/ui/table';
 import { RunStatusBadge } from '@/components/workflow/ui/run-status-badge';
 import {
+  digitalHumanRunStatusLabelKey,
+  isActiveDigitalHumanRunStatus,
+} from '@/components/digital-human/digital-human-run-presentation';
+import {
   useDigitalHumanMutations,
   useDigitalHumanRuns,
 } from '@/hooks/digital-human/use-digital-humans';
@@ -26,7 +30,6 @@ import { cn } from '@/lib/utils';
 import type { DigitalHumanRun, DigitalHumanRunStatus } from '@/services/types/digital-human';
 
 const runParam = 'run';
-const activeStatuses = new Set<DigitalHumanRunStatus>(['queued', 'running', 'canceling']);
 
 type StatusFilter = 'all' | 'active' | 'succeeded' | 'failed' | 'canceled';
 type SourceFilter = 'all' | 'manual' | 'channel' | 'scheduled' | 'email' | 'external';
@@ -231,7 +234,10 @@ export function DigitalHumanRuns({ id }: { id: string }) {
                       >
                         <div className="flex items-start justify-between gap-3">
                           <SourceBadge label={runSourceLabel(run, sourceLabels)} />
-                          <RunStatusBadge status={run.status} label={t(`status.${run.status}`)} />
+                          <RunStatusBadge
+                            status={run.status}
+                            label={t(digitalHumanRunStatusLabelKey(run.status, run.waiting_reason))}
+                          />
                         </div>
                         <p className="mt-3 line-clamp-2 text-sm font-medium leading-6">
                           {run.query}
@@ -321,7 +327,10 @@ export function DigitalHumanRuns({ id }: { id: string }) {
                         </span>
                       </TableCell>
                       <TableCell className="py-4">
-                        <RunStatusBadge status={run.status} label={t(`status.${run.status}`)} />
+                        <RunStatusBadge
+                          status={run.status}
+                          label={t(digitalHumanRunStatusLabelKey(run.status, run.waiting_reason))}
+                        />
                       </TableCell>
                       <TableCell className="py-4">{formatRunDuration(run)}</TableCell>
                       <TableCell className="py-4">
@@ -390,7 +399,7 @@ function SourceBadge({ label }: { label: string }) {
 
 function matchesStatus(status: DigitalHumanRunStatus, filter: StatusFilter) {
   if (filter === 'all') return true;
-  if (filter === 'active') return activeStatuses.has(status);
+  if (filter === 'active') return isActiveDigitalHumanRunStatus(status);
   if (filter === 'failed') return status === 'failed' || status === 'unknown';
   return status === filter;
 }

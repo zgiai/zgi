@@ -15,13 +15,22 @@ import { DIGITAL_HUMAN_KEYS } from '@/hooks/query-keys';
 import { useT } from '@/i18n';
 import { ICON_BG } from '@/lib/config';
 import { digitalHumanService } from '@/services/digital-human.service';
-import type { DigitalHumanResourceCandidate } from '@/services/types/digital-human';
+import type {
+  DigitalHumanResourceBindingInput,
+  DigitalHumanResourceCandidate,
+} from '@/services/types/digital-human';
+import { composeCreateBindings } from './create-digital-human-bindings';
 import {
   bindingDisplayNames,
   createDigitalHumanPayload,
-  selectCandidateBindings,
   templateDefaultSkillIds,
 } from './create-digital-human-payload';
+import {
+  createConnectorSelectionBindings,
+  createConnectorSelectionCandidates,
+  createConnectorSelectionsDirty,
+  type DigitalHumanCreateConnectorSelection,
+} from './digital-human-connector-create-model';
 import { DigitalHumanCreateSuccessDialog } from './digital-human-create-success-dialog';
 import {
   DigitalHumanTemplateForm,
@@ -153,11 +162,12 @@ function DigitalHumanConfigureStep({
   const selectedSkillIds = skillSelection ?? defaultSkillIds;
   const changeSkillSelection = (resourceIds: string[]) => setSkillSelection(resourceIds);
 
-  // A template that declares no skill has no capability this product can bind
-  // yet, so creation cannot deliver what its copy promises. The form says so
-  // instead of letting the user expect a working server connection. The custom
-  // entry picks its own skills, so it carries no such notice.
-  const templateWithoutSkills = Boolean(template && template.skills.length === 0);
+  // The Connector selection lives with the form: the picker edits it and
+  // creation submits it, while the credentials themselves never leave the
+  // server-side connection in Connector Center.
+  const [connectorSelections, setConnectorSelections] = useState<
+    DigitalHumanCreateConnectorSelection[]
+  >([]);
 
   const [initialValue] = useState<DigitalHumanTemplateFormValue>(() => ({
     name: template ? texts(template.titleKey) : '',
@@ -188,7 +198,8 @@ function DigitalHumanConfigureStep({
     value.responsibility !== initialValue.responsibility ||
     value.model !== initialValue.model ||
     !iconEquals(value.icon, initialValue.icon) ||
-    skillsDirty;
+    skillsDirty ||
+    createConnectorSelectionsDirty(connectorSelections);
 
   const handleChange = (patch: Partial<DigitalHumanTemplateFormValue>) => {
     setValue(current => {
@@ -217,15 +228,32 @@ function DigitalHumanConfigureStep({
   };
 
   /**
-   * Bind exactly the capabilities the user selected: the workspace skills,
-   * resolved against the real candidates.
+   * Compose the single replacement list creation will send.
+   *
+   * Skills and Connector connections are resolved against the workspace's real
+   * candidates; the Connector side uses the exact snapshots the user selected.
+   * A stale, unavailable, widened, or empty selection fails here, so creation
+   * can stop before it writes anything.
+   */
+  const composeSelectedBindings = () =>
+    composeCreateBindings(
+      selectedSkillIds,
+      skillCandidates,
+      createConnectorSelectionBindings(connectorSelections),
+      createConnectorSelectionCandidates(connectorSelections)
+    );
+
+  /**
+   * Bind exactly the composed list, once.
    *
    * Nothing selected means nothing to bind; the create request itself never
-   * carries a credential, and this never fabricates a binding for a capability
-   * the workspace does not offer.
+   * carries a credential or capability claim.
    */
-  const bindSelectedCapabilities = async (id: string, lockVersion: number) => {
-    const items = selectCandidateBindings(selectedSkillIds, skillCandidates);
+  const bindSelectedCapabilities = async (
+    id: string,
+    lockVersion: number,
+    items: DigitalHumanResourceBindingInput[]
+  ) => {
     if (items.length === 0) return [];
     const bound = await digitalHumanService.replaceDraftBindings(id, lockVersion, items);
     return bindingDisplayNames(bound.data?.items ?? items);
@@ -240,6 +268,17 @@ function DigitalHumanConfigureStep({
     }
     setSubmitting(true);
     setSubmitError(null);
+    let items: DigitalHumanResourceBindingInput[];
+    try {
+      items = composeSelectedBindings();
+    } catch {
+      // An invalid selection must block creation with a visible error rather
+      // than create a draft that cannot carry the chosen authority.
+      setSubmitError(t('createFlow.form.invalidSelection'));
+      toast.error(t('createFlow.form.invalidSelection'));
+      setSubmitting(false);
+      return;
+    }
     try {
       const payload = createDigitalHumanPayload({
         name: value.name,
@@ -260,7 +299,8 @@ function DigitalHumanConfigureStep({
       try {
         boundCapabilityNames = await bindSelectedCapabilities(
           id,
-          detail?.draft?.lock_version ?? 1
+          detail?.draft?.lock_version ?? 1,
+          items
         );
       } catch {
         notice = t('createFlow.form.bindingFailed');
@@ -310,6 +350,8 @@ function DigitalHumanConfigureStep({
         skillsLoading={skillCandidatesQuery.isLoading}
         skillsError={skillCandidatesQuery.isError}
         onRetrySkills={() => void skillCandidatesQuery.refetch()}
+        connectorSelections={connectorSelections}
+        onChangeConnectorSelections={setConnectorSelections}
         value={{ ...value, model: effectiveModel }}
         onChange={handleChange}
         models={availableModels.models}
@@ -323,11 +365,7 @@ function DigitalHumanConfigureStep({
         submitLabel={created ? t('createFlow.success.continueSetup') : undefined}
         notice={
           notice ??
-          (created
-            ? t('createFlow.form.draftCreatedNotice')
-            : templateWithoutSkills
-              ? t('createFlow.form.templateNotEnabled')
-              : null)
+          (created ? t('createFlow.form.draftCreatedNotice') : null)
         }
       />
 
@@ -356,6 +394,7 @@ function DigitalHumanConfigureStep({
         confirmText={t('createFlow.form.discardConfirm')}
         onConfirm={() => {
           setValue(initialValue);
+          setConnectorSelections([]);
           onBack();
         }}
       />

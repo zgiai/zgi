@@ -7,15 +7,21 @@
  * its guarantees (single submit, auto publish, no fake capability claims).
  *
  * Creation no longer reads, selects, or binds the old integration connections:
- * the operations template is a design target that declares no skill, so it binds
- * nothing and the UI says so instead of implying a working server connection.
+ * the operations template declares no skill and binds nothing by default. Phase
+ * one reaches servers through the DigitalHuman-only serverops_ssh connector the
+ * user verifies in Connector Center and binds in the generic create form, so the
+ * copy describes only approved per-invocation read-only actions.
  *
  * Run with: pnpm test:digital-human-create-flow
  */
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { readFile, readdir } from 'node:fs/promises';
+import path from 'node:path';
 import { URL } from 'node:url';
+
+import ts from 'typescript';
 
 import enUS from '../src/i18n/modules/digitalHumans/en-US.ts';
 import zhHans from '../src/i18n/modules/digitalHumans/zh-Hans.ts';
@@ -35,6 +41,55 @@ import {
   serializeDigitalHumanIcon,
   templateDefaultSkillIds,
 } from '../src/components/digital-human/create/create-digital-human-payload.ts';
+
+// Node cannot resolve the extensionless TypeScript specifiers the create-time
+// bindings helper uses to share the Connector model, so that pure module is
+// transpiled and its local imports inlined as data URLs, like the other pure
+// model suites do.
+const transpileSource = relativePath =>
+  ts.transpileModule(readFileSync(path.join(process.cwd(), relativePath), 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+const asDataModule = source =>
+  `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
+
+const connectorModelModuleURL = asDataModule(
+  transpileSource('src/components/digital-human/digital-human-connector-model.ts')
+);
+const createPayloadModuleURL = asDataModule(
+  transpileSource('src/components/digital-human/create/create-digital-human-payload.ts')
+);
+const createBindingsModuleURL = asDataModule(
+  transpileSource('src/components/digital-human/create/create-digital-human-bindings.ts')
+    .replace(
+      /from\s+['"]\.\.\/digital-human-connector-model['"];/,
+      `from '${connectorModelModuleURL}';`
+    )
+    .replace(
+      /from\s+['"]\.\/create-digital-human-payload['"];/,
+      `from '${createPayloadModuleURL}';`
+    )
+);
+const { composeCreateBindings } = await import(createBindingsModuleURL);
+const connectorCreateModelModuleURL = asDataModule(
+  transpileSource(
+    'src/components/digital-human/create/digital-human-connector-create-model.ts'
+  ).replace(
+    /from\s+['"]\.\.\/digital-human-connector-model['"];/,
+    `from '${connectorModelModuleURL}';`
+  )
+);
+const { connectorOperationIds } = await import(connectorModelModuleURL);
+const {
+  addCreateConnectorSelection,
+  createConnectorCandidateKey,
+  createConnectorCandidateSelectable,
+  createConnectorSelectionBindings,
+  createConnectorSelectionCandidates,
+  removeCreateConnectorSelection,
+  setCreateConnectorSelectionOperation,
+  toggleCreateConnectorSelection,
+} = await import(connectorCreateModelModuleURL);
 
 /** The only keys the create request may ever carry. */
 const EXPECTED_PAYLOAD_KEYS = [
@@ -401,28 +456,30 @@ for (const forbiddenField of [
 }
 
 // Safety copy: the operations template must state the read-only boundary in both
-// locales and must never claim service-status or log capabilities it lacks.
+// locales and must never imply an approval can be reused or a connection works
+// before it is bound and verified.
 const opsCopyZh = zhHans.createFlow.templates.opsSpecialist;
 const opsCopyEn = enUS.createFlow.templates.opsSpecialist;
 assert.ok(
-  opsCopyZh.responsibility.includes('不执行部署、重启、配置修改或任意命令'),
+  opsCopyZh.responsibility.includes('不执行部署、重启、写入、配置修改，也不运行任意命令'),
   'the zh operations responsibility must state the read-only boundary'
 );
 assert.ok(
   opsCopyEn.responsibility.includes(
-    'Deployment, restarts, configuration changes, and arbitrary commands are not performed.'
+    'It does not deploy, restart, write, change configuration, or run arbitrary commands.'
   ),
   'the en operations responsibility must state the read-only boundary'
 );
 assert.ok(
-  opsCopyZh.persona.includes('不得声称已完成部署、重启、配置修改、服务状态检查或日志读取'),
-  'the zh operations persona must not claim unverified service or log capabilities'
+  opsCopyZh.persona.includes('不得部署、重启、写入、修改配置、开启交互式会话或运行任意命令') &&
+    opsCopyZh.persona.includes('不得假设之前的批准仍然有效或已被记住'),
+  'the zh operations persona must forbid writes and remembered approval'
 );
 assert.ok(
   opsCopyEn.persona.includes(
-    'never claim to have deployed, restarted, changed configuration, checked service status, or read logs'
-  ),
-  'the en operations persona must not claim unverified service or log capabilities'
+    'Never deploy, restart, write, change configuration, open an interactive session, or run arbitrary commands.'
+  ) && opsCopyEn.persona.includes('never assume an earlier approval still applies or has been remembered'),
+  'the en operations persona must forbid writes and remembered approval'
 );
 assert.ok(
   !Object.prototype.hasOwnProperty.call(opsCopyZh, 'connections') &&
@@ -430,52 +487,63 @@ assert.ok(
   'the operations copy must not keep a connection family label'
 );
 
-// The operations template is a design target, not a wired capability. Both
-// locales must say it cannot connect, inspect, or deploy yet, that target
-// authorization plus read-only verification come first, and that deployment or
-// configuration changes need separate approval.
-const OPS_UNDELIVERED_COPY = {
+// Phase one reaches servers through the DigitalHuman-only serverops_ssh
+// connector. Both locales must describe only the supported behaviour: the user
+// creates and verifies SSH server connections in Connector Center, binds one or
+// more distinct named servers in the generic create form, and the role uses only
+// the approved per-invocation read-only actions. They must never claim the
+// connector works before it is bound and verified, never promise deploy, restart,
+// write, arbitrary-command, or configuration-change behaviour, and never claim an
+// approval can be remembered.
+const OPS_PHASE_ONE_COPY = {
   'en-US': {
-    shortDescription: [/not connected to a server yet/i, /cannot connect, inspect, or deploy/i],
+    shortDescription: [
+      /verify in Connector Center/i,
+      /system snapshot, systemd service status, and a bounded journal tail/i,
+      /No deploy, restart, or configuration changes/i,
+    ],
     responsibility: [
-      /It is not connected to a server yet and has no configured, verified tools or authorization/i,
-      /must not connect to a target, collect data, or claim measured findings/i,
+      /one or more named Linux servers you create and verify in Connector Center/i,
+      /more than one server is bound and a request does not name a target/i,
+      /ask which server to check before acting/i,
+      /per-invocation approval/i,
+      /does not deploy, restart, write, change configuration, or run arbitrary commands/i,
+      /usable only after it is verified and bound/i,
     ],
     persona: [
-      /is not connected to any server/i,
-      /until its tools and authorization are configured and verified/i,
-      /must not connect to a target, collect system state, or claim measured findings/i,
-      /once enabled it operates only within the approved scope using verified actions/i,
-      /target authorization and read-only verification first/i,
-      /deployment or configuration changes need separate approval/i,
+      /created and verified in Connector Center and bound to you/i,
+      /not bound or not verified is not usable/i,
+      /ask the user which server they mean/i,
+      /one invocation at a time/i,
+      /Every invocation needs its own approval/i,
+      /has been remembered/i,
+      /Separate observation from inference/i,
     ],
-    notice: [
-      /is not connected to a server yet/i,
-      /Until target authorization and read-only verification are complete/i,
-      /cannot connect to a target, collect state, or run operations/i,
-      /deployment or configuration changes need separate approval/i,
-    ],
+    notice: [/does not bind a Skill on its own/i, /verified and bound to this digital human/i],
   },
   'zh-Hans': {
-    shortDescription: [/尚未接入服务器/, /不能连接、巡检或部署/],
+    shortDescription: [
+      /已在连接中心验证并绑定/,
+      /系统快照、systemd 服务状态和有界日志尾部/,
+      /不部署、不重启、不修改配置/,
+    ],
     responsibility: [
-      /当前尚未接入服务器，也还没有已配置并验证的工具与授权/,
-      /不得连接目标、不得采集数据，也不得声称实测结论/,
+      /一台或多台具名 Linux 服务器/,
+      /先询问要检查哪一台/,
+      /每次调用都需要单独批准/,
+      /不执行部署、重启、写入、配置修改，也不运行任意命令/,
+      /连接只有在通过验证并绑定后才可用/,
     ],
     persona: [
-      /尚未接入任何服务器/,
-      /在工具与授权尚未配置并验证之前/,
-      /不得连接目标、不得采集系统状态，也不得声称实测结论/,
-      /启用之后，仅可在已批准范围内按已验证动作操作/,
-      /目标服务器授权与只读能力验证/,
-      /部署或配置变更的操作还需要单独审批/,
+      /在连接中心创建并验证、且已绑定给你的 SSH 服务器连接/,
+      /未绑定或未验证的连接不可用/,
+      /先询问用户指的是哪一台/,
+      /每次只发起一次调用/,
+      /每次调用都需要当次批准/,
+      /已被记住/,
+      /把观察与推断分开/,
     ],
-    notice: [
-      /尚未接入服务器/,
-      /在完成目标授权与只读能力验证之前/,
-      /不能连接目标、采集状态或执行操作/,
-      /部署或配置变更的操作还需要单独审批/,
-    ],
+    notice: [/该模板本身不会绑定技能/, /通过验证并绑定到这个数字人/],
   },
 };
 for (const [locale, dictionary] of [
@@ -483,7 +551,7 @@ for (const [locale, dictionary] of [
   ['zh-Hans', zhHans],
 ]) {
   const copy = dictionary.createFlow.templates.opsSpecialist;
-  const expected = OPS_UNDELIVERED_COPY[locale];
+  const expected = OPS_PHASE_ONE_COPY[locale];
   for (const [field, patterns] of [
     ['shortDescription', expected.shortDescription],
     ['responsibility', expected.responsibility],
@@ -497,7 +565,7 @@ for (const [locale, dictionary] of [
       assert.match(
         text,
         pattern,
-        `${locale} opsSpecialist.${field} must state the current boundary (${pattern})`
+        `${locale} opsSpecialist.${field} must state the phase-one boundary (${pattern})`
       );
     }
   }
@@ -645,6 +713,610 @@ for (const forbiddenField of [
 }
 
 // ---------------------------------------------------------------------------
+// Create-time bindings: skills plus Connector connections in one replacement
+// ---------------------------------------------------------------------------
+
+const connectorCandidates = [
+  {
+    type: 'connector',
+    resource_id: 'connection-1',
+    parent_resource_id: 'calendar',
+    display_name: 'Calendar primary',
+    resource_revision: 'connector:1',
+    access_modes: ['execute'],
+    metadata: { allowed_operation_ids: ['events.read', 'events.write', 'calendars.read'] },
+    status: 'ready',
+    available: true,
+  },
+  {
+    type: 'connector',
+    resource_id: 'connection-2',
+    parent_resource_id: 'calendar',
+    display_name: 'Calendar team',
+    resource_revision: 'connector:2',
+    access_modes: ['execute'],
+    metadata: { allowed_operation_ids: ['events.read', 'calendars.read'] },
+    status: 'ready',
+    available: true,
+  },
+  {
+    type: 'connector',
+    resource_id: 'connection-3',
+    parent_resource_id: 'mail',
+    display_name: 'Mail shared',
+    resource_revision: 'connector:3',
+    access_modes: ['execute'],
+    metadata: { allowed_operation_ids: ['messages.send'] },
+    status: 'ready',
+    available: true,
+  },
+];
+
+const connectorSelection = (connectorId, connectionId, operationIds, resourceRevision) => ({
+  type: 'connector',
+  resource_id: connectionId,
+  parent_resource_id: connectorId,
+  display_name: connectionId,
+  access_mode: 'execute',
+  resource_revision: resourceRevision,
+  metadata: { allowed_operation_ids: operationIds },
+});
+
+const selectedConnections = [
+  connectorSelection('calendar', 'connection-1', ['events.read'], 'connector:1'),
+  connectorSelection('calendar', 'connection-2', ['calendars.read', 'events.read'], 'connector:2'),
+  connectorSelection('mail', 'connection-3', ['messages.send'], 'connector:3'),
+];
+
+const mergedBindings = composeCreateBindings(
+  ['file-generator', 'not-offered'],
+  offered,
+  selectedConnections,
+  connectorCandidates
+);
+
+// One merged replacement list, in skill-then-connector order.
+assert.deepEqual(
+  mergedBindings.map(item => `${item.type}:${item.parent_resource_id ?? ''}:${item.resource_id}`),
+  [
+    'skill::file-generator',
+    'connector:calendar:connection-1',
+    'connector:calendar:connection-2',
+    'connector:mail:connection-3',
+  ],
+  'the helper must return one list with the offered skill and every selected connection'
+);
+assert.deepEqual(
+  mergedBindings[0],
+  selectCandidateBindings(['file-generator'], offered)[0],
+  'skills must keep the existing candidate-resolved binding behaviour'
+);
+assert.ok(
+  mergedBindings.every(item => item.type === 'skill' || item.type === 'connector'),
+  'only skills and native Connector bindings may enter the create-time replacement list'
+);
+
+// Two distinct connections of the same connector both survive.
+const sameConnector = mergedBindings.filter(item => item.parent_resource_id === 'calendar');
+assert.equal(sameConnector.length, 2, 'two connections of one connector must both survive');
+assert.deepEqual(
+  sameConnector.map(item => item.resource_id),
+  ['connection-1', 'connection-2'],
+  'same-connector connections keep their own identity'
+);
+
+// Allowed operation narrowing, current revision, and credential freedom.
+assert.deepEqual(
+  mergedBindings.find(item => item.resource_id === 'connection-1').metadata.allowed_operation_ids,
+  ['events.read'],
+  'a narrowed selection must carry exactly the operations the user chose'
+);
+assert.deepEqual(
+  mergedBindings.find(item => item.resource_id === 'connection-2').metadata.allowed_operation_ids,
+  ['calendars.read', 'events.read'],
+  'the selected operation order must be preserved for the chosen connection'
+);
+assert.equal(
+  mergedBindings.find(item => item.resource_id === 'connection-1').resource_revision,
+  'connector:1',
+  'the output must carry the current candidate revision'
+);
+for (const item of mergedBindings) {
+  assert.ok(
+    !Object.prototype.hasOwnProperty.call(item, 'credential_ref'),
+    'the merged list must never carry a credential reference'
+  );
+}
+for (const item of mergedBindings.filter(item => item.type === 'connector')) {
+  assert.ok(
+    item.metadata.allowed_operation_ids.length > 0,
+    'every connector binding must name at least one allowed operation'
+  );
+}
+assert.doesNotMatch(
+  JSON.stringify(mergedBindings),
+  /credential|secret|password|token|ssh/i,
+  'the merged list must not leak credential material or a credential handle'
+);
+
+// Connector metadata is an allowlist, not a copy: a dirty or future candidate
+// carrying extra secret-like values must not leak them into the request.
+const dirtyConnectorCandidates = [
+  {
+    ...connectorCandidates[0],
+    metadata: {
+      allowed_operation_ids: ['events.read', 'events.write'],
+      credential_ref: 'credential-handle-must-not-travel',
+      password: 'super-secret-must-not-travel',
+      nested: { access_token: 'token-must-not-travel' },
+    },
+  },
+];
+const dirtyComposed = composeCreateBindings(
+  [],
+  [],
+  [connectorSelection('calendar', 'connection-1', ['events.read'], 'connector:1')],
+  dirtyConnectorCandidates
+);
+assert.equal(dirtyComposed.length, 1, 'a dirty connector candidate must still compose');
+assert.deepEqual(
+  Object.keys(dirtyComposed[0].metadata),
+  ['allowed_operation_ids'],
+  'connector metadata must contain exactly the allowlisted operation ids'
+);
+assert.deepEqual(
+  dirtyComposed[0].metadata.allowed_operation_ids,
+  ['events.read'],
+  'the allowlisted operations must be the validated selection, not the candidate metadata'
+);
+assert.doesNotMatch(
+  JSON.stringify(dirtyComposed),
+  /credential|secret|password|token|ssh|must-not-travel/i,
+  'no extra candidate metadata, secret value, or credential key may reach the binding'
+);
+
+// An exact repeated selection is deduplicated, not sent twice.
+assert.deepEqual(
+  composeCreateBindings(
+    [],
+    [],
+    [
+      selectedConnections[0],
+      connectorSelection('calendar', 'connection-1', ['events.read'], 'connector:1'),
+    ],
+    connectorCandidates
+  ).map(item => item.resource_id),
+  ['connection-1'],
+  'an exact repeated selection must collapse to one binding'
+);
+assert.deepEqual(
+  composeCreateBindings([], [], [], connectorCandidates),
+  [],
+  'nothing selected composes an empty replacement list instead of a call'
+);
+
+// Every stale, missing, unavailable, unready, widening, or empty selection
+// fails explicitly rather than disappearing or publishing a different scope.
+assert.throws(
+  () =>
+    composeCreateBindings(
+      [],
+      [],
+      [connectorSelection('calendar', 'connection-1', ['events.read'], 'connector:old')],
+      connectorCandidates
+    ),
+  /changed since it was selected/,
+  'a stale selection must fail instead of publishing an old revision'
+);
+assert.throws(
+  () =>
+    composeCreateBindings(
+      [],
+      [],
+      [connectorSelection('calendar', 'connection-9', ['events.read'], 'connector:1')],
+      connectorCandidates
+    ),
+  /not offered to this workspace/,
+  'a selection with no exact candidate must fail instead of disappearing'
+);
+assert.throws(
+  () =>
+    composeCreateBindings(
+      [],
+      [],
+      [connectorSelection('other-connector', 'connection-1', ['events.read'], 'connector:1')],
+      connectorCandidates
+    ),
+  /not offered to this workspace/,
+  'the candidate must match the exact connector and connection pair'
+);
+assert.throws(
+  () =>
+    composeCreateBindings(
+      [],
+      [],
+      [selectedConnections[0]],
+      connectorCandidates.map(candidate =>
+        candidate.resource_id === 'connection-1' ? { ...candidate, available: false } : candidate
+      )
+    ),
+  /is not available/,
+  'an unavailable connection must fail instead of being dropped'
+);
+assert.throws(
+  () =>
+    composeCreateBindings(
+      [],
+      [],
+      [selectedConnections[0]],
+      connectorCandidates.map(candidate =>
+        candidate.resource_id === 'connection-1' ? { ...candidate, available: undefined } : candidate
+      )
+    ),
+  /is not available/,
+  'a candidate that is not explicitly ready must fail'
+);
+assert.throws(
+  () =>
+    composeCreateBindings(
+      [],
+      [],
+      [connectorSelection('calendar', 'connection-2', ['events.write'], 'connector:2')],
+      connectorCandidates
+    ),
+  /outside its allowed set/,
+  'a selection may never widen the operations the candidate allows'
+);
+assert.throws(
+  () =>
+    composeCreateBindings(
+      [],
+      [],
+      [connectorSelection('calendar', 'connection-1', [], 'connector:1')],
+      connectorCandidates
+    ),
+  /has no selected operations/,
+  'a connection with no selected operations must fail instead of binding everything'
+);
+assert.throws(
+  () =>
+    composeCreateBindings(
+      [],
+      [],
+      [selectedConnections[0]],
+      connectorCandidates.map(candidate =>
+        candidate.resource_id === 'connection-1'
+          ? { ...candidate, metadata: { allowed_operation_ids: [] } }
+          : candidate
+      )
+    ),
+  /offers no operations/,
+  'a candidate that allows no operation must fail instead of binding nothing usable'
+);
+assert.throws(
+  () =>
+    composeCreateBindings(
+      [],
+      [],
+      [
+        selectedConnections[0],
+        connectorSelection('calendar', 'connection-1', ['events.write'], 'connector:1'),
+      ],
+      connectorCandidates
+    ),
+  /selected twice with different operations/,
+  'one connection selected with two different operation sets must fail instead of merging'
+);
+
+// The composition helper stays generic: no protocol-specific id, no template-id
+// branch, and no raw credential or action key.
+const createBindingsSource = readFileSync(
+  new URL(
+    '../src/components/digital-human/create/create-digital-human-bindings.ts',
+    import.meta.url
+  ),
+  'utf8'
+);
+assert.ok(
+  !/server-ssh|ssh/i.test(createBindingsSource),
+  'the composition helper must not hardcode a protocol-specific connector id'
+);
+assert.ok(
+  !createBindingsSource.includes('opsSpecialist') &&
+    !createBindingsSource.includes('fileGeneration'),
+  'the composition helper must not branch on a template id'
+);
+assert.doesNotMatch(
+  createBindingsSource,
+  /credential_ref|allowed_action_ids/,
+  'the composition helper must never name a credential handle or a raw action key'
+);
+
+// ---------------------------------------------------------------------------
+// Create-time Connector selection model
+// ---------------------------------------------------------------------------
+
+// Several connections, including two of the same connector, can be selected at
+// once, and each one keeps the candidate snapshot it was chosen from.
+let connectorPicks = addCreateConnectorSelection([], connectorCandidates[0]);
+connectorPicks = addCreateConnectorSelection(connectorPicks, connectorCandidates[1]);
+connectorPicks = addCreateConnectorSelection(connectorPicks, connectorCandidates[2]);
+assert.deepEqual(
+  connectorPicks.map(item => item.binding.resource_id),
+  ['connection-1', 'connection-2', 'connection-3'],
+  'the create picker must allow several connections, including two of one connector'
+);
+assert.deepEqual(
+  createConnectorSelectionBindings(connectorPicks).map(item => item.resource_id),
+  ['connection-1', 'connection-2', 'connection-3'],
+  'the composed bindings must keep the selection order'
+);
+assert.deepEqual(
+  createConnectorSelectionCandidates(connectorPicks).map(candidate => candidate.resource_id),
+  ['connection-1', 'connection-2', 'connection-3'],
+  'every binding must travel with its matching candidate snapshot'
+);
+assert.deepEqual(
+  connectorOperationIds(connectorPicks[0].binding),
+  ['events.read', 'events.write', 'calendars.read'],
+  'a new selection must start from every operation the candidate allows'
+);
+assert.equal(
+  addCreateConnectorSelection(connectorPicks, connectorCandidates[1]).length,
+  connectorPicks.length,
+  'selecting the exact same connection twice must not duplicate it'
+);
+
+// Operation narrowing is a strict subset of the candidate's allowed set and can
+// never become empty or wider.
+const firstConnectionKey = createConnectorCandidateKey(connectorPicks[0].candidate);
+let narrowedPicks = setCreateConnectorSelectionOperation(
+  connectorPicks,
+  firstConnectionKey,
+  'events.write',
+  false
+);
+assert.deepEqual(
+  connectorOperationIds(narrowedPicks[0].binding),
+  ['events.read', 'calendars.read'],
+  'unchecking an operation must narrow that connection only'
+);
+assert.deepEqual(
+  connectorOperationIds(narrowedPicks[1].binding),
+  ['events.read', 'calendars.read'],
+  'narrowing one connection must not touch another'
+);
+narrowedPicks = setCreateConnectorSelectionOperation(
+  narrowedPicks,
+  firstConnectionKey,
+  'events.read',
+  false
+);
+narrowedPicks = setCreateConnectorSelectionOperation(
+  narrowedPicks,
+  firstConnectionKey,
+  'calendars.read',
+  false
+);
+assert.deepEqual(
+  connectorOperationIds(narrowedPicks[0].binding),
+  ['calendars.read'],
+  'the last selected operation must never be removable'
+);
+assert.deepEqual(
+  connectorOperationIds(
+    setCreateConnectorSelectionOperation(narrowedPicks, firstConnectionKey, 'messages.send', true)[0]
+      .binding
+  ),
+  ['calendars.read'],
+  'the picker must never add an operation outside the candidate allowed set'
+);
+
+// Toggling removes a selected connection without touching the rest.
+assert.deepEqual(
+  toggleCreateConnectorSelection(connectorPicks, connectorCandidates[1]).map(
+    item => item.binding.resource_id
+  ),
+  ['connection-1', 'connection-3'],
+  'toggling a selected connection must remove it'
+);
+assert.deepEqual(
+  removeCreateConnectorSelection(connectorPicks, firstConnectionKey).map(
+    item => item.binding.resource_id
+  ),
+  ['connection-2', 'connection-3'],
+  'removing by identity must drop exactly the named connection'
+);
+
+// Only available native Connector candidates with at least one operation are
+// selectable; anything else is refused instead of stored.
+assert.equal(
+  createConnectorCandidateSelectable({ ...connectorCandidates[0], available: false }),
+  false,
+  'an unavailable connection must not be selectable'
+);
+assert.equal(
+  createConnectorCandidateSelectable({
+    ...connectorCandidates[0],
+    metadata: { allowed_operation_ids: [] },
+  }),
+  false,
+  'a connection without operations must not be selectable'
+);
+assert.equal(
+  createConnectorCandidateSelectable({ ...connectorCandidates[0], type: 'skill' }),
+  false,
+  'only native Connector candidates may enter the create selection'
+);
+assert.equal(
+  addCreateConnectorSelection([], { ...connectorCandidates[0], available: false }).length,
+  0,
+  'an unavailable connection must be refused, not stored'
+);
+
+// The snapshot must keep the revision and allowed operations the user saw even
+// if a later server response mutates the source object.
+const mutableCandidate = {
+  ...connectorCandidates[0],
+  metadata: { ...connectorCandidates[0].metadata },
+};
+const snapshotPicks = addCreateConnectorSelection([], mutableCandidate);
+mutableCandidate.resource_revision = 'connector:mutated';
+mutableCandidate.metadata.allowed_operation_ids = ['events.write'];
+assert.equal(
+  snapshotPicks[0].binding.resource_revision,
+  'connector:1',
+  'the stored snapshot must keep the revision the user selected'
+);
+assert.deepEqual(
+  connectorOperationIds(snapshotPicks[0].binding),
+  ['events.read', 'events.write', 'calendars.read'],
+  'the stored snapshot must keep the operations the user selected'
+);
+
+// In-place mutation of the fetched candidate must not reach the stored snapshot
+// or its binding: the snapshot deep-copies the operation and access-mode arrays
+// instead of sharing them with the server response.
+const inPlaceCandidate = {
+  ...connectorCandidates[0],
+  access_modes: [...connectorCandidates[0].access_modes],
+  metadata: {
+    allowed_operation_ids: [...connectorCandidates[0].metadata.allowed_operation_ids],
+  },
+};
+const inPlacePicks = addCreateConnectorSelection([], inPlaceCandidate);
+inPlaceCandidate.metadata.allowed_operation_ids.push('events.delete');
+inPlaceCandidate.metadata.allowed_operation_ids[0] = 'events.mutated';
+inPlaceCandidate.access_modes.push('write');
+assert.deepEqual(
+  connectorOperationIds(inPlacePicks[0].candidate),
+  ['events.read', 'events.write', 'calendars.read'],
+  'in-place mutation of candidate.metadata.allowed_operation_ids must not change the stored snapshot'
+);
+assert.deepEqual(
+  connectorOperationIds(inPlacePicks[0].binding),
+  ['events.read', 'events.write', 'calendars.read'],
+  'in-place mutation of the fetched candidate must not change the stored binding'
+);
+assert.deepEqual(
+  inPlacePicks[0].candidate.access_modes,
+  ['execute'],
+  'the snapshot must deep-copy access_modes so later mutation cannot reach it'
+);
+
+// The snapshot is an explicit allowlist. Extra metadata (credential-like or
+// otherwise) and extra top-level properties must never enter the snapshot or the
+// composed output, even though the candidate is otherwise selectable.
+const dirtyCreateCandidate = {
+  type: 'connector',
+  resource_id: 'connection-dirty',
+  parent_resource_id: 'calendar',
+  display_name: 'Calendar dirty',
+  description: 'keep this allowlisted description',
+  resource_revision: 'connector:dirty',
+  access_modes: ['execute'],
+  metadata: {
+    allowed_operation_ids: ['events.read'],
+    credential_ref: 'credential-handle-must-not-travel',
+    password: 'super-secret-must-not-travel',
+    nested: { access_token: 'token-must-not-travel' },
+  },
+  status: 'ready',
+  available: true,
+  secret_token: 'top-level-secret-must-not-travel',
+  internal_note: 'must-not-travel',
+};
+const dirtyCreatePicks = addCreateConnectorSelection([], dirtyCreateCandidate);
+const dirtyCreateSnapshot = dirtyCreatePicks[0].candidate;
+assert.deepEqual(
+  Object.keys(dirtyCreateSnapshot).sort(),
+  [
+    'access_modes',
+    'available',
+    'description',
+    'display_name',
+    'metadata',
+    'parent_resource_id',
+    'resource_id',
+    'resource_revision',
+    'status',
+    'type',
+  ],
+  'the selected snapshot must carry exactly the allowlisted candidate fields'
+);
+assert.deepEqual(
+  Object.keys(dirtyCreateSnapshot.metadata),
+  ['allowed_operation_ids'],
+  'candidate metadata must be reduced to allowed_operation_ids only'
+);
+assert.equal(
+  dirtyCreateSnapshot.description,
+  'keep this allowlisted description',
+  'the allowlisted description must survive the snapshot'
+);
+assert.deepEqual(
+  connectorOperationIds(dirtyCreateSnapshot),
+  ['events.read'],
+  'the snapshot must keep the validated allowed operations'
+);
+assert.doesNotMatch(
+  JSON.stringify(dirtyCreatePicks),
+  /credential|secret|password|token|ssh|must-not-travel/i,
+  'no extra candidate metadata or top-level property may enter the selected snapshot'
+);
+
+const dirtyCreateOutput = createConnectorSelectionBindings(dirtyCreatePicks);
+assert.deepEqual(
+  Object.keys(dirtyCreateOutput[0]).sort(),
+  [
+    'access_mode',
+    'display_name',
+    'metadata',
+    'parent_resource_id',
+    'resource_id',
+    'resource_revision',
+    'type',
+  ],
+  'the selected binding must carry exactly the request fields it declares'
+);
+assert.deepEqual(
+  Object.keys(dirtyCreateOutput[0].metadata),
+  ['allowed_operation_ids'],
+  'the selected binding metadata must stay an operation-id allowlist'
+);
+assert.doesNotMatch(
+  JSON.stringify(dirtyCreateOutput),
+  /credential|secret|password|token|ssh|must-not-travel/i,
+  'no extra candidate field may reach the composed selection binding'
+);
+
+const dirtyCreateComposed = composeCreateBindings(
+  [],
+  [],
+  dirtyCreateOutput,
+  createConnectorSelectionCandidates(dirtyCreatePicks)
+);
+assert.equal(dirtyCreateComposed.length, 1, 'a dirty but selectable candidate must still compose');
+assert.doesNotMatch(
+  JSON.stringify(dirtyCreateComposed),
+  /credential|secret|password|token|ssh|must-not-travel/i,
+  'no extra candidate field may reach the composed create-time output'
+);
+
+// The picker selection composes into the single create-time replacement list
+// together with the offered skill.
+assert.deepEqual(
+  composeCreateBindings(
+    ['file-generator'],
+    offered,
+    createConnectorSelectionBindings(connectorPicks.slice(0, 2)),
+    createConnectorSelectionCandidates(connectorPicks.slice(0, 2))
+  ).map(item => `${item.type}:${item.parent_resource_id ?? ''}:${item.resource_id}`),
+  ['skill::file-generator', 'connector:calendar:connection-1', 'connector:calendar:connection-2'],
+  'the picker selection must compose skills and connections into one replacement list'
+);
+
+// ---------------------------------------------------------------------------
 // UI source contracts
 // ---------------------------------------------------------------------------
 
@@ -669,6 +1341,12 @@ const successSource = await readSource(
   '../src/components/digital-human/create/digital-human-create-success-dialog.tsx'
 );
 const createPageSource = await readSource('../src/app/console/digital-humans/create/page.tsx');
+const connectorCreatePickerSource = await readSource(
+  '../src/components/digital-human/create/digital-human-connector-create-picker.tsx'
+);
+const connectorCreateModelSource = await readSource(
+  '../src/components/digital-human/create/digital-human-connector-create-model.ts'
+);
 
 assert.match(
   createPageSource,
@@ -798,15 +1476,15 @@ assert.equal(
 );
 
 // ---------------------------------------------------------------------------
-// One binding replacement for the selected skills
+// One binding replacement for the selected capabilities and resources
 // ---------------------------------------------------------------------------
 
-// The flow builds the skill bindings with the approved helper and never
-// fabricates a binding for a capability the workspace does not offer.
+// The flow composes skills and Connector selections with the approved helper
+// and never fabricates a binding for a capability the workspace does not offer.
 assert.match(
   flowSource,
-  /selectCandidateBindings\(selectedSkillIds, skillCandidates\)/,
-  'skill bindings must come from the approved helper'
+  /composeCreateBindings\(\s*selectedSkillIds,\s*skillCandidates,\s*createConnectorSelectionBindings\(connectorSelections\),\s*createConnectorSelectionCandidates\(connectorSelections\)\s*\)/,
+  'create bindings must merge the skill selection and the Connector selection snapshots'
 );
 assert.doesNotMatch(
   flowSource,
@@ -929,6 +1607,100 @@ for (const [name, source] of [
 }
 
 // ---------------------------------------------------------------------------
+// Generic create-time Connector picker contracts
+// ---------------------------------------------------------------------------
+
+// The picker lists the owner's saved connections through the reviewed
+// pre-creation reader. The shared ConnectorPicker owns filtering and the host
+// keeps a full 512-candidate eligibility snapshot for safe create-time binding.
+assert.match(
+  connectorCreatePickerSource,
+  /useDigitalHumanConnectorCandidates\(\{\s*limit:\s*512\s*\}\)/,
+  'the picker must load the full pre-creation candidate page'
+);
+// Alias, status, connection creation, and operation scoping come from the
+// shared ConnectorPicker/Setup surfaces.
+assert.match(
+  connectorCreatePickerSource,
+  /<ConnectorPickerDialog[\s\S]*selectionMode="multiple-connections"/,
+  'the create picker must reuse the shared multiple-connection adapter'
+);
+assert.match(
+  connectorCreatePickerSource,
+  /onRequestConnectAndAdd=/,
+  'the create picker must open setup from the usage surface'
+);
+assert.match(
+  connectorCreatePickerSource,
+  /<ConnectorKeySetupPanel[\s\S]*embedded/,
+  'the create picker must reuse the shared credential setup panel without a draft target'
+);
+const setupTagStart = connectorCreatePickerSource.indexOf('<ConnectorKeySetupPanel');
+const setupTagEnd = connectorCreatePickerSource.indexOf('/>', setupTagStart);
+const setupTag = connectorCreatePickerSource.slice(setupTagStart, setupTagEnd + 2);
+assert.doesNotMatch(
+  setupTag,
+  /target=/,
+  'pre-creation setup must not attach a credential to a non-existent draft target'
+);
+assert.match(
+  connectorCreatePickerSource,
+  /<DigitalHumanConnectorOperationDetails[\s\S]*onOperation=/,
+  'the create picker must scope operations on selected connections'
+);
+assert.match(
+  connectorCreatePickerSource,
+  /\/console\/connectors\/connections/,
+  'the picker must link to Connector Center for creation, verification, and maintenance'
+);
+
+// The create page may open the shared credential/reconnect surfaces directly
+// from the usage context, while the template form itself remains generic.
+assert.match(
+  connectorCreatePickerSource,
+  /ConnectionReconnectDialog|ConnectionAppDialog|supportsAppSetup/,
+  'the create Connector picker must reuse shared setup and maintenance controls'
+);
+for (const [name, source] of [
+  ['create Connector picker', connectorCreatePickerSource],
+  ['create Connector model', connectorCreateModelSource],
+]) {
+  for (const forbiddenToken of [
+    'server-ssh',
+    'credential_ref',
+    'allowed_action_ids',
+    'opsSpecialist',
+    'fileGeneration',
+  ]) {
+    assert.ok(!source.includes(forbiddenToken), `${name} must not mention ${forbiddenToken}`);
+  }
+}
+// The model copies only validated operation ids and never a raw credential key.
+assert.doesNotMatch(
+  connectorCreateModelSource,
+  /credential_ref|password|api_key|allowed_action_ids|server-ssh/,
+  'the create Connector model must stay credential-free and protocol-agnostic'
+);
+
+// The generic create form renders the section for every template and the
+// custom entry, and not inside a template branch.
+assert.match(
+  formSource,
+  /<DigitalHumanConnectorCreateSection[\s\S]*?selections=\{connectorSelections\}[\s\S]*?onChangeSelections=\{onChangeConnectorSelections\}/,
+  'the generic create form must render the Connector section for every template and custom entry'
+);
+assert.doesNotMatch(
+  formSource,
+  /template\.id\s*===|isCustomTemplateId/,
+  'the form must not branch the Connector section on a template id'
+);
+assert.doesNotMatch(
+  flowSource,
+  /useDigitalHumanConnectorCandidates/,
+  'the flow must not fetch Connector candidates itself; the shared picker owns that'
+);
+
+// ---------------------------------------------------------------------------
 // No create-time old-integrations coupling remains anywhere in the feature
 // ---------------------------------------------------------------------------
 
@@ -945,6 +1717,9 @@ const createFeatureSources = [
   ['success dialog', successSource],
   ['template catalogue', templatesSource],
   ['create payload', createPayloadSource],
+  ['create bindings', createBindingsSource],
+  ['create connector model', connectorCreateModelSource],
+  ['create connector picker', connectorCreatePickerSource],
   ['digital human service', integrationServiceSource],
   ['query keys', queryKeysSource],
   ['digital human hooks', digitalHumanHooksSource],
@@ -1050,8 +1825,31 @@ assert.equal(
   1,
   'only the discard path may reset the form, so a failed create keeps every field'
 );
-const catchStart = flowSource.indexOf('} catch {');
-const catchEnd = flowSource.indexOf('} finally {', catchStart);
+// The selection is validated before creation, and its failure surfaces a
+// visible error without creating anything.
+const composeGuardStart = flowSource.indexOf('items = composeSelectedBindings();');
+const composeCatchEnd = flowSource.indexOf('mutations.create.mutateAsync', composeGuardStart);
+assert.ok(
+  composeGuardStart > 0 && composeCatchEnd > composeGuardStart,
+  'the flow must compose the selection before the create request'
+);
+const composeCatchBody = flowSource.slice(
+  flowSource.indexOf('} catch {', composeGuardStart),
+  composeCatchEnd
+);
+assert.match(
+  composeCatchBody,
+  /setSubmitError\(t\('createFlow\.form\.invalidSelection'\)\)/,
+  'an invalid selection must block creation with a visible error'
+);
+assert.doesNotMatch(
+  composeCatchBody,
+  /mutations\.create/,
+  'an invalid selection must not create a digital human'
+);
+
+const catchEnd = flowSource.indexOf('} finally {');
+const catchStart = flowSource.lastIndexOf('} catch {', catchEnd);
 assert.ok(catchStart > 0 && catchEnd > catchStart, 'the create call must keep a catch/finally pair');
 assert.ok(
   flowSource.slice(catchStart, catchEnd).includes('setSubmitError') &&
@@ -1067,9 +1865,24 @@ const submitBody = flowSource.slice(submitStart, submitEnd);
 const createCallIndex = submitBody.indexOf('mutations.create.mutateAsync');
 const bindCallIndex = submitBody.indexOf('bindSelectedCapabilities(');
 const publishCallIndex = submitBody.indexOf('.publish(');
+const composeCallIndex = submitBody.indexOf('composeSelectedBindings()');
+assert.ok(
+  composeCallIndex > 0 && composeCallIndex < createCallIndex,
+  'the flow must validate the composed selection before the create request'
+);
 assert.ok(
   createCallIndex > 0 && bindCallIndex > createCallIndex && publishCallIndex > bindCallIndex,
   'the flow must create, then bind the selected capabilities, then publish'
+);
+assert.match(
+  submitBody,
+  /if \(!notice\)\s*\{[\s\S]*?\.publish\(/,
+  'publishing must be skipped when binding failed, leaving the created draft'
+);
+assert.match(
+  flowSource,
+  /createFlow\.form\.invalidSelection/,
+  'an invalid selection must surface a visible error before creating'
 );
 assert.ok(
   submitBody.indexOf('digitalHumanService.get(') === -1 ||
@@ -1079,8 +1892,13 @@ assert.ok(
 assert.match(flowSource, /replaceDraftBindings/, 'binding must go through the bindings API');
 assert.match(
   flowSource,
-  /selectCandidateBindings\(selectedSkillIds, skillCandidates\)/,
-  'bindings must be resolved from the real binding candidates and the user selection'
+  /composeCreateBindings\(/,
+  'bindings must be resolved from the real candidates, the skill selection, and the Connector snapshots'
+);
+assert.match(
+  flowSource,
+  /createConnectorSelectionBindings\(connectorSelections\)[\s\S]*createConnectorSelectionCandidates\(connectorSelections\)/,
+  'the flow must compose the selected Connector bindings with their candidate snapshots'
 );
 assert.match(
   flowSource,
@@ -1185,8 +2003,10 @@ assert.doesNotMatch(
   'the form must not render the removed placeholder capability list'
 );
 
-// A template that declares no capability this product can bind yet must warn the
-// user in the configure form instead of letting creation imply a working server.
+// A template that seeds no skill must warn the user only while nothing is
+// selected: the generic form can bind a Skill or a Connector connection, and
+// once one is selected the notice must disappear instead of denying a capability
+// creation can now deliver.
 assert.match(
   flowSource,
   /const templateWithoutSkills = Boolean\(template && template\.skills\.length === 0\)/,
@@ -1194,7 +2014,17 @@ assert.match(
 );
 assert.match(
   flowSource,
-  /templateWithoutSkills\s*\?\s*t\('createFlow\.form\.templateNotEnabled'\)/,
+  /const hasSelectedCapability = selectedSkillIds\.length > 0 \|\| connectorSelections\.length > 0/,
+  'a selected skill or Connector connection must count as a selected capability'
+);
+assert.match(
+  flowSource,
+  /const showTemplateNotEnabled = templateWithoutSkills && !hasSelectedCapability/,
+  'the not-enabled notice must require a zero-seed-skill template with nothing selected'
+);
+assert.match(
+  flowSource,
+  /showTemplateNotEnabled\s*\?\s*t\('createFlow\.form\.templateNotEnabled'\)/,
   'such a template must surface the localized not-enabled notice'
 );
 assert.match(
@@ -1389,9 +2219,9 @@ for (const [name, source] of [
 }
 
 // Copy guard: no locale may claim a capability is already connected or running.
-// The operations copy honestly says it is *not* connected yet and only acts once
-// a server *is* connected, so a bare /connected/ match would flag a negation or a
-// condition; the English patterns therefore target positive claims only.
+// The operations copy says a connection is only usable once it is verified and
+// bound, so a bare /connected/ match would flag that condition; the English
+// patterns therefore target positive claims only.
 const forbiddenClaims = [
   /已连接/,
   /连接成功/,

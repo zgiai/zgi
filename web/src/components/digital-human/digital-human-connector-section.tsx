@@ -76,6 +76,7 @@ function ScopedConnectorSection({
   const [selection, setSelection] = useState<DigitalHumanConnectorSelection>();
   const [initialReplacement, setInitialReplacement] = useState<DigitalHumanResourceBindingInput>();
   const [opening, setOpening] = useState(false);
+  const anchorRef = useRef<HTMLElement | null>(null);
   const currentRef = useRef<DigitalHumanConnectorSelection>();
   const mountedRef = useRef(false);
   const openingRef = useRef(false);
@@ -97,8 +98,9 @@ function ScopedConnectorSection({
     if (next !== current) changeSelection(next);
   }, [query.data?.data]);
 
-  const open = async (removeId?: string, replaceId?: string) => {
+  const open = async (removeId?: string, replaceId?: string, trigger?: HTMLElement | null) => {
     if (!canUpdate || openingRef.current || currentRef.current) return;
+    anchorRef.current = trigger ?? null;
     openingRef.current = true;
     setOpening(true);
     try {
@@ -191,7 +193,7 @@ function ScopedConnectorSection({
           aria-haspopup="dialog"
           aria-expanded={Boolean(selection)}
           disabled={!canUpdate || opening || query.isLoading || mutations.replaceBindings.isPending}
-          onClick={() => void open()}
+          onClick={event => void open(undefined, undefined, event.currentTarget)}
         >
           <Plus className="size-4" />
         </Button>
@@ -212,7 +214,7 @@ function ScopedConnectorSection({
             type="button"
             className="flex min-h-full w-full flex-col items-center justify-center rounded-xl border border-dashed bg-muted/10 px-5 py-6 text-center transition-colors hover:border-primary/40 hover:bg-primary/[0.03] disabled:pointer-events-none"
             disabled={!canUpdate || opening}
-            onClick={() => void open()}
+            onClick={event => void open(undefined, undefined, event.currentTarget)}
           >
             <Plus className="mb-2 size-5 text-muted-foreground" />
             <span className="text-sm font-medium text-foreground">
@@ -238,8 +240,12 @@ function ScopedConnectorSection({
               candidatesLoading={candidatesQuery.isLoading}
               candidatesError={candidatesQuery.isError}
               disabled={opening || !canUpdate || mutations.replaceBindings.isPending}
-              onRemove={canUpdate ? item => void open(item.id) : undefined}
-              onReplace={canUpdate ? item => void open(undefined, item.id) : undefined}
+              onRemove={
+                canUpdate ? (item, trigger) => void open(item.id, undefined, trigger) : undefined
+              }
+              onReplace={
+                canUpdate ? (item, trigger) => void open(undefined, item.id, trigger) : undefined
+              }
             />
             {canUpdate ? (
               <Button
@@ -247,7 +253,7 @@ function ScopedConnectorSection({
                 variant="outline"
                 className="mt-3 w-full"
                 disabled={opening || mutations.replaceBindings.isPending}
-                onClick={() => void open()}
+                onClick={event => void open(undefined, undefined, event.currentTarget)}
               >
                 {connectorT('picker.actions.addConnection')}
               </Button>
@@ -260,6 +266,7 @@ function ScopedConnectorSection({
           key={selection.token}
           id={id}
           selection={selection}
+          anchorElement={anchorRef.current}
           readOnly={!canUpdate}
           initialReplacement={initialReplacement}
           onChange={changeSelection}

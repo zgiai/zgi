@@ -221,6 +221,25 @@ class DigitalHumanService extends BaseService {
     return this.request('get', '/digital-human-skill-candidates');
   }
 
+  /**
+   * The owner-scoped Connector connections a new digital human may attach.
+   *
+   * Creation happens before any draft exists, so this mirrors
+   * `listSkillCandidates` without requiring an id. The server forces the
+   * Connector binding type and answers with the same safe, credential-free
+   * `DigitalHumanResourceCandidateList` projection as the draft editor. The
+   * caller may only narrow with `query` and page with `limit` (up to the
+   * server's 512 maximum).
+   */
+  listConnectorCandidates(params: {
+    query?: string;
+    limit?: number;
+  } = {}): Promise<ApiResponseData<DigitalHumanResourceCandidateList>> {
+    return this.request('get', '/digital-human-connector-candidates', undefined, {
+      params: { query: params.query, limit: params.limit },
+    });
+  }
+
   replaceDraftBindings(
     id: string,
     expectedDraftLockVersion: number,

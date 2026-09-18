@@ -42,7 +42,7 @@ const messages = {
   },
   createFlow: {
     title: 'Create digital human',
-    subtitle: 'Pick a template, or start from a blank digital human. Templates bind real skills.',
+    subtitle: 'Choose a template or start from blank; you can adjust the setup before creating.',
     invalidRole: 'That template does not exist. Choose one from the list.',
     backToGallery: 'Back to templates',
     gallery: {
@@ -73,10 +73,15 @@ const messages = {
       skillsLoadFailed: 'The Skills this workspace offers could not be loaded.',
       skillsOptional: 'You can create it without Skills and add them later.',
       skillsHint:
-        'Pick the Skills this digital human may use. They are bound when creation finishes and version 1 is published; the template only pre-selects its own. Adjust them later in Configuration → Capabilities.',
+        'Choose the Skills to bind at creation; adjust them later in Configuration → Capabilities.',
       skillsPending: 'Resolved against the skills available in this workspace when you create.',
-      templateNotEnabled:
-        'This template is still a design target and is not connected to a server yet. Until target authorization and read-only verification are complete, it cannot connect to a target, collect state, or run operations; deployment or configuration changes need separate approval. You can create the digital human now and add capabilities later.',
+      connectorsHint:
+        'Choose the Connector connections to bind and keep only the needed operations.',
+      connectorsOptional: 'You can leave this empty and add connections after creation.',
+      connectorsDialogDescription:
+        'Choose connections and set the operations this digital human may use.',
+      invalidSelection:
+        'Review the selected Skills and Connector connections before creating; the current selection is no longer valid.',
       advanced: 'Advanced settings',
       model: 'Agent Runtime model',
       currentModel: 'Current model',
@@ -99,7 +104,8 @@ const messages = {
         'The digital human was created, but binding the selected capabilities or resources failed. Continue in Configuration → Capabilities to handle them by hand.',
       publishFailed:
         'The digital human and its selected capabilities/resources are in place, but publishing failed. Publish it from the configuration page.',
-      draftCreatedNotice: 'This digital human already exists. Continue setup, or go back to the list.',
+      draftCreatedNotice:
+        'This digital human already exists. Continue setup, or go back to the list.',
     },
     preview: {
       title: 'Preview',
@@ -146,29 +152,33 @@ const messages = {
       opsSpecialist: {
         title: 'Operations specialist',
         shortDescription:
-          'The intended operations role: not connected to a server yet, so it cannot connect, inspect, or deploy.',
+          'Read-only inspection of the SSH servers you verify in Connector Center and bind to this digital human: a system snapshot, systemd service status, and a bounded journal tail. No deploy, restart, or configuration changes.',
         responsibility:
-          'This template describes the intended operations specialist role: once a verified server is connected, collect host, load, memory, and disk state read-only, organize evidence for environment issues, and recommend verifiable next steps. It is not connected to a server yet and has no configured, verified tools or authorization; until those are in place it must not connect to a target, collect data, or claim measured findings. Deployment, restarts, configuration changes, and arbitrary commands are not performed.',
+          'Inspect the one or more named Linux servers you create and verify in Connector Center and bind to this digital human. When more than one server is bound and a request does not name a target, ask which server to check before acting. Use only the read-only actions approved for the bound connection, each with its own per-invocation approval: a system snapshot, a systemd service status read, and a bounded journal tail. Report observed facts separately from inference and recommendations. It does not deploy, restart, write, change configuration, or run arbitrary commands. A connection is usable only after it is verified and bound, and an approval for one call never carries over to another.',
         persona:
-          'You are a cautious, evidence-first operations specialist. This role is currently a design target and is not connected to any server: until its tools and authorization are configured and verified, it must not connect to a target, collect system state, or claim measured findings, and once enabled it operates only within the approved scope using verified actions. Confirm the target server and the user-authorized boundary before starting, and use only actions the backend verified for the bound connection. Enabling it requires target authorization and read-only verification first, and deployment or configuration changes need separate approval. Once enabled, collect a system snapshot first, then assess environment risks from the host, operating system, kernel, uptime, load, memory, and disk data. Separate observed facts, inferences, and recommendations. It must never claim to have deployed, restarted, changed configuration, checked service status, or read logs; when those capabilities are needed, state that they are not yet authorized or verified and explain the next step.',
+          'You are a cautious, evidence-first operations specialist for Linux servers. Work only through SSH server connections the user created and verified in Connector Center and bound to you; a connection that is not bound or not verified is not usable, so never imply you can reach a server before that. Before acting, establish the target: when several distinct servers are bound and the request does not name one, ask the user which server they mean instead of guessing. Use only the read-only actions approved for the bound connection, one invocation at a time: a system snapshot, a single systemd service status read, and a bounded journal tail with its limited line count and time window. Every invocation needs its own approval; never assume an earlier approval still applies or has been remembered. Never deploy, restart, write, change configuration, open an interactive session, or run arbitrary commands. Separate observation from inference: state the action you ran and the facts it returned first, then clearly label any inference or recommendation, and say when the evidence is missing or the request falls outside the approved read-only scope.',
         tags: {
           serverInspection: 'Server inspection',
           evidenceFirst: 'Evidence first',
           readOnlySafety: 'Read-only safety',
         },
         goals: {
-          confirmTarget: 'Confirm the target server, user authorization, and inspection boundary.',
-          collectSnapshot: 'Collect host, load, memory, and disk state.',
-          assessEnvironment: 'Identify resource and environment risks from verifiable data.',
-          recommendNext: 'Recommend verifiable next steps.',
+          confirmTarget:
+            'Confirm which bound server the request targets, and ask when it is ambiguous.',
+          collectSnapshot:
+            'Collect read-only evidence through the approved actions: system snapshot, systemd service status, and bounded journal tail.',
+          assessEnvironment:
+            'Identify resource and service risks from observed facts, and label inference as inference.',
+          recommendNext:
+            'Recommend verifiable next steps and state which evidence is still missing.',
         },
         rules: {
           verifiedReadOnly:
-            'Use only backend-verified read-only actions on the bound connection. Never deploy, restart, change configuration, or run arbitrary commands.',
+            'Use only the read-only actions approved for the bound connection, with a fresh approval for every invocation. Never deploy, restart, write, change configuration, or run arbitrary commands.',
           targetBoundary:
-            "Confirm the target server before acting, and never use one server's result as evidence for another.",
+            "Confirm the target server before acting; when several named servers are bound and the request is ambiguous, ask which one. Never use one server's result as evidence for another.",
           noOverclaim:
-            'Without a verified action and result evidence, never claim to have checked service status, read logs, or resolved the issue.',
+            'Report a service status, journal tail, or conclusion only from an action you actually ran and observed. Never present inference as an observed fact, and never claim an approval has been remembered.',
         },
       },
     },
@@ -704,6 +714,44 @@ const messages = {
       searchPlaceholder: 'Search workflows',
       updatedAt: 'Last published: {time}',
     },
+    connectors: {
+      leaveTitle: 'Leave connector setup?',
+      leaveDescription:
+        'Leaving discards your unsaved digital human selection. Personal connections already created will be kept.',
+      leaveConfirm: 'Discard selection and continue',
+      title: 'Connectors',
+      add: 'Add connectors',
+      edit: 'Manage connectors',
+      empty: 'No connectors selected.',
+      loadFailed: 'Connector information could not be loaded. Please retry.',
+      unnamed: 'Unnamed connection',
+      legacy: 'Historical connection',
+      needsReplacement: 'Replacement required',
+      legacyDescription:
+        'This historical connection cannot execute. Keep the record, remove it, or explicitly replace it with a personal connection.',
+      operations: 'Operation access ({count} selected)',
+      operationsHint: 'Select only the operations required to complete the work.',
+      identity: 'Connection ID: {id}',
+      operationUnavailable:
+        'This operation is currently unavailable. Existing access will not expand automatically.',
+      operationRequired: 'Select at least one available operation.',
+      replace: 'Replace connection',
+      target: 'this digital human',
+      setupHint:
+        'Create a personal connection and add it to this selection. The digital human receives access when you save.',
+      setupNotAdded:
+        'The personal connection was created but has not been added. Return to the list, refresh, and select it.',
+      conflict:
+        'The draft changed. Your selection has not been saved. Reloading discards this selection and opens the latest draft.',
+      reload: 'Reload and reset selection',
+      saveFailed:
+        'Selection could not be saved. Check connections and operation access, then retry.',
+      unavailable:
+        'This connection is not currently available to this digital human. Check its status and operation access.',
+      replacing: 'Choose a new connection to replace “{name}”.',
+      selectionInvalid:
+        'Select at least one available operation for each new or changed connection. Explicitly replace or remove historical references.',
+    },
     integrations: {
       dialogDescription:
         'Choose a connected external app and enable only the actions needed to complete the work.',
@@ -852,6 +900,17 @@ const messages = {
     channelContext: {
       title: 'Channel context preparation',
       notSupported: 'Message history is not supported by this platform',
+    },
+    connectorConfirmation: {
+      accountName: 'Account',
+      accountIdentity: 'Identity',
+      previewUnavailable:
+        'The account and operation preview could not be verified. Confirm stays disabled until the connection service returns a complete preview; you can still cancel this run.',
+      unavailableTitle: 'Approval cannot be shown safely',
+      unavailableDescription:
+        'This run is waiting for an approval that the server could not verify against the run. Approving is disabled; cancel the run and start it again.',
+      unavailableNoReceipt:
+        'This run is waiting for an approval without a verifiable receipt. Approving is disabled; cancel the run and start it again.',
     },
   },
   channels: {
@@ -1806,11 +1865,14 @@ const messages = {
     signedIn: 'Signed in',
     retry: 'Retry',
     loadTimeoutTitle: 'The landing page took too long to load',
-    loadTimeoutDescription: 'The digital human configuration is taking too long to respond. Check your network and try again.',
+    loadTimeoutDescription:
+      'The digital human configuration is taking too long to respond. Check your network and try again.',
     authLoadErrorTitle: 'Could not restore sign-in state',
-    authLoadErrorDescription: 'The current sign-in state could not be restored. Retry to continue using this landing page.',
+    authLoadErrorDescription:
+      'The current sign-in state could not be restored. Retry to continue using this landing page.',
     authLoadTimeoutTitle: 'Sign-in state is taking too long to load',
-    authLoadTimeoutDescription: 'Sign-in restoration is taking too long. Retry to continue; the digital human configuration is still available.',
+    authLoadTimeoutDescription:
+      'Sign-in restoration is taking too long. Retry to continue; the digital human configuration is still available.',
     loadingConversation: 'Loading conversation…',
     inputPlaceholder: 'Message this digital human',
     homeTitle: 'Chat with {name}',
@@ -1821,6 +1883,10 @@ const messages = {
     disabled: 'Disabled',
     queued: 'Queued',
     running: 'Running',
+    waiting: 'Waiting',
+    waitingApproval: 'Waiting for approval',
+    waitingQuestion: 'Waiting for your response',
+    waitingClientAction: 'Waiting for page action',
     canceling: 'Canceling',
     succeeded: 'Succeeded',
     failed: 'Failed',

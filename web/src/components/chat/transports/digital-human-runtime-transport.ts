@@ -3,14 +3,13 @@ import type {
   AIChatRuntimeTransport,
   AIChatStreamCallbacks,
 } from '@/components/chat/transports/aichat-transport';
+import { isActiveDigitalHumanRunStatus } from '@/components/digital-human/digital-human-run-presentation';
 import { digitalHumanService } from '@/services/digital-human.service';
 import type { AIChatChatRequest } from '@/services/types/aichat';
 import type { DigitalHumanRun } from '@/services/types/digital-human';
 
 const RUN_LINK_POLL_INTERVAL_MS = 400;
 const RUN_LINK_TIMEOUT_MS = 120_000;
-
-const activeRunStatuses = new Set(['queued', 'running', 'canceling']);
 
 /**
  * Adapts the durable DigitalHuman invocation path to the shared ChatRuntime UI.
@@ -64,7 +63,11 @@ export class DigitalHumanRuntimeTransport
         abortSignal
       );
     } catch (error) {
-      if (abortSignal?.aborted && submittedRun && activeRunStatuses.has(submittedRun.status)) {
+      if (
+        abortSignal?.aborted &&
+        submittedRun &&
+        isActiveDigitalHumanRunStatus(submittedRun.status)
+      ) {
         try {
           await digitalHumanService.cancelRun(this.digitalHumanId, submittedRun.id);
         } catch {
@@ -88,7 +91,7 @@ export class DigitalHumanRuntimeTransport
     let run = initialRun;
     while (!run.conversation_id || !run.message_id) {
       if (abortSignal?.aborted) throw abortError();
-      if (!activeRunStatuses.has(run.status)) {
+      if (!isActiveDigitalHumanRunStatus(run.status)) {
         throw new Error(run.error_message || 'The digital human run ended before chat started.');
       }
       if (Date.now() - startedAt >= RUN_LINK_TIMEOUT_MS) {

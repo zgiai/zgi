@@ -39,7 +39,7 @@ const messages: DigitalHumansMessages = {
   },
   createFlow: {
     title: '创建数字人',
-    subtitle: '选择一个模板，或从空白开始创建。模板会绑定真实技能。',
+    subtitle: '选择一个模板，或从空白开始创建；创建前可以调整配置。',
     invalidRole: '该模板不存在，请从列表中选择。',
     backToGallery: '返回模板选择',
     gallery: {
@@ -69,11 +69,12 @@ const messages: DigitalHumansMessages = {
       skillsLoading: '正在加载当前工作区可绑定的技能…',
       skillsLoadFailed: '当前工作区可绑定的技能加载失败。',
       skillsOptional: '也可以先不选技能，创建完成后再补充。',
-      skillsHint:
-        '选择这个数字人可以使用的技能。创建完成后会按所选技能绑定并发布第 1 个版本；模板只会预选自己的技能。后续可在「配置 → 能力」中调整。',
+      skillsHint: '选择创建时绑定的技能，之后可在「配置 → 能力」中调整。',
       skillsPending: '创建时会按工作区中实际可用的技能进行匹配。',
-      templateNotEnabled:
-        '该模板目前只是设计目标，尚未接入服务器。在完成目标授权与只读能力验证之前，不能连接目标、采集状态或执行操作；涉及部署或配置变更的操作还需要单独审批。可以先创建数字人，之后再补充能力。',
+      connectorsHint: '选择要绑定的 Connector 连接，并为每条连接保留需要的操作。',
+      connectorsOptional: '可以先不绑定，创建后再补充。',
+      connectorsDialogDescription: '选择要使用的连接，并设置允许的操作。',
+      invalidSelection: '创建前请检查所选的技能与 Connector 连接，当前选择已不可用。',
       advanced: '高级设置',
       model: 'Agent Runtime 模型',
       currentModel: '当前模型',
@@ -103,8 +104,7 @@ const messages: DigitalHumansMessages = {
     },
     sharedRules: {
       credentials: '不要求用户在对话、名称或职责描述中直接粘贴密码、Token、私钥等敏感凭证。',
-      authorization:
-        '未获得用户明确授权，不执行可能中断服务、修改数据、删除资源或扩大权限的操作。',
+      authorization: '未获得用户明确授权，不执行可能中断服务、修改数据、删除资源或扩大权限的操作。',
       verifyResult: '不把「已经执行」等同于「已经成功」，必须核对结果、状态或日志后再给出结论。',
       stateBlockers:
         '信息不足、环境不匹配或风险不可控时停止操作，清楚说明阻塞原因和下一步需要的信息。',
@@ -137,27 +137,31 @@ const messages: DigitalHumansMessages = {
       },
       opsSpecialist: {
         title: '运维专员',
-        shortDescription: '运维职责的设计目标：当前尚未接入服务器，不能连接、巡检或部署。',
+        shortDescription:
+          '对你已在连接中心验证并绑定到这个数字人的 SSH 服务器执行只读检查：系统快照、systemd 服务状态和有界日志尾部；不部署、不重启、不修改配置。',
         responsibility:
-          '这个模板描述的是运维专员的职责方向：接入经过验证的服务器后，以只读方式采集主机系统、负载、内存和磁盘状态，整理环境问题证据并给出可复核的处理建议。当前尚未接入服务器，也还没有已配置并验证的工具与授权；在完成配置与验证之前，不得连接目标、不得采集数据，也不得声称实测结论。不执行部署、重启、配置修改或任意命令。',
+          '对你已在连接中心创建并验证、并绑定到这个数字人的一台或多台具名 Linux 服务器进行只读检查。绑定了多台服务器而请求没有指明目标时，先询问要检查哪一台，不要自行猜测。只使用该绑定连接中已批准的只读动作，且每次调用都需要单独批准：系统快照、systemd 服务状态、有界日志尾部。必须把已观察事实与推断、建议分开表述。不执行部署、重启、写入、配置修改，也不运行任意命令。连接只有在通过验证并绑定后才可用，一次调用的批准不会延续到下一次。',
         persona:
-          '你是一名谨慎、证据优先的运维专员。这个角色目前是设计目标，尚未接入任何服务器：在工具与授权尚未配置并验证之前，不得连接目标、不得采集系统状态，也不得声称实测结论；启用之后，仅可在已批准范围内按已验证动作操作。开始前先确认目标服务器和用户授权范围，只使用已绑定连接中后端验证允许的动作。启用前需要先完成目标服务器授权与只读能力验证，涉及部署或配置变更的操作还需要单独审批。启用后先采集系统快照，再根据主机、操作系统、内核、运行时长、负载、内存和磁盘数据识别环境风险；结论必须区分已观察事实、推断和建议。不得声称已完成部署、重启、配置修改、服务状态检查或日志读取；需要这些能力时明确说明尚未授权或验证，并给出下一步。',
+          '你是一名谨慎、证据优先的 Linux 服务器运维专员。你只能通过用户在连接中心创建并验证、且已绑定给你的 SSH 服务器连接工作；未绑定或未验证的连接不可用，在此之前不得声称能够访问服务器。开始前先确定目标：绑定了多台不同服务器而请求没有指明目标时，先询问用户指的是哪一台，不要自行猜测。只使用该绑定连接中已批准的只读动作，且每次只发起一次调用：系统快照、单次 systemd 服务状态读取、有界日志尾部（行数和时间窗口均受限）。每次调用都需要当次批准；不得假设之前的批准仍然有效或已被记住。不得部署、重启、写入、修改配置、开启交互式会话或运行任意命令。把观察与推断分开：先说明执行了什么动作、返回了哪些事实，再明确标注推断或建议，并在证据不足或请求超出已批准的只读范围时说明。',
         tags: {
           serverInspection: '服务器巡检',
           evidenceFirst: '证据优先',
           readOnlySafety: '只读安全',
         },
         goals: {
-          confirmTarget: '确认目标服务器、用户授权和检查边界。',
-          collectSnapshot: '采集主机系统、负载、内存和磁盘快照。',
-          assessEnvironment: '基于可验证数据识别资源与环境风险。',
-          recommendNext: '给出可复核的处理建议和下一步。',
+          confirmTarget: '确认请求针对的是哪台已绑定服务器；目标不明确时先询问。',
+          collectSnapshot:
+            '通过已批准的只读动作采集证据：系统快照、systemd 服务状态和有界日志尾部。',
+          assessEnvironment: '基于已观察事实识别资源与服务风险，并把推断明确标注为推断。',
+          recommendNext: '给出可复核的下一步，并说明还缺少哪些证据。',
         },
         rules: {
           verifiedReadOnly:
-            '仅执行已绑定连接中后端验证允许的只读动作，不执行部署、重启、配置修改或任意命令。',
-          targetBoundary: '执行前确认目标服务器，不把一个服务器的结果当作另一个服务器的证据。',
-          noOverclaim: '没有已验证动作或结果证据时，不声称已检查服务状态、读取日志或解决问题。',
+            '只执行该绑定连接中已批准的只读动作，且每次调用都重新获得批准。不部署、不重启、不写入、不修改配置，也不运行任意命令。',
+          targetBoundary:
+            '执行前确认目标服务器；绑定了多台具名服务器而请求不明确时，先询问是哪一台。不得把一台服务器的结果当作另一台的证据。',
+          noOverclaim:
+            '只根据实际执行并观察到的动作报告服务状态、日志内容或结论。不把推断表述为已观察事实，也不声称批准已被记住。',
         },
       },
     },
@@ -660,6 +664,35 @@ const messages: DigitalHumansMessages = {
       searchPlaceholder: '搜索工作流',
       updatedAt: '最后发布：{time}',
     },
+    connectors: {
+      leaveTitle: '离开连接器设置？',
+      leaveDescription: '离开将丢弃本次未保存的数字人选择。已经创建的个人连接会保留。',
+      leaveConfirm: '丢弃选择并继续',
+      title: '连接器',
+      add: '添加连接器',
+      edit: '管理连接器',
+      empty: '还没有选择连接器。',
+      loadFailed: '连接器信息加载失败，请重试。',
+      unnamed: '未命名连接',
+      legacy: '历史连接',
+      needsReplacement: '待替换',
+      legacyDescription: '此历史连接已不可执行。可以保留记录、移除，或明确选择新的个人连接替换。',
+      operations: '操作范围（已选 {count}）',
+      operationsHint: '只选择完成任务所需的操作。',
+      identity: '连接 ID：{id}',
+      operationUnavailable: '此操作当前不可用，原有选择不会自动扩大。',
+      operationRequired: '请选择至少一个可用操作。',
+      replace: '替换连接',
+      target: '这个数字人',
+      setupHint: '创建个人连接后加入本次选择，保存选择后数字人才获得使用权限。',
+      setupNotAdded: '个人连接已创建，但尚未加入数字人。请返回列表刷新后重新选择。',
+      conflict: '草稿已被更新。本次选择尚未保存；重新加载将丢弃本次选择并显示最新草稿。',
+      reload: '重新加载并重置选择',
+      saveFailed: '选择保存失败，请检查连接和操作范围后重试。',
+      unavailable: '该连接当前不能用于这个数字人，请检查状态和操作权限。',
+      replacing: '请选择用于替换“{name}”的新连接。',
+      selectionInvalid: '请为新增或修改的连接选择至少一个可用操作；历史引用需明确替换或移除。',
+    },
     integrations: {
       dialogDescription: '选择一个已连接的外部应用，并只开启完成工作所需的操作。',
       searchPlaceholder: '搜索连接或外部应用',
@@ -805,6 +838,17 @@ const messages: DigitalHumansMessages = {
     channelContext: {
       title: '渠道上下文准备',
       notSupported: '平台不支持历史读取',
+    },
+    connectorConfirmation: {
+      accountName: '使用账号',
+      accountIdentity: '账号身份',
+      previewUnavailable:
+        '无法核对本次操作使用的账号与内容。在连接服务返回完整预览之前，确认按钮保持不可用；你仍然可以取消这次运行。',
+      unavailableTitle: '无法安全展示本次审批',
+      unavailableDescription:
+        '这次运行正在等待审批，但服务端返回的内容无法与该运行核对。确认已停用；请取消本次运行后重新发起。',
+      unavailableNoReceipt:
+        '这次运行正在等待审批，但没有可核对的回执。确认已停用；请取消本次运行后重新发起。',
     },
   },
   channels: {
@@ -1698,6 +1742,10 @@ const messages: DigitalHumansMessages = {
     disabled: '已停用',
     queued: '排队中',
     running: '运行中',
+    waiting: '等待中',
+    waitingApproval: '等待审批',
+    waitingQuestion: '等待你补充信息',
+    waitingClientAction: '等待页面操作',
     canceling: '取消中',
     succeeded: '已完成',
     failed: '失败',

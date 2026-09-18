@@ -5,11 +5,22 @@ export type DigitalHumanVersionState = 'draft' | 'published';
 export type DigitalHumanRunStatus =
   | 'queued'
   | 'running'
+  | 'waiting'
   | 'canceling'
   | 'succeeded'
   | 'failed'
   | 'canceled'
   | 'unknown';
+
+/**
+ * Why a durable run is parked in `waiting`. The backend constrains this to the
+ * runtime message statuses that suspend a turn: a governance approval, a
+ * question for the operator, or an external page action.
+ */
+export type DigitalHumanRunWaitingReason =
+  | 'waiting_approval'
+  | 'waiting_question'
+  | 'waiting_client_action';
 
 export interface DigitalHumanChannelResponsePolicy {
   intermediate_messages_enabled?: boolean;
@@ -339,6 +350,16 @@ export interface DigitalHumanRun {
   execution_trace: Record<string, unknown>;
   query: string;
   status: DigitalHumanRunStatus;
+  /**
+   * Present only while `status` is `waiting`; says what the run is parked on so
+   * the console can label it instead of showing a generic pending state.
+   */
+  waiting_reason?: DigitalHumanRunWaitingReason;
+  /**
+   * Opaque server-side receipt for a `waiting_approval` run. It is the seam a
+   * future confirmation action would submit; the current UI only carries it.
+   */
+  waiting_receipt?: string | null;
   conversation_id?: string | null;
   message_id?: string | null;
   result_summary?: string;
@@ -362,6 +383,14 @@ export interface DigitalHumanRunList {
 export interface DigitalHumanRunRuntimeLog {
   detail?: AgentRuntimeRunDetail | null;
   steps: AgentRuntimeStep[];
+  /**
+   * Server-authored, credential-free Connector confirmation presentation.
+   * Present only while the run is durably `waiting_approval` and the projection
+   * matched the run, message, conversation, and waiting receipt. Deliberately
+   * `unknown`: the console must pass it through the strict DigitalHuman parser
+   * before rendering consent UI.
+   */
+  pending_connector_confirmation?: unknown;
 }
 
 export interface ManualDigitalHumanInvocationRequest {

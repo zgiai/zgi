@@ -1,13 +1,25 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Ban, Loader2 } from 'lucide-react';
 import { AgentRuntimeLogDetailDrawer } from '@/app/console/agents/[agentId]/logs/_components/agent-runtime-log-detail-drawer';
 import { Button } from '@/components/ui/button';
 import {
+  ConnectorRuntimeConfirmationCard,
+  type ConnectorRuntimeDecisionHandler,
+} from '@/components/connectors/runtime/connector-runtime-confirmation-card';
+import { submitConnectorRuntimeDecision } from '@/components/connectors/runtime/connector-runtime-transport';
+import { parseDigitalHumanRunConnectorConfirmation } from '@/components/digital-human/digital-human-run-confirmation-presentation';
+import {
+  digitalHumanRunApprovalReceipt,
+  isActiveDigitalHumanRunStatus,
+} from '@/components/digital-human/digital-human-run-presentation';
+import {
   useDigitalHumanRun,
   useDigitalHumanRunRuntimeLog,
 } from '@/hooks/digital-human/use-digital-humans';
+import { DIGITAL_HUMAN_KEYS } from '@/hooks/query-keys';
 import { useT } from '@/i18n';
 import type { AgentRuntimeRunItem } from '@/services/types/agent-runtime-log';
 import type { DigitalHumanRun } from '@/services/types/digital-human';
@@ -30,9 +42,10 @@ export function DigitalHumanRunDetailDrawer({
   cancelPending,
 }: DigitalHumanRunDetailDrawerProps) {
   const t = useT('digitalHumans');
+  const queryClient = useQueryClient();
   const runQuery = useDigitalHumanRun(digitalHumanId, runId, open);
   const run = runQuery.data?.data ?? null;
-  const active = run ? ['queued', 'running', 'canceling'].includes(run.status) : false;
+  const active = run ? isActiveDigitalHumanRunStatus(run.status) : false;
   const runtimeQuery = useDigitalHumanRunRuntimeLog(digitalHumanId, runId, open, !run || active);
   const runtimeLog = runtimeQuery.data?.data;
   const runtimeSteps = useMemo(
@@ -54,6 +67,39 @@ export function DigitalHumanRunDetailDrawer({
   const error =
     runQuery.isError || runtimeQuery.isError ? t('runs.detailErrorDescription') : undefined;
 
+  // Only a durable `waiting_approval` run with a matching, strictly parsed
+  // projection can offer approval. Everything else keeps the existing run
+  // cancellation path and never renders consent UI.
+  const approvalWait = Boolean(
+    run && run.status === 'waiting' && run.waiting_reason === 'waiting_approval'
+  );
+  const approvalReceipt = run ? digitalHumanRunApprovalReceipt(run) : null;
+  const connectorConfirmation = useMemo(
+    () =>
+      parseDigitalHumanRunConnectorConfirmation(runtimeLog?.pending_connector_confirmation, {
+        digitalHumanId,
+        run,
+      }),
+    [runtimeLog?.pending_connector_confirmation, digitalHumanId, run]
+  );
+  const submitConnectorDecision = useCallback<ConnectorRuntimeDecisionHandler>(
+    async (command, scope) => {
+      const outcome = await submitConnectorRuntimeDecision(command, scope);
+      // A decision resumes or ends the durable run; refresh every surface that
+      // still projects the waiting state so the drawer cannot offer a stale
+      // approval. The transport one-shot guard owns duplicate-submit safety.
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: DIGITAL_HUMAN_KEYS.run(digitalHumanId, runId) }),
+        queryClient.invalidateQueries({
+          queryKey: DIGITAL_HUMAN_KEYS.runRuntimeLog(digitalHumanId, runId),
+        }),
+        queryClient.invalidateQueries({ queryKey: DIGITAL_HUMAN_KEYS.runs(digitalHumanId) }),
+      ]);
+      return outcome;
+    },
+    [digitalHumanId, runId, queryClient]
+  );
+
   return (
     <AgentRuntimeLogDetailDrawer
       open={open}
@@ -66,19 +112,49 @@ export function DigitalHumanRunDetailDrawer({
       sourceLabel={run ? runSourceLabel(run, t) : null}
       footer={
         run && active ? (
-          <div className="flex justify-end">
-            <Button
-              variant="outline"
-              onClick={() => void onCancel(run.id)}
-              disabled={cancelPending || run.status === 'canceling'}
-            >
-              {cancelPending ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <Ban className="size-4" />
-              )}
-              {run.status === 'canceling' ? t('runs.canceling') : t('runs.cancel')}
-            </Button>
+          <div className="flex flex-col gap-3">
+            {connectorConfirmation ? (
+              <div className="max-h-[45vh] overflow-y-auto pr-1">
+                <ConnectorRuntimeConfirmationCard
+                  key={connectorConfirmation.confirmation.route_receipt}
+                  result={connectorConfirmation}
+                  onDecision={submitConnectorDecision}
+                  compact
+                  showPreview
+                  requireCompletePreview
+                  previewLabels={{
+                    accountName: t('runs.connectorConfirmation.accountName'),
+                    accountIdentity: t('runs.connectorConfirmation.accountIdentity'),
+                    unavailable: t('runs.connectorConfirmation.previewUnavailable'),
+                  }}
+                />
+              </div>
+            ) : approvalWait && !runtimeQuery.isLoading ? (
+              <div className="rounded-md border border-warning/25 bg-warning/10 px-3 py-2 text-xs leading-5">
+                <div className="font-medium text-foreground">
+                  {t('runs.connectorConfirmation.unavailableTitle')}
+                </div>
+                <div className="mt-1 text-muted-foreground">
+                  {approvalReceipt
+                    ? t('runs.connectorConfirmation.unavailableDescription')
+                    : t('runs.connectorConfirmation.unavailableNoReceipt')}
+                </div>
+              </div>
+            ) : null}
+            <div className="flex justify-end">
+              <Button
+                variant="outline"
+                onClick={() => void onCancel(run.id)}
+                disabled={cancelPending || run.status === 'canceling'}
+              >
+                {cancelPending ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Ban className="size-4" />
+                )}
+                {run.status === 'canceling' ? t('runs.canceling') : t('runs.cancel')}
+              </Button>
+            </div>
           </div>
         ) : null
       }
