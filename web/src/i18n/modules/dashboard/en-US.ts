@@ -612,6 +612,8 @@ const messages = {
       customAmount: 'Custom Amount',
       customAmountPlaceholder: 'Enter recharge amount',
       customAmountMinHint: 'Minimum recharge amount is ¥{min}',
+      customAmountPrecisionLimit: 'Recharge amount supports at most two decimal places',
+      customAmountMaxHint: 'Recharge amount cannot exceed ¥{max}',
       cancel: 'Cancel',
       confirm: 'Confirm',
     },

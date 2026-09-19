@@ -1283,7 +1283,7 @@ func operationPlanToolStepTitle(skillID, toolName string) string {
 	case isConsoleNavigatorNavigateTool(skillID, toolName):
 		return "Navigate to page"
 	case isKnownArtifactGeneratorToolCall(skillID, toolName):
-		return "Generate temporary file"
+		return "Generate file"
 	case isFileManagerSaveToolCall(skillID, toolName):
 		return "Save generated file to File Management"
 	case isFileManagerDeleteToolCall(skillID, toolName):
@@ -1298,7 +1298,7 @@ func operationPlanToolStepEvidence(skillID, toolName string) []string {
 	case isConsoleNavigatorNavigateTool(skillID, toolName):
 		return []string{"client_action.status=success", "client_action.result.loaded_href matches target page"}
 	case isKnownArtifactGeneratorToolCall(skillID, toolName):
-		return []string{"tool_call.status=success", "generated_files contains temporary artifact", "artifact file_id or tool_file_id"}
+		return []string{"tool_call.status=success", "generated_files contains generated artifact", "artifact file_id or tool_file_id"}
 	case isFileManagerSaveToolCall(skillID, toolName):
 		return []string{"tool_call.status=success", "generated_files contains managed_file artifact", "managed_file_id or upload_file_id", "saved filename"}
 	case isFileManagerDeleteToolCall(skillID, toolName):

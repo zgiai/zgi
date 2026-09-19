@@ -150,7 +150,7 @@ This skill creates new workflow files; it does not edit an existing uploaded fil
 8. For PPTX, plan the slide layout before building the structured presentation object. Use non-overlapping boxes for titles, text, and tables. Split dense content into more slides instead of shrinking text or stacking elements.
 9. For PPTX with Chinese or other dense text, treat "more text" as more slides, not denser text boxes. Keep body paragraphs short; use bullets, columns, or additional slides before exceeding the readable capacity of a box.
 10. Before calling `generate_pptx`, self-check that each slide's readable content fits within the slide bounds, does not overlap, uses explicit `x`, `y`, `w`, and `h` when the layout matters, and avoids long unbroken lines.
-11. Always create a temporary downloadable artifact. This skill does not write generated output into File Management.
+11. Always create a retained downloadable artifact. This skill does not write generated output into File Management.
 12. If the user explicitly asks to save, create, upload, add, or import the generated result into File Management or the current Files page, first generate the artifact here, then use `file-manager/save_file_to_management` with the returned `tool_file_id`/`file_id` and destination filename.
 13. For file-first requests, put the complete body directly in the generation tool call. Do not first emit the same complete body through `submit_intermediate_answer`. Only show the complete body in chat as well when the user explicitly asks to see both the chat text and the file.
 14. After the required format reference is read and the source material is sufficient, call the selected generation tool immediately. On that tool-calling turn, leave ordinary assistant content empty; do not first draft or duplicate the report, analysis, or document body outside the tool arguments.
@@ -204,13 +204,13 @@ Read exactly one reference after choosing a complex target format. References fo
 - `format`: `txt`, `md`, `html`, `json`, `csv`, `svg`, `docx`, `xlsx`, or `pdf`.
 - `filename`: optional display filename. The extension is added automatically.
 - `title`: optional title used by generated HTML, XLSX, and PDF files. For XLSX, this becomes a merged title row above the table.
-- `lifecycle`: optional temporary artifact lifecycle, `persistent` or `temporary`. Defaults to `temporary`.
+- `lifecycle`: optional generated artifact lifecycle, `persistent` or `temporary`. Defaults to `persistent`; `temporary` only applies to explicitly configured workflow outputs.
 
 `generate_docx` accepts:
 
 - `document`: structured object describing the styled DOCX document.
 - `filename`: optional display filename. The `.docx` extension is added automatically.
-- `lifecycle`: optional temporary artifact lifecycle, `persistent` or `temporary`. Defaults to `temporary`.
+- `lifecycle`: optional generated artifact lifecycle, `persistent` or `temporary`. Defaults to `persistent`; `temporary` only applies to explicitly configured workflow outputs.
 
 `generate_pdf` accepts:
 
@@ -218,10 +218,10 @@ Read exactly one reference after choosing a complex target format. References fo
 - `css`: optional inline CSS appended to the document.
 - `filename`: optional display filename. The `.pdf` extension is added automatically.
 - `title`: optional title used when wrapping an HTML fragment. Visible content must be in `html`.
-- `lifecycle`: optional temporary artifact lifecycle, `persistent` or `temporary`. Defaults to `temporary`.
+- `lifecycle`: optional generated artifact lifecycle, `persistent` or `temporary`. Defaults to `persistent`; `temporary` only applies to explicitly configured workflow outputs.
 
 `generate_pptx` accepts:
 
 - `presentation`: structured object describing the editable static PPTX deck.
 - `filename`: optional display filename. The `.pptx` extension is added automatically.
-- `lifecycle`: optional temporary artifact lifecycle, `persistent` or `temporary`. Defaults to `temporary`.
+- `lifecycle`: optional generated artifact lifecycle, `persistent` or `temporary`. Defaults to `persistent`; `temporary` only applies to explicitly configured workflow outputs.

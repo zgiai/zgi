@@ -43,7 +43,7 @@ func (*deleteTestStorage) List(string) ([]storage.FileInfo, error)  { return nil
 
 func TestResolveLifecycleUsesSevenDayTemporaryTTL(t *testing.T) {
 	before := time.Now().Add(DefaultTemporaryToolFileTTL)
-	lifecycle, expiresAt, err := resolveLifecycle(ToolFileLifecycleTemporary, nil)
+	lifecycle, expiresAt, err := resolveLifecycle(ToolFileLifecycleTemporary, nil, true)
 	after := time.Now().Add(DefaultTemporaryToolFileTTL)
 	if err != nil {
 		t.Fatalf("resolveLifecycle() error = %v", err)
@@ -53,6 +53,57 @@ func TestResolveLifecycleUsesSevenDayTemporaryTTL(t *testing.T) {
 	}
 	if expiresAt.Before(before) || expiresAt.After(after) {
 		t.Fatalf("expiresAt = %v, want between %v and %v", expiresAt, before, after)
+	}
+}
+
+func TestResolveLifecycleOnlyHonorsExplicitWorkflowExpiry(t *testing.T) {
+	past := time.Now().Add(-time.Hour)
+	for _, requested := range []ToolFileLifecycle{"", ToolFileLifecyclePersistent, ToolFileLifecycleTemporary} {
+		lifecycle, expiresAt, err := resolveLifecycle(requested, &past, false)
+		if err != nil || lifecycle != ToolFileLifecyclePersistent || expiresAt != nil {
+			t.Fatalf("resolveLifecycle(%q) = %q, %v, %v; want persistent without expiry", requested, lifecycle, expiresAt, err)
+		}
+	}
+	lifecycle, expiresAt, err := resolveLifecycle(ToolFileLifecycleTemporary, &past, true)
+	if err != nil || lifecycle != ToolFileLifecycleTemporary || expiresAt == nil || !expiresAt.Equal(past) {
+		t.Fatalf("explicit workflow expiry = %q, %v, %v", lifecycle, expiresAt, err)
+	}
+}
+
+func TestCleanupExpiredTemporaryFilesOnlyRemovesWorkflowOutput(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:tool-file-workflow-expiry?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&ToolFile{}); err != nil {
+		t.Fatal(err)
+	}
+	local := &localDeleteTestStorage{LocalStorage: storage.NewLocalStorage(t.TempDir())}
+	manager := NewToolFileManager(db, local)
+	past := time.Now().Add(-time.Hour)
+	create := func(explicitWorkflow bool) *ToolFile {
+		t.Helper()
+		file, err := manager.CreateFileByRaw(t.Context(), CreateFileByRawParams{
+			UserID: "account-1", TenantID: "organization-1", FileData: []byte("content"), MimeType: "text/plain",
+			Lifecycle: ToolFileLifecycleTemporary, ExpiresAt: &past, ExplicitWorkflowLifecycle: explicitWorkflow,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return file
+	}
+	agentFile := create(false)
+	workflowFile := create(true)
+	deleted, err := manager.CleanupExpiredTemporaryFiles(t.Context())
+	if err != nil || deleted != 1 {
+		t.Fatalf("CleanupExpiredTemporaryFiles() = %d, %v; want one workflow output", deleted, err)
+	}
+	if _, err := manager.GetToolFileByID(t.Context(), agentFile.ID); err != nil {
+		t.Fatalf("agent file should remain available: %v", err)
+	}
+	var count int64
+	if err := db.Model(&ToolFile{}).Where("id = ?", workflowFile.ID).Count(&count).Error; err != nil || count != 0 {
+		t.Fatalf("workflow file count = %d, %v; want 0", count, err)
 	}
 }
 

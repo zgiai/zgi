@@ -22,6 +22,7 @@ import { cn } from '@/lib/utils';
 import { usePaymentStatusPolling } from '@/hooks/pay/use-payment-status-polling';
 import { toast } from 'sonner';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { payService } from '@/services/pay.service';
 import type { AiCreditProduct, Wallet, OrderStatus, PaymentMethod } from '@/services/types/pay';
 import { formatRecordedCurrencyAmount } from '@/utils/billing-display';
 
@@ -30,6 +31,14 @@ function AlipayIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 1024 1024" fill="currentColor">
       <path d="M1024 629.76c0 0-177.664-73.728-284.16-116.736 34.816-68.608 60.928-146.432 74.752-227.84h-202.752v-67.072h247.808v-46.08h-247.808v-119.808h-108.032c-15.872 0-15.872 15.872-15.872 15.872v103.936h-237.568v46.08h237.568v67.072h-192.512v46.08h373.76c-11.776 56.32-30.208 109.568-53.76 157.696-112.128-39.936-238.592-76.8-362.496-76.8-187.392 0-253.44 100.352-253.44 185.344 0 171.008 197.12 205.312 355.328 183.296 114.176-15.872 225.792-67.072 316.928-140.8 102.912 53.248 298.496 147.456 298.496 147.456l53.76-157.696zM254.464 778.24c-122.88 0-154.112-55.808-154.112-99.84 0-68.096 62.976-106.496 159.232-106.496 96.256 0 195.072 26.624 295.936 68.096-77.312 86.016-183.808 138.24-301.056 138.24z" />
+    </svg>
+  );
+}
+
+function WeChatIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+      <path d="M8.691 2.188C3.891 2.188 0 5.476 0 9.53c0 2.212 1.17 4.203 3.002 5.55a.59.59 0 0 1 .213.665l-.39 1.48c-.019.07-.048.141-.048.213 0 .163.13.295.29.295a.326.326 0 0 0 .167-.054l1.903-1.114a.864.864 0 0 1 .717-.098 10.16 10.16 0 0 0 2.837.403c.276 0 .543-.027.811-.05-.857-2.578.157-4.972 1.932-6.446 1.703-1.415 3.882-1.98 5.853-1.838-.576-3.583-4.196-6.348-8.596-6.348zM5.785 5.991c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 0 1-1.162 1.178A1.17 1.17 0 0 1 4.623 7.17c0-.651.52-1.18 1.162-1.18zm5.813 0c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 0 1-1.162 1.178 1.17 1.17 0 0 1-1.162-1.178c0-.651.52-1.18 1.162-1.18zm5.34 2.867c-1.797-.052-3.746.512-5.28 1.786-1.72 1.428-2.687 3.72-1.78 6.22.942 2.453 3.666 4.229 6.884 4.229.826 0 1.622-.12 2.361-.336a.722.722 0 0 1 .598.082l1.584.926a.272.272 0 0 0 .14.047c.134 0 .24-.111.24-.247 0-.06-.023-.12-.038-.177l-.327-1.233a.582.582 0 0 1-.023-.156.49.49 0 0 1 .201-.398C23.024 18.48 24 16.82 24 14.98c0-3.21-2.931-5.837-6.656-6.088V8.89c-.135-.01-.27-.027-.407-.03zm-2.53 3.274c.535 0 .969.44.969.982a.976.976 0 0 1-.969.983.976.976 0 0 1-.969-.983c0-.542.434-.982.97-.982zm4.844 0c.535 0 .969.44.969.982a.976.976 0 0 1-.969.983.976.976 0 0 1-.969-.983c0-.542.434-.982.969-.982z" />
     </svg>
   );
 }
@@ -67,8 +76,21 @@ export function BuyAiCreditDialog({
   const locale = useLocale();
   const [useBalance, setUseBalance] = useState(false);
   const [balanceAmount, setBalanceAmount] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('alipay');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('wechat');
   const [orderStatus, setOrderStatus] = useState<OrderStatus | null>(null);
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen && orderNo && orderStatus === 'pending') {
+      void payService
+        .cancelOrder(orderNo)
+        .then(() => onOpenChange(false))
+        .catch(() => {
+          // Keep the dialog open until the provider order is safely closed.
+        });
+      return;
+    }
+    onOpenChange(nextOpen);
+  };
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
 
   // Determine if we should show QR code
@@ -105,7 +127,7 @@ export function BuyAiCreditDialog({
     () =>
       orderStatus === 'completed' ||
       orderStatus === 'failed' ||
-      orderStatus === 'cancelled' ||
+      orderStatus === 'canceled' ||
       orderStatus === 'expired',
     [orderStatus]
   );
@@ -132,11 +154,17 @@ export function BuyAiCreditDialog({
         description: t('costCenter.rechargeDialog.payment.failedDesc'),
       });
     },
-    onExpired: () => {
-      setOrderStatus('expired');
-      toast.error(t('costCenter.rechargeDialog.payment.expired'), {
-        description: t('costCenter.rechargeDialog.payment.expiredDesc'),
-      });
+    onExpired: async () => {
+      if (!orderNo) return;
+      try {
+        await payService.cancelOrder(orderNo);
+        setOrderStatus('expired');
+        toast.error(t('costCenter.rechargeDialog.payment.expired'), {
+          description: t('costCenter.rechargeDialog.payment.expiredDesc'),
+        });
+      } catch {
+        // Keep the order pending if payment won the race; polling remains authoritative.
+      }
     },
   });
 
@@ -179,7 +207,7 @@ export function BuyAiCreditDialog({
 
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
+      <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
             <DialogTitle>
@@ -206,7 +234,7 @@ export function BuyAiCreditDialog({
                           viewBox="0 0 180 180"
                         />
                       </div>
-                    ) : orderStatus === 'failed' || orderStatus === 'cancelled' ? (
+                    ) : orderStatus === 'failed' || orderStatus === 'canceled' ? (
                       <div className="text-center text-red-600">
                         <XCircle className="h-8 w-8 mx-auto mb-2" />
                         <span className="text-sm font-medium">
@@ -289,7 +317,9 @@ export function BuyAiCreditDialog({
                       <div className="flex justify-end">
                         <span className="text-sm text-muted-foreground">
                           {t('costCenter.packages.deduction')}:{' '}
-                          {formatRecordedCurrencyAmount(deductionAmount, walletCurrency, { locale })}
+                          {formatRecordedCurrencyAmount(deductionAmount, walletCurrency, {
+                            locale,
+                          })}
                         </span>
                       </div>
                     </div>
@@ -344,6 +374,33 @@ export function BuyAiCreditDialog({
                           </span>
                         </label>
                       </div>
+                      <div className="flex-1">
+                        <label
+                          htmlFor="wechat"
+                          className={cn(
+                            'flex items-center justify-center gap-2 p-4 rounded-lg border-2 cursor-pointer transition-all',
+                            paymentMethod === 'wechat'
+                              ? 'border-green-500 bg-green-50'
+                              : 'border-gray-200 hover:border-green-300 hover:bg-gray-50'
+                          )}
+                        >
+                          <Radio value="wechat" id="wechat" className="sr-only" />
+                          <WeChatIcon
+                            className={cn(
+                              'h-6 w-6',
+                              paymentMethod === 'wechat' ? 'text-green-600' : 'text-gray-400'
+                            )}
+                          />
+                          <span
+                            className={cn(
+                              'font-medium',
+                              paymentMethod === 'wechat' ? 'text-green-600' : 'text-gray-600'
+                            )}
+                          >
+                            {t('costCenter.rechargeDialog.payment.wechat')}
+                          </span>
+                        </label>
+                      </div>
                     </RadioGroup>
                   </div>
                 )}
@@ -361,7 +418,7 @@ export function BuyAiCreditDialog({
 
           {!showQrcode && (
             <DialogFooter>
-              <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isLoading}>
+              <Button variant="outline" onClick={() => handleOpenChange(false)} disabled={isLoading}>
                 {t('costCenter.packages.cancel')}
               </Button>
               <Button onClick={handleConfirm} disabled={isLoading || finalPaymentAmount < 0}>

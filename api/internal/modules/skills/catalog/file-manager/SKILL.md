@@ -79,14 +79,14 @@ supported_callers:
 
 # File Manager Skill
 
-Use this skill for governed File Management asset operations. It is intentionally separate from `file-reader` and `file-generator`: reading and summarizing file contents belongs to `file-reader`, generating temporary downloadable artifacts belongs to `file-generator`, and creating or deleting File Management assets belongs here.
+Use this skill for governed File Management asset operations. It is intentionally separate from `file-reader` and `file-generator`: reading and summarizing file contents belongs to `file-reader`, generating retained downloadable artifacts belongs to `file-generator`, and creating or deleting File Management assets belongs here.
 
 ## Workflow
 
 1. Use this skill only when the user explicitly asks to change File Management, such as deleting a visible file or saving a generated/external file into the current Files page.
 2. Do not invent file IDs. For existing files, use a file ID supplied by resolved page context or governed asset resolution.
 3. For deletion requests with a resolved target, call `delete_file` with exactly that `file_id`.
-4. For create/save/import requests where file content still needs to be produced, first use the appropriate artifact-producing skill to create a temporary artifact, then call `save_file_to_management` with `source_type=tool_file`, the returned `tool_file_id`/`file_id`, and the destination filename.
+4. For create/save/import requests where file content still needs to be produced, first use the appropriate artifact-producing skill to create a generated artifact, then call `save_file_to_management` with `source_type=tool_file`, the returned `tool_file_id`/`file_id`, and the destination filename.
    - Use `file-generator` for regular files and generic SVG/vector files.
    - Use `chart-generator` only for chart, graph, and data visualization artifacts.
 5. For create/save/import requests where the user supplied a public file URL, call `save_file_to_management` with `source_type=url`, the URL, and the destination filename.
@@ -109,7 +109,7 @@ Use this skill for governed File Management asset operations. It is intentionall
 - `url`: required when `source_type=url`; must be an absolute public HTTP or HTTPS URL supplied by the user.
 - `filename`: required destination filename shown in File Management. Include a suitable extension.
 - `workspace_id`: optional target workspace ID. Usually omit it so the current assistant workspace context is used. Do not invent IDs.
-- Success evidence: the tool result must include a managed File Management identity such as `managed_file_id`, `upload_file_id`, or a successful saved-file record plus the saved `filename`. If only a temporary artifact exists, do not say the file was saved into File Management.
+- Success evidence: the tool result must include a managed File Management identity such as `managed_file_id`, `upload_file_id`, or a successful saved-file record plus the saved `filename`. If only a generated artifact exists, do not say the file was saved into File Management.
 
 ## Truthfulness Contract
 

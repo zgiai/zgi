@@ -158,6 +158,8 @@ const messages: DashboardMessages = {
       customAmount: '自定义金额',
       customAmountPlaceholder: '请输入充值金额',
       customAmountMinHint: '最小充值金额为 ¥{min}',
+      customAmountPrecisionLimit: '充值金额最多支持两位小数',
+      customAmountMaxHint: '充值金额不能超过 ¥{max}',
       cancel: '取消',
       confirm: '确认充值',
     },

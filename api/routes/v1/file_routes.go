@@ -12,7 +12,6 @@ import (
 	dataset_repo "github.com/zgiai/zgi/api/internal/modules/dataset/repository"
 	fileProcessHandler "github.com/zgiai/zgi/api/internal/modules/file_process/handler"
 	fileProcessRepo "github.com/zgiai/zgi/api/internal/modules/file_process/repository"
-	fileScheduler "github.com/zgiai/zgi/api/internal/modules/file_process/scheduler"
 	fileProcessService "github.com/zgiai/zgi/api/internal/modules/file_process/service"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
@@ -36,7 +35,6 @@ type FileRouteDeps struct {
 	DataLibraryModule          *datalibrarymodule.Module
 	TaskManager                *queue.TaskManager
 	Scheduler                  *pkgscheduler.Scheduler
-	ScheduledFileService       interfaces.FileService
 }
 
 // registerFileRoutesLegacy keeps original implementation details.
@@ -210,12 +208,6 @@ func RegisterFileRoutes(v1 *gin.RouterGroup, deps FileRouteDeps) {
 	validateFileRouteDeps(deps)
 	registerFileRoutesLegacy(v1, deps)
 
-	if err := fileScheduler.RegisterFileTasks(deps.Scheduler, deps.ScheduledFileService); err != nil {
-		logger.Error("Failed to register file scheduled tasks", err)
-	} else {
-		logger.Info("File scheduled tasks registered", nil)
-	}
-
 	if err := toolfilescheduler.RegisterToolFileTasks(deps.Scheduler, tool_file.GlobalToolFileManager); err != nil {
 		logger.Error("Failed to register tool file scheduled tasks", err)
 	} else {
@@ -256,8 +248,5 @@ func validateFileRouteDeps(deps FileRouteDeps) {
 	}
 	if deps.Scheduler == nil {
 		panic("file routes require scheduler")
-	}
-	if deps.ScheduledFileService == nil {
-		panic("file routes require scheduled file service")
 	}
 }

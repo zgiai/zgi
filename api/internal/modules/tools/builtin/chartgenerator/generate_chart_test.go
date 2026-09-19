@@ -293,8 +293,8 @@ func TestBuildChartFilenameAddsSVGExtension(t *testing.T) {
 	require.Equal(t, "chart.svg", buildChartFilename("../", ".svg"))
 }
 
-func TestResolveChartFileLifecycleDefaultsToTemporary(t *testing.T) {
+func TestResolveChartFileLifecycleDefaultsToPersistent(t *testing.T) {
 	lifecycle, err := resolveChartFileLifecycle("")
 	require.NoError(t, err)
-	require.Equal(t, tool_file.ToolFileLifecycleTemporary, lifecycle)
+	require.Equal(t, tool_file.ToolFileLifecyclePersistent, lifecycle)
 }

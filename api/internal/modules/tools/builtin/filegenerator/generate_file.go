@@ -40,6 +40,7 @@ var filenameUnsafePattern = regexp.MustCompile(`[^a-zA-Z0-9._\-\p{Han}]`)
 type generatedFileTarget string
 
 const (
+	// Legacy target identifies an artifact outside File Management; it does not set retention.
 	generatedFileTargetTemporaryArtifact generatedFileTarget = "temporary_artifact"
 )
 
@@ -67,7 +68,7 @@ func NewGenerateFileTool(tenantID string) *GenerateFileTool {
 				"en_US":   "Generate a downloadable file from provided content.",
 				"zh_Hans": "根据提供的内容生成可下载文件。",
 			},
-			LLM: "Generate a temporary downloadable file artifact from provided content. Supported formats: txt, md, html, json, csv, svg, docx, xlsx, and pdf. This tool does not write to File Management. When the user asks to save the result into File Management, generate the artifact first and then use file-manager/save_file_to_management. When the user asks to export or save existing conversation content, pass that existing content here directly; do not first repeat it with submit_intermediate_answer.",
+			LLM: "Generate a retained downloadable file artifact from provided content. Supported formats: txt, md, html, json, csv, svg, docx, xlsx, and pdf. This tool does not write to File Management. When the user asks to save the result into File Management, generate the artifact first and then use file-manager/save_file_to_management. When the user asks to export or save existing conversation content, pass that existing content here directly; do not first repeat it with submit_intermediate_answer.",
 		},
 		Parameters: []tools.ToolParameter{
 			{
@@ -129,11 +130,11 @@ func NewGenerateFileTool(tenantID string) *GenerateFileTool {
 				Name:             "lifecycle",
 				Label:            tools.I18nText{"en_US": "Lifecycle", "zh_Hans": "生命周期"},
 				HumanDescription: tools.I18nText{"en_US": "Whether the generated file is persistent or temporary.", "zh_Hans": "生成文件是持久保存还是临时保存。"},
-				LLMDescription:   "Temporary artifact lifecycle: persistent or temporary. Defaults to temporary.",
+				LLMDescription:   "Generated artifacts are retained without expiry. Defaults to persistent; temporary is only honored for explicitly configured workflow outputs.",
 				Type:             tools.ToolParameterTypeSelect,
 				Form:             tools.ToolParameterFormLLM,
 				Required:         false,
-				Default:          "temporary",
+				Default:          "persistent",
 				SupportVariable:  true,
 				Options: []tools.ToolParameterOption{
 					{Value: "persistent", Label: tools.I18nText{"en_US": "Persistent", "zh_Hans": "持久保存"}},
@@ -230,7 +231,7 @@ func createGeneratedFileForRuntime(ctx context.Context, tenantID string, runtime
 	}
 	lifecycle := params.lifecycle
 	if lifecycle == "" {
-		lifecycle = tool_file.ToolFileLifecycleTemporary
+		lifecycle = tool_file.ToolFileLifecyclePersistent
 	}
 
 	toolFile, err := tool_file.CreateFileByRawGlobal(ctx, tool_file.CreateFileByRawParams{
@@ -273,6 +274,21 @@ func createGeneratedFileForRuntime(ctx context.Context, tenantID string, runtime
 		fileMeta["expires_at"] = toolFile.ExpiresAt.Unix()
 	}
 
+	fileData := map[string]interface{}{
+		"file_id":      toolFile.ID,
+		"tool_file_id": toolFile.ID,
+		"filename":     toolFile.Name,
+		"format":       params.format,
+		"mime_type":    params.mimeType,
+		"size":         toolFile.Size,
+		"url":          url,
+		"download_url": downloadURL,
+		"target":       string(generatedFileTargetTemporaryArtifact),
+		"lifecycle":    toolFile.Lifecycle,
+	}
+	if toolFile.ExpiresAt != nil {
+		fileData["expires_at"] = toolFile.ExpiresAt.Unix()
+	}
 	return []tools.ToolInvokeMessage{
 		{
 			Type: tools.ToolInvokeMessageTypeFile,
@@ -281,27 +297,8 @@ func createGeneratedFileForRuntime(ctx context.Context, tenantID string, runtime
 				"file": fileMeta,
 			},
 		},
-		builtin.CreateJSONMessage(map[string]interface{}{
-			"file_id":      toolFile.ID,
-			"tool_file_id": toolFile.ID,
-			"filename":     toolFile.Name,
-			"format":       params.format,
-			"mime_type":    params.mimeType,
-			"size":         toolFile.Size,
-			"url":          url,
-			"download_url": downloadURL,
-			"target":       string(generatedFileTargetTemporaryArtifact),
-			"lifecycle":    toolFile.Lifecycle,
-			"expires_at":   generatedToolFileExpiresAt(toolFile),
-		}),
+		builtin.CreateJSONMessage(fileData),
 	}, nil
-}
-
-func generatedToolFileExpiresAt(toolFile *tool_file.ToolFile) interface{} {
-	if toolFile == nil || toolFile.ExpiresAt == nil {
-		return nil
-	}
-	return toolFile.ExpiresAt.Unix()
 }
 
 func (t *GenerateFileTool) enforceRuntimeFilePolicy(format string) error {
@@ -905,10 +902,10 @@ func isFullHTMLDocument(content string) bool {
 
 func resolveToolFileLifecycle(raw string) (tool_file.ToolFileLifecycle, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "", "temporary":
-		return tool_file.ToolFileLifecycleTemporary, nil
-	case "persistent":
+	case "", "persistent":
 		return tool_file.ToolFileLifecyclePersistent, nil
+	case "temporary":
+		return tool_file.ToolFileLifecycleTemporary, nil
 	default:
 		return "", fmt.Errorf("unsupported lifecycle: %s", raw)
 	}
