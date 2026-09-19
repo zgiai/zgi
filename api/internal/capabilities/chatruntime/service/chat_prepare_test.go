@@ -210,3 +210,7 @@ func (f fakeWaitingMessageRepo) ListStaleActiveIDs(context.Context, time.Time) (
 func (f fakeWaitingMessageRepo) MarkStaleActiveAsError(context.Context, time.Time, string) (int64, error) {
 	panic("not implemented")
 }
+
+func (f fakeWaitingMessageRepo) CountChildren(context.Context, uuid.UUID) (int64, error) {
+	return 0, nil
+}

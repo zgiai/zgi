@@ -6,13 +6,13 @@ import (
 )
 
 const (
-	defaultAgentWindowK      = 256
-	defaultSummaryOutput     = 20_000
-	defaultEmergencyBuffer   = 13_000
-	defaultHysteresis        = 8_000
-	defaultMaxToolResult     = 32_000
-	defaultToolPreviewRunes  = 12_000
-	defaultTailMinTextRounds = 3
+	defaultAgentWindowK     = 512
+	defaultSummaryOutput    = 20_000
+	defaultEmergencyBuffer  = 13_000
+	defaultHysteresis       = 8_000
+	defaultMaxToolResult    = 32_000
+	defaultToolPreviewRunes = 12_000
+	defaultTailMinMessages  = 8
 )
 
 func normalizeConfig(config Config) (Config, error) {
@@ -46,8 +46,8 @@ func normalizeConfig(config Config) (Config, error) {
 	if config.ToolResultPreviewRunes <= 0 {
 		config.ToolResultPreviewRunes = defaultToolPreviewRunes
 	}
-	if config.TailMinTextRounds <= 0 {
-		config.TailMinTextRounds = defaultTailMinTextRounds
+	if config.TailMinMessages <= 0 {
+		config.TailMinMessages = defaultTailMinMessages
 	}
 	return config, nil
 }

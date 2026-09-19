@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
@@ -56,7 +57,7 @@ func TestPrepareBeforeModelCallDoesNotRequireRuntimeStorage(t *testing.T) {
 		ConfiguredAgentWindowK: 64,
 		ModelContextWindow:     128_000,
 		MaxOutputTokens:        8_000,
-	}, nil, NewFileStore(storageRoot), nil)
+	}, nil, NewFileStore(storageRoot), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +108,7 @@ func TestOversizedToolResultProjectionIsStableInMemory(t *testing.T) {
 		MaxOutputTokens:        8_000,
 		MaxToolResultTokens:    100,
 		ToolResultPreviewRunes: 200,
-	}, nil, store, nil)
+	}, nil, store, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +151,7 @@ func TestTurnTranscriptCapturesToolPairsAndTracksProjectedContent(t *testing.T) 
 		MaxOutputTokens:        8_000,
 		MaxToolResultTokens:    40,
 		ToolResultPreviewRunes: 120,
-	}, nil, store, nil)
+	}, nil, store, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +209,7 @@ func TestProjectedToolResultMicrocompactPreservesOriginalArtifact(t *testing.T) 
 		MaxOutputTokens:        8_000,
 		MaxToolResultTokens:    10,
 		ToolResultPreviewRunes: 100,
-	}, nil, store, nil)
+	}, nil, store, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +240,7 @@ func TestExpandedContextArtifactSkipsProjectionAndReusesOriginalArtifactDuringMi
 		ConfiguredAgentWindowK: 64,
 		ModelContextWindow:     128_000,
 		MaxToolResultTokens:    1,
-	}, nil, store, nil)
+	}, nil, store, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,7 +308,7 @@ func TestMicrocompactProtectsEntireLatestParallelToolBatch(t *testing.T) {
 		ConfiguredAgentWindowK: 64,
 		ModelContextWindow:     128_000,
 		MaxOutputTokens:        8_000,
-	}, nil, store, nil)
+	}, nil, store, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -345,7 +346,7 @@ func TestMicrocompactProtectsEntireLatestParallelToolBatch(t *testing.T) {
 
 func TestMicrocompactProtectsAtLeastFourResultsWhenLatestBatchIsSmaller(t *testing.T) {
 	store := NewMemoryStore()
-	manager, err := New(Config{AgentRunID: "run-minimum-protection", ConfiguredAgentWindowK: 64, ModelContextWindow: 128_000}, nil, store, nil)
+	manager, err := New(Config{AgentRunID: "run-minimum-protection", ConfiguredAgentWindowK: 64, ModelContextWindow: 128_000}, nil, store, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -382,7 +383,7 @@ func TestMicrocompactProtectsAtLeastFourResultsWhenLatestBatchIsSmaller(t *testi
 
 func TestMicrocompactDoesNotProtectAnAlreadyConsumedParallelBatch(t *testing.T) {
 	store := NewMemoryStore()
-	manager, err := New(Config{AgentRunID: "run-consumed-batch", ConfiguredAgentWindowK: 64, ModelContextWindow: 128_000}, nil, store, nil)
+	manager, err := New(Config{AgentRunID: "run-consumed-batch", ConfiguredAgentWindowK: 64, ModelContextWindow: 128_000}, nil, store, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -423,7 +424,7 @@ func TestHardLimitFairlyShrinksEveryPendingParallelToolPreview(t *testing.T) {
 		EmergencyBufferTokens:  3_000,
 		HysteresisTokens:       1_000,
 		MaxToolResultTokens:    100_000,
-	}, nil, store, nil)
+	}, nil, store, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -546,6 +547,84 @@ func TestAPIRoundGroupingKeepsAbsoluteRunSequences(t *testing.T) {
 	}
 }
 
+func TestSelectPreservedTailMessagesKeepsLatestEightProtocolMessages(t *testing.T) {
+	messages := make([]adapter.Message, 0, 10)
+	for index := 0; index < 10; index++ {
+		messages = append(messages, adapter.Message{Role: "user", Content: fmt.Sprintf("message-%d", index)})
+	}
+	if got := selectPreservedTailMessages(messages, 8); got != 2 {
+		t.Fatalf("tail start = %d, want 2", got)
+	}
+	if got := selectPreservedTailMessages(messages[:8], 8); got != 0 {
+		t.Fatalf("short dialogue tail start = %d, want 0", got)
+	}
+}
+
+func TestSelectPreservedTailMessagesExpandsForCompleteToolBatch(t *testing.T) {
+	messages := []adapter.Message{
+		{Role: "user", Content: "old context"},
+		{Role: "assistant", ToolCalls: []adapter.ToolCall{{ID: "a"}, {ID: "b"}, {ID: "c"}}},
+		{Role: "tool", ToolCallID: "a", Content: "a result"},
+		{Role: "tool", ToolCallID: "b", Content: "b result"},
+		{Role: "tool", ToolCallID: "c", Content: "c result"},
+		{Role: "user", Content: "follow-up"},
+		{Role: "assistant", Content: "answer"},
+		{Role: "user", Content: "next"},
+		{Role: "assistant", Content: "next answer"},
+		{Role: "user", Content: "latest"},
+		{Role: "assistant", Content: "latest answer"},
+	}
+	if got := selectPreservedTailMessages(messages, 8); got != 1 {
+		t.Fatalf("tail start = %d, want 1 to keep the complete tool batch", got)
+	}
+	tail := messages[1:]
+	if err := validateToolPairing(tail); err != nil {
+		t.Fatalf("expanded tail split tool batch: %v", err)
+	}
+}
+
+func TestSemanticCompactionDefaultPreservesEightMessages(t *testing.T) {
+	compactor := &recordingCompactor{summary: `<summary>the oldest message is summarized</summary>`}
+	manager := newTestManager(t, Config{
+		AgentRunID:             "run-eight-message-tail",
+		ConfiguredAgentWindowK: 32,
+		ModelContextWindow:     128_000,
+		MaxOutputTokens:        4_000,
+		SummaryOutputTokens:    4_000,
+		EmergencyBufferTokens:  3_000,
+		HysteresisTokens:       1_000,
+	}, compactor)
+	request := &adapter.ChatRequest{Model: "gpt-5", MaxTokens: intPointerForTest(2_000)}
+	for index := 0; index < 9; index++ {
+		request.Messages = append(request.Messages, adapter.Message{Role: "user", Content: fmt.Sprintf("message-%d", index)})
+	}
+	request.Messages[0].Content = strings.Repeat("old context ", 13_000)
+	budget, err := budgetForRequest(manager.config, 2_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if estimate := manager.estimator.EstimateChatRequest(request).Tokens; estimate < budget.SoftLimit || estimate >= budget.HardLimit {
+		t.Fatalf("test request estimate = %d, want [%d,%d)", estimate, budget.SoftLimit, budget.HardLimit)
+	}
+	prepared, decision, err := manager.PrepareBeforeModelCall(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Action != DecisionSemanticCompact || len(compactor.requests) != 1 {
+		t.Fatalf("decision=%#v compact requests=%d", decision, len(compactor.requests))
+	}
+	// One summary plus the latest eight protocol messages remain in the active
+	// request. The summary prompt itself is not counted as a protocol message.
+	if len(prepared.Messages) != 9 {
+		t.Fatalf("prepared messages = %d, want summary + 8 tail messages", len(prepared.Messages))
+	}
+	for index := 1; index < len(prepared.Messages); index++ {
+		if got, want := contentString(prepared.Messages[index].Content), fmt.Sprintf("message-%d", index); got != want {
+			t.Fatalf("tail message %d changed: got %q want %q", index, got, want)
+		}
+	}
+}
+
 func TestHardLimitReturnsContextExhaustedAndKeepsInMemoryState(t *testing.T) {
 	manager, err := New(Config{
 		AgentRunID:             "run-hard-limit",
@@ -555,7 +634,7 @@ func TestHardLimitReturnsContextExhaustedAndKeepsInMemoryState(t *testing.T) {
 		SummaryOutputTokens:    4_000,
 		EmergencyBufferTokens:  3_000,
 		HysteresisTokens:       1_000,
-	}, nil, nil, nil)
+	}, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -582,7 +661,7 @@ func TestHardLimitForcesFinalRecoveryAfterProactiveCompactionCircuitBreaker(t *t
 		SummaryOutputTokens:    4_000,
 		EmergencyBufferTokens:  3_000,
 		HysteresisTokens:       1_000,
-		TailMinTextRounds:      2,
+		TailMinMessages:        2,
 	}, compactor)
 	manager.state.Compaction.ConsecutiveFailures = maxConsecutiveCompactionFailures
 	request := &adapter.ChatRequest{
@@ -630,7 +709,7 @@ func TestHardLimitStopsAfterFinalRecoveryFails(t *testing.T) {
 		SummaryOutputTokens:    4_000,
 		EmergencyBufferTokens:  3_000,
 		HysteresisTokens:       1_000,
-		TailMinTextRounds:      2,
+		TailMinMessages:        2,
 	}, compactor)
 	manager.state.Compaction.ConsecutiveFailures = maxConsecutiveCompactionFailures
 	request := &adapter.ChatRequest{
@@ -666,7 +745,7 @@ func TestLongAgentRunSurvivesOneHundredToolRoundsAndRepeatedCompaction(t *testin
 		SummaryOutputTokens:    4_000,
 		EmergencyBufferTokens:  3_000,
 		HysteresisTokens:       1_000,
-		TailMinTextRounds:      2,
+		TailMinMessages:        2,
 	}, compactor)
 	messages := []adapter.Message{{Role: "user", Content: "complete a long Agent task"}}
 	for round := 1; round <= 100; round++ {
@@ -726,7 +805,7 @@ the recent tool rounds remain authoritative</summary>`}
 		EmergencyBufferTokens:  3_000,
 		HysteresisTokens:       1_000,
 		TargetRatio:            0.60,
-		TailMinTextRounds:      2,
+		TailMinMessages:        4,
 	}, compactor)
 	longHistory := strings.Repeat("historical requirement number 12345 with implementation detail. ", 2600)
 	request := &adapter.ChatRequest{Model: "gpt-5", MaxTokens: intPointerForTest(2_000), Messages: []adapter.Message{
@@ -769,7 +848,7 @@ the recent tool rounds remain authoritative</summary>`}
 	}
 }
 
-func TestSemanticCompactionRetriesPromptTooLongByDroppingOldestAPIRound(t *testing.T) {
+func TestSemanticCompactionRetriesPromptTooLongByDroppingOldestMessageBatch(t *testing.T) {
 	compactor := &recordingCompactor{
 		summary:  `<summary>older work is summarized and the recent rounds remain authoritative</summary>`,
 		failures: []error{errors.New("context_length_exceeded")},
@@ -784,7 +863,7 @@ func TestSemanticCompactionRetriesPromptTooLongByDroppingOldestAPIRound(t *testi
 		EmergencyBufferTokens:  3_000,
 		HysteresisTokens:       1_000,
 		TargetRatio:            0.60,
-		TailMinTextRounds:      1,
+		TailMinMessages:        1,
 	}, compactor)
 	request := &adapter.ChatRequest{Model: "gpt-5", MaxTokens: intPointerForTest(2_000), Messages: []adapter.Message{
 		{Role: "user", Content: strings.Repeat("old bootstrap requirement ", 6500)},
@@ -801,7 +880,10 @@ func TestSemanticCompactionRetriesPromptTooLongByDroppingOldestAPIRound(t *testi
 		t.Fatalf("decision=%#v compact requests=%d", decision, len(compactor.requests))
 	}
 	if len(compactor.requests[1].Messages) >= len(compactor.requests[0].Messages) {
-		t.Fatalf("retry did not drop the oldest API round: first=%d second=%d", len(compactor.requests[0].Messages), len(compactor.requests[1].Messages))
+		t.Fatalf("retry did not drop the oldest message batch: first=%d second=%d", len(compactor.requests[0].Messages), len(compactor.requests[1].Messages))
+	}
+	if err := validateToolPairing(compactor.requests[1].Messages); err != nil {
+		t.Fatalf("retry split a tool batch: %v", err)
 	}
 }
 
@@ -823,13 +905,157 @@ func (c *recordingCompactor) Compact(_ context.Context, request *adapter.ChatReq
 	return c.summary, &adapter.Usage{PromptTokens: 100, CompletionTokens: 20, TotalTokens: 120}, nil
 }
 
+func TestSemanticCompactReportsTheEntryBoundaryItSummarized(t *testing.T) {
+	compactor := &recordingCompactor{summary: `<summary>The earlier rounds are summarized.</summary>`}
+	manager := newTestManager(t, Config{
+		AgentRunID:             "run-entry-boundary",
+		ConfiguredAgentWindowK: 64,
+		ModelContextWindow:     128_000,
+		MaxOutputTokens:        8_000,
+		SummaryOutputTokens:    4_000,
+		EmergencyBufferTokens:  25_000,
+		HysteresisTokens:       1_000,
+		TailMinMessages:        3,
+	}, compactor)
+	// Replayed history carries its conversation position; the current question is
+	// not an entry yet.
+	firstID, secondID, thirdID, fourthID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
+	request := &adapter.ChatRequest{Model: "test-model", MaxTokens: intPointerForTest(4_000), Messages: []adapter.Message{
+		{Role: "user", Content: "第一轮提问", EntryID: firstID},
+		{Role: "assistant", Content: "第一轮回答", EntryID: secondID},
+		{Role: "user", Content: "第二轮提问", EntryID: thirdID},
+		{Role: "assistant", Content: "第二轮回答", EntryID: fourthID},
+		{Role: "user", Content: "第三轮提问"},
+	}}
+	budget, err := budgetForRequest(manager.config, 4_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	growRequestToSoftLimit(t, manager, request, budget, 0)
+
+	prepared, decision, err := manager.PrepareBeforeModelCall(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(compactor.calls) != 1 || decision.Action != DecisionSemanticCompact {
+		t.Fatalf("compaction did not run: calls=%d decision=%#v", len(compactor.calls), decision)
+	}
+	// The first round is summarized and the rest is kept verbatim, so the boundary
+	// is the position of its last entry: never zero, never a kept entry.
+	call := compactor.calls[0]
+	if call.SummarizedEntryID == "" {
+		t.Fatal("compaction did not report an entry boundary")
+	}
+	for _, want := range []string{thirdID, fourthID} {
+		found := false
+		for _, message := range prepared.Messages {
+			if message.EntryID == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("entry %s disappeared from the compacted request: %+v", want, prepared.Messages)
+		}
+	}
+}
+
+// growRequestToSoftLimit pads one message until the request estimate reaches the
+// soft limit, so a test does not depend on the estimator's exact ratio.
+func growRequestToSoftLimit(t *testing.T, manager *Manager, request *adapter.ChatRequest, budget Budget, messageIndex int) {
+	t.Helper()
+	for step := 0; step < 400; step++ {
+		estimate := manager.estimator.EstimateChatRequest(request).Tokens
+		if estimate >= budget.SoftLimit {
+			if estimate >= budget.HardLimit {
+				t.Fatalf("request estimate %d reached the hard limit %d", estimate, budget.HardLimit)
+			}
+			return
+		}
+		message := &request.Messages[messageIndex]
+		message.Content = contentString(message.Content) + strings.Repeat("长", 500)
+	}
+	t.Fatal("the request never reached the soft limit")
+}
+
 func newTestManager(t *testing.T, config Config, compactor Compactor) *Manager {
 	t.Helper()
-	manager, err := New(config, compactor, nil, nil)
+	manager, err := New(config, compactor, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return manager
+}
+
+func TestCheckpointPersistsBeforeEveryModelCallAndAfterEveryResponse(t *testing.T) {
+	ctx := context.Background()
+	var snapshots [][]adapter.Message
+	var manager *Manager
+	manager, err := New(Config{AgentRunID: "checkpoint-run", ConfiguredAgentWindowK: 64, ModelContextWindow: 128_000}, nil, nil, nil,
+		func(ctx context.Context, transcript []adapter.Message) {
+			// Reading the manager from inside a checkpoint must not deadlock: the
+			// transcript is handed over instead of being re-read under the lock.
+			_ = manager.TurnTranscript()
+			snapshots = append(snapshots, transcript)
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := &adapter.ChatRequest{Model: "gpt-5", Messages: []adapter.Message{{Role: "user", Content: "退款"}}}
+	if _, _, err := manager.PrepareBeforeModelCall(ctx, request); err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshots) != 0 {
+		t.Fatalf("a turn without output must not checkpoint: %d", len(snapshots))
+	}
+
+	assistant := adapter.Message{Role: "assistant", Content: "我来处理", ReasoningContent: "hidden"}
+	if err := manager.ObserveModelResponse(ctx, assistant, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshots) != 1 {
+		t.Fatalf("checkpoints after the response = %d, want 1", len(snapshots))
+	}
+	if got := contentString(snapshots[0][0].Content); got != "我来处理" {
+		t.Fatalf("checkpointed content = %q", got)
+	}
+	if snapshots[0][0].ReasoningContent != "" {
+		t.Fatal("checkpoint must not carry reasoning content")
+	}
+
+	// The next API round checkpoints the same transcript before calling the model.
+	if _, _, err := manager.PrepareBeforeModelCall(ctx, &adapter.ChatRequest{Model: "gpt-5", Messages: manager.State().Messages}); err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshots) != 2 {
+		t.Fatalf("checkpoints before the next model call = %d, want 2", len(snapshots))
+	}
+	if len(snapshots[1]) != 1 {
+		t.Fatalf("second snapshot = %d messages, want 1", len(snapshots[1]))
+	}
+
+	// A tool call is durable as soon as it is observed, and each result as soon
+	// as it arrives, so a crash mid-batch loses at most the call in flight.
+	toolCall := adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{{ID: "call-1", Function: adapter.FunctionCall{Name: "refund_query"}}}}
+	if err := manager.ObserveModelResponse(ctx, toolCall, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshots) != 3 || len(snapshots[2]) != 2 {
+		t.Fatalf("checkpoint after the tool call = %d snapshots, last %d messages", len(snapshots), len(snapshots[len(snapshots)-1]))
+	}
+	withResult := append(manager.State().Messages, adapter.Message{Role: "tool", ToolCallID: "call-1", Content: "订单 12345"})
+	if err := manager.ReplaceMessages(ctx, withResult); err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshots) != 4 {
+		t.Fatalf("checkpoints after a tool result = %d, want 4", len(snapshots))
+	}
+	last := snapshots[3]
+	if len(last) != 3 {
+		t.Fatalf("snapshot after the tool result = %d messages, want 3", len(last))
+	}
+	if last[2].Role != "tool" || contentString(last[2].Content) != "订单 12345" {
+		t.Fatalf("tool result was not checkpointed: %+v", last[2])
+	}
 }
 
 func intPointerForTest(value int) *int { return &value }

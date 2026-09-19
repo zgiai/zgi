@@ -19,8 +19,8 @@ func TestRunModelToolRoundReactivelyCompactsAndRetriesPromptTooLongOnce(t *testi
 		ModelContextWindow:     128_000,
 		MaxInputTokens:         128_000,
 		MaxOutputTokens:        8_000,
-		TailMinTextRounds:      1,
-	}, compactor, nil, nil)
+		TailMinMessages:        1,
+	}, compactor, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestTerminalToolBatchCompletesEveryToolCall(t *testing.T) {
 		ConfiguredAgentWindowK: 64,
 		ModelContextWindow:     128_000,
 		MaxOutputTokens:        8_000,
-	}, nil, nil, nil)
+	}, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,8 +112,8 @@ func TestRunModelToolRoundReturnsContextExhaustedAfterReactiveRetryFails(t *test
 		ModelContextWindow:     128_000,
 		MaxInputTokens:         128_000,
 		MaxOutputTokens:        8_000,
-		TailMinTextRounds:      1,
-	}, &reactiveTestCompactor{}, nil, nil)
+		TailMinMessages:        1,
+	}, &reactiveTestCompactor{}, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
