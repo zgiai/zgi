@@ -8,7 +8,12 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import type { ChatBranchNavigation } from '@/components/chat/utils/message-tree';
-import type { AIChatConversation, AIChatMessage, AIChatMessageFile } from '@/services/types/aichat';
+import type {
+  AIChatConversation,
+  AIChatMessage,
+  AIChatMessageFile,
+  AIChatTokenUsageUpdatedEventData,
+} from '@/services/types/aichat';
 import type { AIChatStreamingMessageState } from '@/components/chat/controllers/aichat';
 import { AIChatMessageBubble } from '@/components/chat/variants/aichat/message-bubble';
 import type { AIChatSkillDisplayMap } from '@/components/chat/variants/aichat/skill-display';
@@ -113,6 +118,21 @@ function canReplaceRootMessage(
   );
 }
 
+function tokenUsageFromMessage(
+  message: AIChatMessage
+): AIChatTokenUsageUpdatedEventData | undefined {
+  const budget = message.metadata?.task_token_budget;
+  const usage = message.metadata?.usage;
+  if (!budget && !usage?.total_tokens) return undefined;
+  const total = Math.max(0, usage?.total_tokens ?? 0);
+  return {
+    conversation_id: message.conversation_id,
+    message_id: message.id,
+    usage: usage ?? { total_tokens: total },
+    ...(budget ? { task_token_budget: budget } : {}),
+  };
+}
+
 /**
  * @component AIChatMessageList
  * @category Feature
@@ -205,6 +225,9 @@ export function AIChatMessageList({
                 isSending={isSending}
                 timeline={streamingByMessageId[message.id]?.timeline ?? []}
                 modelProcessing={streamingByMessageId[message.id]?.modelProcessing}
+                tokenUsage={
+                  streamingByMessageId[message.id]?.tokenUsage ?? tokenUsageFromMessage(message)
+                }
                 presentationItems={
                   streamingByMessageId[message.id]?.presentationItems ??
                   presentationProjectionFromMetadata(message.metadata)?.items

@@ -46,6 +46,22 @@ export interface AIChatUsage {
   total_tokens?: number;
 }
 
+/** Cumulative token budget reported while an API task is running. */
+export interface AIChatTaskTokenBudget {
+  used_tokens: number;
+  max_tokens: number;
+  remaining_tokens: number;
+  status?: string;
+}
+
+/** Token accounting update emitted after each model invocation. */
+export interface AIChatTokenUsageUpdatedEventData {
+  conversation_id: string;
+  message_id: string;
+  usage: AIChatUsage;
+  task_token_budget?: AIChatTaskTokenBudget;
+}
+
 export type AIChatSkillMode = 'disabled' | 'auto' | 'required';
 export type AIChatSkillSource = 'system' | 'custom';
 export type AIChatSkillRuntimeType = 'tool' | 'prompt' | 'hybrid';
@@ -404,6 +420,7 @@ export interface AIChatGeneratedFile {
 
 export interface AIChatMessageMetadata {
   usage?: AIChatUsage;
+  task_token_budget?: AIChatTaskTokenBudget;
   answer_before_timeline_length?: number;
   presentation_version?: number;
   presentation?: AIChatPresentationProjection;
@@ -1330,6 +1347,7 @@ export type AIChatSseEventName =
   | 'message'
   | 'message_retract'
   | 'message_end'
+  | 'token_usage_updated'
   | 'error';
 
 export interface AIChatSseEnvelope<TData = unknown> {

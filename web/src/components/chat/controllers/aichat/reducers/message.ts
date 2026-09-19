@@ -8,6 +8,8 @@ import type {
   AIChatMessageEndEventData,
   AIChatMessageRetractEventData,
   AIChatMessageStartEventData,
+  AIChatUsage,
+  AIChatTokenUsageUpdatedEventData,
   AIChatSkillInvocation,
   AIChatUserInputRequestedEventData,
 } from '@/services/types/aichat';
@@ -639,6 +641,7 @@ export function applyMessageChunkState(
         replay_offset: replayOffset,
         replace: previousStreaming?.replace,
         sensitiveOutputBlocked: isSensitiveBlocked || previousStreaming?.sensitiveOutputBlocked,
+        tokenUsage: previousStreaming?.tokenUsage,
       },
     },
   };
@@ -961,6 +964,81 @@ export function applyMessageEndState(
       [payload.conversation_id]: false,
     },
     isSending: getNextActiveSendingState(current, payload.conversation_id, false),
+  };
+}
+
+export function applyTokenUsageUpdatedState(
+  current: AIChatControllerState,
+  payload: AIChatTokenUsageUpdatedEventData,
+  eventId?: string | null
+): AIChatControllerState {
+  if (!payload.conversation_id || !payload.message_id) {
+    return current;
+  }
+  const previousStreaming = current.streamingByMessageId[payload.message_id];
+  if (isStaleAIChatStreamEvent(eventId, previousStreaming?.last_event_id)) {
+    return current;
+  }
+
+  // API events carry a cumulative budget counter. Console/debug runs do not
+  // have a budget, so accumulate their per-invocation deltas in the client to
+  // keep the message footer showing the task total in real time.
+  const previousUsage = previousStreaming?.tokenUsage?.usage;
+  const usage = payload.task_token_budget
+    ? payload.usage
+    : addAIChatUsage(previousUsage, payload.usage);
+  const nextPayload: AIChatTokenUsageUpdatedEventData = {
+    ...payload,
+    usage,
+  };
+
+  const messages = current.messagesByConversation[payload.conversation_id] ?? [];
+  const nextMessages = messages.map(message =>
+    message.id === payload.message_id
+      ? {
+          ...message,
+          metadata: {
+            ...(message.metadata ?? {}),
+            usage,
+            ...(payload.task_token_budget ? { task_token_budget: payload.task_token_budget } : {}),
+          },
+          updated_at: Math.floor(Date.now() / 1000),
+        }
+      : message
+  );
+  const fallbackStreaming: AIChatStreamingMessageState = {
+    conversation_id: payload.conversation_id,
+    message_id: payload.message_id,
+    answer: messages.find(message => message.id === payload.message_id)?.answer ?? '',
+    status: 'streaming',
+  };
+
+  return {
+    ...current,
+    messagesByConversation: {
+      ...current.messagesByConversation,
+      [payload.conversation_id]: nextMessages,
+    },
+    streamingByMessageId: {
+      ...current.streamingByMessageId,
+      [payload.message_id]: {
+        ...(previousStreaming ?? fallbackStreaming),
+        tokenUsage: nextPayload,
+        last_event_id: eventId ?? previousStreaming?.last_event_id,
+      },
+    },
+  };
+}
+
+function addAIChatUsage(previous: AIChatUsage | undefined, next: AIChatUsage): AIChatUsage {
+  const prompt = Math.max(0, previous?.prompt_tokens ?? 0) + Math.max(0, next.prompt_tokens ?? 0);
+  const completion =
+    Math.max(0, previous?.completion_tokens ?? 0) + Math.max(0, next.completion_tokens ?? 0);
+  const total = Math.max(0, previous?.total_tokens ?? 0) + Math.max(0, next.total_tokens ?? 0);
+  return {
+    prompt_tokens: prompt || undefined,
+    completion_tokens: completion || undefined,
+    total_tokens: total || undefined,
   };
 }
 

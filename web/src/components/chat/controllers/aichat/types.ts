@@ -14,6 +14,7 @@ import type {
   AIChatMessageEndEventData,
   AIChatMessageRetractEventData,
   AIChatMessageStartEventData,
+  AIChatTokenUsageUpdatedEventData,
   AIChatPresentationItem,
   AIChatMemoryMutationEventData,
   AIChatClientActionResultRequest,
@@ -69,6 +70,7 @@ export interface AIChatStreamingMessageState {
   replace?: boolean;
   sensitiveOutputBlocked?: boolean;
   modelProcessing?: AIChatModelProcessingState;
+  tokenUsage?: AIChatTokenUsageUpdatedEventData;
 }
 
 export type AIChatAgenticTimelineItem =
@@ -268,6 +270,10 @@ export interface AIChatControllerStore extends AIChatControllerState {
   applyFileParseEnd: (payload: AIChatFileParseEndEventData, eventId?: string | null) => void;
   applyFileParseError: (payload: AIChatFileParseErrorEventData, eventId?: string | null) => void;
   applyMessageEnd: (payload: AIChatMessageEndEventData, eventId?: string | null) => void;
+  applyTokenUsageUpdated: (
+    payload: AIChatTokenUsageUpdatedEventData,
+    eventId?: string | null
+  ) => void;
   applyStreamError: (payload: AIChatErrorEventData, fallbackConversationId: string | null) => void;
   mergeMessages: (conversationId: string, messages: AIChatMessage[]) => void;
   setActiveConversationId: (conversationId: string | null) => void;

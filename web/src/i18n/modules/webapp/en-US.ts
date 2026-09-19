@@ -484,6 +484,10 @@ const messages = {
     historySubtitle: 'Workbench assistant history',
     conversationListDescription: 'Browse and switch workbench assistant conversations.',
     streaming: 'Streaming',
+    tokenUsage: {
+      count: '{count} tokens',
+      details: 'Total {total} tokens · {prompt} input · {completion} output',
+    },
     waitingApproval: 'Waiting for approval',
     waitingQuestion: 'Waiting for your response',
     waitingClientAction: 'Waiting for page action',

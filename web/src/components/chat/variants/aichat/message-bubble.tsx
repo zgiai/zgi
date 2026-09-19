@@ -29,8 +29,10 @@ import type {
   AIChatMessage,
   AIChatMessageFile,
   AIChatPresentationItem,
+  AIChatTokenUsageUpdatedEventData,
 } from '@/services/types/aichat';
 import { isSensitiveOutputBlockedValue } from '@/utils/model-output-filter';
+import { formatTokenCount } from '@/utils/token-format';
 import type { ChatBranchNavigation } from '@/components/chat/utils/message-tree';
 import {
   AssistantMessageToolbar,
@@ -84,6 +86,7 @@ interface AIChatMessageBubbleProps {
   isSending?: boolean;
   timeline?: AIChatAgenticTimelineItem[];
   modelProcessing?: AIChatStreamingMessageState['modelProcessing'];
+  tokenUsage?: AIChatTokenUsageUpdatedEventData;
   presentationItems?: AIChatPresentationItem[];
   answerBeforeTimelineLength?: number;
   skillDisplayById: AIChatSkillDisplayMap;
@@ -1225,6 +1228,7 @@ export function AIChatMessageBubble({
   isSending = false,
   timeline = [],
   modelProcessing,
+  tokenUsage,
   presentationItems,
   answerBeforeTimelineLength,
   skillDisplayById,
@@ -1458,6 +1462,23 @@ export function AIChatMessageBubble({
         return t('consoleChat.operationStatus.modelProcessing.initial');
     }
   }, [isStreaming, modelProcessing, t]);
+  const tokenUsageSummary = useMemo(() => {
+    if (!tokenUsage) return null;
+    const budget = tokenUsage.task_token_budget;
+    const usage = tokenUsage.usage ?? {};
+    const count = Math.max(0, budget?.used_tokens ?? usage.total_tokens ?? 0);
+    if (count <= 0) return null;
+    const prompt = Math.max(0, usage.prompt_tokens ?? 0);
+    const completion = Math.max(0, usage.completion_tokens ?? 0);
+    return {
+      count,
+      details: t('consoleChat.tokenUsage.details', {
+        total: formatTokenCount(count),
+        prompt: formatTokenCount(prompt),
+        completion: formatTokenCount(completion),
+      }),
+    };
+  }, [t, tokenUsage]);
   const showInitialPlanningStatus =
     isStreaming &&
     !modelProcessingLabel &&
@@ -1759,12 +1780,15 @@ export function AIChatMessageBubble({
           </div>
         ) : null}
 
-        {!shouldHideAssistantToolbar && (answer || canRegenerateMessage) ? (
+        {!shouldHideAssistantToolbar && (tokenUsageSummary || answer || canRegenerateMessage) ? (
           <AssistantMessageToolbar
             answer={answer}
             canRegenerate={canRegenerateMessage}
             isDisabled={isSending || isActiveMessage}
             toolbarVisibility={toolbarVisibility}
+            showActions={!shouldHideAssistantToolbar}
+            tokenCount={tokenUsageSummary?.count}
+            tokenUsageTitle={tokenUsageSummary?.details}
             branchNavigation={branchNavigation}
             canSwitchBranch={canSwitchBranch}
             onRegenerate={() => onRegenerate?.(message)}

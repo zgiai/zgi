@@ -298,6 +298,10 @@ export function useChatRuntimeStreamRecovery({
                 if (abortController.signal.aborted) return;
                 eventAppliers.applyAgentProgress(payload, eventId);
               },
+              onTokenUsageUpdated: (payload, eventId) => {
+                if (abortController.signal.aborted) return;
+                eventAppliers.applyTokenUsageUpdated(payload, eventId);
+              },
               onIntermediateAnswer: (payload, eventId) => {
                 if (abortController.signal.aborted) return;
                 eventAppliers.applyIntermediateAnswer(payload, eventId);

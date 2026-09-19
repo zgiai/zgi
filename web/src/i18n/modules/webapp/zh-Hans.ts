@@ -446,6 +446,10 @@ const messages: WebappMessages = {
     historySubtitle: '工作台助手历史',
     conversationListDescription: '浏览和切换工作台助手会话。',
     streaming: '生成中',
+    tokenUsage: {
+      count: '{count} tokens',
+      details: '总计 {total} tokens · 输入 {prompt} · 输出 {completion}',
+    },
     waitingApproval: '等待审批',
     waitingQuestion: '等待你补充信息',
     waitingClientAction: '等待页面操作',

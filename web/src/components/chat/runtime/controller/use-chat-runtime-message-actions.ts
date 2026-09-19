@@ -79,6 +79,7 @@ export function useChatRuntimeMessageActions({
     applyAgentProgress,
     applyIntermediateAnswer,
     applyUserInputRequested,
+    applyTokenUsageUpdated,
     applyMessageEnd,
     applyStreamError,
   } = eventAppliers;
@@ -633,6 +634,10 @@ export function useChatRuntimeMessageActions({
               if (abortController.signal.aborted) return;
               applyAgentProgress(payload, eventId);
             },
+            onTokenUsageUpdated: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              applyTokenUsageUpdated(payload, eventId);
+            },
             onIntermediateAnswer: (payload, eventId) => {
               if (abortController.signal.aborted) return;
               applyIntermediateAnswer(payload, eventId);
@@ -858,6 +863,7 @@ export function useChatRuntimeMessageActions({
     },
     [
       applyAgentProgress,
+      applyTokenUsageUpdated,
       applyIntermediateAnswer,
       applyUserInputRequested,
       applyFileParseEnd,
@@ -1080,6 +1086,10 @@ export function useChatRuntimeMessageActions({
               if (abortController.signal.aborted) return;
               applyAgentProgress(payload, eventId);
             },
+            onTokenUsageUpdated: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              applyTokenUsageUpdated(payload, eventId);
+            },
             onIntermediateAnswer: (payload, eventId) => {
               if (abortController.signal.aborted) return;
               applyIntermediateAnswer(payload, eventId);
@@ -1263,6 +1273,7 @@ export function useChatRuntimeMessageActions({
     },
     [
       applyAgentProgress,
+      applyTokenUsageUpdated,
       applyIntermediateAnswer,
       applyUserInputRequested,
       applyFileParseEnd,

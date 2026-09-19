@@ -13,6 +13,7 @@ import type {
   AIChatMessageEndEventData,
   AIChatMessageRetractEventData,
   AIChatMessageStartEventData,
+  AIChatTokenUsageUpdatedEventData,
   AIChatMemoryMutationEventData,
   AIChatRuntimeInputAppliedEventData,
   AIChatSkillArtifactCreatedEventData,
@@ -48,6 +49,7 @@ import {
   applyRuntimeInputAppliedState,
   applyMessageRetractState,
   applyMessageStartState,
+  applyTokenUsageUpdatedState,
   applySkillArtifactCreatedState,
   applySkillCallEndState,
   applySkillCallErrorState,
@@ -253,6 +255,14 @@ export function useChatRuntimeEventAppliers({
         answer_len: (payload.answer ?? '').length,
       });
       setControllerState(current => applyMessageChunkState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applyTokenUsageUpdated = useCallback(
+    (payload: AIChatTokenUsageUpdatedEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id) return;
+      setControllerState(current => applyTokenUsageUpdatedState(current, payload, eventId));
     },
     [setControllerState]
   );
@@ -677,6 +687,7 @@ export function useChatRuntimeEventAppliers({
       applyIntermediateAnswer,
       applyUserInputRequested,
       applyMessageEnd,
+      applyTokenUsageUpdated,
       applyStreamError,
     }),
     [
@@ -699,6 +710,7 @@ export function useChatRuntimeEventAppliers({
       applyWorkflowStarted,
       applyMessageChunk,
       applyMessageEnd,
+      applyTokenUsageUpdated,
       applyMessageRetract,
       applyMessageStart,
       applySkillArtifactCreated,

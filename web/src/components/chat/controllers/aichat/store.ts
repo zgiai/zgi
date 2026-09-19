@@ -10,6 +10,7 @@ import {
   applyMessageEndState,
   applyMessageRetractState,
   applyMessageStartState,
+  applyTokenUsageUpdatedState,
   applyStreamErrorState,
   mergeAIChatMessages,
 } from './state-reducers';
@@ -71,6 +72,8 @@ export function createAIChatControllerStore() {
       set(current => applyFileParseErrorState(current, payload, eventId)),
     applyMessageEnd: (payload, eventId) =>
       set(current => applyMessageEndState(current, payload, eventId)),
+    applyTokenUsageUpdated: (payload, eventId) =>
+      set(current => applyTokenUsageUpdatedState(current, payload, eventId)),
     applyStreamError: (payload, fallbackConversationId) =>
       set(current => applyStreamErrorState(current, payload, fallbackConversationId)),
     mergeMessages: (conversationId, messages) =>
