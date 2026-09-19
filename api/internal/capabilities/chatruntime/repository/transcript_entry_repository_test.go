@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"gorm.io/driver/sqlite"
@@ -17,252 +16,146 @@ func newTranscriptEntryTestDB(t *testing.T, name string) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := db.AutoMigrate(&runtimemodel.Message{}, &runtimemodel.TranscriptEntry{}); err != nil {
+	if err := db.AutoMigrate(&runtimemodel.Conversation{}, &runtimemodel.Message{}, &runtimemodel.TranscriptEntry{}); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 	return db
 }
 
-func seedTranscriptMessage(t *testing.T, db *gorm.DB, conversationID, messageID, organizationID uuid.UUID) {
+func seedTranscriptMessage(t *testing.T, db *gorm.DB) (*runtimemodel.Conversation, *runtimemodel.Message) {
 	t.Helper()
-	message := &runtimemodel.Message{
-		ID:              messageID,
-		ConversationID:  conversationID,
-		Query:           "query",
-		Answer:          "",
-		Status:          runtimemodel.MessageStatusStreaming,
-		ModelName:       "test-model",
-		ModelParameters: map[string]interface{}{},
-		Metadata:        map[string]interface{}{},
+	conversation := &runtimemodel.Conversation{ID: uuid.New(), OrganizationID: uuid.New(), AccountID: uuid.New(), Title: "test"}
+	if err := db.Create(conversation).Error; err != nil {
+		t.Fatalf("seed conversation: %v", err)
 	}
+	message := &runtimemodel.Message{ID: uuid.New(), ConversationID: conversation.ID, Query: "query", Status: runtimemodel.MessageStatusStreaming, ModelName: "test", ModelParameters: map[string]interface{}{}, Metadata: map[string]interface{}{}}
 	if err := db.Create(message).Error; err != nil {
 		t.Fatalf("seed message: %v", err)
 	}
-	_ = organizationID
+	return conversation, message
 }
 
-func transcriptEntry(id uuid.UUID, conversationID, messageID, organizationID uuid.UUID, seq int, cseq int64, kind, content string) *runtimemodel.TranscriptEntry {
-	message := map[string]interface{}{"role": kind, "content": content}
-	return &runtimemodel.TranscriptEntry{
-		ID:             id,
-		MessageID:      messageID,
-		ConversationID: conversationID,
-		OrganizationID: organizationID,
-		CSeq:           cseq,
-		Seq:            seq,
-		Kind:           kind,
-		Preview:        message,
-		Payload:        message,
-		ByteSize:       len(content),
-	}
+func chainEntry(conversation *runtimemodel.Conversation, message *runtimemodel.Message, parent *uuid.UUID, kind, content, event string) *runtimemodel.TranscriptEntry {
+	payload := map[string]interface{}{"role": kind, "content": content}
+	return &runtimemodel.TranscriptEntry{ID: uuid.New(), MessageID: message.ID, ConversationID: conversation.ID, OrganizationID: conversation.OrganizationID, ParentEntryID: parent, Kind: kind, Preview: payload, Payload: payload, EventID: event, ByteSize: len(content)}
 }
 
-func TestTranscriptEntryAppendAssignsOrderAndRoundTripsPreviews(t *testing.T) {
-	db := newTranscriptEntryTestDB(t, "transcript-append")
+func TestTranscriptEntryAppendAndParentProjection(t *testing.T) {
+	db := newTranscriptEntryTestDB(t, "transcript-parent")
 	repo := NewTranscriptEntryRepository(db)
 	ctx := context.Background()
-	conversationID, messageID, organizationID := uuid.New(), uuid.New(), uuid.New()
-	seedTranscriptMessage(t, db, conversationID, messageID, organizationID)
-
-	seq, cseq, err := repo.NextPositions(ctx, conversationID, messageID)
-	if err != nil {
-		t.Fatalf("NextPositions: %v", err)
+	conversation, message := seedTranscriptMessage(t, db)
+	first := chainEntry(conversation, message, nil, runtimemodel.TranscriptEntryKindUser, "hello", "user")
+	second := chainEntry(conversation, message, &first.ID, runtimemodel.TranscriptEntryKindAssistant, "world", "assistant")
+	head, err := repo.AppendForMessage(ctx, message.ID, nil, []*runtimemodel.TranscriptEntry{first, second})
+	if err != nil || head != second.ID {
+		t.Fatalf("append head = %v, err = %v", head, err)
 	}
-	if seq != 1 || cseq != 1 {
-		t.Fatalf("first positions = (%d, %d), want (1, 1)", seq, cseq)
+	var stored runtimemodel.Message
+	if err := db.First(&stored, "id = ?", message.ID).Error; err != nil || stored.TranscriptHeadEntryID == nil || *stored.TranscriptHeadEntryID != second.ID {
+		t.Fatalf("stored head = %v, err = %v", stored.TranscriptHeadEntryID, err)
 	}
-
-	first := transcriptEntry(uuid.New(), conversationID, messageID, organizationID, 1, 1, runtimemodel.TranscriptEntryKindUser, "帮我退款")
-	second := transcriptEntry(uuid.New(), conversationID, messageID, organizationID, 2, 2, runtimemodel.TranscriptEntryKindTool, "订单 12345")
-	if err := repo.Append(ctx, []*runtimemodel.TranscriptEntry{first, second}); err != nil {
-		t.Fatalf("Append: %v", err)
-	}
-
-	seq, cseq, err = repo.NextPositions(ctx, conversationID, messageID)
-	if err != nil {
-		t.Fatalf("NextPositions after append: %v", err)
-	}
-	if seq != 3 || cseq != 3 {
-		t.Fatalf("positions after append = (%d, %d), want (3, 3)", seq, cseq)
-	}
-
-	previews, err := repo.ListPreviewsByConversation(ctx, conversationID, 0, 0)
-	if err != nil {
-		t.Fatalf("ListPreviewsByConversation: %v", err)
-	}
-	if len(previews) != 2 {
-		t.Fatalf("preview rows = %d, want 2", len(previews))
-	}
-	if previews[0].CSeq != 1 || previews[1].CSeq != 2 {
-		t.Fatalf("previews out of order: %d, %d", previews[0].CSeq, previews[1].CSeq)
-	}
-	if previews[0].Preview["content"] != "帮我退款" {
-		t.Fatalf("preview content = %v, want 帮我退款", previews[0].Preview["content"])
-	}
-	if previews[0].MessageID != messageID || previews[1].Kind != runtimemodel.TranscriptEntryKindTool {
-		t.Fatalf("preview scope mismatch: %+v", previews[0])
+	chain, err := repo.LoadPreviewChain(ctx, second.ID, nil, 0)
+	if err != nil || len(chain) != 2 || chain[0].ID != second.ID || chain[1].ID != first.ID {
+		t.Fatalf("reverse chain = %+v, err = %v", chain, err)
 	}
 }
 
-func TestTranscriptEntryAppendRejectsDuplicatePositions(t *testing.T) {
-	db := newTranscriptEntryTestDB(t, "transcript-duplicate")
+func TestListPreviewsByMessageFiltersSharedParentChain(t *testing.T) {
+	db := newTranscriptEntryTestDB(t, "transcript-shared-message-chain")
+	repos := NewRepositories(db)
+	ctx := context.Background()
+	conversation, parent := seedTranscriptMessage(t, db)
+	parentEntry := chainEntry(conversation, parent, nil, runtimemodel.TranscriptEntryKindAssistant, "parent", "parent")
+	parentHead, err := repos.TranscriptEntry.AppendForMessage(ctx, parent.ID, nil, []*runtimemodel.TranscriptEntry{parentEntry})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := &runtimemodel.Message{
+		ID:              uuid.New(),
+		ConversationID:  conversation.ID,
+		ParentID:        &parent.ID,
+		Query:           "child",
+		Status:          runtimemodel.MessageStatusStreaming,
+		ModelName:       "test",
+		ModelParameters: map[string]interface{}{},
+		Metadata:        map[string]interface{}{},
+	}
+	if err := repos.Message.Create(ctx, child); err != nil {
+		t.Fatal(err)
+	}
+	childEntry := chainEntry(conversation, child, &parentHead, runtimemodel.TranscriptEntryKindAssistant, "child", "child")
+	if _, err := repos.TranscriptEntry.AppendForMessage(ctx, child.ID, &parentHead, []*runtimemodel.TranscriptEntry{childEntry}); err != nil {
+		t.Fatal(err)
+	}
+	parentPreview, err := repos.TranscriptEntry.ListPreviewsByMessage(ctx, parent.ID)
+	if err != nil || len(parentPreview) != 1 || parentPreview[0].ID != parentEntry.ID {
+		t.Fatalf("parent previews = %+v/%v", parentPreview, err)
+	}
+	childPreview, err := repos.TranscriptEntry.ListPreviewsByMessage(ctx, child.ID)
+	if err != nil || len(childPreview) != 1 || childPreview[0].ID != childEntry.ID {
+		t.Fatalf("child previews = %+v/%v", childPreview, err)
+	}
+}
+
+func TestTranscriptSummaryIsIdempotentAndCopyReadsParentChain(t *testing.T) {
+	db := newTranscriptEntryTestDB(t, "transcript-summary-copy")
 	repo := NewTranscriptEntryRepository(db)
 	ctx := context.Background()
-	conversationID, messageID, organizationID := uuid.New(), uuid.New(), uuid.New()
-	seedTranscriptMessage(t, db, conversationID, messageID, organizationID)
-
-	entry := transcriptEntry(uuid.New(), conversationID, messageID, organizationID, 1, 1, runtimemodel.TranscriptEntryKindUser, "hello")
-	if err := repo.Append(ctx, []*runtimemodel.TranscriptEntry{entry}); err != nil {
-		t.Fatalf("Append: %v", err)
+	conversation, message := seedTranscriptMessage(t, db)
+	entry := chainEntry(conversation, message, nil, runtimemodel.TranscriptEntryKindUser, "hello", "user")
+	head, err := repo.AppendForMessage(ctx, message.ID, nil, []*runtimemodel.TranscriptEntry{entry})
+	if err != nil {
+		t.Fatal(err)
 	}
-	duplicate := transcriptEntry(uuid.New(), conversationID, messageID, organizationID, 1, 1, runtimemodel.TranscriptEntryKindUser, "hello again")
-	if err := repo.Append(ctx, []*runtimemodel.TranscriptEntry{duplicate}); err == nil {
-		t.Fatal("expected duplicate (message_id, seq) to be rejected")
+	summaryHead, err := repo.AppendSummaryForMessage(ctx, message.ID, &head, &entry.ID, "summary", "summary:event")
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := repo.AppendSummaryForMessage(ctx, message.ID, &head, &entry.ID, "summary", "summary:event")
+	if err != nil || replayed != summaryHead {
+		t.Fatalf("summary replay = %v/%v, want %v", replayed, err, summaryHead)
+	}
+	copied, err := repo.ListForCopyByHead(ctx, summaryHead, nil)
+	if err != nil || len(copied) != 2 {
+		t.Fatalf("copy source = %d/%v", len(copied), err)
 	}
 }
 
-func TestTranscriptEntryUpdatePreviewKeepsPayloadAndFiltersByCSeq(t *testing.T) {
-	db := newTranscriptEntryTestDB(t, "transcript-update-preview")
+func TestTranscriptEntryRejectsStaleHeadAndUnreachableSummaryBoundary(t *testing.T) {
+	db := newTranscriptEntryTestDB(t, "transcript-cas-boundary")
 	repo := NewTranscriptEntryRepository(db)
 	ctx := context.Background()
-	conversationID, messageID, organizationID := uuid.New(), uuid.New(), uuid.New()
-	seedTranscriptMessage(t, db, conversationID, messageID, organizationID)
-
-	entry := transcriptEntry(uuid.New(), conversationID, messageID, organizationID, 1, 1, runtimemodel.TranscriptEntryKindTool, "900KB 原始工具结果")
-	if err := repo.Append(ctx, []*runtimemodel.TranscriptEntry{entry}); err != nil {
-		t.Fatalf("Append: %v", err)
-	}
-
-	pruned := map[string]interface{}{"role": "tool", "content": "[工具结果已归档] ref=" + entry.ID.String()}
-	if err := repo.UpdatePreview(ctx, entry.ID, pruned, 42); err != nil {
-		t.Fatalf("UpdatePreview: %v", err)
-	}
-
-	payloads, err := repo.GetPayload(ctx, entry.ID, organizationID)
+	conversation, message := seedTranscriptMessage(t, db)
+	first := chainEntry(conversation, message, nil, runtimemodel.TranscriptEntryKindUser, "hello", "user")
+	head, err := repo.AppendForMessage(ctx, message.ID, nil, []*runtimemodel.TranscriptEntry{first})
 	if err != nil {
-		t.Fatalf("GetPayload: %v", err)
+		t.Fatal(err)
 	}
-	if payloads.Payload["content"] != "900KB 原始工具结果" {
-		t.Fatalf("payload was modified: %v", payloads.Payload["content"])
+	stale := chainEntry(conversation, message, nil, runtimemodel.TranscriptEntryKindAssistant, "stale", "stale")
+	if _, err := repo.AppendForMessage(ctx, message.ID, nil, []*runtimemodel.TranscriptEntry{stale}); err == nil {
+		t.Fatal("expected stale head CAS to fail")
 	}
-
-	previews, err := repo.ListPreviewsByConversation(ctx, conversationID, 0, 0)
-	if err != nil {
-		t.Fatalf("ListPreviewsByConversation: %v", err)
-	}
-	if len(previews) != 1 || previews[0].Preview["content"] != pruned["content"] || previews[0].ByteSize != 42 {
-		t.Fatalf("preview not updated: %+v", previews[0])
-	}
-
-	after, err := repo.ListPreviewsByConversation(ctx, conversationID, 1, 0)
-	if err != nil {
-		t.Fatalf("ListPreviewsByConversation after boundary: %v", err)
-	}
-	if len(after) != 0 {
-		t.Fatalf("cseq boundary filter returned %d rows, want 0", len(after))
+	unreachable := uuid.New()
+	if _, err := repo.AppendSummaryForMessage(ctx, message.ID, &head, &unreachable, "summary", "summary:bad"); err == nil {
+		t.Fatal("expected unreachable summary boundary to fail")
 	}
 }
 
-func TestTranscriptEntryGetPayloadIsScopedToOrganization(t *testing.T) {
-	db := newTranscriptEntryTestDB(t, "transcript-org-scope")
+func TestTranscriptEntryLoadDetectsParentCycle(t *testing.T) {
+	db := newTranscriptEntryTestDB(t, "transcript-cycle")
 	repo := NewTranscriptEntryRepository(db)
 	ctx := context.Background()
-	conversationID, messageID, organizationID := uuid.New(), uuid.New(), uuid.New()
-	seedTranscriptMessage(t, db, conversationID, messageID, organizationID)
-
-	entry := transcriptEntry(uuid.New(), conversationID, messageID, organizationID, 1, 1, runtimemodel.TranscriptEntryKindTool, "secret")
-	if err := repo.Append(ctx, []*runtimemodel.TranscriptEntry{entry}); err != nil {
-		t.Fatalf("Append: %v", err)
+	conversation, message := seedTranscriptMessage(t, db)
+	first := chainEntry(conversation, message, nil, runtimemodel.TranscriptEntryKindUser, "one", "one")
+	second := chainEntry(conversation, message, &first.ID, runtimemodel.TranscriptEntryKindAssistant, "two", "two")
+	if _, err := repo.AppendForMessage(ctx, message.ID, nil, []*runtimemodel.TranscriptEntry{first, second}); err != nil {
+		t.Fatal(err)
 	}
-
-	if _, err := repo.GetPayload(ctx, entry.ID, uuid.New()); err == nil {
-		t.Fatal("expected cross-organization lookup to fail")
+	if err := db.Model(&runtimemodel.TranscriptEntry{}).Where("id = ?", first.ID).Update("parent_entry_id", second.ID).Error; err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestTranscriptEntryDeleteByConversationRemovesFacts(t *testing.T) {
-	db := newTranscriptEntryTestDB(t, "transcript-delete-conversation")
-	repo := NewTranscriptEntryRepository(db)
-	ctx := context.Background()
-	conversationID, messageID, organizationID := uuid.New(), uuid.New(), uuid.New()
-	seedTranscriptMessage(t, db, conversationID, messageID, organizationID)
-
-	entry := transcriptEntry(uuid.New(), conversationID, messageID, organizationID, 1, 1, runtimemodel.TranscriptEntryKindUser, "hello")
-	if err := repo.Append(ctx, []*runtimemodel.TranscriptEntry{entry}); err != nil {
-		t.Fatalf("Append: %v", err)
-	}
-
-	deleted, err := repo.DeleteByConversation(ctx, conversationID)
-	if err != nil {
-		t.Fatalf("DeleteByConversation: %v", err)
-	}
-	if deleted != 1 {
-		t.Fatalf("deleted rows = %d, want 1", deleted)
-	}
-	remaining, err := repo.ListPreviewsByConversation(ctx, conversationID, 0, 0)
-	if err != nil {
-		t.Fatalf("ListPreviewsByConversation: %v", err)
-	}
-	if len(remaining) != 0 {
-		t.Fatalf("conversation still has %d entries", len(remaining))
-	}
-}
-
-func TestTranscriptEntryPreviewQueryNeverSelectsPayload(t *testing.T) {
-	db, mock := newConversationRepositoryMockDB(t)
-	repo := NewTranscriptEntryRepository(db)
-	conversationID := uuid.New()
-
-	// The whitelist is the guard: if a projection/list query ever selects
-	// payload again, this expectation stops matching and the test fails.
-	mock.ExpectQuery(`(?s)SELECT id, message_id, cseq, seq, kind, preview, byte_size FROM "chat_runtime_message_transcript_entries" WHERE conversation_id = \$1 AND cseq > \$2 ORDER BY cseq ASC`).
-		WithArgs(conversationID, int64(7)).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "message_id", "cseq", "seq", "kind", "preview", "byte_size"}))
-
-	if _, err := repo.ListPreviewsByConversation(context.Background(), conversationID, 7, 0); err != nil {
-		t.Fatalf("ListPreviewsByConversation: %v", err)
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("unmet expectations: %v", err)
-	}
-}
-
-func TestMessageContextSummaryRoundTripAndBoundaryFilter(t *testing.T) {
-	db := newTranscriptEntryTestDB(t, "message-context-summary")
-	repo := NewMessageRepository(db)
-	ctx := context.Background()
-	conversationID, firstMessageID, secondMessageID, organizationID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
-	seedTranscriptMessage(t, db, conversationID, firstMessageID, organizationID)
-	seedTranscriptMessage(t, db, conversationID, secondMessageID, organizationID)
-
-	if summary, err := repo.ContextSummaryAt(ctx, conversationID, 100); err != nil || summary != nil {
-		t.Fatalf("empty conversation summary = (%v, %v), want (nil, nil)", summary, err)
-	}
-
-	if err := repo.UpdateContextSummary(ctx, firstMessageID, "第一段摘要", 40); err != nil {
-		t.Fatalf("UpdateContextSummary: %v", err)
-	}
-	if err := repo.UpdateContextSummary(ctx, secondMessageID, "第二段摘要", 90); err != nil {
-		t.Fatalf("UpdateContextSummary: %v", err)
-	}
-
-	summary, err := repo.ContextSummaryAt(ctx, conversationID, 95)
-	if err != nil {
-		t.Fatalf("ContextSummaryAt: %v", err)
-	}
-	if summary == nil || summary.ThroughSeq != 90 || summary.Summary != "第二段摘要" || summary.MessageID != secondMessageID {
-		t.Fatalf("latest applicable summary = %+v", summary)
-	}
-
-	older, err := repo.ContextSummaryAt(ctx, conversationID, 40)
-	if err != nil {
-		t.Fatalf("ContextSummaryAt older: %v", err)
-	}
-	if older == nil || older.ThroughSeq != 40 || older.MessageID != firstMessageID {
-		t.Fatalf("older applicable summary = %+v", older)
-	}
-
-	if none, err := repo.ContextSummaryAt(ctx, conversationID, 10); err != nil || none != nil {
-		t.Fatalf("summary before first boundary = (%v, %v), want (nil, nil)", none, err)
+	if _, err := repo.LoadPreviewChain(ctx, second.ID, nil, 0); err == nil {
+		t.Fatal("expected parent cycle to fail")
 	}
 }

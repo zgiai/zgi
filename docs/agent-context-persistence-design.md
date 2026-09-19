@@ -1,4 +1,6 @@
-# Agent 上下文持久化设计（v3）
+# Agent 上下文持久化设计（v3，历史方案）
+
+> 本文保留作为旧方案记录，已被 [transcript-entry-log-refactor.md](transcript-entry-log-refactor.md) 取代。当前实现不再使用 `cseq`、`seq`、`summary_through_seq` 或 message 上的 summary 字段；请以新文档中的 parent 链、entry boundary 和 `transcript_head_entry_id` 为准。
 
 状态：设计定稿，待评审
 取代：此前被回滚的「上下文条目表」方案（`chat_runtime_context_entries` + 会话级链尾指针）
@@ -241,6 +243,9 @@ project(conversation, at = 当前 tail):
 12. 保留策略按**会话**删除后，存量分支不受影响（零降级）；将来若做冷归档，payload 取回后可正常重建；
 13. 并发：两个 run 同会话写入，后者被拒（部分唯一索引生效）；
 14. 保留窗口起点吸附后不产生孤儿 tool 消息。
+15. **每轮 checkpoint 幂等**：一轮内多次 checkpoint 不产生重复 entry；进程在工具执行中途死掉时，已写下的 assistant/tool 交换能原样重放；
+16. **用户提问必在日志里**：每轮第一条 entry 是该轮的 `kind='user'` 提问；逐轮重放不会把提问插进 assistant/tool 交换中间；
+17. **`preview` 重算只改 `preview`**：`payload` 不变；位置上换成另一条消息时原 entry 不被覆盖。
 
 ---
 
@@ -278,14 +283,18 @@ project(conversation, at = 当前 tail):
 | 设计要素 | 落点 | 状态 |
 |---|---|---|
 | entry 表 + messages 三列（summary / summary_through_seq / transcript_format_version） | 迁移 `20260917120000` | ✅ |
-| 追加写入（每个检查点） | `service/context_entries.go` → `syncAgentTranscriptEntries`：模型调用前（`stream.go`）、压缩前与压缩成功后（`agent_context_manager.go`）、终态（`skill_loop.go`） | ✅ |
+| 追加写入（每个中断点） | `service/context_entries.go` → `persistTurnTranscriptEntries`：由 `contextmgr.Manager.Checkpoint` 在**每次模型调用前**（`PrepareBeforeModelCall`）、**每次观测到模型响应后**（`ObserveModelResponse`）、**每个工具结果到达时**（`ReplaceMessages`）触发（不再只在终态写一次）；压缩前用 `CompactCall.Transcript` 传值（不回读 manager，避免自锁），终态再补一次 | ✅ |
+| 用户提问入日志 | `turnTranscriptWithQuery`：entry 日志以该轮 `kind='user'` 提问起头（context manager 的 turn transcript 只含 assistant/tool 交换）；逐轮重放 `historicalAgentTranscript` 会跳过它，因为调用方请求里已经带着当前提问 | ✅ |
+| `preview` 重算 | `refreshRewrittenPreviews`：同一位置的同一条消息被后续投影改写（工具结果被裁剪、工具参数被投影）时只重写 `preview`，`payload` 不动；位置上已经是**另一条**消息则判定为分歧，保留原 entry 不改（追加日志不回改历史） | ✅ |
 | 上下文投影（摘要 + `cseq > 边界`） | `service/context_projection.go` → `projectContextMessages`（只读 preview；摘要按当时的 user 形态包装） | ✅ |
 | 工具结果裁剪写回 preview | 写入时按阈值归档（`pruneTranscriptMessageForWrite`，ref = entry id + 前 200 字 + 原始长度） | ✅ |
-| 摘要 + 精确边界 | `persistCompactionSummary`：边界 = 摘要器实际收到的最后一条 entry，**取值保守**（宁可重复不可丢失） | ✅ |
+| 摘要 + 精确边界 | 边界不再是"猜"出来的：一轮的历史来自投影，每条重放消息都带 `EntryCSeq`（`adapter.Message` 的内部字段，不进协议），`contextmgr` 把 compact 输入里最后一条 entry 的位置放进 `CompactCall.SummarizedEntryCSeq`，service 直接写回 `summary_through_seq` | ✅ |
+| **一轮的对话区来自 entry 投影** | `conversationHistoryMessages`：`摘要 + cseq > 边界`（`projectConversationRegion`），上界 = 上一轮的 `MaxCSeqForMessage`（续跑不会重放本轮半截的交换）；`kind='user'` 用 message 行重渲染以保留附件/图片；没有 entry 的老轮次回退 message 行历史 | ✅ |
+| 逐轮重放的末尾去重 | `dropDuplicatedFinalAnswer`：entry 日志保留该轮最终回答（事实），但逐轮重放会丢掉末尾那条 assistant 回答，因为调用方（历史组装）随后自己会 append `message.Answer`，否则回答会重复一次 | ✅ |
 | 悬空 `tool_call` 补齐 | `closeDanglingToolCalls`，投影必然过一遍（合成结果明确写"结果未记录、不要盲目重试"） | ✅ |
-| 重建 | `loadProjectedConversationContext`（没有 entry 时返回 miss，调用方走兜底） | ✅ |
+| 重建 | 摘要 + `cseq > 边界`：一轮的组装走 `conversationHistoryMessages` → `projectConversationRegion`；分支流程走 `loadProjectedConversationContext` | ✅ |
 | 分支复制 | `copyConversationTranscriptForBranch`（重铸 entry id、保留 seq/cseq、重写 preview 里的 ref） | ✅ 供分支流程调用 |
-| 读取切换（entry 优先、metadata 兜底） | `historicalAgentTranscript` / `appendPersistedAgentTranscript`（历史组装 + 4 个续跑入口） | ✅ |
+| 本轮交换的逐轮重放（续跑用） | `historicalAgentTranscript` / `appendPersistedAgentTranscript`：跳掉本轮自己的提问、丢掉调用方会再 append 的末尾回答；4 个续跑入口 | ✅ |
 | 只允许删除最后一轮 | `DeleteMessage` 用 `CountChildren` 拦截，中间轮提示"从该轮开分支" | ✅ |
 | 会话删除清理 entry | `DeleteConversation` 在同一事务里 `DeleteByConversation`（会话是软删，外键级联不会触发） | ✅ |
 | 窄查询白名单 | `transcriptEntryPreviewColumns` + SQL 守卫测试（payload 不进投影/列表查询） | ✅ |

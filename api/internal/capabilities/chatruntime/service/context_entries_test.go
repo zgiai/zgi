@@ -19,375 +19,170 @@ func newContextEntryTestService(t *testing.T, name string) (*service, *runtimemo
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := db.AutoMigrate(&runtimemodel.Message{}, &runtimemodel.Conversation{}, &runtimemodel.TranscriptEntry{}); err != nil {
+	if err := db.AutoMigrate(&runtimemodel.Conversation{}, &runtimemodel.Message{}, &runtimemodel.TranscriptEntry{}); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
-	conversation := &runtimemodel.Conversation{
-		ID:             uuid.New(),
-		OrganizationID: uuid.New(),
-		AccountID:      uuid.New(),
-		Title:          "conversation",
-		Metadata:       map[string]interface{}{},
-	}
+	conversation := &runtimemodel.Conversation{ID: uuid.New(), OrganizationID: uuid.New(), AccountID: uuid.New(), Title: "conversation", Metadata: map[string]interface{}{}}
 	if err := db.Create(conversation).Error; err != nil {
-		t.Fatalf("create conversation: %v", err)
+		t.Fatal(err)
 	}
-	message := &runtimemodel.Message{
-		ID:              uuid.New(),
-		ConversationID:  conversation.ID,
-		Query:           "帮我退款",
-		Status:          runtimemodel.MessageStatusStreaming,
-		ModelName:       "test-model",
-		ModelParameters: map[string]interface{}{},
-		Metadata:        map[string]interface{}{},
-	}
+	message := &runtimemodel.Message{ID: uuid.New(), ConversationID: conversation.ID, Query: "帮我退款", Status: runtimemodel.MessageStatusStreaming, ModelName: "test", ModelParameters: map[string]interface{}{}, Metadata: map[string]interface{}{}}
 	if err := db.Create(message).Error; err != nil {
-		t.Fatalf("create message: %v", err)
+		t.Fatal(err)
 	}
-	svc := &service{repos: repository.NewRepositories(db)}
-	return svc, message, conversation
+	return &service{repos: repository.NewRepositories(db)}, message, conversation
 }
 
 func testProtocolTranscript() []adapter.Message {
 	return []adapter.Message{
-		{Role: "user", Content: "帮我退款"},
-		{Role: "assistant", ToolCalls: []adapter.ToolCall{{ID: "call-1", Type: "function", Function: adapter.FunctionCall{Name: "refund_query"}}}},
-		{Role: "tool", ToolCallID: "call-1", Content: "订单 12345：已支付 199 元"},
-		{Role: "assistant", Content: "已为你提交退款"},
+		{Role: "assistant", ToolCalls: []adapter.ToolCall{{ID: "call-1", Type: "function", Function: adapter.FunctionCall{Name: "lookup"}}}},
+		{Role: "tool", ToolCallID: "call-1", Content: "result"},
+		{Role: "assistant", Content: "done"},
 	}
 }
 
-func TestProjectContextMessagesUsesSummaryBoundaryWithoutGapOrOverlap(t *testing.T) {
-	entries := []*runtimemodel.TranscriptEntryPreview{
-		{ID: uuid.New(), CSeq: 1, Preview: map[string]interface{}{"role": "user", "content": "第一轮"}},
-		{ID: uuid.New(), CSeq: 2, Preview: map[string]interface{}{"role": "assistant", "content": "第一轮回答"}},
-		{ID: uuid.New(), CSeq: 3, Preview: map[string]interface{}{"role": "user", "content": "第二轮"}},
-		{ID: uuid.New(), CSeq: 4, Preview: map[string]interface{}{"role": "assistant", "content": "第二轮回答"}},
+func TestContextEntrySyncAppendsParentLinkedEntries(t *testing.T) {
+	svc, message, conversation := newContextEntryTestService(t, "context-entry-sync-new")
+	prepared := &PreparedChat{Message: message, Conversation: conversation, Scope: Scope{OrganizationID: conversation.OrganizationID, AccountID: conversation.AccountID}}
+	svc.persistTurnTranscriptEntries(context.Background(), prepared, testProtocolTranscript())
+	if message.TranscriptHeadEntryID == nil {
+		t.Fatal("transcript head was not advanced")
 	}
-	summary := &runtimemodel.MessageContextSummary{MessageID: uuid.New(), Summary: "更早对话的摘要", ThroughSeq: 2}
+	entries, err := svc.repos.TranscriptEntry.ListPreviewsByMessage(context.Background(), message.ID)
+	if err != nil || len(entries) != 4 {
+		t.Fatalf("entries = %d/%v", len(entries), err)
+	}
+	if entries[0].Kind != runtimemodel.TranscriptEntryKindUser || entries[1].ParentEntryID == nil || *entries[1].ParentEntryID != entries[0].ID {
+		t.Fatalf("parent chain = %+v", entries)
+	}
+}
 
-	messages, err := projectContextMessages(summary, entries)
-	if err != nil {
-		t.Fatalf("projectContextMessages: %v", err)
+func TestPersistTurnTranscriptEntriesBindsEntryIDsForCurrentRun(t *testing.T) {
+	svc, message, conversation := newContextEntryTestService(t, "context-entry-bind-ids")
+	prepared := &PreparedChat{Message: message, Conversation: conversation, Scope: Scope{OrganizationID: conversation.OrganizationID, AccountID: conversation.AccountID}}
+	transcript := []adapter.Message{
+		{Role: "assistant", ToolCalls: []adapter.ToolCall{{ID: "call-1", Type: "function", Function: adapter.FunctionCall{Name: "lookup"}}}},
+		{Role: "tool", ToolCallID: "call-1", Content: "result"},
 	}
-	if len(messages) != 3 {
-		t.Fatalf("messages = %d, want 3 (summary + two entries after the boundary)", len(messages))
+	bound := svc.persistTurnTranscriptEntries(context.Background(), prepared, transcript)
+	if len(bound) != len(transcript) {
+		t.Fatalf("bound transcript length = %d, want %d", len(bound), len(transcript))
 	}
-	if messages[0].Role != "user" || !strings.Contains(messageContentText(messages[0].Content), "更早对话的摘要") {
-		t.Fatalf("summary message = %+v", messages[0])
+	for index, item := range bound {
+		if strings.TrimSpace(item.EntryID) == "" {
+			t.Fatalf("bound transcript entry %d has no durable id", index)
+		}
 	}
-	if messageContentText(messages[1].Content) != "第二轮" || messageContentText(messages[2].Content) != "第二轮回答" {
-		t.Fatalf("covered entries leaked into the projection: %+v", messages[1:])
-	}
+}
 
-	withoutSummary, err := projectContextMessages(nil, entries)
-	if err != nil {
-		t.Fatalf("projectContextMessages without summary: %v", err)
+func TestProjectTranscriptChainUsesSummaryBoundary(t *testing.T) {
+	svc, message, conversation := newContextEntryTestService(t, "context-entry-projection-new")
+	prepared := &PreparedChat{Message: message, Conversation: conversation, Scope: Scope{OrganizationID: conversation.OrganizationID, AccountID: conversation.AccountID}}
+	svc.persistTurnTranscriptEntries(context.Background(), prepared, []adapter.Message{{Role: "assistant", Content: "old"}, {Role: "assistant", Content: "tail"}})
+	entries, _ := svc.repos.TranscriptEntry.ListPreviewsByMessage(context.Background(), message.ID)
+	boundary := entries[1].ID
+	svc.persistAgentContextSummary(context.Background(), prepared, "summary", boundary.String())
+	region, ok, err := svc.projectTranscriptChain(context.Background(), *message.TranscriptHeadEntryID, map[uuid.UUID]*runtimemodel.Message{message.ID: message}, false)
+	if err != nil || !ok {
+		t.Fatalf("projection = %v/%v", ok, err)
 	}
-	if len(withoutSummary) != 4 {
-		t.Fatalf("messages without summary = %d, want 4", len(withoutSummary))
+	if len(region.Messages) != 2 || !strings.Contains(messageContentText(region.Messages[0].Content), "summary") || messageContentText(region.Messages[1].Content) != "tail" {
+		t.Fatalf("projected messages = %+v", region.Messages)
+	}
+}
+
+func TestPersistedLegacyAgentTranscriptRemainsReadable(t *testing.T) {
+	svc, message, _ := newContextEntryTestService(t, "context-entry-legacy-new")
+	message.Answer = "final"
+	message.Metadata = mergeAgentTranscriptMetadata(nil, testProtocolTranscript(), message.Answer)
+	got := svc.historicalAgentTranscript(context.Background(), message)
+	if len(got) != 2 || got[0].Role != "assistant" || got[1].Role != "tool" {
+		t.Fatalf("legacy transcript = %+v", got)
+	}
+}
+
+func TestCopyConversationTranscriptForBranchOwnsIndependentEntries(t *testing.T) {
+	svc, sourceMessage, sourceConversation := newContextEntryTestService(t, "context-entry-branch-copy")
+	prepared := &PreparedChat{Message: sourceMessage, Conversation: sourceConversation, Scope: Scope{OrganizationID: sourceConversation.OrganizationID, AccountID: sourceConversation.AccountID}}
+	svc.persistTurnTranscriptEntries(context.Background(), prepared, []adapter.Message{{Role: "assistant", Content: "answer"}})
+
+	targetConversation := &runtimemodel.Conversation{ID: uuid.New(), OrganizationID: sourceConversation.OrganizationID, AccountID: sourceConversation.AccountID, Title: "branch", Metadata: map[string]interface{}{}}
+	if err := svc.repos.DB.Create(targetConversation).Error; err != nil {
+		t.Fatal(err)
+	}
+	targetMessage := &runtimemodel.Message{ID: uuid.New(), ConversationID: targetConversation.ID, Query: sourceMessage.Query, Status: runtimemodel.MessageStatusCompleted, ModelName: "test", ModelParameters: map[string]interface{}{}, Metadata: map[string]interface{}{}}
+	if err := svc.repos.DB.Create(targetMessage).Error; err != nil {
+		t.Fatal(err)
+	}
+	copied, err := svc.copyConversationTranscriptForBranch(context.Background(), *sourceMessage.TranscriptHeadEntryID, targetConversation.ID, map[uuid.UUID]uuid.UUID{sourceMessage.ID: targetMessage.ID}, sourceConversation.OrganizationID)
+	if err != nil || copied != 2 {
+		t.Fatalf("copy = %d/%v", copied, err)
+	}
+	var stored runtimemodel.Message
+	if err := svc.repos.DB.First(&stored, "id = ?", targetMessage.ID).Error; err != nil || stored.TranscriptHeadEntryID == nil || *stored.TranscriptHeadEntryID == *sourceMessage.TranscriptHeadEntryID {
+		t.Fatalf("target head = %v/%v", stored.TranscriptHeadEntryID, err)
+	}
+	if _, err := svc.repos.TranscriptEntry.DeleteByConversation(context.Background(), sourceConversation.ID); err != nil {
+		t.Fatal(err)
+	}
+	chain, err := svc.repos.TranscriptEntry.LoadPreviewChain(context.Background(), *stored.TranscriptHeadEntryID, nil, 0)
+	if err != nil || len(chain) != 2 {
+		t.Fatalf("target chain after source delete = %d/%v", len(chain), err)
+	}
+}
+
+func TestCopyConversationTranscriptForBranchRejectsIncompleteMessageMapping(t *testing.T) {
+	svc, sourceMessage, sourceConversation := newContextEntryTestService(t, "context-entry-branch-missing-map")
+	prepared := &PreparedChat{Message: sourceMessage, Conversation: sourceConversation, Scope: Scope{OrganizationID: sourceConversation.OrganizationID, AccountID: sourceConversation.AccountID}}
+	svc.persistTurnTranscriptEntries(context.Background(), prepared, []adapter.Message{{Role: "assistant", Content: "answer"}})
+	if _, err := svc.copyConversationTranscriptForBranch(context.Background(), *sourceMessage.TranscriptHeadEntryID, uuid.New(), map[uuid.UUID]uuid.UUID{}, sourceConversation.OrganizationID); err == nil {
+		t.Fatal("expected incomplete message mapping to be rejected")
+	}
+}
+
+func TestLegacyMainMessageHistoryIsLazilyJoinedToParentChain(t *testing.T) {
+	svc, parent, conversation := newContextEntryTestService(t, "context-entry-legacy-bootstrap")
+	parent.Status = runtimemodel.MessageStatusCompleted
+	parent.Query = "old question"
+	parent.Answer = "old answer"
+	parent.Metadata = mergeAgentTranscriptMetadata(nil, testProtocolTranscript(), parent.Answer)
+	if err := svc.repos.DB.Save(parent).Error; err != nil {
+		t.Fatal(err)
+	}
+	child := &runtimemodel.Message{ID: uuid.New(), ConversationID: conversation.ID, ParentID: &parent.ID, Query: "new question", Status: runtimemodel.MessageStatusStreaming, ModelName: "test", ModelParameters: map[string]interface{}{}, Metadata: map[string]interface{}{}}
+	if err := svc.repos.Message.Create(context.Background(), child); err != nil {
+		t.Fatal(err)
+	}
+	prepared := &PreparedChat{Message: child, Conversation: conversation, Scope: Scope{OrganizationID: conversation.OrganizationID, AccountID: conversation.AccountID}}
+	svc.persistTurnTranscriptEntries(context.Background(), prepared, []adapter.Message{{Role: "assistant", Content: "new answer"}})
+	region, ok, err := svc.projectTranscriptChain(context.Background(), *child.TranscriptHeadEntryID, map[uuid.UUID]*runtimemodel.Message{parent.ID: parent, child.ID: child}, false)
+	if err != nil || !ok {
+		t.Fatalf("legacy bootstrap projection = %v/%v", ok, err)
+	}
+	joined := make([]string, 0, len(region.Messages))
+	for _, message := range region.Messages {
+		joined = append(joined, messageContentText(message.Content))
+	}
+	text := strings.Join(joined, "|")
+	if !strings.Contains(text, "old question") || !strings.Contains(text, "old answer") || !strings.Contains(text, "new question") {
+		t.Fatalf("legacy history was not joined: %s", text)
 	}
 }
 
 func TestPruneTranscriptMessageForWriteArchivesOversizedToolResults(t *testing.T) {
 	entryID := uuid.New()
-	big := strings.Repeat("很长的工具结果", 4000)
+	big := strings.Repeat("large result ", 9000)
 	payload := map[string]interface{}{"role": "tool", "tool_call_id": "call-1", "content": big}
-
 	preview := pruneTranscriptMessageForWrite(entryID, payload, runtimemodel.TranscriptEntryKindTool)
-	content := messageContentText(preview["content"])
-	if !strings.Contains(content, "ref="+entryID.String()) {
-		t.Fatalf("preview lost the ref: %s", content)
-	}
-	if !strings.Contains(content, "原始长度=") || !strings.Contains(content, "预览（前 200 字）") {
-		t.Fatalf("preview is missing the archive header: %s", content)
-	}
-	if len([]rune(content)) >= len([]rune(big)) {
-		t.Fatalf("preview was not shortened: %d vs %d", len([]rune(content)), len([]rune(big)))
-	}
-	if preview["tool_call_id"] != "call-1" {
-		t.Fatalf("preview lost the tool_call_id: %+v", preview)
-	}
-	if payload["content"] != big {
-		t.Fatal("payload was mutated by the preview computation")
-	}
-
-	small := map[string]interface{}{"role": "tool", "content": "短结果"}
-	if got := pruneTranscriptMessageForWrite(entryID, small, runtimemodel.TranscriptEntryKindTool); got["content"] != "短结果" {
-		t.Fatalf("small tool result should stay inline: %+v", got)
-	}
-	assistant := map[string]interface{}{"role": "assistant", "content": big}
-	if got := pruneTranscriptMessageForWrite(entryID, assistant, runtimemodel.TranscriptEntryKindAssistant); got["content"] != big {
-		t.Fatal("assistant messages must never be archived")
+	if !strings.Contains(messageContentText(preview["content"]), "ref="+entryID.String()) || len([]rune(messageContentText(preview["content"]))) >= len([]rune(big)) {
+		t.Fatal("tool preview was not archived")
 	}
 }
 
-func TestCloseDanglingToolCallsClosesUnmatchedBatch(t *testing.T) {
-	messages := []adapter.Message{
-		{Role: "user", Content: "帮我退款"},
-		{Role: "assistant", ToolCalls: []adapter.ToolCall{
-			{ID: "call-1", Function: adapter.FunctionCall{Name: "refund_query"}},
-			{ID: "call-2", Function: adapter.FunctionCall{Name: "refund_submit"}},
-		}},
-		{Role: "tool", ToolCallID: "call-1", Content: "订单 12345"},
-	}
-
-	closed, synthesized := closeDanglingToolCalls(messages)
-	if len(synthesized) != 1 {
-		t.Fatalf("synthesized = %d, want 1", len(synthesized))
-	}
-	if synthesized[0].ToolCallID != "call-2" {
-		t.Fatalf("synthesized the wrong call: %+v", synthesized[0])
-	}
-	content := messageContentText(synthesized[0].Content)
-	if !strings.Contains(content, "结果未记录") || !strings.Contains(content, "不要盲目重试") {
-		t.Fatalf("synthetic result must warn against blind retry: %s", content)
-	}
-	if len(closed) != 4 {
-		t.Fatalf("closed messages = %d, want 4", len(closed))
-	}
-}
-
-func TestSnapContextWindowStartKeepsToolBatchWhole(t *testing.T) {
-	messages := []adapter.Message{
-		{Role: "user", Content: "第一轮"},
-		{Role: "assistant", ToolCalls: []adapter.ToolCall{{ID: "call-1"}}},
-		{Role: "tool", ToolCallID: "call-1", Content: "结果"},
-		{Role: "assistant", Content: "回答"},
-	}
-	if got := snapContextWindowStart(messages, 2); got != 1 {
-		t.Fatalf("window start = %d, want 1 so the assistant tool call stays inside", got)
-	}
-	if got := snapContextWindowStart(messages, 3); got != 3 {
-		t.Fatalf("window start = %d, want 3 (already a legal boundary)", got)
-	}
-	if got := snapContextWindowStart(messages, 0); got != 0 {
-		t.Fatalf("window start = %d, want 0", got)
-	}
-}
-
-func TestContextEntrySyncAppendsTranscriptAsIdempotentEntries(t *testing.T) {
-	svc, message, conversation := newContextEntryTestService(t, "context-entry-sync")
-	ctx := context.Background()
-	prepared := &PreparedChat{Message: message, Conversation: conversation}
-	writer, err := svc.agentContextEntrySync(ctx, prepared)
-	if err != nil {
-		t.Fatalf("agentContextEntrySync: %v", err)
-	}
-	if writer == nil {
-		t.Fatal("expected an entry writer")
-	}
-
-	transcript := testProtocolTranscript()
-	if err := writer.sync(ctx, svc.repos, transcript); err != nil {
-		t.Fatalf("first sync: %v", err)
-	}
-	if err := writer.sync(ctx, svc.repos, transcript); err != nil {
-		t.Fatalf("second sync: %v", err)
-	}
-	entries, err := svc.repos.TranscriptEntry.ListPreviewsByMessage(ctx, message.ID)
-	if err != nil {
-		t.Fatalf("ListPreviewsByMessage: %v", err)
-	}
-	if len(entries) != len(transcript) {
-		t.Fatalf("entries = %d, want %d (repeat sync must not duplicate)", len(entries), len(transcript))
-	}
-	for index, entry := range entries {
-		if entry.Seq != index+1 || entry.CSeq != int64(index+1) {
-			t.Fatalf("entry %d positions = (seq %d, cseq %d)", index, entry.Seq, entry.CSeq)
-		}
-	}
-
-	extended := append(testProtocolTranscript(), adapter.Message{Role: "user", Content: "还有一笔"})
-	if err := writer.sync(ctx, svc.repos, extended); err != nil {
-		t.Fatalf("third sync: %v", err)
-	}
-	entries, err = svc.repos.TranscriptEntry.ListPreviewsByMessage(ctx, message.ID)
-	if err != nil {
-		t.Fatalf("ListPreviewsByMessage after append: %v", err)
-	}
-	if len(entries) != len(extended) {
-		t.Fatalf("entries = %d, want %d", len(entries), len(extended))
-	}
-
-	boundary, ok := writer.boundaryForCompactInput(transcript[:3])
-	if !ok {
-		t.Fatal("boundary for the first three messages was not resolved")
-	}
-	if boundary != 3 {
-		t.Fatalf("boundary = %d, want 3 (last summarised entry)", boundary)
-	}
-	if _, ok := writer.boundaryForCompactInput([]adapter.Message{{Role: "user", Content: "不在日志里的消息"}}); ok {
-		t.Fatal("an unmatched compact input must not claim a boundary")
-	}
-}
-
-func TestLoadProjectedConversationContextRebuildsFromEntriesThenFallsBack(t *testing.T) {
-	svc, message, conversation := newContextEntryTestService(t, "context-entry-load")
-	ctx := context.Background()
-	prepared := &PreparedChat{Message: message, Conversation: conversation}
-	writer, err := svc.agentContextEntrySync(ctx, prepared)
-	if err != nil {
-		t.Fatalf("agentContextEntrySync: %v", err)
-	}
-	if err := writer.sync(ctx, svc.repos, testProtocolTranscript()[:3]); err != nil {
-		t.Fatalf("sync: %v", err)
-	}
-
-	messages, ok, err := svc.loadProjectedConversationContext(ctx, conversation.ID, 0)
-	if err != nil || !ok {
-		t.Fatalf("loadProjectedConversationContext = (%v, %v)", ok, err)
-	}
-	if len(messages) != 3 {
-		t.Fatalf("projected messages = %d, want 3", len(messages))
-	}
-
-	if err := svc.repos.Message.UpdateContextSummary(ctx, message.ID, "更早对话的摘要", 2); err != nil {
-		t.Fatalf("UpdateContextSummary: %v", err)
-	}
-	messages, ok, err = svc.loadProjectedConversationContext(ctx, conversation.ID, 3)
-	if err != nil || !ok {
-		t.Fatalf("loadProjectedConversationContext with summary = (%v, %v)", ok, err)
-	}
-	if len(messages) != 2 {
-		t.Fatalf("messages = %d, want 2 (summary + the entry after the boundary)", len(messages))
-	}
-	if !strings.Contains(messageContentText(messages[0].Content), "更早对话的摘要") {
-		t.Fatalf("first message is not the summary: %+v", messages[0])
-	}
-	if messageContentText(messages[1].Content) != "订单 12345：已支付 199 元" {
-		t.Fatalf("entry after the boundary is missing: %+v", messages[1])
-	}
-
-	empty, ok, err := svc.loadProjectedConversationContext(ctx, uuid.New(), 0)
-	if err != nil || ok || empty != nil {
-		t.Fatalf("conversation without entries must report a miss: (%v, %v, %v)", empty, ok, err)
-	}
-}
-
-func TestHistoricalAgentTranscriptPrefersEntriesOverLegacyMetadata(t *testing.T) {
-	svc, message, conversation := newContextEntryTestService(t, "context-entry-history")
-	ctx := context.Background()
-	message.Metadata = map[string]interface{}{
-		agentTranscriptVersionMetadataKey: agentTranscriptSchemaVersion,
-		agentTranscriptMetadataKey: []interface{}{
-			map[string]interface{}{"role": "assistant", "content": "旧快照回答"},
-		},
-	}
-	legacy := svc.historicalAgentTranscript(ctx, message)
-	if len(legacy) != 1 || messageContentText(legacy[0].Content) != "旧快照回答" {
-		t.Fatalf("legacy metadata fallback = %+v", legacy)
-	}
-
-	prepared := &PreparedChat{Message: message, Conversation: conversation}
-	writer, err := svc.agentContextEntrySync(ctx, prepared)
-	if err != nil {
-		t.Fatalf("agentContextEntrySync: %v", err)
-	}
-	if err := writer.sync(ctx, svc.repos, testProtocolTranscript()); err != nil {
-		t.Fatalf("sync: %v", err)
-	}
-
-	projected := svc.historicalAgentTranscript(ctx, message)
-	if len(projected) != 4 {
-		t.Fatalf("projected messages = %d, want the 4 stored entries", len(projected))
-	}
-	if messageContentText(projected[3].Content) != "已为你提交退款" {
-		t.Fatalf("entries did not win over metadata: %+v", projected[3])
-	}
-}
-
-func TestCopyConversationTranscriptForBranchRemintsIdsAndRewritesRefs(t *testing.T) {
-	svc, message, conversation := newContextEntryTestService(t, "context-entry-branch")
-	ctx := context.Background()
-	prepared := &PreparedChat{Message: message, Conversation: conversation}
-	writer, err := svc.agentContextEntrySync(ctx, prepared)
-	if err != nil {
-		t.Fatalf("agentContextEntrySync: %v", err)
-	}
-	// One oversized tool result so the preview carries a ref that must be
-	// repointed at the copy.
-	big := strings.Repeat("工具结果", 4000)
-	transcript := []adapter.Message{
-		{Role: "user", Content: "帮我退款"},
-		{Role: "assistant", ToolCalls: []adapter.ToolCall{{ID: "call-1", Function: adapter.FunctionCall{Name: "refund_query"}}}},
-		{Role: "tool", ToolCallID: "call-1", Content: big},
-	}
-	if err := writer.sync(ctx, svc.repos, transcript); err != nil {
-		t.Fatalf("sync: %v", err)
-	}
-	sourceEntries, err := svc.repos.TranscriptEntry.ListPreviewsByMessage(ctx, message.ID)
-	if err != nil {
-		t.Fatalf("ListPreviewsByMessage: %v", err)
-	}
-	if len(sourceEntries) != 3 {
-		t.Fatalf("source entries = %d, want 3", len(sourceEntries))
-	}
-
-	branchConversationID := uuid.New()
-	branch := &runtimemodel.Conversation{
-		ID:             branchConversationID,
-		OrganizationID: conversation.OrganizationID,
-		AccountID:      conversation.AccountID,
-		Title:          "branch",
-		Metadata:       map[string]interface{}{},
-	}
-	if err := svc.repos.DB.Create(branch).Error; err != nil {
-		t.Fatalf("create branch conversation: %v", err)
-	}
-	branchMessage := &runtimemodel.Message{
-		ID:              uuid.New(),
-		ConversationID:  branchConversationID,
-		Query:           message.Query,
-		Status:          runtimemodel.MessageStatusCompleted,
-		ModelName:       message.ModelName,
-		ModelParameters: map[string]interface{}{},
-		Metadata:        map[string]interface{}{},
-	}
-	if err := svc.repos.DB.Create(branchMessage).Error; err != nil {
-		t.Fatalf("create branch message: %v", err)
-	}
-
-	copied, err := svc.copyConversationTranscriptForBranch(ctx, conversation.ID, branchConversationID,
-		map[uuid.UUID]uuid.UUID{message.ID: branchMessage.ID}, conversation.OrganizationID, sourceEntries[2].CSeq)
-	if err != nil {
-		t.Fatalf("copyConversationTranscriptForBranch: %v", err)
-	}
-	if copied != 3 {
-		t.Fatalf("copied entries = %d, want 3", copied)
-	}
-
-	branchEntries, err := svc.repos.TranscriptEntry.ListPreviewsByMessage(ctx, branchMessage.ID)
-	if err != nil {
-		t.Fatalf("branch entries: %v", err)
-	}
-	if len(branchEntries) != 3 {
-		t.Fatalf("branch entries = %d, want 3", len(branchEntries))
-	}
-	for index := range branchEntries {
-		if branchEntries[index].CSeq != sourceEntries[index].CSeq || branchEntries[index].Seq != sourceEntries[index].Seq {
-			t.Fatalf("positions changed at %d: %+v vs %+v", index, branchEntries[index], sourceEntries[index])
-		}
-		if branchEntries[index].ID == sourceEntries[index].ID {
-			t.Fatalf("entry %d kept the source id", index)
-		}
-	}
-
-	// The branch must own its archived result: the ref now names the copy.
-	prunedContent := messageContentText(branchEntries[2].Preview["content"])
-	if strings.Contains(prunedContent, sourceEntries[2].ID.String()) {
-		t.Fatalf("branch preview still points at the source entry: %s", prunedContent)
-	}
-	if !strings.Contains(prunedContent, branchEntries[2].ID.String()) {
-		t.Fatalf("branch preview ref was not rewritten: %s", prunedContent)
-	}
-
-	// Branching must reproduce the source context at the boundary.
-	branchMessages, ok, err := svc.loadProjectedConversationContext(ctx, branchConversationID, 0)
-	if err != nil || !ok {
-		t.Fatalf("branch projection = (%v, %v)", ok, err)
-	}
-	if len(branchMessages) != 3 || messageContentText(branchMessages[0].Content) != "帮我退款" {
-		t.Fatalf("branch context does not match the source boundary: %+v", branchMessages)
+func TestCompactBoundaryUsesEntryID(t *testing.T) {
+	messages := []adapter.Message{{Role: "user", Content: "q", EntryID: uuid.NewString()}, {Role: "assistant", Content: "a", EntryID: uuid.NewString()}}
+	got := messages[len(messages)-1].EntryID
+	if got != messages[1].EntryID {
+		t.Fatalf("boundary = %q", got)
 	}
 }

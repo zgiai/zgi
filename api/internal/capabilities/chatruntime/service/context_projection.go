@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/contextmgr"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
@@ -106,26 +105,12 @@ func pruneTranscriptMessageForWrite(entryID uuid.UUID, payload map[string]interf
 	return pruned
 }
 
-// projectContextMessages assembles the model-visible conversation region: the
-// stored summary (already a role=user message, matching what the model saw)
-// followed by every entry after the boundary in cseq order. Entries at or
-// before the boundary are represented by the summary and are skipped.
-func projectContextMessages(summary *runtimemodel.MessageContextSummary, entries []*runtimemodel.TranscriptEntryPreview) ([]adapter.Message, error) {
+// projectContextMessages decodes a chronological list of transcript previews.
+// Summary entries are projected by the parent-chain loader and are ignored here.
+func projectContextMessages(entries []*runtimemodel.TranscriptEntryPreview) ([]adapter.Message, error) {
 	messages := make([]adapter.Message, 0, len(entries)+1)
-	if summary != nil && strings.TrimSpace(summary.Summary) != "" {
-		// The stored value is the summary text. The live context injected it
-		// wrapped as a user message, so the projection applies the same formatter
-		// and reproduces exactly what the model saw.
-		messages = append(messages, adapter.Message{
-			Role:    "user",
-			Content: contextmgr.GetCompactUserSummaryMessage(contextmgr.FormatCompactSummary(summary.Summary), true, "", true),
-		})
-	}
 	for _, entry := range entries {
-		if entry == nil || len(entry.Preview) == 0 {
-			continue
-		}
-		if summary != nil && entry.CSeq <= summary.ThroughSeq {
+		if entry == nil || entry.Kind == runtimemodel.TranscriptEntryKindSummary || len(entry.Preview) == 0 {
 			continue
 		}
 		message, err := protocolMessageFromJSON(entry.Preview)

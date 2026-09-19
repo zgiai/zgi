@@ -86,12 +86,15 @@ func loadChatRuntimeConfig(cfg *Config, source *envSource) error {
 	if timeout <= 0 {
 		timeout = 300
 	}
-	agentContextWindowK, err := source.int(256, envChatRuntimeAgentContextWindowK)
+	agentContextWindowK, err := source.int(512, envChatRuntimeAgentContextWindowK)
 	if err != nil {
 		return err
 	}
 	if agentContextWindowK <= 0 {
 		return fmt.Errorf("%s must be a positive integer", envChatRuntimeAgentContextWindowK)
+	}
+	if agentContextWindowK < 512 {
+		agentContextWindowK = 512
 	}
 	if agentContextWindowK > int(^uint(0)>>1)/1000 {
 		return fmt.Errorf("%s is too large", envChatRuntimeAgentContextWindowK)

@@ -150,10 +150,11 @@ func renderAgentContextPromptDump(now time.Time, requestType string, round int, 
 	fmt.Fprintf(&builder, "压缩前 Token: %d\n", metrics.BeforeTokens)
 	fmt.Fprintf(&builder, "压缩后 Token: %d\n", metrics.AfterTokens)
 	fmt.Fprintf(&builder, "压缩覆盖至 API Round: %d\n", metrics.CompactedThroughRound)
-	fmt.Fprintf(&builder, "保留原文 API Rounds: %v\n", metrics.PreservedRounds)
+	fmt.Fprintf(&builder, "保留原文协议消息数: %d\n", metrics.PreservedMessageCount)
+	fmt.Fprintf(&builder, "保留原文 API Rounds（兼容指标）: %v\n", metrics.PreservedRounds)
 	fmt.Fprintf(&builder, "工具结果原始 Token: %d\n", metrics.ToolResultOriginalTokens)
 	fmt.Fprintf(&builder, "工具结果投影后 Token: %d\n", metrics.ToolResultProjectedTokens)
-	fmt.Fprintf(&builder, "摘要输入裁剪 API Rounds: %d\n", metrics.LossyRecoveryDroppedRounds)
+	fmt.Fprintf(&builder, "摘要输入裁剪不可拆分消息批次: %d\n", metrics.LossyRecoveryDroppedBatches)
 	fmt.Fprintf(&builder, "估算器/校准系数: %s / %.4f\n", metrics.Estimator, metrics.EstimateScale)
 	if metrics.CompactionFailure != "" {
 		fmt.Fprintf(&builder, "压缩失败: %s\n", metrics.CompactionFailure)

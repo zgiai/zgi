@@ -66,8 +66,6 @@ type MessageRepository interface {
 	DeleteSubtreeScoped(ctx context.Context, id, organizationID, accountID uuid.UUID) (*MessageDeleteResult, error)
 	ListStaleActiveIDs(ctx context.Context, cutoff time.Time) ([]uuid.UUID, error)
 	MarkStaleActiveAsError(ctx context.Context, cutoff time.Time, message string) (int64, error)
-	UpdateContextSummary(ctx context.Context, id uuid.UUID, summary string, throughSeq int64) error
-	ContextSummaryAt(ctx context.Context, conversationID uuid.UUID, throughCSeq int64) (*runtimemodel.MessageContextSummary, error)
 	CountChildren(ctx context.Context, parentID uuid.UUID) (int64, error)
 }
 
@@ -76,11 +74,20 @@ type MessageRepository interface {
 // List and projection reads must stay on the preview columns.
 type TranscriptEntryRepository interface {
 	Append(ctx context.Context, entries []*runtimemodel.TranscriptEntry) error
-	NextPositions(ctx context.Context, conversationID, messageID uuid.UUID) (int, int64, error)
-	MaxCSeq(ctx context.Context, conversationID uuid.UUID) (int64, error)
-	ListPreviewsByConversation(ctx context.Context, conversationID uuid.UUID, afterCSeq int64, limit int) ([]*runtimemodel.TranscriptEntryPreview, error)
+	// AppendForMessage appends a chain and advances the owning message head in
+	// one transaction. expectedHead is nil for a new message.
+	AppendForMessage(ctx context.Context, messageID uuid.UUID, expectedHead *uuid.UUID, entries []*runtimemodel.TranscriptEntry) (uuid.UUID, error)
+	// AppendSummaryForMessage appends a summary checkpoint and advances the
+	// owning message head atomically.
+	AppendSummaryForMessage(ctx context.Context, messageID uuid.UUID, expectedHead, boundary *uuid.UUID, summary, eventID string) (uuid.UUID, error)
+	SetMessageHead(ctx context.Context, messageID uuid.UUID, head *uuid.UUID) error
+	// LoadPreviewChain returns the reachable chain from newest to oldest. It
+	// stops at stopAt, when provided, and rejects cycles.
+	LoadPreviewChain(ctx context.Context, headID uuid.UUID, stopAt *uuid.UUID, limit int) ([]*runtimemodel.TranscriptEntryPreview, error)
+	// ListForCopyByHead returns the complete reachable chain in chronological
+	// order, including payloads, for an isolated branch copy.
+	ListForCopyByHead(ctx context.Context, headID uuid.UUID, stopAt *uuid.UUID) ([]*runtimemodel.TranscriptEntry, error)
 	ListPreviewsByMessage(ctx context.Context, messageID uuid.UUID) ([]*runtimemodel.TranscriptEntryPreview, error)
-	ListForCopy(ctx context.Context, conversationID uuid.UUID, throughCSeq int64) ([]*runtimemodel.TranscriptEntry, error)
 	GetPayload(ctx context.Context, id, organizationID uuid.UUID) (*runtimemodel.TranscriptEntry, error)
 	UpdatePreview(ctx context.Context, id uuid.UUID, preview map[string]interface{}, byteSize int) error
 	DeleteByMessage(ctx context.Context, messageID uuid.UUID) (int64, error)
@@ -879,6 +886,16 @@ func (r *messageRepository) Create(ctx context.Context, message *runtimemodel.Me
 	if message.Metadata == nil {
 		message.Metadata = map[string]interface{}{}
 	}
+	if message.TranscriptHeadEntryID == nil && message.ParentID != nil {
+		var parent runtimemodel.Message
+		if err := r.db.WithContext(ctx).Select("transcript_head_entry_id").Where("id = ?", *message.ParentID).Take(&parent).Error; err != nil {
+			return fmt.Errorf("failed to inherit transcript head from parent message: %w", err)
+		}
+		if parent.TranscriptHeadEntryID != nil && *parent.TranscriptHeadEntryID != uuid.Nil {
+			head := *parent.TranscriptHeadEntryID
+			message.TranscriptHeadEntryID = &head
+		}
+	}
 	message.CreatedAt = now
 	message.UpdatedAt = now
 	if err := r.db.WithContext(ctx).Create(message).Error; err != nil {
@@ -1127,22 +1144,26 @@ func (r *messageRepository) ReplaceRootForStreaming(ctx context.Context, message
 	result := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
 		Where("id = ? AND deleted_at IS NULL AND parent_id IS NULL", message.ID).
 		Updates(map[string]interface{}{
-			"query":                 message.Query,
-			"answer":                "",
-			"status":                runtimemodel.MessageStatusStreaming,
-			"error":                 nil,
-			"model_provider":        message.ModelProvider,
-			"model_name":            message.ModelName,
-			"billing_reason_source": message.BillingReasonSource,
-			"model_parameters":      datatypes.JSON(parametersJSON),
-			"metadata":              datatypes.JSON(metadataJSON),
-			"updated_at":            time.Now(),
+			"query":                    message.Query,
+			"answer":                   "",
+			"status":                   runtimemodel.MessageStatusStreaming,
+			"error":                    nil,
+			"model_provider":           message.ModelProvider,
+			"model_name":               message.ModelName,
+			"billing_reason_source":    message.BillingReasonSource,
+			"model_parameters":         datatypes.JSON(parametersJSON),
+			"metadata":                 datatypes.JSON(metadataJSON),
+			"transcript_head_entry_id": nil,
+			"updated_at":               time.Now(),
 		})
 	if result.Error != nil {
 		return fmt.Errorf("failed to prepare aichat root replacement: %w", result.Error)
 	}
 	if result.RowsAffected == 0 {
 		return gorm.ErrRecordNotFound
+	}
+	if err := r.db.WithContext(ctx).Where("message_id = ?", message.ID).Delete(&runtimemodel.TranscriptEntry{}).Error; err != nil {
+		return fmt.Errorf("failed to clear root transcript entries: %w", err)
 	}
 	return nil
 }
@@ -1514,48 +1535,6 @@ func (r *messageRepository) CountChildren(ctx context.Context, parentID uuid.UUI
 		return 0, fmt.Errorf("count child messages: %w", err)
 	}
 	return count, nil
-}
-
-// UpdateContextSummary records one compaction summary together with its precise
-// boundary: the cseq of the last transcript entry the summary covers.
-func (r *messageRepository) UpdateContextSummary(ctx context.Context, id uuid.UUID, summary string, throughSeq int64) error {
-	result := r.db.WithContext(ctx).
-		Model(&runtimemodel.Message{}).
-		Where("id = ?", id).
-		Updates(map[string]interface{}{
-			"summary":             summary,
-			"summary_through_seq": throughSeq,
-		})
-	if result.Error != nil {
-		return fmt.Errorf("update message context summary: %w", result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("update message context summary: message %s not found", id)
-	}
-	return nil
-}
-
-// ContextSummaryAt returns the newest summary whose boundary is at or before
-// throughCSeq. A conversation without an applicable summary yields (nil, nil) so
-// callers fall back to projecting every entry from the beginning.
-func (r *messageRepository) ContextSummaryAt(ctx context.Context, conversationID uuid.UUID, throughCSeq int64) (*runtimemodel.MessageContextSummary, error) {
-	var row runtimemodel.MessageContextSummary
-	err := r.db.WithContext(ctx).
-		Model(&runtimemodel.Message{}).
-		Select("id AS message_id, summary, summary_through_seq AS through_seq").
-		Where("conversation_id = ? AND summary IS NOT NULL AND summary_through_seq IS NOT NULL AND summary_through_seq <= ?", conversationID, throughCSeq).
-		Order("summary_through_seq DESC").
-		Take(&row).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("read conversation context summary: %w", err)
-	}
-	if row.ThroughSeq == 0 && row.Summary == "" {
-		return nil, nil
-	}
-	return &row, nil
 }
 
 type accessRepository struct {
