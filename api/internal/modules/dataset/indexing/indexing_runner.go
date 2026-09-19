@@ -1681,7 +1681,7 @@ func (ir *IndexingRunner) ensureVectorClass(ctx context.Context, className strin
 		{
 			"name":            "text",
 			"dataType":        []string{"text"},
-			"tokenization":    "gse_ch",
+			"tokenization":    "word",
 			"indexSearchable": true,
 		},
 	}

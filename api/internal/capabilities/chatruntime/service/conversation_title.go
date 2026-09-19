@@ -28,6 +28,10 @@ type conversationTitleGenerationInput struct {
 	LegacyFallback    bool
 }
 
+func conversationTitleGenerationEnabled(caller Caller) bool {
+	return normalizeConversationType(caller.ConversationType) != runtimemodel.ConversationTypeImage
+}
+
 func conversationTitleMessagesFromQuery(query string) []titlegen.Message {
 	query = strings.TrimSpace(query)
 	if query == "" {
@@ -75,7 +79,7 @@ func (s *service) enqueueConversationTitleGeneration(
 	conversation *runtimemodel.Conversation,
 	input conversationTitleGenerationInput,
 ) {
-	if s == nil || s.titleGen == nil || conversation == nil || len(input.Messages) == 0 {
+	if s == nil || s.titleGen == nil || !conversationTitleGenerationEnabled(caller) || conversation == nil || len(input.Messages) == 0 {
 		return
 	}
 	conversationID := conversation.ID
@@ -165,7 +169,7 @@ func (s *service) persistConversationTitleGenerationResult(
 }
 
 func (s *service) enqueueConversationTitleBackfills(ctx context.Context, scope Scope, caller Caller, conversations []*runtimemodel.Conversation) {
-	if s == nil || s.titleGen == nil || s.repos == nil || s.repos.DB == nil {
+	if s == nil || s.titleGen == nil || !conversationTitleGenerationEnabled(caller) || s.repos == nil || s.repos.DB == nil {
 		return
 	}
 	for _, conversation := range conversations {
@@ -174,7 +178,7 @@ func (s *service) enqueueConversationTitleBackfills(ctx context.Context, scope S
 }
 
 func (s *service) enqueueConversationTitleBackfill(ctx context.Context, scope Scope, caller Caller, conversation *runtimemodel.Conversation) {
-	if s == nil || s.titleGen == nil || s.repos == nil || s.repos.DB == nil || conversation == nil || conversation.DialogueCount <= 0 {
+	if s == nil || s.titleGen == nil || !conversationTitleGenerationEnabled(caller) || s.repos == nil || s.repos.DB == nil || conversation == nil || conversation.DialogueCount <= 0 {
 		return
 	}
 	status := conversationTitleGenerationStatus(conversation.Metadata)

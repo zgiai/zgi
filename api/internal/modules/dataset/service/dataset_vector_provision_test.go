@@ -57,7 +57,7 @@ func TestEnsureDatasetVectorClassUsesDatasetCollection(t *testing.T) {
 	if vectorDB.className != model.GenCollectionNameByID(datasetID) {
 		t.Fatalf("class name=%q, want %q", vectorDB.className, model.GenCollectionNameByID(datasetID))
 	}
-	if len(vectorDB.properties) != 1 || vectorDB.properties[0]["name"] != "text" || vectorDB.properties[0]["tokenization"] != "gse_ch" {
+	if len(vectorDB.properties) != 1 || vectorDB.properties[0]["name"] != "text" || vectorDB.properties[0]["tokenization"] != "word" {
 		t.Fatalf("properties=%#v", vectorDB.properties)
 	}
 }

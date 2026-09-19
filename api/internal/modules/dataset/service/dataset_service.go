@@ -641,7 +641,7 @@ func defaultDatasetVectorClassProperties() []map[string]interface{} {
 		{
 			"name":            "text",
 			"dataType":        []string{"text"},
-			"tokenization":    "gse_ch",
+			"tokenization":    "word",
 			"indexSearchable": true,
 		},
 	}
