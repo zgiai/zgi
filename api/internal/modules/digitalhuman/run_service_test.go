@@ -21,6 +21,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/resourcebindings"
 	"github.com/zgiai/zgi/api/internal/capabilities/runspec"
 	"github.com/zgiai/zgi/api/internal/capabilities/runtimeidentity"
+	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"gorm.io/datatypes"
@@ -48,6 +49,50 @@ func TestRuntimeServiceSubmitIsDurableAndIdempotent(t *testing.T) {
 	}
 	if got := store.outbox[0].Status; got != RunOutboxConfirmed {
 		t.Fatalf("outbox status = %s, want confirmed", got)
+	}
+}
+
+func TestRuntimeServiceSubmitAPIStoresTaskTokenBudgetInInvocationContext(t *testing.T) {
+	store, dispatcher, chat := newFakeRunStore(), &fakeRunDispatcher{}, &fakeDigitalHumanChat{}
+	service := newTestRuntimeService(t, store, dispatcher, chat)
+	scope := testRunScope()
+	scope.Surface = SurfaceAPI
+	scope.PrincipalType = string(invocation.PrincipalService)
+	scope.PrincipalID = scope.ActorID
+	subjectID := uuid.New()
+	scope.UserSubjectID = &subjectID
+	scope.UserSubjectKind = string(usersubject.APIEndUser)
+	digitalHumanID := uuid.New()
+
+	run, created, err := service.SubmitAPI(t.Context(), scope, digitalHumanID, ManualInvocationRequest{
+		RequestID: uuid.New(), Query: "inspect the deployment", MaxTaskTokens: 42000,
+	})
+	if err != nil || !created || run == nil {
+		t.Fatalf("SubmitAPI() = %#v, created %v, error %v", run, created, err)
+	}
+	_, event, err := decodeAndVerifyRun(run)
+	if err != nil {
+		t.Fatalf("decode run: %v", err)
+	}
+	if got := intContextValue(event.Context, "max_task_tokens"); got != 42000 {
+		t.Fatalf("max_task_tokens = %d, want 42000", got)
+	}
+
+	for _, invalid := range []int{-1, 100000001} {
+		failed, failedCreated, err := service.SubmitAPI(t.Context(), scope, digitalHumanID, ManualInvocationRequest{
+			RequestID: uuid.New(), Query: "reject invalid budget", MaxTaskTokens: invalid,
+		})
+		if failed != nil || failedCreated || !errors.Is(err, ErrInvalidRequest) {
+			t.Fatalf("SubmitAPI(max_task_tokens=%d) = %#v, created %v, error %v", invalid, failed, failedCreated, err)
+		}
+	}
+	webScope := scope
+	webScope.Surface = SurfaceWebApp
+	failed, failedCreated, err := service.SubmitWebApp(t.Context(), webScope, digitalHumanID, ManualInvocationRequest{
+		RequestID: uuid.New(), Query: "reject webapp budget", MaxTaskTokens: 42000,
+	})
+	if failed != nil || failedCreated || !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("SubmitWebApp(max_task_tokens) = %#v, created %v, error %v", failed, failedCreated, err)
 	}
 }
 

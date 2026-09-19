@@ -55,18 +55,30 @@ func (s *service) persistModelInvocationBestEffort(ctx context.Context, prepared
 	if prepared == nil || prepared.Message == nil {
 		return
 	}
+	if prepared.taskTokenBudget != nil {
+		prepared.taskTokenBudget.addUsage(trace.Usage)
+	}
 	suppressContent := prepared.parts != nil && prepared.parts.AgentMemoryEnabled
 	if suppressContent {
 		trace = modelInvocationTraceWithoutContent(trace)
 	}
 	invocation := modelInvocationFromTrace(trace, runtimeUserSystemPrompt(prepared), shouldRedactModelInvocationRequest(prepared))
-	if len(invocation) == 0 {
+	if len(invocation) == 0 && prepared.taskTokenBudget == nil {
 		return
 	}
-	if shouldPersistAgentLogContext(prepared) && !suppressContent {
+	if shouldPersistAgentLogContext(prepared) && !suppressContent && len(invocation) > 0 {
 		invocation["log_context"] = modelInvocationLogContext(trace.Request, runtimeUserSystemPrompt(prepared))
 	}
-	metadata := mergeModelInvocationMetadata(prepared.Message.Metadata, invocation)
+	metadata := copyStringAnyMap(prepared.Message.Metadata)
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	if len(invocation) > 0 {
+		metadata = mergeModelInvocationMetadata(metadata, invocation)
+	}
+	if prepared.taskTokenBudget != nil {
+		metadata[taskTokenBudgetMetadataKey] = prepared.taskTokenBudget.metadata("running")
+	}
 	provider := ""
 	model := ""
 	if trace.Request != nil {

@@ -54,6 +54,8 @@ const (
 	streamEventAgentProgress               = "agent_progress"
 	streamEventIntermediateAnswer          = "agent_intermediate_answer"
 	streamEventUserInputRequested          = "user_input_requested"
+	streamEventTokenBudgetRequested        = "token_budget_requested"
+	streamEventTokenUsageUpdated           = "token_usage_updated"
 	streamEventFileParseStart              = "file_parse_start"
 	streamEventFileParseEnd                = "file_parse_end"
 	streamEventFileParseError              = "file_parse_error"
@@ -617,6 +619,7 @@ type PreparedChat struct {
 	usageExecutionStarted  bool
 	usageExecutionBaseline *adapter.Usage
 	usageContinuation      bool
+	taskTokenBudget        *taskTokenBudgetState
 }
 
 type ChatResult struct {

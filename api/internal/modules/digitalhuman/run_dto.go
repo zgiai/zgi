@@ -16,6 +16,7 @@ type ManualInvocationRequest struct {
 	ConversationID  *uuid.UUID `json:"conversation_id,omitempty"`
 	ParentMessageID *uuid.UUID `json:"parent_message_id,omitempty"`
 	FileIDs         []string   `json:"file_ids,omitempty"`
+	MaxTaskTokens   int        `json:"max_task_tokens,omitempty"`
 }
 
 // RegenerateInvocationRequest replays a root user turn through the durable

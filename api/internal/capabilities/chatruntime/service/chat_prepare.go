@@ -49,13 +49,14 @@ func (s *service) PrepareConfiguredChat(ctx context.Context, scope Scope, caller
 	s.appendStreamEventBestEffort(ctx, message.ID, conversation.ID, streamEventMessageStart, messageStartPayload(conversation, message, false))
 
 	prepared := &PreparedChat{
-		Conversation: conversation,
-		Message:      message,
-		Scope:        scope,
-		Caller:       caller,
-		RunConfig:    config,
-		ParentID:     parentID,
-		parts:        parts,
+		Conversation:    conversation,
+		Message:         message,
+		Scope:           scope,
+		Caller:          caller,
+		RunConfig:       config,
+		ParentID:        parentID,
+		parts:           parts,
+		taskTokenBudget: newTaskTokenBudget(req.MaxTaskTokens),
 	}
 	s.refreshInitialPageContext(ctx, prepared)
 	return prepared, nil
@@ -64,6 +65,12 @@ func (s *service) PrepareConfiguredChat(ctx context.Context, scope Scope, caller
 func (s *service) prepareConfiguredChatDefinition(ctx context.Context, scope Scope, caller Caller, config RunConfig, req runtimedto.ChatRequest) (RunConfig, *chatRequestParts, *runtimemodel.Conversation, *uuid.UUID, error) {
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return RunConfig{}, nil, nil, nil, err
+	}
+	if req.MaxTaskTokens < 0 || req.MaxTaskTokens > maxTaskTokenBudget {
+		return RunConfig{}, nil, nil, nil, fmt.Errorf("%w: max_task_tokens must be between 0 and %d", ErrInvalidInput, maxTaskTokenBudget)
+	}
+	if req.MaxTaskTokens > 0 && normalizeConversationSource(caller.Source) != runtimemodel.ConversationSourceExternalAPI {
+		return RunConfig{}, nil, nil, nil, fmt.Errorf("%w: max_task_tokens is only available for external API calls", ErrInvalidInput)
 	}
 	initialConnections, err := initialChatConnections(caller, req)
 	if err != nil {

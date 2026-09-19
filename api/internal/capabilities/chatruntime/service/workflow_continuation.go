@@ -1046,6 +1046,11 @@ func (s *service) continueWorkflowTaskInvocation(ctx context.Context, scope Scop
 
 	previousTaskToolCalls := digitalHumanTaskToolInvocationCount(prepared.Message.Metadata)
 	answer, usage, err := s.runPreparedToolLoop(runCtx, persistCtx, prepared, nil, onEvent)
+	if err == nil {
+		if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, answer, usage, nil, onEvent); handled {
+			return result, budgetErr
+		}
+	}
 	if err == nil && req.AllowToolReinvoke && digitalHumanTaskToolInvocationCount(prepared.Message.Metadata) <= previousTaskToolCalls {
 		// A revision is a control-flow transition, not a normal assistant turn.
 		// If the model ignored the first instruction and emitted prose, give it
@@ -1061,7 +1066,13 @@ func (s *service) continueWorkflowTaskInvocation(ctx context.Context, scope Scop
 		err = fmt.Errorf("%w: revised digital-human task proposal was not regenerated", ErrInvalidInput)
 	}
 	if err != nil {
+		if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, answer, usage, err, onEvent); handled {
+			return result, budgetErr
+		}
 		return s.finishUserInputContinuationPendingOrError(persistCtx, prepared, answer, usage, err, onEvent)
+	}
+	if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, answer, usage, nil, onEvent); handled {
+		return result, budgetErr
 	}
 	if s.streams.IsStopped(message.ID, execution.runID) {
 		_ = s.persistStoppedAnswer(persistCtx, prepared, answer, usage)
@@ -1133,6 +1144,7 @@ func (s *service) prepareWorkflowTaskContinuationChat(ctx context.Context, scope
 		ContinuationType: "agent_workflow_task",
 		parts:            parts,
 		contextBudget:    contextResult,
+		taskTokenBudget:  taskTokenBudgetFromMetadata(message.Metadata),
 	}, nil
 }
 

@@ -63,6 +63,23 @@ func (s *service) RunConfiguredUserInputContinuationStream(
 	req runtimedto.UserInputContinuationRequest,
 	onEvent func(StreamEvent) error,
 ) (*ChatResult, error) {
+	if strings.TrimSpace(req.Action) != "" {
+		return s.runTaskTokenBudgetContinuationStream(ctx, scope, caller, config, conversationID, messageID, requestID, req, onEvent)
+	}
+	return s.runConfiguredUserInputContinuationStream(ctx, scope, caller, config, conversationID, messageID, requestID, req, onEvent)
+}
+
+func (s *service) runConfiguredUserInputContinuationStream(
+	ctx context.Context,
+	scope Scope,
+	caller Caller,
+	config RunConfig,
+	conversationID uuid.UUID,
+	messageID uuid.UUID,
+	requestID string,
+	req runtimedto.UserInputContinuationRequest,
+	onEvent func(StreamEvent) error,
+) (*ChatResult, error) {
 	if onEvent == nil {
 		return nil, fmt.Errorf("%w: event callback is required", ErrInvalidInput)
 	}
@@ -100,6 +117,9 @@ func (s *service) RunConfiguredUserInputContinuationStream(
 	if err != nil {
 		return s.finishUserInputContinuationPendingOrError(persistCtx, prepared, answer, usage, err, onEvent)
 	}
+	if budgetErr := prepared.taskTokenBudget.exhausted(); budgetErr != nil {
+		return s.finishUserInputContinuationPendingOrError(persistCtx, prepared, answer, usage, budgetErr, onEvent)
+	}
 	if s.streams.IsStopped(messageID, execution.runID) {
 		_ = s.persistStoppedAnswer(persistCtx, prepared, answer, usage)
 		return nil, ErrMessageStopped
@@ -123,6 +143,17 @@ func (s *service) finishUserInputContinuationPendingOrError(
 	onEvent func(StreamEvent) error,
 ) (*ChatResult, error) {
 	var pendingGovernance *skillloop.ToolGovernancePendingError
+	var budgetExceeded *TaskTokenBudgetExceededError
+	if errors.As(cause, &budgetExceeded) {
+		metadata, persistErr := s.persistTaskTokenBudgetPendingResult(persistCtx, prepared, usage)
+		if persistErr != nil {
+			return nil, finalizedRuntimePersistenceError(persistErr)
+		}
+		payload := taskTokenBudgetEventPayload(metadata, prepared.Conversation.ID.String(), prepared.Message.ID.String())
+		_ = s.emitPreparedEvent(persistCtx, prepared, streamEventTokenBudgetRequested, payload, onEvent)
+		s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion), onEvent)
+		return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingQuestion}, nil
+	}
 	if errors.As(cause, &pendingGovernance) {
 		metadata, persistErr := s.persistToolGovernanceApprovalPendingResult(persistCtx, prepared, pendingGovernance.Payload, usage)
 		if persistErr != nil {
@@ -537,6 +568,7 @@ func (s *service) prepareUserInputContinuationChat(
 		ContinuationType: "user_input",
 		parts:            parts,
 		contextBudget:    contextResult,
+		taskTokenBudget:  taskTokenBudgetFromMetadata(message.Metadata),
 	}, nil
 }
 

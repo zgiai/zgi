@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -146,7 +147,7 @@ func WithManualInvocationFileValidator(validator ManualInvocationFileValidator) 
 func (s *RuntimeService) SubmitManual(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, request ManualInvocationRequest) (*Run, bool, error) {
 	query := strings.TrimSpace(request.Query)
 	if !validScope(scope) || digitalHumanID == uuid.Nil || request.RequestID == uuid.Nil || query == "" ||
-		!utf8.ValidString(query) || utf8.RuneCountInString(query) > maxManualQueryRunes {
+		!utf8.ValidString(query) || utf8.RuneCountInString(query) > maxManualQueryRunes || request.MaxTaskTokens != 0 {
 		return nil, false, ErrInvalidRequest
 	}
 	event := invocation.Event{
@@ -296,7 +297,9 @@ func (s *RuntimeService) submitExternalSurface(ctx context.Context, scope Scope,
 	query := strings.TrimSpace(request.Query)
 	if !validScope(scope) || digitalHumanID == uuid.Nil || request.RequestID == uuid.Nil || query == "" ||
 		!utf8.ValidString(query) || utf8.RuneCountInString(query) > maxManualQueryRunes ||
-		scope.PrincipalID == uuid.Nil || (surface != SurfaceAPI && surface != SurfaceWebApp) {
+		scope.PrincipalID == uuid.Nil || (surface != SurfaceAPI && surface != SurfaceWebApp) ||
+		request.MaxTaskTokens < 0 || request.MaxTaskTokens > 100000000 ||
+		(request.MaxTaskTokens > 0 && surface != SurfaceAPI) {
 		return nil, false, ErrInvalidRequest
 	}
 	eventID := request.RequestID.String()
@@ -332,6 +335,9 @@ func appendInvocationRequestContext(contextValues map[string]any, request Manual
 	}
 	if len(request.FileIDs) > 0 {
 		contextValues["file_ids"] = slices.Clone(request.FileIDs)
+	}
+	if request.MaxTaskTokens > 0 {
+		contextValues["max_task_tokens"] = request.MaxTaskTokens
 	}
 }
 
@@ -827,6 +833,9 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 		chatRequest.ParentID = parentID
 	}
 	chatRequest.FileIDs = stringSliceContextValue(event.Context, "file_ids")
+	if surface, ok := stringContextValue(event.Context, "surface"); ok && surface == SurfaceAPI {
+		chatRequest.MaxTaskTokens = intContextValue(event.Context, "max_task_tokens")
+	}
 	if event.Origin.Kind == invocation.OriginChannel {
 		excludedTexts := []string{run.Query}
 		if channelContextPreparation != nil {
@@ -1259,6 +1268,22 @@ func stringContextValue(values map[string]any, key string) (string, bool) {
 	value, ok := values[key].(string)
 	value = strings.TrimSpace(value)
 	return value, ok && value != ""
+}
+
+func intContextValue(values map[string]any, key string) int {
+	switch value := values[key].(type) {
+	case int:
+		return value
+	case int64:
+		return int(value)
+	case float64:
+		return int(value)
+	case string:
+		parsed, _ := strconv.Atoi(strings.TrimSpace(value))
+		return parsed
+	default:
+		return 0
+	}
 }
 
 func stringSliceContextValue(values map[string]any, key string) []string {

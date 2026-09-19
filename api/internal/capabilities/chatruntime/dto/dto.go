@@ -36,6 +36,10 @@ type ChatRequest struct {
 	ResponseMode                     string                 `json:"response_mode,omitempty"`
 	Parameters                       map[string]interface{} `json:"parameters,omitempty"`
 	UseMemory                        bool                   `json:"use_memory,omitempty"`
+	// MaxTaskTokens caps the total provider-reported model tokens for this
+	// API-originated task. Zero keeps the legacy unlimited behaviour and is
+	// never populated by Workflow callers.
+	MaxTaskTokens int `json:"max_task_tokens,omitempty"`
 	// SourceMessageID is a server-owned idempotency link. HTTP decoders never populate it.
 	SourceMessageID *uuid.UUID `json:"-"`
 	// HistoryPolicy is supplied only by trusted subject adapters. It cannot be
@@ -104,7 +108,11 @@ type ClientActionResultRequest struct {
 }
 
 type UserInputContinuationRequest struct {
-	Answers          map[string]string      `json:"answers" binding:"required"`
+	Answers map[string]string `json:"answers,omitempty"`
+	// Action and AdditionalTokens are used only when the pending request is a
+	// task-token-budget pause. Ordinary model questions continue to use Answers.
+	Action           string                 `json:"action,omitempty"`
+	AdditionalTokens int                    `json:"additional_tokens,omitempty"`
 	Surface          string                 `json:"surface,omitempty"`
 	RuntimeContext   string                 `json:"runtime_context,omitempty"`
 	OperationContext map[string]interface{} `json:"operation_context,omitempty"`

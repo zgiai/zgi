@@ -383,13 +383,14 @@ func (s *service) prepareExistingRuntimeInputFollowUp(ctx context.Context, scope
 	metadata[runtimeInputFollowUpBatchIDMetadataKey] = batchID.String()
 	message.Metadata = metadata
 	prepared := &PreparedChat{
-		Conversation: resolvedConversation,
-		Message:      message,
-		Scope:        scope,
-		Caller:       caller,
-		RunConfig:    resolvedConfig,
-		ParentID:     parentID,
-		parts:        parts,
+		Conversation:    resolvedConversation,
+		Message:         message,
+		Scope:           scope,
+		Caller:          caller,
+		RunConfig:       resolvedConfig,
+		ParentID:        parentID,
+		parts:           parts,
+		taskTokenBudget: taskTokenBudgetFromMetadata(message.Metadata),
 	}
 	s.refreshInitialPageContext(ctx, prepared)
 	return prepared, nil

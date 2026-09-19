@@ -71,6 +71,7 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		return nil, newFinalizedStreamError(err)
 	}
 	userMemoryUsage := prepared.UserMemoryPreflightUsage
+	preflightRan := !prepared.UserMemoryPreflightDone
 	if !prepared.UserMemoryPreflightDone {
 		var err error
 		userMemoryUsage, err = s.runUserMemoryPreflight(runCtx, persistCtx, prepared, eventCallback)
@@ -84,6 +85,14 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		}
 	}
 	preflightUsage := userMemoryUsage
+	if prepared.taskTokenBudget != nil && preflightRan {
+		if prepared.Message.Metadata == nil {
+			prepared.Message.Metadata = map[string]interface{}{}
+		}
+		prepared.taskTokenBudget.addUsage(userMemoryUsage)
+		prepared.Message.Metadata[taskTokenBudgetMetadataKey] = prepared.taskTokenBudget.metadata("running")
+		s.emitTaskTokenUsageUpdated(persistCtx, prepared, userMemoryUsage, eventCallback)
+	}
 	if !prepared.toolLoopEnabled() {
 		timeline := newProcessTimelineRecorder(runCtx, persistCtx, s, prepared, eventCallback)
 		additional, err := s.claimRuntimeInputsForCurrentRun(
@@ -107,6 +116,17 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		answer, usage, err := s.runPreparedToolStream(runCtx, persistCtx, prepared, onChunk, eventCallback)
 		usage = mergeUsage(preflightUsage, usage)
 		if err != nil {
+			var budgetExceeded *TaskTokenBudgetExceededError
+			if errors.As(err, &budgetExceeded) {
+				metadata, persistErr := s.persistTaskTokenBudgetPendingResult(persistCtx, prepared, usage)
+				if persistErr != nil {
+					return nil, finalizedRuntimePersistenceError(persistErr)
+				}
+				payload := taskTokenBudgetEventPayload(metadata, prepared.Conversation.ID.String(), prepared.Message.ID.String())
+				_ = s.emitPreparedEvent(persistCtx, prepared, streamEventTokenBudgetRequested, payload, eventCallback)
+				eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion))
+				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingQuestion, MessageEndEventID: eventID}, nil
+			}
 			var pendingGovernance *skillloop.ToolGovernancePendingError
 			if errors.As(err, &pendingGovernance) {
 				metadata, persistErr := s.persistToolGovernanceApprovalPendingResult(persistCtx, prepared, pendingGovernance.Payload, usage)
@@ -172,6 +192,16 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 			s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
 			return nil, newFinalizedStreamError(err)
 		}
+		if budgetErr := prepared.taskTokenBudget.exhausted(); budgetErr != nil {
+			metadata, persistErr := s.persistTaskTokenBudgetPendingResult(persistCtx, prepared, usage)
+			if persistErr != nil {
+				return nil, finalizedRuntimePersistenceError(persistErr)
+			}
+			payload := taskTokenBudgetEventPayload(metadata, prepared.Conversation.ID.String(), prepared.Message.ID.String())
+			_ = s.emitPreparedEvent(persistCtx, prepared, streamEventTokenBudgetRequested, payload, eventCallback)
+			eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion))
+			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingQuestion, MessageEndEventID: eventID}, nil
+		}
 		if s.streams.IsStopped(prepared.Message.ID, execution.runID) {
 			_ = s.persistStoppedAnswer(persistCtx, prepared, answer, usage)
 			return nil, ErrMessageStopped
@@ -187,6 +217,16 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, MessageEndEventID: eventID}, nil
 	}
 	appendDirectAnswerGroundingMessage(prepared)
+	if budgetErr := prepared.taskTokenBudget.exhausted(); budgetErr != nil {
+		metadata, persistErr := s.persistTaskTokenBudgetPendingResult(persistCtx, prepared, preflightUsage)
+		if persistErr != nil {
+			return nil, finalizedRuntimePersistenceError(persistErr)
+		}
+		payload := taskTokenBudgetEventPayload(metadata, prepared.Conversation.ID.String(), prepared.Message.ID.String())
+		_ = s.emitPreparedEvent(persistCtx, prepared, streamEventTokenBudgetRequested, payload, eventCallback)
+		eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion))
+		return &ChatResult{Metadata: metadata, Usage: preflightUsage, Status: runtimemodel.MessageStatusWaitingQuestion, MessageEndEventID: eventID}, nil
+	}
 
 	finalCallStartedAt := time.Now()
 	modelProgress := s.startPreparedModelProgress(runCtx, prepared, 0, prepared.LLMRequest.Messages, eventCallback)
@@ -230,6 +270,7 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 			Usage:      callUsage,
 			Error:      err.Error(),
 		})
+		s.emitTaskTokenUsageUpdated(persistCtx, prepared, callUsage, eventCallback)
 		if errors.Is(err, ErrMessageStopped) {
 			_ = s.clearPreparedRuntime(persistCtx, prepared)
 			return nil, err
@@ -247,6 +288,17 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		Response:   &adapter.Message{Role: "assistant", Content: answer},
 		Usage:      callUsage,
 	})
+	s.emitTaskTokenUsageUpdated(persistCtx, prepared, callUsage, eventCallback)
+	if budgetErr := prepared.taskTokenBudget.exhausted(); budgetErr != nil {
+		metadata, persistErr := s.persistTaskTokenBudgetPendingResult(persistCtx, prepared, usage)
+		if persistErr != nil {
+			return nil, finalizedRuntimePersistenceError(persistErr)
+		}
+		payload := taskTokenBudgetEventPayload(metadata, prepared.Conversation.ID.String(), prepared.Message.ID.String())
+		_ = s.emitPreparedEvent(persistCtx, prepared, streamEventTokenBudgetRequested, payload, eventCallback)
+		eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion))
+		return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingQuestion, MessageEndEventID: eventID}, nil
+	}
 	if s.streams.IsStopped(prepared.Message.ID, execution.runID) {
 		_ = s.persistStoppedAnswer(persistCtx, prepared, answer, usage)
 		return nil, ErrMessageStopped
@@ -920,6 +972,9 @@ func (s *service) clearPreparedRuntime(ctx context.Context, prepared *PreparedCh
 
 func (s *service) persistStoppedAnswer(ctx context.Context, prepared *PreparedChat, answer string, usage *adapter.Usage) error {
 	metadata := preparedResultMetadataForPrepared(prepared, prepared.Message.Metadata, usage)
+	if prepared != nil && prepared.taskTokenBudget != nil {
+		metadata[taskTokenBudgetMetadataKey] = prepared.taskTokenBudget.metadata("stopped")
+	}
 	metadata["stopped"] = true
 	markOperationPlanStopped(metadata)
 	if err := s.repos.Message.UpdateStoppedAnswer(ctx, prepared.Message.ID, answer, metadata); err != nil {

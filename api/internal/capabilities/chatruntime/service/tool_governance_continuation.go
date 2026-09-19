@@ -320,6 +320,7 @@ func (s *service) prepareConfiguredToolGovernanceContinuationChat(ctx context.Co
 		SuppressInitialNaturalProgress: true,
 		parts:                          parts,
 		contextBudget:                  contextResult,
+		taskTokenBudget:                taskTokenBudgetFromMetadata(message.Metadata),
 	}, nil
 }
 
@@ -342,8 +343,14 @@ func (s *service) runToolGovernanceApprovedContinuation(ctx context.Context, pre
 		return result, nil
 	}
 	prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, continuationMessageForExecutionMode(toolGovernanceApprovalContinuationMessage(event), prepared.parts.ExecutionMode))
+	if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, "", nil, nil, onEvent); handled {
+		return result, budgetErr
+	}
 	answer, usage, err := s.runPreparedToolLoop(ctx, persistCtx, prepared, nil, onEvent)
 	if err != nil {
+		if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, answer, usage, err, onEvent); handled {
+			return result, budgetErr
+		}
 		var pendingGovernance *skillloop.ToolGovernancePendingError
 		if errors.As(err, &pendingGovernance) {
 			metadata, persistErr := s.persistToolGovernanceApprovalPendingResult(persistCtx, prepared, pendingGovernance.Payload, usage)
@@ -385,6 +392,9 @@ func (s *service) runToolGovernanceApprovedContinuation(ctx context.Context, pre
 		}
 		return nil, newFinalizedStreamError(err)
 	}
+	if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, answer, usage, nil, onEvent); handled {
+		return result, budgetErr
+	}
 	metadata := preparedResultMetadataForPrepared(prepared, prepared.Message.Metadata, usage)
 	if err := s.completePreparedChat(persistCtx, prepared, answer, metadata); err != nil {
 		return nil, finalizedRuntimePersistenceError(err)
@@ -413,6 +423,9 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 	frozen = remapLegacyFileDeleteFrozenInvocation(frozen)
 	prepared.ContinuationType = "tool_governance_approval"
 	prepared.PreferredRestoredSkillID = strings.TrimSpace(frozen.SkillID)
+	if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, "", nil, nil, onEvent); handled {
+		return result, true, budgetErr
+	}
 	if s.skillRuntime == nil {
 		return nil, true, fmt.Errorf("%w: skill runtime is not configured", ErrInvalidInput)
 	}
@@ -483,6 +496,11 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 		executionContext,
 		callID,
 	)
+	frozenModelUsage := scriptModelUsage()
+	if prepared.taskTokenBudget != nil {
+		prepared.taskTokenBudget.addUsage(frozenModelUsage)
+		s.emitTaskTokenUsageUpdated(persistCtx, prepared, frozenModelUsage, onEvent)
+	}
 	executionErr := err
 	if invocation == nil {
 		if executionErr == nil {
@@ -519,12 +537,12 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 					return nil, true, finalizedRuntimePersistenceError(err)
 				}
 				if clientActionRequiresModelContinuation(payload) {
-					metadata, persistErr := s.persistClientActionPendingResult(persistCtx, prepared, payload, nil)
+					metadata, persistErr := s.persistClientActionPendingResult(persistCtx, prepared, payload, frozenModelUsage)
 					if ownershipErr := finalizedRuntimeOwnershipError(persistErr); ownershipErr != nil {
 						return nil, true, ownershipErr
 					}
 					s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingClientAction), onEvent)
-					return &ChatResult{Answer: "", Metadata: metadata, Usage: nil, Status: runtimemodel.MessageStatusWaitingClientAction}, true, nil
+					return &ChatResult{Answer: "", Metadata: metadata, Usage: frozenModelUsage, Status: runtimemodel.MessageStatusWaitingClientAction}, true, nil
 				}
 			}
 		}
@@ -549,8 +567,11 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 
 	prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, continuationMessageForExecutionMode(toolGovernanceFrozenExecutionContinuationMessage(prepared.Message, event, invocation, executionErr), prepared.parts.ExecutionMode))
 	answer, usage, err := s.runPreparedToolLoop(ctx, persistCtx, prepared, nil, onEvent)
-	usage = addUsageCloned(usage, scriptModelUsage())
+	usage = addUsageCloned(usage, frozenModelUsage)
 	if err != nil {
+		if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, answer, usage, err, onEvent); handled {
+			return result, true, budgetErr
+		}
 		var pendingGovernance *skillloop.ToolGovernancePendingError
 		if errors.As(err, &pendingGovernance) {
 			metadata, persistErr := s.persistToolGovernanceApprovalPendingResult(persistCtx, prepared, pendingGovernance.Payload, usage)
@@ -588,6 +609,9 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingQuestion}, true, nil
 		}
 		return nil, true, err
+	}
+	if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, answer, usage, nil, onEvent); handled {
+		return result, true, budgetErr
 	}
 	metadata := preparedResultMetadataForPrepared(prepared, prepared.Message.Metadata, usage)
 	if err := s.completePreparedChat(persistCtx, prepared, answer, metadata); err != nil {
@@ -1458,6 +1482,9 @@ func toolGovernanceDropModelVisibleKey(key string) bool {
 
 func (s *service) runToolGovernanceRejectionContinuation(ctx context.Context, prepared *PreparedChat, req runtimedto.ToolGovernanceDecisionRequest, event map[string]interface{}, onEvent func(StreamEvent) error) (*ChatResult, error) {
 	persistCtx := context.WithoutCancel(ctx)
+	if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, "", nil, nil, onEvent); handled {
+		return result, budgetErr
+	}
 	prepared.LLMRequest = toolGovernanceRejectionLLMRequest(prepared.Message, req, event)
 	stream, err := s.openChatStream(ctx, prepared)
 	if err != nil {
@@ -1472,6 +1499,13 @@ func (s *service) runToolGovernanceRejectionContinuation(ctx context.Context, pr
 			return nil, finalizedRuntimePersistenceError(finalizeErr)
 		}
 		return nil, newFinalizedStreamError(err)
+	}
+	if prepared.taskTokenBudget != nil {
+		prepared.taskTokenBudget.addUsage(usage)
+		s.emitTaskTokenUsageUpdated(persistCtx, prepared, usage, onEvent)
+	}
+	if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, answer, usage, nil, onEvent); handled {
+		return result, budgetErr
 	}
 	metadata := preparedResultMetadataForPrepared(prepared, prepared.Message.Metadata, usage)
 	if err := s.completePreparedChat(persistCtx, prepared, answer, metadata); err != nil {

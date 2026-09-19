@@ -107,6 +107,7 @@ func (s *service) runPreparedToolLoop(
 		},
 		OnModelInvocation: func(trace skillloop.ModelInvocationTrace) {
 			s.persistModelInvocationBestEffort(persistCtx, prepared, trace)
+			s.emitTaskTokenUsageUpdated(persistCtx, prepared, trace.Usage, onEvent)
 		},
 	}
 	loopPrepared := skillloop.NewPreparedChat(
@@ -252,6 +253,9 @@ func (s *service) runPreparedToolLoop(
 		OnTerminalCompletion:           onTerminalCompletion,
 		OnChunk:                        onChunk,
 		BeforeModelRound: func(checkpointCtx context.Context, round int) ([]adapter.Message, error) {
+			if budgetErr := prepared.taskTokenBudget.exhausted(); budgetErr != nil {
+				return nil, budgetErr
+			}
 			return s.claimRuntimeInputsForCurrentRun(
 				checkpointCtx,
 				prepared,
@@ -279,7 +283,12 @@ func (s *service) runPreparedToolLoop(
 		err = presentationErr
 	}
 	s.persistAgentTurnTranscript(persistCtx, prepared, contextManager, answer, err != nil)
-	usage = addUsageCloned(usage, scriptModelUsage())
+	scriptUsage := scriptModelUsage()
+	usage = addUsageCloned(usage, scriptUsage)
+	if prepared.taskTokenBudget != nil {
+		prepared.taskTokenBudget.addUsage(scriptUsage)
+		s.emitTaskTokenUsageUpdated(persistCtx, prepared, scriptUsage, onEvent)
+	}
 	if err != nil && strings.TrimSpace(answer) != "" {
 		s.persistPartialSkillLoopAnswerBestEffort(persistCtx, prepared, answer, usage)
 	}
