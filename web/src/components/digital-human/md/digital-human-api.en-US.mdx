@@ -208,6 +208,7 @@ The same event names and payload families used by the Agent API are available fo
 | Skills and tools            | `skill_load_start`, `skill_load_end`, `skill_reference_read`, `skill_call_start`, `skill_call_end`, `skill_call_error`, `skill_artifact_created`                                                                                                                                                                                                                                                                                                                                                            | Group by `invocation_id`; render public summaries and downloadable artifacts                                               |
 | Governance and host actions | `tool_governance_decision`, `client_action_required`                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Show the decision; perform host actions only from an explicit allow-list and honor `blocking`                              |
 | Relationship memory         | `memory_create`, `memory_update`, `memory_delete`, `memory_clear`                                                                                                                                                                                                                                                                                                                                                                                                                                           | Show a small confirmation; do not expose a memory-management editor in the public client                                   |
+| Token usage                 | `token_usage_updated`, `token_budget_requested`                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Show cumulative task tokens in real time; when the budget pauses execution, offer add-budget or stop actions              |
 | Workflow lifecycle          | `workflow_started`, `node_started`, `node_finished`, `workflow_paused`, `workflow_resumed`, `approval_requested`, `approval_result_filled`, `approval_expired`, `question_answer_requested`, `question_answer_submitted`, `iteration_started`, `iteration_next`, `iteration_completed`, `iteration_succeeded`, `iteration_failed`, `loop_started`, `loop_next`, `loop_completed`, `loop_succeeded`, `loop_failed`, `workflow_finished`, `workflow_failed`, `workflow_stopped`, `text_chunk`, `text_replace` | Build a process timeline keyed by `workflow_run_id`; preserve unknown fields and use only advertised continuation controls |
 
 ### Event payload fields
@@ -278,6 +279,12 @@ The same event names and payload families used by the Agent API are available fo
   </Property>
   <Property name="workflow_run_id" type="string" propKey="workflow_run_id">
     Correlates workflow, node, approval, iteration, loop, and text events.
+  </Property>
+  <Property name="usage" type="object" propKey="usage">
+    Input, output, and total tokens for the model invocation in `token_usage_updated`; clients may accumulate them per message.
+  </Property>
+  <Property name="task_token_budget" type="object" propKey="task_token_budget">
+    Cumulative budget state returned when the API request sets `max_task_tokens`; omitted when no budget is configured.
   </Property>
 </Properties>
 

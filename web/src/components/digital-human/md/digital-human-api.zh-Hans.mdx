@@ -208,6 +208,7 @@ data: {"event":"message","data":{"conversation_id":"...","message_id":"...","ans
 | Skill 与工具   | `skill_load_start`、`skill_load_end`、`skill_reference_read`、`skill_call_start`、`skill_call_end`、`skill_call_error`、`skill_artifact_created`                                                                                                                                                                                                                                                                                                                                                            | 按 `invocation_id` 分组，展示公开摘要和可下载产物                                 |
 | 治理与宿主动作 | `tool_governance_decision`、`client_action_required`                                                                                                                                                                                                                                                                                                                                                                                                                                                        | 展示决策；仅按宿主白名单执行动作，并遵守 `blocking`                               |
 | 用户关系记忆   | `memory_create`、`memory_update`、`memory_delete`、`memory_clear`                                                                                                                                                                                                                                                                                                                                                                                                                                           | 展示轻量确认，不在公开客户端提供记忆管理编辑器                                    |
+| Token 用量     | `token_usage_updated`、`token_budget_requested`                                                                                                                                                                                                                                                                                                                                                                                                                                                               | 实时展示本次任务累计 token；收到预算暂停时，向用户提供追加预算或停止运行的选择       |
 | 工作流生命周期 | `workflow_started`、`node_started`、`node_finished`、`workflow_paused`、`workflow_resumed`、`approval_requested`、`approval_result_filled`、`approval_expired`、`question_answer_requested`、`question_answer_submitted`、`iteration_started`、`iteration_next`、`iteration_completed`、`iteration_succeeded`、`iteration_failed`、`loop_started`、`loop_next`、`loop_completed`、`loop_succeeded`、`loop_failed`、`workflow_finished`、`workflow_failed`、`workflow_stopped`、`text_chunk`、`text_replace` | 按 `workflow_run_id` 构建过程时间线；保留未知字段，只使用服务端明确给出的续接控件 |
 
 ### 事件载荷字段
@@ -278,6 +279,12 @@ data: {"event":"message","data":{"conversation_id":"...","message_id":"...","ans
   </Property>
   <Property name="workflow_run_id" type="string" propKey="workflow_run_id">
     关联工作流、节点、审批、迭代、循环和文本事件。
+  </Property>
+  <Property name="usage" type="object" propKey="usage">
+    `token_usage_updated` 中本次模型调用的输入、输出和总 token 数；客户端可按消息累计展示。
+  </Property>
+  <Property name="task_token_budget" type="object" propKey="task_token_budget">
+    API 请求设置 `max_task_tokens` 时返回的累计预算状态；未设置预算时不返回。
   </Property>
 </Properties>
 

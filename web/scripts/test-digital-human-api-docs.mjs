@@ -167,6 +167,8 @@ const requiredSharedRuntimeEvents = [
   'skill_reference_read',
   'text_chunk',
   'text_replace',
+  'token_budget_requested',
+  'token_usage_updated',
   'tool_governance_decision',
   'user_input_requested',
   'workflow_failed',

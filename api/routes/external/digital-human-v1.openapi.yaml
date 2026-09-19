@@ -33,6 +33,8 @@ x-zgi-sse-event-data-schemas:
   agent_progress: '#/components/schemas/AgentProgressEvent'
   agent_intermediate_answer: '#/components/schemas/IntermediateAnswerEvent'
   user_input_requested: '#/components/schemas/UserInputRequestedEvent'
+  token_budget_requested: '#/components/schemas/UserInputRequestedEvent'
+  token_usage_updated: '#/components/schemas/TokenUsageUpdatedEvent'
   file_parse_start: '#/components/schemas/FileParseEvent'
   file_parse_end: '#/components/schemas/FileParseEvent'
   file_parse_error: '#/components/schemas/FileParseEvent'
@@ -120,6 +122,7 @@ paths:
                 run_accepted: {$ref: '#/components/schemas/RunAcceptedEvent'}
                 message_start: {$ref: '#/components/schemas/MessageStartEvent'}
                 message: {$ref: '#/components/schemas/MessageDeltaEvent'}
+                token_usage_updated: {$ref: '#/components/schemas/TokenUsageUpdatedEvent'}
                 message_end: {$ref: '#/components/schemas/MessageEndEvent'}
                 error: {$ref: '#/components/schemas/StreamErrorEvent'}
                 run_end: {$ref: '#/components/schemas/RunEndEvent'}
@@ -165,6 +168,7 @@ paths:
               x-zgi-sse-event-data-schemas:
                 message_start: {$ref: '#/components/schemas/MessageStartEvent'}
                 message: {$ref: '#/components/schemas/MessageDeltaEvent'}
+                token_usage_updated: {$ref: '#/components/schemas/TokenUsageUpdatedEvent'}
                 message_end: {$ref: '#/components/schemas/MessageEndEvent'}
                 error: {$ref: '#/components/schemas/StreamErrorEvent'}
                 run_end: {$ref: '#/components/schemas/RunEndEvent'}
@@ -343,6 +347,7 @@ paths:
                 run_accepted: {$ref: '#/components/schemas/RunAcceptedEvent'}
                 message_start: {$ref: '#/components/schemas/MessageStartEvent'}
                 message: {$ref: '#/components/schemas/MessageDeltaEvent'}
+                token_usage_updated: {$ref: '#/components/schemas/TokenUsageUpdatedEvent'}
                 message_end: {$ref: '#/components/schemas/MessageEndEvent'}
                 error: {$ref: '#/components/schemas/StreamErrorEvent'}
                 run_end: {$ref: '#/components/schemas/RunEndEvent'}
@@ -375,6 +380,7 @@ paths:
                 message_start: {$ref: '#/components/schemas/MessageStartEvent'}
                 approval_result: {$ref: '#/components/schemas/WorkflowEvent'}
                 message: {$ref: '#/components/schemas/MessageDeltaEvent'}
+                token_usage_updated: {$ref: '#/components/schemas/TokenUsageUpdatedEvent'}
                 message_end: {$ref: '#/components/schemas/MessageEndEvent'}
                 error: {$ref: '#/components/schemas/StreamErrorEvent'}
         default: {$ref: '#/components/responses/Error'}
@@ -411,6 +417,7 @@ paths:
                 message_start: {$ref: '#/components/schemas/MessageStartEvent'}
                 user_input_requested: {$ref: '#/components/schemas/UserInputRequestedEvent'}
                 message: {$ref: '#/components/schemas/MessageDeltaEvent'}
+                token_usage_updated: {$ref: '#/components/schemas/TokenUsageUpdatedEvent'}
                 message_end: {$ref: '#/components/schemas/MessageEndEvent'}
                 error: {$ref: '#/components/schemas/StreamErrorEvent'}
         default: {$ref: '#/components/responses/Error'}
@@ -703,6 +710,11 @@ components:
           type: array
           description: Files uploaded by the same user for this DigitalHuman.
           items: {type: string, format: uuid, description: Uploaded file identifier.}
+        max_task_tokens:
+          type: integer
+          minimum: 1
+          maximum: 100000000
+          description: Optional per-task model token budget based on provider-reported usage. Enforcement occurs after an in-flight call is counted, so that call may cross the limit; the stream then emits token_budget_requested and waits for an add or stop continuation.
         response_mode: {type: string, enum: [streaming], default: streaming, description: DigitalHuman v1 supports only `streaming`.}
     DigitalHumanRegenerateMessageRequest:
       type: object
@@ -808,8 +820,8 @@ components:
     DigitalHumanUserInputContinuationRequest:
       type: object
       additionalProperties: false
-      required: [user, answers]
-      description: Answers a model-generated user question and resumes the same Agent Loop.
+      required: [user]
+      description: Answers a model-generated user question and resumes the same Agent Loop, or continues a token_budget_requested pause with action=add/stop.
       properties:
         user:
           allOf: [{$ref: '#/components/schemas/User'}]
@@ -821,6 +833,15 @@ components:
             type: string
             maxLength: 4000
           description: Answers keyed by the question ids returned in user_input_requested.
+        action:
+          type: string
+          enum: [add, stop]
+          description: Budget continuation action for a token_budget_requested event.
+        additional_tokens:
+          type: integer
+          minimum: 1
+          maximum: 100000000
+          description: Number of tokens to add when action is add.
         runtime_context: {type: string, maxLength: 8000, description: Optional trusted runtime context.}
         operation_context: {type: object, additionalProperties: true, description: Optional operation metadata.}
     DigitalHumanTask:
@@ -1072,6 +1093,32 @@ components:
           properties:
             presentation_disposition: {type: string, enum: [process, discard], description: Move candidate text to process UI or discard it.}
             answer: {type: string, description: Candidate text affected by the retraction when supplied.}
+    TokenUsageUpdatedEvent:
+      description: Provider-reported model token usage update emitted after each model invocation. When an API task supplies a token budget, task_token_budget is also included with the cumulative budget state.
+      allOf:
+        - $ref: '#/components/schemas/RuntimeEventIdentity'
+        - type: object
+          required: [usage]
+          properties:
+            usage:
+              $ref: '#/components/schemas/TokenUsage'
+            task_token_budget:
+              $ref: '#/components/schemas/TaskTokenBudget'
+    TokenUsage:
+      type: object
+      required: [prompt_tokens, completion_tokens, total_tokens]
+      properties:
+        prompt_tokens: {type: integer, minimum: 0, description: Prompt tokens reported for the model invocation.}
+        completion_tokens: {type: integer, minimum: 0, description: Completion tokens reported for the model invocation.}
+        total_tokens: {type: integer, minimum: 0, description: Total tokens charged for the model invocation.}
+    TaskTokenBudget:
+      type: object
+      required: [used_tokens, max_tokens, remaining_tokens, status]
+      properties:
+        used_tokens: {type: integer, minimum: 0, description: Cumulative provider-reported tokens consumed by this task.}
+        max_tokens: {type: integer, minimum: 1, description: Maximum tokens configured for this task.}
+        remaining_tokens: {type: integer, minimum: 0, description: Remaining task budget after the latest usage update.}
+        status: {type: string, enum: [running, exhausted], description: Current task budget status.}
     AgentProgressEvent:
       description: Coarse processing progress that never contains hidden reasoning.
       allOf:
@@ -1109,6 +1156,8 @@ components:
           required: [request_id, questions]
           properties:
             request_id: {type: string, description: Correlation identifier for the request.}
+            request_kind: {type: string, enum: [task_token_budget], description: Present for a token budget pause; continue with action=add or action=stop.}
+            token_budget: {type: object, additionalProperties: true, description: Current task token usage and available continuation actions.}
             source: {type: string, description: Runtime source used to route the answer.}
             message: {type: string, description: Optional user-facing instruction.}
             questions:

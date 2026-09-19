@@ -721,6 +721,24 @@ Agent 的普通 JSON 成功响应统一为 `{ "code": "0", "message": "success",
   <Property name="created_at / created_at_ms" type="integer?" propKey="created_at">
     Unix 秒与可选 Unix 毫秒时间戳，用于展示和诊断，不作为去重键。
   </Property>
+  <Property name="usage" type="object" propKey="usage">
+    `token_usage_updated` 中本次模型调用的输入、输出和总 token 数；客户端可按消息累计展示实时用量。
+  </Property>
+  <Property name="task_token_budget" type="object" propKey="task_token_budget">
+    配置 `max_task_tokens` 时返回的 API 任务累计预算状态；未配置时不返回。
+  </Property>
+  <Property name="request_kind" type="string?" propKey="request_kind">
+    `task_token_budget` 表示预算暂停，需要通过追加预算或停止运行继续。
+  </Property>
+  <Property name="token_budget" type="object?" propKey="token_budget">
+    预算暂停时的当前用量、上限、剩余量和可用继续操作。
+  </Property>
+  <Property name="prompt_tokens / completion_tokens / total_tokens" type="integer?" propKey="usage">
+    Provider 返回的输入、输出和总 token 数；`total_tokens` 用于累加消息实时总用量。
+  </Property>
+  <Property name="used_tokens / max_tokens / remaining_tokens" type="integer?" propKey="task_token_budget">
+    API 任务累计用量、配置上限与剩余额度。
+  </Property>
 </Properties>
 
 ### 推荐客户端状态机
@@ -776,6 +794,8 @@ function applyAgentEvent(frame: AgentEvent) {
 | `message_retract` | 已发送的候选文本不再属于最终回答      | `process` 时移出最终回答并可放入过程区；`discard` 时直接删除       | `presentation_disposition`, `answer?`                  |
 | `message_end`     | 当前 SSE 阶段结束                     | 根据 `status` 进入终态或等待态；若有 `answer` 可用它校准完整文本   | `status`, `metadata`, `answer?`                        |
 | `error`           | 流式传输或 runtime 产生客户端安全错误 | 展示 `message`；记录 `code`；若后续没有 `message_end` 则按失败终止 | `message`, `code?`, `params?`                          |
+| `token_usage_updated` | 模型调用报告 provider token 用量       | 将本次调用用量累加到消息总数；存在 `task_token_budget` 时用于展示 API 预算状态 | `conversation_id`, `message_id`, `usage`, `task_token_budget?` |
+| `token_budget_requested` | API 任务达到配置的 token 预算           | 暂停运行，通过 user-input continuation 让调用方追加预算或停止 | `request_id`, `token_budget`, `questions[]`            |
 
 `message_start.parent_id` 为空表示根消息；`replace=true` 表示重新生成正在替换原分支结果。`message_end.status` 的终态为 `completed`、`stopped`、`error`、`failed`，等待态为 `waiting_approval`、`waiting_question`。`metadata` 是公开扩展对象，客户端只读取已知字段并保留未知字段兼容性。
 

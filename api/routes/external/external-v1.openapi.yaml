@@ -16,6 +16,8 @@ x-zgi-sse-event-data-schemas:
   agent_progress: '#/components/schemas/AgentProgressEventData'
   agent_intermediate_answer: '#/components/schemas/IntermediateAnswerEventData'
   user_input_requested: '#/components/schemas/UserInputRequestedEventData'
+  token_budget_requested: '#/components/schemas/UserInputRequestedEventData'
+  token_usage_updated: '#/components/schemas/TokenUsageUpdatedEventData'
   file_parse_start: '#/components/schemas/FileParseEventData'
   file_parse_end: '#/components/schemas/FileParseEventData'
   file_parse_error: '#/components/schemas/FileParseEventData'
@@ -655,6 +657,8 @@ components:
         - agent_progress
         - agent_intermediate_answer
         - user_input_requested
+        - token_budget_requested
+        - token_usage_updated
         - file_parse_start
         - file_parse_end
         - file_parse_error
@@ -737,6 +741,32 @@ components:
               enum: [process, discard]
               description: Move previously streamed candidate text to process UI, or remove it entirely.
             answer: {type: string, description: Candidate text affected by the retraction when supplied.}
+    TokenUsageUpdatedEventData:
+      description: Provider-reported model token usage update emitted after each model invocation. When an API task supplies a token budget, task_token_budget is also included with the cumulative budget state.
+      allOf:
+        - $ref: '#/components/schemas/EventIdentity'
+        - type: object
+          required: [usage]
+          properties:
+            usage:
+              $ref: '#/components/schemas/TokenUsage'
+            task_token_budget:
+              $ref: '#/components/schemas/TaskTokenBudget'
+    TokenUsage:
+      type: object
+      required: [prompt_tokens, completion_tokens, total_tokens]
+      properties:
+        prompt_tokens: {type: integer, minimum: 0, description: Prompt tokens reported for the model invocation.}
+        completion_tokens: {type: integer, minimum: 0, description: Completion tokens reported for the model invocation.}
+        total_tokens: {type: integer, minimum: 0, description: Total tokens charged for the model invocation.}
+    TaskTokenBudget:
+      type: object
+      required: [used_tokens, max_tokens, remaining_tokens, status]
+      properties:
+        used_tokens: {type: integer, minimum: 0, description: Cumulative provider-reported tokens consumed by this task.}
+        max_tokens: {type: integer, minimum: 1, description: Maximum tokens configured for this task.}
+        remaining_tokens: {type: integer, minimum: 0, description: Remaining task budget after the latest usage update.}
+        status: {type: string, enum: [running, exhausted], description: Current task budget status.}
     MessageEndEventData:
       description: Ends the current streaming phase; waiting statuses require a matching continuation endpoint.
       allOf:
@@ -822,6 +852,8 @@ components:
           required: [request_id, questions, created_at]
           properties:
             source: {type: string, description: Routing discriminator. `agent_workflow_question_answer` means this projected event must use workflow continuation; absent or other values use the Skill user-input continuation endpoint.}
+            request_kind: {type: string, enum: [task_token_budget], description: Present for a token budget pause; continue with action=add or action=stop.}
+            token_budget: {type: object, additionalProperties: true, description: Current task token usage and available continuation actions.}
             request_id: {type: string, description: Prompt correlation id; use it as the Skill continuation path id only when source is not `agent_workflow_question_answer`.}
             workflow_run_id: {type: string, description: Originating workflow run for workflow-generated prompts.}
             node_id: {type: string, description: Originating workflow node for workflow-generated prompts.}
@@ -1255,6 +1287,11 @@ components:
           type: string
           deprecated: true
           description: Deprecated compatibility field. Use `X-External-User-ID`; if both are sent they must match exactly.
+        max_task_tokens:
+          type: integer
+          minimum: 1
+          maximum: 100000000
+          description: Optional per-task model token budget based on provider-reported usage. Enforcement occurs after an in-flight call is counted, so that call may cross the limit; the stream then emits token_budget_requested and waits for an add or stop continuation.
       example:
         query: Summarize the attached report in three bullets.
         conversation_id: f1f7503a-9e28-4af5-9d6d-9e23fb5a8994
@@ -1277,14 +1314,22 @@ components:
       example: {query: Give me a shorter answer.}
     UserInputContinuationRequest:
       type: object
-      description: Answers a Skill-originated user_input_requested event without creating a new message.
-      required: [answers]
+      description: Answers a Skill-originated user_input_requested event without creating a new message, or continues a token_budget_requested pause with action=add/stop.
       properties:
         answers:
           type: object
           minProperties: 1
           description: Map each `user_input_requested.questions[].id` to the user's answer or selected option value.
           additionalProperties: {type: string}
+        action:
+          type: string
+          enum: [add, stop]
+          description: Budget continuation action for a token_budget_requested event.
+        additional_tokens:
+          type: integer
+          minimum: 1
+          maximum: 100000000
+          description: Number of tokens to add when action is add.
       example:
         answers: {target: production}
     WorkflowContinuationRequest:

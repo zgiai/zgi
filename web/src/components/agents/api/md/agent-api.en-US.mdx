@@ -733,6 +733,26 @@ This section defines the SSE contract shared by chat, stream recovery, and conti
     Unix seconds and optional Unix milliseconds for display and diagnostics. They are not
     deduplication keys.
   </Property>
+  <Property name="usage" type="object" propKey="usage">
+    Per-invocation input, output, and total token counts in `token_usage_updated`; clients may
+    accumulate them per message for real-time usage display.
+  </Property>
+  <Property name="task_token_budget" type="object" propKey="task_token_budget">
+    Cumulative API task budget state when `max_task_tokens` is configured; omitted otherwise.
+  </Property>
+  <Property name="request_kind" type="string?" propKey="request_kind">
+    `task_token_budget` identifies a budget pause that accepts an add-budget or stop continuation.
+  </Property>
+  <Property name="token_budget" type="object?" propKey="token_budget">
+    Current token usage, limit, remaining amount, and available continuation actions in a budget pause.
+  </Property>
+  <Property name="prompt_tokens / completion_tokens / total_tokens" type="integer?" propKey="usage">
+    Provider-reported input, output, and total token counts. `total_tokens` is the value to add to
+    the per-message running total.
+  </Property>
+  <Property name="used_tokens / max_tokens / remaining_tokens" type="integer?" propKey="task_token_budget">
+    Cumulative API task usage, configured limit, and remaining allowance.
+  </Property>
 </Properties>
 
 ### Recommended Client State Machine
@@ -788,6 +808,8 @@ function applyAgentEvent(frame: AgentEvent) {
 | `message_retract` | Previously emitted candidate text no longer belongs to the final answer | For `process`, move it out of the final answer and optionally into a process view; for `discard`, remove it | `presentation_disposition`, `answer?`                  |
 | `message_end`     | The current SSE phase ends                                              | Enter a terminal or waiting state from `status`; when present, use `answer` to reconcile the complete text  | `status`, `metadata`, `answer?`                        |
 | `error`           | Streaming or the runtime produces a client-safe error                   | Display `message`, log `code`, and terminate as failed if no later `message_end` arrives                    | `message`, `code?`, `params?`                          |
+| `token_usage_updated` | A model invocation reports provider token usage                         | Add the invocation usage to the message total; use `task_token_budget` when present for API budget state | `conversation_id`, `message_id`, `usage`, `task_token_budget?` |
+| `token_budget_requested` | An API task reaches its configured token budget                         | Pause and ask the caller to add budget or stop through the user-input continuation endpoint             | `request_id`, `token_budget`, `questions[]`            |
 
 An empty `message_start.parent_id` identifies a root message. `replace=true` means regeneration is replacing the result on the previous branch. Terminal `message_end.status` values are `completed`, `stopped`, `error`, and `failed`; waiting values are `waiting_approval` and `waiting_question`. `metadata` is an extensible public object, so read known fields and tolerate unknown ones.
 
