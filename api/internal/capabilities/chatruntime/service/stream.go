@@ -490,6 +490,10 @@ func (s *service) openChatStream(ctx context.Context, prepared *PreparedChat) (<
 		return nil, err
 	}
 	if contextManager != nil {
+		// Durable checkpoint: everything produced so far becomes transcript
+		// entries before the next model call, and before any compaction that call
+		// may trigger (a summary boundary must name a real entry).
+		s.syncAgentTranscriptEntries(ctx, prepared, contextManager)
 		finalRequest, decision, prepareErr := contextManager.PrepareBeforeModelCall(ctx, prepared.LLMRequest)
 		if prepareErr != nil {
 			return nil, prepareErr

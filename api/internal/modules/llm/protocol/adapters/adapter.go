@@ -270,6 +270,9 @@ type Message struct {
 	ToolCalls        []ToolCall    `json:"tool_calls,omitempty"`
 	ToolCallID       string        `json:"tool_call_id,omitempty"`
 	ReasoningContent string        `json:"reasoning_content,omitempty"` // DeepSeek thinking-mode round trip
+	// EntryID is the durable transcript identity used to record the exact
+	// compaction boundary. It is never part of the provider protocol.
+	EntryID string `json:"-"`
 }
 
 // MessageContentPart represents a content part in multimodal messages (OpenAI format)

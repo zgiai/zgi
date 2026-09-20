@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/config"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
@@ -104,22 +105,15 @@ func (s *service) buildTokenBudgetMessages(
 	}
 	currentContent, attachmentMetadata, estimatedPromptTokens := s.buildBudgetedCurrentUserContent(parts, systemPrompt, budget, extraContextTokens)
 
-	groups, err := s.historyMessageGroupsForCurrentRequest(ctx, parentMessages, parts)
+	historyMessages, err := s.conversationHistoryMessages(ctx, parentMessages, parts)
 	if err != nil {
 		return nil, err
 	}
-	historyBefore := countAdapterMessages(groups)
-	selected := groups
-	for _, group := range selected {
-		estimatedPromptTokens += s.tokenEstimator.EstimateMessages(group, parts.ModelName).Tokens
-	}
+	historyBefore := len(historyMessages)
+	estimatedPromptTokens += s.tokenEstimator.EstimateMessages(historyMessages, parts.ModelName).Tokens
 
 	systemMessage := adapter.Message{Role: "system", Content: systemPrompt}
 	currentUserMessage := adapter.Message{Role: "user", Content: currentContent}
-	historyMessages := make([]adapter.Message, 0, historyBefore)
-	for _, group := range selected {
-		historyMessages = append(historyMessages, group...)
-	}
 	messages := make([]adapter.Message, 0, 2+historyBefore)
 	messages = append(messages, systemMessage)
 	messages = append(messages, historyMessages...)
@@ -322,7 +316,7 @@ func (s *service) computeContextBudget(spec ModelSpec, parts *chatRequestParts, 
 	if spec.ContextWindow <= 0 {
 		return nil, fmt.Errorf("%w: model context_window is required", ErrInvalidInput)
 	}
-	agentWindowK := 256
+	agentWindowK := 512
 	if config.GlobalConfig != nil && config.GlobalConfig.ChatRuntime.AgentContextWindowK > 0 {
 		agentWindowK = config.GlobalConfig.ChatRuntime.AgentContextWindowK
 	}
@@ -401,6 +395,58 @@ func (s *service) computeContextBudget(spec ModelSpec, parts *chatRequestParts, 
 	}, nil
 }
 
+// conversationHistoryMessages rebuilds the conversation region of the current
+// turn: the newest summary plus every transcript entry after its boundary, which
+// is the whole point of the durable log. A conversation without entries yet (a
+// legacy turn) falls back to the message-row history, and a turn that isolates
+// its history keeps none.
+func (s *service) conversationHistoryMessages(ctx context.Context, branch []*runtimemodel.Message, parts *chatRequestParts) ([]adapter.Message, error) {
+	if shouldIsolateHistoryForCurrentTurn(parts) {
+		return nil, nil
+	}
+	includeImages := false
+	if parts != nil {
+		includeImages = parts.ModelSupportsVision
+	}
+	tip := conversationBranchTip(branch)
+	if tip != nil && s != nil && s.repos != nil && s.repos.TranscriptEntry != nil {
+		if tip.TranscriptHeadEntryID != nil && *tip.TranscriptHeadEntryID != uuid.Nil {
+			byID := make(map[uuid.UUID]*runtimemodel.Message, len(branch))
+			for _, row := range branch {
+				if row != nil {
+					byID[row.ID] = row
+				}
+			}
+			region, ok, regionErr := s.projectTranscriptChain(ctx, *tip.TranscriptHeadEntryID, byID, includeImages)
+			if regionErr != nil {
+				return nil, regionErr
+			}
+			if ok {
+				return region.Messages, nil
+			}
+		}
+	}
+	groups, err := s.historyMessageGroups(ctx, branch, includeImages)
+	if err != nil {
+		return nil, err
+	}
+	messages := make([]adapter.Message, 0, countAdapterMessages(groups))
+	for _, group := range groups {
+		messages = append(messages, group...)
+	}
+	return messages, nil
+}
+
+// conversationBranchTip returns the newest message of a loaded branch.
+func conversationBranchTip(branch []*runtimemodel.Message) *runtimemodel.Message {
+	for index := len(branch) - 1; index >= 0; index-- {
+		if branch[index] != nil {
+			return branch[index]
+		}
+	}
+	return nil
+}
+
 func (s *service) historyMessageGroups(ctx context.Context, branch []*runtimemodel.Message, includeImages bool) ([][]adapter.Message, error) {
 	groups := make([][]adapter.Message, 0, len(branch))
 	for _, item := range branch {
@@ -416,7 +462,7 @@ func (s *service) historyMessageGroups(ctx context.Context, branch []*runtimemod
 			group = append(group, *userMessage)
 		}
 		if isUsableAgentTranscriptHistoryStatus(item.Status) {
-			group = append(group, agentTranscriptFromMetadata(item.Metadata, item.Answer)...)
+			group = append(group, s.historicalAgentTranscript(ctx, item)...)
 		}
 		if isUsableAssistantHistoryStatus(item.Status) && item.Answer != "" {
 			group = append(group, adapter.Message{Role: "assistant", Content: item.Answer})

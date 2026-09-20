@@ -612,6 +612,7 @@ type PreparedChat struct {
 	runtimeInputClaimedBatches     []claimedRuntimeInputBatch
 	contextBudget                  *contextBudgetResult
 	contextManager                 *contextmgr.Manager
+	contextEntries                 *contextEntrySync
 
 	UserMemoryPreflightDone  bool
 	UserMemoryPreflightUsage *adapter.Usage

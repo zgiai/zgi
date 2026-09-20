@@ -21,7 +21,7 @@ func TestRunnerReadContextArtifactFeedsCompleteContentIntoNextModelCall(t *testi
 		ModelContextWindow:     1_000_000,
 		MaxOutputTokens:        16_000,
 		MaxToolResultTokens:    100,
-	}, nil, store, nil)
+	}, nil, store, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -66,6 +66,32 @@ type MessageRepository interface {
 	DeleteSubtreeScoped(ctx context.Context, id, organizationID, accountID uuid.UUID) (*MessageDeleteResult, error)
 	ListStaleActiveIDs(ctx context.Context, cutoff time.Time) ([]uuid.UUID, error)
 	MarkStaleActiveAsError(ctx context.Context, cutoff time.Time, message string) (int64, error)
+	CountChildren(ctx context.Context, parentID uuid.UUID) (int64, error)
+}
+
+// TranscriptEntryRepository stores the append-only protocol messages of a turn.
+// Payload is the immutable original; preview is the derived effective form.
+// List and projection reads must stay on the preview columns.
+type TranscriptEntryRepository interface {
+	Append(ctx context.Context, entries []*runtimemodel.TranscriptEntry) error
+	// AppendForMessage appends a chain and advances the owning message head in
+	// one transaction. expectedHead is nil for a new message.
+	AppendForMessage(ctx context.Context, messageID uuid.UUID, expectedHead *uuid.UUID, entries []*runtimemodel.TranscriptEntry) (uuid.UUID, error)
+	// AppendSummaryForMessage appends a summary checkpoint and advances the
+	// owning message head atomically.
+	AppendSummaryForMessage(ctx context.Context, messageID uuid.UUID, expectedHead, boundary *uuid.UUID, summary, eventID string) (uuid.UUID, error)
+	SetMessageHead(ctx context.Context, messageID uuid.UUID, head *uuid.UUID) error
+	// LoadPreviewChain returns the reachable chain from newest to oldest. It
+	// stops at stopAt, when provided, and rejects cycles.
+	LoadPreviewChain(ctx context.Context, headID uuid.UUID, stopAt *uuid.UUID, limit int) ([]*runtimemodel.TranscriptEntryPreview, error)
+	// ListForCopyByHead returns the complete reachable chain in chronological
+	// order, including payloads, for an isolated branch copy.
+	ListForCopyByHead(ctx context.Context, headID uuid.UUID, stopAt *uuid.UUID) ([]*runtimemodel.TranscriptEntry, error)
+	ListPreviewsByMessage(ctx context.Context, messageID uuid.UUID) ([]*runtimemodel.TranscriptEntryPreview, error)
+	GetPayload(ctx context.Context, id, organizationID uuid.UUID) (*runtimemodel.TranscriptEntry, error)
+	UpdatePreview(ctx context.Context, id uuid.UUID, preview map[string]interface{}, byteSize int) error
+	DeleteByMessage(ctx context.Context, messageID uuid.UUID) (int64, error)
+	DeleteByConversation(ctx context.Context, conversationID uuid.UUID) (int64, error)
 }
 
 type RuntimeLeaseRepository interface {
@@ -117,15 +143,16 @@ type CustomSkillRepository interface {
 }
 
 type Repositories struct {
-	Conversation ConversationRepository
-	Message      MessageRepository
-	RuntimeLease RuntimeLeaseRepository
-	RuntimeInput RuntimeInputRepository
-	Access       AccessRepository
-	SkillConfig  OrganizationSkillConfigRepository
-	SkillPref    AccountSkillPreferenceRepository
-	CustomSkill  CustomSkillRepository
-	DB           *gorm.DB
+	Conversation    ConversationRepository
+	Message         MessageRepository
+	RuntimeLease    RuntimeLeaseRepository
+	RuntimeInput    RuntimeInputRepository
+	Access          AccessRepository
+	SkillConfig     OrganizationSkillConfigRepository
+	SkillPref       AccountSkillPreferenceRepository
+	CustomSkill     CustomSkillRepository
+	TranscriptEntry TranscriptEntryRepository
+	DB              *gorm.DB
 }
 
 type MessageDeleteResult struct {
@@ -154,15 +181,16 @@ type SearchResult struct {
 
 func NewRepositories(db *gorm.DB) *Repositories {
 	return &Repositories{
-		Conversation: NewConversationRepository(db),
-		Message:      NewMessageRepository(db),
-		RuntimeLease: NewRuntimeLeaseRepository(db),
-		RuntimeInput: NewRuntimeInputRepository(db),
-		Access:       NewAccessRepository(db),
-		SkillConfig:  NewOrganizationSkillConfigRepository(db),
-		SkillPref:    NewAccountSkillPreferenceRepository(db),
-		CustomSkill:  NewCustomSkillRepository(db),
-		DB:           db,
+		Conversation:    NewConversationRepository(db),
+		Message:         NewMessageRepository(db),
+		RuntimeLease:    NewRuntimeLeaseRepository(db),
+		RuntimeInput:    NewRuntimeInputRepository(db),
+		Access:          NewAccessRepository(db),
+		SkillConfig:     NewOrganizationSkillConfigRepository(db),
+		SkillPref:       NewAccountSkillPreferenceRepository(db),
+		CustomSkill:     NewCustomSkillRepository(db),
+		TranscriptEntry: NewTranscriptEntryRepository(db),
+		DB:              db,
 	}
 }
 
@@ -879,6 +907,16 @@ func (r *messageRepository) Create(ctx context.Context, message *runtimemodel.Me
 	if message.Status == runtimemodel.MessageStatusPending || message.Status == runtimemodel.MessageStatusStreaming {
 		delete(message.Metadata, "connector_action_instances")
 	}
+	if message.TranscriptHeadEntryID == nil && message.ParentID != nil {
+		var parent runtimemodel.Message
+		if err := r.db.WithContext(ctx).Select("transcript_head_entry_id").Where("id = ?", *message.ParentID).Take(&parent).Error; err != nil {
+			return fmt.Errorf("failed to inherit transcript head from parent message: %w", err)
+		}
+		if parent.TranscriptHeadEntryID != nil && *parent.TranscriptHeadEntryID != uuid.Nil {
+			head := *parent.TranscriptHeadEntryID
+			message.TranscriptHeadEntryID = &head
+		}
+	}
 	message.CreatedAt = now
 	message.UpdatedAt = now
 	if err := r.db.WithContext(ctx).Create(message).Error; err != nil {
@@ -1136,6 +1174,7 @@ func (r *messageRepository) ReplaceRootForStreaming(ctx context.Context, message
 			"billing_reason_source": message.BillingReasonSource,
 			"model_parameters":      datatypes.JSON(parametersJSON),
 			"metadata":              rootReplacementMetadataValue(r.db, metadataJSON),
+			"transcript_head_entry_id": nil,
 			"updated_at":            time.Now(),
 		})
 	if result.Error != nil {
@@ -1143,6 +1182,9 @@ func (r *messageRepository) ReplaceRootForStreaming(ctx context.Context, message
 	}
 	if result.RowsAffected == 0 {
 		return gorm.ErrRecordNotFound
+	}
+	if err := r.db.WithContext(ctx).Where("message_id = ?", message.ID).Delete(&runtimemodel.TranscriptEntry{}).Error; err != nil {
+		return fmt.Errorf("failed to clear root transcript entries: %w", err)
 	}
 	return nil
 }
@@ -1500,6 +1542,20 @@ func (r *messageRepository) MarkStaleActiveAsError(ctx context.Context, cutoff t
 		return 0, fmt.Errorf("failed to mark stale aichat messages error: %w", result.Error)
 	}
 	return result.RowsAffected, nil
+}
+
+// CountChildren reports how many live messages hang below one message. The
+// conversation is a tree, so a turn that still has children is not a leaf.
+func (r *messageRepository) CountChildren(ctx context.Context, parentID uuid.UUID) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).
+		Model(&runtimemodel.Message{}).
+		Where("parent_id = ?", parentID).
+		Count(&count).Error
+	if err != nil {
+		return 0, fmt.Errorf("count child messages: %w", err)
+	}
+	return count, nil
 }
 
 type accessRepository struct {

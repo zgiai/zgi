@@ -86,7 +86,8 @@ func TestAppendCurrentTurnAgentTranscriptRestoresCompleteToolEvidence(t *testing
 	}
 	request := &adapter.ChatRequest{Messages: []adapter.Message{{Role: "user", Content: "original request"}}}
 
-	appendCurrentTurnAgentTranscript(request, message)
+	// No repositories: the helper falls back to the legacy metadata snapshot.
+	(&service{}).appendPersistedAgentTranscript(context.Background(), request, message)
 
 	if len(request.Messages) != 3 {
 		t.Fatalf("messages = %#v, want original request and one complete tool batch", request.Messages)
