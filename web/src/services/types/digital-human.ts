@@ -20,6 +20,7 @@ export type DigitalHumanRunStatus =
 export type DigitalHumanRunWaitingReason =
   | 'waiting_approval'
   | 'waiting_question'
+  | 'waiting_budget'
   | 'waiting_client_action';
 
 export interface DigitalHumanChannelResponsePolicy {

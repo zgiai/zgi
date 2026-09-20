@@ -36,6 +36,7 @@ export type AIChatMessageStatus =
   | 'waiting_approval'
   | 'waiting_client_action'
   | 'waiting_question'
+  | 'waiting_budget'
   | 'completed'
   | 'error'
   | 'stopped';
@@ -60,6 +61,17 @@ export interface AIChatTokenUsageUpdatedEventData {
   message_id: string;
   usage: AIChatUsage;
   task_token_budget?: AIChatTaskTokenBudget;
+}
+
+/** Independent continuation request emitted when an API task exhausts its budget. */
+export interface AIChatTokenBudgetRequestedEventData {
+  conversation_id: string;
+  message_id: string;
+  request_id: string;
+  request_kind: 'task_token_budget' | string;
+  message: string;
+  token_budget: AIChatTaskTokenBudget;
+  actions: Array<{ id: 'add' | 'stop' | string; label: string }>;
 }
 
 export type AIChatSkillMode = 'disabled' | 'auto' | 'required';
@@ -421,6 +433,7 @@ export interface AIChatGeneratedFile {
 export interface AIChatMessageMetadata {
   usage?: AIChatUsage;
   task_token_budget?: AIChatTaskTokenBudget;
+  task_token_budget_request?: AIChatTokenBudgetRequestedEventData;
   answer_before_timeline_length?: number;
   presentation_version?: number;
   presentation?: AIChatPresentationProjection;
@@ -1348,6 +1361,7 @@ export type AIChatSseEventName =
   | 'message_retract'
   | 'message_end'
   | 'token_usage_updated'
+  | 'token_budget_requested'
   | 'error';
 
 export interface AIChatSseEnvelope<TData = unknown> {

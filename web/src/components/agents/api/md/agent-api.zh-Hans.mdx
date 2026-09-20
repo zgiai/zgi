@@ -367,6 +367,7 @@ Agent 的普通 JSON 成功响应统一为 `{ "code": "0", "message": "success",
 | 等待审批 | 最新消息 `status=waiting_approval` | 回放该消息以重建 `approval_requested`；也可先用消息 metadata 恢复表单作为即时 UI |
 | 等待工作流回答 | `question_answer_requested`，或 `user_input_requested.source=agent_workflow_question_answer` | 渲染问题/选项并调用 workflow continuation |
 | 等待 Skill 输入 | 其他 `user_input_requested` | 按问题 id 收集答案并调用 user-input continuation |
+| 等待 Token 预算 | 最新消息为 `status=waiting_budget` | 展示独立预算操作，并使用对应 `request_id` 调用 token-budget continuation |
 | 已完成或失败 | `completed`、`stopped`、`error`、`failed` | 只显示消息历史，不建立恢复流 |
 
     等待状态下会话通常已经不再是 `running`，因此不能只检查 `active_message_id`。还要检查最新消息的 `status`，并恢复同一个 `message_id`。事件过期后，非运行消息可能返回空 SSE；此时回退到消息 metadata。若 metadata 也缺少表单、动作或 request id，应显示“状态不可恢复”，不要猜测审批动作。
@@ -689,6 +690,56 @@ Agent 的普通 JSON 成功响应统一为 `{ "code": "0", "message": "success",
 
 ---
 
+<Heading
+  url="/api/v1/agents/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue"
+  method="POST"
+  title="继续或停止 Token 预算暂停"
+  name="#Continue-Agent-Token-Budget"
+/>
+
+<Row>
+  <Col>
+    仅在收到 `token_budget_requested` 后使用。它是独立协议：不要提交 `answers`，也不要调用
+    Skill 的 user-input continuation。
+
+    <Properties>
+      <Property name='conversation_id' type='uuid' propKey='conversation_id'>必填，处于预算等待状态的会话 id。</Property>
+      <Property name='message_id' type='uuid' propKey='message_id'>必填，预算事件中的消息 id。</Property>
+      <Property name='request_id' type='string' propKey='request_id'>必填，预算事件中的 request_id。</Property>
+      <Property name='action' type='add | stop' propKey='action'>`add` 追加任务上限，`stop` 正常停止任务。</Property>
+      <Property name='additional_tokens' type='integer?' propKey='additional_tokens'>仅 `add` 必填，范围 1 到 100000000，追加后总上限不能溢出。</Property>
+    </Properties>
+
+    返回同一条消息的 SSE 流。`add` 会以 `message_start` 恢复，可能继续产生用量事件或再次预算暂停；
+    `stop` 只发送 `message_end(status=stopped)`，除非发生真实系统错误。
+  </Col>
+  <Col sticky>
+    <CodeGroup title="请求">
+    ```bash
+    curl --no-buffer '{apibase}/agents/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue' \
+      --header 'Content-Type: application/json' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1' \
+      --data '{"action":"add","additional_tokens":2048}'
+    ```
+    </CodeGroup>
+    <CodeGroup title="响应">
+    ```text
+    event: message_start
+    data: {"event":"message_start","data":{"conversation_id":"...","message_id":"..."}}
+
+    event: token_usage_updated
+    data: {"event":"token_usage_updated","data":{"message_id":"...","usage":{"total_tokens":2048}}}
+
+    event: message_end
+    data: {"event":"message_end","data":{"message_id":"...","status":"completed"}}
+    ```
+    </CodeGroup>
+  </Col>
+</Row>
+
+---
+
 ## Agent 事件接入手册
 
 本节是聊天、断线恢复和继续接口共用的 SSE 契约。先根据原生 `event:` 分发，再读取 JSON envelope 的 `data.data`。不要把整个响应当成一个 JSON，也不要等连接关闭后再渲染。
@@ -727,12 +778,6 @@ Agent 的普通 JSON 成功响应统一为 `{ "code": "0", "message": "success",
   <Property name="task_token_budget" type="object" propKey="task_token_budget">
     配置 `max_task_tokens` 时返回的 API 任务累计预算状态；未配置时不返回。
   </Property>
-  <Property name="request_kind" type="string?" propKey="request_kind">
-    `task_token_budget` 表示预算暂停，需要通过追加预算或停止运行继续。
-  </Property>
-  <Property name="token_budget" type="object?" propKey="token_budget">
-    预算暂停时的当前用量、上限、剩余量和可用继续操作。
-  </Property>
   <Property name="prompt_tokens / completion_tokens / total_tokens" type="integer?" propKey="usage">
     Provider 返回的输入、输出和总 token 数；`total_tokens` 用于累加消息实时总用量。
   </Property>
@@ -746,7 +791,7 @@ Agent 的普通 JSON 成功响应统一为 `{ "code": "0", "message": "success",
 1. 收到 `message_start` 就保存响应头或事件里的 `conversation_id`、`message_id`。
 2. 收到带 `id` 的事件就立即持久化最新 id，并按 id 去重。
 3. 可见答案只由 `message`、`message_retract`、`message_end.answer` 驱动；进度事件不要拼入最终答案。
-4. `message_end.status` 为 `completed`、`stopped`、`error`、`failed` 时结束；为 `waiting_approval` 或 `waiting_question` 时保留同一消息并走匹配的继续接口。
+4. `message_end.status` 为 `completed`、`stopped`、`error`、`failed` 时结束；为 `waiting_approval`、`waiting_question` 或 `waiting_budget` 时保留同一消息并走匹配的继续接口。
 5. 断线后调用 events 接口恢复，不要重复提交原聊天请求。
 
 <CodeGroup title="TypeScript 事件分发骨架">
@@ -770,6 +815,9 @@ function applyAgentEvent(frame: AgentEvent) {
     case 'approval_requested':
     case 'question_answer_requested':
       renderPendingInteraction(frame);
+      break;
+    case 'token_budget_requested':
+      renderTokenBudgetActions(frame);
       break;
     case 'message_end':
       transitionMessage(String(data.message_id), String(data.status));
@@ -795,9 +843,9 @@ function applyAgentEvent(frame: AgentEvent) {
 | `message_end`     | 当前 SSE 阶段结束                     | 根据 `status` 进入终态或等待态；若有 `answer` 可用它校准完整文本   | `status`, `metadata`, `answer?`                        |
 | `error`           | 流式传输或 runtime 产生客户端安全错误 | 展示 `message`；记录 `code`；若后续没有 `message_end` 则按失败终止 | `message`, `code?`, `params?`                          |
 | `token_usage_updated` | 模型调用报告 provider token 用量       | 将本次调用用量累加到消息总数；存在 `task_token_budget` 时用于展示 API 预算状态 | `conversation_id`, `message_id`, `usage`, `task_token_budget?` |
-| `token_budget_requested` | API 任务达到配置的 token 预算           | 暂停运行，通过 user-input continuation 让调用方追加预算或停止 | `request_id`, `token_budget`, `questions[]`            |
+| `token_budget_requested` | API 任务达到配置的 token 预算           | 暂停运行，展示独立的追加预算或停止操作，并调用 token-budget continuation | `request_id`, `request_kind`, `token_budget`, `actions[]` |
 
-`message_start.parent_id` 为空表示根消息；`replace=true` 表示重新生成正在替换原分支结果。`message_end.status` 的终态为 `completed`、`stopped`、`error`、`failed`，等待态为 `waiting_approval`、`waiting_question`。`metadata` 是公开扩展对象，客户端只读取已知字段并保留未知字段兼容性。
+`message_start.parent_id` 为空表示根消息；`replace=true` 表示重新生成正在替换原分支结果。`message_end.status` 的终态为 `completed`、`stopped`、`error`、`failed`，等待态为 `waiting_approval`、`waiting_question`、`waiting_budget`。`metadata` 是公开扩展对象，客户端只读取已知字段并保留未知字段兼容性。
 
 <Properties>
   <Property name="parent_id" type="uuid | empty string" propKey="parent_id">
@@ -822,10 +870,10 @@ function applyAgentEvent(frame: AgentEvent) {
   </Property>
   <Property
     name="status"
-    type="completed | stopped | error | failed | waiting_approval | waiting_question"
+    type="completed | stopped | error | failed | waiting_approval | waiting_question | waiting_budget"
     propKey="status"
   >
-    必填于 `message_end`。前四项终止本次消息，后两项要求继续处理同一消息。
+    必填于 `message_end`。前四项终止本次消息，后三项要求通过对应协议继续处理同一消息。
   </Property>
   <Property name="metadata" type="object" propKey="metadata">
     必填于 `message_end`。公开运行元数据，可包含 usage 和等待上下文；允许增加未知键。
@@ -1039,6 +1087,7 @@ data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-
 | 事件                   | 作用与触发时机                             | 客户端应该做什么                                                                           | 关键字段                                                                                                   |
 | ---------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
 | `user_input_requested` | Skill 需要补充输入，或工作流问题被投影为通用输入结构 | 渲染问题并按 `source` 分流；`agent_workflow_question_answer` 走 workflow continuation，其他情况通过 user-input continue 提交 `answers` | `request_id`, `message?`, `questions[]`, `created_at`, `source?`, `workflow_run_id?`, `node_id?`, `round?` |
+| `token_budget_requested` | API 任务耗尽配置预算 | 只渲染事件返回的 `actions`；用 token-budget continue 追加预算或停止 | `request_id`, `request_kind`, `message`, `token_budget`, `actions[]` |
 
 <Properties>
   <Property name="request_id" type="string" propKey="request_id">

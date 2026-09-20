@@ -374,6 +374,7 @@ Normal Agent JSON success responses use `{ "code": "0", "message": "success", "d
 | Waiting for approval | Latest message has `status=waiting_approval` | Replay that message to rebuild `approval_requested`; message metadata may provide an immediate form fallback |
 | Waiting for workflow answer | `question_answer_requested`, or `user_input_requested.source=agent_workflow_question_answer` | Render the question/choices and call workflow continuation |
 | Waiting for Skill input | Any other `user_input_requested` | Key answers by question id and call user-input continuation |
+| Waiting for token budget | Latest message has `status=waiting_budget` | Render the independent budget actions and call token-budget continuation with the matching `request_id` |
 | Completed or failed | `completed`, `stopped`, `error`, or `failed` | Render history only; do not open a recovery stream |
 
     Waiting conversations are normally no longer `running`, so checking only `active_message_id` is insufficient. Inspect the newest message status and recover that same `message_id`. If retained events and message metadata cannot reconstruct the form, actions, or request id, show an unrecoverable-state UI instead of inventing approval actions.
@@ -696,6 +697,57 @@ Normal Agent JSON success responses use `{ "code": "0", "message": "success", "d
 
 ---
 
+<Heading
+  url="/api/v1/agents/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue"
+  method="POST"
+  title="Continue or Stop a Token-Budget Pause"
+  name="#Continue-Agent-Token-Budget"
+/>
+
+<Row>
+  <Col>
+    Use only after `token_budget_requested`. This is an independent protocol: do not send
+    `answers`, and do not route the request through Skill user-input continuation.
+
+    <Properties>
+      <Property name='conversation_id' type='uuid' propKey='conversation_id'>Required waiting conversation id.</Property>
+      <Property name='message_id' type='uuid' propKey='message_id'>Required message id from the budget event.</Property>
+      <Property name='request_id' type='string' propKey='request_id'>Required request id from the budget event.</Property>
+      <Property name='action' type='add | stop' propKey='action'>Use `add` to increase the task limit or `stop` to end the run normally.</Property>
+      <Property name='additional_tokens' type='integer?' propKey='additional_tokens'>Required only for `add`; range is 1 to 100000000 and the resulting limit cannot overflow that maximum.</Property>
+    </Properties>
+
+    The response is another SSE stream for the same message. `add` resumes with `message_start`
+    and may emit usage updates or another `token_budget_requested`; `stop` emits only
+    `message_end` with `status=stopped` unless a real system error occurs.
+  </Col>
+  <Col sticky>
+    <CodeGroup title="Request">
+    ```bash
+    curl --no-buffer '{apibase}/agents/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue' \
+      --header 'Content-Type: application/json' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1' \
+    --data '{"action":"add","additional_tokens":2048}'
+    ```
+    </CodeGroup>
+    <CodeGroup title="Response">
+    ```text
+    event: message_start
+    data: {"event":"message_start","data":{"conversation_id":"...","message_id":"..."}}
+
+    event: token_usage_updated
+    data: {"event":"token_usage_updated","data":{"message_id":"...","usage":{"total_tokens":2048}}}
+
+    event: message_end
+    data: {"event":"message_end","data":{"message_id":"...","status":"completed"}}
+    ```
+    </CodeGroup>
+  </Col>
+</Row>
+
+---
+
 ## Agent Event Integration Guide
 
 This section defines the SSE contract shared by chat, stream recovery, and continuation endpoints. Dispatch on the native `event:` field first, then read the event payload from `data.data` in the JSON envelope. Do not parse the whole response as one JSON document or wait for the connection to close before rendering.
@@ -740,12 +792,6 @@ This section defines the SSE contract shared by chat, stream recovery, and conti
   <Property name="task_token_budget" type="object" propKey="task_token_budget">
     Cumulative API task budget state when `max_task_tokens` is configured; omitted otherwise.
   </Property>
-  <Property name="request_kind" type="string?" propKey="request_kind">
-    `task_token_budget` identifies a budget pause that accepts an add-budget or stop continuation.
-  </Property>
-  <Property name="token_budget" type="object?" propKey="token_budget">
-    Current token usage, limit, remaining amount, and available continuation actions in a budget pause.
-  </Property>
   <Property name="prompt_tokens / completion_tokens / total_tokens" type="integer?" propKey="usage">
     Provider-reported input, output, and total token counts. `total_tokens` is the value to add to
     the per-message running total.
@@ -760,7 +806,7 @@ This section defines the SSE contract shared by chat, stream recovery, and conti
 1. On `message_start`, persist `conversation_id` and `message_id` from the response headers or event.
 2. Persist every non-empty SSE `id` immediately and deduplicate by id.
 3. Build the visible answer only from `message`, `message_retract`, and `message_end.answer`; never append progress events to the final answer.
-4. Treat `completed`, `stopped`, `error`, and `failed` as terminal `message_end.status` values. For `waiting_approval` or `waiting_question`, keep the same message and call the matching continuation endpoint.
+4. Treat `completed`, `stopped`, `error`, and `failed` as terminal `message_end.status` values. For `waiting_approval`, `waiting_question`, or `waiting_budget`, keep the same message and call the matching continuation endpoint.
 5. After a disconnect, recover from the events endpoint. Do not submit the original chat request again.
 
 <CodeGroup title="TypeScript Event Dispatcher">
@@ -784,6 +830,9 @@ function applyAgentEvent(frame: AgentEvent) {
     case 'approval_requested':
     case 'question_answer_requested':
       renderPendingInteraction(frame);
+      break;
+    case 'token_budget_requested':
+      renderTokenBudgetActions(frame);
       break;
     case 'message_end':
       transitionMessage(String(data.message_id), String(data.status));
@@ -809,9 +858,9 @@ function applyAgentEvent(frame: AgentEvent) {
 | `message_end`     | The current SSE phase ends                                              | Enter a terminal or waiting state from `status`; when present, use `answer` to reconcile the complete text  | `status`, `metadata`, `answer?`                        |
 | `error`           | Streaming or the runtime produces a client-safe error                   | Display `message`, log `code`, and terminate as failed if no later `message_end` arrives                    | `message`, `code?`, `params?`                          |
 | `token_usage_updated` | A model invocation reports provider token usage                         | Add the invocation usage to the message total; use `task_token_budget` when present for API budget state | `conversation_id`, `message_id`, `usage`, `task_token_budget?` |
-| `token_budget_requested` | An API task reaches its configured token budget                         | Pause and ask the caller to add budget or stop through the user-input continuation endpoint             | `request_id`, `token_budget`, `questions[]`            |
+| `token_budget_requested` | An API task reaches its configured token budget                         | Pause and render the independent add-budget or stop actions; continue through the token-budget endpoint | `request_id`, `request_kind`, `token_budget`, `actions[]` |
 
-An empty `message_start.parent_id` identifies a root message. `replace=true` means regeneration is replacing the result on the previous branch. Terminal `message_end.status` values are `completed`, `stopped`, `error`, and `failed`; waiting values are `waiting_approval` and `waiting_question`. `metadata` is an extensible public object, so read known fields and tolerate unknown ones.
+An empty `message_start.parent_id` identifies a root message. `replace=true` means regeneration is replacing the result on the previous branch. Terminal `message_end.status` values are `completed`, `stopped`, `error`, and `failed`; waiting values are `waiting_approval`, `waiting_question`, and `waiting_budget`. `metadata` is an extensible public object, so read known fields and tolerate unknown ones.
 
 <Properties>
   <Property name="parent_id" type="uuid | empty string" propKey="parent_id">
@@ -839,11 +888,11 @@ An empty `message_start.parent_id` identifies a root message. `replace=true` mea
   </Property>
   <Property
     name="status"
-    type="completed | stopped | error | failed | waiting_approval | waiting_question"
+    type="completed | stopped | error | failed | waiting_approval | waiting_question | waiting_budget"
     propKey="status"
   >
-    Required in `message_end`. The first four terminate the message; the final two require
-    continuing the same message.
+    Required in `message_end`. The first four terminate the message; the final three require
+    continuing the same message through the matching protocol.
   </Property>
   <Property name="metadata" type="object" propKey="metadata">
     Required in `message_end`. Public runtime metadata that may contain usage and waiting context;
@@ -1068,6 +1117,7 @@ data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-
 | Event                  | Purpose and trigger                                                           | Client action                                                                                                                                     | Key fields                                                                                                 |
 | ---------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | `user_input_requested` | A Skill needs input, or a workflow question is projected into the common input shape | Render the questions and route by `source`; use workflow continuation for `agent_workflow_question_answer`, otherwise submit `answers` through user-input continuation | `request_id`, `message?`, `questions[]`, `created_at`, `source?`, `workflow_run_id?`, `node_id?`, `round?` |
+| `token_budget_requested` | An API task exhausted its configured budget | Render only the returned `actions`; call token-budget continuation with `action=add` and `additional_tokens`, or `action=stop` | `request_id`, `request_kind`, `message`, `token_budget`, `actions[]` |
 
 <Properties>
   <Property name="request_id" type="string" propKey="request_id">

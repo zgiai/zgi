@@ -94,6 +94,7 @@ function mergeTerminalMessageMetadata(
     status === 'waiting_approval' ||
     status === 'waiting_client_action' ||
     status === 'waiting_question' ||
+    status === 'waiting_budget' ||
     status === 'pending' ||
     status === 'streaming'
   ) {
@@ -116,7 +117,8 @@ export function removeStreamingStateByConversation(
         streaming.timeline?.length &&
         (streaming.status === 'waiting_approval' ||
           streaming.status === 'waiting_client_action' ||
-          streaming.status === 'waiting_question')
+          streaming.status === 'waiting_question' ||
+          streaming.status === 'waiting_budget')
       ) {
         return;
       }

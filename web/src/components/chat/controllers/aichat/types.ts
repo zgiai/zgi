@@ -56,6 +56,7 @@ export interface AIChatStreamingMessageState {
     | 'waiting_approval'
     | 'waiting_client_action'
     | 'waiting_question'
+    | 'waiting_budget'
     | 'stopped'
     | 'error';
   timeline?: AIChatAgenticTimelineItem[];

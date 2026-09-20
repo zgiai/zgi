@@ -21,6 +21,7 @@ const ACTIVE_DIGITAL_HUMAN_RUN_STATUSES: ReadonlySet<string> = new Set([
   'waiting_question',
   'pending_client_action',
   'waiting_client_action',
+  'waiting_budget',
 ]);
 
 export function isActiveDigitalHumanRunStatus(status?: string | null): boolean {

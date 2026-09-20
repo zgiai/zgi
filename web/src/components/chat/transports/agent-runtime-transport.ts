@@ -113,6 +113,7 @@ function runtimeTerminalMessage(message: { event: string | null; data: unknown }
       'waiting_approval',
       'waiting_client_action',
       'waiting_question',
+      'waiting_budget',
     ].includes(String((data as Record<string, unknown>).status))
   );
 }

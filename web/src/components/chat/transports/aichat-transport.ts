@@ -20,6 +20,7 @@ import type {
   AIChatMessageRetractEventData,
   AIChatMessageStartEventData,
   AIChatTokenUsageUpdatedEventData,
+  AIChatTokenBudgetRequestedEventData,
   AIChatMemoryMutationEventData,
   AIChatIntermediateAnswerEventData,
   AIChatUserInputRequestedEventData,
@@ -205,6 +206,10 @@ export interface AIChatStreamCallbacks {
   onMessageEnd: (payload: AIChatMessageEndEventData, eventId?: string | null) => void;
   onTokenUsageUpdated?: (
     payload: AIChatTokenUsageUpdatedEventData,
+    eventId?: string | null
+  ) => void;
+  onTokenBudgetRequested?: (
+    payload: AIChatTokenBudgetRequestedEventData,
     eventId?: string | null
   ) => void;
   onErrorEvent: (payload: AIChatErrorEventData, eventId?: string | null) => void;
@@ -557,6 +562,12 @@ export function dispatchAIChatStreamEvent(
     case 'token_usage_updated':
       callbacks.onTokenUsageUpdated?.(
         (data ?? {}) as AIChatTokenUsageUpdatedEventData,
+        eventId
+      );
+      break;
+    case 'token_budget_requested':
+      callbacks.onTokenBudgetRequested?.(
+        (data ?? {}) as AIChatTokenBudgetRequestedEventData,
         eventId
       );
       break;

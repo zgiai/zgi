@@ -746,6 +746,7 @@ function skillInvocationStatusRank(status: string | undefined): number {
     case 'waiting_approval':
     case 'waiting_client_action':
     case 'waiting_question':
+    case 'waiting_budget':
       return 20;
     case 'running':
     case 'loading':

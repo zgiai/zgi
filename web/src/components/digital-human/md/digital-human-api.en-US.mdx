@@ -298,6 +298,7 @@ The same event names and payload families used by the Agent API are available fo
 | `message_end=completed`, no `run_end` yet | Finalizing              | Keep listening until `run_end`                                                                                       |
 | `message_end=waiting_approval`            | Task approval         | Replace the composer with the approval form and continue the original message through workflow-continuation; do not send a new natural-language confirmation |
 | `message_end=waiting_question`            | User input            | Keep the ids and render the question control described by `user_input_requested` |
+| `message_end=waiting_budget`              | Token budget          | Render the independent `token_budget_requested` actions and call token-budget continuation |
 | `run_end` with a terminal status          | Terminal                | Stop reconnecting; history is the source of truth                                                                    |
 
 On a full page reload, fetch conversation messages first. If a run is still active, reconnect without assuming that a locally stored cursor matches what the fresh DOM rendered. De-duplicate by non-empty SSE id and by `(message_id, event id)`.
@@ -310,6 +311,13 @@ metadata, replace the composer with the approval controls, and submit
 When the stream ends in `waiting_question` and emits `user_input_requested`,
 submit the answer to
 `POST /api/v1/digital-humans/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue` with the same `user` and an `answers` object keyed by question id. This resumes the original Agent Loop in place; do not send a new chat message or route it through workflow-continuation.
+
+When the stream ends in `waiting_budget`, handle the independent
+`token_budget_requested` event. Call
+`POST /api/v1/digital-humans/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue`
+with the same `user` and either `{"action":"add","additional_tokens":2048}` or
+`{"action":"stop"}`. Do not send `answers`; stopping produces a normal
+`message_end(status=stopped)` rather than a generic error.
 
 ---
 
@@ -650,6 +658,45 @@ curl --request POST '{apibase}/digital-humans/conversations/{conversation_id}/me
 ```text
 event: message
 data: {"event":"message","data":{"message_id":"...","answer":"Continuing with the conservative option."}}
+
+event: message_end
+data: {"event":"message_end","data":{"message_id":"...","status":"completed"}}
+```
+</CodeGroup>
+
+---
+
+<Heading
+  url="/api/v1/digital-humans/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue"
+  method="POST"
+  title="Continue or Stop a Token-Budget Pause"
+  name="#Continue-DigitalHuman-Token-Budget"
+/>
+
+<Properties>
+  <Property name="conversation_id" type="uuid path" propKey="conversation_id">Required owning conversation.</Property>
+  <Property name="message_id" type="uuid path" propKey="message_id">Required paused assistant message.</Property>
+  <Property name="request_id" type="string path" propKey="request_id">Required id from `token_budget_requested`.</Property>
+  <Property name="user" type="string body" propKey="user">Required and must match the conversation owner.</Property>
+  <Property name="action" type="add | stop" propKey="action">Use `add` to increase the task budget or `stop` to stop normally.</Property>
+  <Property name="additional_tokens" type="integer body" propKey="additional_tokens">Required for `add`; 1 to 100000000, with no overflow of the resulting task limit.</Property>
+</Properties>
+
+<CodeGroup title="Request">
+```bash
+curl --request POST '{apibase}/digital-humans/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'Content-Type: application/json' \
+  --data '{"user":"customer_123","action":"add","additional_tokens":2048}'
+```
+</CodeGroup>
+<CodeGroup title="Response">
+```text
+event: message_start
+data: {"event":"message_start","data":{"conversation_id":"...","message_id":"..."}}
+
+event: token_usage_updated
+data: {"event":"token_usage_updated","data":{"message_id":"...","usage":{"total_tokens":2048}}}
 
 event: message_end
 data: {"event":"message_end","data":{"message_id":"...","status":"completed"}}

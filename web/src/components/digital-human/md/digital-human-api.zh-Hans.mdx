@@ -298,6 +298,7 @@ data: {"event":"message","data":{"conversation_id":"...","message_id":"...","ans
 | `message_end=completed`，尚无 `run_end` | 收尾中         | 继续监听到 `run_end`                                            |
 | `message_end=waiting_approval`          | 等待任务审批   | 用审批表单替换输入框，调用 workflow-continuation 续接原消息；不要发送新的自然语言确认 |
 | `message_end=waiting_question`          | 等待用户输入   | 保留标识并按 `user_input_requested` 展示问题控件 |
+| `message_end=waiting_budget`            | 等待 Token 预算 | 展示独立 `token_budget_requested` 操作并调用 token-budget continue |
 | `run_end` 携带终态                      | 已终止         | 停止重连，以历史记录为准                                        |
 
 页面完全刷新后先读取消息历史。Run 仍在执行时，不要假设浏览器保存的游标与全新 DOM 已渲染内容一致；应按非空 SSE id 及 `(message_id, event id)` 去重。
@@ -307,6 +308,9 @@ data: {"event":"message","data":{"conversation_id":"...","message_id":"...","ans
 
 如果消息以 `waiting_question` 结束并收到 `user_input_requested`，应调用
 `POST /api/v1/digital-humans/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue`，提交同一个 `user` 和按问题 id 对应的 `answers`。该接口会恢复原 Agent Loop，不会创建新的对话消息，也不能替代任务审批接口。
+
+如果消息以 `waiting_budget` 结束，应处理独立的 `token_budget_requested` 事件。调用
+`POST /api/v1/digital-humans/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue`，提交同一个 `user` 以及 `{"action":"add","additional_tokens":2048}` 或 `{"action":"stop"}`。不要提交 `answers`；停止会产生正常的 `message_end(status=stopped)`，不会伪造通用错误。
 
 ---
 
@@ -638,6 +642,45 @@ curl --request POST '{apibase}/digital-humans/conversations/{conversation_id}/me
 ```text
 event: message
 data: {"event":"message","data":{"message_id":"...","answer":"将按保守方案继续处理。"}}
+
+event: message_end
+data: {"event":"message_end","data":{"message_id":"...","status":"completed"}}
+```
+</CodeGroup>
+
+---
+
+<Heading
+  url="/api/v1/digital-humans/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue"
+  method="POST"
+  title="继续或停止 Token 预算暂停"
+  name="#Continue-DigitalHuman-Token-Budget"
+/>
+
+<Properties>
+  <Property name="conversation_id" type="uuid path" propKey="conversation_id">必填，会话 id。</Property>
+  <Property name="message_id" type="uuid path" propKey="message_id">必填，处于预算等待状态的消息 id。</Property>
+  <Property name="request_id" type="string path" propKey="request_id">必填，来自 `token_budget_requested`。</Property>
+  <Property name="user" type="string body" propKey="user">必填，且必须匹配会话所有者。</Property>
+  <Property name="action" type="add | stop" propKey="action">`add` 追加预算，`stop` 正常停止。</Property>
+  <Property name="additional_tokens" type="integer body" propKey="additional_tokens">`add` 时必填，范围 1 到 100000000，追加后总上限不能溢出。</Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl --request POST '{apibase}/digital-humans/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'Content-Type: application/json' \
+  --data '{"user":"customer_123","action":"add","additional_tokens":2048}'
+```
+</CodeGroup>
+<CodeGroup title="响应">
+```text
+event: message_start
+data: {"event":"message_start","data":{"conversation_id":"...","message_id":"..."}}
+
+event: token_usage_updated
+data: {"event":"token_usage_updated","data":{"message_id":"...","usage":{"total_tokens":2048}}}
 
 event: message_end
 data: {"event":"message_end","data":{"message_id":"...","status":"completed"}}

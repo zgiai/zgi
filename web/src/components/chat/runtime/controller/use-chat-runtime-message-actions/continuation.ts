@@ -155,9 +155,11 @@ export function useWorkflowContinuationActions({
         sourceMessage?.status === 'waiting_approval' ||
         sourceMessage?.status === 'waiting_client_action' ||
         sourceMessage?.status === 'waiting_question' ||
+        sourceMessage?.status === 'waiting_budget' ||
         streamingStatus === 'waiting_approval' ||
         streamingStatus === 'waiting_client_action' ||
-        streamingStatus === 'waiting_question';
+        streamingStatus === 'waiting_question' ||
+        streamingStatus === 'waiting_budget';
       if (
         (currentState.isSending && !waitingForContinuation) ||
         (currentState.recoveringByConversation[conversationId] &&

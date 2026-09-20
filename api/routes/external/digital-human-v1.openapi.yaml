@@ -33,7 +33,7 @@ x-zgi-sse-event-data-schemas:
   agent_progress: '#/components/schemas/AgentProgressEvent'
   agent_intermediate_answer: '#/components/schemas/IntermediateAnswerEvent'
   user_input_requested: '#/components/schemas/UserInputRequestedEvent'
-  token_budget_requested: '#/components/schemas/UserInputRequestedEvent'
+  token_budget_requested: '#/components/schemas/TokenBudgetRequestedEvent'
   token_usage_updated: '#/components/schemas/TokenUsageUpdatedEvent'
   file_parse_start: '#/components/schemas/FileParseEvent'
   file_parse_end: '#/components/schemas/FileParseEvent'
@@ -418,6 +418,38 @@ paths:
                 user_input_requested: {$ref: '#/components/schemas/UserInputRequestedEvent'}
                 message: {$ref: '#/components/schemas/MessageDeltaEvent'}
                 token_usage_updated: {$ref: '#/components/schemas/TokenUsageUpdatedEvent'}
+                message_end: {$ref: '#/components/schemas/MessageEndEvent'}
+                error: {$ref: '#/components/schemas/StreamErrorEvent'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue:
+    parameters:
+      - $ref: '#/components/parameters/ConversationID'
+      - $ref: '#/components/parameters/MessageID'
+      - name: request_id
+        in: path
+        required: true
+        description: Correlation identifier from the token_budget_requested event.
+        schema: {type: string, minLength: 1, maxLength: 160}
+    post:
+      tags: [DigitalHuman conversations]
+      summary: Continue or stop a DigitalHuman task paused by its token budget
+      description: Continues the same message after token_budget_requested with an independent budget action. This endpoint does not accept question answers.
+      operationId: continueDigitalHumanTaskTokenBudget
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DigitalHumanTaskTokenBudgetContinuationRequest'}
+      responses:
+        '200':
+          description: Recoverable SSE stream for the resumed task.
+          content:
+            text/event-stream:
+              schema: {type: string, description: Native SSE frames containing JSON event envelopes.}
+              x-zgi-sse-event-data-schemas:
+                message_start: {$ref: '#/components/schemas/MessageStartEvent'}
+                token_usage_updated: {$ref: '#/components/schemas/TokenUsageUpdatedEvent'}
+                token_budget_requested: {$ref: '#/components/schemas/TokenBudgetRequestedEvent'}
                 message_end: {$ref: '#/components/schemas/MessageEndEvent'}
                 error: {$ref: '#/components/schemas/StreamErrorEvent'}
         default: {$ref: '#/components/responses/Error'}
@@ -820,8 +852,8 @@ components:
     DigitalHumanUserInputContinuationRequest:
       type: object
       additionalProperties: false
-      required: [user]
-      description: Answers a model-generated user question and resumes the same Agent Loop, or continues a token_budget_requested pause with action=add/stop.
+      required: [user, answers]
+      description: Answers a model-generated user question and resumes the same Agent Loop.
       properties:
         user:
           allOf: [{$ref: '#/components/schemas/User'}]
@@ -833,15 +865,24 @@ components:
             type: string
             maxLength: 4000
           description: Answers keyed by the question ids returned in user_input_requested.
+    DigitalHumanTaskTokenBudgetContinuationRequest:
+      type: object
+      additionalProperties: false
+      required: [user, action]
+      description: Continues a DigitalHuman task paused by its token budget. Use add with additional_tokens or stop without it.
+      properties:
+        user:
+          allOf: [{$ref: '#/components/schemas/User'}]
+          description: End user that owns the target conversation.
         action:
           type: string
           enum: [add, stop]
-          description: Budget continuation action for a token_budget_requested event.
+          description: Resolve the budget pause by adding tokens or stopping the task.
         additional_tokens:
           type: integer
           minimum: 1
           maximum: 100000000
-          description: Number of tokens to add when action is add.
+          description: Number of tokens to add when action is add; the total limit cannot exceed 100000000.
         runtime_context: {type: string, maxLength: 8000, description: Optional trusted runtime context.}
         operation_context: {type: object, additionalProperties: true, description: Optional operation metadata.}
     DigitalHumanTask:
@@ -1002,7 +1043,9 @@ components:
       description: Durable lifecycle record for one idempotent chat request.
       properties:
         run_id: {type: string, format: uuid, description: Durable run identifier.}
-        status: {type: string, enum: [queued, running, canceling, succeeded, failed, canceled, unknown], description: Current durable execution status.}
+        status: {type: string, enum: [queued, running, waiting, canceling, succeeded, failed, canceled, unknown], description: Current durable execution status.}
+        waiting_reason: {type: string, enum: [waiting_approval, waiting_question, waiting_budget, waiting_client_action], description: Why a run with status waiting is parked.}
+        waiting_receipt: {type: string, format: uuid, nullable: true, description: Opaque approval receipt when waiting_reason is waiting_approval.}
         conversation_id: {type: string, format: uuid, description: Linked conversation once available.}
         message_id: {type: string, format: uuid, description: Linked assistant message once available.}
         error_code: {type: string, description: Safe stable error code when failed.}
@@ -1045,7 +1088,7 @@ components:
       properties:
         conversation_id: {type: string, format: uuid, description: Conversation containing the message.}
         message_id: {type: string, format: uuid, description: Assistant message that reached this state.}
-        status: {type: string, enum: [completed, stopped, error, waiting_approval, waiting_question, waiting_client_action], description: Message phase status. Specialized waiting-state continuation APIs are not part of DigitalHuman v1.}
+        status: {type: string, enum: [completed, stopped, error, waiting_approval, waiting_question, waiting_budget, waiting_client_action], description: Message phase status.}
         metadata: {type: object, additionalProperties: true, description: Safe runtime metadata such as usage.}
         answer: {type: string, description: Optional complete answer fallback.}
     StreamErrorEvent:
@@ -1118,7 +1161,7 @@ components:
         used_tokens: {type: integer, minimum: 0, description: Cumulative provider-reported tokens consumed by this task.}
         max_tokens: {type: integer, minimum: 1, description: Maximum tokens configured for this task.}
         remaining_tokens: {type: integer, minimum: 0, description: Remaining task budget after the latest usage update.}
-        status: {type: string, enum: [running, exhausted], description: Current task budget status.}
+        status: {type: string, enum: [running, exhausted, waiting, stopped], description: Current task budget status.}
     AgentProgressEvent:
       description: Coarse processing progress that never contains hidden reasoning.
       allOf:
@@ -1156,8 +1199,6 @@ components:
           required: [request_id, questions]
           properties:
             request_id: {type: string, description: Correlation identifier for the request.}
-            request_kind: {type: string, enum: [task_token_budget], description: Present for a token budget pause; continue with action=add or action=stop.}
-            token_budget: {type: object, additionalProperties: true, description: Current task token usage and available continuation actions.}
             source: {type: string, description: Runtime source used to route the answer.}
             message: {type: string, description: Optional user-facing instruction.}
             questions:
@@ -1166,6 +1207,27 @@ components:
               items:
                 type: object
                 additionalProperties: true
+    TokenBudgetRequestedEvent:
+      description: Pauses a DigitalHuman API task after its configured token budget is exhausted. This independent event never contains user-input questions.
+      allOf:
+        - $ref: '#/components/schemas/RuntimeEventIdentity'
+        - type: object
+          required: [request_id, request_kind, message, token_budget, actions, created_at]
+          properties:
+            request_id: {type: string, description: Opaque continuation id for this budget pause.}
+            request_kind: {type: string, enum: [task_token_budget], description: Stable discriminator for the independent task-budget continuation protocol.}
+            message: {type: string, description: User-facing budget exhaustion message.}
+            token_budget: {$ref: '#/components/schemas/TaskTokenBudget'}
+            actions:
+              type: array
+              minItems: 1
+              description: Actions allowed for resolving the budget pause.
+              items:
+                type: object
+                required: [id, label]
+                properties:
+                  id: {type: string, enum: [add, stop]}
+                  label: {type: string}
     FileParseEvent:
       description: Start, completion, or failure while preparing one uploaded file.
       allOf:

@@ -109,6 +109,7 @@ function shouldRefreshConversationAfterMessageEnd(
     status === 'waiting_approval' ||
     status === 'waiting_client_action' ||
     status === 'waiting_question' ||
+    status === 'waiting_budget' ||
     status === 'stopped' ||
     status === 'error' ||
     status === 'failed'
