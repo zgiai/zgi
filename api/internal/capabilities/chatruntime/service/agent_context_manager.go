@@ -12,6 +12,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/contextmgr"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 func (s *service) newAgentContextManager(ctx context.Context, prepared *PreparedChat) (*contextmgr.Manager, error) {
@@ -44,7 +45,7 @@ func (s *service) newAgentContextManager(ctx context.Context, prepared *Prepared
 	if spec.ContextWindow <= 0 {
 		return nil, fmt.Errorf("%w: model context_window is required", ErrInvalidInput)
 	}
-	agentWindowK := 256
+	agentWindowK := 512
 	if prepared.contextBudget != nil && prepared.contextBudget.Budget != nil && prepared.contextBudget.Budget.ConfiguredAgentWindowK > 0 {
 		agentWindowK = prepared.contextBudget.Budget.ConfiguredAgentWindowK
 	} else if config.GlobalConfig != nil && config.GlobalConfig.ChatRuntime.AgentContextWindowK > 0 {
@@ -75,6 +76,10 @@ func (s *service) newAgentContextManager(ctx context.Context, prepared *Prepared
 		DefaultMainOutputTokens: mainOutput,
 	}, &serviceContextCompactor{service: s, prepared: prepared}, toolResultStore, func(requestType string, round int, request *adapter.ChatRequest, decision contextmgr.Decision) {
 		s.writeAgentContextPromptDumpBestEffort(context.Background(), prepared, requestType, round, request, &decision)
+	}, func(ctx context.Context, transcript []adapter.Message) {
+		// Best effort and never cancelled with the request: the point of a
+		// checkpoint is that a turn interrupted mid-flight is still recoverable.
+		s.persistTurnTranscriptEntries(context.WithoutCancel(ctx), prepared, transcript)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create agent context manager: %w", err)
@@ -110,6 +115,13 @@ func (c *serviceContextCompactor) Compact(ctx context.Context, request *adapter.
 	if c == nil || c.service == nil || c.service.llmClient == nil || c.prepared == nil {
 		return "", nil, errors.New("context compaction model client is unavailable")
 	}
+	// Persist the turn before summarising it: the summary boundary is the last
+	// replayed entry of the compact input, so everything the summarizer is about
+	// to receive has to be durable first.
+	boundTranscript := c.service.persistTurnTranscriptEntries(ctx, c.prepared, call.Transcript)
+	if len(boundTranscript) == len(call.Transcript) {
+		copy(call.Transcript, boundTranscript)
+	}
 	startedAt := time.Now()
 	callCtx, cancel := context.WithTimeout(ctx, c.service.modelIdleTimeoutValue())
 	defer cancel()
@@ -142,7 +154,25 @@ func (c *serviceContextCompactor) Compact(ctx context.Context, request *adapter.
 		return "", response.Usage, err
 	}
 	c.persistInvocation(call, request, &choice.Message, response.Usage, startedAt, nil)
+	c.persistCompactionSummary(ctx, call, summary)
 	return summary, response.Usage, nil
+}
+
+// persistCompactionSummary records one summary together with its exact boundary:
+// the conversation position of the last replayed entry the summarizer received.
+// The manager reads that position off the compact input it actually sent, so the
+// boundary is stated rather than matched — it can neither over-claim (which
+// would drop content) nor under-claim (which would replay it twice).
+func (c *serviceContextCompactor) persistCompactionSummary(ctx context.Context, call contextmgr.CompactCall, summary string) {
+	if c == nil || c.prepared == nil || c.prepared.Message == nil {
+		return
+	}
+	if strings.TrimSpace(call.SummarizedEntryID) == "" {
+		logger.WarnContext(ctx, "agent context summary has no entry boundary; keeping it in memory only",
+			"message_id", c.prepared.Message.ID.String())
+		return
+	}
+	c.service.persistAgentContextSummary(ctx, c.prepared, summary, call.SummarizedEntryID)
 }
 
 func (c *serviceContextCompactor) persistInvocation(call contextmgr.CompactCall, request *adapter.ChatRequest, response *adapter.Message, usage *adapter.Usage, startedAt time.Time, callErr error) {

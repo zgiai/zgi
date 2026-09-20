@@ -262,7 +262,10 @@ func (s *service) runPreparedToolLoop(
 	if err == nil && presentationErr != nil {
 		err = presentationErr
 	}
-	s.persistAgentTurnTranscript(persistCtx, prepared, contextManager, answer, err != nil)
+	// Durable facts: the turn's protocol messages become transcript entries.
+	// The metadata snapshot is no longer written; legacy turns are still read
+	// through the metadata fallback.
+	s.syncAgentTranscriptEntries(persistCtx, prepared, contextManager)
 	usage = addUsageCloned(usage, scriptModelUsage())
 	if err != nil && strings.TrimSpace(answer) != "" {
 		s.persistPartialSkillLoopAnswerBestEffort(persistCtx, prepared, answer, usage)

@@ -505,6 +505,7 @@ type PreparedChat struct {
 	parts                          *chatRequestParts
 	contextBudget                  *contextBudgetResult
 	contextManager                 *contextmgr.Manager
+	contextEntries                 *contextEntrySync
 
 	UserMemoryPreflightDone  bool
 	UserMemoryPreflightUsage *adapter.Usage

@@ -436,7 +436,7 @@ func (s *service) prepareConfiguredClientActionContinuationChat(ctx context.Cont
 	}
 	parts.ContextControl = contextResult.Metadata
 	llmRequest := newLLMChatRequest(parts, contextResult.Messages)
-	appendCurrentTurnAgentTranscript(llmRequest, message)
+	s.appendPersistedAgentTranscript(ctx, llmRequest, message)
 	llmRequest.Messages = append(llmRequest.Messages, continuationMessageForExecutionMode(clientActionContinuationMessage(message, continuation.Event, req), parts.ExecutionMode))
 	prepared.LLMRequest = llmRequest
 	prepared.contextBudget = contextResult

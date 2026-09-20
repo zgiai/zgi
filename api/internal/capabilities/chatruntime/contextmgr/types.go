@@ -39,7 +39,10 @@ type Config struct {
 	TargetRatio             float64
 	MaxToolResultTokens     int
 	ToolResultPreviewRunes  int
-	TailMinTextRounds       int
+	// TailMinMessages is the minimum number of protocol messages kept verbatim
+	// during semantic compaction. Tool-call batches may make the actual tail
+	// larger so an assistant tool call is never separated from its results.
+	TailMinMessages int
 }
 
 type Budget struct {
@@ -72,10 +75,12 @@ type Decision struct {
 	AfterTokens                   int            `json:"after_tokens"`
 	CompactedThroughRound         int            `json:"compacted_through_round,omitempty"`
 	PreservedRounds               []int          `json:"preserved_rounds,omitempty"`
+	PreservedMessageCount         int            `json:"preserved_message_count,omitempty"`
 	ToolResultOriginalTokens      int            `json:"tool_result_original_tokens"`
 	ToolResultProjectedTokens     int            `json:"tool_result_projected_tokens"`
 	ToolProjectionCount           int            `json:"tool_projection_count"`
 	LossyRecoveryDroppedRounds    int            `json:"lossy_recovery_dropped_rounds,omitempty"`
+	LossyRecoveryDroppedBatches   int            `json:"lossy_recovery_dropped_batches,omitempty"`
 	Estimator                     string         `json:"estimator"`
 	EstimateScale                 float64        `json:"estimate_scale"`
 	CompactionFailure             string         `json:"compaction_failure,omitempty"`
@@ -88,6 +93,12 @@ type ContextSummary struct {
 	CompactedThroughRound int       `json:"compacted_through_round"`
 	CreatedAt             time.Time `json:"created_at"`
 }
+
+// CheckpointFunc persists the turn transcript at an interruption point: a new
+// API round is about to start, or a model response was just observed. The
+// manager hands over its own snapshot, so a checkpoint never has to call back
+// into the manager it was registered on.
+type CheckpointFunc func(ctx context.Context, transcript []adapter.Message)
 
 type ContentReplacement struct {
 	ToolCallID     string `json:"tool_call_id"`
@@ -143,6 +154,13 @@ type CompactCall struct {
 	APIRound   int
 	Type       string
 	Decision   Decision
+	// Transcript is the turn transcript as it stands right before this
+	// compaction. It travels by value so a compactor can persist it without
+	// reaching back into the manager that is calling it.
+	Transcript []adapter.Message
+	// SummarizedEntryID is the exact parent-chain boundary represented by the
+	// summary. An empty value means the compact input contained no durable entry.
+	SummarizedEntryID string
 }
 
 type Compactor interface {

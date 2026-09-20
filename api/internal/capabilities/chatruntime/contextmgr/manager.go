@@ -24,21 +24,23 @@ type Manager struct {
 	compactor    Compactor
 	toolStore    ToolResultStore
 	observer     RequestObserver
+	checkpoint   CheckpointFunc
 	state        AgentContextState
 	pendingUsage *adapter.Usage
 }
 
-func New(config Config, compactor Compactor, toolStore ToolResultStore, observer RequestObserver) (*Manager, error) {
+func New(config Config, compactor Compactor, toolStore ToolResultStore, observer RequestObserver, checkpoint CheckpointFunc) (*Manager, error) {
 	normalized, err := normalizeConfig(config)
 	if err != nil {
 		return nil, err
 	}
 	manager := &Manager{
-		config:    normalized,
-		estimator: tokenestimate.NewEstimator(),
-		compactor: compactor,
-		toolStore: toolStore,
-		observer:  observer,
+		config:     normalized,
+		estimator:  tokenestimate.NewEstimator(),
+		compactor:  compactor,
+		toolStore:  toolStore,
+		observer:   observer,
+		checkpoint: checkpoint,
 		state: AgentContextState{
 			SchemaVersion:       1,
 			AgentRunID:          strings.TrimSpace(normalized.AgentRunID),
@@ -54,10 +56,28 @@ func New(config Config, compactor Compactor, toolStore ToolResultStore, observer
 	return manager, nil
 }
 
+// Checkpoint hands the transcript produced so far to the registered writer.
+// Callers use it at interruption points: the assistant message of a round and
+// the tool results of its calls must be durable before the next model call, so
+// a process that dies mid-turn loses at most the round in flight.
+func (m *Manager) Checkpoint(ctx context.Context) {
+	if m == nil || m.checkpoint == nil {
+		return
+	}
+	m.mu.Lock()
+	transcript := cloneMessages(m.state.TurnTranscript)
+	m.mu.Unlock()
+	if len(transcript) == 0 {
+		return
+	}
+	m.checkpoint(ctx, transcript)
+}
+
 func (m *Manager) PrepareBeforeModelCall(ctx context.Context, request *adapter.ChatRequest) (*adapter.ChatRequest, Decision, error) {
 	if m == nil || request == nil {
 		return nil, Decision{}, fmt.Errorf("context manager request is required")
 	}
+	m.Checkpoint(ctx)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -242,12 +262,11 @@ func (m *Manager) PrepareReactiveCompact(ctx context.Context, request *adapter.C
 	return compacted, decision, nil
 }
 
-func (m *Manager) ObserveModelResponse(_ context.Context, message adapter.Message, usage *adapter.Usage) error {
+func (m *Manager) ObserveModelResponse(ctx context.Context, message adapter.Message, usage *adapter.Usage) error {
 	if m == nil {
 		return nil
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	message.ReasoningContent = ""
 	message = cloneMessage(message)
 	m.state.Messages = append(m.state.Messages, message)
@@ -262,6 +281,10 @@ func (m *Manager) ObserveModelResponse(_ context.Context, message adapter.Messag
 		cloned := *usage
 		m.state.LastUsage = &cloned
 	}
+	m.mu.Unlock()
+	// The response is durable before anything acts on it: a tool call that is
+	// about to be executed must never be discovered only in a lost process.
+	m.Checkpoint(ctx)
 	return nil
 }
 
@@ -280,15 +303,18 @@ func (m *Manager) ConsumeCompactionUsage() *adapter.Usage {
 	return &cloned
 }
 
-func (m *Manager) ReplaceMessages(_ context.Context, messages []adapter.Message) error {
+func (m *Manager) ReplaceMessages(ctx context.Context, messages []adapter.Message) error {
 	if m == nil {
 		return nil
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.appendNewTurnToolMessages(messages)
 	m.syncTurnTranscriptMessages(messages)
 	m.state.Messages = cloneMessages(messages)
+	m.mu.Unlock()
+	// A tool result becomes durable as soon as it exists: a crash in the middle
+	// of a batch loses at most the call that was still running.
+	m.Checkpoint(ctx)
 	return nil
 }
 
@@ -302,6 +328,22 @@ func (m *Manager) TurnTranscript() []adapter.Message {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return cloneMessages(m.state.TurnTranscript)
+}
+
+// BindTurnTranscript attaches durable entry identities to the manager's
+// in-memory transcript after a checkpoint has written them.  EntryID is not
+// part of the provider protocol, but compaction needs it to persist an exact
+// parent-chain boundary for messages produced during the current run.
+func (m *Manager) BindTurnTranscript(messages []adapter.Message) {
+	if m == nil || len(messages) == 0 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.state.TurnTranscript) != len(messages) {
+		return
+	}
+	m.state.TurnTranscript = cloneMessages(messages)
 }
 
 func (m *Manager) appendNewTurnToolMessages(messages []adapter.Message) {
@@ -839,19 +881,22 @@ func intFromJSONNumber(value interface{}) int {
 func (m *Manager) semanticCompact(ctx context.Context, request *adapter.ChatRequest, decision Decision, reactive bool) (*adapter.ChatRequest, *ContextSummary, Decision, error) {
 	systems, dialogue := splitSystemMessages(request.Messages)
 	rounds := groupMessagesByAPIRoundForRun(dialogue, m.state.NextRound)
-	if len(rounds) < 2 {
-		return nil, nil, decision, fmt.Errorf("no complete API-round prefix is available for compaction")
+	if len(dialogue) < 2 {
+		return nil, nil, decision, fmt.Errorf("no message prefix is available for compaction")
 	}
-	minimumTailRounds := m.config.TailMinTextRounds
+	minimumTailMessages := m.config.TailMinMessages
 	if reactive {
-		minimumTailRounds = 1
+		// Hard-limit recovery may need to summarize a short request. Proactive
+		// compaction still protects the configured message tail (8 by default),
+		// while recovery keeps at least the newest complete batch when possible.
+		minimumTailMessages = 1
 	}
-	preserveStart := selectPreservedTail(rounds, decision.Budget, minimumTailRounds, m.estimator, request.Model)
-	if preserveStart <= 0 || preserveStart >= len(rounds) {
-		return nil, nil, decision, fmt.Errorf("no safe API-round compaction boundary is available")
+	preserveStart := selectPreservedTailMessages(dialogue, minimumTailMessages)
+	if preserveStart <= 0 || preserveStart >= len(dialogue) {
+		return nil, nil, decision, fmt.Errorf("no safe message compaction boundary is available")
 	}
-	prefix := flattenRounds(rounds[:preserveStart])
-	tail := flattenRounds(rounds[preserveStart:])
+	prefix := cloneMessages(dialogue[:preserveStart])
+	tail := cloneMessages(dialogue[preserveStart:])
 	compactRequest := cloneRequest(request)
 	compactRequest.Messages = cloneMessages(prefix)
 	compactRequest.Messages = append(compactRequest.Messages, adapter.Message{Role: "user", Content: GetPartialCompactPrompt("", "up_to")})
@@ -865,15 +910,15 @@ func (m *Manager) semanticCompact(ctx context.Context, request *adapter.ChatRequ
 	maxTokens := decision.Budget.SummaryOutputReserve
 	compactRequest.MaxTokens = &maxTokens
 
-	lossyDroppedRounds := 0
+	lossyDroppedBatches := 0
 	for attempt := 0; attempt < 3 && m.estimator.EstimateChatRequest(compactRequest).Tokens > decision.Budget.CompactInputLimit; attempt++ {
-		prefixRounds := groupMessagesByAPIRound(compactRequest.Messages[:len(compactRequest.Messages)-1])
-		if len(prefixRounds) <= 1 {
+		prefixBatches := groupMessagesByCompactionBatch(compactRequest.Messages[:len(compactRequest.Messages)-1])
+		if len(prefixBatches) <= 1 {
 			break
 		}
-		compactRequest.Messages = flattenRounds(prefixRounds[1:])
+		compactRequest.Messages = flattenCompactionBatches(prefixBatches[1:])
 		compactRequest.Messages = append(compactRequest.Messages, adapter.Message{Role: "user", Content: GetPartialCompactPrompt("", "up_to")})
-		lossyDroppedRounds++
+		lossyDroppedBatches++
 	}
 	if m.estimator.EstimateChatRequest(compactRequest).Tokens > decision.Budget.CompactInputLimit {
 		return nil, nil, decision, fmt.Errorf("compaction input exceeds compact input limit")
@@ -888,7 +933,8 @@ func (m *Manager) semanticCompact(ctx context.Context, request *adapter.ChatRequ
 	if reactive {
 		compactDecision.Action = DecisionReactiveCompact
 	}
-	compactDecision.LossyRecoveryDroppedRounds = lossyDroppedRounds
+	compactDecision.LossyRecoveryDroppedRounds = lossyDroppedBatches
+	compactDecision.LossyRecoveryDroppedBatches = lossyDroppedBatches
 	var rawSummary string
 	var compactErr error
 	for attempt := 0; attempt < 3; attempt++ {
@@ -897,16 +943,31 @@ func (m *Manager) semanticCompact(ctx context.Context, request *adapter.ChatRequ
 			m.observer(callType, decision.APIRound, cloneRequest(compactRequest), attemptDecision)
 		}
 		var compactUsage *adapter.Usage
-		rawSummary, compactUsage, compactErr = m.compactor.Compact(ctx, compactRequest, CompactCall{AgentRunID: m.state.AgentRunID, APIRound: decision.APIRound, Type: callType, Decision: attemptDecision})
+		compactCall := CompactCall{
+			AgentRunID:        m.state.AgentRunID,
+			APIRound:          decision.APIRound,
+			Type:              callType,
+			Decision:          attemptDecision,
+			Transcript:        cloneMessages(m.state.TurnTranscript),
+			SummarizedEntryID: summarizedEntryID(compactRequest.Messages),
+		}
+		rawSummary, compactUsage, compactErr = m.compactor.Compact(ctx, compactRequest, compactCall)
+		// A compactor may bind newly persisted entry identities to the
+		// transcript snapshot. Keep those identities for the next compaction and
+		// for the eventual terminal checkpoint.
+		if len(compactCall.Transcript) == len(m.state.TurnTranscript) {
+			m.state.TurnTranscript = cloneMessages(compactCall.Transcript)
+		}
 		m.pendingUsage = mergeUsage(m.pendingUsage, compactUsage)
 		if compactErr == nil {
 			break
 		}
-		if !isPromptTooLong(compactErr) || attempt == 2 || !dropOldestCompactRound(compactRequest) {
+		if !isPromptTooLong(compactErr) || attempt == 2 || !dropOldestCompactBatch(compactRequest) {
 			return nil, nil, decision, compactErr
 		}
-		lossyDroppedRounds++
-		compactDecision.LossyRecoveryDroppedRounds = lossyDroppedRounds
+		lossyDroppedBatches++
+		compactDecision.LossyRecoveryDroppedRounds = lossyDroppedBatches
+		compactDecision.LossyRecoveryDroppedBatches = lossyDroppedBatches
 	}
 	if compactErr != nil {
 		return nil, nil, decision, compactErr
@@ -932,7 +993,7 @@ func (m *Manager) semanticCompact(ctx context.Context, request *adapter.ChatRequ
 	if candidateEstimate.Tokens >= before || candidateEstimate.Tokens >= decision.Budget.SoftLimit || (candidateEstimate.Tokens > decision.Budget.TargetTokens && !meaningfulSavings) {
 		return nil, nil, decision, fmt.Errorf("compacted request did not reach a safe lower token count: before=%d after=%d target=%d soft_limit=%d", before, candidateEstimate.Tokens, decision.Budget.TargetTokens, decision.Budget.SoftLimit)
 	}
-	compactedThrough := rounds[preserveStart-1].Sequence
+	compactedThrough := compactedRoundThroughMessagePrefix(rounds, preserveStart)
 	if m.state.Summary != nil {
 		compactedThrough = max(compactedThrough, m.state.Summary.CompactedThroughRound)
 	}
@@ -940,17 +1001,15 @@ func (m *Manager) semanticCompact(ctx context.Context, request *adapter.ChatRequ
 	m.state.Messages = cloneMessages(candidate.Messages)
 	m.state.Summary = newSummary
 	decision.Action = compactDecision.Action
-	decision.LossyRecoveryDroppedRounds = lossyDroppedRounds
+	decision.LossyRecoveryDroppedRounds = lossyDroppedBatches
+	decision.LossyRecoveryDroppedBatches = lossyDroppedBatches
+	decision.PreservedMessageCount = len(tail)
 	decision.AfterTokens = candidateEstimate.Tokens
 	decision.FinalPromptTokens = candidateEstimate.Tokens
 	decision.Estimator = candidateEstimate.Tokenizer
 	decision.ComponentTokens = componentTokenMap(candidateEstimate)
 	decision.CompactedThroughRound = newSummary.CompactedThroughRound
-	for _, round := range rounds[preserveStart:] {
-		if round.Sequence > 0 {
-			decision.PreservedRounds = append(decision.PreservedRounds, round.Sequence)
-		}
-	}
+	decision.PreservedRounds = preservedRoundSequences(rounds, preserveStart)
 	decision.Budget.ContextPressure = float64(candidateEstimate.Tokens) / float64(decision.Budget.PromptBudget)
 	return candidate, newSummary, decision, nil
 }
@@ -969,16 +1028,16 @@ func (m *Manager) decisionForRequest(request *adapter.ChatRequest, base Decision
 	return base
 }
 
-func dropOldestCompactRound(request *adapter.ChatRequest) bool {
+func dropOldestCompactBatch(request *adapter.ChatRequest) bool {
 	if request == nil || len(request.Messages) < 2 {
 		return false
 	}
 	prompt := cloneMessage(request.Messages[len(request.Messages)-1])
-	prefixRounds := groupMessagesByAPIRound(request.Messages[:len(request.Messages)-1])
-	if len(prefixRounds) <= 1 {
+	prefixBatches := groupMessagesByCompactionBatch(request.Messages[:len(request.Messages)-1])
+	if len(prefixBatches) <= 1 {
 		return false
 	}
-	request.Messages = flattenRounds(prefixRounds[1:])
+	request.Messages = flattenCompactionBatches(prefixBatches[1:])
 	request.Messages = append(request.Messages, prompt)
 	return true
 }
@@ -1004,23 +1063,33 @@ func isPromptTooLong(err error) bool {
 	return false
 }
 
-func selectPreservedTail(rounds []apiRound, budget Budget, minimumRounds int, estimator *tokenestimate.Estimator, model string) int {
-	if len(rounds) <= 1 {
-		return 0
-	}
-	preserveStart := len(rounds) - 1
-	tokens := estimator.EstimateMessages(rounds[preserveStart].Messages, model).Tokens
-	preserved := 1
-	for preserveStart > 1 && (preserved < minimumRounds || tokens < budget.TailMinTokens) {
-		candidateTokens := estimator.EstimateMessages(rounds[preserveStart-1].Messages, model).Tokens
-		if preserved >= minimumRounds && tokens+candidateTokens > budget.TailMaxTokens {
+func compactedRoundThroughMessagePrefix(rounds []apiRound, messageCount int) int {
+	consumed := 0
+	through := 0
+	for _, round := range rounds {
+		if consumed >= messageCount {
 			break
 		}
-		preserveStart--
-		preserved++
-		tokens += candidateTokens
+		remaining := messageCount - consumed
+		if remaining > 0 && round.Sequence > 0 {
+			through = max(through, round.Sequence)
+		}
+		consumed += min(remaining, len(round.Messages))
 	}
-	return preserveStart
+	return through
+}
+
+func preservedRoundSequences(rounds []apiRound, messageStart int) []int {
+	sequences := make([]int, 0)
+	consumed := 0
+	for _, round := range rounds {
+		end := consumed + len(round.Messages)
+		if end > messageStart && round.Sequence > 0 {
+			sequences = append(sequences, round.Sequence)
+		}
+		consumed = end
+	}
+	return sequences
 }
 
 func splitSystemMessages(messages []adapter.Message) ([]adapter.Message, []adapter.Message) {
