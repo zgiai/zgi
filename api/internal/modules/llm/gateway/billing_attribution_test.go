@@ -46,6 +46,10 @@ func TestSettlementFromQueryResultHydratesActualRoutingFromSnapshot(t *testing.T
 		SettlementID:     "settlement-1",
 		SettlementStatus: "SETTLED",
 		SettledCredits:   9,
+		PromptTokens:     12,
+		CompletionTokens: 8,
+		TotalTokens:      20,
+		CacheReadTokens:  3,
 		PricingSnapshot:  []byte(`{"actual_provider":"siliconflow","actual_channel_name":"硅基流动","total_cost_usd":"0.01"}`),
 	}
 	settlement := settlementFromQueryResult(result)
@@ -54,6 +58,9 @@ func TestSettlementFromQueryResultHydratesActualRoutingFromSnapshot(t *testing.T
 	}
 	if settlement.ActualProvider != "siliconflow" || settlement.ActualChannelName != "硅基流动" || settlement.TotalCostUSD != "0.01" {
 		t.Fatalf("settlement routing = %#v", settlement)
+	}
+	if settlement.PromptTokens != 12 || settlement.CompletionTokens != 8 || settlement.TotalTokens != 20 || settlement.CacheReadTokens != 3 {
+		t.Fatalf("settlement tokens = %#v", settlement)
 	}
 }
 

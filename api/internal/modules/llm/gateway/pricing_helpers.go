@@ -155,6 +155,12 @@ func (s *llmGatewayServiceImpl) quoteTokenPricingForSettlementUsage(
 	usage TokenUsage,
 ) (PricingQuote, error) {
 	usage = normalizeGatewayTokenUsage(usage)
+	if bc != nil && bc.LockedTokenQuote != nil && bc.LockedTokenQuote.CacheBillingSupported != nil && !*bc.LockedTokenQuote.CacheBillingSupported {
+		usage.CacheReadTokens = 0
+		usage.CacheWriteTokens = 0
+		usage.CacheWrite5mTokens = 0
+		usage.CacheWrite1hTokens = 0
+	}
 	if bc != nil && bc.LockedTokenQuote != nil && lockedTokenQuoteSupportsUsage(*bc.LockedTokenQuote, usage) {
 		return repriceLockedTokenUsage(*bc.LockedTokenQuote, usage)
 	}

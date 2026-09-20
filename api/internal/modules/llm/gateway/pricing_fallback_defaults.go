@@ -32,6 +32,9 @@ const (
 	PricingOperationTranscription PricingOperation = "transcription"
 	PricingOperationMusic         PricingOperation = "music_generation"
 	PricingOperationLyrics        PricingOperation = "lyrics_generation"
+	// PricingOperationRealtimeAudio bills realtime speech models by audio
+	// input/output tokens instead of text chat tokens.
+	PricingOperationRealtimeAudio PricingOperation = "realtime_audio"
 )
 
 type PricingMeter string

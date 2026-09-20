@@ -72,6 +72,7 @@ func (s *RemoteBilling) FinalizePlatformProxySettlement(
 	bc.BillingLane = UsageBillingLanePlatform
 	bc.UseSystemProvider = true
 	bc.ActualCredits = settlement.OfficialPoints
+	applyPlatformSettlementTokenUsage(bc, settlement)
 	applyPlatformSettlementCostSnapshot(bc, settlement)
 	s.localService.applyRouteAttributionWithLookup(ctx, bc)
 	finalizeMediaTimingSnapshot(bc)
@@ -115,6 +116,7 @@ func (s *RemoteBilling) MirrorPlatformMediaSettlement(ctx context.Context, bc *B
 	bc.UseSystemProvider = true
 	bc.DeductionID = settlement.SettlementID
 	bc.ActualCredits = settlement.OfficialPoints
+	applyPlatformSettlementTokenUsage(bc, settlement)
 	bc.Status = "success"
 	bc.SettledAt = time.Now().UTC()
 	applyPlatformSettlementCostSnapshot(bc, settlement)
@@ -130,6 +132,39 @@ func (s *RemoteBilling) MirrorPlatformMediaSettlement(ctx context.Context, bc *B
 		}
 		return s.localService.upsertUsageBill(ctx, tx, bc, usageBillStatusSuccess, nil, nil)
 	})
+}
+
+// applyPlatformSettlementTokenUsage copies only an authoritative, non-empty
+// Console usage snapshot. An empty/legacy settlement must not erase tokens
+// already collected on a private or partially mirrored attempt.
+func applyPlatformSettlementTokenUsage(bc *BillingContext, settlement *adapter.SettlementResult) {
+	if bc == nil || settlement == nil {
+		return
+	}
+	valid := settlement.PromptTokens > 0 || settlement.CompletionTokens > 0 || settlement.TotalTokens > 0 || settlement.CacheReadTokens > 0 || settlement.CacheWriteTokens > 0 || settlement.CacheWrite5mTokens > 0 || settlement.CacheWrite1hTokens > 0 || settlement.ReasoningOutputTokens > 0 || settlement.AudioInputTokens > 0 || settlement.AudioOutputTokens > 0
+	if !valid {
+		return
+	}
+	bc.PromptTokens = maxInt(settlement.PromptTokens, 0)
+	bc.CompletionTokens = maxInt(settlement.CompletionTokens, 0)
+	bc.CacheReadTokens = maxInt(settlement.CacheReadTokens, 0)
+	bc.CacheWriteTokens = maxInt(settlement.CacheWriteTokens, 0)
+	bc.CacheWrite5mTokens = maxInt(settlement.CacheWrite5mTokens, 0)
+	bc.CacheWrite1hTokens = maxInt(settlement.CacheWrite1hTokens, 0)
+	if bc.CacheWriteTokens == 0 {
+		bc.CacheWriteTokens = bc.CacheWrite5mTokens + bc.CacheWrite1hTokens
+	}
+	bc.TotalTokens = maxInt(settlement.TotalTokens, 0)
+	if bc.TotalTokens == 0 {
+		bc.TotalTokens = bc.PromptTokens + bc.CacheReadTokens + bc.CacheWriteTokens + bc.CompletionTokens
+	}
+}
+
+func maxInt(value, fallback int) int {
+	if value < fallback {
+		return fallback
+	}
+	return value
 }
 
 func applyPlatformSettlementCostSnapshot(bc *BillingContext, settlement *adapter.SettlementResult) {

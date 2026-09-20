@@ -25,18 +25,43 @@ type pricingIssueRow struct {
 	CacheWrite1hPrice *float64  `gorm:"column:cache_write_1h_price"`
 }
 
-func (s *modelService) ListPricingIssues(ctx context.Context) (*dto.PricingIssuesListResponse, error) {
-	var rows []pricingIssueRow
+// ListPricingIssues reports catalog and tenant custom models whose use_cases
+// require a price that is not configured. Custom models are scoped to the
+// calling organization so one tenant cannot see another tenant's catalog.
+func (s *modelService) ListPricingIssues(ctx context.Context, organizationID uuid.UUID) (*dto.PricingIssuesListResponse, error) {
+	items := make([]dto.PricingIssueResponse, 0)
+
+	var globalRows []pricingIssueRow
 	if err := s.db.WithContext(ctx).
 		Table("llm_models").
 		Select("id, provider, name, display_name, use_cases, pricing, input_price, output_price, cached_input_price, cache_read_price, cache_write_price, cache_write_5m_price, cache_write_1h_price").
 		Where("deleted_at IS NULL AND is_active = ?", true).
 		Order("provider ASC, name ASC").
-		Find(&rows).Error; err != nil {
+		Find(&globalRows).Error; err != nil {
 		return nil, err
 	}
+	items = appendPricingIssues(items, globalRows, false)
 
-	items := make([]dto.PricingIssueResponse, 0)
+	if organizationID != uuid.Nil {
+		var customRows []pricingIssueRow
+		if err := s.db.WithContext(ctx).
+			Table("llm_custom_models").
+			Select("id, provider, name, display_name, use_cases, pricing, input_price, output_price, NULL AS cached_input_price, cost_cache_read AS cache_read_price, cost_cache_write AS cache_write_price, cost_cache_write_5m AS cache_write_5m_price, cost_cache_write_1h AS cache_write_1h_price").
+			Where("deleted_at IS NULL AND is_active = ? AND organization_id = ?", true, organizationID).
+			Order("provider ASC, name ASC").
+			Find(&customRows).Error; err != nil {
+			return nil, err
+		}
+		items = appendPricingIssues(items, customRows, true)
+	}
+
+	return &dto.PricingIssuesListResponse{
+		Items: items,
+		Total: len(items),
+	}, nil
+}
+
+func appendPricingIssues(items []dto.PricingIssueResponse, rows []pricingIssueRow, isCustom bool) []dto.PricingIssueResponse {
 	for _, row := range rows {
 		useCases := decodePricingIssueUseCases(row.UseCases)
 		if len(useCases) == 0 {
@@ -75,13 +100,10 @@ func (s *modelService) ListPricingIssues(ctx context.Context) (*dto.PricingIssue
 			UseCases:   useCases,
 			Missing:    issueItems,
 			Configured: modelpricing.PricingHasConfiguredRules(json.RawMessage(row.Pricing)),
+			IsCustom:   isCustom,
 		})
 	}
-
-	return &dto.PricingIssuesListResponse{
-		Items: items,
-		Total: len(items),
-	}, nil
+	return items
 }
 
 func decodePricingIssueUseCases(raw string) []string {

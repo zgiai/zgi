@@ -110,13 +110,17 @@ func missingPricingForUseCases(useCases []string, pricing json.RawMessage, scala
 			})
 			continue
 		}
+		operation := requirement.Operation
+		if requirement.UseCase == "realtime-audio" && hasRealtimeAudioRules(envelope) {
+			operation = "realtime_audio"
+		}
 		for _, meter := range requirement.Meters {
-			if hasOperationMeterPricing(envelope, scalars, requirement.Operation, meter) {
+			if hasOperationMeterPricing(envelope, scalars, operation, meter) {
 				continue
 			}
 			missing = append(missing, MissingPricingItem{
 				UseCase:   requirement.UseCase,
-				Operation: requirement.Operation,
+				Operation: operation,
 				Meter:     meter,
 			})
 		}
@@ -248,7 +252,11 @@ func requiredPricingFromNormalizedUseCases(normalized []string) []requiredPricin
 			continue
 		}
 		key := requirement.Operation
-		if requirement.AnyMeter {
+		if useCase == "realtime-audio" {
+			// Realtime audio may bill by text tokens or by audio in/out tokens, so
+			// it must not collapse into the plain chat requirement.
+			key = "realtime-audio"
+		} else if requirement.AnyMeter {
 			key += "|any"
 		} else {
 			key += "|" + strings.Join(requirement.Meters, ",")
@@ -280,6 +288,17 @@ func parsePricingEnvelope(raw json.RawMessage) pricingEnvelope {
 		return pricingEnvelope{}
 	}
 	return pricingEnvelope{structuredPricing: pricing, present: true}
+}
+
+// hasRealtimeAudioRules reports whether the model opted into audio token billing
+// by carrying a priced realtime_audio rule. Absence means text-token billing.
+func hasRealtimeAudioRules(envelope pricingEnvelope) bool {
+	for _, rule := range envelope.Rules {
+		if rule.Operation == "realtime_audio" && hasRulePrice(rule) {
+			return true
+		}
+	}
+	return false
 }
 
 func hasVideoPricing(envelope pricingEnvelope, _ LegacyScalarPrices) bool {

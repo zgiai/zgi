@@ -307,6 +307,7 @@ const messages: DashboardMessages = {
       subtitle: '查看所有通过 Gateway 发起的模型调用，并按来源、业务场景和模型排查问题。',
       description: '按一次业务请求汇总 Gateway 调用；模型重试会合并展示。',
       supplierLabel: '供应商：{name}',
+      platformChannelName: 'ZGI Cloud',
       loadFailed: '加载调用日志失败',
       loadFailedDescription: '本次请求未成功完成，请检查网络或服务状态后重试。',
       retry: '重试',

@@ -17,6 +17,29 @@ type ResolvedConfigured struct {
 	CacheWrite1h bool
 }
 
+// CacheBillingSupported is the single capability gate for token cache billing.
+// Legacy scalar cache columns are deliberately not considered: without an
+// explicit cache meter in the canonical pricing document, historical values
+// must not re-enter the billing path.
+func CacheBillingSupported(raw json.RawMessage) bool {
+	envelope := parsePricingEnvelope(raw)
+	for _, rule := range envelope.Rules {
+		switch rule.Meter {
+		case "cache_read_token", "cache_write_token", "cache_write_5m_token", "cache_write_1h_token":
+			return true
+		}
+	}
+	for _, tier := range envelope.TokenTiers {
+		if tier.CachedInputPricePerMillion != nil ||
+			tier.CacheWritePricePerMillion != nil ||
+			tier.CacheWrite5mPricePerMillion != nil ||
+			tier.CacheWrite1hPricePerMillion != nil {
+			return true
+		}
+	}
+	return false
+}
+
 // ResolveConfigured derives configured flags for official, custom, and private
 // models from pricing JSON. Scalar columns are not consulted directly; callers
 // must fold organization overrides before billing.

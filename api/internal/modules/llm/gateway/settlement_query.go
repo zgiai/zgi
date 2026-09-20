@@ -32,6 +32,16 @@ type settlementQueryResponse struct {
 	RequestID             string          `json:"request_id"`
 	FailureMessage        string          `json:"failure_message"`
 	Retryable             bool            `json:"retryable"`
+	PromptTokens          int             `json:"prompt_tokens"`
+	CompletionTokens      int             `json:"completion_tokens"`
+	TotalTokens           int             `json:"total_tokens"`
+	CacheReadTokens       int             `json:"cache_read_tokens"`
+	CacheWriteTokens      int             `json:"cache_write_tokens"`
+	CacheWrite5mTokens    int             `json:"cache_write_5m_tokens"`
+	CacheWrite1hTokens    int             `json:"cache_write_1h_tokens"`
+	ReasoningOutputTokens int             `json:"reasoning_output_tokens"`
+	AudioInputTokens      int             `json:"audio_input_tokens"`
+	AudioOutputTokens     int             `json:"audio_output_tokens"`
 }
 
 // queryConsoleSettlement uses the same internal API base URL as official model

@@ -764,7 +764,9 @@ func (s *RemoteBilling) mirrorQueriedSettlement(ctx context.Context, attempt *Bi
 			return err
 		}
 		s.localService.enrichBillingContextCatalogFields(ctx, bc)
-		applyPlatformSettlementCostSnapshot(bc, settlementFromQueryResult(result))
+		settlement := settlementFromQueryResult(result)
+		applyPlatformSettlementTokenUsage(bc, settlement)
+		applyPlatformSettlementCostSnapshot(bc, settlement)
 		s.localService.applyRouteAttributionWithLookup(ctx, bc)
 		finalizeMediaTimingSnapshot(bc)
 		if err := s.localService.settleSubjectQuota(ctx, tx, bc); err != nil {

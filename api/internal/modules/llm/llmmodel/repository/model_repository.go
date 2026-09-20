@@ -133,6 +133,8 @@ func (r *modelRepository) availableModelQuery(ctx context.Context, provider stri
 		// compatible with those rows (especially image generation models).
 		if useCase == string(model.UseCaseImageGen) {
 			query = query.Where("? = ANY(use_cases) OR image_generation = TRUE OR image_edit = TRUE", useCase)
+		} else if useCase == string(model.UseCaseMusicGen) {
+			query = query.Where("? = ANY(use_cases) OR music_generation = TRUE", useCase)
 		} else {
 			query = query.Where("? = ANY(use_cases)", useCase)
 		}

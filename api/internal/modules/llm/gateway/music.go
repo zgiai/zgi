@@ -86,7 +86,7 @@ func (s *llmGatewayServiceImpl) GenerateLyrics(
 	if len(selections) == 0 {
 		return nil, reportedNoProviderAvailableError(ctx, request.Model, organizationID.String(), shadowOrganizationID.String())
 	}
-	if !selections[0].Model.MusicGeneration {
+	if !modelSupportsMusicGeneration(&selections[0].Model) {
 		return nil, fmt.Errorf("%w: model %q does not support music generation", adapter.ErrCapabilityUnsupported, request.Model)
 	}
 
@@ -235,7 +235,7 @@ func (s *llmGatewayServiceImpl) GenerateMusic(
 	if len(selections) == 0 {
 		return reportedNoProviderAvailableError(ctx, request.Model, organizationID.String(), shadowOrganizationID.String())
 	}
-	if !selections[0].Model.MusicGeneration {
+	if !modelSupportsMusicGeneration(&selections[0].Model) {
 		return fmt.Errorf("%w: model %q does not support music generation", adapter.ErrCapabilityUnsupported, request.Model)
 	}
 
@@ -389,6 +389,24 @@ func (s *llmGatewayServiceImpl) CompensateMusicDelivery(
 		APIKeyID:              strings.TrimSpace(apiKey.ID),
 	})
 	return compensator.CompensateMusicDelivery(callContext, requestID)
+}
+
+// modelSupportsMusicGeneration accepts both catalog capability shapes. The
+// endpoint boolean is retained for legacy rows, while newer publications use
+// the canonical music-gen use case label.
+func modelSupportsMusicGeneration(model *llmmodel.LLMModel) bool {
+	if model == nil {
+		return false
+	}
+	if model.MusicGeneration {
+		return true
+	}
+	for _, useCase := range model.UseCases {
+		if strings.EqualFold(strings.TrimSpace(useCase), string(llmmodel.UseCaseMusicGen)) {
+			return true
+		}
+	}
+	return false
 }
 
 func validateMusicGatewayRequest(request *MusicRequest, dst io.Writer) error {

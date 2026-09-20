@@ -108,6 +108,24 @@ func TestBuildUsageBill_PartialKeepsRecordedUsageAndPoints(t *testing.T) {
 	}
 }
 
+func TestBuildUsageBillPrivateImageUsagePersistsProviderTokens(t *testing.T) {
+	service := &BillingService{}
+	bc := testUsageBillContext(time.Time{}, time.Time{})
+	bc.PricingOperation = PricingOperationImage
+	applyUsageToBillingContext(bc, &adapter.Usage{
+		InputTokens:  4,
+		OutputTokens: 1105,
+		TotalTokens:  1109,
+	})
+	bill, err := service.buildUsageBill(bc, usageBillStatusSuccess, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bill.PromptTokens != 4 || bill.CompletionTokens != 1105 || bill.TotalTokens != 1109 {
+		t.Fatalf("image token bill = %d/%d/%d, want 4/1105/1109", bill.PromptTokens, bill.CompletionTokens, bill.TotalTokens)
+	}
+}
+
 func TestBuildUsageBill_FailedZeroesUsageAndPoints(t *testing.T) {
 	service := &BillingService{}
 	bc := testUsageBillContext(time.Time{}, time.Time{})

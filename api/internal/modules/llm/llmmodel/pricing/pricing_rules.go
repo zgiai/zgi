@@ -43,6 +43,7 @@ var pricingRuleOperations = map[string]struct{}{
 	"transcription":     {},
 	"music_generation":  {},
 	"lyrics_generation": {},
+	"realtime_audio":    {},
 }
 
 var pricingRuleMeterUnits = map[string]map[string]string{
@@ -78,6 +79,11 @@ var pricingRuleMeterUnits = map[string]map[string]string{
 	},
 	"lyrics_generation": {
 		"request": "request",
+	},
+	"realtime_audio": {
+		"input_token":      "per_1m_tokens",
+		"output_token":     "per_1m_tokens",
+		"cache_read_token": "per_1m_tokens",
 	},
 }
 

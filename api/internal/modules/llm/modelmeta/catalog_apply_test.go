@@ -55,6 +55,30 @@ func TestEndpointColumnsForPublishedModelIncludesMusicGeneration(t *testing.T) {
 	require.True(t, values["music_generation"])
 }
 
+func TestEndpointColumnsForPublishedModelCanonicalUseCasesWinOverFalseAuthoritativeEndpoints(t *testing.T) {
+	tests := []struct {
+		name     string
+		useCase  llmmodel.UseCase
+		endpoint string
+	}{
+		{name: "embedding", useCase: llmmodel.UseCaseEmbedding, endpoint: "embeddings"},
+		{name: "image", useCase: llmmodel.UseCaseImageGen, endpoint: "image_generation"},
+		{name: "video", useCase: llmmodel.UseCaseVideoGen, endpoint: "videos"},
+		{name: "music", useCase: llmmodel.UseCaseMusicGen, endpoint: "music_generation"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			values := endpointColumnsForPublishedModel(
+				[]string{string(tt.useCase)},
+				&llmmodel.ModelEndpoints{},
+				true,
+			)
+			require.True(t, values[tt.endpoint])
+		})
+	}
+}
+
 func TestApplyPublishedCatalogStoresMusicGenerationEndpoint(t *testing.T) {
 	db := newCatalogApplyTestDB(t)
 	svc := NewService(db)

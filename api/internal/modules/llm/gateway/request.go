@@ -42,6 +42,35 @@ func hasBillableTokenUsage(usage *adapter.Usage) bool {
 	return usage.PromptTokens > 0 || usage.CompletionTokens > 0 || usage.CacheReadTokens > 0 || usage.CacheWriteTokens > 0
 }
 
+// applyUsageToBillingContext normalizes adapter usage into the disjoint token
+// buckets persisted by llm_usage_bills. It is used by private media paths;
+// platform paths must wait for Console's authoritative settlement snapshot.
+func applyUsageToBillingContext(billingCtx *BillingContext, usage *adapter.Usage) {
+	if billingCtx == nil || usage == nil {
+		return
+	}
+	if usage.PromptTokens == 0 {
+		usage.PromptTokens = usage.InputTokens
+	}
+	if usage.CompletionTokens == 0 {
+		usage.CompletionTokens = usage.OutputTokens
+	}
+	if usage.TotalTokens == 0 {
+		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	}
+	usage.NormalizeCacheTokens()
+	billingCtx.PromptTokens = usage.UncachedInputTokens
+	billingCtx.CacheReadTokens = usage.CacheReadTokens
+	billingCtx.CacheWriteTokens = usage.CacheWriteTokens
+	billingCtx.CacheWrite5mTokens = usage.CacheWrite5mTokens
+	billingCtx.CacheWrite1hTokens = usage.CacheWrite1hTokens
+	billingCtx.CompletionTokens = usage.CompletionTokens
+	billingCtx.TotalTokens = usage.TotalTokens
+	if billingCtx.TotalTokens <= 0 {
+		billingCtx.TotalTokens = billingCtx.PromptTokens + billingCtx.CacheReadTokens + billingCtx.CacheWriteTokens + billingCtx.CompletionTokens
+	}
+}
+
 func missingTokenUsageError(providerName, modelName string) error {
 	providerName = strings.TrimSpace(providerName)
 	modelName = strings.TrimSpace(modelName)

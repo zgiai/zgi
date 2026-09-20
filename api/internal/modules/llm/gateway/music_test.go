@@ -146,6 +146,38 @@ func TestGenerateMusicUsesStableRequestIDAndCompleteOfficialStream(t *testing.T)
 	}
 }
 
+func TestGenerateMusicAcceptsCanonicalUseCaseWithoutLegacyEndpointFlag(t *testing.T) {
+	organizationID := uuid.New()
+	var requestCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestCount.Add(1)
+		w.Header().Set("Content-Type", "audio/mpeg")
+		w.Header().Set("Trailer", "X-ZGI-Stream-Status")
+		_, _ = io.WriteString(w, "MP3")
+		w.Header().Set("X-ZGI-Stream-Status", "complete")
+	}))
+	defer server.Close()
+	setMusicGatewayTestConfig(t, server.URL)
+
+	service := newMusicGatewayTestService(t, organizationID, false)
+	err := service.GenerateMusic(t.Context(), &apikeymodel.TenantAPIKey{
+		ID:             uuid.NewString(),
+		OrganizationID: organizationID.String(),
+	}, &MusicRequest{
+		RequestID:      uuid.NewString(),
+		Model:          musicGatewayTestModel,
+		Mode:           adapter.MusicModeInstrumental,
+		Prompt:         "warm piano",
+		ResponseFormat: "mp3",
+	}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("GenerateMusic() error = %v, want canonical use case to enable generation", err)
+	}
+	if got := requestCount.Load(); got != 1 {
+		t.Fatalf("request count = %d, want 1", got)
+	}
+}
+
 func TestGenerateMusicRejectsModelWithoutCapabilityBeforeDispatch(t *testing.T) {
 	organizationID := uuid.New()
 	var requestCount atomic.Int32
@@ -156,6 +188,11 @@ func TestGenerateMusicRejectsModelWithoutCapabilityBeforeDispatch(t *testing.T) 
 	setMusicGatewayTestConfig(t, server.URL)
 
 	service := newMusicGatewayTestService(t, organizationID, false)
+	if err := service.db.Model(&llmmodel.LLMModel{}).
+		Where("name = ?", musicGatewayTestModel).
+		Update("use_cases", llmmodel.StringArray{}).Error; err != nil {
+		t.Fatal(err)
+	}
 	err := service.GenerateMusic(t.Context(), &apikeymodel.TenantAPIKey{
 		ID:             uuid.NewString(),
 		OrganizationID: organizationID.String(),

@@ -49,6 +49,14 @@ const (
 	headerCacheReadCostUSD    = "X-ZGI-Cache-Read-Cost-USD"
 	headerCacheWriteCostUSD   = "X-ZGI-Cache-Write-Cost-USD"
 	headerOutputCostUSD       = "X-ZGI-Output-Cost-USD"
+	headerPromptTokens        = "X-ZGI-Prompt-Tokens"
+	headerCompletionTokens    = "X-ZGI-Completion-Tokens"
+	headerTotalTokens         = "X-ZGI-Total-Tokens"
+	headerCacheReadTokens     = "X-ZGI-Cache-Read-Tokens"
+	headerCacheWriteTokens    = "X-ZGI-Cache-Write-Tokens"
+	headerCacheWrite5mTokens  = "X-ZGI-Cache-Write-5m-Tokens"
+	headerCacheWrite1hTokens  = "X-ZGI-Cache-Write-1h-Tokens"
+	headerReasoningTokens     = "X-ZGI-Reasoning-Output-Tokens"
 	headerActualChannelID     = "X-ZGI-Actual-Channel-ID"
 	headerActualChannelName   = "X-ZGI-Actual-Channel-Name"
 	headerActualProvider      = "X-ZGI-Actual-Provider"
@@ -1149,6 +1157,7 @@ func settlementFromHeaders(headers http.Header) *adapter.SettlementResult {
 	}
 	points, _ := strconv.ParseInt(pointsRaw, 10, 64)
 	remaining, _ := strconv.ParseInt(strings.TrimSpace(headers.Get(headerRemainingBalance)), 10, 64)
+	parseToken := func(name string) int { value, _ := strconv.Atoi(strings.TrimSpace(headers.Get(name))); return value }
 	return &adapter.SettlementResult{
 		SettlementID:                  settlementID,
 		OfficialPoints:                points,
@@ -1165,6 +1174,14 @@ func settlementFromHeaders(headers http.Header) *adapter.SettlementResult {
 		CacheReadCostUSD:              strings.TrimSpace(headers.Get(headerCacheReadCostUSD)),
 		CacheWriteCostUSD:             strings.TrimSpace(headers.Get(headerCacheWriteCostUSD)),
 		OutputCostUSD:                 strings.TrimSpace(headers.Get(headerOutputCostUSD)),
+		PromptTokens:                  parseToken(headerPromptTokens),
+		CompletionTokens:              parseToken(headerCompletionTokens),
+		TotalTokens:                   parseToken(headerTotalTokens),
+		CacheReadTokens:               parseToken(headerCacheReadTokens),
+		CacheWriteTokens:              parseToken(headerCacheWriteTokens),
+		CacheWrite5mTokens:            parseToken(headerCacheWrite5mTokens),
+		CacheWrite1hTokens:            parseToken(headerCacheWrite1hTokens),
+		ReasoningOutputTokens:         parseToken(headerReasoningTokens),
 		ActualChannelID:               strings.TrimSpace(headers.Get(headerActualChannelID)),
 		ActualChannelName:             strings.TrimSpace(headers.Get(headerActualChannelName)),
 		ActualProvider:                strings.TrimSpace(headers.Get(headerActualProvider)),

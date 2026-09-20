@@ -47,13 +47,11 @@ import {
   formatRecordedBillingAmountFromUSD,
   type BillingDisplaySettings,
 } from '@/utils/billing-display';
-import {
-  formatAiCreditValue,
-  MODEL_USAGE_AI_CREDITS_INTERNAL_PRECISION,
-} from '@/utils/ai-credits';
+import { formatAiCreditValue, MODEL_USAGE_AI_CREDITS_INTERNAL_PRECISION } from '@/utils/ai-credits';
 import { formatNumber } from '@/utils/format';
 import { normalizeModelUsageAppType } from '@/utils/model-usage-app-type';
 import { formatTokenCount } from '@/utils/token-format';
+import { resolveChannelDisplay } from '@/utils/invocation-channel-display';
 
 type SourceFilter = 'all' | Exclude<InvocationSource, 'unknown'>;
 
@@ -283,76 +281,86 @@ export function InvocationLogSection({
                     </TableCell>
                   </TableRow>
                 ) : (
-                  items.map(item => (
-                    <TableRow key={item.invocation_id}>
-                      <TableCell className="pl-6 tabular-nums">
-                        <div>{new Date(item.started_at).toLocaleString(locale)}</div>
-                        <div
-                          className="mt-0.5 max-w-[132px] truncate font-mono text-[11px] text-muted-foreground"
-                          title={item.invocation_id}
-                        >
-                          {item.invocation_id}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={
-                            item.invocation_source === 'api'
-                              ? 'info'
-                              : item.invocation_source === 'product'
-                                ? 'secondary'
-                                : 'subtle'
-                          }
-                        >
-                          {t(`usage.invocations.sources.${item.invocation_source}`)}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div className="font-medium">{item.model_name}</div>
-                        <div className="text-xs text-muted-foreground">{item.provider_name}</div>
-                      </TableCell>
-                      <TableCell>
-                        <div>{item.actual_channel_name || item.channel_name || '-'}</div>
-                        {item.supplier_name ? (
-                          <div className="text-xs text-muted-foreground">
-                            {t('usage.invocations.supplierLabel', { name: item.supplier_name })}
+                  items.map(item => {
+                    const channelDisplay = resolveChannelDisplay(
+                      item,
+                      t('usage.invocations.platformChannelName')
+                    );
+                    return (
+                      <TableRow key={item.invocation_id}>
+                        <TableCell className="pl-6 tabular-nums">
+                          <div>{new Date(item.started_at).toLocaleString(locale)}</div>
+                          <div
+                            className="mt-0.5 max-w-[132px] truncate font-mono text-[11px] text-muted-foreground"
+                            title={item.invocation_id}
+                          >
+                            {item.invocation_id}
                           </div>
-                        ) : null}
-                      </TableCell>
-                      <TableCell>{t(`usage.appTypes.${knownAppType(item.app_type)}`)}</TableCell>
-                      <TableCell>
-                        <StatusBadge status={item.status} attempts={item.attempt_count} />
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={item.content_available ? 'success' : 'subtle'}>
-                          {t(
-                            `usage.invocations.contentStatus.${
-                              item.content_available ? 'available' : 'unavailable'
-                            }`
-                          )}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {formatTokenCount(item.total_tokens, locale)}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {formatDuration(item.duration_ms)}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {formatInvocationCost(item, billingDisplay, locale)}
-                      </TableCell>
-                      <TableCell className="pr-6 text-right">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setSelectedInvocation(item)}
-                        >
-                          {t('usage.invocations.details.action')}
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant={
+                              item.invocation_source === 'api'
+                                ? 'info'
+                                : item.invocation_source === 'product'
+                                  ? 'secondary'
+                                  : 'subtle'
+                            }
+                          >
+                            {t(`usage.invocations.sources.${item.invocation_source}`)}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <div className="font-medium">{item.model_name}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {channelDisplay.providerName}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div>{channelDisplay.actualChannelName}</div>
+                          {channelDisplay.supplierName ? (
+                            <div className="text-xs text-muted-foreground">
+                              {t('usage.invocations.supplierLabel', {
+                                name: channelDisplay.supplierName,
+                              })}
+                            </div>
+                          ) : null}
+                        </TableCell>
+                        <TableCell>{t(`usage.appTypes.${knownAppType(item.app_type)}`)}</TableCell>
+                        <TableCell>
+                          <StatusBadge status={item.status} attempts={item.attempt_count} />
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={item.content_available ? 'success' : 'subtle'}>
+                            {t(
+                              `usage.invocations.contentStatus.${
+                                item.content_available ? 'available' : 'unavailable'
+                              }`
+                            )}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {formatTokenCount(item.total_tokens, locale)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {formatDuration(item.duration_ms)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {formatInvocationCost(item, billingDisplay, locale)}
+                        </TableCell>
+                        <TableCell className="pr-6 text-right">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setSelectedInvocation(item)}
+                          >
+                            {t('usage.invocations.details.action')}
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
                 )}
               </TableBody>
             </Table>
@@ -449,6 +457,7 @@ function InvocationDetailSheet({
       : item.invocation_source === 'product'
         ? t('usage.invocations.details.sourceProduct')
         : t('usage.invocations.details.sourceUnknown');
+  const channelDisplay = resolveChannelDisplay(item, t('usage.invocations.platformChannelName'));
 
   return (
     <Sheet open onOpenChange={onOpenChange}>
@@ -476,13 +485,10 @@ function InvocationDetailSheet({
                 ],
                 [t('usage.invocations.details.appId'), item.app_id],
                 [t('usage.invocations.details.model'), item.model_name],
-                [t('usage.invocations.details.provider'), item.provider_name],
-                [t('usage.invocations.details.channel'), item.channel_name || '-'],
-                [
-                  t('usage.invocations.details.actualChannel'),
-                  item.actual_channel_name || '-',
-                ],
-                [t('usage.invocations.details.supplier'), item.supplier_name || '-'],
+                [t('usage.invocations.details.provider'), channelDisplay.providerName],
+                [t('usage.invocations.details.channel'), channelDisplay.channelName],
+                [t('usage.invocations.details.actualChannel'), channelDisplay.actualChannelName],
+                [t('usage.invocations.details.supplier'), channelDisplay.supplierName || '-'],
                 [t('usage.invocations.details.settlementId'), item.settlement_id || '-'],
                 [
                   t('usage.invocations.details.startedAt'),
@@ -865,11 +871,9 @@ function formatInvocationCost(
       { locale }
     );
   }
-  return formatBillingDisplayAmountFromNormalizedCredits(
-    item.total_points,
-    billingDisplay,
-    { locale }
-  );
+  return formatBillingDisplayAmountFromNormalizedCredits(item.total_points, billingDisplay, {
+    locale,
+  });
 }
 
 function formatInvocationSummaryCost(

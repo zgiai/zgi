@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -339,6 +340,37 @@ func TestAvailableModels_ReturnsMusicGenerationCapability(t *testing.T) {
 	}
 	if !models[0].Endpoints.MusicGeneration {
 		t.Fatal("Endpoints.MusicGeneration = false, want true")
+	}
+}
+
+func TestAvailableModels_InfersMusicUseCaseFromEndpoint(t *testing.T) {
+	organizationID := uuid.New()
+	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{{
+		ID:              uuid.New(),
+		Provider:        "custom-provider",
+		Model:           "music-model",
+		ModelName:       "Music model",
+		IsActive:        true,
+		UseCases:        types.StringArray{},
+		MusicGeneration: true,
+	}}}
+	routeRepo := &availableRouteRepoFake{routes: []*channelmodel.LLMRoute{{
+		Type:                   shared.RouteTypeZGICloud,
+		IsOfficial:             true,
+		Models:                 []string{"music-model"},
+		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "custom-provider", Model: "music-model"}},
+	}}}
+	svc := NewAvailableModelsService(modelRepo, &availableConfigRepoFake{}, &availableCustomRepoFake{}, routeRepo)
+
+	models, err := svc.ListAvailable(t.Context(), organizationID, "custom-provider", string(llmmodel.UseCaseMusicGen))
+	if err != nil {
+		t.Fatalf("ListAvailable() error = %v", err)
+	}
+	if len(models) != 1 {
+		t.Fatalf("models length = %d, want 1", len(models))
+	}
+	if !slices.Contains(models[0].UseCases, string(llmmodel.UseCaseMusicGen)) {
+		t.Fatalf("use_cases = %#v, want music-gen", models[0].UseCases)
 	}
 }
 
@@ -691,6 +723,76 @@ func TestAvailableModels_OfficialRouteAvailabilityIsIndependentOfSupplierProvide
 	if !gotProviders["openai"] || !gotProviders["anthropic"] {
 		t.Fatalf("available providers = %#v, want logical model independent of supplier", gotProviders)
 	}
+}
+
+func TestAvailableModels_CustomModelRequiresEnabledPrivateRoute(t *testing.T) {
+	organizationID := uuid.New()
+	modelName := "qwen2.5-14b-instruct"
+	newCustomRepo := func() *availableCustomRepoFake {
+		return &availableCustomRepoFake{models: []*llmmodel.CustomModel{{
+			ID:             uuid.New(),
+			OrganizationID: organizationID,
+			Provider:       "1",
+			Name:           modelName,
+			DisplayName:    modelName,
+			IsActive:       true,
+			UseCases:       types.StringArray{string(llmmodel.UseCaseTextChat)},
+		}}}
+	}
+	// The enabled official route advertises the same logical model under a
+	// different supplier. It must not satisfy the tenant's custom
+	// provider/model record; only an enabled private route may do that.
+	officialRoute := &channelmodel.LLMRoute{
+		Type:                   shared.RouteTypeZGICloud,
+		IsOfficial:             true,
+		Models:                 []string{modelName},
+		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "gpustack", Model: modelName}},
+	}
+
+	t.Run("disabled private route stays hidden", func(t *testing.T) {
+		svc := NewAvailableModelsService(
+			&availableModelRepoFake{},
+			&availableConfigRepoFake{},
+			newCustomRepo(),
+			&availableRouteRepoFake{routes: []*channelmodel.LLMRoute{officialRoute}},
+		)
+		models, err := svc.ListAvailable(context.Background(), organizationID, "", string(llmmodel.UseCaseTextChat))
+		if err != nil {
+			t.Fatalf("ListAvailable returned error: %v", err)
+		}
+		for _, item := range models {
+			if item.IsCustom && item.Provider == "1" && item.Name == modelName {
+				t.Fatalf("custom model from a disabled channel was exposed through an official route: %#v", item)
+			}
+		}
+	})
+
+	t.Run("enabled private route exposes custom model", func(t *testing.T) {
+		privateRoute := &channelmodel.LLMRoute{
+			Type:            shared.RouteTypePrivate,
+			ChannelProvider: "openai-compatible",
+			Models:          []string{modelName},
+		}
+		svc := NewAvailableModelsService(
+			&availableModelRepoFake{},
+			&availableConfigRepoFake{},
+			newCustomRepo(),
+			&availableRouteRepoFake{routes: []*channelmodel.LLMRoute{officialRoute, privateRoute}},
+		)
+		models, err := svc.ListAvailable(context.Background(), organizationID, "", string(llmmodel.UseCaseTextChat))
+		if err != nil {
+			t.Fatalf("ListAvailable returned error: %v", err)
+		}
+		found := false
+		for _, item := range models {
+			if item.IsCustom && item.Provider == "1" && item.Name == modelName {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("enabled private route did not expose custom model: %#v", models)
+		}
+	})
 }
 
 func TestAvailableModels_OfficialLegacySnapshotWithoutProviderPairsKeepsModelsAvailable(t *testing.T) {

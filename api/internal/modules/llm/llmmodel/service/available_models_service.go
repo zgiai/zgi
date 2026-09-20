@@ -1124,6 +1124,15 @@ func routeBacksModelForUseCase(routes []*channelmodel.LLMRoute, modelProvider, m
 			continue
 		}
 		official := route.IsOfficial || route.Type == shared.RouteTypeZGICloud
+		// Mirror ChannelRouter.filterRoutesForSelection: a tenant custom model is
+		// served only by a private route. An official route that happens to
+		// advertise the same logical model name must not make the tenant's
+		// custom provider/model record appear available, otherwise disabling the
+		// private route still leaves the model in the session selector even
+		// though invocation rejects it (no candidate route).
+		if customModel && official {
+			continue
+		}
 		if !route.SupportsModelForProvider(modelProvider, modelName) {
 			continue
 		}

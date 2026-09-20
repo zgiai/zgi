@@ -233,6 +233,48 @@ func TestPricingEngineQuoteTokenUsageUsesCustomModelCachePrices(t *testing.T) {
 	}
 }
 
+func TestPricingEngineIgnoresHistoricalCachePricesWithoutCapabilityMetadata(t *testing.T) {
+	db := openPricingEngineTestDB(t)
+	if err := db.Exec(`CREATE TABLE llm_custom_models (
+		id text PRIMARY KEY,
+		provider text,
+		name text,
+		input_price decimal,
+		output_price decimal,
+		cost_cache_read decimal,
+		cost_cache_write decimal,
+		input_price_configured boolean,
+		output_price_configured boolean,
+		cache_read_price_configured boolean,
+		cache_write_price_configured boolean,
+		pricing json DEFAULT '{}'
+	)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	modelID := uuid.New()
+	if err := db.Exec(`INSERT INTO llm_custom_models (
+		id, provider, name, input_price, output_price, cost_cache_read, cost_cache_write,
+		input_price_configured, output_price_configured,
+		cache_read_price_configured, cache_write_price_configured, pricing
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		modelID.String(), "music-provider", "music-model", "1", "2", "0.25", "1.25",
+		true, true, true, true, `{"deployment_scope":"global","token_tiers":[{"min_input_tokens":0,"input_price_per_million":1,"output_price_per_million":2}],"rules":[{"operation":"music_generation","meter":"output_track","unit":"track","price":"1","configured":true}]}`,
+	).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	quote, err := NewPricingEngine(db).(cacheTokenPricingEngine).QuoteTokenUsage(context.Background(), PricingModelRef{
+		ModelID: modelID,
+		Source:  PricingModelSourceCustom,
+	}, TokenUsage{InputTokens: 100, CacheReadTokens: 200, CacheWriteTokens: 300, OutputTokens: 400})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !quote.CacheReadUSD.IsZero() || !quote.CacheWriteUSD.IsZero() {
+		t.Fatalf("historical cache prices were charged: read=%s write=%s", quote.CacheReadUSD, quote.CacheWriteUSD)
+	}
+}
+
 func TestPricingEngineQuoteTokenUsageUsesCacheWriteTTLPrices(t *testing.T) {
 	db := openPricingEngineTestDB(t)
 	for _, ddl := range []string{
@@ -559,6 +601,48 @@ func TestPricingEngineQuoteTokensUnconfiguredZeroFailsWithoutOrganizationFallbac
 	if err == nil {
 		t.Fatalf("QuoteTokens error = nil, want missing organization fallback error")
 	}
+	if !errors.Is(err, ErrPricingNotConfigured) {
+		t.Fatalf("error = %v, want ErrPricingNotConfigured", err)
+	}
+}
+
+func TestPricingEngineQuoteRealtimeAudioUsesAudioTokens(t *testing.T) {
+	db := openPricingEngineTestDB(t)
+	modelID := uuid.New()
+	insertPricingModelNamed(t, db, modelID, "openai", "gpt-realtime", "0", "0", false, false, "[]")
+	rules := `{"deployment_scope":"global","rules":[{"operation":"realtime_audio","meter":"input_token","unit":"per_1m_tokens","price":"32","configured":true},{"operation":"realtime_audio","meter":"output_token","unit":"per_1m_tokens","price":"64","configured":true}]}`
+	if err := db.Exec(`UPDATE llm_models SET pricing = ? WHERE id = ?`, rules, modelID.String()).Error; err != nil {
+		t.Fatalf("update pricing: %v", err)
+	}
+
+	quote, err := NewPricingEngine(db).QuoteTokens(context.Background(), PricingModelRef{
+		ModelID:   modelID,
+		Source:    PricingModelSourceGlobal,
+		Operation: PricingOperationRealtimeAudio,
+	}, 1000, 1000)
+	if err != nil {
+		t.Fatalf("QuoteTokens error = %v", err)
+	}
+	// $32/1M in + $64/1M out over 1k + 1k tokens = $0.096 = 96,000 credits.
+	if quote.TotalCredits != 96000 {
+		t.Fatalf("total credits = %d, want 96000", quote.TotalCredits)
+	}
+	if quote.InputTokenPriceUSDPer1M.String() != "32" || quote.OutputTokenPriceUSDPer1M.String() != "64" {
+		t.Fatalf("token prices = %s/%s, want 32/64", quote.InputTokenPriceUSDPer1M, quote.OutputTokenPriceUSDPer1M)
+	}
+}
+
+func TestPricingEngineQuoteRealtimeAudioFailsClosedWithoutAudioRules(t *testing.T) {
+	db := openPricingEngineTestDB(t)
+	modelID := uuid.New()
+	// Chat scalar prices are configured, but there is no realtime_audio rule.
+	insertPricingModelNamed(t, db, modelID, "openai", "gpt-realtime", "1", "2", true, true, "[]")
+
+	_, err := NewPricingEngine(db).QuoteTokens(context.Background(), PricingModelRef{
+		ModelID:   modelID,
+		Source:    PricingModelSourceGlobal,
+		Operation: PricingOperationRealtimeAudio,
+	}, 1000, 1000)
 	if !errors.Is(err, ErrPricingNotConfigured) {
 		t.Fatalf("error = %v, want ErrPricingNotConfigured", err)
 	}

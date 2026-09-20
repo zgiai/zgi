@@ -16,7 +16,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type { ModelItem } from '@/services/types/model';
 import { useT } from '@/i18n';
-import { isImageGenerationModel, isInputOnlyPriceModel } from '@/utils/model-price';
+import { hasCacheBillingCapability, isImageGenerationModel, isInputOnlyPriceModel } from '@/utils/model-price';
 import {
   billingDisplayInputToUSD,
   billingDisplayInputValueFromUSD,
@@ -88,6 +88,7 @@ export function ModelPriceDialog({
   const isImage = isImageGenerationModel(model?.use_cases);
   const isInputOnly = !isImage && isInputOnlyPriceModel(model?.use_cases);
   const isSyncedModel = model?.synced_input_price != null;
+  const showCachePricing = isSyncedModel && hasCacheBillingCapability(model?.pricing);
 
   useEffect(() => {
     if (!model) {
@@ -326,7 +327,7 @@ export function ModelPriceDialog({
                   </div>
                 </div>
               )}
-              {isSyncedModel ? (
+              {showCachePricing ? (
                 <>
                   <PriceInput
                     id="model-cache-read-price"
@@ -378,10 +379,12 @@ export function ModelPriceDialog({
               {t('aiProviders.models.priceDialog.syncedPrices', {
                 input: model.synced_input_price ?? model.input_price,
                 output: model.synced_output_price ?? model.output_price,
-                cacheRead:
-                  model.synced_cache_read_price ?? t('aiProviders.models.priceDialog.notProvided'),
-                cacheWrite:
-                  model.synced_cache_write_price ?? t('aiProviders.models.priceDialog.notProvided'),
+                cacheRead: showCachePricing
+                  ? model.synced_cache_read_price ?? t('aiProviders.models.priceDialog.notProvided')
+                  : t('aiProviders.models.priceDialog.notProvided'),
+                cacheWrite: showCachePricing
+                  ? model.synced_cache_write_price ?? t('aiProviders.models.priceDialog.notProvided')
+                  : t('aiProviders.models.priceDialog.notProvided'),
               })}
             </p>
           ) : null}

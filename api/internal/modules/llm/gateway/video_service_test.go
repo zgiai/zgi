@@ -54,6 +54,18 @@ func TestVideoBillingContextFromTaskPreservesProductAttribution(t *testing.T) {
 	}
 }
 
+func TestVideoResponseTokenCountKeepsVideoTokensInTotalOnly(t *testing.T) {
+	resp := &adapter.VideoResponse{Usage: &adapter.Usage{PromptTokens: 0, CompletionTokens: 0, TotalTokens: 321}}
+	if got := videoResponseTokenCount(resp); got != 321 {
+		t.Fatalf("video token count = %d, want 321", got)
+	}
+	bc := &BillingContext{}
+	bc.TotalTokens = videoResponseTokenCount(resp)
+	if bc.TotalTokens != 321 || bc.PromptTokens != 0 || bc.CompletionTokens != 0 {
+		t.Fatalf("video billing buckets = %#v", bc)
+	}
+}
+
 func TestVideoBillingContextRestoresAttemptStartAndRecordsEndToEndTiming(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {

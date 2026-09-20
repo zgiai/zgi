@@ -410,6 +410,7 @@ export interface ModelPricingIssue {
   use_cases: string[];
   missing: ModelPricingIssueItem[];
   configured: boolean;
+  is_custom?: boolean;
 }
 
 export interface ModelPricingIssuesResponse {

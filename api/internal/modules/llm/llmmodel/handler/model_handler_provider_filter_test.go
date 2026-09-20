@@ -129,7 +129,7 @@ func (f *fakeModelService) BatchToggleModels(ctx context.Context, organizationID
 	return nil
 }
 
-func (f *fakeModelService) ListPricingIssues(ctx context.Context) (*dto.PricingIssuesListResponse, error) {
+func (f *fakeModelService) ListPricingIssues(ctx context.Context, organizationID uuid.UUID) (*dto.PricingIssuesListResponse, error) {
 	return &dto.PricingIssuesListResponse{Items: nil, Total: 0}, nil
 }
 

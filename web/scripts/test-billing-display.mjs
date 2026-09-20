@@ -465,17 +465,17 @@ assert.match(
 );
 assert.match(
   customModelDialogSource,
-  /input_price: billingDisplayInputToUSD\(values\.input_price \?\? '', billingDisplay\)/,
+  /input_price:[\s\S]{0,160}?billingDisplayInputToUSD\(values\.input_price \?\? '', billingDisplay\)/,
   'custom model display prices must be converted back to canonical USD before saving'
 );
 assert.match(
   customModelDialogSource,
-  /cache_read_price: billingDisplayInputToUSD/,
+  /cache_read_price:[\s\S]{0,160}?billingDisplayInputToUSD/,
   'custom models must submit a distinct cache read price'
 );
 assert.match(
   customModelDialogSource,
-  /cache_write_price: billingDisplayInputToUSD/,
+  /cache_write_price:[\s\S]{0,160}?billingDisplayInputToUSD/,
   'custom models must submit a distinct cache write price'
 );
 assert.doesNotMatch(

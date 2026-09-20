@@ -214,9 +214,19 @@ func settlementFromQueryResult(result *settlementQueryResponse) *adapter.Settlem
 		return nil
 	}
 	settlement := &adapter.SettlementResult{
-		SettlementID:   strings.TrimSpace(result.SettlementID),
-		OfficialPoints: result.SettledCredits,
-		Status:         strings.TrimSpace(result.SettlementStatus),
+		SettlementID:          strings.TrimSpace(result.SettlementID),
+		OfficialPoints:        result.SettledCredits,
+		Status:                strings.TrimSpace(result.SettlementStatus),
+		PromptTokens:          result.PromptTokens,
+		CompletionTokens:      result.CompletionTokens,
+		TotalTokens:           result.TotalTokens,
+		CacheReadTokens:       result.CacheReadTokens,
+		CacheWriteTokens:      result.CacheWriteTokens,
+		CacheWrite5mTokens:    result.CacheWrite5mTokens,
+		CacheWrite1hTokens:    result.CacheWrite1hTokens,
+		ReasoningOutputTokens: result.ReasoningOutputTokens,
+		AudioInputTokens:      result.AudioInputTokens,
+		AudioOutputTokens:     result.AudioOutputTokens,
 	}
 	if len(result.PricingSnapshot) == 0 || !json.Valid(result.PricingSnapshot) {
 		return settlement

@@ -149,6 +149,7 @@ const messages = {
         'Inspect every model call routed through the Gateway by source, business area, and model.',
       description: 'Gateway attempts are grouped into logical business calls.',
       supplierLabel: 'Supplier: {name}',
+      platformChannelName: 'ZGI Cloud',
       loadFailed: 'Failed to load invocation log',
       loadFailedDescription:
         'The request did not complete successfully. Check the connection and try again.',

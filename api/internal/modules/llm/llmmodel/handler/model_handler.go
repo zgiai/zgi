@@ -88,7 +88,12 @@ func (h *ModelHandler) ListGlobal(c *gin.Context) {
 }
 
 func (h *ModelHandler) ListPricingIssues(c *gin.Context) {
-	result, err := h.service.ListPricingIssues(c.Request.Context())
+	organizationID, err := getOrganizationID(c)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid tenant id")
+		return
+	}
+	result, err := h.service.ListPricingIssues(c.Request.Context(), organizationID)
 	if err != nil {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return

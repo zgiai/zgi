@@ -990,6 +990,21 @@ func TestBillingRouting_SettleChatSuccess_PlatformClearsPreDeductTokensWhenUsage
 	}
 }
 
+func TestApplyPlatformSettlementTokenUsageOnlyOverridesWithAuthoritativeValues(t *testing.T) {
+	bc := &BillingContext{PromptTokens: 9, CompletionTokens: 4, TotalTokens: 13}
+	applyPlatformSettlementTokenUsage(bc, &adapter.SettlementResult{})
+	if bc.PromptTokens != 9 || bc.CompletionTokens != 4 || bc.TotalTokens != 13 {
+		t.Fatalf("empty settlement cleared existing tokens: %#v", bc)
+	}
+	applyPlatformSettlementTokenUsage(bc, &adapter.SettlementResult{
+		PromptTokens: 10, CompletionTokens: 6, CacheReadTokens: 2,
+		CacheWrite5mTokens: 3, CacheWrite1hTokens: 1,
+	})
+	if bc.PromptTokens != 10 || bc.CompletionTokens != 6 || bc.CacheReadTokens != 2 || bc.CacheWriteTokens != 4 || bc.TotalTokens != 22 {
+		t.Fatalf("authoritative settlement tokens = %#v", bc)
+	}
+}
+
 func TestBillingRouting_SettleImageSuccess_PlatformUsesProxySettlement(t *testing.T) {
 	remote := &fakeProxySettlementBillingProvider{}
 	local := &fakeBillingProvider{checkBalanceResult: true}

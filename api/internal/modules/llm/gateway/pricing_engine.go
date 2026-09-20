@@ -82,8 +82,11 @@ type PricingQuote struct {
 	CacheWrite5mPriceResolved bool
 	CacheWrite1hPriceResolved bool
 	OutputTokenPriceResolved  bool
-	InputRuleID               string
-	OutputRuleID              string
+	// CacheBillingSupported is derived from canonical pricing capability
+	// metadata, never from legacy scalar cache columns.
+	CacheBillingSupported *bool
+	InputRuleID           string
+	OutputRuleID          string
 
 	MeteredOperation       PricingOperation
 	MeteredMeter           string
@@ -139,6 +142,7 @@ type pricingModelRecord struct {
 	CacheWrite1hPriceConfigured      bool            `gorm:"column:cache_write_1h_price_configured"`
 	ImagePrices                      datatypes.JSON  `gorm:"column:image_prices"`
 	Pricing                          datatypes.JSON  `gorm:"column:pricing"`
+	CacheBillingSupported            bool            `gorm:"-"`
 	InputPriceOrganizationOverride   bool            `gorm:"-"`
 	OutputPriceOrganizationOverride  bool            `gorm:"-"`
 	CacheReadOrganizationOverride    bool            `gorm:"-"`
@@ -160,6 +164,10 @@ func (e *pricingEngine) QuoteTokens(ctx context.Context, ref PricingModelRef, pr
 	model, found, err := e.loadModel(ctx, ref)
 	if err != nil {
 		return PricingQuote{}, err
+	}
+
+	if ref.Operation == PricingOperationRealtimeAudio {
+		return e.quoteRealtimeAudioTokens(ref, model, found, promptTokens, completionTokens)
 	}
 
 	if found && tokenPricesConfiguredForUsage(model, requiredPrices) {
@@ -184,6 +192,7 @@ func (e *pricingEngine) QuoteTokens(ctx context.Context, ref PricingModelRef, pr
 			"output_price_configured":        model.OutputPriceConfigured,
 		})
 		quote := newUSDQuote(inputUSD, outputUSD, PricingSourceUpstreamModelPrice, "", UsageSourceProviderUsage, snapshot)
+		quote.CacheBillingSupported = boolPtr(model.CacheBillingSupported)
 		return withTokenPricingBasis(
 			quote,
 			model.InputPrice,
@@ -203,16 +212,24 @@ func (e *pricingEngine) QuoteTokenUsage(ctx context.Context, ref PricingModelRef
 		return PricingQuote{}, fmt.Errorf("token count must be greater than or equal to zero")
 	}
 	usage = normalizeGatewayTokenUsage(usage)
+	model, found, err := e.loadModel(ctx, ref)
+	if err != nil {
+		return PricingQuote{}, err
+	}
+	// Cache usage is ignored unless the model's canonical pricing explicitly
+	// declares cache meters. This makes historical scalar cache prices inert.
+	if !found || model == nil || !model.CacheBillingSupported {
+		usage.CacheReadTokens = 0
+		usage.CacheWriteTokens = 0
+		usage.CacheWrite5mTokens = 0
+		usage.CacheWrite1hTokens = 0
+	}
 	quote, err := e.QuoteTokens(ctx, ref, usage.InputTokens, usage.OutputTokens)
 	if err != nil {
 		return PricingQuote{}, err
 	}
 	if usage.CacheReadTokens == 0 && usage.CacheWriteTokens == 0 {
 		return quote, nil
-	}
-	model, found, err := e.loadModel(ctx, ref)
-	if err != nil {
-		return PricingQuote{}, err
 	}
 	if !found || model == nil {
 		return PricingQuote{}, fmt.Errorf("%w: cache token pricing requires a configured model", ErrPricingNotConfigured)
@@ -283,7 +300,105 @@ func (e *pricingEngine) QuoteTokenUsage(ctx context.Context, ref PricingModelRef
 	result.CacheWritePriceResolved = model.CacheWritePriceConfigured
 	result.CacheWrite5mPriceResolved = cacheWrite5mResolved
 	result.CacheWrite1hPriceResolved = cacheWrite1hResolved
+	result.CacheBillingSupported = boolPtr(model.CacheBillingSupported)
 	return result, nil
+}
+
+// quoteRealtimeAudioTokens bills a realtime audio request from the model's
+// canonical realtime_audio rules (audio input/output tokens). The chat scalar
+// columns represent text tokens and must not be used for audio billing.
+func (e *pricingEngine) quoteRealtimeAudioTokens(
+	ref PricingModelRef,
+	model *pricingModelRecord,
+	found bool,
+	inputTokens int,
+	outputTokens int,
+) (PricingQuote, error) {
+	if !found || model == nil {
+		return PricingQuote{}, fmt.Errorf("%w: realtime audio pricing requires a configured model", ErrPricingNotConfigured)
+	}
+	inputPrice, outputPrice, ok, err := resolveRealtimeAudioTokenPrices(model.Pricing)
+	if err != nil {
+		return PricingQuote{}, err
+	}
+	if !ok {
+		return PricingQuote{}, fmt.Errorf("%w: realtime audio token pricing is not configured", ErrPricingNotConfigured)
+	}
+	inputUSD := tokenUSD(inputPrice, inputTokens)
+	outputUSD := tokenUSD(outputPrice, outputTokens)
+	snapshot := buildPricingSnapshot(map[string]interface{}{
+		"pricing_source":                 PricingSourceUpstreamModelPrice,
+		"usage_source":                   UsageSourceProviderUsage,
+		"operation":                      ref.Operation,
+		"model_id":                       model.ID.String(),
+		"provider":                       strings.TrimSpace(model.Provider),
+		"model":                          strings.TrimSpace(model.Name),
+		"prompt_tokens":                  inputTokens,
+		"completion_tokens":              outputTokens,
+		"input_price_usd_per_1m_tokens":  inputPrice.String(),
+		"output_price_usd_per_1m_tokens": outputPrice.String(),
+		"input_cost_usd":                 inputUSD.String(),
+		"output_cost_usd":                outputUSD.String(),
+	})
+	quote := newUSDQuote(inputUSD, outputUSD, PricingSourceUpstreamModelPrice, "", UsageSourceProviderUsage, snapshot)
+	return withTokenPricingBasis(quote, inputPrice, outputPrice, true, true, "", ""), nil
+}
+
+func resolveRealtimeAudioTokenPrices(raw datatypes.JSON) (decimal.Decimal, decimal.Decimal, bool, error) {
+	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
+		return decimal.Zero, decimal.Zero, false, nil
+	}
+	var envelope struct {
+		Rules []struct {
+			Operation string          `json:"operation"`
+			Meter     string          `json:"meter"`
+			Price     json.RawMessage `json:"price"`
+		} `json:"rules"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return decimal.Zero, decimal.Zero, false, fmt.Errorf("%w: invalid realtime audio pricing: %v", ErrPricingNotConfigured, err)
+	}
+	operation := string(PricingOperationRealtimeAudio)
+	var inputPrice, outputPrice decimal.Decimal
+	var hasInput, hasOutput bool
+	for _, rule := range envelope.Rules {
+		if rule.Operation != operation {
+			continue
+		}
+		amount, ok := parseRealtimeAudioRulePrice(rule.Price)
+		if !ok {
+			continue
+		}
+		switch rule.Meter {
+		case string(PricingMeterInputToken):
+			inputPrice, hasInput = amount, true
+		case string(PricingMeterOutputToken):
+			outputPrice, hasOutput = amount, true
+		}
+	}
+	if !hasInput && !hasOutput {
+		return decimal.Zero, decimal.Zero, false, nil
+	}
+	return inputPrice, outputPrice, true, nil
+}
+
+func parseRealtimeAudioRulePrice(raw json.RawMessage) (decimal.Decimal, bool) {
+	if len(raw) == 0 {
+		return decimal.Zero, false
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		amount, err := decimal.NewFromString(strings.TrimSpace(text))
+		if err != nil || amount.IsNegative() {
+			return decimal.Zero, false
+		}
+		return amount, true
+	}
+	var number float64
+	if err := json.Unmarshal(raw, &number); err != nil || number < 0 {
+		return decimal.Zero, false
+	}
+	return decimal.NewFromFloat(number), true
 }
 
 func normalizeGatewayTokenUsage(usage TokenUsage) TokenUsage {
@@ -544,6 +659,9 @@ func (e *pricingEngine) quoteTokensWithFallback(
 	})
 
 	quote := newUSDQuote(inputUSD, outputUSD, source, ruleID, UsageSourceProviderUsage, snapshot)
+	if model != nil {
+		quote.CacheBillingSupported = boolPtr(model.CacheBillingSupported)
+	}
 	return withTokenPricingBasis(
 		quote,
 		inputPrice,
@@ -929,6 +1047,7 @@ func applyResolvedConfiguredToRecord(record *pricingModelRecord) {
 		CacheWrite1h: record.CacheWrite1hOrganizationOverride,
 	}
 	resolved := modelpricing.ApplyOrganizationOverrides(modelpricing.ResolveConfigured([]byte(record.Pricing)), overrides)
+	record.CacheBillingSupported = modelpricing.CacheBillingSupported([]byte(record.Pricing))
 	record.InputPriceConfigured = resolved.Input
 	record.OutputPriceConfigured = resolved.Output
 	record.CacheReadPriceConfigured = resolved.CacheRead
@@ -1128,6 +1247,7 @@ func repriceLockedTokenUsage(quote PricingQuote, usage TokenUsage) (PricingQuote
 	repriced.CacheWritePriceResolved = quote.CacheWritePriceResolved
 	repriced.CacheWrite5mPriceResolved = quote.CacheWrite5mPriceResolved
 	repriced.CacheWrite1hPriceResolved = quote.CacheWrite1hPriceResolved
+	repriced.CacheBillingSupported = quote.CacheBillingSupported
 	repriced.InputRuleID = quote.InputRuleID
 	repriced.OutputRuleID = quote.OutputRuleID
 	return repriced, nil
@@ -1174,7 +1294,7 @@ func repriceLockedTokenQuote(quote PricingQuote, promptTokens, completionTokens 
 		usageSource,
 		snapshot,
 	)
-	return withTokenPricingBasis(
+	repriced = withTokenPricingBasis(
 		repriced,
 		quote.InputTokenPriceUSDPer1M,
 		quote.OutputTokenPriceUSDPer1M,
@@ -1182,7 +1302,9 @@ func repriceLockedTokenQuote(quote PricingQuote, promptTokens, completionTokens 
 		quote.OutputTokenPriceResolved,
 		quote.InputRuleID,
 		quote.OutputRuleID,
-	), nil
+	)
+	repriced.CacheBillingSupported = quote.CacheBillingSupported
+	return repriced, nil
 }
 
 func creditsFromUSD(totalUSD decimal.Decimal) int64 {

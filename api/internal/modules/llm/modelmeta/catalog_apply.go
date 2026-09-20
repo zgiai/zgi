@@ -942,7 +942,8 @@ func applyPublishedLifecycleColumns(db *gorm.DB, values map[string]interface{}, 
 }
 
 func endpointColumnsForPublishedModel(useCases []string, endpoints *llmmodel.ModelEndpoints, authoritative bool) map[string]bool {
-	resolved := llmmodel.DefaultEndpointsForUseCases(useCases)
+	derived := llmmodel.DefaultEndpointsForUseCases(useCases)
+	resolved := derived
 	if endpoints != nil {
 		if authoritative {
 			resolved = *endpoints
@@ -965,6 +966,25 @@ func endpointColumnsForPublishedModel(useCases []string, endpoints *llmmodel.Mod
 			resolved.MusicGeneration = resolved.MusicGeneration || endpoints.MusicGeneration
 		}
 	}
+	// Use cases are the canonical semantic capability declaration. Keep every
+	// legacy endpoint projection enabled when an older or incomplete
+	// authoritative endpoint payload says false.
+	resolved.ChatCompletions = resolved.ChatCompletions || derived.ChatCompletions
+	resolved.Responses = resolved.Responses || derived.Responses
+	resolved.Realtime = resolved.Realtime || derived.Realtime
+	resolved.Assistants = resolved.Assistants || derived.Assistants
+	resolved.Batch = resolved.Batch || derived.Batch
+	resolved.Embeddings = resolved.Embeddings || derived.Embeddings
+	resolved.FineTuning = resolved.FineTuning || derived.FineTuning
+	resolved.ImageGeneration = resolved.ImageGeneration || derived.ImageGeneration
+	resolved.Vision = resolved.Vision || derived.Vision
+	resolved.SpeechGeneration = resolved.SpeechGeneration || derived.SpeechGeneration
+	resolved.Transcription = resolved.Transcription || derived.Transcription
+	resolved.Translation = resolved.Translation || derived.Translation
+	resolved.Moderation = resolved.Moderation || derived.Moderation
+	resolved.Videos = resolved.Videos || derived.Videos
+	resolved.ImageEdit = resolved.ImageEdit || derived.ImageEdit
+	resolved.MusicGeneration = resolved.MusicGeneration || derived.MusicGeneration
 
 	return map[string]bool{
 		"chat_completions":  resolved.ChatCompletions,

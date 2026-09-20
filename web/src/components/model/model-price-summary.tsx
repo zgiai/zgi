@@ -100,6 +100,7 @@ export const ModelPriceSummary = memo(function ModelPriceSummary({
     cacheWrite5mPriceConfigured: cacheWrite5mPrice.configured,
     cacheWrite1hPriceConfigured: cacheWrite1hPrice.configured,
     useCases: model.use_cases,
+    endpoints: model.endpoints,
     currency: model.currency,
     pricing: model.pricing,
     imagePrices: model.image_prices,

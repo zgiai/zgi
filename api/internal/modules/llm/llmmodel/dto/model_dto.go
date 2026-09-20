@@ -230,6 +230,7 @@ type PricingIssueResponse struct {
 	UseCases   []string           `json:"use_cases"`
 	Missing    []PricingIssueItem `json:"missing"`
 	Configured bool               `json:"configured"`
+	IsCustom   bool               `json:"is_custom"`
 }
 
 type PricingIssuesListResponse struct {

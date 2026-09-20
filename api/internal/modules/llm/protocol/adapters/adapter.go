@@ -396,6 +396,8 @@ type Usage struct {
 	PromptTokens            int                     `json:"prompt_tokens"`
 	CompletionTokens        int                     `json:"completion_tokens"`
 	TotalTokens             int                     `json:"total_tokens"`
+	InputTokens             int                     `json:"input_tokens,omitempty"`
+	OutputTokens            int                     `json:"output_tokens,omitempty"`
 	PromptTokensDetails     PromptTokensDetails     `json:"prompt_tokens_details,omitempty"`
 	CompletionTokensDetails CompletionTokensDetails `json:"completion_tokens_details,omitempty"`
 	UncachedInputTokens     int                     `json:"uncached_input_tokens,omitempty"`
@@ -403,6 +405,10 @@ type Usage struct {
 	CacheWriteTokens        int                     `json:"cache_write_tokens,omitempty"`
 	CacheWrite5mTokens      int                     `json:"cache_write_5m_tokens,omitempty"`
 	CacheWrite1hTokens      int                     `json:"cache_write_1h_tokens,omitempty"`
+	// AudioInputTokens / AudioOutputTokens carry upstream audio token usage for
+	// realtime/audio models so the gateway can bill the realtime_audio operation.
+	AudioInputTokens  int `json:"audio_input_tokens,omitempty"`
+	AudioOutputTokens int `json:"audio_output_tokens,omitempty"`
 }
 
 type PromptTokensDetails struct {
@@ -490,6 +496,16 @@ type SettlementResult struct {
 	ActualProvider                  string `json:"actual_provider,omitempty"`
 	ActualProtocol                  string `json:"actual_protocol,omitempty"`
 	ActualUpstreamModel             string `json:"actual_upstream_model,omitempty"`
+	PromptTokens                    int    `json:"prompt_tokens,omitempty"`
+	CompletionTokens                int    `json:"completion_tokens,omitempty"`
+	TotalTokens                     int    `json:"total_tokens,omitempty"`
+	CacheReadTokens                 int    `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens                int    `json:"cache_write_tokens,omitempty"`
+	CacheWrite5mTokens              int    `json:"cache_write_5m_tokens,omitempty"`
+	CacheWrite1hTokens              int    `json:"cache_write_1h_tokens,omitempty"`
+	ReasoningOutputTokens           int    `json:"reasoning_output_tokens,omitempty"`
+	AudioInputTokens                int    `json:"audio_input_tokens,omitempty"`
+	AudioOutputTokens               int    `json:"audio_output_tokens,omitempty"`
 }
 
 // SettlementError carries console-api settlement failure data for official streams.
@@ -658,6 +674,7 @@ type ImageRequest struct {
 type ImageResponse struct {
 	Created    int64             `json:"created"`
 	Data       []ImageItem       `json:"data"`
+	Usage      *Usage            `json:"usage,omitempty"`
 	Settlement *SettlementResult `json:"-"`
 }
 

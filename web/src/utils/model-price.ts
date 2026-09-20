@@ -77,6 +77,11 @@ interface VideoGenerationResolutionRate {
 
 interface StructuredModelPricing {
   currency?: string | null;
+  rules?: Array<{
+    operation?: string | null;
+    meter?: string | null;
+    price?: number | string | null;
+  }> | null;
   price_per_image?: number | null;
   token_tiers?: Array<{
     min_input_tokens?: number | null;
@@ -132,9 +137,35 @@ interface GetModelPriceDisplayParams {
   imagePrices?: ModelImagePriceRule[] | null;
   currency: string | null | undefined;
   useCases?: ModelUseCase[] | null;
+  endpoints?: Record<string, boolean> | null;
   billingDisplay?: BillingDisplaySettings;
   labels?: ModelPriceDisplayLabels;
   videoDisplayMode?: 'detailed' | 'summary';
+}
+
+/** Cache billing is opt-in: only explicit cache meters in the canonical pricing
+ * document can authorize cache UI or billing. Legacy scalar columns alone are
+ * intentionally ignored so historical prices cannot revive cache charges. */
+export function hasCacheBillingCapability(pricing: unknown): boolean {
+  if (!isRecord(pricing)) return false;
+  if (Array.isArray(pricing.rules)) {
+    if (pricing.rules.some(rule => {
+      if (!isRecord(rule)) return false;
+      return ['cache_read_token', 'cache_write_token', 'cache_write_5m_token', 'cache_write_1h_token'].includes(String(rule.meter));
+    })) return true;
+  }
+  if (Array.isArray(pricing.token_tiers)) {
+    return pricing.token_tiers.some(tier => isRecord(tier) && [
+      'cached_input_price_per_million',
+      'cache_read_price_per_million',
+      'cache_write_price_per_million',
+      'cache_write_5m_price_per_million',
+      'cache_write_1h_price_per_million',
+      'cache_creation_5m_price_per_million',
+      'cache_creation_1h_price_per_million',
+    ].some(key => hasNumericPrice(tier[key])));
+  }
+  return false;
 }
 
 /**
@@ -148,12 +179,15 @@ export function isVideoGenerationModel(useCases?: ModelUseCase[] | null): boolea
   return Array.isArray(useCases) && useCases.includes('video-gen');
 }
 
-export function isInputOnlyPriceModel(useCases?: ModelUseCase[] | null): boolean {
+export function isInputOnlyPriceModel(
+  useCases?: ModelUseCase[] | null,
+  endpoints?: Record<string, boolean> | null,
+): boolean {
   const cases = Array.isArray(useCases) ? useCases : [];
   return (
-    cases.some(useCase => useCase === 'embedding' || useCase === 'rerank') &&
+    (cases.some(useCase => useCase === 'embedding' || useCase === 'rerank') || endpoints?.embeddings === true) &&
     !cases.some(useCase =>
-      ['text-chat', 'vision', 'reasoning', 'function-calling', 'image-gen', 'video-gen'].includes(
+      ['text-chat', 'vision', 'reasoning', 'function-calling', 'realtime-audio', 'image-gen', 'video-gen'].includes(
         useCase
       )
     )
@@ -162,8 +196,12 @@ export function isInputOnlyPriceModel(useCases?: ModelUseCase[] | null): boolean
 
 export interface ModelPricingConfiguredInput {
   use_cases?: ModelUseCase[] | null;
+  endpoints?: Record<string, boolean> | null;
   pricing?: StructuredModelPricing | Record<string, unknown> | null;
   image_prices?: ModelImagePriceRule[] | null;
+  input_price?: number | null;
+  synced_input_price?: number | null;
+  input_price_override?: number | null;
   input_price_configured?: boolean | null;
   output_price_configured?: boolean | null;
 }
@@ -177,6 +215,8 @@ export function isModelPricingConfigured(
   model: ModelPricingConfiguredInput | null | undefined
 ): boolean {
   if (!model) return false;
+  const inputOnlyModel = isInputOnlyPriceModel(model.use_cases, model.endpoints);
+  if (inputOnlyModel && hasInputOnlyStructuredPricing(model.pricing)) return true;
   if (hasStructuredSalePricing(model.pricing)) return true;
   if (Array.isArray(model.image_prices) && model.image_prices.length > 0) {
     return model.image_prices.some(rule => hasNumericPrice(rule?.price?.amount));
@@ -187,8 +227,13 @@ export function isModelPricingConfigured(
   if (isVideoGenerationModel(model.use_cases)) {
     return false;
   }
-  if (isInputOnlyPriceModel(model.use_cases)) {
-    return Boolean(model.input_price_configured);
+  if (inputOnlyModel) {
+    return Boolean(
+      model.input_price_configured ||
+        isPositiveNumber(model.input_price) ||
+        isPositiveNumber(model.input_price_override) ||
+        isPositiveNumber(model.synced_input_price)
+    );
   }
   return Boolean(model.input_price_configured && model.output_price_configured);
 }
@@ -227,6 +272,17 @@ function hasStructuredSalePricing(pricing: unknown): boolean {
   return false;
 }
 
+function hasInputOnlyStructuredPricing(pricing: unknown): boolean {
+  if (!isRecord(pricing) || !Array.isArray(pricing.rules)) return false;
+  return pricing.rules.some(rule => {
+    if (!isRecord(rule) || !hasNumericPrice(rule.price)) return false;
+    return (
+      (rule.operation === 'embedding' || rule.operation === 'rerank') &&
+      rule.meter === 'input_token'
+    );
+  });
+}
+
 function isPricedTokenTier(value: unknown): boolean {
   if (!isRecord(value)) return false;
   return (
@@ -257,6 +313,11 @@ function hasNumericPrice(value: unknown): boolean {
   return false;
 }
 
+function isPositiveNumber(value: unknown): boolean {
+  if (!hasNumericPrice(value)) return false;
+  return Number(value) > 0;
+}
+
 /**
  * @util Build price display lines for model management tables.
  */
@@ -277,6 +338,7 @@ export function getModelPriceDisplay({
   imagePrices,
   currency,
   useCases,
+  endpoints,
   billingDisplay = DEFAULT_BILLING_DISPLAY,
   labels,
   videoDisplayMode = 'detailed',
@@ -301,7 +363,7 @@ export function getModelPriceDisplay({
     ];
   }
 
-  const cacheItems = buildCachePriceDisplayItems({
+  const cacheItems = hasCacheBillingCapability(pricing) ? buildCachePriceDisplayItems({
     cacheReadPrice,
     cacheWritePrice,
     cacheWrite5mPrice,
@@ -311,7 +373,7 @@ export function getModelPriceDisplay({
     cacheWrite5mPriceConfigured,
     cacheWrite1hPriceConfigured,
     billingDisplay,
-  });
+  }) : [];
   const structuredItems = getStructuredPriceDisplay(pricing, currency, labels);
   if (structuredItems.length > 0) {
     const structuredLabels = new Set(structuredItems.map(item => item.label));
@@ -341,7 +403,7 @@ export function getModelPriceDisplay({
     ];
   }
 
-  if (isInputOnlyPriceModel(useCases)) {
+  if (isInputOnlyPriceModel(useCases, endpoints)) {
     return [
       buildModelPriceDisplayItem(
         'input',
@@ -449,6 +511,23 @@ function getStructuredPriceDisplay(
         labels?.perMillionTokens ?? '/ 百万 tokens'
       ),
     ].filter((item): item is ModelPriceDisplayItem => item !== null);
+  }
+
+  const inputTokenRule = (Array.isArray(pricing.rules) ? pricing.rules : []).find(rule =>
+    (rule.operation === 'embedding' || rule.operation === 'rerank') &&
+    rule.meter === 'input_token' &&
+    hasNumericPrice(rule.price)
+  );
+  if (inputTokenRule) {
+    return [
+      buildStructuredPriceItem(
+        'input',
+        labels?.input ?? '输入',
+        Number(inputTokenRule.price),
+        safeCurrency(fallbackCurrency, pricing.currency, 'USD'),
+        labels?.perMillionTokens ?? '/ 百万 tokens'
+      ),
+    ];
   }
 
   const metered = Array.isArray(pricing.metered) ? pricing.metered : [];

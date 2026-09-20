@@ -906,10 +906,15 @@ func (s *llmGatewayServiceImpl) settleVideoTaskSuccess(
 		return err
 	}
 	billingCtx.PricingOperation = PricingOperationVideo
-	if resp.Usage != nil {
-		billingCtx.PromptTokens = resp.Usage.PromptTokens
-		billingCtx.CompletionTokens = resp.Usage.CompletionTokens
-		billingCtx.TotalTokens = resp.Usage.TotalTokens
+	if !selection.UseSystemProvider {
+		// Video usage is a separate metered dimension. Keep it in total_tokens
+		// for the local bill, without fabricating prompt/completion tokens.
+		videoTokens := videoResponseTokenCount(resp)
+		if videoTokens > 0 {
+			billingCtx.PromptTokens = 0
+			billingCtx.CompletionTokens = 0
+			billingCtx.TotalTokens = videoTokens
+		}
 	}
 	billingCtx.ActualCredits = quote.TotalCredits
 	billingCtx.Status = billingContextStatusSuccess
@@ -938,6 +943,26 @@ func (s *llmGatewayServiceImpl) settleVideoTaskSuccess(
 	resp.EstimatedCredits = billingCtx.EstimatedCredits
 	resp.ActualCredits = billingCtx.ActualCredits
 	return nil
+}
+
+func videoResponseTokenCount(resp *adapter.VideoResponse) int {
+	if resp == nil {
+		return 0
+	}
+	if resp.Usage != nil {
+		if resp.Usage.TotalTokens > 0 {
+			return resp.Usage.TotalTokens
+		}
+		if resp.Usage.PromptTokens > 0 || resp.Usage.CompletionTokens > 0 {
+			return resp.Usage.PromptTokens + resp.Usage.CompletionTokens
+		}
+	}
+	for _, key := range []string{"video_tokens", "total_video_tokens", "output_video_tokens"} {
+		if value := intFromAny(resp.Raw[key]); value > 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 func (s *llmGatewayServiceImpl) settleVideoTaskFailure(

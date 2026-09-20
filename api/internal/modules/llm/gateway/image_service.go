@@ -254,6 +254,8 @@ func (s *llmGatewayServiceImpl) createImageInternal(
 	}
 	if decision.UseSystemProvider {
 		actualQuote = PricingQuote{}
+	} else {
+		applyUsageToBillingContext(billingCtx, resp.Usage)
 	}
 
 	if err := s.settleImageSuccess(ctx, billingCtx, selection, actualQuote, resp.Settlement, responseTime); err != nil {

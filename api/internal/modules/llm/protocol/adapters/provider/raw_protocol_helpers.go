@@ -57,6 +57,7 @@ type openAIUsageShape struct {
 	CompletionTokens   int `json:"completion_tokens"`
 	InputTokensDetails struct {
 		CachedTokens int `json:"cached_tokens"`
+		AudioTokens  int `json:"audio_tokens"`
 	} `json:"input_tokens_details"`
 	PromptTokensDetails struct {
 		CachedTokens        int `json:"cached_tokens"`
@@ -64,6 +65,7 @@ type openAIUsageShape struct {
 	} `json:"prompt_tokens_details"`
 	OutputTokensDetails struct {
 		ReasoningTokens int `json:"reasoning_tokens"`
+		AudioTokens     int `json:"audio_tokens"`
 	} `json:"output_tokens_details"`
 	CompletionTokensDetails struct {
 		ReasoningTokens int `json:"reasoning_tokens"`
@@ -100,6 +102,8 @@ func (u openAIUsageShape) toAdapterUsage() *adapter.Usage {
 	usage.CacheReadTokens = maxRawUsageInt(u.InputTokensDetails.CachedTokens, u.PromptTokensDetails.CachedTokens)
 	usage.CacheWriteTokens = u.PromptTokensDetails.CacheCreationTokens
 	usage.CompletionTokensDetails.ReasoningTokens = maxRawUsageInt(u.OutputTokensDetails.ReasoningTokens, u.CompletionTokensDetails.ReasoningTokens)
+	usage.AudioInputTokens = u.InputTokensDetails.AudioTokens
+	usage.AudioOutputTokens = u.OutputTokensDetails.AudioTokens
 	usage.NormalizeCacheTokens()
 	return usage
 }
