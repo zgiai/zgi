@@ -296,7 +296,7 @@ func (s *service) createConversationForChat(ctx context.Context, scope Scope, ca
 	if err != nil {
 		return nil, err
 	}
-	if s.titleGen == nil {
+	if s.titleGen == nil || !conversationTitleGenerationEnabled(caller) {
 		return conversation, nil
 	}
 	s.markConversationTitleGenerationPending(ctx, scope, conversation)
