@@ -478,7 +478,10 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 		callID = strings.TrimSpace(frozen.ID)
 	}
 	executionContext := s.skillExecutionContext(prepared)
-	scriptModel, scriptModelUsage := s.newSkillScriptModelChannel(prepared)
+	scriptModel, scriptModelUsage := s.newSkillScriptModelChannel(
+		prepared,
+		s.taskTokenUsageObserver(persistCtx, prepared, onEvent),
+	)
 	executionContext.ScriptModel = scriptModel
 	executionContext.RuntimeParameters = skills.WithToolGovernanceCorrelationID(
 		executionContext.RuntimeParameters,

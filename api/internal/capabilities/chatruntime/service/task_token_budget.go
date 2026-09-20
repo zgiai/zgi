@@ -95,6 +95,37 @@ func (b *taskTokenBudgetState) metadata(status string) map[string]interface{} {
 	}
 }
 
+// accountTaskTokenUsage records provider usage before a result is persisted or
+// a continuation decision is made. The task budget is API-only, so callers can
+// safely invoke this for every model invocation and let nil mean "not capped".
+func accountTaskTokenUsage(prepared *PreparedChat, usage *adapter.Usage) *TaskTokenBudgetExceededError {
+	if prepared == nil || prepared.Message == nil || prepared.taskTokenBudget == nil || usage == nil {
+		return nil
+	}
+	prepared.taskTokenBudget.addUsage(usage)
+	if prepared.Message.Metadata == nil {
+		prepared.Message.Metadata = map[string]interface{}{}
+	}
+	status := "running"
+	budgetErr := prepared.taskTokenBudget.exhausted()
+	if budgetErr != nil {
+		status = "exhausted"
+	}
+	prepared.Message.Metadata[taskTokenBudgetMetadataKey] = prepared.taskTokenBudget.metadata(status)
+	return budgetErr
+}
+
+func (s *service) taskTokenUsageObserver(
+	persistCtx context.Context,
+	prepared *PreparedChat,
+	onEvent func(StreamEvent) error,
+) scriptModelUsageObserver {
+	return func(usage *adapter.Usage) error {
+		budgetErr := accountTaskTokenUsage(prepared, usage)
+		s.emitTaskTokenUsageUpdated(persistCtx, prepared, usage, onEvent)
+		return budgetErr
+	}
+}
 func taskTokenBudgetRequestPayload(budget *taskTokenBudgetState) map[string]interface{} {
 	requestID := uuid.New().String()
 	used, limit := 0, 0

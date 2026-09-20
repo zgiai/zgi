@@ -10,10 +10,12 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
+type scriptModelUsageObserver func(*adapter.Usage) error
+
 // Reuse the prepared Agent's authorized model and billing scope, but not its
 // conversation messages, tools, or generation settings. The workflow owns its
 // two prompts; the script receives neither credentials nor routing controls.
-func (s *service) newSkillScriptModelChannel(prepared *PreparedChat) (*skills.ScriptModelChannel, func() *adapter.Usage) {
+func (s *service) newSkillScriptModelChannel(prepared *PreparedChat, observers ...scriptModelUsageObserver) (*skills.ScriptModelChannel, func() *adapter.Usage) {
 	var mu sync.Mutex
 	var usage *adapter.Usage
 	snapshot := func() *adapter.Usage {
@@ -42,6 +44,14 @@ func (s *service) newSkillScriptModelChannel(prepared *PreparedChat) (*skills.Sc
 				mu.Lock()
 				usage = addUsageCloned(usage, response.Usage)
 				mu.Unlock()
+				for _, observer := range observers {
+					if observer == nil || response.Usage == nil {
+						continue
+					}
+					if err := observer(response.Usage); err != nil {
+						return "", err
+					}
+				}
 			}
 			if err != nil {
 				return "", fmt.Errorf("skill model request failed")

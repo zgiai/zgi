@@ -20,11 +20,13 @@ func (s *service) handleTaskTokenBudgetPending(
 	onEvent func(StreamEvent) error,
 ) (*ChatResult, bool, error) {
 	var exceeded *TaskTokenBudgetExceededError
-	if cause != nil {
-		if !errors.As(cause, &exceeded) {
-			return nil, false, nil
-		}
-	} else if prepared == nil || prepared.taskTokenBudget == nil || prepared.taskTokenBudget.exhausted() == nil {
+	if prepared != nil && prepared.taskTokenBudget != nil {
+		exceeded = prepared.taskTokenBudget.exhausted()
+	}
+	if exceeded == nil && cause != nil && !errors.As(cause, &exceeded) {
+		return nil, false, nil
+	}
+	if exceeded == nil {
 		return nil, false, nil
 	}
 	metadata, err := s.persistTaskTokenBudgetPendingResult(ctx, prepared, usage)

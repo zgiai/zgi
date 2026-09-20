@@ -141,7 +141,10 @@ func (s *service) runPreparedToolLoop(
 		additionalSystemMessages = append(additionalSystemMessages, agentmemoryruntime.PolicyMessage(enabledAgentMemorySlots(prepared.parts.AgentMemorySlots), proactiveAllowed))
 	}
 	executionContext := s.skillExecutionContext(prepared)
-	scriptModel, scriptModelUsage := s.newSkillScriptModelChannel(prepared)
+	scriptModel, scriptModelUsage := s.newSkillScriptModelChannel(
+		prepared,
+		s.taskTokenUsageObserver(persistCtx, prepared, onEvent),
+	)
 	executionContext.ScriptModel = scriptModel
 	var nativeToolSet *skills.NativeToolSet
 	var nativeSkillSession *skills.NativeSkillSession
@@ -253,8 +256,10 @@ func (s *service) runPreparedToolLoop(
 		OnTerminalCompletion:           onTerminalCompletion,
 		OnChunk:                        onChunk,
 		BeforeModelRound: func(checkpointCtx context.Context, round int) ([]adapter.Message, error) {
-			if budgetErr := prepared.taskTokenBudget.exhausted(); budgetErr != nil {
-				return nil, budgetErr
+			if prepared.taskTokenBudget != nil {
+				if budgetErr := prepared.taskTokenBudget.exhausted(); budgetErr != nil {
+					return nil, budgetErr
+				}
 			}
 			return s.claimRuntimeInputsForCurrentRun(
 				checkpointCtx,

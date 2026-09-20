@@ -116,16 +116,8 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		answer, usage, err := s.runPreparedToolStream(runCtx, persistCtx, prepared, onChunk, eventCallback)
 		usage = mergeUsage(preflightUsage, usage)
 		if err != nil {
-			var budgetExceeded *TaskTokenBudgetExceededError
-			if errors.As(err, &budgetExceeded) {
-				metadata, persistErr := s.persistTaskTokenBudgetPendingResult(persistCtx, prepared, usage)
-				if persistErr != nil {
-					return nil, finalizedRuntimePersistenceError(persistErr)
-				}
-				payload := taskTokenBudgetEventPayload(metadata, prepared.Conversation.ID.String(), prepared.Message.ID.String())
-				_ = s.emitPreparedEvent(persistCtx, prepared, streamEventTokenBudgetRequested, payload, eventCallback)
-				eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion))
-				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingQuestion, MessageEndEventID: eventID}, nil
+			if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, answer, usage, err, eventCallback); handled {
+				return result, budgetErr
 			}
 			var pendingGovernance *skillloop.ToolGovernancePendingError
 			if errors.As(err, &pendingGovernance) {

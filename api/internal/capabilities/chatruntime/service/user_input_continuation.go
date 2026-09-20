@@ -144,7 +144,13 @@ func (s *service) finishUserInputContinuationPendingOrError(
 ) (*ChatResult, error) {
 	var pendingGovernance *skillloop.ToolGovernancePendingError
 	var budgetExceeded *TaskTokenBudgetExceededError
-	if errors.As(cause, &budgetExceeded) {
+	if prepared != nil && prepared.taskTokenBudget != nil {
+		budgetExceeded = prepared.taskTokenBudget.exhausted()
+	}
+	if budgetExceeded == nil && cause != nil {
+		errors.As(cause, &budgetExceeded)
+	}
+	if budgetExceeded != nil {
 		metadata, persistErr := s.persistTaskTokenBudgetPendingResult(persistCtx, prepared, usage)
 		if persistErr != nil {
 			return nil, finalizedRuntimePersistenceError(persistErr)
