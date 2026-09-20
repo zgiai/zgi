@@ -108,10 +108,17 @@ type ClientActionResultRequest struct {
 }
 
 type UserInputContinuationRequest struct {
-	Answers map[string]string `json:"answers,omitempty"`
-	// Action and AdditionalTokens are used only when the pending request is a
-	// task-token-budget pause. Ordinary model questions continue to use Answers.
-	Action           string                 `json:"action,omitempty"`
+	Answers          map[string]string      `json:"answers,omitempty"`
+	Surface          string                 `json:"surface,omitempty"`
+	RuntimeContext   string                 `json:"runtime_context,omitempty"`
+	OperationContext map[string]interface{} `json:"operation_context,omitempty"`
+}
+
+// TaskTokenBudgetContinuationRequest is the independent API contract used to
+// resume a message paused by a task token budget. It intentionally has no
+// answers field so budget control cannot be confused with model questions.
+type TaskTokenBudgetContinuationRequest struct {
+	Action           string                 `json:"action"`
 	AdditionalTokens int                    `json:"additional_tokens,omitempty"`
 	Surface          string                 `json:"surface,omitempty"`
 	RuntimeContext   string                 `json:"runtime_context,omitempty"`

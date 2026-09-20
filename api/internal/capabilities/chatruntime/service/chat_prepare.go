@@ -276,6 +276,9 @@ func (s *service) ensureConversationAllowsNewTurn(ctx context.Context, scope Sco
 		if leafMessage.Status == runtimemodel.MessageStatusWaitingClientAction {
 			return ErrConversationWaitingAction
 		}
+		if leafMessage.Status == runtimemodel.MessageStatusWaitingBudget {
+			return ErrConversationWaitingBudget
+		}
 	}
 	if !allowRuntimeInputFollowUp {
 		pending, err := s.repos.RuntimeInput.HasPendingFollowUp(ctx, conversation.ID)

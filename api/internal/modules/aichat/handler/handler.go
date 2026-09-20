@@ -850,6 +850,7 @@ func (h *Handler) fail(c *gin.Context, err error) {
 		errors.Is(err, runtimeservice.ErrConversationWaitingApproval),
 		errors.Is(err, runtimeservice.ErrConversationWaitingQuestion),
 		errors.Is(err, runtimeservice.ErrConversationWaitingAction),
+		errors.Is(err, runtimeservice.ErrConversationWaitingBudget),
 		errors.Is(err, runtimeservice.ErrMessageReplaceNotAllowed):
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 	default:

@@ -500,10 +500,6 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 		callID,
 	)
 	frozenModelUsage := scriptModelUsage()
-	if prepared.taskTokenBudget != nil {
-		prepared.taskTokenBudget.addUsage(frozenModelUsage)
-		s.emitTaskTokenUsageUpdated(persistCtx, prepared, frozenModelUsage, onEvent)
-	}
 	executionErr := err
 	if invocation == nil {
 		if executionErr == nil {
@@ -1503,10 +1499,8 @@ func (s *service) runToolGovernanceRejectionContinuation(ctx context.Context, pr
 		}
 		return nil, newFinalizedStreamError(err)
 	}
-	if prepared.taskTokenBudget != nil {
-		prepared.taskTokenBudget.addUsage(usage)
-		s.emitTaskTokenUsageUpdated(persistCtx, prepared, usage, onEvent)
-	}
+	accountTaskTokenUsage(prepared, usage)
+	s.emitTaskTokenUsageUpdated(persistCtx, prepared, usage, onEvent)
 	if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, answer, usage, nil, onEvent); handled {
 		return result, budgetErr
 	}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
@@ -34,11 +35,13 @@ func (s *service) handleTaskTokenBudgetPending(
 		return nil, true, finalizedRuntimePersistenceError(err)
 	}
 	payload := taskTokenBudgetEventPayload(metadata, prepared.Conversation.ID.String(), prepared.Message.ID.String())
-	if err := s.emitPreparedEvent(ctx, prepared, streamEventTokenBudgetRequested, payload, onEvent); err != nil {
+	if err := s.emitTaskTokenBudgetEvent(ctx, prepared, streamEventTokenBudgetRequested, payload, onEvent); err != nil {
 		return nil, true, err
 	}
-	s.emitPreparedEvent(ctx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion), onEvent)
-	return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingQuestion}, true, nil
+	if err := s.emitTaskTokenBudgetEvent(ctx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingBudget), onEvent); err != nil {
+		return nil, true, err
+	}
+	return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingBudget}, true, nil
 }
 
 func (s *service) persistTaskTokenBudgetPendingResult(ctx context.Context, prepared *PreparedChat, usage *adapter.Usage) (map[string]interface{}, error) {
@@ -50,29 +53,53 @@ func (s *service) persistTaskTokenBudgetPendingResult(ctx context.Context, prepa
 	if metadata == nil {
 		metadata = map[string]interface{}{}
 	}
-	metadata[taskTokenBudgetMetadataKey] = prepared.taskTokenBudget.metadata("waiting_question")
+	metadata[taskTokenBudgetMetadataKey] = prepared.taskTokenBudget.metadata("waiting")
+	metadata["task_token_budget_request"] = payload
+	delete(metadata, "user_input_request")
+	metadata["task_token_budget_continuation"] = map[string]interface{}{
+		"status":         runtimemodel.MessageStatusWaitingBudget,
+		"request_id":     payload["request_id"],
+		"original_query": prepared.Message.Query,
+		"resume_policy":  "same_message",
+	}
 	prepared.Message.Metadata = metadata
-	metadata, err := s.persistUserInputRequestPendingResult(ctx, prepared, payload, usage)
+	metadata = preparedResultMetadataForPrepared(prepared, metadata, usage)
+	// preparedResultMetadataForPrepared is also used by normal terminal turns and
+	// therefore defaults the budget status to completed. A budget pause is not a
+	// completed task: restore the independent waiting state after usage metadata
+	// has been merged.
+	metadata[taskTokenBudgetMetadataKey] = prepared.taskTokenBudget.metadata("waiting")
+	prepared.Message.Metadata = metadata
+	if s == nil || s.repos == nil || s.repos.Message == nil || s.repos.Conversation == nil {
+		return metadata, nil
+	}
+	err := s.persistPendingMessageAndFinishConversationBestEffort(
+		ctx,
+		prepared,
+		"task token budget",
+		func(repo repository.MessageRepository) error {
+			updater, ok := repo.(interface {
+				UpdateWaitingBudget(context.Context, uuid.UUID, map[string]interface{}) error
+			})
+			if !ok {
+				return fmt.Errorf("%w: waiting budget persistence is unavailable", ErrInvalidInput)
+			}
+			return updater.UpdateWaitingBudget(ctx, prepared.Message.ID, metadata)
+		},
+		func(repo repository.ConversationRepository) error {
+			return repo.FinishWaitingApprovalMessage(ctx, prepared.Conversation.ID, prepared.Message.ID)
+		},
+	)
 	if err != nil {
 		return metadata, err
-	}
-	metadata[taskTokenBudgetMetadataKey] = prepared.taskTokenBudget.metadata("waiting_question")
-	if metadata["user_input_request"] != nil {
-		request := mapFromOperationContext(metadata["user_input_request"])
-		request["request_kind"] = taskTokenBudgetRequestKind
-		request["token_budget"] = prepared.taskTokenBudget.metadata("waiting_question")
-		metadata["user_input_request"] = request
-	}
-	prepared.Message.Metadata = metadata
-	if s.repos != nil && s.repos.Message != nil {
-		if err := s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {
-			return metadata, err
-		}
 	}
 	return metadata, nil
 }
 
 func (s *service) taskTokenBudgetRequest(ctx context.Context, scope Scope, caller Caller, conversationID, messageID uuid.UUID, requestID string) (map[string]interface{}, *runtimemodel.Message, error) {
+	if err := s.ensureMember(ctx, scope); err != nil {
+		return nil, nil, err
+	}
 	if normalizeConversationSource(caller.Source) != runtimemodel.ConversationSourceExternalAPI {
 		return nil, nil, fmt.Errorf("%w: task token budget continuation is only available for external API calls", ErrInvalidInput)
 	}
@@ -87,12 +114,12 @@ func (s *service) taskTokenBudgetRequest(ctx context.Context, scope Scope, calle
 	if message.ConversationID != conversation.ID || conversation.CurrentLeafMessageID == nil || *conversation.CurrentLeafMessageID != message.ID {
 		return nil, nil, ErrInvalidInput
 	}
-	request := governanceMapFromAny(message.Metadata["user_input_request"])
+	request := governanceMapFromAny(message.Metadata["task_token_budget_request"])
 	if strings.TrimSpace(stringFromAny(request["request_id"])) != strings.TrimSpace(requestID) ||
 		strings.TrimSpace(stringFromAny(request["request_kind"])) != taskTokenBudgetRequestKind {
 		return nil, nil, ErrNotFound
 	}
-	if message.Status != runtimemodel.MessageStatusWaitingQuestion {
+	if message.Status != runtimemodel.MessageStatusWaitingBudget {
 		return nil, nil, ErrInvalidInput
 	}
 	return request, message, nil

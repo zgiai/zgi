@@ -705,7 +705,8 @@ func (h *AgentsHandler) failRuntime(c *gin.Context, err error) {
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 	case errors.Is(err, runtimeservice.ErrConversationWaitingApproval),
 		errors.Is(err, runtimeservice.ErrConversationWaitingQuestion),
-		errors.Is(err, runtimeservice.ErrConversationWaitingAction):
+		errors.Is(err, runtimeservice.ErrConversationWaitingAction),
+		errors.Is(err, runtimeservice.ErrConversationWaitingBudget):
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 	case errors.Is(err, agentmemory.ErrInvalidInput):
 		response.Fail(c, response.ErrInvalidParam)

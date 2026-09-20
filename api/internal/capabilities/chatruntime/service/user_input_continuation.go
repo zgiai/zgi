@@ -63,9 +63,6 @@ func (s *service) RunConfiguredUserInputContinuationStream(
 	req runtimedto.UserInputContinuationRequest,
 	onEvent func(StreamEvent) error,
 ) (*ChatResult, error) {
-	if strings.TrimSpace(req.Action) != "" {
-		return s.runTaskTokenBudgetContinuationStream(ctx, scope, caller, config, conversationID, messageID, requestID, req, onEvent)
-	}
 	return s.runConfiguredUserInputContinuationStream(ctx, scope, caller, config, conversationID, messageID, requestID, req, onEvent)
 }
 
@@ -115,10 +112,10 @@ func (s *service) runConfiguredUserInputContinuationStream(
 	s.emitPreparedEvent(persistCtx, prepared, streamEventMessageStart, messageStartPayload(continuation.Conversation, continuation.Message, false), onEvent)
 	answer, usage, err := s.runPreparedToolLoop(runCtx, persistCtx, prepared, nil, onEvent)
 	if err != nil {
-		return s.finishUserInputContinuationPendingOrError(persistCtx, prepared, answer, usage, err, onEvent)
+		return s.finishContinuationPendingOrError(persistCtx, prepared, answer, usage, err, onEvent)
 	}
 	if budgetErr := prepared.taskTokenBudget.exhausted(); budgetErr != nil {
-		return s.finishUserInputContinuationPendingOrError(persistCtx, prepared, answer, usage, budgetErr, onEvent)
+		return s.finishContinuationPendingOrError(persistCtx, prepared, answer, usage, budgetErr, onEvent)
 	}
 	if s.streams.IsStopped(messageID, execution.runID) {
 		_ = s.persistStoppedAnswer(persistCtx, prepared, answer, usage)
@@ -134,7 +131,7 @@ func (s *service) runConfiguredUserInputContinuationStream(
 	return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusCompleted}, nil
 }
 
-func (s *service) finishUserInputContinuationPendingOrError(
+func (s *service) finishContinuationPendingOrError(
 	persistCtx context.Context,
 	prepared *PreparedChat,
 	answer string,
@@ -151,14 +148,8 @@ func (s *service) finishUserInputContinuationPendingOrError(
 		errors.As(cause, &budgetExceeded)
 	}
 	if budgetExceeded != nil {
-		metadata, persistErr := s.persistTaskTokenBudgetPendingResult(persistCtx, prepared, usage)
-		if persistErr != nil {
-			return nil, finalizedRuntimePersistenceError(persistErr)
-		}
-		payload := taskTokenBudgetEventPayload(metadata, prepared.Conversation.ID.String(), prepared.Message.ID.String())
-		_ = s.emitPreparedEvent(persistCtx, prepared, streamEventTokenBudgetRequested, payload, onEvent)
-		s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion), onEvent)
-		return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingQuestion}, nil
+		result, _, err := s.handleTaskTokenBudgetPending(persistCtx, prepared, answer, usage, budgetExceeded, onEvent)
+		return result, err
 	}
 	if errors.As(cause, &pendingGovernance) {
 		metadata, persistErr := s.persistToolGovernanceApprovalPendingResult(persistCtx, prepared, pendingGovernance.Payload, usage)
@@ -221,6 +212,20 @@ func (s *service) finishUserInputContinuationPendingOrError(
 		return nil, finalizedRuntimePersistenceError(finalizeErr)
 	}
 	return nil, newFinalizedStreamError(cause)
+}
+
+// finishUserInputContinuationPendingOrError is retained for workflow and
+// legacy internal callers; budget continuations use the independent entry
+// point but share the same pending-result projection.
+func (s *service) finishUserInputContinuationPendingOrError(
+	persistCtx context.Context,
+	prepared *PreparedChat,
+	answer string,
+	usage *adapter.Usage,
+	cause error,
+	onEvent func(StreamEvent) error,
+) (*ChatResult, error) {
+	return s.finishContinuationPendingOrError(persistCtx, prepared, answer, usage, cause, onEvent)
 }
 
 func (s *service) beginUserInputContinuation(

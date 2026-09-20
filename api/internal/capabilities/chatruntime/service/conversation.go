@@ -807,6 +807,7 @@ func (s *service) validateCurrentLeafMessage(ctx context.Context, scope Scope, c
 		runtimemodel.MessageStatusError,
 		runtimemodel.MessageStatusWaitingApproval,
 		runtimemodel.MessageStatusWaitingQuestion,
+		runtimemodel.MessageStatusWaitingBudget,
 		runtimemodel.MessageStatusWaitingClientAction:
 		return nil
 	case runtimemodel.MessageStatusStreaming:

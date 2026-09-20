@@ -88,3 +88,22 @@ func TestTaskTokenUsageUpdatedPayloadIncludesConsoleUsageWithoutBudget(t *testin
 		t.Fatalf("console payload = %#v, must not include API task budget", payload)
 	}
 }
+
+func TestTaskTokenBudgetRequestPayloadIsIndependentFromUserInput(t *testing.T) {
+	budget := newTaskTokenBudget(100)
+	budget.UsedTokens = 125
+	payload := taskTokenBudgetRequestPayload(budget)
+	if payload["request_kind"] != taskTokenBudgetRequestKind {
+		t.Fatalf("request_kind = %#v", payload["request_kind"])
+	}
+	if _, ok := payload["questions"]; ok {
+		t.Fatalf("budget request must not contain user-input questions: %#v", payload)
+	}
+	if len(payload["actions"].([]interface{})) != 2 {
+		t.Fatalf("actions = %#v", payload["actions"])
+	}
+	tokenBudget := payload["token_budget"].(map[string]interface{})
+	if tokenBudget["status"] != "waiting" || tokenBudget["used_tokens"] != 125 || tokenBudget["remaining_tokens"] != 0 {
+		t.Fatalf("token_budget = %#v", tokenBudget)
+	}
+}

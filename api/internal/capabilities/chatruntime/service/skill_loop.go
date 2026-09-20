@@ -106,6 +106,7 @@ func (s *service) runPreparedToolLoop(
 			s.writeAgentContextPromptDumpBestEffort(ctx, prepared, phase, round, request, decision)
 		},
 		OnModelInvocation: func(trace skillloop.ModelInvocationTrace) {
+			accountTaskTokenUsage(prepared, trace.Usage)
 			s.persistModelInvocationBestEffort(persistCtx, prepared, trace)
 			s.emitTaskTokenUsageUpdated(persistCtx, prepared, trace.Usage, onEvent)
 		},
@@ -289,10 +290,6 @@ func (s *service) runPreparedToolLoop(
 	}
 	scriptUsage := scriptModelUsage()
 	usage = addUsageCloned(usage, scriptUsage)
-	if prepared.taskTokenBudget != nil && scriptUsage != nil {
-		accountTaskTokenUsage(prepared, scriptUsage)
-		s.emitTaskTokenUsageUpdated(persistCtx, prepared, scriptUsage, onEvent)
-	}
 	// Durable facts: the turn's protocol messages become transcript entries.
 	// The metadata snapshot is no longer written; legacy turns are still read
 	// through the metadata fallback.

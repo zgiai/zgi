@@ -35,6 +35,14 @@ type RunStore interface {
 	MarkStaleRunsUnknown(context.Context, time.Time, time.Time) error
 }
 
+// runWaitingStore is an optional persistence extension so focused RunStore
+// fakes do not need to implement API-only waiting semantics.
+type runWaitingStore interface {
+	MarkRunWaiting(context.Context, uuid.UUID, string, time.Time) error
+	ResumeWaitingRun(context.Context, uuid.UUID, time.Time) error
+	CancelWaitingRun(context.Context, uuid.UUID, time.Time) error
+}
+
 // runtimeInputFollowUpStore is an optional persistence extension used by the
 // durable runtime-input continuation path. Keeping it separate avoids widening
 // the core run-store contract implemented by focused tests and alternative stores.
@@ -171,6 +179,32 @@ func (r *GormRepository) LinkRunMessage(ctx context.Context, runID, conversation
 	return r.LinkChannelRunConversation(ctx, runID, conversationID, now)
 }
 
+func (r *GormRepository) ResumeWaitingRun(ctx context.Context, runID uuid.UUID, now time.Time) error {
+	result := r.db.WithContext(ctx).Model(&Run{}).
+		Where("id = ? AND status = ?", runID, RunStatusWaiting).
+		Updates(map[string]any{"status": RunStatusRunning, "waiting_reason": "", "updated_at": now})
+	if result.Error != nil {
+		return fmt.Errorf("resume DigitalHuman run: %w", result.Error)
+	}
+	if result.RowsAffected != 1 {
+		return ErrRunConflict
+	}
+	return nil
+}
+
+func (r *GormRepository) CancelWaitingRun(ctx context.Context, runID uuid.UUID, now time.Time) error {
+	result := r.db.WithContext(ctx).Model(&Run{}).
+		Where("id = ? AND status = ?", runID, RunStatusWaiting).
+		Updates(map[string]any{"status": RunStatusCanceled, "waiting_reason": "", "completed_at": now, "updated_at": now})
+	if result.Error != nil {
+		return fmt.Errorf("cancel waiting DigitalHuman run: %w", result.Error)
+	}
+	if result.RowsAffected != 1 {
+		return ErrRunConflict
+	}
+	return nil
+}
+
 func (r *GormRepository) ListRecoverableRuns(ctx context.Context, updatedBefore time.Time, limit int) ([]*Run, error) {
 	if limit <= 0 {
 		limit = defaultOutboxBatch
@@ -204,7 +238,7 @@ func (r *GormRepository) CompleteRun(ctx context.Context, runID uuid.UUID, summa
 }
 
 func (r *GormRepository) MarkRunWaiting(ctx context.Context, runID uuid.UUID, reason string, now time.Time) error {
-	if reason != runtimemodel.MessageStatusWaitingApproval && reason != runtimemodel.MessageStatusWaitingQuestion && reason != runtimemodel.MessageStatusWaitingClientAction {
+	if reason != runtimemodel.MessageStatusWaitingApproval && reason != runtimemodel.MessageStatusWaitingQuestion && reason != runtimemodel.MessageStatusWaitingClientAction && reason != runtimemodel.MessageStatusWaitingBudget {
 		return ErrInvalidRequest
 	}
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

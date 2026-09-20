@@ -1165,17 +1165,17 @@ func (r *messageRepository) ReplaceRootForStreaming(ctx context.Context, message
 	result := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
 		Where("id = ? AND deleted_at IS NULL AND parent_id IS NULL", message.ID).
 		Updates(map[string]interface{}{
-			"query":                 message.Query,
-			"answer":                "",
-			"status":                runtimemodel.MessageStatusStreaming,
-			"error":                 nil,
-			"model_provider":        message.ModelProvider,
-			"model_name":            message.ModelName,
-			"billing_reason_source": message.BillingReasonSource,
-			"model_parameters":      datatypes.JSON(parametersJSON),
-			"metadata":              rootReplacementMetadataValue(r.db, metadataJSON),
+			"query":                    message.Query,
+			"answer":                   "",
+			"status":                   runtimemodel.MessageStatusStreaming,
+			"error":                    nil,
+			"model_provider":           message.ModelProvider,
+			"model_name":               message.ModelName,
+			"billing_reason_source":    message.BillingReasonSource,
+			"model_parameters":         datatypes.JSON(parametersJSON),
+			"metadata":                 rootReplacementMetadataValue(r.db, metadataJSON),
 			"transcript_head_entry_id": nil,
-			"updated_at":            time.Now(),
+			"updated_at":               time.Now(),
 		})
 	if result.Error != nil {
 		return fmt.Errorf("failed to prepare aichat root replacement: %w", result.Error)
@@ -1314,6 +1314,33 @@ func (r *messageRepository) UpdateWaitingQuestion(ctx context.Context, id uuid.U
 		})
 	if result.Error != nil {
 		return fmt.Errorf("failed to mark aichat message waiting question: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+func (r *messageRepository) UpdateWaitingBudget(ctx context.Context, id uuid.UUID, metadata map[string]interface{}) error {
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal waiting budget aichat message metadata: %w", err)
+	}
+	result := scopeRuntimeRunOwnership(ctx, r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
+		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, activeMessageStatuses())).
+		Updates(map[string]interface{}{
+			"status":               runtimemodel.MessageStatusWaitingBudget,
+			"error":                nil,
+			"metadata":             messageMetadataValue(r.db, metadataJSON),
+			"runtime_run_id":       nil,
+			"runtime_heartbeat_at": nil,
+			"updated_at":           time.Now(),
+		})
+	if result.Error != nil {
+		return fmt.Errorf("failed to mark aichat message waiting budget: %w", result.Error)
 	}
 	if result.RowsAffected == 0 {
 		return gorm.ErrRecordNotFound
@@ -1609,6 +1636,7 @@ func mutableMessageStatuses() []string {
 		runtimemodel.MessageStatusStreaming,
 		runtimemodel.MessageStatusWaitingApproval,
 		runtimemodel.MessageStatusWaitingQuestion,
+		runtimemodel.MessageStatusWaitingBudget,
 		runtimemodel.MessageStatusWaitingClientAction,
 	}
 }

@@ -72,6 +72,7 @@ func (h *ExternalHandler) RegisterAPIRoutes(router *gin.RouterGroup) {
 	group.GET("/conversations/:conversation_id/messages", h.ListConversationMessages)
 	group.POST("/conversations/:conversation_id/messages/:message_id/regenerate", h.RegenerateAPIMessage)
 	group.POST("/conversations/:conversation_id/messages/:message_id/user-input/:request_id/continue", h.ContinueAPIUserInput)
+	group.POST("/conversations/:conversation_id/messages/:message_id/token-budget/:request_id/continue", h.ContinueAPITaskTokenBudget)
 	group.POST("/conversations/:conversation_id/messages/:message_id/workflow-continuation", h.ContinueAPITaskApproval)
 	group.POST("/files/upload", h.UploadFile)
 	group.GET("/tasks", h.ListAPITasks)

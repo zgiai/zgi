@@ -55,9 +55,6 @@ func (s *service) persistModelInvocationBestEffort(ctx context.Context, prepared
 	if prepared == nil || prepared.Message == nil {
 		return
 	}
-	if prepared.taskTokenBudget != nil {
-		prepared.taskTokenBudget.addUsage(trace.Usage)
-	}
 	suppressContent := prepared.parts != nil && prepared.parts.AgentMemoryEnabled
 	if suppressContent {
 		trace = modelInvocationTraceWithoutContent(trace)
@@ -77,7 +74,11 @@ func (s *service) persistModelInvocationBestEffort(ctx context.Context, prepared
 		metadata = mergeModelInvocationMetadata(metadata, invocation)
 	}
 	if prepared.taskTokenBudget != nil {
-		metadata[taskTokenBudgetMetadataKey] = prepared.taskTokenBudget.metadata("running")
+		status := "running"
+		if prepared.taskTokenBudget.exhausted() != nil {
+			status = "exhausted"
+		}
+		metadata[taskTokenBudgetMetadataKey] = prepared.taskTokenBudget.metadata(status)
 	}
 	provider := ""
 	model := ""

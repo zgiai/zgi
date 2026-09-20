@@ -932,7 +932,7 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 		_ = s.store.FailRun(ctx, run.ID, "digital_human.run.execution_failed", "The DigitalHuman execution did not complete.", s.now())
 		return err
 	}
-	if result != nil && (result.Status == runtimemodel.MessageStatusWaitingApproval || result.Status == runtimemodel.MessageStatusWaitingQuestion || result.Status == runtimemodel.MessageStatusWaitingClientAction) {
+	if result != nil && (result.Status == runtimemodel.MessageStatusWaitingApproval || result.Status == runtimemodel.MessageStatusWaitingQuestion || result.Status == runtimemodel.MessageStatusWaitingClientAction || result.Status == runtimemodel.MessageStatusWaitingBudget) {
 		waiter, ok := s.store.(interface {
 			MarkRunWaiting(context.Context, uuid.UUID, string, time.Time) error
 		})

@@ -407,6 +407,7 @@ type Service interface {
 	RunConfiguredClientActionContinuationStream(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID, actionID string, req runtimedto.ClientActionResultRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
 	RunUserInputContinuationStream(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, requestID string, req runtimedto.UserInputContinuationRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
 	RunConfiguredUserInputContinuationStream(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID, requestID string, req runtimedto.UserInputContinuationRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
+	RunConfiguredTaskTokenBudgetContinuationStream(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID, requestID string, req runtimedto.TaskTokenBudgetContinuationRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
 	CreatePendingMessage(ctx context.Context, scope Scope, req CreatePendingMessageRequest) (*runtimemodel.Message, error)
 	CreateConversationWithPendingMessage(ctx context.Context, scope Scope, caller Caller, req CreateConversationWithPendingMessageRequest) (*runtimemodel.Conversation, *runtimemodel.Message, error)
 	CompleteMessage(ctx context.Context, scope Scope, req CompleteMessageRequest) (*runtimemodel.Message, error)

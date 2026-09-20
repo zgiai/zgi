@@ -48,7 +48,7 @@ func (s *RuntimeService) ContinueUserInput(
 	onEvent func(runtimeservice.StreamEvent) error,
 ) (*runtimeservice.ChatResult, error) {
 	if s == nil || digitalHumanID == uuid.Nil || conversationID == uuid.Nil || messageID == uuid.Nil ||
-		strings.TrimSpace(requestID) == "" || onEvent == nil || (len(request.Answers) == 0 && strings.TrimSpace(request.Action) == "") {
+		strings.TrimSpace(requestID) == "" || onEvent == nil || len(request.Answers) == 0 {
 		return nil, ErrInvalidRequest
 	}
 
@@ -250,8 +250,6 @@ func (h *ExternalHandler) ContinueAPIUserInput(c *gin.Context) {
 	var raw struct {
 		User             string                 `json:"user"`
 		Answers          map[string]string      `json:"answers,omitempty"`
-		Action           string                 `json:"action,omitempty"`
-		AdditionalTokens int                    `json:"additional_tokens,omitempty"`
 		Surface          string                 `json:"surface,omitempty"`
 		RuntimeContext   string                 `json:"runtime_context,omitempty"`
 		OperationContext map[string]interface{} `json:"operation_context,omitempty"`
@@ -277,7 +275,7 @@ func (h *ExternalHandler) ContinueAPIUserInput(c *gin.Context) {
 		return
 	}
 	request := runtimedto.UserInputContinuationRequest{
-		Answers: raw.Answers, Action: raw.Action, AdditionalTokens: raw.AdditionalTokens, Surface: SurfaceAPI, RuntimeContext: raw.RuntimeContext, OperationContext: raw.OperationContext,
+		Answers: raw.Answers, Surface: SurfaceAPI, RuntimeContext: raw.RuntimeContext, OperationContext: raw.OperationContext,
 	}
 	writer := newDigitalHumanSSEWriter(c)
 	writer.start(c.Request.Context())

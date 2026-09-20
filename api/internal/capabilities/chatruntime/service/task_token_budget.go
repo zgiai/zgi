@@ -136,19 +136,16 @@ func taskTokenBudgetRequestPayload(budget *taskTokenBudgetState) map[string]inte
 		"request_id":   requestID,
 		"request_kind": taskTokenBudgetRequestKind,
 		"created_at":   time.Now().Unix(),
-		"message":      fmt.Sprintf("本次任务已使用 %d tokens，预算上限为 %d tokens。请追加预算或停止运行。", used, limit),
-		"questions": []interface{}{
-			map[string]interface{}{"id": "action", "question": "请选择追加任务预算或停止运行"},
-			map[string]interface{}{"id": "additional_tokens", "question": "追加 token 数量（选择追加时填写）"},
+		"message":      "本次任务预算已用尽，请追加预算或停止运行。",
+		"actions": []interface{}{
+			map[string]interface{}{"id": "add", "label": "追加预算"},
+			map[string]interface{}{"id": "stop", "label": "停止运行"},
 		},
 		"token_budget": map[string]interface{}{
 			"used_tokens":      used,
 			"max_tokens":       limit,
 			"remaining_tokens": max(0, limit-used),
-			"actions": []interface{}{
-				map[string]interface{}{"id": "add", "label": "追加预算"},
-				map[string]interface{}{"id": "stop", "label": "停止运行"},
-			},
+			"status":           "waiting",
 		},
 	}
 }
@@ -196,11 +193,28 @@ func (s *service) emitTaskTokenUsageUpdated(ctx context.Context, prepared *Prepa
 }
 
 func taskTokenBudgetEventPayload(metadata map[string]interface{}, conversationID, messageID string) map[string]interface{} {
-	payload := copyStringAnyMap(mapFromOperationContext(metadata["user_input_request"]))
+	payload := copyStringAnyMap(mapFromOperationContext(metadata["task_token_budget_request"]))
 	if payload == nil {
 		payload = map[string]interface{}{}
 	}
 	payload["conversation_id"] = conversationID
 	payload["message_id"] = messageID
 	return payload
+}
+
+// emitTaskTokenBudgetEvent makes budget pause events durable before handing
+// them to the live transport. Unlike ordinary best-effort progress events,
+// losing this event would strand an API caller without a continuation token.
+func (s *service) emitTaskTokenBudgetEvent(ctx context.Context, prepared *PreparedChat, eventType string, payload map[string]interface{}, onEvent func(StreamEvent) error) error {
+	if prepared == nil || prepared.Message == nil || prepared.Conversation == nil || s == nil || s.events == nil {
+		return ErrStreamEventsUnavailable
+	}
+	event, err := s.events.append(ctx, prepared.Message.ID, prepared.Conversation.ID, eventType, payload)
+	if err != nil {
+		return err
+	}
+	if onEvent == nil {
+		return nil
+	}
+	return onEvent(*event)
 }
