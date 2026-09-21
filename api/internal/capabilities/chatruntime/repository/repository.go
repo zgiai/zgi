@@ -1322,6 +1322,16 @@ func (r *messageRepository) UpdateWaitingQuestion(ctx context.Context, id uuid.U
 }
 
 func (r *messageRepository) UpdateWaitingBudget(ctx context.Context, id uuid.UUID, metadata map[string]interface{}) error {
+	return r.updateWaitingBudget(ctx, id, "", metadata, false)
+}
+
+// UpdateWaitingBudgetWithAnswer parks a message after budget exhaustion while
+// preserving any assistant text produced before the provider stopped.
+func (r *messageRepository) UpdateWaitingBudgetWithAnswer(ctx context.Context, id uuid.UUID, answer string, metadata map[string]interface{}) error {
+	return r.updateWaitingBudget(ctx, id, answer, metadata, true)
+}
+
+func (r *messageRepository) updateWaitingBudget(ctx context.Context, id uuid.UUID, answer string, metadata map[string]interface{}, includeAnswer bool) error {
 	if metadata == nil {
 		metadata = map[string]interface{}{}
 	}
@@ -1329,16 +1339,20 @@ func (r *messageRepository) UpdateWaitingBudget(ctx context.Context, id uuid.UUI
 	if err != nil {
 		return fmt.Errorf("failed to marshal waiting budget aichat message metadata: %w", err)
 	}
+	updates := map[string]interface{}{
+		"status":               runtimemodel.MessageStatusWaitingBudget,
+		"error":                nil,
+		"metadata":             messageMetadataValue(r.db, metadataJSON),
+		"runtime_run_id":       nil,
+		"runtime_heartbeat_at": nil,
+		"updated_at":           time.Now(),
+	}
+	if includeAnswer {
+		updates["answer"] = answer
+	}
 	result := scopeRuntimeRunOwnership(ctx, r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
 		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, activeMessageStatuses())).
-		Updates(map[string]interface{}{
-			"status":               runtimemodel.MessageStatusWaitingBudget,
-			"error":                nil,
-			"metadata":             messageMetadataValue(r.db, metadataJSON),
-			"runtime_run_id":       nil,
-			"runtime_heartbeat_at": nil,
-			"updated_at":           time.Now(),
-		})
+		Updates(updates)
 	if result.Error != nil {
 		return fmt.Errorf("failed to mark aichat message waiting budget: %w", result.Error)
 	}

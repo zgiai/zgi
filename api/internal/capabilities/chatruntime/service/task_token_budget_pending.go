@@ -30,7 +30,7 @@ func (s *service) handleTaskTokenBudgetPending(
 	if exceeded == nil {
 		return nil, false, nil
 	}
-	metadata, err := s.persistTaskTokenBudgetPendingResult(ctx, prepared, usage)
+	metadata, err := s.persistTaskTokenBudgetPendingResult(ctx, prepared, answer, usage)
 	if err != nil {
 		return nil, true, finalizedRuntimePersistenceError(err)
 	}
@@ -38,13 +38,13 @@ func (s *service) handleTaskTokenBudgetPending(
 	if err := s.emitTaskTokenBudgetEvent(ctx, prepared, streamEventTokenBudgetRequested, payload, onEvent); err != nil {
 		return nil, true, err
 	}
-	if err := s.emitTaskTokenBudgetEvent(ctx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingBudget), onEvent); err != nil {
+	if err := s.emitTaskTokenBudgetEvent(ctx, prepared, streamEventMessageEnd, messageEndPayloadForBudget(prepared.Conversation.ID, prepared.Message.ID, metadata, answer, runtimemodel.MessageStatusWaitingBudget), onEvent); err != nil {
 		return nil, true, err
 	}
 	return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingBudget}, true, nil
 }
 
-func (s *service) persistTaskTokenBudgetPendingResult(ctx context.Context, prepared *PreparedChat, usage *adapter.Usage) (map[string]interface{}, error) {
+func (s *service) persistTaskTokenBudgetPendingResult(ctx context.Context, prepared *PreparedChat, answer string, usage *adapter.Usage) (map[string]interface{}, error) {
 	if prepared == nil || prepared.Message == nil || prepared.Conversation == nil || prepared.taskTokenBudget == nil {
 		return map[string]interface{}{}, nil
 	}
@@ -62,6 +62,7 @@ func (s *service) persistTaskTokenBudgetPendingResult(ctx context.Context, prepa
 		"original_query": prepared.Message.Query,
 		"resume_policy":  "same_message",
 	}
+	prepared.Message.Answer = answer
 	prepared.Message.Metadata = metadata
 	metadata = preparedResultMetadataForPrepared(prepared, metadata, usage)
 	// preparedResultMetadataForPrepared is also used by normal terminal turns and
@@ -78,6 +79,19 @@ func (s *service) persistTaskTokenBudgetPendingResult(ctx context.Context, prepa
 		prepared,
 		"task token budget",
 		func(repo repository.MessageRepository) error {
+			if updater, ok := repo.(interface {
+				UpdateWaitingBudgetWithAnswer(context.Context, uuid.UUID, string, map[string]interface{}) error
+			}); ok {
+				return updater.UpdateWaitingBudgetWithAnswer(ctx, prepared.Message.ID, answer, metadata)
+			}
+			// Compatibility fallback for repository doubles that have not adopted
+			// the answer-aware update yet. The production repository uses the
+			// atomic method above.
+			if strings.TrimSpace(answer) != "" {
+				if err := repo.UpdatePartialAnswer(ctx, prepared.Message.ID, answer, metadata); err != nil {
+					return err
+				}
+			}
 			updater, ok := repo.(interface {
 				UpdateWaitingBudget(context.Context, uuid.UUID, map[string]interface{}) error
 			})
@@ -115,12 +129,19 @@ func (s *service) taskTokenBudgetRequest(ctx context.Context, scope Scope, calle
 		return nil, nil, ErrInvalidInput
 	}
 	request := governanceMapFromAny(message.Metadata["task_token_budget_request"])
-	if strings.TrimSpace(stringFromAny(request["request_id"])) != strings.TrimSpace(requestID) ||
-		strings.TrimSpace(stringFromAny(request["request_kind"])) != taskTokenBudgetRequestKind {
-		return nil, nil, ErrNotFound
+	if strings.TrimSpace(stringFromAny(request["request_id"])) == strings.TrimSpace(requestID) &&
+		strings.TrimSpace(stringFromAny(request["request_kind"])) == taskTokenBudgetRequestKind &&
+		message.Status == runtimemodel.MessageStatusWaitingBudget {
+		return request, message, nil
+	}
+	continuation := governanceMapFromAny(message.Metadata["task_token_budget_continuation"])
+	if message.Status == runtimemodel.MessageStatusStreaming &&
+		strings.TrimSpace(stringFromAny(continuation["request_id"])) == strings.TrimSpace(requestID) &&
+		strings.TrimSpace(stringFromAny(continuation["status"])) == runtimemodel.MessageStatusStreaming {
+		return continuation, message, nil
 	}
 	if message.Status != runtimemodel.MessageStatusWaitingBudget {
 		return nil, nil, ErrInvalidInput
 	}
-	return request, message, nil
+	return nil, nil, ErrNotFound
 }

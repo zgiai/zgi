@@ -66,12 +66,14 @@ func (s *RuntimeService) ContinueTaskTokenBudget(
 	if !continuationRunOwnedByScope(run, scope, digitalHumanID) || run.ConversationID == nil || *run.ConversationID != conversationID || run.MessageID == nil || *run.MessageID != messageID {
 		return nil, ErrConversationNotFound
 	}
-	if run.Status != RunStatusWaiting || run.WaitingReason != runtimemodel.MessageStatusWaitingBudget {
-		return nil, ErrRunConflict
-	}
 	action := strings.ToLower(strings.TrimSpace(request.Action))
 	if action != "add" && action != "stop" {
 		return nil, ErrInvalidRequest
+	}
+	waitingForBudget := run.Status == RunStatusWaiting && run.WaitingReason == runtimemodel.MessageStatusWaitingBudget
+	activeContinuationRetry := run.Status == RunStatusRunning && action == "add"
+	if !waitingForBudget && !activeContinuationRetry {
+		return nil, ErrRunConflict
 	}
 	if action == "add" && (request.AdditionalTokens < 1 || request.AdditionalTokens > 100000000) {
 		return nil, ErrInvalidRequest
@@ -94,7 +96,7 @@ func (s *RuntimeService) ContinueTaskTokenBudget(
 			return nil, err
 		}
 	}
-	if action == "add" {
+	if action == "add" && waitingForBudget {
 		resumer, ok := s.store.(runWaitingStore)
 		if !ok {
 			return nil, fmt.Errorf("digital human waiting run resume is unavailable")
@@ -113,9 +115,18 @@ func (s *RuntimeService) ContinueTaskTokenBudget(
 	if result == nil {
 		return nil, ErrRunConflict
 	}
-	if result.Status == runtimemodel.MessageStatusWaitingBudget {
+	// A retry after an SSE disconnect may reconnect to an already-running
+	// continuation. The run was resumed by the original request and must remain
+	// running; do not treat the reconnect result as a completed delivery.
+	if result.Status == runtimemodel.MessageStatusStreaming {
+		return result, nil
+	}
+	if result.Status == runtimemodel.MessageStatusWaitingApproval ||
+		result.Status == runtimemodel.MessageStatusWaitingQuestion ||
+		result.Status == runtimemodel.MessageStatusWaitingClientAction ||
+		result.Status == runtimemodel.MessageStatusWaitingBudget {
 		if waiter, ok := s.store.(runWaitingStore); ok {
-			if err := waiter.MarkRunWaiting(ctx, run.ID, runtimemodel.MessageStatusWaitingBudget, s.now()); err != nil {
+			if err := waiter.MarkRunWaiting(ctx, run.ID, result.Status, s.now()); err != nil {
 				return nil, err
 			}
 		}

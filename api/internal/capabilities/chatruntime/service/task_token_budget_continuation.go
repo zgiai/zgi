@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"gorm.io/gorm"
 )
@@ -36,6 +38,12 @@ func (s *service) RunConfiguredTaskTokenBudgetContinuationStream(
 	case "stop":
 		return s.stopTaskTokenBudget(ctx, scope, conversationID, messageID, message, onEvent)
 	case "add":
+		if message.Status == runtimemodel.MessageStatusStreaming {
+			if err := s.StreamConversationEventsForCaller(ctx, scope, caller, conversationID, messageID, "", onEvent); err != nil {
+				return nil, err
+			}
+			return &ChatResult{Status: runtimemodel.MessageStatusStreaming, Metadata: message.Metadata}, nil
+		}
 		return s.addTaskTokenBudget(ctx, scope, caller, config, conversationID, messageID, message, request, req, onEvent)
 	default:
 		return nil, fmt.Errorf("%w: action must be add or stop", ErrInvalidInput)
@@ -141,16 +149,17 @@ func (s *service) addTaskTokenBudget(
 	delete(metadata, "task_token_budget_request")
 	metadata[taskTokenBudgetMetadataKey] = budget.metadata("running")
 	metadata["task_token_budget_continuation"] = map[string]interface{}{
-		"status":     runtimemodel.MessageStatusStreaming,
-		"request_id": request["request_id"],
-		"resumed_at": time.Now().Unix(),
+		"status":       runtimemodel.MessageStatusStreaming,
+		"request_kind": taskTokenBudgetRequestKind,
+		"request_id":   request["request_id"],
+		"resumed_at":   time.Now().Unix(),
 	}
 	// Build the continuation before claiming the waiting message. Preparation
 	// is read-only; doing it first prevents a model/configuration error from
 	// leaving the durable message stuck in `streaming`.
 	prepared, err := s.prepareTaskTokenBudgetContinuationChat(ctx, scope, caller, config, conversation, message, req)
 	if err != nil {
-		return nil, newFinalizedStreamError(err)
+		return nil, err
 	}
 	prepared.taskTokenBudget = budget
 	if s.repos.DB == nil {
@@ -257,6 +266,7 @@ func taskTokenBudgetContinuationMessage(message *runtimemodel.Message, additiona
 func (s *service) runPreparedTaskTokenBudgetContinuation(ctx context.Context, prepared *PreparedChat, onEvent func(StreamEvent) error) (*ChatResult, error) {
 	execution, err := s.beginRuntimeExecution(ctx, prepared.Message.ID)
 	if err != nil {
+		s.finalizePreparedError(context.WithoutCancel(ctx), prepared, err, onEvent)
 		return nil, newFinalizedStreamError(err)
 	}
 	defer execution.Finish()
@@ -265,6 +275,9 @@ func (s *service) runPreparedTaskTokenBudgetContinuation(ctx context.Context, pr
 		return nil, ErrMessageStopped
 	}
 	s.emitPreparedEvent(execution.PersistContext, prepared, streamEventMessageStart, messageStartPayload(prepared.Conversation, prepared.Message, false), onEvent)
+	if !prepared.toolLoopEnabled() {
+		return s.runPreparedDirectTaskTokenBudgetContinuation(execution, prepared, onEvent)
+	}
 	answer, usage, err := s.runPreparedToolLoop(execution.Context, execution.PersistContext, prepared, nil, onEvent)
 	if err != nil {
 		return s.finishContinuationPendingOrError(execution.PersistContext, prepared, answer, usage, err, onEvent)
@@ -282,6 +295,74 @@ func (s *service) runPreparedTaskTokenBudgetContinuation(ctx context.Context, pr
 	}
 	s.emitPreparedEvent(execution.PersistContext, prepared, streamEventMessageEnd, messageEndPayload(prepared, metadata), onEvent)
 	return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusCompleted}, nil
+}
+
+func (s *service) runPreparedDirectTaskTokenBudgetContinuation(
+	execution *runtimeExecution,
+	prepared *PreparedChat,
+	onEvent func(StreamEvent) error,
+) (*ChatResult, error) {
+	appendDirectAnswerGroundingMessage(prepared)
+	ctx := execution.Context
+	persistCtx := execution.PersistContext
+	startedAt := time.Now()
+	modelProgress := s.startPreparedModelProgress(ctx, prepared, 0, prepared.LLMRequest.Messages, onEvent)
+	defer modelProgress.Stop()
+	stream, err := s.openChatStream(ctx, prepared)
+	if err != nil {
+		s.persistModelInvocationBestEffort(persistCtx, prepared, skillloop.ModelInvocationTrace{
+			Phase: "final_answer", Round: -1, Streaming: true, StartedAt: startedAt,
+			DurationMS: time.Since(startedAt).Milliseconds(), Request: prepared.LLMRequest, Error: err.Error(),
+		})
+		if s.isStoppedContext(ctx, prepared.Message.ID) {
+			_ = s.persistStoppedAnswer(persistCtx, prepared, "", nil)
+			return nil, ErrMessageStopped
+		}
+		s.finalizePreparedError(persistCtx, prepared, err, onEvent)
+		return nil, newFinalizedStreamError(err)
+	}
+	answer, callUsage, err := s.collectStreamAnswerWithEventsAndProgress(ctx, prepared, stream, onEvent, nil, modelProgress)
+	if settleErr := s.settleClaimedRuntimeInputBatches(persistCtx, prepared, err == nil); settleErr != nil {
+		err = errors.Join(err, settleErr)
+	}
+	if err != nil {
+		accountTaskTokenUsage(prepared, callUsage)
+		s.persistModelInvocationBestEffort(persistCtx, prepared, skillloop.ModelInvocationTrace{
+			Phase: "final_answer", Round: -1, Streaming: true, StartedAt: startedAt,
+			DurationMS: time.Since(startedAt).Milliseconds(), Request: prepared.LLMRequest,
+			Response: &adapter.Message{Role: "assistant", Content: answer}, Usage: callUsage, Error: err.Error(),
+		})
+		s.emitTaskTokenUsageUpdated(persistCtx, prepared, callUsage, onEvent)
+		if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, answer, callUsage, err, onEvent); handled {
+			return result, budgetErr
+		}
+		if errors.Is(err, ErrMessageStopped) {
+			_ = s.clearPreparedRuntime(persistCtx, prepared)
+			return nil, err
+		}
+		s.finalizePreparedError(persistCtx, prepared, err, onEvent)
+		return nil, newFinalizedStreamError(err)
+	}
+	accountTaskTokenUsage(prepared, callUsage)
+	s.persistModelInvocationBestEffort(persistCtx, prepared, skillloop.ModelInvocationTrace{
+		Phase: "final_answer", Round: -1, Streaming: true, StartedAt: startedAt,
+		DurationMS: time.Since(startedAt).Milliseconds(), Request: prepared.LLMRequest,
+		Response: &adapter.Message{Role: "assistant", Content: answer}, Usage: callUsage,
+	})
+	s.emitTaskTokenUsageUpdated(persistCtx, prepared, callUsage, onEvent)
+	if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, answer, callUsage, nil, onEvent); handled {
+		return result, budgetErr
+	}
+	if s.streams.IsStopped(prepared.Message.ID, execution.runID) {
+		_ = s.persistStoppedAnswer(persistCtx, prepared, answer, callUsage)
+		return nil, ErrMessageStopped
+	}
+	metadata := preparedResultMetadataForPrepared(prepared, prepared.Message.Metadata, callUsage)
+	if err := s.completePreparedChat(persistCtx, prepared, answer, metadata); err != nil {
+		return nil, finalizedRuntimePersistenceError(err)
+	}
+	s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayload(prepared, metadata), onEvent)
+	return &ChatResult{Answer: answer, Metadata: metadata, Usage: callUsage, Status: runtimemodel.MessageStatusCompleted}, nil
 }
 
 func messageEndPayloadForBudget(conversationID, messageID uuid.UUID, metadata map[string]interface{}, answer, status string) map[string]interface{} {

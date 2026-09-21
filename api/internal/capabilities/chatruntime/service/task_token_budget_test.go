@@ -107,3 +107,25 @@ func TestTaskTokenBudgetRequestPayloadIsIndependentFromUserInput(t *testing.T) {
 		t.Fatalf("token_budget = %#v", tokenBudget)
 	}
 }
+
+func TestTaskTokenBudgetMessageEndPayloadPreservesPartialAnswer(t *testing.T) {
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	answer := "已经完成了一部分"
+	payload := messageEndPayloadForBudget(
+		conversationID,
+		messageID,
+		map[string]interface{}{"task_token_budget": map[string]interface{}{"status": "waiting"}},
+		answer,
+		runtimemodel.MessageStatusWaitingBudget,
+	)
+	if payload["conversation_id"] != conversationID.String() || payload["message_id"] != messageID.String() {
+		t.Fatalf("identity = %#v", payload)
+	}
+	if payload["status"] != runtimemodel.MessageStatusWaitingBudget {
+		t.Fatalf("status = %#v", payload["status"])
+	}
+	if payload["answer"] != answer {
+		t.Fatalf("answer = %#v, want %q", payload["answer"], answer)
+	}
+}

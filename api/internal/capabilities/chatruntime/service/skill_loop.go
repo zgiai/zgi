@@ -288,8 +288,6 @@ func (s *service) runPreparedToolLoop(
 	if err == nil && presentationErr != nil {
 		err = presentationErr
 	}
-	scriptUsage := scriptModelUsage()
-	usage = addUsageCloned(usage, scriptUsage)
 	// Durable facts: the turn's protocol messages become transcript entries.
 	// The metadata snapshot is no longer written; legacy turns are still read
 	// through the metadata fallback.
