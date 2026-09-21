@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	accessmodel "github.com/zgiai/zgi/api/internal/modules/llm/developeraccess/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	"gorm.io/gorm"
@@ -129,7 +130,7 @@ func seedMeteredAccessGrant(t *testing.T, db *gorm.DB) (accessmodel.Grant, int64
 	t.Helper()
 	// A platform-lane reservation with no local quote bounds itself by the whole
 	// remaining grant, so the fixture needs headroom beyond one reservation.
-	quota := int64(1_000_000)
+	quota := millipoints.MilliPoints(1_000_000)
 	grant := accessmodel.Grant{
 		OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
 		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),

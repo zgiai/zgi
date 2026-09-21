@@ -219,12 +219,12 @@ func refundPrivateMusicSubject(ctx context.Context, tx *gorm.DB, attempt Billing
 		if attempt.GrantAuthorizationVersion == nil || grant.AuthorizationVersion != *attempt.GrantAuthorizationVersion {
 			return nil
 		}
-		if grant.UsedQuota < amount {
+		if grant.UsedQuota < millipoints.MilliPoints(amount) {
 			return fmt.Errorf("developer grant used quota is smaller than music refund")
 		}
-		grant.UsedQuota -= amount
+		grant.UsedQuota -= millipoints.MilliPoints(amount)
 		if grant.QuotaLimit != nil {
-			grant.RemainQuota += amount
+			grant.RemainQuota += millipoints.MilliPoints(amount)
 		}
 		return tx.WithContext(ctx).Unscoped().Save(&grant).Error
 	case quotaSubjectTypeOrganization:

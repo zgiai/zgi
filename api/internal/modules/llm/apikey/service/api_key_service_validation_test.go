@@ -10,6 +10,7 @@ import (
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/apikey/repository"
 	accessmodel "github.com/zgiai/zgi/api/internal/modules/llm/developeraccess/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
 	sharedredis "github.com/zgiai/zgi/api/pkg/redis"
@@ -18,13 +19,13 @@ import (
 )
 
 func TestValidateAPIKeyRejectsInactivePrincipalGrant(t *testing.T) {
-	quotaLimit := int64(100)
+	quotaLimit := millipoints.MilliPoints(100)
 	tests := []struct {
 		name         string
 		grantVersion int64
 		keyVersion   int64
-		grantQuota   *int64
-		remaining    int64
+		grantQuota   *millipoints.MilliPoints
+		remaining    millipoints.MilliPoints
 		orgStatus    workspacemodel.OrganizationStatus
 	}{
 		{name: "stale authorization period", grantVersion: 2, keyVersion: 1, orgStatus: workspacemodel.OrganizationStatusActive},

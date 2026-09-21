@@ -43,21 +43,21 @@ const (
 )
 
 type PolicyInput struct {
-	Mode              string   `json:"mode" binding:"required"`
-	DefaultQuota      *int64   `json:"default_quota"`
-	MaxQuota          *int64   `json:"max_quota"`
-	MaxKeys           int      `json:"max_keys"`
-	DefaultTTLSeconds *int64   `json:"default_ttl_seconds"`
-	MaxTTLSeconds     *int64   `json:"max_ttl_seconds"`
-	AllowedModels     []string `json:"allowed_models"`
+	Mode              string                   `json:"mode" binding:"required"`
+	DefaultQuota      *millipoints.MilliPoints `json:"default_quota"`
+	MaxQuota          *millipoints.MilliPoints `json:"max_quota"`
+	MaxKeys           int                      `json:"max_keys"`
+	DefaultTTLSeconds *int64                   `json:"default_ttl_seconds"`
+	MaxTTLSeconds     *int64                   `json:"max_ttl_seconds"`
+	AllowedModels     []string                 `json:"allowed_models"`
 }
 
 type CreateRequestInput struct {
-	Purpose             string   `json:"purpose" binding:"required,max=2000"`
-	Environment         string   `json:"environment"`
-	RequestedQuota      *int64   `json:"requested_quota"`
-	RequestedModels     []string `json:"requested_models"`
-	RequestedTTLSeconds *int64   `json:"requested_ttl_seconds"`
+	Purpose             string                   `json:"purpose" binding:"required,max=2000"`
+	Environment         string                   `json:"environment"`
+	RequestedQuota      *millipoints.MilliPoints `json:"requested_quota"`
+	RequestedModels     []string                 `json:"requested_models"`
+	RequestedTTLSeconds *int64                   `json:"requested_ttl_seconds"`
 }
 
 type RequestQuery struct {
@@ -76,11 +76,11 @@ type RequestPage struct {
 }
 
 type ReviewRequestInput struct {
-	QuotaLimit    *int64     `json:"quota_limit"`
-	MaxKeys       *int       `json:"max_keys"`
-	AllowedModels []string   `json:"allowed_models"`
-	ExpiresAt     *time.Time `json:"expires_at"`
-	Reason        string     `json:"reason"`
+	QuotaLimit    *millipoints.MilliPoints `json:"quota_limit"`
+	MaxKeys       *int                     `json:"max_keys"`
+	AllowedModels []string                 `json:"allowed_models"`
+	ExpiresAt     *time.Time               `json:"expires_at"`
+	Reason        string                   `json:"reason"`
 }
 
 type CreateKeyInput struct {
@@ -394,7 +394,7 @@ func validatePolicy(input PolicyInput) error {
 	if input.MaxKeys < 1 || input.MaxKeys > 100 {
 		return ErrInvalid
 	}
-	for _, quota := range []*int64{input.DefaultQuota, input.MaxQuota} {
+	for _, quota := range []*millipoints.MilliPoints{input.DefaultQuota, input.MaxQuota} {
 		if quota != nil && *quota < 0 {
 			return ErrInvalid
 		}
@@ -867,7 +867,7 @@ func (s *Service) reviewRequest(ctx context.Context, scope *workspaceScope, acco
 	return &request, nil
 }
 
-func upsertGrant(tx *gorm.DB, scope *workspaceScope, principalID, actorID, source string, quota *int64, maxKeys int, models []string, expiresAt *time.Time, now time.Time) error {
+func upsertGrant(tx *gorm.DB, scope *workspaceScope, principalID, actorID, source string, quota *millipoints.MilliPoints, maxKeys int, models []string, expiresAt *time.Time, now time.Time) error {
 	var grant accessmodel.Grant
 	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("workspace_id = ? AND principal_type = ? AND principal_id = ?", scope.Workspace.ID, accessmodel.PrincipalTypeUser, principalID).First(&grant).Error
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -894,7 +894,7 @@ func upsertGrant(tx *gorm.DB, scope *workspaceScope, principalID, actorID, sourc
 	return tx.Save(&grant).Error
 }
 
-func applyGrantLimits(grant *accessmodel.Grant, quota *int64, startsNewPeriod bool) {
+func applyGrantLimits(grant *accessmodel.Grant, quota *millipoints.MilliPoints, startsNewPeriod bool) {
 	if startsNewPeriod {
 		grant.UsedQuota = 0
 	}
@@ -912,7 +912,7 @@ func grantHasAvailableQuota(grant *accessmodel.Grant) bool {
 	return grant != nil && (grant.QuotaLimit == nil || grant.RemainQuota > 0)
 }
 
-func quotaHasAvailableBalance(quota *int64) bool {
+func quotaHasAvailableBalance(quota *millipoints.MilliPoints) bool {
 	return quota == nil || *quota > 0
 }
 
@@ -953,7 +953,7 @@ func createGrantOrReloadForUpdate(tx *gorm.DB, grant *accessmodel.Grant) (bool, 
 	return false, nil
 }
 
-func createGrantIfAbsent(tx *gorm.DB, scope *workspaceScope, principalID, actorID, source string, quota *int64, maxKeys int, models []string, expiresAt *time.Time) error {
+func createGrantIfAbsent(tx *gorm.DB, scope *workspaceScope, principalID, actorID, source string, quota *millipoints.MilliPoints, maxKeys int, models []string, expiresAt *time.Time) error {
 	grant := accessmodel.Grant{
 		OrganizationID: *scope.Workspace.OrganizationID, WorkspaceID: scope.Workspace.ID,
 		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: principalID,

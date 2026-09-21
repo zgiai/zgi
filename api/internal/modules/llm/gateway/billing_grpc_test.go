@@ -12,6 +12,7 @@ import (
 	"github.com/shopspring/decimal"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	accessmodel "github.com/zgiai/zgi/api/internal/modules/llm/developeraccess/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
@@ -333,7 +334,7 @@ func TestRemoteBillingReconcileFinalizesPartialUsageBill(t *testing.T) {
 	if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {
 		t.Fatalf("migrate developer grant: %v", err)
 	}
-	quota := int64(100)
+	quota := millipoints.MilliPoints(100)
 	grant := accessmodel.Grant{
 		OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
 		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),
@@ -404,7 +405,7 @@ func TestRemoteBillingEmptyDeductionIDRollsBackLocalGrantReservation(t *testing.
 	if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {
 		t.Fatalf("migrate developer grant: %v", err)
 	}
-	quota := int64(100)
+	quota := millipoints.MilliPoints(100)
 	grant := accessmodel.Grant{
 		OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
 		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),
@@ -481,7 +482,7 @@ func testRemoteBillingInsufficientGrantQuotaPreservesSentinelAndFailureLedger(t 
 	if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {
 		t.Fatalf("migrate developer grant: %v", err)
 	}
-	quota := int64(1)
+	quota := millipoints.MilliPoints(1)
 	grant := accessmodel.Grant{
 		OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
 		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),
@@ -561,7 +562,7 @@ func TestRemoteBillingRejectsInactivePersonalKeyAndRollsBackGrantReservation(t *
 	if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {
 		t.Fatalf("migrate developer grant: %v", err)
 	}
-	quota := int64(100)
+	quota := millipoints.MilliPoints(100)
 	grant := accessmodel.Grant{
 		OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
 		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),
@@ -601,7 +602,7 @@ func TestRemoteBillingRejectsExpiredPersonalKeyAndRollsBackGrantReservation(t *t
 	if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {
 		t.Fatalf("migrate developer grant: %v", err)
 	}
-	quota := int64(100)
+	quota := millipoints.MilliPoints(100)
 	grant := accessmodel.Grant{
 		OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
 		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),
@@ -646,7 +647,7 @@ func TestRemoteBillingRecoversStaleInitWithoutBoundDeduction(t *testing.T) {
 	if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {
 		t.Fatalf("migrate developer grant: %v", err)
 	}
-	quota := int64(100)
+	quota := millipoints.MilliPoints(100)
 	grant := accessmodel.Grant{
 		OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
 		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),
@@ -666,7 +667,7 @@ func TestRemoteBillingRecoversStaleInitWithoutBoundDeduction(t *testing.T) {
 		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: grant.PrincipalID,
 		AccessGrantID: grant.ID, GrantAuthorizationVersion: &version,
 		QuotaSubjectType: quotaSubjectTypeAccessGrant, QuotaSubjectID: grant.ID,
-		EstimatedCredits: quota,
+		EstimatedCredits: quota.Int64(),
 	}
 	seedRemoteBillingPersonalKey(t, db, &grant, bc, "active")
 	remote := &RemoteBilling{localService: &BillingService{db: db}}
@@ -709,7 +710,7 @@ func TestRemoteBillingRecoversStaleInitWithoutBoundDeduction(t *testing.T) {
 	if err := db.Where("attempt_id = ? AND entry_type = ?", bc.AttemptID, billingEntryTypeFund).First(&fundEntry).Error; err != nil {
 		t.Fatal(err)
 	}
-	if subjectEntry.Status != billingEntryStatusRolled || subjectEntry.ActualAmount != 0 || subjectEntry.RefundedAmount.Int64() != quota {
+	if subjectEntry.Status != billingEntryStatusRolled || subjectEntry.ActualAmount != 0 || subjectEntry.RefundedAmount.Int64() != quota.Int64() {
 		t.Fatalf("stale INIT subject entry = %#v", subjectEntry)
 	}
 	if fundEntry.Status != billingEntryStatusFailed || fundEntry.RefundedAmount != 0 {
@@ -732,7 +733,7 @@ func TestRemoteBillingPersistsAndRetriesFailedLateDeductionCompensation(t *testi
 	if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {
 		t.Fatalf("migrate developer grant: %v", err)
 	}
-	quota := int64(100)
+	quota := millipoints.MilliPoints(100)
 	grant := accessmodel.Grant{
 		OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
 		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),
@@ -752,7 +753,7 @@ func TestRemoteBillingPersistsAndRetriesFailedLateDeductionCompensation(t *testi
 		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: grant.PrincipalID,
 		AccessGrantID: grant.ID, GrantAuthorizationVersion: &version,
 		QuotaSubjectType: quotaSubjectTypeAccessGrant, QuotaSubjectID: grant.ID,
-		EstimatedCredits: quota, SubjectReservedCredits: quota,
+		EstimatedCredits: quota.Int64(), SubjectReservedCredits: quota.Int64(),
 	}
 	seedRemoteBillingPersonalKey(t, db, &grant, bc, "active")
 	client := &lateDeductionQuotaClient{}
@@ -817,7 +818,7 @@ func TestRemoteBillingPersistsAndRetriesFailedLateDeductionCompensation(t *testi
 	if err := db.First(&fundEntry, "id = ?", fundEntryID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if fundEntry.Status != billingEntryStatusRolled || fundEntry.ActualAmount != 0 || fundEntry.RefundedAmount.Int64() != quota {
+	if fundEntry.Status != billingEntryStatusRolled || fundEntry.ActualAmount != 0 || fundEntry.RefundedAmount.Int64() != quota.Int64() {
 		t.Fatalf("reconciled compensation fund entry = %#v", fundEntry)
 	}
 	if err := db.First(&grant, "id = ?", grant.ID).Error; err != nil {
@@ -834,7 +835,7 @@ func TestRemoteBillingFinalizationIsIdempotentUnderAttemptLock(t *testing.T) {
 		t.Fatalf("migrate developer grant: %v", err)
 	}
 	organizationID := uuid.New()
-	quota := int64(100)
+	quota := millipoints.MilliPoints(100)
 	grant := accessmodel.Grant{
 		OrganizationID: organizationID.String(), WorkspaceID: uuid.NewString(),
 		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),

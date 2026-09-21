@@ -541,7 +541,7 @@ func (b *BillingService) preDeductAccessGrantQuota(ctx context.Context, tx *gorm
 	if availableQuota > remainingByLimit {
 		availableQuota = remainingByLimit
 	}
-	reservation := bc.EstimatedCredits
+	reservation := millipoints.MilliPoints(bc.EstimatedCredits)
 	usageLane, err := normalizeBillingContextUsageLane(bc)
 	if err != nil {
 		return err
@@ -556,7 +556,7 @@ func (b *BillingService) preDeductAccessGrantQuota(ctx context.Context, tx *gorm
 	if availableQuota <= 0 || availableQuota < reservation {
 		return ErrInsufficientQuota
 	}
-	bc.SubjectReservedCredits = reservation
+	bc.SubjectReservedCredits = reservation.Int64()
 	grant.RemainQuota = availableQuota - reservation
 	return tx.WithContext(ctx).Save(&grant).Error
 }
@@ -671,7 +671,7 @@ func (b *BillingService) settleAccessGrantQuota(ctx context.Context, tx *gorm.DB
 		return nil
 	}
 	if grant.QuotaLimit == nil {
-		grant.UsedQuota += bc.ActualCredits
+		grant.UsedQuota += millipoints.MilliPoints(bc.ActualCredits)
 		charged := bc.ActualCredits
 		bc.QuotaChargedCredits = &charged
 		return tx.WithContext(ctx).Save(&grant).Error
@@ -680,7 +680,7 @@ func (b *BillingService) settleAccessGrantQuota(ctx context.Context, tx *gorm.DB
 	// amount this attempt may charge is therefore the post-reservation balance
 	// plus its own reservation. Provider usage can exceed an estimate (notably
 	// hidden reasoning tokens), but a member grant must remain a hard boundary.
-	reservedCredits := subjectReservedCredits(bc)
+	reservedCredits := millipoints.MilliPoints(subjectReservedCredits(bc))
 	availableForAttempt := grant.RemainQuota + reservedCredits
 	if availableForAttempt < 0 {
 		availableForAttempt = 0
@@ -692,16 +692,17 @@ func (b *BillingService) settleAccessGrantQuota(ctx context.Context, tx *gorm.DB
 	if availableForAttempt > remainingByLimit {
 		availableForAttempt = remainingByLimit
 	}
-	charged := bc.ActualCredits
+	charged := millipoints.MilliPoints(bc.ActualCredits)
 	if charged > availableForAttempt {
 		charged = availableForAttempt
 	}
 	if charged < 0 {
 		charged = 0
 	}
-	bc.QuotaChargedCredits = &charged
+	chargedInt := charged.Int64()
+	bc.QuotaChargedCredits = &chargedInt
 	diff := reservedCredits - charged
-	grant.RemainQuota = clampQuotaRemainAtZero(grant.RemainQuota + diff)
+	grant.RemainQuota = millipoints.MilliPoints(clampQuotaRemainAtZero((grant.RemainQuota + diff).Int64()))
 	grant.UsedQuota += charged
 	if grant.QuotaLimit != nil && grant.UsedQuota > *grant.QuotaLimit {
 		grant.UsedQuota = *grant.QuotaLimit

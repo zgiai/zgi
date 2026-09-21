@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	accessmodel "github.com/zgiai/zgi/api/internal/modules/llm/developeraccess/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -23,7 +24,7 @@ func TestDeveloperGrantQuotaIsSharedBillingSubject(t *testing.T) {
 		t.Fatal(err)
 	}
 	organizationID, workspaceID, principalID := uuid.NewString(), uuid.NewString(), uuid.NewString()
-	quota := int64(100)
+	quota := millipoints.MilliPoints(100)
 	grant := accessmodel.Grant{
 		OrganizationID: organizationID, WorkspaceID: workspaceID,
 		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: principalID,
@@ -69,7 +70,7 @@ func TestDeveloperGrantSettlementCapsChargeAtHardLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	organizationID := uuid.NewString()
-	quota := int64(40)
+	quota := millipoints.MilliPoints(40)
 	grant := accessmodel.Grant{
 		OrganizationID:       organizationID,
 		WorkspaceID:          uuid.NewString(),
@@ -108,7 +109,7 @@ func TestDeveloperGrantSettlementCapsChargeAtHardLimit(t *testing.T) {
 	if grant.UsedQuota != quota || grant.RemainQuota != 0 {
 		t.Fatalf("settled grant used/remain = %d/%d, want %d/0", grant.UsedQuota, grant.RemainQuota, quota)
 	}
-	if billing.QuotaChargedCredits == nil || *billing.QuotaChargedCredits != quota {
+	if billing.QuotaChargedCredits == nil || *billing.QuotaChargedCredits != quota.Int64() {
 		t.Fatalf("quota charged = %v, want %d", billing.QuotaChargedCredits, quota)
 	}
 }
@@ -121,7 +122,7 @@ func TestDeveloperGrantSettlementUsesLimitWhenStoredRemainIsInconsistent(t *test
 	if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {
 		t.Fatal(err)
 	}
-	quota := int64(100)
+	quota := millipoints.MilliPoints(100)
 	grant := accessmodel.Grant{
 		OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
 		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),
@@ -159,13 +160,13 @@ func TestDeveloperGrantSettlementUsesLimitWhenStoredRemainIsInconsistent(t *test
 func TestDeveloperGrantZeroCreditReservationHonorsBoundedExhaustion(t *testing.T) {
 	tests := []struct {
 		name        string
-		quotaLimit  *int64
-		usedQuota   int64
-		remainQuota int64
+		quotaLimit  *millipoints.MilliPoints
+		usedQuota   millipoints.MilliPoints
+		remainQuota millipoints.MilliPoints
 		wantErr     bool
 	}{
-		{name: "exhausted bounded grant", quotaLimit: int64Ptr(100), usedQuota: 100, remainQuota: 0, wantErr: true},
-		{name: "bounded grant with balance", quotaLimit: int64Ptr(100), usedQuota: 90, remainQuota: 10},
+		{name: "exhausted bounded grant", quotaLimit: milliPointsPtr(100), usedQuota: 100, remainQuota: 0, wantErr: true},
+		{name: "bounded grant with balance", quotaLimit: milliPointsPtr(100), usedQuota: 90, remainQuota: 10},
 		{name: "unlimited grant", quotaLimit: nil, usedQuota: 0, remainQuota: 0},
 	}
 	for _, test := range tests {
@@ -217,7 +218,7 @@ func TestDeveloperGrantUnknownPlatformCostSerializesBoundedRequests(t *testing.T
 	if err := db.Exec(`CREATE UNIQUE INDEX uq_billing_attempt_entry ON billing_attempt_entries (attempt_id, entry_type, ledger_type)`).Error; err != nil {
 		t.Fatal(err)
 	}
-	quota := int64(100)
+	quota := millipoints.MilliPoints(100)
 	grant := accessmodel.Grant{
 		OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
 		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),
@@ -309,7 +310,7 @@ func TestDeveloperGrantSettlementDoesNotMutateNewAuthorizationPeriod(t *testing.
 	if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {
 		t.Fatal(err)
 	}
-	quota := int64(100)
+	quota := millipoints.MilliPoints(100)
 	grant := accessmodel.Grant{
 		OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
 		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),
@@ -365,7 +366,7 @@ func TestDeveloperGrantPreDeductRejectsStaleKeyAuthorizationPeriod(t *testing.T)
 	if err := db.AutoMigrate(&accessmodel.Grant{}, &accessmodel.Policy{}, &workspacemodel.Organization{}, &workspacemodel.Workspace{}); err != nil {
 		t.Fatal(err)
 	}
-	quota := int64(100)
+	quota := millipoints.MilliPoints(100)
 	grant := accessmodel.Grant{
 		OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
 		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),
@@ -465,7 +466,7 @@ func TestDeveloperGrantReservationRollsBackWhenKeyIsInactiveOrExpired(t *testing
 					t.Fatal(err)
 				}
 			}
-			quota := int64(100)
+			quota := millipoints.MilliPoints(100)
 			grant := accessmodel.Grant{
 				OrganizationID: organizationID, WorkspaceID: workspaceID,
 				PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: principalID,
@@ -509,3 +510,8 @@ func TestDeveloperGrantReservationRollsBackWhenKeyIsInactiveOrExpired(t *testing
 }
 
 func int64Ptr(value int64) *int64 { return &value }
+
+func milliPointsPtr(value int64) *millipoints.MilliPoints {
+	points := millipoints.MilliPoints(value)
+	return &points
+}
