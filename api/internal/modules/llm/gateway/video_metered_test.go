@@ -30,6 +30,20 @@ func TestVideoMeteredFactMapsBillingUnits(t *testing.T) {
 			wantUnit: "task",
 			wantQty:  2,
 		},
+		{
+			name:     "million video tokens without estimator reserves one priced unit",
+			pricing:  `{"deployment_scope":"global","video_generation":{"currency":"USD","billing_unit":"million_video_tokens","rates":[{"resolution":"720p","price_per_million_tokens":2}]}}`,
+			req:      &adapter.VideoRequest{Resolution: "720p", Duration: &ten},
+			wantUnit: "million_video_tokens",
+			wantQty:  defaultVideoTokenReservation,
+		},
+		{
+			name:     "million video tokens uses the configured estimator",
+			pricing:  `{"deployment_scope":"global","video_generation":{"currency":"USD","billing_unit":"million_video_tokens","rates":[{"resolution":"720p","price_per_million_tokens":2}],"token_estimation":{"unit":"video_tokens","rules":[{"resolution":"720p","tokens_per_second":1000}]}}}`,
+			req:      &adapter.VideoRequest{Resolution: "720p", Duration: &ten},
+			wantUnit: "million_video_tokens",
+			wantQty:  10000,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

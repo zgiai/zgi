@@ -131,6 +131,29 @@ func conservativeReasoningCompletionTokens(maxOutputTokens, completionTokens int
 	return reserved
 }
 
+// chatCompletionReservationCap bounds the completion side of a chat reservation
+// when the request omits max_tokens and the catalog advertises a large output
+// window. Over-reserving is refunded at settlement, but an unbounded window
+// (for example 128k) would freeze an amount most organizations cannot
+// pre-deduct, so the catalog value is capped.
+const chatCompletionReservationCap = 4096
+
+// reservationCompletionTokens returns the completion token basis used for a
+// pre-deduct reservation. An explicit request max_tokens always wins; when the
+// request omits it, the selected catalog model's max_output_tokens is used
+// (capped) instead of the estimator's small generic default, which made long
+// answers exceed the reservation almost immediately.
+func reservationCompletionTokens(selection *ProviderSelection, requestedMaxTokens *int, estimated int) int {
+	if requestedMaxTokens != nil && *requestedMaxTokens > 0 {
+		return estimated
+	}
+	if selection == nil || selection.Model.MaxOutputTokens <= 0 {
+		return estimated
+	}
+	bound := min(selection.Model.MaxOutputTokens, chatCompletionReservationCap)
+	return max(estimated, bound)
+}
+
 func (s *llmGatewayServiceImpl) quoteTokenPricingForSettlement(
 	ctx context.Context,
 	bc *BillingContext,

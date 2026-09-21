@@ -168,7 +168,8 @@ func (s *llmGatewayServiceImpl) tryChatCompletion(
 	tCalc := time.Now()
 	attemptID := buildAttemptID(requestID, attemptIdx)
 
-	quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, pricingModelRefFromSelection(providerSelection), promptTokens, completionTokens)
+	reservedCompletion := reservationCompletionTokens(providerSelection, req.MaxTokens, completionTokens)
+	quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, pricingModelRefFromSelection(providerSelection), promptTokens, reservedCompletion)
 	if err != nil {
 		return nil, wrapPricingCalculationError(err)
 	}
@@ -421,7 +422,8 @@ func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 ) (<-chan adapter.StreamResponse, error) {
 	// Calculate estimated credits
 	attemptID := buildAttemptID(requestID, attemptIdx)
-	quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, pricingModelRefFromSelection(providerSelection), promptTokens, completionTokens)
+	reservedCompletion := reservationCompletionTokens(providerSelection, req.MaxTokens, completionTokens)
+	quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, pricingModelRefFromSelection(providerSelection), promptTokens, reservedCompletion)
 	if err != nil {
 		return nil, wrapPricingCalculationError(err)
 	}

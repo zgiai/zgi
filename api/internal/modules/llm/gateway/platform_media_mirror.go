@@ -34,6 +34,10 @@ func (s *llmGatewayServiceImpl) mirrorPlatformMediaSettlement(
 	}
 	bc := s.createBillingContext(apiKey, nil, selection, getChannelID(selection), billingOrganizationID, 0, streaming, startedAt, requestID, attemptID)
 	bc.PricingOperation = operation
+	// Product surfaces declare their source on the context; a public Gateway
+	// call carries none and resolves to "api". Without this the media mirror
+	// persisted an empty source, which normalized to "unknown".
+	bc.InvocationSource = resolveInvocationSource(ctx, nil)
 	bc.RoutingStrategy = selection.RoutingStrategy
 	bc.ResponseTime = time.Since(startedAt).Milliseconds()
 	bc.DeductionID = settlement.SettlementID

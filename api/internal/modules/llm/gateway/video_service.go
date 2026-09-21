@@ -321,6 +321,12 @@ func (s *llmGatewayServiceImpl) videoPredeductQuote(ctx context.Context, selecti
 	return quote, nil
 }
 
+// defaultVideoTokenReservation bounds the reservation for a token-metered video
+// model that has no token_estimation rule. The upstream token count is only
+// known after generation, so the pre-deduct reserves one priced unit and the
+// settlement trues up to the actual count.
+const defaultVideoTokenReservation = 1_000_000
+
 // quoteVideoFromModelPricing derives the reservation from the selected model's
 // structured video rule. A CNY price book without a positive rate is
 // fail-closed.
@@ -329,6 +335,14 @@ func quoteVideoFromModelPricing(selection *ProviderSelection, requestModel strin
 		return PricingQuote{}, fmt.Errorf("%w: video pricing is not configured", ErrPricingNotConfigured)
 	}
 	cost, present, err := modelpricing.ResolveVideoGenerationCost(json.RawMessage(selection.Model.Pricing), costReq)
+	if err != nil {
+		// Token-metered video without an estimator: retry with one priced unit.
+		fallbackReq := costReq
+		fallbackReq.VideoTokens = defaultVideoTokenReservation
+		if retryCost, retryPresent, retryErr := modelpricing.ResolveVideoGenerationCost(json.RawMessage(selection.Model.Pricing), fallbackReq); retryErr == nil {
+			cost, present, err = retryCost, retryPresent, nil
+		}
+	}
 	if err != nil || !present || cost.SourceCost <= 0 {
 		return PricingQuote{}, fmt.Errorf("%w: video pricing is not configured", ErrPricingNotConfigured)
 	}
@@ -395,6 +409,15 @@ func videoMeteredFact(pricing json.RawMessage, req *adapter.VideoRequest) (share
 	}
 	costReq := videoGenerationCostRequestFromCreate(req, seconds, count)
 	cost, present, err := modelpricing.ResolveVideoGenerationCost(pricing, costReq)
+	if err != nil {
+		// Token-metered video without an estimator: retry with one priced unit so
+		// the platform pre-deduct still holds a bounded reservation.
+		fallbackReq := costReq
+		fallbackReq.VideoTokens = defaultVideoTokenReservation
+		if retryCost, retryPresent, retryErr := modelpricing.ResolveVideoGenerationCost(pricing, fallbackReq); retryErr == nil {
+			cost, present, err = retryCost, retryPresent, nil
+		}
+	}
 	if err != nil || !present || strings.TrimSpace(cost.BillingUnit) == "" {
 		return shared.MeteredUsageFact{}, false
 	}
@@ -418,8 +441,11 @@ func videoMeteredFact(pricing json.RawMessage, req *adapter.VideoRequest) (share
 			"count":            strconv.Itoa(costReq.Count),
 		},
 	}
-	if costReq.VideoTokens > 0 {
-		fact.Dimensions["video_tokens"] = strconv.Itoa(costReq.VideoTokens)
+	// Console rebuilds the metered snapshot from these dimensions, so the token
+	// count used for the estimate must be the resolved one (which may be the
+	// bounded fallback), not only the request-provided count.
+	if cost.VideoTokens > 0 {
+		fact.Dimensions["video_tokens"] = strconv.Itoa(cost.VideoTokens)
 	}
 	return fact, true
 }
