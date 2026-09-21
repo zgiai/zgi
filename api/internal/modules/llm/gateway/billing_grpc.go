@@ -126,6 +126,12 @@ func (s *RemoteBilling) QuotePlatformTokenPricing(
 	// sale price across every catalog provider row for the logical model.
 	resp, err := client.CalculateDualCost(ctx, modelID, model.Provider, model.Model, promptTokens, completionTokens)
 	if err != nil {
+		// A stable Console ErrorInfo.Reason must classify the failure (for
+		// example billing.model.pricing_not_configured -> 402) instead of
+		// collapsing into a generic internal_error at the projector.
+		if mapped, ok := mapBillingRPCErrorCode(billingRPCErrorReason(err), ""); ok {
+			return PricingQuote{}, wrapPricingNotConfiguredError(mapped, pricingErrorParamsFromModelRef(model))
+		}
 		return PricingQuote{}, fmt.Errorf("calculate authoritative token cost: %w", err)
 	}
 	if resp == nil || !resp.Success {

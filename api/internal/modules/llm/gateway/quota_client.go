@@ -253,7 +253,9 @@ func (c *QuotaClient) CalculateDualCost(ctx context.Context, modelID, provider, 
 		CompletionTokens: int32(completionTokens),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("grpc call failed: %w", err)
+		// Carry the Console ErrorInfo.Reason so callers classify a stable billing
+		// failure instead of a transport error, exactly like the pre-deduct paths.
+		return nil, fmt.Errorf("grpc call failed: %w", newBillingRPCError(err))
 	}
 	inputUSD, err := wireFloatToDecimal(resp.InputUsd)
 	if err != nil {
