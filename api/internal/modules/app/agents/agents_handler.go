@@ -1398,6 +1398,14 @@ func writeAgentSSE(c *gin.Context, event string, data interface{}) error {
 }
 
 func writeAgentChatEnd(c *gin.Context, prepared *runtimeservice.PreparedChat, result *runtimeservice.ChatResult) {
+	// Budget-pending turns already deliver a durable message_end through the
+	// runtime event callback immediately after token_budget_requested.  The
+	// regular handler tail must not write a second terminal event for the same
+	// message, otherwise external API clients observe duplicate message_end
+	// frames and may resume against an already-paused turn twice.
+	if result != nil && result.Status == runtimemodel.MessageStatusWaitingBudget {
+		return
+	}
 	status := runtimemodel.MessageStatusCompleted
 	metadata := map[string]interface{}{}
 	eventID := ""

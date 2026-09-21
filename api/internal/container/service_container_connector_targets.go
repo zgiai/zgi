@@ -3,6 +3,7 @@ package container
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
@@ -65,7 +66,16 @@ func (authority *connectorTargetAuthority) authorize(ctx context.Context, org, a
 	c := authority.container
 	organizations := c.GetOrganizationService()
 	member, err := organizations.IsOrganizationMember(ctx, org.String(), actor.String())
-	if err != nil || !member {
+	if err != nil {
+		return targetDenied()
+	}
+	// External Agent API keys are virtual principals, not organization
+	// members. They still need to resolve the published Agent target so the
+	// runtime can discover its owner-scoped Connector bindings. The binding
+	// rows remain queried under the API-key owner below, so this exception does
+	// not grant access to another principal's Personal Connection.
+	apiKeyPublishedRead := !member && !edit && target.Type == core.TargetTypeAgent && target.EffectiveScope() == core.ScopePublished
+	if !member && !apiKeyPublishedRead {
 		return targetDenied()
 	}
 	if target.Type == core.TargetTypeChat {
@@ -163,9 +173,26 @@ func (authority *connectorTargetAuthority) authorize(ctx context.Context, org, a
 	}
 	allowed, err := organizations.CheckWorkspaceOrganizationAnyPermission(ctx, org.String(), workspaceID, actor.String(), permission)
 	if err != nil || !allowed {
+		if apiKeyPublishedRead && authority.isActiveAgentAPIKeyForTarget(ctx, actor, id, workspaceID) {
+			return nil
+		}
 		return targetDenied()
 	}
 	return nil
+}
+
+func (authority *connectorTargetAuthority) isActiveAgentAPIKeyForTarget(ctx context.Context, keyID, agentID uuid.UUID, workspaceID string) bool {
+	workspaceUUID, err := uuid.Parse(strings.TrimSpace(workspaceID))
+	if authority == nil || authority.container == nil || authority.container.db == nil || keyID == uuid.Nil || agentID == uuid.Nil || err != nil || workspaceUUID == uuid.Nil {
+		return false
+	}
+	var count int64
+	err = authority.container.db.WithContext(ctx).
+		Table("agent_api_keys AS k").
+		Joins("JOIN agents AS a ON a.id::text = k.agent_id AND a.tenant_id::text = k.tenant_id AND a.deleted_at IS NULL").
+		Where("k.id = ? AND k.agent_id = ? AND k.tenant_id = ? AND k.status = ? AND (k.expires_at IS NULL OR k.expires_at > ?)", keyID.String(), agentID.String(), workspaceUUID.String(), "active", time.Now()).
+		Count(&count).Error
+	return err == nil && count == 1
 }
 
 func (authority *connectorTargetAuthority) RequireTargetRead(ctx context.Context, org, actor uuid.UUID, target bindings.TargetIdentity) error {
