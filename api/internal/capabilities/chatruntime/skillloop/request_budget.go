@@ -38,7 +38,16 @@ type planningRequestBudgetDiagnostics struct {
 func planningRequestBudgetForRun(req RunRequest) planningRequestBudget {
 	metadata := currentMetadataForRun(req)
 	control := evidenceMapFromAny(metadata["context_control"])
-	safeLimit := numericValue(control["agent_context_window"])
+	// The context manager now reports the model's physical window directly.
+	// Keep the former Agent field as a compatibility fallback for persisted
+	// metadata produced before the window parameter was removed.
+	safeLimit := numericValue(control["model_context_window"])
+	if safeLimit <= 0 {
+		safeLimit = numericValue(control["context_window"])
+	}
+	if safeLimit <= 0 {
+		safeLimit = numericValue(control["agent_context_window"])
+	}
 	promptBudget := numericValue(control["prompt_budget"])
 	if safeLimit <= 0 {
 		safeLimit = numericValue(control["safe_context_limit"])

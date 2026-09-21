@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/contextmgr"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/llm/tokenestimate"
@@ -15,9 +15,7 @@ import (
 )
 
 const (
-	contextBudgetSafetyNumerator   = 9
-	contextBudgetSafetyDenominator = 10
-	maxContextCandidateMessages    = 100
+	maxContextCandidateMessages = 100
 
 	contextControlStrategyTokenBudget = "token_budget"
 
@@ -41,17 +39,14 @@ type contextBudgetResult struct {
 }
 
 type budgetComputation struct {
-	ConfiguredAgentWindowK int
-	AgentContextWindow     int
-	AgentWindowClamped     bool
-	SafeLimit              int
-	PromptBudget           int
-	ReservedOutputTokens   int
-	BasePromptTokens       int
-	OriginalMaxTokens      *int
-	EffectiveMaxTokens     *int
-	MaxTokensClamped       bool
-	Tokenizer              string
+	SafeLimit            int
+	PromptBudget         int
+	ReservedOutputTokens int
+	BasePromptTokens     int
+	OriginalMaxTokens    *int
+	EffectiveMaxTokens   *int
+	MaxTokensClamped     bool
+	Tokenizer            string
 }
 
 func (s *service) buildTokenBudgetMessages(
@@ -61,6 +56,9 @@ func (s *service) buildTokenBudgetMessages(
 	systemPrompt string,
 	parentMessages []*runtimemodel.Message,
 ) (*contextBudgetResult, error) {
+	if spec.ContextWindow <= 0 {
+		spec.ContextWindow = contextmgr.DefaultModelContextWindowTokens
+	}
 	if s.tokenEstimator == nil {
 		s.tokenEstimator = newTokenEstimator()
 	}
@@ -313,14 +311,9 @@ func mergeAttachmentContextMetadata(target map[string]interface{}, source map[st
 
 func (s *service) computeContextBudget(spec ModelSpec, parts *chatRequestParts, baseMessages []adapter.Message) (*budgetComputation, error) {
 	if spec.ContextWindow <= 0 {
-		return nil, fmt.Errorf("%w: model context_window is required", ErrInvalidInput)
+		spec.ContextWindow = contextmgr.DefaultModelContextWindowTokens
 	}
-	agentWindowK := 512
-	if config.GlobalConfig != nil && config.GlobalConfig.ChatRuntime.AgentContextWindowK > 0 {
-		agentWindowK = config.GlobalConfig.ChatRuntime.AgentContextWindowK
-	}
-	configuredAgentWindow := agentWindowK * 1000
-	agentContextWindow := min(configuredAgentWindow, spec.ContextWindow)
+	agentContextWindow := spec.ContextWindow
 	safeLimit := agentContextWindow
 	minOutput := minOutputReserve(agentContextWindow)
 	if safeLimit <= minOutput {
@@ -380,17 +373,14 @@ func (s *service) computeContextBudget(spec ModelSpec, parts *chatRequestParts, 
 	}
 
 	return &budgetComputation{
-		ConfiguredAgentWindowK: agentWindowK,
-		AgentContextWindow:     agentContextWindow,
-		AgentWindowClamped:     agentContextWindow < configuredAgentWindow,
-		SafeLimit:              safeLimit,
-		PromptBudget:           promptBudget,
-		ReservedOutputTokens:   reservedOutput,
-		BasePromptTokens:       baseEstimate.Tokens,
-		OriginalMaxTokens:      originalMaxTokens,
-		EffectiveMaxTokens:     effectiveMaxTokens,
-		MaxTokensClamped:       maxTokensClamped,
-		Tokenizer:              baseEstimate.Tokenizer,
+		SafeLimit:            safeLimit,
+		PromptBudget:         promptBudget,
+		ReservedOutputTokens: reservedOutput,
+		BasePromptTokens:     baseEstimate.Tokens,
+		OriginalMaxTokens:    originalMaxTokens,
+		EffectiveMaxTokens:   effectiveMaxTokens,
+		MaxTokensClamped:     maxTokensClamped,
+		Tokenizer:            baseEstimate.Tokenizer,
 	}, nil
 }
 
@@ -1768,23 +1758,20 @@ func countAdapterMessages(groups [][]adapter.Message) int {
 
 func contextControlMetadata(spec ModelSpec, budget *budgetComputation, estimatedPromptTokens int, historyBefore int, historyAfter int) map[string]interface{} {
 	return map[string]interface{}{
-		"strategy":                  contextControlStrategyTokenBudget,
-		"context_window":            spec.ContextWindow,
-		"configured_agent_window_k": budget.ConfiguredAgentWindowK,
-		"agent_context_window":      budget.AgentContextWindow,
-		"agent_window_clamped":      budget.AgentWindowClamped,
-		"model_max_output_tokens":   spec.MaxOutputTokens,
-		"safe_context_limit":        budget.SafeLimit,
-		"prompt_budget":             budget.PromptBudget,
-		"estimated_prompt_tokens":   estimatedPromptTokens,
-		"history_messages_before":   historyBefore,
-		"history_messages_after":    historyAfter,
-		"truncated":                 historyAfter < historyBefore,
-		"max_tokens_clamped":        budget.MaxTokensClamped,
-		"original_max_tokens":       optionalIntValue(budget.OriginalMaxTokens),
-		"effective_max_tokens":      optionalIntValue(budget.EffectiveMaxTokens),
-		"reserved_output_tokens":    budget.ReservedOutputTokens,
-		"tokenizer":                 budget.Tokenizer,
+		"strategy":                contextControlStrategyTokenBudget,
+		"context_window":          spec.ContextWindow,
+		"model_max_output_tokens": spec.MaxOutputTokens,
+		"safe_context_limit":      budget.SafeLimit,
+		"prompt_budget":           budget.PromptBudget,
+		"estimated_prompt_tokens": estimatedPromptTokens,
+		"history_messages_before": historyBefore,
+		"history_messages_after":  historyAfter,
+		"truncated":               historyAfter < historyBefore,
+		"max_tokens_clamped":      budget.MaxTokensClamped,
+		"original_max_tokens":     optionalIntValue(budget.OriginalMaxTokens),
+		"effective_max_tokens":    optionalIntValue(budget.EffectiveMaxTokens),
+		"reserved_output_tokens":  budget.ReservedOutputTokens,
+		"tokenizer":               budget.Tokenizer,
 	}
 }
 

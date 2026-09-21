@@ -4,11 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/contextmgr"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
@@ -30,26 +28,17 @@ func (s *service) newAgentContextManager(ctx context.Context, prepared *Prepared
 			mainOutput = prepared.contextBudget.Budget.ReservedOutputTokens
 		}
 	} else {
-		if s == nil || s.modelSpecResolver == nil {
-			return nil, fmt.Errorf("agent context model budget is unavailable")
+		if s != nil && s.modelSpecResolver != nil {
+			resolved, ok, err := s.modelSpecResolver.Resolve(ctx, prepared.Scope.OrganizationID, prepared.LLMRequest.Provider, prepared.LLMRequest.Model)
+			if err != nil {
+				logger.WarnContext(ctx, "failed to resolve Agent context model spec; using fallback context window", "error", err)
+			} else if ok {
+				spec = resolved
+			}
 		}
-		resolved, ok, err := s.modelSpecResolver.Resolve(ctx, prepared.Scope.OrganizationID, prepared.LLMRequest.Provider, prepared.LLMRequest.Model)
-		if err != nil {
-			return nil, fmt.Errorf("resolve Agent context model spec: %w", err)
-		}
-		if !ok {
-			return nil, fmt.Errorf("%w: model context specification is unavailable", ErrInvalidInput)
-		}
-		spec = resolved
 	}
 	if spec.ContextWindow <= 0 {
-		return nil, fmt.Errorf("%w: model context_window is required", ErrInvalidInput)
-	}
-	agentWindowK := 512
-	if prepared.contextBudget != nil && prepared.contextBudget.Budget != nil && prepared.contextBudget.Budget.ConfiguredAgentWindowK > 0 {
-		agentWindowK = prepared.contextBudget.Budget.ConfiguredAgentWindowK
-	} else if config.GlobalConfig != nil && config.GlobalConfig.ChatRuntime.AgentContextWindowK > 0 {
-		agentWindowK = config.GlobalConfig.ChatRuntime.AgentContextWindowK
+		spec.ContextWindow = contextmgr.DefaultModelContextWindowTokens
 	}
 	if prepared.LLMRequest.MaxTokens != nil && *prepared.LLMRequest.MaxTokens > 0 {
 		mainOutput = *prepared.LLMRequest.MaxTokens
@@ -59,22 +48,13 @@ func (s *service) newAgentContextManager(ctx context.Context, prepared *Prepared
 		prepared.Message.Metadata = map[string]interface{}{}
 	}
 	prepared.Message.Metadata["agent_run_id"] = runID
-	var toolResultStore contextmgr.ToolResultStore
-	if runningUnderGoTest() {
-		store := contextmgr.NewMemoryStore()
-		toolResultStore = store
-	} else {
-		store := contextmgr.NewFileStore(agentContextStoragePath())
-		toolResultStore = store
-	}
 	manager, err := contextmgr.New(contextmgr.Config{
 		AgentRunID:              runID,
-		ConfiguredAgentWindowK:  agentWindowK,
 		ModelContextWindow:      spec.ContextWindow,
 		MaxInputTokens:          spec.MaxInputTokens,
 		MaxOutputTokens:         spec.MaxOutputTokens,
 		DefaultMainOutputTokens: mainOutput,
-	}, &serviceContextCompactor{service: s, prepared: prepared}, toolResultStore, func(requestType string, round int, request *adapter.ChatRequest, decision contextmgr.Decision) {
+	}, &serviceContextCompactor{service: s, prepared: prepared}, nil, func(requestType string, round int, request *adapter.ChatRequest, decision contextmgr.Decision) {
 		s.writeAgentContextPromptDumpBestEffort(context.Background(), prepared, requestType, round, request, &decision)
 	}, func(ctx context.Context, transcript []adapter.Message) {
 		// Best effort and never cancelled with the request: the point of a
@@ -98,12 +78,6 @@ func preparedAgentRunID(prepared *PreparedChat) string {
 		return prepared.Message.ID.String()
 	}
 	return ""
-}
-
-func agentContextStoragePath() string {
-	dumpPath := contextPromptDumpPath()
-	storagePath := filepath.Dir(filepath.Dir(dumpPath))
-	return filepath.Join(storagePath, "agent-context")
 }
 
 type serviceContextCompactor struct {

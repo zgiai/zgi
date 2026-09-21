@@ -433,25 +433,27 @@ func (r *transcriptEntryRepository) GetPayload(ctx context.Context, id, organiza
 	return &entry, nil
 }
 
-// UpdatePreview replaces the derived effective form. It reads only the narrow
-// columns it needs so the payload column is never loaded.
+// UpdatePreview replaces the canonical effective form. Context compression is
+// intentionally lossy, so payload and preview must be updated together; the
+// original tool result is not retained for a later recovery read.
 func (r *transcriptEntryRepository) UpdatePreview(ctx context.Context, id uuid.UUID, preview map[string]interface{}, byteSize int) error {
 	if len(preview) == 0 {
 		return fmt.Errorf("update transcript entry preview: empty preview")
 	}
 	var entry runtimemodel.TranscriptEntry
 	err := r.db.WithContext(ctx).
-		Select("id, preview, byte_size").
+		Select("id, preview, payload, byte_size").
 		Where("id = ?", id).
 		Take(&entry).Error
 	if err != nil {
 		return wrapNotFound(err, "transcript entry")
 	}
 	entry.Preview = preview
+	entry.Payload = preview
 	entry.ByteSize = byteSize
 	if err := r.db.WithContext(ctx).
 		Model(&runtimemodel.TranscriptEntry{}).
-		Select("preview", "byte_size").
+		Select("preview", "payload", "byte_size").
 		Where("id = ?", id).
 		Updates(&entry).Error; err != nil {
 		return fmt.Errorf("update transcript entry preview: %w", err)

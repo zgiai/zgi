@@ -40,6 +40,27 @@ func (r *Runner) handleProgressiveSkillCall(
 		trace := invalidToolArgumentsFeedbackTrace(call.Function.Name, err, args)
 		return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, recoverableErrorPayload(err, stringArg(args, "next_action"))), false, false)
 	}
+	// Tool visibility is scoped to the current skill session. A model may carry
+	// a previously visible tool name into a new user turn; require explicit
+	// activation instead of restoring the skill from conversation history.
+	if !isSkillMetaToolName(call.Function.Name) {
+		if skillID, ok := uniqueResolvedSkillForToolName(resolved, call.Function.Name); ok {
+			if _, active := loadedSkills[skillID]; !active {
+				err := fmt.Errorf("%w: skill %s is not active", ErrInvalidInput, skillID)
+				trace := failedSkillTrace("tool_call", call.Function.Name, err)
+				trace.SkillID = skillID
+				trace.Status = "blocked"
+				trace.Arguments = summarizeSkillToolArgumentsForResolved(resolved, skillID, call.Function.Name, args)
+				trace.Arguments["reason_code"] = "skill_not_active"
+				nextAction := fmt.Sprintf("call activate_skills with skill_ids [\"%s\"], then retry %s", skillID, call.Function.Name)
+				payload := recoverableSkillToolErrorPayload(err, nextAction, skillID, call.Function.Name, resolved)
+				payload["error_code"] = "skill_not_active"
+				payload["skill_id"] = skillID
+				payload["tool_name"] = call.Function.Name
+				return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, payload), false, false)
+			}
+		}
+	}
 	if normalizedCall, normalizedArgs, ok := normalizeDirectLoadedSkillToolCall(resolved, loadedSkills, call, args); ok {
 		call = normalizedCall
 		args = normalizedArgs
@@ -323,6 +344,29 @@ func uniqueLoadedSkillForToolName(resolved *skills.ResolvedSkills, loadedSkills 
 		}
 	}
 	return matchedSkillID, matchedSkillID != ""
+}
+
+func uniqueResolvedSkillForToolName(resolved *skills.ResolvedSkills, toolName string) (string, bool) {
+	if resolved == nil || strings.TrimSpace(toolName) == "" {
+		return "", false
+	}
+	matched := ""
+	for _, doc := range resolved.Skills {
+		for _, tool := range doc.Tools {
+			if !strings.EqualFold(strings.TrimSpace(tool.Name), strings.TrimSpace(toolName)) {
+				continue
+			}
+			skillID := strings.ToLower(strings.TrimSpace(doc.Metadata.ID))
+			if skillID == "" {
+				continue
+			}
+			if matched != "" && matched != skillID {
+				return "", false
+			}
+			matched = skillID
+		}
+	}
+	return matched, matched != ""
 }
 
 func injectedContextPseudoToolFeedbackStep(callID string, toolName string) skillStepResult {

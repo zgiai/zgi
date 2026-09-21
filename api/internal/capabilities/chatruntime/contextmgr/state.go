@@ -54,7 +54,7 @@ func flattenCompactionBatches(batches []compactionBatch) []adapter.Message {
 // dialogue is protected), which is important for short conversations.
 func selectPreservedTailMessages(messages []adapter.Message, minimumMessages int) int {
 	if minimumMessages <= 0 {
-		minimumMessages = defaultTailMinMessages
+		minimumMessages = 1
 	}
 	if len(messages) <= minimumMessages {
 		return 0
@@ -76,6 +76,36 @@ func selectPreservedTailMessages(messages []adapter.Message, minimumMessages int
 	return start
 }
 
+// selectPreservedTailMessagesByRounds returns the first message of the newest
+// complete model rounds. A model round starts with an assistant response and
+// includes every immediately following tool result. Any trailing current user
+// input is preserved as part of the tail. Returning zero means there is no
+// older prefix that can be summarized safely.
+func selectPreservedTailMessagesByRounds(messages []adapter.Message, roundsToKeep int) int {
+	if roundsToKeep <= 0 {
+		roundsToKeep = defaultPreservedRounds
+	}
+	rounds := groupMessagesByAPIRound(messages)
+	assistantRounds := make([]int, 0, len(rounds))
+	for index, round := range rounds {
+		for _, message := range round.Messages {
+			if strings.EqualFold(strings.TrimSpace(message.Role), "assistant") {
+				assistantRounds = append(assistantRounds, index)
+				break
+			}
+		}
+	}
+	if len(assistantRounds) <= roundsToKeep {
+		return 0
+	}
+	firstPreservedRound := assistantRounds[len(assistantRounds)-roundsToKeep]
+	start := 0
+	for index := 0; index < firstPreservedRound; index++ {
+		start += len(rounds[index].Messages)
+	}
+	return start
+}
+
 // groupMessagesByAPIRound starts a new group at every assistant response.
 // Tool results following that assistant remain in the same group. The groups
 // are retained for round-based diagnostics; compaction boundaries use the
@@ -85,7 +115,29 @@ func groupMessagesByAPIRound(messages []adapter.Message) []apiRound {
 	current := apiRound{}
 	sequence := 0
 	for _, message := range messages {
-		if strings.EqualFold(strings.TrimSpace(message.Role), "assistant") && len(current.Messages) > 0 {
+		role := strings.ToLower(strings.TrimSpace(message.Role))
+		startsNewRound := false
+		if len(current.Messages) > 0 && role == "assistant" {
+			// Each assistant response is one model invocation. A follow-up
+			// assistant response after tool results therefore starts a new round.
+			for _, existing := range current.Messages {
+				if strings.EqualFold(strings.TrimSpace(existing.Role), "assistant") {
+					startsNewRound = true
+					break
+				}
+			}
+		}
+		if len(current.Messages) > 0 && role == "user" {
+			// A new user turn belongs to the next round, not to the previous
+			// assistant response and its tool results.
+			for _, existing := range current.Messages {
+				if strings.EqualFold(strings.TrimSpace(existing.Role), "assistant") {
+					startsNewRound = true
+					break
+				}
+			}
+		}
+		if startsNewRound {
 			rounds = append(rounds, current)
 			sequence++
 			current = apiRound{Sequence: sequence}

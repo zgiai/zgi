@@ -15,16 +15,11 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
-func TestBudgetUsesAgentWorkingWindowAndClampsToPhysicalWindow(t *testing.T) {
+func TestBudgetUsesPhysicalWindowAndTriggersAtEightyPercent(t *testing.T) {
 	config, err := normalizeConfig(Config{
-		ConfiguredAgentWindowK: 256,
-		ModelContextWindow:     1_000_000,
-		MaxInputTokens:         900_000,
-		MaxOutputTokens:        32_000,
-		SummaryOutputTokens:    20_000,
-		EmergencyBufferTokens:  13_000,
-		HysteresisTokens:       8_000,
-		TargetRatio:            0.60,
+		ModelContextWindow: 1_000_000,
+		MaxInputTokens:     900_000,
+		MaxOutputTokens:    32_000,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -33,11 +28,11 @@ func TestBudgetUsesAgentWorkingWindowAndClampsToPhysicalWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if budget.AgentContextWindow != 256_000 || budget.PromptBudget != 240_000 || budget.SoftLimit != 223_000 || budget.HardLimit != 240_000 || budget.TargetTokens != 144_000 {
+	if budget.AgentContextWindow != 1_000_000 || budget.PromptBudget != 800_000 || budget.SoftLimit != 800_000 || budget.HardLimit != 800_000 || budget.TargetTokens != 800_000 {
 		t.Fatalf("budget = %#v", budget)
 	}
 	if budget.AgentContextWindowClamped {
-		t.Fatal("1M physical window must not clamp configured 256K working window")
+		t.Fatal("physical window must not be marked as clamped")
 	}
 
 	config.ModelContextWindow = 128_000
@@ -45,18 +40,34 @@ func TestBudgetUsesAgentWorkingWindowAndClampsToPhysicalWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if budget.AgentContextWindow != 128_000 || !budget.AgentContextWindowClamped {
-		t.Fatalf("clamped budget = %#v", budget)
+	if budget.AgentContextWindow != 128_000 || budget.PromptBudget != 102_400 || budget.AgentContextWindowClamped {
+		t.Fatalf("physical budget = %#v", budget)
+	}
+}
+
+func TestBudgetFallsBackTo512KWhenPhysicalWindowIsUnavailable(t *testing.T) {
+	config, err := normalizeConfig(Config{AgentRunID: "fallback-window"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	budget, err := budgetForRequest(config, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if budget.ModelContextWindow != DefaultModelContextWindowTokens || budget.PromptBudget != 409_600 {
+		t.Fatalf("fallback budget = %#v", budget)
+	}
+	if budget.SummaryOutputReserve != 20_000 {
+		t.Fatalf("summary output reserve = %d, want 20000", budget.SummaryOutputReserve)
 	}
 }
 
 func TestPrepareBeforeModelCallDoesNotRequireRuntimeStorage(t *testing.T) {
 	storageRoot := filepath.Join(t.TempDir(), "missing")
 	manager, err := New(Config{
-		AgentRunID:             "run-without-checkpoint-storage",
-		ConfiguredAgentWindowK: 64,
-		ModelContextWindow:     128_000,
-		MaxOutputTokens:        8_000,
+		AgentRunID:         "run-without-checkpoint-storage",
+		ModelContextWindow: 64_000,
+		MaxOutputTokens:    8_000,
 	}, nil, NewFileStore(storageRoot), nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -75,7 +86,7 @@ func TestPrepareBeforeModelCallDoesNotRequireRuntimeStorage(t *testing.T) {
 }
 
 func TestPrepareCountsToolResultsAndToolSchemasInFinalRequest(t *testing.T) {
-	manager := newTestManager(t, Config{AgentRunID: "run-count", ConfiguredAgentWindowK: 64, ModelContextWindow: 128_000, MaxOutputTokens: 8_000}, nil)
+	manager := newTestManager(t, Config{AgentRunID: "run-count", ModelContextWindow: 64_000, MaxOutputTokens: 8_000}, nil)
 	request := &adapter.ChatRequest{
 		Model: "gpt-5",
 		Messages: []adapter.Message{
@@ -99,12 +110,11 @@ func TestPrepareCountsToolResultsAndToolSchemasInFinalRequest(t *testing.T) {
 	}
 }
 
-func TestOversizedToolResultProjectionIsStableInMemory(t *testing.T) {
+func TestOversizedToolResultRemainsRawBelowContextThreshold(t *testing.T) {
 	store := NewFileStore(t.TempDir())
 	manager, err := New(Config{
 		AgentRunID:             "run-tool-projection",
-		ConfiguredAgentWindowK: 64,
-		ModelContextWindow:     128_000,
+		ModelContextWindow:     64_000,
 		MaxOutputTokens:        8_000,
 		MaxToolResultTokens:    100,
 		ToolResultPreviewRunes: 200,
@@ -121,23 +131,20 @@ func TestOversizedToolResultProjectionIsStableInMemory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if firstDecision.Action != DecisionToolProjection || firstDecision.ToolProjectionCount != 1 {
+	if firstDecision.Action != DecisionNone || firstDecision.ToolProjectionCount != 0 {
 		t.Fatalf("decision = %#v", firstDecision)
 	}
-	projected := contentString(first.Messages[2].Content)
-	for _, expected := range []string{`"status":"projected"`, `"artifact_ref":"agent-context://tool-results/`, `"original_tokens"`} {
-		if !strings.Contains(projected, expected) {
-			t.Fatalf("projection missing %q: %s", expected, projected)
-		}
+	if !strings.HasPrefix(contentString(first.Messages[2].Content), "large result row") {
+		t.Fatalf("oversized result was changed below threshold: %s", contentString(first.Messages[2].Content))
 	}
 	second, _, err := manager.PrepareBeforeModelCall(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if contentString(second.Messages[2].Content) != projected {
-		t.Fatalf("projection changed between requests:\nfirst=%s\nsecond=%s", projected, contentString(second.Messages[2].Content))
+	if contentString(second.Messages[2].Content) != contentString(first.Messages[2].Content) {
+		t.Fatalf("raw result changed between requests")
 	}
-	if state := manager.State(); len(state.ContentReplacements) != 1 {
+	if state := manager.State(); len(state.ContentReplacements) != 0 {
 		t.Fatalf("context replacements = %#v", state.ContentReplacements)
 	}
 }
@@ -146,8 +153,7 @@ func TestTurnTranscriptCapturesToolPairsAndTracksProjectedContent(t *testing.T) 
 	store := NewMemoryStore()
 	manager, err := New(Config{
 		AgentRunID:             "run-turn-transcript",
-		ConfiguredAgentWindowK: 64,
-		ModelContextWindow:     128_000,
+		ModelContextWindow:     64_000,
 		MaxOutputTokens:        8_000,
 		MaxToolResultTokens:    40,
 		ToolResultPreviewRunes: 120,
@@ -195,8 +201,8 @@ func TestTurnTranscriptCapturesToolPairsAndTracksProjectedContent(t *testing.T) 
 	if transcript[0].ToolCalls[0].Function.Arguments != projectedAssistant.ToolCalls[0].Function.Arguments {
 		t.Fatalf("projected assistant arguments were not synchronized: %#v", transcript[0].ToolCalls[0])
 	}
-	if !strings.Contains(contentString(transcript[1].Content), `"status":"projected"`) || !strings.Contains(contentString(transcript[1].Content), `"artifact_ref"`) {
-		t.Fatalf("projected tool content was not synchronized: %v", transcript[1].Content)
+	if !strings.HasPrefix(contentString(transcript[1].Content), "large search result") {
+		t.Fatalf("raw tool content was not synchronized: %v", transcript[1].Content)
 	}
 }
 
@@ -204,8 +210,7 @@ func TestProjectedToolResultMicrocompactPreservesOriginalArtifact(t *testing.T) 
 	store := NewFileStore(t.TempDir())
 	manager, err := New(Config{
 		AgentRunID:             "run-receipt",
-		ConfiguredAgentWindowK: 64,
-		ModelContextWindow:     128_000,
+		ModelContextWindow:     64_000,
 		MaxOutputTokens:        8_000,
 		MaxToolResultTokens:    10,
 		ToolResultPreviewRunes: 100,
@@ -236,10 +241,9 @@ func TestProjectedToolResultMicrocompactPreservesOriginalArtifact(t *testing.T) 
 func TestExpandedContextArtifactSkipsProjectionAndReusesOriginalArtifactDuringMicrocompact(t *testing.T) {
 	store := NewMemoryStore()
 	manager, err := New(Config{
-		AgentRunID:             "run-expanded-artifact",
-		ConfiguredAgentWindowK: 64,
-		ModelContextWindow:     128_000,
-		MaxToolResultTokens:    1,
+		AgentRunID:          "run-expanded-artifact",
+		ModelContextWindow:  64_000,
+		MaxToolResultTokens: 1,
 	}, nil, store, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -304,10 +308,9 @@ func TestExpandedContextArtifactSkipsProjectionAndReusesOriginalArtifactDuringMi
 func TestMicrocompactProtectsEntireLatestParallelToolBatch(t *testing.T) {
 	store := NewMemoryStore()
 	manager, err := New(Config{
-		AgentRunID:             "run-parallel-protection",
-		ConfiguredAgentWindowK: 64,
-		ModelContextWindow:     128_000,
-		MaxOutputTokens:        8_000,
+		AgentRunID:         "run-parallel-protection",
+		ModelContextWindow: 64_000,
+		MaxOutputTokens:    8_000,
 	}, nil, store, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -346,7 +349,7 @@ func TestMicrocompactProtectsEntireLatestParallelToolBatch(t *testing.T) {
 
 func TestMicrocompactProtectsAtLeastFourResultsWhenLatestBatchIsSmaller(t *testing.T) {
 	store := NewMemoryStore()
-	manager, err := New(Config{AgentRunID: "run-minimum-protection", ConfiguredAgentWindowK: 64, ModelContextWindow: 128_000}, nil, store, nil, nil)
+	manager, err := New(Config{AgentRunID: "run-minimum-protection", ModelContextWindow: 64_000}, nil, store, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -383,7 +386,7 @@ func TestMicrocompactProtectsAtLeastFourResultsWhenLatestBatchIsSmaller(t *testi
 
 func TestMicrocompactDoesNotProtectAnAlreadyConsumedParallelBatch(t *testing.T) {
 	store := NewMemoryStore()
-	manager, err := New(Config{AgentRunID: "run-consumed-batch", ConfiguredAgentWindowK: 64, ModelContextWindow: 128_000}, nil, store, nil, nil)
+	manager, err := New(Config{AgentRunID: "run-consumed-batch", ModelContextWindow: 64_000}, nil, store, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -416,14 +419,10 @@ func TestMicrocompactDoesNotProtectAnAlreadyConsumedParallelBatch(t *testing.T) 
 func TestHardLimitFairlyShrinksEveryPendingParallelToolPreview(t *testing.T) {
 	store := NewMemoryStore()
 	manager, err := New(Config{
-		AgentRunID:             "run-fair-pending-batch",
-		ConfiguredAgentWindowK: 20,
-		ModelContextWindow:     128_000,
-		MaxOutputTokens:        4_000,
-		SummaryOutputTokens:    4_000,
-		EmergencyBufferTokens:  3_000,
-		HysteresisTokens:       1_000,
-		MaxToolResultTokens:    100_000,
+		AgentRunID:          "run-fair-pending-batch",
+		ModelContextWindow:  20_000,
+		MaxOutputTokens:     4_000,
+		MaxToolResultTokens: 100_000,
 	}, nil, store, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -442,32 +441,9 @@ func TestHardLimitFairlyShrinksEveryPendingParallelToolPreview(t *testing.T) {
 		})
 	}
 
-	prepared, decision, err := manager.PrepareBeforeModelCall(context.Background(), &adapter.ChatRequest{Model: "gpt-5", Messages: messages})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if decision.FinalPromptTokens > decision.Budget.HardLimit {
-		t.Fatalf("final prompt = %d, hard limit = %d", decision.FinalPromptTokens, decision.Budget.HardLimit)
-	}
-	if decision.ToolProjectionCount != 6 {
-		t.Fatalf("projection count = %d, want 6", decision.ToolProjectionCount)
-	}
-	seen := 0
-	for _, message := range prepared.Messages {
-		if !strings.HasPrefix(message.ToolCallID, "parallel-") {
-			continue
-		}
-		receipt, ok := decodeToolResultReceipt(contentString(message.Content))
-		if !ok || !strings.EqualFold(fmt.Sprint(receipt["status"]), "projected") {
-			t.Fatalf("parallel result %s was not projected: %s", message.ToolCallID, contentString(message.Content))
-		}
-		if preview := strings.TrimSpace(fmt.Sprint(receipt["preview"])); preview == "" || preview == "<nil>" {
-			t.Fatalf("parallel result %s lost its preview: %s", message.ToolCallID, contentString(message.Content))
-		}
-		seen++
-	}
-	if seen != 6 {
-		t.Fatalf("projected pending results = %d, want 6", seen)
+	_, _, err = manager.PrepareBeforeModelCall(context.Background(), &adapter.ChatRequest{Model: "gpt-5", Messages: messages})
+	if err == nil {
+		t.Fatal("expected latest protected round to remain over the hard limit")
 	}
 }
 
@@ -486,7 +462,7 @@ func TestToolPairingRequiresEveryParallelCallResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	rounds := groupMessagesByAPIRound(messages)
-	if len(rounds) != 2 || len(rounds[1].Messages) != 4 {
+	if len(rounds) != 1 || len(rounds[0].Messages) != 5 {
 		t.Fatalf("parallel tool round grouping = %#v", rounds)
 	}
 }
@@ -502,7 +478,7 @@ func TestToolPairingRejectsToolCallWithoutID(t *testing.T) {
 }
 
 func TestAPIRoundAdvancesOnlyAfterModelResponse(t *testing.T) {
-	manager := newTestManager(t, Config{AgentRunID: "run-round-sequence", ConfiguredAgentWindowK: 64, ModelContextWindow: 128_000, MaxOutputTokens: 8_000}, nil)
+	manager := newTestManager(t, Config{AgentRunID: "run-round-sequence", ModelContextWindow: 64_000, MaxOutputTokens: 8_000}, nil)
 	request := &adapter.ChatRequest{Model: "gpt-5", Messages: []adapter.Message{{Role: "user", Content: "question"}}}
 
 	_, first, err := manager.PrepareBeforeModelCall(context.Background(), request)
@@ -539,11 +515,11 @@ func TestAPIRoundGroupingKeepsAbsoluteRunSequences(t *testing.T) {
 		{Role: "tool", ToolCallID: "b", Content: "b result"},
 	}
 	rounds := groupMessagesByAPIRoundForRun(messages, 3)
-	if len(rounds) != 4 {
+	if len(rounds) != 3 {
 		t.Fatalf("round count = %d", len(rounds))
 	}
-	if rounds[1].Sequence != 0 || rounds[2].Sequence != 1 || rounds[3].Sequence != 2 {
-		t.Fatalf("absolute sequences = %d, %d, %d", rounds[1].Sequence, rounds[2].Sequence, rounds[3].Sequence)
+	if rounds[0].Sequence != 0 || rounds[1].Sequence != 1 || rounds[2].Sequence != 2 {
+		t.Fatalf("absolute sequences = %d, %d, %d", rounds[0].Sequence, rounds[1].Sequence, rounds[2].Sequence)
 	}
 }
 
@@ -583,16 +559,36 @@ func TestSelectPreservedTailMessagesExpandsForCompleteToolBatch(t *testing.T) {
 	}
 }
 
+func TestSelectPreservedTailMessagesByRoundsKeepsCompleteRecentModelRounds(t *testing.T) {
+	messages := []adapter.Message{
+		{Role: "user", Content: "old question"},
+		{Role: "assistant", ToolCalls: []adapter.ToolCall{{ID: "old-call"}}},
+		{Role: "tool", ToolCallID: "old-call", Content: "old result"},
+		{Role: "user", Content: "middle question"},
+		{Role: "assistant", ToolCalls: []adapter.ToolCall{{ID: "middle-call"}}},
+		{Role: "tool", ToolCallID: "middle-call", Content: "middle result"},
+		{Role: "user", Content: "latest question"},
+		{Role: "assistant", Content: "latest answer"},
+	}
+	start := selectPreservedTailMessagesByRounds(messages, 2)
+	if start != 3 {
+		t.Fatalf("tail start = %d, want 3", start)
+	}
+	if err := validateToolPairing(messages[start:]); err != nil {
+		t.Fatalf("round-based tail split a tool batch: %v", err)
+	}
+	if got := contentString(messages[start].Content); got != "middle question" {
+		t.Fatalf("first preserved message = %q, want middle question", got)
+	}
+}
+
 func TestSemanticCompactionDefaultPreservesEightMessages(t *testing.T) {
 	compactor := &recordingCompactor{summary: `<summary>the oldest message is summarized</summary>`}
 	manager := newTestManager(t, Config{
-		AgentRunID:             "run-eight-message-tail",
-		ConfiguredAgentWindowK: 32,
-		ModelContextWindow:     128_000,
-		MaxOutputTokens:        4_000,
-		SummaryOutputTokens:    4_000,
-		EmergencyBufferTokens:  3_000,
-		HysteresisTokens:       1_000,
+		AgentRunID:         "run-eight-message-tail",
+		ModelContextWindow: 32_000,
+		MaxOutputTokens:    4_000,
+		TailMinMessages:    8,
 	}, compactor)
 	request := &adapter.ChatRequest{Model: "gpt-5", MaxTokens: intPointerForTest(2_000)}
 	for index := 0; index < 9; index++ {
@@ -603,8 +599,8 @@ func TestSemanticCompactionDefaultPreservesEightMessages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if estimate := manager.estimator.EstimateChatRequest(request).Tokens; estimate < budget.SoftLimit || estimate >= budget.HardLimit {
-		t.Fatalf("test request estimate = %d, want [%d,%d)", estimate, budget.SoftLimit, budget.HardLimit)
+	if estimate := manager.estimator.EstimateChatRequest(request).Tokens; estimate < budget.SoftLimit {
+		t.Fatalf("test request estimate = %d, want at least %d", estimate, budget.SoftLimit)
 	}
 	prepared, decision, err := manager.PrepareBeforeModelCall(context.Background(), request)
 	if err != nil {
@@ -625,15 +621,45 @@ func TestSemanticCompactionDefaultPreservesEightMessages(t *testing.T) {
 	}
 }
 
+func TestSemanticCompactionDefaultPreservesFourCompleteModelRounds(t *testing.T) {
+	compactor := &recordingCompactor{summary: `<summary>the oldest model rounds are summarized</summary>`}
+	manager := newTestManager(t, Config{
+		AgentRunID:         "run-four-round-tail",
+		ModelContextWindow: 64_000,
+		MaxOutputTokens:    8_000,
+	}, compactor)
+	request := &adapter.ChatRequest{Model: "gpt-5", MaxTokens: intPointerForTest(2_000), Messages: []adapter.Message{
+		{Role: "user", Content: strings.Repeat("old context ", 30_000)},
+		{Role: "assistant", Content: "old answer"},
+	}}
+	for index := 0; index < 5; index++ {
+		request.Messages = append(request.Messages,
+			adapter.Message{Role: "user", Content: fmt.Sprintf("question-%d", index)},
+			adapter.Message{Role: "assistant", Content: fmt.Sprintf("answer-%d", index)},
+		)
+	}
+
+	prepared, decision, err := manager.PrepareBeforeModelCall(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Action != DecisionSemanticCompact || len(compactor.requests) != 1 {
+		t.Fatalf("decision=%#v compact requests=%d", decision, len(compactor.requests))
+	}
+	content := messagesString(prepared.Messages)
+	if strings.Contains(content, "question-0") || !strings.Contains(content, "question-1") || !strings.Contains(content, "question-4") {
+		t.Fatalf("default four-round tail was not preserved: %s", content)
+	}
+	if decision.FinalPromptTokens >= decision.Budget.PromptBudget {
+		t.Fatalf("compacted prompt = %d, want below %d", decision.FinalPromptTokens, decision.Budget.PromptBudget)
+	}
+}
+
 func TestHardLimitReturnsContextExhaustedAndKeepsInMemoryState(t *testing.T) {
 	manager, err := New(Config{
-		AgentRunID:             "run-hard-limit",
-		ConfiguredAgentWindowK: 32,
-		ModelContextWindow:     128_000,
-		MaxOutputTokens:        4_000,
-		SummaryOutputTokens:    4_000,
-		EmergencyBufferTokens:  3_000,
-		HysteresisTokens:       1_000,
+		AgentRunID:         "run-hard-limit",
+		ModelContextWindow: 32_000,
+		MaxOutputTokens:    4_000,
 	}, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -651,19 +677,14 @@ func TestHardLimitReturnsContextExhaustedAndKeepsInMemoryState(t *testing.T) {
 	}
 }
 
-func TestHardLimitForcesFinalRecoveryAfterProactiveCompactionCircuitBreaker(t *testing.T) {
+func TestContextCompactionAlwaysUsesTheSimpleProactivePath(t *testing.T) {
 	compactor := &recordingCompactor{summary: `<summary>Earlier work is preserved in a compact form.</summary>`}
 	manager := newTestManager(t, Config{
-		AgentRunID:             "run-final-recovery",
-		ConfiguredAgentWindowK: 32,
-		ModelContextWindow:     128_000,
-		MaxOutputTokens:        4_000,
-		SummaryOutputTokens:    4_000,
-		EmergencyBufferTokens:  3_000,
-		HysteresisTokens:       1_000,
-		TailMinMessages:        2,
+		AgentRunID:         "run-final-recovery",
+		ModelContextWindow: 32_000,
+		MaxOutputTokens:    4_000,
+		TailMinMessages:    2,
 	}, compactor)
-	manager.state.Compaction.ConsecutiveFailures = maxConsecutiveCompactionFailures
 	request := &adapter.ChatRequest{
 		Model:     "test-model",
 		MaxTokens: intPointerForTest(2_000),
@@ -685,11 +706,11 @@ func TestHardLimitForcesFinalRecoveryAfterProactiveCompactionCircuitBreaker(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decision.Action != DecisionReactiveCompact || decision.FinalPromptTokens > decision.Budget.HardLimit {
-		t.Fatalf("final recovery decision = %#v", decision)
+	if decision.Action != DecisionSemanticCompact || decision.FinalPromptTokens > decision.Budget.HardLimit {
+		t.Fatalf("semantic compaction decision = %#v", decision)
 	}
-	if len(compactor.calls) != 1 || compactor.calls[0].Type != RequestTypeReactiveCompact {
-		t.Fatalf("compact calls = %#v, want one reactive compact", compactor.calls)
+	if len(compactor.calls) != 1 || compactor.calls[0].Type != RequestTypeCompact {
+		t.Fatalf("compact calls = %#v, want one compact call", compactor.calls)
 	}
 	if manager.State().Compaction.ConsecutiveFailures != 0 {
 		t.Fatalf("failure count was not reset: %#v", manager.State().Compaction)
@@ -699,19 +720,14 @@ func TestHardLimitForcesFinalRecoveryAfterProactiveCompactionCircuitBreaker(t *t
 	}
 }
 
-func TestHardLimitStopsAfterFinalRecoveryFails(t *testing.T) {
+func TestContextCompactionFailureReturnsContextExhausted(t *testing.T) {
 	compactor := &recordingCompactor{failures: []error{errors.New("summary provider unavailable")}}
 	manager := newTestManager(t, Config{
-		AgentRunID:             "run-final-recovery-failed",
-		ConfiguredAgentWindowK: 32,
-		ModelContextWindow:     128_000,
-		MaxOutputTokens:        4_000,
-		SummaryOutputTokens:    4_000,
-		EmergencyBufferTokens:  3_000,
-		HysteresisTokens:       1_000,
-		TailMinMessages:        2,
+		AgentRunID:         "run-final-recovery-failed",
+		ModelContextWindow: 32_000,
+		MaxOutputTokens:    4_000,
+		TailMinMessages:    2,
 	}, compactor)
-	manager.state.Compaction.ConsecutiveFailures = maxConsecutiveCompactionFailures
 	request := &adapter.ChatRequest{
 		Model:     "test-model",
 		MaxTokens: intPointerForTest(2_000),
@@ -723,29 +739,25 @@ func TestHardLimitStopsAfterFinalRecoveryFails(t *testing.T) {
 	}
 
 	_, decision, err := manager.PrepareBeforeModelCall(context.Background(), request)
-	if !errors.Is(err, ErrContextExhausted) || !strings.Contains(err.Error(), "final recovery compaction failed") {
-		t.Fatalf("error = %v, want failed final recovery context exhaustion", err)
+	if !errors.Is(err, ErrContextExhausted) || !strings.Contains(err.Error(), "context compaction failed") {
+		t.Fatalf("error = %v, want failed context compaction exhaustion", err)
 	}
 	if decision.CompactionFailure != "summary provider unavailable" {
 		t.Fatalf("decision = %#v", decision)
 	}
-	if len(compactor.calls) != 1 || compactor.calls[0].Type != RequestTypeReactiveCompact {
-		t.Fatalf("compact calls = %#v, want one reactive compact", compactor.calls)
+	if len(compactor.calls) != 1 || compactor.calls[0].Type != RequestTypeCompact {
+		t.Fatalf("compact calls = %#v, want one compact call", compactor.calls)
 	}
 }
 
 func TestLongAgentRunSurvivesOneHundredToolRoundsAndRepeatedCompaction(t *testing.T) {
 	compactor := &recordingCompactor{summary: `<summary>The earlier API rounds completed successfully. Preserve the current task constraints and continue from the verbatim recent rounds.</summary>`}
 	manager := newTestManager(t, Config{
-		AgentRunID:             "run-one-hundred-rounds",
-		ConfiguredAgentWindowK: 32,
-		ModelContextWindow:     128_000,
-		MaxInputTokens:         128_000,
-		MaxOutputTokens:        4_000,
-		SummaryOutputTokens:    4_000,
-		EmergencyBufferTokens:  3_000,
-		HysteresisTokens:       1_000,
-		TailMinMessages:        2,
+		AgentRunID:         "run-one-hundred-rounds",
+		ModelContextWindow: 32_000,
+		MaxInputTokens:     128_000,
+		MaxOutputTokens:    4_000,
+		TailMinMessages:    2,
 	}, compactor)
 	messages := []adapter.Message{{Role: "user", Content: "complete a long Agent task"}}
 	for round := 1; round <= 100; round++ {
@@ -796,16 +808,11 @@ continue the long task
 9. Context for Continuing Work:
 the recent tool rounds remain authoritative</summary>`}
 	manager := newTestManager(t, Config{
-		AgentRunID:             "run-compact",
-		ConfiguredAgentWindowK: 32,
-		ModelContextWindow:     128_000,
-		MaxInputTokens:         128_000,
-		MaxOutputTokens:        4_000,
-		SummaryOutputTokens:    4_000,
-		EmergencyBufferTokens:  3_000,
-		HysteresisTokens:       1_000,
-		TargetRatio:            0.60,
-		TailMinMessages:        4,
+		AgentRunID:         "run-compact",
+		ModelContextWindow: 32_000,
+		MaxInputTokens:     128_000,
+		MaxOutputTokens:    4_000,
+		TailMinMessages:    4,
 	}, compactor)
 	longHistory := strings.Repeat("historical requirement number 12345 with implementation detail. ", 2600)
 	request := &adapter.ChatRequest{Model: "gpt-5", MaxTokens: intPointerForTest(2_000), Messages: []adapter.Message{
@@ -854,19 +861,14 @@ func TestSemanticCompactionRetriesPromptTooLongByDroppingOldestMessageBatch(t *t
 		failures: []error{errors.New("context_length_exceeded")},
 	}
 	manager := newTestManager(t, Config{
-		AgentRunID:             "run-compact-retry",
-		ConfiguredAgentWindowK: 32,
-		ModelContextWindow:     128_000,
-		MaxInputTokens:         128_000,
-		MaxOutputTokens:        4_000,
-		SummaryOutputTokens:    4_000,
-		EmergencyBufferTokens:  3_000,
-		HysteresisTokens:       1_000,
-		TargetRatio:            0.60,
-		TailMinMessages:        1,
+		AgentRunID:         "run-compact-retry",
+		ModelContextWindow: 32_000,
+		MaxInputTokens:     128_000,
+		MaxOutputTokens:    4_000,
+		TailMinMessages:    1,
 	}, compactor)
 	request := &adapter.ChatRequest{Model: "gpt-5", MaxTokens: intPointerForTest(2_000), Messages: []adapter.Message{
-		{Role: "user", Content: strings.Repeat("old bootstrap requirement ", 6500)},
+		{Role: "user", Content: strings.Repeat("old bootstrap requirement ", 7000)},
 		{Role: "assistant", ToolCalls: []adapter.ToolCall{{ID: "call-1", Function: adapter.FunctionCall{Name: "read_file"}}}},
 		{Role: "tool", ToolCallID: "call-1", Content: strings.Repeat("old file result ", 300)},
 		{Role: "assistant", ToolCalls: []adapter.ToolCall{{ID: "call-2", Function: adapter.FunctionCall{Name: "search"}}}},
@@ -908,14 +910,10 @@ func (c *recordingCompactor) Compact(_ context.Context, request *adapter.ChatReq
 func TestSemanticCompactReportsTheEntryBoundaryItSummarized(t *testing.T) {
 	compactor := &recordingCompactor{summary: `<summary>The earlier rounds are summarized.</summary>`}
 	manager := newTestManager(t, Config{
-		AgentRunID:             "run-entry-boundary",
-		ConfiguredAgentWindowK: 64,
-		ModelContextWindow:     128_000,
-		MaxOutputTokens:        8_000,
-		SummaryOutputTokens:    4_000,
-		EmergencyBufferTokens:  25_000,
-		HysteresisTokens:       1_000,
-		TailMinMessages:        3,
+		AgentRunID:         "run-entry-boundary",
+		ModelContextWindow: 64_000,
+		MaxOutputTokens:    8_000,
+		TailMinMessages:    3,
 	}, compactor)
 	// Replayed history carries its conversation position; the current question is
 	// not an entry yet.
@@ -966,9 +964,6 @@ func growRequestToSoftLimit(t *testing.T, manager *Manager, request *adapter.Cha
 	for step := 0; step < 400; step++ {
 		estimate := manager.estimator.EstimateChatRequest(request).Tokens
 		if estimate >= budget.SoftLimit {
-			if estimate >= budget.HardLimit {
-				t.Fatalf("request estimate %d reached the hard limit %d", estimate, budget.HardLimit)
-			}
 			return
 		}
 		message := &request.Messages[messageIndex]
@@ -990,7 +985,7 @@ func TestCheckpointPersistsBeforeEveryModelCallAndAfterEveryResponse(t *testing.
 	ctx := context.Background()
 	var snapshots [][]adapter.Message
 	var manager *Manager
-	manager, err := New(Config{AgentRunID: "checkpoint-run", ConfiguredAgentWindowK: 64, ModelContextWindow: 128_000}, nil, nil, nil,
+	manager, err := New(Config{AgentRunID: "checkpoint-run", ModelContextWindow: 64_000}, nil, nil, nil,
 		func(ctx context.Context, transcript []adapter.Message) {
 			// Reading the manager from inside a checkpoint must not deadlock: the
 			// transcript is handed over instead of being re-read under the lock.

@@ -65,7 +65,6 @@ type Config struct {
 
 type ChatRuntimeConfig struct {
 	ModelIdleTimeoutSeconds  int  `json:"model_idle_timeout_seconds"`
-	AgentContextWindowK      int  `json:"agent_context_window_k"`
 	ContextPromptDumpEnabled bool `json:"context_prompt_dump_enabled"`
 }
 
