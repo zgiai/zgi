@@ -107,7 +107,18 @@ func (s *RuntimeService) ContinueTaskTokenBudget(
 	}
 	result, err := continuationRuntime.RunConfiguredTaskTokenBudgetContinuationStream(ctx, runtimeScope, caller, config, conversationID, messageID, strings.TrimSpace(requestID), request, onEvent)
 	if err != nil {
-		if action == "add" {
+		if action == "add" && waitingForBudget {
+			if runtimeservice.IsTaskTokenBudgetPreparationError(err) {
+				if waiter, ok := s.store.(runWaitingStore); ok {
+					if restoreErr := waiter.MarkRunWaiting(context.WithoutCancel(ctx), run.ID, runtimemodel.MessageStatusWaitingBudget, s.now()); restoreErr != nil {
+						return nil, errors.Join(err, restoreErr)
+					}
+				}
+				return nil, err
+			}
+			if runtimeservice.IsContinuationAlreadyRunningError(err) {
+				return nil, err
+			}
 			_ = s.store.FailRun(context.WithoutCancel(ctx), run.ID, "digital_human.run.execution_failed", "The DigitalHuman continuation failed.", s.now())
 		}
 		return nil, err

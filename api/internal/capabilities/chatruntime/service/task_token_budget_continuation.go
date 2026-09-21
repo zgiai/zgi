@@ -159,11 +159,11 @@ func (s *service) addTaskTokenBudget(
 	// leaving the durable message stuck in `streaming`.
 	prepared, err := s.prepareTaskTokenBudgetContinuationChat(ctx, scope, caller, config, conversation, message, req)
 	if err != nil {
-		return nil, err
+		return nil, newTaskTokenBudgetPreparationError(err)
 	}
 	prepared.taskTokenBudget = budget
 	if s.repos.DB == nil {
-		return nil, fmt.Errorf("%w: chat runtime database is unavailable", ErrInvalidInput)
+		return nil, newTaskTokenBudgetPreparationError(fmt.Errorf("%w: chat runtime database is unavailable", ErrInvalidInput))
 	}
 	err = s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		result := tx.Model(&runtimemodel.Message{}).
@@ -178,6 +178,12 @@ func (s *service) addTaskTokenBudget(
 		return repository.NewRepositories(tx).Conversation.StartStreaming(ctx, conversation.ID, scope.OrganizationID, scope.AccountID, message.ID)
 	})
 	if err != nil {
+		if IsContinuationAlreadyRunningError(err) {
+			if streamErr := s.StreamConversationEventsForCaller(ctx, scope, caller, conversationID, messageID, "", onEvent); streamErr != nil {
+				return nil, streamErr
+			}
+			return &ChatResult{Status: runtimemodel.MessageStatusStreaming}, nil
+		}
 		return nil, mapRepoError(err)
 	}
 	message.Status = runtimemodel.MessageStatusStreaming
@@ -241,6 +247,9 @@ func (s *service) prepareTaskTokenBudgetContinuationChat(
 	parts.ContextControl = contextResult.Metadata
 	llmRequest := newLLMChatRequest(parts, contextResult.Messages)
 	s.appendPersistedAgentTranscript(ctx, llmRequest, message)
+	if answer := strings.TrimSpace(message.Answer); answer != "" {
+		llmRequest.Messages = append(llmRequest.Messages, adapter.Message{Role: "assistant", Content: answer})
+	}
 	if stateMessage := currentTurnAuthoritativeStateMessage(message); stateMessage != nil {
 		llmRequest.Messages = append(llmRequest.Messages, *stateMessage)
 	}

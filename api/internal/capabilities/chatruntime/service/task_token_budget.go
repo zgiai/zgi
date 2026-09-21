@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -28,6 +29,38 @@ type taskTokenBudgetState struct {
 type TaskTokenBudgetExceededError struct {
 	UsedTokens int
 	MaxTokens  int
+}
+
+type taskTokenBudgetPreparationError struct {
+	cause error
+}
+
+func (e *taskTokenBudgetPreparationError) Error() string {
+	if e == nil || e.cause == nil {
+		return "task token budget continuation preparation failed"
+	}
+	return e.cause.Error()
+}
+
+func (e *taskTokenBudgetPreparationError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
+}
+
+func newTaskTokenBudgetPreparationError(cause error) error {
+	if cause == nil {
+		return nil
+	}
+	return &taskTokenBudgetPreparationError{cause: cause}
+}
+
+// IsTaskTokenBudgetPreparationError identifies failures that happened before
+// the continuation claimed the durable waiting message.
+func IsTaskTokenBudgetPreparationError(err error) bool {
+	var target *taskTokenBudgetPreparationError
+	return errors.As(err, &target)
 }
 
 func (e *TaskTokenBudgetExceededError) Error() string {

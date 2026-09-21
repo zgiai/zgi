@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -127,5 +128,16 @@ func TestTaskTokenBudgetMessageEndPayloadPreservesPartialAnswer(t *testing.T) {
 	}
 	if payload["answer"] != answer {
 		t.Fatalf("answer = %#v, want %q", payload["answer"], answer)
+	}
+}
+
+func TestTaskTokenBudgetPreparationErrorIsDistinguishable(t *testing.T) {
+	cause := errors.New("model configuration is invalid")
+	err := newTaskTokenBudgetPreparationError(cause)
+	if !IsTaskTokenBudgetPreparationError(err) {
+		t.Fatal("preparation error was not recognized")
+	}
+	if !errors.Is(err, cause) {
+		t.Fatalf("preparation error does not unwrap cause: %v", err)
 	}
 }
