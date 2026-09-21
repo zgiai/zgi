@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/infra/platform/consoleauth"
 	pb "github.com/zgiai/zgi/api/pkg/rpc/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -25,6 +26,7 @@ type OfficialCreditChecker interface {
 
 type consoleOfficialCreditChecker struct {
 	grpcAddr       string
+	apiKey         string
 	dialTimeout    time.Duration
 	requestTimeout time.Duration
 }
@@ -33,6 +35,7 @@ type consoleOfficialCreditChecker struct {
 func NewConsoleOfficialCreditChecker() OfficialCreditChecker {
 	return &consoleOfficialCreditChecker{
 		grpcAddr:       resolveConsoleGRPCAddr(),
+		apiKey:         resolveConsoleDownstreamAPIKey(),
 		dialTimeout:    defaultConsoleGRPCDialTimeout,
 		requestTimeout: defaultConsoleGRPCRequestTimeout,
 	}
@@ -46,12 +49,14 @@ func (c *consoleOfficialCreditChecker) GetOfficialBalance(ctx context.Context, o
 	dialCtx, cancelDial := context.WithTimeout(ctx, c.dialTimeout)
 	defer cancelDial()
 
-	conn, err := grpc.DialContext(
-		dialCtx,
-		c.grpcAddr,
+	dialOptions := []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithBlock(),
-	)
+	}
+	if key := strings.TrimSpace(c.apiKey); key != "" {
+		dialOptions = append(dialOptions, grpc.WithPerRPCCredentials(consoleauth.Credentials{Token: key}))
+	}
+	conn, err := grpc.DialContext(dialCtx, c.grpcAddr, dialOptions...)
 	if err != nil {
 		return 0, fmt.Errorf("%w: dial console grpc failed: %v", ErrOfficialCreditUnavailable, err)
 	}
@@ -82,4 +87,8 @@ func (c *consoleOfficialCreditChecker) GetOfficialBalance(ctx context.Context, o
 
 func resolveConsoleGRPCAddr() string {
 	return strings.TrimSpace(config.Current().Console.GRPCAddr)
+}
+
+func resolveConsoleDownstreamAPIKey() string {
+	return strings.TrimSpace(config.Current().Console.DownstreamAPIKey)
 }

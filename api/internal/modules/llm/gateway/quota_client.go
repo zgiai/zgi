@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/shopspring/decimal"
+	appconfig "github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/infra/platform/consoleauth"
 	"github.com/zgiai/zgi/api/internal/observability"
 	pb "github.com/zgiai/zgi/api/pkg/rpc/v1"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
@@ -29,6 +31,11 @@ func NewQuotaClient(address string) (*QuotaClient, error) {
 	dialOptions := []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithBlock(),
+	}
+	if cfg := appconfig.Current(); cfg != nil {
+		if key := strings.TrimSpace(cfg.Console.DownstreamAPIKey); key != "" {
+			dialOptions = append(dialOptions, grpc.WithPerRPCCredentials(consoleauth.Credentials{Token: key}))
+		}
 	}
 	dialOptions = append(dialOptions, observability.GRPCDialOptions()...)
 	conn, err := grpc.DialContext(ctx, address, dialOptions...)

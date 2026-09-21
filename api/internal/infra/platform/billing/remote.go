@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/zgiai/zgi/api/internal/infra/platform/consoleauth"
 	"github.com/zgiai/zgi/api/internal/observability"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	pb "github.com/zgiai/zgi/api/pkg/rpc/v1"
@@ -26,7 +27,7 @@ type Remote struct {
 func NewRemote(addr, apiKey string) (*Remote, error) {
 	dialOptions := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
 	if token := strings.TrimSpace(apiKey); token != "" {
-		dialOptions = append(dialOptions, grpc.WithPerRPCCredentials(consoleAPICredentials{token: token}))
+		dialOptions = append(dialOptions, grpc.WithPerRPCCredentials(consoleauth.Credentials{Token: token}))
 	}
 	dialOptions = append(dialOptions, observability.GRPCDialOptions()...)
 	conn, err := grpc.Dial(addr, dialOptions...)
@@ -39,18 +40,6 @@ func NewRemote(addr, apiKey string) (*Remote, error) {
 		fallback: false,
 	}, nil
 }
-
-// consoleAPICredentials attaches the Console-issued downstream API key to every
-// billing RPC as "authorization: Bearer <key>". Console validates it server-side.
-type consoleAPICredentials struct {
-	token string
-}
-
-func (c consoleAPICredentials) GetRequestMetadata(context.Context, ...string) (map[string]string, error) {
-	return map[string]string{"authorization": "Bearer " + c.token}, nil
-}
-
-func (c consoleAPICredentials) RequireTransportSecurity() bool { return false }
 
 // SetFallbackBehavior controls what happens when gRPC is unavailable.
 // If true, requests are allowed; if false, requests are rejected.
