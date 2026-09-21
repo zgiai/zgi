@@ -11,6 +11,7 @@ const (
 	MessageStatusStreaming           = "streaming"
 	MessageStatusWaitingApproval     = "waiting_approval"
 	MessageStatusWaitingQuestion     = "waiting_question"
+	MessageStatusWaitingBudget       = "waiting_budget"
 	MessageStatusWaitingClientAction = "waiting_client_action"
 	MessageStatusCompleted           = "completed"
 	MessageStatusError               = "error"

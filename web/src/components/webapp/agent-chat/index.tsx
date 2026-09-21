@@ -28,9 +28,7 @@ import {
 } from '@/components/chat/runtime/conversation-route-handoff';
 import { transcribeAgentWebAppVoice } from '@/services/voice-transcription.service';
 import { generateAgentWebAppSpeech } from '@/services/voice-speech.service';
-// End-user memory management is intentionally hidden for the initial release.
-// Keep the component and APIs in place so the entry can be restored later.
-// import { AgentMemoryManager } from './agent-memory-manager';
+import { AgentMemoryManager } from './agent-memory-manager';
 
 interface AgentWebappChatProps {
   webAppId: string;
@@ -291,12 +289,9 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
       voiceTranscriber={voiceInputEnabled ? handleVoiceTranscription : undefined}
       speechSynthesizer={speechEnabled ? handleSpeechSynthesis : undefined}
       headerRightAction={
-        /* End-user memory management is not exposed yet. Restore when the feature is reopened:
         isAuthenticated ? (
           <AgentMemoryManager webAppId={webAppId} memoryEnabled={memoryEnabled} />
         ) : undefined
-        */
-        undefined
       }
     />
   );

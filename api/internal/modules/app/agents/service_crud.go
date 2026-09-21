@@ -908,6 +908,7 @@ func (s *agentsService) DeleteAgent(ctx context.Context, agentID string) error {
 	accountID := authorization.AccountID
 	workspaceID := authorization.WorkspaceID
 	groupID := authorization.GroupID
+	isWorkflowAgent := agent.AgentsType == "WORKFLOW" || agent.AgentsType == "CONVERSATIONAL_WORKFLOW"
 
 	var lifecycleBindingRef *agentbindings.ResourceRef
 	actorUUID, actorErr := uuid.Parse(accountID)
@@ -933,10 +934,29 @@ func (s *agentsService) DeleteAgent(ctx context.Context, agentID string) error {
 	var affectedAgentIDs []uuid.UUID
 	// Step 2: Perform soft delete and record usage in transaction
 	err = s.db.Transaction(func(tx *gorm.DB) error {
+		if isWorkflowAgent {
+			if groupID == nil {
+				return fmt.Errorf("Workflow connector deletion organization is unavailable")
+			}
+			workspaceUUID, parseErr := uuid.Parse(strings.TrimSpace(workspaceID))
+			if parseErr != nil || workspaceUUID == uuid.Nil {
+				return fmt.Errorf("Workflow connector deletion workspace is invalid")
+			}
+			if revokeErr := s.revokeAgentWorkflowConnectorLineage(
+				ctx, tx, *groupID, workspaceUUID, agent.ID,
+			); revokeErr != nil {
+				return revokeErr
+			}
+		}
 		if lifecycleBindingRef != nil {
 			txBindings := s.agentBindings.WithTx(tx)
 			if lockErr := txBindings.LockResources(ctx, tx, []agentbindings.ResourceRef{*lifecycleBindingRef}); lockErr != nil {
 				return lockErr
+			}
+		}
+		if s.agentBindings != nil {
+			if revokeErr := s.agentBindings.WithTx(tx).RevokeAgentConsumers(ctx, tx, agent.ID); revokeErr != nil {
+				return revokeErr
 			}
 		}
 

@@ -81,7 +81,10 @@ import type { AIChatVoiceTranscriber } from '@/components/chat/variants/aichat/v
 import { useAgentVoiceInput } from '@/components/chat/variants/aichat/voice/use-agent-voice-input';
 import { getVoiceInputErrorKey } from '@/components/chat/variants/aichat/voice/voice-input-errors';
 
-export type AIChatUploadScope = { type: 'console' } | { type: 'webapp'; webAppId: string };
+export type AIChatUploadScope =
+  | { type: 'console' }
+  | { type: 'webapp'; webAppId: string }
+  | { type: 'digital-human-webapp'; webAppId: string };
 
 const FileSelectorDialog = dynamic(() => import('@/components/files/file-selector-dialog'), {
   ssr: false,
@@ -205,6 +208,8 @@ interface AIChatInputAreaProps {
   isModelInitializing?: boolean;
   modelMissing: boolean;
   isSending: boolean;
+  allowRuntimeInput?: boolean;
+  runtimeInputQueueFull?: boolean;
   disabled?: boolean;
   canStop?: boolean;
   isStopping: boolean;
@@ -238,7 +243,10 @@ interface AIChatInputAreaProps {
   connectedAppsLabel?: string;
   connectedAppsSelectedCount?: number;
   connectedAppsAttentionRequired?: boolean;
-  onOpenConnectedApps?: () => void;
+  connectedAppsDisabled?: boolean;
+  connectedAppsOpen?: boolean;
+  connectedAppsPopup?: 'menu' | 'dialog';
+  onOpenConnectedApps?: (anchorElement: HTMLElement) => void;
   showSkillManagement?: boolean;
   skillManagementLabel?: string;
   onOpenSkillManagement?: () => void;
@@ -307,6 +315,8 @@ export function AIChatInputArea({
   isModelInitializing = false,
   modelMissing,
   isSending,
+  allowRuntimeInput = false,
+  runtimeInputQueueFull = false,
   disabled = false,
   canStop,
   isStopping,
@@ -333,6 +343,9 @@ export function AIChatInputArea({
   connectedAppsLabel,
   connectedAppsSelectedCount = 0,
   connectedAppsAttentionRequired = false,
+  connectedAppsDisabled = false,
+  connectedAppsOpen = false,
+  connectedAppsPopup = 'dialog',
   onOpenConnectedApps,
   showSkillManagement = false,
   skillManagementLabel,
@@ -391,8 +404,8 @@ export function AIChatInputArea({
     activeWorkflowApprovalRequest?.approvalToken,
     Boolean(
       canSubmitWorkflowApprovalInline &&
-        activeWorkflowApprovalRequest?.approvalToken &&
-        !activeApprovalForm
+      activeWorkflowApprovalRequest?.approvalToken &&
+      !activeApprovalForm
     )
   );
   const approvalForm = activeApprovalForm ?? approvalFormQuery.data ?? null;
@@ -460,7 +473,7 @@ export function AIChatInputArea({
 
   const { data: uploadConfig } = useUploadConfig({
     enabled: enableUpload,
-    scope: uploadScope.type === 'webapp' ? uploadScope : undefined,
+    scope: uploadScope.type === 'console' ? undefined : uploadScope,
   });
   const currentWorkspace = useCurrentWorkspace();
   const allowedExtensions = useMemo(
@@ -514,6 +527,7 @@ export function AIChatInputArea({
     !isModelInitializing &&
     !isPreparingSend &&
     !isUploading &&
+    !(isSending && runtimeInputQueueFull) &&
     !hasUploadError &&
     !disabled;
   const interactionDisabled = disabled || isSending;
@@ -772,11 +786,15 @@ export function AIChatInputArea({
         const response =
           uploadScope.type === 'webapp'
             ? await uploadService.uploadWebAppSingle(uploadScope.webAppId, file, { onProgress })
-            : await uploadService.uploadSingle(file, {
-                is_temporary: true,
-                workspace_id: currentWorkspace?.id,
-                onProgress,
-              });
+            : uploadScope.type === 'digital-human-webapp'
+              ? await uploadService.uploadDigitalHumanWebAppSingle(uploadScope.webAppId, file, {
+                  onProgress,
+                })
+              : await uploadService.uploadSingle(file, {
+                  is_temporary: true,
+                  workspace_id: currentWorkspace?.id,
+                  onProgress,
+                });
         const uploadedFile = toAIChatMessageFile(response, kind);
         setAttachments(current =>
           current.map(attachment =>
@@ -1066,6 +1084,48 @@ export function AIChatInputArea({
     [onInputChange]
   );
 
+  const handleComposerKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLTextAreaElement>) => {
+      if (event.key === 'Escape' && (canStop ?? isSending) && !input.trim()) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!isStopping) onStop();
+        return;
+      }
+      if (event.key !== 'Enter' || event.shiftKey) return;
+      if (shouldIgnoreCompositionEnter(event)) return;
+      if (
+        disabled ||
+        (isSending && !allowRuntimeInput) ||
+        isPreparingSend ||
+        isModelInitializing ||
+        isUploading ||
+        hasUploadError ||
+        voiceInputBusy
+      ) {
+        return;
+      }
+      event.preventDefault();
+      void handleSend();
+    },
+    [
+      allowRuntimeInput,
+      canStop,
+      disabled,
+      handleSend,
+      hasUploadError,
+      input,
+      isModelInitializing,
+      isPreparingSend,
+      isSending,
+      isStopping,
+      isUploading,
+      onStop,
+      shouldIgnoreCompositionEnter,
+      voiceInputBusy,
+    ]
+  );
+
   const adjustComposerTextareaHeight = useCallback(() => {
     const isOverflowing = resizeComposerTextarea(
       textareaRef.current,
@@ -1244,9 +1304,11 @@ export function AIChatInputArea({
               ? 'max-w-full'
               : surface === 'agent-draft'
                 ? 'max-w-[560px]'
-                : isHome && !isLoadingMessages
-                  ? 'max-w-3xl'
-                  : 'max-w-4xl'
+                : surface === 'digital-human' && isHome && !isLoadingMessages
+                  ? 'max-w-3xl xl:max-w-4xl 2xl:max-w-5xl'
+                  : isHome && !isLoadingMessages
+                    ? 'max-w-3xl'
+                    : 'max-w-4xl'
           )}
         >
           {modelMissing && !hasBlockingApproval && !hasActiveUserInputRequest ? (
@@ -1430,24 +1492,13 @@ export function AIChatInputArea({
                     onPaste={handlePaste}
                     onCompositionStart={handleCompositionStart}
                     onCompositionEnd={handleCompositionEnd}
-                    onKeyDown={event => {
-                      if (event.key === 'Enter' && !event.shiftKey) {
-                        if (shouldIgnoreCompositionEnter(event)) return;
-                        if (
-                          interactionDisabled ||
-                          isPreparingSend ||
-                          isModelInitializing ||
-                          isUploading ||
-                          hasUploadError ||
-                          voiceInputBusy
-                        ) {
-                          return;
-                        }
-                        event.preventDefault();
-                        void handleSend();
-                      }
-                    }}
-                    placeholder={inputPlaceholder || t('chat.enterCommand')}
+                    onKeyDown={handleComposerKeyDown}
+                    aria-keyshortcuts="Enter Shift+Enter Escape"
+                    placeholder={
+                      isSending && allowRuntimeInput
+                        ? t('consoleChat.runtimeInput.placeholder')
+                        : inputPlaceholder || t('chat.enterCommand')
+                    }
                     className={cn(
                       'min-h-12 resize-none overflow-y-hidden border-0 bg-transparent py-2 pl-3 pr-4 text-sm shadow-none focus-visible:ring-0',
                       '[scrollbar-width:thin] [scrollbar-color:rgba(113,113,122,0.45)_transparent]',
@@ -1496,6 +1547,9 @@ export function AIChatInputArea({
                 modelCapabilityFilter={modelCapabilityFilter}
                 hasImageAttachment={hasImageAttachment}
                 isSending={interactionDisabled}
+                allowRuntimeInput={allowRuntimeInput && !disabled}
+                hasInput={Boolean(input.trim())}
+                runtimeInputQueueFull={runtimeInputQueueFull}
                 canStop={canStop}
                 isUploading={isUploading || isPreparingSend}
                 isStopping={isStopping}
@@ -1523,6 +1577,9 @@ export function AIChatInputArea({
                 connectedAppsLabel={connectedAppsLabel}
                 connectedAppsSelectedCount={connectedAppsSelectedCount}
                 connectedAppsAttentionRequired={connectedAppsAttentionRequired}
+                connectedAppsDisabled={connectedAppsDisabled}
+                connectedAppsOpen={connectedAppsOpen}
+                connectedAppsPopup={connectedAppsPopup}
                 showSkillManagement={showSkillManagement}
                 skillManagementLabel={skillManagementLabel}
                 surface={surface}

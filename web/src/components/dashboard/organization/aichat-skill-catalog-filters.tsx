@@ -22,7 +22,7 @@ export type SkillScenarioFilter = 'all' | SkillScenario;
 export type SkillCapabilityFilter = 'all' | SkillCapabilityCategory;
 export type SkillSourceFilter = 'all' | AIChatSkillSource;
 export type SkillStatusFilter = 'all' | 'enabled' | 'disabled' | 'invalid';
-export type SkillDependencyFilter = 'all' | 'standalone' | 'external_integration';
+export type SkillDependencyFilter = 'all' | 'standalone' | 'connector';
 
 interface AIChatSkillCatalogFiltersProps {
   locale: string;
@@ -169,7 +169,7 @@ export function AIChatSkillCatalogFilters({
           <SelectItem value="standalone">
             {t('organization.aichatSkills.dependency.standalone')}
           </SelectItem>
-          <SelectItem value="external_integration">
+          <SelectItem value="connector">
             {t('organization.aichatSkills.dependency.external')}
           </SelectItem>
         </SelectContent>

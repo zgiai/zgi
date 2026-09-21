@@ -376,6 +376,7 @@ export interface ConversationVariableDraftItem {
 
 // Payload shape for saving workflow draft to server
 export interface WorkflowDraftSavePayload {
+  connector_reference_commands?: import('@/services/types/connector').ConnectorReferenceCommand[];
   graph: WorkflowData['graph'];
   features: WorkflowData['features'];
   environment_variables: EnvironmentVariable[];
@@ -384,6 +385,7 @@ export interface WorkflowDraftSavePayload {
 }
 
 export interface WorkflowData {
+  connector_reference_commands?: import('@/services/types/connector').ConnectorReferenceCommand[];
   graph: {
     nodes: WorkflowNode[];
     edges: WorkflowEdge[];

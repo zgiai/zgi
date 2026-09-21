@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 )
 
 func applyRunConfigToChatRequest(config RunConfig, req runtimedto.ChatRequest) runtimedto.ChatRequest {
@@ -60,9 +61,15 @@ func applyRunConfigToParts(config RunConfig, parts *chatRequestParts) {
 	parts.AgentMemoryAutoExtractionEnabled = config.AgentMemoryAutoExtractionEnabled
 	parts.AgentMemorySlots = normalizeAgentMemorySlots(config.AgentMemorySlots)
 	parts.AgentMemoryUserScope = strings.TrimSpace(config.AgentMemoryUserScope)
+	parts.ConnectorTargetScope = config.ConnectorTargetScope
+	parts.ConnectorTargetVersionID = config.ConnectorTargetVersionID
+	parts.ConnectorTargetType = config.ConnectorTargetType
+	parts.ConnectorRunID = config.ConnectorRunID
+	parts.ConnectorInteractive = config.ConnectorInteractive
 	parts.AgentMemoryConfigScope = strings.TrimSpace(config.AgentMemoryConfigScope)
 	parts.AgentMemoryConfigRevision = strings.TrimSpace(config.AgentMemoryConfigRevision)
 	parts.AgentMemoryAgentID = strings.TrimSpace(config.BillingAppID)
+	parts.RuntimeTools = append([]skillloop.RuntimeTool(nil), config.RuntimeTools...)
 	parts.BillingSource = strings.TrimSpace(config.BillingAppType)
 	if runConfigDisablesUserMemory(config) {
 		parts.UseMemory = false
@@ -92,11 +99,11 @@ func applyPersistedConversationSurface(conversation *runtimemodel.Conversation, 
 }
 
 func runConfigAllowsUserMemory(config RunConfig) bool {
-	return config.UseMemory && !strings.EqualFold(strings.TrimSpace(config.BillingAppType), runtimemodel.ConversationCallerAgent)
+	return config.UseMemory && !isAutonomousSubjectCaller(config.BillingAppType)
 }
 
 func runConfigDisablesUserMemory(config RunConfig) bool {
-	return strings.EqualFold(strings.TrimSpace(config.BillingAppType), runtimemodel.ConversationCallerAgent)
+	return isAutonomousSubjectCaller(config.BillingAppType)
 }
 
 func normalizeAgentMemorySlots(input []AgentMemorySlotConfig) []AgentMemorySlotConfig {
@@ -177,6 +184,7 @@ func normalizeChatRequest(req runtimedto.ChatRequest) (*chatRequestParts, error)
 		providerPtr = &provider
 	}
 	return &chatRequestParts{
+		ConversationID:      strings.TrimSpace(req.ConversationID),
 		Query:               query,
 		Surface:             surface,
 		RuntimeContext:      runtimeContext,
@@ -188,7 +196,41 @@ func normalizeChatRequest(req runtimedto.ChatRequest) (*chatRequestParts, error)
 		ProviderPtr:         providerPtr,
 		Parameters:          params,
 		UseMemory:           req.UseMemory,
+		SourceMessageID:     cloneUUIDPointer(req.SourceMessageID),
+		HistoryPolicy:       normalizeConversationHistoryPolicy(req.HistoryPolicy),
 	}, nil
+}
+
+func normalizeConversationHistoryPolicy(policy *runtimedto.ConversationHistoryPolicy) *runtimedto.ConversationHistoryPolicy {
+	if policy == nil {
+		return nil
+	}
+	mode := strings.ToLower(strings.TrimSpace(policy.Mode))
+	if mode != runtimedto.ConversationHistoryModeSupplemental && mode != runtimedto.ConversationHistoryModeIsolated {
+		return nil
+	}
+	maxTurns := min(max(policy.MaxTurns, 0), maxContextCandidateMessages)
+	excluded := make([]string, 0, min(len(policy.ExcludedTexts), maxContextCandidateMessages))
+	seen := make(map[string]struct{}, cap(excluded))
+	for _, value := range policy.ExcludedTexts {
+		value = normalizedHistoryContent(value)
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		excluded = append(excluded, value)
+		if len(excluded) >= maxContextCandidateMessages {
+			break
+		}
+	}
+	return &runtimedto.ConversationHistoryPolicy{Mode: mode, MaxTurns: maxTurns, ExcludedTexts: excluded}
+}
+
+func normalizedHistoryContent(value string) string {
+	return strings.Join(strings.Fields(value), " ")
 }
 
 func normalizeRuntimeContext(value string) string {
@@ -249,6 +291,7 @@ func normalizeRegenerateRequest(req runtimedto.RegenerateMessageRequest, message
 	operationContext, operationLedger := normalizeOperationContext(req.OperationContext)
 
 	return &chatRequestParts{
+		ConversationID:      message.ConversationID.String(),
 		Query:               query,
 		Surface:             surface,
 		RuntimeContext:      runtimeContext,
@@ -318,7 +361,16 @@ func newStreamingMessage(conversationID uuid.UUID, parentID *uuid.UUID, parts *c
 		BillingReasonSource: &billingReasonSource,
 		ModelParameters:     parts.Parameters,
 		Metadata:            streamingMessageMetadataWithTaskID(parts, messageID.String()),
+		SourceMessageID:     cloneUUIDPointer(parts.SourceMessageID),
 	}
+}
+
+func cloneUUIDPointer(value *uuid.UUID) *uuid.UUID {
+	if value == nil || *value == uuid.Nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
 
 func streamingMessageMetadata(parts *chatRequestParts) map[string]interface{} {
@@ -466,7 +518,7 @@ func normalizeAIChatSurface(value string) string {
 }
 
 func normalizeRuntimeSurfaceForCaller(caller Caller, surface string) string {
-	if normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAgent {
+	if isAutonomousSubjectCaller(caller.Type) {
 		return aiChatSurfaceExternalPageChat
 	}
 	return normalizeAIChatSurface(surface)

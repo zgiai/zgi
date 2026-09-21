@@ -63,7 +63,6 @@ func TestAgentsRoutes_ResourceCandidatePickersUseAgentScopedGETs(t *testing.T) {
 		`appsGroup.GET("/:agent_id/candidates/workflows", appHandler.ListAgentWorkflowBindingCandidates)`,
 		`appsGroup.GET("/:agent_id/candidates/databases", appHandler.ListAgentDatabaseBindingCandidates)`,
 		`appsGroup.GET("/:agent_id/candidates/databases/:data_source_id/tables", appHandler.ListAgentDatabaseTableBindingCandidates)`,
-		`appsGroup.GET("/:agent_id/candidates/integration-connections", appHandler.ListAgentIntegrationConnectionBindingCandidates)`,
 	}
 	for _, want := range wants {
 		if !strings.Contains(text, want) {
@@ -80,5 +79,29 @@ func TestAgentsRoutes_DeleteImpactPreviewUsesAgentScopedGET(t *testing.T) {
 	want := `appsGroup.GET("/:agent_id/delete-impact", appHandler.PreviewAgentDeleteImpact)`
 	if !strings.Contains(string(source), want) {
 		t.Fatalf("delete impact preview route missing; want %q", want)
+	}
+}
+
+func TestAgentsRoutes_RuntimeInputsAreLimitedToAgentAndAuthenticatedWebAppSurfaces(t *testing.T) {
+	source, err := os.ReadFile("agents_routers.go")
+	if err != nil {
+		t.Fatalf("read agents_routers.go: %v", err)
+	}
+	text := string(source)
+	agentRoute := `appsGroup.POST("/:agent_id/runtime/conversations/:conversation_id/messages/:message_id/runtime-inputs", appHandler.SubmitAgentRuntimeInput)`
+	webAppRoute := `protectedWebApps.POST("/:web_app_id/runtime/conversations/:conversation_id/messages/:message_id/runtime-inputs", appHandler.SubmitWebAppAgentRuntimeInput)`
+	publicRoute := `publicWebApps.POST("/:web_app_id/runtime/conversations/:conversation_id/messages/:message_id/runtime-inputs"`
+	for label, route := range map[string]string{"Agent": agentRoute, "WebApp": webAppRoute} {
+		if !strings.Contains(text, route) {
+			t.Errorf("%s runtime input route missing; want %q", label, route)
+		}
+	}
+	if strings.Contains(text, publicRoute) {
+		t.Fatalf("runtime input route must not bypass WebApp authentication; found %q", publicRoute)
+	}
+	authIndex := strings.Index(text, `protectedWebApps.Use(middleware.WebAppAuthMiddleware())`)
+	routeIndex := strings.Index(text, webAppRoute)
+	if authIndex < 0 || routeIndex < authIndex {
+		t.Fatal("WebApp runtime input route is registered before WebApp authentication")
 	}
 }

@@ -23,6 +23,7 @@ const (
 	EventSkillCallEnd           = "skill_call_end"
 	EventSkillCallError         = "skill_call_error"
 	EventClientActionRequired   = "client_action_required"
+	EventConnectorConfirmation  = "connector_confirmation_required"
 	EventToolGovernanceDecision = "tool_governance_decision"
 	EventSkillLoadStart         = "skill_load_start"
 	EventSkillLoadEnd           = "skill_load_end"
@@ -109,6 +110,24 @@ func (e *ClientActionPendingError) Error() string {
 	return fmt.Sprintf("client action is pending for %s", actionID)
 }
 
+// ConnectorConfirmationPendingError is intentionally independent from the
+// legacy client-action and governance continuations. Its opaque receipt is
+// resolved only through the shared Connector confirmation endpoint.
+type ConnectorConfirmationPendingError struct {
+	Payload map[string]interface{}
+}
+
+func (e *ConnectorConfirmationPendingError) Error() string {
+	if e == nil {
+		return "Connector confirmation is pending"
+	}
+	receipt := stringFromInterface(e.Payload["route_receipt"])
+	if receipt == "" {
+		return "Connector confirmation is pending"
+	}
+	return fmt.Sprintf("Connector confirmation is pending for %s", receipt)
+}
+
 type UserInputPendingError struct {
 	Payload map[string]interface{}
 }
@@ -182,6 +201,8 @@ type RunRequest struct {
 	OnTerminalStateGuardDecision   func(TerminalStateGuardDecisionRecord)
 	OnTerminalCompletion           func(TerminalCompletionResult)
 	OnChunk                        func(string) error
+	BeforeModelRound               func(context.Context, int) ([]adapter.Message, error)
+	AfterModelRound                func(context.Context, int, bool) error
 	PlanningOutputTokenLimit       int
 	AuthorizeSkillStep             func(context.Context, string) (bool, error)
 	PreferredRestoredSkillID       string
@@ -190,8 +211,9 @@ type RunRequest struct {
 }
 
 // RuntimeTool is a first-party capability owned by the chat runtime rather
-// than an installable Skill. Its handler must return only safe, content-free
-// arguments and results because they are persisted in traces.
+// than an installable Skill. Arguments and Result must be safe and
+// content-free because they are persisted in traces. ModelResult, when set, is
+// delivered to the current model turn only and is never retained in a trace.
 type RuntimeTool struct {
 	Definition adapter.Tool
 	SkillID    string
@@ -202,8 +224,14 @@ type RuntimeToolResult struct {
 	Status      string
 	Arguments   map[string]interface{}
 	Result      map[string]interface{}
-	Error       error
-	Recoverable bool
+	ModelResult map[string]interface{}
+	// PendingApproval pauses the current run and is projected into the
+	// durable workflow-continuation metadata. Runtime tools use this instead
+	// of returning a normal success result so callers can render the approval
+	// interaction in the composer.
+	PendingApproval map[string]interface{}
+	Error           error
+	Recoverable     bool
 }
 
 type TerminalStateGuardDecisionRecord struct {
@@ -223,10 +251,11 @@ type TerminalCompletionResult struct {
 }
 
 type SkillToolCallRef struct {
-	SkillID   string
-	ToolName  string
-	Arguments map[string]interface{}
-	Result    map[string]interface{}
+	ConnectorNative bool
+	SkillID         string
+	ToolName        string
+	Arguments       map[string]interface{}
+	Result          map[string]interface{}
 }
 
 type ModelInvocationTrace struct {

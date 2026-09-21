@@ -589,36 +589,6 @@ func (h *AgentsHandler) ListAgentSkillBindingCandidates(c *gin.Context) {
 	response.Success(c, result)
 }
 
-func (h *AgentsHandler) ListAgentIntegrationConnectionBindingCandidates(c *gin.Context) {
-	accountID := c.GetString("account_id")
-	if accountID == "" {
-		response.Fail(c, response.ErrUnauthorized)
-		return
-	}
-	ctx, ok := h.requireAgentManageAccess(c, accountID)
-	if !ok {
-		return
-	}
-	var req dto.AgentIntegrationConnectionCandidatesRequest
-	if err := c.ShouldBindQuery(&req); err != nil {
-		response.Fail(c, response.ErrInvalidParam)
-		return
-	}
-	if req.Limit == 0 {
-		req.Limit = maxAgentBindingCandidateLimit
-	}
-	if req.Page == 0 {
-		req.Page = 1
-	}
-	req.IncludeSelected = true
-	result, err := h.appService.ListAgentIntegrationConnectionCandidates(ctx, c.Param("agent_id"), accountID, req)
-	if err != nil {
-		h.failRuntime(c, err)
-		return
-	}
-	response.Success(c, result)
-}
-
 func (h *AgentsHandler) ListAgentKnowledgeBindingCandidates(c *gin.Context) {
 	accountID := c.GetString("account_id")
 	if accountID == "" {
@@ -923,6 +893,7 @@ func (h *AgentsHandler) ChatAgent(c *gin.Context) {
 		h.failRuntime(c, err)
 		return
 	}
+	runConfig.RuntimeInputPolicy = runtimeservice.RuntimeInputPolicyCheckpointAndFollowUp
 	prepared, err := h.chatRuntimeService.PrepareConfiguredChat(
 		ctx,
 		scope,
@@ -1343,6 +1314,7 @@ func (h *AgentsHandler) ChatWebAppAgent(c *gin.Context) {
 		h.failRuntime(c, err)
 		return
 	}
+	runConfig.RuntimeInputPolicy = runtimeservice.RuntimeInputPolicyCheckpointAndFollowUp
 	prepared, err := h.chatRuntimeService.PrepareConfiguredChat(
 		c.Request.Context(),
 		scope,
@@ -1426,6 +1398,14 @@ func writeAgentSSE(c *gin.Context, event string, data interface{}) error {
 }
 
 func writeAgentChatEnd(c *gin.Context, prepared *runtimeservice.PreparedChat, result *runtimeservice.ChatResult) {
+	// Budget-pending turns already deliver a durable message_end through the
+	// runtime event callback immediately after token_budget_requested.  The
+	// regular handler tail must not write a second terminal event for the same
+	// message, otherwise external API clients observe duplicate message_end
+	// frames and may resume against an already-paused turn twice.
+	if result != nil && result.Status == runtimemodel.MessageStatusWaitingBudget {
+		return
+	}
 	status := runtimemodel.MessageStatusCompleted
 	metadata := map[string]interface{}{}
 	eventID := ""

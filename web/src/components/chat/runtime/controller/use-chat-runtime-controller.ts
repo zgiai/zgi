@@ -37,6 +37,7 @@ import { MEMORY_KEYS } from '@/hooks/query-keys';
 export function useChatRuntimeController(options?: {
   transport?: AIChatRuntimeTransport;
   requireModel?: boolean;
+  memoryMutationMode?: 'account' | 'disabled';
 }): AIChatController {
   const queryClient = useQueryClient();
   const requireModel = options?.requireModel ?? true;
@@ -92,9 +93,10 @@ export function useChatRuntimeController(options?: {
 
   const refreshAccountMemoryAfterMemoryMutation = useCallback(
     (_payload: AIChatMemoryMutationEventData) => {
+      if (options?.memoryMutationMode === 'disabled') return;
       void queryClient.invalidateQueries({ queryKey: MEMORY_KEYS.me() });
     },
-    [queryClient]
+    [options?.memoryMutationMode, queryClient]
   );
 
   const markSelectionTarget = useCallback((conversationId: string | null) => {
@@ -207,6 +209,7 @@ export function useChatRuntimeController(options?: {
     });
   const {
     send,
+    submitRuntimeInput,
     regenerate,
     replaceRootMessage,
     continueWorkflowApproval,
@@ -264,6 +267,12 @@ export function useChatRuntimeController(options?: {
     isRecoveringMessages: viewModel.isRecoveringMessages,
     isStopping: viewModel.isStopping,
     isSending: viewModel.isSending,
+    supportsRuntimeInput: Boolean(transportRef.current.supportsRuntimeInput),
+    canSubmitRuntimeInput: Boolean(
+      transportRef.current.supportsRuntimeInput &&
+        viewModel.activeConversation?.runtime_status === 'streaming' &&
+        viewModel.activeConversation.active_message_id
+    ),
     connectionState: viewModel.connectionState,
     error: viewModel.error,
     init,
@@ -275,6 +284,7 @@ export function useChatRuntimeController(options?: {
     loadOlderMessages,
     recoverStreamingConversation,
     send,
+    submitRuntimeInput,
     regenerate,
     replaceRootMessage,
     continueWorkflowApproval,

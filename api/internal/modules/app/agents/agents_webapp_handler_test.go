@@ -935,10 +935,6 @@ func (s *stubWebAppStatusHandlerService) ListAgentWorkflowBindingCandidates(cont
 	return nil, nil
 }
 
-func (s *stubWebAppStatusHandlerService) ListAgentIntegrationConnectionCandidates(context.Context, string, string, dto.AgentIntegrationConnectionCandidatesRequest) (*dto.AgentIntegrationConnectionCandidatesResponse, error) {
-	return nil, nil
-}
-
 func (s *stubWebAppStatusHandlerService) ListAgentMemorySlots(context.Context, string, string) ([]dto.AgentMemorySlotConfig, error) {
 	return nil, nil
 }

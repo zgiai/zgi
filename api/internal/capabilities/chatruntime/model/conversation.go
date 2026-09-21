@@ -16,10 +16,12 @@ const (
 	ConversationSourceConsole     = "console"
 	ConversationSourceWebApp      = "webapp"
 	ConversationSourceExternalAPI = "external-api"
+	ConversationSourceChannel     = "channel"
 	ConversationSourceMigration   = "migration"
 
-	ConversationCallerAIChat = "aichat"
-	ConversationCallerAgent  = "agent"
+	ConversationCallerAIChat       = "aichat"
+	ConversationCallerAgent        = "agent"
+	ConversationCallerDigitalHuman = "digital_human"
 
 	ConversationTypeChat  = "chat"
 	ConversationTypeImage = "image"

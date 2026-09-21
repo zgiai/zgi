@@ -38,6 +38,7 @@ import {
   mergeRuntimeTimelineWithMessageTimeline,
   timelineFromAIChatMessage,
 } from '@/components/chat/controllers/aichat/selectors';
+import { applyConnectorRuntimeResolutionState } from '@/components/chat/controllers/aichat/state-reducers';
 import { Sidebar } from '@/components/chat/variants/common/sidebar';
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
@@ -53,11 +54,16 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import { useWorkspaceStore } from '@/store/workspace-store';
+import { useAuthStore } from '@/store/auth-store';
+import { useOrganizationStore } from '@/store/organization-store';
+import { useChatConnectorDraft } from './use-chat-connector-draft';
+import { useChatConnectorPreferences } from '@/hooks/connectors/use-chat-connector-preferences';
 import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
 import type {
   AIChatConversation,
   AIChatMessage,
   AIChatMessageFile,
+  AIChatRuntimeInput,
   AIChatRuntimeSurface,
   AIChatUserInputRequest,
   AIChatWorkflowQuestionAnswerInputs,
@@ -91,6 +97,7 @@ import {
 import {
   resolvePendingToolGovernanceApprovalFromTimeline,
   type AIChatToolGovernanceDecisionSubmitPayload,
+  type AITaskProposalActionPayload,
 } from '@/components/chat/variants/aichat/agentic-timeline';
 import {
   buildAIChatSkillDisplayMap,
@@ -118,6 +125,11 @@ import {
   workflowBillingToastClassNames,
 } from '@/components/workflow/common/workflow-billing-toast-action';
 import { normalizeApprovalRuntimeForm } from '@/components/workflow/approval/runtime-events';
+import {
+  submitConnectorRuntimeDecision,
+  type ConnectorRuntimeConfirmationCommand,
+  type ConnectorRuntimeDecisionResult,
+} from '@/components/connectors/runtime';
 import { isWorkflowApprovalInlineAllowed } from '@/components/workflow/approval/workflow-approval-surface';
 import { AICHAT_SIDEBAR_BG_IMAGE } from '@/lib/config';
 import {
@@ -140,6 +152,15 @@ import {
 import type { AIChatVoiceTranscriber } from '@/components/chat/variants/aichat/voice/pcm-audio';
 import type { AIChatSpeechSynthesizer } from '@/components/chat/variants/aichat/voice/speech-playback';
 import { useAgentSpeechPlayback } from '@/components/chat/variants/aichat/voice/use-agent-speech-playback';
+import { AIChatRuntimeInputQueue } from '@/components/chat/variants/aichat/runtime-input-queue';
+import { isDraftAIChatConversationId } from '@/components/chat/utils/aichat-message';
+import { selectRuntimeInputQueue } from '@/components/chat/utils/runtime-input-reconcile';
+import {
+  enqueueQueuedChatTurn,
+  MAX_QUEUED_CHAT_TURNS,
+  removeQueuedChatTurn,
+  type AIChatQueuedTurn,
+} from '@/components/chat/utils/queued-turns';
 
 export { AIChatMessageBubble } from '@/components/chat/variants/aichat/message-bubble';
 export type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
@@ -183,24 +204,32 @@ interface AIChatShellProps {
   }) => React.ReactNode;
   onSelectConversation?: (id: string) => void;
   onStartNewConversation?: () => void;
+  routeConversationId?: string | null;
+  isConversationTransitioning?: boolean;
+  conversationListTitle?: string;
+  conversationListDescription?: string;
   defaultSidebarOpen?: boolean;
   showAssistantModelMeta?: boolean;
-  surface?: 'aichat' | 'agent-draft' | 'agent-webapp';
+  enableMessageReplay?: boolean;
+  messageDensity?: 'default' | 'compact';
+  surface?: 'aichat' | 'agent-draft' | 'agent-webapp' | 'digital-human';
   runtimeSurface?: AIChatRuntimeSurface;
   themeColor?: string;
   enableToolGovernance?: boolean;
+  onTaskProposalAction?: (payload: AITaskProposalActionPayload) => void | Promise<void>;
+  onTaskMutation?: () => void;
   voiceTranscriber?: AIChatVoiceTranscriber;
   speechSynthesizer?: AIChatSpeechSynthesizer;
   headerRightAction?: React.ReactNode;
 }
 
 const CHAT_THEME_PRIMARY: Record<string, string> = {
-  blue: '217 91% 60%',
-  emerald: '160 84% 39%',
-  violet: '262 83% 58%',
-  rose: '346 77% 50%',
-  amber: '38 92% 50%',
-  slate: '215 20% 45%',
+  blue: 'hsl(217 91% 60%)',
+  emerald: 'hsl(160 84% 39%)',
+  violet: 'hsl(262 83% 58%)',
+  rose: 'hsl(346 77% 50%)',
+  amber: 'hsl(38 92% 50%)',
+  slate: 'hsl(215 20% 45%)',
 };
 const AGENT_WORKFLOW_QUESTION_SOURCE = 'agent_workflow_question_answer';
 const TOOL_GOVERNANCE_PERMISSION_TIER_STORAGE_KEY = 'zgi:aichat:tool-governance-permission-tier';
@@ -317,24 +346,35 @@ export function AIChatShell({
   renderEmbeddedConversationControls,
   onSelectConversation,
   onStartNewConversation,
+  routeConversationId,
+  isConversationTransitioning = false,
+  conversationListTitle,
+  conversationListDescription,
   defaultSidebarOpen = true,
   showAssistantModelMeta = true,
+  enableMessageReplay = true,
+  messageDensity = 'default',
   surface = 'aichat',
   runtimeSurface = 'work_chat',
   themeColor,
   enableToolGovernance = false,
+  onTaskProposalAction,
+  onTaskMutation,
   voiceTranscriber,
   speechSynthesizer,
   headerRightAction,
 }: AIChatShellProps) {
   const router = useRouter();
   const t = useT('webapp');
+  const connectorT = useT('connectors');
   const tGlobal = useT();
   const { locale } = useLocale();
   const isMobile = useIsMobile();
   const isEmbedded = variant === 'embedded';
   const chatSurfaceBackground =
-    isEmbedded && surface !== 'agent-draft' ? 'bg-bg-canvas' : 'bg-background';
+    isEmbedded && surface !== 'agent-draft' && surface !== 'digital-human'
+      ? 'bg-bg-canvas'
+      : 'bg-background';
   const toolGovernanceApprovalScopeId = useId();
   const showEmbeddedConversationDrawer = isEmbedded && embeddedConversationMode === 'drawer';
   const themeStyle = useMemo<CSSProperties | undefined>(() => {
@@ -342,10 +382,15 @@ export function AIChatShell({
     return primary ? ({ '--primary': primary } as CSSProperties) : undefined;
   }, [themeColor]);
   const [input, setInput] = useState('');
+  const [queuedTurnsByConversation, setQueuedTurnsByConversation] = useState<
+    Record<string, AIChatQueuedTurn[]>
+  >({});
+  const [guidingQueuedTurnIDs, setGuidingQueuedTurnIDs] = useState<Set<string>>(() => new Set());
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingQuery, setEditingQuery] = useState('');
-  const [selectedModelProps, setSelectedModelProps] =
-    useState<ModelSelectorModelProps | null>(null);
+  const [selectedModelProps, setSelectedModelProps] = useState<ModelSelectorModelProps | null>(
+    null
+  );
   const [pendingVisionReplayAction, setPendingVisionReplayAction] =
     useState<PendingVisionReplayAction | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(defaultSidebarOpen);
@@ -354,6 +399,9 @@ export function AIChatShell({
   const [externalControlsPortal, setExternalControlsPortal] = useState<HTMLElement | null>(null);
   const [skillPreferenceOpen, setSkillPreferenceOpen] = useState(false);
   const [connectedAppsOpen, setConnectedAppsOpen] = useState(false);
+  const [connectedAppsAnchorElement, setConnectedAppsAnchorElement] = useState<HTMLElement | null>(
+    null
+  );
   const [connectedAppsSummary, setConnectedAppsSummary] = useState<AIChatConnectedAppsSummary>({
     selectedConnectionCount: 0,
     hasAttentionRequired: false,
@@ -372,6 +420,8 @@ export function AIChatShell({
     useState(false);
   const topologyRef = useRef<{ key: string; topology: ChatMessageTopology } | null>(null);
   const lastErrorToastRef = useRef<string | null>(null);
+  const autoSendingQueuedTurnRef = useRef<string | null>(null);
+  const previousQueuedConversationIDRef = useRef<string | null>(null);
 
   const conversations = useStore(controller.store, state => state.conversations);
   const conversationPagination = useStore(controller.store, state => state.pagination);
@@ -383,6 +433,9 @@ export function AIChatShell({
   const activeMessages = useStore(controller.store, selectActiveMessages);
   const activeMessagePagination = useStore(controller.store, selectActiveMessagePagination);
   const isLoadingMessages = useStore(controller.store, state => state.isLoadingMessages);
+  const selectedConversationId =
+    routeConversationId === undefined ? activeConversationId : routeConversationId;
+  const effectiveIsLoadingMessages = isLoadingMessages || isConversationTransitioning;
   const isLoadingConversationList = useStore(controller.store, state => state.isLoadingList);
   const isLoadingOlderMessages = useStore(controller.store, selectIsLoadingOlderMessages);
   const isRecoveringMessages = useStore(controller.store, selectIsRecoveringMessages);
@@ -404,18 +457,43 @@ export function AIChatShell({
     synthesizer: speechSynthesizer,
     messages: activeMessages,
     conversationId: activeConversationId,
-    isLoadingMessages,
+    isLoadingMessages: effectiveIsLoadingMessages,
     playbackErrorMessages: speechPlaybackErrorMessages,
   });
   const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
+  const account = useAuthStore.use.user();
+  const organization = useOrganizationStore.use.currentOrganization();
   const systemFeatures = useSystemFeatures();
   const { canManageModelConfig: isBillingAdmin } = useAccountCapabilities();
   const enableAIChatSkillPreference =
     surface === 'aichat' && (!isEmbedded || runtimeSurface === 'contextual_sidebar');
-  const enableAIChatConnectedApps =
-    enableAIChatSkillPreference && Boolean(systemFeatures.data?.enable_external_integrations);
+  const connectorsEnabled = enableAIChatSkillPreference;
+  const legacyEnabled =
+    enableAIChatSkillPreference && Boolean(systemFeatures.data?.enable_connectors);
+  const enableAIChatConnectedApps = connectorsEnabled || legacyEnabled;
+  const connectorConversationId =
+    activeConversationId && !activeConversationId.startsWith('draft-') ? activeConversationId : '';
+  const inheritConnectorDefaults = connectorsEnabled && !connectorConversationId;
+  const { data: connectorDefaultsResponse, isError: connectorDefaultsError } =
+    useChatConnectorPreferences(inheritConnectorDefaults);
+  // Load on chat mount, not on picker open. Persisted chats and Agent surfaces
+  // keep their explicit bindings and never acquire personal defaults.
+  const connectorDraft = useChatConnectorDraft(
+    JSON.stringify([account?.id, organization?.id, currentWorkspace?.id]),
+    activeConversationId,
+    {
+      enabled: inheritConnectorDefaults,
+      data: connectorDefaultsResponse?.data,
+      isError: connectorDefaultsError,
+    }
+  );
+  const connectorSelectedCount = connectorConversationId
+    ? connectedAppsSummary.selectedConnectionCount
+    : connectorDraft.draft.bindings.length;
   const effectiveRuntimeSurface: AIChatRuntimeSurface =
-    surface === 'agent-draft' || surface === 'agent-webapp' ? 'external_page_chat' : runtimeSurface;
+    surface === 'agent-draft' || surface === 'agent-webapp' || surface === 'digital-human'
+      ? 'external_page_chat'
+      : runtimeSurface;
   const matchingModelProps = useMemo(() => {
     const matchesSelection = (candidate: ModelSelectorModelProps | null | undefined) =>
       Boolean(
@@ -434,6 +512,11 @@ export function AIChatShell({
       : matchingModelProps
         ? isVisionModel(matchingModelProps)
         : null;
+
+  useEffect(() => {
+    setConnectedAppsOpen(false);
+  }, [connectorConversationId]);
+
   const { data: availableSkills = [] } = useAIChatSkills({ enabled: enableAIChatSkillPreference });
   const { data: skillPreference, isLoading: isLoadingSkillPreference } = useAIChatSkillPreference({
     enabled: enableAIChatSkillPreference,
@@ -545,6 +628,39 @@ export function AIChatShell({
     () => selectDisplayMessages(displayMessageIds, activeMessages),
     [activeMessages, displayMessageIds]
   );
+  const runtimeInputQueue = useMemo<AIChatRuntimeInput[]>(
+    () => selectRuntimeInputQueue(messages, activeConversation?.active_message_id),
+    [activeConversation?.active_message_id, messages]
+  );
+  const activeQueuedTurns = useMemo(
+    () => (activeConversationId ? (queuedTurnsByConversation[activeConversationId] ?? []) : []),
+    [activeConversationId, queuedTurnsByConversation]
+  );
+  const runtimeInputQueueFull =
+    runtimeInputQueue.length + activeQueuedTurns.length >= MAX_QUEUED_CHAT_TURNS;
+  useEffect(() => {
+    const previousConversationID = previousQueuedConversationIDRef.current;
+    previousQueuedConversationIDRef.current = activeConversationId;
+    if (
+      !previousConversationID ||
+      !activeConversationId ||
+      previousConversationID === activeConversationId ||
+      !isDraftAIChatConversationId(previousConversationID)
+    ) {
+      return;
+    }
+    setQueuedTurnsByConversation(current => {
+      const draftTurns = current[previousConversationID] ?? [];
+      if (draftTurns.length === 0) return current;
+      const next = { ...current };
+      delete next[previousConversationID];
+      next[activeConversationId] = draftTurns.reduce(
+        (turns, turn) => enqueueQueuedChatTurn(turns, turn),
+        next[activeConversationId] ?? []
+      );
+      return next;
+    });
+  }, [activeConversationId]);
   const assetAuditRefreshKey = useMemo(
     () =>
       activeMessages
@@ -559,7 +675,8 @@ export function AIChatShell({
     () => selectBranchNavigationByMessageId(displayMessageIds, messageTopology),
     [displayMessageIds, messageTopology]
   );
-  const isHome = !activeConversationId && messages.length === 0 && !isSending;
+  const isHome =
+    !isConversationTransitioning && !activeConversationId && messages.length === 0 && !isSending;
   const modelMissing = requireModel && !isModelInitializing && !modelSelectorValue.model;
   const {
     bottomRef,
@@ -570,7 +687,7 @@ export function AIChatShell({
   } = useAIChatScroll({
     messages,
     activeMessagePagination,
-    isLoadingMessages,
+    isLoadingMessages: effectiveIsLoadingMessages,
     isLoadingOlderMessages,
     isSending,
     bottomInsetHeight: inputAreaHeight,
@@ -613,7 +730,8 @@ export function AIChatShell({
   const activeUserInputRequest = activeUserInputMessage?.metadata?.user_input_request ?? null;
   const activeWorkflowApprovalRequest = useMemo(
     () =>
-      !isRecoveringMessages && (surface === 'agent-draft' || surface === 'agent-webapp')
+      !isRecoveringMessages &&
+      (surface === 'agent-draft' || surface === 'agent-webapp' || surface === 'digital-human')
         ? resolveActiveWorkflowApprovalRequest(
             activeConversation,
             activeMessages,
@@ -646,7 +764,9 @@ export function AIChatShell({
       : null;
   }, [activeConversation?.current_leaf_message_id, activeMessages]);
   const contextBlocked = Boolean(contextBlockedMessage);
-  const messageActionsLocked = Boolean(activeWorkflowApprovalRequest || contextBlocked);
+  const messageActionsLocked = Boolean(
+    activeWorkflowApprovalRequest || isConversationTransitioning || contextBlocked
+  );
   const showResumeScrollButton = isAutoFollowPaused && (isSending || hasActiveStreamingMessage);
   const visiblePendingUserMessage =
     pendingUserMessage && isSending && !hasActiveStreamingMessage ? pendingUserMessage : null;
@@ -692,14 +812,10 @@ export function AIChatShell({
     const errorInput = matchingRuntimeErrorMessage
       ? getAIChatMessageErrorInput(matchingRuntimeErrorMessage)
       : { message: error ?? undefined };
-    return resolveAIChatErrorMessage(
-      (key, values) => tGlobal(key as never, values),
-      errorInput,
-      {
-        isAdmin: isBillingAdmin,
-        workspaceId: currentWorkspace?.id,
-      }
-    );
+    return resolveAIChatErrorMessage((key, values) => tGlobal(key as never, values), errorInput, {
+      isAdmin: isBillingAdmin,
+      workspaceId: currentWorkspace?.id,
+    });
   }, [
     currentWorkspace?.id,
     error,
@@ -732,9 +848,7 @@ export function AIChatShell({
     lastErrorToastRef.current = toastKey;
     const toastFn = resolvedRuntimeError.isBilling ? toast.warning : toast.error;
     toastFn(resolvedRuntimeError.title || resolvedRuntimeError.description, {
-      id: resolvedRuntimeError.code
-        ? `aichat-billing-${resolvedRuntimeError.code}`
-        : undefined,
+      id: resolvedRuntimeError.code ? `aichat-billing-${resolvedRuntimeError.code}` : undefined,
       description: resolvedRuntimeError.title ? resolvedRuntimeError.description : undefined,
       classNames: resolvedRuntimeError.isBilling ? workflowBillingToastClassNames : undefined,
       action:
@@ -745,13 +859,7 @@ export function AIChatShell({
             })
           : undefined,
     });
-  }, [
-    error,
-    isBillingAdmin,
-    resolvedRuntimeError,
-    router,
-    showInlineRuntimeError,
-  ]);
+  }, [error, isBillingAdmin, resolvedRuntimeError, router, showInlineRuntimeError]);
 
   useEffect(() => {
     if (!pendingUserMessage) return;
@@ -788,7 +896,9 @@ export function AIChatShell({
       [
         'aichat-runtime',
         effectiveRuntimeSurface,
-        uploadScope?.type === 'webapp' ? uploadScope.webAppId : 'console',
+        uploadScope?.type === 'console' || !uploadScope
+          ? 'console'
+          : `${uploadScope.type}:${uploadScope.webAppId}`,
         'conversations',
         'search',
       ] as const,
@@ -860,29 +970,31 @@ export function AIChatShell({
     setSidebarOpen(value => !value);
   }, [isMobile]);
 
-  const handleSend = useCallback(
-    async (files: AIChatMessageFile[] = [], useMemory = false): Promise<boolean> => {
+  const sendOrdinaryTurn = useCallback(
+    async (query: string, files: AIChatMessageFile[] = [], useMemory = false): Promise<boolean> => {
       if (activeWorkflowApprovalRequest || contextBlocked) {
         return false;
       }
-      const query = input.trim();
-      if (!query || isSending) {
+      if (!query.trim() || isSending) {
         return false;
       }
       if (requireModel && !modelSelectorValue.model) {
         toast.error(t('consoleChat.modelRequired'));
         return false;
       }
+      const connectorSnapshot = inheritConnectorDefaults ? connectorDraft.capture() : undefined;
+      if (inheritConnectorDefaults && !connectorSnapshot) return false;
       speechPlayback?.stop();
       if (beforeSend) {
         const canSend = await beforeSend();
         if (!canSend) return false;
       }
+      if (connectorSnapshot && !connectorSnapshot.isCurrent()) return false;
+      setConnectedAppsOpen(false);
 
       const pendingMessageId = Date.now();
       const pendingMessageCreatedAt = Math.floor(pendingMessageId / 1000);
       const showAssistantPlanning = Boolean(activeConversationId || messages.length > 0);
-      setInput('');
       setPendingUserMessage({
         id: `pending-user-${pendingMessageId}`,
         query,
@@ -902,6 +1014,8 @@ export function AIChatShell({
         useMemory: forcedUseMemory ?? useMemory,
         runtimeSurface: effectiveRuntimeSurface,
         operationContext: toolGovernanceOperationContext,
+        initialConnectorBindings:
+          connectorsEnabled && !connectorConversationId ? connectorSnapshot?.bindings : undefined,
       });
       return true;
     },
@@ -912,7 +1026,6 @@ export function AIChatShell({
       beforeSend,
       controller,
       forcedUseMemory,
-      input,
       isSending,
       messages.length,
       modelSelectorValue,
@@ -921,8 +1034,153 @@ export function AIChatShell({
       effectiveRuntimeSurface,
       t,
       toolGovernanceOperationContext,
+      connectorsEnabled,
+      connectorConversationId,
+      connectorDraft,
+      inheritConnectorDefaults,
     ]
   );
+
+  const handleSend = useCallback(
+    async (files: AIChatMessageFile[] = [], useMemory = false): Promise<boolean> => {
+      if (activeWorkflowApprovalRequest || contextBlocked) return false;
+      const query = input.trim();
+      if (!query) return false;
+
+      if (isSending) {
+        if (!controller.supportsRuntimeInput || !activeConversationId) return false;
+        if (files.length > 0) {
+          toast.error(t('consoleChat.runtimeInput.textOnly'));
+          return false;
+        }
+        if (runtimeInputQueueFull) {
+          toast.error(t('consoleChat.runtimeInput.queueFull'));
+          return false;
+        }
+        const queuedTurn: AIChatQueuedTurn = {
+          id: crypto.randomUUID(),
+          content: query,
+          useMemory: forcedUseMemory ?? useMemory,
+          createdAt: Date.now(),
+        };
+        setQueuedTurnsByConversation(current => ({
+          ...current,
+          [activeConversationId]: enqueueQueuedChatTurn(
+            current[activeConversationId] ?? [],
+            queuedTurn
+          ),
+        }));
+        setInput('');
+        return true;
+      }
+
+      setInput('');
+      const sent = await sendOrdinaryTurn(query, files, useMemory);
+      if (!sent) setInput(current => current || query);
+      return sent;
+    },
+    [
+      activeConversationId,
+      activeWorkflowApprovalRequest,
+      contextBlocked,
+      controller.supportsRuntimeInput,
+      forcedUseMemory,
+      input,
+      isSending,
+      runtimeInputQueueFull,
+      sendOrdinaryTurn,
+      t,
+    ]
+  );
+
+  const removeQueuedTurn = useCallback((conversationID: string, turnID: string) => {
+    setQueuedTurnsByConversation(current => ({
+      ...current,
+      [conversationID]: removeQueuedChatTurn(current[conversationID] ?? [], turnID),
+    }));
+  }, []);
+
+  const handleGuideQueuedTurn = useCallback(
+    async (turn: AIChatQueuedTurn) => {
+      if (!activeConversationId || guidingQueuedTurnIDs.has(turn.id)) return;
+      setGuidingQueuedTurnIDs(current => new Set(current).add(turn.id));
+      removeQueuedTurn(activeConversationId, turn.id);
+      try {
+        const result = await controller.submitRuntimeInput(turn.content);
+        if (result.status === 'accepted') return;
+        if (result.status === 'conversation_idle') {
+          const sent = await sendOrdinaryTurn(turn.content, [], turn.useMemory);
+          if (sent) return;
+        } else {
+          toast.error(t('consoleChat.runtimeInput.failed'));
+        }
+        setQueuedTurnsByConversation(current => ({
+          ...current,
+          [activeConversationId]: enqueueQueuedChatTurn(current[activeConversationId] ?? [], turn),
+        }));
+      } finally {
+        setGuidingQueuedTurnIDs(current => {
+          const next = new Set(current);
+          next.delete(turn.id);
+          return next;
+        });
+      }
+    },
+    [activeConversationId, controller, guidingQueuedTurnIDs, removeQueuedTurn, sendOrdinaryTurn, t]
+  );
+
+  const handleEditQueuedTurn = useCallback(
+    (turn: AIChatQueuedTurn) => {
+      if (!activeConversationId) return;
+      removeQueuedTurn(activeConversationId, turn.id);
+      setInput(current => (current.trim() ? `${turn.content}\n\n${current}` : turn.content));
+    },
+    [activeConversationId, removeQueuedTurn]
+  );
+
+  const handleStop = useCallback(() => {
+    if (activeConversationId) {
+      setQueuedTurnsByConversation(current => ({
+        ...current,
+        [activeConversationId]: [],
+      }));
+    }
+    controller.stop();
+  }, [activeConversationId, controller]);
+
+  useEffect(() => {
+    if (
+      !activeConversationId ||
+      activeConversationRunning ||
+      isSending ||
+      pendingUserMessage ||
+      activeWorkflowApprovalRequest ||
+      activeQueuedTurns.length === 0
+    ) {
+      return;
+    }
+    const nextTurn = activeQueuedTurns[0];
+    if (autoSendingQueuedTurnRef.current === nextTurn.id) return;
+    autoSendingQueuedTurnRef.current = nextTurn.id;
+    void sendOrdinaryTurn(nextTurn.content, [], nextTurn.useMemory)
+      .then(sent => {
+        if (sent) removeQueuedTurn(activeConversationId, nextTurn.id);
+      })
+      .finally(() => {
+        if (autoSendingQueuedTurnRef.current === nextTurn.id) {
+          autoSendingQueuedTurnRef.current = null;
+        }
+      });
+  }, [
+    activeConversationId,
+    activeConversationRunning,
+    activeQueuedTurns,
+    activeWorkflowApprovalRequest,
+    isSending,
+    pendingUserMessage,
+    removeQueuedTurn,
+    sendOrdinaryTurn,
+  ]);
 
   const handleUserInputRequestSubmit = useCallback(
     (query: string, _useMemory: boolean, answers?: Record<string, string>) => {
@@ -981,8 +1239,12 @@ export function AIChatShell({
 
   const executeRegenerate = useCallback(
     async (message: AIChatMessage) => {
+      const connectorSnapshot = inheritConnectorDefaults ? connectorDraft.capture() : undefined;
+      if (inheritConnectorDefaults && !connectorSnapshot) return;
       speechPlayback?.stop();
       if (beforeSend && !(await beforeSend())) return;
+      if (connectorSnapshot && !connectorSnapshot.isCurrent()) return;
+      setConnectedAppsOpen(false);
 
       void controller.regenerate(
         message.id,
@@ -994,6 +1256,8 @@ export function AIChatShell({
         {
           operationContext: toolGovernanceOperationContext,
           runtimeSurface: effectiveRuntimeSurface,
+          initialConnectorBindings:
+            connectorsEnabled && !connectorConversationId ? connectorSnapshot?.bindings : undefined,
         }
       );
     },
@@ -1004,6 +1268,10 @@ export function AIChatShell({
       speechPlayback,
       effectiveRuntimeSurface,
       toolGovernanceOperationContext,
+      connectorsEnabled,
+      connectorConversationId,
+      connectorDraft,
+      inheritConnectorDefaults,
     ]
   );
 
@@ -1057,12 +1325,23 @@ export function AIChatShell({
         isBilling={resolvedRuntimeError.isBilling}
         canRetry={canRetryRuntimeError}
         onRetry={handleRetryRuntimeError}
-        onConfigure={
-          runtimeErrorActionHref ? () => router.push(runtimeErrorActionHref) : undefined
-        }
+        onConfigure={runtimeErrorActionHref ? () => router.push(runtimeErrorActionHref) : undefined}
       />
     ) : null;
-  const composerTopAccessory = runtimeErrorNotice || inputTopNotice;
+  const composerPrimaryNotice = runtimeErrorNotice || inputTopNotice;
+  const composerTopAccessory =
+    composerPrimaryNotice || runtimeInputQueue.length > 0 || activeQueuedTurns.length > 0 ? (
+      <div className="space-y-2">
+        {composerPrimaryNotice}
+        <AIChatRuntimeInputQueue
+          items={runtimeInputQueue}
+          queuedTurns={activeQueuedTurns}
+          guidingTurnIDs={guidingQueuedTurnIDs}
+          onGuideTurn={controller.canSubmitRuntimeInput ? handleGuideQueuedTurn : undefined}
+          onEditTurn={handleEditQueuedTurn}
+        />
+      </div>
+    ) : null;
 
   const handleEditStart = useCallback(
     (message: AIChatMessage) => {
@@ -1189,13 +1468,21 @@ export function AIChatShell({
   const handleWorkflowApprovalSubmit = useCallback(
     (request: AIChatWorkflowApprovalRequest, payload: AIChatWorkflowApprovalSubmitPayload) => {
       if (!controller.continueWorkflowApproval) return;
-      void controller.continueWorkflowApproval(request.conversationId, request.messageId, {
-        approvalToken: request.approvalToken,
-        inputs: payload.inputs,
-        action: payload.action,
-      });
+      void controller
+        .continueWorkflowApproval(request.conversationId, request.messageId, {
+          approvalToken: request.approvalToken,
+          inputs: payload.inputs,
+          action: payload.action,
+        })
+        .then(() => onTaskMutation?.())
+        .catch(error => {
+          toast.error(
+            error instanceof Error ? error.message : t('consoleChat.workflow.approvalSubmitFailed')
+          );
+          onTaskMutation?.();
+        });
     },
-    [controller]
+    [controller, onTaskMutation, t]
   );
 
   const handleToolGovernanceDecision = useCallback(
@@ -1233,6 +1520,52 @@ export function AIChatShell({
           });
           throw error;
         });
+    },
+    [controller]
+  );
+  const handleConnectorRuntimeDecision = useCallback(
+    async (
+      conversationId: string,
+      messageId: string,
+      command: ConnectorRuntimeConfirmationCommand,
+      expectedScope?: string,
+      rememberForSession = false
+    ): Promise<ConnectorRuntimeDecisionResult> => {
+      const currentScope = () =>
+        JSON.stringify([
+          useOrganizationStore.getState().currentOrganization?.id ?? '',
+          useAuthStore.getState().user?.id ?? '',
+        ]);
+      const scope = expectedScope ?? currentScope();
+      const result = await submitConnectorRuntimeDecision(
+        {
+          ...command,
+          ...(rememberForSession ? { remember_for_session: true } : {}),
+        },
+        scope
+      );
+      if (currentScope() !== scope) return result;
+      controller.store.getState().update(current =>
+        applyConnectorRuntimeResolutionState(current, {
+          conversation_id: conversationId,
+          message_id: messageId,
+          progress_id: result.route_receipt,
+          state: result.state === 'transport_unconfirmed' ? 'unknown' : result.state,
+          ...(result.state !== 'transport_unconfirmed' && result.decision_id
+            ? { decision_id: result.decision_id }
+            : {}),
+          ...(result.state !== 'transport_unconfirmed' && result.error_code
+            ? { error_code: result.error_code }
+            : {}),
+        })
+      );
+      try {
+        await controller.recoverStreamingConversation(conversationId);
+      } catch {
+        // The receipt is already consumed even when the provider outcome is unknown.
+        // A later durable-event recovery is safe; repeating the operation is not.
+      }
+      return result;
     },
     [controller]
   );
@@ -1294,6 +1627,8 @@ export function AIChatShell({
 
   const handleNewChat = useCallback(() => {
     speechPlayback?.stop();
+    connectorDraft.reset();
+    setConnectedAppsOpen(false);
     if (isHome) {
       toast.info(t('chat.alreadyInDraft'));
       setMobileSidebarOpen(false);
@@ -1307,7 +1642,7 @@ export function AIChatShell({
     }
     setMobileSidebarOpen(false);
     setEmbeddedAssetAuditOpen(false);
-  }, [controller, isHome, onStartNewConversation, speechPlayback, t]);
+  }, [controller, isHome, onStartNewConversation, speechPlayback, t, connectorDraft]);
 
   const handleLoadMoreConversations = useCallback(
     (page: number) => controller.refreshList({ page, append: true }),
@@ -1438,7 +1773,7 @@ export function AIChatShell({
       {!isEmbedded ? (
         <div className="hidden md:block">
           <Sidebar
-            activeId={activeConversationId}
+            activeId={selectedConversationId}
             conversations={conversationSummaries}
             isOpen={sidebarOpen}
             isHome={isHome}
@@ -1452,6 +1787,8 @@ export function AIChatShell({
             pagination={conversationPagination}
             isLoadingList={isLoadingConversationList}
             onLoadMore={handleLoadMoreConversations}
+            title={conversationListTitle}
+            description={conversationListDescription}
           />
         </div>
       ) : null}
@@ -1469,6 +1806,7 @@ export function AIChatShell({
             <AIChatHeader
               isHome={isHome}
               title={activeConversation?.title || ''}
+              position={surface === 'digital-human' ? 'static' : 'overlay'}
               onToggleSidebar={handleToggleSidebar}
               onStartNew={handleNewChat}
               rightAction={
@@ -1502,7 +1840,7 @@ export function AIChatShell({
             activeConversation={activeConversation}
             activeMessageCount={activeMessages.length}
             branchNavigationByMessageId={branchNavigationByMessageId}
-            isLoadingMessages={isLoadingMessages}
+            isLoadingMessages={effectiveIsLoadingMessages}
             isLoadingOlderMessages={isLoadingOlderMessages}
             isSending={isSending || messageActionsLocked}
             streamingByMessageId={streamingByMessageId}
@@ -1517,22 +1855,26 @@ export function AIChatShell({
                 : Math.max(inputAreaHeight + 72, 180)
             }
             onScroll={handleMessagesScroll}
-            onRegenerate={handleRegenerate}
+            onRegenerate={enableMessageReplay ? handleRegenerate : undefined}
             onToolGovernanceDecision={
               enableToolGovernanceApprovals && !isRecoveringMessages
                 ? handleToolGovernanceDecision
                 : undefined
             }
+            onTaskProposalAction={onTaskProposalAction}
+            onTaskMutation={onTaskMutation}
+            onConnectorRuntimeDecision={handleConnectorRuntimeDecision}
             enableToolGovernanceApprovals={enableToolGovernanceApprovals}
             suppressPendingToolGovernanceApprovals={isRecoveringMessages}
             onSwitchBranch={handleSwitchBranch}
-            onEditStart={handleEditStart}
+            onEditStart={enableMessageReplay ? handleEditStart : undefined}
             onEditChange={setEditingQuery}
             onEditCancel={handleEditCancel}
             onEditSubmit={handleEditSubmit}
             showAssistantModelMeta={showAssistantModelMeta}
             layout={isEmbedded ? 'embedded' : 'full'}
-            showMemoryKey={surface !== 'agent-webapp'}
+            messageDensity={messageDensity}
+            showMemoryKey={surface !== 'agent-webapp' && surface !== 'digital-human'}
             showSkillEventDetails={surface !== 'agent-webapp'}
             showWorkflowFailureDetails={surface !== 'agent-webapp'}
             showContextualOperationStatus={effectiveRuntimeSurface === 'contextual_sidebar'}
@@ -1542,7 +1884,7 @@ export function AIChatShell({
           />
 
           <AIChatHomeView
-            isVisible={isHome && !isLoadingMessages}
+            isVisible={isHome && !effectiveIsLoadingMessages}
             suggestions={suggestions}
             onSelectSuggestion={setInput}
             brand={homeBrand}
@@ -1594,7 +1936,7 @@ export function AIChatShell({
           <AIChatInputArea
             isEmbedded={isEmbedded}
             isHome={isHome}
-            isLoadingMessages={isLoadingMessages}
+            isLoadingMessages={effectiveIsLoadingMessages}
             input={input}
             modelSelectorValue={modelSelectorValue}
             modelSelectorWarning={modelSelectorWarning}
@@ -1603,6 +1945,8 @@ export function AIChatShell({
             isModelInitializing={isModelInitializing}
             modelMissing={modelMissing}
             isSending={isSending}
+            allowRuntimeInput={controller.supportsRuntimeInput}
+            runtimeInputQueueFull={runtimeInputQueueFull}
             disabled={contextBlocked}
             canStop={canStopPendingWorkflowInteraction || activeConversationRunning}
             isStopping={isStopping}
@@ -1612,7 +1956,7 @@ export function AIChatShell({
             onUserInputRequestSubmit={handleUserInputRequestSubmit}
             activeWorkflowApprovalRequest={activeWorkflowApprovalRequest}
             onWorkflowApprovalSubmit={handleWorkflowApprovalSubmit}
-            onStop={controller.stop}
+            onStop={handleStop}
             onModelChange={onModelChange}
             onModelPropsChange={setSelectedModelProps}
             onHeightChange={setInputAreaHeight}
@@ -1626,12 +1970,30 @@ export function AIChatShell({
             showFileLibraryPicker={showFileLibraryPicker}
             allowWorkspaceSwitch={allowWorkspaceSwitch}
             showConnectedApps={enableAIChatConnectedApps}
-            connectedAppsLabel={t('consoleChat.connectedApps.action', {
-              count: connectedAppsSummary.selectedConnectionCount,
-            })}
-            connectedAppsSelectedCount={connectedAppsSummary.selectedConnectionCount}
-            connectedAppsAttentionRequired={connectedAppsSummary.hasAttentionRequired}
-            onOpenConnectedApps={() => setConnectedAppsOpen(true)}
+            connectedAppsLabel={
+              connectorsEnabled
+                ? !connectorConversationId && connectorDraft.attention === 'loadFailed'
+                  ? connectorT('defaultsDraft.loadFailed')
+                  : connectorT('picker.toolbarAction', {
+                      count: connectorSelectedCount,
+                    })
+                : t('consoleChat.connectedApps.action', {
+                    count: connectorSelectedCount,
+                  })
+            }
+            connectedAppsSelectedCount={connectorSelectedCount}
+            connectedAppsAttentionRequired={
+              connectorConversationId
+                ? connectedAppsSummary.hasAttentionRequired
+                : Boolean(connectorDraft.attention && connectorDraft.attention !== 'loading')
+            }
+            connectedAppsDisabled={connectorsEnabled && !connectorConversationId && isSending}
+            connectedAppsOpen={connectedAppsOpen}
+            connectedAppsPopup="dialog"
+            onOpenConnectedApps={anchorElement => {
+              setConnectedAppsAnchorElement(anchorElement);
+              setConnectedAppsOpen(open => !open);
+            }}
             showSkillManagement={enableAIChatSkillPreference}
             skillManagementLabel={t('consoleChat.skillPreferences.action')}
             onOpenSkillManagement={() => handleSkillPreferenceOpenChange(true)}
@@ -1670,7 +2032,7 @@ export function AIChatShell({
           )}
         >
           <Sidebar
-            activeId={activeConversationId}
+            activeId={selectedConversationId}
             conversations={conversationSummaries}
             isOpen
             isHome={isHome}
@@ -1684,6 +2046,8 @@ export function AIChatShell({
             useBackNavigation
             search={searchConversations}
             searchKey={conversationSearchKey}
+            title={conversationListTitle}
+            description={conversationListDescription}
           />
         </div>
       ) : embeddedAssetAuditOverlayOpen ? (
@@ -1703,13 +2067,19 @@ export function AIChatShell({
 
       {!isEmbedded ? (
         <Sheet open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
-          <SheetContent side="left" className="max-w-none p-0 sm:max-w-sm" showClose={false}>
-            <SheetTitle className="sr-only">{t('chat.conversations')}</SheetTitle>
+          <SheetContent
+            side="left"
+            className="w-screen max-w-none p-0 sm:w-96 sm:max-w-sm"
+            showClose={false}
+          >
+            <SheetTitle className="sr-only">
+              {conversationListTitle || t('chat.conversations')}
+            </SheetTitle>
             <SheetDescription className="sr-only">
-              {t('consoleChat.conversationListDescription')}
+              {conversationListDescription || t('consoleChat.conversationListDescription')}
             </SheetDescription>
             <Sidebar
-              activeId={activeConversationId}
+              activeId={selectedConversationId}
               conversations={conversationSummaries}
               isOpen
               isHome={isHome}
@@ -1726,6 +2096,8 @@ export function AIChatShell({
               pagination={conversationPagination}
               isLoadingList={isLoadingConversationList}
               onLoadMore={handleLoadMoreConversations}
+              title={conversationListTitle}
+              description={conversationListDescription}
             />
           </SheetContent>
         </Sheet>
@@ -1749,8 +2121,12 @@ export function AIChatShell({
       {enableAIChatConnectedApps ? (
         <AIChatConnectedAppsDialog
           open={connectedAppsOpen}
-          enabled={enableAIChatConnectedApps}
-          scopeKey={currentWorkspace?.id ?? 'organization'}
+          anchorElement={connectedAppsAnchorElement}
+          connectorsEnabled={connectorsEnabled}
+          conversationId={connectorConversationId}
+          draft={!connectorConversationId ? connectorDraft.draft : undefined}
+          onDraftBindingsChange={connectorDraft.update}
+          targetName={activeConversation?.title?.trim() || connectorT('picker.targetTypes.chat')}
           onOpenChange={setConnectedAppsOpen}
           onSummaryChange={setConnectedAppsSummary}
         />
@@ -1771,9 +2147,7 @@ export function AIChatShell({
                   : 0,
               })}
             </p>
-            <p>
-              {t('consoleChat.attachments.visionReplayWarning.recommendation')}
-            </p>
+            <p>{t('consoleChat.attachments.visionReplayWarning.recommendation')}</p>
           </div>
         }
         cancelText={t('consoleChat.attachments.visionReplayWarning.cancel')}
@@ -1789,7 +2163,7 @@ function resolveActiveWorkflowApprovalRequest(
   messages: AIChatMessage[],
   isSending: boolean,
   hasActiveStreamingMessage: boolean,
-  surface: 'aichat' | 'agent-draft' | 'agent-webapp'
+  surface: 'aichat' | 'agent-draft' | 'agent-webapp' | 'digital-human'
 ): AIChatWorkflowApprovalRequest | null {
   if (
     !conversation ||
@@ -1820,12 +2194,15 @@ function resolveActiveWorkflowApprovalRequest(
   if (
     !runWithApproval &&
     runForContinuation &&
+    continuationStatus !== 'waiting_approval' &&
     !isActiveWorkflowApprovalRun(runForContinuation, continuationWorkflowRunId, continuationStatus)
   ) {
     return null;
   }
-  const approval = runWithApproval?.approval;
-  const inlineApprovalForm = normalizeApprovalRuntimeForm(approval?.approval_form);
+  const approval = runWithApproval?.approval ?? runForContinuation?.approval;
+  const inlineApprovalForm =
+    normalizeApprovalRuntimeForm(approval?.approval_form) ||
+    normalizeApprovalRuntimeForm(stringRecordValue(continuation, 'approval_form'));
   const approvalToken =
     resolveApprovalToken(approval) ||
     stringFromRecord(continuation, 'approval_token') ||
@@ -1847,6 +2224,11 @@ function resolveActiveWorkflowApprovalRequest(
     approvalForm: inlineApprovalForm,
     canSubmitInline,
   };
+}
+
+function stringRecordValue(record: unknown, key: string): unknown {
+  if (!record || typeof record !== 'object') return undefined;
+  return (record as Record<string, unknown>)[key];
 }
 
 function workflowApprovalUIAccess(approval: unknown, continuation: unknown): boolean | undefined {

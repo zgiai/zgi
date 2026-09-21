@@ -1,0 +1,1212 @@
+# 数字人 API
+
+使用当前数字人的最新发布版本构建品牌化、可恢复的聊天体验。接口只支持流式响应；能复用 Agent 外接语义的部分保持一致，同时显式保留数字人的 Durable Run 生命周期。
+
+## 接入总览
+
+### 鉴权与终端用户身份
+
+只在服务端发送数字人 API Key：
+
+<CodeGroup title="请求头" targetCode={`Authorization: Bearer {api_key}`}>
+
+```text
+Authorization: Bearer {api_key}
+```
+
+</CodeGroup>
+
+API Key 不能进入浏览器代码、移动端安装包、日志、分析系统或 URL。所有有状态请求还必须传 `user`：最长 128 字符、稳定、不透明、大小写敏感的业务用户标识。
+
+| 概念              | 用途                           | 稳定性规则                            |
+| ----------------- | ------------------------------ | ------------------------------------- |
+| API Key           | 鉴权调用方和数字人             | 可轮换，不改变用户数据归属            |
+| `user`            | 拥有会话、文件、运行和关系记忆 | 稳定、大小写敏感、不能包含个人信息    |
+| `request_id`      | 保证一次聊天请求幂等           | 只在重试同一载荷时复用                |
+| `run_id`          | 跟踪 Durable Run 和断线恢复    | 由响应头及 `run_accepted` 返回        |
+| `conversation_id` | 维持多轮上下文                 | 同一 `user` 后续请求继续使用          |
+| `message_id`      | 标识本轮助手消息               | 由 `message_start` 返回并进入历史记录 |
+
+一个 Key 可以服务多个终端用户。Key 轮换后，同一 `user` 的数据身份不变；不同 `user` 之间完全隔离，同一字符串在不同数字人下也不是同一主体。请勿使用邮箱、手机号等直接身份信息，原始 `user` 不会在响应中返回。
+
+### 推荐浏览器架构
+
+```text
+浏览器或移动端 UI
+        |
+        | 业务系统登录态
+        v
+你的 BFF / API Route  -- 仅服务端持有 Key -->  ZGI /api/v1/digital-humans/*
+        |
+        +-- 从登录态派生稳定 `user`
+        +-- SSE 原样转发且禁止缓冲
+        +-- 执行授权、限流和请求大小限制
+```
+
+浏览器不应接触 Key，也不应自行指定另一个账号的 `user`。历史、恢复、停止、运行时输入和文件上传等所有代理路由，都要从同一登录态派生 `user`。
+
+### 最小生产闭环
+
+1. 读取 `/digital-humans/config`，渲染标题、开场白、建议问题和输入提示。
+2. 生成 UUID `request_id`，调用 `/digital-humans/chat`，立即保存 `X-ZGI-Run-ID`。
+3. 增量解析 SSE，保存 `conversation_id`、`message_id` 和最近一个非空事件 `id`。
+4. 追加 `message.data.answer`；`message_end` 结束消息阶段；唯一的 `run_end` 结束 Durable Run。
+5. 断线后使用相同 `user`、保存的 `run_id` 和 `Last-Event-ID` 恢复；收到 `message_start` 后不要重发聊天 POST。
+6. 页面刷新后先读取消息历史，再决定是否恢复仍在运行的 Run。
+
+## 构建高质量 Demo
+
+下面的客户端核心不依赖框架，能够处理拆分的 SSE 帧、多行 data、未知事件、恢复游标和终态：
+
+```ts
+export type ZGIEvent<T = Record<string, unknown>> = {
+  id?: string;
+  event: string;
+  data: T;
+};
+
+export async function readZGISSE(
+  response: Response,
+  onEvent: (event: ZGIEvent) => void
+): Promise<void> {
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({
+      code: `http.${response.status}`,
+      message: response.statusText,
+      retryable: response.status === 429 || response.status >= 500,
+    }));
+    throw Object.assign(new Error(error.message), { status: response.status, ...error });
+  }
+  if (!response.body) throw new Error('ZGI 返回了空事件流');
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, '\n');
+    const frames = buffer.split('\n\n');
+    buffer = frames.pop() ?? '';
+
+    for (const frame of frames) {
+      let id: string | undefined;
+      let nativeEvent = 'message';
+      const dataLines: string[] = [];
+      for (const line of frame.split('\n')) {
+        if (line.startsWith('id:')) id = line.slice(3).trim();
+        else if (line.startsWith('event:')) nativeEvent = line.slice(6).trim();
+        else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
+      }
+      if (!dataLines.length) continue;
+      const envelope = JSON.parse(dataLines.join('\n')) as {
+        event?: string;
+        data?: Record<string, unknown>;
+      };
+      onEvent({ id, event: envelope.event ?? nativeEvent, data: envelope.data ?? {} });
+    }
+    if (done) break;
+  }
+}
+```
+
+推荐使用 reducer 管理状态，不要把运行状态散落在各个回调中：
+
+```ts
+type ChatState = {
+  phase: 'idle' | 'accepting' | 'streaming' | 'waiting' | 'completed' | 'error';
+  runId?: string;
+  conversationId?: string;
+  messageId?: string;
+  lastEventId?: string;
+  answer: string;
+  error?: string;
+};
+
+function applyZGIEvent(state: ChatState, event: ZGIEvent): ChatState {
+  const data = event.data;
+  const cursor = event.id || state.lastEventId;
+  switch (event.event) {
+    case 'run_accepted':
+      return { ...state, phase: 'accepting', runId: String(data.run_id), lastEventId: cursor };
+    case 'message_start':
+      return {
+        ...state,
+        phase: 'streaming',
+        conversationId: String(data.conversation_id),
+        messageId: String(data.message_id),
+        answer: data.replace ? '' : state.answer,
+        lastEventId: cursor,
+      };
+    case 'message':
+      if (state.messageId && data.message_id !== state.messageId) return state;
+      return { ...state, answer: state.answer + String(data.answer ?? ''), lastEventId: cursor };
+    case 'message_end': {
+      const status = String(data.status);
+      return {
+        ...state,
+        phase: status.startsWith('waiting_')
+          ? 'waiting'
+          : status === 'completed'
+            ? 'completed'
+            : 'error',
+        lastEventId: cursor,
+      };
+    }
+    case 'error':
+      return {
+        ...state,
+        phase: 'error',
+        error: String(data.message ?? '请求失败'),
+        lastEventId: cursor,
+      };
+    case 'run_end':
+      return {
+        ...state,
+        phase: data.status === 'succeeded' ? 'completed' : state.phase,
+        lastEventId: cursor,
+      };
+    default:
+      return { ...state, lastEventId: cursor };
+  }
+}
+```
+
+高质量 Demo 还应包含会话侧栏、安全的 Markdown 渲染、停止生成、重连提示、上传进度、响应式空状态、键盘提交和无障碍状态播报。完整 Next.js BFF 与页面蓝图维护在 `docs/digital-human-api-quickstart.md`。
+
+## 数字人事件接入手册
+
+### 通用信封和恢复字段
+
+ZGI 同时发送原生 SSE `event:` 和相同事件名的 JSON 信封：
+
+```text
+id: 1715750400000-0
+event: message
+data: {"event":"message","data":{"conversation_id":"...","message_id":"...","answer":"你好"}}
+```
+
+可根据 JSON `event` 或原生 SSE event 分发。事件 ID 是不透明字符串；客户端必须忽略未知事件名和未知字段，保持向前兼容。
+
+| 事件            | 客户端必须执行                                              | Durable 含义          |
+| --------------- | ----------------------------------------------------------- | --------------------- |
+| `run_accepted`  | 保存 `run_id`、`request_id`、`status`、`created`            | 幂等请求已受理        |
+| `message_start` | 保存 `conversation_id`、`message_id`；处理 `replace`        | 持久化助手消息已创建  |
+| `message`       | 为匹配的消息追加 `answer`                                   | 可恢复的回答增量      |
+| `message_end`   | 解释消息 `status` 和 `metadata`                             | 当前消息阶段结束      |
+| `error`         | 展示安全 `message`；存在时记录 `code`；检查可选 `retryable` | HTTP 200 后的流式错误 |
+| `run_end`       | 停止恢复并记录最终 `status`                                 | 唯一 Durable 终态事件 |
+
+数字人 API 同时提供与 Agent API 一致的过程事件和载荷分组，可用于实现更完整的运行过程界面：
+
+| 事件分组       | 事件                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | 推荐呈现方式                                                                      |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| 回答修正       | `message_retract`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | 根据 `presentation_disposition` 把候选回答移入过程区或丢弃                        |
+| 运行进度       | `agent_progress`、`agent_intermediate_answer`                                                                                                                                                                                                                                                                                                                                                                                                                                                               | 展示简洁活动状态和独立的阶段答案卡片，禁止自行补写推理过程                        |
+| 用户输入       | `user_input_requested`、`runtime_input_accepted`、`runtime_input_applied`、`runtime_input_follow_up_started`、`runtime_input_canceled`、`runtime_input_failed`                                                                                                                                                                                                                                                                                                                                              | 渲染问题，使用新的 `client_input_id` 提交，并展示返回的处理方式                   |
+| 文件准备       | `file_parse_start`、`file_parse_end`、`file_parse_error`                                                                                                                                                                                                                                                                                                                                                                                                                                                    | 按 `file_id` 更新单个文件状态，只展示安全错误信息                                 |
+| Skill 与工具   | `skill_load_start`、`skill_load_end`、`skill_reference_read`、`skill_call_start`、`skill_call_end`、`skill_call_error`、`skill_artifact_created`                                                                                                                                                                                                                                                                                                                                                            | 按 `invocation_id` 分组，展示公开摘要和可下载产物                                 |
+| 治理与宿主动作 | `tool_governance_decision`、`client_action_required`                                                                                                                                                                                                                                                                                                                                                                                                                                                        | 展示决策；仅按宿主白名单执行动作，并遵守 `blocking`                               |
+| 用户关系记忆   | `memory_create`、`memory_update`、`memory_delete`、`memory_clear`                                                                                                                                                                                                                                                                                                                                                                                                                                           | 展示轻量确认，不在公开客户端提供记忆管理编辑器                                    |
+| Token 用量     | `token_usage_updated`、`token_budget_requested`                                                                                                                                                                                                                                                                                                                                                                                                                                                               | 实时展示本次任务累计 token；收到预算暂停时，向用户提供追加预算或停止运行的选择       |
+| 工作流生命周期 | `workflow_started`、`node_started`、`node_finished`、`workflow_paused`、`workflow_resumed`、`approval_requested`、`approval_result_filled`、`approval_expired`、`question_answer_requested`、`question_answer_submitted`、`iteration_started`、`iteration_next`、`iteration_completed`、`iteration_succeeded`、`iteration_failed`、`loop_started`、`loop_next`、`loop_completed`、`loop_succeeded`、`loop_failed`、`workflow_finished`、`workflow_failed`、`workflow_stopped`、`text_chunk`、`text_replace` | 按 `workflow_run_id` 构建过程时间线；保留未知字段，只使用服务端明确给出的续接控件 |
+
+### 事件载荷字段
+
+<Properties>
+  <Property name="run_id" type="uuid" propKey="run_id">
+    `run_accepted`、`error`、`run_end` 中的 Durable Run 标识。
+  </Property>
+  <Property name="request_id" type="uuid" propKey="request_id">
+    `run_accepted` 中的原始幂等键。
+  </Property>
+  <Property name="created" type="boolean" propKey="created">
+    相同请求复用原 Run 时为 false。
+  </Property>
+  <Property name="conversation_id" type="uuid" propKey="conversation_id">
+    持久化会话标识。
+  </Property>
+  <Property name="message_id" type="uuid" propKey="message_id">
+    持久化助手消息标识。
+  </Property>
+  <Property name="parent_id" type="uuid | null" propKey="parent_id">
+    存在消息分支时的父消息。
+  </Property>
+  <Property name="title" type="string" propKey="title">
+    可用时的会话标题。
+  </Property>
+  <Property name="model" type="string" propKey="model">
+    可用时的公开模型标识。
+  </Property>
+  <Property name="replace" type="boolean" propKey="replace">
+    应用恢复文本前先清除已渲染历史回答。
+  </Property>
+  <Property name="created_at" type="unix seconds" propKey="created_at">
+    消息创建时间。
+  </Property>
+  <Property name="answer" type="string" propKey="answer">
+    回答增量，或 `message_end` 中可选的完整回答兜底。
+  </Property>
+  <Property name="status" type="string" propKey="status">
+    根据事件表示消息或 Durable Run 状态。
+  </Property>
+  <Property name="metadata" type="object" propKey="metadata">
+    用量等安全消息元数据。
+  </Property>
+  <Property name="code" type="string" propKey="code">
+    稳定机器错误码。
+  </Property>
+  <Property name="message" type="string" propKey="message">
+    安全错误信息。
+  </Property>
+  <Property name="retryable" type="boolean" propKey="retryable">
+    不修改请求时恢复是否可能成功。
+  </Property>
+  <Property name="params" type="object" propKey="params">
+    可选的安全本地化参数。
+  </Property>
+  <Property name="file_id" type="uuid" propKey="file_id">
+    文件解析和产物事件共享的文件标识。
+  </Property>
+  <Property name="skill_id" type="string" propKey="skill_id">
+    Skill 加载、工具、产物和治理事件共享的 Skill 标识。
+  </Property>
+  <Property name="action_id" type="string" propKey="action_id">
+    `client_action_required` 中的稳定宿主动作标识。
+  </Property>
+  <Property name="input_id" type="uuid" propKey="input_id">
+    一次运行时输入生命周期的服务端标识。
+  </Property>
+  <Property name="workflow_run_id" type="string" propKey="workflow_run_id">
+    关联工作流、节点、审批、迭代、循环和文本事件。
+  </Property>
+  <Property name="usage" type="object" propKey="usage">
+    `token_usage_updated` 中本次模型调用的输入、输出和总 token 数；客户端可按消息累计展示。
+  </Property>
+  <Property name="task_token_budget" type="object" propKey="task_token_budget">
+    API 请求设置 `max_task_tokens` 时返回的累计预算状态；未设置预算时不返回。
+  </Property>
+</Properties>
+
+### 状态与恢复矩阵
+
+| 已观察状态                              | UI 状态        | 下一步                                                          |
+| --------------------------------------- | -------------- | --------------------------------------------------------------- |
+| Chat 已受理，尚无 `message_start`       | 启动中         | 保持 POST 流，保存 `run_id`                                     |
+| 已收到 `message_start`                  | 生成中         | 渲染增量并保存最近 SSE id                                       |
+| Run 未终止但网络断开                    | 重连中         | 通过 Run Events 和 `Last-Event-ID` 恢复                         |
+| `message_end=completed`，尚无 `run_end` | 收尾中         | 继续监听到 `run_end`                                            |
+| `message_end=waiting_approval`          | 等待任务审批   | 用审批表单替换输入框，调用 workflow-continuation 续接原消息；不要发送新的自然语言确认 |
+| `message_end=waiting_question`          | 等待用户输入   | 保留标识并按 `user_input_requested` 展示问题控件 |
+| `message_end=waiting_budget`            | 等待 Token 预算 | 展示独立 `token_budget_requested` 操作并调用 token-budget continue |
+| `run_end` 携带终态                      | 已终止         | 停止重连，以历史记录为准                                        |
+
+页面完全刷新后先读取消息历史。Run 仍在执行时，不要假设浏览器保存的游标与全新 DOM 已渲染内容一致；应按非空 SSE id 及 `(message_id, event id)` 去重。
+
+对话中创建或修改待办任务时，运行会在 `waiting_approval` 暂停。客户端应从 `approval_requested` 或消息元数据读取审批表单，在输入框位置展示确认/取消和可编辑字段；提交到
+`POST /api/v1/digital-humans/conversations/{conversation_id}/messages/{message_id}/workflow-continuation`，请求中携带同一个 `user`、`approval_token` 和 `action`。审批完成后继续消费同一条消息的 SSE 事件。
+
+如果消息以 `waiting_question` 结束并收到 `user_input_requested`，应调用
+`POST /api/v1/digital-humans/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue`，提交同一个 `user` 和按问题 id 对应的 `answers`。该接口会恢复原 Agent Loop，不会创建新的对话消息，也不能替代任务审批接口。
+
+如果消息以 `waiting_budget` 结束，应处理独立的 `token_budget_requested` 事件。调用
+`POST /api/v1/digital-humans/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue`，提交同一个 `user` 以及 `{"action":"add","additional_tokens":2048}` 或 `{"action":"stop"}`。不要提交 `answers`；停止会产生正常的 `message_end(status=stopped)`，不会伪造通用错误。
+
+---
+
+## 已发布配置
+
+<Heading
+  url="/api/v1/digital-humans/config"
+  method="GET"
+  title="获取已发布配置"
+  name="#Get-DigitalHuman-Config"
+/>
+
+<Row>
+  <Col>
+    返回已发布的品牌和能力快照。该接口不读取终端用户数据，因此不需要 `user`。
+    <Properties>
+      <Property name='Authorization' type='header' propKey='Bearer'>必填数字人 API Key。</Property>
+      <Property name='data' type='DigitalHumanConfig' propKey='data'>展示字段、能力开关和不可变版本身份。</Property>
+    </Properties>
+  </Col>
+  <Col sticky>
+    <CodeGroup title="请求">
+    ```bash
+    curl '{apibase}/digital-humans/config' \
+      --header 'Authorization: Bearer {api_key}'
+    ```
+    </CodeGroup>
+    <CodeGroup title="响应">
+    ```json
+    {"code":"0","message":"success","data":{"digital_human_id":"11111111-1111-4111-8111-111111111111","web_app_id":"22222222-2222-4222-8222-222222222222","name":"研究伙伴","description":"把调研转化为决策","home_title":"今天研究什么？","opening_statement":"我可以比较证据并给出下一步。","input_placeholder":"输入研究问题","suggested_questions":["比较三个方案"],"file_upload_enabled":true,"relationship_memory_enabled":true,"memory_requires_user":true,"external_user_required":true,"runtime_input_enabled":true,"regenerate_enabled":true,"landing_page_enabled":true,"api_enabled":true,"version":"3","version_uuid":"33333333-3333-4333-8333-333333333333"}}
+    ```
+    </CodeGroup>
+  </Col>
+</Row>
+
+---
+
+## 流式聊天与 Durable Run
+
+<Heading
+  url="/api/v1/digital-humans/chat"
+  method="POST"
+  title="创建或继续聊天"
+  name="#Create-DigitalHuman-Chat"
+/>
+
+<Row>
+  <Col>
+    创建或复用 Durable Run 并立即建立 SSE。同一 `(数字人, user, request_id, payload)` 重试会复用 Run；同一 `request_id` 改变载荷返回 `409`。
+    <Properties>
+      <Property name='request_id' type='uuid' propKey='request_id'>必填客户端幂等键。</Property>
+      <Property name='user' type='string' propKey='user'>必填稳定终端用户身份。</Property>
+      <Property name='query' type='string' propKey='query'>必填用户消息，最长 32,000 字符。</Property>
+      <Property name='conversation_id' type='uuid' propKey='conversation_id'>可选，需要继续的当前用户会话。</Property>
+      <Property name='parent_message_id' type='uuid' propKey='parent_message_id'>可选消息分支父节点。</Property>
+      <Property name='file_ids' type='uuid[]' propKey='file_ids'>可选，同一数字人、同一用户上传的文件。</Property>
+      <Property name='response_mode' type='streaming' propKey='response_mode'>可选，当前只支持 `streaming`。</Property>
+    </Properties>
+  </Col>
+  <Col sticky>
+    <CodeGroup title="请求">
+    ```bash
+    curl --no-buffer '{apibase}/digital-humans/chat' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'Content-Type: application/json' \
+      --data '{"request_id":"20a2952d-776d-41c9-a1e2-88739013cd43","user":"customer_123","query":"比较附件中的方案","response_mode":"streaming"}'
+    ```
+    </CodeGroup>
+    <CodeGroup title="响应">
+    ```text
+    event: run_accepted
+    data: {"event":"run_accepted","data":{"run_id":"...","request_id":"20a2952d-776d-41c9-a1e2-88739013cd43","status":"queued","created":true}}
+
+    event: message_start
+    data: {"event":"message_start","data":{"conversation_id":"...","message_id":"...","replace":false}}
+
+    id: 1715750400000-0
+    event: message
+    data: {"event":"message","data":{"conversation_id":"...","message_id":"...","answer":"推荐方案 A"}}
+
+    event: message_end
+    data: {"event":"message_end","data":{"conversation_id":"...","message_id":"...","status":"completed","metadata":{}}}
+
+    event: run_end
+    data: {"event":"run_end","data":{"run_id":"...","status":"succeeded","conversation_id":"...","message_id":"..."}}
+    ```
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+<Heading
+  url="/api/v1/digital-humans/runs/{run_id}"
+  method="GET"
+  title="查询 Run 状态"
+  name="#Get-DigitalHuman-Run"
+/>
+
+<Properties>
+  <Property name="run_id" type="uuid path" propKey="run_id">
+    必填 Durable Run 标识。
+  </Property>
+  <Property name="user" type="string query" propKey="user">
+    必填所属终端用户。
+  </Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl '{apibase}/digital-humans/runs/{run_id}?user=customer_123' \
+  --header 'Authorization: Bearer {api_key}'
+```
+</CodeGroup>
+
+<CodeGroup title="响应">
+```json
+{"code":"0","message":"success","data":{"run_id":"44444444-4444-4444-8444-444444444444","status":"running","conversation_id":"55555555-5555-4555-8555-555555555555","message_id":"66666666-6666-4666-8666-666666666666","created_at":1715750400,"updated_at":1715750401}}
+```
+</CodeGroup>
+
+<Heading
+  url="/api/v1/digital-humans/runs/{run_id}/events"
+  method="GET"
+  title="恢复 Run 事件流"
+  name="#Recover-DigitalHuman-Run"
+/>
+
+<Properties>
+  <Property name="run_id" type="uuid path" propKey="run_id">
+    必填 Durable Run 标识。
+  </Property>
+  <Property name="user" type="string query" propKey="user">
+    必填所属终端用户。
+  </Property>
+  <Property name="Last-Event-ID" type="header" propKey="Last-Event-ID">
+    可选，最近已处理的不透明 SSE id。
+  </Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl --no-buffer '{apibase}/digital-humans/runs/{run_id}/events?user=customer_123' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'Last-Event-ID: 1715750400000-0'
+```
+</CodeGroup>
+
+<CodeGroup title="响应">
+```text
+id: 1715750400100-0
+event: message
+data: {"event":"message","data":{"conversation_id":"...","message_id":"...","answer":"，因为总体成本更低。"}}
+
+event: run_end
+data: {"event":"run_end","data":{"run_id":"...","status":"succeeded"}}
+
+```
+</CodeGroup>
+
+<Heading url="/api/v1/digital-humans/runs/{run_id}/stop" method="POST" title="停止 Run" name="#Stop-DigitalHuman-Run" />
+
+<Properties>
+  <Property name='run_id' type='uuid path' propKey='run_id'>必填，要取消的 Run。</Property>
+  <Property name='user' type='string body' propKey='user'>必填所属终端用户。</Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl --request POST '{apibase}/digital-humans/runs/{run_id}/stop' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'Content-Type: application/json' \
+  --data '{"user":"customer_123"}'
+```
+
+</CodeGroup>
+
+<CodeGroup title="响应">
+```json
+{"code":"0","message":"success","data":{"run_id":"44444444-4444-4444-8444-444444444444","status":"canceling","created_at":1715750400,"updated_at":1715750402}}
+```
+</CodeGroup>
+
+<Heading
+  url="/api/v1/digital-humans/runs/{run_id}/runtime-input"
+  method="POST"
+  title="提交运行时输入"
+  name="#Submit-DigitalHuman-Runtime-Input"
+/>
+
+<Properties>
+  <Property name="run_id" type="uuid path" propKey="run_id">
+    必填，活动或可续接 Run。
+  </Property>
+  <Property name="user" type="string body" propKey="user">
+    必填所属终端用户。
+  </Property>
+  <Property name="client_input_id" type="uuid" propKey="client_input_id">
+    必填，本次输入的幂等键。
+  </Property>
+  <Property name="content" type="string" propKey="content">
+    必填输入，最长 16,000 字符。
+  </Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl --request POST '{apibase}/digital-humans/runs/{run_id}/runtime-input' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'Content-Type: application/json' \
+  --data '{"user":"customer_123","client_input_id":"77777777-7777-4777-8777-777777777777","content":"成本优先于交付速度"}'
+```
+</CodeGroup>
+
+<CodeGroup title="响应">
+```json
+{"code":"0","message":"success","data":{"input":{"id":"88888888-8888-4888-8888-888888888888","client_input_id":"77777777-7777-4777-8777-777777777777","content":"成本优先于交付速度","status":"applied_current_run","target_message_id":"66666666-6666-4666-8666-666666666666","sequence":1,"created_at":1715750403},"disposition":"current_run","created":true}}
+```
+</CodeGroup>
+
+---
+
+## 编辑与重新生成历史问题
+
+<Heading
+  url="/api/v1/digital-humans/conversations/{conversation_id}/messages/{message_id}/regenerate"
+  method="POST"
+  title="编辑或重新生成根消息"
+  name="#Regenerate-DigitalHuman-Message"
+/>
+
+该接口与控制台/落地页的“编辑问题”和“重新生成”使用同一套 Durable Run + SSE。省略 `query` 会重用原问题；传入 `query` 会以编辑后的问题替换当前根消息并重新执行。原始消息只有在 ChatRuntime 校验通过后才替换，非根消息请使用聊天接口的 `parent_message_id` 创建分支。
+
+<Properties>
+  <Property name="conversation_id" type="uuid path" propKey="conversation_id">必填，所属用户会话。</Property>
+  <Property name="message_id" type="uuid path" propKey="message_id">必填，要编辑或重放的根消息。</Property>
+  <Property name="user" type="string body" propKey="user">必填，必须与会话所属用户一致。</Property>
+  <Property name="query" type="string body" propKey="query">可选，编辑后的问题；不传则保持原问题。</Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl --request POST '{apibase}/digital-humans/conversations/{conversation_id}/messages/{message_id}/regenerate' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'Content-Type: application/json' \
+  --data '{"user":"customer_123","query":"请重新比较三个方案并给出风险"}'
+```
+</CodeGroup>
+
+<CodeGroup title="响应">
+```text
+event: run_accepted
+data: {"event":"run_accepted","data":{"run_id":"...","status":"accepted"}}
+
+event: message_start
+data: {"event":"message_start","data":{"conversation_id":"...","message_id":"...","replace":true}}
+
+event: message
+data: {"event":"message","data":{"message_id":"...","answer":"更新后的回答"}}
+
+event: message_end
+data: {"event":"message_end","data":{"message_id":"...","status":"completed"}}
+
+event: run_end
+data: {"event":"run_end","data":{"run_id":"...","status":"succeeded"}}
+```
+</CodeGroup>
+
+响应是可恢复 SSE，先收到 `run_accepted`，随后收到带 `replace=true` 的 `message_start`、中间事件、`message`、`message_end` 和 `run_end`。断线后按同一会话的事件接口和 `Last-Event-ID` 恢复。
+
+<Heading
+  url="/api/v1/digital-humans/conversations/{conversation_id}/messages/{message_id}/workflow-continuation"
+  method="POST"
+  title="继续处理任务审批"
+  name="#Continue-DigitalHuman-Task-Approval"
+/>
+
+<Properties>
+  <Property name="conversation_id" type="uuid path" propKey="conversation_id">必填，所属会话。</Property>
+  <Property name="message_id" type="uuid path" propKey="message_id">必填，暂停中的助手消息。</Property>
+  <Property name="user" type="string body" propKey="user">必填，必须与会话所属用户一致。</Property>
+  <Property name="approval_token" type="string body" propKey="approval_token">必填，来自 `approval_requested` 的不透明令牌。</Property>
+  <Property name="action" type="string body" propKey="action">填写 `approve` 或 `decline`。</Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl --request POST '{apibase}/digital-humans/conversations/{conversation_id}/messages/{message_id}/workflow-continuation' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'Content-Type: application/json' \
+  --data '{"type":"approval","user":"customer_123","approval_token":"opaque-token","action":"approve"}'
+```
+</CodeGroup>
+
+<CodeGroup title="响应">
+```text
+event: approval_result
+data: {"event":"approval_result","data":{"action":"approve"}}
+
+event: message_end
+data: {"event":"message_end","data":{"message_id":"...","status":"completed"}}
+```
+</CodeGroup>
+
+<Heading
+  url="/api/v1/digital-humans/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue"
+  method="POST"
+  title="继续提交用户补充信息"
+  name="#Continue-DigitalHuman-User-Input"
+/>
+
+<Properties>
+  <Property name="conversation_id" type="uuid path" propKey="conversation_id">必填，所属会话。</Property>
+  <Property name="message_id" type="uuid path" propKey="message_id">必填，暂停中的助手消息。</Property>
+  <Property name="request_id" type="string path" propKey="request_id">必填，来自 `user_input_requested` 的请求标识。</Property>
+  <Property name="user" type="string body" propKey="user">必填，必须与会话所属用户一致。</Property>
+  <Property name="answers" type="object body" propKey="answers">必填，按问题 id 组织的回答。</Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl --request POST '{apibase}/digital-humans/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'Content-Type: application/json' \
+  --data '{"user":"customer_123","answers":{"question_1":"采用保守方案"}}'
+```
+</CodeGroup>
+
+<CodeGroup title="响应">
+```text
+event: message
+data: {"event":"message","data":{"message_id":"...","answer":"将按保守方案继续处理。"}}
+
+event: message_end
+data: {"event":"message_end","data":{"message_id":"...","status":"completed"}}
+```
+</CodeGroup>
+
+---
+
+<Heading
+  url="/api/v1/digital-humans/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue"
+  method="POST"
+  title="继续或停止 Token 预算暂停"
+  name="#Continue-DigitalHuman-Token-Budget"
+/>
+
+<Properties>
+  <Property name="conversation_id" type="uuid path" propKey="conversation_id">必填，会话 id。</Property>
+  <Property name="message_id" type="uuid path" propKey="message_id">必填，处于预算等待状态的消息 id。</Property>
+  <Property name="request_id" type="string path" propKey="request_id">必填，来自 `token_budget_requested`。</Property>
+  <Property name="user" type="string body" propKey="user">必填，且必须匹配会话所有者。</Property>
+  <Property name="action" type="add | stop" propKey="action">`add` 追加预算，`stop` 正常停止。</Property>
+  <Property name="additional_tokens" type="integer body" propKey="additional_tokens">`add` 时必填，范围 1 到 100000000，追加后总上限不能溢出。</Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl --request POST '{apibase}/digital-humans/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'Content-Type: application/json' \
+  --data '{"user":"customer_123","action":"add","additional_tokens":2048}'
+```
+</CodeGroup>
+<CodeGroup title="响应">
+```text
+event: message_start
+data: {"event":"message_start","data":{"conversation_id":"...","message_id":"..."}}
+
+event: token_usage_updated
+data: {"event":"token_usage_updated","data":{"message_id":"...","usage":{"total_tokens":2048}}}
+
+event: message_end
+data: {"event":"message_end","data":{"message_id":"...","status":"completed"}}
+```
+</CodeGroup>
+
+---
+
+## 会话管理
+
+<Heading
+  url="/api/v1/digital-humans/conversations"
+  method="GET"
+  title="会话列表"
+  name="#List-DigitalHuman-Conversations"
+/>
+
+<Properties>
+  <Property name="user" type="string query" propKey="user">
+    必填终端用户。
+  </Property>
+  <Property name="page" type="integer query" propKey="page">
+    可选页码，默认 1。
+  </Property>
+  <Property name="limit" type="integer query" propKey="limit">
+    可选页大小，默认 20。
+  </Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl '{apibase}/digital-humans/conversations?user=customer_123&page=1&limit=20' \
+  --header 'Authorization: Bearer {api_key}'
+```
+</CodeGroup>
+
+<CodeGroup title="响应">
+```json
+{"code":"0","message":"success","data":{"data":[{"id":"55555555-5555-4555-8555-555555555555","organization_id":"99999999-9999-4999-8999-999999999999","account_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","title":"方案比较","status":"active","runtime_status":"idle","conversation_type":"chat","dialogue_count":2,"source":"external-api","created_at":1715750400,"updated_at":1715750450}],"page":1,"limit":20,"total":1,"has_more":false}}
+```
+</CodeGroup>
+
+<Heading
+  url="/api/v1/digital-humans/conversations/search"
+  method="GET"
+  title="搜索会话"
+  name="#Search-DigitalHuman-Conversations"
+/>
+
+<Properties>
+  <Property name="user" type="string query" propKey="user">
+    必填终端用户。
+  </Property>
+  <Property name="query" type="string query" propKey="query">
+    必填标题或消息搜索词。
+  </Property>
+  <Property name="limit" type="integer query" propKey="limit">
+    可选结果数量，运行时最大 50。
+  </Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl '{apibase}/digital-humans/conversations/search?user=customer_123&query=方案&limit=20' \
+  --header 'Authorization: Bearer {api_key}'
+```
+</CodeGroup>
+
+<CodeGroup title="响应">
+```json
+{"code":"0","message":"success","data":[{"type":"conversation","conversation_id":"55555555-5555-4555-8555-555555555555","conversation_title":"方案比较","snippet":"方案比较","updated_at":1715750450}]}
+```
+</CodeGroup>
+
+<Heading
+  url="/api/v1/digital-humans/conversations/{conversation_id}"
+  method="GET"
+  title="获取会话"
+  name="#Get-DigitalHuman-Conversation"
+/>
+
+<Properties>
+  <Property name="conversation_id" type="uuid path" propKey="conversation_id">
+    必填会话标识。
+  </Property>
+  <Property name="user" type="string query" propKey="user">
+    必填所属终端用户。
+  </Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl '{apibase}/digital-humans/conversations/{conversation_id}?user=customer_123' \
+  --header 'Authorization: Bearer {api_key}'
+```
+</CodeGroup>
+
+<CodeGroup title="响应">
+```json
+{"code":"0","message":"success","data":{"id":"55555555-5555-4555-8555-555555555555","organization_id":"99999999-9999-4999-8999-999999999999","account_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","title":"方案比较","status":"active","runtime_status":"idle","conversation_type":"chat","dialogue_count":2,"source":"external-api","created_at":1715750400,"updated_at":1715750450}}
+```
+</CodeGroup>
+
+<Heading
+  url="/api/v1/digital-humans/conversations/{conversation_id}"
+  method="PATCH"
+  title="重命名会话"
+  name="#Rename-DigitalHuman-Conversation"
+/>
+
+<Properties>
+  <Property name="conversation_id" type="uuid path" propKey="conversation_id">
+    必填会话标识。
+  </Property>
+  <Property name="user" type="string body" propKey="user">
+    必填所属终端用户。
+  </Property>
+  <Property name="title" type="string body" propKey="title">
+    必填新标题，1–50 字符。
+  </Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl --request PATCH '{apibase}/digital-humans/conversations/{conversation_id}' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'Content-Type: application/json' \
+  --data '{"user":"customer_123","title":"Q3 方案决策"}'
+```
+</CodeGroup>
+
+<CodeGroup title="响应">
+```json
+{"code":"0","message":"success","data":{"id":"55555555-5555-4555-8555-555555555555","organization_id":"99999999-9999-4999-8999-999999999999","account_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","title":"Q3 方案决策","status":"active","runtime_status":"idle","conversation_type":"chat","dialogue_count":2,"source":"external-api","created_at":1715750400,"updated_at":1715750500}}
+```
+</CodeGroup>
+
+<Heading
+  url="/api/v1/digital-humans/conversations/{conversation_id}"
+  method="DELETE"
+  title="删除会话"
+  name="#Delete-DigitalHuman-Conversation"
+/>
+
+<Properties>
+  <Property name="conversation_id" type="uuid path" propKey="conversation_id">
+    必填会话标识。
+  </Property>
+  <Property name="user" type="string query" propKey="user">
+    必填所属终端用户。
+  </Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl --request DELETE '{apibase}/digital-humans/conversations/{conversation_id}?user=customer_123' \
+  --header 'Authorization: Bearer {api_key}'
+```
+</CodeGroup>
+
+<CodeGroup title="响应">
+```json
+{"code":"0","message":"success","data":{"result":"success"}}
+```
+</CodeGroup>
+
+<Heading
+  url="/api/v1/digital-humans/conversations/{conversation_id}/messages"
+  method="GET"
+  title="消息历史"
+  name="#List-DigitalHuman-Messages"
+/>
+
+<Properties>
+  <Property name="conversation_id" type="uuid path" propKey="conversation_id">
+    必填会话标识。
+  </Property>
+  <Property name="user" type="string query" propKey="user">
+    必填所属终端用户。
+  </Property>
+  <Property name="page" type="integer query" propKey="page">
+    可选页码。
+  </Property>
+  <Property name="limit" type="integer query" propKey="limit">
+    可选页大小。
+  </Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl '{apibase}/digital-humans/conversations/{conversation_id}/messages?user=customer_123&page=1&limit=100' \
+  --header 'Authorization: Bearer {api_key}'
+```
+</CodeGroup>
+
+<CodeGroup title="响应">
+```json
+{"code":"0","message":"success","data":{"data":[{"id":"66666666-6666-4666-8666-666666666666","conversation_id":"55555555-5555-4555-8555-555555555555","query":"比较这些方案","answer":"推荐方案 A。","status":"completed","model_name":"published-model","runtime_inputs":[],"created_at":1715750400,"updated_at":1715750450}],"page":1,"limit":100,"total":1,"has_more":false}}
+```
+</CodeGroup>
+
+---
+
+## 文件上传
+
+<Heading
+  url="/api/v1/digital-humans/files/upload"
+  method="POST"
+  title="上传聊天文件"
+  name="#Upload-DigitalHuman-File"
+/>
+
+<Properties>
+  <Property name="user" type="multipart field" propKey="user">
+    必填所属终端用户。
+  </Property>
+  <Property name="file" type="binary multipart field" propKey="file">
+    必填文件，受部署策略和 100 MiB 请求上限约束。
+  </Property>
+  <Property name="data.id" type="uuid" propKey="file_id">
+    将返回值放入后续 Chat 的 `file_ids`。
+  </Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl --request POST '{apibase}/digital-humans/files/upload' \
+  --header 'Authorization: Bearer {api_key}' \
+  --form 'user=customer_123' \
+  --form 'file=@./brief.pdf'
+```
+</CodeGroup>
+
+<CodeGroup title="响应">
+```json
+{"code":"0","message":"success","data":{"id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","name":"brief.pdf","size":48231,"extension":"pdf","mime_type":"application/pdf","created_at":1715750600}}
+```
+</CodeGroup>
+
+---
+
+## 用户私有待办
+
+通过公开 API 创建的待办归属于 `user`，而不是 API Key。一个 Key 可以服务多个
+用户，轮换 Key 不会改变任务归属。数字人共享任务仍只在控制台的共享任务页管理。
+
+<Heading
+  url="/api/v1/digital-humans/tasks"
+  method="POST"
+  title="创建用户私有待办"
+  name="#Create-DigitalHuman-Task"
+/>
+
+<Properties>
+  <Property name="user" type="string body" propKey="user">
+    必填、稳定且不透明的终端用户标识。
+  </Property>
+  <Property name="name" type="string body" propKey="name">
+    必填待办名称。
+  </Property>
+  <Property name="goal" type="string body" propKey="goal">
+    必填交付目标。
+  </Property>
+  <Property name="schedule.type" type="string body" propKey="schedule">
+    可选 `manual`、`once` 或 `cron`。
+  </Property>
+  <Property name="Idempotency-Key" type="uuid header" propKey="idempotency_key">
+    建议用于安全重试。
+  </Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl --request POST '{apibase}/digital-humans/tasks' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'Idempotency-Key: 8e5a6f5a-7b5d-4d20-8b63-cc47a40fba0e' \
+  --header 'Content-Type: application/json' \
+  --data '{"user":"customer_123","name":"跟进需求","goal":"总结最新需求变化","schedule":{"type":"manual"},"delivery_mode":"task_only"}'
+```
+</CodeGroup>
+
+<CodeGroup title="响应">
+```json
+{"code":"0","message":"success","data":{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","digital_human_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","owner_kind":"user_subject","name":"跟进需求","goal":"总结最新需求变化","work_status":"pending","lifecycle_status":"active","priority":"normal","schedule":{"type":"manual"},"delivery_mode":"task_only","revision":1}}
+```
+</CodeGroup>
+
+<Heading
+  url="/api/v1/digital-humans/tasks"
+  method="GET"
+  title="查询用户私有待办"
+  name="#List-DigitalHuman-Tasks"
+/>
+
+<Properties>
+  <Property name="user" type="string query" propKey="user">
+    必填所属终端用户。
+  </Property>
+  <Property name="page" type="integer query" propKey="page">
+    可选，从 1 开始的页码。
+  </Property>
+  <Property name="page_size" type="integer query" propKey="page_size">
+    可选页大小，取值 1 至 100。
+  </Property>
+  <Property name="status, priority, q" type="string query" propKey="filters">
+    可选工作状态、优先级和文本筛选条件。
+  </Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl '{apibase}/digital-humans/tasks?user=customer_123&page=1&page_size=20' \
+  --header 'Authorization: Bearer {api_key}'
+```
+</CodeGroup>
+
+<CodeGroup title="响应">
+```json
+{"code":"0","message":"success","data":{"items":[],"total":0,"page":1,"page_size":20,"has_more":false,"counts":{}}}
+```
+</CodeGroup>
+
+<Heading
+  url="/api/v1/digital-humans/tasks/{task_id}"
+  method="GET"
+  title="查询单个用户私有待办"
+  name="#Get-DigitalHuman-Task"
+/>
+
+<Properties>
+  <Property name="task_id" type="uuid path" propKey="task_id">
+    必填待办标识。
+  </Property>
+  <Property name="user" type="string query" propKey="user">
+    必填所属终端用户。
+  </Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl '{apibase}/digital-humans/tasks/{task_id}?user=customer_123' \
+  --header 'Authorization: Bearer {api_key}'
+```
+</CodeGroup>
+
+<CodeGroup title="响应">
+```json
+{"code":"0","message":"success","data":{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","digital_human_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","owner_kind":"user_subject","name":"跟进需求","goal":"总结最新需求变化","work_status":"pending","lifecycle_status":"active","priority":"normal","schedule":{"type":"manual"},"delivery_mode":"task_only","revision":1}}
+```
+</CodeGroup>
+
+<Heading
+  url="/api/v1/digital-humans/tasks/{task_id}"
+  method="PATCH"
+  title="更新用户私有待办"
+  name="#Update-DigitalHuman-Task"
+/>
+
+<Properties>
+  <Property name="task_id" type="uuid path" propKey="task_id">
+    必填待办标识。
+  </Property>
+  <Property name="user" type="string body" propKey="user">
+    必填所属终端用户。
+  </Property>
+  <Property name="expected_revision" type="integer body" propKey="expected_revision">
+    必填当前 revision，用于乐观并发控制。
+  </Property>
+  <Property name="name, goal, schedule, priority" type="body fields" propKey="changes">
+    只传需要替换的可修改字段。
+  </Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl --request PATCH '{apibase}/digital-humans/tasks/{task_id}' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'Content-Type: application/json' \
+  --data '{"user":"customer_123","expected_revision":1,"name":"复核需求"}'
+```
+</CodeGroup>
+
+<CodeGroup title="响应">
+```json
+{"code":"0","message":"success","data":{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","digital_human_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","owner_kind":"user_subject","name":"复核需求","goal":"总结最新需求变化","work_status":"pending","lifecycle_status":"active","priority":"normal","schedule":{"type":"manual"},"delivery_mode":"task_only","revision":2}}
+```
+</CodeGroup>
+
+<Heading
+  url="/api/v1/digital-humans/tasks/{task_id}/actions/{action}"
+  method="POST"
+  title="执行待办动作"
+  name="#Action-DigitalHuman-Task"
+/>
+
+<Properties>
+  <Property name="task_id" type="uuid path" propKey="task_id">
+    必填待办标识。
+  </Property>
+  <Property name="action" type="string path" propKey="action">
+    可选 `confirm`、`decline`、`run_now`、`pause`、`resume`、`retry`、`cancel` 或 `archive`。
+  </Property>
+  <Property name="user" type="string body" propKey="user">
+    必填所属终端用户。
+  </Property>
+  <Property name="expected_revision" type="integer body" propKey="expected_revision">
+    必填当前 revision。
+  </Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl --request POST '{apibase}/digital-humans/tasks/{task_id}/actions/run_now' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'Content-Type: application/json' \
+  --data '{"user":"customer_123","expected_revision":2}'
+```
+</CodeGroup>
+
+<CodeGroup title="响应">
+```json
+{"code":"0","message":"success","data":{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","digital_human_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","owner_kind":"user_subject","name":"复核需求","goal":"总结最新需求变化","work_status":"pending","lifecycle_status":"active","priority":"normal","schedule":{"type":"manual"},"delivery_mode":"task_only","revision":3}}
+```
+</CodeGroup>
+
+<Heading
+  url="/api/v1/digital-humans/tasks/{task_id}/runs"
+  method="GET"
+  title="查询待办执行记录"
+  name="#List-DigitalHuman-Task-Runs"
+/>
+
+<Properties>
+  <Property name="task_id" type="uuid path" propKey="task_id">
+    必填待办标识。
+  </Property>
+  <Property name="user" type="string query" propKey="user">
+    必填所属终端用户。
+  </Property>
+  <Property name="page, page_size" type="integer query" propKey="pagination">
+    可选分页参数。
+  </Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl '{apibase}/digital-humans/tasks/{task_id}/runs?user=customer_123&page=1&page_size=20' \
+  --header 'Authorization: Bearer {api_key}'
+```
+</CodeGroup>
+
+<CodeGroup title="响应">
+```json
+{"code":"0","message":"success","data":{"items":[{"id":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee","task_id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","trigger_source":"manual","attempt":1,"status":"succeeded","result_summary":"需求总结已完成。","scheduled_for":"2026-09-14T02:00:00Z","created_at":"2026-09-14T02:00:00Z"}],"total":1,"page":1,"page_size":20,"has_more":false}}
+```
+</CodeGroup>
+
+<Heading
+  url="/api/v1/digital-humans/tasks/{task_id}/activities"
+  method="GET"
+  title="查询待办活动记录"
+  name="#List-DigitalHuman-Task-Activities"
+/>
+
+<Properties>
+  <Property name="task_id" type="uuid path" propKey="task_id">
+    必填待办标识。
+  </Property>
+  <Property name="user" type="string query" propKey="user">
+    必填所属终端用户。
+  </Property>
+  <Property name="page, page_size" type="integer query" propKey="pagination">
+    可选分页参数。
+  </Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl '{apibase}/digital-humans/tasks/{task_id}/activities?user=customer_123&page=1&page_size=20' \
+  --header 'Authorization: Bearer {api_key}'
+```
+</CodeGroup>
+
+<CodeGroup title="响应">
+```json
+{"code":"0","message":"success","data":{"items":[{"event":"created","actor":"current_user","created_at":"2026-09-14T02:00:00Z"}],"total":1,"page":1,"page_size":20,"has_more":false}}
+```
+</CodeGroup>
+
+读取、更新和执行动作时，需要传入任务返回的 `revision`。
+
+支持 `confirm`、`decline`、`run_now`、`pause`、`resume`、`retry`、`cancel` 和
+`archive`。revision 过期时返回 `409 digital_human.task.conflict`，应刷新任务后使用
+最新 revision 重试。`GET /digital-humans/tasks/{task_id}/runs?user=customer_123` 返回
+有长度上限的执行元数据和安全 `result_summary`，不会返回执行 Trace 或模型原始响应。
+活动记录会隐藏 API Key ID 等可信审计引用。
+
+如果待办是由对话中的数字人提出或修改，SSE 会返回 `approval_requested`，消息进入
+`waiting_approval`，并在输入框位置显示审批表单。客户端应调用
+`POST /digital-humans/conversations/{conversation_id}/messages/{message_id}/workflow-continuation`，提交同一个
+`user`、`approval_token` 和 `action`；不要再发送一条“确认”消息。
+
+已登录落地页提供等价的
+`/api/v1/digital-human-webapps/{web_app_id}/tasks...` 接口，服务端从签名会话解析账号
+主体，不接受浏览器传入的 `user`。匿名会话不能创建任务，也不会注册任务工具。
+
+---
+
+## JSON 错误、重试与安全
+
+SSE 建链前，错误使用 HTTP 状态码和安全 JSON：
+
+```json
+{ "code": "digital_human.request.invalid", "message": "Invalid request.", "retryable": false }
+```
+
+| HTTP  | 常见原因                                    | 自动重试               |
+| ----- | ------------------------------------------- | ---------------------- |
+| `400` | UUID 非法、`user` 缺失/非法、响应模式不支持 | 否                     |
+| `401` | Key 缺失、无效、过期、停用或撤销            | 否                     |
+| `403` | API Surface 或部署总开关关闭                | 否                     |
+| `404` | Run、会话、消息或发布版本不在调用方范围     | 否                     |
+| `409` | 幂等载荷或 Durable 状态冲突                 | 先校准状态再决定       |
+| `413` | 上传超过请求上限                            | 否                     |
+| `415` | 文件类型不支持                              | 否                     |
+| `429` | 速率或上游限流                              | 有上限的指数退避       |
+| `500` | 内部失败                                    | 仅 `retryable=true` 时 |
+
+HTTP 200 的 SSE 开始后，应消费 `error` 和 `run_end`，不会再有第二个 HTTP 状态码。日志只记录安全 `code`、`run_id` 和业务侧请求追踪 ID；不得记录 API Key、原始 `user`、提示词、文件内容或模型输出。

@@ -10,6 +10,8 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 	automationdefinition "github.com/zgiai/zgi/api/internal/modules/automation/service/definition"
+	connectordispatch "github.com/zgiai/zgi/api/internal/modules/connectors/dispatch"
+	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	notificationsms "github.com/zgiai/zgi/api/internal/modules/notification/sms"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
@@ -23,6 +25,9 @@ type Dependencies struct {
 	ContentExtractor            file.ContentExtractor
 	LLMClient                   interface{}
 	ToolEngine                  interface{}
+	ConnectorConfirmationStore  connectorexecution.ConfirmationContinuationStore
+	ConnectorDispatcher         connectordispatch.Dispatcher
+	ConnectorCatalog            connectorexecution.DefinitionCatalog
 	GraphFlowService            *graphflow.Service
 	FileService                 interfaces.FileService
 	PromptResolver              promptservice.PromptService
@@ -126,6 +131,15 @@ func (r *NodeRunner) optionalDependencies(nodeID string, nodeType shared.NodeTyp
 			logger.Info("Passing ToolEngine to Tools node: %s", nodeID)
 		} else {
 			logger.Warn("No ToolEngine available for Tools node: %s", nodeID)
+		}
+		if r.deps.ConnectorDispatcher != nil {
+			optionalDeps = append(optionalDeps, r.deps.ConnectorDispatcher)
+		}
+		if r.deps.ConnectorCatalog != nil {
+			optionalDeps = append(optionalDeps, r.deps.ConnectorCatalog)
+		}
+		if r.deps.ConnectorConfirmationStore != nil {
+			optionalDeps = append(optionalDeps, r.deps.ConnectorConfirmationStore)
 		}
 	}
 

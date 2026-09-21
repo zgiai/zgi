@@ -577,6 +577,12 @@ func summarizeStructuredArtifactArgument(key string, value interface{}) map[stri
 }
 
 func summarizeToolArguments(tool SkillToolDefinition, args map[string]interface{}) map[string]interface{} {
+	if tool.ConnectorNative {
+		return map[string]interface{}{
+			"schema_bound_arguments_redacted": true,
+			"argument_count":                  len(args),
+		}
+	}
 	if tool.Governance == nil || !tool.Governance.DataEgress || tool.Governance.SensitiveDataAllowed {
 		return summarizeArguments(args)
 	}

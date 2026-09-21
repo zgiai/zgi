@@ -193,7 +193,7 @@ func NewLLMModule(db *gorm.DB, crypto shared.CryptoService, tenantService interf
 	m.AvailabilityModule = availability.NewModule(m.ModelRepo, m.ModelCfgRepo, m.TenantRouteRepo, m.ProviderModule.GlobalRepo, m.ProviderModule.ConfigRepo)
 	m.AvailabilityHandler = m.AvailabilityModule.Handler
 
-	// Initialize ModelMeta Module (for syncing model metadata from modelmeta.dev)
+	// Initialize ModelMeta Module (for syncing model metadata from models.zgi.ai)
 	modelMetaSvc := modelmeta.NewService(db)
 	m.ModelMetaHandler = modelmeta.NewHandler(modelMetaSvc)
 

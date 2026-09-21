@@ -1,5 +1,5 @@
 import { BaseService } from '@/lib/http/services';
-import { webappHttp } from '@/lib/http';
+import { createDigitalHumanWebAppHttp, webappHttp } from '@/lib/http';
 import type { ApiResponseData } from './types/common';
 import type { FileParseProviderKey, FileUploadProcessingMode } from './types/file';
 
@@ -138,6 +138,28 @@ export class UploadService extends BaseService {
     throw new Error(response.message || 'Failed to upload file');
   }
 
+  async uploadDigitalHumanWebAppSingle(
+    webAppId: string,
+    file: File,
+    options: { onProgress?: (progress: number) => void } = {}
+  ): Promise<UploadResponse> {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await createDigitalHumanWebAppHttp(webAppId).post<
+      ApiResponseData<UploadResponse>
+    >(`/api/v1/digital-human-webapps/${encodeURIComponent(webAppId)}/files/upload`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: options.onProgress
+        ? progressEvent => {
+            const progress = Math.round((progressEvent.loaded * 98) / (progressEvent.total || 1));
+            options.onProgress?.(progress);
+          }
+        : undefined,
+    });
+    if (response.code === '0' && response.data) return response.data;
+    throw new Error(response.message || 'Failed to upload file');
+  }
+
   // Get upload configuration
   async getConfig(): Promise<UploadConfig> {
     try {
@@ -159,6 +181,14 @@ export class UploadService extends BaseService {
     if (response.code === '0' && response.data) {
       return response.data;
     }
+    throw new Error(response.message || 'Failed to get upload config');
+  }
+
+  async getDigitalHumanWebAppConfig(webAppId: string): Promise<UploadConfig> {
+    const response = await createDigitalHumanWebAppHttp(webAppId).get<
+      ApiResponseData<UploadConfig>
+    >(`/api/v1/digital-human-webapps/${encodeURIComponent(webAppId)}/files/upload`);
+    if (response.code === '0' && response.data) return response.data;
     throw new Error(response.message || 'Failed to get upload config');
   }
 

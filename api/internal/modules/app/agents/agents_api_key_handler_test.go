@@ -339,7 +339,7 @@ func TestChatAPIKeyAgentStreamsPublishedRuntimeSSE(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/agents/chat", strings.NewReader(`{"query":"Analyze the supplied bone-ageing cohort","response_mode":"streaming"}`))
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/agents/chat", strings.NewReader(`{"query":"Analyze the supplied bone-ageing cohort","response_mode":"streaming","max_task_tokens":42000}`))
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Set("organization_id", ids.organizationID.String())
 	c.Set("workspace_id", ids.workspaceID.String())
@@ -361,7 +361,7 @@ func TestChatAPIKeyAgentStreamsPublishedRuntimeSSE(t *testing.T) {
 	if got := w.Header().Get(agentSSEMessageIDHeader); got != ids.messageID.String() {
 		t.Fatalf("message header = %q, want %s", got, ids.messageID)
 	}
-	for _, expected := range []string{`"event":"message_start"`, `"replace":false`, `"event":"message"`, `"answer":"verified scientific result"`, `"event":"skill_call_end"`, `"event":"message_end"`, `"status":"completed"`} {
+	for _, expected := range []string{`"event":"message_start"`, `"replace":false`, `"event":"message"`, `"answer":"verified scientific result"`, `"event":"skill_call_end"`, `"event":"token_usage_updated"`, `"used_tokens":42`, `"event":"message_end"`, `"status":"completed"`} {
 		if !strings.Contains(w.Body.String(), expected) {
 			t.Fatalf("SSE body missing %q: %s", expected, w.Body.String())
 		}
@@ -369,6 +369,9 @@ func TestChatAPIKeyAgentStreamsPublishedRuntimeSSE(t *testing.T) {
 	assertExternalAgentRuntimeCallerScope(t, runtimeSvc.lastScope, runtimeSvc.lastCaller, ids)
 	if runtimeSvc.lastRunConfig.BillingAppID != ids.agentID.String() || runtimeSvc.lastRunConfig.BillingAppType != runtimemodel.ConversationCallerAgent {
 		t.Fatalf("billing app = %q/%q, want %s/%s", runtimeSvc.lastRunConfig.BillingAppID, runtimeSvc.lastRunConfig.BillingAppType, ids.agentID, runtimemodel.ConversationCallerAgent)
+	}
+	if runtimeSvc.lastRequest.MaxTaskTokens != 42000 {
+		t.Fatalf("max task tokens = %d, want 42000", runtimeSvc.lastRequest.MaxTaskTokens)
 	}
 }
 
@@ -554,14 +557,16 @@ type apiKeyChatRuntimeService struct {
 	lastScope     runtimeservice.Scope
 	lastCaller    runtimeservice.Caller
 	lastRunConfig runtimeservice.RunConfig
+	lastRequest   runtimedto.ChatRequest
 	result        *runtimeservice.ChatResult
 	runErr        error
 }
 
-func (s *apiKeyChatRuntimeService) PrepareConfiguredChat(_ context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, config runtimeservice.RunConfig, _ runtimedto.ChatRequest) (*runtimeservice.PreparedChat, error) {
+func (s *apiKeyChatRuntimeService) PrepareConfiguredChat(_ context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, config runtimeservice.RunConfig, request runtimedto.ChatRequest) (*runtimeservice.PreparedChat, error) {
 	s.lastScope = scope
 	s.lastCaller = caller
 	s.lastRunConfig = config
+	s.lastRequest = request
 	return &runtimeservice.PreparedChat{
 		Conversation: &runtimemodel.Conversation{ID: s.ids.conversationID},
 		Message:      &runtimemodel.Message{ID: s.ids.messageID, ConversationID: s.ids.conversationID, ModelName: "gpt-5.6-sol"},
@@ -580,6 +585,12 @@ func (s *apiKeyChatRuntimeService) RunPreparedStream(_ context.Context, _ *runti
 	}
 	if len(onEvents) > 0 && onEvents[0] != nil {
 		if err := onEvents[0](runtimeservice.StreamEvent{ID: "event-1", EventType: "skill_call_end", Payload: map[string]interface{}{"method": "ordinary_least_squares"}}); err != nil {
+			return nil, err
+		}
+		if err := onEvents[0](runtimeservice.StreamEvent{ID: "event-2", EventType: "token_usage_updated", Payload: map[string]interface{}{
+			"usage":             map[string]interface{}{"prompt_tokens": 30, "completion_tokens": 12, "total_tokens": 42},
+			"task_token_budget": map[string]interface{}{"used_tokens": 42, "max_tokens": 42000, "remaining_tokens": 41958, "status": "running"},
+		}}); err != nil {
 			return nil, err
 		}
 	}

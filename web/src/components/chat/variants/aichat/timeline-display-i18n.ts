@@ -1,9 +1,5 @@
 import type { ScopedTranslations } from '@/i18n/translations';
 import {
-  integrationErrorTranslationKey,
-  looksLikeIntegrationErrorCode,
-} from '@/services/integration-error-i18n';
-import {
   formatTimelineDebugValue,
   sanitizeTimelineDisplayString,
   summarizeTimelineArgumentsForDisplay,
@@ -146,9 +142,7 @@ export function localizeAIChatRuntimeErrorCode(value: unknown, t: WebappTranslat
   if (typeof value !== 'string') return null;
   const normalized = value.trim().toLowerCase();
   if (!normalized) return null;
-  const key = integrationErrorTranslationKey(normalized, 'webapp');
-  if (key) return t(key);
-  return normalized.startsWith('integration_')
+  return normalized.startsWith('connector_')
     ? t('consoleChat.skills.trace.errors.externalAppFailed')
     : null;
 }
@@ -178,9 +172,7 @@ export function localizeAIChatRuntimeMessage(
   ) {
     return t('consoleChat.skills.trace.errors.invalidArguments');
   }
-  const integrationErrorKey = integrationErrorTranslationKey(normalized, 'webapp');
-  if (integrationErrorKey) return t(integrationErrorKey);
-  if (looksLikeIntegrationErrorCode(normalized)) {
+  if (/^connector_[a-z_]+$/.test(normalized)) {
     return t('consoleChat.skills.trace.errors.externalAppFailed');
   }
   if (/preferred connection|connection.*selected|selected.*connection/i.test(normalized)) {

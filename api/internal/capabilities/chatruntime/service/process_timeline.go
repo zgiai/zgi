@@ -111,7 +111,19 @@ func (r *processTimelineRecorder) RecordEvent(eventType string, payload map[stri
 		r.service.persistWorkflowRunEventBestEffort(r.persistCtx, r.prepared, eventType, payload)
 	}
 	invocation := r.invocationFromEvent(eventType, payload)
-	r.recordPresentationEvent(eventType, payload, invocation)
+	internalTaskGovernance := r.isInternalDigitalHumanTaskGovernanceEvent(eventType, payload)
+	if internalTaskGovernance && len(invocation) > 0 {
+		// Keep the governance invocation in durable metadata for audit and
+		// continuation recovery, but never project it into the user-facing
+		// presentation timeline. DigitalHuman task approvals have their own
+		// workflow card; the generic governance placeholder is redundant.
+		invocation["presentation_visibility"] = "internal"
+	} else {
+		r.recordPresentationEvent(eventType, payload, invocation)
+	}
+	if eventType == streamEventRuntimeInputApplied {
+		r.recordRuntimeInputApplication(payload)
+	}
 	if len(invocation) > 0 {
 		if strings.TrimSpace(stringFromAny(invocation["kind"])) == "tool_governance" {
 			r.persistGovernedToolCallSuspension(payload)
@@ -130,6 +142,43 @@ func (r *processTimelineRecorder) RecordEvent(eventType string, payload map[stri
 		return err
 	}
 	return r.Emit(eventType, payload)
+}
+
+func (r *processTimelineRecorder) isInternalDigitalHumanTaskGovernanceEvent(eventType string, payload map[string]interface{}) bool {
+	if r == nil || r.prepared == nil {
+		return false
+	}
+	return shouldSuppressDigitalHumanTaskGovernanceEvent(r.prepared.Caller, eventType, payload)
+}
+
+func (r *processTimelineRecorder) recordRuntimeInputApplication(payload map[string]interface{}) {
+	if r == nil || r.prepared == nil || r.prepared.Message == nil {
+		return
+	}
+	inputID := payloadString(payload, "input_id")
+	if inputID == "" {
+		return
+	}
+	application := map[string]interface{}{}
+	for _, key := range []string{
+		"input_id", "sequence", "checkpoint", "model_round", "created_at", "applied_at",
+		"presentation_id", "presentation_sequence", "presentation_version",
+	} {
+		if value, ok := payload[key]; ok {
+			application[key] = value
+		}
+	}
+	applications := mapSliceFromAny(r.prepared.Message.Metadata[runtimeInputApplicationsMetadataKey])
+	for index := range applications {
+		if payloadString(applications[index], "input_id") != inputID {
+			continue
+		}
+		applications[index] = application
+		r.prepared.Message.Metadata[runtimeInputApplicationsMetadataKey] = mapsToInterfaceSlice(applications)
+		return
+	}
+	applications = append(applications, application)
+	r.prepared.Message.Metadata[runtimeInputApplicationsMetadataKey] = mapsToInterfaceSlice(applications)
 }
 
 func (r *processTimelineRecorder) recordPresentationTextChunk(payload map[string]interface{}) {
@@ -430,16 +479,41 @@ func (r *processTimelineRecorder) invocationFromEvent(eventType string, payload 
 		invocation["runtime_id"] = r.runtimeIDForStandalone(invocation)
 		return invocation
 	case streamEventToolGovernanceDecision:
-		invocation := newSkillInvocation("tool_governance", payloadString(payload, "skill_id"), payloadString(payload, "tool_name"), payloadStatus(payload, "needs_approval"), invocationTimelineFields(payload, map[string]interface{}{
+		skillID := payloadString(payload, "skill_id")
+		toolName := payloadString(payload, "tool_name")
+		// DigitalHuman task continuation events may be emitted after the
+		// original tool invocation has been compacted. Keep the stable task
+		// identity in the persisted governance invocation so the timeline can
+		// fold it into the task approval card rather than showing a generic
+		// governance row.
+		if isDigitalHumanTaskGovernancePayload(payload) {
+			if skillID == "" {
+				skillID = "digital-human-tasks"
+			}
+			if toolName == "" {
+				toolName = "manage_digital_human_task"
+			}
+		}
+		result := governanceMapFromAny(payload["result"])
+		if result == nil {
+			result = map[string]interface{}{}
+		}
+		for _, key := range []string{"task_id", "task_action", "operation_id", "task_revision", "owner_kind", "workflow_run_id"} {
+			if _, exists := result[key]; !exists && payload[key] != nil {
+				result[key] = payload[key]
+			}
+		}
+		if approvalEvent := governanceMapFromAny(payload["approval_event"]); len(approvalEvent) > 0 {
+			result["approval_event"] = approvalEvent
+		}
+		invocation := newSkillInvocation("tool_governance", skillID, toolName, payloadStatus(payload, "needs_approval"), invocationTimelineFields(payload, map[string]interface{}{
 			"conversation_id":       payload["conversation_id"],
 			"message_id":            payload["message_id"],
 			"duration_ms":           payload["duration_ms"],
 			"governance":            governanceMapFromAny(payload["governance"]),
 			"asset_operation_audit": governanceMapFromAny(payload["asset_operation_audit"]),
 			"approval_status":       payload["approval_status"],
-			"result": map[string]interface{}{
-				"approval_event": governanceMapFromAny(payload["approval_event"]),
-			},
+			"result":                result,
 		}))
 		if runtimeID := toolGovernanceRuntimeIDFromEvent(payload); runtimeID != "" {
 			invocation["runtime_id"] = runtimeID
@@ -568,6 +642,46 @@ func (r *processTimelineRecorder) invocationFromEvent(eventType string, payload 
 	default:
 		return nil
 	}
+}
+
+func isDigitalHumanTaskGovernancePayload(payload map[string]interface{}) bool {
+	if len(payload) == 0 {
+		return false
+	}
+	if strings.EqualFold(payloadString(payload, "skill_id"), "digital-human-tasks") ||
+		strings.EqualFold(payloadString(payload, "tool_name"), "manage_digital_human_task") ||
+		strings.TrimSpace(payloadString(payload, "task_action")) != "" {
+		return true
+	}
+	if strings.EqualFold(payloadString(payload, "kind"), "digital_human_task") {
+		return true
+	}
+	if strings.HasPrefix(strings.ToLower(payloadString(payload, "workflow_run_id")), "digital-human-task:") {
+		return true
+	}
+	governance := governanceMapFromAny(payload["governance"])
+	for _, value := range []interface{}{payload["approval_event"], governance["approval_event"], governance["frozen_invocation"], payload["result"]} {
+		approval := governanceMapFromAny(value)
+		if strings.EqualFold(payloadString(approval, "skill_id"), "digital-human-tasks") ||
+			strings.EqualFold(payloadString(approval, "tool_name"), "manage_digital_human_task") ||
+			strings.TrimSpace(payloadString(approval, "task_action")) != "" {
+			return true
+		}
+		form := governanceMapFromAny(approval["approval_form"])
+		if strings.EqualFold(payloadString(form, "node_id"), "digital_human_task") ||
+			strings.EqualFold(payloadString(approval, "node_id"), "digital_human_task") ||
+			strings.EqualFold(payloadString(approval, "skill_id"), "digital-human-tasks") ||
+			strings.EqualFold(payloadString(approval, "tool_name"), "manage_digital_human_task") {
+			return true
+		}
+		arguments := governanceMapFromAny(approval["arguments"])
+		if strings.EqualFold(payloadString(arguments, "skill_id"), "digital-human-tasks") ||
+			strings.EqualFold(payloadString(arguments, "tool_name"), "manage_digital_human_task") ||
+			strings.TrimSpace(payloadString(arguments, "task_action")) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *processTimelineRecorder) intermediateAnswerMessage(answerID string, content string, delta bool) string {
@@ -925,6 +1039,9 @@ func invocationTimelineFields(payload map[string]interface{}, values map[string]
 	}
 	if len(payload) == 0 {
 		return values
+	}
+	if payload["runtime_source"] == "connector" {
+		values["runtime_source"] = "connector"
 	}
 	if _, exists := values["created_at"]; !exists {
 		values["created_at"] = payload["created_at"]

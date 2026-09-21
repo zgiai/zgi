@@ -19,7 +19,6 @@ import WorkflowRunsDropdown from '../workflow-runs-dropdown';
 import { useHistoryView } from './hooks/use-history-view';
 import { useSseCallbacks } from './hooks/use-sse-callbacks';
 import type { WorkflowFinishedData, HistoryResult } from './types';
-import useWorkflowValidation from '../../hooks/use-workflow-validation';
 import { flushWorkflowPendingEdits } from '../../hooks/pending-edits';
 import {
   Dialog,
@@ -955,8 +954,6 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
   );
 
   const saveWorkflowDraft = useSaveWorkflowDraft();
-  const { errors } = useWorkflowValidation();
-
   const persistDraftBeforeRun = useCallback(async () => {
     flushWorkflowPendingEdits();
     const { nodes, edges, viewport, workflowData } = useWorkflowStore.getState();
@@ -1156,14 +1153,17 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
         toast.error(t('common.unauthorizedDescription'));
         return;
       }
-      if (errors.length > 0 && !isBannerHidden(BannerKey.WorkflowRunErrorsWarning)) {
+      flushWorkflowPendingEdits();
+      useWorkflowStore.getState().syncRunnableSets();
+      const latestErrors = useWorkflowStore.getState().validationResults.errors;
+      if (latestErrors.length > 0 && !isBannerHidden(BannerKey.WorkflowRunErrorsWarning)) {
         pendingInputsRef.current = values;
         setRunWarnOpen(true);
         return;
       }
       await runDraftWithPrecheck(values);
     },
-    [canRunDraft, errors.length, runDraftWithPrecheck, t]
+    [canRunDraft, runDraftWithPrecheck, t]
   );
 
   const handleRunNoInputs = useCallback(async () => {
@@ -1171,13 +1171,16 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
       toast.error(t('common.unauthorizedDescription'));
       return;
     }
-    if (errors.length > 0 && !isBannerHidden(BannerKey.WorkflowRunErrorsWarning)) {
+    flushWorkflowPendingEdits();
+    useWorkflowStore.getState().syncRunnableSets();
+    const latestErrors = useWorkflowStore.getState().validationResults.errors;
+    if (latestErrors.length > 0 && !isBannerHidden(BannerKey.WorkflowRunErrorsWarning)) {
       pendingInputsRef.current = {};
       setRunWarnOpen(true);
       return;
     }
     await runDraftWithPrecheck({});
-  }, [canRunDraft, errors.length, runDraftWithPrecheck, t]);
+  }, [canRunDraft, runDraftWithPrecheck, t]);
 
   const handleQuestionAnswerSelect = useCallback(
     (choice: QuestionAnswerChoice) => {

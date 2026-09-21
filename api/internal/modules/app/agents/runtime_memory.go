@@ -2,8 +2,6 @@ package agents
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -12,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
+	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -79,6 +78,21 @@ func (s *agentsService) ListAgentMemoryValues(ctx context.Context, agentID, acco
 	if err != nil {
 		return nil, fmt.Errorf("account id is invalid")
 	}
+	if s.relationshipMemory != nil && relationshipmemory.RuntimeEnabled() {
+		slots, slotErr := s.publishedRelationshipMemorySlots(ctx, ag.ID)
+		if slotErr != nil {
+			return nil, slotErr
+		}
+		privacySlots, privacyErr := s.relationshipMemory.PrivacySlots(ctx, ag.TenantID, ag.ID, slots, agentmemory.UserScopeAccount, targetUserID)
+		if privacyErr != nil {
+			return nil, privacyErr
+		}
+		exported, readErr := s.relationshipMemory.ExportUserMemory(ctx, ag.TenantID, ag.ID, privacySlots, agentmemory.UserScopeAccount, targetUserID)
+		if readErr != nil {
+			return nil, readErr
+		}
+		return &dto.AgentMemoryValuesResponse{UserScope: agentmemory.UserScopeAccount, UserID: targetUserID.String(), Values: agentMemoryValueConfigsFromResponses(exported.Values)}, nil
+	}
 	values, err := s.agentMemoryService.ListOrganizerValues(ctx, ag.ID, agentmemory.UserScopeAccount, targetUserID)
 	if err != nil {
 		return nil, err
@@ -101,6 +115,18 @@ func (s *agentsService) UpdateAgentMemoryValue(ctx context.Context, agentID, acc
 	targetUserID, err := uuid.Parse(strings.TrimSpace(accountID))
 	if err != nil {
 		return nil, fmt.Errorf("account id is invalid")
+	}
+	if s.relationshipMemory != nil && relationshipmemory.RuntimeEnabled() {
+		slots, slotErr := s.publishedRelationshipMemorySlots(ctx, ag.ID)
+		if slotErr != nil {
+			return nil, slotErr
+		}
+		value, updateErr := s.relationshipMemory.UpdateValue(ctx, ag.TenantID, ag.ID, slots, agentmemory.UserScopeAccount, targetUserID, agentmemory.UpdateValueRequest{Key: req.Key, Content: req.Content, ExpectedRevision: req.ExpectedRevision}, agentmemory.MutationMetadata{ActorType: agentmemory.EventActorOrganizer, Source: agentmemory.EventSourceAPI, SourceKind: agentmemory.SourceKindManager})
+		if updateErr != nil {
+			return nil, updateErr
+		}
+		resp := agentMemoryValueConfigFromResponse(*value)
+		return &resp, nil
 	}
 	value, err := s.agentMemoryService.UpdateOrganizerValue(ctx, ag.ID, agentmemory.UserScopeAccount, targetUserID, agentmemory.UpdateValueRequest{
 		Key:              req.Key,
@@ -126,12 +152,36 @@ func (s *agentsService) ClearAgentMemoryValue(ctx context.Context, agentID, acco
 	if err != nil {
 		return nil, fmt.Errorf("account id is invalid")
 	}
+	if s.relationshipMemory != nil && relationshipmemory.RuntimeEnabled() {
+		slots, slotErr := s.publishedRelationshipMemorySlots(ctx, ag.ID)
+		if slotErr != nil {
+			return nil, slotErr
+		}
+		value, clearErr := s.relationshipMemory.ClearValue(ctx, ag.TenantID, ag.ID, slots, agentmemory.UserScopeAccount, targetUserID, key, agentmemory.MutationMetadata{ActorType: agentmemory.EventActorOrganizer, Source: agentmemory.EventSourceAPI, SourceKind: agentmemory.SourceKindManager})
+		if clearErr != nil {
+			return nil, clearErr
+		}
+		resp := agentMemoryValueConfigFromResponse(*value)
+		return &resp, nil
+	}
 	value, err := s.agentMemoryService.ClearOrganizerValue(ctx, ag.ID, agentmemory.UserScopeAccount, targetUserID, key)
 	if err != nil {
 		return nil, err
 	}
 	resp := agentMemoryValueConfigFromResponse(*value)
 	return &resp, nil
+}
+
+func (s *agentsService) publishedRelationshipMemorySlots(ctx context.Context, agentID uuid.UUID) ([]agentmemory.RuntimeSlot, error) {
+	version, err := s.agentsRepo.GetLatestAgentPublishedVersion(ctx, agentID.String())
+	if err != nil {
+		return nil, err
+	}
+	config := agentConfigResponseFromSnapshot(agentID.String(), version.ConfigSnapshot)
+	if config == nil || !config.AgentMemoryEnabled {
+		return nil, fmt.Errorf("Agent memory is disabled in the published version")
+	}
+	return agentMemoryRuntimeStoreSlots(agentMemoryRuntimeSlots(config.AgentMemorySlots)), nil
 }
 
 func (s *agentsService) agentMemorySlotsForDraft(ctx context.Context, agentID uuid.UUID) []dto.AgentMemorySlotConfig {
@@ -395,18 +445,9 @@ func (s *agentsService) UpdateAgentMemoryConfig(ctx context.Context, agentID, ac
 }
 
 func agentMemoryConfigRevision(enabled, automatic bool, slots []dto.AgentMemorySlotConfig) string {
-	type revisionSlot struct {
-		Key         string `json:"key"`
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		MaxChars    int    `json:"max_chars"`
-		Enabled     bool   `json:"enabled"`
-		SortOrder   int    `json:"sort_order"`
-	}
-	normalizedSlots := normalizeAgentMemorySlotConfigs(slots)
-	revisionSlots := make([]revisionSlot, 0, len(normalizedSlots))
-	for _, slot := range normalizedSlots {
-		revisionSlots = append(revisionSlots, revisionSlot{
+	runtimeSlots := make([]agentmemory.RuntimeSlot, 0, len(slots))
+	for _, slot := range slots {
+		runtimeSlots = append(runtimeSlots, agentmemory.RuntimeSlot{
 			Key:         slot.Key,
 			Name:        slot.Name,
 			Description: slot.Description,
@@ -415,14 +456,7 @@ func agentMemoryConfigRevision(enabled, automatic bool, slots []dto.AgentMemoryS
 			SortOrder:   slot.SortOrder,
 		})
 	}
-	payload := struct {
-		Enabled   bool           `json:"enabled"`
-		Automatic bool           `json:"automatic"`
-		Slots     []revisionSlot `json:"slots"`
-	}{enabled, automatic, revisionSlots}
-	raw, _ := json.Marshal(payload)
-	digest := sha256.Sum256(raw)
-	return hex.EncodeToString(digest[:])
+	return agentmemory.ConfigRevision(enabled, automatic, runtimeSlots)
 }
 
 func agentMemorySlotConfigsFromSnapshot(raw interface{}) []dto.AgentMemorySlotConfig {

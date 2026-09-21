@@ -55,7 +55,7 @@ type WorkflowRouteDeps struct {
 }
 
 // RegisterWorkflowRoutes now uses modular services.
-func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) {
+func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) *workflowHandlerPkg.WorkflowService {
 	validateWorkflowRouteDeps(deps)
 
 	// Initialize workflow repository
@@ -251,6 +251,8 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) {
 	builtInWorkflowRuntimeSurfaces.PATCH("/:scenario/runtime-surfaces", builtInHandler.UpdateBuiltInWorkflowRuntimeSurfaces)
 
 	builtInWorkflows.GET("/:scenario", builtInHandler.GetBuiltInWorkflowByScenario)
+
+	return workflowService
 }
 
 func validateWorkflowRouteDeps(deps WorkflowRouteDeps) {

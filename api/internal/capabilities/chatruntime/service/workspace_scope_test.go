@@ -78,16 +78,11 @@ func TestExistingChatAndRegenerationRejectConversationWorkspaceMismatch(t *testi
 		WorkspaceID: &workspaceA,
 	}
 	message := &runtimemodel.Message{ID: uuid.New(), ConversationID: conversation.ID}
-	resolverCalls := 0
 	svc := &service{
 		repos: &repository.Repositories{
 			Conversation: workspaceScopeConversationRepository{conversation: conversation},
 			Message:      workspaceScopeMessageRepository{message: message},
 		},
-		integrationPrefs: AIChatIntegrationPreferenceResolverFunc(func(context.Context, Scope) (AIChatIntegrationRuntimePreferences, error) {
-			resolverCalls++
-			return AIChatIntegrationRuntimePreferences{}, nil
-		}),
 	}
 	scope := Scope{
 		OrganizationID: organizationID, AccountID: accountID,
@@ -110,9 +105,6 @@ func TestExistingChatAndRegenerationRejectConversationWorkspaceMismatch(t *testi
 	if !errors.Is(err, ErrPermissionDenied) {
 		t.Fatalf("regeneration error = %v, want workspace permission denial", err)
 	}
-	if resolverCalls != 1 {
-		t.Fatalf("resolver calls = %d, want authoritative refresh at regeneration boundary", resolverCalls)
-	}
 }
 
 func TestContinuationPrepareRejectsConversationWorkspaceMismatchBeforePreferenceRefresh(t *testing.T) {
@@ -120,11 +112,7 @@ func TestContinuationPrepareRejectsConversationWorkspaceMismatchBeforePreference
 	workspaceB := uuid.New()
 	conversation := &runtimemodel.Conversation{ID: uuid.New(), WorkspaceID: &workspaceA}
 	message := &runtimemodel.Message{ID: uuid.New(), ConversationID: conversation.ID}
-	resolverCalls := 0
-	svc := &service{integrationPrefs: AIChatIntegrationPreferenceResolverFunc(func(context.Context, Scope) (AIChatIntegrationRuntimePreferences, error) {
-		resolverCalls++
-		return AIChatIntegrationRuntimePreferences{}, nil
-	})}
+	svc := &service{}
 	scope := Scope{WorkspaceID: &workspaceB}
 	caller := Caller{Type: runtimemodel.ConversationCallerAIChat}
 
@@ -151,8 +139,5 @@ func TestContinuationPrepareRejectsConversationWorkspaceMismatchBeforePreference
 				t.Fatalf("continuation error = %v, want workspace permission denial", err)
 			}
 		})
-	}
-	if resolverCalls != 0 {
-		t.Fatalf("resolver calls = %d, want none after workspace mismatch", resolverCalls)
 	}
 }

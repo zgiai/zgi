@@ -13,7 +13,9 @@ import type {
   AIChatMessageEndEventData,
   AIChatMessageRetractEventData,
   AIChatMessageStartEventData,
+  AIChatTokenUsageUpdatedEventData,
   AIChatMemoryMutationEventData,
+  AIChatRuntimeInputAppliedEventData,
   AIChatSkillArtifactCreatedEventData,
   AIChatSkillCallEndEventData,
   AIChatSkillCallErrorEventData,
@@ -44,8 +46,10 @@ import {
   applyMessageChunkState,
   applyMessageEndState,
   applyMemoryMutationState,
+  applyRuntimeInputAppliedState,
   applyMessageRetractState,
   applyMessageStartState,
+  applyTokenUsageUpdatedState,
   applySkillArtifactCreatedState,
   applySkillCallEndState,
   applySkillCallErrorState,
@@ -105,6 +109,7 @@ function shouldRefreshConversationAfterMessageEnd(
     status === 'waiting_approval' ||
     status === 'waiting_client_action' ||
     status === 'waiting_question' ||
+    status === 'waiting_budget' ||
     status === 'stopped' ||
     status === 'error' ||
     status === 'failed'
@@ -136,8 +141,7 @@ function clientActionProgressPayload(
     effect: payload.effect,
     asset_type: payload.asset_type,
     assets: payload.assets,
-    correlation_id:
-      typeof payload.correlation_id === 'string' ? payload.correlation_id : undefined,
+    correlation_id: typeof payload.correlation_id === 'string' ? payload.correlation_id : undefined,
     asset_operation_audit: payload.asset_operation_audit,
     result: clientActionProgressResult(payload),
     created_at: payload.created_at,
@@ -252,6 +256,14 @@ export function useChatRuntimeEventAppliers({
         answer_len: (payload.answer ?? '').length,
       });
       setControllerState(current => applyMessageChunkState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applyTokenUsageUpdated = useCallback(
+    (payload: AIChatTokenUsageUpdatedEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id) return;
+      setControllerState(current => applyTokenUsageUpdatedState(current, payload, eventId));
     },
     [setControllerState]
   );
@@ -448,6 +460,14 @@ export function useChatRuntimeEventAppliers({
     (payload: AIChatMemoryMutationEventData, eventId?: string | null) => {
       if (!payload.conversation_id || !payload.message_id || !payload.action) return;
       setControllerState(current => applyMemoryMutationState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applyRuntimeInputApplied = useCallback(
+    (payload: AIChatRuntimeInputAppliedEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id || !payload.input_id) return;
+      setControllerState(current => applyRuntimeInputAppliedState(current, payload, eventId));
     },
     [setControllerState]
   );
@@ -653,6 +673,7 @@ export function useChatRuntimeEventAppliers({
       applySkillCallError,
       applySkillArtifactCreated,
       applyMemoryMutation,
+      applyRuntimeInputApplied,
       applyToolGovernanceDecision,
       applyClientActionRequired,
       applyClientActionResult,
@@ -667,6 +688,7 @@ export function useChatRuntimeEventAppliers({
       applyIntermediateAnswer,
       applyUserInputRequested,
       applyMessageEnd,
+      applyTokenUsageUpdated,
       applyStreamError,
     }),
     [
@@ -679,6 +701,7 @@ export function useChatRuntimeEventAppliers({
       applyIntermediateAnswer,
       applyUserInputRequested,
       applyMemoryMutation,
+      applyRuntimeInputApplied,
       applyWorkflowApprovalRequested,
       applyWorkflowFailed,
       applyWorkflowFinished,
@@ -688,6 +711,7 @@ export function useChatRuntimeEventAppliers({
       applyWorkflowStarted,
       applyMessageChunk,
       applyMessageEnd,
+      applyTokenUsageUpdated,
       applyMessageRetract,
       applyMessageStart,
       applySkillArtifactCreated,

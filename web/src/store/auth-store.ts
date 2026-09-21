@@ -155,13 +155,19 @@ const useAuthStoreBase = create<AuthState>()((set, get) => ({
         sessionStatus: 'syncing',
       });
 
-      const user = await authService.getProfile(!(options?.refresh ?? false));
+      const forceRefresh = options?.refresh ?? false;
+      const user = await authService.getProfile(!forceRefresh);
       const currentToken = authService.getToken();
+      // A forced profile refresh is used during auth bootstrap. The HTTP
+      // client may proactively rotate the access token before the profile
+      // request, so a changed token is expected rather than evidence that
+      // this request became stale. Keep the stale-request guard for cached
+      // profile refreshes, where a token change still indicates a race.
       if (
         version !== initializationVersion ||
         get().isLoggingOut ||
         !currentToken ||
-        currentToken !== token
+        (!forceRefresh && currentToken !== token)
       ) {
         return null;
       }

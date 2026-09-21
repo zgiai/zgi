@@ -2,9 +2,12 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
+	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
@@ -18,6 +21,29 @@ func NewToolEngine(toolManager *ToolManager) *ToolEngine {
 	return &ToolEngine{
 		toolManager: toolManager,
 	}
+}
+
+// ResolveToolEntity returns the authoritative catalog contract used by a Tool
+// node. Workflow execution uses this as a compatibility fallback for drafts
+// saved before structured output snapshots were introduced.
+func (e *ToolEngine) ResolveToolEntity(
+	ctx context.Context,
+	providerType ToolProviderType,
+	providerID, toolName, tenantID string,
+) (*ToolEntity, error) {
+	if e == nil || e.toolManager == nil {
+		return nil, fmt.Errorf("tool manager is not configured")
+	}
+	provider, err := e.toolManager.GetProvider(ctx, providerType, providerID, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	tool, err := provider.GetTool(toolName)
+	if err != nil {
+		return nil, err
+	}
+	entity := tool.GetEntity()
+	return &entity, nil
 }
 
 // InvokeRequest represents a tool invocation request
@@ -34,6 +60,8 @@ type InvokeRequest struct {
 	MessageID         string                 `json:"message_id,omitempty"`
 	InvokeFrom        ToolInvokeFrom         `json:"invoke_from"`
 	RuntimeParameters map[string]interface{} `json:"runtime_parameters,omitempty"`
+	// ConnectorIdentity is an internal, typed, non-secret authorization and
+	// idempotency identity. It is never decoded from a public Tool payload.
 }
 
 // InvokeResult represents the result of a tool invocation
@@ -46,6 +74,10 @@ type InvokeResult struct {
 
 // Invoke invokes a tool based on the request
 func (e *ToolEngine) Invoke(ctx context.Context, req InvokeRequest) (*InvokeResult, error) {
+	if NormalizeToolProviderType(req.ProviderType) == ToolProviderTypeConnector {
+		err := fmt.Errorf("Connector operations require native dispatch")
+		return &InvokeResult{Success: false, Error: err.Error(), Meta: NewErrorToolInvokeMeta(err.Error())}, err
+	}
 	startTime := time.Now()
 
 	logger.Debug("tool engine invoking tool",
@@ -73,7 +105,6 @@ func (e *ToolEngine) Invoke(ctx context.Context, req InvokeRequest) (*InvokeResu
 			Meta:    NewErrorToolInvokeMeta(err.Error()),
 		}, err
 	}
-
 	// Prepare optional parameters
 	var conversationID, appID, messageID *string
 	if req.ConversationID != "" {
@@ -91,8 +122,9 @@ func (e *ToolEngine) Invoke(ctx context.Context, req InvokeRequest) (*InvokeResu
 	if err != nil {
 		elapsed := time.Since(startTime).Seconds()
 		return &InvokeResult{
-			Success: false,
-			Error:   fmt.Sprintf("tool invocation failed: %v", err),
+			Messages: safeConnectorRuntimeErrorMessages(req.ProviderType, tool, messages, err),
+			Success:  false,
+			Error:    fmt.Sprintf("tool invocation failed: %v", err),
 			Meta: &ToolInvokeMeta{
 				TimeCost: elapsed,
 				Error:    err.Error(),
@@ -110,9 +142,82 @@ func (e *ToolEngine) Invoke(ctx context.Context, req InvokeRequest) (*InvokeResu
 	}, nil
 }
 
+// connectorRuntimeErrorMessageProjector is intentionally implemented only by
+// the server-owned Connector metadata type. ToolEngine never forwards the
+// original message on an error path; the projector must rebuild a bounded,
+// credential-free control message from typed fields.
+type connectorRuntimeErrorMessageProjector interface {
+	SafeConnectorRuntimeErrorMessage() (ToolInvokeMessage, bool)
+}
+
+func safeConnectorRuntimeErrorMessages(
+	providerType ToolProviderType,
+	tool Tool,
+	messages []ToolInvokeMessage,
+	err error,
+) []ToolInvokeMessage {
+	if NormalizeToolProviderType(providerType) != ToolProviderTypeConnector ||
+		!connectorcore.IsErrorCode(err, connectorcore.ErrorCodeConfirmationRequired) ||
+		len(messages) != 1 || tool == nil {
+		return nil
+	}
+	native, nativeOK := tool.(ConnectorNativeTool)
+	if !nativeOK || !native.IsConnectorNativeTool() {
+		return nil
+	}
+	message := messages[0]
+	if message.Type != ToolInvokeMessageTypeJSON || len(message.Meta) != 1 {
+		return nil
+	}
+	for _, rawMetadata := range message.Meta {
+		projector, ok := rawMetadata.(connectorRuntimeErrorMessageProjector)
+		if !ok {
+			return nil
+		}
+		projected, valid := projector.SafeConnectorRuntimeErrorMessage()
+		if !valid || !validSafeConnectorRuntimeErrorMessage(projected) {
+			return nil
+		}
+		return []ToolInvokeMessage{projected}
+	}
+	return nil
+}
+
+func validSafeConnectorRuntimeErrorMessage(message ToolInvokeMessage) bool {
+	if message.Type != ToolInvokeMessageTypeJSON || message.Text != "" || len(message.Data) != 2 ||
+		len(message.Meta) != 1 || message.Data["state"] != "blocked" {
+		return false
+	}
+	decisionID, ok := message.Data["decision_id"].(string)
+	if !ok {
+		return false
+	}
+	parsedDecisionID, err := uuid.Parse(decisionID)
+	if err != nil || parsedDecisionID == uuid.Nil {
+		return false
+	}
+	rawMetadata, ok := message.Meta["connector_execution"]
+	if !ok {
+		return false
+	}
+	encoded, err := json.Marshal(rawMetadata)
+	if err != nil {
+		return false
+	}
+	metadata := map[string]interface{}{}
+	if err := json.Unmarshal(encoded, &metadata); err != nil || len(metadata) != 2 ||
+		metadata["state"] != "blocked" || metadata["decision_id"] != decisionID {
+		return false
+	}
+	return true
+}
+
 // EnrichGovernanceArguments gives a runtime tool a chance to add display-only
 // context, such as asset names, before the governance decision freezes a call.
 func (e *ToolEngine) EnrichGovernanceArguments(ctx context.Context, req InvokeRequest) (map[string]interface{}, error) {
+	if NormalizeToolProviderType(req.ProviderType) == ToolProviderTypeConnector {
+		return req.Parameters, fmt.Errorf("Connector operations require native dispatch")
+	}
 	if e == nil || e.toolManager == nil {
 		return req.Parameters, nil
 	}
@@ -184,6 +289,7 @@ type WorkflowToolInvokeRequest struct {
 	ToolConfigurations map[string]interface{} `json:"tool_configurations"`
 	ToolCredentials    map[string]interface{} `json:"tool_credentials,omitempty"` // Credentials for plugin runtime
 	ConversationID     string                 `json:"conversation_id,omitempty"`
+	RuntimeParameters  map[string]interface{} `json:"runtime_parameters,omitempty"`
 }
 
 // InvokeForWorkflow invokes a tool for workflow execution
@@ -200,16 +306,17 @@ func (e *ToolEngine) InvokeForWorkflow(ctx context.Context, req WorkflowToolInvo
 	}
 
 	return e.Invoke(ctx, InvokeRequest{
-		ProviderType:   req.ProviderType,
-		ProviderID:     req.ProviderID,
-		ToolName:       req.ToolName,
-		TenantID:       req.TenantID,
-		UserID:         req.UserID,
-		Parameters:     parameters,
-		CredentialID:   req.CredentialID,
-		ConversationID: req.ConversationID,
-		AppID:          req.AppID,
-		InvokeFrom:     ToolInvokeFromWorkflow,
+		ProviderType:      req.ProviderType,
+		ProviderID:        req.ProviderID,
+		ToolName:          req.ToolName,
+		TenantID:          req.TenantID,
+		UserID:            req.UserID,
+		Parameters:        parameters,
+		CredentialID:      req.CredentialID,
+		ConversationID:    req.ConversationID,
+		AppID:             req.AppID,
+		InvokeFrom:        ToolInvokeFromWorkflow,
+		RuntimeParameters: req.RuntimeParameters,
 	})
 }
 

@@ -315,6 +315,7 @@ const Results: React.FC<ResultsProps> = ({
     return collectGeneratedFiles(historyResult.value);
   }, [historyResult]);
 
+
   // Determine content text to copy from current mode
   const copyText = useMemo<string>(() => {
     const body = (() => {

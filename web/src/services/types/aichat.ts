@@ -36,6 +36,7 @@ export type AIChatMessageStatus =
   | 'waiting_approval'
   | 'waiting_client_action'
   | 'waiting_question'
+  | 'waiting_budget'
   | 'completed'
   | 'error'
   | 'stopped';
@@ -44,6 +45,33 @@ export interface AIChatUsage {
   prompt_tokens?: number;
   completion_tokens?: number;
   total_tokens?: number;
+}
+
+/** Cumulative token budget reported while an API task is running. */
+export interface AIChatTaskTokenBudget {
+  used_tokens: number;
+  max_tokens: number;
+  remaining_tokens: number;
+  status?: string;
+}
+
+/** Token accounting update emitted after each model invocation. */
+export interface AIChatTokenUsageUpdatedEventData {
+  conversation_id: string;
+  message_id: string;
+  usage: AIChatUsage;
+  task_token_budget?: AIChatTaskTokenBudget;
+}
+
+/** Independent continuation request emitted when an API task exhausts its budget. */
+export interface AIChatTokenBudgetRequestedEventData {
+  conversation_id: string;
+  message_id: string;
+  request_id: string;
+  request_kind: 'task_token_budget' | string;
+  message: string;
+  token_budget: AIChatTaskTokenBudget;
+  actions: Array<{ id: 'add' | 'stop' | string; label: string }>;
 }
 
 export type AIChatSkillMode = 'disabled' | 'auto' | 'required';
@@ -108,9 +136,9 @@ export interface AIChatSkillExposureProfile {
   governance_risk?: 'none' | 'low' | 'medium' | 'high' | 'mixed' | string;
 }
 
-export interface AIChatSkillIntegrationRequirement {
-  integration_id: string;
-  action_ids?: string[];
+export interface AIChatSkillConnectorRequirement {
+  connector_id: string;
+  operation_ids?: string[];
   required: boolean;
 }
 
@@ -124,7 +152,7 @@ export type AIChatSkillAvailabilityState =
 export interface AIChatSkillAvailability {
   state: AIChatSkillAvailabilityState;
   reason?: string;
-  integration_ids?: string[];
+  connector_ids?: string[];
 }
 
 export interface AIChatSkillMetadata {
@@ -146,11 +174,11 @@ export interface AIChatSkillMetadata {
   validation_error?: string;
   supported_callers?: Array<'aichat' | 'agent'>;
   required_config?: string[];
-  dependency_type?: 'standalone' | 'integration' | string;
+  dependency_type?: 'standalone' | 'connector' | string;
   provider_type?: string;
   provider_id?: string;
-  integration_requirements?: Array<AIChatSkillIntegrationRequirement | string>;
-  external_dependencies?: Array<AIChatSkillIntegrationRequirement | string>;
+  connector_requirements?: Array<AIChatSkillConnectorRequirement | string>;
+  external_dependencies?: Array<AIChatSkillConnectorRequirement | string>;
   availability?: AIChatSkillAvailability;
   exposure?: AIChatSkillExposureProfile;
 }
@@ -235,6 +263,7 @@ export interface AIChatExistingSkill {
 }
 
 export interface AIChatSkillInvocation {
+  runtime_source?: 'connector' | 'connector_history';
   kind?: AIChatSkillInvocationKind;
   invocation_id?: string;
   runtime_id?: string;
@@ -252,6 +281,8 @@ export interface AIChatSkillInvocation {
   tool_name?: string;
   title?: string;
   status: AIChatSkillActivityStatus;
+  /** Durable governance records may be retained for recovery but hidden from user timelines. */
+  presentation_visibility?: 'user' | 'internal' | string;
   duration_ms?: number;
   arguments?: Record<string, unknown> | null;
   result?: Record<string, unknown> | null;
@@ -315,11 +346,15 @@ export interface AIChatWorkflowRunApprovalMetadata extends Record<string, unknow
   approval_form?: unknown;
   ui_approval_allowed?: boolean;
   status?: string;
+  task_name?: string;
+  task_id?: string;
 }
 
 export interface AIChatWorkflowRunMetadata {
+  kind?: string;
   workflow_run_id?: string;
   task_id?: string;
+  task_name?: string;
   id?: string;
   workflow_id?: string;
   agent_id?: string;
@@ -397,6 +432,8 @@ export interface AIChatGeneratedFile {
 
 export interface AIChatMessageMetadata {
   usage?: AIChatUsage;
+  task_token_budget?: AIChatTaskTokenBudget;
+  task_token_budget_request?: AIChatTokenBudgetRequestedEventData;
   answer_before_timeline_length?: number;
   presentation_version?: number;
   presentation?: AIChatPresentationProjection;
@@ -421,6 +458,7 @@ export interface AIChatMessageMetadata {
   generated_files?: AIChatGeneratedFile[];
   user_input_request?: AIChatUserInputRequest;
   user_input_responses?: AIChatUserInputResponse[];
+  runtime_input_applications?: AIChatRuntimeInputApplicationMetadata[];
   context_control?: Record<string, unknown>;
   [key: string]: unknown;
 }
@@ -541,8 +579,59 @@ export interface AIChatMessage {
   model_parameters?: Record<string, unknown>;
   metadata?: AIChatMessageMetadata;
   source_message_id?: string;
+  runtime_inputs?: AIChatRuntimeInput[];
   created_at: number;
   updated_at: number;
+}
+
+export type AIChatRuntimeInputStatus =
+  | 'pending'
+  | 'applied_current_run'
+  | 'applied_follow_up'
+  | 'queued_follow_up'
+  | 'canceled'
+  | 'failed';
+
+export interface AIChatRuntimeInput {
+  id: string;
+  client_input_id: string;
+  content: string;
+  status: AIChatRuntimeInputStatus;
+  optimistic?: boolean;
+  target_message_id: string;
+  consumed_message_id?: string;
+  sequence: number;
+  created_at: number;
+}
+
+export interface AIChatRuntimeInputApplicationMetadata extends AIChatPresentationPosition {
+  input_id: string;
+  sequence?: number;
+  checkpoint?: string;
+  model_round?: number;
+  created_at?: number;
+  applied_at?: number;
+}
+
+export interface AIChatRuntimeInputAppliedEventData extends AIChatRuntimeInputApplicationMetadata {
+  conversation_id: string;
+  message_id: string;
+  client_input_id?: string;
+  content: string;
+  status?: AIChatRuntimeInputStatus;
+  target_message_id?: string;
+  consumed_message_id?: string;
+}
+
+export interface AIChatSubmitRuntimeInputRequest {
+  client_input_id: string;
+  content: string;
+}
+
+export interface AIChatSubmitRuntimeInputResponseData {
+  input: AIChatRuntimeInput;
+  disposition: 'current_run' | 'follow_up';
+  created: boolean;
 }
 
 export type AIChatSearchResultType = 'conversation' | 'message';
@@ -596,6 +685,8 @@ export interface AIChatModelParameters {
 export type AIChatRuntimeSurface = 'work_chat' | 'contextual_sidebar' | 'external_page_chat';
 
 export interface AIChatChatRequest {
+  initial_connector_bindings?: AIChatInitialConnectorBinding[];
+  initial_connector_defaults_revision?: number;
   conversation_id?: string;
   parent_id?: string;
   query: string;
@@ -608,6 +699,12 @@ export interface AIChatChatRequest {
   response_mode: 'streaming';
   parameters?: AIChatModelParameters;
   use_memory?: boolean;
+}
+
+/** First-turn, owner-scoped connection references. Never include credentials. */
+export interface AIChatInitialConnectorBinding {
+  connector_id: string;
+  connection_id: string;
 }
 
 export interface AIChatRegenerateMessageRequest {
@@ -710,6 +807,7 @@ export interface AIChatSkillCallStartEventData {
 }
 
 export interface AIChatSkillCallEndEventData {
+  runtime_source?: 'connector';
   conversation_id: string;
   message_id: string;
   kind?: AIChatSkillInvocationKind;
@@ -735,6 +833,8 @@ export interface AIChatSkillCallEndEventData {
 }
 
 export interface AIChatSkillCallErrorEventData {
+  runtime_source?: 'connector';
+  result?: Record<string, unknown> | null;
   conversation_id: string;
   message_id: string;
   kind?: AIChatSkillInvocationKind;
@@ -1053,6 +1153,8 @@ export interface AIChatAgentProgressEventData {
     | 'model_processing'
     | 'client_action'
     | 'client_action_result'
+    | 'connector_confirmation_required'
+    | 'connector_confirmation_resolved'
     | 'context_compaction';
   progress_id?: string;
   stage?: 'initial' | 'extended' | 'long_running';
@@ -1172,6 +1274,7 @@ export interface AIChatWorkflowPausedEventData extends AIChatWorkflowEventData {
   approval_url?: string;
   approval_form?: unknown;
   ui_approval_allowed?: boolean;
+  task_name?: string;
 }
 
 export interface AIChatFileParseStartEventData {
@@ -1257,6 +1360,8 @@ export type AIChatSseEventName =
   | 'message'
   | 'message_retract'
   | 'message_end'
+  | 'token_usage_updated'
+  | 'token_budget_requested'
   | 'error';
 
 export interface AIChatSseEnvelope<TData = unknown> {

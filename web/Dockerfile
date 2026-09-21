@@ -101,6 +101,13 @@ WORKDIR /app/web
 # Copy build artifacts
 COPY --from=builder /app/web/public ./public
 COPY --from=builder /app/web/.next/standalone ./
+# Next.js can preserve the workspace directory in standalone output (for
+# example, `.next/standalone/web/server.js`). Normalize that layout so the
+# entrypoint has one stable runtime path regardless of tracing-root detection.
+RUN if [ ! -f ./server.js ] && [ -f ./web/server.js ]; then \
+      cp -a ./web/. ./ && rm -rf ./web; \
+    fi \
+    && test -f ./server.js
 COPY --from=builder /app/web/.next/static ./.next/static
 COPY docker/entrypoint.sh ./entrypoint.sh
 

@@ -9,6 +9,34 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
+func TestMergeSkillTraceMetadataRedactsConnectorNativeArgumentsAcrossTimeline(t *testing.T) {
+	const sentinel = "private-provider-input-sentinel"
+
+	metadata := mergeSkillTraceMetadata(nil, []skills.SkillTrace{{
+		Kind: "tool_call", SkillID: skills.SkillConnectorRuntime, ToolName: "search_provider",
+		Status: "pending_confirmation", ConnectorNative: true,
+		Arguments: map[string]interface{}{
+			"query":  sentinel,
+			"nested": map[string]interface{}{"private": sentinel},
+		},
+	}})
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), sentinel) {
+		t.Fatalf("Connector provider input leaked into message metadata: %s", encoded)
+	}
+	invocations := skillInvocationsFromMetadata(metadata["skill_invocations"])
+	if len(invocations) != 1 {
+		t.Fatalf("skill_invocations = %#v, want one", invocations)
+	}
+	arguments := mapFromOperationContext(invocations[0]["arguments"])
+	if arguments["schema_bound_arguments_redacted"] != true || intValueFromAny(arguments["argument_count"]) != 2 {
+		t.Fatalf("persisted Connector arguments = %#v", arguments)
+	}
+}
+
 func TestMergeSkillTraceMetadataStoresTurnStateOutsideVisibleInvocations(t *testing.T) {
 	metadata := mergeSkillTraceMetadata(nil, []skills.SkillTrace{{
 		Kind:   "turn_state",
@@ -39,6 +67,35 @@ func TestMergeSkillTraceMetadataStoresTurnStateOutsideVisibleInvocations(t *test
 	}
 	if got := stringFromAny(items[0]["value"]); got != "water fee confirmation" {
 		t.Fatalf("turn_state value = %q, want water fee confirmation", got)
+	}
+}
+
+func TestClientVisibleMessageMetadataHidesInternalDigitalHumanTaskGovernance(t *testing.T) {
+	metadata := map[string]interface{}{
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":                    "tool_governance",
+				"skill_id":                "digital-human-tasks",
+				"tool_name":               "manage_digital_human_task",
+				"presentation_visibility": "internal",
+				"status":                  "needs_approval",
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"skill_id":  "time",
+				"tool_name": "get_current_time",
+				"status":    "success",
+			},
+		},
+	}
+
+	visible := ClientVisibleMessageMetadata(metadata)
+	invocations := skillInvocationsFromMetadata(visible["skill_invocations"])
+	if len(invocations) != 1 {
+		t.Fatalf("visible skill_invocations = %#v, want only the real tool call", invocations)
+	}
+	if got := stringFromAny(invocations[0]["tool_name"]); got != "get_current_time" {
+		t.Fatalf("visible tool_name = %q, want get_current_time", got)
 	}
 }
 

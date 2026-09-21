@@ -10,9 +10,7 @@ import (
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
-	"github.com/zgiai/zgi/api/internal/modules/tools"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
@@ -28,9 +26,6 @@ func (s *service) catalogSkillMetadata(ctx context.Context, organizationID uuid.
 			if err != nil {
 				logger.WarnContext(ctx, "aichat system skill catalog has invalid entries", err)
 			}
-		}
-		if !s.skillRuntime.ToolProviderConfigured(ctx, tools.ToolProviderTypeConnector, integrations.MetaProviderExternalIntegrations) {
-			systemMetadata = excludeSkillMetadata(systemMetadata, skills.SkillExternalApps)
 		}
 	}
 	customMetadata, err := s.customSkillDiscoveryMetadata(ctx, organizationID)
@@ -63,7 +58,7 @@ func (s *service) customSkillCatalogEntries(ctx context.Context, organizationID 
 	}
 	entries := make([]skills.CustomSkillCatalogEntry, 0, len(customSkills))
 	for _, item := range customSkills {
-		if item == nil {
+		if item == nil || item.Status != runtimemodel.CustomSkillStatusActive {
 			continue
 		}
 		entries = append(entries, skills.CustomSkillCatalogEntry{
@@ -85,6 +80,10 @@ func (s *service) customSkillDiscoveryMetadata(ctx context.Context, organization
 	metadata := make([]skills.SkillDiscoveryMetadata, 0, len(customSkills))
 	for _, item := range customSkills {
 		if item == nil {
+			continue
+		}
+		if item.Status == runtimemodel.CustomSkillStatusInvalid {
+			metadata = append(metadata, invalidCustomSkillMetadata(item, fmt.Errorf("%s", item.ValidationError)))
 			continue
 		}
 		doc, err := s.skillRuntime.LoadCustomSkillDocument(item.StoragePath)
@@ -243,40 +242,24 @@ func effectiveAgentSkillIDs(input []string, catalog []skills.SkillDiscoveryMetad
 			out = append(out, id)
 		}
 	}
-	if runConfigHasAgentIntegrationBindings(runConfig) {
-		id := skills.SkillExternalApps
-		if _, ok := seen[id]; !ok &&
-			runtimeManagedSkillAvailableForCaller(catalog, id, runtimemodel.ConversationCallerAgent) {
-			out = append(out, id)
-		}
-	}
 	sort.Strings(out)
 	return out
 }
 
-func runConfigHasAgentIntegrationBindings(runConfig *RunConfig) bool {
-	if runConfig == nil || !strings.EqualFold(strings.TrimSpace(runConfig.BillingAppType), runtimemodel.ConversationCallerAgent) {
-		return false
+func filterDigitalHumanSkillIDs(input []string) []string {
+	forbidden := map[string]struct{}{
+		skills.SkillAgentManagement: {},
+		skills.SkillAgentMemory:     {},
+		skills.SkillUserMemory:      {},
 	}
-	for integrationID, connectionID := range runConfig.IntegrationConnectionIDs {
-		integrationID = strings.ToLower(strings.TrimSpace(integrationID))
-		connectionID = strings.ToLower(strings.TrimSpace(connectionID))
-		if integrationID == "" || connectionID == "" {
-			continue
-		}
-		for _, authorization := range runConfig.BindingAuthorizations {
-			if !strings.EqualFold(strings.TrimSpace(authorization.BindingType), "integration_connection") ||
-				!strings.EqualFold(strings.TrimSpace(authorization.ParentResourceID), integrationID) ||
-				!strings.EqualFold(strings.TrimSpace(authorization.ResourceID), connectionID) ||
-				strings.TrimSpace(authorization.BoundByAccountID) == "" ||
-				authorization.BoundAtUnix <= 0 ||
-				len(normalizeRuntimeStringIDs(authorization.AllowedActionIDs)) == 0 {
-				continue
-			}
-			return true
+	out := make([]string, 0, len(input))
+	for _, id := range input {
+		id = strings.ToLower(strings.TrimSpace(id))
+		if _, denied := forbidden[id]; id != "" && !denied {
+			out = append(out, id)
 		}
 	}
-	return false
+	return out
 }
 
 func runtimeManagedSkillAvailableForCaller(catalog []skills.SkillDiscoveryMetadata, skillID string, callerType string) bool {
@@ -933,35 +916,6 @@ func runConfigHasWorkflowBindings(runConfig *RunConfig) bool {
 
 func runConfigHasAgentMemory(runConfig *RunConfig) bool {
 	return runConfig != nil && runConfig.AgentMemoryEnabled && len(enabledAgentMemorySlots(runConfig.AgentMemorySlots)) > 0
-}
-
-func runConfigHasSelectedIntegrationConnections(runConfig *RunConfig) bool {
-	if runConfig == nil {
-		return false
-	}
-	for integrationID, connectionIDs := range runConfig.IntegrationSelectedConnectionIDs {
-		if strings.TrimSpace(integrationID) == "" {
-			continue
-		}
-		for _, connectionID := range connectionIDs {
-			if strings.TrimSpace(connectionID) != "" {
-				return true
-			}
-		}
-	}
-	for integrationID, connectionID := range runConfig.IntegrationConnectionIDs {
-		if strings.TrimSpace(integrationID) != "" && strings.TrimSpace(connectionID) != "" {
-			return true
-		}
-	}
-	return false
-}
-
-func addAIChatExternalAppsSkillID(enabled []string, catalog []skills.SkillDiscoveryMetadata, runConfig *RunConfig) []string {
-	if !runConfigHasSelectedIntegrationConnections(runConfig) {
-		return enabled
-	}
-	return addRuntimeManagedSkillIDIfAvailable(enabled, catalog, skills.SkillExternalApps, runtimemodel.ConversationCallerAIChat)
 }
 
 func agentKnowledgeAvailable(catalog []skills.SkillDiscoveryMetadata) bool {

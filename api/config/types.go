@@ -1,6 +1,8 @@
 package config
 
-import "time"
+import (
+	"time"
+)
 
 // GlobalConfig stores the loaded application configuration.
 var GlobalConfig *Config
@@ -19,46 +21,46 @@ const (
 )
 
 type Config struct {
-	Server                 ServerConfig
-	Database               DatabaseConfig
-	Redis                  RedisConfig
-	JWT                    JWTConfig
-	Log                    LogConfig
-	Email                  EmailConfig
-	App                    AppConfig
-	PluginRunner           PluginRunnerConfig
-	TaskQueue              TaskQueueConfig
-	VectorStore            VectorStoreConfig
-	Upload                 UploadConfig
-	ETL                    ETLConfig
-	CodeExec               CodeExecConfig
-	Console                ConsoleConfig
-	Feature                FeatureConfig
-	Workflow               WorkflowConfig
-	WorkflowFileExtraction WorkflowFileExtractionConfig
-	AnswerNodeStreaming    AnswerNodeStreamingConfig
-	Encryption             EncryptionConfig
-	Observability          ObservabilityConfig
-	OpenTelemetry          OpenTelemetryConfig
-	LLMInvocationContent   LLMInvocationContentConfig
-	ModelMeta              ModelMetaConfig
-	Neo4j                  Neo4jConfig
-	Sentry                 SentryConfig
-	Platform               PlatformConfig
-	Storage                StorageConfig
-	Marketplace            MarketplaceConfig
-	SQLBase                SQLBaseConfig
-	Auth                   AuthConfig
-	Knowledge              KnowledgeConfig
-	GraphFlow              GraphFlowConfig
-	ContentParse           ContentParseConfig
-	LLM                    LLMConfig
-	LLMPolicyPrompt        LLMPolicyPromptConfig
-	Automation             AutomationConfig
-	Tooling                ToolingConfig
-	ChatRuntime            ChatRuntimeConfig
-	WebSearch              WebSearchConfig
-	ExternalIntegrations   ExternalIntegrationsConfig
+	Server                  ServerConfig
+	Database                DatabaseConfig
+	Redis                   RedisConfig
+	JWT                     JWTConfig
+	Log                     LogConfig
+	Email                   EmailConfig
+	App                     AppConfig
+	PluginRunner            PluginRunnerConfig
+	TaskQueue               TaskQueueConfig
+	VectorStore             VectorStoreConfig
+	Upload                  UploadConfig
+	ETL                     ETLConfig
+	CodeExec                CodeExecConfig
+	Console                 ConsoleConfig
+	Feature                 FeatureConfig
+	Workflow                WorkflowConfig
+	WorkflowFileExtraction  WorkflowFileExtractionConfig
+	AnswerNodeStreaming     AnswerNodeStreamingConfig
+	Encryption              EncryptionConfig
+	Observability           ObservabilityConfig
+	OpenTelemetry           OpenTelemetryConfig
+	LLMInvocationContent    LLMInvocationContentConfig
+	ModelMeta               ModelMetaConfig
+	Neo4j                   Neo4jConfig
+	Sentry                  SentryConfig
+	Platform                PlatformConfig
+	Storage                 StorageConfig
+	Marketplace             MarketplaceConfig
+	SQLBase                 SQLBaseConfig
+	Auth                    AuthConfig
+	Knowledge               KnowledgeConfig
+	GraphFlow               GraphFlowConfig
+	ContentParse            ContentParseConfig
+	LLM                     LLMConfig
+	LLMPolicyPrompt         LLMPolicyPromptConfig
+	Automation              AutomationConfig
+	Tooling                 ToolingConfig
+	ChatRuntime             ChatRuntimeConfig
+	Connectors              ConnectorsConfig
+	DigitalHumanCredentials DigitalHumanCredentialsConfig
 
 	source *envSource
 }
@@ -330,7 +332,8 @@ type LLMInvocationContentConfig struct {
 }
 
 type ModelMetaConfig struct {
-	APIURL string `json:"api_url"`
+	APIURL          string `json:"api_url"`
+	AutoSyncEnabled bool   `json:"auto_sync_enabled"`
 }
 
 type Neo4jConfig struct {
@@ -472,54 +475,11 @@ type ToolingConfig struct {
 	DryRun bool `json:"dry_run"`
 }
 
-// ExternalIntegrationsConfig controls the provider/connection runtime shared
-// by every external application, including Web Search.
-type ExternalIntegrationsConfig struct {
-	Enabled               bool                            `json:"enabled"`
-	OrgDailyLimit         int                             `json:"org_daily_limit"`
-	TimeoutSeconds        int                             `json:"timeout_seconds"`
-	CredentialActiveKeyID string                          `json:"credential_active_key_id"`
-	CredentialKeys        map[string]string               `json:"-"`
-	Health                ExternalIntegrationHealthConfig `json:"health"`
-	OAuth                 ExternalIntegrationOAuthConfig  `json:"oauth"`
-}
-
-type ExternalIntegrationHealthConfig struct {
-	FailureThreshold int `json:"failure_threshold"`
-}
-
-type ExternalIntegrationOAuthConfig struct {
-	RefreshWindowSeconds int `json:"refresh_window_seconds"`
-	FlowTTLSeconds       int `json:"flow_ttl_seconds"`
-	// CallbackURL is the exact, server-owned redirect URI registered with
-	// providers. It must never be derived from an inbound Host header.
-	CallbackURL string `json:"callback_url"`
-	// ResultURL is the console page shown after the server has consumed the
-	// provider callback. It never receives authorization codes or tokens.
-	ResultURL string `json:"result_url"`
-	// Clients are optional deployment-level OAuth applications. Organization
-	// client configurations, when present, take precedence at runtime.
-	Clients map[string]ExternalIntegrationOAuthClientConfig `json:"-"`
-}
-
-type ExternalIntegrationOAuthClientConfig struct {
-	ClientID     string            `json:"-"`
-	ClientSecret string            `json:"-"`
-	Config       map[string]string `json:"-"`
-}
-
-// WebSearchConfig contains Exa-specific runtime limits. Web Search registration
-// follows ExternalIntegrationsConfig.Enabled, and credentials are supplied by
-// encrypted organization or account Connections.
-type WebSearchConfig struct {
-	Provider string    `json:"provider"`
-	Exa      ExaConfig `json:"exa"`
-}
-
-type ExaConfig struct {
-	TimeoutSeconds       int    `json:"timeout_seconds"`
-	MaxResults           int    `json:"max_results"`
-	DefaultSearchType    string `json:"default_search_type"`
-	MaxFetchURLs         int    `json:"max_fetch_urls"`
-	MaxContentCharacters int    `json:"max_content_characters"`
+// ConnectorsConfig configures the always-available Personal Connector runtime. It
+// deliberately does not inherit the legacy external-integrations enable flag
+// or credential keyring.
+type ConnectorsConfig struct {
+	CredentialActiveKeyID string            `json:"credential_active_key_id"`
+	CredentialKeys        map[string]string `json:"-"`
+	PluginDirectories     []string          `json:"-"`
 }

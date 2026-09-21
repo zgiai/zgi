@@ -32,6 +32,7 @@ function fixture() {
     isAuthenticated: true,
     isSystemReady: true,
     isLoading: false,
+    networkError: false,
     user: null,
     initializeAuth: async () => {},
     reset: () => {

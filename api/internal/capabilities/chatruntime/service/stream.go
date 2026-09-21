@@ -71,6 +71,7 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		return nil, newFinalizedStreamError(err)
 	}
 	userMemoryUsage := prepared.UserMemoryPreflightUsage
+	preflightRan := !prepared.UserMemoryPreflightDone
 	if !prepared.UserMemoryPreflightDone {
 		var err error
 		userMemoryUsage, err = s.runUserMemoryPreflight(runCtx, persistCtx, prepared, eventCallback)
@@ -84,11 +85,39 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		}
 	}
 	preflightUsage := userMemoryUsage
+	if prepared.taskTokenBudget != nil && preflightRan {
+		if prepared.Message.Metadata == nil {
+			prepared.Message.Metadata = map[string]interface{}{}
+		}
+		accountTaskTokenUsage(prepared, userMemoryUsage)
+		s.emitTaskTokenUsageUpdated(persistCtx, prepared, userMemoryUsage, eventCallback)
+	}
+	if !prepared.toolLoopEnabled() {
+		timeline := newProcessTimelineRecorder(runCtx, persistCtx, s, prepared, eventCallback)
+		additional, err := s.claimRuntimeInputsForCurrentRun(
+			runCtx,
+			prepared,
+			runtimeInputCheckpoint{Name: runtimeInputCheckpointBeforeModelRound, ModelRound: 1},
+			func(payload map[string]interface{}) error {
+				return timeline.RecordEvent(streamEventRuntimeInputApplied, payload)
+			},
+		)
+		if err != nil {
+			s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
+			return nil, newFinalizedStreamError(err)
+		}
+		if len(additional) > 0 {
+			prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, additional...)
+		}
+	}
 
 	if prepared.toolLoopEnabled() {
 		answer, usage, err := s.runPreparedToolStream(runCtx, persistCtx, prepared, onChunk, eventCallback)
 		usage = mergeUsage(preflightUsage, usage)
 		if err != nil {
+			if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, answer, usage, err, eventCallback); handled {
+				return result, budgetErr
+			}
 			var pendingGovernance *skillloop.ToolGovernancePendingError
 			if errors.As(err, &pendingGovernance) {
 				metadata, persistErr := s.persistToolGovernanceApprovalPendingResult(persistCtx, prepared, pendingGovernance.Payload, usage)
@@ -115,6 +144,15 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 				}
 				eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion))
 				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingQuestion, MessageEndEventID: eventID}, nil
+			}
+			var pendingConnector *skillloop.ConnectorConfirmationPendingError
+			if errors.As(err, &pendingConnector) {
+				metadata, persistErr := s.persistConnectorConfirmationPendingResult(persistCtx, prepared, pendingConnector.Payload, usage)
+				if persistErr != nil {
+					return nil, finalizedRuntimePersistenceError(persistErr)
+				}
+				eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval))
+				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval, MessageEndEventID: eventID}, nil
 			}
 			var pendingClientAction *skillloop.ClientActionPendingError
 			if errors.As(err, &pendingClientAction) {
@@ -145,6 +183,9 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 			s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
 			return nil, newFinalizedStreamError(err)
 		}
+		if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, answer, usage, nil, eventCallback); handled {
+			return result, budgetErr
+		}
 		if s.streams.IsStopped(prepared.Message.ID, execution.runID) {
 			_ = s.persistStoppedAnswer(persistCtx, prepared, answer, usage)
 			return nil, ErrMessageStopped
@@ -160,12 +201,18 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, MessageEndEventID: eventID}, nil
 	}
 	appendDirectAnswerGroundingMessage(prepared)
+	if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, "", preflightUsage, nil, eventCallback); handled {
+		return result, budgetErr
+	}
 
 	finalCallStartedAt := time.Now()
 	modelProgress := s.startPreparedModelProgress(runCtx, prepared, 0, prepared.LLMRequest.Messages, eventCallback)
 	defer modelProgress.Stop()
 	stream, err := s.openChatStream(runCtx, prepared)
 	if err != nil {
+		if releaseErr := s.settleClaimedRuntimeInputBatches(persistCtx, prepared, false); releaseErr != nil {
+			err = errors.Join(err, releaseErr)
+		}
 		s.persistModelInvocationBestEffort(persistCtx, prepared, skillloop.ModelInvocationTrace{
 			Phase:      "final_answer",
 			Round:      -1,
@@ -185,7 +232,11 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 	modelChunkCallback := modelStreamChunkCallback(eventCallback, onChunk)
 	answer, callUsage, err := s.collectStreamAnswerWithEventsAndProgress(runCtx, prepared, stream, eventCallback, modelChunkCallback, modelProgress)
 	usage := mergeUsage(preflightUsage, callUsage)
+	if settleErr := s.settleClaimedRuntimeInputBatches(persistCtx, prepared, err == nil); settleErr != nil {
+		err = errors.Join(err, settleErr)
+	}
 	if err != nil {
+		accountTaskTokenUsage(prepared, callUsage)
 		s.persistModelInvocationBestEffort(persistCtx, prepared, skillloop.ModelInvocationTrace{
 			Phase:      "final_answer",
 			Round:      -1,
@@ -197,6 +248,10 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 			Usage:      callUsage,
 			Error:      err.Error(),
 		})
+		s.emitTaskTokenUsageUpdated(persistCtx, prepared, callUsage, eventCallback)
+		if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, answer, usage, err, eventCallback); handled {
+			return result, budgetErr
+		}
 		if errors.Is(err, ErrMessageStopped) {
 			_ = s.clearPreparedRuntime(persistCtx, prepared)
 			return nil, err
@@ -204,6 +259,7 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
 		return nil, newFinalizedStreamError(err)
 	}
+	accountTaskTokenUsage(prepared, callUsage)
 	s.persistModelInvocationBestEffort(persistCtx, prepared, skillloop.ModelInvocationTrace{
 		Phase:      "final_answer",
 		Round:      -1,
@@ -214,6 +270,10 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		Response:   &adapter.Message{Role: "assistant", Content: answer},
 		Usage:      callUsage,
 	})
+	s.emitTaskTokenUsageUpdated(persistCtx, prepared, callUsage, eventCallback)
+	if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, answer, usage, nil, eventCallback); handled {
+		return result, budgetErr
+	}
 	if s.streams.IsStopped(prepared.Message.ID, execution.runID) {
 		_ = s.persistStoppedAnswer(persistCtx, prepared, answer, usage)
 		return nil, ErrMessageStopped
@@ -312,8 +372,15 @@ func (s *service) StreamConversationEventsForCaller(ctx context.Context, scope S
 		}
 		for _, event := range events {
 			lastID = event.ID
+			// DigitalHuman task mutations have their own approval/workflow
+			// projection. The generic governance decision is retained in the
+			// durable event store for audit and recovery, but must not be replayed
+			// to DigitalHuman clients as a duplicate "run this tool" event.
+			if shouldSuppressDigitalHumanTaskGovernanceEvent(caller, event.EventType, event.Payload) {
+				continue
+			}
 			event = hydrateStreamEventGeneratedFileURL(event)
-			event = publicExternalActionStreamEvent(event)
+			event = publicToolStreamEvent(event)
 			if err := onEvent(event); err != nil {
 				return err
 			}
@@ -467,7 +534,10 @@ func (s *service) prepareLLMRequestForRun(ctx context.Context, prepared *Prepare
 	if err := s.extractPreparedAttachments(ctx, prepared, onEvent); err != nil {
 		return err
 	}
-	metadata := streamingMessageMetadataWithTaskID(prepared.parts, prepared.Message.ID.String())
+	metadata := preserveRuntimeInputFollowUpMetadata(
+		streamingMessageMetadataWithTaskID(prepared.parts, prepared.Message.ID.String()),
+		prepared.Message.Metadata,
+	)
 	prepared.Message.Metadata = metadata
 	if err := s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {
 		return err
@@ -487,7 +557,10 @@ func (s *service) prepareLLMRequestForRun(ctx context.Context, prepared *Prepare
 		prepared.UserMemoryPreflightDone = preflight.UserMemoryDone
 		prepared.UserMemoryPreflightUsage = preflight.UserMemoryUsage
 	}
-	metadata = streamingMessageMetadataWithTaskID(prepared.parts, prepared.Message.ID.String())
+	metadata = preserveRuntimeInputFollowUpMetadata(
+		streamingMessageMetadataWithTaskID(prepared.parts, prepared.Message.ID.String()),
+		prepared.Message.Metadata,
+	)
 	prepared.Message.Metadata = metadata
 	if err := s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {
 		return err
@@ -723,7 +796,7 @@ func (s *service) deliverStreamEvent(ctx context.Context, messageID uuid.UUID, e
 	if suppressClientStreamEvent(event.EventType, event.Payload) {
 		return
 	}
-	publicEvent := publicExternalActionStreamEvent(*event)
+	publicEvent := publicToolStreamEvent(*event)
 	if err := onEvent(StreamEvent{
 		ID:          publicEvent.ID,
 		EventType:   publicEvent.EventType,
@@ -739,24 +812,42 @@ func (s *service) deliverStreamEvent(ctx context.Context, messageID uuid.UUID, e
 func (s *service) completePreparedChat(ctx context.Context, prepared *PreparedChat, answer string, metadata map[string]interface{}) error {
 	metadata = completeToolGovernanceContinuationMetadata(metadata)
 	prepared.Message.Metadata = metadata
-	if err := s.repos.Message.UpdateCompleted(ctx, prepared.Message.ID, answer, metadata); err != nil {
-		return err
+	complete := func(txRepos *repository.Repositories) error {
+		if err := txRepos.Message.UpdateCompleted(ctx, prepared.Message.ID, answer, metadata); err != nil {
+			return err
+		}
+		if prepared.ReplaceRoot {
+			if err := txRepos.Conversation.CompleteRootReplacement(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
+				return err
+			}
+		} else if prepared.Continuation {
+			if err := txRepos.Conversation.FinishContinuationMessage(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
+				return err
+			}
+		} else if err := txRepos.Conversation.UpdateAfterMessage(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
+			return err
+		}
+		batchID, err := s.claimRuntimeInputsForFollowUp(ctx, txRepos, prepared)
+		if err != nil {
+			return err
+		}
+		prepared.RuntimeInputFollowUpBatchID = batchID
+		return nil
 	}
-	if prepared.ReplaceRoot {
-		if err := s.repos.Conversation.CompleteRootReplacement(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
-			return err
-		}
-	} else if prepared.Continuation {
-		if err := s.repos.Conversation.FinishContinuationMessage(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
-			return err
-		}
+	var err error
+	if s.repos.DB == nil {
+		err = complete(s.repos)
 	} else {
-		if err := s.repos.Conversation.UpdateAfterMessage(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
-			return err
-		}
+		err = s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			return complete(repository.NewRepositories(tx))
+		})
+	}
+	if err != nil {
+		return err
 	}
 	prepared.Message.Answer = answer
 	s.scheduleAgentMemoryExtractionBestEffort(ctx, prepared)
+	s.dispatchPreparedRuntimeInputFollowUp(ctx, prepared)
 	return nil
 }
 
@@ -773,6 +864,8 @@ func (s *service) finalizePreparedError(ctx context.Context, prepared *PreparedC
 		if clearErr := s.clearPreparedRuntime(ctx, prepared); clearErr != nil {
 			logger.WarnContext(ctx, "failed to clear aichat conversation runtime", "conversation_id", prepared.Conversation.ID.String(), clearErr)
 		}
+	} else {
+		s.dispatchPreparedRuntimeInputFollowUp(ctx, prepared)
 	}
 	s.emitPreparedEvent(ctx, prepared, streamEventError, BuildStreamErrorPayload(prepared, cause), eventCallback)
 	return nil
@@ -794,8 +887,9 @@ func finalizedRuntimeOwnershipError(err error) error {
 
 func (s *service) completePreparedError(ctx context.Context, prepared *PreparedChat, cause error) error {
 	message := publicAichatErrorMessage(cause)
+	metadata := copyStringAnyMap(prepared.Message.Metadata)
+	metadataChanged := false
 	if code, params, ok := publicAichatStructuredError(cause); ok {
-		metadata := copyStringAnyMap(prepared.Message.Metadata)
 		if metadata == nil {
 			metadata = map[string]interface{}{}
 		}
@@ -805,22 +899,47 @@ func (s *service) completePreparedError(ctx context.Context, prepared *PreparedC
 		} else {
 			delete(metadata, "error_params")
 		}
-		if err := s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {
-			logger.WarnContext(ctx, "failed to persist aichat error metadata", "message_id", prepared.Message.ID.String(), err)
-		} else {
-			prepared.Message.Metadata = metadata
+		metadataChanged = true
+	}
+	finish := func(txRepos *repository.Repositories) error {
+		if metadataChanged {
+			if err := txRepos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {
+				return err
+			}
 		}
+		if err := txRepos.Message.UpdateError(ctx, prepared.Message.ID, message); err != nil {
+			return err
+		}
+		if prepared.ReplaceRoot {
+			if err := txRepos.Conversation.CompleteRootReplacement(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
+				return err
+			}
+		} else if prepared.Continuation {
+			if err := txRepos.Conversation.FinishContinuationMessage(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
+				return err
+			}
+		} else if err := txRepos.Conversation.UpdateAfterMessage(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
+			return err
+		}
+		batchID, err := s.claimRuntimeInputsForFollowUp(ctx, txRepos, prepared)
+		if err != nil {
+			return err
+		}
+		prepared.RuntimeInputFollowUpBatchID = batchID
+		return nil
 	}
-	if err := s.repos.Message.UpdateError(ctx, prepared.Message.ID, message); err != nil {
-		return err
+	var err error
+	if s.repos.DB == nil {
+		err = finish(s.repos)
+	} else {
+		err = s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			return finish(repository.NewRepositories(tx))
+		})
 	}
-	if prepared.ReplaceRoot {
-		return s.repos.Conversation.CompleteRootReplacement(ctx, prepared.Conversation.ID, prepared.Message.ID)
+	if err == nil && metadataChanged {
+		prepared.Message.Metadata = metadata
 	}
-	if prepared.Continuation {
-		return s.repos.Conversation.FinishContinuationMessage(ctx, prepared.Conversation.ID, prepared.Message.ID)
-	}
-	return s.repos.Conversation.UpdateAfterMessage(ctx, prepared.Conversation.ID, prepared.Message.ID)
+	return err
 }
 
 func (s *service) clearPreparedRuntime(ctx context.Context, prepared *PreparedChat) error {
@@ -832,6 +951,9 @@ func (s *service) clearPreparedRuntime(ctx context.Context, prepared *PreparedCh
 
 func (s *service) persistStoppedAnswer(ctx context.Context, prepared *PreparedChat, answer string, usage *adapter.Usage) error {
 	metadata := preparedResultMetadataForPrepared(prepared, prepared.Message.Metadata, usage)
+	if prepared != nil && prepared.taskTokenBudget != nil {
+		metadata[taskTokenBudgetMetadataKey] = prepared.taskTokenBudget.metadata("stopped")
+	}
 	metadata["stopped"] = true
 	markOperationPlanStopped(metadata)
 	if err := s.repos.Message.UpdateStoppedAnswer(ctx, prepared.Message.ID, answer, metadata); err != nil {
@@ -926,6 +1048,9 @@ func (s *service) emitPreparedEvent(ctx context.Context, prepared *PreparedChat,
 		}
 		event.hydratePayloadEnvelope()
 	}
+	if shouldSuppressDigitalHumanTaskGovernanceEvent(prepared.Caller, event.EventType, event.Payload) {
+		return nil
+	}
 	if aichatTimelineDebugEnabled() {
 		logger.DebugContext(ctx, "aichat timeline stream delivered",
 			"message_id", prepared.Message.ID.String(),
@@ -945,7 +1070,7 @@ func (s *service) emitPreparedEvent(ctx context.Context, prepared *PreparedChat,
 			"content_len", timelineDebugTextLen(event.Payload["content"]),
 		)
 	}
-	publicEvent := publicExternalActionStreamEvent(*event)
+	publicEvent := publicToolStreamEvent(*event)
 	if err := onEvent(StreamEvent{
 		ID:          publicEvent.ID,
 		EventType:   publicEvent.EventType,
@@ -1042,6 +1167,12 @@ func suppressClientStreamEvent(eventType string, payload map[string]interface{})
 	default:
 		return false
 	}
+}
+
+func shouldSuppressDigitalHumanTaskGovernanceEvent(caller Caller, eventType string, payload map[string]interface{}) bool {
+	return isDigitalHumanCaller(caller.Type) &&
+		strings.TrimSpace(eventType) == streamEventToolGovernanceDecision &&
+		isDigitalHumanTaskGovernancePayload(payload)
 }
 
 // BuildStreamErrorPayload returns the public SSE error payload for an AIChat turn.

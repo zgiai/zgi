@@ -31,7 +31,7 @@ const {
 const {
   buildAIChatSkillDisplayMap,
   getAIChatSkillDisplayInfo,
-  getSkillIntegrationRequirements,
+  getSkillConnectorRequirements,
   isHiddenSystemSkill,
 } = require('../src/components/chat/variants/aichat/skill-display.ts');
 const {
@@ -170,7 +170,7 @@ const normalizedDisplayMap = buildAIChatSkillDisplayMap(
 assert.equal(normalizedDisplayMap.time.skillId, 'time');
 assert.equal(normalizedDisplayMap[' TIME '], undefined);
 assert.deepEqual(
-  getSkillIntegrationRequirements({
+  getSkillConnectorRequirements({
     ...systemSkillWithApiTaxonomy,
     integration_requirements: {},
     external_dependencies: null,

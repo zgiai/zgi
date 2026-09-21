@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	ToolMutate = "mutate_agent_memory"
+	ToolMutate = "mutate_user_relationship_memory"
 
 	legacyToolUpdate = "update_agent_memory"
 	legacyToolClear  = "clear_agent_memory"
@@ -29,16 +29,18 @@ type Slot struct {
 }
 
 type State struct {
-	Enabled        bool
-	AgentID        uuid.UUID
-	UserScope      string
-	MemoryEpoch    *int64
-	ConfigScope    string
-	ConfigRevision string
-	EnabledSlots   []Slot
-	SavedValues    []agentmemory.SlotValueResponse
-	ContextStatus  string
-	ContextError   string
+	Enabled                      bool
+	AutoCaptureEnabled           bool
+	RelationshipSettingsResolved bool
+	AgentID                      uuid.UUID
+	UserScope                    string
+	MemoryEpoch                  *int64
+	ConfigScope                  string
+	ConfigRevision               string
+	EnabledSlots                 []Slot
+	SavedValues                  []agentmemory.SlotValueResponse
+	ContextStatus                string
+	ContextError                 string
 }
 
 type ToolOperation struct {
@@ -57,6 +59,12 @@ type MemoryService interface {
 	ReadRuntimeFence(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID, configScope, configRevision string) (int64, error)
 	ReadUserMemory(ctx context.Context, workspaceID, agentID uuid.UUID, slots []agentmemory.RuntimeSlot, userScope string, userID uuid.UUID) ([]agentmemory.SlotValueResponse, error)
 	MutateValues(ctx context.Context, workspaceID, agentID uuid.UUID, slots []agentmemory.RuntimeSlot, userScope string, userID uuid.UUID, req agentmemory.MutateValuesRequest, meta agentmemory.MutationMetadata) (*agentmemory.MutateValuesResponse, error)
+}
+
+// RelationshipSettingsService is optional so the legacy Agent memory service
+// remains a valid rollback implementation during the compatibility window.
+type RelationshipSettingsService interface {
+	RelationshipRuntimeSettings(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) (memoryEnabled bool, autoCaptureEnabled bool, err error)
 }
 
 type ContextRequest struct {

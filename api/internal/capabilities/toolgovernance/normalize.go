@@ -125,6 +125,8 @@ func normalizeSessionGrant(grant SessionGrant) SessionGrant {
 	grant.SkillID = strings.TrimSpace(grant.SkillID)
 	grant.ProviderType = strings.TrimSpace(grant.ProviderType)
 	grant.ProviderID = strings.TrimSpace(grant.ProviderID)
+	grant.ConnectionID = strings.TrimSpace(grant.ConnectionID)
+	grant.BindingID = strings.TrimSpace(grant.BindingID)
 	grant.ToolID = strings.TrimSpace(grant.ToolID)
 	grant.Effect = NormalizeEffect(grant.Effect)
 	grant.AssetType = normalizeAssetType(grant.AssetType)

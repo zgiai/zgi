@@ -3,7 +3,7 @@
 import { useEffect, useMemo } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAuthStore } from '@/store/auth-store';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, RefreshCw } from 'lucide-react';
 import { ZgiLoadingScreen } from '@/components/brand/zgi-loading-screen';
 import { useT } from '@/i18n';
 import { consumePendingLogoutRedirect } from '@/utils/logout-redirect';
@@ -28,6 +28,8 @@ export function ProtectedRoute({ children, requireAdmin = false, fallback }: Pro
   const isLoading = useAuthStore.use.isLoading();
   const user = useAuthStore.use.user();
   const isSystemReady = useAuthStore.use.isSystemReady();
+  const networkError = useAuthStore.use.networkError();
+  const initializeAuth = useAuthStore.use.initializeAuth();
   // Check admin requirements
   const isAdmin = useMemo(() => {
     if (!user) return false;
@@ -72,6 +74,43 @@ export function ProtectedRoute({ children, requireAdmin = false, fallback }: Pro
   }, [isAuthenticated, isLoading, isSystemReady, requireAdmin, isAdmin, router, pathname]);
 
   const loadingState = <ZgiLoadingScreen phase="auth" />;
+
+  const retryAuth = () => {
+    void initializeAuth({ force: true });
+  };
+
+  // A transient auth/network failure must not leave a protected route on an
+  // infinite splash screen. We still keep the route gated (no children are
+  // rendered until the session is verified), but give the user a recoverable
+  // state and a retry action.
+  if (!isSystemReady && !isLoading && networkError) {
+    return (
+      <main className="flex min-h-svh items-center justify-center bg-background px-6">
+        <div
+          className="flex w-full max-w-md flex-col items-center gap-4 rounded-xl border bg-card p-8 text-center shadow-sm"
+          role="alert"
+        >
+          <div className="flex size-11 items-center justify-center rounded-full bg-destructive/10 text-destructive">
+            <AlertCircle className="size-5" aria-hidden="true" />
+          </div>
+          <div className="space-y-1">
+            <h2 className="text-base font-semibold">{t('common.networkError')}</h2>
+            <p className="text-sm text-muted-foreground">
+              {t('common.requestErrors.timeout')}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={retryAuth}
+            className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+          >
+            <RefreshCw className="size-4" aria-hidden="true" />
+            {t('common.errorPages.error.retry')}
+          </button>
+        </div>
+      </main>
+    );
+  }
 
   // Never show authorization fallback before auth bootstrap completes.
   if (!isSystemReady || isLoading) {

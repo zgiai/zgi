@@ -22,19 +22,18 @@ import {
 } from '@/components/ui/select';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { Info } from 'lucide-react';
-import { Icons } from '@/components/ui/icons';
 import { cn } from '@/lib/utils';
-import type { ToolParameterBinding, ToolNodeData } from '../config';
-import type { ToolConfigParameters, ToolFormField } from '@/services/types/tool';
+import type { ToolConfigParameters } from '@/services/types/tool';
 import { mapParametersToFormFields, coerceValue } from '@/utils/tool-helpers';
 import { useLocale } from '@/hooks/use-locale';
+import { useT } from '@/i18n';
 
 interface ToolConfigDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   configParameters: ToolConfigParameters;
-  initialValues?: Record<string, any>;
-  onSave: (values: Record<string, any>) => void;
+  initialValues?: Record<string, unknown>;
+  onSave: (values: Record<string, unknown>) => void;
   title?: string;
 }
 
@@ -44,11 +43,12 @@ const ToolConfigDialog: React.FC<ToolConfigDialogProps> = ({
   configParameters,
   initialValues = {},
   onSave,
-  title = '工具配置',
+  title,
 }) => {
   const { locale } = useLocale();
-  const [values, setValues] = useState<Record<string, any>>(initialValues || {});
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  const t = useT();
+  const [values, setValues] = useState<Record<string, unknown>>(initialValues || {});
+  const [errors, setErrors] = useState<Record<string, boolean>>({});
 
   const formFields = useMemo(() => {
     return mapParametersToFormFields(configParameters.parameters, locale);
@@ -78,12 +78,12 @@ const ToolConfigDialog: React.FC<ToolConfigDialogProps> = ({
   );
 
   const handleSave = () => {
-    const newErrors: Record<string, string> = {};
+    const newErrors: Record<string, boolean> = {};
     formFields.forEach(field => {
       if (field.required) {
         const val = values[field.name];
         if (val === undefined || val === null || (typeof val === 'string' && val.trim() === '')) {
-          newErrors[field.name] = '该项为必填项';
+          newErrors[field.name] = true;
         }
       }
     });
@@ -102,7 +102,9 @@ const ToolConfigDialog: React.FC<ToolConfigDialogProps> = ({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-[560px] p-0 overflow-hidden">
         <DialogHeader className="pb-2">
-          <DialogTitle className="text-xl font-bold tracking-tight">{title}</DialogTitle>
+          <DialogTitle className="text-xl font-bold tracking-tight">
+            {title ?? t('navigation.settings')}
+          </DialogTitle>
         </DialogHeader>
 
         <DialogBody className="space-y-6 py-6 scrollbar-thin">
@@ -147,7 +149,7 @@ const ToolConfigDialog: React.FC<ToolConfigDialogProps> = ({
                           className="data-[state=checked]:bg-primary"
                         />
                         <span className="text-xs text-muted-foreground font-semibold">
-                          {Boolean(value) ? '已启用' : '已禁用'}
+                          {value ? t('common.enabled') : t('common.disabled')}
                         </span>
                       </div>
                     ) : field.type === 'select' && field.options ? (
@@ -156,7 +158,7 @@ const ToolConfigDialog: React.FC<ToolConfigDialogProps> = ({
                         onValueChange={v => handleUpdateValue(field.name, v)}
                       >
                         <SelectTrigger className="h-11 shadow-sm font-medium rounded-xl border-neutral-200 hover:border-neutral-300 transition-all">
-                          <SelectValue placeholder="请选择..." />
+                          <SelectValue placeholder={t('common.form.selectPlaceholder')} />
                         </SelectTrigger>
                         <SelectContent className="rounded-xl shadow-premium border-neutral-100">
                           {field.options.map(opt => (
@@ -172,7 +174,7 @@ const ToolConfigDialog: React.FC<ToolConfigDialogProps> = ({
                         onChange={e => handleUpdateValue(field.name, e.target.value)}
                         autoComplete="new-password"
                         className="h-11 shadow-sm font-medium rounded-xl border-neutral-200 focus-visible:ring-primary/20"
-                        errorText={errors[field.name]}
+                        errorText={errors[field.name] ? t('common.form.required') : undefined}
                       />
                     ) : field.type === 'number' ? (
                       <Input
@@ -180,7 +182,7 @@ const ToolConfigDialog: React.FC<ToolConfigDialogProps> = ({
                         value={value !== undefined ? String(value) : ''}
                         onChange={e => handleUpdateValue(field.name, e.target.value)}
                         className="h-11 shadow-sm font-medium rounded-xl border-neutral-200"
-                        errorText={errors[field.name]}
+                        errorText={errors[field.name] ? t('common.form.required') : undefined}
                       />
                     ) : (
                       <Input
@@ -198,7 +200,7 @@ const ToolConfigDialog: React.FC<ToolConfigDialogProps> = ({
 
                   {errors[field.name] && (
                     <p className="text-xs text-destructive font-bold px-1 animate-in fade-in slide-in-from-top-1 duration-200">
-                      {errors[field.name]}
+                      {t('common.form.required')}
                     </p>
                   )}
                 </div>
@@ -209,10 +211,10 @@ const ToolConfigDialog: React.FC<ToolConfigDialogProps> = ({
 
         <DialogFooter className="bg-neutral-50/50 pt-4 pb-6 px-6 border-t">
           <Button variant="ghost" onClick={() => onOpenChange(false)} className="font-semibold">
-            取消
+            {t('common.cancel')}
           </Button>
           <Button onClick={handleSave} size="lg" className="px-10 font-bold shadow-sm">
-            保存配置
+            {t('common.save')}
           </Button>
         </DialogFooter>
       </DialogContent>

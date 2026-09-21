@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/zgiai/zgi/api/internal/capabilities/connectortools"
 	"strings"
 	"time"
 
@@ -18,11 +19,10 @@ type toolFailureExplanationEvidence struct {
 	StopReason          string                 `json:"stop_reason"`
 	FailedOperation     toolFailureOperation   `json:"failed_operation"`
 	CompletedOperations []toolFailureOperation `json:"completed_operations,omitempty"`
+	PartialSuccess      bool                   `json:"partial_success,omitempty"`
 	MissingFields       []string               `json:"missing_fields,omitempty"`
 	FailureStage        string                 `json:"failure_stage,omitempty"`
 	ReasonCode          string                 `json:"reason_code,omitempty"`
-	IntegrationID       string                 `json:"integration_id,omitempty"`
-	ActionID            string                 `json:"action_id,omitempty"`
 	ProviderRequestSent *bool                  `json:"provider_request_sent,omitempty"`
 	Recoverable         bool                   `json:"recoverable,omitempty"`
 	RecoveryAction      string                 `json:"recovery_action,omitempty"`
@@ -30,10 +30,11 @@ type toolFailureExplanationEvidence struct {
 }
 
 type toolFailureOperation struct {
-	SkillID   string `json:"skill_id,omitempty"`
-	ToolName  string `json:"tool_name,omitempty"`
-	ErrorCode string `json:"error_code,omitempty"`
-	Status    string `json:"status,omitempty"`
+	Operation *connectortools.OperationRef `json:"operation,omitempty"`
+	SkillID   string                       `json:"skill_id,omitempty"`
+	ToolName  string                       `json:"tool_name,omitempty"`
+	ErrorCode string                       `json:"error_code,omitempty"`
+	Status    string                       `json:"status,omitempty"`
 }
 
 func (r *Runner) completeBusinessToolFailure(
@@ -95,7 +96,13 @@ func (r *Runner) runToolFailureExplanation(
 	stopReason string,
 	round int,
 ) (string, *adapter.Usage, error) {
-	evidence := buildToolFailureExplanationEvidence(failure, successfulToolCalls, stopReason)
+	runtimeState := runtimeStateWithSuccessfulToolCalls(req, successfulToolCalls)
+	evidence := buildToolFailureExplanationEvidenceWithRuntimeState(
+		failure,
+		successfulToolCalls,
+		stopReason,
+		runtimeState,
+	)
 	encodedEvidence, err := json.Marshal(evidence)
 	if err != nil {
 		return "", nil, fmt.Errorf("marshal tool failure evidence: %w", err)
@@ -109,18 +116,8 @@ func (r *Runner) runToolFailureExplanation(
 		}
 	}
 	explanationRequest.Messages = append(explanationRequest.Messages, adapter.Message{
-		Role: "system",
-		Content: strings.Join([]string{
-			"The requested operation could not be completed by the available business tool.",
-			"Write the final user-facing answer now, using only the user request and the internal evidence below.",
-			"State truthfully that the operation did not complete; never claim that a file, asset, update, or other side effect succeeded.",
-			"Explain the reason in language the user can understand and suggest a practical next step, such as retrying, choosing another format, or supplying required information.",
-			"When the evidence names an integration action, that action exists. Never claim that the integration lacks the capability merely because its arguments failed validation.",
-			"When provider_request_sent is false, say that validation failed before any request was sent to the external provider.",
-			"Do not expose schemas, call IDs, stack traces, raw internal errors, credentials, or implementation details.",
-			"Do not call or propose calling tools in this response. Return natural-language answer text only.",
-			"Internal evidence (not for verbatim disclosure): " + string(encodedEvidence),
-		}, "\n"),
+		Role:    "system",
+		Content: toolFailureExplanationSystemPrompt(evidence, string(encodedEvidence)),
 	})
 	explanationRequest.Tools = nil
 	explanationRequest.ToolChoice = nil
@@ -134,9 +131,13 @@ func (r *Runner) runToolFailureExplanation(
 	for attempt := 0; attempt < 2; attempt++ {
 		request := cloneChatRequest(explanationRequest)
 		if attempt > 0 {
+			retryInstruction := "The previous response was empty or attempted a tool call. Reply once with concise natural-language failure guidance only."
+			if evidence.PartialSuccess {
+				retryInstruction = "The previous response was empty or attempted a tool call. Reply once with a concise natural-language partial-success summary that separately identifies the completed and uncompleted operations."
+			}
 			request.Messages = append(request.Messages, adapter.Message{
 				Role:    "system",
-				Content: "The previous response was empty or attempted a tool call. Reply once with concise natural-language failure guidance only.",
+				Content: retryInstruction,
 			})
 		}
 		r.requestBudget = planningRequestBudgetForRun(req)
@@ -211,10 +212,47 @@ func (r *Runner) runToolFailureExplanation(
 	return "", usage, fmt.Errorf("%w: tool failure explanation was not generated", ErrInvalidInput)
 }
 
+func toolFailureExplanationSystemPrompt(evidence toolFailureExplanationEvidence, encodedEvidence string) string {
+	instructions := []string{}
+	if evidence.PartialSuccess {
+		instructions = append(instructions,
+			"The request was only partially completed: the evidence contains one or more trustworthy completed business operations and a separate operation that did not complete.",
+			"Write the final user-facing answer now, using only the user request and the internal evidence below.",
+			"Explicitly distinguish every operation in completed_operations from failed_operation, so the user can tell what succeeded and what remains uncompleted.",
+			"Preserve the confirmed successes. Never say that the whole request failed, and never deny or cast doubt on an operation listed in completed_operations.",
+			"Do not infer success for any operation not listed in completed_operations. An outcome_unknown, unconfirmed, partial, or failed external operation is not a success.",
+		)
+	} else {
+		instructions = append(instructions,
+			"The requested operation could not be completed by the available business tool.",
+			"Write the final user-facing answer now, using only the user request and the internal evidence below.",
+			"State truthfully that the operation did not complete; never claim that a file, asset, update, or other side effect succeeded.",
+		)
+	}
+	instructions = append(instructions,
+		"Explain the reason in language the user can understand and suggest a practical next step, such as retrying, choosing another format, or supplying required information.",
+		"When the evidence names an integration action, that action exists. Never claim that the integration lacks the capability merely because its arguments failed validation.",
+		"When provider_request_sent is false, say that validation failed before any request was sent to the external provider.",
+		"Do not expose schemas, call IDs, stack traces, raw internal errors, credentials, or implementation details.",
+		"Do not call or propose calling tools in this response. Return natural-language answer text only.",
+		"Internal evidence (not for verbatim disclosure): "+encodedEvidence,
+	)
+	return strings.Join(instructions, "\n")
+}
+
 func buildToolFailureExplanationEvidence(
 	failure skills.SkillTrace,
 	successfulToolCalls []SkillToolCallRef,
 	stopReason string,
+) toolFailureExplanationEvidence {
+	return buildToolFailureExplanationEvidenceWithRuntimeState(failure, successfulToolCalls, stopReason, nil)
+}
+
+func buildToolFailureExplanationEvidenceWithRuntimeState(
+	failure skills.SkillTrace,
+	successfulToolCalls []SkillToolCallRef,
+	stopReason string,
+	runtimeState map[string]interface{},
 ) toolFailureExplanationEvidence {
 	evidence := toolFailureExplanationEvidence{
 		StopReason: strings.TrimSpace(stopReason),
@@ -228,22 +266,59 @@ func buildToolFailureExplanationEvidence(
 	}
 	evidence.FailureStage = strings.TrimSpace(evidenceStringFromAny(failure.Arguments["failure_stage"]))
 	evidence.ReasonCode = strings.TrimSpace(evidenceStringFromAny(failure.Arguments["reason_code"]))
-	evidence.IntegrationID = strings.TrimSpace(evidenceStringFromAny(failure.Arguments["integration_id"]))
-	evidence.ActionID = strings.TrimSpace(evidenceStringFromAny(failure.Arguments["action_id"]))
-	if providerRequestSent, ok := failure.Arguments["provider_request_sent"].(bool); ok {
-		evidence.ProviderRequestSent = &providerRequestSent
+	if sent, known := failure.Arguments["provider_request_sent"].(bool); known {
+		evidence.ProviderRequestSent = &sent
 	}
-	evidence.Recoverable, _ = failure.Arguments["recoverable"].(bool)
-	evidence.RecoveryAction = strings.TrimSpace(evidenceStringFromAny(failure.Arguments["recovery_action"]))
-	evidence.MissingFields = evidenceStringSliceFromAny(failure.Arguments["missing_fields"])
-	for _, call := range successfulToolCalls {
-		evidence.CompletedOperations = append(evidence.CompletedOperations, toolFailureOperation{
-			SkillID:  strings.TrimSpace(call.SkillID),
-			ToolName: strings.TrimSpace(call.ToolName),
-			Status:   "success",
-		})
+	if failure.ConnectorNative {
+		proof, _ := connectortools.Evidence(map[string]any{"kind": "tool_call", "runtime_source": "connector", "result": failure.Result})
+		if proof.Operation.Valid() {
+			evidence.FailedOperation.Operation = &proof.Operation
+			evidence.FailedOperation.Status = proof.Status
+		}
 	}
+	evidence.CompletedOperations = toolFailureCompletedOperations(successfulToolCalls, runtimeState)
+	evidence.PartialSuccess = len(evidence.CompletedOperations) > 0
 	return evidence
+}
+
+func toolFailureCompletedOperations(successfulToolCalls []SkillToolCallRef, runtimeState map[string]interface{}) []toolFailureOperation {
+	completed := []toolFailureOperation{}
+	seen := map[string]bool{}
+	appendOperation := func(operation toolFailureOperation) {
+		encoded, _ := json.Marshal(operation)
+		key := string(encoded)
+		if !seen[key] {
+			seen[key] = true
+			completed = append(completed, operation)
+		}
+	}
+	for _, record := range terminalStateGuardInvocations(runtimeState) {
+		if proof, native := connectortools.Evidence(record); native && proof.Status == "successful" {
+			ref := proof.Operation
+			appendOperation(toolFailureOperation{Operation: &ref, Status: "successful"})
+		}
+	}
+	for _, call := range successfulToolCalls {
+		if operation, ok := trustedToolFailureCompletedOperation(call); ok {
+			appendOperation(operation)
+		}
+	}
+	return completed
+}
+
+func trustedToolFailureCompletedOperation(call SkillToolCallRef) (toolFailureOperation, bool) {
+	if call.ConnectorNative {
+		proof, _ := connectortools.Evidence(map[string]any{"kind": "tool_call", "runtime_source": "connector", "result": call.Result})
+		if proof.Status != "successful" {
+			return toolFailureOperation{}, false
+		}
+		return toolFailureOperation{Operation: &proof.Operation, Status: "successful"}, true
+	}
+	skillID, toolName := strings.TrimSpace(call.SkillID), strings.TrimSpace(call.ToolName)
+	if skillID == "" || toolName == "" {
+		return toolFailureOperation{}, false
+	}
+	return toolFailureOperation{SkillID: skillID, ToolName: toolName, Status: "success"}, true
 }
 
 func truncateFailureEvidence(value string, maxRunes int) string {

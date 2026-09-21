@@ -25,10 +25,10 @@ swagger:
 
 # Database migration (Note: Please create PostgreSQL database first: CREATE DATABASE zgi_ginkit;)
 migrate:
-	go run cmd/migrate/main.go up
+	go run ./cmd/migrate up
 
 seed:
-	go run cmd/migrate/main.go seed
+	go run ./cmd/migrate seed
 # Clean build files
 clean:
 	rm -rf bin/

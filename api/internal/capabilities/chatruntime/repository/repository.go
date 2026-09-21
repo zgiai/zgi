@@ -102,6 +102,22 @@ type RuntimeLeaseRepository interface {
 	MarkExpiredActiveAsError(ctx context.Context, heartbeatCutoff, legacyCutoff time.Time, message string) ([]uuid.UUID, error)
 }
 
+type RuntimeInputRepository interface {
+	Submit(ctx context.Context, input *runtimemodel.RuntimeInput) (*runtimemodel.RuntimeInput, bool, error)
+	ListByConversation(ctx context.Context, conversationID, organizationID, accountID uuid.UUID) ([]*runtimemodel.RuntimeInput, error)
+	ListByBatch(ctx context.Context, batchID uuid.UUID) ([]*runtimemodel.RuntimeInput, error)
+	ClaimPending(ctx context.Context, targetMessageID uuid.UUID, mode string, batchID *uuid.UUID, now, expiresAt time.Time) ([]*runtimemodel.RuntimeInput, error)
+	MarkBatchConsumed(ctx context.Context, batchID, consumedMessageID uuid.UUID, now time.Time) error
+	ReleaseCurrentRunBatch(ctx context.Context, batchID uuid.UUID, now time.Time) error
+	MarkBatchFailed(ctx context.Context, batchID uuid.UUID, failure string, now time.Time) ([]*runtimemodel.RuntimeInput, error)
+	CancelForStoppedMessage(ctx context.Context, conversationID, messageID uuid.UUID, now time.Time) ([]*runtimemodel.RuntimeInput, error)
+	CancelPendingFollowUps(ctx context.Context, conversationID uuid.UUID, now time.Time) ([]*runtimemodel.RuntimeInput, error)
+	RecoverStaleClaims(ctx context.Context, cutoff time.Time) (int64, error)
+	HasPendingFollowUp(ctx context.Context, conversationID uuid.UUID) (bool, error)
+	ListPendingInactiveTargets(ctx context.Context, limit int) ([]uuid.UUID, error)
+	ListPendingFollowUpBatches(ctx context.Context, limit int) ([]uuid.UUID, error)
+}
+
 type AccessRepository interface {
 	IsOrganizationMember(ctx context.Context, organizationID, accountID uuid.UUID) (bool, error)
 	GetCurrentWorkspaceID(ctx context.Context, accountID uuid.UUID) (*uuid.UUID, error)
@@ -130,6 +146,7 @@ type Repositories struct {
 	Conversation    ConversationRepository
 	Message         MessageRepository
 	RuntimeLease    RuntimeLeaseRepository
+	RuntimeInput    RuntimeInputRepository
 	Access          AccessRepository
 	SkillConfig     OrganizationSkillConfigRepository
 	SkillPref       AccountSkillPreferenceRepository
@@ -167,6 +184,7 @@ func NewRepositories(db *gorm.DB) *Repositories {
 		Conversation:    NewConversationRepository(db),
 		Message:         NewMessageRepository(db),
 		RuntimeLease:    NewRuntimeLeaseRepository(db),
+		RuntimeInput:    NewRuntimeInputRepository(db),
 		Access:          NewAccessRepository(db),
 		SkillConfig:     NewOrganizationSkillConfigRepository(db),
 		SkillPref:       NewAccountSkillPreferenceRepository(db),
@@ -886,6 +904,9 @@ func (r *messageRepository) Create(ctx context.Context, message *runtimemodel.Me
 	if message.Metadata == nil {
 		message.Metadata = map[string]interface{}{}
 	}
+	if message.Status == runtimemodel.MessageStatusPending || message.Status == runtimemodel.MessageStatusStreaming {
+		delete(message.Metadata, "connector_action_instances")
+	}
 	if message.TranscriptHeadEntryID == nil && message.ParentID != nil {
 		var parent runtimemodel.Message
 		if err := r.db.WithContext(ctx).Select("transcript_head_entry_id").Where("id = ?", *message.ParentID).Take(&parent).Error; err != nil {
@@ -1152,7 +1173,7 @@ func (r *messageRepository) ReplaceRootForStreaming(ctx context.Context, message
 			"model_name":               message.ModelName,
 			"billing_reason_source":    message.BillingReasonSource,
 			"model_parameters":         datatypes.JSON(parametersJSON),
-			"metadata":                 datatypes.JSON(metadataJSON),
+			"metadata":                 rootReplacementMetadataValue(r.db, metadataJSON),
 			"transcript_head_entry_id": nil,
 			"updated_at":               time.Now(),
 		})
@@ -1183,7 +1204,7 @@ func (r *messageRepository) UpdateCompleted(ctx context.Context, id uuid.UUID, a
 			"answer":               answer,
 			"status":               runtimemodel.MessageStatusCompleted,
 			"error":                nil,
-			"metadata":             datatypes.JSON(metadataJSON),
+			"metadata":             messageMetadataValue(r.db, metadataJSON),
 			"runtime_run_id":       nil,
 			"runtime_heartbeat_at": nil,
 			"updated_at":           time.Now(),
@@ -1209,7 +1230,7 @@ func (r *messageRepository) UpdateMetadata(ctx context.Context, id uuid.UUID, me
 		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, mutableMessageStatuses())
 	result := scopeRuntimeRunOwnership(ctx, query).
 		Updates(map[string]interface{}{
-			"metadata":   datatypes.JSON(metadataJSON),
+			"metadata":   messageMetadataValue(r.db, metadataJSON),
 			"updated_at": time.Now(),
 		})
 	if result.Error != nil {
@@ -1232,7 +1253,7 @@ func (r *messageRepository) UpdateMetadataAnyStatus(ctx context.Context, id uuid
 	result := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
 		Where("id = ? AND deleted_at IS NULL", id).
 		Updates(map[string]interface{}{
-			"metadata":   datatypes.JSON(metadataJSON),
+			"metadata":   messageMetadataValue(r.db, metadataJSON),
 			"updated_at": time.Now(),
 		})
 	if result.Error != nil {
@@ -1258,7 +1279,7 @@ func (r *messageRepository) UpdateWaitingApproval(ctx context.Context, id uuid.U
 		Updates(map[string]interface{}{
 			"status":               runtimemodel.MessageStatusWaitingApproval,
 			"error":                nil,
-			"metadata":             datatypes.JSON(metadataJSON),
+			"metadata":             messageMetadataValue(r.db, metadataJSON),
 			"runtime_run_id":       nil,
 			"runtime_heartbeat_at": nil,
 			"updated_at":           time.Now(),
@@ -1286,13 +1307,40 @@ func (r *messageRepository) UpdateWaitingQuestion(ctx context.Context, id uuid.U
 		Updates(map[string]interface{}{
 			"status":               runtimemodel.MessageStatusWaitingQuestion,
 			"error":                nil,
-			"metadata":             datatypes.JSON(metadataJSON),
+			"metadata":             messageMetadataValue(r.db, metadataJSON),
 			"runtime_run_id":       nil,
 			"runtime_heartbeat_at": nil,
 			"updated_at":           time.Now(),
 		})
 	if result.Error != nil {
 		return fmt.Errorf("failed to mark aichat message waiting question: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+func (r *messageRepository) UpdateWaitingBudget(ctx context.Context, id uuid.UUID, metadata map[string]interface{}) error {
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal waiting budget aichat message metadata: %w", err)
+	}
+	result := scopeRuntimeRunOwnership(ctx, r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
+		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, activeMessageStatuses())).
+		Updates(map[string]interface{}{
+			"status":               runtimemodel.MessageStatusWaitingBudget,
+			"error":                nil,
+			"metadata":             messageMetadataValue(r.db, metadataJSON),
+			"runtime_run_id":       nil,
+			"runtime_heartbeat_at": nil,
+			"updated_at":           time.Now(),
+		})
+	if result.Error != nil {
+		return fmt.Errorf("failed to mark aichat message waiting budget: %w", result.Error)
 	}
 	if result.RowsAffected == 0 {
 		return gorm.ErrRecordNotFound
@@ -1314,7 +1362,7 @@ func (r *messageRepository) UpdateWaitingClientAction(ctx context.Context, id uu
 		Updates(map[string]interface{}{
 			"status":               runtimemodel.MessageStatusWaitingClientAction,
 			"error":                nil,
-			"metadata":             datatypes.JSON(metadataJSON),
+			"metadata":             messageMetadataValue(r.db, metadataJSON),
 			"runtime_run_id":       nil,
 			"runtime_heartbeat_at": nil,
 			"updated_at":           time.Now(),
@@ -1361,7 +1409,7 @@ func (r *messageRepository) UpdatePartialAnswer(ctx context.Context, id uuid.UUI
 	result := scopeRuntimeRunOwnership(ctx, query).
 		Updates(map[string]interface{}{
 			"answer":     answer,
-			"metadata":   datatypes.JSON(metadataJSON),
+			"metadata":   messageMetadataValue(r.db, metadataJSON),
 			"updated_at": time.Now(),
 		})
 	if result.Error != nil {
@@ -1413,7 +1461,7 @@ func (r *messageRepository) UpdateStoppedAnswer(ctx context.Context, id uuid.UUI
 		"answer":               answer,
 		"status":               runtimemodel.MessageStatusStopped,
 		"error":                nil,
-		"metadata":             datatypes.JSON(metadataJSON),
+		"metadata":             messageMetadataValue(r.db, metadataJSON),
 		"runtime_run_id":       nil,
 		"runtime_heartbeat_at": nil,
 		"updated_at":           time.Now(),
@@ -1450,7 +1498,7 @@ func (r *messageRepository) UpdateStoppedPreservingAnswer(ctx context.Context, i
 	result := query.Updates(map[string]interface{}{
 		"status":               runtimemodel.MessageStatusStopped,
 		"error":                nil,
-		"metadata":             datatypes.JSON(metadataJSON),
+		"metadata":             messageMetadataValue(r.db, metadataJSON),
 		"runtime_run_id":       nil,
 		"runtime_heartbeat_at": nil,
 		"updated_at":           time.Now(),
@@ -1588,6 +1636,7 @@ func mutableMessageStatuses() []string {
 		runtimemodel.MessageStatusStreaming,
 		runtimemodel.MessageStatusWaitingApproval,
 		runtimemodel.MessageStatusWaitingQuestion,
+		runtimemodel.MessageStatusWaitingBudget,
 		runtimemodel.MessageStatusWaitingClientAction,
 	}
 }

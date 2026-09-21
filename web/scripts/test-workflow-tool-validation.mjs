@@ -240,4 +240,96 @@ const validResult = validateWorkflow(
 
 assert.equal(validResult.errors.filter(error => error.nodeId === 'tool-send-email').length, 0);
 
+const connectorNodes = JSON.parse(JSON.stringify(validNodes));
+connectorNodes[1].data.provider_type = 'connector';
+delete connectorNodes[1].data.connection_id;
+const connectorMissingConnection = validateWorkflow(
+  connectorNodes,
+  edges,
+  AgentType.WORKFLOW,
+  runnableSets,
+  null,
+  toolProviders,
+  'zh-Hans'
+);
+assert.equal(
+  connectorMissingConnection.errors.some(
+    error =>
+      error.nodeId === 'tool-send-email' && error.code === 'tool.validation.connectionRequired'
+  ),
+  true
+);
+
+connectorNodes[1].data.connection_id = 'connection-123';
+const connectorValid = validateWorkflow(
+  connectorNodes,
+  edges,
+  AgentType.WORKFLOW,
+  runnableSets,
+  null,
+  toolProviders,
+  'zh-Hans'
+);
+assert.equal(connectorValid.errors.filter(error => error.nodeId === 'tool-send-email').length, 0);
+
+const searchConnectorProviders = [
+  {
+    id: 'web-search',
+    name: 'web-search',
+    type: 'connector',
+    tools: [
+      {
+        name: 'search_web',
+        parameters: [
+          {
+            name: 'query',
+            type: 'string',
+            required: true,
+            label: { zh_Hans: '搜索词', en_US: 'Search query' },
+          },
+        ],
+      },
+    ],
+  },
+];
+const searchNodes = JSON.parse(JSON.stringify(connectorNodes));
+searchNodes[1].data.provider_id = 'web-search';
+searchNodes[1].data.tool_name = 'search_web';
+searchNodes[1].data.tool_parameters = {
+  query: { type: 'mixed', value: '' },
+};
+const emptySearchResult = validateWorkflow(
+  searchNodes,
+  edges,
+  AgentType.WORKFLOW,
+  runnableSets,
+  null,
+  searchConnectorProviders,
+  'zh-Hans'
+);
+assert.equal(
+  emptySearchResult.errors.some(
+    error =>
+      error.nodeId === 'tool-send-email' &&
+      error.code === 'tool.validation.paramValueRequired' &&
+      error.params?.name === '搜索词'
+  ),
+  true
+);
+
+searchNodes[1].data.tool_parameters.query.value = '武汉天气';
+const validSearchResult = validateWorkflow(
+  searchNodes,
+  edges,
+  AgentType.WORKFLOW,
+  runnableSets,
+  null,
+  searchConnectorProviders,
+  'zh-Hans'
+);
+assert.equal(
+  validSearchResult.errors.filter(error => error.nodeId === 'tool-send-email').length,
+  0
+);
+
 console.log('workflow tool validation tests passed');

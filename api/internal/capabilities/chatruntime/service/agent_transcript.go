@@ -34,6 +34,9 @@ func agentTranscriptFromMetadata(metadata map[string]interface{}, answer string)
 	if len(metadata) == 0 {
 		return nil
 	}
+	if version, ok := intValue(metadata["connector_history_version"]); ok && version == 1 {
+		return nil
+	}
 	version, ok := intValue(metadata[agentTranscriptVersionMetadataKey])
 	if !ok || version != agentTranscriptSchemaVersion {
 		return nil

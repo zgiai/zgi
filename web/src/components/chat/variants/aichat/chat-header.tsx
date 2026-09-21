@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils';
 interface AIChatHeaderProps {
   isHome: boolean;
   title: string;
+  position?: 'overlay' | 'static';
   rightAction?: ReactNode;
   onToggleSidebar: () => void;
   onStartNew: () => void;
@@ -26,6 +27,7 @@ interface AIChatHeaderProps {
 export function AIChatHeader({
   isHome,
   title,
+  position = 'overlay',
   rightAction,
   onToggleSidebar,
   onStartNew,
@@ -33,7 +35,12 @@ export function AIChatHeader({
   const t = useT('webapp');
 
   return (
-    <header className="absolute left-0 right-0 top-0 z-20 flex h-12 items-center justify-between bg-background/80 px-3 backdrop-blur-sm transition-opacity duration-300 sm:h-14 sm:px-4">
+    <header
+      className={cn(
+        'left-0 right-0 z-20 flex h-12 items-center justify-between bg-background/95 px-3 backdrop-blur-sm transition-opacity duration-300 sm:h-14 sm:px-4',
+        position === 'static' ? 'relative shrink-0 border-b' : 'absolute top-0'
+      )}
+    >
       <div className="flex items-center gap-2">
         <Button
           variant="ghost"

@@ -40,7 +40,6 @@ func clientActionRequiredPayload(prepared *PreparedChat, trace skills.SkillTrace
 	}
 	return nil
 }
-
 func enrichSkillTraceResultFromMessages(trace skills.SkillTrace, messages []tools.ToolInvokeMessage) skills.SkillTrace {
 	summary := summarizeSkillToolResult(trace.SkillID, trace.ToolName, messages)
 	if len(summary) == 0 {

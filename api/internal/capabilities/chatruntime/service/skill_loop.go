@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	"regexp"
 	"sort"
 	"strings"
@@ -16,7 +17,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/contextmgr"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
-	integrationmetatools "github.com/zgiai/zgi/api/internal/modules/integrations/metatools"
+	"github.com/zgiai/zgi/api/internal/capabilities/resourcebindings"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
@@ -53,17 +54,15 @@ func (s *service) runPreparedToolLoop(
 		return "", nil, fmt.Errorf("llm client is not configured")
 	}
 	timeline := newProcessTimelineRecorder(ctx, persistCtx, s, prepared, onEvent)
-	runtimeTools := s.agentMemoryRuntimeTools(persistCtx, prepared, timeline)
+	runtimeTools := append([]skillloop.RuntimeTool(nil), prepared.parts.RuntimeTools...)
+	runtimeTools = append(runtimeTools, s.agentMemoryRuntimeTools(persistCtx, prepared, timeline)...)
 	resolved := &skills.ResolvedSkills{}
 	if chatPartsBusinessSkillsEnabled(prepared.parts) {
 		if s.skillRuntime == nil {
 			return "", nil, fmt.Errorf("%w: skill runtime is not configured", ErrInvalidInput)
 		}
-		custom, err := s.customSkillCatalogEntries(ctx, prepared.Scope.OrganizationID)
-		if err != nil {
-			return "", nil, err
-		}
-		resolved, err = s.skillRuntime.ResolveEnabledSkillsWithCustom(ctx, prepared.parts.SkillIDs, custom)
+		var err error
+		resolved, err = s.resolvePreparedBusinessSkills(ctx, prepared)
 		if err != nil {
 			return "", nil, err
 		}
@@ -107,7 +106,9 @@ func (s *service) runPreparedToolLoop(
 			s.writeAgentContextPromptDumpBestEffort(ctx, prepared, phase, round, request, decision)
 		},
 		OnModelInvocation: func(trace skillloop.ModelInvocationTrace) {
+			accountTaskTokenUsage(prepared, trace.Usage)
 			s.persistModelInvocationBestEffort(persistCtx, prepared, trace)
+			s.emitTaskTokenUsageUpdated(persistCtx, prepared, trace.Usage, onEvent)
 		},
 	}
 	loopPrepared := skillloop.NewPreparedChat(
@@ -141,16 +142,19 @@ func (s *service) runPreparedToolLoop(
 		additionalSystemMessages = append(additionalSystemMessages, agentmemoryruntime.PolicyMessage(enabledAgentMemorySlots(prepared.parts.AgentMemorySlots), proactiveAllowed))
 	}
 	executionContext := s.skillExecutionContext(prepared)
-	scriptModel, scriptModelUsage := s.newSkillScriptModelChannel(prepared)
+	scriptModel, scriptModelUsage := s.newSkillScriptModelChannel(
+		prepared,
+		s.taskTokenUsageObserver(persistCtx, prepared, onEvent),
+	)
 	executionContext.ScriptModel = scriptModel
-	var externalActionProjections []integrationmetatools.ActionProjection
-	if nativeLoop {
-		externalActionProjections = s.resolveExternalActionProjections(ctx, prepared, resolved, executionContext)
-	}
-	nativeExternalActionTools := externalActionNativeToolProjections(externalActionProjections)
 	var nativeToolSet *skills.NativeToolSet
 	var nativeSkillSession *skills.NativeSkillSession
 	if nativeLoop {
+		projectionResolved, nativeConnectorTools := splitConnectorNativeToolProjections(resolved)
+		directTools := []skills.NativeToolProjection{}
+		if len(nativeConnectorTools) > 0 {
+			directTools = skills.RankNativeToolProjections(append(directTools, nativeConnectorTools...), prepared.parts.Query)
+		}
 		budgetTokens, budgetChars, estimateNativeTokens := s.nativeSkillProjectionBudget(prepared, resolved, additionalSystemMessages)
 		reservedNativeToolNames := nativeProjectionReservedToolNames(runtimeTools)
 		toolSetOptions := skills.NativeToolSetOptions{
@@ -170,13 +174,13 @@ func (s *service) runPreparedToolLoop(
 			prepared.Message.Metadata["native_skill_diagnostics"] = nativeSkillDiagnostics(projected)
 		} else if protocol == skills.NativeSkillProtocolProgressiveV1 {
 			initialSkillIDs := nativeInitialActiveSkillIDs(prepared, resolved)
-			if len(nativeExternalActionTools) > 0 {
-				initialSkillIDs = appendUniqueNativeSkillID(initialSkillIDs, skills.SkillExternalApps)
+			for _, projection := range directTools {
+				initialSkillIDs = appendUniqueNativeSkillID(initialSkillIDs, projection.Binding.SkillID)
 			}
 			prioritySkillIDs := skills.RankNativeSkillIDs(resolved, nativeSkillSelectionText(prepared), initialSkillIDs)
-			// Initial skills already receive their full instructions and schemas. Rank
-			// the remaining skills first so deterministic activation does not consume
-			// the compact candidate directory's Top-K slots.
+			// Initial groups receive their instructions and ordinary schemas or
+			// selected direct functions. Rank remaining Skills first so initial
+			// activation does not consume the compact directory's Top-K slots.
 			prioritySkillIDs = nativeSkillIDsWithout(prioritySkillIDs, initialSkillIDs)
 			catalog := skills.BuildNativeSkillCatalog(
 				resolved,
@@ -191,15 +195,15 @@ func (s *service) runPreparedToolLoop(
 			if content := strings.TrimSpace(stringFromAny(catalog.Message.Content)); content != "" && toolSetOptions.BudgetChars > 0 {
 				toolSetOptions.BudgetChars = max(1, toolSetOptions.BudgetChars-len([]rune(content)))
 			}
-			nativeSkillSession = skills.NewNativeSkillSession(s.skillRuntime, resolved, catalog, toolSetOptions)
+			nativeSkillSession = skills.NewNativeSkillSession(s.skillRuntime, projectionResolved, catalog, toolSetOptions)
 			nativeSkillSession.Activate(ctx, initialSkillIDs, "runtime_preload")
-			projectExternalActionNativeToolsToSession(nativeSkillSession, nativeExternalActionTools, reservedNativeToolNames, estimateNativeTokens)
+			projectNativeDirectToolsToSession(nativeSkillSession, directTools, reservedNativeToolNames, estimateNativeTokens)
 			projected := nativeSkillSession.ToolSet()
 			nativeToolSet = &projected
 			prepared.Message.Metadata["native_skill_diagnostics"] = nativeSkillSessionDiagnostics(nativeSkillSession, prepared.Message.Metadata)
 		} else {
-			projected := s.skillRuntime.BuildNativeToolSet(ctx, resolved, toolSetOptions)
-			projectExternalActionNativeTools(&projected, nativeExternalActionTools, reservedNativeToolNames, estimateNativeTokens)
+			projected := s.skillRuntime.BuildNativeToolSet(ctx, projectionResolved, toolSetOptions)
+			projectNativeDirectTools(&projected, directTools, reservedNativeToolNames, estimateNativeTokens)
 			nativeToolSet = &projected
 			prepared.Message.Metadata["native_skill_diagnostics"] = nativeSkillDiagnostics(projected)
 		}
@@ -213,7 +217,7 @@ func (s *service) runPreparedToolLoop(
 			"provider_tool_count", len(nativeToolSet.ProviderTools),
 			"skipped_skills", nativeToolSet.SkippedSkills,
 			"skipped_tools", nativeToolSet.SkippedTools,
-			"external_action_candidate_count", len(externalActionProjections),
+			"connector_operation_candidate_count", len(nativeConnectorTools),
 			"instruction_chars", nativeToolSet.InstructionChars,
 			"schema_chars", nativeToolSet.SchemaChars,
 			"budget_chars", nativeToolSet.BudgetChars,
@@ -221,6 +225,10 @@ func (s *service) runPreparedToolLoop(
 			"schema_tokens", nativeToolSet.SchemaTokens,
 			"budget_tokens", nativeToolSet.BudgetTokens,
 		)
+		// Only successfully exposed native operations may be normalized back to
+		// executable Skill tools. Keep ordinary Skill candidates unchanged so
+		// their existing activation flow remains available during this turn.
+		resolved = restrictConnectorNativeExecutionTools(resolved, *nativeToolSet)
 	}
 	runtimeStateSnapshot := skillLoopRuntimeStateSnapshot(prepared)
 	onTerminalStateGuardDecision := skillLoopTerminalStateGuardDecision(prepared)
@@ -248,11 +256,29 @@ func (s *service) runPreparedToolLoop(
 		OnTerminalStateGuardDecision:   onTerminalStateGuardDecision,
 		OnTerminalCompletion:           onTerminalCompletion,
 		OnChunk:                        onChunk,
-		PlanningOutputTokenLimit:       planningOutputTokenLimit(prepared),
-		AuthorizeSkillStep:             authorizeSkillStep,
-		PreferredRestoredSkillID:       prepared.PreferredRestoredSkillID,
-		ContinuationType:               prepared.ContinuationType,
-		TerminalOnly:                   prepared.TerminalOnly,
+		BeforeModelRound: func(checkpointCtx context.Context, round int) ([]adapter.Message, error) {
+			if prepared.taskTokenBudget != nil {
+				if budgetErr := prepared.taskTokenBudget.exhausted(); budgetErr != nil {
+					return nil, budgetErr
+				}
+			}
+			return s.claimRuntimeInputsForCurrentRun(
+				checkpointCtx,
+				prepared,
+				runtimeInputCheckpoint{Name: runtimeInputCheckpointBeforeModelRound, ModelRound: round + 1},
+				func(payload map[string]interface{}) error {
+					return timeline.RecordEvent(streamEventRuntimeInputApplied, payload)
+				},
+			)
+		},
+		AfterModelRound: func(checkpointCtx context.Context, _ int, accepted bool) error {
+			return s.settleClaimedRuntimeInputBatches(checkpointCtx, prepared, accepted)
+		},
+		PlanningOutputTokenLimit: planningOutputTokenLimit(prepared),
+		AuthorizeSkillStep:       authorizeSkillStep,
+		PreferredRestoredSkillID: prepared.PreferredRestoredSkillID,
+		ContinuationType:         prepared.ContinuationType,
+		TerminalOnly:             prepared.TerminalOnly,
 	})
 	if nativeSkillSession != nil {
 		prepared.Message.Metadata["native_skill_diagnostics"] = nativeSkillSessionDiagnostics(nativeSkillSession, prepared.Message.Metadata)
@@ -262,171 +288,28 @@ func (s *service) runPreparedToolLoop(
 	if err == nil && presentationErr != nil {
 		err = presentationErr
 	}
+	scriptUsage := scriptModelUsage()
+	usage = addUsageCloned(usage, scriptUsage)
 	// Durable facts: the turn's protocol messages become transcript entries.
 	// The metadata snapshot is no longer written; legacy turns are still read
 	// through the metadata fallback.
 	s.syncAgentTranscriptEntries(persistCtx, prepared, contextManager)
-	usage = addUsageCloned(usage, scriptModelUsage())
 	if err != nil && strings.TrimSpace(answer) != "" {
 		s.persistPartialSkillLoopAnswerBestEffort(persistCtx, prepared, answer, usage)
 	}
 	return answer, usage, err
 }
 
-func (s *service) resolveExternalActionProjections(
-	ctx context.Context,
-	prepared *PreparedChat,
-	resolved *skills.ResolvedSkills,
-	execution skills.ExecutionContext,
-) []integrationmetatools.ActionProjection {
-	if s == nil || s.externalActionProjections == nil || prepared == nil || resolved == nil {
-		return nil
-	}
-	if _, active := resolved.Get(skills.SkillExternalApps); !active {
-		return nil
-	}
-	query := ""
-	if prepared.parts != nil {
-		query = strings.TrimSpace(prepared.parts.Query)
-	}
-	projections, err := s.externalActionProjections.ProjectActions(ctx, integrationmetatools.ActionProjectionRequest{
-		ExecutionContext: execution,
-		Query:            query,
-		PinnedActionKeys: externalActionPinnedPlanKeys(prepared.Message.Metadata),
-	})
-	if err != nil {
-		// The existing external-apps catalog remains available as the safe
-		// fallback. A projection failure must not broaden access or fail an
-		// otherwise unrelated chat turn.
-		logger.WarnContext(ctx, "external Action projection unavailable", "error", err)
-		return nil
-	}
-	return projections
-}
-
-func externalActionPinnedPlanKeys(metadata map[string]interface{}) []string {
-	plan := mapFromOperationContext(metadata["operation_plan"])
-	seen := map[string]struct{}{}
-	for _, phase := range mapSliceFromAny(plan["phases"]) {
-		status := strings.ToLower(strings.TrimSpace(stringFromAny(phase["status"])))
-		if status == "completed" || status == "skipped" || status == "failed" {
-			continue
-		}
-		expected := mapFromOperationContext(phase["expected_action"])
-		if !strings.EqualFold(strings.TrimSpace(stringFromAny(expected["skill_id"])), skills.SkillExternalApps) ||
-			!strings.EqualFold(strings.TrimSpace(stringFromAny(expected["tool_name"])), integrationmetatools.ToolExecuteAction) {
-			continue
-		}
-		target := mapFromOperationContext(expected["target"])
-		integrationID := strings.ToLower(strings.TrimSpace(stringFromAny(target["integration_id"])))
-		actionID := strings.ToLower(strings.TrimSpace(stringFromAny(target["action_id"])))
-		if integrationID != "" && actionID != "" {
-			seen[integrationID+":"+actionID] = struct{}{}
-		}
-	}
-	out := make([]string, 0, len(seen))
-	for key := range seen {
-		out = append(out, key)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func externalActionNativeToolProjections(input []integrationmetatools.ActionProjection) []skills.NativeToolProjection {
-	out := make([]skills.NativeToolProjection, 0, len(input))
-	for _, projection := range input {
-		integrationID := strings.ToLower(strings.TrimSpace(projection.IntegrationID))
-		actionID := strings.ToLower(strings.TrimSpace(projection.ActionID))
-		toolName := strings.TrimSpace(projection.ToolName)
-		schemaHash := strings.TrimSpace(projection.SchemaHash)
-		schemaRevision := strings.TrimSpace(projection.SchemaRevision)
-		catalogRevision := strings.TrimSpace(projection.CatalogRevision)
-		if integrationID == "" || actionID == "" || toolName == "" || len(projection.InputSchema) == 0 ||
-			schemaHash == "" || schemaRevision == "" || catalogRevision == "" {
-			continue
-		}
-		fixed := map[string]interface{}{
-			"integration_id":         integrationID,
-			"action_id":              actionID,
-			"action_schema_hash":     schemaHash,
-			"action_schema_revision": schemaRevision,
-			"catalog_revision":       catalogRevision,
-		}
-		if connectionID := strings.TrimSpace(projection.ConnectionID); connectionID != "" {
-			fixed["connection_id"] = connectionID
-		}
-		inputSchema, ok := externalActionProjectedInputSchema(projection.InputSchema)
-		if !ok {
-			continue
-		}
-		out = append(out, skills.NativeToolProjection{
-			Name:        toolName,
-			NameScope:   integrationID + "/" + actionID,
-			Description: strings.TrimSpace(projection.Description),
-			InputSchema: inputSchema,
-			Binding: skills.NativeToolBinding{
-				SkillID:              skills.SkillExternalApps,
-				ToolName:             integrationmetatools.ToolExecuteAction,
-				Effect:               strings.ToLower(strings.TrimSpace(projection.Effect)),
-				IntentMatched:        projection.IntentMatched,
-				IntentGroup:          projection.IntentGroup,
-				IntentTokens:         append([]string(nil), projection.IntentTokens...),
-				BindingFingerprint:   projection.BindingFingerprint,
-				ConnectionBinding:    skills.NativeExternalActionConnectionBindingHash(projection.ConnectionID),
-				Pinned:               projection.Pinned,
-				ProjectionPriority:   projection.ProjectionPriority,
-				ArgumentEnvelope:     "arguments",
-				FixedArguments:       fixed,
-				TargetArgumentPaths:  append([]string(nil), projection.TargetArgumentPaths...),
-				PreparationActionIDs: append([]string(nil), projection.PreparationActionIDs...),
-				PreparationHints:     externalActionNativePreparationHints(projection.PreparationHints),
-				PlanPhaseArgument:    "plan_phase_id",
-			},
-		})
-	}
-	return out
-}
-
-func externalActionNativePreparationHints(input []integrationmetatools.ActionProjectionPreparationHint) []skills.NativeExternalActionPreparationHint {
-	out := make([]skills.NativeExternalActionPreparationHint, 0, len(input))
-	for _, hint := range input {
-		out = append(out, skills.NativeExternalActionPreparationHint{
-			ActionID:        strings.ToLower(strings.TrimSpace(hint.ActionID)),
-			Relation:        strings.ToLower(strings.TrimSpace(hint.Relation)),
-			TargetArguments: append([]string(nil), hint.TargetArguments...),
-			ResultPaths:     append([]string(nil), hint.ResultPaths...),
-			ResultTransform: strings.ToLower(strings.TrimSpace(hint.ResultTransform)),
-		})
-	}
-	return out
-}
-
-func externalActionProjectedInputSchema(input map[string]interface{}) (map[string]interface{}, bool) {
-	schema := copyStringAnyMap(input)
-	properties := copyStringAnyMap(mapFromOperationContext(schema["properties"]))
-	if len(schema) == 0 || properties == nil {
-		return nil, false
-	}
-	if _, collision := properties["plan_phase_id"]; collision {
-		return nil, false
-	}
-	properties["plan_phase_id"] = map[string]interface{}{
-		"type":        "string",
-		"description": "Required only when multiple plan phases call this same projected Action for the same target. Use the exact matching operation_plan phase id. The runtime removes this control value before provider execution.",
-	}
-	schema["properties"] = properties
-	return schema, true
-}
-
-func projectExternalActionNativeTools(
+func projectNativeDirectTools(
 	toolSet *skills.NativeToolSet,
 	projections []skills.NativeToolProjection,
 	reservedToolNames []string,
 	estimateTokens func([]adapter.Message, []adapter.Tool) int,
 ) int {
-	if toolSet == nil || !nativeToolSetHasActiveSkill(*toolSet, skills.SkillExternalApps) {
+	if toolSet == nil {
 		return 0
 	}
+	projections = nativeProjectionsForActiveSkills(projections, toolSet.ActiveSkillIDs)
 	return skills.AppendNativeToolProjections(toolSet, projections, skills.NativeToolProjectionOptions{
 		MaxTools:          skills.DefaultMaxNativeToolProjections,
 		ReservedToolNames: reservedToolNames,
@@ -434,15 +317,16 @@ func projectExternalActionNativeTools(
 	})
 }
 
-func projectExternalActionNativeToolsToSession(
+func projectNativeDirectToolsToSession(
 	session *skills.NativeSkillSession,
 	projections []skills.NativeToolProjection,
 	reservedToolNames []string,
 	estimateTokens func([]adapter.Message, []adapter.Tool) int,
 ) int {
-	if session == nil || !containsNativeSkillID(session.ActiveSkillIDs(), skills.SkillExternalApps) {
+	if session == nil {
 		return 0
 	}
+	projections = nativeProjectionsForActiveSkills(projections, session.ActiveSkillIDs())
 	return session.AddToolProjections(projections, skills.NativeToolProjectionOptions{
 		MaxTools:          skills.DefaultMaxNativeToolProjections,
 		ReservedToolNames: reservedToolNames,
@@ -892,7 +776,7 @@ func (s *service) currentAgentSkillStepAuthorizer(prepared *PreparedChat) func(c
 		organizationID = prepared.Scope.OrganizationID
 	}
 	organizationAuthorizer := s.currentOrganizationSkillStepAuthorizer(organizationID)
-	if prepared == nil || normalizeCallerType(prepared.Caller.Type) != runtimemodel.ConversationCallerAgent {
+	if prepared == nil || !isAutonomousSubjectCaller(prepared.Caller.Type) {
 		return organizationAuthorizer
 	}
 	bindingVerifier := s.currentAgentBindingVerifier(prepared)
@@ -1042,7 +926,7 @@ func skillLoopPrefersExplicitFinalAnswer(prepared *PreparedChat) bool {
 	if prepared.parts != nil && prepared.parts.ExecutionMode == executionModeLegacyToolChat {
 		return false
 	}
-	if normalizeCallerType(prepared.Caller.Type) == runtimemodel.ConversationCallerAgent {
+	if isAutonomousSubjectCaller(prepared.Caller.Type) {
 		return false
 	}
 	return skillLoopHasOperationPlan(prepared)
@@ -1612,13 +1496,11 @@ func operationPlanCompactPhasesForPrompt(value interface{}, limit int) []interfa
 	}
 	selected := make([]map[string]interface{}, 0, minInt(len(phases), limit))
 	selectedIDs := map[string]struct{}{}
-	// Every server-bound projected phase remains visible even beyond the normal
-	// compact limit so the model can address it by phase_updates without
-	// round-tripping hidden binding attestations.
+	// Keep every Connector phase visible so required operations are not lost
+	// when compacting the prompt.
 	for _, phase := range phases {
 		expected := mapFromOperationContext(phase["expected_action"])
-		if !strings.EqualFold(strings.TrimSpace(stringFromAny(expected["skill_id"])), skills.SkillExternalApps) ||
-			strings.TrimSpace(stringFromAny(expected["_server_projected_binding_fingerprint"])) == "" {
+		if len(mapFromOperationContext(expected["connector_operation"])) == 0 {
 			continue
 		}
 		selected = append(selected, phase)
@@ -1655,10 +1537,13 @@ func operationPlanCompactPhasesForPrompt(value interface{}, limit int) []interfa
 	out := make([]interface{}, 0, len(selected))
 	for _, phase := range selected {
 		item := map[string]interface{}{}
-		for _, key := range []string{"id", "outcome_id", "step", "title", "status", "note", "verification_mode", "completion_source"} {
+		for _, key := range []string{"id", "outcome_id", "step", "title", "status", "note", "verification_mode", "completion_source", operationPlanPhaseSourceKey} {
 			if text := strings.TrimSpace(stringFromAny(phase[key])); text != "" {
 				item[key] = compactForPrompt(text, 240)
 			}
+		}
+		if required, exists := phase["required"].(bool); exists {
+			item["required"] = required
 		}
 		if evidence := stringSliceFromAny(phase["evidence"]); len(evidence) > 0 {
 			item["evidence"] = compactStringSliceForPrompt(evidence, 6, 180)
@@ -1677,13 +1562,16 @@ func operationPlanCompactPhasesForPrompt(value interface{}, limit int) []interfa
 		}
 		if expectedAction := mapFromOperationContext(phase["expected_action"]); len(expectedAction) > 0 {
 			action := map[string]interface{}{}
-			for _, key := range []string{"skill_id", "tool_name", "projected_tool_name"} {
+			for _, key := range []string{"skill_id", "tool_name"} {
 				if value := strings.TrimSpace(stringFromAny(expectedAction[key])); value != "" {
 					action[key] = compactForPrompt(value, 160)
 				}
 			}
 			if target := mapFromOperationContext(expectedAction["target"]); len(target) > 0 {
 				action["target"] = target
+			}
+			if operation := mapFromOperationContext(expectedAction["connector_operation"]); len(operation) > 0 {
+				action["connector_operation"] = operation
 			}
 			if targetArguments := mapFromOperationContext(expectedAction["target_arguments"]); len(targetArguments) > 0 {
 				action["target_arguments"] = targetArguments
@@ -2085,7 +1973,7 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 		appID = strings.TrimSpace(prepared.RunConfig.BillingAppID)
 	}
 	invokeFrom := tools.ToolInvokeFromAIChat
-	if normalizeCallerType(prepared.Caller.Type) == runtimemodel.ConversationCallerAgent {
+	if isAutonomousSubjectCaller(prepared.Caller.Type) {
 		invokeFrom = tools.ToolInvokeFromAgent
 	}
 	runtimeParameters := skillRuntimeParametersForPrepared(prepared)
@@ -2095,16 +1983,61 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 	if authorizer := s.consoleNavigationRouteAuthorizer(prepared); authorizer != nil {
 		runtimeParameters = consolenavigation.WithRouteAuthorizer(runtimeParameters, authorizer)
 	}
-	return skills.ExecutionContext{
-		OrganizationID:    prepared.Scope.OrganizationID.String(),
-		UserID:            prepared.Scope.AccountID.String(),
-		ExternalUserID:    preparedExternalUserID(prepared),
-		ConversationID:    prepared.Conversation.ID.String(),
-		AppID:             appID,
-		MessageID:         prepared.Message.ID.String(),
-		InvokeFrom:        invokeFrom,
-		RuntimeParameters: runtimeParameters,
+	presentationLocale := "en-US"
+	if prepared.parts != nil {
+		for _, character := range prepared.parts.Query {
+			if unicode.Is(unicode.Han, character) {
+				presentationLocale = "zh-Hans"
+				break
+			}
+		}
 	}
+	executionContext := skills.ExecutionContext{
+		PresentationLocale: presentationLocale,
+		OrganizationID:     prepared.Scope.OrganizationID.String(),
+		UserID:             prepared.Scope.AccountID.String(),
+		ExternalUserID:     preparedExternalUserID(prepared),
+		ConversationID:     prepared.Conversation.ID.String(),
+		AppID:              appID,
+		MessageID:          prepared.Message.ID.String(),
+		InvokeFrom:         invokeFrom,
+		RuntimeParameters:  runtimeParameters,
+	}
+	if s == nil {
+		return executionContext
+	}
+	if invokeFrom == tools.ToolInvokeFromAIChat {
+		executionContext.ConnectorIdentityResolver = s.connectorChatRuntime
+	} else if invokeFrom == tools.ToolInvokeFromAgent {
+		executionContext.ConnectorIdentityResolver = s.connectorAgentRuntime
+		executionContext.ConnectorTargetScope = connectorcore.TargetScope(prepared.RunConfig.ConnectorTargetScope)
+		executionContext.ConnectorTargetVersionID = prepared.RunConfig.ConnectorTargetVersionID
+	}
+	// ConnectorTargetType is server-owned and empty for Chat, Agent and Workflow
+	// callers, whose Connector target is derived from InvokeFrom.
+	executionContext.ConnectorTargetType = prepared.RunConfig.ConnectorTargetType
+	if isDigitalHumanCaller(prepared.Caller.Type) {
+		// A DigitalHuman host keeps the compatibility ToolInvokeFromAgent profile
+		// so its existing Skill surface is unchanged, but it must never borrow the
+		// Agent target implied by InvokeFrom. The explicit host type plus the
+		// published scope/version carried above and the run id below let the Skills
+		// layer validate the exact bound instance before dispatch.
+		executionContext.ConnectorTargetType = connectorcore.TargetTypeDigitalHuman
+		// The compatibility ToolInvokeFromAgent profile above would otherwise leave
+		// the Agent identity resolver in place; select the DigitalHuman resolver
+		// explicitly so its absence fails closed instead of borrowing Agent identity.
+		executionContext.ConnectorIdentityResolver = s.connectorDigitalHumanRuntime
+		executionContext.ConnectorRunID = strings.TrimSpace(prepared.RunConfig.ConnectorRunID)
+		executionContext.ConnectorInteractive = prepared.RunConfig.ConnectorInteractive
+		if prepared.Caller.ID != nil {
+			executionContext.AppID = prepared.Caller.ID.String()
+		}
+	}
+	executionContext.ConnectorConfirmationStore = s.connectorConfirmationStore
+	if s.connectorActionResolverFactory != nil {
+		executionContext.ConnectorActionResolver = s.connectorActionResolverFactory(prepared.Message.ID, prepared.Conversation.ID, prepared.Scope.OrganizationID, prepared.Scope.AccountID)
+	}
+	return executionContext
 }
 
 func preparedExternalUserID(prepared *PreparedChat) string {
@@ -2161,9 +2094,24 @@ func (s *service) consoleNavigationRouteAuthorizer(prepared *PreparedChat) conso
 }
 
 func (s *service) currentAgentBindingVerifier(prepared *PreparedChat) skills.AgentBindingVerifier {
-	if s == nil || s.repos == nil || s.repos.DB == nil || prepared == nil ||
-		normalizeCallerType(prepared.Caller.Type) != runtimemodel.ConversationCallerAgent ||
-		prepared.Caller.ID == nil || *prepared.Caller.ID == uuid.Nil {
+	if prepared == nil || prepared.Caller.ID == nil || *prepared.Caller.ID == uuid.Nil {
+		return nil
+	}
+	if isDigitalHumanCaller(prepared.Caller.Type) {
+		if prepared.RunConfig.BindingReader == nil {
+			return nil
+		}
+		reader := prepared.RunConfig.BindingReader
+		ref := prepared.RunConfig.BindingSnapshot
+		return func(ctx context.Context, check skills.AgentBindingCheck) (bool, error) {
+			decision, err := reader.Verify(ctx, ref, resourcebindings.Match{
+				Type: resourcebindings.BindingType(check.BindingType), ResourceID: check.ResourceID,
+				ParentResourceID: check.ParentResourceID, AccessMode: resourcebindings.AccessMode(check.AccessMode), ActionID: check.ActionID,
+			})
+			return decision.Allowed, err
+		}
+	}
+	if s == nil || s.repos == nil || s.repos.DB == nil || normalizeCallerType(prepared.Caller.Type) != runtimemodel.ConversationCallerAgent {
 		return nil
 	}
 	agentID := *prepared.Caller.ID
@@ -2177,7 +2125,7 @@ func (s *service) currentAgentBindingVerifier(prepared *PreparedChat) skills.Age
 		if scope == agentbindings.ScopePublished {
 			var versionIDs []uuid.UUID
 			if err := s.repos.DB.WithContext(ctx).Model(&agentbindings.Binding{}).
-				Where("agent_id = ? AND binding_scope = ? AND published_version_uuid IS NOT NULL", agentID, scope).
+				Where("agent_id = ? AND consumer_type = ? AND binding_scope = ? AND published_version_uuid IS NOT NULL", agentID, agentbindings.ConsumerTypeAgent, scope).
 				Limit(1).
 				Pluck("published_version_uuid", &versionIDs).Error; err != nil {
 				return false, fmt.Errorf("resolve current Agent published binding version: %w", err)
@@ -2187,18 +2135,7 @@ func (s *service) currentAgentBindingVerifier(prepared *PreparedChat) skills.Age
 			}
 			ref.PublishedVersionUUID = &versionIDs[0]
 		}
-		if agentbindings.BindingType(check.BindingType) == agentbindings.BindingTypeIntegrationConnection {
-			binding, err := repo.FindBinding(ctx, ref, agentbindings.Match{
-				BindingType:      agentbindings.BindingTypeIntegrationConnection,
-				ResourceID:       check.ResourceID,
-				ParentResourceID: check.ParentResourceID,
-				AccessMode:       check.AccessMode,
-			})
-			if err != nil || binding == nil {
-				return false, err
-			}
-			return binding.AllowsIntegrationAction(check.ActionID), nil
-		}
+
 		return repo.HasBinding(ctx, ref, agentbindings.Match{
 			BindingType:      agentbindings.BindingType(check.BindingType),
 			ResourceID:       check.ResourceID,
@@ -2993,12 +2930,13 @@ func aiChatTurnStrategyToolStepID(tool AIChatTurnStrategyTool) string {
 }
 
 func chatPartsBusinessSkillsEnabled(parts *chatRequestParts) bool {
-	return parts != nil && parts.SkillMode != skillModeDisabled && len(parts.SkillIDs) > 0
+	return parts != nil && parts.SkillMode != skillModeDisabled &&
+		(len(parts.SkillIDs) > 0 || parts.ConnectorToolsEnabled)
 }
 
 func chatPartsToolLoopEnabled(parts *chatRequestParts) bool {
 	return parts != nil && parts.ExecutionMode != executionModeDirectChat &&
-		(parts.ProtocolToolsEnabled || parts.AgentMemoryToolsEnabled || chatPartsBusinessSkillsEnabled(parts))
+		(parts.ProtocolToolsEnabled || parts.AgentMemoryToolsEnabled || parts.ConnectorToolsEnabled || chatPartsBusinessSkillsEnabled(parts))
 }
 
 func runtimeToolNames(runtimeTools []skillloop.RuntimeTool) []string {

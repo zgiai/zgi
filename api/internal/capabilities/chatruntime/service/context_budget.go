@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/config"
+	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/llm/tokenestimate"
@@ -477,6 +478,7 @@ func (s *service) historyMessageGroupsForCurrentRequest(ctx context.Context, bra
 	if shouldIsolateHistoryForCurrentTurn(parts) {
 		return nil, nil
 	}
+	branch = supplementalHistoryBranch(branch, parts)
 	includeImages := false
 	if parts != nil {
 		includeImages = parts.ModelSupportsVision
@@ -484,7 +486,38 @@ func (s *service) historyMessageGroupsForCurrentRequest(ctx context.Context, bra
 	return s.historyMessageGroups(ctx, branch, includeImages)
 }
 
+func supplementalHistoryBranch(branch []*runtimemodel.Message, parts *chatRequestParts) []*runtimemodel.Message {
+	if parts == nil || parts.HistoryPolicy == nil || parts.HistoryPolicy.Mode != runtimedto.ConversationHistoryModeSupplemental {
+		return branch
+	}
+	excluded := make(map[string]struct{}, len(parts.HistoryPolicy.ExcludedTexts))
+	for _, value := range parts.HistoryPolicy.ExcludedTexts {
+		if value = normalizedHistoryContent(value); value != "" {
+			excluded[value] = struct{}{}
+		}
+	}
+	filtered := make([]*runtimemodel.Message, 0, len(branch))
+	for _, message := range branch {
+		if message == nil {
+			continue
+		}
+		_, queryExcluded := excluded[normalizedHistoryContent(message.Query)]
+		_, answerExcluded := excluded[normalizedHistoryContent(message.Answer)]
+		if queryExcluded || answerExcluded {
+			continue
+		}
+		filtered = append(filtered, message)
+	}
+	if limit := parts.HistoryPolicy.MaxTurns; limit > 0 && len(filtered) > limit {
+		filtered = filtered[len(filtered)-limit:]
+	}
+	return filtered
+}
+
 func shouldIsolateHistoryForCurrentTurn(parts *chatRequestParts) bool {
+	if parts != nil && parts.HistoryPolicy != nil && parts.HistoryPolicy.Mode == runtimedto.ConversationHistoryModeIsolated {
+		return true
+	}
 	if parts == nil || !isContextualAIChatSurface(parts.Surface) {
 		return false
 	}

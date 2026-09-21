@@ -7,6 +7,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// The DigitalHuman contract has its own source file so it can evolve without
+// conflicting with the Agent external-v1 specification. Both products share
+// envelope, error, pagination, and SSE event conventions.
+//
+//go:embed digital-human-v1.openapi.yaml
+var digitalHumanV1OpenAPI []byte
+
 //go:embed external-v1.openapi.yaml
 var externalV1OpenAPI []byte
 
@@ -24,11 +31,12 @@ func RegisterPublicRoutes(r *gin.RouterGroup) {
 	// API documentation endpoint
 	r.GET("/docs", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
-			"message":       "ZGI External API Documentation",
-			"openapi":       "/api/openapi.yaml",
-			"openapi_scope": "Agent API",
-			"sse_contract":  "OpenAPI x-zgi-sse-event-data-schemas",
-			"swagger":       "/swagger/index.html",
+			"message":               "ZGI External API Documentation",
+			"openapi":               "/api/openapi.yaml",
+			"digital_human_openapi": "/api/digital-human-openapi.yaml",
+			"openapi_scope":         "Agent and DigitalHuman APIs",
+			"sse_contract":          "OpenAPI x-zgi-sse-event-data-schemas",
+			"swagger":               "/swagger/index.html",
 			"endpoints": gin.H{
 				"agent": []string{
 					"GET /api/v1/agents/config",
@@ -62,12 +70,21 @@ func RegisterPublicRoutes(r *gin.RouterGroup) {
 					"POST /api/v1/workflows/tasks/{task_id}/stop",
 					"POST /api/v1/chat-workflows/run",
 				},
+				"digital_human": []string{
+					"POST /api/v1/digital-humans/chat",
+					"GET /api/v1/digital-humans/runs/{run_id}/events",
+					"GET /api/v1/digital-humans/conversations/{conversation_id}/messages",
+					"POST /api/v1/digital-humans/files/upload",
+				},
 			},
-			"authentication": "Use X-API-Key header or Authorization: Bearer <api_key>",
+			"authentication": "Use X-API-Key or Authorization: Bearer <api_key>",
 		})
 	})
 
 	r.GET("/openapi.yaml", func(c *gin.Context) {
 		c.Data(http.StatusOK, "application/yaml; charset=utf-8", externalV1OpenAPI)
+	})
+	r.GET("/digital-human-openapi.yaml", func(c *gin.Context) {
+		c.Data(http.StatusOK, "application/yaml; charset=utf-8", digitalHumanV1OpenAPI)
 	})
 }

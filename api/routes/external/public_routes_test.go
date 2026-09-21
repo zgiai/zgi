@@ -16,6 +16,42 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func TestPublicDocumentationExposesDigitalHumanExternalContract(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	RegisterPublicRoutes(router.Group("/api"))
+
+	docs := httptest.NewRecorder()
+	router.ServeHTTP(docs, httptest.NewRequest(http.MethodGet, "/api/docs", nil))
+	if docs.Code != http.StatusOK || !strings.Contains(docs.Body.String(), "/api/v1/digital-humans") ||
+		!strings.Contains(docs.Body.String(), "/api/digital-human-openapi.yaml") {
+		t.Fatalf("docs response = %d %s", docs.Code, docs.Body.String())
+	}
+
+	spec := httptest.NewRecorder()
+	router.ServeHTTP(spec, httptest.NewRequest(http.MethodGet, "/api/digital-human-openapi.yaml", nil))
+	if spec.Code != http.StatusOK || !strings.Contains(spec.Header().Get("Content-Type"), "application/yaml") {
+		t.Fatalf("OpenAPI response = %d %q", spec.Code, spec.Header().Get("Content-Type"))
+	}
+	var document map[string]any
+	if err := yaml.Unmarshal(spec.Body.Bytes(), &document); err != nil {
+		t.Fatalf("OpenAPI is invalid YAML: %v", err)
+	}
+	for _, required := range []string{
+		"/digital-humans/chat:", "/digital-humans/runs/{run_id}/events:",
+		"/digital-humans/conversations/{conversation_id}/messages:",
+		"/digital-humans/files/upload:", "Last-Event-ID", "X-ZGI-Run-ID",
+		"x-zgi-sse-event-data-schemas:", "run_accepted:", "run_end:",
+	} {
+		if !strings.Contains(spec.Body.String(), required) {
+			t.Fatalf("OpenAPI document is missing %q", required)
+		}
+	}
+	if strings.Contains(spec.Body.String(), "X-External-User-ID") || strings.Contains(spec.Body.String(), "end_user_id") {
+		t.Fatal("DigitalHuman contract must use the user field instead of an identity header or renamed field")
+	}
+}
+
 func TestPublicDocumentationRoutesExposeCurrentAgentContract(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -54,6 +90,7 @@ func TestPublicDocumentationRoutesExposeCurrentAgentContract(t *testing.T) {
 		"/agents/conversations/{conversation_id}/messages:",
 		"/agents/messages/{message_id}/regenerate:",
 		"/agents/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue:",
+		"/agents/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue:",
 		"x-zgi-sse-event-data-schemas:",
 		"/agents/memory/{key}:",
 		"X-External-User-ID",
@@ -97,6 +134,7 @@ func TestPublicDocumentationRoutesExposeCurrentAgentContract(t *testing.T) {
 		{http.MethodPost, "/agents/messages/{message_id}/regenerate"},
 		{http.MethodPost, "/agents/conversations/{conversation_id}/messages/{message_id}/workflow-continuation"},
 		{http.MethodPost, "/agents/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue"},
+		{http.MethodPost, "/agents/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue"},
 		{http.MethodGet, "/agents/memory"},
 		{http.MethodDelete, "/agents/memory"},
 		{http.MethodGet, "/agents/memory/export"},

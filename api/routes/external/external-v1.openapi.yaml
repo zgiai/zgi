@@ -16,6 +16,8 @@ x-zgi-sse-event-data-schemas:
   agent_progress: '#/components/schemas/AgentProgressEventData'
   agent_intermediate_answer: '#/components/schemas/IntermediateAnswerEventData'
   user_input_requested: '#/components/schemas/UserInputRequestedEventData'
+  token_budget_requested: '#/components/schemas/TokenBudgetRequestedEventData'
+  token_usage_updated: '#/components/schemas/TokenUsageUpdatedEventData'
   file_parse_start: '#/components/schemas/FileParseEventData'
   file_parse_end: '#/components/schemas/FileParseEventData'
   file_parse_error: '#/components/schemas/FileParseEventData'
@@ -366,6 +368,33 @@ paths:
           $ref: '#/components/responses/AgentEventStream'
         default:
           $ref: '#/components/responses/Error'
+  /agents/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue:
+    post:
+      tags: [Continuations]
+      summary: Continue or stop an API task paused by its token budget
+      operationId: continueAgentTaskTokenBudget
+      description: Adds tokens to, or stops, the same message after `token_budget_requested`. This endpoint is independent from Skill `user_input_requested`; do not send `answers`.
+      parameters:
+        - $ref: '#/components/parameters/ConversationID'
+        - $ref: '#/components/parameters/MessageID'
+        - name: request_id
+          in: path
+          required: true
+          description: Request id copied from the active `token_budget_requested` event.
+          schema: {type: string}
+        - $ref: '#/components/parameters/ExternalUserID'
+        - $ref: '#/components/parameters/LegacyUser'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskTokenBudgetContinuationRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/AgentEventStream'
+        default:
+          $ref: '#/components/responses/Error'
   /agents/memory:
     get:
       tags: [Memory]
@@ -655,6 +684,8 @@ components:
         - agent_progress
         - agent_intermediate_answer
         - user_input_requested
+        - token_budget_requested
+        - token_usage_updated
         - file_parse_start
         - file_parse_end
         - file_parse_error
@@ -737,6 +768,32 @@ components:
               enum: [process, discard]
               description: Move previously streamed candidate text to process UI, or remove it entirely.
             answer: {type: string, description: Candidate text affected by the retraction when supplied.}
+    TokenUsageUpdatedEventData:
+      description: Provider-reported model token usage update emitted after each model invocation. When an API task supplies a token budget, task_token_budget is also included with the cumulative budget state.
+      allOf:
+        - $ref: '#/components/schemas/EventIdentity'
+        - type: object
+          required: [usage]
+          properties:
+            usage:
+              $ref: '#/components/schemas/TokenUsage'
+            task_token_budget:
+              $ref: '#/components/schemas/TaskTokenBudget'
+    TokenUsage:
+      type: object
+      required: [prompt_tokens, completion_tokens, total_tokens]
+      properties:
+        prompt_tokens: {type: integer, minimum: 0, description: Prompt tokens reported for the model invocation.}
+        completion_tokens: {type: integer, minimum: 0, description: Completion tokens reported for the model invocation.}
+        total_tokens: {type: integer, minimum: 0, description: Total tokens charged for the model invocation.}
+    TaskTokenBudget:
+      type: object
+      required: [used_tokens, max_tokens, remaining_tokens, status]
+      properties:
+        used_tokens: {type: integer, minimum: 0, description: Cumulative provider-reported tokens consumed by this task.}
+        max_tokens: {type: integer, minimum: 1, description: Maximum tokens configured for this task.}
+        remaining_tokens: {type: integer, minimum: 0, description: Remaining task budget after the latest usage update.}
+        status: {type: string, enum: [running, exhausted, waiting, stopped], description: Current task budget status.}
     MessageEndEventData:
       description: Ends the current streaming phase; waiting statuses require a matching continuation endpoint.
       allOf:
@@ -746,7 +803,7 @@ components:
           properties:
             status:
               type: string
-              enum: [completed, stopped, error, failed, waiting_approval, waiting_question]
+              enum: [completed, stopped, error, failed, waiting_approval, waiting_question, waiting_budget]
               description: Final status, or a resumable waiting state for this streaming phase.
             answer: {type: string, description: Complete stored answer when supplied.}
             metadata: {type: object, additionalProperties: true, description: Public runtime metadata, including usage and continuation state.}
@@ -831,6 +888,28 @@ components:
               type: array
               description: Questions whose ids become keys in the continuation answers object.
               items: {$ref: '#/components/schemas/UserInputQuestion'}
+    TokenBudgetRequestedEventData:
+      description: Pauses an API task after its configured token budget is exhausted. This independent event never contains user-input questions.
+      allOf:
+        - $ref: '#/components/schemas/EventIdentity'
+        - type: object
+          required: [request_id, request_kind, message, token_budget, actions, created_at]
+          properties:
+            request_id: {type: string, description: Opaque continuation id for this budget pause.}
+            request_kind: {type: string, enum: [task_token_budget], description: Stable discriminator for the independent task-budget continuation protocol.}
+            message: {type: string, description: User-facing budget exhaustion message.}
+            token_budget:
+              $ref: '#/components/schemas/TaskTokenBudget'
+            actions:
+              type: array
+              minItems: 1
+              description: Actions allowed for resolving the budget pause.
+              items:
+                type: object
+                required: [id, label]
+                properties:
+                  id: {type: string, enum: [add, stop]}
+                  label: {type: string}
     FileParseEventData:
       description: Start, completion, or failure state for one uploaded file being prepared for the Agent.
       allOf:
@@ -1255,6 +1334,11 @@ components:
           type: string
           deprecated: true
           description: Deprecated compatibility field. Use `X-External-User-ID`; if both are sent they must match exactly.
+        max_task_tokens:
+          type: integer
+          minimum: 1
+          maximum: 100000000
+          description: Optional per-task model token budget based on provider-reported usage. Enforcement occurs after an in-flight call is counted, so that call may cross the limit; the stream then emits token_budget_requested and waits for an add or stop continuation.
       example:
         query: Summarize the attached report in three bullets.
         conversation_id: f1f7503a-9e28-4af5-9d6d-9e23fb5a8994
@@ -1287,6 +1371,21 @@ components:
           additionalProperties: {type: string}
       example:
         answers: {target: production}
+    TaskTokenBudgetContinuationRequest:
+      type: object
+      description: Continues an API task paused by token budget. Use add with additional_tokens, or stop without additional_tokens.
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum: [add, stop]
+          description: Resolve the budget pause by adding tokens or stopping the task.
+        additional_tokens:
+          type: integer
+          minimum: 1
+          maximum: 100000000
+          description: Number of tokens to add when action is add. The resulting task limit must not exceed 100000000.
+      example: {action: add, additional_tokens: 2048}
     WorkflowContinuationRequest:
       description: Resumes a paused workflow question or approval within the existing Agent message.
       oneOf:

@@ -60,8 +60,34 @@ export interface ApprovalRuntimeForm {
     };
   };
   resolved_default_values?: Record<string, unknown>;
+  task_approval?: DigitalHumanTaskApprovalPresentation;
   expiration_at?: number;
   expires_at?: number;
+}
+
+export interface DigitalHumanTaskApprovalChange {
+  field: string;
+  label?: string;
+  before?: unknown;
+  after?: unknown;
+  change_type?: 'added' | 'removed' | 'changed' | string;
+}
+
+export interface DigitalHumanTaskApprovalPresentation {
+  operation:
+    | 'create'
+    | 'update'
+    | 'confirm'
+    | 'decline'
+    | 'cancel'
+    | 'run_now'
+    | 'status'
+    | 'action'
+    | string;
+  task_before?: Record<string, unknown> | null;
+  task_after?: Record<string, unknown> | null;
+  changes?: DigitalHumanTaskApprovalChange[];
+  supplement_allowed?: boolean;
 }
 
 export interface ApprovalSubmitRequest {

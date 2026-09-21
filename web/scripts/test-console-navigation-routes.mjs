@@ -11,18 +11,34 @@ import { getRecentWorkNavigationHref } from '../src/utils/console-recent-work.ts
 
 const siteMapRoutes = new Set(ZGI_CONSOLE_SITE_MAP.map(route => route.href));
 
-for (const href of ['/console/workflows', '/console/skills', '/console/integrations']) {
+for (const href of [
+  '/console/workflows',
+  '/console/digital-humans',
+  '/console/skills',
+  '/console/connectors',
+  '/console/connectors/connections',
+]) {
   assert.equal(siteMapRoutes.has(href), true, `site map must include ${href}`);
   assert.equal(normalizeZGIConsoleNavigationHref(href), href, `${href} must be navigable`);
 }
 
 for (const href of [
-  '/console/integrations/oauth/result',
+  '/console/connectors/github',
+  '/console/connectors/connections/11111111-1111-4111-8111-111111111111',
   '/console/workflows/workflow-1',
   '/console/workflows/workflow-1/logs',
   '/console/workflows/workflow-1/api/keys',
   '/console/workflows/workflow-1/api/docs',
   '/console/workflows/workflow-1/batch-test',
+  '/console/digital-humans/digital-human-1',
+  '/console/digital-humans/digital-human-1/settings',
+  '/console/digital-humans/digital-human-1/capabilities',
+  '/console/digital-humans/digital-human-1/channels',
+  '/console/digital-humans/digital-human-1/configuration',
+  '/console/digital-humans/digital-human-1/preferences',
+  '/console/digital-humans/digital-human-1/tasks',
+  '/console/digital-humans/digital-human-1/runs',
+  '/console/digital-humans/digital-human-1/memory',
 ]) {
   assert.equal(normalizeZGIConsoleNavigationHref(href), href, `${href} must be navigable`);
 }
@@ -81,6 +97,22 @@ assert.equal(
     getZGIConsoleNavigationAccess('/console/workflows', readyContext)
   ),
   'forbidden'
+);
+assert.equal(
+  getZGIConsoleNavigationAccess('/console/connectors', {
+    ...readyContext,
+    workspaceStatus: 'workspace_required',
+  }).status,
+  'allowed',
+  'Connector Center must remain available without a workspace'
+);
+assert.equal(
+  getZGIConsoleNavigationAccess(
+    '/console/connectors/connections/11111111-1111-4111-8111-111111111111',
+    { ...readyContext, workspaceStatus: 'workspace_required' }
+  ).status,
+  'allowed',
+  'personal Connection management must remain organization-scoped'
 );
 assert.equal(
   getZGIConsoleNavigationAccess('/console/workflows', {
@@ -192,6 +224,76 @@ const workflowEditor = { ...readyContext, permissions: ['workflow.update'] };
 assert.equal(
   getZGIConsoleNavigationAccess('/console/workflows/workflow-1', workflowEditor).status,
   'allowed'
+);
+
+const digitalHumanViewer = { ...readyContext, permissions: ['digital_human.view'] };
+assert.equal(
+  getZGIConsoleNavigationAccess('/console/digital-humans', digitalHumanViewer).status,
+  'allowed'
+);
+assert.equal(
+  getZGIConsoleNavigationAccess('/console/digital-humans/digital-human-1', digitalHumanViewer)
+    .status,
+  'allowed'
+);
+assert.equal(
+  getZGIConsoleNavigationAccess('/console/digital-humans/digital-human-1/tasks', digitalHumanViewer)
+    .status,
+  'allowed'
+);
+assert.equal(
+  getZGIConsoleNavigationAccess(
+    '/console/digital-humans/digital-human-1/configuration',
+    digitalHumanViewer
+  ).status,
+  'allowed'
+);
+assert.equal(
+  getZGIConsoleNavigationAccess(
+    '/console/digital-humans/digital-human-1/preferences',
+    digitalHumanViewer
+  ).status,
+  'allowed'
+);
+assert.equal(
+  getZGIConsoleNavigationAccess(
+    '/console/digital-humans/digital-human-1/channels',
+    digitalHumanViewer
+  ).status,
+  'allowed'
+);
+assert.equal(
+  getZGIConsoleNavigationAccess('/console/digital-humans/digital-human-1/runs', {
+    ...readyContext,
+    permissions: ['digital_human.logs.view'],
+  }).status,
+  'allowed'
+);
+assert.equal(
+  normalizeZGIConsoleNavigationHref('/console/digital-humans/create'),
+  '/console/digital-humans/create',
+  'the creation route must stay navigable'
+);
+assert.equal(
+  getZGIConsoleNavigationAccess('/console/digital-humans/create', {
+    ...readyContext,
+    permissions: ['digital_human.view', 'digital_human.create'],
+  }).status,
+  'allowed',
+  'view + create must be enough to open the creation route'
+);
+assert.equal(
+  getZGIConsoleNavigationAccess('/console/digital-humans/create', digitalHumanViewer).status,
+  'permission_denied',
+  'view alone must not open the creation route'
+);
+assert.equal(
+  getZGIConsoleNavigationAccess('/console/digital-humans/create', {
+    ...readyContext,
+    permissions: ['digital_human.view', 'digital_human.update', 'digital_human.publish'],
+  }).status,
+  'permission_denied',
+  'the creation route must not fall through to the digital human detail permissions'
 );
 assert.equal(
   getZGIConsoleNavigationAccess('/console/agents/legacy-workflow/workflow', workflowEditor).status,

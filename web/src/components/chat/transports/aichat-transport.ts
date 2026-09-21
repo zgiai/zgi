@@ -19,11 +19,14 @@ import type {
   AIChatMessageEndEventData,
   AIChatMessageRetractEventData,
   AIChatMessageStartEventData,
+  AIChatTokenUsageUpdatedEventData,
+  AIChatTokenBudgetRequestedEventData,
   AIChatMemoryMutationEventData,
   AIChatIntermediateAnswerEventData,
   AIChatUserInputRequestedEventData,
   AIChatRegenerateMessageRequest,
   AIChatRuntimeSurface,
+  AIChatRuntimeInputAppliedEventData,
   AIChatSearchResult,
   AIChatSkillCallEndEventData,
   AIChatSkillCallErrorEventData,
@@ -33,6 +36,8 @@ import type {
   AIChatSkillLoadStartEventData,
   AIChatSkillReferenceReadEventData,
   AIChatStopConversationResponseData,
+  AIChatSubmitRuntimeInputRequest,
+  AIChatSubmitRuntimeInputResponseData,
   AIChatToolGovernanceDecisionRequest,
   AIChatUserInputContinuationRequest,
   AIChatToolGovernanceDecisionEventData,
@@ -182,6 +187,10 @@ export interface AIChatStreamCallbacks {
     eventId?: string | null
   ) => void;
   onMemoryMutation: (payload: AIChatMemoryMutationEventData, eventId?: string | null) => void;
+  onRuntimeInputApplied?: (
+    payload: AIChatRuntimeInputAppliedEventData,
+    eventId?: string | null
+  ) => void;
   onWorkflowStarted?: (payload: AIChatWorkflowEventData, eventId?: string | null) => void;
   onWorkflowNodeStarted?: (payload: AIChatWorkflowNodeEventData, eventId?: string | null) => void;
   onWorkflowNodeFinished?: (payload: AIChatWorkflowNodeEventData, eventId?: string | null) => void;
@@ -195,6 +204,14 @@ export interface AIChatStreamCallbacks {
   onMessageChunk: (payload: AIChatMessageChunkEventData, eventId?: string | null) => void;
   onMessageRetract: (payload: AIChatMessageRetractEventData, eventId?: string | null) => void;
   onMessageEnd: (payload: AIChatMessageEndEventData, eventId?: string | null) => void;
+  onTokenUsageUpdated?: (
+    payload: AIChatTokenUsageUpdatedEventData,
+    eventId?: string | null
+  ) => void;
+  onTokenBudgetRequested?: (
+    payload: AIChatTokenBudgetRequestedEventData,
+    eventId?: string | null
+  ) => void;
   onErrorEvent: (payload: AIChatErrorEventData, eventId?: string | null) => void;
   onRequestError: (error: Error) => void;
   onClose: () => void;
@@ -207,6 +224,7 @@ export interface AIChatWorkflowApprovalContinuationPayload {
 }
 
 export interface AIChatRuntimeTransport {
+  readonly supportsRuntimeInput?: boolean;
   listConversations(params: {
     page: number;
     limit: number;
@@ -233,6 +251,11 @@ export interface AIChatRuntimeTransport {
     options?: { surface?: AIChatRuntimeSurface }
   ): Promise<ConversationSearchResult[]>;
   stopConversation(conversationId: string): Promise<AIChatStopConversationResponseData>;
+  submitRuntimeInput?(
+    conversationId: string,
+    messageId: string,
+    payload: AIChatSubmitRuntimeInputRequest
+  ): Promise<AIChatSubmitRuntimeInputResponseData>;
   streamChat(
     payload: AIChatChatRequest,
     callbacks: AIChatStreamCallbacks,
@@ -368,11 +391,55 @@ export function dispatchAIChatStreamEvent(
     case 'client_action_result':
       callbacks.onClientActionResult?.((data ?? {}) as AIChatClientActionResultEventData, eventId);
       break;
+    case 'connector_confirmation_required':
+    case 'connector_confirmation_resolved': {
+      const envelope =
+        data && typeof data === 'object' && !Array.isArray(data)
+          ? (data as Record<string, unknown>)
+          : {};
+      const nestedResult =
+        envelope.result && typeof envelope.result === 'object' && !Array.isArray(envelope.result)
+          ? (envelope.result as Record<string, unknown>)
+          : envelope.execution_result &&
+              typeof envelope.execution_result === 'object' &&
+              !Array.isArray(envelope.execution_result)
+            ? (envelope.execution_result as Record<string, unknown>)
+            : null;
+      const result = nestedResult ?? {
+        state: envelope.state,
+        ...(envelope.decision_id !== undefined ? { decision_id: envelope.decision_id } : {}),
+        ...(envelope.error_code !== undefined ? { error_code: envelope.error_code } : {}),
+        ...(envelope.confirmation !== undefined ? { confirmation: envelope.confirmation } : {}),
+      };
+      callbacks.onAgentProgress(
+        {
+          conversation_id: String(envelope.conversation_id ?? ''),
+          message_id: String(envelope.message_id ?? ''),
+          phase: event,
+          progress_id: String(envelope.route_receipt ?? ''),
+          status:
+            event === 'connector_confirmation_required'
+              ? 'waiting_approval'
+              : String(result.state ?? 'unknown'),
+          result,
+          created_at:
+            typeof envelope.created_at === 'number' ? envelope.created_at : undefined,
+        },
+        eventId
+      );
+      break;
+    }
     case 'memory_create':
     case 'memory_update':
     case 'memory_delete':
     case 'memory_clear':
       callbacks.onMemoryMutation((data ?? {}) as AIChatMemoryMutationEventData, eventId);
+      break;
+    case 'runtime_input_applied':
+      callbacks.onRuntimeInputApplied?.(
+        (data ?? {}) as AIChatRuntimeInputAppliedEventData,
+        eventId
+      );
       break;
     case 'workflow_started':
       callbacks.onWorkflowStarted?.((data ?? {}) as AIChatWorkflowEventData, eventId);
@@ -491,6 +558,18 @@ export function dispatchAIChatStreamEvent(
       break;
     case 'message_end':
       callbacks.onMessageEnd((data ?? {}) as AIChatMessageEndEventData, eventId);
+      break;
+    case 'token_usage_updated':
+      callbacks.onTokenUsageUpdated?.(
+        (data ?? {}) as AIChatTokenUsageUpdatedEventData,
+        eventId
+      );
+      break;
+    case 'token_budget_requested':
+      callbacks.onTokenBudgetRequested?.(
+        (data ?? {}) as AIChatTokenBudgetRequestedEventData,
+        eventId
+      );
       break;
     case 'error':
       callbacks.onErrorEvent((data ?? {}) as AIChatErrorEventData, eventId);
