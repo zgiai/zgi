@@ -18,9 +18,9 @@ import (
 // transcript entry table.
 //
 // Only two things are ever written: a new fact (an appended protocol message) or
-// a recomputed effective form (preview). The payload column of an existing row
-// is never touched, which is what keeps "the conversation the user saw" and
-// "the context the model saw" from drifting apart.
+// a recomputed effective form. When context compression changes a tool result,
+// the canonical payload and preview are updated together so the original is not
+// recoverable from the database.
 type contextEntrySync struct {
 	messageID      uuid.UUID
 	conversationID uuid.UUID
@@ -302,10 +302,9 @@ func (w *contextEntrySync) syncWithOrigins(ctx context.Context, repos *repositor
 	return append([]contextEntryOrigin(nil), w.ordered[:len(transcript)]...), nil
 }
 
-// refreshRewrittenPreviews replaces the derived effective form of the stored
-// entries whose live counterpart changed in place, for example a tool result a
-// later budget projection pruned. Only preview is rewritten — payload is the
-// original fact and never changes.
+// refreshRewrittenPreviews replaces the canonical stored form of entries whose
+// live counterpart changed in place, for example a tool result compressed by a
+// later context-budget decision.
 //
 // A position whose live message is a *different* message is not a rewrite but a
 // divergence. The log is append-only, so the stored entry is kept and reported.
