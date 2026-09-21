@@ -172,6 +172,9 @@ func (b *BillingService) PreDeduct(ctx context.Context, bc *BillingContext) erro
 			if err := captureOrganizationBillingCurrency(ctx, tx, bc); err != nil {
 				return fmt.Errorf("capture billing currency snapshot: %w", err)
 			}
+			if err := applyLocalBillingCurrencySnapshot(bc); err != nil {
+				return fmt.Errorf("apply pre-deduct billing currency snapshot: %w", err)
+			}
 		}
 		if err := b.upsertAttemptInit(ctx, tx, bc); err != nil {
 			return fmt.Errorf("failed to init billing attempt: %w", err)
@@ -279,7 +282,9 @@ func (b *BillingService) Settle(ctx context.Context, bc *BillingContext) error {
 			if err := captureOrganizationBillingCurrency(ctx, tx, bc); err != nil {
 				return fmt.Errorf("capture billing currency snapshot: %w", err)
 			}
-			applyLocalBillingCurrencySnapshot(bc)
+			if err := applyLocalBillingCurrencySnapshot(bc); err != nil {
+				return fmt.Errorf("apply settle billing currency snapshot: %w", err)
+			}
 		}
 		attemptID, err := b.ensureAttemptID(bc)
 		if err != nil {
@@ -869,15 +874,23 @@ func (b *BillingService) deductTenantCredits(ctx context.Context, tx *gorm.DB, b
 			GroupID:           account.GroupID,
 			CurrencyType:      string(paymentModel.CurrencyTypePurchasedCredits),
 			TransactionType:   string(paymentModel.TransactionTypeAIConsumption),
-			Amount:            float64(-creditsToDeduct),
-			BalanceBefore:     float64(accountBefore.PurchasedCredits),
-			BalanceAfter:      float64(account.PurchasedCredits),
+			Amount:            legacyTransactionFloat(-creditsToDeduct),
+			BalanceBefore:     legacyTransactionFloat(int64(accountBefore.PurchasedCredits)),
+			BalanceAfter:      legacyTransactionFloat(int64(account.PurchasedCredits)),
 			TransactionDetail: transactionDetail,
 			CreatedAt:         now,
 		},
 	}
 
 	return b.creditTxRepo.CreateBatch(ctx, transactions)
+}
+
+// legacyTransactionFloat converts an exact integer credit-ledger value to the
+// legacy float64 decimal(16,4) payment-transaction column. Internal billing
+// keeps exact int64 amounts, so this is the only float boundary on the local
+// credit ledger; whole values below 2^53 convert losslessly.
+func legacyTransactionFloat(value int64) float64 {
+	return float64(value)
 }
 
 func billingContextNeedsTokenReprice(bc *BillingContext) bool {

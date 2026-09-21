@@ -247,9 +247,9 @@ func TestDefaultVideoPredeductQuoteUsesModelTokenEstimation(t *testing.T) {
 		DurationSeconds: 5,
 		Count:           2,
 	}
-	quote, ok := quoteVideoFromModelPricing(selection, "wan-video", costReq, decimal.NewFromInt(7))
-	if !ok {
-		t.Fatal("quoteVideoFromModelPricing() returned false")
+	quote, err := quoteVideoFromModelPricing(selection, "wan-video", costReq, decimal.NewFromInt(7))
+	if err != nil {
+		t.Fatalf("quoteVideoFromModelPricing() error = %v", err)
 	}
 	if quote.PricingSource != PricingSourceUpstreamModelPrice {
 		t.Fatalf("pricing source = %q, want model price", quote.PricingSource)

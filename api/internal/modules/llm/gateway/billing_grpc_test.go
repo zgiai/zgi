@@ -114,7 +114,7 @@ func (*authoritativeQuoteQuotaClient) Close() error { return nil }
 func TestRemoteBillingQuotePlatformTokenPricingUsesAuthoritativeCredits(t *testing.T) {
 	client := &authoritativeQuoteQuotaClient{response: &DualCostQuotaResponse{
 		Success: true, InputCredits: 25, OutputCredits: 20, TotalCredits: 45,
-		InputUSD: 0.000025, OutputUSD: 0.00002, TotalUSD: 0.000045,
+		InputUSD: decimal.RequireFromString("0.000025"), OutputUSD: decimal.RequireFromString("0.00002"), TotalUSD: decimal.RequireFromString("0.000045"),
 	}}
 	rb := &RemoteBilling{grpcClient: client}
 	localModelID := uuid.New()

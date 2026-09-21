@@ -68,6 +68,7 @@ import { USE_CASE_BADGE_COLORS, USE_CASE_ORDER } from '@/config/model-colors';
 import { resolveModelConfigParameterCopy } from '@/utils/model-config-parameter-i18n';
 import { CUSTOM_MODEL_ID_PATTERN } from '@/utils/model-id';
 import {
+  type BillingDisplaySettings,
   billingDisplayInputToUSD,
   billingDisplayInputValueFromUSD,
   getBillingCurrencySymbol,
@@ -236,6 +237,18 @@ function parseNumericConfigValue(value: string): number | undefined {
   }
 
   return parsed;
+}
+
+/**
+ * Converts a canonical USD price from the stored pricing JSON into the
+ * organization's display-currency input value. Media prices are persisted in
+ * USD, so the editor must apply the current rate here to stay symmetric with
+ * billingDisplayInputToUSD on submit; otherwise a CNY organization would divide
+ * the already-USD amount a second time.
+ */
+function displayPriceInputValue(usdValue: string, billingDisplay: BillingDisplaySettings): string {
+  if (usdValue.trim() === '') return '';
+  return billingDisplayInputValueFromUSD(usdValue, true, billingDisplay);
 }
 
 function normalizeTier(value?: string): 'standard' | 'premium' | 'enterprise' {
@@ -699,18 +712,48 @@ export function CustomModelDialog({
           initialData.cache_write_1h_price_configured,
           billingDisplay
         ),
-        price_per_image: readCustomModelPricePerImage(initialData.pricing),
+        price_per_image: displayPriceInputValue(
+          readCustomModelPricePerImage(initialData.pricing),
+          billingDisplay
+        ),
         image_billing_mode: getImageBillingMode(initialData.pricing),
-        image_token_text_price: readImageTokenPrice(initialData.pricing, 'text_input_price_per_million'),
-        image_token_image_price: readImageTokenPrice(initialData.pricing, 'image_input_price_per_million'),
-        image_token_output_price: readImageTokenPrice(initialData.pricing, 'output_price_per_million'),
-        video_rates: readCustomModelVideoRates(initialData.pricing),
-        speech_to_text_price: readCustomModelMeteredPrice(initialData.pricing, 'transcription'),
-        text_to_speech_price: readCustomModelMeteredPrice(initialData.pricing, 'speech_generation'),
-        music_price_per_track: readCustomModelMeteredPrice(initialData.pricing, 'music_generation'),
+        image_token_text_price: displayPriceInputValue(
+          readImageTokenPrice(initialData.pricing, 'text_input_price_per_million'),
+          billingDisplay
+        ),
+        image_token_image_price: displayPriceInputValue(
+          readImageTokenPrice(initialData.pricing, 'image_input_price_per_million'),
+          billingDisplay
+        ),
+        image_token_output_price: displayPriceInputValue(
+          readImageTokenPrice(initialData.pricing, 'output_price_per_million'),
+          billingDisplay
+        ),
+        video_rates: readCustomModelVideoRates(initialData.pricing).map(rate => ({
+          resolution: rate.resolution,
+          price_per_second: displayPriceInputValue(rate.pricePerSecond, billingDisplay),
+        })),
+        speech_to_text_price: displayPriceInputValue(
+          readCustomModelMeteredPrice(initialData.pricing, 'transcription'),
+          billingDisplay
+        ),
+        text_to_speech_price: displayPriceInputValue(
+          readCustomModelMeteredPrice(initialData.pricing, 'speech_generation'),
+          billingDisplay
+        ),
+        music_price_per_track: displayPriceInputValue(
+          readCustomModelMeteredPrice(initialData.pricing, 'music_generation'),
+          billingDisplay
+        ),
         realtime_audio_billing_mode: getRealtimeAudioBillingMode(initialData.pricing),
-        realtime_audio_input_price: readRealtimeAudioPrice(initialData.pricing, 'input_token'),
-        realtime_audio_output_price: readRealtimeAudioPrice(initialData.pricing, 'output_token'),
+        realtime_audio_input_price: displayPriceInputValue(
+          readRealtimeAudioPrice(initialData.pricing, 'input_token'),
+          billingDisplay
+        ),
+        realtime_audio_output_price: displayPriceInputValue(
+          readRealtimeAudioPrice(initialData.pricing, 'output_token'),
+          billingDisplay
+        ),
         input_modalities: initialData.input_modalities || ['text'],
         output_modalities: initialData.output_modalities || ['text'],
         knowledge_cutoff: initialData.training_data?.cutoff_date || '',

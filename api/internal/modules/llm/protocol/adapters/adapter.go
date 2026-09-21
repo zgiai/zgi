@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -409,6 +411,15 @@ type Usage struct {
 	// realtime/audio models so the gateway can bill the realtime_audio operation.
 	AudioInputTokens  int `json:"audio_input_tokens,omitempty"`
 	AudioOutputTokens int `json:"audio_output_tokens,omitempty"`
+	// InputTokensDetails carries the OpenAI input_tokens_details split
+	// (text_tokens / image_tokens) used to bill image generation by token.
+	InputTokensDetails InputTokensDetails `json:"input_tokens_details,omitempty"`
+}
+
+// InputTokensDetails is the text/image split of an image response input tokens.
+type InputTokensDetails struct {
+	TextTokens  int `json:"text_tokens,omitempty"`
+	ImageTokens int `json:"image_tokens,omitempty"`
 }
 
 type PromptTokensDetails struct {
@@ -768,10 +779,93 @@ type VideoResponse struct {
 	Provider         string                 `json:"-"`
 	Protocol         string                 `json:"-"`
 	ChannelID        string                 `json:"-"`
+
+	// ActualDurationSeconds is the duration in seconds the upstream provider
+	// reports for the finished video. The zero value means the provider did not
+	// report one. It is only ever populated from the provider response and never
+	// from the request, so by-second settlement can fail closed instead of
+	// charging the requested/declared duration.
+	ActualDurationSeconds float64 `json:"-"`
 }
 
 // VideoItem represents a generated video artifact.
 type VideoItem struct {
 	URL     string `json:"url,omitempty"`
 	B64JSON string `json:"b64_json,omitempty"`
+}
+
+// VideoActualDurationSeconds returns the upstream-reported video duration in
+// seconds. It prefers the typed field and then recursively searches the raw
+// provider payload for a duration key. Zero means the provider reported no
+// usable duration and the caller must fail closed for by-second settlement.
+func (r *VideoResponse) VideoActualDurationSeconds() float64 {
+	if r == nil {
+		return 0
+	}
+	if r.ActualDurationSeconds > 0 {
+		return r.ActualDurationSeconds
+	}
+	if r.Raw == nil {
+		return 0
+	}
+	if found, ok := findVideoRawValueByKeys(r.Raw, videoRawDurationKeys); ok {
+		if seconds, ok := videoRawFloat(found); ok && seconds > 0 {
+			return seconds
+		}
+	}
+	return 0
+}
+
+// videoRawDurationKeys lists the upstream response keys that may carry the
+// actual generated video duration. Providers vary between snake_case and
+// camelCase, so both are accepted.
+var videoRawDurationKeys = map[string]struct{}{
+	"duration_seconds": {},
+	"duration":         {},
+	"video_duration":   {},
+	"durationseconds":  {},
+}
+
+func findVideoRawValueByKeys(value interface{}, keys map[string]struct{}) (interface{}, bool) {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		for key, item := range typed {
+			if _, ok := keys[strings.ToLower(strings.TrimSpace(key))]; ok {
+				return item, true
+			}
+		}
+		for _, item := range typed {
+			if found, ok := findVideoRawValueByKeys(item, keys); ok {
+				return found, true
+			}
+		}
+	case []interface{}:
+		for _, item := range typed {
+			if found, ok := findVideoRawValueByKeys(item, keys); ok {
+				return found, true
+			}
+		}
+	}
+	return nil, false
+}
+
+func videoRawFloat(value interface{}) (float64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case float32:
+		return float64(typed), true
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case json.Number:
+		parsed, err := typed.Float64()
+		return parsed, err == nil
+	case string:
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
 }

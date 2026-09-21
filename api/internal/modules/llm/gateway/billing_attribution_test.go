@@ -91,6 +91,54 @@ func TestFinalizeMediaTimingSnapshotRecordsMediaDuration(t *testing.T) {
 	}
 }
 
+func TestNormalizeMediaUsageBillSources(t *testing.T) {
+	t.Run("platform media backfills remote authority", func(t *testing.T) {
+		bc := &BillingContext{
+			PricingOperation:  PricingOperationTranscription,
+			BillingLane:       UsageBillingLanePlatform,
+			UseSystemProvider: true,
+		}
+		pricingSource, usageSource := normalizeMediaUsageBillSources(bc)
+		if pricingSource != PricingSourcePlatformRemoteAuthority || usageSource != UsageSourceProviderUsage {
+			t.Fatalf("sources = %q/%q, want %q/%q", pricingSource, usageSource, PricingSourcePlatformRemoteAuthority, UsageSourceProviderUsage)
+		}
+		if bc.PricingSource != pricingSource || bc.UsageSource != usageSource {
+			t.Fatalf("context sources = %q/%q, want %q/%q", bc.PricingSource, bc.UsageSource, pricingSource, usageSource)
+		}
+	})
+
+	t.Run("private media falls back to the upstream price", func(t *testing.T) {
+		bc := &BillingContext{PricingOperation: PricingOperationVideo, BillingLane: UsageBillingLanePrivate}
+		pricingSource, usageSource := normalizeMediaUsageBillSources(bc)
+		if pricingSource != PricingSourceUpstreamModelPrice || usageSource != UsageSourceProviderUsage {
+			t.Fatalf("sources = %q/%q, want %q/%q", pricingSource, usageSource, PricingSourceUpstreamModelPrice, UsageSourceProviderUsage)
+		}
+	})
+
+	t.Run("explicit labels are preserved", func(t *testing.T) {
+		bc := &BillingContext{
+			PricingOperation: PricingOperationSpeech,
+			PricingSource:    PricingSourceAdminFallback,
+			UsageSource:      UsageSourceRequestParameters,
+		}
+		pricingSource, usageSource := normalizeMediaUsageBillSources(bc)
+		if pricingSource != PricingSourceAdminFallback || usageSource != UsageSourceRequestParameters {
+			t.Fatalf("sources = %q/%q, want the explicit labels", pricingSource, usageSource)
+		}
+	})
+
+	t.Run("non-media operations are untouched", func(t *testing.T) {
+		bc := &BillingContext{PricingOperation: PricingOperationChat}
+		pricingSource, usageSource := normalizeMediaUsageBillSources(bc)
+		if pricingSource != "" || usageSource != "" {
+			t.Fatalf("sources = %q/%q, want empty for chat", pricingSource, usageSource)
+		}
+		if len(bc.PricingSnapshot) != 0 {
+			t.Fatalf("chat snapshot = %s, want unchanged", string(bc.PricingSnapshot))
+		}
+	})
+}
+
 func TestApplyRouteAttributionWithLookupUsesRouteTable(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
@@ -125,11 +173,14 @@ func TestApplyPlatformSettlementCostSnapshotFallsBackToBillingContext(t *testing
 		ChannelProvider: "dashscope",
 		ModelName:       "qwen-plus",
 	}
-	applyPlatformSettlementCostSnapshot(bc, &adapter.SettlementResult{
+	if err := applyPlatformSettlementCostSnapshot(bc, &adapter.SettlementResult{
 		SettlementID:   "settlement-1",
 		OfficialPoints: 3,
 		Status:         "settled",
-	})
+		CNYPerUSD:      "7.2",
+	}); err != nil {
+		t.Fatalf("applyPlatformSettlementCostSnapshot() error = %v", err)
+	}
 
 	var snapshot map[string]string
 	if err := json.Unmarshal(bc.PricingSnapshot, &snapshot); err != nil {
@@ -140,6 +191,9 @@ func TestApplyPlatformSettlementCostSnapshotFallsBackToBillingContext(t *testing
 	}
 	if snapshot["actual_upstream_model"] != "qwen-plus" {
 		t.Fatalf("actual_upstream_model = %q", snapshot["actual_upstream_model"])
+	}
+	if snapshot["rate_source"] != "console_system" || snapshot["rate"] != "7.2" {
+		t.Fatalf("platform currency segment = %#v", snapshot)
 	}
 }
 

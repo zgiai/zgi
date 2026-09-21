@@ -43,6 +43,9 @@ message PreDeductMeteredUsageResponse {
   int64 estimated_credits = 4;
   int64 reserved_credits = 5;
   int64 remaining_credits = 6;
+  // Stable cataloged error identity (domain.subject.reason); mirrors the
+  // Console contract and supports the error_code compatibility branch.
+  string error_code = 7;
 }
 
 message PreDeductQuotaRequest {
@@ -109,6 +112,7 @@ message SettleQuotaResponse {
   int64 used_quota = 4;
   int64 refunded_credits = 5;
   int64 settled_credits = 6;
+  string error_code = 7;
 }
 
 message CalculateDualCostRequest {
@@ -130,6 +134,7 @@ message DualCostResponse {
   double output_usd = 7;
   double total_usd = 8;
   string billing_mode = 9;
+  string error_code = 10;
 }
 
 message SettleUsageRequest {
@@ -162,6 +167,7 @@ message SettleUsageResponse {
   double usd_cost = 4;
   string billing_mode = 5;
   bool is_self_paid = 6;
+  string error_code = 7;
 }
 
 message GetBillingModeRequest {
@@ -173,6 +179,7 @@ message BillingModeResponse {
   string error_message = 2;
   string billing_mode = 3;
   bool is_self_paid = 4;
+  string error_code = 5;
 }
 
 message CheckCreditBalanceRequest {
@@ -185,4 +192,5 @@ message CheckCreditBalanceResponse {
   string error_message = 2;
   bool sufficient = 3;
   int64 balance = 4;
+  string error_code = 5;
 }

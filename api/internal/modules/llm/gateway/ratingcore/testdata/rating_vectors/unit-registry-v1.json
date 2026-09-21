@@ -1,0 +1,260 @@
+{
+  "$schema": "zgi.rating.unit-registry/1",
+  "version": 1,
+  "status": "frozen",
+  "canonical_currency": "USD",
+  "points_per_usd": 1000,
+  "milli_points_per_point": 1000,
+  "milli_points_per_usd": 1000000,
+  "db_precision": "numeric(20,3) points",
+  "wire_amount_type": "int64 milli-points",
+  "display_currencies_allowed": [
+    "USD",
+    "CNY"
+  ],
+  "entries": [
+    {
+      "operation": "chat",
+      "meter": "input_token",
+      "unit": "per_1m_tokens",
+      "base_unit": "per_1m_tokens",
+      "per_quantity_default": 1000000,
+      "quantity_kind": "tokens",
+      "pricing_source": "rules",
+      "notes": "chat token 计价；cache_write_5m/1h 为 TTL 缓存写"
+    },
+    {
+      "operation": "chat",
+      "meter": "output_token",
+      "unit": "per_1m_tokens",
+      "base_unit": "per_1m_tokens",
+      "per_quantity_default": 1000000,
+      "quantity_kind": "tokens",
+      "pricing_source": "rules",
+      "notes": "chat token 计价；cache_write_5m/1h 为 TTL 缓存写"
+    },
+    {
+      "operation": "chat",
+      "meter": "cache_read_token",
+      "unit": "per_1m_tokens",
+      "base_unit": "per_1m_tokens",
+      "per_quantity_default": 1000000,
+      "quantity_kind": "tokens",
+      "pricing_source": "rules",
+      "notes": "chat token 计价；cache_write_5m/1h 为 TTL 缓存写"
+    },
+    {
+      "operation": "chat",
+      "meter": "cache_write_token",
+      "unit": "per_1m_tokens",
+      "base_unit": "per_1m_tokens",
+      "per_quantity_default": 1000000,
+      "quantity_kind": "tokens",
+      "pricing_source": "rules",
+      "notes": "chat token 计价；cache_write_5m/1h 为 TTL 缓存写"
+    },
+    {
+      "operation": "chat",
+      "meter": "cache_write_5m_token",
+      "unit": "per_1m_tokens",
+      "base_unit": "per_1m_tokens",
+      "per_quantity_default": 1000000,
+      "quantity_kind": "tokens",
+      "pricing_source": "rules",
+      "notes": "chat token 计价；cache_write_5m/1h 为 TTL 缓存写"
+    },
+    {
+      "operation": "chat",
+      "meter": "cache_write_1h_token",
+      "unit": "per_1m_tokens",
+      "base_unit": "per_1m_tokens",
+      "per_quantity_default": 1000000,
+      "quantity_kind": "tokens",
+      "pricing_source": "rules",
+      "notes": "chat token 计价；cache_write_5m/1h 为 TTL 缓存写"
+    },
+    {
+      "operation": "embedding",
+      "meter": "input_token",
+      "unit": "per_1m_tokens",
+      "base_unit": "per_1m_tokens",
+      "per_quantity_default": 1000000,
+      "quantity_kind": "tokens",
+      "pricing_source": "rules",
+      "notes": ""
+    },
+    {
+      "operation": "rerank",
+      "meter": "input_token",
+      "unit": "per_1m_tokens",
+      "base_unit": "per_1m_tokens",
+      "per_quantity_default": 1000000,
+      "quantity_kind": "tokens",
+      "pricing_source": "rules",
+      "notes": ""
+    },
+    {
+      "operation": "realtime_audio",
+      "meter": "input_token",
+      "unit": "per_1m_tokens",
+      "base_unit": "per_1m_tokens",
+      "per_quantity_default": 1000000,
+      "quantity_kind": "audio_tokens",
+      "pricing_source": "rules",
+      "notes": "优先用 audio_tokens，缺失回退 prompt/completion 走同一规则"
+    },
+    {
+      "operation": "realtime_audio",
+      "meter": "output_token",
+      "unit": "per_1m_tokens",
+      "base_unit": "per_1m_tokens",
+      "per_quantity_default": 1000000,
+      "quantity_kind": "audio_tokens",
+      "pricing_source": "rules",
+      "notes": "优先用 audio_tokens，缺失回退 prompt/completion 走同一规则"
+    },
+    {
+      "operation": "realtime_audio",
+      "meter": "cache_read_token",
+      "unit": "per_1m_tokens",
+      "base_unit": "per_1m_tokens",
+      "per_quantity_default": 1000000,
+      "quantity_kind": "audio_tokens",
+      "pricing_source": "rules",
+      "notes": "优先用 audio_tokens，缺失回退 prompt/completion 走同一规则"
+    },
+    {
+      "operation": "image_generation",
+      "meter": "image",
+      "unit": "per_image",
+      "base_unit": "per_image",
+      "per_quantity_default": 1,
+      "quantity_kind": "images",
+      "pricing_source": "rules",
+      "notes": "按张计价，走 ResolveImageGenerationPriceDetail"
+    },
+    {
+      "operation": "image_generation",
+      "meter": "input_text_token",
+      "unit": "per_1m_tokens",
+      "base_unit": "per_1m_tokens",
+      "per_quantity_default": 1000000,
+      "quantity_kind": "tokens",
+      "pricing_source": "image_token_pricing",
+      "notes": "图片按 token：文本输入档"
+    },
+    {
+      "operation": "image_generation",
+      "meter": "input_image_token",
+      "unit": "per_1m_tokens",
+      "base_unit": "per_1m_tokens",
+      "per_quantity_default": 1000000,
+      "quantity_kind": "tokens",
+      "pricing_source": "image_token_pricing",
+      "notes": "图片按 token：图片输入档（P0-2 关键）"
+    },
+    {
+      "operation": "image_generation",
+      "meter": "output_token",
+      "unit": "per_1m_tokens",
+      "base_unit": "per_1m_tokens",
+      "per_quantity_default": 1000000,
+      "quantity_kind": "tokens",
+      "pricing_source": "image_token_pricing",
+      "notes": "图片按 token：输出档"
+    },
+    {
+      "operation": "video_generation",
+      "meter": "output_video_second",
+      "unit": "second",
+      "base_unit": "second",
+      "per_quantity_default": 1,
+      "quantity_kind": "seconds",
+      "pricing_source": "video_generation",
+      "notes": "视频按秒，结算用上游实际时长，缺失 fail-closed"
+    },
+    {
+      "operation": "video_generation",
+      "meter": "output_video_task",
+      "unit": "task",
+      "base_unit": "task",
+      "per_quantity_default": 1,
+      "quantity_kind": "tasks",
+      "pricing_source": "video_generation",
+      "notes": "视频按任务（P0-1）"
+    },
+    {
+      "operation": "video_generation",
+      "meter": "output_video_token",
+      "unit": "million_video_tokens",
+      "base_unit": "million_video_tokens",
+      "per_quantity_default": 1000000,
+      "quantity_kind": "video_tokens",
+      "pricing_source": "video_generation",
+      "notes": "视频按百万 token"
+    },
+    {
+      "operation": "transcription",
+      "meter": "input_audio_duration",
+      "unit": "millisecond",
+      "base_unit": "millisecond",
+      "per_quantity_default": 1,
+      "quantity_kind": "milliseconds",
+      "pricing_source": "metered",
+      "notes": "per_quantity 可由规则覆盖（例：1 元/3600000ms）"
+    },
+    {
+      "operation": "speech_generation",
+      "meter": "input_text",
+      "unit": "billed_character",
+      "base_unit": "billed_character",
+      "per_quantity_default": 1,
+      "quantity_kind": "characters",
+      "pricing_source": "metered",
+      "notes": "per_quantity 可由规则覆盖（例：3 元/10000 字）"
+    },
+    {
+      "operation": "music_generation",
+      "meter": "output_track",
+      "unit": "track",
+      "base_unit": "track",
+      "per_quantity_default": 1,
+      "quantity_kind": "tracks",
+      "pricing_source": "metered",
+      "notes": ""
+    },
+    {
+      "operation": "lyrics_generation",
+      "meter": "request",
+      "unit": "request",
+      "base_unit": "request",
+      "per_quantity_default": 1,
+      "quantity_kind": "requests",
+      "pricing_source": "metered",
+      "notes": ""
+    }
+  ],
+  "metered_rule_override": {
+    "per_quantity_overridable": true,
+    "must_be_positive_integer": true,
+    "applies_to": [
+      "transcription",
+      "speech_generation",
+      "music_generation",
+      "lyrics_generation",
+      "video_generation"
+    ]
+  },
+  "invariants": [
+    "operation×meter 只能映射到一个 unit/base_unit",
+    "unit 必须等于 metered base_unit",
+    "per_1m_tokens 与 million_video_tokens 的 per_quantity 固定为 1000000",
+    "除 per_1m_tokens/million_video_tokens 外，per_quantity 默认为 1，可由 metered 规则覆盖",
+    "表外组合必须显式报错，禁止猜测或回退到其它 operation/meter"
+  ],
+  "forbidden": [
+    "currency_overrides（每币种固定价，本期不启用、不留字段位）",
+    "Console 快照 rate 段字段",
+    "共享 Go 模块 / 运行时 RatingService"
+  ]
+}

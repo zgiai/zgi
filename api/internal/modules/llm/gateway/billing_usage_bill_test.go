@@ -1,6 +1,8 @@
 package gateway
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -8,6 +10,8 @@ import (
 	"github.com/google/uuid"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"gorm.io/datatypes"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 func TestBuildUsageBill_NormalizesTimes(t *testing.T) {
@@ -224,6 +228,94 @@ func TestBillingContextNeedsTokenReprice(t *testing.T) {
 			t.Fatal("billingContextNeedsTokenReprice = false, want true for unpriced token usage")
 		}
 	})
+}
+
+func TestBuildUsageBill_MediaOperationsAlwaysCarrySourceLabels(t *testing.T) {
+	service := &BillingService{}
+	mediaOperations := []PricingOperation{
+		PricingOperationImage,
+		PricingOperationVideo,
+		PricingOperationMusic,
+		PricingOperationSpeech,
+		PricingOperationTranscription,
+		PricingOperationLyrics,
+	}
+	lanes := []UsageBillingLane{UsageBillingLanePrivate, UsageBillingLanePlatform}
+
+	for _, operation := range mediaOperations {
+		for _, lane := range lanes {
+			bc := testUsageBillContext(time.Time{}, time.Time{})
+			bc.PricingOperation = operation
+			bc.BillingLane = lane
+			bc.UseSystemProvider = lane == UsageBillingLanePlatform
+			bc.PricingSource = ""
+			bc.UsageSource = ""
+			bc.PricingSnapshot = nil
+
+			bill, err := service.buildUsageBill(bc, usageBillStatusSuccess, nil, nil)
+			if err != nil {
+				t.Fatalf("%s/%s: buildUsageBill returned error: %v", operation, lane, err)
+			}
+			if bill.PricingSource == "" || bill.UsageSource == "" {
+				t.Fatalf("%s/%s: sources = %q/%q, want both labels set", operation, lane, bill.PricingSource, bill.UsageSource)
+			}
+
+			var snapshot map[string]string
+			if err := json.Unmarshal(bill.PricingSnapshot, &snapshot); err != nil {
+				t.Fatalf("%s/%s: unmarshal snapshot: %v", operation, lane, err)
+			}
+			if snapshot["pricing_source"] != string(bill.PricingSource) || snapshot["usage_source"] != string(bill.UsageSource) {
+				t.Fatalf("%s/%s: snapshot sources = %#v, want %q/%q", operation, lane, snapshot, bill.PricingSource, bill.UsageSource)
+			}
+		}
+	}
+}
+
+// TestMediaUsageBillsPersistSourceColumns writes new media usage bills through
+// the real persistence path and reads the columns back, proving both labels
+// reach llm_usage_bills.
+func TestMediaUsageBillsPersistSourceColumns(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite db: %v", err)
+	}
+	if err := db.AutoMigrate(&UsageBill{}); err != nil {
+		t.Fatalf("automigrate usage bills: %v", err)
+	}
+
+	service := &BillingService{db: db}
+	ctx := context.Background()
+	mediaOperations := []PricingOperation{
+		PricingOperationImage,
+		PricingOperationVideo,
+		PricingOperationMusic,
+		PricingOperationSpeech,
+		PricingOperationTranscription,
+		PricingOperationLyrics,
+	}
+	for _, operation := range mediaOperations {
+		bc := testUsageBillContext(time.Now().Add(-time.Second), time.Now())
+		bc.PricingOperation = operation
+		bc.BillingLane = UsageBillingLanePlatform
+		bc.UseSystemProvider = true
+		bc.PricingSource = ""
+		bc.UsageSource = ""
+
+		if err := service.upsertUsageBill(ctx, db, bc, usageBillStatusSuccess, nil, nil); err != nil {
+			t.Fatalf("%s: upsertUsageBill returned error: %v", operation, err)
+		}
+
+		var bill UsageBill
+		if err := db.Where("attempt_id = ?", bc.AttemptID).First(&bill).Error; err != nil {
+			t.Fatalf("%s: load persisted bill: %v", operation, err)
+		}
+		if bill.PricingSource != PricingSourcePlatformRemoteAuthority {
+			t.Fatalf("%s: persisted pricing_source = %q, want %q", operation, bill.PricingSource, PricingSourcePlatformRemoteAuthority)
+		}
+		if bill.UsageSource == "" {
+			t.Fatalf("%s: persisted usage_source is empty", operation)
+		}
+	}
 }
 
 func testUsageBillContext(requestCreatedAt, settledAt time.Time) *BillingContext {

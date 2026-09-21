@@ -58,8 +58,14 @@ func TestLocalizedProtocolErrorFallsBackToEnglishAndLeavesOtherErrorsAlone(t *te
 
 	other := handler.localizedProtocolError(context, adapter.ErrContentPolicyViolation)
 	want := classifyProtocolError(adapter.ErrContentPolicyViolation)
-	if other != want {
-		t.Fatalf("unmigrated error changed: got %#v, want %#v", other, want)
+	if other.openAIStatus != want.openAIStatus || other.openAICode != want.openAICode || other.anthropicType != want.anthropicType || other.message != want.message {
+		t.Fatalf("unmigrated legacy contract changed: got %#v, want %#v", other, want)
+	}
+	if other.errorID == "" {
+		t.Fatal("projection boundary did not mint an error_id")
+	}
+	if other.appCode != "" {
+		t.Fatalf("unregistered error exposed a stable code: %q", other.appCode)
 	}
 }
 
@@ -106,8 +112,8 @@ func TestLocalizedChatStreamErrorSanitizesOnlyMigratedTimeout(t *testing.T) {
 	}
 
 	unmigrated := errors.New("legacy stream message")
-	if got := handler.localizedChatStreamError(context, unmigrated); got != unmigrated.Error() {
-		t.Fatalf("unmigrated stream message = %q", got)
+	if got := handler.localizedChatStreamError(context, unmigrated); got == unmigrated.Error() || strings.Contains(got, "legacy stream message") || got == "" {
+		t.Fatalf("unmigrated stream message leaked raw diagnostics: %q", got)
 	}
 }
 
@@ -192,6 +198,7 @@ type testingTB interface {
 func testApplicationErrorProjector(tb testingTB) *apptransport.Projector {
 	tb.Helper()
 	definitions := append(appcatalog.DefaultDefinitions(), llmerrors.CatalogDefinitions()...)
+	definitions = append(definitions, llmerrors.BillingCatalogDefinitions()...)
 	productCatalog, err := appcatalog.New(appcatalog.LocaleEnglishUS, appcatalog.CodeInternal, definitions...)
 	if err != nil {
 		tb.Fatal(err)

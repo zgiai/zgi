@@ -659,6 +659,8 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 			return
 		}
 
+		audioInputTokens := 0
+		audioOutputTokens := 0
 		if useSystemProvider && !sawUsage {
 			clearBillingContextTokenUsage(billingCtx)
 		} else {
@@ -668,6 +670,8 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 				billingCtx.CacheWriteTokens = latestUsage.CacheWriteTokens
 				billingCtx.CacheWrite5mTokens = latestUsage.CacheWrite5mTokens
 				billingCtx.CacheWrite1hTokens = latestUsage.CacheWrite1hTokens
+				audioInputTokens = latestUsage.AudioInputTokens
+				audioOutputTokens = latestUsage.AudioOutputTokens
 			} else {
 				billingCtx.PromptTokens = totalPromptTokens
 			}
@@ -682,6 +686,7 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 				InputTokens: billingCtx.PromptTokens, CacheReadTokens: billingCtx.CacheReadTokens,
 				CacheWriteTokens: billingCtx.CacheWriteTokens, CacheWrite5mTokens: billingCtx.CacheWrite5mTokens,
 				CacheWrite1hTokens: billingCtx.CacheWrite1hTokens, OutputTokens: billingCtx.CompletionTokens,
+				AudioInputTokens: audioInputTokens, AudioOutputTokens: audioOutputTokens,
 			})
 			if err != nil {
 				wrappedErr := wrapPricingCalculationError(err)

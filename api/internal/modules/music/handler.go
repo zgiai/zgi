@@ -193,25 +193,38 @@ func (h *Handler) handleMusicServiceError(c *gin.Context, err error) {
 	case errors.Is(err, ErrInvalidRequest):
 		writeMusicError(c, http.StatusBadRequest, "INVALID_REQUEST", messageInvalidGenerationRequest)
 	case errors.Is(err, ErrModelUnavailable):
-		writeMusicError(c, http.StatusBadRequest, "MODEL_UNAVAILABLE", messageModelUnavailable)
+		h.writeApplicationError(c, apperror.Wrap(err, AppCodeModelUnavailable, apperror.WithOperation("music.model")))
 	case errors.Is(err, ErrTaskNotFound):
-		writeMusicError(c, http.StatusNotFound, "TASK_NOT_FOUND", messageTaskNotFound)
+		h.writeApplicationError(c, apperror.Wrap(err, AppCodeTaskNotFound, apperror.WithOperation("music.task.get")))
 	case errors.Is(err, ErrTaskConflict):
-		writeMusicError(c, http.StatusConflict, "TASK_CONFLICT", messageTaskConflict)
+		h.writeApplicationError(c, apperror.Wrap(err, AppCodeTaskConflict, apperror.WithOperation("music.task.create")))
 	case apperror.IsCode(err, AppCodeTaskNotDeletable):
 		h.writeApplicationError(c, err)
 	default:
-		writeMusicError(c, http.StatusInternalServerError, "MUSIC_TASK_FAILED", messageTaskProcessingFailed)
+		h.writeApplicationError(c, apperror.Wrap(err, AppCodeTaskFailed, apperror.WithOperation("music.task")))
 	}
 }
 
 func (h *Handler) writeApplicationError(c *gin.Context, err error) {
 	locale := apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language"))
-	presentation := h.errorProjector.Project(err, locale).Presentation
-	c.JSON(presentation.HTTPStatus, gin.H{
-		"code":    presentation.Code.String(),
-		"message": presentation.Message,
-	})
+	result := h.errorProjector.Project(err, locale)
+	body := gin.H{
+		"code":      result.Presentation.Code.String(),
+		"message":   result.Presentation.Message,
+		"retryable": result.Presentation.Retryable,
+	}
+	if result.ErrorID != "" {
+		body["error_id"] = result.ErrorID
+	}
+	if requestID := strings.TrimSpace(c.GetString("request_id")); requestID != "" {
+		body["request_id"] = requestID
+	} else if requestID := strings.TrimSpace(c.Writer.Header().Get("X-Request-ID")); requestID != "" {
+		body["request_id"] = requestID
+	}
+	if result.Presentation.HTTPStatus == http.StatusTooManyRequests {
+		c.Header("Retry-After", "60")
+	}
+	c.JSON(result.Presentation.HTTPStatus, body)
 }
 
 func writeMusicError(c *gin.Context, status int, code, message string) {

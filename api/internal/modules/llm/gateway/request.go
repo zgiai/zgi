@@ -39,7 +39,8 @@ func hasBillableTokenUsage(usage *adapter.Usage) bool {
 	if usage == nil {
 		return false
 	}
-	return usage.PromptTokens > 0 || usage.CompletionTokens > 0 || usage.CacheReadTokens > 0 || usage.CacheWriteTokens > 0
+	return usage.PromptTokens > 0 || usage.CompletionTokens > 0 || usage.CacheReadTokens > 0 || usage.CacheWriteTokens > 0 ||
+		usage.AudioInputTokens > 0 || usage.AudioOutputTokens > 0
 }
 
 // applyUsageToBillingContext normalizes adapter usage into the disjoint token
@@ -667,10 +668,17 @@ func (s *llmGatewayServiceImpl) settleChatSuccess(
 	actualPromptTokens := usage.UncachedInputTokens
 	actualCompletionTokens := usage.CompletionTokens
 
-	quote, err := s.quoteTokenPricingForSettlementUsage(ctx, billingCtx, pricingModelRefFromSelection(providerSelection), TokenUsage{
+	settlementModel := pricingModelRefFromSelection(providerSelection)
+	if billingCtx != nil && billingCtx.PricingOperation != "" {
+		// Carry the declared operation (e.g. realtime_audio) so the audio token
+		// split is billed against the realtime rules, not the chat scalars.
+		settlementModel.Operation = billingCtx.PricingOperation
+	}
+	quote, err := s.quoteTokenPricingForSettlementUsage(ctx, billingCtx, settlementModel, TokenUsage{
 		InputTokens: actualPromptTokens, CacheReadTokens: usage.CacheReadTokens,
 		CacheWriteTokens: usage.CacheWriteTokens, CacheWrite5mTokens: usage.CacheWrite5mTokens,
 		CacheWrite1hTokens: usage.CacheWrite1hTokens, OutputTokens: actualCompletionTokens,
+		AudioInputTokens: usage.AudioInputTokens, AudioOutputTokens: usage.AudioOutputTokens,
 	})
 	if err != nil {
 		return wrapPricingCalculationError(err)

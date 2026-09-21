@@ -6,8 +6,10 @@ package transport
 import (
 	"errors"
 
+	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/pkg/apperror"
 	"github.com/zgiai/zgi/api/pkg/apperror/catalog"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 var ErrCatalogRequired = errors.New("application error catalog is required")
@@ -49,6 +51,46 @@ func (r Resolution) String() string {
 type Result struct {
 	Presentation catalog.Presentation
 	Resolution   Resolution
+	// ErrorID is generated once per projection at this boundary and is safe to
+	// expose to clients for support correlation.
+	ErrorID string
+}
+
+// ProjectionLog is the diagnostic record emitted for one projection. It keeps
+// the original error and its operation so operators can trace a public error_id
+// back to the concrete cause without exposing that cause to the client.
+type ProjectionLog struct {
+	ErrorID    string
+	Code       apperror.Code
+	Operation  string
+	Cause      error
+	Resolution Resolution
+}
+
+// ProjectionLogger records a projection at the boundary. Bootstrap wires the
+// process logger; tests may inject a recorder or leave it nil.
+type ProjectionLogger func(ProjectionLog)
+
+// Option customizes a Projector without changing its immutable public contract.
+type Option func(*Projector)
+
+// WithIDGenerator overrides error_id generation. It exists for deterministic
+// tests; production uses random identifiers.
+func WithIDGenerator(generator func() string) Option {
+	return func(projector *Projector) {
+		if generator != nil {
+			projector.newID = generator
+		}
+	}
+}
+
+// WithProjectionLogger replaces the diagnostic sink for generated error_ids.
+func WithProjectionLogger(log ProjectionLogger) Option {
+	return func(projector *Projector) {
+		if log != nil {
+			projector.logger = log
+		}
+	}
 }
 
 // LegacyMessage contains only fields that are safe to overlay on an existing
@@ -65,23 +107,41 @@ type LegacyMessage struct {
 // Projector is immutable after construction and safe for concurrent use.
 type Projector struct {
 	catalog *catalog.Catalog
+	newID   func() string
+	logger  ProjectionLogger
 }
 
-func NewProjector(productCatalog *catalog.Catalog) (*Projector, error) {
+func NewProjector(productCatalog *catalog.Catalog, options ...Option) (*Projector, error) {
 	if productCatalog == nil {
 		return nil, ErrCatalogRequired
 	}
-	return &Projector{catalog: productCatalog}, nil
+	projector := &Projector{
+		catalog: productCatalog,
+		newID:   defaultErrorID,
+		logger:  defaultProjectionLogger,
+	}
+	for _, option := range options {
+		if option != nil {
+			option(projector)
+		}
+	}
+	return projector, nil
 }
 
 // Project returns a safe public presentation for err. Unknown errors and
 // rendering failures use the catalog fallback instead of exposing err.Error().
+// It always assigns a fresh error_id and emits one diagnostic record.
 func (p *Projector) Project(err error, locale catalog.Locale) Result {
 	appErr, ok := apperror.As(err)
+	var result Result
 	if !ok {
-		return p.fallback(locale, ResolutionUnknownError)
+		result = p.fallback(locale, ResolutionUnknownError)
+	} else {
+		result = p.projectAppError(appErr, locale)
 	}
-	return p.projectAppError(appErr, locale)
+	result.ErrorID = p.newID()
+	p.logProjection(result, appErr, err)
+	return result
 }
 
 // ProjectLegacyMessage verifies that legacyKey belongs to err's canonical
@@ -116,6 +176,22 @@ func (p *Projector) fallback(locale catalog.Locale, resolution Resolution) Resul
 	}
 }
 
+func (p *Projector) logProjection(result Result, appErr *apperror.Error, err error) {
+	if p.logger == nil {
+		return
+	}
+	record := ProjectionLog{
+		ErrorID:    result.ErrorID,
+		Code:       result.Presentation.Code,
+		Cause:      err,
+		Resolution: result.Resolution,
+	}
+	if appErr != nil {
+		record.Operation = appErr.Operation()
+	}
+	p.logger(record)
+}
+
 func legacyMessageFrom(result Result) LegacyMessage {
 	return LegacyMessage{
 		AppCode:    result.Presentation.Code,
@@ -124,4 +200,29 @@ func legacyMessageFrom(result Result) LegacyMessage {
 		Retryable:  result.Presentation.Retryable,
 		Resolution: result.Resolution,
 	}
+}
+
+func defaultErrorID() string {
+	return uuid.NewString()
+}
+
+// defaultProjectionLogger emits structured diagnostics only when the process
+// logger is already installed. It deliberately avoids lazy file initialization
+// so unit tests and short-lived commands never create log files as a side effect.
+func defaultProjectionLogger(record ProjectionLog) {
+	if !logger.IsInitialized() {
+		return
+	}
+	fields := map[string]interface{}{
+		"error_id":   record.ErrorID,
+		"code":       record.Code.String(),
+		"resolution": record.Resolution.String(),
+	}
+	if record.Operation != "" {
+		fields["operation"] = record.Operation
+	}
+	if record.Cause != nil {
+		fields["cause"] = record.Cause.Error()
+	}
+	logger.Error("application error projected", fields)
 }

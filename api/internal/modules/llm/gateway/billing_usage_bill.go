@@ -136,6 +136,9 @@ func (b *BillingService) buildUsageBill(
 
 	promptTokens, cacheReadTokens, cacheWriteTokens, completionTokens, totalTokens := usageBillTokens(bc, status)
 	officialPoints, privatePoints := usageBillPoints(bc, status, billingLane)
+	// Media records must always carry both source labels; normalize before the
+	// snapshot is frozen so the columns and the snapshot agree.
+	pricingSource, usageSource := normalizeMediaUsageBillSources(bc)
 	pricingSnapshot := bc.PricingSnapshot
 	if len(pricingSnapshot) == 0 || string(pricingSnapshot) == "null" {
 		pricingSnapshot = datatypes.JSON([]byte("{}"))
@@ -186,8 +189,8 @@ func (b *BillingService) buildUsageBill(
 		OfficialPoints:    millipoints.MilliPoints(officialPoints),
 		PrivatePoints:     millipoints.MilliPoints(privatePoints),
 		TotalPoints:       millipoints.MilliPoints(officialPoints + privatePoints),
-		PricingSource:     bc.PricingSource,
-		UsageSource:       bc.UsageSource,
+		PricingSource:     pricingSource,
+		UsageSource:       usageSource,
 		PricingSnapshot:   pricingSnapshot,
 		ResponseTimeMS:    maxInt64(bc.ResponseTime, 0),
 		ErrorCode:         errorCode,

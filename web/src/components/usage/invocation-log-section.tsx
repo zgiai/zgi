@@ -886,12 +886,11 @@ function formatInvocationSummaryCost(
     return formatRecordedBillingAmount(summary.total_cost_cny, 'CNY', { locale });
   }
   if (summary?.total_cost_usd) {
-    return formatRecordedBillingAmountFromUSD(
-      summary.total_cost_usd,
-      billingDisplay.currency,
-      billingDisplay.usdToCnyRate,
-      { locale }
-    );
+    // History is display-only: the backend only exposes total_cost_cny when
+    // every aggregated record carries its call-time rate. When it is withheld,
+    // show the canonical USD total instead of re-converting history with the
+    // organization's current display rate.
+    return formatRecordedBillingAmount(summary.total_cost_usd, 'USD', { locale });
   }
   return formatBillingDisplayAmountFromNormalizedCredits(fallbackPoints, billingDisplay, {
     locale,

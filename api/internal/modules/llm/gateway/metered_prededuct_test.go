@@ -85,11 +85,11 @@ func TestMapMeteredPreDeductErrorPreservesSentinels(t *testing.T) {
 		{"invalid request", ErrInvalidRequest},
 	}
 	for _, tc := range tests {
-		if err := mapMeteredPreDeductError(tc.message); !errors.Is(err, tc.target) {
+		if err := mapMeteredPreDeductError("", tc.message); !errors.Is(err, tc.target) {
 			t.Fatalf("mapMeteredPreDeductError(%q) = %v, want %v", tc.message, err, tc.target)
 		}
 	}
-	if err := mapMeteredPreDeductError("metered settlement model not found"); err == nil || errors.Is(err, ErrInsufficientBalance) {
+	if err := mapMeteredPreDeductError("", "metered settlement model not found"); err == nil || errors.Is(err, ErrInsufficientBalance) {
 		t.Fatalf("unknown message = %v, want a generic error", err)
 	}
 }

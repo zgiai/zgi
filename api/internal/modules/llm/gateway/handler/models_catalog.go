@@ -227,7 +227,7 @@ func catalogModelHasCapability(model adapter.Model, capability string) bool {
 func writeAnthropicModels(c *gin.Context, models []adapter.Model) {
 	limit, err := parseCatalogLimit(c.Query("limit"))
 	if err != nil {
-		writeAnthropicCatalogError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		writeAnthropicCatalogError(c, http.StatusBadRequest, "invalid_request_error", "limit must be an integer between 1 and 1000")
 		return
 	}
 	afterID, beforeID := strings.TrimSpace(c.Query("after_id")), strings.TrimSpace(c.Query("before_id"))

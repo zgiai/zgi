@@ -1,5 +1,5 @@
 import type { ModelImagePriceRule, ModelUseCase } from '@/services/types/model';
-import Decimal from 'decimal.js-light';
+import Decimal from 'decimal.js';
 import {
   type BillingDisplaySettings,
   DEFAULT_BILLING_DISPLAY,
@@ -346,7 +346,7 @@ export function getModelPriceDisplay({
   if (isVideoGenerationModel(useCases)) {
     const videoRows = getVideoPriceDisplayRows(pricing, currency, labels);
     if (videoRows.length > 0) {
-      if (videoDisplayMode === 'summary') return summarizeVideoPriceRows(videoRows);
+      if (videoDisplayMode === 'summary') return summarizeVideoPriceRows(videoRows, billingDisplay);
       return videoRows.map(row =>
         buildSourceCurrencyModelPriceDisplayItem(
           'video',
@@ -374,14 +374,19 @@ export function getModelPriceDisplay({
     cacheWrite1hPriceConfigured,
     billingDisplay,
   }) : [];
-  const structuredItems = getStructuredPriceDisplay(pricing, currency, labels);
+  const structuredItems = getStructuredPriceDisplay(pricing, currency, billingDisplay, labels);
   if (structuredItems.length > 0) {
     const structuredLabels = new Set(structuredItems.map(item => item.label));
     return [...structuredItems, ...cacheItems.filter(item => !structuredLabels.has(item.label))];
   }
 
   if (isImageGenerationModel(useCases)) {
-    const configuredImagePriceItems = getImagePriceDisplayItems(imagePrices, currency, labels);
+    const configuredImagePriceItems = getImagePriceDisplayItems(
+      imagePrices,
+      currency,
+      billingDisplay,
+      labels
+    );
     if (configuredImagePriceItems.length > 0) {
       return configuredImagePriceItems;
     }
@@ -437,6 +442,7 @@ export function getModelPriceDisplay({
 function getStructuredPriceDisplay(
   pricing: StructuredModelPricing | null | undefined,
   fallbackCurrency: string | null | undefined,
+  billingDisplay: BillingDisplaySettings,
   labels?: ModelPriceDisplayLabels
 ): ModelPriceDisplayItem[] {
   if (!isRecord(pricing)) return [];
@@ -448,7 +454,8 @@ function getStructuredPriceDisplay(
         labels?.image ?? '图像',
         pricing.price_per_image,
         safeCurrency(fallbackCurrency, pricing.currency, 'CNY'),
-        labels?.perImage ?? '/ 张'
+        labels?.perImage ?? '/ 张',
+        billingDisplay
       ),
     ];
   }
@@ -465,14 +472,16 @@ function getStructuredPriceDisplay(
         labels?.input ?? '输入',
         finiteNumberOrUndefined(tokenTier.input_price_per_million),
         safeCurrency(fallbackCurrency, pricing.currency, 'USD'),
-        labels?.perMillionTokens ?? '/ 百万 tokens'
+        labels?.perMillionTokens ?? '/ 百万 tokens',
+        billingDisplay
       ),
       buildOptionalStructuredPriceItem(
         'output',
         labels?.output ?? '输出',
         finiteNumberOrUndefined(tokenTier.output_price_per_million),
         safeCurrency(fallbackCurrency, pricing.currency, 'USD'),
-        labels?.perMillionTokens ?? '/ 百万 tokens'
+        labels?.perMillionTokens ?? '/ 百万 tokens',
+        billingDisplay
       ),
       buildOptionalStructuredPriceItem(
         'cacheRead',
@@ -481,14 +490,16 @@ function getStructuredPriceDisplay(
           tokenTier.cache_read_price_per_million ?? tokenTier.cached_input_price_per_million
         ),
         safeCurrency(fallbackCurrency, pricing.currency, 'USD'),
-        labels?.perMillionTokens ?? '/ 百万 tokens'
+        labels?.perMillionTokens ?? '/ 百万 tokens',
+        billingDisplay
       ),
       buildOptionalStructuredPriceItem(
         'cacheWrite',
         labels?.cacheWrite ?? '缓存写入',
         finiteNumberOrUndefined(tokenTier.cache_write_price_per_million),
         safeCurrency(fallbackCurrency, pricing.currency, 'USD'),
-        labels?.perMillionTokens ?? '/ 百万 tokens'
+        labels?.perMillionTokens ?? '/ 百万 tokens',
+        billingDisplay
       ),
       buildOptionalStructuredPriceItem(
         'cacheWrite5m',
@@ -498,7 +509,8 @@ function getStructuredPriceDisplay(
             tokenTier.cache_creation_5m_price_per_million
         ),
         safeCurrency(fallbackCurrency, pricing.currency, 'USD'),
-        labels?.perMillionTokens ?? '/ 百万 tokens'
+        labels?.perMillionTokens ?? '/ 百万 tokens',
+        billingDisplay
       ),
       buildOptionalStructuredPriceItem(
         'cacheWrite1h',
@@ -508,7 +520,8 @@ function getStructuredPriceDisplay(
             tokenTier.cache_creation_1h_price_per_million
         ),
         safeCurrency(fallbackCurrency, pricing.currency, 'USD'),
-        labels?.perMillionTokens ?? '/ 百万 tokens'
+        labels?.perMillionTokens ?? '/ 百万 tokens',
+        billingDisplay
       ),
     ].filter((item): item is ModelPriceDisplayItem => item !== null);
   }
@@ -523,9 +536,10 @@ function getStructuredPriceDisplay(
       buildStructuredPriceItem(
         'input',
         labels?.input ?? '输入',
-        Number(inputTokenRule.price),
+        String(inputTokenRule.price),
         safeCurrency(fallbackCurrency, pricing.currency, 'USD'),
-        labels?.perMillionTokens ?? '/ 百万 tokens'
+        labels?.perMillionTokens ?? '/ 百万 tokens',
+        billingDisplay
       ),
     ];
   }
@@ -534,8 +548,9 @@ function getStructuredPriceDisplay(
   return metered.flatMap(rawItem => {
     if (!isRecord(rawItem)) return [];
     const price = isRecord(rawItem.price) ? rawItem.price : undefined;
-    const amount = Number(price?.amount);
-    if (!Number.isFinite(amount)) return [];
+    const amount = price?.amount;
+    if (typeof amount !== 'number' && typeof amount !== 'string') return [];
+    if (!hasNumericPrice(amount)) return [];
     return [
       buildStructuredPriceItem(
         'output',
@@ -549,7 +564,8 @@ function getStructuredPriceDisplay(
           nonEmptyString(rawItem.base_unit),
           finiteNumberOrUndefined(price?.per_quantity),
           labels
-        )
+        ),
+        billingDisplay
       ),
     ];
   });
@@ -558,6 +574,7 @@ function getStructuredPriceDisplay(
 function getImagePriceDisplayItems(
   imagePrices: ModelImagePriceRule[] | null | undefined,
   fallbackCurrency: string | null | undefined,
+  billingDisplay: BillingDisplaySettings,
   labels?: ModelPriceDisplayLabels
 ): ModelPriceDisplayItem[] {
   if (!Array.isArray(imagePrices) || imagePrices.length === 0) return [];
@@ -576,7 +593,8 @@ function getImagePriceDisplayItems(
           labels?.image ?? '图像',
           amount,
           safeCurrency(price?.currency, fallbackCurrency, 'USD'),
-          labels?.perImage ?? '/ 张'
+          labels?.perImage ?? '/ 张',
+          billingDisplay
         ),
       ];
     }
@@ -603,40 +621,81 @@ function getImagePriceDisplayItems(
 function buildOptionalStructuredPriceItem(
   label: ModelPriceLabel,
   detail: string,
-  amount: number | null | undefined,
+  amount: number | string | null | undefined,
   currency: string,
-  displayUnit: string
+  displayUnit: string,
+  billingDisplay: BillingDisplaySettings
 ): ModelPriceDisplayItem | null {
-  if (typeof amount !== 'number' || !Number.isFinite(amount)) return null;
-  return buildStructuredPriceItem(label, detail, amount, currency, displayUnit);
+  const parsed = parseMoneyValue(amount);
+  if (parsed === null) return null;
+  return buildStructuredPriceItem(label, detail, parsed, currency, displayUnit, billingDisplay);
 }
 
 function buildStructuredPriceItem(
   label: ModelPriceLabel,
   detail: string,
-  amount: number,
+  amount: number | string | Decimal,
   currency: string,
-  displayUnit: string
+  displayUnit: string,
+  billingDisplay: BillingDisplaySettings
 ): ModelPriceDisplayItem {
+  const parsed = parseMoneyValue(amount);
   return {
     label,
     detail,
-    formattedValue: formatStructuredAmount(amount, currency),
+    formattedValue: formatStructuredAmount(parsed ?? amount, currency, billingDisplay),
     unit: label === 'image' ? 'perImage' : 'perMillionTokens',
     isConfigured: true,
-    isFree: amount === 0,
+    isFree: parsed !== null && parsed.isZero(),
     displayUnit,
   };
 }
 
-function formatStructuredAmount(amount: number, currency: string): string {
+/**
+ * Formats a canonical structured price in the organization display currency.
+ * Values already in the display currency keep their plain symbol; values coming
+ * from another currency are converted with the current rate and marked with ≈.
+ */
+function formatStructuredAmount(
+  amount: number | string | Decimal,
+  currency: string,
+  billingDisplay: BillingDisplaySettings
+): string {
+  const parsed = parseMoneyValue(amount);
+  if (parsed === null) return '-';
   const normalizedCurrency = safeCurrency(currency, 'USD').trim().toUpperCase();
-  const symbol =
-    normalizedCurrency === 'CNY' ? '¥' : normalizedCurrency === 'USD' ? '$' : `${currency} `;
-  return `${symbol}${amount.toLocaleString(undefined, {
+  if (normalizedCurrency === billingDisplay.currency) {
+    return formatAmountWithSymbol(parsed, normalizedCurrency);
+  }
+  if (!Number.isFinite(billingDisplay.usdToCnyRate) || billingDisplay.usdToCnyRate <= 0) {
+    return formatAmountWithSymbol(parsed, normalizedCurrency);
+  }
+  try {
+    const amountUSD =
+      normalizedCurrency === 'CNY' ? parsed.div(billingDisplay.usdToCnyRate) : parsed;
+    const formatted = formatBillingDisplayAmountFromUSD(amountUSD.toString(), billingDisplay);
+    return formatted.startsWith('≈') ? formatted : `≈${formatted}`;
+  } catch {
+    return formatAmountWithSymbol(parsed, normalizedCurrency);
+  }
+}
+
+function formatAmountWithSymbol(amount: Decimal, currency: string): string {
+  const symbol = currency === 'CNY' ? '¥' : currency === 'USD' ? '$' : `${currency} `;
+  return `${symbol}${amount.toNumber().toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+}
+
+function parseMoneyValue(value: number | string | Decimal | null | undefined): Decimal | null {
+  if (value === null || value === undefined) return null;
+  try {
+    const parsed = new Decimal(value);
+    return parsed.isFinite() ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 function structuredOperationLabel(operation: string, labels?: ModelPriceDisplayLabels): string {
@@ -784,7 +843,15 @@ function formatSourceCurrencyAmount(
       normalizedCurrency === 'CNY'
         ? new Decimal(price).div(billingDisplay.usdToCnyRate)
         : new Decimal(price);
-    return formatBillingDisplayAmountFromUSD(priceUSD.toString(), billingDisplay);
+    const formatted = formatBillingDisplayAmountFromUSD(priceUSD.toString(), billingDisplay);
+    if (
+      normalizedCurrency &&
+      normalizedCurrency !== billingDisplay.currency &&
+      !formatted.startsWith('≈')
+    ) {
+      return `≈${formatted}`;
+    }
+    return formatted;
   } catch {
     return '-';
   }
@@ -821,7 +888,10 @@ function getVideoPriceDisplayRows(
   });
 }
 
-function summarizeVideoPriceRows(rows: VideoPriceDisplayRow[]): ModelPriceDisplayItem[] {
+function summarizeVideoPriceRows(
+  rows: VideoPriceDisplayRow[],
+  billingDisplay: BillingDisplaySettings
+): ModelPriceDisplayItem[] {
   const groups = [
     { detail: '有参考视频', rows: rows.filter(row => row.detail.includes('含视频输入')) },
     { detail: '无参考视频', rows: rows.filter(row => row.detail.includes('无视频输入')) },
@@ -829,22 +899,27 @@ function summarizeVideoPriceRows(rows: VideoPriceDisplayRow[]): ModelPriceDispla
 
   return groups.flatMap(group => {
     if (group.rows.length === 0) return [];
-    const prices = group.rows.map(row => Number(row.price)).filter(Number.isFinite);
+    const prices = group.rows
+      .map(row => parseMoneyValue(row.price))
+      .filter((price): price is Decimal => price !== null);
     if (prices.length === 0) return [];
-    const min = Math.min(...prices);
-    const max = Math.max(...prices);
+    const min = prices.reduce((left, right) => (right.lt(left) ? right : left));
+    const max = prices.reduce((left, right) => (right.gt(left) ? right : left));
     const currency = group.rows[0]?.currency || 'CNY';
     return [
       {
         label: 'video' as const,
         detail: group.detail,
-        formattedValue:
-          min === max
-            ? formatStructuredAmount(min, currency)
-            : `${formatStructuredAmount(min, currency)}–${formatStructuredAmount(max, currency)}`,
+        formattedValue: min.eq(max)
+          ? formatStructuredAmount(min, currency, billingDisplay)
+          : `${formatStructuredAmount(min, currency, billingDisplay)}–${formatStructuredAmount(
+              max,
+              currency,
+              billingDisplay
+            )}`,
         unit: 'perMillionVideoTokens' as const,
         isConfigured: true,
-        isFree: min === 0 && max === 0,
+        isFree: min.isZero() && max.isZero(),
         displayUnit: '/ 百万视频 tokens',
       },
     ];

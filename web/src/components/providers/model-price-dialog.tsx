@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import Decimal from 'decimal.js-light';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -17,6 +16,7 @@ import { Label } from '@/components/ui/label';
 import type { ModelItem } from '@/services/types/model';
 import { useT } from '@/i18n';
 import { hasCacheBillingCapability, isImageGenerationModel, isInputOnlyPriceModel } from '@/utils/model-price';
+import { parseMoney } from '@/utils/money';
 import {
   billingDisplayInputToUSD,
   billingDisplayInputValueFromUSD,
@@ -45,11 +45,8 @@ interface ModelPriceDialogProps {
 function priceValueInvalid(value: string): boolean {
   const trimmed = value.trim();
   if (trimmed === '') return false;
-  try {
-    return new Decimal(trimmed).isNegative();
-  } catch {
-    return true;
-  }
+  const parsed = parseMoney(trimmed);
+  return parsed === null ? true : parsed.isNegative();
 }
 
 export function ModelPriceDialog({

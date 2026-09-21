@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -62,7 +61,7 @@ func (h *LLMHandler) ChatCompletions(c *gin.Context) {
 
 	// 3. Validate required parameters
 	if err := validatePublicChatRequest(&req); err != nil {
-		writeOpenAIProtocolError(c, invalidRequestProtocolError(err.Error()))
+		writeOpenAIProtocolError(c, invalidRequestProtocolError(publicInputMessage(err)))
 		return
 	}
 
@@ -98,7 +97,7 @@ func (h *LLMHandler) Embeddings(c *gin.Context) {
 	// 2. Parse request
 	var req adapter.EmbeddingsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeOpenAIProtocolError(c, invalidRequestProtocolError(fmt.Sprintf("Invalid request: %v", err)))
+		writeOpenAIProtocolError(c, invalidRequestProtocolError("Invalid JSON request body"))
 		return
 	}
 
@@ -121,7 +120,7 @@ func (h *LLMHandler) CreateResponse(c *gin.Context) {
 
 	req, err := parseRawResponseRequest(c)
 	if err != nil {
-		writeOpenAIProtocolError(c, invalidRequestProtocolError(err.Error()))
+		writeOpenAIProtocolError(c, invalidRequestProtocolError(publicInputMessage(err)))
 		return
 	}
 
@@ -130,7 +129,7 @@ func (h *LLMHandler) CreateResponse(c *gin.Context) {
 		return
 	}
 	if err := validatePublicNativeBody(req.Body, "responses"); err != nil {
-		writeOpenAIProtocolError(c, invalidRequestProtocolError(err.Error()))
+		writeOpenAIProtocolError(c, invalidRequestProtocolError(publicInputMessage(err)))
 		return
 	}
 
@@ -161,7 +160,7 @@ func (h *LLMHandler) CreateAnthropicMessage(c *gin.Context) {
 
 	req, err := parseAnthropicMessageRequest(c)
 	if err != nil {
-		writeAnthropicProtocolError(c, invalidRequestProtocolError(err.Error()))
+		writeAnthropicProtocolError(c, invalidRequestProtocolError(publicInputMessage(err)))
 		return
 	}
 	if req.Model == "" {
@@ -169,7 +168,7 @@ func (h *LLMHandler) CreateAnthropicMessage(c *gin.Context) {
 		return
 	}
 	if err := validatePublicNativeBody(req.Body, "messages"); err != nil {
-		writeAnthropicProtocolError(c, invalidRequestProtocolError(err.Error()))
+		writeAnthropicProtocolError(c, invalidRequestProtocolError(publicInputMessage(err)))
 		return
 	}
 
@@ -200,11 +199,11 @@ func (h *LLMHandler) CreateGeminiContent(c *gin.Context) {
 	}
 	req, err := parseGeminiGenerateContentRequest(c)
 	if err != nil {
-		writeGeminiProtocolError(c, invalidRequestProtocolError(err.Error()))
+		writeGeminiProtocolError(c, invalidRequestProtocolError(publicInputMessage(err)))
 		return
 	}
 	if err := validatePublicNativeBody(req.Body, "gemini"); err != nil {
-		writeGeminiProtocolError(c, invalidRequestProtocolError(err.Error()))
+		writeGeminiProtocolError(c, invalidRequestProtocolError(publicInputMessage(err)))
 		return
 	}
 	if req.Stream {
@@ -568,14 +567,14 @@ func apiKeyFromContext(c *gin.Context) (*apikeymodel.TenantAPIKey, bool) {
 func parseRawResponseRequest(c *gin.Context) (*adapter.RawResponseRequest, error) {
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		return nil, fmt.Errorf("read request body: %w", err)
+		return nil, newPublicInputErrorf("invalid JSON request body")
 	}
 	var meta struct {
 		Model  string `json:"model"`
 		Stream bool   `json:"stream"`
 	}
 	if err := json.Unmarshal(body, &meta); err != nil {
-		return nil, fmt.Errorf("invalid JSON: %w", err)
+		return nil, newPublicInputErrorf("invalid JSON request body")
 	}
 	return &adapter.RawResponseRequest{
 		Model:  strings.TrimSpace(meta.Model),
@@ -595,14 +594,14 @@ func gatewayRequestContext(c *gin.Context) context.Context {
 func parseAnthropicMessageRequest(c *gin.Context) (*adapter.AnthropicMessageRequest, error) {
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		return nil, fmt.Errorf("read request body: %w", err)
+		return nil, newPublicInputErrorf("invalid JSON request body")
 	}
 	var meta struct {
 		Model  string `json:"model"`
 		Stream bool   `json:"stream"`
 	}
 	if err := json.Unmarshal(body, &meta); err != nil {
-		return nil, fmt.Errorf("invalid JSON: %w", err)
+		return nil, newPublicInputErrorf("invalid JSON request body")
 	}
 	headers := map[string]string{}
 	for _, key := range []string{"anthropic-version", "anthropic-beta"} {
@@ -622,7 +621,7 @@ func parseGeminiGenerateContentRequest(c *gin.Context) (*adapter.GeminiGenerateC
 	modelAction := strings.TrimPrefix(strings.TrimSpace(c.Param("modelAction")), "/")
 	model, action, ok := strings.Cut(modelAction, ":")
 	if !ok || strings.TrimSpace(model) == "" {
-		return nil, fmt.Errorf("Gemini path must be /v1beta/models/{model}:generateContent")
+		return nil, newPublicInputErrorf("Gemini path must be /v1beta/models/{model}:generateContent")
 	}
 	stream := false
 	switch action {
@@ -630,17 +629,17 @@ func parseGeminiGenerateContentRequest(c *gin.Context) (*adapter.GeminiGenerateC
 	case "streamGenerateContent":
 		stream = true
 	default:
-		return nil, fmt.Errorf("unsupported Gemini action %s", action)
+		return nil, newPublicInputErrorf("unsupported Gemini action %s", action)
 	}
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		return nil, fmt.Errorf("read request body: %w", err)
+		return nil, newPublicInputErrorf("invalid JSON request body")
 	}
 	if len(strings.TrimSpace(string(body))) == 0 {
 		body = []byte(`{}`)
 	}
 	if !json.Valid(body) {
-		return nil, fmt.Errorf("invalid JSON")
+		return nil, newPublicInputErrorf("invalid JSON request body")
 	}
 	return &adapter.GeminiGenerateContentRequest{Model: strings.TrimSpace(model), Stream: stream, Body: body}, nil
 }

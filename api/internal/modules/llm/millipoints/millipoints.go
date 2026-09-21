@@ -38,12 +38,6 @@ func FromDecimalPoints(points decimal.Decimal) MilliPoints {
 	return MilliPoints(points.Mul(milliPointsPerPoint).Round(0).IntPart())
 }
 
-// FromFloatPoints converts a float points amount to milli-points. Prefer
-// FromDecimalPoints whenever the source value is already decimal.
-func FromFloatPoints(points float64) MilliPoints {
-	return FromDecimalPoints(decimal.NewFromFloat(points))
-}
-
 // FromUSD converts a USD cost to milli-points at the given points-per-USD rate.
 // The multiplication is exact decimal arithmetic and rounds UP to the next
 // milli-point: legacy Console used ceil(usd x 1_000_000) internal units, and
@@ -116,6 +110,10 @@ func (m *MilliPoints) Scan(value any) error {
 		return m.setPoints(decimal.NewFromInt(int64(v)))
 	case int:
 		return m.setPoints(decimal.NewFromInt(int64(v)))
+	// SQL driver boundary: some drivers (for example SQLite) surface a
+	// numeric(20,3) column as a float. This is the only float entry point into
+	// MilliPoints; the value is converted to exact decimal immediately and all
+	// arithmetic afterward stays integer/decimal.
 	case float64:
 		if math.IsNaN(v) || math.IsInf(v, 0) {
 			return fmt.Errorf("millipoints: cannot scan %v", v)

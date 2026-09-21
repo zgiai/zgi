@@ -73,7 +73,12 @@ func (s *RemoteBilling) FinalizePlatformProxySettlement(
 	bc.UseSystemProvider = true
 	bc.ActualCredits = settlement.OfficialPoints
 	applyPlatformSettlementTokenUsage(bc, settlement)
-	applyPlatformSettlementCostSnapshot(bc, settlement)
+	if err := applyPlatformSettlementCostSnapshot(bc, settlement); err != nil {
+		if markErr := s.markAttemptSettleFailed(ctx, bc, "PROXY_SETTLE_CURRENCY_SNAPSHOT_FAILED", err.Error()); markErr != nil {
+			return fmt.Errorf("apply platform settlement currency snapshot: %v (additionally failed to mark partial: %w)", err, markErr)
+		}
+		return fmt.Errorf("apply platform settlement currency snapshot: %w", err)
+	}
 	s.localService.applyRouteAttributionWithLookup(ctx, bc)
 	finalizeMediaTimingSnapshot(bc)
 	bc.SettledAt = time.Now().UTC()
@@ -119,7 +124,9 @@ func (s *RemoteBilling) MirrorPlatformMediaSettlement(ctx context.Context, bc *B
 	applyPlatformSettlementTokenUsage(bc, settlement)
 	bc.Status = "success"
 	bc.SettledAt = time.Now().UTC()
-	applyPlatformSettlementCostSnapshot(bc, settlement)
+	if err := applyPlatformSettlementCostSnapshot(bc, settlement); err != nil {
+		return fmt.Errorf("apply platform media currency snapshot: %w", err)
+	}
 	s.localService.applyRouteAttributionWithLookup(ctx, bc)
 	finalizeMediaTimingSnapshot(bc)
 	return s.localService.db.Transaction(func(tx *gorm.DB) error {
@@ -167,14 +174,16 @@ func maxInt(value, fallback int) int {
 	return value
 }
 
-func applyPlatformSettlementCostSnapshot(bc *BillingContext, settlement *adapter.SettlementResult) {
+// applyPlatformSettlementCostSnapshot merges Console-recorded settlement facts
+// and the canonical exchange-rate segment into the billing snapshot. Platform
+// rows are authoritative in Console, so the rate is mirrored from the Console
+// settlement (rate_source=console_system). A settlement that records no rate is
+// fail-closed.
+func applyPlatformSettlementCostSnapshot(bc *BillingContext, settlement *adapter.SettlementResult) error {
 	if bc == nil || settlement == nil {
-		return
+		return nil
 	}
-	values := map[string]interface{}{}
-	if len(bc.PricingSnapshot) > 0 && string(bc.PricingSnapshot) != "null" {
-		_ = json.Unmarshal(bc.PricingSnapshot, &values)
-	}
+	values := pricingSnapshotMap(bc.PricingSnapshot)
 	changed := false
 	if value, ok := parseNonNegativeBillingDecimal(settlement.TotalCostUSD); ok {
 		bc.TotalUSD = value
@@ -183,11 +192,6 @@ func applyPlatformSettlementCostSnapshot(bc *BillingContext, settlement *adapter
 	}
 	if value, ok := parseNonNegativeBillingDecimal(settlement.TotalCostCNY); ok {
 		values["total_cost_cny"] = value.String()
-		changed = true
-	}
-	if value, ok := parsePositiveBillingDecimal(settlement.CNYPerUSD); ok {
-		values["cny_per_usd"] = value.String()
-		values["exchange_rate_source"] = "console_settlement"
 		changed = true
 	}
 	for key, raw := range map[string]string{
@@ -225,6 +229,17 @@ func applyPlatformSettlementCostSnapshot(bc *BillingContext, settlement *adapter
 		bc.PricingSnapshot = buildPricingSnapshot(values)
 	}
 	applyRouteAttributionSnapshot(bc, "")
+
+	// Prefer the settlement field, then any rate already mirrored from
+	// Console's authoritative pricing_snapshot. Never fall back to a default.
+	rate, ok := parsePositiveBillingDecimal(settlement.CNYPerUSD)
+	if !ok {
+		rate, ok = parsePositiveBillingDecimal(pricingSnapshotString(pricingSnapshotMap(bc.PricingSnapshot), exchangeRateSnapshotRateKey))
+	}
+	if !ok {
+		return fmt.Errorf("%w: console settlement recorded no USD to CNY rate", ErrExchangeRateUnavailable)
+	}
+	return mergeExchangeRateSnapshot(bc, rate, exchangeRateSourceConsoleSystem, time.Now().UTC())
 }
 
 func validatePlatformProxySettlement(bc *BillingContext, settlement *adapter.SettlementResult) error {

@@ -15,13 +15,21 @@ import {
   formatCatalogCurrencyAmount,
   getBillingDisplaySettings,
   normalizedAiCreditsToUSD,
+  NORMALIZED_AI_CREDITS_PER_USD,
 } from '../src/utils/billing-display.ts';
 import {
+  AI_CREDITS_SCALE,
+  CHANNEL_POINTS_PER_USD,
   formatAiCreditValue,
   MODEL_USAGE_AI_CREDITS_INTERNAL_PRECISION,
   normalizeAiCreditValue,
   normalizeModelUsageData,
 } from '../src/utils/ai-credits.ts';
+import {
+  MILLI_POINTS_PER_POINT,
+  MILLI_POINTS_PER_USD,
+  POINTS_PER_USD,
+} from '../src/utils/billing-units.ts';
 import { formatTokenCount } from '../src/utils/token-format.ts';
 
 const usdSettings = {
@@ -33,6 +41,36 @@ const cnySettings = {
   currency: 'CNY',
   usdToCnyRate: 7,
 };
+
+// T15: one canonical unit registry. 1 USD = 1,000 points = 1,000,000 milli-points.
+assert.equal(POINTS_PER_USD, 1_000, 'canonical points per USD');
+assert.equal(MILLI_POINTS_PER_POINT, 1_000, 'canonical milli-points per point');
+assert.equal(MILLI_POINTS_PER_USD, 1_000_000, 'canonical milli-points per USD');
+assert.equal(AI_CREDITS_SCALE, POINTS_PER_USD, 'AI credits scale must derive from the registry');
+assert.equal(
+  CHANNEL_POINTS_PER_USD,
+  POINTS_PER_USD,
+  'channel wallet points must use the same points-per-USD'
+);
+assert.equal(
+  NORMALIZED_AI_CREDITS_PER_USD,
+  POINTS_PER_USD,
+  'billing display must use the same points-per-USD'
+);
+
+// The channel wallet copy must quote the same 1,000 points per USD the code uses.
+const channelMessagesSource = await readFile(
+  new URL('../src/i18n/modules/channels/en-US.ts', import.meta.url),
+  'utf8'
+);
+assert.ok(
+  channelMessagesSource.includes('Conversion: $1.00 = 1,000 points'),
+  'the channel conversion label must state the canonical 1,000 points per USD'
+);
+assert.ok(
+  !channelMessagesSource.includes('10,000'),
+  'the channel conversion label must not advertise a 10,000 points per USD rate'
+);
 
 // A detailed invocation must reconcile with the grant down to one internal credit.
 for (const [internal, expected] of [[0, '0'], [1, '0.001'], [45, '0.045'], [180, '0.18']]) {
@@ -48,6 +86,21 @@ const invocationDetailSource = await readFile(
 assert.match(invocationDetailSource,
   /points: formatAiCreditValue\(item\.total_points,\s*\{\s*locale,\s*maximumFractionDigits: MODEL_USAGE_AI_CREDITS_INTERNAL_PRECISION/,
   'invocation detail must opt into internal-credit precision, not the compact display default'
+);
+
+const invocationSectionSource = await readFile(
+  new URL('../src/components/usage/invocation-log-section.tsx', import.meta.url),
+  'utf8'
+);
+assert.match(
+  invocationSectionSource,
+  /formatRecordedBillingAmount\(summary\.total_cost_usd, 'USD'/,
+  'historical invocation totals without a recorded CNY total must present canonical USD'
+);
+assert.doesNotMatch(
+  invocationSectionSource,
+  /billingDisplay\.usdToCnyRate/,
+  'historical invocation totals must not re-convert with the organization current rate'
 );
 
 assert.equal(

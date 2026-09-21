@@ -200,3 +200,45 @@ func testDefinitions() []catalog.Definition {
 		},
 	)
 }
+
+// T17 acceptance 5: the projection boundary mints one error_id per projection
+// and emits a diagnostic record carrying the operation and original cause.
+func TestProjectMintsErrorIDAndLogsOperationAndCause(t *testing.T) {
+	t.Parallel()
+
+	var records []transport.ProjectionLog
+	projector, err := transport.NewProjector(newCatalog(t),
+		transport.WithIDGenerator(func() string { return "err-fixed-id" }),
+		transport.WithProjectionLogger(func(record transport.ProjectionLog) { records = append(records, record) }),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cause := errors.New("provider token sk-secret")
+	err = fmt.Errorf("chat failed: %w", apperror.Wrap(cause, codeProviderTimeout, apperror.WithOperation("gateway.chat")))
+
+	result := projector.Project(err, catalog.LocaleEnglishUS)
+	if result.ErrorID != "err-fixed-id" {
+		t.Fatalf("error_id = %q", result.ErrorID)
+	}
+	if len(records) != 1 {
+		t.Fatalf("projection records = %d, want 1", len(records))
+	}
+	if records[0].ErrorID != "err-fixed-id" || records[0].Operation != "gateway.chat" || !errors.Is(records[0].Cause, cause) {
+		t.Fatalf("projection record = %#v", records[0])
+	}
+	if strings.Contains(result.Presentation.Message, "sk-secret") {
+		t.Fatal("cause leaked into public message")
+	}
+}
+
+func TestProjectAssignsDistinctErrorIDs(t *testing.T) {
+	t.Parallel()
+
+	projector := newProjector(t)
+	first := projector.Project(apperror.New(codeProviderTimeout), catalog.LocaleEnglishUS)
+	second := projector.Project(apperror.New(codeProviderTimeout), catalog.LocaleEnglishUS)
+	if first.ErrorID == "" || second.ErrorID == "" || first.ErrorID == second.ErrorID {
+		t.Fatalf("error_id is not unique per projection: %q vs %q", first.ErrorID, second.ErrorID)
+	}
+}

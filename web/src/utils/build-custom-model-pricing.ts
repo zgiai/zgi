@@ -1,4 +1,5 @@
 import type { ModelPricing } from '@/services/types/model';
+import Decimal from 'decimal.js';
 
 export type CustomModelMeteredOperation =
   | 'transcription'
@@ -59,6 +60,15 @@ const MEDIA_USE_CASES = [
 
 const REALTIME_AUDIO_OPERATION = 'realtime_audio';
 
+/**
+ * Serializes a canonical USD decimal string into the number shape the pricing
+ * JSON projections require. The decimal -> number step happens only at this
+ * wire boundary and never feeds further money arithmetic.
+ */
+function toWirePrice(value: string): number {
+  return new Decimal(value).toNumber();
+}
+
 export function buildCustomModelPricing(input: CustomModelPricingInput): ModelPricing | undefined {
   const tracksImage = input.useCases.includes('image-gen');
   const tracksVideo = input.useCases.includes('video-gen');
@@ -68,10 +78,11 @@ export function buildCustomModelPricing(input: CustomModelPricingInput): ModelPr
     return undefined;
   }
 
-  // Editor amounts reach this function already converted to canonical USD, so
-  // projections must be labelled USD. Labelling them with the organization's
-  // display currency would make the backend convert the already-USD amount a
-  // second time for CNY organizations.
+  // Editor amounts reach this function already converted to canonical USD via
+  // billingDisplayInputToUSD, and the canonical currency is declared explicitly
+  // on every projection. Labelling them with the organization's display
+  // currency would make the backend convert the already-USD amount a second
+  // time for CNY organizations.
   const currency = 'USD';
   const pricing: ModelPricing = {
     deployment_scope: 'global',
@@ -85,19 +96,19 @@ export function buildCustomModelPricing(input: CustomModelPricingInput): ModelPr
     if (input.imageBillingMode === 'token') {
       const tokenPricing: Record<string, unknown> = { currency };
       if (input.imageTextInputPricePerMillion?.trim()) {
-        tokenPricing.text_input_price_per_million = Number(input.imageTextInputPricePerMillion);
+        tokenPricing.text_input_price_per_million = toWirePrice(input.imageTextInputPricePerMillion);
       }
       if (input.imageImageInputPricePerMillion?.trim()) {
-        tokenPricing.image_input_price_per_million = Number(input.imageImageInputPricePerMillion);
+        tokenPricing.image_input_price_per_million = toWirePrice(input.imageImageInputPricePerMillion);
       }
       if (input.imageOutputPricePerMillion?.trim()) {
-        tokenPricing.output_price_per_million = Number(input.imageOutputPricePerMillion);
+        tokenPricing.output_price_per_million = toWirePrice(input.imageOutputPricePerMillion);
       }
       const hasTokenPrice = Object.keys(tokenPricing).length > 1;
       pricing.image_token_pricing = hasTokenPrice ? tokenPricing : null;
       pricing.price_per_image = null;
     } else {
-      pricing.price_per_image = input.pricePerImage?.trim() ? Number(input.pricePerImage) : null;
+      pricing.price_per_image = input.pricePerImage?.trim() ? toWirePrice(input.pricePerImage) : null;
     }
   }
 
@@ -108,7 +119,7 @@ export function buildCustomModelPricing(input: CustomModelPricingInput): ModelPr
         if (!price) return null;
         return {
           resolution: rate.resolution?.trim() || '720p',
-          price_per_second: Number(price),
+          price_per_second: toWirePrice(price),
         };
       })
       .filter((rate): rate is { resolution: string; price_per_second: number } => rate !== null);

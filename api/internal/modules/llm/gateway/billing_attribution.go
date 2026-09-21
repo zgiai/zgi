@@ -278,6 +278,48 @@ func isMediaPricingOperation(operation PricingOperation) bool {
 	}
 }
 
+// mediaUsageBillOperation reports whether operation is a non-token media
+// operation. Media records must always persist both canonical source labels.
+func mediaUsageBillOperation(operation PricingOperation) bool {
+	return isMediaPricingOperation(operation) || operation == PricingOperationVideo
+}
+
+// normalizeMediaUsageBillSources resolves the canonical pricing_source and
+// usage_source labels for a media usage bill and backfills them on the billing
+// context and its pricing snapshot. Media operations settle through several
+// paths (private quote, Console settlement mirror, asynchronous video task),
+// so a path that reaches persistence without an explicit label is stamped here
+// and a new media record can never lose pricing_source/usage_source. Non-media
+// operations keep their exact original labels.
+func normalizeMediaUsageBillSources(bc *BillingContext) (PricingSource, UsageSource) {
+	if bc == nil {
+		return "", ""
+	}
+	if !mediaUsageBillOperation(bc.PricingOperation) {
+		return bc.PricingSource, bc.UsageSource
+	}
+
+	pricingSource := bc.PricingSource
+	if pricingSource == "" {
+		if bc.UseSystemProvider || bc.BillingLane == UsageBillingLanePlatform {
+			pricingSource = PricingSourcePlatformRemoteAuthority
+		} else {
+			pricingSource = PricingSourceUpstreamModelPrice
+		}
+	}
+	usageSource := bc.UsageSource
+	if usageSource == "" {
+		usageSource = UsageSourceProviderUsage
+	}
+
+	bc.PricingSource, bc.UsageSource = pricingSource, usageSource
+	mergePricingSnapshot(bc, map[string]interface{}{
+		"pricing_source": string(pricingSource),
+		"usage_source":   string(usageSource),
+	})
+	return pricingSource, usageSource
+}
+
 func finalizeMediaTimingSnapshot(bc *BillingContext) {
 	if bc == nil || !isMediaPricingOperation(bc.PricingOperation) {
 		return

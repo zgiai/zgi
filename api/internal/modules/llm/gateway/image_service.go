@@ -2,12 +2,14 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway/ratingcore"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 )
@@ -256,6 +258,15 @@ func (s *llmGatewayServiceImpl) createImageInternal(
 		actualQuote = PricingQuote{}
 	} else {
 		applyUsageToBillingContext(billingCtx, resp.Usage)
+		tokenQuote, tokenPriced, tokenErr := s.quoteImageTokenPricingForSettlement(ctx, selection, resp.Usage)
+		if tokenErr != nil {
+			s.rollbackPreDeduction(ctx, billingCtx)
+			s.traceImageGeneration(ctx, req, resp, startTime, time.Now(), billingCtx, tokenErr)
+			return nil, wrapPricingCalculationError(tokenErr)
+		}
+		if tokenPriced {
+			actualQuote = tokenQuote
+		}
 	}
 
 	if err := s.settleImageSuccess(ctx, billingCtx, selection, actualQuote, resp.Settlement, responseTime); err != nil {
@@ -316,4 +327,70 @@ func (s *llmGatewayServiceImpl) quoteImagePricingForSettlement(
 		return estimatedQuote, nil
 	}
 	return s.quoteImagePricing(ctx, model, req)
+}
+
+// quoteImageTokenPricingForSettlement reprices a private image response from
+// the three-tier image_token_pricing block when the selected model declares it
+// and the upstream returned token usage. A token-priced model never silently
+// falls back to the flat per-image price: absent usage is fail-closed.
+func (s *llmGatewayServiceImpl) quoteImageTokenPricingForSettlement(
+	ctx context.Context,
+	selection *ProviderSelection,
+	usage *adapter.Usage,
+) (PricingQuote, bool, error) {
+	if selection == nil || usage == nil {
+		return PricingQuote{}, false, nil
+	}
+	var pricing ratingcore.Pricing
+	if len(selection.Model.Pricing) > 0 {
+		if err := json.Unmarshal(selection.Model.Pricing, &pricing); err != nil {
+			return PricingQuote{}, false, fmt.Errorf("invalid image token pricing: %w", err)
+		}
+	}
+	if pricing.ImageTokenPricing == nil {
+		return PricingQuote{}, false, nil
+	}
+	text, imageInput, output, ok := imageTokenUsageSplit(usage)
+	if !ok {
+		return PricingQuote{}, false, fmt.Errorf("%w: image token usage is required for a token-priced image model", ErrPricingNotConfigured)
+	}
+	engine, supported := s.pricing().(imageTokenPricingEngine)
+	if !supported {
+		return PricingQuote{}, false, nil
+	}
+	quote, err := engine.QuoteImageTokenUsage(ctx, pricingModelRefFromSelection(selection), ImageTokenUsage{
+		TextInputTokens:  text,
+		ImageInputTokens: imageInput,
+		OutputTokens:     output,
+	})
+	if err != nil {
+		return PricingQuote{}, false, err
+	}
+	return quote, true, nil
+}
+
+// imageTokenUsageSplit extracts the text input, image input, and output token
+// counts from an upstream image response. OpenAI reports input_tokens /
+// output_tokens with input_tokens_details.text_tokens / image_tokens; when the
+// split is absent every input token is treated as text so the bill stays
+// deterministic.
+func imageTokenUsageSplit(usage *adapter.Usage) (text, imageInput, output int, ok bool) {
+	if usage == nil {
+		return 0, 0, 0, false
+	}
+	prompt := usage.PromptTokens
+	if prompt == 0 {
+		prompt = usage.InputTokens
+	}
+	completion := usage.CompletionTokens
+	if completion == 0 {
+		completion = usage.OutputTokens
+	}
+	text = prompt
+	if detail := usage.InputTokensDetails; detail.TextTokens > 0 || detail.ImageTokens > 0 {
+		text = detail.TextTokens
+		imageInput = detail.ImageTokens
+	}
+	ok = prompt > 0 || completion > 0 || imageInput > 0
+	return text, imageInput, completion, ok
 }

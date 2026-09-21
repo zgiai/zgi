@@ -61,11 +61,11 @@ func TestClassifyProtocolError(t *testing.T) {
 			wantAnthropicType: "billing_error",
 		},
 		{
-			name:              "provider resource unavailable",
+			name:              "channel not found has its own branch",
 			err:               llmerrors.DomainErrChannelNotFound,
-			wantStatus:        http.StatusServiceUnavailable,
-			wantCode:          "provider_unavailable",
-			wantAnthropicType: "api_error",
+			wantStatus:        http.StatusNotFound,
+			wantCode:          "llm.channel.not_found",
+			wantAnthropicType: "not_found_error",
 		},
 		{
 			name:              "platform channel unavailable",

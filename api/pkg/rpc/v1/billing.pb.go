@@ -222,8 +222,11 @@ type PreDeductMeteredUsageResponse struct {
 	EstimatedCredits int64                  `protobuf:"varint,4,opt,name=estimated_credits,json=estimatedCredits,proto3" json:"estimated_credits,omitempty"`
 	ReservedCredits  int64                  `protobuf:"varint,5,opt,name=reserved_credits,json=reservedCredits,proto3" json:"reserved_credits,omitempty"`
 	RemainingCredits int64                  `protobuf:"varint,6,opt,name=remaining_credits,json=remainingCredits,proto3" json:"remaining_credits,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Stable cataloged error identity (domain.subject.reason); mirrors the
+	// Console contract and supports the error_code compatibility branch.
+	ErrorCode     string `protobuf:"bytes,7,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *PreDeductMeteredUsageResponse) Reset() {
@@ -296,6 +299,13 @@ func (x *PreDeductMeteredUsageResponse) GetRemainingCredits() int64 {
 		return x.RemainingCredits
 	}
 	return 0
+}
+
+func (x *PreDeductMeteredUsageResponse) GetErrorCode() string {
+	if x != nil {
+		return x.ErrorCode
+	}
+	return ""
 }
 
 type PreDeductQuotaRequest struct {
@@ -798,6 +808,7 @@ type SettleQuotaResponse struct {
 	UsedQuota       int64                  `protobuf:"varint,4,opt,name=used_quota,json=usedQuota,proto3" json:"used_quota,omitempty"`
 	RefundedCredits int64                  `protobuf:"varint,5,opt,name=refunded_credits,json=refundedCredits,proto3" json:"refunded_credits,omitempty"`
 	SettledCredits  int64                  `protobuf:"varint,6,opt,name=settled_credits,json=settledCredits,proto3" json:"settled_credits,omitempty"`
+	ErrorCode       string                 `protobuf:"bytes,7,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -872,6 +883,13 @@ func (x *SettleQuotaResponse) GetSettledCredits() int64 {
 		return x.SettledCredits
 	}
 	return 0
+}
+
+func (x *SettleQuotaResponse) GetErrorCode() string {
+	if x != nil {
+		return x.ErrorCode
+	}
+	return ""
 }
 
 type CalculateDualCostRequest struct {
@@ -969,6 +987,7 @@ type DualCostResponse struct {
 	OutputUsd     float64                `protobuf:"fixed64,7,opt,name=output_usd,json=outputUsd,proto3" json:"output_usd,omitempty"`
 	TotalUsd      float64                `protobuf:"fixed64,8,opt,name=total_usd,json=totalUsd,proto3" json:"total_usd,omitempty"`
 	BillingMode   string                 `protobuf:"bytes,9,opt,name=billing_mode,json=billingMode,proto3" json:"billing_mode,omitempty"`
+	ErrorCode     string                 `protobuf:"bytes,10,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1062,6 +1081,13 @@ func (x *DualCostResponse) GetTotalUsd() float64 {
 func (x *DualCostResponse) GetBillingMode() string {
 	if x != nil {
 		return x.BillingMode
+	}
+	return ""
+}
+
+func (x *DualCostResponse) GetErrorCode() string {
+	if x != nil {
+		return x.ErrorCode
 	}
 	return ""
 }
@@ -1270,6 +1296,7 @@ type SettleUsageResponse struct {
 	UsdCost         float64                `protobuf:"fixed64,4,opt,name=usd_cost,json=usdCost,proto3" json:"usd_cost,omitempty"`
 	BillingMode     string                 `protobuf:"bytes,5,opt,name=billing_mode,json=billingMode,proto3" json:"billing_mode,omitempty"`
 	IsSelfPaid      bool                   `protobuf:"varint,6,opt,name=is_self_paid,json=isSelfPaid,proto3" json:"is_self_paid,omitempty"`
+	ErrorCode       string                 `protobuf:"bytes,7,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -1346,6 +1373,13 @@ func (x *SettleUsageResponse) GetIsSelfPaid() bool {
 	return false
 }
 
+func (x *SettleUsageResponse) GetErrorCode() string {
+	if x != nil {
+		return x.ErrorCode
+	}
+	return ""
+}
+
 type GetBillingModeRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	OrganizationId string                 `protobuf:"bytes,1,opt,name=organization_id,json=organizationId,proto3" json:"organization_id,omitempty"`
@@ -1396,6 +1430,7 @@ type BillingModeResponse struct {
 	ErrorMessage  string                 `protobuf:"bytes,2,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
 	BillingMode   string                 `protobuf:"bytes,3,opt,name=billing_mode,json=billingMode,proto3" json:"billing_mode,omitempty"`
 	IsSelfPaid    bool                   `protobuf:"varint,4,opt,name=is_self_paid,json=isSelfPaid,proto3" json:"is_self_paid,omitempty"`
+	ErrorCode     string                 `protobuf:"bytes,5,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1458,6 +1493,13 @@ func (x *BillingModeResponse) GetIsSelfPaid() bool {
 	return false
 }
 
+func (x *BillingModeResponse) GetErrorCode() string {
+	if x != nil {
+		return x.ErrorCode
+	}
+	return ""
+}
+
 type CheckCreditBalanceRequest struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	OrganizationId   string                 `protobuf:"bytes,1,opt,name=organization_id,json=organizationId,proto3" json:"organization_id,omitempty"`
@@ -1516,6 +1558,7 @@ type CheckCreditBalanceResponse struct {
 	ErrorMessage  string                 `protobuf:"bytes,2,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
 	Sufficient    bool                   `protobuf:"varint,3,opt,name=sufficient,proto3" json:"sufficient,omitempty"`
 	Balance       int64                  `protobuf:"varint,4,opt,name=balance,proto3" json:"balance,omitempty"`
+	ErrorCode     string                 `protobuf:"bytes,5,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1578,6 +1621,13 @@ func (x *CheckCreditBalanceResponse) GetBalance() int64 {
 	return 0
 }
 
+func (x *CheckCreditBalanceResponse) GetErrorCode() string {
+	if x != nil {
+		return x.ErrorCode
+	}
+	return ""
+}
+
 var File_pkg_rpc_v1_billing_proto protoreflect.FileDescriptor
 
 const file_pkg_rpc_v1_billing_proto_rawDesc = "" +
@@ -1610,14 +1660,16 @@ const file_pkg_rpc_v1_billing_proto_rawDesc = "" +
 	"\rprovider_name\x18\t \x01(\tR\fproviderName\x12\x1d\n" +
 	"\n" +
 	"model_name\x18\n" +
-	" \x01(\tR\tmodelName\"\x86\x02\n" +
+	" \x01(\tR\tmodelName\"\xa5\x02\n" +
 	"\x1dPreDeductMeteredUsageResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12#\n" +
 	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\x12!\n" +
 	"\fdeduction_id\x18\x03 \x01(\tR\vdeductionId\x12+\n" +
 	"\x11estimated_credits\x18\x04 \x01(\x03R\x10estimatedCredits\x12)\n" +
 	"\x10reserved_credits\x18\x05 \x01(\x03R\x0freservedCredits\x12+\n" +
-	"\x11remaining_credits\x18\x06 \x01(\x03R\x10remainingCredits\"\xf0\x03\n" +
+	"\x11remaining_credits\x18\x06 \x01(\x03R\x10remainingCredits\x12\x1d\n" +
+	"\n" +
+	"error_code\x18\a \x01(\tR\terrorCode\"\xf0\x03\n" +
 	"\x15PreDeductQuotaRequest\x12'\n" +
 	"\x0forganization_id\x18\x01 \x01(\tR\x0eorganizationId\x12+\n" +
 	"\x11estimated_credits\x18\x02 \x01(\x03R\x10estimatedCredits\x12\x19\n" +
@@ -1688,7 +1740,7 @@ const file_pkg_rpc_v1_billing_proto_rawDesc = "" +
 	"\rresource_type\x18\x1c \x01(\tR\fresourceType\x12\x1f\n" +
 	"\vresource_id\x18\x1d \x01(\tR\n" +
 	"resourceId\x12#\n" +
-	"\rresource_name\x18\x1e \x01(\tR\fresourceName\"\xf0\x01\n" +
+	"\rresource_name\x18\x1e \x01(\tR\fresourceName\"\x8f\x02\n" +
 	"\x13SettleQuotaResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12#\n" +
 	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\x12'\n" +
@@ -1696,14 +1748,16 @@ const file_pkg_rpc_v1_billing_proto_rawDesc = "" +
 	"\n" +
 	"used_quota\x18\x04 \x01(\x03R\tusedQuota\x12)\n" +
 	"\x10refunded_credits\x18\x05 \x01(\x03R\x0frefundedCredits\x12'\n" +
-	"\x0fsettled_credits\x18\x06 \x01(\x03R\x0esettledCredits\"\xe2\x01\n" +
+	"\x0fsettled_credits\x18\x06 \x01(\x03R\x0esettledCredits\x12\x1d\n" +
+	"\n" +
+	"error_code\x18\a \x01(\tR\terrorCode\"\xe2\x01\n" +
 	"\x18CalculateDualCostRequest\x12#\n" +
 	"\rprompt_tokens\x18\x01 \x01(\x05R\fpromptTokens\x12+\n" +
 	"\x11completion_tokens\x18\x02 \x01(\x05R\x10completionTokens\x12\x19\n" +
 	"\bmodel_id\x18\x03 \x01(\tR\amodelId\x12'\n" +
 	"\x0forganization_id\x18\x04 \x01(\tR\x0eorganizationId\x12\x1a\n" +
 	"\bprovider\x18\x05 \x01(\tR\bprovider\x12\x14\n" +
-	"\x05model\x18\x06 \x01(\tR\x05model\"\xbe\x02\n" +
+	"\x05model\x18\x06 \x01(\tR\x05model\"\xdd\x02\n" +
 	"\x10DualCostResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12#\n" +
 	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\x12#\n" +
@@ -1714,7 +1768,10 @@ const file_pkg_rpc_v1_billing_proto_rawDesc = "" +
 	"\n" +
 	"output_usd\x18\a \x01(\x01R\toutputUsd\x12\x1b\n" +
 	"\ttotal_usd\x18\b \x01(\x01R\btotalUsd\x12!\n" +
-	"\fbilling_mode\x18\t \x01(\tR\vbillingMode\"\xb4\x05\n" +
+	"\fbilling_mode\x18\t \x01(\tR\vbillingMode\x12\x1d\n" +
+	"\n" +
+	"error_code\x18\n" +
+	" \x01(\tR\terrorCode\"\xb4\x05\n" +
 	"\x12SettleUsageRequest\x12'\n" +
 	"\x0forganization_id\x18\x01 \x01(\tR\x0eorganizationId\x12\x19\n" +
 	"\bmodel_id\x18\x02 \x01(\tR\amodelId\x12\x1d\n" +
@@ -1743,7 +1800,7 @@ const file_pkg_rpc_v1_billing_proto_rawDesc = "" +
 	"\n" +
 	"user_agent\x18\x12 \x01(\tR\tuserAgent\x12!\n" +
 	"\fis_streaming\x18\x13 \x01(\bR\visStreaming\x12.\n" +
-	"\x13use_system_provider\x18\x14 \x01(\bR\x11useSystemProvider\"\xdf\x01\n" +
+	"\x13use_system_provider\x18\x14 \x01(\bR\x11useSystemProvider\"\xfe\x01\n" +
 	"\x13SettleUsageResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12#\n" +
 	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\x12)\n" +
@@ -1751,25 +1808,31 @@ const file_pkg_rpc_v1_billing_proto_rawDesc = "" +
 	"\busd_cost\x18\x04 \x01(\x01R\ausdCost\x12!\n" +
 	"\fbilling_mode\x18\x05 \x01(\tR\vbillingMode\x12 \n" +
 	"\fis_self_paid\x18\x06 \x01(\bR\n" +
-	"isSelfPaid\"@\n" +
+	"isSelfPaid\x12\x1d\n" +
+	"\n" +
+	"error_code\x18\a \x01(\tR\terrorCode\"@\n" +
 	"\x15GetBillingModeRequest\x12'\n" +
-	"\x0forganization_id\x18\x01 \x01(\tR\x0eorganizationId\"\x99\x01\n" +
+	"\x0forganization_id\x18\x01 \x01(\tR\x0eorganizationId\"\xb8\x01\n" +
 	"\x13BillingModeResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12#\n" +
 	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\x12!\n" +
 	"\fbilling_mode\x18\x03 \x01(\tR\vbillingMode\x12 \n" +
 	"\fis_self_paid\x18\x04 \x01(\bR\n" +
-	"isSelfPaid\"q\n" +
+	"isSelfPaid\x12\x1d\n" +
+	"\n" +
+	"error_code\x18\x05 \x01(\tR\terrorCode\"q\n" +
 	"\x19CheckCreditBalanceRequest\x12'\n" +
 	"\x0forganization_id\x18\x01 \x01(\tR\x0eorganizationId\x12+\n" +
-	"\x11estimated_credits\x18\x02 \x01(\x03R\x10estimatedCredits\"\x95\x01\n" +
+	"\x11estimated_credits\x18\x02 \x01(\x03R\x10estimatedCredits\"\xb4\x01\n" +
 	"\x1aCheckCreditBalanceResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12#\n" +
 	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\x12\x1e\n" +
 	"\n" +
 	"sufficient\x18\x03 \x01(\bR\n" +
 	"sufficient\x12\x18\n" +
-	"\abalance\x18\x04 \x01(\x03R\abalance2\x98\x05\n" +
+	"\abalance\x18\x04 \x01(\x03R\abalance\x12\x1d\n" +
+	"\n" +
+	"error_code\x18\x05 \x01(\tR\terrorCode2\x98\x05\n" +
 	"\x0eBillingService\x12W\n" +
 	"\x0ePreDeductQuota\x12!.zgi.rpc.v1.PreDeductQuotaRequest\x1a\".zgi.rpc.v1.PreDeductQuotaResponse\x12N\n" +
 	"\vSettleQuota\x12\x1e.zgi.rpc.v1.SettleQuotaRequest\x1a\x1f.zgi.rpc.v1.SettleQuotaResponse\x12W\n" +

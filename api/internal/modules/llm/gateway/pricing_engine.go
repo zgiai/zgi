@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"github.com/zgiai/zgi/api/internal/modules/llm/billingsettings"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway/ratingcore"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	modelpricing "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/pricing"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
@@ -111,6 +112,13 @@ type TokenUsage struct {
 	CacheWrite5mTokens int
 	CacheWrite1hTokens int
 	OutputTokens       int
+	// AudioInputTokens / AudioOutputTokens carry the upstream realtime audio
+	// token split (OpenAI input_tokens_details.audio_tokens /
+	// output_tokens_details.audio_tokens). For realtime_audio they are
+	// preferred over Input/OutputTokens; when absent the normal prompt /
+	// completion counts are billed against the same realtime rules.
+	AudioInputTokens  int
+	AudioOutputTokens int
 }
 
 type PricingEngine interface {
@@ -208,10 +216,16 @@ func (e *pricingEngine) QuoteTokens(ctx context.Context, ref PricingModelRef, pr
 }
 
 func (e *pricingEngine) QuoteTokenUsage(ctx context.Context, ref PricingModelRef, usage TokenUsage) (PricingQuote, error) {
-	if usage.InputTokens < 0 || usage.CacheReadTokens < 0 || usage.CacheWriteTokens < 0 || usage.CacheWrite5mTokens < 0 || usage.CacheWrite1hTokens < 0 || usage.OutputTokens < 0 {
+	if usage.InputTokens < 0 || usage.CacheReadTokens < 0 || usage.CacheWriteTokens < 0 || usage.CacheWrite5mTokens < 0 || usage.CacheWrite1hTokens < 0 || usage.OutputTokens < 0 || usage.AudioInputTokens < 0 || usage.AudioOutputTokens < 0 {
 		return PricingQuote{}, fmt.Errorf("token count must be greater than or equal to zero")
 	}
 	usage = normalizeGatewayTokenUsage(usage)
+	ref = normalizePricingModelRef(ref)
+	if ref.Operation == PricingOperationRealtimeAudio {
+		// Prefer upstream audio tokens; without them the normal prompt and
+		// completion counts are billed against the same realtime_audio rules.
+		usage = realtimeAudioTokenUsage(usage)
+	}
 	model, found, err := e.loadModel(ctx, ref)
 	if err != nil {
 		return PricingQuote{}, err
@@ -394,6 +408,8 @@ func parseRealtimeAudioRulePrice(raw json.RawMessage) (decimal.Decimal, bool) {
 		}
 		return amount, true
 	}
+	// Explicit boundary: legacy pricing JSON can encode the amount as a JSON
+	// number. Convert once here; every pricing computation afterward is decimal.
 	var number float64
 	if err := json.Unmarshal(raw, &number); err != nil || number < 0 {
 		return decimal.Zero, false
@@ -404,6 +420,21 @@ func parseRealtimeAudioRulePrice(raw json.RawMessage) (decimal.Decimal, bool) {
 func normalizeGatewayTokenUsage(usage TokenUsage) TokenUsage {
 	if usage.CacheWriteTokens == 0 {
 		usage.CacheWriteTokens = usage.CacheWrite5mTokens + usage.CacheWrite1hTokens
+	}
+	return usage
+}
+
+// realtimeAudioTokenUsage prefers upstream audio_tokens when present and falls
+// back to the prompt/completion token counts otherwise. Missing audio tokens
+// must not fail closed: a modality-aware realtime price is still billed from
+// the text-token split against the same realtime_audio rules. This mirrors the
+// pure ratingcore fallback so Pre rates realtime audio identically.
+func realtimeAudioTokenUsage(usage TokenUsage) TokenUsage {
+	if usage.AudioInputTokens > 0 {
+		usage.InputTokens = usage.AudioInputTokens
+	}
+	if usage.AudioOutputTokens > 0 {
+		usage.OutputTokens = usage.AudioOutputTokens
 	}
 	return usage
 }
@@ -553,6 +584,93 @@ func (e *pricingEngine) QuoteImage(ctx context.Context, ref PricingModelRef, req
 	}
 
 	return e.quoteImageWithFallback(ctx, ref, model, found, &r, count)
+}
+
+// ImageTokenUsage is the upstream image token split used to bill the
+// three-tier image_token_pricing block: text input, image input, and output.
+type ImageTokenUsage struct {
+	TextInputTokens  int
+	ImageInputTokens int
+	OutputTokens     int
+}
+
+// imageTokenPricingEngine is the optional pricing capability for token-metered
+// image generation. It is deliberately separate from PricingEngine so fake
+// engines used by unrelated tests keep the per-image path.
+type imageTokenPricingEngine interface {
+	QuoteImageTokenUsage(ctx context.Context, ref PricingModelRef, usage ImageTokenUsage) (PricingQuote, error)
+}
+
+// QuoteImageTokenUsage rates image generation from upstream token usage with the
+// explicit three-tier image_token_pricing block. It never falls back to the flat
+// per-image price: a model without the block is not token priced. The amount is
+// produced by the shared ratingcore kernel so Pre and Console agree on T1.
+func (e *pricingEngine) QuoteImageTokenUsage(ctx context.Context, ref PricingModelRef, usage ImageTokenUsage) (PricingQuote, error) {
+	ref = normalizePricingModelRef(PricingModelRef{
+		ModelID:        ref.ModelID,
+		OrganizationID: ref.OrganizationID,
+		Source:         ref.Source,
+		Operation:      PricingOperationImage,
+		Provider:       ref.Provider,
+		Model:          ref.Model,
+	})
+	model, found, err := e.loadModel(ctx, ref)
+	if err != nil {
+		return PricingQuote{}, err
+	}
+	if !found || model == nil {
+		return PricingQuote{}, fmt.Errorf("%w: image token pricing requires a configured model", ErrPricingNotConfigured)
+	}
+	var pricing ratingcore.Pricing
+	if err := json.Unmarshal(model.Pricing, &pricing); err != nil {
+		return PricingQuote{}, fmt.Errorf("%w: invalid image token pricing: %v", ErrPricingNotConfigured, err)
+	}
+	if pricing.ImageTokenPricing == nil {
+		return PricingQuote{}, fmt.Errorf("%w: image token pricing is not configured", ErrPricingNotConfigured)
+	}
+	operation := string(PricingOperationImage)
+	inputUSD, err := ratingcore.Resolve(pricing, ratingcore.Usage{
+		Operation:        operation,
+		Meter:            "input_text_token",
+		BaseUnit:         "per_1m_tokens",
+		TextInputTokens:  int64(usage.TextInputTokens),
+		InputImageTokens: int64(usage.ImageInputTokens),
+	})
+	if err != nil {
+		return PricingQuote{}, fmt.Errorf("%w: %v", ErrPricingNotConfigured, err)
+	}
+	outputUSD, err := ratingcore.Resolve(pricing, ratingcore.Usage{
+		Operation:    operation,
+		Meter:        "output_token",
+		BaseUnit:     "per_1m_tokens",
+		OutputTokens: int64(usage.OutputTokens),
+	})
+	if err != nil {
+		return PricingQuote{}, fmt.Errorf("%w: %v", ErrPricingNotConfigured, err)
+	}
+	tiers := pricing.ImageTokenPricing
+	snapshot := buildPricingSnapshot(map[string]interface{}{
+		"pricing_source":                PricingSourceUpstreamModelPrice,
+		"usage_source":                  UsageSourceProviderUsage,
+		"operation":                     PricingOperationImage,
+		"model_id":                      model.ID.String(),
+		"provider":                      strings.TrimSpace(model.Provider),
+		"model":                         strings.TrimSpace(model.Name),
+		"text_input_tokens":             usage.TextInputTokens,
+		"image_input_tokens":            usage.ImageInputTokens,
+		"output_tokens":                 usage.OutputTokens,
+		"text_input_price_per_million":  tiers.TextInputPricePerMillion.String(),
+		"image_input_price_per_million": tiers.ImageInputPricePerMillion.String(),
+		"output_price_per_million":      tiers.OutputPricePerMillion.String(),
+		"input_cost_usd":                inputUSD.String(),
+		"output_cost_usd":               outputUSD.String(),
+	})
+	quote := newUSDQuote(inputUSD, outputUSD, PricingSourceUpstreamModelPrice, "pricing.image_token_pricing", UsageSourceProviderUsage, snapshot)
+	quote.InputTokenPriceUSDPer1M = tiers.TextInputPricePerMillion
+	quote.OutputTokenPriceUSDPer1M = tiers.OutputPricePerMillion
+	quote.InputTokenPriceResolved = true
+	quote.OutputTokenPriceResolved = true
+	return quote, nil
 }
 
 func configuredImagePricingRules(model *pricingModelRecord) ([]llmmodel.PricingRule, bool, error) {
@@ -743,6 +861,7 @@ func (e *pricingEngine) quoteImageWithFallback(
 
 func quoteConfiguredImageRule(model *pricingModelRecord, req *adapter.ImageRequest, matched llmmodel.PricingRule, count int64) (PricingQuote, error) {
 	if matched.Price.Amount > 0 {
+		// Explicit boundary: the structured rule amount is a legacy JSON float.
 		totalUSD := decimal.NewFromFloat(matched.Price.Amount).Mul(decimal.NewFromInt(count))
 		snapshot := configuredImagePricingSnapshot(model, req, matched, count, matched.Price.Amount, 0)
 		return newOutputOnlyUSDQuote(totalUSD, PricingSourceUpstreamModelPrice, matched.ID, UsageSourceRequestParameters, snapshot), nil
@@ -787,6 +906,8 @@ func quoteConfiguredStructuredImagePrice(model *pricingModelRecord, req *adapter
 	if err := json.Unmarshal(model.Pricing, &pricing); err != nil || pricing.PricePerImage == nil || *pricing.PricePerImage < 0 {
 		return PricingQuote{}, false
 	}
+	// Explicit boundary: price_per_image is projected from legacy JSON as a
+	// float. Convert once here and keep the pricing arithmetic decimal.
 	price := decimal.NewFromFloat(*pricing.PricePerImage)
 	totalUSD := price.Mul(decimal.NewFromInt(count))
 	provider, modelName := pricingModelIdentity(PricingModelRef{}, model, true)

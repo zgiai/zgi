@@ -49,50 +49,36 @@ func principalAccessProtocolError(c *gin.Context, err error, projector *apptrans
 	return legacy
 }
 
-// localizedProtocolError is an error-only compatibility adapter. The protocol
-// classifier continues to own status, type, code, and wire shape; the
-// application catalog may replace only the safe public message.
+// localizedProtocolError projects the application error at the protocol
+// boundary. The classifier keeps ownership of status, type, and legacy wire
+// code; the catalog supplies the localized message, stable code, and retryable
+// flag, and the projector mints the error_id.
 func (h *LLMHandler) localizedProtocolError(c *gin.Context, err error) protocolError {
 	legacy := classifyProtocolError(err)
-	if h == nil || h.errorProjector == nil {
+	if h == nil || h.errorProjector == nil || err == nil {
 		return legacy
 	}
-	appErr, supported := gatewayApplicationError(err)
+	projectionTarget, supported := applicationErrorFor(err)
 	if !supported {
-		return legacy
+		projectionTarget = err
 	}
 
-	legacyKey := legacyOpenAIUpstreamTimeout
-	if isAnthropicRequest(c) {
-		legacyKey = legacyAnthropicTimeoutError
-	}
 	locale := apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language"))
-	message := h.errorProjector.ProjectLegacyMessage(appErr, locale, legacyKey)
-	if message.Resolution == apptransport.ResolutionMatched {
-		legacy.message = message.Message
+	result := h.errorProjector.Project(projectionTarget, locale)
+	legacy.errorID = result.ErrorID
+	if result.Resolution == apptransport.ResolutionMatched {
+		legacy.message = result.Presentation.Message
+		legacy.appCode = result.Presentation.Code.String()
+		legacy.retryable = result.Presentation.Retryable
 	}
 	return legacy
 }
 
+// localizedChatStreamError returns a safe projected message for every stream
+// failure. Diagnostic causes never reach the client, whether or not the error
+// has a registered catalog code.
 func (h *LLMHandler) localizedChatStreamError(c *gin.Context, err error) string {
-	if _, supported := gatewayApplicationError(err); !supported {
-		return err.Error()
-	}
 	return h.localizedProtocolError(c, err).message
-}
-
-func gatewayApplicationError(err error) (error, bool) {
-	if apperror.IsCode(err, llmerrors.AppCodeProviderTimeout) {
-		return err, true
-	}
-	if !isGatewayProviderTimeout(err) {
-		return err, false
-	}
-	return apperror.Wrap(
-		err,
-		llmerrors.AppCodeProviderTimeout,
-		apperror.WithOperation("gateway.protocol_error"),
-	), true
 }
 
 func isGatewayProviderTimeout(err error) bool {
@@ -110,6 +96,6 @@ func isGatewayProviderTimeout(err error) bool {
 }
 
 func normalizeGatewayApplicationError(err error) error {
-	appErr, _ := gatewayApplicationError(err)
+	appErr, _ := applicationErrorFor(err)
 	return appErr
 }

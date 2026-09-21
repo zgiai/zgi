@@ -100,6 +100,12 @@ message CatalogModel {
     string deprecation_reason = 34;
     string pricing_json = 35;
     string vendor = 36;
+    // provider_key / vendor_key are the normalized identity keys published by
+    // the Console catalog (mirrors zgi-console catalog.proto fields 37/38).
+    // Pre also derives them locally so the two sides match without a shared
+    // runtime service.
+    string provider_key = 37;
+    string vendor_key = 38;
 }
 
 message CatalogModelEndpoints {

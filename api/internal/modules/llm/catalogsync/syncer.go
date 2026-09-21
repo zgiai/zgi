@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -65,6 +66,9 @@ type Synchronizer struct {
 	reconnectDelay time.Duration
 	catalogLoaded  atomic.Bool
 	settings       *billingsettings.Store
+
+	reportMu   sync.RWMutex
+	lastReport *modelmeta.CatalogApplyReport
 }
 
 func NewSynchronizer(db *gorm.DB, grpcAddr string) *Synchronizer {
@@ -168,10 +172,12 @@ func (s *Synchronizer) connect(ctx context.Context) (catalogRPCClient, io.Closer
 		// requiring Console to publish an unrelated new version.
 		catalog := catalogFromResponse(resp)
 		service := modelmeta.NewService(s.db)
-		if err := service.ApplyPublishedCatalog(ctx, catalog); err != nil {
+		report, err := service.ApplyPublishedCatalogWithReport(ctx, catalog)
+		if err != nil {
 			_ = service.RecordPublishedCatalogSyncError(ctx, err.Error())
 			return nil, closer, nil, err
 		}
+		s.recordCatalogApplyReport(ctx, report)
 		s.applyBillingSettings(ctx, catalog)
 	}
 
@@ -244,14 +250,52 @@ func (s *Synchronizer) applyPublishedVersion(ctx context.Context, client catalog
 	catalog := catalogFromResponse(resp)
 
 	service := modelmeta.NewService(s.db)
-	if err := service.ApplyPublishedCatalog(ctx, catalog); err != nil {
+	report, err := service.ApplyPublishedCatalogWithReport(ctx, catalog)
+	if err != nil {
 		_ = service.RecordPublishedCatalogSyncError(ctx, err.Error())
 		return err
 	}
+	s.recordCatalogApplyReport(ctx, report)
 	s.applyBillingSettings(ctx, catalog)
 	s.catalogLoaded.Store(true)
 
 	return nil
+}
+
+// recordCatalogApplyReport keeps the most recent normalization report and
+// emits it so operational reconciliation can locate price/unit/currency/identity
+// diffs by model+provider.
+func (s *Synchronizer) recordCatalogApplyReport(ctx context.Context, report modelmeta.CatalogApplyReport) {
+	if s == nil {
+		return
+	}
+	s.reportMu.Lock()
+	s.lastReport = &report
+	s.reportMu.Unlock()
+
+	if report.Normalized == 0 && len(report.Models) == 0 {
+		return
+	}
+	logger.InfoContext(ctx, "Applied catalog snapshot normalization diff",
+		zap.Int64("version", report.Version),
+		zap.Int("normalized_models", report.Normalized),
+		zap.Int("diff_models", len(report.Models)),
+	)
+}
+
+// LastCatalogApplyReport returns the diff report from the most recently
+// applied catalog snapshot, or nil when no snapshot has been applied yet.
+func (s *Synchronizer) LastCatalogApplyReport() *modelmeta.CatalogApplyReport {
+	if s == nil {
+		return nil
+	}
+	s.reportMu.RLock()
+	defer s.reportMu.RUnlock()
+	if s.lastReport == nil {
+		return nil
+	}
+	report := *s.lastReport
+	return &report
 }
 
 // watchStartVersion forces the latest published catalog to be replayed once

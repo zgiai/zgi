@@ -302,40 +302,51 @@ func (s *llmGatewayServiceImpl) videoPredeductQuote(ctx context.Context, selecti
 	if costReq.Count <= 0 {
 		costReq.Count = 1
 	}
+	// The organization rate is only consulted for CNY pricing. A missing rate
+	// fails closed inside quoteVideoFromModelPricing; a USD price book does not
+	// require one.
 	rate := decimal.Zero
 	if s != nil && selection != nil {
-		rate = s.organizationUSDToCNYRate(ctx, selection.OrganizationID)
+		if loaded, err := s.organizationUSDToCNYRate(ctx, selection.OrganizationID); err == nil {
+			rate = loaded
+		}
 	}
-	quote, ok := quoteVideoFromModelPricing(selection, requestModel, costReq, rate)
-	if !ok || quote.TotalCredits <= 0 {
+	quote, err := quoteVideoFromModelPricing(selection, requestModel, costReq, rate)
+	if err != nil {
+		return PricingQuote{}, err
+	}
+	if quote.TotalCredits <= 0 {
 		return PricingQuote{}, fmt.Errorf("%w: video pricing is not configured", ErrPricingNotConfigured)
 	}
 	return quote, nil
 }
 
 // quoteVideoFromModelPricing derives the reservation from the selected model's
-// structured video rule.
-func quoteVideoFromModelPricing(selection *ProviderSelection, requestModel string, costReq modelpricing.VideoGenerationCostRequest, cnyPerUSD decimal.Decimal) (PricingQuote, bool) {
+// structured video rule. A CNY price book without a positive rate is
+// fail-closed.
+func quoteVideoFromModelPricing(selection *ProviderSelection, requestModel string, costReq modelpricing.VideoGenerationCostRequest, cnyPerUSD decimal.Decimal) (PricingQuote, error) {
 	if selection == nil || len(selection.Model.Pricing) == 0 {
-		return PricingQuote{}, false
+		return PricingQuote{}, fmt.Errorf("%w: video pricing is not configured", ErrPricingNotConfigured)
 	}
 	cost, present, err := modelpricing.ResolveVideoGenerationCost(json.RawMessage(selection.Model.Pricing), costReq)
 	if err != nil || !present || cost.SourceCost <= 0 {
-		return PricingQuote{}, false
+		return PricingQuote{}, fmt.Errorf("%w: video pricing is not configured", ErrPricingNotConfigured)
 	}
 	currency := strings.ToUpper(strings.TrimSpace(cost.Currency))
 	if currency == "" {
 		currency = strings.ToUpper(strings.TrimSpace(selection.Model.Currency))
 	}
+	// Explicit boundary: the video cost resolver projects legacy JSON as a
+	// float. Convert once here; settlement arithmetic below is decimal.
 	totalSource := decimal.NewFromFloat(cost.SourceCost)
 	totalUSD := totalSource
 	if currency == "CNY" {
 		if !cnyPerUSD.IsPositive() {
-			return PricingQuote{}, false
+			return PricingQuote{}, fmt.Errorf("%w: video CNY pricing requires a positive USD to CNY rate", ErrExchangeRateUnavailable)
 		}
 		totalUSD = totalSource.Div(cnyPerUSD)
 	} else if currency != "" && currency != "USD" {
-		return PricingQuote{}, false
+		return PricingQuote{}, fmt.Errorf("%w: unsupported video pricing currency %q", ErrPricingNotConfigured, currency)
 	}
 	modelName := strings.TrimSpace(requestModel)
 	if strings.TrimSpace(selection.Model.Model) != "" {
@@ -362,7 +373,7 @@ func quoteVideoFromModelPricing(selection *ProviderSelection, requestModel strin
 	if ruleID == "" {
 		ruleID = "model.video_generation"
 	}
-	return newOutputOnlyUSDQuote(totalUSD, PricingSourceUpstreamModelPrice, ruleID, UsageSourceRequestParameters, snapshot), true
+	return newOutputOnlyUSDQuote(totalUSD, PricingSourceUpstreamModelPrice, ruleID, UsageSourceRequestParameters, snapshot), nil
 }
 
 // videoMeteredFact declares the video metered identity used by the unified
@@ -1173,15 +1184,28 @@ func (s *llmGatewayServiceImpl) quoteVideoPricingForSelection(ctx context.Contex
 	priceUSD := rate
 	currency := strings.ToUpper(strings.TrimSpace(selection.Model.Currency))
 	if currency == "CNY" {
-		rateUSDToCNY := s.organizationUSDToCNYRate(ctx, selection.OrganizationID)
+		// CNY settlement needs the organization rate. A missing rate is
+		// fail-closed; it never falls back to a hard-coded 7.
+		rateUSDToCNY, rateErr := s.organizationUSDToCNYRate(ctx, selection.OrganizationID)
+		if rateErr != nil {
+			return PricingQuote{}, fmt.Errorf("%w: video CNY settlement requires an exchange rate: %v", ErrExchangeRateUnavailable, rateErr)
+		}
 		priceUSD = rate.Div(rateUSDToCNY)
 	}
 	totalUSD := decimal.Zero
 	usageSource := UsageSourceRequestParameters
 	videoTokens := videoPricingTokenCount(req, resp)
+	// The requested duration is only a reservation estimate. Settlement must
+	// never fall back to it: the upstream-reported actual duration is the only
+	// acceptable input for by-second pricing.
+	actualDurationSeconds := resp.VideoActualDurationSeconds()
 	durationSeconds := intFromAny(videoTaskAdditionalParam(req, "duration"))
 	if durationSeconds <= 0 {
 		durationSeconds = defaultVideoPredeductDurationSeconds
+	}
+	var snapshotDuration interface{} = durationSeconds
+	if actualDurationSeconds > 0 {
+		snapshotDuration = actualDurationSeconds
 	}
 	count := intFromAny(videoTaskAdditionalParam(req, "count"))
 	if count <= 0 {
@@ -1195,7 +1219,19 @@ func (s *llmGatewayServiceImpl) quoteVideoPricingForSelection(ctx context.Contex
 		totalUSD = tokenUSD(priceUSD, videoTokens)
 		usageSource = UsageSourceProviderUsage
 	case "second":
-		totalUSD = priceUSD.Mul(decimal.NewFromInt(int64(durationSeconds))).Mul(decimal.NewFromInt(int64(count)))
+		if actualDurationSeconds <= 0 {
+			// Fail closed without settling: the generated video exists but the
+			// upstream did not report how long it is, so there is no trustworthy
+			// amount to charge. The reservation stays for reconciliation.
+			return PricingQuote{}, fmt.Errorf("%w: upstream video duration is unavailable for by-second settlement", ErrBillingSettleFailed)
+		}
+		// The measured duration is not money. It is converted to exact decimal
+		// once here so the rate multiplication stays exact.
+		totalUSD = priceUSD.Mul(decimal.NewFromFloat(actualDurationSeconds)).Mul(decimal.NewFromInt(int64(count)))
+	case "task":
+		// Task-priced video is billed per task. The same count drives
+		// pre-deduct and settlement, so the reservation equals the charge.
+		totalUSD = priceUSD.Mul(decimal.NewFromInt(int64(count)))
 	default:
 		return PricingQuote{}, nil
 	}
@@ -1211,7 +1247,7 @@ func (s *llmGatewayServiceImpl) quoteVideoPricingForSelection(ctx context.Contex
 		"input_video":      inputVideo,
 		"pricing_mode":     pricingMode,
 		"video_tokens":     videoTokens,
-		"duration_seconds": durationSeconds,
+		"duration_seconds": snapshotDuration,
 		"count":            count,
 		"source_currency":  currency,
 	})
@@ -1223,6 +1259,11 @@ func videoPriceForSelection(selection *ProviderSelection, req *adapter.VideoTask
 		return decimal.Zero, "", false, "", false, nil
 	}
 	seconds := intFromAny(videoTaskAdditionalParam(req, "duration"))
+	if actual := resp.VideoActualDurationSeconds(); actual > 0 {
+		// Rate conditions may pin a duration; match against the upstream actual
+		// duration rather than the requested estimate.
+		seconds = int(actual)
+	}
 	if seconds <= 0 {
 		seconds = defaultVideoPredeductDurationSeconds
 	}
@@ -1240,6 +1281,8 @@ func videoPriceForSelection(selection *ProviderSelection, req *adapter.VideoTask
 	}
 	mode := cost.BillingUnit
 	var rate decimal.Decimal
+	// Explicit boundary: the unit price comes from legacy JSON as a float and
+	// is converted once per settlement mode; rate math below stays decimal.
 	switch mode {
 	case "second":
 		rate = decimal.NewFromFloat(cost.UnitPrice)
@@ -1315,9 +1358,9 @@ func videoPricingInputVideo(req *adapter.VideoTaskRequest, resp *adapter.VideoRe
 	return false
 }
 
-func (s *llmGatewayServiceImpl) organizationUSDToCNYRate(ctx context.Context, organizationID uuid.UUID) decimal.Decimal {
+func (s *llmGatewayServiceImpl) organizationUSDToCNYRate(ctx context.Context, organizationID uuid.UUID) (decimal.Decimal, error) {
 	if s == nil {
-		return decimal.NewFromInt(7)
+		return decimal.Zero, fmt.Errorf("%w: billing service is nil", ErrExchangeRateUnavailable)
 	}
 	return loadOrganizationUSDToCNYRate(ctx, s.db, organizationID)
 }

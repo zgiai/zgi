@@ -1,0 +1,760 @@
+{
+  "$schema": "zgi.apperror.catalog/1",
+  "version": 1,
+  "status": "frozen",
+  "envelope": {
+    "http_and_sse_payload": [
+      "code",
+      "message",
+      "params",
+      "retryable",
+      "error_id",
+      "request_id"
+    ],
+    "legacy_fields_preserved": [
+      "旧 numeric code",
+      "X-ZGI-App-Error-Code",
+      "SSE 事件名"
+    ],
+    "localization": [
+      "zh-Hans",
+      "en-US"
+    ],
+    "error_id": "在投影边界生成，写日志；前端可复制用于排查"
+  },
+  "errorinfo": {
+    "type": "google.rpc.ErrorInfo",
+    "reason": "等于 apperror.Code（domain.subject.reason）",
+    "domain": "zgi.billing | zgi.llm | zgi.video | zgi.image | zgi.music",
+    "metadata": [
+      "error_id",
+      "request_id",
+      "retryable",
+      "http_status",
+      "operation"
+    ],
+    "optional_details": [
+      "google.rpc.RequestInfo.request_id",
+      "google.rpc.LocalizedMessage"
+    ],
+    "note": "Console→Pre 走 gRPC status + ErrorInfo；body 保留 error_code 兼容；浏览器只看到 Pre 投影后的 code"
+  },
+  "grpc_status_mapping": [
+    {
+      "grpc": "INVALID_ARGUMENT",
+      "codes": [
+        "billing.request.invalid",
+        "llm.request.invalid",
+        "video.request.invalid",
+        "image.request.invalid"
+      ]
+    },
+    {
+      "grpc": "UNAUTHENTICATED",
+      "codes": [
+        "llm.api_key.invalid",
+        "llm.api_key.expired",
+        "llm.api_key.inactive"
+      ]
+    },
+    {
+      "grpc": "PERMISSION_DENIED",
+      "codes": [
+        "llm.model.forbidden"
+      ]
+    },
+    {
+      "grpc": "NOT_FOUND",
+      "codes": [
+        "billing.deduction.not_found",
+        "llm.model.not_found",
+        "video.task.not_found",
+        "image.task.not_found",
+        "music.task.not_found"
+      ]
+    },
+    {
+      "grpc": "ALREADY_EXISTS",
+      "codes": [
+        "image.task.conflict",
+        "music.task.conflict"
+      ]
+    },
+    {
+      "grpc": "FAILED_PRECONDITION",
+      "codes": [
+        "billing.model.pricing_not_configured",
+        "billing.deduction.mismatch",
+        "billing.deduction.expired",
+        "billing.actual_exceeds_reserve",
+        "music.task.not_deletable"
+      ]
+    },
+    {
+      "grpc": "RESOURCE_EXHAUSTED",
+      "codes": [
+        "billing.organization.balance_insufficient",
+        "billing.private_channel.balance_insufficient",
+        "billing.workspace.quota_insufficient",
+        "llm.quota.exceeded",
+        "llm.balance.insufficient",
+        "llm.provider.rate_limited",
+        "llm.rate_limit.exceeded"
+      ]
+    },
+    {
+      "grpc": "DEADLINE_EXCEEDED",
+      "codes": [
+        "llm.provider.timeout",
+        "video.upstream.timeout",
+        "image.task.timeout"
+      ]
+    },
+    {
+      "grpc": "UNAVAILABLE",
+      "codes": [
+        "billing.exchange_rate.unavailable",
+        "llm.provider.none_available",
+        "llm.provider.unavailable",
+        "llm.channel.private_unavailable",
+        "llm.invocation.failed",
+        "llm.provider.auth_failed",
+        "video.task.failed",
+        "video.runtime.unavailable",
+        "image.upstream.failed",
+        "music.model.unavailable"
+      ]
+    },
+    {
+      "grpc": "INTERNAL",
+      "codes": [
+        "billing.prededuct.failed",
+        "billing.settle.failed",
+        "video.asset.save_failed",
+        "image.asset.save_failed",
+        "image.runtime.failed",
+        "music.task.failed"
+      ]
+    }
+  ],
+  "user_visible_classes": [
+    {
+      "class": "余额/额度不足",
+      "codes": [
+        "billing.organization.balance_insufficient",
+        "billing.private_channel.balance_insufficient",
+        "billing.workspace.quota_insufficient",
+        "llm.quota.exceeded"
+      ],
+      "action": "充值 / 充值渠道 / 提升工作区额度 / 更换 API key",
+      "retryable": false
+    },
+    {
+      "class": "模型错误",
+      "codes": [
+        "llm.model.not_found",
+        "llm.model.forbidden",
+        "billing.model.pricing_not_configured",
+        "llm.request.invalid"
+      ],
+      "action": "更换模型 / 申请权限 / 联系管理员配价",
+      "retryable": false
+    },
+    {
+      "class": "推理失败",
+      "codes": [
+        "llm.provider.none_available",
+        "llm.provider.unavailable",
+        "llm.channel.private_unavailable",
+        "llm.invocation.failed",
+        "llm.provider.timeout",
+        "llm.provider.auth_failed",
+        "llm.provider.rate_limited",
+        "video.task.failed",
+        "video.upstream.timeout",
+        "video.runtime.unavailable",
+        "image.upstream.failed",
+        "image.task.timeout"
+      ],
+      "action": "重试 / 稍后重试 / 更换模型 / 联系管理员",
+      "retryable": true
+    },
+    {
+      "class": "系统计费失败",
+      "codes": [
+        "billing.prededuct.failed",
+        "billing.settle.failed",
+        "billing.exchange_rate.unavailable",
+        "video.asset.save_failed",
+        "image.asset.save_failed",
+        "image.runtime.failed",
+        "music.task.failed"
+      ],
+      "action": "重试 / 联系管理员（附 error_id）",
+      "retryable": true
+    }
+  ],
+  "compatibility": {
+    "new_logs_use_new_codes_only": true,
+    "old_logs_untouched_display_only": true,
+    "new_tables": false,
+    "reused_columns": [
+      "llm_usage_bills.error_code",
+      "llm_usage_bills.error_message"
+    ]
+  },
+  "codes": [
+    {
+      "code": "billing.organization.balance_insufficient",
+      "status": "new",
+      "category": "quota",
+      "http": 402,
+      "retryable": false,
+      "domain": "zgi.billing",
+      "grpc": "RESOURCE_EXHAUSTED",
+      "en": "Your organization balance is insufficient. Add funds or contact an administrator.",
+      "zh": "组织账户余额不足，请充值或联系管理员。",
+      "legacy": "app.workflow:207011 / app.workflow:207001 / llm.domain:40301"
+    },
+    {
+      "code": "billing.private_channel.balance_insufficient",
+      "status": "new",
+      "category": "quota",
+      "http": 402,
+      "retryable": false,
+      "domain": "zgi.billing",
+      "grpc": "RESOURCE_EXHAUSTED",
+      "en": "The private channel balance is insufficient. Recharge the channel or choose another model.",
+      "zh": "私有渠道余额不足，请充值渠道或更换模型。",
+      "legacy": "app.workflow:207013"
+    },
+    {
+      "code": "billing.workspace.quota_insufficient",
+      "status": "new",
+      "category": "quota",
+      "http": 402,
+      "retryable": false,
+      "domain": "zgi.billing",
+      "grpc": "RESOURCE_EXHAUSTED",
+      "en": "This workspace has reached its quota. Review the workspace quota or contact an administrator.",
+      "zh": "工作空间额度已用完，请检查额度或联系管理员。",
+      "legacy": "app.workflow:207012"
+    },
+    {
+      "code": "billing.model.pricing_not_configured",
+      "status": "new",
+      "category": "configuration",
+      "http": 402,
+      "retryable": false,
+      "domain": "zgi.billing",
+      "grpc": "FAILED_PRECONDITION",
+      "en": "Pricing is not configured for this model. An administrator must configure it in model management or billing policy.",
+      "zh": "模型未配置价格，请管理员在模型管理或计费策略中配置价格。",
+      "legacy": "app.workflow:207014"
+    },
+    {
+      "code": "billing.exchange_rate.unavailable",
+      "status": "new",
+      "category": "configuration",
+      "http": 503,
+      "retryable": false,
+      "domain": "zgi.billing",
+      "grpc": "UNAVAILABLE",
+      "en": "The exchange rate is unavailable, so this request cannot be billed. Contact an administrator.",
+      "zh": "汇率不可用，无法完成本次计费，请联系管理员。",
+      "legacy": "new"
+    },
+    {
+      "code": "billing.prededuct.failed",
+      "status": "new",
+      "category": "internal",
+      "http": 500,
+      "retryable": true,
+      "domain": "zgi.billing",
+      "grpc": "INTERNAL",
+      "en": "The request could not be reserved for billing. Try again; if it continues, contact an administrator.",
+      "zh": "请求预扣费失败，请重试；如持续发生，请联系管理员。",
+      "legacy": "console:UNKNOWN_ERROR / free-text prededuct"
+    },
+    {
+      "code": "billing.settle.failed",
+      "status": "new",
+      "category": "internal",
+      "http": 500,
+      "retryable": true,
+      "domain": "zgi.billing",
+      "grpc": "INTERNAL",
+      "en": "The request completed but billing settlement failed. It will be reconciled automatically; contact an administrator if it persists.",
+      "zh": "请求已完成但计费结算失败，系统将自动对账；如持续发生，请联系管理员。",
+      "legacy": "new"
+    },
+    {
+      "code": "billing.request.invalid",
+      "status": "new",
+      "category": "validation",
+      "http": 400,
+      "retryable": false,
+      "domain": "zgi.billing",
+      "grpc": "INVALID_ARGUMENT",
+      "en": "The billing request is invalid.",
+      "zh": "计费请求无效。",
+      "legacy": "console:INVALID_REQUEST / ATTEMPT_ID_REQUIRED / DEDUCTION_ID_REQUIRED / DEDUCTION_ID_INVALID"
+    },
+    {
+      "code": "billing.deduction.not_found",
+      "status": "new",
+      "category": "not_found",
+      "http": 404,
+      "retryable": false,
+      "domain": "zgi.billing",
+      "grpc": "NOT_FOUND",
+      "en": "The billing reservation was not found.",
+      "zh": "未找到计费预扣记录。",
+      "legacy": "console:ErrDeductionNotFound"
+    },
+    {
+      "code": "billing.deduction.mismatch",
+      "status": "new",
+      "category": "conflict",
+      "http": 409,
+      "retryable": false,
+      "domain": "zgi.billing",
+      "grpc": "FAILED_PRECONDITION",
+      "en": "The billing reservation does not match this request.",
+      "zh": "计费预扣与当前请求不匹配。",
+      "legacy": "console:ErrDeductionMismatch"
+    },
+    {
+      "code": "billing.deduction.expired",
+      "status": "new",
+      "category": "conflict",
+      "http": 409,
+      "retryable": false,
+      "domain": "zgi.billing",
+      "grpc": "FAILED_PRECONDITION",
+      "en": "The billing reservation expired. Retry the request to create a new reservation.",
+      "zh": "计费预扣已过期，请重试以创建新的预扣。",
+      "legacy": "console:ErrDeductionExpired"
+    },
+    {
+      "code": "billing.actual_exceeds_reserve",
+      "status": "new",
+      "category": "conflict",
+      "http": 409,
+      "retryable": false,
+      "domain": "zgi.billing",
+      "grpc": "FAILED_PRECONDITION",
+      "en": "The actual usage exceeded the reserved amount.",
+      "zh": "实际用量超过预留额度。",
+      "legacy": "console:ErrActualExceedsReserve"
+    },
+    {
+      "code": "llm.model.not_found",
+      "status": "existing",
+      "category": "not_found",
+      "http": 404,
+      "retryable": false,
+      "domain": "zgi.llm",
+      "grpc": "NOT_FOUND",
+      "en": "The selected model was not found. Choose an available model.",
+      "zh": "未找到所选大模型，请选择可用模型。",
+      "legacy": "llm.gateway:40401 / llm.domain:40401"
+    },
+    {
+      "code": "llm.model.forbidden",
+      "status": "existing",
+      "category": "authorization",
+      "http": 403,
+      "retryable": false,
+      "domain": "zgi.llm",
+      "grpc": "PERMISSION_DENIED",
+      "en": "You do not have access to the selected model. Choose another model or contact an administrator.",
+      "zh": "你没有使用所选大模型的权限，请更换模型或联系管理员。",
+      "legacy": "llm.gateway:40303 / llm.domain:40302"
+    },
+    {
+      "code": "llm.request.invalid",
+      "status": "existing",
+      "category": "validation",
+      "http": 400,
+      "retryable": false,
+      "domain": "zgi.llm",
+      "grpc": "INVALID_ARGUMENT",
+      "en": "The model request is invalid. Check the request and try again.",
+      "zh": "大模型请求内容不正确，请检查后重试。",
+      "legacy": "llm.gateway:40001 / llm.domain:40001"
+    },
+    {
+      "code": "llm.api_key.invalid",
+      "status": "existing",
+      "category": "authentication",
+      "http": 401,
+      "retryable": false,
+      "domain": "zgi.llm",
+      "grpc": "UNAUTHENTICATED",
+      "en": "The API key is invalid. Check the key and try again.",
+      "zh": "API 密钥无效，请检查密钥后重试。",
+      "legacy": "llm.gateway:40101 / llm.domain:40101"
+    },
+    {
+      "code": "llm.api_key.expired",
+      "status": "existing",
+      "category": "authentication",
+      "http": 401,
+      "retryable": false,
+      "domain": "zgi.llm",
+      "grpc": "UNAUTHENTICATED",
+      "en": "The API key has expired. Create or select an active key.",
+      "zh": "API 密钥已过期，请创建或选择有效密钥。",
+      "legacy": "llm.gateway:40102 / llm.domain:40103"
+    },
+    {
+      "code": "llm.api_key.inactive",
+      "status": "existing",
+      "category": "authentication",
+      "http": 401,
+      "retryable": false,
+      "domain": "zgi.llm",
+      "grpc": "UNAUTHENTICATED",
+      "en": "The API key is disabled. Enable it or use another key.",
+      "zh": "API 密钥已停用，请启用后重试或更换密钥。",
+      "legacy": "llm.gateway:40103 / llm.domain:40102"
+    },
+    {
+      "code": "llm.quota.exceeded",
+      "status": "existing",
+      "category": "quota",
+      "http": 429,
+      "retryable": false,
+      "domain": "zgi.llm",
+      "grpc": "RESOURCE_EXHAUSTED",
+      "en": "The API key quota has been reached. Review the quota or use another key.",
+      "zh": "API 密钥额度已用完，请检查额度或更换密钥。",
+      "legacy": "existing"
+    },
+    {
+      "code": "llm.balance.insufficient",
+      "status": "existing",
+      "category": "quota",
+      "http": 403,
+      "retryable": false,
+      "domain": "zgi.llm",
+      "grpc": "RESOURCE_EXHAUSTED",
+      "en": "The account balance is insufficient. Add funds or contact an administrator.",
+      "zh": "账户余额不足，请充值或联系管理员。",
+      "legacy": "llm.domain:40301"
+    },
+    {
+      "code": "llm.provider.none_available",
+      "status": "existing",
+      "category": "upstream",
+      "http": 503,
+      "retryable": true,
+      "domain": "zgi.llm",
+      "grpc": "UNAVAILABLE",
+      "en": "No model provider is currently available. Try another model or contact an administrator.",
+      "zh": "当前没有可用的大模型服务商，请更换模型或联系管理员。",
+      "legacy": "llm.domain:40506"
+    },
+    {
+      "code": "llm.provider.unavailable",
+      "status": "existing",
+      "category": "upstream",
+      "http": 503,
+      "retryable": true,
+      "domain": "zgi.llm",
+      "grpc": "UNAVAILABLE",
+      "en": "The model service is temporarily unavailable. Try again later or choose another model.",
+      "zh": "大模型服务暂时不可用，请稍后重试或选择其他模型。",
+      "legacy": "llm.gateway:50301 / llm.domain:40504"
+    },
+    {
+      "code": "llm.channel.private_unavailable",
+      "status": "existing",
+      "category": "upstream",
+      "http": 502,
+      "retryable": true,
+      "domain": "zgi.llm",
+      "grpc": "UNAVAILABLE",
+      "en": "The configured private model channel is unavailable. Try another model or contact an administrator.",
+      "zh": "已配置的私有大模型渠道暂不可用，请更换模型或联系管理员。",
+      "legacy": "llm.domain:40507 / app.workflow:207015"
+    },
+    {
+      "code": "llm.invocation.failed",
+      "status": "existing",
+      "category": "upstream",
+      "http": 502,
+      "retryable": true,
+      "domain": "zgi.llm",
+      "grpc": "UNAVAILABLE",
+      "en": "The model request could not be completed. Try again or choose another model.",
+      "zh": "大模型调用未完成，请重试或选择其他模型。",
+      "legacy": "llm.domain:40505"
+    },
+    {
+      "code": "llm.provider.timeout",
+      "status": "existing",
+      "category": "upstream",
+      "http": 504,
+      "retryable": true,
+      "domain": "zgi.llm",
+      "grpc": "DEADLINE_EXCEEDED",
+      "en": "The model service took too long to respond. Try again or choose another model.",
+      "zh": "大模型服务响应超时，请重试或选择其他模型。",
+      "legacy": "llm.domain:40503 / llm.openai:upstream_timeout"
+    },
+    {
+      "code": "llm.provider.auth_failed",
+      "status": "existing",
+      "category": "upstream",
+      "http": 502,
+      "retryable": false,
+      "domain": "zgi.llm",
+      "grpc": "UNAVAILABLE",
+      "en": "The model provider rejected its credentials. Contact an administrator.",
+      "zh": "大模型服务商凭据校验失败，请联系管理员。",
+      "legacy": "llm.domain:40501"
+    },
+    {
+      "code": "llm.provider.rate_limited",
+      "status": "existing",
+      "category": "rate_limit",
+      "http": 429,
+      "retryable": true,
+      "domain": "zgi.llm",
+      "grpc": "RESOURCE_EXHAUSTED",
+      "en": "The model service is busy. Wait a moment and try again.",
+      "zh": "大模型服务当前繁忙，请稍后重试。",
+      "legacy": "llm.domain:40502"
+    },
+    {
+      "code": "llm.rate_limit.exceeded",
+      "status": "existing",
+      "category": "rate_limit",
+      "http": 429,
+      "retryable": true,
+      "domain": "zgi.llm",
+      "grpc": "RESOURCE_EXHAUSTED",
+      "en": "Too many model requests were sent. Wait a moment and try again.",
+      "zh": "大模型请求过于频繁，请稍后重试。",
+      "legacy": "llm.domain:40901"
+    },
+    {
+      "code": "video.request.invalid",
+      "status": "new",
+      "category": "validation",
+      "http": 400,
+      "retryable": false,
+      "domain": "zgi.video",
+      "grpc": "INVALID_ARGUMENT",
+      "en": "The video request is invalid. Check your input and try again.",
+      "zh": "视频请求内容不正确，请检查后重试。",
+      "legacy": "video.gateway:PROMPT_REQUIRED / PROMPT_TOO_LONG / MODEL_NOT_AVAILABLE / INVALID_CURSOR / SEARCH_TOO_LONG / BILLING_CONTEXT_REQUIRED"
+    },
+    {
+      "code": "video.task.not_found",
+      "status": "new",
+      "category": "not_found",
+      "http": 404,
+      "retryable": false,
+      "domain": "zgi.video",
+      "grpc": "NOT_FOUND",
+      "en": "The video generation task was not found or is no longer available.",
+      "zh": "未找到视频生成任务，它可能已不存在。",
+      "legacy": "video.gateway:VIDEO_TASK_NOT_FOUND"
+    },
+    {
+      "code": "video.task.failed",
+      "status": "new",
+      "category": "upstream",
+      "http": 502,
+      "retryable": true,
+      "domain": "zgi.video",
+      "grpc": "UNAVAILABLE",
+      "en": "The video generation task failed. Try again or choose another model.",
+      "zh": "视频生成任务失败，请重试或更换模型。",
+      "legacy": "video.gateway:UPSTREAM_FAILED / VIDEO_RUNTIME_FAILED"
+    },
+    {
+      "code": "video.upstream.timeout",
+      "status": "new",
+      "category": "upstream",
+      "http": 504,
+      "retryable": true,
+      "domain": "zgi.video",
+      "grpc": "DEADLINE_EXCEEDED",
+      "en": "The video model service timed out. Try again or choose another model.",
+      "zh": "视频模型服务响应超时，请重试或更换模型。",
+      "legacy": "new"
+    },
+    {
+      "code": "video.runtime.unavailable",
+      "status": "new",
+      "category": "upstream",
+      "http": 503,
+      "retryable": true,
+      "domain": "zgi.video",
+      "grpc": "UNAVAILABLE",
+      "en": "The video runtime is temporarily unavailable. Try again later.",
+      "zh": "视频运行时暂时不可用，请稍后重试。",
+      "legacy": "video.gateway:VIDEO_RUNTIME_UNAVAILABLE"
+    },
+    {
+      "code": "video.asset.save_failed",
+      "status": "new",
+      "category": "internal",
+      "http": 502,
+      "retryable": true,
+      "domain": "zgi.video",
+      "grpc": "INTERNAL",
+      "en": "The generated video could not be saved. Try again.",
+      "zh": "生成视频保存失败，请重试。",
+      "legacy": "new（替代 video_transfer_error / poster_generation_error 原始文本）"
+    },
+    {
+      "code": "image.request.invalid",
+      "status": "new",
+      "category": "validation",
+      "http": 400,
+      "retryable": false,
+      "domain": "zgi.image",
+      "grpc": "INVALID_ARGUMENT",
+      "en": "The image request is invalid. Check your input and try again.",
+      "zh": "图片请求内容不正确，请检查后重试。",
+      "legacy": "image.gateway:PROMPT_REQUIRED / MODEL_NOT_AVAILABLE / UNSUPPORTED_SIZE"
+    },
+    {
+      "code": "image.task.not_found",
+      "status": "existing",
+      "category": "not_found",
+      "http": 404,
+      "retryable": false,
+      "domain": "zgi.image",
+      "grpc": "NOT_FOUND",
+      "en": "The image generation task was not found or is no longer available.",
+      "zh": "未找到图片生成任务，它可能已不存在。",
+      "legacy": "existing"
+    },
+    {
+      "code": "image.task.conflict",
+      "status": "existing",
+      "category": "conflict",
+      "http": 409,
+      "retryable": false,
+      "domain": "zgi.image",
+      "grpc": "ALREADY_EXISTS",
+      "en": "Too many image generation tasks are running. Wait for one to finish and try again.",
+      "zh": "当前图片生成任务过多，请等待已有任务结束后重试。",
+      "legacy": "existing"
+    },
+    {
+      "code": "image.task.timeout",
+      "status": "new",
+      "category": "upstream",
+      "http": 504,
+      "retryable": true,
+      "domain": "zgi.image",
+      "grpc": "DEADLINE_EXCEEDED",
+      "en": "The image generation task timed out. Try again.",
+      "zh": "图片生成任务超时，请重试。",
+      "legacy": "image.gateway:IMAGE_TASK_TIMEOUT（原返回 400）"
+    },
+    {
+      "code": "image.upstream.failed",
+      "status": "new",
+      "category": "upstream",
+      "http": 502,
+      "retryable": true,
+      "domain": "zgi.image",
+      "grpc": "UNAVAILABLE",
+      "en": "The image model service failed. Try again or choose another model.",
+      "zh": "图片模型服务调用失败，请重试或更换模型。",
+      "legacy": "image.gateway:UPSTREAM_FAILED"
+    },
+    {
+      "code": "image.asset.save_failed",
+      "status": "new",
+      "category": "internal",
+      "http": 502,
+      "retryable": true,
+      "domain": "zgi.image",
+      "grpc": "INTERNAL",
+      "en": "The generated image could not be saved. Try again.",
+      "zh": "生成图片保存失败，请重试。",
+      "legacy": "image.gateway:IMAGE_SAVE_FAILED"
+    },
+    {
+      "code": "image.runtime.failed",
+      "status": "new",
+      "category": "internal",
+      "http": 500,
+      "retryable": true,
+      "domain": "zgi.image",
+      "grpc": "INTERNAL",
+      "en": "The image service encountered a problem. Try again later.",
+      "zh": "图片服务出现问题，请稍后重试。",
+      "legacy": "image.gateway:IMAGE_RUNTIME_FAILED（原 502）"
+    },
+    {
+      "code": "music.task.not_found",
+      "status": "new",
+      "category": "not_found",
+      "http": 404,
+      "retryable": false,
+      "domain": "zgi.music",
+      "grpc": "NOT_FOUND",
+      "en": "The music task was not found.",
+      "zh": "未找到音乐任务。",
+      "legacy": "music.gateway:TASK_NOT_FOUND"
+    },
+    {
+      "code": "music.task.conflict",
+      "status": "new",
+      "category": "conflict",
+      "http": 409,
+      "retryable": false,
+      "domain": "zgi.music",
+      "grpc": "ALREADY_EXISTS",
+      "en": "A music task with this request ID already exists.",
+      "zh": "该请求 ID 的音乐任务已存在。",
+      "legacy": "music.gateway:TASK_CONFLICT"
+    },
+    {
+      "code": "music.model.unavailable",
+      "status": "new",
+      "category": "upstream",
+      "http": 503,
+      "retryable": false,
+      "domain": "zgi.music",
+      "grpc": "UNAVAILABLE",
+      "en": "The music model is unavailable. Choose another model.",
+      "zh": "音乐模型不可用，请更换模型。",
+      "legacy": "music.gateway:MODEL_UNAVAILABLE（原 400）"
+    },
+    {
+      "code": "music.task.failed",
+      "status": "new",
+      "category": "internal",
+      "http": 500,
+      "retryable": true,
+      "domain": "zgi.music",
+      "grpc": "INTERNAL",
+      "en": "The music task could not be processed. Try again later.",
+      "zh": "音乐任务处理失败，请稍后重试。",
+      "legacy": "music.gateway:MUSIC_TASK_FAILED / queue_unavailable / generation_failed / delivery_failed"
+    },
+    {
+      "code": "music.task.not_deletable",
+      "status": "existing",
+      "category": "conflict",
+      "http": 409,
+      "retryable": false,
+      "domain": "zgi.music",
+      "grpc": "FAILED_PRECONDITION",
+      "en": "This music task can be deleted after generation completes or fails.",
+      "zh": "音乐生成完成或失败后才能删除该任务。",
+      "legacy": "existing"
+    }
+  ]
+}

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
@@ -80,9 +81,9 @@ func TestGRPCSettleQuota(t *testing.T) {
 		PromptTokens:      100,
 		CompletionTokens:  50,
 		TotalTokens:       150,
-		InputCost:         0.001,
-		OutputCost:        0.002,
-		TotalCost:         0.003,
+		InputCost:         decimal.RequireFromString("0.001"),
+		OutputCost:        decimal.RequireFromString("0.002"),
+		TotalCost:         decimal.RequireFromString("0.003"),
 		ModelID:           uuid.New().String(),
 		ModelName:         "gpt-4",
 		ProviderID:        uuid.New().String(),

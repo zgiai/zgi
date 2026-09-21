@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
-	"math"
 	"strings"
 	"time"
 
@@ -151,9 +150,9 @@ func (s *RemoteBilling) QuotePlatformTokenPricing(
 		InputCredits:      resp.InputCredits,
 		OutputCredits:     resp.OutputCredits,
 		TotalCredits:      resp.TotalCredits,
-		InputUSD:          decimal.NewFromFloat(resp.InputUSD),
-		OutputUSD:         decimal.NewFromFloat(resp.OutputUSD),
-		TotalUSD:          decimal.NewFromFloat(resp.TotalUSD),
+		InputUSD:          resp.InputUSD,
+		OutputUSD:         resp.OutputUSD,
+		TotalUSD:          resp.TotalUSD,
 		PricingSource:     PricingSourceUpstreamModelPrice,
 		UsageSource:       UsageSourceEstimatedUsage,
 		ReservationPolicy: reservationPolicyAuthoritativeQuoteV1,
@@ -173,26 +172,26 @@ func (s *RemoteBilling) QuotePlatformTokenPricing(
 			"input_credits":                  resp.InputCredits,
 			"output_credits":                 resp.OutputCredits,
 			"total_credits":                  resp.TotalCredits,
-			"input_usd":                      resp.InputUSD,
-			"output_usd":                     resp.OutputUSD,
-			"total_usd":                      resp.TotalUSD,
+			"input_usd":                      resp.InputUSD.String(),
+			"output_usd":                     resp.OutputUSD.String(),
+			"total_usd":                      resp.TotalUSD.String(),
 			"input_price_usd_per_1m_tokens":  inputPrice.String(),
 			"output_price_usd_per_1m_tokens": outputPrice.String(),
 		}),
 	}, nil
 }
 
-func deriveAuthoritativeTokenPrice(costUSD float64, tokenCount int) (decimal.Decimal, bool, error) {
-	if tokenCount < 0 || costUSD < 0 || math.IsNaN(costUSD) || math.IsInf(costUSD, 0) {
+func deriveAuthoritativeTokenPrice(costUSD decimal.Decimal, tokenCount int) (decimal.Decimal, bool, error) {
+	if tokenCount < 0 || costUSD.IsNegative() {
 		return decimal.Zero, false, fmt.Errorf("invalid authoritative token cost")
 	}
 	if tokenCount == 0 {
-		if costUSD != 0 {
+		if !costUSD.IsZero() {
 			return decimal.Zero, false, fmt.Errorf("non-zero cost without tokens")
 		}
 		return decimal.Zero, false, nil
 	}
-	price := decimal.NewFromFloat(costUSD).
+	price := costUSD.
 		Mul(decimal.NewFromInt(1_000_000)).
 		Div(decimal.NewFromInt(int64(tokenCount)))
 	return price, true, nil
@@ -253,6 +252,9 @@ func (s *RemoteBilling) preDeductViaGRPC(ctx context.Context, bc *BillingContext
 		if rollbackErr := s.rollbackLocalSubjectQuotaAndMarkFailed(ctx, bc, "PREDEDUCT_FAILED", err.Error()); rollbackErr != nil {
 			return fmt.Errorf("grpc pre-deduct failed: %v (local subject rollback failed: %w)", err, rollbackErr)
 		}
+		if mapped, ok := mapBillingRPCErrorCode(billingRPCErrorReason(err), ""); ok {
+			return mapped
+		}
 		return fmt.Errorf("grpc pre-deduct failed: %w", err)
 	}
 
@@ -260,16 +262,10 @@ func (s *RemoteBilling) preDeductViaGRPC(ctx context.Context, bc *BillingContext
 		if rollbackErr := s.rollbackLocalSubjectQuotaAndMarkFailed(ctx, bc, "PREDEDUCT_FAILED", resp.ErrorMessage); rollbackErr != nil {
 			return fmt.Errorf("pre-deduct failed: %s (local subject rollback failed: %w)", resp.ErrorMessage, rollbackErr)
 		}
-		switch resp.ErrorCode {
-		case "INSUFFICIENT_CREDITS":
-			return ErrInsufficientBalance
-		case "ORG_NOT_FOUND":
-			return ErrBalanceNotFound
-		case "INVALID_REQUEST":
-			return ErrInvalidRequest
-		default:
-			return fmt.Errorf("pre-deduct failed: %s", resp.ErrorMessage)
+		if mapped, ok := mapBillingRPCErrorCode(resp.ErrorCode, resp.ErrorMessage); ok {
+			return mapped
 		}
+		return fmt.Errorf("pre-deduct failed: %s", resp.ErrorMessage)
 	}
 
 	if err := s.finalizeRemotePreDeductBinding(ctx, bc, resp.DeductionID); err != nil {
@@ -404,9 +400,9 @@ func (s *RemoteBilling) settleViaGRPC(ctx context.Context, bc *BillingContext) e
 		PromptTokens:      bc.PromptTokens,
 		CompletionTokens:  bc.CompletionTokens,
 		TotalTokens:       bc.TotalTokens,
-		InputCost:         bc.InputCost.InexactFloat64(),
-		OutputCost:        bc.OutputCost.InexactFloat64(),
-		TotalCost:         bc.TotalCost.InexactFloat64(),
+		InputCost:         bc.InputCost,
+		OutputCost:        bc.OutputCost,
+		TotalCost:         bc.TotalCost,
 		ModelID:           bc.ModelID.String(),
 		ModelName:         bc.ModelName,
 		ProviderID:        bc.ProviderID.String(),
@@ -766,7 +762,9 @@ func (s *RemoteBilling) mirrorQueriedSettlement(ctx context.Context, attempt *Bi
 		s.localService.enrichBillingContextCatalogFields(ctx, bc)
 		settlement := settlementFromQueryResult(result)
 		applyPlatformSettlementTokenUsage(bc, settlement)
-		applyPlatformSettlementCostSnapshot(bc, settlement)
+		if err := applyPlatformSettlementCostSnapshot(bc, settlement); err != nil {
+			return fmt.Errorf("apply platform settlement currency snapshot: %w", err)
+		}
 		s.localService.applyRouteAttributionWithLookup(ctx, bc)
 		finalizeMediaTimingSnapshot(bc)
 		if err := s.localService.settleSubjectQuota(ctx, tx, bc); err != nil {
@@ -1519,32 +1517,66 @@ func (s *RemoteBilling) preDeductMeteredViaGRPC(ctx context.Context, bc *Billing
 		if rollbackErr := s.rollbackLocalSubjectQuotaAndMarkFailed(ctx, bc, "PREDEDUCT_FAILED", err.Error()); rollbackErr != nil {
 			return fmt.Errorf("grpc metered pre-deduct failed: %v (local subject rollback failed: %w)", err, rollbackErr)
 		}
+		if mapped, ok := mapBillingRPCErrorCode(billingRPCErrorReason(err), ""); ok {
+			return mapped
+		}
 		return fmt.Errorf("grpc metered pre-deduct failed: %w", err)
 	}
 	if !resp.Success {
 		if rollbackErr := s.rollbackLocalSubjectQuotaAndMarkFailed(ctx, bc, "PREDEDUCT_FAILED", resp.ErrorMessage); rollbackErr != nil {
 			return fmt.Errorf("metered pre-deduct failed: %s (local subject rollback failed: %w)", resp.ErrorMessage, rollbackErr)
 		}
-		return mapMeteredPreDeductError(resp.ErrorMessage)
+		return mapMeteredPreDeductError(resp.ErrorCode, resp.ErrorMessage)
 	}
 	return s.finalizeRemotePreDeductBinding(ctx, bc, resp.DeductionID)
 }
 
-// mapMeteredPreDeductError mirrors the legacy PreDeductQuota error-code map.
-// PreDeductMeteredUsage reports failures through error_message only, so the
-// sentinels are detected by substring; anything else stays a generic error.
-func mapMeteredPreDeductError(message string) error {
-	lowered := strings.ToLower(strings.TrimSpace(message))
+// mapMeteredPreDeductError maps a metered pre-deduct failure to a Pre sentinel,
+// preferring the stable error_code over the free-text message.
+func mapMeteredPreDeductError(errorCode, message string) error {
+	if mapped, ok := mapBillingRPCErrorCode(errorCode, message); ok {
+		return mapped
+	}
+	return fmt.Errorf("pre-deduct failed: %s", message)
+}
+
+// mapBillingRPCErrorCode maps a Console billing failure to a Pre sentinel. It
+// prefers the stable error_code / ErrorInfo.Reason and keeps a temporary
+// substring compatibility branch for Console builds that only populate the
+// free-text message. T21 removes the compatibility branch once every Console
+// failure carries a stable code.
+func mapBillingRPCErrorCode(errorCode, errorMessage string) (error, bool) {
+	switch strings.TrimSpace(errorCode) {
+	case "billing.organization.balance_insufficient",
+		"billing.private_channel.balance_insufficient",
+		"llm.balance.insufficient",
+		"INSUFFICIENT_CREDITS":
+		return ErrInsufficientBalance, true
+	case "billing.workspace.quota_insufficient",
+		"llm.quota.exceeded":
+		return ErrInsufficientQuota, true
+	case "billing.model.pricing_not_configured":
+		return ErrPricingNotConfigured, true
+	case "billing.prededuct.failed":
+		return ErrBillingPreDeductFailed, true
+	case "billing.deduction.not_found", "ORG_NOT_FOUND":
+		return ErrBalanceNotFound, true
+	case "billing.request.invalid", "INVALID_REQUEST":
+		return ErrInvalidRequest, true
+	}
+
+	// Temporary compatibility branch (T21 removal). Older Console builds only
+	// populated error_message, so the sentinels are detected by substring.
+	lowered := strings.ToLower(strings.TrimSpace(errorMessage))
 	switch {
 	case strings.Contains(lowered, "insufficient"):
-		return ErrInsufficientBalance
+		return ErrInsufficientBalance, true
 	case strings.Contains(lowered, "organization") && strings.Contains(lowered, "not found"):
-		return ErrBalanceNotFound
+		return ErrBalanceNotFound, true
 	case strings.Contains(lowered, "invalid"):
-		return ErrInvalidRequest
-	default:
-		return fmt.Errorf("pre-deduct failed: %s", message)
+		return ErrInvalidRequest, true
 	}
+	return nil, false
 }
 
 func (s *RemoteBilling) preDeductLocalSubjectQuota(ctx context.Context, bc *BillingContext) error {

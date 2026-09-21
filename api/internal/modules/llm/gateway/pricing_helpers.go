@@ -155,6 +155,12 @@ func (s *llmGatewayServiceImpl) quoteTokenPricingForSettlementUsage(
 	usage TokenUsage,
 ) (PricingQuote, error) {
 	usage = normalizeGatewayTokenUsage(usage)
+	model = normalizePricingModelRef(model)
+	if model.Operation == PricingOperationRealtimeAudio {
+		// Prefer upstream audio tokens here so both the locked-quote fast path
+		// and the pricing engine bill the audio quantities, not the text split.
+		usage = realtimeAudioTokenUsage(usage)
+	}
 	if bc != nil && bc.LockedTokenQuote != nil && bc.LockedTokenQuote.CacheBillingSupported != nil && !*bc.LockedTokenQuote.CacheBillingSupported {
 		usage.CacheReadTokens = 0
 		usage.CacheWriteTokens = 0

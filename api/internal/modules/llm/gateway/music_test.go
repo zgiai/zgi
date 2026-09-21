@@ -442,6 +442,59 @@ func TestGenerateMusicPrivateProviderFailureRollsBackReservation(t *testing.T) {
 	}
 }
 
+// T13 acceptance 2: when the upstream music generation succeeds but settlement
+// fails, the gateway must surface the settlement error instead of reporting
+// success, and the same request must stay compensatable so the pre-deduct hold
+// is refunded rather than left un-settled.
+func TestT13GenerateMusicSettlementFailureSurfacesAndCompensates(t *testing.T) {
+	organizationID := uuid.New()
+	requestID := uuid.NewString()
+	providerAdapter := &privateMusicGatewayAdapter{}
+	factory := adapter.NewDefaultAdapterFactory()
+	factory.Register("minimax", func(*adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {
+		return providerAdapter, nil
+	})
+	settleErr := errors.New("music settlement transaction failed")
+	local := &privateMusicCompensationBilling{
+		fakeBillingProvider: fakeBillingProvider{checkBalanceResult: true, settleErr: settleErr},
+	}
+	service := newPrivateMusicGatewayTestService(t, organizationID)
+	service.adapterFactory = factory
+	service.billing = &fakeBillingProvider{checkBalanceResult: true}
+	service.localBilling = local
+	service.pricingEngine = &fakePricingEngine{meteredQuote: PricingQuote{TotalCredits: 17, OutputCredits: 17}}
+
+	err := service.GenerateMusic(t.Context(), &apikeymodel.TenantAPIKey{
+		ID:             uuid.NewString(),
+		OrganizationID: organizationID.String(),
+	}, &MusicRequest{
+		RequestID:      requestID,
+		Model:          musicGatewayTestModel,
+		Mode:           adapter.MusicModeInstrumental,
+		Prompt:         "warm piano",
+		ResponseFormat: "mp3",
+	}, &bytes.Buffer{})
+	if !errors.Is(err, ErrBillingSettleFailed) {
+		t.Fatalf("GenerateMusic() error = %v, want surfaced ErrBillingSettleFailed", err)
+	}
+	if !errors.Is(err, settleErr) {
+		t.Fatalf("GenerateMusic() error = %v, want wrapped settlement cause", err)
+	}
+	if local.settleCalls != 1 || local.lastSettle == nil || local.lastSettle.Status != "success" {
+		t.Fatalf("settlement calls/context = %d/%#v", local.settleCalls, local.lastSettle)
+	}
+
+	if err := service.CompensateMusicDelivery(t.Context(), &apikeymodel.TenantAPIKey{
+		ID:             uuid.NewString(),
+		OrganizationID: organizationID.String(),
+	}, requestID); err != nil {
+		t.Fatalf("CompensateMusicDelivery() error = %v", err)
+	}
+	if local.calls != 1 || local.organizationID != organizationID || local.requestID != requestID {
+		t.Fatalf("compensation = calls=%d org=%s request=%s", local.calls, local.organizationID, local.requestID)
+	}
+}
+
 func TestCompensateMusicDeliveryDoesNotDependOnCurrentModelRoute(t *testing.T) {
 	organizationID := uuid.New()
 	requestID := uuid.NewString()

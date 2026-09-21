@@ -21,8 +21,16 @@ func wrapBillingPredeductErrorForUser(err error, billingCtx *BillingContext, use
 		return nil
 	}
 
-	if billingCtx != nil && billingCtx.QuotaSubjectType == quotaSubjectTypeWorkspace && errors.Is(err, ErrInsufficientQuota) {
-		return workspaceQuotaInsufficientError(err)
+	if billingCtx != nil && errors.Is(err, ErrInsufficientQuota) {
+		switch billingCtx.QuotaSubjectType {
+		case quotaSubjectTypeWorkspace:
+			return workspaceQuotaInsufficientError(err)
+		case quotaSubjectTypeAPIKey, quotaSubjectTypeAccessGrant:
+			// A personal key spends its member grant, so both subject types are
+			// key-scoped allowances. They stay distinct from the workspace,
+			// organization, and private-channel causes.
+			return apiKeyQuotaInsufficientError(err)
+		}
 	}
 
 	if errors.Is(err, ErrInsufficientBalance) {

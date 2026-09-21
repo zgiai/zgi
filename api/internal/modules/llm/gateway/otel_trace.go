@@ -716,6 +716,8 @@ func costDetails(bc *BillingContext) string {
 	if !bc.TotalUSD.IsPositive() {
 		return ""
 	}
+	// Explicit boundary: tracing attributes are display-only doubles. Exact USD
+	// decimal stays the billing source of truth.
 	return safeJSONString(map[string]float64{
 		"input":  bc.InputUSD.InexactFloat64(),
 		"output": bc.OutputUSD.InexactFloat64(),

@@ -110,18 +110,35 @@ type PublishedModel struct {
 }
 
 func (s *Service) ApplyPublishedCatalog(ctx context.Context, catalog PublishedCatalog) error {
+	_, err := s.ApplyPublishedCatalogWithReport(ctx, catalog)
+	return err
+}
+
+// ApplyPublishedCatalogWithReport applies a Console catalog snapshot after
+// normalizing newly written/synced CNY prices to canonical USD. It returns a
+// diff report keyed by provider+model covering price, unit, currency, and
+// normalized identity key changes. The snapshot itself is never mutated, so a
+// replayed snapshot produces the same stored result.
+func (s *Service) ApplyPublishedCatalogWithReport(ctx context.Context, catalog PublishedCatalog) (CatalogApplyReport, error) {
 	if err := validatePublishedCatalog(catalog); err != nil {
-		return err
+		return CatalogApplyReport{}, err
+	}
+	normalized, report, err := normalizePublishedCatalog(catalog)
+	if err != nil {
+		return CatalogApplyReport{}, err
+	}
+	if err := validatePublishedCatalog(normalized); err != nil {
+		return CatalogApplyReport{}, err
 	}
 
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txService := *s
 		txService.db = tx
 
 		skippedProviders := make(map[string]bool)
-		providerNames := make([]string, 0, len(catalog.Providers))
-		appliedProviderNames := make([]string, 0, len(catalog.Providers))
-		for _, provider := range catalog.Providers {
+		providerNames := make([]string, 0, len(normalized.Providers))
+		appliedProviderNames := make([]string, 0, len(normalized.Providers))
+		for _, provider := range normalized.Providers {
 			providerNames = append(providerNames, provider.Provider)
 			skipped, err := txService.upsertPublishedProvider(ctx, provider)
 			if err != nil {
@@ -137,8 +154,8 @@ func (s *Service) ApplyPublishedCatalog(ctx context.Context, catalog PublishedCa
 			return err
 		}
 
-		modelKeys := make([]catalogModelKey, 0, len(catalog.Models))
-		for _, model := range catalog.Models {
+		modelKeys := make([]catalogModelKey, 0, len(normalized.Models))
+		for _, model := range normalized.Models {
 			if skippedProviders[model.Provider] {
 				continue
 			}
@@ -153,20 +170,20 @@ func (s *Service) ApplyPublishedCatalog(ctx context.Context, catalog PublishedCa
 		if _, err := txService.markPublishedModelsMissingFromCatalogDeprecated(ctx, appliedProviderNames, modelKeys); err != nil {
 			return err
 		}
-		if err := txService.ensurePublishedModelVendorIdentities(ctx, catalog); err != nil {
+		if err := txService.ensurePublishedModelVendorIdentities(ctx, normalized); err != nil {
 			return err
 		}
 
-		return txService.upsertCatalogSyncState(ctx, catalog.Version, catalog.PublishedAt, "")
+		return txService.upsertCatalogSyncState(ctx, normalized.Version, normalized.PublishedAt, "")
 	})
 	if err != nil {
-		return err
+		return CatalogApplyReport{}, err
 	}
-	RefreshPublishedCatalogProjection(catalog)
+	RefreshPublishedCatalogProjection(normalized)
 	if invalidator := currentModelCacheInvalidator(); invalidator != nil {
 		invalidator.InvalidateModelCache(ctx)
 	}
-	return nil
+	return report, nil
 }
 
 // RefreshPublishedCatalogProjection rebuilds Console-owned model-vendor display
@@ -286,6 +303,12 @@ func (s *Service) upsertPublishedModel(ctx context.Context, model PublishedModel
 
 	if existing.DeletedAt.Valid {
 		return false, nil
+	}
+	if isLocalPrivatePricing(existing.Pricing) {
+		// A locally authored price on this provider/model pair is authoritative
+		// for Pre. The Console catalog may keep the row's lifecycle current but
+		// must never overwrite the tenant's local private price.
+		return true, nil
 	}
 
 	return true, s.updatePublishedModel(ctx, existing.ID, model)
@@ -484,20 +507,40 @@ type catalogModelKey struct {
 type existingPublishedModelForSync struct {
 	ID        string         `gorm:"column:id"`
 	DeletedAt gorm.DeletedAt `gorm:"column:deleted_at"`
+	Pricing   string         `gorm:"column:pricing"`
 }
 
 func (s *Service) findExistingPublishedModel(ctx context.Context, provider, model string) (*existingPublishedModelForSync, error) {
+	columns := []string{"id", "deleted_at"}
+	if hasColumn(s.db, "llm_models", "pricing") {
+		columns = append(columns, "pricing")
+	}
 	var existing existingPublishedModelForSync
 	err := s.db.WithContext(ctx).
 		Unscoped().
 		Table("llm_models").
-		Select("id", "deleted_at").
+		Select(columns).
 		Where("provider = ? AND name = ?", provider, model).
 		First(&existing).Error
 	if err != nil {
 		return nil, err
 	}
 	return &existing, nil
+}
+
+// isLocalPrivatePricing reports whether a stored pricing JSON marks the row as
+// a locally authored price that the published catalog must not overwrite.
+func isLocalPrivatePricing(raw string) bool {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || trimmed == "null" {
+		return false
+	}
+	var object map[string]interface{}
+	if err := json.Unmarshal([]byte(trimmed), &object); err != nil {
+		return false
+	}
+	origin, _ := object["catalog_origin"].(string)
+	return strings.EqualFold(strings.TrimSpace(origin), "pre_custom")
 }
 
 func (s *Service) createPublishedModel(ctx context.Context, model PublishedModel) error {

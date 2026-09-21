@@ -234,17 +234,25 @@ func TestHandlerRejectsRequestIDReusedWithDifferentPayload(t *testing.T) {
 		t.Fatalf("second POST status = %d, want %d; body=%s", got, want, secondRecorder.Body.String())
 	}
 	var response struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
+		Code      string `json:"code"`
+		Message   string `json:"message"`
+		ErrorID   string `json:"error_id"`
+		Retryable bool   `json:"retryable"`
 	}
 	if err := json.Unmarshal(secondRecorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := response.Code, "TASK_CONFLICT"; got != want {
+	if got, want := response.Code, "music.task.conflict"; got != want {
 		t.Fatalf("code = %q, want %q", got, want)
 	}
-	if got, want := response.Message, "Music request ID is already in use"; got != want {
+	if got, want := response.Message, "A music task with this request ID already exists."; got != want {
 		t.Fatalf("message = %q, want %q", got, want)
+	}
+	if response.ErrorID == "" {
+		t.Fatal("projected music error is missing error_id")
+	}
+	if response.Retryable {
+		t.Fatal("music.task.conflict must not be retryable")
 	}
 }
 

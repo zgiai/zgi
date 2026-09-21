@@ -2,13 +2,19 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"math"
+	"strings"
 	"time"
 
+	"github.com/shopspring/decimal"
 	"github.com/zgiai/zgi/api/internal/observability"
 	pb "github.com/zgiai/zgi/api/pkg/rpc/v1"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 type QuotaClient struct {
@@ -36,6 +42,66 @@ func NewQuotaClient(address string) (*QuotaClient, error) {
 	}, nil
 }
 
+// BillingRPCError carries the stable Console ErrorInfo.Reason alongside the
+// transport failure so callers can classify a billing failure without parsing
+// transport or free-text messages.
+type BillingRPCError struct {
+	Reason string
+	Err    error
+}
+
+func (e *BillingRPCError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if e.Err == nil {
+		return e.Reason
+	}
+	if strings.TrimSpace(e.Reason) == "" {
+		return e.Err.Error()
+	}
+	return e.Reason + ": " + e.Err.Error()
+}
+
+func (e *BillingRPCError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+func newBillingRPCError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &BillingRPCError{Reason: billingErrorInfoReason(err), Err: err}
+}
+
+// billingErrorInfoReason extracts google.rpc.ErrorInfo.Reason from a gRPC
+// status, returning "" when the server predates the ErrorInfo contract.
+func billingErrorInfoReason(err error) string {
+	statusError, ok := status.FromError(err)
+	if !ok || statusError == nil {
+		return ""
+	}
+	for _, detail := range statusError.Details() {
+		if info, ok := detail.(*errdetails.ErrorInfo); ok && info != nil {
+			return strings.TrimSpace(info.Reason)
+		}
+	}
+	return ""
+}
+
+// billingRPCErrorReason returns the stable reason recorded by this client, or
+// "" when the error predates ErrorInfo.
+func billingRPCErrorReason(err error) string {
+	var rpcErr *BillingRPCError
+	if errors.As(err, &rpcErr) && rpcErr != nil {
+		return rpcErr.Reason
+	}
+	return ""
+}
+
 func (c *QuotaClient) Close() error {
 	if c.conn != nil {
 		return c.conn.Close()
@@ -59,7 +125,7 @@ func (c *QuotaClient) PreDeductQuota(ctx context.Context, req *PreDeductQuotaReq
 
 	resp, err := c.client.PreDeductQuota(ctx, grpcReq)
 	if err != nil {
-		return nil, fmt.Errorf("grpc call failed: %w", err)
+		return nil, fmt.Errorf("grpc call failed: %w", newBillingRPCError(err))
 	}
 
 	return &PreDeductQuotaResponse{
@@ -95,11 +161,12 @@ func (c *QuotaClient) PreDeductMeteredUsage(ctx context.Context, req *PreDeductM
 
 	resp, err := c.client.PreDeductMeteredUsage(ctx, grpcReq)
 	if err != nil {
-		return nil, fmt.Errorf("grpc call failed: %w", err)
+		return nil, fmt.Errorf("grpc call failed: %w", newBillingRPCError(err))
 	}
 
 	return &PreDeductMeteredUsageResponse{
 		Success:          resp.Success,
+		ErrorCode:        resp.ErrorCode,
 		ErrorMessage:     resp.ErrorMessage,
 		DeductionID:      resp.DeductionId,
 		EstimatedCredits: resp.EstimatedCredits,
@@ -117,9 +184,9 @@ func (c *QuotaClient) SettleQuota(ctx context.Context, req *SettleQuotaRequest) 
 		PromptTokens:      int32(req.PromptTokens),
 		CompletionTokens:  int32(req.CompletionTokens),
 		TotalTokens:       int32(req.TotalTokens),
-		InputCost:         req.InputCost,
-		OutputCost:        req.OutputCost,
-		TotalCost:         req.TotalCost,
+		InputCost:         decimalToWireFloat(req.InputCost),
+		OutputCost:        decimalToWireFloat(req.OutputCost),
+		TotalCost:         decimalToWireFloat(req.TotalCost),
 		ModelId:           req.ModelID,
 		ModelName:         req.ModelName,
 		ProviderId:        req.ProviderID,
@@ -141,11 +208,12 @@ func (c *QuotaClient) SettleQuota(ctx context.Context, req *SettleQuotaRequest) 
 
 	resp, err := c.client.SettleQuota(ctx, grpcReq)
 	if err != nil {
-		return nil, fmt.Errorf("grpc call failed: %w", err)
+		return nil, fmt.Errorf("grpc call failed: %w", newBillingRPCError(err))
 	}
 
 	return &SettleQuotaResponse{
 		Success:         resp.Success,
+		ErrorCode:       resp.ErrorCode,
 		ErrorMessage:    resp.ErrorMessage,
 		RemainingQuota:  resp.RemainingQuota,
 		UsedQuota:       resp.UsedQuota,
@@ -187,15 +255,27 @@ func (c *QuotaClient) CalculateDualCost(ctx context.Context, modelID, provider, 
 	if err != nil {
 		return nil, fmt.Errorf("grpc call failed: %w", err)
 	}
+	inputUSD, err := wireFloatToDecimal(resp.InputUsd)
+	if err != nil {
+		return nil, fmt.Errorf("decode authoritative input usd: %w", err)
+	}
+	outputUSD, err := wireFloatToDecimal(resp.OutputUsd)
+	if err != nil {
+		return nil, fmt.Errorf("decode authoritative output usd: %w", err)
+	}
+	totalUSD, err := wireFloatToDecimal(resp.TotalUsd)
+	if err != nil {
+		return nil, fmt.Errorf("decode authoritative total usd: %w", err)
+	}
 	return &DualCostQuotaResponse{
 		Success:       resp.Success,
 		ErrorMessage:  resp.ErrorMessage,
 		InputCredits:  resp.InputCredits,
 		OutputCredits: resp.OutputCredits,
 		TotalCredits:  resp.TotalCredits,
-		InputUSD:      resp.InputUsd,
-		OutputUSD:     resp.OutputUsd,
-		TotalUSD:      resp.TotalUsd,
+		InputUSD:      inputUSD,
+		OutputUSD:     outputUSD,
+		TotalUSD:      totalUSD,
 	}, nil
 }
 
@@ -245,6 +325,7 @@ type PreDeductMeteredUsageRequest struct {
 
 type PreDeductMeteredUsageResponse struct {
 	Success          bool
+	ErrorCode        string
 	ErrorMessage     string
 	DeductionID      string
 	EstimatedCredits int64
@@ -253,16 +334,18 @@ type PreDeductMeteredUsageResponse struct {
 }
 
 type SettleQuotaRequest struct {
-	OrganizationID    string
-	DeductionID       string
-	EstimatedCredits  int64
-	ActualCredits     int64
-	PromptTokens      int
-	CompletionTokens  int
-	TotalTokens       int
-	InputCost         float64
-	OutputCost        float64
-	TotalCost         float64
+	OrganizationID   string
+	DeductionID      string
+	EstimatedCredits int64
+	ActualCredits    int64
+	PromptTokens     int
+	CompletionTokens int
+	TotalTokens      int
+	// InputCost/OutputCost/TotalCost are exact credit (points) amounts. The
+	// legacy gRPC contract carries them as doubles; see decimalToWireFloat.
+	InputCost         decimal.Decimal
+	OutputCost        decimal.Decimal
+	TotalCost         decimal.Decimal
 	ModelID           string
 	ModelName         string
 	ProviderID        string
@@ -284,6 +367,7 @@ type SettleQuotaRequest struct {
 
 type SettleQuotaResponse struct {
 	Success         bool
+	ErrorCode       string
 	ErrorMessage    string
 	RemainingQuota  int64
 	UsedQuota       int64
@@ -297,7 +381,29 @@ type DualCostQuotaResponse struct {
 	InputCredits  int64
 	OutputCredits int64
 	TotalCredits  int64
-	InputUSD      float64
-	OutputUSD     float64
-	TotalUSD      float64
+	// InputUSD/OutputUSD/TotalUSD are exact USD amounts decoded from the
+	// legacy double wire fields; see wireFloatToDecimal.
+	InputUSD  decimal.Decimal
+	OutputUSD decimal.Decimal
+	TotalUSD  decimal.Decimal
+}
+
+// decimalToWireFloat converts an internal decimal money amount to the legacy
+// double field the existing Console billing peer consumes. This is the single
+// explicit float boundary on the Pre side and no money arithmetic happens on
+// the result. Internal decimal values remain the source of truth; a
+// scaled-int/string wire field can replace this once both peers advertise it.
+func decimalToWireFloat(value decimal.Decimal) float64 {
+	return value.InexactFloat64()
+}
+
+// wireFloatToDecimal converts a legacy double wire amount into an exact
+// internal decimal. The double is a transport representation only; every
+// pricing and settlement computation after this boundary uses decimal. A
+// non-finite peer value is rejected so fail-closed validation is preserved.
+func wireFloatToDecimal(value float64) (decimal.Decimal, error) {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return decimal.Zero, fmt.Errorf("non-finite money value %v", value)
+	}
+	return decimal.NewFromFloat(value), nil
 }

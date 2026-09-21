@@ -76,8 +76,11 @@ func TestApplyPlatformSettlementCostSnapshotRecordsCallTimeCurrencyFacts(t *test
 	if snapshot["total_cost_usd"] != "0.006601" || snapshot["total_cost_cny"] != "0.0475272" || snapshot["cny_per_usd"] != "7.2" {
 		t.Fatalf("pricing snapshot = %#v", snapshot)
 	}
-	if snapshot["exchange_rate_source"] != "console_settlement" {
-		t.Fatalf("exchange rate source = %#v", snapshot["exchange_rate_source"])
+	if snapshot["rate_source"] != "console_system" || snapshot["rate"] != "7.2" || snapshot["display_currency"] != "USD" {
+		t.Fatalf("exchange rate segment = %#v", snapshot)
+	}
+	if snapshot["rate_at"] == nil || snapshot["rate_at"] == "" {
+		t.Fatalf("rate_at missing from currency segment: %#v", snapshot)
 	}
 	if snapshot["input_price_usd_per_1m_tokens"] != "5" || snapshot["cache_write_price_usd_per_1m_tokens"] != "2.5" || snapshot["output_price_usd_per_1m_tokens"] != "30" {
 		t.Fatalf("component prices missing from pricing snapshot: %#v", snapshot)
@@ -96,7 +99,9 @@ func TestApplyLocalBillingCurrencySnapshotRecordsOrganizationCallTimeRate(t *tes
 		DisplayCurrency: "CNY",
 		USDToCNYRate:    decimal.RequireFromString("7.2"),
 	}
-	applyLocalBillingCurrencySnapshot(bc)
+	if err := applyLocalBillingCurrencySnapshot(bc); err != nil {
+		t.Fatalf("applyLocalBillingCurrencySnapshot() error = %v", err)
+	}
 
 	var snapshot map[string]interface{}
 	if err := json.Unmarshal(bc.PricingSnapshot, &snapshot); err != nil {
@@ -105,8 +110,14 @@ func TestApplyLocalBillingCurrencySnapshotRecordsOrganizationCallTimeRate(t *tes
 	if snapshot["total_cost_cny"] != "0.0475272" || snapshot["cny_per_usd"] != "7.2" {
 		t.Fatalf("pricing snapshot = %#v", snapshot)
 	}
-	if snapshot["billing_display_currency"] != "CNY" || snapshot["exchange_rate_source"] != "organization_call_snapshot" {
+	if snapshot["rate_source"] != "pre_org" || snapshot["rate"] != "7.2" || snapshot["display_currency"] != "CNY" {
+		t.Fatalf("private currency segment = %#v", snapshot)
+	}
+	if snapshot["billing_display_currency"] != "CNY" {
 		t.Fatalf("billing display snapshot = %#v", snapshot)
+	}
+	if snapshot["rate_at"] == nil || snapshot["rate_at"] == "" {
+		t.Fatalf("rate_at missing from currency segment: %#v", snapshot)
 	}
 }
 

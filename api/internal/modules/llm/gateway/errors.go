@@ -43,6 +43,9 @@ var (
 	ErrBillingSettleFailed      = errors.New("billing settle failed")
 	ErrBillingLaneMismatch      = errors.New("billing lane mismatch")
 	ErrPricingCalculationFailed = errors.New("pricing calculation failed")
+	// ErrExchangeRateUnavailable marks a fail-closed exchange-rate resolution
+	// so callers can distinguish a missing rate from missing model pricing.
+	ErrExchangeRateUnavailable = errors.New("exchange rate is unavailable")
 )
 
 type reportedProviderFailureError struct {

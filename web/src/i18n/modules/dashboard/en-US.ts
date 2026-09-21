@@ -1754,7 +1754,7 @@ const messages = {
       quotaCustom: 'Custom',
       quotaUsed: 'Used {used}',
       quotaRemain: 'Remaining {remain} / {limit}',
-      quotaRemaining: 'Remaining {remain} credits',
+      quotaRemaining: 'Remaining {remain} points',
       quotaFiatApprox: '≈ {amount}',
       department: 'Department',
       resourceConfig: 'Resource Config (API Token)',
