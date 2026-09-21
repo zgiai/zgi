@@ -47,7 +47,7 @@ func NewContainer(db *gorm.DB) (*Container, error) {
 		if grpcAddr == "" {
 			grpcAddr = "localhost:50051"
 		}
-		billingRemote, err := billing.NewRemote(grpcAddr)
+		billingRemote, err := billing.NewRemote(grpcAddr, cfg.Console.DownstreamAPIKey)
 		if err != nil {
 			return nil, fmt.Errorf("cloud mode requires remote billing at %s: %w", grpcAddr, err)
 		}

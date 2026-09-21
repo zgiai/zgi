@@ -3,6 +3,7 @@ package billing
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/zgiai/zgi/api/internal/observability"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -18,9 +19,15 @@ type Remote struct {
 	fallback bool // Whether to allow requests on gRPC failure
 }
 
-// NewRemote creates a new remote billing provider.
-func NewRemote(addr string) (*Remote, error) {
+// NewRemote creates a new remote billing provider. apiKey is the Console-issued
+// downstream client key; when set, every billing RPC carries it so Console can
+// resolve the downstream identity. An empty key keeps the transitional
+// unauthenticated behavior.
+func NewRemote(addr, apiKey string) (*Remote, error) {
 	dialOptions := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+	if token := strings.TrimSpace(apiKey); token != "" {
+		dialOptions = append(dialOptions, grpc.WithPerRPCCredentials(consoleAPICredentials{token: token}))
+	}
 	dialOptions = append(dialOptions, observability.GRPCDialOptions()...)
 	conn, err := grpc.Dial(addr, dialOptions...)
 	if err != nil {
@@ -32,6 +39,18 @@ func NewRemote(addr string) (*Remote, error) {
 		fallback: false,
 	}, nil
 }
+
+// consoleAPICredentials attaches the Console-issued downstream API key to every
+// billing RPC as "authorization: Bearer <key>". Console validates it server-side.
+type consoleAPICredentials struct {
+	token string
+}
+
+func (c consoleAPICredentials) GetRequestMetadata(context.Context, ...string) (map[string]string, error) {
+	return map[string]string{"authorization": "Bearer " + c.token}, nil
+}
+
+func (c consoleAPICredentials) RequireTransportSecurity() bool { return false }
 
 // SetFallbackBehavior controls what happens when gRPC is unavailable.
 // If true, requests are allowed; if false, requests are rejected.

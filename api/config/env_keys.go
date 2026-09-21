@@ -197,6 +197,9 @@ const (
 	envConsoleAPIGRPCAddr = "CONSOLE_API_GRPC_ADDR"
 	// envConsoleInternalAPIKey sets the internal API key shared with the console service. Default: empty.
 	envConsoleInternalAPIKey = "CONSOLE_INTERNAL_API_KEY"
+	// envConsoleDownstreamAPIKey is the Console-issued API key identifying this
+	// deployment as a downstream client. Default: empty (transitional).
+	envConsoleDownstreamAPIKey = "CONSOLE_DOWNSTREAM_API_KEY"
 
 	// Bootstrap credentials.
 	// envZGIAdminPass sets the static admin token for self-hosted platform identity calls. Default: empty.
