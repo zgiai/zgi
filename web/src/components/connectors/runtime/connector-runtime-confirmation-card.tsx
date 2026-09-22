@@ -7,7 +7,6 @@ import { useConnectorRuntimeReceipt } from './use-runtime-receipt';
 import { OperationConfirmationCard } from '@/components/aichat/operation-cards';
 import { localizeConnectorRuntimeConfirmation } from '@/components/connectors/connector-metadata';
 import type {
-  OperationCardMetaItem,
   OperationCardTextBlock,
   OperationConfirmationStatus,
 } from '@/components/aichat/operation-cards/types';
@@ -154,7 +153,9 @@ export function ConnectorRuntimeConfirmationCard({
   const isSubmitting = visibleState.status === 'submitting';
   const resolvedDecision = visibleState.status === 'resolved' ? visibleState.decision : null;
   const canDecide =
-    verifiedIdentity === identity && isConnectorRuntimeDecisionAvailable(visibleState, result);
+    verifiedIdentity === identity &&
+    Boolean(receipt.preview?.complete) &&
+    isConnectorRuntimeDecisionAvailable(visibleState, result);
   const riskIsHigh = confirmation.risk_classification === 'high';
   const effect = effectLabel(confirmation.consequence.external_effect, t);
 
@@ -207,15 +208,6 @@ export function ConnectorRuntimeConfirmationCard({
     statusLabel = t('runtime.confirmation.status.failed');
   }
 
-  const items: OperationCardMetaItem[] = [];
-  if (confirmation.consequence.external_destination) {
-    items.push({
-      id: 'destination',
-      label: t('runtime.confirmation.fields.destination'),
-      value: confirmation.consequence.external_destination,
-    });
-  }
-
   const warnings: OperationCardTextBlock[] = [];
   if (confirmation.risk_classification === 'unclassified') {
     warnings.push({
@@ -258,16 +250,12 @@ export function ConnectorRuntimeConfirmationCard({
       eyebrow={t('runtime.confirmation.eyebrow', {
         risk: riskIsHigh ? t('runtime.risk.high') : t('runtime.risk.unclassified'),
       })}
-      title={confirmation.connector_name + ' · ' + confirmation.action_name}
-      description={
-        confirmation.consequence.data_egress
-          ? t('runtime.confirmation.dataEgressDescription')
-          : undefined
-      }
+      title={t('runtime.confirmation.title')}
+      description={t('runtime.confirmation.description')}
       status={status}
       statusLabel={statusLabel}
       summary={riskIsHigh ? t('runtime.confirmation.consequenceFallback', { effect }) : undefined}
-      items={items}
+      items={[]}
       warnings={warnings}
       actions={
         visibleState.status === 'unknown'

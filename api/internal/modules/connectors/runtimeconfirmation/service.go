@@ -3,9 +3,13 @@ package runtimeconfirmation
 import (
 	"context"
 
+	"strings"
+
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/connectortools"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
+	"github.com/zgiai/zgi/api/internal/modules/connectors/dispatch"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/execution"
 )
 
@@ -71,14 +75,15 @@ type ConfirmationRequestIdentity struct {
 // ErrorCode. JSON tags provide a second line of defense against exposing the
 // origin or provider value directly.
 type Result struct {
-	State           State                        `json:"state"`
-	DecisionID      uuid.UUID                    `json:"decision_id,omitempty,omitzero"`
-	ErrorCode       core.ErrorCode               `json:"error_code,omitempty"`
-	Origin          execution.ConfirmationOrigin `json:"-"`
-	RequestIdentity ConfirmationRequestIdentity  `json:"-"`
-	Authorization   *AuthorizationSnapshot       `json:"-"`
-	ExecutionResult *execution.ExecutionResult   `json:"-"`
-	OutcomeID       uuid.UUID                    `json:"-"`
+	State           State                                 `json:"state"`
+	DecisionID      uuid.UUID                             `json:"decision_id,omitempty,omitzero"`
+	ErrorCode       core.ErrorCode                        `json:"error_code,omitempty"`
+	Origin          execution.ConfirmationOrigin          `json:"-"`
+	RequestIdentity ConfirmationRequestIdentity           `json:"-"`
+	Authorization   *AuthorizationSnapshot                `json:"-"`
+	ExecutionResult *execution.ExecutionResult            `json:"-"`
+	Presentation    *connectortools.OperationPresentation `json:"-"`
+	OutcomeID       uuid.UUID                             `json:"-"`
 }
 
 // ExecutionRouter is implemented by execution.Router. Keeping the dependency
@@ -197,6 +202,19 @@ func (service *Service) Continue(ctx context.Context, command Command) (Result, 
 	}
 	if executionResultMatchesTerminal(result, terminal) {
 		projected.ExecutionResult = &result
+		projected.Presentation = connectortools.PresentationForExecution(result, dispatch.Identity{
+			OrganizationID:     request.OrganizationID,
+			OwnerAccountID:     request.OwnerAccountID,
+			ActingPrincipalID:  request.ActingPrincipalID,
+			BindingID:          request.BindingID,
+			ConnectionID:       request.ConnectionID,
+			ConnectorID:        request.ConnectorID,
+			Target:             request.Target,
+			OperationID:        request.OperationID,
+			LogicalOperationID: request.LogicalOperationID,
+			CorrelationID:      request.CorrelationID,
+			Interactive:        request.Interactive,
+		})
 	}
 	projected.Authorization = authorization
 	return projected, nil
@@ -482,7 +500,40 @@ func projectExisting(
 	default:
 		return Result{}, core.NewError(core.ErrorCodeInternal, false, nil)
 	}
+	result.Presentation = fallbackPresentation(request, continuation.Frozen.AcceptedOperation, result.State, result.ErrorCode)
 	return result, nil
+}
+
+func fallbackPresentation(
+	request execution.ExecutionRequest,
+	operation catalog.PinnedOperation,
+	state State,
+	errorCode core.ErrorCode,
+) *connectortools.OperationPresentation {
+	status := "unknown"
+	switch state {
+	case StateCompleted:
+		status = "successful"
+	case StateFailed:
+		status = "failed"
+	case StateCancelled:
+		status = "cancelled"
+	}
+	title := strings.TrimSpace(operation.Operation.Name)
+	if title == "" {
+		title = request.OperationID.String()
+	}
+	return &connectortools.OperationPresentation{
+		SchemaVersion: 1,
+		SourceKind:    "native",
+		InvocationID:  request.LogicalOperationID,
+		ConnectorID:   request.ConnectorID,
+		OperationID:   request.OperationID,
+		DisplayStatus: status,
+		Title:         title,
+		ErrorCode:     strings.TrimSpace(string(errorCode)),
+		Redacted:      true,
+	}
 }
 
 func authorizationSnapshot(

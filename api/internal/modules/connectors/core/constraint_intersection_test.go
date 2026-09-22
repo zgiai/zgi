@@ -39,3 +39,19 @@ func TestConstraintIntersectionNeverWidensRestoredAuthority(t *testing.T) {
 		t.Fatal("missing historical constraint must fail closed")
 	}
 }
+
+func TestConstraintIntersectionPreservesExplicitBindingAuthorization(t *testing.T) {
+	owner := uuid.New()
+	binding := OwnerConstraint(owner, []Identifier{"github.issue.create"})
+	binding.AuthorizationMode = AuthorizationModeDirect
+	connection := OwnerConstraint(owner, []Identifier{"github.issue.create"})
+	intersection, err := IntersectConstraints(binding, connection)
+	if err != nil || intersection.AuthorizationMode != AuthorizationModeDirect {
+		t.Fatalf("authorization mode = %q, err=%v; want direct", intersection.AuthorizationMode, err)
+	}
+	connection.AuthorizationMode = AuthorizationModeDirect
+	intersection, err = IntersectConstraints(OwnerConstraint(owner, []Identifier{"github.issue.create"}), connection)
+	if err != nil || intersection.AuthorizationMode != AuthorizationModeAsk {
+		t.Fatalf("connection-only authorization mode = %q, err=%v; want ask_each_time", intersection.AuthorizationMode, err)
+	}
+}

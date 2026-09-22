@@ -17,7 +17,11 @@ interface ConnectorPickerRowProps {
   onAction: (row: ConnectorPickerRowModel) => void;
 }
 
-export function ConnectorPickerRow({ row, pending = false, onAction }: ConnectorPickerRowProps) {
+export function ConnectorPickerRow({
+  row,
+  pending = false,
+  onAction,
+}: ConnectorPickerRowProps) {
   const t = useT('connectors');
   const locale = useLocale();
   const isApp = Boolean(row.connector.extension_schema_version && row.connector.setup);
@@ -52,7 +56,7 @@ export function ConnectorPickerRow({ row, pending = false, onAction }: Connector
               : t('picker.actions.viewReason');
 
   return (
-    <article className="flex min-w-0 flex-col gap-3 rounded-xl border bg-background p-3.5 shadow-xs sm:flex-row sm:items-center">
+    <article className="grid min-w-0 gap-3 rounded-xl border bg-background p-3.5 shadow-xs sm:grid-cols-[40px_minmax(0,1fr)_auto] sm:items-center">
       <ConnectorIcon
         connectorId={row.connector.id}
         name={row.connector.name}

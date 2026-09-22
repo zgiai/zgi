@@ -2,6 +2,7 @@ package bindings
 
 import (
 	"context"
+	"sort"
 	"testing"
 	"time"
 
@@ -73,6 +74,43 @@ func TestBindingServiceUpsertIsLogicalKeyIdempotentWithStableUUID(t *testing.T) 
 		if call.organizationID != organizationID || call.actingPrincipalID != ownerID || call.target != (TargetIdentity{Type: core.TargetTypeChat, ID: "workflow-1"}) {
 			t.Fatalf("target authority call = %#v", call)
 		}
+	}
+}
+
+func TestBindingServiceUpdatesAuthorizationWithRevisionAndConnectionSnapshot(t *testing.T) {
+	organizationID, ownerID := uuid.New(), uuid.New()
+	connection := readyServiceConnection(organizationID, ownerID, uuid.New())
+	connection.Revision = 4
+	connection.CredentialVersion = 3
+	repository := newMemoryBindingRepository()
+	service := mustBindingService(t, repository, &recordingConnectionReader{connection: connection}, &recordingTargetAuthority{})
+	created, err := service.UpsertBinding(context.Background(), UpsertBindingCommand{
+		OrganizationID: organizationID, ActingPrincipalID: ownerID, ConnectionID: connection.ID,
+		Target:         core.TargetRef{Type: core.TargetTypeChat, ID: "chat-auth"},
+		IdempotencyKey: "binding-auth-create-0001", AuthorizationMode: core.AuthorizationModeDirect,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Binding.Constraint.AuthorizationConnectionRevision != 4 || created.Binding.Constraint.AuthorizationCredentialVersion != 3 {
+		t.Fatalf("direct authorization snapshot = %#v", created.Binding.Constraint)
+	}
+	updated, err := service.UpdateBindingAuthorization(context.Background(), UpdateBindingAuthorizationCommand{
+		OrganizationID: organizationID, ActingPrincipalID: ownerID, BindingID: created.Binding.ID,
+		ExpectedRevision: created.Binding.Revision, AuthorizationMode: core.AuthorizationModeAsk,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Revision != created.Binding.Revision+1 || updated.Constraint.AuthorizationModeValue() != core.AuthorizationModeAsk ||
+		updated.Constraint.AuthorizationConnectionRevision != 0 || updated.Constraint.AuthorizationCredentialVersion != 0 {
+		t.Fatalf("authorization update = %#v", updated)
+	}
+	if _, err := service.UpdateBindingAuthorization(context.Background(), UpdateBindingAuthorizationCommand{
+		OrganizationID: organizationID, ActingPrincipalID: ownerID, BindingID: created.Binding.ID,
+		ExpectedRevision: created.Binding.Revision, AuthorizationMode: core.AuthorizationModeDirect,
+	}); !core.IsErrorCode(err, core.ErrorCodeConflict) {
+		t.Fatalf("stale authorization update error = %v, want conflict", err)
 	}
 }
 
@@ -486,7 +524,8 @@ func (repository *memoryBindingRepository) UpsertBinding(_ context.Context, orga
 		repository.bindings[key] = binding
 		return binding, true, nil
 	}
-	if existing.ConnectionID == binding.ConnectionID && existing.Status == binding.Status {
+	if existing.ConnectionID == binding.ConnectionID && existing.Status == binding.Status &&
+		core.EquivalentConstraints(existing.Constraint, binding.Constraint) {
 		return existing, false, nil
 	}
 	if expectedRevision < 1 || existing.Revision != expectedRevision || existing.OrganizationID != organizationID || existing.OwnerAccountID != ownerID {
@@ -494,6 +533,7 @@ func (repository *memoryBindingRepository) UpsertBinding(_ context.Context, orga
 	}
 	existing.ConnectionID = binding.ConnectionID
 	existing.Status = binding.Status
+	existing.Constraint = binding.Constraint
 	existing.Revision++
 	existing.UpdatedAt = binding.UpdatedAt
 	repository.bindings[key] = existing
@@ -512,6 +552,29 @@ func (repository *memoryBindingRepository) UpsertBindingWithLifecycle(
 		repository.mutations = append(repository.mutations, mutation)
 	}
 	return stored, created, err
+}
+
+func (repository *memoryBindingRepository) UpdateBindingAuthorizationWithLifecycle(
+	_ context.Context,
+	organizationID, ownerID, bindingID uuid.UUID,
+	constraint *core.AccessConstraint,
+	expectedRevision int,
+	mutation BindingLifecycleMutation,
+) (core.TargetBinding, error) {
+	for key, binding := range repository.bindings {
+		if binding.ID != bindingID || binding.OrganizationID != organizationID || binding.OwnerAccountID != ownerID {
+			continue
+		}
+		if binding.Revision != expectedRevision || binding.Status != core.BindingStatusActive {
+			return core.TargetBinding{}, core.NewError(core.ErrorCodeConflict, false, nil)
+		}
+		binding.Constraint = constraint
+		binding.Revision++
+		repository.bindings[key] = binding
+		repository.mutations = append(repository.mutations, mutation)
+		return binding, nil
+	}
+	return core.TargetBinding{}, core.NewError(core.ErrorCodeNotFound, false, nil)
 }
 
 func (repository *memoryBindingRepository) GetBinding(_ context.Context, organizationID, ownerID, bindingID uuid.UUID) (core.TargetBinding, error) {
@@ -541,6 +604,7 @@ func (repository *memoryBindingRepository) ListBindingsByConnection(_ context.Co
 			items = append(items, binding)
 		}
 	}
+	sort.Slice(items, func(i, j int) bool { return items[i].Target.ID < items[j].Target.ID })
 	return items, nil
 }
 

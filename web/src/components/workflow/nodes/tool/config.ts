@@ -20,7 +20,14 @@ export interface ToolNodeData {
   provider_type: ProviderType;
   // Provider id, e.g. 'time', 'github'
   provider_id: string;
-  connector?: { binding_id?: string; revision?: number; connection_id: string; connector_id: string; operation_id: string };
+  connector?: {
+    binding_id?: string;
+    revision?: number;
+    connection_id: string;
+    connector_id: string;
+    operation_id: string;
+    authorization_mode?: 'ask_each_time' | 'direct';
+  };
   connector_unavailable_ref?: string;
   // Tool name within the provider, e.g. 'current_time', 'getIssue'
   tool_name: string;

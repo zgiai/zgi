@@ -13,7 +13,7 @@ import {
   type ConnectorReferenceRepairProps,
 } from '../unavailable-references';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { usePendingSetups } from '@/hooks/connectors/use-pending-setups';
 import { ConnectorKeySetupPanel } from '@/components/connectors/setup/connector-key-setup-panel';
 import { AlertCircle, RefreshCw, SearchX } from 'lucide-react';
@@ -79,6 +79,8 @@ export interface ConnectorPickerDialogProps extends ConnectorReferenceRepairProp
   onRequestUpdateKey: NonNullable<ConnectorPickerActionHandlers['onRequestUpdateKey']>;
   onRequestViewReason: NonNullable<ConnectorPickerActionHandlers['onRequestViewReason']>;
   onRequestDetach: NonNullable<ConnectorPickerActionHandlers['onRequestDetach']>;
+  headerExtra?: ReactNode;
+  footerExtra?: ReactNode;
 }
 
 const FILTER_VALUES: readonly ConnectorCatalogStatus[] = ['all', 'connected', 'needs_attention'];
@@ -99,6 +101,8 @@ export function ConnectorPickerDialog({
   onRequestUpdateKey,
   onRequestViewReason,
   onRequestDetach,
+  headerExtra,
+  footerExtra,
   onReferenceCommand,
   pendingReferenceCommands,
 }: ConnectorPickerDialogProps) {
@@ -484,17 +488,19 @@ export function ConnectorPickerDialog({
               }
             }}
           >
-            <DialogHeader className="shrink-0 pb-3 pr-12">
-              <DialogTitle>{t('picker.title')}</DialogTitle>
-              <DialogDescription>
+          <DialogHeader className="shrink-0 pb-3 pr-12">
+            <DialogTitle>{t('picker.title')}</DialogTitle>
+            <DialogDescription>
                 {t(groupByConnector ? 'picker.group.subtitle' : 'picker.subtitle', {
                   target: targetLabel,
-                })}
-              </DialogDescription>
+              })}
+            </DialogDescription>
+            {headerExtra}
             </DialogHeader>
 
             <DialogBody className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">
               {pickerBody}
+              {footerExtra}
             </DialogBody>
           </DialogContent>
         ) : (
@@ -515,8 +521,10 @@ export function ConnectorPickerDialog({
             })}
             headerClassName="shrink-0 pb-3 pr-12"
             bodyClassName="flex min-h-0 flex-1 flex-col overflow-hidden p-0"
+            headerExtra={headerExtra}
           >
             {pickerBody}
+            {footerExtra}
           </ResourceSelectionDialogContent>
         )}
       </Dialog>

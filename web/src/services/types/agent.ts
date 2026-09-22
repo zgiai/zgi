@@ -464,6 +464,7 @@ export interface AgentConnectorBinding {
   target_version_id?: string;
   connector_id: string;
   connection_id: string;
+  authorization_mode?: 'ask_each_time' | 'direct';
 }
 
 export interface AgentSuggestedQuestionSkillContext {

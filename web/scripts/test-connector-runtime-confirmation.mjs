@@ -35,6 +35,40 @@ const confirmationResult = {
 };
 
 assert.deepEqual(parseConnectorRuntimeExecutionResult(confirmationResult), confirmationResult);
+const terminalPresentationResult = {
+  state: 'completed',
+  connector_presentation: {
+    schema_version: 1,
+    source_kind: 'native',
+    invocation_id: 'mail-send-1',
+    connector_id: 'qqmail',
+    operation_id: 'qqmail.message.send',
+    display_status: 'successful',
+    title: '发送邮件',
+    summary: '邮件已成功发送。',
+    redacted: true,
+    truncated: false,
+  },
+};
+const parsedTerminalPresentation = parseConnectorRuntimeExecutionResult(terminalPresentationResult);
+assert.ok(parsedTerminalPresentation);
+assert.equal(parsedTerminalPresentation.connector_presentation.title, '发送邮件');
+assert.equal(parsedTerminalPresentation.connector_presentation.display_status, 'successful');
+const failedTerminalPresentation = parseConnectorRuntimeExecutionResult({
+  state: 'failed',
+  error_code: 'connector_mail_submission_rejected',
+  connector_presentation: {
+    ...terminalPresentationResult.connector_presentation,
+    display_status: 'failed',
+    error_code: 'connector_mail_submission_rejected',
+    summary: '邮件服务器拒绝了本次提交，请检查邮件服务状态后重试。',
+  },
+});
+assert.ok(failedTerminalPresentation);
+assert.equal(
+  failedTerminalPresentation.connector_presentation.error_code,
+  'connector_mail_submission_rejected'
+);
 const spacedTranslations = {
   ...confirmationResult,
   confirmation: {
@@ -314,6 +348,9 @@ const confirmationSource = source(
 const dialogBridgeSource = source(
   'src/components/connectors/runtime/connector-runtime-surface.tsx'
 );
+const previewSummarySource = source(
+  'src/components/connectors/runtime/connector-runtime-preview-summary.tsx'
+);
 const blockedSource = source(
   'src/components/connectors/runtime/connector-runtime-blocked-state.tsx'
 );
@@ -336,6 +373,7 @@ const streamSource = source('src/components/chat/transports/aichat-transport.ts'
 const connectorRuntimeSource = [
   confirmationSource,
   dialogBridgeSource,
+  previewSummarySource,
   blockedSource,
   resultSource,
   surfaceSource,
@@ -344,11 +382,13 @@ const connectorRuntimeSource = [
 ].join('\n');
 
 for (const field of ['connector_name', 'action_name', 'risk_classification']) {
-  assert.match(dialogBridgeSource, new RegExp(field));
+  assert.match(previewSummarySource + dialogBridgeSource, new RegExp(field));
 }
-for (const field of ['external_effect', 'data_egress']) {
-  assert.match(confirmationSource, new RegExp(field));
+for (const field of ['fields', 'truncated', 'previewUnavailable']) {
+  assert.match(previewSummarySource, new RegExp(field));
 }
+assert.match(confirmationSource, /runtime\.confirmation\.title/);
+assert.doesNotMatch(confirmationSource, /external_destination/);
 assert.match(dialogBridgeSource, /ConnectorRuntimeDialogApprovalBridge/);
 assert.match(dialogBridgeSource, /publishToolGovernancePendingApproval/);
 assert.match(dialogBridgeSource, /ToolGovernancePendingApproval/);

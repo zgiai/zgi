@@ -55,7 +55,7 @@ func (s *agentsService) resolveAgentConnectorReferences(ctx context.Context, tx 
 					filtered = append(filtered, existing)
 				}
 			}
-			request.ConnectorBindings = append(filtered, dto.AgentConnectorBinding{ConnectorID: binding.ConnectorID.String(), ConnectionID: binding.ConnectionID.String(), BindingID: binding.ID.String(), Revision: binding.Revision})
+			request.ConnectorBindings = append(filtered, dto.AgentConnectorBinding{ConnectorID: binding.ConnectorID.String(), ConnectionID: binding.ConnectionID.String(), BindingID: binding.ID.String(), Revision: binding.Revision, AuthorizationMode: binding.Constraint.AuthorizationModeValue()})
 		}
 	}
 	return nil

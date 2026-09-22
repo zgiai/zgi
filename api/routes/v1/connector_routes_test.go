@@ -543,7 +543,7 @@ func TestConnectorTargetBindingRoutesUseActorScopeAndStrictContract(t *testing.T
 		t.Fatalf("binding list call = %#v", listCall)
 	}
 
-	createBody := `{"connection_id":"` + connectionID.String() + `","target":{"type":"workflow","id":"workflow-1","binding_instance_id":"node-1"}}`
+	createBody := `{"connection_id":"` + connectionID.String() + `","target":{"type":"workflow","id":"workflow-1","binding_instance_id":"node-1"},"authorization_mode":"direct"}`
 	created := connectorRouteRequest(
 		t, router, http.MethodPost, "/console/api/connector-target-bindings", createBody,
 		map[string]string{"Idempotency-Key": "binding-route-idempotency-0001"},
@@ -560,6 +560,31 @@ func TestConnectorTargetBindingRoutesUseActorScopeAndStrictContract(t *testing.T
 		command.IdempotencyKey != "binding-route-idempotency-0001" || command.Target != native.Target || command.ExpectedRevision != 0 {
 		t.Fatalf("binding upsert command = %#v", command)
 	}
+	if command.AuthorizationMode != connectorcore.AuthorizationModeDirect {
+		t.Fatalf("binding authorization mode = %q, want direct", command.AuthorizationMode)
+	}
+	updated := native
+	updated.Constraint = connectorcore.OwnerConstraint(ownerID, []connectorcore.Identifier{"github.user.get"})
+	updated.Constraint.AuthorizationMode = connectorcore.AuthorizationModeAsk
+	updated.Revision = native.Revision + 1
+	bindingService.upsertResult.Binding = updated
+	authorizationResponse := connectorRouteRequest(
+		t, router, http.MethodPatch, "/console/api/connector-target-bindings/"+native.ID.String()+"/authorization",
+		`{"revision":1,"authorization_mode":"ask_each_time"}`, nil,
+	)
+	if authorizationResponse.Code != http.StatusOK || !strings.Contains(authorizationResponse.Body.String(), `"authorization_mode":"ask_each_time"`) {
+		t.Fatalf("binding authorization status/body = %d %s", authorizationResponse.Code, authorizationResponse.Body.String())
+	}
+	if len(bindingService.authorizationCalls) != 1 {
+		t.Fatalf("binding authorization calls = %#v", bindingService.authorizationCalls)
+	}
+	authorizationCommand := bindingService.authorizationCalls[0]
+	if authorizationCommand.OrganizationID != organizationID || authorizationCommand.ActingPrincipalID != ownerID ||
+		authorizationCommand.BindingID != native.ID || authorizationCommand.ExpectedRevision != native.Revision ||
+		authorizationCommand.AuthorizationMode != connectorcore.AuthorizationModeAsk {
+		t.Fatalf("binding authorization command = %#v", authorizationCommand)
+	}
+	assertConnectorRouteBodyIsSecretFree(t, authorizationResponse.Body.String())
 
 	detached := native
 	detached.Status = connectorcore.BindingStatusDisabled
@@ -1003,18 +1028,31 @@ type connectorRouteBindingListCall struct {
 }
 
 type connectorRouteRecordingBindingService struct {
-	listCalls    []connectorRouteBindingListCall
-	upsertCalls  []connectorbindings.UpsertBindingCommand
-	detachCalls  []connectorbindings.DetachBindingCommand
-	impactCalls  []connectorRouteImpactCall
-	listResult   []connectorcore.TargetBinding
-	upsertResult connectorbindings.UpsertBindingResult
-	detachResult connectorcore.TargetBinding
-	impactResult connectorbindings.RemovalImpact
-	listErr      error
-	upsertErr    error
-	detachErr    error
-	impactErr    error
+	listCalls          []connectorRouteBindingListCall
+	upsertCalls        []connectorbindings.UpsertBindingCommand
+	authorizationCalls []connectorbindings.UpdateBindingAuthorizationCommand
+	detachCalls        []connectorbindings.DetachBindingCommand
+	impactCalls        []connectorRouteImpactCall
+	listResult         []connectorcore.TargetBinding
+	upsertResult       connectorbindings.UpsertBindingResult
+	detachResult       connectorcore.TargetBinding
+	impactResult       connectorbindings.RemovalImpact
+	listErr            error
+	upsertErr          error
+	authorizationErr   error
+	detachErr          error
+	impactErr          error
+}
+
+func (service *connectorRouteRecordingBindingService) UpdateBindingAuthorization(
+	_ context.Context,
+	command connectorbindings.UpdateBindingAuthorizationCommand,
+) (connectorcore.TargetBinding, error) {
+	service.authorizationCalls = append(service.authorizationCalls, command)
+	if service.authorizationErr != nil {
+		return connectorcore.TargetBinding{}, service.authorizationErr
+	}
+	return service.upsertResult.Binding, nil
 }
 
 type connectorRouteImpactCall struct {

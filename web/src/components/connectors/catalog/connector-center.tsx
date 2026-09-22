@@ -135,7 +135,7 @@ export function ConnectorCenter({ enabled, featureLoading = false }: ConnectorCe
           <ConnectorPageMessage
             kind="disabled"
             title={t('title')}
-            description={featureLoading ? t('description') : t('disabledDescription')}
+            description={featureLoading ? t('catalog.loading') : t('disabledDescription')}
           />
         </div>
       </div>

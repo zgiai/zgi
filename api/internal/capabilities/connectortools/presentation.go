@@ -40,6 +40,24 @@ type OperationPresentation struct {
 	Truncated     bool            `json:"truncated"`
 	Title         string          `json:"title,omitempty"`
 	Summary       string          `json:"summary,omitempty"`
+	ErrorCode     string          `json:"error_code,omitempty"`
+}
+
+// PresentationForExecution returns the same safe, read-only presentation
+// stored in a native invocation. Runtime confirmation and Workflow adapters
+// use this helper so every surface applies the same redaction and fallback
+// rules instead of inventing its own terminal card payload.
+func PresentationForExecution(result execution.ExecutionResult, identity dispatch.Identity) *OperationPresentation {
+	messages := MessagesForInvocation(result, identity)
+	if len(messages) == 0 {
+		return nil
+	}
+	metadata, ok := ResultFromMessage(messages[0])
+	if !ok || metadata.Presentation == nil {
+		return nil
+	}
+	presentation := *metadata.Presentation
+	return &presentation
 }
 
 func MessagesForInvocation(result execution.ExecutionResult, identity dispatch.Identity, causes ...error) []tools.ToolInvokeMessage {
@@ -76,9 +94,75 @@ func MessagesForInvocation(result execution.ExecutionResult, identity dispatch.I
 			metadata.Presentation.Summary, summaryTruncated = boundedPresentationText(result.Display.Summary, 800)
 			metadata.Presentation.Truncated = metadata.Presentation.Truncated || summaryTruncated
 		}
+		code := strings.TrimSpace(result.Outcome.DiagnosticCode)
+		if code == "" {
+			for _, cause := range causes {
+				if cause == nil {
+					continue
+				}
+				if candidate := string(core.ErrorCodeOf(cause)); candidate != "" {
+					code = candidate
+					break
+				}
+			}
+		}
+		if code != "" {
+			metadata.Presentation.ErrorCode = code
+			if strings.TrimSpace(metadata.Presentation.Summary) == "" {
+				metadata.Presentation.Summary = safePresentationSummary(code, result.Display)
+			}
+		} else if strings.TrimSpace(metadata.Presentation.Summary) == "" && metadata.Presentation.DisplayStatus == "successful" {
+			metadata.Presentation.Summary = safeSuccessSummary(result.Display)
+		}
 		messages[i].Meta[ResultKey] = metadata
 	}
 	return messages
+}
+
+func safeSuccessSummary(display *execution.OperationDisplay) string {
+	locale := ""
+	if display != nil {
+		locale = strings.ToLower(strings.TrimSpace(display.Locale))
+	}
+	if strings.HasPrefix(locale, "zh") {
+		return "连接器操作已成功完成。"
+	}
+	return "The Connector operation completed successfully."
+}
+
+func safePresentationSummary(code string, display *execution.OperationDisplay) string {
+	locale := ""
+	if display != nil {
+		locale = strings.ToLower(strings.TrimSpace(display.Locale))
+	}
+	chinese := strings.HasPrefix(locale, "zh")
+	switch core.ErrorCode(code) {
+	case core.ErrorCodeMailSubmissionRejected:
+		if chinese {
+			return "邮件服务器拒绝了本次提交，请检查邮件服务状态后重试。"
+		}
+		return "The mail server rejected this submission. Check the mail service and try again."
+	case core.ErrorCodeMailRecipientRejected:
+		if chinese {
+			return "邮件服务器拒绝了收件人，请检查收件人后重试。"
+		}
+		return "The mail server rejected a recipient. Check the recipients and try again."
+	case core.ErrorCodeMailAuthenticationRejected:
+		if chinese {
+			return "邮箱认证失败，请检查连接凭据和已启用的邮件服务。"
+		}
+		return "Email authentication failed. Check the connection credentials and enabled mail services."
+	case core.ErrorCodeOutcomeUnknown:
+		if chinese {
+			return "暂时无法确认操作结果，请先核查服务商侧状态，避免重复执行。"
+		}
+		return "The operation result cannot be confirmed yet. Check the provider before retrying."
+	default:
+		if chinese {
+			return "连接器操作未能完成，请检查连接状态后重试。"
+		}
+		return "The Connector operation did not complete. Check the connection and try again."
+	}
 }
 
 func presentationStatus(result ResultMetadata) string {

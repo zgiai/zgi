@@ -6,6 +6,7 @@ import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { localizeConnectorCatalogItem } from '@/components/connectors/connector-metadata';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   connectorCatalogItems,
   personalConnectionItems,
@@ -64,7 +65,7 @@ export function AgentRuntimeConnectorSection({
       open={open}
       count={connectorBindings.length}
       addLabel={connectorT('picker.title')}
-      helpText={connectorT('description')}
+      helpText={connectorT('sections.connectorsDescription')}
       emptyText={connectorT('sections.empty')}
       isLoading={connectorBindingsLoading}
       onToggleSection={onToggleSection}
@@ -155,6 +156,39 @@ export function AgentRuntimeConnectorSection({
                       ? connectorT('status.reconnectRequired')
                       : connectorT('status.unavailable')}
                 </Badge>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <span className="text-xs font-medium text-muted-foreground">
+                  {connectorT('picker.authorization.modeLabel')}
+                </span>
+                <Select
+                  value={binding.authorization_mode === 'direct' ? 'direct' : 'ask_each_time'}
+                  disabled={readOnly}
+                  onValueChange={value =>
+                    onChangeConnectorBindings(
+                      connectorBindings.map(item =>
+                        item === binding
+                          ? {
+                              ...item,
+                              authorization_mode: value === 'direct' ? 'direct' : 'ask_each_time',
+                            }
+                          : item
+                      )
+                    )
+                  }
+                >
+                  <SelectTrigger className="h-8 w-auto min-w-36 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ask_each_time">
+                      {connectorT('picker.authorization.askShort')}
+                    </SelectItem>
+                    <SelectItem value="direct">
+                      {connectorT('picker.authorization.directShort')}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </AgentRuntimeResourceCard>
           );

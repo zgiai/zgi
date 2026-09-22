@@ -63,6 +63,26 @@ function MailSetup({ connector, updateConnection, onReady, submitLabel, onBusyCh
     updateConnection && connectionMailUsage(updateConnection) !== 'read_send'
   );
   const gmail = connector.id === 'gmail';
+  const emailHintKey =
+    connector.id === 'qqmail'
+      ? 'mail.qqEmailHint'
+      : connector.id === 'netease163'
+        ? 'mail.neteaseEmailHint'
+        : 'mail.gmailEmailHint';
+  const emailPlaceholderKey =
+    connector.id === 'qqmail'
+      ? 'mail.qqEmailPlaceholder'
+      : connector.id === 'netease163'
+        ? 'mail.neteaseEmailPlaceholder'
+        : 'mail.gmailEmailPlaceholder';
+  const fixedDomain =
+    connector.id === 'qqmail' ? '@qq.com' : connector.id === 'netease163' ? '@163.com' : undefined;
+  const emailLocalPart =
+    fixedDomain && setup.email.toLowerCase().endsWith(fixedDomain)
+      ? setup.email.slice(0, -fixedDomain.length)
+      : setup.email;
+  const setEmailValue = (value: string) =>
+    setup.setEmail(fixedDomain ? `${value}${fixedDomain}` : value);
   return (
     <div className="space-y-4">
       {!mailSetupEnabled(connector) && (
@@ -88,18 +108,40 @@ function MailSetup({ connector, updateConnection, onReady, submitLabel, onBusyCh
           )}
           <div className="space-y-2">
             <Label htmlFor="gmail-email">{t('mail.email')}</Label>
-            <Input
-              id="gmail-email"
-              name="email"
-              type="email"
-              autoComplete="off"
-              autoCapitalize="none"
-              spellCheck={false}
-              required
-              readOnly={Boolean(updateConnection)}
-              value={setup.email}
-              onChange={event => setup.setEmail(event.target.value)}
-            />
+            {fixedDomain ? (
+              <div className="flex h-10 items-center rounded-md border border-input bg-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
+                <Input
+                  id="mail-email-local-part"
+                  name="email_local_part"
+                  type="text"
+                  autoComplete="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  required
+                  readOnly={Boolean(updateConnection)}
+                  value={emailLocalPart}
+                  placeholder={t(emailPlaceholderKey).replace(fixedDomain, '')}
+                  className="h-full min-w-0 flex-1 border-0 shadow-none focus-visible:ring-0"
+                  onChange={event => setEmailValue(event.target.value)}
+                />
+                <span className="shrink-0 pr-3 text-sm text-muted-foreground">{fixedDomain}</span>
+              </div>
+            ) : (
+              <Input
+                id="gmail-email"
+                name="email"
+                type="email"
+                autoComplete="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                required
+                readOnly={Boolean(updateConnection)}
+                value={setup.email}
+                placeholder={t(emailPlaceholderKey)}
+                onChange={event => setup.setEmail(event.target.value)}
+              />
+            )}
+            <p className="text-xs text-muted-foreground">{t(emailHintKey)}</p>
             {updateConnection && (
               <p className="text-xs text-muted-foreground">{t('mail.lockedEmail')}</p>
             )}
@@ -127,7 +169,7 @@ function MailSetup({ connector, updateConnection, onReady, submitLabel, onBusyCh
               autoCapitalize="none"
               spellCheck={false}
               required
-              maxLength={128}
+              maxLength={256}
               value={setup.password}
               onChange={event => setup.setPassword(event.target.value)}
             />

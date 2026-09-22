@@ -77,6 +77,8 @@ export function ConnectorUnavailableReferences({
     queryFn: () => connectorService.getCatalog(),
     enabled: enabled && mutable && items.length > 0,
   });
+  const connectorName = (connectorID: string) =>
+    catalog.data?.data.items.find(value => value.id === connectorID)?.name ?? connectorID;
   const resolve = async (item: ConnectorUnavailableReference, action: 'replace' | 'detach') => {
     if (pending || !mutable) return;
     const command: ConnectorReferenceCommand = {
@@ -143,9 +145,19 @@ export function ConnectorUnavailableReferences({
             ?.capabilities.filter(
               value => value.usable && connection?.usable_operation_ids?.includes(value.id)
             ) ?? [];
+        const connectorLabel = connectorName(item.label);
+        const targetLabel = t(`usage.surfaces.${item.target.type}`);
         return (
           <div key={item.id} className="space-y-2 rounded-md border p-2">
-            <p className="break-words">{item.label || t('status.unavailable')}</p>
+            <div className="flex min-w-0 items-center justify-between gap-2">
+              <p className="break-words font-medium">{connectorLabel || t('status.unavailable')}</p>
+              <span className="shrink-0 text-xs text-muted-foreground">
+                {targetLabel}
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {t('references.originalConnection', { connection: item.former_reference_id })}
+            </p>
             <p className="text-xs text-muted-foreground">
               {t(referenceReasonKey(item.reason_code))}
             </p>

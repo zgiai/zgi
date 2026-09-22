@@ -250,13 +250,14 @@ type AgentDatabaseBinding struct {
 }
 
 // AgentConnectorBinding is the editor-safe projection of one owner-scoped
-// Connector Target Binding. Operation selection, risk, confirmation, and Key
-// material are deliberately absent from this contract.
+// Connector Target Binding. It carries only the explicit binding execution
+// mode; operation/risk details and Key material remain server-owned.
 type AgentConnectorBinding struct {
 	BindingID    string `json:"binding_id,omitempty"`
 	Revision     int    `json:"revision,omitempty"`
 	ConnectorID  string `json:"connector_id"`
 	ConnectionID string `json:"connection_id"`
+	AuthorizationMode string `json:"authorization_mode,omitempty"`
 }
 
 type AgentWorkflowBinding struct {

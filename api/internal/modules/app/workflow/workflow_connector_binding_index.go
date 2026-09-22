@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"github.com/google/uuid"
 	connectorbindings "github.com/zgiai/zgi/api/internal/modules/connectors/bindings"
+	connectorcatalog "github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
+	connectorconnections "github.com/zgiai/zgi/api/internal/modules/connectors/connections"
 	core "github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -88,11 +90,17 @@ func (s *WorkflowService) persistWorkflowWithBindings(ctx context.Context, workf
 		}
 		for _, selection := range selections {
 			constraint := connectorbindings.NewBindingConstraint(selection.OwnerID, selection.ConnectorID)
+			if selection.AuthorizationMode != "" {
+				constraint.AuthorizationMode = selection.AuthorizationMode
+			}
 			if previous, found := byNode[selection.NodeID]; found {
 				if previous.OwnerAccountID != selection.OwnerID {
 					return fmt.Errorf("Connector binding belongs to another owner")
 				}
 				constraint = previous.Constraint
+				if selection.AuthorizationMode != "" {
+					constraint.AuthorizationMode = selection.AuthorizationMode
+				}
 			}
 			if selection.BindingID != uuid.Nil {
 				source, err := repo.GetBinding(ctx, org, selection.OwnerID, selection.BindingID)
@@ -106,6 +114,26 @@ func (s *WorkflowService) persistWorkflowWithBindings(ctx context.Context, workf
 				if err != nil {
 					return err
 				}
+			}
+			if constraint.DirectlyAuthorized() {
+				if s.executor == nil || s.executor.connectorCatalog == nil {
+					return fmt.Errorf("Connector catalog is unavailable")
+				}
+				connection, connectionErr := connectorconnections.NewGormRepository(tx).GetConnection(ctx, org, selection.OwnerID, selection.ConnectionID)
+				if connectionErr != nil || connection.State != core.ReadinessReady {
+					return fmt.Errorf("Connector authorization connection is unavailable")
+				}
+				definition, found := s.executor.connectorCatalog.Get(selection.ConnectorID.String())
+				if !found {
+					return fmt.Errorf("Connector definition is unavailable")
+				}
+				contractDigest, digestErr := connectorcatalog.DefinitionContractDigest(definition)
+				if digestErr != nil || contractDigest == "" {
+					return fmt.Errorf("Connector contract digest is unavailable")
+				}
+				constraint.AuthorizationConnectionRevision = connection.Revision
+				constraint.AuthorizationCredentialVersion = connection.CredentialVersion
+				constraint.AuthorizationContractDigest = contractDigest
 			}
 			if constraint.Validate() != nil {
 				return fmt.Errorf("Connector binding restrictions are unavailable")

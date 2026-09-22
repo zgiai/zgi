@@ -38,6 +38,9 @@ func TestServiceContinueRestoresFrozenRequestAndPersistsCompletedTerminal(t *tes
 		result.ExecutionResult.Outcome.ID != outcomeID {
 		t.Fatalf("trusted continuation result = %#v", result)
 	}
+	if result.Presentation == nil || result.Presentation.InvocationID == "" || result.Presentation.DisplayStatus != "successful" {
+		t.Fatalf("missing safe terminal presentation = %#v", result.Presentation)
+	}
 	if result.Authorization == nil || result.Authorization.ConnectionID != store.continuation.Frozen.Request.ConnectionID ||
 		result.Authorization.BindingID != store.continuation.Frozen.Request.BindingID ||
 		result.Authorization.OperationID != store.continuation.Frozen.Request.OperationID {
@@ -115,6 +118,9 @@ func TestServiceContinueDuplicateAndConflictingDecisionsDoNotRouteAgain(t *testi
 	}
 	if duplicate.RequestIdentity != first.RequestIdentity {
 		t.Fatalf("duplicate request identity = %#v, want %#v", duplicate.RequestIdentity, first.RequestIdentity)
+	}
+	if duplicate.Presentation == nil || duplicate.Presentation.DisplayStatus != "successful" {
+		t.Fatalf("duplicate lost terminal presentation = %#v", duplicate.Presentation)
 	}
 	conflicting := command
 	conflicting.Decision = execution.ConfirmationDecisionCancelled

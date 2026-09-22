@@ -81,8 +81,8 @@ func MailDefinition(id string) (Definition, bool) {
 }
 
 // NormalizeMailValuesFor preserves the authenticated login and credential case.
-// Google app passwords and NetEase client codes may be copied with visual
-// whitespace separators; those separators are removed before validation.
+// Provider-specific credential validity is left to the real protocol verifier;
+// this function only enforces safe input boundaries.
 func NormalizeMailValuesFor(id string, values map[string]string) error {
 	if id == "gmail" {
 		return NormalizeMailValues(values)
@@ -118,11 +118,8 @@ func NormalizeMailValuesFor(id string, values map[string]string) error {
 	} else {
 		code = strings.TrimSpace(code)
 	}
-	if len(code) != 16 {
-		return invalid("mail_password")
-	}
 	for _, r := range code {
-		if r < 33 || r > 126 || p.RequireIMAPID && !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z') {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			return invalid("mail_password")
 		}
 	}

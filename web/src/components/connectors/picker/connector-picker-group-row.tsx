@@ -77,10 +77,10 @@ export function ConnectorPickerGroupRow({
     onSelect(row, triggerRef.current);
   };
   const summaryClass =
-    'col-start-2 h-[54px] w-full min-w-0 shrink-0 justify-between rounded-lg px-3 sm:w-[228px]';
+    'h-[54px] w-full min-w-0 shrink-0 justify-between rounded-lg px-3 md:col-start-3';
 
   return (
-    <article className="grid min-w-0 grid-cols-[40px_minmax(0,1fr)] items-center gap-3 rounded-xl border bg-background p-3.5 shadow-xs sm:flex sm:min-h-[92px] sm:gap-4">
+    <article className="grid min-w-0 grid-cols-[40px_minmax(0,1fr)] items-center gap-3 rounded-xl border bg-background p-3.5 shadow-xs md:grid-cols-[40px_minmax(0,1fr)_minmax(240px,auto)] md:gap-4">
       <ConnectorIcon
         connectorId={group.id}
         name={groupName}
@@ -103,7 +103,8 @@ export function ConnectorPickerGroupRow({
         ) : null}
       </div>
       {group.count > 0 || group.currentBinding || pendingSetups.length > 0 ? (
-        <DropdownMenu
+        <>
+          <DropdownMenu
           onOpenChange={next => {
             if (next) handoffRef.current = false;
           }}
@@ -331,7 +332,8 @@ export function ConnectorPickerGroupRow({
               </DropdownMenuItem>
             ) : null}
           </DropdownMenuContent>
-        </DropdownMenu>
+          </DropdownMenu>
+        </>
       ) : createRow ? (
         <Button
           className={summaryClass}
