@@ -411,7 +411,7 @@ func (resolution connectorConfirmationResolution) terminalPayload() map[string]i
 			}
 			payload["state"], payload["outcome_status"] = "completed", status
 		}
-		presentation := connectortools.OperationPresentation{SchemaVersion: 1, SourceKind: "native", InvocationID: resolution.operation.LogicalOperationID, ConnectorID: resolution.operation.ConnectorID, OperationID: resolution.operation.OperationID, DisplayStatus: status, Title: resolution.presentationTitle, ErrorCode: resolution.errorCode, Redacted: true}
+		presentation := connectortools.OperationPresentation{SchemaVersion: 1, SourceKind: "native", InvocationID: resolution.operation.LogicalOperationID, ConnectorID: resolution.operation.ConnectorID, OperationID: resolution.operation.OperationID, DisplayStatus: status, Title: resolution.presentationTitle, Summary: connectortools.SafeTerminalSummary(status, resolution.errorCode, ""), ErrorCode: resolution.errorCode, Redacted: false}
 		if resolution.presentation != nil {
 			presentation = *resolution.presentation
 			presentation.DisplayStatus = status

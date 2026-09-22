@@ -20,6 +20,7 @@ export function useConnectorRuntimeReceipt(receipt: string) {
     identity: string;
     preview: ConnectorConfirmationPreview | null;
   }>();
+  const [readFailure, setReadFailure] = useState<{ identity: string }>();
   const phase = useSyncExternalStore(
     connectorRuntimeDecisionTransport.subscribe,
     () => connectorRuntimeDecisionTransport.getPhase(receipt, scope),
@@ -43,6 +44,7 @@ export function useConnectorRuntimeReceipt(receipt: string) {
       }
       const { presentation: payload, ...status } = response.data;
       setPresentation({ identity, preview: parseConnectorConfirmationPresentation(payload) });
+      setReadFailure(undefined);
       if (status.resolution === 'unresolved' && Object.keys(status).length === 1) {
         return;
       }
@@ -50,11 +52,16 @@ export function useConnectorRuntimeReceipt(receipt: string) {
         throw new Error('Connector status could not be verified');
       }
     } catch (error) {
+      // A failed status read is not an unknown execution outcome. Only a
+      // confirmation POST that never returns a legal response may become
+      // transport_unconfirmed, and the transport records that itself. Surface a
+      // retryable read failure so the host never re-submits or shows a false
+      // unknown terminal.
       if (
         useAuthStore.getState().user?.id === actor &&
         useOrganizationStore.getState().currentOrganization?.id === organization
       ) {
-        connectorRuntimeDecisionTransport.markUnconfirmed(receipt, scope);
+        setReadFailure({ identity });
       }
       throw error;
     }
@@ -64,6 +71,7 @@ export function useConnectorRuntimeReceipt(receipt: string) {
     preview: presentation?.identity === identity ? presentation.preview : null,
     phase,
     result: connectorRuntimeDecisionTransport.getResult(receipt, scope),
+    readFailed: readFailure?.identity === identity,
     check,
   };
 }

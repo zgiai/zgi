@@ -119,6 +119,22 @@ func MessagesForInvocation(result execution.ExecutionResult, identity dispatch.I
 	return messages
 }
 
+// SafeTerminalSummary returns a locale-appropriate safe summary for a terminal
+// presentation that has no provider-derived summary. It reuses the same stable
+// error-code and success copy as the native projector and never includes raw
+// provider content. An empty result means the frontend should localize the
+// display status itself (for example cancelled terminals).
+func SafeTerminalSummary(displayStatus string, errorCode string, locale string) string {
+	display := &execution.OperationDisplay{Locale: locale}
+	if code := strings.TrimSpace(errorCode); code != "" {
+		return safePresentationSummary(code, display)
+	}
+	if displayStatus == "successful" || displayStatus == "partial" {
+		return safeSuccessSummary(display)
+	}
+	return ""
+}
+
 func safeSuccessSummary(display *execution.OperationDisplay) string {
 	locale := ""
 	if display != nil {

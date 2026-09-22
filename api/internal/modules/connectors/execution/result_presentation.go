@@ -15,6 +15,18 @@ func WithPresentationLocale(ctx context.Context, value string) context.Context {
 	return context.WithValue(ctx, presentationLocaleKey{}, locale)
 }
 
+// PresentationLocaleFromContext returns the locale pinned for safe presentation
+// labels, defaulting to en-US when the host did not pin one. It mirrors the
+// resolution presentResult uses so fallback projections stay locale-consistent.
+func PresentationLocaleFromContext(ctx context.Context) string {
+	if ctx != nil {
+		if locale, ok := ctx.Value(presentationLocaleKey{}).(appcatalog.Locale); ok && locale != "" {
+			return string(locale)
+		}
+	}
+	return string(appcatalog.LocaleEnglishUS)
+}
+
 func (service *Service) presentResult(ctx context.Context, result ExecutionResult) ExecutionResult {
 	var locale appcatalog.Locale
 	if ctx != nil {

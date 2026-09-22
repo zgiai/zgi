@@ -358,6 +358,7 @@ const surfaceSource = source('src/components/connectors/runtime/connector-runtim
 const resultSource = source('src/components/aichat/operation-cards/operation-result-card.tsx');
 const modelSource = source('src/components/connectors/runtime/connector-runtime-model.ts');
 const transportSource = source('src/components/connectors/runtime/connector-runtime-transport.ts');
+const receiptHookSource = source('src/components/connectors/runtime/use-runtime-receipt.ts');
 const serviceSource = source('src/services/connector.service.ts');
 const contractSource = source('src/services/types/connector.ts');
 const chatSource = source('src/components/chat/variants/aichat/agentic-timeline.tsx');
@@ -427,5 +428,27 @@ assert.doesNotMatch(connectorRuntimeSource, /localStorage|sessionStorage|compone
 assert.doesNotMatch(`${surfaceSource}\n${confirmationSource}`, /connectorService|axios|fetch\(/);
 assert.doesNotMatch(blockedSource, /onClick|onDecision|confirmAction|cancelAction/);
 assert.match(surfaceSource, /ConnectorRuntimeTerminalState/);
+
+// T2-01: an initial status-read failure is a retryable read error, never a
+// post-submit transport_unconfirmed outcome.
+assert.doesNotMatch(
+  receiptHookSource,
+  /markUnconfirmed/,
+  'a failed status read must not force transport_unconfirmed'
+);
+assert.match(receiptHookSource, /readFailed/, 'the receipt hook exposes a read-failure signal');
+assert.doesNotMatch(
+  transportSource,
+  /markUnconfirmed/,
+  'only a failed confirmation POST may record transport_unconfirmed'
+);
+assert.match(confirmationSource, /receipt\.readFailed/);
+assert.match(confirmationSource, /runtime\.confirmation\.statusReadFailed/);
+assert.match(confirmationSource, /runtime\.confirmation\.retryStatus/);
+assert.doesNotMatch(
+  confirmationSource,
+  /decisionStateRef\.current = unconfirmed/,
+  'a failed read must not fabricate an unknown decision state'
+);
 
 console.log('Connector runtime one-shot confirmation contract checks passed.');

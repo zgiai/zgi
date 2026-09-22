@@ -127,15 +127,10 @@ export function ConnectorRuntimeConfirmationCard({
         if (current) setVerifiedIdentity(identity);
       })
       .catch(() => {
-        if (!current) return;
-        decisionScope.current = receiptScope;
-        const unconfirmed: ConnectorRuntimeDecisionState = {
-          status: 'unknown',
-          routeReceipt: confirmation.route_receipt,
-          decision: 'confirmed',
-        };
-        decisionStateRef.current = unconfirmed;
-        setDecisionState(unconfirmed);
+        // A failed read is a temporary status-read failure, not an unknown
+        // execution outcome. Leave the decision idle and let receipt.readFailed
+        // drive a retryable prompt; never fabricate a transport_unconfirmed.
+        if (current) setVerifiedIdentity('');
       });
     return () => {
       current = false;
@@ -146,6 +141,7 @@ export function ConnectorRuntimeConfirmationCard({
     setChecking(true);
     try {
       await receipt.check();
+      if (mounted.current && identityRef.current === identity) setVerifiedIdentity(identity);
     } finally {
       if (mounted.current && identityRef.current === identity) setChecking(false);
     }
@@ -242,6 +238,16 @@ export function ConnectorRuntimeConfirmationCard({
       tone: 'warning',
     });
   }
+  const showReadFailed = receipt.readFailed && visibleState.status === 'idle';
+  if (showReadFailed) {
+    statusLabel = t('runtime.confirmation.statusReadFailed');
+    warnings.push({
+      id: 'status-read-failed',
+      title: t('runtime.confirmation.statusReadFailed'),
+      description: t('runtime.confirmation.statusReadFailedHint'),
+      tone: 'warning',
+    });
+  }
   const resolved = visibleState.status === 'resolved' || visibleState.status === 'unknown';
   return (
     <OperationConfirmationCard
@@ -258,11 +264,17 @@ export function ConnectorRuntimeConfirmationCard({
       items={[]}
       warnings={warnings}
       actions={
-        visibleState.status === 'unknown'
+        visibleState.status === 'unknown' || showReadFailed
           ? [
               {
-                id: 'check-connector-status',
-                label: t('runtime.confirmation.checkStatus'),
+                id:
+                  visibleState.status === 'unknown'
+                    ? 'check-connector-status'
+                    : 'retry-connector-status',
+                label:
+                  visibleState.status === 'unknown'
+                    ? t('runtime.confirmation.checkStatus')
+                    : t('runtime.confirmation.retryStatus'),
                 icon: <RefreshCw className="size-3.5" />,
                 disabled: checking,
                 loading: checking,

@@ -809,6 +809,10 @@ const messages = {
       transportUnconfirmedHint:
         'The result has not been confirmed. Check its status before repeating the action.',
       checkStatus: 'Check status',
+      statusReadFailed: 'Unable to read the operation status',
+      statusReadFailedHint:
+        'This does not mean the operation ran or that its result is unknown. Retry the read; the operation will not be resubmitted.',
+      retryStatus: 'Retry',
       title: 'Confirm Connector action',
       description:
         'Review this action before it runs. Your decision applies only to this operation.',

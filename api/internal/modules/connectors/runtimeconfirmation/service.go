@@ -142,7 +142,7 @@ func (service *Service) Continue(ctx context.Context, command Command) (Result, 
 		return Result{}, err
 	}
 	if continuation.State != execution.ConfirmationContinuationPending {
-		return projectExisting(continuation, command.Decision)
+		return projectExisting(ctx, continuation, command.Decision)
 	}
 	if err := authorizeFrozenRequest(command, continuation.Frozen); err != nil {
 		return Result{}, err
@@ -196,7 +196,7 @@ func (service *Service) Continue(ctx context.Context, command Command) (Result, 
 		}
 		return Result{}, err
 	}
-	projected, err := projectExisting(stored, command.Decision)
+	projected, err := projectExisting(ctx, stored, command.Decision)
 	if err != nil {
 		return Result{}, err
 	}
@@ -287,7 +287,7 @@ func (service *Service) resolveConcurrentWinner(
 	if current.State == execution.ConfirmationContinuationPending {
 		return service.recoverPendingTerminal(ctx, command, current, conflict)
 	}
-	return projectExisting(current, command.Decision)
+	return projectExisting(ctx, current, command.Decision)
 }
 
 func (service *Service) recoverPendingTerminal(
@@ -330,7 +330,7 @@ func (service *Service) recoverPendingTerminal(
 			return Result{}, conflict
 		}
 	}
-	return projectExisting(stored, command.Decision)
+	return projectExisting(ctx, stored, command.Decision)
 }
 
 func terminalRecoveryRequest(
@@ -464,6 +464,7 @@ func safeExecutionErrorCode(err error) core.ErrorCode {
 }
 
 func projectExisting(
+	ctx context.Context,
 	continuation execution.ConfirmationContinuation,
 	decision execution.ConfirmationDecision,
 ) (Result, error) {
@@ -500,11 +501,12 @@ func projectExisting(
 	default:
 		return Result{}, core.NewError(core.ErrorCodeInternal, false, nil)
 	}
-	result.Presentation = fallbackPresentation(request, continuation.Frozen.AcceptedOperation, result.State, result.ErrorCode)
+	result.Presentation = fallbackPresentation(ctx, request, continuation.Frozen.AcceptedOperation, result.State, result.ErrorCode)
 	return result, nil
 }
 
 func fallbackPresentation(
+	ctx context.Context,
 	request execution.ExecutionRequest,
 	operation catalog.PinnedOperation,
 	state State,
@@ -519,7 +521,12 @@ func fallbackPresentation(
 	case StateCancelled:
 		status = "cancelled"
 	}
-	title := strings.TrimSpace(operation.Operation.Name)
+	locale := execution.PresentationLocaleFromContext(ctx)
+	code := strings.TrimSpace(string(errorCode))
+	title := strings.TrimSpace(operation.Operation.NameI18n[locale])
+	if title == "" {
+		title = strings.TrimSpace(operation.Operation.Name)
+	}
 	if title == "" {
 		title = request.OperationID.String()
 	}
@@ -531,8 +538,9 @@ func fallbackPresentation(
 		OperationID:   request.OperationID,
 		DisplayStatus: status,
 		Title:         title,
-		ErrorCode:     strings.TrimSpace(string(errorCode)),
-		Redacted:      true,
+		Summary:       connectortools.SafeTerminalSummary(status, code, locale),
+		ErrorCode:     code,
+		Redacted:      false,
 	}
 }
 

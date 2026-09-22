@@ -1,14 +1,17 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useLocale } from 'next-intl';
 import type { ToolGovernancePendingApproval } from '@/components/chat/variants/aichat/tool-governance-decision-card';
 import {
   publishToolGovernancePendingApproval,
   useToolGovernancePendingApprovalScope,
 } from '@/components/chat/variants/aichat/tool-governance-decision-card';
 import { useT } from '@/i18n/translations';
+import { localizeConnectorRuntimeConfirmation } from '@/components/connectors/connector-metadata';
 import { useConnectorRuntimeReceipt } from './use-runtime-receipt';
 import type {
+  ConnectorRuntimeConfirmation,
   ConnectorRuntimeDecisionHandler,
   ConnectorRuntimeExecutionResult,
   ConnectorRuntimeRequiresConfirmationResult,
@@ -39,6 +42,8 @@ interface ConnectorRuntimeDialogApprovalBridgeProps {
 
 function connectorRuntimePendingApproval({
   result,
+  confirmation,
+  locale,
   preview,
   verified,
   conversationId,
@@ -47,6 +52,8 @@ function connectorRuntimePendingApproval({
   onDecision,
   t,
 }: ConnectorRuntimeDialogApprovalBridgeProps & {
+  confirmation: ConnectorRuntimeConfirmation;
+  locale: string;
   preview: ReturnType<typeof useConnectorRuntimeReceipt>['preview'];
   verified: boolean;
   scope: string;
@@ -56,8 +63,8 @@ function connectorRuntimePendingApproval({
     id: `${conversationId}:${messageId}:${result.confirmation.route_receipt}`,
     conversationId,
     messageId,
-    title: t('runtime.confirmation.title'),
-    toolLabel: t('runtime.presentation.title'),
+    title: `${confirmation.connector_name} · ${confirmation.action_name}`,
+    toolLabel: confirmation.action_name,
     actionSentence: t('runtime.confirmation.description'),
     assets: [
       ...(preview?.account_identity
@@ -71,7 +78,7 @@ function connectorRuntimePendingApproval({
         : []),
       ...(preview?.fields ?? []).map((field, index) => ({
         key: `connector-preview-${index}`,
-        name: field.label_i18n?.['zh-Hans'] ?? field.label,
+        name: field.label_i18n?.[locale] ?? field.label,
         meta: field.value,
       })),
     ],
@@ -114,8 +121,10 @@ export function ConnectorRuntimeDialogApprovalBridge({
   onDecision,
 }: ConnectorRuntimeDialogApprovalBridgeProps) {
   const t = useT('connectors');
+  const locale = useLocale();
   const pendingScopeId = useToolGovernancePendingApprovalScope();
   const receipt = useConnectorRuntimeReceipt(result.confirmation.route_receipt);
+  const confirmation = localizeConnectorRuntimeConfirmation(result.confirmation, locale);
   const checkReceipt = receipt.check;
   const [verified, setVerified] = useState(false);
   useEffect(() => {
@@ -137,6 +146,8 @@ export function ConnectorRuntimeDialogApprovalBridge({
     () =>
       connectorRuntimePendingApproval({
         result,
+        confirmation,
+        locale,
         preview: receipt.preview,
         verified,
         conversationId,
@@ -146,7 +157,9 @@ export function ConnectorRuntimeDialogApprovalBridge({
         t,
       }),
     [
+      confirmation,
       conversationId,
+      locale,
       messageId,
       onDecision,
       receipt.preview,
