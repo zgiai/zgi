@@ -141,6 +141,15 @@ func buildWorkflowStreamErrorPayload(err error) map[string]any {
 			"code":    response.ErrWorkflowPrivateChannelUpstreamUnavailable.Code,
 		}
 	}
+	// A node that exhausts its execution budget surfaces context.DeadlineExceeded
+	// (typically because the upstream model stalled) or an explicit upstream
+	// timeout. Project it to a cataloged timeout instead of the raw error string.
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, adapter.ErrTimeout) || errors.Is(err, llmerrors.DomainErrUpstreamTimeout) {
+		return map[string]any{
+			"message": response.ErrWorkflowExecutionTimeout.Message,
+			"code":    response.ErrWorkflowExecutionTimeout.Code,
+		}
+	}
 
 	code, message, ok := workflowBillingErrorCodeAndMessage(err)
 	if !ok {

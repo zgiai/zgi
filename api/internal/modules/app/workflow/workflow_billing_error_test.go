@@ -327,3 +327,42 @@ func TestBuildWorkflowStreamErrorPayload_ExchangeRateUnavailableIsSpecific(t *te
 		t.Fatalf("code = %#v, want %d", got, response.ErrWorkflowBillingExchangeRateUnavailable.Code)
 	}
 }
+
+// TestBuildWorkflowStreamErrorPayload_ExecutionTimeout guards that a node which
+// exhausts its budget (context.DeadlineExceeded, usually a stalled upstream) or
+// an explicit upstream timeout is projected to the cataloged timeout instead of
+// leaking the raw error string.
+func TestBuildWorkflowStreamErrorPayload_ExecutionTimeout(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{
+			name: "node deadline",
+			err:  fmt.Errorf("workflow execution failed at node [n1]: text2sql generation failed: %w", context.DeadlineExceeded),
+		},
+		{
+			name: "upstream adapter timeout",
+			err:  fmt.Errorf("provider timeout: %w", adapter.ErrTimeout),
+		},
+		{
+			name: "domain upstream timeout",
+			err:  fmt.Errorf("all providers failed: %w", llmerrors.DomainErrUpstreamTimeout),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := buildWorkflowStreamErrorPayload(tc.err)
+			if got := payload["code"]; got != response.ErrWorkflowExecutionTimeout.Code {
+				t.Fatalf("code = %#v, want %d", got, response.ErrWorkflowExecutionTimeout.Code)
+			}
+			message, _ := payload["message"].(string)
+			if message != response.ErrWorkflowExecutionTimeout.Message {
+				t.Fatalf("message = %q, want %q", message, response.ErrWorkflowExecutionTimeout.Message)
+			}
+			if strings.Contains(message, "context deadline exceeded") || strings.Contains(message, "n1") {
+				t.Fatalf("message leaked raw error detail: %s", message)
+			}
+		})
+	}
+}
