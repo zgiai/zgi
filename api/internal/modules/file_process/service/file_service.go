@@ -747,6 +747,14 @@ func (s *fileService) ParseFileContent(ctx context.Context, uploadFileID string)
 	}
 }
 
+func (s *fileService) IsRuntimeExternalFile(ctx context.Context, fileID string) (bool, error) {
+	var count int64
+	if err := s.db.WithContext(ctx).Table("runtime_external_files").Where("file_id = ?", fileID).Count(&count).Error; err != nil {
+		return false, fmt.Errorf("check runtime external file: %w", err)
+	}
+	return count > 0, nil
+}
+
 // GetFileByID retrieves file information by file ID
 func (s *fileService) GetFileByID(ctx context.Context, fileID string) (*dto.UploadFile, error) {
 	localUploadFile, err := s.fileRepo.GetByID(ctx, fileID)

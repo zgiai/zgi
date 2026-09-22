@@ -171,6 +171,10 @@ type RunConfig struct {
 	AgentMemoryUserScope             string
 	ConnectorTargetScope             string
 	ConnectorTargetVersionID         string
+	// ConnectorToolsDisabled prevents a host adapter from projecting Connector
+	// capabilities when that external surface does not support them. It is
+	// opt-in so existing Chat, Agent API, and DigitalHuman behavior is unchanged.
+	ConnectorToolsDisabled bool
 	// ConnectorTargetType, ConnectorRunID and ConnectorInteractive are
 	// server-owned DigitalHuman host coordinates. They are never populated from
 	// a user-facing request DTO.
@@ -731,6 +735,7 @@ type chatRequestParts struct {
 	AgentMemoryUserScope             string
 	ConnectorTargetScope             string
 	ConnectorTargetVersionID         string
+	ConnectorToolsDisabled           bool
 	// ConnectorTargetType, ConnectorRunID and ConnectorInteractive carry
 	// server-owned DigitalHuman host coordinates from RunConfig into the Skill
 	// execution boundary. A user request DTO cannot set them.

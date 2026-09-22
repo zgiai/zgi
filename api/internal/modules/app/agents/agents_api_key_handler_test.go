@@ -16,6 +16,7 @@ import (
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/runtimeworkspace"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
@@ -598,4 +599,61 @@ func (s *apiKeyChatRuntimeService) RunPreparedStream(_ context.Context, _ *runti
 		return s.result, nil
 	}
 	return &runtimeservice.ChatResult{Status: runtimemodel.MessageStatusCompleted, Metadata: map[string]interface{}{"usage": map[string]interface{}{"total_tokens": 42}}}, nil
+}
+
+func TestRuntimeWorkspaceMemoryFailsClosedWithoutRelationshipMemory(t *testing.T) {
+	t.Setenv("ZGI_RELATIONSHIP_MEMORY_ENABLED", "")
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/connect/v1/apps/app-key/memory", nil)
+	c.Set("runtime_workspace_principal", &runtimeworkspace.Principal{})
+	NewAgentsHandler(nil, nil, nil, nil, nil).GetAPIKeyAgentMemory(c)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusForbidden, w.Body.String())
+	}
+}
+
+func TestRuntimeWorkspaceRunConfigKeepsPublishedCapabilities(t *testing.T) {
+	t.Setenv("ZGI_RELATIONSHIP_MEMORY_ENABLED", "")
+	config := runtimeWorkspaceRunConfig(runtimeservice.RunConfig{
+		EnabledSkillIDs:                  []string{"calculator", "agent-knowledge", "agent-database", "agent-workflow", "connector-runtime"},
+		KnowledgeDatasetIDs:              []string{"dataset-1"},
+		KnowledgeRetrievalConfig:         map[string]interface{}{"mode": "hybrid"},
+		DatabaseBindings:                 []runtimeservice.AgentDatabaseBinding{{DataSourceID: "database-1", TableIDs: []string{"table-1"}}},
+		WorkflowBindings:                 []runtimeservice.AgentWorkflowBinding{{BindingID: "binding-1", AgentID: "agent-1", WorkflowID: "workflow-1"}},
+		BindingAuthorizations:            []runtimeservice.ResourceBindingAuthorization{{BindingType: "workflow", ResourceID: "workflow-1"}},
+		ConnectorTargetScope:             "agent",
+		ConnectorTargetVersionID:         "version-1",
+		AgentMemoryEnabled:               true,
+		AgentMemoryAutoExtractionEnabled: true,
+		AgentMemorySlots:                 []runtimeservice.AgentMemorySlotConfig{{Key: "profile", Enabled: true}},
+	})
+	if strings.Join(config.EnabledSkillIDs, ",") != "calculator,agent-knowledge,agent-database,agent-workflow,connector-runtime" {
+		t.Fatalf("published skills were changed: %#v", config.EnabledSkillIDs)
+	}
+	if len(config.KnowledgeDatasetIDs) != 1 || len(config.DatabaseBindings) != 1 || len(config.WorkflowBindings) != 1 || len(config.BindingAuthorizations) != 1 {
+		t.Fatalf("published bindings were changed: %#v", config)
+	}
+	if config.ConnectorTargetScope != "agent" || config.ConnectorTargetVersionID != "version-1" {
+		t.Fatalf("published connector target was changed: %#v", config)
+	}
+	if !config.ConnectorToolsDisabled {
+		t.Fatalf("Runtime Workspace Connector projection remained enabled: %#v", config)
+	}
+	if config.AgentMemoryEnabled || config.AgentMemoryAutoExtractionEnabled || len(config.AgentMemorySlots) != 0 {
+		t.Fatalf("memory remained enabled while relationship memory was disabled: %#v", config)
+	}
+}
+
+func TestRuntimeWorkspaceRunConfigKeepsRelationshipMemory(t *testing.T) {
+	t.Setenv("ZGI_RELATIONSHIP_MEMORY_ENABLED", "true")
+	config := runtimeWorkspaceRunConfig(runtimeservice.RunConfig{
+		AgentMemoryEnabled:               true,
+		AgentMemoryAutoExtractionEnabled: true,
+		AgentMemorySlots:                 []runtimeservice.AgentMemorySlotConfig{{Key: "profile", Enabled: true}},
+	})
+	if !config.AgentMemoryEnabled || !config.AgentMemoryAutoExtractionEnabled || len(config.AgentMemorySlots) != 1 {
+		t.Fatalf("relationship memory config = %#v, want enabled memory", config)
+	}
 }

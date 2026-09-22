@@ -96,6 +96,9 @@ func (s *service) applyConnectorSkillConfig(
 	}
 	parts.ConnectorSkillIDs = nil
 	parts.ConnectorToolsEnabled = false
+	if parts.ConnectorToolsDisabled {
+		return nil
+	}
 	targetID, surface, ok := connectorTargetForCaller(caller, parts)
 	if !ok {
 		return nil
@@ -203,6 +206,9 @@ func (s *service) resolvePreparedBusinessSkills(
 			return nil, err
 		}
 		resolved = baseResolved
+	}
+	if parts.ConnectorToolsDisabled {
+		return resolved, nil
 	}
 
 	targetID, surface, ok := connectorTargetForCaller(prepared.Caller, parts)

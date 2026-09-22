@@ -43,6 +43,24 @@ func TestAuthorizeFileAccessRejectsCrossOrganizationFile(t *testing.T) {
 	}
 }
 
+func TestAuthorizeFileAccessHidesRuntimeExternalFileFromWorkspaceMembers(t *testing.T) {
+	c, recorder := newFileAccessTestContext("account-1", "org-1")
+	workspaceID := "workspace-1"
+	fileService := &fileAccessFileService{
+		files: map[string]*dto.UploadFile{
+			"runtime-file": {ID: "runtime-file", OrganizationID: "org-1", WorkspaceID: &workspaceID, CreatedBy: "runtime-subject"},
+		},
+		runtimeFiles: map[string]bool{"runtime-file": true},
+	}
+	permissionChecker := &fileAccessPermissionChecker{allowed: map[workspace_model.WorkspacePermissionCode]bool{workspace_model.WorkspacePermissionFilePreview: true}}
+	if _, ok := authorizeFilePreviewAccess(c, fileService, permissionChecker, "runtime-file"); ok {
+		t.Fatal("ordinary Workspace file API exposed a Runtime external file")
+	}
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNotFound)
+	}
+}
+
 func TestAuthorizeFileViewAccessAllowsWorkspaceMembershipPermission(t *testing.T) {
 	c, _ := newFileAccessTestContext("account-1", "org-1")
 	workspaceID := "workspace-1"
@@ -1101,7 +1119,8 @@ func (f *fileResourcePermissionChecker) GetOrganizationWorkspacesList(ctx contex
 }
 
 type fileAccessFileService struct {
-	files map[string]*dto.UploadFile
+	files        map[string]*dto.UploadFile
+	runtimeFiles map[string]bool
 }
 
 func (f *fileAccessFileService) GetUploadConfig() *interfaces.FileUploadConfigResponse {
@@ -1141,6 +1160,10 @@ func (f *fileAccessFileService) IsFileSizeWithinLimit(extension string, fileSize
 }
 
 func (f *fileAccessFileService) ParseFileContent(ctx context.Context, uploadFileID string) {}
+
+func (f *fileAccessFileService) IsRuntimeExternalFile(ctx context.Context, fileID string) (bool, error) {
+	return f.runtimeFiles[fileID], nil
+}
 
 func (f *fileAccessFileService) GetFileByID(ctx context.Context, fileID string) (*dto.UploadFile, error) {
 	uploadFile, ok := f.files[fileID]

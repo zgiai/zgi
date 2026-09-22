@@ -11,6 +11,7 @@ import (
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/prompt"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
@@ -796,6 +797,9 @@ func (s *service) applySkillConfig(ctx context.Context, scope Scope, caller Call
 		enabled = filterAIChatSkillIDsForSurface(enabled, parts)
 		trustedCapabilities := s.trustedContextualAIChatSkillCapabilities(ctx, scope, parts)
 		enabled = addContextualAIChatSkillIDsWithCapabilities(enabled, orgEnabled, catalog, parts, trustedCapabilities)
+	}
+	if parts.ConnectorToolsDisabled {
+		enabled = skillIDsWithout(enabled, []string{skills.SkillConnectorRuntime})
 	}
 	parts.BaseSkillIDs, parts.BaseToolSkillIDs = filterSkillsForModel(enabled, catalog, parts)
 	parts.SkillIDs = mergeNormalizedSkillIDs(parts.BaseSkillIDs, parts.ConnectorSkillIDs)

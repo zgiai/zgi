@@ -39,6 +39,7 @@ type FileService interface {
 	IsFileSizeWithinLimit(extension string, fileSize int64) bool
 	ParseFileContent(ctx context.Context, uploadFileID string)
 	GetFileByID(ctx context.Context, fileID string) (*dto.UploadFile, error)
+	IsRuntimeExternalFile(ctx context.Context, fileID string) (bool, error)
 	DownloadFile(ctx context.Context, fileID string) ([]byte, error)
 	// ListFiles paginated list of files
 	ListFiles(ctx context.Context, tenantID, accountID string, req *dto.FileListRequest, visibleWorkspaceIDs []string) (*dto.FileListResponse, error)

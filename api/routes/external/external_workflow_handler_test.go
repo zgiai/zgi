@@ -462,6 +462,10 @@ func (s *externalFileAccessService) IsFileSizeWithinLimit(string, int64) bool {
 
 func (s *externalFileAccessService) ParseFileContent(context.Context, string) {}
 
+func (s *externalFileAccessService) IsRuntimeExternalFile(context.Context, string) (bool, error) {
+	return false, nil
+}
+
 func (s *externalFileAccessService) GetFileByID(_ context.Context, fileID string) (*dto.UploadFile, error) {
 	file, ok := s.files[fileID]
 	if !ok {

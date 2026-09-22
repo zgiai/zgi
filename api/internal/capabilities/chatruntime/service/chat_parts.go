@@ -63,6 +63,7 @@ func applyRunConfigToParts(config RunConfig, parts *chatRequestParts) {
 	parts.AgentMemoryUserScope = strings.TrimSpace(config.AgentMemoryUserScope)
 	parts.ConnectorTargetScope = config.ConnectorTargetScope
 	parts.ConnectorTargetVersionID = config.ConnectorTargetVersionID
+	parts.ConnectorToolsDisabled = config.ConnectorToolsDisabled
 	parts.ConnectorTargetType = config.ConnectorTargetType
 	parts.ConnectorRunID = config.ConnectorRunID
 	parts.ConnectorInteractive = config.ConnectorInteractive

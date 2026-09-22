@@ -52,6 +52,57 @@ func TestPublicDocumentationExposesDigitalHumanExternalContract(t *testing.T) {
 	}
 }
 
+func TestPublicDocumentationExposesRuntimeWorkspacePhase1Contract(t *testing.T) {
+	t.Setenv("ZGI_RUNTIME_WORKSPACE_ENABLED", "true")
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	RegisterPublicRoutes(router.Group("/api"))
+
+	docs := httptest.NewRecorder()
+	router.ServeHTTP(docs, httptest.NewRequest(http.MethodGet, "/api/docs", nil))
+	if docs.Code != http.StatusOK || !strings.Contains(docs.Body.String(), "/api/runtime-workspace-openapi.yaml") {
+		t.Fatalf("docs response = %d %s", docs.Code, docs.Body.String())
+	}
+
+	spec := httptest.NewRecorder()
+	router.ServeHTTP(spec, httptest.NewRequest(http.MethodGet, "/api/runtime-workspace-openapi.yaml", nil))
+	if spec.Code != http.StatusOK || !strings.Contains(spec.Header().Get("Content-Type"), "application/yaml") {
+		t.Fatalf("OpenAPI response = %d %q", spec.Code, spec.Header().Get("Content-Type"))
+	}
+	var document map[string]interface{}
+	if err := yaml.Unmarshal(spec.Body.Bytes(), &document); err != nil {
+		t.Fatalf("OpenAPI is invalid YAML: %v", err)
+	}
+	assertOpenAPIRefsResolve(t, document)
+	for _, required := range []string{
+		"/apps/{app_key}/config:", "/apps/{app_key}/parameters:", "/apps/{app_key}/chat:", "/apps/{app_key}/conversations:",
+		"/apps/{app_key}/conversations/search:", "/messages/{message_id}/regenerate:", "/apps/{app_key}/memory/{key}:",
+		"/apps/{app_key}/memory/settings:", "/memory/operations/{operation_id}/undo:", "/files/{file_id}/download-url:",
+		"X-ZGI-External-User-ID", "Idempotency-Key", "If-Match",
+	} {
+		if !strings.Contains(spec.Body.String(), required) {
+			t.Errorf("Runtime Workspace OpenAPI is missing %q", required)
+		}
+	}
+}
+
+func TestPublicDocumentationHidesRuntimeWorkspaceWhenDisabled(t *testing.T) {
+	t.Setenv("ZGI_RUNTIME_WORKSPACE_ENABLED", "")
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	RegisterPublicRoutes(router.Group("/api"))
+	docs := httptest.NewRecorder()
+	router.ServeHTTP(docs, httptest.NewRequest(http.MethodGet, "/api/docs", nil))
+	if docs.Code != http.StatusOK || strings.Contains(docs.Body.String(), "/api/connect/v1") || strings.Contains(docs.Body.String(), "runtime_workspace_openapi") {
+		t.Fatalf("disabled Runtime Workspace leaked through docs: %d %s", docs.Code, docs.Body.String())
+	}
+	spec := httptest.NewRecorder()
+	router.ServeHTTP(spec, httptest.NewRequest(http.MethodGet, "/api/runtime-workspace-openapi.yaml", nil))
+	if spec.Code != http.StatusNotFound {
+		t.Fatalf("disabled Runtime Workspace OpenAPI status = %d, want %d", spec.Code, http.StatusNotFound)
+	}
+}
+
 func TestPublicDocumentationRoutesExposeCurrentAgentContract(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()

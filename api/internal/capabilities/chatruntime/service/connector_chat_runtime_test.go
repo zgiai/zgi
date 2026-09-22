@@ -37,6 +37,29 @@ func TestUnboundConversationHasNoConnectorCapability(t *testing.T) {
 	}
 }
 
+func TestConnectorToolsDisabledSkipsAgentCapabilityResolution(t *testing.T) {
+	t.Parallel()
+
+	resolver := &connectorNativeLoopAgentResolver{}
+	svc := &service{connectorAgentRuntime: resolver}
+	agentID := uuid.New()
+	parts := &chatRequestParts{
+		ConnectorToolsDisabled:   true,
+		ConnectorTargetScope:     string(core.ScopePublished),
+		ConnectorTargetVersionID: uuid.NewString(),
+	}
+
+	err := svc.applyConnectorSkillConfig(
+		context.Background(),
+		Scope{OrganizationID: uuid.New(), AccountID: uuid.New()},
+		Caller{Type: runtimemodel.ConversationCallerAgent, ID: &agentID},
+		parts,
+	)
+	if err != nil || len(resolver.requests) != 0 || parts.ConnectorToolsEnabled || len(parts.ConnectorSkillIDs) != 0 {
+		t.Fatalf("disabled Connector projection resolved capabilities: parts=%#v requests=%#v err=%v", parts, resolver.requests, err)
+	}
+}
+
 func TestAIChatConnectorSkillIsEnabledOnlyByConversationTargetBindingCapabilities(t *testing.T) {
 	t.Parallel()
 

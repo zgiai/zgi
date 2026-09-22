@@ -209,4 +209,12 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 		externalGroup.POST("/agents/conversations/:conversation_id/messages/:message_id/user-input/:request_id/continue", withAgentAPIKeyContext(agentHandler.ContinueAPIKeyAgentRuntimeUserInput))
 		externalGroup.POST("/agents/conversations/:conversation_id/messages/:message_id/token-budget/:request_id/continue", withAgentAPIKeyContext(agentHandler.ContinueAPIKeyAgentRuntimeTokenBudget))
 	}
+
+	// Runtime Workspace exposes the same published Agent runtime through one
+	// rotatable group credential while keeping the legacy /v1 contract intact.
+	RegisterRuntimeWorkspaceRoutes(r, RuntimeWorkspaceRouteDeps{
+		DB:           db,
+		FileService:  fileService,
+		AgentHandler: agentHandler,
+	})
 }

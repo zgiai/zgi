@@ -81,6 +81,17 @@ func (a *AgentAdapter) relationship(ctx context.Context, workspaceID, agentID uu
 		issuerType = "agent_api"
 		value := agentID
 		issuerID = &value
+		var registered usersubject.Subject
+		err := a.service.db.WithContext(ctx).First(&registered, "id = ?", userID).Error
+		switch {
+		case err == nil:
+			kind, issuerType, issuerID, err = agentEndUserIdentity(&registered, agentID)
+			if err != nil {
+				return nil, err
+			}
+		case !errors.Is(err, gorm.ErrRecordNotFound):
+			return nil, fmt.Errorf("read registered Agent memory subject: %w", err)
+		}
 	} else if userScope != agentmemory.UserScopeAccount {
 		return nil, agentmemory.ErrInvalidInput
 	}
@@ -102,6 +113,22 @@ func (a *AgentAdapter) relationship(ctx context.Context, workspaceID, agentID uu
 	}
 	relationship, err := a.service.EnsureRelationship(ctx, EnsureRelationshipRequest{OrganizationID: *scope.OrganizationID, WorkspaceID: workspaceID, Subject: usersubject.Ref{Kind: kind, ID: userID}, IssuerType: issuerType, IssuerID: issuerID, ConsumerType: ConsumerAgent, ConsumerID: agentID, ConsumerNameSnapshot: scope.Name})
 	return relationship, mapAgentMemoryError(err)
+}
+
+// agentEndUserIdentity preserves the canonical issuer established by a
+// trusted outer runtime. Runtime Workspace subjects are scoped to the
+// exposure group rather than an individual Agent, so rewriting their issuer
+// to agent_api would incorrectly reject the same stable subject.
+func agentEndUserIdentity(registered *usersubject.Subject, agentID uuid.UUID) (usersubject.Kind, string, *uuid.UUID, error) {
+	if registered == nil {
+		issuerID := agentID
+		return usersubject.APIEndUser, "agent_api", &issuerID, nil
+	}
+	if registered.Kind != usersubject.APIEndUser || registered.IssuerType == "" || registered.IssuerID == nil || *registered.IssuerID == uuid.Nil {
+		return "", "", nil, agentmemory.ErrInvalidInput
+	}
+	issuerID := *registered.IssuerID
+	return registered.Kind, registered.IssuerType, &issuerID, nil
 }
 
 func agentContract(slots []agentmemory.RuntimeSlot) ConsumerMemoryContract {

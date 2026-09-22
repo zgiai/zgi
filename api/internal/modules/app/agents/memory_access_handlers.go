@@ -23,6 +23,7 @@ type memoryAccessScope struct {
 	agentID            uuid.UUID
 	userScope          string
 	userID             uuid.UUID
+	operationID        *uuid.UUID
 	slots              []agentmemory.RuntimeSlot
 	writeSlots         []agentmemory.RuntimeSlot
 	writesEnabled      bool
@@ -163,6 +164,11 @@ func (h *AgentsHandler) webAppMemoryAccess(c *gin.Context) (memoryAccessScope, b
 }
 
 func (h *AgentsHandler) apiKeyMemoryAccess(c *gin.Context) (memoryAccessScope, bool) {
+	_, runtimeWorkspaceRequest := c.Get("runtime_workspace_principal")
+	if runtimeWorkspaceRequest && !relationshipmemory.RuntimeEnabled() {
+		response.Fail(c, response.ErrPermissionDenied)
+		return memoryAccessScope{}, false
+	}
 	agentID, err := uuid.Parse(strings.TrimSpace(c.GetString("agent_id")))
 	if err != nil || agentID == uuid.Nil {
 		response.Fail(c, response.ErrInvalidParam)
@@ -192,6 +198,25 @@ func (h *AgentsHandler) apiKeyMemoryAccess(c *gin.Context) (memoryAccessScope, b
 		privacyContractSlots = nil
 	}
 	externalUserID := DeriveExternalUserID(workspaceID, agentID, externalUser)
+	if runtimeSubject := strings.TrimSpace(c.GetString("runtime_subject_id")); runtimeSubject != "" {
+		parsedSubject, parseErr := uuid.Parse(runtimeSubject)
+		if parseErr != nil || parsedSubject == uuid.Nil {
+			response.Fail(c, response.ErrUnauthorized)
+			return memoryAccessScope{}, false
+		}
+		externalUserID = parsedSubject
+	}
+	var operationID *uuid.UUID
+	if runtimeWorkspaceRequest {
+		if rawOperationID := strings.TrimSpace(c.GetHeader("Idempotency-Key")); rawOperationID != "" {
+			parsedOperationID, parseErr := uuid.Parse(rawOperationID)
+			if parseErr != nil || parsedOperationID == uuid.Nil {
+				response.Fail(c, response.ErrInvalidParam)
+				return memoryAccessScope{}, false
+			}
+			operationID = &parsedOperationID
+		}
+	}
 	privacySlots, err := h.memoryService().PrivacySlots(c.Request.Context(), workspaceID, agentID, privacyContractSlots, agentmemory.UserScopeEndUser, externalUserID)
 	if err != nil {
 		h.failRuntime(c, err)
@@ -202,6 +227,7 @@ func (h *AgentsHandler) apiKeyMemoryAccess(c *gin.Context) (memoryAccessScope, b
 		agentID:            agentID,
 		userScope:          agentmemory.UserScopeEndUser,
 		userID:             externalUserID,
+		operationID:        operationID,
 		slots:              privacySlots,
 		writeSlots:         writeSlots,
 		writesEnabled:      published.Config.AgentMemoryEnabled,
@@ -242,6 +268,7 @@ func (access memoryAccessScope) mutationMetadata() agentmemory.MutationMetadata 
 		ActorType:      access.actorType,
 		Source:         agentmemory.EventSourceAPI,
 		SourceKind:     access.sourceKind,
+		OperationID:    access.operationID,
 		ConfigScope:    access.configScope,
 		ConfigRevision: access.configRevision,
 	}
@@ -269,6 +296,14 @@ func (h *AgentsHandler) putDirectMemory(c *gin.Context, access memoryAccessScope
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
+	if req.ExpectedRevision == nil {
+		var valid bool
+		req.ExpectedRevision, valid = ifMatchRevision(c.GetHeader("If-Match"))
+		if !valid {
+			response.Fail(c, response.ErrInvalidParam)
+			return
+		}
+	}
 	key := strings.TrimSpace(c.Param("key"))
 	value, err := h.memoryService().UpdateValue(c.Request.Context(), access.workspaceID, access.agentID, access.writeSlots, access.userScope, access.userID, agentmemory.UpdateValueRequest{Key: key, Content: req.Content, ExpectedRevision: req.ExpectedRevision}, access.mutationMetadata())
 	if err != nil {
@@ -286,6 +321,13 @@ func (h *AgentsHandler) deleteDirectMemoryValue(c *gin.Context, access memoryAcc
 			response.Fail(c, response.ErrInvalidParam)
 			return
 		}
+	} else {
+		var valid bool
+		expected, valid = ifMatchRevision(c.GetHeader("If-Match"))
+		if !valid {
+			response.Fail(c, response.ErrInvalidParam)
+			return
+		}
 	}
 	metadata := access.mutationMetadata()
 	metadata.ExpectedRevision = expected
@@ -296,6 +338,19 @@ func (h *AgentsHandler) deleteDirectMemoryValue(c *gin.Context, access memoryAcc
 	}
 	response.Success(c, value)
 }
+
+func ifMatchRevision(value string) (*int64, bool) {
+	value = strings.Trim(strings.TrimSpace(value), "\"")
+	if value == "" || value == "*" {
+		return nil, true
+	}
+	revision, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || revision < 0 {
+		return nil, false
+	}
+	return &revision, true
+}
+
 func (h *AgentsHandler) deleteAllDirectMemory(c *gin.Context, access memoryAccessScope) {
 	err := h.memoryService().ClearAllValues(c.Request.Context(), access.workspaceID, access.agentID, access.userScope, access.userID, access.mutationMetadata())
 	if err != nil {

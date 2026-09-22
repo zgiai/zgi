@@ -61,6 +61,10 @@ func (m *mockWorkflowFileService) IsFileSizeWithinLimit(extension string, fileSi
 
 func (m *mockWorkflowFileService) ParseFileContent(ctx context.Context, uploadFileID string) {}
 
+func (m *mockWorkflowFileService) IsRuntimeExternalFile(context.Context, string) (bool, error) {
+	return false, nil
+}
+
 func (m *mockWorkflowFileService) GetFileByID(ctx context.Context, fileID string) (*dto.UploadFile, error) {
 	if m.getFileByIDFn != nil {
 		return m.getFileByIDFn(ctx, fileID)

@@ -92,6 +92,10 @@ func (f *fakeDatabaseIngestionFileService) IsFileSizeWithinLimit(string, int64) 
 
 func (f *fakeDatabaseIngestionFileService) ParseFileContent(context.Context, string) {}
 
+func (f *fakeDatabaseIngestionFileService) IsRuntimeExternalFile(context.Context, string) (bool, error) {
+	return false, nil
+}
+
 func (f *fakeDatabaseIngestionFileService) GetFileByID(context.Context, string) (*dto.UploadFile, error) {
 	if f.getFileErr != nil {
 		return nil, f.getFileErr

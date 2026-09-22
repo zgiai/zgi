@@ -1,0 +1,722 @@
+openapi: 3.0.3
+info:
+  title: ZGI Runtime Workspace API
+  version: 1.0.0
+  description: Server-side API for published Agents, conversations, files, and user memory exposed by one Runtime Workspace. A Runtime Workspace may configure a fixed-window requests_per_minute policy; limited responses return HTTP 429 with Retry-After and X-RateLimit-Limit/X-RateLimit-Remaining headers.
+x-zgi-sse-event-data-schemas:
+  message_start: '#/components/schemas/MessageStartEventData'
+  message: '#/components/schemas/MessageEventData'
+  message_end: '#/components/schemas/MessageEndEventData'
+  error: '#/components/schemas/ErrorEventData'
+  token_usage_updated: '#/components/schemas/TokenUsageEventData'
+  skill_call_start: '#/components/schemas/SkillEventData'
+  skill_call_end: '#/components/schemas/SkillEventData'
+  skill_call_error: '#/components/schemas/SkillEventData'
+  skill_load_start: '#/components/schemas/SkillEventData'
+  skill_load_end: '#/components/schemas/SkillEventData'
+  skill_reference_read: '#/components/schemas/SkillEventData'
+  skill_artifact_created: '#/components/schemas/SkillEventData'
+  agent_progress: '#/components/schemas/AgentProgressEventData'
+  agent_intermediate_answer: '#/components/schemas/MessageEventData'
+  file_parse_start: '#/components/schemas/FileParseEventData'
+  file_parse_end: '#/components/schemas/FileParseEventData'
+  file_parse_error: '#/components/schemas/FileParseEventData'
+servers:
+  - url: /api/connect/v1
+security:
+  - BearerAuth: []
+paths:
+  /apps:
+    get:
+      summary: List exposed apps
+      description: Lists callable Agents bound to the authenticated Runtime Workspace.
+      operationId: listRuntimeWorkspaceApps
+      responses:
+        '200':
+          $ref: '#/components/responses/AppListResponse'
+        default:
+          $ref: '#/components/responses/Error'
+  /apps/{app_key}:
+    parameters:
+      - $ref: '#/components/parameters/AppKey'
+    get:
+      summary: Get an exposed app
+      description: Returns the current published presentation for one exposed Agent.
+      operationId: getRuntimeWorkspaceApp
+      responses:
+        '200':
+          $ref: '#/components/responses/AppResponse'
+        default:
+          $ref: '#/components/responses/Error'
+  /apps/{app_key}/config:
+    parameters:
+      - $ref: '#/components/parameters/AppKey'
+    get:
+      summary: Get published Agent configuration
+      description: Returns the complete published presentation and feature configuration. External User ID is not required.
+      operationId: getRuntimeWorkspaceAppConfig
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /apps/{app_key}/parameters:
+    parameters:
+      - $ref: '#/components/parameters/AppKey'
+    get:
+      summary: Get App input and upload parameters
+      description: Returns published presentation features, file types, upload limits, and memory requirements. External User ID is not required.
+      operationId: getRuntimeWorkspaceAppParameters
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /apps/{app_key}/chat:
+    parameters:
+      - $ref: '#/components/parameters/AppKey'
+      - $ref: '#/components/parameters/ExternalUserID'
+    post:
+      summary: Chat with an app
+      description: Starts a streaming turn on the selected published Agent.
+      operationId: chatRuntimeWorkspaceApp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/AgentEventStream'
+        default:
+          $ref: '#/components/responses/Error'
+  /apps/{app_key}/conversations:
+    parameters:
+      - $ref: '#/components/parameters/AppKey'
+      - $ref: '#/components/parameters/ExternalUserID'
+    get:
+      summary: List conversations
+      description: Lists conversations owned by the current Runtime Subject and Agent.
+      operationId: listRuntimeWorkspaceConversations
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Create a conversation
+      description: Creates a conversation owned by the current Runtime Subject and Agent.
+      operationId: createRuntimeWorkspaceConversation
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                conversation_type:
+                  type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        default:
+          $ref: '#/components/responses/Error'
+  /apps/{app_key}/conversations/search:
+    parameters:
+      - $ref: '#/components/parameters/AppKey'
+      - $ref: '#/components/parameters/ExternalUserID'
+    get:
+      summary: Search conversations and messages
+      description: Searches the current external user's conversations and messages for the selected App.
+      operationId: searchRuntimeWorkspaceConversations
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema: {type: string, minLength: 1, maxLength: 200}
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /apps/{app_key}/conversations/{conversation_id}:
+    parameters:
+      - $ref: '#/components/parameters/AppKey'
+      - $ref: '#/components/parameters/ConversationID'
+      - $ref: '#/components/parameters/ExternalUserID'
+    get:
+      summary: Get a conversation
+      description: Returns a Subject- and Agent-scoped conversation.
+      operationId: getRuntimeWorkspaceConversation
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        default:
+          $ref: '#/components/responses/Error'
+    patch:
+      summary: Update a conversation
+      description: Updates a Subject- and Agent-scoped conversation.
+      operationId: updateRuntimeWorkspaceConversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: Delete a conversation
+      description: Deletes a Subject- and Agent-scoped conversation.
+      operationId: deleteRuntimeWorkspaceConversation
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        default:
+          $ref: '#/components/responses/Error'
+  /apps/{app_key}/conversations/{conversation_id}/messages:
+    parameters:
+      - $ref: '#/components/parameters/AppKey'
+      - $ref: '#/components/parameters/ConversationID'
+      - $ref: '#/components/parameters/ExternalUserID'
+    get:
+      summary: List conversation messages
+      description: Lists messages in a Subject- and Agent-scoped conversation.
+      operationId: listRuntimeWorkspaceMessages
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        default:
+          $ref: '#/components/responses/Error'
+  /apps/{app_key}/conversations/{conversation_id}/events:
+    parameters:
+      - $ref: '#/components/parameters/AppKey'
+      - $ref: '#/components/parameters/ConversationID'
+      - $ref: '#/components/parameters/ExternalUserID'
+    get:
+      summary: Resume conversation events
+      description: Resumes the recoverable server-sent event stream.
+      operationId: streamRuntimeWorkspaceEvents
+      responses:
+        '200':
+          $ref: '#/components/responses/AgentEventStream'
+        default:
+          $ref: '#/components/responses/Error'
+  /apps/{app_key}/conversations/{conversation_id}/stop:
+    parameters:
+      - $ref: '#/components/parameters/AppKey'
+      - $ref: '#/components/parameters/ConversationID'
+      - $ref: '#/components/parameters/ExternalUserID'
+    post:
+      summary: Stop a conversation turn
+      description: Stops the active turn in a Subject- and Agent-scoped conversation.
+      operationId: stopRuntimeWorkspaceConversation
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        default:
+          $ref: '#/components/responses/Error'
+  /apps/{app_key}/messages/{message_id}/regenerate:
+    parameters:
+      - $ref: '#/components/parameters/AppKey'
+      - $ref: '#/components/parameters/MessageID'
+      - $ref: '#/components/parameters/ExternalUserID'
+    post:
+      summary: Regenerate a root message
+      description: Regenerates the selected root message with the published Agent configuration and streams the replacement through SSE.
+      operationId: regenerateRuntimeWorkspaceMessage
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RegenerateRequest'}
+      responses:
+        '200': {$ref: '#/components/responses/AgentEventStream'}
+        default: {$ref: '#/components/responses/Error'}
+  /apps/{app_key}/memory:
+    parameters:
+      - $ref: '#/components/parameters/AppKey'
+      - $ref: '#/components/parameters/ExternalUserID'
+    get:
+      summary: Get Agent memory
+      description: Returns the existing Agent Memory contract for the current Runtime Subject and Agent.
+      operationId: getRuntimeWorkspaceMemory
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: Clear Agent memory
+      description: Clears all memory values for the current Runtime Subject and Agent.
+      operationId: clearRuntimeWorkspaceMemory
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        default:
+          $ref: '#/components/responses/Error'
+  /apps/{app_key}/memory/export:
+    parameters:
+      - $ref: '#/components/parameters/AppKey'
+      - $ref: '#/components/parameters/ExternalUserID'
+    get:
+      summary: Export Agent memory
+      description: Exports memory for the current Runtime Subject and Agent.
+      operationId: exportRuntimeWorkspaceMemory
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        default:
+          $ref: '#/components/responses/Error'
+  /apps/{app_key}/memory/settings:
+    parameters:
+      - $ref: '#/components/parameters/AppKey'
+      - $ref: '#/components/parameters/ExternalUserID'
+    get:
+      summary: Get Agent memory settings
+      operationId: getRuntimeWorkspaceMemorySettings
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+    patch:
+      summary: Update Agent memory settings
+      operationId: updateRuntimeWorkspaceMemorySettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/MemorySettingsPatchRequest'}
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /apps/{app_key}/memory/operations/{operation_id}/undo:
+    parameters:
+      - $ref: '#/components/parameters/AppKey'
+      - $ref: '#/components/parameters/ExternalUserID'
+      - name: operation_id
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    post:
+      summary: Undo an Agent memory operation
+      operationId: undoRuntimeWorkspaceMemoryOperation
+      responses:
+        '200': {$ref: '#/components/responses/Success'}
+        default: {$ref: '#/components/responses/Error'}
+  /apps/{app_key}/memory/{key}:
+    parameters:
+      - $ref: '#/components/parameters/AppKey'
+      - $ref: '#/components/parameters/MemoryKey'
+      - $ref: '#/components/parameters/ExternalUserID'
+      - $ref: '#/components/parameters/IdempotencyKey'
+    put:
+      summary: Put an Agent memory value
+      description: Creates or updates one value using the existing Agent Memory key and revision contract.
+      operationId: putRuntimeWorkspaceMemory
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemoryUpdateRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: Delete an Agent memory value
+      description: Deletes one value using the existing Agent Memory key and revision contract.
+      operationId: deleteRuntimeWorkspaceMemory
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        default:
+          $ref: '#/components/responses/Error'
+  /files:
+    parameters:
+      - $ref: '#/components/parameters/ExternalUserID'
+    get:
+      summary: List files
+      description: Lists paginated files owned by the current Runtime Subject.
+      operationId: listRuntimeWorkspaceFiles
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          $ref: '#/components/responses/FileListResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Upload a file
+      description: Uploads a file owned by the current Runtime Subject.
+      operationId: uploadRuntimeWorkspaceFile
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          $ref: '#/components/responses/FileUploadResponse'
+        default:
+          $ref: '#/components/responses/Error'
+  /files/{file_id}:
+    parameters:
+      - $ref: '#/components/parameters/FileID'
+      - $ref: '#/components/parameters/ExternalUserID'
+    get:
+      summary: Get file metadata
+      description: Returns public metadata after Runtime Subject ownership validation.
+      operationId: getRuntimeWorkspaceFile
+      responses:
+        '200':
+          $ref: '#/components/responses/FileResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: Delete a file
+      description: Deletes a file owned by the current Runtime Subject.
+      operationId: deleteRuntimeWorkspaceFile
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        default:
+          $ref: '#/components/responses/Error'
+  /files/{file_id}/download-url:
+    parameters:
+      - $ref: '#/components/parameters/FileID'
+      - $ref: '#/components/parameters/ExternalUserID'
+    get:
+      summary: Get a file download URL
+      description: Returns a signed URL after Runtime Subject ownership validation.
+      operationId: getRuntimeWorkspaceFileDownloadURL
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        default:
+          $ref: '#/components/responses/Error'
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: RuntimeWorkspaceKey
+  parameters:
+    AppKey:
+      name: app_key
+      in: path
+      required: true
+      schema:
+        type: string
+    ConversationID:
+      name: conversation_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    MessageID:
+      name: message_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    FileID:
+      name: file_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    MemoryKey:
+      name: key
+      in: path
+      required: true
+      schema:
+        type: string
+    ExternalUserID:
+      name: X-ZGI-External-User-ID
+      in: header
+      required: true
+      description: Stable opaque identifier supplied by the trusted server-side integration.
+      schema:
+        type: string
+        maxLength: 128
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema:
+        type: string
+        format: uuid
+    IfMatch:
+      name: If-Match
+      in: header
+      required: false
+      schema:
+        type: string
+    Page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+  schemas:
+    App:
+      type: object
+      required: [app_key, name, version, version_uuid, status, supports_stream, capabilities]
+      properties:
+        app_key: {type: string, example: app_34ab5c8d91ef}
+        name: {type: string, example: Research Assistant}
+        description: {type: string}
+        icon: {type: string}
+        icon_type: {type: string}
+        icon_url: {type: string, format: uri}
+        version: {type: string, example: v12}
+        version_uuid: {type: string, format: uuid}
+        home_title: {type: string}
+        opening_statement: {type: string}
+        input_placeholder: {type: string}
+        theme_color: {type: string}
+        suggested_questions:
+          type: array
+          items: {type: string}
+        status: {type: string, enum: [active]}
+        supports_stream: {type: boolean}
+        file_upload_enabled: {type: boolean}
+        supports_vision: {type: boolean}
+        agent_memory_enabled: {type: boolean}
+        memory_requires_user: {type: boolean}
+        external_user_required: {type: boolean}
+        capabilities:
+          type: array
+          items: {type: string, enum: [chat, conversations, files, memory, vision, skills]}
+    AppListData:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/App'}
+    File:
+      type: object
+      required: [id, name, size, extension, mime_type, created_at]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        size: {type: integer, format: int64}
+        extension: {type: string}
+        mime_type: {type: string}
+        created_at: {type: string, format: date-time}
+    FileListData:
+      type: object
+      required: [items, page, limit, total, has_more]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/File'}
+        page: {type: integer}
+        limit: {type: integer}
+        total: {type: integer, format: int64}
+        has_more: {type: boolean}
+    MemoryValue:
+      type: object
+      properties:
+        key: {type: string}
+        name: {type: string}
+        content: {type: string}
+        revision: {type: integer, format: int64}
+        updated_at: {type: string, format: date-time}
+    MessageStartEventData:
+      type: object
+      required: [conversation_id, message_id]
+      properties:
+        conversation_id: {type: string, format: uuid}
+        message_id: {type: string, format: uuid}
+        parent_id: {type: string, format: uuid, nullable: true}
+        title: {type: string}
+        model: {type: string}
+        replace: {type: boolean}
+        created_at: {type: integer, format: int64}
+    MessageEventData:
+      type: object
+      required: [conversation_id, message_id, answer]
+      properties:
+        conversation_id: {type: string, format: uuid}
+        message_id: {type: string, format: uuid}
+        answer: {type: string}
+    MessageEndEventData:
+      type: object
+      required: [conversation_id, message_id, status]
+      properties:
+        conversation_id: {type: string, format: uuid}
+        message_id: {type: string, format: uuid}
+        status: {type: string}
+        metadata: {type: object, additionalProperties: true}
+    ErrorEventData:
+      type: object
+      required: [code, message]
+      properties:
+        code: {type: string}
+        message: {type: string}
+        retryable: {type: boolean}
+    TokenUsageEventData:
+      type: object
+      additionalProperties: true
+    SkillEventData:
+      type: object
+      additionalProperties: true
+    RegenerateRequest:
+      type: object
+      properties:
+        query: {type: string}
+    MemorySettingsPatchRequest:
+      type: object
+      properties:
+        memory_enabled: {type: boolean}
+        auto_capture_enabled: {type: boolean}
+        expected_revision: {type: integer, minimum: 0}
+    AgentProgressEventData:
+      type: object
+      additionalProperties: true
+    FileParseEventData:
+      type: object
+      additionalProperties: true
+    ChatRequest:
+      type: object
+      required: [query]
+      properties:
+        conversation_id:
+          type: string
+          format: uuid
+        parent_id:
+          type: string
+          format: uuid
+        query:
+          type: string
+        file_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+    MemoryUpdateRequest:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+        expected_revision:
+          type: integer
+          minimum: 0
+    Envelope:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        data: {}
+  responses:
+    AgentEventStream:
+      description: Native Server-Sent Events stream. Persist every SSE id for reconnect.
+      content:
+        text/event-stream:
+          schema:
+            type: string
+            example: |-
+              id: 1715750400000-0
+              event: message
+              data: {"event":"message","data":{"conversation_id":"...","message_id":"...","answer":"Hello"}}
+      headers:
+        X-ZGI-Conversation-ID:
+          schema: {type: string, format: uuid}
+        X-ZGI-Message-ID:
+          schema: {type: string, format: uuid}
+    AppListResponse:
+      description: Exposed Apps
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data: {$ref: '#/components/schemas/AppListData'}
+    AppResponse:
+      description: Exposed App
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data: {$ref: '#/components/schemas/App'}
+    FileListResponse:
+      description: Subject-scoped file list
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data: {$ref: '#/components/schemas/FileListData'}
+    FileResponse:
+      description: Public file metadata
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data: {$ref: '#/components/schemas/File'}
+    FileUploadResponse:
+      description: Uploaded Runtime file
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [id, name, size, extension, mime_type, created_at]
+            properties:
+              id: {type: string, format: uuid}
+              name: {type: string}
+              size: {type: integer, format: int64}
+              extension: {type: string}
+              mime_type: {type: string}
+              created_at: {type: integer, format: int64}
+    Success:
+      description: Successful response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Envelope'
+    Error:
+      description: Error response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Envelope'
