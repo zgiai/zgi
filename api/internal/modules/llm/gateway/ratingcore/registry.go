@@ -39,6 +39,19 @@ var unitRegistry = []UnitDefinition{
 	{Operation: "speech_generation", Meter: "input_text", Unit: "billed_character", BaseUnit: "billed_character", PerQuantityDefault: 1, QuantityKind: "characters", PricingSource: "metered"},
 	{Operation: "music_generation", Meter: "output_track", Unit: "track", BaseUnit: "track", PerQuantityDefault: 1, QuantityKind: "tracks", PricingSource: "metered"},
 	{Operation: "lyrics_generation", Meter: "request", Unit: "request", BaseUnit: "request", PerQuantityDefault: 1, QuantityKind: "requests", PricingSource: "metered"},
+	{Operation: "rerank", Meter: "search", Unit: "search", BaseUnit: "search", PerQuantityDefault: 1, QuantityKind: "searches", PricingSource: "metered"},
+	{Operation: "embedding", Meter: "input_pixel", Unit: "per_1m_pixels", BaseUnit: "per_1m_pixels", PerQuantityDefault: 1000000, QuantityKind: "pixels", PricingSource: "metered"},
+	{Operation: "transcription", Meter: "input_token", Unit: "per_1m_tokens", BaseUnit: "per_1m_tokens", PerQuantityDefault: 1000000, QuantityKind: "tokens", PricingSource: "metered"},
+	{Operation: "transcription", Meter: "output_token", Unit: "per_1m_tokens", BaseUnit: "per_1m_tokens", PerQuantityDefault: 1000000, QuantityKind: "tokens", PricingSource: "metered"},
+	{Operation: "speech_generation", Meter: "output_audio_token", Unit: "per_1m_tokens", BaseUnit: "per_1m_tokens", PerQuantityDefault: 1000000, QuantityKind: "audio_tokens", PricingSource: "metered"},
+	{Operation: "music_generation", Meter: "output_duration", Unit: "minute", BaseUnit: "minute", PerQuantityDefault: 1, QuantityKind: "minutes", PricingSource: "metered"},
+	{Operation: "web_search", Meter: "call", Unit: "call", BaseUnit: "call", PerQuantityDefault: 1, QuantityKind: "calls", PricingSource: "metered"},
+	{Operation: "file_search", Meter: "call", Unit: "call", BaseUnit: "call", PerQuantityDefault: 1, QuantityKind: "calls", PricingSource: "metered"},
+	{Operation: "code_interpreter", Meter: "session", Unit: "session", BaseUnit: "session", PerQuantityDefault: 1, QuantityKind: "sessions", PricingSource: "metered"},
+	{Operation: "code_interpreter", Meter: "hour", Unit: "hour", BaseUnit: "hour", PerQuantityDefault: 1, QuantityKind: "hours", PricingSource: "metered"},
+	{Operation: "chat", Meter: "input_image_token", Unit: "per_1m_tokens", BaseUnit: "per_1m_tokens", PerQuantityDefault: 1000000, QuantityKind: "tokens", PricingSource: "metered"},
+	{Operation: "image_generation", Meter: "input_text_token_cached", Unit: "per_1m_tokens", BaseUnit: "per_1m_tokens", PerQuantityDefault: 1000000, QuantityKind: "tokens", PricingSource: "metered"},
+	{Operation: "image_generation", Meter: "input_image_token_cached", Unit: "per_1m_tokens", BaseUnit: "per_1m_tokens", PerQuantityDefault: 1000000, QuantityKind: "tokens", PricingSource: "metered"},
 }
 
 // UnitDefinitions returns a defensive copy of the frozen registry.

@@ -232,6 +232,136 @@
       "quantity_kind": "requests",
       "pricing_source": "metered",
       "notes": ""
+    },
+    {
+      "operation": "rerank",
+      "meter": "search",
+      "unit": "search",
+      "base_unit": "search",
+      "per_quantity_default": 1,
+      "quantity_kind": "searches",
+      "pricing_source": "metered",
+      "notes": "按搜索单元（1 query + N documents）"
+    },
+    {
+      "operation": "embedding",
+      "meter": "input_pixel",
+      "unit": "per_1m_pixels",
+      "base_unit": "per_1m_pixels",
+      "per_quantity_default": 1000000,
+      "quantity_kind": "pixels",
+      "pricing_source": "metered",
+      "notes": "多模态 embedding 按像素"
+    },
+    {
+      "operation": "transcription",
+      "meter": "input_token",
+      "unit": "per_1m_tokens",
+      "base_unit": "per_1m_tokens",
+      "per_quantity_default": 1000000,
+      "quantity_kind": "tokens",
+      "pricing_source": "metered",
+      "notes": "STT token 模式输入档"
+    },
+    {
+      "operation": "transcription",
+      "meter": "output_token",
+      "unit": "per_1m_tokens",
+      "base_unit": "per_1m_tokens",
+      "per_quantity_default": 1000000,
+      "quantity_kind": "tokens",
+      "pricing_source": "metered",
+      "notes": "STT token 模式输出档"
+    },
+    {
+      "operation": "speech_generation",
+      "meter": "output_audio_token",
+      "unit": "per_1m_tokens",
+      "base_unit": "per_1m_tokens",
+      "per_quantity_default": 1000000,
+      "quantity_kind": "audio_tokens",
+      "pricing_source": "metered",
+      "notes": "TTS 输出音频 token 档"
+    },
+    {
+      "operation": "music_generation",
+      "meter": "output_duration",
+      "unit": "minute",
+      "base_unit": "minute",
+      "per_quantity_default": 1,
+      "quantity_kind": "minutes",
+      "pricing_source": "metered",
+      "notes": "音乐按分钟"
+    },
+    {
+      "operation": "web_search",
+      "meter": "call",
+      "unit": "call",
+      "base_unit": "call",
+      "per_quantity_default": 1,
+      "quantity_kind": "calls",
+      "pricing_source": "metered",
+      "notes": "托管 web search 按次"
+    },
+    {
+      "operation": "file_search",
+      "meter": "call",
+      "unit": "call",
+      "base_unit": "call",
+      "per_quantity_default": 1,
+      "quantity_kind": "calls",
+      "pricing_source": "metered",
+      "notes": "托管 file search 按次"
+    },
+    {
+      "operation": "code_interpreter",
+      "meter": "session",
+      "unit": "session",
+      "base_unit": "session",
+      "per_quantity_default": 1,
+      "quantity_kind": "sessions",
+      "pricing_source": "metered",
+      "notes": "代码解释器按会话"
+    },
+    {
+      "operation": "code_interpreter",
+      "meter": "hour",
+      "unit": "hour",
+      "base_unit": "hour",
+      "per_quantity_default": 1,
+      "quantity_kind": "hours",
+      "pricing_source": "metered",
+      "notes": "代码解释器按容器小时"
+    },
+    {
+      "operation": "chat",
+      "meter": "input_image_token",
+      "unit": "per_1m_tokens",
+      "base_unit": "per_1m_tokens",
+      "per_quantity_default": 1000000,
+      "quantity_kind": "tokens",
+      "pricing_source": "metered",
+      "notes": "chat/vision 图片输入 token（使用方上报）"
+    },
+    {
+      "operation": "image_generation",
+      "meter": "input_text_token_cached",
+      "unit": "per_1m_tokens",
+      "base_unit": "per_1m_tokens",
+      "per_quantity_default": 1000000,
+      "quantity_kind": "tokens",
+      "pricing_source": "metered",
+      "notes": "图片生成缓存文本输入 token"
+    },
+    {
+      "operation": "image_generation",
+      "meter": "input_image_token_cached",
+      "unit": "per_1m_tokens",
+      "base_unit": "per_1m_tokens",
+      "per_quantity_default": 1000000,
+      "quantity_kind": "tokens",
+      "pricing_source": "metered",
+      "notes": "图片生成缓存图片输入 token"
     }
   ],
   "metered_rule_override": {

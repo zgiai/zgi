@@ -189,6 +189,13 @@ func Resolve(pricing Pricing, usage Usage) (decimal.Decimal, error) {
 		return decimal.Zero, invalidRequestError("usage cannot be negative")
 	}
 
+	// A registry-owned metered meter takes the generic metered path even when
+	// its operation also supports token meters (for example rerank by search, or
+	// an STT model billed by token instead of duration).
+	if entry, ok := LookupUnit(operation, usage.Meter); ok && entry.PricingSource == "metered" {
+		return resolveMetered(pricing, usage)
+	}
+
 	switch operation {
 	case "chat", "embedding", "rerank", "realtime_audio":
 		return resolveTokenMeters(pricing, usage)
