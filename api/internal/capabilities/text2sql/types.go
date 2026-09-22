@@ -90,8 +90,9 @@ type Catalog struct {
 }
 
 type CatalogTable struct {
-	Ref   TableRef
-	Table *sql_base.Table
+	Ref          TableRef
+	Table        *sql_base.Table
+	ValueSamples map[string][]string
 
 	// Description is the operator-facing business description stored on
 	// data_source_tables. It carries the domain wording used by end users

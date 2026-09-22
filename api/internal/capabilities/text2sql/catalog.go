@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/zgiai/zgi/api/pkg/sql_base"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -80,6 +81,31 @@ func (l *SQLCatalogLoader) Load(ctx context.Context, req CatalogRequest) (Catalo
 		return Catalog{}, fmt.Errorf("%w: load data source table mappings: %v", ErrSchemaLoad, err)
 	}
 
+	assetIDs := make([]string, 0, len(mappings))
+	for _, mapping := range mappings {
+		assetIDs = append(assetIDs, mapping.ID)
+	}
+	type valueSampleRow struct {
+		AssetTableID string         `gorm:"column:asset_table_id"`
+		ValueSamples datatypes.JSON `gorm:"column:value_samples"`
+	}
+	var sampleRows []valueSampleRow
+	if len(assetIDs) > 0 {
+		// Join the current indexing settings so a model switch cannot make the
+		// catalog read samples from a historical ready index.
+		_ = l.db.WithContext(ctx).
+			Table("text2sql_schema_indexes AS idx").
+			Select("DISTINCT ON (idx.asset_table_id) idx.asset_table_id, idx.value_samples").
+			Joins("JOIN database_schema_index_settings AS settings ON settings.data_source_id = idx.data_source_id AND settings.workspace_id = idx.workspace_id AND settings.embedding_provider = idx.embedding_provider AND settings.embedding_model = idx.embedding_model").
+			Where("idx.workspace_id = ? AND idx.data_source_id = ? AND idx.status = ? AND idx.asset_table_id IN ?", req.Scope.WorkspaceID, req.DataSourceID, IndexReady, assetIDs).
+			Order("idx.asset_table_id, idx.updated_at DESC").
+			Find(&sampleRows)
+	}
+	valueSamplesByAsset := make(map[string]map[string][]string, len(sampleRows))
+	for _, sample := range sampleRows {
+		valueSamplesByAsset[sample.AssetTableID] = DecodeValueSamples(sample.ValueSamples)
+	}
+
 	catalog := Catalog{Tables: make([]CatalogTable, 0, len(req.Tables))}
 	seenMappings := make(map[string]struct{}, len(req.Tables))
 	for _, requested := range req.Tables {
@@ -107,9 +133,10 @@ func (l *SQLCatalogLoader) Load(ctx context.Context, req CatalogRequest) (Catalo
 			return Catalog{}, fmt.Errorf("%w: table %s", ErrSchemaLoad, matched.ID)
 		}
 		catalog.Tables = append(catalog.Tables, CatalogTable{
-			Ref:         TableRef{AssetID: matched.ID, PhysicalID: matched.TableID, Schema: table.Schema, Name: table.Name},
-			Table:       table,
-			Description: stringValue(matched.Description),
+			Ref:          TableRef{AssetID: matched.ID, PhysicalID: matched.TableID, Schema: table.Schema, Name: table.Name},
+			Table:        table,
+			ValueSamples: valueSamplesByAsset[matched.ID],
+			Description:  stringValue(matched.Description),
 		})
 	}
 	return catalog, nil

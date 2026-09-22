@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/pkg/sql_base"
 	"github.com/zgiai/zgi/api/pkg/vectordb"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -29,20 +30,21 @@ const (
 )
 
 type SchemaIndex struct {
-	ID                string      `gorm:"type:uuid;primaryKey"`
-	OrganizationID    string      `gorm:"type:uuid;not null"`
-	WorkspaceID       string      `gorm:"type:uuid;not null"`
-	DataSourceID      string      `gorm:"type:uuid;not null"`
-	AssetTableID      string      `gorm:"type:uuid;not null"`
-	PhysicalTableID   int         `gorm:"not null"`
-	SchemaName        string      `gorm:"not null"`
-	PhysicalTableName string      `gorm:"not null"`
-	Fingerprint       string      `gorm:"not null"`
-	EmbeddingProvider string      `gorm:"not null"`
-	EmbeddingModel    string      `gorm:"not null"`
-	CollectionName    string      `gorm:"not null"`
-	VectorObjectID    string      `gorm:"not null"`
-	Status            IndexStatus `gorm:"not null"`
+	ID                string         `gorm:"type:uuid;primaryKey"`
+	OrganizationID    string         `gorm:"type:uuid;not null"`
+	WorkspaceID       string         `gorm:"type:uuid;not null"`
+	DataSourceID      string         `gorm:"type:uuid;not null"`
+	AssetTableID      string         `gorm:"type:uuid;not null"`
+	PhysicalTableID   int            `gorm:"not null"`
+	SchemaName        string         `gorm:"not null"`
+	PhysicalTableName string         `gorm:"not null"`
+	Fingerprint       string         `gorm:"not null"`
+	EmbeddingProvider string         `gorm:"not null"`
+	EmbeddingModel    string         `gorm:"not null"`
+	CollectionName    string         `gorm:"not null"`
+	VectorObjectID    string         `gorm:"not null"`
+	Status            IndexStatus    `gorm:"not null"`
+	ValueSamples      datatypes.JSON `gorm:"type:jsonb;not null"`
 	LastErrorCode     *string
 	IndexedAt         *time.Time
 	CreatedAt         time.Time
@@ -68,6 +70,9 @@ func (r *IndexRepository) Pending(ctx context.Context, limit int) ([]SchemaIndex
 }
 
 func (r *IndexRepository) Save(ctx context.Context, row *SchemaIndex) error {
+	if len(row.ValueSamples) == 0 {
+		row.ValueSamples = datatypes.JSON([]byte(`{}`))
+	}
 	result := r.db.WithContext(ctx).Model(&SchemaIndex{}).Where("id = ?", row.ID).Select("*").Updates(row)
 	if result.Error != nil {
 		return result.Error
@@ -120,6 +125,7 @@ func NewSchemaIndex(organizationID, workspaceID, dataSourceID, assetTableID stri
 		AssetTableID: assetTableID, PhysicalTableID: table.ID, SchemaName: table.Schema, PhysicalTableName: table.Name,
 		Fingerprint: schemaFingerprint(table), EmbeddingProvider: provider, EmbeddingModel: model,
 		CollectionName: collectionName(workspaceID, provider, model), VectorObjectID: uuid.NewString(), Status: IndexPending,
+		ValueSamples: datatypes.JSON([]byte(`{}`)),
 	}
 }
 

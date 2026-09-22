@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
@@ -319,5 +320,88 @@ func renderCatalog(catalog Catalog, options SchemaRenderOptions) string {
 			fmt.Fprintf(&builder, "  FOREIGN KEY %s -> %s.%s.%s\n", relationship.SourceColumnName, relationship.TargetTableSchema, relationship.TargetTableName, relationship.TargetColumnName)
 		}
 	}
+	if options.IncludeComments {
+		renderValueSamples(&builder, catalog)
+	}
 	return strings.TrimSpace(builder.String())
+}
+
+func renderValueSamples(builder *strings.Builder, catalog Catalog) {
+	type valueGroup struct {
+		values []string
+		tables []string
+	}
+	groups := make(map[string]map[string]*valueGroup)
+	for _, item := range catalog.Tables {
+		for column, values := range item.ValueSamples {
+			clean := make([]string, 0, min(len(values), 16))
+			seen := make(map[string]struct{}, len(values))
+			for _, value := range values {
+				value = sanitizeSample(value)
+				if value == "" {
+					continue
+				}
+				if _, ok := seen[value]; ok {
+					continue
+				}
+				seen[value] = struct{}{}
+				clean = append(clean, value)
+				if len(clean) == 16 {
+					break
+				}
+			}
+			if len(clean) == 0 {
+				continue
+			}
+			sort.Strings(clean)
+			signature := strings.Join(clean, "\x00")
+			bySignature := groups[column]
+			if bySignature == nil {
+				bySignature = make(map[string]*valueGroup)
+				groups[column] = bySignature
+			}
+			group := bySignature[signature]
+			if group == nil {
+				group = &valueGroup{values: clean}
+				bySignature[signature] = group
+			}
+			group.tables = append(group.tables, item.Table.Name)
+		}
+	}
+	if len(groups) == 0 {
+		return
+	}
+
+	builder.WriteString("\n值域参考（库中实际存储值；筛选时必须使用这些值，不要照抄问题中的措辞）：\n")
+	columns := make([]string, 0, len(groups))
+	for column := range groups {
+		columns = append(columns, column)
+	}
+	sort.Strings(columns)
+	for _, column := range columns {
+		signatures := groups[column]
+		keys := make([]string, 0, len(signatures))
+		for signature := range signatures {
+			keys = append(keys, signature)
+		}
+		sort.Strings(keys)
+		for _, signature := range keys {
+			group := signatures[signature]
+			label := ""
+			if len(signatures) > 1 {
+				sort.Strings(group.tables)
+				label = " (表: " + strings.Join(group.tables, ", ") + ")"
+			}
+			fmt.Fprintf(builder, "  %s%s: %s\n", column, label, strings.Join(group.values, ", "))
+		}
+	}
+}
+
+func sanitizeSample(value string) string {
+	value = strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(value, "\r", " "), "\n", " "))
+	runes := []rune(value)
+	if len(runes) > 24 {
+		return string(runes[:24])
+	}
+	return value
 }

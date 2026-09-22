@@ -84,6 +84,20 @@ func TestRenderCatalogHonorsModeColumnLimitAndComments(t *testing.T) {
 	}
 }
 
+func TestRenderCatalogIncludesDeduplicatedValueSamples(t *testing.T) {
+	catalog := Catalog{Tables: []CatalogTable{
+		{Table: &sql_base.Table{Schema: "public", Name: "campaigns", Columns: []sql_base.Column{{Name: "campaign_status", DataType: "text"}}}, ValueSamples: ColumnValues{"campaign_status": []string{"pending", "active"}}},
+		{Table: &sql_base.Table{Schema: "public", Name: "other_campaigns", Columns: []sql_base.Column{{Name: "campaign_status", DataType: "text"}}}, ValueSamples: ColumnValues{"campaign_status": []string{"active", "pending"}}},
+	}}
+	rendered := renderCatalog(catalog, SchemaRenderOptions{Mode: "columns", IncludeComments: true})
+	if !strings.Contains(rendered, "值域参考（库中实际存储值；筛选时必须使用这些值，不要照抄问题中的措辞）：") {
+		t.Fatalf("renderCatalog() = %q, want value sample header", rendered)
+	}
+	if strings.Count(rendered, "campaign_status (表:") != 0 || !strings.Contains(rendered, "campaign_status: active, pending") {
+		t.Fatalf("renderCatalog() = %q, want deduplicated value sample", rendered)
+	}
+}
+
 func TestRenderCatalogPutsBusinessDescriptionOnTableHeader(t *testing.T) {
 	t.Parallel()
 

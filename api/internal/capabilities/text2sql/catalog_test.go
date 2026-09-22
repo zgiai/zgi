@@ -8,6 +8,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/zgiai/zgi/api/pkg/sql_base"
+	"gorm.io/datatypes"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -30,6 +31,7 @@ func TestSQLCatalogLoaderUsesServerMetadataForMappedTable(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("ds-1"))
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, table_id, description FROM "data_source_tables"`)).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "table_id", "description"}).AddRow("table-1", 7, "营销域campaigns业务表"))
+	expectCatalogValueSamples(mock)
 	sqlClient := &recordingCatalogSQLBase{table: &sql_base.Table{ID: 7, Schema: "public", Name: "customers"}}
 	loader := NewSQLCatalogLoader(db, sqlClient)
 
@@ -58,6 +60,7 @@ func TestSQLCatalogLoaderSupportsLegacyPhysicalIDWithinDataSource(t *testing.T) 
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("ds-1"))
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, table_id, description FROM "data_source_tables"`)).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "table_id", "description"}).AddRow("table-1", 7, "营销域campaigns业务表"))
+	expectCatalogValueSamples(mock)
 	sqlClient := &recordingCatalogSQLBase{table: &sql_base.Table{ID: 7, Schema: "public", Name: "customers"}}
 	loader := NewSQLCatalogLoader(db, sqlClient)
 
@@ -104,6 +107,7 @@ func TestSQLCatalogLoaderPrefersBusinessIDWhenPhysicalIDIsStale(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("ds-1"))
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, table_id, description FROM "data_source_tables"`)).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "table_id", "description"}).AddRow("table-1", 7, "营销域campaigns业务表"))
+	expectCatalogValueSamples(mock)
 	sqlClient := &recordingCatalogSQLBase{table: &sql_base.Table{ID: 7, Schema: "public", Name: "customers"}}
 	loader := NewSQLCatalogLoader(db, sqlClient)
 
@@ -131,6 +135,7 @@ func TestSQLCatalogLoaderCarriesBusinessDescription(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "table_id", "description"}).
 			AddRow("table-1", 7, "营销域campaigns业务表").
 			AddRow("table-2", 8, nil))
+	expectCatalogValueSamples(mock)
 	comment := "Table created for organization org, data source ds"
 	sqlClient := &catalogStubSQLBase{tables: map[int]*sql_base.Table{
 		7: {ID: 7, Schema: "public", Name: "marketing_campaigns"},
@@ -158,6 +163,32 @@ func TestSQLCatalogLoaderCarriesBusinessDescription(t *testing.T) {
 	}
 }
 
+func TestSQLCatalogLoaderLoadsValueSamples(t *testing.T) {
+	db, mock, closeDB := newCatalogTestDB(t)
+	defer closeDB()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT "id" FROM "data_sources"`)).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("ds-1"))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, table_id, description FROM "data_source_tables"`)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "table_id", "description"}).AddRow("table-1", 7, nil))
+	mock.ExpectQuery(`SELECT .*idx\.asset_table_id, idx\.value_samples FROM text2sql_schema_indexes AS idx JOIN database_schema_index_settings AS settings`).
+		WillReturnRows(sqlmock.NewRows([]string{"asset_table_id", "value_samples"}).AddRow("table-1", datatypes.JSON([]byte(`{"v":1,"columns":{"campaign_status":["active","completed"]}}`))))
+	loader := NewSQLCatalogLoader(db, &recordingCatalogSQLBase{table: &sql_base.Table{ID: 7, Schema: "public", Name: "campaigns"}})
+
+	catalog, err := loader.Load(context.Background(), CatalogRequest{
+		Scope: Scope{OrganizationID: "org-1", WorkspaceID: "workspace-1"}, DataSourceID: "ds-1",
+		Tables: []TableRef{{AssetID: "table-1", PhysicalID: 7}},
+	})
+	if err != nil {
+		t.Fatalf("Load error = %v", err)
+	}
+	if got := catalog.Tables[0].ValueSamples["campaign_status"]; len(got) != 2 || got[1] != "completed" {
+		t.Fatalf("ValueSamples = %#v, want campaign status values", catalog.Tables[0].ValueSamples)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 type catalogStubSQLBase struct {
 	sql_base.SQLBase
 	tables map[int]*sql_base.Table
@@ -179,4 +210,9 @@ func newCatalogTestDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock, func()) {
 		t.Fatal(err)
 	}
 	return db, mock, func() { _ = sqlDB.Close() }
+}
+
+func expectCatalogValueSamples(mock sqlmock.Sqlmock) {
+	mock.ExpectQuery(`SELECT .*idx\.asset_table_id, idx\.value_samples FROM text2sql_schema_indexes AS idx JOIN database_schema_index_settings AS settings`).
+		WillReturnRows(sqlmock.NewRows([]string{"asset_table_id", "value_samples"}))
 }

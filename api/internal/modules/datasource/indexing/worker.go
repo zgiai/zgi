@@ -19,6 +19,8 @@ import (
 
 const taskType = "database:schema_index"
 const tableTimeout = 2 * time.Minute
+const valueSampleTimeout = 15 * time.Second
+const maxValueSampleBackfills = 20
 
 type taskPayload struct {
 	IndexID string `json:"index_id"`
@@ -114,10 +116,20 @@ func (s *Service) reconcileDatabase(ctx context.Context, setting Settings) error
 	}
 	ids := make([]string, 0, len(tables))
 	tableDetails := make([]RunTable, 0, len(tables))
+	backfills := 0
 	for _, table := range tables {
 		row := text2sql.NewSchemaIndex(setting.OrganizationID, setting.WorkspaceID, setting.DataSourceID, table.AssetID, table.Table, model.Provider, model.Model)
 		if err := repo.Ensure(ctx, row); err != nil {
 			return err
+		}
+		if row.Status == text2sql.IndexReady && !text2sql.ValueSamplesInitialized(row.ValueSamples) && backfills < maxValueSampleBackfills {
+			sampleCtx, sampleCancel := context.WithTimeout(ctx, valueSampleTimeout)
+			encoded := text2sql.EncodeValueSamples(text2sql.SampleColumnValues(sampleCtx, s.sql, table.Table))
+			sampleCancel()
+			if err := s.db.WithContext(ctx).Model(&text2sql.SchemaIndex{}).Where("id = ?", row.ID).Update("value_samples", encoded).Error; err != nil {
+				return err
+			}
+			backfills++
 		}
 		ids = append(ids, row.ID)
 		tableDetails = append(tableDetails, RunTable{Name: table.Table.Name})
@@ -274,6 +286,15 @@ func (s *Service) handleTask(ctx context.Context, task *asynq.Task) error {
 		}
 		buildErr := s.validateTask(buildCtx, setting, &row.SchemaIndex)
 		if buildErr == nil {
+			table, tableErr := s.sql.GetTable(buildCtx, row.PhysicalTableID)
+			if tableErr != nil {
+				s.log.Warn("sample column values skipped", zap.String("index_id", row.ID), zap.Error(tableErr))
+				row.ValueSamples = text2sql.EncodeValueSamples(text2sql.ColumnValues{})
+			} else {
+				sampleCtx, sampleCancel := context.WithTimeout(buildCtx, valueSampleTimeout)
+				row.ValueSamples = text2sql.EncodeValueSamples(text2sql.SampleColumnValues(sampleCtx, s.sql, table))
+				sampleCancel()
+			}
 			indexer := text2sql.NewIndexer(text2sql.NewIndexRepository(db), s.sql, embedder{s, setting}, s.vectors)
 			buildErr = indexer.Process(buildCtx, &row.SchemaIndex)
 		}
