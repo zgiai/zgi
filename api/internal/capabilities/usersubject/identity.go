@@ -11,8 +11,9 @@ import (
 var ErrInvalidUser = errors.New("user must be a stable opaque identifier with at most 128 characters")
 
 const (
-	agentAPISubjectNamespace        = "external-agent-memory"
-	digitalHumanAPISubjectNamespace = "external-digital-human-memory"
+	agentAPISubjectNamespace            = "external-agent-memory"
+	digitalHumanAPISubjectNamespace     = "external-digital-human-memory"
+	runtimeWorkspaceAPISubjectNamespace = "external-runtime-workspace-memory"
 )
 
 // AccountSubject returns the stable subject for an authenticated account.
@@ -31,11 +32,33 @@ func DigitalHumanAPIEndUserSubject(workspaceID, digitalHumanID uuid.UUID, user s
 	return apiEndUserSubject(digitalHumanAPISubjectNamespace, workspaceID, digitalHumanID, user)
 }
 
-func apiEndUserSubject(namespace string, workspaceID, consumerID uuid.UUID, user string) (Ref, error) {
-	normalized := strings.TrimSpace(user)
-	if workspaceID == uuid.Nil || consumerID == uuid.Nil || normalized == "" || len([]rune(normalized)) > 128 || strings.IndexFunc(normalized, unicode.IsControl) >= 0 {
+// RuntimeWorkspaceEndUserSubject derives a stable subject scoped to an
+// external Runtime Workspace. The workspace, rather than an individual Agent
+// or credential, is part of the identity so files and sessions survive Agent
+// changes and credential rotation within the same exposure group.
+func RuntimeWorkspaceEndUserSubject(runtimeWorkspaceID uuid.UUID, user string) (Ref, error) {
+	normalized := normalizeUser(runtimeWorkspaceID, user)
+	if normalized == "" {
 		return Ref{}, ErrInvalidUser
 	}
-	seed := strings.Join([]string{"zgi", namespace, workspaceID.String(), consumerID.String(), normalized}, "\x00")
+	seed := strings.Join([]string{"zgi", runtimeWorkspaceAPISubjectNamespace, runtimeWorkspaceID.String(), normalized}, "\x00")
 	return Ref{Kind: APIEndUser, ID: uuid.NewSHA1(uuid.NameSpaceOID, []byte(seed))}, nil
+}
+
+func apiEndUserSubject(namespace string, workspaceID, consumerID uuid.UUID, user string) (Ref, error) {
+	normalized := normalizeUser(workspaceID, user)
+	if consumerID == uuid.Nil || normalized == "" {
+		return Ref{}, ErrInvalidUser
+	}
+	seedParts := []string{"zgi", namespace, workspaceID.String(), consumerID.String(), normalized}
+	seed := strings.Join(seedParts, "\x00")
+	return Ref{Kind: APIEndUser, ID: uuid.NewSHA1(uuid.NameSpaceOID, []byte(seed))}, nil
+}
+
+func normalizeUser(workspaceID uuid.UUID, user string) string {
+	normalized := strings.TrimSpace(user)
+	if workspaceID == uuid.Nil || normalized == "" || len([]rune(normalized)) > 128 || strings.IndexFunc(normalized, unicode.IsControl) >= 0 {
+		return ""
+	}
+	return normalized
 }

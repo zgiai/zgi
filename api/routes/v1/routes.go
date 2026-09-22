@@ -67,6 +67,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		DepartmentService:                serviceContainer.GetDepartmentService(),
 		ConsoleWebURL:                    config.GlobalConfig.Email.ConsoleWebURL,
 	})
+	RegisterRuntimeWorkspaceManagementRoutes(v1, db, accountService, serviceContainer.GetTenantService())
 
 	// ---------- Explore ----------
 	RegisterExploreRoutes(v1, accountService)

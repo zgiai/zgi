@@ -18,6 +18,7 @@ import (
 	graphflowworker "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/worker"
 	imageservice "github.com/zgiai/zgi/api/internal/modules/image/service"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	"github.com/zgiai/zgi/api/internal/modules/runtimeworkspace"
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 	videoservice "github.com/zgiai/zgi/api/internal/modules/video/service"
 	"github.com/zgiai/zgi/api/internal/observability"
@@ -142,12 +143,54 @@ func registerRuntime(lc fx.Lifecycle, params runtimeParams) error {
 		params.ServiceContainer.GetDigitalHumanChannelReceiverManager(),
 		params.Logger,
 	)
+	RegisterRuntimeWorkspaceCredentialCleanupLifecycle(lc, runtimeworkspace.NewService(params.ServiceContainer.GetDB()), params.Logger)
 	RegisterGRPCServerLifecycle(lc, params.GRPCServer, params.GRPCListener, params.Logger)
 	RegisterHTTPServerLifecycle(lc, params.HTTPServer, params.HTTPListener, params.Logger)
 	RegisterSQLAuditRecorderLifecycle(lc, params.ServiceContainer, params.Logger)
 	registerZGIReporterLifecycle(lc, params.ZGIReporter, params.Logger)
 
 	return nil
+}
+
+type runtimeWorkspaceCredentialCleaner interface {
+	CleanupExpiredCredentialOperations(context.Context) error
+}
+
+func RegisterRuntimeWorkspaceCredentialCleanupLifecycle(lc fx.Lifecycle, cleaner runtimeWorkspaceCredentialCleaner, log *zap.Logger) {
+	if !runtimeworkspace.RuntimeEnabled() || cleaner == nil {
+		return
+	}
+	var cancel context.CancelFunc
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			if err := cleaner.CleanupExpiredCredentialOperations(ctx); err != nil {
+				return err
+			}
+			workerContext, stop := context.WithCancel(context.Background())
+			cancel = stop
+			go func() {
+				ticker := time.NewTicker(5 * time.Minute)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-workerContext.Done():
+						return
+					case <-ticker.C:
+						if err := cleaner.CleanupExpiredCredentialOperations(workerContext); err != nil && log != nil {
+							log.Warn("Runtime Workspace credential cleanup failed", zap.Error(err))
+						}
+					}
+				}
+			}()
+			return nil
+		},
+		OnStop: func(context.Context) error {
+			if cancel != nil {
+				cancel()
+			}
+			return nil
+		},
+	})
 }
 
 type DigitalHumanChannelReceiverLifecycle interface {

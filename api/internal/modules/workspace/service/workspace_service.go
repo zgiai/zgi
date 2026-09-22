@@ -117,6 +117,11 @@ func (s *WorkspaceServiceImpl) UpdateWorkspace(ctx context.Context, workspaceID,
 	}
 
 	if statusChanged {
+		if *status == model.WorkspaceStatusArchived {
+			if err := s.workspaceRepo.GetDB().WithContext(ctx).Table("runtime_workspaces").Where("workspace_id = ?", workspaceID).Updates(map[string]any{"status": "disabled", "updated_at": gorm.Expr("CURRENT_TIMESTAMP")}).Error; err != nil {
+				return nil, fmt.Errorf("disable Runtime Workspace before archive: %w", err)
+			}
+		}
 		err = s.workspaceRepo.UpdateWorkspaceStatus(ctx, workspaceID, *status)
 		if err != nil {
 			return nil, err

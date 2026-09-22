@@ -1316,6 +1316,10 @@ func (h *OrganizationHandler) DeleteOrganizationWorkspace(c *gin.Context) {
 	// Note: We don't need to explicitly remove it from organization first because deleting the workspace
 	// will automatically remove the association. Plus, DeleteWorkspaceWithMembers handles quota release.
 	if err := h.workspaceManagementService.DeleteWorkspaceWithMembers(c.Request.Context(), workspaceID); err != nil {
+		if errors.Is(err, workspace_service.ErrWorkspaceHasActiveRuntime) {
+			c.JSON(http.StatusConflict, response.Response{Code: "workspace_has_active_runtime", Message: "Disable the Runtime Workspace before deleting this Workspace"})
+			return
+		}
 		response.Fail(c, response.ErrSystemError)
 		return
 	}

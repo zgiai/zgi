@@ -31,3 +31,19 @@ func TestAPIEndUserSubjectRejectsUnsafeValues(t *testing.T) {
 		}
 	}
 }
+
+func TestRuntimeWorkspaceEndUserSubjectIsSharedAcrossAgentsAndRotations(t *testing.T) {
+	runtimeWorkspaceID := uuid.New()
+	first, err := RuntimeWorkspaceEndUserSubject(runtimeWorkspaceID, "customer_123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repeated, err := RuntimeWorkspaceEndUserSubject(runtimeWorkspaceID, " customer_123 ")
+	if err != nil || repeated != first {
+		t.Fatalf("repeated runtime subject = %#v, %v; want %#v", repeated, err, first)
+	}
+	otherWorkspace, err := RuntimeWorkspaceEndUserSubject(uuid.New(), "customer_123")
+	if err != nil || otherWorkspace == first {
+		t.Fatalf("cross-workspace runtime subject = %#v, %v; want distinct subject", otherWorkspace, err)
+	}
+}

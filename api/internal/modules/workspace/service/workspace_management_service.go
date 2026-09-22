@@ -19,6 +19,8 @@ import (
 	"gorm.io/gorm"
 )
 
+var ErrWorkspaceHasActiveRuntime = errors.New("workspace has an active Runtime Workspace")
+
 type WorkspaceManagementServiceImpl struct {
 	db                  *gorm.DB
 	workspaceRepo       repository.WorkspaceRepository
@@ -519,6 +521,13 @@ func (s *WorkspaceManagementServiceImpl) UpdateWorkspace(ctx context.Context, id
 
 // DeleteWorkspace Delete workspace
 func (s *WorkspaceManagementServiceImpl) DeleteWorkspace(ctx context.Context, id string) error {
+	var activeRuntimeCount int64
+	if err := s.db.WithContext(ctx).Table("runtime_workspaces").Where("workspace_id = ? AND status = ?", id, "active").Count(&activeRuntimeCount).Error; err != nil {
+		return fmt.Errorf("check active Runtime Workspace: %w", err)
+	}
+	if activeRuntimeCount > 0 {
+		return ErrWorkspaceHasActiveRuntime
+	}
 	workspace, _ := s.workspaceRepo.GetByID(ctx, id)
 	if err := s.workspaceRepo.Delete(ctx, id); err != nil {
 		return err
