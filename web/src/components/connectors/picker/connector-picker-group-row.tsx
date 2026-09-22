@@ -80,7 +80,7 @@ export function ConnectorPickerGroupRow({
     'h-[54px] w-full min-w-0 shrink-0 justify-between rounded-lg px-3 md:col-start-3';
 
   return (
-    <article className="grid min-w-0 grid-cols-[40px_minmax(0,1fr)] items-center gap-3 rounded-xl border bg-background p-3.5 shadow-xs md:grid-cols-[40px_minmax(0,1fr)_minmax(240px,auto)] md:gap-4">
+    <article className="grid min-w-0 grid-cols-[40px_minmax(0,1fr)] items-center gap-3 rounded-xl border bg-background p-3.5 shadow-xs md:grid-cols-[40px_minmax(0,1fr)_minmax(240px,20rem)] md:gap-4">
       <ConnectorIcon
         connectorId={group.id}
         name={groupName}
