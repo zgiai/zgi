@@ -838,8 +838,8 @@ func synthesizeMeteredRule(metered structuredMeteredPricing) (structuredRule, bo
 	if err := json.Unmarshal(metered.Price.Amount, &amount); err != nil {
 		return structuredRule{}, false
 	}
-	contract, ok := meteredPricingContracts[metered.Operation]
-	if !ok || metered.Meter != contract.Meter || metered.BaseUnit != contract.BaseUnit {
+	contract, ok := meteredContractFor(metered.Operation, metered.Meter)
+	if !ok || metered.BaseUnit != contract.BaseUnit {
 		return structuredRule{}, false
 	}
 	conditions, err := decodeMeteredDimensions(metered.Dimensions)
@@ -1132,8 +1132,8 @@ func deriveVideoRateFromRule(rule structuredRule, billingUnit string, index int)
 func deriveMeteredFromRules(rules []structuredRule, currency string) []structuredMeteredPricing {
 	metered := make([]structuredMeteredPricing, 0, len(rules))
 	for _, rule := range rules {
-		contract, ok := meteredPricingContracts[rule.Operation]
-		if !ok || rule.Meter != contract.Meter || rule.Unit != contract.BaseUnit {
+		contract, ok := meteredContractFor(rule.Operation, rule.Meter)
+		if !ok || rule.Unit != contract.BaseUnit {
 			continue
 		}
 		dimensionsRaw, err := encodeMeteredDimensions(rule.Conditions)

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway/ratingcore"
 )
 
 // MissingPricingItem describes a required price that is not present.
@@ -29,6 +31,9 @@ type pricingRequirement struct {
 	Operation string
 	Meters    []string
 	AnyMeter  bool
+	// AcceptAnyRegistered lets a capability accept any registry-owned meter for
+	// its operation while still reporting the primary meters when nothing is priced.
+	AcceptAnyRegistered bool
 }
 
 var useCaseAliases = map[string]string{
@@ -44,7 +49,7 @@ var useCaseAliases = map[string]string{
 	"stt":               "speech-to-text",
 	"transcription":     "speech-to-text",
 	"music-generation":  "music-gen",
-	"responses":         "moderation",
+	"responses":         "text-chat",
 }
 
 var useCaseRequirements = map[string]pricingRequirement{
@@ -54,13 +59,14 @@ var useCaseRequirements = map[string]pricingRequirement{
 	"vision":           {Operation: "chat", Meters: []string{"input_token", "output_token"}},
 	"reasoning":        {Operation: "chat", Meters: []string{"input_token", "output_token"}},
 	"realtime-audio":   {Operation: "chat", Meters: []string{"input_token", "output_token"}},
-	"embedding":        {Operation: "embedding", Meters: []string{"input_token"}},
-	"rerank":           {Operation: "rerank", Meters: []string{"input_token"}},
+	"moderation":       {Operation: "chat", Meters: []string{"input_token", "output_token"}},
+	"embedding":        {Operation: "embedding", Meters: []string{"input_token"}, AcceptAnyRegistered: true},
+	"rerank":           {Operation: "rerank", Meters: []string{"input_token"}, AcceptAnyRegistered: true},
 	"image-gen":        {Operation: "image_generation", Meters: []string{"image"}},
 	"video-gen":        {Operation: "video_generation", AnyMeter: true},
-	"speech-to-text":   {Operation: "transcription", Meters: []string{"input_audio_duration"}},
-	"text-to-speech":   {Operation: "speech_generation", Meters: []string{"input_text"}},
-	"music-gen":        {Operation: "music_generation", Meters: []string{"output_track"}},
+	"speech-to-text":   {Operation: "transcription", Meters: []string{"input_audio_duration"}, AcceptAnyRegistered: true},
+	"text-to-speech":   {Operation: "speech_generation", Meters: []string{"input_text"}, AcceptAnyRegistered: true},
+	"music-gen":        {Operation: "music_generation", Meters: []string{"output_track"}, AcceptAnyRegistered: true},
 }
 
 // NormalizeUseCase maps backend aliases onto the canonical frontend use_case values.
@@ -113,6 +119,9 @@ func missingPricingForUseCases(useCases []string, pricing json.RawMessage, scala
 		operation := requirement.Operation
 		if requirement.UseCase == "realtime-audio" && hasRealtimeAudioRules(envelope) {
 			operation = "realtime_audio"
+		}
+		if requirement.AcceptAnyRegistered && hasAnyRegisteredMeterPricing(envelope, scalars, operation) {
+			continue
 		}
 		for _, meter := range requirement.Meters {
 			if hasOperationMeterPricing(envelope, scalars, operation, meter) {
@@ -179,7 +188,7 @@ func TokenOperationsForUseCases(useCases []string) map[string]bool {
 	operations := make(map[string]bool)
 	for _, useCase := range normalizeUseCases(useCases) {
 		switch useCase {
-		case "text-chat", "function-calling", "agent", "vision", "reasoning", "realtime-audio":
+		case "text-chat", "function-calling", "agent", "vision", "reasoning", "realtime-audio", "moderation":
 			operations["chat"] = true
 		case "embedding":
 			operations["embedding"] = true
@@ -210,10 +219,11 @@ func FormatMissingPricingError(items []MissingPricingItem) error {
 }
 
 type requiredPricing struct {
-	UseCase   string
-	Operation string
-	Meters    []string
-	AnyMeter  bool
+	UseCase             string
+	Operation           string
+	Meters              []string
+	AnyMeter            bool
+	AcceptAnyRegistered bool
 }
 
 type pricingEnvelope struct {
@@ -265,10 +275,11 @@ func requiredPricingFromNormalizedUseCases(normalized []string) []requiredPricin
 			continue
 		}
 		seen[key] = requiredPricing{
-			UseCase:   useCase,
-			Operation: requirement.Operation,
-			Meters:    append([]string{}, requirement.Meters...),
-			AnyMeter:  requirement.AnyMeter,
+			UseCase:             useCase,
+			Operation:           requirement.Operation,
+			Meters:              append([]string{}, requirement.Meters...),
+			AnyMeter:            requirement.AnyMeter,
+			AcceptAnyRegistered: requirement.AcceptAnyRegistered,
 		}
 	}
 	result := make([]requiredPricing, 0, len(seen))
@@ -341,6 +352,19 @@ func hasRulePrice(rule structuredRule) bool {
 }
 
 func hasLegacyOperationMeterPricing(envelope pricingEnvelope, scalars LegacyScalarPrices, operation, meter string) bool {
+	// Registry-owned metered meters are matched by the frozen contract, so an
+	// operation can carry several alternative billing units.
+	if entry, ok := ratingcore.LookupUnit(operation, meter); ok && entry.PricingSource == "metered" {
+		if !envelope.present {
+			return false
+		}
+		for _, metered := range envelope.Metered {
+			if metered.Operation == operation && metered.Meter == meter && meteredHasPrice(metered) {
+				return true
+			}
+		}
+		return false
+	}
 	switch operation {
 	case "chat", "embedding", "rerank":
 		return hasTokenMeterLegacyPricing(envelope, scalars, operation, meter)
@@ -352,23 +376,23 @@ func hasLegacyOperationMeterPricing(envelope pricingEnvelope, scalars LegacyScal
 			return true
 		}
 		return false
-	case "transcription", "speech_generation", "music_generation", "lyrics_generation":
-		if !envelope.present {
-			return false
-		}
-		contract, ok := meteredPricingContracts[operation]
-		if !ok || contract.Meter != meter {
-			return false
-		}
-		for _, metered := range envelope.Metered {
-			if metered.Operation == operation && metered.Meter == meter && meteredHasPrice(metered) {
-				return true
-			}
-		}
-		return false
 	default:
 		return false
 	}
+}
+
+// hasAnyRegisteredMeterPricing reports whether at least one registered meter for
+// the operation carries a usable price.
+func hasAnyRegisteredMeterPricing(envelope pricingEnvelope, scalars LegacyScalarPrices, operation string) bool {
+	for _, entry := range ratingcore.UnitDefinitions() {
+		if entry.Operation != operation {
+			continue
+		}
+		if hasOperationMeterPricing(envelope, scalars, operation, entry.Meter) {
+			return true
+		}
+	}
+	return false
 }
 
 func hasTokenMeterLegacyPricing(envelope pricingEnvelope, scalars LegacyScalarPrices, operation, meter string) bool {

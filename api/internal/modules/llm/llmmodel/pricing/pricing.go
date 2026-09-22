@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway/ratingcore"
 )
 
 // ErrPricingNotConfigured indicates that no model price is available for the
@@ -59,11 +61,14 @@ type meteredPricingContract struct {
 	BaseUnit string
 }
 
-var meteredPricingContracts = map[string]meteredPricingContract{
-	"transcription":     {Meter: "input_audio_duration", BaseUnit: "millisecond"},
-	"speech_generation": {Meter: "input_text", BaseUnit: "billed_character"},
-	"music_generation":  {Meter: "output_track", BaseUnit: "track"},
-	"lyrics_generation": {Meter: "request", BaseUnit: "request"},
+// meteredContractFor returns the frozen unit-registry contract for one metered
+// operation/meter pair, so an operation can carry several alternative meters.
+func meteredContractFor(operation, meter string) (meteredPricingContract, bool) {
+	entry, ok := ratingcore.LookupUnit(strings.TrimSpace(operation), strings.TrimSpace(meter))
+	if !ok || entry.PricingSource != "metered" {
+		return meteredPricingContract{}, false
+	}
+	return meteredPricingContract{Meter: entry.Meter, BaseUnit: entry.BaseUnit}, true
 }
 
 type structuredPriceTier struct {
@@ -326,11 +331,11 @@ func validateImageTokenPricing(pricing structuredImageTokenPricing) error {
 func validateMeteredPricing(prices []structuredMeteredPricing) error {
 	for i, price := range prices {
 		prefix := fmt.Sprintf("invalid pricing: metered[%d]", i)
-		contract, ok := meteredPricingContracts[price.Operation]
+		contract, ok := meteredContractFor(price.Operation, price.Meter)
 		if !ok {
-			return fmt.Errorf("%s.operation must be transcription, speech_generation, music_generation, or lyrics_generation", prefix)
+			return fmt.Errorf("%s must be a registered metered operation/meter", prefix)
 		}
-		if price.Meter != contract.Meter || price.BaseUnit != contract.BaseUnit {
+		if price.BaseUnit != contract.BaseUnit {
 			return fmt.Errorf("%s must use %s/%s/%s", prefix, price.Operation, contract.Meter, contract.BaseUnit)
 		}
 
