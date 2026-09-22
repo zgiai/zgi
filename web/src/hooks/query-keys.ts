@@ -59,6 +59,26 @@ export const WORKSPACE_KEYS = {
     [...WORKSPACE_KEYS.all, 'permissions', orgId, wsId, accountId] as const,
 } as const;
 
+export const RUNTIME_WORKSPACE_KEYS = {
+  all: ['runtime-workspace'] as const,
+  current: (workspaceId: string | null) => [...RUNTIME_WORKSPACE_KEYS.all, 'current', workspaceId],
+  apps: (workspaceId: string | null) => [...RUNTIME_WORKSPACE_KEYS.all, 'apps', workspaceId],
+  candidateScopes: (workspaceId: string | null) => [
+    ...RUNTIME_WORKSPACE_KEYS.all,
+    'candidates',
+    workspaceId,
+  ],
+  candidates: (workspaceId: string | null, scope: 'current' | 'authorized') => [
+    ...RUNTIME_WORKSPACE_KEYS.candidateScopes(workspaceId),
+    scope,
+  ],
+  credentials: (workspaceId: string | null) => [
+    ...RUNTIME_WORKSPACE_KEYS.all,
+    'credentials',
+    workspaceId,
+  ],
+} as const;
+
 // 3. Agent Related
 export const AGENT_KEYS = {
   all: ['agents'] as const,

@@ -41,6 +41,7 @@ export * from './apikey.service';
 export * from './dashboard.service';
 // Workspace Quota service
 export * from './workspace-quota.service';
+export * from './runtime-workspace.service';
 
 // Service types
 export type * from './types/auth';
@@ -79,6 +80,7 @@ export type * from './types/apikey';
 export type * from './types/dashboard';
 // Workspace Quota types
 export type * from './types/workspace-quota';
+export type * from './types/runtime-workspace';
 
 export type * from './types/tool';
 export type * from './types/content-parse';
