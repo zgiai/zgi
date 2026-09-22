@@ -114,6 +114,27 @@ func TestRemoteNotifyOfficialSignupUsesStableIdempotencyKey(t *testing.T) {
 	require.True(t, response.AlreadyGranted)
 }
 
+// TestRemoteSignRequestSendsInternalSecret verifies the configured Console
+// credential is sent raw in the existing X-ZGI-Internal-Secret slot, with the
+// HMAC signature kept for the shared-secret compatibility path.
+func TestRemoteSignRequestSendsInternalSecret(t *testing.T) {
+	var gotSecret, gotSignature string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotSecret = r.Header.Get("X-ZGI-Internal-Secret")
+		gotSignature = r.Header.Get("X-Internal-Signature")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"code":0,"data":{}}`))
+	}))
+	defer server.Close()
+
+	remote := NewRemote(server.URL, "test-signing-key")
+	if err := remote.RegisterOrganizationSync(t.Context(), &RegisterOrganizationRequest{OrganizationID: "org-1"}); err != nil {
+		t.Fatalf("RegisterOrganizationSync() error = %v", err)
+	}
+	require.Equal(t, "test-signing-key", gotSecret)
+	require.NotEmpty(t, gotSignature)
+}
+
 type registrationRoundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f registrationRoundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {

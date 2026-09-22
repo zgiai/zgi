@@ -152,11 +152,7 @@ type ConsoleConfig struct {
 	APIURL         string `json:"api_url"`
 	GRPCAddr       string `json:"grpc_addr"`
 	InternalAPIKey string `json:"-"`
-	// DownstreamAPIKey is the Console-issued API key that identifies this
-	// deployment as a downstream client on the internal HTTP and gRPC billing
-	// channels. Empty keeps the transitional shared-secret behavior.
-	DownstreamAPIKey string `json:"-"`
-	WebURL           string `json:"web_url"`
+	WebURL         string `json:"web_url"`
 }
 
 type LLMPolicyPromptConfig struct {

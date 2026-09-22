@@ -1049,14 +1049,18 @@ func (s *llmGatewayServiceImpl) createAdapterConfig(selection *ProviderSelection
 	return config
 }
 
-// buildConsoleAuthHook returns an AuthHook that signs requests with HMAC-SHA256
-// for console-api internal endpoints.
+// buildConsoleAuthHook returns an AuthHook that authenticates requests to
+// console-api internal endpoints. The configured credential is sent raw in the
+// existing X-ZGI-Internal-Secret slot: Console resolves it against api_keys to
+// recover the caller identity, or falls back to the transitional shared-secret
+// comparison. The HMAC signature is kept for that compatibility path.
 func (s *llmGatewayServiceImpl) buildConsoleAuthHook(organizationID uuid.UUID) func(req *http.Request) {
 	internalAPIKey := appconfig.Current().Console.InternalAPIKey
 	if internalAPIKey == "" {
 		return nil
 	}
 	return func(req *http.Request) {
+		req.Header.Set("X-ZGI-Internal-Secret", internalAPIKey)
 		signConsoleRequest(req, internalAPIKey)
 		if organizationID != uuid.Nil {
 			req.Header.Set("X-Organization-ID", organizationID.String())
@@ -1067,6 +1071,9 @@ func (s *llmGatewayServiceImpl) buildConsoleAuthHook(organizationID uuid.UUID) f
 
 // signConsoleRequest adds HMAC-SHA256 authentication headers to an outgoing request.
 func signConsoleRequest(req *http.Request, internalAPIKey string) {
+	if internalAPIKey == "" {
+		return
+	}
 	ts := fmt.Sprintf("%d", time.Now().Unix())
 	message := ts + "|" + req.URL.Path
 	mac := hmac.New(sha256.New, []byte(internalAPIKey))

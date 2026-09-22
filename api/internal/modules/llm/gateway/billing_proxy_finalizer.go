@@ -230,11 +230,18 @@ func applyPlatformSettlementCostSnapshot(bc *BillingContext, settlement *adapter
 	}
 	applyRouteAttributionSnapshot(bc, "")
 
-	// Prefer the settlement field, then any rate already mirrored from
-	// Console's authoritative pricing_snapshot. Never fall back to a default.
+	// Mirror Console's recorded-rate reader (ledger_currency.go): cny_per_usd is
+	// the canonical USD->CNY rate; the local currency segment written by an
+	// earlier mirror is next. The legacy metered CNY form records the rate in
+	// exchange_rate, but a USD snapshot stores the identity rate there, so
+	// exchange_rate is only read when the source currency is CNY. Never fall
+	// back to a default.
 	rate, ok := parsePositiveBillingDecimal(settlement.CNYPerUSD)
 	if !ok {
-		rate, ok = parsePositiveBillingDecimal(pricingSnapshotString(pricingSnapshotMap(bc.PricingSnapshot), exchangeRateSnapshotRateKey))
+		rate, ok = parsePositiveBillingDecimal(pricingSnapshotString(values, exchangeRateSnapshotRateKey))
+	}
+	if !ok && strings.EqualFold(pricingSnapshotString(values, consoleSettlementCurrencyKey), billingDisplayCurrencyCNY) {
+		rate, ok = parsePositiveBillingDecimal(pricingSnapshotString(values, consoleSettlementExchangeRateKey))
 	}
 	if !ok {
 		return fmt.Errorf("%w: console settlement recorded no USD to CNY rate", ErrExchangeRateUnavailable)

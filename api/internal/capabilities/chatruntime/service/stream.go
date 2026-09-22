@@ -375,6 +375,15 @@ func conversationHasActiveMessage(conversation *runtimemodel.Conversation, messa
 	return conversation.RuntimeStatus == runtimemodel.ConversationRuntimeStatusStreaming && *conversation.ActiveMessageID == messageID
 }
 
+func isTerminalMessageStatus(status string) bool {
+	switch strings.TrimSpace(status) {
+	case runtimemodel.MessageStatusCompleted, runtimemodel.MessageStatusStopped, runtimemodel.MessageStatusError:
+		return true
+	default:
+		return false
+	}
+}
+
 func isTerminalStreamEvent(event StreamEvent) bool {
 	switch event.EventType {
 	case streamEventError:
@@ -821,7 +830,18 @@ func (s *service) completePreparedError(ctx context.Context, prepared *PreparedC
 		}
 	}
 	if err := s.repos.Message.UpdateError(ctx, prepared.Message.ID, message); err != nil {
-		return err
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		// The message is no longer active. If this run already finalized it
+		// (terminal status), the conversation cleanup and the client error
+		// notification must still run; otherwise the failed run stays
+		// "streaming" forever and the UI hangs. A still-active message owned by
+		// another run is a real ownership loss and is left to the new owner.
+		status, statusErr := s.repos.Message.GetStatus(ctx, prepared.Message.ID)
+		if statusErr != nil || !isTerminalMessageStatus(status) {
+			return gorm.ErrRecordNotFound
+		}
 	}
 	if prepared.ReplaceRoot {
 		return s.repos.Conversation.CompleteRootReplacement(ctx, prepared.Conversation.ID, prepared.Message.ID)

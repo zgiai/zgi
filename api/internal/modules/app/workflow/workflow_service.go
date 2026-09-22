@@ -3004,7 +3004,7 @@ func workflowExecutionMessageStatus(status string) string {
 
 func workflowExecutionLogStatusAndError(result *WorkflowExecutionResult, err error) (string, string) {
 	if err != nil {
-		return "failed", err.Error()
+		return "failed", workflowPublicErrorMessage(err)
 	}
 	if result == nil {
 		return "succeeded", ""
@@ -3026,7 +3026,7 @@ func workflowExecutionErrorMessage(result *WorkflowExecutionResult) string {
 		return ""
 	}
 	if result.Error != nil {
-		return result.Error.Error()
+		return workflowPublicErrorMessage(result.Error)
 	}
 	nodeErrors := workflowExecutionNodeErrors(result)
 	if len(nodeErrors) == 0 {

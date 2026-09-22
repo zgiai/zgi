@@ -35,7 +35,7 @@ type consoleOfficialCreditChecker struct {
 func NewConsoleOfficialCreditChecker() OfficialCreditChecker {
 	return &consoleOfficialCreditChecker{
 		grpcAddr:       resolveConsoleGRPCAddr(),
-		apiKey:         resolveConsoleDownstreamAPIKey(),
+		apiKey:         resolveConsoleInternalAPIKey(),
 		dialTimeout:    defaultConsoleGRPCDialTimeout,
 		requestTimeout: defaultConsoleGRPCRequestTimeout,
 	}
@@ -89,6 +89,6 @@ func resolveConsoleGRPCAddr() string {
 	return strings.TrimSpace(config.Current().Console.GRPCAddr)
 }
 
-func resolveConsoleDownstreamAPIKey() string {
-	return strings.TrimSpace(config.Current().Console.DownstreamAPIKey)
+func resolveConsoleInternalAPIKey() string {
+	return strings.TrimSpace(config.Current().Console.InternalAPIKey)
 }

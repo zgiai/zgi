@@ -33,7 +33,7 @@ func NewQuotaClient(address string) (*QuotaClient, error) {
 		grpc.WithBlock(),
 	}
 	if cfg := appconfig.Current(); cfg != nil {
-		if key := strings.TrimSpace(cfg.Console.DownstreamAPIKey); key != "" {
+		if key := strings.TrimSpace(cfg.Console.InternalAPIKey); key != "" {
 			dialOptions = append(dialOptions, grpc.WithPerRPCCredentials(consoleauth.Credentials{Token: key}))
 		}
 	}

@@ -444,11 +444,10 @@ func loadAppConfig(cfg *Config, source *envSource) error {
 
 func loadConsoleConfig(cfg *Config, source *envSource) {
 	cfg.Console = ConsoleConfig{
-		APIURL:           source.string(defaultLocalConsoleAPIURL(cfg), envConsoleAPIURL),
-		GRPCAddr:         source.string("", envConsoleAPIGRPCAddr),
-		InternalAPIKey:   source.string("", envConsoleInternalAPIKey),
-		DownstreamAPIKey: source.string("", envConsoleDownstreamAPIKey),
-		WebURL:           source.string(cfg.Email.ConsoleWebURL, envEmailConsoleWebURL),
+		APIURL:         source.string(defaultLocalConsoleAPIURL(cfg), envConsoleAPIURL),
+		GRPCAddr:       source.string("", envConsoleAPIGRPCAddr),
+		InternalAPIKey: source.string("", envConsoleInternalAPIKey),
+		WebURL:         source.string(cfg.Email.ConsoleWebURL, envEmailConsoleWebURL),
 	}
 }
 

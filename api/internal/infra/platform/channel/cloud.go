@@ -164,12 +164,16 @@ func (c *Cloud) fetchFromConsole(ctx context.Context) ([]*OfficialChannel, error
 	return channels, nil
 }
 
-// signRequest adds HMAC-SHA256 authentication headers to an outgoing request.
-// It sets X-Internal-Timestamp and X-Internal-Signature headers.
+// signRequest adds the authenticated Console credential to an outgoing request.
+// The configured credential is sent raw in the existing X-ZGI-Internal-Secret
+// slot: Console resolves it against api_keys to recover the caller identity, or
+// falls back to the transitional shared-secret comparison. The HMAC headers are
+// kept for that compatibility path.
 func (c *Cloud) signRequest(req *http.Request) {
 	if c.internalAPIKey == "" {
 		return
 	}
+	req.Header.Set("X-ZGI-Internal-Secret", c.internalAPIKey)
 	ts := strconv.FormatInt(time.Now().Unix(), 10)
 	message := ts + "|" + req.URL.Path
 	mac := hmac.New(sha256.New, []byte(c.internalAPIKey))

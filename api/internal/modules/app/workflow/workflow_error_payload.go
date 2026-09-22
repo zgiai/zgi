@@ -172,24 +172,45 @@ func workflowFallbackErrorMessage(err error) string {
 	return err.Error()
 }
 
+// workflowPublicErrorMessage returns the user-facing message for a workflow
+// error. Recognized failures are projected to their cataloged message so the raw
+// provider/billing chain (with internal request/attempt/route ids) never reaches
+// the run UI or the persisted run error; unrecognized errors keep their own
+// message for diagnostics. The raw error is still logged by the caller.
+func workflowPublicErrorMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+	return workflowStreamErrorMessage(buildWorkflowStreamErrorPayload(err))
+}
+
 func workflowBillingErrorCodeAndMessage(err error) (int, string, bool) {
 	var userErr *gateway.BillingUserError
-	if !errors.As(err, &userErr) || userErr == nil {
-		return 0, "", false
+	if errors.As(err, &userErr) && userErr != nil {
+		switch userErr.Kind {
+		case gateway.BillingUserErrorKindOrganizationBalanceInsufficient:
+			return response.ErrWorkflowOrganizationBalanceInsufficient.Code, response.ErrWorkflowOrganizationBalanceInsufficient.Message, true
+		case gateway.BillingUserErrorKindWorkspaceQuotaInsufficient:
+			return response.ErrWorkflowWorkspaceQuotaInsufficient.Code, response.ErrWorkflowWorkspaceQuotaInsufficient.Message, true
+		case gateway.BillingUserErrorKindPrivateChannelBalanceInsufficient:
+			return response.ErrWorkflowPrivateChannelBalanceInsufficient.Code, response.ErrWorkflowPrivateChannelBalanceInsufficient.Message, true
+		case gateway.BillingUserErrorKindModelPricingNotConfigured:
+			return response.ErrWorkflowModelPricingNotConfigured.Code, response.ErrWorkflowModelPricingNotConfigured.Message, true
+		}
 	}
 
-	switch userErr.Kind {
-	case gateway.BillingUserErrorKindOrganizationBalanceInsufficient:
-		return response.ErrWorkflowOrganizationBalanceInsufficient.Code, response.ErrWorkflowOrganizationBalanceInsufficient.Message, true
-	case gateway.BillingUserErrorKindWorkspaceQuotaInsufficient:
-		return response.ErrWorkflowWorkspaceQuotaInsufficient.Code, response.ErrWorkflowWorkspaceQuotaInsufficient.Message, true
-	case gateway.BillingUserErrorKindPrivateChannelBalanceInsufficient:
-		return response.ErrWorkflowPrivateChannelBalanceInsufficient.Code, response.ErrWorkflowPrivateChannelBalanceInsufficient.Message, true
-	case gateway.BillingUserErrorKindModelPricingNotConfigured:
-		return response.ErrWorkflowModelPricingNotConfigured.Code, response.ErrWorkflowModelPricingNotConfigured.Message, true
-	default:
-		return 0, "", false
+	// Generic billing failures have no user-actionable cause, but they still must
+	// not surface the internal provider/billing chain (request/attempt/route ids).
+	// The exchange-rate cause is checked first because the settle failure wraps it.
+	switch {
+	case errors.Is(err, gateway.ErrExchangeRateUnavailable):
+		return response.ErrWorkflowBillingExchangeRateUnavailable.Code, response.ErrWorkflowBillingExchangeRateUnavailable.Message, true
+	case errors.Is(err, gateway.ErrBillingPreDeductFailed):
+		return response.ErrWorkflowBillingPreDeductFailed.Code, response.ErrWorkflowBillingPreDeductFailed.Message, true
+	case errors.Is(err, gateway.ErrBillingSettleFailed), errors.Is(err, llmerrors.DomainErrBillingFailed):
+		return response.ErrWorkflowBillingSettleFailed.Code, response.ErrWorkflowBillingSettleFailed.Message, true
 	}
+	return 0, "", false
 }
 
 func workflowBillingErrorParams(err error) map[string]any {

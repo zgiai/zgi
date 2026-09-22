@@ -9,6 +9,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	appconfig "github.com/zgiai/zgi/api/config"
 )
 
 type settlementQueryResponse struct {
@@ -121,7 +123,15 @@ func queryConsoleSettlement(ctx context.Context, base, organizationID, attemptID
 	if err != nil {
 		return nil, err
 	}
-	if secret := strings.TrimSpace(os.Getenv("CONSOLE_INTERNAL_API_KEY")); secret != "" {
+	// Authenticate with the configured Console credential sent raw in the
+	// existing secret slot (same credential as every other Pre->Console call);
+	// Console resolves it against api_keys or falls back to the shared secret.
+	cfg := appconfig.Current()
+	secret := strings.TrimSpace(cfg.Console.InternalAPIKey)
+	if secret == "" {
+		secret = strings.TrimSpace(os.Getenv("CONSOLE_INTERNAL_API_KEY"))
+	}
+	if secret != "" {
 		req.Header.Set("X-ZGI-Internal-Secret", secret)
 	}
 	client := &http.Client{Timeout: 5 * time.Second}

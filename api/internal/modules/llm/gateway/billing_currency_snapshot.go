@@ -28,6 +28,12 @@ const (
 	exchangeRateSnapshotRateSourceKey      = "rate_source"
 	exchangeRateSnapshotRateAtKey          = "rate_at"
 	exchangeRateSnapshotDisplayCurrencyKey = "display_currency"
+
+	// Console's §7.1 settlement snapshot keys, read when mirroring a platform
+	// settlement. Console always writes "exchange_rate"; only newer builders
+	// additionally write "cny_per_usd".
+	consoleSettlementCurrencyKey     = "currency"
+	consoleSettlementExchangeRateKey = "exchange_rate"
 )
 
 // captureOrganizationBillingCurrency fills the request-scoped currency fields
