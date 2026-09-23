@@ -2339,8 +2339,8 @@ func preparedSkillWorkspaceID(prepared *PreparedChat) string {
 	if prepared == nil {
 		return ""
 	}
-	if prepared.Scope.WorkspaceID != nil && *prepared.Scope.WorkspaceID != uuid.Nil {
-		return prepared.Scope.WorkspaceID.String()
+	if workspaceID := prepared.Scope.AgentResourceWorkspaceID(); workspaceID != nil && *workspaceID != uuid.Nil {
+		return workspaceID.String()
 	}
 	if prepared.Conversation != nil && prepared.Conversation.WorkspaceID != nil && *prepared.Conversation.WorkspaceID != uuid.Nil {
 		return prepared.Conversation.WorkspaceID.String()

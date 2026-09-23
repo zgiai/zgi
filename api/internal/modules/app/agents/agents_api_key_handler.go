@@ -140,6 +140,11 @@ func (h *AgentsHandler) ChatAPIKeyAgent(c *gin.Context) {
 		return
 	}
 	scope := runtimeCtx.Scope
+	scope, err = scopeWithAgentResourceWorkspace(scope, published.WorkspaceID)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
 	runConfig, err := h.agentRunConfig(ctx, scope, published.AgentID, "agent.published."+published.Version, published.Config, "end_user")
 	if err != nil {
 		h.failRuntime(c, err)
@@ -429,6 +434,27 @@ func (h *AgentsHandler) apiKeyAgentRuntimeContext(c *gin.Context) (agentRuntimeC
 		WorkspaceID:     &workspaceID,
 		SkipAccessCheck: true,
 	}
+	if rawRuntimeWorkspaceID := strings.TrimSpace(c.GetString("runtime_workspace_id")); rawRuntimeWorkspaceID != "" {
+		runtimeWorkspaceID, parseErr := uuid.Parse(rawRuntimeWorkspaceID)
+		if parseErr != nil || runtimeWorkspaceID == uuid.Nil {
+			response.Fail(c, response.ErrUnauthorized)
+			return agentRuntimeContext{}, false
+		}
+		scope.RuntimeWorkspaceID = &runtimeWorkspaceID
+	}
+	if rawRuntimeSubjectID := strings.TrimSpace(c.GetString("runtime_subject_id")); rawRuntimeSubjectID != "" {
+		runtimeSubjectID, parseErr := uuid.Parse(rawRuntimeSubjectID)
+		if parseErr != nil || runtimeSubjectID == uuid.Nil {
+			response.Fail(c, response.ErrUnauthorized)
+			return agentRuntimeContext{}, false
+		}
+		scope.RuntimeSubjectID = &runtimeSubjectID
+	}
+	if authorizer, exists := c.Get("runtime_file_authorizer"); exists {
+		if typed, ok := authorizer.(runtimeservice.RuntimeExternalFileAuthorizer); ok {
+			scope.RuntimeFileAuthorizer = typed
+		}
+	}
 	caller := runtimeservice.Caller{
 		Type:   runtimemodel.ConversationCallerAgent,
 		ID:     &agentID,
@@ -451,6 +477,11 @@ func (h *AgentsHandler) apiKeyAgentContinuationRuntimeContext(c *gin.Context) (a
 		h.failRuntime(c, err)
 		return agentRuntimeContext{}, false
 	}
+	runtimeCtx.Scope, err = scopeWithAgentResourceWorkspace(runtimeCtx.Scope, published.WorkspaceID)
+	if err != nil {
+		h.failRuntime(c, err)
+		return agentRuntimeContext{}, false
+	}
 	runConfig, err := h.agentRunConfig(
 		c.Request.Context(),
 		runtimeCtx.Scope,
@@ -468,6 +499,15 @@ func (h *AgentsHandler) apiKeyAgentContinuationRuntimeContext(c *gin.Context) (a
 	}
 	runtimeCtx.RunConfig = runConfig
 	return runtimeCtx, true
+}
+
+func scopeWithAgentResourceWorkspace(scope runtimeservice.Scope, rawWorkspaceID string) (runtimeservice.Scope, error) {
+	workspaceID, err := uuid.Parse(strings.TrimSpace(rawWorkspaceID))
+	if err != nil || workspaceID == uuid.Nil {
+		return runtimeservice.Scope{}, errors.New("agent resource workspace id is invalid")
+	}
+	scope.ResourceWorkspaceID = &workspaceID
+	return scope, nil
 }
 
 func (h *AgentsHandler) apiKeyAgentUserRuntimeContext(c *gin.Context, legacyUser string) (agentRuntimeContext, bool) {
@@ -515,13 +555,8 @@ func runtimeWorkspaceRunConfig(config runtimeservice.RunConfig) runtimeservice.R
 }
 
 func publishedAgentConfigRequiresExternalUser(cfg dto.AgentConfigResponse) bool {
-	if !cfg.AgentMemoryEnabled {
-		return false
-	}
-	for _, slot := range cfg.AgentMemorySlots {
-		if slot.Enabled && strings.TrimSpace(slot.Key) != "" {
-			return true
-		}
-	}
-	return false
+	// Memory is always scoped to an external Subject at the API boundary. The
+	// published slot list controls which values are available, not whether the
+	// caller identity is required.
+	return cfg.AgentMemoryEnabled
 }

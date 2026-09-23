@@ -68,6 +68,31 @@ func TestLoadBoundAgentsAllowsAuthorizedAgentFromAnotherWorkspace(t *testing.T) 
 	}
 }
 
+func TestCanReadRuntimeExternalFileScopesByWorkspaceAndSubject(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeWorkspaceID, subjectID := uuid.New(), uuid.New()
+	fileID := uuid.NewString()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT count(*) FROM "runtime_external_files" WHERE file_id = $1 AND runtime_workspace_id = $2 AND subject_id = $3`)).
+		WithArgs(fileID, runtimeWorkspaceID, subjectID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+
+	allowed, err := NewService(db).CanReadRuntimeExternalFile(t.Context(), runtimeWorkspaceID, subjectID, fileID)
+	if err != nil || !allowed {
+		t.Fatalf("CanReadRuntimeExternalFile() = %v, %v, want true", allowed, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRuntimeAgentUnavailableReason(t *testing.T) {
 	active := runtimeAgentRecord{Published: true, EnableAPI: true, WebAppStatus: "active"}
 	for _, test := range []struct {

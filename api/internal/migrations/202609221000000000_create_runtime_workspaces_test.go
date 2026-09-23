@@ -41,6 +41,8 @@ func TestCreateRuntimeWorkspacesAddsScopedCredentialsBindingsAndFiles(t *testing
 
 func TestCreateRuntimeWorkspacesRollbackRestoresSubjectConstraint(t *testing.T) {
 	db, mock := openMigrationMockDB(t)
+	mock.ExpectExec(`(?s)DO \$\$.*issuer_type = 'runtime_workspace_api'.*cannot rollback Runtime Workspace migration while Runtime Subjects exist`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	for _, table := range []string{"runtime_external_files", "runtime_workspace_agents", "runtime_workspace_credential_operations", "runtime_workspace_credentials", "runtime_workspaces"} {
 		mock.ExpectExec(`DROP TABLE IF EXISTS "public"\."` + table + `"`).WillReturnResult(sqlmock.NewResult(0, 0))
 	}

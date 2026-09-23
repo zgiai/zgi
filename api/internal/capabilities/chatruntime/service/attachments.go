@@ -200,6 +200,26 @@ func normalizeAttachmentFileIDs(fileIDs []string, limit int) ([]string, error) {
 }
 
 func (s *service) ensureAttachmentReadable(ctx context.Context, scope Scope, file *dto.UploadFile) error {
+	if scope.RuntimeWorkspaceID != nil && *scope.RuntimeWorkspaceID != uuid.Nil &&
+		scope.RuntimeSubjectID != nil && *scope.RuntimeSubjectID != uuid.Nil {
+		if scope.RuntimeFileAuthorizer == nil {
+			return fmt.Errorf("%w: runtime file authorization is unavailable", ErrPermissionDenied)
+		}
+		allowed, err := scope.RuntimeFileAuthorizer.CanReadRuntimeExternalFile(
+			ctx,
+			*scope.RuntimeWorkspaceID,
+			*scope.RuntimeSubjectID,
+			strings.TrimSpace(file.ID),
+		)
+		if err != nil {
+			return fmt.Errorf("failed to check runtime file permission: %w", err)
+		}
+		if !allowed {
+			return fmt.Errorf("%w: file is not accessible", ErrPermissionDenied)
+		}
+		return nil
+	}
+
 	accountID := scope.AccountID.String()
 	if file.IsTemporary {
 		expectedOwnerID := accountID

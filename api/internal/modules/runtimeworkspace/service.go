@@ -309,6 +309,28 @@ func (s *Service) Authenticate(ctx context.Context, rawKey, externalUserID, appK
 	return principal, nil
 }
 
+// CanReadRuntimeExternalFile authorizes a permanent uploaded file for the
+// authenticated Runtime Subject. Runtime Subjects are not Workspace members,
+// so this binding is the source of truth for chat attachments as well as the
+// Runtime file management endpoints.
+func (s *Service) CanReadRuntimeExternalFile(ctx context.Context, runtimeWorkspaceID, subjectID uuid.UUID, fileID string) (bool, error) {
+	fileID = strings.TrimSpace(fileID)
+	if s == nil || s.db == nil || runtimeWorkspaceID == uuid.Nil || subjectID == uuid.Nil || fileID == "" {
+		return false, nil
+	}
+	if _, err := uuid.Parse(fileID); err != nil {
+		return false, nil
+	}
+	var count int64
+	err := s.db.WithContext(ctx).Table("runtime_external_files").
+		Where("file_id = ? AND runtime_workspace_id = ? AND subject_id = ?", fileID, runtimeWorkspaceID, subjectID).
+		Count(&count).Error
+	if err != nil {
+		return false, fmt.Errorf("check runtime external file access: %w", err)
+	}
+	return count == 1, nil
+}
+
 func (s *Service) ResolveApp(ctx context.Context, runtimeWorkspaceID uuid.UUID, appKey string) (*AgentBinding, error) {
 	runtimeWorkspace, err := s.loadRuntimeWorkspace(ctx, runtimeWorkspaceID)
 	if err != nil {

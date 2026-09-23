@@ -179,32 +179,47 @@ func (h *AgentsHandler) apiKeyMemoryAccess(c *gin.Context) (memoryAccessScope, b
 		response.Fail(c, response.ErrWorkspaceNotFound)
 		return memoryAccessScope{}, false
 	}
-	externalUser, ok := externalUserFromRequest(c, c.Query("user"))
-	if !ok {
-		return memoryAccessScope{}, false
-	}
-	if len([]rune(externalUser)) > 128 {
-		response.FailWithMessage(c, response.ErrInvalidParam, "user must not exceed 128 characters")
-		return memoryAccessScope{}, false
-	}
 	published, err := h.appService.GetPublishedAgentRuntimeConfig(c.Request.Context(), agentID.String())
 	if err != nil {
 		h.failRuntime(c, err)
 		return memoryAccessScope{}, false
+	}
+	if runtimeWorkspaceRequest {
+		resourceScope, scopeErr := scopeWithAgentResourceWorkspace(runtimeservice.Scope{WorkspaceID: &workspaceID}, published.WorkspaceID)
+		if scopeErr != nil || resourceScope.ResourceWorkspaceID == nil {
+			response.Fail(c, response.ErrWorkspaceNotFound)
+			return memoryAccessScope{}, false
+		}
+		workspaceID = *resourceScope.ResourceWorkspaceID
 	}
 	writeSlots := agentMemoryRuntimeStoreSlots(agentMemoryRuntimeSlots(published.Config.AgentMemorySlots))
 	privacyContractSlots := writeSlots
 	if !published.Config.AgentMemoryEnabled {
 		privacyContractSlots = nil
 	}
-	externalUserID := DeriveExternalUserID(workspaceID, agentID, externalUser)
-	if runtimeSubject := strings.TrimSpace(c.GetString("runtime_subject_id")); runtimeSubject != "" {
+	var externalUserID uuid.UUID
+	if runtimeWorkspaceRequest {
+		runtimeSubject := strings.TrimSpace(c.GetString("runtime_subject_id"))
+		if runtimeSubject == "" {
+			response.Fail(c, response.ErrUnauthorized)
+			return memoryAccessScope{}, false
+		}
 		parsedSubject, parseErr := uuid.Parse(runtimeSubject)
 		if parseErr != nil || parsedSubject == uuid.Nil {
 			response.Fail(c, response.ErrUnauthorized)
 			return memoryAccessScope{}, false
 		}
 		externalUserID = parsedSubject
+	} else {
+		externalUser, ok := externalUserFromRequest(c, c.Query("user"))
+		if !ok {
+			return memoryAccessScope{}, false
+		}
+		if len([]rune(externalUser)) > 128 {
+			response.FailWithMessage(c, response.ErrInvalidParam, "user must not exceed 128 characters")
+			return memoryAccessScope{}, false
+		}
+		externalUserID = DeriveExternalUserID(workspaceID, agentID, externalUser)
 	}
 	var operationID *uuid.UUID
 	if runtimeWorkspaceRequest {

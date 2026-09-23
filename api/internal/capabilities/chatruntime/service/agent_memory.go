@@ -44,8 +44,8 @@ func (s *service) appendAgentMemoryContext(ctx context.Context, scope Scope, par
 	}
 	agentID, _ := uuid.Parse(strings.TrimSpace(parts.AgentMemoryAgentID))
 	workspaceID := uuid.Nil
-	if scope.WorkspaceID != nil {
-		workspaceID = *scope.WorkspaceID
+	if resourceWorkspaceID := scope.AgentResourceWorkspaceID(); resourceWorkspaceID != nil {
+		workspaceID = *resourceWorkspaceID
 	}
 	budgetTokens := maxAgentMemoryContextTokens
 	if modelInputLimit > 0 && modelInputLimit/10 < budgetTokens {
@@ -159,7 +159,8 @@ func (s *service) scheduleAgentMemoryExtractionBestEffort(ctx context.Context, p
 	if state := prepared.parts.AgentMemoryRuntimeState; state != nil && state.RelationshipSettingsResolved && (!state.Enabled || !state.AutoCaptureEnabled) {
 		return
 	}
-	if prepared.Scope.WorkspaceID == nil || *prepared.Scope.WorkspaceID == uuid.Nil || agentMemoryUserID(prepared.Scope) == uuid.Nil {
+	resourceWorkspaceID := prepared.Scope.AgentResourceWorkspaceID()
+	if resourceWorkspaceID == nil || *resourceWorkspaceID == uuid.Nil || agentMemoryUserID(prepared.Scope) == uuid.Nil {
 		return
 	}
 	agentID, err := uuid.Parse(strings.TrimSpace(prepared.parts.AgentMemoryAgentID))
@@ -167,7 +168,7 @@ func (s *service) scheduleAgentMemoryExtractionBestEffort(ctx context.Context, p
 		return
 	}
 	_, _ = s.agentMemoryExtractionScheduler.ScheduleExtraction(ctx, agentmemory.ScheduleExtractionRequest{
-		WorkspaceID: prepared.Scope.WorkspaceID.String(), AgentID: agentID.String(),
+		WorkspaceID: resourceWorkspaceID.String(), AgentID: agentID.String(),
 		UserScope: prepared.parts.AgentMemoryUserScope, UserID: agentMemoryUserID(prepared.Scope).String(),
 		ConversationID: prepared.Conversation.ID.String(), MessageWatermarkID: prepared.Message.ID.String(),
 		ExtractorVersion: "agent-memory-v2", ConfigScope: prepared.parts.AgentMemoryConfigScope,
@@ -238,7 +239,7 @@ func agentMemoryRuntimeAvailable(prepared *PreparedChat, memoryService AgentMemo
 	if !parts.AgentMemoryEnabled || !parts.AgentMemoryToolsEnabled || len(enabledAgentMemorySlots(parts.AgentMemorySlots)) == 0 {
 		return false
 	}
-	if prepared.Scope.WorkspaceID == nil || *prepared.Scope.WorkspaceID == uuid.Nil || agentMemoryUserID(prepared.Scope) == uuid.Nil {
+	if prepared.Scope.AgentResourceWorkspaceID() == nil || *prepared.Scope.AgentResourceWorkspaceID() == uuid.Nil || agentMemoryUserID(prepared.Scope) == uuid.Nil {
 		return false
 	}
 	agentID, err := uuid.Parse(strings.TrimSpace(parts.AgentMemoryAgentID))
@@ -294,7 +295,11 @@ func (s *service) agentMemoryRuntimeTools(persistCtx context.Context, prepared *
 			// validation failure. Further attempts remain harmless and final.
 			return memoryRuntimeFailure("retry_exhausted", false)
 		}
-		workspaceID := *prepared.Scope.WorkspaceID
+		resourceWorkspaceID := prepared.Scope.AgentResourceWorkspaceID()
+		if resourceWorkspaceID == nil || *resourceWorkspaceID == uuid.Nil {
+			return memoryRuntimeFailure("workspace_missing", false)
+		}
+		workspaceID := *resourceWorkspaceID
 		mutationCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
 		result := agentmemoryruntime.Execute(mutationCtx, agentmemoryruntime.MutationRequest{

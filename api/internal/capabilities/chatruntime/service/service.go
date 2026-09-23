@@ -110,12 +110,41 @@ const (
 )
 
 type Scope struct {
-	OrganizationID    uuid.UUID
-	AccountID         uuid.UUID
-	WorkspaceID       *uuid.UUID
-	ExternalUserID    *uuid.UUID
-	AgentMemoryUserID *uuid.UUID
-	SkipAccessCheck   bool
+	OrganizationID uuid.UUID
+	AccountID      uuid.UUID
+	WorkspaceID    *uuid.UUID
+	// RuntimeWorkspaceID identifies the external exposure group. It is kept
+	// separate from WorkspaceID because the latter owns Runtime data such as
+	// conversations and uploaded files.
+	RuntimeWorkspaceID *uuid.UUID
+	// RuntimeSubjectID identifies the authenticated external user. It is
+	// deliberately separate from AccountID, which is retained as the runtime
+	// caller owner for existing conversation persistence.
+	RuntimeSubjectID *uuid.UUID
+	// ResourceWorkspaceID is the Workspace that owns the published Agent and
+	// its bound capabilities. Runtime data may live in another Workspace.
+	ResourceWorkspaceID   *uuid.UUID
+	ExternalUserID        *uuid.UUID
+	AgentMemoryUserID     *uuid.UUID
+	SkipAccessCheck       bool
+	RuntimeFileAuthorizer RuntimeExternalFileAuthorizer
+}
+
+// RuntimeExternalFileAuthorizer authorizes a permanent Runtime Workspace file
+// for the authenticated Runtime Subject. The chat runtime owns this contract;
+// the Runtime Workspace module supplies the database-backed implementation.
+type RuntimeExternalFileAuthorizer interface {
+	CanReadRuntimeExternalFile(ctx context.Context, runtimeWorkspaceID, subjectID uuid.UUID, fileID string) (bool, error)
+}
+
+// AgentResourceWorkspaceID returns the Workspace that owns Agent capabilities.
+// Ordinary callers use WorkspaceID; Runtime callers can override it for an
+// Agent bound from a different source Workspace.
+func (s Scope) AgentResourceWorkspaceID() *uuid.UUID {
+	if s.ResourceWorkspaceID != nil && *s.ResourceWorkspaceID != uuid.Nil {
+		return s.ResourceWorkspaceID
+	}
+	return s.WorkspaceID
 }
 
 func isNativeExecutionMode(mode string) bool {

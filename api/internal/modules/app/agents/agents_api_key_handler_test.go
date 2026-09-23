@@ -324,6 +324,21 @@ func TestDeriveExternalUserIDStableAcrossAPIKeys(t *testing.T) {
 	}
 }
 
+func TestScopeWithAgentResourceWorkspaceKeepsRuntimeDataWorkspaceSeparate(t *testing.T) {
+	runtimeDataWorkspaceID := uuid.New()
+	agentResourceWorkspaceID := uuid.New()
+	scope, err := scopeWithAgentResourceWorkspace(runtimeservice.Scope{WorkspaceID: &runtimeDataWorkspaceID}, agentResourceWorkspaceID.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scope.WorkspaceID == nil || *scope.WorkspaceID != runtimeDataWorkspaceID {
+		t.Fatalf("runtime data workspace = %v, want %s", scope.WorkspaceID, runtimeDataWorkspaceID)
+	}
+	if scope.AgentResourceWorkspaceID() == nil || *scope.AgentResourceWorkspaceID() != agentResourceWorkspaceID {
+		t.Fatalf("agent resource workspace = %v, want %s", scope.AgentResourceWorkspaceID(), agentResourceWorkspaceID)
+	}
+}
+
 func TestChatAPIKeyAgentStreamsPublishedRuntimeSSE(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

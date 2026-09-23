@@ -113,6 +113,21 @@ func TestRuntimeFileBindingScopesLookupByWorkspaceAndSubject(t *testing.T) {
 	}
 }
 
+func TestRuntimeWorkspaceRateLimitKeyIsSharedByCredentials(t *testing.T) {
+	runtimeID := uuid.New()
+	first := runtimeWorkspaceRateLimitKey(&runtimeworkspace.Principal{
+		RuntimeWorkspace: &runtimeworkspace.RuntimeWorkspace{RuntimeID: runtimeID, WorkspaceID: uuid.New()},
+		Credential:       &runtimeworkspace.Credential{ID: uuid.New()},
+	})
+	second := runtimeWorkspaceRateLimitKey(&runtimeworkspace.Principal{
+		RuntimeWorkspace: &runtimeworkspace.RuntimeWorkspace{RuntimeID: runtimeID, WorkspaceID: uuid.New()},
+		Credential:       &runtimeworkspace.Credential{ID: uuid.New()},
+	})
+	if first == "" || first != second || first != runtimeID.String() {
+		t.Fatalf("rate-limit keys = %q/%q, want shared Runtime Workspace key %s", first, second, runtimeID)
+	}
+}
+
 type runtimeWorkspaceRouteFileService struct{}
 
 func (runtimeWorkspaceRouteFileService) GetUploadConfig() *interfaces.FileUploadConfigResponse {

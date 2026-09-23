@@ -88,8 +88,8 @@ func (c RuntimeCapabilityConfig) RuntimeParameters(scope Scope, billingAppType s
 			}
 		}
 	}
-	if scope.WorkspaceID != nil {
-		params["workspace_id"] = scope.WorkspaceID.String()
+	if workspaceID := scope.AgentResourceWorkspaceID(); workspaceID != nil {
+		params["workspace_id"] = workspaceID.String()
 	}
 	c.Knowledge.applyRuntimeParameters(params)
 	c.Database.applyRuntimeParameters(params)

@@ -227,6 +227,10 @@ func runtimeWorkspaceAuth(service *runtimeworkspace.Service, requireApp bool) gi
 		util.SetWorkspaceScopeCompat(c, principal.RuntimeWorkspace.ResourceWorkspaceID().String())
 		util.SetOrganizationID(c, principal.RuntimeWorkspace.OrganizationID.String())
 		c.Set("runtime_workspace_principal", principal)
+		// The chat runtime consumes this narrow capability interface to authorize
+		// permanent Runtime files. It must not fall back to Workspace membership,
+		// because Runtime Subjects are intentionally not members.
+		c.Set("runtime_file_authorizer", service)
 		if principal.Agent != nil {
 			c.Set("agent_id", principal.Agent.AgentID.String())
 		}
@@ -316,7 +320,7 @@ func runtimeWorkspaceRateLimit() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		key := principal.RuntimeWorkspace.LogicalID().String() + ":" + principal.Credential.ID.String()
+		key := runtimeWorkspaceRateLimitKey(principal)
 		decision, err := runtimeworkspace.AllowRateLimitedRequest(c.Request.Context(), redisPkg.GetClient(), key, limit, time.Now())
 		c.Header("X-RateLimit-Limit", strconv.Itoa(decision.Limit))
 		c.Header("X-RateLimit-Remaining", strconv.Itoa(decision.Remaining))
@@ -335,6 +339,15 @@ func runtimeWorkspaceRateLimit() gin.HandlerFunc {
 		}
 		c.Next()
 	}
+}
+
+func runtimeWorkspaceRateLimitKey(principal *runtimeworkspace.Principal) string {
+	if principal == nil || principal.RuntimeWorkspace == nil {
+		return ""
+	}
+	// The policy is owned by the Runtime Workspace, not by an individual
+	// credential. Rotating or adding credentials must not multiply its quota.
+	return principal.RuntimeWorkspace.LogicalID().String()
 }
 
 func runtimeFail(c *gin.Context, err error) {

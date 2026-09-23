@@ -100,6 +100,25 @@ func upCreateRuntimeWorkspaces(schema *mschema.Builder) error {
 }
 
 func downCreateRuntimeWorkspaces(schema *mschema.Builder) error {
+	// Runtime Subjects and their relationship-memory graph live outside the
+	// Runtime Workspace tables. Refuse a rollback while any such subject exists
+	// instead of dropping the tables and failing later when the legacy subject
+	// constraint is restored. This keeps rollback atomic and avoids silent data
+	// loss; operators must explicitly clean the Runtime data before retrying.
+	if err := schema.Raw(`
+		DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1 FROM public.user_subjects
+				WHERE issuer_type = 'runtime_workspace_api'
+			) THEN
+				RAISE EXCEPTION 'cannot rollback Runtime Workspace migration while Runtime Subjects exist';
+			END IF;
+		END
+		$$;
+	`); err != nil {
+		return err
+	}
 	if err := schema.DropIfExists("runtime_external_files"); err != nil {
 		return err
 	}
