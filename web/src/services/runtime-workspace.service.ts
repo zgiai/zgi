@@ -30,7 +30,11 @@ class RuntimeWorkspaceService extends BaseService {
       undefined,
       { headers: this.workspaceHeaders(workspaceId), skipErrorHandling: true }
     );
-    return response.data;
+    // The API omits `data` when the runtime workspace has not been created
+    // yet (`response.Success(c, nil)` plus `omitempty`). React Query treats
+    // an undefined query result as an error, while the page needs null to
+    // render the first-time enablement flow.
+    return response.data ?? null;
   }
 
   async create(workspaceId: string): Promise<RuntimeWorkspace> {
