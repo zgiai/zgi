@@ -78,6 +78,23 @@ func TestRuntimeWorkspaceMetadataRoutesDoNotRequireSubject(t *testing.T) {
 	}
 }
 
+func TestRuntimeAuditContextSurvivesRequestCancellation(t *testing.T) {
+	type contextKey string
+	parent, cancelParent := context.WithCancel(context.WithValue(context.Background(), contextKey("request-id"), "request-1"))
+	cancelParent()
+	auditCtx, cancelAudit := runtimeAuditContext(parent)
+	defer cancelAudit()
+	if err := auditCtx.Err(); err != nil {
+		t.Fatalf("detached audit context error = %v", err)
+	}
+	if value := auditCtx.Value(contextKey("request-id")); value != "request-1" {
+		t.Fatalf("audit context value = %v, want request-1", value)
+	}
+	if _, ok := auditCtx.Deadline(); !ok {
+		t.Fatal("detached audit context has no deadline")
+	}
+}
+
 func TestRuntimeWorkspaceRoutesAreFailClosed(t *testing.T) {
 	t.Setenv("ZGI_RUNTIME_WORKSPACE_ENABLED", "")
 	engine := gin.New()

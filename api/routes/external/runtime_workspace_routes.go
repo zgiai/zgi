@@ -1,6 +1,7 @@
 package external
 
 import (
+	"context"
 	"errors"
 	"io"
 	"mime/multipart"
@@ -24,7 +25,10 @@ import (
 	"gorm.io/gorm"
 )
 
-const runtimeExternalUserHeader = "X-ZGI-External-User-ID"
+const (
+	runtimeExternalUserHeader      = "X-ZGI-External-User-ID"
+	runtimeAuditPersistenceTimeout = 2 * time.Second
+)
 
 type RuntimeWorkspaceRouteDeps struct {
 	DB           *gorm.DB
@@ -41,7 +45,7 @@ func RegisterRuntimeWorkspaceRoutes(router *gin.RouterGroup, deps RuntimeWorkspa
 	}
 	service := runtimeworkspace.NewService(deps.DB)
 	group := router.Group("/connect/v1")
-	group.Use(runtimeWorkspaceAuth(service, false), runtimeWorkspaceAudit(service), runtimeWorkspaceRateLimit())
+	group.Use(runtimeWorkspaceCredentialAuth(service), runtimeWorkspaceAudit(service), runtimeWorkspaceRateLimit(), runtimeWorkspaceSubjectAuth(service))
 	group.GET("/apps", func(c *gin.Context) {
 		principal, ok := runtimePrincipal(c)
 		if !ok {
@@ -140,11 +144,32 @@ func runtimeWorkspaceMetadataRequest(method, fullPath string) bool {
 	return method == http.MethodGet && (strings.HasSuffix(fullPath, "/apps/:app_key") || strings.HasSuffix(fullPath, "/apps/:app_key/config") || strings.HasSuffix(fullPath, "/apps/:app_key/parameters"))
 }
 
-func runtimeWorkspaceAuth(service *runtimeworkspace.Service, requireApp bool) gin.HandlerFunc {
+func runtimeWorkspaceCredentialAuth(service *runtimeworkspace.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		rawKey, err := externalapikey.Extract(c.GetHeader("Authorization"), c.GetHeader("X-API-Key"))
 		if err != nil {
 			runtimeFail(c, runtimeworkspace.ErrUnauthorized)
+			c.Abort()
+			return
+		}
+		principal, err := service.AuthenticateCredential(c.Request.Context(), rawKey)
+		if err != nil {
+			runtimeFail(c, err)
+			c.Abort()
+			return
+		}
+		c.Set("runtime_workspace_principal", principal)
+		c.Set("credential_id", principal.Credential.ID.String())
+		c.Set("runtime_workspace_id", principal.RuntimeWorkspace.LogicalID().String())
+		c.Set("runtime_resource_workspace_id", principal.RuntimeWorkspace.ResourceWorkspaceID().String())
+		c.Next()
+	}
+}
+
+func runtimeWorkspaceSubjectAuth(service *runtimeworkspace.Service) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		principal, ok := runtimePrincipal(c)
+		if !ok {
 			c.Abort()
 			return
 		}
@@ -155,14 +180,9 @@ func runtimeWorkspaceAuth(service *runtimeworkspace.Service, requireApp bool) gi
 		appKey := strings.TrimSpace(c.Param("app_key"))
 		fullPath := c.FullPath()
 		metadataRequest := runtimeWorkspaceMetadataRequest(c.Request.Method, fullPath)
-		needsSubject := requireApp || strings.Contains(fullPath, "/files") || appKey != "" && !metadataRequest
+		needsSubject := strings.Contains(fullPath, "/files") || appKey != "" && !metadataRequest
 		if needsSubject && externalUser == "" {
 			runtimeFail(c, runtimeworkspace.ErrSubjectRequired)
-			c.Abort()
-			return
-		}
-		if requireApp && appKey == "" {
-			runtimeFail(c, runtimeworkspace.ErrAppNotFound)
 			c.Abort()
 			return
 		}
@@ -170,9 +190,8 @@ func runtimeWorkspaceAuth(service *runtimeworkspace.Service, requireApp bool) gi
 		if metadataRequest {
 			authAppKey = ""
 		}
-		principal, authErr := service.Authenticate(c.Request.Context(), rawKey, externalUser, authAppKey)
-		if authErr != nil {
-			runtimeFail(c, authErr)
+		if err := service.ResolveRequestPrincipal(c.Request.Context(), principal, externalUser, authAppKey); err != nil {
+			runtimeFail(c, err)
 			c.Abort()
 			return
 		}
@@ -187,16 +206,13 @@ func runtimeWorkspaceAuth(service *runtimeworkspace.Service, requireApp bool) gi
 		}
 
 		// A Runtime Subject is the external user's stable runtime account. It is
-		// deliberately independent from the rotating credential so conversations
-		// remain stable when keys are rotated. App discovery has no subject yet,
-		// so it uses the Runtime Workspace only as a non-resource placeholder.
+		// deliberately independent from rotating credentials so conversations
+		// remain stable when keys are rotated.
 		accountID := principal.RuntimeWorkspace.LogicalID().String()
 		if principal.SubjectID != uuid.Nil {
 			accountID = principal.SubjectID.String()
-			// Existing Agent runtime handlers still resolve the legacy canonical
-			// header. Bridge the new header into that context only after the
-			// Runtime Workspace credential has authenticated it.
 			c.Request.Header.Set(agents.ExternalUserIDHeader, principal.ExternalUserID)
+			c.Set("runtime_subject_id", principal.SubjectID.String())
 		}
 		c.Set("account_id", accountID)
 		runtimeContext := runtimeworkspace.RuntimeContext{
@@ -214,19 +230,12 @@ func runtimeWorkspaceAuth(service *runtimeworkspace.Service, requireApp bool) gi
 			runtimeContext.AgentID = principal.Agent.AgentID
 		}
 		c.Set("runtime_context", runtimeContext)
-		c.Set("credential_id", principal.Credential.ID.String())
-		c.Set("runtime_workspace_id", principal.RuntimeWorkspace.LogicalID().String())
-		c.Set("runtime_resource_workspace_id", principal.RuntimeWorkspace.ResourceWorkspaceID().String())
-		if principal.SubjectID != uuid.Nil {
-			c.Set("runtime_subject_id", principal.SubjectID.String())
-		}
 		c.Set("agent_id", "")
 		c.Set("invoke_from", "external-api")
 		c.Set("created_from", "external-api")
 		c.Set("created_by_role", "end_user")
 		util.SetWorkspaceScopeCompat(c, principal.RuntimeWorkspace.ResourceWorkspaceID().String())
 		util.SetOrganizationID(c, principal.RuntimeWorkspace.OrganizationID.String())
-		c.Set("runtime_workspace_principal", principal)
 		// The chat runtime consumes this narrow capability interface to authorize
 		// permanent Runtime files. It must not fall back to Workspace membership,
 		// because Runtime Subjects are intentionally not members.
@@ -248,8 +257,13 @@ func runtimePrincipal(c *gin.Context) (*runtimeworkspace.Principal, bool) {
 	return principal, true
 }
 
+func runtimeAuditContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(parent), runtimeAuditPersistenceTimeout)
+}
+
 func runtimeWorkspaceAudit(service *runtimeworkspace.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		requestCtx := c.Request.Context()
 		c.Next()
 		principal, ok := c.Get("runtime_workspace_principal")
 		runtimePrincipal, valid := principal.(*runtimeworkspace.Principal)
@@ -281,7 +295,16 @@ func runtimeWorkspaceAudit(service *runtimeworkspace.Service) gin.HandlerFunc {
 		if runtimePrincipal.Agent != nil {
 			agentID = runtimePrincipal.Agent.AgentID
 		}
-		if err := service.RecordAccessEvent(c.Request.Context(), runtimeworkspace.AccessEventInput{
+		details := map[string]any{
+			"external_user_id_hash": runtimeExternalUserHash(runtimePrincipal.ExternalUserID),
+		}
+		if requestErr := requestCtx.Err(); requestErr != nil {
+			details["request_canceled"] = errors.Is(requestErr, context.Canceled)
+			details["request_context_error"] = requestErr.Error()
+		}
+		auditCtx, cancel := runtimeAuditContext(requestCtx)
+		defer cancel()
+		if err := service.RecordAccessEvent(auditCtx, runtimeworkspace.AccessEventInput{
 			RuntimeWorkspaceID: runtimePrincipal.RuntimeWorkspace.LogicalID(),
 			OrganizationID:     runtimePrincipal.RuntimeWorkspace.OrganizationID,
 			WorkspaceID:        runtimePrincipal.RuntimeWorkspace.ResourceWorkspaceID(),
@@ -291,9 +314,7 @@ func runtimeWorkspaceAudit(service *runtimeworkspace.Service) gin.HandlerFunc {
 			Method:             c.Request.Method,
 			Route:              route,
 			StatusCode:         c.Writer.Status(),
-			Details: map[string]any{
-				"external_user_id_hash": runtimeExternalUserHash(runtimePrincipal.ExternalUserID),
-			},
+			Details:            details,
 		}); err != nil {
 			logger.Warn("runtime workspace audit persistence failed", "error", err, "route", route)
 		}
