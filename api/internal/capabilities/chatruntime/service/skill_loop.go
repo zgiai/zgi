@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
 	"unicode"
+
+	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
@@ -142,7 +143,7 @@ func (s *service) runPreparedToolLoop(
 		additionalSystemMessages = append(additionalSystemMessages, agentmemoryruntime.PolicyMessage(enabledAgentMemorySlots(prepared.parts.AgentMemorySlots), proactiveAllowed))
 	}
 	executionContext := s.skillExecutionContext(prepared)
-	scriptModel, scriptModelUsage := s.newSkillScriptModelChannel(
+	scriptModel, _ := s.newSkillScriptModelChannel(
 		prepared,
 		s.taskTokenUsageObserver(persistCtx, prepared, onEvent),
 	)

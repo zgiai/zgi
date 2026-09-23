@@ -258,7 +258,7 @@ func TestExternalAgentInvocationContextPreservesAPISource(t *testing.T) {
 	}
 }
 
-func TestPublishedAgentConfigRequiresExternalUserOnlyWhenMemoryEnabledWithSlots(t *testing.T) {
+func TestPublishedAgentConfigRequiresExternalUserWheneverMemoryIsEnabled(t *testing.T) {
 	tests := []struct {
 		name string
 		cfg  dto.AgentConfigResponse
@@ -281,7 +281,7 @@ func TestPublishedAgentConfigRequiresExternalUserOnlyWhenMemoryEnabledWithSlots(
 					{Key: "", Enabled: true},
 				},
 			},
-			want: false,
+			want: true,
 		},
 		{
 			name: "enabled memory with enabled slot",
