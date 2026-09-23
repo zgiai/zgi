@@ -522,26 +522,47 @@ func (s *WorkspaceManagementServiceImpl) UpdateWorkspace(ctx context.Context, id
 
 // DeleteWorkspace Delete workspace
 func (s *WorkspaceManagementServiceImpl) DeleteWorkspace(ctx context.Context, id string) error {
+	workspaceID, err := uuid.Parse(strings.TrimSpace(id))
+	if err != nil {
+		return fmt.Errorf("invalid Workspace ID: %w", err)
+	}
+	// Keep the fast rejection outside the transaction for callers that try to
+	// delete an active Runtime Workspace. The transactional helper below repeats
+	// this check under the delete transaction to close the race with a concurrent
+	// Runtime activation.
 	var activeRuntimeCount int64
-	if err := s.db.WithContext(ctx).Table("runtime_workspaces").Where("workspace_id = ? AND status = ?", id, "active").Count(&activeRuntimeCount).Error; err != nil {
+	if err := s.db.WithContext(ctx).Table("runtime_workspaces").Where("workspace_id = ? AND status = ?", id, runtimeworkspace.StatusActive).Count(&activeRuntimeCount).Error; err != nil {
 		return fmt.Errorf("check active Runtime Workspace: %w", err)
 	}
 	if activeRuntimeCount > 0 {
 		return ErrWorkspaceHasActiveRuntime
 	}
-	workspaceID, err := uuid.Parse(strings.TrimSpace(id))
-	if err != nil {
-		return fmt.Errorf("invalid Workspace ID: %w", err)
-	}
-	if _, err := runtimeworkspace.TeardownAttachedWorkspace(ctx, s.db, workspaceID, time.Now().UTC()); err != nil {
-		return fmt.Errorf("teardown Runtime Workspace data: %w", err)
-	}
 	workspace, _ := s.workspaceRepo.GetByID(ctx, id)
-	if err := s.workspaceRepo.Delete(ctx, id); err != nil {
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		txService := s.WithTx(tx).(*WorkspaceManagementServiceImpl)
+		return txService.deleteWorkspaceInTx(ctx, id, workspaceID)
+	}); err != nil {
 		return err
 	}
 	if workspace != nil && workspace.OrganizationID != nil {
 		workspacecache.InvalidateOrganizationWithWorkspaceMembers(ctx, s.db, *workspace.OrganizationID)
+	}
+	return nil
+}
+
+func (s *WorkspaceManagementServiceImpl) deleteWorkspaceInTx(ctx context.Context, id string, workspaceID uuid.UUID) error {
+	var activeRuntimeCount int64
+	if err := s.db.WithContext(ctx).Table("runtime_workspaces").Where("workspace_id = ? AND status = ?", id, runtimeworkspace.StatusActive).Count(&activeRuntimeCount).Error; err != nil {
+		return fmt.Errorf("check active Runtime Workspace: %w", err)
+	}
+	if activeRuntimeCount > 0 {
+		return ErrWorkspaceHasActiveRuntime
+	}
+	if _, err := runtimeworkspace.TeardownAttachedWorkspace(ctx, s.db, workspaceID, time.Now().UTC()); err != nil {
+		return fmt.Errorf("teardown Runtime Workspace data: %w", err)
+	}
+	if err := s.workspaceRepo.Delete(ctx, id); err != nil {
+		return err
 	}
 	return nil
 }
@@ -838,9 +859,6 @@ func (s *WorkspaceManagementServiceImpl) disableRuntimeWorkspaceForDeletion(ctx 
 
 // DeleteWorkspaceWithMembers Delete workspace and all its members (including owner)
 func (s *WorkspaceManagementServiceImpl) DeleteWorkspaceWithMembers(ctx context.Context, id string) error {
-	if err := s.disableRuntimeWorkspaceForDeletion(ctx, id); err != nil {
-		return fmt.Errorf("disable Runtime Workspace before deletion: %w", err)
-	}
 	workspace, _ := s.workspaceRepo.GetByID(ctx, id)
 	joins, err := s.workspaceMemberRepo.GetJoinsByWorkspaceID(ctx, id)
 	if err != nil {
@@ -856,6 +874,9 @@ func (s *WorkspaceManagementServiceImpl) DeleteWorkspaceWithMembers(ctx context.
 
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
 		txSvc := s.WithTx(tx).(*WorkspaceManagementServiceImpl)
+		if err := txSvc.disableRuntimeWorkspaceForDeletion(ctx, id); err != nil {
+			return fmt.Errorf("disable Runtime Workspace before deletion: %w", err)
+		}
 
 		// Remove all members (force=true to allow removing owner)
 		for _, join := range joins {
@@ -865,7 +886,11 @@ func (s *WorkspaceManagementServiceImpl) DeleteWorkspaceWithMembers(ctx context.
 		}
 
 		// Delete workspace
-		return txSvc.DeleteWorkspace(ctx, id)
+		workspaceID, err := uuid.Parse(strings.TrimSpace(id))
+		if err != nil {
+			return fmt.Errorf("invalid Workspace ID: %w", err)
+		}
+		return txSvc.deleteWorkspaceInTx(ctx, id, workspaceID)
 	}); err != nil {
 		return err
 	}
