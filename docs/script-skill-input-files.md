@@ -42,6 +42,13 @@ that contains the manifest `entrypoint`, matching `python3 <entrypoint>` runtime
 semantics. Code in nested packages should use package-qualified or relative
 imports. Dynamic `sys.path` changes do not expand the scanner's local import root.
 
+Deployments with a fixed, prebuilt dependency set may set
+`CODE_EXECUTION_SKILL_DEPENDENCY_SCAN_ENABLED=false`. Default-profile skills then
+skip dependency discovery and managed builds and use
+`CODE_EXECUTION_SYSTEM_DATA_PROFILE` instead. The configured profile must already
+be present, enabled, and ready in the sandbox catalog; profile preflight and all
+archive, manifest, input, artifact, and organization-grant checks remain active.
+
 When `confirmation_file_id` is supplied, stdin keeps the original arguments and
 adds file metadata:
 

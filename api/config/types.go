@@ -237,6 +237,7 @@ type CodeExecConfig struct {
 	EnableNetwork                bool   `json:"enable_network"`
 	SystemOfficeProfile          string `json:"system_office_profile"`
 	SystemDataProfile            string `json:"system_data_profile"`
+	SkillDependencyScanDisabled  bool   `json:"skill_dependency_scan_disabled"`
 	MaxNumber                    int64  `json:"max_number"`
 	MinNumber                    int64  `json:"min_number"`
 	MaxStringLength              int    `json:"max_string_length"`

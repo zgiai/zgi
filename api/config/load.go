@@ -762,6 +762,10 @@ func loadCodeExecConfig(cfg *Config, source *envSource) error {
 	if err != nil {
 		return err
 	}
+	skillDependencyScanEnabled, err := source.bool(true, envCodeExecutionSkillDependencyScanEnabled)
+	if err != nil {
+		return err
+	}
 	maxNumber, err := source.int64(9223372036854775807, envCodeMaxNumber)
 	if err != nil {
 		return err
@@ -788,6 +792,7 @@ func loadCodeExecConfig(cfg *Config, source *envSource) error {
 		EnableNetwork:                enableNetwork,
 		SystemOfficeProfile:          source.string("skill-office", envCodeExecutionSystemOfficeProfile),
 		SystemDataProfile:            source.string("scientific-data", envCodeExecutionSystemDataProfile),
+		SkillDependencyScanDisabled:  !skillDependencyScanEnabled,
 		MaxNumber:                    maxNumber,
 		MinNumber:                    minNumber,
 		MaxStringLength:              maxStringLength,

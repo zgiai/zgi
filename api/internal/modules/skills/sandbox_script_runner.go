@@ -46,7 +46,10 @@ type SandboxScriptRunnerConfig struct {
 	// operator-managed dependency profiles and does not permit builds during
 	// a skill request. It should point at a prebuilt, verified profile such as
 	// scientific-data; an empty value preserves the dynamic-build behavior.
-	FallbackDependencyProfile   string
+	FallbackDependencyProfile string
+	// DependencyScanDisabled routes default-profile skills directly to the
+	// configured prebuilt profile without inspecting or building dependencies.
+	DependencyScanDisabled      bool
 	ConnectTimeout              time.Duration
 	CreateTimeout               time.Duration
 	UploadTimeout               time.Duration
@@ -65,6 +68,7 @@ type SandboxScriptRunner struct {
 	endpoint                  string
 	apiKey                    string
 	fallbackDependencyProfile string
+	dependencyScanDisabled    bool
 	client                    *http.Client
 	timeouts                  sandboxScriptRunnerTimeouts
 	artifactPersister         SkillScriptArtifactPersister
@@ -124,6 +128,7 @@ func NewSandboxScriptRunner(config SandboxScriptRunnerConfig) *SandboxScriptRunn
 		endpoint:                  endpoint,
 		apiKey:                    strings.TrimSpace(config.APIKey),
 		fallbackDependencyProfile: strings.TrimSpace(config.FallbackDependencyProfile),
+		dependencyScanDisabled:    config.DependencyScanDisabled,
 		client: &http.Client{
 			Transport: sandboxHTTPTransport(connectTimeout),
 		},
@@ -247,8 +252,16 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 		return &ToolInvocationResult{Trace: trace}, err
 	}
 	dependencyProfile := manifest.DependencyProfile
-	if dependencyProfile == defaultSkillDependencyProfile && skillPackageHasDependencyHints(doc.Metadata.RootPath) {
-		resolvedProfile, usedFallback := r.fallbackDependencyProfileForRuntime(ctx, execCtx, manifest.Language)
+	resolvedProfile := ""
+	if dependencyProfile == defaultSkillDependencyProfile && r.dependencyScanDisabled {
+		resolvedProfile, err = r.configuredPrebuiltDependencyProfile()
+		if err != nil {
+			recordSkillScriptError(&trace, start, err)
+			return &ToolInvocationResult{Trace: trace}, err
+		}
+	} else if dependencyProfile == defaultSkillDependencyProfile && skillPackageHasDependencyHints(doc.Metadata.RootPath) {
+		var usedFallback bool
+		resolvedProfile, usedFallback = r.fallbackDependencyProfileForRuntime(ctx, execCtx, manifest.Language)
 		if !usedFallback {
 			resolvedProfile, err = r.prepareDependencyProfile(ctx, execCtx, archiveBase64, manifest.Language)
 			if err != nil {
@@ -256,6 +269,8 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 				return &ToolInvocationResult{Trace: trace}, err
 			}
 		}
+	}
+	if resolvedProfile != "" {
 		dependencyProfile = resolvedProfile
 		manifest.DependencyProfile = resolvedProfile
 		manifestRaw, err = json.Marshal(manifest)

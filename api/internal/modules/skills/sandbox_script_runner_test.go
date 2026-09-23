@@ -772,6 +772,77 @@ func TestSandboxScriptRunnerUsesReadyFallbackWhenRuntimeBuildsDisabled(t *testin
 	}
 }
 
+func TestSandboxScriptRunnerUsesPrebuiltProfileWhenDependencyScanDisabled(t *testing.T) {
+	root := writePythonScenarioSkill(t, "import copy\nprint(copy.deepcopy({'ok': True}))")
+
+	dependencyBuildRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/sandbox/dependencies":
+			writeSandboxOK(t, w, map[string]interface{}{
+				"language": "python3",
+				"profiles": []map[string]interface{}{
+					{"name": "scientific-data", "version": "2026.09.14", "status": "ready", "enabled": true, "languages": []string{"python3"}},
+				},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/sandbox/dependencies/builds":
+			dependencyBuildRequests++
+			t.Fatalf("unexpected dynamic dependency build request")
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/sandboxes":
+			request := readJSONBody(t, r)
+			if request["dependency_profile"] != "scientific-data" {
+				t.Fatalf("dependency profile = %#v, want scientific-data", request["dependency_profile"])
+			}
+			writeSandboxOK(t, w, map[string]interface{}{"id": "sbx_test"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/files/upload-archive":
+			request := readJSONBody(t, r)
+			manifestContent := archiveFileContent(t, request["archive_base64"].(string), "skill.manifest.json")
+			if !strings.Contains(manifestContent, `"dependency_profile":"scientific-data"`) {
+				t.Fatalf("uploaded manifest = %s, want scientific-data profile", manifestContent)
+			}
+			writeSandboxOK(t, w, map[string]interface{}{"file_count": 3})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/exec/command":
+			writeSandboxOK(t, w, map[string]interface{}{"stdout": "ok\n", "error": "", "exit_code": 0, "duration_ms": 1, "truncated": false, "command": "python3"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/files/tree":
+			writeSandboxOK(t, w, map[string]interface{}{"items": []map[string]interface{}{}})
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/sandboxes/sbx_test":
+			writeSandboxOK(t, w, map[string]interface{}{"deleted": true})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	runner := NewSandboxScriptRunner(SandboxScriptRunnerConfig{
+		Endpoint:                  server.URL,
+		FallbackDependencyProfile: "scientific-data",
+		DependencyScanDisabled:    true,
+	})
+	if _, err := runner.RunSkillScript(context.Background(), scriptSkillDocument(root), map[string]interface{}{}, ExecutionContext{}, "call_1"); err != nil {
+		t.Fatalf("run skill script: %v", err)
+	}
+	if dependencyBuildRequests != 0 {
+		t.Fatalf("dynamic dependency build requests = %d, want 0", dependencyBuildRequests)
+	}
+}
+
+func TestSandboxScriptRunnerRequiresPrebuiltProfileWhenDependencyScanDisabled(t *testing.T) {
+	root := writePythonScenarioSkill(t, "print('ok')")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("unexpected sandbox request: %s %s", r.Method, r.URL.Path)
+	}))
+	defer server.Close()
+
+	runner := NewSandboxScriptRunner(SandboxScriptRunnerConfig{
+		Endpoint:               server.URL,
+		DependencyScanDisabled: true,
+	})
+	_, err := runner.RunSkillScript(context.Background(), scriptSkillDocument(root), map[string]interface{}{}, ExecutionContext{}, "call_1")
+	if err == nil || !strings.Contains(err.Error(), "prebuilt dependency profile is not configured") {
+		t.Fatalf("RunSkillScript() error = %v, want missing prebuilt profile error", err)
+	}
+}
+
 func TestSkillPackageDependencyHintsDetectThirdPartyImports(t *testing.T) {
 	root := writePythonScenarioSkill(t, "import json\nimport pandas as pd\nprint('ok')")
 	if !skillPackageHasDependencyHints(root) {
@@ -1260,6 +1331,63 @@ func TestSandboxScriptRunnerRealSandboxE2E(t *testing.T) {
 	}
 	if !messagesContainArtifacts(result.Messages) {
 		t.Fatalf("expected real sandbox artifact message, got %+v", result.Messages)
+	}
+}
+
+func TestSandboxScriptRunnerRealSandboxPrebuiltDependencyProfile(t *testing.T) {
+	endpoint := strings.TrimSpace(os.Getenv("ZGI_SANDBOX_E2E_ENDPOINT"))
+	if endpoint == "" {
+		t.Skip("set ZGI_SANDBOX_E2E_ENDPOINT to run prebuilt dependency profile E2E")
+	}
+	profile := strings.TrimSpace(os.Getenv("ZGI_SANDBOX_E2E_PREBUILT_PROFILE"))
+	if profile == "" {
+		profile = "scientific-data"
+	}
+	root := writePythonScenarioSkill(t, `
+import copy
+import json
+import lifelines
+import networkx
+import numpy
+import openpyxl
+import pandas
+import scipy
+import sklearn
+import statsmodels
+import xlrd
+
+print(json.dumps({
+    "ok": copy.deepcopy({"value": True})["value"],
+    "versions": {
+        "lifelines": lifelines.__version__,
+        "networkx": networkx.__version__,
+        "numpy": numpy.__version__,
+        "openpyxl": openpyxl.__version__,
+        "pandas": pandas.__version__,
+        "scipy": scipy.__version__,
+        "sklearn": sklearn.__version__,
+        "statsmodels": statsmodels.__version__,
+        "xlrd": xlrd.__version__,
+    },
+}, sort_keys=True))
+`)
+	manifest := `{"entrypoint":"scripts/run.py","language":"python3","timeout_ms":120000,"allowed_artifact_paths":["artifacts"],"max_artifact_count":1,"max_artifact_bytes":1048576,"result_mode":"mixed"}`
+	if err := os.WriteFile(filepath.Join(root, "skill.manifest.json"), []byte(manifest), 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	runner := NewSandboxScriptRunner(SandboxScriptRunnerConfig{
+		Endpoint:                  endpoint,
+		APIKey:                    strings.TrimSpace(os.Getenv("ZGI_SANDBOX_E2E_API_KEY")),
+		FallbackDependencyProfile: profile,
+		DependencyScanDisabled:    true,
+	})
+	result, err := runner.RunSkillScript(context.Background(), scriptSkillDocument(root), map[string]interface{}{}, ExecutionContext{}, "call_prebuilt")
+	if err != nil {
+		t.Fatalf("run skill with prebuilt dependency profile: %v", err)
+	}
+	if len(result.Messages) == 0 || result.Messages[0].Type != tools.ToolInvokeMessageTypeJSON || result.Messages[0].Data["ok"] != true {
+		t.Fatalf("result messages = %#v, want JSON success", result.Messages)
 	}
 }
 
