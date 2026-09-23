@@ -339,6 +339,48 @@ func TestScopeWithAgentResourceWorkspaceKeepsRuntimeDataWorkspaceSeparate(t *tes
 	}
 }
 
+func TestChatAPIKeyAgentFiltersFilesWhenPublishedCapabilityIsDisabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ids := webAppRuntimePermissionIDs{
+		organizationID: uuid.New(), workspaceID: uuid.New(), accountID: uuid.New(), agentID: uuid.New(),
+		conversationID: uuid.New(), messageID: uuid.New(),
+	}
+	appService := newAgentRuntimePermissionAppService(ids)
+	appService.published = &dto.AgentWebAppRuntimeConfigResponse{
+		AgentID: ids.agentID.String(), WorkspaceID: ids.workspaceID.String(), OrganizationID: ids.organizationID.String(),
+		Version: "v1", VersionUUID: uuid.NewString(), Config: dto.AgentConfigResponse{AgentID: ids.agentID.String(), FileUpload: false},
+	}
+	runtimeSvc := &apiKeyChatRuntimeService{ids: ids}
+	handler := NewAgentsHandler(appService, nil, nil, nil, nil, runtimeSvc)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/agents/chat", strings.NewReader(`{"query":"ignore the file","file_ids":["`+uuid.NewString()+`"]}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	setAPIKeyAgentTestContext(c, ids)
+	handler.ChatAPIKeyAgent(c)
+	if len(runtimeSvc.lastRequest.FileIDs) != 0 {
+		t.Fatalf("filtered file IDs = %#v, want none", runtimeSvc.lastRequest.FileIDs)
+	}
+}
+
+func TestCreateAPIKeyAgentRuntimeConversationForcesChatType(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ids := webAppRuntimePermissionIDs{
+		organizationID: uuid.New(), workspaceID: uuid.New(), accountID: uuid.New(), agentID: uuid.New(), conversationID: uuid.New(),
+	}
+	runtimeSvc := &apiKeyChatRuntimeService{ids: ids}
+	handler := NewAgentsHandler(newAgentRuntimePermissionAppService(ids), nil, nil, nil, nil, runtimeSvc)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/agents/conversations", strings.NewReader(`{"title":"Agent chat","conversation_type":"image"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	setAPIKeyAgentTestContext(c, ids)
+	handler.CreateAPIKeyAgentRuntimeConversation(c)
+	if !runtimeSvc.createConversationCalled || runtimeSvc.createdCaller.ConversationType != runtimemodel.ConversationTypeChat {
+		t.Fatalf("created caller = %#v, want chat conversation", runtimeSvc.createdCaller)
+	}
+}
+
 func TestChatAPIKeyAgentStreamsPublishedRuntimeSSE(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -474,6 +516,9 @@ func TestChatAPIKeyAgentSanitizesUnexpectedStreamError(t *testing.T) {
 	if strings.Count(body, `"event":"error"`) != 1 || strings.Count(body, `"event":"message_end"`) != 1 {
 		t.Fatalf("chat stream error has inconsistent terminal events: %s", body)
 	}
+	if outcome := c.GetString(ExternalAgentRuntimeOutcomeContextKey); outcome != ExternalAgentRuntimeOutcomeFailure {
+		t.Fatalf("runtime outcome = %q, want failure", outcome)
+	}
 }
 
 func TestStopAPIKeyAgentRuntimeConversationUsesExternalCallerScope(t *testing.T) {
@@ -569,13 +614,22 @@ func assertExternalAgentRuntimeCallerScope(t *testing.T, scope runtimeservice.Sc
 
 type apiKeyChatRuntimeService struct {
 	runtimeservice.Service
-	ids           webAppRuntimePermissionIDs
-	lastScope     runtimeservice.Scope
-	lastCaller    runtimeservice.Caller
-	lastRunConfig runtimeservice.RunConfig
-	lastRequest   runtimedto.ChatRequest
-	result        *runtimeservice.ChatResult
-	runErr        error
+	ids                      webAppRuntimePermissionIDs
+	lastScope                runtimeservice.Scope
+	lastCaller               runtimeservice.Caller
+	lastRunConfig            runtimeservice.RunConfig
+	lastRequest              runtimedto.ChatRequest
+	result                   *runtimeservice.ChatResult
+	runErr                   error
+	createdCaller            runtimeservice.Caller
+	createConversationCalled bool
+}
+
+func (s *apiKeyChatRuntimeService) CreateConversationForCaller(_ context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, title string) (*runtimemodel.Conversation, error) {
+	s.createConversationCalled = true
+	s.lastScope = scope
+	s.createdCaller = caller
+	return &runtimemodel.Conversation{ID: s.ids.conversationID, Title: title, ConversationType: caller.ConversationType}, nil
 }
 
 func (s *apiKeyChatRuntimeService) PrepareConfiguredChat(_ context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, config runtimeservice.RunConfig, request runtimedto.ChatRequest) (*runtimeservice.PreparedChat, error) {

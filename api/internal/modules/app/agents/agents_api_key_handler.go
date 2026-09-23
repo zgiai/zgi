@@ -139,6 +139,9 @@ func (h *AgentsHandler) ChatAPIKeyAgent(c *gin.Context) {
 		h.failRuntime(c, err)
 		return
 	}
+	if !published.Config.FileUpload {
+		req.FileIDs = nil
+	}
 	scope := runtimeCtx.Scope
 	scope, err = scopeWithAgentResourceWorkspace(scope, published.WorkspaceID)
 	if err != nil {
@@ -196,6 +199,7 @@ func (h *AgentsHandler) ChatAPIKeyAgent(c *gin.Context) {
 		return writeAgentSSEEvent(c, event.ID, event.EventType, event.Payload)
 	})
 	if err != nil {
+		markExternalAgentRuntimeFailure(c)
 		if runtimeservice.IsFinalizedStreamError(err) {
 			return
 		}
@@ -250,6 +254,7 @@ func (h *AgentsHandler) StreamAPIKeyAgentRuntimeEvents(c *gin.Context) {
 		return writeAgentSSEEvent(c, event.ID, event.EventType, event.Payload)
 	})
 	if err != nil {
+		markExternalAgentRuntimeFailure(c)
 		logger.WarnContext(c.Request.Context(), "external Agent event stream failed", "conversation_id", conversationID.String(), "message_id", messageID.String(), err)
 		_ = writeAgentSSEEvent(c, "", "error", gin.H{
 			"conversation_id": conversationID.String(),
@@ -319,12 +324,14 @@ func (h *AgentsHandler) CreateAPIKeyAgentRuntimeConversation(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var req runtimedto.CreateConversationRequest
+	var req struct {
+		Title string `json:"title"`
+	}
 	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	runtimeCtx.Caller.ConversationType = req.ConversationType
+	runtimeCtx.Caller.ConversationType = runtimemodel.ConversationTypeChat
 	conversation, err := h.chatRuntimeService.CreateConversationForCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, req.Title)
 	if err != nil {
 		h.failRuntime(c, err)

@@ -2,6 +2,7 @@ package agents
 
 import (
 	"errors"
+
 	"github.com/gin-gonic/gin"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
@@ -48,6 +49,7 @@ func (h *AgentsHandler) runPreparedAgentStream(c *gin.Context, prepared *runtime
 		return writeAgentSSEEvent(c, event.ID, event.EventType, event.Payload)
 	})
 	if err != nil {
+		markExternalAgentRuntimeFailure(c)
 		status := runtimemodel.MessageStatusError
 		if errors.Is(err, runtimeservice.ErrMessageStopped) {
 			status = runtimemodel.MessageStatusStopped

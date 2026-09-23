@@ -137,7 +137,7 @@ Returns presentation features, allowed file types, document/image/audio/video si
   <Property name='query' type='string' propKey='query'>Required user input.</Property>
   <Property name='conversation_id' type='uuid' propKey='conversation_id'>Optional existing conversation.</Property>
   <Property name='parent_id' type='uuid' propKey='parent_id'>Optional parent message.</Property>
-  <Property name='file_ids' type='array[uuid]' propKey='file_ids'>Files owned by the current External User ID.</Property>
+  <Property name='file_ids' type='array[uuid]' propKey='file_ids'>Files owned by the current External User ID. The server filters these references when the selected assistant has file input disabled.</Property>
   <Property name='response_mode' type='string' propKey='response_mode'>Optional; use `streaming`.</Property>
   <Property name='max_task_tokens' type='integer' propKey='max_task_tokens'>Optional Agent task budget. Exhaustion may emit `token_budget_requested`.</Property>
 </Properties>
@@ -196,7 +196,7 @@ curl -X POST '{apibase}/apps/app_34ab5c8d91ef/conversations' \
 
 </CodeGroup>
 
-A different External User ID receives 404 for the same conversation ID.
+The server always creates `chat` conversations; callers do not send `conversation_type`. A different External User ID receives 404 for the same conversation ID.
 
 <Heading url="/apps/{app_key}/conversations/search" method="GET" title="Search conversations and messages" name="#Search-Conversations" />
 

@@ -1378,9 +1378,11 @@ func setupAgentSSE(c *gin.Context) {
 }
 
 const (
-	agentSSEConversationIDHeader = "X-ZGI-Conversation-ID"
-	agentSSEMessageIDHeader      = "X-ZGI-Message-ID"
-	externalAgentAPIContextKey   = "external_agent_api"
+	agentSSEConversationIDHeader          = "X-ZGI-Conversation-ID"
+	agentSSEMessageIDHeader               = "X-ZGI-Message-ID"
+	externalAgentAPIContextKey            = "external_agent_api"
+	ExternalAgentRuntimeOutcomeContextKey = "external_agent_runtime_outcome"
+	ExternalAgentRuntimeOutcomeFailure    = "failure"
 )
 
 func setupPreparedAgentSSE(c *gin.Context, prepared *runtimeservice.PreparedChat) {
@@ -1426,16 +1428,34 @@ func writeAgentChatEnd(c *gin.Context, prepared *runtimeservice.PreparedChat, re
 	})
 }
 
+func markExternalAgentRuntimeFailure(c *gin.Context) {
+	if c != nil && c.GetBool(externalAgentAPIContextKey) {
+		c.Set(ExternalAgentRuntimeOutcomeContextKey, ExternalAgentRuntimeOutcomeFailure)
+	}
+}
+
 func writeAgentSSEEvent(c *gin.Context, id string, event string, data interface{}) error {
 	if c.GetBool(externalAgentAPIContextKey) && isSidebarOnlyAgentEvent(event) {
 		return nil
 	}
+	if strings.TrimSpace(event) == "error" {
+		markExternalAgentRuntimeFailure(c)
+	}
+	var err error
+	wrote := false
 	if value, ok := c.Get(agentSSEWriterContextKey); ok {
 		if writer, writerOK := value.(*agentSSEWriter); writerOK && writer != nil {
-			return writer.WriteEvent(id, event, data)
+			wrote = true
+			err = writer.WriteEvent(id, event, data)
 		}
 	}
-	return writeAgentSSERaw(c, id, event, data)
+	if !wrote {
+		err = writeAgentSSERaw(c, id, event, data)
+	}
+	if err != nil {
+		markExternalAgentRuntimeFailure(c)
+	}
+	return err
 }
 
 func isSidebarOnlyAgentEvent(event string) bool {

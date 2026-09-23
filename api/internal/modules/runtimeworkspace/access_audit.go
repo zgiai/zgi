@@ -29,6 +29,7 @@ type AccessEventInput struct {
 	Method             string
 	Route              string
 	StatusCode         int
+	Result             string
 	Details            map[string]any
 }
 
@@ -37,6 +38,20 @@ type AccessEventInput struct {
 // outage must not turn an already completed chat/file/memory operation into a
 // second failure, while the error is still returned to the caller for logging
 // and metrics.
+func accessEventResult(input AccessEventInput) (string, error) {
+	result := strings.TrimSpace(input.Result)
+	if result == "" {
+		result = AccessEventResultSuccess
+		if input.StatusCode >= 400 {
+			result = AccessEventResultFailure
+		}
+	}
+	if result != AccessEventResultSuccess && result != AccessEventResultFailure {
+		return "", errors.New("invalid runtime workspace access event result")
+	}
+	return result, nil
+}
+
 func (s *Service) RecordAccessEvent(ctx context.Context, input AccessEventInput) error {
 	if s == nil || s.db == nil || input.RuntimeWorkspaceID == uuid.Nil || input.OrganizationID == uuid.Nil ||
 		input.WorkspaceID == uuid.Nil || strings.TrimSpace(input.Method) == "" || strings.TrimSpace(input.Route) == "" || input.StatusCode <= 0 {
@@ -51,9 +66,9 @@ func (s *Service) RecordAccessEvent(ctx context.Context, input AccessEventInput)
 		}
 		details = datatypes.JSON(encoded)
 	}
-	result := AccessEventResultSuccess
-	if input.StatusCode >= 400 {
-		result = AccessEventResultFailure
+	result, err := accessEventResult(input)
+	if err != nil {
+		return err
 	}
 	event := &AccessEvent{
 		ID: uuid.New(), RuntimeWorkspaceID: input.RuntimeWorkspaceID, OrganizationID: input.OrganizationID,

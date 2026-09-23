@@ -112,8 +112,6 @@ paths:
               properties:
                 title:
                   type: string
-                conversation_type:
-                  type: string
       responses:
         '200':
           $ref: '#/components/responses/Success'

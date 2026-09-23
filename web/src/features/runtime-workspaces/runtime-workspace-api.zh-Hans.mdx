@@ -137,7 +137,7 @@ curl -N -X POST '{apibase}/apps/app_34ab5c8d91ef/chat' \
   <Property name='query' type='string' propKey='query'>必填，本轮用户输入。</Property>
   <Property name='conversation_id' type='uuid' propKey='conversation_id'>可选。继续已有会话时传入。</Property>
   <Property name='parent_id' type='uuid' propKey='parent_id'>可选。指定父消息。</Property>
-  <Property name='file_ids' type='array[uuid]' propKey='file_ids'>可选。引用当前 External User ID 所拥有的文件。</Property>
+  <Property name='file_ids' type='array[uuid]' propKey='file_ids'>可选。引用当前 External User ID 所拥有的文件；所选智能体未启用文件能力时，文件引用会被服务端过滤。</Property>
   <Property name='response_mode' type='string' propKey='response_mode'>可选，仅支持 `streaming`。</Property>
   <Property name='max_task_tokens' type='integer' propKey='max_task_tokens'>可选。为 Agent 任务设置 Token 预算；耗尽时可能进入 `token_budget_requested` 等待状态。</Property>
 </Properties>
@@ -198,7 +198,7 @@ curl -X POST '{apibase}/apps/app_34ab5c8d91ef/conversations' \
 
 </CodeGroup>
 
-使用不同 External User ID 访问同一个会话 ID 时返回 404。
+会话类型由服务端固定为 `chat`，请求不需要传入 `conversation_type`。使用不同 External User ID 访问同一个会话 ID 时返回 404。
 
 <Heading url="/apps/{app_key}/conversations/search" method="GET" title="搜索会话与消息" name="#Search-Conversations" />
 

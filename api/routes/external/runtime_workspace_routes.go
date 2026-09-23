@@ -302,6 +302,10 @@ func runtimeWorkspaceAudit(service *runtimeworkspace.Service) gin.HandlerFunc {
 			details["request_canceled"] = errors.Is(requestErr, context.Canceled)
 			details["request_context_error"] = requestErr.Error()
 		}
+		result := ""
+		if outcome := strings.TrimSpace(c.GetString(agents.ExternalAgentRuntimeOutcomeContextKey)); outcome == agents.ExternalAgentRuntimeOutcomeFailure || requestCtx.Err() != nil {
+			result = runtimeworkspace.AccessEventResultFailure
+		}
 		auditCtx, cancel := runtimeAuditContext(requestCtx)
 		defer cancel()
 		if err := service.RecordAccessEvent(auditCtx, runtimeworkspace.AccessEventInput{
@@ -314,6 +318,7 @@ func runtimeWorkspaceAudit(service *runtimeworkspace.Service) gin.HandlerFunc {
 			Method:             c.Request.Method,
 			Route:              route,
 			StatusCode:         c.Writer.Status(),
+			Result:             result,
 			Details:            details,
 		}); err != nil {
 			logger.Warn("runtime workspace audit persistence failed", "error", err, "route", route)
