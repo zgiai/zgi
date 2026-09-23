@@ -210,7 +210,7 @@ Re-executes the root message with the original published model and parameters. A
 
 ## Files
 
-Files are scoped by Runtime Workspace and External User ID. One user can reuse the same files across exposed Agents.
+Files are scoped by Runtime Workspace and External User ID. One user can reuse the same files across exposed Agents. Deleting the owning Workspace makes them unavailable immediately; stored objects are retained for 30 days and then removed by the scheduled cleanup.
 
 <Heading url="/files" method="POST" title="Upload a file" name="#Upload-File" />
 

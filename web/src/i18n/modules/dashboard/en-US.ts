@@ -1811,7 +1811,7 @@ const messages = {
       deleteConfirm: {
         title: 'Confirm Disband',
         description:
-          'Are you sure you want to disband workspace "{workspaceName}"? This action cannot be undone.',
+          'Disband workspace "{workspaceName}"? This cannot be undone. If external access was enabled, access keys, external users, conversations, and memories are permanently removed. External uploads become unavailable immediately and are deleted after a 30-day retention period.',
         cancel: 'Cancel',
         confirm: 'Confirm Disband',
         deleting: 'Disbanding...',

@@ -212,7 +212,7 @@ curl -X POST '{apibase}/apps/app_34ab5c8d91ef/conversations' \
 
 ## Files
 
-文件按 Runtime Workspace 和 External User ID 隔离，同一用户可以在多个已添加 Agent 中使用同一批文件。
+文件按 Runtime Workspace 和 External User ID 隔离，同一用户可以在多个已添加 Agent 中使用同一批文件。删除所属工作空间后，文件会立即停止访问，存储对象保留 30 天后由系统定期清理。
 
 <Heading url="/files" method="POST" title="上传文件" name="#Upload-File" />
 

@@ -1714,7 +1714,7 @@ const messages: DashboardMessages = {
       deleteError: '解散工作空间失败',
       deleteConfirm: {
         title: '确认解散',
-        description: '确定要解散工作空间"{workspaceName}"吗？此操作不可撤销。',
+        description: '确定要解散工作空间“{workspaceName}”吗？此操作不可撤销。若已启用外部接入，访问密钥、外部用户、会话和记忆将被永久删除；外部上传文件会立即停止访问，并在保留 30 天后由系统清理。',
         cancel: '取消',
         confirm: '确认解散',
         deleting: '解散中...',

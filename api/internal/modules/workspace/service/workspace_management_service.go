@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	usererrors "github.com/zgiai/zgi/api/internal/errors"
 	quota_model "github.com/zgiai/zgi/api/internal/modules/quota/model"
+	"github.com/zgiai/zgi/api/internal/modules/runtimeworkspace"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	workspacecache "github.com/zgiai/zgi/api/internal/modules/workspace/cache"
@@ -528,6 +529,13 @@ func (s *WorkspaceManagementServiceImpl) DeleteWorkspace(ctx context.Context, id
 	if activeRuntimeCount > 0 {
 		return ErrWorkspaceHasActiveRuntime
 	}
+	workspaceID, err := uuid.Parse(strings.TrimSpace(id))
+	if err != nil {
+		return fmt.Errorf("invalid Workspace ID: %w", err)
+	}
+	if _, err := runtimeworkspace.TeardownAttachedWorkspace(ctx, s.db, workspaceID, time.Now().UTC()); err != nil {
+		return fmt.Errorf("teardown Runtime Workspace data: %w", err)
+	}
 	workspace, _ := s.workspaceRepo.GetByID(ctx, id)
 	if err := s.workspaceRepo.Delete(ctx, id); err != nil {
 		return err
@@ -820,8 +828,19 @@ func (s *WorkspaceManagementServiceImpl) removeMemberInternal(ctx context.Contex
 	return nil
 }
 
+func (s *WorkspaceManagementServiceImpl) disableRuntimeWorkspaceForDeletion(ctx context.Context, workspaceID string) error {
+	if s == nil || s.db == nil {
+		return errors.New("workspace database is unavailable")
+	}
+	return s.db.WithContext(ctx).Table("runtime_workspaces").Where("workspace_id = ? AND status = ?", workspaceID, runtimeworkspace.StatusActive).
+		Updates(map[string]any{"status": runtimeworkspace.StatusDisabled, "updated_at": gorm.Expr("CURRENT_TIMESTAMP")}).Error
+}
+
 // DeleteWorkspaceWithMembers Delete workspace and all its members (including owner)
 func (s *WorkspaceManagementServiceImpl) DeleteWorkspaceWithMembers(ctx context.Context, id string) error {
+	if err := s.disableRuntimeWorkspaceForDeletion(ctx, id); err != nil {
+		return fmt.Errorf("disable Runtime Workspace before deletion: %w", err)
+	}
 	workspace, _ := s.workspaceRepo.GetByID(ctx, id)
 	joins, err := s.workspaceMemberRepo.GetJoinsByWorkspaceID(ctx, id)
 	if err != nil {
