@@ -24,24 +24,19 @@ const (
 	DecisionReactiveCompact = "reactive_compact"
 )
 
-// Config is immutable for one logical Agent run. All token limits are derived
-// from AgentContextWindow, never directly from the model's physical window.
+// Config is immutable for one logical Agent run. Context limits are derived
+// directly from the selected model's physical context window.
 type Config struct {
 	AgentRunID              string
-	ConfiguredAgentWindowK  int
 	ModelContextWindow      int
 	MaxInputTokens          int
 	MaxOutputTokens         int
 	DefaultMainOutputTokens int
-	SummaryOutputTokens     int
-	EmergencyBufferTokens   int
-	HysteresisTokens        int
-	TargetRatio             float64
 	MaxToolResultTokens     int
 	ToolResultPreviewRunes  int
-	// TailMinMessages is the minimum number of protocol messages kept verbatim
-	// during semantic compaction. Tool-call batches may make the actual tail
-	// larger so an assistant tool call is never separated from its results.
+	// TailMinMessages is retained for source compatibility with older callers.
+	// Runtime callers leave it unset and use the newest four complete model
+	// rounds.
 	TailMinMessages int
 }
 

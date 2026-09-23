@@ -4,8 +4,17 @@ import (
 	"context"
 	"testing"
 
+	"go.uber.org/fx"
 	"go.uber.org/zap"
 )
+
+type digitalHumanChannelReceiverTestLifecycle struct {
+	hooks []fx.Hook
+}
+
+func (lifecycle *digitalHumanChannelReceiverTestLifecycle) Append(hook fx.Hook) {
+	lifecycle.hooks = append(lifecycle.hooks, hook)
+}
 
 type digitalHumanChannelReceiverLifecycleStub struct {
 	started bool
@@ -23,7 +32,7 @@ func (stub *digitalHumanChannelReceiverLifecycleStub) Stop(context.Context) erro
 }
 
 func TestRegisterDigitalHumanChannelReceiverLifecycleStartsAndStopsManager(t *testing.T) {
-	lifecycle := &integrationCompletionTestLifecycle{}
+	lifecycle := &digitalHumanChannelReceiverTestLifecycle{}
 	manager := &digitalHumanChannelReceiverLifecycleStub{}
 
 	RegisterDigitalHumanChannelReceiverLifecycle(lifecycle, manager, zap.NewNop())
