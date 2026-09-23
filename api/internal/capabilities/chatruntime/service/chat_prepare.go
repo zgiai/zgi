@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/contextmgr"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
@@ -331,7 +332,7 @@ func (s *service) createConversationForChat(ctx context.Context, scope Scope, ca
 	if err != nil {
 		return nil, err
 	}
-	if s.titleGen == nil {
+	if s.titleGen == nil || !conversationTitleGenerationEnabled(caller) {
 		return conversation, nil
 	}
 	s.markConversationTitleGenerationPending(ctx, scope, conversation)
@@ -412,11 +413,17 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 	if s.modelSpecResolver != nil {
 		resolvedSpec, resolvedSpecOK, err = s.modelSpecResolver.Resolve(ctx, scope.OrganizationID, parts.Provider, parts.ModelName)
 		if err != nil {
-			return nil, err
+			logger.WarnContext(ctx, "failed to resolve model context window; using fallback context window", "error", err)
+			resolvedSpec = ModelSpec{}
+			resolvedSpecOK = false
 		}
 		if resolvedSpecOK {
 			parts.ModelSupportsVision = resolvedSpec.SupportsVision()
 		}
+	}
+	if !resolvedSpecOK || resolvedSpec.ContextWindow <= 0 {
+		resolvedSpec.ContextWindow = contextmgr.DefaultModelContextWindowTokens
+		resolvedSpecOK = true
 	}
 	inputTokenLimit := 0
 	if resolvedSpecOK {
@@ -460,9 +467,6 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 		result.Metadata = mergeUserMemoryMetadata(result.Metadata, memoryMetadata)
 		result.Metadata = mergeUserMemoryMetadata(result.Metadata, agentMemoryMetadata)
 		return result, nil
-	}
-	if len(conversationIDs) > 0 && conversationIDs[0] != uuid.Nil {
-		return nil, fmt.Errorf("%w: model context_window is unavailable", ErrInvalidInput)
 	}
 	currentContent, contextMetadata := s.buildFallbackCurrentUserContent(parts)
 	messages := []adapter.Message{{Role: "system", Content: systemPrompt}}
@@ -520,14 +524,14 @@ func (s *service) applyModelCapabilities(ctx context.Context, scope Scope, calle
 		return nil
 	}
 	if s.modelSpecResolver == nil {
-		return fmt.Errorf("resolve AI Chat model capabilities: resolver is unavailable")
+		return applyModelCapabilityFallback(ctx, parts, "model capability resolver is unavailable")
 	}
 	spec, ok, err := s.modelSpecResolver.Resolve(ctx, scope.OrganizationID, parts.Provider, parts.ModelName)
 	if err != nil {
-		return fmt.Errorf("resolve AI Chat model capabilities: %w", err)
+		return applyModelCapabilityFallback(ctx, parts, err.Error())
 	}
 	if !ok {
-		return fmt.Errorf("resolve AI Chat model capabilities: model %s/%s was not found", parts.Provider, parts.ModelName)
+		return applyModelCapabilityFallback(ctx, parts, fmt.Sprintf("model %s/%s was not found", parts.Provider, parts.ModelName))
 	}
 	parts.ModelSupportsVision = spec.SupportsVision()
 	parts.ModelSupportsAgent = spec.SupportsAgent()
@@ -536,6 +540,21 @@ func (s *service) applyModelCapabilities(ctx context.Context, scope Scope, calle
 	parts.FunctionCallingAssumed = false
 	parts.ModelCapabilityStatus = "resolved"
 	parts.ModelCapabilityError = ""
+	return nil
+}
+
+func applyModelCapabilityFallback(ctx context.Context, parts *chatRequestParts, reason string) error {
+	if parts == nil {
+		return nil
+	}
+	parts.ModelSupportsVision = false
+	parts.ModelSupportsAgent = false
+	parts.FunctionCallingKnown = false
+	parts.ModelSupportsFunctionCalling = false
+	parts.FunctionCallingAssumed = true
+	parts.ModelCapabilityStatus = "fallback"
+	parts.ModelCapabilityError = strings.TrimSpace(reason)
+	logger.WarnContext(ctx, "AI Chat model capabilities unavailable; using context-window fallback", "reason", parts.ModelCapabilityError)
 	return nil
 }
 

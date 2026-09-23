@@ -14,6 +14,7 @@ import (
 	chatruntime "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/capabilities/imageasset"
 	"github.com/zgiai/zgi/api/internal/dto"
+	workflowfile "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
 	"github.com/zgiai/zgi/api/internal/modules/image/registry"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
@@ -1107,7 +1108,7 @@ func imageRequestPayload(req *adapter.ImageRequest) map[string]any {
 }
 
 func imageTaskFromRecord(record imageTaskRecord) ImageTask {
-	files := imageFilesFromJSON(record.Files)
+	files := refreshImageFileURLs(imageFilesFromJSON(record.Files))
 	referenceImage := referenceImageFromJSON(record.ReferenceImage)
 	status := normalizeImageTaskStatus(record.Status)
 	task := ImageTask{
@@ -1387,7 +1388,7 @@ func buildAppContext(scope Scope, conversationID uuid.UUID) (*llmclient.AppConte
 }
 
 func imageFileFromMeta(meta map[string]interface{}) ImageFile {
-	return ImageFile{
+	file := ImageFile{
 		FileID:         stringValue(meta["file_id"]),
 		ToolFileID:     stringValue(meta["tool_file_id"]),
 		URL:            stringValue(meta["url"]),
@@ -1399,6 +1400,55 @@ func imageFileFromMeta(meta map[string]interface{}) ImageFile {
 		Lifecycle:      stringValue(meta["lifecycle"]),
 		ExpiresAt:      int64PtrValue(meta["expires_at"]),
 	}
+	refreshImageFileURL(&file)
+	return file
+}
+
+func refreshImageFileURLs(files []ImageFile) []ImageFile {
+	for index := range files {
+		refreshImageFileURL(&files[index])
+	}
+	return files
+}
+
+func refreshImageFileURL(file *ImageFile) {
+	if file == nil {
+		return
+	}
+	transferMethod := strings.TrimSpace(file.TransferMethod)
+	if transferMethod != "" && !strings.EqualFold(transferMethod, string(workflowfile.FileTransferMethodToolFile)) {
+		return
+	}
+	fileID := strings.TrimSpace(file.ToolFileID)
+	if fileID == "" {
+		fileID = strings.TrimSpace(file.FileID)
+	}
+	extension := strings.TrimSpace(file.Extension)
+	if fileID == "" || extension == "" {
+		return
+	}
+
+	urlMode := tool_file.ToolFileURLModeSigned
+	if strings.TrimSpace(file.Lifecycle) == "" || strings.EqualFold(strings.TrimSpace(file.Lifecycle), string(tool_file.ToolFileLifecyclePersistent)) {
+		urlMode = tool_file.ToolFileURLModePermanent
+	}
+	url, err := tool_file.SignToolFileGlobalWithMode(fileID, extension, urlMode)
+	if err != nil {
+		return
+	}
+	file.URL = url
+	file.DownloadURL = appendImageDownloadQuery(url)
+}
+
+func appendImageDownloadQuery(rawURL string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" || strings.Contains(rawURL, "download=") {
+		return rawURL
+	}
+	if strings.Contains(rawURL, "?") {
+		return rawURL + "&download=1"
+	}
+	return rawURL + "?download=1"
 }
 
 func int64PtrValue(value interface{}) *int64 {

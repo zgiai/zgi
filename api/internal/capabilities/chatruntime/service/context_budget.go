@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/contextmgr"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
@@ -16,9 +16,7 @@ import (
 )
 
 const (
-	contextBudgetSafetyNumerator   = 9
-	contextBudgetSafetyDenominator = 10
-	maxContextCandidateMessages    = 100
+	maxContextCandidateMessages = 100
 
 	contextControlStrategyTokenBudget = "token_budget"
 
@@ -62,6 +60,9 @@ func (s *service) buildTokenBudgetMessages(
 	systemPrompt string,
 	parentMessages []*runtimemodel.Message,
 ) (*contextBudgetResult, error) {
+	if spec.ContextWindow <= 0 {
+		spec.ContextWindow = contextmgr.DefaultModelContextWindowTokens
+	}
 	if s.tokenEstimator == nil {
 		s.tokenEstimator = newTokenEstimator()
 	}
@@ -314,14 +315,12 @@ func mergeAttachmentContextMetadata(target map[string]interface{}, source map[st
 
 func (s *service) computeContextBudget(spec ModelSpec, parts *chatRequestParts, baseMessages []adapter.Message) (*budgetComputation, error) {
 	if spec.ContextWindow <= 0 {
-		return nil, fmt.Errorf("%w: model context_window is required", ErrInvalidInput)
+		spec.ContextWindow = contextmgr.DefaultModelContextWindowTokens
 	}
-	agentWindowK := 512
-	if config.GlobalConfig != nil && config.GlobalConfig.ChatRuntime.AgentContextWindowK > 0 {
-		agentWindowK = config.GlobalConfig.ChatRuntime.AgentContextWindowK
-	}
-	configuredAgentWindow := agentWindowK * 1000
-	agentContextWindow := min(configuredAgentWindow, spec.ContextWindow)
+	// The effective Agent window follows the selected model's physical context
+	// window. The old configurable cap was removed by the mainline context
+	// manager; keep the diagnostic fields populated for existing telemetry.
+	agentContextWindow := spec.ContextWindow
 	safeLimit := agentContextWindow
 	minOutput := minOutputReserve(agentContextWindow)
 	if safeLimit <= minOutput {
@@ -381,9 +380,9 @@ func (s *service) computeContextBudget(spec ModelSpec, parts *chatRequestParts, 
 	}
 
 	return &budgetComputation{
-		ConfiguredAgentWindowK: agentWindowK,
+		ConfiguredAgentWindowK: agentContextWindow / 1000,
 		AgentContextWindow:     agentContextWindow,
-		AgentWindowClamped:     agentContextWindow < configuredAgentWindow,
+		AgentWindowClamped:     false,
 		SafeLimit:              safeLimit,
 		PromptBudget:           promptBudget,
 		ReservedOutputTokens:   reservedOutput,

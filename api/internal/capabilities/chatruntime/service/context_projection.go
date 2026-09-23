@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -13,13 +12,10 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
-// Write-time pruning budget for one transcript entry. Above the threshold the
-// entry keeps an excerpt plus a ref (its own id) in preview, so the context
-// never has to load the full payload again; the payload keeps the original.
-const (
-	transcriptPreviewThresholdRunes = 8192
-	transcriptPreviewHeadRunes      = 200
-)
+// Write-time compression budget for one transcript entry. Tool results are
+// compressed only when the context manager has already crossed its global
+// threshold; this writer applies the same lossy representation when durable
+// history is first written so payload and preview cannot diverge.
 
 // transcriptEntryKindForRole maps a protocol role onto a stored entry kind.
 // System messages are never stored: the prologue is re-rendered per request.
@@ -77,32 +73,19 @@ func protocolMessageFingerprint(payload map[string]interface{}) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// pruneTranscriptMessageForWrite computes the effective form stored in preview.
-// Oversized tool results become "ref + excerpt"; every other message is stored
-// unchanged. The ref is the entry id, so the model can ask for the original and
-// the excerpt cannot be confused with the full result.
+// pruneTranscriptMessageForWrite computes the canonical form stored in both
+// preview and payload. Oversized tool results keep the beginning and end only;
+// the omitted middle is intentionally unrecoverable.
 func pruneTranscriptMessageForWrite(entryID uuid.UUID, payload map[string]interface{}, kind string) map[string]interface{} {
 	if kind != runtimemodel.TranscriptEntryKindTool {
 		return payload
 	}
 	text := messageContentText(payload["content"])
-	runes := []rune(text)
-	if len(runes) <= transcriptPreviewThresholdRunes {
-		return payload
-	}
-	head := transcriptPreviewHeadRunes
-	if head > len(runes) {
-		head = len(runes)
-	}
-	pruned := make(map[string]interface{}, len(payload))
-	for key, value := range payload {
-		pruned[key] = value
-	}
-	pruned["content"] = fmt.Sprintf(
-		"[工具结果已归档] ref=%s 原始长度=%s 字符\n预览（前 %d 字）：%s",
-		entryID.String(), strconv.Itoa(len(runes)), head, string(runes[:head]),
-	)
-	return pruned
+	// The context manager is the sole component that decides when and how to
+	// compress. Persistence must not apply an independent size threshold.
+	_ = entryID
+	_ = text
+	return payload
 }
 
 // projectContextMessages decodes a chronological list of transcript previews.

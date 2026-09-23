@@ -169,13 +169,13 @@ func TestLegacyMainMessageHistoryIsLazilyJoinedToParentChain(t *testing.T) {
 	}
 }
 
-func TestPruneTranscriptMessageForWriteArchivesOversizedToolResults(t *testing.T) {
+func TestPruneTranscriptMessageForWriteLeavesCompressionToContextManager(t *testing.T) {
 	entryID := uuid.New()
 	big := strings.Repeat("large result ", 9000)
 	payload := map[string]interface{}{"role": "tool", "tool_call_id": "call-1", "content": big}
 	preview := pruneTranscriptMessageForWrite(entryID, payload, runtimemodel.TranscriptEntryKindTool)
-	if !strings.Contains(messageContentText(preview["content"]), "ref="+entryID.String()) || len([]rune(messageContentText(preview["content"]))) >= len([]rune(big)) {
-		t.Fatal("tool preview was not archived")
+	if messageContentText(preview["content"]) != big {
+		t.Fatal("persistence layer changed an uncompressed tool result")
 	}
 }
 

@@ -114,7 +114,7 @@ func (s *service) CreateConversationWithCompletedMessage(ctx context.Context, sc
 		Source:           source,
 		SourceWebAppID:   sourceWebAppID,
 	}
-	if s.titleGen != nil {
+	if s.titleGen != nil && conversationTitleGenerationEnabled(caller) {
 		conversation.Metadata = conversationMetadataWithTitleStatus(conversation.Metadata, conversationTitleStatusPending)
 	}
 	messageReq := req.Message
@@ -133,7 +133,7 @@ func (s *service) CreateConversationWithCompletedMessage(ctx context.Context, sc
 	}); err != nil {
 		return nil, nil, err
 	}
-	if s.titleGen != nil {
+	if s.titleGen != nil && conversationTitleGenerationEnabled(caller) {
 		s.enqueueConversationTitleGeneration(ctx, scope, caller, conversation, conversationTitleGenerationInput{
 			Messages:      conversationTitleMessagesFromQuery(message.Query),
 			FallbackTitle: conversation.Title,
@@ -173,7 +173,7 @@ func (s *service) CreateConversationWithPendingMessage(ctx context.Context, scop
 		Source:           source,
 		SourceWebAppID:   sourceWebAppID,
 	}
-	if s.titleGen != nil {
+	if s.titleGen != nil && conversationTitleGenerationEnabled(caller) {
 		conversation.Metadata = conversationMetadataWithTitleStatus(conversation.Metadata, conversationTitleStatusPending)
 	}
 	messageReq := req.Message
@@ -192,7 +192,7 @@ func (s *service) CreateConversationWithPendingMessage(ctx context.Context, scop
 	}); err != nil {
 		return nil, nil, err
 	}
-	if s.titleGen != nil {
+	if s.titleGen != nil && conversationTitleGenerationEnabled(caller) {
 		s.enqueueConversationTitleGeneration(ctx, scope, caller, conversation, conversationTitleGenerationInput{
 			Messages:      conversationTitleMessagesFromQuery(message.Query),
 			FallbackTitle: conversation.Title,

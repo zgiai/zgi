@@ -142,7 +142,11 @@ func (service) SaveGeneratedImage(ctx context.Context, req SaveRequest) (map[str
 	if extension == "" {
 		extension = defaultImageExt
 	}
-	url, err := tool_file.SignToolFileGlobal(toolFile.ID, extension)
+	urlMode := tool_file.ToolFileURLModeSigned
+	if toolFile.LifecycleValue() == tool_file.ToolFileLifecyclePersistent {
+		urlMode = tool_file.ToolFileURLModePermanent
+	}
+	url, err := tool_file.SignToolFileGlobalWithMode(toolFile.ID, extension, urlMode)
 	if err != nil {
 		return nil, fmt.Errorf("failed to sign generated image: %w", err)
 	}

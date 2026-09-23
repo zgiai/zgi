@@ -706,7 +706,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		} else {
 			planningReq.Tools = metaToolsForRun(resolved, loadedSkills, preferExplicitFinalAnswer, false)
 		}
-		planningReq.Tools = appendContextArtifactTool(planningReq.Tools, r.ContextManager != nil)
 		allowPlanUpdate := planRevisionRequired || operationPlanModelRevisionRequired(req, roundRuntimeState)
 		allowIntermediateAnswer := !fileDeliveryRequiresArtifactOnly(req, roundRuntimeState)
 		if connectorOutcomesComplete {
@@ -1608,7 +1607,6 @@ func legacyToolChatTools(input []adapter.Tool, allowSkillReload bool) []adapter.
 		skills.MetaToolReadSkillReference: {},
 		skills.MetaToolCallSkillTool:      {},
 		skills.MetaToolRequestUserInput:   {},
-		contextArtifactToolName:           {},
 	}
 	if allowSkillReload {
 		allowed[skills.MetaToolLoadSkill] = struct{}{}

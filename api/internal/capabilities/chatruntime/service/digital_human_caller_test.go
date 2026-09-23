@@ -84,8 +84,7 @@ func TestDigitalHumanUsesSharedAgentContextManager(t *testing.T) {
 		contextBudget: &contextBudgetResult{
 			Spec: ModelSpec{ContextWindow: 128_000, MaxOutputTokens: 8_000},
 			Budget: &budgetComputation{
-				ConfiguredAgentWindowK: 256,
-				ReservedOutputTokens:   8_000,
+				ReservedOutputTokens: 8_000,
 			},
 		},
 	}
@@ -105,7 +104,7 @@ func TestDigitalHumanUsesSharedAgentContextManager(t *testing.T) {
 	if request == nil || decision.AgentRunID != messageID.String() {
 		t.Fatalf("context decision = %#v", decision)
 	}
-	if decision.Budget.AgentContextWindow != 128_000 || !decision.Budget.AgentContextWindowClamped {
+	if decision.Budget.AgentContextWindow != 128_000 || decision.Budget.AgentContextWindowClamped {
 		t.Fatalf("DigitalHuman context budget = %#v", decision.Budget)
 	}
 	if prepared.Message.Metadata["agent_run_id"] != messageID.String() {

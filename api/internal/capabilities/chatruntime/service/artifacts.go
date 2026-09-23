@@ -191,7 +191,11 @@ func hydrateGeneratedFileURLWithLookup(file map[string]interface{}, toolFiles ma
 	if fileID == "" || extension == "" {
 		return hydrated
 	}
-	url, err := tool_file.SignToolFileGlobal(fileID, extension)
+	urlMode := tool_file.ToolFileURLModeSigned
+	if strings.EqualFold(strings.TrimSpace(stringFromAny(hydrated["lifecycle"])), string(tool_file.ToolFileLifecyclePersistent)) {
+		urlMode = tool_file.ToolFileURLModePermanent
+	}
+	url, err := tool_file.SignToolFileGlobalWithMode(fileID, extension, urlMode)
 	if err != nil {
 		return hydrated
 	}

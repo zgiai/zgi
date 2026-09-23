@@ -679,6 +679,35 @@ func TestHydrateMessageGeneratedFileURLsRefreshesImageGenerationFiles(t *testing
 	}
 }
 
+func TestHydratePersistentImageGenerationFileUsesPermanentURL(t *testing.T) {
+	restoreToolFileSignature(t)
+	message := &runtimemodel.Message{Metadata: map[string]interface{}{
+		"image_generation": map[string]interface{}{
+			"files": []interface{}{map[string]interface{}{
+				"file_id":         "file-persistent-image",
+				"filename":        "generated-image.png",
+				"extension":       ".png",
+				"mime_type":       "image/png",
+				"transfer_method": "tool_file",
+				"lifecycle":       "persistent",
+				"url":             "http://stale.example/preview",
+			}},
+		},
+	}}
+
+	hydrateMessageGeneratedFileURLs(message)
+
+	imageGeneration := message.Metadata["image_generation"].(map[string]interface{})
+	file := generatedFilesFromMetadata(imageGeneration["files"])[0]
+	url := stringFromAny(file["url"])
+	if !strings.Contains(url, "expires_at=0") {
+		t.Fatalf("url = %q, want permanent expires_at=0", url)
+	}
+	if stringFromAny(file["download_url"]) != url+"&download=1" {
+		t.Fatalf("download_url = %q, want preview url plus download=1", file["download_url"])
+	}
+}
+
 func restoreToolFileSignature(t *testing.T) {
 	t.Helper()
 	previous := tool_file.GlobalFileSignature
