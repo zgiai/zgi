@@ -16,6 +16,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
 	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -84,6 +85,38 @@ func NewService(db *gorm.DB, options ...ServiceOption) *Service {
 // attached resource Workspace ID. Keeping this compatibility lookup at the
 // service boundary lets existing console routes continue to pass workspace_id
 // while future isolated routes can address runtime_id directly.
+type resourceWorkspaceState struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID                       `gorm:"column:organization_id"`
+	Status         workspace_model.WorkspaceStatus `gorm:"column:status"`
+}
+
+func loadResourceWorkspaceState(ctx context.Context, db *gorm.DB, workspaceID uuid.UUID, lock bool) (*resourceWorkspaceState, error) {
+	if db == nil || workspaceID == uuid.Nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+	query := db.WithContext(ctx).Table("workspaces").Select("id, organization_id, status").Where("id = ?", workspaceID)
+	if lock {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	var workspace resourceWorkspaceState
+	if err := query.Take(&workspace).Error; err != nil {
+		return nil, err
+	}
+	return &workspace, nil
+}
+
+func requireNormalResourceWorkspace(ctx context.Context, db *gorm.DB, workspaceID uuid.UUID, lock bool) (*resourceWorkspaceState, error) {
+	workspace, err := loadResourceWorkspaceState(ctx, db, workspaceID, lock)
+	if err != nil {
+		return nil, err
+	}
+	if workspace.Status != workspace_model.WorkspaceStatusNormal {
+		return nil, ErrWorkspaceDisabled
+	}
+	return workspace, nil
+}
+
 func (s *Service) loadRuntimeWorkspace(ctx context.Context, identifier uuid.UUID) (*RuntimeWorkspace, error) {
 	if identifier == uuid.Nil {
 		return nil, gorm.ErrRecordNotFound
@@ -110,21 +143,22 @@ func (s *Service) ResolveRuntimeID(ctx context.Context, identifier uuid.UUID) (u
 }
 
 type runtimeAgentRecord struct {
-	ID             uuid.UUID
-	TenantID       uuid.UUID `gorm:"column:tenant_id"`
-	OrganizationID uuid.UUID `gorm:"column:organization_id"`
-	WorkspaceName  string    `gorm:"column:workspace_name"`
-	Name           string
-	Description    string
-	Icon           string    `gorm:"column:icon"`
-	IconType       string    `gorm:"column:icon_type"`
-	EnableAPI      bool      `gorm:"column:enable_api"`
-	WebAppStatus   string    `gorm:"column:web_app_status"`
-	Published      bool      `gorm:"column:published"`
-	Version        string    `gorm:"column:version"`
-	VersionUUID    uuid.UUID `gorm:"column:version_uuid"`
-	PublishedAt    time.Time `gorm:"column:published_at"`
-	ConfigSnapshot []byte    `gorm:"column:config_snapshot"`
+	ID              uuid.UUID
+	TenantID        uuid.UUID                       `gorm:"column:tenant_id"`
+	OrganizationID  uuid.UUID                       `gorm:"column:organization_id"`
+	WorkspaceName   string                          `gorm:"column:workspace_name"`
+	WorkspaceStatus workspace_model.WorkspaceStatus `gorm:"column:workspace_status"`
+	Name            string
+	Description     string
+	Icon            string    `gorm:"column:icon"`
+	IconType        string    `gorm:"column:icon_type"`
+	EnableAPI       bool      `gorm:"column:enable_api"`
+	WebAppStatus    string    `gorm:"column:web_app_status"`
+	Published       bool      `gorm:"column:published"`
+	Version         string    `gorm:"column:version"`
+	VersionUUID     uuid.UUID `gorm:"column:version_uuid"`
+	PublishedAt     time.Time `gorm:"column:published_at"`
+	ConfigSnapshot  []byte    `gorm:"column:config_snapshot"`
 }
 
 type runtimePublishedPresentation struct {
@@ -209,7 +243,7 @@ func (s *Service) loadBoundAgents(ctx context.Context, runtimeWorkspace *Runtime
 	}
 	var records []runtimeAgentRecord
 	if err := s.db.WithContext(ctx).Table("agents AS agents").
-		Select("agents.id, agents.tenant_id, workspaces.organization_id, workspaces.name AS workspace_name, agents.name, agents.description, COALESCE(agents.icon, '') AS icon, COALESCE(agents.icon_type, '') AS icon_type, agents.enable_api, agents.web_app_status, latest.version_uuid IS NOT NULL AS published, COALESCE(latest.version, '') AS version, latest.version_uuid, latest.created_at AS published_at, latest.config_snapshot").
+		Select("agents.id, agents.tenant_id, workspaces.organization_id, workspaces.name AS workspace_name, workspaces.status AS workspace_status, agents.name, agents.description, COALESCE(agents.icon, '') AS icon, COALESCE(agents.icon_type, '') AS icon_type, agents.enable_api, agents.web_app_status, latest.version_uuid IS NOT NULL AS published, COALESCE(latest.version, '') AS version, latest.version_uuid, latest.created_at AS published_at, latest.config_snapshot").
 		Joins("JOIN workspaces AS workspaces ON workspaces.id = agents.tenant_id").
 		Joins("LEFT JOIN LATERAL (SELECT versions.version, versions.version_uuid, versions.created_at, versions.config_snapshot FROM agent_published_versions AS versions WHERE versions.agent_id = agents.id AND versions.workspace_id = agents.tenant_id AND versions.deleted_at IS NULL ORDER BY versions.created_at DESC, versions.id DESC LIMIT 1) AS latest ON TRUE").
 		Where("agents.id IN ? AND agents.deleted_at IS NULL", agentIDs).Find(&records).Error; err != nil {
@@ -218,7 +252,7 @@ func (s *Service) loadBoundAgents(ctx context.Context, runtimeWorkspace *Runtime
 	candidates := make([]runtimeauth.ResourceAuthorizationCandidate, 0, len(records))
 	for _, record := range records {
 		agentsByID[record.ID] = record
-		if record.OrganizationID != runtimeWorkspace.OrganizationID || !record.Published || !record.EnableAPI || strings.TrimSpace(record.WebAppStatus) != runtimeauth.WebAppStatusActive {
+		if record.OrganizationID != runtimeWorkspace.OrganizationID || record.WorkspaceStatus != workspace_model.WorkspaceStatusNormal || !record.Published || !record.EnableAPI || strings.TrimSpace(record.WebAppStatus) != runtimeauth.WebAppStatusActive {
 			continue
 		}
 		candidates = append(candidates, runtimeauth.ResourceAuthorizationCandidate{ResourceID: record.ID, Fallback: runtimeauth.PolicyFromAgentFields(record.WebAppStatus, record.EnableAPI)})
@@ -239,6 +273,8 @@ func runtimeAgentUnavailableReason(record runtimeAgentRecord, found, authorized 
 	switch {
 	case !found:
 		return "agent_not_found"
+	case record.WorkspaceStatus != workspace_model.WorkspaceStatusNormal:
+		return "source_workspace_archived"
 	case !record.Published:
 		return "agent_not_published"
 	case !record.EnableAPI || strings.TrimSpace(record.WebAppStatus) != runtimeauth.WebAppStatusActive:
@@ -250,14 +286,14 @@ func runtimeAgentUnavailableReason(record runtimeAgentRecord, found, authorized 
 	}
 }
 
-func (s *Service) Authenticate(ctx context.Context, rawKey, externalUserID, appKey string) (*Principal, error) {
+func (s *Service) AuthenticateCredential(ctx context.Context, rawKey string) (*Principal, error) {
 	key := strings.TrimSpace(rawKey)
 	if key == "" {
 		return nil, ErrUnauthorized
 	}
 	var credential Credential
 	query := s.db.WithContext(ctx).Where("key_hash = ? AND status = ?", externalapikey.Hash(key), CredentialActive).
-		Where("expires_at IS NULL OR expires_at > ?", time.Now())
+		Where("expires_at IS NULL OR expires_at > ?", s.now())
 	if err := query.First(&credential).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrUnauthorized
@@ -274,38 +310,60 @@ func (s *Service) Authenticate(ctx context.Context, rawKey, externalUserID, appK
 	if workspace.Status != StatusActive || workspace.Mode != ModeAttached && workspace.Mode != ModeIsolated {
 		return nil, ErrWorkspaceDisabled
 	}
-
-	principal := &Principal{
-		RuntimeWorkspace: workspace,
-		Credential:       &credential,
-		ExternalUserID:   strings.TrimSpace(externalUserID),
-	}
-	if strings.TrimSpace(externalUserID) != "" {
-		subject, err := usersubject.RuntimeWorkspaceEndUserSubject(workspace.LogicalID(), externalUserID)
-		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrSubjectRequired, err)
+	if _, err := requireNormalResourceWorkspace(ctx, s.db, workspace.ResourceWorkspaceID(), false); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, ErrWorkspaceDisabled) {
+			return nil, ErrWorkspaceDisabled
 		}
-		logicalID := workspace.LogicalID()
+		return nil, fmt.Errorf("load runtime resource workspace: %w", err)
+	}
+	return &Principal{RuntimeWorkspace: workspace, Credential: &credential}, nil
+}
+
+func (s *Service) ResolveRequestPrincipal(ctx context.Context, principal *Principal, externalUserID, appKey string) error {
+	if principal == nil || principal.RuntimeWorkspace == nil || principal.Credential == nil {
+		return ErrUnauthorized
+	}
+	principal.ExternalUserID = strings.TrimSpace(externalUserID)
+	principal.SubjectID = uuid.Nil
+	principal.Agent = nil
+	if principal.ExternalUserID != "" {
+		subject, err := usersubject.RuntimeWorkspaceEndUserSubject(principal.RuntimeWorkspace.LogicalID(), principal.ExternalUserID)
+		if err != nil {
+			return fmt.Errorf("%w: %v", ErrSubjectRequired, err)
+		}
+		logicalID := principal.RuntimeWorkspace.LogicalID()
 		if _, err := usersubject.NewService(s.db).Ensure(ctx, usersubject.EnsureRequest{
 			Subject: subject, IssuerType: SubjectIssuerType, IssuerID: &logicalID,
 		}); err != nil {
-			return nil, fmt.Errorf("ensure runtime workspace subject: %w", err)
+			return fmt.Errorf("ensure runtime workspace subject: %w", err)
 		}
 		principal.SubjectID = subject.ID
 	}
-	if strings.TrimSpace(appKey) != "" && principal.SubjectID == uuid.Nil {
-		return nil, ErrSubjectRequired
+	appKey = strings.TrimSpace(appKey)
+	if appKey != "" && principal.SubjectID == uuid.Nil {
+		return ErrSubjectRequired
 	}
-	if strings.TrimSpace(appKey) != "" {
-		binding, err := s.ResolveApp(ctx, workspace.LogicalID(), appKey)
+	if appKey != "" {
+		binding, err := s.ResolveApp(ctx, principal.RuntimeWorkspace.LogicalID(), appKey)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		principal.Agent = binding
 	}
-	_ = s.db.WithContext(ctx).Model(&Credential{}).Where("id = ?", credential.ID).Updates(map[string]any{
-		"last_used_at": time.Now(), "usage_count": gorm.Expr("usage_count + 1"),
+	_ = s.db.WithContext(ctx).Model(&Credential{}).Where("id = ?", principal.Credential.ID).Updates(map[string]any{
+		"last_used_at": s.now(), "usage_count": gorm.Expr("usage_count + 1"),
 	})
+	return nil
+}
+
+func (s *Service) Authenticate(ctx context.Context, rawKey, externalUserID, appKey string) (*Principal, error) {
+	principal, err := s.AuthenticateCredential(ctx, rawKey)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.ResolveRequestPrincipal(ctx, principal, externalUserID, appKey); err != nil {
+		return nil, err
+	}
 	return principal, nil
 }
 
@@ -547,24 +605,25 @@ func (s *Service) CreateWorkspace(ctx context.Context, workspaceID, accountID uu
 	if workspaceID == uuid.Nil || accountID == uuid.Nil {
 		return nil, ErrUnauthorized
 	}
-	var workspace struct {
-		ID             uuid.UUID
-		OrganizationID uuid.UUID `gorm:"column:organization_id"`
-	}
-	if err := s.db.WithContext(ctx).Table("workspaces").Select("id, organization_id").Where("id = ?", workspaceID).Take(&workspace).Error; err != nil {
+	var entry RuntimeWorkspace
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		workspace, err := requireNormalResourceWorkspace(ctx, tx, workspaceID, true)
+		if err != nil {
+			return err
+		}
+		// Attached Runtime Workspaces intentionally start with a stable logical ID
+		// equal to the current resource Workspace ID. This preserves all existing
+		// child rows while making the identity explicit for future isolated mode.
+		candidate := RuntimeWorkspace{RuntimeID: workspaceID, WorkspaceID: workspaceID, OrganizationID: workspace.OrganizationID, ManagedByAccountID: accountID, Status: StatusActive, Mode: ModeAttached, PolicyJSON: "{}"}
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&candidate).Error; err != nil {
+			return fmt.Errorf("create runtime workspace: %w", err)
+		}
+		return tx.First(&entry, "workspace_id = ?", workspaceID).Error
+	})
+	if err != nil {
 		return nil, err
 	}
-	// Attached Runtime Workspaces intentionally start with a stable logical ID
-	// equal to the current resource Workspace ID. This preserves all existing
-	// child rows while making the identity explicit for future isolated mode.
-	entry := &RuntimeWorkspace{RuntimeID: workspaceID, WorkspaceID: workspaceID, OrganizationID: workspace.OrganizationID, ManagedByAccountID: accountID, Status: StatusActive, Mode: ModeAttached, PolicyJSON: "{}"}
-	if err := s.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(entry).Error; err != nil {
-		return nil, fmt.Errorf("create runtime workspace: %w", err)
-	}
-	if err := s.db.WithContext(ctx).First(entry, "workspace_id = ?", workspaceID).Error; err != nil {
-		return nil, err
-	}
-	return entry, nil
+	return &entry, nil
 }
 
 func (s *Service) UpdateWorkspace(ctx context.Context, workspaceID uuid.UUID, status *string, policy json.RawMessage) (*RuntimeWorkspace, error) {
@@ -589,19 +648,28 @@ func (s *Service) UpdateWorkspace(ctx context.Context, workspaceID uuid.UUID, st
 	if len(updates) == 1 {
 		return nil, ErrInvalidWorkspace
 	}
-	runtimeWorkspace, err := s.loadRuntimeWorkspace(ctx, workspaceID)
-	if err != nil {
-		return nil, err
-	}
-	result := s.db.WithContext(ctx).Model(&RuntimeWorkspace{}).Where("runtime_id = ?", runtimeWorkspace.LogicalID()).Updates(updates)
-	if result.Error != nil {
-		return nil, fmt.Errorf("update runtime workspace: %w", result.Error)
-	}
-	if result.RowsAffected != 1 {
-		return nil, gorm.ErrRecordNotFound
-	}
 	var updated RuntimeWorkspace
-	if err := s.db.WithContext(ctx).First(&updated, "runtime_id = ?", runtimeWorkspace.LogicalID()).Error; err != nil {
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		txService := NewService(tx, WithClock(s.now))
+		runtimeWorkspace, err := txService.loadRuntimeWorkspace(ctx, workspaceID)
+		if err != nil {
+			return err
+		}
+		if status != nil && strings.TrimSpace(*status) == StatusActive {
+			if _, err := requireNormalResourceWorkspace(ctx, tx, runtimeWorkspace.ResourceWorkspaceID(), true); err != nil {
+				return err
+			}
+		}
+		result := tx.Model(&RuntimeWorkspace{}).Where("runtime_id = ?", runtimeWorkspace.LogicalID()).Updates(updates)
+		if result.Error != nil {
+			return fmt.Errorf("update runtime workspace: %w", result.Error)
+		}
+		if result.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		return tx.First(&updated, "runtime_id = ?", runtimeWorkspace.LogicalID()).Error
+	})
+	if err != nil {
 		return nil, err
 	}
 	return &updated, nil

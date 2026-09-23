@@ -32,6 +32,39 @@ func TestWorkspaceArchiveDisablesAttachedRuntime(t *testing.T) {
 	}
 }
 
+func TestWorkspaceArchiveRollsBackWhenRuntimeDisableFails(t *testing.T) {
+	db, mock := newWorkspaceManagementMockDB(t)
+	workspaceID := "10000000-0000-0000-0000-000000000003"
+	repo := &runtimeLifecycleWorkspaceRepo{db: db, workspace: &model.Workspace{ID: workspaceID, Name: "Attached", Status: model.WorkspaceStatusNormal}}
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE "runtime_workspaces" SET .*"status"=\$[0-9]+.*WHERE workspace_id = \$[0-9]+`).
+		WithArgs("disabled", workspaceID).
+		WillReturnError(errors.New("runtime update unavailable"))
+	mock.ExpectRollback()
+	archived := model.WorkspaceStatusArchived
+	if _, err := NewWorkspaceService(repo).UpdateWorkspace(t.Context(), workspaceID, "", &archived, "account-1", true); err == nil {
+		t.Fatal("archive succeeded while Runtime disable failed")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWorkspaceArchiveRollsBackBeforeRuntimeDisableWhenStatusUpdateFails(t *testing.T) {
+	db, mock := newWorkspaceManagementMockDB(t)
+	workspaceID := "10000000-0000-0000-0000-000000000004"
+	repo := &runtimeLifecycleWorkspaceRepo{db: db, workspace: &model.Workspace{ID: workspaceID, Name: "Attached", Status: model.WorkspaceStatusNormal}, updateStatusErr: errors.New("workspace status unavailable")}
+	mock.ExpectBegin()
+	mock.ExpectRollback()
+	archived := model.WorkspaceStatusArchived
+	if _, err := NewWorkspaceService(repo).UpdateWorkspace(t.Context(), workspaceID, "", &archived, "account-1", true); err == nil {
+		t.Fatal("archive succeeded while Workspace status update failed")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestWorkspaceDeleteRejectsActiveRuntime(t *testing.T) {
 	db, mock := newWorkspaceManagementMockDB(t)
 	workspaceID := "10000000-0000-0000-0000-000000000002"
@@ -49,9 +82,10 @@ func TestWorkspaceDeleteRejectsActiveRuntime(t *testing.T) {
 
 type runtimeLifecycleWorkspaceRepo struct {
 	repository.WorkspaceRepository
-	db            *gorm.DB
-	workspace     *model.Workspace
-	updatedStatus model.WorkspaceStatus
+	db              *gorm.DB
+	workspace       *model.Workspace
+	updatedStatus   model.WorkspaceStatus
+	updateStatusErr error
 }
 
 func (repo *runtimeLifecycleWorkspaceRepo) GetWorkspaceByID(context.Context, string) (*model.Workspace, error) {
@@ -62,10 +96,17 @@ func (repo *runtimeLifecycleWorkspaceRepo) GetWorkspaceByID(context.Context, str
 }
 
 func (repo *runtimeLifecycleWorkspaceRepo) UpdateWorkspaceStatus(_ context.Context, _ string, status model.WorkspaceStatus) error {
+	if repo.updateStatusErr != nil {
+		return repo.updateStatusErr
+	}
 	repo.updatedStatus = status
 	return nil
 }
 
 func (repo *runtimeLifecycleWorkspaceRepo) GetDB() *gorm.DB {
 	return repo.db
+}
+
+func (repo *runtimeLifecycleWorkspaceRepo) WithTx(*gorm.DB) repository.WorkspaceRepository {
+	return repo
 }

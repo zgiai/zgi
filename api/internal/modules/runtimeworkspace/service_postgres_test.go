@@ -156,6 +156,39 @@ func TestCredentialCreationPostgresIdempotentReplayAndExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var baselineSubjectCount int64
+	if err := tx.Table("user_subjects").Where("issuer_type = ?", SubjectIssuerType).Count(&baselineSubjectCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Table("workspaces").Where("id = ?", workspaceID).Update("status", "archived").Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.AuthenticateCredential(t.Context(), created.Secret); !errors.Is(err, ErrWorkspaceDisabled) {
+		t.Fatalf("archived resource Workspace authentication error = %v, want ErrWorkspaceDisabled", err)
+	}
+	if err := tx.Table("workspaces").Where("id = ?", workspaceID).Update("status", "normal").Error; err != nil {
+		t.Fatal(err)
+	}
+	principal, err := service.AuthenticateCredential(t.Context(), created.Secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var subjectCount int64
+	if err := tx.Table("user_subjects").Where("issuer_type = ?", SubjectIssuerType).Count(&subjectCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if subjectCount != baselineSubjectCount {
+		t.Fatalf("credential-only authentication changed Runtime Subject count from %d to %d", baselineSubjectCount, subjectCount)
+	}
+	if err := service.ResolveRequestPrincipal(t.Context(), principal, "external-user-1", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Table("user_subjects").Where("issuer_type = ?", SubjectIssuerType).Count(&subjectCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if subjectCount != baselineSubjectCount+1 {
+		t.Fatalf("resolved Runtime principal changed Subject count from %d to %d, want +1", baselineSubjectCount, subjectCount)
+	}
 	var operation CredentialOperation
 	if err := tx.First(&operation, "credential_id = ?", created.Credential.ID).Error; err != nil {
 		t.Fatal(err)

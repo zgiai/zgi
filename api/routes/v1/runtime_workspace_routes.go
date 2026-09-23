@@ -362,6 +362,10 @@ func managementFail(c *gin.Context, err error) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
+	if errors.Is(err, runtimeworkspace.ErrWorkspaceDisabled) {
+		response.Fail(c, response.ErrPermissionDenied)
+		return
+	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		response.Fail(c, response.ErrNotFound)
 		return
