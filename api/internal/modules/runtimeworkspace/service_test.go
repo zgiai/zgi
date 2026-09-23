@@ -37,6 +37,88 @@ func TestCreateWorkspaceRejectsArchivedResourceWorkspace(t *testing.T) {
 	}
 }
 
+func TestRuntimeRequestLeaseAdmitsAndReleasesActiveWorkspace(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeID := uuid.New()
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE "runtime_workspaces" SET "in_flight_requests"=in_flight_requests \+ 1 WHERE runtime_id = \$1 AND status = \$2`).
+		WithArgs(runtimeID, StatusActive).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE "runtime_workspaces" SET "in_flight_requests"=in_flight_requests - 1 WHERE runtime_id = \$1 AND in_flight_requests > 0`).
+		WithArgs(runtimeID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	service := NewService(db)
+	if err := service.AcquireRequestLease(t.Context(), runtimeID); err != nil {
+		t.Fatalf("AcquireRequestLease() error = %v", err)
+	}
+	if err := service.ReleaseRequestLease(t.Context(), runtimeID); err != nil {
+		t.Fatalf("ReleaseRequestLease() error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRuntimeRequestLeaseRejectsDisabledWorkspace(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeID := uuid.New()
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE "runtime_workspaces" SET "in_flight_requests"=in_flight_requests \+ 1 WHERE runtime_id = \$1 AND status = \$2`).
+		WithArgs(runtimeID, StatusActive).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
+
+	if err := NewService(db).AcquireRequestLease(t.Context(), runtimeID); !errors.Is(err, ErrWorkspaceDisabled) {
+		t.Fatalf("AcquireRequestLease() error = %v, want ErrWorkspaceDisabled", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRuntimeRequestDrainReturnsWhenNoRequestsRemain(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeID, workspaceID := uuid.New(), uuid.New()
+	mock.ExpectQuery(`SELECT \* FROM "runtime_workspaces" WHERE runtime_id = \$1 OR workspace_id = \$2.*LIMIT \$3`).
+		WithArgs(runtimeID, runtimeID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"runtime_id", "workspace_id", "in_flight_requests"}).AddRow(runtimeID, workspaceID, 0))
+
+	if err := NewService(db).WaitForRequestDrain(t.Context(), runtimeID); err != nil {
+		t.Fatalf("WaitForRequestDrain() error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestUpdateWorkspaceRejectsActivationForArchivedResourceWorkspace(t *testing.T) {
 	sqlDB, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
 	if err != nil {

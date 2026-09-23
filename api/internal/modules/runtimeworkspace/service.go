@@ -38,12 +38,15 @@ var (
 	ErrIdempotencyConflict       = errors.New("runtime workspace idempotency key was reused for another request")
 	ErrOperationInProgress       = errors.New("runtime workspace credential operation is in progress")
 	ErrSecretReplayExpired       = errors.New("runtime workspace credential secret replay window expired")
+	ErrRequestDrainTimeout       = errors.New("runtime workspace requests did not drain before teardown")
 )
 
 const (
 	credentialSecretReplayTTL    = 30 * time.Minute
 	credentialOperationRecordTTL = 24 * time.Hour
 	maxRuntimeWorkspaceAgents    = 100
+	runtimeRequestDrainTimeout   = 30 * time.Second
+	runtimeRequestDrainPoll      = 50 * time.Millisecond
 )
 
 type Service struct {
@@ -79,6 +82,80 @@ func NewService(db *gorm.DB, options ...ServiceOption) *Service {
 		}
 	}
 	return service
+}
+
+// AcquireRequestLease admits one external Runtime request. The update is
+// intentionally conditional on the Runtime Workspace still being active. It
+// serializes with the deletion-side disable update, so a request that passed
+// credential authentication but has not entered the request pipeline cannot
+// start after teardown begins.
+func (s *Service) AcquireRequestLease(ctx context.Context, runtimeWorkspaceID uuid.UUID) error {
+	if s == nil || s.db == nil || runtimeWorkspaceID == uuid.Nil {
+		return ErrUnauthorized
+	}
+	result := s.db.WithContext(ctx).Model(&RuntimeWorkspace{}).
+		Where("runtime_id = ? AND status = ?", runtimeWorkspaceID, StatusActive).
+		UpdateColumn("in_flight_requests", gorm.Expr("in_flight_requests + 1"))
+	if result.Error != nil {
+		return fmt.Errorf("acquire Runtime Workspace request lease: %w", result.Error)
+	}
+	if result.RowsAffected != 1 {
+		return ErrWorkspaceDisabled
+	}
+	return nil
+}
+
+// ReleaseRequestLease releases an external Runtime request admitted by
+// AcquireRequestLease. A detached context is used by the HTTP middleware so
+// client disconnects cannot strand the counter.
+func (s *Service) ReleaseRequestLease(ctx context.Context, runtimeWorkspaceID uuid.UUID) error {
+	if s == nil || s.db == nil || runtimeWorkspaceID == uuid.Nil {
+		return nil
+	}
+	result := s.db.WithContext(ctx).Model(&RuntimeWorkspace{}).
+		Where("runtime_id = ? AND in_flight_requests > 0", runtimeWorkspaceID).
+		UpdateColumn("in_flight_requests", gorm.Expr("in_flight_requests - 1"))
+	if result.Error != nil {
+		return fmt.Errorf("release Runtime Workspace request lease: %w", result.Error)
+	}
+	return nil
+}
+
+// WaitForRequestDrain prevents teardown from deleting Runtime-owned data while
+// an already-admitted external request can still persist a Subject,
+// conversation, or message. New requests are rejected by the disabled status
+// before this drain begins.
+func (s *Service) WaitForRequestDrain(ctx context.Context, identifier uuid.UUID) error {
+	if s == nil || s.db == nil || identifier == uuid.Nil {
+		return ErrInvalidWorkspace
+	}
+	drainCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), runtimeRequestDrainTimeout)
+	defer cancel()
+	for {
+		var workspace RuntimeWorkspace
+		err := s.db.WithContext(drainCtx).
+			Where("runtime_id = ? OR workspace_id = ?", identifier, identifier).
+			First(&workspace).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("inspect Runtime Workspace request leases: %w", err)
+		}
+		if workspace.InFlightRequests <= 0 {
+			return nil
+		}
+
+		timer := time.NewTimer(runtimeRequestDrainPoll)
+		select {
+		case <-drainCtx.Done():
+			if errors.Is(drainCtx.Err(), context.DeadlineExceeded) {
+				return ErrRequestDrainTimeout
+			}
+			return drainCtx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 // loadRuntimeWorkspace accepts either the stable Runtime Workspace ID or the

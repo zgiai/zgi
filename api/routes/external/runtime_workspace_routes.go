@@ -45,7 +45,7 @@ func RegisterRuntimeWorkspaceRoutes(router *gin.RouterGroup, deps RuntimeWorkspa
 	}
 	service := runtimeworkspace.NewService(deps.DB)
 	group := router.Group("/connect/v1")
-	group.Use(runtimeWorkspaceCredentialAuth(service), runtimeWorkspaceAudit(service), runtimeWorkspaceRateLimit(), runtimeWorkspaceSubjectAuth(service))
+	group.Use(runtimeWorkspaceCredentialAuth(service), runtimeWorkspaceRequestLease(service), runtimeWorkspaceAudit(service), runtimeWorkspaceRateLimit(), runtimeWorkspaceSubjectAuth(service))
 	group.GET("/apps", func(c *gin.Context) {
 		principal, ok := runtimePrincipal(c)
 		if !ok {
@@ -162,6 +162,29 @@ func runtimeWorkspaceCredentialAuth(service *runtimeworkspace.Service) gin.Handl
 		c.Set("credential_id", principal.Credential.ID.String())
 		c.Set("runtime_workspace_id", principal.RuntimeWorkspace.LogicalID().String())
 		c.Set("runtime_resource_workspace_id", principal.RuntimeWorkspace.ResourceWorkspaceID().String())
+		c.Next()
+	}
+}
+
+func runtimeWorkspaceRequestLease(service *runtimeworkspace.Service) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		principal, ok := runtimePrincipal(c)
+		if !ok {
+			return
+		}
+		runtimeID := principal.RuntimeWorkspace.LogicalID()
+		if err := service.AcquireRequestLease(c.Request.Context(), runtimeID); err != nil {
+			runtimeFail(c, err)
+			c.Abort()
+			return
+		}
+		defer func() {
+			releaseCtx, cancel := runtimeAuditContext(c.Request.Context())
+			defer cancel()
+			if err := service.ReleaseRequestLease(releaseCtx, runtimeID); err != nil {
+				logger.Warn("runtime workspace request lease release failed", "error", err, "runtime_workspace_id", runtimeID.String())
+			}
+		}()
 		c.Next()
 	}
 }

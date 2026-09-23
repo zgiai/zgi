@@ -37,6 +37,7 @@ type RuntimeWorkspace struct {
 	Mode               string    `gorm:"type:varchar(24);not null;default:'attached';index" json:"mode"`
 	PolicyJSON         string    `gorm:"type:jsonb;not null;default:'{}'" json:"policy_json"`
 	BindingsRevision   int64     `gorm:"not null;default:0" json:"bindings_revision"`
+	InFlightRequests   int64     `gorm:"column:in_flight_requests;not null;default:0" json:"-"`
 	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at"`
 }

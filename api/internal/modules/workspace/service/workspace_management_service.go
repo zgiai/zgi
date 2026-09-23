@@ -537,6 +537,9 @@ func (s *WorkspaceManagementServiceImpl) DeleteWorkspace(ctx context.Context, id
 	if activeRuntimeCount > 0 {
 		return ErrWorkspaceHasActiveRuntime
 	}
+	if err := runtimeworkspace.NewService(s.db).WaitForRequestDrain(ctx, workspaceID); err != nil {
+		return fmt.Errorf("drain Runtime Workspace requests: %w", err)
+	}
 	workspace, _ := s.workspaceRepo.GetByID(ctx, id)
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
 		txService := s.WithTx(tx).(*WorkspaceManagementServiceImpl)
@@ -859,6 +862,10 @@ func (s *WorkspaceManagementServiceImpl) disableRuntimeWorkspaceForDeletion(ctx 
 
 // DeleteWorkspaceWithMembers Delete workspace and all its members (including owner)
 func (s *WorkspaceManagementServiceImpl) DeleteWorkspaceWithMembers(ctx context.Context, id string) error {
+	workspaceID, err := uuid.Parse(strings.TrimSpace(id))
+	if err != nil {
+		return fmt.Errorf("invalid Workspace ID: %w", err)
+	}
 	workspace, _ := s.workspaceRepo.GetByID(ctx, id)
 	joins, err := s.workspaceMemberRepo.GetJoinsByWorkspaceID(ctx, id)
 	if err != nil {
@@ -872,11 +879,24 @@ func (s *WorkspaceManagementServiceImpl) DeleteWorkspaceWithMembers(ctx context.
 		}
 	}
 
+	// Commit the disablement before waiting. Request leases are released by the
+	// request middleware, so holding this row lock while waiting would deadlock
+	// an in-flight request that is trying to finish and release its lease.
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
 		txSvc := s.WithTx(tx).(*WorkspaceManagementServiceImpl)
 		if err := txSvc.disableRuntimeWorkspaceForDeletion(ctx, id); err != nil {
 			return fmt.Errorf("disable Runtime Workspace before deletion: %w", err)
 		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := runtimeworkspace.NewService(s.db).WaitForRequestDrain(ctx, workspaceID); err != nil {
+		return fmt.Errorf("drain Runtime Workspace requests: %w", err)
+	}
+
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		txSvc := s.WithTx(tx).(*WorkspaceManagementServiceImpl)
 
 		// Remove all members (force=true to allow removing owner)
 		for _, join := range joins {
@@ -886,10 +906,6 @@ func (s *WorkspaceManagementServiceImpl) DeleteWorkspaceWithMembers(ctx context.
 		}
 
 		// Delete workspace
-		workspaceID, err := uuid.Parse(strings.TrimSpace(id))
-		if err != nil {
-			return fmt.Errorf("invalid Workspace ID: %w", err)
-		}
 		return txSvc.deleteWorkspaceInTx(ctx, id, workspaceID)
 	}); err != nil {
 		return err

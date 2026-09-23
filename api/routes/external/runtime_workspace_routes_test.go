@@ -145,6 +145,41 @@ func TestRuntimeWorkspaceRateLimitKeyIsSharedByCredentials(t *testing.T) {
 	}
 }
 
+func TestRuntimeWorkspaceRequestLeaseCoversTheWholeHandler(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeID := uuid.New()
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE "runtime_workspaces" SET "in_flight_requests"=in_flight_requests \+ 1 WHERE runtime_id = \$1 AND status = \$2`).
+		WithArgs(runtimeID, runtimeworkspace.StatusActive).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE "runtime_workspaces" SET "in_flight_requests"=in_flight_requests - 1 WHERE runtime_id = \$1 AND in_flight_requests > 0`).
+		WithArgs(runtimeID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest("GET", "/api/connect/v1/apps", nil)
+	ctx.Set("runtime_workspace_principal", &runtimeworkspace.Principal{
+		RuntimeWorkspace: &runtimeworkspace.RuntimeWorkspace{RuntimeID: runtimeID, WorkspaceID: uuid.New()},
+		Credential:       &runtimeworkspace.Credential{ID: uuid.New()},
+	})
+	runtimeWorkspaceRequestLease(runtimeworkspace.NewService(db))(ctx)
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 type runtimeWorkspaceRouteFileService struct{}
 
 func (runtimeWorkspaceRouteFileService) GetUploadConfig() *interfaces.FileUploadConfigResponse {
