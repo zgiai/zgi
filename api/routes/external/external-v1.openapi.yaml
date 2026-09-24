@@ -436,6 +436,36 @@ paths:
           $ref: '#/components/responses/MemoryExportDownload'
         default:
           $ref: '#/components/responses/Error'
+  /agents/memory/settings:
+    parameters:
+      - $ref: '#/components/parameters/ExternalUserID'
+      - $ref: '#/components/parameters/LegacyUser'
+    get:
+      tags: [Memory]
+      summary: Get the external user's Agent Memory settings
+      operationId: getAgentMemorySettings
+      description: Returns the current per-user memory and automatic-capture switches with their optimistic-concurrency revision.
+      responses:
+        '200':
+          $ref: '#/components/responses/MemorySettingsEnvelope'
+        default:
+          $ref: '#/components/responses/Error'
+    patch:
+      tags: [Memory]
+      summary: Update the external user's Agent Memory settings
+      operationId: updateAgentMemorySettings
+      description: Updates per-user memory switches when allowed by the published Agent configuration. `expected_revision` is required to reject stale updates.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemorySettingsPatchRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/MemorySettingsEnvelope'
+        default:
+          $ref: '#/components/responses/Error'
   /agents/memory/{key}:
     parameters:
       - name: key
@@ -643,6 +673,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/MemorySlotEnvelope'
+    MemorySettingsEnvelope:
+      description: Per-user Agent Memory settings
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MemorySettingsEnvelope'
     MemoryClearEnvelope:
       description: Clear-all result
       content:
@@ -1419,6 +1455,14 @@ components:
         content: {type: string, description: New slot content within the published slot's max_chars limit.}
         expected_revision: {type: integer, format: int64, minimum: 0, description: Optional optimistic-concurrency revision.}
       example: {content: Prefers concise answers, expected_revision: 2}
+    MemorySettingsPatchRequest:
+      type: object
+      required: [expected_revision]
+      properties:
+        memory_enabled: {type: boolean, description: Enables or disables memory use for this external user and Agent.}
+        auto_capture_enabled: {type: boolean, description: Enables or disables automatic capture when the published Agent allows it.}
+        expected_revision: {type: integer, format: int64, minimum: 0, description: Current settings revision required for optimistic concurrency.}
+      example: {memory_enabled: true, auto_capture_enabled: true, expected_revision: 3}
     AgentConfigEnvelope:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -1722,6 +1766,21 @@ components:
           required: [data]
           properties:
             data: {$ref: '#/components/schemas/MemorySlotValue'}
+    MemorySettings:
+      type: object
+      required: [memory_enabled, auto_capture_enabled, settings_revision, memory_epoch]
+      properties:
+        memory_enabled: {type: boolean}
+        auto_capture_enabled: {type: boolean}
+        settings_revision: {type: integer, format: int64, minimum: 0}
+        memory_epoch: {type: integer, format: int64, minimum: 0}
+    MemorySettingsEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data: {$ref: '#/components/schemas/MemorySettings'}
     MemoryClearEnvelope:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'

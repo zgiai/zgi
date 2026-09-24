@@ -63,6 +63,16 @@ func TestPublicDocumentationExposesRuntimeWorkspacePhase1Contract(t *testing.T) 
 	if docs.Code != http.StatusOK || !strings.Contains(docs.Body.String(), "/api/runtime-workspace-openapi.yaml") {
 		t.Fatalf("docs response = %d %s", docs.Code, docs.Body.String())
 	}
+	for _, route := range []string{
+		"token-budget/{request_id}/continue",
+		"GET /console/api/runtime-workspaces/{workspace_id}/agent-candidates",
+		"GET|PUT /console/api/runtime-workspaces/{workspace_id}/agents",
+		"GET /console/api/runtime-workspaces/{workspace_id}/audit-events",
+	} {
+		if !strings.Contains(docs.Body.String(), route) {
+			t.Fatalf("docs response is missing %q: %s", route, docs.Body.String())
+		}
+	}
 
 	spec := httptest.NewRecorder()
 	router.ServeHTTP(spec, httptest.NewRequest(http.MethodGet, "/api/runtime-workspace-openapi.yaml", nil))
@@ -77,6 +87,7 @@ func TestPublicDocumentationExposesRuntimeWorkspacePhase1Contract(t *testing.T) 
 	for _, required := range []string{
 		"/apps/{app_key}/config:", "/apps/{app_key}/parameters:", "/apps/{app_key}/chat:", "/apps/{app_key}/conversations:",
 		"/apps/{app_key}/conversations/search:", "/messages/{message_id}/regenerate:", "/apps/{app_key}/memory/{key}:",
+		"/messages/{message_id}/token-budget/{request_id}/continue:", "token_budget_requested:", "TaskTokenBudgetContinuationRequest:",
 		"/apps/{app_key}/memory/settings:", "/memory/operations/{operation_id}/undo:", "/files/{file_id}/download-url:",
 		"X-ZGI-External-User-ID", "Idempotency-Key", "If-Match",
 	} {
@@ -189,6 +200,8 @@ func TestPublicDocumentationRoutesExposeCurrentAgentContract(t *testing.T) {
 		{http.MethodGet, "/agents/memory"},
 		{http.MethodDelete, "/agents/memory"},
 		{http.MethodGet, "/agents/memory/export"},
+		{http.MethodGet, "/agents/memory/settings"},
+		{http.MethodPatch, "/agents/memory/settings"},
 		{http.MethodPut, "/agents/memory/{key}"},
 		{http.MethodDelete, "/agents/memory/{key}"},
 		{http.MethodPost, "/agents/memory/operations/{operation_id}/undo"},

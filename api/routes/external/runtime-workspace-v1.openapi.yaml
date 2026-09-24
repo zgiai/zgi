@@ -18,6 +18,8 @@ x-zgi-sse-event-data-schemas:
   skill_artifact_created: '#/components/schemas/SkillEventData'
   agent_progress: '#/components/schemas/AgentProgressEventData'
   agent_intermediate_answer: '#/components/schemas/MessageEventData'
+  user_input_requested: '#/components/schemas/UserInputRequestedEventData'
+  token_budget_requested: '#/components/schemas/TokenBudgetRequestedEventData'
   file_parse_start: '#/components/schemas/FileParseEventData'
   file_parse_end: '#/components/schemas/FileParseEventData'
   file_parse_error: '#/components/schemas/FileParseEventData'
@@ -186,6 +188,62 @@ paths:
           $ref: '#/components/responses/Success'
         default:
           $ref: '#/components/responses/Error'
+  /apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/workflow-continuation:
+    parameters:
+      - $ref: '#/components/parameters/AppKey'
+      - $ref: '#/components/parameters/ConversationID'
+      - $ref: '#/components/parameters/MessageID'
+      - $ref: '#/components/parameters/ExternalUserID'
+    post:
+      summary: Continue a paused workflow interaction
+      description: Resumes an approval or question-answer pause for the current Runtime Subject and App.
+      operationId: continueRuntimeWorkspaceWorkflow
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/WorkflowContinuationRequest'}
+      responses:
+        '200': {$ref: '#/components/responses/AgentEventStream'}
+        default: {$ref: '#/components/responses/Error'}
+  /apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue:
+    parameters:
+      - $ref: '#/components/parameters/AppKey'
+      - $ref: '#/components/parameters/ConversationID'
+      - $ref: '#/components/parameters/MessageID'
+      - $ref: '#/components/parameters/RequestID'
+      - $ref: '#/components/parameters/ExternalUserID'
+    post:
+      summary: Continue a Skill user-input request
+      description: Submits answers for the current Runtime Subject's pending Skill input request and resumes the same message.
+      operationId: continueRuntimeWorkspaceUserInput
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UserInputContinuationRequest'}
+      responses:
+        '200': {$ref: '#/components/responses/AgentEventStream'}
+        default: {$ref: '#/components/responses/Error'}
+  /apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue:
+    parameters:
+      - $ref: '#/components/parameters/AppKey'
+      - $ref: '#/components/parameters/ConversationID'
+      - $ref: '#/components/parameters/MessageID'
+      - $ref: '#/components/parameters/RequestID'
+      - $ref: '#/components/parameters/ExternalUserID'
+    post:
+      summary: Continue or stop a task paused by its token budget
+      description: Adds tokens to, or stops, the same message after `token_budget_requested`. This is independent from Skill user input and does not accept `answers`.
+      operationId: continueRuntimeWorkspaceTaskTokenBudget
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TaskTokenBudgetContinuationRequest'}
+      responses:
+        '200': {$ref: '#/components/responses/AgentEventStream'}
+        default: {$ref: '#/components/responses/Error'}
   /apps/{app_key}/conversations/{conversation_id}/events:
     parameters:
       - $ref: '#/components/parameters/AppKey'
@@ -431,6 +489,11 @@ components:
       in: path
       required: true
       schema: {type: string, format: uuid}
+    RequestID:
+      name: request_id
+      in: path
+      required: true
+      schema: {type: string, minLength: 1, maxLength: 200}
     FileID:
       name: file_id
       in: path
@@ -582,6 +645,63 @@ components:
     TokenUsageEventData:
       type: object
       additionalProperties: true
+    TaskTokenBudget:
+      type: object
+      required: [used_tokens, max_tokens, remaining_tokens, status]
+      properties:
+        used_tokens: {type: integer, minimum: 0}
+        max_tokens: {type: integer, minimum: 1}
+        remaining_tokens: {type: integer, minimum: 0}
+        status: {type: string, enum: [running, exhausted, waiting, stopped]}
+    UserInputQuestion:
+      type: object
+      required: [id, question]
+      properties:
+        id: {type: string}
+        question: {type: string}
+        options:
+          type: array
+          items:
+            oneOf:
+              - type: object
+                required: [label]
+                properties:
+                  label: {type: string}
+                  description: {type: string}
+              - type: string
+    UserInputRequestedEventData:
+      type: object
+      required: [conversation_id, message_id, request_id, questions, created_at]
+      properties:
+        conversation_id: {type: string, format: uuid}
+        message_id: {type: string, format: uuid}
+        request_id: {type: string}
+        source: {type: string, description: Use workflow continuation when this is `agent_workflow_question_answer`; otherwise use Skill user-input continuation.}
+        message: {type: string}
+        questions:
+          type: array
+          items: {$ref: '#/components/schemas/UserInputQuestion'}
+        created_at: {type: integer, format: int64}
+    TokenBudgetRequestedEventData:
+      type: object
+      required: [conversation_id, message_id, request_id, request_kind, message, token_budget, actions, created_at]
+      properties:
+        conversation_id: {type: string, format: uuid}
+        message_id: {type: string, format: uuid}
+        request_id: {type: string}
+        request_kind: {type: string, enum: [task_token_budget]}
+        message: {type: string}
+        token_budget: {$ref: '#/components/schemas/TaskTokenBudget'}
+        actions:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [id, label]
+            properties:
+              id: {type: string, enum: [add, stop]}
+              label: {type: string}
+        created_at: {type: integer, format: int64}
     SkillEventData:
       type: object
       additionalProperties: true
@@ -589,8 +709,46 @@ components:
       type: object
       properties:
         query: {type: string}
+    UserInputContinuationRequest:
+      type: object
+      required: [answers]
+      properties:
+        answers:
+          type: object
+          minProperties: 1
+          maxProperties: 20
+          additionalProperties:
+            type: string
+            maxLength: 4000
+    TaskTokenBudgetContinuationRequest:
+      type: object
+      description: Use `add` with `additional_tokens`, or `stop` without it.
+      required: [action]
+      properties:
+        action: {type: string, enum: [add, stop]}
+        additional_tokens:
+          type: integer
+          minimum: 1
+          maximum: 100000000
+          description: Required when action is `add`; the resulting total task budget must not exceed 100000000.
+      example: {action: add, additional_tokens: 2048}
+    WorkflowContinuationRequest:
+      oneOf:
+        - type: object
+          required: [type, approval_token, action]
+          properties:
+            type: {type: string, enum: [approval]}
+            approval_token: {type: string}
+            action: {type: string}
+            inputs: {type: object, additionalProperties: true}
+        - type: object
+          required: [type, inputs]
+          properties:
+            type: {type: string, enum: [question_answer]}
+            inputs: {type: object, minProperties: 1, additionalProperties: true}
     MemorySettingsPatchRequest:
       type: object
+      required: [expected_revision]
       properties:
         memory_enabled: {type: boolean}
         auto_capture_enabled: {type: boolean}
@@ -618,6 +776,15 @@ components:
           items:
             type: string
             format: uuid
+        response_mode:
+          type: string
+          enum: [streaming]
+          default: streaming
+        max_task_tokens:
+          type: integer
+          minimum: 1
+          maximum: 100000000
+          description: Optional task-wide model token budget. Exhaustion pauses the message and emits `token_budget_requested`.
     MemoryUpdateRequest:
       type: object
       required: [content]

@@ -154,6 +154,8 @@ Returns presentation features, allowed file types, document/image/audio/video si
 | `skill_reference_read` | Skill reference reads |
 | `skill_call_start` / `skill_call_end` / `skill_call_error` | Skill execution state |
 | `skill_artifact_created` | Skill-generated artifacts |
+| `user_input_requested` | A Skill or workflow needs input; choose the continuation endpoint from `source` |
+| `token_budget_requested` | The task budget is exhausted; use its `request_id` to add budget or stop |
 | `token_usage_updated` | Updated token usage |
 | `message_end` | Final or waiting message state and usage |
 | `error` | Safe public error projection |
@@ -183,6 +185,9 @@ Conversations are scoped by Runtime Workspace, External User ID, and Agent.
 | PATCH | `/apps/{app_key}/conversations/{conversation_id}` | Update a conversation |
 | DELETE | `/apps/{app_key}/conversations/{conversation_id}` | Delete a conversation |
 | GET | `/apps/{app_key}/conversations/{conversation_id}/messages` | List messages |
+| POST | `/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/workflow-continuation` | Continue an approval or workflow question |
+| POST | `/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue` | Submit Skill input and continue |
+| POST | `/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue` | Add task tokens or stop the task |
 
 <CodeGroup title="Create a conversation">
 
@@ -205,6 +210,18 @@ Use `query` to search titles, user inputs, and Agent answers within the current 
 <Heading url="/apps/{app_key}/messages/{message_id}/regenerate" method="POST" title="Regenerate a root message" name="#Regenerate-Message" />
 
 Re-executes the root message with the original published model and parameters. An optional `query` replaces the original input; the response is a replacement SSE stream for the same turn.
+
+<Heading url="/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue" method="POST" title="Continue Skill user input" name="#Continue-User-Input" />
+
+Send `{"answers":{"question_id":"answer"}}`. After validating the Runtime Subject, Agent, conversation, message, and request ownership, the server resumes the same message as an SSE stream.
+
+<Heading url="/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/workflow-continuation" method="POST" title="Continue a workflow interaction" name="#Continue-Workflow" />
+
+For approvals, send `{"type":"approval","approval_token":"...","action":"approve","inputs":{}}`. For workflow questions, send `{"type":"question_answer","inputs":{"query":"..."}}`. Both return SSE and remain scoped to the current External User ID and Agent.
+
+<Heading url="/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue" method="POST" title="Continue a task token budget" name="#Continue-Token-Budget" />
+
+Read `request_id` from `token_budget_requested`. Send `{"action":"add","additional_tokens":2048}` to add budget, or `{"action":"stop"}` to terminate the current task. The response continues the same message as SSE and does not accept `answers`.
 
 ---
 

@@ -154,6 +154,8 @@ curl -N -X POST '{apibase}/apps/app_34ab5c8d91ef/chat' \
 | `skill_reference_read` | Skill 引用读取状态 |
 | `skill_call_start` / `skill_call_end` / `skill_call_error` | Skill 调用状态 |
 | `skill_artifact_created` | Skill 生成的产物 |
+| `user_input_requested` | Skill 或工作流要求补充输入；根据 `source` 选择对应继续接口 |
+| `token_budget_requested` | 任务 Token 预算耗尽；使用事件中的 `request_id` 增加预算或停止 |
 | `token_usage_updated` | Token 使用量更新 |
 | `message_end` | 消息最终状态和用量；也可能是等待状态 |
 | `error` | 安全投影后的错误信息 |
@@ -183,6 +185,9 @@ SSE 的 `id` 是可恢复事件游标。断线后通过 events 接口和最后�
 | PATCH | `/apps/{app_key}/conversations/{conversation_id}` | 更新标题等字段 |
 | DELETE | `/apps/{app_key}/conversations/{conversation_id}` | 删除会话 |
 | GET | `/apps/{app_key}/conversations/{conversation_id}/messages` | 分页列出消息 |
+| POST | `/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/workflow-continuation` | 继续审批或工作流问答 |
+| POST | `/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue` | 提交 Skill 补充输入并继续 |
+| POST | `/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue` | 增加任务 Token 预算或停止任务 |
 
 ### 创建会话
 
@@ -207,6 +212,18 @@ curl -X POST '{apibase}/apps/app_34ab5c8d91ef/conversations' \
 <Heading url="/apps/{app_key}/messages/{message_id}/regenerate" method="POST" title="重新生成根消息" name="#Regenerate-Message" />
 
 按原消息使用的已发布模型和参数重新执行。请求体可选传入新的 `query`；响应为替换同一轮消息的 SSE 流。只允许当前 External User ID 拥有、且满足重新生成条件的消息。
+
+<Heading url="/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue" method="POST" title="继续 Skill 补充输入" name="#Continue-User-Input" />
+
+请求体为 `{"answers":{"question_id":"answer"}}`。服务端校验 Runtime Subject、Agent、会话、消息和请求 ID 的归属后，以 SSE 继续同一轮消息。
+
+<Heading url="/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/workflow-continuation" method="POST" title="继续工作流交互" name="#Continue-Workflow" />
+
+审批使用 `{"type":"approval","approval_token":"...","action":"approve","inputs":{}}`；工作流问答使用 `{"type":"question_answer","inputs":{"query":"..."}}`。响应均为 SSE，且不能跨 External User ID 或 Agent 继续其他消息。
+
+<Heading url="/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue" method="POST" title="继续任务 Token 预算" name="#Continue-Token-Budget" />
+
+从 `token_budget_requested` 事件读取 `request_id`。增加预算时发送 `{"action":"add","additional_tokens":2048}`；终止当前任务时发送 `{"action":"stop"}`。该接口返回同一条消息的 SSE，不使用 `answers` 字段。
 
 ---
 
