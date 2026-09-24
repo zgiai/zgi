@@ -9,7 +9,6 @@ import (
 
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/capabilities/text2sql"
-	"github.com/zgiai/zgi/api/internal/modules/app/workflow/databaseauthorization"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
@@ -67,7 +66,7 @@ func (n *Node) executeText2SQL(ctx context.Context) (*shared.NodeRunResult, erro
 	for _, table := range n.NodeData.DataSource.Tables {
 		refs = append(refs, text2sql.TableRef{AssetID: table.ID, PhysicalID: table.TableID, Schema: table.Schema, Name: table.Name})
 	}
-	if err := n.authorizeText2SQL(ctx, refs); err != nil {
+	if err := n.authorizeText2SQL(ctx); err != nil {
 		return n.failureResult(nil, nil, "DatabaseAccessDenied", err), nil
 	}
 	policy, err := n.loadGuardPolicy(ctx)
@@ -110,32 +109,29 @@ func (n *Node) executeText2SQL(ctx context.Context) (*shared.NodeRunResult, erro
 	return &shared.NodeRunResult{Status: shared.SUCCEEDED, Inputs: inputs, ProcessData: process, Outputs: outputs, Metadata: map[shared.WorkflowNodeExecutionMetadataKey]any{shared.ToolInfo: map[string]any{"type": "llm", "model": n.NodeData.Model.Name}}}, nil
 }
 
-func (n *Node) authorizeText2SQL(ctx context.Context, refs []text2sql.TableRef) error {
-	if n.authorizer == nil {
-		return databaseauthorization.ErrInvalidRequest
+var errDatabaseAccessDenied = errors.New("database access denied")
+
+func (n *Node) authorizeText2SQL(ctx context.Context) error {
+	if n.permissions == nil {
+		return errDatabaseAccessDenied
 	}
-	tables := make([]databaseauthorization.TableReference, 0, len(refs))
-	if text2sql.SelectionMode(n.NodeData.TableSelectionMode) == text2sql.SelectionModeManual {
-		for _, ref := range refs {
-			table := databaseauthorization.TableReference{TableID: ref.PhysicalID}
-			if strings.TrimSpace(ref.AssetID) != "" {
-				table = databaseauthorization.TableReference{ID: ref.AssetID}
-			}
-			tables = append(tables, table)
+	workspaceID := strings.TrimSpace(n.WorkspaceID)
+	if workspaceID == "" {
+		workspaceID = strings.TrimSpace(n.TenantID)
+	}
+	for _, permission := range []workspacemodel.WorkspacePermissionCode{
+		workspacemodel.WorkspacePermissionDatabaseAIQueryRead,
+		workspacemodel.WorkspacePermissionDatabaseRecordView,
+	} {
+		allowed, err := n.permissions.CheckWorkspacePermission(ctx, n.OrganizationID, workspaceID, n.UserID, permission)
+		if err != nil {
+			return fmt.Errorf("check Text2SQL workspace permission %s: %w", permission, err)
+		}
+		if !allowed {
+			return errDatabaseAccessDenied
 		}
 	}
-	return n.authorizer.Authorize(ctx, databaseauthorization.Request{
-		OrganizationID:        n.OrganizationID,
-		WorkspaceID:           n.WorkspaceID,
-		WorkflowID:            n.WorkflowID,
-		DataSourceID:          n.NodeData.DataSource.Source.ID,
-		AllowLogicalRelations: true,
-		Permissions: []workspacemodel.WorkspacePermissionCode{
-			workspacemodel.WorkspacePermissionDatabaseAIQueryRead,
-			workspacemodel.WorkspacePermissionDatabaseRecordView,
-		},
-		Tables: tables,
-	})
+	return nil
 }
 
 type workflowEmbeddingModels struct{ node *Node }

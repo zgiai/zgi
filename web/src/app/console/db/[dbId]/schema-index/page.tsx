@@ -6,7 +6,7 @@ import {
   PermissionDeniedState,
   PermissionLoadingState,
 } from '@/components/common/permission-gate-state';
-import { useDbEffectivePermissions } from '@/hooks/db/use-db-effective-permissions';
+import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { DATABASE_PERMISSION_ACTIONS } from '@/constants/permissions';
 
 interface PageProps {
@@ -15,7 +15,7 @@ interface PageProps {
 
 export default function DbSchemaIndexPage({ params }: PageProps) {
   const { dbId } = use(params);
-  const { hasAnyPermission, isLoading } = useDbEffectivePermissions(dbId);
+  const { hasAnyPermission, isLoading } = useAccountPermissions();
   const canManage = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.schemaManage);
   const canView = canManage || hasAnyPermission(DATABASE_PERMISSION_ACTIONS.schemaView);
 

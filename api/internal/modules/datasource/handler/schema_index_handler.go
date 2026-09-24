@@ -7,7 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/datasource/indexing"
-	"github.com/zgiai/zgi/api/internal/modules/datasource/service"
+	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/apperror"
 	"github.com/zgiai/zgi/api/pkg/apperror/catalog"
 	"github.com/zgiai/zgi/api/pkg/apperror/transport"
@@ -33,7 +33,7 @@ func (h *SchemaIndexHandler) Status(c *gin.Context) { h.handle(c, false) }
 func (h *SchemaIndexHandler) Start(c *gin.Context)  { h.handle(c, true) }
 
 func (h *SchemaIndexHandler) History(c *gin.Context) {
-	org, id, account, ok := dataSourceAccessPolicyRequestScope(c)
+	org, id, account, ok := h.requestScope(c)
 	if !ok {
 		return
 	}
@@ -52,7 +52,7 @@ func (h *SchemaIndexHandler) History(c *gin.Context) {
 }
 
 func (h *SchemaIndexHandler) handle(c *gin.Context, start bool) {
-	org, id, account, ok := dataSourceAccessPolicyRequestScope(c)
+	org, id, account, ok := h.requestScope(c)
 	if !ok {
 		return
 	}
@@ -76,13 +76,27 @@ func (h *SchemaIndexHandler) handle(c *gin.Context, start bool) {
 	response.Success(c, result)
 }
 
+func (h *SchemaIndexHandler) requestScope(c *gin.Context) (organizationID, dataSourceID, accountID string, ok bool) {
+	organizationID = util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		h.fail(c, apperror.New(catalog.CodeRequestInvalid))
+		return "", "", "", false
+	}
+	accountID = c.GetString("account_id")
+	if accountID == "" {
+		h.fail(c, apperror.New(catalog.CodeAuthenticationRequired))
+		return "", "", "", false
+	}
+	return organizationID, c.Param("id"), accountID, true
+}
+
 func (h *SchemaIndexHandler) fail(c *gin.Context, err error) {
 	logger.L().Warn("database schema index request failed", zap.Error(err))
 	code := catalog.CodeInternal
 	switch {
-	case errors.Is(err, service.ErrDataSourceAccessDenied):
+	case errors.Is(err, indexing.ErrAccessDenied):
 		code = catalog.CodePermissionDenied
-	case errors.Is(err, service.ErrDataSourceNotVisible), errors.Is(err, gorm.ErrRecordNotFound):
+	case errors.Is(err, gorm.ErrRecordNotFound):
 		code = catalog.CodeResourceNotFound
 	}
 	if _, ok := apperror.As(err); !ok {

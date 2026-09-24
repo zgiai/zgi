@@ -8,12 +8,12 @@ import (
 	"time"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/text2sql"
-	"github.com/zgiai/zgi/api/internal/modules/app/workflow/databaseauthorization"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
+	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/pkg/database"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/sql_base"
@@ -22,9 +22,24 @@ import (
 )
 
 const (
-	defaultTimeoutSeconds = 30
-	retryBackoffBase      = 150 * time.Millisecond
+	defaultTimeoutSeconds   = 30
+	automaticTimeoutSeconds = 120
+	retryBackoffBase        = 150 * time.Millisecond
 )
+
+func effectiveExecutionTimeout(configured int, mode TableSelectionMode) int {
+	if mode == TableSelectionModeAutomatic && configured < automaticTimeoutSeconds {
+		return automaticTimeoutSeconds
+	}
+	if configured <= 0 {
+		return defaultTimeoutSeconds
+	}
+	return configured
+}
+
+type workspacePermissionChecker interface {
+	CheckWorkspacePermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode workspacemodel.WorkspacePermissionCode) (bool, error)
+}
 
 // Node represents the SQL generator workflow node.
 type Node struct {
@@ -36,7 +51,7 @@ type Node struct {
 	llmClient          llmclient.LLMClient
 	models             llmdefaultservice.DefaultModelResolver
 	sqlClient          sql_base.SQLBase
-	authorizer         databaseauthorization.Authorizer
+	permissions        workspacePermissionChecker
 	catalogLoader      text2sql.CatalogLoader
 	billingSubjectType string
 }
@@ -97,8 +112,8 @@ func New(
 			n.models = dependency
 		case sql_base.SQLBase:
 			n.sqlClient = dependency
-		case databaseauthorization.Authorizer:
-			n.authorizer = dependency
+		case workspacePermissionChecker:
+			n.permissions = dependency
 		case text2sql.CatalogLoader:
 			n.catalogLoader = dependency
 		}
@@ -171,31 +186,9 @@ func (n *Node) workflowRunID() string {
 
 func (n *Node) executeRun(ctx context.Context) (*shared.NodeRunResult, error) {
 	logCtx := n.logContext(ctx)
-	// Try to get runtime configuration from VariablePool
-	runtimeDataSource, runtimeTables := n.getRuntimeDataSourceConfig()
 	runtimeModelConfig := n.getRuntimeModelConfig()
 
-	// Override static config with runtime config if provided
 	configSource := "static"
-	if runtimeDataSource != nil {
-		n.NodeData.DataSource.Source = *runtimeDataSource
-		n.NodeData.IsStaticConfig = false
-		configSource = "runtime"
-		logger.InfoContext(logCtx, "sql generator using runtime data source",
-			zap.String("data_source_id", runtimeDataSource.ID),
-		)
-	}
-
-	if runtimeTables != nil && len(runtimeTables) > 0 {
-		n.NodeData.DataSource.Tables = runtimeTables
-		n.NodeData.IsStaticConfig = false
-		configSource = "runtime"
-		logger.InfoContext(logCtx, "sql generator using runtime table selection",
-			zap.Int("table_count", len(runtimeTables)),
-			zap.String("data_source_id", n.NodeData.DataSource.Source.ID),
-		)
-	}
-
 	if runtimeModelConfig != nil {
 		n.NodeData.Model = *runtimeModelConfig
 		n.NodeData.IsStaticConfig = false
@@ -225,16 +218,7 @@ func (n *Node) executeRun(ctx context.Context) (*shared.NodeRunResult, error) {
 }
 
 func (n *Node) validateConfiguration() error {
-	if strings.TrimSpace(n.NodeData.Model.Provider) == "" {
-		return fmt.Errorf("model provider is required")
-	}
-	if strings.TrimSpace(n.NodeData.Model.Name) == "" {
-		return fmt.Errorf("model name is required")
-	}
-	if strings.TrimSpace(n.NodeData.Prompt.User) == "" {
-		return fmt.Errorf("user prompt cannot be empty")
-	}
-	return nil
+	return n.NodeData.ValidateConfiguration()
 }
 
 func (n *Node) failureResult(
@@ -411,119 +395,6 @@ func parseNodeDataFromConfig(config map[string]any) (NodeData, string, error) {
 	nodeData.IsStaticConfig = true
 
 	return nodeData, nodeID, nil
-}
-
-// getRuntimeDataSourceConfig retrieves runtime data source configuration from VariablePool
-func (n *Node) getRuntimeDataSourceConfig() (*calldatabase.DataSourceConfig, []calldatabase.TableRef) {
-	if n.GraphRuntimeState == nil || n.GraphRuntimeState.VariablePool == nil {
-		return nil, nil
-	}
-
-	userInputs := n.GraphRuntimeState.VariablePool.UserInputs
-	if userInputs == nil {
-		return nil, nil
-	}
-
-	var dataSource *calldatabase.DataSourceConfig
-	var tables []calldatabase.TableRef
-
-	// 1. Check for data_source in inputs (can be flat or nested structure)
-	if dsRaw, exists := userInputs["data_source"]; exists {
-		if dsMap, ok := dsRaw.(map[string]interface{}); ok {
-			// Check if it's nested structure with "source" field (SQL Generator format)
-			if sourceRaw, hasSource := dsMap["source"]; hasSource {
-				if sourceMap, ok := sourceRaw.(map[string]interface{}); ok {
-					ds := calldatabase.DataSourceConfig{}
-					if id, ok := sourceMap["id"].(string); ok {
-						ds.ID = id
-					}
-					if name, ok := sourceMap["name"].(string); ok {
-						ds.Name = name
-					}
-					if dsType, ok := sourceMap["type"].(string); ok {
-						ds.Type = dsType
-					}
-					if ds.ID != "" {
-						dataSource = &ds
-					}
-				}
-			} else {
-				// Flat structure (Call Database format)
-				ds := calldatabase.DataSourceConfig{}
-				if id, ok := dsMap["id"].(string); ok {
-					ds.ID = id
-				}
-				if name, ok := dsMap["name"].(string); ok {
-					ds.Name = name
-				}
-				if dsType, ok := dsMap["type"].(string); ok {
-					ds.Type = dsType
-				}
-				if ds.ID != "" {
-					dataSource = &ds
-				}
-			}
-
-			// Check for tables in nested structure
-			if tablesRaw, hasTables := dsMap["tables"]; hasTables {
-				if tablesList, ok := tablesRaw.([]interface{}); ok {
-					tables = parseTablesList(tablesList)
-				}
-			}
-		}
-	}
-
-	// 2. Check for table_selection in inputs (Call Database format)
-	if len(tables) == 0 {
-		if tablesRaw, exists := userInputs["table_selection"]; exists {
-			if tablesList, ok := tablesRaw.([]interface{}); ok {
-				tables = parseTablesList(tablesList)
-			}
-		}
-	}
-
-	return dataSource, tables
-}
-
-// parseTablesList parses a list of table objects into TableRef structs
-func parseTablesList(tablesList []interface{}) []calldatabase.TableRef {
-	tables := make([]calldatabase.TableRef, 0, len(tablesList))
-
-	for _, tableRaw := range tablesList {
-		if tableMap, ok := tableRaw.(map[string]interface{}); ok {
-			table := calldatabase.TableRef{}
-
-			if schema, ok := tableMap["schema"].(string); ok {
-				table.Schema = schema
-			}
-			if name, ok := tableMap["name"].(string); ok {
-				table.Name = name
-			}
-			// Handle both float64 (from JSON) and int
-			if tableID, ok := tableMap["table_id"].(float64); ok {
-				table.TableID = int(tableID)
-			} else if tableID, ok := tableMap["table_id"].(int); ok {
-				table.TableID = tableID
-			}
-
-			// Parse columns array
-			if columnsRaw, ok := tableMap["columns"].([]interface{}); ok {
-				table.Columns = make([]string, 0, len(columnsRaw))
-				for _, colRaw := range columnsRaw {
-					if col, ok := colRaw.(string); ok {
-						table.Columns = append(table.Columns, col)
-					}
-				}
-			}
-
-			// Only add if at least name or table_id is present
-			if table.Name != "" || table.TableID > 0 {
-				tables = append(tables, table)
-			}
-		}
-	}
-
-	return tables
 }
 
 // getRuntimeModelConfig retrieves runtime model configuration from VariablePool

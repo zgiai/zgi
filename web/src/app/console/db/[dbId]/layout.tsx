@@ -109,9 +109,8 @@ export default function DbLayout({ children, params }: LayoutProps) {
   } | null>(null);
   const [createMethodOpen, setCreateMethodOpen] = React.useState(false);
   const [editDbOpen, setEditDbOpen] = React.useState(false);
-  const [accessPolicyOpen, setAccessPolicyOpen] = React.useState(false);
   const canViewSchemaIndex =
-    canManageSchema || hasEffectivePermission(DATABASE_PERMISSION_ACTIONS.schemaView);
+    canManageSchema || hasAnyPermission(DATABASE_PERMISSION_ACTIONS.schemaView);
   const [deleteTarget, setDeleteTarget] = React.useState<{ id: string; name: string } | null>(null);
   const [bindingImpact, setBindingImpact] = React.useState<AgentResourceBoundImpact | null>(null);
   const [isCheckingDeleteImpact, setIsCheckingDeleteImpact] = React.useState(false);

@@ -49,10 +49,7 @@ type RunPage struct {
 }
 
 func (s *Service) History(ctx context.Context, org, id, account string, page, limit int) (*RunPage, error) {
-	if err := s.authorize(ctx, org, id, account, false); err != nil {
-		return nil, err
-	}
-	ds, err := s.database(ctx, org, id)
+	ds, err := s.authorizedDatabase(ctx, org, id, account, false)
 	if err != nil {
 		return nil, err
 	}

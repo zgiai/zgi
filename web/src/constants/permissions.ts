@@ -247,14 +247,6 @@ const permissionFallbackNames: Record<string, { zhHans: string; enUS: string }> 
   'file.folder.manage': { zhHans: '管理文件夹', enUS: 'Manage folders' },
 };
 
-const permissionFallbackDescriptions: Partial<Record<string, { zhHans: string; enUS: string }>> = {
-  'database.sql.execute': {
-    zhHans:
-      '允许使用工作流的“执行自定义 SQL”节点，并对已选数据表执行受限的单条 SELECT、INSERT、UPDATE 或 DELETE。该权限仅代表可以使用此节点，不允许 DDL、多语句、锁定查询或包含写操作的 CTE；实际操作仍需目标数据库对应的记录权限。',
-    enUS: 'Allows use of the workflow Execute Custom SQL node to run one restricted SELECT, INSERT, UPDATE, or DELETE against selected tables. This permission only grants access to the node; DDL, multiple statements, locking reads, and data-modifying CTEs are rejected, and matching record permissions on the target database are still required.',
-  },
-};
-
 const getPermissionFallbackName = (code: string, locale?: string) => {
   const fallback = permissionFallbackNames[code];
   if (!fallback) return undefined;

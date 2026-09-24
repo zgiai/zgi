@@ -4,9 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/text2sql"
-	"github.com/zgiai/zgi/api/internal/modules/app/workflow/databaseauthorization"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/subgraph"
@@ -34,7 +32,7 @@ type Dependencies struct {
 	NotificationSMSService      notificationsms.Service
 	SQLBase                     sql_base.SQLBase
 	DefaultModelResolver        llmdefaultservice.DefaultModelResolver
-	DatabaseAuthorizer          databaseauthorization.Authorizer
+	WorkspacePermissions        interfaces.OrganizationService
 	Text2SQLCatalogLoader       text2sql.CatalogLoader
 }
 
@@ -142,8 +140,8 @@ func (r *NodeRunner) optionalDependencies(nodeID string, nodeType shared.NodeTyp
 	if (nodeType == shared.CallDatabase || nodeType == shared.SQLGenerator) && r.deps.SQLBase != nil {
 		optionalDeps = append(optionalDeps, r.deps.SQLBase)
 	}
-	if (nodeType == shared.CallDatabase || nodeType == shared.SQLGenerator) && r.deps.DatabaseAuthorizer != nil {
-		optionalDeps = append(optionalDeps, r.deps.DatabaseAuthorizer)
+	if nodeType == shared.SQLGenerator && r.deps.WorkspacePermissions != nil {
+		optionalDeps = append(optionalDeps, r.deps.WorkspacePermissions)
 	}
 	if nodeType == shared.SQLGenerator && r.deps.Text2SQLCatalogLoader != nil {
 		optionalDeps = append(optionalDeps, r.deps.Text2SQLCatalogLoader)

@@ -3,6 +3,7 @@ package text2sql
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"sort"
 	"strings"
@@ -14,9 +15,8 @@ import (
 const valueSamplesVersion = 1
 
 var (
-	digitsOnlyPattern  = regexp.MustCompile(`^\d+$`)
-	datePrefixPattern  = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}`)
-	valueColumnPattern = regexp.MustCompile(`(?i)(_id|_no|_uuid|_name|_code|_date|_time|_at|_amount|_rate|_qty|_count)$`)
+	digitsOnlyPattern = regexp.MustCompile(`^\d+$`)
+	datePrefixPattern = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}`)
 )
 
 type ColumnValues map[string][]string
@@ -35,16 +35,25 @@ func SampleColumnValues(ctx context.Context, client sql_base.SQLBase, table *sql
 	}
 
 	candidates := make(map[string]struct{})
+	candidateNames := make([]string, 0, len(table.Columns))
 	for _, column := range table.Columns {
 		if isCategoricalColumn(column) {
 			candidates[column.Name] = struct{}{}
+			candidateNames = append(candidateNames, column.Name)
 		}
 	}
 	if len(candidates) == 0 {
 		return ColumnValues{}
 	}
+	sort.Strings(candidateNames)
+	params := []interface{}{table.Schema, table.Name}
+	placeholders := make([]string, 0, len(candidateNames))
+	for _, name := range candidateNames {
+		params = append(params, name)
+		placeholders = append(placeholders, fmt.Sprintf("$%d", len(params)))
+	}
 
-	result, err := client.ExecuteSQL(ctx, `
+	query := fmt.Sprintf(`
 		SELECT
 			s.attname AS column_name,
 			unnest(s.most_common_vals::text::text[]) AS value
@@ -55,11 +64,13 @@ func SampleColumnValues(ctx context.Context, client sql_base.SQLBase, table *sql
 		 AND c.column_name = s.attname
 		WHERE s.schemaname = $1
 		  AND s.tablename = $2
+		  AND s.attname IN (%s)
 		  AND c.data_type IN ('text', 'character varying', 'character', 'name', 'USER-DEFINED')
 		  AND s.most_common_vals IS NOT NULL
 		  AND s.n_distinct >= 2
 		  AND s.n_distinct <= 64
-		  AND s.avg_width <= 24`, []interface{}{table.Schema, table.Name}, nil)
+		  AND s.avg_width <= 24`, strings.Join(placeholders, ", "))
+	result, err := client.ExecuteSQL(ctx, query, params, nil)
 	if err != nil || result == nil {
 		return ColumnValues{}
 	}
@@ -137,19 +148,10 @@ func DecodeValueSamples(raw datatypes.JSON) ColumnValues {
 }
 
 func isCategoricalColumn(column sql_base.Column) bool {
-	if valueColumnPattern.MatchString(column.Name) {
-		return false
-	}
-	if len(column.Enums) > 0 {
-		return true
-	}
-	dataType := strings.ToLower(strings.TrimSpace(column.DataType))
-	switch dataType {
-	case "text", "varchar", "character varying", "char", "character", "bpchar", "name":
-		return true
-	default:
-		return false
-	}
+	// Only database-declared enum/check-constraint values are eligible. A text
+	// type or a suggestive column name is not sufficient evidence that values
+	// are safe to retain and send to a model.
+	return len(column.Enums) > 0
 }
 
 func acceptableSampleValue(value string) bool {

@@ -219,71 +219,6 @@ func (n *Node) executeRun(ctx context.Context) (*shared.NodeRunResult, error) {
 	}
 
 	sqlText = ensureQuotedIdentifiers(sqlText, n.NodeData.TableSelection)
-	analysis, err := databaseauthorization.AnalyzeSQL(sqlText)
-	if err != nil {
-		return nil, err
-	}
-	effectiveTables := n.NodeData.TableSelection
-	if len(effectiveTables) == 0 && len(analysis.Relations) > 0 {
-		resolver, ok := n.authorizer.(databaseauthorization.TableResolver)
-		if !ok {
-			return nil, databaseauthorization.ErrInvalidRequest
-		}
-		resolved, err := resolver.ResolveTables(ctx, databaseauthorization.Request{
-			OrganizationID: n.OrganizationID,
-			DataSourceID:   n.NodeData.DataSource.ID,
-			Relations:      analysis.Relations,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("resolve call-database tables: %w", err)
-		}
-		effectiveTables = resolvedTableRefs(resolved)
-		sqlText = ensureQuotedIdentifiers(sqlText, effectiveTables)
-		analysis, err = databaseauthorization.AnalyzeSQL(sqlText)
-		if err != nil {
-			return nil, err
-		}
-	}
-	sqlText = analysis.SQL
-	permissions := analysis.Permissions
-	if n.authorizer == nil {
-		return nil, databaseauthorization.ErrInvalidRequest
-	}
-	authorizeAnalysis := func(authCtx context.Context, current *databaseauthorization.SQLAnalysis) error {
-		return n.authorizer.Authorize(authCtx, databaseauthorization.Request{
-			OrganizationID: n.OrganizationID,
-			WorkspaceID:    n.WorkspaceID,
-			WorkflowID:     n.WorkflowID,
-			DataSourceID:   n.NodeData.DataSource.ID,
-			WorkspacePermissions: []workspacemodel.WorkspacePermissionCode{
-				workspacemodel.WorkspacePermissionDatabaseSQLExecute,
-			},
-			Permissions: current.Permissions,
-			Tables:      authorizationTables(effectiveTables),
-			Relations:   current.Relations,
-		})
-	}
-	if err := authorizeAnalysis(ctx, analysis); err != nil {
-		return nil, fmt.Errorf("authorize call-database node: %w", err)
-	}
-	readOnly := databaseauthorization.RequiresReadOnlyExecution(permissions)
-	executionOpts := sql_base.ExecuteSQLOptions{
-		ReadOnly:    readOnly,
-		CatalogOnly: analysis.CatalogOnly,
-		ValidateRenderedSQL: func(authCtx context.Context, renderedSQL string) error {
-			renderedAnalysis, err := databaseauthorization.AnalyzeSQL(renderedSQL)
-			if err != nil {
-				return fmt.Errorf("analyze rendered call-database SQL: %w", err)
-			}
-			if !sameSQLAuthorizationShape(analysis, renderedAnalysis) {
-				return fmt.Errorf("rendered call-database SQL changed authorization scope")
-			}
-			if err := authorizeAnalysis(authCtx, renderedAnalysis); err != nil {
-				return fmt.Errorf("authorize rendered call-database SQL: %w", err)
-			}
-			return nil
-		},
-	}
 
 	execTimeout := n.NodeData.Execution.TimeoutSeconds
 	if execTimeout == 0 {
@@ -297,7 +232,7 @@ func (n *Node) executeRun(ctx context.Context) (*shared.NodeRunResult, error) {
 	}
 
 	start := time.Now()
-	auditTableID, auditTableName := auditTableContext(effectiveTables)
+	auditTableID, auditTableName := auditTableContext(n.NodeData.TableSelection)
 	auditCtx := &audit.Context{
 		OrganizationID: n.OrganizationID,
 		WorkspaceID:    n.WorkspaceID,
@@ -317,7 +252,7 @@ func (n *Node) executeRun(ctx context.Context) (*shared.NodeRunResult, error) {
 
 	processData := map[string]any{
 		"data_source":     n.NodeData.DataSource,
-		"table_selection": effectiveTables,
+		"table_selection": n.NodeData.TableSelection,
 		"attempts":        attempts,
 		"duration_ms":     duration.Milliseconds(),
 	}
@@ -329,7 +264,7 @@ func (n *Node) executeRun(ctx context.Context) (*shared.NodeRunResult, error) {
 	if execErr != nil {
 		logger.CriticalContext(logCtx, "call database sql execution failed",
 			zap.String("data_source_id", n.NodeData.DataSource.ID),
-			zap.Int("table_count", len(effectiveTables)),
+			zap.Int("table_count", len(n.NodeData.TableSelection)),
 			zap.Int("attempts", attempts),
 			zap.Error(execErr),
 		)
@@ -365,7 +300,7 @@ func (n *Node) executeRun(ctx context.Context) (*shared.NodeRunResult, error) {
 		"row_count":      len(rowMaps),
 		"rows_affected":  result.RowsAffected,
 		"duration_ms":    duration.Milliseconds(),
-		"table_context":  effectiveTables,
+		"table_context":  n.NodeData.TableSelection,
 		"data_source_id": n.NodeData.DataSource.ID,
 	}
 
@@ -897,14 +832,4 @@ func parseCallDatabaseTablesList(tablesList []interface{}) []TableRef {
 	}
 
 	return tables
-}
-
-func resolvedTableRefs(tables []databaseauthorization.TableReference) []TableRef {
-	result := make([]TableRef, 0, len(tables))
-	for _, table := range tables {
-		result = append(result, TableRef{
-			ID: table.ID, TableID: table.TableID, Schema: table.Schema, Name: table.Name,
-		})
-	}
-	return result
 }

@@ -288,7 +288,6 @@ type ServiceContainer struct {
 
 	// Workflow engine factory
 	workflowEngineFactory *graph_engine.EngineFactory
-	databaseAuthorizer    databaseauthorization.Authorizer
 	workflowTestService   *workflowtest.Service
 
 	// Workflow Diagnoser
@@ -1779,36 +1778,6 @@ func (c *ServiceContainer) SetWorkflowEngineFactory(factory *graph_engine.Engine
 	c.workflowEngineFactory = factory
 }
 
-func (c *ServiceContainer) GetDatabaseAuthorizer() databaseauthorization.Authorizer {
-	if c.databaseAuthorizer == nil {
-		dataSourceAccessPolicy, _ := c.GetDataSourceService().(service.DataSourceAccessPolicyService)
-		var evaluateDatabasePermission databaseauthorization.PermissionEvaluateFunc
-		if dataSourceAccessPolicy != nil {
-			evaluateDatabasePermission = func(ctx context.Context, organizationID, dataSourceID, accountID string, permission workspace_model.WorkspacePermissionCode) (*databaseauthorization.PermissionDecision, error) {
-				decision, err := dataSourceAccessPolicy.EvaluateDataSourcePermission(ctx, organizationID, dataSourceID, accountID, permission)
-				if errors.Is(err, service.ErrDataSourceNotVisible) || errors.Is(err, service.ErrDataSourceAccessDenied) {
-					return nil, databaseauthorization.ErrAccessDenied
-				}
-				if err != nil || decision == nil {
-					return nil, err
-				}
-				return &databaseauthorization.PermissionDecision{
-					Visible:              decision.Visible,
-					Allowed:              decision.Allowed,
-					ImplicitFullAccess:   decision.ImplicitFullAccess,
-					EffectivePermissions: decision.EffectivePermissions,
-				}, nil
-			}
-		}
-		c.databaseAuthorizer = databaseauthorization.New(
-			c.db,
-			evaluateDatabasePermission,
-			c.GetOrganizationService(),
-		)
-	}
-	return c.databaseAuthorizer
-}
-
 func (c *ServiceContainer) GetWorkflowRuntimeDependencies() workflowruntime.Dependencies {
 	return workflowruntime.Dependencies{
 		ContentExtractor:            c.GetContentExtractor(),
@@ -1821,7 +1790,7 @@ func (c *ServiceContainer) GetWorkflowRuntimeDependencies() workflowruntime.Depe
 		NotificationSMSService:      c.GetNotificationSMSService(),
 		SQLBase:                     c.GetSQLBase(),
 		DefaultModelResolver:        c.GetDefaultModelService(),
-		DatabaseAuthorizer:          c.GetDatabaseAuthorizer(),
+		WorkspacePermissions:        c.GetOrganizationService(),
 		Text2SQLCatalogLoader:       c.GetText2SQLCatalogLoader(),
 	}
 }

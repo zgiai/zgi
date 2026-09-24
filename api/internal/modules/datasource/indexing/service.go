@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/text2sql"
 	dsmodel "github.com/zgiai/zgi/api/internal/modules/datasource/model"
-	dsservice "github.com/zgiai/zgi/api/internal/modules/datasource/service"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	defaults "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
@@ -29,6 +28,12 @@ import (
 )
 
 const MaxAttempts = 3
+
+var ErrAccessDenied = errors.New("schema index access denied")
+
+type workspacePermissionChecker interface {
+	CheckWorkspaceOrganizationAnyPermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCodes ...workspace.WorkspacePermissionCode) (bool, error)
+}
 
 // Settings exists only after explicit consent to build and maintain indexes.
 // TargetIDs identifies the catalog snapshot; historical rows do not count as ready.
@@ -73,11 +78,11 @@ type Service struct {
 	llm     llmclient.LLMClient
 	vectors vectordb.VectorDB
 	queue   *queue.TaskManager
-	access  dsservice.DataSourceAccessPolicyService
+	access  workspacePermissionChecker
 	log     *zap.Logger
 }
 
-func NewService(db *gorm.DB, sql sql_base.SQLBase, models defaults.DefaultModelService, llm llmclient.LLMClient, vectors vectordb.VectorDB, tasks *queue.TaskManager, access dsservice.DataSourceAccessPolicyService, log *zap.Logger) *Service {
+func NewService(db *gorm.DB, sql sql_base.SQLBase, models defaults.DefaultModelService, llm llmclient.LLMClient, vectors vectordb.VectorDB, tasks *queue.TaskManager, access workspacePermissionChecker, log *zap.Logger) *Service {
 	return &Service{db: db, sql: sql, models: models, llm: llm, vectors: vectors, queue: tasks, access: access, log: log}
 }
 
@@ -92,23 +97,40 @@ func (s *Service) database(ctx context.Context, org, id string) (*dsmodel.DataSo
 	return &ds, nil
 }
 
-func (s *Service) authorize(ctx context.Context, org, id, account string, manage bool) error {
-	permission := workspace.WorkspacePermissionDatabaseSchemaView
+func (s *Service) authorizedDatabase(ctx context.Context, org, id, account string, manage bool) (*dsmodel.DataSource, error) {
+	ds, err := s.database(ctx, org, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.authorizeWorkspace(ctx, org, *ds.WorkspaceID, account, manage); err != nil {
+		return nil, err
+	}
+	return ds, nil
+}
+
+func (s *Service) authorizeWorkspace(ctx context.Context, org, workspaceID, account string, manage bool) error {
+	if s.access == nil {
+		return ErrAccessDenied
+	}
+	permissions := []workspace.WorkspacePermissionCode{
+		workspace.WorkspacePermissionDatabaseSchemaView,
+		workspace.WorkspacePermissionDatabaseSchemaManage,
+	}
 	if manage {
-		permission = workspace.WorkspacePermissionDatabaseSchemaManage
+		permissions = permissions[1:]
 	}
-	_, err := s.access.RequireDataSourcePermission(ctx, org, id, account, permission)
-	if !manage && errors.Is(err, dsservice.ErrDataSourceAccessDenied) {
-		_, err = s.access.RequireDataSourcePermission(ctx, org, id, account, workspace.WorkspacePermissionDatabaseSchemaManage)
+	allowed, err := s.access.CheckWorkspaceOrganizationAnyPermission(ctx, org, workspaceID, account, permissions...)
+	if err != nil {
+		return fmt.Errorf("check schema index permission: %w", err)
 	}
-	return err
+	if !allowed {
+		return ErrAccessDenied
+	}
+	return nil
 }
 
 func (s *Service) Status(ctx context.Context, org, id, account string) (*Status, error) {
-	if err := s.authorize(ctx, org, id, account, false); err != nil {
-		return nil, err
-	}
-	ds, err := s.database(ctx, org, id)
+	ds, err := s.authorizedDatabase(ctx, org, id, account, false)
 	if err != nil {
 		return nil, err
 	}
@@ -175,10 +197,7 @@ func (s *Service) Status(ctx context.Context, org, id, account string) (*Status,
 // Start records consent durably. The reconciler submits work even if Redis is down
 // at request time. Calling Start again retries failures, without rebuilding ready rows.
 func (s *Service) Start(ctx context.Context, org, id, account string) error {
-	if err := s.authorize(ctx, org, id, account, true); err != nil {
-		return err
-	}
-	ds, err := s.database(ctx, org, id)
+	ds, err := s.authorizedDatabase(ctx, org, id, account, true)
 	if err != nil {
 		return err
 	}

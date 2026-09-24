@@ -97,7 +97,7 @@ func (s *Service) reconcileDatabase(ctx context.Context, setting Settings) error
 	if err != nil {
 		return err
 	}
-	if err := s.authorize(ctx, setting.OrganizationID, setting.DataSourceID, setting.RequestedBy, true); err != nil {
+	if err := s.authorizeWorkspace(ctx, setting.OrganizationID, setting.WorkspaceID, setting.RequestedBy, true); err != nil {
 		return err
 	}
 	model, err := s.models.ResolveUseCase(ctx, setting.OrganizationID, llmmodel.UseCaseEmbedding, nil, nil)
@@ -343,7 +343,7 @@ func (s *Service) validateTask(ctx context.Context, setting Settings, row *text2
 	if err != nil || *ds.WorkspaceID != setting.WorkspaceID {
 		return errors.Join(errTaskScope, err)
 	}
-	if err := s.authorize(ctx, setting.OrganizationID, setting.DataSourceID, setting.RequestedBy, true); err != nil {
+	if err := s.authorizeWorkspace(ctx, setting.OrganizationID, setting.WorkspaceID, setting.RequestedBy, true); err != nil {
 		return errors.Join(errTaskScope, err)
 	}
 	model, err := s.models.ResolveUseCase(ctx, setting.OrganizationID, llmmodel.UseCaseEmbedding, nil, nil)

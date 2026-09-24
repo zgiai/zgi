@@ -2,6 +2,7 @@ package sqlgenerator
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
@@ -9,6 +10,14 @@ import (
 )
 
 const AppType = "workflow"
+
+// TableSelectionMode controls whether tables are configured explicitly or selected per run.
+type TableSelectionMode string
+
+const (
+	TableSelectionModeManual    TableSelectionMode = "manual"
+	TableSelectionModeAutomatic TableSelectionMode = "automatic"
+)
 
 // ModelSection captures the model configuration selected by the user.
 type ModelSection struct {
@@ -63,10 +72,11 @@ type ExecutionConfig struct {
 type NodeData struct {
 	base.NodeData
 
-	Model      ModelSection      `json:"model"`
-	DataSource DataSourceSection `json:"data_source"`
-	Prompt     PromptSection     `json:"prompt"`
-	Execution  ExecutionConfig   `json:"execution"`
+	Model              ModelSection       `json:"model"`
+	DataSource         DataSourceSection  `json:"data_source"`
+	Prompt             PromptSection      `json:"prompt"`
+	Execution          ExecutionConfig    `json:"execution"`
+	TableSelectionMode TableSelectionMode `json:"table_selection_mode,omitempty"`
 
 	// IsStaticConfig marks whether this config came from graph (true) or runtime (false)
 	// This field is not serialized to JSON

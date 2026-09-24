@@ -7,12 +7,13 @@ import (
 	"testing"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/text2sql"
-	"github.com/zgiai/zgi/api/internal/modules/app/workflow/databaseauthorization"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/calldatabase"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
+	workspace "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/pkg/sql_base"
 )
 
@@ -376,30 +377,6 @@ type sqlGeneratorFakeSQLBase struct {
 	table *sql_base.Table
 }
 
-func TestAuthorizeText2SQLPreservesWorkflowScopeAndSelectedTables(t *testing.T) {
-	recorder := &recordingText2SQLAuthorizer{}
-	node := &Node{
-		NodeStruct: base.NodeStruct{OrganizationID: "org-1", WorkspaceID: "workspace-1", WorkflowID: "workflow-1"},
-		NodeData: NodeData{
-			TableSelectionMode: TableSelectionModeManual,
-			DataSource:         DataSourceSection{Source: calldatabase.DataSourceConfig{ID: "ds-1"}},
-		},
-		authorizer: recorder,
-	}
-	refs := []text2sql.TableRef{{AssetID: "table-1", PhysicalID: 7, Schema: "public", Name: "customers"}}
-
-	if err := node.authorizeText2SQL(context.Background(), refs); err != nil {
-		t.Fatalf("authorizeText2SQL error = %v", err)
-	}
-	req := recorder.request
-	if req.OrganizationID != "org-1" || req.WorkspaceID != "workspace-1" || req.WorkflowID != "workflow-1" || req.DataSourceID != "ds-1" {
-		t.Fatalf("authorization scope = %#v", req)
-	}
-	if len(req.Permissions) != 2 || len(req.Tables) != 1 || req.Tables[0] != (databaseauthorization.TableReference{ID: "table-1"}) {
-		t.Fatalf("authorization permissions/tables = %#v/%#v", req.Permissions, req.Tables)
-	}
-}
-
 func TestWorkflowGeneratorAppendsCustomSystemPromptWithoutReplacingCoreRules(t *testing.T) {
 	invoker := &stubLLMInvoker{response: `{"sql":"SELECT 1"}`}
 	node := &Node{NodeStruct: base.NodeStruct{UserID: "account-1"}, llmInvoker: invoker}
@@ -418,45 +395,6 @@ func TestWorkflowGeneratorAppendsCustomSystemPromptWithoutReplacingCoreRules(t *
 	}
 }
 
-func TestAuthorizeText2SQLAutomaticModeAuthorizesDataSourceWithoutTrustingClientTables(t *testing.T) {
-	recorder := &recordingText2SQLAuthorizer{}
-	node := &Node{
-		NodeStruct: base.NodeStruct{OrganizationID: "org-1", WorkspaceID: "workspace-1", WorkflowID: "workflow-1"},
-		NodeData: NodeData{
-			TableSelectionMode: TableSelectionModeAutomatic,
-			DataSource:         DataSourceSection{Source: calldatabase.DataSourceConfig{ID: "ds-1"}},
-		},
-		authorizer: recorder,
-	}
-
-	if err := node.authorizeText2SQL(context.Background(), []text2sql.TableRef{{AssetID: "untrusted", PhysicalID: 999}}); err != nil {
-		t.Fatalf("authorizeText2SQL error = %v", err)
-	}
-	if len(recorder.request.Tables) != 0 {
-		t.Fatalf("automatic authorization trusted client tables: %#v", recorder.request.Tables)
-	}
-}
-
-func TestAuthorizeText2SQLFailsClosedWithoutAuthorizer(t *testing.T) {
-	node := &Node{NodeData: NodeData{DataSource: DataSourceSection{Source: calldatabase.DataSourceConfig{ID: "ds-1"}}}}
-	if err := node.authorizeText2SQL(context.Background(), nil); !errors.Is(err, databaseauthorization.ErrInvalidRequest) {
-		t.Fatalf("authorizeText2SQL error = %v, want ErrInvalidRequest", err)
-	}
-}
-
-type allowingText2SQLAuthorizer struct{}
-
-func (allowingText2SQLAuthorizer) Authorize(context.Context, databaseauthorization.Request) error {
-	return nil
-}
-
-type recordingText2SQLAuthorizer struct{ request databaseauthorization.Request }
-
-func (r *recordingText2SQLAuthorizer) Authorize(_ context.Context, req databaseauthorization.Request) error {
-	r.request = req
-	return nil
-}
-
 type staticText2SQLCatalogLoader struct{ table *sql_base.Table }
 
 func (l staticText2SQLCatalogLoader) Load(context.Context, text2sql.CatalogRequest) (text2sql.Catalog, error) {
@@ -467,8 +405,57 @@ func (l staticText2SQLCatalogLoader) Load(context.Context, text2sql.CatalogReque
 }
 
 func attachText2SQLTestDependencies(node *Node) {
-	node.authorizer = allowingText2SQLAuthorizer{}
+	node.permissions = allowingWorkspacePermissions{}
 	node.catalogLoader = staticText2SQLCatalogLoader{table: node.sqlClient.(*sqlGeneratorFakeSQLBase).table}
+}
+
+type allowingWorkspacePermissions struct{}
+
+func (allowingWorkspacePermissions) CheckWorkspacePermission(context.Context, string, string, string, workspace.WorkspacePermissionCode) (bool, error) {
+	return true, nil
+}
+
+type recordingWorkspacePermissions struct {
+	allowed      bool
+	workspaceIDs []string
+	permissions  []workspace.WorkspacePermissionCode
+}
+
+func (p *recordingWorkspacePermissions) CheckWorkspacePermission(_ context.Context, _, workspaceID, _ string, permission workspace.WorkspacePermissionCode) (bool, error) {
+	p.workspaceIDs = append(p.workspaceIDs, workspaceID)
+	p.permissions = append(p.permissions, permission)
+	return p.allowed, nil
+}
+
+func TestAuthorizeText2SQLUsesExistingWorkspacePermissions(t *testing.T) {
+	permissions := &recordingWorkspacePermissions{allowed: true}
+	node := &Node{
+		NodeStruct:  base.NodeStruct{TenantID: "workspace-1", UserID: "account-1"},
+		permissions: permissions,
+	}
+
+	if err := node.authorizeText2SQL(context.Background()); err != nil {
+		t.Fatalf("authorizeText2SQL error = %v", err)
+	}
+	wantPermissions := []workspace.WorkspacePermissionCode{
+		workspace.WorkspacePermissionDatabaseAIQueryRead,
+		workspace.WorkspacePermissionDatabaseRecordView,
+	}
+	if len(permissions.permissions) != len(wantPermissions) {
+		t.Fatalf("permission checks = %v", permissions.permissions)
+	}
+	for index, permission := range wantPermissions {
+		if permissions.permissions[index] != permission || permissions.workspaceIDs[index] != "workspace-1" {
+			t.Fatalf("permission check %d = (%s, %s)", index, permissions.workspaceIDs[index], permissions.permissions[index])
+		}
+	}
+}
+
+func TestAuthorizeText2SQLFailsClosedWithoutWorkspacePermissions(t *testing.T) {
+	node := &Node{NodeStruct: base.NodeStruct{TenantID: "workspace-1", UserID: "account-1"}}
+	if err := node.authorizeText2SQL(context.Background()); !errors.Is(err, errDatabaseAccessDenied) {
+		t.Fatalf("authorizeText2SQL error = %v, want %v", err, errDatabaseAccessDenied)
+	}
 }
 
 func (f *sqlGeneratorFakeSQLBase) GetTable(context.Context, int) (*sql_base.Table, error) {

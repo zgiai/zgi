@@ -18,7 +18,6 @@ import (
 	"github.com/hibiken/asynq"
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/capabilities/text2sql"
-	dsservice "github.com/zgiai/zgi/api/internal/modules/datasource/service"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	defaults "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
@@ -43,16 +42,38 @@ func (m *testModels) ResolveUseCase(context.Context, string, llmmodel.UseCase, *
 }
 
 type testAccess struct {
-	dsservice.DataSourceAccessPolicyService
 	deny     bool
 	viewOnly bool
 }
 
-func (a *testAccess) RequireDataSourcePermission(_ context.Context, _, _, _ string, p workspace.WorkspacePermissionCode) (*dsservice.DataSourcePermissionDecision, error) {
-	if a.deny || a.viewOnly && p == workspace.WorkspacePermissionDatabaseSchemaManage {
-		return nil, dsservice.ErrDataSourceAccessDenied
+func (a *testAccess) CheckWorkspaceOrganizationAnyPermission(_ context.Context, _, _, _ string, permissions ...workspace.WorkspacePermissionCode) (bool, error) {
+	if a.deny {
+		return false, nil
 	}
-	return &dsservice.DataSourcePermissionDecision{Allowed: true}, nil
+	if !a.viewOnly {
+		return true, nil
+	}
+	for _, permission := range permissions {
+		if permission == workspace.WorkspacePermissionDatabaseSchemaView {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func TestAuthorizeWorkspaceUsesExistingWorkspacePermissions(t *testing.T) {
+	viewer := &Service{access: &testAccess{viewOnly: true}}
+	if err := viewer.authorizeWorkspace(context.Background(), "org-1", "workspace-1", "account-1", false); err != nil {
+		t.Fatalf("viewer access error = %v, want nil", err)
+	}
+	if err := viewer.authorizeWorkspace(context.Background(), "org-1", "workspace-1", "account-1", true); !errors.Is(err, ErrAccessDenied) {
+		t.Fatalf("viewer manage error = %v, want ErrAccessDenied", err)
+	}
+
+	missingChecker := &Service{}
+	if err := missingChecker.authorizeWorkspace(context.Background(), "org-1", "workspace-1", "account-1", false); !errors.Is(err, ErrAccessDenied) {
+		t.Fatalf("missing checker error = %v, want ErrAccessDenied", err)
+	}
 }
 
 type testSQL struct {
@@ -306,7 +327,7 @@ func TestPostgresTimeoutRetryBudgetAndManualRetry(t *testing.T) {
 func TestPostgresPermissionModelChangeAndMove(t *testing.T) {
 	f := newFixture(t, 1)
 	f.access.viewOnly = true
-	if err := f.service.Start(context.Background(), f.setting.OrganizationID, f.setting.DataSourceID, f.setting.RequestedBy); !errors.Is(err, dsservice.ErrDataSourceAccessDenied) {
+	if err := f.service.Start(context.Background(), f.setting.OrganizationID, f.setting.DataSourceID, f.setting.RequestedBy); !errors.Is(err, ErrAccessDenied) {
 		t.Fatal("viewer can build")
 	}
 	if f.status(t).Enabled {
