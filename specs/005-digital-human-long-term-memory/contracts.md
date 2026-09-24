@@ -33,7 +33,7 @@ Tool: retrieve_digital_human_memory
 }
 ```
 
-结果中的来源 ID 和 revision 用于运行时审计与一致性校验；最终用户是否看到内部 ID 由 Agent 输出策略决定，Skill 不得泄露内部知识库 ID。
+每个 `context_blocks` 条目附带该条记忆的 `memory_id`、`memory_key` 与 `revision`：模型修正或清除该记忆时直接复用 `memory_key` 与 `revision`，换新 key 替代旧记忆时将该 `memory_id` 作为 `supersedes_id`，避免模型臆造 key 或版本。这三个字段只进入模型上下文，不向最终用户暴露；Skill 不得泄露内部知识库 ID。
 
 ## 可见性契约
 

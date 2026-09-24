@@ -27,7 +27,7 @@ func TestRenderDigitalHumanMemoryContextCarriesScopeAndRevision(t *testing.T) {
 	if !strings.Contains(content, "retrieve_digital_human_memory") {
 		t.Errorf("context missing retrieval guidance: %s", content)
 	}
-	for _, expected := range []string{"self/decision", "published identity", "Never store a conversational role directive as self/identity", "Decide at runtime", "not from trigger words", "Proactive memory maintenance is enabled"} {
+	for _, expected := range []string{"self/decision", "published identity", "Never store a conversational role directive as self/identity", "Decide at runtime", "not from trigger words", "Proactive memory maintenance is enabled", "memory_id, memory_key and revision of every match", "expected_revision 0", "as supersedes_id"} {
 		if !strings.Contains(content, expected) {
 			t.Errorf("context missing durable directive policy %q: %s", expected, content)
 		}

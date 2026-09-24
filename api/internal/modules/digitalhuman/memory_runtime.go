@@ -210,6 +210,7 @@ func renderDigitalHumanMemoryContext(items []*DigitalHumanMemory, toolEnabled, p
 		}
 		sections = append(sections,
 			"Decide at runtime whether a memory change is warranted from the meaning and context of the conversation, not from trigger words. If no safe durable update is needed, do not call the memory tool.",
+			"Retrieval returns the memory_id, memory_key and revision of every match. Correct or clear an existing memory only with its returned key and revision, create a new memory with expected_revision 0, and replace an existing memory only by passing its returned memory_id as supersedes_id.",
 			modePolicy,
 			"Every memory operation must include an exact non-empty quote from the current user message as transient evidence. Never use assistant text, tool output, inferred behavior, hypotheticals, temporary details, or third-party facts as evidence.",
 		)
@@ -228,7 +229,7 @@ func renderDigitalHumanMemoryContext(items []*DigitalHumanMemory, toolEnabled, p
 func (p *DefaultMemoryRuntimeProvider) memoryRetrievalTool(run *Run, event invocation.Event) skillloop.RuntimeTool {
 	definition := adapter.Tool{Type: "function", Function: adapter.Function{
 		Name:        digitalHumanMemoryRetrievalToolName,
-		Description: "Retrieve relevant long-term memory for the current question. Call this only when durable DigitalHuman context may affect the answer. The backend automatically limits results to this DigitalHuman; never ask for or provide a dataset ID.",
+		Description: "Retrieve relevant long-term memory for the current question. Call this only when durable DigitalHuman context may affect the answer. The backend automatically limits results to this DigitalHuman; never ask for or provide a dataset ID. Every returned match carries the memory_id, memory_key and revision that identify it, which are required to correct, clear or replace it later.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -327,7 +328,7 @@ func (p *DefaultMemoryRuntimeProvider) memoryMutationTool(
 	}
 	definition := adapter.Tool{Type: "function", Function: adapter.Function{
 		Name:        digitalHumanMemoryToolName,
-		Description: "Propose one evidence-backed long-term memory change for this DigitalHuman when the conversation semantically warrants it; do not call this tool when no safe durable change is needed. Use explicit mode when the current user directly establishes, corrects, or asks to forget durable working context, including a standing role or responsibility. Use proactive mode only when available and only for high-confidence durable information directly stated by the current user. Store a durable working directive as self/decision, never self/identity; it does not modify the published persona or rules. Every operation requires an exact quote from the current user message as transient evidence. To replace a stale memory with a new semantic key, provide its id and revision as supersedes_id and expected_superseded_revision.",
+		Description: "Propose one evidence-backed long-term memory change for this DigitalHuman when the conversation semantically warrants it; do not call this tool when no safe durable change is needed. Use explicit mode when the current user directly establishes, corrects, or asks to forget durable working context, including a standing role or responsibility. Use proactive mode only when available and only for high-confidence durable information directly stated by the current user. Store a durable working directive as self/decision, never self/identity; it does not modify the published persona or rules. Every operation requires an exact quote from the current user message as transient evidence. To correct or clear an existing memory, retrieve it first and reuse its returned memory_key as key with its returned revision as expected_revision; never guess either value, and never give a fact that is already stored a second key. Use expected_revision 0 only for a key that does not exist yet. To replace a stale memory with a new semantic key, retrieve it first and pass its returned memory_id as supersedes_id with its returned revision as expected_superseded_revision.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

@@ -149,7 +149,7 @@ func recentMemoryResult(items []*DigitalHumanMemory, cause string) *DigitalHuman
 		position := len(result.Items) + 1
 		result.Items = append(result.Items, memory)
 		contextParts = append(contextParts, fmt.Sprintf("[memory %d] %s", position, memory.Content))
-		result.ContextBlocks = append(result.ContextBlocks, map[string]any{"position": position, "source": "digital_human_long_term_memory", "match_type": "recency"})
+		result.ContextBlocks = append(result.ContextBlocks, map[string]any{"position": position, "source": "digital_human_long_term_memory", "match_type": "recency", "memory_id": memory.ID.String(), "memory_key": memory.MemoryKey, "revision": memory.Revision})
 		result.SourceSummary = append(result.SourceSummary, map[string]any{"position": position, "match_type": "recency"})
 	}
 	result.Context = strings.Join(contextParts, "\n\n")
@@ -441,7 +441,7 @@ func (p *DigitalHumanMemoryProjectionProvider) authoritativeResult(response *dat
 		items = append(items, memory)
 		position := len(items)
 		contextParts = append(contextParts, fmt.Sprintf("[memory %d] %s", position, memory.Content))
-		blocks = append(blocks, map[string]any{"position": position, "source": "digital_human_long_term_memory", "score": resource.Score})
+		blocks = append(blocks, map[string]any{"position": position, "source": "digital_human_long_term_memory", "score": resource.Score, "memory_id": memory.ID.String(), "memory_key": memory.MemoryKey, "revision": memory.Revision})
 		sources = append(sources, map[string]any{"position": position, "match_type": resource.MatchType, "score": resource.Score})
 	}
 	result := &DigitalHumanMemoryRetrievalResult{Status: datasetservice.KnowledgeRetrieveStatusNoResults, Context: strings.Join(contextParts, "\n\n"), ResultCount: len(items), SourceSummary: sources, ContextBlocks: blocks, Items: items}

@@ -15,9 +15,9 @@ func TestAuthoritativeMemoryResultKeepsActiveMemoriesAndDropsUnknownOrInactiveHi
 	legacyBusinessID := uuid.New()
 	inactiveID := uuid.New()
 	memories := map[uuid.UUID]*DigitalHumanMemory{
-		allowedID:        {ID: allowedID, MemoryClass: memoryruntime.MemoryClassSelf, Status: MemoryStatusActive, Content: "allowed"},
-		legacyBusinessID: {ID: legacyBusinessID, MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeCustomer, ScopeID: uuid.New().String(), Status: MemoryStatusActive, Content: "legacy business stays visible"},
-		inactiveID:       {ID: inactiveID, MemoryClass: memoryruntime.MemoryClassSelf, Status: MemoryStatusArchived, Content: "archived"},
+		allowedID:        {ID: allowedID, MemoryKey: "allowed-key", Revision: 3, MemoryClass: memoryruntime.MemoryClassSelf, Status: MemoryStatusActive, Content: "allowed"},
+		legacyBusinessID: {ID: legacyBusinessID, MemoryKey: "legacy-business-key", Revision: 1, MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeCustomer, ScopeID: uuid.New().String(), Status: MemoryStatusActive, Content: "legacy business stays visible"},
+		inactiveID:       {ID: inactiveID, MemoryKey: "archived-key", Revision: 1, MemoryClass: memoryruntime.MemoryClassSelf, Status: MemoryStatusArchived, Content: "archived"},
 	}
 	response := &datasetservice.KnowledgeRetrieveResponse{Resources: []datasetservice.KnowledgeRetrieverResource{
 		{SegmentID: allowedID.String(), Score: 0.9},
@@ -32,15 +32,32 @@ func TestAuthoritativeMemoryResultKeepsActiveMemoriesAndDropsUnknownOrInactiveHi
 	if result.Context != "[memory 1] allowed\n\n[memory 2] legacy business stays visible" {
 		t.Fatalf("context = %q, want authoritative context", result.Context)
 	}
+	// The mutation contract is id-, key- and revision-addressed, so every match
+	// must hand the model the values it needs to correct, clear or replace that
+	// memory later.
+	wantBlocks := []struct {
+		id       uuid.UUID
+		key      string
+		revision int64
+	}{{allowedID, "allowed-key", 3}, {legacyBusinessID, "legacy-business-key", 1}}
+	if len(result.ContextBlocks) != len(wantBlocks) {
+		t.Fatalf("blocks = %#v, want one context block per match", result.ContextBlocks)
+	}
+	for index, want := range wantBlocks {
+		block := result.ContextBlocks[index]
+		if block["memory_id"] != want.id.String() || block["memory_key"] != want.key || block["revision"] != want.revision {
+			t.Fatalf("block %d = %#v, want id %s key %q revision %d", index, block, want.id, want.key, want.revision)
+		}
+	}
 }
 
 func TestRecentMemoryResultOrdersFallbackAndFlagsDegradedRecall(t *testing.T) {
 	newerID := uuid.New()
 	olderID := uuid.New()
 	result := recentMemoryResult([]*DigitalHumanMemory{
-		{ID: newerID, Status: MemoryStatusActive, Content: "newest"},
-		{ID: olderID, Status: MemoryStatusActive, Content: "older"},
-		{ID: uuid.New(), Status: MemoryStatusInvalidated, Content: "not active"},
+		{ID: newerID, MemoryKey: "newest-key", Revision: 2, Status: MemoryStatusActive, Content: "newest"},
+		{ID: olderID, MemoryKey: "older-key", Revision: 5, Status: MemoryStatusActive, Content: "older"},
+		{ID: uuid.New(), MemoryKey: "inactive-key", Revision: 1, Status: MemoryStatusInvalidated, Content: "not active"},
 		nil,
 	}, "vector recall failed")
 	if result.Status != datasetservice.KnowledgeRetrieveStatusSuccess || result.ResultCount != 2 {
@@ -57,6 +74,16 @@ func TestRecentMemoryResultOrdersFallbackAndFlagsDegradedRecall(t *testing.T) {
 	}
 	if len(result.Warnings) != 1 {
 		t.Fatalf("warnings = %#v, want the degraded recall to be flagged", result.Warnings)
+	}
+	for index, want := range []struct {
+		id       uuid.UUID
+		key      string
+		revision int64
+	}{{newerID, "newest-key", 2}, {olderID, "older-key", 5}} {
+		block := result.ContextBlocks[index]
+		if block["memory_id"] != want.id.String() || block["memory_key"] != want.key || block["revision"] != want.revision {
+			t.Fatalf("fallback block %d = %#v, want id %s key %q revision %d", index, block, want.id, want.key, want.revision)
+		}
 	}
 }
 
