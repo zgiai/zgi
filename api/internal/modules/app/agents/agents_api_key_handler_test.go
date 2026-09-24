@@ -111,6 +111,115 @@ func TestContinueAPIKeyAgentRuntimeUserInputUsesPublishedExternalScope(t *testin
 	}
 }
 
+func TestContinueAPIKeyAgentRuntimeUserInputPreservesRuntimeWorkspaceSubjectScope(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	runtimeWorkspaceID := uuid.New()
+	runtimeSubjectID := uuid.New()
+	ids := webAppRuntimePermissionIDs{
+		organizationID: uuid.New(),
+		workspaceID:    uuid.New(),
+		accountID:      runtimeSubjectID,
+		agentID:        uuid.New(),
+		conversationID: uuid.New(),
+		messageID:      uuid.New(),
+	}
+	runtimeSvc := &webAppRuntimePermissionService{}
+	handler := NewAgentsHandler(newAgentRuntimePermissionAppService(ids), nil, nil, nil, nil, runtimeSvc)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/connect/v1/apps/app-1/conversations/"+ids.conversationID.String()+"/messages/"+ids.messageID.String()+"/user-input/ask-1/continue", bytes.NewBufferString(`{"answers":{"target":"Runtime Workspace"}}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{
+		{Key: "conversation_id", Value: ids.conversationID.String()},
+		{Key: "message_id", Value: ids.messageID.String()},
+		{Key: "request_id", Value: "ask-1"},
+	}
+	setAPIKeyAgentTestContext(c, ids)
+	c.Set("runtime_workspace_id", runtimeWorkspaceID.String())
+	c.Set("runtime_subject_id", runtimeSubjectID.String())
+	c.Set("runtime_workspace_principal", &runtimeworkspace.Principal{})
+	handler.ContinueAPIKeyAgentRuntimeUserInput(c)
+
+	if !runtimeSvc.userInputContinuationCalled {
+		t.Fatal("RunConfiguredUserInputContinuationStream was not called")
+	}
+	if runtimeSvc.lastScope.RuntimeWorkspaceID == nil || *runtimeSvc.lastScope.RuntimeWorkspaceID != runtimeWorkspaceID {
+		t.Fatalf("RuntimeWorkspaceID = %v, want %s", runtimeSvc.lastScope.RuntimeWorkspaceID, runtimeWorkspaceID)
+	}
+	if runtimeSvc.lastScope.RuntimeSubjectID == nil || *runtimeSvc.lastScope.RuntimeSubjectID != runtimeSubjectID {
+		t.Fatalf("RuntimeSubjectID = %v, want %s", runtimeSvc.lastScope.RuntimeSubjectID, runtimeSubjectID)
+	}
+	if runtimeSvc.lastScope.ExternalUserID == nil || *runtimeSvc.lastScope.ExternalUserID != runtimeSubjectID {
+		t.Fatalf("ExternalUserID = %v, want Runtime Subject %s", runtimeSvc.lastScope.ExternalUserID, runtimeSubjectID)
+	}
+	if runtimeSvc.lastScope.AgentMemoryUserID == nil || *runtimeSvc.lastScope.AgentMemoryUserID != runtimeSubjectID {
+		t.Fatalf("AgentMemoryUserID = %v, want Runtime Subject %s", runtimeSvc.lastScope.AgentMemoryUserID, runtimeSubjectID)
+	}
+	if !runtimeSvc.lastRunConfig.ConnectorToolsDisabled {
+		t.Fatal("Runtime Workspace continuation must keep personal Connectors disabled")
+	}
+}
+
+func TestContinueAPIKeyAgentRuntimeTokenBudgetPreservesRuntimeWorkspaceSubjectScope(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	runtimeWorkspaceID := uuid.New()
+	runtimeSubjectID := uuid.New()
+	ids := webAppRuntimePermissionIDs{
+		organizationID: uuid.New(),
+		workspaceID:    uuid.New(),
+		accountID:      runtimeSubjectID,
+		agentID:        uuid.New(),
+		conversationID: uuid.New(),
+		messageID:      uuid.New(),
+	}
+	runtimeSvc := &webAppRuntimePermissionService{}
+	handler := NewAgentsHandler(newAgentRuntimePermissionAppService(ids), nil, nil, nil, nil, runtimeSvc)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/connect/v1/apps/app-1/conversations/"+ids.conversationID.String()+"/messages/"+ids.messageID.String()+"/token-budget/budget-1/continue", bytes.NewBufferString(`{"action":"add","additional_tokens":2048}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{
+		{Key: "conversation_id", Value: ids.conversationID.String()},
+		{Key: "message_id", Value: ids.messageID.String()},
+		{Key: "request_id", Value: "budget-1"},
+	}
+	setAPIKeyAgentTestContext(c, ids)
+	c.Set("runtime_workspace_id", runtimeWorkspaceID.String())
+	c.Set("runtime_subject_id", runtimeSubjectID.String())
+	c.Set("runtime_workspace_principal", &runtimeworkspace.Principal{})
+	handler.ContinueAPIKeyAgentRuntimeTokenBudget(c)
+
+	if !runtimeSvc.tokenBudgetContinuationCalled {
+		t.Fatal("RunConfiguredTaskTokenBudgetContinuationStream was not called")
+	}
+	if runtimeSvc.lastScope.RuntimeWorkspaceID == nil || *runtimeSvc.lastScope.RuntimeWorkspaceID != runtimeWorkspaceID {
+		t.Fatalf("RuntimeWorkspaceID = %v, want %s", runtimeSvc.lastScope.RuntimeWorkspaceID, runtimeWorkspaceID)
+	}
+	if runtimeSvc.lastScope.RuntimeSubjectID == nil || *runtimeSvc.lastScope.RuntimeSubjectID != runtimeSubjectID {
+		t.Fatalf("RuntimeSubjectID = %v, want %s", runtimeSvc.lastScope.RuntimeSubjectID, runtimeSubjectID)
+	}
+	if runtimeSvc.lastScope.ExternalUserID == nil || *runtimeSvc.lastScope.ExternalUserID != runtimeSubjectID {
+		t.Fatalf("ExternalUserID = %v, want Runtime Subject %s", runtimeSvc.lastScope.ExternalUserID, runtimeSubjectID)
+	}
+	if runtimeSvc.lastScope.AgentMemoryUserID == nil || *runtimeSvc.lastScope.AgentMemoryUserID != runtimeSubjectID {
+		t.Fatalf("AgentMemoryUserID = %v, want Runtime Subject %s", runtimeSvc.lastScope.AgentMemoryUserID, runtimeSubjectID)
+	}
+	if runtimeSvc.lastTokenBudgetRequest.Action != "add" || runtimeSvc.lastTokenBudgetRequest.AdditionalTokens != 2048 {
+		t.Fatalf("token budget request = %#v", runtimeSvc.lastTokenBudgetRequest)
+	}
+	if runtimeSvc.lastTokenBudgetRequest.Surface != "external_api" {
+		t.Fatalf("continuation surface = %q, want external_api", runtimeSvc.lastTokenBudgetRequest.Surface)
+	}
+	if !runtimeSvc.lastRunConfig.ConnectorToolsDisabled {
+		t.Fatal("Runtime Workspace continuation must keep personal Connectors disabled")
+	}
+	if w.Header().Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("Content-Type = %q, want text/event-stream", w.Header().Get("Content-Type"))
+	}
+}
+
 func TestContinueAPIKeyAgentRuntimeUserInputSanitizesUnexpectedStreamError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ids := webAppRuntimePermissionIDs{

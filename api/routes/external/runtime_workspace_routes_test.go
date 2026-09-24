@@ -30,20 +30,36 @@ func TestRuntimeWorkspaceRoutesExposePublishedAgentContract(t *testing.T) {
 	}
 	for _, route := range []string{
 		"GET /api/connect/v1/apps",
+		"GET /api/connect/v1/apps/:app_key",
 		"GET /api/connect/v1/apps/:app_key/config",
 		"GET /api/connect/v1/apps/:app_key/parameters",
 		"POST /api/connect/v1/apps/:app_key/chat",
 		"GET /api/connect/v1/apps/:app_key/conversations",
 		"GET /api/connect/v1/apps/:app_key/conversations/search",
 		"POST /api/connect/v1/apps/:app_key/conversations",
+		"GET /api/connect/v1/apps/:app_key/conversations/:conversation_id",
+		"PATCH /api/connect/v1/apps/:app_key/conversations/:conversation_id",
+		"DELETE /api/connect/v1/apps/:app_key/conversations/:conversation_id",
+		"GET /api/connect/v1/apps/:app_key/conversations/:conversation_id/messages",
+		"GET /api/connect/v1/apps/:app_key/conversations/:conversation_id/events",
+		"POST /api/connect/v1/apps/:app_key/conversations/:conversation_id/stop",
+		"POST /api/connect/v1/apps/:app_key/conversations/:conversation_id/messages/:message_id/workflow-continuation",
+		"POST /api/connect/v1/apps/:app_key/conversations/:conversation_id/messages/:message_id/user-input/:request_id/continue",
+		"POST /api/connect/v1/apps/:app_key/conversations/:conversation_id/messages/:message_id/token-budget/:request_id/continue",
 		"POST /api/connect/v1/apps/:app_key/messages/:message_id/regenerate",
 		"GET /api/connect/v1/apps/:app_key/memory",
+		"GET /api/connect/v1/apps/:app_key/memory/export",
 		"GET /api/connect/v1/apps/:app_key/memory/settings",
 		"PATCH /api/connect/v1/apps/:app_key/memory/settings",
 		"POST /api/connect/v1/apps/:app_key/memory/operations/:operation_id/undo",
 		"PUT /api/connect/v1/apps/:app_key/memory/:key",
+		"DELETE /api/connect/v1/apps/:app_key/memory/:key",
 		"DELETE /api/connect/v1/apps/:app_key/memory",
 		"POST /api/connect/v1/files",
+		"GET /api/connect/v1/files",
+		"GET /api/connect/v1/files/:file_id",
+		"DELETE /api/connect/v1/files/:file_id",
+		"GET /api/connect/v1/files/:file_id/download-url",
 	} {
 		if !routes[route] {
 			t.Errorf("missing phase 1 route %s", route)
@@ -51,15 +67,6 @@ func TestRuntimeWorkspaceRoutesExposePublishedAgentContract(t *testing.T) {
 	}
 	if routes["GET /api/connect/v1/apps/:app_key/memory/:key"] {
 		t.Error("unsupported single Memory value route is exposed")
-	}
-	for _, route := range []string{
-		"POST /api/connect/v1/apps/:app_key/conversations/:conversation_id/messages/:message_id/workflow-continuation",
-		"POST /api/connect/v1/apps/:app_key/conversations/:conversation_id/messages/:message_id/user-input/:request_id/continue",
-		"POST /api/connect/v1/apps/:app_key/conversations/:conversation_id/messages/:message_id/token-budget/:request_id/continue",
-	} {
-		if routes[route] {
-			t.Errorf("deferred Runtime Workspace route is exposed: %s", route)
-		}
 	}
 }
 

@@ -1008,42 +1008,44 @@ func (s *agentRuntimePermissionAppService) GetAgentDraftRuntimeConfig(_ context.
 type webAppRuntimePermissionService struct {
 	runtimeservice.Service
 
-	getConversationErr          error
-	beginContinuationErr        error
-	enforceContinuationBinding  bool
-	continuationBindingID       string
-	continuationAgentID         string
-	prepareRegenerationErr      error
-	userInputContinuationErr    error
-	getConversationCalled       bool
-	updateConversationCalled    bool
-	deleteConversationCalled    bool
-	listMessagesCalled          bool
-	stopConversationCalled      bool
-	streamCalled                bool
-	streamForCallerCalled       bool
-	beginContinuationCalled     bool
-	prepareRegenerationCalled   bool
-	runPreparedStreamCalled     bool
-	userInputContinuationCalled bool
-	toolGovernanceCalled        bool
-	clientActionCalled          bool
-	toolGovernanceErr           error
-	clientActionErr             error
-	streamForCallerErr          error
-	lastScope                   runtimeservice.Scope
-	lastCaller                  runtimeservice.Caller
-	lastRunConfig               runtimeservice.RunConfig
-	lastConversationID          uuid.UUID
-	lastMessageID               uuid.UUID
-	lastRequestID               string
-	lastCorrelationID           string
-	lastActionID                string
-	lastUserInputRequest        runtimedto.UserInputContinuationRequest
-	lastToolGovernanceRequest   runtimedto.ToolGovernanceDecisionRequest
-	lastClientActionRequest     runtimedto.ClientActionResultRequest
-	activeMessageID             *uuid.UUID
-	messageMetadata             map[string]interface{}
+	getConversationErr            error
+	beginContinuationErr          error
+	enforceContinuationBinding    bool
+	continuationBindingID         string
+	continuationAgentID           string
+	prepareRegenerationErr        error
+	userInputContinuationErr      error
+	getConversationCalled         bool
+	updateConversationCalled      bool
+	deleteConversationCalled      bool
+	listMessagesCalled            bool
+	stopConversationCalled        bool
+	streamCalled                  bool
+	streamForCallerCalled         bool
+	beginContinuationCalled       bool
+	prepareRegenerationCalled     bool
+	runPreparedStreamCalled       bool
+	userInputContinuationCalled   bool
+	tokenBudgetContinuationCalled bool
+	toolGovernanceCalled          bool
+	clientActionCalled            bool
+	toolGovernanceErr             error
+	clientActionErr               error
+	streamForCallerErr            error
+	lastScope                     runtimeservice.Scope
+	lastCaller                    runtimeservice.Caller
+	lastRunConfig                 runtimeservice.RunConfig
+	lastConversationID            uuid.UUID
+	lastMessageID                 uuid.UUID
+	lastRequestID                 string
+	lastCorrelationID             string
+	lastActionID                  string
+	lastUserInputRequest          runtimedto.UserInputContinuationRequest
+	lastTokenBudgetRequest        runtimedto.TaskTokenBudgetContinuationRequest
+	lastToolGovernanceRequest     runtimedto.ToolGovernanceDecisionRequest
+	lastClientActionRequest       runtimedto.ClientActionResultRequest
+	activeMessageID               *uuid.UUID
+	messageMetadata               map[string]interface{}
 }
 
 func (s *webAppRuntimePermissionService) GetConversationByCaller(_ context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, id uuid.UUID) (*runtimemodel.Conversation, error) {
@@ -1210,6 +1212,28 @@ func (s *webAppRuntimePermissionService) RunConfiguredUserInputContinuationStrea
 	if s.userInputContinuationErr != nil {
 		return nil, s.userInputContinuationErr
 	}
+	return &runtimeservice.ChatResult{Status: runtimemodel.MessageStatusCompleted}, nil
+}
+
+func (s *webAppRuntimePermissionService) RunConfiguredTaskTokenBudgetContinuationStream(
+	_ context.Context,
+	scope runtimeservice.Scope,
+	caller runtimeservice.Caller,
+	config runtimeservice.RunConfig,
+	conversationID uuid.UUID,
+	messageID uuid.UUID,
+	requestID string,
+	req runtimedto.TaskTokenBudgetContinuationRequest,
+	_ func(runtimeservice.StreamEvent) error,
+) (*runtimeservice.ChatResult, error) {
+	s.tokenBudgetContinuationCalled = true
+	s.lastScope = scope
+	s.lastCaller = caller
+	s.lastRunConfig = config
+	s.lastConversationID = conversationID
+	s.lastMessageID = messageID
+	s.lastRequestID = requestID
+	s.lastTokenBudgetRequest = req
 	return &runtimeservice.ChatResult{Status: runtimemodel.MessageStatusCompleted}, nil
 }
 
