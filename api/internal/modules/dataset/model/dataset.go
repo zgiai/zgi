@@ -108,6 +108,10 @@ type Dataset struct {
 	DocForm      string                 `json:"doc_form" gorm:"-"`
 }
 
+// ProviderDigitalHumanMemory is a runtime-managed projection. It must never
+// be selectable, bindable, or rendered as a user knowledge base.
+const ProviderDigitalHumanMemory = "digital_human_memory"
+
 // TableName specifies table name
 func (Dataset) TableName() string {
 	return "datasets"

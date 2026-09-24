@@ -77,10 +77,10 @@ func TestListAccessibleDatasetCandidatesOrdersSelectedIDsWithValidPostgresINClau
 	svc := &KnowledgeRetrievalService{db: db}
 
 	expectAccessibleKnowledgeWorkspaces(mock, "workspace-1")
-	mock.ExpectQuery(`SELECT count\(\*\) FROM "datasets" WHERE workspace_id IN \(\$1\)`).
+	mock.ExpectQuery(`SELECT count\(\*\) FROM "datasets" WHERE workspace_id IN \(\$1\) AND provider <> 'digital_human_memory'`).
 		WithArgs("workspace-1").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
-	mock.ExpectQuery(`SELECT \* FROM "datasets" WHERE workspace_id IN \(\$1\) ORDER BY CASE WHEN id IN \(\$2,\$3\) THEN 0 ELSE 1 END, LOWER\(name\) ASC, id ASC LIMIT \$4`).
+	mock.ExpectQuery(`SELECT \* FROM "datasets" WHERE workspace_id IN \(\$1\) AND provider <> 'digital_human_memory' ORDER BY CASE WHEN id IN \(\$2,\$3\) THEN 0 ELSE 1 END, LOWER\(name\) ASC, id ASC LIMIT \$4`).
 		WithArgs("workspace-1", "dataset-1", "dataset-2", 24).
 		WillReturnRows(datasetRows().
 			AddRow("dataset-1", "org-1", "workspace-1", "Selected one", "", "vendor", false, "account-1", time.Now()).

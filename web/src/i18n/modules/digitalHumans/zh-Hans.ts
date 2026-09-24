@@ -1564,6 +1564,13 @@ const messages: DigitalHumansMessages = {
     disableFuse: '关闭自动提取',
     updatingFuse: '正在更新…',
     fuseUpdated: '自动提取策略已更新。',
+    repair: '修复记忆检索',
+    repairing: '正在重建…',
+    repairHint: '当该数字人无法正常检索长期记忆时，重建记忆索引即可恢复。',
+    repairTitle: '重建长期记忆索引？',
+    repairDescription:
+      '系统会按当前默认嵌入模型，根据已保存的记忆重建记忆索引。已保存的记忆不会被删除或修改；重建期间记忆检索可能短暂不可用。',
+    repaired: '长期记忆索引已重建，共处理 {count} 条记忆。',
     empty: '没有符合当前筛选条件的记忆。',
     emptyDescription: '具备权限的操作者可以明确添加一条有证据的记忆，或者调整筛选条件。',
     loadError: '无法加载长期记忆。',
@@ -1623,6 +1630,7 @@ const messages: DigitalHumansMessages = {
       mutate: '无法变更这条记忆。',
       undo: '无法撤销这次记忆变更。',
       fuse: '无法更新自动提取策略。',
+      repair: '无法重建长期记忆索引。',
     },
   },
   access: {

@@ -44,6 +44,7 @@ type HandlerService interface {
 	UpdateMemoryState(context.Context, Scope, uuid.UUID, UpdateMemoryStateRequest) (*MemoryState, error)
 	ApplyMemoryProposal(context.Context, Scope, uuid.UUID, MemoryProposalRequest) (*MemoryMutationResult, error)
 	UndoMemory(context.Context, Scope, uuid.UUID, uuid.UUID, MemoryUndoRequest) (*MemoryMutationResult, error)
+	RepairMemoryProjection(context.Context, Scope, uuid.UUID) (*MemoryProjectionRepairResult, error)
 }
 
 // Handler exposes the DigitalHuman lifecycle API.
@@ -84,6 +85,7 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	group.PATCH("/:id/memory/state", h.UpdateMemoryState)
 	group.POST("/:id/memory/proposals", h.ApplyMemoryProposal)
 	group.POST("/:id/memory/operations/:operation_id/undo", h.UndoMemory)
+	group.POST("/:id/memory/repair", h.RepairMemoryProjection)
 
 	templates := router.Group("/digital-human-persona-templates")
 	templates.POST("", h.CreatePersonaTemplate)
@@ -164,6 +166,21 @@ func (h *Handler) UndoMemory(c *gin.Context) {
 		return
 	}
 	result, err := h.service.UndoMemory(c.Request.Context(), scope, id, operationID, request)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, result)
+}
+
+// RepairMemoryProjection drops and rebuilds the hidden long-term memory
+// projection from the stored memories.
+func (h *Handler) RepairMemoryProjection(c *gin.Context) {
+	scope, id, ok := h.scopeAndID(c)
+	if !ok {
+		return
+	}
+	result, err := h.service.RepairMemoryProjection(c.Request.Context(), scope, id)
 	if err != nil {
 		h.writeError(c, err)
 		return

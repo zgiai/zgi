@@ -35,6 +35,8 @@ var (
 	AppCodeMemoryConflict               = apperror.MustCode("digital_human.memory.conflict")
 	AppCodeMemoryPolicyRejected         = apperror.MustCode("digital_human.memory.policy_rejected")
 	AppCodeMemoryUndoUnavailable        = apperror.MustCode("digital_human.memory.undo_unavailable")
+	AppCodeMemoryProjectionUnavailable  = apperror.MustCode("digital_human.memory.projection_unavailable")
+	AppCodeMemoryRepairFailed           = apperror.MustCode("digital_human.memory.repair_failed")
 	AppCodeTaskNotFound                 = apperror.MustCode("digital_human.task.not_found")
 	AppCodeTaskInvalidRequest           = apperror.MustCode("digital_human.task.invalid_request")
 	AppCodeTaskConflict                 = apperror.MustCode("digital_human.task.conflict")
@@ -101,6 +103,11 @@ func CatalogDefinitions() []appcatalog.Definition {
 			"The memory proposal was rejected by evidence, privacy, or sensitivity policy.", "该记忆提议未通过证据、隐私或敏感信息策略。"),
 		digitalHumanDefinition(AppCodeMemoryUndoUnavailable, appcatalog.CategoryConflict, 409,
 			"This memory change can no longer be undone.", "该记忆变更已无法撤销。"),
+		digitalHumanDefinition(AppCodeMemoryProjectionUnavailable, appcatalog.CategoryInternal, 503,
+			"Long-term memory repair is not available in this deployment.", "当前部署暂不支持长期记忆修复。"),
+		digitalHumanDefinition(AppCodeMemoryRepairFailed, appcatalog.CategoryInternal, 500,
+			"Long-term memory could not be rebuilt. Check the embedding model and vector store configuration.",
+			"长期记忆重建失败，请检查嵌入模型与向量库配置。"),
 		digitalHumanDefinition(AppCodeTaskNotFound, appcatalog.CategoryNotFound, 404,
 			"The DigitalHuman task was not found or is not available to this user.", "未找到该任务，或该任务不属于当前用户。"),
 		digitalHumanDefinition(AppCodeTaskInvalidRequest, appcatalog.CategoryValidation, 400,

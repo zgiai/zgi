@@ -46,7 +46,8 @@ type Service struct {
 	iconResolver interface {
 		GetFileURL(context.Context, string) (string, error)
 	}
-	now func() time.Time
+	projectionRepairer DigitalHumanMemoryProjectionRepairer
+	now                func() time.Time
 }
 
 // SetIconResolver enables Agent-compatible image icon URLs without coupling the domain to file storage.
@@ -54,6 +55,13 @@ func (s *Service) SetIconResolver(resolver interface {
 	GetFileURL(context.Context, string) (string, error)
 }) {
 	s.iconResolver = resolver
+}
+
+// SetMemoryProjectionRepairer enables the operator-facing long-term memory
+// repair. It stays optional so a deployment without a vector store can still
+// serve the rest of the DigitalHuman surface.
+func (s *Service) SetMemoryProjectionRepairer(repairer DigitalHumanMemoryProjectionRepairer) {
+	s.projectionRepairer = repairer
 }
 
 // NewService constructs a DigitalHuman lifecycle service.
@@ -881,6 +889,10 @@ func applicationError(err error, operation string) error {
 		code = AppCodeMemoryPolicyRejected
 	case errors.Is(err, ErrMemoryUndoUnavailable):
 		code = AppCodeMemoryUndoUnavailable
+	case errors.Is(err, ErrMemoryProjectionUnavailable):
+		code = AppCodeMemoryProjectionUnavailable
+	case errors.Is(err, ErrMemoryProjectionRepairFailed):
+		code = AppCodeMemoryRepairFailed
 	case errors.Is(err, ErrTaskNotFound):
 		code = AppCodeTaskNotFound
 	case errors.Is(err, ErrTaskConflict):

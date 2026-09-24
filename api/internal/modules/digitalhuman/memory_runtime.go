@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -22,10 +21,55 @@ import (
 )
 
 const (
-	digitalHumanMemoryToolName      = "manage_digital_human_memory"
-	digitalHumanMemoryModeExplicit  = "explicit"
-	digitalHumanMemoryModeProactive = "proactive"
+	digitalHumanMemoryToolName          = "manage_digital_human_memory"
+	digitalHumanMemoryRetrievalToolName = "retrieve_digital_human_memory"
+	digitalHumanMemoryModeExplicit      = "explicit"
+	digitalHumanMemoryModeProactive     = "proactive"
 )
+
+const (
+	defaultDigitalHumanMemoryRetrievalTopK = 5
+	maxDigitalHumanMemoryRetrievalTopK     = 20
+)
+
+// DigitalHumanMemoryRetrievalRequest contains only model-controlled retrieval
+// inputs. Identity, tenancy, and the internal projection are resolved by the
+// runtime before the backend is called.
+type DigitalHumanMemoryRetrievalRequest struct {
+	Run           *Run
+	Event         invocation.Event
+	Query         string
+	TopK          int
+	RetrievalMode string
+}
+
+// DigitalHumanMemoryRetrievalResult is the model-facing projection returned by
+// the internal retrieval backend. The backend may attach authoritative memory
+// items for audit logging; their contents are never persisted in the tool trace.
+type DigitalHumanMemoryRetrievalResult struct {
+	Status        string
+	Context       string
+	ResultCount   int
+	TopScore      *float64
+	SourceSummary []map[string]any
+	ContextBlocks []map[string]any
+	Warnings      []string
+	Items         []*DigitalHumanMemory
+}
+
+// DigitalHumanMemoryRetriever is intentionally narrower than the generic
+// knowledge-base service. Implementations resolve the hidden per-DigitalHuman
+// projection and return the active memories for that DigitalHuman.
+type DigitalHumanMemoryRetriever interface {
+	Retrieve(context.Context, DigitalHumanMemoryRetrievalRequest) (*DigitalHumanMemoryRetrievalResult, error)
+}
+
+// DigitalHumanMemoryProjectionRepairer rebuilds the hidden vector projection
+// from the authoritative memory rows. It is optional: a deployment can serve
+// recall without exposing the operator repair action.
+type DigitalHumanMemoryProjectionRepairer interface {
+	Repair(context.Context, memoryProjectionScope) (*MemoryProjectionRepairResult, error)
+}
 
 // MemoryRuntimePreparation is the safe context/tool projection for one run.
 type MemoryRuntimePreparation struct {
@@ -67,9 +111,18 @@ func WithMemoryPromotionAuthorizer(authorizer MemoryPromotionAuthorizer) MemoryR
 	}
 }
 
+// WithDigitalHumanMemoryRetriever attaches the hidden, query-aware retrieval
+// backend. It does not expose a dataset ID or a resource binding to callers.
+func WithDigitalHumanMemoryRetriever(retriever DigitalHumanMemoryRetriever) MemoryRuntimeProviderOption {
+	return func(provider *DefaultMemoryRuntimeProvider) {
+		provider.retriever = retriever
+	}
+}
+
 type DefaultMemoryRuntimeProvider struct {
 	service             *Service
 	promotionAuthorizer MemoryPromotionAuthorizer
+	retriever           DigitalHumanMemoryRetriever
 	now                 func() time.Time
 }
 
@@ -91,16 +144,10 @@ func (p *DefaultMemoryRuntimeProvider) Prepare(ctx context.Context, run *Run, re
 		return nil, ErrInvalidRequest
 	}
 	scope := runScope(run)
-	authorizedScopes := authorizedMemoryScopes(event, run.WorkspaceID)
-	items, err := p.service.RetrieveMemories(ctx, scope, run.DigitalHumanID, authorizedScopes, 50)
-	if err != nil {
-		return nil, err
-	}
 	state, err := p.service.memoryState(ctx, scope, run.DigitalHumanID)
 	if err != nil {
 		return nil, err
 	}
-	p.recordRetrieval(ctx, run, items, authorizedScopes)
 	promotionAuthorized := false
 	if p.promotionAuthorizer != nil && run.ActorID != nil && *run.ActorID != uuid.Nil {
 		promotionAuthorized, err = p.promotionAuthorizer.CanPromoteDigitalHumanMemory(
@@ -112,10 +159,13 @@ func (p *DefaultMemoryRuntimeProvider) Prepare(ctx context.Context, run *Run, re
 	}
 	toolEnabled := digitalHumanMemoryToolEnabled(event, state, promotionAuthorized)
 	preparation := &MemoryRuntimePreparation{
-		SystemPromptAddendum: renderDigitalHumanMemoryContext(items, toolEnabled, state.AutoExtractionEnabled),
+		SystemPromptAddendum: renderDigitalHumanMemoryContext(nil, toolEnabled, state.AutoExtractionEnabled),
+	}
+	if p.retriever != nil {
+		preparation.Tools = append(preparation.Tools, p.memoryRetrievalTool(run, event))
 	}
 	if toolEnabled {
-		preparation.Tools = []skillloop.RuntimeTool{p.memoryMutationTool(run, event, state, authorizedScopes, promotionAuthorized)}
+		preparation.Tools = append(preparation.Tools, p.memoryMutationTool(run, event, state, promotionAuthorized))
 	}
 	return preparation, nil
 }
@@ -146,65 +196,17 @@ func (p *DefaultMemoryRuntimeProvider) Finalize(ctx context.Context, run *Run, p
 	)
 }
 
-func authorizedMemoryScopes(event invocation.Event, workspaceID uuid.UUID) []memoryruntime.MemoryScopeRef {
-	scopes := []memoryruntime.MemoryScopeRef{{Type: memoryruntime.MemoryScopeWorkspace, ID: workspaceID.String()}}
-	trusted, _ := event.Context["memory_scopes_authorized"].(bool)
-	if !trusted {
-		return scopes
-	}
-	raw, ok := event.Context["memory_scopes"].([]interface{})
-	if !ok {
-		return scopes
-	}
-	seen := map[string]struct{}{string(memoryruntime.MemoryScopeWorkspace) + "\x00" + workspaceID.String(): {}}
-	for _, item := range raw {
-		encoded, err := json.Marshal(item)
-		if err != nil {
-			continue
-		}
-		var candidate memoryruntime.MemoryScopeRef
-		if json.Unmarshal(encoded, &candidate) != nil {
-			continue
-		}
-		candidate, err = memoryruntime.ValidateMemoryScopeRef(candidate)
-		if err != nil {
-			continue
-		}
-		key := string(candidate.Type) + "\x00" + candidate.ID
-		if _, exists := seen[key]; exists {
-			continue
-		}
-		seen[key] = struct{}{}
-		scopes = append(scopes, candidate)
-	}
-	return scopes
-}
-
 func renderDigitalHumanMemoryContext(items []*DigitalHumanMemory, toolEnabled, proactiveAllowed bool) string {
 	sections := []string{
 		"Long-term memory belongs to this DigitalHuman, not to the current user.",
 		"Treat memory as fallible context: respect its scope and revision, and prefer current tool evidence when facts conflict.",
+		"Long-term memory is not preloaded. When the current question may depend on durable context, call retrieve_digital_human_memory with a concise query before answering.",
 	}
-	if len(items) == 0 {
-		sections = append(sections, "No active long-term memory is available in the authorized scopes for this run.")
-	} else {
-		lines := make([]string, 0, len(items))
-		for _, item := range items {
-			if item == nil {
-				continue
-			}
-			scope := "self"
-			if item.MemoryClass == memoryruntime.MemoryClassBusiness {
-				scope = string(item.ScopeType) + ":" + item.ScopeID
-			}
-			lines = append(lines, fmt.Sprintf("- [%s/%s; id=%s; key=%s; scope=%s; revision=%d] %s", item.MemoryClass, item.MemoryType, item.ID, item.MemoryKey, scope, item.Revision, item.Content))
-		}
-		sections = append(sections, "Authorized active long-term memory:\n"+strings.Join(lines, "\n"))
-	}
+	_ = items
 	if toolEnabled {
 		modePolicy := "Proactive memory maintenance is disabled. Use explicit mode only when the current user directly establishes, corrects, or asks to forget durable DigitalHuman working context."
 		if proactiveAllowed {
-			modePolicy = "Proactive memory maintenance is enabled. Proactive mode may save only high-confidence durable work experience, decisions, open loops, reflections, or authorized business facts directly supported by the current user message."
+			modePolicy = "Proactive memory maintenance is enabled. Proactive mode may save only high-confidence durable work experience, decisions, open loops, reflections, or evidence-backed facts directly supported by the current user message."
 		}
 		sections = append(sections,
 			"Decide at runtime whether a memory change is warranted from the meaning and context of the conversation, not from trigger words. If no safe durable update is needed, do not call the memory tool.",
@@ -223,11 +225,100 @@ func renderDigitalHumanMemoryContext(items []*DigitalHumanMemory, toolEnabled, p
 	return strings.Join(sections, "\n\n")
 }
 
+func (p *DefaultMemoryRuntimeProvider) memoryRetrievalTool(run *Run, event invocation.Event) skillloop.RuntimeTool {
+	definition := adapter.Tool{Type: "function", Function: adapter.Function{
+		Name:        digitalHumanMemoryRetrievalToolName,
+		Description: "Retrieve relevant long-term memory for the current question. Call this only when durable DigitalHuman context may affect the answer. The backend automatically limits results to this DigitalHuman; never ask for or provide a dataset ID.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"query":          map[string]any{"type": "string", "description": "A concise query describing the durable fact or context needed to answer the current question."},
+				"top_k":          map[string]any{"type": "integer", "minimum": 1, "maximum": maxDigitalHumanMemoryRetrievalTopK},
+				"retrieval_mode": map[string]any{"type": "string", "enum": []string{"vector", "hybrid"}},
+			},
+			"required":             []string{"query"},
+			"additionalProperties": false,
+		},
+	}}
+	handler := func(ctx context.Context, call adapter.ToolCall) skillloop.RuntimeToolResult {
+		args, err := decodeMemoryRetrievalToolArguments(call.Function.Arguments)
+		if err != nil {
+			return skillloop.RuntimeToolResult{Status: "error", Error: err, Recoverable: true}
+		}
+		result, err := p.retriever.Retrieve(ctx, DigitalHumanMemoryRetrievalRequest{
+			Run: run, Event: event, Query: args.Query, TopK: args.TopK, RetrievalMode: args.RetrievalMode,
+		})
+		if err != nil {
+			return skillloop.RuntimeToolResult{Status: "error", Arguments: map[string]any{"query": args.Query}, Error: err, Recoverable: true}
+		}
+		if result == nil {
+			return skillloop.RuntimeToolResult{Status: "error", Arguments: map[string]any{"query": args.Query}, Error: errors.New("digital human memory retrieval returned nil result"), Recoverable: true}
+		}
+		p.recordRetrieval(ctx, run, result.Items)
+		modelResult := map[string]any{
+			"query": args.Query, "status": result.Status, "context": result.Context,
+			"result_count": result.ResultCount, "source_summary": result.SourceSummary,
+			"context_blocks": result.ContextBlocks, "warnings": result.Warnings,
+		}
+		if result.TopScore != nil {
+			modelResult["top_score"] = *result.TopScore
+		}
+		return skillloop.RuntimeToolResult{
+			Status:      "success",
+			Arguments:   map[string]any{"query": args.Query, "top_k": args.TopK, "retrieval_mode": args.RetrievalMode},
+			Result:      map[string]any{"status": result.Status, "result_count": result.ResultCount},
+			ModelResult: modelResult,
+		}
+	}
+	return skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillDigitalHumanMemory, Handler: handler}
+}
+
+type memoryRetrievalToolArguments struct {
+	Query         string `json:"query"`
+	TopK          int    `json:"top_k,omitempty"`
+	RetrievalMode string `json:"retrieval_mode,omitempty"`
+}
+
+func decodeMemoryRetrievalToolArguments(raw string) (memoryRetrievalToolArguments, error) {
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var args memoryRetrievalToolArguments
+	if err := decoder.Decode(&args); err != nil {
+		return memoryRetrievalToolArguments{}, ErrInvalidRequest
+	}
+	var trailing any
+	if decoder.Decode(&trailing) != io.EOF {
+		return memoryRetrievalToolArguments{}, ErrInvalidRequest
+	}
+	args.Query = strings.TrimSpace(args.Query)
+	if args.Query == "" {
+		return memoryRetrievalToolArguments{}, ErrInvalidRequest
+	}
+	if args.TopK == 0 {
+		args.TopK = defaultDigitalHumanMemoryRetrievalTopK
+	}
+	if args.TopK < 1 || args.TopK > maxDigitalHumanMemoryRetrievalTopK {
+		return memoryRetrievalToolArguments{}, ErrInvalidRequest
+	}
+	args.RetrievalMode = strings.TrimSpace(strings.ToLower(args.RetrievalMode))
+	if args.RetrievalMode == "" {
+		args.RetrievalMode = "hybrid"
+	}
+	if args.RetrievalMode != "vector" && args.RetrievalMode != "hybrid" {
+		return memoryRetrievalToolArguments{}, ErrInvalidRequest
+	}
+	return args, nil
+}
+
+// memoryMutationTool exposes the single converged memory write surface.
+// Convergence: a DigitalHuman currently owns only self memory, so the tool no
+// longer accepts memory_class or business scope fields; every proposal is
+// stored as self memory. Business scopes remain a future extension of the
+// memoryruntime contract and are not offered to the model yet.
 func (p *DefaultMemoryRuntimeProvider) memoryMutationTool(
 	run *Run,
 	event invocation.Event,
 	state *MemoryState,
-	authorizedScopes []memoryruntime.MemoryScopeRef,
 	promotionAuthorized bool,
 ) skillloop.RuntimeTool {
 	modes := []string{digitalHumanMemoryModeExplicit}
@@ -244,19 +335,16 @@ func (p *DefaultMemoryRuntimeProvider) memoryMutationTool(
 				"mode":              map[string]any{"type": "string", "enum": modes},
 				"evidence":          map[string]any{"type": "string", "description": "An exact non-empty quote from the current user message supporting this operation."},
 				"key":               map[string]any{"type": "string", "description": "Stable semantic key, max 160 characters."},
-				"memory_class":      map[string]any{"type": "string", "enum": []string{"self", "business"}},
 				"memory_type":       map[string]any{"type": "string", "enum": []string{"experience", "decision", "fact", "open_loop", "reflection"}},
-				"scope_type":        map[string]any{"type": "string", "enum": []string{"workspace", "project", "customer", "campaign", "channel"}},
-				"scope_id":          map[string]any{"type": "string"},
 				"content":           map[string]any{"type": "string", "description": "A concise, redacted summary. Empty only for clear."},
 				"expected_revision": map[string]any{"type": "integer", "minimum": 0},
-				"supersedes_id":     map[string]any{"type": "string", "format": "uuid", "description": "ID of an active same-class, same-scope memory replaced by this new key."},
+				"supersedes_id":     map[string]any{"type": "string", "format": "uuid", "description": "ID of an active memory replaced by this new key."},
 				"expected_superseded_revision": map[string]any{
 					"type": "integer", "minimum": 1, "description": "Current revision of supersedes_id.",
 				},
 				"confidence": map[string]any{"type": "number", "minimum": 0, "maximum": 1},
 			},
-			"required":             []string{"action", "mode", "evidence", "key", "memory_class", "memory_type", "expected_revision"},
+			"required":             []string{"action", "mode", "evidence", "key", "memory_type", "expected_revision"},
 			"additionalProperties": false,
 		},
 	}}
@@ -267,7 +355,7 @@ func (p *DefaultMemoryRuntimeProvider) memoryMutationTool(
 		}
 		operationID := memoryToolOperationID(run.ID, call)
 		request := MemoryProposalRequest{
-			OperationID: operationID, Key: args.Key, Action: args.Action, MemoryClass: args.MemoryClass, MemoryType: args.MemoryType,
+			OperationID: operationID, Key: args.Key, Action: args.Action, MemoryClass: memoryruntime.MemoryClassSelf, MemoryType: args.MemoryType,
 			Content: args.Content, ExpectedRevision: args.ExpectedRevision, SupersedesID: args.SupersedesID,
 			ExpectedSupersededRevision: args.ExpectedSupersededRevision, ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch,
 			Visibility: MemoryVisibilityWorkspace, Confidence: args.Confidence, RunID: &run.ID,
@@ -278,18 +366,9 @@ func (p *DefaultMemoryRuntimeProvider) memoryMutationTool(
 			},
 			OccurredAt: p.now(),
 		}
-		if args.MemoryClass == memoryruntime.MemoryClassBusiness {
-			request.Scope = &memoryruntime.MemoryScopeRef{Type: args.ScopeType, ID: args.ScopeID}
-		}
 		if err := validateMemoryToolDecision(args, run.Query, state.AutoExtractionEnabled); err != nil {
 			p.service.recordRejectedMemoryProposal(ctx, runScope(run), run.DigitalHumanID, request, err)
 			return memoryToolFailure(AppCodeMemoryPolicyRejected.String(), false)
-		}
-		if args.MemoryClass == memoryruntime.MemoryClassBusiness {
-			if !memoryToolBusinessScopeAuthorized(args, authorizedScopes) {
-				p.service.recordRejectedMemoryProposal(ctx, runScope(run), run.DigitalHumanID, request, ErrMemoryPolicyRejected)
-				return memoryToolFailure(AppCodeMemoryPolicyRejected.String(), false)
-			}
 		}
 		result, err := p.service.ApplyAutonomousMemoryProposal(ctx, runScope(run), run.DigitalHumanID, request)
 		if err != nil {
@@ -298,7 +377,7 @@ func (p *DefaultMemoryRuntimeProvider) memoryMutationTool(
 		return skillloop.RuntimeToolResult{
 			Status: "success",
 			Arguments: map[string]any{
-				"action": args.Action, "mode": args.Mode, "key": strings.TrimSpace(args.Key), "memory_class": args.MemoryClass,
+				"action": args.Action, "mode": args.Mode, "key": strings.TrimSpace(args.Key), "memory_class": memoryruntime.MemoryClassSelf,
 				"memory_type": args.MemoryType, "supersedes_id": args.SupersedesID,
 			},
 			Result: map[string]any{"status": "committed", "operation_id": result.Event.OperationID.String(), "memory_id": result.Memory.ID.String(), "revision": result.Memory.Revision, "replayed": result.Replayed},
@@ -307,27 +386,17 @@ func (p *DefaultMemoryRuntimeProvider) memoryMutationTool(
 	return skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillDigitalHumanMemory, Handler: handler}
 }
 
-func memoryToolBusinessScopeAuthorized(args memoryToolArguments, authorizedScopes []memoryruntime.MemoryScopeRef) bool {
-	if args.MemoryClass != memoryruntime.MemoryClassBusiness {
-		return true
-	}
-	return memoryScopeAuthorized(memoryruntime.MemoryScopeRef{Type: args.ScopeType, ID: args.ScopeID}, authorizedScopes)
-}
-
 type memoryToolArguments struct {
-	Action                     memoryruntime.MutationAction  `json:"action"`
-	Mode                       string                        `json:"mode"`
-	Evidence                   string                        `json:"evidence"`
-	Key                        string                        `json:"key"`
-	MemoryClass                memoryruntime.MemoryClass     `json:"memory_class"`
-	MemoryType                 memoryruntime.MemoryType      `json:"memory_type"`
-	ScopeType                  memoryruntime.MemoryScopeType `json:"scope_type"`
-	ScopeID                    string                        `json:"scope_id"`
-	Content                    string                        `json:"content"`
-	ExpectedRevision           int64                         `json:"expected_revision"`
-	SupersedesID               *uuid.UUID                    `json:"supersedes_id"`
-	ExpectedSupersededRevision int64                         `json:"expected_superseded_revision"`
-	Confidence                 float64                       `json:"confidence"`
+	Action                     memoryruntime.MutationAction `json:"action"`
+	Mode                       string                       `json:"mode"`
+	Evidence                   string                       `json:"evidence"`
+	Key                        string                       `json:"key"`
+	MemoryType                 memoryruntime.MemoryType     `json:"memory_type"`
+	Content                    string                       `json:"content"`
+	ExpectedRevision           int64                        `json:"expected_revision"`
+	SupersedesID               *uuid.UUID                   `json:"supersedes_id"`
+	ExpectedSupersededRevision int64                        `json:"expected_superseded_revision"`
+	Confidence                 float64                      `json:"confidence"`
 }
 
 func decodeMemoryToolArguments(raw string) (memoryToolArguments, error) {
@@ -420,14 +489,14 @@ func safeMemoryArtifactRefs(metadata map[string]interface{}) datatypes.JSON {
 	return datatypes.JSON(encoded)
 }
 
-func (p *DefaultMemoryRuntimeProvider) recordRetrieval(ctx context.Context, run *Run, items []*DigitalHumanMemory, scopes []memoryruntime.MemoryScopeRef) {
+func (p *DefaultMemoryRuntimeProvider) recordRetrieval(ctx context.Context, run *Run, items []*DigitalHumanMemory) {
 	refs := make([]map[string]any, 0, len(items))
 	for _, item := range items {
 		if item != nil {
 			refs = append(refs, map[string]any{"memory_id": item.ID, "revision": item.Revision, "content_digest": item.ContentDigest})
 		}
 	}
-	detail, _ := json.Marshal(map[string]any{"memory_refs": refs, "authorized_scopes": scopes})
+	detail, _ := json.Marshal(map[string]any{"memory_refs": refs})
 	_ = p.service.repo.CreateActionLedger(context.WithoutCancel(ctx), &ActionLedgerEntry{
 		ID: uuid.New(), OrganizationID: run.OrganizationID, WorkspaceID: run.WorkspaceID, DigitalHumanID: run.DigitalHumanID,
 		RunID: &run.ID, ActionType: "memory.retrieve", Status: "completed", Detail: datatypes.JSON(detail), CreatedAt: p.now(),

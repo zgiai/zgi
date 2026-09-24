@@ -44,6 +44,11 @@ var (
 	ErrMemoryPolicyRejected = errors.New("digital human memory proposal rejected")
 	// ErrMemoryUndoUnavailable indicates an expired, consumed, or stale undo record.
 	ErrMemoryUndoUnavailable = errors.New("digital human memory undo unavailable")
+	// ErrMemoryProjectionUnavailable indicates that this deployment cannot rebuild
+	// the hidden memory projection.
+	ErrMemoryProjectionUnavailable = errors.New("digital human memory projection unsupported")
+	// ErrMemoryProjectionRepairFailed indicates that a projection rebuild failed.
+	ErrMemoryProjectionRepairFailed = errors.New("digital human memory projection repair failed")
 	// ErrTaskNotFound indicates that a scoped DigitalHuman task does not exist.
 	ErrTaskNotFound = errors.New("digital human task not found")
 	// ErrTaskConflict indicates a stale revision or invalid task transition.

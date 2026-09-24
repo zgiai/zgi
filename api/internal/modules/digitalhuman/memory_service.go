@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/memoryruntime"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
@@ -102,6 +103,39 @@ func (s *Service) UpdateMemoryState(ctx context.Context, scope Scope, digitalHum
 		return nil, applicationError(err, "digital_human.memory.state.update")
 	}
 	return updated, nil
+}
+
+// RepairMemoryProjection rebuilds the hidden vector projection for one
+// DigitalHuman. Memory rows are the source of truth, so the rebuild only
+// recreates derived data and never changes stored memory.
+func (s *Service) RepairMemoryProjection(ctx context.Context, scope Scope, digitalHumanID uuid.UUID) (*MemoryProjectionRepairResult, error) {
+	if !validScopeBoundary(scope) || digitalHumanID == uuid.Nil {
+		return nil, applicationError(ErrInvalidRequest, "digital_human.memory.repair")
+	}
+	if s.projectionRepairer == nil {
+		// A nil repairer is a wiring gap: log it so operators can see the cause
+		// behind the unavailable response.
+		logger.WarnContext(ctx, "digital human memory projection repairer is not wired", "digital_human_id", digitalHumanID.String())
+		return nil, applicationError(ErrMemoryProjectionUnavailable, "digital_human.memory.repair")
+	}
+	if _, err := s.repo.Definition(ctx, scope, digitalHumanID); err != nil {
+		return nil, applicationError(err, "digital_human.memory.repair")
+	}
+	result, err := s.projectionRepairer.Repair(ctx, memoryProjectionScope{
+		OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID, DigitalHumanID: digitalHumanID,
+		ActorID: &scope.ActorID, PrincipalID: &scope.PrincipalID,
+	})
+	if err != nil {
+		return nil, applicationError(fmt.Errorf("%w: %v", ErrMemoryProjectionRepairFailed, err), "digital_human.memory.repair")
+	}
+	if err := s.repo.CreateActionLedger(ctx, &ActionLedgerEntry{
+		ID: uuid.New(), OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID, DigitalHumanID: digitalHumanID,
+		ActionType: "memory.projection.repair", Status: "completed", CreatedAt: s.now(),
+		Detail: mustJSON(map[string]any{"memory_count": result.MemoryCount, "embedding_provider": result.EmbeddingProvider, "embedding_model": result.EmbeddingModel}),
+	}); err != nil {
+		return nil, applicationError(err, "digital_human.memory.repair")
+	}
+	return result, nil
 }
 
 // ScheduleMemoryExtraction records a reference-only extraction job after a
@@ -476,21 +510,15 @@ func (s *Service) UndoMemory(ctx context.Context, scope Scope, digitalHumanID, o
 	return result, nil
 }
 
-// RetrieveMemories returns self memory plus only the explicitly authorized
-// business scopes. Actor identity never participates in the storage key.
-func (s *Service) RetrieveMemories(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, authorizedScopes []memoryruntime.MemoryScopeRef, limit int) ([]*DigitalHumanMemory, error) {
+// RetrieveMemories returns the DigitalHuman's active memories. Convergence: a
+// DigitalHuman currently owns a single self memory store, so business scopes no
+// longer filter recall; legacy business rows stay visible. Actor identity never
+// participates in the storage key.
+func (s *Service) RetrieveMemories(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, limit int) ([]*DigitalHumanMemory, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 30
 	}
-	normalized := make([]memoryruntime.MemoryScopeRef, 0, len(authorizedScopes))
-	for _, item := range authorizedScopes {
-		value, err := memoryruntime.ValidateMemoryScopeRef(item)
-		if err != nil {
-			return nil, applicationError(ErrInvalidRequest, "digital_human.memory.retrieve")
-		}
-		normalized = append(normalized, value)
-	}
-	items, err := s.repo.ActiveMemories(ctx, scope, digitalHumanID, normalized, limit)
+	items, err := s.repo.ActiveMemories(ctx, scope, digitalHumanID, limit)
 	if err != nil {
 		return nil, applicationError(err, "digital_human.memory.retrieve")
 	}
@@ -555,13 +583,11 @@ func validateMemoryProposalPolicy(request MemoryProposalRequest, autonomous bool
 	if sensitiveMemoryPattern.MatchString(request.Content) || looksLikeStructuredBusinessObject(request.Content) {
 		return ErrMemoryPolicyRejected
 	}
-	if autonomous {
-		allowed := request.MemoryType == memoryruntime.MemoryTypeExperience || request.MemoryType == memoryruntime.MemoryTypeDecision ||
-			request.MemoryType == memoryruntime.MemoryTypeOpenLoop || request.MemoryType == memoryruntime.MemoryTypeReflection ||
-			(request.MemoryClass == memoryruntime.MemoryClassBusiness && request.MemoryType == memoryruntime.MemoryTypeFact)
-		if !allowed || request.MemoryType == memoryruntime.MemoryTypeIdentity {
-			return ErrMemoryPolicyRejected
-		}
+	// Convergence: self is the only memory class, so an autonomous proposal may
+	// carry any non-identity type, including evidence-backed facts. Partitioning
+	// facts behind a business scope is deferred as a future extension.
+	if autonomous && request.MemoryType == memoryruntime.MemoryTypeIdentity {
+		return ErrMemoryPolicyRejected
 	}
 	if request.MemoryType == memoryruntime.MemoryTypeIdentity && !request.AdminApproved {
 		return ErrMemoryPolicyRejected
