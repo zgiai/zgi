@@ -30,6 +30,7 @@ func newSkillRuntimeWithSandbox(toolEngine *tools.ToolEngine, toolManager *tools
 		Endpoint:                  appconfig.GlobalConfig.CodeExec.Endpoint,
 		APIKey:                    appconfig.GlobalConfig.CodeExec.APIKey,
 		FallbackDependencyProfile: appconfig.GlobalConfig.CodeExec.SystemDataProfile,
+		DependencyScanDisabled:    appconfig.GlobalConfig.CodeExec.SkillDependencyScanDisabled,
 		ConnectTimeout:            secondsDuration(appconfig.GlobalConfig.CodeExec.ConnectTimeoutSeconds),
 		CreateTimeout:             secondsDuration(appconfig.GlobalConfig.CodeExec.CreateTimeoutSeconds),
 		UploadTimeout:             secondsDuration(appconfig.GlobalConfig.CodeExec.UploadTimeoutSeconds),

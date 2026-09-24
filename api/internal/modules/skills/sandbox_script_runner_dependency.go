@@ -9,6 +9,14 @@ import (
 	"time"
 )
 
+func (r *SandboxScriptRunner) configuredPrebuiltDependencyProfile() (string, error) {
+	profile := strings.TrimSpace(r.fallbackDependencyProfile)
+	if profile == "" {
+		return "", fmt.Errorf("skill dependency scan is disabled but prebuilt dependency profile is not configured")
+	}
+	return profile, nil
+}
+
 func (r *SandboxScriptRunner) preflightDependencyProfile(ctx context.Context, execCtx ExecutionContext, language string, dependencyProfile string) error {
 	profile := strings.TrimSpace(dependencyProfile)
 	if profile == "" {

@@ -366,6 +366,8 @@ const (
 	envCodeExecutionSystemOfficeProfile = "CODE_EXECUTION_SYSTEM_OFFICE_PROFILE"
 	// envCodeExecutionSystemDataProfile sets the prebuilt dependency profile used when runtime dependency builds are disabled. Default: scientific-data.
 	envCodeExecutionSystemDataProfile = "CODE_EXECUTION_SYSTEM_DATA_PROFILE"
+	// envCodeExecutionSkillDependencyScanEnabled controls per-skill dependency discovery and managed profile builds. Default: true.
+	envCodeExecutionSkillDependencyScanEnabled = "CODE_EXECUTION_SKILL_DEPENDENCY_SCAN_ENABLED"
 	// envSkillRuntimeGrantsPath points to administrator-owned organization/package grants.
 	envSkillRuntimeGrantsPath = "ZGI_SKILL_RUNTIME_GRANTS_PATH"
 
