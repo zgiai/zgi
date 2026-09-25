@@ -371,6 +371,16 @@ func LoadCustomSkillDocument(root string) (SkillDocument, error) {
 	return doc, nil
 }
 
+// ValidateCustomSkillScriptPackage performs the structural checks required
+// before a custom script skill can be imported. It intentionally does not
+// grant execution-time dependency or model-call capabilities.
+func ValidateCustomSkillScriptPackage(root string, fallbackTimeoutSeconds int) error {
+	if _, err := prepareSkillScriptManifest(root, fallbackTimeoutSeconds, true); err != nil {
+		return fmt.Errorf("invalid custom skill script package: %w", err)
+	}
+	return nil
+}
+
 func (r *Runtime) LoadCustomSkillDocument(root string) (SkillDocument, error) {
 	doc, err := LoadCustomSkillDocument(root)
 	if err != nil {

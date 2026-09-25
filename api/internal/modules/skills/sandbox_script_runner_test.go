@@ -853,6 +853,35 @@ func TestSkillPackageDependencyHintsDetectThirdPartyImports(t *testing.T) {
 	if skillPackageHasDependencyHints(stdlibRoot) {
 		t.Fatal("did not expect stdlib-only Python imports to trigger dependency prepare")
 	}
+
+	localRoot := writePythonScenarioSkill(t, "from zgi_local.main import run\nprint(run())")
+	if err := os.MkdirAll(filepath.Join(localRoot, "scripts", "zgi_local"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(localRoot, "scripts", "zgi_local", "main.py"), []byte("def run(): return 'ok'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if skillPackageHasDependencyHints(localRoot) {
+		t.Fatal("did not expect bundled Python imports to trigger dependency prepare")
+	}
+
+	nodeLocalRoot := writeNodeManifestSkill(t)
+	if err := os.WriteFile(filepath.Join(nodeLocalRoot, "scripts", "run.js"), []byte("const {value} = require('./local'); const fs = require('node:fs'); console.log(value, fs);\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nodeLocalRoot, "scripts", "local.js"), []byte("module.exports = 'ok';\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if skillPackageHasDependencyHints(nodeLocalRoot) {
+		t.Fatal("did not expect relative Node imports to trigger dependency prepare")
+	}
+
+	if err := os.WriteFile(filepath.Join(nodeLocalRoot, "scripts", "run.js"), []byte("const {read} = require('xlsx'); console.log(read);\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !skillPackageHasDependencyHints(nodeLocalRoot) {
+		t.Fatal("expected bare Node import to trigger dependency prepare")
+	}
 }
 
 // These tests use an HTTP test double only to assert rejection before network I/O.
