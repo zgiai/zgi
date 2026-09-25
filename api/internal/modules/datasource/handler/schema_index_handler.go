@@ -32,6 +32,36 @@ func NewSchemaIndexHandler(service *indexing.Service, productCatalog *catalog.Ca
 func (h *SchemaIndexHandler) Status(c *gin.Context) { h.handle(c, false) }
 func (h *SchemaIndexHandler) Start(c *gin.Context)  { h.handle(c, true) }
 
+type schemaIndexConfigureRequest struct {
+	Enabled                bool   `json:"enabled"`
+	EmbeddingModelProvider string `json:"embedding_model_provider"`
+	EmbeddingModel         string `json:"embedding_model"`
+}
+
+func (h *SchemaIndexHandler) Configure(c *gin.Context) {
+	org, id, account, ok := dataSourceAccessPolicyRequestScope(c)
+	if !ok {
+		return
+	}
+	if _, err := uuid.Parse(id); err != nil {
+		h.fail(c, apperror.New(catalog.CodeRequestInvalid))
+		return
+	}
+	var request schemaIndexConfigureRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		h.fail(c, apperror.Wrap(err, catalog.CodeRequestInvalid))
+		return
+	}
+	err := h.service.Configure(c.Request.Context(), org, id, account, indexing.ConfigureRequest{
+		Enabled: request.Enabled, Provider: request.EmbeddingModelProvider, Model: request.EmbeddingModel,
+	})
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	response.Success(c, map[string]bool{"accepted": true})
+}
+
 func (h *SchemaIndexHandler) History(c *gin.Context) {
 	org, id, account, ok := h.requestScope(c)
 	if !ok {

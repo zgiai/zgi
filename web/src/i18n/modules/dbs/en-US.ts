@@ -15,12 +15,17 @@ const messages = {
     checkedAt: 'Last catalog check: {time}',
     failures: '{count} tables failed. View details',
     consent:
-      'Building enables automatic updates when table structures or the default embedding model change. Model usage is billed to this database’s workspace. This is a table-discovery index, not a SQL performance index.',
+      'When enabled, table structure changes are indexed with the selected embedding model. Usage is billed to this database’s workspace. This is a table-discovery index, not a SQL performance index.',
     readOnly: 'Schema management permission is required to build or retry indexes.',
     startError:
       'Could not submit the request. Check model configuration and your permissions, then retry.',
     start: 'Build index',
     retry: 'Retry unfinished indexes',
+    enable: 'Enable automatic understanding',
+    disable: 'Turn off automatic updates',
+    disableConfirm:
+      'AI will stop selecting tables from this database automatically, and existing indexes will be cleaned up in the background.',
+    configuring: 'Saving…',
     history: {
       title: 'Update history',
       description: 'Index builds and automatic updates, summarized once per run.',
@@ -48,6 +53,7 @@ const messages = {
       ready: 'Ready',
       failed: 'Needs attention',
       empty: 'No tables to index',
+      cleanup: 'Turning off and cleaning up indexes',
     },
     errors: {
       timeout: 'This table exceeded its processing time limit.',
@@ -57,7 +63,8 @@ const messages = {
       scope:
         'Permissions, workspace, table structure or model configuration changed. Review them before retrying.',
       interrupted: 'Processing was interrupted. Retry this table.',
-      model: 'Configure an available default embedding model first.',
+      model:
+        'The selected embedding model is unavailable. Turn off indexing and select another model.',
       preparation:
         'Preparation failed. Check database access, model configuration and the task service.',
       build: 'Indexing failed. Check the server logs for the detailed cause.',
@@ -155,6 +162,12 @@ const messages = {
     permissionsLabel: 'Permissions',
     advancedSettingsLabel: 'Advanced Settings',
     iconLabel: 'Database Icon',
+    schemaIndexLabel: 'Let AI understand table structures automatically (recommended)',
+    schemaIndexDescription:
+      'Update after tables are created or changed to help AI select the right tables. This uses the selected embedding model.',
+    embeddingModelLabel: 'Embedding model',
+    embeddingModelPlaceholder: 'Select a model',
+    embeddingModelRequired: 'Select an embedding model',
     createButton: 'Create',
     creatingButton: 'Creating...',
   },

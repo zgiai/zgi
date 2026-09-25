@@ -159,6 +159,7 @@ func (h *DataSourceHandler) ConfirmExcelImport(c *gin.Context) {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
 	}
+	h.notifySchemaChanged(c.Request.Context(), dataSourceID)
 	response.Success(c, result)
 }
 

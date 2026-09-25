@@ -45,6 +45,7 @@ import type {
   AnalyzeExistingTableExcelImportData,
   ExistingTableExcelImportDraftRequest,
   ExistingTableExcelImportPreviewData,
+  SchemaIndexConfigRequest,
 } from './types/db';
 
 /**
@@ -58,6 +59,13 @@ class DbService extends BaseService {
 
   startSchemaIndex(dbId: string): Promise<ApiResponseData<{ accepted: boolean }>> {
     return this.request('post', `/data-dbs/${dbId}/schema-index`);
+  }
+
+  configureSchemaIndex(
+    dbId: string,
+    config: SchemaIndexConfigRequest
+  ): Promise<ApiResponseData<{ accepted: boolean }>> {
+    return this.request('put', `/data-dbs/${dbId}/schema-index`, config);
   }
 
   getSchemaIndexRuns(
@@ -479,7 +487,7 @@ class DbService extends BaseService {
 
 export interface SchemaIndexStatus {
   enabled: boolean;
-  state: 'disabled' | 'building' | 'ready' | 'failed' | 'empty';
+  state: 'disabled' | 'building' | 'ready' | 'failed' | 'empty' | 'cleanup';
   provider: string;
   model: string;
   total: number;
@@ -487,6 +495,7 @@ export interface SchemaIndexStatus {
   failed: Array<{ name: string; code: string }>;
   error_code?: string;
   updated_at: string | null;
+  cleanup_pending: boolean;
 }
 
 export interface SchemaIndexRun {

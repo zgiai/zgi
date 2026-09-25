@@ -18,6 +18,7 @@ import (
 )
 
 const taskType = "database:schema_index"
+const reconcileTaskType = "database:schema_index_reconcile"
 const tableTimeout = 2 * time.Minute
 const valueSampleTimeout = 15 * time.Second
 const maxValueSampleBackfills = 20
@@ -26,12 +27,53 @@ type taskPayload struct {
 	IndexID string `json:"index_id"`
 	AssetID string `json:"asset_id"`
 }
+type reconcileTaskPayload struct {
+	DataSourceID string `json:"data_source_id"`
+}
 type taskRegistry interface {
 	Register(string, func(context.Context, *asynq.Task) error) bool
 }
 
 func (s *Service) Register(registry taskRegistry) {
 	registry.Register(s.queue.GetTaskTypeWithPrefix(taskType), s.handleTask)
+	registry.Register(s.queue.GetTaskTypeWithPrefix(reconcileTaskType), s.handleReconcileTask)
+}
+
+// NotifySchemaChanged queues a cheap database-level reconciliation only when
+// automatic schema indexing is enabled.
+func (s *Service) NotifySchemaChanged(ctx context.Context, dataSourceID string) error {
+	var count int64
+	if err := s.db.WithContext(ctx).Model(&Settings{}).Where("data_source_id = ?", dataSourceID).Count(&count).Error; err != nil {
+		return err
+	}
+	if count == 0 {
+		return nil
+	}
+	return s.enqueueReconcile(dataSourceID)
+}
+
+func (s *Service) enqueueReconcile(dataSourceID string) error {
+	if s.queue == nil {
+		return fmt.Errorf("schema index queue unavailable")
+	}
+	payload, err := json.Marshal(reconcileTaskPayload{DataSourceID: dataSourceID})
+	if err != nil {
+		return err
+	}
+	task := asynq.NewTask(s.queue.GetTaskTypeWithPrefix(reconcileTaskType), payload)
+	_, err = s.queue.EnqueueTask(task, asynq.Queue("low"), asynq.MaxRetry(3), asynq.Timeout(5*time.Minute))
+	return err
+}
+
+func (s *Service) handleReconcileTask(ctx context.Context, task *asynq.Task) error {
+	var payload reconcileTaskPayload
+	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
+		return err
+	}
+	if payload.DataSourceID == "" {
+		return fmt.Errorf("schema index data source id required")
+	}
+	return s.ReconcileDataSource(ctx, payload.DataSourceID)
 }
 
 // Run reconciles only explicitly enabled databases. It also repairs missed
@@ -61,13 +103,7 @@ func (s *Service) Reconcile(ctx context.Context) error {
 			return ctx.Err()
 		}
 		scanCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-		err := s.withLock(scanCtx, "database:"+setting.DataSourceID, func(db *gorm.DB) error {
-			// Another instance or a manual retry may have updated the settings.
-			if err := db.WithContext(scanCtx).Where("data_source_id = ?", setting.DataSourceID).Take(&setting).Error; err != nil {
-				return err
-			}
-			return s.reconcileDatabase(scanCtx, setting)
-		})
+		err := s.ReconcileDataSource(scanCtx, setting.DataSourceID)
 		cancel()
 		if err != nil {
 			s.log.Error("database schema index reconciliation failed", zap.String("data_source_id", setting.DataSourceID), zap.Error(err))
@@ -80,7 +116,32 @@ func (s *Service) Reconcile(ctx context.Context) error {
 			}
 		}
 	}
+	var disabled []string
+	if err := s.db.WithContext(ctx).Table("text2sql_schema_indexes AS idx").Distinct("idx.data_source_id").Joins("LEFT JOIN database_schema_index_settings AS settings ON settings.data_source_id = idx.data_source_id").Where("settings.data_source_id IS NULL").Pluck("idx.data_source_id", &disabled).Error; err != nil {
+		return err
+	}
+	for _, dataSourceID := range disabled {
+		if err := s.ReconcileDataSource(ctx, dataSourceID); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// ReconcileDataSource serializes and reconciles one database. When indexing
+// has been disabled, it removes the remaining vector and metadata rows.
+func (s *Service) ReconcileDataSource(ctx context.Context, dataSourceID string) error {
+	return s.withLock(ctx, "database:"+dataSourceID, func(db *gorm.DB) error {
+		var setting Settings
+		err := db.WithContext(ctx).Where("data_source_id = ?", dataSourceID).Take(&setting).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return s.retire(ctx, Settings{DataSourceID: dataSourceID}, nil)
+		}
+		if err != nil {
+			return err
+		}
+		return s.reconcileDatabase(ctx, setting)
+	})
 }
 
 func (s *Service) reconcileDatabase(ctx context.Context, setting Settings) error {
@@ -100,11 +161,10 @@ func (s *Service) reconcileDatabase(ctx context.Context, setting Settings) error
 	if err := s.authorizeWorkspace(ctx, setting.OrganizationID, setting.WorkspaceID, setting.RequestedBy, true); err != nil {
 		return err
 	}
-	model, err := s.models.ResolveUseCase(ctx, setting.OrganizationID, llmmodel.UseCaseEmbedding, nil, nil)
+	model, err := s.models.ResolveUseCase(ctx, setting.OrganizationID, llmmodel.UseCaseEmbedding, &setting.EmbeddingProvider, &setting.EmbeddingModel)
 	if err != nil {
 		return err
 	}
-	previousProvider, previousModel := setting.EmbeddingProvider, setting.EmbeddingModel
 	var previousIDs []string
 	if err := json.Unmarshal(setting.TargetIDs, &previousIDs); err != nil {
 		return err
@@ -145,8 +205,8 @@ func (s *Service) reconcileDatabase(ctx context.Context, setting Settings) error
 		if setting.PendingRunID != nil {
 			runID = *setting.PendingRunID
 		}
-	} else if previousProvider != model.Provider || previousModel != model.Model {
-		trigger = "model_changed"
+	} else if len(previousIDs) == 0 && len(ids) > 0 {
+		trigger = "initial"
 	} else if !slices.Equal(previousIDs, ids) {
 		trigger = "schema_changed"
 	} else if setting.LastErrorCode != nil {
@@ -229,8 +289,10 @@ func (s *Service) retire(ctx context.Context, setting Settings, keep []string) e
 			if err := db.WithContext(ctx).Model(&text2sql.SchemaIndex{}).Where("id = ?", row.ID).Update("status", text2sql.IndexDeleting).Error; err != nil {
 				return err
 			}
-			if err := s.vectors.DeleteVector(ctx, row.VectorObjectID, row.CollectionName); err != nil {
-				return err
+			if row.VectorObjectID != "" && row.CollectionName != "" {
+				if err := s.vectors.DeleteVector(ctx, row.VectorObjectID, row.CollectionName); err != nil {
+					return err
+				}
 			}
 			return db.WithContext(ctx).Delete(&row).Error
 		}); err != nil {
@@ -339,6 +401,14 @@ func (s *Service) handleTask(ctx context.Context, task *asynq.Task) error {
 var errTaskScope = errors.New("schema index task scope changed")
 
 func (s *Service) validateTask(ctx context.Context, setting Settings, row *text2sql.SchemaIndex) error {
+	var current Settings
+	if err := s.db.WithContext(ctx).Where("data_source_id = ? AND workspace_id = ?", setting.DataSourceID, setting.WorkspaceID).Take(&current).Error; err != nil {
+		return errors.Join(errTaskScope, err)
+	}
+	var targetIDs []string
+	if err := json.Unmarshal(current.TargetIDs, &targetIDs); err != nil || !slices.Contains(targetIDs, row.ID) {
+		return errors.Join(errTaskScope, err)
+	}
 	ds, err := s.database(ctx, setting.OrganizationID, setting.DataSourceID)
 	if err != nil || *ds.WorkspaceID != setting.WorkspaceID {
 		return errors.Join(errTaskScope, err)
@@ -346,7 +416,7 @@ func (s *Service) validateTask(ctx context.Context, setting Settings, row *text2
 	if err := s.authorizeWorkspace(ctx, setting.OrganizationID, setting.WorkspaceID, setting.RequestedBy, true); err != nil {
 		return errors.Join(errTaskScope, err)
 	}
-	model, err := s.models.ResolveUseCase(ctx, setting.OrganizationID, llmmodel.UseCaseEmbedding, nil, nil)
+	model, err := s.models.ResolveUseCase(ctx, current.OrganizationID, llmmodel.UseCaseEmbedding, &current.EmbeddingProvider, &current.EmbeddingModel)
 	if err != nil || model.Provider != row.EmbeddingProvider || model.Model != row.EmbeddingModel {
 		return errors.Join(errTaskScope, err)
 	}

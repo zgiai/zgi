@@ -1,11 +1,14 @@
 'use client';
 
+import { useState } from 'react';
 import { AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { useT } from '@/i18n';
 import { DB_KEYS } from '@/hooks/query-keys';
 import { dbService } from '@/services/db.service';
+import { EmbeddingSettings } from '@/components/datasets/indexing-config';
+import { useInitializeDefaultModelByUseCase } from '@/hooks/model/use-default-model-by-use-case';
 
 interface Props {
   dbId: string;
@@ -15,6 +18,7 @@ interface Props {
 export function DbSchemaIndexPanel({ dbId, canManage }: Props) {
   const t = useT('dbs');
   const queryClient = useQueryClient();
+  const [embeddingModel, setEmbeddingModel] = useState({ provider: '', model: '' });
   const queryKey = [...DB_KEYS.detail(dbId), 'schema-index'];
   const status = useQuery({
     queryKey,
@@ -34,6 +38,25 @@ export function DbSchemaIndexPanel({ dbId, canManage }: Props) {
   });
   const data = status.data?.data;
   const state = data?.state;
+  useInitializeDefaultModelByUseCase({
+    useCase: 'embedding',
+    currentModel: embeddingModel,
+    enabled: Boolean(data && !data.enabled && !data.cleanup_pending),
+    onInitialize: setEmbeddingModel,
+  });
+  const configure = useMutation({
+    mutationFn: (enabled: boolean) =>
+      dbService.configureSchemaIndex(dbId, {
+        enabled,
+        ...(enabled
+          ? {
+              embedding_model_provider: embeddingModel.provider,
+              embedding_model: embeddingModel.model,
+            }
+          : {}),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey }),
+  });
   const progress = data && data.total > 0 ? Math.min(100, (data.ready / data.total) * 100) : 0;
   const explanation = (code: string) => {
     switch (code) {
@@ -156,19 +179,53 @@ export function DbSchemaIndexPanel({ dbId, canManage }: Props) {
               {!canManage && (
                 <p className="text-xs text-muted-foreground">{t('schemaIndex.readOnly')}</p>
               )}
-              {start.isError && (
+              {(start.isError || configure.isError) && (
                 <p role="alert" className="text-sm text-destructive">
                   {t('schemaIndex.startError')}
                 </p>
               )}
-              {canManage && (state === 'disabled' || state === 'failed') && (
+              {canManage && state === 'disabled' && !data.cleanup_pending && (
+                <div className="space-y-4">
+                  <EmbeddingSettings
+                    embeddingModel={embeddingModel}
+                    onChange={setEmbeddingModel}
+                    required
+                    title={t('createModal.embeddingModelLabel')}
+                    placeholder={t('createModal.embeddingModelPlaceholder')}
+                  />
+                  <Button
+                    className="w-full sm:w-auto"
+                    disabled={
+                      configure.isPending || !embeddingModel.provider || !embeddingModel.model
+                    }
+                    onClick={() => configure.mutate(true)}
+                  >
+                    {configure.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    {t('schemaIndex.enable')}
+                  </Button>
+                </div>
+              )}
+              {canManage && state === 'failed' && (
                 <Button
                   className="w-full sm:w-auto"
-                  disabled={start.isPending || data.total === 0 || !data.model}
+                  disabled={start.isPending || !data.model}
                   onClick={() => start.mutate()}
                 >
                   {start.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  {data.enabled ? t('schemaIndex.retry') : t('schemaIndex.start')}
+                  {t('schemaIndex.retry')}
+                </Button>
+              )}
+              {canManage && data.enabled && (
+                <Button
+                  variant="outline"
+                  className="w-full text-destructive hover:text-destructive sm:w-auto"
+                  disabled={configure.isPending}
+                  onClick={() => {
+                    if (window.confirm(t('schemaIndex.disableConfirm'))) configure.mutate(false);
+                  }}
+                >
+                  {configure.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  {t('schemaIndex.disable')}
                 </Button>
               )}
             </div>
