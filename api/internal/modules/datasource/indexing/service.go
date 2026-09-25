@@ -286,14 +286,14 @@ func (s *Service) Start(ctx context.Context, org, id, account string) error {
 		if existingErr != nil && !errors.Is(existingErr, gorm.ErrRecordNotFound) {
 			return existingErr
 		}
-		trigger := "manual_retry"
+		trigger := TriggerManualRetry
 		if errors.Is(existingErr, gorm.ErrRecordNotFound) {
 			model, resolveErr := s.models.ResolveUseCase(ctx, org, llmmodel.UseCaseEmbedding, nil, nil)
 			if resolveErr != nil {
 				return fmt.Errorf("resolve embedding model: %w", resolveErr)
 			}
 			existing = Settings{DataSourceID: id, OrganizationID: org, WorkspaceID: *ds.WorkspaceID, RequestedBy: account, EmbeddingProvider: model.Provider, EmbeddingModel: model.Model, TargetIDs: datatypes.JSON("[]")}
-			trigger = "initial"
+			trigger = TriggerInitial
 		}
 		runID := uuid.NewString()
 		existing.PendingRunID, existing.PendingTrigger = &runID, &trigger

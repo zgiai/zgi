@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/datasource/indexing"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/response"
@@ -159,7 +160,7 @@ func (h *DataSourceHandler) ConfirmExcelImport(c *gin.Context) {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
 	}
-	h.notifySchemaChanged(c.Request.Context(), dataSourceID)
+	h.notifySchemaChanged(c.Request.Context(), dataSourceID, indexing.TriggerTableCreated)
 	response.Success(c, result)
 }
 

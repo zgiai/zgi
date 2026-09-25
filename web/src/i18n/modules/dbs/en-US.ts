@@ -37,6 +37,9 @@ const messages = {
       unknownTable: 'Preparation',
       triggers: {
         initial: 'Initial build',
+        table_created: 'Table added',
+        table_deleted: 'Table deleted',
+        table_metadata_changed: 'Table details changed',
         schema_changed: 'Schema changed',
         model_changed: 'Embedding model changed',
         manual_retry: 'Manual retry',

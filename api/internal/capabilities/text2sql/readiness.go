@@ -2,6 +2,7 @@ package text2sql
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/zgiai/zgi/api/pkg/sql_base"
@@ -13,27 +14,62 @@ type IndexedTable struct {
 	Table   *sql_base.Table
 }
 
+type indexedTableAsset struct {
+	ID          string
+	TableID     int
+	Name        string
+	Description string
+}
+
 // Snapshot loads the current catalog, without creating indexes or calling a model.
 func (r *IndexRepository) Snapshot(ctx context.Context, organizationID, sourceID string, sql sql_base.SQLBase) ([]IndexedTable, error) {
-	var assets []struct {
-		ID      string
-		TableID int
-	}
-	if err := r.db.WithContext(ctx).Table("data_source_tables").Select("id, table_id").Where("organization_id = ? AND data_source_id = ?", organizationID, sourceID).Order("id").Find(&assets).Error; err != nil {
+	var assets []indexedTableAsset
+	if err := r.db.WithContext(ctx).Table("data_source_tables").Select("id, table_id, name, description").Where("organization_id = ? AND data_source_id = ?", organizationID, sourceID).Order("id").Find(&assets).Error; err != nil {
 		return nil, err
 	}
 	result := make([]IndexedTable, 0, len(assets))
 	for _, asset := range assets {
-		table, err := sql.GetTable(ctx, asset.TableID)
+		table, err := loadIndexedTable(ctx, sql, asset)
 		if err != nil {
 			return nil, fmt.Errorf("load index catalog: %w", err)
-		}
-		if table == nil {
-			return nil, ErrSchemaLoad
 		}
 		result = append(result, IndexedTable{asset.ID, table})
 	}
 	return result, nil
+}
+
+func (r *IndexRepository) snapshotTable(ctx context.Context, assetID string, sql sql_base.SQLBase) (*IndexedTable, error) {
+	var asset indexedTableAsset
+	if err := r.db.WithContext(ctx).Table("data_source_tables").Select("id, table_id, name, description").Where("id = ?", assetID).Take(&asset).Error; err != nil {
+		return nil, err
+	}
+	table, err := loadIndexedTable(ctx, sql, asset)
+	if err != nil {
+		return nil, err
+	}
+	return &IndexedTable{AssetID: asset.ID, Table: table}, nil
+}
+
+func loadIndexedTable(ctx context.Context, sql sql_base.SQLBase, asset indexedTableAsset) (*sql_base.Table, error) {
+	table, err := sql.GetTable(ctx, asset.TableID)
+	if err != nil {
+		return nil, err
+	}
+	if table == nil {
+		return nil, ErrSchemaLoad
+	}
+	copyTable := *table
+	metadata, err := json.Marshal(struct {
+		DisplayName     string  `json:"display_name"`
+		Description     string  `json:"description"`
+		PhysicalComment *string `json:"physical_comment,omitempty"`
+	}{asset.Name, asset.Description, table.Comment})
+	if err != nil {
+		return nil, fmt.Errorf("encode table metadata: %w", err)
+	}
+	comment := string(metadata)
+	copyTable.Comment = &comment
+	return &copyTable, nil
 }
 
 // CompleteIndexes selects exactly one current ready index for every asset.

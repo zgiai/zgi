@@ -9,6 +9,7 @@ import (
 
 	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/datasource/indexing"
 	"github.com/zgiai/zgi/api/internal/modules/datasource/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	shared_visibility "github.com/zgiai/zgi/api/internal/modules/shared/visibility"
@@ -26,7 +27,7 @@ import (
 )
 
 type schemaIndexChangeNotifier interface {
-	NotifySchemaChanged(ctx context.Context, dataSourceID string) error
+	NotifySchemaChanged(ctx context.Context, dataSourceID, trigger string) error
 }
 
 // DataSourceHandler handles HTTP requests for data sources
@@ -80,11 +81,11 @@ func NewDataSourceHandler(service service.DataSourceService, accountService inte
 	return handler
 }
 
-func (h *DataSourceHandler) notifySchemaChanged(ctx context.Context, dataSourceID string) {
+func (h *DataSourceHandler) notifySchemaChanged(ctx context.Context, dataSourceID, trigger string) {
 	if h.schemaIndexNotifier == nil {
 		return
 	}
-	if err := h.schemaIndexNotifier.NotifySchemaChanged(ctx, dataSourceID); err != nil {
+	if err := h.schemaIndexNotifier.NotifySchemaChanged(ctx, dataSourceID, trigger); err != nil {
 		logger.L().Warn("enqueue database schema index reconciliation", zap.String("data_source_id", dataSourceID), zap.Error(err))
 	}
 }
@@ -560,7 +561,7 @@ func (h *DataSourceHandler) CreateTable(c *gin.Context) {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
 	}
-	h.notifySchemaChanged(c.Request.Context(), id)
+	h.notifySchemaChanged(c.Request.Context(), id, indexing.TriggerTableCreated)
 
 	response.Success(c, table)
 }
@@ -726,7 +727,7 @@ func (h *DataSourceHandler) DeleteTable(c *gin.Context) {
 		response.Fail(c, response.ErrSystemError)
 		return
 	}
-	h.notifySchemaChanged(c.Request.Context(), id)
+	h.notifySchemaChanged(c.Request.Context(), id, indexing.TriggerTableDeleted)
 
 	response.Success(c, gin.H{"message": "table deleted successfully"})
 }
@@ -816,7 +817,7 @@ func (h *DataSourceHandler) UpdateTable(c *gin.Context) {
 		response.Fail(c, response.ErrNotFound)
 		return
 	}
-	h.notifySchemaChanged(c.Request.Context(), dataSourceID)
+	h.notifySchemaChanged(c.Request.Context(), dataSourceID, indexing.TriggerTableMetadataChanged)
 
 	response.Success(c, table)
 }
@@ -876,7 +877,7 @@ func (h *DataSourceHandler) UpdateTableColumns(c *gin.Context) {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
 	}
-	h.notifySchemaChanged(c.Request.Context(), id)
+	h.notifySchemaChanged(c.Request.Context(), id, indexing.TriggerSchemaChanged)
 
 	response.Success(c, gin.H{"message": "table columns updated successfully"})
 }

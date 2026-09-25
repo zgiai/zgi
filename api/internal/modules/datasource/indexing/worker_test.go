@@ -147,7 +147,7 @@ func newFixture(t *testing.T, n int) fixture {
 		"ALTER TABLE text2sql_schema_indexes ADD build_attempts integer NOT NULL DEFAULT 0",
 		"CREATE UNIQUE INDEX identity_unique ON text2sql_schema_indexes(workspace_id,data_source_id,asset_table_id,fingerprint,embedding_provider,embedding_model)",
 		"CREATE TABLE data_sources(id uuid PRIMARY KEY,organization_id uuid,workspace_id uuid)",
-		"CREATE TABLE data_source_tables(id uuid PRIMARY KEY,organization_id uuid,data_source_id uuid,table_id integer)",
+		"CREATE TABLE data_source_tables(id uuid PRIMARY KEY,organization_id uuid,data_source_id uuid,table_id integer,name text NOT NULL,description text NOT NULL)",
 	} {
 		if err := db.Exec(sql).Error; err != nil {
 			t.Fatal(err)
@@ -160,7 +160,7 @@ func newFixture(t *testing.T, n int) fixture {
 	catalog := testSQL{tables: map[int]*sql_base.Table{}}
 	for i := 1; i <= n; i++ {
 		catalog.tables[i] = &sql_base.Table{ID: i, Schema: "public", Name: fmt.Sprintf("table_%03d", i)}
-		if err := db.Exec("INSERT INTO data_source_tables VALUES(?,?,?,?)", uuid.NewString(), setting.OrganizationID, setting.DataSourceID, i).Error; err != nil {
+		if err := db.Exec("INSERT INTO data_source_tables VALUES(?,?,?,?,?,?)", uuid.NewString(), setting.OrganizationID, setting.DataSourceID, i, fmt.Sprintf("Table %03d", i), fmt.Sprintf("Description %03d", i)).Error; err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -216,6 +216,33 @@ func (f fixture) status(t *testing.T) *Status {
 		t.Fatal(err)
 	}
 	return status
+}
+
+func TestAutomaticPendingTriggerPreservesInitialBuildAndDistinguishesLaterCreates(t *testing.T) {
+	got, err := automaticPendingTrigger(Settings{TargetIDs: []byte("[]")}, TriggerTableCreated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != TriggerInitial {
+		t.Fatalf("first table trigger = %q, want %q", got, TriggerInitial)
+	}
+
+	pending := TriggerTableCreated
+	got, err = automaticPendingTrigger(Settings{TargetIDs: []byte(`["existing"]`), PendingTrigger: &pending}, TriggerSchemaChanged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != TriggerTableCreated {
+		t.Fatalf("coalesced trigger = %q, want %q", got, TriggerTableCreated)
+	}
+
+	got, err = automaticPendingTrigger(Settings{TargetIDs: []byte(`["existing"]`)}, TriggerTableCreated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != TriggerTableCreated {
+		t.Fatalf("later table trigger = %q, want %q", got, TriggerTableCreated)
+	}
 }
 
 func TestPostgresTwoHundredTablesResumeAndReuse(t *testing.T) {
@@ -312,7 +339,7 @@ func TestPostgresTimeoutRetryBudgetAndManualRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if page.Total != 2 || page.Items[0].Trigger != "manual_retry" || page.Items[0].Status != "succeeded" || page.Items[1].Status != "failed" {
+	if page.Total != 2 || page.Items[0].Trigger != TriggerManualRetry || page.Items[0].Status != "succeeded" || page.Items[1].Status != "failed" {
 		t.Fatalf("unexpected retry history: %+v", page.Items)
 	}
 	firstPage, err := f.service.History(context.Background(), f.setting.OrganizationID, f.setting.DataSourceID, f.setting.RequestedBy, 1, 1)
@@ -361,5 +388,74 @@ func TestPostgresPermissionModelChangeAndMove(t *testing.T) {
 	f.service.db.Model(&Settings{}).Count(&count)
 	if count != 0 {
 		t.Fatal("moved database remains enabled in old workspace")
+	}
+}
+
+func TestPostgresTableMetadataChangeRebuildsIndexAndKeepsTrigger(t *testing.T) {
+	f := newFixture(t, 1)
+	f.start(t)
+	before := f.rows(t)[0]
+
+	if err := f.service.db.Table("data_source_tables").Where("data_source_id = ?", f.setting.DataSourceID).Updates(map[string]any{
+		"name": "Renamed table", "description": "Updated description",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.NotifySchemaChanged(context.Background(), f.setting.DataSourceID, TriggerTableMetadataChanged); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	after := f.rows(t)[0]
+	if after.ID == before.ID {
+		t.Fatal("table metadata change reused the previous index")
+	}
+	if err := f.service.handleTask(context.Background(), indexTask(after)); err != nil {
+		t.Fatal(err)
+	}
+	var run Run
+	if err := f.service.db.Where("data_source_id = ? AND trigger = ?", f.setting.DataSourceID, TriggerTableMetadataChanged).Take(&run).Error; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPostgresTableCreateAndDeleteKeepDistinctTriggers(t *testing.T) {
+	f := newFixture(t, 1)
+	f.start(t)
+	assetID := uuid.NewString()
+	f.service.sql.(testSQL).tables[2] = &sql_base.Table{ID: 2, Schema: "public", Name: "table_002"}
+	if err := f.service.db.Exec("INSERT INTO data_source_tables VALUES(?,?,?,?,?,?)", assetID, f.setting.OrganizationID, f.setting.DataSourceID, 2, "Second table", "Created later").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.NotifySchemaChanged(context.Background(), f.setting.DataSourceID, TriggerTableCreated); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var created Run
+	if err := f.service.db.Where("data_source_id = ? AND trigger = ?", f.setting.DataSourceID, TriggerTableCreated).Take(&created).Error; err != nil {
+		t.Fatal(err)
+	}
+	if created.TableCount != 1 {
+		t.Fatalf("created table count = %d, want 1", created.TableCount)
+	}
+
+	if err := f.service.db.Exec("DELETE FROM data_source_tables WHERE id = ?", assetID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.NotifySchemaChanged(context.Background(), f.setting.DataSourceID, TriggerTableDeleted); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var deleted Run
+	if err := f.service.db.Where("data_source_id = ? AND trigger = ?", f.setting.DataSourceID, TriggerTableDeleted).Take(&deleted).Error; err != nil {
+		t.Fatal(err)
+	}
+	if deleted.TableCount != 1 {
+		t.Fatalf("deleted table count = %d, want 1", deleted.TableCount)
 	}
 }

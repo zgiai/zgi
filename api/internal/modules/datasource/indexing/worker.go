@@ -39,17 +39,64 @@ func (s *Service) Register(registry taskRegistry) {
 	registry.Register(s.queue.GetTaskTypeWithPrefix(reconcileTaskType), s.handleReconcileTask)
 }
 
-// NotifySchemaChanged queues a cheap database-level reconciliation only when
-// automatic schema indexing is enabled.
-func (s *Service) NotifySchemaChanged(ctx context.Context, dataSourceID string) error {
-	var count int64
-	if err := s.db.WithContext(ctx).Model(&Settings{}).Where("data_source_id = ?", dataSourceID).Count(&count).Error; err != nil {
+// NotifySchemaChanged durably records why reconciliation is needed before it
+// queues the cheap database-level task. The minute reconciler can therefore
+// preserve the user-visible reason even when Redis is temporarily unavailable.
+func (s *Service) NotifySchemaChanged(ctx context.Context, dataSourceID, trigger string) error {
+	if !isAutomaticTrigger(trigger) {
+		return fmt.Errorf("invalid automatic schema index trigger %q", trigger)
+	}
+	enabled := false
+	err := s.withLock(ctx, "database:"+dataSourceID, func(db *gorm.DB) error {
+		var setting Settings
+		if err := db.WithContext(ctx).Where("data_source_id = ?", dataSourceID).Take(&setting).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		} else if err != nil {
+			return err
+		}
+		effectiveTrigger, err := automaticPendingTrigger(setting, trigger)
+		if err != nil {
+			return err
+		}
+		runID := uuid.NewString()
+		if setting.PendingRunID != nil {
+			runID = *setting.PendingRunID
+		}
+		enabled = true
+		return db.WithContext(ctx).Model(&Settings{}).Where("data_source_id = ?", dataSourceID).Updates(map[string]any{
+			"pending_run_id": runID, "pending_trigger": effectiveTrigger, "last_error_code": nil, "updated_at": time.Now(),
+		}).Error
+	})
+	if err != nil || !enabled {
 		return err
 	}
-	if count == 0 {
-		return nil
-	}
 	return s.enqueueReconcile(dataSourceID)
+}
+
+func automaticPendingTrigger(setting Settings, trigger string) (string, error) {
+	if setting.PendingTrigger != nil {
+		return *setting.PendingTrigger, nil
+	}
+	if trigger != TriggerTableCreated {
+		return trigger, nil
+	}
+	var targetIDs []string
+	if err := json.Unmarshal(setting.TargetIDs, &targetIDs); err != nil {
+		return "", err
+	}
+	if len(targetIDs) == 0 {
+		return TriggerInitial, nil
+	}
+	return trigger, nil
+}
+
+func isAutomaticTrigger(trigger string) bool {
+	switch trigger {
+	case TriggerTableCreated, TriggerTableDeleted, TriggerTableMetadataChanged, TriggerSchemaChanged:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Service) enqueueReconcile(dataSourceID string) error {
@@ -206,9 +253,9 @@ func (s *Service) reconcileDatabase(ctx context.Context, setting Settings) error
 			runID = *setting.PendingRunID
 		}
 	} else if len(previousIDs) == 0 && len(ids) > 0 {
-		trigger = "initial"
+		trigger = TriggerInitial
 	} else if !slices.Equal(previousIDs, ids) {
-		trigger = "schema_changed"
+		trigger = TriggerSchemaChanged
 	} else if setting.LastErrorCode != nil {
 		trigger, err = s.lastFailedTrigger(ctx, setting.DataSourceID)
 		if err != nil {

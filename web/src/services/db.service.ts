@@ -500,7 +500,14 @@ export interface SchemaIndexStatus {
 
 export interface SchemaIndexRun {
   id: string;
-  trigger: 'initial' | 'schema_changed' | 'model_changed' | 'manual_retry';
+  trigger:
+    | 'initial'
+    | 'table_created'
+    | 'table_deleted'
+    | 'table_metadata_changed'
+    | 'schema_changed'
+    | 'model_changed'
+    | 'manual_retry';
   status: 'building' | 'succeeded' | 'failed';
   provider: string;
   model: string;

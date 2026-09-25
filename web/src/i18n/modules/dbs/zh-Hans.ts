@@ -35,6 +35,9 @@ const messages: DbsMessages = {
       unknownTable: '准备阶段',
       triggers: {
         initial: '首次建立',
+        table_created: '新增数据表',
+        table_deleted: '删除数据表',
+        table_metadata_changed: '表信息变化',
         schema_changed: '表结构变化',
         model_changed: '向量模型变化',
         manual_retry: '手动重试',
