@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zgiai/zgi/api/internal/infra/platform/consolecred"
 	"github.com/zgiai/zgi/api/internal/observability"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
@@ -181,6 +182,10 @@ func (c *Cloud) signRequest(req *http.Request) {
 	sig := hex.EncodeToString(mac.Sum(nil))
 	req.Header.Set("X-Internal-Timestamp", ts)
 	req.Header.Set("X-Internal-Signature", sig)
+
+	// MERGE-NOTE(codex-video-image-rollback): per-instance credential on top of the
+	// legacy shared secret. Merge: keep this single line.
+	consolecred.SignRequest(req)
 }
 
 // deepCopy returns a deep copy of the cached channels to prevent callers from mutating cache.

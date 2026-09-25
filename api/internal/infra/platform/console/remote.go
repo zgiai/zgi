@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zgiai/zgi/api/internal/infra/platform/consolecred"
 	"github.com/zgiai/zgi/api/internal/observability"
 )
 
@@ -682,6 +683,10 @@ func (r *Remote) signRequest(req *http.Request) {
 	sig := hex.EncodeToString(mac.Sum(nil))
 	req.Header.Set("X-Internal-Timestamp", ts)
 	req.Header.Set("X-Internal-Signature", sig)
+
+	// MERGE-NOTE(codex-video-image-rollback): adds the per-instance credential on top of
+	// the legacy shared secret. Merge: keep this single line next to the branch signer.
+	consolecred.SignRequest(req)
 }
 
 func (r *Remote) doJSON(

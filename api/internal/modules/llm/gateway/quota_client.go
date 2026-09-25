@@ -11,6 +11,7 @@ import (
 	"github.com/shopspring/decimal"
 	appconfig "github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/infra/platform/consoleauth"
+	"github.com/zgiai/zgi/api/internal/infra/platform/consolecred"
 	"github.com/zgiai/zgi/api/internal/observability"
 	pb "github.com/zgiai/zgi/api/pkg/rpc/v1"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
@@ -32,6 +33,13 @@ func NewQuotaClient(address string) (*QuotaClient, error) {
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithBlock(),
 	}
+	// Two distinct credentials travel on every billing RPC. The per-instance
+	// control-plane credential is attached first: it contributes the X-Internal-*
+	// HMAC headers (signed through consolecred over the full gRPC method) the console
+	// instance interceptor verifies. The Console-issued downstream client key is
+	// attached last so that it owns the "authorization" metadata key the console
+	// downstream interceptor resolves. Neither credential is required to be present.
+	dialOptions = append(dialOptions, grpc.WithPerRPCCredentials(consolecred.NewGRPCCredentials()))
 	if cfg := appconfig.Current(); cfg != nil {
 		if key := strings.TrimSpace(cfg.Console.InternalAPIKey); key != "" {
 			dialOptions = append(dialOptions, grpc.WithPerRPCCredentials(consoleauth.Credentials{Token: key}))

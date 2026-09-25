@@ -39,6 +39,7 @@ import (
 	connectorgmail "github.com/zgiai/zgi/api/internal/modules/connectors/providers/gmail"
 	connectormail "github.com/zgiai/zgi/api/internal/modules/connectors/providers/mailprotocol"
 	connectorruntimeconfirmation "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeconfirmation"
+	"github.com/zgiai/zgi/api/internal/modules/consolesync"
 	contentparsemodule "github.com/zgiai/zgi/api/internal/modules/contentparse"
 	datalibrarymodule "github.com/zgiai/zgi/api/internal/modules/datalibrary"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
@@ -202,6 +203,9 @@ type ServiceContainer struct {
 
 	// Data Library module
 	dataLibraryModule *datalibrarymodule.Module
+
+	// consoleSyncCancel marks that the console control-plane loop was started.
+	consoleSyncCancel chan struct{}
 
 	// Tenant permission filter service
 	tenantPermissionFilterService workspace_service.WorkspacePermissionFilterService
@@ -441,6 +445,29 @@ func (c *ServiceContainer) InitializeDependencies() {
 	c.wireAccountDependencies()
 	c.wireWorkspaceDependencies()
 	c.initializeWorkflowFileDependencies()
+	c.initializeConsoleSync()
+}
+
+// initializeConsoleSync starts the console control-plane loop.
+//
+// Cloud mode only: in SELF_HOSTED mode (or when CONSOLE_SYNC_ENABLED is false, or when no
+// instance credential is configured) NewService returns nil and nothing runs, so
+// behaviour is byte-for-byte identical to before this feature existed.
+//
+// MERGE-NOTE(codex-video-image-rollback): the branch does not touch this file. Keep this
+// method; it is the single startup hook for the sync loop.
+func (c *ServiceContainer) initializeConsoleSync() {
+	if c == nil || c.db == nil || c.config == nil {
+		return
+	}
+	buildVersion := c.config.Sentry.Release
+	service := consolesync.NewService(c.db, consolesync.ConfigFromApp(c.config), buildVersion)
+	consolesync.SetGlobal(service)
+	if service == nil {
+		return
+	}
+	c.consoleSyncCancel = make(chan struct{})
+	go service.Start(context.Background())
 }
 
 func (c *ServiceContainer) initializeCoreServices() {

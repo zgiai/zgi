@@ -153,6 +153,15 @@ type ConsoleConfig struct {
 	GRPCAddr       string `json:"grpc_addr"`
 	InternalAPIKey string `json:"-"`
 	WebURL         string `json:"web_url"`
+
+	// Per-instance control-plane credential issued by console (Cloud mode).
+	InstanceID     string `json:"instance_id,omitempty"`
+	InstanceSecret string `json:"-"`
+
+	// Control-plane sync loop cadence (Cloud mode only).
+	SyncEnabled     bool `json:"sync_enabled"`
+	SyncIntervalSec int  `json:"sync_interval_sec"`
+	SyncStaleSec    int  `json:"sync_stale_sec"`
 }
 
 type LLMPolicyPromptConfig struct {

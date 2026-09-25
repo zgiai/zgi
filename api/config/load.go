@@ -443,11 +443,19 @@ func loadAppConfig(cfg *Config, source *envSource) error {
 }
 
 func loadConsoleConfig(cfg *Config, source *envSource) {
+	syncIntervalSec, _ := source.int(45, envConsoleSyncIntervalSec)
+	syncStaleSec, _ := source.int(300, envConsoleSyncStaleSec)
+
 	cfg.Console = ConsoleConfig{
-		APIURL:         source.string(defaultLocalConsoleAPIURL(cfg), envConsoleAPIURL),
-		GRPCAddr:       source.string("", envConsoleAPIGRPCAddr),
-		InternalAPIKey: source.string("", envConsoleInternalAPIKey),
-		WebURL:         source.string(cfg.Email.ConsoleWebURL, envEmailConsoleWebURL),
+		APIURL:          source.string(defaultLocalConsoleAPIURL(cfg), envConsoleAPIURL),
+		GRPCAddr:        source.string("", envConsoleAPIGRPCAddr),
+		InternalAPIKey:  source.string("", envConsoleInternalAPIKey),
+		WebURL:          source.string(cfg.Email.ConsoleWebURL, envEmailConsoleWebURL),
+		InstanceID:      source.string("", envConsoleInstanceID),
+		InstanceSecret:  source.string("", envConsoleInstanceSecret),
+		SyncEnabled:     mustBool(source.bool(true, envConsoleSyncEnabled)),
+		SyncIntervalSec: syncIntervalSec,
+		SyncStaleSec:    syncStaleSec,
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/infra/platform/consoleauth"
+	"github.com/zgiai/zgi/api/internal/infra/platform/consolecred"
 	pb "github.com/zgiai/zgi/api/pkg/rpc/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -52,6 +53,12 @@ func (c *consoleOfficialCreditChecker) GetOfficialBalance(ctx context.Context, o
 	dialOptions := []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithBlock(),
+		// Two distinct credentials travel on the balance RPC. The per-instance
+		// control-plane credential is attached first: it contributes the X-Internal-*
+		// HMAC headers the console instance interceptor verifies. The Console-issued
+		// downstream client key is attached below so that it owns the "authorization"
+		// metadata key the console downstream interceptor resolves.
+		grpc.WithPerRPCCredentials(consolecred.NewGRPCCredentials()),
 	}
 	if key := strings.TrimSpace(c.apiKey); key != "" {
 		dialOptions = append(dialOptions, grpc.WithPerRPCCredentials(consoleauth.Credentials{Token: key}))

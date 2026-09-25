@@ -20,6 +20,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/infra/platform"
 	pchannel "github.com/zgiai/zgi/api/internal/infra/platform/channel"
 	pconsole "github.com/zgiai/zgi/api/internal/infra/platform/console"
+	"github.com/zgiai/zgi/api/internal/infra/platform/consolecred"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	apikeyrepo "github.com/zgiai/zgi/api/internal/modules/llm/apikey/repository"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
@@ -1113,6 +1114,10 @@ func signConsoleRequest(req *http.Request, internalAPIKey string) {
 	sig := hex.EncodeToString(mac.Sum(nil))
 	req.Header.Set("X-Internal-Timestamp", ts)
 	req.Header.Set("X-Internal-Signature", sig)
+
+	// MERGE-NOTE(codex-video-image-rollback): per-instance credential on top of the
+	// legacy shared secret. Merge: keep this single line.
+	consolecred.SignRequest(req)
 }
 
 // rollbackPreDeduction releases a pre-deducted reservation after a failed provider attempt.
