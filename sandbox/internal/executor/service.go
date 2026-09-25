@@ -46,6 +46,22 @@ type Service struct {
 	queuedExecutionsByOrganization map[string]int
 }
 
+// Skill package archives have a stable cross-service contract. Keep these
+// values aligned with the API's custom-skill import and snapshot limits.
+const (
+	maxSkillPackageArchiveFiles     = 600
+	maxSkillPackageArchiveFileSize  = 10 * 1024 * 1024
+	maxSkillPackageArchiveTotalSize = 64 * 1024 * 1024
+)
+
+func skillPackageArchiveLimits() archiveLimits {
+	return archiveLimits{
+		maxFiles:     maxSkillPackageArchiveFiles,
+		maxFileSize:  maxSkillPackageArchiveFileSize,
+		maxTotalSize: maxSkillPackageArchiveTotalSize,
+	}
+}
+
 type CodeRequest struct {
 	SandboxID            string          `json:"sandbox_id"`
 	OrganizationID       string          `json:"organization_id,omitempty"`
@@ -1430,6 +1446,9 @@ func (s *Service) UploadArchive(req ArchiveUploadRequest) (*ArchiveUploadResult,
 		maxFiles:     256,
 		maxFileSize:  s.policy.MaxFileSizeBytes(),
 		maxTotalSize: s.policy.MaxFileSizeBytes() * 256,
+	}
+	if req.ValidateSkillManifest {
+		limit = skillPackageArchiveLimits()
 	}
 	totalSize, err := validateArchiveEntriesWithinLimits(entries, limit)
 	if err != nil {

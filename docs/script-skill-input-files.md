@@ -63,11 +63,14 @@ selected dependency profile. Python packages must resolve from the entrypoint
 directory. Node.js packages must still be imported by a relative specifier.
 
 Deployments with a fixed, prebuilt dependency set may set
-`CODE_EXECUTION_SKILL_DEPENDENCY_SCAN_ENABLED=false`. Default-profile skills then
-skip dependency discovery and managed builds and use
-`CODE_EXECUTION_SYSTEM_DATA_PROFILE` instead. The configured profile must already
-be present, enabled, and ready in the sandbox catalog; profile preflight and all
-archive, manifest, input, artifact, and organization-grant checks remain active.
+`CODE_EXECUTION_SKILL_DEPENDENCY_SCAN_ENABLED=false`. Default-profile Python
+skills then skip dependency discovery and managed builds and use
+`CODE_EXECUTION_SYSTEM_DATA_PROFILE` instead. Default-profile Node.js skills stay
+on `stdlib`; a deployment that needs Node.js third-party packages in this mode must
+provide a compatible prebuilt profile through a server-controlled runtime grant.
+The configured Python profile must already be present, enabled, and ready in the
+sandbox catalog; profile preflight and all archive, manifest, input, artifact, and
+organization-grant checks remain active.
 
 When `confirmation_file_id` is supplied, stdin keeps the original arguments and
 adds file metadata:

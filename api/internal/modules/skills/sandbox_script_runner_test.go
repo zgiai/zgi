@@ -826,6 +826,64 @@ func TestSandboxScriptRunnerUsesPrebuiltProfileWhenDependencyScanDisabled(t *tes
 	}
 }
 
+func TestSandboxScriptRunnerKeepsStdlibForNodeWhenDependencyScanDisabled(t *testing.T) {
+	root := writeNodeManifestSkill(t)
+	if err := os.WriteFile(filepath.Join(root, "scripts", "run.js"), []byte("const yaml = require('yaml'); console.log(JSON.stringify({ok: Boolean(yaml)}));\n"), 0o600); err != nil {
+		t.Fatalf("write Node script: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/sandbox/dependencies":
+			if r.URL.Query().Get("language") != "nodejs" {
+				t.Fatalf("dependency catalog language = %q, want nodejs", r.URL.Query().Get("language"))
+			}
+			writeSandboxOK(t, w, map[string]interface{}{
+				"language": "nodejs",
+				"profiles": []map[string]interface{}{
+					{"name": "stdlib", "version": "2026.09.14", "status": "ready", "enabled": true, "languages": []string{"nodejs"}},
+				},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/sandbox/dependencies/builds":
+			t.Fatal("unexpected dynamic dependency build request")
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/sandboxes":
+			request := readJSONBody(t, r)
+			if request["dependency_profile"] != "stdlib" {
+				t.Fatalf("dependency profile = %#v, want stdlib", request["dependency_profile"])
+			}
+			writeSandboxOK(t, w, map[string]interface{}{"id": "sbx_node"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/files/upload-archive":
+			writeSandboxOK(t, w, map[string]interface{}{"file_count": 2})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/exec/skill":
+			writeSandboxOK(t, w, map[string]interface{}{
+				"command": map[string]interface{}{
+					"stdout":      "{\"ok\":true}\n",
+					"error":       "",
+					"exit_code":   0,
+					"duration_ms": 1,
+					"truncated":   false,
+					"command":     "node",
+				},
+				"artifact_manifests": []map[string]interface{}{},
+			})
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/sandboxes/sbx_node":
+			writeSandboxOK(t, w, map[string]interface{}{"deleted": true})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	runner := NewSandboxScriptRunner(SandboxScriptRunnerConfig{
+		Endpoint:                  server.URL,
+		FallbackDependencyProfile: "scientific-data",
+		DependencyScanDisabled:    true,
+	})
+	if _, err := runner.RunSkillScript(context.Background(), scriptSkillDocument(root), map[string]interface{}{}, ExecutionContext{}, "call_node"); err != nil {
+		t.Fatalf("run Node skill script: %v", err)
+	}
+}
+
 func TestSandboxScriptRunnerRequiresPrebuiltProfileWhenDependencyScanDisabled(t *testing.T) {
 	root := writePythonScenarioSkill(t, "print('ok')")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

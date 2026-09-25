@@ -29,9 +29,9 @@ import (
 
 const (
 	customSkillStorageRoot    = "storage/aichat/skills"
-	customSkillMaxPackageSize = 64 * 1024 * 1024
-	customSkillMaxFileSize    = 10 * 1024 * 1024
-	customSkillMaxFileCount   = 600
+	customSkillMaxPackageSize = skills.ScriptPackageMaxBytes
+	customSkillMaxFileSize    = skills.ScriptPackageMaxFileBytes
+	customSkillMaxFileCount   = skills.ScriptPackageMaxFiles
 )
 
 const customSkillSystemNameConflictMessage = "This skill name is reserved by a built-in system skill. Please rename your custom skill and try again."

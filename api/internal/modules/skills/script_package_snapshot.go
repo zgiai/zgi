@@ -37,7 +37,7 @@ func snapshotSkillPackage(source string) (string, error) {
 			return fmt.Errorf("skill package contains a nonregular file")
 		}
 		count++
-		if count > 4096 {
+		if count > ScriptPackageMaxFiles {
 			return fmt.Errorf("skill package exceeds snapshot file limit")
 		}
 		in, err := root.Open(name)
@@ -52,11 +52,14 @@ func snapshotSkillPackage(source string) (string, error) {
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("skill package contains a nonregular file")
 		}
+		if info.Size() > ScriptPackageMaxFileBytes {
+			return fmt.Errorf("skill package file exceeds snapshot size limit")
+		}
 		out, err := os.OpenFile(filepath.Join(target, filepath.FromSlash(name)), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 		if err != nil {
 			return err
 		}
-		n, copyErr := io.Copy(out, io.LimitReader(in, 64*1024*1024-total+1))
+		n, copyErr := io.Copy(out, io.LimitReader(in, ScriptPackageMaxBytes-total+1))
 		closeErr := out.Close()
 		total += n
 		if copyErr != nil {
@@ -65,7 +68,7 @@ func snapshotSkillPackage(source string) (string, error) {
 		if closeErr != nil {
 			return closeErr
 		}
-		if total > 64*1024*1024 {
+		if total > ScriptPackageMaxBytes {
 			return fmt.Errorf("skill package exceeds snapshot size limit")
 		}
 		return nil

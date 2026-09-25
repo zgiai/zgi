@@ -235,7 +235,10 @@ Sandbox 路径不是下载地址。文件必须写入声明的 `artifacts/` 路�
 
 禁止未固定版本、远程 URL、本地路径依赖以及运行时安装命令。设置
 `CODE_EXECUTION_SKILL_DEPENDENCY_SCAN_ENABLED=false` 后，声明不会触发扫描或构建；
-部署配置的预构建 Profile 必须已经包含全部第三方包。
+默认 Profile 的 Python Skill 使用部署配置的预构建数据 Profile，该 Profile 必须已经
+包含全部第三方包。默认 Profile 的 Node.js Skill 仍使用 `stdlib`；需要第三方包时必须
+由部署管理员通过服务器控制的 runtime grant 绑定兼容 Node.js 的预构建 Profile，关闭
+扫描本身不会安装 Node.js 包。
 
 ## 本地验证
 

@@ -86,15 +86,7 @@ func (s *Service) PrepareDependencies(req DependencyPrepareRequest) (DependencyP
 	if err != nil {
 		return DependencyPrepareResult{}, err
 	}
-	maxFileSize := int64(256 * 1024)
-	if s != nil && s.policy != nil {
-		maxFileSize = s.policy.MaxFileSizeBytes()
-	}
-	if _, err := validateArchiveEntriesWithinLimits(entries, archiveLimits{
-		maxFiles:     256,
-		maxFileSize:  maxFileSize,
-		maxTotalSize: maxFileSize * 256,
-	}); err != nil {
+	if _, err := validateArchiveEntriesWithinLimits(entries, skillPackageArchiveLimits()); err != nil {
 		return DependencyPrepareResult{}, err
 	}
 
@@ -463,10 +455,9 @@ func scanNodeImports(file *zip.File) ([]string, error) {
 	specSet := map[string]struct{}{}
 	for _, match := range matches {
 		name := strings.TrimSpace(match[1])
-		if name == "" || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "/") {
+		if name == "" || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "/") || strings.HasPrefix(name, "node:") {
 			continue
 		}
-		name = strings.TrimPrefix(name, "node:")
 		if strings.HasPrefix(name, "@") {
 			parts := strings.Split(name, "/")
 			if len(parts) >= 2 {

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -1475,6 +1476,58 @@ func TestUploadArchiveValidatesSkillManifest(t *testing.T) {
 	}
 }
 
+func TestUploadArchiveUsesSkillPackageLimits(t *testing.T) {
+	service, manager := newTestExecutorService(t)
+	box, err := manager.Create(lifecycle.CreateRequest{RuntimeProfile: string(sandbox.RuntimeSession)})
+	if err != nil {
+		t.Fatalf("create sandbox: %v", err)
+	}
+
+	files := map[string]string{
+		"SKILL.md":             "# Skill",
+		"scripts/run.py":       "print('ok')",
+		"skill.manifest.json":  validSkillManifestJSON("scripts/run.py"),
+		"references/large.bin": strings.Repeat("x", 256*1024+1),
+	}
+	for len(files) < 257 {
+		name := fmt.Sprintf("references/item-%03d.txt", len(files))
+		files[name] = "x"
+	}
+	result, err := service.UploadArchive(ArchiveUploadRequest{
+		SandboxID:             box.ID,
+		Path:                  ".",
+		ArchiveBase64:         zipBase64(t, files),
+		Format:                "zip",
+		ValidateSkillManifest: true,
+	})
+	if err != nil {
+		t.Fatalf("upload 257-file skill package above the generic per-file limit: %v", err)
+	}
+	if result.FileCount != 257 {
+		t.Fatalf("uploaded file count = %d, want 257", result.FileCount)
+	}
+
+	tooManyFiles := map[string]string{
+		"SKILL.md":            "# Skill",
+		"scripts/run.py":      "print('ok')",
+		"skill.manifest.json": validSkillManifestJSON("scripts/run.py"),
+	}
+	for len(tooManyFiles) < maxSkillPackageArchiveFiles+1 {
+		name := fmt.Sprintf("references/item-%03d.txt", len(tooManyFiles))
+		tooManyFiles[name] = "x"
+	}
+	_, err = service.UploadArchive(ArchiveUploadRequest{
+		SandboxID:             box.ID,
+		Path:                  "too-many",
+		ArchiveBase64:         zipBase64(t, tooManyFiles),
+		Format:                "zip",
+		ValidateSkillManifest: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "archive exceeds max file count of 600") {
+		t.Fatalf("UploadArchive() error = %v, want skill package file-count limit", err)
+	}
+}
+
 func TestUploadArchiveValidatesBundledPackages(t *testing.T) {
 	service, manager := newTestExecutorService(t)
 	box, err := manager.Create(lifecycle.CreateRequest{RuntimeProfile: string(sandbox.RuntimeSession)})
@@ -2052,7 +2105,7 @@ func TestPrepareDependenciesIgnoresNodeBuiltinsAndRelativeModules(t *testing.T) 
 		ArchiveBase64: zipBase64(t, map[string]string{
 			"SKILL.md":              "Skill package\n",
 			"skill.manifest.json":   `{"entrypoint":"scripts/run.js","language":"nodejs"}`,
-			"scripts/run.js":        "const fs = require('node:fs'); const path = require('path'); const helper = require('./lib/helper'); const yaml = require('yaml');\n",
+			"scripts/run.js":        "const fs = require('node:fs'); const hooks = require('node:async_hooks'); const inspector = require('node:inspector'); const test = require('node:test'); const path = require('path'); const helper = require('./lib/helper'); const yaml = require('yaml');\n",
 			"scripts/lib/helper.js": "module.exports = { ok: true };\n",
 		}),
 		Format:      "zip",
@@ -2069,6 +2122,9 @@ func TestPrepareDependenciesIgnoresNodeBuiltinsAndRelativeModules(t *testing.T) 
 	}
 	assertDetectedDependency(t, result.Packages, "nodejs", "yaml", "")
 	assertMissingDependency(t, result.Packages, "nodejs", "fs")
+	assertMissingDependency(t, result.Packages, "nodejs", "async_hooks")
+	assertMissingDependency(t, result.Packages, "nodejs", "inspector")
+	assertMissingDependency(t, result.Packages, "nodejs", "test")
 	assertMissingDependency(t, result.Packages, "nodejs", "path")
 	assertMissingDependency(t, result.Packages, "nodejs", "helper")
 }
