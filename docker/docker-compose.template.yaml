@@ -137,6 +137,9 @@ services:
         GOPROXY: ${GOPROXY:-}
         APT_MIRROR: ${APT_MIRROR:-}
         APT_SECURITY_MIRROR: ${APT_SECURITY_MIRROR:-}
+    # The entrypoint delegates per-execution cgroups and then drops to zgi.
+    user: root
+    privileged: ${ZGI_SANDBOX_CONTAINER_PRIVILEGED:-false}
     env_file:
       - ../sandbox/.env
     environment:
@@ -150,6 +153,7 @@ services:
       ZGI_SANDBOX_REQUIRED_DEPENDENCY_PROFILES: ${ZGI_SANDBOX_REQUIRED_DEPENDENCY_PROFILES:-skill-office}
       ZGI_SANDBOX_PREBUILT_DEPENDENCY_ROOTFS_DIR: ${ZGI_SANDBOX_PREBUILT_DEPENDENCY_ROOTFS_DIR:-/opt/zgi/prebuilt-dependency-rootfs}
       ZGI_SANDBOX_MAX_DEPENDENCY_PROFILE_SIZE_BYTES: ${ZGI_SANDBOX_MAX_DEPENDENCY_PROFILE_SIZE_BYTES:-3221225472}
+      ZGI_SANDBOX_SECURE_RUNTIME_CGROUP_ROOT: ${ZGI_SANDBOX_SECURE_RUNTIME_CGROUP_ROOT:-/sys/fs/cgroup/zgi-sandbox-executions}
     depends_on:
       postgres:
         condition: service_healthy
