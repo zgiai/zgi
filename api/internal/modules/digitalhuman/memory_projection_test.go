@@ -1,6 +1,7 @@
 package digitalhuman
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -114,4 +115,67 @@ func TestKnowledgeCandidatesHideRuntimeManagedProjection(t *testing.T) {
 	if len(candidates) != 1 || candidates[0].DisplayName != "Sales handbook" {
 		t.Fatalf("knowledge candidates = %#v, want only the user knowledge base", candidates)
 	}
+}
+
+// A recorded projection id that no longer resolves must fail loudly. Retrying it
+// used to re-enter ensureProjection until the goroutine stack was exhausted.
+func TestEnsureProjectionRejectsUnresolvableRecordedDataset(t *testing.T) {
+	t.Parallel()
+	repo, _ := newMemoryProjectionTestDB(t)
+	ctx := t.Context()
+	scope := testScope()
+	digitalHumanID, actorID := uuid.New(), uuid.New()
+	staleDatasetID := uuid.New()
+	state := MemoryState{
+		ID: uuid.New(), OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID, DigitalHumanID: digitalHumanID,
+		MemoryEpoch: 1, ConfigRevision: "revision-1", MemoryDatasetID: &staleDatasetID,
+		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	}
+	if err := repo.db.Create(&state).Error; err != nil {
+		t.Fatal(err)
+	}
+	provider := &DigitalHumanMemoryProjectionProvider{db: repo.db, now: func() time.Time { return time.Now().UTC() }}
+
+	_, err := provider.ensureProjection(ctx, memoryProjectionScope{
+		OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID, DigitalHumanID: digitalHumanID, ActorID: &actorID,
+	})
+	if err == nil {
+		t.Fatal("an unresolvable projection association must fail instead of rebuilding again")
+	}
+	if !strings.Contains(err.Error(), "is unavailable") {
+		t.Fatalf("error = %v, want the unresolvable projection to be reported", err)
+	}
+	var persisted MemoryState
+	if err := repo.db.Where("id = ?", state.ID).First(&persisted).Error; err != nil {
+		t.Fatal(err)
+	}
+	if persisted.MemoryDatasetID == nil || *persisted.MemoryDatasetID != staleDatasetID {
+		t.Fatalf("stored association = %#v, want the failed attempt to leave it untouched", persisted.MemoryDatasetID)
+	}
+}
+
+// Recall repairs the projection as a side effect, so a rebuild of one
+// DigitalHuman has to exclude another rebuild of the same one.
+func TestProjectionRebuildLockSerializesOneDigitalHuman(t *testing.T) {
+	t.Parallel()
+	provider := &DigitalHumanMemoryProjectionProvider{}
+	subject := uuid.New()
+	shard := func(id uuid.UUID) int { return int(id[0]^id[15]) % projectionRebuildLockShards }
+
+	release := provider.lockProjectionRebuild(subject)
+	if provider.rebuildLocks[shard(subject)].TryLock() {
+		t.Fatal("a second rebuild of the same DigitalHuman acquired the projection")
+	}
+	release()
+
+	other := uuid.New()
+	for shard(other) == shard(subject) {
+		other = uuid.New()
+	}
+	releaseOther := provider.lockProjectionRebuild(other)
+	if !provider.rebuildLocks[shard(subject)].TryLock() {
+		t.Fatal("an unrelated DigitalHuman rebuild was blocked by another subject")
+	}
+	provider.rebuildLocks[shard(subject)].Unlock()
+	releaseOther()
 }

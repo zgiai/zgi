@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,6 +26,12 @@ import (
 // projection cannot serve a query. It deliberately exceeds the retrieval tool's
 // maximum top_k so a broken projection still leaves the model enough material.
 const fallbackRecentMemoryLimit = 50
+
+// projectionRebuildLockShards bounds the per-subject rebuild lock table. Recall
+// and the operator repair both rewrite the same derived dataset, so they must not
+// interleave; sharding keeps that serialization without tracking one lock object
+// per DigitalHuman.
+const projectionRebuildLockShards = 64
 
 // memoryProjectionScope identifies the DigitalHuman whose hidden projection is
 // being built. Recall derives it from a run; operator repair derives it from the
@@ -60,6 +67,18 @@ type DigitalHumanMemoryProjectionProvider struct {
 	defaultModelSvc llmdefaultservice.DefaultModelService
 	vectorDB        vectordb.VectorDB
 	now             func() time.Time
+	// rebuildLocks serialize projection rebuilds per DigitalHuman so a recall and
+	// a repair, or two repairs, cannot drop vectors the other one already
+	// recorded as written.
+	rebuildLocks [projectionRebuildLockShards]sync.Mutex
+}
+
+// lockProjectionRebuild reserves the projection of one DigitalHuman and returns
+// the release function.
+func (p *DigitalHumanMemoryProjectionProvider) lockProjectionRebuild(digitalHumanID uuid.UUID) func() {
+	lock := &p.rebuildLocks[int(digitalHumanID[0]^digitalHumanID[15])%projectionRebuildLockShards]
+	lock.Lock()
+	return lock.Unlock
 }
 
 // The operator repair action is only reachable while the concrete provider
@@ -88,11 +107,16 @@ func (p *DigitalHumanMemoryProjectionProvider) Retrieve(ctx context.Context, req
 		return p.fallbackToRecentMemories(ctx, req.Run, "projection backend unavailable", fmt.Errorf("digital human memory projection backend is not configured"))
 	}
 	scope := projectionScopeForRun(req.Run)
+	// Recall repairs the projection as a side effect, so it shares the rebuild
+	// lock with the operator repair action.
+	releaseProjection := p.lockProjectionRebuild(scope.DigitalHumanID)
 	dataset, err := p.ensureProjection(ctx, scope)
 	if err != nil {
+		releaseProjection()
 		return p.fallbackToRecentMemories(ctx, req.Run, "projection unavailable", err)
 	}
 	memories, err := p.syncProjection(ctx, scope, dataset)
+	releaseProjection()
 	if err != nil {
 		return p.fallbackToRecentMemories(ctx, req.Run, "projection sync failed", err)
 	}
@@ -166,9 +190,8 @@ func (p *DigitalHumanMemoryProjectionProvider) ensureProjection(ctx context.Cont
 		return nil, fmt.Errorf("load DigitalHuman memory state: %w", err)
 	}
 	if state.MemoryDatasetID != nil && *state.MemoryDatasetID != uuid.Nil {
-		var dataset datasetmodel.Dataset
-		if err := p.db.WithContext(ctx).Where("id = ? AND provider = ? AND organization_id = ? AND workspace_id = ?", *state.MemoryDatasetID, datasetmodel.ProviderDigitalHumanMemory, scope.OrganizationID, scope.WorkspaceID).First(&dataset).Error; err == nil {
-			return &dataset, nil
+		if dataset, err := p.projectionDataset(ctx, scope, *state.MemoryDatasetID); err == nil {
+			return dataset, nil
 		}
 	}
 	createdBy := projectionAccountID(scope)
@@ -198,15 +221,36 @@ func (p *DigitalHumanMemoryProjectionProvider) ensureProjection(ctx context.Cont
 	if result.RowsAffected == 0 {
 		tx.Rollback()
 		var existing MemoryState
-		if err := p.db.WithContext(ctx).First(&existing, state.ID).Error; err != nil || existing.MemoryDatasetID == nil {
+		if err := p.db.WithContext(ctx).First(&existing, state.ID).Error; err != nil {
 			return nil, fmt.Errorf("load concurrent hidden DigitalHuman memory dataset: %w", err)
 		}
-		return p.ensureProjection(ctx, scope)
+		if existing.MemoryDatasetID == nil {
+			return nil, fmt.Errorf("hidden DigitalHuman memory dataset association was not persisted")
+		}
+		// Another writer recorded an association while this call was creating one.
+		// Resolve that id once: re-entering would spin forever whenever the
+		// recorded projection can no longer be resolved.
+		return p.projectionDataset(ctx, scope, *existing.MemoryDatasetID)
 	}
 	if err := tx.Commit().Error; err != nil {
 		return nil, fmt.Errorf("commit hidden DigitalHuman memory dataset: %w", err)
 	}
 	return dataset, nil
+}
+
+// projectionDataset resolves the projection dataset recorded for one
+// DigitalHuman. A recorded id that does not resolve is a broken association, so
+// it has to surface as an error instead of triggering another rebuild attempt.
+func (p *DigitalHumanMemoryProjectionProvider) projectionDataset(ctx context.Context, scope memoryProjectionScope, datasetID uuid.UUID) (*datasetmodel.Dataset, error) {
+	var dataset datasetmodel.Dataset
+	err := p.db.WithContext(ctx).Where(
+		"id = ? AND provider = ? AND organization_id = ? AND workspace_id = ?",
+		datasetID, datasetmodel.ProviderDigitalHumanMemory, scope.OrganizationID, scope.WorkspaceID,
+	).First(&dataset).Error
+	if err != nil {
+		return nil, fmt.Errorf("DigitalHuman memory projection dataset %s is unavailable: %w", datasetID, err)
+	}
+	return &dataset, nil
 }
 
 func (p *DigitalHumanMemoryProjectionProvider) syncProjection(ctx context.Context, scope memoryProjectionScope, dataset *datasetmodel.Dataset) (map[uuid.UUID]*DigitalHumanMemory, error) {
@@ -323,6 +367,10 @@ func (p *DigitalHumanMemoryProjectionProvider) Repair(ctx context.Context, scope
 	if p == nil || p.db == nil || p.vectorDB == nil || scope.DigitalHumanID == uuid.Nil {
 		return nil, fmt.Errorf("digital human memory projection is not configured")
 	}
+	// Dropping the vector class while another rebuild or recall is writing it
+	// would leave the projection marked as written but partially empty.
+	releaseProjection := p.lockProjectionRebuild(scope.DigitalHumanID)
+	defer releaseProjection()
 	dataset, err := p.ensureProjection(ctx, scope)
 	if err != nil {
 		return nil, err
