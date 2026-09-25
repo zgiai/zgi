@@ -155,7 +155,7 @@ func (i *Indexer) Process(ctx context.Context, row *SchemaIndex) error {
 	if err := i.repo.Save(ctx, row); err != nil {
 		return err
 	}
-	indexedTable, err := i.repo.snapshotTable(ctx, row.AssetTableID, i.sql)
+	indexedTable, err := i.repo.SnapshotTable(ctx, row.AssetTableID, i.sql)
 	if err != nil {
 		return i.fail(ctx, row, "schema_load_failed", err)
 	}

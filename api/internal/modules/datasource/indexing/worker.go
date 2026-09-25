@@ -467,15 +467,11 @@ func (s *Service) validateTask(ctx context.Context, setting Settings, row *text2
 	if err != nil || model.Provider != row.EmbeddingProvider || model.Model != row.EmbeddingModel {
 		return errors.Join(errTaskScope, err)
 	}
-	var asset struct{ TableID int }
-	if err := s.db.WithContext(ctx).Table("data_source_tables").Where("id = ? AND data_source_id = ?", row.AssetTableID, row.DataSourceID).Take(&asset).Error; err != nil {
+	snapshot, err := text2sql.NewIndexRepository(s.db).SnapshotTable(ctx, row.AssetTableID, s.sql)
+	if err != nil {
 		return errors.Join(errTaskScope, err)
 	}
-	table, err := s.sql.GetTable(ctx, asset.TableID)
-	if err != nil {
-		return err
-	}
-	if !text2sql.MatchesSchema(*row, table) {
+	if !text2sql.MatchesSchema(*row, snapshot.Table) {
 		return errTaskScope
 	}
 	return nil

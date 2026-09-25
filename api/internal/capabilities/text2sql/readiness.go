@@ -38,7 +38,9 @@ func (r *IndexRepository) Snapshot(ctx context.Context, organizationID, sourceID
 	return result, nil
 }
 
-func (r *IndexRepository) snapshotTable(ctx context.Context, assetID string, sql sql_base.SQLBase) (*IndexedTable, error) {
+// SnapshotTable loads one asset together with the same metadata-enriched
+// physical schema used by Snapshot and the indexer.
+func (r *IndexRepository) SnapshotTable(ctx context.Context, assetID string, sql sql_base.SQLBase) (*IndexedTable, error) {
 	var asset indexedTableAsset
 	if err := r.db.WithContext(ctx).Table("data_source_tables").Select("id, table_id, name, description").Where("id = ?", assetID).Take(&asset).Error; err != nil {
 		return nil, err

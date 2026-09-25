@@ -7,12 +7,15 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
@@ -242,6 +245,53 @@ func TestAutomaticPendingTriggerPreservesInitialBuildAndDistinguishesLaterCreate
 	}
 	if got != TriggerTableCreated {
 		t.Fatalf("later table trigger = %q, want %q", got, TriggerTableCreated)
+	}
+}
+
+func TestValidateTaskUsesMetadataEnrichedTableSnapshot(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB, PreferSimpleProtocol: true}), &gorm.Config{SkipDefaultTransaction: true, Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	setting := Settings{
+		DataSourceID: uuid.NewString(), OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(), RequestedBy: uuid.NewString(),
+		EmbeddingProvider: "test", EmbeddingModel: "embedding-v1",
+	}
+	assetID := uuid.NewString()
+	physical := &sql_base.Table{ID: 1, Schema: "public", Name: "physical_table"}
+	catalog := testSQL{tables: map[int]*sql_base.Table{1: physical}}
+	assetRows := func() *sqlmock.Rows {
+		return sqlmock.NewRows([]string{"id", "table_id", "name", "description"}).AddRow(assetID, 1, "Business name", "Business description")
+	}
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, table_id, name, description FROM "data_source_tables"`)).WillReturnRows(assetRows())
+	snapshot, err := text2sql.NewIndexRepository(db).SnapshotTable(context.Background(), assetID, catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := text2sql.NewSchemaIndex(setting.OrganizationID, setting.WorkspaceID, setting.DataSourceID, assetID, snapshot.Table, setting.EmbeddingProvider, setting.EmbeddingModel)
+	setting.TargetIDs, err = json.Marshal([]string{row.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "database_schema_index_settings"`)).WillReturnRows(sqlmock.NewRows([]string{
+		"data_source_id", "organization_id", "workspace_id", "requested_by", "embedding_provider", "embedding_model", "target_ids", "created_at", "updated_at",
+	}).AddRow(setting.DataSourceID, setting.OrganizationID, setting.WorkspaceID, setting.RequestedBy, setting.EmbeddingProvider, setting.EmbeddingModel, setting.TargetIDs, now, now))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "data_sources"`)).WillReturnRows(sqlmock.NewRows([]string{"id", "organization_id", "workspace_id"}).AddRow(setting.DataSourceID, setting.OrganizationID, setting.WorkspaceID))
+	mock.ExpectQuery(`SELECT (\*|id, table_id, name, description) FROM "data_source_tables"`).WillReturnRows(assetRows())
+
+	service := NewService(db, catalog, &testModels{model: setting.EmbeddingModel}, nil, nil, nil, &testAccess{}, zap.NewNop())
+	if err := service.validateTask(context.Background(), setting, row); err != nil {
+		t.Fatalf("validateTask() error = %v, want nil", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 
