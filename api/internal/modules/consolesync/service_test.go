@@ -516,3 +516,87 @@ func TestClientDecodesConsoleEnvelope(t *testing.T) {
 }
 
 func ptrEnvelope(command CommandEnvelope) *CommandEnvelope { return &command }
+
+// Acceptance row 7: a hole in the sequence must stop in-order application instead of
+// jumping over the missing commands.
+func TestCheckSequenceDetectsGaps(t *testing.T) {
+	if err := checkSequence(4, 5); err != nil {
+		t.Fatalf("contiguous seq rejected: %v", err)
+	}
+	if err := checkSequence(4, 4); err != nil {
+		t.Fatalf("replayed seq rejected: %v", err)
+	}
+	err := checkSequence(4, 6)
+	if !errors.Is(err, ErrSequenceGap) {
+		t.Fatalf("error = %v, want ErrSequenceGap", err)
+	}
+}
+
+// Acceptance row 9 / decision 8.1(4): while the console link is stale the official channel
+// must fail closed, which is implemented by dropping the loaded credential.
+func TestStaleGateClearsCredentialAndRecovers(t *testing.T) {
+	db := newConsolesyncTestDB(t)
+	store := NewStore(db)
+	service := &Service{
+		cfg: Config{
+			Enabled:        true,
+			Edition:        "CLOUD",
+			BaseURL:        "https://console.example.com",
+			InstanceID:     "instance-1",
+			InstanceSecret: "secret",
+			Interval:       45 * time.Second,
+			StaleAfter:     5 * time.Minute,
+		},
+		store: store,
+	}
+	ctx := context.Background()
+
+	consolecred.Configure("instance-1", "secret")
+	t.Cleanup(func() { consolecred.Global().Clear() })
+
+	// A heartbeat far in the past means the link is stale.
+	state, err := store.LoadState(ctx)
+	if err != nil {
+		t.Fatalf("bootstrap state: %v", err)
+	}
+	stale := time.Now().Add(-30 * time.Minute)
+	state.LastHeartbeatAt = &stale
+	if err := store.SaveState(ctx, state); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+	if !service.isStale(state, time.Now().UTC()) {
+		t.Fatalf("a 30 minute old heartbeat must count as stale")
+	}
+
+	service.enterStale(ctx, state)
+	if consolecred.Global().Loaded() {
+		t.Fatalf("stale gate did not clear the credential; the official channel would stay open")
+	}
+	reloaded, err := store.LoadState(ctx)
+	if err != nil {
+		t.Fatalf("reload state: %v", err)
+	}
+	if reloaded.CredentialStatus != CredentialStatusStale {
+		t.Fatalf("credential_status = %q, want stale", reloaded.CredentialStatus)
+	}
+	if service.Status(ctx).Stale != true {
+		t.Fatalf("status did not report the stale state")
+	}
+
+	// A successful heartbeat restores the credential and clears the flag.
+	service.leaveStale()
+	if !consolecred.Global().Loaded() {
+		t.Fatalf("recovery did not restore the credential")
+	}
+	if service.Status(ctx).Stale {
+		t.Fatalf("recovery did not clear the stale flag")
+	}
+}
+
+func TestHeartbeatIsNotStaleBeforeTheFirstSuccess(t *testing.T) {
+	service := &Service{cfg: Config{StaleAfter: 5 * time.Minute}}
+	// No heartbeat recorded yet: a fresh process must be allowed to try.
+	if service.isStale(&PreSyncState{}, time.Now().UTC()) {
+		t.Fatalf("a process that has never synced must not be considered stale")
+	}
+}

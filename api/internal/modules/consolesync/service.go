@@ -188,8 +188,8 @@ func (s *Service) drainCommands(ctx context.Context, state *PreSyncState) error 
 		for _, command := range pulled.Commands {
 			// A hole in the sequence means we would apply out of order: stop, report the
 			// drift and let the next cycle re-pull from the same cursor.
-			if command.Seq > state.CursorSeq+1 {
-				return fmt.Errorf("%w: expected seq %d, received %d", ErrSequenceGap, state.CursorSeq+1, command.Seq)
+			if err := checkSequence(state.CursorSeq, command.Seq); err != nil {
+				return err
 			}
 			if command.Seq <= state.CursorSeq {
 				continue
@@ -403,6 +403,18 @@ func (s *Service) Status(ctx context.Context) Status {
 
 // ErrSequenceGap means console delivered a seq that skips one or more commands.
 var ErrSequenceGap = errors.New("console command sequence gap")
+
+// checkSequence enforces strict in-order application.
+//
+// A delivered seq must never skip ahead of the cursor: a hole means one or more commands
+// were missed, so the caller stops applying and the next cycle re-pulls from the same
+// cursor instead of jumping over them (plan §3.8, acceptance row 7).
+func checkSequence(cursor, incoming int64) error {
+	if incoming > cursor+1 {
+		return fmt.Errorf("%w: expected seq %d, received %d", ErrSequenceGap, cursor+1, incoming)
+	}
+	return nil
+}
 
 func timePtr(value time.Time) *time.Time { return &value }
 
