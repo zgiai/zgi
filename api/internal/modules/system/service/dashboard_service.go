@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	chatruntimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	datasetmodel "github.com/zgiai/zgi/api/internal/modules/dataset/model"
 	llmmodelsvc "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
 	dashboardcache "github.com/zgiai/zgi/api/internal/modules/system/cache"
 	"github.com/zgiai/zgi/api/internal/modules/system/model"
@@ -347,7 +348,9 @@ func (s *dashboardService) getResourceStatsWithHealth(ctx context.Context, organ
 
 	if len(scopes.DatasetWorkspaceIDs) > 0 {
 		var countHealthy bool
-		stats.Datasets, countHealthy = s.safeCountWithHealth(ctx, "datasets", "workspace_id IN ?", scopes.DatasetWorkspaceIDs)
+		// The runtime-managed DigitalHuman memory projection is infrastructure, not
+		// a user knowledge base, so it must not inflate the workspace resource stats.
+		stats.Datasets, countHealthy = s.safeCountWithHealth(ctx, "datasets", "workspace_id IN ? AND provider <> ?", scopes.DatasetWorkspaceIDs, datasetmodel.ProviderDigitalHumanMemory)
 		healthy = healthy && countHealthy
 	}
 
@@ -408,9 +411,10 @@ func (s *dashboardService) getActivityStats(ctx context.Context, organizationID 
 		stats.CreatedDatasets = s.safeCount(
 			ctx,
 			"datasets",
-			"workspace_id IN ? AND created_by = ?",
+			"workspace_id IN ? AND created_by = ? AND provider <> ?",
 			scopes.WorkspaceIDs,
 			accountID,
+			datasetmodel.ProviderDigitalHumanMemory,
 		)
 	}
 	return stats
@@ -509,6 +513,7 @@ func (s *dashboardService) getRecentDatasets(ctx context.Context, workspaceIDs [
 		Select("d.id, d.name AS title, d.id AS resource_id, d.workspace_id, w.name AS workspace_name, d.updated_at, d.created_at").
 		Joins("INNER JOIN workspaces AS w ON w.id = d.workspace_id").
 		Where("d.workspace_id IN ?", workspaceIDs).
+		Where("d.provider <> ?", datasetmodel.ProviderDigitalHumanMemory).
 		Order("d.updated_at DESC").
 		Limit(limit).
 		Scan(&rows).Error

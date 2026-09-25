@@ -255,7 +255,6 @@ export function DigitalHumanMemory({ id }: { id: string }) {
                   confirmText={t('memory.repair')}
                   cancelText={t('common.cancel')}
                   loading={mutations.repairMemory.isPending}
-                  confirmDisabled={mutations.updateMemoryState.isPending}
                   onConfirm={() => void repairMemory()}
                 />
               </>
