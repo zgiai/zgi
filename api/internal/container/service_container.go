@@ -11,6 +11,7 @@ import (
 	"github.com/hibiken/asynq"
 	"github.com/zgiai/zgi/api/config"
 	shortlinkcap "github.com/zgiai/zgi/api/internal/capabilities/shortlink"
+	"github.com/zgiai/zgi/api/internal/capabilities/text2sql"
 	"github.com/zgiai/zgi/api/internal/contracts"
 	"github.com/zgiai/zgi/api/internal/infra/platform"
 	"github.com/zgiai/zgi/api/internal/infra/platform/console"
@@ -28,6 +29,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	dataset_repo "github.com/zgiai/zgi/api/internal/modules/dataset/repository"
 	dataset_service "github.com/zgiai/zgi/api/internal/modules/dataset/service"
+	"github.com/zgiai/zgi/api/internal/modules/datasource/indexing"
 	"github.com/zgiai/zgi/api/internal/modules/datasource/repository"
 	"github.com/zgiai/zgi/api/internal/modules/datasource/service"
 	file_repo "github.com/zgiai/zgi/api/internal/modules/file_process/repository"
@@ -180,10 +182,12 @@ type ServiceContainer struct {
 	contentParseModule            *contentparsemodule.Module
 
 	// DataSource service
-	dataSourceService service.DataSourceService
-	sqlAuditRecorder  audit.Recorder
-	sqlBase           sql_base.SQLBase
-	promptModule      *promptsmodule.Module
+	dataSourceService     service.DataSourceService
+	databaseSchemaIndexes *indexing.Service
+	sqlAuditRecorder      audit.Recorder
+	sqlBase               sql_base.SQLBase
+	text2SQLCatalogLoader text2sql.CatalogLoader
+	promptModule          *promptsmodule.Module
 
 	// Data Library module
 	dataLibraryModule *datalibrarymodule.Module
@@ -782,6 +786,13 @@ func (c *ServiceContainer) GetSQLBase() sql_base.SQLBase {
 		c.sqlBase = client
 	}
 	return c.sqlBase
+}
+
+func (c *ServiceContainer) GetText2SQLCatalogLoader() text2sql.CatalogLoader {
+	if c.text2SQLCatalogLoader == nil {
+		c.text2SQLCatalogLoader = text2sql.NewSQLCatalogLoader(c.db, c.GetSQLBase())
+	}
+	return c.text2SQLCatalogLoader
 }
 
 func (c *ServiceContainer) GetDataLibraryModule() *datalibrarymodule.Module {
@@ -1767,19 +1778,26 @@ func (c *ServiceContainer) SetWorkflowEngineFactory(factory *graph_engine.Engine
 	c.workflowEngineFactory = factory
 }
 
+func (c *ServiceContainer) GetWorkflowRuntimeDependencies() workflowruntime.Dependencies {
+	return workflowruntime.Dependencies{
+		ContentExtractor:            c.GetContentExtractor(),
+		LLMClient:                   c.GetLLMClient(),
+		ToolEngine:                  c.GetToolEngine(),
+		GraphFlowService:            c.GetGraphFlowService(),
+		FileService:                 c.GetFileService(),
+		PromptResolver:              c.GetPromptService(),
+		AutomationDefinitionService: c.GetAutomationDefinitionService(),
+		NotificationSMSService:      c.GetNotificationSMSService(),
+		SQLBase:                     c.GetSQLBase(),
+		DefaultModelResolver:        c.GetDefaultModelService(),
+		WorkspacePermissions:        c.GetOrganizationService(),
+		Text2SQLCatalogLoader:       c.GetText2SQLCatalogLoader(),
+	}
+}
+
 func (c *ServiceContainer) GetWorkflowEngineFactory() *graph_engine.EngineFactory {
 	if c.workflowEngineFactory == nil {
-		nodeRunner := workflowruntime.NewNodeRunner(workflowruntime.Dependencies{
-			ContentExtractor:            c.GetContentExtractor(),
-			LLMClient:                   c.GetLLMClient(),
-			ToolEngine:                  c.GetToolEngine(),
-			GraphFlowService:            c.GetGraphFlowService(),
-			FileService:                 c.GetFileService(),
-			PromptResolver:              c.GetPromptService(),
-			AutomationDefinitionService: c.GetAutomationDefinitionService(),
-			NotificationSMSService:      c.GetNotificationSMSService(),
-			SQLBase:                     c.GetSQLBase(),
-		})
+		nodeRunner := workflowruntime.NewNodeRunner(c.GetWorkflowRuntimeDependencies())
 		c.workflowEngineFactory = graph_engine.NewEngineFactory(10, nodeRunner)
 	}
 	return c.workflowEngineFactory

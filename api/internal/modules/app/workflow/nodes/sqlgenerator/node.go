@@ -7,12 +7,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/text2sql"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
-	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/calldatabase"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
-	"github.com/zgiai/zgi/api/internal/prompt"
+	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
+	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/pkg/database"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/sql_base"
@@ -21,18 +22,38 @@ import (
 )
 
 const (
-	defaultTimeoutSeconds = 30
-	retryBackoffBase      = 150 * time.Millisecond
+	defaultTimeoutSeconds   = 30
+	automaticTimeoutSeconds = 120
+	retryBackoffBase        = 150 * time.Millisecond
 )
+
+func effectiveExecutionTimeout(configured int, mode TableSelectionMode) int {
+	if mode == TableSelectionModeAutomatic && configured < automaticTimeoutSeconds {
+		return automaticTimeoutSeconds
+	}
+	if configured <= 0 {
+		return defaultTimeoutSeconds
+	}
+	return configured
+}
+
+type workspacePermissionChecker interface {
+	CheckWorkspacePermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode workspacemodel.WorkspacePermissionCode) (bool, error)
+}
 
 // Node represents the SQL generator workflow node.
 type Node struct {
 	base.NodeStruct
 	NodeData NodeData
 
-	db         *gorm.DB
-	llmInvoker LLMInvoker
-	sqlClient  sql_base.SQLBase
+	db                 *gorm.DB
+	llmInvoker         LLMInvoker
+	llmClient          llmclient.LLMClient
+	models             llmdefaultservice.DefaultModelResolver
+	sqlClient          sql_base.SQLBase
+	permissions        workspacePermissionChecker
+	catalogLoader      text2sql.CatalogLoader
+	billingSubjectType string
 }
 
 // New creates a new SQL generator node instance.
@@ -57,6 +78,8 @@ func New(
 			NodeType:   shared.SQLGenerator,
 
 			TenantID:          graphInitParams.TenantID,
+			WorkspaceID:       graphInitParams.WorkspaceID,
+			OrganizationID:    graphInitParams.OrganizationID,
 			APPID:             graphInitParams.AppID,
 			WorkflowType:      string(graphInitParams.WorkflowType),
 			WorkflowID:        graphInitParams.WorkflowID,
@@ -70,25 +93,29 @@ func New(
 			GraphRuntimeState: graphRuntimeState,
 			PreviousNodeID:    previousNodeID,
 		},
-		NodeData: nodeData,
-		db:       database.GetDB(),
+		NodeData:           nodeData,
+		db:                 database.GetDB(),
+		billingSubjectType: graphInitParams.BillingSubjectType,
 	}
 
-	sqlClient, err := sql_base.NewSQLBaseClient()
-	if err != nil {
-		return nil, fmt.Errorf("failed to init sql base client: %w", err)
-	}
-	n.sqlClient = sqlClient
-
-	// Check optionalDeps for LLMClient
 	for _, dep := range optionalDeps {
-		if client, ok := dep.(llmclient.LLMClient); ok {
+		switch dependency := dep.(type) {
+		case llmclient.LLMClient:
+			client := dependency
 			invoker, invErr := NewGatewayLLMInvoker(client, graphInitParams.OrganizationID, graphInitParams.WorkspaceID, graphInitParams.BillingSubjectType)
 			if invErr != nil {
 				return nil, invErr
 			}
 			n.llmInvoker = invoker
-			break
+			n.llmClient = client
+		case llmdefaultservice.DefaultModelResolver:
+			n.models = dependency
+		case sql_base.SQLBase:
+			n.sqlClient = dependency
+		case workspacePermissionChecker:
+			n.permissions = dependency
+		case text2sql.CatalogLoader:
+			n.catalogLoader = dependency
 		}
 	}
 
@@ -159,31 +186,9 @@ func (n *Node) workflowRunID() string {
 
 func (n *Node) executeRun(ctx context.Context) (*shared.NodeRunResult, error) {
 	logCtx := n.logContext(ctx)
-	// Try to get runtime configuration from VariablePool
-	runtimeDataSource, runtimeTables := n.getRuntimeDataSourceConfig()
 	runtimeModelConfig := n.getRuntimeModelConfig()
 
-	// Override static config with runtime config if provided
 	configSource := "static"
-	if runtimeDataSource != nil {
-		n.NodeData.DataSource.Source = *runtimeDataSource
-		n.NodeData.IsStaticConfig = false
-		configSource = "runtime"
-		logger.InfoContext(logCtx, "sql generator using runtime data source",
-			zap.String("data_source_id", runtimeDataSource.ID),
-		)
-	}
-
-	if runtimeTables != nil && len(runtimeTables) > 0 {
-		n.NodeData.DataSource.Tables = runtimeTables
-		n.NodeData.IsStaticConfig = false
-		configSource = "runtime"
-		logger.InfoContext(logCtx, "sql generator using runtime table selection",
-			zap.Int("table_count", len(runtimeTables)),
-			zap.String("data_source_id", n.NodeData.DataSource.Source.ID),
-		)
-	}
-
 	if runtimeModelConfig != nil {
 		n.NodeData.Model = *runtimeModelConfig
 		n.NodeData.IsStaticConfig = false
@@ -205,169 +210,15 @@ func (n *Node) executeRun(ctx context.Context) (*shared.NodeRunResult, error) {
 	if err := n.validateConfiguration(); err != nil {
 		return n.failureResult(nil, nil, "InvalidConfiguration", err), nil
 	}
-
-	execTimeout := n.NodeData.Execution.TimeoutSeconds
-	if execTimeout <= 0 {
-		execTimeout = defaultTimeoutSeconds
-	}
+	execTimeout := effectiveExecutionTimeout(n.NodeData.Execution.TimeoutSeconds, n.NodeData.TableSelectionMode)
 
 	execCtx, cancel := context.WithTimeout(ctx, time.Duration(execTimeout)*time.Second)
 	defer cancel()
-
-	vp := n.GraphRuntimeState.VariablePool
-
-	resolvedSystemPrompt, err := n.resolveSystemPrompt()
-	if err != nil {
-		return n.failureResult(nil, map[string]any{"template_id": string(prompt.WorkflowSQLGeneratorSystem)}, "PromptConstructionFailed", err), nil
-	}
-
-	effectiveNodeData := n.NodeData
-	effectiveNodeData.Prompt.System = resolvedSystemPrompt.Content
-
-	renderedPrompt, resolvedVars, err := resolveTemplate(n.NodeData.Prompt.User, vp)
-	if err != nil {
-		return n.failureResult(nil, map[string]any{"template": n.NodeData.Prompt.User}, "PromptConstructionFailed", err), nil
-	}
-
-	quickBindings := resolveQuickBindings(n.NodeData.Prompt.QuickBindings, vp)
-	for key, value := range quickBindings {
-		if _, exists := resolvedVars[key]; !exists {
-			resolvedVars[key] = value
-		}
-	}
-
-	tablesMetadata, err := n.loadTableMetadata(execCtx)
-	if err != nil {
-		logger.WarnContext(logCtx, "sql generator metadata fetch failed",
-			zap.String("data_source_id", n.NodeData.DataSource.Source.ID),
-			zap.Int("table_count", len(n.NodeData.DataSource.Tables)),
-			zap.Error(err),
-		)
-		tablesMetadata = fallbackMetadataFromSelection(n.NodeData.DataSource.Tables)
-	}
-
-	var metadataText string
-	switch n.NodeData.Prompt.Metadata.Mode {
-	case MetadataModeDDL:
-		metadataText = renderDDLMetadata(tablesMetadata, n.NodeData.Prompt.Metadata)
-	default:
-		metadataText = renderTableMetadata(tablesMetadata, n.NodeData.Prompt.Metadata)
-	}
-
-	finalUserPrompt := strings.TrimSpace(renderedPrompt)
-	if metadataText != "" {
-		builder := strings.Builder{}
-		if finalUserPrompt != "" {
-			builder.WriteString(finalUserPrompt)
-			builder.WriteString("\n\n")
-		}
-		builder.WriteString("Known table schema:\n")
-		builder.WriteString(metadataText)
-		finalUserPrompt = builder.String()
-	}
-
-	messages := []PromptMessage{
-		{
-			Role:    "system",
-			Content: effectiveNodeData.Prompt.System,
-		},
-		{
-			Role:    "user",
-			Content: finalUserPrompt,
-		},
-	}
-
-	stop, modelParams := extractStopParameter(n.NodeData.Model.Parameters)
-
-	// Use model name directly without provider prefix
-	// The gateway will handle provider selection based on tenant configuration
-	modelSlug := n.NodeData.Model.Name
-	logger.InfoContext(logCtx, "sql generator using model",
-		zap.String("provider", n.NodeData.Model.Provider),
-		zap.String("model", n.NodeData.Model.Name),
-	)
-
-	req := &InvokeRequest{
-		ModelSlug:  modelSlug,
-		Messages:   messages,
-		Parameters: modelParams,
-		Stop:       stop,
-		UserID:     n.UserID,
-	}
-
-	start := time.Now()
-	invokeResult, attempts, invokeErr := n.invokeLLMWithRetry(execCtx, req)
-
-	duration := time.Since(start)
-
-	inputSnapshot := buildInputSnapshot(effectiveNodeData, renderedPrompt, metadataText, resolvedVars, quickBindings)
-	processData := buildProcessData(effectiveNodeData, tablesMetadata, metadataText, attempts, duration, stop)
-	processData["system_prompt_source"] = string(resolvedSystemPrompt.Source)
-
-	if invokeErr != nil {
-		processData["error"] = invokeErr.Error()
-		return n.failureResult(inputSnapshot, processData, "ModelInvocationFailed", invokeErr), nil
-	}
-
-	if invokeResult == nil {
-		err := fmt.Errorf("empty chat response")
-		processData["error"] = err.Error()
-		return n.failureResult(inputSnapshot, processData, "ModelInvocationFailed", err), nil
-	}
-
-	responseText := messageContentToString(invokeResult.Text)
-	parsed, parseErr := parseLLMContent(responseText)
-	if parseErr != nil {
-		processData["raw_response"] = responseText
-		return n.failureResult(inputSnapshot, processData, "ResponseParseFailed", parseErr), nil
-	}
-
-	outputs := map[string]any{
-		"sql":          parsed.SQL,
-		"raw_response": responseText,
-	}
-	if parsed.Analysis != "" {
-		outputs["analysis"] = parsed.Analysis
-	}
-	if len(parsed.UsedFields) > 0 {
-		outputs["used_fields"] = parsed.UsedFields
-	}
-	if parsed.RawJSON != nil {
-		outputs["structured"] = parsed.RawJSON
-	}
-
-	metadata := map[shared.WorkflowNodeExecutionMetadataKey]any{
-		shared.ToolInfo: map[string]any{
-			"type":   "llm",
-			"model":  n.NodeData.Model.Name,
-			"tenant": n.TenantID,
-		},
-	}
-
-	if finish := invokeResult.Finish; finish != "" {
-		processData["finish_reason"] = finish
-	}
-
-	return &shared.NodeRunResult{
-		Status:      shared.SUCCEEDED,
-		Inputs:      inputSnapshot,
-		ProcessData: processData,
-		Outputs:     outputs,
-		Metadata:    metadata,
-	}, nil
+	return n.executeText2SQL(execCtx)
 }
 
 func (n *Node) validateConfiguration() error {
-	if strings.TrimSpace(n.NodeData.Model.Provider) == "" {
-		return fmt.Errorf("model provider is required")
-	}
-	if strings.TrimSpace(n.NodeData.Model.Name) == "" {
-		return fmt.Errorf("model name is required")
-	}
-	if strings.TrimSpace(n.NodeData.Prompt.User) == "" {
-		return fmt.Errorf("user prompt cannot be empty")
-	}
-	return nil
+	return n.NodeData.ValidateConfiguration()
 }
 
 func (n *Node) failureResult(
@@ -397,98 +248,6 @@ func (n *Node) failureResult(
 		ErrMsg:      errMsg,
 		ErrType:     errType,
 	}
-}
-
-func buildInputSnapshot(
-	nodeData NodeData,
-	renderedPrompt string,
-	metadataText string,
-	resolvedVars map[string]any,
-	quickBindings map[string]any,
-) map[string]any {
-	_ = resolvedVars
-	_ = quickBindings
-
-	inputs := map[string]any{
-		"prompt": map[string]any{
-			"system": nodeData.Prompt.System,
-			"user":   renderedPrompt,
-		},
-	}
-	return inputs
-}
-
-func buildProcessData(
-	nodeData NodeData,
-	tables []TableMetadata,
-	metadataText string,
-	attempts int,
-	duration time.Duration,
-	stop []string,
-) map[string]any {
-	process := map[string]any{
-		"tables_metadata": tables,
-		"attempts":        attempts,
-		"duration_ms":     duration.Milliseconds(),
-		"stop_sequences":  stop,
-		"model": map[string]string{
-			"provider": nodeData.Model.Provider,
-			"name":     nodeData.Model.Name,
-		},
-	}
-	if metadataText != "" {
-		process["metadata_context"] = metadataText
-	}
-	return process
-}
-
-func buildSchemaTablesSnapshot(dataSource calldatabase.DataSourceConfig, tables []calldatabase.TableRef) []string {
-	result := make([]string, 0, len(tables))
-	sourceName := dataSource.Name
-	if sourceName == "" {
-		sourceName = dataSource.ID
-	}
-	for _, table := range tables {
-		tableName := table.Name
-		if tableName == "" {
-			continue
-		}
-		if sourceName != "" {
-			result = append(result, sourceName+"."+tableName)
-			continue
-		}
-		result = append(result, tableName)
-	}
-	return result
-}
-
-func buildTableSchemaSnapshot(tables []calldatabase.TableRef, metadataText string) []map[string]any {
-	result := make([]map[string]any, 0, len(tables))
-	for _, table := range tables {
-		result = append(result, map[string]any{
-			"id":      tableIDValue(table),
-			"schema":  table.Schema,
-			"name":    table.Name,
-			"columns": table.Columns,
-		})
-	}
-	if len(result) == 0 && metadataText != "" {
-		result = append(result, map[string]any{
-			"id":      "",
-			"content": metadataText,
-		})
-	}
-	return result
-}
-
-func tableIDValue(table calldatabase.TableRef) any {
-	if table.TableID > 0 {
-		return table.TableID
-	}
-	if table.Name != "" {
-		return table.Name
-	}
-	return ""
 }
 
 func (n *Node) invokeLLMWithRetry(
@@ -542,43 +301,6 @@ func cloneParameters(params map[string]any) map[string]any {
 		c[k] = v
 	}
 	return c
-}
-
-func extractStopParameter(params map[string]any) ([]string, map[string]any) {
-	if len(params) == 0 {
-		return []string{}, map[string]any{}
-	}
-
-	stop := []string{}
-	rest := make(map[string]any, len(params))
-	for key, value := range params {
-		if strings.EqualFold(key, "stop") {
-			stop = toStringSlice(value)
-			continue
-		}
-		rest[key] = value
-	}
-	return stop, rest
-}
-
-func toStringSlice(value any) []string {
-	switch v := value.(type) {
-	case []string:
-		return append([]string{}, v...)
-	case []any:
-		out := make([]string, 0, len(v))
-		for _, item := range v {
-			switch converted := item.(type) {
-			case string:
-				out = append(out, converted)
-			}
-		}
-		return out
-	case string:
-		return []string{v}
-	default:
-		return []string{}
-	}
 }
 
 func messageContentToString(content any) string {
@@ -673,119 +395,6 @@ func parseNodeDataFromConfig(config map[string]any) (NodeData, string, error) {
 	nodeData.IsStaticConfig = true
 
 	return nodeData, nodeID, nil
-}
-
-// getRuntimeDataSourceConfig retrieves runtime data source configuration from VariablePool
-func (n *Node) getRuntimeDataSourceConfig() (*calldatabase.DataSourceConfig, []calldatabase.TableRef) {
-	if n.GraphRuntimeState == nil || n.GraphRuntimeState.VariablePool == nil {
-		return nil, nil
-	}
-
-	userInputs := n.GraphRuntimeState.VariablePool.UserInputs
-	if userInputs == nil {
-		return nil, nil
-	}
-
-	var dataSource *calldatabase.DataSourceConfig
-	var tables []calldatabase.TableRef
-
-	// 1. Check for data_source in inputs (can be flat or nested structure)
-	if dsRaw, exists := userInputs["data_source"]; exists {
-		if dsMap, ok := dsRaw.(map[string]interface{}); ok {
-			// Check if it's nested structure with "source" field (SQL Generator format)
-			if sourceRaw, hasSource := dsMap["source"]; hasSource {
-				if sourceMap, ok := sourceRaw.(map[string]interface{}); ok {
-					ds := calldatabase.DataSourceConfig{}
-					if id, ok := sourceMap["id"].(string); ok {
-						ds.ID = id
-					}
-					if name, ok := sourceMap["name"].(string); ok {
-						ds.Name = name
-					}
-					if dsType, ok := sourceMap["type"].(string); ok {
-						ds.Type = dsType
-					}
-					if ds.ID != "" {
-						dataSource = &ds
-					}
-				}
-			} else {
-				// Flat structure (Call Database format)
-				ds := calldatabase.DataSourceConfig{}
-				if id, ok := dsMap["id"].(string); ok {
-					ds.ID = id
-				}
-				if name, ok := dsMap["name"].(string); ok {
-					ds.Name = name
-				}
-				if dsType, ok := dsMap["type"].(string); ok {
-					ds.Type = dsType
-				}
-				if ds.ID != "" {
-					dataSource = &ds
-				}
-			}
-
-			// Check for tables in nested structure
-			if tablesRaw, hasTables := dsMap["tables"]; hasTables {
-				if tablesList, ok := tablesRaw.([]interface{}); ok {
-					tables = parseTablesList(tablesList)
-				}
-			}
-		}
-	}
-
-	// 2. Check for table_selection in inputs (Call Database format)
-	if len(tables) == 0 {
-		if tablesRaw, exists := userInputs["table_selection"]; exists {
-			if tablesList, ok := tablesRaw.([]interface{}); ok {
-				tables = parseTablesList(tablesList)
-			}
-		}
-	}
-
-	return dataSource, tables
-}
-
-// parseTablesList parses a list of table objects into TableRef structs
-func parseTablesList(tablesList []interface{}) []calldatabase.TableRef {
-	tables := make([]calldatabase.TableRef, 0, len(tablesList))
-
-	for _, tableRaw := range tablesList {
-		if tableMap, ok := tableRaw.(map[string]interface{}); ok {
-			table := calldatabase.TableRef{}
-
-			if schema, ok := tableMap["schema"].(string); ok {
-				table.Schema = schema
-			}
-			if name, ok := tableMap["name"].(string); ok {
-				table.Name = name
-			}
-			// Handle both float64 (from JSON) and int
-			if tableID, ok := tableMap["table_id"].(float64); ok {
-				table.TableID = int(tableID)
-			} else if tableID, ok := tableMap["table_id"].(int); ok {
-				table.TableID = tableID
-			}
-
-			// Parse columns array
-			if columnsRaw, ok := tableMap["columns"].([]interface{}); ok {
-				table.Columns = make([]string, 0, len(columnsRaw))
-				for _, colRaw := range columnsRaw {
-					if col, ok := colRaw.(string); ok {
-						table.Columns = append(table.Columns, col)
-					}
-				}
-			}
-
-			// Only add if at least name or table_id is present
-			if table.Name != "" || table.TableID > 0 {
-				tables = append(tables, table)
-			}
-		}
-	}
-
-	return tables
 }
 
 // getRuntimeModelConfig retrieves runtime model configuration from VariablePool

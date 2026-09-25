@@ -460,3 +460,83 @@ func TestWeaviateSearchByFullTextRequestsBM25Score(t *testing.T) {
 		t.Fatalf("score = %#v, want 7.25", additional["score"])
 	}
 }
+
+func TestWeaviateFieldAwareSearchUsesRequestedSchemaAndEscapesBM25Query(t *testing.T) {
+	var queries []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/schema":
+			_, _ = w.Write([]byte(`{"classes":[{"class":"Text2SQLSchema_1"}]}`))
+		case "/v1/graphql":
+			var payload struct {
+				Query string `json:"query"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode GraphQL request: %v", err)
+			}
+			queries = append(queries, payload.Query)
+			_, _ = w.Write([]byte(`{"data":{"Get":{"Text2SQLSchema_1":[{"asset_table_id":"asset-1","content":"orders"}]}}}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := NewWeaviateClient(&config.VectorStoreConfig{WeaviateEndpoint: server.URL})
+	fields := []string{"asset_table_id", "content"}
+	if _, err := client.SearchVectorsByFields(context.Background(), "Text2SQLSchema_1", "ds-1", []float64{0.1, 0.2}, 5, fields); err != nil {
+		t.Fatalf("SearchVectorsByFields returned error: %v", err)
+	}
+	multiline := "line one\n\"line two\" \\ path"
+	if _, err := client.SearchByFullTextField(context.Background(), "Text2SQLSchema_1", "ds-1", "content", multiline, 5, fields); err != nil {
+		t.Fatalf("SearchByFullTextField returned error: %v", err)
+	}
+	if len(queries) != 2 {
+		t.Fatalf("query count = %d, want 2", len(queries))
+	}
+	for _, query := range queries {
+		if strings.Contains(query, "doc_id") || strings.Contains(query, "dataset_id") || strings.Contains(query, "\ntext\n") {
+			t.Fatalf("field-aware query contains legacy document fields: %s", query)
+		}
+		if !strings.Contains(query, "asset_table_id") || !strings.Contains(query, "content") {
+			t.Fatalf("field-aware query missing requested fields: %s", query)
+		}
+		if !strings.Contains(query, `where: {path: ["data_source_id"] operator: Equal valueText: "ds-1"}`) {
+			t.Fatalf("field-aware query missing data source filter: %s", query)
+		}
+	}
+	if !strings.Contains(queries[1], `query: "line one\n\"line two\" \\ path"`) {
+		t.Fatalf("BM25 query was not GraphQL escaped: %s", queries[1])
+	}
+}
+
+func TestWeaviateFieldAwareSearchReturnsGraphQLError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/schema" {
+			_, _ = w.Write([]byte(`{"classes":[{"class":"Text2SQLSchema_1"}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"errors":[{"message":"Cannot query field content"}]}`))
+	}))
+	defer server.Close()
+
+	client := NewWeaviateClient(&config.VectorStoreConfig{WeaviateEndpoint: server.URL})
+	_, err := client.SearchVectorsByFields(context.Background(), "Text2SQLSchema_1", "ds-1", []float64{0.1}, 1, []string{"content"})
+	if err == nil || !strings.Contains(err.Error(), "Cannot query field content") {
+		t.Fatalf("error = %v, want original GraphQL message", err)
+	}
+}
+
+func TestWeaviateFieldAwareSearchRequiresDataSource(t *testing.T) {
+	client := NewWeaviateClient(&config.VectorStoreConfig{WeaviateEndpoint: "http://example.com"})
+	fields := []string{"content"}
+
+	if _, err := client.SearchVectorsByFields(context.Background(), "Text2SQLSchema_1", "", []float64{0.1}, 1, fields); err == nil {
+		t.Fatal("SearchVectorsByFields error = nil, want missing data source error")
+	}
+	if _, err := client.SearchByFullTextField(context.Background(), "Text2SQLSchema_1", "", "content", "orders", 1, fields); err == nil {
+		t.Fatal("SearchByFullTextField error = nil, want missing data source error")
+	}
+}

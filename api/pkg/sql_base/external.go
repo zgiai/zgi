@@ -14,6 +14,7 @@ import (
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/sql_base/audit"
 	"github.com/zgiai/zgi/api/pkg/sql_base/guard"
+	"github.com/zgiai/zgi/api/pkg/sql_base/sqlanalysis"
 	"go.uber.org/zap"
 )
 
@@ -1195,7 +1196,11 @@ func (c *externalClient) FormatQuery(ctx context.Context, req FormatQueryRequest
 }
 
 func (c *externalClient) ParseQuery(ctx context.Context, req ParseQueryRequest) (*ParsedQuery, error) {
-	return nil, fmt.Errorf("not implemented")
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	analysis := sqlanalysis.Analyze(req.Query)
+	return &analysis, nil
 }
 
 func (c *externalClient) DeparseQuery(ctx context.Context, req DeparseQueryRequest) (string, error) {
