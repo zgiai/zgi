@@ -1507,6 +1507,29 @@ func TestUploadArchiveUsesSkillPackageLimits(t *testing.T) {
 		t.Fatalf("uploaded file count = %d, want 257", result.FileCount)
 	}
 
+	legacyFiles := map[string]string{
+		"SKILL.md":             "# Legacy Skill",
+		"scripts/run.py":       "print('ok')",
+		"references/large.bin": strings.Repeat("x", 256*1024+1),
+	}
+	for len(legacyFiles) < 257 {
+		name := fmt.Sprintf("references/item-%03d.txt", len(legacyFiles))
+		legacyFiles[name] = "x"
+	}
+	legacyResult, err := service.UploadArchive(ArchiveUploadRequest{
+		SandboxID:     box.ID,
+		Path:          "legacy",
+		ArchiveBase64: zipBase64(t, legacyFiles),
+		Format:        "zip",
+		SkillPackage:  true,
+	})
+	if err != nil {
+		t.Fatalf("upload 257-file legacy Skill package above the generic per-file limit: %v", err)
+	}
+	if legacyResult.FileCount != 257 || legacyResult.SkillManifest != nil {
+		t.Fatalf("legacy upload result = %+v, want 257 files without manifest validation", legacyResult)
+	}
+
 	tooManyFiles := map[string]string{
 		"SKILL.md":            "# Skill",
 		"scripts/run.py":      "print('ok')",
@@ -2105,7 +2128,7 @@ func TestPrepareDependenciesIgnoresNodeBuiltinsAndRelativeModules(t *testing.T) 
 		ArchiveBase64: zipBase64(t, map[string]string{
 			"SKILL.md":              "Skill package\n",
 			"skill.manifest.json":   `{"entrypoint":"scripts/run.js","language":"nodejs"}`,
-			"scripts/run.js":        "const fs = require('node:fs'); const hooks = require('node:async_hooks'); const inspector = require('node:inspector'); const test = require('node:test'); const path = require('path'); const helper = require('./lib/helper'); const yaml = require('yaml');\n",
+			"scripts/run.js":        "const fs = require('node:fs'); const hooks = require('async_hooks'); const inspector = require('inspector/promises'); const test = require('node:test'); const path = require('path'); const helper = require('./lib/helper'); const yaml = require('yaml');\n",
 			"scripts/lib/helper.js": "module.exports = { ok: true };\n",
 		}),
 		Format:      "zip",

@@ -582,10 +582,10 @@ var pythonStdlibModules = map[string]bool{
 }
 
 var nodeBuiltinModules = map[string]bool{
-	"assert": true, "buffer": true, "child_process": true, "cluster": true,
+	"assert": true, "async_hooks": true, "buffer": true, "child_process": true, "cluster": true,
 	"console": true, "constants": true, "crypto": true, "dgram": true,
 	"diagnostics_channel": true, "dns": true, "domain": true, "events": true,
-	"fs": true, "http": true, "http2": true, "https": true, "module": true,
+	"fs": true, "http": true, "http2": true, "https": true, "inspector": true, "module": true,
 	"net": true, "os": true, "path": true, "perf_hooks": true,
 	"process": true, "punycode": true, "querystring": true, "readline": true,
 	"repl": true, "stream": true, "string_decoder": true, "sys": true,

@@ -311,7 +311,10 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 		}
 	}
 
-	if err := r.uploadArchive(ctx, sandboxID, archiveBase64, execCtx, hasManifest); err != nil {
+	if err := r.uploadArchive(ctx, sandboxID, archiveBase64, execCtx, archiveUploadOptions{
+		skillPackage:          true,
+		validateSkillManifest: hasManifest,
+	}); err != nil {
 		recordSkillScriptError(&trace, start, err)
 		return &ToolInvocationResult{Trace: trace}, err
 	}

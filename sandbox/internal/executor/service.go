@@ -151,6 +151,7 @@ type ArchiveUploadRequest struct {
 	ArchiveBase64         string `json:"archive_base64"`
 	Format                string `json:"format"`
 	StripRoot             bool   `json:"strip_root"`
+	SkillPackage          bool   `json:"skill_package"`
 	ValidateSkillManifest bool   `json:"validate_skill_manifest"`
 }
 
@@ -1447,7 +1448,7 @@ func (s *Service) UploadArchive(req ArchiveUploadRequest) (*ArchiveUploadResult,
 		maxFileSize:  s.policy.MaxFileSizeBytes(),
 		maxTotalSize: s.policy.MaxFileSizeBytes() * 256,
 	}
-	if req.ValidateSkillManifest {
+	if req.SkillPackage || req.ValidateSkillManifest {
 		limit = skillPackageArchiveLimits()
 	}
 	totalSize, err := validateArchiveEntriesWithinLimits(entries, limit)
