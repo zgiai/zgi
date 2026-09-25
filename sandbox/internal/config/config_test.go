@@ -203,6 +203,7 @@ func TestFromEnvReadsSecureRuntimeLimits(t *testing.T) {
 	t.Setenv("ZGI_SANDBOX_SECURE_RUNTIME_CPU_SECONDS", "3")
 	t.Setenv("ZGI_SANDBOX_SECURE_RUNTIME_MEMORY_BYTES", "134217728")
 	t.Setenv("ZGI_SANDBOX_SECURE_RUNTIME_PROCESS_LIMIT", "32")
+	t.Setenv("ZGI_SANDBOX_SECURE_RUNTIME_CGROUP_ROOT", "/sys/fs/cgroup/custom-executions")
 	t.Setenv("ZGI_SANDBOX_SECURE_RUNTIME_OPEN_FILE_LIMIT", "64")
 
 	cfg := FromEnv()
@@ -215,6 +216,9 @@ func TestFromEnvReadsSecureRuntimeLimits(t *testing.T) {
 	}
 	if cfg.SecureRuntimeProcessLimit != 32 {
 		t.Fatalf("expected secure runtime process limit 32, got %d", cfg.SecureRuntimeProcessLimit)
+	}
+	if cfg.SecureRuntimeCgroupRoot != "/sys/fs/cgroup/custom-executions" {
+		t.Fatalf("expected secure runtime cgroup root, got %s", cfg.SecureRuntimeCgroupRoot)
 	}
 	if cfg.SecureRuntimeOpenFileLimit != 64 {
 		t.Fatalf("expected secure runtime open file limit 64, got %d", cfg.SecureRuntimeOpenFileLimit)
@@ -338,6 +342,9 @@ func TestPublicSnapshotOmitsSecrets(t *testing.T) {
 	if snapshot["secure_runtime_process_limit"] != 32 {
 		t.Fatalf("expected secure runtime process limit, got %#v", snapshot["secure_runtime_process_limit"])
 	}
+	if snapshot["secure_runtime_cgroup_root"] != defaultSecureRuntimeCgroupRoot {
+		t.Fatalf("expected secure runtime cgroup root, got %#v", snapshot["secure_runtime_cgroup_root"])
+	}
 	if snapshot["secure_runtime_open_file_limit"] != 64 {
 		t.Fatalf("expected secure runtime open file limit, got %#v", snapshot["secure_runtime_open_file_limit"])
 	}
@@ -432,6 +439,17 @@ func TestValidateStartupRejectsRelativeSecureRootFS(t *testing.T) {
 
 	if err := cfg.ValidateStartup(); err == nil || !strings.Contains(err.Error(), "absolute path") {
 		t.Fatalf("expected relative secure rootfs to be rejected, got %v", err)
+	}
+}
+
+func TestValidateStartupRejectsRelativeSecureRuntimeCgroupRoot(t *testing.T) {
+	cfg := validStartupConfig()
+	cfg.RuntimeBackend = "linux-secure"
+	cfg.SecureRootFS = secureRootFSDir(t)
+	cfg.SecureRuntimeCgroupRoot = "relative-cgroup"
+
+	if err := cfg.ValidateStartup(); err == nil || !strings.Contains(err.Error(), "ZGI_SANDBOX_SECURE_RUNTIME_CGROUP_ROOT must be an absolute path") {
+		t.Fatalf("expected relative secure runtime cgroup root to be rejected, got %v", err)
 	}
 }
 

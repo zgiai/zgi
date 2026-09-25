@@ -19,7 +19,6 @@ func TestSecureRuntimeLimitsBuildPrlimitArgs(t *testing.T) {
 	want := []string{
 		"--cpu=3",
 		"--as=134217728",
-		"--nproc=16",
 		"--nofile=32",
 	}
 	if !reflect.DeepEqual(got, want) {
