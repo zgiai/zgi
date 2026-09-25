@@ -1,0 +1,17 @@
+{
+  "mode": "upper",
+  "text": "Hello from a ZGI Script Skill.",
+  "count": 2,
+  "ratio": 0.75,
+  "enabled": true,
+  "tags": [
+    "reference",
+    "python"
+  ],
+  "options": {
+    "prefix": "Result: ",
+    "repeat": 1,
+    "emit_diagnostic": false
+  },
+  "note": null
+}
