@@ -24,6 +24,9 @@ func (s *Store) LoadState(ctx context.Context) (*PreSyncState, error) {
 	var state PreSyncState
 	err := s.db.WithContext(ctx).Where("id = ?", syncStateSingletonID).First(&state).Error
 	if err == nil {
+		// The driver returns timestamptz in its own location (pgx: time.Local). Pin it to
+		// the real UTC instant so write and read agree everywhere downstream.
+		state.normalizeTimesUTC()
 		return &state, nil
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -61,10 +64,14 @@ func (s *Store) EnsureStateWith(ctx context.Context, db *gorm.DB) error {
 }
 
 // SaveState writes the mutable fields of the singleton state row.
+//
+// Every timestamp is normalised to UTC before it reaches the driver, so a caller that
+// passes a local-zone time still stores the real instant that LoadState reads back.
 func (s *Store) SaveState(ctx context.Context, state *PreSyncState) error {
 	if state == nil {
 		return nil
 	}
+	state.normalizeTimesUTC()
 	state.UpdatedAt = time.Now().UTC()
 	return s.db.WithContext(ctx).
 		Model(&PreSyncState{}).

@@ -2,6 +2,7 @@ package consolecred
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -22,7 +23,25 @@ type GRPCCredentials struct{}
 func NewGRPCCredentials() credentials.PerRPCCredentials { return GRPCCredentials{} }
 
 // GetRequestMetadata implements credentials.PerRPCCredentials.
+//
+// While the console link is stale it returns ErrConsoleLinkStale and attaches no metadata:
+// every gRPC official-channel dial site (billing, gateway quota, the official credit
+// checker) therefore fails closed. The loaded credential is left untouched so the
+// sync/inventory HTTP client, which is not attached to this credential, keeps signing.
 func (GRPCCredentials) GetRequestMetadata(ctx context.Context, _ ...string) (map[string]string, error) {
+	// The full method is attached by the gRPC transport for exactly this purpose.
+	method := ""
+	if info, found := credentials.RequestInfoFromContext(ctx); found {
+		method = info.Method
+	}
+
+	if global.Stale() {
+		if method == "" {
+			return nil, ErrConsoleLinkStale
+		}
+		return nil, fmt.Errorf("%w: %s", ErrConsoleLinkStale, method)
+	}
+
 	cred, ok := global.Get()
 	if !ok {
 		return map[string]string{}, nil
@@ -32,11 +51,6 @@ func (GRPCCredentials) GetRequestMetadata(ctx context.Context, _ ...string) (map
 		strings.ToLower(HeaderAuthorization): "Bearer " + cred.Secret,
 	}
 
-	// The full method is attached by the gRPC transport for exactly this purpose.
-	method := ""
-	if info, found := credentials.RequestInfoFromContext(ctx); found {
-		method = info.Method
-	}
 	if method == "" {
 		// Without a method there is nothing to sign; the Bearer token still travels and
 		// the branch interceptor can still resolve the instance.

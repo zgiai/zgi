@@ -161,8 +161,8 @@ func (s *Service) runOnce(ctx context.Context) error {
 		return err
 	}
 
-	// A successful heartbeat means the console link is healthy again: reload the
-	// credential that the stale gate dropped.
+	// A successful heartbeat means the console link is healthy again: re-enable the
+	// official channel for this process.
 	s.leaveStale()
 
 	state.LastHeartbeatAt = timePtr(time.Now().UTC())
@@ -289,20 +289,46 @@ func (s *Service) driftFor(ctx context.Context, state *PreSyncState) []Drift {
 	return drift
 }
 
+// isStale reports whether the console link must be considered stale.
+//
+// Only an in-process success counts. A persisted last_heartbeat_at is history from a
+// previous run: if it alone could gate the process, a restart could never repair a stale
+// row (every call would be refused before the first success could be recorded). So a
+// freshly started process is never stale, and the gate can only close after THIS process
+// has synced successfully and then gone silent for StaleAfter.
 func (s *Service) isStale(state *PreSyncState, now time.Time) bool {
-	reference := state.LastHeartbeatAt
-	if s.lastSuccess != nil && (reference == nil || s.lastSuccess.After(*reference)) {
-		reference = s.lastSuccess
-	}
-	if reference == nil {
-		// Never synced: stale only after the configured window from process start.
+	s.mu.Lock()
+	lastSuccess := s.lastSuccess
+	s.mu.Unlock()
+
+	if lastSuccess == nil {
 		return false
 	}
-	return now.Sub(*reference) > s.cfg.StaleAfter
+
+	// Compare real instants in UTC: the persisted value is read back from a timestamptz
+	// column, which drivers hand over in their own location (pgx returns time.Local).
+	reference := lastSuccess.UTC()
+	if state != nil && state.LastHeartbeatAt != nil && state.LastHeartbeatAt.After(reference) {
+		reference = state.LastHeartbeatAt.UTC()
+	}
+	return now.UTC().Sub(reference) > s.cfg.StaleAfter
 }
 
-// enterStale implements the recommended P9 gate: drop the loaded console credential so
-// subsequent official calls fail closed, without touching llm/gateway.
+// enterStale marks the console link stale for the official channel.
+//
+// Mechanism (approved option a + c): the per-instance credential is deliberately KEPT
+// loaded and the stale state is expressed as a flag on the same process-wide store
+// (consolecred.Global().SetStale). Clearing the credential here was a self-lock: the sync
+// client shares that global, so unsigned heartbeats were answered with "401 Missing
+// authentication headers", last_heartbeat_at never advanced and the link stayed stale
+// forever, across restarts.
+//
+//   - the sync/inventory client signs through consolecred.SignSyncRequest, which ignores
+//     the stale flag, so the next successful call re-establishes the link;
+//   - official-channel callers are gated on consolecred.Global().Stale(): the HTTP signer
+//     (consolecred.SignRequest, used by channel/console/gateway callers) attaches no
+//     instance headers while stale, gRPC per-RPC credentials return ErrConsoleLinkStale,
+//     and the official credit checker returns ErrOfficialCreditUnavailable.
 func (s *Service) enterStale(ctx context.Context, state *PreSyncState) {
 	s.mu.Lock()
 	alreadyStale := s.stale
@@ -312,8 +338,8 @@ func (s *Service) enterStale(ctx context.Context, state *PreSyncState) {
 		return
 	}
 
-	consolecred.Global().Clear()
-	log.Printf("[consolesync] console link is stale for more than %s: official channel credential cleared", s.cfg.StaleAfter)
+	consolecred.Global().SetStale(true)
+	log.Printf("[consolesync] console link is stale for more than %s: official channel suspended, sync credential kept", s.cfg.StaleAfter)
 
 	state.CredentialStatus = CredentialStatusStale
 	state.LastError = "console link stale; official channel suspended"
@@ -326,22 +352,28 @@ func (s *Service) leaveStale() {
 	s.stale = false
 	s.mu.Unlock()
 
-	if !wasStale {
-		// Keep the credential loaded even when it was never dropped.
-		if !consolecred.Global().Loaded() {
-			consolecred.Configure(s.cfg.InstanceID, s.cfg.InstanceSecret)
-		}
-		return
+	// The official channel is re-enabled unconditionally, and the credential is loaded if
+	// something else (credential.disable) removed it.
+	consolecred.Global().SetStale(false)
+	if !consolecred.Global().Loaded() {
+		consolecred.Configure(s.cfg.InstanceID, s.cfg.InstanceSecret)
 	}
-	consolecred.Configure(s.cfg.InstanceID, s.cfg.InstanceSecret)
-	log.Printf("[consolesync] console link recovered: official channel credential restored")
+	if wasStale {
+		log.Printf("[consolesync] console link recovered: official channel re-enabled")
+	}
+}
+
+// noteSuccess records an in-process successful contact with console. isStale trusts only
+// this in-process marker, never the persisted history.
+func (s *Service) noteSuccess(now time.Time) {
+	s.mu.Lock()
+	s.lastSuccess = &now
+	s.mu.Unlock()
 }
 
 func (s *Service) recordSuccess(ctx context.Context) {
 	now := time.Now().UTC()
-	s.mu.Lock()
-	s.lastSuccess = &now
-	s.mu.Unlock()
+	s.noteSuccess(now)
 
 	state, err := s.store.LoadState(ctx)
 	if err != nil {

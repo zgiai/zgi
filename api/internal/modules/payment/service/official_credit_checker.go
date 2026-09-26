@@ -47,6 +47,13 @@ func (c *consoleOfficialCreditChecker) GetOfficialBalance(ctx context.Context, o
 		return 0, fmt.Errorf("%w: console grpc address is empty", ErrOfficialCreditUnavailable)
 	}
 
+	// The official channel fails closed while the console link is stale. The instance
+	// credential stays loaded (the sync client needs it to repair the link), so this call
+	// site checks the explicit stale flag instead of relying on a cleared credential.
+	if consolecred.Global().Stale() {
+		return 0, fmt.Errorf("%w: console link is stale", ErrOfficialCreditUnavailable)
+	}
+
 	dialCtx, cancelDial := context.WithTimeout(ctx, c.dialTimeout)
 	defer cancelDial()
 

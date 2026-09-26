@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -527,6 +529,26 @@ func TestClientDecodesConsoleEnvelope(t *testing.T) {
 
 func ptrEnvelope(command CommandEnvelope) *CommandEnvelope { return &command }
 
+// callIsSigned reports whether a captured request carried the full instance credential.
+func callIsSigned(call capturedCall) bool {
+	return call.Header.Get(consolecred.HeaderInstanceID) == "instance-1" &&
+		call.Header.Get(consolecred.HeaderSignature) != ""
+}
+
+// receiveCallForPath drains captured calls until one for path arrives, so a test can assert
+// on a specific request even when the client issues others in the same cycle.
+func receiveCallForPath(t *testing.T, calls <-chan capturedCall, path string) capturedCall {
+	t.Helper()
+	for i := 0; i < 64; i++ {
+		call := receiveCall(t, calls)
+		if call.Path == path {
+			return call
+		}
+	}
+	t.Fatalf("the console never received a call for %s", path)
+	return capturedCall{}
+}
+
 // Acceptance row 7: a hole in the sequence must stop in-order application instead of
 // jumping over the missing commands.
 func TestCheckSequenceDetectsGaps(t *testing.T) {
@@ -543,8 +565,10 @@ func TestCheckSequenceDetectsGaps(t *testing.T) {
 }
 
 // Acceptance row 9 / decision 8.1(4): while the console link is stale the official channel
-// must fail closed, which is implemented by dropping the loaded credential.
-func TestStaleGateClearsCredentialAndRecovers(t *testing.T) {
+// must fail closed. The gate is an explicit flag on the shared credential store, NOT
+// Clear(): the sync/inventory client shares that store and must keep signing, otherwise
+// the link can never recover.
+func TestStaleGateKeepsTheSyncCredentialAndSuspendsOfficialChannel(t *testing.T) {
 	db := newConsolesyncTestDB(t)
 	store := NewStore(db)
 	service := &Service{
@@ -562,9 +586,11 @@ func TestStaleGateClearsCredentialAndRecovers(t *testing.T) {
 	ctx := context.Background()
 
 	consolecred.Configure("instance-1", "secret")
-	t.Cleanup(func() { consolecred.Global().Clear() })
+	t.Cleanup(func() {
+		consolecred.Global().SetStale(false)
+		consolecred.Global().Clear()
+	})
 
-	// A heartbeat far in the past means the link is stale.
 	state, err := store.LoadState(ctx)
 	if err != nil {
 		t.Fatalf("bootstrap state: %v", err)
@@ -574,14 +600,28 @@ func TestStaleGateClearsCredentialAndRecovers(t *testing.T) {
 	if err := store.SaveState(ctx, state); err != nil {
 		t.Fatalf("seed state: %v", err)
 	}
-	if !service.isStale(state, time.Now().UTC()) {
-		t.Fatalf("a 30 minute old heartbeat must count as stale")
-	}
 
 	service.enterStale(ctx, state)
-	if consolecred.Global().Loaded() {
-		t.Fatalf("stale gate did not clear the credential; the official channel would stay open")
+	if consolecred.Global().Stale() != true {
+		t.Fatalf("enterStale did not set the stale flag")
 	}
+	if !consolecred.Global().Loaded() {
+		t.Fatalf("enterStale must keep the credential loaded: clearing it is the self-lock")
+	}
+
+	// The sync/inventory client keeps signing while stale: this is what repairs the link.
+	req := httptest.NewRequest(http.MethodPost, "https://console.example.com"+apiPrefix+pathHeartbeat, nil)
+	consolecred.SignSyncRequest(req)
+	if req.Header.Get(consolecred.HeaderInstanceID) != "instance-1" {
+		t.Fatalf("the sync client did not sign while stale; the link could never recover")
+	}
+	// The official channel is gated on the same flag.
+	official := httptest.NewRequest(http.MethodPost, "https://console.example.com"+apiPrefix+pathHeartbeat, nil)
+	consolecred.SignRequest(official)
+	if official.Header.Get(consolecred.HeaderInstanceID) != "" {
+		t.Fatalf("the official channel was signed while stale")
+	}
+
 	reloaded, err := store.LoadState(ctx)
 	if err != nil {
 		t.Fatalf("reload state: %v", err)
@@ -592,14 +632,252 @@ func TestStaleGateClearsCredentialAndRecovers(t *testing.T) {
 	if service.Status(ctx).Stale != true {
 		t.Fatalf("status did not report the stale state")
 	}
+	if !service.Status(ctx).CredentialLoaded {
+		t.Fatalf("status must still report the credential as loaded")
+	}
 
-	// A successful heartbeat restores the credential and clears the flag.
+	// A successful call clears the flag and re-enables the official channel.
 	service.leaveStale()
+	if consolecred.Global().Stale() {
+		t.Fatalf("recovery did not clear the stale flag")
+	}
 	if !consolecred.Global().Loaded() {
-		t.Fatalf("recovery did not restore the credential")
+		t.Fatalf("recovery lost the credential")
+	}
+	officialAgain := httptest.NewRequest(http.MethodPost, "https://console.example.com"+apiPrefix+pathHeartbeat, nil)
+	consolecred.SignRequest(officialAgain)
+	if officialAgain.Header.Get(consolecred.HeaderInstanceID) != "instance-1" {
+		t.Fatalf("the official channel was not re-enabled after recovery")
 	}
 	if service.Status(ctx).Stale {
-		t.Fatalf("recovery did not clear the stale flag")
+		t.Fatalf("recovery did not clear the stale flag in Status()")
+	}
+}
+
+// (c) A persisted last_heartbeat_at is history, not evidence: a fresh process must not be
+// gated by it. The link only turns stale after an in-process success followed by StaleAfter
+// without contact, and a restart resets the gate.
+func TestIsStaleIgnoresPersistedHistoryUntilThisProcessSucceeds(t *testing.T) {
+	service := &Service{cfg: Config{StaleAfter: 5 * time.Minute}}
+	now := time.Now().UTC()
+	old := now.Add(-8 * time.Hour)
+	state := &PreSyncState{LastHeartbeatAt: &old}
+
+	// Right after Start: an 8h old persisted heartbeat must not count, otherwise a restart
+	// can never repair the row.
+	if service.isStale(state, now) {
+		t.Fatalf("a fresh process was gated by persisted history alone")
+	}
+
+	// An in-process success starts the clock.
+	service.noteSuccess(now)
+	if service.isStale(state, now.Add(4*time.Minute)) {
+		t.Fatalf("link reported stale before StaleAfter without contact")
+	}
+	if !service.isStale(state, now.Add(6*time.Minute)) {
+		t.Fatalf("link not reported stale after StaleAfter without contact")
+	}
+
+	// A newer persisted heartbeat is also respected, but only once this process succeeded.
+	newer := now.Add(-time.Minute)
+	fresh := &Service{cfg: Config{StaleAfter: 5 * time.Minute}}
+	fresh.noteSuccess(now.Add(-4 * time.Minute))
+	if fresh.isStale(&PreSyncState{LastHeartbeatAt: &newer}, now) {
+		t.Fatalf("a heartbeat newer than the in-process success must keep the link fresh")
+	}
+}
+
+// (c) Timezone regression: a stored last_heartbeat_at must round-trip to the same instant
+// and be handed back as UTC. Drivers return timestamptz in their own location (pgx builds
+// it with time.Unix, i.e. time.Local; sqlite returns a fixed offset), which previously read
+// back a UTC write as "+08:00" while the instant was correct.
+func TestLastHeartbeatAtRoundTripsToTheSameUTCInstant(t *testing.T) {
+	db := newConsolesyncTestDB(t)
+	store := NewStore(db)
+	ctx := context.Background()
+
+	shanghai := time.FixedZone("CST", 8*60*60)
+	written := time.Date(2026, 9, 25, 12, 3, 36, 0, shanghai)
+
+	state, err := store.LoadState(ctx)
+	if err != nil {
+		t.Fatalf("bootstrap state: %v", err)
+	}
+	state.LastHeartbeatAt = &written
+	state.LastPullAt = &written
+	state.NextPollAt = &written
+	if err := store.SaveState(ctx, state); err != nil {
+		t.Fatalf("SaveState() error = %v", err)
+	}
+
+	reloaded, err := store.LoadState(ctx)
+	if err != nil {
+		t.Fatalf("LoadState() error = %v", err)
+	}
+	if reloaded.LastHeartbeatAt == nil {
+		t.Fatalf("last_heartbeat_at was lost")
+	}
+	if !reloaded.LastHeartbeatAt.Equal(written) {
+		t.Fatalf("last_heartbeat_at = %s, want the same instant as %s",
+			reloaded.LastHeartbeatAt, written)
+	}
+	if reloaded.LastHeartbeatAt.Location() != time.UTC {
+		t.Fatalf("last_heartbeat_at location = %s, want UTC", reloaded.LastHeartbeatAt.Location())
+	}
+	if got := reloaded.LastHeartbeatAt.Format(time.RFC3339); got != "2026-09-25T04:03:36Z" {
+		t.Fatalf("last_heartbeat_at = %q, want the real UTC instant", got)
+	}
+	if reloaded.LastPullAt == nil || !reloaded.LastPullAt.Equal(written) {
+		t.Fatalf("last_pull_at did not round-trip: %v", reloaded.LastPullAt)
+	}
+	if reloaded.NextPollAt == nil || !reloaded.NextPollAt.Equal(written) {
+		t.Fatalf("next_poll_at did not round-trip: %v", reloaded.NextPollAt)
+	}
+
+	// A row written by an older build / another writer in a non-UTC location (the "+08:00"
+	// rendering seen in the bug report) must still be read as the same real UTC instant,
+	// because the read path normalises what the driver hands back.
+	if err := db.Exec(
+		`UPDATE pre_sync_state SET last_heartbeat_at = ? WHERE id = 1`, written,
+	).Error; err != nil {
+		t.Fatalf("seed a legacy offset row: %v", err)
+	}
+	legacy, err := store.LoadState(ctx)
+	if err != nil {
+		t.Fatalf("LoadState() after a legacy offset row: %v", err)
+	}
+	if legacy.LastHeartbeatAt == nil || !legacy.LastHeartbeatAt.Equal(written) {
+		t.Fatalf("legacy row instant = %v, want %s", legacy.LastHeartbeatAt, written)
+	}
+	if legacy.LastHeartbeatAt.Location() != time.UTC {
+		t.Fatalf("legacy row location = %s, want UTC", legacy.LastHeartbeatAt.Location())
+	}
+	if got := legacy.LastHeartbeatAt.Format(time.RFC3339); got != "2026-09-25T04:03:36Z" {
+		t.Fatalf("legacy row = %q, want the real UTC instant", got)
+	}
+}
+
+// The regression from the bug report, end to end: a persisted 8h old heartbeat plus a
+// stale official channel must not stop the signed heartbeat/inventory call that repairs
+// the link, and that successful call must clear the stale state.
+func TestStalePersistedHeartbeatDoesNotBlockSignedSyncAndRecovers(t *testing.T) {
+	db := newConsolesyncTestDB(t)
+	seedInventoryOrganization(t, db, testOrganizationID, "Acme", "acme", "active", time.Now().UTC())
+	// The heartbeat and the inventory report can run concurrently against the shared
+	// in-memory database; a single connection avoids SQLITE_BUSY flakes.
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("sql.DB(): %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+
+	calls := make(chan capturedCall, 16)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls <- captureConsoleCall(r)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case apiPrefix + pathHeartbeat:
+			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"desired_version":1}}`))
+		case apiPrefix + pathCommands:
+			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"commands":[]}}`))
+		case apiPrefix + pathDesiredState:
+			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"version":1,"account_status":"active"}}`))
+		case testOrganizationPath:
+			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"upserted":1}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	service := NewService(db, Config{
+		Enabled:        true,
+		Edition:        "CLOUD",
+		BaseURL:        server.URL,
+		InstanceID:     "instance-1",
+		InstanceSecret: "secret",
+		Interval:       45 * time.Second,
+		StaleAfter:     5 * time.Minute,
+		HTTPTimeout:    5 * time.Second,
+		ReconcileEvery: time.Minute,
+	}, "test")
+	if service == nil {
+		t.Fatalf("NewService() returned nil for a valid cloud config")
+	}
+	t.Cleanup(func() {
+		consolecred.Global().SetStale(false)
+		consolecred.Global().Clear()
+	})
+	// Start() loads the instance credential; do the same here without running the loop.
+	consolecred.Configure(service.cfg.InstanceID, service.cfg.InstanceSecret)
+
+	ctx := context.Background()
+	// The persisted row from a previous run: 8h old and already marked stale.
+	persisted, err := service.store.LoadState(ctx)
+	if err != nil {
+		t.Fatalf("bootstrap state: %v", err)
+	}
+	old := time.Now().UTC().Add(-8 * time.Hour)
+	persisted.LastHeartbeatAt = &old
+	persisted.CredentialStatus = CredentialStatusStale
+	if err := service.store.SaveState(ctx, persisted); err != nil {
+		t.Fatalf("seed persisted state: %v", err)
+	}
+
+	// Restart case: a fresh process must not be gated by the persisted row. runOnce signs
+	// its heartbeat and must come out of it not stale.
+	if err := service.runOnce(ctx); err != nil {
+		t.Fatalf("runOnce() after a restart with a persisted stale row = %v", err)
+	}
+	firstHeartbeat := receiveCallForPath(t, calls, apiPrefix+pathHeartbeat)
+	if !callIsSigned(firstHeartbeat) {
+		t.Fatalf("a restarted process sent an unsigned heartbeat: the persisted row gated it")
+	}
+	if service.Status(ctx).Stale || consolecred.Global().Stale() {
+		t.Fatalf("a restarted process became stale from persisted history alone")
+	}
+
+	// Simulate the gate having fired in this process before the recovery attempt.
+	service.enterStale(ctx, persisted)
+	if !consolecred.Global().Stale() {
+		t.Fatalf("precondition: the link must be stale")
+	}
+	// Even while stale, the sync/inventory client signs and gets through.
+	if err := service.reportOrganizationInventory(ctx); err != nil {
+		t.Fatalf("reportOrganizationInventory() while stale = %v", err)
+	}
+	inventory := receiveCallForPath(t, calls, testOrganizationPath)
+	if !callIsSigned(inventory) {
+		t.Fatalf("the inventory call went out unsigned while stale: the self-lock is back")
+	}
+	if consolecred.Global().Stale() {
+		t.Fatalf("a successful inventory call must clear the stale state")
+	}
+
+	// Re-arm the gate and prove the heartbeat path recovers it too.
+	service.enterStale(ctx, persisted)
+	if err := service.runOnce(ctx); err != nil {
+		t.Fatalf("runOnce() while stale = %v", err)
+	}
+	heartbeat := receiveCallForPath(t, calls, apiPrefix+pathHeartbeat)
+	if !callIsSigned(heartbeat) {
+		t.Fatalf("the heartbeat went out unsigned while stale: the self-lock is back")
+	}
+	if consolecred.Global().Stale() || service.Status(ctx).Stale {
+		t.Fatalf("a successful heartbeat must clear the stale state")
+	}
+	if !consolecred.Global().Loaded() {
+		t.Fatalf("the credential was dropped")
+	}
+	reloaded, err := service.store.LoadState(ctx)
+	if err != nil {
+		t.Fatalf("reload state: %v", err)
+	}
+	if reloaded.LastHeartbeatAt == nil || time.Since(*reloaded.LastHeartbeatAt) > time.Minute {
+		t.Fatalf("last_heartbeat_at did not advance: %v", reloaded.LastHeartbeatAt)
+	}
+	if reloaded.LastHeartbeatAt.Location() != time.UTC {
+		t.Fatalf("last_heartbeat_at was not normalised to UTC: %v", reloaded.LastHeartbeatAt)
 	}
 }
 

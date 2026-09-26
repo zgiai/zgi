@@ -224,8 +224,10 @@ func (c *Client) doRequest(
 		return fmt.Errorf("build console sync request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	// The instance credential is the only identity console accepts on this surface.
-	consolecred.SignRequest(req)
+	// The instance credential is the only identity console accepts on this surface. This is
+	// the sync/inventory client, so it signs even while the link is stale: it is what
+	// carries the heartbeat that clears the stale state (see consolecred.SignSyncRequest).
+	consolecred.SignSyncRequest(req)
 
 	resp, err := c.http.Do(req)
 	if err != nil {

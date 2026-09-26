@@ -2,6 +2,7 @@ package consolecred
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -41,7 +42,7 @@ func TestSignRequestIsNoOpWithoutCredential(t *testing.T) {
 	}
 }
 
-func TestClearIsTheStaleGate(t *testing.T) {
+func TestClearDropsTheCredential(t *testing.T) {
 	Configure("instance-1", "secret")
 	if !Global().Loaded() {
 		t.Fatalf("credential must be loaded after Configure")
@@ -50,10 +51,77 @@ func TestClearIsTheStaleGate(t *testing.T) {
 	if Global().Loaded() {
 		t.Fatalf("credential must be gone after Clear")
 	}
+	if Global().Stale() {
+		t.Fatalf("a cleared store must not report a stale link")
+	}
 	req := httptest.NewRequest("GET", "https://console.example.com/v1/internal/pre/commands", nil)
 	SignRequest(req)
 	if req.Header.Get(HeaderSignature) != "" {
-		t.Fatalf("stale gate must stop signing official calls")
+		t.Fatalf("a cleared credential must stop signing official calls")
+	}
+}
+
+// The stale gate is the explicit store flag, not Clear(): the sync client keeps signing so
+// the link can recover, while the official HTTP channel is refused.
+func TestStaleFlagSuspendsOnlyTheOfficialChannel(t *testing.T) {
+	Global().Clear()
+	t.Cleanup(func() { Global().Clear() })
+	Configure("instance-1", "secret")
+	Global().SetStale(true)
+
+	official := httptest.NewRequest("POST", "https://console.example.com/v1/internal/channels/routing", nil)
+	SignRequest(official)
+	if official.Header.Get(HeaderInstanceID) != "" || official.Header.Get(HeaderSignature) != "" {
+		t.Fatalf("the official channel must not be signed while stale")
+	}
+
+	sync := httptest.NewRequest("POST", "https://console.example.com/v1/internal/pre/heartbeat", nil)
+	SignSyncRequest(sync)
+	if sync.Header.Get(HeaderInstanceID) != "instance-1" || sync.Header.Get(HeaderSignature) == "" {
+		t.Fatalf("the sync client must keep signing while stale")
+	}
+
+	Global().SetStale(false)
+	officialAgain := httptest.NewRequest("POST", "https://console.example.com/v1/internal/channels/routing", nil)
+	SignRequest(officialAgain)
+	if officialAgain.Header.Get(HeaderInstanceID) != "instance-1" {
+		t.Fatalf("clearing the stale flag must re-enable the official channel")
+	}
+}
+
+// While stale the gRPC official channel fails closed with a local error instead of sending
+// an unsigned call.
+func TestGRPCCredentialsRefuseWhileStale(t *testing.T) {
+	Global().Clear()
+	t.Cleanup(func() { Global().Clear() })
+	Configure("instance-9", "grpc-secret")
+	Global().SetStale(true)
+
+	ctx := credentials.NewContextWithRequestInfo(context.Background(), credentials.RequestInfo{
+		Method: "/zgi.rpc.v1.BillingService/CheckCreditBalance",
+	})
+	metadata, err := NewGRPCCredentials().GetRequestMetadata(ctx)
+	if !errors.Is(err, ErrConsoleLinkStale) {
+		t.Fatalf("error = %v, want ErrConsoleLinkStale", err)
+	}
+	if len(metadata) != 0 {
+		t.Fatalf("metadata = %v, want none while stale", metadata)
+	}
+	if !Global().Loaded() {
+		t.Fatalf("the credential must stay loaded while stale")
+	}
+}
+
+// A no-credential (rollout) store sends nothing; a stale store refuses, and the two are
+// distinguishable by the error.
+func TestGRPCCredentialsWithoutCredentialSendNothing(t *testing.T) {
+	Global().Clear()
+	metadata, err := NewGRPCCredentials().GetRequestMetadata(context.Background())
+	if err != nil {
+		t.Fatalf("GetRequestMetadata() error = %v", err)
+	}
+	if len(metadata) != 0 {
+		t.Fatalf("metadata = %v, want empty during the rollout window", metadata)
 	}
 }
 
@@ -82,17 +150,6 @@ func TestGRPCCredentialsCarryBearerAndHMAC(t *testing.T) {
 	want := Sign("grpc-secret", timestamp, method)
 	if got := metadata[strings.ToLower(HeaderSignature)]; got != want {
 		t.Fatalf("signature = %q, want %q", got, want)
-	}
-}
-
-func TestGRPCCredentialsWithoutCredentialSendNothing(t *testing.T) {
-	Global().Clear()
-	metadata, err := NewGRPCCredentials().GetRequestMetadata(context.Background())
-	if err != nil {
-		t.Fatalf("GetRequestMetadata() error = %v", err)
-	}
-	if len(metadata) != 0 {
-		t.Fatalf("metadata = %v, want empty during the rollout window", metadata)
 	}
 }
 

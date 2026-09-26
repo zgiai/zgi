@@ -171,6 +171,12 @@ func (s *Service) reportOrganizationInventory(ctx context.Context) error {
 		return fmt.Errorf("report %d organizations: %w", len(payload.Organizations), err)
 	}
 
+	// A signed inventory that console accepted proves the link is up again: the sync client
+	// signs even while stale on purpose, so this is a legitimate recovery signal and it
+	// clears the official-channel gate for the whole process.
+	s.noteSuccess(time.Now().UTC())
+	s.leaveStale()
+
 	upserted := int64(0)
 	if response != nil {
 		upserted = response.Upserted
