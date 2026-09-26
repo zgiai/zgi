@@ -30,8 +30,9 @@ import (
 // VIEW over `workspace_members` (migrations/baseline/70_compat_views.go) and no Go code in
 // this repository reads it. `workspace_members` is *workspace* membership, so an
 // organization-only member (no workspace assigned) has no workspace row to write. This
-// command therefore writes exactly two tables: `accounts` (only when the email is new) and
-// `members`.
+// command therefore writes `accounts` (only when the email is new), `members`, and -- when
+// the optional `department_id` is present -- one `department_members` row, the table pre's
+// own contacts page reads its department membership from.
 //
 // All statements go through GORM's builder against the shared table names, so postgres,
 // sqlite and mysql behave identically without dialect-specific SQL.
@@ -80,15 +81,16 @@ type OrganizationMemberCreateAck struct {
 
 // applyOrganizationMemberCreate adds one organization member.
 //
-// It runs inside the applier's transaction, so the account, the membership and the
-// idempotency ledger row commit together.
+// It runs inside the applier's transaction, so the account, the membership, the optional
+// department membership and the idempotency ledger row commit together.
 func (a *Applier) applyOrganizationMemberCreate(ctx context.Context, tx *gorm.DB, payload map[string]json.RawMessage) (string, string, error) {
 	organizationID := strings.TrimSpace(rawString(payload, "organization_id"))
 	email := normalizeMemberEmail(rawString(payload, "email"))
 	role := strings.ToLower(rawString(payload, "role"))
 	name := strings.TrimSpace(rawString(payload, "name"))
+	departmentID := strings.TrimSpace(rawString(payload, "department_id"))
 
-	if err := validateOrganizationMemberCreate(organizationID, email, role); err != nil {
+	if err := validateOrganizationMemberCreate(organizationID, email, role, departmentID); err != nil {
 		return "", "", err
 	}
 	memberRole, err := preOrganizationMemberRole(role)
@@ -112,6 +114,14 @@ func (a *Applier) applyOrganizationMemberCreate(ctx context.Context, tx *gorm.DB
 		return "", "", fmt.Errorf("organization.member.create: read organization: %w", err)
 	}
 
+	// The optional department must belong to that same organization. An unknown or foreign
+	// id is a hard failure, checked before anything is written.
+	if departmentID != "" {
+		if err := requireOrganizationDepartment(ctx, tx, organizationID, departmentID); err != nil {
+			return "", "", err
+		}
+	}
+
 	account, accountCreated, err := findOrCreateMemberAccount(ctx, tx, email, name)
 	if err != nil {
 		return "", "", err
@@ -120,6 +130,12 @@ func (a *Applier) applyOrganizationMemberCreate(ctx context.Context, tx *gorm.DB
 	memberCreated, err := ensureOrganizationMember(ctx, tx, organizationID, account.ID, memberRole, name)
 	if err != nil {
 		return "", "", err
+	}
+
+	if departmentID != "" {
+		if err := ensureDepartmentMember(ctx, tx, organizationID, departmentID, account.ID); err != nil {
+			return "", "", err
+		}
 	}
 
 	before := marshalMap(map[string]interface{}{
@@ -244,8 +260,75 @@ func ensureOrganizationMember(ctx context.Context, tx *gorm.DB, organizationID, 
 	return true, nil
 }
 
+// requireOrganizationDepartment refuses a department that is not part of the organization.
+//
+// The lookup mirrors pre's own direct-add flow (getDirectAddDepartmentTx) and the
+// department repository: `departments.id` scoped by `group_id`, with no status filter, so a
+// department pre's own UI can still display is accepted.
+func requireOrganizationDepartment(ctx context.Context, tx *gorm.DB, organizationID, departmentID string) error {
+	var department struct {
+		ID string `gorm:"column:id"`
+	}
+	err := tx.WithContext(ctx).Table("departments").
+		Select("id").
+		Where("id = ? AND group_id = ?", departmentID, organizationID).
+		Take(&department).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("organization.member.create: department %s does not exist in organization %s",
+			departmentID, organizationID)
+	}
+	if err != nil {
+		return fmt.Errorf("organization.member.create: read department: %w", err)
+	}
+	return nil
+}
+
+// ensureDepartmentMember writes the one `department_members` row pre's own UI reads
+// (workspace/model.DepartmentMember, written by AddMemberToDepartment / ChangeMemberDepartment
+// and by the direct-add flow).
+//
+// pre keeps a member in at most one department per organization, so an existing membership
+// is never duplicated:
+//   - the requested department is already the member's department: idempotent no-op, so a
+//     console retry under a fresh command id still succeeds;
+//   - the member sits in a different department: the command fails with a clear error and
+//     writes nothing, mirroring pre's direct-add conflict instead of silently creating a
+//     second membership the UI would render twice.
+func ensureDepartmentMember(ctx context.Context, tx *gorm.DB, organizationID, departmentID, accountID string) error {
+	var existing struct {
+		DepartmentID string `gorm:"column:department_id"`
+	}
+	err := tx.WithContext(ctx).
+		Table("department_members AS dm").
+		Select("dm.department_id").
+		Joins("JOIN departments AS d ON d.id = dm.department_id").
+		Where("d.group_id = ? AND dm.account_id = ?", organizationID, accountID).
+		Take(&existing).Error
+	if err == nil {
+		if existing.DepartmentID == departmentID {
+			return nil
+		}
+		return fmt.Errorf("organization.member.create: member %s already belongs to department %s in organization %s",
+			accountID, existing.DepartmentID, organizationID)
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("organization.member.create: check department membership: %w", err)
+	}
+
+	now := time.Now().UTC()
+	if err := tx.WithContext(ctx).Table("department_members").Create(map[string]interface{}{
+		"id":            uuid.NewString(),
+		"department_id": departmentID,
+		"account_id":    accountID,
+		"created_at":    now,
+	}).Error; err != nil {
+		return fmt.Errorf("organization.member.create: create department membership: %w", err)
+	}
+	return nil
+}
+
 // validateOrganizationMemberCreate rejects a malformed payload before anything is written.
-func validateOrganizationMemberCreate(organizationID, email, role string) error {
+func validateOrganizationMemberCreate(organizationID, email, role, departmentID string) error {
 	if _, err := uuid.Parse(organizationID); err != nil {
 		return fmt.Errorf("organization.member.create: organization_id %q is not a valid uuid", organizationID)
 	}
@@ -258,6 +341,11 @@ func validateOrganizationMemberCreate(organizationID, email, role string) error 
 	if role != commandRoleAdmin && role != commandRoleMember {
 		return fmt.Errorf("organization.member.create: role %q is not supported (expected %s or %s)",
 			role, commandRoleAdmin, commandRoleMember)
+	}
+	if departmentID != "" {
+		if _, err := uuid.Parse(departmentID); err != nil {
+			return fmt.Errorf("organization.member.create: department_id %q is not a valid uuid", departmentID)
+		}
 	}
 	return nil
 }

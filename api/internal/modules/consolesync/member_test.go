@@ -25,6 +25,18 @@ func memberCreatePayload(organizationID, email, name, role string) string {
 	return string(raw)
 }
 
+// memberCreatePayloadWithDepartment is the same payload with the optional department_id.
+func memberCreatePayloadWithDepartment(organizationID, email, name, role, departmentID string) string {
+	raw, _ := json.Marshal(map[string]string{
+		"organization_id": organizationID,
+		"email":           email,
+		"name":            name,
+		"role":            role,
+		"department_id":   departmentID,
+	})
+	return string(raw)
+}
+
 func seedMemberAccount(t *testing.T, db *gorm.DB, id, email, name, status string) {
 	t.Helper()
 	now := time.Now().UTC()
@@ -224,6 +236,166 @@ func TestApplyOrganizationMemberCreateIsIdempotentOnReplay(t *testing.T) {
 	}
 }
 
+// A department_id that belongs to the organization also places the member in pre's
+// `department_members` table, the one the contacts page reads.
+func TestApplyOrganizationMemberCreatePlacesMemberInDepartment(t *testing.T) {
+	applier, _, db := newApplierFixture(t)
+	const departmentID = "33333333-3333-4333-8333-333333333333"
+	seedDepartment(t, db, departmentID, testOrganizationID, "研发部", "active", 1)
+
+	result, err := applier.Apply(context.Background(), ptrEnvelope(envelope(
+		CommandOrganizationMemberCreate,
+		memberCreatePayloadWithDepartment(testOrganizationID, "dept@example.com", "张三", "member", departmentID),
+	)))
+	if err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	ack := decodeMemberAck(t, result.After)
+	if !ack.Created {
+		t.Fatalf("created = false, want true for a new account")
+	}
+
+	var membership struct {
+		ID           string `gorm:"column:id"`
+		DepartmentID string `gorm:"column:department_id"`
+		AccountID    string `gorm:"column:account_id"`
+	}
+	if err := db.Table("department_members").
+		Select("id, department_id, account_id").
+		Where("account_id = ?", ack.AccountID).
+		Scan(&membership).Error; err != nil {
+		t.Fatalf("read department membership: %v", err)
+	}
+	if membership.ID == "" {
+		t.Fatalf("no department_members row was written for %s", ack.AccountID)
+	}
+	if membership.DepartmentID != departmentID || membership.AccountID != ack.AccountID {
+		t.Fatalf("department membership = %+v, want department %s account %s", membership, departmentID, ack.AccountID)
+	}
+}
+
+// A department that does not belong to the organization -- or does not exist at all -- is a
+// clear failure, and neither the account, the membership nor a department row is written.
+func TestApplyOrganizationMemberCreateRejectsUnknownDepartment(t *testing.T) {
+	const foreignOrganization = "22222222-2222-4222-8222-222222222222"
+	const foreignDepartment = "44444444-4444-4444-8444-444444444444"
+	const missingDepartment = "55555555-5555-4555-8555-555555555555"
+
+	cases := []struct {
+		name         string
+		departmentID string
+		seedForeign  bool
+	}{
+		{"department of another organization", foreignDepartment, true},
+		{"department that does not exist", missingDepartment, false},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			applier, _, db := newApplierFixture(t)
+			if testCase.seedForeign {
+				seedDepartment(t, db, foreignDepartment, foreignOrganization, "外部部门", "active", 1)
+			}
+
+			_, err := applier.Apply(context.Background(), ptrEnvelope(envelope(
+				CommandOrganizationMemberCreate,
+				memberCreatePayloadWithDepartment(testOrganizationID, "user@example.com", "张三", "member", testCase.departmentID),
+			)))
+			if err == nil {
+				t.Fatalf("Apply() accepted %s", testCase.name)
+			}
+			if !strings.Contains(err.Error(), testCase.departmentID) || !strings.Contains(err.Error(), "does not exist") {
+				t.Fatalf("error = %q, want a clear unknown-department message", err.Error())
+			}
+
+			var accounts, members, departmentMembers int64
+			if err := db.Table("accounts").Count(&accounts).Error; err != nil {
+				t.Fatalf("count accounts: %v", err)
+			}
+			if err := db.Table("members").Count(&members).Error; err != nil {
+				t.Fatalf("count members: %v", err)
+			}
+			if err := db.Table("department_members").Count(&departmentMembers).Error; err != nil {
+				t.Fatalf("count department members: %v", err)
+			}
+			if accounts != 0 || members != 0 || departmentMembers != 0 {
+				t.Fatalf("a rejected department wrote rows: accounts=%d members=%d department_members=%d",
+					accounts, members, departmentMembers)
+			}
+		})
+	}
+}
+
+// The department assignment is idempotent: the same command delivered again under a fresh
+// command id must not create a second department_members row.
+func TestApplyOrganizationMemberCreateDepartmentAssignmentIsIdempotent(t *testing.T) {
+	applier, _, db := newApplierFixture(t)
+	ctx := context.Background()
+	const departmentID = "33333333-3333-4333-8333-333333333333"
+	seedDepartment(t, db, departmentID, testOrganizationID, "研发部", "active", 1)
+	payload := memberCreatePayloadWithDepartment(testOrganizationID, "replay-dept@example.com", "张三", "member", departmentID)
+
+	first, err := applier.Apply(ctx, ptrEnvelope(envelope(CommandOrganizationMemberCreate, payload)))
+	if err != nil {
+		t.Fatalf("first apply: %v", err)
+	}
+	firstAck := decodeMemberAck(t, first.After)
+
+	second, err := applier.Apply(ctx, ptrEnvelope(envelope(CommandOrganizationMemberCreate, payload)))
+	if err != nil {
+		t.Fatalf("replay with a new command id: %v", err)
+	}
+	if ack := decodeMemberAck(t, second.After); ack.Created {
+		t.Fatalf("replay reported created=true")
+	}
+
+	var departmentMembers int64
+	if err := db.Table("department_members").
+		Where("account_id = ? AND department_id = ?", firstAck.AccountID, departmentID).
+		Count(&departmentMembers).Error; err != nil {
+		t.Fatalf("count department members: %v", err)
+	}
+	if departmentMembers != 1 {
+		t.Fatalf("department_members rows = %d, want exactly 1", departmentMembers)
+	}
+}
+
+// A member who already belongs to another department of the organization is refused, like
+// pre's own direct-add flow, instead of ending up in two departments the UI would render twice.
+func TestApplyOrganizationMemberCreateRejectsSecondDepartment(t *testing.T) {
+	applier, _, db := newApplierFixture(t)
+	const firstDepartment = "33333333-3333-4333-8333-333333333333"
+	const secondDepartment = "66666666-6666-4666-8666-666666666666"
+	seedDepartment(t, db, firstDepartment, testOrganizationID, "研发部", "active", 1)
+	seedDepartment(t, db, secondDepartment, testOrganizationID, "市场部", "active", 2)
+	seedMemberAccount(t, db, "acc-existing", "existing@example.com", "Existing", "active")
+	seedDepartmentMember(t, db, "dm-existing", firstDepartment, "acc-existing")
+
+	_, err := applier.Apply(context.Background(), ptrEnvelope(envelope(
+		CommandOrganizationMemberCreate,
+		memberCreatePayloadWithDepartment(testOrganizationID, "existing@example.com", "Existing", "member", secondDepartment),
+	)))
+	if err == nil {
+		t.Fatalf("Apply() moved a member into a second department")
+	}
+	if !strings.Contains(err.Error(), firstDepartment) {
+		t.Fatalf("error = %q, want it to name the member's current department", err.Error())
+	}
+
+	var departmentMembers, requested int64
+	if err := db.Table("department_members").Where("account_id = ?", "acc-existing").Count(&departmentMembers).Error; err != nil {
+		t.Fatalf("count department members: %v", err)
+	}
+	if err := db.Table("department_members").
+		Where("account_id = ? AND department_id = ?", "acc-existing", secondDepartment).
+		Count(&requested).Error; err != nil {
+		t.Fatalf("count requested department members: %v", err)
+	}
+	if departmentMembers != 1 || requested != 0 {
+		t.Fatalf("department_members rows = %d (requested %d), want the original row only", departmentMembers, requested)
+	}
+}
+
 // An organization that does not exist is a clear failure and writes nothing.
 func TestApplyOrganizationMemberCreateRejectsUnknownOrganization(t *testing.T) {
 	applier, _, db := newApplierFixture(t)
@@ -263,6 +435,8 @@ func TestApplyOrganizationMemberCreateValidatesPayload(t *testing.T) {
 		{"invalid email", memberCreatePayload(testOrganizationID, "not-an-email", "张三", "member")},
 		{"unsupported role", memberCreatePayload(testOrganizationID, "user@example.com", "张三", "owner")},
 		{"missing role", memberCreatePayload(testOrganizationID, "user@example.com", "张三", "")},
+		{"invalid department uuid", memberCreatePayloadWithDepartment(
+			testOrganizationID, "user@example.com", "张三", "member", "not-a-uuid")},
 	}
 
 	for _, testCase := range cases {

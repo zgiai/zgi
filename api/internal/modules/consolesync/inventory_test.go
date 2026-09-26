@@ -57,10 +57,82 @@ func TestBuildOrganizationInventoryShapesTheConsolePayload(t *testing.T) {
 		t.Fatalf("marshal payload: %v", err)
 	}
 	want := `{"organizations":[{"id":"11111111-1111-4111-8111-111111111111","name":"默认组织",` +
-		`"short_name":"","status":"active","member_count":3,"updated_at":"2026-09-26T02:40:46Z"}],` +
+		`"short_name":"","status":"active","member_count":3,"updated_at":"2026-09-26T02:40:46Z",` +
+		`"departments":[],"members":[]}],` +
 		`"synced_at":"2026-09-26T03:00:00Z"}`
 	if string(raw) != want {
 		t.Fatalf("payload = %s\nwant       %s", raw, want)
+	}
+}
+
+// The new inventory fields: department rows and member rows, including a null and an
+// RFC3339 last_login_at and a null department_id, exactly as console consumes them.
+func TestBuildOrganizationInventoryShapesMembersAndDepartments(t *testing.T) {
+	lastLogin := time.Date(2026, 9, 26, 2, 40, 46, 0, time.UTC)
+	departmentID := "33333333-3333-4333-8333-333333333333"
+
+	payload := BuildOrganizationInventory([]OrganizationRecord{{
+		ID:          "11111111-1111-4111-8111-111111111111",
+		Name:        "默认组织",
+		Status:      "active",
+		MemberCount: 2,
+		UpdatedAt:   lastLogin,
+		Departments: []OrganizationDepartmentRecord{
+			{ID: departmentID, Name: "研发部", MemberCount: 3},
+		},
+		Members: []OrganizationMemberRecord{
+			{
+				AccountID:    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+				Name:         "张三",
+				Email:        "zhang@example.com",
+				Role:         "admin",
+				Status:       "active",
+				LastLoginAt:  &lastLogin,
+				DepartmentID: &departmentID,
+			},
+			{
+				AccountID: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+				Name:      "李四",
+				Email:     "li@example.com",
+				Role:      "normal",
+				Status:    "inactive",
+			},
+		},
+	}}, lastLogin)
+
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	want := `{"organizations":[{"id":"11111111-1111-4111-8111-111111111111","name":"默认组织",` +
+		`"short_name":"","status":"active","member_count":2,"updated_at":"2026-09-26T02:40:46Z",` +
+		`"departments":[{"id":"33333333-3333-4333-8333-333333333333","name":"研发部","member_count":3}],` +
+		`"members":[{"account_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","name":"张三",` +
+		`"email":"zhang@example.com","role":"admin","status":"active",` +
+		`"last_login_at":"2026-09-26T02:40:46Z","department_id":"33333333-3333-4333-8333-333333333333"},` +
+		`{"account_id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","name":"李四","email":"li@example.com",` +
+		`"role":"normal","status":"inactive","last_login_at":null,"department_id":null}]}],` +
+		`"synced_at":"2026-09-26T02:40:46Z"}`
+	if string(raw) != want {
+		t.Fatalf("payload = %s\nwant       %s", raw, want)
+	}
+}
+
+// A non-UTC last_login_at is normalised to the same whole-second UTC RFC3339 console stores.
+func TestBuildOrganizationInventoryNormalisesMemberLoginTime(t *testing.T) {
+	shanghai := time.FixedZone("CST", 8*60*60)
+	lastLogin := time.Date(2026, 9, 26, 10, 40, 46, 123456789, shanghai)
+
+	payload := BuildOrganizationInventory([]OrganizationRecord{{
+		ID: "org-1",
+		Members: []OrganizationMemberRecord{
+			{AccountID: "account-1", LastLoginAt: &lastLogin},
+		},
+	}}, time.Now().UTC())
+
+	got := payload.Organizations[0].Members[0].LastLoginAt
+	if got == nil || *got != "2026-09-26T02:40:46Z" {
+		t.Fatalf("last_login_at = %v, want the UTC RFC3339 rendering", got)
 	}
 }
 
@@ -150,6 +222,109 @@ func TestListOrganizationRecordsReportsZeroMembers(t *testing.T) {
 	}
 	if len(records) != 1 || records[0].MemberCount != 0 {
 		t.Fatalf("records = %+v, want one organization with member_count 0", records)
+	}
+	if len(records[0].Members) != 0 || len(records[0].Departments) != 0 {
+		t.Fatalf("records = %+v, want empty member and department lists", records[0])
+	}
+}
+
+// The member list must be the one pre's own contacts page shows: `members` joined to live
+// `accounts` (soft-deleted accounts excluded), the member display name falling back to the
+// account name, and the department resolved only within the same organization.
+func TestListOrganizationRecordsReportsMembersAndDepartments(t *testing.T) {
+	db := newConsolesyncTestDB(t)
+	lastLogin := time.Date(2026, 9, 26, 2, 40, 46, 0, time.UTC)
+
+	seedInventoryOrganization(t, db, "org-a", "Acme", "acme", "active", lastLogin)
+	seedInventoryOrganization(t, db, "org-b", "Bravo", "", "active", lastLogin)
+
+	seedInventoryAccount(t, db, "acc-1", "Account One", "one@example.com", &lastLogin, false)
+	seedInventoryAccount(t, db, "acc-2", "Account Two", "two@example.com", nil, false)
+	seedInventoryAccount(t, db, "acc-deleted", "Gone", "gone@example.com", nil, true)
+	seedInventoryAccount(t, db, "acc-other", "Other", "other@example.com", nil, false)
+
+	seedMember(t, db, "org-a", "acc-1", "active")
+	seedMember(t, db, "org-a", "acc-2", "inactive")
+	seedMember(t, db, "org-a", "acc-deleted", "active")
+	seedMember(t, db, "org-b", "acc-other", "active")
+	seedMemberName(t, db, "org-a", "acc-1", "Member One")
+
+	seedDepartment(t, db, "dept-1", "org-a", "研发部", "active", 1)
+	seedDepartment(t, db, "dept-archived", "org-a", "归档部", "archived", 2)
+	seedDepartment(t, db, "dept-b", "org-b", "销售部", "active", 1)
+	// acc-2's only department membership belongs to org-b, so it must not surface on org-a.
+	// The deleted account still counts towards the raw department count pre's tree shows.
+	seedDepartmentMember(t, db, "dm-1", "dept-1", "acc-1")
+	seedDepartmentMember(t, db, "dm-2", "dept-1", "acc-deleted")
+	seedDepartmentMember(t, db, "dm-3", "dept-b", "acc-other")
+	seedDepartmentMember(t, db, "dm-4", "dept-b", "acc-2")
+
+	records, err := NewStore(db).ListOrganizationRecords(context.Background())
+	if err != nil {
+		t.Fatalf("ListOrganizationRecords() error = %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("records = %+v, want both organizations", records)
+	}
+
+	orgA := records[0]
+	if orgA.ID != "org-a" || len(orgA.Members) != 2 {
+		t.Fatalf("org-a members = %+v, want the two live members", orgA.Members)
+	}
+	members := map[string]OrganizationMemberRecord{}
+	for _, member := range orgA.Members {
+		members[member.AccountID] = member
+	}
+
+	first := members["acc-1"]
+	if first.Name != "Member One" || first.Email != "one@example.com" || first.Role != "normal" || first.Status != "active" {
+		t.Fatalf("acc-1 = %+v, want the member display name and the account email/role/status", first)
+	}
+	if first.LastLoginAt == nil || first.LastLoginAt.UTC().Format(time.RFC3339) != "2026-09-26T02:40:46Z" {
+		t.Fatalf("acc-1 last_login_at = %v, want the stored instant", first.LastLoginAt)
+	}
+	if first.DepartmentID == nil || *first.DepartmentID != "dept-1" {
+		t.Fatalf("acc-1 department_id = %v, want dept-1", first.DepartmentID)
+	}
+
+	second := members["acc-2"]
+	if second.Name != "Account Two" {
+		t.Fatalf("acc-2 name = %q, want the account name fallback", second.Name)
+	}
+	if second.Status != "inactive" {
+		t.Fatalf("acc-2 status = %q, want inactive (pre's list shows inactive members too)", second.Status)
+	}
+	if second.LastLoginAt != nil {
+		t.Fatalf("acc-2 last_login_at = %v, want nil", second.LastLoginAt)
+	}
+	if second.DepartmentID != nil {
+		t.Fatalf("acc-2 department_id = %v, want nil: its only department belongs to org-b", second.DepartmentID)
+	}
+
+	// Departments: the active list of the organization, with the raw member count pre's own
+	// department tree shows.
+	if len(orgA.Departments) != 1 || orgA.Departments[0].ID != "dept-1" || orgA.Departments[0].Name != "研发部" {
+		t.Fatalf("org-a departments = %+v, want only the active department", orgA.Departments)
+	}
+	if orgA.Departments[0].MemberCount != 2 {
+		t.Fatalf("dept-1 member_count = %d, want 2", orgA.Departments[0].MemberCount)
+	}
+
+	orgB := records[1]
+	if len(orgB.Departments) != 1 || orgB.Departments[0].ID != "dept-b" {
+		t.Fatalf("org-b departments = %+v, want only dept-b", orgB.Departments)
+	}
+	if len(orgB.Members) != 1 || orgB.Members[0].AccountID != "acc-other" {
+		t.Fatalf("org-b members = %+v, want only acc-other", orgB.Members)
+	}
+	if orgB.Members[0].DepartmentID == nil || *orgB.Members[0].DepartmentID != "dept-b" {
+		t.Fatalf("org-b member department_id = %v, want dept-b", orgB.Members[0].DepartmentID)
+	}
+
+	// The same rows must survive the payload mapping.
+	payload := BuildOrganizationInventory(records, lastLogin)
+	if len(payload.Organizations[0].Members) != 2 || len(payload.Organizations[0].Departments) != 1 {
+		t.Fatalf("payload lost members or departments: %+v", payload.Organizations[0])
 	}
 }
 
@@ -396,6 +571,54 @@ func seedMember(t *testing.T, db *gorm.DB, organizationID, accountID, status str
 		organizationID, accountID, status,
 	).Error; err != nil {
 		t.Fatalf("seed member: %v", err)
+	}
+}
+
+// seedMemberName sets the member-level display name pre's contacts page prefers over the
+// account name.
+func seedMemberName(t *testing.T, db *gorm.DB, organizationID, accountID, name string) {
+	t.Helper()
+	if err := db.Exec(
+		`UPDATE members SET name = ? WHERE organization_id = ? AND account_id = ?`,
+		name, organizationID, accountID,
+	).Error; err != nil {
+		t.Fatalf("seed member name: %v", err)
+	}
+}
+
+func seedInventoryAccount(t *testing.T, db *gorm.DB, id, name, email string, lastLoginAt *time.Time, deleted bool) {
+	t.Helper()
+	var deletedAt any
+	if deleted {
+		deletedAt = time.Now().UTC()
+	}
+	if err := db.Exec(
+		`INSERT INTO accounts (id, name, email, status, last_login_at, deleted_at, created_at, updated_at, last_active_at)
+		 VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?)`,
+		id, name, email, lastLoginAt, deletedAt, time.Now().UTC(), time.Now().UTC(), time.Now().UTC(),
+	).Error; err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+}
+
+func seedDepartment(t *testing.T, db *gorm.DB, id, organizationID, name, status string, sortOrder int) {
+	t.Helper()
+	if err := db.Exec(
+		`INSERT INTO departments (id, group_id, name, status, sort_order, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, organizationID, name, status, sortOrder, time.Now().UTC(), time.Now().UTC(),
+	).Error; err != nil {
+		t.Fatalf("seed department: %v", err)
+	}
+}
+
+func seedDepartmentMember(t *testing.T, db *gorm.DB, id, departmentID, accountID string) {
+	t.Helper()
+	if err := db.Exec(
+		`INSERT INTO department_members (id, department_id, account_id, created_at) VALUES (?, ?, ?, ?)`,
+		id, departmentID, accountID, time.Now().UTC(),
+	).Error; err != nil {
+		t.Fatalf("seed department member: %v", err)
 	}
 }
 
