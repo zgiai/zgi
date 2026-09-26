@@ -191,7 +191,10 @@ func (s *Service) ReconcileDataSource(ctx context.Context, dataSourceID string) 
 		var setting Settings
 		err := db.WithContext(ctx).Where("data_source_id = ?", dataSourceID).Take(&setting).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return s.retire(ctx, Settings{DataSourceID: dataSourceID}, nil)
+			if err := s.retire(ctx, Settings{DataSourceID: dataSourceID}, nil); err != nil {
+				return err
+			}
+			return s.finalizeRuns(ctx, dataSourceID)
 		}
 		if err != nil {
 			return err

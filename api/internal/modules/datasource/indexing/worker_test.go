@@ -271,7 +271,9 @@ func TestReconcileDataSourceRecordsFailureBeforeUnlock(t *testing.T) {
 		"data_source_id", "organization_id", "workspace_id", "requested_by", "embedding_provider", "embedding_model", "target_ids", "pending_run_id", "pending_trigger", "created_at", "updated_at",
 	}).AddRow(dataSourceID, uuid.NewString(), uuid.NewString(), uuid.NewString(), "test", "embedding-v1", []byte("[]"), runID, pendingTrigger, now, now))
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "data_sources"`)).WillReturnError(reconcileErr)
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "database_schema_index_runs"`)).WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "database_schema_index_runs" WHERE id = $1 AND data_source_id = $2`)).
+		WithArgs(runID, dataSourceID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO "database_schema_index_runs"`)).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE "database_schema_index_settings" SET .*"pending_run_id"=.*"pending_trigger"=`).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -282,6 +284,147 @@ func TestReconcileDataSourceRecordsFailureBeforeUnlock(t *testing.T) {
 	service := &Service{db: db, log: zap.NewNop()}
 	if err := service.ReconcileDataSource(context.Background(), dataSourceID); !errors.Is(err, reconcileErr) {
 		t.Fatalf("ReconcileDataSource() error = %v, want %v", err, reconcileErr)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFailPendingRunRecordsOnlyCurrentGeneration(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB, PreferSimpleProtocol: true}), &gorm.Config{SkipDefaultTransaction: true, Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pendingRunID := uuid.NewString()
+	trigger := TriggerTableCreated
+	setting := Settings{
+		DataSourceID: uuid.NewString(), OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
+		EmbeddingProvider: "test", EmbeddingModel: "embedding-v1", PendingRunID: &pendingRunID, PendingTrigger: &trigger,
+	}
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "database_schema_index_runs" WHERE id = $1 AND data_source_id = $2`)).
+		WithArgs(pendingRunID, setting.DataSourceID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO "database_schema_index_runs"`)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	service := &Service{db: db}
+	if err := service.failPendingRun(context.Background(), db, setting, "preparation_failed"); err != nil {
+		t.Fatalf("failPendingRun() error = %v, want nil", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFailPendingRunUpdatesCurrentBuildingRun(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB, PreferSimpleProtocol: true}), &gorm.Config{SkipDefaultTransaction: true, Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pendingRunID := uuid.NewString()
+	trigger := TriggerTableCreated
+	tables, _ := json.Marshal([]RunTable{{Name: "table_001"}})
+	setting := Settings{DataSourceID: uuid.NewString(), PendingRunID: &pendingRunID, PendingTrigger: &trigger}
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "database_schema_index_runs" WHERE id = $1 AND data_source_id = $2`)).
+		WithArgs(pendingRunID, setting.DataSourceID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "status", "tables"}).AddRow(pendingRunID, "building", tables))
+	mock.ExpectExec(regexp.QuoteMeta(`UPDATE "database_schema_index_runs" SET`)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	service := &Service{db: db}
+	if err := service.failPendingRun(context.Background(), db, setting, "preparation_failed"); err != nil {
+		t.Fatalf("failPendingRun() error = %v, want nil", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFinalizeRunsFailsRunWhenTargetWasSuperseded(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB, PreferSimpleProtocol: true}), &gorm.Config{SkipDefaultTransaction: true, Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runID := uuid.NewString()
+	dataSourceID := uuid.NewString()
+	targetID := uuid.NewString()
+	targets, _ := json.Marshal([]string{targetID})
+	tables, _ := json.Marshal([]RunTable{{Name: "table_001"}})
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "database_schema_index_runs"`)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "data_source_id", "status", "target_ids", "tables"}).
+			AddRow(runID, dataSourceID, "building", targets, tables))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "text2sql_schema_indexes"`)).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectExec(regexp.QuoteMeta(`UPDATE "database_schema_index_runs" SET`)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	service := &Service{db: db}
+	if err := service.finalizeRuns(context.Background(), dataSourceID); err != nil {
+		t.Fatalf("finalizeRuns() error = %v, want nil", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReconcileDataSourceFinalizesRunsAfterDisable(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB, PreferSimpleProtocol: true}), &gorm.Config{SkipDefaultTransaction: true, Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runID := uuid.NewString()
+	dataSourceID := uuid.NewString()
+	targetID := uuid.NewString()
+	targets, _ := json.Marshal([]string{targetID})
+	tables, _ := json.Marshal([]RunTable{{Name: "table_001"}})
+	mock.ExpectExec(regexp.QuoteMeta(`SELECT pg_advisory_lock(hashtextextended($1, 0))`)).
+		WithArgs("schema-index:database:" + dataSourceID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "database_schema_index_settings"`)).
+		WillReturnRows(sqlmock.NewRows([]string{"data_source_id"}))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "text2sql_schema_indexes" WHERE data_source_id = $1`)).
+		WithArgs(dataSourceID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "database_schema_index_runs" WHERE data_source_id = $1 AND status = $2`)).
+		WithArgs(dataSourceID, "building").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "data_source_id", "status", "target_ids", "tables"}).
+			AddRow(runID, dataSourceID, "building", targets, tables))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "text2sql_schema_indexes" WHERE id IN ($1)`)).
+		WithArgs(targetID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectExec(regexp.QuoteMeta(`UPDATE "database_schema_index_runs" SET`)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta(`SELECT pg_advisory_unlock(hashtextextended($1, 0))`)).
+		WithArgs("schema-index:database:" + dataSourceID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	service := &Service{db: db, log: zap.NewNop()}
+	if err := service.ReconcileDataSource(context.Background(), dataSourceID); err != nil {
+		t.Fatalf("ReconcileDataSource() error = %v, want nil", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
@@ -485,6 +628,10 @@ func TestPostgresTableMetadataChangeRebuildsIndexAndKeepsTrigger(t *testing.T) {
 	f := newFixture(t, 1)
 	f.start(t)
 	before := f.rows(t)[0]
+	var initial Run
+	if err := f.service.db.Where("data_source_id = ? AND trigger = ?", f.setting.DataSourceID, TriggerInitial).Take(&initial).Error; err != nil {
+		t.Fatal(err)
+	}
 
 	if err := f.service.db.Table("data_source_tables").Where("data_source_id = ?", f.setting.DataSourceID).Updates(map[string]any{
 		"name": "Renamed table", "description": "Updated description",
@@ -507,6 +654,12 @@ func TestPostgresTableMetadataChangeRebuildsIndexAndKeepsTrigger(t *testing.T) {
 	var run Run
 	if err := f.service.db.Where("data_source_id = ? AND trigger = ?", f.setting.DataSourceID, TriggerTableMetadataChanged).Take(&run).Error; err != nil {
 		t.Fatal(err)
+	}
+	if err := f.service.db.Take(&initial, "id = ?", initial.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if initial.Status != "failed" || initial.CompletedAt == nil {
+		t.Fatalf("superseded initial run status = %q, completed_at = %v; want failed with completion time", initial.Status, initial.CompletedAt)
 	}
 }
 
@@ -547,5 +700,56 @@ func TestPostgresTableCreateAndDeleteKeepDistinctTriggers(t *testing.T) {
 	}
 	if deleted.TableCount != 1 {
 		t.Fatalf("deleted table count = %d, want 1", deleted.TableCount)
+	}
+	if err := f.service.db.Take(&created, "id = ?", created.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if created.Status != "failed" || created.CompletedAt == nil {
+		t.Fatalf("superseded create run status = %q, completed_at = %v; want failed with completion time", created.Status, created.CompletedAt)
+	}
+}
+
+func TestPostgresReconcileFailureIsScopedToPendingRun(t *testing.T) {
+	f := newFixture(t, 1)
+	f.start(t)
+
+	var active Run
+	if err := f.service.db.Where("data_source_id = ? AND trigger = ?", f.setting.DataSourceID, TriggerInitial).Take(&active).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.NotifySchemaChanged(context.Background(), f.setting.DataSourceID, TriggerTableMetadataChanged); err != nil {
+		t.Fatal(err)
+	}
+	var setting Settings
+	if err := f.service.db.Where("data_source_id = ?", f.setting.DataSourceID).Take(&setting).Error; err != nil {
+		t.Fatal(err)
+	}
+	if setting.PendingRunID == nil {
+		t.Fatal("pending run id is nil")
+	}
+	pendingRunID := *setting.PendingRunID
+	f.access.deny = true
+	if err := f.service.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := f.service.db.Take(&active, "id = ?", active.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if active.Status != "building" {
+		t.Fatalf("previous run status = %q, want building", active.Status)
+	}
+	var failed Run
+	if err := f.service.db.Take(&failed, "id = ?", pendingRunID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if failed.Status != "failed" || failed.Trigger != TriggerTableMetadataChanged {
+		t.Fatalf("pending run = %+v, want failed metadata-change run", failed)
+	}
+	if err := f.service.db.Where("data_source_id = ?", f.setting.DataSourceID).Take(&setting).Error; err != nil {
+		t.Fatal(err)
+	}
+	if setting.PendingRunID != nil || setting.PendingTrigger != nil {
+		t.Fatalf("pending state = (%v, %v), want cleared", setting.PendingRunID, setting.PendingTrigger)
 	}
 }
