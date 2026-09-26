@@ -18,6 +18,10 @@ const (
 
 	defaultServerPort = 2670
 	defaultGRPCPort   = 50051
+
+	// defaultOrganizationReportInterval is how often pre reports its organization
+	// inventory to console when CONSOLE_SYNC_ORGANIZATION_REPORT_INTERVAL is unset.
+	defaultOrganizationReportInterval = 5 * time.Minute
 )
 
 type Config struct {
@@ -162,6 +166,8 @@ type ConsoleConfig struct {
 	SyncEnabled     bool `json:"sync_enabled"`
 	SyncIntervalSec int  `json:"sync_interval_sec"`
 	SyncStaleSec    int  `json:"sync_stale_sec"`
+	// Organization inventory report cadence (Cloud mode only). 0 disables the report.
+	SyncOrganizationReportInterval time.Duration `json:"sync_organization_report_interval"`
 }
 
 type LLMPolicyPromptConfig struct {

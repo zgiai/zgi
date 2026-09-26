@@ -52,9 +52,19 @@ func newConsolesyncTestDB(t *testing.T) *gorm.DB {
 		`CREATE TABLE organizations (
 			id VARCHAR(255) PRIMARY KEY,
 			name VARCHAR(255),
+			short_name VARCHAR(255),
 			status VARCHAR(16) NOT NULL DEFAULT 'active',
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE members (
+			organization_id VARCHAR(255) NOT NULL,
+			account_id VARCHAR(255) NOT NULL,
+			role VARCHAR(16) NOT NULL DEFAULT 'normal',
+			status VARCHAR(16) NOT NULL DEFAULT 'active',
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (organization_id, account_id)
 		)`,
 		`CREATE TABLE llm_organization_api_keys (
 			id TEXT PRIMARY KEY,

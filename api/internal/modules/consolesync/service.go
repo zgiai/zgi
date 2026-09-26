@@ -88,8 +88,22 @@ func (s *Service) Start(ctx context.Context) {
 	consolecred.Configure(s.cfg.InstanceID, s.cfg.InstanceSecret)
 	log.Printf("[consolesync] started against %s as instance %s", s.cfg.BaseURL, s.cfg.InstanceID)
 
+	// The organization inventory report (plan P0) has its own goroutine and ticker: a slow
+	// or failing report must never delay a heartbeat. It is cancelled and joined below, so
+	// it belongs to exactly the same lifecycle as the sync loop.
+	reportCtx, stopReports := context.WithCancel(ctx)
+	reportsDone := make(chan struct{})
+	go func() {
+		defer close(reportsDone)
+		s.runOrganizationReporter(reportCtx)
+	}()
+
 	ticker := time.NewTicker(s.cfg.Interval)
 	defer ticker.Stop()
+	defer func() {
+		stopReports()
+		<-reportsDone
+	}()
 
 	s.tick(ctx)
 	for {

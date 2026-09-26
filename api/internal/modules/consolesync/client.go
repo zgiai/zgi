@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/zgiai/zgi/api/internal/infra/platform/consolecred"
@@ -15,10 +16,11 @@ import (
 )
 
 const (
-	apiPrefix        = "/v1/internal/pre"
-	pathHeartbeat    = "/heartbeat"
-	pathCommands     = "/commands"
-	pathDesiredState = "/desired-state"
+	apiPrefix         = "/v1/internal/pre"
+	pathHeartbeat     = "/heartbeat"
+	pathCommands      = "/commands"
+	pathDesiredState  = "/desired-state"
+	pathOrganizations = "/organizations"
 )
 
 // Drift is one field where the local value disagrees with the console desired state.
@@ -164,11 +166,44 @@ func (c *Client) DesiredState(ctx context.Context) (*DesiredStateResponse, error
 	return &out, nil
 }
 
+// ReportOrganizations pushes the local organization inventory (plan P0).
+//
+// Unlike the heartbeat/pull surface this call is strict about the console envelope: a 2xx
+// answer with code != 0 is an error, because console serves business failures that way and
+// a rejected inventory must be visible instead of silently counted as reported.
+func (c *Client) ReportOrganizations(ctx context.Context, req OrganizationInventoryRequest) (*OrganizationInventoryResponse, error) {
+	var out OrganizationInventoryResponse
+	if err := c.doJSONChecked(ctx, http.MethodPost, pathOrganizations, req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 func (c *Client) doJSON(
 	ctx context.Context,
 	method, path string,
 	payload interface{},
 	out interface{},
+) error {
+	return c.doRequest(ctx, method, path, payload, out, false)
+}
+
+// doJSONChecked is doJSON plus the envelope success-code gate.
+func (c *Client) doJSONChecked(
+	ctx context.Context,
+	method, path string,
+	payload interface{},
+	out interface{},
+) error {
+	return c.doRequest(ctx, method, path, payload, out, true)
+}
+
+func (c *Client) doRequest(
+	ctx context.Context,
+	method, path string,
+	payload interface{},
+	out interface{},
+	checkCode bool,
 ) error {
 	if c == nil || c.baseURL == "" {
 		return fmt.Errorf("console sync base url is empty")
@@ -206,24 +241,40 @@ func (c *Client) doJSON(
 		return &APIError{StatusCode: resp.StatusCode, Message: errorMessage(raw)}
 	}
 
-	if out == nil {
+	// Callers that neither decode a payload nor ask for the code gate keep the historical
+	// behaviour of accepting any 2xx answer.
+	if out == nil && !checkCode {
 		return nil
 	}
 	var envelope struct {
-		Code    interface{}     `json:"code"`
-		Message string          `json:"message"`
-		Data    json.RawMessage `json:"data"`
+		Code json.RawMessage `json:"code"`
+		Data json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return fmt.Errorf("decode console sync envelope: %w", err)
 	}
-	if len(envelope.Data) == 0 || string(envelope.Data) == "null" {
+	if checkCode && !envelopeCodeIsSuccess(envelope.Code) {
+		return &APIError{StatusCode: resp.StatusCode, Message: errorMessage(raw)}
+	}
+	if out == nil || len(envelope.Data) == 0 || string(envelope.Data) == "null" {
 		return nil
 	}
 	if err := json.Unmarshal(envelope.Data, out); err != nil {
 		return fmt.Errorf("decode console sync data: %w", err)
 	}
 	return nil
+}
+
+// envelopeCodeIsSuccess reports whether the console envelope code means success. Console
+// encodes it as the number 0 (occasionally as the string "0"); an absent or null code is
+// accepted because a few handlers answer with data only.
+func envelopeCodeIsSuccess(raw json.RawMessage) bool {
+	switch trimmed := strings.TrimSpace(string(raw)); trimmed {
+	case "", "null", "0", `"0"`:
+		return true
+	default:
+		return false
+	}
 }
 
 func errorMessage(raw []byte) string {
