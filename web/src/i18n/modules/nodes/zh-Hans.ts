@@ -286,6 +286,7 @@ const messages: NodesMessages = {
     },
     runtime: {
       waitingAnswer: '等待用户回答',
+      continue: '继续',
       chooseOne: '请选择一个选项',
       submitting: '提交中',
       submitted: '已提交回答',
