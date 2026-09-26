@@ -248,7 +248,7 @@ func TestAutomaticPendingTriggerPreservesInitialBuildAndDistinguishesLaterCreate
 	}
 }
 
-func TestRecordReconcileFailureReloadsCurrentPendingRun(t *testing.T) {
+func TestReconcileDataSourceRecordsFailureBeforeUnlock(t *testing.T) {
 	sqlDB, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
@@ -263,16 +263,25 @@ func TestRecordReconcileFailureReloadsCurrentPendingRun(t *testing.T) {
 	dataSourceID := uuid.NewString()
 	pendingTrigger := TriggerTableMetadataChanged
 	now := time.Now()
+	reconcileErr := errors.New("database unavailable")
+	mock.ExpectExec(regexp.QuoteMeta(`SELECT pg_advisory_lock(hashtextextended($1, 0))`)).
+		WithArgs("schema-index:database:" + dataSourceID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "database_schema_index_settings"`)).WillReturnRows(sqlmock.NewRows([]string{
 		"data_source_id", "organization_id", "workspace_id", "requested_by", "embedding_provider", "embedding_model", "target_ids", "pending_run_id", "pending_trigger", "created_at", "updated_at",
 	}).AddRow(dataSourceID, uuid.NewString(), uuid.NewString(), uuid.NewString(), "test", "embedding-v1", []byte("[]"), runID, pendingTrigger, now, now))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "data_sources"`)).WillReturnError(reconcileErr)
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "database_schema_index_runs"`)).WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO "database_schema_index_runs"`)).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(regexp.QuoteMeta(`UPDATE "database_schema_index_settings"`)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE "database_schema_index_settings" SET .*"pending_run_id"=.*"pending_trigger"=`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta(`SELECT pg_advisory_unlock(hashtextextended($1, 0))`)).
+		WithArgs("schema-index:database:" + dataSourceID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	service := &Service{db: db}
-	if err := service.recordReconcileFailure(context.Background(), dataSourceID, "preparation_failed"); err != nil {
-		t.Fatalf("recordReconcileFailure() error = %v, want nil", err)
+	service := &Service{db: db, log: zap.NewNop()}
+	if err := service.ReconcileDataSource(context.Background(), dataSourceID); !errors.Is(err, reconcileErr) {
+		t.Fatalf("ReconcileDataSource() error = %v, want %v", err, reconcileErr)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

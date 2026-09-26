@@ -160,10 +160,10 @@ func (s *Service) affectedTables(ctx context.Context, trigger string, previousID
 	return result, nil
 }
 
-func (s *Service) failPendingRun(ctx context.Context, setting Settings, code string) error {
+func (s *Service) failPendingRun(ctx context.Context, db *gorm.DB, setting Settings, code string) error {
 	now := time.Now()
 	var active []Run
-	if err := s.db.WithContext(ctx).Where("data_source_id = ? AND status = ?", setting.DataSourceID, "building").Find(&active).Error; err != nil {
+	if err := db.WithContext(ctx).Where("data_source_id = ? AND status = ?", setting.DataSourceID, "building").Find(&active).Error; err != nil {
 		return err
 	}
 	for _, run := range active {
@@ -181,7 +181,7 @@ func (s *Service) failPendingRun(ctx context.Context, setting Settings, code str
 		if err != nil {
 			return err
 		}
-		if err := s.db.WithContext(ctx).Model(&Run{}).Where("id = ? AND status = ?", run.ID, "building").Updates(map[string]any{"status": "failed", "failure_count": max(1, len(details)), "tables": tables, "completed_at": now, "updated_at": now}).Error; err != nil {
+		if err := db.WithContext(ctx).Model(&Run{}).Where("id = ? AND status = ?", run.ID, "building").Updates(map[string]any{"status": "failed", "failure_count": max(1, len(details)), "tables": tables, "completed_at": now, "updated_at": now}).Error; err != nil {
 			return err
 		}
 	}
@@ -190,7 +190,7 @@ func (s *Service) failPendingRun(ctx context.Context, setting Settings, code str
 	}
 	tables, _ := json.Marshal([]RunTable{{Code: code}})
 	run := Run{ID: *setting.PendingRunID, DataSourceID: setting.DataSourceID, OrganizationID: setting.OrganizationID, WorkspaceID: setting.WorkspaceID, Trigger: valueOr(setting.PendingTrigger, TriggerInitial), Status: "failed", EmbeddingProvider: setting.EmbeddingProvider, EmbeddingModel: setting.EmbeddingModel, Tables: tables, TargetIDs: datatypes.JSON("[]"), FailureCount: 1, StartedAt: now, CompletedAt: &now}
-	return s.db.WithContext(ctx).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "id"}}, DoUpdates: clause.Assignments(map[string]any{"status": "failed", "failure_count": 1, "tables": tables, "completed_at": now, "updated_at": now})}).Create(&run).Error
+	return db.WithContext(ctx).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "id"}}, DoUpdates: clause.Assignments(map[string]any{"status": "failed", "failure_count": 1, "tables": tables, "completed_at": now, "updated_at": now})}).Create(&run).Error
 }
 
 func (s *Service) lastFailedTrigger(ctx context.Context, sourceID string) (string, error) {

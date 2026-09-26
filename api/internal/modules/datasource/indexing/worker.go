@@ -23,6 +23,8 @@ const tableTimeout = 2 * time.Minute
 const valueSampleTimeout = 15 * time.Second
 const maxValueSampleBackfills = 20
 
+var errReconcileFailurePersistence = errors.New("record schema index reconciliation failure")
+
 type taskPayload struct {
 	IndexID string `json:"index_id"`
 	AssetID string `json:"asset_id"`
@@ -154,11 +156,8 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		cancel()
 		if err != nil {
 			s.log.Error("database schema index reconciliation failed", zap.String("data_source_id", setting.DataSourceID), zap.Error(err))
-			writeCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			writeErr := s.recordReconcileFailure(writeCtx, setting.DataSourceID, "preparation_failed")
-			stop()
-			if writeErr != nil {
-				return errors.Join(err, writeErr)
+			if errors.Is(err, errReconcileFailurePersistence) {
+				return err
 			}
 		}
 	}
@@ -174,15 +173,15 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	return nil
 }
 
-func (s *Service) recordReconcileFailure(ctx context.Context, dataSourceID, code string) error {
-	var current Settings
-	if err := s.db.WithContext(ctx).Where("data_source_id = ?", dataSourceID).Take(&current).Error; err != nil {
+func (s *Service) recordReconcileFailure(ctx context.Context, db *gorm.DB, setting Settings, code string) error {
+	if err := s.failPendingRun(ctx, db, setting, code); err != nil {
 		return err
 	}
-	if err := s.failPendingRun(ctx, current, code); err != nil {
-		return err
-	}
-	return s.db.WithContext(ctx).Model(&Settings{}).Where("data_source_id = ?", dataSourceID).Update("last_error_code", code).Error
+	return db.WithContext(ctx).Model(&Settings{}).Where("data_source_id = ?", setting.DataSourceID).Updates(map[string]any{
+		"last_error_code": code,
+		"pending_run_id":  nil,
+		"pending_trigger": nil,
+	}).Error
 }
 
 // ReconcileDataSource serializes and reconciles one database. When indexing
@@ -197,7 +196,17 @@ func (s *Service) ReconcileDataSource(ctx context.Context, dataSourceID string) 
 		if err != nil {
 			return err
 		}
-		return s.reconcileDatabase(ctx, setting)
+		reconcileErr := s.reconcileDatabase(ctx, setting)
+		if reconcileErr == nil {
+			return nil
+		}
+		writeCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		writeErr := s.recordReconcileFailure(writeCtx, db, setting, "preparation_failed")
+		stop()
+		if writeErr != nil {
+			return errors.Join(reconcileErr, fmt.Errorf("%w: %w", errReconcileFailurePersistence, writeErr))
+		}
+		return reconcileErr
 	})
 }
 
