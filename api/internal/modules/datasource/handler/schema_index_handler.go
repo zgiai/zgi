@@ -39,7 +39,7 @@ type schemaIndexConfigureRequest struct {
 }
 
 func (h *SchemaIndexHandler) Configure(c *gin.Context) {
-	org, id, account, ok := dataSourceAccessPolicyRequestScope(c)
+	org, id, account, ok := h.requestScope(c)
 	if !ok {
 		return
 	}

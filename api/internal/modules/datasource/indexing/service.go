@@ -210,10 +210,7 @@ func (s *Service) Status(ctx context.Context, org, id, account string) (*Status,
 
 // Configure enables or disables automatic schema indexing for a database.
 func (s *Service) Configure(ctx context.Context, org, id, account string, request ConfigureRequest) error {
-	if err := s.authorize(ctx, org, id, account, true); err != nil {
-		return err
-	}
-	ds, err := s.database(ctx, org, id)
+	ds, err := s.authorizedDatabase(ctx, org, id, account, true)
 	if err != nil {
 		return err
 	}
