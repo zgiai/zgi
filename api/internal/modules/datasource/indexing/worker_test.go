@@ -248,6 +248,37 @@ func TestAutomaticPendingTriggerPreservesInitialBuildAndDistinguishesLaterCreate
 	}
 }
 
+func TestRecordReconcileFailureReloadsCurrentPendingRun(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB, PreferSimpleProtocol: true}), &gorm.Config{SkipDefaultTransaction: true, Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runID := uuid.NewString()
+	dataSourceID := uuid.NewString()
+	pendingTrigger := TriggerTableMetadataChanged
+	now := time.Now()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "database_schema_index_settings"`)).WillReturnRows(sqlmock.NewRows([]string{
+		"data_source_id", "organization_id", "workspace_id", "requested_by", "embedding_provider", "embedding_model", "target_ids", "pending_run_id", "pending_trigger", "created_at", "updated_at",
+	}).AddRow(dataSourceID, uuid.NewString(), uuid.NewString(), uuid.NewString(), "test", "embedding-v1", []byte("[]"), runID, pendingTrigger, now, now))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "database_schema_index_runs"`)).WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO "database_schema_index_runs"`)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta(`UPDATE "database_schema_index_settings"`)).WillReturnResult(sqlmock.NewResult(0, 1))
+
+	service := &Service{db: db}
+	if err := service.recordReconcileFailure(context.Background(), dataSourceID, "preparation_failed"); err != nil {
+		t.Fatalf("recordReconcileFailure() error = %v, want nil", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestValidateTaskUsesMetadataEnrichedTableSnapshot(t *testing.T) {
 	sqlDB, mock, err := sqlmock.New()
 	if err != nil {

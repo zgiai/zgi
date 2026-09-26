@@ -126,6 +126,9 @@ func (h *SchemaIndexHandler) fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, indexing.ErrAccessDenied):
 		code = catalog.CodePermissionDenied
+	case errors.Is(err, indexing.ErrCleanupPending),
+		errors.Is(err, indexing.ErrModelChangeRequiresDisable):
+		code = catalog.CodeResourceConflict
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		code = catalog.CodeResourceNotFound
 	}

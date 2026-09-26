@@ -155,8 +155,7 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		if err != nil {
 			s.log.Error("database schema index reconciliation failed", zap.String("data_source_id", setting.DataSourceID), zap.Error(err))
 			writeCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			_ = s.failPendingRun(writeCtx, setting, "preparation_failed")
-			writeErr := s.db.WithContext(writeCtx).Model(&Settings{}).Where("data_source_id = ?", setting.DataSourceID).Update("last_error_code", "preparation_failed").Error
+			writeErr := s.recordReconcileFailure(writeCtx, setting.DataSourceID, "preparation_failed")
 			stop()
 			if writeErr != nil {
 				return errors.Join(err, writeErr)
@@ -173,6 +172,17 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (s *Service) recordReconcileFailure(ctx context.Context, dataSourceID, code string) error {
+	var current Settings
+	if err := s.db.WithContext(ctx).Where("data_source_id = ?", dataSourceID).Take(&current).Error; err != nil {
+		return err
+	}
+	if err := s.failPendingRun(ctx, current, code); err != nil {
+		return err
+	}
+	return s.db.WithContext(ctx).Model(&Settings{}).Where("data_source_id = ?", dataSourceID).Update("last_error_code", code).Error
 }
 
 // ReconcileDataSource serializes and reconciles one database. When indexing

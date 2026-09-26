@@ -2,6 +2,7 @@ package text2sql
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -34,6 +35,35 @@ func TestTableMetadataChangesSchemaFingerprint(t *testing.T) {
 	}
 	if physical.Comment != nil {
 		t.Fatal("index snapshot mutated the physical table")
+	}
+}
+
+func TestSnapshotTableAcceptsNullDescription(t *testing.T) {
+	db, mock := newIndexLifecycleTestDB(t)
+	mock.ExpectQuery(`SELECT id, table_id, name, description FROM "data_source_tables"`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "table_id", "name", "description"}).
+			AddRow("asset", 1, "Orders", nil))
+
+	snapshot, err := NewIndexRepository(db).SnapshotTable(context.Background(), "asset", snapshotTestSQL{
+		table: &sql_base.Table{ID: 1, Schema: "public", Name: "orders"},
+	})
+	if err != nil {
+		t.Fatalf("SnapshotTable() error = %v, want nil", err)
+	}
+	var metadata struct {
+		Description string `json:"description"`
+	}
+	if snapshot.Table.Comment == nil {
+		t.Fatal("SnapshotTable() comment = nil, want metadata")
+	}
+	if err := json.Unmarshal([]byte(*snapshot.Table.Comment), &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Description != "" {
+		t.Fatalf("description = %q, want empty string", metadata.Description)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 
