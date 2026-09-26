@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -617,4 +618,185 @@ func TestOrganizationMemberCreateAcksFailures(t *testing.T) {
 	if !strings.Contains(ack.Error, "does not exist") {
 		t.Fatalf("ack error = %q, want the unknown-organization message", ack.Error)
 	}
+}
+
+// Applying organization.member.create must push one immediate inventory report instead of
+// waiting for the next periodic tick, and that report must already contain the new member.
+func TestOrganizationMemberCreateTriggersAnImmediateInventoryReport(t *testing.T) {
+	db := newConsolesyncTestDB(t)
+	seedInventoryOrganization(t, db, testOrganizationID, "Acme", "acme", "active", time.Now().UTC())
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("sql.DB(): %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+
+	command := envelope(CommandOrganizationMemberCreate,
+		memberCreatePayload(testOrganizationID, "triggered@example.com", "张三", "member"))
+	commandsData, err := json.Marshal(PullCommandsResponse{
+		Commands:       []CommandEnvelope{command},
+		DesiredVersion: 1,
+	})
+	if err != nil {
+		t.Fatalf("marshal commands: %v", err)
+	}
+
+	calls := make(chan capturedCall, 32)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls <- captureConsoleCall(r)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case apiPrefix + pathHeartbeat:
+			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"desired_version":1}}`))
+		case apiPrefix + pathCommands:
+			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":` + string(commandsData) + `}`))
+		case apiPrefix + pathDesiredState:
+			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"version":1,"account_status":"active"}}`))
+		case testOrganizationPath:
+			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"upserted":1}}`))
+		default:
+			_, _ = w.Write([]byte(`{"code":0,"message":"success"}`))
+		}
+	}))
+	defer server.Close()
+
+	service := newMemberTriggerService(t, db, server.URL)
+	stop := startOrganizationReporterForTest(t, service)
+	defer stop()
+
+	// The reporter reports once on start, before the member exists. Draining that call is
+	// what makes the next POST observably the one the command triggered.
+	initial := receiveCallForPath(t, calls, testOrganizationPath)
+	var initialBody OrganizationInventoryRequest
+	if err := json.Unmarshal(initial.Body, &initialBody); err != nil {
+		t.Fatalf("decode initial inventory request: %v", err)
+	}
+	if len(initialBody.Organizations) != 1 || len(initialBody.Organizations[0].Members) != 0 {
+		t.Fatalf("initial report = %+v, want the seeded organization without members", initialBody.Organizations)
+	}
+
+	if err := service.runOnce(context.Background()); err != nil {
+		t.Fatalf("runOnce() = %v", err)
+	}
+
+	triggered := receiveCallForPath(t, calls, testOrganizationPath)
+	var body OrganizationInventoryRequest
+	if err := json.Unmarshal(triggered.Body, &body); err != nil {
+		t.Fatalf("decode triggered inventory request: %v", err)
+	}
+	if len(body.Organizations) != 1 {
+		t.Fatalf("triggered report = %+v, want exactly one organization", body.Organizations)
+	}
+	for _, member := range body.Organizations[0].Members {
+		if member.Email == "triggered@example.com" {
+			return
+		}
+	}
+	t.Fatalf("the triggered inventory payload does not contain the new member: %+v", body.Organizations[0].Members)
+}
+
+// A failing immediate report must not fail the command apply or its ACK: it is best-effort
+// exactly like the periodic report.
+func TestOrganizationMemberCreateAckSurvivesAFailingImmediateReport(t *testing.T) {
+	db := newConsolesyncTestDB(t)
+	seedInventoryOrganization(t, db, testOrganizationID, "Acme", "acme", "active", time.Now().UTC())
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("sql.DB(): %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+
+	command := envelope(CommandOrganizationMemberCreate,
+		memberCreatePayload(testOrganizationID, "survives@example.com", "张三", "member"))
+	commandsData, err := json.Marshal(PullCommandsResponse{
+		Commands:       []CommandEnvelope{command},
+		DesiredVersion: 1,
+	})
+	if err != nil {
+		t.Fatalf("marshal commands: %v", err)
+	}
+
+	var inventoryCalls int32
+	calls := make(chan capturedCall, 32)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls <- captureConsoleCall(r)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case apiPrefix + pathHeartbeat:
+			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"desired_version":1}}`))
+		case apiPrefix + pathCommands:
+			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":` + string(commandsData) + `}`))
+		case apiPrefix + pathDesiredState:
+			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"version":1,"account_status":"active"}}`))
+		case testOrganizationPath:
+			atomic.AddInt32(&inventoryCalls, 1)
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"code":500,"message":"inventory exploded"}`))
+		default:
+			_, _ = w.Write([]byte(`{"code":0,"message":"success"}`))
+		}
+	}))
+	defer server.Close()
+
+	service := newMemberTriggerService(t, db, server.URL)
+	stop := startOrganizationReporterForTest(t, service)
+	defer stop()
+
+	// The initial report already fails; the command must still apply and ACK, and the
+	// reporter must still attempt the triggered report.
+	waitFor(t, 5*time.Second, func() bool {
+		return atomic.LoadInt32(&inventoryCalls) >= 1
+	}, "the initial failing inventory report")
+
+	if err := service.runOnce(context.Background()); err != nil {
+		t.Fatalf("runOnce() with a failing inventory report = %v", err)
+	}
+
+	ackCall := receiveCallForPath(t, calls, apiPrefix+pathCommands+"/"+command.ID+"/ack")
+	var ack AckRequest
+	if err := json.Unmarshal(ackCall.Body, &ack); err != nil {
+		t.Fatalf("decode ack request %s: %v", ackCall.Body, err)
+	}
+	if ack.Status != StatusApplied {
+		t.Fatalf("ack status = %q, want applied even though the inventory report failed", ack.Status)
+	}
+
+	waitFor(t, 5*time.Second, func() bool {
+		return atomic.LoadInt32(&inventoryCalls) >= 2
+	}, "the triggered report despite the failing initial one")
+
+	var members int64
+	if err := db.Table("members").Where("organization_id = ?", testOrganizationID).Count(&members).Error; err != nil {
+		t.Fatalf("count members: %v", err)
+	}
+	if members != 1 {
+		t.Fatalf("members = %d, want the applied member to be committed", members)
+	}
+}
+
+// newMemberTriggerService builds the real service -- applier included -- against the fake
+// console, mirroring the service construction in the other pipeline tests.
+func newMemberTriggerService(t *testing.T, db *gorm.DB, baseURL string) *Service {
+	t.Helper()
+	service := NewService(db, Config{
+		Enabled:                    true,
+		Edition:                    "CLOUD",
+		BaseURL:                    baseURL,
+		InstanceID:                 "instance-1",
+		InstanceSecret:             "secret",
+		Interval:                   45 * time.Second,
+		StaleAfter:                 5 * time.Minute,
+		HTTPTimeout:                5 * time.Second,
+		ReconcileEvery:             time.Minute,
+		OrganizationReportInterval: time.Minute,
+	}, "test")
+	if service == nil {
+		t.Fatalf("NewService() returned nil for a valid cloud config")
+	}
+	consolecred.Configure(service.cfg.InstanceID, service.cfg.InstanceSecret)
+	t.Cleanup(func() {
+		consolecred.Global().SetStale(false)
+		consolecred.Global().Clear()
+	})
+	return service
 }

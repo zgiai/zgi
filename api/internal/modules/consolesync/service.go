@@ -42,6 +42,12 @@ type Service struct {
 	reconciler *Reconciler
 	buildInfo  string
 
+	// reportNow carries at most one pending "report the organization inventory now"
+	// request from the command apply path to the inventory reporter goroutine. It is
+	// buffered with capacity 1 on purpose: a burst of membership changes coalesces into
+	// a single extra report instead of an unbounded backlog.
+	reportNow chan struct{}
+
 	mu            sync.Mutex
 	state         *PreSyncState
 	running       bool
@@ -67,6 +73,7 @@ func NewService(db *gorm.DB, cfg Config, buildInfo string) *Service {
 		applier:    NewApplier(db, store),
 		reconciler: NewReconciler(store),
 		buildInfo:  buildInfo,
+		reportNow:  make(chan struct{}, 1),
 	}
 }
 
@@ -237,6 +244,14 @@ func (s *Service) drainCommands(ctx context.Context, state *PreSyncState) error 
 				}
 				state.CursorSeq = command.Seq
 				appliedAny = true
+				// organization.member.create changed the organization's members (and
+				// possibly its departments), which the periodic inventory report would
+				// only publish on its next tick, up to a full interval later. Ask the
+				// reporter for one immediate report; the request never blocks this loop
+				// and a failing report is logged and swallowed by the reporter.
+				if command.Type == CommandOrganizationMemberCreate {
+					s.requestOrganizationReport()
+				}
 			}
 		}
 

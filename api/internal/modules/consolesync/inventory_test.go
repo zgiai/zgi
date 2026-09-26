@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -504,6 +505,128 @@ func TestOrganizationReportFailureDoesNotStopTheLoop(t *testing.T) {
 	}
 }
 
+// A burst of "report now" signals from the command path must coalesce: at most one report
+// runs at a time, and an arbitrarily large burst produces one extra report, not one per
+// trigger.
+func TestConcurrentOrganizationReportTriggersCoalesceToASingleInFlightReport(t *testing.T) {
+	db := newConsolesyncTestDB(t)
+	seedInventoryOrganization(t, db, testOrganizationID, "Acme", "acme", "active", time.Now().UTC())
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("sql.DB(): %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+
+	var inFlight, maxInFlight, total int32
+	release := make(chan struct{})
+	started := make(chan struct{})
+	var firstOnce sync.Once
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == testOrganizationPath {
+			current := atomic.AddInt32(&inFlight, 1)
+			for {
+				highest := atomic.LoadInt32(&maxInFlight)
+				if current <= highest || atomic.CompareAndSwapInt32(&maxInFlight, highest, current) {
+					break
+				}
+			}
+			atomic.AddInt32(&total, 1)
+			firstOnce.Do(func() { close(started) })
+			// Hold the first report open so the triggers below all arrive while it runs.
+			<-release
+			atomic.AddInt32(&inFlight, -1)
+		}
+		_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"upserted":1}}`))
+	}))
+	defer server.Close()
+
+	service := newInventoryService(t, db, server.URL)
+	stop := startOrganizationReporterForTest(t, service)
+	defer stop()
+
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("the initial report never reached the console")
+	}
+
+	// Concurrent triggers, all while the initial report is still in flight.
+	var wg sync.WaitGroup
+	for i := 0; i < 25; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			service.requestOrganizationReport()
+		}()
+	}
+	wg.Wait()
+	close(release)
+
+	waitFor(t, 5*time.Second, func() bool {
+		return atomic.LoadInt32(&total) >= 2 && atomic.LoadInt32(&inFlight) == 0
+	}, "the coalesced trigger to be reported")
+
+	if got := atomic.LoadInt32(&maxInFlight); got != 1 {
+		t.Fatalf("max concurrent reports = %d, want 1: triggers must never run in parallel", got)
+	}
+	if got := atomic.LoadInt32(&total); got < 2 || got > 3 {
+		t.Fatalf("reports = %d, want the initial report plus at most two coalesced triggers", got)
+	}
+}
+
+// A triggered report is a real console contact, so it must refresh the same link-health
+// bookkeeping as the periodic one: the in-process success marker and the stale gate.
+func TestTriggeredOrganizationReportRefreshesLinkHealth(t *testing.T) {
+	db := newConsolesyncTestDB(t)
+	seedInventoryOrganization(t, db, testOrganizationID, "Acme", "acme", "active", time.Now().UTC())
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("sql.DB(): %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+
+	calls := make(chan capturedCall, 16)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls <- captureConsoleCall(r)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"upserted":1}}`))
+	}))
+	defer server.Close()
+
+	service := newInventoryService(t, db, server.URL)
+	t.Cleanup(func() { consolecred.Global().SetStale(false) })
+	stop := startOrganizationReporterForTest(t, service)
+	defer stop()
+
+	initial := receiveCallForPath(t, calls, testOrganizationPath)
+	if !callIsSigned(initial) {
+		t.Fatalf("the initial report was not signed")
+	}
+	waitFor(t, 5*time.Second, func() bool {
+		return service.Status(context.Background()).LastSuccessAt != nil
+	}, "the initial report to record an in-process success")
+
+	// Pretend the link went stale: the next report must repair it exactly like a periodic
+	// one would.
+	service.mu.Lock()
+	service.stale = true
+	service.lastSuccess = nil
+	service.mu.Unlock()
+	consolecred.Global().SetStale(true)
+
+	service.requestOrganizationReport()
+
+	triggered := receiveCallForPath(t, calls, testOrganizationPath)
+	if !callIsSigned(triggered) {
+		t.Fatalf("the triggered report went out unsigned while stale: the link could never recover")
+	}
+	waitFor(t, 5*time.Second, func() bool {
+		status := service.Status(context.Background())
+		return !consolecred.Global().Stale() && !status.Stale && status.LastSuccessAt != nil
+	}, "the triggered report to refresh the link health")
+}
+
 func TestConfigFromAppCarriesTheOrganizationReportInterval(t *testing.T) {
 	if got := ConfigFromApp(nil).OrganizationReportInterval; got != DefaultOrganizationReportInterval {
 		t.Fatalf("nil config interval = %s, want the %s default", got, DefaultOrganizationReportInterval)
@@ -544,8 +667,26 @@ func newInventoryService(t *testing.T, db *gorm.DB, baseURL string) *Service {
 			HTTPTimeout:                5 * time.Second,
 			OrganizationReportInterval: time.Minute,
 		},
-		store:  NewStore(db),
-		client: NewClient(baseURL, 5*time.Second),
+		store:     NewStore(db),
+		client:    NewClient(baseURL, 5*time.Second),
+		reportNow: make(chan struct{}, 1),
+	}
+}
+
+// startOrganizationReporterForTest runs the inventory reporter loop in the background and
+// returns a stop function that cancels it and waits for it to be joined, so a test can
+// shut the goroutine down before its fake console is closed.
+func startOrganizationReporterForTest(t *testing.T, service *Service) func() {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		service.runOrganizationReporter(ctx)
+	}()
+	return func() {
+		cancel()
+		<-done
 	}
 }
 

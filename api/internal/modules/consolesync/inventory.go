@@ -435,7 +435,33 @@ func (s *Service) runOrganizationReporter(ctx context.Context) {
 			return
 		case <-ticker.C:
 			reporter.start(ctx)
+		case <-s.reportNow:
+			// A command just changed the organization membership. Unlike a tick, this
+			// signal must not be dropped by the in-flight guard: a report that started
+			// before the change would leave console stale until the next tick. So wait
+			// for any running report and then report the state that now exists. The
+			// command path only ever leaves one signal pending, so this is still a
+			// single extra report per membership change.
+			reporter.wait()
+			reporter.start(ctx)
 		}
+	}
+}
+
+// requestOrganizationReport asks the inventory reporter for one immediate report.
+//
+// It is called from the command apply path, so it never blocks: the buffered signal
+// channel holds at most one pending request and every further request is dropped, which
+// coalesces a burst of membership changes into a single extra report. When the reporter is
+// not running (reporting disabled, or a service built without NewService) this is a no-op.
+func (s *Service) requestOrganizationReport() {
+	if s.reportNow == nil {
+		return
+	}
+	select {
+	case s.reportNow <- struct{}{}:
+	default:
+		// A report is already pending; one is enough.
 	}
 }
 
