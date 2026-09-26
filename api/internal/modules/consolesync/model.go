@@ -83,9 +83,10 @@ const (
 
 // Command types understood by the applier. They mirror the console side exactly.
 const (
-	CommandAccountStatusSet  = "account.status.set"
-	CommandAPIKeySet         = "apikey.set"
-	CommandAPIKeyQuotaSet    = "apikey.quota.set"
-	CommandQuotaSet          = "quota.set"
-	CommandCredentialDisable = "credential.disable"
+	CommandAccountStatusSet         = "account.status.set"
+	CommandAPIKeySet                = "apikey.set"
+	CommandAPIKeyQuotaSet           = "apikey.quota.set"
+	CommandQuotaSet                 = "quota.set"
+	CommandCredentialDisable        = "credential.disable"
+	CommandOrganizationMemberCreate = "organization.member.create"
 )

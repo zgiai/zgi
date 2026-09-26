@@ -243,8 +243,13 @@ func (s *Service) drainCommands(ctx context.Context, state *PreSyncState) error 
 }
 
 // ackCommand reports the terminal result to console.
+//
+// Before/After carry the result snapshots produced by the applier: for
+// organization.member.create the After document is exactly the member create ACK payload
+// console correlates the command with. They were previously computed and dropped, so the
+// success payload never reached console.
 func (s *Service) ackCommand(ctx context.Context, command CommandEnvelope, status, before, after string, applyErr error) error {
-	request := AckRequest{Status: status}
+	request := AckRequest{Status: status, Before: before, After: after}
 	if applyErr != nil {
 		request.Error = applyErr.Error()
 	}

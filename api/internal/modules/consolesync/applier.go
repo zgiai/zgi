@@ -121,6 +121,8 @@ func (a *Applier) applyWithin(ctx context.Context, tx *gorm.DB, command *Command
 		return a.applyWorkspaceQuota(ctx, tx, payload)
 	case CommandCredentialDisable:
 		return a.applyCredentialDisable(ctx, tx, command, payload)
+	case CommandOrganizationMemberCreate:
+		return a.applyOrganizationMemberCreate(ctx, tx, payload)
 	default:
 		return "", "", fmt.Errorf("%w: %s", ErrUnsupportedCommand, command.Type)
 	}
