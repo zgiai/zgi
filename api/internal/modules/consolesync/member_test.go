@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/zgiai/zgi/api/internal/infra/platform/consolecred"
+	helper "github.com/zgiai/zgi/api/internal/util"
 	"gorm.io/gorm"
 )
 
@@ -36,6 +37,46 @@ func memberCreatePayloadWithDepartment(organizationID, email, name, role, depart
 		"department_id":   departmentID,
 	})
 	return string(raw)
+}
+
+func memberCreatePayloadWithPassword(organizationID, email, name, role, password string) string {
+	raw, _ := json.Marshal(map[string]string{
+		"organization_id": organizationID,
+		"email":           email,
+		"name":            name,
+		"role":            role,
+		"password":        password,
+	})
+	return string(raw)
+}
+
+func TestApplyOrganizationMemberCreateStoresConsolePasswordAsPreHash(t *testing.T) {
+	applier, _, db := newApplierFixture(t)
+	const password = "Member-Password-123!"
+	command := envelope(CommandOrganizationMemberCreate,
+		memberCreatePayloadWithPassword(testOrganizationID, "password@example.com", "Password User", "member", password))
+	result, err := applier.Apply(context.Background(), ptrEnvelope(command))
+	if err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	var account struct {
+		Password     *string
+		PasswordSalt *string
+		Status       string
+	}
+	if err := db.Table("accounts").Select("password, password_salt, status").Where("email = ?", "password@example.com").Take(&account).Error; err != nil {
+		t.Fatalf("read account: %v", err)
+	}
+	if account.Password == nil || account.PasswordSalt == nil || account.Status != "active" {
+		t.Fatalf("account credentials = %#v, want active account with password and salt", account)
+	}
+	ok, err := helper.ComparePasswordPBKDF2(password, *account.Password, *account.PasswordSalt)
+	if err != nil || !ok {
+		t.Fatalf("stored password does not verify: ok=%v err=%v", ok, err)
+	}
+	if strings.Contains(result.After, password) {
+		t.Fatalf("ACK leaked plaintext password: %s", result.After)
+	}
 }
 
 func seedMemberAccount(t *testing.T, db *gorm.DB, id, email, name, status string) {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	helper "github.com/zgiai/zgi/api/internal/util"
 	"gorm.io/gorm"
 )
 
@@ -89,6 +90,7 @@ func (a *Applier) applyOrganizationMemberCreate(ctx context.Context, tx *gorm.DB
 	role := strings.ToLower(rawString(payload, "role"))
 	name := strings.TrimSpace(rawString(payload, "name"))
 	departmentID := strings.TrimSpace(rawString(payload, "department_id"))
+	password := rawString(payload, "password")
 
 	if err := validateOrganizationMemberCreate(organizationID, email, role, departmentID); err != nil {
 		return "", "", err
@@ -122,7 +124,7 @@ func (a *Applier) applyOrganizationMemberCreate(ctx context.Context, tx *gorm.DB
 		}
 	}
 
-	account, accountCreated, err := findOrCreateMemberAccount(ctx, tx, email, name)
+	account, accountCreated, err := findOrCreateMemberAccount(ctx, tx, email, name, password)
 	if err != nil {
 		return "", "", err
 	}
@@ -165,7 +167,7 @@ type memberAccount struct {
 //
 // The lookup is case-insensitive and skips soft-deleted rows, so the command can never
 // resurrect or collide with a deleted account.
-func findOrCreateMemberAccount(ctx context.Context, tx *gorm.DB, email, name string) (*memberAccount, bool, error) {
+func findOrCreateMemberAccount(ctx context.Context, tx *gorm.DB, email, name, password string) (*memberAccount, bool, error) {
 	account, err := findMemberAccountByEmail(ctx, tx, email)
 	if err == nil {
 		return account, false, nil
@@ -175,24 +177,34 @@ func findOrCreateMemberAccount(ctx context.Context, tx *gorm.DB, email, name str
 	}
 
 	now := time.Now().UTC()
+	status := memberAccountStatusPending
+	var hashedPassword interface{}
+	var passwordSalt interface{}
+	var initializedAt interface{}
+	if strings.TrimSpace(password) != "" {
+		hashed, salt, err := helper.HashPasswordPBKDF2(password)
+		if err != nil {
+			return nil, false, fmt.Errorf("organization.member.create: hash password: %w", err)
+		}
+		hashedPassword = hashed
+		passwordSalt = salt
+		initializedAt = now
+		status = "active"
+	}
 	account = &memberAccount{
 		ID:     uuid.NewString(),
 		Email:  email,
 		Name:   memberAccountName(email, name),
-		Status: memberAccountStatusPending,
+		Status: status,
 	}
-	// password / password_salt / initialized_at stay NULL on purpose: console never sends a
-	// password, and pre represents "invited, not activated yet" exactly this way
-	// (auth/model.AccountStatusPending + InitializedAt nil). The account cannot
-	// authenticate until the invitation is accepted.
 	if err := tx.WithContext(ctx).Table("accounts").Create(map[string]interface{}{
 		"id":             account.ID,
 		"name":           account.Name,
 		"email":          account.Email,
-		"password":       nil,
-		"password_salt":  nil,
+		"password":       hashedPassword,
+		"password_salt":  passwordSalt,
 		"status":         account.Status,
-		"initialized_at": nil,
+		"initialized_at": initializedAt,
 		"created_at":     now,
 		"updated_at":     now,
 		"last_active_at": now,

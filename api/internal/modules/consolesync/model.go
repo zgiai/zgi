@@ -94,4 +94,5 @@ const (
 	CommandQuotaSet                 = "quota.set"
 	CommandCredentialDisable        = "credential.disable"
 	CommandOrganizationMemberCreate = "organization.member.create"
+	CommandOrganizationCreate       = "organization.create"
 )

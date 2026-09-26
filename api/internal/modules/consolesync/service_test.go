@@ -77,6 +77,13 @@ func newConsolesyncTestDB(t *testing.T) *gorm.DB {
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`,
+		`CREATE TABLE account_contexts (
+			account_id VARCHAR(255) PRIMARY KEY,
+			current_organization_id VARCHAR(255),
+			current_workspace_id VARCHAR(255),
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
 		`CREATE TABLE departments (
 			id VARCHAR(255) PRIMARY KEY,
 			group_id VARCHAR(255) NOT NULL,
