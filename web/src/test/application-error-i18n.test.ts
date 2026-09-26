@@ -55,8 +55,11 @@ const enCodes = enUS.requestErrors.codes as unknown as Record<string, CodeCopy>;
 const zhCodes = zhHans.requestErrors.codes as unknown as Record<string, CodeCopy>;
 
 for (const code of APPLICATION_ERROR_CODES) {
-  const en = enCodes[code];
-  const zh = zhCodes[code];
+  // next-intl rejects message keys containing ".", so the catalog stores the frozen
+  // application error codes with "__" as the separator.
+  const key = code.replace(/\./g, '__');
+  const en = enCodes[key];
+  const zh = zhCodes[key];
   assert.ok(en && en.title.trim().length > 0, `missing en-US title for ${code}`);
   assert.ok(en && en.action.trim().length > 0, `missing en-US action for ${code}`);
   assert.ok(zh && zh.title.trim().length > 0, `missing zh-Hans title for ${code}`);
