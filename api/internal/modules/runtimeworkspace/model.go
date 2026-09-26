@@ -168,27 +168,28 @@ type RuntimeContext struct {
 }
 
 type App struct {
-	AppKey               string   `json:"app_key"`
-	Name                 string   `json:"name"`
-	Description          string   `json:"description,omitempty"`
-	Icon                 string   `json:"icon,omitempty"`
-	IconType             string   `json:"icon_type,omitempty"`
-	IconURL              string   `json:"icon_url,omitempty"`
-	Version              string   `json:"version"`
-	VersionUUID          string   `json:"version_uuid"`
-	HomeTitle            string   `json:"home_title,omitempty"`
-	OpeningStatement     string   `json:"opening_statement,omitempty"`
-	InputPlaceholder     string   `json:"input_placeholder,omitempty"`
-	ThemeColor           string   `json:"theme_color,omitempty"`
-	SuggestedQuestions   []string `json:"suggested_questions"`
-	Status               string   `json:"status"`
-	SupportsStream       bool     `json:"supports_stream"`
-	FileUploadEnabled    bool     `json:"file_upload_enabled"`
-	SupportsVision       bool     `json:"supports_vision"`
-	AgentMemoryEnabled   bool     `json:"agent_memory_enabled"`
-	MemoryRequiresUser   bool     `json:"memory_requires_user"`
-	ExternalUserRequired bool     `json:"external_user_required"`
-	Capabilities         []string `json:"capabilities"`
+	AppKey               string       `json:"app_key"`
+	Name                 string       `json:"name"`
+	Description          string       `json:"description,omitempty"`
+	Icon                 string       `json:"icon,omitempty"`
+	IconType             string       `json:"icon_type,omitempty"`
+	IconURL              string       `json:"icon_url,omitempty"`
+	Version              string       `json:"version"`
+	VersionUUID          string       `json:"version_uuid"`
+	HomeTitle            string       `json:"home_title,omitempty"`
+	OpeningStatement     string       `json:"opening_statement,omitempty"`
+	InputPlaceholder     string       `json:"input_placeholder,omitempty"`
+	ThemeColor           string       `json:"theme_color,omitempty"`
+	SuggestedQuestions   []string     `json:"suggested_questions"`
+	Status               string       `json:"status"`
+	SupportsStream       bool         `json:"supports_stream"`
+	FileUploadEnabled    bool         `json:"file_upload_enabled"`
+	SupportsVision       bool         `json:"supports_vision"`
+	AgentMemoryEnabled   bool         `json:"agent_memory_enabled"`
+	MemoryRequiresUser   bool         `json:"memory_requires_user"`
+	ExternalUserRequired bool         `json:"external_user_required"`
+	Capabilities         []string     `json:"capabilities"`
+	Tags                 []CatalogTag `json:"tags"`
 }
 
 type ManagementApp struct {

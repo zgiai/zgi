@@ -532,6 +532,14 @@ func (s *Service) ListApps(ctx context.Context, runtimeWorkspaceID uuid.UUID) ([
 	if err != nil {
 		return nil, err
 	}
+	agentIDs := make([]uuid.UUID, 0, len(bindings))
+	for _, binding := range bindings {
+		agentIDs = append(agentIDs, binding.AgentID)
+	}
+	tagsByAgent, err := s.catalogTagsByAgentIDs(ctx, agentIDs)
+	if err != nil {
+		return nil, err
+	}
 	apps := make([]App, 0, len(bindings))
 	for _, binding := range bindings {
 		agent, found := agentsByID[binding.AgentID]
@@ -546,6 +554,7 @@ func (s *Service) ListApps(ctx context.Context, runtimeWorkspaceID uuid.UUID) ([
 			HomeTitle: presentation.HomeTitle, OpeningStatement: presentation.OpeningStatement, InputPlaceholder: presentation.InputPlaceholder, ThemeColor: presentation.ThemeColor, SuggestedQuestions: presentation.SuggestedQuestions,
 			Status: binding.Status, SupportsStream: true, FileUploadEnabled: presentation.FileUploadEnabled, SupportsVision: presentation.SupportsVision,
 			AgentMemoryEnabled: presentation.AgentMemoryEnabled && relationshipmemory.RuntimeEnabled(), MemoryRequiresUser: relationshipmemory.RuntimeEnabled() && runtimeMemoryRequiresUser(presentation), ExternalUserRequired: true, Capabilities: runtimeAgentCapabilities(presentation),
+			Tags: tagsByAgent[binding.AgentID],
 		})
 	}
 	return apps, nil
@@ -582,7 +591,7 @@ func (s *Service) ListBindings(ctx context.Context, runtimeWorkspaceID uuid.UUID
 			Version: agent.Version, VersionUUID: agent.VersionUUID.String(), PublishedAt: agent.PublishedAt,
 			Status: binding.Status, SupportsStream: true, FileUploadEnabled: presentation.FileUploadEnabled, SupportsVision: presentation.SupportsVision,
 			AgentMemoryEnabled: presentation.AgentMemoryEnabled && relationshipmemory.RuntimeEnabled(), Capabilities: runtimeAgentCapabilities(presentation),
-			Tags: tagsByAgent[binding.AgentID],
+			Tags:     tagsByAgent[binding.AgentID],
 			Callable: binding.Status == AgentBindingActive && allowed, UnavailableReason: reason,
 		})
 	}
