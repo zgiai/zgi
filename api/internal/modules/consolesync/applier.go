@@ -48,6 +48,9 @@ func (a *Applier) Apply(ctx context.Context, command *CommandEnvelope) (*Result,
 	}
 
 	var result Result
+	// replayed marks the idempotency-key hit so its stored ACK can be returned to the
+	// caller; a repeated command id and the insert race stay silent as before.
+	replayed := false
 	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var count int64
 		if err := tx.Model(&PreAppliedCommand{}).
@@ -59,22 +62,46 @@ func (a *Applier) Apply(ctx context.Context, command *CommandEnvelope) (*Result,
 			return ErrAlreadyApplied
 		}
 
+		// Console can redeliver the same command under a fresh command id. The key on the
+		// envelope is the real boundary: a successful ledger row means the effect is already
+		// in place, so the stored ACK payload is reused instead of executing a second time.
+		// Only successful rows count, so a failed apply stays retryable.
+		idempotencyKey := strings.TrimSpace(command.IdempotencyKey)
+		if idempotencyKey != "" {
+			var applied PreAppliedCommand
+			lookup := tx.Where("idempotency_key = ? AND status = ?", idempotencyKey, StatusApplied).
+				Limit(1).Find(&applied)
+			if lookup.Error != nil {
+				return fmt.Errorf("check applied idempotency key: %w", lookup.Error)
+			}
+			if lookup.RowsAffected > 0 {
+				result.Before = applied.BeforeState
+				result.After = applied.AfterState
+				replayed = true
+				return ErrAlreadyApplied
+			}
+		}
+
 		before, after, applyErr := a.applyWithin(ctx, tx, command)
 		result.Before = before
 		result.After = after
 
 		entry := &PreAppliedCommand{
-			CommandID:   parseUUIDOrZero(command.ID),
-			Seq:         command.Seq,
-			Type:        command.Type,
-			Status:      StatusApplied,
-			BeforeState: before,
-			AfterState:  after,
-			AppliedAt:   time.Now().UTC(),
+			CommandID:      parseUUIDOrZero(command.ID),
+			Seq:            command.Seq,
+			Type:           command.Type,
+			IdempotencyKey: idempotencyKeyOrNil(idempotencyKey),
+			Status:         StatusApplied,
+			BeforeState:    before,
+			AfterState:     after,
+			AppliedAt:      time.Now().UTC(),
 		}
 		if applyErr != nil {
 			entry.Status = StatusFailed
 			entry.Error = applyErr.Error()
+			// Only a successful apply owns the key: a failed apply stays retryable, and the
+			// unique index must not reject the retry that then succeeds under the same key.
+			entry.IdempotencyKey = nil
 		}
 		if err := tx.Create(entry).Error; err != nil {
 			// A concurrent duplicate insert means another worker already recorded it.
@@ -86,12 +113,26 @@ func (a *Applier) Apply(ctx context.Context, command *CommandEnvelope) (*Result,
 		return applyErr
 	})
 	if err != nil {
+		if replayed {
+			return &result, err
+		}
 		return nil, err
 	}
 	return &result, nil
 }
 
-// ErrAlreadyApplied means the idempotency ledger already holds this command id.
+// idempotencyKeyOrNil keeps a command without a key NULL, so keyless commands never
+// occupy the unique key and keep working as before.
+func idempotencyKeyOrNil(key string) *string {
+	if key == "" {
+		return nil
+	}
+	return &key
+}
+
+// ErrAlreadyApplied means the idempotency ledger already holds this command id, or its
+// idempotency key. An idempotency-key hit also returns the stored result so the caller can
+// re-ACK it; a command-id hit returns no result.
 var ErrAlreadyApplied = errors.New("command already applied")
 
 // ErrCommandExpired means the command outlived its expiry and must not execute.

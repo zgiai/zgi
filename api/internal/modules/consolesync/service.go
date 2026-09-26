@@ -212,7 +212,14 @@ func (s *Service) drainCommands(ctx context.Context, state *PreSyncState) error 
 			result, err := s.applier.Apply(ctx, &command)
 			switch {
 			case errors.Is(err, ErrAlreadyApplied):
-				// Console re-delivered a command we already recorded: advance and move on.
+				// A repeat of the same command id needs no second ACK, but a replay of the
+				// same idempotency key under a fresh command id returns the stored result
+				// and must be acknowledged applied so console can settle the command.
+				if result != nil {
+					if ackErr := s.ackCommand(ctx, command, StatusApplied, result.Before, result.After, nil); ackErr != nil {
+						return ackErr
+					}
+				}
 				state.CursorSeq = command.Seq
 				appliedAny = true
 				continue

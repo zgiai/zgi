@@ -54,16 +54,21 @@ func utcPtr(value *time.Time) *time.Time {
 // TableName pins the table created by the console sync migration.
 func (PreSyncState) TableName() string { return "pre_sync_state" }
 
-// PreAppliedCommand is the idempotency ledger: a command id may only ever appear once.
+// PreAppliedCommand is the idempotency ledger: a command id may only ever appear once,
+// and a console envelope idempotency key may only ever appear once on a successful row.
 type PreAppliedCommand struct {
-	CommandID   uuid.UUID `gorm:"column:command_id;type:uuid;primaryKey" json:"command_id"`
-	Seq         int64     `gorm:"column:seq;not null" json:"seq"`
-	Type        string    `gorm:"column:type;size:64;not null" json:"type"`
-	Status      string    `gorm:"column:status;size:20;not null" json:"status"`
-	BeforeState string    `gorm:"column:before_state;type:jsonb" json:"before_state,omitempty"`
-	AfterState  string    `gorm:"column:after_state;type:jsonb" json:"after_state,omitempty"`
-	Error       string    `gorm:"column:error;type:text" json:"error,omitempty"`
-	AppliedAt   time.Time `gorm:"column:applied_at;not null" json:"applied_at"`
+	CommandID uuid.UUID `gorm:"column:command_id;type:uuid;primaryKey" json:"command_id"`
+	Seq       int64     `gorm:"column:seq;not null" json:"seq"`
+	Type      string    `gorm:"column:type;size:64;not null" json:"type"`
+	// IdempotencyKey is the key the console attached to the envelope. It is nullable and
+	// only stored for a successful apply, so failed commands stay retryable and keyless
+	// commands keep their previous behaviour.
+	IdempotencyKey *string   `gorm:"column:idempotency_key;size:128" json:"idempotency_key,omitempty"`
+	Status         string    `gorm:"column:status;size:20;not null" json:"status"`
+	BeforeState    string    `gorm:"column:before_state;type:jsonb" json:"before_state,omitempty"`
+	AfterState     string    `gorm:"column:after_state;type:jsonb" json:"after_state,omitempty"`
+	Error          string    `gorm:"column:error;type:text" json:"error,omitempty"`
+	AppliedAt      time.Time `gorm:"column:applied_at;not null" json:"applied_at"`
 }
 
 // TableName pins the table created by the console sync migration.

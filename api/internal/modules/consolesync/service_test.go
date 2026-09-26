@@ -45,12 +45,15 @@ func newConsolesyncTestDB(t *testing.T) *gorm.DB {
 			command_id TEXT PRIMARY KEY,
 			seq INTEGER NOT NULL,
 			type VARCHAR(64) NOT NULL,
+			idempotency_key VARCHAR(128),
 			status VARCHAR(20) NOT NULL,
 			before_state JSONB,
 			after_state JSONB,
 			error TEXT,
 			applied_at TIMESTAMP NOT NULL
 		)`,
+		`CREATE UNIQUE INDEX idx_pre_applied_commands_idempotency_key
+			ON pre_applied_commands (idempotency_key)`,
 		`CREATE TABLE organizations (
 			id VARCHAR(255) PRIMARY KEY,
 			name VARCHAR(255),
