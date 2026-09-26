@@ -59,25 +59,69 @@ type GetAgentsListRequest struct {
 	AssetKind     string `form:"asset_kind" json:"asset_kind"`
 	IsPublished   *bool  `form:"is_published" json:"is_published"`
 	WebAppStatus  string `form:"web_app_status" json:"web_app_status"`
+	TagIDs        string `form:"tag_ids" json:"tag_ids" binding:"omitempty,max=800"`
 	Internal      *bool  `form:"internal" json:"internal"`
+}
+
+type GetAgentCatalogTagFacetsRequest struct {
+	WorkspaceID string `form:"workspace_id" json:"workspace_id" binding:"omitempty,uuid"`
+	AssetKind   string `form:"asset_kind" json:"asset_kind"`
 }
 
 type GetRunnableWebAppsRequest struct {
 	WorkspaceID string `form:"workspace_id" json:"workspace_id"`
 	WebAppID    string `form:"web_app_id" json:"web_app_id" binding:"omitempty,uuid"`
 	WebAppIDs   string `form:"web_app_ids" json:"web_app_ids" binding:"omitempty,max=800"`
+	TagIDs      string `form:"tag_ids" json:"tag_ids" binding:"omitempty,max=800"`
 	Keyword     string `form:"keyword" json:"keyword" binding:"omitempty,max=200"`
 	Page        int    `form:"page" json:"page" binding:"omitempty,min=1"`
 	PageSize    int    `form:"page_size" json:"page_size" binding:"omitempty,min=1,max=100"`
 }
 
+type AgentCatalogTag struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type AgentCatalogTagInput struct {
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
+}
+
+type ReplaceAgentCatalogTagsRequest struct {
+	Tags []AgentCatalogTagInput `json:"tags"`
+}
+
+type AgentCatalogTagsResponse struct {
+	Items []AgentCatalogTag `json:"items"`
+}
+
+type AgentCatalogTagFacet struct {
+	AgentCatalogTag
+	Count int64 `json:"count"`
+}
+
+type AgentCatalogTagFacetsResponse struct {
+	Items []AgentCatalogTagFacet `json:"items"`
+}
+
+type RunnableWebAppTagFacet struct {
+	AgentCatalogTag
+	Count int64 `json:"count"`
+}
+
+type RunnableWebAppTagFacetsResponse struct {
+	Items []RunnableWebAppTagFacet `json:"items"`
+}
+
 type RunnableWebAppMetaData struct {
-	Name      string  `json:"name"`
-	Icon      *string `json:"icon"`
-	IconType  *string `json:"icon_type"`
-	IconUrl   string  `json:"icon_url"`
-	Desc      string  `json:"desc"`
-	AgentType string  `json:"agent_type"`
+	Name      string            `json:"name"`
+	Icon      *string           `json:"icon"`
+	IconType  *string           `json:"icon_type"`
+	IconUrl   string            `json:"icon_url"`
+	Desc      string            `json:"desc"`
+	AgentType string            `json:"agent_type"`
+	Tags      []AgentCatalogTag `json:"tags"`
 }
 
 type RunnableWebAppItem struct {
@@ -98,23 +142,24 @@ type RunnableWebAppsResponse struct {
 
 // AgentListItem represents a single agent in the list response
 type AgentListItem struct {
-	ID           string  `json:"id"`
-	Name         string  `json:"name"`
-	Description  string  `json:"description"`
-	AgentType    string  `json:"agent_type"`
-	TenantID     string  `json:"tenant_id"`
-	WorkspaceID  string  `json:"workspace_id"`
-	IconType     *string `json:"icon_type,omitempty"`
-	Icon         *string `json:"icon,omitempty"`
-	IconUrl      string  `json:"icon_url,omitempty"`
-	IsPublic     bool    `json:"is_public"`
-	IsPublished  bool    `json:"is_published"`
-	WebAppStatus string  `json:"web_app_status"`
-	CreatedBy    *string `json:"created_by,omitempty"`
-	CreatedAt    int64   `json:"created_at"`
-	UpdatedAt    int64   `json:"updated_at"`
-	Internal     bool    `json:"internal"`
-	CanEdit      bool    `json:"can_edit"` // Indicates if current user can edit this agent
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Description  string            `json:"description"`
+	AgentType    string            `json:"agent_type"`
+	TenantID     string            `json:"tenant_id"`
+	WorkspaceID  string            `json:"workspace_id"`
+	IconType     *string           `json:"icon_type,omitempty"`
+	Icon         *string           `json:"icon,omitempty"`
+	IconUrl      string            `json:"icon_url,omitempty"`
+	IsPublic     bool              `json:"is_public"`
+	IsPublished  bool              `json:"is_published"`
+	WebAppStatus string            `json:"web_app_status"`
+	CreatedBy    *string           `json:"created_by,omitempty"`
+	CreatedAt    int64             `json:"created_at"`
+	UpdatedAt    int64             `json:"updated_at"`
+	Internal     bool              `json:"internal"`
+	CanEdit      bool              `json:"can_edit"` // Indicates if current user can edit this agent
+	Tags         []AgentCatalogTag `json:"tags"`
 }
 
 // AgentsListResponse represents the paginated response for agent list queries

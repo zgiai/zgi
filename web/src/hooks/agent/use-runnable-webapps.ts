@@ -8,10 +8,12 @@ import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
 import { agentService } from '@/services';
 import type { ApiResponseData } from '@/services/types/common';
 import type {
+  AgentCatalogTag,
   RunnableWebAppItem,
   RunnableWebAppsData,
   RunnableWebAppMetaData,
   RunnableWebAppsParams,
+  RunnableWebAppTagFacetsData,
 } from '@/services/types/agent';
 import { useCurrentWorkspace } from '@/store/workspace-store';
 import { getErrorMessage } from '@/utils/error-notifications';
@@ -25,6 +27,7 @@ export interface RunnableWebAppResolvedMetaData {
   icon_url: string;
   desc: string | null;
   agent_type: RunnableWebAppMetaData['agent_type'];
+  tags: AgentCatalogTag[];
 }
 
 export type RunnableWebAppResolvedItem = Omit<RunnableWebAppItem, 'meta_data'> & {
@@ -38,6 +41,7 @@ interface UseRunnableWebAppsOptions {
   staleTime?: number;
   webAppId?: string | null;
   webAppIds?: string[];
+  tagIds?: string[];
   keyword?: string;
   page?: number;
   pageSize?: number;
@@ -48,6 +52,7 @@ interface UseInfiniteRunnableWebAppsOptions {
   enabled?: boolean;
   staleTime?: number;
   keyword?: string;
+  tagIds?: string[];
   pageSize?: number;
 }
 
@@ -80,6 +85,7 @@ export function useRunnableWebApps({
   staleTime = 60 * 1000,
   webAppId,
   webAppIds,
+  tagIds,
   keyword,
   page,
   pageSize,
@@ -100,17 +106,26 @@ export function useRunnableWebApps({
         .join(',') || undefined,
     [webAppIds]
   );
+  const tagIDsParam = useMemo(
+    () =>
+      tagIds
+        ?.map(id => id.trim())
+        .filter(Boolean)
+        .join(',') || undefined,
+    [tagIds]
+  );
 
   const requestParams = useMemo<RunnableWebAppsParams>(
     () => ({
       workspace_id: resolvedWorkspaceId || undefined,
       web_app_id: webAppId?.trim() || undefined,
       web_app_ids: webAppIDsParam,
+      tag_ids: tagIDsParam,
       keyword: keyword?.trim() || undefined,
       page,
       page_size: pageSize,
     }),
-    [keyword, page, pageSize, resolvedWorkspaceId, webAppId, webAppIDsParam]
+    [keyword, page, pageSize, resolvedWorkspaceId, tagIDsParam, webAppId, webAppIDsParam]
   );
 
   const query = useQuery<ApiResponseData<RunnableWebAppsData>>({
@@ -151,6 +166,7 @@ export function useInfiniteRunnableWebApps({
   enabled = true,
   staleTime = 60 * 1000,
   keyword,
+  tagIds,
   pageSize = 20,
 }: UseInfiniteRunnableWebAppsOptions = {}) {
   const {
@@ -160,13 +176,22 @@ export function useInfiniteRunnableWebApps({
     isCapabilitiesFetching,
   } = useRunnableWebAppQueryScope(workspaceId);
   const queryEnabled = enabled && canUseAppCenterResourceList;
+  const tagIDsParam = useMemo(
+    () =>
+      tagIds
+        ?.map(id => id.trim())
+        .filter(Boolean)
+        .join(',') || undefined,
+    [tagIds]
+  );
   const requestParams = useMemo<RunnableWebAppsParams>(
     () => ({
       workspace_id: resolvedWorkspaceId || undefined,
       keyword: keyword?.trim() || undefined,
+      tag_ids: tagIDsParam,
       page_size: pageSize,
     }),
-    [keyword, pageSize, resolvedWorkspaceId]
+    [keyword, pageSize, resolvedWorkspaceId, tagIDsParam]
   );
 
   const query = useInfiniteQuery<ApiResponseData<RunnableWebAppsData>>({
@@ -206,6 +231,48 @@ export function useInfiniteRunnableWebApps({
   };
 }
 
+export function useRunnableWebAppTagFacets({
+  workspaceId,
+  enabled = true,
+  staleTime = 60 * 1000,
+  keyword,
+}: Pick<UseRunnableWebAppsOptions, 'workspaceId' | 'enabled' | 'staleTime' | 'keyword'> = {}) {
+  const {
+    resolvedWorkspaceId,
+    canUseAppCenterResourceList,
+    isCapabilitiesLoading,
+    isCapabilitiesFetching,
+  } = useRunnableWebAppQueryScope(workspaceId);
+  const queryEnabled = enabled && canUseAppCenterResourceList;
+  const params = useMemo(
+    () => ({
+      workspace_id: resolvedWorkspaceId || undefined,
+      keyword: keyword?.trim() || undefined,
+    }),
+    [keyword, resolvedWorkspaceId]
+  );
+  const query = useQuery<ApiResponseData<RunnableWebAppTagFacetsData>>({
+    queryKey: AGENT_KEYS.runnableTagFacets(resolvedWorkspaceId, params),
+    queryFn: () => agentService.getRunnableWebAppTagFacets(params),
+    enabled: queryEnabled,
+    staleTime,
+    gcTime: 10 * 60 * 1000,
+    retry: false,
+  });
+
+  useEffect(() => {
+    if (!queryEnabled || !query.isError) return;
+    toast.error(getErrorMessage(query.error));
+  }, [queryEnabled, query.error, query.isError]);
+
+  return {
+    ...query,
+    items: queryEnabled ? (query.data?.data?.items ?? []) : [],
+    isLoading: enabled && isCapabilitiesLoading ? true : query.isLoading,
+    isFetching: (enabled && isCapabilitiesFetching) || query.isFetching,
+  };
+}
+
 function resolveRunnableWebAppItems(rawItems: RunnableWebAppItem[]): RunnableWebAppResolvedItem[] {
   return rawItems.map((item, index) => {
     const apiMeta = item.meta_data;
@@ -222,6 +289,7 @@ function resolveRunnableWebAppItems(rawItems: RunnableWebAppItem[]): RunnableWeb
         icon_url: apiMeta?.icon_url || '',
         desc: apiMeta?.desc ?? null,
         agent_type: apiMeta?.agent_type || 'CONVERSATIONAL_WORKFLOW',
+        tags: apiMeta?.tags ?? [],
       },
       icon_type: iconType,
     };

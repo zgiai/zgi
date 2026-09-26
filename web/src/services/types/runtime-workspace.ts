@@ -2,6 +2,11 @@ export type RuntimeWorkspaceStatus = 'active' | 'disabled';
 export type RuntimeCredentialStatus = 'active' | 'revoked';
 export type RuntimeAgentBindingStatus = 'active' | 'disabled';
 
+export interface RuntimeCatalogTag {
+  id: string;
+  name: string;
+}
+
 export interface RuntimeWorkspace {
   runtime_id: string;
   workspace_id: string;
@@ -48,6 +53,7 @@ export interface RuntimeApp {
   supports_vision: boolean;
   agent_memory_enabled: boolean;
   capabilities: string[];
+  tags: RuntimeCatalogTag[];
   callable?: boolean;
   unavailable_reason?: string;
 }
@@ -81,6 +87,7 @@ export interface RuntimeAgentCandidate {
   supports_vision: boolean;
   agent_memory_enabled: boolean;
   capabilities: string[];
+  tags: RuntimeCatalogTag[];
 }
 
 export interface RuntimeCredentialCreation {

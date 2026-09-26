@@ -196,7 +196,9 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 
 	// Agent management endpoints
 	appsGroup.GET("", appHandler.GetAgentsList)
+	appsGroup.GET("/catalog-tags", appHandler.GetAgentCatalogTagFacets)
 	appsGroup.POST("/runtime/audio/transcriptions", appHandler.TranscribeWorkspaceVoice)
+	appsGroup.GET("/runnable-webapps/tags", appHandler.GetRunnableWebAppTagFacets)
 	appsGroup.GET("/runnable-webapps", appHandler.GetRunnableWebApps)
 	appsGroup.POST("", appHandler.CreateAgent)
 	appsGroup.GET("/:agent_id/candidates/skills", appHandler.ListAgentSkillBindingCandidates)
@@ -208,6 +210,8 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	appsGroup.GET("/:agent_id/skills/candidates", appHandler.ListAgentSkillBindingCandidates)
 	appsGroup.GET("/:agent_id/workflow-bindings/candidates", appHandler.ListAgentWorkflowBindingCandidates)
 	appsGroup.GET("/:agent_id", appHandler.GetAgent)
+	appsGroup.GET("/:agent_id/tags", appHandler.GetAgentCatalogTags)
+	appsGroup.PUT("/:agent_id/tags", appHandler.ReplaceAgentCatalogTags)
 	appsGroup.GET("/:agent_id/config", appHandler.GetAgentConfig)
 	appsGroup.GET("/:agent_id/runtime-surfaces", appHandler.GetAgentRuntimeSurfaces)
 	appsGroup.PATCH("/:agent_id/runtime-surfaces", appHandler.UpdateAgentRuntimeSurfaces)

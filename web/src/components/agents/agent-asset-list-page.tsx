@@ -22,6 +22,7 @@ import { AgentEmptyElement, AgentEmptySearchResults } from '@/components/agents/
 import ImportAgentDialog from '@/components/agents/import-agent-dialog';
 import { TemplateGalleryDialog } from '@/components/agents/templates';
 import { useAgents } from '@/hooks/agent/use-agents';
+import { useAgentCatalogTagFacets } from '@/hooks/agent/use-agent-catalog-tags';
 import { AGENT_KEYS } from '@/hooks/query-keys';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
@@ -46,10 +47,7 @@ import {
   type AgentListScope,
   type AgentListWorkflowTypeFilter,
 } from '@/utils/agent-list-state';
-import {
-  AGENT_PERMISSION_ACTIONS,
-  WORKFLOW_PERMISSION_ACTIONS,
-} from '@/constants/permissions';
+import { AGENT_PERMISSION_ACTIONS, WORKFLOW_PERMISSION_ACTIONS } from '@/constants/permissions';
 
 const PAGE_SIZE = 20;
 
@@ -87,6 +85,9 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
   const [workflowTypeFilter, setWorkflowTypeFilter] = useState<AgentListWorkflowTypeFilter>(
     () => readAgentListInitialFilters(listScope).workflowTypeFilter
   );
+  const [tagFilter, setTagFilter] = useState(
+    () => readAgentListInitialFilters(listScope).tagFilter
+  );
   const [queryKeywordOverride, setQueryKeywordOverride] = useState<string | null>(null);
   const [isRestoreChecked, setIsRestoreChecked] = useState(false);
   const [reloading, setReloading] = useState(false);
@@ -104,6 +105,12 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
     publishFilter === 'published' ? 'active' : publishFilter === 'offline' ? 'inactive' : undefined;
   const filteredAgentType =
     isWorkflowList && workflowTypeFilter !== 'all' ? (workflowTypeFilter as AgentType) : undefined;
+  const { items: catalogTagFacets, isLoading: areCatalogTagFacetsLoading } =
+    useAgentCatalogTagFacets({
+      workspaceId: currentWorkspace?.id,
+      assetKind,
+      enabled: canView,
+    });
   const templateFromQuery = isWorkflowList ? searchParams.get('template') : null;
   const agentListParams = useMemo(
     () => ({
@@ -114,6 +121,7 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
       agent_type: filteredAgentType,
       is_published: isPublished,
       web_app_status: webAppStatus,
+      tag_ids: tagFilter === 'all' ? undefined : tagFilter,
     }),
     [
       assetKind,
@@ -122,6 +130,7 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
       currentWorkspace?.id,
       isPublished,
       webAppStatus,
+      tagFilter,
     ]
   );
   const agentListQueryKey = useMemo(() => AGENT_KEYS.list(agentListParams), [agentListParams]);
@@ -163,6 +172,7 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
       setSearchKeyword('');
       setPublishFilter('all');
       setWorkflowTypeFilter('all');
+      setTagFilter('all');
       setQueryKeywordOverride('');
       setIsRestoreChecked(true);
       return;
@@ -171,6 +181,7 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
     setSearchKeyword(savedState.keyword);
     setPublishFilter(savedState.publishFilter);
     setWorkflowTypeFilter(isWorkflowList ? savedState.workflowTypeFilter : 'all');
+    setTagFilter(savedState.tagFilter);
     setQueryKeywordOverride(savedState.keyword);
     pendingRestoreRef.current = savedState;
 
@@ -191,6 +202,7 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
           : savedState.publishFilter === 'offline'
             ? 'inactive'
             : undefined,
+      tag_ids: savedState.tagFilter === 'all' ? undefined : savedState.tagFilter,
     };
     const restoredQueryKey = AGENT_KEYS.list(restoredParams);
     const existingCachedPages =
@@ -236,6 +248,7 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
         keyword: effectiveSearchKeyword,
         publishFilter,
         workflowTypeFilter: isWorkflowList ? workflowTypeFilter : 'all',
+        tagFilter,
         loadedPageCount: pages.length,
         scrollTop: nextScrollTop ?? listScrollRef.current?.scrollTop ?? 0,
         workspaceId: currentWorkspace.id,
@@ -279,6 +292,7 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
     pages,
     publishFilter,
     workflowTypeFilter,
+    tagFilter,
   ]);
 
   useEffect(() => {
@@ -287,6 +301,7 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
     if (pendingRestore.keyword !== effectiveSearchKeyword) return;
     if (pendingRestore.publishFilter !== publishFilter) return;
     if (isWorkflowList && pendingRestore.workflowTypeFilter !== workflowTypeFilter) return;
+    if (pendingRestore.tagFilter !== tagFilter) return;
     if (pages.length >= pendingRestore.loadedPageCount || !hasNextPage || isFetchingNextPage) {
       return;
     }
@@ -303,6 +318,7 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
     pages.length,
     publishFilter,
     workflowTypeFilter,
+    tagFilter,
   ]);
 
   useEffect(() => {
@@ -311,6 +327,7 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
     if (pendingRestore.keyword !== effectiveSearchKeyword) return;
     if (pendingRestore.publishFilter !== publishFilter) return;
     if (isWorkflowList && pendingRestore.workflowTypeFilter !== workflowTypeFilter) return;
+    if (pendingRestore.tagFilter !== tagFilter) return;
     if (pages.length < pendingRestore.loadedPageCount && hasNextPage) return;
 
     const frame = window.requestAnimationFrame(() => {
@@ -330,6 +347,7 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
     pages.length,
     publishFilter,
     workflowTypeFilter,
+    tagFilter,
   ]);
 
   useEffect(() => {
@@ -338,6 +356,7 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
     if (pendingRestore.keyword !== effectiveSearchKeyword) return;
     if (pendingRestore.publishFilter !== publishFilter) return;
     if (isWorkflowList && pendingRestore.workflowTypeFilter !== workflowTypeFilter) return;
+    if (pendingRestore.tagFilter !== tagFilter) return;
     if (pages.length === 0) return;
 
     hasRefreshedRestoredPagesRef.current = true;
@@ -350,6 +369,7 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
     publishFilter,
     refetchFromPageAndAfter,
     workflowTypeFilter,
+    tagFilter,
   ]);
 
   useEffect(() => {
@@ -400,16 +420,24 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
     setWorkflowTypeFilter(value);
   };
 
+  const handleTagFilterChange = (value: string) => {
+    resetListPosition();
+    setTagFilter(value);
+  };
+
   const handleClearCriteria = () => {
     resetListPosition();
     setSearchKeyword('');
     setQueryKeywordOverride('');
     setPublishFilter('all');
     setWorkflowTypeFilter('all');
+    setTagFilter('all');
   };
 
   const hasActiveFilters =
-    publishFilter !== 'all' || (isWorkflowList && workflowTypeFilter !== 'all');
+    publishFilter !== 'all' ||
+    tagFilter !== 'all' ||
+    (isWorkflowList && workflowTypeFilter !== 'all');
   const hasActiveCriteria = Boolean(effectiveSearchKeyword) || hasActiveFilters;
 
   const handleReload = () => {
@@ -495,6 +523,26 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
           </div>
 
           <div className="flex w-full flex-col gap-3 @3xl/console:w-auto @3xl/console:flex-row @3xl/console:flex-wrap @3xl/console:justify-end">
+            <Select
+              value={tagFilter}
+              onValueChange={handleTagFilterChange}
+              disabled={areCatalogTagFacetsLoading}
+            >
+              <SelectTrigger
+                className="w-full bg-background @3xl/console:w-40"
+                aria-label={t('agents.listFilters.category')}
+              >
+                <SelectValue placeholder={t('agents.listFilters.category')} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t('agents.listFilters.allCategories')}</SelectItem>
+                {catalogTagFacets.map(tag => (
+                  <SelectItem key={tag.id} value={tag.id}>
+                    {tag.name} ({tag.count})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Select
               value={publishFilter}
               onValueChange={value => handlePublishFilterChange(value as AgentListPublishFilter)}

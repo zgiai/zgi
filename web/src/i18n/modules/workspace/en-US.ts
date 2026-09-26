@@ -111,13 +111,16 @@ const messages = {
       disableAction: 'Pause access',
       disableTitle: 'Pause external access?',
       disableConfirm: 'Confirm pause',
-      disableDescription: 'All access keys will stop working immediately. Added assistants, files, conversations, and memories are retained.',
+      disableDescription:
+        'All access keys will stop working immediately. Added assistants, files, conversations, and memories are retained.',
       pausedTitle: 'External access is paused',
-      pausedDescription: 'All external requests are currently rejected. You can continue managing assistants and access keys.',
+      pausedDescription:
+        'All external requests are currently rejected. You can continue managing assistants and access keys.',
     },
     enable: {
       title: 'Enable external access',
-      description: 'Once enabled, business systems can call multiple published assistants with access keys.',
+      description:
+        'Once enabled, business systems can call multiple published assistants with access keys.',
       note: 'External users do not join the Workspace. Files are isolated by user and memory is isolated by assistant.',
       button: 'Enable external access',
     },
@@ -138,7 +141,8 @@ const messages = {
         keyTitle: 'Create an access key to continue',
         keyDescription: 'Create an access key before a trusted backend can call the API.',
         readyTitle: 'External access is ready',
-        readyDescription: '{agents} callable assistants are available and an access key is configured.',
+        readyDescription:
+          '{agents} callable assistants are available and an access key is configured.',
         readyAction: 'View API docs',
       },
       steps: {
@@ -160,9 +164,11 @@ const messages = {
       titleWithCount: 'Connected assistants {count}',
       description: 'Business systems call the latest published version of each assistant.',
       currentWorkspace: 'Current Workspace',
-      currentWorkspaceDescription: 'Only published assistants from the current Workspace that allow external calls are shown here.',
+      currentWorkspaceDescription:
+        'Only published assistants from the current Workspace that allow external calls are shown here.',
       otherWorkspaces: 'Other Workspaces',
-      crossWorkspaceNote: 'Assistant configuration and publishing remain in the source Workspace; access keys, external users, and runtime data belong to the current external access point.',
+      crossWorkspaceNote:
+        'Assistant configuration and publishing remain in the source Workspace; access keys, external users, and runtime data belong to the current external access point.',
       sourceWorkspace: 'Source Workspace',
       allSourceWorkspaces: 'All manageable Workspaces',
       sourceWorkspaceLabel: 'From {name}',
@@ -178,12 +184,14 @@ const messages = {
       published: 'Published',
       unbind: 'Remove',
       bindTitle: 'Choose a published assistant',
-      bindDescription: 'Use the icon, source Workspace, published version, and capabilities to confirm your choice. The application ID is generated automatically.',
+      bindDescription:
+        'Use the icon, source Workspace, published version, and capabilities to confirm your choice. The application ID is generated automatically.',
       searchPlaceholder: 'Search by assistant, description, Workspace, or version',
       searchBoundPlaceholder: 'Search connected assistants',
       noCandidates: 'No published assistants are available',
       noSearchResults: 'No matching published assistants',
       noDescription: 'No description',
+      categories: 'Categories',
       followPublished: 'Presentation and capabilities follow the latest published version.',
       bindConfirm: 'Add assistant',
       batchManage: 'Batch manage',
@@ -193,9 +201,11 @@ const messages = {
       addSelected: 'Add {count} assistants',
       removeSelected: 'Remove {count} assistants',
       batchRemoveTitle: 'Remove {count} assistants?',
-      batchRemoveDescription: 'Remove {count} assistants. External systems will no longer be able to call them, while existing files, conversations, and memories are retained.',
+      batchRemoveDescription:
+        'Remove {count} assistants. External systems will no longer be able to call them, while existing files, conversations, and memories are retained.',
       unbindTitle: 'Remove assistant',
-      unbindDescription: 'External users will no longer be able to call this app. Existing conversations, files, and memories are kept.',
+      unbindDescription:
+        'External users will no longer be able to call this app. Existing conversations, files, and memories are kept.',
       confirmUnbind: 'Confirm removal',
       capabilities: {
         chat: 'Chat',
@@ -211,7 +221,8 @@ const messages = {
     },
     credentials: {
       title: 'Access keys',
-      description: 'Access keys let business systems call the API and can be revoked or expired at any time.',
+      description:
+        'Access keys let business systems call the API and can be revoked or expired at any time.',
       create: 'Create access key',
       empty: 'No access keys yet',
       emptyDescription: 'Create an access key before a business system can call the API.',
@@ -227,19 +238,22 @@ const messages = {
       never: 'Never',
       noExpiry: 'Never',
       createTitle: 'Create access key',
-      createDescription: 'This key can only call the external API. It cannot manage the Workspace or modify assistants.',
+      createDescription:
+        'This key can only call the external API. It cannot manage the Workspace or modify assistants.',
       namePlaceholder: 'For example, Production',
       expiresAtPlaceholder: 'Optional',
       createConfirm: 'Create key',
       secretTitle: 'Access key created',
-      secretDescription: 'Copy and store the complete key now. It cannot be viewed again after closing this window.',
+      secretDescription:
+        'Copy and store the complete key now. It cannot be viewed again after closing this window.',
       copy: 'Copy key',
       copied: 'Copied',
       copyFailed: 'Copy failed',
       saved: 'I saved it',
       revoke: 'Revoke',
       revokeTitle: 'Revoke access key',
-      revokeDescription: 'This key will stop working immediately. Other keys, files, conversations, and memories are unaffected.',
+      revokeDescription:
+        'This key will stop working immediately. Other keys, files, conversations, and memories are unaffected.',
       confirmRevoke: 'Confirm revoke',
     },
     integration: {

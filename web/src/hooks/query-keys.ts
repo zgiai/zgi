@@ -98,6 +98,11 @@ export const AGENT_KEYS = {
     [...AGENT_KEYS.all, 'runnable-webapps', workspaceId || 'all', params] as const,
   runnableInfinite: (workspaceId?: string | null, params?: unknown) =>
     [...AGENT_KEYS.all, 'runnable-webapps-infinite', workspaceId || 'all', params] as const,
+  runnableTagFacets: (workspaceId?: string | null, params?: unknown) =>
+    [...AGENT_KEYS.all, 'runnable-webapp-tag-facets', workspaceId || 'all', params] as const,
+  catalogTags: (agentId: string) => [...AGENT_KEYS.detail(agentId), 'catalog-tags'] as const,
+  catalogTagFacets: (workspaceId?: string | null, assetKind?: string) =>
+    [...AGENT_KEYS.all, 'catalog-tag-facets', workspaceId || 'all', assetKind || 'all'] as const,
   runtimeSurfaces: (agentId: string) =>
     [...AGENT_KEYS.detail(agentId), 'runtime-surfaces'] as const,
   runtimeRuns: (agentId: string, params: unknown) =>
@@ -172,7 +177,13 @@ export const CONNECTOR_KEYS = {
     [...CONNECTOR_KEYS.connection(connectionId), 'removal-impact'] as const,
   setups: () => [...CONNECTOR_KEYS.all, 'key-setups'] as const,
   setup: (attemptId: string) => [...CONNECTOR_KEYS.setups(), attemptId] as const,
-  targetBindings: (target?: { type?: string; id?: string; binding_instance_id?: string; scope?: string; version_id?: string }) =>
+  targetBindings: (target?: {
+    type?: string;
+    id?: string;
+    binding_instance_id?: string;
+    scope?: string;
+    version_id?: string;
+  }) =>
     [
       ...CONNECTOR_KEYS.all,
       'target-bindings',

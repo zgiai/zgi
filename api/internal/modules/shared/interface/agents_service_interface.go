@@ -10,6 +10,10 @@ import (
 type AgentsService interface {
 	GetAgentsListWithPermissions(ctx context.Context, accountID string, req dto.GetAgentsListRequest) (*dto.AgentsListResponse, error)
 	GetRunnableWebApps(ctx context.Context, accountID string, req dto.GetRunnableWebAppsRequest) (*dto.RunnableWebAppsResponse, error)
+	GetRunnableWebAppTagFacets(ctx context.Context, accountID string, req dto.GetRunnableWebAppsRequest) (*dto.RunnableWebAppTagFacetsResponse, error)
+	GetAgentCatalogTagFacets(ctx context.Context, accountID string, req dto.GetAgentCatalogTagFacetsRequest) (*dto.AgentCatalogTagFacetsResponse, error)
+	GetAgentCatalogTags(ctx context.Context, agentID, accountID string) (*dto.AgentCatalogTagsResponse, error)
+	ReplaceAgentCatalogTags(ctx context.Context, agentID, accountID string, req dto.ReplaceAgentCatalogTagsRequest) (*dto.AgentCatalogTagsResponse, error)
 	CreateAgent(ctx context.Context, tenantID string, req interface{}, accountID string) (interface{}, error)
 	GetAgent(ctx context.Context, agentID string) (interface{}, error)
 	UpdateAgent(ctx context.Context, agentID string, req interface{}) (interface{}, error)

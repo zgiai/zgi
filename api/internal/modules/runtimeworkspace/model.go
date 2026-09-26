@@ -192,26 +192,32 @@ type App struct {
 }
 
 type ManagementApp struct {
-	AgentID            string    `json:"agent_id"`
-	AppKey             string    `json:"app_key"`
-	WorkspaceID        string    `json:"workspace_id"`
-	WorkspaceName      string    `json:"workspace_name"`
-	Name               string    `json:"name"`
-	Description        string    `json:"description,omitempty"`
-	Icon               string    `json:"icon,omitempty"`
-	IconType           string    `json:"icon_type,omitempty"`
-	IconURL            string    `json:"icon_url,omitempty"`
-	Version            string    `json:"version"`
-	VersionUUID        string    `json:"version_uuid"`
-	PublishedAt        time.Time `json:"published_at"`
-	Status             string    `json:"status"`
-	SupportsStream     bool      `json:"supports_stream"`
-	FileUploadEnabled  bool      `json:"file_upload_enabled"`
-	SupportsVision     bool      `json:"supports_vision"`
-	AgentMemoryEnabled bool      `json:"agent_memory_enabled"`
-	Capabilities       []string  `json:"capabilities"`
-	Callable           bool      `json:"callable"`
-	UnavailableReason  string    `json:"unavailable_reason,omitempty"`
+	AgentID            string       `json:"agent_id"`
+	AppKey             string       `json:"app_key"`
+	WorkspaceID        string       `json:"workspace_id"`
+	WorkspaceName      string       `json:"workspace_name"`
+	Name               string       `json:"name"`
+	Description        string       `json:"description,omitempty"`
+	Icon               string       `json:"icon,omitempty"`
+	IconType           string       `json:"icon_type,omitempty"`
+	IconURL            string       `json:"icon_url,omitempty"`
+	Version            string       `json:"version"`
+	VersionUUID        string       `json:"version_uuid"`
+	PublishedAt        time.Time    `json:"published_at"`
+	Status             string       `json:"status"`
+	SupportsStream     bool         `json:"supports_stream"`
+	FileUploadEnabled  bool         `json:"file_upload_enabled"`
+	SupportsVision     bool         `json:"supports_vision"`
+	AgentMemoryEnabled bool         `json:"agent_memory_enabled"`
+	Capabilities       []string     `json:"capabilities"`
+	Tags               []CatalogTag `json:"tags"`
+	Callable           bool         `json:"callable"`
+	UnavailableReason  string       `json:"unavailable_reason,omitempty"`
+}
+
+type CatalogTag struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 type ManagementAppSet struct {
@@ -233,21 +239,22 @@ type AgentCandidateSet struct {
 }
 
 type AgentCandidate struct {
-	AgentID            string    `json:"agent_id"`
-	WorkspaceID        string    `json:"workspace_id"`
-	WorkspaceName      string    `json:"workspace_name"`
-	Name               string    `json:"name"`
-	Description        string    `json:"description,omitempty"`
-	Icon               string    `json:"icon,omitempty"`
-	IconType           string    `json:"icon_type,omitempty"`
-	IconURL            string    `json:"icon_url,omitempty"`
-	Version            string    `json:"version"`
-	VersionUUID        string    `json:"version_uuid"`
-	PublishedAt        time.Time `json:"published_at"`
-	FileUploadEnabled  bool      `json:"file_upload_enabled"`
-	SupportsVision     bool      `json:"supports_vision"`
-	AgentMemoryEnabled bool      `json:"agent_memory_enabled"`
-	Capabilities       []string  `json:"capabilities"`
+	AgentID            string       `json:"agent_id"`
+	WorkspaceID        string       `json:"workspace_id"`
+	WorkspaceName      string       `json:"workspace_name"`
+	Name               string       `json:"name"`
+	Description        string       `json:"description,omitempty"`
+	Icon               string       `json:"icon,omitempty"`
+	IconType           string       `json:"icon_type,omitempty"`
+	IconURL            string       `json:"icon_url,omitempty"`
+	Version            string       `json:"version"`
+	VersionUUID        string       `json:"version_uuid"`
+	PublishedAt        time.Time    `json:"published_at"`
+	FileUploadEnabled  bool         `json:"file_upload_enabled"`
+	SupportsVision     bool         `json:"supports_vision"`
+	AgentMemoryEnabled bool         `json:"agent_memory_enabled"`
+	Capabilities       []string     `json:"capabilities"`
+	Tags               []CatalogTag `json:"tags"`
 }
 
 type FileView struct {

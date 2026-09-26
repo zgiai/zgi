@@ -855,6 +855,22 @@ func (s *stubWebAppStatusHandlerService) GetRunnableWebApps(context.Context, str
 	return nil, nil
 }
 
+func (s *stubWebAppStatusHandlerService) GetRunnableWebAppTagFacets(context.Context, string, dto.GetRunnableWebAppsRequest) (*dto.RunnableWebAppTagFacetsResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) GetAgentCatalogTagFacets(context.Context, string, dto.GetAgentCatalogTagFacetsRequest) (*dto.AgentCatalogTagFacetsResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) GetAgentCatalogTags(context.Context, string, string) (*dto.AgentCatalogTagsResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) ReplaceAgentCatalogTags(context.Context, string, string, dto.ReplaceAgentCatalogTagsRequest) (*dto.AgentCatalogTagsResponse, error) {
+	return nil, nil
+}
+
 func (s *stubWebAppStatusHandlerService) CreateAgent(context.Context, string, interface{}, string) (interface{}, error) {
 	s.createAgentCalled = true
 	return nil, nil

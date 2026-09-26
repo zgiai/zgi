@@ -108,7 +108,8 @@ const messages: WorkspaceMessages = {
       disableAction: '暂停外接',
       disableTitle: '暂停外部接入？',
       disableConfirm: '确认暂停',
-      disableDescription: '暂停后，所有访问密钥会立即失效。已添加的智能体、文件、会话和记忆仍会保留。',
+      disableDescription:
+        '暂停后，所有访问密钥会立即失效。已添加的智能体、文件、会话和记忆仍会保留。',
       pausedTitle: '外部接入已暂停',
       pausedDescription: '所有外部请求当前都会被拒绝，你仍可继续管理智能体和访问密钥。',
     },
@@ -159,7 +160,8 @@ const messages: WorkspaceMessages = {
       currentWorkspace: '当前工作空间',
       currentWorkspaceDescription: '这里只展示当前工作空间中已发布且允许外部调用的智能体。',
       otherWorkspaces: '其他工作空间',
-      crossWorkspaceNote: '智能体配置和发布由来源工作空间管理；访问密钥、外部用户和运行数据属于当前外部接入。',
+      crossWorkspaceNote:
+        '智能体配置和发布由来源工作空间管理；访问密钥、外部用户和运行数据属于当前外部接入。',
       sourceWorkspace: '来源工作空间',
       allSourceWorkspaces: '全部可管理空间',
       sourceWorkspaceLabel: '来自 {name}',
@@ -181,6 +183,7 @@ const messages: WorkspaceMessages = {
       noCandidates: '暂无可用的已发布智能体',
       noSearchResults: '没有匹配的已发布智能体',
       noDescription: '暂无描述',
+      categories: '分类',
       followPublished: '展示信息和能力始终跟随最新发布版本。',
       bindConfirm: '添加智能体',
       batchManage: '批量管理',
@@ -190,9 +193,11 @@ const messages: WorkspaceMessages = {
       addSelected: '添加 {count} 个智能体',
       removeSelected: '移除 {count} 个智能体',
       batchRemoveTitle: '移除 {count} 个智能体？',
-      batchRemoveDescription: '将移除 {count} 个智能体。外部系统将无法继续调用，但已有文件、会话和记忆不会被删除。',
+      batchRemoveDescription:
+        '将移除 {count} 个智能体。外部系统将无法继续调用，但已有文件、会话和记忆不会被删除。',
       unbindTitle: '移除智能体',
-      unbindDescription: '移除后，外部用户将无法继续调用该智能体，但已有会话、文件和记忆不会被删除。',
+      unbindDescription:
+        '移除后，外部用户将无法继续调用该智能体，但已有会话、文件和记忆不会被删除。',
       confirmUnbind: '确认移除',
       capabilities: {
         chat: '对话',

@@ -1597,8 +1597,11 @@ const messages = {
     openRecent: 'Resume app',
     clearSearch: 'Clear',
     searchPlaceholder: 'Search apps',
+    categories: 'App categories',
+    allCategories: 'All',
     noSearchResults: 'No apps found',
-    noSearchResultsDescription: 'Try another keyword, or clear search to view all apps.',
+    noSearchResultsDescription:
+      'Try another keyword or category, or clear the filters to view all apps.',
     paginationInfo: 'Showing {start}–{end} of {total} apps',
     recentlyUsed: 'Recently used',
     recentFallbackDescription: 'Open this app to continue where you last left off.',

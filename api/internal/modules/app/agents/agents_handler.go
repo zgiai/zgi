@@ -162,6 +162,10 @@ func (h *AgentsHandler) GetAgentsList(c *gin.Context) {
 			return
 		}
 	}
+	if _, err := parseRunnableWebAppTagIDs(req.TagIDs); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
 
 	// 4. Validate and normalize pagination parameters
 	if req.Page <= 0 {
@@ -248,6 +252,33 @@ func (h *AgentsHandler) GetAgentsList(c *gin.Context) {
 	response.Success(c, result)
 }
 
+func (h *AgentsHandler) GetAgentCatalogTagFacets(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if _, err := uuid.Parse(accountID); err != nil {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	var req dto.GetAgentCatalogTagFacetsRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	result, err := h.appService.GetAgentCatalogTagFacets(c.Request.Context(), accountID, req)
+	if err != nil {
+		if errors.Is(err, errInvalidAgentListAssetKind) {
+			response.Fail(c, response.ErrInvalidParam)
+			return
+		}
+		if errors.Is(err, errCurrentOrganizationNotFound) {
+			response.Fail(c, response.ErrOrganizationNotFound)
+			return
+		}
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
 func (h *AgentsHandler) GetRunnableWebApps(c *gin.Context) {
 	accountID := c.GetString("account_id")
 	if accountID == "" {
@@ -277,11 +308,15 @@ func (h *AgentsHandler) GetRunnableWebApps(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
+	if _, err := parseRunnableWebAppTagIDs(req.TagIDs); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
 
 	result, err := h.appService.GetRunnableWebApps(c.Request.Context(), accountID, req)
 	if err != nil {
 		switch {
-		case errors.Is(err, errInvalidRunnableWebAppIDs):
+		case errors.Is(err, errInvalidRunnableWebAppIDs), errors.Is(err, runtimeservice.ErrInvalidInput):
 			response.Fail(c, response.ErrInvalidParam)
 		case errors.Is(err, errCurrentOrganizationNotFound):
 			response.Fail(c, response.ErrOrganizationNotFound)
@@ -292,6 +327,73 @@ func (h *AgentsHandler) GetRunnableWebApps(c *gin.Context) {
 		return
 	}
 
+	response.Success(c, result)
+}
+
+func (h *AgentsHandler) GetRunnableWebAppTagFacets(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if _, err := uuid.Parse(accountID); err != nil {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	var req dto.GetRunnableWebAppsRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if req.WorkspaceID != "" {
+		if _, err := uuid.Parse(req.WorkspaceID); err != nil {
+			response.Fail(c, response.ErrInvalidParam)
+			return
+		}
+	}
+	result, err := h.appService.GetRunnableWebAppTagFacets(c.Request.Context(), accountID, req)
+	if err != nil {
+		if errors.Is(err, errCurrentOrganizationNotFound) {
+			response.Fail(c, response.ErrOrganizationNotFound)
+			return
+		}
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *AgentsHandler) GetAgentCatalogTags(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	ctx := agentRuntimeRequestContext(c, accountID)
+	result, err := h.appService.GetAgentCatalogTags(ctx, c.Param("agent_id"), accountID)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *AgentsHandler) ReplaceAgentCatalogTags(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	ctx, ok := h.requireAgentManageAccess(c, accountID)
+	if !ok {
+		return
+	}
+	var req dto.ReplaceAgentCatalogTagsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	result, err := h.appService.ReplaceAgentCatalogTags(ctx, c.Param("agent_id"), accountID, req)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
 	response.Success(c, result)
 }
 

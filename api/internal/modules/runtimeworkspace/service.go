@@ -556,6 +556,14 @@ func (s *Service) ListBindings(ctx context.Context, runtimeWorkspaceID uuid.UUID
 	if err != nil {
 		return nil, err
 	}
+	agentIDs := make([]uuid.UUID, 0, len(bindings))
+	for _, binding := range bindings {
+		agentIDs = append(agentIDs, binding.AgentID)
+	}
+	tagsByAgent, err := s.catalogTagsByAgentIDs(ctx, agentIDs)
+	if err != nil {
+		return nil, err
+	}
 	apps := make([]ManagementApp, 0, len(bindings))
 	for _, binding := range bindings {
 		agent, found := agentsByID[binding.AgentID]
@@ -574,6 +582,7 @@ func (s *Service) ListBindings(ctx context.Context, runtimeWorkspaceID uuid.UUID
 			Version: agent.Version, VersionUUID: agent.VersionUUID.String(), PublishedAt: agent.PublishedAt,
 			Status: binding.Status, SupportsStream: true, FileUploadEnabled: presentation.FileUploadEnabled, SupportsVision: presentation.SupportsVision,
 			AgentMemoryEnabled: presentation.AgentMemoryEnabled && relationshipmemory.RuntimeEnabled(), Capabilities: runtimeAgentCapabilities(presentation),
+			Tags: tagsByAgent[binding.AgentID],
 			Callable: binding.Status == AgentBindingActive && allowed, UnavailableReason: reason,
 		})
 	}
@@ -631,6 +640,10 @@ func (s *Service) ListAgentCandidates(ctx context.Context, runtimeWorkspaceID, a
 	if err != nil {
 		return nil, err
 	}
+	tagsByAgent, err := s.catalogTagsByAgentIDs(ctx, agentIDs)
+	if err != nil {
+		return nil, err
+	}
 	candidates := make([]AgentCandidate, 0, len(authorized))
 	for _, agentID := range agentIDs {
 		if _, allowed := authorized[agentID]; !allowed {
@@ -644,6 +657,7 @@ func (s *Service) ListAgentCandidates(ctx context.Context, runtimeWorkspaceID, a
 			Version: agent.Version, VersionUUID: agent.VersionUUID.String(), PublishedAt: agent.PublishedAt,
 			FileUploadEnabled: presentation.FileUploadEnabled, SupportsVision: presentation.SupportsVision,
 			AgentMemoryEnabled: presentation.AgentMemoryEnabled && relationshipmemory.RuntimeEnabled(), Capabilities: runtimeAgentCapabilities(presentation),
+			Tags: tagsByAgent[agentID],
 		})
 	}
 	sources := make([]SourceWorkspace, 0, len(access.Workspaces))

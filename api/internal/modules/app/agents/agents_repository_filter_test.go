@@ -60,6 +60,33 @@ func TestAgentsRepositoryApplyFiltersMultipleTenants_FiltersPublishedStatus(t *t
 	require.Equal(t, []any{string(AgentWebAppStatusInactive)}, offlineQuery.Statement.Vars)
 }
 
+func TestAgentsRepositoryApplyFiltersMultipleTenants_FiltersCatalogTags(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	mock.ExpectClose()
+	t.Cleanup(func() {
+		require.NoError(t, sqlDB.Close())
+	})
+
+	db, err := gorm.Open(
+		postgres.New(postgres.Config{Conn: sqlDB}),
+		&gorm.Config{DryRun: true},
+	)
+	require.NoError(t, err)
+
+	repo := &agentsRepository{db: db}
+	query := repo.applyFiltersMultipleTenants(
+		db.Model(&Agent{}),
+		AgentsFilter{TagIDs: []string{"tag-one", "tag-two"}},
+	).Find(&[]Agent{})
+	sql := compactSQL(query.Statement.SQL.String())
+
+	require.Contains(t, sql, "EXISTS ( SELECT 1 FROM agent_catalog_tag_bindings AS catalog_filter")
+	require.Contains(t, sql, "catalog_filter.agent_id = agents.id")
+	require.Contains(t, sql, "catalog_filter.tag_id IN")
+	require.Equal(t, []any{"tag-one", "tag-two"}, query.Statement.Vars)
+}
+
 func compactSQL(value string) string {
 	return strings.Join(strings.Fields(value), " ")
 }
