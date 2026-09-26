@@ -2,6 +2,9 @@ package consolecred
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
@@ -60,8 +63,21 @@ func (GRPCCredentials) GetRequestMetadata(ctx context.Context, _ ...string) (map
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	metadata[strings.ToLower(HeaderInstanceID)] = cred.InstanceID
 	metadata[strings.ToLower(HeaderTimestamp)] = timestamp
-	metadata[strings.ToLower(HeaderSignature)] = Sign(cred.Secret, timestamp, method)
+	metadata[strings.ToLower(HeaderSignature)] = signGRPCMethod(cred.Secret, timestamp, method)
 	return metadata, nil
+}
+
+// signGRPCMethod signs the unchanged gRPC string timestamp + "|" + method.
+//
+// The hardened HTTP protocol (nonce + method + path + body digest) cannot be applied here
+// cheaply: GetRequestMetadata never sees the marshaled request message, gRPC has no HTTP
+// method, and the console gRPC interceptor still verifies this legacy shape. gRPC is
+// therefore deliberately left as-is; only HTTP requests carry the nonce and body digest.
+// Do not route HTTP callers through this helper.
+func signGRPCMethod(secret, timestamp, method string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(timestamp + "|" + method))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 // RequireTransportSecurity is false: console is reached over plaintext gRPC today,

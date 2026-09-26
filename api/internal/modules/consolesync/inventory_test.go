@@ -20,19 +20,21 @@ import (
 // capturedCall is one request observed by a fake console. Copies are passed over a channel
 // so the handler goroutine and the test never share memory unsafely.
 type capturedCall struct {
-	Method string
-	Path   string
-	Header http.Header
-	Body   []byte
+	Method   string
+	Path     string
+	RawQuery string
+	Header   http.Header
+	Body     []byte
 }
 
 func captureConsoleCall(r *http.Request) capturedCall {
 	body, _ := io.ReadAll(r.Body)
 	return capturedCall{
-		Method: r.Method,
-		Path:   r.URL.Path,
-		Header: r.Header.Clone(),
-		Body:   body,
+		Method:   r.Method,
+		Path:     r.URL.Path,
+		RawQuery: r.URL.RawQuery,
+		Header:   r.Header.Clone(),
+		Body:     body,
 	}
 }
 
@@ -368,9 +370,18 @@ func TestReportOrganizationInventoryPostsSignedPayload(t *testing.T) {
 	if timestamp == "" {
 		t.Fatalf("%s is missing", consolecred.HeaderTimestamp)
 	}
-	wantSignature := consolecred.Sign("secret", timestamp, testOrganizationPath)
+	nonce := call.Header.Get(consolecred.HeaderNonce)
+	if len(nonce) != 32 {
+		t.Fatalf("%s = %q, want 32 lowercase hex chars", consolecred.HeaderNonce, nonce)
+	}
+	// The signature commits to the nonce, the method, the queryless path and the exact body
+	// bytes that were sent.
+	wantSignature := consolecred.Sign(
+		"secret", nonce, timestamp, http.MethodPost, testOrganizationPath,
+		consolecred.BodyDigest(call.Body),
+	)
 	if got := call.Header.Get(consolecred.HeaderSignature); got != wantSignature {
-		t.Fatalf("signature = %q, want HMAC over timestamp|path (%q)", got, wantSignature)
+		t.Fatalf("signature = %q, want HMAC over nonce|timestamp|METHOD|path|sha256(body) (%q)", got, wantSignature)
 	}
 
 	var body OrganizationInventoryRequest

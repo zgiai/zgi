@@ -16,12 +16,11 @@ package consolecred
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"strconv"
 	"sync"
-	"time"
 )
 
 // ErrConsoleLinkStale is returned to official-channel callers while the sync loop has
@@ -35,8 +34,17 @@ const (
 	HeaderInstanceID    = "X-Internal-Instance-Id"
 	HeaderTimestamp     = "X-Internal-Timestamp"
 	HeaderSignature     = "X-Internal-Signature"
+	HeaderNonce         = "X-Internal-Nonce"
 	HeaderAuthorization = "Authorization"
 )
+
+// nonceBytes is the number of random bytes behind one request nonce. The nonce travels as
+// lowercase hex, so a nonce is always 2*nonceBytes = 32 characters long.
+const nonceBytes = 16
+
+// emptyBodyDigest is hex(sha256("")): the digest that commits a request without a body to
+// the empty payload.
+const emptyBodyDigest = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
 // Credential is the loaded per-instance identity. It is immutable once stored.
 type Credential struct {
@@ -139,35 +147,42 @@ func Configure(instanceID, secret string) {
 	global.Set(instanceID, secret)
 }
 
-// SignMessage builds the signed message exactly like the console internal channel:
-// timestamp + "|" + path.
-func SignMessage(timestamp, path string) string {
-	return timestamp + "|" + path
+// NewNonce returns a fresh per-request nonce: 16 random bytes encoded as 32 lowercase hex
+// characters. The nonce makes every signed request unique, so a captured header set cannot
+// be replayed inside the timestamp window even when method, path and body are unchanged.
+func NewNonce() (string, error) {
+	buf := make([]byte, nonceBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
 }
 
-// Sign returns the hex-encoded HMAC-SHA256 of timestamp|path using secret.
-func Sign(secret, timestamp, path string) string {
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(SignMessage(timestamp, path)))
-	return hex.EncodeToString(mac.Sum(nil))
+// BodyDigest returns the lowercase hex SHA-256 of body. An empty body digests as
+// sha256(""), so the signature always commits to the payload that is actually sent.
+func BodyDigest(body []byte) string {
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:])
 }
 
-// Headers builds the instance authentication headers for one signed path, or nil when no
-// credential is loaded.
+// SignedString builds the string covered by the instance signature:
 //
-// It is the raw accessor: it does NOT consult the stale flag. Use SignRequest for an
-// official-channel request and SignSyncRequest for the sync/inventory client.
-func Headers(path string) map[string]string {
-	cred, ok := global.Get()
-	if !ok {
-		return nil
-	}
-	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-	return map[string]string{
-		HeaderInstanceID: cred.InstanceID,
-		HeaderTimestamp:  timestamp,
-		HeaderSignature:  Sign(cred.Secret, timestamp, path),
-	}
+//	nonce + "|" + timestamp + "|" + METHOD + "|" + path + "|" + bodyDigest
+//
+// METHOD is the uppercase HTTP method and path is the request path ONLY: the query string
+// travels on the wire but is never signed. bodyDigest is hex(sha256(body)) for the exact
+// bytes sent. Callers must build nothing themselves: every HTTP caller goes through
+// SignRequest/SignSyncRequest (or the raw Headers accessor), which use this helper.
+func SignedString(nonce, timestamp, method, path, bodyDigest string) string {
+	return nonce + "|" + timestamp + "|" + method + "|" + path + "|" + bodyDigest
+}
+
+// Sign returns the lowercase hex HMAC-SHA256, under secret, of the signed string assembled
+// from its parts. Splitting the parts out keeps every caller off the string format.
+func Sign(secret, nonce, timestamp, method, path, bodyDigest string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(SignedString(nonce, timestamp, method, path, bodyDigest)))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 // BearerToken returns "Bearer <secret>" when a credential is loaded.
