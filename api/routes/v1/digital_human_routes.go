@@ -17,8 +17,10 @@ import (
 	connectordispatch "github.com/zgiai/zgi/api/internal/modules/connectors/dispatch"
 	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
 	connectorruntimeauth "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeauth"
+	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
 	digitalhuman "github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
@@ -31,6 +33,7 @@ import (
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/queue"
 	pkgscheduler "github.com/zgiai/zgi/api/pkg/scheduler"
+	"github.com/zgiai/zgi/api/pkg/vectordb"
 	"gorm.io/gorm"
 )
 
@@ -51,6 +54,8 @@ type DigitalHumanRouteDeps struct {
 type DigitalHumanRuntimeDeps struct {
 	DB                                  *gorm.DB
 	LLMClient                           llmclient.LLMClient
+	DefaultModelService                 llmdefaultservice.DefaultModelService
+	KnowledgeRetrievalService           *datasetservice.KnowledgeRetrievalService
 	FileService                         interfaces.FileService
 	ContentExtractor                    runtimeservice.ContentExtractionService
 	OrganizationService                 interfaces.OrganizationService
@@ -68,16 +73,20 @@ type DigitalHumanRuntimeDeps struct {
 	WorkspaceMembership                 digitalhuman.WorkspaceMembershipChecker
 	ConnectorConfirmationStore          connectorexecution.ConfirmationContinuationStore
 	Tasks                               digitalhuman.TaskHandlerService
+	MemoryRetriever                     digitalhuman.DigitalHumanMemoryRetriever
 }
 
 // DigitalHumanRuntimeBundle keeps the model runtime and channel application
 // service on the same repository and invocation pipeline.
 type DigitalHumanRuntimeBundle struct {
-	Runtime   *digitalhuman.RuntimeService
-	Access    *digitalhuman.AccessService
-	Tasks     digitalhuman.TaskHandlerService
-	Channels  *digitalhuman.ChannelService
-	Receivers *digitalhuman.ChannelReceiverManager
+	Runtime *digitalhuman.RuntimeService
+	Access  *digitalhuman.AccessService
+	Tasks   digitalhuman.TaskHandlerService
+	// The HTTP memory surfaces run on the container-owned service, so the
+	// projection repairer has to travel out of the runtime wiring to reach it.
+	MemoryProjectionRepairer digitalhuman.DigitalHumanMemoryProjectionRepairer
+	Channels                 *digitalhuman.ChannelService
+	Receivers                *digitalhuman.ChannelReceiverManager
 }
 
 // RegisterDigitalHumanRoutes exposes the DigitalHuman module.
@@ -311,8 +320,7 @@ func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRu
 	)
 	dispatcher := digitalhuman.NewAsynqRunDispatcher(deps.TaskManager)
 	memoryService := digitalhuman.NewService(repository)
-	memoryProvider := digitalhuman.NewMemoryRuntimeProvider(
-		memoryService,
+	memoryOptions := []digitalhuman.MemoryRuntimeProviderOption{
 		digitalhuman.WithMemoryPromotionAuthorizer(digitalhuman.MemoryPromotionAuthorizerFunc(
 			func(ctx context.Context, organizationID, workspaceID, actorID uuid.UUID) (bool, error) {
 				return deps.OrganizationService.CheckWorkspacePermission(
@@ -320,7 +328,30 @@ func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRu
 				)
 			},
 		)),
-	)
+	}
+	var memoryRetriever digitalhuman.DigitalHumanMemoryRetriever
+	if deps.MemoryRetriever != nil {
+		memoryRetriever = deps.MemoryRetriever
+	} else {
+		vectorStore, err := vectordb.NewVectorDB(&config.Current().VectorStore)
+		if err != nil {
+			panic("initialize DigitalHuman memory vector store: " + err.Error())
+		}
+		knowledgeService := deps.KnowledgeRetrievalService
+		if knowledgeService == nil {
+			knowledgeService = datasetservice.NewKnowledgeRetrievalService(deps.DB, config.Current(), deps.LLMClient, deps.DefaultModelService, nil)
+		}
+		memoryRetriever = digitalhuman.NewDigitalHumanMemoryProjectionProvider(
+			deps.DB, knowledgeService, deps.LLMClient, deps.DefaultModelService, vectorStore,
+		)
+	}
+	memoryOptions = append(memoryOptions, digitalhuman.WithDigitalHumanMemoryRetriever(memoryRetriever))
+	var memoryProjectionRepairer digitalhuman.DigitalHumanMemoryProjectionRepairer
+	if repairer, ok := memoryRetriever.(digitalhuman.DigitalHumanMemoryProjectionRepairer); ok {
+		memoryProjectionRepairer = repairer
+		memoryService.SetMemoryProjectionRepairer(repairer)
+	}
+	memoryProvider := digitalhuman.NewMemoryRuntimeProvider(memoryService, memoryOptions...)
 	runtime := digitalhuman.NewRuntimeService(
 		repository,
 		digitalhuman.NewResolver(repository),
@@ -373,5 +404,8 @@ func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRu
 	); err != nil {
 		panic("register DigitalHuman channel delivery sweep: " + err.Error())
 	}
-	return &DigitalHumanRuntimeBundle{Runtime: runtime, Tasks: deps.Tasks, Channels: channels, Receivers: receivers}
+	return &DigitalHumanRuntimeBundle{
+		Runtime: runtime, Tasks: deps.Tasks, Channels: channels, Receivers: receivers,
+		MemoryProjectionRepairer: memoryProjectionRepairer,
+	}
 }

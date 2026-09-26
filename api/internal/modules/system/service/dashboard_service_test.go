@@ -12,6 +12,7 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
+	datasetmodel "github.com/zgiai/zgi/api/internal/modules/dataset/model"
 	"github.com/zgiai/zgi/api/internal/modules/system/model"
 )
 
@@ -244,8 +245,8 @@ func TestDashboardServiceDatasetStatsUsesWorkspaceScopeOnly(t *testing.T) {
 	svc := NewDashboardService(db).(*dashboardService)
 	svc.tableCache["datasets"] = true
 
-	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "?datasets"? WHERE workspace_id IN`).
-		WithArgs("ws-knowledge").
+	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "?datasets"? WHERE workspace_id IN \(\$1\) AND provider <> \$2`).
+		WithArgs("ws-knowledge", datasetmodel.ProviderDigitalHumanMemory).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
 
 	stats := svc.getResourceStats(context.Background(), "org-1", "acc-1", model.DashboardWorkspaceScopes{
@@ -286,8 +287,8 @@ func TestDashboardServiceActivityStatsCountsVisibleAndOrganizationDirectChatHist
 	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "?agents"? WHERE .*tenant_id IN.*created_by =.*agent_type =.*is_universal =.*internal`).
 		WithArgs("ws-1", "acc-1", "AGENT", false, false).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "?datasets"? WHERE .*workspace_id IN.*created_by =`).
-		WithArgs("ws-1", "acc-1").
+	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "?datasets"? WHERE .*workspace_id IN.*created_by =.*provider <>`).
+		WithArgs("ws-1", "acc-1", datasetmodel.ProviderDigitalHumanMemory).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 
 	stats := svc.getActivityStats(context.Background(), "org-1", "acc-1", model.DashboardWorkspaceScopes{
@@ -351,8 +352,8 @@ func TestDashboardServiceRecentDatasetsUsesWorkspaceScopeOnly(t *testing.T) {
 	svc.tableCache["workspaces"] = true
 
 	updatedAt := time.Unix(1710000000, 0).UTC()
-	mock.ExpectQuery(`(?s)SELECT .*FROM "?datasets"? AS d.*d\.workspace_id IN.*ORDER BY d\.updated_at DESC.*LIMIT`).
-		WithArgs("ws-knowledge", 3).
+	mock.ExpectQuery(`(?s)SELECT .*FROM "?datasets"? AS d.*d\.workspace_id IN.*d\.provider <>.*ORDER BY d\.updated_at DESC.*LIMIT`).
+		WithArgs("ws-knowledge", datasetmodel.ProviderDigitalHumanMemory, 3).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id",
 			"title",

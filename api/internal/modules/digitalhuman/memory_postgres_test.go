@@ -100,18 +100,26 @@ func TestDigitalHumanMemoryPostgresOwnershipFencesAndUndo(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := NewMemoryRuntimeProvider(service)
-	tool := provider.memoryMutationTool(guardRun, guardEvent, state, []memoryruntime.MemoryScopeRef{{
-		Type: memoryruntime.MemoryScopeWorkspace, ID: workspaceID.String(),
-	}}, true)
-	toolResult := tool.Handler(t.Context(), adapter.ToolCall{
-		ID: "unauthorized-project-scope",
+	tool := provider.memoryMutationTool(guardRun, guardEvent, state, true)
+	scopeResult := tool.Handler(t.Context(), adapter.ToolCall{
+		ID: "legacy-scope-fields",
 		Function: adapter.FunctionCall{
 			Name:      digitalHumanMemoryToolName,
-			Arguments: `{"action":"upsert","mode":"explicit","evidence":"Save this to memory.","key":"unauthorized-project","memory_class":"business","memory_type":"fact","scope_type":"project","scope_id":"project-not-authorized","content":"must not commit","expected_revision":0,"confidence":1}`,
+			Arguments: `{"action":"upsert","mode":"explicit","evidence":"Save this to memory.","key":"scoped","memory_type":"fact","scope_type":"project","scope_id":"project-not-authorized","content":"must not commit","expected_revision":0,"confidence":1}`,
+		},
+	})
+	if scopeResult.Status != "failed" || scopeResult.Result["error_code"] != "invalid_arguments" {
+		t.Fatalf("scope-carrying runtime tool result = %#v", scopeResult)
+	}
+	toolResult := tool.Handler(t.Context(), adapter.ToolCall{
+		ID: "invented-evidence",
+		Function: adapter.FunctionCall{
+			Name:      digitalHumanMemoryToolName,
+			Arguments: `{"action":"upsert","mode":"explicit","evidence":"not said by the user","key":"unauthorized-project","memory_type":"fact","content":"must not commit","expected_revision":0,"confidence":1}`,
 		},
 	})
 	if toolResult.Status != "failed" || toolResult.Result["error_code"] != AppCodeMemoryPolicyRejected.String() {
-		t.Fatalf("unauthorized runtime tool result = %#v", toolResult)
+		t.Fatalf("policy-rejected runtime tool result = %#v", toolResult)
 	}
 	var unauthorizedCount int64
 	if err := tx.Model(&DigitalHumanMemory{}).
@@ -154,19 +162,16 @@ func TestDigitalHumanMemoryPostgresOwnershipFencesAndUndo(t *testing.T) {
 		t.Fatalf("created memory = %#v", created.Memory)
 	}
 
+	otherScope := memoryruntime.MemoryScopeRef{Type: memoryruntime.MemoryScopeProject, ID: "project-8"}
+	var items []*DigitalHumanMemory
 	for name, scope := range map[string]Scope{"actor_a": scopeA, "actor_b": scopeB} {
-		items, err := service.RetrieveMemories(t.Context(), scope, detail.Definition.ID, []memoryruntime.MemoryScopeRef{projectScope}, 10)
+		retrieved, err := service.RetrieveMemories(t.Context(), scope, detail.Definition.ID, 10)
 		if err != nil {
 			t.Fatalf("retrieve for %s: %v", name, err)
 		}
-		if len(items) != 1 || items[0].ID != created.Memory.ID || items[0].Content != created.Memory.Content {
-			t.Fatalf("retrieve for %s = %#v", name, items)
+		if len(retrieved) != 1 || retrieved[0].ID != created.Memory.ID || retrieved[0].Content != created.Memory.Content {
+			t.Fatalf("retrieve for %s = %#v", name, retrieved)
 		}
-	}
-	otherScope := memoryruntime.MemoryScopeRef{Type: memoryruntime.MemoryScopeProject, ID: "project-8"}
-	items, err := service.RetrieveMemories(t.Context(), scopeB, detail.Definition.ID, []memoryruntime.MemoryScopeRef{otherScope}, 10)
-	if err != nil || len(items) != 0 {
-		t.Fatalf("unauthorized scope retrieval = %#v, err %v", items, err)
 	}
 
 	replayed, err := service.ApplyMemoryProposal(t.Context(), scopeB, detail.Definition.ID, proposal)
@@ -239,7 +244,7 @@ func TestDigitalHumanMemoryPostgresOwnershipFencesAndUndo(t *testing.T) {
 	if err != nil || undone.Memory == nil || undone.Memory.Status != MemoryStatusInvalidated {
 		t.Fatalf("undo = %#v, err %v", undone, err)
 	}
-	items, err = service.RetrieveMemories(t.Context(), scopeA, detail.Definition.ID, []memoryruntime.MemoryScopeRef{projectScope}, 10)
+	items, err = service.RetrieveMemories(t.Context(), scopeA, detail.Definition.ID, 10)
 	if err != nil || len(items) != 0 {
 		t.Fatalf("retrieval after undo = %#v, err %v", items, err)
 	}
@@ -320,9 +325,16 @@ func TestDigitalHumanMemoryPostgresOwnershipFencesAndUndo(t *testing.T) {
 	if err := tx.RollbackTo("cross_scope_supersedes_guard").Error; err != nil {
 		t.Fatal(err)
 	}
-	items, err = service.RetrieveMemories(t.Context(), scopeA, detail.Definition.ID, []memoryruntime.MemoryScopeRef{projectScope}, 10)
-	if err != nil || len(items) != 1 || items[0].ID != replacement.Memory.ID {
+	items, err = service.RetrieveMemories(t.Context(), scopeA, detail.Definition.ID, 10)
+	if err != nil || len(items) != 2 {
 		t.Fatalf("retrieval after supersede = %#v, err %v", items, err)
+	}
+	seenAfterSupersede := map[uuid.UUID]bool{}
+	for _, item := range items {
+		seenAfterSupersede[item.ID] = true
+	}
+	if !seenAfterSupersede[replacement.Memory.ID] || !seenAfterSupersede[otherScopeMemory.Memory.ID] {
+		t.Fatalf("retrieval after supersede missing active memories = %#v", items)
 	}
 
 	restored, err := service.UndoMemory(t.Context(), scopeA, detail.Definition.ID, supersede.OperationID, MemoryUndoRequest{ExpectedRevision: 1})
@@ -336,8 +348,17 @@ func TestDigitalHumanMemoryPostgresOwnershipFencesAndUndo(t *testing.T) {
 	if invalidatedReplacement.Status != MemoryStatusInvalidated || invalidatedReplacement.Revision != 2 {
 		t.Fatalf("replacement after undo = %#v", invalidatedReplacement)
 	}
-	items, err = service.RetrieveMemories(t.Context(), scopeB, detail.Definition.ID, []memoryruntime.MemoryScopeRef{projectScope}, 10)
-	if err != nil || len(items) != 1 || items[0].ID != oldMemory.Memory.ID || items[0].Content != oldProposal.Content {
+	items, err = service.RetrieveMemories(t.Context(), scopeB, detail.Definition.ID, 10)
+	if err != nil || len(items) != 2 {
+		t.Fatalf("retrieval after supersede undo = %#v, err %v", items, err)
+	}
+	var restoredOld *DigitalHumanMemory
+	for _, item := range items {
+		if item.ID == oldMemory.Memory.ID {
+			restoredOld = item
+		}
+	}
+	if restoredOld == nil || restoredOld.Content != oldProposal.Content {
 		t.Fatalf("retrieval after supersede undo = %#v, err %v", items, err)
 	}
 }
@@ -455,8 +476,7 @@ func TestDigitalHumanMemoryPostgresExtractionJobCommitsFromReferences(t *testing
 	}
 
 	extractor := &recordingMemoryExtractor{drafts: []MemoryExtractionDraft{{
-		Key: "launch-date", MemoryClass: memoryruntime.MemoryClassBusiness, MemoryType: memoryruntime.MemoryTypeFact,
-		ScopeType: memoryruntime.MemoryScopeWorkspace, ScopeID: workspaceID.String(),
+		Key: "launch-date", MemoryType: memoryruntime.MemoryTypeFact,
 		Content: "The approved launch date is September 8.", Confidence: 0.95,
 	}}}
 	runner := NewMemoryExtractionRunner(repository, service, extractor)
@@ -467,10 +487,8 @@ func TestDigitalHumanMemoryPostgresExtractionJobCommitsFromReferences(t *testing
 	if extractor.calls != 1 || extractor.input.Source.Query != run.Query || extractor.input.Source.Answer != run.ResultSummary {
 		t.Fatalf("extractor calls=%d input=%#v", extractor.calls, extractor.input.Source)
 	}
-	items, err := service.RetrieveMemories(t.Context(), scope, detail.Definition.ID, []memoryruntime.MemoryScopeRef{{
-		Type: memoryruntime.MemoryScopeWorkspace, ID: workspaceID.String(),
-	}}, 10)
-	if err != nil || len(items) != 1 || items[0].MemoryKey != "launch-date" || items[0].Revision != 1 {
+	items, err := service.RetrieveMemories(t.Context(), scope, detail.Definition.ID, 10)
+	if err != nil || len(items) != 1 || items[0].MemoryKey != "launch-date" || items[0].Revision != 1 || items[0].MemoryClass != memoryruntime.MemoryClassSelf {
 		t.Fatalf("extracted memory = %#v, err %v", items, err)
 	}
 	var job MemoryExtractionJob

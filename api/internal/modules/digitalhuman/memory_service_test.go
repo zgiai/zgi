@@ -21,6 +21,13 @@ func TestValidateMemoryProposalPolicyRejectsUnsafeAutonomousWrites(t *testing.T)
 	if err := validateMemoryProposalPolicy(base, true); err != nil {
 		t.Fatalf("safe autonomous proposal error = %v", err)
 	}
+	// Convergence: self is the only class, so an autonomous evidence-backed fact
+	// is no longer gated behind a business scope and must be accepted.
+	fact := base
+	fact.MemoryType = memoryruntime.MemoryTypeFact
+	if err := validateMemoryProposalPolicy(fact, true); err != nil {
+		t.Fatalf("autonomous self fact error = %v", err)
+	}
 
 	tests := []struct {
 		name   string

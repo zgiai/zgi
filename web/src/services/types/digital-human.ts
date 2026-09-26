@@ -514,6 +514,13 @@ export interface DigitalHumanMemoryMutationResult {
   replayed: boolean;
 }
 
+export interface DigitalHumanMemoryRepairResult {
+  status: 'repaired';
+  memory_count: number;
+  embedding_provider?: string;
+  embedding_model?: string;
+}
+
 export type DigitalHumanChannelInstallationStatus = 'active' | 'disabled';
 export type DigitalHumanChannelEventStatus = 'received' | 'ignored' | 'accepted' | 'failed';
 export type DigitalHumanChannelDeliveryStatus =

@@ -52,6 +52,7 @@ func TestDigitalHumanPermissionForRequest(t *testing.T) {
 		{http.MethodPost, "/console/api/digital-humans/:id/memory/proposals", workspacemodel.WorkspacePermissionDigitalHumanMemoryManage},
 		{http.MethodPatch, "/console/api/digital-humans/:id/memory/state", workspacemodel.WorkspacePermissionDigitalHumanMemoryManage},
 		{http.MethodPost, "/console/api/digital-humans/:id/memory/operations/:operation_id/undo", workspacemodel.WorkspacePermissionDigitalHumanMemoryManage},
+		{http.MethodPost, "/console/api/digital-humans/:id/memory/repair", workspacemodel.WorkspacePermissionDigitalHumanMemoryManage},
 		{http.MethodPost, "/console/api/digital-humans/:id/runs/:run_id/cancel", workspacemodel.WorkspacePermissionDigitalHumanRun},
 		{http.MethodGet, "/console/api/digital-humans/:id/runtime/conversations", workspacemodel.WorkspacePermissionDigitalHumanRun},
 		{http.MethodGet, "/console/api/digital-humans/:id/runtime/conversations/:conversation_id/messages", workspacemodel.WorkspacePermissionDigitalHumanRun},
@@ -100,7 +101,7 @@ func TestRegisterDigitalHumanRoutesRegistersLifecycleAPI(t *testing.T) {
 	})
 
 	routes := router.Routes()
-	if got, want := len(routes), 77; got != want {
+	if got, want := len(routes), 78; got != want {
 		t.Fatalf("registered route count = %d, want %d", got, want)
 	}
 	want := map[string]bool{
@@ -129,6 +130,7 @@ func TestRegisterDigitalHumanRoutesRegistersLifecycleAPI(t *testing.T) {
 		"POST /console/api/digital-humans/:id/memory/proposals":                                                           false,
 		"PATCH /console/api/digital-humans/:id/memory/state":                                                              false,
 		"POST /console/api/digital-humans/:id/memory/operations/:operation_id/undo":                                       false,
+		"POST /console/api/digital-humans/:id/memory/repair":                                                              false,
 		"GET /console/api/digital-humans/:id/draft/binding-candidates":                                                    false,
 		"GET /console/api/digital-humans/:id/runs":                                                                        false,
 		"GET /console/api/digital-humans/:id/runs/:run_id":                                                                false,

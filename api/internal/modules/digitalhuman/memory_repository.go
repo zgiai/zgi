@@ -50,6 +50,27 @@ func (r *GormRepository) UpdateMemoryStateFence(ctx context.Context, state *Memo
 	return nil
 }
 
+// SetMemoryDatasetID associates the hidden projection with the source state.
+// This is intentionally independent from the memory epoch: creating or
+// repairing an index must not invalidate an in-flight memory mutation.
+func (r *GormRepository) SetMemoryDatasetID(ctx context.Context, state *MemoryState, datasetID uuid.UUID) error {
+	if state == nil || state.ID == uuid.Nil || datasetID == uuid.Nil {
+		return ErrInvalidRequest
+	}
+	result := r.db.WithContext(ctx).Model(&MemoryState{}).Where(
+		"id = ? AND organization_id = ? AND workspace_id = ? AND digital_human_id = ?",
+		state.ID, state.OrganizationID, state.WorkspaceID, state.DigitalHumanID,
+	).Updates(map[string]any{"memory_dataset_id": datasetID, "updated_at": time.Now().UTC()})
+	if result.Error != nil {
+		return fmt.Errorf("set DigitalHuman memory dataset: %w", result.Error)
+	}
+	if result.RowsAffected != 1 {
+		return ErrMemoryConflict
+	}
+	state.MemoryDatasetID = &datasetID
+	return nil
+}
+
 func (r *GormRepository) MemoryByKeyForUpdate(
 	ctx context.Context,
 	scope Scope,
@@ -208,28 +229,19 @@ func applyMemoryUndoStatus(items []*DigitalHumanMemory, records []MemoryUndoReco
 	}
 }
 
-func (r *GormRepository) ActiveMemories(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, scopes []memoryruntime.MemoryScopeRef, limit int) ([]*DigitalHumanMemory, error) {
+// ActiveMemories returns every active memory for the DigitalHuman. Convergence:
+// class and business scope no longer gate recall; legacy business rows remain
+// readable so previously stored facts stay visible without a migration.
+func (r *GormRepository) ActiveMemories(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, limit int) ([]*DigitalHumanMemory, error) {
 	db := r.db.WithContext(ctx).Where(
 		"organization_id = ? AND workspace_id = ? AND digital_human_id = ? AND status = ?",
 		scope.OrganizationID, scope.WorkspaceID, digitalHumanID, MemoryStatusActive,
-	).Where("memory_class = ? OR (memory_class = ? AND (scope_type, scope_id) IN ?)",
-		memoryruntime.MemoryClassSelf, memoryruntime.MemoryClassBusiness, memoryScopePairs(scopes))
+	)
 	items := make([]*DigitalHumanMemory, 0, limit)
 	if err := db.Order("updated_at DESC, id DESC").Limit(limit).Find(&items).Error; err != nil {
 		return nil, fmt.Errorf("retrieve DigitalHuman memories: %w", err)
 	}
 	return items, nil
-}
-
-func memoryScopePairs(scopes []memoryruntime.MemoryScopeRef) [][]string {
-	pairs := make([][]string, 0, len(scopes))
-	for _, scope := range scopes {
-		pairs = append(pairs, []string{string(scope.Type), scope.ID})
-	}
-	if len(pairs) == 0 {
-		return [][]string{{"__none__", "__none__"}}
-	}
-	return pairs
 }
 
 func (r *GormRepository) MemoryEventByOperation(ctx context.Context, scope Scope, digitalHumanID, operationID uuid.UUID) (*MemoryEvent, error) {

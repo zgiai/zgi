@@ -24,8 +24,8 @@ type ModelConfig struct {
 	OutputPriceOverride       *decimal.Decimal       `gorm:"type:decimal(24,12)" json:"output_price_override,omitempty"`
 	CacheReadPriceOverride    *decimal.Decimal       `gorm:"type:decimal(24,12)" json:"cache_read_price_override,omitempty"`
 	CacheWritePriceOverride   *decimal.Decimal       `gorm:"type:decimal(24,12)" json:"cache_write_price_override,omitempty"`
-	CacheWrite5mPriceOverride *decimal.Decimal       `gorm:"type:decimal(24,12)" json:"cache_write_5m_price_override,omitempty"`
-	CacheWrite1hPriceOverride *decimal.Decimal       `gorm:"type:decimal(24,12)" json:"cache_write_1h_price_override,omitempty"`
+	CacheWrite5mPriceOverride *decimal.Decimal       `gorm:"column:cache_write_5m_price_override;type:decimal(24,12)" json:"cache_write_5m_price_override,omitempty"`
+	CacheWrite1hPriceOverride *decimal.Decimal       `gorm:"column:cache_write_1h_price_override;type:decimal(24,12)" json:"cache_write_1h_price_override,omitempty"`
 	AccessScope               AccessScope            `gorm:"type:varchar(20);default:'all'" json:"access_scope"`
 	VisibleGroups             []string               `gorm:"type:jsonb;serializer:json;default:'[]'" json:"visible_groups"`
 	VisibleUsers              []string               `gorm:"type:jsonb;serializer:json;default:'[]'" json:"visible_users"`

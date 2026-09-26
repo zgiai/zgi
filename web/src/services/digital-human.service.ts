@@ -20,6 +20,7 @@ import type {
   DigitalHumanMemoryList,
   DigitalHumanMemoryListParams,
   DigitalHumanMemoryMutationResult,
+  DigitalHumanMemoryRepairResult,
   DigitalHumanMemoryState,
   DigitalHumanMemoryProposalRequest,
   DigitalHumanResourceBindingInput,
@@ -313,6 +314,10 @@ class DigitalHumanService extends BaseService {
       expected_memory_epoch: expectedMemoryEpoch,
       auto_extraction_enabled: autoExtractionEnabled,
     });
+  }
+
+  repairMemory(id: string): Promise<ApiResponseData<DigitalHumanMemoryRepairResult>> {
+    return this.request('post', `/digital-humans/${id}/memory/repair`, {});
   }
 
   listChannelInstallations(
