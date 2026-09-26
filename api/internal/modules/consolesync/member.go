@@ -38,10 +38,10 @@ import (
 // All statements go through GORM's builder against the shared table names, so postgres,
 // sqlite and mysql behave identically without dialect-specific SQL.
 //
-// No password ever comes from console, so a newly created account is left with a NULL
-// password and status=pending / initialized_at=NULL: pre's representation of an invited
-// account that has not activated yet (see getOrCreateDirectAddAccountTx). Such a row
-// cannot authenticate until the invitation is accepted.
+// Password is optional for backwards-compatible commands. New Console commands carry it
+// only through the encrypted control-plane queue; pre hashes it locally and activates the
+// account immediately. Legacy commands without a password retain the pending invitation
+// representation and cannot authenticate until the invitation is accepted.
 
 // Organization member roles as console sends them.
 const (
