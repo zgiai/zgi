@@ -36,6 +36,7 @@ type anthropicCatalogResponse struct {
 }
 
 func writeModelsCatalog(c *gin.Context, models []adapter.Model) {
+	c.Header("Vary", "anthropic-version")
 	models = mergeCatalogLogicalModels(models)
 	if strings.TrimSpace(c.Query("client_version")) != "" {
 		writeCodexModels(c, filterCatalogModels(models, modelsProtocolResponses))
@@ -53,6 +54,7 @@ func writeModelsCatalog(c *gin.Context, models []adapter.Model) {
 }
 
 func writeModelsDetail(c *gin.Context, models []adapter.Model) {
+	c.Header("Vary", "anthropic-version")
 	models = mergeCatalogLogicalModels(models)
 	protocol := ""
 	if strings.TrimSpace(c.Query("client_version")) != "" {
