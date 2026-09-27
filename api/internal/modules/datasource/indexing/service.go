@@ -251,12 +251,8 @@ func (s *Service) Configure(ctx context.Context, org, id, account string, reques
 		if !errors.Is(existingErr, gorm.ErrRecordNotFound) {
 			return existingErr
 		}
-		var cleanupCount int64
-		if err := db.WithContext(ctx).Table("text2sql_schema_indexes").Where("data_source_id = ?", id).Count(&cleanupCount).Error; err != nil {
+		if err := ensureCleanupComplete(ctx, db, id); err != nil {
 			return err
-		}
-		if cleanupCount > 0 {
-			return ErrCleanupPending
 		}
 		settings := Settings{DataSourceID: id, OrganizationID: org, WorkspaceID: *ds.WorkspaceID, RequestedBy: account, EmbeddingProvider: resolved.Provider, EmbeddingModel: resolved.Model, TargetIDs: datatypes.JSON("[]")}
 		return db.WithContext(ctx).Create(&settings).Error
@@ -285,6 +281,9 @@ func (s *Service) Start(ctx context.Context, org, id, account string) error {
 		}
 		trigger := TriggerManualRetry
 		if errors.Is(existingErr, gorm.ErrRecordNotFound) {
+			if err := ensureCleanupComplete(ctx, db, id); err != nil {
+				return err
+			}
 			model, resolveErr := s.models.ResolveUseCase(ctx, org, llmmodel.UseCaseEmbedding, nil, nil)
 			if resolveErr != nil {
 				return fmt.Errorf("resolve embedding model: %w", resolveErr)
@@ -304,6 +303,17 @@ func (s *Service) Start(ctx context.Context, org, id, account string) error {
 	}
 	if enqueueErr := s.enqueueReconcile(id); enqueueErr != nil {
 		s.log.Warn("enqueue schema index retry", zap.String("data_source_id", id), zap.Error(enqueueErr))
+	}
+	return nil
+}
+
+func ensureCleanupComplete(ctx context.Context, db *gorm.DB, dataSourceID string) error {
+	var count int64
+	if err := db.WithContext(ctx).Table("text2sql_schema_indexes").Where("data_source_id = ?", dataSourceID).Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return ErrCleanupPending
 	}
 	return nil
 }

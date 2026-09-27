@@ -33,7 +33,7 @@ func (h *SchemaIndexHandler) Status(c *gin.Context) { h.handle(c, false) }
 func (h *SchemaIndexHandler) Start(c *gin.Context)  { h.handle(c, true) }
 
 type schemaIndexConfigureRequest struct {
-	Enabled                bool   `json:"enabled"`
+	Enabled                *bool  `json:"enabled"`
 	EmbeddingModelProvider string `json:"embedding_model_provider"`
 	EmbeddingModel         string `json:"embedding_model"`
 }
@@ -52,8 +52,12 @@ func (h *SchemaIndexHandler) Configure(c *gin.Context) {
 		h.fail(c, apperror.Wrap(err, catalog.CodeRequestInvalid))
 		return
 	}
+	if request.Enabled == nil {
+		h.fail(c, apperror.New(catalog.CodeRequestInvalid))
+		return
+	}
 	err := h.service.Configure(c.Request.Context(), org, id, account, indexing.ConfigureRequest{
-		Enabled: request.Enabled, Provider: request.EmbeddingModelProvider, Model: request.EmbeddingModel,
+		Enabled: *request.Enabled, Provider: request.EmbeddingModelProvider, Model: request.EmbeddingModel,
 	})
 	if err != nil {
 		h.fail(c, err)

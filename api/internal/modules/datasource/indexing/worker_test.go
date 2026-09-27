@@ -79,6 +79,47 @@ func TestAuthorizeWorkspaceUsesExistingWorkspacePermissions(t *testing.T) {
 	}
 }
 
+func TestStartRejectsEnableWhileCleanupPending(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB, PreferSimpleProtocol: true}), &gorm.Config{SkipDefaultTransaction: true, Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dataSourceID := uuid.NewString()
+	organizationID := uuid.NewString()
+	workspaceID := uuid.NewString()
+	accountID := uuid.NewString()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "data_sources" WHERE id = $1 AND organization_id = $2 LIMIT $3`)).
+		WithArgs(dataSourceID, organizationID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "organization_id", "workspace_id"}).AddRow(dataSourceID, organizationID, workspaceID))
+	mock.ExpectExec(regexp.QuoteMeta(`SELECT pg_advisory_lock(hashtextextended($1, 0))`)).
+		WithArgs("schema-index:database:" + dataSourceID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "database_schema_index_settings" WHERE data_source_id = $1 LIMIT $2`)).
+		WithArgs(dataSourceID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"data_source_id"}))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT count(*) FROM "text2sql_schema_indexes" WHERE data_source_id = $1`)).
+		WithArgs(dataSourceID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectExec(regexp.QuoteMeta(`SELECT pg_advisory_unlock(hashtextextended($1, 0))`)).
+		WithArgs("schema-index:database:" + dataSourceID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	service := NewService(db, nil, &testModels{model: "embedding-v1"}, nil, nil, nil, &testAccess{}, zap.NewNop())
+	err = service.Start(context.Background(), organizationID, dataSourceID, accountID)
+	if !errors.Is(err, ErrCleanupPending) {
+		t.Fatalf("Start() error = %v, want ErrCleanupPending", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 type testSQL struct {
 	sql_base.SQLBase
 	tables map[int]*sql_base.Table

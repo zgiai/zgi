@@ -54,6 +54,27 @@ func TestSchemaIndexHandlerProjectsWorkspacePermissionDenial(t *testing.T) {
 	}
 }
 
+func TestSchemaIndexConfigureRequiresEnabledField(t *testing.T) {
+	productCatalog, err := catalog.NewDefault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewSchemaIndexHandler(nil, productCatalog)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("organization_id", uuid.NewString())
+	c.Set("account_id", uuid.NewString())
+	c.Params = gin.Params{{Key: "id", Value: uuid.NewString()}}
+
+	h.Configure(c)
+
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "request.invalid") {
+		t.Fatalf("unsafe or incorrect response: %d %s", w.Code, w.Body.String())
+	}
+}
+
 func TestSchemaIndexHandlerProjectsConfigurationConflicts(t *testing.T) {
 	productCatalog, err := catalog.NewDefault()
 	if err != nil {
