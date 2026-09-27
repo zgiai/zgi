@@ -93,13 +93,15 @@ func (l *SQLCatalogLoader) Load(ctx context.Context, req CatalogRequest) (Catalo
 	if len(assetIDs) > 0 {
 		// Join the current indexing settings so a model switch cannot make the
 		// catalog read samples from a historical ready index.
-		_ = l.db.WithContext(ctx).
+		if err := l.db.WithContext(ctx).
 			Table("text2sql_schema_indexes AS idx").
 			Select("DISTINCT ON (idx.asset_table_id) idx.asset_table_id, idx.value_samples").
-			Joins("JOIN database_schema_index_settings AS settings ON settings.data_source_id = idx.data_source_id AND settings.workspace_id = idx.workspace_id AND settings.embedding_provider = idx.embedding_provider AND settings.embedding_model = idx.embedding_model").
+			Joins("JOIN database_schema_index_settings AS settings ON settings.data_source_id = idx.data_source_id AND settings.workspace_id = idx.workspace_id AND settings.embedding_provider = idx.embedding_provider AND settings.embedding_model = idx.embedding_model AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(settings.target_ids) AS target(id) WHERE target.id = idx.id::text)").
 			Where("idx.workspace_id = ? AND idx.data_source_id = ? AND idx.status = ? AND idx.asset_table_id IN ?", req.Scope.WorkspaceID, req.DataSourceID, IndexReady, assetIDs).
 			Order("idx.asset_table_id, idx.updated_at DESC").
-			Find(&sampleRows)
+			Find(&sampleRows).Error; err != nil {
+			return Catalog{}, fmt.Errorf("%w: load indexed value samples: %v", ErrSchemaLoad, err)
+		}
 	}
 	valueSamplesByAsset := make(map[string]map[string][]string, len(sampleRows))
 	for _, sample := range sampleRows {
