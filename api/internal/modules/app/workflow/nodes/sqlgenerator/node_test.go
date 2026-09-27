@@ -13,6 +13,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
+	llmadapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	workspace "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/pkg/sql_base"
 )
@@ -455,6 +456,33 @@ func TestAuthorizeText2SQLFailsClosedWithoutWorkspacePermissions(t *testing.T) {
 	node := &Node{NodeStruct: base.NodeStruct{TenantID: "workspace-1", UserID: "account-1"}}
 	if err := node.authorizeText2SQL(context.Background()); !errors.Is(err, errDatabaseAccessDenied) {
 		t.Fatalf("authorizeText2SQL error = %v, want %v", err, errDatabaseAccessDenied)
+	}
+}
+
+type recordingEmbeddingClient struct {
+	llmclient.LLMClient
+	request *llmadapter.EmbeddingsRequest
+}
+
+func (c *recordingEmbeddingClient) AppEmbed(_ context.Context, _ *llmclient.AppContext, request *llmadapter.EmbeddingsRequest) (*llmadapter.EmbeddingsResponse, error) {
+	c.request = request
+	return &llmadapter.EmbeddingsResponse{Data: []llmadapter.Embedding{{Embedding: []float32{0.1}}}}, nil
+}
+
+func TestWorkflowEmbedderPreservesConfiguredProvider(t *testing.T) {
+	client := &recordingEmbeddingClient{}
+	node := &Node{
+		NodeStruct: base.NodeStruct{
+			OrganizationID: "org-1", WorkspaceID: "workspace-1", TenantID: "workspace-1", UserID: "account-1",
+			APPID: "app-1", WorkflowID: "workflow-1", NodeID: "node-1", NodeType: shared.SQLGenerator,
+		},
+		llmClient: client,
+	}
+	if _, err := (workflowEmbedder{node: node}).Embed(context.Background(), "provider-a", "shared-model", "question"); err != nil {
+		t.Fatal(err)
+	}
+	if client.request == nil || client.request.Provider != "provider-a" {
+		t.Fatalf("embedding request = %#v, want provider-a", client.request)
 	}
 }
 

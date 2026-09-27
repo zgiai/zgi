@@ -138,10 +138,25 @@ type testLLM struct {
 	calls      atomic.Int32
 	fail       bool
 	badBilling atomic.Bool
+	mu         sync.Mutex
+	request    *adapter.EmbeddingsRequest
+	started    chan struct{}
+	release    <-chan struct{}
+	startOnce  sync.Once
 }
 
-func (l *testLLM) AppEmbed(_ context.Context, app *llmclient.AppContext, _ *adapter.EmbeddingsRequest) (*adapter.EmbeddingsResponse, error) {
+func (l *testLLM) AppEmbed(_ context.Context, app *llmclient.AppContext, request *adapter.EmbeddingsRequest) (*adapter.EmbeddingsResponse, error) {
 	l.calls.Add(1)
+	l.mu.Lock()
+	copyRequest := *request
+	l.request = &copyRequest
+	l.mu.Unlock()
+	if l.started != nil {
+		l.startOnce.Do(func() { close(l.started) })
+	}
+	if l.release != nil {
+		<-l.release
+	}
 	if app.BillingSubjectType != llmclient.BillingSubjectTypeWorkspace || app.WorkspaceID == "" || app.AccountID == "" || app.WorkflowID != "" {
 		l.badBilling.Store(true)
 	}
@@ -149,6 +164,56 @@ func (l *testLLM) AppEmbed(_ context.Context, app *llmclient.AppContext, _ *adap
 		return nil, context.DeadlineExceeded
 	}
 	return &adapter.EmbeddingsResponse{Data: []adapter.Embedding{{Embedding: []float32{0.1, 0.2}}}}, nil
+}
+
+func TestEmbedderPreservesConfiguredProvider(t *testing.T) {
+	llm := &testLLM{}
+	settings := Settings{
+		DataSourceID: "ds-1", OrganizationID: "org-1", WorkspaceID: "workspace-1", RequestedBy: "account-1",
+		EmbeddingProvider: "provider-a", EmbeddingModel: "shared-model",
+	}
+	service := &Service{llm: llm}
+	if _, err := (embedder{service: service, settings: settings}).Embed(context.Background(), settings.EmbeddingProvider, settings.EmbeddingModel, "schema"); err != nil {
+		t.Fatal(err)
+	}
+	llm.mu.Lock()
+	defer llm.mu.Unlock()
+	if llm.request == nil {
+		t.Fatal("embedding request is nil")
+	}
+	if llm.request.Provider != settings.EmbeddingProvider {
+		t.Fatalf("embedding provider = %q, want %q", llm.request.Provider, settings.EmbeddingProvider)
+	}
+}
+
+func TestNotifySchemaChangedDoesNotWaitForReconcileAdvisoryLock(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB, PreferSimpleProtocol: true}), &gorm.Config{SkipDefaultTransaction: true, Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataSourceID := uuid.NewString()
+	pendingRunID := uuid.NewString()
+	targetIDs, _ := json.Marshal([]string{uuid.NewString()})
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "database_schema_index_settings" WHERE data_source_id = $1 LIMIT $2 FOR UPDATE`)).
+		WithArgs(dataSourceID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"data_source_id", "target_ids", "pending_run_id"}).AddRow(dataSourceID, targetIDs, pendingRunID))
+	mock.ExpectExec(regexp.QuoteMeta(`UPDATE "database_schema_index_settings" SET`)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	service := &Service{db: db, log: zap.NewNop()}
+	if err := service.NotifySchemaChanged(context.Background(), dataSourceID, TriggerTableMetadataChanged); err != nil {
+		t.Fatalf("NotifySchemaChanged() error = %v, want nil", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 type fixture struct {
@@ -662,6 +727,115 @@ func TestPostgresPermissionModelChangeAndMove(t *testing.T) {
 	f.service.db.Model(&Settings{}).Count(&count)
 	if count != 0 {
 		t.Fatal("moved database remains enabled in old workspace")
+	}
+}
+
+func TestPostgresDisableWaitsForInFlightBuildAndLeavesIndexDeleting(t *testing.T) {
+	f := newFixture(t, 1)
+	f.start(t)
+	row := f.rows(t)[0]
+	started := make(chan struct{})
+	release := make(chan struct{})
+	f.llm.started = started
+	f.llm.release = release
+
+	buildDone := make(chan error, 1)
+	go func() {
+		buildDone <- f.service.handleTask(context.Background(), indexTask(row))
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("embedding request did not start")
+	}
+
+	disableDone := make(chan error, 1)
+	go func() {
+		disableDone <- f.service.Configure(context.Background(), f.setting.OrganizationID, f.setting.DataSourceID, f.setting.RequestedBy, ConfigureRequest{Enabled: false})
+	}()
+	select {
+	case err := <-disableDone:
+		t.Fatalf("Configure(false) returned before the in-flight build finished: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	close(release)
+	if err := <-buildDone; err != nil {
+		t.Fatalf("handleTask() error = %v", err)
+	}
+	if err := <-disableDone; err != nil {
+		t.Fatalf("Configure(false) error = %v", err)
+	}
+	var stored text2sql.SchemaIndex
+	if err := f.service.db.Take(&stored, "id = ?", row.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != text2sql.IndexDeleting {
+		t.Fatalf("index status = %q, want %q", stored.Status, text2sql.IndexDeleting)
+	}
+}
+
+func TestPostgresSchemaNotificationDoesNotWaitForReconcileLock(t *testing.T) {
+	f := newFixture(t, 1)
+	if err := f.service.Start(context.Background(), f.setting.OrganizationID, f.setting.DataSourceID, f.setting.RequestedBy); err != nil {
+		t.Fatal(err)
+	}
+	var before Settings
+	if err := f.service.db.Take(&before, "data_source_id = ?", f.setting.DataSourceID).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	sqlDB, err := f.service.db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := sqlDB.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	lockKey := "schema-index:database:" + f.setting.DataSourceID
+	if _, err := conn.ExecContext(context.Background(), "SELECT pg_advisory_lock(hashtextextended($1, 0))", lockKey); err != nil {
+		t.Fatal(err)
+	}
+	defer conn.ExecContext(context.Background(), "SELECT pg_advisory_unlock(hashtextextended($1, 0))", lockKey)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := f.service.NotifySchemaChanged(ctx, f.setting.DataSourceID, TriggerTableMetadataChanged); err != nil {
+		t.Fatalf("NotifySchemaChanged() waited for reconcile lock: %v", err)
+	}
+	var after Settings
+	if err := f.service.db.Take(&after, "data_source_id = ?", f.setting.DataSourceID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if before.PendingRunID == nil || after.PendingRunID == nil || *before.PendingRunID == *after.PendingRunID {
+		t.Fatalf("pending run id did not advance: before=%v after=%v", before.PendingRunID, after.PendingRunID)
+	}
+}
+
+func TestPostgresCatalogLoadsSamplesFromCurrentUUIDIndex(t *testing.T) {
+	f := newFixture(t, 1)
+	f.start(t)
+	row := f.rows(t)[0]
+	if err := f.service.handleTask(context.Background(), indexTask(row)); err != nil {
+		t.Fatal(err)
+	}
+
+	loader := text2sql.NewSQLCatalogLoader(f.service.db, f.service.sql)
+	catalog, err := loader.Load(context.Background(), text2sql.CatalogRequest{
+		Scope: text2sql.Scope{
+			OrganizationID: f.setting.OrganizationID,
+			WorkspaceID:    f.setting.WorkspaceID,
+		},
+		DataSourceID: f.setting.DataSourceID,
+		Tables:       []text2sql.TableRef{{AssetID: row.AssetTableID, PhysicalID: row.PhysicalTableID}},
+	})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(catalog.Tables) != 1 || catalog.Tables[0].Ref.AssetID != row.AssetTableID {
+		t.Fatalf("catalog = %#v, want current indexed table", catalog)
 	}
 }
 

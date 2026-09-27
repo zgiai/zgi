@@ -152,11 +152,11 @@ func (m workflowEmbeddingModels) ResolveEmbedding(ctx context.Context, organizat
 
 type workflowEmbedder struct{ node *Node }
 
-func (e workflowEmbedder) Embed(ctx context.Context, _, model, input string) ([]float64, error) {
+func (e workflowEmbedder) Embed(ctx context.Context, provider, model, input string) ([]float64, error) {
 	if e.node == nil || e.node.llmClient == nil {
 		return nil, text2sql.ErrIndexNotReady
 	}
-	response, err := e.node.llmClient.AppEmbed(ctx, e.node.embeddingAppContext(), &llmadapter.EmbeddingsRequest{Input: input, Model: model, EncodingFormat: "float"})
+	response, err := e.node.llmClient.AppEmbed(ctx, e.node.embeddingAppContext(), &llmadapter.EmbeddingsRequest{Input: input, Provider: provider, Model: model, EncodingFormat: "float"})
 	if err != nil {
 		return nil, err
 	}

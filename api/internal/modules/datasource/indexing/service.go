@@ -44,14 +44,14 @@ type workspacePermissionChecker interface {
 // TargetIDs identifies the catalog snapshot; historical rows do not count as ready.
 type Settings struct {
 	DataSourceID      string `gorm:"primaryKey;type:uuid"`
-	OrganizationID    string
-	WorkspaceID       string
-	RequestedBy       string
+	OrganizationID    string `gorm:"type:uuid"`
+	WorkspaceID       string `gorm:"type:uuid"`
+	RequestedBy       string `gorm:"type:uuid"`
 	EmbeddingProvider string
 	EmbeddingModel    string
 	TargetIDs         datatypes.JSON
 	LastErrorCode     *string
-	PendingRunID      *string
+	PendingRunID      *string `gorm:"type:uuid"`
 	PendingTrigger    *string
 	ReconciledAt      *time.Time
 	CreatedAt         time.Time
@@ -162,6 +162,13 @@ func (s *Service) Status(ctx context.Context, org, id, account string) (*Status,
 		result.CleanupPending = cleanupCount > 0
 		if result.CleanupPending {
 			result.State = "cleanup"
+			return result, nil
+		}
+		model, resolveErr := s.models.ResolveUseCase(ctx, org, llmmodel.UseCaseEmbedding, nil, nil)
+		if resolveErr != nil {
+			result.ErrorCode = "model_unavailable"
+		} else {
+			result.Provider, result.Model = model.Provider, model.Model
 		}
 		return result, nil
 	}
@@ -321,26 +328,44 @@ func ensureCleanupComplete(ctx context.Context, db *gorm.DB, dataSourceID string
 // Session advisory locks serialize a table's build and deletion across API
 // instances. A process crash releases the lock; no in-memory owner survives it.
 func (s *Service) withLock(ctx context.Context, key string, run func(*gorm.DB) error) error {
+	return s.withSessionLock(ctx, key, false, run)
+}
+
+func (s *Service) withSharedLock(ctx context.Context, key string, run func(*gorm.DB) error) error {
+	return s.withSessionLock(ctx, key, true, run)
+}
+
+func (s *Service) withSessionLock(ctx context.Context, key string, shared bool, run func(*gorm.DB) error) error {
 	return s.db.WithContext(ctx).Connection(func(db *gorm.DB) error {
-		discard := func() {
-			if conn, ok := db.Statement.ConnPool.(*sql.Conn); ok {
-				_ = conn.Raw(func(any) error { return driver.ErrBadConn })
-			}
-		}
-		if err := db.Exec("SELECT pg_advisory_lock(hashtextextended(?, 0))", "schema-index:"+key).Error; err != nil {
-			discard()
-			return err
-		}
-		defer func() {
-			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			defer cancel()
-			if err := db.WithContext(cleanup).Exec("SELECT pg_advisory_unlock(hashtextextended(?, 0))", "schema-index:"+key).Error; err != nil {
-				discard()
-				s.log.Error("release schema index lock", zap.Error(err))
-			}
-		}()
-		return run(db)
+		return s.withConnectionLock(ctx, db, key, shared, run)
 	})
+}
+
+func (s *Service) withConnectionLock(ctx context.Context, db *gorm.DB, key string, shared bool, run func(*gorm.DB) error) error {
+	lockFunction := "pg_advisory_lock"
+	unlockFunction := "pg_advisory_unlock"
+	if shared {
+		lockFunction = "pg_advisory_lock_shared"
+		unlockFunction = "pg_advisory_unlock_shared"
+	}
+	discard := func() {
+		if conn, ok := db.Statement.ConnPool.(*sql.Conn); ok {
+			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+		}
+	}
+	if err := db.Exec("SELECT "+lockFunction+"(hashtextextended(?, 0))", "schema-index:"+key).Error; err != nil {
+		discard()
+		return err
+	}
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if err := db.WithContext(cleanup).Exec("SELECT "+unlockFunction+"(hashtextextended(?, 0))", "schema-index:"+key).Error; err != nil {
+			discard()
+			s.log.Error("release schema index lock", zap.Error(err))
+		}
+	}()
+	return run(db)
 }
 
 type embedder struct {
@@ -355,7 +380,7 @@ func (e embedder) Embed(ctx context.Context, provider, model, input string) ([]f
 	result, err := e.service.llm.AppEmbed(ctx, &llmclient.AppContext{
 		OrganizationID: e.settings.OrganizationID, WorkspaceID: e.settings.WorkspaceID, AccountID: e.settings.RequestedBy,
 		BillingSubjectType: llmclient.BillingSubjectTypeWorkspace, AppID: e.settings.DataSourceID, AppType: "database_schema_index", ModelUseCase: string(llmmodel.UseCaseEmbedding), SuppressInvocationContent: true,
-	}, &adapter.EmbeddingsRequest{Model: model, Input: input, EncodingFormat: "float"})
+	}, &adapter.EmbeddingsRequest{Provider: provider, Model: model, Input: input, EncodingFormat: "float"})
 	if err != nil {
 		return nil, err
 	}

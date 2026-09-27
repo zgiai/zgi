@@ -83,7 +83,7 @@ export default function CreateDbDialog({ open, onOpenChange }: CreateDbDialogPro
 
   const [iconValue, setIconValue] = useState<IconValue>(initialIconValue);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [schemaIndexEnabled, setSchemaIndexEnabled] = useState(true);
+  const [schemaIndexEnabled, setSchemaIndexEnabled] = useState(false);
   const [embeddingModel, setEmbeddingModel] = useState({ provider: '', model: '' });
   const [formData, setFormData] = useState<{
     name: string;
@@ -205,7 +205,7 @@ export default function CreateDbDialog({ open, onOpenChange }: CreateDbDialogPro
         onOpenChange(false);
         setFormData({ name: '', description: '', workspace: undefined });
         setIconValue(createTextIconValue('', ICON_BG));
-        setSchemaIndexEnabled(true);
+        setSchemaIndexEnabled(false);
         setEmbeddingModel({ provider: '', model: '' });
       }
     } catch (error) {
@@ -217,7 +217,7 @@ export default function CreateDbDialog({ open, onOpenChange }: CreateDbDialogPro
     setFormData({ name: '', description: '', workspace: undefined });
     setIconValue(createTextIconValue('', ICON_BG));
     setHasSubmitted(false);
-    setSchemaIndexEnabled(true);
+    setSchemaIndexEnabled(false);
     setEmbeddingModel({ provider: '', model: '' });
   };
 

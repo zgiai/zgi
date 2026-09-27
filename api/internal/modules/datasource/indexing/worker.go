@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const taskType = "database:schema_index"
@@ -49,9 +50,9 @@ func (s *Service) NotifySchemaChanged(ctx context.Context, dataSourceID, trigger
 		return fmt.Errorf("invalid automatic schema index trigger %q", trigger)
 	}
 	enabled := false
-	err := s.withLock(ctx, "database:"+dataSourceID, func(db *gorm.DB) error {
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var setting Settings
-		if err := db.WithContext(ctx).Where("data_source_id = ?", dataSourceID).Take(&setting).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("data_source_id = ?", dataSourceID).Take(&setting).Error; errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil
 		} else if err != nil {
 			return err
@@ -60,19 +61,18 @@ func (s *Service) NotifySchemaChanged(ctx context.Context, dataSourceID, trigger
 		if err != nil {
 			return err
 		}
-		runID := uuid.NewString()
-		if setting.PendingRunID != nil {
-			runID = *setting.PendingRunID
-		}
 		enabled = true
-		return db.WithContext(ctx).Model(&Settings{}).Where("data_source_id = ?", dataSourceID).Updates(map[string]any{
-			"pending_run_id": runID, "pending_trigger": effectiveTrigger, "last_error_code": nil, "updated_at": time.Now(),
+		return tx.Model(&Settings{}).Where("data_source_id = ?", dataSourceID).Updates(map[string]any{
+			"pending_run_id": uuid.NewString(), "pending_trigger": effectiveTrigger, "last_error_code": nil, "updated_at": time.Now(),
 		}).Error
 	})
 	if err != nil || !enabled {
 		return err
 	}
-	return s.enqueueReconcile(dataSourceID)
+	if err := s.enqueueReconcile(dataSourceID); err != nil {
+		s.log.Warn("enqueue schema index reconciliation", zap.String("data_source_id", dataSourceID), zap.Error(err))
+	}
+	return nil
 }
 
 func automaticPendingTrigger(setting Settings, trigger string) (string, error) {
@@ -110,7 +110,10 @@ func (s *Service) enqueueReconcile(dataSourceID string) error {
 		return err
 	}
 	task := asynq.NewTask(s.queue.GetTaskTypeWithPrefix(reconcileTaskType), payload)
-	_, err = s.queue.EnqueueTask(task, asynq.Queue("low"), asynq.MaxRetry(3), asynq.Timeout(5*time.Minute))
+	_, err = s.queue.EnqueueTask(task, asynq.Queue("low"), asynq.Unique(time.Minute), asynq.MaxRetry(3), asynq.Timeout(5*time.Minute))
+	if errors.Is(err, asynq.ErrDuplicateTask) {
+		return nil
+	}
 	return err
 }
 
@@ -299,9 +302,21 @@ func (s *Service) reconcileDatabase(ctx context.Context, setting Settings) error
 				return err
 			}
 		}
-		return tx.WithContext(ctx).Model(&Settings{}).Where("data_source_id = ? AND workspace_id = ?", setting.DataSourceID, setting.WorkspaceID).Updates(map[string]any{
-			"target_ids": setting.TargetIDs, "embedding_provider": model.Provider, "embedding_model": model.Model, "pending_run_id": nil, "pending_trigger": nil, "last_error_code": nil, "reconciled_at": time.Now(),
-		}).Error
+		result := tx.WithContext(ctx).Model(&Settings{}).Where("data_source_id = ? AND workspace_id = ?", setting.DataSourceID, setting.WorkspaceID).Updates(map[string]any{
+			"target_ids": setting.TargetIDs, "embedding_provider": model.Provider, "embedding_model": model.Model, "last_error_code": nil, "reconciled_at": time.Now(),
+		})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return errTaskScope
+		}
+		if setting.PendingRunID == nil {
+			return nil
+		}
+		return tx.WithContext(ctx).Model(&Settings{}).
+			Where("data_source_id = ? AND workspace_id = ? AND pending_run_id = ?", setting.DataSourceID, setting.WorkspaceID, *setting.PendingRunID).
+			Updates(map[string]any{"pending_run_id": nil, "pending_trigger": nil}).Error
 	}); err != nil {
 		return err
 	}
@@ -379,82 +394,14 @@ func (s *Service) handleTask(ctx context.Context, task *asynq.Task) error {
 	if payload.IndexID == "" || payload.AssetID == "" {
 		return fmt.Errorf("schema index task identifiers required")
 	}
-	var sourceID string
-	err := s.withLock(ctx, "table:"+payload.AssetID, func(db *gorm.DB) error {
-		var row struct {
-			text2sql.SchemaIndex
-			BuildAttempts int
-		}
-		err := db.WithContext(ctx).Table("text2sql_schema_indexes").Where("id = ? AND asset_table_id = ?", payload.IndexID, payload.AssetID).Take(&row).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		sourceID = row.DataSourceID
-		if row.Status == text2sql.IndexReady || row.Status == text2sql.IndexDeleting || row.BuildAttempts >= MaxAttempts {
-			return nil
-		}
-		var setting Settings
-		if err := db.WithContext(ctx).Where("data_source_id = ? AND workspace_id = ?", row.DataSourceID, row.WorkspaceID).Take(&setting).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil
-			}
-			return err
-		}
-		var ids []string
-		if err := json.Unmarshal(setting.TargetIDs, &ids); err != nil {
-			return err
-		}
-		if !slices.Contains(ids, row.ID) {
-			return nil
-		}
-		buildCtx, cancel := context.WithTimeout(ctx, tableTimeout)
-		defer cancel()
-		if err := db.WithContext(buildCtx).Table("text2sql_schema_indexes").Where("id = ?", row.ID).Update("build_attempts", gorm.Expr("build_attempts + 1")).Error; err != nil {
-			return err
-		}
-		buildErr := s.validateTask(buildCtx, setting, &row.SchemaIndex)
-		if buildErr == nil {
-			table, tableErr := s.sql.GetTable(buildCtx, row.PhysicalTableID)
-			if tableErr != nil {
-				s.log.Warn("sample column values skipped", zap.String("index_id", row.ID), zap.Error(tableErr))
-				row.ValueSamples = text2sql.EncodeValueSamples(text2sql.ColumnValues{})
-			} else {
-				sampleCtx, sampleCancel := context.WithTimeout(buildCtx, valueSampleTimeout)
-				row.ValueSamples = text2sql.EncodeValueSamples(text2sql.SampleColumnValues(sampleCtx, s.sql, table))
-				sampleCancel()
-			}
-			indexer := text2sql.NewIndexer(text2sql.NewIndexRepository(db), s.sql, embedder{s, setting}, s.vectors)
-			buildErr = indexer.Process(buildCtx, &row.SchemaIndex)
-		}
-		if buildErr == nil {
-			buildErr = s.validateTask(buildCtx, setting, &row.SchemaIndex)
-		}
-		if buildErr != nil {
-			s.log.Error("database schema index build failed", zap.String("index_id", row.ID), zap.Error(buildErr))
-			code := "build_failed"
-			if row.LastErrorCode != nil {
-				code = *row.LastErrorCode
-			}
-			if errors.Is(buildErr, context.DeadlineExceeded) {
-				code = "timeout"
-			}
-			writeCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			defer stop()
-			// A revoked permission or invalid model is terminal until manual retry;
-			// transient embedding/storage errors retain the bounded retry budget.
-			updates := map[string]any{"status": text2sql.IndexFailed, "last_error_code": code, "updated_at": time.Now()}
-			if errors.Is(buildErr, errTaskScope) {
-				updates["build_attempts"] = MaxAttempts
-				updates["last_error_code"] = "scope_changed"
-			}
-			if err := db.WithContext(writeCtx).Table("text2sql_schema_indexes").Where("id = ?", row.ID).Updates(updates).Error; err != nil {
-				return errors.Join(buildErr, err)
-			}
-		}
-		return buildErr
+	sourceID, err := s.taskDataSourceID(ctx, payload)
+	if err != nil || sourceID == "" {
+		return err
+	}
+	err = s.withSharedLock(ctx, "database:"+sourceID, func(db *gorm.DB) error {
+		return s.withConnectionLock(ctx, db, "table:"+payload.AssetID, false, func(db *gorm.DB) error {
+			return s.processTask(ctx, db, payload, sourceID)
+		})
 	})
 	if sourceID != "" {
 		writeCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
@@ -465,6 +412,102 @@ func (s *Service) handleTask(ctx context.Context, task *asynq.Task) error {
 		}
 	}
 	return err
+}
+
+func (s *Service) processTask(ctx context.Context, db *gorm.DB, payload taskPayload, sourceID string) error {
+	var row struct {
+		text2sql.SchemaIndex
+		BuildAttempts int
+	}
+	err := db.WithContext(ctx).Table("text2sql_schema_indexes").Where("id = ? AND asset_table_id = ?", payload.IndexID, payload.AssetID).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if row.DataSourceID != sourceID {
+		return errTaskScope
+	}
+	if row.Status == text2sql.IndexReady || row.Status == text2sql.IndexDeleting || row.BuildAttempts >= MaxAttempts {
+		return nil
+	}
+	var setting Settings
+	if err := db.WithContext(ctx).Where("data_source_id = ? AND workspace_id = ?", row.DataSourceID, row.WorkspaceID).Take(&setting).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	var ids []string
+	if err := json.Unmarshal(setting.TargetIDs, &ids); err != nil {
+		return err
+	}
+	if !slices.Contains(ids, row.ID) {
+		return nil
+	}
+	buildCtx, cancel := context.WithTimeout(ctx, tableTimeout)
+	defer cancel()
+	if err := db.WithContext(buildCtx).Table("text2sql_schema_indexes").Where("id = ?", row.ID).Update("build_attempts", gorm.Expr("build_attempts + 1")).Error; err != nil {
+		return err
+	}
+	buildErr := s.validateTask(buildCtx, setting, &row.SchemaIndex)
+	if buildErr == nil {
+		table, tableErr := s.sql.GetTable(buildCtx, row.PhysicalTableID)
+		if tableErr != nil {
+			s.log.Warn("sample column values skipped", zap.String("index_id", row.ID), zap.Error(tableErr))
+			row.ValueSamples = text2sql.EncodeValueSamples(text2sql.ColumnValues{})
+		} else {
+			sampleCtx, sampleCancel := context.WithTimeout(buildCtx, valueSampleTimeout)
+			row.ValueSamples = text2sql.EncodeValueSamples(text2sql.SampleColumnValues(sampleCtx, s.sql, table))
+			sampleCancel()
+		}
+		indexer := text2sql.NewIndexer(text2sql.NewIndexRepository(db), s.sql, embedder{s, setting}, s.vectors)
+		buildErr = indexer.Process(buildCtx, &row.SchemaIndex)
+	}
+	if buildErr == nil {
+		buildErr = s.validateTask(buildCtx, setting, &row.SchemaIndex)
+	}
+	if buildErr == nil {
+		return nil
+	}
+
+	s.log.Error("database schema index build failed", zap.String("index_id", row.ID), zap.Error(buildErr))
+	code := "build_failed"
+	if row.LastErrorCode != nil {
+		code = *row.LastErrorCode
+	}
+	if errors.Is(buildErr, context.DeadlineExceeded) {
+		code = "timeout"
+	}
+	writeCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer stop()
+	// A revoked permission or invalid model is terminal until manual retry;
+	// transient embedding/storage errors retain the bounded retry budget.
+	updates := map[string]any{"status": text2sql.IndexFailed, "last_error_code": code, "updated_at": time.Now()}
+	if errors.Is(buildErr, errTaskScope) {
+		updates["build_attempts"] = MaxAttempts
+		updates["last_error_code"] = "scope_changed"
+	}
+	if err := db.WithContext(writeCtx).Table("text2sql_schema_indexes").Where("id = ?", row.ID).Updates(updates).Error; err != nil {
+		return errors.Join(buildErr, err)
+	}
+	return buildErr
+}
+
+func (s *Service) taskDataSourceID(ctx context.Context, payload taskPayload) (string, error) {
+	var row struct {
+		DataSourceID string
+	}
+	err := s.db.WithContext(ctx).Table("text2sql_schema_indexes").Select("data_source_id").
+		Where("id = ? AND asset_table_id = ?", payload.IndexID, payload.AssetID).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return row.DataSourceID, nil
 }
 
 var errTaskScope = errors.New("schema index task scope changed")
