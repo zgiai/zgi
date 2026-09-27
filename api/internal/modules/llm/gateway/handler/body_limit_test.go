@@ -13,8 +13,8 @@ import (
 func TestGatewayBodyLimitRejectsAllPublicProtocolsBeforeNextMiddleware(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	paths := []struct{ path, marker string }{
-		{"/v1/chat/completions", `"code":"body_too_large"`},
-		{"/v1/responses", `"code":"body_too_large"`},
+		{"/v1/chat/completions", `"code":"llm.request.too_large"`},
+		{"/v1/responses", `"code":"llm.request.too_large"`},
 		{"/v1/messages", `"type":"error"`},
 		{"/v1beta/models/gemini-test:generateContent", `"status":"RESOURCE_EXHAUSTED"`},
 	}

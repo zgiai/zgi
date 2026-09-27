@@ -76,8 +76,13 @@ func TestLocalizedProtocolErrorWithoutProjectorFallsBackToSafeLegacyContract(t *
 
 	got := handler.localizedProtocolError(context, timeout)
 
-	if got.openAIStatus != 504 || got.openAICode != "upstream_timeout" || got.message != "Upstream provider timed out" {
+	// The fallback (no projector) still owns a stable catalog code and a
+	// user-facing message, and it must never echo the upstream cause.
+	if got.openAIStatus != 504 || got.openAICode != "upstream_timeout" || got.message != "The model service took too long to respond. Please try again or choose another model." {
 		t.Fatalf("fallback protocol contract = %#v", got)
+	}
+	if got.appCode != llmerrors.AppCodeProviderTimeout.String() || !got.retryable {
+		t.Fatalf("fallback must carry the catalog identity and retry hint: %#v", got)
 	}
 	if strings.Contains(got.message, "sk-secret") {
 		t.Fatalf("fallback message leaked cause: %q", got.message)

@@ -31,6 +31,7 @@ var (
 	AppCodeDeveloperApprovalNeeded   = apperror.MustCode("llm.developer_access.approval_required")
 	AppCodeDeveloperAccessConflict   = apperror.MustCode("llm.developer_access.conflict")
 	AppCodeDeveloperQuotaExhausted   = apperror.MustCode("llm.developer_access.quota_exhausted")
+	AppCodeRequestTooLarge           = apperror.MustCode("llm.request.too_large")
 )
 
 // CatalogDefinitions returns fresh LLM-owned definitions for composition into
@@ -133,6 +134,10 @@ func CatalogDefinitions() []appcatalog.Definition {
 			"Your developer API allowance is exhausted or reserved by in-flight requests. Check usage or contact your workspace administrator. Creating another key does not increase the shared allowance.",
 			"你的开发者 API 额度已用完或被进行中的请求占用。请检查用量或联系工作空间管理员；创建新密钥不会增加共享额度。",
 			"llm.personal_key.quota:invalid_api_key", "llm.developer_access.quota_exhausted:501002"),
+		llmDefinition(AppCodeRequestTooLarge, appcatalog.CategoryValidation, 413, false,
+			"The request body is too large. Reduce the payload size and try again.",
+			"请求体过大，请缩减请求内容后重试。",
+			"llm.gateway:body_too_large"),
 	}
 }
 

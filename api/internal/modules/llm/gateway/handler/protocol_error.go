@@ -60,7 +60,9 @@ func classifyProtocolError(err error) protocolError {
 	case errors.Is(err, gateway.ErrInsufficientQuota), errors.Is(err, gateway.ErrInsufficientBalance), errors.Is(err, llmerrors.DomainErrInsufficientBalance), errors.Is(err, adapter.ErrInsufficientBalance), errors.Is(err, adapter.ErrQuotaExhausted):
 		return quotaProtocolError()
 	case errors.Is(err, llmerrors.DomainErrRateLimitExceeded), errors.Is(err, adapter.ErrRateLimited):
-		return newProtocolError(http.StatusTooManyRequests, "rate_limit_error", "rate_limit_exceeded", "rate_limit_error", "Rate limit exceeded")
+		// The legacy OpenAI wire code stays rate_limit_exceeded; the stable
+		// catalog identity is llm.provider.rate_limited.
+		return newAppProtocolError(llmerrors.AppCodeProviderRateLimited, http.StatusTooManyRequests, "rate_limit_error", "rate_limit_exceeded", "rate_limit_error", "The model service is receiving too many requests right now. Please try again shortly.", true)
 	case errors.Is(err, gateway.ErrPricingNotConfigured):
 		return pricingNotConfiguredProtocolError()
 	case errors.Is(err, llmerrors.DomainErrPrivateChannelUpstreamUnavailable):
@@ -83,7 +85,9 @@ func classifyProtocolError(err error) protocolError {
 	case strings.Contains(err.Error(), "no provider available"):
 		return newAppProtocolError(llmerrors.AppCodeNoProviderAvailable, http.StatusServiceUnavailable, "server_error", llmerrors.AppCodeNoProviderAvailable.String(), "api_error", "No model provider is currently available. Try another model or contact an administrator.", true)
 	case isGatewayProviderTimeout(err):
-		return newProtocolError(http.StatusGatewayTimeout, "server_error", "upstream_timeout", "timeout_error", "Upstream provider timed out")
+		// Keep the legacy upstream_timeout wire code, add the catalog identity
+		// so the error catalog code and localized message reach the client.
+		return newAppProtocolError(llmerrors.AppCodeProviderTimeout, http.StatusGatewayTimeout, "server_error", "upstream_timeout", "timeout_error", "The model service took too long to respond. Please try again or choose another model.", true)
 	case errors.Is(err, gateway.ErrBillingPreDeductFailed):
 		return billingFailureProtocolError(llmerrors.AppCodeBillingPredeductFailed)
 	case errors.Is(err, gateway.ErrBillingSettleFailed):
@@ -91,7 +95,10 @@ func classifyProtocolError(err error) protocolError {
 	case errors.Is(err, gateway.ErrBalanceNotFound), errors.Is(err, gateway.ErrBillingFailed), errors.Is(err, gateway.ErrBillingLaneMismatch), errors.Is(err, gateway.ErrPricingCalculationFailed), errors.Is(err, llmerrors.DomainErrBillingFailed), errors.Is(err, llmerrors.DomainErrDatabaseError), errors.Is(err, llmerrors.DomainErrInternalError):
 		return newProtocolError(http.StatusInternalServerError, "server_error", "internal_error", "api_error", "Internal server error")
 	default:
-		return newProtocolError(http.StatusBadGateway, "server_error", "upstream_error", "api_error", "Upstream provider request failed")
+		// Every unclassified upstream failure must still carry a catalog
+		// identity, otherwise the client sees a bare upstream_error with no
+		// code to render and no retry guidance.
+		return newAppProtocolError(llmerrors.AppCodeInvocationFailed, http.StatusBadGateway, "server_error", "upstream_error", "api_error", "The model service could not complete the request. Please try again or choose another model.", true)
 	}
 }
 
@@ -173,16 +180,23 @@ func newAppProtocolError(code apperror.Code, status int, openAIType, openAICode,
 	return protocolErr
 }
 
+// invalidAPIKeyProtocolError keeps the legacy invalid_api_key wire shape and
+// adds the catalog identity so shell-layer 401s carry the same top-level code
+// as business errors.
 func invalidAPIKeyProtocolError(message string) protocolError {
-	return newProtocolError(http.StatusUnauthorized, "invalid_request_error", "invalid_api_key", "authentication_error", message)
+	return newAppProtocolError(llmerrors.AppCodeAPIKeyInvalid, http.StatusUnauthorized, "invalid_request_error", "invalid_api_key", "authentication_error", message, false)
 }
 
+// invalidRequestProtocolError keeps the legacy invalid_request wire shape and
+// adds the catalog identity for shell-layer 400s.
 func invalidRequestProtocolError(message string) protocolError {
-	return newProtocolError(http.StatusBadRequest, "invalid_request_error", "invalid_request", "invalid_request_error", message)
+	return newAppProtocolError(llmerrors.AppCodeRequestInvalid, http.StatusBadRequest, "invalid_request_error", "invalid_request", "invalid_request_error", message, false)
 }
 
 func quotaProtocolError() protocolError {
-	err := newProtocolError(http.StatusTooManyRequests, "insufficient_quota", "insufficient_quota", "billing_error", "API key has insufficient quota")
+	// The legacy OpenAI wire shape stays insufficient_quota; the catalog
+	// identity is llm.quota.exceeded.
+	err := newAppProtocolError(llmerrors.AppCodeQuotaExceeded, http.StatusTooManyRequests, "insufficient_quota", "insufficient_quota", "billing_error", "This API key has no remaining quota. Check your usage or contact an administrator.", false)
 	err.anthropicStatus = http.StatusPaymentRequired
 	return err
 }

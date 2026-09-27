@@ -69,9 +69,19 @@ func HydrateOfficialRoutes(
 					providerModels = append(providerModels, pair)
 				}
 			}
-			protocols := platformChannel.ModelProtocols[rawModel]
-			if len(protocols) == 0 {
+			// An explicitly published per-model list is authoritative even when it
+			// is empty: Console sends [] for a model no protocol can serve, and
+			// falling back to the channel-wide union there re-advertised
+			// Responses/Messages for image and embedding models.
+			protocols, declared := platformChannel.ModelProtocols[rawModel]
+			if !declared {
 				protocols = platformChannel.SupportedProtocols
+			} else if _, exists := modelProtocols[modelName]; !exists {
+				// Seed the key so an authoritative empty declaration survives into
+				// OfficialModelProtocols. The append loop below never creates it for
+				// zero protocols, and a missing key reads as "not declared", which
+				// let the channel-wide union leak back in.
+				modelProtocols[modelName] = []string{}
 			}
 			if modelProtocolSeen[modelName] == nil {
 				modelProtocolSeen[modelName] = map[string]struct{}{}

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 )
 
 const defaultGatewayRequestBodyLimit int64 = 10 << 20
@@ -52,7 +53,7 @@ func isBodyLimitedGatewayPath(path string) bool {
 }
 
 func writeGatewayBodyTooLarge(c *gin.Context) {
-	writeGatewayRequestError(c, http.StatusRequestEntityTooLarge, "body_too_large", "Request body too large")
+	writeGatewayRequestError(c, http.StatusRequestEntityTooLarge, llmerrors.AppCodeRequestTooLarge.String(), "Request body too large")
 }
 
 func writeGatewayMalformedBody(c *gin.Context) {

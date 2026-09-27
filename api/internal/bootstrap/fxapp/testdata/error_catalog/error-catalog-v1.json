@@ -755,6 +755,18 @@
       "en": "This music task can be deleted after generation completes or fails.",
       "zh": "音乐生成完成或失败后才能删除该任务。",
       "legacy": "existing"
+    },
+    {
+      "code": "llm.request.too_large",
+      "status": "new",
+      "category": "validation",
+      "http": 413,
+      "retryable": false,
+      "domain": "zgi.llm",
+      "grpc": "INVALID_ARGUMENT",
+      "en": "The request body is too large. Reduce the payload size and try again.",
+      "zh": "请求体过大，请缩减请求内容后重试。",
+      "legacy": "llm.gateway:body_too_large"
     }
   ]
 }

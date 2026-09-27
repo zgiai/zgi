@@ -861,7 +861,15 @@ func (s *llmGatewayServiceImpl) ListAvailableModels(
 	// Convert to adapter models
 	result := make([]adapter.Model, 0, len(models))
 	for _, m := range models {
-		if len(routableModels[normalizeRequestedModelName(m.Model)]) == 0 {
+		routes := routableModels[normalizeRequestedModelName(m.Model)]
+		if len(routes) == 0 {
+			continue
+		}
+		protocols := supportedProtocolsForRoutes(routes, &m)
+		if len(protocols) == 0 {
+			// A route exists but no protocol is actually serviceable, so listing
+			// the model would hand clients a model they cannot call. Console's
+			// catalog hides these too; keep the two directories consistent.
 			continue
 		}
 
@@ -877,7 +885,7 @@ func (s *llmGatewayServiceImpl) ListAvailableModels(
 			Capabilities:       publicModelCapabilities(&m),
 			Created:            m.CreatedAt.Unix(),
 			OwnedBy:            m.Provider,
-			SupportedProtocols: supportedProtocolsForRoutes(routableModels[normalizeRequestedModelName(m.Model)], &m),
+			SupportedProtocols: protocols,
 		})
 	}
 
@@ -923,12 +931,36 @@ func supportedProtocolsForRoutes(routes []*channelmodel.LLMRoute, model *llmmode
 			if supported, declared := routeProtocolDeclaration(route, modelName, protocolOpenAIChatCompletions); declared {
 				return supported
 			}
+			// The model's own capability decides. Without this, dedicated
+			// image/embedding/video models were advertised as chat models and
+			// the call then fell through to billing or the upstream instead of
+			// being rejected as unsupported.
+			if model != nil && !model.ChatCompletions && !model.Responses {
+				return false
+			}
 			return true
 		}},
 		{protocolOpenAIResponses, func(route *channelmodel.LLMRoute) bool {
-			return (isOfficialRoute(route) || model != nil && model.Responses) && routeSupportsOpenAIResponses(route, modelName)
+			// Require the model capability on every route, official included.
+			// The previous "official routes always support Responses" shortcut
+			// advertised Responses for models the gateway then refused to
+			// route, which the client saw as a 502.
+			if model == nil || !model.Responses {
+				return false
+			}
+			return routeSupportsOpenAIResponses(route, modelName)
 		}},
-		{protocolAnthropicMessages, func(route *channelmodel.LLMRoute) bool { return routeSupportsAnthropicMessages(route, modelName) }},
+		{protocolAnthropicMessages, func(route *channelmodel.LLMRoute) bool {
+			// Messages is a conversational protocol. For organization-owned
+			// routes the model capability is authoritative, so an image or
+			// embedding model cannot enter Messages just because the channel
+			// enabled the native endpoint. Official routes follow Console's
+			// per-model declaration instead, like the chat/responses guards above.
+			if !isOfficialRoute(route) && model != nil && !model.ChatCompletions && !model.Responses {
+				return false
+			}
+			return routeSupportsAnthropicMessages(route, modelName)
+		}},
 		{protocolGeminiGenerateContent, func(route *channelmodel.LLMRoute) bool { return routeSupportsGeminiGenerateContent(route, modelName) }},
 	}
 	result := make([]string, 0, len(checks))

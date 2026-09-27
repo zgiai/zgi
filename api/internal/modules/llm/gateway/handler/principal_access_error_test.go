@@ -64,11 +64,21 @@ func TestPrincipalQuotaMessagePreservesAuthenticationContract(t *testing.T) {
 					}
 					anthropic := path == "/v1/messages" || strings.HasPrefix(path, "/anthropic/")
 					if anthropic {
-						if len(body) != 3 || len(protocol) != 2 || body["type"] != "error" || body["request_id"] != "req-quota" || protocol["type"] != "authentication_error" {
+						// Legacy Anthropic shape is preserved; the catalog fields
+						// are additive on top of it.
+						if body["type"] != "error" || protocol["type"] != "authentication_error" {
 							t.Fatalf("Anthropic contract changed: %v", body)
 						}
-					} else if len(body) != 1 || len(protocol) != 4 || protocol["type"] != "invalid_request_error" || protocol["code"] != "invalid_api_key" || protocol["param"] != nil {
-						t.Fatalf("OpenAI contract changed: %v", body)
+					} else if protocol["type"] != "invalid_request_error" || protocol["code"] != "invalid_api_key" || protocol["param"] != nil {
+						t.Fatalf("OpenAI legacy contract changed: %v", body)
+					}
+					// Shell-layer errors now carry the same catalog identity as
+					// business errors, so a client can render them by code.
+					if body["code"] != llmerrors.AppCodeAPIKeyInvalid.String() || body["error_code"] != llmerrors.AppCodeAPIKeyInvalid.String() {
+						t.Fatalf("missing catalog code on shell error: %v", body)
+					}
+					if body["request_id"] != "req-quota" {
+						t.Fatalf("missing request id: %v", body)
 					}
 					message, _ := protocol["message"].(string)
 					if strings.Contains(response.Body.String(), "private-database-detail") {
