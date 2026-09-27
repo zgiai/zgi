@@ -42,3 +42,36 @@ func TestApplyOrganizationCreateCreatesOwnerWithPrePasswordHash(t *testing.T) {
 		t.Fatalf("organization create ACK leaked plaintext password: %s", result.After)
 	}
 }
+
+func TestApplyOrganizationDepartmentCreateCreatesDepartmentAndParent(t *testing.T) {
+	applier, _, db := newApplierFixture(t)
+	organizationID := testOrganizationID
+
+	parentPayload, _ := json.Marshal(map[string]string{
+		"organization_id": organizationID,
+		"name":            "产品部",
+	})
+	if _, err := applier.Apply(context.Background(), ptrEnvelope(envelope(CommandOrganizationDepartmentCreate, string(parentPayload)))); err != nil {
+		t.Fatalf("create parent department: %v", err)
+	}
+	var parent struct{ ID string }
+	if err := db.Table("departments").Select("id").Where("group_id = ? AND name = ?", organizationID, "产品部").Take(&parent).Error; err != nil {
+		t.Fatalf("read parent department: %v", err)
+	}
+
+	childPayload, _ := json.Marshal(map[string]string{
+		"organization_id": organizationID,
+		"name":            "后端组",
+		"parent_id":       parent.ID,
+	})
+	if _, err := applier.Apply(context.Background(), ptrEnvelope(envelope(CommandOrganizationDepartmentCreate, string(childPayload)))); err != nil {
+		t.Fatalf("create child department: %v", err)
+	}
+	var child struct{ ParentID *string }
+	if err := db.Table("departments").Select("parent_id").Where("group_id = ? AND name = ?", organizationID, "后端组").Take(&child).Error; err != nil {
+		t.Fatalf("read child department: %v", err)
+	}
+	if child.ParentID == nil || *child.ParentID != parent.ID {
+		t.Fatalf("child parent_id = %v, want %s", child.ParentID, parent.ID)
+	}
+}

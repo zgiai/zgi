@@ -166,6 +166,8 @@ func (a *Applier) applyWithin(ctx context.Context, tx *gorm.DB, command *Command
 		return a.applyOrganizationMemberCreate(ctx, tx, payload)
 	case CommandOrganizationCreate:
 		return a.applyOrganizationCreate(ctx, tx, payload)
+	case CommandOrganizationDepartmentCreate:
+		return a.applyOrganizationDepartmentCreate(ctx, tx, payload)
 	default:
 		return "", "", fmt.Errorf("%w: %s", ErrUnsupportedCommand, command.Type)
 	}

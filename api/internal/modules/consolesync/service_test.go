@@ -490,6 +490,27 @@ func TestReconcilerReportsAccountStatusDriftOnly(t *testing.T) {
 	}
 }
 
+func TestSnapshotControlledFieldsSupportsMultipleOrganizations(t *testing.T) {
+	_, store, db := newApplierFixture(t)
+	if err := db.Exec(
+		`INSERT INTO organizations (id, name, status, created_at) VALUES (?, ?, ?, ?)`,
+		"22222222-2222-4222-8222-222222222222", "Second", "inactive", time.Now().UTC(),
+	).Error; err != nil {
+		t.Fatalf("seed second organization: %v", err)
+	}
+
+	snapshot, err := store.SnapshotControlledFields(context.Background())
+	if err != nil {
+		t.Fatalf("snapshot with multiple organizations: %v", err)
+	}
+	if snapshot.OrganizationID != "" {
+		t.Fatalf("organization id = %q, want empty for an instance-level snapshot", snapshot.OrganizationID)
+	}
+	if snapshot.AccountStatus != "" {
+		t.Fatalf("account status = %q, want empty when tenant statuses differ", snapshot.AccountStatus)
+	}
+}
+
 func TestReconcilerReportsWorkspaceQuotaDrift(t *testing.T) {
 	_, store, db := newApplierFixture(t)
 	reconciler := NewReconciler(store)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -140,38 +141,58 @@ type ControlledSnapshot struct {
 	APIKeyStatuses   map[string]string
 }
 
-// SnapshotControlledFields reads the 2-3 controlled fields from the real tables.
+// SnapshotControlledFields reads the controlled fields from the real tables.
 //
-// The organization is resolved from the local `organizations` table because a pre
-// deployment maps 1:1 to one organization.
+// A Cloud Pre deployment can host multiple organizations. Heartbeat is an
+// instance-level signal, so it must not fail just because there is more than one
+// organization. For a multi-organization deployment we only report account status
+// when every organization has the same status; an empty value means "mixed" and
+// avoids pretending that one tenant represents the whole instance.
 func (s *Store) SnapshotControlledFields(ctx context.Context) (*ControlledSnapshot, error) {
 	snapshot := &ControlledSnapshot{
 		WorkspaceQuotas: map[string]int64{},
 		APIKeyStatuses:  map[string]string{},
 	}
 
-	organizationID, err := s.ResolveOrganizationID(ctx)
+	organizationIDs, err := s.ResolveOrganizationIDs(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if organizationID == "" {
+	if len(organizationIDs) == 0 {
 		return snapshot, nil
 	}
-	snapshot.OrganizationID = organizationID
+	if len(organizationIDs) == 1 {
+		snapshot.OrganizationID = organizationIDs[0]
+	}
 
-	var org struct {
+	var orgs []struct {
+		ID     string `gorm:"column:id"`
 		Name   string `gorm:"column:name"`
 		Status string `gorm:"column:status"`
 	}
 	if err := s.db.WithContext(ctx).
 		Table("organizations").
-		Select("name, status").
-		Where("id = ?", organizationID).
-		Scan(&org).Error; err != nil {
+		Select("id, name, status").
+		Where("id IN ?", organizationIDs).
+		Scan(&orgs).Error; err != nil {
 		return nil, fmt.Errorf("read organization state: %w", err)
 	}
-	snapshot.OrganizationName = org.Name
-	snapshot.AccountStatus = org.Status
+	if len(orgs) == 1 {
+		snapshot.OrganizationName = orgs[0].Name
+		snapshot.AccountStatus = orgs[0].Status
+	} else if len(orgs) > 1 {
+		status := strings.TrimSpace(orgs[0].Status)
+		allSame := status != ""
+		for _, org := range orgs[1:] {
+			if strings.TrimSpace(org.Status) != status {
+				allSame = false
+				break
+			}
+		}
+		if allSame {
+			snapshot.AccountStatus = status
+		}
+	}
 
 	var quotas []struct {
 		WorkspaceID string `gorm:"column:workspace_id"`
@@ -180,7 +201,7 @@ func (s *Store) SnapshotControlledFields(ctx context.Context) (*ControlledSnapsh
 	if err := s.db.WithContext(ctx).
 		Table("llm_workspace_quotas").
 		Select("workspace_id, quota_limit").
-		Where("organization_id = ?", organizationID).
+		Where("organization_id IN ?", organizationIDs).
 		Scan(&quotas).Error; err != nil {
 		return nil, fmt.Errorf("read workspace quotas: %w", err)
 	}
@@ -197,7 +218,7 @@ func (s *Store) SnapshotControlledFields(ctx context.Context) (*ControlledSnapsh
 	if err := s.db.WithContext(ctx).
 		Table("llm_organization_api_keys").
 		Select("id, status").
-		Where("organization_id = ?", organizationID).
+		Where("organization_id IN ?", organizationIDs).
 		Scan(&keys).Error; err != nil {
 		return nil, fmt.Errorf("read api key states: %w", err)
 	}
@@ -211,6 +232,26 @@ func (s *Store) SnapshotControlledFields(ctx context.Context) (*ControlledSnapsh
 // ResolveOrganizationID returns the organization this deployment serves.
 func (s *Store) ResolveOrganizationID(ctx context.Context) (string, error) {
 	return s.ResolveOrganizationIDWith(ctx, s.db)
+}
+
+// ResolveOrganizationIDs returns every organization hosted by this Pre instance.
+func (s *Store) ResolveOrganizationIDs(ctx context.Context) ([]string, error) {
+	return s.ResolveOrganizationIDsWith(ctx, s.db)
+}
+
+func (s *Store) ResolveOrganizationIDsWith(ctx context.Context, db *gorm.DB) ([]string, error) {
+	if db == nil {
+		db = s.db
+	}
+	var ids []string
+	if err := db.WithContext(ctx).
+		Table("organizations").
+		Select("id").
+		Order("created_at ASC").
+		Pluck("id", &ids).Error; err != nil {
+		return nil, fmt.Errorf("resolve organizations: %w", err)
+	}
+	return ids, nil
 }
 
 // ResolveOrganizationIDWith resolves the organization using an explicit handle so callers

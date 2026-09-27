@@ -244,12 +244,10 @@ func (s *Service) drainCommands(ctx context.Context, state *PreSyncState) error 
 				}
 				state.CursorSeq = command.Seq
 				appliedAny = true
-				// organization.member.create changed the organization's members (and
-				// possibly its departments), which the periodic inventory report would
-				// only publish on its next tick, up to a full interval later. Ask the
-				// reporter for one immediate report; the request never blocks this loop
-				// and a failing report is logged and swallowed by the reporter.
-				if command.Type == CommandOrganizationMemberCreate {
+				// Organization and member creation both change the inventory that the
+				// Console displays. The periodic report could otherwise leave a newly
+				// created owner invisible for up to the full report interval.
+				if command.Type == CommandOrganizationCreate || command.Type == CommandOrganizationMemberCreate || command.Type == CommandOrganizationDepartmentCreate {
 					s.requestOrganizationReport()
 				}
 			}

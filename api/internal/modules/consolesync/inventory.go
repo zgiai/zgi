@@ -49,6 +49,7 @@ type OrganizationDepartmentRecord struct {
 	ID          string
 	Name        string
 	MemberCount int64
+	ParentID    *string
 }
 
 // OrganizationRecord is one organization read from the local database, before it is shaped
@@ -68,9 +69,10 @@ type OrganizationRecord struct {
 
 // OrganizationDepartmentInventory is one department in the console report body.
 type OrganizationDepartmentInventory struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	MemberCount int64  `json:"member_count"`
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	MemberCount int64   `json:"member_count"`
+	ParentID    *string `json:"parent_id,omitempty"`
 }
 
 // OrganizationMemberInventory is one member in the console report body.
@@ -144,6 +146,7 @@ func buildDepartmentInventory(records []OrganizationDepartmentRecord) []Organiza
 			ID:          record.ID,
 			Name:        record.Name,
 			MemberCount: record.MemberCount,
+			ParentID:    record.ParentID,
 		})
 	}
 	return departments
@@ -324,13 +327,14 @@ func (s *Store) organizationMembers(ctx context.Context) (map[string][]Organizat
 // builds, and no postgres-only SQL is used so sqlite and mysql behave identically.
 func (s *Store) organizationDepartments(ctx context.Context) (map[string][]OrganizationDepartmentRecord, error) {
 	var rows []struct {
-		OrganizationID string `gorm:"column:group_id"`
-		ID             string `gorm:"column:id"`
-		Name           string `gorm:"column:name"`
+		OrganizationID string  `gorm:"column:group_id"`
+		ID             string  `gorm:"column:id"`
+		Name           string  `gorm:"column:name"`
+		ParentID       *string `gorm:"column:parent_id"`
 	}
 	if err := s.db.WithContext(ctx).
 		Table("departments").
-		Select("group_id, id, name").
+		Select("group_id, id, name, parent_id").
 		Where("status = ?", departmentStatusActive).
 		Order("group_id ASC, sort_order ASC, created_at ASC").
 		Scan(&rows).Error; err != nil {
@@ -351,6 +355,7 @@ func (s *Store) organizationDepartments(ctx context.Context) (map[string][]Organ
 			ID:          row.ID,
 			Name:        row.Name,
 			MemberCount: counts[row.ID],
+			ParentID:    row.ParentID,
 		})
 	}
 	return departments, nil
