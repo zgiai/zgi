@@ -19,6 +19,7 @@ export const RETRYABLE_APPLICATION_ERROR_CODES = new Set<string>([
   'llm.provider.timeout',
   'llm.provider.rate_limited',
   'llm.rate_limit.exceeded',
+  'llm.channel.private_unavailable',
   'video.task.failed',
   'video.upstream.timeout',
   'video.runtime.unavailable',
