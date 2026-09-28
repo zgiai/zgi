@@ -190,7 +190,7 @@ func updatePlanMetaTool() llmadapter.Tool {
 		Type: "function",
 		Function: llmadapter.Function{
 			Name:        MetaToolUpdatePlan,
-			Description: "Replace the user-visible outcome contract when its structure changes, or patch existing phases after the goal or route changes. Use phase_updates for server-owned phases before a projected external Action; the server preserves hidden attestations and maintains projected bindings automatically. Ordinary tool success is reconciled automatically and must not trigger this tool.",
+			Description: "Replace the user-visible outcome contract when its structure changes, or patch existing phases after the goal or route changes. Joint outcomes and plan preserve both contracts: bind each phase with outcome_id, or supply equally sized ordered arrays to pair them by position. Use phase_updates for server-owned phases before a projected external Action; the server preserves hidden attestations and maintains projected bindings automatically. Ordinary tool success is reconciled automatically and must not trigger this tool.",
 			Parameters:  parameters,
 		},
 	}
@@ -461,15 +461,16 @@ func planSnapshotSchema() map[string]interface{} {
 		"items": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"id":     map[string]interface{}{"type": "string"},
-				"step":   map[string]interface{}{"type": "string"},
-				"status": map[string]interface{}{"type": "string", "enum": []string{"pending", "in_progress", "completed", "skipped"}},
+				"id":         map[string]interface{}{"type": "string"},
+				"outcome_id": map[string]interface{}{"type": "string", "description": "Outcome served by this phase. In a joint snapshot, every outcome must have a phase. If all IDs are omitted, equally sized outcome and plan arrays pair by position."},
+				"step":       map[string]interface{}{"type": "string"},
+				"status":     map[string]interface{}{"type": "string", "enum": []string{"pending", "in_progress", "completed", "skipped"}},
 				"completion_mode": map[string]interface{}{
 					"type":        "string",
 					"enum":        []string{"tool", "final_answer", "non_tool"},
 					"description": "Classify a phase that intentionally has no expected_action as final-answer-only or non-tool work. Use tool when expected_action is present.",
 				},
-				"evidence_refs": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+				"evidence_refs": map[string]interface{}{"type": "array", "description": "Completed tool phases require references to successful runtime evidence, such as tool:skill-id/tool_name or the exact invocation_id from the evidence ledger. A note or a claimed status is not execution evidence.", "items": map[string]interface{}{"type": "string"}},
 				"note":          map[string]interface{}{"type": "string"},
 				"expected_action": map[string]interface{}{
 					"type":        "object",

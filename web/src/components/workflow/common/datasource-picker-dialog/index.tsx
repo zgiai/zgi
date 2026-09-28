@@ -41,6 +41,7 @@ interface PickerDialogProps {
   onConfirm: (next: { dataSource: DatabaseSourceRef; tables: TableRef[] }) => void;
   initialSchema?: string;
   readOnly?: boolean;
+  sourceOnly?: boolean;
 }
 
 interface TableListProps {
@@ -302,6 +303,7 @@ const PickerDialog: React.FC<PickerDialogProps> = ({
   onConfirm,
   initialSchema,
   readOnly = false,
+  sourceOnly = false,
 }) => {
   const t = useT('nodes');
   const [keyword, setKeyword] = useState('');
@@ -357,16 +359,16 @@ const PickerDialog: React.FC<PickerDialogProps> = ({
 
   const handleConfirm = useCallback(() => {
     if (!localSource || !canBrowseDatabaseMetadata) return;
-    onConfirm({ dataSource: localSource, tables: tableSelection });
+    onConfirm({ dataSource: localSource, tables: sourceOnly ? [] : tableSelection });
     onOpenChange(false);
-  }, [canBrowseDatabaseMetadata, localSource, onConfirm, onOpenChange, tableSelection]);
+  }, [canBrowseDatabaseMetadata, localSource, onConfirm, onOpenChange, sourceOnly, tableSelection]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-5xl w-full p-0 overflow-hidden" aria-description={undefined}>
         <DialogHeader className="pb-2">
           <DialogTitle className="text-xl font-bold tracking-tight">
-            {t('callDatabase.section.tables')}
+            {sourceOnly ? t('sqlGenerator.fields.dataSource') : t('callDatabase.section.tables')}
           </DialogTitle>
         </DialogHeader>
 
@@ -462,28 +464,30 @@ const PickerDialog: React.FC<PickerDialogProps> = ({
             </div>
 
             {/* Right Panel: Tables */}
-            <div className="flex-1 min-w-0 flex flex-col">
-              <div className="p-5 h-full flex flex-col bg-white">
-                {localSource ? (
-                  <TableList
-                    dbId={localSource.id}
-                    fallbackSchema={fallbackSchema}
-                    selected={tableSelection}
-                    onChange={setTableSelection}
-                    canBrowseDatabaseMetadata={canBrowseDatabaseMetadata}
-                  />
-                ) : (
-                  <div className="flex-1 flex flex-col items-center justify-center rounded-3xl border-2 border-dashed border-neutral-100 bg-neutral-50/30 p-12 text-center animate-in fade-in zoom-in-95 duration-300">
-                    <div className="h-16 w-16 bg-neutral-100 flex items-center justify-center rounded-2xl mb-4 group-hover:scale-110 transition-transform">
-                      <ChevronRight className="h-8 w-8 text-neutral-400 rotate-90" />
+            {!sourceOnly && (
+              <div className="flex-1 min-w-0 flex flex-col">
+                <div className="p-5 h-full flex flex-col bg-white">
+                  {localSource ? (
+                    <TableList
+                      dbId={localSource.id}
+                      fallbackSchema={fallbackSchema}
+                      selected={tableSelection}
+                      onChange={setTableSelection}
+                      canBrowseDatabaseMetadata={canBrowseDatabaseMetadata}
+                    />
+                  ) : (
+                    <div className="flex-1 flex flex-col items-center justify-center rounded-3xl border-2 border-dashed border-neutral-100 bg-neutral-50/30 p-12 text-center animate-in fade-in zoom-in-95 duration-300">
+                      <div className="h-16 w-16 bg-neutral-100 flex items-center justify-center rounded-2xl mb-4 group-hover:scale-110 transition-transform">
+                        <ChevronRight className="h-8 w-8 text-neutral-400 rotate-90" />
+                      </div>
+                      <div className="max-w-[200px] text-sm font-bold text-neutral-400 leading-relaxed">
+                        {t('callDatabase.empty.selectDataSourceFirst')}
+                      </div>
                     </div>
-                    <div className="max-w-[200px] text-sm font-bold text-neutral-400 leading-relaxed">
-                      {t('callDatabase.empty.selectDataSourceFirst')}
-                    </div>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </DialogBody>
 

@@ -19,9 +19,9 @@ import (
 
 const (
 	customSkillStorageRoot    = "storage/aichat/skills"
-	customSkillMaxPackageSize = 20 * 1024 * 1024
-	customSkillMaxFileSize    = 5 * 1024 * 1024
-	customSkillMaxFileCount   = 200
+	customSkillMaxPackageSize = 100 * 1024 * 1024
+	customSkillMaxFileSize    = 10 * 1024 * 1024
+	customSkillMaxFileCount   = 600
 )
 
 const customSkillSystemNameConflictMessage = "This skill name is reserved by a built-in system skill. Please rename your custom skill and try again."
@@ -142,6 +142,7 @@ func (s *service) confirmCustomSkillImport(ctx context.Context, scope Scope, imp
 	if err != nil {
 		return nil, err
 	}
+	doc.Metadata.RootPath = finalRoot
 	extracted := extractedSkillPackageFromPreview(preview)
 	record := customSkillRecordFromDocument(scope, doc, finalRoot, extracted)
 	if err := s.repos.CustomSkill.Upsert(ctx, record); err != nil {

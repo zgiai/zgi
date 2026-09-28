@@ -250,9 +250,17 @@ func operationPlanReconcileOutcomes(plan map[string]interface{}) bool {
 	if operationPlanIsTerminalFailure(plan) {
 		return false
 	}
+	operationPlanBindReferencedPhaseActions(plan)
 	outcomes := mapSliceFromAny(plan[operationPlanOutcomesKey])
 	if len(outcomes) == 0 {
 		return false
+	}
+	for _, outcome := range outcomes {
+		if stringFromAny(outcome["completion_source"]) == "runtime_phase_evidence" {
+			outcome["status"] = operationPlanStepStatusPending
+			delete(outcome, "completed_at")
+			delete(outcome, "effect_refs")
+		}
 	}
 	effects := mapSliceFromAny(plan[operationPlanEffectLedgerKey])
 	changed := false
@@ -265,6 +273,13 @@ func operationPlanReconcileOutcomes(plan map[string]interface{}) bool {
 			acceptance := mapFromOperationContext(outcome["acceptance"])
 			specs := mapSliceFromAny(acceptance["effects"])
 			if len(specs) == 0 {
+				if refs, satisfied := operationPlanOutcomePhaseEvidence(plan, outcome, false); satisfied {
+					outcome["status"] = operationPlanStepStatusCompleted
+					outcome["completed_at"] = time.Now().UTC().Format(time.RFC3339)
+					outcome["effect_refs"] = refs
+					outcome["completion_source"] = "runtime_phase_evidence"
+					passChanged, changed = true, true
+				}
 				continue
 			}
 			refs := make([]string, 0, len(specs))
@@ -303,6 +318,9 @@ func operationPlanReconcileOutcomes(plan map[string]interface{}) bool {
 }
 
 func operationPlanCompleteFinalAnswerOutcomes(plan map[string]interface{}) bool {
+	if operationPlanIsTerminalFailure(plan) {
+		return false
+	}
 	outcomes := mapSliceFromAny(plan[operationPlanOutcomesKey])
 	if len(outcomes) == 0 {
 		return false
@@ -311,14 +329,20 @@ func operationPlanCompleteFinalAnswerOutcomes(plan map[string]interface{}) bool 
 	for pass := 0; pass < len(outcomes); pass++ {
 		passChanged := false
 		for _, outcome := range outcomes {
-			if !operationPlanPhaseOpen(outcome) ||
-				!strings.EqualFold(strings.TrimSpace(stringFromAny(outcome["verification_mode"])), "final_answer") ||
-				!operationPlanOutcomeDependenciesSatisfied(outcome, outcomes) {
+			if !operationPlanPhaseOpen(outcome) || !operationPlanOutcomeDependenciesSatisfied(outcome, outcomes) {
+				continue
+			}
+			refs, bound := operationPlanOutcomePhaseEvidence(plan, outcome, true)
+			if !strings.EqualFold(strings.TrimSpace(stringFromAny(outcome["verification_mode"])), "final_answer") &&
+				!(bound && len(mapSliceFromAny(mapFromOperationContext(outcome["acceptance"])["effects"])) == 0) {
 				continue
 			}
 			outcome["status"] = operationPlanStepStatusCompleted
 			outcome["completed_at"] = time.Now().UTC().Format(time.RFC3339)
 			outcome["completion_source"] = "main_model_final"
+			if bound {
+				outcome["effect_refs"] = refs
+			}
 			passChanged = true
 			changed = true
 		}
@@ -334,6 +358,90 @@ func operationPlanCompleteFinalAnswerOutcomes(plan map[string]interface{}) bool 
 	if operationPlanOutcomesTerminal(outcomes) {
 		plan["status"] = operationPlanStatusCompleted
 		plan["pending_next_action"] = "none"
+	}
+	return true
+}
+
+// Resolve only explicit phase contracts against the server-owned invocation
+// ledger. Model status, notes, and evidence_refs are never completion proof.
+// Domain effect acceptance is evaluated separately and cannot be weakened here.
+func operationPlanOutcomePhaseEvidence(plan, outcome map[string]interface{}, finalAnswer bool) ([]string, bool) {
+	var refs []string
+	linked := false
+	for _, phase := range mapSliceFromAny(plan["phases"]) {
+		if stringFromAny(phase["outcome_id"]) != stringFromAny(outcome["id"]) {
+			continue
+		}
+		linked = true
+		expected := mapFromOperationContext(phase["expected_action"])
+		if len(expected) == 0 {
+			classification := copyStringAnyMap(phase)
+			delete(classification, "outcome_id")
+			if !finalAnswer || !operationPlanPhaseCanCompleteWithFinalAnswer(classification) {
+				return nil, false
+			}
+			refs = appendUniqueStrings(refs, "final_answer:main_model_final")
+			continue
+		}
+		// External actions require their stricter server-projected effect and
+		// ledger-epoch binding, never the generic tool-success fallback.
+		if strings.EqualFold(stringFromAny(expected["skill_id"]), skills.SkillConnectorRuntime) {
+			return nil, false
+		}
+		ledger := mapSliceFromAny(plan["evidence_ledger"])
+		ref := ""
+		attemptID := ""
+		attempts := mapSliceFromAny(plan[operationPlanActionAttemptsKey])
+		for index := len(attempts) - 1; index >= 0; index-- {
+			attempt := attempts[index]
+			if !operationPlanPhaseAttemptMatches(plan, phase, attempt) {
+				continue
+			}
+			if !operationPlanEvidenceEntrySucceeded(attempt) {
+				return nil, false
+			}
+			attemptID = stringFromAny(attempt["id"])
+			break
+		}
+		if attemptID == "" {
+			return nil, false
+		}
+		for index := len(ledger) - 1; index >= 0; index-- {
+			entry := ledger[index]
+			if !operationPlanEntryHasInvocation(entry, attemptID) {
+				continue
+			}
+			if stringFromAny(entry["kind"]) != "tool_call" {
+				continue
+			}
+			if operationPlanEvidenceEntrySucceeded(entry) {
+				ref = stringFromAny(entry["invocation_id"])
+			}
+			break
+		}
+		if ref == "" {
+			return nil, false
+		}
+		refs = appendUniqueStrings(refs, ref)
+	}
+	return refs, linked && len(refs) > 0
+}
+
+func operationPlanPhaseAttemptMatches(plan, phase, attempt map[string]interface{}) bool {
+	if stringFromAny(attempt["kind"]) != "tool_call" || !operationPlanExpectedActionMatches(mapFromOperationContext(phase["expected_action"]),
+		stringFromAny(attempt["skill_id"]), stringFromAny(attempt["tool_name"]), mapFromOperationContext(attempt["target"])) {
+		return false
+	}
+	if id := stringFromAny(attempt["plan_phase_id"]); id != "" {
+		return id == stringFromAny(phase["id"])
+	}
+	// A coarse tool identity must not satisfy two distinct phases using one
+	// call. Repeated identical bindings require explicit phase correlation.
+	for _, other := range mapSliceFromAny(plan["phases"]) {
+		if stringFromAny(other["id"]) != stringFromAny(phase["id"]) && operationPlanExpectedActionMatches(mapFromOperationContext(other["expected_action"]),
+			stringFromAny(attempt["skill_id"]), stringFromAny(attempt["tool_name"]), mapFromOperationContext(attempt["target"])) {
+			return false
+		}
 	}
 	return true
 }
@@ -542,35 +650,35 @@ func operationPlanOutcomeContractEqual(left, right map[string]interface{}) bool 
 }
 
 func operationPlanPhasesFromOutcomeSnapshot(current []map[string]interface{}, outcomes []map[string]interface{}) []map[string]interface{} {
-	byOutcomeID := map[string]map[string]interface{}{}
+	byOutcomeID := map[string][]map[string]interface{}{}
 	for _, phase := range current {
 		if id := strings.TrimSpace(stringFromAny(phase["outcome_id"])); id != "" {
-			byOutcomeID[id] = phase
+			byOutcomeID[id] = append(byOutcomeID[id], phase)
 		}
 	}
 	phases := make([]map[string]interface{}, 0, len(outcomes))
 	for index, outcome := range outcomes {
 		outcomeID := strings.TrimSpace(stringFromAny(outcome["id"]))
-		phaseID := fmt.Sprintf("phase-%d", index+1)
-		if previous := byOutcomeID[outcomeID]; len(previous) > 0 {
-			if value := strings.TrimSpace(stringFromAny(previous["id"])); value != "" {
-				phaseID = value
+		existing := byOutcomeID[outcomeID]
+		if len(existing) == 0 {
+			existing = []map[string]interface{}{{
+				"id":                        fmt.Sprintf("phase-%d", index+1),
+				"outcome_id":                outcomeID,
+				"step":                      stringFromAny(outcome["goal"]),
+				"title":                     stringFromAny(outcome["goal"]),
+				"completion_source":         "runtime_effect_reconciliation",
+				"required":                  operationPlanOutcomeRequired(outcome),
+				operationPlanPhaseSourceKey: operationPlanPhaseSourceServerOutcome,
+			}}
+		}
+		for _, previous := range existing {
+			phase := copyStringAnyMap(previous)
+			phase["status"] = outcome["status"]
+			if refs := stringSliceFromAny(outcome["effect_refs"]); len(refs) > 0 {
+				phase["effect_refs"] = refs
 			}
+			phases = append(phases, phase)
 		}
-		phase := map[string]interface{}{
-			"id":                        phaseID,
-			"outcome_id":                outcomeID,
-			"step":                      stringFromAny(outcome["goal"]),
-			"title":                     stringFromAny(outcome["goal"]),
-			"status":                    stringFromAny(outcome["status"]),
-			"completion_source":         "runtime_effect_reconciliation",
-			"required":                  operationPlanOutcomeRequired(outcome),
-			operationPlanPhaseSourceKey: operationPlanPhaseSourceServerOutcome,
-		}
-		if refs := stringSliceFromAny(outcome["effect_refs"]); len(refs) > 0 {
-			phase["effect_refs"] = refs
-		}
-		phases = append(phases, phase)
 	}
 	operationPlanAdvanceNextPendingPhase(phases)
 	return phases

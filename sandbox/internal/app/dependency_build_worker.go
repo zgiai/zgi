@@ -198,16 +198,7 @@ func (s *Server) dependencyBuildArtifactAvailable(artifactChecksum string) (bool
 	if artifactChecksum == "" || strings.TrimSpace(s.config.DependencyRootFSDir) == "" {
 		return true, nil
 	}
-	artifacts, err := runner.ListDependencyProfileArtifacts(s.config.DependencyRootFSDir)
-	if err != nil {
-		return false, err
-	}
-	for _, artifact := range artifacts {
-		if artifact.Checksum == artifactChecksum {
-			return true, nil
-		}
-	}
-	return false, nil
+	return runner.DependencyProfileArtifactPresent(s.config.DependencyRootFSDir, artifactChecksum)
 }
 
 func dependencyBuildWorkerInputFromRecord(record *storage.DependencyBuildRequestRecord, root string) (dependencyBuildWorkerInput, error) {

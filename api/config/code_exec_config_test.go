@@ -26,6 +26,10 @@ func TestLoadCodeExecConfigLoadsAdapterTimeouts(t *testing.T) {
 			return "true", true
 		case envCodeExecutionSystemOfficeProfile:
 			return "system-office", true
+		case envCodeExecutionSystemDataProfile:
+			return "system-data", true
+		case envCodeExecutionSkillDependencyScanEnabled:
+			return "false", true
 		default:
 			return "", false
 		}
@@ -44,7 +48,9 @@ func TestLoadCodeExecConfigLoadsAdapterTimeouts(t *testing.T) {
 		cfg.CodeExec.ArtifactTimeoutSeconds != 6 ||
 		cfg.CodeExec.CleanupTimeoutSeconds != 7 ||
 		!cfg.CodeExec.EnableNetwork ||
-		cfg.CodeExec.SystemOfficeProfile != "system-office" {
+		cfg.CodeExec.SystemOfficeProfile != "system-office" ||
+		cfg.CodeExec.SystemDataProfile != "system-data" ||
+		!cfg.CodeExec.SkillDependencyScanDisabled {
 		t.Fatalf("unexpected code execution timeouts: %+v", cfg.CodeExec)
 	}
 }
@@ -63,7 +69,23 @@ func TestLoadCodeExecConfigUsesAdapterTimeoutDefaults(t *testing.T) {
 		cfg.CodeExec.ArtifactTimeoutSeconds != 10 ||
 		cfg.CodeExec.CleanupTimeoutSeconds != 5 ||
 		cfg.CodeExec.EnableNetwork ||
-		cfg.CodeExec.SystemOfficeProfile != "skill-office" {
+		cfg.CodeExec.SystemOfficeProfile != "skill-office" ||
+		cfg.CodeExec.SystemDataProfile != "scientific-data" ||
+		cfg.CodeExec.SkillDependencyScanDisabled {
 		t.Fatalf("unexpected default code execution timeouts: %+v", cfg.CodeExec)
+	}
+}
+
+func TestLoadCodeExecConfigRejectsInvalidSkillDependencyScanFlag(t *testing.T) {
+	cfg := &Config{}
+	source := &envSource{lookupEnv: func(key string) (string, bool) {
+		if key == envCodeExecutionSkillDependencyScanEnabled {
+			return "sometimes", true
+		}
+		return "", false
+	}}
+
+	if err := loadCodeExecConfig(cfg, source); err == nil {
+		t.Fatal("loadCodeExecConfig() error = nil, want invalid boolean error")
 	}
 }

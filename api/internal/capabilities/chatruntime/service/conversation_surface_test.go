@@ -124,6 +124,37 @@ func TestCreateConversationForCallerStoresDefaultSurfaceMetadata(t *testing.T) {
 	}
 }
 
+func TestCreateConversationForCallerStoresExternalUserScope(t *testing.T) {
+	workspaceID := uuid.New()
+	externalUserID := uuid.New()
+	agentID := uuid.New()
+	conversationRepo := &capturingConversationRepo{}
+	svc := &service{repos: &repository.Repositories{
+		Access:       surfaceAccessRepo{},
+		Conversation: conversationRepo,
+	}}
+
+	conversation, err := svc.CreateConversationForCaller(context.Background(), Scope{
+		OrganizationID: uuid.New(),
+		AccountID:      uuid.New(),
+		WorkspaceID:    &workspaceID,
+		ExternalUserID: &externalUserID,
+	}, Caller{
+		Type:   runtimemodel.ConversationCallerAgent,
+		ID:     &agentID,
+		Source: runtimemodel.ConversationSourceExternalAPI,
+	}, "external conversation")
+	if err != nil {
+		t.Fatalf("CreateConversationForCaller() error = %v", err)
+	}
+	if conversation.ExternalUserID == nil || *conversation.ExternalUserID != externalUserID {
+		t.Fatalf("conversation external user = %v, want %s", conversation.ExternalUserID, externalUserID)
+	}
+	if conversationRepo.created == nil || conversationRepo.created.ExternalUserID == nil || *conversationRepo.created.ExternalUserID != externalUserID {
+		t.Fatalf("stored external user = %v, want %s", conversationRepo.created, externalUserID)
+	}
+}
+
 func uuidPointer(value uuid.UUID) *uuid.UUID {
 	return &value
 }
@@ -321,7 +352,7 @@ func (r *capturingConversationRepo) GetScoped(context.Context, uuid.UUID, uuid.U
 	return r.conversation, nil
 }
 
-func (r *capturingConversationRepo) GetByCallerScoped(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, string, *uuid.UUID, string) (*runtimemodel.Conversation, error) {
+func (r *capturingConversationRepo) GetByCallerScoped(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, string, *uuid.UUID, *uuid.UUID, string) (*runtimemodel.Conversation, error) {
 	return r.conversation, nil
 }
 

@@ -1419,3 +1419,19 @@ func TestSummarizeToolResultCompactsVisibleFilesPayload(t *testing.T) {
 		t.Fatalf("content_preview should not be included in compact trace file: %#v", files[0])
 	}
 }
+
+func TestScriptFailurePayloadRetainsOnlyExecutionIdentity(t *testing.T) {
+	trace := skills.SkillTrace{ToolName: skills.SkillScriptToolRun, Status: "error", Result: map[string]interface{}{"exit_code": 2, "package_sha256": "verified-package", "dependency_artifact_checksum": "verified-profile", "stdout": "private output", "provider_token": "secret"}}
+	payload := SkillCallErrorPayload(PayloadIDs{}, trace, "error", true)
+	result, ok := payload["result"].(map[string]interface{})
+	if !ok || result["exit_code"] != 2 || result["package_sha256"] != "verified-package" {
+		t.Fatalf("missing execution identity: %#v", result)
+	}
+	if len(result) != 3 {
+		t.Fatalf("unexpected failure result fields: %#v", result)
+	}
+	trace.ToolName = "provider_action"
+	if _, exists := SkillCallErrorPayload(PayloadIDs{}, trace, "error", true)["result"]; exists {
+		t.Fatal("provider failure exposed arbitrary result")
+	}
+}

@@ -455,33 +455,6 @@ func (s *fileService) UploadFileWithOptions(ctx context.Context, filename string
 	return s.convertToInterfaceUploadFile(localUploadFile), nil
 }
 
-func (s *fileService) CleanupExpiredTemporaryFiles(ctx context.Context, ttl time.Duration) (int64, error) {
-	cutoff := time.Now().Add(-ttl)
-	var files []*model.UploadFile
-	if err := s.db.WithContext(ctx).
-		Where("is_temporary = ? AND created_at <= ?", true, cutoff).
-		Find(&files).Error; err != nil {
-		return 0, err
-	}
-
-	var deleted int64
-	for _, f := range files {
-		if f.Key != "" {
-			if err := s.storage.Delete(f.Key); err != nil {
-				logger.Warn("Failed to delete temporary file from storage", "key", f.Key, "error", err.Error())
-			}
-		}
-
-		if err := s.fileRepo.Delete(ctx, f.ID); err != nil {
-			logger.Warn("Failed to delete temporary file record", "id", f.ID, "error", err.Error())
-			continue
-		}
-		deleted++
-	}
-
-	return deleted, nil
-}
-
 // AddFileToFolder adds a file to a folder
 func (s *fileService) AddFileToFolder(ctx context.Context, fileID, folderID, accountID string) error {
 	// This would typically call the file folder service to add the file to a folder

@@ -111,6 +111,34 @@ func TestResolveDependencyProfileActivationUsesReusableArtifactChecksum(t *testi
 	}
 }
 
+func TestPinnedDependencyProfileActivationCacheReusesVerifiedArtifact(t *testing.T) {
+	defaultRoot := testRootFSDir(t, "default")
+	profileRoot := testRootFSDir(t, "profile-root")
+	profileDir := filepath.Join(profileRoot, "opt", "zgi", "profiles", "skill-office")
+	writeBuiltProfileArtifact(t, profileDir, "skill-office", map[string]string{"data.txt": "verified"})
+	manifest, err := validateBuiltProfileArtifact(profileDir, "skill-office")
+	if err != nil {
+		t.Fatalf("validate artifact: %v", err)
+	}
+	dependencyRoot := t.TempDir()
+	if err := os.Rename(profileRoot, filepath.Join(dependencyRoot, "skill-office")); err != nil {
+		t.Fatalf("move profile rootfs: %v", err)
+	}
+
+	cache := newDependencyProfileActivationCache()
+	first, err := cache.resolve(defaultRoot, dependencyRoot, "skill-office", manifest.Build.Checksum)
+	if err != nil {
+		t.Fatalf("first cached resolve: %v", err)
+	}
+	second, err := cache.resolve(defaultRoot, dependencyRoot, "skill-office", manifest.Build.Checksum)
+	if err != nil {
+		t.Fatalf("second cached resolve: %v", err)
+	}
+	if first.ProfileChecksum != second.ProfileChecksum || second.ProfileChecksum != manifest.Build.Checksum {
+		t.Fatalf("cached activation mismatch: first=%+v second=%+v", first, second)
+	}
+}
+
 func TestResolveDependencyProfileActivationFallsBackToProfileRootForArtifactChecksum(t *testing.T) {
 	defaultRoot := testRootFSDir(t, "default")
 	profileRoot := testRootFSDir(t, "profile-root")
@@ -278,6 +306,48 @@ func TestListDependencyProfileArtifactsReadsRootFSArtifacts(t *testing.T) {
 	}
 	if !artifact.PublicReusable || !artifact.Pinned {
 		t.Fatalf("expected reusable pinned artifact metadata, got %+v", artifact)
+	}
+}
+
+func TestDependencyProfileArtifactDoesNotInferTrustFromAutoPrefix(t *testing.T) {
+	artifact := dependencyProfileArtifactFromManifest(builtProfileManifest{
+		Name:           "auto-untrusted",
+		PublicReusable: false,
+		Pinned:         false,
+	})
+	if artifact.PublicReusable || artifact.Pinned {
+		t.Fatalf("auto-prefixed profile inherited trust without manifest authorization: %+v", artifact)
+	}
+}
+
+func TestDependencyProfileArtifactPresenceDoesNotReplaceActivationValidation(t *testing.T) {
+	root := t.TempDir()
+	profileDir := filepath.Join(root, "skill-office", "opt", "zgi", "profiles", "skill-office")
+	writeBuiltProfileArtifact(t, profileDir, "skill-office", map[string]string{"data.txt": "verified"})
+	manifest, err := validateBuiltProfileArtifact(profileDir, "skill-office")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A broken unrelated environment must not block reuse of this build.
+	if err := os.MkdirAll(filepath.Join(root, "other-profile"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	present, err := DependencyProfileArtifactPresent(root, manifest.Build.Checksum)
+	if err != nil || !present {
+		t.Fatalf("expected installed artifact: present=%v err=%v", present, err)
+	}
+	if err := os.WriteFile(filepath.Join(profileDir, "data.txt"), []byte("tampered"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := validateBuiltProfileArtifact(profileDir, "skill-office"); err == nil {
+		t.Fatal("activation must still reject a tampered artifact")
+	}
+	if err := os.Remove(filepath.Join(profileDir, "manifest.json")); err != nil {
+		t.Fatal(err)
+	}
+	present, err = DependencyProfileArtifactPresent(root, manifest.Build.Checksum)
+	if err != nil || present {
+		t.Fatalf("missing artifact must be rebuilt: present=%v err=%v", present, err)
 	}
 }
 

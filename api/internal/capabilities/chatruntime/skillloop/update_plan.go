@@ -20,6 +20,9 @@ func (r *Runner) handleUpdatePlanCall(callID string, args map[string]interface{}
 	if err == nil && args["outcomes"] != nil {
 		outcomes, err = normalizeOutcomeSnapshot(args["outcomes"])
 	}
+	if err == nil && len(phases) > 0 && len(outcomes) > 0 {
+		err = bindJointPlanOutcomes(phases, outcomes)
+	}
 	if err == nil && args["phase_updates"] != nil {
 		phaseUpdates, err = normalizePlanPhaseUpdates(args["phase_updates"])
 	}
@@ -43,6 +46,17 @@ func (r *Runner) handleUpdatePlanCall(callID string, args map[string]interface{}
 			for _, phase := range evidenceMapsFromAny(evidenceMapFromAny(evidence["operation_plan"])["phases"]) {
 				if len(connectorPhaseOperation(phase)) > 0 {
 					err = fmt.Errorf("%w: Connector plans require explicit operation phases", ErrInvalidInput)
+					break
+				}
+			}
+		}
+	}
+	if err == nil {
+		for _, phase := range phases {
+			if strings.EqualFold(stringFromInterface(phase["completion_mode"]), "tool") &&
+				strings.EqualFold(stringFromInterface(phase["status"]), "completed") {
+				if warnings := planEvidenceAuditWarnings([]map[string]interface{}{phase}, evidence); len(warnings) > 0 {
+					err = fmt.Errorf("%w: completed tool phase %q requires successful runtime evidence_refs: %s", ErrInvalidInput, phase["id"], strings.Join(warnings, "; "))
 					break
 				}
 			}
@@ -79,6 +93,9 @@ func (r *Runner) handleUpdatePlanCall(callID string, args map[string]interface{}
 		Result: result,
 	}
 	payload := map[string]interface{}{"status": "recorded"}
+	if warnings, exists := result["evidence_warnings"]; exists {
+		payload["evidence_warnings"] = warnings
+	}
 	if len(phases) > 0 {
 		payload["plan"] = phases
 	}
@@ -86,6 +103,35 @@ func (r *Runner) handleUpdatePlanCall(callID string, args map[string]interface{}
 		payload["outcomes"] = outcomes
 	}
 	return successfulSkillStep(trace, skills.ToolResultMessage(callID, payload), false, false)
+}
+
+func bindJointPlanOutcomes(phases, outcomes []map[string]interface{}) error {
+	ids, covered := map[string]bool{}, map[string]bool{}
+	for _, outcome := range outcomes {
+		ids[stringFromInterface(outcome["id"])] = true
+	}
+	explicit := false
+	for _, phase := range phases {
+		explicit = explicit || stringFromInterface(phase["outcome_id"]) != ""
+	}
+	if !explicit && len(phases) != len(outcomes) {
+		return fmt.Errorf("%w: joint plan/outcomes need explicit outcome_id on every phase or equally sized ordered arrays", ErrInvalidInput)
+	}
+	for index, phase := range phases {
+		id := stringFromInterface(phase["outcome_id"])
+		if !explicit {
+			id = stringFromInterface(outcomes[index]["id"])
+			phase["outcome_id"] = id
+		}
+		if !ids[id] {
+			return fmt.Errorf("%w: phase %q requires a valid outcome_id from this snapshot", ErrInvalidInput, phase["id"])
+		}
+		covered[id] = true
+	}
+	if len(covered) != len(ids) {
+		return fmt.Errorf("%w: joint plan must cover every supplied outcome", ErrInvalidInput)
+	}
+	return nil
 }
 
 func normalizePlanPhaseUpdates(value interface{}) ([]map[string]interface{}, error) {
@@ -383,6 +429,9 @@ func normalizePlanSnapshot(value interface{}) ([]map[string]interface{}, error) 
 		}
 		if expectedAction := normalizePlanExpectedAction(item["expected_action"]); len(expectedAction) > 0 {
 			phase["expected_action"] = expectedAction
+		}
+		if outcomeID := strings.TrimSpace(stringFromInterface(item["outcome_id"])); outcomeID != "" {
+			phase["outcome_id"] = outcomeID
 		}
 		if len(refs) > 0 {
 			phase["evidence_refs"] = refs

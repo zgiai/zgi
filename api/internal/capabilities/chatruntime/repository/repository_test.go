@@ -53,6 +53,50 @@ func TestFinishContinuationMessageKeepsSameLeafWithoutIncrement(t *testing.T) {
 	}
 }
 
+func TestGetByCallerScopedFiltersExternalUser(t *testing.T) {
+	db, mock := newConversationRepositoryMockDB(t)
+	repo := NewConversationRepository(db)
+	conversationID := uuid.New()
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	agentID := uuid.New()
+	externalUserID := uuid.New()
+
+	mock.ExpectQuery(`(?s).*FROM "chat_runtime_conversations".*id = .*organization_id = .*account_id = .*caller_type.*caller_id.*conversation_type.*external_user_id.*LIMIT.*`).
+		WithArgs(
+			conversationID,
+			organizationID,
+			accountID,
+			runtimemodel.ConversationCallerAgent,
+			agentID,
+			runtimemodel.ConversationTypeChat,
+			externalUserID,
+			1,
+		).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "organization_id", "account_id", "caller_type", "caller_id", "external_user_id", "conversation_type"}).
+			AddRow(conversationID, organizationID, accountID, runtimemodel.ConversationCallerAgent, agentID, externalUserID, runtimemodel.ConversationTypeChat))
+
+	conversation, err := repo.GetByCallerScoped(
+		context.Background(),
+		conversationID,
+		organizationID,
+		accountID,
+		runtimemodel.ConversationCallerAgent,
+		&agentID,
+		&externalUserID,
+		runtimemodel.ConversationTypeChat,
+	)
+	if err != nil {
+		t.Fatalf("GetByCallerScoped: %v", err)
+	}
+	if conversation.ExternalUserID == nil || *conversation.ExternalUserID != externalUserID {
+		t.Fatalf("external user = %v, want %s", conversation.ExternalUserID, externalUserID)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
 func TestSearchByCallerScopedMapsResults(t *testing.T) {
 	db, mock := newConversationRepositoryMockDB(t)
 	repo := NewConversationRepository(db)
@@ -60,6 +104,7 @@ func TestSearchByCallerScopedMapsResults(t *testing.T) {
 	accountID := uuid.New()
 	conversationID := uuid.New()
 	messageID := uuid.New()
+	externalUserID := uuid.New()
 	updatedAt := time.Now().UTC()
 
 	rows := sqlmock.NewRows([]string{
@@ -79,25 +124,27 @@ func TestSearchByCallerScopedMapsResults(t *testing.T) {
 		updatedAt,
 		1,
 	)
-	mock.ExpectQuery(`(?s).*chat_runtime_conversations AS c.*chat_runtime_messages AS m.*ORDER BY rank ASC, updated_at DESC.*LIMIT.*`).
+	mock.ExpectQuery(`(?s).*chat_runtime_conversations AS c.*external_user_id.*chat_runtime_messages AS m.*external_user_id.*ORDER BY rank ASC, updated_at DESC.*LIMIT.*`).
 		WithArgs(
 			organizationID,
 			accountID,
 			runtimemodel.ConversationCallerAIChat,
 			runtimemodel.ConversationTypeChat,
+			externalUserID,
 			"%release%",
 			"%release%",
 			organizationID,
 			accountID,
 			runtimemodel.ConversationCallerAIChat,
 			runtimemodel.ConversationTypeChat,
+			externalUserID,
 			"%release%",
 			"%release%",
 			20,
 		).
 		WillReturnRows(rows)
 
-	results, err := repo.SearchByCallerScoped(context.Background(), organizationID, accountID, runtimemodel.ConversationCallerAIChat, nil, runtimemodel.ConversationTypeChat, "", nil, "", "release", 20)
+	results, err := repo.SearchByCallerScoped(context.Background(), organizationID, accountID, runtimemodel.ConversationCallerAIChat, nil, &externalUserID, runtimemodel.ConversationTypeChat, "", nil, "", "release", 20)
 	if err != nil {
 		t.Fatalf("SearchByCallerScoped: %v", err)
 	}
@@ -155,7 +202,7 @@ func TestSearchByCallerScopedAppliesSurfaceFilter(t *testing.T) {
 		).
 		WillReturnRows(rows)
 
-	results, err := repo.SearchByCallerScoped(context.Background(), organizationID, accountID, runtimemodel.ConversationCallerAIChat, nil, runtimemodel.ConversationTypeChat, "", nil, "contextual_sidebar", "asset", 10)
+	results, err := repo.SearchByCallerScoped(context.Background(), organizationID, accountID, runtimemodel.ConversationCallerAIChat, nil, nil, runtimemodel.ConversationTypeChat, "", nil, "contextual_sidebar", "asset", 10)
 	if err != nil {
 		t.Fatalf("SearchByCallerScoped: %v", err)
 	}
@@ -254,8 +301,9 @@ func TestListByCallerSourceScopedFiltersWebAppIdentity(t *testing.T) {
 	accountID := uuid.New()
 	agentID := uuid.New()
 	webAppID := uuid.New()
+	externalUserID := uuid.New()
 
-	mock.ExpectQuery(`(?s).*FROM "chat_runtime_conversations".*caller_type.*caller_id.*source.*source_web_app_id.*`).
+	mock.ExpectQuery(`(?s).*FROM "chat_runtime_conversations".*caller_type.*caller_id.*source.*source_web_app_id.*external_user_id.*`).
 		WithArgs(
 			organizationID,
 			accountID,
@@ -264,9 +312,10 @@ func TestListByCallerSourceScopedFiltersWebAppIdentity(t *testing.T) {
 			runtimemodel.ConversationTypeChat,
 			runtimemodel.ConversationSourceWebApp,
 			webAppID,
+			externalUserID,
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-	mock.ExpectQuery(`(?s).*FROM "chat_runtime_conversations".*caller_type.*caller_id.*source.*source_web_app_id.*ORDER BY updated_at DESC.*LIMIT.*`).
+	mock.ExpectQuery(`(?s).*FROM "chat_runtime_conversations".*caller_type.*caller_id.*source.*source_web_app_id.*external_user_id.*ORDER BY updated_at DESC.*LIMIT.*`).
 		WithArgs(
 			organizationID,
 			accountID,
@@ -275,6 +324,7 @@ func TestListByCallerSourceScopedFiltersWebAppIdentity(t *testing.T) {
 			runtimemodel.ConversationTypeChat,
 			runtimemodel.ConversationSourceWebApp,
 			webAppID,
+			externalUserID,
 			20,
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
@@ -285,6 +335,7 @@ func TestListByCallerSourceScopedFiltersWebAppIdentity(t *testing.T) {
 		accountID,
 		runtimemodel.ConversationCallerAgent,
 		&agentID,
+		&externalUserID,
 		runtimemodel.ConversationTypeChat,
 		runtimemodel.ConversationSourceWebApp,
 		&webAppID,

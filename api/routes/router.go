@@ -1,6 +1,8 @@
 package routes
 
 import (
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
@@ -24,7 +26,14 @@ func RegisterRoutes(r *gin.Engine, serviceContainer *container.ServiceContainer,
 	}
 
 	// Swagger documentation
-	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	swaggerHandler := ginSwagger.WrapHandler(swaggerFiles.Handler, ginSwagger.URL("/api/openapi.yaml"))
+	r.GET("/swagger/*any", func(c *gin.Context) {
+		if c.Param("any") == "/doc.json" {
+			c.Redirect(http.StatusTemporaryRedirect, "/api/openapi.yaml")
+			return
+		}
+		swaggerHandler(c)
+	})
 
 	// Root endpoint - Welcome message
 	r.GET("/", func(c *gin.Context) {

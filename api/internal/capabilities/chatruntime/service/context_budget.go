@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/zgiai/zgi/api/config"
+	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/contextmgr"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/llm/tokenestimate"
@@ -14,9 +15,7 @@ import (
 )
 
 const (
-	contextBudgetSafetyNumerator   = 9
-	contextBudgetSafetyDenominator = 10
-	maxContextCandidateMessages    = 100
+	maxContextCandidateMessages = 100
 
 	contextControlStrategyTokenBudget = "token_budget"
 
@@ -40,17 +39,14 @@ type contextBudgetResult struct {
 }
 
 type budgetComputation struct {
-	ConfiguredAgentWindowK int
-	AgentContextWindow     int
-	AgentWindowClamped     bool
-	SafeLimit              int
-	PromptBudget           int
-	ReservedOutputTokens   int
-	BasePromptTokens       int
-	OriginalMaxTokens      *int
-	EffectiveMaxTokens     *int
-	MaxTokensClamped       bool
-	Tokenizer              string
+	SafeLimit            int
+	PromptBudget         int
+	ReservedOutputTokens int
+	BasePromptTokens     int
+	OriginalMaxTokens    *int
+	EffectiveMaxTokens   *int
+	MaxTokensClamped     bool
+	Tokenizer            string
 }
 
 func (s *service) buildTokenBudgetMessages(
@@ -60,11 +56,14 @@ func (s *service) buildTokenBudgetMessages(
 	systemPrompt string,
 	parentMessages []*runtimemodel.Message,
 ) (*contextBudgetResult, error) {
+	if spec.ContextWindow <= 0 {
+		spec.ContextWindow = contextmgr.DefaultModelContextWindowTokens
+	}
 	if s.tokenEstimator == nil {
 		s.tokenEstimator = newTokenEstimator()
 	}
 	applyRecentAssetCandidatesFromBranch(parts, parentMessages)
-	applyRecentGeneratedArtifactsFromBranch(parts, parentMessages)
+	applyRecentGeneratedArtifactsFromBranch(ctx, parts, parentMessages)
 	applyRecentOperationPlansFromBranch(parts, parentMessages)
 	recentExecutionContext, recentExecutionMetadata := buildRecentExecutionContextMessageForRequest(parts, parentMessages)
 	continuationContext := buildContinuationTaskStateMessage(parts, parentMessages)
@@ -103,22 +102,15 @@ func (s *service) buildTokenBudgetMessages(
 	}
 	currentContent, attachmentMetadata, estimatedPromptTokens := s.buildBudgetedCurrentUserContent(parts, systemPrompt, budget, extraContextTokens)
 
-	groups, err := s.historyMessageGroupsForCurrentRequest(ctx, parentMessages, parts)
+	historyMessages, err := s.conversationHistoryMessages(ctx, parentMessages, parts)
 	if err != nil {
 		return nil, err
 	}
-	historyBefore := countAdapterMessages(groups)
-	selected := groups
-	for _, group := range selected {
-		estimatedPromptTokens += s.tokenEstimator.EstimateMessages(group, parts.ModelName).Tokens
-	}
+	historyBefore := len(historyMessages)
+	estimatedPromptTokens += s.tokenEstimator.EstimateMessages(historyMessages, parts.ModelName).Tokens
 
 	systemMessage := adapter.Message{Role: "system", Content: systemPrompt}
 	currentUserMessage := adapter.Message{Role: "user", Content: currentContent}
-	historyMessages := make([]adapter.Message, 0, historyBefore)
-	for _, group := range selected {
-		historyMessages = append(historyMessages, group...)
-	}
 	messages := make([]adapter.Message, 0, 2+historyBefore)
 	messages = append(messages, systemMessage)
 	messages = append(messages, historyMessages...)
@@ -319,14 +311,9 @@ func mergeAttachmentContextMetadata(target map[string]interface{}, source map[st
 
 func (s *service) computeContextBudget(spec ModelSpec, parts *chatRequestParts, baseMessages []adapter.Message) (*budgetComputation, error) {
 	if spec.ContextWindow <= 0 {
-		return nil, fmt.Errorf("%w: model context_window is required", ErrInvalidInput)
+		spec.ContextWindow = contextmgr.DefaultModelContextWindowTokens
 	}
-	agentWindowK := 256
-	if config.GlobalConfig != nil && config.GlobalConfig.ChatRuntime.AgentContextWindowK > 0 {
-		agentWindowK = config.GlobalConfig.ChatRuntime.AgentContextWindowK
-	}
-	configuredAgentWindow := agentWindowK * 1000
-	agentContextWindow := min(configuredAgentWindow, spec.ContextWindow)
+	agentContextWindow := spec.ContextWindow
 	safeLimit := agentContextWindow
 	minOutput := minOutputReserve(agentContextWindow)
 	if safeLimit <= minOutput {
@@ -386,18 +373,67 @@ func (s *service) computeContextBudget(spec ModelSpec, parts *chatRequestParts, 
 	}
 
 	return &budgetComputation{
-		ConfiguredAgentWindowK: agentWindowK,
-		AgentContextWindow:     agentContextWindow,
-		AgentWindowClamped:     agentContextWindow < configuredAgentWindow,
-		SafeLimit:              safeLimit,
-		PromptBudget:           promptBudget,
-		ReservedOutputTokens:   reservedOutput,
-		BasePromptTokens:       baseEstimate.Tokens,
-		OriginalMaxTokens:      originalMaxTokens,
-		EffectiveMaxTokens:     effectiveMaxTokens,
-		MaxTokensClamped:       maxTokensClamped,
-		Tokenizer:              baseEstimate.Tokenizer,
+		SafeLimit:            safeLimit,
+		PromptBudget:         promptBudget,
+		ReservedOutputTokens: reservedOutput,
+		BasePromptTokens:     baseEstimate.Tokens,
+		OriginalMaxTokens:    originalMaxTokens,
+		EffectiveMaxTokens:   effectiveMaxTokens,
+		MaxTokensClamped:     maxTokensClamped,
+		Tokenizer:            baseEstimate.Tokenizer,
 	}, nil
+}
+
+// conversationHistoryMessages rebuilds the conversation region of the current
+// turn: the newest summary plus every transcript entry after its boundary, which
+// is the whole point of the durable log. A conversation without entries yet (a
+// legacy turn) falls back to the message-row history, and a turn that isolates
+// its history keeps none.
+func (s *service) conversationHistoryMessages(ctx context.Context, branch []*runtimemodel.Message, parts *chatRequestParts) ([]adapter.Message, error) {
+	if shouldIsolateHistoryForCurrentTurn(parts) {
+		return nil, nil
+	}
+	includeImages := false
+	if parts != nil {
+		includeImages = parts.ModelSupportsVision
+	}
+	tip := conversationBranchTip(branch)
+	if tip != nil && s != nil && s.repos != nil && s.repos.TranscriptEntry != nil {
+		if tip.TranscriptHeadEntryID != nil && *tip.TranscriptHeadEntryID != uuid.Nil {
+			byID := make(map[uuid.UUID]*runtimemodel.Message, len(branch))
+			for _, row := range branch {
+				if row != nil {
+					byID[row.ID] = row
+				}
+			}
+			region, ok, regionErr := s.projectTranscriptChain(ctx, *tip.TranscriptHeadEntryID, byID, includeImages)
+			if regionErr != nil {
+				return nil, regionErr
+			}
+			if ok {
+				return region.Messages, nil
+			}
+		}
+	}
+	groups, err := s.historyMessageGroups(ctx, branch, includeImages)
+	if err != nil {
+		return nil, err
+	}
+	messages := make([]adapter.Message, 0, countAdapterMessages(groups))
+	for _, group := range groups {
+		messages = append(messages, group...)
+	}
+	return messages, nil
+}
+
+// conversationBranchTip returns the newest message of a loaded branch.
+func conversationBranchTip(branch []*runtimemodel.Message) *runtimemodel.Message {
+	for index := len(branch) - 1; index >= 0; index-- {
+		if branch[index] != nil {
+			return branch[index]
+		}
+	}
+	return nil
 }
 
 func (s *service) historyMessageGroups(ctx context.Context, branch []*runtimemodel.Message, includeImages bool) ([][]adapter.Message, error) {
@@ -415,7 +451,7 @@ func (s *service) historyMessageGroups(ctx context.Context, branch []*runtimemod
 			group = append(group, *userMessage)
 		}
 		if isUsableAgentTranscriptHistoryStatus(item.Status) {
-			group = append(group, agentTranscriptFromMetadata(item.Metadata, item.Answer)...)
+			group = append(group, s.historicalAgentTranscript(ctx, item)...)
 		}
 		if isUsableAssistantHistoryStatus(item.Status) && item.Answer != "" {
 			group = append(group, adapter.Message{Role: "assistant", Content: item.Answer})
@@ -1722,23 +1758,20 @@ func countAdapterMessages(groups [][]adapter.Message) int {
 
 func contextControlMetadata(spec ModelSpec, budget *budgetComputation, estimatedPromptTokens int, historyBefore int, historyAfter int) map[string]interface{} {
 	return map[string]interface{}{
-		"strategy":                  contextControlStrategyTokenBudget,
-		"context_window":            spec.ContextWindow,
-		"configured_agent_window_k": budget.ConfiguredAgentWindowK,
-		"agent_context_window":      budget.AgentContextWindow,
-		"agent_window_clamped":      budget.AgentWindowClamped,
-		"model_max_output_tokens":   spec.MaxOutputTokens,
-		"safe_context_limit":        budget.SafeLimit,
-		"prompt_budget":             budget.PromptBudget,
-		"estimated_prompt_tokens":   estimatedPromptTokens,
-		"history_messages_before":   historyBefore,
-		"history_messages_after":    historyAfter,
-		"truncated":                 historyAfter < historyBefore,
-		"max_tokens_clamped":        budget.MaxTokensClamped,
-		"original_max_tokens":       optionalIntValue(budget.OriginalMaxTokens),
-		"effective_max_tokens":      optionalIntValue(budget.EffectiveMaxTokens),
-		"reserved_output_tokens":    budget.ReservedOutputTokens,
-		"tokenizer":                 budget.Tokenizer,
+		"strategy":                contextControlStrategyTokenBudget,
+		"context_window":          spec.ContextWindow,
+		"model_max_output_tokens": spec.MaxOutputTokens,
+		"safe_context_limit":      budget.SafeLimit,
+		"prompt_budget":           budget.PromptBudget,
+		"estimated_prompt_tokens": estimatedPromptTokens,
+		"history_messages_before": historyBefore,
+		"history_messages_after":  historyAfter,
+		"truncated":               historyAfter < historyBefore,
+		"max_tokens_clamped":      budget.MaxTokensClamped,
+		"original_max_tokens":     optionalIntValue(budget.OriginalMaxTokens),
+		"effective_max_tokens":    optionalIntValue(budget.EffectiveMaxTokens),
+		"reserved_output_tokens":  budget.ReservedOutputTokens,
+		"tokenizer":               budget.Tokenizer,
 	}
 }
 

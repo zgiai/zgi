@@ -31,7 +31,21 @@ export interface SqlGeneratorDataSource {
   tables: SqlGeneratorTableRef[];
 }
 
+export type TableSelectionMode = 'manual' | 'automatic';
+
+export const normalizeTableSelectionMode = (mode: unknown): TableSelectionMode | null => {
+  if (mode === undefined || mode === null || mode === '') return 'manual';
+  return mode === 'manual' || mode === 'automatic' ? mode : null;
+};
+
+export const normalizeSqlGeneratorDataSource = (
+  dataSource: SqlGeneratorDataSource,
+  mode: TableSelectionMode
+): SqlGeneratorDataSource =>
+  mode === 'automatic' ? { source: dataSource.source, tables: [] } : dataSource;
+
 export interface SqlGeneratorInnerData {
+  table_selection_mode?: TableSelectionMode;
   model: SqlGeneratorModelConfig;
   data_source: SqlGeneratorDataSource;
   prompt: string;
@@ -75,6 +89,7 @@ export const DEFAULT_SQL_GENERATOR_NODE_DATA: SqlGeneratorNodeData = {
   title: 'SQL Generator',
   desc: '',
   data: {
+    table_selection_mode: 'manual',
     model: { ...DEFAULT_SQL_GENERATOR_MODEL },
     data_source: { ...DEFAULT_SQL_GENERATOR_DATA_SOURCE },
     prompt: DEFAULT_SQL_GENERATOR_PROMPT,
@@ -100,6 +115,11 @@ export const checkValid = (nodeData: SqlGeneratorNodeData): ValidationResult => 
     ? nodeData.data.data_source.tables
     : [];
   const prompt = nodeData.data?.prompt ?? '';
+  const mode = normalizeTableSelectionMode(nodeData.data?.table_selection_mode);
+
+  if (!mode) {
+    errors.push({ code: 'sqlGenerator.validation.tableSelectionModeInvalid' });
+  }
 
   // Model validation (warnings)
   if (!model?.provider || !model?.name) {
@@ -117,7 +137,7 @@ export const checkValid = (nodeData: SqlGeneratorNodeData): ValidationResult => 
   }
 
   // Table selection validation (error)
-  if (tables.length === 0) {
+  if (mode === 'manual' && tables.length === 0) {
     errors.push({ code: 'sqlGenerator.validation.tableSelectionRequired' });
   }
 

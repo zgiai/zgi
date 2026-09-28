@@ -162,6 +162,7 @@ type fileScope struct {
 	OrganizationID string
 	WorkspaceID    string
 	AccountID      string
+	ExternalUserID string
 	InvokeFrom     tools.ToolInvokeFrom
 }
 
@@ -328,7 +329,7 @@ func newSaveFileTool(fileService FileService, workspacePerms WorkspacePermission
 			Human: tools.I18nText{
 				"en_US": "Save a generated file or external file URL into File Management.",
 			},
-			LLM: "Copy an already generated tool file or a public external file URL into File Management. The source tool file remains available until its original expiry time; this tool does not move, consume, delete, or extend the source. Use this only when the user explicitly asks to save, create, upload, import, or add the file to File Management/current Files page. If the file content still needs to be generated, first call file-generator to create a temporary artifact, then call this tool with source_type=tool_file and the generated tool_file_id. This operation mutates File Management and is governed by file.create approval.",
+			LLM: "Copy an already generated tool file or a public external file URL into File Management. The source tool file remains available until its original expiry time; this tool does not move, consume, delete, or extend the source. Use this only when the user explicitly asks to save, create, upload, import, or add the file to File Management/current Files page. If the file content still needs to be generated, first call file-generator to create a generated artifact, then call this tool with source_type=tool_file and the generated tool_file_id. This operation mutates File Management and is governed by file.create approval.",
 		},
 		Parameters: []tools.ToolParameter{
 			{
@@ -1245,6 +1246,7 @@ func fileScopeFromRuntime(runtime *tools.ToolRuntime, tenantID string, userID st
 	tenantID = strings.TrimSpace(tenantID)
 	organizationID := ""
 	workspaceID := ""
+	externalUserID := ""
 	invokeFrom := tools.ToolInvokeFromAIChat
 	if runtime != nil {
 		if strings.TrimSpace(runtime.TenantID) != "" {
@@ -1252,6 +1254,7 @@ func fileScopeFromRuntime(runtime *tools.ToolRuntime, tenantID string, userID st
 		}
 		organizationID = strings.TrimSpace(stringValue(runtime.RuntimeParameters, "organization_id"))
 		workspaceID = strings.TrimSpace(stringValue(runtime.RuntimeParameters, "workspace_id"))
+		externalUserID = strings.TrimSpace(stringValue(runtime.RuntimeParameters, tools.ExternalUserIDRuntimeParameter))
 		if runtime.InvokeFrom != "" {
 			invokeFrom = runtime.InvokeFrom
 		}
@@ -1270,6 +1273,7 @@ func fileScopeFromRuntime(runtime *tools.ToolRuntime, tenantID string, userID st
 		OrganizationID: organizationID,
 		WorkspaceID:    workspaceID,
 		AccountID:      accountID,
+		ExternalUserID: externalUserID,
 		InvokeFrom:     invokeFrom,
 	}, nil
 }
@@ -1283,7 +1287,11 @@ func ensureScopedFilePermission(ctx context.Context, scope fileScope, file *dto.
 		return fmt.Errorf("file is not accessible")
 	}
 	if file.IsTemporary {
-		if strings.TrimSpace(file.CreatedBy) != scope.AccountID {
+		expectedOwnerID := scope.AccountID
+		if strings.TrimSpace(scope.ExternalUserID) != "" {
+			expectedOwnerID = scope.ExternalUserID
+		}
+		if strings.TrimSpace(file.CreatedBy) != expectedOwnerID {
 			return fmt.Errorf("file is not accessible")
 		}
 		return nil

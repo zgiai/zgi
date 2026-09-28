@@ -1,5 +1,11 @@
 services:
   sandbox:
+    # Reap orphaned interpreter workers after cancellation or process failure.
+    init: true
+    # Nested Bubblewrap namespaces need elevated container isolation support.
+    # Keep false for the preview backend; production linux-secure deployments
+    # must explicitly opt in or run the Sandbox directly on a Linux worker.
+    privileged: ${ZGI_SANDBOX_CONTAINER_PRIVILEGED:-false}
     build:
       context: .
       dockerfile: Dockerfile
@@ -10,14 +16,14 @@ services:
     env_file:
       - .env
     environment:
-      ZGI_SANDBOX_DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in sandbox/.env or your environment}@sandbox-postgres:5432/${POSTGRES_DB:-zgi_sandbox}?sslmode=disable
+      ZGI_SANDBOX_DATABASE_URL: ${ZGI_SANDBOX_DATABASE_URL:-postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in sandbox/.env or your environment}@sandbox-postgres:5432/${POSTGRES_DB:-zgi_sandbox}?sslmode=disable}
       ZGI_SANDBOX_SERVER_PORT: ${ZGI_SANDBOX_SERVER_PORT:-2660}
       ZGI_SANDBOX_API_KEY: ${ZGI_SANDBOX_API_KEY:-}
       ZGI_SANDBOX_ADVERTISE_URL: http://localhost:${ZGI_SANDBOX_SERVER_PORT:-2660}
       ZGI_SANDBOX_PUBLIC_BASE_URL: http://localhost:${ZGI_SANDBOX_SERVER_PORT:-2660}
       ZGI_SANDBOX_DEPENDENCY_ROOTFS_DIR: ${ZGI_SANDBOX_DEPENDENCY_ROOTFS_DIR:-/var/lib/zgi-sandbox/dependency-rootfs}
       ZGI_SANDBOX_PREBUILT_DEPENDENCY_ROOTFS_DIR: ${ZGI_SANDBOX_PREBUILT_DEPENDENCY_ROOTFS_DIR:-/opt/zgi/prebuilt-dependency-rootfs}
-      ZGI_SANDBOX_REQUIRED_DEPENDENCY_PROFILES: ${ZGI_SANDBOX_REQUIRED_DEPENDENCY_PROFILES:-skill-office}
+      ZGI_SANDBOX_REQUIRED_DEPENDENCY_PROFILES: ${ZGI_SANDBOX_REQUIRED_DEPENDENCY_PROFILES:-skill-office,scientific-data}
       ZGI_SANDBOX_DEPENDENCY_BUILD_COMMAND: ${ZGI_SANDBOX_DEPENDENCY_BUILD_COMMAND:-/usr/local/bin/zgi-sandbox-build-dependency-profile}
     networks:
       default:

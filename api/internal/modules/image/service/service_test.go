@@ -10,11 +10,13 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/config"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	chatruntimerepository "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	chatruntime "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/capabilities/imageasset"
 	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
 	"github.com/zgiai/zgi/api/internal/modules/image/registry"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
@@ -192,6 +194,48 @@ func TestImageFileFromMetaIncludesLifecycleFields(t *testing.T) {
 	if file.ExpiresAt == nil || *file.ExpiresAt != expiresAt {
 		t.Fatalf("expires_at = %#v, want %d", file.ExpiresAt, expiresAt)
 	}
+}
+
+func TestImageFileFromMetaRefreshesPersistentURLPermanently(t *testing.T) {
+	restoreImageFileSignature(t)
+	file := imageFileFromMeta(map[string]interface{}{
+		"file_id":         "file-persistent",
+		"tool_file_id":    "file-persistent",
+		"url":             "https://example.com/stale.png?expires_at=1",
+		"download_url":    "https://example.com/stale.png?expires_at=1&download=1",
+		"filename":        "generated-image.png",
+		"extension":       ".png",
+		"mime_type":       "image/png",
+		"transfer_method": "tool_file",
+		"lifecycle":       "persistent",
+	})
+
+	if !strings.HasPrefix(file.URL, "http://files.example/console/api/files/tools/file-persistent.png?") {
+		t.Fatalf("url = %q, want refreshed tool file url", file.URL)
+	}
+	if !strings.Contains(file.URL, "expires_at=0") {
+		t.Fatalf("url = %q, want permanent expires_at=0", file.URL)
+	}
+	if file.DownloadURL != file.URL+"&download=1" {
+		t.Fatalf("download_url = %q, want preview url plus download=1", file.DownloadURL)
+	}
+}
+
+func restoreImageFileSignature(t *testing.T) {
+	t.Helper()
+	previous := tool_file.GlobalFileSignature
+	previousConfig := config.GlobalConfig
+	cfg := &config.Config{App: config.AppConfig{
+		SecretKey:          "test-secret",
+		FilesURL:           "http://files.example",
+		FilesAccessTimeout: 3600,
+	}}
+	config.GlobalConfig = cfg
+	tool_file.InitFileSignature(cfg)
+	t.Cleanup(func() {
+		tool_file.GlobalFileSignature = previous
+		config.GlobalConfig = previousConfig
+	})
 }
 
 type fakeImageLLMClient struct {

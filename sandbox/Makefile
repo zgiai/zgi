@@ -1,6 +1,6 @@
 SHELL := /bin/sh
 
-.PHONY: fmt test build check run kest test-linux-secure check-docker-entrypoint check-config-docs profile-build-stdlib
+.PHONY: fmt test build check run kest test-linux-secure check-docker-entrypoint check-config-docs profile-build-stdlib profile-build-scientific-data
 .PHONY: docker-up docker-down docker-logs
 .PHONY: docker-config
 
@@ -34,6 +34,11 @@ profile-build-stdlib:
 	tmp="$$(mktemp -d /tmp/zgi-profile-build.XXXXXX)"; \
 	trap 'rm -rf "$$tmp"' EXIT; \
 	./scripts/build-profile --profile stdlib --output-dir "$$tmp"
+
+profile-build-scientific-data:
+	tmp="$$(mktemp -d /tmp/zgi-scientific-data-profile.XXXXXX)"; \
+	trap 'rm -rf "$$tmp"' EXIT; \
+	./scripts/build-profile --profile scientific-data --output-dir "$$tmp"
 
 docker-up:
 	./scripts/start-docker

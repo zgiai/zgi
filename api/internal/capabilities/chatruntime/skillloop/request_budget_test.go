@@ -54,6 +54,23 @@ func TestFinalPlanningRequestBudgetLeavesNativeOutputLimitToProvider(t *testing.
 	}
 }
 
+func TestPlanningRequestBudgetUsesPhysicalContextWindowMetadata(t *testing.T) {
+	metadata := map[string]interface{}{"context_control": map[string]interface{}{
+		"context_window":         1_000_000,
+		"prompt_budget":          800_000,
+		"reserved_output_tokens": 20_000,
+	}}
+	request := &adapter.ChatRequest{Model: "model-a"}
+	runRequest := RunRequest{
+		Prepared:        NewPreparedChat("conversation", "message", "provider-a", "auto", request),
+		CurrentMetadata: func() map[string]interface{} { return metadata },
+	}
+	budget := planningRequestBudgetForRun(runRequest)
+	if budget.safeContextLimit != 1_000_000 || budget.promptBudget != 800_000 {
+		t.Fatalf("budget = %#v", budget)
+	}
+}
+
 func TestPlanningRequestBudgetUsesOnlyMatchingVersionedCalibration(t *testing.T) {
 	metadata := map[string]interface{}{
 		"context_control": map[string]interface{}{"agent_context_window": 10000, "prompt_budget": 8000},

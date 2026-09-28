@@ -15,8 +15,14 @@ const defaultSkillScriptTimeoutSeconds = 30
 const inlineSkillArtifactMaxBytes = 32 * 1024
 const maxSkillScriptArtifactCount = 10
 const maxSkillScriptArtifactBytes = 2 * 1024 * 1024
-const maxSkillScriptInputFileCount = 10
+
+// A package may declare mutually exclusive input roles. Keep their number
+// bounded independently of per-file byte limits.
+const maxSkillScriptInputFileCount = 16
 const maxSkillScriptInputFileBytes = 10 * 1024 * 1024
+const maxManagedSkillScriptArtifactCount = 20
+const maxManagedSkillScriptArtifactBytes = 256 * 1024 * 1024
+const maxManagedSkillScriptInputFileBytes = 256 * 1024 * 1024
 const defaultSkillDependencyProfile = "stdlib"
 
 const (
@@ -33,8 +39,17 @@ const (
 )
 
 type SandboxScriptRunnerConfig struct {
-	Endpoint                    string
-	APIKey                      string
+	RuntimeGrantsPath string
+	Endpoint          string
+	APIKey            string
+	// FallbackDependencyProfile is used when the sandbox is configured for
+	// operator-managed dependency profiles and does not permit builds during
+	// a skill request. It should point at a prebuilt, verified profile such as
+	// scientific-data; an empty value preserves the dynamic-build behavior.
+	FallbackDependencyProfile string
+	// DependencyScanDisabled routes default-profile skills directly to the
+	// configured prebuilt profile without inspecting or building dependencies.
+	DependencyScanDisabled      bool
 	ConnectTimeout              time.Duration
 	CreateTimeout               time.Duration
 	UploadTimeout               time.Duration
@@ -48,12 +63,16 @@ type SandboxScriptRunnerConfig struct {
 }
 
 type SandboxScriptRunner struct {
-	endpoint          string
-	apiKey            string
-	client            *http.Client
-	timeouts          sandboxScriptRunnerTimeouts
-	artifactPersister SkillScriptArtifactPersister
-	inputFileProvider SkillScriptInputFileProvider
+	runtimeGrants             []ScriptRuntimeGrant
+	runtimeGrantsError        error
+	endpoint                  string
+	apiKey                    string
+	fallbackDependencyProfile string
+	dependencyScanDisabled    bool
+	client                    *http.Client
+	timeouts                  sandboxScriptRunnerTimeouts
+	artifactPersister         SkillScriptArtifactPersister
+	inputFileProvider         SkillScriptInputFileProvider
 }
 
 type sandboxScriptRunnerTimeouts struct {
@@ -101,10 +120,15 @@ func NewSandboxScriptRunner(config SandboxScriptRunnerConfig) *SandboxScriptRunn
 	if endpoint == "" {
 		return nil
 	}
+	grants, grantsErr := loadScriptRuntimeGrants(config.RuntimeGrantsPath)
 	connectTimeout := durationOrDefault(config.ConnectTimeout, defaultSandboxConnectTimeout)
 	return &SandboxScriptRunner{
-		endpoint: endpoint,
-		apiKey:   strings.TrimSpace(config.APIKey),
+		runtimeGrants:             grants,
+		runtimeGrantsError:        grantsErr,
+		endpoint:                  endpoint,
+		apiKey:                    strings.TrimSpace(config.APIKey),
+		fallbackDependencyProfile: strings.TrimSpace(config.FallbackDependencyProfile),
+		dependencyScanDisabled:    config.DependencyScanDisabled,
 		client: &http.Client{
 			Transport: sandboxHTTPTransport(connectTimeout),
 		},
@@ -126,13 +150,19 @@ func (r *SandboxScriptRunner) Configured() bool {
 	return r != nil && r.endpoint != "" && r.client != nil
 }
 
-func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocument, arguments map[string]interface{}, execCtx ExecutionContext, callID string) (*ToolInvocationResult, error) {
+func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocument, arguments map[string]interface{}, execCtx ExecutionContext, callID string) (invocation *ToolInvocationResult, invocationErr error) {
 	if !r.Configured() {
 		return nil, fmt.Errorf("skill script runner is not configured")
 	}
 	if !doc.Metadata.HasScripts {
 		return nil, fmt.Errorf("skill %s does not include scripts", doc.Metadata.ID)
 	}
+	snapshot, err := snapshotSkillPackage(doc.Metadata.RootPath)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot skill package: %w", err)
+	}
+	defer os.RemoveAll(snapshot)
+	doc.Metadata.RootPath = snapshot
 	hasManifest, err := hasSkillManifest(doc.Metadata.RootPath)
 	if err != nil {
 		return nil, fmt.Errorf("skill %s manifest is invalid: %w", doc.Metadata.ID, err)
@@ -153,10 +183,39 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 		Arguments: summarizeArguments(arguments),
 	}
 
+	identity := map[string]interface{}{}
+	defer func() {
+		if invocation == nil && invocationErr != nil {
+			recordSkillScriptError(&trace, start, invocationErr)
+			invocation = &ToolInvocationResult{Trace: trace}
+		}
+		if invocation != nil {
+			if invocation.Trace.Result == nil {
+				invocation.Trace.Result = map[string]interface{}{}
+			}
+			for key, value := range identity {
+				invocation.Trace.Result[key] = value
+			}
+		}
+	}()
+	grant, packageHash, err := r.runtimeGrant(doc.Metadata.RootPath, execCtx.OrganizationID)
+	if err != nil {
+		return nil, err
+	}
+	identity["package_sha256"] = packageHash
+	if grant != nil {
+		identity["dependency_profile"] = grant.DependencyProfile
+		identity["dependency_profile_version"] = grant.ProfileVersion
+		identity["dependency_artifact_checksum"] = grant.ArtifactChecksum
+	}
 	manifest := defaultSkillScriptManifest(docTimeoutSeconds(doc))
 	var manifestRaw []byte
 	if hasManifest {
-		preparedManifest, err := prepareSkillScriptManifest(doc.Metadata.RootPath, docTimeoutSeconds(doc))
+		preparedManifest, err := prepareSkillScriptManifest(
+			doc.Metadata.RootPath,
+			docTimeoutSeconds(doc),
+			grant != nil,
+		)
 		if err != nil {
 			trace.Status = "error"
 			trace.Error = err.Error()
@@ -165,6 +224,19 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 		}
 		manifest = preparedManifest.Manifest
 		manifestRaw = preparedManifest.Raw
+	}
+	if grant != nil {
+		if manifest.DependencyProfile != grant.DependencyProfile || manifest.MaxArtifactCount > grant.MaxArtifactCount || manifest.MaxArtifactBytes > grant.MaxArtifactBytes {
+			return nil, fmt.Errorf("skill runtime request exceeds organization grant")
+		}
+		for _, input := range manifest.InputFiles {
+			if input.MaxBytes > grant.MaxInputFileBytes {
+				return nil, fmt.Errorf("skill input quota exceeds organization grant")
+			}
+		}
+	}
+	if manifest.ModelCalls > 0 && (execCtx.ScriptModel == nil || execCtx.ScriptModel.Complete == nil || execCtx.OrganizationID == "" || execCtx.UserID == "") {
+		return nil, fmt.Errorf("skill model channel is unavailable for this execution")
 	}
 	inputFiles, err := r.resolveInputFiles(ctx, arguments, execCtx, manifest)
 	if err != nil {
@@ -180,12 +252,25 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 		return &ToolInvocationResult{Trace: trace}, err
 	}
 	dependencyProfile := manifest.DependencyProfile
-	if dependencyProfile == defaultSkillDependencyProfile && skillPackageHasDependencyHints(doc.Metadata.RootPath) {
-		resolvedProfile, err := r.prepareDependencyProfile(ctx, execCtx, archiveBase64, manifest.Language)
+	resolvedProfile := ""
+	if dependencyProfile == defaultSkillDependencyProfile && r.dependencyScanDisabled {
+		resolvedProfile, err = r.configuredPrebuiltDependencyProfile()
 		if err != nil {
 			recordSkillScriptError(&trace, start, err)
 			return &ToolInvocationResult{Trace: trace}, err
 		}
+	} else if dependencyProfile == defaultSkillDependencyProfile && skillPackageHasDependencyHints(doc.Metadata.RootPath) {
+		var usedFallback bool
+		resolvedProfile, usedFallback = r.fallbackDependencyProfileForRuntime(ctx, execCtx, manifest.Language)
+		if !usedFallback {
+			resolvedProfile, err = r.prepareDependencyProfile(ctx, execCtx, archiveBase64, manifest.Language)
+			if err != nil {
+				recordSkillScriptError(&trace, start, err)
+				return &ToolInvocationResult{Trace: trace}, err
+			}
+		}
+	}
+	if resolvedProfile != "" {
 		dependencyProfile = resolvedProfile
 		manifest.DependencyProfile = resolvedProfile
 		manifestRaw, err = json.Marshal(manifest)
@@ -211,6 +296,18 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 		return &ToolInvocationResult{Trace: trace}, err
 	}
 	defer func() { _ = r.deleteSandbox(context.WithoutCancel(ctx), sandboxID, execCtx) }()
+	if grant != nil {
+		var actual struct {
+			Version  string `json:"dependency_profile_version"`
+			Checksum string `json:"dependency_artifact_checksum"`
+		}
+		if err := r.doJSON(ctx, http.MethodGet, withOrganizationQuery("/v1/sandboxes/"+sandboxID, execCtx), nil, &actual, r.timeouts.Create); err != nil {
+			return nil, err
+		}
+		if actual.Version != grant.ProfileVersion || actual.Checksum != grant.ArtifactChecksum {
+			return nil, fmt.Errorf("skill runtime version or artifact checksum does not match organization grant")
+		}
+	}
 
 	if err := r.uploadArchive(ctx, sandboxID, archiveBase64, execCtx, hasManifest); err != nil {
 		recordSkillScriptError(&trace, start, err)
@@ -239,7 +336,7 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 	var artifacts []skillScriptArtifact
 	var artifactErr error
 	if hasManifest {
-		runResult, err := r.runSkill(ctx, sandboxID, string(stdin), execCtx, skillScriptTimeoutSeconds(manifest.TimeoutMS))
+		runResult, err := r.runSkillWithModel(ctx, sandboxID, string(stdin), execCtx, manifest)
 		if err != nil {
 			recordSkillScriptError(&trace, start, err)
 			return &ToolInvocationResult{Trace: trace}, err
@@ -259,6 +356,13 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 	r.prepareArtifacts(ctx, sandboxID, artifacts, execCtx, manifest.MaxArtifactBytes)
 	messages, content, err := skillScriptMessages(command, artifacts, artifactErr)
 	trace.DurationMS = time.Since(start).Milliseconds()
+	trace.Result = summarizeSkillScriptResult(command, messages, artifacts)
+	trace.Result["package_sha256"] = packageHash
+	if grant != nil {
+		trace.Result["dependency_profile"] = grant.DependencyProfile
+		trace.Result["dependency_profile_version"] = grant.ProfileVersion
+		trace.Result["dependency_artifact_checksum"] = grant.ArtifactChecksum
+	}
 	if command.ExitCode != 0 {
 		err = fmt.Errorf("skill script exited with code %d: %s", command.ExitCode, strings.TrimSpace(command.Error))
 	}
@@ -266,7 +370,6 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 		recordSkillScriptError(&trace, start, err)
 		return &ToolInvocationResult{Trace: trace, Messages: messages, ToolMessage: skillScriptToolMessage(callID, content)}, err
 	}
-	trace.Result = summarizeSkillScriptResult(command, messages, artifacts)
 	return &ToolInvocationResult{
 		Messages:    messages,
 		Trace:       trace,
@@ -276,6 +379,10 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 
 func skillScriptEnv(execCtx ExecutionContext) map[string]string {
 	env := map[string]string{}
+	if execCtx.scriptModelPath != "" && execCtx.ScriptModel != nil {
+		env["ZGI_MODEL_CHANNEL"] = execCtx.scriptModelPath
+		env["MODEL_NAME"] = execCtx.ScriptModel.Model
+	}
 	if value := strings.TrimSpace(execCtx.OrganizationID); value != "" {
 		env["ZGI_ORGANIZATION_ID"] = value
 	}

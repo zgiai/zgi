@@ -10,7 +10,11 @@ import (
 
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/datasource/model"
+	"github.com/zgiai/zgi/api/internal/modules/datasource/repository"
+	defaultmodelsvc "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
+	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	sharedmodel "github.com/zgiai/zgi/api/internal/modules/shared/model"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/pkg/sql_base/audit"
 	"github.com/zgiai/zgi/api/pkg/sql_base/guard"
@@ -155,10 +159,11 @@ func TestLogSQLOperationWithResultRecordsFailure(t *testing.T) {
 }
 
 type fakeDataSourceRepository struct {
-	items map[string]*model.DataSource
+	items       map[string]*model.DataSource
+	schemaIndex *repository.SchemaIndexSettingsCreate
 }
 
-func (r *fakeDataSourceRepository) Create(ctx context.Context, ds *model.DataSource) error {
+func (r *fakeDataSourceRepository) Create(ctx context.Context, ds *model.DataSource, schemaIndex *repository.SchemaIndexSettingsCreate) error {
 	if r.items == nil {
 		r.items = make(map[string]*model.DataSource)
 	}
@@ -167,7 +172,24 @@ func (r *fakeDataSourceRepository) Create(ctx context.Context, ds *model.DataSou
 	}
 	copied := *ds
 	r.items[ds.ID] = &copied
+	if schemaIndex != nil {
+		settings := *schemaIndex
+		r.schemaIndex = &settings
+	}
 	return nil
+}
+
+type fakeDefaultModelResolver struct{}
+
+func (fakeDefaultModelResolver) ResolveModelType(context.Context, string, *string, *string, sharedmodel.ModelType) (*defaultmodelsvc.ResolvedModel, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (fakeDefaultModelResolver) ResolveUseCase(_ context.Context, _ string, _ llmmodel.UseCase, provider, modelName *string) (*defaultmodelsvc.ResolvedModel, error) {
+	if provider == nil || modelName == nil || *provider == "" || *modelName == "" {
+		return nil, errors.New("explicit model required")
+	}
+	return &defaultmodelsvc.ResolvedModel{Provider: *provider, Model: *modelName}, nil
 }
 
 func (r *fakeDataSourceRepository) FindByID(ctx context.Context, id string) (*model.DataSource, error) {
@@ -534,6 +556,29 @@ func TestCreateDataSourceRequiresWorkspaceScopeAndCreatePermission(t *testing.T)
 	}
 	if len(req.PermissionCodes) != 1 || req.PermissionCodes[0] != workspace_model.WorkspacePermissionDatabaseCreate {
 		t.Fatalf("permission codes = %#v, want database.create", req.PermissionCodes)
+	}
+}
+
+func TestCreateDataSourceStoresExplicitSchemaIndexModel(t *testing.T) {
+	repo := &fakeDataSourceRepository{items: map[string]*model.DataSource{}}
+	authorization := &fakeAuthorizationService{allow: true}
+	svc := newScopedDataSourceService(nil, nil, authorization)
+	svc.repo = repo
+	svc.defaultModelResolver = fakeDefaultModelResolver{}
+	workspaceID := "workspace-1"
+
+	_, err := svc.CreateDataSource(context.Background(), "organization-1", "account-1", dto.CreateDataSourceRequest{
+		Name: "main", WorkspaceID: &workspaceID,
+		SchemaIndex: &dto.SchemaIndexConfigRequest{Enabled: true, EmbeddingModelProvider: " provider ", EmbeddingModel: " model "},
+	})
+	if err != nil {
+		t.Fatalf("CreateDataSource error = %v", err)
+	}
+	if repo.schemaIndex == nil {
+		t.Fatal("schema index settings = nil, want enabled settings")
+	}
+	if repo.schemaIndex.EmbeddingProvider != "provider" || repo.schemaIndex.EmbeddingModel != "model" || repo.schemaIndex.RequestedBy != "account-1" {
+		t.Fatalf("schema index settings = %#v", repo.schemaIndex)
 	}
 }
 
@@ -1273,7 +1318,7 @@ type fakeDataSourceRepo struct {
 	ds *model.DataSource
 }
 
-func (r *fakeDataSourceRepo) Create(ctx context.Context, ds *model.DataSource) error {
+func (r *fakeDataSourceRepo) Create(ctx context.Context, ds *model.DataSource, _ *repository.SchemaIndexSettingsCreate) error {
 	r.ds = ds
 	return nil
 }

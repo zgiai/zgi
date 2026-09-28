@@ -309,6 +309,13 @@ func (s *service) beginClientActionContinuation(ctx context.Context, scope Scope
 	)
 }
 
+// beginClientActionContinuationForCaller is the caller-aware entry point used
+// by external Agent and web-app continuations. The configured implementation
+// applies caller and external-user scoping consistently with other continuations.
+func (s *service) beginClientActionContinuationForCaller(ctx context.Context, scope Scope, caller Caller, conversationID, messageID uuid.UUID, actionID string) (*ClientActionContinuation, error) {
+	return s.beginConfiguredClientActionContinuation(ctx, scope, caller, conversationID, messageID, actionID)
+}
+
 func (s *service) beginConfiguredClientActionContinuation(
 	ctx context.Context,
 	scope Scope,
@@ -323,7 +330,7 @@ func (s *service) beginConfiguredClientActionContinuation(
 	if actionID == "" {
 		return nil, fmt.Errorf("%w: client action_id is required", ErrInvalidInput)
 	}
-	conversation, err := s.getConversationByCallerScoped(ctx, scope, caller, conversationID)
+	conversation, err := s.getInteractiveContinuationConversation(ctx, scope, caller, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -412,13 +419,17 @@ func (s *service) reloadClientActionContinuationMessage(ctx context.Context, sco
 	)
 }
 
+func (s *service) reloadClientActionContinuationMessageForCaller(ctx context.Context, scope Scope, caller Caller, conversationID, messageID uuid.UUID) (*runtimemodel.Conversation, *runtimemodel.Message, error) {
+	return s.reloadConfiguredClientActionContinuationMessage(ctx, scope, caller, conversationID, messageID)
+}
+
 func (s *service) reloadConfiguredClientActionContinuationMessage(
 	ctx context.Context,
 	scope Scope,
 	caller Caller,
 	conversationID, messageID uuid.UUID,
 ) (*runtimemodel.Conversation, *runtimemodel.Message, error) {
-	conversation, err := s.getConversationByCallerScoped(ctx, scope, caller, conversationID)
+	conversation, err := s.getInteractiveContinuationConversation(ctx, scope, caller, conversationID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -464,16 +475,18 @@ func (s *service) prepareConfiguredClientActionContinuationChat(
 		if normalizeCallerID(caller.ID) == nil {
 			return nil, fmt.Errorf("%w: Agent caller is required", ErrInvalidInput)
 		}
-	} else {
 	}
-	parts, err := normalizeRegenerateRequest(runtimedto.RegenerateMessageRequest{
+	regenerateReq := applyRunConfigToRegenerateRequest(config, runtimedto.RegenerateMessageRequest{
 		Surface:          req.Surface,
 		RuntimeContext:   req.RuntimeContext,
 		OperationContext: req.OperationContext,
-	}, message)
+	})
+	parts, err := normalizeRegenerateRequest(regenerateReq, message)
 	if err != nil {
 		return nil, err
 	}
+	applyRunConfigToParts(config, parts)
+	applyCallerRuntimeSurfacePolicy(caller, parts)
 	applyPersistedConversationSurface(continuation.Conversation, parts)
 	restoreExecutionModeFromMetadata(parts, message.Metadata)
 	restoreTurnInitialContextFromMetadata(parts, message.Metadata)
@@ -489,6 +502,7 @@ func (s *service) prepareConfiguredClientActionContinuationChat(
 	if err := s.applyModelCapabilities(ctx, scope, caller, parts); err != nil {
 		return nil, err
 	}
+	applyProtocolToolsPolicy(caller, parts)
 	applyManagedUserMemoryPolicy(caller, parts)
 	if err := s.applySkillConfig(ctx, scope, caller, &config, parts); err != nil {
 		return nil, err
@@ -509,9 +523,8 @@ func (s *service) prepareConfiguredClientActionContinuationChat(
 	}
 	parts.ContextControl = contextResult.Metadata
 	llmRequest := newLLMChatRequest(parts, contextResult.Messages)
-	appendCurrentTurnAgentTranscript(llmRequest, message)
-	continuationMessage := clientActionContinuationMessage(message, continuation.Event, req)
-	llmRequest.Messages = append(llmRequest.Messages, continuationMessageForExecutionMode(continuationMessage, parts.ExecutionMode))
+	s.appendPersistedAgentTranscript(ctx, llmRequest, message)
+	llmRequest.Messages = append(llmRequest.Messages, continuationMessageForExecutionMode(clientActionContinuationMessage(message, continuation.Event, req), parts.ExecutionMode))
 	prepared.LLMRequest = llmRequest
 	prepared.contextBudget = contextResult
 	return prepared, nil

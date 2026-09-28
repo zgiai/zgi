@@ -2,6 +2,17 @@ package service
 
 import "testing"
 
+func TestConversationTitleGenerationEnabled(t *testing.T) {
+	t.Parallel()
+
+	if conversationTitleGenerationEnabled(Caller{ConversationType: "image"}) {
+		t.Fatal("image conversations should not generate model titles")
+	}
+	if !conversationTitleGenerationEnabled(Caller{ConversationType: "chat"}) {
+		t.Fatal("chat conversations should generate model titles")
+	}
+}
+
 func TestConversationTitleLooksUnprocessed(t *testing.T) {
 	t.Parallel()
 

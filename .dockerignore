@@ -19,3 +19,9 @@ outputs/
 qa-artifacts/
 **/.local/
 .specify/
+
+# Runtime and local-only data
+**/storage/
+**/__pycache__/
+**/*.pyc
+**/.venv/

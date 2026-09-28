@@ -2,6 +2,9 @@ package handler
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"math"
 	"net/http"
 	"strings"
 
@@ -19,6 +22,14 @@ const (
 	orderTypeWalletRecharge   = "wallet_recharge"
 	productCodeWalletRecharge = "wallet_recharge"
 	currencyCNY               = "CNY"
+	// minWalletRechargeAmount is the floor for a single wallet recharge.
+	// Keep web MIN_CUSTOM_AMOUNT in sync.
+	minWalletRechargeAmount = 10
+	// maxWalletRechargeAmount caps a single wallet recharge. WeChat Pay rejects
+	// prepay requests above the merchant per-transaction limit (10,000,000 CNY),
+	// so validate locally to fail fast with a clear error instead of proxying an
+	// upstream gateway failure. Keep web MAX_CUSTOM_AMOUNT in sync.
+	maxWalletRechargeAmount = 10000000
 )
 
 // OrderHandler handles order-related HTTP requests
@@ -99,12 +110,14 @@ type CreateAICreditAndPayRequest struct {
 
 // CreateWalletRechargeRequest represents the request to create a wallet recharge order
 type CreateWalletRechargeRequest struct {
-	Amount float64 `json:"amount" binding:"required,gte=1"` // Recharge amount (minimum 1)
+	Amount float64 `json:"amount" binding:"required,gte=10"` // Recharge amount (minimum minWalletRechargeAmount)
 }
 
 // CreateWalletRechargeAndPayRequest represents the request to create a wallet recharge order and initiate payment
 type CreateWalletRechargeAndPayRequest struct {
-	Amount           float64 `json:"amount" binding:"required,gte=1"`   // Recharge amount (minimum 1)
+	// Amount bounds are enforced explicitly in CreateWalletRechargeAndPay so the
+	// rejection message is readable; the binding tag only rejects non-positive values.
+	Amount           float64 `json:"amount" binding:"required,gte=1"` // Recharge amount (min minWalletRechargeAmount, max maxWalletRechargeAmount)
 	PaymentMethod    string  `json:"payment_method" binding:"required"` // alipay, wechat, stripe
 	PaymentSubMethod string  `json:"payment_sub_method"`                // qrcode, native, wap, app
 	ReturnURL        string  `json:"return_url"`                        // For web payments
@@ -495,6 +508,10 @@ func (h *OrderHandler) CreateWalletRechargeAndPay(c *gin.Context) {
 		errorResponse(c, http.StatusBadRequest, "wallet payment is not allowed for wallet recharge")
 		return
 	}
+	if err := validateWalletRechargeAmount(req.Amount); err != nil {
+		errorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
 	if !requireConsolePaymentProxy(c, h.consoleProvider) {
 		return
 	}
@@ -525,6 +542,30 @@ func (h *OrderHandler) CreateWalletRechargeAndPay(c *gin.Context) {
 		},
 		"payment": checkoutResp,
 	})
+}
+
+// hasAtMostTwoDecimalPlaces reports whether amount carries no sub-cent precision.
+// The comparison is epsilon-based because float64 cannot represent most cent
+// values exactly (for example 0.07 * 100 is 7.000000000000001).
+func hasAtMostTwoDecimalPlaces(amount float64) bool {
+	scaled := amount * 100
+	return math.Abs(scaled-math.Round(scaled)) < 1e-9
+}
+
+// validateWalletRechargeAmount enforces the shared recharge amount bounds and
+// precision at the API boundary. The web form applies the same rules, but the
+// endpoint is callable directly, so the contract must be enforced here too.
+func validateWalletRechargeAmount(amount float64) error {
+	if amount < minWalletRechargeAmount {
+		return fmt.Errorf("recharge amount must be at least %d", minWalletRechargeAmount)
+	}
+	if amount > maxWalletRechargeAmount {
+		return fmt.Errorf("recharge amount must not exceed %d", maxWalletRechargeAmount)
+	}
+	if !hasAtMostTwoDecimalPlaces(amount) {
+		return errors.New("recharge amount supports at most 2 decimal places")
+	}
+	return nil
 }
 
 func (h *OrderHandler) requireOrganizationAdmin(c *gin.Context, accountID, organizationID, denyMessage string) bool {

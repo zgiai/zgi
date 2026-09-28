@@ -14,13 +14,12 @@ import (
 func TestRunModelToolRoundReactivelyCompactsAndRetriesPromptTooLongOnce(t *testing.T) {
 	compactor := &reactiveTestCompactor{}
 	manager, err := contextmgr.New(contextmgr.Config{
-		AgentRunID:             "reactive-run",
-		ConfiguredAgentWindowK: 64,
-		ModelContextWindow:     128_000,
-		MaxInputTokens:         128_000,
-		MaxOutputTokens:        8_000,
-		TailMinTextRounds:      1,
-	}, compactor, nil, nil)
+		AgentRunID:         "reactive-run",
+		ModelContextWindow: 64_000,
+		MaxInputTokens:     128_000,
+		MaxOutputTokens:    8_000,
+		TailMinMessages:    1,
+	}, compactor, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,11 +67,10 @@ func TestRunModelToolRoundReactivelyCompactsAndRetriesPromptTooLongOnce(t *testi
 
 func TestTerminalToolBatchCompletesEveryToolCall(t *testing.T) {
 	manager, err := contextmgr.New(contextmgr.Config{
-		AgentRunID:             "terminal-tool-batch",
-		ConfiguredAgentWindowK: 64,
-		ModelContextWindow:     128_000,
-		MaxOutputTokens:        8_000,
-	}, nil, nil, nil)
+		AgentRunID:         "terminal-tool-batch",
+		ModelContextWindow: 64_000,
+		MaxOutputTokens:    8_000,
+	}, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,13 +105,12 @@ func TestTerminalToolBatchCompletesEveryToolCall(t *testing.T) {
 
 func TestRunModelToolRoundReturnsContextExhaustedAfterReactiveRetryFails(t *testing.T) {
 	manager, err := contextmgr.New(contextmgr.Config{
-		AgentRunID:             "reactive-failure-run",
-		ConfiguredAgentWindowK: 64,
-		ModelContextWindow:     128_000,
-		MaxInputTokens:         128_000,
-		MaxOutputTokens:        8_000,
-		TailMinTextRounds:      1,
-	}, &reactiveTestCompactor{}, nil, nil)
+		AgentRunID:         "reactive-failure-run",
+		ModelContextWindow: 64_000,
+		MaxInputTokens:     128_000,
+		MaxOutputTokens:    8_000,
+		TailMinMessages:    1,
+	}, &reactiveTestCompactor{}, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

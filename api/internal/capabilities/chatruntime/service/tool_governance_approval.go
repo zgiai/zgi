@@ -108,10 +108,33 @@ func (s *service) SubmitToolGovernanceDecision(
 	correlationID string,
 	req runtimedto.ToolGovernanceDecisionRequest,
 ) (*runtimedto.ToolGovernanceDecisionResponse, error) {
+	return s.submitToolGovernanceDecisionForCaller(
+		ctx,
+		scope,
+		Caller{Type: runtimemodel.ConversationCallerAIChat},
+		conversationID,
+		messageID,
+		correlationID,
+		req,
+	)
+}
+
+func (s *service) submitToolGovernanceDecisionForCaller(
+	ctx context.Context,
+	scope Scope,
+	caller Caller,
+	conversationID uuid.UUID,
+	messageID uuid.UUID,
+	correlationID string,
+	req runtimedto.ToolGovernanceDecisionRequest,
+) (*runtimedto.ToolGovernanceDecisionResponse, error) {
 	if s == nil || s.repos == nil || s.repos.Message == nil || s.repos.Conversation == nil {
 		return nil, fmt.Errorf("aichat repository is not configured")
 	}
 	if err := s.ensureMember(ctx, scope); err != nil {
+		return nil, err
+	}
+	if _, err := s.getInteractiveContinuationConversation(ctx, scope, caller, conversationID); err != nil {
 		return nil, err
 	}
 	action, approvalStatus, err := normalizeToolGovernanceApprovalAction(req.Action)

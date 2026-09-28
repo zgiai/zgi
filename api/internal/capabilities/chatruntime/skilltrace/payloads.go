@@ -207,6 +207,18 @@ func SkillCallErrorPayload(ids PayloadIDs, trace skills.SkillTrace, status strin
 	if strings.TrimSpace(trace.ErrorCode) != "" {
 		payload["error_code"] = strings.TrimSpace(trace.ErrorCode)
 	}
+	// Failed script executions retain only their attested runtime identity.
+	// Keep arbitrary output and provider details outside the error event.
+	if trace.ToolName == skills.SkillScriptToolRun && trace.Result["exit_code"] != nil {
+		result := map[string]interface{}{}
+		for _, key := range []string{"exit_code", "package_sha256", "dependency_profile", "dependency_profile_version", "dependency_artifact_checksum"} {
+			if value, exists := trace.Result[key]; exists {
+				result[key] = value
+			}
+		}
+		payload["result"] = result
+	}
+
 	enrichSkillCallPayloadSemantics(payload, trace)
 	return payload
 }

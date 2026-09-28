@@ -36,17 +36,41 @@ func (s *service) RunToolGovernanceDecisionStream(
 	req runtimedto.ToolGovernanceDecisionRequest,
 	onEvent func(StreamEvent) error,
 ) (*ChatResult, error) {
+	return s.RunConfiguredToolGovernanceDecisionStream(
+		ctx,
+		scope,
+		Caller{Type: runtimemodel.ConversationCallerAIChat},
+		RunConfig{BillingAppType: runtimemodel.MessageBillingReasonSourceAIChat},
+		conversationID,
+		messageID,
+		correlationID,
+		req,
+		onEvent,
+	)
+}
+
+func (s *service) RunConfiguredToolGovernanceDecisionStream(
+	ctx context.Context,
+	scope Scope,
+	caller Caller,
+	config RunConfig,
+	conversationID uuid.UUID,
+	messageID uuid.UUID,
+	correlationID string,
+	req runtimedto.ToolGovernanceDecisionRequest,
+	onEvent func(StreamEvent) error,
+) (*ChatResult, error) {
 	if onEvent == nil {
 		return nil, fmt.Errorf("%w: event callback is required", ErrInvalidInput)
 	}
-	publicDecision, err := s.SubmitToolGovernanceDecision(ctx, scope, conversationID, messageID, correlationID, req)
+	publicDecision, err := s.submitToolGovernanceDecisionForCaller(ctx, scope, caller, conversationID, messageID, correlationID, req)
 	if err != nil {
 		return nil, err
 	}
-	continuation, err := s.beginToolGovernanceContinuation(ctx, scope, conversationID, messageID, correlationID)
+	continuation, err := s.beginToolGovernanceContinuationForCaller(ctx, scope, caller, conversationID, messageID, correlationID)
 	if err != nil {
 		if IsContinuationAlreadyRunningError(err) {
-			if streamErr := s.StreamConversationEvents(ctx, scope, conversationID, messageID, "", onEvent); streamErr != nil {
+			if streamErr := s.StreamConversationEventsForCaller(ctx, scope, caller, conversationID, messageID, "", onEvent); streamErr != nil {
 				return nil, streamErr
 			}
 			return &ChatResult{Status: runtimemodel.MessageStatusStreaming}, nil
@@ -54,7 +78,7 @@ func (s *service) RunToolGovernanceDecisionStream(
 		return nil, err
 	}
 
-	conversation, message, err := s.reloadToolGovernanceContinuationMessage(ctx, scope, conversationID, messageID)
+	conversation, message, err := s.reloadToolGovernanceContinuationMessageForCaller(ctx, scope, caller, conversationID, messageID)
 	if err != nil {
 		s.failToolGovernanceContinuation(context.WithoutCancel(ctx), continuation, err, onEvent)
 		return nil, newFinalizedStreamError(err)
@@ -71,7 +95,7 @@ func (s *service) RunToolGovernanceDecisionStream(
 	}
 	continuation.Event = authoritativeEvent
 
-	prepared, err := s.prepareToolGovernanceContinuationChat(ctx, scope, continuation)
+	prepared, err := s.prepareConfiguredToolGovernanceContinuationChat(ctx, scope, caller, config, continuation)
 	if err != nil {
 		s.failToolGovernanceContinuation(context.WithoutCancel(ctx), continuation, err, onEvent)
 		return nil, newFinalizedStreamError(err)
@@ -144,10 +168,14 @@ func (s *service) failToolGovernanceContinuation(ctx context.Context, continuati
 }
 
 func (s *service) beginToolGovernanceContinuation(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, correlationID string) (*ToolGovernanceContinuation, error) {
+	return s.beginToolGovernanceContinuationForCaller(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, conversationID, messageID, correlationID)
+}
+
+func (s *service) beginToolGovernanceContinuationForCaller(ctx context.Context, scope Scope, caller Caller, conversationID, messageID uuid.UUID, correlationID string) (*ToolGovernanceContinuation, error) {
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err
 	}
-	conversation, err := s.getConversation(ctx, scope, conversationID)
+	conversation, err := s.getInteractiveContinuationConversation(ctx, scope, caller, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -212,8 +240,8 @@ func isResolvedToolGovernanceDecisionEvent(event map[string]interface{}) bool {
 	return strings.TrimSpace(stringFromAny(event["approval_status"])) != ""
 }
 
-func (s *service) reloadToolGovernanceContinuationMessage(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID) (*runtimemodel.Conversation, *runtimemodel.Message, error) {
-	conversation, err := s.getConversation(ctx, scope, conversationID)
+func (s *service) reloadToolGovernanceContinuationMessageForCaller(ctx context.Context, scope Scope, caller Caller, conversationID, messageID uuid.UUID) (*runtimemodel.Conversation, *runtimemodel.Message, error) {
+	conversation, err := s.getInteractiveContinuationConversation(ctx, scope, caller, conversationID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -228,6 +256,16 @@ func (s *service) reloadToolGovernanceContinuationMessage(ctx context.Context, s
 }
 
 func (s *service) prepareToolGovernanceContinuationChat(ctx context.Context, scope Scope, continuation *ToolGovernanceContinuation) (*PreparedChat, error) {
+	return s.prepareConfiguredToolGovernanceContinuationChat(
+		ctx,
+		scope,
+		Caller{Type: runtimemodel.ConversationCallerAIChat},
+		RunConfig{BillingAppType: runtimemodel.MessageBillingReasonSourceAIChat},
+		continuation,
+	)
+}
+
+func (s *service) prepareConfiguredToolGovernanceContinuationChat(ctx context.Context, scope Scope, caller Caller, config RunConfig, continuation *ToolGovernanceContinuation) (*PreparedChat, error) {
 	if continuation == nil || continuation.Conversation == nil || continuation.Message == nil {
 		return nil, fmt.Errorf("%w: tool governance continuation is required", ErrInvalidInput)
 	}
@@ -235,14 +273,13 @@ func (s *service) prepareToolGovernanceContinuationChat(ctx context.Context, sco
 		return nil, err
 	}
 	message := continuation.Message
-	caller := Caller{Type: runtimemodel.ConversationCallerAIChat}
-	config := RunConfig{
-		BillingAppType: runtimemodel.MessageBillingReasonSourceAIChat,
-	}
-	parts, err := normalizeRegenerateRequest(runtimedto.RegenerateMessageRequest{}, message)
+	regenerateReq := applyRunConfigToRegenerateRequest(config, runtimedto.RegenerateMessageRequest{})
+	parts, err := normalizeRegenerateRequest(regenerateReq, message)
 	if err != nil {
 		return nil, err
 	}
+	applyRunConfigToParts(config, parts)
+	applyCallerRuntimeSurfacePolicy(caller, parts)
 	applyPersistedConversationSurface(continuation.Conversation, parts)
 	restoreExecutionModeFromMetadata(parts, message.Metadata)
 	restoreConsoleFilesContextFromMetadata(parts, message.Metadata, continuation.Event)
@@ -256,6 +293,7 @@ func (s *service) prepareToolGovernanceContinuationChat(ctx context.Context, sco
 	if err := s.applyModelCapabilities(ctx, scope, caller, parts); err != nil {
 		return nil, err
 	}
+	applyProtocolToolsPolicy(caller, parts)
 	applyManagedUserMemoryPolicy(caller, parts)
 	if err := s.applySkillConfig(ctx, scope, caller, &config, parts); err != nil {
 		return nil, err
@@ -266,7 +304,7 @@ func (s *service) prepareToolGovernanceContinuationChat(ctx context.Context, sco
 	}
 	parts.ContextControl = contextResult.Metadata
 	llmRequest := newLLMChatRequest(parts, contextResult.Messages)
-	appendCurrentTurnAgentTranscript(llmRequest, message)
+	s.appendPersistedAgentTranscript(ctx, llmRequest, message)
 	if stateMessage := currentTurnAuthoritativeStateMessage(message); stateMessage != nil {
 		llmRequest.Messages = append(llmRequest.Messages, *stateMessage)
 	}
@@ -427,6 +465,8 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 		callID = strings.TrimSpace(frozen.ID)
 	}
 	executionContext := s.skillExecutionContext(prepared)
+	scriptModel, scriptModelUsage := s.newSkillScriptModelChannel(prepared)
+	executionContext.ScriptModel = scriptModel
 	executionContext.RuntimeParameters = skills.WithToolGovernanceCorrelationID(
 		executionContext.RuntimeParameters,
 		frozen.CorrelationID,
@@ -509,6 +549,7 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 
 	prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, continuationMessageForExecutionMode(toolGovernanceFrozenExecutionContinuationMessage(prepared.Message, event, invocation, executionErr), prepared.parts.ExecutionMode))
 	answer, usage, err := s.runPreparedToolLoop(ctx, persistCtx, prepared, nil, onEvent)
+	usage = addUsageCloned(usage, scriptModelUsage())
 	if err != nil {
 		var pendingGovernance *skillloop.ToolGovernancePendingError
 		if errors.As(err, &pendingGovernance) {

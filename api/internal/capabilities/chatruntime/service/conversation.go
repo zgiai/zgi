@@ -52,6 +52,7 @@ func (s *service) createConversationForCaller(ctx context.Context, scope Scope, 
 		AccountID:        scope.AccountID,
 		CallerType:       normalizeCallerType(caller.Type),
 		CallerID:         normalizeCallerID(caller.ID),
+		ExternalUserID:   normalizeCallerID(scope.ExternalUserID),
 		ConversationType: normalizeConversationType(caller.ConversationType),
 		Title:            title,
 		Status:           runtimemodel.ConversationStatusNormal,
@@ -115,6 +116,7 @@ func (s *service) getConversationByCallerScoped(ctx context.Context, scope Scope
 		scope.AccountID,
 		normalizeCallerType(caller.Type),
 		normalizeCallerID(caller.ID),
+		normalizeCallerID(scope.ExternalUserID),
 		normalizeConversationType(caller.ConversationType),
 	)
 	if err != nil {
@@ -123,7 +125,25 @@ func (s *service) getConversationByCallerScoped(ctx context.Context, scope Scope
 	if !conversationMatchesCallerSource(conversation, caller) {
 		return nil, ErrNotFound
 	}
+	if !conversationMatchesExternalUser(conversation, scope.ExternalUserID) {
+		return nil, ErrNotFound
+	}
 	return conversation, nil
+}
+
+func conversationMatchesExternalUser(conversation *runtimemodel.Conversation, externalUserID *uuid.UUID) bool {
+	expected := normalizeCallerID(externalUserID)
+	if expected == nil {
+		return true
+	}
+	return conversation != nil && conversation.ExternalUserID != nil && *conversation.ExternalUserID == *expected
+}
+
+func (s *service) getInteractiveContinuationConversation(ctx context.Context, scope Scope, caller Caller, id uuid.UUID) (*runtimemodel.Conversation, error) {
+	if normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAIChat && caller.ID == nil && strings.TrimSpace(caller.Source) == "" {
+		return s.getConversation(ctx, scope, id)
+	}
+	return s.getConversationByCallerScoped(ctx, scope, caller, id)
 }
 
 func conversationMatchesCallerSource(conversation *runtimemodel.Conversation, caller Caller) bool {
@@ -483,6 +503,7 @@ func (s *service) ListConversationsByCaller(ctx context.Context, scope Scope, ca
 			scope.AccountID,
 			normalizeCallerType(caller.Type),
 			normalizeCallerID(caller.ID),
+			normalizeCallerID(scope.ExternalUserID),
 			conversationType,
 			normalizeConversationSource(caller.Source),
 			normalizeCallerID(caller.SourceWebAppID),
@@ -494,7 +515,7 @@ func (s *service) ListConversationsByCaller(ctx context.Context, scope Scope, ca
 		}
 		return conversations, total, err
 	}
-	conversations, total, err := s.repos.Conversation.ListByCallerScoped(ctx, scope.OrganizationID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID), conversationType, limit, offset)
+	conversations, total, err := s.repos.Conversation.ListByCallerScoped(ctx, scope.OrganizationID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID), normalizeCallerID(scope.ExternalUserID), conversationType, limit, offset)
 	if err == nil {
 		s.enqueueConversationTitleBackfills(ctx, scope, caller, conversations)
 	}
@@ -564,6 +585,7 @@ func (s *service) searchByCallerSurface(ctx context.Context, scope Scope, caller
 		scope.AccountID,
 		normalizeCallerType(caller.Type),
 		normalizeCallerID(caller.ID),
+		normalizeCallerID(scope.ExternalUserID),
 		normalizeConversationType(caller.ConversationType),
 		strings.TrimSpace(caller.Source),
 		normalizeCallerID(caller.SourceWebAppID),
@@ -745,7 +767,18 @@ func (s *service) DeleteConversation(ctx context.Context, scope Scope, id uuid.U
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return err
 	}
-	return mapRepoError(s.repos.Conversation.DeleteScoped(ctx, id, scope.OrganizationID, scope.AccountID))
+	// Deleting a conversation is the retention path: the conversation row is
+	// soft-deleted, so its transcript entries are removed explicitly in the same
+	// transaction instead of relying on the foreign-key cascade.
+	err := s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		txRepos := repository.NewRepositories(tx)
+		if err := txRepos.Conversation.DeleteScoped(ctx, id, scope.OrganizationID, scope.AccountID); err != nil {
+			return err
+		}
+		_, err := txRepos.TranscriptEntry.DeleteByConversation(ctx, id)
+		return err
+	})
+	return mapRepoError(err)
 }
 
 func (s *service) DeleteConversationByCaller(ctx context.Context, scope Scope, caller Caller, id uuid.UUID) error {
@@ -895,8 +928,20 @@ func (s *service) DeleteMessage(ctx context.Context, scope Scope, id uuid.UUID) 
 	}
 	err := s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txRepos := repository.NewRepositories(tx)
+		children, err := txRepos.Message.CountChildren(ctx, id)
+		if err != nil {
+			return err
+		}
+		if children > 0 {
+			// Deleting a middle turn would silently change the context every
+			// later turn was built on. Branch from that turn instead.
+			return fmt.Errorf("%w: only the last turn can be deleted; branch from that turn to explore another direction", ErrInvalidInput)
+		}
 		result, err := txRepos.Message.DeleteSubtreeScoped(ctx, id, scope.OrganizationID, scope.AccountID)
 		if err != nil {
+			return err
+		}
+		if _, err := txRepos.TranscriptEntry.DeleteByMessage(ctx, id); err != nil {
 			return err
 		}
 		return txRepos.Conversation.RefreshAfterMessageDelete(ctx, result.ConversationID)
@@ -922,6 +967,7 @@ func (s *service) StopMessage(ctx context.Context, scope Scope, id uuid.UUID) (*
 		}
 
 		metadata := workflowContinuationMetadataWithoutUserInputRequest(message.Metadata)
+		markOperationPlanStopped(metadata)
 		continuation := workflowApprovalContinuationFromMetadata(metadata)
 		isWorkflowContinuation := continuation.WorkflowRunID != ""
 		if isWorkflowContinuation {

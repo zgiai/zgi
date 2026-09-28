@@ -18,14 +18,14 @@ import (
 type ConversationRepository interface {
 	Create(ctx context.Context, conversation *runtimemodel.Conversation) error
 	GetScoped(ctx context.Context, id, organizationID, accountID uuid.UUID) (*runtimemodel.Conversation, error)
-	GetByCallerScoped(ctx context.Context, id, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, conversationType string) (*runtimemodel.Conversation, error)
+	GetByCallerScoped(ctx context.Context, id, organizationID, accountID uuid.UUID, callerType string, callerID, externalUserID *uuid.UUID, conversationType string) (*runtimemodel.Conversation, error)
 	GetRuntimeLogScoped(ctx context.Context, id, organizationID uuid.UUID, workspaceID *uuid.UUID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string) (*runtimemodel.Conversation, error)
 	GetBySourceConversation(ctx context.Context, sourceConversationID uuid.UUID) (*runtimemodel.Conversation, error)
 	ListScoped(ctx context.Context, organizationID, accountID uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
-	ListByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, conversationType string, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
-	ListByCallerSourceScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, conversationType string, source string, sourceWebAppID *uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
+	ListByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID, externalUserID *uuid.UUID, conversationType string, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
+	ListByCallerSourceScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID, externalUserID *uuid.UUID, conversationType string, source string, sourceWebAppID *uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
 	ListByCallerSurfaceScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, surface string, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
-	SearchByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, conversationType string, source string, sourceWebAppID *uuid.UUID, surface string, queryText string, limit int) ([]*SearchResult, error)
+	SearchByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID, externalUserID *uuid.UUID, conversationType string, source string, sourceWebAppID *uuid.UUID, surface string, queryText string, limit int) ([]*SearchResult, error)
 	UpdateScoped(ctx context.Context, id, organizationID, accountID uuid.UUID, updates map[string]interface{}) error
 	UpdateMetadata(ctx context.Context, id uuid.UUID, metadata map[string]interface{}) error
 	DeleteScoped(ctx context.Context, id, organizationID, accountID uuid.UUID) error
@@ -66,6 +66,32 @@ type MessageRepository interface {
 	DeleteSubtreeScoped(ctx context.Context, id, organizationID, accountID uuid.UUID) (*MessageDeleteResult, error)
 	ListStaleActiveIDs(ctx context.Context, cutoff time.Time) ([]uuid.UUID, error)
 	MarkStaleActiveAsError(ctx context.Context, cutoff time.Time, message string) (int64, error)
+	CountChildren(ctx context.Context, parentID uuid.UUID) (int64, error)
+}
+
+// TranscriptEntryRepository stores the append-only protocol messages of a turn.
+// Payload is the immutable original; preview is the derived effective form.
+// List and projection reads must stay on the preview columns.
+type TranscriptEntryRepository interface {
+	Append(ctx context.Context, entries []*runtimemodel.TranscriptEntry) error
+	// AppendForMessage appends a chain and advances the owning message head in
+	// one transaction. expectedHead is nil for a new message.
+	AppendForMessage(ctx context.Context, messageID uuid.UUID, expectedHead *uuid.UUID, entries []*runtimemodel.TranscriptEntry) (uuid.UUID, error)
+	// AppendSummaryForMessage appends a summary checkpoint and advances the
+	// owning message head atomically.
+	AppendSummaryForMessage(ctx context.Context, messageID uuid.UUID, expectedHead, boundary *uuid.UUID, summary, eventID string) (uuid.UUID, error)
+	SetMessageHead(ctx context.Context, messageID uuid.UUID, head *uuid.UUID) error
+	// LoadPreviewChain returns the reachable chain from newest to oldest. It
+	// stops at stopAt, when provided, and rejects cycles.
+	LoadPreviewChain(ctx context.Context, headID uuid.UUID, stopAt *uuid.UUID, limit int) ([]*runtimemodel.TranscriptEntryPreview, error)
+	// ListForCopyByHead returns the complete reachable chain in chronological
+	// order, including payloads, for an isolated branch copy.
+	ListForCopyByHead(ctx context.Context, headID uuid.UUID, stopAt *uuid.UUID) ([]*runtimemodel.TranscriptEntry, error)
+	ListPreviewsByMessage(ctx context.Context, messageID uuid.UUID) ([]*runtimemodel.TranscriptEntryPreview, error)
+	GetPayload(ctx context.Context, id, organizationID uuid.UUID) (*runtimemodel.TranscriptEntry, error)
+	UpdatePreview(ctx context.Context, id uuid.UUID, preview map[string]interface{}, byteSize int) error
+	DeleteByMessage(ctx context.Context, messageID uuid.UUID) (int64, error)
+	DeleteByConversation(ctx context.Context, conversationID uuid.UUID) (int64, error)
 }
 
 type RuntimeLeaseRepository interface {
@@ -101,14 +127,15 @@ type CustomSkillRepository interface {
 }
 
 type Repositories struct {
-	Conversation ConversationRepository
-	Message      MessageRepository
-	RuntimeLease RuntimeLeaseRepository
-	Access       AccessRepository
-	SkillConfig  OrganizationSkillConfigRepository
-	SkillPref    AccountSkillPreferenceRepository
-	CustomSkill  CustomSkillRepository
-	DB           *gorm.DB
+	Conversation    ConversationRepository
+	Message         MessageRepository
+	RuntimeLease    RuntimeLeaseRepository
+	Access          AccessRepository
+	SkillConfig     OrganizationSkillConfigRepository
+	SkillPref       AccountSkillPreferenceRepository
+	CustomSkill     CustomSkillRepository
+	TranscriptEntry TranscriptEntryRepository
+	DB              *gorm.DB
 }
 
 type MessageDeleteResult struct {
@@ -137,14 +164,15 @@ type SearchResult struct {
 
 func NewRepositories(db *gorm.DB) *Repositories {
 	return &Repositories{
-		Conversation: NewConversationRepository(db),
-		Message:      NewMessageRepository(db),
-		RuntimeLease: NewRuntimeLeaseRepository(db),
-		Access:       NewAccessRepository(db),
-		SkillConfig:  NewOrganizationSkillConfigRepository(db),
-		SkillPref:    NewAccountSkillPreferenceRepository(db),
-		CustomSkill:  NewCustomSkillRepository(db),
-		DB:           db,
+		Conversation:    NewConversationRepository(db),
+		Message:         NewMessageRepository(db),
+		RuntimeLease:    NewRuntimeLeaseRepository(db),
+		Access:          NewAccessRepository(db),
+		SkillConfig:     NewOrganizationSkillConfigRepository(db),
+		SkillPref:       NewAccountSkillPreferenceRepository(db),
+		CustomSkill:     NewCustomSkillRepository(db),
+		TranscriptEntry: NewTranscriptEntryRepository(db),
+		DB:              db,
 	}
 }
 
@@ -198,10 +226,10 @@ func (r *conversationRepository) GetScoped(ctx context.Context, id, organization
 	return &conversation, nil
 }
 
-func (r *conversationRepository) GetByCallerScoped(ctx context.Context, id, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, conversationType string) (*runtimemodel.Conversation, error) {
+func (r *conversationRepository) GetByCallerScoped(ctx context.Context, id, organizationID, accountID uuid.UUID, callerType string, callerID, externalUserID *uuid.UUID, conversationType string) (*runtimemodel.Conversation, error) {
 	var conversation runtimemodel.Conversation
-	query := applyConversationTypeFilter(applyCallerFilter(r.db.WithContext(ctx).
-		Where("id = ? AND organization_id = ? AND account_id = ? AND deleted_at IS NULL", id, organizationID, accountID), callerType, callerID), conversationType, "")
+	query := applyExternalUserFilter(applyConversationTypeFilter(applyCallerFilter(r.db.WithContext(ctx).
+		Where("id = ? AND organization_id = ? AND account_id = ? AND deleted_at IS NULL", id, organizationID, accountID), callerType, callerID), conversationType, ""), externalUserID, "")
 	if err := query.Take(&conversation).Error; err != nil {
 		return nil, wrapNotFound(err, "chat runtime conversation")
 	}
@@ -246,11 +274,11 @@ func (r *conversationRepository) ListScoped(ctx context.Context, organizationID,
 	return conversations, total, nil
 }
 
-func (r *conversationRepository) ListByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, conversationType string, limit, offset int) ([]*runtimemodel.Conversation, int64, error) {
+func (r *conversationRepository) ListByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID, externalUserID *uuid.UUID, conversationType string, limit, offset int) ([]*runtimemodel.Conversation, int64, error) {
 	var conversations []*runtimemodel.Conversation
 	var total int64
-	query := applyConversationTypeFilter(applyCallerFilter(r.db.WithContext(ctx).Model(&runtimemodel.Conversation{}).
-		Where("organization_id = ? AND account_id = ? AND deleted_at IS NULL", organizationID, accountID), callerType, callerID), conversationType, "")
+	query := applyExternalUserFilter(applyConversationTypeFilter(applyCallerFilter(r.db.WithContext(ctx).Model(&runtimemodel.Conversation{}).
+		Where("organization_id = ? AND account_id = ? AND deleted_at IS NULL", organizationID, accountID), callerType, callerID), conversationType, ""), externalUserID, "")
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, fmt.Errorf("failed to count chat runtime conversations: %w", err)
 	}
@@ -260,11 +288,11 @@ func (r *conversationRepository) ListByCallerScoped(ctx context.Context, organiz
 	return conversations, total, nil
 }
 
-func (r *conversationRepository) ListByCallerSourceScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, conversationType string, source string, sourceWebAppID *uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error) {
+func (r *conversationRepository) ListByCallerSourceScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID, externalUserID *uuid.UUID, conversationType string, source string, sourceWebAppID *uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error) {
 	var conversations []*runtimemodel.Conversation
 	var total int64
-	query := applyConversationSourceFilter(applyConversationTypeFilter(applyCallerFilter(r.db.WithContext(ctx).Model(&runtimemodel.Conversation{}).
-		Where("organization_id = ? AND account_id = ? AND deleted_at IS NULL", organizationID, accountID), callerType, callerID), conversationType, ""), source, sourceWebAppID)
+	query := applyExternalUserFilter(applyConversationSourceFilter(applyConversationTypeFilter(applyCallerFilter(r.db.WithContext(ctx).Model(&runtimemodel.Conversation{}).
+		Where("organization_id = ? AND account_id = ? AND deleted_at IS NULL", organizationID, accountID), callerType, callerID), conversationType, ""), source, sourceWebAppID), externalUserID, "")
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, fmt.Errorf("failed to count chat runtime conversations: %w", err)
 	}
@@ -288,7 +316,7 @@ func (r *conversationRepository) ListByCallerSurfaceScoped(ctx context.Context, 
 	return conversations, total, nil
 }
 
-func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, conversationType string, source string, sourceWebAppID *uuid.UUID, surface string, queryText string, limit int) ([]*SearchResult, error) {
+func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID, externalUserID *uuid.UUID, conversationType string, source string, sourceWebAppID *uuid.UUID, surface string, queryText string, limit int) ([]*SearchResult, error) {
 	keyword := strings.TrimSpace(queryText)
 	if keyword == "" || limit <= 0 {
 		return []*SearchResult{}, nil
@@ -326,15 +354,23 @@ func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organ
 		}
 	}
 	surfaceFilter, surfaceArgs := searchConversationSurfaceFilter(surface)
+	externalUserFilter := ""
+	externalUserArgs := []interface{}{}
+	if externalUserID != nil && *externalUserID != uuid.Nil {
+		externalUserFilter = " AND c.external_user_id = ?"
+		externalUserArgs = append(externalUserArgs, *externalUserID)
+	}
 	args := []interface{}{organizationID, accountID, callerType, conversationType}
 	args = append(args, callerArgs...)
 	args = append(args, sourceArgs...)
+	args = append(args, externalUserArgs...)
 	args = append(args, surfaceArgs...)
 	args = append(args, pattern)
 	args = append(args, pattern)
 	args = append(args, organizationID, accountID, callerType, conversationType)
 	args = append(args, callerArgs...)
 	args = append(args, sourceArgs...)
+	args = append(args, externalUserArgs...)
 	args = append(args, surfaceArgs...)
 	args = append(args, pattern, pattern)
 	args = append(args, limit)
@@ -358,6 +394,7 @@ func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organ
 				AND c.conversation_type = ?
 				AND %s
 				AND c.deleted_at IS NULL
+				%s
 				%s
 				%s
 				AND LOWER(COALESCE(c.title, '')) LIKE ? ESCAPE '\'
@@ -384,6 +421,7 @@ func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organ
 				AND m.deleted_at IS NULL
 				%s
 				%s
+				%s
 				AND (
 					LOWER(COALESCE(m.query, '')) LIKE ? ESCAPE '\'
 					OR LOWER(COALESCE(m.answer, '')) LIKE ? ESCAPE '\'
@@ -391,7 +429,7 @@ func (r *conversationRepository) SearchByCallerScoped(ctx context.Context, organ
 		) AS matches
 		ORDER BY rank ASC, updated_at DESC
 		LIMIT ?
-	`, callerFilter, sourceFilter, surfaceFilter, callerFilter, sourceFilter, surfaceFilter)
+	`, callerFilter, sourceFilter, externalUserFilter, surfaceFilter, callerFilter, sourceFilter, externalUserFilter, surfaceFilter)
 
 	if err := r.db.WithContext(ctx).Raw(query, args...).Scan(&rows).Error; err != nil {
 		return nil, fmt.Errorf("failed to search chat runtime conversations: %w", err)
@@ -454,6 +492,13 @@ func applyCallerFilter(query *gorm.DB, callerType string, callerID *uuid.UUID) *
 		return query.Where("caller_id = ?", *callerID)
 	}
 	return query.Where("caller_id IS NULL")
+}
+
+func applyExternalUserFilter(query *gorm.DB, externalUserID *uuid.UUID, alias string) *gorm.DB {
+	if externalUserID == nil || *externalUserID == uuid.Nil {
+		return query
+	}
+	return query.Where(qualifiedColumn(alias, "external_user_id")+" = ?", *externalUserID)
 }
 
 func applyConversationSurfaceFilter(query *gorm.DB, surface string) *gorm.DB {
@@ -844,6 +889,16 @@ func (r *messageRepository) Create(ctx context.Context, message *runtimemodel.Me
 	if message.Status == runtimemodel.MessageStatusPending || message.Status == runtimemodel.MessageStatusStreaming {
 		delete(message.Metadata, "connector_action_instances")
 	}
+	if message.TranscriptHeadEntryID == nil && message.ParentID != nil {
+		var parent runtimemodel.Message
+		if err := r.db.WithContext(ctx).Select("transcript_head_entry_id").Where("id = ?", *message.ParentID).Take(&parent).Error; err != nil {
+			return fmt.Errorf("failed to inherit transcript head from parent message: %w", err)
+		}
+		if parent.TranscriptHeadEntryID != nil && *parent.TranscriptHeadEntryID != uuid.Nil {
+			head := *parent.TranscriptHeadEntryID
+			message.TranscriptHeadEntryID = &head
+		}
+	}
 	message.CreatedAt = now
 	message.UpdatedAt = now
 	if err := r.db.WithContext(ctx).Create(message).Error; err != nil {
@@ -1092,22 +1147,26 @@ func (r *messageRepository) ReplaceRootForStreaming(ctx context.Context, message
 	result := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
 		Where("id = ? AND deleted_at IS NULL AND parent_id IS NULL", message.ID).
 		Updates(map[string]interface{}{
-			"query":                 message.Query,
-			"answer":                "",
-			"status":                runtimemodel.MessageStatusStreaming,
-			"error":                 nil,
-			"model_provider":        message.ModelProvider,
-			"model_name":            message.ModelName,
-			"billing_reason_source": message.BillingReasonSource,
-			"model_parameters":      datatypes.JSON(parametersJSON),
-			"metadata":              rootReplacementMetadataValue(r.db, metadataJSON),
-			"updated_at":            time.Now(),
+			"query":                    message.Query,
+			"answer":                   "",
+			"status":                   runtimemodel.MessageStatusStreaming,
+			"error":                    nil,
+			"model_provider":           message.ModelProvider,
+			"model_name":               message.ModelName,
+			"billing_reason_source":    message.BillingReasonSource,
+			"model_parameters":         datatypes.JSON(parametersJSON),
+			"metadata":                 rootReplacementMetadataValue(r.db, metadataJSON),
+			"transcript_head_entry_id": nil,
+			"updated_at":               time.Now(),
 		})
 	if result.Error != nil {
 		return fmt.Errorf("failed to prepare aichat root replacement: %w", result.Error)
 	}
 	if result.RowsAffected == 0 {
 		return gorm.ErrRecordNotFound
+	}
+	if err := r.db.WithContext(ctx).Where("message_id = ?", message.ID).Delete(&runtimemodel.TranscriptEntry{}).Error; err != nil {
+		return fmt.Errorf("failed to clear root transcript entries: %w", err)
 	}
 	return nil
 }
@@ -1465,6 +1524,20 @@ func (r *messageRepository) MarkStaleActiveAsError(ctx context.Context, cutoff t
 		return 0, fmt.Errorf("failed to mark stale aichat messages error: %w", result.Error)
 	}
 	return result.RowsAffected, nil
+}
+
+// CountChildren reports how many live messages hang below one message. The
+// conversation is a tree, so a turn that still has children is not a leaf.
+func (r *messageRepository) CountChildren(ctx context.Context, parentID uuid.UUID) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).
+		Model(&runtimemodel.Message{}).
+		Where("parent_id = ?", parentID).
+		Count(&count).Error
+	if err != nil {
+		return 0, fmt.Errorf("count child messages: %w", err)
+	}
+	return count, nil
 }
 
 type accessRepository struct {

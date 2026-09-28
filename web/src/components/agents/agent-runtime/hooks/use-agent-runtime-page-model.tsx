@@ -1,5 +1,7 @@
 'use client';
 
+import { indexWorkflowBindingCandidates } from '../workflow-candidates';
+
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -469,8 +471,8 @@ export function useAgentRuntimePageModel(agentId: string) {
   }, [canBindKnowledge, knowledgeDatasetIds, selectedDatasetQueries, t]);
   const isSelectedDatasetsLoading = selectedDatasetQueries.some(query => query.isLoading);
   const workflowCandidatesByBindingID = useMemo<Map<string, AgentWorkflowBindingCandidate>>(
-    () => new Map(workflowCandidates.map(candidate => [candidate.binding_id, candidate])),
-    [workflowCandidates]
+    () => indexWorkflowBindingCandidates(workflowCandidates, workflowBindings),
+    [workflowCandidates, workflowBindings]
   );
   const normalizedSelectedSkillIds = useMemo(
     () => normalizeAIChatSkillIds(selectedSkillIds),

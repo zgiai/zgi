@@ -65,7 +65,7 @@ export function usePaymentStatusPolling({
       }
 
       // Payment failed or cancelled
-      if (status === 'failed' || status === 'cancelled') {
+      if (status === 'failed' || status === 'canceled') {
         stopPolling();
         callbacksRef.current.onFailure?.(status);
         return;

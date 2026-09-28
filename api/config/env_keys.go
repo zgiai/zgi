@@ -32,10 +32,6 @@ const (
 	// envChatRuntimeModelIdleTimeoutSeconds stops one model call after this many
 	// seconds without any upstream response. Default: 300.
 	envChatRuntimeModelIdleTimeoutSeconds = "CHAT_RUNTIME_MODEL_IDLE_TIMEOUT_SECONDS"
-	// envChatRuntimeAgentContextWindowK sets the Agent working context window in
-	// thousands of tokens (k). 1k means 1,000 tokens. Default: 256. The runtime
-	// caps the effective value at the selected model's physical context window.
-	envChatRuntimeAgentContextWindowK = "CHAT_RUNTIME_AGENT_CONTEXT_WINDOW_K"
 	// envChatRuntimeContextPromptDumpEnabled writes each final model request to
 	// local debug storage. Default: false.
 	envChatRuntimeContextPromptDumpEnabled = "ZGI_AICHAT_CONTEXT_PROMPT_DUMP"
@@ -368,6 +364,12 @@ const (
 	envCodeExecutionEnableNetwork = "CODE_EXECUTION_ENABLE_NETWORK"
 	// envCodeExecutionSystemOfficeProfile sets the managed dependency profile used by system Office/PDF/PPTX file tools. Default: skill-office.
 	envCodeExecutionSystemOfficeProfile = "CODE_EXECUTION_SYSTEM_OFFICE_PROFILE"
+	// envCodeExecutionSystemDataProfile sets the prebuilt dependency profile used when runtime dependency builds are disabled. Default: scientific-data.
+	envCodeExecutionSystemDataProfile = "CODE_EXECUTION_SYSTEM_DATA_PROFILE"
+	// envCodeExecutionSkillDependencyScanEnabled controls per-skill dependency discovery and managed profile builds. Default: true.
+	envCodeExecutionSkillDependencyScanEnabled = "CODE_EXECUTION_SKILL_DEPENDENCY_SCAN_ENABLED"
+	// envSkillRuntimeGrantsPath points to administrator-owned organization/package grants.
+	envSkillRuntimeGrantsPath = "ZGI_SKILL_RUNTIME_GRANTS_PATH"
 
 	// Code execution safety limits.
 	// envCodeMaxNumber sets the largest numeric value allowed in code execution. Default: 9223372036854775807.

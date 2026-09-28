@@ -422,19 +422,49 @@ func applyPlanUpdateTraceMetadata(metadata map[string]interface{}, trace skills.
 	if len(outcomeSnapshot) > 0 {
 		outcomes := reconcileOperationPlanOutcomeSnapshot(plan, outcomeSnapshot)
 		plan[operationPlanOutcomesKey] = mapsToInterfaceSlice(outcomes)
-		outcomePhases := operationPlanPhasesFromOutcomeSnapshot(mapSliceFromAny(plan["phases"]), outcomes)
 		if len(phases) > 0 {
-			// Internal server plan updates may atomically declare Outcomes and
-			// attach canonical Action bindings. Reconcile the supplied phases onto
-			// the generated Outcome phases so expected_action, ledger epoch, and
-			// other server execution facts are not discarded by Outcome creation.
+			// A joint snapshot supplies the execution contract as well as goals.
+			// Legacy joint arrays pair by position; explicit outcome_id supports
+			// multiple phases per outcome. The tool validates this association.
+			for index, phase := range phases {
+				if stringFromAny(phase["outcome_id"]) == "" && len(phases) == len(outcomes) {
+					phase["outcome_id"] = outcomes[index]["id"]
+				}
+			}
+			// Internal server plan updates may atomically declare outcomes and
+			// attach canonical action bindings. Reconcile supplied phases onto
+			// generated outcome phases so no outcome or execution fact is lost.
+			outcomePhases := operationPlanPhasesFromOutcomeSnapshot(mapSliceFromAny(plan["phases"]), outcomes)
 			outcomePhases = reconcileOperationPlanOutcomePhaseSnapshot(outcomePhases, phases)
+			plan["phases"] = mapsToInterfaceSlice(outcomePhases)
+		} else {
+			plan["phases"] = mapsToInterfaceSlice(operationPlanPhasesFromOutcomeSnapshot(mapSliceFromAny(plan["phases"]), outcomes))
 		}
-		plan["phases"] = mapsToInterfaceSlice(outcomePhases)
 		operationPlanReconcileOutcomes(plan)
 	} else {
 		phases = reconcileOperationPlanPhaseSnapshot(mapSliceFromAny(plan["phases"]), phases)
 		plan["phases"] = mapsToInterfaceSlice(phases)
+	}
+	// Phase-bound completion must be rechecked when bindings are amended;
+	// a previously completed goal cannot carry proof for a different tool.
+	if outcomes := mapSliceFromAny(plan[operationPlanOutcomesKey]); len(outcomes) > 0 {
+		for _, outcome := range outcomes {
+			if len(mapSliceFromAny(mapFromOperationContext(outcome["acceptance"])["effects"])) > 0 {
+				continue
+			}
+			for _, phase := range mapSliceFromAny(plan["phases"]) {
+				if stringFromAny(phase["outcome_id"]) == stringFromAny(outcome["id"]) &&
+					(len(mapFromOperationContext(phase["expected_action"])) > 0 || stringFromAny(phase["completion_mode"]) != "") {
+					outcome["status"] = operationPlanStepStatusPending
+					delete(outcome, "completed_at")
+					delete(outcome, "effect_refs")
+					delete(outcome, "completion_source")
+					break
+				}
+			}
+		}
+		plan[operationPlanOutcomesKey] = mapsToInterfaceSlice(outcomes)
+		operationPlanReconcileOutcomes(plan)
 	}
 	plan["phase_revision"] = intValueFromAny(plan["phase_revision"]) + 1
 	plan["phase_updated_at"] = time.Now().UTC().Format(time.RFC3339)

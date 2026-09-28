@@ -103,6 +103,7 @@ type Scope struct {
 	OrganizationID    uuid.UUID
 	AccountID         uuid.UUID
 	WorkspaceID       *uuid.UUID
+	ExternalUserID    *uuid.UUID
 	AgentMemoryUserID *uuid.UUID
 	SkipAccessCheck   bool
 }
@@ -298,7 +299,9 @@ type Service interface {
 	StreamConversationEventsForCaller(ctx context.Context, scope Scope, caller Caller, conversationID, messageID uuid.UUID, afterID string, onEvent func(StreamEvent) error) error
 	SubmitToolGovernanceDecision(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, correlationID string, req runtimedto.ToolGovernanceDecisionRequest) (*runtimedto.ToolGovernanceDecisionResponse, error)
 	RunToolGovernanceDecisionStream(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, correlationID string, req runtimedto.ToolGovernanceDecisionRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
+	RunConfiguredToolGovernanceDecisionStream(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID, correlationID string, req runtimedto.ToolGovernanceDecisionRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
 	RunClientActionContinuationStream(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, actionID string, req runtimedto.ClientActionResultRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
+	RunConfiguredClientActionContinuationStream(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID, actionID string, req runtimedto.ClientActionResultRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
 	RunUserInputContinuationStream(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, requestID string, req runtimedto.UserInputContinuationRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
 	RunConfiguredUserInputContinuationStream(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID, requestID string, req runtimedto.UserInputContinuationRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
 	CreatePendingMessage(ctx context.Context, scope Scope, req CreatePendingMessageRequest) (*runtimemodel.Message, error)
@@ -495,6 +498,7 @@ type PreparedChat struct {
 	parts                          *chatRequestParts
 	contextBudget                  *contextBudgetResult
 	contextManager                 *contextmgr.Manager
+	contextEntries                 *contextEntrySync
 
 	UserMemoryPreflightDone  bool
 	UserMemoryPreflightUsage *adapter.Usage

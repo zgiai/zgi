@@ -23,11 +23,11 @@ func TestBuildStreamErrorPayloadDoesNotGuessPrivateBalanceFromProviderError(t *t
 
 	payload := BuildStreamErrorPayload(prepared, err)
 
-	if _, ok := payload["code"]; ok {
-		t.Fatalf("stream error code = %#v, want no guessed private-channel code", payload["code"])
+	if got := payload["code"]; got != response.ErrSystemError.Code {
+		t.Fatalf("stream error code = %#v, want generic code %d", got, response.ErrSystemError.Code)
 	}
-	if got := payload["message"]; got != err.Error() {
-		t.Fatalf("stream error message = %#v, want original error %q", got, err.Error())
+	if got := payload["message"]; got != response.ErrSystemError.Message {
+		t.Fatalf("stream error message = %#v, want generic message %q", got, response.ErrSystemError.Message)
 	}
 }
 
@@ -99,17 +99,17 @@ func TestBuildStreamErrorPayloadMapsPrivateChannelUpstreamUnavailable(t *testing
 	}
 }
 
-func TestBuildStreamErrorPayloadKeepsOrdinaryError(t *testing.T) {
+func TestBuildStreamErrorPayloadSanitizesOrdinaryError(t *testing.T) {
 	prepared := streamErrorTestPrepared()
-	err := errors.New("plain provider failure")
+	err := errors.New("redis password leaked by internal error")
 
 	payload := BuildStreamErrorPayload(prepared, err)
 
-	if got := payload["message"]; got != "plain provider failure" {
-		t.Fatalf("stream error message = %#v, want plain provider failure", got)
+	if got := payload["message"]; got != response.ErrSystemError.Message {
+		t.Fatalf("stream error message = %#v, want %#v", got, response.ErrSystemError.Message)
 	}
-	if _, ok := payload["code"]; ok {
-		t.Fatalf("stream error code = %#v, want no code for ordinary error", payload["code"])
+	if got := payload["code"]; got != response.ErrSystemError.Code {
+		t.Fatalf("stream error code = %#v, want %d", got, response.ErrSystemError.Code)
 	}
 }
 

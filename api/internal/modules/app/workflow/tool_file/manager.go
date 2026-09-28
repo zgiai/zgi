@@ -40,7 +40,7 @@ func NewToolFileManager(db *gorm.DB, storage storage.Storage) *ToolFileManager {
 
 // CreateFileByRaw creates a tool file from raw binary data
 func (tm *ToolFileManager) CreateFileByRaw(ctx context.Context, params CreateFileByRawParams) (*ToolFile, error) {
-	lifecycle, expiresAt, err := resolveLifecycle(params.Lifecycle, params.ExpiresAt)
+	lifecycle, expiresAt, err := resolveLifecycle(params.Lifecycle, params.ExpiresAt, params.ExplicitWorkflowLifecycle)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +99,7 @@ func (tm *ToolFileManager) CreateFileByRaw(ctx context.Context, params CreateFil
 
 // CreateFileByURL creates a tool file from a remote URL
 func (tm *ToolFileManager) CreateFileByURL(ctx context.Context, params CreateFileByURLParams) (*ToolFile, error) {
-	lifecycle, expiresAt, err := resolveLifecycle(params.Lifecycle, params.ExpiresAt)
+	lifecycle, expiresAt, err := resolveLifecycle(params.Lifecycle, params.ExpiresAt, params.ExplicitWorkflowLifecycle)
 	if err != nil {
 		return nil, err
 	}
@@ -393,16 +393,19 @@ type CreateFileByRawParams struct {
 	Filename       *string
 	Lifecycle      ToolFileLifecycle
 	ExpiresAt      *time.Time
+	// ExplicitWorkflowLifecycle permits expiry only for workflow-declared temporary output.
+	ExplicitWorkflowLifecycle bool
 }
 
 // CreateFileByURLParams parameters for creating file by URL
 type CreateFileByURLParams struct {
-	UserID         string
-	TenantID       string
-	ConversationID *string
-	FileURL        string
-	Lifecycle      ToolFileLifecycle
-	ExpiresAt      *time.Time
+	UserID                    string
+	TenantID                  string
+	ConversationID            *string
+	FileURL                   string
+	Lifecycle                 ToolFileLifecycle
+	ExpiresAt                 *time.Time
+	ExplicitWorkflowLifecycle bool
 }
 
 // Helper functions
@@ -442,13 +445,16 @@ func shouldPreferDetectedMimeType(currentMimeType, detectedMimeType string) bool
 	return currentMimeType == "" || currentMimeType == "application/octet-stream"
 }
 
-func resolveLifecycle(lifecycle ToolFileLifecycle, expiresAt *time.Time) (ToolFileLifecycle, *time.Time, error) {
+func resolveLifecycle(lifecycle ToolFileLifecycle, expiresAt *time.Time, explicitWorkflowLifecycle bool) (ToolFileLifecycle, *time.Time, error) {
 	switch lifecycle {
 	case "":
 		return ToolFileLifecyclePersistent, nil, nil
 	case ToolFileLifecyclePersistent:
 		return ToolFileLifecyclePersistent, nil, nil
 	case ToolFileLifecycleTemporary:
+		if !explicitWorkflowLifecycle {
+			return ToolFileLifecyclePersistent, nil, nil
+		}
 		if expiresAt != nil {
 			expiresCopy := *expiresAt
 			return ToolFileLifecycleTemporary, &expiresCopy, nil

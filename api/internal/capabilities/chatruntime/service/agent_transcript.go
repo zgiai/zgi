@@ -1,14 +1,11 @@
 package service
 
 import (
-	"context"
 	"encoding/json"
 	"strings"
 
-	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/contextmgr"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
-	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 const (
@@ -16,30 +13,6 @@ const (
 	agentTranscriptVersionMetadataKey = "agent_transcript_version"
 	agentTranscriptSchemaVersion      = 1
 )
-
-// persistAgentTurnTranscript snapshots the model-protocol messages produced by
-// the current logical Agent turn. Successful and suspended paths will persist
-// prepared.Message.Metadata with their terminal status update; error paths need
-// this eager write because UpdateError intentionally does not replace metadata.
-func (s *service) persistAgentTurnTranscript(
-	ctx context.Context,
-	prepared *PreparedChat,
-	manager *contextmgr.Manager,
-	answer string,
-	eager bool,
-) {
-	if prepared == nil || prepared.Message == nil || manager == nil {
-		return
-	}
-	metadata := mergeAgentTranscriptMetadata(prepared.Message.Metadata, manager.TurnTranscript(), answer)
-	prepared.Message.Metadata = metadata
-	if !eager || s == nil || s.repos == nil || s.repos.Message == nil {
-		return
-	}
-	if err := s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {
-		logger.WarnContext(ctx, "failed to persist Agent turn transcript", "message_id", prepared.Message.ID.String(), err)
-	}
-}
 
 func mergeAgentTranscriptMetadata(source map[string]interface{}, transcript []adapter.Message, answer string) map[string]interface{} {
 	metadata := copyStringAnyMap(source)
@@ -81,13 +54,6 @@ func agentTranscriptFromMetadata(metadata map[string]interface{}, answer string)
 		return nil
 	}
 	return normalizeAgentTranscript(messages, answer)
-}
-
-func appendCurrentTurnAgentTranscript(request *adapter.ChatRequest, message *runtimemodel.Message) {
-	if request == nil || message == nil {
-		return
-	}
-	request.Messages = append(request.Messages, agentTranscriptFromMetadata(message.Metadata, message.Answer)...)
 }
 
 // normalizeAgentTranscript accepts only complete assistant tool-call batches.

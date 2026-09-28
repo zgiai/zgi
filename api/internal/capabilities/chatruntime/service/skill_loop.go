@@ -138,6 +138,8 @@ func (s *service) runPreparedToolLoop(
 		additionalSystemMessages = append(additionalSystemMessages, agentmemoryruntime.PolicyMessage(enabledAgentMemorySlots(prepared.parts.AgentMemorySlots), proactiveAllowed))
 	}
 	executionContext := s.skillExecutionContext(prepared)
+	scriptModel, scriptModelUsage := s.newSkillScriptModelChannel(prepared)
+	executionContext.ScriptModel = scriptModel
 	var nativeToolSet *skills.NativeToolSet
 	var nativeSkillSession *skills.NativeSkillSession
 	if nativeLoop {
@@ -261,7 +263,11 @@ func (s *service) runPreparedToolLoop(
 	if err == nil && presentationErr != nil {
 		err = presentationErr
 	}
-	s.persistAgentTurnTranscript(persistCtx, prepared, contextManager, answer, err != nil)
+	// Durable facts: the turn's protocol messages become transcript entries.
+	// The metadata snapshot is no longer written; legacy turns are still read
+	// through the metadata fallback.
+	s.syncAgentTranscriptEntries(persistCtx, prepared, contextManager)
+	usage = addUsageCloned(usage, scriptModelUsage())
 	if err != nil && strings.TrimSpace(answer) != "" {
 		s.persistPartialSkillLoopAnswerBestEffort(persistCtx, prepared, answer, usage)
 	}
@@ -1984,6 +1990,13 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 	return executionContext
 }
 
+func preparedExternalUserID(prepared *PreparedChat) string {
+	if prepared == nil || prepared.Scope.ExternalUserID == nil || *prepared.Scope.ExternalUserID == uuid.Nil {
+		return ""
+	}
+	return prepared.Scope.ExternalUserID.String()
+}
+
 func (s *service) consoleNavigationRouteAuthorizer(prepared *PreparedChat) consolenavigation.RouteAuthorizer {
 	if s == nil || prepared == nil {
 		return nil
@@ -2073,6 +2086,9 @@ func skillRuntimeParameters(scope Scope, config RunConfig) map[string]interface{
 
 func skillRuntimeParametersForPrepared(prepared *PreparedChat) map[string]interface{} {
 	params := skillRuntimeParameters(prepared.Scope, prepared.RunConfig)
+	if externalUserID := preparedExternalUserID(prepared); externalUserID != "" {
+		params[tools.ExternalUserIDRuntimeParameter] = externalUserID
+	}
 	if prepared != nil {
 		if source := strings.TrimSpace(prepared.Caller.Source); source != "" {
 			// Built-in tools use the server-owned conversation source to decide
@@ -2975,7 +2991,7 @@ func contextualContinuationStrategy(parts *chatRequestParts, strategy *AIChatTur
 		strategy.SuccessCriteria = []string{
 			"continue from the recent execution context instead of treating the request as a new generic question",
 			"do not repeat successful side-effecting tool calls from the recent task",
-			"each requested destination file has exactly one temporary artifact selected",
+			"each requested destination file has exactly one generated artifact selected",
 			"file-manager/save_file_to_management succeeds for each selected artifact",
 			"asset observation or refreshed page context confirms every created file is visible",
 		}
@@ -3002,7 +3018,7 @@ func contextualContinuationStrategy(parts *chatRequestParts, strategy *AIChatTur
 			}
 		}
 		strategy.Avoid = appendUniqueStrings(strategy.Avoid,
-			"after a temporary artifact is generated, do not regenerate it; save each unsaved generated artifact with file-manager/save_file_to_management",
+			"after an artifact is generated, do not regenerate it; save each unsaved generated artifact with file-manager/save_file_to_management",
 		)
 	}
 	if skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
@@ -3048,7 +3064,7 @@ func contextualManagedFileCreateStrategy(parts *chatRequestParts, strategy *AICh
 	strategy.Approval = "file-manager/save_file_to_management is governed; approval depends on the user's permission tier"
 	strategy.SuccessCriteria = []string{
 		"Files page context is loaded before File Management mutation when needed",
-		"each requested destination file has exactly one temporary artifact selected",
+		"each requested destination file has exactly one generated artifact selected",
 		"file-manager/save_file_to_management succeeds for each selected artifact",
 		"asset observation or refreshed page context confirms the created file is visible",
 	}
@@ -3083,8 +3099,8 @@ func contextualTemporaryFileGenerateStrategy(parts *chatRequestParts, strategy *
 	strategy.AssetRisk = "medium"
 	strategy.Approval = "artifact generation follows the producing skill manifest; do not save into File Management unless the user explicitly asks"
 	strategy.SuccessCriteria = []string{
-		"the appropriate artifact-producing skill creates exactly one requested temporary artifact per requested file",
-		"generated_files metadata records the temporary artifact",
+		"the appropriate artifact-producing skill creates exactly one generated artifact per requested file",
+		"generated_files metadata records the generated artifact",
 		"file-manager/save_file_to_management is not called unless the user explicitly asks to save or create in File Management",
 	}
 	strategy.ObservationPoints = []string{"generated_file_metadata", "message_file_card"}
@@ -3093,7 +3109,7 @@ func contextualTemporaryFileGenerateStrategy(parts *chatRequestParts, strategy *
 		strategy.SupportingSkills = appendUniqueStrings(strategy.SupportingSkills, skills.SkillConsoleNavigator)
 	}
 	strategy.Avoid = appendUniqueStrings(strategy.Avoid,
-		"do not answer that a temporary file was generated until an artifact-producing tool succeeds",
+		"do not answer that a file was generated until an artifact-producing tool succeeds",
 		"do not call file-manager/save_file_to_management for temporary-only generation requests",
 	)
 	return strategy
@@ -3645,12 +3661,12 @@ func contextualConsoleFilesSkillMessage(prepared *PreparedChat) (adapter.Message
 		"If a prior approval or session grant exists, it only skips the approval prompt. You must still call file-manager/delete_file in this turn and wait for the tool result before saying the file was deleted.",
 		"Never claim a file was deleted, removed, updated, created, saved, or otherwise changed based only on previous conversation context.",
 		"If the target file cannot be determined from structured context, call request_user_input with a concise clarification instead of guessing.",
-		"For requests to create, generate, write, save, upload, import, or export a new file into File Management or the current Files page, use a two-step flow: first use the appropriate artifact-producing skill to create a temporary artifact, then use file-manager/save_file_to_management with source_type \"tool_file\", the generated tool_file_id/file_id, and the destination filename.",
+		"For requests to create, generate, write, save, upload, import, or export a new file into File Management or the current Files page, use a two-step flow: first create an artifact with the appropriate producing skill, then use file-manager/save_file_to_management with source_type \"tool_file\", the generated tool_file_id/file_id, and the destination filename.",
 		"Choose the artifact-producing skill that best matches the requested output. file-generator fits regular documents and files such as SVG, PDF, DOCX, PPTX, XLSX, CSV, JSON, Markdown, HTML, or TXT; chart-generator fits charts, graphs, and data visualizations.",
 		"When the user says this file, the previous file, the generated file, or the file just created and asks to save/upload/import it into File Management, resolve that reference from recent_generated_files before considering visible_files. Use the listed tool_file_id only as a tool argument.",
-		"Do not treat a visible File Management asset as the same file as a recent temporary generated artifact unless the filenames and requested action make that explicit.",
+		"Do not treat a visible File Management asset as the same file as a recent generated artifact unless the filenames and requested action make that explicit.",
 		"For requests to save or import a public external URL into File Management, use file-manager/save_file_to_management with source_type \"url\" and the destination filename.",
-		"For generated or downloadable files without an explicit File Management, current Files page, save, create, or upload target, keep the default temporary artifact behavior and do not call file-manager/save_file_to_management.",
+		"For generated or downloadable files without an explicit File Management, current Files page, save, create, or upload target, keep the default generated artifact behavior and do not call file-manager/save_file_to_management.",
 		"Creating a File Management file is a governed file.create operation owned by file-manager/save_file_to_management. Tool governance handles the approval card when the permission tier requires it; do not ask for a separate natural-language confirmation first.",
 		"Do not call unrelated discovery or domain tools, such as database, knowledge, or calculator, before completing the requested files-page operation.",
 		"For existing-file read/delete operations, do not call file-generation tools before the requested read/delete is completed.",

@@ -63,6 +63,9 @@ type skillLocation struct {
 }
 
 type ExecutionContext struct {
+	// ScriptModel is server-owned and never serialized into tool arguments.
+	ScriptModel                *ScriptModelChannel `json:"-"`
+	scriptModelPath            string
 	PresentationLocale         string           `json:"-"`
 	ConnectorTargetScope       core.TargetScope `json:"-"`
 	ConnectorTargetVersionID   string           `json:"-"`
@@ -76,6 +79,9 @@ type ExecutionContext struct {
 	ConnectorIdentityResolver  connectordispatch.IdentityResolver               `json:"-"`
 	ConnectorActionResolver    connectordispatch.ActionInstanceResolver         `json:"-"`
 	ConnectorConfirmationStore connectorexecution.ConfirmationContinuationStore `json:"-"`
+	// ExternalUserID is the server-derived external caller identity. It is
+	// distinct from UserID, which remains the internal account/API-key identity.
+	ExternalUserID string `json:"-"`
 }
 
 type ToolInvocationResult struct {

@@ -1073,7 +1073,9 @@ function AIChatGeneratedFileCard({ file }: AIChatGeneratedFileCardProps) {
       ? t('consoleChat.attachments.expiredGeneratedFile')
       : isManagedFile
         ? t('consoleChat.attachments.managedGeneratedFile')
-        : t('consoleChat.attachments.temporaryGeneratedFile');
+        : file.lifecycle === 'temporary'
+          ? t('consoleChat.attachments.temporaryGeneratedFile')
+          : t('consoleChat.attachments.generatedFile');
 
   return (
     <>

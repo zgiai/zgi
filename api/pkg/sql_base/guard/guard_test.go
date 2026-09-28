@@ -59,6 +59,19 @@ func TestCheckMaxJoinDepth(t *testing.T) {
 	assertReason(t, result, ReasonMaxJoinDepth)
 }
 
+func TestCheckMaxJoinDepthUsesMaximumPerQueryBlock(t *testing.T) {
+	policy := DefaultPolicy()
+	policy.MaxJoinDepth = 1
+	result := Check(`SELECT
+		(SELECT a.id FROM a JOIN b ON a.id = b.id LIMIT 1),
+		(SELECT c.id FROM c JOIN d ON c.id = d.id LIMIT 1)`, policy)
+	for _, reason := range result.Reasons {
+		if reason.Code == ReasonMaxJoinDepth {
+			t.Fatalf("independent query blocks were accumulated: %#v", result.Reasons)
+		}
+	}
+}
+
 func TestCheckMaxJoinDepthCanBeDisabled(t *testing.T) {
 	policy := DefaultPolicy()
 	policy.MaxJoinDepth = 0

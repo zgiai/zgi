@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+import { indexWorkflowBindingCandidates } from '../src/components/agents/agent-runtime/workflow-candidates.ts';
+const candidate = { binding_id: 'suggested', agent_id: 'planner', workflow_id: 'published', version_uuid: 'version', version_strategy: 'pinned', label: 'Planner' };
+const custom = { ...candidate, binding_id: 'custom-alias', label: 'Saved label' };
+assert.equal(indexWorkflowBindingCandidates([candidate], [custom]).get('custom-alias')?.label, 'Saved label');
+assert.equal(indexWorkflowBindingCandidates([], [custom]).has('custom-alias'), false);
+assert.equal(indexWorkflowBindingCandidates([candidate], [{ ...custom, workflow_id: 'other-version' }]).has('custom-alias'), false);
+assert.equal(indexWorkflowBindingCandidates([candidate], [{ ...custom, version_uuid: 'old-version' }]).has('custom-alias'), false);
+assert.equal(indexWorkflowBindingCandidates([candidate], [{ ...custom, binding_id: 'suggested', agent_id: 'different-agent' }]).has('suggested'), false);
+assert.equal(indexWorkflowBindingCandidates([candidate], [custom]).get('custom-alias')?.workflow_id, 'published');
+assert.equal(indexWorkflowBindingCandidates([candidate], [{ ...candidate, workflow_id: 'old-workflow' }]).has('suggested'), false);
+console.log('Workflow alias and resource/version boundary checks passed');

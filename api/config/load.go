@@ -86,23 +86,12 @@ func loadChatRuntimeConfig(cfg *Config, source *envSource) error {
 	if timeout <= 0 {
 		timeout = 300
 	}
-	agentContextWindowK, err := source.int(256, envChatRuntimeAgentContextWindowK)
-	if err != nil {
-		return err
-	}
-	if agentContextWindowK <= 0 {
-		return fmt.Errorf("%s must be a positive integer", envChatRuntimeAgentContextWindowK)
-	}
-	if agentContextWindowK > int(^uint(0)>>1)/1000 {
-		return fmt.Errorf("%s is too large", envChatRuntimeAgentContextWindowK)
-	}
 	contextPromptDumpEnabled, err := source.bool(false, envChatRuntimeContextPromptDumpEnabled)
 	if err != nil {
 		return err
 	}
 	cfg.ChatRuntime = ChatRuntimeConfig{
 		ModelIdleTimeoutSeconds:  timeout,
-		AgentContextWindowK:      agentContextWindowK,
 		ContextPromptDumpEnabled: contextPromptDumpEnabled,
 	}
 	return nil
@@ -772,6 +761,10 @@ func loadCodeExecConfig(cfg *Config, source *envSource) error {
 	if err != nil {
 		return err
 	}
+	skillDependencyScanEnabled, err := source.bool(true, envCodeExecutionSkillDependencyScanEnabled)
+	if err != nil {
+		return err
+	}
 	maxNumber, err := source.int64(9223372036854775807, envCodeMaxNumber)
 	if err != nil {
 		return err
@@ -786,6 +779,7 @@ func loadCodeExecConfig(cfg *Config, source *envSource) error {
 	}
 
 	cfg.CodeExec = CodeExecConfig{
+		SkillRuntimeGrantsPath:       source.string("", envSkillRuntimeGrantsPath),
 		Endpoint:                     source.string("", envCodeExecutionEndpoint),
 		APIKey:                       source.string("", envCodeExecutionAPIKey),
 		ConnectTimeoutSeconds:        connectTimeout,
@@ -796,6 +790,8 @@ func loadCodeExecConfig(cfg *Config, source *envSource) error {
 		CleanupTimeoutSeconds:        cleanupTimeout,
 		EnableNetwork:                enableNetwork,
 		SystemOfficeProfile:          source.string("skill-office", envCodeExecutionSystemOfficeProfile),
+		SystemDataProfile:            source.string("scientific-data", envCodeExecutionSystemDataProfile),
+		SkillDependencyScanDisabled:  !skillDependencyScanEnabled,
 		MaxNumber:                    maxNumber,
 		MinNumber:                    minNumber,
 		MaxStringLength:              maxStringLength,

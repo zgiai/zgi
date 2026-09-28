@@ -286,6 +286,7 @@ const messages: NodesMessages = {
     },
     runtime: {
       waitingAnswer: '等待用户回答',
+      continue: '继续',
       chooseOne: '请选择一个选项',
       submitting: '提交中',
       submitted: '已提交回答',
@@ -1427,6 +1428,12 @@ const messages: NodesMessages = {
     editor: '代码编辑器',
     noOutputs: '暂无输出变量',
     varNamePlaceholder: '输入变量名',
+    dependencyProfile: {
+      label: '运行环境',
+      stdlib: '标准库',
+      scientificData: '科学数据分析（pandas、SciPy、statsmodels、scikit-learn、lifelines）',
+      description: '为当前代码节点选择由平台统一构建、可复现的依赖环境。',
+    },
     languageChange: {
       title: '切换编程语言',
       description: '您正在从 {from} 切换到 {to}。是否使用新语言的默认模板覆盖当前代码？',
@@ -1665,6 +1672,8 @@ const messages: NodesMessages = {
       selectedTables: '已选数据表',
     },
     hints: {
+      restrictedSql:
+        '仅支持对所选数据源内的数据表执行单条 SELECT、INSERT、UPDATE 或 DELETE。禁止 DDL、多语句、锁定查询和 CTE；工作流变量会作为安全参数传入。',
       timeoutSeconds: '填 0 使用后端默认值（30 秒）。',
       maxRetries: '填 0 表示不重试，建议范围 0-3。',
     },
@@ -1678,16 +1687,19 @@ const messages: NodesMessages = {
       noTables: '未发现数据表',
       noColumns: '暂无可用字段',
       selectorHintTitle: '未选择数据源',
-      selectorHintDesc: '点击选择数据源与数据表',
+      selectorHintDesc: '点击选择数据源，可按需限定数据表',
     },
     validation: {
       dataSourceRequired: '必须选择数据源',
-      tableSelectionRequired: '至少选择一个数据表',
       sqlRequired: 'SQL 不能为空',
       timeoutPositive: '超时时间应为正数',
     },
   },
   sqlGenerator: {
+    tableSelectionMode: {
+      manual: '手动选表',
+      automatic: '自动选表',
+    },
     section: {
       model: '模型',
       dataSource: '数据源',
@@ -1704,10 +1716,13 @@ const messages: NodesMessages = {
       prompt: "输入提示词，输入'/'插入变量",
     },
     hints: {
+      automaticTableSelection: '只需选择数据源，运行时会根据问题自动选择数据表。',
       timeoutSeconds: '填 0 使用后端默认值（30 秒）。',
       maxRetries: '填 0 表示不重试，建议范围 0-3。',
     },
     empty: {
+      dataSourceRequired: '未选择数据源',
+      dataSourceHint: '点击选择数据源',
       selectorHintTitle: '未选择数据源或数据表',
       selectorHintDesc: '点击选择数据源与数据表',
     },
@@ -1716,6 +1731,7 @@ const messages: NodesMessages = {
       promptRequired: '提示词不能为空',
       dataSourceRequired: '必须选择数据源',
       tableSelectionRequired: '至少选择一个数据表',
+      tableSelectionModeInvalid: '选表模式无效',
       timeoutPositive: '超时时间应为正数',
       retriesPositive: '最大重试次数应为正数',
     },

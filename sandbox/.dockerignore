@@ -7,3 +7,11 @@ dist
 bin
 node_modules
 coverage
+
+# Runtime and local-only data
+**/__pycache__/
+**/*.pyc
+**/.venv/
+**/.env
+**/.env.local
+**/*.log

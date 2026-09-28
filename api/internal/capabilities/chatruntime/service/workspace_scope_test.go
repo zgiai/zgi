@@ -55,7 +55,7 @@ func (repo workspaceScopeConversationRepository) GetScoped(context.Context, uuid
 	return repo.conversation, nil
 }
 
-func (repo workspaceScopeConversationRepository) GetByCallerScoped(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, string, *uuid.UUID, string) (*runtimemodel.Conversation, error) {
+func (repo workspaceScopeConversationRepository) GetByCallerScoped(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, string, *uuid.UUID, *uuid.UUID, string) (*runtimemodel.Conversation, error) {
 	return repo.conversation, nil
 }
 

@@ -45,6 +45,7 @@ import type {
   AnalyzeExistingTableExcelImportData,
   ExistingTableExcelImportDraftRequest,
   ExistingTableExcelImportPreviewData,
+  SchemaIndexConfigRequest,
 } from './types/db';
 
 /**
@@ -52,6 +53,32 @@ import type {
  * Handles all database module APIs under `/console/api/data-dbs`.
  */
 class DbService extends BaseService {
+  getSchemaIndex(dbId: string, signal?: AbortSignal): Promise<ApiResponseData<SchemaIndexStatus>> {
+    return this.request('get', `/data-dbs/${dbId}/schema-index`, undefined, { signal });
+  }
+
+  startSchemaIndex(dbId: string): Promise<ApiResponseData<{ accepted: boolean }>> {
+    return this.request('post', `/data-dbs/${dbId}/schema-index`);
+  }
+
+  configureSchemaIndex(
+    dbId: string,
+    config: SchemaIndexConfigRequest
+  ): Promise<ApiResponseData<{ accepted: boolean }>> {
+    return this.request('put', `/data-dbs/${dbId}/schema-index`, config);
+  }
+
+  getSchemaIndexRuns(
+    dbId: string,
+    page = 1,
+    limit = 20,
+    signal?: AbortSignal
+  ): Promise<ApiResponseData<SchemaIndexRunPage>> {
+    return this.request('get', `/data-dbs/${dbId}/schema-index/runs`, undefined, {
+      params: { page, limit },
+      signal,
+    });
+  }
   constructor() {
     super({ endpoint: 'main', basePath: '/console/api' });
   }
@@ -456,6 +483,47 @@ class DbService extends BaseService {
       params,
     });
   }
+}
+
+export interface SchemaIndexStatus {
+  enabled: boolean;
+  state: 'disabled' | 'building' | 'ready' | 'failed' | 'empty' | 'cleanup';
+  provider: string;
+  model: string;
+  total: number;
+  ready: number;
+  failed: Array<{ name: string; code: string }>;
+  error_code?: string;
+  updated_at: string | null;
+  cleanup_pending: boolean;
+}
+
+export interface SchemaIndexRun {
+  id: string;
+  trigger:
+    | 'initial'
+    | 'table_created'
+    | 'table_deleted'
+    | 'table_metadata_changed'
+    | 'schema_changed'
+    | 'model_changed'
+    | 'manual_retry';
+  status: 'building' | 'succeeded' | 'failed';
+  provider: string;
+  model: string;
+  table_count: number;
+  failure_count: number;
+  started_at: string;
+  completed_at: string | null;
+  tables: Array<{ name: string; code?: string }>;
+}
+
+export interface SchemaIndexRunPage {
+  items: SchemaIndexRun[];
+  page: number;
+  limit: number;
+  total: number;
+  has_more: boolean;
 }
 
 export const dbService = new DbService();

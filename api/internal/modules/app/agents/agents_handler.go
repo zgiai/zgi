@@ -1378,6 +1378,7 @@ func setupAgentSSE(c *gin.Context) {
 const (
 	agentSSEConversationIDHeader = "X-ZGI-Conversation-ID"
 	agentSSEMessageIDHeader      = "X-ZGI-Message-ID"
+	externalAgentAPIContextKey   = "external_agent_api"
 )
 
 func setupPreparedAgentSSE(c *gin.Context, prepared *runtimeservice.PreparedChat) {
@@ -1416,12 +1417,24 @@ func writeAgentChatEnd(c *gin.Context, prepared *runtimeservice.PreparedChat, re
 }
 
 func writeAgentSSEEvent(c *gin.Context, id string, event string, data interface{}) error {
+	if c.GetBool(externalAgentAPIContextKey) && isSidebarOnlyAgentEvent(event) {
+		return nil
+	}
 	if value, ok := c.Get(agentSSEWriterContextKey); ok {
 		if writer, writerOK := value.(*agentSSEWriter); writerOK && writer != nil {
 			return writer.WriteEvent(id, event, data)
 		}
 	}
 	return writeAgentSSERaw(c, id, event, data)
+}
+
+func isSidebarOnlyAgentEvent(event string) bool {
+	switch strings.TrimSpace(event) {
+	case "client_action_required", "client_action_result":
+		return true
+	default:
+		return false
+	}
 }
 
 func writeAgentSSERaw(c *gin.Context, id string, event string, data interface{}) error {

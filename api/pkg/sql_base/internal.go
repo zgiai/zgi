@@ -12,6 +12,7 @@ import (
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/sql_base/audit"
 	"github.com/zgiai/zgi/api/pkg/sql_base/guard"
+	"github.com/zgiai/zgi/api/pkg/sql_base/sqlanalysis"
 	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/driver"
 
 	"github.com/zgiai/zgi/api/pkg/sql_base/sqlmeta/catalog/columns"
@@ -789,7 +790,11 @@ func (c *internalClient) FormatQuery(ctx context.Context, req FormatQueryRequest
 }
 
 func (c *internalClient) ParseQuery(ctx context.Context, req ParseQueryRequest) (*ParsedQuery, error) {
-	return nil, errors.New("internal postgres meta service is not implemented yet")
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	analysis := sqlanalysis.Analyze(req.Query)
+	return &analysis, nil
 }
 
 func (c *internalClient) DeparseQuery(ctx context.Context, req DeparseQueryRequest) (string, error) {

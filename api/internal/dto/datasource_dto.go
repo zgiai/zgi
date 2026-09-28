@@ -14,13 +14,21 @@ import (
 
 // CreateDataSourceRequest represents the request to create a new data source
 type CreateDataSourceRequest struct {
-	Name           string  `json:"name" binding:"required"`
-	Description    string  `json:"description"`
-	Permission     string  `json:"permission"`
-	WorkspaceID    *string `json:"workspace_id"`
-	IconType       *string `json:"icon_type"`
-	Icon           *string `json:"icon"`
-	IconBackground *string `json:"icon_background"`
+	Name           string                    `json:"name" binding:"required"`
+	Description    string                    `json:"description"`
+	Permission     string                    `json:"permission"`
+	WorkspaceID    *string                   `json:"workspace_id"`
+	IconType       *string                   `json:"icon_type"`
+	Icon           *string                   `json:"icon"`
+	IconBackground *string                   `json:"icon_background"`
+	SchemaIndex    *SchemaIndexConfigRequest `json:"schema_index,omitempty"`
+}
+
+// SchemaIndexConfigRequest controls automatic database schema indexing.
+type SchemaIndexConfigRequest struct {
+	Enabled                bool   `json:"enabled"`
+	EmbeddingModelProvider string `json:"embedding_model_provider"`
+	EmbeddingModel         string `json:"embedding_model"`
 }
 
 // UpdateDataSourceRequest represents the request to update an existing data source
