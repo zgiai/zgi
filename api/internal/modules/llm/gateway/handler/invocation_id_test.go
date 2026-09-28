@@ -56,7 +56,7 @@ func TestChatResponseExposesInvocationIDBeforeHeadersCommit(t *testing.T) {
 				handler.ChatCompletions(c)
 				response := recorder.Result()
 				defer response.Body.Close()
-				if stub.id == "" || response.Header.Get(types.InvocationIDHeader) != stub.id || stub.id == "untrusted-client-invocation-id" {
+				if stub.id != "client-transport-id" || response.Header.Get(types.InvocationIDHeader) != "client-transport-id" {
 					t.Fatalf("invocation header=%q, gateway=%q", response.Header.Get(types.InvocationIDHeader), stub.id)
 				}
 				if response.Header.Get("X-Request-ID") != "client-transport-id" {
