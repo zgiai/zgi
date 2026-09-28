@@ -57,7 +57,7 @@ func applicationCode(err error) (apperror.Code, bool) {
 		errors.Is(err, gateway.ErrModelNotActive), errors.Is(err, adapter.ErrModelNotFound):
 		return llmerrors.AppCodeModelNotFound, true
 	case errors.Is(err, llmerrors.DomainErrRouteNotFound):
-		return llmerrors.AppCodeRouteNotFound, true
+		return llmerrors.AppCodeNoProviderAvailable, true
 	case errors.Is(err, llmerrors.DomainErrProviderNotFound), errors.Is(err, gateway.ErrProviderNotFound):
 		return llmerrors.AppCodeProviderNotFound, true
 	case errors.Is(err, llmerrors.DomainErrChannelNotFound):

@@ -47,7 +47,7 @@ func classifyProtocolError(err error) protocolError {
 	switch {
 	case errors.Is(err, gateway.ErrModelNotAuthorized), errors.Is(err, llmerrors.DomainErrModelNotAuthorized):
 		return newProtocolError(http.StatusForbidden, "permission_error", "model_not_authorized", "permission_error", "Model not authorized for this API key")
-	case errors.Is(err, llmerrors.DomainErrModelNotFound), errors.Is(err, llmerrors.DomainErrRouteNotFound), errors.Is(err, gateway.ErrModelNotFound), errors.Is(err, gateway.ErrModelNotActive), errors.Is(err, adapter.ErrModelNotFound):
+	case errors.Is(err, llmerrors.DomainErrModelNotFound), errors.Is(err, gateway.ErrModelNotFound), errors.Is(err, gateway.ErrModelNotActive), errors.Is(err, adapter.ErrModelNotFound):
 		return newProtocolError(http.StatusNotFound, "invalid_request_error", "model_not_found", "not_found_error", "Model not found")
 	case adapter.IsCapabilityUnsupported(err):
 		return newProtocolError(http.StatusBadRequest, "invalid_request_error", "unsupported_protocol", "invalid_request_error", "Requested model does not support this API protocol")
@@ -72,6 +72,8 @@ func classifyProtocolError(err error) protocolError {
 	// The four selection failures below each keep a distinct branch and stable
 	// code. They must never collapse into a single provider_unavailable outcome.
 	case errors.Is(err, gateway.ErrNoProviderAvailable), errors.Is(err, llmerrors.DomainErrNoProviderAvailable):
+		return newAppProtocolError(llmerrors.AppCodeNoProviderAvailable, http.StatusServiceUnavailable, "server_error", llmerrors.AppCodeNoProviderAvailable.String(), "api_error", "No model provider is currently available. Try another model or contact an administrator.", true)
+	case errors.Is(err, llmerrors.DomainErrRouteNotFound):
 		return newAppProtocolError(llmerrors.AppCodeNoProviderAvailable, http.StatusServiceUnavailable, "server_error", llmerrors.AppCodeNoProviderAvailable.String(), "api_error", "No model provider is currently available. Try another model or contact an administrator.", true)
 	case errors.Is(err, gateway.ErrProviderNotFound), errors.Is(err, llmerrors.DomainErrProviderNotFound):
 		return newAppProtocolError(llmerrors.AppCodeProviderNotFound, http.StatusNotFound, "invalid_request_error", llmerrors.AppCodeProviderNotFound.String(), "not_found_error", "The model provider was not found. Check the model configuration.", false)

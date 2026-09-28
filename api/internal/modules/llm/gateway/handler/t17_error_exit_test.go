@@ -102,6 +102,7 @@ func TestT17ProviderFailuresHaveSeparateBranches(t *testing.T) {
 		wantHTTP int
 	}{
 		{"no provider", gateway.NewNoProviderAvailableError("m", "o"), "llm.provider.none_available", http.StatusServiceUnavailable},
+		{"route not found", llmerrors.DomainErrRouteNotFound, "llm.provider.none_available", http.StatusServiceUnavailable},
 		{"provider not found", gateway.ErrProviderNotFound, "llm.provider.not_found", http.StatusNotFound},
 		{"channel not found", llmerrors.DomainErrChannelNotFound, "llm.channel.not_found", http.StatusNotFound},
 		{"upstream unavailable", llmerrors.DomainErrUpstreamUnavailable, "llm.provider.unavailable", http.StatusServiceUnavailable},
@@ -119,8 +120,8 @@ func TestT17ProviderFailuresHaveSeparateBranches(t *testing.T) {
 			seen[got.appCode] = struct{}{}
 		})
 	}
-	if len(seen) != len(cases) {
-		t.Fatalf("provider branches collapsed: %d distinct codes for %d causes", len(seen), len(cases))
+	if len(seen) != 4 {
+		t.Fatalf("provider branches collapsed unexpectedly: %d distinct codes", len(seen))
 	}
 }
 
