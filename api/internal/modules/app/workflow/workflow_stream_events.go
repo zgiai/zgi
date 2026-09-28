@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
@@ -60,6 +61,18 @@ func (h *WorkflowHandler) sendSSEErrorData(ctx context.Context, w http.ResponseW
 			workflowpause.EventError,
 			data,
 		),
+	}
+	dataMap, _ := event["data"].(map[string]interface{})
+	if dataMap != nil {
+		if _, ok := dataMap["error_code"]; !ok {
+			dataMap["error_code"] = "llm.invocation.failed"
+		}
+		if _, ok := dataMap["params"]; !ok {
+			dataMap["params"] = map[string]interface{}{}
+		}
+		if _, ok := dataMap["error_id"]; !ok {
+			dataMap["error_id"] = uuid.NewString()
+		}
 	}
 
 	jsonData, err := json.Marshal(event)

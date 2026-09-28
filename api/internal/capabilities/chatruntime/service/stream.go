@@ -1080,6 +1080,9 @@ func BuildStreamErrorPayload(prepared *PreparedChat, err error) map[string]inter
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
 		"message":         message,
+		"error_code":      stableAichatErrorCode(err),
+		"params":          map[string]interface{}{},
+		"error_id":        uuid.NewString(),
 	}
 	if code, params, ok := publicAichatStructuredError(err); ok {
 		payload["code"] = code
@@ -1090,6 +1093,28 @@ func BuildStreamErrorPayload(prepared *PreparedChat, err error) map[string]inter
 		payload["code"] = response.ErrSystemError.Code
 	}
 	return payload
+}
+
+func stableAichatErrorCode(err error) string {
+	if code, _, ok := publicAichatErrorCodeAndMessage(err); ok {
+		switch code {
+		case response.ErrWorkflowOrganizationBalanceInsufficient.Code:
+			return "billing.organization.balance_insufficient"
+		case response.ErrWorkflowWorkspaceQuotaInsufficient.Code:
+			return "billing.workspace.quota_insufficient"
+		case response.ErrWorkflowPrivateChannelBalanceInsufficient.Code:
+			return "billing.private_channel.balance_insufficient"
+		case response.ErrWorkflowModelPricingNotConfigured.Code:
+			return "billing.model.pricing_not_configured"
+		}
+	}
+	if errors.Is(err, adapter.ErrTimeout) || errors.Is(err, ErrModelIdleTimeout) || errors.Is(err, skillloop.ErrModelIdleTimeout) {
+		return "llm.provider.timeout"
+	}
+	if errors.Is(err, adapter.ErrUpstreamError) || errors.Is(err, adapter.ErrStreamClosed) || errors.Is(err, adapter.ErrProxyError) || errors.Is(err, adapter.ErrPlatformChannelUnavailable) {
+		return "llm.provider.unavailable"
+	}
+	return "llm.invocation.failed"
 }
 
 func publicAichatErrorMessage(err error) string {

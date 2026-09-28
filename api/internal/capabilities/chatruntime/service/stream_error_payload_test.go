@@ -49,6 +49,12 @@ func TestBuildStreamErrorPayloadMapsTypedUpstreamErrorWithoutGuessingPrivateBala
 	if got := payload["message"]; got != aichatModelServiceUnavailableMessage {
 		t.Fatalf("stream error message = %#v, want %q", got, aichatModelServiceUnavailableMessage)
 	}
+	if got := payload["error_code"]; got != "llm.provider.unavailable" {
+		t.Fatalf("stable stream error code = %#v", got)
+	}
+	if payload["error_id"] == "" || payload["params"] == nil {
+		t.Fatalf("stream error metadata missing: %#v", payload)
+	}
 }
 
 func TestBuildStreamErrorPayloadMapsTypedPrivateChannelBalance(t *testing.T) {
@@ -128,8 +134,8 @@ func TestBuildStreamErrorPayloadMapsFinalAnswerUnavailable(t *testing.T) {
 	if got := payload["message"]; got != aichatFinalAnswerUnavailableMessage {
 		t.Fatalf("stream error message = %#v, want %q", got, aichatFinalAnswerUnavailableMessage)
 	}
-	if _, ok := payload["params"]; ok {
-		t.Fatalf("stream error params = %#v, want no params", payload["params"])
+	if payload["params"] == nil {
+		t.Fatalf("stream error params missing: %#v", payload)
 	}
 }
 
