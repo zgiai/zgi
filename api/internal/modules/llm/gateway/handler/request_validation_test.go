@@ -65,3 +65,25 @@ func TestInvalidParametersStopBeforeGatewayServiceForAllProtocols(t *testing.T) 
 		})
 	}
 }
+
+func TestInvalidRequestUsesLocalizedCatalogMessage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	stub := &invocationGatewayStub{}
+	handler := NewLLMHandler(stub, testApplicationErrorProjector(t))
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Set("llm_api_key", &apikeymodel.TenantAPIKey{})
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"messages":[]}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("Accept-Language", "zh-CN")
+
+	handler.ChatCompletions(c)
+
+	if recorder.Code != http.StatusBadRequest || stub.id != "" {
+		t.Fatalf("status=%d gateway_id=%q body=%s", recorder.Code, stub.id, recorder.Body.String())
+	}
+	body := recorder.Body.String()
+	if !strings.Contains(body, "大模型请求内容不正确") || strings.Contains(body, "model is required") {
+		t.Fatalf("request validation leaked an untranslated message: %s", body)
+	}
+}

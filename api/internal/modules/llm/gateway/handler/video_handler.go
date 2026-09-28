@@ -19,7 +19,7 @@ func (h *LLMHandler) CreateVideo(c *gin.Context) {
 	}
 	var req adapter.VideoRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeOpenAIProtocolError(c, invalidRequestProtocolError(fmt.Sprintf("Invalid request: %v", err)))
+		writeOpenAIProtocolError(c, h.localizedInvalidRequest(c, invalidRequestProtocolError(fmt.Sprintf("Invalid request: %v", err))))
 		return
 	}
 	videoGateway, ok := h.gatewayService.(interface {
@@ -49,7 +49,7 @@ func (h *LLMHandler) GetVideoTask(c *gin.Context) {
 		Model:  strings.TrimSpace(c.Query("model")),
 	}
 	if req.Model == "" {
-		writeOpenAIProtocolError(c, invalidRequestProtocolError("model is required"))
+		writeOpenAIProtocolError(c, h.localizedInvalidRequest(c, invalidRequestProtocolError("model is required")))
 		return
 	}
 	videoGateway, ok := h.gatewayService.(interface {

@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/pkg/apperror"
 	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
@@ -79,6 +80,19 @@ func (h *LLMHandler) localizedProtocolError(c *gin.Context, err error) protocolE
 // has a registered catalog code.
 func (h *LLMHandler) localizedChatStreamError(c *gin.Context, err error) string {
 	return h.localizedProtocolError(c, err).message
+}
+
+// localizedInvalidRequest overlays the catalog's locale-specific request
+// message while preserving each protocol's legacy status/type/code shape.
+// Validation errors are created at the protocol boundary, so they otherwise
+// bypass the application-error projector and leak the English detail string.
+func (h *LLMHandler) localizedInvalidRequest(c *gin.Context, protocolErr protocolError) protocolError {
+	projected := h.localizedProtocolError(c, gateway.ErrInvalidRequest)
+	protocolErr.message = projected.message
+	protocolErr.appCode = projected.appCode
+	protocolErr.retryable = projected.retryable
+	protocolErr.errorID = projected.errorID
+	return protocolErr
 }
 
 func isGatewayProviderTimeout(err error) bool {

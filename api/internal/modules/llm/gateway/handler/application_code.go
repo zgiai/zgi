@@ -87,10 +87,14 @@ func applicationCode(err error) (apperror.Code, bool) {
 		return llmerrors.AppCodeBillingSettleFailed, true
 	case errors.Is(err, adapter.ErrAuthFailed):
 		return llmerrors.AppCodeProviderAuthFailed, true
-	case errors.Is(err, llmerrors.DomainErrUpstreamFailed):
-		return llmerrors.AppCodeInvocationFailed, true
 	case isGatewayProviderTimeout(err):
 		return llmerrors.AppCodeProviderTimeout, true
+	case errors.Is(err, llmerrors.DomainErrUpstreamFailed), errors.Is(err, adapter.ErrUpstreamError):
+		return llmerrors.AppCodeInvocationFailed, true
+	}
+	var statusErr *adapter.HTTPStatusError
+	if errors.As(err, &statusErr) && statusErr.StatusCode >= 500 {
+		return llmerrors.AppCodeInvocationFailed, true
 	}
 	return apperror.Code{}, false
 }

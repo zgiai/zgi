@@ -55,13 +55,13 @@ func (h *LLMHandler) ChatCompletions(c *gin.Context) {
 	// 2. Parse request
 	var req adapter.ChatRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeOpenAIProtocolError(c, invalidRequestProtocolError("Invalid JSON request body"))
+		writeOpenAIProtocolError(c, h.localizedInvalidRequest(c, invalidRequestProtocolError("Invalid JSON request body")))
 		return
 	}
 
 	// 3. Validate required parameters
 	if err := validatePublicChatRequest(&req); err != nil {
-		writeOpenAIProtocolError(c, invalidRequestProtocolError(publicInputMessage(err)))
+		writeOpenAIProtocolError(c, h.localizedInvalidRequest(c, invalidRequestProtocolError(publicInputMessage(err))))
 		return
 	}
 
@@ -97,7 +97,7 @@ func (h *LLMHandler) Embeddings(c *gin.Context) {
 	// 2. Parse request
 	var req adapter.EmbeddingsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeOpenAIProtocolError(c, invalidRequestProtocolError("Invalid JSON request body"))
+		writeOpenAIProtocolError(c, h.localizedInvalidRequest(c, invalidRequestProtocolError("Invalid JSON request body")))
 		return
 	}
 
@@ -120,16 +120,16 @@ func (h *LLMHandler) CreateResponse(c *gin.Context) {
 
 	req, err := parseRawResponseRequest(c)
 	if err != nil {
-		writeOpenAIProtocolError(c, invalidRequestProtocolError(publicInputMessage(err)))
+		writeOpenAIProtocolError(c, h.localizedInvalidRequest(c, invalidRequestProtocolError(publicInputMessage(err))))
 		return
 	}
 
 	if req.Model == "" {
-		writeOpenAIProtocolError(c, invalidRequestProtocolError("Model field is required"))
+		writeOpenAIProtocolError(c, h.localizedInvalidRequest(c, invalidRequestProtocolError("Model field is required")))
 		return
 	}
 	if err := validatePublicNativeBody(req.Body, "responses"); err != nil {
-		writeOpenAIProtocolError(c, invalidRequestProtocolError(publicInputMessage(err)))
+		writeOpenAIProtocolError(c, h.localizedInvalidRequest(c, invalidRequestProtocolError(publicInputMessage(err))))
 		return
 	}
 
@@ -160,15 +160,15 @@ func (h *LLMHandler) CreateAnthropicMessage(c *gin.Context) {
 
 	req, err := parseAnthropicMessageRequest(c)
 	if err != nil {
-		writeAnthropicProtocolError(c, invalidRequestProtocolError(publicInputMessage(err)))
+		writeAnthropicProtocolError(c, h.localizedInvalidRequest(c, invalidRequestProtocolError(publicInputMessage(err))))
 		return
 	}
 	if req.Model == "" {
-		writeAnthropicProtocolError(c, invalidRequestProtocolError("Model field is required"))
+		writeAnthropicProtocolError(c, h.localizedInvalidRequest(c, invalidRequestProtocolError("Model field is required")))
 		return
 	}
 	if err := validatePublicNativeBody(req.Body, "messages"); err != nil {
-		writeAnthropicProtocolError(c, invalidRequestProtocolError(publicInputMessage(err)))
+		writeAnthropicProtocolError(c, h.localizedInvalidRequest(c, invalidRequestProtocolError(publicInputMessage(err))))
 		return
 	}
 
@@ -199,11 +199,11 @@ func (h *LLMHandler) CreateGeminiContent(c *gin.Context) {
 	}
 	req, err := parseGeminiGenerateContentRequest(c)
 	if err != nil {
-		writeGeminiProtocolError(c, invalidRequestProtocolError(publicInputMessage(err)))
+		writeGeminiProtocolError(c, h.localizedInvalidRequest(c, invalidRequestProtocolError(publicInputMessage(err))))
 		return
 	}
 	if err := validatePublicNativeBody(req.Body, "gemini"); err != nil {
-		writeGeminiProtocolError(c, invalidRequestProtocolError(publicInputMessage(err)))
+		writeGeminiProtocolError(c, h.localizedInvalidRequest(c, invalidRequestProtocolError(publicInputMessage(err))))
 		return
 	}
 	if req.Stream {

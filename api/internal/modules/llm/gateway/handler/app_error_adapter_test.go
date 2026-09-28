@@ -185,6 +185,20 @@ func TestLocalizedProtocolErrorMapsTransportTimeoutToStableContract(t *testing.T
 	}
 }
 
+func TestLocalizedProtocolErrorProjectsGenericUpstreamFailure(t *testing.T) {
+	handler := &LLMHandler{errorProjector: testApplicationErrorProjector(t)}
+	context := testProtocolContext(t, "/v1/chat/completions", "zh-CN")
+
+	got := handler.localizedProtocolError(context, adapter.ErrUpstreamError)
+
+	if got.openAIStatus != 502 || got.appCode != llmerrors.AppCodeInvocationFailed.String() {
+		t.Fatalf("protocol contract = %#v", got)
+	}
+	if got.message != "大模型调用未完成，请重试或选择其他模型。" {
+		t.Fatalf("message = %q", got.message)
+	}
+}
+
 func BenchmarkLocalizedProtocolErrorProviderTimeout(b *testing.B) {
 	handler := &LLMHandler{errorProjector: testApplicationErrorProjector(b)}
 	context := testProtocolContext(b, "/v1/chat/completions", "zh-CN")
