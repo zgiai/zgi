@@ -99,10 +99,12 @@ func stableInvocationErrorCode(err error) string {
 		return llmerrors.AppCodeRequestInvalid.String()
 	case errors.Is(err, adapter.ErrModelNotFound):
 		return llmerrors.AppCodeModelNotFound.String()
-	case errors.Is(err, adapter.ErrPlatformChannelUnavailable), errors.Is(err, adapter.ErrUpstreamError),
+	case errors.Is(err, adapter.ErrPlatformChannelUnavailable),
 		errors.Is(err, adapter.ErrProxyError), errors.Is(err, adapter.ErrInsufficientBalance),
 		errors.Is(err, adapter.ErrBillingUnavailable):
 		return llmerrors.AppCodeProviderUnavailable.String()
+	case errors.Is(err, adapter.ErrUpstreamError):
+		return llmerrors.AppCodeInvocationFailed.String()
 	}
 
 	statusCode := 0
