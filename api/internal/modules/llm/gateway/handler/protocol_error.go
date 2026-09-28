@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
@@ -241,17 +242,21 @@ func writeProtocolErrorHeaders(c *gin.Context, protocolErr protocolError) {
 // and only runs when the error came through the projection boundary, so
 // unprojected legacy responses keep their original exact shape.
 func applyProtocolErrorEnvelope(c *gin.Context, body gin.H, protocolErr protocolError) gin.H {
-	if strings.TrimSpace(protocolErr.appCode) == "" && strings.TrimSpace(protocolErr.errorID) == "" {
-		return body
+	code := strings.TrimSpace(protocolErr.appCode)
+	if code == "" {
+		code = strings.TrimSpace(protocolErr.openAICode)
 	}
-	if strings.TrimSpace(protocolErr.appCode) != "" {
-		body["code"] = protocolErr.appCode
-		body["error_code"] = protocolErr.appCode
+	if code == "" {
+		code = "internal_error"
 	}
+	body["code"] = code
+	body["error_code"] = code
+	body["params"] = map[string]string{}
 	body["retryable"] = protocolErr.retryable
-	if protocolErr.errorID != "" {
-		body["error_id"] = protocolErr.errorID
+	if strings.TrimSpace(protocolErr.errorID) == "" {
+		protocolErr.errorID = uuid.NewString()
 	}
+	body["error_id"] = protocolErr.errorID
 	requestID := protocolErr.requestID
 	if requestID == "" {
 		requestID = requestIDFromContext(c)
