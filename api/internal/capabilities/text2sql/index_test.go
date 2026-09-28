@@ -92,11 +92,16 @@ func (v *lifecycleVectorDB) DeleteVector(_ context.Context, id, _ string) error 
 func TestIndexerReplacesReadyFingerprintAfterNewVersionIsReady(t *testing.T) {
 	db, mock := newIndexLifecycleTestDB(t)
 	table := &sql_base.Table{ID: 1, Schema: "public", Name: "orders", Columns: []sql_base.Column{{Name: "id", OrdinalPosition: 1}}}
+	indexedTable, err := loadIndexedTable(context.Background(), indexSQLBase{table: table}, indexedTableAsset{ID: "asset", TableID: 1, Name: "Orders", Description: "Customer orders"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	old := testSchemaIndex("old-id", IndexReady)
 	old.Fingerprint = "old-fingerprint"
 	current := testSchemaIndex("current-id", IndexPending)
-	current.Fingerprint = schemaFingerprint(table)
+	current.Fingerprint = schemaFingerprint(indexedTable)
 	mock.ExpectExec(`UPDATE "text2sql_schema_indexes"`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT id, table_id, name, description FROM "data_source_tables"`).WillReturnRows(sqlmock.NewRows([]string{"id", "table_id", "name", "description"}).AddRow("asset", 1, "Orders", "Customer orders"))
 	mock.ExpectExec(`UPDATE "text2sql_schema_indexes"`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`SELECT \* FROM "text2sql_schema_indexes"`).WillReturnRows(schemaIndexRows(old))
 	mock.ExpectExec(`UPDATE "text2sql_schema_indexes"`).WillReturnResult(sqlmock.NewResult(0, 1))
@@ -118,11 +123,16 @@ func TestIndexerReplacesReadyFingerprintAfterNewVersionIsReady(t *testing.T) {
 func TestIndexerKeepsOldReadyVersionWhenNewVectorWriteFails(t *testing.T) {
 	db, mock := newIndexLifecycleTestDB(t)
 	table := &sql_base.Table{ID: 1, Schema: "public", Name: "orders", Columns: []sql_base.Column{{Name: "id", OrdinalPosition: 1}}}
+	indexedTable, err := loadIndexedTable(context.Background(), indexSQLBase{table: table}, indexedTableAsset{ID: "asset", TableID: 1, Name: "Orders", Description: "Customer orders"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	old := testSchemaIndex("old-id", IndexReady)
 	old.Fingerprint = "old-fingerprint"
 	current := testSchemaIndex("current-id", IndexPending)
-	current.Fingerprint = schemaFingerprint(table)
+	current.Fingerprint = schemaFingerprint(indexedTable)
 	mock.ExpectExec(`UPDATE "text2sql_schema_indexes"`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT id, table_id, name, description FROM "data_source_tables"`).WillReturnRows(sqlmock.NewRows([]string{"id", "table_id", "name", "description"}).AddRow("asset", 1, "Orders", "Customer orders"))
 	mock.ExpectExec(`UPDATE "text2sql_schema_indexes"`).WillReturnResult(sqlmock.NewResult(0, 1))
 	vectors := &lifecycleVectorDB{storeErr: errors.New("store failed")}
 	indexer := NewIndexer(NewIndexRepository(db), indexSQLBase{table: table}, indexEmbedder{}, vectors)

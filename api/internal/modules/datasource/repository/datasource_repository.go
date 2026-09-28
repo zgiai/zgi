@@ -17,7 +17,7 @@ import (
 
 // DataSourceRepository defines the interface for data source repository
 type DataSourceRepository interface {
-	Create(ctx context.Context, ds *model.DataSource) error
+	Create(ctx context.Context, ds *model.DataSource, schemaIndex *SchemaIndexSettingsCreate) error
 	FindByID(ctx context.Context, id string) (*model.DataSource, error)
 	FindByOrganizationAndName(ctx context.Context, organizationID, name string) (*model.DataSource, error)
 	ListByOrganization(ctx context.Context, organizationID string) ([]*model.DataSource, error)
@@ -27,6 +27,14 @@ type DataSourceRepository interface {
 	UpdateGuardPolicy(ctx context.Context, id string, policy []byte) error
 	UpdateStatus(ctx context.Context, id, status string) error
 	Delete(ctx context.Context, id string) error
+}
+
+// SchemaIndexSettingsCreate contains the persistence fields written together
+// with a new data source. A nil value leaves automatic indexing disabled.
+type SchemaIndexSettingsCreate struct {
+	RequestedBy       string
+	EmbeddingProvider string
+	EmbeddingModel    string
 }
 
 // SQLOperationRepository defines the interface for SQL operation repository
@@ -65,7 +73,7 @@ func NewPostgresSQLOperationRepository(db *gorm.DB) SQLOperationRepository {
 }
 
 // Create creates a new data source record
-func (r *PostgresDataSourceRepository) Create(ctx context.Context, ds *model.DataSource) error {
+func (r *PostgresDataSourceRepository) Create(ctx context.Context, ds *model.DataSource, schemaIndex *SchemaIndexSettingsCreate) error {
 	if ds.ID == "" {
 		ds.ID = uuid.New().String()
 	}
@@ -84,27 +92,38 @@ func (r *PostgresDataSourceRepository) Create(ctx context.Context, ds *model.Dat
 	if len(guardPolicy) == 0 {
 		guardPolicy = guard.DefaultPolicyJSON()
 	}
-	err := r.db.WithContext(ctx).Exec(
-		query,
-		ds.ID,
-		ds.OrganizationID,
-		ds.WorkspaceID,
-		ds.Name,
-		ds.SchemaName,
-		ds.SchemaID,
-		ds.Description,
-		ds.Permission,
-		ds.Status,
-		ds.CreatedBy,
-		ds.UpdatedBy,
-		ds.CreatedAt,
-		ds.UpdatedAt,
-		ds.IconType,
-		ds.Icon,
-		ds.IconBackground,
-		guardPolicy,
-	).Error
-	return err
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec(
+			query,
+			ds.ID,
+			ds.OrganizationID,
+			ds.WorkspaceID,
+			ds.Name,
+			ds.SchemaName,
+			ds.SchemaID,
+			ds.Description,
+			ds.Permission,
+			ds.Status,
+			ds.CreatedBy,
+			ds.UpdatedBy,
+			ds.CreatedAt,
+			ds.UpdatedAt,
+			ds.IconType,
+			ds.Icon,
+			ds.IconBackground,
+			guardPolicy,
+		).Error; err != nil {
+			return err
+		}
+		if schemaIndex == nil {
+			return nil
+		}
+		return tx.Exec(`
+			INSERT INTO database_schema_index_settings
+				(data_source_id, organization_id, workspace_id, requested_by, embedding_provider, embedding_model, target_ids, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, '[]'::jsonb, ?, ?)
+		`, ds.ID, ds.OrganizationID, ds.WorkspaceID, schemaIndex.RequestedBy, schemaIndex.EmbeddingProvider, schemaIndex.EmbeddingModel, ds.CreatedAt, ds.UpdatedAt).Error
+	})
 }
 
 // FindByID finds a data source by ID

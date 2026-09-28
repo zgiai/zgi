@@ -36,6 +36,7 @@ func RegisterDataSourceRoutes(router *gin.RouterGroup, deps DataSourceRouteDeps)
 		deps.DataSourceService,
 		deps.AccountService,
 		deps.OrganizationService,
+		deps.SchemaIndexes,
 	)
 	dataSourceHandler.RegisterRoutes(router)
 	if deps.SchemaIndexes != nil {
@@ -44,5 +45,6 @@ func RegisterDataSourceRoutes(router *gin.RouterGroup, deps DataSourceRouteDeps)
 		auth.GET("/data-dbs/:id/schema-index", h.Status)
 		auth.GET("/data-dbs/:id/schema-index/runs", h.History)
 		auth.POST("/data-dbs/:id/schema-index", h.Start)
+		auth.PUT("/data-dbs/:id/schema-index", h.Configure)
 	}
 }

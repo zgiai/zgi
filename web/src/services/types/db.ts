@@ -30,6 +30,13 @@ export interface CreateDbRequest {
   icon_type: 'text' | 'image';
   icon: string;
   icon_background: string;
+  schema_index?: SchemaIndexConfigRequest;
+}
+
+export interface SchemaIndexConfigRequest {
+  enabled: boolean;
+  embedding_model_provider?: string;
+  embedding_model?: string;
 }
 
 export interface UpdateDbRequest {

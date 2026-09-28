@@ -53,3 +53,47 @@ func TestSchemaIndexHandlerProjectsWorkspacePermissionDenial(t *testing.T) {
 		t.Fatalf("unsafe or incorrect response: %d %s", w.Code, w.Body.String())
 	}
 }
+
+func TestSchemaIndexConfigureRequiresEnabledField(t *testing.T) {
+	productCatalog, err := catalog.NewDefault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewSchemaIndexHandler(nil, productCatalog)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("organization_id", uuid.NewString())
+	c.Set("account_id", uuid.NewString())
+	c.Params = gin.Params{{Key: "id", Value: uuid.NewString()}}
+
+	h.Configure(c)
+
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "request.invalid") {
+		t.Fatalf("unsafe or incorrect response: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSchemaIndexHandlerProjectsConfigurationConflicts(t *testing.T) {
+	productCatalog, err := catalog.NewDefault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewSchemaIndexHandler(nil, productCatalog)
+	for _, conflict := range []error{
+		indexing.ErrCleanupPending,
+		indexing.ErrModelChangeRequiresDisable,
+	} {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodPut, "/", nil)
+		c.Request.Header.Set("Accept-Language", "zh-Hans")
+
+		h.fail(c, conflict)
+
+		if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "resource.conflict") || strings.Contains(w.Body.String(), conflict.Error()) {
+			t.Fatalf("unsafe or incorrect response for %v: %d %s", conflict, w.Code, w.Body.String())
+		}
+	}
+}

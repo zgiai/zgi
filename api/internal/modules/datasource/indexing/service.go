@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,7 +30,11 @@ import (
 
 const MaxAttempts = 3
 
-var ErrAccessDenied = errors.New("schema index access denied")
+var (
+	ErrAccessDenied               = errors.New("schema index access denied")
+	ErrCleanupPending             = errors.New("schema index cleanup pending")
+	ErrModelChangeRequiresDisable = errors.New("disable schema indexing before changing the model")
+)
 
 type workspacePermissionChecker interface {
 	CheckWorkspaceOrganizationAnyPermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCodes ...workspace.WorkspacePermissionCode) (bool, error)
@@ -39,14 +44,14 @@ type workspacePermissionChecker interface {
 // TargetIDs identifies the catalog snapshot; historical rows do not count as ready.
 type Settings struct {
 	DataSourceID      string `gorm:"primaryKey;type:uuid"`
-	OrganizationID    string
-	WorkspaceID       string
-	RequestedBy       string
+	OrganizationID    string `gorm:"type:uuid"`
+	WorkspaceID       string `gorm:"type:uuid"`
+	RequestedBy       string `gorm:"type:uuid"`
 	EmbeddingProvider string
 	EmbeddingModel    string
 	TargetIDs         datatypes.JSON
 	LastErrorCode     *string
-	PendingRunID      *string
+	PendingRunID      *string `gorm:"type:uuid"`
 	PendingTrigger    *string
 	ReconciledAt      *time.Time
 	CreatedAt         time.Time
@@ -60,15 +65,22 @@ type FailedTable struct {
 	Code string `json:"code"`
 }
 type Status struct {
-	Enabled   bool          `json:"enabled"`
-	State     string        `json:"state"`
-	Provider  string        `json:"provider"`
-	Model     string        `json:"model"`
-	Total     int           `json:"total"`
-	Ready     int           `json:"ready"`
-	Failed    []FailedTable `json:"failed"`
-	ErrorCode string        `json:"error_code,omitempty"`
-	UpdatedAt *time.Time    `json:"updated_at"`
+	Enabled        bool          `json:"enabled"`
+	State          string        `json:"state"`
+	Provider       string        `json:"provider"`
+	Model          string        `json:"model"`
+	Total          int           `json:"total"`
+	Ready          int           `json:"ready"`
+	Failed         []FailedTable `json:"failed"`
+	ErrorCode      string        `json:"error_code,omitempty"`
+	UpdatedAt      *time.Time    `json:"updated_at"`
+	CleanupPending bool          `json:"cleanup_pending"`
+}
+
+type ConfigureRequest struct {
+	Enabled  bool
+	Provider string
+	Model    string
 }
 
 type Service struct {
@@ -143,6 +155,15 @@ func (s *Service) Status(ctx context.Context, org, id, account string) (*Status,
 	var settings Settings
 	err = s.db.WithContext(ctx).Where("data_source_id = ? AND workspace_id = ?", id, *ds.WorkspaceID).Take(&settings).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
+		var cleanupCount int64
+		if err := s.db.WithContext(ctx).Table("text2sql_schema_indexes").Where("data_source_id = ?", id).Count(&cleanupCount).Error; err != nil {
+			return nil, err
+		}
+		result.CleanupPending = cleanupCount > 0
+		if result.CleanupPending {
+			result.State = "cleanup"
+			return result, nil
+		}
 		model, resolveErr := s.models.ResolveUseCase(ctx, org, llmmodel.UseCaseEmbedding, nil, nil)
 		if resolveErr != nil {
 			result.ErrorCode = "model_unavailable"
@@ -194,6 +215,64 @@ func (s *Service) Status(ctx context.Context, org, id, account string) (*Status,
 	return result, nil
 }
 
+// Configure enables or disables automatic schema indexing for a database.
+func (s *Service) Configure(ctx context.Context, org, id, account string, request ConfigureRequest) error {
+	ds, err := s.authorizedDatabase(ctx, org, id, account, true)
+	if err != nil {
+		return err
+	}
+	if !request.Enabled {
+		err := s.withLock(ctx, "database:"+id, func(db *gorm.DB) error {
+			return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+				if err := tx.Model(&text2sql.SchemaIndex{}).Where("data_source_id = ?", id).Update("status", text2sql.IndexDeleting).Error; err != nil {
+					return err
+				}
+				return tx.Where("data_source_id = ?", id).Delete(&Settings{}).Error
+			})
+		})
+		if err != nil {
+			return err
+		}
+		if enqueueErr := s.enqueueReconcile(id); enqueueErr != nil {
+			s.log.Warn("enqueue schema index cleanup", zap.String("data_source_id", id), zap.Error(enqueueErr))
+		}
+		return nil
+	}
+	provider, model := strings.TrimSpace(request.Provider), strings.TrimSpace(request.Model)
+	if provider == "" || model == "" {
+		return fmt.Errorf("embedding model provider and model are required")
+	}
+	resolved, err := s.models.ResolveUseCase(ctx, org, llmmodel.UseCaseEmbedding, &provider, &model)
+	if err != nil {
+		return fmt.Errorf("resolve embedding model: %w", err)
+	}
+	err = s.withLock(ctx, "database:"+id, func(db *gorm.DB) error {
+		var existing Settings
+		existingErr := db.WithContext(ctx).Where("data_source_id = ?", id).Take(&existing).Error
+		if existingErr == nil {
+			if existing.EmbeddingProvider == resolved.Provider && existing.EmbeddingModel == resolved.Model {
+				return nil
+			}
+			return ErrModelChangeRequiresDisable
+		}
+		if !errors.Is(existingErr, gorm.ErrRecordNotFound) {
+			return existingErr
+		}
+		if err := ensureCleanupComplete(ctx, db, id); err != nil {
+			return err
+		}
+		settings := Settings{DataSourceID: id, OrganizationID: org, WorkspaceID: *ds.WorkspaceID, RequestedBy: account, EmbeddingProvider: resolved.Provider, EmbeddingModel: resolved.Model, TargetIDs: datatypes.JSON("[]")}
+		return db.WithContext(ctx).Create(&settings).Error
+	})
+	if err != nil {
+		return err
+	}
+	if enqueueErr := s.enqueueReconcile(id); enqueueErr != nil {
+		s.log.Warn("enqueue schema index reconciliation", zap.String("data_source_id", id), zap.Error(enqueueErr))
+	}
+	return nil
+}
+
 // Start records consent durably. The reconciler submits work even if Redis is down
 // at request time. Calling Start again retries failures, without rebuilding ready rows.
 func (s *Service) Start(ctx context.Context, org, id, account string) error {
@@ -201,53 +280,92 @@ func (s *Service) Start(ctx context.Context, org, id, account string) error {
 	if err != nil {
 		return err
 	}
-	model, err := s.models.ResolveUseCase(ctx, org, llmmodel.UseCaseEmbedding, nil, nil)
-	if err != nil {
-		return fmt.Errorf("resolve embedding model: %w", err)
-	}
-	return s.withLock(ctx, "database:"+id, func(db *gorm.DB) error {
+	err = s.withLock(ctx, "database:"+id, func(db *gorm.DB) error {
 		var existing Settings
 		existingErr := db.WithContext(ctx).Where("data_source_id = ?", id).Take(&existing).Error
 		if existingErr != nil && !errors.Is(existingErr, gorm.ErrRecordNotFound) {
 			return existingErr
 		}
-		trigger := "initial"
-		if existingErr == nil {
-			trigger = "manual_retry"
+		trigger := TriggerManualRetry
+		if errors.Is(existingErr, gorm.ErrRecordNotFound) {
+			if err := ensureCleanupComplete(ctx, db, id); err != nil {
+				return err
+			}
+			model, resolveErr := s.models.ResolveUseCase(ctx, org, llmmodel.UseCaseEmbedding, nil, nil)
+			if resolveErr != nil {
+				return fmt.Errorf("resolve embedding model: %w", resolveErr)
+			}
+			existing = Settings{DataSourceID: id, OrganizationID: org, WorkspaceID: *ds.WorkspaceID, RequestedBy: account, EmbeddingProvider: model.Provider, EmbeddingModel: model.Model, TargetIDs: datatypes.JSON("[]")}
+			trigger = TriggerInitial
 		}
 		runID := uuid.NewString()
-		settings := Settings{DataSourceID: id, OrganizationID: org, WorkspaceID: *ds.WorkspaceID, RequestedBy: account, EmbeddingProvider: model.Provider, EmbeddingModel: model.Model, TargetIDs: datatypes.JSON("[]")}
-		settings.PendingRunID, settings.PendingTrigger = &runID, &trigger
-		if err := db.WithContext(ctx).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "data_source_id"}}, DoUpdates: clause.Assignments(map[string]any{"requested_by": account, "workspace_id": *ds.WorkspaceID, "embedding_provider": model.Provider, "embedding_model": model.Model, "pending_run_id": runID, "pending_trigger": trigger, "last_error_code": nil, "reconciled_at": nil, "updated_at": time.Now()})}).Create(&settings).Error; err != nil {
+		existing.PendingRunID, existing.PendingTrigger = &runID, &trigger
+		if err := db.WithContext(ctx).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "data_source_id"}}, DoUpdates: clause.Assignments(map[string]any{"requested_by": account, "workspace_id": *ds.WorkspaceID, "pending_run_id": runID, "pending_trigger": trigger, "last_error_code": nil, "updated_at": time.Now()})}).Create(&existing).Error; err != nil {
 			return err
 		}
 		return db.WithContext(ctx).Table("text2sql_schema_indexes").Where("data_source_id = ? AND workspace_id = ? AND status = ?", id, *ds.WorkspaceID, text2sql.IndexFailed).Updates(map[string]any{"build_attempts": 0, "status": text2sql.IndexPending, "last_error_code": nil}).Error
 	})
+	if err != nil {
+		return err
+	}
+	if enqueueErr := s.enqueueReconcile(id); enqueueErr != nil {
+		s.log.Warn("enqueue schema index retry", zap.String("data_source_id", id), zap.Error(enqueueErr))
+	}
+	return nil
+}
+
+func ensureCleanupComplete(ctx context.Context, db *gorm.DB, dataSourceID string) error {
+	var count int64
+	if err := db.WithContext(ctx).Table("text2sql_schema_indexes").Where("data_source_id = ?", dataSourceID).Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return ErrCleanupPending
+	}
+	return nil
 }
 
 // Session advisory locks serialize a table's build and deletion across API
 // instances. A process crash releases the lock; no in-memory owner survives it.
 func (s *Service) withLock(ctx context.Context, key string, run func(*gorm.DB) error) error {
+	return s.withSessionLock(ctx, key, false, run)
+}
+
+func (s *Service) withSharedLock(ctx context.Context, key string, run func(*gorm.DB) error) error {
+	return s.withSessionLock(ctx, key, true, run)
+}
+
+func (s *Service) withSessionLock(ctx context.Context, key string, shared bool, run func(*gorm.DB) error) error {
 	return s.db.WithContext(ctx).Connection(func(db *gorm.DB) error {
-		discard := func() {
-			if conn, ok := db.Statement.ConnPool.(*sql.Conn); ok {
-				_ = conn.Raw(func(any) error { return driver.ErrBadConn })
-			}
-		}
-		if err := db.Exec("SELECT pg_advisory_lock(hashtextextended(?, 0))", "schema-index:"+key).Error; err != nil {
-			discard()
-			return err
-		}
-		defer func() {
-			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			defer cancel()
-			if err := db.WithContext(cleanup).Exec("SELECT pg_advisory_unlock(hashtextextended(?, 0))", "schema-index:"+key).Error; err != nil {
-				discard()
-				s.log.Error("release schema index lock", zap.Error(err))
-			}
-		}()
-		return run(db)
+		return s.withConnectionLock(ctx, db, key, shared, run)
 	})
+}
+
+func (s *Service) withConnectionLock(ctx context.Context, db *gorm.DB, key string, shared bool, run func(*gorm.DB) error) error {
+	lockFunction := "pg_advisory_lock"
+	unlockFunction := "pg_advisory_unlock"
+	if shared {
+		lockFunction = "pg_advisory_lock_shared"
+		unlockFunction = "pg_advisory_unlock_shared"
+	}
+	discard := func() {
+		if conn, ok := db.Statement.ConnPool.(*sql.Conn); ok {
+			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+		}
+	}
+	if err := db.Exec("SELECT "+lockFunction+"(hashtextextended(?, 0))", "schema-index:"+key).Error; err != nil {
+		discard()
+		return err
+	}
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if err := db.WithContext(cleanup).Exec("SELECT "+unlockFunction+"(hashtextextended(?, 0))", "schema-index:"+key).Error; err != nil {
+			discard()
+			s.log.Error("release schema index lock", zap.Error(err))
+		}
+	}()
+	return run(db)
 }
 
 type embedder struct {
@@ -262,7 +380,7 @@ func (e embedder) Embed(ctx context.Context, provider, model, input string) ([]f
 	result, err := e.service.llm.AppEmbed(ctx, &llmclient.AppContext{
 		OrganizationID: e.settings.OrganizationID, WorkspaceID: e.settings.WorkspaceID, AccountID: e.settings.RequestedBy,
 		BillingSubjectType: llmclient.BillingSubjectTypeWorkspace, AppID: e.settings.DataSourceID, AppType: "database_schema_index", ModelUseCase: string(llmmodel.UseCaseEmbedding), SuppressInvocationContent: true,
-	}, &adapter.EmbeddingsRequest{Model: model, Input: input, EncodingFormat: "float"})
+	}, &adapter.EmbeddingsRequest{Provider: provider, Model: model, Input: input, EncodingFormat: "float"})
 	if err != nil {
 		return nil, err
 	}

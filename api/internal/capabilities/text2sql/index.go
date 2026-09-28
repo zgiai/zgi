@@ -155,10 +155,11 @@ func (i *Indexer) Process(ctx context.Context, row *SchemaIndex) error {
 	if err := i.repo.Save(ctx, row); err != nil {
 		return err
 	}
-	table, err := i.sql.GetTable(ctx, row.PhysicalTableID)
+	indexedTable, err := i.repo.SnapshotTable(ctx, row.AssetTableID, i.sql)
 	if err != nil {
 		return i.fail(ctx, row, "schema_load_failed", err)
 	}
+	table := indexedTable.Table
 	document := schemaDocument(table)
 	fingerprint := schemaFingerprint(table)
 	if fingerprint != row.Fingerprint {
