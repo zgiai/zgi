@@ -85,7 +85,8 @@ export function isApplicationErrorCode(value: unknown): boolean {
  * codes so callers can fall back without echoing raw text.
  */
 export function applicationErrorCopy(code: string): ApplicationErrorCopy | null {
-  const entry = codeMessages()[code];
+  const normalizedCode = code.replace(/\./g, '__');
+  const entry = codeMessages()[normalizedCode];
   if (!entry) {
     return null;
   }
