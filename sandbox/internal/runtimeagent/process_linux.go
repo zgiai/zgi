@@ -217,12 +217,14 @@ func mergedEnvironment(overrides map[string]string) []string {
 	values := make(map[string]string)
 	for _, item := range os.Environ() {
 		key, value, ok := strings.Cut(item, "=")
-		if ok {
+		if ok && !isRuntimeControlEnvironment(key) {
 			values[key] = value
 		}
 	}
 	for key, value := range overrides {
-		values[key] = value
+		if !isRuntimeControlEnvironment(key) {
+			values[key] = value
+		}
 	}
 	keys := make([]string, 0, len(values))
 	for key := range values {
@@ -234,4 +236,11 @@ func mergedEnvironment(overrides map[string]string) []string {
 		result = append(result, key+"="+values[key])
 	}
 	return result
+}
+
+// Runtime Agent configuration is a control-plane secret boundary. Commands
+// execute as untrusted workload code and must not inherit, or override, the
+// listener, bearer token, workspace root, or protocol limits.
+func isRuntimeControlEnvironment(key string) bool {
+	return strings.HasPrefix(strings.ToUpper(strings.TrimSpace(key)), "ZGI_RUNTIME_AGENT_")
 }

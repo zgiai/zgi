@@ -20,6 +20,7 @@ import (
 type RemoteOptions struct {
 	BaseURL      string
 	Token        string
+	Headers      http.Header
 	HTTPClient   *http.Client
 	PollInterval time.Duration
 }
@@ -27,6 +28,7 @@ type RemoteOptions struct {
 type RemoteBackend struct {
 	baseURL      string
 	token        string
+	headers      http.Header
 	client       *http.Client
 	pollInterval time.Duration
 }
@@ -68,11 +70,15 @@ func NewRemote(options RemoteOptions) (*RemoteBackend, error) {
 	if options.HTTPClient == nil {
 		options.HTTPClient = &http.Client{Timeout: 30 * time.Second}
 	}
+	headers, err := validatedRemoteHeaders(options.Headers)
+	if err != nil {
+		return nil, err
+	}
 	if options.PollInterval <= 0 {
 		options.PollInterval = 50 * time.Millisecond
 	}
 	return &RemoteBackend{
-		baseURL: options.BaseURL, token: options.Token,
+		baseURL: options.BaseURL, token: options.Token, headers: headers,
 		client: options.HTTPClient, pollInterval: options.PollInterval,
 	}, nil
 }
@@ -104,7 +110,7 @@ func (b *RemoteBackend) UploadFile(ctx context.Context, _ agentexecution.Allocat
 	if err != nil {
 		return agentexecution.FileInfo{}, err
 	}
-	request.Header.Set("Authorization", "Bearer "+b.token)
+	b.applyHeaders(request)
 	request.ContentLength = size
 	response, err := b.client.Do(request)
 	if err != nil {
@@ -124,7 +130,7 @@ func (b *RemoteBackend) DownloadFile(ctx context.Context, _ agentexecution.Alloc
 	if err != nil {
 		return nil, agentexecution.FileInfo{}, err
 	}
-	request.Header.Set("Authorization", "Bearer "+b.token)
+	b.applyHeaders(request)
 	response, err := b.client.Do(request)
 	if err != nil {
 		return nil, agentexecution.FileInfo{}, err
@@ -156,7 +162,7 @@ func (b *RemoteBackend) doJSON(ctx context.Context, method string, requestPath s
 	if err != nil {
 		return err
 	}
-	request.Header.Set("Authorization", "Bearer "+b.token)
+	b.applyHeaders(request)
 	if body != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
@@ -166,6 +172,33 @@ func (b *RemoteBackend) doJSON(ctx context.Context, method string, requestPath s
 	}
 	defer response.Body.Close()
 	return decodeRuntimeResponse(response, target)
+}
+
+func (b *RemoteBackend) applyHeaders(request *http.Request) {
+	for key, values := range b.headers {
+		for _, value := range values {
+			request.Header.Add(key, value)
+		}
+	}
+	request.Header.Set("Authorization", "Bearer "+b.token)
+}
+
+func validatedRemoteHeaders(input http.Header) (http.Header, error) {
+	result := make(http.Header, len(input))
+	for key, values := range input {
+		canonical := http.CanonicalHeaderKey(strings.TrimSpace(key))
+		switch canonical {
+		case "", "Authorization", "Host", "Content-Length", "Transfer-Encoding", "Connection":
+			return nil, fmt.Errorf("%w: runtime agent proxy header %q is not allowed", agentexecution.ErrInvalidRequest, key)
+		}
+		for _, value := range values {
+			if strings.ContainsAny(value, "\r\n") {
+				return nil, fmt.Errorf("%w: runtime agent proxy header contains a newline", agentexecution.ErrInvalidRequest)
+			}
+			result.Add(canonical, value)
+		}
+	}
+	return result, nil
 }
 
 type remoteRunningJob struct {

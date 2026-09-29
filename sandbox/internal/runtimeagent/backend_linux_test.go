@@ -63,6 +63,35 @@ func TestBackendRunsJobStreamsOutputAndIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestBackendDoesNotExposeRuntimeControlEnvironment(t *testing.T) {
+	t.Setenv("ZGI_RUNTIME_AGENT_TOKEN", "host-secret")
+	t.Setenv("ZGI_RUNTIME_AGENT_LISTEN", "tcp://control-only")
+	backend := newTestBackend(t)
+	var output bytes.Buffer
+	running, err := backend.StartJob(context.Background(), agentexecution.Allocation{}, agentexecution.JobSpec{
+		JobID: "job-secret-boundary", Command: "/bin/sh",
+		Args: []string{"-c", `printf '%s:%s:%s' "${ZGI_RUNTIME_AGENT_TOKEN-unset}" "${ZGI_RUNTIME_AGENT_LISTEN-unset}" "${VISIBLE-unset}"`},
+		Environment: map[string]string{
+			"ZGI_RUNTIME_AGENT_TOKEN": "override-secret",
+			"VISIBLE":                 "ok",
+		},
+		Timeout: time.Second,
+	}, func(chunk agentexecution.OutputChunk) error {
+		_, _ = output.Write(chunk.Data)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("start job: %v", err)
+	}
+	result, err := running.Wait(context.Background())
+	if err != nil || result.ExitCode != 0 {
+		t.Fatalf("wait job: result=%+v error=%v", result, err)
+	}
+	if output.String() != "unset:unset:ok" {
+		t.Fatalf("job environment = %q", output.String())
+	}
+}
+
 func TestBackendCancelsProcessGroup(t *testing.T) {
 	backend := newTestBackend(t)
 	running, err := backend.StartJob(context.Background(), agentexecution.Allocation{}, agentexecution.JobSpec{

@@ -133,6 +133,42 @@ func TestUnixRemoteBackendContract(t *testing.T) {
 	}
 }
 
+func TestRemoteBackendAddsProxyHeadersWithoutOverridingAuthorization(t *testing.T) {
+	local := newTestBackend(t)
+	handler, err := NewHTTPServer(local, HTTPServerOptions{Token: "runtime-token"})
+	if err != nil {
+		t.Fatalf("new HTTP server: %v", err)
+	}
+	t.Cleanup(func() { _ = handler.Close() })
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("E2B-Traffic-Access-Token") != "traffic-token" {
+			http.Error(writer, "missing traffic token", http.StatusUnauthorized)
+			return
+		}
+		handler.ServeHTTP(writer, request)
+	}))
+	t.Cleanup(server.Close)
+
+	remote, err := NewRemote(RemoteOptions{
+		BaseURL: server.URL, Token: "runtime-token",
+		Headers: http.Header{"E2B-Traffic-Access-Token": []string{"traffic-token"}},
+	})
+	if err != nil {
+		t.Fatalf("new remote backend: %v", err)
+	}
+	if _, err := remote.Capabilities(context.Background(), agentexecution.Allocation{}); err != nil {
+		t.Fatalf("capabilities: %v", err)
+	}
+
+	_, err = NewRemote(RemoteOptions{
+		BaseURL: server.URL, Token: "runtime-token",
+		Headers: http.Header{"Authorization": []string{"Bearer attacker"}},
+	})
+	if !errors.Is(err, agentexecution.ErrInvalidRequest) {
+		t.Fatalf("authorization override error = %v", err)
+	}
+}
+
 func TestRemoteBackendCancelsAndResizesPTY(t *testing.T) {
 	local := newTestBackend(t)
 	handler, err := NewHTTPServer(local, HTTPServerOptions{Token: "runtime-token"})
