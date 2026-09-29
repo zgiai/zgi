@@ -1,6 +1,6 @@
 SHELL := /bin/sh
 
-.PHONY: fmt test build check run kest test-linux-secure test-agent-runtime-containerd check-docker-entrypoint check-config-docs profile-build-stdlib profile-build-scientific-data build-agent-runtime-image build-agent-runtime-worker
+.PHONY: fmt test build check run kest test-linux-secure test-agent-runtime-containerd test-agent-runtime-e2b check-docker-entrypoint check-config-docs profile-build-stdlib profile-build-scientific-data build-agent-runtime-image build-agent-runtime-worker
 .PHONY: docker-up docker-down docker-logs
 .PHONY: docker-config
 
@@ -26,6 +26,9 @@ test-linux-secure:
 
 test-agent-runtime-containerd:
 	go test -tags=agent_runtime_integration -count=1 -v ./internal/localruntime/containerd -run TestContainerdGVisorContract
+
+test-agent-runtime-e2b:
+	go test -tags=e2b_integration -count=1 -v ./internal/hostedruntime/e2b -run TestE2BContract
 
 check-docker-entrypoint:
 	./scripts/test_docker_entrypoint

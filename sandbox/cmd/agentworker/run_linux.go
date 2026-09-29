@@ -20,12 +20,21 @@ import (
 
 	"github.com/zgiai/zgi-sandbox/internal/agentexecution"
 	"github.com/zgiai/zgi-sandbox/internal/config"
+	e2bprovider "github.com/zgiai/zgi-sandbox/internal/hostedruntime/e2b"
 	"github.com/zgiai/zgi-sandbox/internal/localruntime"
 	containerdprovider "github.com/zgiai/zgi-sandbox/internal/localruntime/containerd"
 	"github.com/zgiai/zgi-sandbox/internal/storage"
 )
 
-const localBackendName = "local-gvisor"
+const (
+	localBackendName = "local-gvisor"
+	e2bBackendName   = "e2b"
+)
+
+type runtimeBackend interface {
+	agentexecution.Backend
+	agentexecution.ExecutionBackend
+}
 
 type workerConfig struct {
 	ListenAddress     string
@@ -42,6 +51,14 @@ type workerConfig struct {
 	PIDs              int64
 	CPUPeriod         uint64
 	CPUQuota          int64
+	Backend           string
+	E2BAPIURL         string
+	E2BDomain         string
+	E2BAPIKey         string
+	E2BProfiles       map[string]e2bprovider.Profile
+	E2BAgentPort      uint16
+	E2BEnvdPort       uint16
+	E2BTimeoutSeconds int
 }
 
 func run(parent context.Context, logger *log.Logger) error {
@@ -60,20 +77,13 @@ func run(parent context.Context, logger *log.Logger) error {
 		return err
 	}
 	defer store.Close()
-	provider, err := containerdprovider.New(containerdprovider.Options{
-		Address: cfg.ContainerdAddress, RootDir: cfg.RootDir, Profiles: cfg.Profiles,
-		MemoryBytes: cfg.MemoryBytes, PIDs: cfg.PIDs, CPUPeriod: cfg.CPUPeriod, CPUQuota: cfg.CPUQuota,
-	})
+	backendName, backend, closeBackend, err := newRuntimeBackend(cfg)
 	if err != nil {
 		return err
 	}
-	defer provider.Close()
-	backend, err := localruntime.New(provider)
-	if err != nil {
-		return err
-	}
-	controlBackends := map[string]agentexecution.Backend{localBackendName: backend}
-	executionBackends := map[string]agentexecution.ExecutionBackend{localBackendName: backend}
+	defer closeBackend()
+	controlBackends := map[string]agentexecution.Backend{backendName: backend}
+	executionBackends := map[string]agentexecution.ExecutionBackend{backendName: backend}
 	control, err := agentexecution.NewService(store, controlBackends, agentexecution.ServiceOptions{IdleTTL: cfg.IdleTTL})
 	if err != nil {
 		return err
@@ -152,7 +162,7 @@ func run(parent context.Context, logger *log.Logger) error {
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
 	serverResult := make(chan error, 1)
 	go func() {
-		logger.Printf("zgi Agent Runtime worker %s listening on %s with backend %s", cfg.WorkerID, listener.Addr(), localBackendName)
+		logger.Printf("zgi Agent Runtime worker %s listening on %s with backend %s", cfg.WorkerID, listener.Addr(), backendName)
 		err := server.Serve(listener)
 		if errors.Is(err, http.ErrServerClosed) {
 			err = nil
@@ -177,10 +187,6 @@ func run(parent context.Context, logger *log.Logger) error {
 }
 
 func workerConfigFromEnv() (workerConfig, error) {
-	profiles := map[string]containerdprovider.Profile{}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_PROFILES_JSON"))), &profiles); err != nil {
-		return workerConfig{}, fmt.Errorf("parse ZGI_AGENT_RUNTIME_PROFILES_JSON: %w", err)
-	}
 	hostname, _ := os.Hostname()
 	fallbackWorkerID := fmt.Sprintf("%s-%d", hostname, os.Getpid())
 	cfg := workerConfig{
@@ -190,7 +196,7 @@ func workerConfigFromEnv() (workerConfig, error) {
 		WorkerID:          envString("ZGI_AGENT_RUNTIME_WORKER_ID", fallbackWorkerID),
 		RootDir:           envString("ZGI_AGENT_RUNTIME_ROOT", "/var/lib/zgi-agent-runtime"),
 		ContainerdAddress: envString("ZGI_AGENT_RUNTIME_CONTAINERD_ADDRESS", "/run/containerd/containerd.sock"),
-		Profiles:          profiles,
+		Profiles:          map[string]containerdprovider.Profile{},
 		MaxWorkers:        envInt("ZGI_AGENT_RUNTIME_MAX_WORKERS", 4),
 		IdleTTL:           time.Duration(envInt("ZGI_AGENT_RUNTIME_IDLE_TTL_SECONDS", 1800)) * time.Second,
 		ShutdownTimeout:   time.Duration(envInt("ZGI_AGENT_RUNTIME_SHUTDOWN_TIMEOUT_SECONDS", 30)) * time.Second,
@@ -198,17 +204,85 @@ func workerConfigFromEnv() (workerConfig, error) {
 		PIDs:              envInt64("ZGI_AGENT_RUNTIME_PIDS", 128),
 		CPUPeriod:         uint64(envInt64("ZGI_AGENT_RUNTIME_CPU_PERIOD", 100000)),
 		CPUQuota:          envInt64("ZGI_AGENT_RUNTIME_CPU_QUOTA", 100000),
+		Backend:           envString("ZGI_AGENT_RUNTIME_BACKEND", localBackendName),
+		E2BAPIURL:         strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_E2B_API_URL")),
+		E2BDomain:         strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_E2B_DOMAIN")),
+		E2BAPIKey:         strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_E2B_API_KEY")),
+		E2BProfiles:       map[string]e2bprovider.Profile{},
+		E2BAgentPort:      envUint16("ZGI_AGENT_RUNTIME_E2B_AGENT_PORT", 49984),
+		E2BEnvdPort:       envUint16("ZGI_AGENT_RUNTIME_E2B_ENVD_PORT", 49983),
+		E2BTimeoutSeconds: envInt("ZGI_AGENT_RUNTIME_E2B_TIMEOUT_SECONDS", 1800),
 	}
 	if cfg.APIKey == "" || cfg.DatabaseURL == "" {
 		return workerConfig{}, errors.New("ZGI_AGENT_RUNTIME_API_KEY and ZGI_AGENT_RUNTIME_DATABASE_URL are required")
 	}
-	if len(cfg.Profiles) == 0 || cfg.MaxWorkers <= 0 || cfg.IdleTTL <= 0 || cfg.ShutdownTimeout <= 0 || cfg.MemoryBytes <= 0 || cfg.PIDs <= 0 || cfg.CPUPeriod == 0 || cfg.CPUQuota <= 0 {
-		return workerConfig{}, errors.New("Agent Runtime profiles and positive resource, worker, and timeout limits are required")
+	if cfg.MaxWorkers <= 0 || cfg.IdleTTL <= 0 || cfg.ShutdownTimeout <= 0 {
+		return workerConfig{}, errors.New("positive Agent Runtime worker and timeout limits are required")
+	}
+	switch cfg.Backend {
+	case localBackendName:
+		if err := decodeProfiles("ZGI_AGENT_RUNTIME_PROFILES_JSON", &cfg.Profiles); err != nil {
+			return workerConfig{}, err
+		}
+		if len(cfg.Profiles) == 0 || cfg.MemoryBytes <= 0 || cfg.PIDs <= 0 || cfg.CPUPeriod == 0 || cfg.CPUQuota <= 0 {
+			return workerConfig{}, errors.New("local Agent Runtime profiles and positive resource limits are required")
+		}
+	case e2bBackendName:
+		if err := decodeProfiles("ZGI_AGENT_RUNTIME_E2B_PROFILES_JSON", &cfg.E2BProfiles); err != nil {
+			return workerConfig{}, err
+		}
+		if cfg.E2BAPIKey == "" || len(cfg.E2BProfiles) == 0 || cfg.E2BAgentPort == 0 || cfg.E2BEnvdPort == 0 || cfg.E2BTimeoutSeconds <= 0 {
+			return workerConfig{}, errors.New("E2B API key, approved profiles, ports, and timeout are required")
+		}
+	default:
+		return workerConfig{}, fmt.Errorf("unsupported ZGI_AGENT_RUNTIME_BACKEND %q", cfg.Backend)
 	}
 	if _, _, err := net.SplitHostPort(cfg.ListenAddress); err != nil {
 		return workerConfig{}, fmt.Errorf("parse ZGI_AGENT_RUNTIME_LISTEN: %w", err)
 	}
 	return cfg, nil
+}
+
+func newRuntimeBackend(cfg workerConfig) (string, runtimeBackend, func(), error) {
+	switch cfg.Backend {
+	case localBackendName:
+		provider, err := containerdprovider.New(containerdprovider.Options{
+			Address: cfg.ContainerdAddress, RootDir: cfg.RootDir, Profiles: cfg.Profiles,
+			MemoryBytes: cfg.MemoryBytes, PIDs: cfg.PIDs, CPUPeriod: cfg.CPUPeriod, CPUQuota: cfg.CPUQuota,
+		})
+		if err != nil {
+			return "", nil, func() {}, err
+		}
+		backend, err := localruntime.New(provider)
+		if err != nil {
+			_ = provider.Close()
+			return "", nil, func() {}, err
+		}
+		return localBackendName, backend, func() { _ = provider.Close() }, nil
+	case e2bBackendName:
+		backend, err := e2bprovider.New(e2bprovider.Options{
+			APIURL: cfg.E2BAPIURL, Domain: cfg.E2BDomain, APIKey: cfg.E2BAPIKey,
+			Profiles: cfg.E2BProfiles, AgentPort: cfg.E2BAgentPort, EnvdPort: cfg.E2BEnvdPort,
+			TimeoutSeconds: cfg.E2BTimeoutSeconds,
+		})
+		if err != nil {
+			return "", nil, func() {}, err
+		}
+		return e2bBackendName, backend, func() {}, nil
+	default:
+		return "", nil, func() {}, fmt.Errorf("unsupported Agent Runtime backend %q", cfg.Backend)
+	}
+}
+
+func decodeProfiles(name string, target any) error {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		value = "{}"
+	}
+	if err := json.Unmarshal([]byte(value), target); err != nil {
+		return fmt.Errorf("parse %s: %w", name, err)
+	}
+	return nil
 }
 
 func envString(name string, fallback string) string {
@@ -232,4 +306,12 @@ func envInt64(name string, fallback int64) int64 {
 		return fallback
 	}
 	return value
+}
+
+func envUint16(name string, fallback uint16) uint16 {
+	value, err := strconv.ParseUint(strings.TrimSpace(os.Getenv(name)), 10, 16)
+	if err != nil {
+		return fallback
+	}
+	return uint16(value)
 }

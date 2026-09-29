@@ -8,6 +8,7 @@ import (
 )
 
 func TestWorkerConfigRequiresDedicatedSecretsAndProfiles(t *testing.T) {
+	t.Setenv("ZGI_AGENT_RUNTIME_BACKEND", localBackendName)
 	t.Setenv("ZGI_AGENT_RUNTIME_API_KEY", "")
 	t.Setenv("ZGI_AGENT_RUNTIME_DATABASE_URL", "")
 	t.Setenv("ZGI_AGENT_RUNTIME_PROFILES_JSON", `{}`)
@@ -17,6 +18,7 @@ func TestWorkerConfigRequiresDedicatedSecretsAndProfiles(t *testing.T) {
 }
 
 func TestWorkerConfigParsesApprovedProfilesAndLimits(t *testing.T) {
+	t.Setenv("ZGI_AGENT_RUNTIME_BACKEND", localBackendName)
 	t.Setenv("ZGI_AGENT_RUNTIME_API_KEY", "dedicated-secret")
 	t.Setenv("ZGI_AGENT_RUNTIME_DATABASE_URL", "postgres://runtime")
 	t.Setenv("ZGI_AGENT_RUNTIME_LISTEN", "127.0.0.1:9876")
@@ -32,5 +34,22 @@ func TestWorkerConfigParsesApprovedProfilesAndLimits(t *testing.T) {
 	}
 	if cfg.APIKey == os.Getenv("ZGI_SANDBOX_API_KEY") && cfg.APIKey != "" {
 		t.Fatal("worker reused the ordinary Sandbox API key")
+	}
+}
+
+func TestWorkerConfigParsesE2BWithoutLocalRuntimeSettings(t *testing.T) {
+	t.Setenv("ZGI_AGENT_RUNTIME_BACKEND", e2bBackendName)
+	t.Setenv("ZGI_AGENT_RUNTIME_API_KEY", "dedicated-secret")
+	t.Setenv("ZGI_AGENT_RUNTIME_DATABASE_URL", "postgres://runtime")
+	t.Setenv("ZGI_AGENT_RUNTIME_PROFILES_JSON", "")
+	t.Setenv("ZGI_AGENT_RUNTIME_E2B_API_KEY", "e2b-provider-secret")
+	t.Setenv("ZGI_AGENT_RUNTIME_E2B_PROFILES_JSON", `{"standard":{"template_id":"zgi-runtime-template"}}`)
+	t.Setenv("ZGI_AGENT_RUNTIME_E2B_TIMEOUT_SECONDS", "1800")
+	cfg, err := workerConfigFromEnv()
+	if err != nil {
+		t.Fatalf("parse E2B config: %v", err)
+	}
+	if cfg.Backend != e2bBackendName || cfg.E2BProfiles["standard"].TemplateID != "zgi-runtime-template" || len(cfg.Profiles) != 0 {
+		t.Fatalf("config = %+v", cfg)
 	}
 }
