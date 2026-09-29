@@ -40,7 +40,10 @@ The generated binary is placed under ignored `sandbox/e2b-template-build/` build
 must not be committed. The template Dockerfile downloads the fixed Node.js
 22.23.3 archive and verifies its pinned SHA-256 before installation. Python
 3.13 comes from the digest-resolved base image at build time; production build
-automation should additionally pin that base image by digest.
+automation should additionally pin that base image by digest. Keep the generated
+Runtime Agent as a file-level `COPY`: current CLI upload caching can skip an
+unchanged directory input without materializing its contents in a later build,
+while the explicit file input remains reproducible across cached rebuilds.
 
 Approve the resulting immutable template ID in Worker configuration. The template must preserve the image entrypoint, non-root UID/GID 65532, `/workspace`, Python 3.13, Node.js 22, and port 49984. It must not bake provider credentials or a Runtime Agent token into an image layer.
 
