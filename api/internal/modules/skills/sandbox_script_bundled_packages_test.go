@@ -34,6 +34,20 @@ func TestPrepareSkillScriptManifestValidatesBundledPackages(t *testing.T) {
 		}
 	})
 
+	t.Run("python module file", func(t *testing.T) {
+		root := writeBundledPackageSkill(t, "python3", "scripts/run.py", "zgi_local", "scripts/zgi_local.py")
+		modulePath := filepath.Join(root, "scripts", "zgi_local.py")
+		if err := os.RemoveAll(modulePath); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(modulePath, []byte("VALUE = 1\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := prepareSkillScriptManifest(root, 30, false); err != nil {
+			t.Fatalf("prepareSkillScriptManifest() error = %v", err)
+		}
+	})
+
 	tests := []struct {
 		name        string
 		packageName string
@@ -54,6 +68,21 @@ func TestPrepareSkillScriptManifestValidatesBundledPackages(t *testing.T) {
 				}
 			},
 			wantError: "path is missing",
+		},
+		{
+			name:        "extensionless module file",
+			packageName: "zgi_local",
+			packagePath: "scripts/zgi_local",
+			prepare: func(t *testing.T, root string) {
+				path := filepath.Join(root, "scripts", "zgi_local")
+				if err := os.RemoveAll(path); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte("VALUE = 1\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantError: "must use .py",
 		},
 		{
 			name:        "not importable from entrypoint",
@@ -202,6 +231,47 @@ Run the script.
 	err := ValidateCustomSkillScriptPackage(root, 30)
 	if err == nil || !strings.Contains(err.Error(), "bundled package missing_local") {
 		t.Fatalf("ValidateCustomSkillScriptPackage() error = %v, want bundled package validation error", err)
+	}
+}
+
+func TestValidateCustomSkillScriptPackageUsesNormalizedManifestSize(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "scripts"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	entrypoint := []byte("\n")
+	if err := os.WriteFile(filepath.Join(root, "scripts", "run.py"), entrypoint, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manifest := []byte(`{"entrypoint":"scripts/run.py","language":"python3"}`)
+	if err := os.WriteFile(filepath.Join(root, "skill.manifest.json"), manifest, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	remaining := int64(ScriptPackageMaxBytes) - int64(len(entrypoint)) - int64(len(manifest))
+	for index := 0; remaining > 0; index++ {
+		size := min(remaining, int64(ScriptPackageMaxFileBytes))
+		path := filepath.Join(root, "references", "payload-"+strconv.Itoa(index)+".bin")
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		file, err := os.Create(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := file.Truncate(size); err != nil {
+			file.Close()
+			t.Fatal(err)
+		}
+		if err := file.Close(); err != nil {
+			t.Fatal(err)
+		}
+		remaining -= size
+	}
+
+	err := ValidateCustomSkillScriptPackage(root, 30)
+	if err == nil || !strings.Contains(err.Error(), "exceeds upload size limit") {
+		t.Fatalf("ValidateCustomSkillScriptPackage() error = %v, want normalized package size error", err)
 	}
 }
 

@@ -79,3 +79,53 @@ func snapshotSkillPackage(source string) (string, error) {
 	}
 	return target, nil
 }
+
+// validateSkillPackageUploadSize applies the package size limit to the bytes
+// that will actually be uploaded. A normalized manifest replaces the source
+// manifest in the archive and can be larger after defaults are populated.
+func validateSkillPackageUploadSize(root string, manifestRaw []byte) error {
+	var total int64
+	manifestReplaced := false
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if path == root || entry.IsDir() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("skill package contains a symlink")
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("skill package contains a nonregular file")
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		size := info.Size()
+		if len(manifestRaw) > 0 && filepath.ToSlash(relative) == "skill.manifest.json" {
+			size = int64(len(manifestRaw))
+			manifestReplaced = true
+		}
+		total += size
+		if total > ScriptPackageMaxBytes {
+			return fmt.Errorf("skill package exceeds upload size limit of %d bytes", ScriptPackageMaxBytes)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if len(manifestRaw) > 0 && !manifestReplaced {
+		total += int64(len(manifestRaw))
+	}
+	if total > ScriptPackageMaxBytes {
+		return fmt.Errorf("skill package exceeds upload size limit of %d bytes", ScriptPackageMaxBytes)
+	}
+	return nil
+}

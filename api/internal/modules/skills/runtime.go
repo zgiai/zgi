@@ -375,8 +375,18 @@ func LoadCustomSkillDocument(root string) (SkillDocument, error) {
 // before a custom script skill can be imported. It intentionally does not
 // grant execution-time dependency or model-call capabilities.
 func ValidateCustomSkillScriptPackage(root string, fallbackTimeoutSeconds int) error {
-	if _, err := prepareSkillScriptManifest(root, fallbackTimeoutSeconds, true); err != nil {
+	hasManifest, err := hasSkillManifest(root)
+	if err != nil {
 		return fmt.Errorf("invalid custom skill script package: %w", err)
+	}
+	prepared, err := prepareSkillScriptManifest(root, fallbackTimeoutSeconds, true)
+	if err != nil {
+		return fmt.Errorf("invalid custom skill script package: %w", err)
+	}
+	if hasManifest {
+		if err := validateSkillPackageUploadSize(root, prepared.Raw); err != nil {
+			return fmt.Errorf("invalid custom skill script package: %w", err)
+		}
 	}
 	return nil
 }

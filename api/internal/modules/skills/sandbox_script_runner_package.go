@@ -160,6 +160,9 @@ func hasSkillManifest(root string) (bool, error) {
 }
 
 func zipSkillDirectoryBase64(root string, manifestRaw []byte) (string, error) {
+	if err := validateSkillPackageUploadSize(root, manifestRaw); err != nil {
+		return "", err
+	}
 	var buffer bytes.Buffer
 	writer := zip.NewWriter(&buffer)
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
@@ -480,13 +483,25 @@ func normalizeSkillScriptBundledPackages(root string, manifest *skillScriptManif
 		seenPaths[pathKey] = struct{}{}
 
 		target := filepath.Join(root, filepath.FromSlash(item.Path))
-		if err := validateBundledPackageTarget(root, target); err != nil {
+		targetInfo, err := validateBundledPackageTarget(root, target)
+		if err != nil {
 			return fmt.Errorf("skill manifest bundled package %s: %w", item.Name, err)
 		}
 		if manifest.Language == "python3" {
 			importRoot := skillPythonEntrypointImportRoot(root, manifest.Entrypoint)
 			expected := filepath.Join(importRoot, item.Name)
-			if filepath.Clean(target) != filepath.Clean(expected) && filepath.Clean(target) != filepath.Clean(expected+".py") {
+			target = filepath.Clean(target)
+			expected = filepath.Clean(expected)
+			switch target {
+			case expected:
+				if !targetInfo.IsDir() {
+					return fmt.Errorf("skill manifest bundled Python package %s must use .py when it is a regular file", item.Name)
+				}
+			case expected + ".py":
+				if !targetInfo.Mode().IsRegular() {
+					return fmt.Errorf("skill manifest bundled Python package %s path ending in .py must be a regular file", item.Name)
+				}
+			default:
 				return fmt.Errorf("skill manifest bundled Python package %s must resolve from the entrypoint directory", item.Name)
 			}
 		}
@@ -501,21 +516,21 @@ func validBundledPackageName(language string, name string) bool {
 	return nodeBundledPackageNamePattern.MatchString(name)
 }
 
-func validateBundledPackageTarget(root string, target string) error {
+func validateBundledPackageTarget(root string, target string) (os.FileInfo, error) {
 	root, err := filepath.Abs(root)
 	if err != nil {
-		return errors.New("path cannot be resolved")
+		return nil, errors.New("path cannot be resolved")
 	}
 	target, err = filepath.Abs(target)
 	if err != nil {
-		return errors.New("path cannot be resolved")
+		return nil, errors.New("path cannot be resolved")
 	}
 	relative, err := filepath.Rel(root, target)
 	if err != nil {
-		return errors.New("path cannot be resolved")
+		return nil, errors.New("path cannot be resolved")
 	}
 	if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return errors.New("path escapes package root")
+		return nil, errors.New("path escapes package root")
 	}
 	current := root
 	for _, part := range strings.Split(relative, string(filepath.Separator)) {
@@ -526,25 +541,25 @@ func validateBundledPackageTarget(root string, target string) error {
 		info, err := os.Lstat(current)
 		if err != nil {
 			if os.IsNotExist(err) {
-				return errors.New("path is missing from package")
+				return nil, errors.New("path is missing from package")
 			}
-			return errors.New("path cannot be inspected")
+			return nil, errors.New("path cannot be inspected")
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
-			return errors.New("path contains a symlink")
+			return nil, errors.New("path contains a symlink")
 		}
 	}
 	info, err := os.Stat(target)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return errors.New("path is missing from package")
+			return nil, errors.New("path is missing from package")
 		}
-		return errors.New("path cannot be inspected")
+		return nil, errors.New("path cannot be inspected")
 	}
 	if !info.IsDir() && !info.Mode().IsRegular() {
-		return errors.New("path must be a regular file or directory")
+		return nil, errors.New("path must be a regular file or directory")
 	}
-	return nil
+	return info, nil
 }
 
 func normalizeSkillScriptInputFileSpec(spec *skillScriptInputFileSpec, maxBytesLimit int64) error {

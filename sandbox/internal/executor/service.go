@@ -2958,7 +2958,16 @@ func validateBundledPackages(manifest *SkillExecutionManifest, names map[string]
 		if manifest.Language == "python3" {
 			importRoot := filepath.ToSlash(filepath.Dir(filepath.FromSlash(manifest.Entrypoint)))
 			expected := filepath.ToSlash(filepath.Join(filepath.FromSlash(importRoot), item.Name))
-			if item.Path != expected && item.Path != expected+".py" {
+			switch item.Path {
+			case expected:
+				if !archivePathIsDirectory(names, item.Path) {
+					return fmt.Errorf("skill manifest bundled Python package %s must use .py when it is a regular file", item.Name)
+				}
+			case expected + ".py":
+				if !names[item.Path] {
+					return fmt.Errorf("skill manifest bundled Python package %s path ending in .py must be a regular file", item.Name)
+				}
+			default:
 				return fmt.Errorf("skill manifest bundled Python package %s must resolve from the entrypoint directory", item.Name)
 			}
 		}
@@ -2969,6 +2978,19 @@ func validateBundledPackages(manifest *SkillExecutionManifest, names map[string]
 func archivePathExists(names map[string]bool, path string) bool {
 	if names[path] {
 		return true
+	}
+	prefix := strings.TrimSuffix(path, "/") + "/"
+	for name := range names {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func archivePathIsDirectory(names map[string]bool, path string) bool {
+	if names[path] {
+		return false
 	}
 	prefix := strings.TrimSuffix(path, "/") + "/"
 	for name := range names {

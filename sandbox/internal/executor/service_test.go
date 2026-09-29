@@ -1619,6 +1619,24 @@ func TestUploadArchiveRejectsInvalidBundledPackages(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("extensionless module file", func(t *testing.T) {
+		_, err := service.UploadArchive(ArchiveUploadRequest{
+			SandboxID: box.ID,
+			Path:      ".",
+			ArchiveBase64: zipBase64(t, map[string]string{
+				"SKILL.md":            "# Skill",
+				"scripts/run.py":      "import zgi_local",
+				"scripts/zgi_local":   "VALUE = 1\n",
+				"skill.manifest.json": validSkillManifestJSONWithBundledPackage("scripts/run.py", "python3", "zgi_local", "scripts/zgi_local"),
+			}),
+			Format:                "zip",
+			ValidateSkillManifest: true,
+		})
+		if err == nil || !strings.Contains(err.Error(), "must use .py") {
+			t.Fatalf("UploadArchive() error = %v, want Python module suffix error", err)
+		}
+	})
 }
 
 func TestUploadArchiveRejectsSkillManifestDependencyProfileMismatch(t *testing.T) {
