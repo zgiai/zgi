@@ -162,9 +162,11 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 
 	// ---------- DataSource ----------
 	RegisterDataSourceRoutes(v1, DataSourceRouteDeps{
-		DataSourceService:   serviceContainer.GetDataSourceService(),
-		AccountService:      serviceContainer.GetAccountService(),
-		OrganizationService: serviceContainer.GetOrganizationService(),
+		SchemaIndexes:           serviceContainer.GetDatabaseSchemaIndexes(),
+		ApplicationErrorCatalog: applicationErrorCatalog,
+		DataSourceService:       serviceContainer.GetDataSourceService(),
+		AccountService:          serviceContainer.GetAccountService(),
+		OrganizationService:     serviceContainer.GetOrganizationService(),
 	})
 
 	// ---------- Automation ----------

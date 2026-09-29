@@ -98,6 +98,9 @@ func registerRoutes(params routeParams) {
 }
 
 func registerRuntime(lc fx.Lifecycle, params runtimeParams) error {
+	schemaIndexes := params.ServiceContainer.GetDatabaseSchemaIndexes()
+	schemaIndexes.Register(params.TaskHandlerRegistry)
+	registerDatabaseSchemaIndexLifecycle(lc, schemaIndexes)
 	graphLifecycle := params.ServiceContainer.GetGraphLifecycleService()
 	_ = params.ServiceContainer.GetGraphVisibilityService()
 	graphRuntimeHealth := params.ServiceContainer.GetGraphRuntimeHealthService()

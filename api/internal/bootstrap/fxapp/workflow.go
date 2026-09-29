@@ -14,16 +14,7 @@ var workflowModule = fx.Module("workflow",
 )
 
 func provideWorkflowRuntimeDependencies(serviceContainer *container.ServiceContainer) workflowruntime.Dependencies {
-	return workflowruntime.Dependencies{
-		ContentExtractor:            serviceContainer.GetContentExtractor(),
-		LLMClient:                   serviceContainer.GetLLMClient(),
-		ToolEngine:                  serviceContainer.GetToolEngine(),
-		GraphFlowService:            serviceContainer.GetGraphFlowService(),
-		FileService:                 serviceContainer.GetFileService(),
-		AutomationDefinitionService: serviceContainer.GetAutomationDefinitionService(),
-		NotificationSMSService:      serviceContainer.GetNotificationSMSService(),
-		SQLBase:                     serviceContainer.GetSQLBase(),
-	}
+	return serviceContainer.GetWorkflowRuntimeDependencies()
 }
 
 func provideWorkflowEngineFactory(serviceContainer *container.ServiceContainer) *graph_engine.EngineFactory {

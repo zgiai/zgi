@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useT } from '@/i18n';
 import { Label } from '@/components/ui/label';
+import { Radio, RadioGroup } from '@/components/ui/radio';
 import { Database, PlusCircle } from 'lucide-react';
 import ModelSelectorParameter from '@/components/common/model-selector/model-selector-parameter';
 import WorkflowValueInserter from '@/components/workflow/common/workflow-value-inserter';
@@ -18,6 +19,7 @@ import {
   DEFAULT_SQL_GENERATOR_MODEL,
   DEFAULT_SQL_GENERATOR_PROMPT,
   DEFAULT_SQL_GENERATOR_DATA_SOURCE,
+  normalizeSqlGeneratorDataSource,
 } from '../config';
 import type {
   DatabaseExecutionSettings,
@@ -90,12 +92,15 @@ const SqlGeneratorManager: React.FC<SqlGeneratorManagerProps> = ({
       max_retries: inner?.execution?.max_retries ?? DEFAULT_DATABASE_EXECUTION.max_retries,
     };
     return {
+      table_selection_mode: inner?.table_selection_mode ?? 'manual',
       model: mergedModel,
       data_source,
       prompt: inner?.prompt ?? DEFAULT_SQL_GENERATOR_PROMPT,
       execution,
     };
   }, [innerDataRaw]);
+
+  const tableSelectionMode = innerData.table_selection_mode ?? 'manual';
 
   const updateInnerData = useCallback(
     (patch: Partial<SqlGeneratorInnerData>) => {
@@ -237,6 +242,34 @@ const SqlGeneratorManager: React.FC<SqlGeneratorManagerProps> = ({
           <div className="flex items-center justify-between">
             <h3 className="text-lg font-semibold">{t('nodes.sqlGenerator.section.dataSource')}</h3>
           </div>
+          <RadioGroup
+            value={tableSelectionMode}
+            onValueChange={value => {
+              const mode = value === 'automatic' ? 'automatic' : 'manual';
+              updateInnerData({
+                table_selection_mode: mode,
+                data_source: normalizeSqlGeneratorDataSource(dataSource, mode),
+              });
+              setPendingSelection(null);
+            }}
+            orientation="horizontal"
+          >
+            <Radio
+              value="manual"
+              label={t('nodes.sqlGenerator.tableSelectionMode.manual')}
+              disabled={readOnly}
+            />
+            <Radio
+              value="automatic"
+              label={t('nodes.sqlGenerator.tableSelectionMode.automatic')}
+              disabled={readOnly}
+            />
+          </RadioGroup>
+          {tableSelectionMode === 'automatic' && (
+            <p className="text-xs text-muted-foreground">
+              {t('nodes.sqlGenerator.hints.automaticTableSelection')}
+            </p>
+          )}
           <div
             className="rounded-md border p-2 text-sm space-y-2 cursor-pointer hover:bg-muted/60"
             onClick={() => {
@@ -250,10 +283,18 @@ const SqlGeneratorManager: React.FC<SqlGeneratorManagerProps> = ({
                 <Database className="h-5 w-5 text-muted-foreground" />
                 <div className="flex-1 min-w-0">
                   <div className="font-medium truncate">
-                    {t('nodes.sqlGenerator.empty.selectorHintTitle')}
+                    {t(
+                      tableSelectionMode === 'automatic'
+                        ? 'nodes.sqlGenerator.empty.dataSourceRequired'
+                        : 'nodes.sqlGenerator.empty.selectorHintTitle'
+                    )}
                   </div>
                   <div className="text-xs text-muted-foreground truncate">
-                    {t('nodes.sqlGenerator.empty.selectorHintDesc')}
+                    {t(
+                      tableSelectionMode === 'automatic'
+                        ? 'nodes.sqlGenerator.empty.dataSourceHint'
+                        : 'nodes.sqlGenerator.empty.selectorHintDesc'
+                    )}
                   </div>
                 </div>
                 <PlusCircle className="h-5 w-5 text-muted-foreground" />
@@ -268,25 +309,27 @@ const SqlGeneratorManager: React.FC<SqlGeneratorManagerProps> = ({
                       t('nodes.sqlGenerator.empty.selectorHintTitle')}
                   </div>
                 </div>
-                <div>
-                  <Label className="mb-1 block">{t('nodes.sqlGenerator.fields.tables')}</Label>
-                  {dataSource.tables.length === 0 ? (
-                    <div className="text-muted-foreground">
-                      {t('nodes.sqlGenerator.empty.selectorHintTitle')}
-                    </div>
-                  ) : (
-                    <div className="flex flex-wrap gap-2">
-                      {dataSource.tables.map(item => (
-                        <span
-                          key={`${item.schema}.${item.name}`}
-                          className="rounded bg-muted px-2 py-1 text-xs"
-                        >
-                          {item.label || item.name}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                {tableSelectionMode === 'manual' && (
+                  <div>
+                    <Label className="mb-1 block">{t('nodes.sqlGenerator.fields.tables')}</Label>
+                    {dataSource.tables.length === 0 ? (
+                      <div className="text-muted-foreground">
+                        {t('nodes.sqlGenerator.empty.selectorHintTitle')}
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap gap-2">
+                        {dataSource.tables.map(item => (
+                          <span
+                            key={`${item.schema}.${item.name}`}
+                            className="rounded bg-muted px-2 py-1 text-xs"
+                          >
+                            {item.label || item.name}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -302,6 +345,11 @@ const SqlGeneratorManager: React.FC<SqlGeneratorManagerProps> = ({
                 type: ds.type,
                 schema: ds.schema_name || 'public',
               };
+              if (tableSelectionMode === 'automatic') {
+                updateInnerData({ data_source: { source: nextSource, tables: [] } });
+                setPendingSelection(null);
+                return;
+              }
               const idToNumeric = new Map<string, number>();
               if (Array.isArray(dbTables)) {
                 dbTables.forEach(tb => {
@@ -325,6 +373,7 @@ const SqlGeneratorManager: React.FC<SqlGeneratorManagerProps> = ({
             }}
             initialSchema={defaultSchema}
             readOnly={!canEditDatabaseSource}
+            sourceOnly={tableSelectionMode === 'automatic'}
           />
         </section>
 
