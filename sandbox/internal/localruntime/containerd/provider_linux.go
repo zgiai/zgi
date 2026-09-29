@@ -42,6 +42,15 @@ const (
 	defaultCPUQuota     = 100000
 	runtimeSocketName   = "runtime.sock"
 	runtimeTokenName    = "token"
+	// The gVisor shim treats a container without this OCI annotation as a
+	// subcontainer and cannot manage its standalone lifecycle correctly.
+	gvisorContainerTypeAnnotation = "io.kubernetes.cri.container-type"
+	gvisorSandboxContainerType    = "sandbox"
+	// A sandbox-local UDS is invisible to the host even on a bind mount. Allow
+	// creating host-visible sockets so the worker can reach the Runtime Agent;
+	// do not allow opening existing host sockets.
+	gvisorHostUDSAnnotation = "dev.gvisor.flag.host-uds"
+	gvisorHostUDSCreate     = "create"
 )
 
 var (
@@ -347,6 +356,11 @@ func (p *Provider) hardenSpec() oci.SpecOpts {
 		if spec.Process == nil {
 			return errors.New("OCI process is missing")
 		}
+		if spec.Annotations == nil {
+			spec.Annotations = make(map[string]string)
+		}
+		spec.Annotations[gvisorContainerTypeAnnotation] = gvisorSandboxContainerType
+		spec.Annotations[gvisorHostUDSAnnotation] = gvisorHostUDSCreate
 		spec.Process.Cwd = "/workspace"
 		spec.Process.User.UID = p.userID
 		spec.Process.User.GID = p.groupID

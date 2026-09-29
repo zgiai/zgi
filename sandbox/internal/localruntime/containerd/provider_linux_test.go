@@ -39,13 +39,25 @@ func TestValidateOptionsRequiresGVisorAndPinnedImages(t *testing.T) {
 
 func TestHardenSpecDropsPrivilegesAndAppliesLimits(t *testing.T) {
 	provider := &Provider{memoryBytes: 1024, pids: 8, cpuPeriod: 1000, cpuQuota: 500, userID: 123, groupID: 456}
-	spec := &oci.Spec{Process: &specs.Process{}, Linux: &specs.Linux{}}
+	spec := &oci.Spec{
+		Process: &specs.Process{}, Linux: &specs.Linux{},
+		Annotations: map[string]string{"example": "keep", gvisorHostUDSAnnotation: "all"},
+	}
 	var container *corecontainers.Container
 	if err := provider.hardenSpec()(context.Background(), nil, container, spec); err != nil {
 		t.Fatalf("harden spec: %v", err)
 	}
 	if spec.Process.Cwd != "/workspace" || !spec.Process.NoNewPrivileges {
 		t.Fatalf("process hardening = %+v", spec.Process)
+	}
+	if got := spec.Annotations[gvisorContainerTypeAnnotation]; got != gvisorSandboxContainerType {
+		t.Fatalf("gVisor container type = %q, want %q", got, gvisorSandboxContainerType)
+	}
+	if got := spec.Annotations[gvisorHostUDSAnnotation]; got != gvisorHostUDSCreate {
+		t.Fatalf("gVisor host UDS mode = %q, want %q", got, gvisorHostUDSCreate)
+	}
+	if got := spec.Annotations["example"]; got != "keep" {
+		t.Fatalf("existing annotation = %q, want keep", got)
 	}
 	if spec.Process.User.UID != 123 || spec.Process.User.GID != 456 {
 		t.Fatalf("process user = %+v", spec.Process.User)
