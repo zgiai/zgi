@@ -77,6 +77,45 @@ func TestE2BContract(t *testing.T) {
 		t.Fatalf("job result=%+v stdout=%q stderr=%q error=%v", result, stdout.String(), stderr.String(), err)
 	}
 
+	for filePath, content := range map[string]string{
+		"inputs/sales_a.csv": "item,qty\napple,2\nbanana,1\n",
+		"inputs/sales_b.csv": "item,qty\napple,3\nbanana,4\n",
+	} {
+		if _, err := backend.UploadFile(ctx, allocation, filePath, strings.NewReader(content), int64(len(content))); err != nil {
+			t.Fatalf("upload %s: %v", filePath, err)
+		}
+	}
+	const aggregateCSV = "import csv\nfrom collections import Counter\nfrom pathlib import Path\ntotals=Counter()\nfor name in ('inputs/sales_a.csv','inputs/sales_b.csv'):\n with open(name, newline='') as source:\n  for row in csv.DictReader(source): totals[row['item']]+=int(row['qty'])\nPath('artifacts').mkdir(exist_ok=True)\nwith open('artifacts/result.csv','w',newline='') as target:\n writer=csv.writer(target, lineterminator='\\n'); writer.writerow(('item','qty')); writer.writerows(sorted(totals.items()))\nprint('rows='+str(len(totals)))"
+	var aggregateOutput bytes.Buffer
+	aggregateJob, err := backend.StartJob(ctx, allocation, agentexecution.JobSpec{
+		JobID: "e2b-aggregate-csv", Command: "python3", Args: []string{"-c", aggregateCSV}, Timeout: 30 * time.Second,
+	}, func(chunk agentexecution.OutputChunk) error {
+		if chunk.Stream == agentexecution.OutputStreamStdout {
+			outputMu.Lock()
+			defer outputMu.Unlock()
+			_, err := aggregateOutput.Write(chunk.Data)
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("start aggregate job: %v", err)
+	}
+	aggregateResult, err := aggregateJob.Wait(ctx)
+	if err != nil || aggregateResult.ExitCode != 0 || aggregateOutput.String() != "rows=2\n" {
+		t.Fatalf("aggregate result=%+v output=%q error=%v", aggregateResult, aggregateOutput.String(), err)
+	}
+	aggregateReader, aggregateInfo, err := backend.DownloadFile(ctx, allocation, "artifacts/result.csv")
+	if err != nil {
+		t.Fatalf("download aggregate: %v", err)
+	}
+	aggregateValue, aggregateReadErr := io.ReadAll(aggregateReader)
+	_ = aggregateReader.Close()
+	const expectedAggregate = "item,qty\napple,5\nbanana,5\n"
+	if aggregateReadErr != nil || aggregateInfo.Size != int64(len(aggregateValue)) || string(aggregateValue) != expectedAggregate {
+		t.Fatalf("aggregate artifact=%q info=%+v error=%v", aggregateValue, aggregateInfo, aggregateReadErr)
+	}
+
 	if err := backend.SuspendBinding(ctx, allocation); err != nil {
 		t.Fatalf("suspend binding: %v", err)
 	}
@@ -92,6 +131,15 @@ func TestE2BContract(t *testing.T) {
 	_ = reader.Close()
 	if readErr != nil || !bytes.Equal(value, content) || info.Size != int64(len(content)) {
 		t.Fatalf("retained file=%q info=%+v error=%v", value, info, readErr)
+	}
+	aggregateReader, _, err = backend.DownloadFile(ctx, allocation, "artifacts/result.csv")
+	if err != nil {
+		t.Fatalf("download retained aggregate: %v", err)
+	}
+	retainedAggregate, retainedAggregateErr := io.ReadAll(aggregateReader)
+	_ = aggregateReader.Close()
+	if retainedAggregateErr != nil || string(retainedAggregate) != expectedAggregate {
+		t.Fatalf("retained aggregate=%q error=%v", retainedAggregate, retainedAggregateErr)
 	}
 
 	networkJob, err := backend.StartJob(ctx, allocation, agentexecution.JobSpec{

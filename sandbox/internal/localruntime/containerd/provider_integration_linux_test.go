@@ -87,6 +87,32 @@ func TestContainerdGVisorContract(t *testing.T) {
 		t.Fatalf("artifact = %q, info = %+v, error = %v", value, info, readErr)
 	}
 
+	for filePath, content := range map[string]string{
+		"inputs/sales_a.csv": "item,qty\napple,2\nbanana,1\n",
+		"inputs/sales_b.csv": "item,qty\napple,3\nbanana,4\n",
+	} {
+		if _, err := backend.UploadFile(context.Background(), allocation, filePath, strings.NewReader(content), int64(len(content))); err != nil {
+			t.Fatalf("upload %s: %v", filePath, err)
+		}
+	}
+	const aggregateCSV = "import csv\nfrom collections import Counter\nfrom pathlib import Path\ntotals=Counter()\nfor name in ('inputs/sales_a.csv','inputs/sales_b.csv'):\n with open(name, newline='') as source:\n  for row in csv.DictReader(source): totals[row['item']]+=int(row['qty'])\nPath('artifacts').mkdir(exist_ok=True)\nwith open('artifacts/result.csv','w',newline='') as target:\n writer=csv.writer(target, lineterminator='\\n'); writer.writerow(('item','qty')); writer.writerows(sorted(totals.items()))\nprint('rows='+str(len(totals)))"
+	aggregateResult, aggregateOutput := runContractJob(t, backend, allocation, agentexecution.JobSpec{
+		JobID: "aggregate-csv", Command: "python3", Args: []string{"-c", aggregateCSV}, Timeout: 10 * time.Second,
+	})
+	if aggregateResult.ExitCode != 0 || string(aggregateOutput) != "rows=2\n" {
+		t.Fatalf("aggregate result = %+v, output = %q", aggregateResult, aggregateOutput)
+	}
+	aggregateReader, aggregateInfo, err := backend.DownloadFile(context.Background(), allocation, "artifacts/result.csv")
+	if err != nil {
+		t.Fatalf("download aggregate: %v", err)
+	}
+	aggregateValue, aggregateReadErr := io.ReadAll(aggregateReader)
+	_ = aggregateReader.Close()
+	const expectedAggregate = "item,qty\napple,5\nbanana,5\n"
+	if aggregateReadErr != nil || aggregateInfo.Size != int64(len(aggregateValue)) || string(aggregateValue) != expectedAggregate {
+		t.Fatalf("aggregate artifact = %q, info = %+v, error = %v", aggregateValue, aggregateInfo, aggregateReadErr)
+	}
+
 	ptyResult, ptyOutput := runContractJob(t, backend, allocation, agentexecution.JobSpec{
 		JobID: "pty", Command: "/bin/sh", Args: []string{"-c", "test -t 1 && printf pty-ok"},
 		PTY: true, PTYColumns: 80, PTYRows: 24, Timeout: 5 * time.Second,
@@ -121,6 +147,15 @@ func TestContainerdGVisorContract(t *testing.T) {
 	_ = reader.Close()
 	if readErr != nil || !bytes.Equal(retained, value) {
 		t.Fatalf("retained artifact = %q, error = %v", retained, readErr)
+	}
+	aggregateReader, _, err = backend.DownloadFile(context.Background(), allocation, "artifacts/result.csv")
+	if err != nil {
+		t.Fatalf("download retained aggregate: %v", err)
+	}
+	retainedAggregate, retainedAggregateErr := io.ReadAll(aggregateReader)
+	_ = aggregateReader.Close()
+	if retainedAggregateErr != nil || string(retainedAggregate) != expectedAggregate {
+		t.Fatalf("retained aggregate = %q, error = %v", retainedAggregate, retainedAggregateErr)
 	}
 
 	var outputMu sync.Mutex
