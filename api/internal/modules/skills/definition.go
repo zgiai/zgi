@@ -335,6 +335,7 @@ type SkillMetadata struct {
 	References            []SkillReference            `json:"references,omitempty"`
 	HasScripts            bool                        `json:"has_scripts"`
 	ScriptsSupported      bool                        `json:"scripts_supported"`
+	ScriptExecutionMode   string                      `json:"script_execution_mode,omitempty"`
 	MaxCallsPerTurn       int                         `json:"max_calls_per_turn"`
 	TimeoutSeconds        int                         `json:"timeout_seconds"`
 	RootPath              string                      `json:"-"`
@@ -381,6 +382,7 @@ type SkillDiscoveryMetadata struct {
 	HasReferences         bool                        `json:"has_references"`
 	HasScripts            bool                        `json:"has_scripts"`
 	ScriptsSupported      bool                        `json:"scripts_supported"`
+	ScriptExecutionMode   string                      `json:"script_execution_mode,omitempty"`
 	MaxCallsPerTurn       int                         `json:"max_calls_per_turn"`
 	TimeoutSeconds        int                         `json:"timeout_seconds"`
 	Status                string                      `json:"status"`
@@ -562,6 +564,7 @@ func skillDiscoveryMetadata(skill SkillDocument) SkillDiscoveryMetadata {
 		HasReferences:         len(metadata.References) > 0,
 		HasScripts:            metadata.HasScripts,
 		ScriptsSupported:      metadata.ScriptsSupported,
+		ScriptExecutionMode:   metadata.ScriptExecutionMode,
 		MaxCallsPerTurn:       metadata.MaxCallsPerTurn,
 		TimeoutSeconds:        metadata.TimeoutSeconds,
 		Status:                SkillStatusActive,

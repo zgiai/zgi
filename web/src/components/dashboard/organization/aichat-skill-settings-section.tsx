@@ -97,6 +97,7 @@ const RUNTIME_LABEL_KEYS: Record<AIChatSkillRuntimeType, DashboardSuffix> = {
 
 const SCRIPT_STATUS_LABEL_KEYS = {
   runnable: 'organization.aichatSkills.scriptStatus.runnable',
+  session: 'organization.aichatSkills.scriptStatus.session',
   unsupported: 'organization.aichatSkills.scriptStatus.unsupported',
 } as const satisfies Record<string, DashboardSuffix>;
 
@@ -159,6 +160,7 @@ function getSkillDependencyAvailability(
 
 function getScriptStatusLabelKey(skill: AIChatSkillMetadata): DashboardSuffix | null {
   if (!skill.has_scripts) return null;
+  if (skill.script_execution_mode === 'session_script') return SCRIPT_STATUS_LABEL_KEYS.session;
   return skill.scripts_supported
     ? SCRIPT_STATUS_LABEL_KEYS.runnable
     : SCRIPT_STATUS_LABEL_KEYS.unsupported;

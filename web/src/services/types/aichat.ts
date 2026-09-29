@@ -168,6 +168,7 @@ export interface AIChatSkillMetadata {
   has_references: boolean;
   has_scripts: boolean;
   scripts_supported: boolean;
+  script_execution_mode?: 'session_script' | 'legacy_script' | 'zgi_script';
   max_calls_per_turn: number;
   timeout_seconds: number;
   status?: AIChatSkillStatus;

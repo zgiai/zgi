@@ -1071,6 +1071,7 @@ const messages = {
       },
       scriptStatus: {
         runnable: 'Scripts runnable',
+        session: 'Console Agent session scripts',
         unsupported: 'Scripts disabled',
       },
       autoSave: {

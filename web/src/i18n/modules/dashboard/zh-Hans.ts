@@ -1028,6 +1028,7 @@ const messages: DashboardMessages = {
       },
       scriptStatus: {
         runnable: '脚本可运行',
+        session: '控制台 Agent 会话脚本',
         unsupported: '脚本未启用',
       },
       autoSave: {

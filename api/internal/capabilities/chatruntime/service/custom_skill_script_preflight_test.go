@@ -89,11 +89,34 @@ Run scripts/summarize.py with Python.
 	if preview.ScriptExecutionMode != skills.SkillScriptExecutionSession || preview.ScriptsSupported {
 		t.Fatalf("preview mode = %q, scripts_supported = %t, want session without legacy runner", preview.ScriptExecutionMode, preview.ScriptsSupported)
 	}
+	if preview.Skill.ScriptExecutionMode != skills.SkillScriptExecutionSession {
+		t.Fatalf("preview skill mode = %q, want session script", preview.Skill.ScriptExecutionMode)
+	}
 	if len(preview.Warnings) == 0 {
 		t.Fatalf("preview warnings = %#v, want session capability guidance", preview.Warnings)
 	}
 	if _, err := svc.ConfirmCustomSkillImport(context.Background(), scope, preview.ImportID, false); err != nil {
 		t.Fatalf("ConfirmCustomSkillImport() error = %v", err)
+	}
+}
+
+func TestPreviewImportPortableNodeSkillWithoutManifest(t *testing.T) {
+	svc := newScriptPreflightService(t)
+	scope := Scope{OrganizationID: uuid.New(), AccountID: uuid.New(), SkipAccessCheck: true}
+	preview, err := svc.PreviewImportCustomSkill(context.Background(), scope, scriptPreflightFileHeader(t, map[string]string{
+		"portable-node/SKILL.md": `---
+name: portable-node
+description: Process input using a portable Node script.
+---
+Run scripts/process.js with Node.
+`,
+		"portable-node/scripts/process.js": "console.log('done')\n",
+	}))
+	if err != nil {
+		t.Fatalf("PreviewImportCustomSkill() error = %v", err)
+	}
+	if !preview.CanImport || preview.Skill == nil || preview.Skill.ScriptExecutionMode != skills.SkillScriptExecutionSession {
+		t.Fatalf("preview = %#v, want importable Node session script", preview)
 	}
 }
 

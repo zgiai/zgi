@@ -147,6 +147,9 @@ func (r *Runtime) applyScriptSupport(doc *SkillDocument) {
 	}
 	if doc.Metadata.Source == SkillSourceCustom {
 		mode, err := CustomSkillScriptExecutionMode(doc.Metadata.RootPath)
+		if err == nil {
+			doc.Metadata.ScriptExecutionMode = mode
+		}
 		if err != nil || mode == SkillScriptExecutionSession {
 			doc.Metadata.ScriptsSupported = false
 			doc.Tools = slices.DeleteFunc(doc.Tools, func(tool SkillToolDefinition) bool {

@@ -145,6 +145,7 @@ type SkillResponse struct {
 	HasReferences         bool                                `json:"has_references"`
 	HasScripts            bool                                `json:"has_scripts"`
 	ScriptsSupported      bool                                `json:"scripts_supported"`
+	ScriptExecutionMode   string                              `json:"script_execution_mode,omitempty"`
 	MaxCallsPerTurn       int                                 `json:"max_calls_per_turn"`
 	TimeoutSeconds        int                                 `json:"timeout_seconds"`
 	Status                string                              `json:"status"`

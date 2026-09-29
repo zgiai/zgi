@@ -1120,6 +1120,7 @@ func skillResponse(metadata skills.SkillDiscoveryMetadata) runtimedto.SkillRespo
 		HasReferences:         metadata.HasReferences,
 		HasScripts:            metadata.HasScripts,
 		ScriptsSupported:      metadata.ScriptsSupported,
+		ScriptExecutionMode:   metadata.ScriptExecutionMode,
 		MaxCallsPerTurn:       metadata.MaxCallsPerTurn,
 		TimeoutSeconds:        metadata.TimeoutSeconds,
 		Status:                metadata.Status,
