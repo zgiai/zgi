@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -25,6 +26,17 @@ type fakeAgentExecutionGateway struct {
 	command      string
 	args         []string
 	scope        agentExecutionScope
+	uploads      map[string][]byte
+}
+
+type fakeRuntimeAttachmentReader struct {
+	files map[string][]byte
+	calls int
+}
+
+func (r *fakeRuntimeAttachmentReader) DownloadFile(_ context.Context, fileID string) ([]byte, error) {
+	r.calls++
+	return append([]byte(nil), r.files[fileID]...), nil
 }
 
 func (f *fakeAgentExecutionGateway) CreateBinding(_ context.Context, scope agentExecutionScope, _, _, _, _ string) (agentExecutionBinding, error) {
@@ -59,6 +71,14 @@ func (f *fakeAgentExecutionGateway) JobOutput(_ context.Context, _ agentExecutio
 	return f.output, nil
 }
 
+func (f *fakeAgentExecutionGateway) UploadFile(_ context.Context, _ agentExecutionScope, _, filePath string, data []byte) error {
+	if f.uploads == nil {
+		f.uploads = make(map[string][]byte)
+	}
+	f.uploads[filePath] = append([]byte(nil), data...)
+	return nil
+}
+
 func TestAgentExecutionShellToolKeepsCommandAndOutputOutOfTrace(t *testing.T) {
 	exitCode := 2
 	fake := &fakeAgentExecutionGateway{
@@ -66,7 +86,7 @@ func TestAgentExecutionShellToolKeepsCommandAndOutputOutOfTrace(t *testing.T) {
 		job:     agentExecutionJob{ID: "job-1", Status: "failed", ExitCode: &exitCode},
 		output:  []agentExecutionOutputChunk{{Sequence: 0, Stream: "stdout", Data: []byte("private output")}, {Sequence: 1, Stream: "stderr", Data: []byte("private diagnostics")}},
 	}
-	tool := newAgentExecutionShellTool(fake, agentExecutionScope{OrganizationID: "org-1", SubjectID: "account-1"}, "agent-1", "conversation-1", "message-1", "standard", "local-gvisor")
+	tool := newAgentExecutionShellTool(fake, agentExecutionScope{OrganizationID: "org-1", SubjectID: "account-1"}, "agent-1", "conversation-1", "message-1", "standard", "local-gvisor", nil, nil)
 	result := tool.Handler(t.Context(), adapter.ToolCall{ID: "call-1", Function: adapter.FunctionCall{Arguments: `{"command":"echo private command","timeout_seconds":2}`}})
 	if result.Error != nil || result.Status != "success" {
 		t.Fatalf("tool result = %#v", result)
@@ -91,9 +111,50 @@ func TestAgentExecutionShellToolRejectsNetworkedProfile(t *testing.T) {
 		binding:      agentExecutionBinding{ID: "binding-1", Status: "active"},
 		capabilities: agentExecutionCapabilities{Shell: true, NetworkMode: "enabled"},
 	}
-	result := executeAgentShellTool(t.Context(), fake, agentExecutionScope{OrganizationID: "org-1", SubjectID: "account-1"}, "agent-1", "conversation-1", "message-1", "standard", "local-gvisor", adapter.ToolCall{ID: "call-1", Function: adapter.FunctionCall{Arguments: `{"command":"echo test"}`}})
+	result := executeAgentShellTool(t.Context(), fake, agentExecutionScope{OrganizationID: "org-1", SubjectID: "account-1"}, "agent-1", "conversation-1", "message-1", "standard", "local-gvisor", adapter.ToolCall{ID: "call-1", Function: adapter.FunctionCall{Arguments: `{"command":"echo test"}`}}, nil)
 	if result.Status != "failed" || result.Result["error_code"] != "capability_denied" || fake.command != "" {
 		t.Fatalf("networked runtime was allowed: %#v", result)
+	}
+}
+
+func TestAgentExecutionShellStagesAuthorizedAttachmentsOnce(t *testing.T) {
+	fileID := uuid.NewString()
+	reader := &fakeRuntimeAttachmentReader{files: map[string][]byte{fileID: []byte("a,b\n1,2\n")}}
+	exitCode := 0
+	fake := &fakeAgentExecutionGateway{
+		binding:      agentExecutionBinding{ID: "binding-1", Status: "active"},
+		job:          agentExecutionJob{ID: "job-1", Status: "succeeded", ExitCode: &exitCode},
+		capabilities: agentExecutionCapabilities{Shell: true, FileTransfer: true, NetworkMode: "disabled", MaxUploadBytes: 1024},
+	}
+	tool := newAgentExecutionShellTool(fake, agentExecutionScope{OrganizationID: "org-1", SubjectID: "account-1"}, "agent-1", "conversation-1", "message-1", "standard", "local-gvisor", []runtimeservice.RuntimeAttachmentRef{{ID: fileID, Name: "sales.csv", Size: 8}}, reader)
+	for i := 0; i < 2; i++ {
+		result := tool.Handler(t.Context(), adapter.ToolCall{ID: uuid.NewString(), Function: adapter.FunctionCall{Arguments: `{"command":"ls inputs"}`}})
+		if result.Error != nil {
+			t.Fatalf("shell call %d: %v", i, result.Error)
+		}
+		paths, ok := result.ModelResult["input_files"].([]string)
+		if !ok || len(paths) != 1 || paths[0] != "inputs/"+fileID+".csv" {
+			t.Fatalf("staged paths = %#v", result.ModelResult["input_files"])
+		}
+	}
+	if reader.calls != 1 || string(fake.uploads["inputs/"+fileID+".csv"]) != "a,b\n1,2\n" {
+		t.Fatalf("attachment staging calls=%d uploads=%#v", reader.calls, fake.uploads)
+	}
+}
+
+func TestAgentExecutionAttachmentStagingChecksCapabilityAndSize(t *testing.T) {
+	fileID := uuid.NewString()
+	fake := &fakeAgentExecutionGateway{}
+	reader := &fakeRuntimeAttachmentReader{files: map[string][]byte{fileID: []byte("abcd")}}
+	refs := []runtimeservice.RuntimeAttachmentRef{{ID: fileID, Name: "data.csv", Size: 4}}
+	if _, err := stageAgentExecutionAttachments(t.Context(), fake, agentExecutionScope{}, "binding-1", agentExecutionCapabilities{FileTransfer: false, MaxUploadBytes: 1024}, refs, reader); err == nil {
+		t.Fatal("file transfer without capability was allowed")
+	}
+	if _, err := stageAgentExecutionAttachments(t.Context(), fake, agentExecutionScope{}, "binding-1", agentExecutionCapabilities{FileTransfer: true, MaxUploadBytes: 3}, refs, reader); err == nil {
+		t.Fatal("oversized file transfer was allowed")
+	}
+	if reader.calls != 0 || len(fake.uploads) != 0 {
+		t.Fatal("rejected file was downloaded or uploaded")
 	}
 }
 
@@ -177,5 +238,27 @@ func TestAgentExecutionHTTPGatewayDecodesWorkerOutput(t *testing.T) {
 	chunks, err := gateway.JobOutput(t.Context(), agentExecutionScope{OrganizationID: "org-1", SubjectID: "account-1"}, "job-1", -1, 32)
 	if err != nil || len(chunks) != 2 || string(chunks[0].Data) != "hello" || string(chunks[1].Data) != "warning" {
 		t.Fatalf("JobOutput = %#v, %v", chunks, err)
+	}
+}
+
+func TestAgentExecutionHTTPGatewayUploadsRawFileToWorkspace(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/v1/agent-runtime/bindings/binding-1/files" || r.URL.Query().Get("path") != "inputs/data.csv" {
+			t.Errorf("upload request = %s %s", r.Method, r.URL.String())
+		}
+		if r.Header.Get("Authorization") != "Bearer dedicated-worker-key" || r.Header.Get("X-ZGI-Organization-ID") != "org-1" || r.Header.Get("X-ZGI-Subject-ID") != "account-1" {
+			t.Error("upload authentication or scope missing")
+		}
+		var body []byte
+		body, _ = io.ReadAll(r.Body)
+		if string(body) != "raw,csv\n" || r.ContentLength != int64(len(body)) {
+			t.Errorf("upload payload = %q, content-length=%d", body, r.ContentLength)
+		}
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer server.Close()
+	gateway := &agentExecutionHTTPGateway{baseURL: server.URL, apiKey: "dedicated-worker-key", client: server.Client()}
+	if err := gateway.UploadFile(t.Context(), agentExecutionScope{OrganizationID: "org-1", SubjectID: "account-1"}, "binding-1", "inputs/data.csv", []byte("raw,csv\n")); err != nil {
+		t.Fatalf("UploadFile: %v", err)
 	}
 }

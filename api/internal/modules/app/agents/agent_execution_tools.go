@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -37,6 +39,7 @@ func (h *AgentsHandler) attachConsoleAgentExecutionTools(runConfig *runtimeservi
 	profileID := strings.TrimSpace(cfg.ExecutionRuntime.ProfileID)
 	backend := h.executionApprovals.Profiles[profileID].Backend
 	gateway := h.executionGateway
+	fileReader := h.fileService
 	runConfig.RuntimeToolFactory = func(prepared *runtimeservice.PreparedChat) []skillloop.RuntimeTool {
 		if prepared == nil || prepared.Conversation == nil || prepared.Message == nil ||
 			prepared.Caller.Source != runtimemodel.ConversationSourceConsole ||
@@ -48,17 +51,30 @@ func (h *AgentsHandler) attachConsoleAgentExecutionTools(runConfig *runtimeservi
 		}
 		return []skillloop.RuntimeTool{newAgentExecutionShellTool(gateway, agentExecutionScope{
 			OrganizationID: scope.OrganizationID.String(), SubjectID: scope.AccountID.String(),
-		}, agentID.String(), prepared.Conversation.ID.String(), prepared.Message.ID.String(), profileID, backend)}
+		}, agentID.String(), prepared.Conversation.ID.String(), prepared.Message.ID.String(), profileID, backend, prepared.RuntimeAttachmentRefs(), fileReader)}
 	}
 	return nil
 }
 
-func newAgentExecutionShellTool(gateway agentExecutionGateway, scope agentExecutionScope, agentID, conversationID, messageID, profileID, backend string) skillloop.RuntimeTool {
+type agentRuntimeAttachmentReader interface {
+	DownloadFile(context.Context, string) ([]byte, error)
+}
+
+func newAgentExecutionShellTool(gateway agentExecutionGateway, scope agentExecutionScope, agentID, conversationID, messageID, profileID, backend string, attachments []runtimeservice.RuntimeAttachmentRef, fileReader agentRuntimeAttachmentReader) skillloop.RuntimeTool {
+	var stageOnce sync.Once
+	var inputPaths []string
+	var stageErr error
+	stage := func(ctx context.Context, bindingID string, capabilities agentExecutionCapabilities) ([]string, error) {
+		stageOnce.Do(func() {
+			inputPaths, stageErr = stageAgentExecutionAttachments(ctx, gateway, scope, bindingID, capabilities, attachments, fileReader)
+		})
+		return inputPaths, stageErr
+	}
 	return skillloop.RuntimeTool{
 		SkillID: "agent_execution",
 		Definition: adapter.Tool{Type: "function", Function: adapter.Function{
 			Name:        "shell_exec",
-			Description: "Run a command in the approved, isolated Linux workspace for this console conversation. The workspace may be released after inactivity. Network access is disabled unless its approved profile explicitly allows it.",
+			Description: "Run a command in the approved, isolated offline Linux workspace for this console conversation. Current-turn uploaded files are staged under inputs/ before the command; use ls inputs to inspect them. The workspace may be released after inactivity.",
 			Parameters: map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
@@ -69,12 +85,12 @@ func newAgentExecutionShellTool(gateway agentExecutionGateway, scope agentExecut
 			},
 		}},
 		Handler: func(ctx context.Context, call adapter.ToolCall) skillloop.RuntimeToolResult {
-			return executeAgentShellTool(ctx, gateway, scope, agentID, conversationID, messageID, profileID, backend, call)
+			return executeAgentShellTool(ctx, gateway, scope, agentID, conversationID, messageID, profileID, backend, call, stage)
 		},
 	}
 }
 
-func executeAgentShellTool(ctx context.Context, gateway agentExecutionGateway, scope agentExecutionScope, agentID, conversationID, messageID, profileID, backend string, call adapter.ToolCall) skillloop.RuntimeToolResult {
+func executeAgentShellTool(ctx context.Context, gateway agentExecutionGateway, scope agentExecutionScope, agentID, conversationID, messageID, profileID, backend string, call adapter.ToolCall, stage func(context.Context, string, agentExecutionCapabilities) ([]string, error)) skillloop.RuntimeToolResult {
 	failed := func(code string, err error) skillloop.RuntimeToolResult {
 		return skillloop.RuntimeToolResult{
 			Status: "failed", Result: map[string]interface{}{"error_code": code},
@@ -119,6 +135,13 @@ func executeAgentShellTool(ctx context.Context, gateway agentExecutionGateway, s
 	if !capabilities.Shell || capabilities.NetworkMode != "disabled" {
 		return failed("capability_denied", fmt.Errorf("agent execution profile does not provide an offline shell"))
 	}
+	var inputPaths []string
+	if stage != nil {
+		inputPaths, err = stage(operationCtx, binding.ID, capabilities)
+		if err != nil {
+			return failed("file_staging_failed", err)
+		}
+	}
 	callID := strings.TrimSpace(call.ID)
 	if callID == "" {
 		callID = uuid.NewString()
@@ -145,11 +168,49 @@ func executeAgentShellTool(ctx context.Context, gateway agentExecutionGateway, s
 	if err != nil {
 		return failed("job_output_failed", err)
 	}
-	result := map[string]interface{}{"job_id": job.ID, "status": job.Status, "exit_code": job.ExitCode, "truncated": truncated}
+	result := map[string]interface{}{"job_id": job.ID, "status": job.Status, "exit_code": job.ExitCode, "truncated": truncated, "input_count": len(inputPaths)}
 	return skillloop.RuntimeToolResult{
 		Status: "success", Arguments: map[string]interface{}{"command_bytes": len(args.Command)}, Result: result,
-		ModelResult: map[string]interface{}{"job_id": job.ID, "status": job.Status, "exit_code": job.ExitCode, "stdout": stdout, "stderr": stderr, "truncated": truncated},
+		ModelResult: map[string]interface{}{"job_id": job.ID, "status": job.Status, "exit_code": job.ExitCode, "stdout": stdout, "stderr": stderr, "truncated": truncated, "input_files": inputPaths},
 	}
+}
+
+func stageAgentExecutionAttachments(ctx context.Context, gateway agentExecutionGateway, scope agentExecutionScope, bindingID string, capabilities agentExecutionCapabilities, attachments []runtimeservice.RuntimeAttachmentRef, reader agentRuntimeAttachmentReader) ([]string, error) {
+	if len(attachments) == 0 {
+		return nil, nil
+	}
+	if !capabilities.FileTransfer || capabilities.MaxUploadBytes <= 0 || reader == nil {
+		return nil, fmt.Errorf("agent execution file transfer is unavailable")
+	}
+	paths := make([]string, 0, len(attachments))
+	var total int64
+	for _, attachment := range attachments {
+		fileID, err := uuid.Parse(attachment.ID)
+		if err != nil || attachment.Size < 0 || attachment.Size > capabilities.MaxUploadBytes || attachment.Size > 64<<20 {
+			return nil, fmt.Errorf("agent execution attachment is invalid or exceeds the transfer limit")
+		}
+		total += attachment.Size
+		if total > 64<<20 {
+			return nil, fmt.Errorf("agent execution attachments exceed the per-turn transfer limit")
+		}
+		data, err := reader.DownloadFile(ctx, attachment.ID)
+		if err != nil {
+			return nil, fmt.Errorf("download authorized attachment: %w", err)
+		}
+		if int64(len(data)) != attachment.Size || int64(len(data)) > capabilities.MaxUploadBytes {
+			return nil, fmt.Errorf("authorized attachment size changed")
+		}
+		ext := strings.ToLower(path.Ext(attachment.Name))
+		if len(ext) > 12 || strings.Trim(ext, ".abcdefghijklmnopqrstuvwxyz0123456789") != "" {
+			ext = ""
+		}
+		filePath := "inputs/" + fileID.String() + ext
+		if err := gateway.UploadFile(ctx, scope, bindingID, filePath, data); err != nil {
+			return nil, fmt.Errorf("stage authorized attachment: %w", err)
+		}
+		paths = append(paths, filePath)
+	}
+	return paths, nil
 }
 
 func readAgentExecutionOutput(ctx context.Context, gateway agentExecutionGateway, scope agentExecutionScope, jobID string) (string, string, bool, error) {

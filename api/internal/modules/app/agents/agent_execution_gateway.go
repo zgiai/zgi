@@ -41,8 +41,10 @@ type agentExecutionOutputChunk struct {
 }
 
 type agentExecutionCapabilities struct {
-	Shell       bool   `json:"shell"`
-	NetworkMode string `json:"network_mode"`
+	Shell          bool   `json:"shell"`
+	FileTransfer   bool   `json:"file_transfer"`
+	NetworkMode    string `json:"network_mode"`
+	MaxUploadBytes int64  `json:"max_upload_bytes"`
 }
 
 type agentExecutionGateway interface {
@@ -52,6 +54,7 @@ type agentExecutionGateway interface {
 	GetJob(context.Context, agentExecutionScope, string) (agentExecutionJob, error)
 	CancelJob(context.Context, agentExecutionScope, string, int64) error
 	JobOutput(context.Context, agentExecutionScope, string, int64, int) ([]agentExecutionOutputChunk, error)
+	UploadFile(context.Context, agentExecutionScope, string, string, []byte) error
 }
 
 type agentExecutionHTTPGateway struct {
@@ -167,4 +170,28 @@ func (g *agentExecutionHTTPGateway) JobOutput(ctx context.Context, scope agentEx
 	path := "jobs/" + url.PathEscape(jobID) + "/output?after=" + strconv.FormatInt(after, 10) + "&limit=" + strconv.Itoa(limit)
 	err := g.request(ctx, scope, http.MethodGet, path, nil, &result)
 	return result, err
+}
+
+func (g *agentExecutionHTTPGateway) UploadFile(ctx context.Context, scope agentExecutionScope, bindingID, filePath string, data []byte) error {
+	if g == nil || g.client == nil || scope.OrganizationID == "" || scope.SubjectID == "" {
+		return fmt.Errorf("agent execution gateway is unavailable")
+	}
+	endpoint := g.baseURL + "/v1/agent-runtime/bindings/" + url.PathEscape(bindingID) + "/files?path=" + url.QueryEscape(filePath)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("create agent execution upload request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+g.apiKey)
+	req.Header.Set("X-ZGI-Organization-ID", scope.OrganizationID)
+	req.Header.Set("X-ZGI-Subject-ID", scope.SubjectID)
+	req.Header.Set("Content-Type", "application/octet-stream")
+	resp, err := g.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("agent execution upload request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("agent execution upload returned HTTP %d", resp.StatusCode)
+	}
+	return nil
 }
