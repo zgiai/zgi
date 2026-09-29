@@ -16,6 +16,11 @@ import (
 
 const maxProviderResponseBytes = 1024 * 1024
 
+const (
+	runtimeAgentBootstrapTokenPath = "/run/zgi-agent/bootstrap-token"
+	runtimeAgentUser               = "zgi-runtime"
+)
+
 type controlClient struct {
 	apiURL     string
 	domain     string
@@ -102,6 +107,32 @@ func (c *controlClient) environment(ctx context.Context, connection sandboxConne
 		return nil, fmt.Errorf("%w: decode E2B envd response", agentexecution.ErrBackendUnavailable)
 	}
 	return result, nil
+}
+
+func (c *controlClient) uploadBootstrapToken(ctx context.Context, connection sandboxConnection, envdPort uint16, token string) error {
+	requestURL := strings.TrimRight(c.sandboxURL(envdPort, connection.SandboxID, connection.Domain), "/") + "/files"
+	query := url.Values{
+		"path":     []string{runtimeAgentBootstrapTokenPath},
+		"username": []string{runtimeAgentUser},
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL+"?"+query.Encode(), strings.NewReader(token))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/octet-stream")
+	request.Header.Set("X-Access-Token", connection.EnvdAccessToken)
+	request.Header.Set("E2b-Sandbox-Id", connection.SandboxID)
+	request.Header.Set("E2b-Sandbox-Port", fmt.Sprint(envdPort))
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("%w: E2B bootstrap upload failed", agentexecution.ErrBackendUnavailable)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return providerStatusError(response.StatusCode)
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, maxProviderResponseBytes))
+	return nil
 }
 
 func (c *controlClient) doControlJSON(ctx context.Context, method string, requestPath string, body any, target any, allowed ...int) error {

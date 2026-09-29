@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,6 +20,7 @@ func TestBackendUsesSecuredOfflineE2BContract(t *testing.T) {
 	var mu sync.Mutex
 	var created createSandboxRequest
 	var agentToken string
+	var uploadedToken string
 	connectCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if strings.HasPrefix(request.URL.Path, "/v2/") || strings.HasPrefix(request.URL.Path, "/sandboxes/") {
@@ -40,6 +42,20 @@ func TestBackendUsesSecuredOfflineE2BContract(t *testing.T) {
 				SandboxID: "sandbox-1", Domain: "e2b.test",
 				EnvdAccessToken: "envd-create", TrafficAccessToken: "traffic-create",
 			})
+		case request.Method == http.MethodPost && request.URL.Path == "/files":
+			if request.Header.Get("X-Access-Token") != "envd-create" || request.Header.Get("E2b-Sandbox-Port") != "49983" || request.URL.Query().Get("path") != runtimeAgentBootstrapTokenPath || request.URL.Query().Get("username") != runtimeAgentUser {
+				http.Error(writer, "bad bootstrap upload", http.StatusUnauthorized)
+				return
+			}
+			value, err := io.ReadAll(request.Body)
+			if err != nil {
+				http.Error(writer, err.Error(), http.StatusBadRequest)
+				return
+			}
+			mu.Lock()
+			uploadedToken = string(value)
+			mu.Unlock()
+			writeJSON(writer, http.StatusOK, []map[string]string{{"path": runtimeAgentBootstrapTokenPath}})
 		case request.Method == http.MethodPost && request.URL.Path == "/v2/sandboxes/sandbox-1/connect":
 			mu.Lock()
 			connectCalls++
@@ -103,6 +119,9 @@ func TestBackendUsesSecuredOfflineE2BContract(t *testing.T) {
 	}
 	if agentToken == "" || agentToken == "provider-secret" {
 		t.Fatalf("agent token was not independently generated")
+	}
+	if uploadedToken != agentToken {
+		t.Fatalf("bootstrap token was not uploaded through envd")
 	}
 	if capabilities, err := backend.Capabilities(context.Background(), allocation); err != nil || capabilities.NetworkMode != "disabled" {
 		t.Fatalf("capabilities=%+v error=%v", capabilities, err)

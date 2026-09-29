@@ -145,9 +145,13 @@ func (b *Backend) CreateBinding(ctx context.Context, spec agentexecution.CreateS
 		return agentexecution.Allocation{}, fmt.Errorf("create E2B environment: %w", err)
 	}
 	allocation := allocationFor(connection.SandboxID)
-	remote, err := b.remote(connection, token)
+	err = b.client.uploadBootstrapToken(ctx, connection, b.envdPort, token)
 	if err == nil {
-		err = b.waitReady(ctx, remote, allocation)
+		var remote *runtimeagent.RemoteBackend
+		remote, err = b.remote(connection, token)
+		if err == nil {
+			err = b.waitReady(ctx, remote, allocation)
+		}
 	}
 	if err != nil {
 		cleanupContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
