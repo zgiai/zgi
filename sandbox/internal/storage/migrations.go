@@ -1,0 +1,165 @@
+package storage
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+)
+
+const migrationLockID int64 = 9120260929
+
+type schemaMigration struct {
+	version     int64
+	description string
+	statements  []string
+}
+
+var schemaMigrations = []schemaMigration{
+	{
+		version:     2026092901,
+		description: "agent runtime control plane",
+		statements: []string{
+			`CREATE TABLE agent_runtime_profiles (
+				id TEXT PRIMARY KEY,
+				organization_id TEXT NOT NULL DEFAULT '',
+				name TEXT NOT NULL,
+				backend TEXT NOT NULL,
+				status TEXT NOT NULL,
+				capabilities_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+				created_at TIMESTAMPTZ NOT NULL,
+				updated_at TIMESTAMPTZ NOT NULL,
+				UNIQUE (organization_id, name)
+			);`,
+			`CREATE TABLE agent_runtime_home_snapshots (
+				id TEXT PRIMARY KEY,
+				organization_id TEXT NOT NULL,
+				subject_id TEXT NOT NULL,
+				profile_id TEXT NOT NULL,
+				backend TEXT NOT NULL,
+				backend_ref TEXT NOT NULL DEFAULT '',
+				status TEXT NOT NULL,
+				generation BIGINT NOT NULL DEFAULT 1,
+				created_at TIMESTAMPTZ NOT NULL,
+				updated_at TIMESTAMPTZ NOT NULL
+			);`,
+			`CREATE TABLE agent_runtime_workspaces (
+				id TEXT PRIMARY KEY,
+				organization_id TEXT NOT NULL,
+				subject_id TEXT NOT NULL,
+				backend TEXT NOT NULL,
+				backend_ref TEXT NOT NULL DEFAULT '',
+				status TEXT NOT NULL,
+				generation BIGINT NOT NULL DEFAULT 1,
+				created_at TIMESTAMPTZ NOT NULL,
+				updated_at TIMESTAMPTZ NOT NULL
+			);`,
+			`CREATE TABLE agent_runtime_bindings (
+				id TEXT PRIMARY KEY,
+				organization_id TEXT NOT NULL,
+				subject_id TEXT NOT NULL,
+				agent_id TEXT NOT NULL,
+				conversation_id TEXT NOT NULL,
+				profile_id TEXT NOT NULL,
+				home_snapshot_id TEXT NOT NULL DEFAULT '',
+				workspace_id TEXT NOT NULL,
+				backend TEXT NOT NULL,
+				backend_ref TEXT NOT NULL DEFAULT '',
+				workspace_ref TEXT NOT NULL DEFAULT '',
+				idempotency_key TEXT NOT NULL,
+				request_hash TEXT NOT NULL,
+				status TEXT NOT NULL,
+				generation BIGINT NOT NULL DEFAULT 1,
+				failure_reason TEXT NOT NULL DEFAULT '',
+				created_at TIMESTAMPTZ NOT NULL,
+				updated_at TIMESTAMPTZ NOT NULL,
+				last_activity_at TIMESTAMPTZ NOT NULL,
+				expires_at TIMESTAMPTZ NOT NULL,
+				UNIQUE (organization_id, subject_id, idempotency_key)
+			);`,
+			`CREATE INDEX idx_agent_runtime_bindings_owner_status ON agent_runtime_bindings (organization_id, subject_id, status);`,
+			`CREATE INDEX idx_agent_runtime_bindings_expiry ON agent_runtime_bindings (status, expires_at);`,
+			`CREATE TABLE agent_runtime_jobs (
+				id TEXT PRIMARY KEY,
+				binding_id TEXT NOT NULL,
+				organization_id TEXT NOT NULL,
+				subject_id TEXT NOT NULL,
+				status TEXT NOT NULL,
+				generation BIGINT NOT NULL DEFAULT 1,
+				command_json JSONB NOT NULL,
+				exit_code INTEGER,
+				failure_reason TEXT NOT NULL DEFAULT '',
+				created_at TIMESTAMPTZ NOT NULL,
+				updated_at TIMESTAMPTZ NOT NULL,
+				started_at TIMESTAMPTZ,
+				finished_at TIMESTAMPTZ
+			);`,
+			`CREATE INDEX idx_agent_runtime_jobs_binding_created ON agent_runtime_jobs (binding_id, created_at DESC);`,
+			`CREATE TABLE agent_runtime_admission_leases (
+				id TEXT PRIMARY KEY,
+				binding_id TEXT NOT NULL UNIQUE,
+				owner_id TEXT NOT NULL,
+				generation BIGINT NOT NULL DEFAULT 1,
+				expires_at TIMESTAMPTZ NOT NULL,
+				created_at TIMESTAMPTZ NOT NULL,
+				updated_at TIMESTAMPTZ NOT NULL
+			);`,
+			`CREATE INDEX idx_agent_runtime_leases_expiry ON agent_runtime_admission_leases (expires_at);`,
+			`CREATE TABLE agent_runtime_cleanup_tasks (
+				id TEXT PRIMARY KEY,
+				resource_type TEXT NOT NULL,
+				resource_id TEXT NOT NULL,
+				backend TEXT NOT NULL,
+				backend_ref TEXT NOT NULL DEFAULT '',
+				action TEXT NOT NULL,
+				status TEXT NOT NULL,
+				attempts INTEGER NOT NULL DEFAULT 0,
+				last_error TEXT NOT NULL DEFAULT '',
+				not_before TIMESTAMPTZ NOT NULL,
+				created_at TIMESTAMPTZ NOT NULL,
+				updated_at TIMESTAMPTZ NOT NULL,
+				UNIQUE (resource_type, resource_id, action)
+			);`,
+			`CREATE INDEX idx_agent_runtime_cleanup_pending ON agent_runtime_cleanup_tasks (status, not_before);`,
+		},
+	},
+}
+
+func (s *Store) applyMigrations(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin schema migrations: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS sandbox_schema_migrations (
+		version BIGINT PRIMARY KEY,
+		description TEXT NOT NULL,
+		applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	);`); err != nil {
+		return fmt.Errorf("prepare schema migration ledger: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, migrationLockID); err != nil {
+		return fmt.Errorf("lock schema migrations: %w", err)
+	}
+	for _, migration := range schemaMigrations {
+		var applied bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM sandbox_schema_migrations WHERE version = $1)`, migration.version).Scan(&applied); err != nil {
+			return fmt.Errorf("check schema migration %d: %w", migration.version, err)
+		}
+		if applied {
+			continue
+		}
+		for _, statement := range migration.statements {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("apply schema migration %d: %w", migration.version, err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO sandbox_schema_migrations (version, description) VALUES ($1, $2)`, migration.version, migration.description); err != nil {
+			return fmt.Errorf("record schema migration %d: %w", migration.version, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit schema migrations: %w", err)
+	}
+	return nil
+}

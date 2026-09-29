@@ -213,7 +213,7 @@ func (s *Store) prepare(ctx context.Context) error {
 			return fmt.Errorf("prepare postgres schema: %w", err)
 		}
 	}
-	return nil
+	return s.applyMigrations(ctx)
 }
 
 func (s *Store) SaveSandbox(box sandbox.Sandbox) error {
