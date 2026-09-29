@@ -279,12 +279,16 @@ func TestHandlerRejectsOversizedCreateBody(t *testing.T) {
 		t.Fatalf("status = %d, want %d", got, want)
 	}
 	var response struct {
+		Code    string `json:"code"`
 		Message string `json:"message"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := response.Message, "Invalid music generation request"; got != want {
+	if got, want := response.Code, "music.request.invalid"; got != want {
+		t.Fatalf("code = %q, want %q", got, want)
+	}
+	if got, want := response.Message, "The music request is invalid. Check your input and try again."; got != want {
 		t.Fatalf("message = %q, want %q", got, want)
 	}
 }

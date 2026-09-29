@@ -697,6 +697,18 @@
       "legacy": "image.gateway:IMAGE_RUNTIME_FAILED（原 502）"
     },
     {
+      "code": "music.request.invalid",
+      "status": "new",
+      "category": "validation",
+      "http": 400,
+      "retryable": false,
+      "domain": "zgi.music",
+      "grpc": "INVALID_ARGUMENT",
+      "en": "The music request is invalid. Check your input and try again.",
+      "zh": "音乐请求内容不正确，请检查后重试。",
+      "legacy": "music.gateway:INVALID_REQUEST"
+    },
+    {
       "code": "music.task.not_found",
       "status": "new",
       "category": "not_found",

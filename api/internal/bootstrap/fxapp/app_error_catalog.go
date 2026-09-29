@@ -26,7 +26,16 @@ func provideApplicationErrorCatalog() (*appcatalog.Catalog, error) {
 	definitions = append(definitions, musicmodule.CatalogDefinitions()...)
 	definitions = append(definitions, videoservice.CatalogDefinitions()...)
 	definitions = append(definitions, authservice.CatalogDefinitions()...)
-	return appcatalog.New(appcatalog.LocaleEnglishUS, appcatalog.CodeInternal, definitions...)
+	catalog, err := appcatalog.New(appcatalog.LocaleEnglishUS, appcatalog.CodeInternal, definitions...)
+	if err != nil {
+		return nil, err
+	}
+	// The chat-runtime stream payload builder is a pure function reached from
+	// several packages, so it cannot take the catalog as a dependency. Publish
+	// the composed catalog once here so SSE error payloads carry the
+	// catalog-owned retryable flag instead of a second, drifting copy.
+	chatruntimeservice.SetApplicationErrorCatalog(catalog)
+	return catalog, nil
 }
 
 // requireApplicationErrorCatalog makes catalog completeness a startup gate

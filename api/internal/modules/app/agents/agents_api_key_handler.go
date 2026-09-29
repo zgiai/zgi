@@ -188,7 +188,7 @@ func (h *AgentsHandler) ChatAPIKeyAgent(c *gin.Context) {
 		if errors.Is(err, runtimeservice.ErrMessageStopped) {
 			status = runtimemodel.MessageStatusStopped
 		}
-		_ = writeAgentSSE(c, "error", runtimeservice.BuildStreamErrorPayload(prepared, err))
+		_ = writeAgentSSE(c, "error", runtimeservice.BuildStreamErrorPayload(prepared, err, c.Writer.Header().Get("X-Request-ID")))
 		_ = writeAgentSSE(c, "message_end", gin.H{
 			"conversation_id": prepared.Conversation.ID.String(),
 			"message_id":      prepared.Message.ID.String(),

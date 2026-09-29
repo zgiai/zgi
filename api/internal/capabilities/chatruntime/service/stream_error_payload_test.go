@@ -11,6 +11,7 @@ import (
 	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
@@ -21,7 +22,7 @@ func TestBuildStreamErrorPayloadDoesNotGuessPrivateBalanceFromProviderError(t *t
 		adapter.NewAdapterError("insufficient_quota", "account credits exhausted", 402, adapter.ErrInsufficientBalance),
 	)
 
-	payload := BuildStreamErrorPayload(prepared, err)
+	payload := BuildStreamErrorPayload(prepared, err, "")
 
 	if got := payload["code"]; got != response.ErrSystemError.Code {
 		t.Fatalf("stream error code = %#v, want generic code %d", got, response.ErrSystemError.Code)
@@ -38,7 +39,7 @@ func TestBuildStreamErrorPayloadMapsTypedUpstreamErrorWithoutGuessingPrivateBala
 		adapter.NewAdapterError("", "Insufficient Balance", 402, adapter.ErrUpstreamError),
 	)
 
-	payload := BuildStreamErrorPayload(prepared, err)
+	payload := BuildStreamErrorPayload(prepared, err, "")
 
 	if got := payload["code"]; got != aichatErrorCodeModelServiceUnavailable {
 		t.Fatalf("stream error code = %#v, want %q", got, aichatErrorCodeModelServiceUnavailable)
@@ -64,7 +65,7 @@ func TestBuildStreamErrorPayloadMapsTypedPrivateChannelBalance(t *testing.T) {
 		Cause: adapter.ErrInsufficientBalance,
 	})
 
-	payload := BuildStreamErrorPayload(prepared, err)
+	payload := BuildStreamErrorPayload(prepared, err, "")
 
 	if got := payload["code"]; got != response.ErrWorkflowPrivateChannelBalanceInsufficient.Code {
 		t.Fatalf("stream error code = %#v, want %d", got, response.ErrWorkflowPrivateChannelBalanceInsufficient.Code)
@@ -81,7 +82,7 @@ func TestBuildStreamErrorPayloadMapsPlatformChannelUnavailable(t *testing.T) {
 		adapter.NewAdapterError("platform_channel_unavailable", "Platform model service is temporarily unavailable", 502, adapter.ErrPlatformChannelUnavailable),
 	)
 
-	payload := BuildStreamErrorPayload(prepared, err)
+	payload := BuildStreamErrorPayload(prepared, err, "")
 
 	if got := payload["code"]; got != response.ErrWorkflowPlatformChannelUnavailable.Code {
 		t.Fatalf("stream error code = %#v, want %d", got, response.ErrWorkflowPlatformChannelUnavailable.Code)
@@ -95,7 +96,7 @@ func TestBuildStreamErrorPayloadMapsPrivateChannelUpstreamUnavailable(t *testing
 	prepared := streamErrorTestPrepared()
 	err := fmt.Errorf("failed to select provider: %w", llmerrors.DomainErrPrivateChannelUpstreamUnavailable)
 
-	payload := BuildStreamErrorPayload(prepared, err)
+	payload := BuildStreamErrorPayload(prepared, err, "")
 
 	if got := payload["code"]; got != response.ErrWorkflowPrivateChannelUpstreamUnavailable.Code {
 		t.Fatalf("stream error code = %#v, want %d", got, response.ErrWorkflowPrivateChannelUpstreamUnavailable.Code)
@@ -109,7 +110,7 @@ func TestBuildStreamErrorPayloadSanitizesOrdinaryError(t *testing.T) {
 	prepared := streamErrorTestPrepared()
 	err := errors.New("redis password leaked by internal error")
 
-	payload := BuildStreamErrorPayload(prepared, err)
+	payload := BuildStreamErrorPayload(prepared, err, "")
 
 	if got := payload["message"]; got != response.ErrSystemError.Message {
 		t.Fatalf("stream error message = %#v, want %#v", got, response.ErrSystemError.Message)
@@ -126,7 +127,7 @@ func TestBuildStreamErrorPayloadMapsFinalAnswerUnavailable(t *testing.T) {
 		errors.New("terminal-only model returned no final answer"),
 	)
 
-	payload := BuildStreamErrorPayload(prepared, err)
+	payload := BuildStreamErrorPayload(prepared, err, "")
 
 	if got := payload["code"]; got != aichatErrorCodeFinalAnswerUnavailable {
 		t.Fatalf("stream error code = %#v, want %q", got, aichatErrorCodeFinalAnswerUnavailable)
@@ -142,7 +143,7 @@ func TestBuildStreamErrorPayloadMapsFinalAnswerUnavailable(t *testing.T) {
 func TestBuildStreamErrorPayloadMapsModelIdleTimeout(t *testing.T) {
 	prepared := streamErrorTestPrepared()
 
-	payload := BuildStreamErrorPayload(prepared, ErrModelIdleTimeout)
+	payload := BuildStreamErrorPayload(prepared, ErrModelIdleTimeout, "")
 
 	if got := payload["code"]; got != aichatErrorCodeModelServiceTimeout {
 		t.Fatalf("stream error code = %#v, want %q", got, aichatErrorCodeModelServiceTimeout)
@@ -156,7 +157,7 @@ func TestBuildStreamErrorPayloadMapsPlanningTermination(t *testing.T) {
 	prepared := streamErrorTestPrepared()
 	err := &skillloop.PlanningTerminationError{Reason: "content_filter"}
 
-	payload := BuildStreamErrorPayload(prepared, err)
+	payload := BuildStreamErrorPayload(prepared, err, "")
 
 	if got := payload["code"]; got != aichatErrorCodeModelInvocationFailed {
 		t.Fatalf("stream error code = %#v, want %q", got, aichatErrorCodeModelInvocationFailed)
@@ -173,7 +174,7 @@ func TestBuildStreamErrorPayloadMapsPlanningOutputTruncation(t *testing.T) {
 		&skillloop.PlanningTerminationError{Reason: "length", Recoverable: true},
 	)
 
-	payload := BuildStreamErrorPayload(prepared, err)
+	payload := BuildStreamErrorPayload(prepared, err, "")
 
 	if got := payload["code"]; got != aichatErrorCodePlanningOutputTruncated {
 		t.Fatalf("stream error code = %#v, want %q", got, aichatErrorCodePlanningOutputTruncated)
@@ -187,7 +188,7 @@ func TestBuildStreamErrorPayloadMapsNativeAgentOutputTruncation(t *testing.T) {
 	prepared := streamErrorTestPrepared()
 	err := fmt.Errorf("native round failed: %w", skillloop.ErrAgentOutputTruncated)
 
-	payload := BuildStreamErrorPayload(prepared, err)
+	payload := BuildStreamErrorPayload(prepared, err, "")
 
 	if got := payload["code"]; got != aichatErrorCodeAgentOutputTruncated {
 		t.Fatalf("stream error code = %#v, want %q", got, aichatErrorCodeAgentOutputTruncated)
@@ -204,7 +205,7 @@ func TestBuildStreamErrorPayloadPreservesProviderCauseAfterFinalAnswerRetry(t *t
 		adapter.NewAdapterError("upstream_error", "provider failed", 502, adapter.ErrUpstreamError),
 	)
 
-	payload := BuildStreamErrorPayload(prepared, err)
+	payload := BuildStreamErrorPayload(prepared, err, "")
 
 	if got := payload["code"]; got != aichatErrorCodeModelServiceUnavailable {
 		t.Fatalf("stream error code = %#v, want %q", got, aichatErrorCodeModelServiceUnavailable)
@@ -222,7 +223,7 @@ func TestBuildStreamErrorPayloadPreservesTypedBillingErrorOverFinalAnswerError(t
 	}
 	err := errors.Join(skillloop.ErrFinalAnswerUnavailable, billingErr)
 
-	payload := BuildStreamErrorPayload(prepared, err)
+	payload := BuildStreamErrorPayload(prepared, err, "")
 
 	if got := payload["code"]; got != response.ErrWorkflowPrivateChannelBalanceInsufficient.Code {
 		t.Fatalf("stream error code = %#v, want billing code %d", got, response.ErrWorkflowPrivateChannelBalanceInsufficient.Code)
@@ -253,5 +254,44 @@ func streamErrorTestPrepared() *PreparedChat {
 	return &PreparedChat{
 		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
 		Message:      &runtimemodel.Message{ID: uuid.New()},
+	}
+}
+
+// The frozen catalog owns the retryable flag; the stream payload must copy it
+// instead of guessing from the error text, and must carry the transport request
+// identity when the caller has one.
+func TestBuildStreamErrorPayloadPublishesCatalogRetryableAndRequestID(t *testing.T) {
+	catalog, err := appcatalog.New(
+		appcatalog.LocaleEnglishUS,
+		appcatalog.CodeInternal,
+		append(appcatalog.DefaultDefinitions(), llmerrors.CatalogDefinitions()...)...,
+	)
+	if err != nil {
+		t.Fatalf("compose catalog: %v", err)
+	}
+	SetApplicationErrorCatalog(catalog)
+	t.Cleanup(func() { SetApplicationErrorCatalog(nil) })
+
+	prepared := streamErrorTestPrepared()
+	streamErr := fmt.Errorf("provider stream call failed: %w", adapter.ErrUpstreamError)
+
+	payload := BuildStreamErrorPayload(prepared, streamErr, "req-123")
+
+	if got, ok := payload["retryable"]; !ok || got != true {
+		t.Fatalf("retryable = %#v, want true from the catalog for llm.provider.unavailable", got)
+	}
+	if got := payload["request_id"]; got != "req-123" {
+		t.Fatalf("request_id = %#v, want req-123", got)
+	}
+
+	// Without a published catalog the field is omitted rather than guessed, and
+	// without a transport request id the field is omitted as well.
+	SetApplicationErrorCatalog(nil)
+	payload = BuildStreamErrorPayload(prepared, streamErr, "")
+	if _, ok := payload["retryable"]; ok {
+		t.Fatalf("retryable = %#v, want omitted when the catalog is unavailable", payload["retryable"])
+	}
+	if _, ok := payload["request_id"]; ok {
+		t.Fatalf("request_id = %#v, want omitted without a transport request id", payload["request_id"])
 	}
 }

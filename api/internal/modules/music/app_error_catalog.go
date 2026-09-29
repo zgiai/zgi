@@ -8,6 +8,7 @@ import (
 var (
 	// AppCodeTaskNotDeletable identifies a delete request blocked by the task's active state.
 	AppCodeTaskNotDeletable = apperror.MustCode("music.task.not_deletable")
+	AppCodeRequestInvalid   = apperror.MustCode("music.request.invalid")
 	AppCodeTaskNotFound     = apperror.MustCode("music.task.not_found")
 	AppCodeTaskConflict     = apperror.MustCode("music.task.conflict")
 	AppCodeModelUnavailable = apperror.MustCode("music.model.unavailable")
@@ -20,6 +21,10 @@ func CatalogDefinitions() []appcatalog.Definition {
 		musicDefinition(AppCodeTaskNotDeletable, appcatalog.CategoryConflict, 409, false,
 			"This music task can be deleted after generation completes or fails.",
 			"音乐生成完成或失败后才能删除该任务。"),
+		musicDefinition(AppCodeRequestInvalid, appcatalog.CategoryValidation, 400, false,
+			"The music request is invalid. Check your input and try again.",
+			"音乐请求内容不正确，请检查后重试。",
+			"music.gateway:INVALID_REQUEST"),
 		musicDefinition(AppCodeTaskNotFound, appcatalog.CategoryNotFound, 404, false,
 			"The music task was not found.",
 			"未找到音乐任务。",

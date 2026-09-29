@@ -792,7 +792,7 @@ func (s *service) finalizePreparedError(ctx context.Context, prepared *PreparedC
 			logger.WarnContext(ctx, "failed to clear aichat conversation runtime", "conversation_id", prepared.Conversation.ID.String(), clearErr)
 		}
 	}
-	s.emitPreparedEvent(ctx, prepared, streamEventError, BuildStreamErrorPayload(prepared, cause), eventCallback)
+	s.emitPreparedEvent(ctx, prepared, streamEventError, BuildStreamErrorPayload(prepared, cause, ""), eventCallback)
 	return nil
 }
 
@@ -1074,15 +1074,25 @@ func suppressClientStreamEvent(eventType string, payload map[string]interface{})
 }
 
 // BuildStreamErrorPayload returns the public SSE error payload for an AIChat turn.
-func BuildStreamErrorPayload(prepared *PreparedChat, err error) map[string]interface{} {
+// requestID is the transport request identity when the caller has one; it is
+// omitted for runtime-internal emissions that never crossed an HTTP boundary.
+func BuildStreamErrorPayload(prepared *PreparedChat, err error, requestID string) map[string]interface{} {
 	message := publicAichatErrorMessage(err)
+	errorCode := stableAichatErrorCode(err)
 	payload := map[string]interface{}{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
 		"message":         message,
-		"error_code":      stableAichatErrorCode(err),
+		"error_code":      errorCode,
 		"params":          map[string]interface{}{},
 		"error_id":        uuid.NewString(),
+	}
+	// The frozen catalog owns the retryable flag; never guess it from the error text.
+	if retryable, known := streamErrorRetryable(errorCode); known {
+		payload["retryable"] = retryable
+	}
+	if trimmed := strings.TrimSpace(requestID); trimmed != "" {
+		payload["request_id"] = trimmed
 	}
 	if code, params, ok := publicAichatStructuredError(err); ok {
 		payload["code"] = code

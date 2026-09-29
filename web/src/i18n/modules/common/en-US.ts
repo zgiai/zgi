@@ -95,6 +95,7 @@ const messages = {
       'image__upstream__failed': { title: 'Image service failed', action: 'Try again or choose another model.' },
       'image__asset__save_failed': { title: 'Saving the image failed', action: 'Try again.' },
       'image__runtime__failed': { title: 'Image service problem', action: 'Try again later.' },
+      'music__request__invalid': { title: 'The music request is invalid', action: 'Check your input and try again.' },
       'music__task__not_found': { title: 'Music task not found', action: 'Start a new generation.' },
       'music__task__conflict': { title: 'Duplicate music task', action: 'Use a different request ID.' },
       'music__model__unavailable': { title: 'Music model unavailable', action: 'Choose another model.' },

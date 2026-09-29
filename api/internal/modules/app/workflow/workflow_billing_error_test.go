@@ -353,8 +353,8 @@ func TestBuildWorkflowStreamErrorPayload_ExecutionTimeout(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			payload := buildWorkflowStreamErrorPayload(tc.err)
-			if got := payload["code"]; got != response.ErrWorkflowExecutionTimeout.Code {
-				t.Fatalf("code = %#v, want %d", got, response.ErrWorkflowExecutionTimeout.Code)
+			if got := payload["code"]; got != llmerrors.AppCodeProviderTimeout.String() {
+				t.Fatalf("code = %#v, want %s", got, llmerrors.AppCodeProviderTimeout.String())
 			}
 			message, _ := payload["message"].(string)
 			if message != response.ErrWorkflowExecutionTimeout.Message {

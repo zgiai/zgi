@@ -58,7 +58,7 @@ func (h *Handler) Create(c *gin.Context) {
 	}
 	mediaType, _, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
 	if err != nil || mediaType != "application/json" {
-		writeMusicError(c, http.StatusBadRequest, "INVALID_REQUEST", messageJSONContentTypeRequired)
+		h.writeApplicationError(c, apperror.Wrap(errors.New(messageJSONContentTypeRequired), AppCodeRequestInvalid, apperror.WithOperation("music.request")))
 		return
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxCreateRequestBytes)
@@ -66,11 +66,11 @@ func (h *Handler) Create(c *gin.Context) {
 	decoder.DisallowUnknownFields()
 	var request CreateRequest
 	if err := decoder.Decode(&request); err != nil {
-		writeMusicError(c, http.StatusBadRequest, "INVALID_REQUEST", messageInvalidGenerationRequest)
+		h.writeApplicationError(c, apperror.Wrap(errors.New(messageInvalidGenerationRequest), AppCodeRequestInvalid, apperror.WithOperation("music.request")))
 		return
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		writeMusicError(c, http.StatusBadRequest, "INVALID_REQUEST", messageInvalidGenerationRequest)
+		h.writeApplicationError(c, apperror.Wrap(errors.New(messageInvalidGenerationRequest), AppCodeRequestInvalid, apperror.WithOperation("music.request")))
 		return
 	}
 	task, err := h.service.Create(c.Request.Context(), scope, request)
@@ -191,7 +191,7 @@ func musicScope(c *gin.Context) (Scope, bool) {
 func (h *Handler) handleMusicServiceError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrInvalidRequest):
-		writeMusicError(c, http.StatusBadRequest, "INVALID_REQUEST", messageInvalidGenerationRequest)
+		h.writeApplicationError(c, apperror.Wrap(err, AppCodeRequestInvalid, apperror.WithOperation("music.request")))
 	case errors.Is(err, ErrModelUnavailable):
 		h.writeApplicationError(c, apperror.Wrap(err, AppCodeModelUnavailable, apperror.WithOperation("music.model")))
 	case errors.Is(err, ErrTaskNotFound):

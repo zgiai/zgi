@@ -96,6 +96,7 @@ const messages: CommonMessages = {
       'image__upstream__failed': { title: '图片模型服务调用失败', action: '请重试或更换模型。' },
       'image__asset__save_failed': { title: '生成图片保存失败', action: '请重试。' },
       'image__runtime__failed': { title: '图片服务出现问题', action: '请稍后重试。' },
+      'music__request__invalid': { title: '音乐请求内容不正确', action: '请检查后重试。' },
       'music__task__not_found': { title: '未找到音乐任务', action: '请重新生成。' },
       'music__task__conflict': { title: '音乐任务重复', action: '请更换请求 ID。' },
       'music__model__unavailable': { title: '音乐模型不可用', action: '请更换模型。' },

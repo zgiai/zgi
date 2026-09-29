@@ -55,7 +55,7 @@ func (h *AgentsHandler) runPreparedAgentStream(c *gin.Context, prepared *runtime
 		if runtimeservice.IsFinalizedStreamError(err) {
 			return
 		}
-		_ = writeAgentSSE(c, "error", runtimeservice.BuildStreamErrorPayload(prepared, err))
+		_ = writeAgentSSE(c, "error", runtimeservice.BuildStreamErrorPayload(prepared, err, c.Writer.Header().Get("X-Request-ID")))
 		_ = writeAgentSSE(c, "message_end", gin.H{
 			"conversation_id": prepared.Conversation.ID.String(),
 			"message_id":      prepared.Message.ID.String(),

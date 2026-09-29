@@ -33,6 +33,7 @@ const APPLICATION_ERROR_CODES = [
   'image.upstream.failed',
   'image.asset.save_failed',
   'image.runtime.failed',
+  'music.request.invalid',
   'music.task.not_found',
   'music.task.conflict',
   'music.model.unavailable',
