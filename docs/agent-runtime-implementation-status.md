@@ -62,6 +62,7 @@ The following checks define the baseline. Record exact results when executed wit
 | Data-plane contract tests | `go test ./internal/agentexecution` from `sandbox/` | Passed. Covers idempotent Job submission, tenant isolation, chunked output, worker completion, running-job cancellation, path traversal rejection, and file round trips with a Fake Backend. |
 | Data-plane race test | `CGO_ENABLED=1 go test -race ./internal/agentexecution` in `golang:1.26.2-bookworm` | Passed. |
 | PostgreSQL Job repository | `go test -count=1 -v ./internal/storage` against temporary `postgres:16-alpine` | Passed. Covers Job idempotency, exclusive and expired claims, output sequencing and limits, cancellation, terminal state, and all existing storage tests. |
+| Internal HTTP contract | `go test ./internal/agentexecution` from `sandbox/` | Passed. A dedicated Bearer credential and API-injected organization/subject headers are mandatory; the ordinary Sandbox API key is rejected. Binding, Job, output, capability, upload, download, strict JSON, and traversal checks are covered. Registration in the production server remains gated on a real backend. |
 | Real local runtime backend | containerd + gVisor contract suite | Pending. No gVisor result is inferred from the existing bubblewrap baseline. |
 
 ## Compatibility gates

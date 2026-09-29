@@ -169,20 +169,20 @@ type JobResult struct {
 }
 
 type RuntimeCapabilities struct {
-	Shell            bool
-	PTY              bool
-	FileTransfer     bool
-	NetworkMode      string
-	MaxUploadBytes   int64
-	MaxDownloadBytes int64
+	Shell            bool   `json:"shell"`
+	PTY              bool   `json:"pty"`
+	FileTransfer     bool   `json:"file_transfer"`
+	NetworkMode      string `json:"network_mode"`
+	MaxUploadBytes   int64  `json:"max_upload_bytes"`
+	MaxDownloadBytes int64  `json:"max_download_bytes"`
 }
 
 type FileInfo struct {
-	Path        string
-	Size        int64
-	Mode        uint32
-	ModifiedAt  time.Time
-	ContentType string
+	Path        string    `json:"path"`
+	Size        int64     `json:"size"`
+	Mode        uint32    `json:"mode"`
+	ModifiedAt  time.Time `json:"modified_at"`
+	ContentType string    `json:"content_type"`
 }
 
 type RunningJob interface {
