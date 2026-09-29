@@ -482,6 +482,9 @@ func TestPublicAgentWebAppConfig_DoesNotExposeRuntimeSecrets(t *testing.T) {
 		Version:     "20260526000000",
 		VersionUUID: "version-1",
 		Config: dto.AgentConfigResponse{
+			ExecutionRuntime: &dto.AgentExecutionRuntime{
+				Enabled: true, ProfileID: "internal-profile", PolicyID: "internal-policy",
+			},
 			SystemPrompt:        "secret prompt",
 			ModelProvider:       "secret-provider",
 			Model:               "secret-model",
@@ -506,6 +509,8 @@ func TestPublicAgentWebAppConfig_DoesNotExposeRuntimeSecrets(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(encoded), "system_prompt")
 	require.NotContains(t, string(encoded), "secret prompt")
+	require.NotContains(t, string(encoded), "execution_runtime")
+	require.NotContains(t, string(encoded), "internal-profile")
 	require.NotContains(t, string(encoded), "secret-model")
 	require.NotContains(t, string(encoded), "secret-dataset")
 	require.NotContains(t, string(encoded), "database_bindings")

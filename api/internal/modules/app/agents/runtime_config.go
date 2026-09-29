@@ -1423,6 +1423,7 @@ func (s *agentsService) ensureAgentRuntimeDraftConfig(ctx context.Context, ag *A
 }
 
 func normalizeAgentConfigRequest(req dto.AgentConfigRequest) dto.AgentConfigRequest {
+	req.ExecutionRuntime = normalizeAgentExecutionRuntimeConfig(req.ExecutionRuntime)
 	req.SystemPrompt = strings.TrimSpace(req.SystemPrompt)
 	req.ModelProvider = strings.TrimSpace(req.ModelProvider)
 	req.Model = strings.TrimSpace(req.Model)
@@ -1449,6 +1450,11 @@ func applyAgentConfigRequestToDraft(cfg *AgentsConfig, req dto.AgentConfigReques
 	}
 	previousMode := agentRuntimeModeFromConfig(cfg)
 	runtimeCfg := normalizeAgentConfigRequest(req)
+	if runtimeCfg.ExecutionRuntime == nil {
+		// Older editors do not know this field; their full-config saves must not
+		// silently disable an execution environment selected by another editor.
+		runtimeCfg.ExecutionRuntime = normalizeAgentExecutionRuntimeConfig(previousMode.ExecutionRuntime)
+	}
 	if err := validateAgentSystemPromptSource(runtimeCfg.SystemPrompt); err != nil {
 		return dto.AgentConfigRequest{}, err
 	}
@@ -1482,6 +1488,7 @@ func applyAgentConfigRequestToDraft(cfg *AgentsConfig, req dto.AgentConfigReques
 	cfg.Configs = &params
 	modeJSON, err := json.Marshal(dto.AgentRuntimeModeConfig{
 		EnabledSkillIDs:                  runtimeCfg.EnabledSkillIDs,
+		ExecutionRuntime:                 runtimeCfg.ExecutionRuntime,
 		UseMemory:                        false,
 		AgentMemoryEnabled:               runtimeCfg.AgentMemoryEnabled,
 		AgentMemoryAutoExtractionEnabled: runtimeCfg.AgentMemoryAutoExtractionEnabled,
@@ -1522,6 +1529,7 @@ func agentConfigResponse(agentID string, cfg *AgentsConfig) *dto.AgentConfigResp
 		AgentID:                          agentID,
 		ModelParameters:                  params,
 		EnabledSkillIDs:                  normalizeAgentEnabledSkillIDs(mode.EnabledSkillIDs),
+		ExecutionRuntime:                 normalizeAgentExecutionRuntimeConfig(mode.ExecutionRuntime),
 		UseMemory:                        false,
 		AgentMemoryEnabled:               mode.AgentMemoryEnabled,
 		AgentMemoryAutoExtractionEnabled: mode.AgentMemoryAutoExtractionEnabled,
@@ -1559,6 +1567,7 @@ func agentConfigSnapshot(agentID string, cfg *AgentsConfig) map[string]interface
 	resp := agentConfigResponse(agentID, cfg)
 	return map[string]interface{}{
 		"agent_id":                             resp.AgentID,
+		"execution_runtime":                    resp.ExecutionRuntime,
 		"system_prompt":                        resp.SystemPrompt,
 		"model_provider":                       resp.ModelProvider,
 		"model":                                resp.Model,
@@ -1601,6 +1610,7 @@ func agentConfigResponseFromSnapshot(agentID string, snapshot map[string]interfa
 		return resp
 	}
 	resp.ConnectorTargetScope = stringFromSnapshot(snapshot, "connector_target_scope")
+	resp.ExecutionRuntime = agentExecutionRuntimeConfigFromSnapshot(snapshot["execution_runtime"])
 	resp.ConnectorTargetVersionID = stringFromSnapshot(snapshot, "connector_target_version_id")
 	resp.BindingRevision = strings.TrimSpace(stringFromSnapshot(snapshot, "binding_revision"))
 	resp.SystemPrompt = stringFromSnapshot(snapshot, "system_prompt")
@@ -1768,6 +1778,39 @@ func agentRuntimeModeFromConfig(cfg *AgentsConfig) dto.AgentRuntimeModeConfig {
 	}
 	_ = json.Unmarshal([]byte(*cfg.AgentMode), &mode)
 	return mode
+}
+
+func normalizeAgentExecutionRuntimeConfig(config *dto.AgentExecutionRuntime) *dto.AgentExecutionRuntime {
+	if config == nil {
+		return nil
+	}
+	normalized := *config
+	normalized.ProfileID = strings.TrimSpace(config.ProfileID)
+	normalized.PolicyID = strings.TrimSpace(config.PolicyID)
+	if config.HomeSnapshotID != nil {
+		homeSnapshotID := strings.TrimSpace(*config.HomeSnapshotID)
+		if homeSnapshotID != "" {
+			normalized.HomeSnapshotID = &homeSnapshotID
+		} else {
+			normalized.HomeSnapshotID = nil
+		}
+	}
+	return &normalized
+}
+
+func agentExecutionRuntimeConfigFromSnapshot(value interface{}) *dto.AgentExecutionRuntime {
+	if value == nil {
+		return nil
+	}
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	var config dto.AgentExecutionRuntime
+	if err := json.Unmarshal(payload, &config); err != nil {
+		return nil
+	}
+	return normalizeAgentExecutionRuntimeConfig(&config)
 }
 
 func normalizeAgentEnabledSkillIDs(input []string) []string {

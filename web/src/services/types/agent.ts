@@ -240,6 +240,7 @@ export interface UpdateWebAppStatusResponse {
 
 export interface AgentRuntimeConfig {
   agent_id: string;
+  execution_runtime?: AgentExecutionRuntimeConfig | null;
   system_prompt: string;
   model_provider: string;
   model: string;
@@ -265,6 +266,13 @@ export interface AgentRuntimeConfig {
   binding_revision?: string;
   binding_health?: AgentBindingHealth;
   updated_at: number;
+}
+
+export interface AgentExecutionRuntimeConfig {
+  enabled: boolean;
+  profile_id: string;
+  home_snapshot_id: string | null;
+  policy_id: string;
 }
 
 export type AgentBindingType =
@@ -474,6 +482,7 @@ export interface AgentMemoryConfigResponse {
 }
 
 export interface UpdateAgentRuntimeConfigRequest {
+  execution_runtime?: AgentExecutionRuntimeConfig | null;
   system_prompt: string;
   model_provider: string;
   model: string;

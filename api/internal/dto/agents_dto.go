@@ -251,6 +251,7 @@ type AgentRuntimeSurfaceGrantSubjectDetail struct {
 
 type AgentRuntimeModeConfig struct {
 	EnabledSkillIDs                  []string                    `json:"enabled_skill_ids"`
+	ExecutionRuntime                 *AgentExecutionRuntime      `json:"execution_runtime,omitempty"`
 	UseMemory                        bool                        `json:"use_memory"`
 	AgentMemoryEnabled               bool                        `json:"agent_memory_enabled"`
 	AgentMemoryAutoExtractionEnabled bool                        `json:"agent_memory_auto_extraction_enabled"`
@@ -273,6 +274,15 @@ type AgentRuntimeModeConfig struct {
 	WorkflowBoundAtUnix              int64                       `json:"workflow_bound_at_unix,omitempty"`
 	ConnectorBindings                []AgentConnectorBinding     `json:"connector_bindings,omitempty"`
 	BindingAuthorizations            []AgentBindingAuthorization `json:"binding_authorizations,omitempty"`
+}
+
+// AgentExecutionRuntime records the requested execution environment for an Agent.
+// Authorization and capability checks are separate from this stored config.
+type AgentExecutionRuntime struct {
+	Enabled        bool    `json:"enabled"`
+	ProfileID      string  `json:"profile_id"`
+	HomeSnapshotID *string `json:"home_snapshot_id"`
+	PolicyID       string  `json:"policy_id"`
 }
 
 // AgentBindingAuthorization preserves the authorization evidence for one
@@ -585,6 +595,7 @@ type UpdateAgentMemoryValueRequest struct {
 }
 
 type AgentConfigRequest struct {
+	ExecutionRuntime                 *AgentExecutionRuntime           `json:"execution_runtime,omitempty"`
 	ConnectorReferenceCommands       []connectorcore.ReferenceCommand `json:"connector_reference_commands,omitempty"`
 	BindingRevision                  string                           `json:"binding_revision,omitempty"`
 	SystemPrompt                     string                           `json:"system_prompt"`
@@ -631,6 +642,7 @@ type AgentSystemPromptPatchRequest struct {
 }
 
 type AgentConfigResponse struct {
+	ExecutionRuntime                 *AgentExecutionRuntime      `json:"execution_runtime,omitempty"`
 	ConnectorTargetScope             string                      `json:"-"`
 	ConnectorTargetVersionID         string                      `json:"-"`
 	AgentID                          string                      `json:"agent_id"`
