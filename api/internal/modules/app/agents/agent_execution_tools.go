@@ -40,6 +40,10 @@ func (h *AgentsHandler) attachConsoleAgentExecutionTools(runConfig *runtimeservi
 	backend := h.executionApprovals.Profiles[profileID].Backend
 	gateway := h.executionGateway
 	fileReader := h.fileService
+	persister := h.executionArtifactPersister
+	if persister == nil {
+		persister = defaultAgentExecutionArtifactPersister{}
+	}
 	runConfig.RuntimeToolFactory = func(prepared *runtimeservice.PreparedChat) []skillloop.RuntimeTool {
 		if prepared == nil || prepared.Conversation == nil || prepared.Message == nil ||
 			prepared.Caller.Source != runtimemodel.ConversationSourceConsole ||
@@ -49,9 +53,13 @@ func (h *AgentsHandler) attachConsoleAgentExecutionTools(runConfig *runtimeservi
 			prepared.Scope.AccountID != scope.AccountID {
 			return nil
 		}
-		return []skillloop.RuntimeTool{newAgentExecutionShellTool(gateway, agentExecutionScope{
+		executionScope := agentExecutionScope{
 			OrganizationID: scope.OrganizationID.String(), SubjectID: scope.AccountID.String(),
-		}, agentID.String(), prepared.Conversation.ID.String(), prepared.Message.ID.String(), profileID, backend, prepared.RuntimeAttachmentRefs(), fileReader)}
+		}
+		return []skillloop.RuntimeTool{
+			newAgentExecutionShellTool(gateway, executionScope, agentID.String(), prepared.Conversation.ID.String(), prepared.Message.ID.String(), profileID, backend, prepared.RuntimeAttachmentRefs(), fileReader),
+			newAgentExecutionExportTool(gateway, persister, executionScope, agentID.String(), prepared.Conversation.ID.String(), prepared.Message.ID.String(), profileID, backend),
+		}
 	}
 	return nil
 }

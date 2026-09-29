@@ -27,11 +27,26 @@ type fakeAgentExecutionGateway struct {
 	args         []string
 	scope        agentExecutionScope
 	uploads      map[string][]byte
+	downloads    map[string][]byte
 }
 
 type fakeRuntimeAttachmentReader struct {
 	files map[string][]byte
 	calls int
+}
+
+type fakeAgentExecutionArtifactPersister struct {
+	path string
+	data []byte
+}
+
+func (p *fakeAgentExecutionArtifactPersister) Persist(_ context.Context, _ agentExecutionScope, _, filePath string, data []byte) (map[string]interface{}, error) {
+	p.path = filePath
+	p.data = append([]byte(nil), data...)
+	return map[string]interface{}{
+		"artifact_id": "tool_file:file-1", "file_id": "file-1", "tool_file_id": "file-1",
+		"filename": "result.csv", "size": len(data), "download_url": "/files/file-1",
+	}, nil
 }
 
 func (r *fakeRuntimeAttachmentReader) DownloadFile(_ context.Context, fileID string) ([]byte, error) {
@@ -77,6 +92,10 @@ func (f *fakeAgentExecutionGateway) UploadFile(_ context.Context, _ agentExecuti
 	}
 	f.uploads[filePath] = append([]byte(nil), data...)
 	return nil
+}
+
+func (f *fakeAgentExecutionGateway) DownloadFile(_ context.Context, _ agentExecutionScope, _, filePath string) ([]byte, error) {
+	return append([]byte(nil), f.downloads[filePath]...), nil
 }
 
 func TestAgentExecutionShellToolKeepsCommandAndOutputOutOfTrace(t *testing.T) {
@@ -179,7 +198,7 @@ func TestConsoleAgentExecutionToolFactoryIsCallerScoped(t *testing.T) {
 		Caller:       runtimeservice.Caller{Type: runtimemodel.ConversationCallerAgent, ID: &agentID, Source: runtimemodel.ConversationSourceConsole},
 		Conversation: &runtimemodel.Conversation{ID: uuid.New()}, Message: &runtimemodel.Message{ID: uuid.New()},
 	}
-	if got := runConfig.RuntimeToolFactory(prepared); len(got) != 1 || got[0].Definition.Function.Name != "shell_exec" {
+	if got := runConfig.RuntimeToolFactory(prepared); len(got) != 2 || got[0].Definition.Function.Name != "shell_exec" || got[1].Definition.Function.Name != "workspace_export_file" {
 		t.Fatalf("console tools = %#v", got)
 	}
 	prepared.Caller.Source = runtimemodel.ConversationSourceWebApp
@@ -190,6 +209,33 @@ func TestConsoleAgentExecutionToolFactoryIsCallerScoped(t *testing.T) {
 	prepared.Scope.AccountID = uuid.New()
 	if got := runConfig.RuntimeToolFactory(prepared); len(got) != 0 {
 		t.Fatalf("different account received console tools: %#v", got)
+	}
+}
+
+func TestAgentExecutionExportCreatesDownloadArtifactWithoutTraceContent(t *testing.T) {
+	fake := &fakeAgentExecutionGateway{
+		binding:      agentExecutionBinding{ID: "binding-1", Status: "active"},
+		capabilities: agentExecutionCapabilities{FileTransfer: true, NetworkMode: "disabled", MaxDownloadBytes: 1024},
+		downloads:    map[string][]byte{"artifacts/result.csv": []byte("private,output\n")},
+	}
+	persister := &fakeAgentExecutionArtifactPersister{}
+	tool := newAgentExecutionExportTool(fake, persister, agentExecutionScope{OrganizationID: "org-1", SubjectID: "account-1"}, "agent-1", "conversation-1", "message-1", "standard", "local-gvisor")
+	result := tool.Handler(t.Context(), adapter.ToolCall{ID: "call-1", Function: adapter.FunctionCall{Arguments: `{"path":"artifacts/result.csv"}`}})
+	if result.Error != nil || result.Status != "success" || persister.path != "artifacts/result.csv" || string(persister.data) != "private,output\n" {
+		t.Fatalf("export result = %#v, persister=%#v", result, persister)
+	}
+	if len(result.Artifacts) != 1 || result.Artifacts[0]["conversation_id"] != "conversation-1" || result.Artifacts[0]["message_id"] != "message-1" {
+		t.Fatalf("artifact event = %#v", result.Artifacts)
+	}
+	trace, _ := json.Marshal(map[string]interface{}{"arguments": result.Arguments, "result": result.Result})
+	if strings.Contains(string(trace), "private") || strings.Contains(string(trace), "result.csv") {
+		t.Fatalf("trace contains file content or path: %s", trace)
+	}
+	for _, unsafe := range []string{"../secret", "/etc/passwd", "..", "artifacts/../secret"} {
+		bad := tool.Handler(t.Context(), adapter.ToolCall{Function: adapter.FunctionCall{Arguments: `{"path":"` + unsafe + `"}`}})
+		if bad.Result["error_code"] != "invalid_path" {
+			t.Fatalf("unsafe path %q accepted: %#v", unsafe, bad)
+		}
 	}
 }
 
@@ -260,5 +306,37 @@ func TestAgentExecutionHTTPGatewayUploadsRawFileToWorkspace(t *testing.T) {
 	gateway := &agentExecutionHTTPGateway{baseURL: server.URL, apiKey: "dedicated-worker-key", client: server.Client()}
 	if err := gateway.UploadFile(t.Context(), agentExecutionScope{OrganizationID: "org-1", SubjectID: "account-1"}, "binding-1", "inputs/data.csv", []byte("raw,csv\n")); err != nil {
 		t.Fatalf("UploadFile: %v", err)
+	}
+}
+
+func TestAgentExecutionHTTPGatewayDownloadsBoundedFile(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/agent-runtime/bindings/binding-1/files" || r.URL.Query().Get("path") != "artifacts/result.csv" {
+			t.Errorf("download request = %s %s", r.Method, r.URL.String())
+		}
+		if r.Header.Get("Authorization") != "Bearer dedicated-worker-key" || r.Header.Get("X-ZGI-Organization-ID") != "org-1" || r.Header.Get("X-ZGI-Subject-ID") != "account-1" {
+			t.Error("download authentication or scope missing")
+		}
+		w.Header().Set("Content-Length", "8")
+		_, _ = w.Write([]byte("raw,csv\n"))
+	}))
+	defer server.Close()
+	gateway := &agentExecutionHTTPGateway{baseURL: server.URL, apiKey: "dedicated-worker-key", client: server.Client()}
+	data, err := gateway.DownloadFile(t.Context(), agentExecutionScope{OrganizationID: "org-1", SubjectID: "account-1"}, "binding-1", "artifacts/result.csv")
+	if err != nil || string(data) != "raw,csv\n" {
+		t.Fatalf("DownloadFile = %q, %v", data, err)
+	}
+}
+
+func TestAgentExecutionHTTPGatewayRejectsUnboundedFile(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "67108865")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	gateway := &agentExecutionHTTPGateway{baseURL: server.URL, apiKey: "dedicated-worker-key", client: server.Client()}
+	_, err := gateway.DownloadFile(t.Context(), agentExecutionScope{OrganizationID: "org-1", SubjectID: "account-1"}, "binding-1", "artifacts/result.csv")
+	if err == nil || !strings.Contains(err.Error(), "exceeds the limit") {
+		t.Fatalf("expected file size limit, got %v", err)
 	}
 }

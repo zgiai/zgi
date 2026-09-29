@@ -78,6 +78,7 @@ func handleRuntimeToolCall(ctx context.Context, call adapter.ToolCall, runtimeTo
 	message := skills.ToolResultMessage(call.ID, modelResult)
 	step := successfulSkillStep(trace, message, false, true)
 	step.toolResult = result.Result
+	step.artifacts = result.Artifacts
 	step.pendingApproval = result.PendingApproval
 	if result.Recoverable {
 		step = recoverableSkillStep(trace, message, false, true)

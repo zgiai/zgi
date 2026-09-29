@@ -225,6 +225,10 @@ type RuntimeToolResult struct {
 	Arguments   map[string]interface{}
 	Result      map[string]interface{}
 	ModelResult map[string]interface{}
+	// Artifacts are trusted, server-created file summaries for the existing
+	// artifact event and conversation metadata pipeline. Never put file bytes
+	// or unsigned filesystem paths here.
+	Artifacts []map[string]interface{}
 	// PendingApproval pauses the current run and is projected into the
 	// durable workflow-continuation metadata. Runtime tools use this instead
 	// of returning a normal success result so callers can render the approval

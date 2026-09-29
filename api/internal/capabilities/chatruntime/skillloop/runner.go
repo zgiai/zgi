@@ -408,6 +408,7 @@ type skillStepResult struct {
 	trace               skills.SkillTrace
 	toolMessage         adapter.Message
 	toolResult          map[string]interface{}
+	artifacts           []map[string]interface{}
 	answer              string
 	answerStreamed      bool
 	usedSkill           bool
@@ -1042,6 +1043,10 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 					result.trace.InvocationID = call.ID
 				}
 				r.emitEvent(prepared, EventSkillCallEnd, skillCallEndPayload(prepared, result.trace))
+				for _, artifact := range result.artifacts {
+					r.recordArtifact(artifact)
+					r.emitEvent(prepared, EventSkillArtifactCreated, artifact)
+				}
 			}
 			if result.trace.Kind == "" && userInputPlanRevisionRequiredForTool(req, callSkillID, callToolName) {
 				result = pendingUserInputPlanRevisionStep(executionCall.ID, callSkillID, callToolName, callToolArgs, resolved)

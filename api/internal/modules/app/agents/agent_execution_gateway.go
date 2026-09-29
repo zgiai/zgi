@@ -15,6 +15,7 @@ import (
 )
 
 const agentExecutionResponseLimit = 2 << 20
+const agentExecutionFileLimit = 64 << 20
 
 type agentExecutionScope struct {
 	OrganizationID string
@@ -41,10 +42,11 @@ type agentExecutionOutputChunk struct {
 }
 
 type agentExecutionCapabilities struct {
-	Shell          bool   `json:"shell"`
-	FileTransfer   bool   `json:"file_transfer"`
-	NetworkMode    string `json:"network_mode"`
-	MaxUploadBytes int64  `json:"max_upload_bytes"`
+	Shell            bool   `json:"shell"`
+	FileTransfer     bool   `json:"file_transfer"`
+	NetworkMode      string `json:"network_mode"`
+	MaxUploadBytes   int64  `json:"max_upload_bytes"`
+	MaxDownloadBytes int64  `json:"max_download_bytes"`
 }
 
 type agentExecutionGateway interface {
@@ -55,6 +57,7 @@ type agentExecutionGateway interface {
 	CancelJob(context.Context, agentExecutionScope, string, int64) error
 	JobOutput(context.Context, agentExecutionScope, string, int64, int) ([]agentExecutionOutputChunk, error)
 	UploadFile(context.Context, agentExecutionScope, string, string, []byte) error
+	DownloadFile(context.Context, agentExecutionScope, string, string) ([]byte, error)
 }
 
 type agentExecutionHTTPGateway struct {
@@ -194,4 +197,37 @@ func (g *agentExecutionHTTPGateway) UploadFile(ctx context.Context, scope agentE
 		return fmt.Errorf("agent execution upload returned HTTP %d", resp.StatusCode)
 	}
 	return nil
+}
+
+func (g *agentExecutionHTTPGateway) DownloadFile(ctx context.Context, scope agentExecutionScope, bindingID, filePath string) ([]byte, error) {
+	if g == nil || g.client == nil || scope.OrganizationID == "" || scope.SubjectID == "" {
+		return nil, fmt.Errorf("agent execution gateway is unavailable")
+	}
+	endpoint := g.baseURL + "/v1/agent-runtime/bindings/" + url.PathEscape(bindingID) + "/files?path=" + url.QueryEscape(filePath)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create agent execution download request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+g.apiKey)
+	req.Header.Set("X-ZGI-Organization-ID", scope.OrganizationID)
+	req.Header.Set("X-ZGI-Subject-ID", scope.SubjectID)
+	resp, err := g.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("agent execution download request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("agent execution download returned HTTP %d", resp.StatusCode)
+	}
+	if resp.ContentLength < 0 || resp.ContentLength > agentExecutionFileLimit {
+		return nil, fmt.Errorf("agent execution download size is missing or exceeds the limit")
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, agentExecutionFileLimit+1))
+	if err != nil {
+		return nil, fmt.Errorf("read agent execution download: %w", err)
+	}
+	if int64(len(data)) != resp.ContentLength || len(data) > agentExecutionFileLimit {
+		return nil, fmt.Errorf("agent execution download size changed")
+	}
+	return data, nil
 }

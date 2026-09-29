@@ -29,6 +29,26 @@ func TestRuntimeToolModelResultIsNotPersistedInTrace(t *testing.T) {
 	}
 }
 
+func TestRuntimeToolArtifactIsSeparateFromTraceAndModelResult(t *testing.T) {
+	tool := RuntimeTool{
+		Definition: adapter.Tool{Type: "function", Function: adapter.Function{Name: "workspace_export_file"}},
+		Handler: func(context.Context, adapter.ToolCall) RuntimeToolResult {
+			return RuntimeToolResult{
+				Result:      map[string]interface{}{"file_id": "file-1"},
+				ModelResult: map[string]interface{}{"file": map[string]interface{}{"download_url": "/files/file-1"}},
+				Artifacts:   []map[string]interface{}{{"file_id": "file-1", "download_url": "/files/file-1"}},
+			}
+		},
+	}
+	step := handleRuntimeToolCall(t.Context(), adapter.ToolCall{ID: "call-1", Function: adapter.FunctionCall{Name: "workspace_export_file"}}, tool)
+	if len(step.artifacts) != 1 || step.artifacts[0]["file_id"] != "file-1" {
+		t.Fatalf("runtime artifact = %#v", step.artifacts)
+	}
+	if strings.Contains(toTestJSON(step.trace.Result), "/files/file-1") {
+		t.Fatalf("download URL leaked into trace: %#v", step.trace.Result)
+	}
+}
+
 func toTestJSON(value interface{}) string {
 	encoded, _ := json.Marshal(value)
 	return string(encoded)

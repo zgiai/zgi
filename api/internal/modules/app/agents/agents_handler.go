@@ -48,6 +48,7 @@ type AgentsHandler struct {
 	speechService              *SpeechService
 	executionApprovals         agentExecutionApprovals
 	executionGateway           agentExecutionGateway
+	executionArtifactPersister agentExecutionArtifactPersister
 	appErrorProjector          *apptransport.Projector
 }
 
@@ -68,14 +69,15 @@ func NewAgentsHandler(appService AgentsService, tenantService interfaces.Workspa
 		chatRuntimeService = chatRuntimeServices[0]
 	}
 	return &AgentsHandler{
-		appService:          appService,
-		tenantService:       tenantService,
-		accountService:      accountService,
-		organizationService: organizationService,
-		db:                  db,
-		chatRuntimeService:  chatRuntimeService,
-		executionApprovals:  agentExecutionApprovalsFromEnv(),
-		executionGateway:    agentExecutionGatewayFromEnv(),
+		appService:                 appService,
+		tenantService:              tenantService,
+		accountService:             accountService,
+		organizationService:        organizationService,
+		db:                         db,
+		chatRuntimeService:         chatRuntimeService,
+		executionApprovals:         agentExecutionApprovalsFromEnv(),
+		executionGateway:           agentExecutionGatewayFromEnv(),
+		executionArtifactPersister: defaultAgentExecutionArtifactPersister{},
 	}
 }
 
