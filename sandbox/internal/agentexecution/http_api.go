@@ -19,6 +19,7 @@ type ControlPlane interface {
 	CreateBinding(context.Context, CreateBindingRequest) (Binding, error)
 	GetBinding(context.Context, Scope, string) (Binding, error)
 	SuspendBinding(context.Context, Scope, string, int64) (Binding, error)
+	ResumeBinding(context.Context, Scope, string, int64) (Binding, error)
 	DestroyBinding(context.Context, Scope, string, int64) (Binding, error)
 }
 
@@ -143,6 +144,17 @@ func (a *HTTPAPI) handleBindings(w http.ResponseWriter, request *http.Request, s
 			return
 		}
 		binding, err := a.control.SuspendBinding(request.Context(), scope, bindingID, body.Generation)
+		a.writeResult(w, http.StatusOK, bindingResponseFrom(binding), err)
+	case "resume":
+		if request.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		var body generationBody
+		if !a.decodeJSON(w, request, &body) {
+			return
+		}
+		binding, err := a.control.ResumeBinding(request.Context(), scope, bindingID, body.Generation)
 		a.writeResult(w, http.StatusOK, bindingResponseFrom(binding), err)
 	case "capabilities":
 		if request.Method != http.MethodGet {

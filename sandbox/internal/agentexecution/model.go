@@ -31,6 +31,7 @@ const (
 	BindingStatusActive     BindingStatus = "active"
 	BindingStatusSuspending BindingStatus = "suspending"
 	BindingStatusSuspended  BindingStatus = "suspended"
+	BindingStatusResuming   BindingStatus = "resuming"
 	BindingStatusDeleting   BindingStatus = "deleting"
 	BindingStatusDeleted    BindingStatus = "deleted"
 	BindingStatusFailed     BindingStatus = "failed"
@@ -222,12 +223,14 @@ type CreateSpec struct {
 // Backend is intentionally narrow and is owned by the control-plane caller.
 // Local isolation, hosted runtimes, and future VM implementations conform to
 // this contract without leaking provider credentials into persisted records.
-// SuspendBinding and DestroyBinding must be idempotent because reconciliation
-// can repeat them after a process crashes between the backend call and the
-// generation-fenced database update.
+// SuspendBinding, ResumeBinding, and DestroyBinding must be idempotent because
+// reconciliation can repeat them after a process crashes between the backend
+// call and the generation-fenced database update. ResumeBinding may return new
+// opaque handles when a provider recreates compute around retained storage.
 type Backend interface {
 	CreateBinding(context.Context, CreateSpec) (Allocation, error)
 	SuspendBinding(context.Context, Allocation) error
+	ResumeBinding(context.Context, Allocation) (Allocation, error)
 	DestroyBinding(context.Context, Allocation) error
 }
 

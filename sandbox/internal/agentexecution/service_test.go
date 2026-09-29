@@ -125,6 +125,61 @@ func TestSuspendBindingResumesAfterControlPlaneCrash(t *testing.T) {
 	}
 }
 
+func TestResumeBindingUsesGenerationFenceAndRefreshesAllocation(t *testing.T) {
+	repository := newMemoryRepository()
+	backend := &fakeBackend{}
+	service := newTestService(t, repository, backend)
+	binding, err := service.CreateBinding(context.Background(), testCreateRequest())
+	if err != nil {
+		t.Fatalf("create binding: %v", err)
+	}
+	suspended, err := service.SuspendBinding(context.Background(), testCreateRequest().Scope, binding.ID, binding.Generation)
+	if err != nil {
+		t.Fatalf("suspend binding: %v", err)
+	}
+	if _, err := service.ResumeBinding(context.Background(), testCreateRequest().Scope, binding.ID, suspended.Generation-1); !errors.Is(err, ErrGenerationConflict) {
+		t.Fatalf("stale resume error = %v, want ErrGenerationConflict", err)
+	}
+	resumed, err := service.ResumeBinding(context.Background(), testCreateRequest().Scope, binding.ID, suspended.Generation)
+	if err != nil {
+		t.Fatalf("resume binding: %v", err)
+	}
+	if resumed.Status != BindingStatusActive || resumed.BackendRef != "resumed-"+binding.BackendRef {
+		t.Fatalf("resumed binding = %+v", resumed)
+	}
+	if backend.resumeCalls != 1 {
+		t.Fatalf("backend resume calls = %d, want 1", backend.resumeCalls)
+	}
+}
+
+func TestResumeBindingContinuesAfterControlPlaneCrash(t *testing.T) {
+	repository := newMemoryRepository()
+	backend := &fakeBackend{}
+	service := newTestService(t, repository, backend)
+	binding, err := service.CreateBinding(context.Background(), testCreateRequest())
+	if err != nil {
+		t.Fatalf("create binding: %v", err)
+	}
+	suspended, err := service.SuspendBinding(context.Background(), testCreateRequest().Scope, binding.ID, binding.Generation)
+	if err != nil {
+		t.Fatalf("suspend binding: %v", err)
+	}
+
+	repository.mu.Lock()
+	suspended.Status = BindingStatusResuming
+	suspended.Generation++
+	repository.bindings[suspended.ID] = suspended
+	repository.mu.Unlock()
+
+	resumed, err := service.ResumeBinding(context.Background(), testCreateRequest().Scope, suspended.ID, suspended.Generation)
+	if err != nil {
+		t.Fatalf("continue resume: %v", err)
+	}
+	if resumed.Status != BindingStatusActive || backend.resumeCalls != 1 {
+		t.Fatalf("resume result = %+v, backend calls = %d", resumed, backend.resumeCalls)
+	}
+}
+
 func TestDestroyBindingIsIdempotent(t *testing.T) {
 	repository := newMemoryRepository()
 	backend := &fakeBackend{}
@@ -221,6 +276,7 @@ type fakeBackend struct {
 	mu           sync.Mutex
 	createCalls  int
 	suspendCalls int
+	resumeCalls  int
 	destroyCalls int
 	createErr    error
 	destroyErr   error
@@ -238,6 +294,14 @@ func (b *fakeBackend) SuspendBinding(context.Context, Allocation) error {
 	defer b.mu.Unlock()
 	b.suspendCalls++
 	return nil
+}
+
+func (b *fakeBackend) ResumeBinding(_ context.Context, allocation Allocation) (Allocation, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.resumeCalls++
+	allocation.BindingRef = "resumed-" + allocation.BindingRef
+	return allocation, nil
 }
 
 func (b *fakeBackend) DestroyBinding(context.Context, Allocation) error {

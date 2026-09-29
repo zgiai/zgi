@@ -198,6 +198,49 @@ func (s *Service) SuspendBinding(ctx context.Context, scope Scope, bindingID str
 	return binding, nil
 }
 
+func (s *Service) ResumeBinding(ctx context.Context, scope Scope, bindingID string, generation int64) (Binding, error) {
+	binding, backend, err := s.mutableBinding(ctx, scope, bindingID, generation)
+	if err != nil {
+		return Binding{}, err
+	}
+	if binding.Status == BindingStatusActive {
+		return binding, nil
+	}
+	if binding.Status != BindingStatusSuspended && binding.Status != BindingStatusResuming {
+		return Binding{}, fmt.Errorf("%w: cannot resume %s", ErrInvalidTransition, binding.Status)
+	}
+	if binding.Status == BindingStatusSuspended {
+		previousGeneration := binding.Generation
+		binding.Status = BindingStatusResuming
+		binding.Generation++
+		binding.UpdatedAt = s.now().UTC()
+		if err := s.repository.UpdateBinding(ctx, binding, previousGeneration); err != nil {
+			return Binding{}, err
+		}
+	}
+
+	allocation, err := backend.ResumeBinding(ctx, Allocation{
+		BindingRef: binding.BackendRef, WorkspaceRef: binding.WorkspaceRef,
+	})
+	if err != nil {
+		return Binding{}, fmt.Errorf("resume backend binding: %w", err)
+	}
+	previousGeneration := binding.Generation
+	binding.BackendRef = allocation.BindingRef
+	binding.WorkspaceRef = allocation.WorkspaceRef
+	binding.Status = BindingStatusActive
+	binding.FailureReason = ""
+	binding.Generation++
+	binding.UpdatedAt = s.now().UTC()
+	binding.LastActivityAt = binding.UpdatedAt
+	binding.ExpiresAt = binding.UpdatedAt.Add(s.idleTTL)
+	if err := s.repository.UpdateBinding(ctx, binding, previousGeneration); err != nil {
+		cleanupErr := s.enqueueDestroy(ctx, binding, allocation, err)
+		return Binding{}, errors.Join(fmt.Errorf("record resumed binding: %w", err), cleanupErr)
+	}
+	return binding, nil
+}
+
 func (s *Service) DestroyBinding(ctx context.Context, scope Scope, bindingID string, generation int64) (Binding, error) {
 	binding, err := s.GetBinding(ctx, scope, bindingID)
 	if err != nil {

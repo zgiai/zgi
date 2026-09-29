@@ -63,6 +63,18 @@ func TestHTTPAPIBindingJobAndFileFlow(t *testing.T) {
 		t.Fatalf("download response = %d %q", response.Code, response.Body.Bytes())
 	}
 
+	response = performAgentRuntimeRequest(t, api, http.MethodGet, agentRuntimePathPrefix+"bindings/"+bindingID, nil, "org-1", "user-1")
+	generation := responseDataInt64(t, response.Body.Bytes(), "generation")
+	response = performAgentRuntimeRequest(t, api, http.MethodPost, agentRuntimePathPrefix+"bindings/"+bindingID+"/suspend", strings.NewReader(fmt.Sprintf(`{"generation":%d}`, generation)), "org-1", "user-1")
+	if response.Code != http.StatusOK || responseDataString(t, response.Body.Bytes(), "status") != string(BindingStatusSuspended) {
+		t.Fatalf("suspend response = %d %s", response.Code, response.Body.String())
+	}
+	generation = responseDataInt64(t, response.Body.Bytes(), "generation")
+	response = performAgentRuntimeRequest(t, api, http.MethodPost, agentRuntimePathPrefix+"bindings/"+bindingID+"/resume", strings.NewReader(fmt.Sprintf(`{"generation":%d}`, generation)), "org-1", "user-1")
+	if response.Code != http.StatusOK || responseDataString(t, response.Body.Bytes(), "status") != string(BindingStatusActive) {
+		t.Fatalf("resume response = %d %s", response.Code, response.Body.String())
+	}
+
 	response = performAgentRuntimeRequest(t, api, http.MethodGet, agentRuntimePathPrefix+"bindings/"+bindingID, nil, "org-other", "user-1")
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("cross-tenant binding response = %d %s", response.Code, response.Body.String())
@@ -133,4 +145,19 @@ func responseDataString(t *testing.T, value []byte, field string) string {
 		t.Fatalf("response field %q = %#v", field, response.Data[field])
 	}
 	return result
+}
+
+func responseDataInt64(t *testing.T, value []byte, field string) int64 {
+	t.Helper()
+	var response struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(value, &response); err != nil {
+		t.Fatalf("decode response: %v (%s)", err, value)
+	}
+	result, ok := response.Data[field].(float64)
+	if !ok {
+		t.Fatalf("response field %q = %#v", field, response.Data[field])
+	}
+	return int64(result)
 }
