@@ -223,6 +223,8 @@ func (r *Runner) handleNativeSessionControlCall(
 	ctx context.Context,
 	call adapter.ToolCall,
 	session *skills.NativeSkillSession,
+	resolved *skills.ResolvedSkills,
+	runtimeTools []RuntimeTool,
 ) (nativeSessionControlResult, bool) {
 	name := strings.TrimSpace(call.Function.Name)
 	if name != skills.MetaToolActivateSkills && name != skills.MetaToolSearchSkills {
@@ -284,6 +286,20 @@ func (r *Runner) handleNativeSessionControlCall(
 		"skipped_skills":           activation.SkippedSkills,
 		"next_action":              "call an activated business function directly, or activate another candidate only if the task still requires it",
 	}
+	if nativeRuntimeToolAvailable(runtimeTools, "shell_exec") {
+		sessionScripts := make([]map[string]interface{}, 0)
+		for _, skillID := range append(append([]string(nil), activation.ActivatedSkillIDs...), activation.AlreadyActiveSkillIDs...) {
+			if doc, ok := resolved.Get(skillID); ok {
+				if script := portableSessionScriptPayload(doc); script != nil {
+					sessionScripts = append(sessionScripts, script)
+				}
+			}
+		}
+		if len(sessionScripts) > 0 {
+			payload["session_scripts"] = sessionScripts
+			payload["next_action"] = "Use shell_exec with skill_id to stage an activated Skill's script package, then run its script from $ZGI_SKILL_DIR/scripts/."
+		}
+	}
 	trace := skills.SkillTrace{
 		Kind:     "skill_load_attempt",
 		ToolName: skills.MetaToolActivateSkills,
@@ -306,6 +322,15 @@ func (r *Runner) handleNativeSessionControlCall(
 		step = recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, payload), false, false)
 	}
 	return nativeSessionControlResult{step: step, instructions: activation.InstructionMessages}, true
+}
+
+func nativeRuntimeToolAvailable(runtimeTools []RuntimeTool, name string) bool {
+	for _, runtimeTool := range runtimeTools {
+		if runtimeTool.Handler != nil && strings.EqualFold(strings.TrimSpace(runtimeTool.Definition.Function.Name), name) {
+			return true
+		}
+	}
+	return false
 }
 
 func nativeStringSliceArg(args map[string]interface{}, key string) []string {

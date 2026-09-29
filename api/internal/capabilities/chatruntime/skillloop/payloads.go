@@ -570,24 +570,35 @@ func skillDocumentPayload(doc *skills.SkillDocument) map[string]interface{} {
 		"references":   doc.Metadata.References,
 		"tools":        doc.Metadata.Tools,
 	}
-	if doc.Metadata.Source == skills.SkillSourceCustom && doc.Metadata.HasScripts {
-		mode, err := skills.CustomSkillScriptExecutionMode(doc.Metadata.RootPath)
-		if err == nil && mode != skills.SkillScriptExecutionManifest {
-			digest, hashErr := skills.SkillPackageSHA256(doc.Metadata.RootPath)
-			if hashErr == nil {
-				if workspacePath, pathErr := skills.PortableSkillWorkspacePath(doc.Metadata.ID, digest); pathErr == nil {
-					payload["session_script"] = map[string]interface{}{
-						"package_sha256": digest,
-						"workspace_path": workspacePath,
-						"execution_tool": "shell_exec",
-						"skill_id":       doc.Metadata.ID,
-						"usage":          "In an approved console Agent runtime, pass skill_id to shell_exec and run Python or Node scripts from $ZGI_SKILL_DIR/scripts/. No dependencies are installed automatically.",
-					}
-				}
-			}
-		}
+	if sessionScript := portableSessionScriptPayload(doc); sessionScript != nil {
+		payload["session_script"] = sessionScript
 	}
 	return payload
+}
+
+func portableSessionScriptPayload(doc *skills.SkillDocument) map[string]interface{} {
+	if doc == nil || doc.Metadata.Source != skills.SkillSourceCustom || !doc.Metadata.HasScripts {
+		return nil
+	}
+	mode, err := skills.CustomSkillScriptExecutionMode(doc.Metadata.RootPath)
+	if err != nil || mode == skills.SkillScriptExecutionManifest {
+		return nil
+	}
+	digest, err := skills.SkillPackageSHA256(doc.Metadata.RootPath)
+	if err != nil {
+		return nil
+	}
+	workspacePath, err := skills.PortableSkillWorkspacePath(doc.Metadata.ID, digest)
+	if err != nil {
+		return nil
+	}
+	return map[string]interface{}{
+		"package_sha256": digest,
+		"workspace_path": workspacePath,
+		"execution_tool": "shell_exec",
+		"skill_id":       doc.Metadata.ID,
+		"usage":          "In an approved console Agent runtime, pass skill_id to shell_exec and run Python or Node scripts from $ZGI_SKILL_DIR/scripts/. No dependencies are installed automatically.",
+	}
 }
 
 func errorPayload(err error) map[string]interface{} {

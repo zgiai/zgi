@@ -1021,7 +1021,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			callEvidence[runtimeStateNativeAgentLoopKey] = req.NativeAgentLoop
 			result := skillStepResult{}
 			if req.NativeAgentLoop && req.NativeSkillSession != nil {
-				if control, handled := r.handleNativeSessionControlCall(ctx, call, req.NativeSkillSession); handled {
+				if control, handled := r.handleNativeSessionControlCall(ctx, call, req.NativeSkillSession, resolved, req.RuntimeTools); handled {
 					result = control.step
 					if len(control.instructions) > 0 {
 						roundDeferredSystemMessages = append(roundDeferredSystemMessages, control.instructions...)

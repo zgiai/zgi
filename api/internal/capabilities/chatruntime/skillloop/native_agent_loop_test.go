@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -304,6 +307,39 @@ func TestRunnerNativeAgentLoopActivatesSkillBeforeDirectBusinessCall(t *testing.
 	assertNativeProcessCommentaryBeforeSkillCall(t, events)
 	assertNativeCallEventsWithoutLoadEvents(t, events)
 	assertNoNativeActionProgress(t, events)
+}
+
+func TestNativeSkillActivationOnlyExposesSessionScriptWithConsoleShell(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "scripts"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "SKILL.md"), []byte("---\nname: portable-skill\ndescription: Run a bundled script.\n---\nRun scripts/process.py.\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "scripts", "process.py"), []byte("print('ok')\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runtime := skills.NewRuntime(nil, nil)
+	doc, err := runtime.LoadCustomSkillDocument(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{doc}}
+	catalog := skills.BuildNativeSkillCatalog(resolved, nil, skills.DefaultNativeSkillCatalogBudgetChars, 0, nil)
+	session := skills.NewNativeSkillSession(runtime, resolved, catalog, skills.NativeToolSetOptions{BudgetChars: 10000})
+	call := adapter.ToolCall{ID: "activate-portable", Function: adapter.FunctionCall{Name: skills.MetaToolActivateSkills, Arguments: `{"skill_ids":["portable-skill"]}`}}
+	runner := &Runner{}
+	withoutShell, handled := runner.handleNativeSessionControlCall(t.Context(), call, session, resolved, nil)
+	if !handled || strings.Contains(fmt.Sprint(withoutShell.step.toolMessage.Content), "session_scripts") {
+		t.Fatalf("non-console activation exposed execution path: %#v", withoutShell.step.toolMessage)
+	}
+	shell := RuntimeTool{Definition: adapter.Tool{Function: adapter.Function{Name: "shell_exec"}}, Handler: func(context.Context, adapter.ToolCall) RuntimeToolResult { return RuntimeToolResult{} }}
+	withShell, handled := runner.handleNativeSessionControlCall(t.Context(), call, session, resolved, []RuntimeTool{shell})
+	message := fmt.Sprint(withShell.step.toolMessage.Content)
+	if !handled || !strings.Contains(message, "session_scripts") || !strings.Contains(message, ".zgi/skills/portable-skill/") || !strings.Contains(message, "package_sha256") {
+		t.Fatalf("console activation missing versioned script path: %s", message)
+	}
 }
 
 func TestRunnerNativeToolNarrationDoesNotBlockBusinessTool(t *testing.T) {
