@@ -39,6 +39,11 @@ var webFS embed.FS
 
 const statusClientClosedRequest = 499
 
+// Skill archives are sent as Base64 inside a JSON request. Keep enough room
+// for the encoded 64 MiB archive and request metadata even when the generic
+// per-file limit is configured lower than the Skill package contract.
+const skillPackageArchiveRequestOverhead = 1 * 1024 * 1024
+
 type Server struct {
 	config    config.Config
 	store     *storage.Store
@@ -2000,7 +2005,14 @@ func (s *Server) maxFileUploadRequestBytes() int64 {
 }
 
 func (s *Server) maxArchiveUploadRequestBytes() int64 {
-	return s.maxFileSizeBytes()*256*2 + 64*1024
+	genericLimit := s.maxFileSizeBytes()*256*2 + 64*1024
+	return maxInt64(genericLimit, maxSkillPackageArchiveRequestBytes())
+}
+
+func maxSkillPackageArchiveRequestBytes() int64 {
+	archiveBytes := int64(executor.SkillPackageMaxExtractedBytes)
+	encodedBytes := ((archiveBytes + 2) / 3) * 4
+	return encodedBytes + skillPackageArchiveRequestOverhead
 }
 
 func (s *Server) maxFileSizeBytes() int64 {

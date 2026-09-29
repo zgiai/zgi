@@ -49,16 +49,19 @@ type Service struct {
 // Skill package archives have a stable cross-service contract. Keep these
 // values aligned with the API's custom-skill import and snapshot limits.
 const (
-	maxSkillPackageArchiveFiles     = 600
-	maxSkillPackageArchiveFileSize  = 10 * 1024 * 1024
-	maxSkillPackageArchiveTotalSize = 64 * 1024 * 1024
+	maxSkillPackageArchiveFiles    = 600
+	maxSkillPackageArchiveFileSize = 10 * 1024 * 1024
+	// SkillPackageMaxExtractedBytes is the maximum extracted size accepted for a
+	// Skill package. The app layer uses it to size the JSON transport cap before
+	// the request can be decoded as a Skill upload.
+	SkillPackageMaxExtractedBytes = 64 * 1024 * 1024
 )
 
 func skillPackageArchiveLimits() archiveLimits {
 	return archiveLimits{
 		maxFiles:     maxSkillPackageArchiveFiles,
 		maxFileSize:  maxSkillPackageArchiveFileSize,
-		maxTotalSize: maxSkillPackageArchiveTotalSize,
+		maxTotalSize: SkillPackageMaxExtractedBytes,
 	}
 }
 
