@@ -223,6 +223,7 @@ type fakeBackend struct {
 	suspendCalls int
 	destroyCalls int
 	createErr    error
+	destroyErr   error
 }
 
 func (b *fakeBackend) CreateBinding(_ context.Context, spec CreateSpec) (Allocation, error) {
@@ -243,7 +244,7 @@ func (b *fakeBackend) DestroyBinding(context.Context, Allocation) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.destroyCalls++
-	return nil
+	return b.destroyErr
 }
 
 type memoryRepository struct {
@@ -302,4 +303,46 @@ func (r *memoryRepository) EnqueueCleanup(_ context.Context, task CleanupTask) e
 	defer r.mu.Unlock()
 	r.cleanups = append(r.cleanups, task)
 	return nil
+}
+
+func (r *memoryRepository) ClaimCleanup(_ context.Context, ownerID string, now time.Time, leaseExpiresAt time.Time) (CleanupTask, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for index := range r.cleanups {
+		task := &r.cleanups[index]
+		due := (task.Status == "pending" || task.Status == "retrying") && !task.NotBefore.After(now)
+		expired := task.Status == "running" && task.LeaseExpiresAt != nil && !task.LeaseExpiresAt.After(now)
+		if !due && !expired {
+			continue
+		}
+		task.Status = "running"
+		task.Attempts++
+		task.LeaseOwner = ownerID
+		task.LeaseExpiresAt = &leaseExpiresAt
+		task.UpdatedAt = now
+		return *task, true, nil
+	}
+	return CleanupTask{}, false, nil
+}
+
+func (r *memoryRepository) CompleteCleanup(_ context.Context, taskID string, ownerID string, succeeded bool, lastError string, notBefore time.Time, now time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for index := range r.cleanups {
+		task := &r.cleanups[index]
+		if task.ID != taskID || task.LeaseOwner != ownerID || task.Status != "running" || task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.After(now) {
+			continue
+		}
+		task.Status = "retrying"
+		if succeeded {
+			task.Status = "completed"
+		}
+		task.LastError = lastError
+		task.NotBefore = notBefore
+		task.LeaseOwner = ""
+		task.LeaseExpiresAt = nil
+		task.UpdatedAt = now
+		return nil
+	}
+	return ErrCleanupClaimLost
 }

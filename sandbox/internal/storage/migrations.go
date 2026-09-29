@@ -122,6 +122,15 @@ var schemaMigrations = []schemaMigration{
 			`CREATE INDEX idx_agent_runtime_cleanup_pending ON agent_runtime_cleanup_tasks (status, not_before);`,
 		},
 	},
+	{
+		version:     2026092902,
+		description: "agent runtime cleanup claim leases",
+		statements: []string{
+			`ALTER TABLE agent_runtime_cleanup_tasks ADD COLUMN lease_owner TEXT NOT NULL DEFAULT '';`,
+			`ALTER TABLE agent_runtime_cleanup_tasks ADD COLUMN lease_expires_at TIMESTAMPTZ;`,
+			`CREATE INDEX idx_agent_runtime_cleanup_claims ON agent_runtime_cleanup_tasks (status, lease_expires_at, not_before);`,
+		},
+	},
 }
 
 func (s *Store) applyMigrations(ctx context.Context) error {

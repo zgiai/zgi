@@ -23,7 +23,7 @@ Work only in the existing runtime workspace integration worktree. At each iterat
 | Stage | Status | Verified evidence |
 |---|---|---|
 | M0 baseline | In progress | Architecture and business plans are present on the implementation branch. Go 1.26.2 Linux API and Sandbox baselines plus local template smoke tests are recorded below; black-box and secure-runtime checks remain. |
-| M1 control plane | In progress | Versioned resource tables, idempotent Binding state transitions, tenant ownership, generation fencing, cleanup records, fake-backend tests, real PostgreSQL migration tests, and Linux race tests are present. Lease ownership and the cleanup reconciler remain before M1 exit. |
+| M1 control plane | Complete | Versioned resource tables, idempotent Binding state transitions, tenant ownership, generation fencing, admission leases, leased cleanup reconciliation, fake-backend tests, real PostgreSQL migration tests, and Linux race tests pass. HTTP exposure remains intentionally deferred until the M2 data plane exists. |
 | M2 local backend | Not started | Requires a real Linux gVisor integration run. |
 | M3 managed cloud backend | Not started | Requires a real E2B integration run and cleanup evidence. |
 | M4 first user release | Not started | Requires the authenticated console CSV acceptance flow and legacy regression. |
@@ -50,9 +50,9 @@ The following checks define the baseline. Record exact results when executed wit
 
 | Check | Command | Result |
 |---|---|---|
-| State-machine unit tests | `go test ./internal/agentruntime` from `sandbox/` | Passed. Covers idempotent creation, idempotency-key conflicts, cross-tenant hiding, generation fencing, pause recovery, repeated deletion, concurrent creation, and compensating cleanup. |
+| State-machine unit tests | `go test ./internal/agentruntime` from `sandbox/` | Passed. Covers idempotent creation, idempotency-key conflicts, cross-tenant hiding, generation fencing, pause recovery, repeated deletion, concurrent creation, compensating cleanup, expired-claim recovery, cleanup retry, and lease-owner fencing. |
 | State-machine race test | `CGO_ENABLED=1 go test -race ./internal/agentruntime` in `golang:1.26.2-bookworm` | Passed. |
-| PostgreSQL migration/repository | `go test -count=1 -v ./internal/storage` against temporary `postgres:16-alpine` | Passed, including migration ledger, idempotent reservation, generation CAS, and all pre-existing storage tests. The temporary database used no persistent volume and was removed after the run. |
+| PostgreSQL migration/repository | `go test -count=1 -v ./internal/storage` against temporary `postgres:16-alpine` | Passed, including migration ledger, idempotent reservation, generation CAS, lease acquisition/renewal/release, exclusive cleanup claims, expired-claim recovery, and all pre-existing storage tests. The temporary database used no persistent volume and was removed after the run. |
 | Static analysis | `go vet ./internal/agentruntime ./internal/storage` from `sandbox/` | Passed. |
 
 ## Compatibility gates

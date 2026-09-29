@@ -16,6 +16,8 @@ var (
 	ErrGenerationConflict  = errors.New("agent runtime generation conflict")
 	ErrInvalidTransition   = errors.New("invalid agent runtime state transition")
 	ErrBackendUnavailable  = errors.New("agent runtime backend unavailable")
+	ErrLeaseHeld           = errors.New("agent runtime lease is held by another owner")
+	ErrCleanupClaimLost    = errors.New("agent runtime cleanup claim lost")
 )
 
 type BindingStatus string
@@ -59,18 +61,30 @@ type Binding struct {
 }
 
 type CleanupTask struct {
-	ID           string
-	ResourceType string
-	ResourceID   string
-	Backend      string
-	BackendRef   string
-	Action       string
-	Status       string
-	Attempts     int
-	LastError    string
-	NotBefore    time.Time
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID             string
+	ResourceType   string
+	ResourceID     string
+	Backend        string
+	BackendRef     string
+	Action         string
+	Status         string
+	Attempts       int
+	LastError      string
+	NotBefore      time.Time
+	LeaseOwner     string
+	LeaseExpiresAt *time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+type AdmissionLease struct {
+	ID         string
+	BindingID  string
+	OwnerID    string
+	Generation int64
+	ExpiresAt  time.Time
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // Allocation contains only opaque backend handles. Product ownership and
@@ -109,4 +123,16 @@ type Repository interface {
 	Binding(context.Context, string) (Binding, error)
 	UpdateBinding(context.Context, Binding, int64) error
 	EnqueueCleanup(context.Context, CleanupTask) error
+}
+
+type CleanupRepository interface {
+	Repository
+	ClaimCleanup(context.Context, string, time.Time, time.Time) (CleanupTask, bool, error)
+	CompleteCleanup(context.Context, string, string, bool, string, time.Time, time.Time) error
+}
+
+type LeaseRepository interface {
+	AcquireLease(context.Context, AdmissionLease, time.Time) (AdmissionLease, error)
+	RenewLease(context.Context, string, string, int64, time.Time, time.Time) (AdmissionLease, error)
+	ReleaseLease(context.Context, string, string, int64) error
 }
