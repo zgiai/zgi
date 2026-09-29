@@ -219,6 +219,9 @@ type RunConfig struct {
 	// RuntimeTools are caller-scoped first-party capabilities supplied by a
 	// subject adapter. They remain separate from installable Skills.
 	RuntimeTools []skillloop.RuntimeTool
+	// RuntimeToolFactory binds caller-scoped tools to the prepared conversation.
+	// It is invoked only during execution, after conversation ownership is known.
+	RuntimeToolFactory func(*PreparedChat) []skillloop.RuntimeTool
 	// RuntimeInputPolicy enables durable text submitted while this run is active.
 	// It is opt-in so external APIs, workflows, automations, and autonomous
 	// subjects preserve their existing busy-conversation behavior.

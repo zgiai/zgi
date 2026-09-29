@@ -56,6 +56,9 @@ func (s *service) runPreparedToolLoop(
 	}
 	timeline := newProcessTimelineRecorder(ctx, persistCtx, s, prepared, onEvent)
 	runtimeTools := append([]skillloop.RuntimeTool(nil), prepared.parts.RuntimeTools...)
+	if prepared.RunConfig.RuntimeToolFactory != nil {
+		runtimeTools = append(runtimeTools, prepared.RunConfig.RuntimeToolFactory(prepared)...)
+	}
 	runtimeTools = append(runtimeTools, s.agentMemoryRuntimeTools(persistCtx, prepared, timeline)...)
 	resolved := &skills.ResolvedSkills{}
 	if chatPartsBusinessSkillsEnabled(prepared.parts) {

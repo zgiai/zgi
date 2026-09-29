@@ -284,6 +284,34 @@ func TestAgentExecutionRuntimeConfigDefaultsOff(t *testing.T) {
 	}
 }
 
+func TestAgentExecutionRuntimeRollbackRestoresSnapshot(t *testing.T) {
+	tests := []struct {
+		name     string
+		snapshot *dto.AgentExecutionRuntime
+		want     *dto.AgentExecutionRuntime
+	}{
+		{name: "legacy snapshot", want: &dto.AgentExecutionRuntime{}},
+		{name: "explicitly disabled", snapshot: &dto.AgentExecutionRuntime{Enabled: false}, want: &dto.AgentExecutionRuntime{}},
+		{name: "enabled snapshot", snapshot: &dto.AgentExecutionRuntime{Enabled: true, ProfileID: "local-standard", PolicyID: "offline-standard"}, want: &dto.AgentExecutionRuntime{Enabled: true, ProfileID: "local-standard", PolicyID: "offline-standard"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &AgentsConfig{}
+			_, err := applyAgentConfigRequestToDraft(cfg, dto.AgentConfigRequest{ExecutionRuntime: &dto.AgentExecutionRuntime{Enabled: true, ProfileID: "current", PolicyID: "current"}})
+			if err != nil {
+				t.Fatalf("apply current config: %v", err)
+			}
+			_, err = applyAgentConfigRequestToDraft(cfg, agentConfigRequestForRollback(dto.AgentConfigResponse{ExecutionRuntime: tt.snapshot}))
+			if err != nil {
+				t.Fatalf("apply rollback config: %v", err)
+			}
+			if got := agentConfigResponse("agent-1", cfg).ExecutionRuntime; !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("rolled-back execution runtime = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestHydrateAgentWorkflowBindingRuntimeInputsUsesPinnedVersionSchema(t *testing.T) {
 	db, mock := newRunnableWebAppsMockDB(t)
 	service := &agentsService{db: db}

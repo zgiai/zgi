@@ -1,0 +1,170 @@
+package agents
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+)
+
+const agentExecutionResponseLimit = 2 << 20
+
+type agentExecutionScope struct {
+	OrganizationID string
+	SubjectID      string
+}
+
+type agentExecutionBinding struct {
+	ID         string `json:"id"`
+	Status     string `json:"status"`
+	Generation int64  `json:"generation"`
+}
+
+type agentExecutionJob struct {
+	ID         string `json:"id"`
+	Status     string `json:"status"`
+	Generation int64  `json:"generation"`
+	ExitCode   *int   `json:"exit_code"`
+}
+
+type agentExecutionOutputChunk struct {
+	Sequence int64  `json:"sequence"`
+	Stream   string `json:"stream"`
+	Data     []byte `json:"data"`
+}
+
+type agentExecutionCapabilities struct {
+	Shell       bool   `json:"shell"`
+	NetworkMode string `json:"network_mode"`
+}
+
+type agentExecutionGateway interface {
+	CreateBinding(context.Context, agentExecutionScope, string, string, string, string) (agentExecutionBinding, error)
+	Capabilities(context.Context, agentExecutionScope, string) (agentExecutionCapabilities, error)
+	SubmitJob(context.Context, agentExecutionScope, string, string, string, []string, time.Duration) (agentExecutionJob, error)
+	GetJob(context.Context, agentExecutionScope, string) (agentExecutionJob, error)
+	CancelJob(context.Context, agentExecutionScope, string, int64) error
+	JobOutput(context.Context, agentExecutionScope, string, int64, int) ([]agentExecutionOutputChunk, error)
+}
+
+type agentExecutionHTTPGateway struct {
+	baseURL string
+	apiKey  string
+	client  *http.Client
+}
+
+func agentExecutionGatewayFromEnv() agentExecutionGateway {
+	baseURL := strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_URL"))
+	apiKey := strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_API_KEY"))
+	if !validAgentRuntimeGatewayURL(baseURL) || apiKey == "" {
+		return nil
+	}
+	return &agentExecutionHTTPGateway{
+		baseURL: baseURL, apiKey: apiKey,
+		client: &http.Client{
+			Timeout: 60 * time.Second,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
+	}
+}
+
+func (g *agentExecutionHTTPGateway) request(ctx context.Context, scope agentExecutionScope, method, path string, input any, output any) error {
+	if g == nil || g.client == nil || scope.OrganizationID == "" || scope.SubjectID == "" {
+		return fmt.Errorf("agent execution gateway is unavailable")
+	}
+	var body io.Reader
+	if input != nil {
+		encoded, err := json.Marshal(input)
+		if err != nil {
+			return fmt.Errorf("encode agent execution request: %w", err)
+		}
+		body = bytes.NewReader(encoded)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, g.baseURL+"/v1/agent-runtime/"+path, body)
+	if err != nil {
+		return fmt.Errorf("create agent execution request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+g.apiKey)
+	req.Header.Set("X-ZGI-Organization-ID", scope.OrganizationID)
+	req.Header.Set("X-ZGI-Subject-ID", scope.SubjectID)
+	if input != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := g.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("agent execution gateway request: %w", err)
+	}
+	defer resp.Body.Close()
+	var envelope struct {
+		Data  json.RawMessage `json:"data"`
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, agentExecutionResponseLimit+1)).Decode(&envelope); err != nil {
+		return fmt.Errorf("decode agent execution response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("agent execution gateway returned HTTP %d (%s)", resp.StatusCode, envelope.Error.Code)
+	}
+	if output == nil {
+		return nil
+	}
+	if len(envelope.Data) == 0 || len(envelope.Data) > agentExecutionResponseLimit {
+		return fmt.Errorf("agent execution gateway response is missing or too large")
+	}
+	if err := json.Unmarshal(envelope.Data, output); err != nil {
+		return fmt.Errorf("decode agent execution result: %w", err)
+	}
+	return nil
+}
+
+func (g *agentExecutionHTTPGateway) CreateBinding(ctx context.Context, scope agentExecutionScope, agentID, conversationID, profileID, backend string) (agentExecutionBinding, error) {
+	var result agentExecutionBinding
+	err := g.request(ctx, scope, http.MethodPost, "bindings", map[string]any{
+		"agent_id": agentID, "conversation_id": conversationID, "profile_id": profileID,
+		"backend": backend, "idempotency_key": "conversation:" + conversationID,
+	}, &result)
+	return result, err
+}
+
+func (g *agentExecutionHTTPGateway) Capabilities(ctx context.Context, scope agentExecutionScope, bindingID string) (agentExecutionCapabilities, error) {
+	var result agentExecutionCapabilities
+	err := g.request(ctx, scope, http.MethodGet, "bindings/"+url.PathEscape(bindingID)+"/capabilities", nil, &result)
+	return result, err
+}
+
+func (g *agentExecutionHTTPGateway) SubmitJob(ctx context.Context, scope agentExecutionScope, bindingID, idempotencyKey, command string, args []string, timeout time.Duration) (agentExecutionJob, error) {
+	var result agentExecutionJob
+	err := g.request(ctx, scope, http.MethodPost, "bindings/"+url.PathEscape(bindingID)+"/jobs", map[string]any{
+		"idempotency_key": idempotencyKey, "command": command, "args": args,
+		"timeout_ms": timeout.Milliseconds(),
+	}, &result)
+	return result, err
+}
+
+func (g *agentExecutionHTTPGateway) GetJob(ctx context.Context, scope agentExecutionScope, jobID string) (agentExecutionJob, error) {
+	var result agentExecutionJob
+	err := g.request(ctx, scope, http.MethodGet, "jobs/"+url.PathEscape(jobID), nil, &result)
+	return result, err
+}
+
+func (g *agentExecutionHTTPGateway) CancelJob(ctx context.Context, scope agentExecutionScope, jobID string, generation int64) error {
+	return g.request(ctx, scope, http.MethodPost, "jobs/"+url.PathEscape(jobID)+"/cancel", map[string]any{"generation": generation}, nil)
+}
+
+func (g *agentExecutionHTTPGateway) JobOutput(ctx context.Context, scope agentExecutionScope, jobID string, after int64, limit int) ([]agentExecutionOutputChunk, error) {
+	var result []agentExecutionOutputChunk
+	path := "jobs/" + url.PathEscape(jobID) + "/output?after=" + strconv.FormatInt(after, 10) + "&limit=" + strconv.Itoa(limit)
+	err := g.request(ctx, scope, http.MethodGet, path, nil, &result)
+	return result, err
+}

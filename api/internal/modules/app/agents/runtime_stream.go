@@ -11,6 +11,10 @@ import (
 )
 
 func (h *AgentsHandler) regenerateRuntimeMessage(c *gin.Context, runtimeCtx agentRuntimeContext) {
+	if runtimeCtx.ExecutionError != nil {
+		h.failRuntime(c, runtimeCtx.ExecutionError)
+		return
+	}
 	messageID, ok := uuidParam(c, "message_id")
 	if !ok {
 		return

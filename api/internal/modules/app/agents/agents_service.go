@@ -48,6 +48,7 @@ type agentsService struct {
 	agentBindings             *agentbindings.Repository
 	connectorTargetBindings   connectorbindings.Repository
 	agentModels               agentModelEligibility
+	executionApprovals        agentExecutionApprovals
 	db                        *gorm.DB
 }
 
@@ -102,6 +103,7 @@ func NewAgentsService(
 		agentBindings:             agentbindings.NewRepository(db),
 		connectorTargetBindings:   connectorTargetBindings,
 		agentModels:               agentModels,
+		executionApprovals:        agentExecutionApprovalsFromEnv(),
 		db:                        db,
 	}
 }

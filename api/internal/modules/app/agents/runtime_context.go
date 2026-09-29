@@ -10,6 +10,9 @@ import (
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/util"
+	"github.com/zgiai/zgi/api/pkg/apperror"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
 	"net/http"
@@ -18,9 +21,10 @@ import (
 )
 
 type agentRuntimeContext struct {
-	Scope     runtimeservice.Scope
-	Caller    runtimeservice.Caller
-	RunConfig runtimeservice.RunConfig
+	Scope          runtimeservice.Scope
+	Caller         runtimeservice.Caller
+	RunConfig      runtimeservice.RunConfig
+	ExecutionError error
 }
 
 const agentWorkflowBindingUnavailableCode = "agent_workflow_binding_unavailable"
@@ -200,6 +204,7 @@ func (h *AgentsHandler) agentRuntimeContext(c *gin.Context) (agentRuntimeContext
 		h.failRuntime(c, err)
 		return agentRuntimeContext{}, false
 	}
+	executionError := h.attachConsoleAgentExecutionTools(&runConfig, scope, agentID, config)
 	runConfig.RuntimeInputPolicy = runtimeservice.RuntimeInputPolicyCheckpointAndFollowUp
 	return agentRuntimeContext{
 		Scope: scope,
@@ -208,7 +213,8 @@ func (h *AgentsHandler) agentRuntimeContext(c *gin.Context) (agentRuntimeContext
 			ID:     &agentID,
 			Source: runtimemodel.ConversationSourceConsole,
 		},
-		RunConfig: runConfig,
+		RunConfig:      runConfig,
+		ExecutionError: executionError,
 	}, true
 }
 
@@ -683,6 +689,17 @@ func (h *AgentsHandler) streamRuntimeEvents(c *gin.Context, runtimeCtx agentRunt
 }
 
 func (h *AgentsHandler) failRuntime(c *gin.Context, err error) {
+	if apperror.IsCode(err, AppCodeAgentExecutionRuntimeUnavailable) {
+		if h.appErrorProjector == nil {
+			response.Fail(c, response.ErrInvalidParam)
+			return
+		}
+		locale, _ := appcatalog.ParseLocale(c.GetHeader("Accept-Language"))
+		presentation := h.appErrorProjector.Project(err, locale).Presentation
+		c.Header(apptransport.HeaderApplicationErrorCode, presentation.Code.String())
+		c.JSON(presentation.HTTPStatus, gin.H{"code": presentation.Code.String(), "message": presentation.Message})
+		return
+	}
 	externalInvocation := isExternalAgentInvocation(c)
 	var bindingErr *agentBindingAPIError
 	if errors.As(err, &bindingErr) && bindingErr != nil {

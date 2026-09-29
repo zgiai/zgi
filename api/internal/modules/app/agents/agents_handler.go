@@ -25,6 +25,8 @@ import (
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
 	"gorm.io/gorm"
@@ -44,6 +46,9 @@ type AgentsHandler struct {
 	workflowContinuationRunner workflowContinuationRunner
 	voiceService               *VoiceService
 	speechService              *SpeechService
+	executionApprovals         agentExecutionApprovals
+	executionGateway           agentExecutionGateway
+	appErrorProjector          *apptransport.Projector
 }
 
 type workflowContinuationRunner interface {
@@ -69,6 +74,8 @@ func NewAgentsHandler(appService AgentsService, tenantService interfaces.Workspa
 		organizationService: organizationService,
 		db:                  db,
 		chatRuntimeService:  chatRuntimeService,
+		executionApprovals:  agentExecutionApprovalsFromEnv(),
+		executionGateway:    agentExecutionGatewayFromEnv(),
 	}
 }
 
@@ -86,6 +93,15 @@ func (h *AgentsHandler) SetVoiceService(voiceService *VoiceService) {
 
 func (h *AgentsHandler) SetSpeechService(speechService *SpeechService) {
 	h.speechService = speechService
+}
+
+func (h *AgentsHandler) SetApplicationErrorCatalog(catalog *appcatalog.Catalog) error {
+	projector, err := apptransport.NewProjector(catalog)
+	if err != nil {
+		return err
+	}
+	h.appErrorProjector = projector
+	return nil
 }
 
 func (h *AgentsHandler) SetWorkflowContinuationRunner(runner interface {
@@ -992,6 +1008,10 @@ func (h *AgentsHandler) ChatAgent(c *gin.Context) {
 	scope := runtimeservice.Scope{OrganizationID: organizationID, AccountID: accountID, WorkspaceID: &agentWorkspaceID}
 	runConfig, err := h.agentRunConfig(ctx, scope, agentID.String(), "agent.draft", draft.Config, "account")
 	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	if err := h.attachConsoleAgentExecutionTools(&runConfig, scope, agentID, draft.Config); err != nil {
 		h.failRuntime(c, err)
 		return
 	}

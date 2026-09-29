@@ -752,6 +752,9 @@ func (s *agentsService) PublishAgent(ctx context.Context, agentID, accountID str
 		return nil, err
 	}
 	draftConfig := agentConfigResponse(ag.ID.String(), cfg)
+	if err := s.executionApprovals.validate(organizationID.String(), draftConfig.ExecutionRuntime); err != nil {
+		return nil, err
+	}
 	if err := s.projectOwnedAgentConnectorBindings(ctx, s.db, ag, accountID, draftConfig); err != nil {
 		return nil, err
 	}
@@ -976,6 +979,9 @@ func (s *agentsService) createAgentPublishedVersion(
 		}
 		if bindingHealth.SuspendedCount > 0 && !acknowledgeSuspended {
 			return &agentBindingAPIError{Code: agentBindingsSuspendedCode, Message: "agent has suspended bindings", Data: map[string]interface{}{"binding_health": bindingHealth}}
+		}
+		if err := txService.executionApprovals.validate(txService.organizationIDForAgentWorkspace(ctx, ag.TenantID.String()), currentConfig.ExecutionRuntime); err != nil {
+			return err
 		}
 
 		snapshot := agentConfigSnapshot(ag.ID.String(), &current)
@@ -1262,7 +1268,7 @@ func (s *agentsService) rollbackAgentPublishedVersionCAS(
 		if err := txService.recordUnavailableRestoredConnectors(ctx, tx, ag, actorID, version.VersionUUID, originalConnectorBindings, filtered.ConnectorBindings); err != nil {
 			return err
 		}
-		applied, err := applyAgentConfigRequestToDraft(&current, agentConfigRequestFromResponse(filtered), accountID)
+		applied, err := applyAgentConfigRequestToDraft(&current, agentConfigRequestForRollback(filtered), accountID)
 		if err != nil {
 			return err
 		}
@@ -1360,7 +1366,18 @@ func agentConfigRequestFromResponse(config dto.AgentConfigResponse) dto.AgentCon
 		WorkflowBoundAtUnix:              config.WorkflowBoundAtUnix,
 		ConnectorBindings:                config.ConnectorBindings,
 		BindingAuthorizations:            config.BindingAuthorizations,
+		ExecutionRuntime:                 normalizeAgentExecutionRuntimeConfig(config.ExecutionRuntime),
 	}
+}
+
+func agentConfigRequestForRollback(config dto.AgentConfigResponse) dto.AgentConfigRequest {
+	req := agentConfigRequestFromResponse(config)
+	if req.ExecutionRuntime == nil {
+		// A snapshot predating execution_runtime means that it was disabled.
+		// Unlike a legacy editor save, rollback must restore that state.
+		req.ExecutionRuntime = &dto.AgentExecutionRuntime{}
+	}
+	return req
 }
 
 func (s *agentsService) loadAuthorizedAgentRuntimeDraft(ctx context.Context, agentID, accountID string, ensureConfig bool, permissionCodes ...model.WorkspacePermissionCode) (*Agent, *AgentsConfig, error) {

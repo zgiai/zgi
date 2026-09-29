@@ -147,6 +147,9 @@ func (h *AgentsHandler) runtimeInputFollowUpRunConfig(ctx context.Context, info 
 			return runtimeservice.RunConfig{}, loadErr
 		}
 		runConfig, err = h.agentRunConfig(requestCtx, scope, info.CallerID.String(), "agent.draft", draft.Config, agentmemory.UserScopeAccount)
+		if err == nil {
+			err = h.attachConsoleAgentExecutionTools(&runConfig, scope, info.CallerID, draft.Config)
+		}
 	case runtimemodel.ConversationSourceWebApp:
 		if info.SourceWebAppID == nil || *info.SourceWebAppID == uuid.Nil {
 			return runtimeservice.RunConfig{}, runtimeservice.ErrInvalidInput
