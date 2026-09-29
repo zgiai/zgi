@@ -24,7 +24,7 @@ Work only in the existing runtime workspace integration worktree. At each iterat
 |---|---|---|
 | M0 baseline | In progress | Architecture and business plans are present on the implementation branch. Go 1.26.2 Linux API and Sandbox baselines plus local template smoke tests are recorded below; black-box and secure-runtime checks remain. |
 | M1 control plane | Complete | Versioned resource tables, idempotent Binding state transitions, tenant ownership, generation fencing, admission leases, leased cleanup reconciliation, fake-backend tests, real PostgreSQL migration tests, and Linux race tests pass. HTTP exposure remains intentionally deferred until the M2 data plane exists. |
-| M2 local backend | Not started | Requires a real Linux gVisor integration run. |
+| M2 local backend | In progress | Persistent asynchronous Job records, leased worker claims, chunked stdout/stderr, cancellation, PTY and file-transfer backend contracts, tenant-scoped data-plane services, and Fake Backend tests pass. A real runtime-agent process and containerd + gVisor integration are still required for M2 exit. |
 | M3 managed cloud backend | Not started | Requires a real E2B integration run and cleanup evidence. |
 | M4 first user release | Not started | Requires the authenticated console CSV acceptance flow and legacy regression. |
 | M5 retention and templates | Not started | Requires compute release, restart, restore, and template-isolation evidence. |
@@ -40,7 +40,7 @@ The following checks define the baseline. Record exact results when executed wit
 |---|---|---|
 | Sandbox Go tests | `go test ./...` from `sandbox/` | Go 1.26.2 Linux container: all packages passed except existing `internal/runner` process-tree tests `TestCommandCancellationKillsShellChildren` and `TestCommandTimeoutKillsShellChildren`. Both observed child processes surviving the shell process-group termination. |
 | Sandbox black-box flow | `make test-sandbox-kest` | Pending |
-| Linux secure runtime | `make -C sandbox test-linux-secure` | Pending; requires Linux isolation support |
+| Linux secure runtime | `make -C sandbox test-linux-secure` equivalent in privileged Docker Desktop Linux | Passed all existing secure-backend tests: Python execution, network control, non-root workspace bind, namespaces/read-only root, signal reporting, per-execution process limits, cancellation, timeout, and child reaping. This is the existing bubblewrap/cgroup baseline, not gVisor evidence. |
 | API Script Skill tests | `go test ./internal/modules/skills/...` from `api/` | Passed in a Go 1.26.2 Linux container (`ok`, 3.609s). A Windows Go run exposed two model-channel timing failures, so Linux remains the required baseline environment. |
 | API Script Skill E2E | `make test-api-skill-script-e2e` | Pending; requires a running Sandbox |
 | Python template smoke test | documented example request and Artifact hash | Passed in `python:3.13-bookworm`: compile, valid JSON-object stdout, declared `artifacts/result.json`, invalid-input non-zero exit, SHA-256 `e4fbef670e11e57e1eeaa55de2746bf94ddfbe7aef863159e58fd04cfc074d59`. |
@@ -54,6 +54,15 @@ The following checks define the baseline. Record exact results when executed wit
 | State-machine race test | `CGO_ENABLED=1 go test -race ./internal/agentexecution` in `golang:1.26.2-bookworm` | Passed. |
 | PostgreSQL migration/repository | `go test -count=1 -v ./internal/storage` against temporary `postgres:16-alpine` | Passed, including migration ledger, idempotent reservation, generation CAS, lease acquisition/renewal/release, exclusive cleanup claims, expired-claim recovery, and all pre-existing storage tests. The temporary database used no persistent volume and was removed after the run. |
 | Static analysis | `go vet ./internal/agentexecution ./internal/storage` from `sandbox/` | Passed. |
+
+## M2 verification record
+
+| Check | Command | Result |
+|---|---|---|
+| Data-plane contract tests | `go test ./internal/agentexecution` from `sandbox/` | Passed. Covers idempotent Job submission, tenant isolation, chunked output, worker completion, running-job cancellation, path traversal rejection, and file round trips with a Fake Backend. |
+| Data-plane race test | `CGO_ENABLED=1 go test -race ./internal/agentexecution` in `golang:1.26.2-bookworm` | Passed. |
+| PostgreSQL Job repository | `go test -count=1 -v ./internal/storage` against temporary `postgres:16-alpine` | Passed. Covers Job idempotency, exclusive and expired claims, output sequencing and limits, cancellation, terminal state, and all existing storage tests. |
+| Real local runtime backend | containerd + gVisor contract suite | Pending. No gVisor result is inferred from the existing bubblewrap baseline. |
 
 ## Compatibility gates
 

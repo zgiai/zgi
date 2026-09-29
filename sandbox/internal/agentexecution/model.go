@@ -6,6 +6,7 @@ package agentexecution
 import (
 	"context"
 	"errors"
+	"io"
 	"time"
 )
 
@@ -18,6 +19,9 @@ var (
 	ErrBackendUnavailable  = errors.New("agent runtime backend unavailable")
 	ErrLeaseHeld           = errors.New("agent runtime lease is held by another owner")
 	ErrCleanupClaimLost    = errors.New("agent runtime cleanup claim lost")
+	ErrJobClaimLost        = errors.New("agent execution job claim lost")
+	ErrOutputLimit         = errors.New("agent execution output limit exceeded")
+	ErrInvalidPath         = errors.New("invalid agent execution workspace path")
 )
 
 type BindingStatus string
@@ -87,6 +91,116 @@ type AdmissionLease struct {
 	UpdatedAt  time.Time
 }
 
+type JobStatus string
+
+const (
+	JobStatusQueued    JobStatus = "queued"
+	JobStatusRunning   JobStatus = "running"
+	JobStatusSucceeded JobStatus = "succeeded"
+	JobStatusFailed    JobStatus = "failed"
+	JobStatusCanceled  JobStatus = "canceled"
+)
+
+type Job struct {
+	ID              string
+	BindingID       string
+	OrganizationID  string
+	SubjectID       string
+	Backend         string
+	BackendRef      string
+	WorkspaceRef    string
+	IdempotencyKey  string
+	RequestHash     string
+	Status          JobStatus
+	Generation      int64
+	Command         string
+	Args            []string
+	Environment     map[string]string
+	WorkDir         string
+	PTY             bool
+	PTYColumns      uint16
+	PTYRows         uint16
+	Timeout         time.Duration
+	ExitCode        *int
+	FailureReason   string
+	CancelRequested bool
+	ClaimOwner      string
+	ClaimExpiresAt  *time.Time
+	Attempts        int
+	StdoutBytes     int64
+	StderrBytes     int64
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	StartedAt       *time.Time
+	FinishedAt      *time.Time
+}
+
+type OutputStream string
+
+const (
+	OutputStreamStdout OutputStream = "stdout"
+	OutputStreamStderr OutputStream = "stderr"
+)
+
+type OutputChunk struct {
+	JobID     string
+	Sequence  int64
+	Stream    OutputStream
+	Data      []byte
+	CreatedAt time.Time
+}
+
+type JobSpec struct {
+	JobID       string
+	Command     string
+	Args        []string
+	Environment map[string]string
+	WorkDir     string
+	PTY         bool
+	PTYColumns  uint16
+	PTYRows     uint16
+	Timeout     time.Duration
+}
+
+type JobResult struct {
+	ExitCode int
+	Canceled bool
+	Error    string
+}
+
+type RuntimeCapabilities struct {
+	Shell            bool
+	PTY              bool
+	FileTransfer     bool
+	NetworkMode      string
+	MaxUploadBytes   int64
+	MaxDownloadBytes int64
+}
+
+type FileInfo struct {
+	Path        string
+	Size        int64
+	Mode        uint32
+	ModifiedAt  time.Time
+	ContentType string
+}
+
+type RunningJob interface {
+	Wait(context.Context) (JobResult, error)
+	Cancel(context.Context) error
+	ResizePTY(context.Context, uint16, uint16) error
+}
+
+// ExecutionBackend is the data-plane contract implemented by a runtime
+// worker. StartJob must be idempotent for a given JobID because an expired
+// worker claim can be recovered after a control-plane crash.
+type ExecutionBackend interface {
+	Capabilities(context.Context, Allocation) (RuntimeCapabilities, error)
+	StartJob(context.Context, Allocation, JobSpec, func(OutputStream, []byte) error) (RunningJob, error)
+	UploadFile(context.Context, Allocation, string, io.Reader, int64) (FileInfo, error)
+	DownloadFile(context.Context, Allocation, string) (io.ReadCloser, FileInfo, error)
+}
+
 // Allocation contains only opaque backend handles. Product ownership and
 // authorization remain in Binding and are never delegated to a backend.
 type Allocation struct {
@@ -135,4 +249,20 @@ type LeaseRepository interface {
 	AcquireLease(context.Context, AdmissionLease, time.Time) (AdmissionLease, error)
 	RenewLease(context.Context, string, string, int64, time.Time, time.Time) (AdmissionLease, error)
 	ReleaseLease(context.Context, string, string, int64) error
+}
+
+type BindingReader interface {
+	Binding(context.Context, string) (Binding, error)
+}
+
+type JobRepository interface {
+	CreateJob(context.Context, Job) (job Job, created bool, err error)
+	Job(context.Context, string) (Job, error)
+	ClaimJob(context.Context, string, time.Time, time.Time) (job Job, claimed bool, err error)
+	RenewJobClaim(context.Context, string, string, time.Time, time.Time) error
+	AppendJobOutput(context.Context, string, OutputStream, []byte, int64, time.Time) (OutputChunk, error)
+	JobCancellationRequested(context.Context, string) (bool, error)
+	CompleteJob(context.Context, string, string, JobResult, time.Time) (Job, error)
+	RequestJobCancellation(context.Context, string, int64, time.Time) (Job, error)
+	JobOutput(context.Context, string, int64, int) ([]OutputChunk, error)
 }

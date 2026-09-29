@@ -131,6 +131,42 @@ var schemaMigrations = []schemaMigration{
 			`CREATE INDEX idx_agent_runtime_cleanup_claims ON agent_runtime_cleanup_tasks (status, lease_expires_at, not_before);`,
 		},
 	},
+	{
+		version:     2026092903,
+		description: "agent execution asynchronous jobs",
+		statements: []string{
+			`ALTER TABLE agent_runtime_jobs ADD COLUMN backend TEXT NOT NULL DEFAULT '';`,
+			`ALTER TABLE agent_runtime_jobs ADD COLUMN backend_ref TEXT NOT NULL DEFAULT '';`,
+			`ALTER TABLE agent_runtime_jobs ADD COLUMN workspace_ref TEXT NOT NULL DEFAULT '';`,
+			`ALTER TABLE agent_runtime_jobs ADD COLUMN idempotency_key TEXT NOT NULL DEFAULT '';`,
+			`ALTER TABLE agent_runtime_jobs ADD COLUMN request_hash TEXT NOT NULL DEFAULT '';`,
+			`ALTER TABLE agent_runtime_jobs ADD COLUMN command TEXT NOT NULL DEFAULT '';`,
+			`ALTER TABLE agent_runtime_jobs ADD COLUMN args_json JSONB NOT NULL DEFAULT '[]'::jsonb;`,
+			`ALTER TABLE agent_runtime_jobs ADD COLUMN environment_json JSONB NOT NULL DEFAULT '{}'::jsonb;`,
+			`ALTER TABLE agent_runtime_jobs ADD COLUMN work_dir TEXT NOT NULL DEFAULT '';`,
+			`ALTER TABLE agent_runtime_jobs ADD COLUMN pty BOOLEAN NOT NULL DEFAULT false;`,
+			`ALTER TABLE agent_runtime_jobs ADD COLUMN pty_columns INTEGER NOT NULL DEFAULT 0;`,
+			`ALTER TABLE agent_runtime_jobs ADD COLUMN pty_rows INTEGER NOT NULL DEFAULT 0;`,
+			`ALTER TABLE agent_runtime_jobs ADD COLUMN timeout_ms BIGINT NOT NULL DEFAULT 0;`,
+			`ALTER TABLE agent_runtime_jobs ADD COLUMN cancel_requested BOOLEAN NOT NULL DEFAULT false;`,
+			`ALTER TABLE agent_runtime_jobs ADD COLUMN claim_owner TEXT NOT NULL DEFAULT '';`,
+			`ALTER TABLE agent_runtime_jobs ADD COLUMN claim_expires_at TIMESTAMPTZ;`,
+			`ALTER TABLE agent_runtime_jobs ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;`,
+			`ALTER TABLE agent_runtime_jobs ADD COLUMN stdout_bytes BIGINT NOT NULL DEFAULT 0;`,
+			`ALTER TABLE agent_runtime_jobs ADD COLUMN stderr_bytes BIGINT NOT NULL DEFAULT 0;`,
+			`ALTER TABLE agent_runtime_jobs ADD COLUMN next_output_sequence BIGINT NOT NULL DEFAULT 0;`,
+			`CREATE UNIQUE INDEX idx_agent_runtime_jobs_idempotency ON agent_runtime_jobs (binding_id, idempotency_key) WHERE idempotency_key <> '';`,
+			`CREATE INDEX idx_agent_runtime_jobs_claim ON agent_runtime_jobs (status, claim_expires_at, created_at);`,
+			`CREATE TABLE agent_runtime_job_output_chunks (
+				job_id TEXT NOT NULL,
+				sequence BIGINT NOT NULL,
+				stream TEXT NOT NULL,
+				data BYTEA NOT NULL,
+				created_at TIMESTAMPTZ NOT NULL,
+				PRIMARY KEY (job_id, sequence)
+			);`,
+		},
+	},
 }
 
 func (s *Store) applyMigrations(ctx context.Context) error {

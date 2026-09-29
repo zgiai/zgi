@@ -172,3 +172,95 @@ func TestAgentRuntimeLeaseAndCleanupClaims(t *testing.T) {
 		t.Fatalf("recover expired cleanup: cleanup=%+v ok=%v error=%v", claimed, ok, err)
 	}
 }
+
+func TestAgentExecutionJobRepository(t *testing.T) {
+	dsn := testutil.CreateTestPostgresDSN(t)
+	store, err := Open(config.Config{DatabaseURL: dsn, MaxWorkers: 1})
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	job := testAgentExecutionJob(now, "job-1", "request-1")
+	created, wasCreated, err := store.CreateJob(context.Background(), job)
+	if err != nil || !wasCreated {
+		t.Fatalf("create job: created=%v error=%v", wasCreated, err)
+	}
+	duplicate := job
+	duplicate.ID = "job-other"
+	duplicate.RequestHash = "different"
+	existing, wasCreated, err := store.CreateJob(context.Background(), duplicate)
+	if err != nil || wasCreated || existing.ID != job.ID {
+		t.Fatalf("duplicate job: job=%+v created=%v error=%v", existing, wasCreated, err)
+	}
+
+	claimed, ok, err := store.ClaimJob(context.Background(), "worker-1", now, now.Add(time.Minute))
+	if err != nil || !ok {
+		t.Fatalf("claim job: ok=%v error=%v", ok, err)
+	}
+	if claimed.Status != agentruntime.JobStatusRunning || claimed.Generation != created.Generation+1 {
+		t.Fatalf("claimed job = %+v", claimed)
+	}
+	first, err := store.AppendJobOutput(context.Background(), job.ID, agentruntime.OutputStreamStdout, []byte("hello"), 16, now)
+	if err != nil {
+		t.Fatalf("append stdout: %v", err)
+	}
+	second, err := store.AppendJobOutput(context.Background(), job.ID, agentruntime.OutputStreamStderr, []byte("warn"), 16, now)
+	if err != nil {
+		t.Fatalf("append stderr: %v", err)
+	}
+	if first.Sequence != 0 || second.Sequence != 1 {
+		t.Fatalf("output sequences = %d, %d", first.Sequence, second.Sequence)
+	}
+	if _, err := store.AppendJobOutput(context.Background(), job.ID, agentruntime.OutputStreamStdout, []byte("too-large"), 16, now); !errors.Is(err, agentruntime.ErrOutputLimit) {
+		t.Fatalf("output limit error = %v, want ErrOutputLimit", err)
+	}
+	chunks, err := store.JobOutput(context.Background(), job.ID, 0, 10)
+	if err != nil || len(chunks) != 1 || chunks[0].Sequence != 1 {
+		t.Fatalf("paged output = %+v error=%v", chunks, err)
+	}
+	cancelRequested, err := store.RequestJobCancellation(context.Background(), job.ID, claimed.Generation, now.Add(time.Second))
+	if err != nil || !cancelRequested.CancelRequested {
+		t.Fatalf("request cancellation: job=%+v error=%v", cancelRequested, err)
+	}
+	completed, err := store.CompleteJob(context.Background(), job.ID, "worker-1", agentruntime.JobResult{ExitCode: 0}, now.Add(2*time.Second))
+	if err != nil {
+		t.Fatalf("complete canceled job: %v", err)
+	}
+	if completed.Status != agentruntime.JobStatusCanceled {
+		t.Fatalf("completed status = %q, want canceled", completed.Status)
+	}
+
+	job = testAgentExecutionJob(now, "job-2", "request-2")
+	if _, _, err := store.CreateJob(context.Background(), job); err != nil {
+		t.Fatalf("create recoverable job: %v", err)
+	}
+	claimed, ok, err = store.ClaimJob(context.Background(), "worker-dead", now, now.Add(time.Minute))
+	if err != nil || !ok {
+		t.Fatalf("claim recoverable job: ok=%v error=%v", ok, err)
+	}
+	afterExpiry := now.Add(2 * time.Minute)
+	if err := store.RenewJobClaim(context.Background(), claimed.ID, "worker-dead", afterExpiry, afterExpiry.Add(time.Minute)); !errors.Is(err, agentruntime.ErrJobClaimLost) {
+		t.Fatalf("renew expired claim error = %v, want claim lost", err)
+	}
+	recovered, ok, err := store.ClaimJob(context.Background(), "worker-recovery", afterExpiry, afterExpiry.Add(time.Minute))
+	if err != nil || !ok || recovered.Attempts != 2 {
+		t.Fatalf("recover job: job=%+v ok=%v error=%v", recovered, ok, err)
+	}
+	if _, err := store.CompleteJob(context.Background(), recovered.ID, "worker-recovery", agentruntime.JobResult{ExitCode: 0}, afterExpiry.Add(time.Second)); err != nil {
+		t.Fatalf("complete recovered job: %v", err)
+	}
+}
+
+func testAgentExecutionJob(now time.Time, id string, idempotencyKey string) agentruntime.Job {
+	return agentruntime.Job{
+		ID: id, BindingID: "binding-1", OrganizationID: "org-1", SubjectID: "user-1",
+		Backend: "fake", BackendRef: "backend-1", WorkspaceRef: "workspace-1",
+		IdempotencyKey: idempotencyKey, RequestHash: "hash-" + id,
+		Status: agentruntime.JobStatusQueued, Generation: 1,
+		Command: "python3", Args: []string{"-c", "print('ok')"},
+		Environment: map[string]string{"LANG": "C.UTF-8"}, WorkDir: "workspace",
+		Timeout: time.Minute, CreatedAt: now, UpdatedAt: now,
+	}
+}
