@@ -1,6 +1,6 @@
 SHELL := /bin/sh
 
-.PHONY: fmt test build check run kest test-linux-secure test-agent-runtime-containerd test-agent-runtime-e2b check-docker-entrypoint check-config-docs profile-build-stdlib profile-build-scientific-data build-agent-runtime-image build-agent-runtime-worker
+.PHONY: fmt test build check run kest test-linux-secure test-agent-runtime-containerd test-agent-runtime-e2b check-docker-entrypoint check-config-docs profile-build-stdlib profile-build-scientific-data build-agent-runtime-image build-agent-runtime-worker prepare-agent-runtime-e2b
 .PHONY: docker-up docker-down docker-logs
 .PHONY: docker-config
 
@@ -51,6 +51,10 @@ build-agent-runtime-image:
 
 build-agent-runtime-worker:
 	CGO_ENABLED=0 GOOS=linux go build -trimpath -o bin/zgi-agent-runtime-worker ./cmd/agentworker
+
+prepare-agent-runtime-e2b:
+	mkdir -p e2b-template-build
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o e2b-template-build/zgi-runtime-agent ./cmd/runtimeagent
 
 docker-up:
 	./scripts/start-docker

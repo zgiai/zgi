@@ -18,6 +18,7 @@ coverage/
 *.exe
 vendor/
 tmp/
+sandbox/e2b-template-build/
 .tmp/
 docker/docker-compose.yaml
 .qa-state.json
