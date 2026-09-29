@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/resourcebindings"
+	datasetmodel "github.com/zgiai/zgi/api/internal/modules/dataset/model"
 )
 
 // ListResourceCandidates projects existing workspace resources without exposing credentials.
@@ -44,6 +45,7 @@ func (r *GormRepository) listKnowledgeCandidates(ctx context.Context, scope Scop
 	err := r.db.WithContext(ctx).Table("datasets").
 		Select("id, name, COALESCE(description, '') AS description, provider, updated_at").
 		Where("organization_id = ? AND workspace_id = ?", scope.OrganizationID, scope.WorkspaceID).
+		Where("provider <> ?", datasetmodel.ProviderDigitalHumanMemory).
 		Order("LOWER(name) ASC, id ASC").Scan(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("list digital human knowledge candidates: %w", err)

@@ -94,12 +94,15 @@ type KnowledgeRetrieveRequest struct {
 	Query             string
 	DatasetIDs        []string
 	AgentBindingGrant bool
-	TopK              int
-	RetrievalMode     string
-	FallbackPolicy    string
-	RetrievalConfig   map[string]interface{}
-	ContextSeparator  string
-	MaxContextChars   int
+	// AllowRuntimeManagedDataset is reserved for DigitalHuman's internal
+	// projection bridge. Public tools and resource bindings must leave it false.
+	AllowRuntimeManagedDataset bool
+	TopK                       int
+	RetrievalMode              string
+	FallbackPolicy             string
+	RetrievalConfig            map[string]interface{}
+	ContextSeparator           string
+	MaxContextChars            int
 }
 
 // KnowledgeRetrieverResource is a compact citation/resource payload for tools.
@@ -328,7 +331,7 @@ func (s *KnowledgeRetrievalService) ListAccessibleDatasetCandidates(ctx context.
 
 	dbQuery := s.db.WithContext(ctx).
 		Model(&dataset_model.Dataset{}).
-		Where("workspace_id IN ?", workspaceIDs)
+		Where("workspace_id IN ? AND provider <> '"+dataset_model.ProviderDigitalHumanMemory+"'", workspaceIDs)
 	if search := strings.TrimSpace(query); search != "" {
 		pattern := "%" + strings.ToLower(search) + "%"
 		dbQuery = dbQuery.Where(
@@ -433,7 +436,7 @@ func (s *KnowledgeRetrievalService) Retrieve(ctx context.Context, req KnowledgeR
 	scoredRecords := make([]scoredKnowledgeRecord, 0)
 	graphExecutions := make([]*dto.GraphExecution, 0)
 	for _, datasetID := range datasetIDs {
-		dataset, err := s.accessibleKnowledgeDataset(ctx, datasetID, req.Scope, req.AgentBindingGrant)
+		dataset, err := s.accessibleKnowledgeDataset(ctx, datasetID, req.Scope, req.AgentBindingGrant, req.AllowRuntimeManagedDataset)
 		if err != nil {
 			return nil, fmt.Errorf("dataset %s is not accessible: %w", datasetID, err)
 		}
@@ -521,7 +524,7 @@ func (s *KnowledgeRetrievalService) RetrieveAgentKnowledge(ctx context.Context, 
 // ValidateAccessibleDatasets verifies that accountID can access every dataset in ids now.
 func (s *KnowledgeRetrievalService) ValidateAccessibleDatasets(ctx context.Context, scope KnowledgeScope, ids []string) error {
 	for _, datasetID := range normalizeStringList(ids) {
-		if _, err := s.accessibleKnowledgeDataset(ctx, datasetID, scope, false); err != nil {
+		if _, err := s.accessibleKnowledgeDataset(ctx, datasetID, scope, false, false); err != nil {
 			return fmt.Errorf("dataset %s is not accessible: %w", datasetID, err)
 		}
 	}
@@ -564,7 +567,7 @@ func (s *KnowledgeRetrievalService) findAccessibleDatasets(ctx context.Context, 
 	// Legacy dataset_permissions and per-dataset visibility fields are deprecated for AIChat/Agent tools.
 	dbQuery := s.db.WithContext(ctx).
 		Model(&dataset_model.Dataset{}).
-		Where("workspace_id IN ?", workspaceIDs)
+		Where("workspace_id IN ? AND provider <> '"+dataset_model.ProviderDigitalHumanMemory+"'", workspaceIDs)
 	if search != "" {
 		pattern := "%" + search + "%"
 		dbQuery = dbQuery.Where("LOWER(name) LIKE LOWER(?) OR LOWER(description) LIKE LOWER(?)", pattern, pattern)
@@ -661,7 +664,7 @@ func knowledgeWorkspaceMemberCanUseKnowledge(role string, roleID *string, rawPer
 	return false
 }
 
-func (s *KnowledgeRetrievalService) accessibleKnowledgeDataset(ctx context.Context, datasetID string, scope KnowledgeScope, agentBindingGrant bool) (*dataset_model.Dataset, error) {
+func (s *KnowledgeRetrievalService) accessibleKnowledgeDataset(ctx context.Context, datasetID string, scope KnowledgeScope, agentBindingGrant bool, runtimeManaged ...bool) (*dataset_model.Dataset, error) {
 	datasetID = strings.TrimSpace(datasetID)
 	if datasetID == "" {
 		return nil, fmt.Errorf("dataset_id is required")
@@ -696,6 +699,10 @@ func (s *KnowledgeRetrievalService) accessibleKnowledgeDataset(ctx context.Conte
 	var dataset dataset_model.Dataset
 	if err := query.First(&dataset).Error; err != nil {
 		return nil, err
+	}
+	allowRuntimeManaged := len(runtimeManaged) > 0 && runtimeManaged[0]
+	if dataset.Provider == dataset_model.ProviderDigitalHumanMemory && !allowRuntimeManaged {
+		return nil, gorm.ErrRecordNotFound
 	}
 	return &dataset, nil
 }

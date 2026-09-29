@@ -1692,6 +1692,14 @@ const messages = {
     disableFuse: 'Disable automatic extraction',
     updatingFuse: 'Updating…',
     fuseUpdated: 'Automatic extraction policy updated.',
+    repair: 'Repair memory recall',
+    repairing: 'Rebuilding…',
+    repairHint:
+      'If this digital human stops recalling long-term memory, rebuild the memory index to restore it.',
+    repairTitle: 'Rebuild the long-term memory index?',
+    repairDescription:
+      'The memory index is rebuilt from the saved memories with the current default embedding model. Saved memories are not deleted or changed. Recall may be briefly unavailable while the index is rebuilt.',
+    repaired: 'Long-term memory index rebuilt for {count} memories.',
     empty: 'No memory matches these filters.',
     emptyDescription:
       'An authorized operator can explicitly add an evidence-backed memory, or change the filters.',
@@ -1753,6 +1761,7 @@ const messages = {
       mutate: 'Could not change this memory.',
       undo: 'Could not undo this memory change.',
       fuse: 'Could not update automatic extraction.',
+      repair: 'Could not rebuild the long-term memory index.',
     },
   },
   access: {

@@ -112,7 +112,7 @@ type SkillExposureProfile struct {
 
 func IsHiddenSystemSkill(skillID string) bool {
 	switch normalizeSkillID(skillID) {
-	case SkillAgentManagement, SkillFileManager, SkillIntentRouter, SkillAgentKnowledge, SkillAgentDatabase, SkillAgentWorkflow, SkillAgentMemory, SkillUserMemory, SkillConnectorRuntime:
+	case SkillAgentManagement, SkillFileManager, SkillIntentRouter, SkillAgentKnowledge, SkillAgentDatabase, SkillAgentWorkflow, SkillAgentMemory, SkillDigitalHumanMemory, SkillUserMemory, SkillConnectorRuntime:
 		return true
 	default:
 		return false
@@ -185,6 +185,15 @@ func SystemSkillExposureProfile(skillID string) SkillExposureProfile {
 			GovernanceRisk:      SkillGovernanceRiskMixed,
 		}
 	case SkillAgentMemory, SkillUserMemory:
+		return SkillExposureProfile{
+			Category:            SkillExposureHiddenRuntime,
+			UserSelectable:      false,
+			RuntimeManaged:      true,
+			SystemAsset:         false,
+			PageContextRequired: false,
+			GovernanceRisk:      SkillGovernanceRiskLow,
+		}
+	case SkillDigitalHumanMemory:
 		return SkillExposureProfile{
 			Category:            SkillExposureHiddenRuntime,
 			UserSelectable:      false,

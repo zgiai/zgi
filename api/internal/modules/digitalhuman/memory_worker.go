@@ -48,26 +48,24 @@ type MemoryExtractionSource struct {
 // MemoryExtractionInput contains the bounded evidence available to an
 // asynchronous DigitalHuman memory extractor.
 type MemoryExtractionInput struct {
-	Job              *MemoryExtractionJob
-	Run              *Run
-	Event            invocation.Event
-	Source           MemoryExtractionSource
-	AuthorizedScopes []memoryruntime.MemoryScopeRef
-	CurrentMemories  []*DigitalHumanMemory
+	Job             *MemoryExtractionJob
+	Run             *Run
+	Event           invocation.Event
+	Source          MemoryExtractionSource
+	CurrentMemories []*DigitalHumanMemory
 }
 
 // MemoryExtractionDraft is an untrusted model proposal. The regular memory
 // policy and fence checks remain authoritative when it is applied.
+// Convergence: drafts carry no memory class or business scope; every accepted
+// proposal is stored as self memory for the owning DigitalHuman.
 type MemoryExtractionDraft struct {
-	Key                        string                        `json:"key"`
-	MemoryClass                memoryruntime.MemoryClass     `json:"memory_class"`
-	MemoryType                 memoryruntime.MemoryType      `json:"memory_type"`
-	ScopeType                  memoryruntime.MemoryScopeType `json:"scope_type,omitempty"`
-	ScopeID                    string                        `json:"scope_id,omitempty"`
-	Content                    string                        `json:"content"`
-	Confidence                 float64                       `json:"confidence,omitempty"`
-	SupersedesID               *uuid.UUID                    `json:"supersedes_id,omitempty"`
-	ExpectedSupersededRevision int64                         `json:"expected_superseded_revision,omitempty"`
+	Key                        string                   `json:"key"`
+	MemoryType                 memoryruntime.MemoryType `json:"memory_type"`
+	Content                    string                   `json:"content"`
+	Confidence                 float64                  `json:"confidence,omitempty"`
+	SupersedesID               *uuid.UUID               `json:"supersedes_id,omitempty"`
+	ExpectedSupersededRevision int64                    `json:"expected_superseded_revision,omitempty"`
 }
 
 // MemoryExtractor proposes memory changes but cannot commit them directly.
@@ -226,23 +224,21 @@ func (r *MemoryExtractionRunner) RunJob(ctx context.Context, jobID uuid.UUID) er
 		r.recordExtractionLedger(ctx, job, "rejected", map[string]any{"reason": "private_not_promoted"})
 		return nil
 	}
-	scopes := authorizedMemoryScopes(event, job.WorkspaceID)
 	scope := Scope{OrganizationID: job.OrganizationID, WorkspaceID: job.WorkspaceID, ActorID: source.AccountID}
-	current, err := r.service.RetrieveMemories(ctx, scope, job.DigitalHumanID, scopes, 50)
+	current, err := r.service.RetrieveMemories(ctx, scope, job.DigitalHumanID, 50)
 	if err != nil {
 		fail("retrieve_current_memory")
 		return err
 	}
 	drafts, err := r.extractor.Extract(ctx, MemoryExtractionInput{
 		Job: job, Run: run, Event: event, Source: source,
-		AuthorizedScopes: append([]memoryruntime.MemoryScopeRef(nil), scopes...),
-		CurrentMemories:  append([]*DigitalHumanMemory(nil), current...),
+		CurrentMemories: append([]*DigitalHumanMemory(nil), current...),
 	})
 	if err != nil {
 		fail(memoryExtractionErrorCode(err))
 		return err
 	}
-	committed, rejected, err := r.applyDrafts(ctx, scope, job, run, source, scopes, current, drafts)
+	committed, rejected, err := r.applyDrafts(ctx, scope, job, run, source, current, drafts)
 	if err != nil {
 		fail(memoryExtractionErrorCode(err))
 		return err
@@ -332,7 +328,6 @@ func (r *MemoryExtractionRunner) applyDrafts(
 	job *MemoryExtractionJob,
 	run *Run,
 	source MemoryExtractionSource,
-	authorizedScopes []memoryruntime.MemoryScopeRef,
 	current []*DigitalHumanMemory,
 	drafts []MemoryExtractionDraft,
 ) (int, int, error) {
@@ -342,19 +337,14 @@ func (r *MemoryExtractionRunner) applyDrafts(
 	currentByKey := make(map[string]*DigitalHumanMemory, len(current))
 	for _, item := range current {
 		if item != nil {
-			currentByKey[memoryIdentity(item.MemoryClass, item.ScopeType, item.ScopeID, item.MemoryKey)] = item
+			currentByKey[memoryIdentity(item.MemoryKey)] = item
 		}
 	}
 	committed, rejected := 0, 0
 	for _, draft := range drafts {
 		draft.Key = strings.ToLower(strings.TrimSpace(draft.Key))
 		draft.Content = strings.TrimSpace(draft.Content)
-		var scopeRef *memoryruntime.MemoryScopeRef
-		if draft.MemoryClass == memoryruntime.MemoryClassBusiness {
-			candidate := memoryruntime.MemoryScopeRef{Type: draft.ScopeType, ID: strings.TrimSpace(draft.ScopeID)}
-			scopeRef = &candidate
-		}
-		identity := memoryIdentity(draft.MemoryClass, draft.ScopeType, strings.TrimSpace(draft.ScopeID), draft.Key)
+		identity := memoryIdentity(draft.Key)
 		expectedRevision := int64(0)
 		if existing := currentByKey[identity]; existing != nil {
 			expectedRevision = existing.Revision
@@ -362,17 +352,12 @@ func (r *MemoryExtractionRunner) applyDrafts(
 		operationID := uuid.NewSHA1(job.ID, []byte(identity))
 		request := MemoryProposalRequest{
 			OperationID: operationID, Key: draft.Key, Action: memoryruntime.MutationActionUpsert,
-			MemoryClass: draft.MemoryClass, MemoryType: draft.MemoryType, Scope: scopeRef, Content: draft.Content,
+			MemoryClass: memoryruntime.MemoryClassSelf, MemoryType: draft.MemoryType, Content: draft.Content,
 			ExpectedRevision: expectedRevision, ConfigRevision: job.ConfigRevision, MemoryEpoch: job.MemoryEpoch,
 			SupersedesID: draft.SupersedesID, ExpectedSupersededRevision: draft.ExpectedSupersededRevision,
 			Evidence:   []memoryruntime.MemoryEvidence{{Type: memoryruntime.EvidenceTypeRun, ID: run.ID.String(), Digest: run.RunSpecRevision}},
 			Visibility: MemoryVisibilityWorkspace, Confidence: draft.Confidence, RunID: &run.ID,
 			SourceContext: MemorySourceContext{PrivateConversation: false}, OccurredAt: source.CompletedAt,
-		}
-		if scopeRef != nil && !memoryScopeAuthorized(*scopeRef, authorizedScopes) {
-			r.service.recordRejectedMemoryProposal(ctx, scope, job.DigitalHumanID, request, ErrMemoryPolicyRejected)
-			rejected++
-			continue
 		}
 		result, err := r.service.ApplyAutonomousMemoryProposal(ctx, scope, job.DigitalHumanID, request)
 		if err != nil {
@@ -413,16 +398,15 @@ func memoryExtractionPrompt(input MemoryExtractionInput) (string, error) {
 			continue
 		}
 		current = append(current, map[string]any{
-			"id": item.ID, "key": item.MemoryKey, "memory_class": item.MemoryClass, "memory_type": item.MemoryType,
-			"scope_type": item.ScopeType, "scope_id": item.ScopeID,
+			"id": item.ID, "key": item.MemoryKey, "memory_type": item.MemoryType,
 			"content": truncateRunes(item.Content, memoryExtractionMaxMemoryRunes), "revision": item.Revision,
 		})
 	}
 	payload := map[string]any{
 		"run_id": input.Run.ID, "query": truncateRunes(input.Source.Query, memoryExtractionMaxSourceRunes/2),
-		"answer":                     truncateRunes(input.Source.Answer, memoryExtractionMaxSourceRunes/2),
-		"authorized_business_scopes": input.AuthorizedScopes, "current_memory": current,
-		"artifact_refs": json.RawMessage(input.Job.ArtifactRefs),
+		"answer":         truncateRunes(input.Source.Answer, memoryExtractionMaxSourceRunes/2),
+		"current_memory": current,
+		"artifact_refs":  json.RawMessage(input.Job.ArtifactRefs),
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -430,13 +414,13 @@ func memoryExtractionPrompt(input MemoryExtractionInput) (string, error) {
 	}
 	return strings.Join([]string{
 		"You are a conservative background memory proposer for one DigitalHuman.",
-		"Propose only durable work experience, decisions, open loops, reflections, or evidence-backed business facts.",
-		"Treat an explicit durable working directive, such as a future role, recurring responsibility, or default behavior, as self/decision. It does not change the published identity, persona, or rules.",
+		"Propose only durable work experience, decisions, open loops, reflections, or evidence-backed facts.",
+		"Treat an explicit durable working directive, such as a future role, recurring responsibility, or default behavior, as a decision. It does not change the published identity, persona, or rules.",
 		"Never propose identity changes, user profiles, personal preferences, credentials, tokens, cookies, document bodies, artifact bodies, full business objects, or temporary chat details.",
-		"A business fact must use exactly one authorized business scope. Self memory must omit scope_type and scope_id.",
-		"To replace an active memory with a new semantic key, copy its id and revision from current_memory into supersedes_id and expected_superseded_revision. The replacement must keep the same memory_class and exact scope. Never invent a memory id.",
+		"All memory is self memory for this DigitalHuman; do not emit class or business scope fields.",
+		"To replace an active memory with a new semantic key, copy its id and revision from current_memory into supersedes_id and expected_superseded_revision. Never invent a memory id.",
 		"Use concise redacted summaries. Do not propose clear/delete operations. Use none when uncertain or when current memory already captures the same fact.",
-		`Return JSON only: {"proposals":[{"key":"stable-semantic-key","memory_class":"self|business","memory_type":"experience|decision|fact|open_loop|reflection","scope_type":"workspace|project|customer|campaign|channel","scope_id":"required for business","content":"concise durable summary","confidence":0.0,"supersedes_id":"optional UUID copied from current_memory","expected_superseded_revision":0}]}`,
+		`Return JSON only: {"proposals":[{"key":"stable-semantic-key","memory_type":"experience|decision|fact|open_loop|reflection","content":"concise durable summary","confidence":0.0,"supersedes_id":"optional UUID copied from current_memory","expected_superseded_revision":0}]}`,
 		string(raw),
 	}, "\n"), nil
 }
@@ -460,14 +444,12 @@ func parseMemoryExtractionDrafts(content string) ([]MemoryExtractionDraft, error
 	for i := range output.Proposals {
 		draft := &output.Proposals[i]
 		draft.Key = strings.ToLower(strings.TrimSpace(draft.Key))
-		draft.MemoryClass = memoryruntime.MemoryClass(strings.ToLower(strings.TrimSpace(string(draft.MemoryClass))))
 		draft.MemoryType = memoryruntime.MemoryType(strings.ToLower(strings.TrimSpace(string(draft.MemoryType))))
-		draft.ScopeType = memoryruntime.MemoryScopeType(strings.ToLower(strings.TrimSpace(string(draft.ScopeType))))
-		draft.ScopeID, draft.Content = strings.TrimSpace(draft.ScopeID), strings.TrimSpace(draft.Content)
+		draft.Content = strings.TrimSpace(draft.Content)
 		if draft.Confidence == 0 {
 			draft.Confidence = 0.75
 		}
-		key := memoryIdentity(draft.MemoryClass, draft.ScopeType, draft.ScopeID, draft.Key)
+		key := memoryIdentity(draft.Key)
 		if _, ok := seen[key]; ok {
 			return nil, ErrMemoryPolicyRejected
 		}
@@ -476,21 +458,10 @@ func parseMemoryExtractionDrafts(content string) ([]MemoryExtractionDraft, error
 	return output.Proposals, nil
 }
 
-func memoryIdentity(class memoryruntime.MemoryClass, scopeType memoryruntime.MemoryScopeType, scopeID, key string) string {
-	return strings.Join([]string{string(class), string(scopeType), strings.TrimSpace(scopeID), strings.ToLower(strings.TrimSpace(key))}, "\x00")
-}
-
-func memoryScopeAuthorized(scope memoryruntime.MemoryScopeRef, authorized []memoryruntime.MemoryScopeRef) bool {
-	validated, err := memoryruntime.ValidateMemoryScopeRef(scope)
-	if err != nil {
-		return false
-	}
-	for _, candidate := range authorized {
-		if candidate.Type == validated.Type && candidate.ID == validated.ID {
-			return true
-		}
-	}
-	return false
+// memoryIdentity keys converged self memory by its semantic key alone; class
+// and business scope no longer partition the store.
+func memoryIdentity(key string) string {
+	return strings.ToLower(strings.TrimSpace(key))
 }
 
 func memoryPromotionAuthorized(event invocation.Event) bool {

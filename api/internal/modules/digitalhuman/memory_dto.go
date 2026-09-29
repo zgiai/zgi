@@ -69,3 +69,17 @@ type UpdateMemoryStateRequest struct {
 	ExpectedMemoryEpoch   int64 `json:"expected_memory_epoch"`
 	AutoExtractionEnabled bool  `json:"auto_extraction_enabled"`
 }
+
+const (
+	// MemoryProjectionRepairStatusRepaired reports a projection that was dropped
+	// and rebuilt from the authoritative memory rows.
+	MemoryProjectionRepairStatusRepaired = "repaired"
+)
+
+// MemoryProjectionRepairResult describes a completed projection rebuild.
+type MemoryProjectionRepairResult struct {
+	Status            string `json:"status"`
+	MemoryCount       int    `json:"memory_count"`
+	EmbeddingProvider string `json:"embedding_provider,omitempty"`
+	EmbeddingModel    string `json:"embedding_model,omitempty"`
+}

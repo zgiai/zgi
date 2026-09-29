@@ -28,6 +28,10 @@ outputs/
 .*-run-*.ps1
 %SystemDrive%/
 specs/
+!specs/
+specs/*
+!specs/005-digital-human-long-term-memory/
+!specs/005-digital-human-long-term-memory/*.md
 /plan/
 %SystemDrive%/
 scripts/rag_evaluation/.env

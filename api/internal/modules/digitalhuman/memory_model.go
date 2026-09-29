@@ -34,8 +34,11 @@ type MemoryState struct {
 	ConfigRevision        string     `gorm:"type:varchar(71);not null" json:"config_revision"`
 	AutoExtractionEnabled bool       `gorm:"not null" json:"auto_extraction_enabled"`
 	ExtractionCutoffAt    *time.Time `json:"extraction_cutoff_at,omitempty"`
-	CreatedAt             time.Time  `gorm:"not null" json:"created_at"`
-	UpdatedAt             time.Time  `gorm:"not null" json:"updated_at"`
+	// MemoryDatasetID points at the internal, runtime-managed knowledge
+	// projection. It is deliberately absent from all public memory contracts.
+	MemoryDatasetID *uuid.UUID `gorm:"type:uuid" json:"-"`
+	CreatedAt       time.Time  `gorm:"not null" json:"created_at"`
+	UpdatedAt       time.Time  `gorm:"not null" json:"updated_at"`
 }
 
 func (MemoryState) TableName() string { return "digital_human_memory_states" }

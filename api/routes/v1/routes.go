@@ -264,14 +264,20 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		WorkspaceMembership:                 serviceContainer.GetWorkspaceMemberRepository(),
 		ConnectorConfirmationStore:          serviceContainer.GetConnectorConfirmationContinuationStore(),
 		Tasks:                               automationBundle.DigitalHumanTasks,
+		DefaultModelService:                 serviceContainer.GetDefaultModelService(),
+		KnowledgeRetrievalService:           serviceContainer.GetKnowledgeRetrievalService(),
 	})
 	if automationBundle.DigitalHumanTaskReconciler != nil && digitalHumanRuntime.Runtime != nil {
 		automationBundle.DigitalHumanTaskReconciler.SetResultDeliverer(digitalHumanRuntime.Runtime)
 	}
 	digitalHumanRuntime.Access = digitalhuman.NewAccessService(db)
 	serviceContainer.SetDigitalHumanChannelReceiverManager(digitalHumanRuntime.Receivers)
+	consoleDigitalHumanService := serviceContainer.GetDigitalHumanService()
+	if digitalHumanRuntime.MemoryProjectionRepairer != nil {
+		consoleDigitalHumanService.SetMemoryProjectionRepairer(digitalHumanRuntime.MemoryProjectionRepairer)
+	}
 	RegisterDigitalHumanRoutes(v1, DigitalHumanRouteDeps{
-		Service: serviceContainer.GetDigitalHumanService(), Runtime: digitalHumanRuntime.Runtime, Channels: digitalHumanRuntime.Channels,
+		Service: consoleDigitalHumanService, Runtime: digitalHumanRuntime.Runtime, Channels: digitalHumanRuntime.Channels,
 		Tasks: automationBundle.DigitalHumanTasks, Access: digitalHumanRuntime.Access,
 		AccountService: accountService, OrganizationService: serviceContainer.GetOrganizationService(),
 		ApplicationErrorCatalog: applicationErrorCatalog,

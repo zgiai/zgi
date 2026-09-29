@@ -490,6 +490,15 @@ export function useDigitalHumanMutations(id?: string) {
       }),
     onError: error => mutationError(error, t('memory.errors.fuse')),
   });
+  const repairMemory = useMutation({
+    mutationFn: ({ digitalHumanId }: { digitalHumanId: string }) =>
+      digitalHumanService.repairMemory(digitalHumanId),
+    onSuccess: (_, variables) =>
+      queryClient.invalidateQueries({
+        queryKey: DIGITAL_HUMAN_KEYS.memories(variables.digitalHumanId),
+      }),
+    onError: error => mutationError(error, t('memory.errors.repair')),
+  });
 
   return {
     id,
@@ -507,5 +516,6 @@ export function useDigitalHumanMutations(id?: string) {
     applyMemoryProposal,
     undoMemory,
     updateMemoryState,
+    repairMemory,
   };
 }

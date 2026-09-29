@@ -11,49 +11,6 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
-func TestAuthorizedMemoryScopesRequireTrustedUpstreamProjection(t *testing.T) {
-	t.Parallel()
-	workspaceID := uuid.New()
-	event := invocation.Event{Context: map[string]any{
-		"memory_scopes": []interface{}{map[string]any{"type": "project", "id": "project-7"}},
-	}}
-	if scopes := authorizedMemoryScopes(event, workspaceID); len(scopes) != 1 || scopes[0].Type != memoryruntime.MemoryScopeWorkspace {
-		t.Fatalf("untrusted scopes = %#v", scopes)
-	}
-	event.Context["memory_scopes_authorized"] = true
-	if scopes := authorizedMemoryScopes(event, workspaceID); len(scopes) != 2 || scopes[1].Type != memoryruntime.MemoryScopeProject || scopes[1].ID != "project-7" {
-		t.Fatalf("trusted scopes = %#v", scopes)
-	}
-}
-
-func TestMemoryToolBusinessScopeRequiresExactAuthorization(t *testing.T) {
-	t.Parallel()
-	authorized := []memoryruntime.MemoryScopeRef{
-		{Type: memoryruntime.MemoryScopeWorkspace, ID: "workspace-1"},
-		{Type: memoryruntime.MemoryScopeProject, ID: "project-7"},
-	}
-	base := memoryToolArguments{
-		MemoryClass: memoryruntime.MemoryClassBusiness,
-		ScopeType:   memoryruntime.MemoryScopeProject,
-		ScopeID:     "project-7",
-	}
-	if !memoryToolBusinessScopeAuthorized(base, authorized) {
-		t.Fatal("exact authorized business scope was rejected")
-	}
-	base.ScopeID = "project-8"
-	if memoryToolBusinessScopeAuthorized(base, authorized) {
-		t.Fatal("different project scope was authorized")
-	}
-	base.ScopeType, base.ScopeID = memoryruntime.MemoryScopeCustomer, "project-7"
-	if memoryToolBusinessScopeAuthorized(base, authorized) {
-		t.Fatal("same identifier under a different scope type was authorized")
-	}
-	base.MemoryClass = memoryruntime.MemoryClassSelf
-	if !memoryToolBusinessScopeAuthorized(base, authorized) {
-		t.Fatal("self memory was incorrectly subjected to business scope authorization")
-	}
-}
-
 func TestRenderDigitalHumanMemoryContextCarriesScopeAndRevision(t *testing.T) {
 	t.Parallel()
 	memoryID := uuid.New()
@@ -62,22 +19,39 @@ func TestRenderDigitalHumanMemoryContextCarriesScopeAndRevision(t *testing.T) {
 		MemoryKey: "launch-date", MemoryClass: memoryruntime.MemoryClassBusiness, MemoryType: memoryruntime.MemoryTypeFact,
 		ScopeType: memoryruntime.MemoryScopeProject, ScopeID: "project-7", Revision: 4, Content: "Launch is September 8.",
 	}}, true, true)
-	for _, expected := range []string{"id=" + memoryID.String(), "key=launch-date", "scope=project:project-7", "revision=4", "Launch is September 8"} {
-		if !strings.Contains(content, expected) {
-			t.Errorf("context missing %q: %s", expected, content)
+	for _, unexpected := range []string{"id=" + memoryID.String(), "key=launch-date", "scope=project:project-7", "revision=4", "Launch is September 8"} {
+		if strings.Contains(content, unexpected) {
+			t.Errorf("context unexpectedly preloaded %q: %s", unexpected, content)
 		}
 	}
-	for _, expected := range []string{"self/decision", "published identity", "Never store a conversational role directive as self/identity", "Decide at runtime", "not from trigger words", "Proactive memory maintenance is enabled"} {
+	if !strings.Contains(content, "retrieve_digital_human_memory") {
+		t.Errorf("context missing retrieval guidance: %s", content)
+	}
+	for _, expected := range []string{"self/decision", "published identity", "Never store a conversational role directive as self/identity", "Decide at runtime", "not from trigger words", "Proactive memory maintenance is enabled", "memory_id, memory_key and revision of every match", "expected_revision 0", "as supersedes_id"} {
 		if !strings.Contains(content, expected) {
 			t.Errorf("context missing durable directive policy %q: %s", expected, content)
 		}
 	}
 }
 
+func TestDecodeMemoryRetrievalToolArgumentsBoundsAgentControls(t *testing.T) {
+	t.Parallel()
+	args, err := decodeMemoryRetrievalToolArguments(`{"query":"  launch owner  ","top_k":20,"retrieval_mode":"vector"}`)
+	if err != nil || args.Query != "launch owner" || args.TopK != 20 || args.RetrievalMode != "vector" {
+		t.Fatalf("retrieval args = %#v, err=%v", args, err)
+	}
+	if _, err := decodeMemoryRetrievalToolArguments(`{"query":"launch","top_k":21}`); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("top_k error = %v", err)
+	}
+	if _, err := decodeMemoryRetrievalToolArguments(`{"query":"launch","dataset_id":"secret"}`); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("unknown field error = %v", err)
+	}
+}
+
 func TestDecodeMemoryToolArgumentsCarriesSupersedeFence(t *testing.T) {
 	t.Parallel()
 	targetID := uuid.New()
-	args, err := decodeMemoryToolArguments(`{"action":"upsert","mode":"explicit","evidence":"Launch moved","key":"launch-v2","memory_class":"business","memory_type":"fact","scope_type":"project","scope_id":"project-7","content":"Launch moved.","expected_revision":0,"supersedes_id":"` + targetID.String() + `","expected_superseded_revision":4}`)
+	args, err := decodeMemoryToolArguments(`{"action":"upsert","mode":"explicit","evidence":"Launch moved","key":"launch-v2","memory_type":"fact","content":"Launch moved.","expected_revision":0,"supersedes_id":"` + targetID.String() + `","expected_superseded_revision":4}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +130,7 @@ func TestValidateMemoryToolDecisionUsesModelModeAndExactEvidence(t *testing.T) {
 
 func TestDecodeMemoryToolArgumentsRejectsTrailingJSON(t *testing.T) {
 	t.Parallel()
-	_, err := decodeMemoryToolArguments(`{"action":"upsert","mode":"explicit","evidence":"launch","key":"launch","memory_class":"self","memory_type":"decision","expected_revision":0}{}`)
+	_, err := decodeMemoryToolArguments(`{"action":"upsert","mode":"explicit","evidence":"launch","key":"launch","memory_type":"decision","expected_revision":0}{}`)
 	if !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("decode error = %v, want invalid request", err)
 	}

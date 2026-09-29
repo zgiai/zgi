@@ -16,6 +16,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Trash2,
+  Wrench,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
@@ -37,6 +38,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   useDigitalHumanMemories,
   useDigitalHumanMutations,
@@ -82,6 +84,7 @@ export function DigitalHumanMemory({ id }: { id: string }) {
   const [scopeId, setScopeId] = useState('');
   const [source, setSource] = useState('');
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [repairOpen, setRepairOpen] = useState(false);
   const [selected, setSelected] = useState<DigitalHumanMemoryRecord | null>(null);
   const params = useMemo<DigitalHumanMemoryListParams>(
     () => ({
@@ -172,6 +175,11 @@ export function DigitalHumanMemory({ id }: { id: string }) {
     setSelected(null);
   };
 
+  const repairMemory = async () => {
+    const result = await mutations.repairMemory.mutateAsync({ digitalHumanId: id });
+    toast.success(t('memory.repaired', { count: result.data.memory_count }));
+  };
+
   return (
     <div className="mx-auto flex max-w-[1600px] flex-col gap-5 px-4 py-6 md:px-8 xl:py-8">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -214,6 +222,43 @@ export function DigitalHumanMemory({ id }: { id: string }) {
             </div>
           </div>
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-3">
+            {canManage ? (
+              <>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={mutations.repairMemory.isPending}
+                      onClick={() => setRepairOpen(true)}
+                    >
+                      {mutations.repairMemory.isPending ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : (
+                        <Wrench className="size-4" />
+                      )}
+                      {mutations.repairMemory.isPending
+                        ? t('memory.repairing')
+                        : t('memory.repair')}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-72 leading-5">
+                    {t('memory.repairHint')}
+                  </TooltipContent>
+                </Tooltip>
+                <ConfirmDialog
+                  open={repairOpen}
+                  onOpenChange={setRepairOpen}
+                  variant="default"
+                  title={t('memory.repairTitle')}
+                  description={t('memory.repairDescription')}
+                  confirmText={t('memory.repair')}
+                  cancelText={t('common.cancel')}
+                  loading={mutations.repairMemory.isPending}
+                  onConfirm={() => void repairMemory()}
+                />
+              </>
+            ) : null}
             {canManage ? (
               <Button
                 variant="outline"
