@@ -335,13 +335,16 @@ func (c *HTTPClient) DoRequestDetailed(ctx context.Context, method, url string, 
 			return &HTTPResponse{Body: respBody, StatusCode: resp.StatusCode, Header: resp.Header.Clone()}, nil
 		}
 
-		// 5xx server errors, retry
+		// 5xx server errors, retry. Carry the typed upstream-failure identity so
+		// the gateway classifier and the error catalog can project the retried
+		// failure; a bare fmt.Errorf reached the protocol boundary unclassified
+		// and leaked the English fallback message in every locale.
 		if resp.StatusCode >= 500 {
 			bodySnippet := string(respBody)
 			if len(bodySnippet) > 500 {
 				bodySnippet = bodySnippet[:500] + "..."
 			}
-			lastErr = fmt.Errorf("server error %d: %s", resp.StatusCode, bodySnippet)
+			lastErr = fmt.Errorf("%w: server error %d: %s", ErrUpstreamError, resp.StatusCode, bodySnippet)
 			continue
 		}
 
