@@ -100,6 +100,7 @@
     "test:aichat-tool-recovery-display": "node scripts/test-aichat-tool-recovery-display.mjs",
     "test:aichat-external-action-status": "node scripts/test-aichat-external-action-status.mjs",
     "test:connector-api-contract": "node scripts/test-connector-api-contract.mjs",
+    "test:http-service-request-body": "node scripts/test-http-service-request-body.mjs",
     "test:connector-app-setup": "node scripts/test-connector-app-setup.mjs",
     "test:connector-catalog-classification": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-connector-catalog-classification.mjs",
     "test:connector-key-setup-lifecycle": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-connector-key-setup-lifecycle.mjs",
