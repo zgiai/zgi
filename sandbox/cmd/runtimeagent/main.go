@@ -30,9 +30,9 @@ func run(parent context.Context) error {
 	if runtime.GOOS != "linux" {
 		return errors.New("zgi runtime agent requires Linux")
 	}
-	token := strings.TrimSpace(os.Getenv("ZGI_RUNTIME_AGENT_TOKEN"))
-	if token == "" {
-		return errors.New("ZGI_RUNTIME_AGENT_TOKEN is required")
+	token, err := runtimeAgentToken()
+	if err != nil {
+		return err
 	}
 	workspace := envValue("ZGI_RUNTIME_AGENT_WORKSPACE", "/workspace")
 	backend, err := runtimeagent.New(runtimeagent.Options{
@@ -87,6 +87,43 @@ func run(parent context.Context) error {
 		}
 		return <-serveResult
 	}
+}
+
+func runtimeAgentToken() (string, error) {
+	tokenFile := strings.TrimSpace(os.Getenv("ZGI_RUNTIME_AGENT_TOKEN_FILE"))
+	if tokenFile == "" {
+		token := strings.TrimSpace(os.Getenv("ZGI_RUNTIME_AGENT_TOKEN"))
+		if token == "" {
+			return "", errors.New("ZGI_RUNTIME_AGENT_TOKEN or ZGI_RUNTIME_AGENT_TOKEN_FILE is required")
+		}
+		return token, nil
+	}
+	tokenFile = filepath.Clean(tokenFile)
+	if !filepath.IsAbs(tokenFile) || tokenFile == string(filepath.Separator) {
+		return "", errors.New("ZGI_RUNTIME_AGENT_TOKEN_FILE must be an absolute non-root path")
+	}
+	info, err := os.Lstat(tokenFile)
+	if err != nil {
+		return "", fmt.Errorf("inspect ZGI_RUNTIME_AGENT_TOKEN_FILE: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", errors.New("ZGI_RUNTIME_AGENT_TOKEN_FILE must be a regular file")
+	}
+	if err := os.Chmod(tokenFile, 0o600); err != nil {
+		return "", fmt.Errorf("restrict ZGI_RUNTIME_AGENT_TOKEN_FILE: %w", err)
+	}
+	value, err := os.ReadFile(tokenFile)
+	if err != nil {
+		return "", fmt.Errorf("read ZGI_RUNTIME_AGENT_TOKEN_FILE: %w", err)
+	}
+	if err := os.Remove(tokenFile); err != nil {
+		return "", fmt.Errorf("remove ZGI_RUNTIME_AGENT_TOKEN_FILE: %w", err)
+	}
+	token := strings.TrimSpace(string(value))
+	if token == "" {
+		return "", errors.New("ZGI_RUNTIME_AGENT_TOKEN_FILE is empty")
+	}
+	return token, nil
 }
 
 func listenRuntimeAgent(value string) (net.Listener, func(), error) {

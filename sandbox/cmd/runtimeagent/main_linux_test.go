@@ -10,6 +10,38 @@ import (
 	"testing"
 )
 
+func TestRuntimeAgentTokenReadsAndRemovesFile(t *testing.T) {
+	t.Setenv("ZGI_RUNTIME_AGENT_TOKEN", "environment-token")
+	tokenPath := filepath.Join(t.TempDir(), "bootstrap-token")
+	if err := os.WriteFile(tokenPath, []byte("file-token\n"), 0o644); err != nil {
+		t.Fatalf("write token: %v", err)
+	}
+	t.Setenv("ZGI_RUNTIME_AGENT_TOKEN_FILE", tokenPath)
+	token, err := runtimeAgentToken()
+	if err != nil || token != "file-token" {
+		t.Fatalf("token = %q, error = %v", token, err)
+	}
+	if _, err := os.Lstat(tokenPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("token file remains after read: %v", err)
+	}
+}
+
+func TestRuntimeAgentTokenRejectsSymlink(t *testing.T) {
+	tokenDir := t.TempDir()
+	tokenPath := filepath.Join(tokenDir, "token")
+	if err := os.WriteFile(tokenPath, []byte("secret"), 0o600); err != nil {
+		t.Fatalf("write token: %v", err)
+	}
+	linkPath := filepath.Join(tokenDir, "token-link")
+	if err := os.Symlink(tokenPath, linkPath); err != nil {
+		t.Fatalf("symlink token: %v", err)
+	}
+	t.Setenv("ZGI_RUNTIME_AGENT_TOKEN_FILE", linkPath)
+	if _, err := runtimeAgentToken(); err == nil {
+		t.Fatal("symlink token file was accepted")
+	}
+}
+
 func TestListenRuntimeAgentUnixSocket(t *testing.T) {
 	socketPath := filepath.Join(t.TempDir(), "runtime.sock")
 	listener, cleanup, err := listenRuntimeAgent("unix://" + socketPath)
