@@ -38,6 +38,7 @@ type DataPlaneOptions struct {
 	Now                  func() time.Time
 	NewID                func(string) (string, error)
 	MaxFileTransferBytes int64
+	IdleTTL              time.Duration
 }
 
 type DataPlaneService struct {
@@ -47,6 +48,7 @@ type DataPlaneService struct {
 	now                  func() time.Time
 	newID                func(string) (string, error)
 	maxFileTransferBytes int64
+	idleTTL              time.Duration
 }
 
 func NewDataPlaneService(bindings BindingReader, jobs JobRepository, backends map[string]ExecutionBackend, options DataPlaneOptions) (*DataPlaneService, error) {
@@ -62,9 +64,13 @@ func NewDataPlaneService(bindings BindingReader, jobs JobRepository, backends ma
 	if options.MaxFileTransferBytes <= 0 {
 		options.MaxFileTransferBytes = defaultFileTransferMax
 	}
+	if options.IdleTTL <= 0 {
+		options.IdleTTL = defaultIdleTTL
+	}
 	return &DataPlaneService{
 		bindings: bindings, jobs: jobs, backends: copyExecutionBackends(backends),
 		now: options.Now, newID: options.NewID, maxFileTransferBytes: options.MaxFileTransferBytes,
+		idleTTL: options.IdleTTL,
 	}, nil
 }
 
@@ -76,12 +82,9 @@ func (s *DataPlaneService) SubmitJob(ctx context.Context, request SubmitJobReque
 	if request.WorkDir != "" {
 		request.WorkDir, _ = cleanWorkspacePath(request.WorkDir, true)
 	}
-	binding, err := s.authorizedBinding(ctx, request.Scope, request.BindingID)
+	binding, err := s.activeBinding(ctx, request.Scope, request.BindingID, true)
 	if err != nil {
 		return Job{}, err
-	}
-	if binding.Status != BindingStatusActive {
-		return Job{}, fmt.Errorf("%w: binding is %s", ErrInvalidTransition, binding.Status)
 	}
 	if _, ok := s.backends[binding.Backend]; !ok {
 		return Job{}, fmt.Errorf("%w: %s", ErrBackendUnavailable, binding.Backend)
@@ -146,7 +149,7 @@ func (s *DataPlaneService) JobOutput(ctx context.Context, scope Scope, jobID str
 }
 
 func (s *DataPlaneService) Capabilities(ctx context.Context, scope Scope, bindingID string) (RuntimeCapabilities, error) {
-	binding, err := s.authorizedBinding(ctx, scope, bindingID)
+	binding, err := s.activeBinding(ctx, scope, bindingID, false)
 	if err != nil {
 		return RuntimeCapabilities{}, err
 	}
@@ -165,7 +168,7 @@ func (s *DataPlaneService) UploadFile(ctx context.Context, scope Scope, bindingI
 	if reader == nil || size < 0 || size > s.maxFileTransferBytes {
 		return FileInfo{}, fmt.Errorf("%w: upload size is invalid", ErrInvalidRequest)
 	}
-	binding, err := s.authorizedBinding(ctx, scope, bindingID)
+	binding, err := s.activeBinding(ctx, scope, bindingID, true)
 	if err != nil {
 		return FileInfo{}, err
 	}
@@ -181,7 +184,7 @@ func (s *DataPlaneService) DownloadFile(ctx context.Context, scope Scope, bindin
 	if err != nil {
 		return nil, FileInfo{}, err
 	}
-	binding, err := s.authorizedBinding(ctx, scope, bindingID)
+	binding, err := s.activeBinding(ctx, scope, bindingID, true)
 	if err != nil {
 		return nil, FileInfo{}, err
 	}
@@ -209,6 +212,25 @@ func (s *DataPlaneService) authorizedBinding(ctx context.Context, scope Scope, b
 		return Binding{}, ErrNotFound
 	}
 	return binding, nil
+}
+
+func (s *DataPlaneService) activeBinding(ctx context.Context, scope Scope, bindingID string, touch bool) (Binding, error) {
+	binding, err := s.authorizedBinding(ctx, scope, bindingID)
+	if err != nil {
+		return Binding{}, err
+	}
+	if binding.Status != BindingStatusActive {
+		return Binding{}, fmt.Errorf("%w: binding is %s", ErrInvalidTransition, binding.Status)
+	}
+	if !touch {
+		return binding, nil
+	}
+	now := s.now().UTC()
+	touched, err := s.bindings.TouchBinding(ctx, binding.ID, binding.Generation, now, now.Add(s.idleTTL))
+	if err != nil {
+		return Binding{}, err
+	}
+	return touched, nil
 }
 
 type WorkerOptions struct {

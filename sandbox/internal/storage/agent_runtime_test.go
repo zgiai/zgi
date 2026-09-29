@@ -82,6 +82,20 @@ func TestAgentRuntimeMigrationAndBindingRepository(t *testing.T) {
 	if loaded.Status != agentruntime.BindingStatusActive || loaded.Generation != 2 {
 		t.Fatalf("loaded binding = %+v", loaded)
 	}
+	touchedAt := now.Add(time.Minute)
+	touched, err := store.TouchBinding(context.Background(), binding.ID, loaded.Generation, touchedAt, touchedAt.Add(30*time.Minute))
+	if err != nil {
+		t.Fatalf("touch binding: %v", err)
+	}
+	if touched.Generation != 3 || !touched.LastActivityAt.Equal(touchedAt) {
+		t.Fatalf("touched binding = %+v", touched)
+	}
+	if expired, err := store.ExpiredBindings(context.Background(), touched.ExpiresAt.Add(-time.Second), 10); err != nil || len(expired) != 0 {
+		t.Fatalf("early expiry = %+v, error=%v", expired, err)
+	}
+	if expired, err := store.ExpiredBindings(context.Background(), touched.ExpiresAt, 10); err != nil || len(expired) != 1 || expired[0].Generation != touched.Generation {
+		t.Fatalf("expiry = %+v, error=%v", expired, err)
+	}
 }
 
 func TestAgentRuntimeLeaseAndCleanupClaims(t *testing.T) {

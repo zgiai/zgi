@@ -31,6 +31,14 @@ func TestDataPlaneSubmitsIdempotentTenantScopedJob(t *testing.T) {
 	if first.ID != second.ID {
 		t.Fatalf("idempotent jobs differ: %q != %q", first.ID, second.ID)
 	}
+	touched, err := bindings.Binding(context.Background(), "binding-1")
+	if err != nil {
+		t.Fatalf("read touched binding: %v", err)
+	}
+	wantExpiry := time.Date(2026, 9, 29, 12, 30, 0, 0, time.UTC)
+	if touched.Generation != 4 || !touched.ExpiresAt.Equal(wantExpiry) {
+		t.Fatalf("binding activity = generation %d expiry %s", touched.Generation, touched.ExpiresAt)
+	}
 	request.Command = "other"
 	if _, err := service.SubmitJob(context.Background(), request); !errors.Is(err, ErrIdempotencyConflict) {
 		t.Fatalf("idempotency reuse error = %v", err)

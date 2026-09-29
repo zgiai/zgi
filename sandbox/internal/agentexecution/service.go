@@ -175,20 +175,18 @@ func (s *Service) SuspendBinding(ctx context.Context, scope Scope, bindingID str
 	if binding.Status != BindingStatusActive && binding.Status != BindingStatusSuspending {
 		return Binding{}, fmt.Errorf("%w: cannot suspend %s", ErrInvalidTransition, binding.Status)
 	}
-	if binding.Status == BindingStatusActive {
-		previousGeneration := binding.Generation
-		binding.Status = BindingStatusSuspending
-		binding.Generation++
-		binding.UpdatedAt = s.now().UTC()
-		if err := s.repository.UpdateBinding(ctx, binding, previousGeneration); err != nil {
-			return Binding{}, err
-		}
+	previousGeneration := binding.Generation
+	binding.Status = BindingStatusSuspending
+	binding.Generation++
+	binding.UpdatedAt = s.now().UTC()
+	if err := s.repository.UpdateBinding(ctx, binding, previousGeneration); err != nil {
+		return Binding{}, err
 	}
 	allocation := Allocation{BindingRef: binding.BackendRef, WorkspaceRef: binding.WorkspaceRef}
 	if err := backend.SuspendBinding(ctx, allocation); err != nil {
 		return Binding{}, fmt.Errorf("suspend backend binding: %w", err)
 	}
-	previousGeneration := binding.Generation
+	previousGeneration = binding.Generation
 	binding.Status = BindingStatusSuspended
 	binding.Generation++
 	binding.UpdatedAt = s.now().UTC()
@@ -209,14 +207,12 @@ func (s *Service) ResumeBinding(ctx context.Context, scope Scope, bindingID stri
 	if binding.Status != BindingStatusSuspended && binding.Status != BindingStatusResuming {
 		return Binding{}, fmt.Errorf("%w: cannot resume %s", ErrInvalidTransition, binding.Status)
 	}
-	if binding.Status == BindingStatusSuspended {
-		previousGeneration := binding.Generation
-		binding.Status = BindingStatusResuming
-		binding.Generation++
-		binding.UpdatedAt = s.now().UTC()
-		if err := s.repository.UpdateBinding(ctx, binding, previousGeneration); err != nil {
-			return Binding{}, err
-		}
+	previousGeneration := binding.Generation
+	binding.Status = BindingStatusResuming
+	binding.Generation++
+	binding.UpdatedAt = s.now().UTC()
+	if err := s.repository.UpdateBinding(ctx, binding, previousGeneration); err != nil {
+		return Binding{}, err
 	}
 
 	allocation, err := backend.ResumeBinding(ctx, CreateSpec{
@@ -229,7 +225,7 @@ func (s *Service) ResumeBinding(ctx context.Context, scope Scope, bindingID stri
 	if err != nil {
 		return Binding{}, fmt.Errorf("resume backend binding: %w", err)
 	}
-	previousGeneration := binding.Generation
+	previousGeneration = binding.Generation
 	binding.BackendRef = allocation.BindingRef
 	binding.WorkspaceRef = allocation.WorkspaceRef
 	binding.Status = BindingStatusActive
@@ -260,21 +256,19 @@ func (s *Service) DestroyBinding(ctx context.Context, scope Scope, bindingID str
 	if generation != binding.Generation {
 		return Binding{}, ErrGenerationConflict
 	}
-	if binding.Status != BindingStatusDeleting {
-		previousGeneration := binding.Generation
-		binding.Status = BindingStatusDeleting
-		binding.Generation++
-		binding.UpdatedAt = s.now().UTC()
-		if err := s.repository.UpdateBinding(ctx, binding, previousGeneration); err != nil {
-			return Binding{}, err
-		}
+	previousGeneration := binding.Generation
+	binding.Status = BindingStatusDeleting
+	binding.Generation++
+	binding.UpdatedAt = s.now().UTC()
+	if err := s.repository.UpdateBinding(ctx, binding, previousGeneration); err != nil {
+		return Binding{}, err
 	}
 	allocation := Allocation{BindingRef: binding.BackendRef, WorkspaceRef: binding.WorkspaceRef}
 	if err := backend.DestroyBinding(ctx, allocation); err != nil {
 		cleanupErr := s.enqueueDestroy(ctx, binding, allocation, err)
 		return Binding{}, errors.Join(fmt.Errorf("destroy backend binding: %w", err), cleanupErr)
 	}
-	previousGeneration := binding.Generation
+	previousGeneration = binding.Generation
 	binding.Status = BindingStatusDeleted
 	binding.Generation++
 	binding.UpdatedAt = s.now().UTC()

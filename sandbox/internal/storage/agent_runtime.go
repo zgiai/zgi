@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	agentruntime "github.com/zgiai/zgi-sandbox/internal/agentexecution"
 )
@@ -86,6 +87,50 @@ func (s *Store) Binding(ctx context.Context, id string) (agentruntime.Binding, e
 		return agentruntime.Binding{}, agentruntime.ErrNotFound
 	}
 	return binding, err
+}
+
+func (s *Store) TouchBinding(ctx context.Context, id string, expectedGeneration int64, lastActivityAt time.Time, expiresAt time.Time) (agentruntime.Binding, error) {
+	row := s.db.QueryRowContext(ctx, `
+		UPDATE agent_runtime_bindings
+		SET last_activity_at = $3,
+		    expires_at = $4,
+		    updated_at = $3,
+		    generation = generation + 1
+		WHERE id = $1 AND generation = $2 AND status = 'active'
+		RETURNING `+agentRuntimeBindingColumns,
+		id, expectedGeneration, lastActivityAt.UTC(), expiresAt.UTC(),
+	)
+	binding, err := scanAgentRuntimeBinding(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return agentruntime.Binding{}, agentruntime.ErrGenerationConflict
+	}
+	return binding, err
+}
+
+func (s *Store) ExpiredBindings(ctx context.Context, now time.Time, limit int) ([]agentruntime.Binding, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT `+agentRuntimeBindingColumns+`
+		FROM agent_runtime_bindings
+		WHERE status IN ('active', 'suspending') AND expires_at <= $1
+		ORDER BY expires_at ASC, id ASC
+		LIMIT $2
+	`, now.UTC(), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	bindings := make([]agentruntime.Binding, 0)
+	for rows.Next() {
+		binding, err := scanAgentRuntimeBinding(rows)
+		if err != nil {
+			return nil, err
+		}
+		bindings = append(bindings, binding)
+	}
+	return bindings, rows.Err()
 }
 
 func (s *Store) UpdateBinding(ctx context.Context, binding agentruntime.Binding, expectedGeneration int64) error {

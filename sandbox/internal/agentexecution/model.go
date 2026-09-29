@@ -259,6 +259,11 @@ type LeaseRepository interface {
 
 type BindingReader interface {
 	Binding(context.Context, string) (Binding, error)
+	TouchBinding(context.Context, string, int64, time.Time, time.Time) (Binding, error)
+}
+
+type ExpiredBindingRepository interface {
+	ExpiredBindings(context.Context, time.Time, int) ([]Binding, error)
 }
 
 type JobRepository interface {

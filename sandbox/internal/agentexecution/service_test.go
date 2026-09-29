@@ -350,6 +350,39 @@ func (r *memoryRepository) Binding(_ context.Context, id string) (Binding, error
 	return binding, nil
 }
 
+func (r *memoryRepository) TouchBinding(_ context.Context, id string, expectedGeneration int64, lastActivityAt time.Time, expiresAt time.Time) (Binding, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	binding, ok := r.bindings[id]
+	if !ok {
+		return Binding{}, ErrNotFound
+	}
+	if binding.Generation != expectedGeneration || binding.Status != BindingStatusActive {
+		return Binding{}, ErrGenerationConflict
+	}
+	binding.LastActivityAt = lastActivityAt
+	binding.ExpiresAt = expiresAt
+	binding.UpdatedAt = lastActivityAt
+	binding.Generation++
+	r.bindings[id] = binding
+	return binding, nil
+}
+
+func (r *memoryRepository) ExpiredBindings(_ context.Context, now time.Time, limit int) ([]Binding, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	bindings := make([]Binding, 0)
+	for _, binding := range r.bindings {
+		if len(bindings) >= limit && limit > 0 {
+			break
+		}
+		if (binding.Status == BindingStatusActive || binding.Status == BindingStatusSuspending) && !binding.ExpiresAt.After(now) {
+			bindings = append(bindings, binding)
+		}
+	}
+	return bindings, nil
+}
+
 func (r *memoryRepository) UpdateBinding(_ context.Context, binding Binding, expectedGeneration int64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
