@@ -148,11 +148,20 @@ print('processed python input', file=sys.stderr)
 				if err := gateway.request(ctx, scope, http.MethodDelete, requestPath, nil, &deleted); err != nil {
 					t.Fatalf("destroy binding for recreation: %v", err)
 				}
+				stale := export.Handler(ctx, adapter.ToolCall{ID: uuid.NewString(), Function: adapter.FunctionCall{Arguments: string(arguments)}})
+				if stale.Result["error_code"] != "workspace_recreated" {
+					t.Fatalf("old workspace file remained exportable: %#v", stale)
+				}
 				recreatedShell := newAgentExecutionShellTool(gateway, scope, agentID, conversationID, uuid.NewString(), profileID, backend, attachments, reader, resolver)
 				recreateArgs, _ := json.Marshal(map[string]any{"skill_id": tc.id, "command": commandWithInput})
 				recreated := recreatedShell.Handler(ctx, adapter.ToolCall{ID: uuid.NewString(), Function: adapter.FunctionCall{Arguments: string(recreateArgs)}})
 				if recreated.Error != nil || recreated.ModelResult["stdout"] != expected || recreated.ModelResult["workspace_recreated"] != true {
 					t.Fatalf("recreated Skill workspace = %#v", recreated)
+				}
+				store.data = nil
+				fresh := export.Handler(ctx, adapter.ToolCall{ID: uuid.NewString(), Function: adapter.FunctionCall{Arguments: string(arguments)}})
+				if fresh.Error != nil || fresh.Status != "success" || string(store.data) != expected {
+					t.Fatalf("export from recreated Skill workspace = %#v, data = %q", fresh, store.data)
 				}
 			}
 		})

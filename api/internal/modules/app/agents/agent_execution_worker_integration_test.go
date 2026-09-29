@@ -13,8 +13,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/config"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/pkg/storage"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 type workerCSVAttachmentReader struct {
@@ -128,5 +133,37 @@ PY`
 	exported := export.Handler(ctx, adapter.ToolCall{ID: "export", Function: adapter.FunctionCall{Arguments: `{"path":"artifacts/result.csv"}`}})
 	if exported.Error != nil || exported.Status != "success" || string(persister.data) != expected || len(exported.Artifacts) != 1 {
 		t.Fatalf("exported file = %#v, persisted = %q", exported, persister.data)
+	}
+
+	db, err := gorm.Open(sqlite.Open("file:agent-execution-worker-"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&tool_file.ToolFile{}); err != nil {
+		t.Fatal(err)
+	}
+	previousManager, previousSignature := tool_file.GlobalToolFileManager, tool_file.GlobalFileSignature
+	tool_file.InitToolFileManager(db, &agentExecutionTestStorage{LocalStorage: storage.NewLocalStorage(t.TempDir())})
+	tool_file.InitFileSignature(&config.Config{App: config.AppConfig{SecretKey: "test-only-signing-secret", FilesURL: "https://files.example.test"}})
+	t.Cleanup(func() {
+		tool_file.GlobalToolFileManager = previousManager
+		tool_file.GlobalFileSignature = previousSignature
+	})
+	persistentExport := newAgentExecutionExportTool(gateway, defaultAgentExecutionArtifactPersister{}, scope, agentID, conversationID, messageID, profileID, backend)
+	persisted := persistentExport.Handler(ctx, adapter.ToolCall{ID: "persist-export", Function: adapter.FunctionCall{Arguments: `{"path":"artifacts/result.csv"}`}})
+	if persisted.Error != nil || persisted.Status != "success" || len(persisted.Artifacts) != 1 {
+		t.Fatalf("persistent export = %#v", persisted)
+	}
+	artifact := persisted.Artifacts[0]
+	fileID, _ := artifact["file_id"].(string)
+	if fileID == "" || artifact["lifecycle"] != "persistent" || artifact["filename"] != "result.csv" {
+		t.Fatalf("persistent artifact metadata = %#v", artifact)
+	}
+	if url, _ := artifact["download_url"].(string); !strings.Contains(url, "/console/api/files/tools/"+fileID+".csv?") || !strings.HasSuffix(url, "&download=1") {
+		t.Fatalf("persistent artifact download URL = %q", url)
+	}
+	stored, _, err := tool_file.GetFileBinaryGlobal(ctx, fileID)
+	if err != nil || string(stored) != expected {
+		t.Fatalf("persistent artifact bytes = %q, error = %v", stored, err)
 	}
 }

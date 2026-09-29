@@ -63,15 +63,18 @@ func exportAgentExecutionFile(ctx context.Context, gateway agentExecutionGateway
 	if err != nil {
 		return failed("binding_unavailable", err)
 	}
-	if binding.Recreated {
-		return failed("workspace_recreated", fmt.Errorf("agent execution workspace was recreated and previous files are unavailable"))
-	}
 	capabilities, err := gateway.Capabilities(operationCtx, scope, binding.ID)
 	if err != nil || !capabilities.FileTransfer || capabilities.NetworkMode != "disabled" || capabilities.MaxDownloadBytes <= 0 {
 		return failed("capability_denied", fmt.Errorf("offline agent execution download is unavailable"))
 	}
 	data, err := gateway.DownloadFile(operationCtx, scope, binding.ID, filePath)
-	if err != nil || int64(len(data)) > capabilities.MaxDownloadBytes || len(data) > agentExecutionFileLimit {
+	if err != nil {
+		if binding.Recreated {
+			return failed("workspace_recreated", fmt.Errorf("agent execution workspace was recreated and the requested file is unavailable"))
+		}
+		return failed("download_failed", fmt.Errorf("agent execution result file is missing or exceeds the limit"))
+	}
+	if int64(len(data)) > capabilities.MaxDownloadBytes || len(data) > agentExecutionFileLimit {
 		return failed("download_failed", fmt.Errorf("agent execution result file is missing or exceeds the limit"))
 	}
 	artifact, err := persister.Persist(operationCtx, scope, conversationID, filePath, data)

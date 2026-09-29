@@ -120,7 +120,11 @@ func (f *fakeAgentExecutionGateway) UploadFile(_ context.Context, _ agentExecuti
 }
 
 func (f *fakeAgentExecutionGateway) DownloadFile(_ context.Context, _ agentExecutionScope, _, filePath string) ([]byte, error) {
-	return append([]byte(nil), f.downloads[filePath]...), nil
+	data, exists := f.downloads[filePath]
+	if !exists {
+		return nil, fmt.Errorf("test workspace file %q is missing", filePath)
+	}
+	return append([]byte(nil), data...), nil
 }
 
 func TestAgentExecutionBindingResumesAfterIdleSuspension(t *testing.T) {
@@ -313,12 +317,20 @@ func TestAgentExecutionExportCreatesDownloadArtifactWithoutTraceContent(t *testi
 }
 
 func TestAgentExecutionExportRejectsPreviousFileAfterWorkspaceRecreation(t *testing.T) {
-	fake := &fakeAgentExecutionGateway{binding: agentExecutionBinding{ID: "binding-new", Status: "active", Recreated: true}}
+	fake := &fakeAgentExecutionGateway{
+		binding:      agentExecutionBinding{ID: "binding-new", Status: "active", Recreated: true},
+		capabilities: agentExecutionCapabilities{FileTransfer: true, NetworkMode: "disabled", MaxDownloadBytes: 1024},
+		downloads:    map[string][]byte{"artifacts/new.csv": []byte("new,output\n")},
+	}
 	persister := &fakeAgentExecutionArtifactPersister{}
 	tool := newAgentExecutionExportTool(fake, persister, agentExecutionScope{OrganizationID: "org-1", SubjectID: "account-1"}, "agent-1", "conversation-1", "message-1", "standard", "e2b")
 	result := tool.Handler(t.Context(), adapter.ToolCall{Function: adapter.FunctionCall{Arguments: `{"path":"artifacts/result.csv"}`}})
 	if result.Result["error_code"] != "workspace_recreated" || persister.path != "" {
 		t.Fatalf("export after recreation = %#v, persister=%#v", result, persister)
+	}
+	result = tool.Handler(t.Context(), adapter.ToolCall{Function: adapter.FunctionCall{Arguments: `{"path":"artifacts/new.csv"}`}})
+	if result.Error != nil || result.Status != "success" || string(persister.data) != "new,output\n" {
+		t.Fatalf("export file from recreated workspace = %#v, persister=%#v", result, persister)
 	}
 }
 
