@@ -65,29 +65,12 @@ func startProcess(parent context.Context, workDir string, spec agentexecution.Jo
 		}()
 	} else {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		stdout, err := cmd.StdoutPipe()
-		if err != nil {
-			cancel()
-			return nil, fmt.Errorf("open stdout: %w", err)
-		}
-		stderr, err := cmd.StderrPipe()
-		if err != nil {
-			cancel()
-			return nil, fmt.Errorf("open stderr: %w", err)
-		}
+		cmd.Stdout = &outputWriter{stream: agentexecution.OutputStreamStdout, sink: sink}
+		cmd.Stderr = &outputWriter{stream: agentexecution.OutputStreamStderr, sink: sink}
 		if err := cmd.Start(); err != nil {
 			cancel()
 			return nil, fmt.Errorf("start job: %w", err)
 		}
-		readers.Add(2)
-		go func() {
-			defer readers.Done()
-			pumpOutput(stdout, agentexecution.OutputStreamStdout, sink)
-		}()
-		go func() {
-			defer readers.Done()
-			pumpOutput(stderr, agentexecution.OutputStreamStderr, sink)
-		}()
 	}
 
 	go func() {
@@ -109,6 +92,19 @@ func startProcess(parent context.Context, workDir string, spec agentexecution.Jo
 		close(process.done)
 	}()
 	return process, nil
+}
+
+type outputWriter struct {
+	stream agentexecution.OutputStream
+	sink   func(agentexecution.OutputStream, []byte) error
+}
+
+func (w outputWriter) Write(value []byte) (int, error) {
+	copyValue := append([]byte(nil), value...)
+	if err := w.sink(w.stream, copyValue); err != nil {
+		return 0, err
+	}
+	return len(value), nil
 }
 
 func (p *runningProcess) Wait(ctx context.Context) (agentexecution.JobResult, error) {
