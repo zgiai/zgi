@@ -4,6 +4,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"fmt"
+	"io/fs"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -118,6 +120,55 @@ Run scripts/process.js with Node.
 	if !preview.CanImport || preview.Skill == nil || preview.Skill.ScriptExecutionMode != skills.SkillScriptExecutionSession {
 		t.Fatalf("preview = %#v, want importable Node session script", preview)
 	}
+}
+
+// Run with ZGI_PORTABLE_SKILL_TEST_ROOT pointing at an unpacked third-party
+// Skill to exercise the importer against real source without copying it into
+// this repository or making the normal test suite depend on a local checkout.
+func TestImportExternalPortableSkill(t *testing.T) {
+	root := os.Getenv("ZGI_PORTABLE_SKILL_TEST_ROOT")
+	if root == "" {
+		t.Skip("ZGI_PORTABLE_SKILL_TEST_ROOT is not set")
+	}
+	files := make(map[string]string)
+	packageName := filepath.Base(root)
+	err := filepath.WalkDir(root, func(filePath string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if !entry.Type().IsRegular() {
+			return fmt.Errorf("external Skill has a nonregular file: %s", filePath)
+		}
+		relative, err := filepath.Rel(root, filePath)
+		if err != nil {
+			return err
+		}
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			return err
+		}
+		files[packageName+"/"+filepath.ToSlash(relative)] = string(content)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := newScriptPreflightService(t)
+	scope := Scope{OrganizationID: uuid.New(), AccountID: uuid.New(), SkipAccessCheck: true}
+	preview, err := svc.PreviewImportCustomSkill(t.Context(), scope, scriptPreflightFileHeader(t, files))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !preview.CanImport || preview.Skill == nil || preview.Skill.ScriptExecutionMode != skills.SkillScriptExecutionSession {
+		t.Fatalf("external Skill preview = %#v, want importable session script", preview)
+	}
+	if _, err := svc.ConfirmCustomSkillImport(t.Context(), scope, preview.ImportID, false); err != nil {
+		t.Fatalf("confirm external Skill import: %v", err)
+	}
+	t.Logf("imported %s: %d files, %d bytes, mode=%s", preview.Skill.ID, preview.FileCount, preview.TotalSize, preview.ScriptExecutionMode)
 }
 
 func TestPreviewPortableSkillRejectsLegacySchemaWithoutEntrypoint(t *testing.T) {
