@@ -239,6 +239,11 @@ export function mergeSupersededAgentRuntimePayload(
   return {
     ...saved,
     ...current,
+    execution_runtime:
+      JSON.stringify(submitted.execution_runtime ?? null) ===
+      JSON.stringify(current.execution_runtime ?? null)
+        ? saved.execution_runtime
+        : current.execution_runtime,
     enabled_skill_ids: mergeIDDelta(
       submitted.enabled_skill_ids,
       current.enabled_skill_ids,

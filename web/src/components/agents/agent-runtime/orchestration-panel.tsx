@@ -10,6 +10,7 @@ import type { OpeningStatementDialogValue } from '@/components/workflow/ui/featu
 import type {
   AgentDatabaseBinding,
   AgentConnectorBinding,
+  AgentExecutionRuntimeConfig,
   AgentMemorySlotConfig,
   AgentBindingHealth,
   AgentWorkflowBinding,
@@ -17,6 +18,7 @@ import type {
 } from '@/services/types/agent';
 import type { Dataset } from '@/services/types/dataset';
 import { AgentRuntimeDatabaseSection } from './sections/database-section';
+import { AgentRuntimeExecutionSection } from './sections/execution-section';
 import { AgentRuntimeExperienceSection } from './sections/experience-section';
 import { AgentRuntimeFileSection } from './sections/file-section';
 import { AgentRuntimeKnowledgeSection } from './sections/knowledge-section';
@@ -56,6 +58,7 @@ interface AgentRuntimeOrchestrationPanelProps {
   suggestedQuestions: string[];
   isGeneratingSuggestions: boolean;
   fileUploadEnabled: boolean;
+  executionRuntime: AgentExecutionRuntimeConfig | null;
   agentMemoryEnabled: boolean;
   agentMemoryAutoExtractionEnabled: boolean;
   agentMemorySlots: AgentMemorySlotConfig[];
@@ -89,6 +92,7 @@ interface AgentRuntimeOrchestrationPanelProps {
   ) => Promise<{ questions: string[]; warnings?: string[] } | undefined>;
   onChangeSuggestedQuestions: (value: string[]) => void;
   onChangeFileUploadEnabled: (value: boolean) => void;
+  onChangeExecutionRuntime: (value: AgentExecutionRuntimeConfig) => void;
   onChangeAgentMemoryEnabled: (value: boolean) => void;
   onChangeAgentMemoryAutoExtractionEnabled: (value: boolean) => void;
   onChangeAgentMemorySlots: (value: AgentMemorySlotConfig[]) => void;
@@ -122,6 +126,7 @@ export function AgentRuntimeOrchestrationPanel({
   suggestedQuestions,
   isGeneratingSuggestions,
   fileUploadEnabled,
+  executionRuntime,
   agentMemoryEnabled,
   agentMemoryAutoExtractionEnabled,
   agentMemorySlots,
@@ -153,6 +158,7 @@ export function AgentRuntimeOrchestrationPanel({
   onGenerateSuggestedQuestions,
   onChangeSuggestedQuestions,
   onChangeFileUploadEnabled,
+  onChangeExecutionRuntime,
   onChangeAgentMemoryEnabled,
   onChangeAgentMemoryAutoExtractionEnabled,
   onChangeAgentMemorySlots,
@@ -182,6 +188,16 @@ export function AgentRuntimeOrchestrationPanel({
             readOnly={readOnly}
             onToggleSection={onToggleSection}
             onChangeModelValue={onChangeModelValue}
+          />
+
+          <Separator className="h-px" />
+
+          <AgentRuntimeExecutionSection
+            open={openSections.execution}
+            value={executionRuntime}
+            readOnly={readOnly}
+            onToggleSection={onToggleSection}
+            onChange={onChangeExecutionRuntime}
           />
 
           <Separator className="h-px" />

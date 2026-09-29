@@ -41,6 +41,7 @@ import type {
   AgentBindingHealth,
   AgentConnectorBinding,
   AgentDatabaseBinding,
+  AgentExecutionRuntimeConfig,
   AgentMemorySlotConfig,
   AgentRuntimeConfig,
   AgentWorkflowBinding,
@@ -339,6 +340,7 @@ export function useAgentRuntimePageModel(agentId: string) {
   const [agentMemoryConfigRevision, setAgentMemoryConfigRevision] = useState('');
   const [agentMemorySlots, setAgentMemorySlots] = useState<AgentMemorySlotConfig[]>([]);
   const [fileUploadEnabled, setFileUploadEnabled] = useState(false);
+  const [executionRuntime, setExecutionRuntime] = useState<AgentExecutionRuntimeConfig | null>(null);
   const [homeTitle, setHomeTitle] = useState(defaultHomeTitle);
   const [openingStatement, setOpeningStatement] = useState('');
   const [inputPlaceholder, setInputPlaceholder] = useState(defaultInputPlaceholder);
@@ -381,6 +383,7 @@ export function useAgentRuntimePageModel(agentId: string) {
   const [openSections, setOpenSections] = useState<Record<AgentConfigSection, boolean>>({
     experience: true,
     model: true,
+    execution: true,
     skills: true,
     knowledge: true,
     databases: true,
@@ -537,6 +540,13 @@ export function useAgentRuntimePageModel(agentId: string) {
       model_provider: modelValue.provider,
       model: modelValue.model,
       model_parameters: modelValue.params,
+      execution_runtime: executionRuntime
+        ? {
+            ...executionRuntime,
+            profile_id: executionRuntime.profile_id.trim(),
+            policy_id: executionRuntime.policy_id.trim(),
+          }
+        : null,
       enabled_skill_ids: normalizedSelectedSkillIds,
       use_memory: false,
       agent_memory_enabled: agentMemoryEnabled,
@@ -568,6 +578,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       defaultHomeTitle,
       defaultInputPlaceholder,
       fileUploadEnabled,
+      executionRuntime,
       agentMemoryEnabled,
       agentMemoryAutoExtractionEnabled,
       agentMemorySlots,
@@ -613,6 +624,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     setAgentMemoryAutoExtractionEnabled(payload.agent_memory_auto_extraction_enabled ?? false);
     setAgentMemorySlots(payload.agent_memory_slots ?? []);
     setFileUploadEnabled(payload.file_upload_enabled);
+    setExecutionRuntime(payload.execution_runtime ?? null);
     setHomeTitle(payload.home_title);
     setOpeningStatement(payload.opening_statement ?? '');
     setInputPlaceholder(payload.input_placeholder);
@@ -636,6 +648,9 @@ export function useAgentRuntimePageModel(agentId: string) {
       model_provider: runtimeConfig.model_provider ?? fallback?.model_provider ?? '',
       model: runtimeConfig.model ?? fallback?.model ?? '',
       model_parameters: toModelParams(runtimeConfig.model_parameters ?? fallback?.model_parameters),
+      execution_runtime: Object.prototype.hasOwnProperty.call(runtimeConfig, 'execution_runtime')
+        ? (runtimeConfig.execution_runtime ?? null)
+        : (fallback?.execution_runtime ?? null),
       enabled_skill_ids: runtimeConfig.enabled_skill_ids ?? fallback?.enabled_skill_ids ?? [],
       use_memory: runtimeConfig.use_memory ?? fallback?.use_memory ?? false,
       agent_memory_enabled:
@@ -690,6 +705,7 @@ export function useAgentRuntimePageModel(agentId: string) {
 
   const applyServerBindingPayload = useCallback(
     (payload: UpdateAgentRuntimeConfigRequest, health?: AgentBindingHealth) => {
+      setExecutionRuntime(payload.execution_runtime ?? null);
       setSelectedSkillIds(payload.enabled_skill_ids);
       setKnowledgeDatasetIds(payload.knowledge_dataset_ids ?? []);
       setDatabaseBindings(normalizeAgentDatabaseBindings(payload.database_bindings ?? []));
@@ -1586,6 +1602,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       suggestedQuestions,
       isGeneratingSuggestions,
       fileUploadEnabled,
+      executionRuntime,
       agentMemoryEnabled,
       agentMemoryAutoExtractionEnabled,
       agentMemorySlots,
@@ -1664,6 +1681,10 @@ export function useAgentRuntimePageModel(agentId: string) {
       onChangeFileUploadEnabled: (value: boolean) => {
         if (isRuntimeConfigReadOnly) return;
         setFileUploadEnabled(value);
+      },
+      onChangeExecutionRuntime: (value: AgentExecutionRuntimeConfig) => {
+        if (isRuntimeConfigReadOnly) return;
+        setExecutionRuntime(value);
       },
       onChangeAgentMemoryEnabled: (value: boolean) => {
         if (isRuntimeConfigReadOnly) return;

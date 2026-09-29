@@ -95,6 +95,29 @@ const basePayload = {
 }
 
 {
+  const approved = {
+    enabled: true,
+    profile_id: 'standard',
+    policy_id: 'offline',
+    home_snapshot_id: null,
+  };
+  const submitted = { ...basePayload, execution_runtime: null };
+  const saved = { ...submitted, execution_runtime: approved };
+  assert.deepEqual(
+    mergeSupersededAgentRuntimePayload(submitted, submitted, saved).execution_runtime,
+    approved,
+    'An unchanged local draft must not disable a concurrent server-side execution setting.'
+  );
+  const disabled = { ...approved, enabled: false };
+  const current = { ...submitted, execution_runtime: disabled };
+  assert.deepEqual(
+    mergeSupersededAgentRuntimePayload(submitted, current, saved).execution_runtime,
+    disabled,
+    'An explicit local disable must survive a save race.'
+  );
+}
+
+{
   const submitted = {
     ...basePayload,
     enabled_skill_ids: ['skill-a', 'skill-b'],

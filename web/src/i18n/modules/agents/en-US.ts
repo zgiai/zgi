@@ -2261,6 +2261,7 @@ const messages = {
     sections: {
       experience: 'Experience customization',
       model: 'Model',
+      execution: 'Execution environment',
       skills: 'Skill',
       knowledge: 'Knowledge',
       databases: 'Databases',
@@ -2543,6 +2544,13 @@ const messages = {
     files: {
       title: 'Allow file upload',
       description: 'When enabled, users can upload documents or images for the Agent to analyze.',
+    },
+    execution: {
+      title: 'Enable isolated Linux environment',
+      description: 'Available to console Agents only. The environment is offline and releases idle compute after 30 minutes.',
+      profileId: 'Approved Profile ID',
+      policyId: 'Approved Policy ID',
+      approvalNotice: 'Ask an operator for approved IDs. Publishing is blocked when this organization, Profile, or Policy is not approved.',
     },
     memory: {
       agentTitle: 'Memory',

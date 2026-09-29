@@ -2109,6 +2109,7 @@ const messages: AgentsMessages = {
     sections: {
       experience: '体验定制',
       model: '模型',
+      execution: '执行环境',
       skills: 'Skill',
       knowledge: '知识库',
       databases: '数据库',
@@ -2379,6 +2380,13 @@ const messages: AgentsMessages = {
     files: {
       title: '允许文件上传',
       description: '开启后，用户可以向智能体上传文档或图片进行分析。',
+    },
+    execution: {
+      title: '启用隔离 Linux 环境',
+      description: '仅控制台智能体可用。环境默认离线，空闲 30 分钟后释放计算资源。',
+      profileId: '已批准的 Profile ID',
+      policyId: '已批准的 Policy ID',
+      approvalNotice: '请向运维人员获取已批准的 ID。组织、Profile 或 Policy 未获批准时将无法发布。',
     },
     memory: {
       addCustomSlot: '自定义记忆',
