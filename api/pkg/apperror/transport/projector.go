@@ -5,6 +5,7 @@ package transport
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/pkg/apperror"
@@ -63,7 +64,11 @@ type Result struct {
 // the original error and its operation so operators can trace a public error_id
 // back to the concrete cause without exposing that cause to the client.
 type ProjectionLog struct {
-	ErrorID    string
+	ErrorID string
+	// RequestID is the transport request identity, when the caller has one. It
+	// lets support go from a request_id in the logs to the error_id shown to the
+	// client, and back, without a database column for either.
+	RequestID  string
 	Code       apperror.Code
 	Operation  string
 	Cause      error
@@ -135,6 +140,13 @@ func NewProjector(productCatalog *catalog.Catalog, options ...Option) (*Projecto
 // rendering failures use the catalog fallback instead of exposing err.Error().
 // It always assigns a fresh error_id and emits one diagnostic record.
 func (p *Projector) Project(err error, locale catalog.Locale) Result {
+	return p.ProjectWithRequestID(err, locale, "")
+}
+
+// ProjectWithRequestID behaves like Project and additionally records the
+// transport request id on the diagnostic record, so one log line carries both
+// the public error_id and the request_id used to correlate the two edges.
+func (p *Projector) ProjectWithRequestID(err error, locale catalog.Locale, requestID string) Result {
 	appErr, ok := apperror.As(err)
 	var result Result
 	if !ok {
@@ -143,7 +155,7 @@ func (p *Projector) Project(err error, locale catalog.Locale) Result {
 		result = p.projectAppError(appErr, locale)
 	}
 	result.ErrorID = p.newID()
-	p.logProjection(result, appErr, err)
+	p.logProjection(result, appErr, err, strings.TrimSpace(requestID))
 	return result
 }
 
@@ -179,12 +191,13 @@ func (p *Projector) fallback(locale catalog.Locale, resolution Resolution) Resul
 	}
 }
 
-func (p *Projector) logProjection(result Result, appErr *apperror.Error, err error) {
+func (p *Projector) logProjection(result Result, appErr *apperror.Error, err error, requestID string) {
 	if p.logger == nil {
 		return
 	}
 	record := ProjectionLog{
 		ErrorID:    result.ErrorID,
+		RequestID:  requestID,
 		Code:       result.Presentation.Code,
 		Cause:      err,
 		Resolution: result.Resolution,
@@ -220,6 +233,9 @@ func defaultProjectionLogger(record ProjectionLog) {
 		"error_id":   record.ErrorID,
 		"code":       record.Code.String(),
 		"resolution": record.Resolution.String(),
+	}
+	if record.RequestID != "" {
+		fields["request_id"] = record.RequestID
 	}
 	if record.Operation != "" {
 		fields["operation"] = record.Operation

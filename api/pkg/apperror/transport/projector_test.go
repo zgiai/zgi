@@ -242,3 +242,40 @@ func TestProjectAssignsDistinctErrorIDs(t *testing.T) {
 		t.Fatalf("error_id is not unique per projection: %q vs %q", first.ErrorID, second.ErrorID)
 	}
 }
+
+// Support starts from whichever identifier the report carries. The projection
+// log must therefore publish the transport request_id next to the error_id it
+// mints, so either one leads to the other.
+func TestProjectWithRequestIDCorrelatesErrorIDAndRequestID(t *testing.T) {
+	var records []transport.ProjectionLog
+	projector, err := transport.NewProjector(
+		newCatalog(t),
+		transport.WithIDGenerator(func() string { return "err-correlated" }),
+		transport.WithProjectionLogger(func(record transport.ProjectionLog) { records = append(records, record) }),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cause := errors.New("upstream stalled")
+	projectedErr := fmt.Errorf("chat failed: %w", apperror.Wrap(cause, codeProviderTimeout, apperror.WithOperation("gateway.chat")))
+
+	result := projector.ProjectWithRequestID(projectedErr, catalog.LocaleEnglishUS, "req-correlated")
+
+	if result.ErrorID != "err-correlated" {
+		t.Fatalf("error_id = %q", result.ErrorID)
+	}
+	if len(records) != 1 {
+		t.Fatalf("records = %d, want 1", len(records))
+	}
+	if records[0].ErrorID != "err-correlated" || records[0].RequestID != "req-correlated" {
+		t.Fatalf("record = %#v, want both identifiers", records[0])
+	}
+
+	// Project keeps working without a transport identity.
+	records = nil
+	projector.Project(projectedErr, catalog.LocaleEnglishUS)
+	if len(records) != 1 || records[0].RequestID != "" {
+		t.Fatalf("records = %#v, want an empty request_id", records)
+	}
+}

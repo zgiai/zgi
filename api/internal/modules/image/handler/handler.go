@@ -132,7 +132,7 @@ func (h *Handler) fail(c *gin.Context, err error) {
 	appErr := imageApplicationError(err)
 	if appErr != nil && h.errorProjector != nil {
 		locale := apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language"))
-		result := h.errorProjector.Project(appErr, locale)
+		result := h.errorProjector.ProjectWithRequestID(appErr, locale, imageRequestIDFromContext(c))
 		body := gin.H{
 			"code":      result.Presentation.Code.String(),
 			"message":   result.Presentation.Message,

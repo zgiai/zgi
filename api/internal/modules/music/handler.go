@@ -207,7 +207,7 @@ func (h *Handler) handleMusicServiceError(c *gin.Context, err error) {
 
 func (h *Handler) writeApplicationError(c *gin.Context, err error) {
 	locale := apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language"))
-	result := h.errorProjector.Project(err, locale)
+	result := h.errorProjector.ProjectWithRequestID(err, locale, c.Writer.Header().Get("X-Request-ID"))
 	body := gin.H{
 		"code":      result.Presentation.Code.String(),
 		"message":   result.Presentation.Message,

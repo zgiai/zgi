@@ -65,7 +65,7 @@ func (h *LLMHandler) localizedProtocolError(c *gin.Context, err error) protocolE
 	}
 
 	locale := apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language"))
-	result := h.errorProjector.Project(projectionTarget, locale)
+	result := h.errorProjector.ProjectWithRequestID(projectionTarget, locale, c.Writer.Header().Get("X-Request-ID"))
 	legacy.errorID = result.ErrorID
 	if result.Resolution == apptransport.ResolutionMatched {
 		legacy.message = result.Presentation.Message

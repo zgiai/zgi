@@ -136,7 +136,7 @@ func (h *Handler) scope(c *gin.Context) (videoservice.Scope, bool) {
 func (h *Handler) fail(c *gin.Context, err error) {
 	appErr := videoApplicationError(err)
 	locale := apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language"))
-	result := h.errorProjector.Project(appErr, locale)
+	result := h.errorProjector.ProjectWithRequestID(appErr, locale, requestIDFromContext(c))
 
 	body := gin.H{
 		"code":      result.Presentation.Code.String(),
