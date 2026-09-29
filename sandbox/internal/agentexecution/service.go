@@ -312,6 +312,7 @@ func (s *Service) enqueueDestroy(ctx context.Context, binding Binding, allocatio
 		ResourceID:   binding.ID,
 		Backend:      binding.Backend,
 		BackendRef:   allocation.BindingRef,
+		WorkspaceRef: allocation.WorkspaceRef,
 		Action:       "destroy",
 		Status:       "pending",
 		LastError:    limitFailureReason(cause.Error()),

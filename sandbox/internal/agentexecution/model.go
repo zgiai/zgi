@@ -71,6 +71,7 @@ type CleanupTask struct {
 	ResourceID     string
 	Backend        string
 	BackendRef     string
+	WorkspaceRef   string
 	Action         string
 	Status         string
 	Attempts       int

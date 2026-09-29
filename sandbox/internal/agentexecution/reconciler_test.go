@@ -19,7 +19,7 @@ func TestReconcilerRecoversExpiredClaimAndFinalizesBinding(t *testing.T) {
 	expired := now.Add(-time.Second)
 	repository.cleanups = append(repository.cleanups, CleanupTask{
 		ID: "cleanup-1", ResourceType: "binding", ResourceID: "binding-1", Backend: "fake",
-		BackendRef: "backend-1", Action: "destroy", Status: "running", Attempts: 1,
+		BackendRef: "backend-1", WorkspaceRef: "workspace-1", Action: "destroy", Status: "running", Attempts: 1,
 		LeaseOwner: "dead-worker", LeaseExpiresAt: &expired, NotBefore: now.Add(-time.Minute), CreatedAt: now.Add(-time.Minute),
 	})
 	backend := &fakeBackend{}
@@ -36,6 +36,9 @@ func TestReconcilerRecoversExpiredClaimAndFinalizesBinding(t *testing.T) {
 	if !processed || backend.destroyCalls != 1 {
 		t.Fatalf("processed=%v destroy calls=%d", processed, backend.destroyCalls)
 	}
+	if backend.destroyed.WorkspaceRef != "workspace-1" {
+		t.Fatalf("destroy allocation = %+v", backend.destroyed)
+	}
 	if repository.bindings["binding-1"].Status != BindingStatusDeleted {
 		t.Fatalf("binding status = %q, want deleted", repository.bindings["binding-1"].Status)
 	}
@@ -50,7 +53,7 @@ func TestReconcilerSchedulesRetryOnBackendFailure(t *testing.T) {
 	repository.bindings["binding-1"] = Binding{ID: "binding-1", Backend: "fake", Status: BindingStatusDeleting, Generation: 2}
 	repository.cleanups = append(repository.cleanups, CleanupTask{
 		ID: "cleanup-1", ResourceType: "binding", ResourceID: "binding-1", Backend: "fake",
-		BackendRef: "backend-1", Action: "destroy", Status: "pending", NotBefore: now,
+		BackendRef: "backend-1", WorkspaceRef: "workspace-1", Action: "destroy", Status: "pending", NotBefore: now,
 	})
 	reconciler, err := NewReconciler(repository, map[string]Backend{"fake": &fakeBackend{destroyErr: errors.New("backend unavailable")}}, ReconcilerOptions{
 		OwnerID: "worker-1", Now: func() time.Time { return now }, RetryDelay: 20 * time.Second,
@@ -76,7 +79,7 @@ func TestReconcilerCompletesClaimAfterBindingWasAlreadyFinalized(t *testing.T) {
 	expired := now.Add(-time.Second)
 	repository.cleanups = append(repository.cleanups, CleanupTask{
 		ID: "cleanup-1", ResourceType: "binding", ResourceID: "binding-1", Backend: "fake",
-		BackendRef: "backend-1", Action: "destroy", Status: "running", Attempts: 1,
+		BackendRef: "backend-1", WorkspaceRef: "workspace-1", Action: "destroy", Status: "running", Attempts: 1,
 		LeaseOwner: "crashed-worker", LeaseExpiresAt: &expired, NotBefore: now.Add(-time.Minute),
 	})
 	reconciler, err := NewReconciler(repository, map[string]Backend{"fake": &fakeBackend{}}, ReconcilerOptions{

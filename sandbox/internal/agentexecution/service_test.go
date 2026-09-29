@@ -76,6 +76,9 @@ func TestCreateBindingQueuesCleanupWhenBackendPartiallyFails(t *testing.T) {
 	if repository.cleanups[0].BackendRef == "" {
 		t.Fatal("partial backend reference was not retained for cleanup")
 	}
+	if repository.cleanups[0].WorkspaceRef == "" {
+		t.Fatal("partial workspace reference was not retained for cleanup")
+	}
 }
 
 func TestSuspendBindingUsesGenerationFence(t *testing.T) {
@@ -278,6 +281,7 @@ type fakeBackend struct {
 	suspendCalls int
 	resumeCalls  int
 	destroyCalls int
+	destroyed    Allocation
 	createErr    error
 	destroyErr   error
 }
@@ -304,10 +308,11 @@ func (b *fakeBackend) ResumeBinding(_ context.Context, _ CreateSpec, allocation 
 	return allocation, nil
 }
 
-func (b *fakeBackend) DestroyBinding(context.Context, Allocation) error {
+func (b *fakeBackend) DestroyBinding(_ context.Context, allocation Allocation) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.destroyCalls++
+	b.destroyed = allocation
 	return b.destroyErr
 }
 

@@ -167,6 +167,13 @@ var schemaMigrations = []schemaMigration{
 			);`,
 		},
 	},
+	{
+		version:     2026092904,
+		description: "agent runtime cleanup workspace handles",
+		statements: []string{
+			`ALTER TABLE agent_runtime_cleanup_tasks ADD COLUMN workspace_ref TEXT NOT NULL DEFAULT '';`,
+		},
+	},
 }
 
 func (s *Store) applyMigrations(ctx context.Context) error {

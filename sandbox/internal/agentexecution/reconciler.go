@@ -74,7 +74,7 @@ func (r *Reconciler) ReconcileOne(ctx context.Context) (bool, error) {
 		err := fmt.Errorf("%w: unsupported cleanup %s/%s", ErrInvalidRequest, task.ResourceType, task.Action)
 		return true, r.retryCleanup(ctx, task, err)
 	}
-	if err := backend.DestroyBinding(ctx, Allocation{BindingRef: task.BackendRef}); err != nil {
+	if err := backend.DestroyBinding(ctx, Allocation{BindingRef: task.BackendRef, WorkspaceRef: task.WorkspaceRef}); err != nil {
 		return true, r.retryCleanup(ctx, task, err)
 	}
 	finishedAt := r.now().UTC()
