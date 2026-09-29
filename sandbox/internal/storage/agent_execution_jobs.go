@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -124,48 +125,81 @@ func (s *Store) RenewJobClaim(ctx context.Context, jobID string, ownerID string,
 	return requireAffected(result, agentruntime.ErrJobClaimLost)
 }
 
-func (s *Store) AppendJobOutput(ctx context.Context, jobID string, stream agentruntime.OutputStream, data []byte, maximumBytes int64, now time.Time) (agentruntime.OutputChunk, error) {
-	if stream != agentruntime.OutputStreamStdout && stream != agentruntime.OutputStreamStderr {
+func (s *Store) AppendJobOutput(ctx context.Context, jobID string, chunk agentruntime.OutputChunk, maximumBytes int64, now time.Time) (agentruntime.OutputChunk, error) {
+	if chunk.Sequence < 0 || (chunk.Stream != agentruntime.OutputStreamStdout && chunk.Stream != agentruntime.OutputStreamStderr) {
 		return agentruntime.OutputChunk{}, agentruntime.ErrInvalidRequest
 	}
-	stdoutIncrement := 0
-	stderrIncrement := 0
-	if stream == agentruntime.OutputStreamStdout {
-		stdoutIncrement = len(data)
-	} else {
-		stderrIncrement = len(data)
+	if chunk.JobID != "" && chunk.JobID != jobID {
+		return agentruntime.OutputChunk{}, agentruntime.ErrIdempotencyConflict
 	}
-	row := s.db.QueryRowContext(ctx, `
-		WITH updated AS (
-			UPDATE agent_runtime_jobs
-			SET next_output_sequence = next_output_sequence + 1,
-			    stdout_bytes = stdout_bytes + $3,
-			    stderr_bytes = stderr_bytes + $4,
-			    updated_at = $7
-			WHERE id = $1
-			  AND status = 'running'
-			  AND stdout_bytes + stderr_bytes + $5 <= $6
-			RETURNING next_output_sequence - 1 AS sequence
-		)
-		INSERT INTO agent_runtime_job_output_chunks (job_id, sequence, stream, data, created_at)
-		SELECT $1, sequence, $2, $8, $7 FROM updated
-		RETURNING job_id, sequence, stream, data, created_at
-	`, jobID, stream, stdoutIncrement, stderrIncrement, len(data), maximumBytes, now.UTC(), data)
-	chunk, err := scanAgentExecutionOutput(row)
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return agentruntime.OutputChunk{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var status agentruntime.JobStatus
+	var stdoutBytes int64
+	var stderrBytes int64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT status, stdout_bytes, stderr_bytes
+		FROM agent_runtime_jobs
+		WHERE id = $1
+		FOR UPDATE
+	`, jobID).Scan(&status, &stdoutBytes, &stderrBytes); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return agentruntime.OutputChunk{}, agentruntime.ErrNotFound
+		}
+		return agentruntime.OutputChunk{}, err
+	}
+	if status != agentruntime.JobStatusRunning {
+		return agentruntime.OutputChunk{}, fmt.Errorf("%w: job is %s", agentruntime.ErrInvalidTransition, status)
+	}
+	existing, err := scanAgentExecutionOutput(tx.QueryRowContext(ctx, `
+		SELECT job_id, sequence, stream, data, created_at
+		FROM agent_runtime_job_output_chunks
+		WHERE job_id = $1 AND sequence = $2
+	`, jobID, chunk.Sequence))
 	if err == nil {
-		return chunk, nil
+		if existing.Stream != chunk.Stream || !bytes.Equal(existing.Data, chunk.Data) {
+			return agentruntime.OutputChunk{}, agentruntime.ErrIdempotencyConflict
+		}
+		return existing, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return agentruntime.OutputChunk{}, err
 	}
-	job, loadErr := s.Job(ctx, jobID)
-	if loadErr != nil {
-		return agentruntime.OutputChunk{}, loadErr
+	if stdoutBytes+stderrBytes+int64(len(chunk.Data)) > maximumBytes {
+		return agentruntime.OutputChunk{}, agentruntime.ErrOutputLimit
 	}
-	if job.Status != agentruntime.JobStatusRunning {
-		return agentruntime.OutputChunk{}, fmt.Errorf("%w: job is %s", agentruntime.ErrInvalidTransition, job.Status)
+	chunk.JobID = jobID
+	chunk.Data = append([]byte(nil), chunk.Data...)
+	chunk.CreatedAt = now.UTC()
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO agent_runtime_job_output_chunks (job_id, sequence, stream, data, created_at)
+		VALUES ($1, $2, $3, $4, $5)
+	`, chunk.JobID, chunk.Sequence, chunk.Stream, chunk.Data, chunk.CreatedAt); err != nil {
+		return agentruntime.OutputChunk{}, err
 	}
-	return agentruntime.OutputChunk{}, agentruntime.ErrOutputLimit
+	stdoutIncrement := 0
+	stderrIncrement := 0
+	if chunk.Stream == agentruntime.OutputStreamStdout {
+		stdoutIncrement = len(chunk.Data)
+	} else {
+		stderrIncrement = len(chunk.Data)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE agent_runtime_jobs
+		SET stdout_bytes = stdout_bytes + $2,
+		    stderr_bytes = stderr_bytes + $3,
+		    updated_at = $4
+		WHERE id = $1
+	`, jobID, stdoutIncrement, stderrIncrement, now.UTC()); err != nil {
+		return agentruntime.OutputChunk{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return agentruntime.OutputChunk{}, err
+	}
+	return chunk, nil
 }
 
 func (s *Store) JobCancellationRequested(ctx context.Context, jobID string) (bool, error) {

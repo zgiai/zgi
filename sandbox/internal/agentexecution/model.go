@@ -143,11 +143,11 @@ const (
 )
 
 type OutputChunk struct {
-	JobID     string
-	Sequence  int64
-	Stream    OutputStream
-	Data      []byte
-	CreatedAt time.Time
+	JobID     string       `json:"job_id,omitempty"`
+	Sequence  int64        `json:"sequence"`
+	Stream    OutputStream `json:"stream"`
+	Data      []byte       `json:"data"`
+	CreatedAt time.Time    `json:"created_at"`
 }
 
 type JobSpec struct {
@@ -163,9 +163,9 @@ type JobSpec struct {
 }
 
 type JobResult struct {
-	ExitCode int
-	Canceled bool
-	Error    string
+	ExitCode int    `json:"exit_code"`
+	Canceled bool   `json:"canceled"`
+	Error    string `json:"error,omitempty"`
 }
 
 type RuntimeCapabilities struct {
@@ -193,10 +193,12 @@ type RunningJob interface {
 
 // ExecutionBackend is the data-plane contract implemented by a runtime
 // worker. StartJob must be idempotent for a given JobID because an expired
-// worker claim can be recovered after a control-plane crash.
+// worker claim can be recovered after a control-plane crash. Output callbacks
+// must use stable, contiguous sequences beginning at zero and be delivered in
+// sequence order; retries may replay a sequence with identical content.
 type ExecutionBackend interface {
 	Capabilities(context.Context, Allocation) (RuntimeCapabilities, error)
-	StartJob(context.Context, Allocation, JobSpec, func(OutputStream, []byte) error) (RunningJob, error)
+	StartJob(context.Context, Allocation, JobSpec, func(OutputChunk) error) (RunningJob, error)
 	UploadFile(context.Context, Allocation, string, io.Reader, int64) (FileInfo, error)
 	DownloadFile(context.Context, Allocation, string) (io.ReadCloser, FileInfo, error)
 }
@@ -260,7 +262,7 @@ type JobRepository interface {
 	Job(context.Context, string) (Job, error)
 	ClaimJob(context.Context, string, time.Time, time.Time) (job Job, claimed bool, err error)
 	RenewJobClaim(context.Context, string, string, time.Time, time.Time) error
-	AppendJobOutput(context.Context, string, OutputStream, []byte, int64, time.Time) (OutputChunk, error)
+	AppendJobOutput(context.Context, string, OutputChunk, int64, time.Time) (OutputChunk, error)
 	JobCancellationRequested(context.Context, string) (bool, error)
 	CompleteJob(context.Context, string, string, JobResult, time.Time) (Job, error)
 	RequestJobCancellation(context.Context, string, int64, time.Time) (Job, error)

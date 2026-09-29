@@ -269,11 +269,13 @@ func (w *Worker) RunOne(ctx context.Context) (bool, error) {
 	defer cancel()
 	var outputMu sync.Mutex
 	var outputErr error
-	sink := func(stream OutputStream, data []byte) error {
-		if len(data) == 0 {
+	sink := func(chunk OutputChunk) error {
+		if len(chunk.Data) == 0 {
 			return nil
 		}
-		_, err := w.jobs.AppendJobOutput(jobCtx, job.ID, stream, append([]byte(nil), data...), w.maxOutputBytes, w.now().UTC())
+		chunk.JobID = job.ID
+		chunk.Data = append([]byte(nil), chunk.Data...)
+		_, err := w.jobs.AppendJobOutput(jobCtx, job.ID, chunk, w.maxOutputBytes, w.now().UTC())
 		if err != nil {
 			outputMu.Lock()
 			if outputErr == nil {

@@ -27,13 +27,13 @@ func TestBackendRunsJobStreamsOutputAndIsIdempotent(t *testing.T) {
 	var outputMu sync.Mutex
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	sink := func(stream agentexecution.OutputStream, value []byte) error {
+	sink := func(chunk agentexecution.OutputChunk) error {
 		outputMu.Lock()
 		defer outputMu.Unlock()
-		if stream == agentexecution.OutputStreamStdout {
-			_, _ = stdout.Write(value)
+		if chunk.Stream == agentexecution.OutputStreamStdout {
+			_, _ = stdout.Write(chunk.Data)
 		} else {
-			_, _ = stderr.Write(value)
+			_, _ = stderr.Write(chunk.Data)
 		}
 		return nil
 	}
@@ -68,7 +68,7 @@ func TestBackendCancelsProcessGroup(t *testing.T) {
 	running, err := backend.StartJob(context.Background(), agentexecution.Allocation{}, agentexecution.JobSpec{
 		JobID: "job-cancel", Command: "/bin/sh",
 		Args: []string{"-c", `sleep 30 & echo $! > child.pid; wait`}, Timeout: time.Minute,
-	}, func(agentexecution.OutputStream, []byte) error { return nil })
+	}, func(agentexecution.OutputChunk) error { return nil })
 	if err != nil {
 		t.Fatalf("start job: %v", err)
 	}
@@ -97,10 +97,10 @@ func TestBackendPTYAndTimeout(t *testing.T) {
 	running, err := backend.StartJob(context.Background(), agentexecution.Allocation{}, agentexecution.JobSpec{
 		JobID: "job-pty", Command: "/bin/sh", Args: []string{"-c", "printf 'pty-ok'"},
 		PTY: true, PTYColumns: 80, PTYRows: 24, Timeout: time.Second,
-	}, func(_ agentexecution.OutputStream, value []byte) error {
+	}, func(chunk agentexecution.OutputChunk) error {
 		outputMu.Lock()
 		defer outputMu.Unlock()
-		_, _ = output.Write(value)
+		_, _ = output.Write(chunk.Data)
 		return nil
 	})
 	if err != nil {
@@ -116,7 +116,7 @@ func TestBackendPTYAndTimeout(t *testing.T) {
 
 	running, err = backend.StartJob(context.Background(), agentexecution.Allocation{}, agentexecution.JobSpec{
 		JobID: "job-timeout", Command: "/bin/sh", Args: []string{"-c", "sleep 30"}, Timeout: 50 * time.Millisecond,
-	}, func(agentexecution.OutputStream, []byte) error { return nil })
+	}, func(agentexecution.OutputChunk) error { return nil })
 	if err != nil {
 		t.Fatalf("start timeout job: %v", err)
 	}

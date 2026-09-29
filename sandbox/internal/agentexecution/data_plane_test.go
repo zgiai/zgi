@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -130,6 +131,50 @@ func TestWorkerCancelsRunningJob(t *testing.T) {
 	}
 }
 
+func TestWorkerDeduplicatesOutputReplayedAfterClaimRecovery(t *testing.T) {
+	bindings := newMemoryRepository()
+	bindings.bindings["binding-1"] = activeTestBinding()
+	jobs := newMemoryJobRepository()
+	backend := newFakeExecutionBackend()
+	service := newTestDataPlane(t, bindings, jobs, backend)
+	job, err := service.SubmitJob(context.Background(), testSubmitJobRequest())
+	if err != nil {
+		t.Fatalf("submit job: %v", err)
+	}
+	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	expired := now.Add(-time.Second)
+	jobs.mu.Lock()
+	job.Status = JobStatusRunning
+	job.Generation++
+	job.ClaimOwner = "crashed-worker"
+	job.ClaimExpiresAt = &expired
+	job.Attempts = 1
+	job.StdoutBytes = int64(len("hello\n"))
+	job.StderrBytes = int64(len("diagnostic\n"))
+	jobs.jobs[job.ID] = job
+	jobs.chunks[job.ID] = []OutputChunk{
+		{JobID: job.ID, Sequence: 0, Stream: OutputStreamStdout, Data: []byte("hello\n"), CreatedAt: now},
+		{JobID: job.ID, Sequence: 1, Stream: OutputStreamStderr, Data: []byte("diagnostic\n"), CreatedAt: now},
+	}
+	jobs.mu.Unlock()
+
+	worker, err := NewWorker(jobs, map[string]ExecutionBackend{"fake": backend}, WorkerOptions{
+		OwnerID: "recovery-worker", Now: func() time.Time { return now }, CancelPollInterval: 5 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("new worker: %v", err)
+	}
+	if processed, err := worker.RunOne(context.Background()); err != nil || !processed {
+		t.Fatalf("recover job: processed=%v error=%v", processed, err)
+	}
+	jobs.mu.Lock()
+	defer jobs.mu.Unlock()
+	recovered := jobs.jobs[job.ID]
+	if len(jobs.chunks[job.ID]) != 2 || recovered.StdoutBytes != int64(len("hello\n")) || recovered.StderrBytes != int64(len("diagnostic\n")) {
+		t.Fatalf("replayed output was duplicated: job=%+v chunks=%+v", recovered, jobs.chunks[job.ID])
+	}
+}
+
 func TestDataPlaneValidatesPathsAndTransfersFiles(t *testing.T) {
 	bindings := newMemoryRepository()
 	bindings.bindings["binding-1"] = activeTestBinding()
@@ -205,11 +250,11 @@ func (b *fakeExecutionBackend) Capabilities(context.Context, Allocation) (Runtim
 	return RuntimeCapabilities{Shell: true, PTY: true, FileTransfer: true, NetworkMode: "disabled", MaxUploadBytes: defaultFileTransferMax, MaxDownloadBytes: defaultFileTransferMax}, nil
 }
 
-func (b *fakeExecutionBackend) StartJob(_ context.Context, _ Allocation, _ JobSpec, sink func(OutputStream, []byte) error) (RunningJob, error) {
-	if err := sink(OutputStreamStdout, []byte("hello\n")); err != nil {
+func (b *fakeExecutionBackend) StartJob(_ context.Context, _ Allocation, spec JobSpec, sink func(OutputChunk) error) (RunningJob, error) {
+	if err := sink(OutputChunk{JobID: spec.JobID, Sequence: 0, Stream: OutputStreamStdout, Data: []byte("hello\n")}); err != nil {
 		return nil, err
 	}
-	if err := sink(OutputStreamStderr, []byte("diagnostic\n")); err != nil {
+	if err := sink(OutputChunk{JobID: spec.JobID, Sequence: 1, Stream: OutputStreamStderr, Data: []byte("diagnostic\n")}); err != nil {
 		return nil, err
 	}
 	running := &fakeRunningJob{done: make(chan struct{}), backend: b}
@@ -340,24 +385,34 @@ func (r *memoryJobRepository) RenewJobClaim(_ context.Context, id string, owner 
 	return nil
 }
 
-func (r *memoryJobRepository) AppendJobOutput(_ context.Context, id string, stream OutputStream, data []byte, maximum int64, now time.Time) (OutputChunk, error) {
+func (r *memoryJobRepository) AppendJobOutput(_ context.Context, id string, chunk OutputChunk, maximum int64, now time.Time) (OutputChunk, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	job, ok := r.jobs[id]
 	if !ok {
 		return OutputChunk{}, ErrNotFound
 	}
-	if job.StdoutBytes+job.StderrBytes+int64(len(data)) > maximum {
+	for _, existing := range r.chunks[id] {
+		if existing.Sequence == chunk.Sequence {
+			if existing.Stream != chunk.Stream || !bytes.Equal(existing.Data, chunk.Data) {
+				return OutputChunk{}, ErrIdempotencyConflict
+			}
+			return existing, nil
+		}
+	}
+	if job.StdoutBytes+job.StderrBytes+int64(len(chunk.Data)) > maximum {
 		return OutputChunk{}, ErrOutputLimit
 	}
-	if stream == OutputStreamStdout {
-		job.StdoutBytes += int64(len(data))
-	} else if stream == OutputStreamStderr {
-		job.StderrBytes += int64(len(data))
+	if chunk.Stream == OutputStreamStdout {
+		job.StdoutBytes += int64(len(chunk.Data))
+	} else if chunk.Stream == OutputStreamStderr {
+		job.StderrBytes += int64(len(chunk.Data))
 	} else {
 		return OutputChunk{}, ErrInvalidRequest
 	}
-	chunk := OutputChunk{JobID: id, Sequence: int64(len(r.chunks[id])), Stream: stream, Data: append([]byte(nil), data...), CreatedAt: now}
+	chunk.JobID = id
+	chunk.Data = append([]byte(nil), chunk.Data...)
+	chunk.CreatedAt = now
 	r.jobs[id] = job
 	r.chunks[id] = append(r.chunks[id], chunk)
 	return chunk, nil
@@ -425,8 +480,10 @@ func (r *memoryJobRepository) JobOutput(_ context.Context, id string, after int6
 	if _, ok := r.jobs[id]; !ok {
 		return nil, ErrNotFound
 	}
+	ordered := append([]OutputChunk(nil), r.chunks[id]...)
+	sort.Slice(ordered, func(left int, right int) bool { return ordered[left].Sequence < ordered[right].Sequence })
 	result := make([]OutputChunk, 0, limit)
-	for _, chunk := range r.chunks[id] {
+	for _, chunk := range ordered {
 		if chunk.Sequence <= after {
 			continue
 		}

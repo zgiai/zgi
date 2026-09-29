@@ -202,18 +202,22 @@ func TestAgentExecutionJobRepository(t *testing.T) {
 	if claimed.Status != agentruntime.JobStatusRunning || claimed.Generation != created.Generation+1 {
 		t.Fatalf("claimed job = %+v", claimed)
 	}
-	first, err := store.AppendJobOutput(context.Background(), job.ID, agentruntime.OutputStreamStdout, []byte("hello"), 16, now)
+	first, err := store.AppendJobOutput(context.Background(), job.ID, agentruntime.OutputChunk{Sequence: 0, Stream: agentruntime.OutputStreamStdout, Data: []byte("hello")}, 16, now)
 	if err != nil {
 		t.Fatalf("append stdout: %v", err)
 	}
-	second, err := store.AppendJobOutput(context.Background(), job.ID, agentruntime.OutputStreamStderr, []byte("warn"), 16, now)
+	second, err := store.AppendJobOutput(context.Background(), job.ID, agentruntime.OutputChunk{Sequence: 1, Stream: agentruntime.OutputStreamStderr, Data: []byte("warn")}, 16, now)
 	if err != nil {
 		t.Fatalf("append stderr: %v", err)
 	}
 	if first.Sequence != 0 || second.Sequence != 1 {
 		t.Fatalf("output sequences = %d, %d", first.Sequence, second.Sequence)
 	}
-	if _, err := store.AppendJobOutput(context.Background(), job.ID, agentruntime.OutputStreamStdout, []byte("too-large"), 16, now); !errors.Is(err, agentruntime.ErrOutputLimit) {
+	duplicateChunk, err := store.AppendJobOutput(context.Background(), job.ID, agentruntime.OutputChunk{Sequence: 0, Stream: agentruntime.OutputStreamStdout, Data: []byte("hello")}, 16, now)
+	if err != nil || duplicateChunk.Sequence != 0 {
+		t.Fatalf("append duplicate output: chunk=%+v error=%v", duplicateChunk, err)
+	}
+	if _, err := store.AppendJobOutput(context.Background(), job.ID, agentruntime.OutputChunk{Sequence: 2, Stream: agentruntime.OutputStreamStdout, Data: []byte("too-large")}, 16, now); !errors.Is(err, agentruntime.ErrOutputLimit) {
 		t.Fatalf("output limit error = %v, want ErrOutputLimit", err)
 	}
 	chunks, err := store.JobOutput(context.Background(), job.ID, 0, 10)

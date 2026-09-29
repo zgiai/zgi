@@ -106,7 +106,7 @@ func (b *Backend) Capabilities(context.Context, agentexecution.Allocation) (agen
 	}, nil
 }
 
-func (b *Backend) StartJob(ctx context.Context, _ agentexecution.Allocation, spec agentexecution.JobSpec, sink func(agentexecution.OutputStream, []byte) error) (agentexecution.RunningJob, error) {
+func (b *Backend) StartJob(ctx context.Context, _ agentexecution.Allocation, spec agentexecution.JobSpec, sink func(agentexecution.OutputChunk) error) (agentexecution.RunningJob, error) {
 	if err := validateJobSpec(spec, sink); err != nil {
 		return nil, err
 	}
@@ -130,7 +130,18 @@ func (b *Backend) StartJob(ctx context.Context, _ agentexecution.Allocation, spe
 		}
 		return existing.running, nil
 	}
-	running, err := startProcess(ctx, workDir, spec, sink)
+	var outputMu sync.Mutex
+	var sequence int64
+	running, err := startProcess(ctx, workDir, spec, func(stream agentexecution.OutputStream, value []byte) error {
+		outputMu.Lock()
+		defer outputMu.Unlock()
+		chunk := agentexecution.OutputChunk{
+			JobID: spec.JobID, Sequence: sequence, Stream: stream,
+			Data: append([]byte(nil), value...), CreatedAt: time.Now().UTC(),
+		}
+		sequence++
+		return sink(chunk)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +149,7 @@ func (b *Backend) StartJob(ctx context.Context, _ agentexecution.Allocation, spe
 	return running, nil
 }
 
-func validateJobSpec(spec agentexecution.JobSpec, sink func(agentexecution.OutputStream, []byte) error) error {
+func validateJobSpec(spec agentexecution.JobSpec, sink func(agentexecution.OutputChunk) error) error {
 	if strings.TrimSpace(spec.JobID) == "" || strings.TrimSpace(spec.Command) == "" || sink == nil {
 		return fmt.Errorf("%w: job id, command, and output sink are required", agentexecution.ErrInvalidRequest)
 	}
