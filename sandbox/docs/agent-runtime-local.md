@@ -42,6 +42,8 @@ Required environment:
 
 Important optional settings are `ZGI_AGENT_RUNTIME_LISTEN` (default `127.0.0.1:2670`), `ZGI_AGENT_RUNTIME_WORKER_ID`, `ZGI_AGENT_RUNTIME_ROOT` (default `/var/lib/zgi-agent-runtime`), `ZGI_AGENT_RUNTIME_CONTAINERD_ADDRESS`, `ZGI_AGENT_RUNTIME_MAX_WORKERS`, `ZGI_AGENT_RUNTIME_IDLE_TTL_SECONDS` (default 1800), `ZGI_AGENT_RUNTIME_STARTUP_TIMEOUT_SECONDS` (default 30), and the `MEMORY_BYTES`, `PIDS`, `CPU_PERIOD`, and `CPU_QUOTA` variables with the `ZGI_AGENT_RUNTIME_` prefix.
 
+Keep `ZGI_AGENT_RUNTIME_ROOT` under a service-data parent such as `/var/lib`, not under `/root` (normally mode `0700`). The Runtime Agent runs as UID/GID 65532, and the runtime uses host-side bind mounts and a control socket. A native gVisor smoke test timed out when the root was under `/root`, even with a 45-second startup limit, while the same test passed with a root under `/var/lib`. This identifies a deployment-path constraint on the tested node; the exact failing access operation was not exposed by the Worker API. Do not make `/root` world-traversable to work around this; move the Worker root instead. The startup limit is a deadline, not a fix for inaccessible paths.
+
 The process owns bounded, cancelable loops for asynchronous Jobs, cleanup reconciliation, and idle Binding suspension. Job submission and file transfer atomically refresh the Binding idle deadline and generation; a stale reaper observation therefore cannot suspend a Binding after new activity.
 
 ## Lifecycle semantics
