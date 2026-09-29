@@ -115,14 +115,50 @@ func (f *fakeAgentExecutionGateway) DownloadFile(_ context.Context, _ agentExecu
 }
 
 func TestAgentExecutionBindingResumesAfterIdleSuspension(t *testing.T) {
-	fake := &fakeAgentExecutionGateway{binding: agentExecutionBinding{ID: "binding-1", Status: "suspended", Generation: 4}}
+	fake := &fakeAgentExecutionGateway{binding: agentExecutionBinding{ID: "binding-1", Status: "suspended", Generation: 4, Recreated: true}}
 	binding, err := readyAgentExecutionBinding(t.Context(), fake, agentExecutionScope{OrganizationID: "org-1", SubjectID: "account-1"}, "agent-1", "conversation-1", "standard", "local-gvisor")
-	if err != nil || binding.Status != "active" || binding.Generation != 5 || fake.resumeCalls != 1 {
+	if err != nil || binding.Status != "active" || binding.Generation != 5 || fake.resumeCalls != 1 || !binding.Recreated {
 		t.Fatalf("resumed binding = %#v, calls=%d, err=%v", binding, fake.resumeCalls, err)
 	}
 	fake.binding.Status = "deleted"
 	if _, err := readyAgentExecutionBinding(t.Context(), fake, agentExecutionScope{OrganizationID: "org-1", SubjectID: "account-1"}, "agent-1", "conversation-1", "standard", "local-gvisor"); err == nil {
-		t.Fatal("deleted binding must not be reused")
+		t.Fatal("deleted binding with no replacement must not be reused")
+	}
+}
+
+func TestAgentExecutionHTTPGatewayReplacesDeletedBindingIdempotently(t *testing.T) {
+	var keys []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/agent-runtime/bindings" {
+			t.Errorf("binding request = %s %s", r.Method, r.URL.Path)
+		}
+		var body struct {
+			IdempotencyKey string `json:"idempotency_key"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode binding request: %v", err)
+		}
+		keys = append(keys, body.IdempotencyKey)
+		switch body.IdempotencyKey {
+		case "conversation:conversation-1":
+			_, _ = io.WriteString(w, `{"data":{"id":"binding-old","status":"deleted","generation":5}}`)
+		case "conversation:conversation-1:after:binding-old":
+			_, _ = io.WriteString(w, `{"data":{"id":"binding-new","status":"active","generation":2}}`)
+		default:
+			t.Errorf("unexpected idempotency key %q", body.IdempotencyKey)
+		}
+	}))
+	defer server.Close()
+	gateway := &agentExecutionHTTPGateway{baseURL: server.URL, apiKey: "dedicated-worker-key", client: server.Client()}
+	for range 2 {
+		binding, err := gateway.CreateBinding(t.Context(), agentExecutionScope{OrganizationID: "org-1", SubjectID: "account-1"}, "agent-1", "conversation-1", "standard", "local-gvisor")
+		if err != nil || binding.ID != "binding-new" || !binding.Recreated {
+			t.Fatalf("replacement binding = %#v, err=%v", binding, err)
+		}
+	}
+	want := []string{"conversation:conversation-1", "conversation:conversation-1:after:binding-old", "conversation:conversation-1", "conversation:conversation-1:after:binding-old"}
+	if !reflect.DeepEqual(keys, want) {
+		t.Fatalf("binding keys = %v, want %v", keys, want)
 	}
 }
 
@@ -264,6 +300,16 @@ func TestAgentExecutionExportCreatesDownloadArtifactWithoutTraceContent(t *testi
 		if bad.Result["error_code"] != "invalid_path" {
 			t.Fatalf("unsafe path %q accepted: %#v", unsafe, bad)
 		}
+	}
+}
+
+func TestAgentExecutionExportRejectsPreviousFileAfterWorkspaceRecreation(t *testing.T) {
+	fake := &fakeAgentExecutionGateway{binding: agentExecutionBinding{ID: "binding-new", Status: "active", Recreated: true}}
+	persister := &fakeAgentExecutionArtifactPersister{}
+	tool := newAgentExecutionExportTool(fake, persister, agentExecutionScope{OrganizationID: "org-1", SubjectID: "account-1"}, "agent-1", "conversation-1", "message-1", "standard", "e2b")
+	result := tool.Handler(t.Context(), adapter.ToolCall{Function: adapter.FunctionCall{Arguments: `{"path":"artifacts/result.csv"}`}})
+	if result.Result["error_code"] != "workspace_recreated" || persister.path != "" {
+		t.Fatalf("export after recreation = %#v, persister=%#v", result, persister)
 	}
 }
 

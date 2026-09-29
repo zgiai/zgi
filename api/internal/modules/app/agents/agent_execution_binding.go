@@ -14,9 +14,12 @@ func readyAgentExecutionBinding(ctx context.Context, gateway agentExecutionGatew
 	if err != nil {
 		return agentExecutionBinding{}, err
 	}
+	recreated := binding.Recreated
+	seenTerminal := make(map[string]struct{})
 	for {
 		switch binding.Status {
 		case "active":
+			binding.Recreated = recreated
 			return binding, nil
 		case "suspended":
 			binding, err = gateway.ResumeBinding(ctx, scope, binding.ID, binding.Generation)
@@ -36,6 +39,16 @@ func readyAgentExecutionBinding(ctx context.Context, gateway agentExecutionGatew
 			if err != nil {
 				return agentExecutionBinding{}, fmt.Errorf("read agent execution binding: %w", err)
 			}
+		case "deleted", "failed":
+			if _, exists := seenTerminal[binding.ID]; exists {
+				return agentExecutionBinding{}, fmt.Errorf("agent execution binding replacement did not advance")
+			}
+			seenTerminal[binding.ID] = struct{}{}
+			binding, err = gateway.CreateBinding(ctx, scope, agentID, conversationID, profileID, backend)
+			if err != nil {
+				return agentExecutionBinding{}, fmt.Errorf("replace terminal agent execution binding: %w", err)
+			}
+			recreated = recreated || binding.Recreated
 		default:
 			return agentExecutionBinding{}, fmt.Errorf("agent execution binding is %s", binding.Status)
 		}

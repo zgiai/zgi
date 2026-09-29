@@ -173,10 +173,10 @@ func executeAgentShellTool(ctx context.Context, gateway agentExecutionGateway, s
 	if err != nil {
 		return failed("job_output_failed", err)
 	}
-	result := map[string]interface{}{"job_id": job.ID, "status": job.Status, "exit_code": job.ExitCode, "truncated": truncated, "input_count": len(inputPaths)}
+	result := map[string]interface{}{"job_id": job.ID, "status": job.Status, "exit_code": job.ExitCode, "truncated": truncated, "input_count": len(inputPaths), "workspace_recreated": binding.Recreated}
 	return skillloop.RuntimeToolResult{
 		Status: "success", Arguments: map[string]interface{}{"command_bytes": len(args.Command)}, Result: result,
-		ModelResult: map[string]interface{}{"job_id": job.ID, "status": job.Status, "exit_code": job.ExitCode, "stdout": stdout, "stderr": stderr, "truncated": truncated, "input_files": inputPaths},
+		ModelResult: map[string]interface{}{"job_id": job.ID, "status": job.Status, "exit_code": job.ExitCode, "stdout": stdout, "stderr": stderr, "truncated": truncated, "input_files": inputPaths, "workspace_recreated": binding.Recreated},
 	}
 }
 

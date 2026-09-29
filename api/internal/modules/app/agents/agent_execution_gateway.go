@@ -16,6 +16,7 @@ import (
 
 const agentExecutionResponseLimit = 2 << 20
 const agentExecutionFileLimit = 64 << 20
+const agentExecutionMaxBindingReplacements = 16
 
 type agentExecutionScope struct {
 	OrganizationID string
@@ -26,6 +27,7 @@ type agentExecutionBinding struct {
 	ID         string `json:"id"`
 	Status     string `json:"status"`
 	Generation int64  `json:"generation"`
+	Recreated  bool   `json:"-"`
 }
 
 type agentExecutionJob struct {
@@ -137,12 +139,31 @@ func (g *agentExecutionHTTPGateway) request(ctx context.Context, scope agentExec
 }
 
 func (g *agentExecutionHTTPGateway) CreateBinding(ctx context.Context, scope agentExecutionScope, agentID, conversationID, profileID, backend string) (agentExecutionBinding, error) {
-	var result agentExecutionBinding
-	err := g.request(ctx, scope, http.MethodPost, "bindings", map[string]any{
-		"agent_id": agentID, "conversation_id": conversationID, "profile_id": profileID,
-		"backend": backend, "idempotency_key": "conversation:" + conversationID,
-	}, &result)
-	return result, err
+	key := "conversation:" + conversationID
+	seen := make(map[string]struct{})
+	for attempt := 0; attempt <= agentExecutionMaxBindingReplacements; attempt++ {
+		var result agentExecutionBinding
+		err := g.request(ctx, scope, http.MethodPost, "bindings", map[string]any{
+			"agent_id": agentID, "conversation_id": conversationID, "profile_id": profileID,
+			"backend": backend, "idempotency_key": key,
+		}, &result)
+		if err != nil {
+			return agentExecutionBinding{}, err
+		}
+		if result.ID == "" {
+			return agentExecutionBinding{}, fmt.Errorf("agent execution binding response has no id")
+		}
+		if result.Status != "deleted" && result.Status != "failed" {
+			result.Recreated = attempt > 0
+			return result, nil
+		}
+		if _, exists := seen[result.ID]; exists {
+			return agentExecutionBinding{}, fmt.Errorf("agent execution binding replacement cycle")
+		}
+		seen[result.ID] = struct{}{}
+		key = "conversation:" + conversationID + ":after:" + result.ID
+	}
+	return agentExecutionBinding{}, fmt.Errorf("agent execution binding replacement limit exceeded")
 }
 
 func (g *agentExecutionHTTPGateway) GetBinding(ctx context.Context, scope agentExecutionScope, bindingID string) (agentExecutionBinding, error) {

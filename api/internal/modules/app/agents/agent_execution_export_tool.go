@@ -63,6 +63,9 @@ func exportAgentExecutionFile(ctx context.Context, gateway agentExecutionGateway
 	if err != nil {
 		return failed("binding_unavailable", err)
 	}
+	if binding.Recreated {
+		return failed("workspace_recreated", fmt.Errorf("agent execution workspace was recreated and previous files are unavailable"))
+	}
 	capabilities, err := gateway.Capabilities(operationCtx, scope, binding.ID)
 	if err != nil || !capabilities.FileTransfer || capabilities.NetworkMode != "disabled" || capabilities.MaxDownloadBytes <= 0 {
 		return failed("capability_denied", fmt.Errorf("offline agent execution download is unavailable"))
