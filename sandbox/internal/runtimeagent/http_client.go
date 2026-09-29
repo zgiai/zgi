@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -28,6 +29,28 @@ type RemoteBackend struct {
 	token        string
 	client       *http.Client
 	pollInterval time.Duration
+}
+
+// NewUnixRemote connects to a Runtime Agent through a host-visible Unix
+// socket. Local isolation providers use this transport so no TCP listener has
+// to be exposed from an execution environment.
+func NewUnixRemote(socketPath string, token string, pollInterval time.Duration) (*RemoteBackend, error) {
+	socketPath = strings.TrimSpace(socketPath)
+	if socketPath == "" || !strings.HasPrefix(socketPath, "/") {
+		return nil, fmt.Errorf("%w: runtime agent socket path must be absolute", agentexecution.ErrInvalidRequest)
+	}
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return dialer.DialContext(ctx, "unix", socketPath)
+		},
+	}
+	return NewRemote(RemoteOptions{
+		BaseURL:      "http://runtime-agent.local",
+		Token:        token,
+		HTTPClient:   &http.Client{Transport: transport, Timeout: 30 * time.Second},
+		PollInterval: pollInterval,
+	})
 }
 
 var _ agentexecution.ExecutionBackend = (*RemoteBackend)(nil)

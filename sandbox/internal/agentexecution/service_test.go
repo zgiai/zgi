@@ -296,7 +296,7 @@ func (b *fakeBackend) SuspendBinding(context.Context, Allocation) error {
 	return nil
 }
 
-func (b *fakeBackend) ResumeBinding(_ context.Context, allocation Allocation) (Allocation, error) {
+func (b *fakeBackend) ResumeBinding(_ context.Context, _ CreateSpec, allocation Allocation) (Allocation, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.resumeCalls++

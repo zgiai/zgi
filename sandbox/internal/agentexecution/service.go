@@ -219,7 +219,11 @@ func (s *Service) ResumeBinding(ctx context.Context, scope Scope, bindingID stri
 		}
 	}
 
-	allocation, err := backend.ResumeBinding(ctx, Allocation{
+	allocation, err := backend.ResumeBinding(ctx, CreateSpec{
+		BindingID: binding.ID, WorkspaceID: binding.WorkspaceID,
+		OrganizationID: binding.OrganizationID, SubjectID: binding.SubjectID,
+		ProfileID: binding.ProfileID, HomeSnapshotID: binding.HomeSnapshotID,
+	}, Allocation{
 		BindingRef: binding.BackendRef, WorkspaceRef: binding.WorkspaceRef,
 	})
 	if err != nil {

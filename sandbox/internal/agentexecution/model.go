@@ -230,7 +230,7 @@ type CreateSpec struct {
 type Backend interface {
 	CreateBinding(context.Context, CreateSpec) (Allocation, error)
 	SuspendBinding(context.Context, Allocation) error
-	ResumeBinding(context.Context, Allocation) (Allocation, error)
+	ResumeBinding(context.Context, CreateSpec, Allocation) (Allocation, error)
 	DestroyBinding(context.Context, Allocation) error
 }
 

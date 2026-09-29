@@ -7,8 +7,10 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -98,6 +100,36 @@ func TestRemoteBackendRunsRuntimeAgentContract(t *testing.T) {
 	spec.Command = "/bin/false"
 	if _, err := remote.StartJob(context.Background(), agentexecution.Allocation{}, spec, sink); !errors.Is(err, agentexecution.ErrIdempotencyConflict) {
 		t.Fatalf("changed remote job error = %v", err)
+	}
+}
+
+func TestUnixRemoteBackendContract(t *testing.T) {
+	local := newTestBackend(t)
+	handler, err := NewHTTPServer(local, HTTPServerOptions{Token: "unix-secret"})
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	t.Cleanup(func() { _ = handler.Close() })
+	socketPath := filepath.Join(t.TempDir(), "runtime.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	server := httptest.NewUnstartedServer(handler)
+	server.Listener = listener
+	server.Start()
+	t.Cleanup(server.Close)
+
+	remote, err := NewUnixRemote(socketPath, "unix-secret", 5*time.Millisecond)
+	if err != nil {
+		t.Fatalf("new Unix remote: %v", err)
+	}
+	capabilities, err := remote.Capabilities(context.Background(), agentexecution.Allocation{})
+	if err != nil {
+		t.Fatalf("capabilities: %v", err)
+	}
+	if !capabilities.Shell || capabilities.NetworkMode != "disabled" {
+		t.Fatalf("capabilities = %+v", capabilities)
 	}
 }
 
