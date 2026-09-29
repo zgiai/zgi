@@ -22,6 +22,28 @@ Push it to the deployment registry, resolve the resulting immutable digest, prel
 
 The image must contain `/usr/local/bin/zgi-runtime-agent` and the commands promised by its Profile. `Dockerfile.agent-runtime` provides the Runtime Agent, Python 3.13, and Node.js 22 for the initial standard Profile. Adding packages produces a new image digest; it must not mutate an existing approved Profile in place.
 
+## Worker process
+
+Build the independent Linux worker with:
+
+```bash
+make -C sandbox build-agent-runtime-worker
+```
+
+Run it as a root-owned Linux service account that can access containerd and the worker root. The worker hosts only the authenticated `/v1/agent-runtime/` API; it does not register those routes in the existing Sandbox server.
+
+Required environment:
+
+| Variable | Purpose |
+|---|---|
+| `ZGI_AGENT_RUNTIME_API_KEY` | Dedicated internal bearer credential. Do not reuse `ZGI_SANDBOX_API_KEY` or a Runtime Workspace credential. |
+| `ZGI_AGENT_RUNTIME_DATABASE_URL` | PostgreSQL control-plane database. |
+| `ZGI_AGENT_RUNTIME_PROFILES_JSON` | Approved Profile object, for example `{"standard":{"image":"registry.example/zgi/agent-runtime@sha256:..."}}`. |
+
+Important optional settings are `ZGI_AGENT_RUNTIME_LISTEN` (default `127.0.0.1:2670`), `ZGI_AGENT_RUNTIME_WORKER_ID`, `ZGI_AGENT_RUNTIME_ROOT` (default `/var/lib/zgi-agent-runtime`), `ZGI_AGENT_RUNTIME_CONTAINERD_ADDRESS`, `ZGI_AGENT_RUNTIME_MAX_WORKERS`, `ZGI_AGENT_RUNTIME_IDLE_TTL_SECONDS` (default 1800), and the `MEMORY_BYTES`, `PIDS`, `CPU_PERIOD`, and `CPU_QUOTA` variables with the `ZGI_AGENT_RUNTIME_` prefix.
+
+The process owns bounded, cancelable loops for asynchronous Jobs, cleanup reconciliation, and idle Binding suspension. Job submission and file transfer atomically refresh the Binding idle deadline and generation; a stale reaper observation therefore cannot suspend a Binding after new activity.
+
 ## Lifecycle semantics
 
 - Create prepares a retained workspace and starts a dedicated gVisor task.

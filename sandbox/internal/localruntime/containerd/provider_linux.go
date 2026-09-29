@@ -50,8 +50,8 @@ var (
 )
 
 type Profile struct {
-	Image            string
-	RuntimeAgentPath string
+	Image            string `json:"image"`
+	RuntimeAgentPath string `json:"runtime_agent_path,omitempty"`
 }
 
 type Options struct {

@@ -1,6 +1,6 @@
 SHELL := /bin/sh
 
-.PHONY: fmt test build check run kest test-linux-secure test-agent-runtime-containerd check-docker-entrypoint check-config-docs profile-build-stdlib profile-build-scientific-data build-agent-runtime-image
+.PHONY: fmt test build check run kest test-linux-secure test-agent-runtime-containerd check-docker-entrypoint check-config-docs profile-build-stdlib profile-build-scientific-data build-agent-runtime-image build-agent-runtime-worker
 .PHONY: docker-up docker-down docker-logs
 .PHONY: docker-config
 
@@ -45,6 +45,9 @@ profile-build-scientific-data:
 
 build-agent-runtime-image:
 	docker build -f Dockerfile.agent-runtime -t zgi-agent-runtime:dev .
+
+build-agent-runtime-worker:
+	CGO_ENABLED=0 GOOS=linux go build -trimpath -o bin/zgi-agent-runtime-worker ./cmd/agentworker
 
 docker-up:
 	./scripts/start-docker
