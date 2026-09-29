@@ -1,12 +1,40 @@
 package skillloop
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
+
+func TestSkillDocumentPayloadDescribesPortableSessionScript(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "scripts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "SKILL.md"), []byte("---\nname: portable-example\ndescription: Example.\n---\nRun the script.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "scripts", "report.py"), []byte("print('ok')\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	payload := skillDocumentPayload(&skills.SkillDocument{Metadata: skills.SkillMetadata{ID: "portable-example", Source: skills.SkillSourceCustom, HasScripts: true, RootPath: root}})
+	session, ok := payload["session_script"].(map[string]interface{})
+	if !ok || session["execution_tool"] != "shell_exec" || session["skill_id"] != "portable-example" {
+		t.Fatalf("session_script = %#v", payload["session_script"])
+	}
+	if path, ok := session["workspace_path"].(string); !ok || path == "" || filepath.IsAbs(path) {
+		t.Fatalf("workspace_path = %#v, want a relative workspace path", session["workspace_path"])
+	}
+	if strings.Contains(fmt.Sprint(payload), root) {
+		t.Fatalf("payload exposed the host package path: %#v", payload)
+	}
+}
 
 func TestBlockedSkillPlanningFeedbackTraceIsNotGuardrail(t *testing.T) {
 	trace := blockedSkillGuardrailTrace(skills.SkillFileReader, "read_file", "skill must be loaded before calling its tools")

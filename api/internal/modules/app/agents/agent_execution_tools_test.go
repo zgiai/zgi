@@ -30,6 +30,7 @@ type fakeAgentExecutionGateway struct {
 	uploads      map[string][]byte
 	downloads    map[string][]byte
 	resumeCalls  int
+	setupJobs    int
 }
 
 type fakeRuntimeAttachmentReader struct {
@@ -84,6 +85,14 @@ func (f *fakeAgentExecutionGateway) Capabilities(context.Context, agentExecution
 
 func (f *fakeAgentExecutionGateway) SubmitJob(_ context.Context, _ agentExecutionScope, _, _, command string, args []string, _ time.Duration) (agentExecutionJob, error) {
 	f.command, f.args = command, append([]string(nil), args...)
+	if command == "python3" && len(args) == 6 && args[0] == "-c" && args[1] == agentSkillPackageUnpackProgram {
+		f.setupJobs++
+		if f.downloads == nil {
+			f.downloads = make(map[string][]byte)
+		}
+		markerPath := strings.TrimPrefix(args[3], "/workspace/") + "/.zgi-ready"
+		f.downloads[markerPath] = []byte(args[5] + "\n")
+	}
 	return f.job, nil
 }
 

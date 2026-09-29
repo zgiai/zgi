@@ -44,6 +44,7 @@ func (h *AgentsHandler) attachConsoleAgentExecutionTools(runConfig *runtimeservi
 	if persister == nil {
 		persister = defaultAgentExecutionArtifactPersister{}
 	}
+	skillResolver := newAgentSkillPackageResolver(h.db, scope.OrganizationID, cfg.EnabledSkillIDs)
 	runConfig.RuntimeToolFactory = func(prepared *runtimeservice.PreparedChat) []skillloop.RuntimeTool {
 		if prepared == nil || prepared.Conversation == nil || prepared.Message == nil ||
 			prepared.Caller.Source != runtimemodel.ConversationSourceConsole ||
@@ -57,7 +58,7 @@ func (h *AgentsHandler) attachConsoleAgentExecutionTools(runConfig *runtimeservi
 			OrganizationID: scope.OrganizationID.String(), SubjectID: scope.AccountID.String(),
 		}
 		return []skillloop.RuntimeTool{
-			newAgentExecutionShellTool(gateway, executionScope, agentID.String(), prepared.Conversation.ID.String(), prepared.Message.ID.String(), profileID, backend, prepared.RuntimeAttachmentRefs(), fileReader),
+			newAgentExecutionShellTool(gateway, executionScope, agentID.String(), prepared.Conversation.ID.String(), prepared.Message.ID.String(), profileID, backend, prepared.RuntimeAttachmentRefs(), fileReader, skillResolver),
 			newAgentExecutionExportTool(gateway, persister, executionScope, agentID.String(), prepared.Conversation.ID.String(), prepared.Message.ID.String(), profileID, backend),
 		}
 	}
@@ -68,7 +69,7 @@ type agentRuntimeAttachmentReader interface {
 	DownloadFile(context.Context, string) ([]byte, error)
 }
 
-func newAgentExecutionShellTool(gateway agentExecutionGateway, scope agentExecutionScope, agentID, conversationID, messageID, profileID, backend string, attachments []runtimeservice.RuntimeAttachmentRef, fileReader agentRuntimeAttachmentReader) skillloop.RuntimeTool {
+func newAgentExecutionShellTool(gateway agentExecutionGateway, scope agentExecutionScope, agentID, conversationID, messageID, profileID, backend string, attachments []runtimeservice.RuntimeAttachmentRef, fileReader agentRuntimeAttachmentReader, skillResolvers ...agentSkillPackageResolver) skillloop.RuntimeTool {
 	var stageOnce sync.Once
 	var inputPaths []string
 	var stageErr error
@@ -82,23 +83,24 @@ func newAgentExecutionShellTool(gateway agentExecutionGateway, scope agentExecut
 		SkillID: "agent_execution",
 		Definition: adapter.Tool{Type: "function", Function: adapter.Function{
 			Name:        "shell_exec",
-			Description: "Run a command in the approved, isolated offline Linux workspace for this console conversation. Current-turn uploaded files are staged under inputs/ before the command; use ls inputs to inspect them. The workspace may be released after inactivity.",
+			Description: "Run a command in the approved, isolated offline Linux workspace for this console conversation. Current-turn uploaded files are staged under inputs/ before the command. To run an enabled custom Skill's packaged Python or Node script, pass skill_id and use $ZGI_SKILL_DIR/scripts/... in the command. The workspace may be released after inactivity.",
 			Parameters: map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
 					"command":         map[string]any{"type": "string", "description": "Shell command to run in the workspace", "maxLength": agentExecutionMaxCommandBytes},
 					"timeout_seconds": map[string]any{"type": "integer", "minimum": 1, "maximum": 60},
+					"skill_id":        map[string]any{"type": "string", "description": "Enabled custom Skill package to stage before this command"},
 				},
 				"required": []string{"command"},
 			},
 		}},
 		Handler: func(ctx context.Context, call adapter.ToolCall) skillloop.RuntimeToolResult {
-			return executeAgentShellTool(ctx, gateway, scope, agentID, conversationID, messageID, profileID, backend, call, stage)
+			return executeAgentShellTool(ctx, gateway, scope, agentID, conversationID, messageID, profileID, backend, call, stage, skillResolvers...)
 		},
 	}
 }
 
-func executeAgentShellTool(ctx context.Context, gateway agentExecutionGateway, scope agentExecutionScope, agentID, conversationID, messageID, profileID, backend string, call adapter.ToolCall, stage func(context.Context, string, agentExecutionCapabilities) ([]string, error)) skillloop.RuntimeToolResult {
+func executeAgentShellTool(ctx context.Context, gateway agentExecutionGateway, scope agentExecutionScope, agentID, conversationID, messageID, profileID, backend string, call adapter.ToolCall, stage func(context.Context, string, agentExecutionCapabilities) ([]string, error), skillResolvers ...agentSkillPackageResolver) skillloop.RuntimeToolResult {
 	failed := func(code string, err error) skillloop.RuntimeToolResult {
 		return skillloop.RuntimeToolResult{
 			Status: "failed", Result: map[string]interface{}{"error_code": code},
@@ -108,6 +110,7 @@ func executeAgentShellTool(ctx context.Context, gateway agentExecutionGateway, s
 	var args struct {
 		Command        string `json:"command"`
 		TimeoutSeconds int    `json:"timeout_seconds"`
+		SkillID        string `json:"skill_id"`
 	}
 	decoder := json.NewDecoder(strings.NewReader(call.Function.Arguments))
 	decoder.DisallowUnknownFields()
@@ -127,7 +130,7 @@ func executeAgentShellTool(ctx context.Context, gateway agentExecutionGateway, s
 		return failed("invalid_timeout", fmt.Errorf("shell timeout is out of range"))
 	}
 	timeout := time.Duration(args.TimeoutSeconds) * time.Second
-	operationCtx, cancel := context.WithTimeout(ctx, timeout+15*time.Second)
+	operationCtx, cancel := context.WithTimeout(ctx, timeout+120*time.Second)
 	defer cancel()
 	binding, err := readyAgentExecutionBinding(operationCtx, gateway, scope, agentID, conversationID, profileID, backend)
 	if err != nil {
@@ -147,11 +150,29 @@ func executeAgentShellTool(ctx context.Context, gateway agentExecutionGateway, s
 			return failed("file_staging_failed", err)
 		}
 	}
+	var skillPath string
+	if strings.TrimSpace(args.SkillID) != "" {
+		if len(skillResolvers) == 0 || skillResolvers[0] == nil {
+			return failed("skill_package_unavailable", fmt.Errorf("Skill package execution is unavailable for this caller"))
+		}
+		pack, err := skillResolvers[0](operationCtx, args.SkillID)
+		if err != nil {
+			return failed("skill_package_unavailable", err)
+		}
+		skillPath, err = stageAgentSkillPackage(operationCtx, gateway, scope, binding, capabilities, pack)
+		if err != nil {
+			return failed("skill_package_staging_failed", err)
+		}
+	}
 	callID := strings.TrimSpace(call.ID)
 	if callID == "" {
 		callID = uuid.NewString()
 	}
-	job, err := gateway.SubmitJob(operationCtx, scope, binding.ID, "tool:"+messageID+":"+callID, "/bin/sh", []string{"-lc", args.Command}, timeout)
+	command := args.Command
+	if skillPath != "" {
+		command = "ZGI_SKILL_DIR='/workspace/" + skillPath + "'; export ZGI_SKILL_DIR; " + command
+	}
+	job, err := gateway.SubmitJob(operationCtx, scope, binding.ID, "tool:"+messageID+":"+callID, "/bin/sh", []string{"-lc", command}, timeout)
 	if err != nil {
 		return failed("job_submission_failed", err)
 	}
@@ -174,9 +195,12 @@ func executeAgentShellTool(ctx context.Context, gateway agentExecutionGateway, s
 		return failed("job_output_failed", err)
 	}
 	result := map[string]interface{}{"job_id": job.ID, "status": job.Status, "exit_code": job.ExitCode, "truncated": truncated, "input_count": len(inputPaths), "workspace_recreated": binding.Recreated}
+	if skillPath != "" {
+		result["skill_workspace_path"] = skillPath
+	}
 	return skillloop.RuntimeToolResult{
 		Status: "success", Arguments: map[string]interface{}{"command_bytes": len(args.Command)}, Result: result,
-		ModelResult: map[string]interface{}{"job_id": job.ID, "status": job.Status, "exit_code": job.ExitCode, "stdout": stdout, "stderr": stderr, "truncated": truncated, "input_files": inputPaths, "workspace_recreated": binding.Recreated},
+		ModelResult: map[string]interface{}{"job_id": job.ID, "status": job.Status, "exit_code": job.ExitCode, "stdout": stdout, "stderr": stderr, "truncated": truncated, "input_files": inputPaths, "workspace_recreated": binding.Recreated, "skill_workspace_path": skillPath},
 	}
 }
 
