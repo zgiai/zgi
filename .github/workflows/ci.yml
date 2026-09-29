@@ -159,15 +159,18 @@ jobs:
       - name: Run registration and developer access gates
         run: |
           go_root="$(go env GOROOT)"
+          cache_root="$RUNNER_TEMP/zgi-registration-auth-cache"
+          mkdir -p "$cache_root/home" "$cache_root/go-build" "$cache_root/go"
           docker run --rm \
             --user "$(id -u):$(id -g)" \
             --tmpfs /tmp:rw,exec,nosuid,size=4g \
-            -e HOME=/tmp \
+            -e HOME=/cache/home \
             -e CGO_ENABLED=1 \
-            -e GOCACHE=/tmp/go-build \
-            -e GOPATH=/tmp/go \
+            -e GOCACHE=/cache/go-build \
+            -e GOPATH=/cache/go \
             -e PATH=/opt/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
             -v "$go_root:/opt/go:ro" \
+            -v "$cache_root:/cache" \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace \
             node:22-bookworm \
