@@ -153,6 +153,16 @@ func safePresentationSummary(code string, display *execution.OperationDisplay) s
 	}
 	chinese := strings.HasPrefix(locale, "zh")
 	switch core.ErrorCode(code) {
+	case core.ErrorCodeMailUidStateUnavailable:
+		if chinese {
+			return "邮箱服务器未返回该文件夹的 UID 范围，暂时无法列出邮件。请稍后重试或检查该邮箱的 IMAP 设置。"
+		}
+		return "The mail server did not report this mailbox's UID range. Try again later or check its IMAP settings."
+	case core.ErrorCodeMailReferenceExpired:
+		if chinese {
+			return "该邮件引用已失效，请重新列出邮件后再打开。"
+		}
+		return "This message reference has expired. List the messages again before opening one."
 	case core.ErrorCodeMailSubmissionRejected:
 		if chinese {
 			return "邮件服务器拒绝了本次提交，请检查邮件服务状态后重试。"

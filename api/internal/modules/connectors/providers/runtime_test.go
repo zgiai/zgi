@@ -27,9 +27,22 @@ func (d *driverFixture) Invoke(context.Context, string, string, map[string]any) 
 	d.calls++
 	return Response{Value: map[string]any{"ok": true}}, d.failure
 }
+
+// serverOpsDriverFixture satisfies NewRuntime's requirement that every
+// non-messaging, non-mail builtin definition has a registered driver.
+type serverOpsDriverFixture struct{}
+
+func (*serverOpsDriverFixture) ConnectorID() string { return "serverops_ssh" }
+func (*serverOpsDriverFixture) VerifyCredentials(context.Context, CredentialInput) (Verification, error) {
+	return Verification{}, nil
+}
+func (*serverOpsDriverFixture) InvokeCredentials(context.Context, string, CredentialInput, map[string]any) (Response, error) {
+	return Response{}, nil
+}
+
 func TestRuntimeRejectsForgedLeafIdentityWithoutProviderCall(t *testing.T) {
 	github := &driverFixture{id: "github", operations: []string{"github.user.get"}}
-	runtime, err := NewRuntime(github, &driverFixture{id: "web-search"}, &appDriverFixture{})
+	runtime, err := NewRuntime(github, &driverFixture{id: "web-search"}, &appDriverFixture{}, &serverOpsDriverFixture{})
 	if err != nil {
 		t.Fatal(err)
 	}
