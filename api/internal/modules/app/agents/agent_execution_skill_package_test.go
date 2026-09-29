@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -55,6 +56,33 @@ func TestStageAgentSkillPackageRejectsChangedVersionBeforeUpload(t *testing.T) {
 	_, err := stageAgentSkillPackage(context.Background(), fake, agentExecutionScope{}, agentExecutionBinding{ID: "binding-1"}, agentExecutionCapabilities{FileTransfer: true, MaxUploadBytes: 64 << 20}, agentSkillPackage{ID: "portable-example", Root: root, ExpectedDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"})
 	if err == nil || len(fake.uploads) != 0 {
 		t.Fatalf("version mismatch error = %v, uploads = %d", err, len(fake.uploads))
+	}
+}
+
+func TestStageAgentSkillPackageSplitsArchiveAtRuntimeUploadLimit(t *testing.T) {
+	root := testPortableSkillPackage(t)
+	archive, digest, err := skills.BuildPortableSkillArchive(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chunkLimit := int64(len(archive) / 2)
+	if chunkLimit == 0 {
+		t.Fatal("test archive is unexpectedly empty")
+	}
+	exitCode := 0
+	fake := &fakeAgentExecutionGateway{job: agentExecutionJob{ID: "setup-job", Status: "succeeded", ExitCode: &exitCode}}
+	_, err = stageAgentSkillPackage(t.Context(), fake, agentExecutionScope{}, agentExecutionBinding{ID: "binding-1"}, agentExecutionCapabilities{FileTransfer: true, MaxUploadBytes: chunkLimit}, agentSkillPackage{ID: "portable-example", Root: root, ExpectedDigest: digest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantChunks := 1 + (int64(len(archive))-1)/chunkLimit
+	if int64(len(fake.uploads)) != wantChunks || fake.setupJobs != 1 || fake.args[6] != strconv.FormatInt(wantChunks, 10) {
+		t.Fatalf("uploads = %d, setup jobs = %d, setup args = %#v", len(fake.uploads), fake.setupJobs, fake.args)
+	}
+	for uploadPath, data := range fake.uploads {
+		if int64(len(data)) > chunkLimit || !strings.Contains(uploadPath, ".zip.part.") {
+			t.Fatalf("upload %q size = %d exceeds chunk limit %d", uploadPath, len(data), chunkLimit)
+		}
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -83,21 +84,31 @@ func stageAgentSkillPackage(ctx context.Context, gateway agentExecutionGateway, 
 	if err != nil {
 		return "", err
 	}
-	if int64(len(archive)) > capabilities.MaxUploadBytes {
-		return "", fmt.Errorf("Skill package archive exceeds this runtime's upload limit")
-	}
 	markerPath := path.Join(workspacePath, ".zgi-ready")
 	if marker, err := gateway.DownloadFile(ctx, scope, binding.ID, markerPath); err == nil && strings.TrimSpace(string(marker)) == digest {
 		return workspacePath, nil
 	}
 	archiveDigest := sha256.Sum256(archive)
 	archivePath := path.Join(".zgi", "skill-archives", skill.ID, uuid.NewString()+".zip")
-	if err := gateway.UploadFile(ctx, scope, binding.ID, archivePath, archive); err != nil {
-		return "", fmt.Errorf("upload Skill package archive: %w", err)
+	chunkSize := capabilities.MaxUploadBytes
+	chunkCount := int64(1) + (int64(len(archive))-1)/chunkSize
+	if chunkCount > 64 {
+		return "", fmt.Errorf("Skill package requires too many upload chunks for this runtime")
+	}
+	for index := int64(0); index < chunkCount; index++ {
+		start := index * chunkSize
+		end := min(start+chunkSize, int64(len(archive)))
+		uploadPath := archivePath
+		if chunkCount > 1 {
+			uploadPath += ".part." + strconv.FormatInt(index, 10)
+		}
+		if err := gateway.UploadFile(ctx, scope, binding.ID, uploadPath, archive[start:end]); err != nil {
+			return "", fmt.Errorf("upload Skill package archive chunk %d/%d: %w", index+1, chunkCount, err)
+		}
 	}
 	job, err := gateway.SubmitJob(ctx, scope, binding.ID, "skill-setup:"+binding.ID+":"+uuid.NewString(), "python3", []string{
 		"-c", agentSkillPackageUnpackProgram,
-		path.Join("/workspace", archivePath), path.Join("/workspace", workspacePath), hex.EncodeToString(archiveDigest[:]), digest,
+		path.Join("/workspace", archivePath), path.Join("/workspace", workspacePath), hex.EncodeToString(archiveDigest[:]), digest, strconv.FormatInt(chunkCount, 10),
 	}, agentSkillPackageSetupTimeout)
 	if err != nil {
 		return "", fmt.Errorf("submit Skill package setup job: %w", err)
@@ -129,11 +140,23 @@ func stageAgentSkillPackage(ctx context.Context, gateway agentExecutionGateway, 
 // The setup program receives only server-generated paths and checks archive
 // bytes, member types, member sizes, duplicates, and traversal before writing.
 const agentSkillPackageUnpackProgram = `import hashlib, os, pathlib, shutil, stat, sys, tempfile, zipfile
-archive, target, archive_digest, package_digest = sys.argv[1:]
+archive, target, archive_digest, package_digest, part_count = sys.argv[1:]
+part_count = int(part_count)
+if part_count < 1 or part_count > 64:
+    raise ValueError('invalid archive part count')
 root = pathlib.Path('/workspace').resolve()
 archive_path, target_path = pathlib.Path(archive).resolve(), pathlib.Path(target).resolve()
 if not archive_path.is_relative_to(root) or not target_path.is_relative_to(root):
     raise ValueError('invalid workspace path')
+if part_count > 1:
+    with archive_path.open('xb') as combined:
+        for index in range(part_count):
+            part_path = pathlib.Path(str(archive_path) + '.part.' + str(index))
+            if not part_path.resolve().is_relative_to(root):
+                raise ValueError('invalid archive part path')
+            with part_path.open('rb') as part:
+                shutil.copyfileobj(part, combined, 65536)
+            part_path.unlink()
 with archive_path.open('rb') as source:
     if hashlib.file_digest(source, 'sha256').hexdigest() != archive_digest:
         raise ValueError('archive checksum mismatch')

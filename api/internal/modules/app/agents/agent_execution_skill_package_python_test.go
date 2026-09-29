@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -41,7 +42,7 @@ func TestAgentSkillPackageUnpackProgram(t *testing.T) {
 	checksum := sha256.Sum256(archive)
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, "python3", "-c", agentSkillPackageUnpackProgram, archivePath, targetPath, hex.EncodeToString(checksum[:]), digest)
+	command := exec.CommandContext(ctx, "python3", "-c", agentSkillPackageUnpackProgram, archivePath, targetPath, hex.EncodeToString(checksum[:]), digest, "1")
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("unpack valid Skill package: %v, output = %s", err, output)
 	}
@@ -52,6 +53,21 @@ func TestAgentSkillPackageUnpackProgram(t *testing.T) {
 	marker, err := os.ReadFile(filepath.Join(targetPath, ".zgi-ready"))
 	if err != nil || strings.TrimSpace(string(marker)) != digest {
 		t.Fatalf("completion marker = %q, error = %v", marker, err)
+	}
+	archivePath = filepath.Join(root, "chunked.zip")
+	targetPath = filepath.Join(root, "chunked-staged")
+	cut := len(archive) / 2
+	for index, data := range [][]byte{archive[:cut], archive[cut:]} {
+		if err := os.WriteFile(archivePath+".part."+strconv.Itoa(index), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	command = exec.CommandContext(ctx, "python3", "-c", agentSkillPackageUnpackProgram, archivePath, targetPath, hex.EncodeToString(checksum[:]), digest, "2")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("unpack chunked Skill package: %v, output = %s", err, output)
+	}
+	if _, err := os.Stat(filepath.Join(targetPath, "scripts", "task.py")); err != nil {
+		t.Fatalf("chunked package script missing: %v", err)
 	}
 
 	var malicious bytes.Buffer
@@ -71,7 +87,7 @@ func TestAgentSkillPackageUnpackProgram(t *testing.T) {
 		t.Fatal(err)
 	}
 	checksum = sha256.Sum256(malicious.Bytes())
-	command = exec.CommandContext(ctx, "python3", "-c", agentSkillPackageUnpackProgram, archivePath, filepath.Join(root, "bad-target"), hex.EncodeToString(checksum[:]), digest)
+	command = exec.CommandContext(ctx, "python3", "-c", agentSkillPackageUnpackProgram, archivePath, filepath.Join(root, "bad-target"), hex.EncodeToString(checksum[:]), digest, "1")
 	if output, err := command.CombinedOutput(); err == nil || !strings.Contains(string(output), "invalid package member") {
 		t.Fatalf("malicious archive error = %v, output = %s", err, output)
 	}

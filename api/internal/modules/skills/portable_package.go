@@ -12,6 +12,9 @@ import (
 	"strings"
 )
 
+// ZIP headers can make a valid 64 MiB package slightly larger in transit.
+const portableSkillArchiveMaxBytes = ScriptPackageMaxBytes + (1 << 20)
+
 // PortableSkillWorkspacePath returns the relative workspace directory for a
 // content-addressed custom Skill package. It does not expose a host path.
 func PortableSkillWorkspacePath(skillID, digest string) (string, error) {
@@ -68,8 +71,8 @@ func BuildPortableSkillArchive(root string) ([]byte, string, error) {
 		if closeErr != nil {
 			return closeErr
 		}
-		if archive.Len() > ScriptPackageMaxBytes {
-			return fmt.Errorf("skill package transfer exceeds %d bytes", ScriptPackageMaxBytes)
+		if archive.Len() > portableSkillArchiveMaxBytes {
+			return fmt.Errorf("skill package archive exceeds %d bytes", portableSkillArchiveMaxBytes)
 		}
 		return nil
 	})
@@ -79,8 +82,8 @@ func BuildPortableSkillArchive(root string) ([]byte, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("archive skill package: %w", err)
 	}
-	if archive.Len() > ScriptPackageMaxBytes {
-		return nil, "", fmt.Errorf("skill package transfer exceeds %d bytes", ScriptPackageMaxBytes)
+	if archive.Len() > portableSkillArchiveMaxBytes {
+		return nil, "", fmt.Errorf("skill package archive exceeds %d bytes", portableSkillArchiveMaxBytes)
 	}
 	return archive.Bytes(), digest, nil
 }

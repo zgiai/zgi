@@ -85,7 +85,7 @@ func (f *fakeAgentExecutionGateway) Capabilities(context.Context, agentExecution
 
 func (f *fakeAgentExecutionGateway) SubmitJob(_ context.Context, _ agentExecutionScope, _, _, command string, args []string, _ time.Duration) (agentExecutionJob, error) {
 	f.command, f.args = command, append([]string(nil), args...)
-	if command == "python3" && len(args) == 6 && args[0] == "-c" && args[1] == agentSkillPackageUnpackProgram {
+	if command == "python3" && len(args) == 7 && args[0] == "-c" && args[1] == agentSkillPackageUnpackProgram {
 		f.setupJobs++
 		if f.downloads == nil {
 			f.downloads = make(map[string][]byte)
