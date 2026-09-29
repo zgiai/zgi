@@ -1,7 +1,7 @@
-// Package agentruntime owns the control-plane contract for stateful Agent
+// Package agentexecution owns the control-plane contract for stateful Agent
 // execution environments. It deliberately does not depend on a concrete
 // sandbox vendor or transport.
-package agentruntime
+package agentexecution
 
 import (
 	"context"

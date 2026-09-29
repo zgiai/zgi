@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zgiai/zgi-sandbox/internal/agentruntime"
+	agentruntime "github.com/zgiai/zgi-sandbox/internal/agentexecution"
 	"github.com/zgiai/zgi-sandbox/internal/config"
 	"github.com/zgiai/zgi-sandbox/internal/testutil"
 )

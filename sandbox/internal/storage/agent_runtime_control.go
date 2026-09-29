@@ -6,7 +6,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/zgiai/zgi-sandbox/internal/agentruntime"
+	agentruntime "github.com/zgiai/zgi-sandbox/internal/agentexecution"
 )
 
 var (

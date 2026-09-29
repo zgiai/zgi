@@ -50,10 +50,10 @@ The following checks define the baseline. Record exact results when executed wit
 
 | Check | Command | Result |
 |---|---|---|
-| State-machine unit tests | `go test ./internal/agentruntime` from `sandbox/` | Passed. Covers idempotent creation, idempotency-key conflicts, cross-tenant hiding, generation fencing, pause recovery, repeated deletion, concurrent creation, compensating cleanup, expired-claim recovery, cleanup retry, and lease-owner fencing. |
-| State-machine race test | `CGO_ENABLED=1 go test -race ./internal/agentruntime` in `golang:1.26.2-bookworm` | Passed. |
+| State-machine unit tests | `go test ./internal/agentexecution` from `sandbox/` | Passed. Covers idempotent creation, idempotency-key conflicts, cross-tenant hiding, generation fencing, pause recovery, repeated deletion, concurrent creation, compensating cleanup, expired-claim recovery, cleanup retry, and lease-owner fencing. |
+| State-machine race test | `CGO_ENABLED=1 go test -race ./internal/agentexecution` in `golang:1.26.2-bookworm` | Passed. |
 | PostgreSQL migration/repository | `go test -count=1 -v ./internal/storage` against temporary `postgres:16-alpine` | Passed, including migration ledger, idempotent reservation, generation CAS, lease acquisition/renewal/release, exclusive cleanup claims, expired-claim recovery, and all pre-existing storage tests. The temporary database used no persistent volume and was removed after the run. |
-| Static analysis | `go vet ./internal/agentruntime ./internal/storage` from `sandbox/` | Passed. |
+| Static analysis | `go vet ./internal/agentexecution ./internal/storage` from `sandbox/` | Passed. |
 
 ## Compatibility gates
 
