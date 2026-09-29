@@ -129,12 +129,9 @@ func executeAgentShellTool(ctx context.Context, gateway agentExecutionGateway, s
 	timeout := time.Duration(args.TimeoutSeconds) * time.Second
 	operationCtx, cancel := context.WithTimeout(ctx, timeout+15*time.Second)
 	defer cancel()
-	binding, err := gateway.CreateBinding(operationCtx, scope, agentID, conversationID, profileID, backend)
+	binding, err := readyAgentExecutionBinding(operationCtx, gateway, scope, agentID, conversationID, profileID, backend)
 	if err != nil {
 		return failed("binding_failed", err)
-	}
-	if binding.Status != "active" {
-		return failed("binding_inactive", fmt.Errorf("agent execution binding is %s", binding.Status))
 	}
 	capabilities, err := gateway.Capabilities(operationCtx, scope, binding.ID)
 	if err != nil {

@@ -59,12 +59,9 @@ func exportAgentExecutionFile(ctx context.Context, gateway agentExecutionGateway
 	}
 	operationCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
-	binding, err := gateway.CreateBinding(operationCtx, scope, agentID, conversationID, profileID, backend)
+	binding, err := readyAgentExecutionBinding(operationCtx, gateway, scope, agentID, conversationID, profileID, backend)
 	if err != nil {
 		return failed("binding_unavailable", err)
-	}
-	if binding.Status != "active" {
-		return failed("binding_unavailable", fmt.Errorf("agent execution binding is %s", binding.Status))
 	}
 	capabilities, err := gateway.Capabilities(operationCtx, scope, binding.ID)
 	if err != nil || !capabilities.FileTransfer || capabilities.NetworkMode != "disabled" || capabilities.MaxDownloadBytes <= 0 {

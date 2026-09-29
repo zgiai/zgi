@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -28,6 +29,7 @@ type fakeAgentExecutionGateway struct {
 	scope        agentExecutionScope
 	uploads      map[string][]byte
 	downloads    map[string][]byte
+	resumeCalls  int
 }
 
 type fakeRuntimeAttachmentReader struct {
@@ -56,6 +58,20 @@ func (r *fakeRuntimeAttachmentReader) DownloadFile(_ context.Context, fileID str
 
 func (f *fakeAgentExecutionGateway) CreateBinding(_ context.Context, scope agentExecutionScope, _, _, _, _ string) (agentExecutionBinding, error) {
 	f.scope = scope
+	return f.binding, nil
+}
+
+func (f *fakeAgentExecutionGateway) GetBinding(context.Context, agentExecutionScope, string) (agentExecutionBinding, error) {
+	return f.binding, nil
+}
+
+func (f *fakeAgentExecutionGateway) ResumeBinding(_ context.Context, _ agentExecutionScope, bindingID string, generation int64) (agentExecutionBinding, error) {
+	if bindingID != f.binding.ID || generation != f.binding.Generation {
+		return agentExecutionBinding{}, fmt.Errorf("stale binding generation")
+	}
+	f.resumeCalls++
+	f.binding.Status = "active"
+	f.binding.Generation++
 	return f.binding, nil
 }
 
@@ -96,6 +112,18 @@ func (f *fakeAgentExecutionGateway) UploadFile(_ context.Context, _ agentExecuti
 
 func (f *fakeAgentExecutionGateway) DownloadFile(_ context.Context, _ agentExecutionScope, _, filePath string) ([]byte, error) {
 	return append([]byte(nil), f.downloads[filePath]...), nil
+}
+
+func TestAgentExecutionBindingResumesAfterIdleSuspension(t *testing.T) {
+	fake := &fakeAgentExecutionGateway{binding: agentExecutionBinding{ID: "binding-1", Status: "suspended", Generation: 4}}
+	binding, err := readyAgentExecutionBinding(t.Context(), fake, agentExecutionScope{OrganizationID: "org-1", SubjectID: "account-1"}, "agent-1", "conversation-1", "standard", "local-gvisor")
+	if err != nil || binding.Status != "active" || binding.Generation != 5 || fake.resumeCalls != 1 {
+		t.Fatalf("resumed binding = %#v, calls=%d, err=%v", binding, fake.resumeCalls, err)
+	}
+	fake.binding.Status = "deleted"
+	if _, err := readyAgentExecutionBinding(t.Context(), fake, agentExecutionScope{OrganizationID: "org-1", SubjectID: "account-1"}, "agent-1", "conversation-1", "standard", "local-gvisor"); err == nil {
+		t.Fatal("deleted binding must not be reused")
+	}
 }
 
 func TestAgentExecutionShellToolKeepsCommandAndOutputOutOfTrace(t *testing.T) {
@@ -338,5 +366,29 @@ func TestAgentExecutionHTTPGatewayRejectsUnboundedFile(t *testing.T) {
 	_, err := gateway.DownloadFile(t.Context(), agentExecutionScope{OrganizationID: "org-1", SubjectID: "account-1"}, "binding-1", "artifacts/result.csv")
 	if err == nil || !strings.Contains(err.Error(), "exceeds the limit") {
 		t.Fatalf("expected file size limit, got %v", err)
+	}
+}
+
+func TestAgentExecutionHTTPGatewayResumesBindingWithGeneration(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/agent-runtime/bindings/binding-1/resume" {
+			t.Errorf("resume request = %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer dedicated-worker-key" || r.Header.Get("X-ZGI-Organization-ID") != "org-1" || r.Header.Get("X-ZGI-Subject-ID") != "account-1" {
+			t.Error("resume authentication or scope missing")
+		}
+		var body struct {
+			Generation int64 `json:"generation"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Generation != 4 {
+			t.Errorf("resume generation = %d, err=%v", body.Generation, err)
+		}
+		_, _ = io.WriteString(w, `{"data":{"id":"binding-1","status":"active","generation":5}}`)
+	}))
+	defer server.Close()
+	gateway := &agentExecutionHTTPGateway{baseURL: server.URL, apiKey: "dedicated-worker-key", client: server.Client()}
+	binding, err := gateway.ResumeBinding(t.Context(), agentExecutionScope{OrganizationID: "org-1", SubjectID: "account-1"}, "binding-1", 4)
+	if err != nil || binding.Status != "active" || binding.Generation != 5 {
+		t.Fatalf("ResumeBinding = %#v, %v", binding, err)
 	}
 }

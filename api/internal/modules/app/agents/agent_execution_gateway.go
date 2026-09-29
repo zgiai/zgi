@@ -51,6 +51,8 @@ type agentExecutionCapabilities struct {
 
 type agentExecutionGateway interface {
 	CreateBinding(context.Context, agentExecutionScope, string, string, string, string) (agentExecutionBinding, error)
+	GetBinding(context.Context, agentExecutionScope, string) (agentExecutionBinding, error)
+	ResumeBinding(context.Context, agentExecutionScope, string, int64) (agentExecutionBinding, error)
 	Capabilities(context.Context, agentExecutionScope, string) (agentExecutionCapabilities, error)
 	SubmitJob(context.Context, agentExecutionScope, string, string, string, []string, time.Duration) (agentExecutionJob, error)
 	GetJob(context.Context, agentExecutionScope, string) (agentExecutionJob, error)
@@ -140,6 +142,18 @@ func (g *agentExecutionHTTPGateway) CreateBinding(ctx context.Context, scope age
 		"agent_id": agentID, "conversation_id": conversationID, "profile_id": profileID,
 		"backend": backend, "idempotency_key": "conversation:" + conversationID,
 	}, &result)
+	return result, err
+}
+
+func (g *agentExecutionHTTPGateway) GetBinding(ctx context.Context, scope agentExecutionScope, bindingID string) (agentExecutionBinding, error) {
+	var result agentExecutionBinding
+	err := g.request(ctx, scope, http.MethodGet, "bindings/"+url.PathEscape(bindingID), nil, &result)
+	return result, err
+}
+
+func (g *agentExecutionHTTPGateway) ResumeBinding(ctx context.Context, scope agentExecutionScope, bindingID string, generation int64) (agentExecutionBinding, error) {
+	var result agentExecutionBinding
+	err := g.request(ctx, scope, http.MethodPost, "bindings/"+url.PathEscape(bindingID)+"/resume", map[string]any{"generation": generation}, &result)
 	return result, err
 }
 
