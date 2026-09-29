@@ -1176,20 +1176,21 @@ func skillImportPreviewResponse(preview *runtimeservice.SkillImportPreview) runt
 		expiresAt = preview.ExpiresAt.Unix()
 	}
 	return runtimedto.ImportSkillPreviewResponse{
-		ImportID:         preview.ImportID,
-		ExpiresAt:        expiresAt,
-		Skill:            skill,
-		WillOverwrite:    preview.WillOverwrite,
-		ExistingSkill:    existingSkill,
-		FileCount:        preview.FileCount,
-		TotalSize:        preview.TotalSize,
-		Files:            files,
-		References:       copyStringSlice(preview.References),
-		HasScripts:       preview.HasScripts,
-		ScriptsSupported: preview.ScriptsSupported,
-		Warnings:         copyStringSlice(preview.Warnings),
-		ValidationErrors: copyStringSlice(preview.ValidationErrors),
-		CanImport:        preview.CanImport,
+		ImportID:            preview.ImportID,
+		ExpiresAt:           expiresAt,
+		Skill:               skill,
+		WillOverwrite:       preview.WillOverwrite,
+		ExistingSkill:       existingSkill,
+		FileCount:           preview.FileCount,
+		TotalSize:           preview.TotalSize,
+		Files:               files,
+		References:          copyStringSlice(preview.References),
+		HasScripts:          preview.HasScripts,
+		ScriptsSupported:    preview.ScriptsSupported,
+		ScriptExecutionMode: preview.ScriptExecutionMode,
+		Warnings:            copyStringSlice(preview.Warnings),
+		ValidationErrors:    copyStringSlice(preview.ValidationErrors),
+		CanImport:           preview.CanImport,
 	}
 }
 

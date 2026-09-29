@@ -697,20 +697,21 @@ type SkillImportPreviewFile struct {
 }
 
 type SkillImportPreview struct {
-	ImportID         string
-	ExpiresAt        time.Time
-	Skill            *skills.SkillDiscoveryMetadata
-	WillOverwrite    bool
-	ExistingSkill    *ExistingSkill
-	FileCount        int
-	TotalSize        int64
-	Files            []SkillImportPreviewFile
-	References       []string
-	HasScripts       bool
-	ScriptsSupported bool
-	Warnings         []string
-	ValidationErrors []string
-	CanImport        bool
+	ImportID            string
+	ExpiresAt           time.Time
+	Skill               *skills.SkillDiscoveryMetadata
+	WillOverwrite       bool
+	ExistingSkill       *ExistingSkill
+	FileCount           int
+	TotalSize           int64
+	Files               []SkillImportPreviewFile
+	References          []string
+	HasScripts          bool
+	ScriptsSupported    bool
+	ScriptExecutionMode string
+	Warnings            []string
+	ValidationErrors    []string
+	CanImport           bool
 }
 
 type ExistingSkill struct {

@@ -95,6 +95,7 @@ func extractedSkillPackageFromPreview(preview *storedSkillPreview) *extractedSki
 	sort.Strings(files)
 	return &extractedSkillPackage{
 		Root:        preview.Root,
+		PackageName: preview.PackageName,
 		FileCount:   preview.FileCount,
 		TotalSize:   preview.TotalSize,
 		Files:       files,

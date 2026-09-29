@@ -82,20 +82,21 @@ type ImportSkillPreviewFile struct {
 }
 
 type ImportSkillPreviewResponse struct {
-	ImportID         string                   `json:"import_id,omitempty"`
-	ExpiresAt        int64                    `json:"expires_at,omitempty"`
-	Skill            *SkillResponse           `json:"skill,omitempty"`
-	WillOverwrite    bool                     `json:"will_overwrite"`
-	ExistingSkill    *ExistingSkillResponse   `json:"existing_skill,omitempty"`
-	FileCount        int                      `json:"file_count"`
-	TotalSize        int64                    `json:"total_size"`
-	Files            []ImportSkillPreviewFile `json:"files"`
-	References       []string                 `json:"references"`
-	HasScripts       bool                     `json:"has_scripts"`
-	ScriptsSupported bool                     `json:"scripts_supported"`
-	Warnings         []string                 `json:"warnings"`
-	ValidationErrors []string                 `json:"validation_errors"`
-	CanImport        bool                     `json:"can_import"`
+	ImportID            string                   `json:"import_id,omitempty"`
+	ExpiresAt           int64                    `json:"expires_at,omitempty"`
+	Skill               *SkillResponse           `json:"skill,omitempty"`
+	WillOverwrite       bool                     `json:"will_overwrite"`
+	ExistingSkill       *ExistingSkillResponse   `json:"existing_skill,omitempty"`
+	FileCount           int                      `json:"file_count"`
+	TotalSize           int64                    `json:"total_size"`
+	Files               []ImportSkillPreviewFile `json:"files"`
+	References          []string                 `json:"references"`
+	HasScripts          bool                     `json:"has_scripts"`
+	ScriptsSupported    bool                     `json:"scripts_supported"`
+	ScriptExecutionMode string                   `json:"script_execution_mode,omitempty"`
+	Warnings            []string                 `json:"warnings"`
+	ValidationErrors    []string                 `json:"validation_errors"`
+	CanImport           bool                     `json:"can_import"`
 }
 
 type ConfirmImportSkillRequest struct {

@@ -86,7 +86,7 @@ func (s *service) customSkillDiscoveryMetadata(ctx context.Context, organization
 			metadata = append(metadata, invalidCustomSkillMetadata(item, fmt.Errorf("%s", item.ValidationError)))
 			continue
 		}
-		doc, err := s.skillRuntime.LoadCustomSkillDocument(item.StoragePath)
+		doc, err := s.skillRuntime.LoadCustomSkillDocumentWithName(item.StoragePath, item.SkillID)
 		if err == nil {
 			loaded := skillDiscoveryMetadataPtr(doc)
 			metadata = append(metadata, *loaded)

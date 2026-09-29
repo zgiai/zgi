@@ -1055,6 +1055,7 @@ const messages: DashboardMessages = {
       importPreview: {
         title: '预览 Skill 包',
         description: '导入前先检查包的验证结果。',
+        sessionScript: '控制台 Agent 会话脚本',
         fileCount: '文件',
         totalSize: '大小',
         references: '参考资料',

@@ -68,6 +68,57 @@ Run the script.
 	}
 }
 
+func TestPreviewImportPortableSkillWithoutManifestOrName(t *testing.T) {
+	svc := newScriptPreflightService(t)
+	scope := Scope{OrganizationID: uuid.New(), AccountID: uuid.New(), SkipAccessCheck: true}
+	preview, err := svc.PreviewImportCustomSkill(context.Background(), scope, scriptPreflightFileHeader(t, map[string]string{
+		"portable-python/SKILL.md": `---
+description: Summarize CSV input with a portable Python script.
+---
+Run scripts/summarize.py with Python.
+`,
+		"portable-python/scripts/summarize.py": "print('summary')\n",
+		"portable-python/references/usage.md":  "Usage notes.\n",
+	}))
+	if err != nil {
+		t.Fatalf("PreviewImportCustomSkill() error = %v", err)
+	}
+	if !preview.CanImport || preview.Skill == nil || preview.Skill.ID != "portable-python" {
+		t.Fatalf("preview = %#v, want importable package named portable-python", preview)
+	}
+	if preview.ScriptExecutionMode != skills.SkillScriptExecutionSession || preview.ScriptsSupported {
+		t.Fatalf("preview mode = %q, scripts_supported = %t, want session without legacy runner", preview.ScriptExecutionMode, preview.ScriptsSupported)
+	}
+	if len(preview.Warnings) == 0 {
+		t.Fatalf("preview warnings = %#v, want session capability guidance", preview.Warnings)
+	}
+	if _, err := svc.ConfirmCustomSkillImport(context.Background(), scope, preview.ImportID, false); err != nil {
+		t.Fatalf("ConfirmCustomSkillImport() error = %v", err)
+	}
+}
+
+func TestPreviewPortableSkillRejectsLegacySchemaWithoutEntrypoint(t *testing.T) {
+	svc := newScriptPreflightService(t)
+	scope := Scope{OrganizationID: uuid.New(), AccountID: uuid.New(), SkipAccessCheck: true}
+	preview, err := svc.PreviewImportCustomSkill(context.Background(), scope, scriptPreflightFileHeader(t, map[string]string{
+		"SKILL.md": `---
+name: incompatible-schema
+description: Legacy schema without the ZGI entrypoint.
+script_input_schema:
+  type: object
+---
+Run scripts/work.py.
+`,
+		"scripts/work.py": "print('ok')\n",
+	}))
+	if err != nil {
+		t.Fatalf("PreviewImportCustomSkill() error = %v", err)
+	}
+	if preview.CanImport || len(preview.ValidationErrors) == 0 || !strings.Contains(preview.ValidationErrors[0], "script_input_schema requires") {
+		t.Fatalf("preview = %#v, want explicit protocol mismatch", preview)
+	}
+}
+
 func TestConfirmCustomSkillImportRepeatsScriptPreflight(t *testing.T) {
 	svc := newScriptPreflightService(t)
 	scope := Scope{OrganizationID: uuid.New(), AccountID: uuid.New(), SkipAccessCheck: true}

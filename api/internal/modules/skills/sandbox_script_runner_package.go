@@ -32,6 +32,12 @@ func skillPackageHasDependencyHints(root string) bool {
 		skillScriptsHaveThirdPartyImports(root, manifest)
 }
 
+// CustomSkillHasDependencyHints reports a conservative import-preview hint;
+// it does not authorize or install dependencies.
+func CustomSkillHasDependencyHints(root string) bool {
+	return skillPackageHasDependencyHints(root)
+}
+
 var (
 	pythonImportHintPattern = regexp.MustCompile(`(?m)^\s*(?:from|import)\s+([A-Za-z_][A-Za-z0-9_]*)`)
 	nodeImportHintPattern   = regexp.MustCompile(`(?m)(?:import\s+(?:[^'"]+\s+from\s+)?|import\s*\(|require\s*\()\s*['"]([^'"]+)['"]`)

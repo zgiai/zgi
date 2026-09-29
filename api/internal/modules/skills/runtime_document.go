@@ -75,6 +75,9 @@ func (r *Runtime) loadSkillDocumentFromLocation(location skillLocation) (SkillDo
 	if err != nil {
 		return SkillDocument{}, fmt.Errorf("failed to parse skill %s: %w", id, err)
 	}
+	if source == SkillSourceCustom && strings.TrimSpace(frontmatter.Name) == "" {
+		frontmatter.Name = id
+	}
 	doc, err := buildSkillDocument(id, root, source, frontmatter, body, listLocationReferences(location), hasLocationScripts(location))
 	if err != nil {
 		return SkillDocument{}, err
@@ -141,6 +144,16 @@ func buildSkillDocument(id string, root string, source string, frontmatter Skill
 func (r *Runtime) applyScriptSupport(doc *SkillDocument) {
 	if doc == nil || !doc.Metadata.HasScripts {
 		return
+	}
+	if doc.Metadata.Source == SkillSourceCustom {
+		mode, err := CustomSkillScriptExecutionMode(doc.Metadata.RootPath)
+		if err != nil || mode == SkillScriptExecutionSession {
+			doc.Metadata.ScriptsSupported = false
+			doc.Tools = slices.DeleteFunc(doc.Tools, func(tool SkillToolDefinition) bool {
+				return strings.TrimSpace(tool.Name) == SkillScriptToolRun
+			})
+			return
+		}
 	}
 	doc.Metadata.ScriptsSupported = r.ScriptsSupported()
 	if !doc.Metadata.ScriptsSupported {

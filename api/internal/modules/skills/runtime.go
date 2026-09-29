@@ -352,6 +352,12 @@ func (r *Runtime) ValidateCatalog(ctx context.Context) error {
 }
 
 func LoadCustomSkillDocument(root string) (SkillDocument, error) {
+	return LoadCustomSkillDocumentWithName(root, "")
+}
+
+// LoadCustomSkillDocumentWithName accepts the package directory name as a
+// fallback for skills whose frontmatter omits name.
+func LoadCustomSkillDocumentWithName(root, packageName string) (SkillDocument, error) {
 	raw, err := os.ReadFile(filepath.Join(root, "SKILL.md"))
 	if err != nil {
 		return SkillDocument{}, fmt.Errorf("custom skill SKILL.md not found: %w", err)
@@ -359,6 +365,9 @@ func LoadCustomSkillDocument(root string) (SkillDocument, error) {
 	frontmatter, body, err := parseSkillMarkdown(raw)
 	if err != nil {
 		return SkillDocument{}, fmt.Errorf("failed to parse custom skill: %w", err)
+	}
+	if strings.TrimSpace(frontmatter.Name) == "" {
+		frontmatter.Name = strings.ToLower(strings.TrimSpace(packageName))
 	}
 	id := normalizeSkillID(frontmatter.Name)
 	doc, err := buildSkillDocument(id, root, SkillSourceCustom, frontmatter, body, listReferences(root, SkillSourceCustom), hasScripts(root))
@@ -375,15 +384,29 @@ func LoadCustomSkillDocument(root string) (SkillDocument, error) {
 // before a custom script skill can be imported. It intentionally does not
 // grant execution-time dependency or model-call capabilities.
 func ValidateCustomSkillScriptPackage(root string, fallbackTimeoutSeconds int) error {
-	hasManifest, err := hasSkillManifest(root)
+	mode, err := CustomSkillScriptExecutionMode(root)
 	if err != nil {
 		return fmt.Errorf("invalid custom skill script package: %w", err)
+	}
+	if mode == SkillScriptExecutionSession {
+		raw, err := os.ReadFile(filepath.Join(root, "SKILL.md"))
+		if err != nil {
+			return fmt.Errorf("invalid custom skill script package: %w", err)
+		}
+		frontmatter, _, err := parseSkillMarkdown(raw)
+		if err != nil {
+			return fmt.Errorf("invalid custom skill script package: %w", err)
+		}
+		if len(frontmatter.ScriptInputSchema) > 0 {
+			return fmt.Errorf("invalid custom skill script package: script_input_schema requires scripts/run.py or skill.manifest.json")
+		}
+		return nil
 	}
 	prepared, err := prepareSkillScriptManifest(root, fallbackTimeoutSeconds, true)
 	if err != nil {
 		return fmt.Errorf("invalid custom skill script package: %w", err)
 	}
-	if hasManifest {
+	if mode == SkillScriptExecutionManifest {
 		if err := validateSkillPackageUploadSize(root, prepared.Raw); err != nil {
 			return fmt.Errorf("invalid custom skill script package: %w", err)
 		}
@@ -391,8 +414,42 @@ func ValidateCustomSkillScriptPackage(root string, fallbackTimeoutSeconds int) e
 	return nil
 }
 
+const (
+	SkillScriptExecutionSession  = "session_script"
+	SkillScriptExecutionLegacy   = "legacy_script"
+	SkillScriptExecutionManifest = "zgi_script"
+)
+
+// CustomSkillScriptExecutionMode classifies the existing one-shot protocol
+// separately from portable scripts that run in an approved Agent workspace.
+func CustomSkillScriptExecutionMode(root string) (string, error) {
+	hasManifest, err := hasSkillManifest(root)
+	if err != nil {
+		return "", err
+	}
+	if hasManifest {
+		return SkillScriptExecutionManifest, nil
+	}
+	entrypoint := filepath.Join(root, "scripts", "run.py")
+	info, err := os.Lstat(entrypoint)
+	if err == nil {
+		if !info.Mode().IsRegular() {
+			return "", fmt.Errorf("scripts/run.py must be a regular file")
+		}
+		return SkillScriptExecutionLegacy, nil
+	}
+	if !os.IsNotExist(err) {
+		return "", err
+	}
+	return SkillScriptExecutionSession, nil
+}
+
 func (r *Runtime) LoadCustomSkillDocument(root string) (SkillDocument, error) {
-	doc, err := LoadCustomSkillDocument(root)
+	return r.LoadCustomSkillDocumentWithName(root, "")
+}
+
+func (r *Runtime) LoadCustomSkillDocumentWithName(root, packageName string) (SkillDocument, error) {
+	doc, err := LoadCustomSkillDocumentWithName(root, packageName)
 	if err != nil {
 		return SkillDocument{}, err
 	}

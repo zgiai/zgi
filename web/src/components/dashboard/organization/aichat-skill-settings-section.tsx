@@ -519,6 +519,7 @@ function SkillImportPreviewDialog({
   const existingSkillName =
     preview?.existing_skill?.name || preview?.existing_skill?.skill_id || skill?.skill_id || '';
   const scriptStatusLabelKey = skill ? getScriptStatusLabelKey(skill) : null;
+  const sessionScript = preview?.script_execution_mode === 'session_script';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -543,7 +544,11 @@ function SkillImportPreviewDialog({
                   <Badge variant="outline" className="w-fit rounded-md font-normal">
                     {t(RUNTIME_LABEL_KEYS[skill.runtime_type])}
                   </Badge>
-                  {scriptStatusLabelKey ? (
+                  {sessionScript ? (
+                    <Badge variant="outline" className="w-fit rounded-md font-normal">
+                      {t('organization.aichatSkills.importPreview.sessionScript')}
+                    </Badge>
+                  ) : scriptStatusLabelKey ? (
                     <Badge
                       variant={skill.scripts_supported ? 'success' : 'warning'}
                       className="w-fit rounded-md font-normal"

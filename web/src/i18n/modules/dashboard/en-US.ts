@@ -1098,6 +1098,7 @@ const messages = {
       importPreview: {
         title: 'Review Skill package',
         description: 'Check the package validation result before importing it.',
+        sessionScript: 'Console Agent workspace script',
         fileCount: 'Files',
         totalSize: 'Size',
         references: 'References',

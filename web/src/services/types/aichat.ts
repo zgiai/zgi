@@ -244,6 +244,7 @@ export interface AIChatImportSkillPreview {
   references: string[];
   has_scripts: boolean;
   scripts_supported: boolean;
+  script_execution_mode?: 'session_script' | 'legacy_script' | 'zgi_script';
   warnings: string[];
   validation_errors: string[];
   can_import: boolean;
