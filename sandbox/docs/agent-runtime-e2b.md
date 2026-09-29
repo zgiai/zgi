@@ -10,7 +10,8 @@ The adapter uses E2B's authenticated REST interfaces directly instead of a third
 - `POST /v2/sandboxes/{id}/connect` connects or resumes it and returns fresh connection tokens.
 - `POST /sandboxes/{id}/pause` retains a full-memory snapshot.
 - `DELETE /sandboxes/{id}` destroys it idempotently.
-- envd `GET /envs` uses the connection-scoped `X-Access-Token` only to recover the Runtime Agent bootstrap token after a worker restart.
+- envd `POST /files` uses the create-scoped `X-Access-Token` to deliver a per-Binding Runtime Agent token through a fixed file outside the workspace.
+- envd `GET /envs` uses the connection-scoped `X-Access-Token` only to recover that token after a worker restart.
 
 The E2B API key remains in Worker memory. Database allocations contain only the opaque Sandbox ID. envd and traffic tokens are accepted only from the current create/connect response and are never written to Agent execution records.
 
@@ -18,19 +19,34 @@ Every create request sets `allow_internet_access=false`, denies `0.0.0.0/0`, dis
 
 ## Approved template contract
 
-Build the Runtime Agent image for TCP transport with:
+E2B Build System 2.0 accepts a single-stage Dockerfile. Prepare the Linux
+Runtime Agent binary, verify the local image contract, then create the template
+with the pinned CLI version:
 
 ```bash
+make -C sandbox prepare-agent-runtime-e2b
 docker build \
-  --build-arg RUNTIME_AGENT_LISTEN=tcp://0.0.0.0:49984 \
-  -f sandbox/Dockerfile.agent-runtime \
-  -t registry.example/zgi/agent-runtime-e2b:<immutable-version> \
+  -f sandbox/Dockerfile.agent-runtime-e2b \
+  -t zgi-agent-runtime:e2b-template-contract \
   sandbox
+npx --yes @e2b/cli@2.20.0 template create <approved-template-name> \
+  --path sandbox \
+  --dockerfile Dockerfile.agent-runtime-e2b \
+  --cmd /usr/local/bin/zgi-runtime-agent-bootstrap \
+  --ready-cmd 'test -x /usr/local/bin/zgi-runtime-agent && test -x /usr/local/bin/zgi-runtime-agent-bootstrap'
 ```
 
-Publish an immutable image, create an E2B template from that exact image, and approve the resulting template ID in Worker configuration. The template must preserve the image entrypoint, non-root UID/GID 65532, `/workspace`, Python 3.13, Node.js 22, and port 49984. It must not bake provider credentials or a Runtime Agent token into an image layer. E2B injects the per-Binding token and fixed listener/network declarations at create time.
+The generated binary is placed under ignored `sandbox/e2b-template-build/` build storage and
+must not be committed. The template Dockerfile downloads the fixed Node.js
+22.23.3 archive and verifies its pinned SHA-256 before installation. Python
+3.13 comes from the digest-resolved base image at build time; production build
+automation should additionally pin that base image by digest.
 
-Runtime Agent control variables are stripped from every child Job environment, including when a Job tries to override them. Static Profile approval is the only template selection path; arbitrary template IDs are rejected before contacting E2B.
+Approve the resulting immutable template ID in Worker configuration. The template must preserve the image entrypoint, non-root UID/GID 65532, `/workspace`, Python 3.13, Node.js 22, and port 49984. It must not bake provider credentials or a Runtime Agent token into an image layer.
+
+The template start process waits for `/run/zgi-agent/bootstrap-token`. After E2B creates the microVM, the Provider uploads a random per-Binding token through authenticated envd. Runtime Agent accepts only a regular token file, restricts it to mode `0600`, reads it, and removes it before opening port 49984. This handshake is necessary because an E2B template start process is restored from the template snapshot and does not inherit per-Sandbox environment variables supplied later at create time.
+
+Runtime Agent control variables are stripped from every child Job environment, including when a Job tries to override them. Static Profile approval is the only template selection path; arbitrary template IDs are rejected before contacting E2B. Readiness and reconnect fail closed if the injected token cannot be delivered or recovered through authenticated envd.
 
 ## Worker configuration
 
