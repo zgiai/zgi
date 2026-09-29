@@ -47,6 +47,7 @@ type workerConfig struct {
 	MaxWorkers        int
 	IdleTTL           time.Duration
 	ShutdownTimeout   time.Duration
+	StartupTimeout    time.Duration
 	MemoryBytes       int64
 	PIDs              int64
 	CPUPeriod         uint64
@@ -200,6 +201,7 @@ func workerConfigFromEnv() (workerConfig, error) {
 		MaxWorkers:        envInt("ZGI_AGENT_RUNTIME_MAX_WORKERS", 4),
 		IdleTTL:           time.Duration(envInt("ZGI_AGENT_RUNTIME_IDLE_TTL_SECONDS", 1800)) * time.Second,
 		ShutdownTimeout:   time.Duration(envInt("ZGI_AGENT_RUNTIME_SHUTDOWN_TIMEOUT_SECONDS", 30)) * time.Second,
+		StartupTimeout:    time.Duration(envInt("ZGI_AGENT_RUNTIME_STARTUP_TIMEOUT_SECONDS", 30)) * time.Second,
 		MemoryBytes:       envInt64("ZGI_AGENT_RUNTIME_MEMORY_BYTES", 512*1024*1024),
 		PIDs:              envInt64("ZGI_AGENT_RUNTIME_PIDS", 128),
 		CPUPeriod:         uint64(envInt64("ZGI_AGENT_RUNTIME_CPU_PERIOD", 100000)),
@@ -224,8 +226,8 @@ func workerConfigFromEnv() (workerConfig, error) {
 		if err := decodeProfiles("ZGI_AGENT_RUNTIME_PROFILES_JSON", &cfg.Profiles); err != nil {
 			return workerConfig{}, err
 		}
-		if len(cfg.Profiles) == 0 || cfg.MemoryBytes <= 0 || cfg.PIDs <= 0 || cfg.CPUPeriod == 0 || cfg.CPUQuota <= 0 {
-			return workerConfig{}, errors.New("local Agent Runtime profiles and positive resource limits are required")
+		if len(cfg.Profiles) == 0 || cfg.StartupTimeout <= 0 || cfg.MemoryBytes <= 0 || cfg.PIDs <= 0 || cfg.CPUPeriod == 0 || cfg.CPUQuota <= 0 {
+			return workerConfig{}, errors.New("local Agent Runtime profiles and positive startup and resource limits are required")
 		}
 	case e2bBackendName:
 		if err := decodeProfiles("ZGI_AGENT_RUNTIME_E2B_PROFILES_JSON", &cfg.E2BProfiles); err != nil {
@@ -248,7 +250,8 @@ func newRuntimeBackend(cfg workerConfig) (string, runtimeBackend, func(), error)
 	case localBackendName:
 		provider, err := containerdprovider.New(containerdprovider.Options{
 			Address: cfg.ContainerdAddress, RootDir: cfg.RootDir, Profiles: cfg.Profiles,
-			MemoryBytes: cfg.MemoryBytes, PIDs: cfg.PIDs, CPUPeriod: cfg.CPUPeriod, CPUQuota: cfg.CPUQuota,
+			StartupLimit: cfg.StartupTimeout,
+			MemoryBytes:  cfg.MemoryBytes, PIDs: cfg.PIDs, CPUPeriod: cfg.CPUPeriod, CPUQuota: cfg.CPUQuota,
 		})
 		if err != nil {
 			return "", nil, func() {}, err

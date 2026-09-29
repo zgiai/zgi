@@ -173,7 +173,9 @@ func (p *Provider) launch(ctx context.Context, spec agentexecution.CreateSpec) (
 	if err != nil {
 		return allocation, err
 	}
-	if err := p.stopCompute(ctx, allocation.BindingRef); err != nil {
+	startupContext, cancelStartup := context.WithTimeout(ctx, p.startupLimit)
+	defer cancelStartup()
+	if err := p.stopCompute(startupContext, allocation.BindingRef); err != nil {
 		return allocation, fmt.Errorf("remove stale local runtime compute: %w", err)
 	}
 	workspaceDir := p.workspaceDir(allocation.WorkspaceRef)
@@ -199,14 +201,14 @@ func (p *Provider) launch(ctx context.Context, spec agentexecution.CreateSpec) (
 		return allocation, err
 	}
 
-	image, err := p.client.GetImage(ctx, profile.Image)
+	image, err := p.client.GetImage(startupContext, profile.Image)
 	if err != nil {
 		if errdefs.IsNotFound(err) {
 			return allocation, fmt.Errorf("%w: approved profile image is not preloaded", agentexecution.ErrBackendUnavailable)
 		}
 		return allocation, fmt.Errorf("get profile image: %w", err)
 	}
-	container, err := p.client.NewContainer(ctx, allocation.BindingRef,
+	container, err := p.client.NewContainer(startupContext, allocation.BindingRef,
 		containerdclient.WithImage(image),
 		containerdclient.WithNewSnapshot(allocation.BindingRef+"-rootfs", image),
 		containerdclient.WithRuntime(p.runtimeName, nil),
@@ -237,21 +239,21 @@ func (p *Provider) launch(ctx context.Context, spec agentexecution.CreateSpec) (
 	if err != nil {
 		return allocation, fmt.Errorf("create gVisor container: %w", err)
 	}
-	task, err := container.NewTask(ctx, cio.NullIO)
+	task, err := container.NewTask(startupContext, cio.NullIO)
 	if err != nil {
 		cleanupContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		_ = container.Delete(cleanupContext, containerdclient.WithSnapshotCleanup)
 		cancel()
 		return allocation, fmt.Errorf("create gVisor task: %w", err)
 	}
-	if err := task.Start(ctx); err != nil {
+	if err := task.Start(startupContext); err != nil {
 		cleanupContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		_, _ = task.Delete(cleanupContext, containerdclient.WithProcessKill)
 		_ = container.Delete(cleanupContext, containerdclient.WithSnapshotCleanup)
 		cancel()
 		return allocation, fmt.Errorf("start gVisor task: %w", err)
 	}
-	if err := p.waitReady(ctx, allocation); err != nil {
+	if err := p.waitReady(startupContext, allocation); err != nil {
 		cleanupContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		_ = p.stopCompute(cleanupContext, allocation.BindingRef)
 		cancel()

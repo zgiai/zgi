@@ -40,7 +40,7 @@ Required environment:
 | `ZGI_AGENT_RUNTIME_DATABASE_URL` | PostgreSQL control-plane database. |
 | `ZGI_AGENT_RUNTIME_PROFILES_JSON` | Approved Profile object, for example `{"standard":{"image":"registry.example/zgi/agent-runtime@sha256:..."}}`. |
 
-Important optional settings are `ZGI_AGENT_RUNTIME_LISTEN` (default `127.0.0.1:2670`), `ZGI_AGENT_RUNTIME_WORKER_ID`, `ZGI_AGENT_RUNTIME_ROOT` (default `/var/lib/zgi-agent-runtime`), `ZGI_AGENT_RUNTIME_CONTAINERD_ADDRESS`, `ZGI_AGENT_RUNTIME_MAX_WORKERS`, `ZGI_AGENT_RUNTIME_IDLE_TTL_SECONDS` (default 1800), and the `MEMORY_BYTES`, `PIDS`, `CPU_PERIOD`, and `CPU_QUOTA` variables with the `ZGI_AGENT_RUNTIME_` prefix.
+Important optional settings are `ZGI_AGENT_RUNTIME_LISTEN` (default `127.0.0.1:2670`), `ZGI_AGENT_RUNTIME_WORKER_ID`, `ZGI_AGENT_RUNTIME_ROOT` (default `/var/lib/zgi-agent-runtime`), `ZGI_AGENT_RUNTIME_CONTAINERD_ADDRESS`, `ZGI_AGENT_RUNTIME_MAX_WORKERS`, `ZGI_AGENT_RUNTIME_IDLE_TTL_SECONDS` (default 1800), `ZGI_AGENT_RUNTIME_STARTUP_TIMEOUT_SECONDS` (default 30), and the `MEMORY_BYTES`, `PIDS`, `CPU_PERIOD`, and `CPU_QUOTA` variables with the `ZGI_AGENT_RUNTIME_` prefix.
 
 The process owns bounded, cancelable loops for asynchronous Jobs, cleanup reconciliation, and idle Binding suspension. Job submission and file transfer atomically refresh the Binding idle deadline and generation; a stale reaper observation therefore cannot suspend a Binding after new activity.
 
@@ -62,3 +62,5 @@ sudo ZGI_AGENT_RUNTIME_TEST_IMAGE='registry.example/zgi/agent-runtime@sha256:...
 ```
 
 Set `ZGI_AGENT_RUNTIME_CONTAINERD_ADDRESS` only when containerd does not use `/run/containerd/containerd.sock`. The test intentionally fails instead of falling back to runc when runsc, the image, root privileges, or the containerd socket is unavailable.
+
+Run this gate on a native Linux worker or Linux VM. A privileged container on Docker Desktop can build and preload the image and is useful for exercising bounded failure and cleanup paths, but nested containerd/gVisor task creation is not a supported deployment topology and does not satisfy the isolation gate. In particular, a nested shim can complete `runsc create` without completing the containerd task-create handshake. The Provider bounds the complete launch path with `ZGI_AGENT_RUNTIME_STARTUP_TIMEOUT_SECONDS`, but the node operator must still reconcile any runtime process that its containerd installation cannot reap.
