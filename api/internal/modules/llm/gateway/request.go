@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
@@ -88,50 +87,10 @@ func missingTokenUsageError(providerName, modelName string) error {
 }
 
 func stableInvocationErrorCode(err error) string {
-	switch {
-	case errors.Is(err, adapter.ErrTimeout):
-		return llmerrors.AppCodeProviderTimeout.String()
-	case errors.Is(err, adapter.ErrAuthFailed):
-		return llmerrors.AppCodeProviderAuthFailed.String()
-	case errors.Is(err, adapter.ErrRateLimited), errors.Is(err, adapter.ErrQuotaExhausted):
-		return llmerrors.AppCodeProviderRateLimited.String()
-	case errors.Is(err, adapter.ErrInvalidRequest), errors.Is(err, adapter.ErrContentPolicyViolation):
-		return llmerrors.AppCodeRequestInvalid.String()
-	case errors.Is(err, adapter.ErrModelNotFound):
-		return llmerrors.AppCodeModelNotFound.String()
-	case errors.Is(err, adapter.ErrPlatformChannelUnavailable),
-		errors.Is(err, adapter.ErrProxyError), errors.Is(err, adapter.ErrInsufficientBalance),
-		errors.Is(err, adapter.ErrBillingUnavailable):
-		return llmerrors.AppCodeProviderUnavailable.String()
-	case errors.Is(err, adapter.ErrUpstreamError):
-		return llmerrors.AppCodeInvocationFailed.String()
+	if code, ok := ApplicationCodeForError(err); ok {
+		return code.String()
 	}
-
-	statusCode := 0
-	var adapterErr *adapter.AdapterError
-	if errors.As(err, &adapterErr) {
-		statusCode = adapterErr.StatusCode
-	}
-	var statusErr *adapter.HTTPStatusError
-	if errors.As(err, &statusErr) {
-		statusCode = statusErr.StatusCode
-	}
-	switch {
-	case statusCode == http.StatusBadRequest:
-		return llmerrors.AppCodeRequestInvalid.String()
-	case statusCode == http.StatusNotFound:
-		return llmerrors.AppCodeModelNotFound.String()
-	case statusCode == http.StatusGatewayTimeout:
-		return llmerrors.AppCodeProviderTimeout.String()
-	case statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden:
-		return llmerrors.AppCodeProviderAuthFailed.String()
-	case statusCode == http.StatusTooManyRequests:
-		return llmerrors.AppCodeProviderRateLimited.String()
-	case statusCode >= http.StatusInternalServerError:
-		return llmerrors.AppCodeProviderUnavailable.String()
-	default:
-		return llmerrors.AppCodeInvocationFailed.String()
-	}
+	return llmerrors.AppCodeInvocationFailed.String()
 }
 
 func setBillingFailure(billingCtx *BillingContext, err error) {

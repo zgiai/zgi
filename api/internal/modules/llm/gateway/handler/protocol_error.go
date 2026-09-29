@@ -51,9 +51,9 @@ func classifyProtocolError(err error) protocolError {
 	case errors.Is(err, llmerrors.DomainErrModelNotFound), errors.Is(err, gateway.ErrModelNotFound), errors.Is(err, gateway.ErrModelNotActive), errors.Is(err, adapter.ErrModelNotFound):
 		return newProtocolError(http.StatusNotFound, "invalid_request_error", "model_not_found", "not_found_error", "Model not found")
 	case adapter.IsCapabilityUnsupported(err):
-		return newProtocolError(http.StatusBadRequest, "invalid_request_error", "unsupported_protocol", "invalid_request_error", "Requested model does not support this API protocol")
+		return newAppProtocolError(llmerrors.AppCodeRequestInvalid, http.StatusBadRequest, "invalid_request_error", "unsupported_protocol", "invalid_request_error", "Requested model does not support this API protocol", false)
 	case errors.Is(err, adapter.ErrContentPolicyViolation):
-		return newProtocolError(http.StatusBadRequest, "invalid_request_error", "content_policy_violation", "invalid_request_error", "Request was rejected by the content policy")
+		return newAppProtocolError(llmerrors.AppCodeRequestInvalid, http.StatusBadRequest, "invalid_request_error", "content_policy_violation", "invalid_request_error", "Request was rejected by the content policy", false)
 	case errors.Is(err, gateway.ErrMissingModel), errors.Is(err, gateway.ErrMissingMessages), errors.Is(err, gateway.ErrEmptyMessages), errors.Is(err, gateway.ErrInvalidRequest), errors.Is(err, adapter.ErrInvalidRequest), errors.Is(err, llmerrors.DomainErrMissingModel), errors.Is(err, llmerrors.DomainErrMissingMessages), errors.Is(err, llmerrors.DomainErrInvalidMessages), errors.Is(err, llmerrors.DomainErrInvalidTemperature), errors.Is(err, llmerrors.DomainErrInvalidMaxTokens):
 		return invalidRequestProtocolError("Invalid request")
 	case errors.Is(err, gateway.ErrInvalidAPIKey), errors.Is(err, gateway.ErrAPIKeyExpired), errors.Is(err, gateway.ErrAPIKeyInactive), errors.Is(err, gateway.ErrAPIKeyNotFound), errors.Is(err, llmerrors.DomainErrInvalidAPIKey), errors.Is(err, llmerrors.DomainErrAPIKeyDisabled):
@@ -62,8 +62,9 @@ func classifyProtocolError(err error) protocolError {
 		return quotaProtocolError()
 	case errors.Is(err, llmerrors.DomainErrRateLimitExceeded), errors.Is(err, adapter.ErrRateLimited):
 		// The legacy OpenAI wire code stays rate_limit_exceeded; the stable
-		// catalog identity is llm.provider.rate_limited.
-		return newAppProtocolError(llmerrors.AppCodeProviderRateLimited, http.StatusTooManyRequests, "rate_limit_error", "rate_limit_exceeded", "rate_limit_error", "The model service is receiving too many requests right now. Please try again shortly.", true)
+		// catalog identity is the same llm.rate_limit.exceeded code used by
+		// persisted usage events.
+		return newAppProtocolError(llmerrors.AppCodeRateLimitExceeded, http.StatusTooManyRequests, "rate_limit_error", "rate_limit_exceeded", "rate_limit_error", "The model service is receiving too many requests right now. Please try again shortly.", true)
 	case errors.Is(err, gateway.ErrPricingNotConfigured):
 		return pricingNotConfiguredProtocolError()
 	case errors.Is(err, llmerrors.DomainErrPrivateChannelUpstreamUnavailable):
@@ -96,7 +97,7 @@ func classifyProtocolError(err error) protocolError {
 	case errors.Is(err, gateway.ErrBillingSettleFailed):
 		return billingFailureProtocolError(llmerrors.AppCodeBillingSettleFailed)
 	case errors.Is(err, gateway.ErrBalanceNotFound), errors.Is(err, gateway.ErrBillingFailed), errors.Is(err, gateway.ErrBillingLaneMismatch), errors.Is(err, gateway.ErrPricingCalculationFailed), errors.Is(err, llmerrors.DomainErrBillingFailed), errors.Is(err, llmerrors.DomainErrDatabaseError), errors.Is(err, llmerrors.DomainErrInternalError):
-		return newProtocolError(http.StatusInternalServerError, "server_error", "internal_error", "api_error", "Internal server error")
+		return newAppProtocolError(llmerrors.AppCodeInvocationFailed, http.StatusInternalServerError, "server_error", "internal_error", "api_error", "Internal server error", true)
 	default:
 		// Every unclassified upstream failure must still carry a catalog
 		// identity, otherwise the client sees a bare upstream_error with no
@@ -205,7 +206,7 @@ func quotaProtocolError() protocolError {
 }
 
 func internalProtocolError() protocolError {
-	return newProtocolError(http.StatusInternalServerError, "server_error", "internal_error", "api_error", "Internal server error")
+	return newAppProtocolError(llmerrors.AppCodeInvocationFailed, http.StatusInternalServerError, "server_error", "internal_error", "api_error", "Internal server error", true)
 }
 
 func writeProtocolError(c *gin.Context, protocolErr protocolError) {

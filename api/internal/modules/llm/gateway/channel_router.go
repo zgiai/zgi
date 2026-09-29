@@ -713,7 +713,7 @@ func (r *ChannelRouter) filterCandidateRoutes(
 		return nil, err
 	}
 	if len(validRoutes) == 0 {
-		return nil, llmerrors.NewModelNotFoundErrorWithName(modelName)
+		return nil, fmt.Errorf("%w: no routable channel found for model %s", ErrProviderUnavailable, modelName)
 	}
 	return validRoutes, nil
 }

@@ -57,15 +57,14 @@ func TestLocalizedProtocolErrorFallsBackToEnglishAndLeavesOtherErrorsAlone(t *te
 	}
 
 	other := handler.localizedProtocolError(context, adapter.ErrContentPolicyViolation)
-	want := classifyProtocolError(adapter.ErrContentPolicyViolation)
-	if other.openAIStatus != want.openAIStatus || other.openAICode != want.openAICode || other.anthropicType != want.anthropicType || other.message != want.message {
-		t.Fatalf("unmigrated legacy contract changed: got %#v, want %#v", other, want)
+	if other.openAIStatus != 400 || other.openAICode != "content_policy_violation" || other.anthropicType != "invalid_request_error" || other.message != "The model request is invalid. Check the request and try again." {
+		t.Fatalf("content policy projection = %#v", other)
 	}
 	if other.errorID == "" {
 		t.Fatal("projection boundary did not mint an error_id")
 	}
-	if other.appCode != "" {
-		t.Fatalf("unregistered error exposed a stable code: %q", other.appCode)
+	if other.appCode != llmerrors.AppCodeRequestInvalid.String() {
+		t.Fatalf("content policy stable code = %q", other.appCode)
 	}
 }
 
@@ -160,7 +159,7 @@ func TestLocalizedProtocolErrorDoesNotMisclassifyInternalDeadline(t *testing.T) 
 
 	got := handler.localizedProtocolError(requestContext, internalErr)
 
-	if got.openAIStatus != 500 || got.openAICode != "internal_error" || got.message != "Internal server error" {
+	if got.openAIStatus != 500 || got.openAICode != "internal_error" || got.message != "大模型调用未完成，请重试或选择其他模型。" || got.appCode != llmerrors.AppCodeInvocationFailed.String() {
 		t.Fatalf("internal deadline was misclassified: %#v", got)
 	}
 }
