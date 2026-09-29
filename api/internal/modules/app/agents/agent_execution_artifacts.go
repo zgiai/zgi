@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"mime"
 	"path"
-	"strings"
 	"time"
 
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
@@ -25,8 +24,11 @@ func (defaultAgentExecutionArtifactPersister) Persist(ctx context.Context, scope
 	if filename == "" || filename == "." || filename == "/" {
 		return nil, fmt.Errorf("agent execution artifact name is invalid")
 	}
-	extension := strings.TrimPrefix(strings.ToLower(path.Ext(filename)), ".")
-	mimeType := mime.TypeByExtension("." + extension)
+	extension := path.Ext(filename)
+	if extension == "" {
+		extension = ".bin"
+	}
+	mimeType := mime.TypeByExtension(extension)
 	if mimeType == "" {
 		mimeType = "application/octet-stream"
 	}
@@ -46,7 +48,7 @@ func (defaultAgentExecutionArtifactPersister) Persist(ctx context.Context, scope
 		"artifact_id": "tool_file:" + file.ID, "artifact_type": "file",
 		"file_id": file.ID, "tool_file_id": file.ID, "filename": file.Name,
 		"extension": extension, "mime_type": file.MimeType, "size": file.Size,
-		"url": url, "download_url": url, "transfer_method": "tool_file",
+		"url": url, "download_url": url + "&download=1", "transfer_method": "tool_file",
 		"lifecycle": "persistent", "created_at": now.Unix(), "created_at_ms": now.UnixMilli(),
 	}, nil
 }
