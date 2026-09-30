@@ -144,6 +144,8 @@ The Runtime Agent now forces each Job's `$HOME` to `/workspace/.zgi-runtime-home
 
 A PostgreSQL-backed lifecycle test now closes and reopens both the control Store and checkpoint FileStore, simulates lost compute, restores the latest archived bytes using the pinned template, then advances the clock past the retention deadline and verifies Binding deletion and object removal. This is a real database/durable-volume control-plane gate with a fake compute backend; it is not a substitute for a restarted Worker process with real gVisor/E2B and S3 storage.
 
+The same lifecycle also passed with two separate S3 clients against a disposable SeaweedFS server and a disposable PostgreSQL 16 database. It verified replacement from the first object, durable cleanup of the superseded object, and deletion of the final object at retention expiry. The test is opt-in via a private pre-created test bucket and `ZGI_CHECKPOINT_S3_TEST_ENDPOINT`/`ZGI_CHECKPOINT_S3_TEST_BUCKET`; it still uses fake compute and does not replace live gVisor/E2B validation.
+
 A wider `go test ./...` run from WSL failed in the unchanged `internal/app` and `internal/executor` suites because their ignored `.zgi-sandbox-data/workspaces` directories on the Windows-mounted checkout denied writes; the changed packages passed. That checkout permission issue has not been treated as an M5A code regression or worked around by deleting existing runtime data.
 
 The local Sandbox volume now contains the verified `stdlib` profile artifact used by its preview-process backend. The temporary profile source directory was removed. This data-only change does not alter the image, repository code, or the production-grade secure Sandbox configuration.

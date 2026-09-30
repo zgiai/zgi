@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"testing"
 	"time"
 
@@ -15,22 +16,49 @@ import (
 	"github.com/zgiai/zgi-sandbox/internal/workspacecheckpoint"
 )
 
-// This test uses a real PostgreSQL repository and a durable checkpoint
-// directory across two independent Store and Service instances. The backend
-// deliberately loses compute so resume must restore the archived files.
 func TestAgentRuntimeCheckpointSurvivesControlRestartAndRetention(t *testing.T) {
+	directory := t.TempDir()
+	testAgentRuntimeCheckpointLifecycle(t, func() (agentruntime.WorkspaceCheckpointStore, func() error, error) {
+		store, err := workspacecheckpoint.NewFileStore(directory)
+		if err != nil {
+			return nil, nil, err
+		}
+		return store, store.Close, nil
+	})
+}
+
+// Set an endpoint and a pre-created private test bucket to run this same
+// PostgreSQL lifecycle against two separate S3 client instances.
+func TestAgentRuntimeS3CheckpointSurvivesControlRestartAndRetention(t *testing.T) {
+	endpoint := os.Getenv("ZGI_CHECKPOINT_S3_TEST_ENDPOINT")
+	bucket := os.Getenv("ZGI_CHECKPOINT_S3_TEST_BUCKET")
+	if endpoint == "" || bucket == "" {
+		t.Skip("set ZGI_CHECKPOINT_S3_TEST_ENDPOINT and ZGI_CHECKPOINT_S3_TEST_BUCKET for S3 lifecycle acceptance")
+	}
+	prefix := fmt.Sprintf("m5-control-%d", time.Now().UnixNano())
+	testAgentRuntimeCheckpointLifecycle(t, func() (agentruntime.WorkspaceCheckpointStore, func() error, error) {
+		store, err := workspacecheckpoint.NewS3Store(context.Background(), workspacecheckpoint.S3Config{
+			Endpoint: endpoint, Bucket: bucket, Region: "us-east-1", Prefix: prefix, UsePathStyle: true,
+		})
+		return store, func() error { return nil }, err
+	})
+}
+
+// The backend deliberately loses compute so resume must restore archived
+// files. PostgreSQL and checkpoint storage are independently reopened.
+func testAgentRuntimeCheckpointLifecycle(t *testing.T, openCheckpoint func() (agentruntime.WorkspaceCheckpointStore, func() error, error)) {
+	t.Helper()
 	ctx := context.Background()
 	dsn := testutil.CreateTestPostgresDSN(t)
-	directory := t.TempDir()
 	now := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
 	backend := &restartCheckpointBackend{files: []byte("csv-result-v1")}
-	openControl := func() (*Store, *workspacecheckpoint.FileStore, *agentruntime.Service) {
+	openControl := func() (*Store, agentruntime.WorkspaceCheckpointStore, func() error, *agentruntime.Service) {
 		t.Helper()
 		store, err := Open(config.Config{DatabaseURL: dsn, MaxWorkers: 1})
 		if err != nil {
 			t.Fatal(err)
 		}
-		checkpoints, err := workspacecheckpoint.NewFileStore(directory)
+		checkpoints, closeCheckpoint, err := openCheckpoint()
 		if err != nil {
 			_ = store.Close()
 			t.Fatal(err)
@@ -39,13 +67,13 @@ func TestAgentRuntimeCheckpointSurvivesControlRestartAndRetention(t *testing.T) 
 			Now: func() time.Time { return now }, Checkpoints: checkpoints, Jobs: store, Snapshots: store,
 		})
 		if err != nil {
-			_ = checkpoints.Close()
+			_ = closeCheckpoint()
 			_ = store.Close()
 			t.Fatal(err)
 		}
-		return store, checkpoints, service
+		return store, checkpoints, closeCheckpoint, service
 	}
-	store, checkpoints, service := openControl()
+	store, checkpoints, closeCheckpoint, service := openControl()
 	_, err := store.db.ExecContext(ctx, `
 		INSERT INTO agent_runtime_home_snapshots (
 			id, organization_id, subject_id, profile_id, backend, backend_ref,
@@ -68,7 +96,8 @@ func TestAgentRuntimeCheckpointSurvivesControlRestartAndRetention(t *testing.T) 
 	if err != nil || suspended.CheckpointKey == "" {
 		t.Fatalf("suspend binding = %+v, %v", suspended, err)
 	}
-	if err := checkpoints.Close(); err != nil {
+	firstCheckpointKey := suspended.CheckpointKey
+	if err := closeCheckpoint(); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
@@ -76,8 +105,8 @@ func TestAgentRuntimeCheckpointSurvivesControlRestartAndRetention(t *testing.T) 
 	}
 
 	backend.lost = true
-	store, checkpoints, service = openControl()
-	defer checkpoints.Close()
+	store, checkpoints, closeCheckpoint, service = openControl()
+	defer closeCheckpoint()
 	defer store.Close()
 	now = now.Add(24 * time.Hour)
 	resumed, err := service.ResumeBinding(ctx, scope, binding.ID, suspended.Generation)
@@ -99,6 +128,18 @@ func TestAgentRuntimeCheckpointSurvivesControlRestartAndRetention(t *testing.T) 
 	data, readErr := io.ReadAll(reader)
 	if err := errors.Join(readErr, reader.Close()); err != nil || !bytes.Equal(data, backend.files) {
 		t.Fatalf("latest checkpoint = %q, %v", data, err)
+	}
+	reconciler, err := agentruntime.NewReconciler(store, map[string]agentruntime.Backend{"fake": backend}, agentruntime.ReconcilerOptions{
+		OwnerID: "checkpoint-reaper", Now: func() time.Time { return now }, Checkpoints: checkpoints,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if processed, err := reconciler.ReconcileOne(ctx); err != nil || !processed {
+		t.Fatalf("superseded checkpoint cleanup = %t, %v", processed, err)
+	}
+	if _, err := checkpoints.Open(ctx, firstCheckpointKey); !errors.Is(err, agentruntime.ErrNotFound) {
+		t.Fatalf("superseded checkpoint error = %v", err)
 	}
 	now = suspended.RetentionExpiresAt.Add(time.Second)
 	reaper, err := agentruntime.NewRetentionReaper(store, service, func() time.Time { return now })
