@@ -974,6 +974,44 @@ func TestInitialLoadedSkillsRejectsChangedInstructionDigest(t *testing.T) {
 	}
 }
 
+func TestLoadedPortableSkillRequiresReloadWhenScriptChanges(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "scripts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "SKILL.md"), []byte("---\nname: portable-example\ndescription: Example.\n---\nRun the script.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(root, "scripts", "task.py")
+	if err := os.WriteFile(script, []byte("print('first')\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	doc := skills.SkillDocument{Metadata: skills.SkillMetadata{ID: "portable-example", Source: skills.SkillSourceCustom, HasScripts: true, RootPath: root}, Instructions: "Run the script."}
+	version := skillEffectiveVersion(&doc)
+	if err := os.WriteFile(script, []byte("print('second')\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if current := skillEffectiveVersion(&doc); current == version {
+		t.Fatalf("effective version = %q after script change, want a new version", current)
+	}
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{doc}}
+	req := RunRequest{CurrentMetadata: func() map[string]interface{} {
+		return map[string]interface{}{
+			"loaded_skill_ids": []interface{}{"portable-example"},
+			"loaded_skill_state": []interface{}{map[string]interface{}{
+				"skill_id": "portable-example", "instruction_digest": skillInstructionDigest(doc.Instructions), "effective_version": version,
+			}},
+		}
+	}}
+	if loaded := initialLoadedSkillsForRun(req, resolved); len(loaded) != 0 {
+		t.Fatalf("loaded = %#v after script change, want reload required", loaded)
+	}
+	loaded, traces := validatedHistoricalLoadedSkillsForRun(t.Context(), req, resolved)
+	if len(loaded) != 0 || len(traces) != 1 || traces[0].Status != "reload_required" {
+		t.Fatalf("loaded = %#v, traces = %#v, want version_changed reload", loaded, traces)
+	}
+}
+
 func TestValidatedHistoricalLoadedSkillsRecordsVersionAndPolicyFailures(t *testing.T) {
 	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{
 		{Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement}, Instructions: "new instructions"},

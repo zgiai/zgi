@@ -549,6 +549,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		}
 		if nativeToolSet != nil {
 			messages = append(messages, nativeToolSet.InstructionMessages...)
+			if sessionScripts, ok := nativeActiveSessionScriptsSystemMessage(resolved, nativeToolSet.ActiveSkillIDs, req.RuntimeTools); ok {
+				messages = append(messages, sessionScripts)
+			}
 		}
 		messages = append(messages, validAdditionalSystemMessages(req.AdditionalSystemMessages)...)
 		messages = append(messages, nativeAgentLoopSystemMessage())
@@ -1468,11 +1471,14 @@ func invalidLoadedSkillDigests(metadata map[string]interface{}, resolved *skills
 			continue
 		}
 		digest := strings.TrimSpace(evidenceStringFromAny(record["instruction_digest"]))
-		if digest == "" {
+		version := strings.TrimSpace(evidenceStringFromAny(record["effective_version"]))
+		if digest == "" && version == "" {
 			continue
 		}
 		doc, ok := resolved.Get(skillID)
-		if !ok || doc == nil || digest != skillInstructionDigest(doc.Instructions) {
+		if !ok || doc == nil ||
+			(digest != "" && digest != skillInstructionDigest(doc.Instructions)) ||
+			(version != "" && version != skillEffectiveVersion(doc)) {
 			invalid[skillID] = struct{}{}
 		}
 	}
@@ -1499,7 +1505,7 @@ func validatedHistoricalLoadedSkillsForRun(ctx context.Context, req RunRequest, 
 			traces = append(traces, restoredSkillValidationTrace(canonical, "not_exposed_current_surface", record, "allowed", "not_applicable"))
 			continue
 		}
-		currentVersion := skillInstructionDigest(doc.Instructions)
+		currentVersion := skillEffectiveVersion(doc)
 		recordedVersion := strings.TrimSpace(firstNonEmptyString(record["effective_version"], record["instruction_digest"]))
 		if recordedVersion != "" && recordedVersion != currentVersion {
 			delete(loaded, canonical)
@@ -1569,7 +1575,7 @@ func restoredSkillAttemptTraces(metadata map[string]interface{}, resolved *skill
 		doc, _ := resolved.Get(skillID)
 		version := ""
 		if doc != nil {
-			version = skillInstructionDigest(doc.Instructions)
+			version = skillEffectiveVersion(doc)
 		}
 		return skills.SkillTrace{
 			Kind:     "skill_load_attempt",
@@ -1697,6 +1703,18 @@ func restoredLoadedSkillInstructionStateForRun(resolved *skills.ResolvedSkills, 
 func skillInstructionDigest(instructions string) string {
 	digest := sha256.Sum256([]byte(strings.TrimSpace(instructions)))
 	return fmt.Sprintf("sha256:%x", digest[:])
+}
+
+func skillEffectiveVersion(doc *skills.SkillDocument) string {
+	if doc == nil {
+		return ""
+	}
+	if doc.Metadata.Source == skills.SkillSourceCustom && doc.Metadata.HasScripts {
+		if digest, err := skills.SkillPackageSHA256(doc.Metadata.RootPath); err == nil {
+			return "sha256:" + digest
+		}
+	}
+	return skillInstructionDigest(doc.Instructions)
 }
 
 func activeSkillIDsForDiagnostics(resolved *skills.ResolvedSkills, loaded map[string]struct{}) []string {

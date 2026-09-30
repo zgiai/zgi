@@ -95,7 +95,7 @@ func nativeAgentLoopSystemMessage() adapter.Message {
 		"Activate or search for skills only when the user outcome genuinely requires an external read, generation, mutation, governed action, or page operation. Never activate, search, update a plan, or submit state merely to inspect capabilities or prepare an answer.",
 		"If a candidate skill is needed, call activate_skills with the smallest relevant set before doing the business work. Use search_skills only when the compact candidate directory omitted the needed capability.",
 		"Skill discovery and activation are internal. Do not name, narrate, summarize, or expose that mechanism to the user. A useful user-facing process note may accompany the same turn when it describes the actual task stage rather than the internal preparation.",
-		"When a business action is needed, call the exposed business function directly. Never call or invent load_skill, call_skill_tool, submit_intermediate_answer, or submit_final_answer.",
+		"When a business action is needed, call the exposed business function directly. Never call or invent load_skill, call_skill_tool, submit_intermediate_answer, or submit_final_answer. An active script Skill is already loaded; use its supplied session_scripts package_sha256 with shell_exec. Activate a candidate only if it is not already active.",
 		"Call a projected external business function directly when it is needed. Do not call update_plan merely to prepare a single Action: the runtime creates the authoritative Outcome, phase, target binding, and execution ledger fields. Use update_plan only when the user's outcome structure genuinely changes; never invent or pass server-owned phase or binding fields.",
 		"For complex or multi-step work, before the first business stage include one brief user-visible process note in ordinary assistant content before the business function call. Add another note only after important evidence arrives, when the work changes stage, when the approach changes, or when recovering from an error.",
 		"A process note must use the language of the user's latest request and state the current judgment or evidence plus the result the next action will produce. Do not merely repeat the request.",
@@ -110,6 +110,31 @@ func nativeAgentLoopSystemMessage() adapter.Message {
 		"Never claim an external action succeeded without a matching successful tool result. Do not repeat a failed tool call with unchanged arguments.",
 		"Read-only calls may be grouped when useful, but call at most one side-effecting or governed mutation in one assistant turn, then wait for its result.",
 	}, "\n")}
+}
+
+func nativeActiveSessionScriptsSystemMessage(resolved *skills.ResolvedSkills, activeSkillIDs []string, runtimeTools []RuntimeTool) (adapter.Message, bool) {
+	if resolved == nil || !nativeRuntimeToolAvailable(runtimeTools, "shell_exec") {
+		return adapter.Message{}, false
+	}
+	scripts := make([]map[string]interface{}, 0, len(activeSkillIDs))
+	for _, skillID := range activeSkillIDs {
+		if doc, ok := resolved.Get(skillID); ok {
+			if script := portableSessionScriptPayload(doc); script != nil {
+				scripts = append(scripts, script)
+			}
+		}
+	}
+	if len(scripts) == 0 {
+		return adapter.Message{}, false
+	}
+	payload, err := json.Marshal(map[string]interface{}{
+		"session_scripts": scripts,
+		"next_action":     "These Skills are already active. Pass the matching skill_id and package_sha256 to shell_exec, then run the script from $ZGI_SKILL_DIR/scripts/. Do not call load_skill or activate_skills for an already active Skill.",
+	})
+	if err != nil {
+		return adapter.Message{}, false
+	}
+	return adapter.Message{Role: "system", Content: string(payload)}, true
 }
 
 func nativeReferenceReadContinuationSystemMessage(trace skills.SkillTrace) (adapter.Message, bool) {
@@ -184,7 +209,7 @@ func (r *Runner) preloadNativeSkills(
 			"outcome":            "preloaded",
 			"instruction_digest": skillInstructionDigest(doc.Instructions),
 			"instruction_chars":  len([]rune(strings.TrimSpace(doc.Instructions))),
-			"effective_version":  skillInstructionDigest(doc.Instructions),
+			"effective_version":  skillEffectiveVersion(doc),
 			"policy_state":       "allowed",
 			"access_status":      "authorized",
 		}
@@ -297,7 +322,7 @@ func (r *Runner) handleNativeSessionControlCall(
 		}
 		if len(sessionScripts) > 0 {
 			payload["session_scripts"] = sessionScripts
-			payload["next_action"] = "Use shell_exec with skill_id to stage an activated Skill's script package, then run its script from $ZGI_SKILL_DIR/scripts/."
+			payload["next_action"] = "Use shell_exec with skill_id and the activated Skill's package_sha256 to stage its script package, then run its script from $ZGI_SKILL_DIR/scripts/."
 		}
 	}
 	trace := skills.SkillTrace{

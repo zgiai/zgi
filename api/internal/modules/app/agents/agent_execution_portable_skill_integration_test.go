@@ -108,7 +108,7 @@ print('processed python input', file=sys.stderr)
 			}
 			shell := newAgentExecutionShellTool(gateway, scope, agentID, conversationID, uuid.NewString(), profileID, backend, attachments, reader, resolver)
 			invoke := func(command string) map[string]interface{} {
-				args, _ := json.Marshal(map[string]any{"skill_id": tc.id, "command": command})
+				args, _ := json.Marshal(map[string]any{"skill_id": tc.id, "package_sha256": digest, "command": command})
 				result := shell.Handler(ctx, adapter.ToolCall{ID: uuid.NewString(), Function: adapter.FunctionCall{Arguments: string(args)}})
 				if result.Error != nil || result.Status != "success" {
 					t.Fatalf("shell result = %#v", result)
@@ -153,7 +153,7 @@ print('processed python input', file=sys.stderr)
 					t.Fatalf("old workspace file remained exportable: %#v", stale)
 				}
 				recreatedShell := newAgentExecutionShellTool(gateway, scope, agentID, conversationID, uuid.NewString(), profileID, backend, attachments, reader, resolver)
-				recreateArgs, _ := json.Marshal(map[string]any{"skill_id": tc.id, "command": commandWithInput})
+				recreateArgs, _ := json.Marshal(map[string]any{"skill_id": tc.id, "package_sha256": digest, "command": commandWithInput})
 				recreated := recreatedShell.Handler(ctx, adapter.ToolCall{ID: uuid.NewString(), Function: adapter.FunctionCall{Arguments: string(recreateArgs)}})
 				if recreated.Error != nil || recreated.ModelResult["stdout"] != expected || recreated.ModelResult["workspace_recreated"] != true {
 					t.Fatalf("recreated Skill workspace = %#v", recreated)
@@ -220,7 +220,7 @@ func TestAgentExecutionExternalPortableSkillWorkerSmoke(t *testing.T) {
 	}
 	shell := newAgentExecutionShellTool(gateway, scope, agentID, conversationID, uuid.NewString(), profileID, backend, nil, nil, resolver)
 	const command = `python3 "$ZGI_SKILL_DIR/scripts/init_skill.py" smoke-generated --path outputs`
-	arguments, _ := json.Marshal(map[string]any{"skill_id": "skill-creator", "command": command, "timeout_seconds": 30})
+	arguments, _ := json.Marshal(map[string]any{"skill_id": "skill-creator", "package_sha256": digest, "command": command, "timeout_seconds": 30})
 	result := shell.Handler(ctx, adapter.ToolCall{ID: "external-skill-run", Function: adapter.FunctionCall{Arguments: string(arguments)}})
 	if result.Error != nil || result.Status != "success" || !strings.Contains(fmt.Sprint(result.ModelResult["stdout"]), "initialized successfully") {
 		t.Fatalf("external Skill shell result = %#v, want generated Skill confirmation", result)
@@ -234,7 +234,7 @@ func TestAgentExecutionExternalPortableSkillWorkerSmoke(t *testing.T) {
 	if exported.Error != nil || exported.Status != "success" || !strings.Contains(string(store.data), "name: smoke-generated") || len(exported.Artifacts) != 1 {
 		t.Fatalf("external Skill export = %#v, data length = %d, want generated SKILL.md", exported, len(store.data))
 	}
-	repeatArguments, _ := json.Marshal(map[string]any{"skill_id": "skill-creator", "command": `python3 "$ZGI_SKILL_DIR/scripts/init_skill.py" smoke-generated-again --path outputs`})
+	repeatArguments, _ := json.Marshal(map[string]any{"skill_id": "skill-creator", "package_sha256": digest, "command": `python3 "$ZGI_SKILL_DIR/scripts/init_skill.py" smoke-generated-again --path outputs`})
 	repeated := shell.Handler(ctx, adapter.ToolCall{ID: "external-skill-repeat", Function: adapter.FunctionCall{Arguments: string(repeatArguments)}})
 	if repeated.Error != nil || !strings.Contains(fmt.Sprint(repeated.ModelResult["stdout"]), "initialized successfully") || repeated.ModelResult["skill_workspace_path"] != result.ModelResult["skill_workspace_path"] {
 		t.Fatalf("repeated external Skill run = %#v", repeated)
@@ -242,7 +242,7 @@ func TestAgentExecutionExternalPortableSkillWorkerSmoke(t *testing.T) {
 	if code, ok := repeated.ModelResult["exit_code"].(*int); !ok || code == nil || *code != 0 {
 		t.Fatalf("repeated external Skill exit code = %#v, want zero", repeated.ModelResult["exit_code"])
 	}
-	invalidArguments, _ := json.Marshal(map[string]any{"skill_id": "skill-creator", "command": `python3 "$ZGI_SKILL_DIR/scripts/init_skill.py"`})
+	invalidArguments, _ := json.Marshal(map[string]any{"skill_id": "skill-creator", "package_sha256": digest, "command": `python3 "$ZGI_SKILL_DIR/scripts/init_skill.py"`})
 	invalid := shell.Handler(ctx, adapter.ToolCall{ID: "external-skill-invalid", Function: adapter.FunctionCall{Arguments: string(invalidArguments)}})
 	if invalid.Error != nil || !strings.Contains(fmt.Sprint(invalid.ModelResult["stdout"]), "Usage:") {
 		t.Fatalf("external Skill invalid-input diagnostics = %#v", invalid)

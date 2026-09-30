@@ -342,6 +342,74 @@ func TestNativeSkillActivationOnlyExposesSessionScriptWithConsoleShell(t *testin
 	}
 }
 
+func TestNativePreloadedSessionScriptExposesPackageVersionOnlyWithConsoleShell(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "scripts"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "SKILL.md"), []byte("---\nname: portable-skill\ndescription: Run a bundled script.\n---\nRun scripts/process.py.\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "scripts", "process.py"), []byte("print('ok')\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	doc, err := skills.NewRuntime(nil, nil).LoadCustomSkillDocument(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{doc}}
+	if _, ok := nativeActiveSessionScriptsSystemMessage(resolved, []string{doc.Metadata.ID}, nil); ok {
+		t.Fatal("session script exposed without console shell")
+	}
+	shell := RuntimeTool{Definition: adapter.Tool{Function: adapter.Function{Name: "shell_exec"}}, Handler: func(context.Context, adapter.ToolCall) RuntimeToolResult { return RuntimeToolResult{} }}
+	message, ok := nativeActiveSessionScriptsSystemMessage(resolved, []string{doc.Metadata.ID}, []RuntimeTool{shell})
+	if !ok {
+		t.Fatal("active script should expose package version")
+	}
+	digest, err := skills.SkillPackageSHA256(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := fmt.Sprint(message.Content)
+	if message.Role != "system" || !strings.Contains(content, digest) || !strings.Contains(content, `"session_scripts"`) {
+		t.Fatalf("preloaded script context = %#v", message)
+	}
+}
+
+func TestRunnerNativePreloadedScriptVersionReachesModel(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "scripts"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "SKILL.md"), []byte("---\nname: portable-skill\ndescription: Run a bundled script.\n---\nRun scripts/process.py.\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "scripts", "process.py"), []byte("print('ok')\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runtime := skills.NewRuntime(nil, nil)
+	doc, err := runtime.LoadCustomSkillDocument(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{doc}}
+	toolSet := runtime.BuildNativeToolSet(t.Context(), resolved, skills.NativeToolSetOptions{BudgetChars: 10000})
+	shell := RuntimeTool{Definition: adapter.Tool{Type: "function", Function: adapter.Function{Name: "shell_exec"}}, Handler: func(context.Context, adapter.ToolCall) RuntimeToolResult { return RuntimeToolResult{} }}
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "Ready."}, FinishReason: "stop"}}}}}
+	runner := &Runner{LLMClient: fakeLLM, SkillRuntime: runtime, AppContext: &llmclient.AppContext{}}
+	prepared := NewPreparedChat("conv-portable-native", "msg-portable-native", "", "auto", &adapter.ChatRequest{Messages: []adapter.Message{{Role: "user", Content: "Run the Skill script."}}})
+	if _, _, err := runner.Run(t.Context(), RunRequest{Prepared: prepared, Resolved: resolved, NativeAgentLoop: true, NativeToolSet: &toolSet, RuntimeTools: []RuntimeTool{shell}}); err != nil {
+		t.Fatal(err)
+	}
+	digest, err := skills.SkillPackageSHA256(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fakeLLM.appChatRequests) != 1 || !runnerTestMessagesContain(fakeLLM.appChatRequests[0].Messages, digest) {
+		t.Fatal("preloaded Skill package version did not reach the model request")
+	}
+}
+
 func TestRunnerNativeToolNarrationDoesNotBlockBusinessTool(t *testing.T) {
 	manager := tools.NewToolManager(nil)
 	if err := manager.RegisterProvider(calculator.NewProvider()); err != nil {

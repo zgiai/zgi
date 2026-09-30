@@ -31,6 +31,9 @@ func TestSkillDocumentPayloadDescribesPortableSessionScript(t *testing.T) {
 	if path, ok := session["workspace_path"].(string); !ok || path == "" || filepath.IsAbs(path) {
 		t.Fatalf("workspace_path = %#v, want a relative workspace path", session["workspace_path"])
 	}
+	if digest, ok := session["package_sha256"].(string); !ok || len(digest) != 64 || !strings.Contains(fmt.Sprint(session["usage"]), "package_sha256") {
+		t.Fatalf("session script version contract = %#v, want package digest in execution guidance", session)
+	}
 	if strings.Contains(fmt.Sprint(payload), root) {
 		t.Fatalf("payload exposed the host package path: %#v", payload)
 	}

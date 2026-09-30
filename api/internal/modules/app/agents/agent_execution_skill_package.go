@@ -55,6 +55,12 @@ func newAgentSkillPackageResolver(db *gorm.DB, organizationID uuid.UUID, enabled
 			return agentSkillPackage{}, fmt.Errorf("enabled custom Skill has no scripts directory")
 		}
 		digest, _ := record.Manifest["package_sha256"].(string)
+		if digest == "" {
+			digest, err = skills.SkillPackageSHA256(record.StoragePath)
+			if err != nil {
+				return agentSkillPackage{}, fmt.Errorf("hash enabled custom Skill package: %w", err)
+			}
+		}
 		return agentSkillPackage{ID: skillID, Root: record.StoragePath, ExpectedDigest: digest}, nil
 	}
 }

@@ -597,7 +597,7 @@ func portableSessionScriptPayload(doc *skills.SkillDocument) map[string]interfac
 		"workspace_path": workspacePath,
 		"execution_tool": "shell_exec",
 		"skill_id":       doc.Metadata.ID,
-		"usage":          "In an approved console Agent runtime, pass skill_id to shell_exec and run Python or Node scripts from $ZGI_SKILL_DIR/scripts/. No dependencies are installed automatically.",
+		"usage":          "In an approved console Agent runtime, pass skill_id and this package_sha256 to shell_exec, then run Python or Node scripts from $ZGI_SKILL_DIR/scripts/. Reload the Skill if the package changes. No dependencies are installed automatically.",
 	}
 }
 

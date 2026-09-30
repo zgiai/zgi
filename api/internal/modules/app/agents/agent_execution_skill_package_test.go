@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -120,7 +121,8 @@ func TestAgentExecutionShellStagesRequestedSkillBeforeUserCommand(t *testing.T) 
 		return agentSkillPackage{ID: "portable-example", Root: root, ExpectedDigest: digest}, nil
 	}
 	tool := newAgentExecutionShellTool(fake, agentExecutionScope{OrganizationID: uuid.NewString(), SubjectID: uuid.NewString()}, "agent-1", "conversation-1", "message-1", "standard", "local-gvisor", nil, nil, resolve)
-	result := tool.Handler(t.Context(), adapter.ToolCall{ID: "call-1", Function: adapter.FunctionCall{Arguments: `{"skill_id":"portable-example","command":"python3 \"$ZGI_SKILL_DIR/scripts/task.py\""}`}})
+	arguments := fmt.Sprintf(`{"skill_id":"portable-example","package_sha256":%q,"command":"python3 \"$ZGI_SKILL_DIR/scripts/task.py\""}`, digest)
+	result := tool.Handler(t.Context(), adapter.ToolCall{ID: "call-1", Function: adapter.FunctionCall{Arguments: arguments}})
 	if result.Error != nil || result.Status != "success" {
 		t.Fatalf("shell result = %#v, want successful staged command", result)
 	}
@@ -134,6 +136,10 @@ func TestAgentExecutionShellStagesRequestedSkillBeforeUserCommand(t *testing.T) 
 
 func TestAgentExecutionShellDoesNotRunCommandWhenSkillSetupFails(t *testing.T) {
 	root := testPortableSkillPackage(t)
+	digest, err := skills.SkillPackageSHA256(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	exitCode := 1
 	fake := &fakeAgentExecutionGateway{
 		binding:      agentExecutionBinding{ID: "binding-1", Status: "active", Generation: 1},
@@ -141,12 +147,44 @@ func TestAgentExecutionShellDoesNotRunCommandWhenSkillSetupFails(t *testing.T) {
 		capabilities: agentExecutionCapabilities{Shell: true, FileTransfer: true, NetworkMode: "disabled", MaxUploadBytes: 64 << 20},
 	}
 	resolve := func(context.Context, string) (agentSkillPackage, error) {
-		return agentSkillPackage{ID: "portable-example", Root: root}, nil
+		return agentSkillPackage{ID: "portable-example", Root: root, ExpectedDigest: digest}, nil
 	}
 	tool := newAgentExecutionShellTool(fake, agentExecutionScope{OrganizationID: uuid.NewString(), SubjectID: uuid.NewString()}, "agent-1", "conversation-1", "message-1", "standard", "local-gvisor", nil, nil, resolve)
-	result := tool.Handler(t.Context(), adapter.ToolCall{ID: "call-1", Function: adapter.FunctionCall{Arguments: `{"skill_id":"portable-example","command":"echo should-not-run"}`}})
+	arguments := fmt.Sprintf(`{"skill_id":"portable-example","package_sha256":%q,"command":"echo should-not-run"}`, digest)
+	result := tool.Handler(t.Context(), adapter.ToolCall{ID: "call-1", Function: adapter.FunctionCall{Arguments: arguments}})
 	if result.Status != "failed" || result.ModelResult["error_code"] != "skill_package_staging_failed" || fake.command != "python3" {
 		t.Fatalf("shell result = %#v, command = %q, want setup failure before user command", result, fake.command)
+	}
+}
+
+func TestAgentExecutionShellRequiresLoadedSkillVersion(t *testing.T) {
+	root := testPortableSkillPackage(t)
+	digest, err := skills.SkillPackageSHA256(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exitCode := 0
+	fake := &fakeAgentExecutionGateway{
+		binding:      agentExecutionBinding{ID: "binding-1", Status: "active", Generation: 1},
+		job:          agentExecutionJob{ID: "job-1", Status: "succeeded", ExitCode: &exitCode},
+		capabilities: agentExecutionCapabilities{Shell: true, FileTransfer: true, NetworkMode: "disabled", MaxUploadBytes: 64 << 20},
+	}
+	resolve := func(context.Context, string) (agentSkillPackage, error) {
+		return agentSkillPackage{ID: "portable-example", Root: root, ExpectedDigest: digest}, nil
+	}
+	tool := newAgentExecutionShellTool(fake, agentExecutionScope{OrganizationID: uuid.NewString(), SubjectID: uuid.NewString()}, "agent-1", "conversation-1", "message-1", "standard", "local-gvisor", nil, nil, resolve)
+	for _, tc := range []struct {
+		name, arguments, code string
+	}{
+		{"missing", `{"skill_id":"portable-example","command":"echo should-not-run"}`, "skill_version_required"},
+		{"changed", fmt.Sprintf(`{"skill_id":"portable-example","package_sha256":%q,"command":"echo should-not-run"}`, strings.Repeat("a", 64)), "skill_version_changed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result := tool.Handler(t.Context(), adapter.ToolCall{ID: "call-1", Function: adapter.FunctionCall{Arguments: tc.arguments}})
+			if result.Status != "failed" || result.ModelResult["error_code"] != tc.code || len(fake.uploads) != 0 || fake.command != "" {
+				t.Fatalf("result = %#v, uploads = %d, command = %q, want %s without execution", result, len(fake.uploads), fake.command, tc.code)
+			}
+		})
 	}
 }
 

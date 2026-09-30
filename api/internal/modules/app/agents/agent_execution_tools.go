@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -83,13 +84,14 @@ func newAgentExecutionShellTool(gateway agentExecutionGateway, scope agentExecut
 		SkillID: "agent_execution",
 		Definition: adapter.Tool{Type: "function", Function: adapter.Function{
 			Name:        "shell_exec",
-			Description: "Run a command in the approved, isolated offline Linux workspace for this console conversation. Current-turn uploaded files are staged under inputs/ before the command. To run an enabled custom Skill's packaged Python or Node script, pass skill_id and use $ZGI_SKILL_DIR/scripts/... in the command. The workspace may be released after inactivity.",
+			Description: "Run a command in the approved, isolated offline Linux workspace for this console conversation. Current-turn uploaded files are staged under inputs/ before the command. To run an active custom Skill's packaged Python or Node script, pass skill_id and the package_sha256 supplied in session_scripts, then use $ZGI_SKILL_DIR/scripts/... in the command. Reload or reactivate the Skill if its package version changes. The workspace may be released after inactivity.",
 			Parameters: map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
 					"command":         map[string]any{"type": "string", "description": "Shell command to run in the workspace", "maxLength": agentExecutionMaxCommandBytes},
 					"timeout_seconds": map[string]any{"type": "integer", "minimum": 1, "maximum": 60},
 					"skill_id":        map[string]any{"type": "string", "description": "Enabled custom Skill package to stage before this command"},
+					"package_sha256":  map[string]any{"type": "string", "description": "Exact package_sha256 supplied in session_scripts for skill_id", "minLength": 64, "maxLength": 64},
 				},
 				"required": []string{"command"},
 			},
@@ -111,6 +113,7 @@ func executeAgentShellTool(ctx context.Context, gateway agentExecutionGateway, s
 		Command        string `json:"command"`
 		TimeoutSeconds int    `json:"timeout_seconds"`
 		SkillID        string `json:"skill_id"`
+		PackageSHA256  string `json:"package_sha256"`
 	}
 	decoder := json.NewDecoder(strings.NewReader(call.Function.Arguments))
 	decoder.DisallowUnknownFields()
@@ -128,6 +131,15 @@ func executeAgentShellTool(ctx context.Context, gateway agentExecutionGateway, s
 	}
 	if args.TimeoutSeconds < 1 || args.TimeoutSeconds > 60 {
 		return failed("invalid_timeout", fmt.Errorf("shell timeout is out of range"))
+	}
+	if strings.TrimSpace(args.SkillID) == "" {
+		if args.PackageSHA256 != "" {
+			return failed("invalid_arguments", fmt.Errorf("package version requires a Skill ID"))
+		}
+	} else if len(args.PackageSHA256) != 64 || strings.ToLower(args.PackageSHA256) != args.PackageSHA256 {
+		return failed("skill_version_required", fmt.Errorf("pass the active Skill's session_scripts package_sha256 before running its script"))
+	} else if _, err := hex.DecodeString(args.PackageSHA256); err != nil {
+		return failed("skill_version_required", fmt.Errorf("pass the active Skill's session_scripts package_sha256 before running its script"))
 	}
 	timeout := time.Duration(args.TimeoutSeconds) * time.Second
 	operationCtx, cancel := context.WithTimeout(ctx, timeout+120*time.Second)
@@ -158,6 +170,9 @@ func executeAgentShellTool(ctx context.Context, gateway agentExecutionGateway, s
 		pack, err := skillResolvers[0](operationCtx, args.SkillID)
 		if err != nil {
 			return failed("skill_package_unavailable", err)
+		}
+		if pack.ExpectedDigest != args.PackageSHA256 {
+			return failed("skill_version_changed", fmt.Errorf("skill package changed since activation; start a new turn to load the updated Skill before running its script"))
 		}
 		skillPath, err = stageAgentSkillPackage(operationCtx, gateway, scope, binding, capabilities, pack)
 		if err != nil {
