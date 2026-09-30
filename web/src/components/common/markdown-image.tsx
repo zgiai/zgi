@@ -10,6 +10,7 @@ interface MarkdownImageProps extends React.ImgHTMLAttributes<HTMLImageElement> {
   className?: string;
   frameClassName?: string;
   imageClassName?: string;
+  compactActions?: boolean;
 }
 
 const loadedMarkdownImageSrcs = new Set<string>();
@@ -37,6 +38,7 @@ export function MarkdownImage({
   className,
   frameClassName,
   imageClassName,
+  compactActions = false,
   onLoad,
   onError,
   ...props
@@ -199,27 +201,39 @@ export function MarkdownImage({
         </div>
 
         {!isLoading && (
-          <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+          <div
+            className={cn(
+              'absolute flex opacity-0 transition-opacity duration-200 z-10',
+              compactActions ? 'top-1 left-1 gap-0.5' : 'top-2 right-2 gap-1',
+              'group-hover:opacity-100'
+            )}
+          >
             <Button
               variant="secondary"
               isIcon
-              className="h-8 w-8 rounded-full bg-background/80 backdrop-blur-sm shadow-sm hover:bg-background"
+              className={cn(
+                'rounded-full bg-background/80 backdrop-blur-sm shadow-sm hover:bg-background',
+                compactActions ? 'h-6 w-6' : 'h-8 w-8'
+              )}
               onClick={e => {
                 e.stopPropagation();
                 handleOpenChange(true);
               }}
               title={t('chat.markdownImage.zoomIn')}
             >
-              <ZoomIn className="h-4 w-4" />
+              <ZoomIn className={compactActions ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
             </Button>
             <Button
               variant="secondary"
               isIcon
-              className="h-8 w-8 rounded-full bg-background/80 backdrop-blur-sm shadow-sm hover:bg-background"
+              className={cn(
+                'rounded-full bg-background/80 backdrop-blur-sm shadow-sm hover:bg-background',
+                compactActions ? 'h-6 w-6' : 'h-8 w-8'
+              )}
               onClick={handleDownload}
               title={t('chat.markdownImage.download')}
             >
-              <Download className="h-4 w-4" />
+              <Download className={compactActions ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
             </Button>
           </div>
         )}

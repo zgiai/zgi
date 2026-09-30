@@ -578,6 +578,9 @@ function generatedImagesFromGeneration(generation: ImageRuntimeGeneration): Gene
   return (generation.files ?? []).map(file => ({
     url: file.url || file.download_url,
     alt: file.filename,
+    fileId: file.file_id,
+    filename: file.filename,
+    mimeType: file.mime_type,
   }));
 }
 
