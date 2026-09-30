@@ -32,6 +32,7 @@ type ServiceOptions struct {
 	IdleTTL     time.Duration
 	Checkpoints WorkspaceCheckpointStore
 	Jobs        ActiveJobReader
+	Snapshots   HomeSnapshotReader
 }
 
 type Service struct {
@@ -42,6 +43,7 @@ type Service struct {
 	idleTTL     time.Duration
 	checkpoints WorkspaceCheckpointStore
 	jobs        ActiveJobReader
+	snapshots   HomeSnapshotReader
 }
 
 func NewService(repository Repository, backends map[string]Backend, options ServiceOptions) (*Service, error) {
@@ -79,6 +81,7 @@ func NewService(repository Repository, backends map[string]Backend, options Serv
 		idleTTL:     options.IdleTTL,
 		checkpoints: options.Checkpoints,
 		jobs:        options.Jobs,
+		snapshots:   options.Snapshots,
 	}, nil
 }
 
@@ -90,6 +93,21 @@ func (s *Service) CreateBinding(ctx context.Context, request CreateBindingReques
 	backend, ok := s.backends[request.Backend]
 	if !ok {
 		return Binding{}, fmt.Errorf("%w: %s", ErrBackendUnavailable, request.Backend)
+	}
+	var homeSnapshotRef string
+	if request.HomeSnapshotID != "" {
+		if s.snapshots == nil {
+			return Binding{}, ErrBackendUnavailable
+		}
+		snapshot, err := s.snapshots.HomeSnapshot(ctx, request.HomeSnapshotID)
+		if err != nil {
+			return Binding{}, err
+		}
+		if snapshot.Status != "approved" || snapshot.OrganizationID != request.Scope.OrganizationID || snapshot.SubjectID != "" ||
+			snapshot.ProfileID != request.ProfileID || snapshot.Backend != request.Backend || snapshot.BackendRef == "" {
+			return Binding{}, ErrNotFound
+		}
+		homeSnapshotRef = snapshot.BackendRef
 	}
 	bindingID, err := s.newID("arb")
 	if err != nil {
@@ -108,6 +126,7 @@ func (s *Service) CreateBinding(ctx context.Context, request CreateBindingReques
 		ConversationID:     request.ConversationID,
 		ProfileID:          request.ProfileID,
 		HomeSnapshotID:     request.HomeSnapshotID,
+		HomeSnapshotRef:    homeSnapshotRef,
 		WorkspaceID:        workspaceID,
 		Backend:            request.Backend,
 		IdempotencyKey:     request.IdempotencyKey,
@@ -145,6 +164,7 @@ func (s *Service) CreateBinding(ctx context.Context, request CreateBindingReques
 		SubjectID:           binding.SubjectID,
 		ProfileID:           binding.ProfileID,
 		HomeSnapshotID:      binding.HomeSnapshotID,
+		HomeSnapshotRef:     binding.HomeSnapshotRef,
 	})
 	if err != nil {
 		cleanupErr := s.enqueueDestroy(ctx, binding, allocation, err)
@@ -257,7 +277,7 @@ func (s *Service) ResumeBinding(ctx context.Context, scope Scope, bindingID stri
 	spec := CreateSpec{
 		BindingID: binding.ID, WorkspaceID: binding.WorkspaceID,
 		OrganizationID: binding.OrganizationID, SubjectID: binding.SubjectID,
-		ProfileID: binding.ProfileID, HomeSnapshotID: binding.HomeSnapshotID,
+		ProfileID: binding.ProfileID, HomeSnapshotID: binding.HomeSnapshotID, HomeSnapshotRef: binding.HomeSnapshotRef,
 	}
 	allocation, err := backend.ResumeBinding(ctx, spec, Allocation{
 		BindingRef: binding.BackendRef, WorkspaceRef: binding.WorkspaceRef,

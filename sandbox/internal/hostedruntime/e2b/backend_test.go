@@ -142,6 +142,14 @@ func TestBackendUsesSecuredOfflineE2BContract(t *testing.T) {
 	if gotConnectCalls != 2 {
 		t.Fatalf("connect calls = %d, want 2", gotConnectCalls)
 	}
+	spec.HomeSnapshotID = "prepared"
+	spec.HomeSnapshotRef = "approved-prebuilt-template"
+	if _, err := backend.CreateBinding(context.Background(), spec); err != nil {
+		t.Fatalf("create from approved Home Snapshot: %v", err)
+	}
+	if created.TemplateID != "approved-prebuilt-template" {
+		t.Fatalf("template used = %q", created.TemplateID)
+	}
 }
 
 func TestDiscoverAllocationAttemptIncludesPausedSandboxes(t *testing.T) {

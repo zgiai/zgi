@@ -95,3 +95,21 @@ func TestResolveCreateRejectsUnknownProfileAndMismatchedAllocation(t *testing.T)
 		t.Fatalf("allocation error = %v", err)
 	}
 }
+
+func TestResolveCreateUsesApprovedPinnedHomeImage(t *testing.T) {
+	provider := &Provider{profiles: map[string]Profile{"python": {Image: testImage}}}
+	prepared := "registry.example.invalid/zgi/prepared@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	_, profile, err := provider.resolveCreate(agentexecution.CreateSpec{
+		BindingID: "binding-1", WorkspaceID: "workspace-1", ProfileID: "python",
+		HomeSnapshotID: "prepared", HomeSnapshotRef: prepared,
+	})
+	if err != nil || profile.Image != prepared {
+		t.Fatalf("prepared image = %+v, %v", profile, err)
+	}
+	if _, _, err := provider.resolveCreate(agentexecution.CreateSpec{
+		BindingID: "binding-1", WorkspaceID: "workspace-1", ProfileID: "python",
+		HomeSnapshotID: "prepared", HomeSnapshotRef: "registry.example.invalid/zgi/prepared:latest",
+	}); !errors.Is(err, agentexecution.ErrInvalidRequest) {
+		t.Fatalf("floating prepared image accepted: %v", err)
+	}
+}

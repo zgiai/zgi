@@ -124,6 +124,12 @@ func (b *Backend) CreateBinding(ctx context.Context, spec agentexecution.CreateS
 	if !ok {
 		return agentexecution.Allocation{}, fmt.Errorf("%w: E2B profile is not approved", agentexecution.ErrInvalidRequest)
 	}
+	if spec.HomeSnapshotID != "" {
+		if strings.TrimSpace(spec.HomeSnapshotRef) == "" {
+			return agentexecution.Allocation{}, fmt.Errorf("%w: approved E2B Home Snapshot template is missing", agentexecution.ErrInvalidRequest)
+		}
+		profile.TemplateID = spec.HomeSnapshotRef
+	}
 	token, err := newAgentToken()
 	if err != nil {
 		return agentexecution.Allocation{}, fmt.Errorf("create Runtime Agent token: %w", err)

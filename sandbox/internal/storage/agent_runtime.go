@@ -16,7 +16,7 @@ const agentRuntimeBindingColumns = `
 	id, organization_id, subject_id, agent_id, conversation_id, profile_id,
 	home_snapshot_id, workspace_id, backend, backend_ref, workspace_ref, checkpoint_key, pending_checkpoint_key,
 	idempotency_key, request_hash, status, generation, failure_reason,
-	created_at, updated_at, last_activity_at, expires_at, retention_expires_at`
+	created_at, updated_at, last_activity_at, expires_at, retention_expires_at, home_snapshot_ref`
 
 func (s *Store) ReserveBinding(ctx context.Context, binding agentruntime.Binding) (agentruntime.Binding, bool, error) {
 	row := s.db.QueryRowContext(ctx, `
@@ -24,12 +24,12 @@ func (s *Store) ReserveBinding(ctx context.Context, binding agentruntime.Binding
 			id, organization_id, subject_id, agent_id, conversation_id, profile_id,
 			home_snapshot_id, workspace_id, backend, backend_ref, workspace_ref, checkpoint_key, pending_checkpoint_key,
 			idempotency_key, request_hash, status, generation, failure_reason,
-			created_at, updated_at, last_activity_at, expires_at, retention_expires_at
+			created_at, updated_at, last_activity_at, expires_at, retention_expires_at, home_snapshot_ref
 		) VALUES (
 			$1, $2, $3, $4, $5, $6,
 			$7, $8, $9, $10, $11, $12, $13,
 			$14, $15, $16, $17, $18,
-			$19, $20, $21, $22, $23
+			$19, $20, $21, $22, $23, $24
 		)
 		ON CONFLICT (organization_id, subject_id, idempotency_key) DO NOTHING
 		RETURNING `+agentRuntimeBindingColumns,
@@ -56,6 +56,7 @@ func (s *Store) ReserveBinding(ctx context.Context, binding agentruntime.Binding
 		binding.LastActivityAt.UTC(),
 		binding.ExpiresAt.UTC(),
 		binding.RetentionExpiresAt.UTC(),
+		binding.HomeSnapshotRef,
 	)
 	created, err := scanAgentRuntimeBinding(row)
 	if err == nil {
@@ -191,8 +192,9 @@ func (s *Store) UpdateBinding(ctx context.Context, binding agentruntime.Binding,
 		    updated_at = $9,
 		    last_activity_at = $10,
 		    expires_at = $11,
-		    retention_expires_at = $12
-		WHERE id = $1 AND generation = $13
+		    retention_expires_at = $12,
+		    home_snapshot_ref = $13
+		WHERE id = $1 AND generation = $14
 	`,
 		binding.ID,
 		binding.BackendRef,
@@ -206,6 +208,7 @@ func (s *Store) UpdateBinding(ctx context.Context, binding agentruntime.Binding,
 		binding.LastActivityAt.UTC(),
 		binding.ExpiresAt.UTC(),
 		binding.RetentionExpiresAt.UTC(),
+		binding.HomeSnapshotRef,
 		expectedGeneration,
 	)
 	if err != nil {
@@ -304,6 +307,7 @@ func scanAgentRuntimeBinding(scanner rowScanner) (agentruntime.Binding, error) {
 		&binding.LastActivityAt,
 		&binding.ExpiresAt,
 		&binding.RetentionExpiresAt,
+		&binding.HomeSnapshotRef,
 	)
 	return binding, err
 }

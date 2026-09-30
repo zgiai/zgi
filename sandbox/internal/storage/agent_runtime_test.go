@@ -38,6 +38,8 @@ func TestAgentRuntimeMigrationAndBindingRepository(t *testing.T) {
 		AgentID:            "agent-1",
 		ConversationID:     "conversation-1",
 		ProfileID:          "profile-1",
+		HomeSnapshotID:     "prepared",
+		HomeSnapshotRef:    "approved-ref-v1",
 		WorkspaceID:        "workspace-1",
 		Backend:            "fake",
 		IdempotencyKey:     "request-1",
@@ -85,7 +87,7 @@ func TestAgentRuntimeMigrationAndBindingRepository(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load binding: %v", err)
 	}
-	if loaded.Status != agentruntime.BindingStatusActive || loaded.Generation != 2 || loaded.CheckpointKey != binding.CheckpointKey || loaded.PendingCheckpointKey != binding.PendingCheckpointKey {
+	if loaded.Status != agentruntime.BindingStatusActive || loaded.Generation != 2 || loaded.CheckpointKey != binding.CheckpointKey || loaded.PendingCheckpointKey != binding.PendingCheckpointKey || loaded.HomeSnapshotRef != binding.HomeSnapshotRef {
 		t.Fatalf("loaded binding = %+v", loaded)
 	}
 	touchedAt := now.Add(time.Minute)
@@ -117,6 +119,35 @@ func TestAgentRuntimeMigrationAndBindingRepository(t *testing.T) {
 	}
 	if retained, err := store.ExpiredRetainedBindings(context.Background(), touched.RetentionExpiresAt, 10); err != nil || len(retained) != 1 || retained[0].ID != touched.ID {
 		t.Fatalf("retention = %+v, error=%v", retained, err)
+	}
+}
+
+func TestApprovedHomeSnapshotArtifactIsImmutable(t *testing.T) {
+	dsn := testutil.CreateTestPostgresDSN(t)
+	store, err := Open(config.Config{DatabaseURL: dsn, MaxWorkers: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
+	_, err = store.db.ExecContext(context.Background(), `
+		INSERT INTO agent_runtime_home_snapshots (
+			id, organization_id, subject_id, profile_id, backend, backend_ref,
+			status, generation, created_at, updated_at
+		) VALUES ($1, $2, '', $3, $4, $5, 'approved', 1, $6, $6)
+	`, "prepared", "org-1", "standard", "local-gvisor", "registry.example.invalid/zgi/prepared@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := store.HomeSnapshot(context.Background(), "prepared")
+	if err != nil || snapshot.Status != "approved" || snapshot.OrganizationID != "org-1" || snapshot.BackendRef == "" {
+		t.Fatalf("snapshot = %+v, %v", snapshot, err)
+	}
+	if _, err := store.db.ExecContext(context.Background(), `UPDATE agent_runtime_home_snapshots SET backend_ref = 'different' WHERE id = 'prepared'`); err == nil {
+		t.Fatal("approved template artifact changed")
+	}
+	if _, err := store.HomeSnapshot(context.Background(), "missing"); !errors.Is(err, agentruntime.ErrNotFound) {
+		t.Fatalf("missing template = %v", err)
 	}
 }
 

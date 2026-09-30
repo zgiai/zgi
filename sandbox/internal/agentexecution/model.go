@@ -50,6 +50,7 @@ type Binding struct {
 	ConversationID       string
 	ProfileID            string
 	HomeSnapshotID       string
+	HomeSnapshotRef      string
 	WorkspaceID          string
 	Backend              string
 	BackendRef           string
@@ -245,6 +246,23 @@ type CreateSpec struct {
 	SubjectID           string
 	ProfileID           string
 	HomeSnapshotID      string
+	HomeSnapshotRef     string
+}
+
+// HomeSnapshot identifies an immutable, operator-approved base environment.
+// Its backend reference is a prebuilt image or template, never a user session.
+type HomeSnapshot struct {
+	ID             string
+	OrganizationID string
+	SubjectID      string
+	ProfileID      string
+	Backend        string
+	BackendRef     string
+	Status         string
+}
+
+type HomeSnapshotReader interface {
+	HomeSnapshot(context.Context, string) (HomeSnapshot, error)
 }
 
 // AllocationDiscoverer lets a backend locate compute created before the

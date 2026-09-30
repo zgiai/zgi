@@ -413,6 +413,7 @@ type bindingResponse struct {
 	AgentID            string        `json:"agent_id"`
 	ConversationID     string        `json:"conversation_id"`
 	ProfileID          string        `json:"profile_id"`
+	HomeSnapshotID     string        `json:"home_snapshot_id,omitempty"`
 	WorkspaceID        string        `json:"workspace_id"`
 	Backend            string        `json:"backend"`
 	Status             BindingStatus `json:"status"`
@@ -426,7 +427,7 @@ type bindingResponse struct {
 func bindingResponseFrom(binding Binding) bindingResponse {
 	return bindingResponse{
 		ID: binding.ID, AgentID: binding.AgentID, ConversationID: binding.ConversationID,
-		ProfileID: binding.ProfileID, WorkspaceID: binding.WorkspaceID, Backend: binding.Backend,
+		ProfileID: binding.ProfileID, HomeSnapshotID: binding.HomeSnapshotID, WorkspaceID: binding.WorkspaceID, Backend: binding.Backend,
 		Status: binding.Status, Generation: binding.Generation, CreatedAt: binding.CreatedAt,
 		UpdatedAt: binding.UpdatedAt, ExpiresAt: binding.ExpiresAt,
 		RetentionExpiresAt: binding.RetentionExpiresAt,

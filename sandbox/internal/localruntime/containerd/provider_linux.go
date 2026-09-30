@@ -355,6 +355,12 @@ func (p *Provider) resolveCreate(spec agentexecution.CreateSpec) (agentexecution
 	if !ok {
 		return allocation, Profile{}, fmt.Errorf("%w: profile is not approved for the local runtime", agentexecution.ErrInvalidRequest)
 	}
+	if spec.HomeSnapshotID != "" {
+		if !digestImagePattern.MatchString(spec.HomeSnapshotRef) {
+			return allocation, Profile{}, fmt.Errorf("%w: approved Home Snapshot image must be pinned by digest", agentexecution.ErrInvalidRequest)
+		}
+		profile.Image = spec.HomeSnapshotRef
+	}
 	return allocation, profile, nil
 }
 

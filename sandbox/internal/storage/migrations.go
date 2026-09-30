@@ -199,6 +199,30 @@ var schemaMigrations = []schemaMigration{
 			`ALTER TABLE agent_runtime_cleanup_tasks ADD COLUMN binding_id TEXT NOT NULL DEFAULT '';`,
 		},
 	},
+	{
+		version:     2026093003,
+		description: "agent runtime immutable home template reference",
+		statements: []string{
+			`ALTER TABLE agent_runtime_bindings ADD COLUMN home_snapshot_ref TEXT NOT NULL DEFAULT '';`,
+			`CREATE FUNCTION prevent_approved_home_snapshot_mutation() RETURNS trigger AS $$
+			BEGIN
+				IF OLD.status = 'approved' AND (
+					NEW.organization_id IS DISTINCT FROM OLD.organization_id OR
+					NEW.subject_id IS DISTINCT FROM OLD.subject_id OR
+					NEW.profile_id IS DISTINCT FROM OLD.profile_id OR
+					NEW.backend IS DISTINCT FROM OLD.backend OR
+					NEW.backend_ref IS DISTINCT FROM OLD.backend_ref
+				) THEN
+					RAISE EXCEPTION 'approved home snapshot identity and artifact are immutable';
+				END IF;
+				RETURN NEW;
+			END;
+			$$ LANGUAGE plpgsql;`,
+			`CREATE TRIGGER trg_approved_home_snapshot_immutable
+			BEFORE UPDATE ON agent_runtime_home_snapshots
+			FOR EACH ROW EXECUTE FUNCTION prevent_approved_home_snapshot_mutation();`,
+		},
+	},
 }
 
 func (s *Store) applyMigrations(ctx context.Context) error {

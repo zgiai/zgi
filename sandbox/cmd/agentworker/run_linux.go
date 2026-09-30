@@ -103,7 +103,7 @@ func run(parent context.Context, logger *log.Logger) error {
 		checkpoints = fileStore
 	}
 	control, err := agentexecution.NewService(store, controlBackends, agentexecution.ServiceOptions{
-		IdleTTL: cfg.IdleTTL, Checkpoints: checkpoints, Jobs: store,
+		IdleTTL: cfg.IdleTTL, Checkpoints: checkpoints, Jobs: store, Snapshots: store,
 	})
 	if err != nil {
 		return err
