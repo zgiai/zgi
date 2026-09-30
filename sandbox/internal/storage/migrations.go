@@ -223,6 +223,13 @@ var schemaMigrations = []schemaMigration{
 			FOR EACH ROW EXECUTE FUNCTION prevent_approved_home_snapshot_mutation();`,
 		},
 	},
+	{
+		version:     2026093004,
+		description: "agent runtime allocation attempt generation fence",
+		statements: []string{
+			`ALTER TABLE agent_runtime_cleanup_tasks ADD COLUMN binding_generation BIGINT NOT NULL DEFAULT 0;`,
+		},
+	},
 }
 
 func (s *Store) applyMigrations(ctx context.Context) error {

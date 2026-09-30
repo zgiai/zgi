@@ -129,6 +129,29 @@ func (r *Reconciler) reconcileAllocationAttempt(ctx context.Context, task Cleanu
 			return r.retryCleanup(ctx, task, destroyErr)
 		}
 	}
+	if err == nil && task.BindingGeneration > 0 && binding.Generation == task.BindingGeneration {
+		previousGeneration := binding.Generation
+		recovered := false
+		switch binding.Status {
+		case BindingStatusAllocating:
+			binding.Status = BindingStatusFailed
+			binding.FailureReason = "backend allocation did not finish before reconciliation"
+			recovered = true
+		case BindingStatusResuming:
+			// The previous checkpoint remains authoritative. The next request
+			// may retry restoration after this attempt's orphan is removed.
+			binding.Status = BindingStatusSuspended
+			binding.FailureReason = "runtime restoration was interrupted; retry resume"
+			recovered = true
+		}
+		if recovered {
+			binding.Generation++
+			binding.UpdatedAt = r.now().UTC()
+			if updateErr := r.repository.UpdateBinding(ctx, binding, previousGeneration); updateErr != nil {
+				return r.retryCleanup(ctx, task, updateErr)
+			}
+		}
+	}
 	finishedAt := r.now().UTC()
 	return r.repository.CompleteCleanup(ctx, task.ID, r.ownerID, true, "", finishedAt, finishedAt)
 }

@@ -70,22 +70,23 @@ type Binding struct {
 }
 
 type CleanupTask struct {
-	ID             string
-	ResourceType   string
-	ResourceID     string
-	BindingID      string
-	Backend        string
-	BackendRef     string
-	WorkspaceRef   string
-	Action         string
-	Status         string
-	Attempts       int
-	LastError      string
-	NotBefore      time.Time
-	LeaseOwner     string
-	LeaseExpiresAt *time.Time
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID                string
+	ResourceType      string
+	ResourceID        string
+	BindingID         string
+	BindingGeneration int64
+	Backend           string
+	BackendRef        string
+	WorkspaceRef      string
+	Action            string
+	Status            string
+	Attempts          int
+	LastError         string
+	NotBefore         time.Time
+	LeaseOwner        string
+	LeaseExpiresAt    *time.Time
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 type AdmissionLease struct {

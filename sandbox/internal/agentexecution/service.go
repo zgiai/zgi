@@ -489,7 +489,8 @@ func (s *Service) scheduleAllocationCheck(ctx context.Context, binding Binding, 
 	now := s.now().UTC()
 	if err := s.repository.EnqueueCleanup(ctx, CleanupTask{
 		ID: attemptID, ResourceType: "allocation_attempt", ResourceID: attemptID,
-		BindingID: binding.ID, Backend: binding.Backend, Action: "reconcile",
+		BindingID: binding.ID, BindingGeneration: binding.Generation,
+		Backend: binding.Backend, Action: "reconcile",
 		Status: "pending", NotBefore: now.Add(allocationAttemptGrace),
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {

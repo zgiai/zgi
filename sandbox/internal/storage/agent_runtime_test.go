@@ -29,6 +29,9 @@ func TestAgentRuntimeMigrationAndBindingRepository(t *testing.T) {
 	if err := store.db.QueryRow(`SELECT COUNT(*) FROM sandbox_schema_migrations WHERE version = $1`, int64(2026093001)).Scan(&migrationCount); err != nil || migrationCount != 1 {
 		t.Fatalf("retention migration count = %d, error=%v", migrationCount, err)
 	}
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM sandbox_schema_migrations WHERE version = $1`, int64(2026093004)).Scan(&migrationCount); err != nil || migrationCount != 1 {
+		t.Fatalf("allocation generation migration count = %d, error=%v", migrationCount, err)
+	}
 
 	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
 	binding := agentruntime.Binding{
@@ -189,7 +192,7 @@ func TestAgentRuntimeLeaseAndCleanupClaims(t *testing.T) {
 	}
 
 	cleanup := agentruntime.CleanupTask{
-		ID: "cleanup-1", ResourceType: "binding", ResourceID: "binding-1", BindingID: "binding-1", Backend: "fake",
+		ID: "cleanup-1", ResourceType: "binding", ResourceID: "binding-1", BindingID: "binding-1", BindingGeneration: 2, Backend: "fake",
 		BackendRef: "backend-1", WorkspaceRef: "workspace-1", Action: "destroy", Status: "pending", NotBefore: now,
 		CreatedAt: now, UpdatedAt: now,
 	}
@@ -200,7 +203,7 @@ func TestAgentRuntimeLeaseAndCleanupClaims(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("claim cleanup: ok=%v error=%v", ok, err)
 	}
-	if claimed.Attempts != 1 || claimed.LeaseOwner != "worker-1" || claimed.WorkspaceRef != "workspace-1" || claimed.BindingID != "binding-1" {
+	if claimed.Attempts != 1 || claimed.LeaseOwner != "worker-1" || claimed.WorkspaceRef != "workspace-1" || claimed.BindingID != "binding-1" || claimed.BindingGeneration != 2 {
 		t.Fatalf("claimed cleanup = %+v", claimed)
 	}
 	if _, ok, err := store.ClaimCleanup(context.Background(), "worker-2", now, now.Add(time.Minute)); err != nil || ok {

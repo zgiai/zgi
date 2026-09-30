@@ -79,3 +79,52 @@ func TestAllocationAttemptReapsCreationLostBeforeDatabaseWriteback(t *testing.T)
 		t.Fatalf("orphan cleanup = %+v, calls=%d", backend.destroyed, backend.destroyCalls)
 	}
 }
+
+func TestAllocationAttemptRecoversInterruptedBindingState(t *testing.T) {
+	for _, status := range []BindingStatus{BindingStatusAllocating, BindingStatusResuming} {
+		t.Run(string(status), func(t *testing.T) {
+			repository := newMemoryRepository()
+			backend := &discoverableBackend{}
+			service := newTestService(t, repository, backend)
+			binding, err := service.CreateBinding(context.Background(), testCreateRequest())
+			if err != nil {
+				t.Fatal(err)
+			}
+			task := repository.cleanups[0]
+			if task.BindingGeneration != 1 {
+				t.Fatalf("attempt generation = %d", task.BindingGeneration)
+			}
+			// Simulate a Worker crash after a provider allocation but before the
+			// generation-fenced Binding update. A newer attempt must not be
+			// confused with this stale allocation journal entry.
+			repository.mu.Lock()
+			binding.Status = status
+			binding.Generation = task.BindingGeneration
+			binding.CheckpointKey = "retained-checkpoint"
+			repository.bindings[binding.ID] = binding
+			repository.mu.Unlock()
+			backend.allocations = []Allocation{{BindingRef: "orphan-sandbox"}}
+			now := task.NotBefore
+			reconciler, err := NewReconciler(repository, map[string]Backend{"fake": backend}, ReconcilerOptions{
+				OwnerID: "recovery-worker", Now: func() time.Time { return now },
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if processed, err := reconciler.ReconcileOne(context.Background()); err != nil || !processed {
+				t.Fatalf("reconcile = %t, %v", processed, err)
+			}
+			got, err := repository.Binding(context.Background(), binding.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantStatus := BindingStatusFailed
+			if status == BindingStatusResuming {
+				wantStatus = BindingStatusSuspended
+			}
+			if got.Status != wantStatus || got.Generation != task.BindingGeneration+1 || got.CheckpointKey != "retained-checkpoint" || backend.destroyCalls != 1 {
+				t.Fatalf("recovered binding = %+v, destroy calls=%d", got, backend.destroyCalls)
+			}
+		})
+	}
+}
