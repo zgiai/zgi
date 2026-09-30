@@ -117,6 +117,16 @@ func TestE2BContract(t *testing.T) {
 	if aggregateReadErr != nil || aggregateInfo.Size != int64(len(aggregateValue)) || string(aggregateValue) != expectedAggregate {
 		t.Fatalf("aggregate artifact=%q info=%+v error=%v", aggregateValue, aggregateInfo, aggregateReadErr)
 	}
+	homeJob, err := backend.StartJob(ctx, allocation, agentexecution.JobSpec{
+		JobID: "e2b-write-session-home", Command: "python3", Timeout: 30 * time.Second,
+		Args: []string{"-c", "from pathlib import Path; home=Path.home(); assert str(home)=='/workspace/.zgi-runtime-home'; (home/'prepared.txt').write_text('prepared-result')"},
+	}, func(agentexecution.OutputChunk) error { return nil })
+	if err != nil {
+		t.Fatalf("start session home job: %v", err)
+	}
+	if homeResult, err := homeJob.Wait(ctx); err != nil || homeResult.ExitCode != 0 {
+		t.Fatalf("write session home result=%+v error=%v", homeResult, err)
+	}
 	checkpointStore, err := workspacecheckpoint.NewFileStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -214,5 +224,22 @@ func TestE2BContract(t *testing.T) {
 	_ = aggregateReader.Close()
 	if restoredReadErr != nil || string(restoredAggregate) != expectedAggregate {
 		t.Fatalf("restored aggregate = %q, %v", restoredAggregate, restoredReadErr)
+	}
+	var homeOutput bytes.Buffer
+	homeJob, err = backend.StartJob(ctx, allocation, agentexecution.JobSpec{
+		JobID: "e2b-read-session-home", Command: "python3", Timeout: 30 * time.Second,
+		Args: []string{"-c", "from pathlib import Path; print((Path.home()/'prepared.txt').read_text())"},
+	}, func(chunk agentexecution.OutputChunk) error {
+		if chunk.Stream != agentexecution.OutputStreamStdout {
+			return nil
+		}
+		_, err := homeOutput.Write(chunk.Data)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("start restored session home job: %v", err)
+	}
+	if homeResult, err := homeJob.Wait(ctx); err != nil || homeResult.ExitCode != 0 || homeOutput.String() != "prepared-result\n" {
+		t.Fatalf("restored session home result=%+v output=%q error=%v", homeResult, homeOutput.String(), err)
 	}
 }

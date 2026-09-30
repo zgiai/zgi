@@ -51,6 +51,13 @@ func TestContainerdGVisorCheckpointRecovery(t *testing.T) {
 	if _, err := backend.UploadFile(context.Background(), allocation, "artifacts/result.csv", strings.NewReader(result), int64(len(result))); err != nil {
 		t.Fatal(err)
 	}
+	homeWrite, homeOutput := runContractJob(t, backend, allocation, agentexecution.JobSpec{
+		JobID: "write-session-home", Command: "python3", Timeout: 10 * time.Second,
+		Args: []string{"-c", "import os; from pathlib import Path; home=Path.home(); assert str(home)=='/workspace/.zgi-runtime-home'; (home/'prepared.txt').write_text('prepared-result'); print(home)"},
+	})
+	if homeWrite.ExitCode != 0 || string(homeOutput) != "/workspace/.zgi-runtime-home\n" {
+		t.Fatalf("write session home result = %+v, output = %q", homeWrite, homeOutput)
+	}
 	store, err := workspacecheckpoint.NewFileStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -101,6 +108,13 @@ func TestContainerdGVisorCheckpointRecovery(t *testing.T) {
 	_ = reader.Close()
 	if readErr != nil || string(value) != result {
 		t.Fatalf("restored artifact = %q, %v", value, readErr)
+	}
+	homeRead, homeOutput := runContractJob(t, backend, allocation, agentexecution.JobSpec{
+		JobID: "read-session-home", Command: "python3", Timeout: 10 * time.Second,
+		Args: []string{"-c", "from pathlib import Path; print((Path.home()/'prepared.txt').read_text())"},
+	})
+	if homeRead.ExitCode != 0 || string(homeOutput) != "prepared-result\n" {
+		t.Fatalf("restored session home result = %+v, output = %q", homeRead, homeOutput)
 	}
 }
 
