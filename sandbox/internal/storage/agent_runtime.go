@@ -93,6 +93,19 @@ func (s *Store) Binding(ctx context.Context, id string) (agentruntime.Binding, e
 	return binding, err
 }
 
+func (s *Store) BindingByIdempotency(ctx context.Context, scope agentruntime.Scope, key string) (agentruntime.Binding, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT `+agentRuntimeBindingColumns+`
+		FROM agent_runtime_bindings
+		WHERE organization_id = $1 AND subject_id = $2 AND idempotency_key = $3
+	`, scope.OrganizationID, scope.SubjectID, key)
+	binding, err := scanAgentRuntimeBinding(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return agentruntime.Binding{}, agentruntime.ErrNotFound
+	}
+	return binding, err
+}
+
 func (s *Store) TouchBinding(ctx context.Context, id string, expectedGeneration int64, lastActivityAt time.Time, expiresAt time.Time, retentionExpiresAt time.Time) (agentruntime.Binding, error) {
 	row := s.db.QueryRowContext(ctx, `
 		UPDATE agent_runtime_bindings

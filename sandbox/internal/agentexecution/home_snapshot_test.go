@@ -50,6 +50,10 @@ func TestApprovedHomeSnapshotIsBoundToImmutableArtifact(t *testing.T) {
 		ID: "prepared", OrganizationID: "org-2", ProfileID: "profile-1",
 		Backend: "fake", BackendRef: "unowned", Status: "approved",
 	}
+	continued, err := service.CreateBinding(context.Background(), request)
+	if err != nil || continued.ID != binding.ID || continued.HomeSnapshotRef != "approved-artifact-v1" {
+		t.Fatalf("pinned existing binding after template revocation = %+v, %v", continued, err)
+	}
 	request.IdempotencyKey = "new-request"
 	if _, err := service.CreateBinding(context.Background(), request); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("cross-organization template accepted: %v", err)

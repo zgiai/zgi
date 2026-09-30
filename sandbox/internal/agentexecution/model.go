@@ -293,6 +293,7 @@ type Backend interface {
 type Repository interface {
 	ReserveBinding(context.Context, Binding) (binding Binding, created bool, err error)
 	Binding(context.Context, string) (Binding, error)
+	BindingByIdempotency(context.Context, Scope, string) (Binding, error)
 	UpdateBinding(context.Context, Binding, int64) error
 	EnqueueCleanup(context.Context, CleanupTask) error
 }

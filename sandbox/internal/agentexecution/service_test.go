@@ -350,6 +350,16 @@ func (r *memoryRepository) Binding(_ context.Context, id string) (Binding, error
 	return binding, nil
 }
 
+func (r *memoryRepository) BindingByIdempotency(_ context.Context, scope Scope, key string) (Binding, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	id, ok := r.idempotency[scope.OrganizationID+"\x00"+scope.SubjectID+"\x00"+key]
+	if !ok {
+		return Binding{}, ErrNotFound
+	}
+	return r.bindings[id], nil
+}
+
 func (r *memoryRepository) TouchBinding(_ context.Context, id string, expectedGeneration int64, lastActivityAt time.Time, expiresAt time.Time, retentionExpiresAt time.Time) (Binding, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

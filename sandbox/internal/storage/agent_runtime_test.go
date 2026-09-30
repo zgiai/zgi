@@ -70,6 +70,13 @@ func TestAgentRuntimeMigrationAndBindingRepository(t *testing.T) {
 	if !wasCreated || created.ID != binding.ID {
 		t.Fatalf("unexpected reservation: created=%v binding=%+v", wasCreated, created)
 	}
+	byKey, err := store.BindingByIdempotency(context.Background(), agentruntime.Scope{OrganizationID: "org-1", SubjectID: "user-1"}, binding.IdempotencyKey)
+	if err != nil || byKey.ID != binding.ID {
+		t.Fatalf("binding by idempotency key = %+v, %v", byKey, err)
+	}
+	if _, err := store.BindingByIdempotency(context.Background(), agentruntime.Scope{OrganizationID: "org-2", SubjectID: "user-1"}, binding.IdempotencyKey); !errors.Is(err, agentruntime.ErrNotFound) {
+		t.Fatalf("cross-organization idempotency lookup = %v", err)
+	}
 	duplicate, wasCreated, err := store.ReserveBinding(context.Background(), agentruntime.Binding{
 		ID:             "binding-other",
 		OrganizationID: binding.OrganizationID,

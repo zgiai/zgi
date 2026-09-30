@@ -90,6 +90,11 @@ func (s *Service) CreateBinding(ctx context.Context, request CreateBindingReques
 	if err := validateCreateRequest(request); err != nil {
 		return Binding{}, err
 	}
+	if existing, err := s.existingBinding(ctx, request); err == nil {
+		return existing, nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return Binding{}, err
+	}
 	backend, ok := s.backends[request.Backend]
 	if !ok {
 		return Binding{}, fmt.Errorf("%w: %s", ErrBackendUnavailable, request.Backend)
@@ -101,10 +106,20 @@ func (s *Service) CreateBinding(ctx context.Context, request CreateBindingReques
 		}
 		snapshot, err := s.snapshots.HomeSnapshot(ctx, request.HomeSnapshotID)
 		if err != nil {
+			if existing, existingErr := s.existingBinding(ctx, request); existingErr == nil {
+				return existing, nil
+			} else if !errors.Is(existingErr, ErrNotFound) {
+				return Binding{}, existingErr
+			}
 			return Binding{}, err
 		}
 		if snapshot.Status != "approved" || snapshot.OrganizationID != request.Scope.OrganizationID || snapshot.SubjectID != "" ||
 			snapshot.ProfileID != request.ProfileID || snapshot.Backend != request.Backend || snapshot.BackendRef == "" {
+			if existing, existingErr := s.existingBinding(ctx, request); existingErr == nil {
+				return existing, nil
+			} else if !errors.Is(existingErr, ErrNotFound) {
+				return Binding{}, existingErr
+			}
 			return Binding{}, ErrNotFound
 		}
 		homeSnapshotRef = snapshot.BackendRef
@@ -190,6 +205,17 @@ func (s *Service) CreateBinding(ctx context.Context, request CreateBindingReques
 	if err := s.repository.UpdateBinding(ctx, binding, binding.Generation-1); err != nil {
 		cleanupErr := s.enqueueDestroy(ctx, binding, allocation, err)
 		return Binding{}, errors.Join(fmt.Errorf("activate agent runtime binding: %w", err), cleanupErr)
+	}
+	return binding, nil
+}
+
+func (s *Service) existingBinding(ctx context.Context, request CreateBindingRequest) (Binding, error) {
+	binding, err := s.repository.BindingByIdempotency(ctx, request.Scope, request.IdempotencyKey)
+	if err != nil {
+		return Binding{}, err
+	}
+	if binding.RequestHash != requestFingerprint(request) {
+		return Binding{}, ErrIdempotencyConflict
 	}
 	return binding, nil
 }
