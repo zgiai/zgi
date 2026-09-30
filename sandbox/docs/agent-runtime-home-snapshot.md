@@ -8,7 +8,7 @@ A Home Snapshot is an immutable, prebuilt base environment for new Agent Runtime
 2. For local gVisor, publish and preload an immutable `repository@sha256:<64 lowercase hex>` image in the Worker's containerd namespace. For E2B, publish a distinct template ID for each immutable build. The Runtime Agent protocol and offline network policy must be compatible with the Worker version.
 3. Launch a disposable validation environment from the artifact. Verify that `/workspace` is empty, a Python or Node tool expected from the template runs without runtime installation, no user data or control credentials are readable by the Job user, and the network remains disabled. Destroy the disposable environment after verification.
 
-The local runtime binds a fresh workspace over `/workspace` and uses a read-only image root filesystem. E2B templates need explicit validation that their built filesystem contains no previous session data. Neither backend copies a live Binding into a Home Snapshot.
+The local runtime binds a fresh workspace over `/workspace` and uses a read-only image root filesystem. Each Job receives a writable `HOME=/workspace/.zgi-runtime-home`, which is part of the session checkpoint rather than the immutable base image. E2B templates need explicit validation that their built filesystem contains no previous session data. Neither backend copies a live Binding into a Home Snapshot. Put prepared executables in immutable image/template locations such as `/usr/local/bin`; do not assume a prebuilt user's home directory becomes the writable session home.
 
 ## Register and approve
 
@@ -26,4 +26,4 @@ An existing Binding persists the resolved artifact reference, so resuming it doe
 
 ## Current boundary
 
-Checkpoint and seven-day retention currently cover `/workspace`. The Home Snapshot is the immutable prepared base, not a mutable per-session `/home/zgi` archive. Applying a different Home Snapshot to an existing conversation requires a separate, explicit rebuild workflow; changing the Agent configuration alone does not alter existing Bindings. Do not advertise full M5 Home persistence or template-switch recovery before those gates pass.
+Checkpoint and seven-day retention cover `/workspace`, including the session's writable `HOME=/workspace/.zgi-runtime-home`. This is separate from the immutable prepared base image/template; absolute writes to `/home/zgi-runtime` on E2B are not checkpointed, and the local gVisor image root remains read-only. Applying a different Home Snapshot to an existing conversation requires a separate, explicit rebuild workflow; changing the Agent configuration alone does not alter existing Bindings. Do not advertise universal Home-path persistence or template-switch recovery before those gates pass.

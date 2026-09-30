@@ -42,6 +42,8 @@ type Backend struct {
 	closed           bool
 }
 
+const sessionHomeDirectory = ".zgi-runtime-home"
+
 type trackedJob struct {
 	specHash string
 	running  agentexecution.RunningJob
@@ -110,6 +112,14 @@ func (b *Backend) StartJob(ctx context.Context, _ agentexecution.Allocation, spe
 	if err := validateJobSpec(spec, sink); err != nil {
 		return nil, err
 	}
+	// The root filesystem can remain read-only in gVisor while each session
+	// still gets a writable HOME. Keeping it under /workspace makes the
+	// existing authenticated checkpoint protocol retain it with work files.
+	if err := b.workspace.MkdirAll(sessionHomeDirectory, 0o700); err != nil {
+		return nil, fmt.Errorf("prepare session home: %w", err)
+	}
+	spec.Environment = cloneJobEnvironment(spec.Environment)
+	spec.Environment["HOME"] = filepath.Join(b.workspaceName, sessionHomeDirectory)
 	workDir, err := b.resolveWorkDir(spec.WorkDir)
 	if err != nil {
 		return nil, err
@@ -147,6 +157,14 @@ func (b *Backend) StartJob(ctx context.Context, _ agentexecution.Allocation, spe
 	}
 	b.jobs[spec.JobID] = trackedJob{specHash: hash, running: running}
 	return running, nil
+}
+
+func cloneJobEnvironment(values map[string]string) map[string]string {
+	copyValues := make(map[string]string, len(values)+1)
+	for key, value := range values {
+		copyValues[key] = value
+	}
+	return copyValues
 }
 
 func validateJobSpec(spec agentexecution.JobSpec, sink func(agentexecution.OutputChunk) error) error {
