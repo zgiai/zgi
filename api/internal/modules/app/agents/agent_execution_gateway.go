@@ -52,7 +52,7 @@ type agentExecutionCapabilities struct {
 }
 
 type agentExecutionGateway interface {
-	CreateBinding(context.Context, agentExecutionScope, string, string, string, string) (agentExecutionBinding, error)
+	CreateBinding(context.Context, agentExecutionScope, string, string, string, string, ...string) (agentExecutionBinding, error)
 	GetBinding(context.Context, agentExecutionScope, string) (agentExecutionBinding, error)
 	ResumeBinding(context.Context, agentExecutionScope, string, int64) (agentExecutionBinding, error)
 	Capabilities(context.Context, agentExecutionScope, string) (agentExecutionCapabilities, error)
@@ -138,14 +138,18 @@ func (g *agentExecutionHTTPGateway) request(ctx context.Context, scope agentExec
 	return nil
 }
 
-func (g *agentExecutionHTTPGateway) CreateBinding(ctx context.Context, scope agentExecutionScope, agentID, conversationID, profileID, backend string) (agentExecutionBinding, error) {
+func (g *agentExecutionHTTPGateway) CreateBinding(ctx context.Context, scope agentExecutionScope, agentID, conversationID, profileID, backend string, homeSnapshotIDs ...string) (agentExecutionBinding, error) {
 	key := "conversation:" + conversationID
+	homeSnapshotID := ""
+	if len(homeSnapshotIDs) > 0 {
+		homeSnapshotID = strings.TrimSpace(homeSnapshotIDs[0])
+	}
 	seen := make(map[string]struct{})
 	for attempt := 0; attempt <= agentExecutionMaxBindingReplacements; attempt++ {
 		var result agentExecutionBinding
 		err := g.request(ctx, scope, http.MethodPost, "bindings", map[string]any{
 			"agent_id": agentID, "conversation_id": conversationID, "profile_id": profileID,
-			"backend": backend, "idempotency_key": key,
+			"backend": backend, "idempotency_key": key, "home_snapshot_id": homeSnapshotID,
 		}, &result)
 		if err != nil {
 			return agentExecutionBinding{}, err

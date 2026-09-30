@@ -62,7 +62,7 @@ func (r *fakeRuntimeAttachmentReader) DownloadFile(_ context.Context, fileID str
 	return append([]byte(nil), r.files[fileID]...), nil
 }
 
-func (f *fakeAgentExecutionGateway) CreateBinding(_ context.Context, scope agentExecutionScope, _, _, _, _ string) (agentExecutionBinding, error) {
+func (f *fakeAgentExecutionGateway) CreateBinding(_ context.Context, scope agentExecutionScope, _, _, _, _ string, _ ...string) (agentExecutionBinding, error) {
 	f.scope = scope
 	return f.binding, nil
 }
@@ -411,6 +411,25 @@ func TestAgentExecutionHTTPGatewayDecodesWorkerOutput(t *testing.T) {
 	chunks, err := gateway.JobOutput(t.Context(), agentExecutionScope{OrganizationID: "org-1", SubjectID: "account-1"}, "job-1", -1, 32)
 	if err != nil || len(chunks) != 2 || string(chunks[0].Data) != "hello" || string(chunks[1].Data) != "warning" {
 		t.Fatalf("JobOutput = %#v, %v", chunks, err)
+	}
+}
+
+func TestApprovedHomeSnapshotFlowsIntoBindingCreation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		if body["home_snapshot_id"] != "approved-template" {
+			t.Errorf("snapshot request = %#v", body)
+		}
+		_, _ = io.WriteString(w, `{"data":{"id":"binding-1","status":"active","generation":1}}`)
+	}))
+	defer server.Close()
+	base := &agentExecutionHTTPGateway{baseURL: server.URL, apiKey: "dedicated-worker-key", client: server.Client()}
+	gateway := agentExecutionSnapshotGateway{agentExecutionGateway: base, homeSnapshotID: "approved-template"}
+	if _, err := gateway.CreateBinding(t.Context(), agentExecutionScope{OrganizationID: "org-1", SubjectID: "user-1"}, "agent-1", "conversation-1", "standard", "local-gvisor"); err != nil {
+		t.Fatal(err)
 	}
 }
 

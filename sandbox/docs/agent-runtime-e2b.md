@@ -72,6 +72,8 @@ The optional checkpoint settings described in `agent-runtime-local.md` also appl
 
 The Worker records a delayed allocation-reconciliation task before creating an E2B Sandbox. An opaque Sandbox ID lost in a Worker crash can be rediscovered through the per-attempt metadata on running or paused Sandboxes; the reconciler deletes unrecorded allocations while preserving the one referenced by the current Binding. The task runs after a two-hour grace period, beyond the 90-minute maximum create/restore operation. This bounds orphan cleanup but is not a substitute for the still-required real-provider crash-injection acceptance.
 
+An approved [Home Snapshot](agent-runtime-home-snapshot.md) may select a separate, versioned E2B template for new Bindings. The Worker still applies offline network restrictions and requires the Runtime Agent to become healthy before activation.
+
 The archive endpoint appends a version marker and SHA-256 digest to its response body. The Worker removes and verifies that footer before saving the TAR. HTTP trailers are not used for completion because the E2B traffic proxy does not preserve them. Rebuild both the Worker and approved template together when changing this internal archive protocol; a mismatched version fails closed.
 
 ## Real-account gate

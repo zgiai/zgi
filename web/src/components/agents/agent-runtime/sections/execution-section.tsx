@@ -72,6 +72,18 @@ export function AgentRuntimeExecutionSection({
                 onChange={event => onChange({ ...config, policy_id: event.target.value })}
               />
             </label>
+            <label className="space-y-1 text-xs font-medium sm:col-span-2">
+              <span>{t('execution.homeSnapshotId')}</span>
+              <Input
+                value={config.home_snapshot_id ?? ''}
+                disabled={readOnly}
+                maxLength={128}
+                placeholder={t('execution.homeSnapshotPlaceholder')}
+                onChange={event =>
+                  onChange({ ...config, home_snapshot_id: event.target.value || null })
+                }
+              />
+            </label>
             <p className="text-xs text-muted-foreground sm:col-span-2">
               {t('execution.approvalNotice')}
             </p>

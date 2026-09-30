@@ -38,8 +38,15 @@ type agentExecutionApproval struct {
 }
 
 type agentExecutionApprovals struct {
-	Profiles     map[string]agentExecutionApproval
-	GatewayReady bool
+	Profiles      map[string]agentExecutionApproval
+	HomeSnapshots map[string]agentExecutionHomeApproval
+	GatewayReady  bool
+}
+
+type agentExecutionHomeApproval struct {
+	Backend         string   `json:"backend"`
+	ProfileID       string   `json:"profile_id"`
+	OrganizationIDs []string `json:"organization_ids"`
 }
 
 func agentExecutionApprovalsFromEnv() agentExecutionApprovals {
@@ -47,9 +54,14 @@ func agentExecutionApprovalsFromEnv() agentExecutionApprovals {
 	if err := json.Unmarshal([]byte(os.Getenv("ZGI_AGENT_RUNTIME_APPROVED_PROFILES_JSON")), &profiles); err != nil {
 		profiles = nil
 	}
+	var snapshots map[string]agentExecutionHomeApproval
+	if err := json.Unmarshal([]byte(os.Getenv("ZGI_AGENT_RUNTIME_APPROVED_HOME_SNAPSHOTS_JSON")), &snapshots); err != nil {
+		snapshots = nil
+	}
 	return agentExecutionApprovals{
-		Profiles:     profiles,
-		GatewayReady: validAgentRuntimeGatewayURL(os.Getenv("ZGI_AGENT_RUNTIME_URL")) && strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_API_KEY")) != "",
+		Profiles:      profiles,
+		HomeSnapshots: snapshots,
+		GatewayReady:  validAgentRuntimeGatewayURL(os.Getenv("ZGI_AGENT_RUNTIME_URL")) && strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_API_KEY")) != "",
 	}
 }
 
@@ -89,9 +101,11 @@ func (a agentExecutionApprovals) validate(organizationID string, cfg *dto.AgentE
 		return invalid("agent_execution.policy_unapproved")
 	}
 	if cfg.HomeSnapshotID != nil && strings.TrimSpace(*cfg.HomeSnapshotID) != "" {
-		// Home Snapshot validation and retention belong to M5. Do not accept a
-		// reference before the API can prove its organization and ownership.
-		return invalid("agent_execution.home_snapshot_unavailable")
+		snapshot, ok := a.HomeSnapshots[strings.TrimSpace(*cfg.HomeSnapshotID)]
+		if !ok || snapshot.Backend != profile.Backend || snapshot.ProfileID != strings.TrimSpace(cfg.ProfileID) ||
+			!containsAgentExecutionApproval(snapshot.OrganizationIDs, organizationID) {
+			return invalid("agent_execution.home_snapshot_unavailable")
+		}
 	}
 	return nil
 }

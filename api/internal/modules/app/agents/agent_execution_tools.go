@@ -40,6 +40,12 @@ func (h *AgentsHandler) attachConsoleAgentExecutionTools(runConfig *runtimeservi
 	profileID := strings.TrimSpace(cfg.ExecutionRuntime.ProfileID)
 	backend := h.executionApprovals.Profiles[profileID].Backend
 	gateway := h.executionGateway
+	if cfg.ExecutionRuntime.HomeSnapshotID != nil && strings.TrimSpace(*cfg.ExecutionRuntime.HomeSnapshotID) != "" {
+		gateway = agentExecutionSnapshotGateway{
+			agentExecutionGateway: gateway,
+			homeSnapshotID:        strings.TrimSpace(*cfg.ExecutionRuntime.HomeSnapshotID),
+		}
+	}
 	fileReader := h.fileService
 	persister := h.executionArtifactPersister
 	if persister == nil {

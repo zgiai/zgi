@@ -2550,7 +2550,9 @@ const messages = {
       description: 'Available to console Agents only. The environment is offline and releases idle compute after 30 minutes.',
       profileId: 'Approved Profile ID',
       policyId: 'Approved Policy ID',
-      approvalNotice: 'Ask an operator for approved IDs. Publishing is blocked when this organization, Profile, or Policy is not approved.',
+      homeSnapshotId: 'Home Snapshot ID (optional)',
+      homeSnapshotPlaceholder: 'Leave blank for the default environment',
+      approvalNotice: 'Ask an operator for approved IDs. Publishing is blocked when the organization, Profile, Policy, or selected Home Snapshot is not approved.',
     },
     memory: {
       agentTitle: 'Memory',

@@ -18,6 +18,9 @@ func TestAgentExecutionApprovalFailsClosed(t *testing.T) {
 		Profiles: map[string]agentExecutionApproval{
 			"standard": {Backend: "local-gvisor", OrganizationIDs: []string{"org-1"}, PolicyIDs: []string{"offline"}},
 		},
+		HomeSnapshots: map[string]agentExecutionHomeApproval{
+			"snapshot-1": {Backend: "local-gvisor", ProfileID: "standard", OrganizationIDs: []string{"org-1"}},
+		},
 	}
 	tests := []struct {
 		name      string
@@ -34,7 +37,9 @@ func TestAgentExecutionApprovalFailsClosed(t *testing.T) {
 		{name: "wrong organization", approvals: valid, org: "org-2", cfg: &dto.AgentExecutionRuntime{Enabled: true, ProfileID: "standard", PolicyID: "offline"}, wantError: true},
 		{name: "wrong policy", approvals: valid, org: "org-1", cfg: &dto.AgentExecutionRuntime{Enabled: true, ProfileID: "standard", PolicyID: "online"}, wantError: true},
 		{name: "unknown backend", approvals: agentExecutionApprovals{GatewayReady: true, Profiles: map[string]agentExecutionApproval{"standard": {Backend: "unknown", OrganizationIDs: []string{"org-1"}, PolicyIDs: []string{"offline"}}}}, org: "org-1", cfg: &dto.AgentExecutionRuntime{Enabled: true, ProfileID: "standard", PolicyID: "offline"}, wantError: true},
-		{name: "unowned snapshot", approvals: valid, org: "org-1", cfg: &dto.AgentExecutionRuntime{Enabled: true, ProfileID: "standard", PolicyID: "offline", HomeSnapshotID: ptrAgentExecutionString("snapshot-1")}, wantError: true},
+		{name: "approved snapshot", approvals: valid, org: "org-1", cfg: &dto.AgentExecutionRuntime{Enabled: true, ProfileID: "standard", PolicyID: "offline", HomeSnapshotID: ptrAgentExecutionString("snapshot-1")}},
+		{name: "unowned snapshot", approvals: valid, org: "org-2", cfg: &dto.AgentExecutionRuntime{Enabled: true, ProfileID: "standard", PolicyID: "offline", HomeSnapshotID: ptrAgentExecutionString("snapshot-1")}, wantError: true},
+		{name: "unknown snapshot", approvals: valid, org: "org-1", cfg: &dto.AgentExecutionRuntime{Enabled: true, ProfileID: "standard", PolicyID: "offline", HomeSnapshotID: ptrAgentExecutionString("missing")}, wantError: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

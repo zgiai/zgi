@@ -2386,7 +2386,9 @@ const messages: AgentsMessages = {
       description: '仅控制台智能体可用。环境默认离线，空闲 30 分钟后释放计算资源。',
       profileId: '已批准的 Profile ID',
       policyId: '已批准的 Policy ID',
-      approvalNotice: '请向运维人员获取已批准的 ID。组织、Profile 或 Policy 未获批准时将无法发布。',
+      homeSnapshotId: 'Home Snapshot ID（可选）',
+      homeSnapshotPlaceholder: '留空使用默认环境',
+      approvalNotice: '请向运维人员获取已批准的 ID。组织、Profile、Policy 或所填 Home Snapshot 未获批准时将无法发布。',
     },
     memory: {
       addCustomSlot: '自定义记忆',
