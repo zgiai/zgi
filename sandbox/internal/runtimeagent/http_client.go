@@ -1,11 +1,14 @@
 package runtimeagent
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"net"
 	"net/http"
@@ -170,7 +173,10 @@ func (b *RemoteBackend) ExportWorkspace(ctx context.Context, _ agentexecution.Al
 		cancel()
 		return nil, decodeRuntimeResponse(response, nil)
 	}
-	return &archiveResponseReader{response: response, cancel: cancel}, nil
+	return &archiveResponseReader{
+		response: response, cancel: cancel,
+		reader: bufio.NewReader(response.Body), digest: sha256.New(),
+	}, nil
 }
 
 func (b *RemoteBackend) ImportWorkspace(ctx context.Context, _ agentexecution.Allocation, archive io.Reader) error {
@@ -201,14 +207,46 @@ func (b *RemoteBackend) ImportWorkspace(ctx context.Context, _ agentexecution.Al
 type archiveResponseReader struct {
 	response *http.Response
 	cancel   context.CancelFunc
+	reader   *bufio.Reader
+	digest   hash.Hash
+	done     bool
 }
 
+const (
+	workspaceArchiveFooterMagic = "ZGI-WORKSPACE-ARCHIVE-V1\n"
+	workspaceArchiveFooterSize  = len(workspaceArchiveFooterMagic) + sha256.Size
+)
+
 func (r *archiveResponseReader) Read(buffer []byte) (int, error) {
-	n, err := r.response.Body.Read(buffer)
-	if errors.Is(err, io.EOF) && r.response.Trailer.Get("X-ZGI-Archive-Status") != "complete" {
-		return n, fmt.Errorf("%w: workspace archive stream did not complete", agentexecution.ErrBackendUnavailable)
+	if len(buffer) == 0 {
+		return 0, nil
 	}
-	return n, err
+	if r.done {
+		return 0, io.EOF
+	}
+	_, err := r.reader.Peek(workspaceArchiveFooterSize + 1)
+	if err == nil {
+		available := r.reader.Buffered() - workspaceArchiveFooterSize
+		n, readErr := r.reader.Read(buffer[:min(len(buffer), available)])
+		_, _ = r.digest.Write(buffer[:n])
+		return n, readErr
+	}
+	if !errors.Is(err, io.EOF) {
+		return 0, err
+	}
+	r.done = true
+	if r.reader.Buffered() != workspaceArchiveFooterSize {
+		return 0, fmt.Errorf("%w: workspace archive stream did not complete", agentexecution.ErrBackendUnavailable)
+	}
+	var footer [workspaceArchiveFooterSize]byte
+	if _, err := io.ReadFull(r.reader, footer[:]); err != nil {
+		return 0, err
+	}
+	if !bytes.Equal(footer[:len(workspaceArchiveFooterMagic)], []byte(workspaceArchiveFooterMagic)) ||
+		!bytes.Equal(footer[len(workspaceArchiveFooterMagic):], r.digest.Sum(nil)) {
+		return 0, fmt.Errorf("%w: workspace archive checksum mismatch", agentexecution.ErrBackendUnavailable)
+	}
+	return 0, io.EOF
 }
 
 func (r *archiveResponseReader) Close() error {

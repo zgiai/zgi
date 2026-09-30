@@ -20,7 +20,7 @@ import (
 	"github.com/zgiai/zgi-sandbox/internal/agentexecution"
 )
 
-func TestRemoteWorkspaceArchiveRoundTripAndFailureTrailer(t *testing.T) {
+func TestRemoteWorkspaceArchiveRoundTripWithoutHTTPTrailer(t *testing.T) {
 	sourceDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(sourceDir, "result.json"), []byte(`{"total":3}`), 0o640); err != nil {
 		t.Fatal(err)
@@ -37,7 +37,26 @@ func TestRemoteWorkspaceArchiveRoundTripAndFailureTrailer(t *testing.T) {
 	defer handler.Close()
 	server := httptest.NewServer(handler)
 	defer server.Close()
-	remote, err := NewRemote(RemoteOptions{BaseURL: server.URL, Token: "archive-token"})
+	// E2B's traffic proxy may discard HTTP trailers. Forward only the body.
+	proxy := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		upstream, err := http.NewRequestWithContext(request.Context(), request.Method, server.URL+request.URL.RequestURI(), request.Body)
+		if err != nil {
+			http.Error(writer, "invalid upstream request", http.StatusBadGateway)
+			return
+		}
+		upstream.Header = request.Header.Clone()
+		response, err := http.DefaultClient.Do(upstream)
+		if err != nil {
+			http.Error(writer, "upstream unavailable", http.StatusBadGateway)
+			return
+		}
+		defer response.Body.Close()
+		writer.Header().Set("Content-Type", response.Header.Get("Content-Type"))
+		writer.WriteHeader(response.StatusCode)
+		_, _ = io.Copy(writer, response.Body)
+	}))
+	defer proxy.Close()
+	remote, err := NewRemote(RemoteOptions{BaseURL: proxy.URL, Token: "archive-token"})
 	if err != nil {
 		t.Fatal(err)
 	}

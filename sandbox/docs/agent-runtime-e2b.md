@@ -70,6 +70,8 @@ Run local-gVisor and E2B workers as separate service instances with distinct Wor
 
 The optional `ZGI_AGENT_RUNTIME_CHECKPOINT_DIR` setting described in `agent-runtime-local.md` also applies to E2B Workers. If a paused E2B Sandbox has disappeared, the Worker can create a replacement from the same approved Profile and restore the last committed workspace archive before activating the Binding. The approved E2B template must contain the Runtime Agent archive endpoint from this version; an older template fails closed on checkpoint transfer. The checkpoint directory is a persistent Worker volume, **not** an E2B snapshot or cross-node object store. Keep it mounted and private; M5 seven-day retention is not yet available.
 
+The archive endpoint appends a version marker and SHA-256 digest to its response body. The Worker removes and verifies that footer before saving the TAR. HTTP trailers are not used for completion because the E2B traffic proxy does not preserve them. Rebuild both the Worker and approved template together when changing this internal archive protocol; a mismatched version fails closed.
+
 ## Real-account gate
 
 Unit tests use an HTTP contract server and do not count as managed-runtime evidence. With an approved template and disposable E2B project, run:

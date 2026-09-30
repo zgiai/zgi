@@ -114,8 +114,8 @@ func (b *Backend) ImportWorkspace(ctx context.Context, _ agentexecution.Allocati
 		}
 		header, err := archive.Next()
 		if errors.Is(err, io.EOF) {
-			// Drain the transport so the remote trailer and durable-store digest
-			// are both checked before reporting a successful restore.
+			// Drain the transport so the remote body footer and durable-store
+			// digest are both checked before reporting a successful restore.
 			if _, err := io.Copy(io.Discard, limited); err != nil {
 				return err
 			}

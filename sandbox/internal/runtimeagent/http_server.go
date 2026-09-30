@@ -133,13 +133,17 @@ func (s *HTTPServer) handleWorkspace(w http.ResponseWriter, request *http.Reques
 		}
 		defer archive.Close()
 		w.Header().Set("Content-Type", "application/x-tar")
-		w.Header().Set("Trailer", "X-ZGI-Archive-Status")
 		w.WriteHeader(http.StatusOK)
-		if _, err := io.Copy(w, archive); err != nil {
-			w.Header().Set("X-ZGI-Archive-Status", "failed")
+		digest := sha256.New()
+		if _, err := io.Copy(io.MultiWriter(w, digest), archive); err != nil {
 			return
 		}
-		w.Header().Set("X-ZGI-Archive-Status", "complete")
+		// The body footer survives intermediaries that discard HTTP trailers.
+		// A truncated or corrupted archive never becomes a valid checkpoint.
+		if _, err := io.WriteString(w, workspaceArchiveFooterMagic); err != nil {
+			return
+		}
+		_, _ = w.Write(digest.Sum(nil))
 	case http.MethodPut:
 		const maximum = maxWorkspaceArchiveBytes + int64(maxWorkspaceEntries)*4096
 		limited := http.MaxBytesReader(w, request.Body, maximum)
