@@ -202,7 +202,6 @@ func (s *Service) SuspendBinding(ctx context.Context, scope Scope, bindingID str
 		return Binding{}, err
 	}
 	allocation := Allocation{BindingRef: binding.BackendRef, WorkspaceRef: binding.WorkspaceRef}
-	previousCheckpointKey := binding.CheckpointKey
 	if s.checkpoints != nil {
 		if err := s.captureWorkspace(ctx, binding, backend, allocation); err != nil {
 			return Binding{}, fmt.Errorf("checkpoint workspace before suspension: %w", err)
@@ -210,11 +209,6 @@ func (s *Service) SuspendBinding(ctx context.Context, scope Scope, bindingID str
 	}
 	if err := backend.SuspendBinding(ctx, allocation); err != nil {
 		return Binding{}, fmt.Errorf("suspend backend binding: %w", err)
-	}
-	if s.checkpoints != nil && previousCheckpointKey != "" && previousCheckpointKey != binding.PendingCheckpointKey {
-		if err := s.checkpoints.Delete(ctx, previousCheckpointKey); err != nil {
-			return Binding{}, fmt.Errorf("delete superseded workspace checkpoint: %w", err)
-		}
 	}
 	previousGeneration = binding.Generation
 	if s.checkpoints != nil {
@@ -325,6 +319,8 @@ func (s *Service) DestroyBinding(ctx context.Context, scope Scope, bindingID str
 	}
 	previousGeneration = binding.Generation
 	binding.Status = BindingStatusDeleted
+	binding.CheckpointKey = ""
+	binding.PendingCheckpointKey = ""
 	binding.Generation++
 	binding.UpdatedAt = s.now().UTC()
 	if err := s.repository.UpdateBinding(ctx, binding, previousGeneration); err != nil {

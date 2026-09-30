@@ -118,7 +118,7 @@ func (s *Store) ExpiredRetainedBindings(ctx context.Context, now time.Time, limi
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT `+agentRuntimeBindingColumns+`
 		FROM agent_runtime_bindings
-		WHERE status IN ('suspended', 'deleting') AND retention_expires_at <= $1
+		WHERE (status = 'suspended' AND retention_expires_at <= $1) OR status = 'deleting'
 		ORDER BY retention_expires_at ASC, id ASC
 		LIMIT $2
 	`, now.UTC(), limit)
@@ -164,7 +164,22 @@ func (s *Store) ExpiredBindings(ctx context.Context, now time.Time, limit int) (
 }
 
 func (s *Store) UpdateBinding(ctx context.Context, binding agentruntime.Binding, expectedGeneration int64) error {
-	result, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var previousCheckpointKey string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT checkpoint_key FROM agent_runtime_bindings
+		WHERE id = $1 AND generation = $2 FOR UPDATE
+	`, binding.ID, expectedGeneration).Scan(&previousCheckpointKey); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return agentruntime.ErrGenerationConflict
+		}
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `
 		UPDATE agent_runtime_bindings
 		SET backend_ref = $2,
 		    workspace_ref = $3,
@@ -203,7 +218,24 @@ func (s *Store) UpdateBinding(ctx context.Context, binding agentruntime.Binding,
 	if count == 0 {
 		return agentruntime.ErrGenerationConflict
 	}
-	return nil
+	if previousCheckpointKey != "" && previousCheckpointKey != binding.CheckpointKey && binding.Status != agentruntime.BindingStatusDeleted {
+		// Commit the new checkpoint reference and the old-object cleanup task
+		// together. A crash at either side of this transaction leaves a
+		// recoverable reference, never an untracked deleted snapshot.
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO agent_runtime_cleanup_tasks (
+				id, resource_type, resource_id, backend, action, status,
+				last_error, not_before, created_at, updated_at
+			) VALUES ($1, 'checkpoint', $2, '', 'delete', 'pending', '', $3, $3, $3)
+			ON CONFLICT (resource_type, resource_id, action) DO UPDATE SET
+				status = 'pending', not_before = EXCLUDED.not_before,
+				last_error = '', updated_at = EXCLUDED.updated_at
+		`, "arc_cp_"+previousCheckpointKey, previousCheckpointKey, binding.UpdatedAt.UTC())
+		if err != nil {
+			return fmt.Errorf("enqueue superseded checkpoint cleanup: %w", err)
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) EnqueueCleanup(ctx context.Context, task agentruntime.CleanupTask) error {

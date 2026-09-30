@@ -97,6 +97,53 @@ func TestReconcilerCompletesClaimAfterBindingWasAlreadyFinalized(t *testing.T) {
 	}
 }
 
+func TestReconcilerDeletesSupersededCheckpoint(t *testing.T) {
+	now := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
+	repository := newMemoryRepository()
+	store := &memoryCheckpointStore{data: map[string][]byte{"old": []byte("previous"), "new": []byte("current")}}
+	repository.cleanups = append(repository.cleanups, CleanupTask{
+		ID: "cleanup-checkpoint", ResourceType: "checkpoint", ResourceID: "old",
+		Action: "delete", Status: "pending", NotBefore: now,
+	})
+	reconciler, err := NewReconciler(repository, map[string]Backend{"fake": &fakeBackend{}}, ReconcilerOptions{
+		OwnerID: "checkpoint-worker", Now: func() time.Time { return now }, Checkpoints: store,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if processed, err := reconciler.ReconcileOne(context.Background()); err != nil || !processed {
+		t.Fatalf("checkpoint cleanup = %v, %v", processed, err)
+	}
+	if _, ok := store.data["old"]; ok || string(store.data["new"]) != "current" || repository.cleanups[0].Status != "completed" {
+		t.Fatalf("checkpoint data = %#v; cleanup = %+v", store.data, repository.cleanups[0])
+	}
+}
+
+func TestReconcilerDoesNotMarkBindingDeletedBeforeCheckpointRemoval(t *testing.T) {
+	now := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
+	repository := newMemoryRepository()
+	repository.bindings["binding-1"] = Binding{
+		ID: "binding-1", Backend: "fake", Status: BindingStatusDeleting,
+		CheckpointKey: "retained", Generation: 3,
+	}
+	repository.cleanups = append(repository.cleanups, CleanupTask{
+		ID: "cleanup-binding", ResourceType: "binding", ResourceID: "binding-1", Backend: "fake",
+		BackendRef: "backend-1", Action: "destroy", Status: "pending", NotBefore: now,
+	})
+	reconciler, err := NewReconciler(repository, map[string]Backend{"fake": &fakeBackend{}}, ReconcilerOptions{
+		OwnerID: "cleanup-worker", Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reconciler.ReconcileOne(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := repository.bindings["binding-1"].Status; got != BindingStatusDeleting {
+		t.Fatalf("binding prematurely marked %s", got)
+	}
+}
+
 func TestLeaseManagerFencesOldOwnerAfterExpiry(t *testing.T) {
 	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
 	repository := newMemoryLeaseRepository()

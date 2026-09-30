@@ -164,7 +164,7 @@ func run(parent context.Context, logger *log.Logger) error {
 		}
 		startLoop(fmt.Sprintf("job-%d", index+1), jobWorker, 100*time.Millisecond)
 	}
-	reconciler, err := agentexecution.NewReconciler(store, controlBackends, agentexecution.ReconcilerOptions{OwnerID: cfg.WorkerID + "-cleanup"})
+	reconciler, err := agentexecution.NewReconciler(store, controlBackends, agentexecution.ReconcilerOptions{OwnerID: cfg.WorkerID + "-cleanup", Checkpoints: checkpoints})
 	if err != nil {
 		stopWorkers()
 		workers.Wait()

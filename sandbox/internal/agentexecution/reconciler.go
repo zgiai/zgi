@@ -18,6 +18,7 @@ type ReconcilerOptions struct {
 	Now           func() time.Time
 	LeaseDuration time.Duration
 	RetryDelay    time.Duration
+	Checkpoints   WorkspaceCheckpointStore
 }
 
 type Reconciler struct {
@@ -27,6 +28,7 @@ type Reconciler struct {
 	now           func() time.Time
 	leaseDuration time.Duration
 	retryDelay    time.Duration
+	checkpoints   WorkspaceCheckpointStore
 }
 
 func NewReconciler(repository CleanupRepository, backends map[string]Backend, options ReconcilerOptions) (*Reconciler, error) {
@@ -53,6 +55,7 @@ func NewReconciler(repository CleanupRepository, backends map[string]Backend, op
 		now:           options.Now,
 		leaseDuration: options.LeaseDuration,
 		retryDelay:    options.RetryDelay,
+		checkpoints:   options.Checkpoints,
 	}, nil
 }
 
@@ -64,6 +67,16 @@ func (r *Reconciler) ReconcileOne(ctx context.Context) (bool, error) {
 	task, claimed, err := r.repository.ClaimCleanup(ctx, r.ownerID, now, now.Add(r.leaseDuration))
 	if err != nil || !claimed {
 		return claimed, err
+	}
+	if task.ResourceType == "checkpoint" && task.Action == "delete" {
+		if r.checkpoints == nil {
+			return true, r.retryCleanup(ctx, task, ErrBackendUnavailable)
+		}
+		if err := r.checkpoints.Delete(ctx, task.ResourceID); err != nil {
+			return true, r.retryCleanup(ctx, task, err)
+		}
+		finishedAt := r.now().UTC()
+		return true, r.repository.CompleteCleanup(ctx, task.ID, r.ownerID, true, "", finishedAt, finishedAt)
 	}
 	backend, ok := r.backends[task.Backend]
 	if !ok {
@@ -100,6 +113,11 @@ func (r *Reconciler) recordCleanedBinding(ctx context.Context, task CleanupTask,
 	case BindingStatusDeleted:
 		return nil
 	case BindingStatusDeleting:
+		if binding.CheckpointKey != "" || binding.PendingCheckpointKey != "" {
+			// Backend deletion is complete, but a retryable checkpoint deletion
+			// must finish before the Binding can be marked deleted.
+			return nil
+		}
 		binding.Status = BindingStatusDeleted
 	case BindingStatusAllocating, BindingStatusFailed:
 		binding.Status = BindingStatusFailed

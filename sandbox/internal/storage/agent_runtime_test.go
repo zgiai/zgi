@@ -104,8 +104,13 @@ func TestAgentRuntimeMigrationAndBindingRepository(t *testing.T) {
 	}
 	touched.Status = agentruntime.BindingStatusSuspended
 	touched.Generation++
+	touched.CheckpointKey = "next-checkpoint-reference"
 	if err := store.UpdateBinding(context.Background(), touched, touched.Generation-1); err != nil {
 		t.Fatal(err)
+	}
+	cleanup, claimed, err := store.ClaimCleanup(context.Background(), "checkpoint-worker", touched.UpdatedAt, touched.UpdatedAt.Add(time.Minute))
+	if err != nil || !claimed || cleanup.ResourceType != "checkpoint" || cleanup.ResourceID != "checkpoint-reference" || cleanup.Action != "delete" {
+		t.Fatalf("superseded checkpoint cleanup = %+v, claimed=%v, error=%v", cleanup, claimed, err)
 	}
 	if retained, err := store.ExpiredRetainedBindings(context.Background(), touched.RetentionExpiresAt.Add(-time.Second), 10); err != nil || len(retained) != 0 {
 		t.Fatalf("early retention = %+v, error=%v", retained, err)
