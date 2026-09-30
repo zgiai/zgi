@@ -227,7 +227,7 @@ func (s *DataPlaneService) activeBinding(ctx context.Context, scope Scope, bindi
 		return binding, nil
 	}
 	now := s.now().UTC()
-	touched, err := s.bindings.TouchBinding(ctx, binding.ID, binding.Generation, now, now.Add(s.idleTTL))
+	touched, err := s.bindings.TouchBinding(ctx, binding.ID, binding.Generation, now, now.Add(s.idleTTL), now.Add(defaultRetentionTTL))
 	if err != nil {
 		return Binding{}, err
 	}

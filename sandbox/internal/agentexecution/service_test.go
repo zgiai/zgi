@@ -350,7 +350,7 @@ func (r *memoryRepository) Binding(_ context.Context, id string) (Binding, error
 	return binding, nil
 }
 
-func (r *memoryRepository) TouchBinding(_ context.Context, id string, expectedGeneration int64, lastActivityAt time.Time, expiresAt time.Time) (Binding, error) {
+func (r *memoryRepository) TouchBinding(_ context.Context, id string, expectedGeneration int64, lastActivityAt time.Time, expiresAt time.Time, retentionExpiresAt time.Time) (Binding, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	binding, ok := r.bindings[id]
@@ -362,6 +362,7 @@ func (r *memoryRepository) TouchBinding(_ context.Context, id string, expectedGe
 	}
 	binding.LastActivityAt = lastActivityAt
 	binding.ExpiresAt = expiresAt
+	binding.RetentionExpiresAt = retentionExpiresAt
 	binding.UpdatedAt = lastActivityAt
 	binding.Generation++
 	r.bindings[id] = binding
@@ -377,6 +378,21 @@ func (r *memoryRepository) ExpiredBindings(_ context.Context, now time.Time, lim
 			break
 		}
 		if (binding.Status == BindingStatusActive || binding.Status == BindingStatusSuspending) && !binding.ExpiresAt.After(now) {
+			bindings = append(bindings, binding)
+		}
+	}
+	return bindings, nil
+}
+
+func (r *memoryRepository) ExpiredRetainedBindings(_ context.Context, now time.Time, limit int) ([]Binding, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	bindings := make([]Binding, 0)
+	for _, binding := range r.bindings {
+		if len(bindings) >= limit && limit > 0 {
+			break
+		}
+		if (binding.Status == BindingStatusSuspended || binding.Status == BindingStatusDeleting) && !binding.RetentionExpiresAt.After(now) {
 			bindings = append(bindings, binding)
 		}
 	}

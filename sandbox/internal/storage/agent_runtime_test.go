@@ -26,25 +26,29 @@ func TestAgentRuntimeMigrationAndBindingRepository(t *testing.T) {
 	if migrationCount != 1 {
 		t.Fatalf("migration count = %d, want 1", migrationCount)
 	}
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM sandbox_schema_migrations WHERE version = $1`, int64(2026093001)).Scan(&migrationCount); err != nil || migrationCount != 1 {
+		t.Fatalf("retention migration count = %d, error=%v", migrationCount, err)
+	}
 
 	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
 	binding := agentruntime.Binding{
-		ID:             "binding-1",
-		OrganizationID: "org-1",
-		SubjectID:      "user-1",
-		AgentID:        "agent-1",
-		ConversationID: "conversation-1",
-		ProfileID:      "profile-1",
-		WorkspaceID:    "workspace-1",
-		Backend:        "fake",
-		IdempotencyKey: "request-1",
-		RequestHash:    "hash-1",
-		Status:         agentruntime.BindingStatusAllocating,
-		Generation:     1,
-		CreatedAt:      now,
-		UpdatedAt:      now,
-		LastActivityAt: now,
-		ExpiresAt:      now.Add(30 * time.Minute),
+		ID:                 "binding-1",
+		OrganizationID:     "org-1",
+		SubjectID:          "user-1",
+		AgentID:            "agent-1",
+		ConversationID:     "conversation-1",
+		ProfileID:          "profile-1",
+		WorkspaceID:        "workspace-1",
+		Backend:            "fake",
+		IdempotencyKey:     "request-1",
+		RequestHash:        "hash-1",
+		Status:             agentruntime.BindingStatusAllocating,
+		Generation:         1,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+		LastActivityAt:     now,
+		ExpiresAt:          now.Add(30 * time.Minute),
+		RetentionExpiresAt: now.Add(7 * 24 * time.Hour),
 	}
 	created, wasCreated, err := store.ReserveBinding(context.Background(), binding)
 	if err != nil {
@@ -85,7 +89,7 @@ func TestAgentRuntimeMigrationAndBindingRepository(t *testing.T) {
 		t.Fatalf("loaded binding = %+v", loaded)
 	}
 	touchedAt := now.Add(time.Minute)
-	touched, err := store.TouchBinding(context.Background(), binding.ID, loaded.Generation, touchedAt, touchedAt.Add(30*time.Minute))
+	touched, err := store.TouchBinding(context.Background(), binding.ID, loaded.Generation, touchedAt, touchedAt.Add(30*time.Minute), touchedAt.Add(7*24*time.Hour))
 	if err != nil {
 		t.Fatalf("touch binding: %v", err)
 	}
@@ -97,6 +101,17 @@ func TestAgentRuntimeMigrationAndBindingRepository(t *testing.T) {
 	}
 	if expired, err := store.ExpiredBindings(context.Background(), touched.ExpiresAt, 10); err != nil || len(expired) != 1 || expired[0].Generation != touched.Generation {
 		t.Fatalf("expiry = %+v, error=%v", expired, err)
+	}
+	touched.Status = agentruntime.BindingStatusSuspended
+	touched.Generation++
+	if err := store.UpdateBinding(context.Background(), touched, touched.Generation-1); err != nil {
+		t.Fatal(err)
+	}
+	if retained, err := store.ExpiredRetainedBindings(context.Background(), touched.RetentionExpiresAt.Add(-time.Second), 10); err != nil || len(retained) != 0 {
+		t.Fatalf("early retention = %+v, error=%v", retained, err)
+	}
+	if retained, err := store.ExpiredRetainedBindings(context.Background(), touched.RetentionExpiresAt, 10); err != nil || len(retained) != 1 || retained[0].ID != touched.ID {
+		t.Fatalf("retention = %+v, error=%v", retained, err)
 	}
 }
 
@@ -312,7 +327,7 @@ func insertActiveJobBinding(t *testing.T, store *Store, now time.Time) {
 		AgentID: "agent-1", ConversationID: "conversation-1", ProfileID: "profile-1",
 		WorkspaceID: "workspace-1", Backend: "fake", IdempotencyKey: "binding-request-1",
 		RequestHash: "binding-hash", Status: agentruntime.BindingStatusAllocating,
-		Generation: 1, CreatedAt: now, UpdatedAt: now, LastActivityAt: now, ExpiresAt: now.Add(time.Hour),
+		Generation: 1, CreatedAt: now, UpdatedAt: now, LastActivityAt: now, ExpiresAt: now.Add(time.Hour), RetentionExpiresAt: now.Add(7 * 24 * time.Hour),
 	}
 	if _, _, err := store.ReserveBinding(context.Background(), binding); err != nil {
 		t.Fatal(err)

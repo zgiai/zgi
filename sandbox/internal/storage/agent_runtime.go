@@ -16,7 +16,7 @@ const agentRuntimeBindingColumns = `
 	id, organization_id, subject_id, agent_id, conversation_id, profile_id,
 	home_snapshot_id, workspace_id, backend, backend_ref, workspace_ref, checkpoint_key, pending_checkpoint_key,
 	idempotency_key, request_hash, status, generation, failure_reason,
-	created_at, updated_at, last_activity_at, expires_at`
+	created_at, updated_at, last_activity_at, expires_at, retention_expires_at`
 
 func (s *Store) ReserveBinding(ctx context.Context, binding agentruntime.Binding) (agentruntime.Binding, bool, error) {
 	row := s.db.QueryRowContext(ctx, `
@@ -24,12 +24,12 @@ func (s *Store) ReserveBinding(ctx context.Context, binding agentruntime.Binding
 			id, organization_id, subject_id, agent_id, conversation_id, profile_id,
 			home_snapshot_id, workspace_id, backend, backend_ref, workspace_ref, checkpoint_key, pending_checkpoint_key,
 			idempotency_key, request_hash, status, generation, failure_reason,
-			created_at, updated_at, last_activity_at, expires_at
+			created_at, updated_at, last_activity_at, expires_at, retention_expires_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6,
 			$7, $8, $9, $10, $11, $12, $13,
 			$14, $15, $16, $17, $18,
-			$19, $20, $21, $22
+			$19, $20, $21, $22, $23
 		)
 		ON CONFLICT (organization_id, subject_id, idempotency_key) DO NOTHING
 		RETURNING `+agentRuntimeBindingColumns,
@@ -55,6 +55,7 @@ func (s *Store) ReserveBinding(ctx context.Context, binding agentruntime.Binding
 		binding.UpdatedAt.UTC(),
 		binding.LastActivityAt.UTC(),
 		binding.ExpiresAt.UTC(),
+		binding.RetentionExpiresAt.UTC(),
 	)
 	created, err := scanAgentRuntimeBinding(row)
 	if err == nil {
@@ -91,22 +92,49 @@ func (s *Store) Binding(ctx context.Context, id string) (agentruntime.Binding, e
 	return binding, err
 }
 
-func (s *Store) TouchBinding(ctx context.Context, id string, expectedGeneration int64, lastActivityAt time.Time, expiresAt time.Time) (agentruntime.Binding, error) {
+func (s *Store) TouchBinding(ctx context.Context, id string, expectedGeneration int64, lastActivityAt time.Time, expiresAt time.Time, retentionExpiresAt time.Time) (agentruntime.Binding, error) {
 	row := s.db.QueryRowContext(ctx, `
 		UPDATE agent_runtime_bindings
 		SET last_activity_at = $3,
 		    expires_at = $4,
+		    retention_expires_at = $5,
 		    updated_at = $3,
 		    generation = generation + 1
 		WHERE id = $1 AND generation = $2 AND status = 'active'
 		RETURNING `+agentRuntimeBindingColumns,
-		id, expectedGeneration, lastActivityAt.UTC(), expiresAt.UTC(),
+		id, expectedGeneration, lastActivityAt.UTC(), expiresAt.UTC(), retentionExpiresAt.UTC(),
 	)
 	binding, err := scanAgentRuntimeBinding(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return agentruntime.Binding{}, agentruntime.ErrGenerationConflict
 	}
 	return binding, err
+}
+
+func (s *Store) ExpiredRetainedBindings(ctx context.Context, now time.Time, limit int) ([]agentruntime.Binding, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT `+agentRuntimeBindingColumns+`
+		FROM agent_runtime_bindings
+		WHERE status IN ('suspended', 'deleting') AND retention_expires_at <= $1
+		ORDER BY retention_expires_at ASC, id ASC
+		LIMIT $2
+	`, now.UTC(), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	bindings := make([]agentruntime.Binding, 0)
+	for rows.Next() {
+		binding, err := scanAgentRuntimeBinding(rows)
+		if err != nil {
+			return nil, err
+		}
+		bindings = append(bindings, binding)
+	}
+	return bindings, rows.Err()
 }
 
 func (s *Store) ExpiredBindings(ctx context.Context, now time.Time, limit int) ([]agentruntime.Binding, error) {
@@ -147,8 +175,9 @@ func (s *Store) UpdateBinding(ctx context.Context, binding agentruntime.Binding,
 		    failure_reason = $8,
 		    updated_at = $9,
 		    last_activity_at = $10,
-		    expires_at = $11
-		WHERE id = $1 AND generation = $12
+		    expires_at = $11,
+		    retention_expires_at = $12
+		WHERE id = $1 AND generation = $13
 	`,
 		binding.ID,
 		binding.BackendRef,
@@ -161,6 +190,7 @@ func (s *Store) UpdateBinding(ctx context.Context, binding agentruntime.Binding,
 		binding.UpdatedAt.UTC(),
 		binding.LastActivityAt.UTC(),
 		binding.ExpiresAt.UTC(),
+		binding.RetentionExpiresAt.UTC(),
 		expectedGeneration,
 	)
 	if err != nil {
@@ -239,6 +269,7 @@ func scanAgentRuntimeBinding(scanner rowScanner) (agentruntime.Binding, error) {
 		&binding.UpdatedAt,
 		&binding.LastActivityAt,
 		&binding.ExpiresAt,
+		&binding.RetentionExpiresAt,
 	)
 	return binding, err
 }

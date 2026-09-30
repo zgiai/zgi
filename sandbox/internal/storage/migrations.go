@@ -182,6 +182,16 @@ var schemaMigrations = []schemaMigration{
 			`ALTER TABLE agent_runtime_bindings ADD COLUMN pending_checkpoint_key TEXT NOT NULL DEFAULT '';`,
 		},
 	},
+	{
+		version:     2026093001,
+		description: "agent runtime seven-day workspace retention deadline",
+		statements: []string{
+			`ALTER TABLE agent_runtime_bindings ADD COLUMN retention_expires_at TIMESTAMPTZ;`,
+			`UPDATE agent_runtime_bindings SET retention_expires_at = last_activity_at + INTERVAL '7 days';`,
+			`ALTER TABLE agent_runtime_bindings ALTER COLUMN retention_expires_at SET NOT NULL;`,
+			`CREATE INDEX idx_agent_runtime_bindings_retention ON agent_runtime_bindings (retention_expires_at, id) WHERE status IN ('suspended', 'deleting');`,
+		},
+	},
 }
 
 func (s *Store) applyMigrations(ctx context.Context) error {

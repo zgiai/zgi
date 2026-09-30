@@ -43,7 +43,7 @@ func TestBindingActivityFencesStaleIdleReap(t *testing.T) {
 	if err != nil || len(expired) != 1 {
 		t.Fatalf("expired bindings=%+v error=%v", expired, err)
 	}
-	if _, err := repository.TouchBinding(context.Background(), binding.ID, binding.Generation, now, now.Add(defaultIdleTTL)); err != nil {
+	if _, err := repository.TouchBinding(context.Background(), binding.ID, binding.Generation, now, now.Add(defaultIdleTTL), now.Add(defaultRetentionTTL)); err != nil {
 		t.Fatalf("touch binding: %v", err)
 	}
 	service := newTestService(t, repository, &fakeBackend{})

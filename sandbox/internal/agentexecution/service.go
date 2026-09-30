@@ -13,6 +13,7 @@ import (
 )
 
 const defaultIdleTTL = 30 * time.Minute
+const defaultRetentionTTL = 7 * 24 * time.Hour
 
 type CreateBindingRequest struct {
 	Scope          Scope
@@ -99,23 +100,24 @@ func (s *Service) CreateBinding(ctx context.Context, request CreateBindingReques
 	}
 	now := s.now().UTC()
 	binding := Binding{
-		ID:             bindingID,
-		OrganizationID: request.Scope.OrganizationID,
-		SubjectID:      request.Scope.SubjectID,
-		AgentID:        request.AgentID,
-		ConversationID: request.ConversationID,
-		ProfileID:      request.ProfileID,
-		HomeSnapshotID: request.HomeSnapshotID,
-		WorkspaceID:    workspaceID,
-		Backend:        request.Backend,
-		IdempotencyKey: request.IdempotencyKey,
-		RequestHash:    requestFingerprint(request),
-		Status:         BindingStatusAllocating,
-		Generation:     1,
-		CreatedAt:      now,
-		UpdatedAt:      now,
-		LastActivityAt: now,
-		ExpiresAt:      now.Add(s.idleTTL),
+		ID:                 bindingID,
+		OrganizationID:     request.Scope.OrganizationID,
+		SubjectID:          request.Scope.SubjectID,
+		AgentID:            request.AgentID,
+		ConversationID:     request.ConversationID,
+		ProfileID:          request.ProfileID,
+		HomeSnapshotID:     request.HomeSnapshotID,
+		WorkspaceID:        workspaceID,
+		Backend:            request.Backend,
+		IdempotencyKey:     request.IdempotencyKey,
+		RequestHash:        requestFingerprint(request),
+		Status:             BindingStatusAllocating,
+		Generation:         1,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+		LastActivityAt:     now,
+		ExpiresAt:          now.Add(s.idleTTL),
+		RetentionExpiresAt: now.Add(defaultRetentionTTL),
 	}
 	binding, created, err := s.repository.ReserveBinding(ctx, binding)
 	if err != nil {
@@ -155,6 +157,7 @@ func (s *Service) CreateBinding(ctx context.Context, request CreateBindingReques
 	binding.UpdatedAt = s.now().UTC()
 	binding.LastActivityAt = binding.UpdatedAt
 	binding.ExpiresAt = binding.UpdatedAt.Add(s.idleTTL)
+	binding.RetentionExpiresAt = binding.UpdatedAt.Add(defaultRetentionTTL)
 	binding.Generation++
 	if err := s.repository.UpdateBinding(ctx, binding, binding.Generation-1); err != nil {
 		cleanupErr := s.enqueueDestroy(ctx, binding, allocation, err)
@@ -238,6 +241,9 @@ func (s *Service) ResumeBinding(ctx context.Context, scope Scope, bindingID stri
 	if binding.Status != BindingStatusSuspended && binding.Status != BindingStatusResuming {
 		return Binding{}, fmt.Errorf("%w: cannot resume %s", ErrInvalidTransition, binding.Status)
 	}
+	if !binding.RetentionExpiresAt.IsZero() && !s.now().UTC().Before(binding.RetentionExpiresAt) {
+		return Binding{}, fmt.Errorf("%w: workspace retention expired", ErrInvalidTransition)
+	}
 	previousGeneration := binding.Generation
 	binding.Status = BindingStatusResuming
 	binding.Generation++
@@ -269,6 +275,7 @@ func (s *Service) ResumeBinding(ctx context.Context, scope Scope, bindingID stri
 	binding.UpdatedAt = s.now().UTC()
 	binding.LastActivityAt = binding.UpdatedAt
 	binding.ExpiresAt = binding.UpdatedAt.Add(s.idleTTL)
+	binding.RetentionExpiresAt = binding.UpdatedAt.Add(defaultRetentionTTL)
 	if err := s.repository.UpdateBinding(ctx, binding, previousGeneration); err != nil {
 		cleanupErr := s.enqueueDestroy(ctx, binding, allocation, err)
 		return Binding{}, errors.Join(fmt.Errorf("record resumed binding: %w", err), cleanupErr)

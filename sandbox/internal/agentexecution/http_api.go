@@ -409,17 +409,18 @@ type submitJobBody struct {
 }
 
 type bindingResponse struct {
-	ID             string        `json:"id"`
-	AgentID        string        `json:"agent_id"`
-	ConversationID string        `json:"conversation_id"`
-	ProfileID      string        `json:"profile_id"`
-	WorkspaceID    string        `json:"workspace_id"`
-	Backend        string        `json:"backend"`
-	Status         BindingStatus `json:"status"`
-	Generation     int64         `json:"generation"`
-	CreatedAt      time.Time     `json:"created_at"`
-	UpdatedAt      time.Time     `json:"updated_at"`
-	ExpiresAt      time.Time     `json:"expires_at"`
+	ID                 string        `json:"id"`
+	AgentID            string        `json:"agent_id"`
+	ConversationID     string        `json:"conversation_id"`
+	ProfileID          string        `json:"profile_id"`
+	WorkspaceID        string        `json:"workspace_id"`
+	Backend            string        `json:"backend"`
+	Status             BindingStatus `json:"status"`
+	Generation         int64         `json:"generation"`
+	CreatedAt          time.Time     `json:"created_at"`
+	UpdatedAt          time.Time     `json:"updated_at"`
+	ExpiresAt          time.Time     `json:"expires_at"`
+	RetentionExpiresAt time.Time     `json:"retention_expires_at"`
 }
 
 func bindingResponseFrom(binding Binding) bindingResponse {
@@ -428,6 +429,7 @@ func bindingResponseFrom(binding Binding) bindingResponse {
 		ProfileID: binding.ProfileID, WorkspaceID: binding.WorkspaceID, Backend: binding.Backend,
 		Status: binding.Status, Generation: binding.Generation, CreatedAt: binding.CreatedAt,
 		UpdatedAt: binding.UpdatedAt, ExpiresAt: binding.ExpiresAt,
+		RetentionExpiresAt: binding.RetentionExpiresAt,
 	}
 }
 

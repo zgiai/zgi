@@ -178,6 +178,15 @@ func run(parent context.Context, logger *log.Logger) error {
 		return err
 	}
 	startLoop("idle-reaper", reaper, time.Second)
+	if checkpoints != nil {
+		retentionReaper, err := agentexecution.NewRetentionReaper(store, control, nil)
+		if err != nil {
+			stopWorkers()
+			workers.Wait()
+			return err
+		}
+		startLoop("retention-reaper", agentexecution.OneShotFunc(retentionReaper.RunOne), time.Second)
+	}
 
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
 	serverResult := make(chan error, 1)

@@ -65,6 +65,7 @@ type Binding struct {
 	UpdatedAt            time.Time
 	LastActivityAt       time.Time
 	ExpiresAt            time.Time
+	RetentionExpiresAt   time.Time
 }
 
 type CleanupTask struct {
@@ -282,11 +283,15 @@ type LeaseRepository interface {
 
 type BindingReader interface {
 	Binding(context.Context, string) (Binding, error)
-	TouchBinding(context.Context, string, int64, time.Time, time.Time) (Binding, error)
+	TouchBinding(context.Context, string, int64, time.Time, time.Time, time.Time) (Binding, error)
 }
 
 type ExpiredBindingRepository interface {
 	ExpiredBindings(context.Context, time.Time, int) ([]Binding, error)
+}
+
+type RetainedBindingRepository interface {
+	ExpiredRetainedBindings(context.Context, time.Time, int) ([]Binding, error)
 }
 
 type JobRepository interface {
