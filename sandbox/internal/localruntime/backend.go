@@ -29,8 +29,9 @@ type Backend struct {
 }
 
 var (
-	_ agentexecution.Backend          = (*Backend)(nil)
-	_ agentexecution.ExecutionBackend = (*Backend)(nil)
+	_ agentexecution.Backend           = (*Backend)(nil)
+	_ agentexecution.ExecutionBackend  = (*Backend)(nil)
+	_ agentexecution.WorkspaceArchiver = (*Backend)(nil)
 )
 
 func New(provider Provider) (*Backend, error) {
@@ -115,6 +116,30 @@ func (b *Backend) DownloadFile(ctx context.Context, allocation agentexecution.Al
 		return nil, agentexecution.FileInfo{}, err
 	}
 	return connection.DownloadFile(ctx, allocation, path)
+}
+
+func (b *Backend) ExportWorkspace(ctx context.Context, allocation agentexecution.Allocation) (io.ReadCloser, error) {
+	connection, err := b.connect(ctx, allocation)
+	if err != nil {
+		return nil, err
+	}
+	archiver, ok := connection.(agentexecution.WorkspaceArchiver)
+	if !ok {
+		return nil, agentexecution.ErrBackendUnavailable
+	}
+	return archiver.ExportWorkspace(ctx, allocation)
+}
+
+func (b *Backend) ImportWorkspace(ctx context.Context, allocation agentexecution.Allocation, archive io.Reader) error {
+	connection, err := b.connect(ctx, allocation)
+	if err != nil {
+		return err
+	}
+	archiver, ok := connection.(agentexecution.WorkspaceArchiver)
+	if !ok {
+		return agentexecution.ErrBackendUnavailable
+	}
+	return archiver.ImportWorkspace(ctx, allocation, archive)
 }
 
 func (b *Backend) connect(ctx context.Context, allocation agentexecution.Allocation) (agentexecution.ExecutionBackend, error) {

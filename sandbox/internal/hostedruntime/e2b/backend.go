@@ -54,8 +54,9 @@ type Backend struct {
 }
 
 var (
-	_ agentexecution.Backend          = (*Backend)(nil)
-	_ agentexecution.ExecutionBackend = (*Backend)(nil)
+	_ agentexecution.Backend           = (*Backend)(nil)
+	_ agentexecution.ExecutionBackend  = (*Backend)(nil)
+	_ agentexecution.WorkspaceArchiver = (*Backend)(nil)
 )
 
 func New(options Options) (*Backend, error) {
@@ -230,6 +231,22 @@ func (b *Backend) DownloadFile(ctx context.Context, allocation agentexecution.Al
 		return nil, agentexecution.FileInfo{}, err
 	}
 	return remote.DownloadFile(ctx, allocation, path)
+}
+
+func (b *Backend) ExportWorkspace(ctx context.Context, allocation agentexecution.Allocation) (io.ReadCloser, error) {
+	remote, err := b.dataPlane(ctx, allocation)
+	if err != nil {
+		return nil, err
+	}
+	return remote.ExportWorkspace(ctx, allocation)
+}
+
+func (b *Backend) ImportWorkspace(ctx context.Context, allocation agentexecution.Allocation, archive io.Reader) error {
+	remote, err := b.dataPlane(ctx, allocation)
+	if err != nil {
+		return err
+	}
+	return remote.ImportWorkspace(ctx, allocation, archive)
 }
 
 func (b *Backend) dataPlane(ctx context.Context, allocation agentexecution.Allocation) (*runtimeagent.RemoteBackend, error) {

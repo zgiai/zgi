@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -18,6 +19,74 @@ import (
 
 	"github.com/zgiai/zgi-sandbox/internal/agentexecution"
 )
+
+func TestRemoteWorkspaceArchiveRoundTripAndFailureTrailer(t *testing.T) {
+	sourceDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sourceDir, "result.json"), []byte(`{"total":3}`), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	source, err := New(Options{WorkspaceRoot: sourceDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	handler, err := NewHTTPServer(source, HTTPServerOptions{Token: "archive-token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handler.Close()
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	remote, err := NewRemote(RemoteOptions{BaseURL: server.URL, Token: "archive-token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := remote.ExportWorkspace(context.Background(), agentexecution.Allocation{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive, err := io.ReadAll(reader)
+	_ = reader.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	destinationDir := t.TempDir()
+	destination, err := New(Options{WorkspaceRoot: destinationDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer destination.Close()
+	destinationHandler, err := NewHTTPServer(destination, HTTPServerOptions{Token: "archive-token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer destinationHandler.Close()
+	destinationServer := httptest.NewServer(destinationHandler)
+	defer destinationServer.Close()
+	destinationRemote, err := NewRemote(RemoteOptions{BaseURL: destinationServer.URL, Token: "archive-token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := destinationRemote.ImportWorkspace(context.Background(), agentexecution.Allocation{}, bytes.NewReader(archive)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(destinationDir, "result.json"))
+	if err != nil || string(got) != `{"total":3}` {
+		t.Fatalf("restored file = %q, %v", got, err)
+	}
+	if err := os.Symlink("result.json", filepath.Join(sourceDir, "unsafe-link")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	broken, err := remote.ExportWorkspace(context.Background(), agentexecution.Allocation{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = io.Copy(io.Discard, broken)
+	_ = broken.Close()
+	if !errors.Is(err, agentexecution.ErrBackendUnavailable) {
+		t.Fatalf("failed archive error = %v", err)
+	}
+}
 
 func TestRemoteBackendRunsRuntimeAgentContract(t *testing.T) {
 	local := newTestBackend(t)

@@ -28,6 +28,11 @@ func (s *Store) CreateJob(ctx context.Context, job agentruntime.Job) (agentrunti
 		return agentruntime.Job{}, false, err
 	}
 	row := s.db.QueryRowContext(ctx, `
+		WITH active_binding AS (
+			SELECT id FROM agent_runtime_bindings
+			WHERE id = $2 AND status = 'active' AND generation = $29
+			FOR SHARE
+		)
 		INSERT INTO agent_runtime_jobs (
 			id, binding_id, organization_id, subject_id, backend, backend_ref,
 			workspace_ref, idempotency_key, request_hash, status, generation,
@@ -35,14 +40,14 @@ func (s *Store) CreateJob(ctx context.Context, job agentruntime.Job) (agentrunti
 			pty, pty_columns, pty_rows, timeout_ms, failure_reason,
 			cancel_requested, claim_owner, attempts, stdout_bytes, stderr_bytes,
 			created_at, updated_at
-		) VALUES (
+		) SELECT
 			$1, $2, $3, $4, $5, $6,
 			$7, $8, $9, $10, $11,
 			$12, $13::jsonb, $14::jsonb, $15::jsonb, $16,
 			$17, $18, $19, $20, $21,
 			$22, $23, $24, $25, $26,
 			$27, $28
-		)
+		FROM active_binding
 		ON CONFLICT (binding_id, idempotency_key) WHERE idempotency_key <> '' DO NOTHING
 		RETURNING `+agentExecutionJobColumns,
 		job.ID, job.BindingID, job.OrganizationID, job.SubjectID, job.Backend, job.BackendRef,
@@ -50,7 +55,7 @@ func (s *Store) CreateJob(ctx context.Context, job agentruntime.Job) (agentrunti
 		job.Command, string(argsJSON), string(environmentJSON), string(commandJSON), job.WorkDir,
 		job.PTY, job.PTYColumns, job.PTYRows, durationMilliseconds(job.Timeout), job.FailureReason,
 		job.CancelRequested, job.ClaimOwner, job.Attempts, job.StdoutBytes, job.StderrBytes,
-		job.CreatedAt.UTC(), job.UpdatedAt.UTC(),
+		job.CreatedAt.UTC(), job.UpdatedAt.UTC(), job.BindingGeneration,
 	)
 	created, err := scanAgentExecutionJob(row)
 	if err == nil {
@@ -66,9 +71,18 @@ func (s *Store) CreateJob(ctx context.Context, job agentruntime.Job) (agentrunti
 	`, job.BindingID, job.IdempotencyKey)
 	existing, err := scanAgentExecutionJob(row)
 	if errors.Is(err, sql.ErrNoRows) {
-		return agentruntime.Job{}, false, agentruntime.ErrNotFound
+		return agentruntime.Job{}, false, agentruntime.ErrGenerationConflict
 	}
 	return existing, false, err
+}
+
+func (s *Store) HasActiveJobs(ctx context.Context, bindingID string) (bool, error) {
+	var active bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM agent_runtime_jobs
+		WHERE binding_id = $1 AND status IN ('queued', 'running')
+	)`, bindingID).Scan(&active)
+	return active, err
 }
 
 func (s *Store) Job(ctx context.Context, id string) (agentruntime.Job, error) {

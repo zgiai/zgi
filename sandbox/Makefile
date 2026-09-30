@@ -25,7 +25,7 @@ test-linux-secure:
 	./scripts/test_linux_secure_container.sh
 
 test-agent-runtime-containerd:
-	go test -tags=agent_runtime_integration -count=1 -v ./internal/localruntime/containerd -run TestContainerdGVisorContract
+	go test -tags=agent_runtime_integration -count=1 -v ./internal/localruntime/containerd -run 'TestContainerdGVisor(Contract|CheckpointRecovery)'
 
 test-agent-runtime-e2b:
 	go test -tags=e2b_integration -count=1 -v ./internal/hostedruntime/e2b -run TestE2BContract

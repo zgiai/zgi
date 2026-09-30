@@ -56,6 +56,7 @@ func NewUnixRemote(socketPath string, token string, pollInterval time.Duration) 
 }
 
 var _ agentexecution.ExecutionBackend = (*RemoteBackend)(nil)
+var _ agentexecution.WorkspaceArchiver = (*RemoteBackend)(nil)
 
 func NewRemote(options RemoteOptions) (*RemoteBackend, error) {
 	options.BaseURL = strings.TrimRight(strings.TrimSpace(options.BaseURL), "/")
@@ -147,6 +148,72 @@ func (b *RemoteBackend) DownloadFile(ctx context.Context, _ agentexecution.Alloc
 	return response.Body, agentexecution.FileInfo{
 		Path: filePath, Size: size, ContentType: response.Header.Get("Content-Type"),
 	}, nil
+}
+
+func (b *RemoteBackend) ExportWorkspace(ctx context.Context, _ agentexecution.Allocation) (io.ReadCloser, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, b.baseURL+"/v1/workspace/archive", nil)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	b.applyHeaders(request)
+	client := *b.client
+	client.Timeout = 0
+	response, err := client.Do(request)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	if response.StatusCode != http.StatusOK || response.Header.Get("Content-Type") != "application/x-tar" {
+		defer response.Body.Close()
+		cancel()
+		return nil, decodeRuntimeResponse(response, nil)
+	}
+	return &archiveResponseReader{response: response, cancel: cancel}, nil
+}
+
+func (b *RemoteBackend) ImportWorkspace(ctx context.Context, _ agentexecution.Allocation, archive io.Reader) error {
+	if archive == nil {
+		return agentexecution.ErrInvalidRequest
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	// The caller owns archive. net/http closes a request body after transport,
+	// so wrap it to keep the caller's integrity-checked reader available for
+	// its explicit close and error handling.
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut, b.baseURL+"/v1/workspace/archive", io.NopCloser(archive))
+	if err != nil {
+		return err
+	}
+	b.applyHeaders(request)
+	request.Header.Set("Content-Type", "application/x-tar")
+	client := *b.client
+	client.Timeout = 0
+	response, err := client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	return decodeRuntimeResponse(response, nil)
+}
+
+type archiveResponseReader struct {
+	response *http.Response
+	cancel   context.CancelFunc
+}
+
+func (r *archiveResponseReader) Read(buffer []byte) (int, error) {
+	n, err := r.response.Body.Read(buffer)
+	if errors.Is(err, io.EOF) && r.response.Trailer.Get("X-ZGI-Archive-Status") != "complete" {
+		return n, fmt.Errorf("%w: workspace archive stream did not complete", agentexecution.ErrBackendUnavailable)
+	}
+	return n, err
+}
+
+func (r *archiveResponseReader) Close() error {
+	r.cancel()
+	return r.response.Body.Close()
 }
 
 func (b *RemoteBackend) doJSON(ctx context.Context, method string, requestPath string, body any, target any) error {

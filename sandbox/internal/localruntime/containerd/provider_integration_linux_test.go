@@ -5,8 +5,10 @@ package containerd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -14,7 +16,93 @@ import (
 
 	"github.com/zgiai/zgi-sandbox/internal/agentexecution"
 	"github.com/zgiai/zgi-sandbox/internal/localruntime"
+	"github.com/zgiai/zgi-sandbox/internal/workspacecheckpoint"
 )
+
+func TestContainerdGVisorCheckpointRecovery(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Fatal("checkpoint contract requires a root-owned native Linux worker")
+	}
+	image := strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_TEST_IMAGE"))
+	if image == "" {
+		t.Fatal("ZGI_AGENT_RUNTIME_TEST_IMAGE is required")
+	}
+	root := t.TempDir()
+	provider, err := New(Options{
+		Address: strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_CONTAINERD_ADDRESS")),
+		RootDir: root, Profiles: map[string]Profile{"contract": {Image: image}},
+		StartupLimit: 45 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer provider.Close()
+	backend, err := localruntime.New(provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := agentexecution.CreateSpec{BindingID: "checkpoint-binding", WorkspaceID: "checkpoint-workspace", ProfileID: "contract"}
+	allocation, err := backend.CreateBinding(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = backend.DestroyBinding(context.Background(), allocation) }()
+	const result = "item,qty\napple,5\nbanana,5\n"
+	if _, err := backend.UploadFile(context.Background(), allocation, "artifacts/result.csv", strings.NewReader(result), int64(len(result))); err != nil {
+		t.Fatal(err)
+	}
+	store, err := workspacecheckpoint.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	key := strings.Repeat("a", 64)
+	archive, err := backend.ExportWorkspace(context.Background(), allocation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(context.Background(), key, archive); err != nil {
+		t.Fatal(err)
+	}
+	_ = archive.Close()
+	if err := backend.SuspendBinding(context.Background(), allocation); err != nil {
+		t.Fatal(err)
+	}
+	workspace := filepath.Join(root, "workspaces", spec.WorkspaceID)
+	relative, err := filepath.Rel(root, workspace)
+	if err != nil || relative != filepath.Join("workspaces", spec.WorkspaceID) {
+		t.Fatalf("test workspace escaped temporary root: %q", workspace)
+	}
+	if err := os.RemoveAll(workspace); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := backend.ResumeBinding(context.Background(), spec, allocation); !errors.Is(err, agentexecution.ErrNotFound) {
+		t.Fatalf("missing retained workspace error = %v", err)
+	}
+	allocation, err = backend.CreateBinding(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive, err = store.Open(context.Background(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := backend.ImportWorkspace(context.Background(), allocation, archive); err != nil {
+		t.Fatal(err)
+	}
+	if err := archive.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reader, _, err := backend.DownloadFile(context.Background(), allocation, "artifacts/result.csv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, readErr := io.ReadAll(reader)
+	_ = reader.Close()
+	if readErr != nil || string(value) != result {
+		t.Fatalf("restored artifact = %q, %v", value, readErr)
+	}
+}
 
 func TestContainerdGVisorContract(t *testing.T) {
 	if os.Geteuid() != 0 {

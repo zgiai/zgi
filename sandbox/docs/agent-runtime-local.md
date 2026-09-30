@@ -42,6 +42,10 @@ Required environment:
 
 Important optional settings are `ZGI_AGENT_RUNTIME_LISTEN` (default `127.0.0.1:2670`), `ZGI_AGENT_RUNTIME_WORKER_ID`, `ZGI_AGENT_RUNTIME_ROOT` (default `/var/lib/zgi-agent-runtime`), `ZGI_AGENT_RUNTIME_CONTAINERD_ADDRESS`, `ZGI_AGENT_RUNTIME_MAX_WORKERS`, `ZGI_AGENT_RUNTIME_IDLE_TTL_SECONDS` (default 1800), `ZGI_AGENT_RUNTIME_STARTUP_TIMEOUT_SECONDS` (default 30), and the `MEMORY_BYTES`, `PIDS`, `CPU_PERIOD`, and `CPU_QUOTA` variables with the `ZGI_AGENT_RUNTIME_` prefix.
 
+`ZGI_AGENT_RUNTIME_CHECKPOINT_DIR` is an optional M5A development setting. When set, the Worker stores an immutable, SHA-256-verified workspace archive on that directory before suspending compute. The directory must be a private, durable Worker volume, separate from the execution workspace, and must remain mounted across Worker restarts. A lost local compute allocation or missing retained workspace is rebuilt from the last committed checkpoint. A queued or running Job prevents suspension until it becomes terminal; new Jobs cannot be admitted after the Binding enters `suspending`. The archive accepts only regular files and directories, with a 1 GiB file-content and 10,000-entry limit. An archive transfer or restore failure does not mark the Binding active or suspended as though it succeeded.
+
+The setting is **off by default**. A single Worker volume is not an object store or a cross-node backup: losing that volume loses its checkpoints. Do not route an existing checkpointed Binding to a Worker lacking the same volume, and do not remove the configured directory before deleting those Bindings. Seven-day retention, node migration, background checkpoint garbage collection, and Home Snapshots are not provided by M5A. Do not advertise those guarantees until the later M5 gates pass.
+
 Keep `ZGI_AGENT_RUNTIME_ROOT` under a service-data parent such as `/var/lib`, not under `/root` (normally mode `0700`). The Runtime Agent runs as UID/GID 65532, and the runtime uses host-side bind mounts and a control socket. A native gVisor smoke test timed out when the root was under `/root`, even with a 45-second startup limit, while the same test passed with a root under `/var/lib`. This identifies a deployment-path constraint on the tested node; the exact failing access operation was not exposed by the Worker API. Do not make `/root` world-traversable to work around this; move the Worker root instead. The startup limit is a deadline, not a fix for inaccessible paths.
 
 The process owns bounded, cancelable loops for asynchronous Jobs, cleanup reconciliation, and idle Binding suspension. Job submission and file transfer atomically refresh the Binding idle deadline and generation; a stale reaper observation therefore cannot suspend a Binding after new activity.
@@ -51,6 +55,7 @@ The process owns bounded, cancelable loops for asynchronous Jobs, cleanup reconc
 - Create prepares a retained workspace and starts a dedicated gVisor task.
 - Suspend stops and deletes compute plus connection secrets, while retaining the workspace.
 - Resume starts fresh compute around the retained workspace and issues a new connection token.
+- With `ZGI_AGENT_RUNTIME_CHECKPOINT_DIR` enabled, suspend first publishes a durable archive. If retained compute/workspace is missing on resume, the Worker creates a new environment and restores the committed archive before marking the Binding active.
 - Destroy stops compute before deleting workspace, control, and secret directories.
 - Repeated lifecycle calls are safe. Partial creation returns opaque references so the control-plane cleanup queue can retry deletion.
 

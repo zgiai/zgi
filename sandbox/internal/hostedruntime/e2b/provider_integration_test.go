@@ -5,6 +5,7 @@ package e2b
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/zgiai/zgi-sandbox/internal/agentexecution"
+	"github.com/zgiai/zgi-sandbox/internal/workspacecheckpoint"
 )
 
 func TestE2BContract(t *testing.T) {
@@ -115,6 +117,20 @@ func TestE2BContract(t *testing.T) {
 	if aggregateReadErr != nil || aggregateInfo.Size != int64(len(aggregateValue)) || string(aggregateValue) != expectedAggregate {
 		t.Fatalf("aggregate artifact=%q info=%+v error=%v", aggregateValue, aggregateInfo, aggregateReadErr)
 	}
+	checkpointStore, err := workspacecheckpoint.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer checkpointStore.Close()
+	checkpointKey := strings.Repeat("b", 64)
+	workspaceArchive, err := backend.ExportWorkspace(ctx, allocation)
+	if err != nil {
+		t.Fatalf("export workspace: %v", err)
+	}
+	if err := checkpointStore.Save(ctx, checkpointKey, workspaceArchive); err != nil {
+		t.Fatalf("save workspace checkpoint: %v", err)
+	}
+	_ = workspaceArchive.Close()
 
 	if err := backend.SuspendBinding(ctx, allocation); err != nil {
 		t.Fatalf("suspend binding: %v", err)
@@ -167,5 +183,36 @@ func TestE2BContract(t *testing.T) {
 	cancelResult, err := cancelJob.Wait(ctx)
 	if err != nil || !cancelResult.Canceled {
 		t.Fatalf("cancel result=%+v error=%v", cancelResult, err)
+	}
+
+	lostAllocation := allocation
+	if err := backend.DestroyBinding(ctx, lostAllocation); err != nil {
+		t.Fatalf("simulate lost E2B compute: %v", err)
+	}
+	if _, err := backend.ResumeBinding(ctx, spec, lostAllocation); !errors.Is(err, agentexecution.ErrNotFound) {
+		t.Fatalf("lost E2B environment error = %v", err)
+	}
+	allocation, err = backend.CreateBinding(ctx, spec)
+	if err != nil {
+		t.Fatalf("create replacement E2B environment: %v", err)
+	}
+	workspaceArchive, err = checkpointStore.Open(ctx, checkpointKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := backend.ImportWorkspace(ctx, allocation, workspaceArchive); err != nil {
+		t.Fatalf("restore workspace into replacement E2B environment: %v", err)
+	}
+	if err := workspaceArchive.Close(); err != nil {
+		t.Fatal(err)
+	}
+	aggregateReader, _, err = backend.DownloadFile(ctx, allocation, "artifacts/result.csv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoredAggregate, restoredReadErr := io.ReadAll(aggregateReader)
+	_ = aggregateReader.Close()
+	if restoredReadErr != nil || string(restoredAggregate) != expectedAggregate {
+		t.Fatalf("restored aggregate = %q, %v", restoredAggregate, restoredReadErr)
 	}
 }

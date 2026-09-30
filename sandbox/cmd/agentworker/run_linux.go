@@ -24,6 +24,7 @@ import (
 	"github.com/zgiai/zgi-sandbox/internal/localruntime"
 	containerdprovider "github.com/zgiai/zgi-sandbox/internal/localruntime/containerd"
 	"github.com/zgiai/zgi-sandbox/internal/storage"
+	"github.com/zgiai/zgi-sandbox/internal/workspacecheckpoint"
 )
 
 const (
@@ -42,6 +43,7 @@ type workerConfig struct {
 	DatabaseURL       string
 	WorkerID          string
 	RootDir           string
+	CheckpointDir     string
 	ContainerdAddress string
 	Profiles          map[string]containerdprovider.Profile
 	MaxWorkers        int
@@ -85,7 +87,18 @@ func run(parent context.Context, logger *log.Logger) error {
 	defer closeBackend()
 	controlBackends := map[string]agentexecution.Backend{backendName: backend}
 	executionBackends := map[string]agentexecution.ExecutionBackend{backendName: backend}
-	control, err := agentexecution.NewService(store, controlBackends, agentexecution.ServiceOptions{IdleTTL: cfg.IdleTTL})
+	var checkpoints agentexecution.WorkspaceCheckpointStore
+	if cfg.CheckpointDir != "" {
+		fileStore, err := workspacecheckpoint.NewFileStore(cfg.CheckpointDir)
+		if err != nil {
+			return err
+		}
+		defer fileStore.Close()
+		checkpoints = fileStore
+	}
+	control, err := agentexecution.NewService(store, controlBackends, agentexecution.ServiceOptions{
+		IdleTTL: cfg.IdleTTL, Checkpoints: checkpoints, Jobs: store,
+	})
 	if err != nil {
 		return err
 	}
@@ -196,6 +209,7 @@ func workerConfigFromEnv() (workerConfig, error) {
 		DatabaseURL:       strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_DATABASE_URL")),
 		WorkerID:          envString("ZGI_AGENT_RUNTIME_WORKER_ID", fallbackWorkerID),
 		RootDir:           envString("ZGI_AGENT_RUNTIME_ROOT", "/var/lib/zgi-agent-runtime"),
+		CheckpointDir:     strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_CHECKPOINT_DIR")),
 		ContainerdAddress: envString("ZGI_AGENT_RUNTIME_CONTAINERD_ADDRESS", "/run/containerd/containerd.sock"),
 		Profiles:          map[string]containerdprovider.Profile{},
 		MaxWorkers:        envInt("ZGI_AGENT_RUNTIME_MAX_WORKERS", 4),

@@ -43,26 +43,28 @@ type Scope struct {
 }
 
 type Binding struct {
-	ID             string
-	OrganizationID string
-	SubjectID      string
-	AgentID        string
-	ConversationID string
-	ProfileID      string
-	HomeSnapshotID string
-	WorkspaceID    string
-	Backend        string
-	BackendRef     string
-	WorkspaceRef   string
-	IdempotencyKey string
-	RequestHash    string
-	Status         BindingStatus
-	Generation     int64
-	FailureReason  string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	LastActivityAt time.Time
-	ExpiresAt      time.Time
+	ID                   string
+	OrganizationID       string
+	SubjectID            string
+	AgentID              string
+	ConversationID       string
+	ProfileID            string
+	HomeSnapshotID       string
+	WorkspaceID          string
+	Backend              string
+	BackendRef           string
+	WorkspaceRef         string
+	CheckpointKey        string
+	PendingCheckpointKey string
+	IdempotencyKey       string
+	RequestHash          string
+	Status               BindingStatus
+	Generation           int64
+	FailureReason        string
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+	LastActivityAt       time.Time
+	ExpiresAt            time.Time
 }
 
 type CleanupTask struct {
@@ -104,37 +106,38 @@ const (
 )
 
 type Job struct {
-	ID              string
-	BindingID       string
-	OrganizationID  string
-	SubjectID       string
-	Backend         string
-	BackendRef      string
-	WorkspaceRef    string
-	IdempotencyKey  string
-	RequestHash     string
-	Status          JobStatus
-	Generation      int64
-	Command         string
-	Args            []string
-	Environment     map[string]string
-	WorkDir         string
-	PTY             bool
-	PTYColumns      uint16
-	PTYRows         uint16
-	Timeout         time.Duration
-	ExitCode        *int
-	FailureReason   string
-	CancelRequested bool
-	ClaimOwner      string
-	ClaimExpiresAt  *time.Time
-	Attempts        int
-	StdoutBytes     int64
-	StderrBytes     int64
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-	StartedAt       *time.Time
-	FinishedAt      *time.Time
+	ID                string
+	BindingID         string
+	BindingGeneration int64
+	OrganizationID    string
+	SubjectID         string
+	Backend           string
+	BackendRef        string
+	WorkspaceRef      string
+	IdempotencyKey    string
+	RequestHash       string
+	Status            JobStatus
+	Generation        int64
+	Command           string
+	Args              []string
+	Environment       map[string]string
+	WorkDir           string
+	PTY               bool
+	PTYColumns        uint16
+	PTYRows           uint16
+	Timeout           time.Duration
+	ExitCode          *int
+	FailureReason     string
+	CancelRequested   bool
+	ClaimOwner        string
+	ClaimExpiresAt    *time.Time
+	Attempts          int
+	StdoutBytes       int64
+	StderrBytes       int64
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	StartedAt         *time.Time
+	FinishedAt        *time.Time
 }
 
 type OutputStream string
@@ -203,6 +206,26 @@ type ExecutionBackend interface {
 	StartJob(context.Context, Allocation, JobSpec, func(OutputChunk) error) (RunningJob, error)
 	UploadFile(context.Context, Allocation, string, io.Reader, int64) (FileInfo, error)
 	DownloadFile(context.Context, Allocation, string) (io.ReadCloser, FileInfo, error)
+}
+
+// WorkspaceArchiver is an internal, bounded transfer contract used to move a
+// quiescent workspace between an execution environment and durable storage.
+// It is deliberately separate from the user-facing file transfer API.
+type WorkspaceArchiver interface {
+	ExportWorkspace(context.Context, Allocation) (io.ReadCloser, error)
+	ImportWorkspace(context.Context, Allocation, io.Reader) error
+}
+
+// WorkspaceCheckpointStore publishes immutable archives only after the full
+// stream is durable. Open must verify the bytes while they are read.
+type WorkspaceCheckpointStore interface {
+	Save(context.Context, string, io.Reader) error
+	Open(context.Context, string) (io.ReadCloser, error)
+	Delete(context.Context, string) error
+}
+
+type ActiveJobReader interface {
+	HasActiveJobs(context.Context, string) (bool, error)
 }
 
 // Allocation contains only opaque backend handles. Product ownership and

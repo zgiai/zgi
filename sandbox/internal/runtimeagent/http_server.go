@@ -107,8 +107,46 @@ func (s *HTTPServer) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 		s.handleJobs(w, request, segments[1:])
 	case "files":
 		s.handleFiles(w, request, segments[1:])
+	case "workspace":
+		s.handleWorkspace(w, request, segments[1:])
 	default:
 		http.NotFound(w, request)
+	}
+}
+
+func (s *HTTPServer) handleWorkspace(w http.ResponseWriter, request *http.Request, segments []string) {
+	if len(segments) != 1 || segments[0] != "archive" {
+		http.NotFound(w, request)
+		return
+	}
+	archiver, ok := s.backend.(agentexecution.WorkspaceArchiver)
+	if !ok {
+		writeRuntimeAgentError(w, http.StatusNotImplemented, "backend_unavailable", "workspace archive is unavailable")
+		return
+	}
+	switch request.Method {
+	case http.MethodGet:
+		archive, err := archiver.ExportWorkspace(request.Context(), agentexecution.Allocation{})
+		if err != nil {
+			s.writeResult(w, http.StatusOK, nil, err)
+			return
+		}
+		defer archive.Close()
+		w.Header().Set("Content-Type", "application/x-tar")
+		w.Header().Set("Trailer", "X-ZGI-Archive-Status")
+		w.WriteHeader(http.StatusOK)
+		if _, err := io.Copy(w, archive); err != nil {
+			w.Header().Set("X-ZGI-Archive-Status", "failed")
+			return
+		}
+		w.Header().Set("X-ZGI-Archive-Status", "complete")
+	case http.MethodPut:
+		const maximum = maxWorkspaceArchiveBytes + int64(maxWorkspaceEntries)*4096
+		limited := http.MaxBytesReader(w, request.Body, maximum)
+		defer limited.Close()
+		s.writeResult(w, http.StatusOK, struct{}{}, archiver.ImportWorkspace(request.Context(), agentexecution.Allocation{}, limited))
+	default:
+		writeRuntimeAgentMethodNotAllowed(w, http.MethodGet, http.MethodPut)
 	}
 }
 

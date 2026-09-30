@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 )
@@ -24,17 +25,21 @@ type CreateBindingRequest struct {
 }
 
 type ServiceOptions struct {
-	Now     func() time.Time
-	NewID   func(string) (string, error)
-	IdleTTL time.Duration
+	Now         func() time.Time
+	NewID       func(string) (string, error)
+	IdleTTL     time.Duration
+	Checkpoints WorkspaceCheckpointStore
+	Jobs        ActiveJobReader
 }
 
 type Service struct {
-	repository Repository
-	backends   map[string]Backend
-	now        func() time.Time
-	newID      func(string) (string, error)
-	idleTTL    time.Duration
+	repository  Repository
+	backends    map[string]Backend
+	now         func() time.Time
+	newID       func(string) (string, error)
+	idleTTL     time.Duration
+	checkpoints WorkspaceCheckpointStore
+	jobs        ActiveJobReader
 }
 
 func NewService(repository Repository, backends map[string]Backend, options ServiceOptions) (*Service, error) {
@@ -43,6 +48,9 @@ func NewService(repository Repository, backends map[string]Backend, options Serv
 	}
 	if len(backends) == 0 {
 		return nil, fmt.Errorf("%w: at least one backend is required", ErrInvalidRequest)
+	}
+	if options.Checkpoints != nil && options.Jobs == nil {
+		return nil, fmt.Errorf("%w: active job reader is required with workspace checkpoints", ErrInvalidRequest)
 	}
 	backendCopy := make(map[string]Backend, len(backends))
 	for name, backend := range backends {
@@ -62,11 +70,13 @@ func NewService(repository Repository, backends map[string]Backend, options Serv
 		options.IdleTTL = defaultIdleTTL
 	}
 	return &Service{
-		repository: repository,
-		backends:   backendCopy,
-		now:        options.Now,
-		newID:      options.NewID,
-		idleTTL:    options.IdleTTL,
+		repository:  repository,
+		backends:    backendCopy,
+		now:         options.Now,
+		newID:       options.NewID,
+		idleTTL:     options.IdleTTL,
+		checkpoints: options.Checkpoints,
+		jobs:        options.Jobs,
 	}, nil
 }
 
@@ -175,18 +185,39 @@ func (s *Service) SuspendBinding(ctx context.Context, scope Scope, bindingID str
 	if binding.Status != BindingStatusActive && binding.Status != BindingStatusSuspending {
 		return Binding{}, fmt.Errorf("%w: cannot suspend %s", ErrInvalidTransition, binding.Status)
 	}
+	if s.checkpoints == nil && (binding.CheckpointKey != "" || binding.PendingCheckpointKey != "") {
+		return Binding{}, fmt.Errorf("%w: workspace checkpoint storage is not configured", ErrBackendUnavailable)
+	}
 	previousGeneration := binding.Generation
 	binding.Status = BindingStatusSuspending
 	binding.Generation++
+	if s.checkpoints != nil && binding.PendingCheckpointKey == "" {
+		binding.PendingCheckpointKey = workspaceCheckpointKey(binding)
+	}
 	binding.UpdatedAt = s.now().UTC()
 	if err := s.repository.UpdateBinding(ctx, binding, previousGeneration); err != nil {
 		return Binding{}, err
 	}
 	allocation := Allocation{BindingRef: binding.BackendRef, WorkspaceRef: binding.WorkspaceRef}
+	previousCheckpointKey := binding.CheckpointKey
+	if s.checkpoints != nil {
+		if err := s.captureWorkspace(ctx, binding, backend, allocation); err != nil {
+			return Binding{}, fmt.Errorf("checkpoint workspace before suspension: %w", err)
+		}
+	}
 	if err := backend.SuspendBinding(ctx, allocation); err != nil {
 		return Binding{}, fmt.Errorf("suspend backend binding: %w", err)
 	}
+	if s.checkpoints != nil && previousCheckpointKey != "" && previousCheckpointKey != binding.PendingCheckpointKey {
+		if err := s.checkpoints.Delete(ctx, previousCheckpointKey); err != nil {
+			return Binding{}, fmt.Errorf("delete superseded workspace checkpoint: %w", err)
+		}
+	}
 	previousGeneration = binding.Generation
+	if s.checkpoints != nil {
+		binding.CheckpointKey = binding.PendingCheckpointKey
+		binding.PendingCheckpointKey = ""
+	}
 	binding.Status = BindingStatusSuspended
 	binding.Generation++
 	binding.UpdatedAt = s.now().UTC()
@@ -215,13 +246,17 @@ func (s *Service) ResumeBinding(ctx context.Context, scope Scope, bindingID stri
 		return Binding{}, err
 	}
 
-	allocation, err := backend.ResumeBinding(ctx, CreateSpec{
+	spec := CreateSpec{
 		BindingID: binding.ID, WorkspaceID: binding.WorkspaceID,
 		OrganizationID: binding.OrganizationID, SubjectID: binding.SubjectID,
 		ProfileID: binding.ProfileID, HomeSnapshotID: binding.HomeSnapshotID,
-	}, Allocation{
+	}
+	allocation, err := backend.ResumeBinding(ctx, spec, Allocation{
 		BindingRef: binding.BackendRef, WorkspaceRef: binding.WorkspaceRef,
 	})
+	if errors.Is(err, ErrNotFound) && s.checkpoints != nil && binding.CheckpointKey != "" {
+		allocation, err = s.rebuildWorkspace(ctx, binding, backend, spec)
+	}
 	if err != nil {
 		return Binding{}, fmt.Errorf("resume backend binding: %w", err)
 	}
@@ -249,6 +284,9 @@ func (s *Service) DestroyBinding(ctx context.Context, scope Scope, bindingID str
 	if binding.Status == BindingStatusDeleted {
 		return binding, nil
 	}
+	if s.checkpoints == nil && (binding.CheckpointKey != "" || binding.PendingCheckpointKey != "") {
+		return Binding{}, fmt.Errorf("%w: workspace checkpoint storage is not configured", ErrBackendUnavailable)
+	}
 	backend, ok := s.backends[binding.Backend]
 	if !ok {
 		return Binding{}, fmt.Errorf("%w: %s", ErrBackendUnavailable, binding.Backend)
@@ -267,6 +305,16 @@ func (s *Service) DestroyBinding(ctx context.Context, scope Scope, bindingID str
 	if err := backend.DestroyBinding(ctx, allocation); err != nil {
 		cleanupErr := s.enqueueDestroy(ctx, binding, allocation, err)
 		return Binding{}, errors.Join(fmt.Errorf("destroy backend binding: %w", err), cleanupErr)
+	}
+	if s.checkpoints != nil {
+		for _, key := range []string{binding.CheckpointKey, binding.PendingCheckpointKey} {
+			if key == "" {
+				continue
+			}
+			if err := s.checkpoints.Delete(ctx, key); err != nil {
+				return Binding{}, fmt.Errorf("delete workspace checkpoint: %w", err)
+			}
+		}
 	}
 	previousGeneration = binding.Generation
 	binding.Status = BindingStatusDeleted
@@ -292,6 +340,77 @@ func (s *Service) mutableBinding(ctx context.Context, scope Scope, bindingID str
 		return Binding{}, nil, fmt.Errorf("%w: %s", ErrBackendUnavailable, binding.Backend)
 	}
 	return binding, backend, nil
+}
+
+func (s *Service) captureWorkspace(ctx context.Context, binding Binding, backend Backend, allocation Allocation) error {
+	active, err := s.jobs.HasActiveJobs(ctx, binding.ID)
+	if err != nil {
+		return err
+	}
+	if active {
+		return fmt.Errorf("%w: active jobs must finish before a workspace checkpoint", ErrInvalidTransition)
+	}
+	key := binding.PendingCheckpointKey
+	existing, err := s.checkpoints.Open(ctx, key)
+	if err == nil {
+		_, verifyErr := io.Copy(io.Discard, existing)
+		return errors.Join(verifyErr, existing.Close())
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	archiver, ok := backend.(WorkspaceArchiver)
+	if !ok {
+		return ErrBackendUnavailable
+	}
+	archive, err := archiver.ExportWorkspace(ctx, allocation)
+	if err != nil {
+		return err
+	}
+	saveErr := s.checkpoints.Save(ctx, key, archive)
+	return errors.Join(saveErr, archive.Close())
+}
+
+func (s *Service) rebuildWorkspace(ctx context.Context, binding Binding, backend Backend, spec CreateSpec) (Allocation, error) {
+	archive, err := s.checkpoints.Open(ctx, binding.CheckpointKey)
+	if err != nil {
+		return Allocation{}, fmt.Errorf("open workspace checkpoint: %w", err)
+	}
+	archiver, ok := backend.(WorkspaceArchiver)
+	if !ok {
+		_ = archive.Close()
+		return Allocation{}, ErrBackendUnavailable
+	}
+	allocation, err := backend.CreateBinding(ctx, spec)
+	if err != nil {
+		_ = archive.Close()
+		if allocation.BindingRef != "" || allocation.WorkspaceRef != "" {
+			cleanupErr := s.enqueueDestroy(context.WithoutCancel(ctx), binding, allocation, err)
+			return allocation, errors.Join(fmt.Errorf("rebuild runtime environment: %w", err), cleanupErr)
+		}
+		return allocation, fmt.Errorf("rebuild runtime environment: %w", err)
+	}
+	importErr := archiver.ImportWorkspace(ctx, allocation, archive)
+	importErr = errors.Join(importErr, archive.Close())
+	if importErr != nil {
+		cleanupContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		cleanupErr := backend.DestroyBinding(cleanupContext, allocation)
+		cancel()
+		if cleanupErr != nil {
+			cleanupErr = errors.Join(cleanupErr, s.enqueueDestroy(context.WithoutCancel(ctx), binding, allocation, importErr))
+		}
+		return Allocation{}, errors.Join(fmt.Errorf("restore workspace checkpoint: %w", importErr), cleanupErr)
+	}
+	return allocation, nil
+}
+
+func workspaceCheckpointKey(binding Binding) string {
+	value := strings.Join([]string{
+		binding.OrganizationID, binding.SubjectID, binding.WorkspaceID,
+		fmt.Sprint(binding.Generation),
+	}, "\x00")
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
 }
 
 func (s *Service) enqueueDestroy(ctx context.Context, binding Binding, allocation Allocation, cause error) error {

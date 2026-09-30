@@ -95,7 +95,8 @@ func (s *DataPlaneService) SubmitJob(ctx context.Context, request SubmitJobReque
 	}
 	now := s.now().UTC()
 	job := Job{
-		ID: id, BindingID: binding.ID, OrganizationID: binding.OrganizationID, SubjectID: binding.SubjectID,
+		ID: id, BindingID: binding.ID, BindingGeneration: binding.Generation,
+		OrganizationID: binding.OrganizationID, SubjectID: binding.SubjectID,
 		Backend: binding.Backend, BackendRef: binding.BackendRef, WorkspaceRef: binding.WorkspaceRef,
 		IdempotencyKey: request.IdempotencyKey, RequestHash: jobRequestFingerprint(request),
 		Status: JobStatusQueued, Generation: 1, Command: request.Command,

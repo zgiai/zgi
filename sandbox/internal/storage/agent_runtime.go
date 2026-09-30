@@ -14,7 +14,7 @@ var _ agentruntime.Repository = (*Store)(nil)
 
 const agentRuntimeBindingColumns = `
 	id, organization_id, subject_id, agent_id, conversation_id, profile_id,
-	home_snapshot_id, workspace_id, backend, backend_ref, workspace_ref,
+	home_snapshot_id, workspace_id, backend, backend_ref, workspace_ref, checkpoint_key, pending_checkpoint_key,
 	idempotency_key, request_hash, status, generation, failure_reason,
 	created_at, updated_at, last_activity_at, expires_at`
 
@@ -22,14 +22,14 @@ func (s *Store) ReserveBinding(ctx context.Context, binding agentruntime.Binding
 	row := s.db.QueryRowContext(ctx, `
 		INSERT INTO agent_runtime_bindings (
 			id, organization_id, subject_id, agent_id, conversation_id, profile_id,
-			home_snapshot_id, workspace_id, backend, backend_ref, workspace_ref,
+			home_snapshot_id, workspace_id, backend, backend_ref, workspace_ref, checkpoint_key, pending_checkpoint_key,
 			idempotency_key, request_hash, status, generation, failure_reason,
 			created_at, updated_at, last_activity_at, expires_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6,
-			$7, $8, $9, $10, $11,
-			$12, $13, $14, $15, $16,
-			$17, $18, $19, $20
+			$7, $8, $9, $10, $11, $12, $13,
+			$14, $15, $16, $17, $18,
+			$19, $20, $21, $22
 		)
 		ON CONFLICT (organization_id, subject_id, idempotency_key) DO NOTHING
 		RETURNING `+agentRuntimeBindingColumns,
@@ -44,6 +44,8 @@ func (s *Store) ReserveBinding(ctx context.Context, binding agentruntime.Binding
 		binding.Backend,
 		binding.BackendRef,
 		binding.WorkspaceRef,
+		binding.CheckpointKey,
+		binding.PendingCheckpointKey,
 		binding.IdempotencyKey,
 		binding.RequestHash,
 		binding.Status,
@@ -138,17 +140,21 @@ func (s *Store) UpdateBinding(ctx context.Context, binding agentruntime.Binding,
 		UPDATE agent_runtime_bindings
 		SET backend_ref = $2,
 		    workspace_ref = $3,
-		    status = $4,
-		    generation = $5,
-		    failure_reason = $6,
-		    updated_at = $7,
-		    last_activity_at = $8,
-		    expires_at = $9
-		WHERE id = $1 AND generation = $10
+		    checkpoint_key = $4,
+		    pending_checkpoint_key = $5,
+		    status = $6,
+		    generation = $7,
+		    failure_reason = $8,
+		    updated_at = $9,
+		    last_activity_at = $10,
+		    expires_at = $11
+		WHERE id = $1 AND generation = $12
 	`,
 		binding.ID,
 		binding.BackendRef,
 		binding.WorkspaceRef,
+		binding.CheckpointKey,
+		binding.PendingCheckpointKey,
 		binding.Status,
 		binding.Generation,
 		binding.FailureReason,
@@ -222,6 +228,8 @@ func scanAgentRuntimeBinding(scanner rowScanner) (agentruntime.Binding, error) {
 		&binding.Backend,
 		&binding.BackendRef,
 		&binding.WorkspaceRef,
+		&binding.CheckpointKey,
+		&binding.PendingCheckpointKey,
 		&binding.IdempotencyKey,
 		&binding.RequestHash,
 		&binding.Status,

@@ -174,6 +174,14 @@ var schemaMigrations = []schemaMigration{
 			`ALTER TABLE agent_runtime_cleanup_tasks ADD COLUMN workspace_ref TEXT NOT NULL DEFAULT '';`,
 		},
 	},
+	{
+		version:     2026092905,
+		description: "agent runtime workspace checkpoint reference",
+		statements: []string{
+			`ALTER TABLE agent_runtime_bindings ADD COLUMN checkpoint_key TEXT NOT NULL DEFAULT '';`,
+			`ALTER TABLE agent_runtime_bindings ADD COLUMN pending_checkpoint_key TEXT NOT NULL DEFAULT '';`,
+		},
+	},
 }
 
 func (s *Store) applyMigrations(ctx context.Context) error {

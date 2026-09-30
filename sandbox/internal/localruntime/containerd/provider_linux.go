@@ -146,6 +146,13 @@ func (p *Provider) Resume(ctx context.Context, spec agentexecution.CreateSpec, a
 	if allocation.BindingRef != containerID(spec.BindingID) || allocation.WorkspaceRef != spec.WorkspaceID {
 		return agentexecution.Allocation{}, fmt.Errorf("%w: allocation does not match the binding", agentexecution.ErrInvalidRequest)
 	}
+	if info, err := os.Stat(p.workspaceDir(allocation.WorkspaceRef)); errors.Is(err, os.ErrNotExist) {
+		return agentexecution.Allocation{}, agentexecution.ErrNotFound
+	} else if err != nil {
+		return agentexecution.Allocation{}, err
+	} else if !info.IsDir() {
+		return agentexecution.Allocation{}, fmt.Errorf("%w: retained workspace is not a directory", agentexecution.ErrBackendUnavailable)
+	}
 	return p.launch(ctx, spec)
 }
 

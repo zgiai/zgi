@@ -69,6 +69,8 @@ func TestAgentRuntimeMigrationAndBindingRepository(t *testing.T) {
 	binding.Status = agentruntime.BindingStatusActive
 	binding.Generation = 2
 	binding.BackendRef = "backend-1"
+	binding.CheckpointKey = "checkpoint-reference"
+	binding.PendingCheckpointKey = "pending-checkpoint-reference"
 	if err := store.UpdateBinding(context.Background(), binding, 1); err != nil {
 		t.Fatalf("update binding: %v", err)
 	}
@@ -79,7 +81,7 @@ func TestAgentRuntimeMigrationAndBindingRepository(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load binding: %v", err)
 	}
-	if loaded.Status != agentruntime.BindingStatusActive || loaded.Generation != 2 {
+	if loaded.Status != agentruntime.BindingStatusActive || loaded.Generation != 2 || loaded.CheckpointKey != binding.CheckpointKey || loaded.PendingCheckpointKey != binding.PendingCheckpointKey {
 		t.Fatalf("loaded binding = %+v", loaded)
 	}
 	touchedAt := now.Add(time.Minute)
@@ -196,10 +198,14 @@ func TestAgentExecutionJobRepository(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 
 	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	insertActiveJobBinding(t, store, now)
 	job := testAgentExecutionJob(now, "job-1", "request-1")
 	created, wasCreated, err := store.CreateJob(context.Background(), job)
 	if err != nil || !wasCreated {
 		t.Fatalf("create job: created=%v error=%v", wasCreated, err)
+	}
+	if active, err := store.HasActiveJobs(context.Background(), job.BindingID); err != nil || !active {
+		t.Fatalf("queued job activity = %v, %v", active, err)
 	}
 	duplicate := job
 	duplicate.ID = "job-other"
@@ -269,16 +275,51 @@ func TestAgentExecutionJobRepository(t *testing.T) {
 	if _, err := store.CompleteJob(context.Background(), recovered.ID, "worker-recovery", agentruntime.JobResult{ExitCode: 0}, afterExpiry.Add(time.Second)); err != nil {
 		t.Fatalf("complete recovered job: %v", err)
 	}
+	if active, err := store.HasActiveJobs(context.Background(), job.BindingID); err != nil || active {
+		t.Fatalf("terminal job activity = %v, %v", active, err)
+	}
+	binding, err := store.Binding(context.Background(), job.BindingID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding.Status = agentruntime.BindingStatusSuspending
+	binding.Generation++
+	if err := store.UpdateBinding(context.Background(), binding, binding.Generation-1); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.CreateJob(context.Background(), testAgentExecutionJob(now, "job-3", "request-3")); !errors.Is(err, agentruntime.ErrGenerationConflict) {
+		t.Fatalf("job admitted after suspension = %v", err)
+	}
 }
 
 func testAgentExecutionJob(now time.Time, id string, idempotencyKey string) agentruntime.Job {
 	return agentruntime.Job{
-		ID: id, BindingID: "binding-1", OrganizationID: "org-1", SubjectID: "user-1",
+		ID: id, BindingID: "binding-1", BindingGeneration: 2,
+		OrganizationID: "org-1", SubjectID: "user-1",
 		Backend: "fake", BackendRef: "backend-1", WorkspaceRef: "workspace-1",
 		IdempotencyKey: idempotencyKey, RequestHash: "hash-" + id,
 		Status: agentruntime.JobStatusQueued, Generation: 1,
 		Command: "python3", Args: []string{"-c", "print('ok')"},
 		Environment: map[string]string{"LANG": "C.UTF-8"}, WorkDir: "workspace",
 		Timeout: time.Minute, CreatedAt: now, UpdatedAt: now,
+	}
+}
+
+func insertActiveJobBinding(t *testing.T, store *Store, now time.Time) {
+	t.Helper()
+	binding := agentruntime.Binding{
+		ID: "binding-1", OrganizationID: "org-1", SubjectID: "user-1",
+		AgentID: "agent-1", ConversationID: "conversation-1", ProfileID: "profile-1",
+		WorkspaceID: "workspace-1", Backend: "fake", IdempotencyKey: "binding-request-1",
+		RequestHash: "binding-hash", Status: agentruntime.BindingStatusAllocating,
+		Generation: 1, CreatedAt: now, UpdatedAt: now, LastActivityAt: now, ExpiresAt: now.Add(time.Hour),
+	}
+	if _, _, err := store.ReserveBinding(context.Background(), binding); err != nil {
+		t.Fatal(err)
+	}
+	binding.Status = agentruntime.BindingStatusActive
+	binding.Generation = 2
+	if err := store.UpdateBinding(context.Background(), binding, 1); err != nil {
+		t.Fatal(err)
 	}
 }
