@@ -241,14 +241,15 @@ func (s *Store) UpdateBinding(ctx context.Context, binding agentruntime.Binding,
 func (s *Store) EnqueueCleanup(ctx context.Context, task agentruntime.CleanupTask) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO agent_runtime_cleanup_tasks (
-			id, resource_type, resource_id, backend, backend_ref, workspace_ref, action,
+			id, resource_type, resource_id, binding_id, backend, backend_ref, workspace_ref, action,
 			status, attempts, last_error, not_before, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7,
-			$8, $9, $10, $11, $12, $13
+			$1, $2, $3, $4, $5, $6, $7, $8,
+			$9, $10, $11, $12, $13, $14
 		)
 		ON CONFLICT (resource_type, resource_id, action) DO UPDATE SET
 			backend = EXCLUDED.backend,
+			binding_id = EXCLUDED.binding_id,
 			backend_ref = EXCLUDED.backend_ref,
 			workspace_ref = EXCLUDED.workspace_ref,
 			status = 'pending',
@@ -259,6 +260,7 @@ func (s *Store) EnqueueCleanup(ctx context.Context, task agentruntime.CleanupTas
 		task.ID,
 		task.ResourceType,
 		task.ResourceID,
+		task.BindingID,
 		task.Backend,
 		task.BackendRef,
 		task.WorkspaceRef,

@@ -15,7 +15,7 @@ var (
 )
 
 const agentRuntimeCleanupColumns = `
-	id, resource_type, resource_id, backend, backend_ref, workspace_ref, action, status,
+	id, resource_type, resource_id, binding_id, backend, backend_ref, workspace_ref, action, status,
 	attempts, last_error, not_before, lease_owner, lease_expires_at,
 	created_at, updated_at`
 
@@ -143,6 +143,7 @@ func scanAgentRuntimeCleanup(scanner rowScanner) (agentruntime.CleanupTask, erro
 		&task.ID,
 		&task.ResourceType,
 		&task.ResourceID,
+		&task.BindingID,
 		&task.Backend,
 		&task.BackendRef,
 		&task.WorkspaceRef,

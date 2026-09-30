@@ -158,7 +158,7 @@ func TestAgentRuntimeLeaseAndCleanupClaims(t *testing.T) {
 	}
 
 	cleanup := agentruntime.CleanupTask{
-		ID: "cleanup-1", ResourceType: "binding", ResourceID: "binding-1", Backend: "fake",
+		ID: "cleanup-1", ResourceType: "binding", ResourceID: "binding-1", BindingID: "binding-1", Backend: "fake",
 		BackendRef: "backend-1", WorkspaceRef: "workspace-1", Action: "destroy", Status: "pending", NotBefore: now,
 		CreatedAt: now, UpdatedAt: now,
 	}
@@ -169,7 +169,7 @@ func TestAgentRuntimeLeaseAndCleanupClaims(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("claim cleanup: ok=%v error=%v", ok, err)
 	}
-	if claimed.Attempts != 1 || claimed.LeaseOwner != "worker-1" || claimed.WorkspaceRef != "workspace-1" {
+	if claimed.Attempts != 1 || claimed.LeaseOwner != "worker-1" || claimed.WorkspaceRef != "workspace-1" || claimed.BindingID != "binding-1" {
 		t.Fatalf("claimed cleanup = %+v", claimed)
 	}
 	if _, ok, err := store.ClaimCleanup(context.Background(), "worker-2", now, now.Add(time.Minute)); err != nil || ok {

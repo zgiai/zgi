@@ -65,6 +65,60 @@ func (c *controlClient) create(ctx context.Context, request createSandboxRequest
 	return c.validateConnection(result)
 }
 
+func (c *controlClient) listByAttempt(ctx context.Context, attemptID string) ([]string, error) {
+	var ids []string
+	var nextToken string
+	seen := make(map[string]struct{})
+	for page := 0; page < 10; page++ {
+		metadata := url.Values{"zgi.attempt_id": {attemptID}}.Encode()
+		query := url.Values{"metadata": {metadata}, "limit": {"100"}}
+		if nextToken != "" {
+			query.Set("nextToken", nextToken)
+		}
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.apiURL+"/v2/sandboxes?"+query.Encode(), nil)
+		if err != nil {
+			return nil, err
+		}
+		request.Header.Set("X-API-KEY", c.apiKey)
+		request.Header.Set("Accept", "application/json")
+		response, err := c.httpClient.Do(request)
+		if err != nil {
+			return nil, fmt.Errorf("%w: list E2B allocation attempts", agentexecution.ErrBackendUnavailable)
+		}
+		if response.StatusCode != http.StatusOK {
+			_ = response.Body.Close()
+			return nil, providerStatusError(response.StatusCode)
+		}
+		var listed []struct {
+			SandboxID string            `json:"sandboxID"`
+			Metadata  map[string]string `json:"metadata"`
+		}
+		decodeErr := decodeLimitedJSON(response.Body, &listed)
+		next := strings.TrimSpace(response.Header.Get("X-Next-Token"))
+		closeErr := response.Body.Close()
+		if err := errors.Join(decodeErr, closeErr); err != nil {
+			return nil, fmt.Errorf("%w: decode E2B allocation list: %v", agentexecution.ErrBackendUnavailable, err)
+		}
+		for _, item := range listed {
+			if item.Metadata["zgi.attempt_id"] != attemptID || strings.TrimSpace(item.SandboxID) == "" {
+				return nil, fmt.Errorf("%w: E2B allocation list did not match the attempt", agentexecution.ErrBackendUnavailable)
+			}
+			if _, duplicate := seen[item.SandboxID]; !duplicate {
+				seen[item.SandboxID] = struct{}{}
+				ids = append(ids, item.SandboxID)
+			}
+		}
+		if next == "" {
+			return ids, nil
+		}
+		if next == nextToken {
+			return nil, fmt.Errorf("%w: E2B allocation pagination did not advance", agentexecution.ErrBackendUnavailable)
+		}
+		nextToken = next
+	}
+	return nil, fmt.Errorf("%w: E2B allocation list exceeds page limit", agentexecution.ErrBackendUnavailable)
+}
+
 func (c *controlClient) connect(ctx context.Context, sandboxID string, timeoutSeconds int) (sandboxConnection, error) {
 	var result sandboxConnection
 	requestPath := "/v2/sandboxes/" + url.PathEscape(sandboxID) + "/connect"

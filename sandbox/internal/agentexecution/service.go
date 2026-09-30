@@ -14,6 +14,7 @@ import (
 
 const defaultIdleTTL = 30 * time.Minute
 const defaultRetentionTTL = 7 * 24 * time.Hour
+const allocationAttemptGrace = 2 * time.Hour
 
 type CreateBindingRequest struct {
 	Scope          Scope
@@ -130,13 +131,20 @@ func (s *Service) CreateBinding(ctx context.Context, request CreateBindingReques
 		return binding, nil
 	}
 
-	allocation, err := backend.CreateBinding(ctx, CreateSpec{
-		BindingID:      binding.ID,
-		WorkspaceID:    binding.WorkspaceID,
-		OrganizationID: binding.OrganizationID,
-		SubjectID:      binding.SubjectID,
-		ProfileID:      binding.ProfileID,
-		HomeSnapshotID: binding.HomeSnapshotID,
+	attemptID, err := s.scheduleAllocationCheck(ctx, binding, backend)
+	if err != nil {
+		return Binding{}, err
+	}
+	createContext, cancelCreate := context.WithTimeout(ctx, 90*time.Minute)
+	defer cancelCreate()
+	allocation, err := backend.CreateBinding(createContext, CreateSpec{
+		BindingID:           binding.ID,
+		AllocationAttemptID: attemptID,
+		WorkspaceID:         binding.WorkspaceID,
+		OrganizationID:      binding.OrganizationID,
+		SubjectID:           binding.SubjectID,
+		ProfileID:           binding.ProfileID,
+		HomeSnapshotID:      binding.HomeSnapshotID,
 	})
 	if err != nil {
 		cleanupErr := s.enqueueDestroy(ctx, binding, allocation, err)
@@ -255,7 +263,14 @@ func (s *Service) ResumeBinding(ctx context.Context, scope Scope, bindingID stri
 		BindingRef: binding.BackendRef, WorkspaceRef: binding.WorkspaceRef,
 	})
 	if errors.Is(err, ErrNotFound) && s.checkpoints != nil && binding.CheckpointKey != "" {
-		allocation, err = s.rebuildWorkspace(ctx, binding, backend, spec)
+		var attemptID string
+		attemptID, err = s.scheduleAllocationCheck(ctx, binding, backend)
+		if err == nil {
+			spec.AllocationAttemptID = attemptID
+			rebuildContext, cancelRebuild := context.WithTimeout(ctx, 90*time.Minute)
+			allocation, err = s.rebuildWorkspace(rebuildContext, binding, backend, spec)
+			cancelRebuild()
+		}
 	}
 	if err != nil {
 		return Binding{}, fmt.Errorf("resume backend binding: %w", err)
@@ -426,6 +441,7 @@ func (s *Service) enqueueDestroy(ctx context.Context, binding Binding, allocatio
 		ID:           cleanupID,
 		ResourceType: "binding",
 		ResourceID:   binding.ID,
+		BindingID:    binding.ID,
 		Backend:      binding.Backend,
 		BackendRef:   allocation.BindingRef,
 		WorkspaceRef: allocation.WorkspaceRef,
@@ -440,6 +456,26 @@ func (s *Service) enqueueDestroy(ctx context.Context, binding Binding, allocatio
 		return fmt.Errorf("enqueue agent runtime cleanup: %w", err)
 	}
 	return nil
+}
+
+func (s *Service) scheduleAllocationCheck(ctx context.Context, binding Binding, backend Backend) (string, error) {
+	if _, discoverable := backend.(AllocationDiscoverer); !discoverable {
+		return "", nil
+	}
+	attemptID, err := s.newID("ara")
+	if err != nil {
+		return "", fmt.Errorf("create allocation attempt id: %w", err)
+	}
+	now := s.now().UTC()
+	if err := s.repository.EnqueueCleanup(ctx, CleanupTask{
+		ID: attemptID, ResourceType: "allocation_attempt", ResourceID: attemptID,
+		BindingID: binding.ID, Backend: binding.Backend, Action: "reconcile",
+		Status: "pending", NotBefore: now.Add(allocationAttemptGrace),
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		return "", fmt.Errorf("record allocation attempt before provider creation: %w", err)
+	}
+	return attemptID, nil
 }
 
 func normalizeCreateRequest(request CreateBindingRequest) CreateBindingRequest {

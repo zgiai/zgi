@@ -54,9 +54,10 @@ type Backend struct {
 }
 
 var (
-	_ agentexecution.Backend           = (*Backend)(nil)
-	_ agentexecution.ExecutionBackend  = (*Backend)(nil)
-	_ agentexecution.WorkspaceArchiver = (*Backend)(nil)
+	_ agentexecution.Backend              = (*Backend)(nil)
+	_ agentexecution.ExecutionBackend     = (*Backend)(nil)
+	_ agentexecution.WorkspaceArchiver    = (*Backend)(nil)
+	_ agentexecution.AllocationDiscoverer = (*Backend)(nil)
 )
 
 func New(options Options) (*Backend, error) {
@@ -127,12 +128,16 @@ func (b *Backend) CreateBinding(ctx context.Context, spec agentexecution.CreateS
 	if err != nil {
 		return agentexecution.Allocation{}, fmt.Errorf("create Runtime Agent token: %w", err)
 	}
+	metadata := map[string]string{
+		"zgi.binding_id": spec.BindingID,
+		"zgi.profile_id": spec.ProfileID,
+	}
+	if spec.AllocationAttemptID != "" {
+		metadata["zgi.attempt_id"] = spec.AllocationAttemptID
+	}
 	connection, err := b.client.create(ctx, createSandboxRequest{
 		TemplateID: profile.TemplateID,
-		Metadata: map[string]string{
-			"zgi.binding_id": spec.BindingID,
-			"zgi.profile_id": spec.ProfileID,
-		},
+		Metadata:   metadata,
 		Environment: map[string]string{
 			agentTokenEnvironment:            token,
 			"ZGI_RUNTIME_AGENT_LISTEN":       fmt.Sprintf("tcp://0.0.0.0:%d", b.agentPort),
@@ -161,6 +166,21 @@ func (b *Backend) CreateBinding(ctx context.Context, spec agentexecution.CreateS
 		return agentexecution.Allocation{}, fmt.Errorf("start E2B Runtime Agent: %w", err)
 	}
 	return allocation, nil
+}
+
+func (b *Backend) FindAllocations(ctx context.Context, attemptID string) ([]agentexecution.Allocation, error) {
+	if strings.TrimSpace(attemptID) == "" {
+		return nil, agentexecution.ErrInvalidRequest
+	}
+	ids, err := b.client.listByAttempt(ctx, attemptID)
+	if err != nil {
+		return nil, err
+	}
+	allocations := make([]agentexecution.Allocation, 0, len(ids))
+	for _, id := range ids {
+		allocations = append(allocations, allocationFor(id))
+	}
+	return allocations, nil
 }
 
 func (b *Backend) SuspendBinding(ctx context.Context, allocation agentexecution.Allocation) error {

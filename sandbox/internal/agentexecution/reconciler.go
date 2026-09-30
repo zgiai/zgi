@@ -78,6 +78,9 @@ func (r *Reconciler) ReconcileOne(ctx context.Context) (bool, error) {
 		finishedAt := r.now().UTC()
 		return true, r.repository.CompleteCleanup(ctx, task.ID, r.ownerID, true, "", finishedAt, finishedAt)
 	}
+	if task.ResourceType == "allocation_attempt" && task.Action == "reconcile" {
+		return true, r.reconcileAllocationAttempt(ctx, task)
+	}
 	backend, ok := r.backends[task.Backend]
 	if !ok {
 		err := fmt.Errorf("%w: %s", ErrBackendUnavailable, task.Backend)
@@ -98,6 +101,36 @@ func (r *Reconciler) ReconcileOne(ctx context.Context) (bool, error) {
 		return true, err
 	}
 	return true, nil
+}
+
+func (r *Reconciler) reconcileAllocationAttempt(ctx context.Context, task CleanupTask) error {
+	backend, ok := r.backends[task.Backend]
+	if !ok {
+		return r.retryCleanup(ctx, task, ErrBackendUnavailable)
+	}
+	discoverer, ok := backend.(AllocationDiscoverer)
+	if !ok || task.BindingID == "" {
+		return r.retryCleanup(ctx, task, ErrInvalidRequest)
+	}
+	allocations, err := discoverer.FindAllocations(ctx, task.ResourceID)
+	if err != nil {
+		return r.retryCleanup(ctx, task, err)
+	}
+	binding, err := r.repository.Binding(ctx, task.BindingID)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return r.retryCleanup(ctx, task, err)
+	}
+	for _, allocation := range allocations {
+		if err == nil && binding.Backend == task.Backend && binding.BackendRef == allocation.BindingRef &&
+			binding.Status != BindingStatusDeleted && binding.Status != BindingStatusDeleting && binding.Status != BindingStatusFailed {
+			continue
+		}
+		if destroyErr := backend.DestroyBinding(ctx, allocation); destroyErr != nil {
+			return r.retryCleanup(ctx, task, destroyErr)
+		}
+	}
+	finishedAt := r.now().UTC()
+	return r.repository.CompleteCleanup(ctx, task.ID, r.ownerID, true, "", finishedAt, finishedAt)
 }
 
 func (r *Reconciler) recordCleanedBinding(ctx context.Context, task CleanupTask, now time.Time) error {

@@ -72,6 +72,7 @@ type CleanupTask struct {
 	ID             string
 	ResourceType   string
 	ResourceID     string
+	BindingID      string
 	Backend        string
 	BackendRef     string
 	WorkspaceRef   string
@@ -237,12 +238,20 @@ type Allocation struct {
 }
 
 type CreateSpec struct {
-	BindingID      string
-	WorkspaceID    string
-	OrganizationID string
-	SubjectID      string
-	ProfileID      string
-	HomeSnapshotID string
+	BindingID           string
+	AllocationAttemptID string
+	WorkspaceID         string
+	OrganizationID      string
+	SubjectID           string
+	ProfileID           string
+	HomeSnapshotID      string
+}
+
+// AllocationDiscoverer lets a backend locate compute created before the
+// control-plane database could record the provider's opaque allocation ID.
+// Discovery must include paused allocations and may return multiple matches.
+type AllocationDiscoverer interface {
+	FindAllocations(context.Context, string) ([]Allocation, error)
 }
 
 // Backend is intentionally narrow and is owned by the control-plane caller.

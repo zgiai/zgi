@@ -192,6 +192,13 @@ var schemaMigrations = []schemaMigration{
 			`CREATE INDEX idx_agent_runtime_bindings_retention ON agent_runtime_bindings (retention_expires_at, id) WHERE status IN ('suspended', 'deleting');`,
 		},
 	},
+	{
+		version:     2026093002,
+		description: "agent runtime allocation attempt cleanup ownership",
+		statements: []string{
+			`ALTER TABLE agent_runtime_cleanup_tasks ADD COLUMN binding_id TEXT NOT NULL DEFAULT '';`,
+		},
+	},
 }
 
 func (s *Store) applyMigrations(ctx context.Context) error {

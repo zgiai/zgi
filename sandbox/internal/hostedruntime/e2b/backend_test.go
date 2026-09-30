@@ -144,6 +144,40 @@ func TestBackendUsesSecuredOfflineE2BContract(t *testing.T) {
 	}
 }
 
+func TestDiscoverAllocationAttemptIncludesPausedSandboxes(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/v2/sandboxes" || request.Header.Get("X-API-KEY") != "provider-secret" {
+			http.Error(writer, "unexpected control request", http.StatusBadRequest)
+			return
+		}
+		if request.URL.Query().Get("metadata") != "zgi.attempt_id=ara-test" {
+			http.Error(writer, "unfiltered allocation list", http.StatusBadRequest)
+			return
+		}
+		requests++
+		if requests == 1 {
+			writer.Header().Set("X-Next-Token", "next")
+			writeJSON(writer, http.StatusOK, []map[string]any{{"sandboxID": "paused-1", "state": "paused", "metadata": map[string]string{"zgi.attempt_id": "ara-test"}}})
+			return
+		}
+		if request.URL.Query().Get("nextToken") != "next" {
+			http.Error(writer, "wrong pagination token", http.StatusBadRequest)
+			return
+		}
+		writeJSON(writer, http.StatusOK, []map[string]any{{"sandboxID": "running-2", "state": "running", "metadata": map[string]string{"zgi.attempt_id": "ara-test"}}})
+	}))
+	defer server.Close()
+	backend, err := New(Options{APIURL: server.URL, APIKey: "provider-secret", Profiles: map[string]Profile{"standard": {TemplateID: "template"}}, HTTPClient: server.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	allocations, err := backend.FindAllocations(context.Background(), "ara-test")
+	if err != nil || len(allocations) != 2 || allocations[0].BindingRef != "paused-1" || allocations[1].BindingRef != "running-2" {
+		t.Fatalf("allocations = %+v, %v", allocations, err)
+	}
+}
+
 func TestBackendClassifiesProviderLimitsWithoutReturningBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.WriteHeader(http.StatusTooManyRequests)

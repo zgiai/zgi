@@ -70,6 +70,8 @@ Run local-gVisor and E2B workers as separate service instances with distinct Wor
 
 The optional checkpoint settings described in `agent-runtime-local.md` also apply to E2B Workers. If a paused E2B Sandbox has disappeared, the Worker can create a replacement from the same approved Profile and restore the last committed workspace archive before activating the Binding. The approved E2B template must contain the Runtime Agent archive endpoint from this version; an older template fails closed on checkpoint transfer. The local checkpoint directory is a persistent Worker volume; the alternative S3-compatible store permits cross-Worker archive access. Neither mode alone guarantees M5 seven-day retention.
 
+The Worker records a delayed allocation-reconciliation task before creating an E2B Sandbox. An opaque Sandbox ID lost in a Worker crash can be rediscovered through the per-attempt metadata on running or paused Sandboxes; the reconciler deletes unrecorded allocations while preserving the one referenced by the current Binding. The task runs after a two-hour grace period, beyond the 90-minute maximum create/restore operation. This bounds orphan cleanup but is not a substitute for the still-required real-provider crash-injection acceptance.
+
 The archive endpoint appends a version marker and SHA-256 digest to its response body. The Worker removes and verifies that footer before saving the TAR. HTTP trailers are not used for completion because the E2B traffic proxy does not preserve them. Rebuild both the Worker and approved template together when changing this internal archive protocol; a mismatched version fails closed.
 
 ## Real-account gate
