@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	appconfig "github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/infra/platform/consolecred"
 )
 
 func TestQueryConsoleSettlementUsesAttemptAndOrganization(t *testing.T) {
@@ -98,5 +99,83 @@ func TestWaitForConsoleSettlementReturnsFailedFinalImmediately(t *testing.T) {
 	}
 	if !got.Found || got.SettlementStatus != "FAILED_FINAL" || got.Retryable {
 		t.Fatalf("response = %+v", got)
+	}
+}
+
+// The settlement query is an official-channel call: with an instance credential loaded
+// it must carry the per-instance headers on top of the shared secret, like every other
+// Pre -> Console call.
+func TestQueryConsoleSettlementSignsWithInstanceCredential(t *testing.T) {
+	prev := appconfig.GlobalConfig
+	t.Cleanup(func() { appconfig.GlobalConfig = prev; consolecred.Global().Clear() })
+	appconfig.GlobalConfig = &appconfig.Config{Console: appconfig.ConsoleConfig{InternalAPIKey: "shared-secret"}}
+	consolecred.Global().Clear()
+	consolecred.Configure("instance-42", "instance-secret")
+
+	var got http.Header
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		gotPath = r.URL.Path
+		_, _ = w.Write([]byte(`{"found":false}`))
+	}))
+	defer server.Close()
+
+	if _, err := queryConsoleSettlement(context.Background(), server.URL+"/settlements", "org-1", "attempt-1"); err != nil {
+		t.Fatal(err)
+	}
+	if got.Get("X-ZGI-Internal-Secret") != "shared-secret" {
+		t.Fatalf("shared secret must stay in place, got %q", got.Get("X-ZGI-Internal-Secret"))
+	}
+	if got.Get("X-Internal-Instance-Id") != "instance-42" {
+		t.Fatalf("X-Internal-Instance-Id = %q", got.Get("X-Internal-Instance-Id"))
+	}
+	nonce, ts, sig := got.Get("X-Internal-Nonce"), got.Get("X-Internal-Timestamp"), got.Get("X-Internal-Signature")
+	if nonce == "" || ts == "" || sig == "" {
+		t.Fatalf("missing instance headers: nonce=%q ts=%q sig=%q", nonce, ts, sig)
+	}
+	if want := consolecred.Sign("instance-secret", nonce, ts, http.MethodGet, gotPath, consolecred.BodyDigest(nil)); sig != want {
+		t.Fatalf("signature does not cover method/path/empty body")
+	}
+}
+
+// Without a loaded credential, or while the link is stale, the request is exactly what
+// it was before: the shared secret only.
+func TestQueryConsoleSettlementUnsignedWithoutUsableCredential(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func()
+	}{
+		{"not configured", func() { consolecred.Global().Clear() }},
+		{"link stale", func() {
+			consolecred.Global().Clear()
+			consolecred.Configure("instance-42", "instance-secret")
+			consolecred.Global().SetStale(true)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prev := appconfig.GlobalConfig
+			t.Cleanup(func() { appconfig.GlobalConfig = prev; consolecred.Global().Clear() })
+			appconfig.GlobalConfig = &appconfig.Config{Console: appconfig.ConsoleConfig{InternalAPIKey: "shared-secret"}}
+			tc.setup()
+
+			var got http.Header
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				got = r.Header.Clone()
+				_, _ = w.Write([]byte(`{"found":false}`))
+			}))
+			defer server.Close()
+			if _, err := queryConsoleSettlement(context.Background(), server.URL+"/settlements", "org-1", "attempt-1"); err != nil {
+				t.Fatal(err)
+			}
+			if got.Get("X-ZGI-Internal-Secret") != "shared-secret" {
+				t.Fatalf("shared secret = %q", got.Get("X-ZGI-Internal-Secret"))
+			}
+			for _, h := range []string{"X-Internal-Instance-Id", "X-Internal-Timestamp", "X-Internal-Signature", "X-Internal-Nonce"} {
+				if got.Get(h) != "" {
+					t.Fatalf("%s must not be sent, got %q", h, got.Get(h))
+				}
+			}
+		})
 	}
 }

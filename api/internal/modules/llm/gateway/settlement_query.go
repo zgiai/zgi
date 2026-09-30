@@ -11,6 +11,7 @@ import (
 	"time"
 
 	appconfig "github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/infra/platform/consolecred"
 )
 
 type settlementQueryResponse struct {
@@ -134,6 +135,9 @@ func queryConsoleSettlement(ctx context.Context, base, organizationID, attemptID
 	if secret != "" {
 		req.Header.Set("X-ZGI-Internal-Secret", secret)
 	}
+	// MERGE-NOTE(codex-video-image-rollback): per-instance credential on top of the
+	// legacy shared secret, like every other Pre -> Console call. Merge: keep this line.
+	consolecred.SignRequest(req)
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
