@@ -50,7 +50,7 @@ func startProcess(parent context.Context, workDir string, spec agentexecution.Jo
 	}
 	cmd.WaitDelay = time.Second
 
-	var readers sync.WaitGroup
+	var ptyOutputDone chan struct{}
 	if spec.PTY {
 		terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: spec.PTYColumns, Rows: spec.PTYRows})
 		if err != nil {
@@ -58,9 +58,9 @@ func startProcess(parent context.Context, workDir string, spec agentexecution.Jo
 			return nil, fmt.Errorf("start PTY job: %w", err)
 		}
 		process.pty = terminal
-		readers.Add(1)
+		ptyOutputDone = make(chan struct{})
 		go func() {
-			defer readers.Done()
+			defer close(ptyOutputDone)
 			pumpOutput(terminal, agentexecution.OutputStreamStdout, sink)
 		}()
 	} else {
@@ -79,11 +79,18 @@ func startProcess(parent context.Context, workDir string, spec agentexecution.Jo
 		process.ptyMu.Lock()
 		terminal := process.pty
 		process.pty = nil
+		process.ptyMu.Unlock()
 		if terminal != nil {
+			select {
+			case <-ptyOutputDone:
+			case <-time.After(time.Second):
+				// A descendant can hold the slave side open after cmd.Wait.
+				// Bound the drain, then unblock the reader by closing the master.
+				_ = terminal.Close()
+				<-ptyOutputDone
+			}
 			_ = terminal.Close()
 		}
-		process.ptyMu.Unlock()
-		readers.Wait()
 		result := processResult(waitErr, contextErr, process.canceled.Load())
 		process.mu.Lock()
 		process.result = result
