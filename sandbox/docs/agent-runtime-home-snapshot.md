@@ -12,7 +12,7 @@ The local runtime binds a fresh workspace over `/workspace` and uses a read-only
 
 ## Register and approve
 
-Insert one record into the Worker's PostgreSQL `agent_runtime_home_snapshots` table using an operator account. Use an organization-wide record (`subject_id = ''`) and a new ID for every artifact version. Required values are `id`, `organization_id`, `profile_id`, `backend` (`local-gvisor` or `e2b`), `backend_ref`, `status = 'approved'`, `generation = 1`, and timestamps. Once approved, database triggers prohibit changing its organization, profile, backend, or artifact reference. Do not reuse an ID for a rebuild.
+Insert one record into the Worker's PostgreSQL `agent_runtime_home_snapshots` table using an operator account. Use an organization-wide record (`subject_id = ''`) and a new ID for every artifact version. Required values are `id`, `organization_id`, `profile_id`, `backend` (`local-gvisor` or `e2b`), `backend_ref`, `status = 'approved'`, `generation = 1`, and timestamps. Once approved, database triggers prohibit changing its organization, profile, backend, or artifact reference. The database also refuses a new Binding with an unavailable or cross-organization template and refuses deletion while a live Binding references it. Published Agent versions live in the API database, so operators must additionally check those references before retiring a template. Do not reuse an ID for a rebuild.
 
 The API also needs an operator-owned publication allowlist, for example:
 

@@ -34,6 +34,14 @@ func TestAgentRuntimeMigrationAndBindingRepository(t *testing.T) {
 	}
 
 	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	if _, err := store.db.ExecContext(context.Background(), `
+		INSERT INTO agent_runtime_home_snapshots (
+			id, organization_id, subject_id, profile_id, backend, backend_ref,
+			status, generation, created_at, updated_at
+		) VALUES ('prepared', 'org-1', '', 'profile-1', 'fake', 'approved-ref-v1', 'approved', 1, $1, $1)
+	`, now); err != nil {
+		t.Fatal(err)
+	}
 	binding := agentruntime.Binding{
 		ID:                 "binding-1",
 		OrganizationID:     "org-1",
@@ -148,6 +156,36 @@ func TestApprovedHomeSnapshotArtifactIsImmutable(t *testing.T) {
 	}
 	if _, err := store.db.ExecContext(context.Background(), `UPDATE agent_runtime_home_snapshots SET backend_ref = 'different' WHERE id = 'prepared'`); err == nil {
 		t.Fatal("approved template artifact changed")
+	}
+	base := agentruntime.Binding{
+		ID: "template-binding", OrganizationID: "org-1", SubjectID: "user-1",
+		AgentID: "agent-1", ConversationID: "conversation-1", ProfileID: "standard",
+		HomeSnapshotID: "prepared", WorkspaceID: "workspace-1", Backend: "local-gvisor",
+		IdempotencyKey: "template-request", RequestHash: "hash-1",
+		Status: agentruntime.BindingStatusActive, Generation: 1,
+		CreatedAt: now, UpdatedAt: now, LastActivityAt: now,
+		ExpiresAt: now.Add(30 * time.Minute), RetentionExpiresAt: now.Add(7 * 24 * time.Hour),
+	}
+	wrongOrganization := base
+	wrongOrganization.ID = "wrong-org-binding"
+	wrongOrganization.OrganizationID = "other-org"
+	wrongOrganization.IdempotencyKey = "wrong-org-request"
+	if _, _, err := store.ReserveBinding(context.Background(), wrongOrganization); err == nil {
+		t.Fatal("cross-organization template reference was accepted")
+	}
+	if _, _, err := store.ReserveBinding(context.Background(), base); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(context.Background(), `DELETE FROM agent_runtime_home_snapshots WHERE id = 'prepared'`); err == nil {
+		t.Fatal("template referenced by an active binding was deleted")
+	}
+	base.Status = agentruntime.BindingStatusDeleted
+	base.Generation++
+	if err := store.UpdateBinding(context.Background(), base, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(context.Background(), `DELETE FROM agent_runtime_home_snapshots WHERE id = 'prepared'`); err != nil {
+		t.Fatalf("retired template delete: %v", err)
 	}
 	if _, err := store.HomeSnapshot(context.Background(), "missing"); !errors.Is(err, agentruntime.ErrNotFound) {
 		t.Fatalf("missing template = %v", err)

@@ -230,6 +230,50 @@ var schemaMigrations = []schemaMigration{
 			`ALTER TABLE agent_runtime_cleanup_tasks ADD COLUMN binding_generation BIGINT NOT NULL DEFAULT 0;`,
 		},
 	},
+	{
+		version:     2026093005,
+		description: "retain home templates referenced by live bindings",
+		statements: []string{
+			`CREATE INDEX idx_agent_runtime_bindings_home_snapshot_live
+			ON agent_runtime_bindings (home_snapshot_id)
+			WHERE home_snapshot_id <> '' AND status NOT IN ('deleted', 'failed');`,
+			`CREATE FUNCTION validate_home_snapshot_binding_reference() RETURNS trigger AS $$
+			BEGIN
+				IF NEW.home_snapshot_id <> '' THEN
+					PERFORM 1 FROM agent_runtime_home_snapshots
+					WHERE id = NEW.home_snapshot_id
+					  AND organization_id = NEW.organization_id
+					  AND subject_id = ''
+					  AND profile_id = NEW.profile_id
+					  AND backend = NEW.backend
+					  AND status = 'approved'
+					FOR KEY SHARE;
+					IF NOT FOUND THEN
+						RAISE EXCEPTION 'binding references an unavailable home snapshot';
+					END IF;
+				END IF;
+				RETURN NEW;
+			END;
+			$$ LANGUAGE plpgsql;`,
+			`CREATE TRIGGER trg_validate_home_snapshot_binding_reference
+			BEFORE INSERT OR UPDATE OF home_snapshot_id ON agent_runtime_bindings
+			FOR EACH ROW EXECUTE FUNCTION validate_home_snapshot_binding_reference();`,
+			`CREATE FUNCTION prevent_referenced_home_snapshot_delete() RETURNS trigger AS $$
+			BEGIN
+				IF EXISTS (
+					SELECT 1 FROM agent_runtime_bindings
+					WHERE home_snapshot_id = OLD.id AND status NOT IN ('deleted', 'failed')
+				) THEN
+					RAISE EXCEPTION 'home snapshot is still referenced by a live binding';
+				END IF;
+				RETURN OLD;
+			END;
+			$$ LANGUAGE plpgsql;`,
+			`CREATE TRIGGER trg_referenced_home_snapshot_delete
+			BEFORE DELETE ON agent_runtime_home_snapshots
+			FOR EACH ROW EXECUTE FUNCTION prevent_referenced_home_snapshot_delete();`,
+		},
+	},
 }
 
 func (s *Store) applyMigrations(ctx context.Context) error {
