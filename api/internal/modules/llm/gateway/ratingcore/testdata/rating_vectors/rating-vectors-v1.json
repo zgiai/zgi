@@ -2,6 +2,9 @@
   "$schema": "zgi.rating.vectors/1",
   "version": 1,
   "status": "frozen",
+  "amendments": [
+    "2026-09-30: appended V024a-V028 (report M2 video audio/input_video/duration dimensions, M6 realtime text+audio sum and text/audio cache-read split). Existing vectors are unchanged."
+  ],
   "points_per_usd": 1000,
   "milli_points_per_usd": 1000000,
   "comparison_rules": {
@@ -1043,6 +1046,304 @@
         "usd": "0.005",
         "points_mp": 5000,
         "total_points": "5",
+        "error": null
+      }
+    },
+    {
+      "id": "V024a-video-audio-priced",
+      "description": "同分辨率有声视频 10 秒 @ 0.4 USD/秒（M2）",
+      "tags": [
+        "video",
+        "second",
+        "M2"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "video_generation": {
+          "rates": [
+            {
+              "id": "video-rate-0",
+              "resolution": "720p",
+              "audio": false,
+              "price_per_second": 0.1
+            },
+            {
+              "id": "video-rate-1",
+              "resolution": "720p",
+              "audio": true,
+              "price_per_second": 0.4
+            }
+          ]
+        }
+      },
+      "usage": {
+        "operation": "video_generation",
+        "meter": "output_video_second",
+        "base_unit": "second",
+        "quantity": 10,
+        "dimensions": {
+          "resolution": "720p",
+          "audio": true
+        }
+      },
+      "expected": {
+        "usd": "4",
+        "points_mp": 4000000,
+        "total_points": "4000",
+        "error": null
+      }
+    },
+    {
+      "id": "V024b-video-silent-priced",
+      "description": "同分辨率无声视频 10 秒 @ 0.1 USD/秒（M2）",
+      "tags": [
+        "video",
+        "second",
+        "M2"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "video_generation": {
+          "rates": [
+            {
+              "id": "video-rate-0",
+              "resolution": "720p",
+              "audio": false,
+              "price_per_second": 0.1
+            },
+            {
+              "id": "video-rate-1",
+              "resolution": "720p",
+              "audio": true,
+              "price_per_second": 0.4
+            }
+          ]
+        }
+      },
+      "usage": {
+        "operation": "video_generation",
+        "meter": "output_video_second",
+        "base_unit": "second",
+        "quantity": 10,
+        "dimensions": {
+          "resolution": "720p",
+          "audio": false
+        }
+      },
+      "expected": {
+        "usd": "1",
+        "points_mp": 1000000,
+        "total_points": "1000",
+        "error": null
+      }
+    },
+    {
+      "id": "V025-video-input-video-priced",
+      "description": "带输入视频 5 秒 @ 1 USD/秒，无输入视频费率为 2（M2）",
+      "tags": [
+        "video",
+        "second",
+        "M2"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "video_generation": {
+          "rates": [
+            {
+              "id": "video-rate-0",
+              "input_video": false,
+              "price_per_second": 2
+            },
+            {
+              "id": "video-rate-1",
+              "input_video": true,
+              "price_per_second": 1
+            }
+          ]
+        }
+      },
+      "usage": {
+        "operation": "video_generation",
+        "meter": "output_video_second",
+        "base_unit": "second",
+        "quantity": 5,
+        "dimensions": {
+          "input_video": true
+        }
+      },
+      "expected": {
+        "usd": "5",
+        "points_mp": 5000000,
+        "total_points": "5000",
+        "error": null
+      }
+    },
+    {
+      "id": "V026-video-duration-mismatch",
+      "description": "费率声明 8 秒，请求 10 秒，必须 fail-closed（M2）",
+      "tags": [
+        "video",
+        "second",
+        "M2"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "video_generation": {
+          "rates": [
+            {
+              "id": "video-rate-0",
+              "duration_seconds": 8,
+              "price_per_second": 1
+            }
+          ]
+        }
+      },
+      "usage": {
+        "operation": "video_generation",
+        "meter": "output_video_second",
+        "base_unit": "second",
+        "quantity": 10,
+        "dimensions": {
+          "duration_seconds": 10
+        }
+      },
+      "expected": {
+        "usd": null,
+        "points_mp": null,
+        "total_points": null,
+        "error": {
+          "code": "billing.model.pricing_not_configured",
+          "http": 402,
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "V027-realtime-text-plus-audio",
+      "description": "realtime 音频 1M/1M @ 32/64 + 文本 1M/1M @ 4/16 求和（M6）",
+      "tags": [
+        "realtime_audio",
+        "M6"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "rules": [
+          {
+            "id": "realtime_audio-input_token",
+            "operation": "realtime_audio",
+            "meter": "input_token",
+            "unit": "per_1m_tokens",
+            "price": "32",
+            "configured": true
+          },
+          {
+            "id": "realtime_audio-output_token",
+            "operation": "realtime_audio",
+            "meter": "output_token",
+            "unit": "per_1m_tokens",
+            "price": "64",
+            "configured": true
+          },
+          {
+            "id": "chat-input_token",
+            "operation": "chat",
+            "meter": "input_token",
+            "unit": "per_1m_tokens",
+            "price": "4",
+            "configured": true
+          },
+          {
+            "id": "chat-output_token",
+            "operation": "chat",
+            "meter": "output_token",
+            "unit": "per_1m_tokens",
+            "price": "16",
+            "configured": true
+          }
+        ]
+      },
+      "usage": {
+        "operation": "realtime_audio",
+        "audio_input_tokens": 1000000,
+        "audio_output_tokens": 1000000,
+        "text_input_tokens": 1000000,
+        "text_output_tokens": 1000000
+      },
+      "expected": {
+        "usd": "116",
+        "points_mp": 116000000,
+        "total_points": "116000",
+        "error": null
+      }
+    },
+    {
+      "id": "V028-realtime-cache-read-split",
+      "description": "realtime 音频缓存读 1M @ 0.4 + 文本缓存读 2M @ 0.1（M6）",
+      "tags": [
+        "realtime_audio",
+        "cache",
+        "M6"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "rules": [
+          {
+            "id": "realtime_audio-cache_read_token",
+            "operation": "realtime_audio",
+            "meter": "cache_read_token",
+            "unit": "per_1m_tokens",
+            "price": "0.4",
+            "configured": true
+          },
+          {
+            "id": "chat-cache_read_token",
+            "operation": "chat",
+            "meter": "cache_read_token",
+            "unit": "per_1m_tokens",
+            "price": "0.1",
+            "configured": true
+          }
+        ]
+      },
+      "usage": {
+        "operation": "realtime_audio",
+        "cache_read_tokens": 1000000,
+        "text_cache_read_tokens": 2000000
+      },
+      "expected": {
+        "usd": "0.6",
+        "points_mp": 600000,
+        "total_points": "600",
         "error": null
       }
     }

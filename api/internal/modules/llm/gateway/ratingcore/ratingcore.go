@@ -28,9 +28,15 @@ type ImageTokenPricing struct {
 // VideoRate is one rate row. Exactly one price field applies to the selected
 // base unit; the others stay nil.
 type VideoRate struct {
-	ID                    string           `json:"id"`
-	ModelTier             string           `json:"model_tier"`
-	Resolution            string           `json:"resolution"`
+	ID         string `json:"id"`
+	ModelTier  string `json:"model_tier"`
+	Resolution string `json:"resolution"`
+	// Audio, InputVideo and DurationSeconds are optional rate dimensions. A nil
+	// value means the rate does not constrain that dimension. They mirror
+	// modelmeta.videoGenerationRateScore so Console and Pre pick the same rate.
+	Audio                 *bool            `json:"audio,omitempty"`
+	InputVideo            *bool            `json:"input_video,omitempty"`
+	DurationSeconds       *decimal.Decimal `json:"duration_seconds,omitempty"`
 	PricePerSecond        *decimal.Decimal `json:"price_per_second"`
 	PricePerTask          *decimal.Decimal `json:"price_per_task"`
 	PricePerMillionTokens *decimal.Decimal `json:"price_per_million_tokens"`
@@ -85,6 +91,12 @@ type Pricing struct {
 type Dimensions struct {
 	Resolution string `json:"resolution"`
 	ModelTier  string `json:"model_tier"`
+	// Audio and InputVideo are the request facts; nil is read as false, like an
+	// omitted flag on the request. DurationSeconds nil/0 means "not stated" and
+	// matches any rate duration.
+	Audio           *bool            `json:"audio,omitempty"`
+	InputVideo      *bool            `json:"input_video,omitempty"`
+	DurationSeconds *decimal.Decimal `json:"duration_seconds,omitempty"`
 }
 
 // Usage is one request's metered quantities.
@@ -105,6 +117,13 @@ type Usage struct {
 
 	TextInputTokens  int64 `json:"text_input_tokens"`
 	InputImageTokens int64 `json:"input_image_tokens"`
+	// TextOutputTokens is the text share of a realtime_audio session's output;
+	// it is priced on the chat/output_token rule beside the audio output.
+	TextOutputTokens int64 `json:"text_output_tokens"`
+	// TextCacheReadTokens is the text share of a realtime_audio session's cache
+	// reads, priced on chat/cache_read_token. CacheReadTokens stays the audio
+	// share there and is priced on realtime_audio/cache_read_token.
+	TextCacheReadTokens int64 `json:"text_cache_read_tokens"`
 
 	Quantity   int64      `json:"quantity"`
 	Dimensions Dimensions `json:"dimensions"`
@@ -260,11 +279,16 @@ func hasNegativeUsage(usage Usage) bool {
 	return usage.InputTokens < 0 || usage.OutputTokens < 0 || usage.CacheReadTokens < 0 ||
 		usage.CacheWriteTokens < 0 || usage.CacheWrite5m < 0 || usage.CacheWrite1h < 0 ||
 		usage.AudioInputTokens < 0 || usage.AudioOutputTokens < 0 ||
-		usage.TextInputTokens < 0 || usage.InputImageTokens < 0 || usage.Quantity < 0
+		usage.TextInputTokens < 0 || usage.InputImageTokens < 0 || usage.TextOutputTokens < 0 || usage.TextCacheReadTokens < 0 || usage.Quantity < 0
 }
 
 // resolveTokenMeters sums every active token meter. realtime_audio prefers
 // audio_tokens and falls back to prompt/completion tokens on the same rules.
+type meterQuantity struct {
+	meter string
+	value int64
+}
+
 func resolveTokenMeters(pricing Pricing, usage Usage) (decimal.Decimal, error) {
 	inputTokens := usage.InputTokens
 	outputTokens := usage.OutputTokens
@@ -277,10 +301,6 @@ func resolveTokenMeters(pricing Pricing, usage Usage) (decimal.Decimal, error) {
 		}
 	}
 
-	type meterQuantity struct {
-		meter string
-		value int64
-	}
 	candidates := []meterQuantity{
 		{meter: "input_token", value: inputTokens},
 		{meter: "output_token", value: outputTokens},
@@ -308,6 +328,27 @@ func resolveTokenMeters(pricing Pricing, usage Usage) (decimal.Decimal, error) {
 		}
 		total = total.Add(price.Mul(decimal.NewFromInt(candidate.value)).Div(decimalMillion))
 		active++
+	}
+	if usage.Operation == "realtime_audio" {
+		// A realtime session bills its text tokens on the chat rules and its audio
+		// tokens on the realtime_audio rules; the two add up, the audio price
+		// never replaces the text one (report M6).
+		textParts := []meterQuantity{
+			{meter: "input_token", value: usage.TextInputTokens},
+			{meter: "output_token", value: usage.TextOutputTokens},
+			{meter: "cache_read_token", value: usage.TextCacheReadTokens},
+		}
+		for _, part := range textParts {
+			if part.value == 0 || (usage.Meter != "" && usage.Meter != part.meter) {
+				continue
+			}
+			price, ok := findRulePrice(pricing.Rules, "chat", part.meter, "per_1m_tokens")
+			if !ok {
+				return decimal.Zero, pricingError("pricing is not configured for chat/" + part.meter + " (realtime text tokens)")
+			}
+			total = total.Add(price.Mul(decimal.NewFromInt(part.value)).Div(decimalMillion))
+			active++
+		}
 	}
 	if active == 0 {
 		// Explicit single-meter usage must still be a registered combination.
@@ -411,10 +452,23 @@ func resolveVideo(pricing Pricing, usage Usage) (decimal.Decimal, error) {
 	}
 }
 
+// Video rate scoring weights. Resolution and model_tier keep their historical
+// equal weight; the newer dimensions rank below them in the same order as
+// modelmeta.videoGenerationRateScore (input_video > audio > duration).
+const (
+	videoScoreResolution = 16
+	videoScoreModelTier  = 16
+	videoScoreInputVideo = 4
+	videoScoreAudio      = 2
+	videoScoreDuration   = 1
+)
+
 // selectVideoRate picks the most specific rate that does not conflict with a
 // requested dimension. A rate row with an empty dimension is generic; the
 // request's empty dimension matches any rate. This keeps a row declared as
 // model_tier="720p" selectable by a request that only carries resolution=720p.
+// Audio, input_video and duration are exact-match filters when the rate
+// declares them, so a silent and an audio request never share one price.
 func selectVideoRate(rates []VideoRate, dimensions Dimensions) (VideoRate, bool) {
 	best := -1
 	bestScore := -1
@@ -427,10 +481,29 @@ func selectVideoRate(rates []VideoRate, dimensions Dimensions) (VideoRate, bool)
 		}
 		score := 0
 		if rate.Resolution != "" && dimensions.Resolution != "" && rate.Resolution == dimensions.Resolution {
-			score++
+			score += videoScoreResolution
 		}
 		if rate.ModelTier != "" && dimensions.ModelTier != "" && rate.ModelTier == dimensions.ModelTier {
-			score++
+			score += videoScoreModelTier
+		}
+		if rate.InputVideo != nil {
+			if *rate.InputVideo != boolValue(dimensions.InputVideo) {
+				continue
+			}
+			score += videoScoreInputVideo
+		}
+		if rate.Audio != nil {
+			if *rate.Audio != boolValue(dimensions.Audio) {
+				continue
+			}
+			score += videoScoreAudio
+		}
+		if rate.DurationSeconds != nil {
+			if dimensions.DurationSeconds != nil && dimensions.DurationSeconds.IsPositive() &&
+				!rate.DurationSeconds.Equal(*dimensions.DurationSeconds) {
+				continue
+			}
+			score += videoScoreDuration
 		}
 		if score > bestScore {
 			best = index
@@ -441,6 +514,10 @@ func selectVideoRate(rates []VideoRate, dimensions Dimensions) (VideoRate, bool)
 		return VideoRate{}, false
 	}
 	return rates[best], true
+}
+
+func boolValue(value *bool) bool {
+	return value != nil && *value
 }
 
 func resolveMetered(pricing Pricing, usage Usage) (decimal.Decimal, error) {
