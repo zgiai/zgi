@@ -364,12 +364,14 @@ func (s *Service) DestroyBinding(ctx context.Context, scope Scope, bindingID str
 	if generation != binding.Generation {
 		return Binding{}, ErrGenerationConflict
 	}
-	previousGeneration := binding.Generation
-	binding.Status = BindingStatusDeleting
-	binding.Generation++
-	binding.UpdatedAt = s.now().UTC()
-	if err := s.repository.UpdateBinding(ctx, binding, previousGeneration); err != nil {
-		return Binding{}, err
+	if binding.Status != BindingStatusDeleting {
+		previousGeneration := binding.Generation
+		binding.Status = BindingStatusDeleting
+		binding.Generation++
+		binding.UpdatedAt = s.now().UTC()
+		if err := s.repository.UpdateBinding(ctx, binding, previousGeneration); err != nil {
+			return Binding{}, err
+		}
 	}
 	allocation := Allocation{BindingRef: binding.BackendRef, WorkspaceRef: binding.WorkspaceRef}
 	if err := backend.DestroyBinding(ctx, allocation); err != nil {
@@ -386,13 +388,19 @@ func (s *Service) DestroyBinding(ctx context.Context, scope Scope, bindingID str
 			}
 		}
 	}
-	previousGeneration = binding.Generation
+	previousGeneration := binding.Generation
 	binding.Status = BindingStatusDeleted
 	binding.CheckpointKey = ""
 	binding.PendingCheckpointKey = ""
 	binding.Generation++
 	binding.UpdatedAt = s.now().UTC()
 	if err := s.repository.UpdateBinding(ctx, binding, previousGeneration); err != nil {
+		if errors.Is(err, ErrGenerationConflict) {
+			current, readErr := s.GetBinding(ctx, scope, binding.ID)
+			if readErr == nil && current.Status == BindingStatusDeleted {
+				return current, nil
+			}
+		}
 		cleanupErr := s.enqueueDestroy(ctx, binding, allocation, err)
 		return Binding{}, errors.Join(fmt.Errorf("record deleted binding: %w", err), cleanupErr)
 	}

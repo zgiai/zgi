@@ -207,6 +207,74 @@ func TestDestroyBindingIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestDestroyBindingReturnsConcurrentCompletedDeletion(t *testing.T) {
+	repository := newMemoryRepository()
+	backend := &fakeBackend{}
+	service := newTestService(t, repository, backend)
+	binding, err := service.CreateBinding(context.Background(), testCreateRequest())
+	if err != nil {
+		t.Fatalf("create binding: %v", err)
+	}
+	backend.destroyHook = func() {
+		repository.mu.Lock()
+		defer repository.mu.Unlock()
+		current := repository.bindings[binding.ID]
+		current.Status = BindingStatusDeleted
+		current.Generation++
+		repository.bindings[binding.ID] = current
+	}
+	deleted, err := service.DestroyBinding(context.Background(), testCreateRequest().Scope, binding.ID, binding.Generation)
+	if err != nil || deleted.Status != BindingStatusDeleted {
+		t.Fatalf("concurrent completed deletion = %+v, %v", deleted, err)
+	}
+	if len(repository.cleanups) != 0 {
+		t.Fatalf("unexpected cleanup tasks = %+v", repository.cleanups)
+	}
+}
+
+func TestDestroyBindingRetryDoesNotAdvanceDeletingGenerationTwice(t *testing.T) {
+	repository := newMemoryRepository()
+	service := newTestService(t, repository, &fakeBackend{})
+	binding, err := service.CreateBinding(context.Background(), testCreateRequest())
+	if err != nil {
+		t.Fatalf("create binding: %v", err)
+	}
+	repository.mu.Lock()
+	current := repository.bindings[binding.ID]
+	current.Status = BindingStatusDeleting
+	current.Generation++
+	repository.bindings[binding.ID] = current
+	repository.mu.Unlock()
+	deleted, err := service.DestroyBinding(context.Background(), testCreateRequest().Scope, binding.ID, current.Generation)
+	if err != nil || deleted.Status != BindingStatusDeleted || deleted.Generation != current.Generation+1 {
+		t.Fatalf("retried deletion = %+v, %v; want deleted generation %d", deleted, err, current.Generation+1)
+	}
+}
+
+func TestDestroyBindingPreservesUnfinishedDeletionConflict(t *testing.T) {
+	repository := newMemoryRepository()
+	backend := &fakeBackend{}
+	service := newTestService(t, repository, backend)
+	binding, err := service.CreateBinding(context.Background(), testCreateRequest())
+	if err != nil {
+		t.Fatalf("create binding: %v", err)
+	}
+	backend.destroyHook = func() {
+		repository.mu.Lock()
+		defer repository.mu.Unlock()
+		current := repository.bindings[binding.ID]
+		current.Generation++
+		repository.bindings[binding.ID] = current
+	}
+	_, err = service.DestroyBinding(context.Background(), testCreateRequest().Scope, binding.ID, binding.Generation)
+	if !errors.Is(err, ErrGenerationConflict) {
+		t.Fatalf("unfinished concurrent deletion error = %v, want generation conflict", err)
+	}
+	if len(repository.cleanups) != 1 {
+		t.Fatalf("cleanup tasks = %+v, want one retry", repository.cleanups)
+	}
+}
+
 func TestConcurrentCreateAllocatesOnce(t *testing.T) {
 	repository := newMemoryRepository()
 	backend := &fakeBackend{}
@@ -284,6 +352,7 @@ type fakeBackend struct {
 	destroyed    Allocation
 	createErr    error
 	destroyErr   error
+	destroyHook  func()
 }
 
 func (b *fakeBackend) CreateBinding(_ context.Context, spec CreateSpec) (Allocation, error) {
@@ -313,6 +382,9 @@ func (b *fakeBackend) DestroyBinding(_ context.Context, allocation Allocation) e
 	defer b.mu.Unlock()
 	b.destroyCalls++
 	b.destroyed = allocation
+	if b.destroyHook != nil {
+		b.destroyHook()
+	}
 	return b.destroyErr
 }
 
