@@ -120,6 +120,25 @@ func TestFileStoreRejectsUnsafeKeysAndIncompleteSource(t *testing.T) {
 	}
 }
 
+func TestFileStoreSecuresCheckpointDirectory(t *testing.T) {
+	directory := t.TempDir()
+	if err := os.Chmod(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewFileStore(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	info, err := os.Stat(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		t.Fatalf("checkpoint directory mode = %v", info.Mode())
+	}
+}
+
 type errorReader struct{}
 
 func (errorReader) Read([]byte) (int, error) { return 0, errors.New("source failed") }

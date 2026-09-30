@@ -45,6 +45,13 @@ func NewFileStore(directory string) (*FileStore, error) {
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return nil, fmt.Errorf("%w: checkpoint directory must be a real directory", agentexecution.ErrInvalidRequest)
 	}
+	if err := os.Chmod(directory, 0o700); err != nil {
+		return nil, fmt.Errorf("secure checkpoint directory: %w", err)
+	}
+	info, err = os.Lstat(directory)
+	if err != nil || info.Mode().Perm()&0o077 != 0 {
+		return nil, fmt.Errorf("%w: checkpoint directory is not private", agentexecution.ErrInvalidRequest)
+	}
 	root, err := os.OpenRoot(directory)
 	if err != nil {
 		return nil, err
