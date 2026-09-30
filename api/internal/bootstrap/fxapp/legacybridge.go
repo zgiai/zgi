@@ -11,6 +11,8 @@ import (
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 	workspacerepo "github.com/zgiai/zgi/api/internal/modules/workspace/repository"
 	"github.com/zgiai/zgi/api/internal/util"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"github.com/zgiai/zgi/api/pkg/email"
 	"github.com/zgiai/zgi/api/pkg/jwt"
 	"github.com/zgiai/zgi/api/pkg/queue"
@@ -72,7 +74,12 @@ func provideServiceContainer(
 	_ *redis.Client,
 	_ legacyGlobalsReady,
 	platformContainer *platform.Container,
+	productCatalog *appcatalog.Catalog,
 ) (*container.ServiceContainer, error) {
+	projector, err := apptransport.NewProjector(productCatalog)
+	if err != nil {
+		return nil, err
+	}
 	tokenManager := util.NewTokenManager()
 
 	workspaceRepo := workspacerepo.NewWorkspaceRepository(db)
@@ -85,6 +92,7 @@ func provideServiceContainer(
 		workspaceRepo,
 		workspaceMemberRepo,
 		platformContainer,
+		projector,
 	)
 	serviceContainer.InitializeDependencies()
 

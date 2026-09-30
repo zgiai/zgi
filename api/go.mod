@@ -13,6 +13,7 @@ require (
 	github.com/aws/aws-sdk-go v1.55.6
 	github.com/disintegration/imaging v1.6.2
 	github.com/emersion/go-imap v1.2.1
+	github.com/emersion/go-imap-id v0.0.0-20190926060100-f94a56b9ecde
 	github.com/emersion/go-message v0.18.2
 	github.com/extrame/xls v0.0.1
 	github.com/flosch/pongo2/v6 v6.0.0

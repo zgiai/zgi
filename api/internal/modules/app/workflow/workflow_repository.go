@@ -42,6 +42,25 @@ type workflowRepository struct {
 	db *gorm.DB
 }
 
+// DB exposes the repository database only to workflow-domain collaborators
+// that must keep the graph row and its derived binding index in one transaction.
+// It is intentionally not part of WorkflowRepository so existing test doubles
+// and read-only repository implementations remain source-compatible.
+func (r *workflowRepository) DB() *gorm.DB {
+	if r == nil {
+		return nil
+	}
+	return r.db
+}
+
+// WithTx returns a workflow repository scoped to the caller's transaction.
+func (r *workflowRepository) WithTx(tx *gorm.DB) WorkflowRepository {
+	if tx == nil {
+		return r
+	}
+	return &workflowRepository{db: tx}
+}
+
 // NewWorkflowRepository creates a new WorkflowRepository instance
 func NewWorkflowRepository(db *gorm.DB) WorkflowRepository {
 	return &workflowRepository{
@@ -69,7 +88,26 @@ func (r *workflowRepository) GetByID(ctx context.Context, id string) (*Workflow,
 
 // Update updates an existing workflow
 func (r *workflowRepository) Update(ctx context.Context, workflow *Workflow) error {
-	return r.db.WithContext(ctx).Save(workflow).Error
+	if workflow == nil || workflow.ID == "" {
+		return fmt.Errorf("workflow identity is required")
+	}
+	// Save falls back to INSERT when its UPDATE matches no row. That behavior is
+	// unsafe for a stale save racing with Workflow deletion because it can
+	// recreate the deleted graph. Keep updates strict so the caller's enclosing
+	// graph/binding transaction rolls back when the Workflow no longer exists.
+	result := r.db.WithContext(ctx).
+		Model(&Workflow{}).
+		Where("id = ?", workflow.ID).
+		Select("*").
+		Omit("id").
+		Updates(workflow)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return fmt.Errorf("workflow not found")
+	}
+	return nil
 }
 
 // Delete deletes a workflow by ID
@@ -583,6 +621,21 @@ func NewWorkflowRunLogRepository(db *gorm.DB) WorkflowRunLogRepository {
 
 // Create creates a new workflow run log
 func (r *workflowRunLogRepository) Create(ctx context.Context, log *WorkflowRunLog) error {
+	if log.Features != nil && *log.Features != "" {
+		var features map[string]json.RawMessage
+		if json.Unmarshal([]byte(*log.Features), &features) != nil || features == nil {
+			return fmt.Errorf("invalid workflow run features")
+		}
+		if _, exists := features["connector_action_instances"]; exists {
+			delete(features, "connector_action_instances")
+			encoded, err := json.Marshal(features)
+			if err != nil {
+				return err
+			}
+			value := string(encoded)
+			log.Features = &value
+		}
+	}
 	return r.db.WithContext(ctx).Create(log).Error
 }
 
@@ -615,7 +668,28 @@ func (r *workflowRunLogRepository) GetByParentInvocationID(ctx context.Context, 
 
 // Update updates an existing workflow run log
 func (r *workflowRunLogRepository) Update(ctx context.Context, log *WorkflowRunLog) error {
-	return r.db.WithContext(ctx).Save(log).Error
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&WorkflowRunLog{}).Where("id = ?", log.ID).Select("*").Omit("id", "features").Updates(log)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		if log.Features == nil {
+			return nil
+		}
+		features := *log.Features
+		if features == "" {
+			features = "{}"
+		}
+		// Run status snapshots may predate a committed Connector action.
+		// Preserve the durable action ledger when saving ordinary features.
+		if tx.Dialector.Name() == "postgres" {
+			return tx.Model(&WorkflowRunLog{}).Where("id = ?", log.ID).UpdateColumn("features", gorm.Expr("((?::jsonb - 'connector_action_instances') || CASE WHEN jsonb_exists(NULLIF(features, '')::jsonb, 'connector_action_instances') THEN jsonb_build_object('connector_action_instances', features::jsonb->'connector_action_instances') ELSE '{}'::jsonb END)::text", features)).Error
+		}
+		return tx.Model(&WorkflowRunLog{}).Where("id = ?", log.ID).UpdateColumn("features", gorm.Expr("json_patch(json_remove(?, '$.connector_action_instances'), CASE WHEN json_type(features, '$.connector_action_instances') IS NOT NULL THEN json_object('connector_action_instances', json_extract(features, '$.connector_action_instances')) ELSE '{}' END)", features)).Error
+	})
 }
 
 // Delete soft deletes a workflow run log by ID

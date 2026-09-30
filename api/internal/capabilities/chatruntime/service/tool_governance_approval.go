@@ -364,7 +364,7 @@ func toolGovernanceDecisionResponse(
 		ApprovalStatus:     approvalStatus,
 		RememberForSession: rememberForSession,
 		SessionGrant:       sessionGrant,
-		Event:              publicExternalActionPayload(copyStringAnyMap(event)),
+		Event:              publicToolPayload(copyStringAnyMap(event)),
 	}
 }
 
@@ -990,6 +990,8 @@ func toolGovernanceSessionGrantKey(grant map[string]interface{}) string {
 		strings.TrimSpace(firstNonEmptyString(grant["skill_id"], grant["skillId"])),
 		strings.TrimSpace(firstNonEmptyString(grant["provider_type"], grant["providerType"])),
 		strings.TrimSpace(firstNonEmptyString(grant["provider_id"], grant["providerId"])),
+		strings.TrimSpace(firstNonEmptyString(grant["connection_id"], grant["connectionId"])),
+		strings.TrimSpace(firstNonEmptyString(grant["binding_id"], grant["bindingId"])),
 		strings.TrimSpace(stringFromAny(grant["tool_id"])),
 		strings.TrimSpace(stringFromAny(grant["effect"])),
 		strings.TrimSpace(stringFromAny(grant["asset_type"])),

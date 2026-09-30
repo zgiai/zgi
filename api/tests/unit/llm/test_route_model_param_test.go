@@ -163,7 +163,7 @@ func (m *mockChannelValidator) ValidateModels(ctx context.Context, organizationI
 	return args.Get(0).(*channelprovider.ValidationResult), args.Error(1)
 }
 
-func (m *mockChannelValidator) TestModel(ctx context.Context, organizationID uuid.UUID, channelProvider, apiKey, apiBaseURL, modelName, testMethod string) (*channelprovider.TestResult, error) {
+func (m *mockChannelValidator) TestModel(ctx context.Context, organizationID uuid.UUID, channelProvider, apiKey, apiBaseURL, modelName, testMethod string, _ *bool) (*channelprovider.TestResult, error) {
 	args := m.Called(ctx, organizationID, channelProvider, apiKey, apiBaseURL, modelName, testMethod)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)

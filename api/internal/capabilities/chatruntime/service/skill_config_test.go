@@ -1118,7 +1118,6 @@ func TestSkillRuntimeParametersUseCapabilityConfig(t *testing.T) {
 		WorkflowBindings:          []AgentWorkflowBinding{{BindingID: "approval-flow", AgentID: "agent-1", WorkflowID: "workflow-1"}},
 		WorkflowBoundByAccountID:  "workflow-binder",
 		WorkflowBoundAtUnix:       789,
-		IntegrationConnectionIDs:  map[string]string{"web-search": "connection-1"},
 	})
 
 	if params["organization_id"] != organizationID.String() || params["workspace_id"] != workspaceID.String() {
@@ -1139,8 +1138,8 @@ func TestSkillRuntimeParametersUseCapabilityConfig(t *testing.T) {
 	if bindings, ok := params["workflow_bindings"].([]AgentWorkflowBinding); !ok || len(bindings) != 1 || bindings[0].BindingID != "approval-flow" {
 		t.Fatalf("workflow bindings param = %#v", params["workflow_bindings"])
 	}
-	if connectionIDs, ok := params["integration_connection_ids"].(map[string]string); !ok || connectionIDs["web-search"] != "connection-1" {
-		t.Fatalf("integration connection ids param = %#v", params["integration_connection_ids"])
+	if _, exists := params["integration_connection_ids"]; exists {
+		t.Fatal("retired connection preferences leaked into runtime parameters")
 	}
 }
 
@@ -1150,7 +1149,7 @@ func TestSkillRuntimeParametersPreservePerBindingAuthorizationEvidence(t *testin
 		BindingAuthorizations: []ResourceBindingAuthorization{
 			{BindingType: "knowledge_dataset", ResourceID: "dataset-old", AccessMode: "read", BoundByAccountID: "binder-old", BoundAtUnix: 100},
 			{BindingType: "knowledge_dataset", ResourceID: "dataset-new", AccessMode: "read", BoundByAccountID: "binder-new", BoundAtUnix: 200},
-			{BindingType: "integration_connection", ResourceID: "connection-1", ParentResourceID: "web-search", AccessMode: "read", AllowedActionIDs: []string{"web.search"}, BoundByAccountID: "binder-new", BoundAtUnix: 200},
+			{BindingType: "integration_connection", ResourceID: "connection-1", ParentResourceID: "web-search", AccessMode: "read", BoundByAccountID: "binder-new", BoundAtUnix: 200},
 		},
 	})
 
@@ -1158,11 +1157,8 @@ func TestSkillRuntimeParametersPreservePerBindingAuthorizationEvidence(t *testin
 		t.Fatalf("knowledge_binding_grant = %#v, want true", params["knowledge_binding_grant"])
 	}
 	authorizations, ok := params["agent_binding_authorizations"].([]ResourceBindingAuthorization)
-	if !ok || len(authorizations) != 3 {
-		t.Fatalf("agent_binding_authorizations = %#v, want three entries", params["agent_binding_authorizations"])
-	}
-	if len(authorizations[2].AllowedActionIDs) != 1 || authorizations[2].AllowedActionIDs[0] != "web.search" {
-		t.Fatalf("integration authorization allowlist = %#v", authorizations[2].AllowedActionIDs)
+	if !ok || len(authorizations) != 2 {
+		t.Fatalf("agent_binding_authorizations = %#v, want two ordinary-resource entries", params["agent_binding_authorizations"])
 	}
 	if _, exists := params["knowledge_bound_by_account_id"]; exists {
 		t.Fatalf("mixed per-binding grants must not synthesize one category actor: %#v", params)

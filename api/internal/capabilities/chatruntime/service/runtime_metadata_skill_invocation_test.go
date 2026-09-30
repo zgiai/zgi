@@ -9,6 +9,34 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
+func TestMergeSkillTraceMetadataRedactsConnectorNativeArgumentsAcrossTimeline(t *testing.T) {
+	const sentinel = "private-provider-input-sentinel"
+
+	metadata := mergeSkillTraceMetadata(nil, []skills.SkillTrace{{
+		Kind: "tool_call", SkillID: skills.SkillConnectorRuntime, ToolName: "search_provider",
+		Status: "pending_confirmation", ConnectorNative: true,
+		Arguments: map[string]interface{}{
+			"query":  sentinel,
+			"nested": map[string]interface{}{"private": sentinel},
+		},
+	}})
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), sentinel) {
+		t.Fatalf("Connector provider input leaked into message metadata: %s", encoded)
+	}
+	invocations := skillInvocationsFromMetadata(metadata["skill_invocations"])
+	if len(invocations) != 1 {
+		t.Fatalf("skill_invocations = %#v, want one", invocations)
+	}
+	arguments := mapFromOperationContext(invocations[0]["arguments"])
+	if arguments["schema_bound_arguments_redacted"] != true || intValueFromAny(arguments["argument_count"]) != 2 {
+		t.Fatalf("persisted Connector arguments = %#v", arguments)
+	}
+}
+
 func TestMergeSkillTraceMetadataStoresTurnStateOutsideVisibleInvocations(t *testing.T) {
 	metadata := mergeSkillTraceMetadata(nil, []skills.SkillTrace{{
 		Kind:   "turn_state",

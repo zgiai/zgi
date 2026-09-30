@@ -27,16 +27,17 @@ func TestUseCaseEnum(t *testing.T) {
 		assert.Equal(t, model.UseCase("function-calling"), model.UseCaseFuncCalling)
 	})
 
-	t.Run("ValidUseCases returns all 12 values", func(t *testing.T) {
+	t.Run("ValidUseCases returns all 14 values", func(t *testing.T) {
 		useCases := model.ValidUseCases()
-		assert.Len(t, useCases, 12)
+		assert.Len(t, useCases, 14)
 
 		// Verify all expected values are present
 		expected := []model.UseCase{
 			model.UseCaseTextChat, model.UseCaseVision, model.UseCaseImageGen,
 			model.UseCaseEmbedding, model.UseCaseRerank, model.UseCaseSpeechToText,
 			model.UseCaseTextToSpeech, model.UseCaseRealtimeAudio, model.UseCaseVideoGen,
-			model.UseCaseModeration, model.UseCaseReasoning, model.UseCaseFuncCalling,
+			model.UseCaseMusicGen, model.UseCaseModeration, model.UseCaseReasoning, model.UseCaseFuncCalling,
+			model.UseCaseAgent,
 		}
 		assert.Equal(t, expected, useCases)
 	})

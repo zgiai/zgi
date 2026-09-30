@@ -13,10 +13,12 @@ import (
 	workflow "github.com/zgiai/zgi/api/internal/modules/app/workflow"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	workflowtest "github.com/zgiai/zgi/api/internal/modules/app/workflowtest"
+	connectordispatch "github.com/zgiai/zgi/api/internal/modules/connectors/dispatch"
+	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
+	connectorruntimeauth "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeauth"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
 	datasourceservice "github.com/zgiai/zgi/api/internal/modules/datasource/service"
-	integrationmetatools "github.com/zgiai/zgi/api/internal/modules/integrations/metatools"
 	channelrepo "github.com/zgiai/zgi/api/internal/modules/llm/channel/repository"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
@@ -33,7 +35,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, tenantService interfaces.WorkspaceManagementService, resourcePermissionService interfaces.ResourcePermissionService, enterpriseService interfaces.OrganizationService, quotaService interfaces.QuotaService, fileService interfaces.FileService, contentExtractor runtimeservice.ContentExtractionService, llmClient llmclient.LLMClient, toolEngine *tools.ToolEngine, toolManager *tools.ToolManager, memoryService *memorymodule.Service, graphFlowService *graphflow.Service, promptResolver promptservice.PromptService, dataSourceService datasourceservice.DataSourceService, knowledgeRetrievalService *datasetservice.KnowledgeRetrievalService, engineFactory *graph_engine.EngineFactory, taskManager *queue.TaskManager, taskRegistry workflowtest.TaskHandlerRegistry, workflowTestService *workflowtest.Service, scheduler *pkgscheduler.Scheduler, workflowTestTaskBackend string, integrationActions app.IntegrationActionCatalog, externalActionProjections integrationmetatools.ActionProjectionResolver, manifestResolvers ...skills.ToolGovernanceManifestResolver) app.AgentsService {
+func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, tenantService interfaces.WorkspaceManagementService, resourcePermissionService interfaces.ResourcePermissionService, enterpriseService interfaces.OrganizationService, quotaService interfaces.QuotaService, fileService interfaces.FileService, contentExtractor runtimeservice.ContentExtractionService, llmClient llmclient.LLMClient, toolEngine *tools.ToolEngine, toolManager *tools.ToolManager, memoryService *memorymodule.Service, graphFlowService *graphflow.Service, promptResolver promptservice.PromptService, dataSourceService datasourceservice.DataSourceService, knowledgeRetrievalService *datasetservice.KnowledgeRetrievalService, engineFactory *graph_engine.EngineFactory, taskManager *queue.TaskManager, taskRegistry workflowtest.TaskHandlerRegistry, workflowTestService *workflowtest.Service, scheduler *pkgscheduler.Scheduler, workflowTestTaskBackend string, connectorAgentRuntime connectorruntimeauth.AgentRuntimeResolver, connectorConfirmationStore connectorexecution.ConfirmationContinuationStore, connectorDispatcher connectordispatch.Dispatcher, manifestResolvers ...skills.ToolGovernanceManifestResolver) app.AgentsService {
 	repo := app.NewAgentsRepository(db)
 
 	// Initialize workflow service for agents with all required dependencies
@@ -80,10 +82,11 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 		fileService,
 		contentExtractor,
 		enterpriseService,
-		newSkillRuntimeWithSandbox(toolEngine, toolManager, fileService, enterpriseService, manifestResolvers...),
+		newSkillRuntimeWithSandbox(toolEngine, toolManager, fileService, enterpriseService, manifestResolvers...).WithConnectorDispatcher(connectorDispatcher),
 		memoryService,
 		agentMemoryService,
-		externalActionProjections,
+		connectorAgentRuntime,
+		connectorConfirmationStore,
 	)
 	cleanupContext, cancelCleanup := context.WithTimeout(context.Background(), 30*time.Second)
 	affected, cleanupErr := chatRuntimeService.CleanupStaleActiveMessages(cleanupContext)
@@ -105,7 +108,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 			logger.Error("Failed to register Agent memory extraction sweep", err)
 		}
 	}
-	service := app.NewAgentsService(repo, accountService, tenantService, workflowService, chatRuntimeService, agentMemoryService, dataSourceService, knowledgeRetrievalService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db, integrationActions)
+	service := app.NewAgentsService(repo, accountService, tenantService, workflowService, chatRuntimeService, agentMemoryService, dataSourceService, knowledgeRetrievalService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db)
 	appHandler := app.NewAgentsHandler(service, tenantService, accountService, enterpriseService, db, chatRuntimeService)
 	appHandler.SetFileService(fileService)
 	if defaultModelResolver == nil {
@@ -166,7 +169,6 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	appsGroup.GET("/:agent_id/candidates/workflows", appHandler.ListAgentWorkflowBindingCandidates)
 	appsGroup.GET("/:agent_id/candidates/databases", appHandler.ListAgentDatabaseBindingCandidates)
 	appsGroup.GET("/:agent_id/candidates/databases/:data_source_id/tables", appHandler.ListAgentDatabaseTableBindingCandidates)
-	appsGroup.GET("/:agent_id/candidates/integration-connections", appHandler.ListAgentIntegrationConnectionBindingCandidates)
 	// Compatibility aliases for clients using the original candidate paths.
 	appsGroup.GET("/:agent_id/skills/candidates", appHandler.ListAgentSkillBindingCandidates)
 	appsGroup.GET("/:agent_id/workflow-bindings/candidates", appHandler.ListAgentWorkflowBindingCandidates)

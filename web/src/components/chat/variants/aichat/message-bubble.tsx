@@ -67,6 +67,14 @@ import {
   splitAnswerAroundTimeline,
 } from '@/components/chat/controllers/aichat/presentation-order';
 import type { AIChatSpeechPlaybackController } from '@/components/chat/variants/aichat/voice/use-agent-speech-playback';
+import type { ConnectorRuntimeDecisionHandler } from '@/components/connectors/runtime';
+import {
+  connectorChatEvents,
+  connectorOwnsWaitingState,
+  mergeConnectorTimeline,
+  withoutSupersededConnectorProgress,
+} from '@/components/connectors/runtime/connector-runtime-source';
+import { useConnectorRuntimeReceipt } from '@/components/connectors/runtime/use-runtime-receipt';
 
 interface AIChatMessageBubbleProps {
   message: AIChatMessage;
@@ -82,6 +90,7 @@ interface AIChatMessageBubbleProps {
   onToolGovernanceDecision?: (
     payload: AIChatToolGovernanceDecisionSubmitPayload
   ) => void | Promise<void>;
+  onConnectorRuntimeDecision?: ConnectorRuntimeDecisionHandler;
   branchNavigation?: ChatBranchNavigation;
   onSwitchBranch?: (messageId: string) => void;
   isEditing?: boolean;
@@ -1220,6 +1229,7 @@ export function AIChatMessageBubble({
   canReplaceRoot = false,
   onRegenerate,
   onToolGovernanceDecision,
+  onConnectorRuntimeDecision,
   branchNavigation,
   onSwitchBranch,
   isEditing = false,
@@ -1238,15 +1248,36 @@ export function AIChatMessageBubble({
   speechPlayback,
 }: AIChatMessageBubbleProps) {
   const t = useT('webapp');
+  const connectorEvents = connectorChatEvents(
+    message.metadata,
+    timeline,
+    message.conversation_id,
+    message.id
+  );
+  const connectorEvent = connectorEvents.at(-1);
+  const connectorReceipt = useConnectorRuntimeReceipt(connectorEvent?.receipt ?? '');
+  const connectorPhase = connectorEvent
+    ? (connectorReceipt.phase ?? connectorEvent.result.state)
+    : undefined;
+  const connectorWaitingResolved =
+    message.status === 'waiting_approval' &&
+    connectorPhase &&
+    connectorPhase !== 'requires_confirmation' &&
+    connectorOwnsWaitingState(message.metadata, timeline);
   const tGlobal = useT();
   const tCommon = useT('common');
   const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
   const { canManageModelConfig: isBillingAdmin } = useAccountCapabilities();
   const isStreaming = message.status === 'pending' || message.status === 'streaming';
   const isWaitingForUser =
-    message.status === 'waiting_approval' || message.status === 'waiting_question';
+    (message.status === 'waiting_approval' && !connectorWaitingResolved) ||
+    message.status === 'waiting_question';
   const isWaitingForClientAction = message.status === 'waiting_client_action';
-  const isActiveMessage = isStreaming || isWaitingForUser || isWaitingForClientAction;
+  const isActiveMessage =
+    isStreaming ||
+    isWaitingForUser ||
+    isWaitingForClientAction ||
+    Boolean(connectorWaitingResolved && connectorPhase === 'submitting');
   const isError = message.status === 'error';
   const isStopped = message.status === 'stopped';
   const isSensitiveBlocked =
@@ -1276,15 +1307,17 @@ export function AIChatMessageBubble({
   const answer = displayAnswer.trim();
   const userInputRequest = message.metadata?.user_input_request;
   const waitingMessage =
-    message.status === 'waiting_approval'
-      ? t('consoleChat.waitingApprovalMessage')
-      : message.status === 'waiting_question'
-        ? userInputRequest
-          ? null
-          : t('consoleChat.waitingQuestionMessage')
-        : message.status === 'waiting_client_action'
-          ? t('consoleChat.waitingClientActionMessage')
-          : null;
+    connectorEvent && connectorOwnsWaitingState(message.metadata, timeline)
+      ? null
+      : message.status === 'waiting_approval'
+        ? t('consoleChat.waitingApprovalMessage')
+        : message.status === 'waiting_question'
+          ? userInputRequest
+            ? null
+            : t('consoleChat.waitingQuestionMessage')
+          : message.status === 'waiting_client_action'
+            ? t('consoleChat.waitingClientActionMessage')
+            : null;
   const imageFiles = files.filter(file => file.kind === 'image');
   const documentFiles = files.filter(file => file.kind !== 'image');
   const historicalTimeline = useMemo<AIChatAgenticTimelineItem[]>(
@@ -1293,8 +1326,7 @@ export function AIChatMessageBubble({
   );
   const runtimeTimeline = timeline;
   const displayTimeline = useMemo(
-    () =>
-      dedupeTimelineItems(runtimeTimeline.length > 0 ? runtimeTimeline : historicalTimeline),
+    () => dedupeTimelineItems(runtimeTimeline.length > 0 ? runtimeTimeline : historicalTimeline),
     [historicalTimeline, runtimeTimeline]
   );
   useEffect(() => {
@@ -1331,7 +1363,11 @@ export function AIChatMessageBubble({
         : displayTimeline,
     [displayTimeline, isPresentationV2, resolvedPresentationItems]
   );
-  const hasTimeline = orderedDisplayTimeline.length > 0;
+  const connectorTimeline = mergeConnectorTimeline(
+    withoutSupersededConnectorProgress(orderedDisplayTimeline, connectorEvents),
+    connectorEvents
+  );
+  const hasTimeline = connectorTimeline.length > 0;
   const { leadingAnswer, trailingAnswer } = useMemo(() => {
     if (isPresentationV2) {
       return { leadingAnswer: '', trailingAnswer: displayAnswer };
@@ -1613,7 +1649,9 @@ export function AIChatMessageBubble({
             key={`${message.id}-${isActiveMessage ? 'active' : 'history'}-${
               shouldOpenTimelineByDefault ? 'open' : 'closed'
             }`}
-            timeline={orderedDisplayTimeline}
+            timeline={connectorTimeline}
+            conversationId={message.conversation_id}
+            messageId={message.id}
             skillDisplayById={skillDisplayById}
             processNarrative={!isPresentationV2 && hasLeadingAnswer ? leadingAnswer : undefined}
             processNarrativeRenderIdentity={`${message.id}:process-narrative`}
@@ -1625,6 +1663,7 @@ export function AIChatMessageBubble({
             suppressPendingToolGovernanceApprovals={suppressPendingToolGovernanceApprovals}
             messageStatus={message.status}
             onToolGovernanceDecision={onToolGovernanceDecision}
+            onConnectorRuntimeDecision={onConnectorRuntimeDecision}
           />
         ) : null}
 

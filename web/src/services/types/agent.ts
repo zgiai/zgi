@@ -1,5 +1,4 @@
 import type { IconType } from '@/utils/icon-helpers';
-import type { AgentIntegrationConnectionBinding } from '@/services/types/integration';
 
 // Agent type enumeration
 export enum AgentType {
@@ -215,7 +214,8 @@ export interface AgentRuntimeConfig {
   knowledge_retrieval_config?: Record<string, unknown>;
   database_bindings?: AgentDatabaseBinding[];
   workflow_bindings?: AgentWorkflowBinding[];
-  integration_bindings?: AgentIntegrationConnectionBinding[];
+  connector_bindings?: AgentConnectorBinding[];
+  connector_reference_commands?: import('./connector').ConnectorReferenceCommand[];
   binding_revision?: string;
   binding_health?: AgentBindingHealth;
   updated_at: number;
@@ -227,7 +227,7 @@ export type AgentBindingType =
   | 'database'
   | 'database_table'
   | 'workflow'
-  | 'integration_connection';
+  | 'connector_connection';
 
 export type AgentBindingStatus = 'active' | 'suspended' | 'unavailable';
 
@@ -448,8 +448,23 @@ export interface UpdateAgentRuntimeConfigRequest {
   knowledge_retrieval_config?: Record<string, unknown>;
   database_bindings?: AgentDatabaseBinding[];
   workflow_bindings?: AgentWorkflowBinding[];
-  integration_bindings?: AgentIntegrationConnectionBinding[];
+  connector_bindings?: AgentConnectorBinding[];
+  connector_reference_commands?: import('./connector').ConnectorReferenceCommand[];
   binding_revision?: string;
+}
+
+/**
+ * Connector-native Agent selection. Operation availability and risk defaults
+ * are platform-owned; the editor persists no member action matrix.
+ */
+export interface AgentConnectorBinding {
+  binding_id?: string;
+  revision?: number;
+  target_scope?: 'draft' | 'published';
+  target_version_id?: string;
+  connector_id: string;
+  connection_id: string;
+  authorization_mode?: 'ask_each_time' | 'direct';
 }
 
 export interface AgentSuggestedQuestionSkillContext {

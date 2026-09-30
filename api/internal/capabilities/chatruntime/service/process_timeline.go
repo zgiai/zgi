@@ -926,6 +926,9 @@ func invocationTimelineFields(payload map[string]interface{}, values map[string]
 	if len(payload) == 0 {
 		return values
 	}
+	if payload["runtime_source"] == "connector" {
+		values["runtime_source"] = "connector"
+	}
 	if _, exists := values["created_at"]; !exists {
 		values["created_at"] = payload["created_at"]
 	}

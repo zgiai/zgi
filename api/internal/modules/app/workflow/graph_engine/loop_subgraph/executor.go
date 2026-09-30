@@ -43,6 +43,7 @@ func New(cfg Config) *Executor {
 
 // Run executes the loop subgraph for the provided loop index.
 func (e *Executor) Run(ctx context.Context, index int) (Result, error) {
+	ctx = shared.WithExecutionStep(ctx, "loop", e.cfg.NodeID, index)
 	if e.cfg.StartNodeID == nil || len(*e.cfg.StartNodeID) == 0 {
 		return Result{}, fmt.Errorf("start_node_id is required")
 	}

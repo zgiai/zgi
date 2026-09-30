@@ -317,23 +317,6 @@ func performAIChatWorkspaceScopeRequest(router http.Handler) *httptest.ResponseR
 	return recorder
 }
 
-func attachIntegrationWorkspaceScopeForTest(handler *integrationHandler, organizationID, accountID, workspaceID uuid.UUID) {
-	organizationIDRaw := organizationID.String()
-	handler.workspaceScopeResolver = &aichatWorkspaceScopeResolver{
-		workspaces: &fakeAIChatWorkspaceProvider{
-			workspaces: map[uuid.UUID]*model.Workspace{
-				workspaceID: {
-					ID:             workspaceID.String(),
-					Status:         model.WorkspaceStatusNormal,
-					OrganizationID: &organizationIDRaw,
-				},
-			},
-			memberships: map[uuid.UUID]bool{workspaceID: true},
-		},
-		accounts: &fakeAIChatCurrentWorkspaceProvider{},
-	}
-}
-
 func stringPointer(value string) *string {
 	return &value
 }

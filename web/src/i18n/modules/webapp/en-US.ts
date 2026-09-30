@@ -1108,7 +1108,7 @@ const messages = {
             'Read authorized repositories, issues, and account details through the GitHub REST API.',
         },
         webSearch: {
-          name: 'Web Search',
+          name: 'Exa Web Search',
           description: 'Search public webpages and read relevant content through Exa.',
         },
         genericDescription:
@@ -1162,6 +1162,9 @@ const messages = {
         running: 'Using {skill} · {tool}',
         success: '{skill} · {tool} completed',
         error: '{skill} failed',
+        externalActionPartiallySucceeded: '{skill} · {tool} partially succeeded',
+        externalActionOutcomeUnknown: '{skill} · {tool} outcome needs confirmation',
+        externalActionFailed: '{skill} · {tool} failed',
         eventCount: '{count} events',
         summarySuccess: 'Completed {count} skill events',
         debug: {
@@ -1197,6 +1200,32 @@ const messages = {
           action: 'Action',
           connection: 'Connection',
           attemptCount: 'Attempts',
+          operationStatus: 'Operation status',
+          errorCode: 'Error code',
+          reasonCode: 'Reason code',
+          providerErrorCode: 'Provider error code',
+          retrySafe: 'Safe to retry',
+          diagnostic: 'Details',
+          summaryTitles: {
+            success: 'Operation result',
+            running: 'Operation still running',
+            warning: 'Operation needs attention',
+            failed: 'Operation failed',
+          },
+          operationStatuses: {
+            completed: 'Succeeded',
+            already_completed: 'Already completed (existing result reused)',
+            succeeded: 'Succeeded',
+            executing: 'The external service is still processing the request',
+            failed_safe: 'Failed with no side effect confirmed',
+            partially_succeeded: 'Partially succeeded',
+            failed: 'Failed',
+            outcome_unknown: 'Outcome unknown; do not retry immediately',
+          },
+          providerDiagnostics: {
+            wecom81013:
+              'WeCom accepted no recipients (81013). Check that the member exists, is visible to the app, and has the required base API license.',
+          },
           statuses: {
             success: 'Success',
             running: 'In progress',
@@ -1306,6 +1335,10 @@ const messages = {
         callingTool: 'Calling {skill} · {tool}',
         toolSucceeded: '{skill} · {tool} completed',
         toolFailed: '{skill} · {tool} failed',
+        externalActionExecuting: '{skill} · {tool} is still running',
+        externalActionPartiallySucceeded: '{skill} · {tool} partially succeeded',
+        externalActionOutcomeUnknown: '{skill} · {tool} outcome needs confirmation',
+        externalActionFailed: '{skill} · {tool} failed',
         invalidArgumentsCorrected: 'Corrected arguments for {skill} · {tool}',
         invalidArgumentsCorrectedDetail:
           'An earlier call failed argument validation. The model corrected the arguments and a later call succeeded.',

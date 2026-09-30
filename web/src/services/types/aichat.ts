@@ -108,9 +108,9 @@ export interface AIChatSkillExposureProfile {
   governance_risk?: 'none' | 'low' | 'medium' | 'high' | 'mixed' | string;
 }
 
-export interface AIChatSkillIntegrationRequirement {
-  integration_id: string;
-  action_ids?: string[];
+export interface AIChatSkillConnectorRequirement {
+  connector_id: string;
+  operation_ids?: string[];
   required: boolean;
 }
 
@@ -124,7 +124,7 @@ export type AIChatSkillAvailabilityState =
 export interface AIChatSkillAvailability {
   state: AIChatSkillAvailabilityState;
   reason?: string;
-  integration_ids?: string[];
+  connector_ids?: string[];
 }
 
 export interface AIChatSkillMetadata {
@@ -146,11 +146,11 @@ export interface AIChatSkillMetadata {
   validation_error?: string;
   supported_callers?: Array<'aichat' | 'agent'>;
   required_config?: string[];
-  dependency_type?: 'standalone' | 'integration' | string;
+  dependency_type?: 'standalone' | 'connector' | string;
   provider_type?: string;
   provider_id?: string;
-  integration_requirements?: Array<AIChatSkillIntegrationRequirement | string>;
-  external_dependencies?: Array<AIChatSkillIntegrationRequirement | string>;
+  connector_requirements?: Array<AIChatSkillConnectorRequirement | string>;
+  external_dependencies?: Array<AIChatSkillConnectorRequirement | string>;
   availability?: AIChatSkillAvailability;
   exposure?: AIChatSkillExposureProfile;
 }
@@ -235,6 +235,7 @@ export interface AIChatExistingSkill {
 }
 
 export interface AIChatSkillInvocation {
+  runtime_source?: 'connector' | 'connector_history';
   kind?: AIChatSkillInvocationKind;
   invocation_id?: string;
   runtime_id?: string;
@@ -596,6 +597,8 @@ export interface AIChatModelParameters {
 export type AIChatRuntimeSurface = 'work_chat' | 'contextual_sidebar' | 'external_page_chat';
 
 export interface AIChatChatRequest {
+  initial_connector_bindings?: AIChatInitialConnectorBinding[];
+  initial_connector_defaults_revision?: number;
   conversation_id?: string;
   parent_id?: string;
   query: string;
@@ -608,6 +611,12 @@ export interface AIChatChatRequest {
   response_mode: 'streaming';
   parameters?: AIChatModelParameters;
   use_memory?: boolean;
+}
+
+/** First-turn, owner-scoped connection references. Never include credentials. */
+export interface AIChatInitialConnectorBinding {
+  connector_id: string;
+  connection_id: string;
 }
 
 export interface AIChatRegenerateMessageRequest {
@@ -710,6 +719,7 @@ export interface AIChatSkillCallStartEventData {
 }
 
 export interface AIChatSkillCallEndEventData {
+  runtime_source?: 'connector';
   conversation_id: string;
   message_id: string;
   kind?: AIChatSkillInvocationKind;
@@ -735,6 +745,8 @@ export interface AIChatSkillCallEndEventData {
 }
 
 export interface AIChatSkillCallErrorEventData {
+  runtime_source?: 'connector';
+  result?: Record<string, unknown> | null;
   conversation_id: string;
   message_id: string;
   kind?: AIChatSkillInvocationKind;
@@ -1053,6 +1065,8 @@ export interface AIChatAgentProgressEventData {
     | 'model_processing'
     | 'client_action'
     | 'client_action_result'
+    | 'connector_confirmation_required'
+    | 'connector_confirmation_resolved'
     | 'context_compaction';
   progress_id?: string;
   stage?: 'initial' | 'extended' | 'long_running';

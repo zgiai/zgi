@@ -16,6 +16,7 @@ import (
 const (
 	TypeApprovalResume      = "workflow:approval:resume"
 	TypeQuestionResume      = "workflow:question:resume"
+	TypeConnectorResume     = "workflow:connector:resume"
 	TypeApprovalTimeoutScan = "workflow:approval:timeout_scan"
 	TypeRuntimeOutboxScan   = "workflow:runtime:outbox_scan"
 	TypeExecutionLeaseScan  = "workflow:runtime:execution_lease_scan"
@@ -28,6 +29,10 @@ type ResumeTaskPayload struct {
 type QuestionResumeTaskPayload struct {
 	WorkflowRunID string                 `json:"workflow_run_id"`
 	Inputs        map[string]interface{} `json:"inputs"`
+}
+
+type ConnectorResumeTaskPayload struct {
+	WorkflowRunID string `json:"workflow_run_id"`
 }
 
 func NewResumeTask(formID string, taskManager *queue.TaskManager) (*asynq.Task, error) {
@@ -83,6 +88,25 @@ func NewQuestionResumeTask(payload QuestionResumeTaskPayload, taskManager *queue
 	), nil
 }
 
+func NewConnectorResumeTask(payload ConnectorResumeTaskPayload, taskManager *queue.TaskManager) (*asynq.Task, error) {
+	if payload.WorkflowRunID == "" {
+		return nil, fmt.Errorf("workflow run id is empty")
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal Connector resume task payload: %w", err)
+	}
+	taskType := TypeConnectorResume
+	if taskManager != nil {
+		taskType = taskManager.GetTaskTypeWithPrefix(taskType)
+	}
+	return asynq.NewTask(taskType, raw,
+		asynq.Queue("critical"),
+		asynq.Timeout(30*time.Minute),
+		asynq.MaxRetry(10),
+	), nil
+}
+
 func DispatchResumeOutbox(ctx context.Context, service *Service, taskManager *queue.TaskManager, ref *workflowRuntimeOutboxRef) error {
 	if service == nil || taskManager == nil || ref == nil {
 		return fmt.Errorf("workflow resume outbox dispatcher is not configured")
@@ -104,6 +128,8 @@ func DispatchResumeOutbox(ctx context.Context, service *Service, taskManager *qu
 			WorkflowRunID: payload.WorkflowRunID,
 			Inputs:        questionResumeInputs(payload.ResumeInputs),
 		}, taskManager)
+	} else if payload.InteractionType == workflowpause.ReasonTypeConnectorConfirmationRequired {
+		task, err = NewConnectorResumeTask(ConnectorResumeTaskPayload{WorkflowRunID: payload.WorkflowRunID}, taskManager)
 	} else {
 		task, err = NewResumeTask(payload.TriggerID, taskManager)
 	}
@@ -171,6 +197,8 @@ func NewResumeTaskHandler(service *Service, onSubmit ResumeCallback) func(contex
 
 type QuestionResumeCallback func(context.Context, string, map[string]interface{}) error
 
+type ConnectorResumeCallback func(context.Context, string) error
+
 func NewQuestionResumeTaskHandler(onResume QuestionResumeCallback) func(context.Context, *asynq.Task) error {
 	return func(ctx context.Context, task *asynq.Task) error {
 		if onResume == nil {
@@ -184,6 +212,28 @@ func NewQuestionResumeTaskHandler(onResume QuestionResumeCallback) func(context.
 			return fmt.Errorf("question resume task payload missing workflow_run_id: %w", asynq.SkipRetry)
 		}
 		if err := onResume(ctx, payload.WorkflowRunID, payload.Inputs); err != nil {
+			if errors.Is(err, workflowpause.ErrPauseNotFound) || errors.Is(err, workflowpause.ErrPauseNotResumeReady) {
+				return nil
+			}
+			return err
+		}
+		return nil
+	}
+}
+
+func NewConnectorResumeTaskHandler(onResume ConnectorResumeCallback) func(context.Context, *asynq.Task) error {
+	return func(ctx context.Context, task *asynq.Task) error {
+		if onResume == nil {
+			return fmt.Errorf("Connector resume callback is not configured: %w", asynq.SkipRetry)
+		}
+		var payload ConnectorResumeTaskPayload
+		if err := json.Unmarshal(task.Payload(), &payload); err != nil {
+			return fmt.Errorf("unmarshal Connector resume task payload: %v: %w", err, asynq.SkipRetry)
+		}
+		if payload.WorkflowRunID == "" {
+			return fmt.Errorf("Connector resume task payload missing workflow_run_id: %w", asynq.SkipRetry)
+		}
+		if err := onResume(ctx, payload.WorkflowRunID); err != nil {
 			if errors.Is(err, workflowpause.ErrPauseNotFound) || errors.Is(err, workflowpause.ErrPauseNotResumeReady) {
 				return nil
 			}

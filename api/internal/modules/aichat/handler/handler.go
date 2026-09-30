@@ -17,9 +17,14 @@ import (
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
+	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
+	connectorpreferences "github.com/zgiai/zgi/api/internal/modules/connectors/preferences"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/util"
+	"github.com/zgiai/zgi/api/pkg/apperror"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
@@ -51,10 +56,15 @@ type skillConfigConfirmationRequiredResult struct {
 type Handler struct {
 	service         runtimeservice.Service
 	modelPrechecker llmclient.AppModelPrechecker
+	errorProjector  *apptransport.Projector
 }
 
-func NewHandler(service runtimeservice.Service, modelPrechecker llmclient.AppModelPrechecker) *Handler {
-	return &Handler{service: service, modelPrechecker: modelPrechecker}
+func NewHandler(service runtimeservice.Service, modelPrechecker llmclient.AppModelPrechecker, errorProjectors ...*apptransport.Projector) *Handler {
+	h := &Handler{service: service, modelPrechecker: modelPrechecker}
+	if len(errorProjectors) > 0 {
+		h.errorProjector = errorProjectors[0]
+	}
+	return h
 }
 
 func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
@@ -804,7 +814,29 @@ func (h *Handler) scopedID(c *gin.Context, param string) (runtimeservice.Scope, 
 	return scope, id, true
 }
 
+var (
+	legacyConnectorDefaultsRevision = appcatalog.MustLegacyKey("aichat.connector_defaults:199001")
+	legacyConnectorDefaultsInternal = appcatalog.MustLegacyKey("aichat.connector_defaults:399001")
+)
+
 func (h *Handler) fail(c *gin.Context, err error) {
+	if h.failConnectorDefaults(c, err) {
+		return
+	}
+	// First-turn Connector validation uses stable, non-secret domain errors.
+	// Keep the existing response catalog contract, never dependency diagnostics.
+	var connectorError *connectorcore.Error
+	if errors.As(err, &connectorError) {
+		switch connectorError.Code {
+		case connectorcore.ErrorCodeAccessDenied:
+			response.Fail(c, response.ErrPermissionDenied)
+		case connectorcore.ErrorCodeInternal:
+			response.Fail(c, response.ErrSystemError)
+		default:
+			response.Fail(c, response.ErrInvalidParam)
+		}
+		return
+	}
 	switch {
 	case errors.Is(err, runtimeservice.ErrUnauthorized):
 		response.Fail(c, response.ErrUnauthorized)
@@ -824,6 +856,33 @@ func (h *Handler) fail(c *gin.Context, err error) {
 		logger.ErrorContext(c.Request.Context(), "aichat request failed", err)
 		response.Fail(c, response.ErrSystemError)
 	}
+}
+
+func (h *Handler) failConnectorDefaults(c *gin.Context, err error) bool {
+	var legacy response.ErrorCode
+	var legacyKey appcatalog.LegacyKey
+	switch {
+	case apperror.IsCode(err, connectorpreferences.AppCodeRevisionConflict):
+		legacy, legacyKey = response.ErrInvalidParam, legacyConnectorDefaultsRevision
+	case apperror.IsCode(err, connectorpreferences.AppCodeInternal):
+		logger.ErrorContext(c.Request.Context(), "aichat connector defaults validation failed", err)
+		legacy, legacyKey = response.ErrSystemError, legacyConnectorDefaultsInternal
+	default:
+		return false
+	}
+	// The catalog overlays only the public message. Preserve the existing
+	// HTTP status, numeric wire code, and JSON envelope for each legacy error.
+	message := legacy.Message
+	if h.errorProjector != nil {
+		locale := apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language"))
+		projected := h.errorProjector.ProjectLegacyMessage(err, locale, legacyKey)
+		if projected.Resolution == apptransport.ResolutionMatched {
+			message = projected.Message
+			c.Header(apptransport.HeaderApplicationErrorCode, projected.AppCode.String())
+		}
+	}
+	response.FailWithMessage(c, legacy, message)
+	return true
 }
 
 func setupSSE(c *gin.Context) {
@@ -1031,12 +1090,12 @@ func conversationResponse(conversation *runtimemodel.Conversation) runtimedto.Co
 }
 
 func skillResponse(metadata skills.SkillDiscoveryMetadata) runtimedto.SkillResponse {
-	integrationRequirements := make([]runtimedto.SkillIntegrationRequirementResponse, 0, len(metadata.IntegrationRequirements))
-	for _, requirement := range metadata.IntegrationRequirements {
-		integrationRequirements = append(integrationRequirements, runtimedto.SkillIntegrationRequirementResponse{
-			IntegrationID: requirement.IntegrationID,
-			ActionIDs:     append([]string(nil), requirement.ActionIDs...),
-			Required:      requirement.Required,
+	connectorRequirements := make([]runtimedto.SkillConnectorRequirementResponse, 0, len(metadata.ConnectorRequirements))
+	for _, requirement := range metadata.ConnectorRequirements {
+		connectorRequirements = append(connectorRequirements, runtimedto.SkillConnectorRequirementResponse{
+			ConnectorID:  requirement.ConnectorID,
+			OperationIDs: append([]string(nil), requirement.OperationIDs...),
+			Required:     requirement.Required,
 		})
 	}
 	return runtimedto.SkillResponse{
@@ -1054,21 +1113,21 @@ func skillResponse(metadata skills.SkillDiscoveryMetadata) runtimedto.SkillRespo
 			WhenToUse:   metadata.Display.WhenToUse,
 			Tags:        metadata.Display.Tags,
 		},
-		RuntimeType:             metadata.RuntimeType,
-		Enabled:                 metadata.Enabled,
-		HasTools:                metadata.HasTools,
-		HasReferences:           metadata.HasReferences,
-		HasScripts:              metadata.HasScripts,
-		ScriptsSupported:        metadata.ScriptsSupported,
-		MaxCallsPerTurn:         metadata.MaxCallsPerTurn,
-		TimeoutSeconds:          metadata.TimeoutSeconds,
-		Status:                  metadata.Status,
-		ValidationError:         metadata.ValidationError,
-		SupportedCallers:        metadata.SupportedCallers,
-		RequiredConfig:          metadata.RequiredConfig,
-		DependencyType:          metadata.DependencyType,
-		IntegrationRequirements: integrationRequirements,
-		Exposure:                skillExposureResponse(skills.SkillExposureForMetadata(metadata)),
+		RuntimeType:           metadata.RuntimeType,
+		Enabled:               metadata.Enabled,
+		HasTools:              metadata.HasTools,
+		HasReferences:         metadata.HasReferences,
+		HasScripts:            metadata.HasScripts,
+		ScriptsSupported:      metadata.ScriptsSupported,
+		MaxCallsPerTurn:       metadata.MaxCallsPerTurn,
+		TimeoutSeconds:        metadata.TimeoutSeconds,
+		Status:                metadata.Status,
+		ValidationError:       metadata.ValidationError,
+		SupportedCallers:      metadata.SupportedCallers,
+		RequiredConfig:        metadata.RequiredConfig,
+		DependencyType:        metadata.DependencyType,
+		ConnectorRequirements: connectorRequirements,
+		Exposure:              skillExposureResponse(skills.SkillExposureForMetadata(metadata)),
 	}
 }
 
@@ -1198,7 +1257,7 @@ func messageMetadataResponse(metadata map[string]interface{}) map[string]interfa
 	if len(metadata) == 0 {
 		return metadata
 	}
-	if sanitized, ok := toolgovernance.SanitizeExternalActionPublicValue(metadata).(map[string]interface{}); ok {
+	if sanitized, ok := toolgovernance.SanitizePublicValue(metadata).(map[string]interface{}); ok {
 		metadata = sanitized
 	}
 	out := make(map[string]interface{}, len(metadata))

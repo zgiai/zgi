@@ -6,9 +6,21 @@ import (
 	"slices"
 
 	"github.com/go-gormigrate/gormigrate/v2"
+	"github.com/zgiai/zgi/api/internal/migrations/connectorfinalize"
 	mschema "github.com/zgiai/zgi/api/internal/migrations/schema"
 	"gorm.io/gorm"
 )
+
+// This registration exposes one fixed capability, not a destructive Builder
+// or caller-supplied SQL callback. Recovery uses a complete database backup.
+func registerConnectorRetirementMigration(id string) {
+	if id != connectorfinalize.MigrationID {
+		panic("unknown retirement migration")
+	}
+	registerMigration(&gormigrate.Migration{ID: id, Migrate: connectorfinalize.FinalizeEmpty, Rollback: func(*gorm.DB) error {
+		return fmt.Errorf("Connector retirement is forward-only; use the verified maintenance backup for recovery")
+	}})
+}
 
 var (
 	migrationIDPattern = regexp.MustCompile(`^\d{14}(\d{2}|\d{4})?_[a-z0-9_]+$`)

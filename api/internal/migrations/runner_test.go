@@ -569,6 +569,11 @@ func TestNoClosedSourceMigrationHistoryFilesRemain(t *testing.T) {
 			return nil
 		}
 		name := entry.Name()
+		// These are public inventory/checksum modules, not timestamped private
+		// migration history. Keep the historical-file check for all other paths.
+		if filepath.ToSlash(path) == filepath.ToSlash(filepath.Join(root, "connectorfinalize", "manifest.go")) || filepath.ToSlash(path) == filepath.ToSlash(filepath.Join(root, "migration_source_history.go")) {
+			return nil
+		}
 		if strings.HasPrefix(name, "m") && strings.HasSuffix(name, ".go") {
 			historical = append(historical, filepath.ToSlash(path))
 		}

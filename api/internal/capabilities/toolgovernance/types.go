@@ -101,6 +101,8 @@ type SessionGrant struct {
 	SkillID               string     `json:"skill_id,omitempty"`
 	ProviderType          string     `json:"provider_type,omitempty"`
 	ProviderID            string     `json:"provider_id,omitempty"`
+	ConnectionID          string     `json:"connection_id,omitempty"`
+	BindingID             string     `json:"binding_id,omitempty"`
 	ToolID                string     `json:"tool_id"`
 	Effect                Effect     `json:"effect"`
 	AssetType             string     `json:"asset_type,omitempty"`
@@ -179,6 +181,8 @@ type Request struct {
 	SkillID          string
 	ProviderType     string
 	ProviderID       string
+	ConnectionID     string
+	BindingID        string
 	Assets           []AssetRef
 	ExpectedAssets   []AssetRef
 	SessionGrants    []SessionGrant

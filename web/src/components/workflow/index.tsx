@@ -577,7 +577,9 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
   return (
     <ReactFlowProvider>
       <WorkflowVariableImpactProvider>
-        <WorkflowEditorProvider value={{ agentId, agentType, workspaceId }}>
+        <WorkflowEditorProvider
+          value={{ agentId, workflowId: workflowData?.id ?? '', agentType, workspaceId }}
+        >
           <WorkflowAIChatContextRegistration
             agentDetail={agentDetail}
             workflowDraft={workflowData}

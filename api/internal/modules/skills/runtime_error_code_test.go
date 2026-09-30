@@ -6,15 +6,15 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	core "github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
 
-func TestCallSkillToolPublishesTypedIntegrationErrorCodeWithoutProviderMessage(t *testing.T) {
+func TestCallSkillToolPublishesTypedConnectorErrorCodeWithoutProviderMessage(t *testing.T) {
 	providerMessage := "GitHub rejected secret credential ghp_do_not_expose"
 	upstreamCause := errors.New("authorization header contained sensitive provider response")
-	integrationErr := integrations.NewError(integrations.ErrorCodeAuthInvalid, providerMessage, upstreamCause)
+	integrationErr := core.NewError(core.ErrorCodeInvalidKey, false, upstreamCause)
 	runtime, resolved := runtimeWithFailingTool(t, fmt.Errorf("connector invoke failed: %w", integrationErr))
 
 	invocation, err := runtime.CallSkillTool(
@@ -32,10 +32,10 @@ func TestCallSkillToolPublishesTypedIntegrationErrorCodeWithoutProviderMessage(t
 	if invocation == nil {
 		t.Fatal("CallSkillTool() invocation = nil")
 	}
-	if got := invocation.Trace.ErrorCode; got != integrations.ErrorCodeAuthInvalid {
-		t.Fatalf("trace error_code = %q, want %q", got, integrations.ErrorCodeAuthInvalid)
+	if got := invocation.Trace.ErrorCode; got != string(core.ErrorCodeInvalidKey) {
+		t.Fatalf("trace error_code = %q, want %q", got, string(core.ErrorCodeInvalidKey))
 	}
-	if got := invocation.Trace.Error; got != integrations.ErrorCodeAuthInvalid {
+	if got := invocation.Trace.Error; got != string(core.ErrorCodeInvalidKey) {
 		t.Fatalf("trace error = %q, want stable public code", got)
 	}
 	if invocation.Trace.Error == providerMessage || invocation.Trace.Error == upstreamCause.Error() {
@@ -77,7 +77,7 @@ func runtimeWithFailingTool(t *testing.T, invokeErr error) (*skills.Runtime, *sk
 		Metadata: skills.SkillMetadata{ID: "external-apps-test"},
 		Tools: []skills.SkillToolDefinition{{
 			Name:         "execute_action",
-			ProviderType: tools.ToolProviderTypeConnector,
+			ProviderType: tools.ToolProviderTypeBuiltin,
 			ProviderID:   "external-apps-test",
 			InputSchema: map[string]interface{}{
 				"type":                 "object",
@@ -99,12 +99,12 @@ func (p *failingProvider) GetEntity() tools.ToolProviderEntity {
 			Label:       tools.I18nText{"en_US": "External Apps Test"},
 			Description: tools.I18nText{"en_US": "External apps error contract test"},
 		},
-		ProviderType: tools.ToolProviderTypeConnector,
+		ProviderType: tools.ToolProviderTypeBuiltin,
 	}
 }
 
 func (p *failingProvider) GetProviderType() tools.ToolProviderType {
-	return tools.ToolProviderTypeConnector
+	return tools.ToolProviderTypeBuiltin
 }
 
 func (p *failingProvider) GetTool(name string) (tools.Tool, error) {
@@ -144,7 +144,7 @@ func (t *failingTool) GetEntity() tools.ToolEntity {
 }
 
 func (t *failingTool) GetProviderType() tools.ToolProviderType {
-	return tools.ToolProviderTypeConnector
+	return tools.ToolProviderTypeBuiltin
 }
 
 func (t *failingTool) GetTenantID() string {

@@ -1,14 +1,14 @@
 package v1
 
 import (
+	"context"
+	"fmt"
 	"log"
 
 	"github.com/gin-gonic/gin"
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/container"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
-	integrationmetatools "github.com/zgiai/zgi/api/internal/modules/integrations/metatools"
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 	agentmanagement_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/agentmanagement"
 	workspace_service "github.com/zgiai/zgi/api/internal/modules/workspace/service"
@@ -81,27 +81,6 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		AccountService:             accountService,
 		WorkspaceManagementService: tenantService,
 	})
-
-	if currentConfig := config.Current(); currentConfig != nil && currentConfig.ExternalIntegrations.Enabled {
-		RegisterIntegrationRoutes(v1, IntegrationRouteDeps{
-			DB:               db,
-			Registry:         serviceContainer.GetIntegrationRegistry(),
-			Connections:      serviceContainer.GetIntegrationConnectionService(),
-			ConnectionRepo:   serviceContainer.GetIntegrationConnectionRepository(),
-			Grants:           serviceContainer.GetIntegrationConnectionGrantRepository(),
-			Access:           serviceContainer.GetIntegrationConnectionAccessService(),
-			Preferences:      serviceContainer.GetIntegrationAIChatPreferenceService(),
-			HealthEvents:     serviceContainer.GetIntegrationConnectionHealthRepository(),
-			Policies:         serviceContainer.GetIntegrationActionPolicyService(),
-			Executions:       serviceContainer.GetIntegrationExecutionRepository(),
-			AccountService:   accountService,
-			OAuthFlows:       serviceContainer.GetIntegrationOAuthFlowService(),
-			OAuthClients:     serviceContainer.GetIntegrationOAuthClientService(),
-			OAuthRecovery:    serviceContainer.GetIntegrationOAuthRecoveryOutbox(),
-			OAuthCallbackURL: currentConfig.ExternalIntegrations.OAuth.CallbackURL,
-			OAuthResultURL:   currentConfig.ExternalIntegrations.OAuth.ResultURL,
-		})
-	}
 
 	// ---------- API Key ----------
 	if _, ok := tenantServiceImpl.(*workspace_service.WorkspaceManagementServiceImpl); ok {
@@ -214,7 +193,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	})
 
 	// ---------- Workflow ----------
-	RegisterWorkflowRoutes(v1, WorkflowRouteDeps{
+	workflowService := RegisterWorkflowRoutes(v1, WorkflowRouteDeps{
 		DB:                          db,
 		AccountService:              accountService,
 		FileService:                 serviceContainer.GetFileService(),
@@ -234,13 +213,24 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		ShortLinkService:            serviceContainer.GetShortLinkService(),
 	})
 
+	if err := serviceContainer.EnsureConnectorDefinitions(context.Background()); err != nil {
+		panic(fmt.Sprintf("admit Connector definitions: %v", err))
+	}
+	RegisterConnectorRoutes(v1, ConnectorRouteDeps{
+		Catalog:                 serviceContainer.GetConnectorPluginManager(),
+		Connections:             serviceContainer.GetConnectorConnectionService(),
+		Bindings:                serviceContainer.GetConnectorBindingService(),
+		References:              serviceContainer.GetConnectorReferenceService(),
+		Maintenance:             serviceContainer.GetConnectorMaintenanceService(),
+		Onboarding:              serviceContainer.GetConnectorOnboardingService(),
+		Preferences:             serviceContainer.GetConnectorChatPreferenceService(),
+		ApplicationErrorCatalog: applicationErrorCatalog,
+		AccountService:          accountService,
+	})
+
 	// ---------- Agent ----------
 	resourcePermissionService := serviceContainer.GetResourcePermissionService()
-	var externalActionProjections integrationmetatools.ActionProjectionResolver
-	if currentConfig := config.Current(); currentConfig != nil && currentConfig.ExternalIntegrations.Enabled {
-		externalActionProjections = serviceContainer.GetIntegrationActionProjectionService()
-	}
-	agentsService := RegisterAgentsRoutes(v1, db, accountService, tenantService, resourcePermissionService, serviceContainer.GetOrganizationService(), serviceContainer.GetQuotaService(), serviceContainer.GetFileService(), serviceContainer.GetContentExtractor(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetToolManager(), serviceContainer.GetMemoryService(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetDataSourceService(), serviceContainer.GetKnowledgeRetrievalService(), workflowEngineFactory, serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetWorkflowTestService(), serviceContainer.GetScheduler(), config.Current().TaskQueue.WorkflowTestTaskBackend, serviceContainer.GetIntegrationRegistry(), externalActionProjections, integrations.NewGovernanceManifestResolver(serviceContainer.GetIntegrationRegistry(), serviceContainer.GetIntegrationActionPolicyService()))
+	agentsService := RegisterAgentsRoutes(v1, db, accountService, tenantService, resourcePermissionService, serviceContainer.GetOrganizationService(), serviceContainer.GetQuotaService(), serviceContainer.GetFileService(), serviceContainer.GetContentExtractor(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetToolManager(), serviceContainer.GetMemoryService(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetDataSourceService(), serviceContainer.GetKnowledgeRetrievalService(), workflowEngineFactory, serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetWorkflowTestService(), serviceContainer.GetScheduler(), config.Current().TaskQueue.WorkflowTestTaskBackend, serviceContainer.GetConnectorAgentRuntimeResolver(), serviceContainer.GetConnectorConfirmationContinuationStore(), serviceContainer.GetConnectorSurfaceDispatcher())
 
 	// ---------- Prompt Library ----------
 	RegisterPromptRoutes(v1, PromptRouteDeps{
@@ -280,11 +270,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	}
 
 	// ---------- AIChat ----------
-	var aiChatIntegrationPreferences *integrations.DefaultAIChatIntegrationPreferenceService
-	if currentConfig := config.Current(); currentConfig != nil && currentConfig.ExternalIntegrations.Enabled {
-		aiChatIntegrationPreferences = serviceContainer.GetIntegrationAIChatPreferenceService()
-	}
-	chatService := RegisterAIChatRoutes(v1, AIChatRouteDeps{
+	chatRouteDeps := AIChatRouteDeps{
 		DB:                         db,
 		LLMClient:                  serviceContainer.GetLLMClient(),
 		DefaultModelService:        serviceContainer.GetDefaultModelService(),
@@ -298,11 +284,21 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 			serviceContainer.GetToolManager(),
 			serviceContainer.GetFileService(),
 			serviceContainer.GetOrganizationService(),
-			integrations.NewGovernanceManifestResolver(serviceContainer.GetIntegrationRegistry(), serviceContainer.GetIntegrationActionPolicyService()),
-		),
-		AccountService:               accountService,
-		IntegrationPreferences:       aiChatIntegrationPreferences,
-		IntegrationActionProjections: externalActionProjections,
+		).WithConnectorDispatcher(serviceContainer.GetConnectorSurfaceDispatcher()),
+		AccountService:             accountService,
+		ConnectorChatRuntime:       serviceContainer.GetConnectorChatRuntimeResolver(),
+		ConnectorAgentRuntime:      serviceContainer.GetConnectorAgentRuntimeResolver(),
+		ConnectorConfirmationStore: serviceContainer.GetConnectorConfirmationContinuationStore(),
+		ApplicationErrorCatalog:    applicationErrorCatalog,
+	}
+	chatService := RegisterAIChatRoutes(v1, chatRouteDeps)
+	RegisterConnectorRuntimeConfirmationRoutes(v1, ConnectorRuntimeConfirmationRouteDeps{
+		Service: serviceContainer.GetConnectorRuntimeConfirmationService(),
+		Recorder: connectorRuntimeConfirmationSurfaceRecorder{
+			chatAndAgent: chatService,
+			workflow:     workflowService,
+		},
+		AccountService: accountService,
 	})
 	if llmModule != nil && llmModule.LLMModelModule != nil {
 		RegisterImageRuntimeRoutes(v1, ImageRuntimeRouteDeps{

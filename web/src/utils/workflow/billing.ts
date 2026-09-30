@@ -12,6 +12,7 @@ export interface WorkflowBillingMessageOptions {
   isAdmin?: boolean;
   workspaceId?: string | null;
   includeRuntimeDetails?: boolean;
+  connectorTranslator?: WorkflowTranslator;
 }
 
 export interface WorkflowTranslator {
@@ -337,6 +338,10 @@ export function getWorkflowBillingErrorMessage(
       actionLabel: options.isAdmin && href ? t(`${prefix}.${code}.action`) : undefined,
       href,
     };
+  }
+
+  if (/^connector_[a-z_]+$/.test(String(error.code ?? error.message ?? '')) && options.connectorTranslator) {
+    return { title: options.connectorTranslator('status.unavailable'), description: options.connectorTranslator('picker.actionFailed') };
   }
 
   if (error.message?.trim()) {

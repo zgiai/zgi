@@ -257,5 +257,9 @@ func developmentTestConfig() *Config {
 			ExtractionTimeout: 1,
 		},
 		AnswerNodeStreaming: AnswerNodeStreamingConfig{ChunkSize: 1},
+		Connectors: ConnectorsConfig{
+			CredentialActiveKeyID: "test",
+			CredentialKeys:        map[string]string{"test": strings.Repeat("c", 32)},
+		},
 	}
 }

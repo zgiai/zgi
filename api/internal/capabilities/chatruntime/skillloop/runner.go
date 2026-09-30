@@ -23,22 +23,386 @@ import (
 const ContextArtifactToolName = "read_context_artifact"
 
 const (
-	defaultMaxSkillPlanningRounds                 = 50
-	defaultMaxSkillStepsPerTurn                   = 160
-	defaultMaxBusinessToolCallsPerSkill           = 20
-	defaultMaxRecoverableFailureRounds            = 12
-	defaultMaxConsecutiveRecoverableFailureRounds = 5
-	intermediateAnswerChunkRunes                  = 180
-	streamedIntermediateAnswerArg                 = "_aichat_streamed_answer"
-	streamedFinalAnswerArg                        = "_aichat_streamed_final_answer"
-	runtimeStateAllowPlanUpdateKey                = "_skill_loop_allow_plan_update"
-	runtimeStateAllowIntermediateAnswerKey        = "_skill_loop_allow_intermediate_answer"
-	runtimeStateNativeAgentLoopKey                = "_native_agent_loop"
-	userInputContinuationAnswered                 = "answered"
-	userInputContinuationReplan                   = "replan_after_user_input"
-	restoredSkillInstructionsTotalBudgetChars     = 16000
-	restoredSkillInstructionsPerSkillBudgetChars  = 10000
+	defaultMaxSkillPlanningRounds                        = 50
+	defaultMaxSkillStepsPerTurn                          = 160
+	defaultMaxBusinessToolCallsPerSkill                  = 20
+	defaultMaxRecoverableFailureRounds                   = 12
+	defaultMaxConsecutiveRecoverableFailureRounds        = 5
+	defaultMaxPlannerSchemaFailureRounds                 = 12
+	defaultMaxConsecutivePlannerSchemaFailureRounds      = 5
+	defaultMaxArgumentValidationFailureRounds            = 12
+	defaultMaxConsecutiveArgumentValidationFailureRounds = 5
+	defaultMaxProviderBusinessFailureRounds              = defaultMaxRecoverableFailureRounds
+	defaultMaxConsecutiveProviderBusinessFailureRounds   = 5
+	defaultMaxTerminalProtocolFailureRounds              = 12
+	defaultMaxConsecutiveTerminalProtocolFailureRounds   = 5
+	// Kept as a source-compatible alias for existing diagnostics and tests.
+	defaultMaxConsecutivePlannerFeedbackRounds   = defaultMaxConsecutivePlannerSchemaFailureRounds
+	intermediateAnswerChunkRunes                 = 180
+	streamedIntermediateAnswerArg                = "_aichat_streamed_answer"
+	streamedFinalAnswerArg                       = "_aichat_streamed_final_answer"
+	runtimeStateAllowPlanUpdateKey               = "_skill_loop_allow_plan_update"
+	runtimeStateAllowIntermediateAnswerKey       = "_skill_loop_allow_intermediate_answer"
+	runtimeStateNativeAgentLoopKey               = "_native_agent_loop"
+	userInputContinuationAnswered                = "answered"
+	userInputContinuationReplan                  = "replan_after_user_input"
+	restoredSkillInstructionsTotalBudgetChars    = 16000
+	restoredSkillInstructionsPerSkillBudgetChars = 10000
+	connectorOutcomeRecoveryReason               = "connector_outcomes_recovered"
 )
+
+type recoverableFailureBudgetClass string
+
+const (
+	recoverableFailureBudgetBusiness recoverableFailureBudgetClass = "business"
+	recoverableFailureBudgetPlanner  recoverableFailureBudgetClass = "planner"
+)
+
+type retryFailureClass string
+
+const (
+	retryFailurePlannerSchema      retryFailureClass = "planner_schema"
+	retryFailureArgumentValidation retryFailureClass = "argument_validation"
+	retryFailureProviderBusiness   retryFailureClass = "provider_business"
+	retryFailureTerminalProtocol   retryFailureClass = "terminal_protocol"
+)
+
+var retryFailureClasses = [...]retryFailureClass{
+	retryFailureProviderBusiness,
+	retryFailureArgumentValidation,
+	retryFailurePlannerSchema,
+	retryFailureTerminalProtocol,
+}
+
+type retryFailureBudgetLimit struct {
+	maxRounds            int
+	maxConsecutiveRounds int
+}
+
+type retryFailureBudgetMetrics struct {
+	roundCount            int
+	consecutiveRoundCount int
+	callCount             int
+	categories            map[string]int
+	latestTrace           skills.SkillTrace
+}
+
+type retryFailureBudgetState struct {
+	metrics map[retryFailureClass]*retryFailureBudgetMetrics
+}
+
+func newRetryFailureBudgetState() *retryFailureBudgetState {
+	state := &retryFailureBudgetState{metrics: make(map[retryFailureClass]*retryFailureBudgetMetrics, len(retryFailureClasses))}
+	for _, class := range retryFailureClasses {
+		state.metrics[class] = &retryFailureBudgetMetrics{categories: map[string]int{}}
+	}
+	return state
+}
+
+func retryFailureBudgetLimitForClass(class retryFailureClass) retryFailureBudgetLimit {
+	switch class {
+	case retryFailurePlannerSchema:
+		return retryFailureBudgetLimit{
+			maxRounds:            defaultMaxPlannerSchemaFailureRounds,
+			maxConsecutiveRounds: defaultMaxConsecutivePlannerSchemaFailureRounds,
+		}
+	case retryFailureArgumentValidation:
+		return retryFailureBudgetLimit{
+			maxRounds:            defaultMaxArgumentValidationFailureRounds,
+			maxConsecutiveRounds: defaultMaxConsecutiveArgumentValidationFailureRounds,
+		}
+	case retryFailureTerminalProtocol:
+		return retryFailureBudgetLimit{
+			maxRounds:            defaultMaxTerminalProtocolFailureRounds,
+			maxConsecutiveRounds: defaultMaxConsecutiveTerminalProtocolFailureRounds,
+		}
+	default:
+		return retryFailureBudgetLimit{
+			maxRounds:            defaultMaxProviderBusinessFailureRounds,
+			maxConsecutiveRounds: defaultMaxConsecutiveProviderBusinessFailureRounds,
+		}
+	}
+}
+
+func (s *retryFailureBudgetState) metricsFor(class retryFailureClass) *retryFailureBudgetMetrics {
+	if s == nil {
+		return nil
+	}
+	if s.metrics == nil {
+		s.metrics = map[retryFailureClass]*retryFailureBudgetMetrics{}
+	}
+	metrics := s.metrics[class]
+	if metrics == nil {
+		metrics = &retryFailureBudgetMetrics{categories: map[string]int{}}
+		s.metrics[class] = metrics
+	}
+	if metrics.categories == nil {
+		metrics.categories = map[string]int{}
+	}
+	return metrics
+}
+
+func (s *retryFailureBudgetState) recordCall(class retryFailureClass, category string, trace skills.SkillTrace) {
+	metrics := s.metricsFor(class)
+	if metrics == nil {
+		return
+	}
+	metrics.callCount++
+	category = strings.TrimSpace(category)
+	if category == "" {
+		category = "tool"
+	}
+	metrics.categories[category]++
+	metrics.latestTrace = trace
+}
+
+func (s *retryFailureBudgetState) finishRound(
+	observed map[retryFailureClass]bool,
+	progress map[retryFailureClass]bool,
+	roundHadSuccess bool,
+) {
+	for _, class := range retryFailureClasses {
+		metrics := s.metricsFor(class)
+		if metrics == nil {
+			continue
+		}
+		if !observed[class] {
+			metrics.consecutiveRoundCount = 0
+			continue
+		}
+		metrics.roundCount++
+		if roundHadSuccess || progress[class] {
+			metrics.consecutiveRoundCount = 0
+			continue
+		}
+		metrics.consecutiveRoundCount++
+	}
+}
+
+func (s *retryFailureBudgetState) recordStandaloneFailure(class retryFailureClass, category string, trace skills.SkillTrace) {
+	s.recordCall(class, category, trace)
+	s.finishRound(
+		map[retryFailureClass]bool{class: true},
+		map[retryFailureClass]bool{},
+		false,
+	)
+}
+
+func (s *retryFailureBudgetState) limitReached() (retryFailureClass, *retryFailureBudgetMetrics, bool) {
+	for _, class := range retryFailureClasses {
+		metrics := s.metricsFor(class)
+		limit := retryFailureBudgetLimitForClass(class)
+		if metrics != nil &&
+			(metrics.roundCount >= limit.maxRounds || metrics.consecutiveRoundCount >= limit.maxConsecutiveRounds) {
+			return class, metrics, true
+		}
+	}
+	return "", nil, false
+}
+
+func (s *retryFailureBudgetState) classCallCounts() map[string]int {
+	out := make(map[string]int, len(retryFailureClasses))
+	for _, class := range retryFailureClasses {
+		if metrics := s.metricsFor(class); metrics != nil && metrics.callCount > 0 {
+			out[string(class)] = metrics.callCount
+		}
+	}
+	return out
+}
+
+func (s *retryFailureBudgetState) snapshot() map[string]interface{} {
+	out := make(map[string]interface{}, len(retryFailureClasses))
+	for _, class := range retryFailureClasses {
+		metrics := s.metricsFor(class)
+		if metrics == nil {
+			continue
+		}
+		limit := retryFailureBudgetLimitForClass(class)
+		out[string(class)] = map[string]interface{}{
+			"round_count":             metrics.roundCount,
+			"consecutive_round_count": metrics.consecutiveRoundCount,
+			"call_count":              metrics.callCount,
+			"max_rounds":              limit.maxRounds,
+			"max_consecutive_rounds":  limit.maxConsecutiveRounds,
+			"failure_categories":      copyStringIntMap(metrics.categories),
+		}
+	}
+	return out
+}
+
+func retryFailureLimitDetails(class retryFailureClass) (reasonCode string, stopReason string, emitSkillError bool) {
+	switch class {
+	case retryFailurePlannerSchema:
+		return "planner_feedback_limit_reached", "the planner could not produce a valid next step before its retry limit was reached", false
+	case retryFailureArgumentValidation:
+		return "argument_validation_limit_reached", "tool arguments could not be validated before their independent retry limit was reached", false
+	case retryFailureTerminalProtocol:
+		return "terminal_protocol_limit_reached", "the final-answer protocol could not be reconciled before its independent retry limit was reached", false
+	default:
+		return "skill_tool_failure_limit_reached", "the Provider business operation continued to fail and its safe retry limit was reached", true
+	}
+}
+
+func terminalProtocolRetryTrace(decision terminalStateGuardDecision) skills.SkillTrace {
+	err := errors.New(strings.TrimSpace(decision.Reason))
+	trace := failedSkillTrace("terminal_protocol", "", err)
+	trace.Status = "advisory"
+	trace.Arguments = map[string]interface{}{
+		"failure_category": "protocol",
+		"blockers":         append([]string(nil), decision.Blockers...),
+	}
+	return trace
+}
+
+func (r *Runner) completeSkillLoopSafetyTermination(
+	ctx context.Context,
+	req RunRequest,
+	prepared *PreparedChat,
+	messages []adapter.Message,
+	traces []skills.SkillTrace,
+	failure skills.SkillTrace,
+	successfulToolCalls []SkillToolCallRef,
+	stopReason string,
+	round int,
+) (string, *adapter.Usage, error) {
+	runtimeState := runtimeStateWithSuccessfulToolCalls(req, successfulToolCalls)
+	if connectorRequiredOutcomesSatisfied(runtimeState) {
+		return r.completeConnectorOutcomeSuccess(
+			ctx,
+			req,
+			prepared,
+			messages,
+			traces,
+			runtimeState,
+			stopReason,
+			round,
+		)
+	}
+	return r.completeBusinessToolFailure(
+		ctx,
+		req,
+		prepared,
+		traces,
+		failure,
+		successfulToolCalls,
+		stopReason,
+		round,
+	)
+}
+
+func (r *Runner) completeConnectorOutcomeSuccess(
+	ctx context.Context,
+	req RunRequest,
+	prepared *PreparedChat,
+	messages []adapter.Message,
+	traces []skills.SkillTrace,
+	runtimeState map[string]interface{},
+	stopReason string,
+	round int,
+) (string, *adapter.Usage, error) {
+	request := cloneChatRequest(prepared.LLMRequest)
+	request.Messages = append([]adapter.Message(nil), messages...)
+	if evidence := terminalOnlyEvidenceSnapshot(runtimeState); len(evidence) > 0 {
+		if encoded, err := json.Marshal(evidence); err == nil {
+			request.Messages = append(request.Messages, adapter.Message{
+				Role:    "system",
+				Content: "Authoritative native Connector completion evidence JSON:\n" + string(encoded),
+			})
+		}
+	}
+	request.Messages = append(request.Messages, adapter.Message{
+		Role: "system",
+		Content: strings.Join([]string{
+			"The runtime has verified that every required external outcome is supported by an exact native Connector execution.",
+			"The loop stopped only because later planning or bookkeeping could not make further progress; that internal failure does not undo the completed provider operation.",
+			"Write the normal final user-facing answer from the successful tool results already present in this conversation.",
+			"Report only results supported by those tool results. Do not mention planning, bookkeeping, safety limits, schemas, or this recovery instruction.",
+			"Do not call tools or claim any partial, failed, outcome_unknown, or still-pending operation succeeded.",
+		}, "\n"),
+	})
+	request.Tools = nil
+	request.ToolChoice = nil
+	request.Functions = nil
+	request.FunctionCall = nil
+	request.ResponseFormat = nil
+	request.StreamOptions = nil
+
+	result, err := r.runTerminalOnlyPlanningWithRetry(
+		ctx,
+		prepared,
+		request,
+		round,
+		req.OnChunk,
+		true,
+		false,
+	)
+	if err != nil {
+		return "", result.usage, err
+	}
+	answer := strings.TrimSpace(terminalOnlyAnswerCandidate(result.message))
+	if answer == "" {
+		return "", result.usage, terminalFinalAnswerUnavailableError(errors.New("native Connector completion summary was empty"))
+	}
+
+	trace := skills.SkillTrace{
+		Kind:    "final_answer",
+		Title:   "Final answer",
+		Message: answer,
+		Status:  "success",
+		Arguments: map[string]interface{}{
+			"completion_reason": connectorOutcomeRecoveryReason,
+			"round":             round,
+		},
+		Result: map[string]interface{}{
+			"source": "connector_outcome_recovery",
+		},
+	}
+	traces = append(traces, trace)
+	r.recordTrace(traces, trace)
+	r.logSkillTrace(ctx, prepared, trace)
+	if !result.answerStreamed {
+		r.emitAnswerChunk(ctx, prepared, answer, nil)
+	}
+	if req.OnTerminalCompletion != nil {
+		req.OnTerminalCompletion(TerminalCompletionResult{
+			Status:           "pass",
+			Source:           "connector_outcome_recovery",
+			Reason:           strings.TrimSpace(stopReason),
+			CompletionReason: connectorOutcomeRecoveryReason,
+		})
+	}
+	return answer, result.usage, nil
+}
+
+func connectorRequiredOutcomesSatisfied(runtimeState map[string]interface{}) bool {
+	if terminalStateGuardPendingProtocolBlocker(runtimeState) != "" || connectorTerminalStateDecision(runtimeState, "") != nil {
+		return false
+	}
+	plan := evidenceMapFromAny(runtimeState["operation_plan"])
+	native := false
+	for _, phase := range evidenceMapsFromAny(plan["phases"]) {
+		if len(connectorPhaseOperation(phase)) > 0 {
+			proof, ok := connectorPhaseEvidence(phase, runtimeState)
+			if !ok || proof.Status != "successful" {
+				return false
+			}
+			native = true
+			continue
+		}
+		if operationPlanPhaseRequiredByServer(phase, runtimeState) && phase["status"] != "completed" && !operationPlanPhaseServerClassifiedNonTool(phase, runtimeState) {
+			return false
+		}
+	}
+	for _, outcome := range evidenceMapsFromAny(plan["outcomes"]) {
+		if required, exists := outcome["required"].(bool); exists && !required {
+			continue
+		}
+		if outcome["status"] != "completed" && outcome["verification_mode"] != "final_answer" {
+			return false
+		}
+	}
+	return native
+}
 
 type skillStepResult struct {
 	trace               skills.SkillTrace
@@ -54,6 +418,7 @@ type skillStepResult struct {
 	pendingQuestion     map[string]interface{}
 	pendingGovernance   map[string]interface{}
 	pendingClientAction map[string]interface{}
+	pendingConnector    map[string]interface{}
 	pendingUserInput    map[string]interface{}
 	stopBusinessLoop    bool
 	fatalErr            error
@@ -219,7 +584,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			}
 		} else {
 			var preloadErr error
-			loadedSkills, preloadErr = r.preloadNativeSkills(ctx, prepared, resolved, nativeToolSet, &traces)
+			loadedSkills, preloadErr = r.preloadNativeSkills(ctx, prepared, resolved, nativeToolSet, &traces, req.ExecutionContext)
 			if preloadErr != nil {
 				return "", nil, preloadErr
 			}
@@ -238,14 +603,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 
 	stepCount := 0
 	toolCallCount := 0
-	recoverableFailureRoundCount := 0
-	consecutiveRecoverableFailureRounds := 0
-	recoverableFailureCallCount := 0
-	recoverableFailureCounts := map[string]int{}
+	retryFailureBudgets := newRetryFailureBudgetState()
 	failedToolCallAttemptCounts := map[string]int{}
 	emptyFinalAnswerRetryCount := 0
-	externalActionCompletionRetryCounts := map[string]int{}
-	projectedPlanLedgerRetryCount := 0
 	skillToolCallCounts := map[string]int{}
 	successfulToolCalls := []SkillToolCallRef{}
 	failedToolCallReasons := map[string]string{}
@@ -267,6 +627,57 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		continuationType: strings.TrimSpace(req.ContinuationType),
 		terminalOnly:     req.TerminalOnly,
 	}
+	completeRetryFailureLimit := func(class retryFailureClass, metrics *retryFailureBudgetMetrics, round int) (string, *adapter.Usage, error) {
+		limitErr := fmt.Errorf("%w: too many %s failures", ErrInvalidInput, class)
+		failure := skills.SkillTrace{}
+		if metrics != nil {
+			failure = metrics.latestTrace
+		}
+		if strings.TrimSpace(failure.Kind) == "" {
+			failure = failedSkillTrace(string(class), "", limitErr)
+			failure.Arguments = map[string]interface{}{}
+		}
+		reasonCode, stopReason, emitSkillError := retryFailureLimitDetails(class)
+		trace := failedSkillTrace("tool_retry_guard", failure.ToolName, limitErr)
+		trace.SkillID = failure.SkillID
+		trace.Arguments = copyStringAnyMap(failure.Arguments)
+		if trace.Arguments == nil {
+			trace.Arguments = map[string]interface{}{}
+		}
+		trace.Arguments["reason_code"] = reasonCode
+		trace.Arguments["retry_failure_class"] = string(class)
+		trace.Arguments["retry_failure_class_counts"] = copyStringIntMap(retryFailureBudgets.classCallCounts())
+		trace.Arguments["retry_failure_budgets"] = retryFailureBudgets.snapshot()
+		trace.Arguments["termination_reason"] = "safe_retry_limit_reached"
+		if providerMetrics := retryFailureBudgets.metricsFor(retryFailureProviderBusiness); providerMetrics != nil {
+			trace.Arguments["failure_categories"] = copyStringIntMap(providerMetrics.categories)
+		}
+		if plannerMetrics := retryFailureBudgets.metricsFor(retryFailurePlannerSchema); plannerMetrics != nil {
+			trace.Arguments["planner_feedback_categories"] = copyStringIntMap(plannerMetrics.categories)
+		}
+		traces = append(traces, trace)
+		r.recordTrace(traces, trace)
+		r.logSkillTrace(ctx, prepared, trace)
+		if emitSkillError {
+			r.emitSkillError(ctx, prepared, trace)
+		}
+		answer, explanationUsage, explanationErr := r.completeSkillLoopSafetyTermination(
+			ctx,
+			req,
+			prepared,
+			messages,
+			traces,
+			failure,
+			successfulToolCalls,
+			stopReason,
+			round,
+		)
+		usage = mergeUsage(usage, explanationUsage)
+		if explanationErr != nil {
+			return answerBuilder.String(), usage, explanationErr
+		}
+		return answer, usage, nil
+	}
 	for round := 0; round < defaultMaxSkillPlanningRounds; round++ {
 		if eventErr := prepared.presentationEventError(); eventErr != nil {
 			return answerBuilder.String(), usage, eventErr
@@ -277,6 +688,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			roundRuntimeState = runtimeStateWithSuccessfulToolCalls(req, successfulToolCalls)
 			terminalSubmissionAllowed = terminalStateGuardCanStream(roundRuntimeState)
 		}
+		connectorOutcomesComplete := connectorRequiredOutcomesSatisfied(roundRuntimeState)
 		planningReq := cloneChatRequest(prepared.LLMRequest)
 		planningReq.Messages = messages
 		planningReq.Stream = false
@@ -287,13 +699,20 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		}
 		allowPlanUpdate := planRevisionRequired || operationPlanModelRevisionRequired(req, roundRuntimeState)
 		allowIntermediateAnswer := !fileDeliveryRequiresArtifactOnly(req, roundRuntimeState)
-		if !req.NativeAgentLoop {
+		if connectorOutcomesComplete {
+			planningReq.Tools = controlToolsForRound(
+				planningReq.Tools,
+				false,
+				allowIntermediateAnswer,
+			)
+		} else if !req.NativeAgentLoop {
 			planningReq.Tools = controlToolsForRound(
 				planningReq.Tools,
 				allowPlanUpdate,
 				allowIntermediateAnswer,
 			)
 		}
+		planningReq.Tools = updatePlanToolsForRuntimeState(planningReq.Tools, roundRuntimeState)
 		if req.LegacyToolChat {
 			planningReq.Tools = legacyToolChatTools(planningReq.Tools, len(restoredSkillState.reloadRequired) > 0)
 		}
@@ -406,35 +825,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			}
 			emptyFinalAnswerRetryCount = 0
 			guard := terminalStateGuardEvaluate(roundRuntimeState, text)
-			if guard.Path != terminalStateGuardAccepted && terminalStateGuardRequiresProjectedPlanLedgerRetry(guard) {
-				if !req.TerminalOnly && projectedPlanLedgerRetryCount < 1 {
-					terminalStateGuardRecord(req, guard)
-					projectedPlanLedgerRetryCount++
-					messages = append(messages,
-						adapter.Message{Role: "assistant", Content: strings.TrimSpace(text)},
-						adapter.Message{Role: "system", Content: terminalStateGuardProjectedPlanLedgerRetryMessage()},
-					)
-					continue
-				}
-				guard = terminalStateGuardSafeExternalNonExecutionDecision(roundRuntimeState, text)
-			}
-			if guard.Path != terminalStateGuardAccepted &&
-				terminalStateGuardRequiresExternalExecutionRetry(guard) {
-				if !req.TerminalOnly &&
-					terminalStateGuardCanRetryPendingExternalAction(
-						guard.PendingExternalAction,
-						externalActionCompletionRetryCounts,
-					) {
-					terminalStateGuardRecord(req, guard)
-					externalActionCompletionRetryCounts[guard.PendingExternalAction.RetryKey]++
-					messages = append(messages,
-						adapter.Message{Role: "assistant", Content: strings.TrimSpace(text)},
-						adapter.Message{Role: "system", Content: terminalStateGuardExternalExecutionRetryMessage(guard.PendingExternalAction)},
-					)
-					continue
-				}
-				guard = terminalStateGuardSafeExternalNonExecutionDecision(roundRuntimeState, text)
-			}
 			terminalStateGuardRecord(req, guard)
 			if guard.Path != terminalStateGuardAccepted {
 				terminalStateGuardNotify(req, guard)
@@ -468,35 +858,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 
 			submission.streamed = submission.streamed || planningResult.answerStreamed
 			guard := terminalStateGuardEvaluate(roundRuntimeState, submission.answer)
-			if guard.Path != terminalStateGuardAccepted && terminalStateGuardRequiresProjectedPlanLedgerRetry(guard) {
-				if !req.TerminalOnly && projectedPlanLedgerRetryCount < 1 {
-					terminalStateGuardRecord(req, guard)
-					projectedPlanLedgerRetryCount++
-					messages = append(messages,
-						adapter.Message{Role: "assistant", Content: strings.TrimSpace(submission.answer)},
-						adapter.Message{Role: "system", Content: terminalStateGuardProjectedPlanLedgerRetryMessage()},
-					)
-					continue
-				}
-				guard = terminalStateGuardSafeExternalNonExecutionDecision(roundRuntimeState, submission.answer)
-			}
-			if guard.Path != terminalStateGuardAccepted &&
-				terminalStateGuardRequiresExternalExecutionRetry(guard) &&
-				terminalStateGuardCanRetryPendingExternalAction(
-					guard.PendingExternalAction,
-					externalActionCompletionRetryCounts,
-				) {
-				terminalStateGuardRecord(req, guard)
-				externalActionCompletionRetryCounts[guard.PendingExternalAction.RetryKey]++
-				messages = append(messages,
-					adapter.Message{Role: "assistant", Content: strings.TrimSpace(submission.answer)},
-					adapter.Message{Role: "system", Content: terminalStateGuardExternalExecutionRetryMessage(guard.PendingExternalAction)},
-				)
-				continue
-			}
-			if guard.Path != terminalStateGuardAccepted && terminalStateGuardRequiresExternalExecutionRetry(guard) {
-				guard = terminalStateGuardSafeExternalNonExecutionDecision(roundRuntimeState, submission.answer)
-			}
 			terminalStateGuardRecord(req, guard)
 			if guard.Path != terminalStateGuardAccepted {
 				guardErr := terminalStateGuardError(guard)
@@ -572,18 +933,11 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			r.recordTrace(traces, trace)
 			r.logSkillTrace(ctx, prepared, trace)
 			r.emitSkillError(ctx, prepared, trace)
-			planningMessage.Role = "assistant"
-			planningMessage.ToolCalls = toolCalls
-			planningMessage.ReasoningContent = ""
-			messages = append(messages, planningMessage)
-			messages = appendCancelledSiblingToolResults(messages, toolCalls, "the Agent tool-step safety limit was reached before this tool could run")
-			if checkpointErr := r.checkpointContext(ctx, messages); checkpointErr != nil {
-				return answerBuilder.String(), usage, checkpointErr
-			}
-			answer, explanationUsage, explanationErr := r.completeBusinessToolFailure(
+			answer, explanationUsage, explanationErr := r.completeSkillLoopSafetyTermination(
 				ctx,
 				req,
 				prepared,
+				messages,
 				traces,
 				trace,
 				successfulToolCalls,
@@ -613,13 +967,14 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 
 		roundHadRecoverableFailure := false
 		roundHadSuccess := false
-		roundMadeFailureProgress := false
-		var lastRecoverableTrace skills.SkillTrace
+		roundFailureClasses := map[retryFailureClass]bool{}
+		roundFailureProgress := map[retryFailureClass]bool{}
 		stopBusinessLoop := false
 		var stopBusinessLoopTrace skills.SkillTrace
 		roundDeferredSystemMessages := []adapter.Message{}
 		for callIndex, call := range toolCalls {
 			stepCount++
+			callEvidence := runtimeStateWithSuccessfulToolCalls(req, successfulToolCalls)
 			executionCall := call
 			runtimeTool, runtimeCall := runtimeToolForCall(req.RuntimeTools, call)
 			if req.NativeAgentLoop && !runtimeCall {
@@ -631,7 +986,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				callToolName = strings.TrimSpace(runtimeTool.Definition.Function.Name)
 				failedCallKey = ""
 			}
-			callEvidence := runtimeStateWithSuccessfulToolCalls(req, successfulToolCalls)
 			callEvidence[runtimeStateAllowPlanUpdateKey] = req.NativeAgentLoop || planRevisionRequired || operationPlanModelRevisionRequired(req, callEvidence)
 			callEvidence[runtimeStateAllowIntermediateAnswerKey] = !fileDeliveryRequiresArtifactOnly(req, callEvidence)
 			callEvidence[runtimeStateNativeAgentLoopKey] = req.NativeAgentLoop
@@ -671,6 +1025,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 					result = repeatedFailedToolCallRecoverableStep(executionCall.ID, callSkillID, callToolName, callToolArgs, reason, stopAfterWarning, resolved)
 				}
 			}
+			callEvidence[runtimeStateAllowPlanUpdateKey] = req.NativeAgentLoop || planRevisionRequired || operationPlanModelRevisionRequired(req, callEvidence)
+			callEvidence[runtimeStateAllowIntermediateAnswerKey] = !fileDeliveryRequiresArtifactOnly(req, callEvidence)
+			callEvidence[runtimeStateNativeAgentLoopKey] = req.NativeAgentLoop
 			if result.trace.Kind == "" {
 				result = r.handleProgressiveSkillCall(ctx, prepared, resolved, executionCall, req.ExecutionContext, toolCallCount, skillToolCallCounts, loadedSkills, callEvidence, round+1, nil)
 			}
@@ -698,16 +1055,26 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 					result.trace.Arguments = map[string]interface{}{}
 				}
 				result.trace.Arguments["failure_category"] = recoverableSkillFailureCategory(result.trace)
+				failureClass := recoverableSkillFailureClass(result.trace)
+				result.trace.Arguments["retry_failure_class"] = string(failureClass)
+				budgetClass := recoverableSkillFailureBudget(result.trace)
+				result.trace.Arguments["failure_budget"] = string(budgetClass)
 				annotateRecoverableSkillFailure(
 					&result.trace,
 					failedCallKey,
 					failedToolCallAttemptCounts,
 					result.stopBusinessLoop,
 				)
-				madeProgress := recoverableSkillFailureMadeProgress(latestRecoverableTrace, result.trace)
+				classMetrics := retryFailureBudgets.metricsFor(failureClass)
+				previous := skills.SkillTrace{}
+				if classMetrics != nil {
+					previous = classMetrics.latestTrace
+				}
+				madeProgress := recoverableSkillFailureMadeProgress(previous, result.trace)
 				if madeProgress {
-					roundMadeFailureProgress = true
-				} else if repeatedProviderValidationFailure(latestRecoverableTrace, result.trace) {
+					roundFailureProgress[failureClass] = true
+				} else if failureClass == retryFailureProviderBusiness &&
+					repeatedProviderValidationFailure(previous, result.trace) {
 					// Permit one corrected retry after provider field-validation
 					// feedback. If the provider reports the same structural failure
 					// again, further argument variation is not evidence of progress.
@@ -730,14 +1097,14 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			}
 			if result.recoverable {
 				failureCategory := recoverableSkillFailureCategory(result.trace)
-				recoverableFailureCounts[failureCategory]++
-				if !internalPlannerFeedbackTrace(result.trace) {
+				failureClass := recoverableSkillFailureClass(result.trace)
+				retryFailureBudgets.recordCall(failureClass, failureCategory, result.trace)
+				roundFailureClasses[failureClass] = true
+				if failureClass == retryFailureProviderBusiness {
 					r.emitSkillError(ctx, prepared, result.trace)
 				}
 				roundHadRecoverableFailure = true
-				lastRecoverableTrace = result.trace
 				latestRecoverableTrace = result.trace
-				recoverableFailureCallCount++
 				planRevisionRequired = true
 			} else {
 				roundHadSuccess = true
@@ -777,10 +1144,11 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				if strings.EqualFold(strings.TrimSpace(result.trace.Kind), "tool_call") &&
 					strings.EqualFold(strings.TrimSpace(result.trace.Status), "success") {
 					successfulToolCalls = append(successfulToolCalls, SkillToolCallRef{
-						SkillID:   strings.TrimSpace(result.trace.SkillID),
-						ToolName:  strings.TrimSpace(result.trace.ToolName),
-						Arguments: copyStringAnyMap(result.trace.Arguments),
-						Result:    copyStringAnyMap(result.toolResult),
+						ConnectorNative: result.trace.ConnectorNative,
+						SkillID:         strings.TrimSpace(result.trace.SkillID),
+						ToolName:        strings.TrimSpace(result.trace.ToolName),
+						Arguments:       copyStringAnyMap(result.trace.Arguments),
+						Result:          copyStringAnyMap(result.toolResult),
 					})
 				}
 			}
@@ -804,6 +1172,13 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 					return answerBuilder.String(), usage, checkpointErr
 				}
 				return answerBuilder.String(), usage, &ToolGovernancePendingError{Payload: result.pendingGovernance}
+			}
+			if result.pendingConnector != nil {
+				messages = appendCancelledSiblingToolResults(messages, toolCalls[callIndex+1:], "the round paused for Connector confirmation before this sibling tool could run")
+				if checkpointErr := r.checkpointContext(ctx, messages); checkpointErr != nil {
+					return answerBuilder.String(), usage, checkpointErr
+				}
+				return answerBuilder.String(), usage, &ConnectorConfirmationPendingError{Payload: result.pendingConnector}
 			}
 			if result.pendingClientAction != nil {
 				messages = appendCancelledSiblingToolResults(messages, toolCalls[callIndex+1:], "the round paused for a client action before this sibling tool could run")
@@ -867,7 +1242,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				return answerBuilder.String(), usage, checkpointErr
 			}
 		}
-		if stopBusinessLoop && !roundHadSuccess && !roundMadeFailureProgress {
+		if stopBusinessLoop && !roundHadSuccess && !roundFailureProgress[recoverableSkillFailureClass(stopBusinessLoopTrace)] {
 			failureReason := "the model repeated the same failed business-tool call without changing its arguments"
 			if strings.EqualFold(
 				strings.TrimSpace(evidenceStringFromAny(stopBusinessLoopTrace.Arguments["recovery_kind"])),
@@ -875,10 +1250,11 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			) {
 				failureReason = "the provider rejected the corrected request with the same field-validation error"
 			}
-			answer, explanationUsage, explanationErr := r.completeBusinessToolFailure(
+			answer, explanationUsage, explanationErr := r.completeSkillLoopSafetyTermination(
 				ctx,
 				req,
 				prepared,
+				messages,
 				traces,
 				stopBusinessLoopTrace,
 				successfulToolCalls,
@@ -897,58 +1273,16 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				Content: "The previous assistant turn only recorded internal state or plan progress. Continue the same user turn: call the next necessary business tool, request user input if blocked, or call submit_final_answer when the task is actually complete. Do not rely on ordinary assistant content from a meta-tool turn as the final answer.",
 			})
 		}
+		retryFailureBudgets.finishRound(roundFailureClasses, roundFailureProgress, roundHadSuccess)
 		if roundHadRecoverableFailure {
-			recoverableFailureRoundCount++
-			if !roundHadSuccess && !roundMadeFailureProgress {
-				consecutiveRecoverableFailureRounds++
-			} else {
-				consecutiveRecoverableFailureRounds = 0
-			}
 			logger.DebugContext(ctx, "aichat skill recoverable failures observed",
 				"conversation_id", prepared.Conversation.ID.String(),
 				"message_id", prepared.Message.ID.String(),
-				"failure_round_count", recoverableFailureRoundCount,
-				"consecutive_failure_rounds", consecutiveRecoverableFailureRounds,
-				"failure_call_count", recoverableFailureCallCount,
-				"failure_categories", recoverableFailureCounts,
-				"failure_progress", roundMadeFailureProgress,
+				"retry_failure_budgets", retryFailureBudgets.snapshot(),
 			)
-			if recoverableFailureRoundCount >= defaultMaxRecoverableFailureRounds ||
-				consecutiveRecoverableFailureRounds >= defaultMaxConsecutiveRecoverableFailureRounds {
-				err := fmt.Errorf("%w: too many failed skill calls", ErrInvalidInput)
-				trace := failedSkillTrace("tool_retry_guard", lastRecoverableTrace.ToolName, err)
-				trace.SkillID = lastRecoverableTrace.SkillID
-				trace.Arguments = copyStringAnyMap(lastRecoverableTrace.Arguments)
-				if trace.Arguments == nil {
-					trace.Arguments = map[string]interface{}{}
-				}
-				trace.Arguments["reason_code"] = "skill_tool_failure_limit_reached"
-				trace.Arguments["failure_categories"] = copyStringIntMap(recoverableFailureCounts)
-				trace.Arguments["termination_reason"] = "safe_retry_limit_reached"
-				traces = append(traces, trace)
-				r.recordTrace(traces, trace)
-				r.logSkillTrace(ctx, prepared, trace)
-				if !internalPlannerFeedbackTrace(lastRecoverableTrace) {
-					r.emitSkillError(ctx, prepared, trace)
-				}
-				answer, explanationUsage, explanationErr := r.completeBusinessToolFailure(
-					ctx,
-					req,
-					prepared,
-					traces,
-					lastRecoverableTrace,
-					successfulToolCalls,
-					"the business tool continued to fail and the safe retry limit was reached",
-					round,
-				)
-				usage = mergeUsage(usage, explanationUsage)
-				if explanationErr != nil {
-					return answerBuilder.String(), usage, explanationErr
-				}
-				return answer, usage, nil
+			if class, metrics, reached := retryFailureBudgets.limitReached(); reached {
+				return completeRetryFailureLimit(class, metrics, round)
 			}
-		} else {
-			consecutiveRecoverableFailureRounds = 0
 		}
 		if req.TerminalOnly {
 			return answerBuilder.String(), usage, errors.Join(
@@ -971,14 +1305,17 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		trace.Arguments = map[string]interface{}{}
 	}
 	trace.Arguments["reason_code"] = "skill_planning_rounds_exhausted"
+	trace.Arguments["retry_failure_class_counts"] = copyStringIntMap(retryFailureBudgets.classCallCounts())
+	trace.Arguments["retry_failure_budgets"] = retryFailureBudgets.snapshot()
 	traces = append(traces, trace)
 	r.recordTrace(traces, trace)
 	r.logSkillTrace(ctx, prepared, trace)
 	r.emitSkillError(ctx, prepared, trace)
-	answer, explanationUsage, explanationErr := r.completeBusinessToolFailure(
+	answer, explanationUsage, explanationErr := r.completeSkillLoopSafetyTermination(
 		ctx,
 		req,
 		prepared,
+		messages,
 		traces,
 		trace,
 		successfulToolCalls,
@@ -1625,6 +1962,41 @@ func recoverableSkillFailureCategory(trace skills.SkillTrace) string {
 	return "tool"
 }
 
+func recoverableSkillFailureBudget(trace skills.SkillTrace) recoverableFailureBudgetClass {
+	switch recoverableSkillFailureClass(trace) {
+	case retryFailurePlannerSchema, retryFailureArgumentValidation, retryFailureTerminalProtocol:
+		return recoverableFailureBudgetPlanner
+	default:
+		return recoverableFailureBudgetBusiness
+	}
+}
+
+func recoverableSkillFailureClass(trace skills.SkillTrace) retryFailureClass {
+	kind := strings.ToLower(strings.TrimSpace(trace.Kind))
+	if kind == "terminal_protocol" || kind == "final_answer" {
+		return retryFailureTerminalProtocol
+	}
+	providerRequestSent, providerRequestKnown := trace.Arguments["provider_request_sent"].(bool)
+	if kind == "tool_call" && providerRequestKnown && providerRequestSent {
+		return retryFailureProviderBusiness
+	}
+	switch kind {
+	case "plan_update", "skill_load_attempt", "meta_tool":
+		return retryFailurePlannerSchema
+	case "planner_feedback":
+		if recoverableSkillFailureCategory(trace) != "arguments" {
+			return retryFailurePlannerSchema
+		}
+	}
+	if recoverableSkillFailureCategory(trace) == "arguments" || (providerRequestKnown && !providerRequestSent) {
+		return retryFailureArgumentValidation
+	}
+	if kind == "planner_feedback" {
+		return retryFailurePlannerSchema
+	}
+	return retryFailureProviderBusiness
+}
+
 func shouldRememberFailedToolCall(trace skills.SkillTrace) bool {
 	return recoverableSkillFailureCategory(trace) != "transient"
 }
@@ -1774,9 +2146,6 @@ func repeatedFailedToolCallRecoverableStep(callID string, skillID string, toolNa
 		message += ": " + reason
 	}
 	retryAction := "Do not repeat the identical call. Change the arguments using the validation feedback before retrying."
-	if strings.EqualFold(strings.TrimSpace(skillID), "external-apps") && strings.EqualFold(strings.TrimSpace(toolName), "execute_action") {
-		retryAction = "Call get_action_guide for the selected integration and action, then retry execute_action once with corrected arguments."
-	}
 	if stopBusinessLoop {
 		retryAction = "stop retrying this business tool and explain the incomplete operation truthfully"
 	}
@@ -2324,7 +2693,7 @@ func agenticSkillLoopSystemMessage(preferExplicitFinalAnswer bool) adapter.Messa
 		"After each skill/tool result, continue with the next necessary action or final answer. Summarize only user-relevant outcomes, not internal bookkeeping.",
 		"The operation_plan tracks independently verifiable user-visible outcomes, not individual tool calls. Tool loads, prerequisite reads, navigation requests, approvals, and other implementation details belong to the runtime action/effect ledger and do not require plan updates.",
 		"Do not call update_plan after ordinary successful tool results. Use it only when the requested outcome structure changes, a failure invalidates the current route, or the user changes the goal. Prefer the outcomes form, preserve stable outcome IDs, and do not mark required outcomes completed or skipped without runtime evidence.",
-		"plan_phase_id is optional correlation metadata. It never proves completion by itself. Omit it from prerequisite reads, inspections, skill loads, and helper calls; the runtime reconciles successful effects against outcome acceptance facts. expected_action is a legacy advisory hint, not permission to execute; governed mutations are separately frozen to their exact approved call.",
+		"plan_phase_id is legacy correlation metadata and never proves completion. Never invent it or any server binding field for a projected external Action; the runtime supplies those fields. Omit it from prerequisite reads, inspections, skill loads, and helper calls. expected_action is an advisory hint, not permission to execute; governed mutations are separately frozen to their exact approved call.",
 		"For call_skill_tool, set completion_intent=finalize_if_success only when that exact business action is the final remaining user-requested effect and every prerequisite read, artifact creation, save, and navigation has already completed. Otherwise omit it or use continue. This intent never bypasses governance and is ignored unless the frozen action succeeds and the runtime can close the remaining plan deterministically.",
 		"Before submitting the final answer, reconcile the complete user request with the execution evidence. An advisory phase that is still marked open does not by itself require update_plan: if evidence proves the outcome, answer from that evidence; if an outcome is genuinely unfinished, continue the work or state truthfully that it was not completed. Never silently omit an open requested outcome.",
 		"Verify the remaining outcomes and do not submit while you still intend to perform an open phase or an unverified user-visible action. Do not call update_plan only to make bookkeeping match successful evidence; the plan snapshot remains optional audit metadata.",

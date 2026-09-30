@@ -645,26 +645,15 @@ func TestTerminalStateGuardStreamingIgnoresPlanProgress(t *testing.T) {
 	}
 }
 
-func TestTerminalStateGuardDoesNotStreamUnconfirmedExternalOutcome(t *testing.T) {
-	for _, operationStatus := range []string{"outcome_unknown", "failed_safe", "partially_succeeded", "executing"} {
-		t.Run(operationStatus, func(t *testing.T) {
-			evidence := map[string]interface{}{
-				"latest_user_request": "发送企业微信消息",
-				"skill_invocations": []interface{}{map[string]interface{}{
-					"skill_id": "external-apps", "tool_name": "execute_action", "status": "success",
-					"result": map[string]interface{}{
-						"integration_id": "wecom", "action_id": "wecom.message.send", "operation_status": operationStatus,
-					},
-				}},
-			}
-			if terminalStateGuardCanStream(evidence) {
-				t.Fatalf("terminalStateGuardCanStream() = true for %q", operationStatus)
-			}
-		})
+func TestTerminalStateGuardDoesNotStreamUnprovenConnectorOutcome(t *testing.T) {
+	for _, status := range []string{"unknown", "failed", "partial", ""} {
+		if terminalStateGuardCanStream(nativeRunnerTestState(status)) {
+			t.Fatalf("streamed unproven status %q", status)
+		}
 	}
 }
 
-func TestRunnerDefersFalseSuccessStreamForUnknownExternalOutcome(t *testing.T) {
+func TestRunnerDefersFalseSuccessStreamForUnknownConnectorOutcome(t *testing.T) {
 	client := &runnerTestLLMClient{appChatStreams: [][]adapter.StreamResponse{{
 		{Choices: []adapter.StreamChoice{{Delta: adapter.Message{Content: "消息已经发送。"}}}},
 		{Choices: []adapter.StreamChoice{{FinishReason: "stop"}}, Done: true},
@@ -682,24 +671,7 @@ func TestRunnerDefersFalseSuccessStreamForUnknownExternalOutcome(t *testing.T) {
 		Model:    "qwen-plus",
 		Messages: []adapter.Message{{Role: "user", Content: "发送企业微信消息"}},
 	})
-	evidence := map[string]interface{}{
-		"latest_user_request": "发送企业微信消息",
-		"skill_invocations": []interface{}{
-			map[string]interface{}{
-				"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
-				"result": map[string]interface{}{
-					"integration_id": "wecom", "action_id": "wecom.message.send", "effect": "external_send", "can_execute": true,
-				},
-			},
-			map[string]interface{}{
-				"skill_id": "external-apps", "tool_name": "execute_action", "status": "success",
-				"arguments": map[string]interface{}{
-					"integration_id": "wecom", "action_id": "wecom.message.send",
-				},
-				"result": map[string]interface{}{"operation_status": "outcome_unknown", "retry_safe": false},
-			},
-		},
-	}
+	evidence := nativeRunnerTestState("unknown")
 
 	answer, _, err := runner.Run(context.Background(), RunRequest{
 		Prepared:             prepared,
@@ -709,7 +681,7 @@ func TestRunnerDefersFalseSuccessStreamForUnknownExternalOutcome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !strings.Contains(answer, "外部操作未完成") || !strings.Contains(answer, "不能视为已发送或已完成") {
+	if !strings.Contains(answer, "结果未知") {
 		t.Fatalf("answer = %q, want safe external outcome", answer)
 	}
 	visible := ""

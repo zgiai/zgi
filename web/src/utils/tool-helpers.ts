@@ -10,6 +10,7 @@ import type {
   BuiltinToolProvider,
   BuiltinToolItem,
   ToolDescription,
+  ToolConstantValue,
 } from '@/services/types/tool';
 
 /**
@@ -78,6 +79,14 @@ export function inferFormFieldType(type: ToolParameterType): FormFieldType {
       return 'secret';
     case 'file':
       return 'file';
+    case 'json':
+      return 'json';
+    case 'date':
+      return 'date';
+    case 'date-time':
+      return 'date-time';
+    case 'string-list':
+      return 'string-list';
     default:
       // Exhaustiveness check
       return 'text';
@@ -101,12 +110,16 @@ export function mapParametersToFormFields(
     const description = p.human_description
       ? pickLocale(p.human_description, locale, p.description ?? undefined)
       : (p.description ?? undefined);
+    const placeholder = p.placeholder
+      ? pickLocale(p.placeholder, locale, description ?? label)
+      : description;
     return {
       name: p.name,
       label,
       type,
       required: !!p.required,
       description,
+      placeholder,
       default: p.default,
       options,
     };
@@ -124,15 +137,15 @@ export function createDefaultBinding(field: ToolFormField): ToolParameterBinding
   if (field.type === 'text') {
     return { type: 'mixed', value: '' };
   }
+  if (field.type === 'date' || field.type === 'date-time' || field.type === 'string-list') {
+    return { type: 'constant', value: field.type === 'string-list' ? [] : '' };
+  }
   // No default provided; prefer variable mode to encourage workflow linking
   return { type: 'variable', value: undefined };
 }
 
 /** Coerce a raw value to the correct type based on field definition */
-export function coerceValue(
-  field: ToolFormField,
-  raw: unknown
-): string | number | boolean | undefined {
+export function coerceValue(field: ToolFormField, raw: unknown): ToolConstantValue | undefined {
   if (raw === undefined || raw === null) return undefined;
   switch (field.type) {
     case 'checkbox':
@@ -149,7 +162,35 @@ export function coerceValue(
     case 'secret':
     case 'text':
     case 'file':
+    case 'date':
       return typeof raw === 'string' ? raw : String(raw);
+    case 'date-time':
+      if (typeof raw !== 'string' || raw.trim() === '') return undefined;
+      return raw;
+    case 'string-list':
+      if (Array.isArray(raw)) {
+        return raw
+          .map(String)
+          .map(value => value.trim())
+          .filter(Boolean);
+      }
+      if (typeof raw !== 'string') return undefined;
+      return raw
+        .split(/[\n,]/)
+        .map(value => value.trim())
+        .filter(Boolean);
+    case 'json':
+      if (Array.isArray(raw)) return raw;
+      if (raw && typeof raw === 'object') return raw as Record<string, unknown>;
+      if (typeof raw !== 'string' || raw.trim() === '') return undefined;
+      try {
+        const parsed: unknown = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed;
+        if (parsed && typeof parsed === 'object') return parsed as Record<string, unknown>;
+        return undefined;
+      } catch {
+        return undefined;
+      }
     default:
       return undefined;
   }
@@ -158,8 +199,8 @@ export function coerceValue(
 /** Extract defaults from parameter list to initialize form state */
 export function collectParameterDefaults(
   parameters: ToolParameter[]
-): Record<string, string | number | boolean | undefined> {
-  const result: Record<string, string | number | boolean | undefined> = {};
+): Record<string, ToolConstantValue | undefined> {
+  const result: Record<string, ToolConstantValue | undefined> = {};
   for (const p of parameters) {
     if (p.default !== undefined) {
       result[p.name] = p.default;

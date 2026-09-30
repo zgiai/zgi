@@ -2075,6 +2075,8 @@ const messages = {
         'Resource status changed. Review the latest rollback impact and retry.',
       bindingRevisionRebased:
         'Bindings changed elsewhere. Non-binding edits were kept and server bindings were applied: {resources}',
+      connectorBindingRevisionChanged:
+        'Connections changed in another page. The latest selection is now loaded. To switch, select and confirm again; other unsaved changes are kept.',
       memoryRevisionChanged:
         'Memory settings changed elsewhere. Your draft was kept; refresh and review it before saving again.',
       finishVersionPreviewFirst: 'Confirm or cancel version preview first',
@@ -2242,7 +2244,7 @@ const messages = {
       knowledge: 'Knowledge',
       databases: 'Databases',
       workflows: 'Workflows',
-      integrations: 'External apps',
+      connectors: 'Connectors',
       files: 'Files',
       memory: 'Memory',
     },
@@ -2328,8 +2330,7 @@ const messages = {
         database_table: 'Database table',
         writable_database_table: 'Writable database table',
         workflow: 'Workflow',
-        integration_connection: 'External app connection',
-        integration_action: 'External app action',
+        connector_connection: 'Connector connection',
       },
       accessModes: {
         read: 'Read',
@@ -2342,8 +2343,8 @@ const messages = {
         resourceMovedWorkspace: 'The resource was moved to another workspace.',
         authorizationRevoked: 'The binding authorization or required access was revoked.',
         resolutionFailed: 'The current resource status could not be resolved.',
-        integrationConnectionDisabled: 'This external app connection is disabled.',
-        integrationConnectionUnavailable:
+        connectorConnectionDisabled: 'This external app connection is disabled.',
+        connectorConnectionUnavailable:
           'This external app connection or one of its action grants is unavailable.',
         unknown: 'The binding issue has no public reason.',
       },
@@ -2504,42 +2505,8 @@ const messages = {
       cancel: 'Cancel',
       confirm: 'Save',
     },
-    integration: {
-      emptySelected: 'No external app connection has been added to this Agent yet.',
-      add: 'Add external app',
+    connector: {
       remove: 'Remove {name}',
-      helpText:
-        'Choose an available organization-authorized connection and specify which actions this Agent may perform.',
-      dialogTitle: 'Add external app',
-      dialogDescription:
-        'Choose at most one organization connection for each external app, then select the actions this Agent may perform.',
-      searchPlaceholder: 'Search connections or external apps',
-      loadFailedTitle: 'Failed to load external app connections',
-      loadFailedDescription: 'Available external app connections are temporarily unavailable.',
-      retryLoad: 'Reload',
-      emptyTitle: 'No available external app connections',
-      emptyDescription:
-        'Ask an organization administrator to create, test, and grant you access to a connection first.',
-      unavailableConnection: 'External app connection unavailable',
-      unnamedConnection: 'Unnamed connection',
-      unknownExternalApp: 'External app',
-      unknownAction: 'Unknown action',
-      unavailableDescription:
-        'This connection is no longer selectable. Its original binding is preserved until you remove it.',
-      connectionStatus: '{integration} · {status}',
-      connectionDescription: '{integration} · {count} actions allowed',
-      allowedActions: 'Allowed actions',
-      actionRequired: 'Select at least one action.',
-      actionUnavailable: 'Action grant unavailable',
-      noActionDescription: 'No action description',
-      cancel: 'Cancel',
-      confirm: 'Save',
-      status: {
-        pending: 'Pending',
-        active: 'Active',
-        invalid: 'Invalid',
-        disabled: 'Disabled',
-      },
     },
     suggestions: {
       generate: 'Generate',

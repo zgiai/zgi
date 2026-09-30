@@ -368,6 +368,44 @@ export function dispatchAIChatStreamEvent(
     case 'client_action_result':
       callbacks.onClientActionResult?.((data ?? {}) as AIChatClientActionResultEventData, eventId);
       break;
+    case 'connector_confirmation_required':
+    case 'connector_confirmation_resolved': {
+      const envelope =
+        data && typeof data === 'object' && !Array.isArray(data)
+          ? (data as Record<string, unknown>)
+          : {};
+      const nestedResult =
+        envelope.result && typeof envelope.result === 'object' && !Array.isArray(envelope.result)
+          ? (envelope.result as Record<string, unknown>)
+          : envelope.execution_result &&
+              typeof envelope.execution_result === 'object' &&
+              !Array.isArray(envelope.execution_result)
+            ? (envelope.execution_result as Record<string, unknown>)
+            : null;
+      const result = nestedResult ?? {
+        state: envelope.state,
+        ...(envelope.decision_id !== undefined ? { decision_id: envelope.decision_id } : {}),
+        ...(envelope.error_code !== undefined ? { error_code: envelope.error_code } : {}),
+        ...(envelope.confirmation !== undefined ? { confirmation: envelope.confirmation } : {}),
+      };
+      callbacks.onAgentProgress(
+        {
+          conversation_id: String(envelope.conversation_id ?? ''),
+          message_id: String(envelope.message_id ?? ''),
+          phase: event,
+          progress_id: String(envelope.route_receipt ?? ''),
+          status:
+            event === 'connector_confirmation_required'
+              ? 'waiting_approval'
+              : String(result.state ?? 'unknown'),
+          result,
+          created_at:
+            typeof envelope.created_at === 'number' ? envelope.created_at : undefined,
+        },
+        eventId
+      );
+      break;
+    }
     case 'memory_create':
     case 'memory_update':
     case 'memory_delete':

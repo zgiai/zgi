@@ -6,6 +6,8 @@ import type { AgentType } from '@/services/types/agent';
 // Context payload for the Workflow Editor
 export interface WorkflowEditorContextValue {
   agentId: string;
+  /** Stable UUID of the editable Workflow draft used by Connector Target Bindings. */
+  workflowId: string;
   agentType: AgentType;
   workspaceId: string;
 }
@@ -22,8 +24,12 @@ export const WorkflowEditorProvider: React.FC<WorkflowEditorProviderProps> = ({
   value,
   children,
 }) => {
+  const { agentId, workflowId, agentType, workspaceId } = value;
   // Memoize to avoid needless re-renders for deep trees
-  const memoValue = useMemo(() => value, [value.agentId, value.agentType, value.workspaceId]);
+  const memoValue = useMemo(
+    () => ({ agentId, workflowId, agentType, workspaceId }),
+    [agentId, agentType, workflowId, workspaceId]
+  );
   return (
     <WorkflowEditorContext.Provider value={memoValue}>{children}</WorkflowEditorContext.Provider>
   );

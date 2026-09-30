@@ -244,9 +244,16 @@ export const ZGI_CONSOLE_SITE_MAP = [
     permissions: NO_PERMISSIONS,
   },
   {
-    href: '/console/integrations',
-    label: 'Integrations',
-    purpose: 'external integration connection management',
+    href: '/console/connectors',
+    label: 'Connectors',
+    purpose: 'personal Connector and Data Source management',
+    scope: 'organization',
+    permissions: NO_PERMISSIONS,
+  },
+  {
+    href: '/console/connectors/connections',
+    label: 'My Connections',
+    purpose: 'list and manage independent personal Connector connections',
     scope: 'organization',
     permissions: NO_PERMISSIONS,
   },
@@ -299,14 +306,24 @@ const ZGI_CONSOLE_EXACT_ROUTES: ReadonlyMap<string, ZGIConsoleRouteDefinition> =
 
 const ZGI_CONSOLE_DYNAMIC_ROUTES: readonly ZGIConsoleDynamicRouteDefinition[] = [
   {
-    pattern: /^\/console\/integrations\/oauth\/result$/,
+    pattern: /^\/console\/connectors\/connections\/[A-Za-z0-9_-]+$/,
     route: {
-      label: 'Integration OAuth Result',
-      purpose: 'external integration authorization result',
+      label: 'Personal Connection',
+      purpose: 'personal Connector connection management',
       scope: 'organization',
       permissions: NO_PERMISSIONS,
     },
   },
+  {
+    pattern: /^\/console\/connectors\/[A-Za-z0-9][A-Za-z0-9._-]*$/,
+    route: {
+      label: 'Connector Detail',
+      purpose: 'Connector capability and personal Key setup',
+      scope: 'organization',
+      permissions: NO_PERMISSIONS,
+    },
+  },
+
   {
     pattern: /^\/console\/agents\/[A-Za-z0-9_-]+\/logs$/,
     route: {
