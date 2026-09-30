@@ -87,6 +87,9 @@ export function AgentRuntimeExecutionSection({
             <p className="text-xs text-muted-foreground sm:col-span-2">
               {t('execution.approvalNotice')}
             </p>
+            <p className="text-xs text-muted-foreground sm:col-span-2">
+              {t('execution.templateChangeNotice')}
+            </p>
           </div>
         ) : null}
       </div>

@@ -2389,6 +2389,7 @@ const messages: AgentsMessages = {
       homeSnapshotId: 'Home Snapshot ID（可选）',
       homeSnapshotPlaceholder: '留空使用默认环境',
       approvalNotice: '请向运维人员获取已批准的 ID。组织、Profile、Policy 或所填 Home Snapshot 未获批准时将无法发布。',
+      templateChangeNotice: '更换模板只影响新会话。旧会话保留原模板；如需带着文件切换，请先导出文件，再创建新会话并重新上传。',
     },
     memory: {
       addCustomSlot: '自定义记忆',

@@ -2553,6 +2553,7 @@ const messages = {
       homeSnapshotId: 'Home Snapshot ID (optional)',
       homeSnapshotPlaceholder: 'Leave blank for the default environment',
       approvalNotice: 'Ask an operator for approved IDs. Publishing is blocked when the organization, Profile, Policy, or selected Home Snapshot is not approved.',
+      templateChangeNotice: 'Template changes apply only to new conversations. Existing conversations keep their pinned template. Export needed files, start a new conversation, and upload them there to switch.',
     },
     memory: {
       agentTitle: 'Memory',

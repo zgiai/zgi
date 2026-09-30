@@ -24,6 +24,16 @@ The allowlist must match the database row. The API rejects publication without a
 
 An existing Binding persists the resolved artifact reference, so resuming it does not silently switch to a newer build. Console requests for the same conversation reuse that owner-scoped Binding even after the Agent configuration changes; new conversations use the new configuration. The local backend rejects a floating image tag and requires the image to be preloaded. If an approved artifact must change, register a new ID and publish a new Agent configuration; keep the old artifact until its references are retired.
 
+## Explicit template change for existing work
+
+The supported M5 path creates a **new conversation and Binding**; it does not change a running or suspended Binding in place:
+
+1. In the old conversation, use `workspace_export_file` for each business file that must continue. Download the files and verify their contents. Keep the old conversation available during the transition.
+2. Publish the Agent configuration with the new approved Home Snapshot ID, then start a new console conversation. Confirm the new template's expected offline tool runs there before moving data.
+3. Upload the exported files to the new conversation and continue the task. The old conversation remains pinned to its original artifact and retention deadline; deleting it is a separate explicit action.
+
+This is a manual file handoff, not an automatic clone of every Workspace file. An in-place template switch that preserves the same conversation and transparently migrates its Workspace is not implemented and must not be advertised.
+
 ## Current boundary
 
-Checkpoint and seven-day retention cover `/workspace`, including the session's writable `HOME=/workspace/.zgi-runtime-home`. This is separate from the immutable prepared base image/template; absolute writes to `/home/zgi-runtime` on E2B are not checkpointed, and the local gVisor image root remains read-only. Applying a different Home Snapshot to an existing conversation requires a separate, explicit rebuild workflow; changing the Agent configuration alone does not alter existing Bindings. Do not advertise universal Home-path persistence or template-switch recovery before those gates pass.
+Checkpoint and seven-day retention cover `/workspace`, including the session's writable `HOME=/workspace/.zgi-runtime-home`. This is separate from the immutable prepared base image/template; absolute writes to `/home/zgi-runtime` on E2B are not checkpointed, and the local gVisor image root remains read-only. Changing the Agent configuration alone does not alter existing Bindings. Do not advertise universal Home-path persistence, automatic file cloning, or in-place template-switch recovery.
