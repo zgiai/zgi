@@ -952,3 +952,62 @@ func TestHeartbeatIsNotStaleBeforeTheFirstSuccess(t *testing.T) {
 		t.Fatalf("a process that has never synced must not be considered stale")
 	}
 }
+
+// credential_status flips to "stale" on the first 401/403, long before the link is
+// really stale. official_channel_suspended mirrors the process-wide flag that actually
+// suspends the official channel, so operators can tell the two apart. The existing
+// fields keep their meaning.
+func TestStatusReportsOfficialChannelSuspendedSeparately(t *testing.T) {
+	db := newConsolesyncTestDB(t)
+	store := NewStore(db)
+	service := &Service{
+		cfg:   Config{Enabled: true, InstanceID: "instance-1", StaleAfter: 5 * time.Minute},
+		store: store,
+	}
+	ctx := context.Background()
+	t.Cleanup(func() { consolecred.Global().SetStale(false) })
+
+	state, err := store.LoadState(ctx)
+	if err != nil {
+		t.Fatalf("bootstrap state: %v", err)
+	}
+	// First failed sync: the persisted credential status is stale, the link is not.
+	state.CredentialStatus = CredentialStatusStale
+	state.ConsecutiveFailures = 1
+	if err := store.SaveState(ctx, state); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+	status := service.Status(ctx)
+	if status.CredentialStatus != CredentialStatusStale || status.Stale || status.OfficialChannelSuspended {
+		t.Fatalf("after first failure: credential_status=%q stale=%v official_channel_suspended=%v",
+			status.CredentialStatus, status.Stale, status.OfficialChannelSuspended)
+	}
+	raw, err := json.Marshal(status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := decoded["official_channel_suspended"]; !ok || v != false {
+		t.Fatalf("json official_channel_suspended = %v (present=%v), want false", v, ok)
+	}
+	for _, key := range []string{"credential_status", "stale", "consecutive_failures", "credential_loaded"} {
+		if _, ok := decoded[key]; !ok {
+			t.Fatalf("existing field %q disappeared from the status JSON", key)
+		}
+	}
+
+	// The link really goes stale: the official channel is suspended.
+	service.enterStale(ctx, state)
+	status = service.Status(ctx)
+	if !status.Stale || !status.OfficialChannelSuspended {
+		t.Fatalf("stale link: stale=%v official_channel_suspended=%v, want both true", status.Stale, status.OfficialChannelSuspended)
+	}
+
+	service.leaveStale()
+	if status = service.Status(ctx); status.Stale || status.OfficialChannelSuspended {
+		t.Fatalf("after recovery: stale=%v official_channel_suspended=%v, want both false", status.Stale, status.OfficialChannelSuspended)
+	}
+}

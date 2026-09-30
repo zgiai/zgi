@@ -31,6 +31,11 @@ type Status struct {
 	LastDrift           []Drift    `json:"last_drift,omitempty"`
 	DesiredVersion      int64      `json:"desired_version"`
 	Reason              string     `json:"reason,omitempty"`
+
+	// OfficialChannelSuspended mirrors the process-wide stale flag that suspends the
+	// official channel (same value as Stale). credential_status flips to "stale" on the
+	// first 401/403, long before this becomes true, so do not read it as "suspended".
+	OfficialChannelSuspended bool `json:"official_channel_suspended"`
 }
 
 // Service runs the control-plane loop.
@@ -350,10 +355,18 @@ func (s *Service) isStale(state *PreSyncState, now time.Time) bool {
 //
 //   - the sync/inventory client signs through consolecred.SignSyncRequest, which ignores
 //     the stale flag, so the next successful call re-establishes the link;
-//   - official-channel callers are gated on consolecred.Global().Stale(): the HTTP signer
-//     (consolecred.SignRequest, used by channel/console/gateway callers) attaches no
-//     instance headers while stale, gRPC per-RPC credentials return ErrConsoleLinkStale,
-//     and the official credit checker returns ErrOfficialCreditUnavailable.
+//   - official-channel callers are gated on consolecred.Global().Stale(). The two
+//     transports behave differently:
+//     gRPC always fails closed: per-RPC credentials return ErrConsoleLinkStale.
+//     HTTP only omits the instance headers (consolecred.SignRequest, used by
+//     channel/console/gateway callers); whether Console then rejects the request depends
+//     on whether it still accepts the legacy shared secret. While it does, an HTTP call
+//     made while stale still succeeds, so the HTTP "suspension" only takes effect once
+//     Console stops accepting the shared secret.
+//     The official credit checker returns ErrOfficialCreditUnavailable.
+//   - note that the persisted credential_status becomes "stale" on the first 401/403,
+//     well before this flag is set; the health endpoint reports the flag separately as
+//     official_channel_suspended.
 func (s *Service) enterStale(ctx context.Context, state *PreSyncState) {
 	s.mu.Lock()
 	alreadyStale := s.stale
@@ -454,6 +467,7 @@ func (s *Service) Status(ctx context.Context) Status {
 	s.mu.Lock()
 	status.Running = s.running
 	status.Stale = s.stale
+	status.OfficialChannelSuspended = s.stale
 	status.LastSuccessAt = s.lastSuccess
 	status.LastDrift = s.lastDrift
 	status.DesiredVersion = s.desiredVer
