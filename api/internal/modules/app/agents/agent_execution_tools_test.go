@@ -187,6 +187,34 @@ func TestAgentExecutionHTTPGatewayReplacesDeletedBindingIdempotently(t *testing.
 	}
 }
 
+func TestAgentExecutionHTTPGatewayKeepsExistingBindingAfterTemplateChange(t *testing.T) {
+	var lookedUp bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-ZGI-Organization-ID") != "org-1" || r.Header.Get("X-ZGI-Subject-ID") != "account-1" {
+			t.Errorf("binding lookup scope was not injected")
+		}
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/agent-runtime/bindings":
+			w.WriteHeader(http.StatusConflict)
+			_, _ = io.WriteString(w, `{"error":{"code":"idempotency_conflict"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/agent-runtime/bindings/by-idempotency":
+			lookedUp = true
+			if r.URL.Query().Get("key") != "conversation:conversation-1" {
+				t.Errorf("lookup key = %q", r.URL.Query().Get("key"))
+			}
+			_, _ = io.WriteString(w, `{"data":{"id":"pinned-old-binding","status":"suspended","generation":7}}`)
+		default:
+			t.Errorf("unexpected binding request = %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	gateway := &agentExecutionHTTPGateway{baseURL: server.URL, apiKey: "dedicated-worker-key", client: server.Client()}
+	binding, err := gateway.CreateBinding(t.Context(), agentExecutionScope{OrganizationID: "org-1", SubjectID: "account-1"}, "agent-1", "conversation-1", "standard", "local-gvisor", "new-template")
+	if err != nil || binding.ID != "pinned-old-binding" || binding.Status != "suspended" || !lookedUp {
+		t.Fatalf("pinned binding = %+v, lookedUp=%t, error=%v", binding, lookedUp, err)
+	}
+}
+
 func TestAgentExecutionShellToolKeepsCommandAndOutputOutOfTrace(t *testing.T) {
 	exitCode := 2
 	fake := &fakeAgentExecutionGateway{

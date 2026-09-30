@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -70,6 +71,15 @@ type agentExecutionHTTPGateway struct {
 	client  *http.Client
 }
 
+type agentExecutionGatewayHTTPError struct {
+	statusCode int
+	code       string
+}
+
+func (e agentExecutionGatewayHTTPError) Error() string {
+	return fmt.Sprintf("agent execution gateway returned HTTP %d (%s)", e.statusCode, e.code)
+}
+
 func agentExecutionGatewayFromEnv() agentExecutionGateway {
 	baseURL := strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_URL"))
 	apiKey := strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_API_KEY"))
@@ -124,7 +134,7 @@ func (g *agentExecutionHTTPGateway) request(ctx context.Context, scope agentExec
 		return fmt.Errorf("decode agent execution response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("agent execution gateway returned HTTP %d (%s)", resp.StatusCode, envelope.Error.Code)
+		return agentExecutionGatewayHTTPError{statusCode: resp.StatusCode, code: envelope.Error.Code}
 	}
 	if output == nil {
 		return nil
@@ -151,6 +161,13 @@ func (g *agentExecutionHTTPGateway) CreateBinding(ctx context.Context, scope age
 			"agent_id": agentID, "conversation_id": conversationID, "profile_id": profileID,
 			"backend": backend, "idempotency_key": key, "home_snapshot_id": homeSnapshotID,
 		}, &result)
+		var gatewayErr agentExecutionGatewayHTTPError
+		if errors.As(err, &gatewayErr) && gatewayErr.statusCode == http.StatusConflict && gatewayErr.code == "idempotency_conflict" {
+			// A published Agent configuration may change while an older
+			// conversation remains pinned to its original runtime template.
+			// Read that owner-scoped Binding instead of silently replacing it.
+			err = g.request(ctx, scope, http.MethodGet, "bindings/by-idempotency?key="+url.QueryEscape(key), nil, &result)
+		}
 		if err != nil {
 			return agentExecutionBinding{}, err
 		}

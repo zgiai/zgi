@@ -220,6 +220,14 @@ func (s *Service) existingBinding(ctx context.Context, request CreateBindingRequ
 	return binding, nil
 }
 
+func (s *Service) GetBindingByIdempotency(ctx context.Context, scope Scope, key string) (Binding, error) {
+	key = strings.TrimSpace(key)
+	if strings.TrimSpace(scope.OrganizationID) == "" || strings.TrimSpace(scope.SubjectID) == "" || key == "" || len(key) > 512 {
+		return Binding{}, ErrInvalidRequest
+	}
+	return s.repository.BindingByIdempotency(ctx, scope, key)
+}
+
 func (s *Service) GetBinding(ctx context.Context, scope Scope, bindingID string) (Binding, error) {
 	binding, err := s.repository.Binding(ctx, strings.TrimSpace(bindingID))
 	if err != nil {

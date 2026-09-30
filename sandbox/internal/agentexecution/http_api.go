@@ -23,6 +23,10 @@ type ControlPlane interface {
 	DestroyBinding(context.Context, Scope, string, int64) (Binding, error)
 }
 
+type BindingIdempotencyLookup interface {
+	GetBindingByIdempotency(context.Context, Scope, string) (Binding, error)
+}
+
 type DataPlane interface {
 	SubmitJob(context.Context, SubmitJobRequest) (Job, error)
 	GetJob(context.Context, Scope, string) (Job, error)
@@ -109,6 +113,20 @@ func (a *HTTPAPI) handleBindings(w http.ResponseWriter, request *http.Request, s
 			Backend: body.Backend, IdempotencyKey: body.IdempotencyKey,
 		})
 		a.writeResult(w, http.StatusCreated, bindingResponseFrom(binding), err)
+		return
+	}
+	if len(segments) == 1 && segments[0] == "by-idempotency" {
+		if request.Method != http.MethodGet {
+			writeMethodNotAllowed(w, http.MethodGet)
+			return
+		}
+		lookup, ok := a.control.(BindingIdempotencyLookup)
+		if !ok {
+			a.writeResult(w, http.StatusOK, nil, ErrBackendUnavailable)
+			return
+		}
+		binding, err := lookup.GetBindingByIdempotency(request.Context(), scope, request.URL.Query().Get("key"))
+		a.writeResult(w, http.StatusOK, bindingResponseFrom(binding), err)
 		return
 	}
 	bindingID := segments[0]

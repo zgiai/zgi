@@ -22,7 +22,7 @@ ZGI_AGENT_RUNTIME_APPROVED_HOME_SNAPSHOTS_JSON={"prepared-v1":{"backend":"local-
 
 The allowlist must match the database row. The API rejects publication without a matching allowlist entry; the Worker independently checks the database row, organization, profile, backend, approved status, and nonempty artifact reference on every new Binding. A snapshot ID is selected in the console's optional Home Snapshot field. Model Tool arguments cannot override it.
 
-An existing Binding persists the resolved artifact reference, so resuming it does not silently switch to a newer build. The local backend rejects a floating image tag and requires the image to be preloaded. If an approved artifact must change, register a new ID and publish a new Agent configuration; keep the old artifact until its references are retired.
+An existing Binding persists the resolved artifact reference, so resuming it does not silently switch to a newer build. Console requests for the same conversation reuse that owner-scoped Binding even after the Agent configuration changes; new conversations use the new configuration. The local backend rejects a floating image tag and requires the image to be preloaded. If an approved artifact must change, register a new ID and publish a new Agent configuration; keep the old artifact until its references are retired.
 
 ## Current boundary
 

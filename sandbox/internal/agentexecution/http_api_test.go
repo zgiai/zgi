@@ -46,6 +46,14 @@ func TestHTTPAPIBindingJobAndFileFlow(t *testing.T) {
 		t.Fatalf("create binding response = %d %s", response.Code, response.Body.String())
 	}
 	bindingID := responseDataString(t, response.Body.Bytes(), "id")
+	response = performAgentRuntimeRequest(t, api, http.MethodGet, agentRuntimePathPrefix+"bindings/by-idempotency?key=binding-request-1", nil, "org-1", "user-1")
+	if response.Code != http.StatusOK || responseDataString(t, response.Body.Bytes(), "id") != bindingID {
+		t.Fatalf("owner-scoped binding lookup = %d %s", response.Code, response.Body.String())
+	}
+	response = performAgentRuntimeRequest(t, api, http.MethodGet, agentRuntimePathPrefix+"bindings/by-idempotency?key=binding-request-1", nil, "org-other", "user-1")
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("cross-organization binding lookup = %d %s", response.Code, response.Body.String())
+	}
 
 	jobBody := `{"idempotency_key":"job-request-1","command":"python3","args":["-c","print('ok')"],"work_dir":"workspace","timeout_ms":30000}`
 	response = performAgentRuntimeRequest(t, api, http.MethodPost, agentRuntimePathPrefix+"bindings/"+bindingID+"/jobs", strings.NewReader(jobBody), "org-1", "user-1")
