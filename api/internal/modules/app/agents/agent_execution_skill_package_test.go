@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -56,6 +57,23 @@ func TestStageAgentSkillPackageRejectsChangedVersionBeforeUpload(t *testing.T) {
 	_, err := stageAgentSkillPackage(context.Background(), fake, agentExecutionScope{}, agentExecutionBinding{ID: "binding-1"}, agentExecutionCapabilities{FileTransfer: true, MaxUploadBytes: 64 << 20}, agentSkillPackage{ID: "portable-example", Root: root, ExpectedDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"})
 	if err == nil || len(fake.uploads) != 0 {
 		t.Fatalf("version mismatch error = %v, uploads = %d", err, len(fake.uploads))
+	}
+}
+
+func TestStageAgentSkillPackageCancelsSetupJobWhenPollingLosesContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	fake := &fakeAgentExecutionGateway{job: agentExecutionJob{ID: "setup-job", Status: "running", Generation: 2}}
+	fake.getJob = func(ctx context.Context) (agentExecutionJob, error) {
+		cancel()
+		return agentExecutionJob{}, ctx.Err()
+	}
+	_, err := stageAgentSkillPackage(ctx, fake, agentExecutionScope{OrganizationID: "org-1", SubjectID: "account-1"}, agentExecutionBinding{ID: "binding-1"}, agentExecutionCapabilities{FileTransfer: true, MaxUploadBytes: 64 << 20}, agentSkillPackage{ID: "portable-example", Root: testPortableSkillPackage(t)})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("interrupted package setup error = %v, want context cancellation", err)
+	}
+	if fake.cancelCalls != 1 || fake.canceledJob != "setup-job" || fake.canceledGen != 2 || fake.cancelCtxErr != nil {
+		t.Fatalf("cancellation calls = %d, job = %q, generation = %d, context error = %v", fake.cancelCalls, fake.canceledJob, fake.canceledGen, fake.cancelCtxErr)
 	}
 }
 

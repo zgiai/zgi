@@ -116,16 +116,17 @@ func stageAgentSkillPackage(ctx context.Context, gateway agentExecutionGateway, 
 	for job.Status == "queued" || job.Status == "running" {
 		select {
 		case <-ctx.Done():
-			cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			_ = gateway.CancelJob(cancelCtx, scope, job.ID, job.Generation)
-			cancel()
-			return "", ctx.Err()
+			return "", cancelInterruptedAgentExecutionJob(ctx, gateway, scope, job)
 		case <-time.After(350 * time.Millisecond):
 		}
-		job, err = gateway.GetJob(ctx, scope, job.ID)
+		nextJob, err := gateway.GetJob(ctx, scope, job.ID)
 		if err != nil {
+			if ctx.Err() != nil {
+				return "", cancelInterruptedAgentExecutionJob(ctx, gateway, scope, job)
+			}
 			return "", fmt.Errorf("read Skill package setup job: %w", err)
 		}
+		job = nextJob
 	}
 	if job.Status != "succeeded" || job.ExitCode == nil || *job.ExitCode != 0 {
 		return "", fmt.Errorf("Skill package setup failed with status %s", job.Status)

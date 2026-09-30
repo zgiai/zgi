@@ -179,16 +179,17 @@ func executeAgentShellTool(ctx context.Context, gateway agentExecutionGateway, s
 	for job.Status == "queued" || job.Status == "running" {
 		select {
 		case <-operationCtx.Done():
-			cancelCtx, cancelJob := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			_ = gateway.CancelJob(cancelCtx, scope, job.ID, job.Generation)
-			cancelJob()
-			return failed("job_interrupted", operationCtx.Err())
+			return failed("job_interrupted", cancelInterruptedAgentExecutionJob(operationCtx, gateway, scope, job))
 		case <-time.After(350 * time.Millisecond):
 		}
-		job, err = gateway.GetJob(operationCtx, scope, job.ID)
+		nextJob, err := gateway.GetJob(operationCtx, scope, job.ID)
 		if err != nil {
+			if operationCtx.Err() != nil {
+				return failed("job_interrupted", cancelInterruptedAgentExecutionJob(operationCtx, gateway, scope, job))
+			}
 			return failed("job_status_failed", err)
 		}
+		job = nextJob
 	}
 	stdout, stderr, truncated, err := readAgentExecutionOutput(operationCtx, gateway, scope, job.ID)
 	if err != nil {
@@ -202,6 +203,15 @@ func executeAgentShellTool(ctx context.Context, gateway agentExecutionGateway, s
 		Status: "success", Arguments: map[string]interface{}{"command_bytes": len(args.Command)}, Result: result,
 		ModelResult: map[string]interface{}{"job_id": job.ID, "status": job.Status, "exit_code": job.ExitCode, "stdout": stdout, "stderr": stderr, "truncated": truncated, "input_files": inputPaths, "workspace_recreated": binding.Recreated, "skill_workspace_path": skillPath},
 	}
+}
+
+func cancelInterruptedAgentExecutionJob(ctx context.Context, gateway agentExecutionGateway, scope agentExecutionScope, job agentExecutionJob) error {
+	cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := gateway.CancelJob(cancelCtx, scope, job.ID, job.Generation); err != nil {
+		return errors.Join(ctx.Err(), fmt.Errorf("cancel interrupted agent execution job: %w", err))
+	}
+	return ctx.Err()
 }
 
 func stageAgentExecutionAttachments(ctx context.Context, gateway agentExecutionGateway, scope agentExecutionScope, bindingID string, capabilities agentExecutionCapabilities, attachments []runtimeservice.RuntimeAttachmentRef, reader agentRuntimeAttachmentReader) ([]string, error) {

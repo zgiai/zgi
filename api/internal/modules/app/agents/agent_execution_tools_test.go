@@ -22,6 +22,11 @@ import (
 type fakeAgentExecutionGateway struct {
 	binding      agentExecutionBinding
 	job          agentExecutionJob
+	getJob       func(context.Context) (agentExecutionJob, error)
+	cancelCalls  int
+	canceledJob  string
+	canceledGen  int64
+	cancelCtxErr error
 	output       []agentExecutionOutputChunk
 	capabilities agentExecutionCapabilities
 	command      string
@@ -96,11 +101,18 @@ func (f *fakeAgentExecutionGateway) SubmitJob(_ context.Context, _ agentExecutio
 	return f.job, nil
 }
 
-func (f *fakeAgentExecutionGateway) GetJob(context.Context, agentExecutionScope, string) (agentExecutionJob, error) {
+func (f *fakeAgentExecutionGateway) GetJob(ctx context.Context, _ agentExecutionScope, _ string) (agentExecutionJob, error) {
+	if f.getJob != nil {
+		return f.getJob(ctx)
+	}
 	return f.job, nil
 }
 
-func (f *fakeAgentExecutionGateway) CancelJob(context.Context, agentExecutionScope, string, int64) error {
+func (f *fakeAgentExecutionGateway) CancelJob(ctx context.Context, _ agentExecutionScope, jobID string, generation int64) error {
+	f.cancelCalls++
+	f.canceledJob = jobID
+	f.canceledGen = generation
+	f.cancelCtxErr = ctx.Err()
 	return nil
 }
 
@@ -199,6 +211,26 @@ func TestAgentExecutionShellToolKeepsCommandAndOutputOutOfTrace(t *testing.T) {
 	}
 	if result.ModelResult["stdout"] != "private output" || result.ModelResult["stderr"] != "private diagnostics" {
 		t.Fatalf("model-visible output = %#v", result.ModelResult)
+	}
+}
+
+func TestAgentExecutionShellCancelsJobWhenPollingLosesContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	fake := &fakeAgentExecutionGateway{
+		binding: agentExecutionBinding{ID: "binding-1", Status: "active"},
+		job:     agentExecutionJob{ID: "job-1", Status: "running", Generation: 3},
+	}
+	fake.getJob = func(ctx context.Context) (agentExecutionJob, error) {
+		cancel()
+		return agentExecutionJob{}, ctx.Err()
+	}
+	result := executeAgentShellTool(ctx, fake, agentExecutionScope{OrganizationID: "org-1", SubjectID: "account-1"}, "agent-1", "conversation-1", "message-1", "standard", "local-gvisor", adapter.ToolCall{ID: "call-1", Function: adapter.FunctionCall{Arguments: `{"command":"sleep 45"}`}}, nil)
+	if result.Status != "failed" || result.ModelResult["error_code"] != "job_interrupted" {
+		t.Fatalf("interrupted shell result = %#v, want job_interrupted", result)
+	}
+	if fake.cancelCalls != 1 || fake.canceledJob != "job-1" || fake.canceledGen != 3 || fake.cancelCtxErr != nil {
+		t.Fatalf("cancellation calls = %d, job = %q, generation = %d, context error = %v", fake.cancelCalls, fake.canceledJob, fake.canceledGen, fake.cancelCtxErr)
 	}
 }
 
