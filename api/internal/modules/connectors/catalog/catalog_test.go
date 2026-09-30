@@ -227,6 +227,55 @@ func TestCatalogActivatesCompatiblePackageAtomicallyAndDeactivatesPresentation(t
 	}
 }
 
+func TestCatalogListMatchesMemberSearchQuery(t *testing.T) {
+	t.Parallel()
+
+	connector := validDefinition()
+	dataSource := validDefinition()
+	dataSource.ID = "example-search"
+	dataSource.PluginID = "zgi.example-search"
+	dataSource.DriverID = "example-search-rest"
+	dataSource.Name = "Example Search"
+	dataSource.NameI18n = LocalizedText{"en-US": "Example Search", "zh-Hans": "示例搜索"}
+	dataSource.Description = "Example search data source"
+	dataSource.DescriptionI18n = LocalizedText{
+		"en-US": "Example search data source", "zh-Hans": "示例搜索数据源",
+	}
+	dataSource.Classification = ClassificationDataSource
+	dataSource.CapabilityTypes = []CapabilityType{CapabilityTypeData}
+
+	catalog, err := New(connector, dataSource)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	tests := []struct {
+		name  string
+		query string
+		want  []string
+	}{
+		{name: "blank query keeps every definition", query: "   ", want: []string{"example", "example-search"}},
+		{name: "identity", query: "example-search", want: []string{"example-search"}},
+		{name: "name ignores case", query: "EXAMPLE CONNECTOR", want: []string{"example"}},
+		{name: "localized name", query: "示例搜索", want: []string{"example-search"}},
+		{name: "localized description", query: "示例连接器", want: []string{"example"}},
+		{name: "unknown term", query: "absent", want: []string{}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			got := make([]string, 0)
+			for _, item := range catalog.List(Filter{Query: test.query}) {
+				got = append(got, item.ID)
+			}
+			if !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("List(Query=%q) ids = %v, want %v", test.query, got, test.want)
+			}
+		})
+	}
+}
+
 func validDefinition() Definition {
 	return Definition{
 		ID:                  "example",

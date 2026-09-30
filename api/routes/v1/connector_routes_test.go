@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -303,6 +304,57 @@ func TestConnectorRoutesCatalogTaxonomyFilters(t *testing.T) {
 	bad := connectorRouteRequest(t, router, http.MethodGet, "/console/api/connectors/catalog?category=unknown", "", nil)
 	if bad.Code < 400 || bad.Code >= 500 {
 		t.Fatalf("unknown taxonomy filter status = %d", bad.Code)
+	}
+}
+
+func TestConnectorRoutesCatalogSearchMatchesConnectionName(t *testing.T) {
+	definitions, err := connectorcatalog.BuiltinDefinitions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	definitionCatalog, err := connectorcatalog.New(definitions...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	organizationID, ownerID := uuid.New(), uuid.New()
+	displayName := "octocat"
+	service := &connectorRouteRecordingService{connections: []connectorcore.PersonalConnection{{
+		ID: uuid.New(), OrganizationID: organizationID, OwnerAccountID: ownerID,
+		ConnectorID: "github", Name: "我的代码仓库",
+		ExternalDisplayName: &displayName, State: connectorcore.ReadinessReady,
+	}}}
+	router := newConnectorRouteTestRouter(definitionCatalog, service, organizationID, ownerID)
+
+	searched := func(query string) []connectorCatalogItemResponse {
+		t.Helper()
+		path := "/console/api/connectors/catalog?query=" + url.QueryEscape(query)
+		recorder := connectorRouteRequest(t, router, http.MethodGet, path, "", nil)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("search %q status/body = %d %s", query, recorder.Code, recorder.Body.String())
+		}
+		var envelope struct {
+			Data connectorCatalogResponse `json:"data"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
+			t.Fatal(err)
+		}
+		return envelope.Data.Items
+	}
+
+	for _, test := range []struct{ name, query string }{
+		{name: "connection name", query: "我的代码仓库"},
+		{name: "external display name", query: "octocat"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			items := searched(test.query)
+			if len(items) != 1 || items[0].ID != "github" {
+				t.Fatalf("search %q items = %#v, want only github by connection name", test.query, items)
+			}
+		})
+	}
+
+	if items := searched("absent-search-term"); len(items) != 0 {
+		t.Fatalf("unmatched search items = %#v", items)
 	}
 }
 

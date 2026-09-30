@@ -338,10 +338,19 @@ func (handler *connectorHandler) listCatalog(c *gin.Context) {
 		return
 	}
 	connectionsByConnector := groupConnectionsByConnector(connections)
-	definitions := handler.catalog.List(filter)
+	// The member search is applied here rather than in the catalog so a
+	// Connector also matches on its own Connection names, which the definition
+	// catalog deliberately does not own.
+	definitionFilter := filter
+	definitionFilter.Query = ""
+	definitions := handler.catalog.List(definitionFilter)
 	items := make([]connectorCatalogItemResponse, 0, len(definitions))
 	for _, definition := range definitions {
-		item := handler.projectCatalog(definition, connectionsByConnector[definition.ID])
+		connectorConnections := connectionsByConnector[definition.ID]
+		if !connectorCatalogQueryMatches(definition, filter.Query, connectorConnections) {
+			continue
+		}
+		item := handler.projectCatalog(definition, connectorConnections)
 		if catalogItemMatchesStatus(item, status) {
 			items = append(items, item)
 		}
@@ -938,6 +947,30 @@ func (request connectorTargetRequest) targetRef() (connectorcore.TargetRef, erro
 		return connectorcore.TargetRef{}, connectorcore.NewError(connectorcore.ErrorCodeInvalidInput, false, nil)
 	}
 	return target, nil
+}
+
+// connectorCatalogQueryMatches reports whether a catalog entry satisfies a
+// member search query, either through its own definition metadata or through
+// the name of one of the member's saved Connections.
+func connectorCatalogQueryMatches(
+	definition connectorcatalog.Definition,
+	query string,
+	connections []connectorcore.PersonalConnection,
+) bool {
+	if connectorcatalog.DefinitionMatchesQuery(definition, query) {
+		return true
+	}
+	needle := strings.ToLower(strings.TrimSpace(query))
+	for _, connection := range connections {
+		if strings.Contains(strings.ToLower(connection.Name), needle) {
+			return true
+		}
+		if connection.ExternalDisplayName != nil &&
+			strings.Contains(strings.ToLower(*connection.ExternalDisplayName), needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func groupConnectionsByConnector(items []connectorcore.PersonalConnection) map[string][]connectorcore.PersonalConnection {

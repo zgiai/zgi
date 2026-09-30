@@ -22,6 +22,8 @@ export interface ConnectorCatalogFilters {
   status: ConnectorCatalogStatus;
   category?: ConnectorCategory;
   tag?: ConnectorTag;
+  /** Owner-scoped Connection names per Connector, which the definition catalog does not carry. */
+  connectionNames?: ReadonlyMap<string, readonly string[]>;
 }
 
 export interface PartitionedConnectorCatalog {
@@ -56,14 +58,17 @@ export function getConnectorCatalogRowState(item: ConnectorCatalogItem): Connect
   return 'not_connected';
 }
 
-function searchableText(item: ConnectorCatalogItem): string {
-  return connectorCatalogSearchValues(item).join(' ').toLocaleLowerCase();
+function searchableText(item: ConnectorCatalogItem, filters: ConnectorCatalogFilters): string {
+  const connectionNames = filters.connectionNames?.get(item.id) ?? [];
+  return [...connectorCatalogSearchValues(item), ...connectionNames]
+    .join(' ')
+    .toLocaleLowerCase();
 }
 
-function matchesQuery(item: ConnectorCatalogItem, query: string): boolean {
-  const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+function matchesQuery(item: ConnectorCatalogItem, filters: ConnectorCatalogFilters): boolean {
+  const terms = filters.query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
   if (terms.length === 0) return true;
-  const haystack = searchableText(item);
+  const haystack = searchableText(item, filters);
   return terms.every(term => haystack.includes(term));
 }
 
@@ -91,7 +96,7 @@ export function filterConnectorCatalog(
 ): ConnectorCatalogItem[] {
   return items.filter(
     item =>
-      matchesQuery(item, filters.query) &&
+      matchesQuery(item, filters) &&
       matchesTaxonomy(item, filters) &&
       (matchesStatus(item, filters.status) ||
         (filters.status === 'needs_attention' && pendingConnectorIDs.has(item.id)))
