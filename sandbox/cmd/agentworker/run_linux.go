@@ -44,6 +44,7 @@ type workerConfig struct {
 	WorkerID          string
 	RootDir           string
 	CheckpointDir     string
+	CheckpointS3      workspacecheckpoint.S3Config
 	ContainerdAddress string
 	Profiles          map[string]containerdprovider.Profile
 	MaxWorkers        int
@@ -88,7 +89,12 @@ func run(parent context.Context, logger *log.Logger) error {
 	controlBackends := map[string]agentexecution.Backend{backendName: backend}
 	executionBackends := map[string]agentexecution.ExecutionBackend{backendName: backend}
 	var checkpoints agentexecution.WorkspaceCheckpointStore
-	if cfg.CheckpointDir != "" {
+	if cfg.CheckpointS3.Bucket != "" {
+		checkpoints, err = workspacecheckpoint.NewS3Store(parent, cfg.CheckpointS3)
+		if err != nil {
+			return err
+		}
+	} else if cfg.CheckpointDir != "" {
 		fileStore, err := workspacecheckpoint.NewFileStore(cfg.CheckpointDir)
 		if err != nil {
 			return err
@@ -204,12 +210,19 @@ func workerConfigFromEnv() (workerConfig, error) {
 	hostname, _ := os.Hostname()
 	fallbackWorkerID := fmt.Sprintf("%s-%d", hostname, os.Getpid())
 	cfg := workerConfig{
-		ListenAddress:     envString("ZGI_AGENT_RUNTIME_LISTEN", "127.0.0.1:2670"),
-		APIKey:            strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_API_KEY")),
-		DatabaseURL:       strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_DATABASE_URL")),
-		WorkerID:          envString("ZGI_AGENT_RUNTIME_WORKER_ID", fallbackWorkerID),
-		RootDir:           envString("ZGI_AGENT_RUNTIME_ROOT", "/var/lib/zgi-agent-runtime"),
-		CheckpointDir:     strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_CHECKPOINT_DIR")),
+		ListenAddress: envString("ZGI_AGENT_RUNTIME_LISTEN", "127.0.0.1:2670"),
+		APIKey:        strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_API_KEY")),
+		DatabaseURL:   strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_DATABASE_URL")),
+		WorkerID:      envString("ZGI_AGENT_RUNTIME_WORKER_ID", fallbackWorkerID),
+		RootDir:       envString("ZGI_AGENT_RUNTIME_ROOT", "/var/lib/zgi-agent-runtime"),
+		CheckpointDir: strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_CHECKPOINT_DIR")),
+		CheckpointS3: workspacecheckpoint.S3Config{
+			Bucket:       strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_CHECKPOINT_S3_BUCKET")),
+			Region:       strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_CHECKPOINT_S3_REGION")),
+			Endpoint:     strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_CHECKPOINT_S3_ENDPOINT")),
+			Prefix:       strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_CHECKPOINT_S3_PREFIX")),
+			UsePathStyle: strings.EqualFold(strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_CHECKPOINT_S3_PATH_STYLE")), "true"),
+		},
 		ContainerdAddress: envString("ZGI_AGENT_RUNTIME_CONTAINERD_ADDRESS", "/run/containerd/containerd.sock"),
 		Profiles:          map[string]containerdprovider.Profile{},
 		MaxWorkers:        envInt("ZGI_AGENT_RUNTIME_MAX_WORKERS", 4),
@@ -234,6 +247,12 @@ func workerConfigFromEnv() (workerConfig, error) {
 	}
 	if cfg.MaxWorkers <= 0 || cfg.IdleTTL <= 0 || cfg.ShutdownTimeout <= 0 {
 		return workerConfig{}, errors.New("positive Agent Runtime worker and timeout limits are required")
+	}
+	if cfg.CheckpointDir != "" && cfg.CheckpointS3.Bucket != "" {
+		return workerConfig{}, errors.New("configure either a local checkpoint directory or S3 checkpoint bucket, not both")
+	}
+	if cfg.CheckpointS3.Bucket == "" && (cfg.CheckpointS3.Region != "" || cfg.CheckpointS3.Endpoint != "" || cfg.CheckpointS3.Prefix != "" || cfg.CheckpointS3.UsePathStyle) {
+		return workerConfig{}, errors.New("checkpoint S3 bucket is required when S3 options are set")
 	}
 	switch cfg.Backend {
 	case localBackendName:

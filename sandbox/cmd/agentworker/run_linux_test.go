@@ -66,3 +66,21 @@ func TestWorkerConfigParsesE2BWithoutLocalRuntimeSettings(t *testing.T) {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
+
+func TestWorkerConfigCheckpointStorageIsExclusive(t *testing.T) {
+	t.Setenv("ZGI_AGENT_RUNTIME_BACKEND", localBackendName)
+	t.Setenv("ZGI_AGENT_RUNTIME_API_KEY", "dedicated-secret")
+	t.Setenv("ZGI_AGENT_RUNTIME_DATABASE_URL", "postgres://runtime")
+	t.Setenv("ZGI_AGENT_RUNTIME_PROFILES_JSON", `{"standard":{"image":"registry.example.invalid/zgi/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}`)
+	t.Setenv("ZGI_AGENT_RUNTIME_CHECKPOINT_DIR", "/var/lib/zgi-checkpoints")
+	t.Setenv("ZGI_AGENT_RUNTIME_CHECKPOINT_S3_BUCKET", "checkpoints")
+	t.Setenv("ZGI_AGENT_RUNTIME_CHECKPOINT_S3_REGION", "us-east-1")
+	if _, err := workerConfigFromEnv(); err == nil {
+		t.Fatal("two checkpoint stores were accepted")
+	}
+	t.Setenv("ZGI_AGENT_RUNTIME_CHECKPOINT_DIR", "")
+	cfg, err := workerConfigFromEnv()
+	if err != nil || cfg.CheckpointS3.Bucket != "checkpoints" {
+		t.Fatalf("S3 checkpoint config = %+v, %v", cfg.CheckpointS3, err)
+	}
+}
