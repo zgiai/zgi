@@ -198,7 +198,33 @@ func HandleNonJSONError(statusCode int, body []byte) *AdapterError {
 		}
 	}
 
-	return NewAdapterError("PARSE_ERROR",
+	// A plain-text body still carries the upstream's decision, which lives in
+	// the status line. Collapsing every non-JSON body into ErrUpstreamError
+	// turned an upstream 401/403/404 into a retryable 502 invocation failure;
+	// keep the HTML branch's mapping for the text path too.
+	code, sentinel := nonJSONStatusClassification(statusCode)
+	return NewAdapterError(code,
 		fmt.Sprintf("Failed to parse error response (status %d): %s", statusCode, bodyStr),
-		statusCode, ErrUpstreamError)
+		statusCode, sentinel)
+}
+
+// nonJSONStatusClassification gives a non-JSON error body the identity its HTTP
+// status implies, mirroring the HTML branch above.
+func nonJSONStatusClassification(statusCode int) (string, error) {
+	switch statusCode {
+	case 400:
+		return "BAD_REQUEST", ErrInvalidRequest
+	case 401:
+		return "UNAUTHORIZED", ErrAuthFailed
+	case 403:
+		return "FORBIDDEN", ErrAuthFailed
+	case 404:
+		return "NOT_FOUND", ErrModelNotFound
+	case 408, 504:
+		return "UPSTREAM_TIMEOUT", ErrTimeout
+	case 429:
+		return "RATE_LIMITED", ErrRateLimited
+	default:
+		return "PARSE_ERROR", ErrUpstreamError
+	}
 }

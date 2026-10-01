@@ -47,19 +47,30 @@ func classifyProtocolError(err error) protocolError {
 
 	switch {
 	case errors.Is(err, gateway.ErrModelNotAuthorized), errors.Is(err, llmerrors.DomainErrModelNotAuthorized):
-		return newProtocolError(http.StatusForbidden, "permission_error", "model_not_authorized", "permission_error", "Model not authorized for this API key")
+		return newAppProtocolError(llmerrors.AppCodeModelForbidden, http.StatusForbidden, "permission_error", "model_not_authorized", "permission_error", "Model not authorized for this API key", false)
 	case errors.Is(err, llmerrors.DomainErrModelNotFound), errors.Is(err, gateway.ErrModelNotFound), errors.Is(err, gateway.ErrModelNotActive), errors.Is(err, adapter.ErrModelNotFound):
-		return newProtocolError(http.StatusNotFound, "invalid_request_error", "model_not_found", "not_found_error", "Model not found")
+		return newAppProtocolError(llmerrors.AppCodeModelNotFound, http.StatusNotFound, "invalid_request_error", "model_not_found", "not_found_error", "Model not found", false)
 	case adapter.IsCapabilityUnsupported(err):
 		return newAppProtocolError(llmerrors.AppCodeRequestInvalid, http.StatusBadRequest, "invalid_request_error", "unsupported_protocol", "invalid_request_error", "Requested model does not support this API protocol", false)
 	case errors.Is(err, adapter.ErrContentPolicyViolation):
 		return newAppProtocolError(llmerrors.AppCodeRequestInvalid, http.StatusBadRequest, "invalid_request_error", "content_policy_violation", "invalid_request_error", "Request was rejected by the content policy", false)
 	case errors.Is(err, gateway.ErrMissingModel), errors.Is(err, gateway.ErrMissingMessages), errors.Is(err, gateway.ErrEmptyMessages), errors.Is(err, gateway.ErrInvalidRequest), errors.Is(err, adapter.ErrInvalidRequest), errors.Is(err, llmerrors.DomainErrMissingModel), errors.Is(err, llmerrors.DomainErrMissingMessages), errors.Is(err, llmerrors.DomainErrInvalidMessages), errors.Is(err, llmerrors.DomainErrInvalidTemperature), errors.Is(err, llmerrors.DomainErrInvalidMaxTokens):
 		return invalidRequestProtocolError("Invalid request")
-	case errors.Is(err, gateway.ErrInvalidAPIKey), errors.Is(err, gateway.ErrAPIKeyExpired), errors.Is(err, gateway.ErrAPIKeyInactive), errors.Is(err, gateway.ErrAPIKeyNotFound), errors.Is(err, llmerrors.DomainErrInvalidAPIKey), errors.Is(err, llmerrors.DomainErrAPIKeyDisabled):
+	case errors.Is(err, gateway.ErrAPIKeyExpired):
+		return newAppProtocolError(llmerrors.AppCodeAPIKeyExpired, http.StatusUnauthorized, "invalid_request_error", "invalid_api_key", "authentication_error", "The API key has expired", false)
+	case errors.Is(err, gateway.ErrAPIKeyInactive), errors.Is(err, llmerrors.DomainErrAPIKeyDisabled):
+		return newAppProtocolError(llmerrors.AppCodeAPIKeyInactive, http.StatusUnauthorized, "invalid_request_error", "invalid_api_key", "authentication_error", "The API key is disabled", false)
+	case errors.Is(err, gateway.ErrInvalidAPIKey), errors.Is(err, gateway.ErrAPIKeyNotFound), errors.Is(err, llmerrors.DomainErrInvalidAPIKey):
 		return invalidAPIKeyProtocolError("Invalid API key")
-	case errors.Is(err, gateway.ErrInsufficientQuota), errors.Is(err, gateway.ErrInsufficientBalance), errors.Is(err, llmerrors.DomainErrInsufficientBalance), errors.Is(err, adapter.ErrInsufficientBalance), errors.Is(err, adapter.ErrQuotaExhausted):
+	case errors.Is(err, gateway.ErrInsufficientQuota), errors.Is(err, adapter.ErrQuotaExhausted):
 		return quotaProtocolError()
+	case errors.Is(err, gateway.ErrInsufficientBalance), errors.Is(err, llmerrors.DomainErrInsufficientBalance),
+		errors.Is(err, adapter.ErrInsufficientBalance), errors.Is(err, gateway.ErrBalanceNotFound):
+		// A declined reservation is a balance outcome, not a quota one: the
+		// ledger records llm.balance.insufficient, so the wire must answer
+		// with that identity and its 403 rather than collapsing into
+		// insufficient_quota.
+		return balanceProtocolError()
 	case errors.Is(err, llmerrors.DomainErrRateLimitExceeded), errors.Is(err, adapter.ErrRateLimitExceeded):
 		// The legacy OpenAI wire code stays rate_limit_exceeded; the stable
 		// catalog identity is the same llm.rate_limit.exceeded code used by
@@ -72,9 +83,16 @@ func classifyProtocolError(err error) protocolError {
 	case errors.Is(err, gateway.ErrPricingNotConfigured), errors.Is(err, adapter.ErrPricingNotConfigured):
 		return pricingNotConfiguredProtocolError()
 	case errors.Is(err, llmerrors.DomainErrPrivateChannelUpstreamUnavailable):
-		return newProtocolError(http.StatusServiceUnavailable, "server_error", "private_channel_upstream_unavailable", "api_error", "Private channel upstream credential is unavailable")
+		return newAppProtocolError(llmerrors.AppCodePrivateChannelUnavailable, http.StatusBadGateway, "server_error", "private_channel_upstream_unavailable", "api_error", "Private channel upstream credential is unavailable", true)
 	case errors.Is(err, adapter.ErrPlatformChannelUnavailable):
-		return newProtocolError(http.StatusBadGateway, "server_error", adapter.ErrorCodePlatformChannelUnavailable, "api_error", "Platform model service is temporarily unavailable")
+		// The catalog answers provider-unavailable with 503 and retryable, not
+		// the bare 502 this branch used to publish without any stable code.
+		return newAppProtocolError(llmerrors.AppCodeProviderUnavailable, http.StatusServiceUnavailable, "server_error", adapter.ErrorCodePlatformChannelUnavailable, "api_error", "Platform model service is temporarily unavailable", true)
+	case errors.Is(err, adapter.ErrAuthFailed):
+		// An upstream that rejected the platform credential can never succeed
+		// on retry. The ledger records llm.provider.auth_failed, so the wire
+		// must too, instead of a retryable invocation failure.
+		return newAppProtocolError(llmerrors.AppCodeProviderAuthFailed, http.StatusBadGateway, "server_error", "upstream_auth_failed", "api_error", "The model provider rejected the request credentials.", false)
 	// The four selection failures below each keep a distinct branch and stable
 	// code. They must never collapse into a single provider_unavailable outcome.
 	case errors.Is(err, gateway.ErrNoProviderAvailable), errors.Is(err, llmerrors.DomainErrNoProviderAvailable), errors.Is(err, adapter.ErrNoProviderAvailable):
@@ -85,13 +103,9 @@ func classifyProtocolError(err error) protocolError {
 		return newAppProtocolError(llmerrors.AppCodeProviderNotFound, http.StatusNotFound, "invalid_request_error", llmerrors.AppCodeProviderNotFound.String(), "not_found_error", "The model provider was not found. Check the model configuration.", false)
 	case errors.Is(err, llmerrors.DomainErrChannelNotFound):
 		return newAppProtocolError(llmerrors.AppCodeChannelNotFound, http.StatusNotFound, "invalid_request_error", llmerrors.AppCodeChannelNotFound.String(), "not_found_error", "No configured model channel was found. Contact an administrator.", false)
-	case errors.Is(err, gateway.ErrProviderUnavailable), errors.Is(err, llmerrors.DomainErrUpstreamUnavailable):
+	case errors.Is(err, gateway.ErrProviderUnavailable), errors.Is(err, llmerrors.DomainErrUpstreamUnavailable),
+		errors.Is(err, adapter.ErrProxyError), errors.Is(err, adapter.ErrBillingUnavailable):
 		return newAppProtocolError(llmerrors.AppCodeProviderUnavailable, http.StatusServiceUnavailable, "server_error", llmerrors.AppCodeProviderUnavailable.String(), "api_error", "The model service is temporarily unavailable. Try again later or choose another model.", true)
-	// Temporary compatibility branch for legacy aggregated errors that carry no
-	// stable code. T21 removes it once every producer emits an error_code or
-	// ErrorInfo.Reason.
-	case strings.Contains(err.Error(), "no provider available"):
-		return newAppProtocolError(llmerrors.AppCodeNoProviderAvailable, http.StatusServiceUnavailable, "server_error", llmerrors.AppCodeNoProviderAvailable.String(), "api_error", "No model provider is currently available. Try another model or contact an administrator.", true)
 	case isGatewayProviderTimeout(err):
 		// Keep the legacy upstream_timeout wire code, add the catalog identity
 		// so the error catalog code and localized message reach the client.
@@ -104,7 +118,7 @@ func classifyProtocolError(err error) protocolError {
 		// A missing rate is a configuration problem: the request can never be
 		// priced, so it is not retryable and it is not an invocation failure.
 		return newAppProtocolError(llmerrors.AppCodeBillingExchangeRateUnavailable, http.StatusServiceUnavailable, "server_error", llmerrors.AppCodeBillingExchangeRateUnavailable.String(), "api_error", "The exchange rate is unavailable, so this request cannot be billed. Contact an administrator.", false)
-	case errors.Is(err, gateway.ErrBalanceNotFound), errors.Is(err, gateway.ErrBillingFailed), errors.Is(err, gateway.ErrBillingLaneMismatch), errors.Is(err, gateway.ErrPricingCalculationFailed), errors.Is(err, llmerrors.DomainErrBillingFailed), errors.Is(err, llmerrors.DomainErrDatabaseError), errors.Is(err, llmerrors.DomainErrInternalError):
+	case errors.Is(err, gateway.ErrBillingFailed), errors.Is(err, gateway.ErrBillingLaneMismatch), errors.Is(err, gateway.ErrPricingCalculationFailed), errors.Is(err, llmerrors.DomainErrBillingFailed), errors.Is(err, llmerrors.DomainErrDatabaseError), errors.Is(err, llmerrors.DomainErrInternalError):
 		return newAppProtocolError(llmerrors.AppCodeInvocationFailed, http.StatusBadGateway, "server_error", "internal_error", "api_error", "Internal server error", true)
 	default:
 		// Every unclassified upstream failure must still carry a catalog
@@ -211,6 +225,15 @@ func quotaProtocolError() protocolError {
 	err := newAppProtocolError(llmerrors.AppCodeQuotaExceeded, http.StatusTooManyRequests, "insufficient_quota", "insufficient_quota", "billing_error", "This API key has no remaining quota. Check your usage or contact an administrator.", false)
 	err.anthropicStatus = http.StatusPaymentRequired
 	return err
+}
+
+// balanceProtocolError publishes a declined reservation as the catalog's
+// llm.balance.insufficient (403, non-retryable). It is deliberately separate
+// from quotaProtocolError: the ledger classifier already records the balance
+// identity, and answering 429 insufficient_quota on the wire made the two
+// disagree for gateway, domain, and adapter balance errors alike.
+func balanceProtocolError() protocolError {
+	return newAppProtocolError(llmerrors.AppCodeBalanceInsufficient, http.StatusForbidden, "invalid_request_error", "insufficient_balance", "billing_error", "Your organization balance is insufficient. Add funds or contact an administrator.", false)
 }
 
 func internalProtocolError() protocolError {

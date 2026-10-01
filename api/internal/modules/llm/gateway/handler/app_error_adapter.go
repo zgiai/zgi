@@ -55,8 +55,19 @@ func principalAccessProtocolError(c *gin.Context, err error, projector *apptrans
 // code; the catalog supplies the localized message, stable code, and retryable
 // flag, and the projector mints the error_id.
 func (h *LLMHandler) localizedProtocolError(c *gin.Context, err error) protocolError {
+	var projector *apptransport.Projector
+	if h != nil {
+		projector = h.errorProjector
+	}
+	return projectProtocolError(c, projector, err)
+}
+
+// projectProtocolError is the projector-backed half of localizedProtocolError,
+// shared with the handlers that keep their own projector instead of embedding
+// an LLMHandler. Passing a nil projector degrades to the raw classifier.
+func projectProtocolError(c *gin.Context, projector *apptransport.Projector, err error) protocolError {
 	legacy := classifyProtocolError(err)
-	if h == nil || h.errorProjector == nil || err == nil {
+	if projector == nil || err == nil {
 		return legacy
 	}
 	projectionTarget, supported := applicationErrorFor(err)
@@ -65,7 +76,7 @@ func (h *LLMHandler) localizedProtocolError(c *gin.Context, err error) protocolE
 	}
 
 	locale := apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language"))
-	result := h.errorProjector.ProjectWithRequestID(projectionTarget, locale, c.Writer.Header().Get("X-Request-ID"))
+	result := projector.ProjectWithRequestID(projectionTarget, locale, c.Writer.Header().Get("X-Request-ID"))
 	legacy.errorID = result.ErrorID
 	if result.Resolution == apptransport.ResolutionMatched {
 		legacy.message = result.Presentation.Message

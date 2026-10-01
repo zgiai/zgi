@@ -52,6 +52,8 @@ func TestClassifyProtocolError(t *testing.T) {
 		wantStatus        int
 		wantCode          string
 		wantAnthropicType string
+		// wantAppCode pins the cataloged identity when the row is about it.
+		wantAppCode string
 	}{
 		{
 			name:              "model authorization",
@@ -59,6 +61,7 @@ func TestClassifyProtocolError(t *testing.T) {
 			wantStatus:        http.StatusForbidden,
 			wantCode:          "model_not_authorized",
 			wantAnthropicType: "permission_error",
+			wantAppCode:       "llm.model.forbidden",
 		},
 		{
 			name:              "model not found",
@@ -105,9 +108,10 @@ func TestClassifyProtocolError(t *testing.T) {
 		{
 			name:              "platform channel unavailable",
 			err:               adapter.ErrPlatformChannelUnavailable,
-			wantStatus:        http.StatusBadGateway,
+			wantStatus:        http.StatusServiceUnavailable,
 			wantCode:          adapter.ErrorCodePlatformChannelUnavailable,
 			wantAnthropicType: "api_error",
+			wantAppCode:       "llm.provider.unavailable",
 		},
 		{
 			name:              "billing lane mismatch",
@@ -136,6 +140,9 @@ func TestClassifyProtocolError(t *testing.T) {
 			}
 			if got.anthropicType != tt.wantAnthropicType {
 				t.Fatalf("anthropicType = %q, want %q", got.anthropicType, tt.wantAnthropicType)
+			}
+			if tt.wantAppCode != "" && got.appCode != tt.wantAppCode {
+				t.Fatalf("appCode = %q, want %q", got.appCode, tt.wantAppCode)
 			}
 		})
 	}

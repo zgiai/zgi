@@ -20,11 +20,18 @@ import (
 
 func TestClassifyProtocolErrorPreservesUpstreamGuardCode(t *testing.T) {
 	got := classifyProtocolError(llmerrors.DomainErrPrivateChannelUpstreamUnavailable)
-	if got.openAIStatus != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want %d", got.openAIStatus, http.StatusServiceUnavailable)
+	// The status follows the frozen catalog entry for
+	// llm.channel.private_unavailable (502, retryable); the legacy wire code
+	// stays private_channel_upstream_unavailable so the guard remains
+	// distinguishable from a generic invocation failure.
+	if got.openAIStatus != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d", got.openAIStatus, http.StatusBadGateway)
 	}
 	if got.openAICode != "private_channel_upstream_unavailable" {
 		t.Fatalf("code = %q, want private_channel_upstream_unavailable", got.openAICode)
+	}
+	if got.appCode != "llm.channel.private_unavailable" {
+		t.Fatalf("appCode = %q, want llm.channel.private_unavailable", got.appCode)
 	}
 }
 

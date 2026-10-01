@@ -91,10 +91,12 @@ func ApplicationCodeForError(err error) (apperror.Code, bool) {
 	case errors.Is(err, ErrInsufficientBalance), errors.Is(err, llmerrors.DomainErrInsufficientBalance),
 		errors.Is(err, adapter.ErrInsufficientBalance), errors.Is(err, ErrBalanceNotFound):
 		return llmerrors.AppCodeBalanceInsufficient, true
-	case errors.Is(err, llmerrors.DomainErrInvalidAPIKey):
+	case errors.Is(err, llmerrors.DomainErrInvalidAPIKey), errors.Is(err, ErrInvalidAPIKey), errors.Is(err, ErrAPIKeyNotFound):
 		return llmerrors.AppCodeAPIKeyInvalid, true
-	case errors.Is(err, llmerrors.DomainErrAPIKeyDisabled):
+	case errors.Is(err, llmerrors.DomainErrAPIKeyDisabled), errors.Is(err, ErrAPIKeyInactive):
 		return llmerrors.AppCodeAPIKeyInactive, true
+	case errors.Is(err, ErrAPIKeyExpired):
+		return llmerrors.AppCodeAPIKeyExpired, true
 	case errors.Is(err, ErrExchangeRateUnavailable), errors.Is(err, adapter.ErrExchangeRateUnavailable):
 		return llmerrors.AppCodeBillingExchangeRateUnavailable, true
 	case errors.Is(err, ErrBillingPreDeductFailed):

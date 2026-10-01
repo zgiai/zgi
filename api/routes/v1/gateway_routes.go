@@ -66,7 +66,9 @@ func RegisterGatewayRoutes(router *gin.RouterGroup, deps GatewayRouteDeps) {
 	// Initialize handler
 	llmHandler := gatewayhandler.NewLLMHandler(gatewayService, errorProjector)
 	transcriptionHandler := gatewayhandler.NewTranscriptionHandler(gatewayService)
+	transcriptionHandler.SetErrorProjector(errorProjector)
 	speechHandler := gatewayhandler.NewSpeechHandler(gatewayService)
+	speechHandler.SetErrorProjector(errorProjector)
 
 	// Create middleware
 	authMiddleware := gatewayhandler.LLMAPIKeyAuthMiddleware(deps.APIKeyRepo, errorProjector)
