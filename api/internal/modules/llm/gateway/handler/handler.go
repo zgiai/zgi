@@ -471,7 +471,11 @@ func serviceFailureReportHint(err error) observability.FailureReportHint {
 			Retryable: true,
 		},
 	}
-	if protocolErr.openAIStatus == http.StatusInternalServerError {
+	// Gateway-owned failures: the internal_error branch (published as the
+	// catalog's 502 llm.invocation.failed) and the billing reserve/settle
+	// failures (500). Ownership must not follow the HTTP status alone, or an
+	// internal failure would be reported as a provider outage.
+	if protocolErr.openAICode == "internal_error" || protocolErr.openAIStatus == http.StatusInternalServerError {
 		hint.Classification = observability.ErrorClassification{
 			Category: observability.ErrorCategoryApplication,
 			Source:   observability.ErrorSourceZGI,
@@ -535,7 +539,11 @@ func streamFailureReportHint(err error) observability.FailureReportHint {
 			Retryable: true,
 		},
 	}
-	if protocolErr.openAIStatus == http.StatusInternalServerError {
+	// Gateway-owned failures: the internal_error branch (published as the
+	// catalog's 502 llm.invocation.failed) and the billing reserve/settle
+	// failures (500). Ownership must not follow the HTTP status alone, or an
+	// internal failure would be reported as a provider outage.
+	if protocolErr.openAICode == "internal_error" || protocolErr.openAIStatus == http.StatusInternalServerError {
 		hint.Classification = observability.ErrorClassification{
 			Category:  observability.ErrorCategoryApplication,
 			Source:    observability.ErrorSourceZGI,

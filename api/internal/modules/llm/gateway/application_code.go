@@ -47,7 +47,7 @@ func ApplicationCodeForError(err error) (apperror.Code, bool) {
 	case errors.Is(err, ErrInvalidRequest), errors.Is(err, adapter.ErrInvalidRequest),
 		errors.Is(err, ErrMissingModel), errors.Is(err, ErrMissingMessages),
 		errors.Is(err, ErrEmptyMessages),
-		errors.Is(err, adapter.ErrCapabilityUnsupported), errors.Is(err, adapter.ErrContentPolicyViolation),
+		errors.Is(err, adapter.ErrContentPolicyViolation),
 		errors.Is(err, llmerrors.DomainErrMissingModel), errors.Is(err, llmerrors.DomainErrMissingMessages),
 		errors.Is(err, llmerrors.DomainErrInvalidMessages), errors.Is(err, llmerrors.DomainErrInvalidTemperature),
 		errors.Is(err, llmerrors.DomainErrInvalidMaxTokens):
@@ -57,6 +57,12 @@ func ApplicationCodeForError(err error) (apperror.Code, bool) {
 	case errors.Is(err, llmerrors.DomainErrModelNotFound), errors.Is(err, ErrModelNotFound),
 		errors.Is(err, ErrModelNotActive), errors.Is(err, adapter.ErrModelNotFound):
 		return llmerrors.AppCodeModelNotFound, true
+	case adapter.IsCapabilityUnsupported(err):
+		// The same predicate, at the same precedence, as the protocol
+		// boundary: an upstream that says the model does not support the
+		// request is a request problem on both sides, never an invocation
+		// failure in the ledger and a 400 on the wire.
+		return llmerrors.AppCodeRequestInvalid, true
 	case errors.Is(err, llmerrors.DomainErrRouteNotFound):
 		// The model exists but no enabled route can serve it: an availability
 		// outcome, not "model not found".
@@ -73,8 +79,12 @@ func ApplicationCodeForError(err error) (apperror.Code, bool) {
 		return llmerrors.AppCodeProviderUnavailable, true
 	case errors.Is(err, llmerrors.DomainErrPrivateChannelUpstreamUnavailable):
 		return llmerrors.AppCodePrivateChannelUnavailable, true
-	case errors.Is(err, llmerrors.DomainErrRateLimitExceeded), errors.Is(err, adapter.ErrRateLimited):
+	case errors.Is(err, llmerrors.DomainErrRateLimitExceeded):
 		return llmerrors.AppCodeRateLimitExceeded, true
+	case errors.Is(err, adapter.ErrRateLimited):
+		// The upstream provider throttled the call, as opposed to this
+		// gateway's own limit above.
+		return llmerrors.AppCodeProviderRateLimited, true
 	case errors.Is(err, ErrInsufficientQuota), errors.Is(err, adapter.ErrQuotaExhausted):
 		return llmerrors.AppCodeQuotaExceeded, true
 	case errors.Is(err, ErrInsufficientBalance), errors.Is(err, llmerrors.DomainErrInsufficientBalance),

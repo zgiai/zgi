@@ -159,7 +159,7 @@ func TestLocalizedProtocolErrorDoesNotMisclassifyInternalDeadline(t *testing.T) 
 
 	got := handler.localizedProtocolError(requestContext, internalErr)
 
-	if got.openAIStatus != 500 || got.openAICode != "internal_error" || got.message != "大模型调用未完成，请重试或选择其他模型。" || got.appCode != llmerrors.AppCodeInvocationFailed.String() {
+	if got.openAIStatus != 502 || got.openAICode != "internal_error" || got.message != "大模型调用未完成，请重试或选择其他模型。" || got.appCode != llmerrors.AppCodeInvocationFailed.String() {
 		t.Fatalf("internal deadline was misclassified: %#v", got)
 	}
 }

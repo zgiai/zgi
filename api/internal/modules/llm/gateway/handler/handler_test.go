@@ -82,8 +82,8 @@ func TestWriteRawProtocolErrorReplacesNonJSONWithProtocolError(t *testing.T) {
 
 func TestClassifyProtocolErrorTreatsPricingFailureAsInternal(t *testing.T) {
 	got := classifyProtocolError(fmt.Errorf("quote failed: %w", gateway.ErrPricingCalculationFailed))
-	if got.openAIStatus != http.StatusInternalServerError || got.openAICode != "internal_error" {
-		t.Fatalf("protocol error = %#v, want internal error", got)
+	if got.openAIStatus != http.StatusBadGateway || got.openAICode != "internal_error" {
+		t.Fatalf("protocol error = %#v, want internal error published as the catalog's 502", got)
 	}
 }
 

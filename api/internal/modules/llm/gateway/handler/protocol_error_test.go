@@ -112,14 +112,14 @@ func TestClassifyProtocolError(t *testing.T) {
 		{
 			name:              "billing lane mismatch",
 			err:               gateway.ErrBillingLaneMismatch,
-			wantStatus:        http.StatusInternalServerError,
+			wantStatus:        http.StatusBadGateway, // llm.invocation.failed is 502 in the frozen catalog,
 			wantCode:          "internal_error",
 			wantAnthropicType: "api_error",
 		},
 		{
 			name:              "nil error is internal",
 			err:               nil,
-			wantStatus:        http.StatusInternalServerError,
+			wantStatus:        http.StatusBadGateway, // llm.invocation.failed is 502 in the frozen catalog,
 			wantCode:          "internal_error",
 			wantAnthropicType: "api_error",
 		},

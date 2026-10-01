@@ -71,6 +71,16 @@ func (h *LLMHandler) localizedProtocolError(c *gin.Context, err error) protocolE
 		legacy.message = result.Presentation.Message
 		legacy.appCode = result.Presentation.Code.String()
 		legacy.retryable = result.Presentation.Retryable
+		// The HTTP status follows the resolved code too, so the published
+		// (status, code, retryable) triple is always the catalog's. A protocol
+		// that deliberately answers with its own status (Anthropic 402 for an
+		// exhausted key quota) keeps it.
+		if status := result.Presentation.HTTPStatus; status > 0 {
+			if legacy.anthropicStatus == legacy.openAIStatus {
+				legacy.anthropicStatus = status
+			}
+			legacy.openAIStatus = status
+		}
 	}
 	return legacy
 }
