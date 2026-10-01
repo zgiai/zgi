@@ -2245,3 +2245,75 @@ func TestLLMModelFromPrivateModelPreservesAudioCapabilities(t *testing.T) {
 		)
 	}
 }
+
+// TestSelectChannelsForProviderUnknownModelMatrix pins how a name missing from
+// both the catalog and the global registry is answered: when no enabled route
+// names it, it is an unknown model (404); a "*" route keeps passthrough
+// routing; and a route that names the model but cannot serve this request
+// (an official route without a provider hint) must not be reported as unknown.
+func TestSelectChannelsForProviderUnknownModelMatrix(t *testing.T) {
+	const modelName = "no-such-model-zz"
+	cases := []struct {
+		name         string
+		route        *channelmodel.LLMRoute
+		wantSelected bool
+		wantNotFound bool
+	}{
+		{
+			name: "no route names the model",
+			route: &channelmodel.LLMRoute{
+				Type: shared.RouteTypePrivate, ChannelProvider: "openai-compatible", Models: []string{"some-other-model"},
+			},
+			wantNotFound: true,
+		},
+		{
+			name: "wildcard route keeps passthrough",
+			route: &channelmodel.LLMRoute{
+				Type: shared.RouteTypePrivate, ChannelProvider: "openai-compatible", Models: []string{"*"},
+			},
+			wantSelected: true,
+		},
+		{
+			name: "official route names the model but needs a provider",
+			route: &channelmodel.LLMRoute{
+				Type: shared.RouteTypeZGICloud, ChannelProvider: "zgi-cloud", Models: []string{modelName},
+				OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "openai", Model: modelName}},
+				IsEnabled:              true, IsOfficial: true,
+			},
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
+			db, mock := openGatewayModelLookupDB(t)
+			organizationID := uuid.New()
+			mock.ExpectQuery(`(?s)SELECT DISTINCT llm_models\.provider FROM "llm_models" JOIN llm_providers`).
+				WithArgs(modelName, true, llmmodel.ModelStatusActive, true, 2).
+				WillReturnRows(sqlmock.NewRows([]string{"provider"}))
+			mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "llm_models".*name`).
+				WithArgs(modelName).
+				WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+			testCase.route.ID = uuid.New()
+			testCase.route.OrganizationID = organizationID
+			router := &ChannelRouter{
+				db:                      db,
+				organizationIDRouteRepo: &fakeCandidateRouteRepo{routes: []*channelmodel.LLMRoute{testCase.route}},
+				strategyFactory:         NewStrategyFactory(),
+			}
+
+			selections, err := router.SelectChannelsForProvider(context.Background(), organizationID, "", modelName, 1)
+			if testCase.wantSelected {
+				if err != nil || len(selections) != 1 || selections[0].ModelSource != channelModelSourcePassthrough {
+					t.Fatalf("selections = %#v err = %v, want one passthrough selection", selections, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("selections = %#v, want an error", selections)
+			}
+			if gotNotFound := errors.Is(err, llmerrors.DomainErrModelNotFound); gotNotFound != testCase.wantNotFound {
+				t.Fatalf("model-not-found = %v, want %v (err %v)", gotNotFound, testCase.wantNotFound, err)
+			}
+		})
+	}
+}

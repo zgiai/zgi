@@ -157,6 +157,17 @@ func (r *LLMRoute) SupportsModelForProvider(provider, modelName string) bool {
 	return r.supportsOfficialLogicalModel(modelName)
 }
 
+// DeclaresModel reports whether the route names the logical model at all,
+// under any supplier ("*" included). It answers "does this route know the
+// name", which is what separates an unknown model from one that is known but
+// cannot be routed for this request (for example a missing provider hint).
+func (r *LLMRoute) DeclaresModel(modelName string) bool {
+	if !r.IsOfficial && r.Type != shared.RouteTypeZGICloud {
+		return r.SupportsModel(modelName)
+	}
+	return r.supportsOfficialLogicalModel(modelName)
+}
+
 // supportsOfficialLogicalModel reports whether an official route serves the
 // logical model under any supplier. The flat Models list can lag behind a
 // catalog sync, so the advertised provider/model pairs are consulted as well;

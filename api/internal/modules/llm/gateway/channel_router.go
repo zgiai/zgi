@@ -703,6 +703,15 @@ func (r *ChannelRouter) filterCandidateRoutes(
 	isPassthroughMode bool,
 ) ([]*channelmodel.LLMRoute, error) {
 	validRoutes := r.filterRoutesForSelection(routes, modelName, modelProvider, isPrivateCustomModel, isPassthroughMode)
+	if isPassthroughMode && len(validRoutes) == 0 && !anyRouteDeclaresModel(routes, modelName) {
+		// Passthrough means the model is in neither the catalog nor the global
+		// registry. When no enabled route names it either (a "*" route would),
+		// nothing in this organization knows the name: that is an unknown model,
+		// not an unavailable provider, and retrying cannot help. A route that
+		// names the model but was rejected for another reason keeps the
+		// provider-unavailable answer below.
+		return nil, llmerrors.NewModelNotFoundErrorWithName(modelName)
+	}
 	modelUseCase, _ := ctx.Value(shared.ContextKeyModelUseCase).(string)
 	validRoutes = filterRoutesForModelScene(validRoutes, modelName, llmModel, modelUseCase, isPrivateCustomModel)
 	modelCategory, _ := ctx.Value(shared.ContextKeyModelCategory).(string)
@@ -716,6 +725,15 @@ func (r *ChannelRouter) filterCandidateRoutes(
 		return nil, fmt.Errorf("%w: no routable channel found for model %s", ErrProviderUnavailable, modelName)
 	}
 	return validRoutes, nil
+}
+
+func anyRouteDeclaresModel(routes []*channelmodel.LLMRoute, modelName string) bool {
+	for _, route := range routes {
+		if route != nil && route.DeclaresModel(modelName) {
+			return true
+		}
+	}
+	return false
 }
 
 // filterRoutesForOperation enforces channel capability boundaries. Missing
