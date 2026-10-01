@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
@@ -81,7 +82,10 @@ func writeModelsDetail(c *gin.Context, models []adapter.Model) {
 		writeAnthropicCatalogError(c, http.StatusNotFound, "not_found_error", "Model not found")
 		return
 	}
-	writeOpenAIProtocolError(c, protocolError{openAIStatus: http.StatusNotFound, openAIType: "invalid_request_error", openAICode: "model_not_found", message: "Model not found"})
+	// The detail 404 must carry the same cataloged identity and headers as
+	// every other public exit; a bare legacy protocolError published a
+	// non-catalog code with no X-ZGI-App-Error-Code.
+	writeOpenAIProtocolError(c, newAppProtocolError(llmerrors.AppCodeModelNotFound, http.StatusNotFound, "invalid_request_error", "model_not_found", "not_found_error", "Model not found", false))
 }
 
 func mergeCatalogLogicalModels(models []adapter.Model) []adapter.Model {
@@ -289,8 +293,20 @@ func anthropicCatalogModelInfo(model adapter.Model) anthropicCatalogModel {
 	return anthropicCatalogModel{ID: model.ID, Type: "model", DisplayName: catalogDisplayName(model), CreatedAt: time.Unix(created, 0).UTC().Format(time.RFC3339), Capabilities: capabilities, MaxInputTokens: positiveCatalogValue(maxInput, defaultContextWindow), MaxTokens: positiveCatalogValue(model.MaxOutputTokens, defaultMaxTokens)}
 }
 
+// writeAnthropicCatalogError answers an Anthropic-shaped catalog failure with
+// the full public envelope and headers. It used to emit a bare
+// {"type":"error","error":{...}} body, so these exits were the only public
+// responses with no code, params, retryable, error_id, request_id, or header.
 func writeAnthropicCatalogError(c *gin.Context, status int, errType, message string) {
-	c.JSON(status, gin.H{"type": "error", "error": gin.H{"type": errType, "message": message}})
+	code := llmerrors.AppCodeRequestInvalid
+	anthropicType := errType
+	switch status {
+	case http.StatusNotFound:
+		code = llmerrors.AppCodeModelNotFound
+	default:
+		anthropicType = "invalid_request_error"
+	}
+	writeAnthropicProtocolError(c, newAppProtocolError(code, status, anthropicType, code.String(), anthropicType, message, false))
 }
 
 func parseCatalogLimit(raw string) (int, error) {

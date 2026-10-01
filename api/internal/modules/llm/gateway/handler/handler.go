@@ -709,15 +709,35 @@ func publicRawProtocolStatus(status int) int {
 	return http.StatusBadGateway
 }
 
+// writeRawProtocolFallback answers an upstream failure that carried no body.
+// It goes through the same envelope and header writers as every other public
+// exit so the three protocol shapes each stay correct while still carrying the
+// cataloged fields and X-ZGI-App-Error-Code.
 func writeRawProtocolFallback(c *gin.Context, status int, protocol string) {
-	const message = "Upstream request failed"
 	switch strings.ToLower(strings.TrimSpace(protocol)) {
 	case "anthropic":
-		c.JSON(status, gin.H{"type": "error", "error": gin.H{"type": "api_error", "message": message}})
+		writeAnthropicProtocolError(c, rawFallbackProtocolError(status))
 	case "gemini":
-		c.JSON(status, gin.H{"error": gin.H{"code": status, "message": message, "status": geminiErrorStatus(status)}})
+		writeGeminiProtocolError(c, rawFallbackProtocolError(status))
 	default:
-		c.JSON(status, gin.H{"error": gin.H{"message": message, "type": "api_error", "code": "upstream_error", "param": nil}})
+		writeOpenAIProtocolError(c, rawFallbackProtocolError(status))
+	}
+}
+
+// rawFallbackProtocolError picks the cataloged identity the upstream status
+// implies. Raw passthrough deliberately preserves the upstream status, so the
+// code is chosen to match it rather than the catalog's own status for the code.
+func rawFallbackProtocolError(status int) protocolError {
+	const message = "Upstream request failed"
+	switch status {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return newAppProtocolError(llmerrors.AppCodeProviderAuthFailed, status, "invalid_request_error", "upstream_auth_failed", "authentication_error", message, false)
+	case http.StatusTooManyRequests:
+		return newAppProtocolError(llmerrors.AppCodeProviderRateLimited, status, "rate_limit_error", "rate_limit_exceeded", "rate_limit_error", message, true)
+	case http.StatusBadRequest:
+		return newAppProtocolError(llmerrors.AppCodeRequestInvalid, status, "invalid_request_error", "invalid_request", "invalid_request_error", message, false)
+	default:
+		return newAppProtocolError(llmerrors.AppCodeInvocationFailed, publicRawProtocolStatus(status), "server_error", "upstream_error", "api_error", message, true)
 	}
 }
 
