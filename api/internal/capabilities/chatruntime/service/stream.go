@@ -792,7 +792,9 @@ func (s *service) finalizePreparedError(ctx context.Context, prepared *PreparedC
 			logger.WarnContext(ctx, "failed to clear aichat conversation runtime", "conversation_id", prepared.Conversation.ID.String(), clearErr)
 		}
 	}
-	s.emitPreparedEvent(ctx, prepared, streamEventError, BuildStreamErrorPayload(prepared, cause, ""), eventCallback)
+	// The transport request id travels on the context from the HTTP edge; the
+	// catalog code stays the product word list the payload already publishes.
+	s.emitPreparedEvent(ctx, prepared, streamEventError, BuildStreamErrorPayload(prepared, cause, StreamRequestID(ctx)), eventCallback)
 	return nil
 }
 

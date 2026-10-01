@@ -665,7 +665,11 @@ func (h *Handler) chatForSurface(c *gin.Context, surface string) {
 	}
 	req.Surface = surface
 
-	prepared, err := h.service.PrepareChat(c.Request.Context(), scope, req)
+	// Carry the transport request id into the runtime so a stream error frame
+	// can be correlated with the request that produced it.
+	streamCtx := runtimeservice.WithStreamRequestID(c.Request.Context(), c.GetHeader("X-Request-ID"))
+
+	prepared, err := h.service.PrepareChat(streamCtx, scope, req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -675,7 +679,7 @@ func (h *Handler) chatForSurface(c *gin.Context, surface string) {
 	writeChatStart(c, prepared)
 	client := newSSEClientWriter(c)
 
-	result, err := h.service.RunPreparedStream(c.Request.Context(), prepared, func(chunk string) error {
+	result, err := h.service.RunPreparedStream(streamCtx, prepared, func(chunk string) error {
 		return client.writeChunk(prepared, chunk)
 	}, func(event runtimeservice.StreamEvent) error {
 		return writeStreamEvent(c, event)

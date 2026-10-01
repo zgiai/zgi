@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -23,6 +24,12 @@ type WorkflowStreamEvent struct {
 }
 
 func prepareWorkflowStreamSSE(c *gin.Context) {
+	// Echo or mint the correlation id so SSE error frames can carry it.
+	requestID := strings.TrimSpace(c.GetHeader("X-Request-ID"))
+	if requestID == "" {
+		requestID = uuid.NewString()
+	}
+	c.Header("X-Request-ID", requestID)
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache, no-transform")
 	c.Header("Connection", "keep-alive")
@@ -64,14 +71,30 @@ func (h *WorkflowHandler) sendSSEErrorData(ctx context.Context, w http.ResponseW
 	}
 	dataMap, _ := event["data"].(map[string]interface{})
 	if dataMap != nil {
+		// error_code is the contract field while `code` stays the product word
+		// list, so it must never contradict the frame's own identity. Resolve
+		// the most specific cataloged code carried by the payload and only fall
+		// back to the generic invocation failure.
 		if _, ok := dataMap["error_code"]; !ok {
-			dataMap["error_code"] = "llm.invocation.failed"
+			dataMap["error_code"] = workflowStreamErrorCode(dataMap)
 		}
 		if _, ok := dataMap["params"]; !ok {
 			dataMap["params"] = map[string]interface{}{}
 		}
 		if _, ok := dataMap["error_id"]; !ok {
 			dataMap["error_id"] = uuid.NewString()
+		}
+		if _, ok := dataMap["retryable"]; !ok {
+			if retryable, known := workflowStreamErrorRetryable(workflowEventString(dataMap["error_code"])); known {
+				dataMap["retryable"] = retryable
+			}
+		}
+		if _, ok := dataMap["request_id"]; !ok {
+			// The SSE response carries the correlated request id, so an error
+			// frame stays traceable to the client's request.
+			if requestID := strings.TrimSpace(w.Header().Get("X-Request-ID")); requestID != "" {
+				dataMap["request_id"] = requestID
+			}
 		}
 	}
 
@@ -305,3 +328,56 @@ func workflowHasActualFailures(failedNodes map[string]string) bool {
 	}
 	return false
 }
+
+// workflowStreamErrorCode resolves the cataloged identity for an SSE error
+// frame from the payload itself, preferring the most specific code. Only a
+// dotted catalog identity qualifies: a product word such as
+// workflow_conversation_busy must never be published as the contract code.
+func workflowStreamErrorCode(data map[string]interface{}) string {
+	if data == nil {
+		return workflowStreamFallbackErrorCode
+	}
+	candidates := make([]interface{}, 0, 4)
+	if nested, ok := data["error"].(map[string]interface{}); ok && nested != nil {
+		candidates = append(candidates, nested["error_code"], nested["code"])
+	}
+	candidates = append(candidates, data["error_code"], data["code"])
+	for _, candidate := range candidates {
+		if code := workflowCatalogCode(candidate); code != "" {
+			return code
+		}
+	}
+	return workflowStreamFallbackErrorCode
+}
+
+// workflowCatalogCode accepts a value only when it looks like a catalog
+// identity. This mirrors the client-side predicate (a dotted code) and keeps
+// product words out of the contract field.
+func workflowCatalogCode(value interface{}) string {
+	text, _ := value.(string)
+	text = strings.TrimSpace(text)
+	if text == "" || !strings.Contains(text, ".") {
+		return ""
+	}
+	return text
+}
+
+// workflowStreamErrorRetryable publishes retry guidance only for the codes this
+// module raises itself; it never guesses for a code it did not author.
+func workflowStreamErrorRetryable(code string) (bool, bool) {
+	switch strings.TrimSpace(code) {
+	case workflowStreamFallbackErrorCode, workflowBusyContractCode:
+		return true, true
+	default:
+		return false, false
+	}
+}
+
+const (
+	workflowStreamFallbackErrorCode = "llm.invocation.failed"
+	// workflowBusyContractCode is the catalog identity for a recoverable
+	// "another run owns this conversation" outcome. The frame's product `code`
+	// stays workflow_conversation_busy; this is the contract field, so the two
+	// no longer contradict each other.
+	workflowBusyContractCode = "llm.rate_limit.exceeded"
+)
