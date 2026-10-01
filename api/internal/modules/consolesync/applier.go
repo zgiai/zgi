@@ -186,7 +186,7 @@ func (a *Applier) applyAccountStatus(ctx context.Context, tx *gorm.DB, payload m
 		return "", "", fmt.Errorf("account.status.set received unsupported status %q", status)
 	}
 
-	organizationID, err := a.store.ResolveOrganizationIDWith(ctx, tx)
+	organizationID, _, err := a.commandOrganization(ctx, tx, CommandAccountStatusSet, payload)
 	if err != nil {
 		return "", "", err
 	}
@@ -226,21 +226,22 @@ func (a *Applier) applyAPIKeyStatus(ctx context.Context, tx *gorm.DB, payload ma
 		return "", "", errors.New("apikey.set requires status")
 	}
 
+	// With a named organization the key must belong to it (plan A2).
+	organizationID := rawString(payload, "organization_id")
 	before := map[string]string{}
 	var current struct {
 		Status string `gorm:"column:status"`
 	}
-	if err := tx.WithContext(ctx).Table("llm_organization_api_keys").
-		Select("status").Where("id = ?", keyID).Scan(&current).Error; err != nil {
+	if err := scopeAPIKey(tx.WithContext(ctx).Table("llm_organization_api_keys").
+		Select("status").Where("id = ?", keyID), organizationID).Scan(&current).Error; err != nil {
 		return "", "", fmt.Errorf("read api key status: %w", err)
 	}
 	before["status"] = current.Status
 
 	now := time.Now().UTC()
-	result := tx.WithContext(ctx).Exec(
-		`UPDATE llm_organization_api_keys SET status = ?, updated_at = ? WHERE id = ?`,
-		status, now, keyID,
-	)
+	result := scopeAPIKey(tx.WithContext(ctx).Table("llm_organization_api_keys").
+		Where("id = ?", keyID), organizationID).
+		Updates(map[string]interface{}{"status": status, "updated_at": now})
 	if result.Error != nil {
 		return "", "", fmt.Errorf("update api key status: %w", result.Error)
 	}
@@ -268,9 +269,10 @@ func (a *Applier) applyAPIKeyQuota(ctx context.Context, tx *gorm.DB, payload map
 		ModelLimits        *string `gorm:"column:model_limits"`
 		AllowIPs           string  `gorm:"column:allow_ips"`
 	}
-	if err := tx.WithContext(ctx).Table("llm_organization_api_keys").
+	organizationID := rawString(payload, "organization_id")
+	if err := scopeAPIKey(tx.WithContext(ctx).Table("llm_organization_api_keys").
 		Select("status, quota_limit, used_quota, remain_quota, model_limits_enabled, model_limits, allow_ips").
-		Where("id = ?", keyID).
+		Where("id = ?", keyID), organizationID).
 		Scan(&current).Error; err != nil {
 		return "", "", fmt.Errorf("read api key quota: %w", err)
 	}
@@ -314,7 +316,7 @@ func (a *Applier) applyAPIKeyQuota(ctx context.Context, tx *gorm.DB, payload map
 		after["allow_ips"] = value
 	}
 
-	result := tx.WithContext(ctx).Table("llm_organization_api_keys").Where("id = ?", keyID).Updates(updates)
+	result := scopeAPIKey(tx.WithContext(ctx).Table("llm_organization_api_keys").Where("id = ?", keyID), organizationID).Updates(updates)
 	if result.Error != nil {
 		return "", "", fmt.Errorf("update api key quota: %w", result.Error)
 	}
@@ -340,9 +342,14 @@ func (a *Applier) applyWorkspaceQuota(ctx context.Context, tx *gorm.DB, payload 
 		return "", "", errors.New("quota.set requires scope_id")
 	}
 
-	organizationID, err := a.store.ResolveOrganizationIDWith(ctx, tx)
+	organizationID, explicit, err := a.commandOrganization(ctx, tx, CommandQuotaSet, payload)
 	if err != nil {
 		return "", "", err
+	}
+	if explicit {
+		if err := requireWorkspaceInOrganization(ctx, tx, scopeID, organizationID); err != nil {
+			return "", "", err
+		}
 	}
 
 	var current struct {
