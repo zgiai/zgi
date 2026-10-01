@@ -9,6 +9,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/retrieval"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -330,6 +331,132 @@ func TestRetrieveAgentKnowledgeWithRuntimeDatasetsSkipsLegacyConfigFallback(t *t
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("sql expectations: %v", err)
 	}
+}
+
+func TestRerankInBatchesProcessesEveryCandidate(t *testing.T) {
+	runner := &recordingKnowledgeReranker{}
+	contents := make([]string, 300)
+	for index := range contents {
+		contents[index] = "candidate"
+	}
+
+	scores, scored, err := rerankInBatches(context.Background(), runner, "query", contents)
+	if err != nil {
+		t.Fatalf("rerankInBatches() error = %v", err)
+	}
+	if runner.calls != 10 {
+		t.Fatalf("rerank calls = %d, want 10", runner.calls)
+	}
+	if runner.totalDocuments != len(contents) {
+		t.Fatalf("reranked documents = %d, want %d", runner.totalDocuments, len(contents))
+	}
+	if len(scores) != len(contents) || len(scored) != len(contents) {
+		t.Fatalf("result lengths = %d/%d, want %d", len(scores), len(scored), len(contents))
+	}
+	for index, ok := range scored {
+		if !ok {
+			t.Fatalf("candidate %d was not scored", index)
+		}
+	}
+}
+
+func TestRerankInBatchesReportsIncompleteBatchWithoutMixingScores(t *testing.T) {
+	runner := &recordingKnowledgeReranker{omitLastResultOnCall: 2}
+	contents := make([]string, 40)
+	for index := range contents {
+		contents[index] = "candidate"
+	}
+
+	scores, scored, err := rerankInBatches(context.Background(), runner, "query", contents)
+	if err != nil {
+		t.Fatalf("rerankInBatches() error = %v", err)
+	}
+	if len(scores) != len(contents) || len(scored) != len(contents) {
+		t.Fatalf("result lengths = %d/%d, want %d", len(scores), len(scored), len(contents))
+	}
+	for index, ok := range scored {
+		if runner.omitLastResultOnCall == 2 && index == 39 {
+			if ok {
+				t.Fatalf("omitted candidate %d was marked scored", index)
+			}
+			continue
+		}
+		if !ok {
+			t.Fatalf("candidate %d was not scored", index)
+		}
+	}
+}
+
+func TestDeduplicateKnowledgeRecordsKeepsHighestRetrievalScore(t *testing.T) {
+	records := []scoredKnowledgeRecord{
+		{
+			DatasetID: "dataset-a",
+			Record:    dto.HitTestingRecordResponse{Score: 0.4, Segment: dto.SegmentResponse{ID: "segment-a", Content: "Apple and Intel"}},
+		},
+		{
+			DatasetID: "dataset-b",
+			Record:    dto.HitTestingRecordResponse{Score: 0.9, Segment: dto.SegmentResponse{ID: "segment-b", Content: " apple   AND intel "}},
+		},
+		{
+			DatasetID: "dataset-c",
+			Record:    dto.HitTestingRecordResponse{Score: 0.8, Segment: dto.SegmentResponse{ID: "segment-c", Content: "A different fact"}},
+		},
+	}
+
+	unique := deduplicateKnowledgeRecords(records)
+	if len(unique) != 2 {
+		t.Fatalf("unique records = %d, want 2", len(unique))
+	}
+	if unique[0].DatasetID != "dataset-b" || unique[0].Record.Score != 0.9 {
+		t.Fatalf("duplicate winner = %#v, want dataset-b score 0.9", unique[0])
+	}
+}
+
+func TestNormalizeRetrievalModeSupportsVectorAndBM25Alias(t *testing.T) {
+	if got := normalizeRetrievalMode("vectorAndBM25"); got != RetrievalModeVector {
+		t.Fatalf("normalizeRetrievalMode(vectorAndBM25) = %q, want %q", got, RetrievalModeVector)
+	}
+}
+
+func TestNormalizeKnowledgeLimitCapsTopKAtTen(t *testing.T) {
+	if got := normalizeKnowledgeLimit(99, defaultKnowledgeTopK, maxKnowledgeTopK); got != 10 {
+		t.Fatalf("normalizeKnowledgeLimit(99) = %d, want 10", got)
+	}
+}
+
+func TestCommitKnowledgeRerankScoresIsAtomicOnIncompleteResults(t *testing.T) {
+	original := 0.4
+	records := []scoredKnowledgeRecord{
+		{Record: dto.HitTestingRecordResponse{Score: original, Segment: dto.SegmentResponse{ID: "one"}}},
+		{Record: dto.HitTestingRecordResponse{Score: 0.3, Segment: dto.SegmentResponse{ID: "two"}}},
+	}
+
+	if commitKnowledgeRerankScores(records, []int{0, 1}, []float64{0.9, 0.8}, []bool{true, false}) {
+		t.Fatal("commitKnowledgeRerankScores() = true, want false")
+	}
+	if records[0].Record.Score != original || records[0].Record.RetrievalSource != nil {
+		t.Fatalf("incomplete rerank mutated records: %#v", records)
+	}
+}
+
+type recordingKnowledgeReranker struct {
+	calls                int
+	totalDocuments       int
+	omitLastResultOnCall int
+}
+
+func (r *recordingKnowledgeReranker) Rerank(_ context.Context, _ string, documents []string, _ *float64, _ *int) ([]retrieval.GatewayRerankResult, error) {
+	r.calls++
+	r.totalDocuments += len(documents)
+	limit := len(documents)
+	if r.calls == r.omitLastResultOnCall {
+		limit--
+	}
+	results := make([]retrieval.GatewayRerankResult, 0, limit)
+	for index := 0; index < limit; index++ {
+		results = append(results, retrieval.GatewayRerankResult{Index: index, Score: float64(index)})
+	}
+	return results, nil
 }
 
 func newKnowledgeMockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {

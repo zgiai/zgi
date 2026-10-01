@@ -117,6 +117,9 @@ func (r *Runner) handleProgressiveSkillCall(
 			trace := blockedSkillGuardrailTrace(skillID, toolName, "skill does not provide callable tools")
 			return successfulSkillStep(trace, skills.ToolResultMessage(call.ID, guardrailPayload(trace)), true, false)
 		}
+		if isAgentKnowledgeRetrievalCall(skillID, toolName) && skillToolCallCounts[skillID] >= maxBusinessToolCallsForSkill(resolved, skillID) {
+			return knowledgeRetrievalBudgetStep(call.ID, skillID, toolName, toolArgs, skillToolCallCounts[skillID]+1, maxBusinessToolCallsForSkill(resolved, skillID))
+		}
 		if currentToolCalls >= maxBusinessToolCalls(resolved) {
 			err := fmt.Errorf("%w: too many skill tool calls", ErrInvalidInput)
 			trace := skillToolLimitExceededTrace(skillID, toolName, toolArgs, err)
@@ -167,7 +170,17 @@ func (r *Runner) handleProgressiveSkillCall(
 				}
 			}
 		}
-		return r.handleCallSkillTool(ctx, prepared, resolved, call.ID, args, execCtx, runtimeState, onEvent)
+		callExecCtx := execCtx
+		if isAgentKnowledgeRetrievalCall(skillID, toolName) {
+			callExecCtx.RuntimeParameters = copyStringAnyMap(execCtx.RuntimeParameters)
+			if callExecCtx.RuntimeParameters == nil {
+				callExecCtx.RuntimeParameters = map[string]interface{}{}
+			}
+			callExecCtx.RuntimeParameters["knowledge_retrieval_round"] = runtimeKnowledgeRetrievalRound(runtimeState, skillID)
+			callExecCtx.RuntimeParameters["knowledge_retrieval_budget"] = runtimeKnowledgeRetrievalBudget(runtimeState, skillID)
+			callExecCtx.RuntimeParameters["knowledge_retrieval_history"] = runtimeState[runtimeStateKnowledgeRetrievalHistoryKey]
+		}
+		return r.handleCallSkillTool(ctx, prepared, resolved, call.ID, args, callExecCtx, runtimeState, onEvent)
 	case skills.MetaToolRequestUserInput:
 		return r.handleRequestUserInputCall(ctx, prepared, call.ID, args, onEvent)
 	case skills.MetaToolTurnState:
@@ -220,6 +233,57 @@ func runtimeControlToolAllowed(runtimeState map[string]interface{}, key string) 
 	}
 	allowed, ok := value.(bool)
 	return !ok || allowed
+}
+
+func isAgentKnowledgeRetrievalCall(skillID, toolName string) bool {
+	return strings.EqualFold(strings.TrimSpace(skillID), skills.SkillAgentKnowledge) &&
+		strings.EqualFold(strings.TrimSpace(toolName), "retrieve_agent_knowledge")
+}
+
+func runtimeKnowledgeRetrievalRound(runtimeState map[string]interface{}, _ string) int {
+	if runtimeState != nil {
+		if value, ok := runtimeState["knowledge_retrieval_round"].(int); ok && value > 0 {
+			return value
+		}
+		if history := runtimeState[runtimeStateKnowledgeRetrievalHistoryKey]; history != nil {
+			if calls, ok := history.([]map[string]interface{}); ok && len(calls) > 0 {
+				return len(calls) + 1
+			}
+		}
+	}
+	return 1
+}
+
+func runtimeKnowledgeRetrievalBudget(runtimeState map[string]interface{}, _ string) int {
+	if runtimeState != nil {
+		if value, ok := runtimeState["knowledge_retrieval_budget"].(int); ok && value > 0 {
+			return value
+		}
+	}
+	return defaultMaxBusinessToolCallsPerSkill
+}
+
+func knowledgeRetrievalBudgetStep(callID, skillID, toolName string, args map[string]interface{}, round int, budget int) skillStepResult {
+	trace := plannerFeedbackTrace(skillID, toolName, nil)
+	trace.Kind = "tool_call"
+	trace.Status = "blocked"
+	trace.Arguments = summarizeSkillToolArguments(skillID, toolName, args)
+	trace.Arguments["reason_code"] = "retrieval_round_limit"
+	trace.Arguments["next_step"] = "answer from the evidence already retrieved; do not call retrieve_agent_knowledge again in this execution"
+	return successfulSkillStep(trace, skills.ToolResultMessage(callID, map[string]interface{}{
+		"query":               stringArg(args, "query"),
+		"status":              "blocked",
+		"result_count":        0,
+		"retriever_resources": []interface{}{},
+		"warnings":            []string{"retrieval execution budget reached; answer from the evidence already retrieved"},
+		"control": map[string]interface{}{
+			"continuation_allowed": false,
+			"remaining_rounds":     0,
+			"round":                round,
+			"new_evidence_count":   0,
+			"stop_reason":          "retrieval_round_limit",
+		},
+	}), true, false)
 }
 
 func skippedControlToolStep(callID string, toolName string, nextAction string) skillStepResult {
@@ -840,6 +904,13 @@ func (r *Runner) handleCallSkillTool(
 	applyStateHandoffAdvisoryToToolMessage(invocation)
 	applyPageContextInvalidationAdvisory(invocation)
 	guardToolResult := skillToolResultForGuard(invocation.Trace.SkillID, invocation.Trace.ToolName, invocation.Messages, invocation.Trace.Result)
+	if isAgentKnowledgeRetrievalCall(invocation.Trace.SkillID, invocation.Trace.ToolName) {
+		// Keep the structured retrieval payload in the request-scoped history so the
+		// next Agent Knowledge call can detect duplicate queries and new evidence.
+		if payload := firstJSONToolInvokePayload(invocation.Messages); len(payload) > 0 {
+			guardToolResult = copyStringAnyMap(payload)
+		}
+	}
 	if guardToolResult != nil {
 		// Provider output is untrusted. This private evidence key is written only
 		// from the server-owned preparation contract below.

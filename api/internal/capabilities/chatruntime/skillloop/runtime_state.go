@@ -14,6 +14,7 @@ const runtimeStateNativeExternalActionProjectionsKey = "_native_external_action_
 const runtimeStateNativeExternalActionIntentMatchedKey = "_native_external_action_intent_matched"
 const runtimeStateNativeExternalActionIntentKeysKey = "_native_external_action_intent_keys"
 const runtimeStateNativeExternalActionCandidatesKey = "_native_external_action_candidates"
+const runtimeStateKnowledgeRetrievalHistoryKey = "_knowledge_retrieval_history"
 
 func runtimeStateForRun(req RunRequest) map[string]interface{} {
 	state := map[string]interface{}{}
@@ -422,7 +423,29 @@ func runtimeStateWithSuccessfulToolCalls(req RunRequest, successful []SkillToolC
 	if len(invocations) > 0 {
 		state["skill_invocations"] = invocations
 	}
+	if history := knowledgeRetrievalHistoryForToolCalls(successful); len(history) > 0 {
+		state[runtimeStateKnowledgeRetrievalHistoryKey] = history
+	}
 	return state
+}
+
+func knowledgeRetrievalHistoryForToolCalls(calls []SkillToolCallRef) []map[string]interface{} {
+	history := make([]map[string]interface{}, 0)
+	for _, call := range calls {
+		if !strings.EqualFold(strings.TrimSpace(call.SkillID), skills.SkillAgentKnowledge) ||
+			!strings.EqualFold(strings.TrimSpace(call.ToolName), "retrieve_agent_knowledge") {
+			continue
+		}
+		item := map[string]interface{}{}
+		if len(call.Arguments) > 0 {
+			item["arguments"] = copyStringAnyMap(call.Arguments)
+		}
+		if len(call.Result) > 0 {
+			item["result"] = copyStringAnyMap(call.Result)
+		}
+		history = append(history, item)
+	}
+	return history
 }
 
 func latestUserRequestText(req RunRequest) string {

@@ -93,6 +93,8 @@ func applyKnowledgeGraphExecutionPolicy(req *dataset_service.KnowledgeRetrieveRe
 			req.RetrievalMode = "graph"
 		case "hybrid":
 			req.RetrievalMode = "hybrid"
+		case "vector", "vectorandbm25", "vector_and_bm25":
+			req.RetrievalMode = "vectorAndBM25"
 		}
 	}
 	if req.FallbackPolicy == "" {

@@ -107,5 +107,7 @@ Use this skill to answer internal assistant questions with context from knowledg
 
 - `query`: the user question or refined search query.
 - `dataset_ids`: required selected knowledge base IDs returned by the list tool.
-- `top_k`: optional maximum retrieved chunks. Defaults to 5 and is capped at 20.
-- `retrieval_mode`: optional `hybrid`, `vector`, or `graph`. Omit it for the default hybrid mode; use `graph` only for relationship or entity questions.
+- `top_k`: optional maximum retrieved chunks. Defaults to 5 and is capped at 10.
+- `retrieval_mode`: optional `hybrid`, `vectorAndBM25`, or `graph`. Omit it for the
+  default `hybrid`; use `vectorAndBM25` for the textual Vector + BM25 route, `graph`
+  for relationship/entity questions, and `hybrid` for `vectorAndBM25 + graph`.

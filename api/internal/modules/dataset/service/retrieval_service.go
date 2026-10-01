@@ -47,6 +47,11 @@ type RetrievalService struct {
 	llmClient         llmclient.LLMClient
 	graphFlowService  *graphflow.Service
 	boundaryDetector  *graphflow_retrieval.BoundaryDetector
+	// The vector and local full-text adapters keep mutable per-request state (the active
+	// embedding service and fallback index). Knowledge retrieval can fan out across bound
+	// datasets, so serialize access to those shared adapters while allowing dataset-level
+	// orchestration and graph work to remain concurrent.
+	retrievalMu sync.Mutex
 }
 
 // NewRetrievalService creates a new retrieval service
@@ -130,7 +135,7 @@ type RetrievalOptions struct {
 	Filter                map[string]interface{}
 	// ReturnFullDoc removed as per requirement
 	PreQAExtension        bool    // Whether to retrieve content associated with questions
-	RetrievalMode         string  // vector, graph, hybrid (default)
+	RetrievalMode         string  // vectorAndBM25, graph, hybrid (default; vector is a legacy alias)
 	HopDepth              int     // Knowledge graph search depth (Normal/Single mode)
 	AnchoredHopDepth      int     // Knowledge graph search depth (Anchored mode)
 	GraphAlpha            float64 // Weight for vector vs graph in hybrid fusion
@@ -142,6 +147,10 @@ type RetrievalOptions struct {
 	SemanticWeight        float64 // Final weight for semantic score (e.g., 0.7)
 	GraphWeight           float64 // Final weight for graph score (e.g., 0.3)
 	FallbackPolicy        string
+	// SourceQuotaTopK gives each retrieval source its own TopK quota instead of truncating
+	// the fused list once. It is set by callers that rerank the merged pool themselves, so
+	// that graph chunks are not crowded out during in-dataset fusion.
+	SourceQuotaTopK bool
 }
 
 const (
@@ -172,8 +181,8 @@ func (s *RetrievalService) Retrieve(ctx context.Context, dataset *dataset_model.
 	if err != nil {
 		return nil, nil, err
 	}
-	graphRequested := graphConfig.RequestedMethod == string(GraphSearch) || graphConfig.ActualMode == RetrievalModeGraph
-	if graphRequested {
+	graphOnlyRequested := graphConfig.ActualMode == RetrievalModeGraph
+	if graphOnlyRequested {
 		if !dataset.EnableGraphFlow {
 			return nil, nil, fmt.Errorf("knowledge graph is not enabled")
 		}
@@ -232,7 +241,7 @@ func (s *RetrievalService) Retrieve(ctx context.Context, dataset *dataset_model.
 	// - "graph": run only graph search
 	// - "hybrid" or "": run both vector and graph searches
 	runVector := graphConfig.ActualMode != RetrievalModeGraph
-	runGraph := graphConfig.ActualMode == RetrievalModeGraph || graphConfig.ActualMode == RetrievalModeHybrid || graphConfig.RequestedMethod == string(GraphSearch)
+	runGraph := graphConfig.ActualMode == RetrievalModeGraph || graphConfig.ActualMode == RetrievalModeHybrid
 
 	searchMethod := normalizeVectorSearchMethod(options.SearchMethod)
 	if searchMethod == string(GraphSearch) {
@@ -507,6 +516,8 @@ func (s *RetrievalService) keywordSearch(ctx context.Context, dataset *dataset_m
 	if s.keywordRetrieval == nil {
 		return []retrieval.SearchResult{}, nil
 	}
+	s.retrievalMu.Lock()
+	defer s.retrievalMu.Unlock()
 
 	searchOpts := retrieval.SearchOptions{
 		Limit:          options.TopK,
@@ -619,6 +630,8 @@ func (s *RetrievalService) embeddingSearch(ctx context.Context, dataset *dataset
 	if s.vectorRetrieval == nil {
 		return []retrieval.SearchResult{}, nil
 	}
+	s.retrievalMu.Lock()
+	defer s.retrievalMu.Unlock()
 
 	// Prefer injected embedding factory (gateway) if provided
 	overrideApplied := false
@@ -684,6 +697,8 @@ func (s *RetrievalService) fullTextIndexSearch(ctx context.Context, dataset *dat
 	if s.fullTextRetrieval == nil {
 		return []retrieval.SearchResult{}, nil
 	}
+	s.retrievalMu.Lock()
+	defer s.retrievalMu.Unlock()
 
 	// Escape query for search
 	escapedQuery := s.escapeQueryForSearch(query)
@@ -1069,10 +1084,42 @@ func filterAndLimitFinalRecords(records []dto.HitTestingRecordResponse, options 
 		}
 	}
 
-	if options != nil && options.TopK > 0 && len(filtered) > options.TopK {
+	if options == nil || options.TopK <= 0 {
+		return filtered
+	}
+	if options.SourceQuotaTopK {
+		return limitRecordsBySourceQuota(filtered, options.TopK)
+	}
+	if len(filtered) > options.TopK {
 		filtered = filtered[:options.TopK]
 	}
 	return filtered
+}
+
+// limitRecordsBySourceQuota keeps up to topK records per retrieval source, so a vector/BM25
+// result set and a graph result set each survive in-dataset fusion. Records deduplicated to
+// one entry are counted once, which is why the merged size can be below 2*topK.
+func limitRecordsBySourceQuota(records []dto.HitTestingRecordResponse, topK int) []dto.HitTestingRecordResponse {
+	textual := make([]dto.HitTestingRecordResponse, 0, topK)
+	graph := make([]dto.HitTestingRecordResponse, 0, topK)
+	for _, record := range records {
+		if record.MatchType == dto.MatchTypeGraphKnowledge {
+			if len(graph) < topK {
+				graph = append(graph, record)
+			}
+			continue
+		}
+		if len(textual) < topK {
+			textual = append(textual, record)
+		}
+	}
+	merged := make([]dto.HitTestingRecordResponse, 0, len(textual)+len(graph))
+	merged = append(merged, textual...)
+	merged = append(merged, graph...)
+	sort.SliceStable(merged, func(i, j int) bool {
+		return merged[i].Score > merged[j].Score
+	})
+	return merged
 }
 
 func shouldApplyFinalScoreThreshold(record dto.HitTestingRecordResponse) bool {
@@ -1996,7 +2043,9 @@ func (s *RetrievalService) graphSearch(ctx context.Context, dataset *dataset_mod
 		var qEmb []float64
 		embeddingCtx, cancel := context.WithTimeout(ctx, graphEmbeddingTimeout)
 		defer cancel()
+		s.retrievalMu.Lock()
 		embeddingService := s.getEmbeddingService(embeddingCtx, dataset)
+		s.retrievalMu.Unlock()
 		if embeddingService != nil {
 			if emb, err := embeddingService.EmbedText(embeddingCtx, query); err == nil && len(emb) > 0 {
 				qEmb = emb
