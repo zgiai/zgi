@@ -27,9 +27,9 @@ func NormalizedPointsPerUSD() int64 {
 }
 
 // localMilliPointsPerUSD is the local points_per_usd expressed in milli-points
-// (points_per_usd x 1000), so USD -> milli-points stays exact. It replaces the
-// retired compiled-in internal-unit constant and follows the catalog-synced
-// points_per_usd instead.
+// (points_per_usd x 1000), so USD -> milli-points stays exact. points_per_usd
+// is pinned to the platform default (see billingsettings.Store.PointsPerUSD); a
+// synced or stored value does not change it.
 func localMilliPointsPerUSD() int64 {
 	return NormalizedPointsPerUSD() * millipoints.UnitsPerPoint
 }
