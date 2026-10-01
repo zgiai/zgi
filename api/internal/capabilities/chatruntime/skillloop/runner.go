@@ -989,6 +989,11 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			callEvidence[runtimeStateAllowPlanUpdateKey] = req.NativeAgentLoop || planRevisionRequired || operationPlanModelRevisionRequired(req, callEvidence)
 			callEvidence[runtimeStateAllowIntermediateAnswerKey] = !fileDeliveryRequiresArtifactOnly(req, callEvidence)
 			callEvidence[runtimeStateNativeAgentLoopKey] = req.NativeAgentLoop
+			callEvidence[runtimeStateKnowledgeRetrievalHistoryKey] = knowledgeRetrievalHistoryForToolCalls(successfulToolCalls)
+			if isAgentKnowledgeRetrievalCall(callSkillID, callToolName) {
+				callEvidence["knowledge_retrieval_round"] = skillToolCallCounts[callSkillID] + 1
+				callEvidence["knowledge_retrieval_budget"] = maxBusinessToolCallsForSkill(resolved, callSkillID)
+			}
 			result := skillStepResult{}
 			if req.NativeAgentLoop && req.NativeSkillSession != nil {
 				if control, handled := r.handleNativeSessionControlCall(ctx, call, req.NativeSkillSession); handled {

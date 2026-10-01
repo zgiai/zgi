@@ -34,6 +34,42 @@ func TestGetPaginatedByTenantIDsWithPermissionsReturnsScopedWorkspaceDatasets(t 
 	assertDatasetIDs(t, datasets, []string{"unknown", "legacy-team", "team", "private-own", "private-other"})
 }
 
+func TestDatasetListingsHideDigitalHumanMemoryProjection(t *testing.T) {
+	db := newDatasetPermissionTestDB(t)
+	repo := NewDatasetRepository(db)
+	folderRepo := NewDatasetFolderRepository(db)
+	ctx := context.Background()
+
+	now := time.Now()
+	insertDatasetListingRow := func(id, name, provider string, createdAt time.Time) {
+		t.Helper()
+		if err := db.Exec(
+			`INSERT INTO datasets (id, organization_id, workspace_id, name, provider, permission, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			id, "org-1", "workspace-1", name, provider, string(model.DatasetPermissionAllTeam), "owner-1", createdAt, createdAt,
+		).Error; err != nil {
+			t.Fatalf("insert dataset %s: %v", id, err)
+		}
+	}
+	insertDatasetListingRow("visible", "Visible knowledge base", "vendor", now)
+	insertDatasetListingRow("memory-projection", "DigitalHuman memory projection", model.ProviderDigitalHumanMemory, now.Add(time.Minute))
+
+	datasets, total, err := repo.GetPaginatedByTenantIDsWithPermissions(ctx, []string{"workspace-1"}, "member-1", false, nil, 1, 20, "", "DESC")
+	if err != nil {
+		t.Fatalf("list datasets: %v", err)
+	}
+	if total != 1 || len(datasets) != 1 || datasets[0].ID != "visible" {
+		t.Fatalf("dataset listing = total %d, datasets %#v; want only visible dataset", total, datasets)
+	}
+
+	folderDatasets, folderTotal, err := folderRepo.GetDatasetsInFolderByIDWithPaginationWithPermissions(ctx, "", "org-1", []string{"workspace-1"}, "member-1", false, nil, 1, 20, "")
+	if err != nil {
+		t.Fatalf("list folder datasets: %v", err)
+	}
+	if folderTotal != 1 || len(folderDatasets) != 1 || folderDatasets[0].ID != "visible" {
+		t.Fatalf("folder dataset listing = total %d, datasets %#v; want only visible dataset", folderTotal, folderDatasets)
+	}
+}
+
 func TestGetDatasetsInFolderByIDWithPaginationWithPermissionsReturnsScopedWorkspaceDatasets(t *testing.T) {
 	db := newDatasetPermissionTestDB(t)
 	repo := NewDatasetFolderRepository(db)

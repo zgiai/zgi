@@ -341,6 +341,7 @@ func (r *datasetFolderRepository) GetDatasetsInFolder(ctx context.Context, folde
 	// Count total
 	if err := r.db.WithContext(ctx).Model(&model.Dataset{}).
 		Where("id IN (?)", subQuery).
+		Where("LOWER(provider) <> ?", model.ProviderDigitalHumanMemory).
 		Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
@@ -349,6 +350,7 @@ func (r *datasetFolderRepository) GetDatasetsInFolder(ctx context.Context, folde
 	offset := (page - 1) * limit
 	if err := r.db.WithContext(ctx).Model(&model.Dataset{}).
 		Where("id IN (?)", subQuery).
+		Where("LOWER(provider) <> ?", model.ProviderDigitalHumanMemory).
 		Offset(offset).Limit(limit).
 		Order("created_at DESC").
 		Find(&datasets).Error; err != nil {
@@ -435,7 +437,9 @@ func (r *datasetFolderRepository) GetDatasetsInFolderByID(ctx context.Context, f
 		}
 
 		// Build query for datasets not in any folder
-		query := r.db.WithContext(ctx).Model(&model.Dataset{}).Where("workspace_id IN ?", workspaceIDs)
+		query := r.db.WithContext(ctx).Model(&model.Dataset{}).
+			Where("workspace_id IN ?", workspaceIDs).
+			Where("LOWER(provider) <> ?", model.ProviderDigitalHumanMemory)
 		if len(datasetIDsInFolders) > 0 {
 			query = query.Where("id NOT IN ?", datasetIDsInFolders)
 		}
@@ -455,6 +459,7 @@ func (r *datasetFolderRepository) GetDatasetsInFolderByID(ctx context.Context, f
 		if err := r.db.WithContext(ctx).Model(&model.Dataset{}).
 			Where("id IN (?)", subQuery).
 			Where("workspace_id IN ?", workspaceIDs).
+			Where("LOWER(provider) <> ?", model.ProviderDigitalHumanMemory).
 			Order("created_at DESC").
 			Find(&datasets).Error; err != nil {
 			return nil, err
@@ -471,7 +476,9 @@ func (r *datasetFolderRepository) GetDatasetsInFolderByIDWithPagination(ctx cont
 
 	// Note: tenantIDs should include all organization departments for all_group permission to work
 	// The caller (handler) should pass all org department IDs, not just user's departments
-	query := r.db.WithContext(ctx).Model(&model.Dataset{}).Where("workspace_id IN ?", workspaceIDs)
+	query := r.db.WithContext(ctx).Model(&model.Dataset{}).
+		Where("workspace_id IN ?", workspaceIDs).
+		Where("LOWER(provider) <> ?", model.ProviderDigitalHumanMemory)
 
 	// Apply keyword filter if provided
 	if keyword != "" {
@@ -527,7 +534,8 @@ func (r *datasetFolderRepository) GetDatasetsInFolderByIDWithPaginationWithPermi
 
 	query := r.db.WithContext(ctx).Model(&model.Dataset{}).
 		Where("organization_id = ?", organizationID).
-		Where("workspace_id IN ?", tenantIDs)
+		Where("workspace_id IN ?", tenantIDs).
+		Where("LOWER(provider) <> ?", model.ProviderDigitalHumanMemory)
 
 	// Apply keyword filter if provided
 	if keyword != "" {

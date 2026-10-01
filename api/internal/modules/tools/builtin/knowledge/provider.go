@@ -123,9 +123,25 @@ func (t *knowledgeTool) Invoke(ctx context.Context, userID string, params map[st
 	case ToolRetrieveAgentKnowledge:
 		req, err := agentKnowledgeRetrieveRequest(scope, params)
 		if err != nil {
+			if runtime.isAgentInvocation() && strings.Contains(err.Error(), "query is required") {
+				state := runtime.agentKnowledgeExecutionState()
+				return retrievalMessages(blockedAgentKnowledgeResponse("", state, "query_required", "a non-empty retrieval query is required"))
+			}
 			return nil, err
 		}
 		runtime.applyAgentConfig(&req)
+		if runtime.isAgentInvocation() {
+			state := runtime.agentKnowledgeExecutionState()
+			if blocked := preflightAgentKnowledgeRetrieval(req.Query, state); blocked != nil {
+				return retrievalMessages(blocked)
+			}
+			response, err := t.service.RetrieveAgentKnowledge(ctx, req)
+			if err != nil {
+				return nil, err
+			}
+			attachAgentKnowledgeControl(response, state)
+			return retrievalMessages(response)
+		}
 		response, err := t.service.RetrieveAgentKnowledge(ctx, req)
 		if err != nil {
 			return nil, err
@@ -187,6 +203,9 @@ func retrievalMessages(response *dataset_service.KnowledgeRetrieveResponse) ([]t
 		"context":             response.Context,
 		"result_count":        response.ResultCount,
 		"retriever_resources": response.Resources,
+	}
+	if response.Control != nil {
+		payload["control"] = response.Control
 	}
 	if response.TopScore != nil {
 		payload["top_score"] = *response.TopScore
@@ -273,8 +292,11 @@ func knowledgeToolDescription(kind string) string {
 func knowledgeToolParameters(kind string) []tools.ToolParameter {
 	query := stringParam("query", "Query", "The user question or search query.", kind != ToolListAccessibleKnowledge)
 	limit := numberParam("limit", "Limit", "Maximum number of knowledge bases to list. Defaults to 20 and is capped at 100.")
-	topK := numberParam("top_k", "Top K", "Maximum number of retrieved chunks. Defaults to 5 and is capped at 20.")
-	retrievalMode := selectParam("retrieval_mode", "Retrieval mode", "Optional retrieval mode. Omit for the default hybrid mode; use graph only for relationship/entity questions.", []string{"hybrid", "vector", "graph"})
+	topK := numberParam("top_k", "Top K", "Maximum number of retrieved chunks. Defaults to 5 and is capped at 10.")
+	minTopK, maxTopK := float64(1), float64(10)
+	topK.MinValue = &minTopK
+	topK.MaxValue = &maxTopK
+	retrievalMode := selectParam("retrieval_mode", "Retrieval mode", "Optional retrieval mode. Omit for the default hybrid mode; use vectorAndBM25 for the textual Vector+BM25 route, graph for relationship/entity questions, or hybrid for vectorAndBM25 plus graph.", []string{"hybrid", "vectorAndBM25", "graph"})
 	fallbackPolicy := selectParam("fallback_policy", "Fallback policy", "Graph retrieval defaults to no fallback. Select vector only when an explicit downgrade is acceptable.", []string{"none", "vector"})
 	datasetIDs := stringParam("dataset_ids", "Dataset IDs", "Required knowledge base IDs selected after listing. Pass a JSON array or comma-separated string.", true)
 
@@ -284,7 +306,7 @@ func knowledgeToolParameters(kind string) []tools.ToolParameter {
 	case ToolRetrieveKnowledge:
 		return []tools.ToolParameter{query, datasetIDs, topK, retrievalMode, fallbackPolicy}
 	case ToolRetrieveAgentKnowledge:
-		return []tools.ToolParameter{query, topK, retrievalMode, fallbackPolicy}
+		return []tools.ToolParameter{query, topK, retrievalMode}
 	default:
 		return nil
 	}
