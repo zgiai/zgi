@@ -133,9 +133,9 @@ func insertModelUsageAppTypeBill(t *testing.T, db *gorm.DB, requestTime time.Tim
 		"prompt_tokens":      2,
 		"completion_tokens":  4,
 		"total_tokens":       6,
-		"official_points":    10,
+		"official_points":    10000,
 		"private_points":     0,
-		"total_points":       10,
+		"total_points":       10000,
 	}).Error; err != nil {
 		t.Fatalf("insert usage bill: %v", err)
 	}

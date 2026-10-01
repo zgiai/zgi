@@ -18,6 +18,11 @@ func TestCatalogFromResponseCarriesPointsPerUSD(t *testing.T) {
 	require.Equal(t, int64(777), catalog.PointsPerUSD)
 }
 
+// TestApplyBillingSettingsPersistsCatalogRate keeps the catalog round trip
+// observable while the rate itself stays pinned: the published value is stored
+// and reported (HasValue), but it must not move pricing, because the surrounding
+// chain is only wired for a constant rate (main hardcoded 1_000_000 milli-points
+// per USD).
 func TestApplyBillingSettingsPersistsCatalogRate(t *testing.T) {
 	db := openSyncerTestDB(t)
 	syncer := &Synchronizer{db: db}
@@ -28,7 +33,8 @@ func TestApplyBillingSettingsPersistsCatalogRate(t *testing.T) {
 	var setting billingsettings.Setting
 	require.NoError(t, db.Where("key = ?", billingsettings.KeyPointsPerUSD).First(&setting).Error)
 	require.Equal(t, "1234", setting.Value)
-	require.Equal(t, int64(1234), syncer.settings.PointsPerUSD())
+	require.True(t, syncer.settings.HasValue())
+	require.Equal(t, billingsettings.DefaultPointsPerUSD, syncer.settings.PointsPerUSD())
 }
 
 func TestApplyBillingSettingsIgnoresMissingValue(t *testing.T) {

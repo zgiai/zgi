@@ -1,11 +1,16 @@
-// Package millipoints defines the exact Console points type used at the
-// billing database boundary.
+// Package millipoints defines the exact points type used at the billing
+// database boundary.
 //
-// Points are money: Console keeps every in-process amount in milli-points
-// (int64, 1 point = 1000 milli-points) so all arithmetic stays exact. The gRPC
-// and JSON wire carry the same int64 milli-point values, so the wire format is
-// unchanged. Only the PostgreSQL numeric(20,3) boundary converts to and from
-// decimal points. float64 must never be used for money.
+// Points are money: Pre keeps every in-process amount in milli-points
+// (int64, 1 point = 1000 milli-points) so all arithmetic stays exact. The
+// database stores that same integer verbatim in BIGINT columns — the storage
+// unit is milli-points, matching the historical Console/Pre internal unit
+// (1 USD = 1_000_000 units at 1000 points/USD) — and the gRPC/JSON wire carries
+// the same int64 milli-point values, so the wire format is unchanged.
+//
+// Fractional points exist only for display: convert with DecimalPoints (or
+// FromDecimalPoints in the other direction) at the presentation edge, never at
+// the database boundary. float64 must never be used for money.
 package millipoints
 
 import (
@@ -24,7 +29,11 @@ const UnitsPerPoint int64 = 1000
 // MilliPoints is an exact amount of points scaled by 1000.
 type MilliPoints int64
 
-var milliPointsPerPoint = decimal.NewFromInt(UnitsPerPoint)
+var (
+	milliPointsPerPoint = decimal.NewFromInt(UnitsPerPoint)
+	decimalMaxInt64     = decimal.NewFromInt(math.MaxInt64)
+	decimalMinInt64     = decimal.NewFromInt(math.MinInt64)
+)
 
 // FromInt64 converts a wire/database integer in milli-points.
 func FromInt64(value int64) MilliPoints { return MilliPoints(value) }
@@ -33,16 +42,34 @@ func FromInt64(value int64) MilliPoints { return MilliPoints(value) }
 func FromPoints(points int64) MilliPoints { return MilliPoints(points * UnitsPerPoint) }
 
 // FromDecimalPoints converts a decimal points amount to milli-points, rounding
-// to the nearest milli-point (the storage precision).
+// to the nearest milli-point. This is a presentation-edge conversion; values
+// read from or written to the database are already milli-points and must not
+// pass through it.
 func FromDecimalPoints(points decimal.Decimal) MilliPoints {
-	return MilliPoints(points.Mul(milliPointsPerPoint).Round(0).IntPart())
+	scaled := points.Mul(milliPointsPerPoint).Round(0)
+	if scaled.GreaterThan(decimalMaxInt64) || scaled.LessThan(decimalMinInt64) {
+		return 0
+	}
+	return MilliPoints(scaled.IntPart())
+}
+
+// FromDecimalMilliPoints converts a decimal milli-point amount to milli-points,
+// rounding to the nearest milli-point. It exists for the value shapes a JSON
+// document produces (notably float64), which are already denominated in
+// milli-points and must not be scaled by 1000.
+func FromDecimalMilliPoints(milliPoints decimal.Decimal) MilliPoints {
+	rounded := milliPoints.Round(0)
+	if rounded.GreaterThan(decimalMaxInt64) || rounded.LessThan(decimalMinInt64) {
+		return 0
+	}
+	return MilliPoints(rounded.IntPart())
 }
 
 // FromUSD converts a USD cost to milli-points at the given points-per-USD rate.
 // The multiplication is exact decimal arithmetic and rounds UP to the next
-// milli-point: legacy Console used ceil(usd x 1_000_000) internal units, and
-// with points_per_usd = 1000 that is exactly ceil(usd x 1000) points. Rounding
-// down would undercharge by up to 0.000999 point per call.
+// milli-point: the historical internal unit was ceil(usd x 1_000_000), and with
+// points_per_usd = 1000 that is exactly ceil(usd x 1000) points, i.e. the same
+// integer. Rounding down would undercharge by up to 0.000999 point.
 func FromUSD(usd decimal.Decimal, pointsPerUSD int64) MilliPoints {
 	scaled := usd.Mul(decimal.NewFromInt(pointsPerUSD)).Mul(milliPointsPerPoint)
 	if scaled.IsNegative() {
@@ -50,13 +77,19 @@ func FromUSD(usd decimal.Decimal, pointsPerUSD int64) MilliPoints {
 		// against a caller passing a negative remainder.
 		return 0
 	}
+	if scaled.GreaterThan(decimalMaxInt64) {
+		// Never wrap silently: an amount this large is a caller bug.
+		return 0
+	}
 	return MilliPoints(scaled.Ceil().IntPart())
 }
 
-// Int64 returns the raw milli-point value used by the gRPC/JSON wire.
+// Int64 returns the raw milli-point value used by the database and the
+// gRPC/JSON wire.
 func (m MilliPoints) Int64() int64 { return int64(m) }
 
-// DecimalPoints returns the value as decimal points (N/1000).
+// DecimalPoints renders the amount as fractional points (N/1000). Display only:
+// the database and the wire both carry milli-points.
 func (m MilliPoints) DecimalPoints() decimal.Decimal {
 	return decimal.NewFromInt(int64(m)).Div(milliPointsPerPoint)
 }
@@ -64,8 +97,9 @@ func (m MilliPoints) DecimalPoints() decimal.Decimal {
 // IsZero reports whether the amount is zero.
 func (m MilliPoints) IsZero() bool { return m == 0 }
 
-// String renders the amount as a fixed-3-decimal points string, which is the
-// exact representation persisted to the numeric(20,3) column.
+// String renders the amount as a fixed-3-decimal points string for logs and
+// error messages. It is a display helper and is deliberately NOT the database
+// representation — Value persists the raw milli-point integer.
 func (m MilliPoints) String() string {
 	value := int64(m)
 	var magnitude uint64
@@ -84,15 +118,20 @@ func (m MilliPoints) String() string {
 	return rendered
 }
 
-// Value implements driver.Valuer. It persists points as a fixed-3-decimal
-// string so numeric(20,3) receives N/1000 for N milli-points.
+// Value implements driver.Valuer. The database unit is milli-points, so the
+// exact int64 is persisted verbatim into the BIGINT column. Returning the
+// fractional points form here would divide by 1000.
 func (m MilliPoints) Value() (driver.Value, error) {
-	return m.String(), nil
+	return int64(m), nil
 }
 
-// Scan implements sql.Scanner. It accepts the decimal points form produced by
-// a numeric(20,3) column (string, []byte or float64) as well as an integer
-// points value, and returns exact milli-points.
+// Scan implements sql.Scanner for a BIGINT milli-point column. The integer
+// forms a driver returns for BIGINT are taken verbatim; the decimal forms
+// (string, []byte, float64) are only ever produced by a non-integer column, so
+// they are interpreted as milli-points too and rounded to the nearest
+// milli-point rather than being scaled by 1000. A fractional value in this
+// column is a schema mismatch, which AssertMilliPointSchema rejects at start-up
+// instead of letting it corrupt amounts silently.
 func (m *MilliPoints) Scan(value any) error {
 	if m == nil {
 		return fmt.Errorf("millipoints: Scan on nil *MilliPoints")
@@ -105,22 +144,25 @@ func (m *MilliPoints) Scan(value any) error {
 		*m = v
 		return nil
 	case int64:
-		return m.setPoints(decimal.NewFromInt(v))
+		*m = MilliPoints(v)
+		return nil
 	case int32:
-		return m.setPoints(decimal.NewFromInt(int64(v)))
+		*m = MilliPoints(int64(v))
+		return nil
 	case int:
-		return m.setPoints(decimal.NewFromInt(int64(v)))
-	// SQL driver boundary: some drivers (for example SQLite) surface a
-	// numeric(20,3) column as a float. This is the only float entry point into
-	// MilliPoints; the value is converted to exact decimal immediately and all
-	// arithmetic afterward stays integer/decimal.
+		*m = MilliPoints(int64(v))
+		return nil
+	// SQL driver boundary: some drivers (for example SQLite) surface a numeric
+	// column as a float. This is the only float entry point into MilliPoints;
+	// the value is converted to exact decimal immediately and all arithmetic
+	// afterward stays integer/decimal.
 	case float64:
 		if math.IsNaN(v) || math.IsInf(v, 0) {
 			return fmt.Errorf("millipoints: cannot scan %v", v)
 		}
-		return m.setPoints(decimal.NewFromFloat(v))
+		return m.setMilliPoints(decimalFromFloatText(v))
 	case float32:
-		return m.setPoints(decimal.NewFromFloat(float64(v)))
+		return m.setMilliPoints(decimalFromFloatText(float64(v)))
 	case []byte:
 		return m.scanText(string(v))
 	case string:
@@ -130,28 +172,40 @@ func (m *MilliPoints) Scan(value any) error {
 	}
 }
 
+// decimalFromFloatText converts a float handed over by a database driver into an
+// exact decimal through its shortest round-trip string. Money is never parsed
+// through a float constructor, so the value follows the authored decimal
+// instead of a binary approximation.
+func decimalFromFloatText(value float64) decimal.Decimal {
+	converted, err := decimal.NewFromString(strconv.FormatFloat(value, 'f', -1, 64))
+	if err != nil {
+		return decimal.Zero
+	}
+	return converted
+}
+
 func (m *MilliPoints) scanText(raw string) error {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
 		*m = 0
 		return nil
 	}
-	points, err := decimal.NewFromString(trimmed)
+	amount, err := decimal.NewFromString(trimmed)
 	if err != nil {
 		return fmt.Errorf("millipoints: cannot parse %q: %w", raw, err)
 	}
-	return m.setPoints(points)
+	return m.setMilliPoints(amount)
 }
 
-func (m *MilliPoints) setPoints(points decimal.Decimal) error {
-	scaled := points.Mul(milliPointsPerPoint).Round(0)
-	if !scaled.IsInteger() {
-		return fmt.Errorf("millipoints: value %s is not representable at 3 decimals", points)
+// setMilliPoints stores an exact milli-point amount, rounding a fractional input
+// to the nearest milli-point (the storage resolution is one milli-point). The
+// range is checked on the decimal before IntPart so an out-of-range value is
+// reported instead of wrapping through big.Int.Int64.
+func (m *MilliPoints) setMilliPoints(milliPoints decimal.Decimal) error {
+	rounded := milliPoints.Round(0)
+	if rounded.GreaterThan(decimalMaxInt64) || rounded.LessThan(decimalMinInt64) {
+		return fmt.Errorf("millipoints: value %s overflows int64", milliPoints)
 	}
-	value := scaled.IntPart()
-	if value > math.MaxInt64 || value < math.MinInt64 {
-		return fmt.Errorf("millipoints: value %s overflows int64", points)
-	}
-	*m = MilliPoints(value)
+	*m = MilliPoints(rounded.IntPart())
 	return nil
 }

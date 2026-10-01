@@ -34,17 +34,24 @@ func USDToMilliPoints(usd decimal.Decimal) int64 {
 }
 
 // USDToMilliPointsAt converts a canonical USD amount to milli-points at an
-// explicit points-per-USD rate, rounding UP exactly once.
+// explicit points-per-USD rate, rounding UP exactly once. An amount that cannot
+// be represented in an int64 yields 0 instead of wrapping: big.Int.Int64 is
+// undefined out of range, so the range is checked on the decimal first (the
+// same order Quote uses).
 func USDToMilliPointsAt(usd decimal.Decimal, pointsPerUSD int64) int64 {
 	scaled := usd.Mul(decimal.NewFromInt(pointsPerUSD)).Mul(decimalThousand)
 	if scaled.IsNegative() {
 		return 0
 	}
-	return scaled.Ceil().IntPart()
+	ceiled := scaled.Ceil()
+	if ceiled.GreaterThan(decimalMaxInt64) {
+		return 0
+	}
+	return ceiled.IntPart()
 }
 
-// MilliPointsToPoints renders milli-points as decimal points (N/1000) without
-// further rounding; the DB numeric(20,3) resolution is exactly one milli-point.
+// MilliPointsToPoints renders milli-points as decimal points (N/1000) for
+// display; the wire and the database both carry the integer milli-point value.
 func MilliPointsToPoints(milliPoints int64) decimal.Decimal {
 	return decimal.NewFromInt(milliPoints).Div(decimalThousand)
 }

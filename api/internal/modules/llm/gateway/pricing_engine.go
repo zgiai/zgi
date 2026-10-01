@@ -1228,9 +1228,9 @@ func enrichPricingSnapshotTotal(snapshot datatypes.JSON, totalUSD decimal.Decima
 		_ = json.Unmarshal(snapshot, &values)
 	}
 	values["total_cost_usd"] = totalUSD.String()
-	// Snapshot credit amounts are stored in points (numeric(20,3)); the wire
-	// and in-process amounts stay milli-points.
-	values["charged_credits"] = millipoints.MilliPoints(chargedCredits).String()
+	// Credit amounts in the snapshot are milli-points, the same unit as the
+	// column, the wire and the in-process type.
+	values["charged_credits"] = chargedCredits
 	values["points_per_usd"] = NormalizedPointsPerUSD()
 	return buildPricingSnapshot(values)
 }

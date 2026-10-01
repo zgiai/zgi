@@ -77,7 +77,11 @@ func TestStoreCatalogRateIgnoresNonPositive(t *testing.T) {
 	}
 }
 
-func TestInitLoadsExistingValue(t *testing.T) {
+// TestInitIgnoresStoredValueForPricing locks the pinned rate: a stored value is
+// recorded (and logged) but must not move the charge, because the surrounding
+// chain is only wired for a constant rate. This mirrors main, which hardcoded
+// pricingCreditsPerUSD = 1_000_000 milli-points per USD.
+func TestInitIgnoresStoredValueForPricing(t *testing.T) {
 	db := openSettingsTestDB(t)
 	if err := db.Exec(
 		"INSERT INTO llm_billing_settings (key, value, updated_at) VALUES (?, ?, ?)",
@@ -87,11 +91,11 @@ func TestInitLoadsExistingValue(t *testing.T) {
 	}
 
 	store := Init(context.Background(), db)
-	if got := store.PointsPerUSD(); got != 1500 {
-		t.Fatalf("loaded rate = %d, want 1500", got)
+	if got := store.PointsPerUSD(); got != DefaultPointsPerUSD {
+		t.Fatalf("rate = %d, want the pinned default %d", got, DefaultPointsPerUSD)
 	}
 	if !store.HasValue() {
-		t.Fatal("loaded store must report a value")
+		t.Fatal("loaded store must still report that a value was read")
 	}
 }
 

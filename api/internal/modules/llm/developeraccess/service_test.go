@@ -908,11 +908,11 @@ func TestDeveloperAuditIsScopedAndHydrated(t *testing.T) {
 		 total_points, response_time_ms, request_created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		"attempt-1", "request-1", organizationID, workspaceID, accessmodel.PrincipalTypeUser, memberID,
-		"personal_api_key", key.ID, "qwen-test", "qwen", "success", 10, 5, 15, 20, 100, time.Now()).Error; err != nil {
+		"personal_api_key", key.ID, "qwen-test", "qwen", "success", 10, 5, 15, 20000, 100, time.Now()).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Exec(`INSERT INTO billing_attempt_entries (attempt_id, entry_type, reserved_amount, actual_amount, refunded_amount)
-		VALUES (?, ?, ?, ?, ?)`, "attempt-1", "subject", 20, 15, 5).Error; err != nil {
+		VALUES (?, ?, ?, ?, ?)`, "attempt-1", "subject", 20000, 15000, 5000).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Exec(`INSERT INTO llm_usage_bills
@@ -931,11 +931,11 @@ func TestDeveloperAuditIsScopedAndHydrated(t *testing.T) {
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		"attempt-previous-organization", "request-previous-organization", uuid.NewString(), workspaceID,
 		accessmodel.PrincipalTypeUser, memberID, "personal_api_key", key.ID, "private-model", "private-provider",
-		"success", 100, 50, 150, 200, 300, time.Now().Add(2*time.Second)).Error; err != nil {
+		"success", 100, 50, 150, 200000, 300, time.Now().Add(2*time.Second)).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Exec(`INSERT INTO billing_attempt_entries (attempt_id, entry_type, reserved_amount, actual_amount, refunded_amount)
-		VALUES (?, ?, ?, ?, ?)`, "attempt-compensated", "subject", 20, 15, 20).Error; err != nil {
+		VALUES (?, ?, ?, ?, ?)`, "attempt-compensated", "subject", 20000, 15000, 20000).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Exec(`INSERT INTO llm_usage_bills

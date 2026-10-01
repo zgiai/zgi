@@ -92,6 +92,11 @@ func (s *Store) load(ctx context.Context) {
 		log.Printf("[billingsettings] %s=%q is not a positive integer, using default %d", KeyPointsPerUSD, setting.Value, DefaultPointsPerUSD)
 		return
 	}
+	if rate != DefaultPointsPerUSD {
+		// The rate is pinned (see PointsPerUSD); surface a drifting stored value
+		// so it is visible without silently changing what is charged.
+		log.Printf("[billingsettings] stored %s=%d differs from the pinned %d and is ignored for pricing", KeyPointsPerUSD, rate, DefaultPointsPerUSD)
+	}
 
 	s.mu.Lock()
 	s.pointsPerUSD = rate
@@ -99,18 +104,20 @@ func (s *Store) load(ctx context.Context) {
 	s.mu.Unlock()
 }
 
-// PointsPerUSD returns the cached rate. It never returns a non-positive value.
+// PointsPerUSD returns the rate used for every USD -> points conversion.
+//
+// The rate is PINNED to DefaultPointsPerUSD (1000) on purpose, matching what
+// main hardcoded as pricingCreditsPerUSD = 1_000_000 milli-points per USD. The
+// catalog-synced value in llm_billing_settings is recorded and logged but not
+// used for pricing: the surrounding chain (storage unit, statistics, console
+// sync comparisons) is only wired for a constant rate, and a stale stored value
+// would otherwise silently change every charge. Re-enable the read below only
+// together with wiring the whole chain for a variable rate.
 func (s *Store) PointsPerUSD() int64 {
 	if s == nil {
 		return DefaultPointsPerUSD
 	}
-	s.mu.RLock()
-	rate := s.pointsPerUSD
-	s.mu.RUnlock()
-	if rate <= 0 {
-		return DefaultPointsPerUSD
-	}
-	return rate
+	return DefaultPointsPerUSD
 }
 
 // HasValue reports whether a valid rate was loaded or written.

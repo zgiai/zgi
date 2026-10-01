@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	mschema "github.com/zgiai/zgi/api/internal/migrations/schema"
-	"gorm.io/gorm"
 )
 
 const migration202609171652571815ID = "202609171652571815_retire_internal_credit_units"
@@ -19,8 +18,12 @@ type preCreditColumnTarget struct {
 	columns []string
 }
 
-// preRetiredCreditColumns lists every Pre column that stored internal units
-// (points x 1000). They become numeric(20,3) points divided by 1000.
+// preRetiredCreditColumns lists every Pre column that historically stored
+// internal units (points x 1000). They are the columns the retired forward
+// migration divided by 1000, and the ones
+// 202610011200000000_restore_milli_point_storage multiplies back. The storage
+// unit is milli-points: keep this list in sync with
+// AssertMilliPointSchema in internal/bootstrap.
 func preRetiredCreditColumns() []preCreditColumnTarget {
 	return []preCreditColumnTarget{
 		{"llm_usage_bills", []string{"official_points", "private_points", "total_points"}},
@@ -36,37 +39,29 @@ func preRetiredCreditColumns() []preCreditColumnTarget {
 	}
 }
 
-// up202609171652571815 divides every internal-unit column by 1000 into
-// numeric(20,3) points. Column type is the idempotency key: the DO block only
-// touches bigint or non-scale-3 numeric columns.
+// up202609171652571815 is RETIRED and intentionally a no-op.
+//
+// It used to divide every credit column by 1000 into numeric(20,3) fractional
+// points. That layout is abandoned: the storage unit stays milli-points in
+// BIGINT, which is what production already runs and what every reader and
+// writer of these columns expects (millipoints.Value returns the raw int64).
+//
+// The migration ID must stay registered: the current migration plan runs with
+// gormigrate's ValidateUnknownMigrations enabled, so dropping the file would
+// make any database that already recorded it fail to start. Keeping the ID with
+// an empty body means a database that has not applied it records it without
+// touching data, and a database that did apply the old body is repaired by
+// 202610011200000000_restore_milli_point_storage.
 func up202609171652571815(schema *mschema.Builder) error {
-	for _, target := range preRetiredCreditColumns() {
-		if err := dividePreCreditColumns(schema, target.table, target.columns); err != nil {
-			return err
-		}
-	}
-
-	return schema.DataFix("divide llm_usage_bills.pricing_snapshot.charged_credits by 1000 and mark unit=points", func(db *gorm.DB) error {
-		if err := db.Exec("UPDATE llm_usage_bills SET pricing_snapshot = jsonb_set(pricing_snapshot, '{charged_credits}', to_jsonb(((pricing_snapshot->>'charged_credits')::numeric / 1000)::numeric(20,3)), true) WHERE pricing_snapshot IS NOT NULL AND pricing_snapshot ? 'charged_credits' AND COALESCE(pricing_snapshot->>'unit', '') <> 'points'").Error; err != nil {
-			return err
-		}
-		return db.Exec("UPDATE llm_usage_bills SET pricing_snapshot = jsonb_set(pricing_snapshot, '{unit}', to_jsonb('points'::text), true) WHERE pricing_snapshot IS NOT NULL AND pricing_snapshot ? 'charged_credits' AND COALESCE(pricing_snapshot->>'unit', '') <> 'points'").Error
-	})
+	_ = schema
+	return nil
 }
 
+// down202609171652571815 is retired together with the forward body: there is
+// nothing left to roll back.
 func down202609171652571815(schema *mschema.Builder) error {
-	for _, target := range preRetiredCreditColumns() {
-		if err := multiplyPreCreditColumns(schema, target.table, target.columns); err != nil {
-			return err
-		}
-	}
-
-	return schema.DataFix("multiply llm_usage_bills.pricing_snapshot.charged_credits by 1000 and clear unit marker", func(db *gorm.DB) error {
-		if err := db.Exec("UPDATE llm_usage_bills SET pricing_snapshot = jsonb_set(pricing_snapshot, '{charged_credits}', to_jsonb(((pricing_snapshot->>'charged_credits')::numeric * 1000)::numeric(20,3)), true) WHERE pricing_snapshot IS NOT NULL AND pricing_snapshot ? 'charged_credits' AND COALESCE(pricing_snapshot->>'unit', '') = 'points'").Error; err != nil {
-			return err
-		}
-		return db.Exec("UPDATE llm_usage_bills SET pricing_snapshot = (pricing_snapshot - 'unit') WHERE pricing_snapshot IS NOT NULL AND COALESCE(pricing_snapshot->>'unit', '') = 'points'").Error
-	})
+	_ = schema
+	return nil
 }
 
 func dividePreCreditColumns(schema *mschema.Builder, table string, columns []string) error {

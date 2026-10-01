@@ -178,7 +178,9 @@ func TestPricingEngineQuoteTokenUsageSeparatesCacheComponents(t *testing.T) {
 	if err := json.Unmarshal(quote.PricingSnapshot, &snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if snapshot["total_cost_usd"] != "0.001" || snapshot["charged_credits"] != "1.000" || snapshot["points_per_usd"] != float64(1000) {
+	// charged_credits is milli-points in the snapshot, the same unit as the
+	// column and the wire: 0.001 USD = 1000 milli-points = 1 point.
+	if snapshot["total_cost_usd"] != "0.001" || snapshot["charged_credits"] != float64(1000) || snapshot["points_per_usd"] != float64(1000) {
 		t.Fatalf("exact total and charged credits missing from snapshot: %#v", snapshot)
 	}
 }

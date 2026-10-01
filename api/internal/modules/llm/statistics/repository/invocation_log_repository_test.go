@@ -67,13 +67,13 @@ func TestInvocationLogSummaryAggregatesRecordedCallTimeCurrencyTotals(t *testing
 	rows := []map[string]any{
 		{
 			"request_id": "request-1", "organization_id": "org-1", "invocation_source": "product",
-			"model_name": "model-a", "total_tokens": 100, "total_points": 100,
+			"model_name": "model-a", "total_tokens": 100, "total_points": 100000,
 			"pricing_snapshot":   datatypes.JSON(`{"total_cost_usd":"0.1","total_cost_cny":"0.7","cny_per_usd":"7"}`),
 			"request_created_at": started,
 		},
 		{
 			"request_id": "request-2", "organization_id": "org-1", "invocation_source": "product",
-			"model_name": "model-a", "total_tokens": 200, "total_points": 200,
+			"model_name": "model-a", "total_tokens": 200, "total_points": 200000,
 			"pricing_snapshot":   datatypes.JSON(`{"total_cost_usd":"0.2","total_cost_cny":"1.6","cny_per_usd":"8"}`),
 			"request_created_at": started.Add(time.Minute),
 		},
@@ -117,13 +117,13 @@ func TestInvocationLogSummaryOmitsCNYWhenAnyBillLacksRecordedConversion(t *testi
 	rows := []map[string]any{
 		{
 			"request_id": "request-recorded", "organization_id": "org-1", "invocation_source": "product",
-			"model_name": "model-a", "total_tokens": 100, "total_points": 100,
+			"model_name": "model-a", "total_tokens": 100, "total_points": 100000,
 			"pricing_snapshot":   datatypes.JSON(`{"total_cost_usd":"0.1","total_cost_cny":"0.7"}`),
 			"request_created_at": started,
 		},
 		{
 			"request_id": "request-usd-only", "organization_id": "org-1", "invocation_source": "product",
-			"model_name": "model-a", "total_tokens": 100, "total_points": 100,
+			"model_name": "model-a", "total_tokens": 100, "total_points": 100000,
 			"pricing_snapshot":   datatypes.JSON(`{"total_cost_usd":"0.1"}`),
 			"request_created_at": started.Add(time.Minute),
 		},
@@ -508,13 +508,16 @@ func TestGetInvocationLogKeepsBaseLogAvailableWithoutOptionalContentTable(t *tes
 	}
 }
 
+// insertInvocationBill seeds one usage bill. points is the product-facing points
+// amount; llm_usage_bills.total_points stores milli-points (points x1000), which
+// is the same unit the wire and the UI work in.
 func insertInvocationBill(t *testing.T, db *gorm.DB, orgID, requestID, source, status string, started time.Time, tokens, points int64) {
 	t.Helper()
 	if err := db.Table(usageBillTable).Create(map[string]any{
 		"request_id": requestID, "organization_id": orgID, "app_type": "workflow",
 		"invocation_source": source, "model_name": "gpt-test", "provider_name": "test-provider",
 		"status": status, "prompt_tokens": tokens / 2, "completion_tokens": tokens - tokens/2,
-		"total_tokens": tokens, "total_points": points, "response_time_ms": 100,
+		"total_tokens": tokens, "total_points": points * 1000, "response_time_ms": 100,
 		"request_created_at": started, "settled_at": started.Add(100 * time.Millisecond),
 	}).Error; err != nil {
 		t.Fatal(err)

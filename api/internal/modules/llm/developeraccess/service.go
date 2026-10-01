@@ -1523,9 +1523,9 @@ func (s *Service) ListAudit(ctx context.Context, workspaceID, accountID string, 
 		}
 	}
 	for i := range items {
-		// total_points is stored in points; the audit wire carries milli-points
-		// (the UI divides by 1000), matching quota_charged_points below.
-		items[i].TotalPoints *= millipoints.UnitsPerPoint
+		// total_points is stored in milli-points — the same unit the audit wire
+		// carries (the UI divides by 1000) and the same unit as
+		// quota_charged_points below — so no conversion happens here.
 		identity := identityByID[items[i].PrincipalID]
 		key := keysByID[items[i].APIKeyID]
 		items[i].PrincipalName, items[i].PrincipalEmail = identity.PrincipalName, identity.PrincipalEmail
