@@ -26,6 +26,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	automationdefinition "github.com/zgiai/zgi/api/internal/modules/automation/service/definition"
+	connectorbindings "github.com/zgiai/zgi/api/internal/modules/connectors/bindings"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
 	quota_model "github.com/zgiai/zgi/api/internal/modules/quota/model"
@@ -55,6 +56,8 @@ type WorkflowService struct {
 	runningWorkflows   map[string]context.CancelFunc
 	runningWorkflowsMu sync.RWMutex
 	diagnoser          *diagnosis.Diagnoser
+	workflowDB         *gorm.DB
+	connectorBindings  *connectorbindings.GormRepository
 }
 
 var (
@@ -220,7 +223,7 @@ func mergeRootVariablesIntoGraph(workflowMap map[string]any) (map[string]any, er
 // NewWorkflowService creates a new workflow service
 func NewWorkflowService(repo WorkflowRepository, agentsRepo agents.AgentsRepository, workflowRunLogRepo WorkflowRunLogRepository, workflowNodeRuntimeLogRepo WorkflowNodeRuntimeLogRepository, accountService interfaces.AccountService) *WorkflowService {
 	advancedChatHandler := NewAdvancedChatWorkflowHandler()
-	return &WorkflowService{
+	service := &WorkflowService{
 		executor:                   NewWorkflowExecutor(),
 		repo:                       repo,
 		agentsRepo:                 agentsRepo,
@@ -233,12 +236,14 @@ func NewWorkflowService(repo WorkflowRepository, agentsRepo agents.AgentsReposit
 		enterpriseService:          nil,
 		runningWorkflows:           make(map[string]context.CancelFunc),
 	}
+	service.configureWorkflowBindingIndex()
+	return service
 }
 
 // NewWorkflowServiceWithDeps creates a new workflow service with dependencies
 func NewWorkflowServiceWithDeps(repo WorkflowRepository, agentsRepo agents.AgentsRepository, workflowRunLogRepo WorkflowRunLogRepository, workflowNodeRuntimeLogRepo WorkflowNodeRuntimeLogRepository, accountService interfaces.AccountService, fileService interfaces.FileService) *WorkflowService {
 	advancedChatHandler := NewAdvancedChatWorkflowHandler()
-	return &WorkflowService{
+	service := &WorkflowService{
 		executor:                   NewWorkflowExecutorWithDeps(fileService),
 		repo:                       repo,
 		agentsRepo:                 agentsRepo,
@@ -251,6 +256,8 @@ func NewWorkflowServiceWithDeps(repo WorkflowRepository, agentsRepo agents.Agent
 		enterpriseService:          nil,
 		runningWorkflows:           make(map[string]context.CancelFunc),
 	}
+	service.configureWorkflowBindingIndex()
+	return service
 }
 
 // NewWorkflowServiceWithContentExtractor creates a new workflow service with ContentExtractor
@@ -273,7 +280,7 @@ func NewWorkflowServiceWithContentExtractor(repo WorkflowRepository, agentsRepo 
 	})
 	advancedChatHandler := NewAdvancedChatWorkflowHandler()
 
-	return &WorkflowService{
+	service := &WorkflowService{
 		executor:                   executor,
 		repo:                       repo,
 		agentsRepo:                 agentsRepo,
@@ -287,6 +294,8 @@ func NewWorkflowServiceWithContentExtractor(repo WorkflowRepository, agentsRepo 
 		enterpriseService:          enterpriseService,
 		runningWorkflows:           make(map[string]context.CancelFunc),
 	}
+	service.configureWorkflowBindingIndex()
+	return service
 }
 
 func (s *WorkflowService) SetDiagnoser(diagnoser *diagnosis.Diagnoser) {
@@ -549,6 +558,7 @@ func (s *WorkflowService) SyncDraftWorkflow(ctx context.Context, workspaceID, ag
 
 	now := time.Now()
 	var workflow *Workflow
+	createWorkflow := existingWorkflow == nil
 
 	// Determine internal value - use false as default if not provided
 	internal := false
@@ -578,10 +588,6 @@ func (s *WorkflowService) SyncDraftWorkflow(ctx context.Context, workspaceID, ag
 			UpdatedAt:             now,
 		}
 
-		if err := s.repo.Create(ctx, workflow); err != nil {
-			return nil, fmt.Errorf("failed to create workflow: %w", err)
-		}
-		// Note: Quota usage is recorded when creating agent, not here.
 	} else {
 		// Update existing draft workflow
 		existingWorkflow.Graph = string(graphJSON)
@@ -592,11 +598,21 @@ func (s *WorkflowService) SyncDraftWorkflow(ctx context.Context, workspaceID, ag
 		existingWorkflow.UpdatedBy = &accountID
 		existingWorkflow.UpdatedAt = now
 
-		if err := s.repo.Update(ctx, existingWorkflow); err != nil {
-			return nil, fmt.Errorf("failed to update workflow: %w", err)
-		}
 		workflow = existingWorkflow
 	}
+
+	workflow.ConnectorReferenceCommands = syncReq.ConnectorReferenceCommands
+	connectorBindings, err := s.workflowConnectorBindingRows(ctx, workflow, syncReq.Graph, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid workflow connector dependencies: %w", err)
+	}
+	if err := s.persistWorkflowWithBindings(ctx, workflow, connectorBindings, createWorkflow); err != nil {
+		if createWorkflow {
+			return nil, fmt.Errorf("failed to create workflow: %w", err)
+		}
+		return nil, fmt.Errorf("failed to update workflow: %w", err)
+	}
+	// Note: Quota usage is recorded when creating agent, not here.
 
 	// Update agent's workflow_config for conversational workflows
 	if workflow.Type == "chat" && s.agentsRepo != nil {
@@ -647,6 +663,7 @@ func (s *WorkflowService) SyncDraftWorkflow(ctx context.Context, workspaceID, ag
 		"result":     "success",
 		"hash":       fmt.Sprintf("%x", md5.Sum([]byte(workflow.ID+workflow.UpdatedAt.String()))),
 		"updated_at": workflow.UpdatedAt,
+		"graph":      workflow.GetGraphDict(),
 	}
 
 	return response, nil
@@ -671,7 +688,6 @@ func (s *WorkflowService) RunDraftWorkflow(ctx context.Context, workspaceID, age
 			logger.Error("Invalid workflow data format", fmt.Errorf("workflow data is not a map"))
 			return nil, fmt.Errorf("invalid workflow data format")
 		}
-
 		graphData, err := mergeRootVariablesIntoGraph(workflowMap)
 		if err != nil {
 			logger.Error("Invalid graph data format", err)
@@ -1536,6 +1552,10 @@ func (s *WorkflowService) RunPublishedWorkflow(ctx context.Context, workspaceID,
 			logger.Error("Invalid workflow data format", fmt.Errorf("workflow data is not a map"))
 			return nil, fmt.Errorf("invalid workflow data format")
 		}
+		actualWorkflowID, err := requiredWorkflowDataID(workflowMap)
+		if err != nil {
+			return nil, fmt.Errorf("invalid published workflow identity: %w", err)
+		}
 
 		graphData, err := mergeRootVariablesIntoGraph(workflowMap)
 		if err != nil {
@@ -1558,7 +1578,7 @@ func (s *WorkflowService) RunPublishedWorkflow(ctx context.Context, workspaceID,
 		}
 
 		// Create workflow run log with invoke_from from context
-		workflowRunLog, err := s.CreateWorkflowRunLog(ctx, workspaceID, agentID, agentID, invokeFrom, draftReq.Inputs, accountID)
+		workflowRunLog, err := s.CreateWorkflowRunLog(ctx, workspaceID, agentID, actualWorkflowID, invokeFrom, draftReq.Inputs, accountID)
 		var workflowRunLogID string
 		defer func() {
 			s.cleanupWorkflowReusableSessionsWithTimeout(workflowRunLogID)
@@ -1581,9 +1601,7 @@ func (s *WorkflowService) RunPublishedWorkflow(ctx context.Context, workspaceID,
 		if draftReq.Inputs == nil {
 			draftReq.Inputs = make(map[string]interface{})
 		}
-		if organizationID != "" {
-			draftReq.Inputs["sys.organization_id"] = organizationID
-		}
+		ensureWorkflowSystemInputs(draftReq.Inputs, workspaceID, agentID, actualWorkflowID, workflowRunLogID, accountID, organizationID)
 
 		// Execute workflow using executor
 		result, err := s.executor.ExecuteSimpleWorkflowWithRunID(ctx, workflowRunLogID, graphData, draftReq.Inputs)
@@ -1643,8 +1661,10 @@ func (s *WorkflowService) DeleteWorkflow(ctx context.Context, tenantID, agentID,
 		return fmt.Errorf("failed to get workflow: %w", err)
 	}
 
-	// Delete the workflow
-	if err := s.repo.Delete(ctx, workflow.ID); err != nil {
+	// Delete the selected graph row only after the draft and every immutable
+	// published Connector authorization snapshot in this Workflow lineage have
+	// been revoked in the same transaction.
+	if err := s.deleteWorkflowWithBindings(ctx, workflow); err != nil {
 		logger.Error("Failed to delete workflow", err)
 		return fmt.Errorf("failed to delete workflow: %w", err)
 	}
@@ -2035,20 +2055,33 @@ func (s *WorkflowService) createWorkflowRunLog(ctx context.Context, tenantID, ag
 	if s.repo != nil {
 		var wf *Workflow
 		var err error
-
-		// For debugging, use draft version
-		if triggeredFrom == "debugging" {
-			wf, err = s.repo.GetDraftWorkflow(ctx, agentID)
-			version = "draft"
+		exactWorkflowID := strings.TrimSpace(workflowID)
+		if exactWorkflowID != "" && !strings.EqualFold(exactWorkflowID, strings.TrimSpace(agentID)) {
+			// New callers pass workflows.id. Load that exact immutable row so the
+			// run-log snapshot cannot drift to a newer publish between selection
+			// and execution.
+			wf, err = s.repo.GetByID(ctx, exactWorkflowID)
+			if err != nil {
+				return nil, fmt.Errorf("load selected workflow for run log: %w", err)
+			}
+			if wf == nil || !strings.EqualFold(strings.TrimSpace(wf.AgentID), strings.TrimSpace(agentID)) {
+				return nil, fmt.Errorf("selected workflow does not belong to the runtime Agent")
+			}
+			version = wf.Version
 		} else {
-			// For web-app and external-api, use published version
-			wf, err = s.repo.GetLatestPublishedVersion(ctx, agentID)
-			if err == nil && wf != nil {
-				version = wf.Version
-			} else {
-				// Fallback to draft if no published version exists
+			// Compatibility for legacy callers that still pass agents.id.
+			if triggeredFrom == "debugging" || triggeredFrom == "debugger" {
 				wf, err = s.repo.GetDraftWorkflow(ctx, agentID)
 				version = "draft"
+			} else {
+				wf, err = s.repo.GetLatestPublishedVersion(ctx, agentID)
+				if err == nil && wf != nil {
+					version = wf.Version
+				} else {
+					// Retain the legacy draft fallback only for legacy identities.
+					wf, err = s.repo.GetDraftWorkflow(ctx, agentID)
+					version = "draft"
+				}
 			}
 		}
 
@@ -2063,6 +2096,10 @@ func (s *WorkflowService) createWorkflowRunLog(ctx context.Context, tenantID, ag
 			if wf.Features != "" {
 				f := wf.Features
 				featuresStr = &f
+			}
+			if wf.VersionUUID.Valid && wf.VersionUUID.UUID != uuid.Nil {
+				value := wf.VersionUUID.UUID.String()
+				versionUUID = &value
 			}
 		}
 	}
@@ -2652,6 +2689,7 @@ func (s *WorkflowService) GetWorkflowRunDetail(ctx context.Context, tenantID, ag
 	if log.Features != nil && *log.Features != "" {
 		_ = json.Unmarshal([]byte(*log.Features), &features)
 	}
+	delete(features, "connector_action_instances")
 
 	var inputs map[string]interface{}
 	if log.Inputs != nil && *log.Inputs != "" {

@@ -7,9 +7,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
 	graph_entities "github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
+	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
+	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
 	"github.com/zgiai/zgi/api/pkg/database"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
@@ -126,8 +129,35 @@ func handleWorkflowStreamPause(params workflowStreamPauseParams) {
 	persistReasons := make([]workflowpause.Reason, 0, len(pausedNodes))
 	outboundEvents := make([]*WorkflowStreamEvent, 0, len(pausedNodes)*2+1)
 	pauseReason := workflowpause.ReasonTypeApprovalRequired
+	var singleConnectorPauseOutput map[string]interface{}
 	for _, pausedNode := range pausedNodes {
 		pausedNodeIDs = append(pausedNodeIDs, pausedNode.NodeID)
+		if confirmation, ok := workflowPausedConnectorConfirmation(pausedNode.Outputs); ok {
+			pauseReason = workflowpause.ReasonTypeConnectorConfirmationRequired
+			connectorOutput := map[string]interface{}{
+				"state": string(connectorexecution.ExecutionStateRequiresConfirmation), "confirmation": confirmation,
+			}
+			if len(pausedNodes) == 1 {
+				singleConnectorPauseOutput = connectorOutput
+			}
+			requestEvent := copyWorkflowAnyMap(connectorOutput)
+			requestEvent["workflow_run_id"] = params.WorkflowRunID
+			requestEvent["workflow_id"] = params.WorkflowID
+			requestEvent["node_id"] = pausedNode.NodeID
+			requestEvent["created_at"] = pausedAt.Unix()
+			outboundEvents = append(outboundEvents, &WorkflowStreamEvent{
+				EventType: workflowpause.EventConnectorConfirmationRequired,
+				Data:      requestEvent,
+			})
+			eventReasons = append(eventReasons, map[string]interface{}{
+				"type": workflowpause.ReasonTypeConnectorConfirmationRequired, "node_id": pausedNode.NodeID,
+				"node_title": pausedNode.Title, "route_receipt": string(confirmation.RouteReceipt),
+			})
+			persistReasons = append(persistReasons, workflowpause.Reason{
+				Type: workflowpause.ReasonTypeConnectorConfirmationRequired, NodeID: pausedNode.NodeID,
+			})
+			continue
+		}
 		if pausedNode.NodeType == "question-answer" {
 			pauseReason = workflowpause.ReasonTypeQuestionAnswerRequired
 			questionAnswerMessageEvent := buildQuestionAnswerMessageEvent(params, pausedNode)
@@ -208,6 +238,9 @@ func handleWorkflowStreamPause(params workflowStreamPauseParams) {
 		"paused_at":       pausedAt.Unix(),
 		"files":           []interface{}{},
 	}
+	if singleConnectorPauseOutput != nil {
+		pauseEvent["outputs"] = copyWorkflowAnyMap(singleConnectorPauseOutput)
+	}
 
 	pauseInputs := copyWorkflowAnyMap(params.RequestInputs)
 	responseMode := params.ResponseMode
@@ -251,8 +284,12 @@ func handleWorkflowStreamPause(params workflowStreamPauseParams) {
 			OccurredAt:     pausedAt,
 		})
 	}
+	runProjectionOutputs := params.AllNodeOutputs
+	if singleConnectorPauseOutput != nil {
+		runProjectionOutputs = singleConnectorPauseOutput
+	}
 	outputsJSON := "{}"
-	if encoded, err := json.Marshal(params.AllNodeOutputs); err == nil {
+	if encoded, err := json.Marshal(runProjectionOutputs); err == nil {
 		outputsJSON = string(encoded)
 	}
 	pauseConversationID := ""
@@ -387,4 +424,32 @@ func (params workflowStreamPauseParams) effectivePausedNodes() []workflowStreamP
 			NodeStartTime:     params.NodeStartTime,
 		},
 	}
+}
+
+func workflowPausedConnectorConfirmation(outputs map[string]interface{}) (connectorexecution.RuntimeConfirmation, bool) {
+	if len(outputs) != 2 || strings.TrimSpace(workflowString(outputs, "state")) != string(connectorexecution.ExecutionStateRequiresConfirmation) {
+		return connectorexecution.RuntimeConfirmation{}, false
+	}
+	raw, exists := outputs["confirmation"]
+	if !exists || raw == nil {
+		return connectorexecution.RuntimeConfirmation{}, false
+	}
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return connectorexecution.RuntimeConfirmation{}, false
+	}
+	var confirmation connectorexecution.RuntimeConfirmation
+	if err := json.Unmarshal(encoded, &confirmation); err != nil {
+		return connectorexecution.RuntimeConfirmation{}, false
+	}
+	receipt, err := uuid.Parse(string(confirmation.RouteReceipt))
+	if err != nil || receipt == uuid.Nil || receipt.String() != string(confirmation.RouteReceipt) ||
+		confirmation.Target.Type != connectorcore.TargetTypeWorkflow ||
+		strings.TrimSpace(confirmation.Target.ID) == "" || strings.TrimSpace(confirmation.Target.BindingInstanceID) == "" ||
+		strings.TrimSpace(confirmation.ConnectorName) == "" || strings.TrimSpace(confirmation.ActionName) == "" ||
+		strings.TrimSpace(confirmation.Consequence.ExternalEffect) == "" ||
+		(confirmation.Risk != connectorexecution.RiskHigh && confirmation.Risk != connectorexecution.RiskUnclassified) {
+		return connectorexecution.RuntimeConfirmation{}, false
+	}
+	return confirmation, true
 }

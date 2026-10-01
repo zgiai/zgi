@@ -40,6 +40,7 @@ export interface ConfirmDialogProps {
   onOpenChange?: (open: boolean) => void;
   /** Optional cancel handler */
   onCancel?: () => void;
+  onCloseAutoFocus?: React.ComponentProps<typeof DialogContent>['onCloseAutoFocus'];
   /** Variant of the dialog (optional) */
   variant?: 'default' | 'warning' | 'danger';
   contentClassName?: string;
@@ -64,6 +65,7 @@ export function ConfirmDialog({
   onOpenChange: onOpenChangeProp,
   variant = 'default',
   onCancel,
+  onCloseAutoFocus,
   contentClassName,
   footerClassName,
   cancelClassName,
@@ -86,6 +88,7 @@ export function ConfirmDialog({
     <Dialog open={open} onOpenChange={setOpen}>
       {trigger && <DialogTrigger asChild>{trigger}</DialogTrigger>}
       <DialogContent
+        onCloseAutoFocus={onCloseAutoFocus}
         size="sm"
         className={cn('p-0 overflow-hidden', isDanger && 'max-w-md rounded-2xl', contentClassName)}
       >

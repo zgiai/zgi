@@ -42,7 +42,6 @@ func clientActionRequiredPayload(prepared *PreparedChat, trace skills.SkillTrace
 	}
 	return nil
 }
-
 func clientActionRequiresModelContinuation(payload map[string]interface{}) bool {
 	if len(payload) == 0 {
 		return false

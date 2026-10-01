@@ -10,16 +10,15 @@ import (
 )
 
 const (
-	publicExternalArgumentRedacted  = "__zgi_redacted__"
-	publicExternalArgumentTruncated = "__zgi_truncated__"
-	publicExternalHiddenReference   = "__zgi_hidden_reference__"
-	publicExternalArgumentMaxDepth  = 6
-	publicExternalArgumentMaxItems  = 20
-	publicExternalArgumentMaxFields = 40
-	publicExternalArgumentMaxRunes  = 500
+	publicToolArgumentRedacted  = "__zgi_redacted__"
+	publicToolArgumentTruncated = "__zgi_truncated__"
+	publicToolArgumentMaxDepth  = 6
+	publicToolArgumentMaxItems  = 20
+	publicToolArgumentMaxFields = 40
+	publicToolArgumentMaxRunes  = 500
 )
 
-var publicExternalSecretPatterns = []*regexp.Regexp{
+var publicToolSecretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----`),
 	regexp.MustCompile(`(?i)\b(?:bearer|basic)\s+[a-z0-9._~+/=-]{8,}`),
 	regexp.MustCompile(`(?i)\b(?:proxy-)?authorization\s*[:=]\s*[^\r\n]{4,}`),
@@ -36,68 +35,59 @@ var publicExternalSecretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)(?:[?&]|\b)(?:access[_-]?token|refresh[_-]?token|api[_-]?key|apikey|client[_-]?secret|password|secret|signature|sig|token|key|googleaccessid|key[_-]?pair[_-]?id|x-amz-credential|x-amz-signature|x-amz-security-token|x-goog-credential|x-goog-signature)=[^&#\s]+`),
 }
 
-var publicExternalCamelKeyPattern = regexp.MustCompile(`([a-z0-9])([A-Z])`)
+var publicToolCamelKeyPattern = regexp.MustCompile(`([a-z0-9])([A-Z])`)
 
-// SanitizeExternalActionPublicValue returns a detached, JSON-compatible copy
-// suitable for browser-visible events and message metadata. Exact arguments
-// and internal Connection UUIDs remain in the server-side frozen invocation;
-// the public Connected Apps projection keeps only bounded, credential-redacted
-// action arguments plus server-owned connection display labels.
-func SanitizeExternalActionPublicValue(value interface{}) interface{} {
-	return sanitizeExternalPublicValue(value, 0)
+// SanitizePublicValue returns a detached, JSON-compatible copy
+// suitable for browser-visible tool events and message metadata. Private
+// replay state stays on the server; argument previews are bounded and secrets
+// are redacted independently of provider identity.
+func SanitizePublicValue(value interface{}) interface{} {
+	return sanitizePublicValue(value, 0)
 }
 
-func sanitizeExternalPublicValue(value interface{}, depth int) interface{} {
+func sanitizePublicValue(value interface{}, depth int) interface{} {
 	if value == nil {
 		return nil
 	}
 	if depth > 32 {
-		return publicExternalArgumentTruncated
+		return publicToolArgumentTruncated
 	}
 	switch typed := value.(type) {
 	case map[string]interface{}:
-		externalEnvelope := isExternalActionEnvelope(typed)
-		connectionID := ""
-		connectionName := ""
-		connectionDisplayName := ""
-		connectionSelection := ""
-		if externalEnvelope {
-			connectionID = nestedExternalEnvelopeString(typed, "connection_id")
-			connectionName = nestedExternalEnvelopeString(typed, "connection_name")
-			connectionDisplayName = nestedExternalEnvelopeString(typed, "connection_display_name")
-			connectionSelection = nestedExternalEnvelopeString(typed, "connection_selection")
-		}
 		out := make(map[string]interface{}, len(typed))
 		for key, nested := range typed {
-			out[key] = sanitizeExternalPublicValue(nested, depth+1)
-		}
-		sanitizeExternalActionEnvelope(out)
-		if externalEnvelope {
-			out = sanitizeExternalConnectionPublicMap(out, connectionID)
-			if connectionName = publicExternalConnectionLabel(connectionName, connectionID); connectionName != "" {
-				out["connection_name"] = connectionName
-			}
-			if connectionDisplayName = publicExternalConnectionLabel(connectionDisplayName, connectionID); connectionDisplayName != "" {
-				out["connection_display_name"] = connectionDisplayName
-			}
-			if connectionSelection == "preferred" || connectionSelection == "explicit" {
-				out["connection_selection"] = connectionSelection
+			switch key {
+			case "connector_action_instances", "frozen_invocation":
+				continue
+			case "arguments":
+				out[key] = sanitizePublicArgument(nested, 0)
+			default:
+				if publicToolKeySensitive(key) {
+					out[key] = publicToolArgumentRedacted
+				} else {
+					out[key] = sanitizePublicValue(nested, depth+1)
+				}
 			}
 		}
 		return out
 	case []interface{}:
 		out := make([]interface{}, len(typed))
 		for index, nested := range typed {
-			out[index] = sanitizeExternalPublicValue(nested, depth+1)
+			out[index] = sanitizePublicValue(nested, depth+1)
 		}
 		return out
 	case []map[string]interface{}:
 		out := make([]interface{}, len(typed))
 		for index, nested := range typed {
-			out[index] = sanitizeExternalPublicValue(nested, depth+1)
+			out[index] = sanitizePublicValue(nested, depth+1)
 		}
 		return out
-	case string, bool, float32, float64, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, json.Number:
+	case string:
+		if publicToolStringSensitive(typed) {
+			return publicToolArgumentRedacted
+		}
+		return typed
+	case bool, float32, float64, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, json.Number:
 		return typed
 	}
 
@@ -115,171 +105,35 @@ func sanitizeExternalPublicValue(value interface{}, depth int) interface{} {
 	if err := decoder.Decode(&decoded); err != nil {
 		return nil
 	}
-	return sanitizeExternalPublicValue(decoded, depth+1)
+	return sanitizePublicValue(decoded, depth+1)
 }
 
-func sanitizeExternalActionEnvelope(value map[string]interface{}) {
-	if !isExternalActionEnvelope(value) {
-		return
-	}
-	arguments, ok := value["arguments"].(map[string]interface{})
-	if !ok {
-		return
-	}
-	if actionArguments, exists := arguments["arguments"]; exists {
-		arguments["arguments"] = sanitizeExternalApprovalArgument(actionArguments, 0)
-	}
-	if batchItems, exists := arguments["batch_items"]; exists {
-		arguments["batch_items"] = sanitizeExternalApprovalArgument(batchItems, 0)
-	}
-	if batchSummary, exists := arguments["batch_summary"]; exists {
-		arguments["batch_summary"] = sanitizeExternalApprovalArgument(batchSummary, 0)
-	}
-	// Batch IDs, item IDs and digests are internal replay and approval-binding
-	// material. Keep them in the sealed invocation, not the public event copy.
-	delete(arguments, "operation_batch")
-}
-
-func sanitizeExternalConnectionPublicMap(value map[string]interface{}, connectionID string) map[string]interface{} {
-	out := make(map[string]interface{}, len(value))
-	isConnectionAsset := strings.EqualFold(strings.TrimSpace(publicPayloadString(value["type"])), "integration_connection")
-	for key, nested := range value {
-		normalizedKey := strings.ToLower(strings.TrimSpace(key))
-		if normalizedKey == "connection_id" || normalizedKey == "preferred_connection_id" ||
-			(isConnectionAsset && normalizedKey == "id") {
-			continue
-		}
-		publicKey := key
-		if connectionID != "" && strings.Contains(strings.ToLower(key), strings.ToLower(connectionID)) {
-			publicKey = publicExternalHiddenReference
-		}
-		out[publicKey] = sanitizeExternalConnectionPublicValue(nested, connectionID)
-	}
-	return out
-}
-
-func sanitizeExternalConnectionPublicValue(value interface{}, connectionID string) interface{} {
-	switch typed := value.(type) {
-	case map[string]interface{}:
-		return sanitizeExternalConnectionPublicMap(typed, connectionID)
-	case []interface{}:
-		out := make([]interface{}, len(typed))
-		for index, nested := range typed {
-			out[index] = sanitizeExternalConnectionPublicValue(nested, connectionID)
-		}
-		return out
-	case string:
-		if connectionID != "" && strings.Contains(strings.ToLower(typed), strings.ToLower(connectionID)) {
-			return publicExternalHiddenReference
-		}
-		return typed
-	default:
-		return value
-	}
-}
-
-func publicExternalConnectionLabel(value string, connectionID string) string {
-	value = strings.TrimSpace(value)
-	if value == "" || publicExternalStringSensitive(value) ||
-		(connectionID != "" && strings.Contains(strings.ToLower(value), strings.ToLower(connectionID))) {
-		return ""
-	}
-	return truncatePublicExternalString(value)
-}
-
-func nestedExternalEnvelopeString(value interface{}, key string) string {
-	key = strings.ToLower(strings.TrimSpace(key))
-	if key == "" || value == nil {
-		return ""
-	}
-	switch typed := value.(type) {
-	case map[string]interface{}:
-		externalEnvelope := isExternalActionEnvelope(typed)
-		if externalEnvelope {
-			for candidateKey, nested := range typed {
-				if strings.ToLower(strings.TrimSpace(candidateKey)) == key {
-					if text := strings.TrimSpace(publicPayloadString(nested)); text != "" {
-						return text
-					}
-				}
-			}
-			if arguments, ok := typed["arguments"].(map[string]interface{}); ok {
-				if text := strings.TrimSpace(publicPayloadString(arguments[key])); text != "" {
-					return text
-				}
-			}
-		}
-		keys := make([]string, 0, len(typed))
-		for candidateKey := range typed {
-			keys = append(keys, candidateKey)
-		}
-		sort.Strings(keys)
-		for _, candidateKey := range keys {
-			// In a facade envelope the nested action arguments are user/provider
-			// data, not server-owned connection labels. Never promote them.
-			if externalEnvelope && strings.EqualFold(strings.TrimSpace(candidateKey), "arguments") {
-				continue
-			}
-			if text := nestedExternalEnvelopeString(typed[candidateKey], key); text != "" {
-				return text
-			}
-		}
-	case []interface{}:
-		for _, nested := range typed {
-			if text := nestedExternalEnvelopeString(nested, key); text != "" {
-				return text
-			}
-		}
-	default:
-		reflected := reflect.ValueOf(value)
-		if reflected.Kind() == reflect.Pointer || reflected.Kind() == reflect.Struct || reflected.Kind() == reflect.Map || reflected.Kind() == reflect.Slice || reflected.Kind() == reflect.Array {
-			raw, err := json.Marshal(value)
-			if err == nil {
-				var decoded interface{}
-				decoder := json.NewDecoder(strings.NewReader(string(raw)))
-				decoder.UseNumber()
-				if decoder.Decode(&decoded) == nil {
-					return nestedExternalEnvelopeString(decoded, key)
-				}
-			}
-		}
-	}
-	return ""
-}
-
-func isExternalActionEnvelope(value map[string]interface{}) bool {
-	skillID := strings.ToLower(strings.TrimSpace(publicPayloadString(value["skill_id"])))
-	toolName := strings.ToLower(strings.TrimSpace(publicPayloadString(value["tool_name"])))
-	providerID := strings.ToLower(strings.TrimSpace(publicPayloadString(value["provider_id"])))
-	return (skillID == "external-apps" && toolName == "execute_action") || providerID == "external-integrations"
-}
-
-func sanitizeExternalApprovalArgument(value interface{}, depth int) interface{} {
-	if depth > publicExternalArgumentMaxDepth {
-		return publicExternalArgumentTruncated
+func sanitizePublicArgument(value interface{}, depth int) interface{} {
+	if depth > publicToolArgumentMaxDepth {
+		return publicToolArgumentTruncated
 	}
 	switch typed := value.(type) {
 	case nil:
 		return nil
 	case string:
-		if publicExternalStringSensitive(typed) {
-			return publicExternalArgumentRedacted
+		if publicToolStringSensitive(typed) {
+			return publicToolArgumentRedacted
 		}
-		return truncatePublicExternalString(typed)
+		return truncatePublicToolString(typed)
 	case bool, float32, float64, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, json.Number:
 		return typed
 	case []interface{}:
-		limit := min(len(typed), publicExternalArgumentMaxItems)
+		limit := min(len(typed), publicToolArgumentMaxItems)
 		out := make([]interface{}, 0, limit)
 		for _, nested := range typed[:limit] {
-			out = append(out, sanitizeExternalApprovalArgument(nested, depth+1))
+			out = append(out, sanitizePublicArgument(nested, depth+1))
 		}
 		return out
 	case []string:
-		limit := min(len(typed), publicExternalArgumentMaxItems)
+		limit := min(len(typed), publicToolArgumentMaxItems)
 		out := make([]interface{}, 0, limit)
 		for _, nested := range typed[:limit] {
-			out = append(out, sanitizeExternalApprovalArgument(nested, depth+1))
+			out = append(out, sanitizePublicArgument(nested, depth+1))
 		}
 		return out
 	case map[string]interface{}:
@@ -288,35 +142,35 @@ func sanitizeExternalApprovalArgument(value interface{}, depth int) interface{} 
 			keys = append(keys, key)
 		}
 		sort.Strings(keys)
-		if len(keys) > publicExternalArgumentMaxFields {
-			keys = keys[:publicExternalArgumentMaxFields]
+		if len(keys) > publicToolArgumentMaxFields {
+			keys = keys[:publicToolArgumentMaxFields]
 		}
 		out := make(map[string]interface{}, len(keys))
 		for _, key := range keys {
-			if publicExternalKeySensitive(key) {
-				out[key] = publicExternalArgumentRedacted
+			if publicToolKeySensitive(key) {
+				out[key] = publicToolArgumentRedacted
 				continue
 			}
-			out[key] = sanitizeExternalApprovalArgument(typed[key], depth+1)
+			out[key] = sanitizePublicArgument(typed[key], depth+1)
 		}
 		return out
 	}
 	raw, err := json.Marshal(value)
 	if err != nil {
-		return publicExternalArgumentTruncated
+		return publicToolArgumentTruncated
 	}
 	var decoded interface{}
 	decoder := json.NewDecoder(strings.NewReader(string(raw)))
 	decoder.UseNumber()
 	if err := decoder.Decode(&decoded); err != nil {
-		return publicExternalArgumentTruncated
+		return publicToolArgumentTruncated
 	}
-	return sanitizeExternalApprovalArgument(decoded, depth+1)
+	return sanitizePublicArgument(decoded, depth+1)
 }
 
-func publicExternalKeySensitive(raw string) bool {
+func publicToolKeySensitive(raw string) bool {
 	normalized := strings.TrimSpace(raw)
-	normalized = publicExternalCamelKeyPattern.ReplaceAllString(normalized, `${1}_${2}`)
+	normalized = publicToolCamelKeyPattern.ReplaceAllString(normalized, `${1}_${2}`)
 	normalized = strings.ToLower(strings.NewReplacer("-", "_", ".", "_").Replace(normalized))
 	for _, key := range []string{
 		"authorization", "proxy_authorization", "cookie", "set_cookie", "credential", "credentials",
@@ -331,8 +185,8 @@ func publicExternalKeySensitive(raw string) bool {
 		strings.HasPrefix(normalized, "x_goog_") && (strings.Contains(normalized, "credential") || strings.Contains(normalized, "signature"))
 }
 
-func publicExternalStringSensitive(value string) bool {
-	for _, pattern := range publicExternalSecretPatterns {
+func publicToolStringSensitive(value string) bool {
+	for _, pattern := range publicToolSecretPatterns {
 		if pattern.MatchString(value) {
 			return true
 		}
@@ -345,22 +199,17 @@ func publicExternalStringSensitive(value string) bool {
 		return true
 	}
 	for key, values := range parsed.Query() {
-		if publicExternalKeySensitive(key) && len(values) > 0 {
+		if publicToolKeySensitive(key) && len(values) > 0 {
 			return true
 		}
 	}
 	return false
 }
 
-func truncatePublicExternalString(value string) string {
+func truncatePublicToolString(value string) string {
 	runes := []rune(value)
-	if len(runes) <= publicExternalArgumentMaxRunes {
+	if len(runes) <= publicToolArgumentMaxRunes {
 		return value
 	}
-	return string(runes[:publicExternalArgumentMaxRunes]) + "…"
-}
-
-func publicPayloadString(value interface{}) string {
-	text, _ := value.(string)
-	return text
+	return string(runes[:publicToolArgumentMaxRunes]) + "…"
 }

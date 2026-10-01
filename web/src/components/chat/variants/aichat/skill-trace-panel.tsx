@@ -1,7 +1,13 @@
 'use client';
 
+import {
+  isConnectorOperationInvocation,
+  connectorOperationTone,
+  parseConnectorOperationPresentation,
+} from '@/components/connectors/runtime/connector-operation-presentation';
+
 import { useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle2, ChevronDown, Loader2 } from 'lucide-react';
+import { AlertCircle, CheckCircle2, ChevronDown, Loader2, TriangleAlert } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useT, type ScopedTranslations } from '@/i18n/translations';
 import { useLocale } from '@/hooks/use-locale';
@@ -17,11 +23,9 @@ import {
 } from '@/components/chat/variants/aichat/skill-display';
 import { AIChatSkillIcon } from '@/components/chat/variants/aichat/skill-icon';
 import { AIChatSkillResultSummary } from '@/components/chat/variants/aichat/skill-result-summary';
-import {
-  getAIChatExternalInvocationDisplayName,
-  isAIChatExternalAppsInvocation,
-} from '@/components/chat/variants/aichat/external-app-display';
+
 import { sanitizeTimelineDisplayString } from '@/components/chat/variants/aichat/timeline-display-safety';
+
 import {
   formatAIChatTimelineArgumentSummary,
   formatAIChatTimelineValue,
@@ -29,7 +33,7 @@ import {
   localizeAIChatRuntimeMessage,
 } from '@/components/chat/variants/aichat/timeline-display-i18n';
 
-type SkillTraceTone = 'running' | 'success' | 'error';
+type SkillTraceTone = 'running' | 'success' | 'warning' | 'error';
 type SkillTraceDebugLabel = keyof typeof SKILL_TRACE_DEBUG_LABEL_KEYS;
 
 const SKILL_TRACE_DEBUG_LABEL_KEYS = {
@@ -57,6 +61,8 @@ interface AIChatSkillTracePanelProps {
 }
 
 function getInvocationTone(invocation: AIChatSkillInvocation): SkillTraceTone {
+  const nativeTone = connectorOperationTone(invocation);
+  if (nativeTone) return nativeTone;
   if (invocation.status === 'loading' || invocation.status === 'running') return 'running';
   if (invocation.status === 'error') return 'error';
   return 'success';
@@ -65,6 +71,7 @@ function getInvocationTone(invocation: AIChatSkillInvocation): SkillTraceTone {
 function getStatusIcon(tone: SkillTraceTone) {
   if (tone === 'running') return <Loader2 className="size-3.5 animate-spin" />;
   if (tone === 'error') return <AlertCircle className="size-3.5" />;
+  if (tone === 'warning') return <TriangleAlert className="size-3.5 text-amber-600" />;
   return <CheckCircle2 className="size-3.5 text-emerald-600" />;
 }
 
@@ -83,17 +90,13 @@ function skillTraceDebugRows(
   locale: string,
   t: ScopedTranslations<'webapp'>
 ) {
-  const isExternalApp = isAIChatExternalAppsInvocation(invocation);
+  if (isConnectorOperationInvocation(invocation)) return [];
+  const isConnector = isConnectorOperationInvocation(invocation);
   const fallbackToolName =
     getAIChatSkillToolDisplayName(invocation.skill_id, invocation.tool_name, locale) ||
     t('consoleChat.connectedApps.actions.generic');
-  const externalToolName = getAIChatExternalInvocationDisplayName(
-    invocation,
-    locale,
-    t,
-    fallbackToolName
-  );
-  const argumentSummary = isExternalApp
+  const externalToolName = parseConnectorOperationPresentation(invocation)?.title;
+  const argumentSummary = isConnector
     ? {
         type: 'object',
         keys: Object.keys(invocation.arguments ?? {}).filter(
@@ -104,9 +107,9 @@ function skillTraceDebugRows(
   const reasonCode = invocation.arguments?.reason_code;
   return [
     ['kind', getAIChatInvocationKindLabel(invocation.kind, t)],
-    ['skillId', isExternalApp ? null : invocation.skill_id],
+    ['skillId', isConnector ? null : invocation.skill_id],
     ['toolName', externalToolName ?? fallbackToolName],
-    ['path', isExternalApp ? null : invocation.path],
+    ['path', isConnector ? null : invocation.path],
     ['duration', getDurationText(invocation.duration_ms, t)],
     ['arguments', formatAIChatTimelineArgumentSummary(argumentSummary, t)],
     [
@@ -146,27 +149,38 @@ export function AIChatSkillTracePanel({
   skillDisplayById,
 }: AIChatSkillTracePanelProps) {
   const t = useT('webapp');
+  const connectorT = useT('connectors');
   const { locale } = useLocale();
   const [isOpen, setIsOpen] = useState(false);
 
   const events = useMemo<SkillTraceEvent[]>(
     () =>
-      invocations.map(invocation => {
+      invocations.filter(invocation => !isConnectorOperationInvocation(invocation)).map(invocation => {
         const skillId = invocation.skill_id || t('consoleChat.skills.trace.unknownSkill');
         const baseSkill =
           skillDisplayById[skillId] ?? getFallbackAIChatSkillDisplayInfo(skillId, locale);
-        const isExternalApp = isAIChatExternalAppsInvocation(invocation);
-        const skill = isExternalApp
-          ? { ...baseSkill, label: t('consoleChat.connectedApps.title') }
-          : baseSkill;
+        const isConnector = isConnectorOperationInvocation(invocation);
+        const skill = baseSkill;
         const fallbackToolName =
           getAIChatSkillToolDisplayName(invocation.skill_id, invocation.tool_name, locale) ||
-          (isExternalApp ? null : invocation.path) ||
+          (isConnector ? null : invocation.path) ||
           t('consoleChat.skills.trace.unknownTool');
-        const toolName =
-          getAIChatExternalInvocationDisplayName(invocation, locale, t, fallbackToolName) ??
-          fallbackToolName;
+        const toolName = parseConnectorOperationPresentation(invocation)?.title ?? fallbackToolName;
         const tone = getInvocationTone(invocation);
+        if (isConnector) {
+          const presentation = parseConnectorOperationPresentation(invocation);
+          return {
+            invocation,
+            skill,
+            tone,
+            title:
+              (presentation?.title ?? connectorT('runtime.presentation.title')) +
+              ' · ' +
+              connectorT(
+                `runtime.presentation.status.${presentation?.display_status ?? 'unavailable'}`
+              ),
+          };
+        }
         const resultDetail = getAIChatSkillResultDisplay(invocation, locale);
         const reasonCode = invocation.arguments?.reason_code;
 
@@ -208,7 +222,7 @@ export function AIChatSkillTracePanel({
             tone,
             title: t('consoleChat.skills.trace.referenceRead', {
               skill: skill.label,
-              path: isExternalApp
+              path: isConnector
                 ? toolName
                 : invocation.path || t('consoleChat.skills.trace.unknownReference'),
             }),
@@ -238,13 +252,10 @@ export function AIChatSkillTracePanel({
           tone,
           title:
             tone === 'running'
-              ? t('consoleChat.skills.trace.running', {
-                  skill: skill.label,
-                  tool: toolName,
-                })
+              ? t('consoleChat.skills.agentic.callingTool', { skill: skill.label, tool: toolName })
               : tone === 'error'
-                ? t('consoleChat.skills.trace.error', { skill: skill.label })
-                : t('consoleChat.skills.trace.success', {
+                ? t('consoleChat.skills.agentic.toolFailed', { skill: skill.label, tool: toolName })
+                : t('consoleChat.skills.agentic.toolSucceeded', {
                     skill: skill.label,
                     tool: toolName,
                   }),
@@ -267,7 +278,7 @@ export function AIChatSkillTracePanel({
             undefined,
         };
       }),
-    [invocations, locale, skillDisplayById, t]
+    [invocations, locale, skillDisplayById, t, connectorT]
   );
 
   const summary = useMemo(() => {
@@ -276,6 +287,9 @@ export function AIChatSkillTracePanel({
 
     const latestError = [...events].reverse().find(event => event.tone === 'error');
     if (latestError) return latestError;
+
+    const latestWarning = [...events].reverse().find(event => event.tone === 'warning');
+    if (latestWarning) return latestWarning;
 
     const latestSuccess = [...events].reverse().find(event => event.tone === 'success');
     if (!latestSuccess) return null;
@@ -301,7 +315,9 @@ export function AIChatSkillTracePanel({
           type="button"
           className={cn(
             'flex h-8 w-full max-w-xl items-center gap-2 rounded-md border bg-muted/30 px-2.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/50',
-            summary.tone === 'error' && 'border-destructive/30 bg-destructive/10 text-destructive'
+            summary.tone === 'error' && 'border-destructive/30 bg-destructive/10 text-destructive',
+            summary.tone === 'warning' &&
+              'border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-200'
           )}
           aria-expanded={isOpen}
         >
@@ -343,7 +359,9 @@ export function AIChatSkillTracePanel({
                           'flex size-5 items-center justify-center rounded-full border bg-background',
                           event.tone === 'error'
                             ? 'border-destructive/40 text-destructive'
-                            : 'border-border text-muted-foreground'
+                            : event.tone === 'warning'
+                              ? 'border-amber-500/40 text-amber-700 dark:text-amber-300'
+                              : 'border-border text-muted-foreground'
                         )}
                       >
                         {getStatusIcon(event.tone)}
@@ -364,6 +382,7 @@ export function AIChatSkillTracePanel({
                         <div className="mt-1 line-clamp-2 text-muted-foreground">{detail}</div>
                       ) : null}
                       <AIChatSkillResultSummary
+                        invocation={event.invocation}
                         result={event.invocation.result}
                         skillId={event.invocation.skill_id}
                         toolName={event.invocation.tool_name}

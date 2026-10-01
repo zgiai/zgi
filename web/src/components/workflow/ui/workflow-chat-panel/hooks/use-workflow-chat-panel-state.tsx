@@ -17,7 +17,6 @@ import type { ChatAttachment } from '@/components/chat/types';
 import type { WorkflowFeatures } from '@/components/workflow/store/type';
 import type { WorkflowChatDraftPrecheckRequest } from '@/services/workflow.service';
 import { useT } from '@/i18n';
-import useWorkflowValidation from '../../../hooks/use-workflow-validation';
 import { isBannerHidden, hideBanner, BannerKey } from '@/utils/ui-local';
 import type { InputVar } from '@/components/workflow/types/input-var';
 import { WorkflowPrecheckWarningBanner } from '@/components/workflow/common/workflow-precheck-warning';
@@ -2215,7 +2214,6 @@ export function useWorkflowChatPanelState({
     [wfFeatures.suggested_questions]
   );
 
-  const { errors } = useWorkflowValidation();
   const setOpenValidationIssues = useWorkflowStore.use.setOpenValidationIssues();
   const openIssues = useCallback(() => setOpenValidationIssues(true), [setOpenValidationIssues]);
   const [runWarnOpen, setRunWarnOpen] = useState(false);
@@ -2462,7 +2460,10 @@ export function useWorkflowChatPanelState({
         toast.error(t('common.unauthorizedDescription'));
         return;
       }
-      if (errors.length > 0 && !isBannerHidden(BannerKey.WorkflowRunErrorsWarning)) {
+      flushWorkflowPendingEdits();
+      useWorkflowStore.getState().syncRunnableSets();
+      const latestErrors = useWorkflowStore.getState().validationResults.errors;
+      if (latestErrors.length > 0 && !isBannerHidden(BannerKey.WorkflowRunErrorsWarning)) {
         pendingSendRef.current = { items, userInput };
         setRunWarnOpen(true);
         return;
@@ -2471,7 +2472,6 @@ export function useWorkflowChatPanelState({
     },
     [
       canRunDraft,
-      errors.length,
       isConversationPaused,
       isDurableRunActive,
       isRunning,

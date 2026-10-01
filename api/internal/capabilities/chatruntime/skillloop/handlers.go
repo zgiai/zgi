@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
+	connectordispatch "github.com/zgiai/zgi/api/internal/modules/connectors/dispatch"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
@@ -69,7 +70,7 @@ func (r *Runner) handleProgressiveSkillCall(
 	case contextArtifactToolName:
 		return r.handleReadContextArtifactCall(ctx, call.ID, args)
 	case skills.MetaToolLoadSkill:
-		return r.handleLoadSkillCall(ctx, prepared, resolved, call.ID, args, loadedSkills, onEvent)
+		return r.handleLoadSkillCall(ctx, prepared, resolved, call.ID, args, loadedSkills, onEvent, execCtx)
 	case skills.MetaToolReadSkillReference:
 		if _, ok := loadedSkills[normalizedSkillArg(args, "skill_id")]; !ok {
 			trace := blockedSkillGuardrailTrace(stringArg(args, "skill_id"), "", "skill must be loaded before reading references")
@@ -130,9 +131,6 @@ func (r *Runner) handleProgressiveSkillCall(
 			trace := skillToolLimitExceededTrace(skillID, toolName, toolArgs, err)
 			return fatalSkillStep(trace, skills.ToolResultMessage(call.ID, errorPayload(err)), err)
 		}
-		if issue := projectedExternalActionPlanIssue(runtimeState, strings.TrimSpace(stringArg(args, "plan_phase_id")), skillID, toolName, toolArgs); issue != "" {
-			return projectedExternalActionPlanIncompleteStep(call.ID, issue)
-		}
 		planPhaseID, enforcePlanPhase, phaseErr := resolveOperationPlanPhaseForSkillCall(
 			runtimeState,
 			strings.TrimSpace(stringArg(args, "plan_phase_id")),
@@ -147,28 +145,6 @@ func (r *Runner) handleProgressiveSkillCall(
 			args["plan_phase_id"] = planPhaseID
 		} else {
 			delete(args, "plan_phase_id")
-		}
-		delete(args, operationPlanServerTargetKey)
-		if target := projectedExternalActionCallTarget(runtimeState, skillID, toolName, toolArgs); len(target) > 0 {
-			args[operationPlanServerTargetKey] = target
-		}
-		delete(args, operationPlanServerProjectedLedgerEpochKey)
-		delete(args, planExpectedActionServerBindingFingerprintKey)
-		delete(args, operationPlanServerProjectedConnectionBindingKey)
-		if actionKey := projectedExternalActionKeyFromCall(skillID, toolName, toolArgs); actionKey != "" {
-			if _, projected := projectedExternalActionKeys(runtimeState)[actionKey]; projected {
-				if epoch := operationPlanProjectedLedgerEpoch(runtimeState, planPhaseID); epoch != "" {
-					args[operationPlanServerProjectedLedgerEpochKey] = epoch
-				}
-				if fingerprint := operationPlanProjectedBindingFingerprint(runtimeState, planPhaseID); fingerprint != "" {
-					args[planExpectedActionServerBindingFingerprintKey] = fingerprint
-					if candidate := projectedExternalActionCandidateByFingerprint(runtimeState, fingerprint); len(candidate) > 0 {
-						if connectionBinding := strings.TrimSpace(evidenceStringFromAny(candidate[operationPlanServerProjectedConnectionBindingKey])); connectionBinding != "" {
-							args[operationPlanServerProjectedConnectionBindingKey] = connectionBinding
-						}
-					}
-				}
-			}
 		}
 		callExecCtx := execCtx
 		if isAgentKnowledgeRetrievalCall(skillID, toolName) {
@@ -310,6 +286,8 @@ func invalidSkillToolArgumentsStep(
 	trace := failedSkillTrace("tool_call", toolName, err)
 	trace.SkillID = strings.ToLower(strings.TrimSpace(skillID))
 	trace.Arguments = rawSkillToolArgumentsFingerprint(rawArguments)
+	trace.Arguments["failure_category"] = "arguments"
+	trace.Arguments["provider_request_sent"] = false
 	var argumentErr *skillToolArgumentsError
 	if errors.As(err, &argumentErr) && argumentErr != nil {
 		trace.Arguments["reason_code"] = argumentErr.Code
@@ -601,6 +579,7 @@ func (r *Runner) handleLoadSkillCall(
 	args map[string]interface{},
 	loadedSkills map[string]struct{},
 	onEvent func(Event) error,
+	executions ...skills.ExecutionContext,
 ) skillStepResult {
 	skillID := stringArg(args, "skill_id")
 	doc, ok := resolved.Get(skillID)
@@ -612,6 +591,12 @@ func (r *Runner) handleLoadSkillCall(
 		canonicalSkillID = strings.TrimSpace(skillID)
 	}
 	if _, alreadyLoaded := loadedSkills[canonicalSkillID]; alreadyLoaded {
+		if len(doc.Metadata.ConnectorRequirements) > 0 {
+			if _, trace, err := r.SkillRuntime.LoadSkill(ctx, resolved, canonicalSkillID, executions...); err != nil {
+				delete(loadedSkills, canonicalSkillID)
+				return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "repair the required Connector binding before using this skill")), false, false)
+			}
+		}
 		attemptRuntimeID := newSkillLoadAttemptRuntimeID(canonicalSkillID)
 		trace := skills.SkillTrace{
 			Kind:     "skill_load_attempt",
@@ -642,7 +627,7 @@ func (r *Runner) handleLoadSkillCall(
 	}
 	r.emitEvent(prepared, EventSkillLoadStart, skillLoadPayload(prepared, skillID))
 	attemptRuntimeID := newSkillLoadAttemptRuntimeID(canonicalSkillID)
-	doc, trace, err := r.SkillRuntime.LoadSkill(ctx, resolved, skillID)
+	doc, trace, err := r.SkillRuntime.LoadSkill(ctx, resolved, skillID, executions...)
 	if err != nil {
 		if trace.Arguments == nil {
 			trace.Arguments = map[string]interface{}{}
@@ -738,22 +723,10 @@ func (r *Runner) handleCallSkillTool(
 	toolArgs := mapArg(args, "arguments")
 	planPhaseID := strings.TrimSpace(stringArg(args, "plan_phase_id"))
 	completionIntent := normalizeSkillToolCompletionIntent(stringArg(args, "completion_intent"))
-	planTarget := copyStringAnyMap(evidenceMapFromAny(args[operationPlanServerTargetKey]))
-	if len(planTarget) == 0 {
-		planTarget = operationPlanSkillCallTarget(toolArgs)
-	}
+	planTarget := operationPlanSkillCallTarget(toolArgs)
 	argumentSummary := summarizeSkillToolArgumentsForResolved(resolved, skillID, toolName, toolArgs)
 	if len(planTarget) > 0 {
 		argumentSummary["operation_plan_target"] = copyStringAnyMap(planTarget)
-	}
-	if ledgerEpoch := strings.TrimSpace(stringArg(args, operationPlanServerProjectedLedgerEpochKey)); ledgerEpoch != "" {
-		argumentSummary[operationPlanServerProjectedLedgerEpochKey] = ledgerEpoch
-	}
-	if fingerprint := strings.TrimSpace(stringArg(args, planExpectedActionServerBindingFingerprintKey)); fingerprint != "" {
-		argumentSummary[planExpectedActionServerBindingFingerprintKey] = fingerprint
-	}
-	if connectionBinding := strings.TrimSpace(stringArg(args, operationPlanServerProjectedConnectionBindingKey)); connectionBinding != "" {
-		argumentSummary[operationPlanServerProjectedConnectionBindingKey] = connectionBinding
 	}
 	if planPhaseID != "" {
 		argumentSummary["plan_phase_id"] = planPhaseID
@@ -815,10 +788,7 @@ func (r *Runner) handleCallSkillTool(
 			r.emitEvent(prepared, event.Type, payload)
 		})
 	}
-	execCtx.RuntimeParameters = skills.WithExternalActionOperationItemID(execCtx.RuntimeParameters, "")
-	if operationItemID := projectedExternalActionPhaseOperationItemID(runtimeState, planPhaseID, skillID, toolName, toolArgs); operationItemID != "" {
-		execCtx.RuntimeParameters = skills.WithExternalActionOperationItemID(execCtx.RuntimeParameters, operationItemID)
-	}
+	ctx = connectordispatch.WithActionPlanPhase(ctx, planPhaseID)
 	invocation, err := r.SkillRuntime.CallSkillTool(ctx, resolved, skillID, toolName, toolArgs, execCtx, callID)
 	if invocation == nil {
 		r.discardAgentWorkflowDelegateOutput(ctx, prepared, delegateOutput)
@@ -830,6 +800,13 @@ func (r *Runner) handleCallSkillTool(
 		trace.SkillID = skillID
 		trace.Arguments = argumentSummary
 		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, "fix the tool_name or arguments and retry", skillID, toolName, resolved)), true, false)
+	}
+	if invocation.Trace.ConnectorNative {
+		invocation.Trace.Result = summarizeSkillToolResult(invocation.Trace.SkillID, invocation.Trace.ToolName, invocation.Messages)
+		if terminal := connectorTerminalStep(invocation.Trace, callID, runtimeState); terminal != nil {
+			r.emitEvent(prepared, EventSkillCallEnd, skillCallEndPayload(prepared, invocation.Trace))
+			return *terminal
+		}
 	}
 	if err != nil {
 		r.discardAgentWorkflowDelegateOutput(ctx, prepared, delegateOutput)
@@ -846,6 +823,22 @@ func (r *Runner) handleCallSkillTool(
 			invocation.Trace.Arguments["completion_intent"] = completionIntent
 		}
 		applyPublicToolErrorRecoveryTrace(&invocation.Trace, err)
+		if invocation.Trace.ConnectorNative {
+			invocation.Trace.Result = summarizeSkillToolResult(invocation.Trace.SkillID, invocation.Trace.ToolName, invocation.Messages)
+		}
+		if blockedResult := summarizeSkillToolResult(
+			invocation.Trace.SkillID, invocation.Trace.ToolName, invocation.Messages,
+		); strings.EqualFold(strings.TrimSpace(stringFromInterface(blockedResult["state"])), "blocked") {
+			// This is a server-authored terminal control result, not provider
+			// output. Surface it once and end the unattended run so the model
+			// cannot automatically retry a consequential operation.
+			invocation.Trace.Result = blockedResult
+			toolMessage := skills.ToolResultMessage(callID, blockedResult)
+			r.emitEvent(prepared, EventSkillCallEnd, skillCallEndPayload(prepared, invocation.Trace))
+			terminal := terminalSkillStep(invocation.Trace, toolMessage, true, true)
+			terminal.toolResult = blockedResult
+			return terminal
+		}
 		if invocation.Trace.Governance != nil {
 			r.emitEvent(prepared, EventToolGovernanceDecision, toolGovernanceDecisionPayload(prepared, invocation.Trace))
 		}
@@ -905,29 +898,9 @@ func (r *Runner) handleCallSkillTool(
 	applyPageContextInvalidationAdvisory(invocation)
 	guardToolResult := skillToolResultForGuard(invocation.Trace.SkillID, invocation.Trace.ToolName, invocation.Messages, invocation.Trace.Result)
 	if isAgentKnowledgeRetrievalCall(invocation.Trace.SkillID, invocation.Trace.ToolName) {
-		// Keep the structured retrieval payload in the request-scoped history so the
-		// next Agent Knowledge call can detect duplicate queries and new evidence.
 		if payload := firstJSONToolInvokePayload(invocation.Messages); len(payload) > 0 {
 			guardToolResult = copyStringAnyMap(payload)
 		}
-	}
-	if guardToolResult != nil {
-		// Provider output is untrusted. This private evidence key is written only
-		// from the server-owned preparation contract below.
-		delete(guardToolResult, projectedExternalObservedPreparationTargetsKey)
-	}
-	if observedTargets := projectedExternalActionObservedPreparationTargets(
-		runtimeState,
-		toolArgs,
-		planPhaseID,
-		strings.TrimSpace(stringArg(args, operationPlanServerProjectedLedgerEpochKey)),
-		strings.TrimSpace(stringArg(args, planExpectedActionServerBindingFingerprintKey)),
-		firstJSONToolInvokePayload(invocation.Messages),
-	); len(observedTargets) > 0 {
-		if guardToolResult == nil {
-			guardToolResult = map[string]interface{}{}
-		}
-		guardToolResult[projectedExternalObservedPreparationTargetsKey] = observedTargets
 	}
 	logger.DebugContext(ctx, "aichat skill tool completed",
 		"conversation_id", prepared.Conversation.ID.String(),
@@ -946,6 +919,18 @@ func (r *Runner) handleCallSkillTool(
 		// Saving a temporary artifact must update continuation metadata without
 		// emitting a second public file card for the same user-visible file.
 		r.recordArtifact(artifact)
+	}
+	if invocation.ConnectorConfirmation != nil {
+		payload := connectorConfirmationRequiredPayload(prepared, invocation.ConnectorConfirmation)
+		payload["skill_id"] = invocation.Trace.SkillID
+		payload["tool_name"] = invocation.Trace.ToolName
+		r.emitEvent(prepared, EventConnectorConfirmation, payload)
+		// Connector confirmation uses the durable waiting-client-action host
+		// state, while its action type remains reserved for the one-shot opaque
+		// receipt endpoint. It never becomes a reusable governance grant.
+		return connectorConfirmationPendingStep(
+			invocation.Trace, invocation.ToolMessage, guardToolResult, payload,
+		)
 	}
 	if payload := clientActionRequiredPayload(prepared, invocation.Trace, callID); len(payload) > 0 {
 		r.emitEvent(prepared, EventClientActionRequired, payload)

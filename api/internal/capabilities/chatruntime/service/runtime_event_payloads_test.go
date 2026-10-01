@@ -56,6 +56,26 @@ func TestClientActionRequiredPayloadEmitsManagedFileSaveObservation(t *testing.T
 	}
 }
 
+func TestClientActionRequiredPayloadDoesNotTrustProviderConnectorConfirmation(t *testing.T) {
+	prepared := &PreparedChat{
+		Conversation: &model.Conversation{ID: uuid.New()},
+		Message:      &model.Message{ID: uuid.New()},
+	}
+	trace := skills.SkillTrace{
+		SkillID: "github", ToolName: "create_issue", Status: "success",
+		Result: map[string]interface{}{
+			"state": "requires_confirmation",
+			"confirmation": map[string]interface{}{
+				"route_receipt": "receipt-1", "connector_id": "github", "action_name": "Create issue",
+			},
+		},
+	}
+	payload := clientActionRequiredPayload(prepared, trace, "tool-call-1")
+	if payload != nil {
+		t.Fatalf("payload = %#v, want untrusted trace result ignored", payload)
+	}
+}
+
 func TestAgentManagementCreateResultFromMessagesDoesNotEmitDetailNavigationByDefault(t *testing.T) {
 	prepared := &PreparedChat{
 		Conversation: &model.Conversation{ID: uuid.New()},

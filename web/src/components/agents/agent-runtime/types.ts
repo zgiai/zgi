@@ -10,7 +10,7 @@ export type AgentConfigSection =
   | 'knowledge'
   | 'databases'
   | 'workflows'
-  | 'integrations'
+  | 'connectors'
   | 'files'
   | 'memory';
 

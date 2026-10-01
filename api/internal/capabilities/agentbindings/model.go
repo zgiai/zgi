@@ -1,8 +1,6 @@
 package agentbindings
 
 import (
-	"sort"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,20 +13,33 @@ const (
 	ScopePublished Scope = "published"
 )
 
+// ConsumerType identifies the runtime surface that owns a resource binding.
+// AgentID remains the owning application/root Agent for authorization and
+// workspace lifecycle purposes; ConsumerID identifies the concrete Agent or
+// Workflow graph that contains the binding.
+type ConsumerType string
+
+const (
+	ConsumerTypeAgent    ConsumerType = "agent"
+	ConsumerTypeWorkflow ConsumerType = "workflow"
+)
+
 type BindingType string
 
 const (
-	BindingTypeSkill                 BindingType = "skill"
-	BindingTypeKnowledgeDataset      BindingType = "knowledge_dataset"
-	BindingTypeDatabase              BindingType = "database"
-	BindingTypeDatabaseTable         BindingType = "database_table"
-	BindingTypeWorkflow              BindingType = "workflow"
-	BindingTypeIntegrationConnection BindingType = "integration_connection"
+	BindingTypeSkill            BindingType = "skill"
+	BindingTypeKnowledgeDataset BindingType = "knowledge_dataset"
+	BindingTypeDatabase         BindingType = "database"
+	BindingTypeDatabaseTable    BindingType = "database_table"
+	BindingTypeWorkflow         BindingType = "workflow"
 )
 
 type Binding struct {
 	ID                   uuid.UUID              `gorm:"type:uuid;primary_key;default:uuid_generate_v4()"`
 	AgentID              uuid.UUID              `gorm:"type:uuid;not null;column:agent_id"`
+	ConsumerType         ConsumerType           `gorm:"type:varchar(16);not null;default:'agent';column:consumer_type"`
+	ConsumerID           uuid.UUID              `gorm:"type:uuid;not null;column:consumer_id"`
+	BindingInstanceID    string                 `gorm:"type:varchar(255);not null;default:'';column:binding_instance_id"`
 	BindingScope         Scope                  `gorm:"type:varchar(16);not null;column:binding_scope"`
 	OrganizationID       uuid.UUID              `gorm:"type:uuid;not null;column:organization_id"`
 	WorkspaceID          uuid.UUID              `gorm:"type:uuid;not null;column:workspace_id"`
@@ -55,14 +66,27 @@ type ScopeRef struct {
 	PublishedVersionUUID *uuid.UUID
 }
 
+// WorkflowScopeRef selects one concrete Workflow graph scope. WorkflowID is
+// workflows.id (the draft or published graph row), while AgentID is the owning
+// Workflow application's agents.id. PublishedVersionUUID is workflows.version_uuid.
+type WorkflowScopeRef struct {
+	AgentID              uuid.UUID
+	WorkflowID           uuid.UUID
+	Scope                Scope
+	PublishedVersionUUID *uuid.UUID
+}
+
 type ResourceRef struct {
-	OrganizationID   uuid.UUID
-	WorkspaceID      *uuid.UUID
-	AgentID          *uuid.UUID
-	Scope            *Scope
-	BindingType      BindingType
-	ResourceID       string
-	ParentResourceID string
+	OrganizationID    uuid.UUID
+	WorkspaceID       *uuid.UUID
+	AgentID           *uuid.UUID
+	ConsumerType      ConsumerType
+	ConsumerID        *uuid.UUID
+	BindingInstanceID string
+	Scope             *Scope
+	BindingType       BindingType
+	ResourceID        string
+	ParentResourceID  string
 }
 
 // Match describes the concrete resource a single Agent tool step is about to use.
@@ -71,55 +95,4 @@ type Match struct {
 	ResourceID       string
 	ParentResourceID string
 	AccessMode       string
-}
-
-const IntegrationAllowedActionIDsMetadataKey = "allowed_action_ids"
-
-func IntegrationAllowedActionIDs(binding Binding) []string {
-	if binding.BindingType != BindingTypeIntegrationConnection || binding.Metadata == nil {
-		return []string{}
-	}
-	raw, ok := binding.Metadata[IntegrationAllowedActionIDsMetadataKey]
-	if !ok {
-		return []string{}
-	}
-	values := make([]string, 0)
-	switch typed := raw.(type) {
-	case []string:
-		values = append(values, typed...)
-	case []interface{}:
-		for _, item := range typed {
-			if value, ok := item.(string); ok {
-				values = append(values, value)
-			}
-		}
-	}
-	seen := make(map[string]struct{}, len(values))
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.ToLower(strings.TrimSpace(value))
-		if value == "" {
-			continue
-		}
-		if _, exists := seen[value]; exists {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func (binding Binding) AllowsIntegrationAction(actionID string) bool {
-	actionID = strings.ToLower(strings.TrimSpace(actionID))
-	if actionID == "" {
-		return false
-	}
-	for _, allowed := range IntegrationAllowedActionIDs(binding) {
-		if allowed == actionID {
-			return true
-		}
-	}
-	return false
 }

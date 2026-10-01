@@ -278,7 +278,10 @@ func classifyMoveImpactBindings(req MoveImpactRequest, resourceBindings, agentBi
 			if binding.PublishedVersionUUID != nil {
 				version = binding.PublishedVersionUUID.String()
 			}
-			key = strings.Join([]string{binding.AgentID.String(), string(binding.BindingScope), version, string(binding.BindingType), binding.ResourceID, binding.ParentResourceID}, "|")
+			key = strings.Join([]string{
+				binding.AgentID.String(), string(binding.ConsumerType), binding.ConsumerID.String(), binding.BindingInstanceID,
+				string(binding.BindingScope), version, string(binding.BindingType), binding.ResourceID, binding.ParentResourceID,
+			}, "|")
 		}
 		impacted[key] = binding
 	}
@@ -486,5 +489,8 @@ func moveBindingSortKey(binding Binding) string {
 	if binding.PublishedVersionUUID != nil {
 		version = binding.PublishedVersionUUID.String()
 	}
-	return strings.Join([]string{binding.AgentID.String(), string(binding.BindingScope), version, string(binding.BindingType), binding.ResourceID, binding.ParentResourceID}, "|")
+	return strings.Join([]string{
+		binding.AgentID.String(), string(binding.ConsumerType), binding.ConsumerID.String(), binding.BindingInstanceID,
+		string(binding.BindingScope), version, string(binding.BindingType), binding.ResourceID, binding.ParentResourceID,
+	}, "|")
 }

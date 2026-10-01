@@ -1712,57 +1712,19 @@ func TestRunnerAcceptsFinalAnswerWithoutPlanSnapshotWhenCurrentPlanHasOpenPhases
 	}
 }
 
-func TestRunnerExplicitFinalAnswerUsesSafeTerminalAfterExternalRetryExhaustion(t *testing.T) {
-	finalCall := func(callID string, answer string) adapter.ToolCall {
-		arguments, err := json.Marshal(map[string]interface{}{"answer": answer})
-		if err != nil {
-			t.Fatalf("marshal final answer: %v", err)
-		}
-		return adapter.ToolCall{
-			ID:   callID,
-			Type: "function",
-			Function: adapter.FunctionCall{
-				Name:      skills.MetaToolFinalAnswer,
-				Arguments: string(arguments),
-			},
-		}
-	}
-	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
-		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{finalCall("final-1", "消息已经发送。")}}}}},
-		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{finalCall("final-2", "消息确实已经发送。")}}}}},
+func TestRunnerExplicitFinalAnswerReportsUnknownConnectorOutcome(t *testing.T) {
+	client := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{{ID: "final-1", Type: "function", Function: adapter.FunctionCall{Name: skills.MetaToolFinalAnswer, Arguments: `{"answer":"消息已经发送。"}`}}}}}}},
 	}}
-	runner := &Runner{
-		LLMClient:    fakeLLM,
-		SkillRuntime: skills.NewRuntimeWithCatalog(nil, nil, ""),
-		AppContext:   &llmclient.AppContext{},
-	}
-	prepared := NewPreparedChat("conv-explicit-exhausted", "msg-explicit-exhausted", "", "auto", &adapter.ChatRequest{
-		Messages: []adapter.Message{{Role: "user", Content: "发送企业微信消息"}},
-	})
-	evidence := map[string]interface{}{
-		"latest_user_request": "发送企业微信消息",
-		"skill_invocations": []interface{}{map[string]interface{}{
-			"invocation_id": "guide-send", "skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
-			"result": map[string]interface{}{
-				"integration_id": "wecom", "action_id": "wecom.message.send", "can_execute": true,
-			},
-		}},
-	}
-
+	evidence := nativeRunnerTestState("unknown")
+	runner := &Runner{LLMClient: client, SkillRuntime: skills.NewRuntime(nil, nil), AppContext: &llmclient.AppContext{}}
 	answer, _, err := runner.Run(context.Background(), RunRequest{
-		Prepared:                  prepared,
-		Resolved:                  runnerTestResolvedSkills(),
-		PreferExplicitFinalAnswer: true,
-		RuntimeStateSnapshot:      func() map[string]interface{} { return evidence },
+		Prepared: NewPreparedChat("conv-explicit", "msg-explicit", "", "auto", &adapter.ChatRequest{Messages: []adapter.Message{{Role: "user", Content: "发送消息"}}}),
+		Resolved: runnerTestResolvedSkills(), PreferExplicitFinalAnswer: true,
+		RuntimeStateSnapshot: func() map[string]interface{} { return evidence },
 	})
-	if err != nil {
-		t.Fatalf("Run() exposed terminal guard error after explicit retry exhaustion: %v", err)
-	}
-	if !strings.Contains(answer, "外部操作未完成") || !strings.Contains(answer, "不能视为已发送或已完成") {
-		t.Fatalf("answer = %q, want safe explicit final answer", answer)
-	}
-	if fakeLLM.appChatCalls != 2 {
-		t.Fatalf("AppChat calls = %d, want exactly one retry", fakeLLM.appChatCalls)
+	if err != nil || !strings.Contains(answer, "结果未知") || strings.Contains(answer, "消息已经发送") || client.appChatCalls != 1 {
+		t.Fatalf("answer=%q err=%v calls=%d", answer, err, client.appChatCalls)
 	}
 }
 
@@ -4171,7 +4133,7 @@ func TestRecoverableSkillFailureMadeProgress(t *testing.T) {
 		}
 	}
 	providerFailure := func(argumentFingerprint string) skills.SkillTrace {
-		value := trace("external-apps", "execute_action", "arguments", argumentFingerprint, "object")
+		value := trace("ordinary-skill", "perform_task", "arguments", argumentFingerprint, "object")
 		value.Arguments["recovery_kind"] = "provider_validation"
 		value.Arguments["provider_error_code"] = "99992402"
 		value.Arguments["invalid_fields"] = []string{"page_size"}
@@ -4237,7 +4199,7 @@ func TestRecoverableSkillFailureMadeProgress(t *testing.T) {
 func TestRepeatedProviderValidationFailureRequiresSameCodeAndFields(t *testing.T) {
 	trace := func(code string, fields []string) skills.SkillTrace {
 		return skills.SkillTrace{
-			Kind: "tool_call", SkillID: "external-apps", ToolName: "execute_action", Status: "error",
+			Kind: "tool_call", SkillID: "ordinary-skill", ToolName: "perform_task", Status: "error",
 			Arguments: map[string]interface{}{
 				"recovery_kind": "provider_validation", "provider_error_code": code, "invalid_fields": fields,
 			},
@@ -6133,52 +6095,6 @@ func runnerTestSkillToolCall(callID string, skillID string, toolName string, arg
 			Name:      skills.MetaToolCallSkillTool,
 			Arguments: string(payload),
 		},
-	}
-}
-
-func TestRunnerRetriesWhenReadyExternalGuideWasNotExecuted(t *testing.T) {
-	ctx := context.Background()
-	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
-		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "The DingTalk role function is unavailable."}}}},
-		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "Please provide the role search criteria required by the selected action."}}}},
-	}}
-	runner := &Runner{
-		LLMClient:    fakeLLM,
-		SkillRuntime: skills.NewRuntime(nil, nil),
-		AppContext:   &llmclient.AppContext{},
-	}
-	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
-		Messages: []adapter.Message{{Role: "user", Content: "query DingTalk notification status"}},
-	})
-
-	answer, _, err := runner.Run(ctx, RunRequest{
-		Prepared: prepared,
-		Resolved: runnerTestResolvedSkills(),
-		RuntimeStateSnapshot: func() map[string]interface{} {
-			return map[string]interface{}{
-				"latest_user_request": "query DingTalk notification status",
-				"skill_invocations": []interface{}{map[string]interface{}{
-					"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
-					"result": map[string]interface{}{
-						"integration_id": "dingtalk", "action_id": "dingtalk.message.delivery.get", "availability": "ready",
-						"required_arguments": []interface{}{map[string]interface{}{"name": "message_ref", "type": "string"}},
-					},
-				}},
-			}
-		},
-	})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if answer != "Please provide the role search criteria required by the selected action." {
-		t.Fatalf("answer = %q", answer)
-	}
-	if fakeLLM.appChatCalls != 2 {
-		t.Fatalf("AppChat calls = %d, want 2", fakeLLM.appChatCalls)
-	}
-	if len(fakeLLM.appChatRequests) < 2 ||
-		!runnerTestRequestContains(fakeLLM.appChatRequests[1], "external-apps/execute_action") {
-		t.Fatal("second request did not contain the external-action completion correction")
 	}
 }
 

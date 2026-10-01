@@ -1,5 +1,6 @@
 import type {
   AIChatConversation,
+  AIChatInitialConnectorBinding,
   AIChatAgentProgressEventData,
   AIChatErrorEventData,
   AIChatIntermediateAnswerEventData,
@@ -293,6 +294,8 @@ export interface AIChatController {
     options?: { conversation?: AIChatConversation; mode?: AIChatRecoveryMode }
   ) => Promise<void>;
   send: (payload: {
+    initialConnectorBindings?: AIChatInitialConnectorBinding[];
+    initialConnectorDefaultsRevision?: number;
     query: string;
     model: AIChatModelSelection;
     files?: AIChatMessageFile[];
@@ -306,7 +309,12 @@ export interface AIChatController {
   regenerate: (
     messageId: string,
     model: AIChatModelSelection,
-    options?: { operationContext?: unknown; runtimeSurface?: AIChatRuntimeSurface }
+    options?: {
+      operationContext?: unknown;
+      runtimeSurface?: AIChatRuntimeSurface;
+      initialConnectorBindings?: AIChatInitialConnectorBinding[];
+      initialConnectorDefaultsRevision?: number;
+    }
   ) => Promise<void>;
   replaceRootMessage: (payload: {
     messageId: string;

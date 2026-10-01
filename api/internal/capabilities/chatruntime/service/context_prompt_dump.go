@@ -59,7 +59,9 @@ func contextPromptDumpPath() string {
 }
 
 func runningUnderGoTest() bool {
-	return strings.HasSuffix(filepath.Base(os.Args[0]), ".test")
+	executable := strings.ToLower(filepath.Base(os.Args[0]))
+	executable = strings.TrimSuffix(executable, ".exe")
+	return strings.HasSuffix(executable, ".test")
 }
 
 func writeAgentContextPromptDump(directory string, now time.Time, requestType string, round int, decision *contextmgr.Decision, request *adapter.ChatRequest) (string, error) {

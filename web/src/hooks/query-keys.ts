@@ -71,8 +71,6 @@ export const AGENT_KEYS = {
   skillBindingCandidates: (id: string) => [...AGENT_KEYS.candidates(id), 'skills'] as const,
   knowledgeBindingCandidates: (id: string) => [...AGENT_KEYS.candidates(id), 'knowledge'] as const,
   workflowBindingCandidates: (id: string) => [...AGENT_KEYS.candidates(id), 'workflows'] as const,
-  integrationConnectionCandidates: (id: string) =>
-    [...AGENT_KEYS.candidates(id), 'integration-connections'] as const,
   databaseBindingCandidates: (id: string) => [...AGENT_KEYS.candidates(id), 'databases'] as const,
   databaseTableBindingCandidates: (id: string, dataSourceId: string) =>
     [...AGENT_KEYS.candidates(id), 'databases', dataSourceId, 'tables'] as const,
@@ -92,34 +90,32 @@ export const AGENT_KEYS = {
     [...AGENT_KEYS.detail(agentId), 'model-precheck', provider, model] as const,
 } as const;
 
-export const INTEGRATION_KEYS = {
-  all: ['integrations'] as const,
-  catalog: () => [...INTEGRATION_KEYS.all, 'catalog'] as const,
-  capabilityLists: () => [...INTEGRATION_KEYS.all, 'capabilities'] as const,
-  capabilities: (integrationId: string, audience: 'account' | 'organization') =>
-    [...INTEGRATION_KEYS.capabilityLists(), integrationId, audience] as const,
-  connections: () => [...INTEGRATION_KEYS.all, 'connections'] as const,
-  connectionList: (params?: unknown) => [...INTEGRATION_KEYS.connections(), params] as const,
-  myConnectionLists: () => [...INTEGRATION_KEYS.all, 'my-connections'] as const,
-  myConnections: (params?: unknown) => [...INTEGRATION_KEYS.myConnectionLists(), params] as const,
-  availableConnectionLists: () => [...INTEGRATION_KEYS.all, 'available-connections'] as const,
-  availableConnections: (params?: unknown) =>
-    [...INTEGRATION_KEYS.availableConnectionLists(), params] as const,
-  oauthFlows: () => [...INTEGRATION_KEYS.all, 'oauth-flows'] as const,
-  oauthFlow: (flowId: string) => [...INTEGRATION_KEYS.oauthFlows(), flowId] as const,
-  oauthClientConfig: (integrationId: string, authMethodId: string) =>
-    [...INTEGRATION_KEYS.all, integrationId, 'oauth-client-configs', authMethodId] as const,
-  oauthClientConfigImpact: (integrationId: string, authMethodId: string) =>
-    [...INTEGRATION_KEYS.oauthClientConfig(integrationId, authMethodId), 'impact'] as const,
-  oauthRecovery: () => [...INTEGRATION_KEYS.all, 'oauth-recovery'] as const,
-  connection: (id: string) => [...INTEGRATION_KEYS.connections(), id] as const,
-  grants: (id: string) => [...INTEGRATION_KEYS.connection(id), 'grants'] as const,
-  healthEvents: (id: string, params?: unknown) =>
-    [...INTEGRATION_KEYS.connection(id), 'health-events', params] as const,
-  deleteImpact: (id: string) => [...INTEGRATION_KEYS.connection(id), 'delete-impact'] as const,
-  policies: (integrationId: string) =>
-    [...INTEGRATION_KEYS.all, integrationId, 'action-policies'] as const,
-  executions: (params?: unknown) => [...INTEGRATION_KEYS.all, 'executions', params] as const,
+
+export const CONNECTOR_KEYS = {
+  all: ['connectors'] as const,
+  catalog: () => [...CONNECTOR_KEYS.all, 'catalog'] as const,
+  catalogList: (params?: unknown) => [...CONNECTOR_KEYS.catalog(), params] as const,
+  definition: (connectorId: string) =>
+    [...CONNECTOR_KEYS.catalog(), 'definition', connectorId] as const,
+  connections: () => [...CONNECTOR_KEYS.all, 'connections'] as const,
+  connectionList: (params?: unknown) => [...CONNECTOR_KEYS.connections(), params] as const,
+  connection: (connectionId: string) => [...CONNECTOR_KEYS.connections(), connectionId] as const,
+  diagnostics: (connectionId: string) =>
+    [...CONNECTOR_KEYS.connection(connectionId), 'diagnostics'] as const,
+  removalImpact: (connectionId: string) =>
+    [...CONNECTOR_KEYS.connection(connectionId), 'removal-impact'] as const,
+  setups: () => [...CONNECTOR_KEYS.all, 'key-setups'] as const,
+  setup: (attemptId: string) => [...CONNECTOR_KEYS.setups(), attemptId] as const,
+  targetBindings: (target?: { type?: string; id?: string; binding_instance_id?: string; scope?: string; version_id?: string }) =>
+    [
+      ...CONNECTOR_KEYS.all,
+      'target-bindings',
+      target?.scope ?? '',
+      target?.version_id ?? '',
+      target?.type ?? '',
+      target?.id ?? '',
+      target?.binding_instance_id ?? '',
+    ] as const,
 } as const;
 
 export const PROMPT_KEYS = {
@@ -238,8 +234,6 @@ export const AICHAT_KEYS = {
   skill: (id: string) => [...AICHAT_KEYS.skills(), id] as const,
   skillConfig: () => [...AICHAT_KEYS.skills(), 'config'] as const,
   skillPreference: () => [...AICHAT_KEYS.skills(), 'preference', 'me'] as const,
-  integrationPreferences: (workspaceId?: string) =>
-    [...AICHAT_KEYS.all, 'integration-preferences', 'me', workspaceId ?? 'current'] as const,
   assetOperationAudits: (conversationId: string, params?: unknown) =>
     [
       ...AICHAT_KEYS.all,

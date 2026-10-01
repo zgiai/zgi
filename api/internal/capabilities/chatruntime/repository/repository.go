@@ -886,6 +886,9 @@ func (r *messageRepository) Create(ctx context.Context, message *runtimemodel.Me
 	if message.Metadata == nil {
 		message.Metadata = map[string]interface{}{}
 	}
+	if message.Status == runtimemodel.MessageStatusPending || message.Status == runtimemodel.MessageStatusStreaming {
+		delete(message.Metadata, "connector_action_instances")
+	}
 	if message.TranscriptHeadEntryID == nil && message.ParentID != nil {
 		var parent runtimemodel.Message
 		if err := r.db.WithContext(ctx).Select("transcript_head_entry_id").Where("id = ?", *message.ParentID).Take(&parent).Error; err != nil {
@@ -1152,7 +1155,7 @@ func (r *messageRepository) ReplaceRootForStreaming(ctx context.Context, message
 			"model_name":               message.ModelName,
 			"billing_reason_source":    message.BillingReasonSource,
 			"model_parameters":         datatypes.JSON(parametersJSON),
-			"metadata":                 datatypes.JSON(metadataJSON),
+			"metadata":                 rootReplacementMetadataValue(r.db, metadataJSON),
 			"transcript_head_entry_id": nil,
 			"updated_at":               time.Now(),
 		})
@@ -1183,7 +1186,7 @@ func (r *messageRepository) UpdateCompleted(ctx context.Context, id uuid.UUID, a
 			"answer":               answer,
 			"status":               runtimemodel.MessageStatusCompleted,
 			"error":                nil,
-			"metadata":             datatypes.JSON(metadataJSON),
+			"metadata":             messageMetadataValue(r.db, metadataJSON),
 			"runtime_run_id":       nil,
 			"runtime_heartbeat_at": nil,
 			"updated_at":           time.Now(),
@@ -1209,7 +1212,7 @@ func (r *messageRepository) UpdateMetadata(ctx context.Context, id uuid.UUID, me
 		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, mutableMessageStatuses())
 	result := scopeRuntimeRunOwnership(ctx, query).
 		Updates(map[string]interface{}{
-			"metadata":   datatypes.JSON(metadataJSON),
+			"metadata":   messageMetadataValue(r.db, metadataJSON),
 			"updated_at": time.Now(),
 		})
 	if result.Error != nil {
@@ -1232,7 +1235,7 @@ func (r *messageRepository) UpdateMetadataAnyStatus(ctx context.Context, id uuid
 	result := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
 		Where("id = ? AND deleted_at IS NULL", id).
 		Updates(map[string]interface{}{
-			"metadata":   datatypes.JSON(metadataJSON),
+			"metadata":   messageMetadataValue(r.db, metadataJSON),
 			"updated_at": time.Now(),
 		})
 	if result.Error != nil {
@@ -1258,7 +1261,7 @@ func (r *messageRepository) UpdateWaitingApproval(ctx context.Context, id uuid.U
 		Updates(map[string]interface{}{
 			"status":               runtimemodel.MessageStatusWaitingApproval,
 			"error":                nil,
-			"metadata":             datatypes.JSON(metadataJSON),
+			"metadata":             messageMetadataValue(r.db, metadataJSON),
 			"runtime_run_id":       nil,
 			"runtime_heartbeat_at": nil,
 			"updated_at":           time.Now(),
@@ -1286,7 +1289,7 @@ func (r *messageRepository) UpdateWaitingQuestion(ctx context.Context, id uuid.U
 		Updates(map[string]interface{}{
 			"status":               runtimemodel.MessageStatusWaitingQuestion,
 			"error":                nil,
-			"metadata":             datatypes.JSON(metadataJSON),
+			"metadata":             messageMetadataValue(r.db, metadataJSON),
 			"runtime_run_id":       nil,
 			"runtime_heartbeat_at": nil,
 			"updated_at":           time.Now(),
@@ -1314,7 +1317,7 @@ func (r *messageRepository) UpdateWaitingClientAction(ctx context.Context, id uu
 		Updates(map[string]interface{}{
 			"status":               runtimemodel.MessageStatusWaitingClientAction,
 			"error":                nil,
-			"metadata":             datatypes.JSON(metadataJSON),
+			"metadata":             messageMetadataValue(r.db, metadataJSON),
 			"runtime_run_id":       nil,
 			"runtime_heartbeat_at": nil,
 			"updated_at":           time.Now(),
@@ -1361,7 +1364,7 @@ func (r *messageRepository) UpdatePartialAnswer(ctx context.Context, id uuid.UUI
 	result := scopeRuntimeRunOwnership(ctx, query).
 		Updates(map[string]interface{}{
 			"answer":     answer,
-			"metadata":   datatypes.JSON(metadataJSON),
+			"metadata":   messageMetadataValue(r.db, metadataJSON),
 			"updated_at": time.Now(),
 		})
 	if result.Error != nil {
@@ -1413,7 +1416,7 @@ func (r *messageRepository) UpdateStoppedAnswer(ctx context.Context, id uuid.UUI
 		"answer":               answer,
 		"status":               runtimemodel.MessageStatusStopped,
 		"error":                nil,
-		"metadata":             datatypes.JSON(metadataJSON),
+		"metadata":             messageMetadataValue(r.db, metadataJSON),
 		"runtime_run_id":       nil,
 		"runtime_heartbeat_at": nil,
 		"updated_at":           time.Now(),
@@ -1450,7 +1453,7 @@ func (r *messageRepository) UpdateStoppedPreservingAnswer(ctx context.Context, i
 	result := query.Updates(map[string]interface{}{
 		"status":               runtimemodel.MessageStatusStopped,
 		"error":                nil,
-		"metadata":             datatypes.JSON(metadataJSON),
+		"metadata":             messageMetadataValue(r.db, metadataJSON),
 		"runtime_run_id":       nil,
 		"runtime_heartbeat_at": nil,
 		"updated_at":           time.Now(),

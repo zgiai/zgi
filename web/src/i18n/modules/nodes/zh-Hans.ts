@@ -1754,10 +1754,20 @@ const messages: NodesMessages = {
     form: {
       constant: '常量',
       variable: '变量',
+      invalidJson: '请输入有效的 JSON 对象或数组',
+      stringListPlaceholder: '每行填写一项，也可以使用英文逗号分隔',
+    },
+    connection: {
+      label: '外部连接',
+      placeholder: '请选择组织共享连接',
+      hint: '工作流只保存连接引用，服务凭据仍由连接中心加密管理。',
+      empty: '当前没有可用于此应用的组织共享连接。',
+      loadFailed: '无法加载可用连接。',
     },
     validation: {
       providerRequired: '请选择工具服务商',
       toolRequired: '请选择工具名称',
+      connectionRequired: '请选择外部连接',
       paramBindingMissing: '请配置{name}',
       paramValueRequired: '请填写{name}',
       paramVariableRequired: '请绑定{name}变量',

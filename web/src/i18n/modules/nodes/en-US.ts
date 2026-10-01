@@ -1809,10 +1809,20 @@ const messages = {
     form: {
       constant: 'Constant',
       variable: 'Variable',
+      invalidJson: 'Enter a valid JSON object or array',
+      stringListPlaceholder: 'Enter one item per line, or separate items with commas',
+    },
+    connection: {
+      label: 'Connection',
+      placeholder: 'Select a shared connection',
+      hint: 'The workflow stores only the connection reference. Credentials remain encrypted.',
+      empty: 'No available shared connection supports this external app.',
+      loadFailed: 'Unable to load available connections.',
     },
     validation: {
       providerRequired: 'Provider is required',
       toolRequired: 'Tool name is required',
+      connectionRequired: 'Select a connection',
       paramBindingMissing: 'Configure {name}',
       paramValueRequired: 'Fill in {name}',
       paramVariableRequired: 'Bind a variable for {name}',

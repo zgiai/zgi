@@ -1,5 +1,8 @@
 'use client';
 
+import { ConnectorIcon } from '@/components/connectors/connector-icon';
+import { isConnectorListed } from '@/components/connectors/connector-visibility';
+
 import React from 'react';
 import { Plus, Wrench } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -105,6 +108,9 @@ export function ToolCatalogList({
   const classes = densityClassNames[density];
   const loading = isLoading || isFetching;
   const isDragInteraction = interaction === 'drag';
+  const visibleTools = (tools ?? []).filter(
+    provider => provider.type !== 'connector' || isConnectorListed(provider.id)
+  );
 
   if (loading) {
     return (
@@ -120,7 +126,7 @@ export function ToolCatalogList({
     );
   }
 
-  if (!tools || tools.length === 0) {
+  if (visibleTools.length === 0) {
     return (
       <div
         className={cn(
@@ -136,7 +142,7 @@ export function ToolCatalogList({
 
   return (
     <div className={cn(classes.root, className)}>
-      {tools.map((provider, providerIndex) => {
+      {visibleTools.map((provider, providerIndex) => {
         const providerName = pickLocale(provider.label, locale, provider.name);
         const iconUrl = provider.icon;
         const providerKey = provider.id || provider.name || `provider-${providerIndex}`;
@@ -232,7 +238,15 @@ export function ToolCatalogList({
                             classes.icon
                           )}
                         >
-                          {iconUrl ? (
+                          {provider.type === 'connector' ? (
+                            <ConnectorIcon
+                              connectorId={provider.id}
+                              name={providerName}
+                              icon={iconUrl}
+                              classification="connector"
+                              className="size-full rounded-none border-0 shadow-none [&_svg]:size-5"
+                            />
+                          ) : iconUrl ? (
                             <ImageSafe
                               src={iconUrl}
                               alt={providerName}

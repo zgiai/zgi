@@ -22,7 +22,7 @@ Useful direct commands:
 go test ./...
 go test ./internal/...
 go run cmd/server/main.go start
-go run cmd/migrate/main.go up
+go run ./cmd/migrate up
 ```
 
 ## Architecture
