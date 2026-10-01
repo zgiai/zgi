@@ -42,6 +42,14 @@ func TestPublishedErrorTripleMatchesCatalogAndLedger(t *testing.T) {
 		"private channel down":      {llmerrors.DomainErrPrivateChannelUpstreamUnavailable, "llm.channel.private_unavailable"},
 		"upstream says unsupported": {fmt.Errorf("upstream said: model not supported"), "llm.request.invalid"},
 		"bare transport error":      {errors.New("dial tcp: connection refused"), "llm.invocation.failed"},
+		// Console contract codes resolved by the platform-channel adapter: the
+		// published identity must be Console's own, not a flattened invocation
+		// failure, and the ledger must record the same one.
+		"console none available":    {adapter.ErrNoProviderAvailable, "llm.provider.none_available"},
+		"console rate limit":        {adapter.ErrRateLimitExceeded, "llm.rate_limit.exceeded"},
+		"console pricing missing":   {adapter.ErrPricingNotConfigured, "billing.model.pricing_not_configured"},
+		"console exchange rate":     {adapter.ErrExchangeRateUnavailable, "billing.exchange_rate.unavailable"},
+		"console settlement failed": {adapter.ErrBillingSettleFailed, "billing.settle.failed"},
 	}
 	for name, input := range inputs {
 		t.Run(name, func(t *testing.T) {

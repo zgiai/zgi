@@ -42,7 +42,7 @@ func ApplicationCodeForError(err error) (apperror.Code, bool) {
 	}
 
 	switch {
-	case errors.Is(err, ErrPricingNotConfigured):
+	case errors.Is(err, ErrPricingNotConfigured), errors.Is(err, adapter.ErrPricingNotConfigured):
 		return llmerrors.AppCodeBillingModelPricingNotConfigured, true
 	case errors.Is(err, ErrInvalidRequest), errors.Is(err, adapter.ErrInvalidRequest),
 		errors.Is(err, ErrMissingModel), errors.Is(err, ErrMissingMessages),
@@ -71,7 +71,8 @@ func ApplicationCodeForError(err error) (apperror.Code, bool) {
 		return llmerrors.AppCodeProviderNotFound, true
 	case errors.Is(err, llmerrors.DomainErrChannelNotFound):
 		return llmerrors.AppCodeChannelNotFound, true
-	case errors.Is(err, ErrNoProviderAvailable), errors.Is(err, llmerrors.DomainErrNoProviderAvailable):
+	case errors.Is(err, ErrNoProviderAvailable), errors.Is(err, llmerrors.DomainErrNoProviderAvailable),
+		errors.Is(err, adapter.ErrNoProviderAvailable):
 		return llmerrors.AppCodeNoProviderAvailable, true
 	case errors.Is(err, ErrProviderUnavailable), errors.Is(err, llmerrors.DomainErrUpstreamUnavailable),
 		errors.Is(err, adapter.ErrPlatformChannelUnavailable), errors.Is(err, adapter.ErrProxyError),
@@ -79,7 +80,7 @@ func ApplicationCodeForError(err error) (apperror.Code, bool) {
 		return llmerrors.AppCodeProviderUnavailable, true
 	case errors.Is(err, llmerrors.DomainErrPrivateChannelUpstreamUnavailable):
 		return llmerrors.AppCodePrivateChannelUnavailable, true
-	case errors.Is(err, llmerrors.DomainErrRateLimitExceeded):
+	case errors.Is(err, llmerrors.DomainErrRateLimitExceeded), errors.Is(err, adapter.ErrRateLimitExceeded):
 		return llmerrors.AppCodeRateLimitExceeded, true
 	case errors.Is(err, adapter.ErrRateLimited):
 		// The upstream provider throttled the call, as opposed to this
@@ -94,11 +95,11 @@ func ApplicationCodeForError(err error) (apperror.Code, bool) {
 		return llmerrors.AppCodeAPIKeyInvalid, true
 	case errors.Is(err, llmerrors.DomainErrAPIKeyDisabled):
 		return llmerrors.AppCodeAPIKeyInactive, true
-	case errors.Is(err, ErrExchangeRateUnavailable):
+	case errors.Is(err, ErrExchangeRateUnavailable), errors.Is(err, adapter.ErrExchangeRateUnavailable):
 		return llmerrors.AppCodeBillingExchangeRateUnavailable, true
 	case errors.Is(err, ErrBillingPreDeductFailed):
 		return llmerrors.AppCodeBillingPredeductFailed, true
-	case errors.Is(err, ErrBillingSettleFailed):
+	case errors.Is(err, ErrBillingSettleFailed), errors.Is(err, adapter.ErrBillingSettleFailed):
 		return llmerrors.AppCodeBillingSettleFailed, true
 	case errors.Is(err, adapter.ErrAuthFailed):
 		return llmerrors.AppCodeProviderAuthFailed, true

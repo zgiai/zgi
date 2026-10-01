@@ -34,6 +34,27 @@ var (
 	// ErrPlatformChannelUnavailable indicates an official platform channel cannot currently serve requests.
 	ErrPlatformChannelUnavailable = errors.New("platform channel unavailable")
 
+	// ErrNoProviderAvailable indicates the model exists but no channel can serve
+	// it right now. It is distinct from ErrPlatformChannelUnavailable: the
+	// catalog answers llm.provider.none_available rather than
+	// llm.provider.unavailable, so the two must never collapse into one sentinel.
+	ErrNoProviderAvailable = errors.New("no provider available")
+
+	// ErrRateLimitExceeded is this gateway's own limit. It is distinct from
+	// ErrRateLimited, which is the upstream provider throttling the call.
+	ErrRateLimitExceeded = errors.New("rate limit exceeded by gateway")
+
+	// ErrPricingNotConfigured indicates the requested meter has no configured
+	// price, so the call must not be attempted at all.
+	ErrPricingNotConfigured = errors.New("model pricing not configured")
+
+	// ErrExchangeRateUnavailable indicates the USD/CNY rate needed to price the
+	// call could not be resolved.
+	ErrExchangeRateUnavailable = errors.New("exchange rate unavailable")
+
+	// ErrBillingSettleFailed indicates the call completed but settlement failed.
+	ErrBillingSettleFailed = errors.New("billing settlement failed")
+
 	// ErrModelNotFound model not found
 	ErrModelNotFound = errors.New("model not found")
 

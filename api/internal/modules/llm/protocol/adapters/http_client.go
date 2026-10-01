@@ -344,7 +344,15 @@ func (c *HTTPClient) DoRequestDetailed(ctx context.Context, method, url string, 
 			if len(bodySnippet) > 500 {
 				bodySnippet = bodySnippet[:500] + "..."
 			}
-			lastErr = fmt.Errorf("%w: server error %d: %s", ErrUpstreamError, resp.StatusCode, bodySnippet)
+			// Keep the platform channel's own identity through the retry loop.
+			// Without this a 5xx that exhausts its retries is reported as a
+			// generic upstream failure, so the client sees llm.invocation.failed
+			// instead of, say, llm.provider.none_available.
+			sentinel := error(ErrUpstreamError)
+			if consoleSentinel, ok := ConsoleSentinelFromBody(respBody); ok {
+				sentinel = consoleSentinel
+			}
+			lastErr = fmt.Errorf("%w: server error %d: %s", sentinel, resp.StatusCode, bodySnippet)
 			continue
 		}
 

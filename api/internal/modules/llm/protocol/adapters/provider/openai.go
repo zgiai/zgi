@@ -1035,7 +1035,12 @@ const (
 
 func handleOpenAICompatibleError(statusCode int, body []byte) error {
 	var errResp struct {
-		Error struct {
+		// Console's cataloged envelope carries the stable identity at the top
+		// level. The nested error object is only the legacy protocol echo.
+		ErrorCode string `json:"error_code"`
+		Code      string `json:"code"`
+		Retryable *bool  `json:"retryable"`
+		Error     struct {
 			Message string `json:"message"`
 			Type    string `json:"type"`
 			Code    string `json:"code"`
@@ -1044,6 +1049,21 @@ func handleOpenAICompatibleError(statusCode int, body []byte) error {
 
 	if err := json.Unmarshal(body, &errResp); err != nil {
 		return adapter.HandleNonJSONError(statusCode, body)
+	}
+
+	// Resolve the platform channel's own contract codes before the HTTP status
+	// switch. Otherwise every Console outcome between 500 and 599 collapses
+	// into a retryable invocation failure, including ones that can never
+	// succeed (auth_failed, pricing_not_configured, balance.insufficient).
+	consoleCode := strings.TrimSpace(errResp.ErrorCode)
+	if consoleCode == "" {
+		consoleCode = strings.TrimSpace(errResp.Code)
+	}
+	if sentinel, ok := adapter.SentinelForConsoleErrorCode(consoleCode); ok {
+		return adapter.NewAdapterError(consoleCode, errResp.Error.Message, statusCode, sentinel)
+	}
+	if sentinel, ok := adapter.SentinelForConsoleErrorCode(errResp.Error.Code); ok {
+		return adapter.NewAdapterError(errResp.Error.Code, errResp.Error.Message, statusCode, sentinel)
 	}
 
 	providerErrorCode := openAICompatibleErrorCode(errResp.Error.Code, errResp.Error.Type)

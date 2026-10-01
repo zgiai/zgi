@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
@@ -731,5 +732,121 @@ func TestBuildChatPayloadToolChoice(t *testing.T) {
 	function, _ := got["function"].(map[string]string)
 	if got["type"] != "function" || function["name"] != "get_weather" {
 		t.Fatalf("openai tool_choice = %#v, want named function object", openai.buildChatPayload(req)["tool_choice"])
+	}
+}
+
+// TestHandleOpenAICompatibleErrorHonoursConsoleContractCodes pins the platform
+// channel contract: Console answers failures with the stable catalog identity
+// at the top level of the envelope, and Pre must not flatten it into a generic
+// retryable invocation failure. Each case also asserts the adapter preserves
+// the Console code, so the egress identity can be traced back.
+func TestHandleOpenAICompatibleErrorHonoursConsoleContractCodes(t *testing.T) {
+	tests := []struct {
+		name       string
+		status     int
+		consoleErr string
+		legacyCode string
+		wantErr    error
+	}{
+		{"none available", http.StatusServiceUnavailable, "llm.provider.none_available", "no_available_provider", adapter.ErrNoProviderAvailable},
+		{"provider unavailable", http.StatusServiceUnavailable, "llm.provider.unavailable", "platform_channel_unavailable", adapter.ErrPlatformChannelUnavailable},
+		{"timeout", http.StatusGatewayTimeout, "llm.provider.timeout", "upstream_timeout", adapter.ErrTimeout},
+		{"auth failed", http.StatusBadGateway, "llm.provider.auth_failed", "upstream_auth_failed", adapter.ErrAuthFailed},
+		{"provider rate limited", http.StatusTooManyRequests, "llm.provider.rate_limited", "upstream_error", adapter.ErrRateLimited},
+		{"gateway rate limited", http.StatusTooManyRequests, "llm.rate_limit.exceeded", "rate_limit_exceeded", adapter.ErrRateLimitExceeded},
+		{"pricing not configured", http.StatusPaymentRequired, "billing.model.pricing_not_configured", "pricing_not_configured", adapter.ErrPricingNotConfigured},
+		{"balance insufficient", http.StatusForbidden, "llm.balance.insufficient", "insufficient_balance", adapter.ErrInsufficientBalance},
+		{"exchange rate unavailable", http.StatusServiceUnavailable, "billing.exchange_rate.unavailable", "exchange_rate_unavailable", adapter.ErrExchangeRateUnavailable},
+		{"settle failed", http.StatusInternalServerError, "billing.settle.failed", "upstream_error", adapter.ErrBillingSettleFailed},
+		{"model not found", http.StatusNotFound, "llm.model.not_found", "model_not_found", adapter.ErrModelNotFound},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := fmt.Sprintf(`{"code":%q,"error_code":%q,"message":"console message","params":{},"retryable":false,"error_id":"e1","request_id":"r1","error":{"message":"console message","type":"server_error","param":null,"code":%q}}`,
+				tt.consoleErr, tt.consoleErr, tt.legacyCode)
+			err := handleOpenAICompatibleError(tt.status, []byte(body))
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("handleOpenAICompatibleError() error = %v, want %v", err, tt.wantErr)
+			}
+			var adapterErr *adapter.AdapterError
+			if !errors.As(err, &adapterErr) {
+				t.Fatalf("handleOpenAICompatibleError() error = %T %v, want AdapterError", err, err)
+			}
+			if adapterErr.Code != tt.consoleErr {
+				t.Fatalf("AdapterError.Code = %q, want the Console code %q", adapterErr.Code, tt.consoleErr)
+			}
+		})
+	}
+}
+
+// TestHandleOpenAICompatibleErrorKeepsProviderVocabularyForRealUpstreams guards
+// the fallback: the nested code of a real provider must keep being classified
+// by HTTP status, not by the platform channel's contract table.
+func TestHandleOpenAICompatibleErrorKeepsProviderVocabularyForRealUpstreams(t *testing.T) {
+	err := handleOpenAICompatibleError(
+		http.StatusBadRequest,
+		[]byte(`{"error":{"message":"bad request","type":"invalid_request_error","code":"model_not_found"}}`),
+	)
+	if errors.Is(err, adapter.ErrModelNotFound) {
+		t.Fatalf("a real provider's 400 model_not_found must not become ErrModelNotFound: %v", err)
+	}
+	if !errors.Is(err, adapter.ErrInvalidRequest) {
+		t.Fatalf("handleOpenAICompatibleError() error = %v, want ErrInvalidRequest", err)
+	}
+}
+
+// TestConsoleContractCodeSurvivesTheRetryLoop composes the two halves Pre runs
+// against the platform channel: the HTTP client's retry decision, driven by the
+// Console envelope's retryable flag, and the adapter's classification of the
+// final response. A non-retryable Console outcome must cost exactly one
+// upstream call and must still surface as its own identity rather than a
+// flattened, retryable invocation failure.
+func TestConsoleContractCodeSurvivesTheRetryLoop(t *testing.T) {
+	cases := []struct {
+		name        string
+		status      int
+		consoleCode string
+		legacyCode  string
+		retryable   bool
+		wantCalls   int
+		wantErr     error
+	}{
+		{"auth failed is terminal and keeps its identity", http.StatusBadGateway, "llm.provider.auth_failed", "upstream_auth_failed", false, 1, adapter.ErrAuthFailed},
+		{"none available retries and keeps its identity", http.StatusServiceUnavailable, "llm.provider.none_available", "no_available_provider", true, 2, adapter.ErrNoProviderAvailable},
+		{"pricing not configured keeps its identity", http.StatusPaymentRequired, "billing.model.pricing_not_configured", "pricing_not_configured", false, 1, adapter.ErrPricingNotConfigured},
+		{"exchange rate is terminal and keeps its identity", http.StatusServiceUnavailable, "billing.exchange_rate.unavailable", "exchange_rate_unavailable", false, 1, adapter.ErrExchangeRateUnavailable},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			requestCount := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requestCount++
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(testCase.status)
+				_, _ = fmt.Fprintf(w, `{"code":%q,"error_code":%q,"retryable":%t,"error":{"code":%q,"type":"api_error","message":"console message"}}`,
+					testCase.consoleCode, testCase.consoleCode, testCase.retryable, testCase.legacyCode)
+			}))
+			defer server.Close()
+
+			client := adapter.NewHTTPClientWithOptions(time.Second, 1, adapter.HTTPClientOptions{})
+			response, requestErr := client.DoRequestDetailed(context.Background(), http.MethodPost, server.URL, nil, map[string]interface{}{})
+			if requestCount != testCase.wantCalls {
+				t.Fatalf("platform channel calls = %d, want %d", requestCount, testCase.wantCalls)
+			}
+
+			// A retryable 5xx exhausts its budget and comes back as an error; a
+			// terminal response comes back as a body the adapter classifies.
+			classified := requestErr
+			if classified == nil {
+				classified = handleOpenAICompatibleError(response.StatusCode, response.Body)
+			}
+			if !errors.Is(classified, testCase.wantErr) {
+				t.Fatalf("classified error = %v, want %v", classified, testCase.wantErr)
+			}
+			if errors.Is(classified, adapter.ErrUpstreamError) {
+				t.Fatalf("Console code %q was flattened into ErrUpstreamError", testCase.consoleCode)
+			}
+		})
 	}
 }

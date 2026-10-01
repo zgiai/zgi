@@ -60,7 +60,7 @@ func classifyProtocolError(err error) protocolError {
 		return invalidAPIKeyProtocolError("Invalid API key")
 	case errors.Is(err, gateway.ErrInsufficientQuota), errors.Is(err, gateway.ErrInsufficientBalance), errors.Is(err, llmerrors.DomainErrInsufficientBalance), errors.Is(err, adapter.ErrInsufficientBalance), errors.Is(err, adapter.ErrQuotaExhausted):
 		return quotaProtocolError()
-	case errors.Is(err, llmerrors.DomainErrRateLimitExceeded):
+	case errors.Is(err, llmerrors.DomainErrRateLimitExceeded), errors.Is(err, adapter.ErrRateLimitExceeded):
 		// The legacy OpenAI wire code stays rate_limit_exceeded; the stable
 		// catalog identity is the same llm.rate_limit.exceeded code used by
 		// persisted usage events.
@@ -69,7 +69,7 @@ func classifyProtocolError(err error) protocolError {
 		// An upstream 429 keeps the same legacy wire code but carries the
 		// provider rate-limit identity, distinct from this gateway's own limit.
 		return newAppProtocolError(llmerrors.AppCodeProviderRateLimited, http.StatusTooManyRequests, "rate_limit_error", "rate_limit_exceeded", "rate_limit_error", "The model provider is rate limiting requests. Please try again shortly.", true)
-	case errors.Is(err, gateway.ErrPricingNotConfigured):
+	case errors.Is(err, gateway.ErrPricingNotConfigured), errors.Is(err, adapter.ErrPricingNotConfigured):
 		return pricingNotConfiguredProtocolError()
 	case errors.Is(err, llmerrors.DomainErrPrivateChannelUpstreamUnavailable):
 		return newProtocolError(http.StatusServiceUnavailable, "server_error", "private_channel_upstream_unavailable", "api_error", "Private channel upstream credential is unavailable")
@@ -77,7 +77,7 @@ func classifyProtocolError(err error) protocolError {
 		return newProtocolError(http.StatusBadGateway, "server_error", adapter.ErrorCodePlatformChannelUnavailable, "api_error", "Platform model service is temporarily unavailable")
 	// The four selection failures below each keep a distinct branch and stable
 	// code. They must never collapse into a single provider_unavailable outcome.
-	case errors.Is(err, gateway.ErrNoProviderAvailable), errors.Is(err, llmerrors.DomainErrNoProviderAvailable):
+	case errors.Is(err, gateway.ErrNoProviderAvailable), errors.Is(err, llmerrors.DomainErrNoProviderAvailable), errors.Is(err, adapter.ErrNoProviderAvailable):
 		return newAppProtocolError(llmerrors.AppCodeNoProviderAvailable, http.StatusServiceUnavailable, "server_error", llmerrors.AppCodeNoProviderAvailable.String(), "api_error", "No model provider is currently available. Try another model or contact an administrator.", true)
 	case errors.Is(err, llmerrors.DomainErrRouteNotFound):
 		return newAppProtocolError(llmerrors.AppCodeNoProviderAvailable, http.StatusServiceUnavailable, "server_error", llmerrors.AppCodeNoProviderAvailable.String(), "api_error", "No model provider is currently available. Try another model or contact an administrator.", true)
@@ -98,8 +98,12 @@ func classifyProtocolError(err error) protocolError {
 		return newAppProtocolError(llmerrors.AppCodeProviderTimeout, http.StatusGatewayTimeout, "server_error", "upstream_timeout", "timeout_error", "The model service took too long to respond. Please try again or choose another model.", true)
 	case errors.Is(err, gateway.ErrBillingPreDeductFailed):
 		return billingFailureProtocolError(llmerrors.AppCodeBillingPredeductFailed)
-	case errors.Is(err, gateway.ErrBillingSettleFailed):
+	case errors.Is(err, gateway.ErrBillingSettleFailed), errors.Is(err, adapter.ErrBillingSettleFailed):
 		return billingFailureProtocolError(llmerrors.AppCodeBillingSettleFailed)
+	case errors.Is(err, gateway.ErrExchangeRateUnavailable), errors.Is(err, adapter.ErrExchangeRateUnavailable):
+		// A missing rate is a configuration problem: the request can never be
+		// priced, so it is not retryable and it is not an invocation failure.
+		return newAppProtocolError(llmerrors.AppCodeBillingExchangeRateUnavailable, http.StatusServiceUnavailable, "server_error", llmerrors.AppCodeBillingExchangeRateUnavailable.String(), "api_error", "The exchange rate is unavailable, so this request cannot be billed. Contact an administrator.", false)
 	case errors.Is(err, gateway.ErrBalanceNotFound), errors.Is(err, gateway.ErrBillingFailed), errors.Is(err, gateway.ErrBillingLaneMismatch), errors.Is(err, gateway.ErrPricingCalculationFailed), errors.Is(err, llmerrors.DomainErrBillingFailed), errors.Is(err, llmerrors.DomainErrDatabaseError), errors.Is(err, llmerrors.DomainErrInternalError):
 		return newAppProtocolError(llmerrors.AppCodeInvocationFailed, http.StatusBadGateway, "server_error", "internal_error", "api_error", "Internal server error", true)
 	default:
