@@ -43,6 +43,8 @@ const APPLICATION_ERROR_CODES = [
   'llm.provider.not_found',
   'llm.channel.not_found',
   'llm.provider.unavailable',
+  // Upstream 429s are projected as llm.provider.rate_limited.
+  'llm.provider.rate_limited',
   'llm.quota.exceeded',
   'llm.balance.insufficient',
 ] as const;
