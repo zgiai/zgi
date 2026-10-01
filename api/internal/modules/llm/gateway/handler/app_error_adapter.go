@@ -82,6 +82,23 @@ func (h *LLMHandler) localizedChatStreamError(c *gin.Context, err error) string 
 	return h.localizedProtocolError(c, err).message
 }
 
+// localizedInvalidAPIKeyProtocolError keeps the invalid_api_key wire shape and
+// takes the message and error_id from the catalog's llm.api_key.invalid entry,
+// so an unknown key is answered in the caller's language.
+func localizedInvalidAPIKeyProtocolError(c *gin.Context, projector *apptransport.Projector) protocolError {
+	protocolErr := invalidAPIKeyProtocolError("Invalid API key")
+	if projector == nil {
+		return protocolErr
+	}
+	locale := apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language"))
+	result := projector.ProjectWithRequestID(apperror.New(llmerrors.AppCodeAPIKeyInvalid), locale, c.Writer.Header().Get("X-Request-ID"))
+	protocolErr.errorID = result.ErrorID
+	if result.Resolution == apptransport.ResolutionMatched {
+		protocolErr.message = result.Presentation.Message
+	}
+	return protocolErr
+}
+
 // localizedInvalidRequest overlays the catalog's locale-specific request
 // message while preserving each protocol's legacy status/type/code shape.
 // Validation errors are created at the protocol boundary, so they otherwise

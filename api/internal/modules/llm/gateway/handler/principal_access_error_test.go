@@ -132,3 +132,43 @@ func TestPrincipalLifecycleMessagesPreserveWireContract(t *testing.T) {
 		}
 	}
 }
+
+type unknownKeyRepository struct {
+	apikeyrepo.APIKeyRepository
+}
+
+func (unknownKeyRepository) GetByKey(context.Context, string) (*apikeymodel.TenantAPIKey, error) {
+	return nil, errors.New("record not found")
+}
+
+// An unknown API key is answered in the caller's language from the catalog's
+// llm.api_key.invalid entry, keeping the invalid_api_key wire shape.
+func TestUnknownAPIKeyMessageIsLocalized(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	projector := testApplicationErrorProjector(t)
+	for locale, want := range map[string]string{"zh-CN": "API 密钥", "en-US": "API key"} {
+		t.Run(locale, func(t *testing.T) {
+			router := gin.New()
+			router.Use(LLMAPIKeyAuthMiddleware(unknownKeyRepository{}, projector))
+			router.Any("/v1/chat/completions", func(c *gin.Context) { t.Error("denied request reached provider handler") })
+			request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+			request.Header.Set("Authorization", "Bearer sk-bogus")
+			request.Header.Set("Accept-Language", locale)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+
+			var body map[string]any
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			protocol, _ := body["error"].(map[string]any)
+			if response.Code != http.StatusUnauthorized || protocol["code"] != "invalid_api_key" || body["error_code"] != llmerrors.AppCodeAPIKeyInvalid.String() {
+				t.Fatalf("wire contract changed: %d %v", response.Code, body)
+			}
+			message, _ := body["message"].(string)
+			if message == "Invalid API key" || !strings.Contains(message, want) || protocol["message"] != message {
+				t.Fatalf("message = %q (protocol %v), want the catalog text containing %q", message, protocol["message"], want)
+			}
+		})
+	}
+}

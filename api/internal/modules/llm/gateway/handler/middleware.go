@@ -34,13 +34,13 @@ func LLMAPIKeyAuthMiddleware(apiKeyRepo apikeyrepo.APIKeyRepository, projectors 
 		keyInfo, err := apiKeyRepo.GetByKey(c.Request.Context(), apiKey)
 		if err != nil {
 			logger.WarnContext(c.Request.Context(), "API key authentication failed", err)
-			abortWithProtocolError(c, invalidAPIKeyProtocolError("Invalid API key"))
+			abortWithProtocolError(c, localizedInvalidAPIKeyProtocolError(c, projector))
 			return
 		}
 
 		// Internal keys are for system use only and cannot be used via API
 		if keyInfo.IsInternal {
-			abortWithProtocolError(c, invalidAPIKeyProtocolError("Invalid API key"))
+			abortWithProtocolError(c, localizedInvalidAPIKeyProtocolError(c, projector))
 			return
 		}
 
