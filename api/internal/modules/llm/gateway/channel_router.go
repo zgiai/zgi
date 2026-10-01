@@ -389,6 +389,11 @@ func routeSupportsOpenAIResponses(route *channelmodel.LLMRoute, modelName ...str
 	if supported, declared := routeProtocolDeclaration(route, firstModelName(modelName), protocolOpenAIResponses); declared {
 		return supported
 	}
+	// Validated provider gaps override the provider-level optimistic default;
+	// an explicit per-model declaration above stays authoritative.
+	if knownProviderModelProtocolUnsupported(route.ChannelProvider, firstModelName(modelName), protocolOpenAIResponses) {
+		return false
+	}
 	if route.NativeProtocols.OpenAIResponses.Enabled {
 		return true
 	}
@@ -408,6 +413,9 @@ func routeSupportsAnthropicMessages(route *channelmodel.LLMRoute, modelName ...s
 	}
 	if supported, declared := routeProtocolDeclaration(route, firstModelName(modelName), protocolAnthropicMessages); declared {
 		return supported
+	}
+	if knownProviderModelProtocolUnsupported(route.ChannelProvider, firstModelName(modelName), protocolAnthropicMessages) {
+		return false
 	}
 	if route.NativeProtocols.AnthropicMessages.Enabled {
 		return true
