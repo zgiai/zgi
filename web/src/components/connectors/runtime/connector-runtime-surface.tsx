@@ -11,11 +11,13 @@ import { useT } from '@/i18n/translations';
 import { localizeConnectorRuntimeConfirmation } from '@/components/connectors/connector-metadata';
 import { useConnectorRuntimeReceipt } from './use-runtime-receipt';
 import type {
+  ConnectorRuntimeConfirmation,
   ConnectorRuntimeDecisionHandler,
   ConnectorRuntimeExecutionResult,
   ConnectorRuntimeRequiresConfirmationResult,
 } from './connector-runtime-model';
 import { ConnectorRuntimeConfirmationCard } from './connector-runtime-confirmation-card';
+import { ConnectorRuntimePreviewSummary } from './connector-runtime-preview-summary';
 import { ConnectorRuntimeBlockedState } from './connector-runtime-blocked-state';
 import { ConnectorRuntimeTerminalState } from './connector-runtime-terminal-state';
 
@@ -40,62 +42,53 @@ interface ConnectorRuntimeDialogApprovalBridgeProps {
 
 function connectorRuntimePendingApproval({
   result,
+  confirmation,
+  locale,
   preview,
   verified,
   conversationId,
   messageId,
   scope,
   onDecision,
-  locale,
   t,
 }: ConnectorRuntimeDialogApprovalBridgeProps & {
+  confirmation: ConnectorRuntimeConfirmation;
+  locale: string;
   preview: ReturnType<typeof useConnectorRuntimeReceipt>['preview'];
   verified: boolean;
   scope: string;
-  locale: string;
   t: ReturnType<typeof useT<'connectors'>>;
 }): ToolGovernancePendingApproval {
-  const confirmation = localizeConnectorRuntimeConfirmation(result.confirmation, locale);
-  const actionSentence = `${confirmation.connector_name} · ${confirmation.action_name}`;
-  const assets = [] as ToolGovernancePendingApproval['assets'];
-  if (preview?.account_identity) {
-    assets.push({
-      key: 'account',
-      name: t('runtime.confirmation.previewAccount'),
-      meta: preview.account_identity,
-    });
-  }
-  if (preview) {
-    preview.fields.forEach((field, index) => {
-      assets.push({
-        key: `preview-${index}`,
-        name: field.label_i18n[locale] ?? field.label,
-        meta: field.value,
-      });
-    });
-  } else if (confirmation.consequence.external_destination) {
-    assets.push({
-      key: 'destination',
-      name: t('runtime.confirmation.fields.destination'),
-      meta: confirmation.consequence.external_destination,
-    });
-  }
-
   return {
-    id: `${conversationId}:${messageId}:${confirmation.route_receipt}`,
+    id: `${conversationId}:${messageId}:${result.confirmation.route_receipt}`,
     conversationId,
     messageId,
-    title: actionSentence,
-    toolLabel: confirmation.connector_name,
-    actionSentence,
-    assets,
+    title: `${confirmation.connector_name} · ${confirmation.action_name}`,
+    toolLabel: confirmation.action_name,
+    actionSentence: t('runtime.confirmation.description'),
+    assets: [
+      ...(preview?.account_identity
+        ? [
+            {
+              key: 'connector-account',
+              name: t('runtime.confirmation.previewAccount'),
+              meta: preview.account_identity,
+            },
+          ]
+        : []),
+      ...(preview?.fields ?? []).map((field, index) => ({
+        key: `connector-preview-${index}`,
+        name: field.label_i18n?.[locale] ?? field.label,
+        meta: field.value,
+      })),
+    ],
     riskLabel:
-      confirmation.risk_classification === 'high'
+      result.confirmation.risk_classification === 'high'
         ? t('runtime.risk.high')
         : t('runtime.risk.unclassified'),
     permissionLabel: null,
-    canSubmit: verified,
-    isHighImpact: confirmation.risk_classification === 'high',
+    canSubmit: verified && Boolean(preview?.complete),
+    isHighImpact: result.confirmation.risk_classification === 'high',
     onSubmitDecision: async (action, rememberForSession) => {
       if (action === 'approve' && !preview?.complete) {
         throw new Error(t('runtime.confirmation.previewUnavailable'));
@@ -103,7 +96,7 @@ function connectorRuntimePendingApproval({
       const decision = action === 'approve' ? 'confirmed' : 'cancelled';
       await onDecision(
         {
-          route_receipt: confirmation.route_receipt,
+          route_receipt: result.confirmation.route_receipt,
           decision,
           ...(action === 'approve' && rememberForSession ? { remember_for_session: true } : {}),
         },
@@ -127,10 +120,11 @@ export function ConnectorRuntimeDialogApprovalBridge({
   messageId,
   onDecision,
 }: ConnectorRuntimeDialogApprovalBridgeProps) {
-  const locale = useLocale();
   const t = useT('connectors');
+  const locale = useLocale();
   const pendingScopeId = useToolGovernancePendingApprovalScope();
   const receipt = useConnectorRuntimeReceipt(result.confirmation.route_receipt);
+  const confirmation = localizeConnectorRuntimeConfirmation(result.confirmation, locale);
   const checkReceipt = receipt.check;
   const [verified, setVerified] = useState(false);
   useEffect(() => {
@@ -152,16 +146,18 @@ export function ConnectorRuntimeDialogApprovalBridge({
     () =>
       connectorRuntimePendingApproval({
         result,
+        confirmation,
+        locale,
         preview: receipt.preview,
         verified,
         conversationId,
         messageId,
         scope: receipt.scope,
         onDecision,
-        locale,
         t,
       }),
     [
+      confirmation,
       conversationId,
       locale,
       messageId,
@@ -179,7 +175,42 @@ export function ConnectorRuntimeDialogApprovalBridge({
     return publishToolGovernancePendingApproval(approval, pendingScopeId);
   }, [approval, pendingScopeId, receipt.phase, receipt.result, verified]);
 
+  // The existing Tool Governance approval panel owns the visible confirmation
+  // UI. This bridge only registers the server-issued decision and supplies the
+  // safe preview fields as panel assets; rendering another Connector card here
+  // would recreate the duplicate Agent window.
   return null;
+}
+
+function ConnectorRuntimePendingSurface({
+  result,
+  onDecision,
+  compact,
+  className,
+}: {
+  result: ConnectorRuntimeRequiresConfirmationResult;
+  onDecision: ConnectorRuntimeDecisionHandler;
+  compact: boolean;
+  className?: string;
+}) {
+  const receipt = useConnectorRuntimeReceipt(result.confirmation.route_receipt);
+  return (
+    <div className="space-y-2">
+      <ConnectorRuntimePreviewSummary
+        result={result}
+        preview={receipt.preview}
+        compact={compact}
+        className={className}
+      />
+      <ConnectorRuntimeConfirmationCard
+        key={result.confirmation.route_receipt}
+        result={result}
+        onDecision={onDecision}
+        compact={compact}
+        className={className}
+      />
+    </div>
+  );
 }
 
 /** Shared host surface for Chat, Agent, and Workflow runtime adapters. */
@@ -206,8 +237,7 @@ export function ConnectorRuntimeSurface({
     }
     if (readOnly) return null;
     return (
-      <ConnectorRuntimeConfirmationCard
-        key={result.confirmation.route_receipt}
+      <ConnectorRuntimePendingSurface
         result={result}
         onDecision={onDecision}
         compact={compact}
@@ -226,9 +256,14 @@ export function ConnectorRuntimeSurface({
     result.state === 'failed' ||
     result.state === 'unknown'
   ) {
-    return (
-      <ConnectorRuntimeTerminalState state={result.state} compact={compact} className={className} />
-    );
+      return (
+        <ConnectorRuntimeTerminalState
+          state={result.state}
+          presentation={result.connector_presentation}
+          compact={compact}
+          className={className}
+        />
+      );
   }
 
   return null;

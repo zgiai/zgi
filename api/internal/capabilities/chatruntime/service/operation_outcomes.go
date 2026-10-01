@@ -2,10 +2,11 @@ package service
 
 import (
 	"fmt"
-	"github.com/zgiai/zgi/api/internal/capabilities/connectortools"
 	"reflect"
 	"strings"
 	"time"
+
+	"github.com/zgiai/zgi/api/internal/capabilities/connectortools"
 
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )

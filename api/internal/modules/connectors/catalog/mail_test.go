@@ -76,10 +76,10 @@ func TestMailAuthorizationCodeProviderRules(t *testing.T) {
 		{"netease163", "User@163.COM", "AbcdefghijklMNOP", true},
 		{"netease163", "u@163.com", "ABCD EFGH\nIJKL\u00a0MNOP", true},
 		{"qqmail", "u@qq.com", "1234567890123456", true},
-		{"netease163", "u@163.com", "1234567890123456", false},
+		{"netease163", "u@163.com", "1234567890123456", true},
 		{"qqmail", "u@163.com", "abcdefghijklmnop", false},
 		{"netease163", "u@126.com", "abcdefghijklmnop", false},
-		{"qqmail", "u@qq.com", "abcd efghijklmnop", false},
+		{"qqmail", "u@qq.com", "abcd efghijklmnop", true},
 		{"qqmail", "u@qq.com", "abcdefghijklmnop\x00", false},
 		{"qqmail", "u\u200b@qq.com", "abcdefghijklmnop", false},
 	} {
@@ -147,9 +147,14 @@ func TestMailNormalizationPreservesLoginIdentityAndPasswordCase(t *testing.T) {
 			t.Fatal("invalid address admitted")
 		}
 	}
-	for _, password := range []string{"short", "12345678901234567", "abcd\u200befghijklmnop", "abcd\x00efghijklmnop"} {
+	for _, password := range []string{"abcd\u200befghijklmnop", "abcd\x00efghijklmnop"} {
 		if NormalizeMailValues(map[string]string{"email": "user@example.com", "app_password": password}) == nil {
 			t.Fatal("invalid password shape admitted")
+		}
+	}
+	for _, password := range []string{"short", "12345678901234567"} {
+		if NormalizeMailValues(map[string]string{"email": "user@example.com", "app_password": password}) != nil {
+			t.Fatal("provider credential shape was rejected before server verification")
 		}
 	}
 	if NormalizeMailValues(map[string]string{"email": "user@example.com", "app_password": "1234567890123456"}) != nil {

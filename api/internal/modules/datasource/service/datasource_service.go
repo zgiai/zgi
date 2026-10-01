@@ -30,6 +30,7 @@ import (
 	excelimportsvc "github.com/zgiai/zgi/api/internal/modules/datasource/service/excelimport"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	defaultmodelsvc "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
+	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	llmadapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	quota_model "github.com/zgiai/zgi/api/internal/modules/quota/model"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
@@ -280,6 +281,20 @@ func (s *dataSourceService) CreateDataSource(ctx context.Context, organizationID
 	}
 	req.WorkspaceID = &workspaceID
 
+	var schemaIndex *repository.SchemaIndexSettingsCreate
+	if req.SchemaIndex != nil && req.SchemaIndex.Enabled {
+		provider := strings.TrimSpace(req.SchemaIndex.EmbeddingModelProvider)
+		modelName := strings.TrimSpace(req.SchemaIndex.EmbeddingModel)
+		if provider == "" || modelName == "" {
+			return nil, fmt.Errorf("embedding model provider and model are required")
+		}
+		resolved, err := s.defaultModelResolver.ResolveUseCase(ctx, organizationID, llmmodel.UseCaseEmbedding, &provider, &modelName)
+		if err != nil {
+			return nil, fmt.Errorf("resolve embedding model: %w", err)
+		}
+		schemaIndex = &repository.SchemaIndexSettingsCreate{RequestedBy: accountID, EmbeddingProvider: resolved.Provider, EmbeddingModel: resolved.Model}
+	}
+
 	// Check if data source with the same name already exists
 	existing, err := s.repo.FindByOrganizationAndName(ctx, organizationID, req.Name)
 	if err != nil {
@@ -333,7 +348,7 @@ func (s *dataSourceService) CreateDataSource(ctx context.Context, organizationID
 		GuardPolicy:    guard.DefaultPolicyJSON(),
 	}
 
-	if err := s.repo.Create(ctx, dataSource); err != nil {
+	if err := s.repo.Create(ctx, dataSource, schemaIndex); err != nil {
 		// // If metadata creation fails, try to delete the schema
 		// _, _ = s.sqlBase.DeleteSchema(ctx, schemaDetails.ID, true)
 		return nil, fmt.Errorf("failed to save data source metadata: %w", err)

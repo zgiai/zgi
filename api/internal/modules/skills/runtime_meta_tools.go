@@ -190,7 +190,7 @@ func updatePlanMetaTool() llmadapter.Tool {
 		Type: "function",
 		Function: llmadapter.Function{
 			Name:        MetaToolUpdatePlan,
-			Description: "Replace the user-visible outcome contract when its structure changes, or patch existing phases after the goal or route changes. Use phase_updates for server-owned phases before a projected external Action; the server preserves hidden attestations and maintains projected bindings automatically. Ordinary tool success is reconciled automatically and must not trigger this tool.",
+			Description: "Replace the user-visible outcome contract when its structure changes, or patch existing phases after the goal or route changes. Joint outcomes and plan preserve both contracts: bind each phase with outcome_id, or supply equally sized ordered arrays to pair them by position. Use phase_updates for server-owned phases before a projected external Action; the server preserves hidden attestations and maintains projected bindings automatically. Ordinary tool success is reconciled automatically and must not trigger this tool.",
 			Parameters:  parameters,
 		},
 	}

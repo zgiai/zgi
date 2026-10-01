@@ -26,7 +26,6 @@ assert.deepEqual(keyShape(zh), keyShape(en), 'English and Simplified Chinese key
 
 for (const key of [
   'title',
-  'description',
   'account.title',
   'usage.title',
   'maintenance.title',

@@ -21,6 +21,7 @@ const (
 	ErrorCodeMailSubmissionRejected       ErrorCode = "connector_mail_submission_rejected"
 	ErrorCodeMailClientIdentityRequired   ErrorCode = "connector_mail_client_identity_required"
 	ErrorCodeMailAuthMechanismUnsupported ErrorCode = "connector_mail_auth_mechanism_unsupported"
+	ErrorCodeMailUidStateUnavailable      ErrorCode = "connector_mail_uid_state_unavailable"
 )
 
 type authErrorDefinition struct {
@@ -47,6 +48,7 @@ var authErrorDefinitions = []authErrorDefinition{
 	{ErrorCodeMailSubmissionRejected, apperror.MustCode("connector.mail.submission_rejected"), appcatalog.CategoryUpstream, 502, "The mail server rejected this submission.", "邮件服务器拒绝了本次提交。"},
 	{ErrorCodeMailClientIdentityRequired, apperror.MustCode("connector.mail.client_identity_required"), appcatalog.CategoryUpstream, 502, "The mail server rejected the client identity or access policy. Check the client compatibility; do not disable account security.", "邮箱服务器拒绝了客户端身份或访问策略，请检查客户端兼容性，无需关闭账号安全设置。"},
 	{ErrorCodeMailAuthMechanismUnsupported, apperror.MustCode("connector.mail.auth_mechanism_unsupported"), appcatalog.CategoryUpstream, 502, "The mail server does not offer a supported authentication method.", "邮箱服务器未提供当前支持的认证方式。"},
+	{ErrorCodeMailUidStateUnavailable, apperror.MustCode("connector.mail.uid_state_unavailable"), appcatalog.CategoryUpstream, 502, "The mail server did not report this mailbox's UID range, so messages cannot be listed yet. Try again later or check the mailbox IMAP settings.", "邮箱服务器未返回该文件夹的 UID 范围，暂时无法列出邮件。请稍后重试，或检查该邮箱的 IMAP 设置。"},
 }
 
 func authCatalogDefinitions() []appcatalog.Definition {

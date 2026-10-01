@@ -540,7 +540,8 @@ export function AIChatShell({
     setDraftSkillPreferenceIds(skillPreference.enabled_skill_ids ?? []);
   }, [enableAIChatSkillPreference, skillPreference]);
   const enableToolGovernanceApprovals =
-    surface === 'aichat' && Boolean(controller.continueToolGovernanceDecision);
+    surface === 'agent-webapp' ||
+    (surface === 'aichat' && Boolean(controller.continueToolGovernanceDecision));
   const showToolGovernancePermissionControl =
     surface === 'aichat' &&
     effectiveRuntimeSurface === 'contextual_sidebar' &&

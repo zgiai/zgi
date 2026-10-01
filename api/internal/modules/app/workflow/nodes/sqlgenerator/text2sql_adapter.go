@@ -136,24 +136,27 @@ func (n *Node) authorizeText2SQL(ctx context.Context) error {
 
 type workflowEmbeddingModels struct{ node *Node }
 
-func (m workflowEmbeddingModels) ResolveEmbedding(ctx context.Context, organizationID string) (string, string, error) {
-	if m.node == nil || m.node.models == nil {
+func (m workflowEmbeddingModels) ResolveEmbedding(ctx context.Context, organizationID, dataSourceID string) (string, string, error) {
+	if m.node == nil || m.node.db == nil {
 		return "", "", text2sql.ErrIndexNotReady
 	}
-	resolved, err := m.node.models.ResolveUseCase(ctx, organizationID, llmmodelmodel.UseCaseEmbedding, nil, nil)
-	if err != nil {
+	var setting struct {
+		Provider string `gorm:"column:embedding_provider"`
+		Model    string `gorm:"column:embedding_model"`
+	}
+	if err := m.node.db.WithContext(ctx).Table("database_schema_index_settings").Select("embedding_provider, embedding_model").Where("organization_id = ? AND data_source_id = ?", organizationID, dataSourceID).Take(&setting).Error; err != nil {
 		return "", "", err
 	}
-	return resolved.Provider, resolved.Model, nil
+	return setting.Provider, setting.Model, nil
 }
 
 type workflowEmbedder struct{ node *Node }
 
-func (e workflowEmbedder) Embed(ctx context.Context, _, model, input string) ([]float64, error) {
+func (e workflowEmbedder) Embed(ctx context.Context, provider, model, input string) ([]float64, error) {
 	if e.node == nil || e.node.llmClient == nil {
 		return nil, text2sql.ErrIndexNotReady
 	}
-	response, err := e.node.llmClient.AppEmbed(ctx, e.node.embeddingAppContext(), &llmadapter.EmbeddingsRequest{Input: input, Model: model, EncodingFormat: "float"})
+	response, err := e.node.llmClient.AppEmbed(ctx, e.node.embeddingAppContext(), &llmadapter.EmbeddingsRequest{Input: input, Provider: provider, Model: model, EncodingFormat: "float"})
 	if err != nil {
 		return nil, err
 	}

@@ -103,6 +103,8 @@ export interface ConnectorPickerDialogProps extends ConnectorReferenceRepairProp
   onRequestUpdateKey: NonNullable<ConnectorPickerActionHandlers['onRequestUpdateKey']>;
   onRequestViewReason: NonNullable<ConnectorPickerActionHandlers['onRequestViewReason']>;
   onRequestDetach: NonNullable<ConnectorPickerActionHandlers['onRequestDetach']>;
+  headerExtra?: ReactNode;
+  footerExtra?: ReactNode;
 }
 
 const FILTER_VALUES: readonly ConnectorCatalogStatus[] = ['all', 'connected', 'needs_attention'];
@@ -135,6 +137,8 @@ export function ConnectorPickerDialog({
   onRequestUpdateKey,
   onRequestViewReason,
   onRequestDetach,
+  headerExtra,
+  footerExtra,
   onReferenceCommand,
   pendingReferenceCommands,
 }: ConnectorPickerDialogProps) {
@@ -623,6 +627,7 @@ export function ConnectorPickerDialog({
                   }
                 )}
             </DialogDescription>
+            {headerExtra}
           </DialogHeader>
 
           <DialogBody className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">
@@ -803,6 +808,7 @@ export function ConnectorPickerDialog({
               </>
             )}
           </DialogBody>
+          {footerExtra}
 
           {footer !== undefined ? (
             <DialogFooter className="shrink-0 justify-start border-t bg-primary/[0.03] px-6 py-4 text-left">

@@ -44,6 +44,7 @@ type connectorConfirmationResolution struct {
 	authorization       *connectorconfirmation.AuthorizationSnapshot
 	outcomeID           uuid.UUID
 	presentationTitle   string
+	presentation        *connectortools.OperationPresentation
 }
 
 // RecordConnectorConfirmationResolution projects a resolved Connector call
@@ -199,6 +200,10 @@ func validateConnectorConfirmationResolution(
 	}
 	if result.ErrorCode != "" {
 		resolution.errorCode = string(result.ErrorCode)
+	}
+	if result.Presentation != nil {
+		presentation := *result.Presentation
+		resolution.presentation = &presentation
 	}
 	switch result.Origin.Surface {
 	case connectorcore.TargetTypeChat:
@@ -494,7 +499,18 @@ func (resolution connectorConfirmationResolution) terminalPayload() map[string]i
 			}
 			payload["state"], payload["outcome_status"] = "completed", status
 		}
-		payload["connector_presentation"] = connectortools.OperationPresentation{SchemaVersion: 1, SourceKind: "native", InvocationID: resolution.operation.LogicalOperationID, ConnectorID: resolution.operation.ConnectorID, OperationID: resolution.operation.OperationID, DisplayStatus: status, Title: resolution.presentationTitle}
+		presentation := connectortools.OperationPresentation{SchemaVersion: 1, SourceKind: "native", InvocationID: resolution.operation.LogicalOperationID, ConnectorID: resolution.operation.ConnectorID, OperationID: resolution.operation.OperationID, DisplayStatus: status, Title: resolution.presentationTitle, Summary: connectortools.SafeTerminalSummary(status, resolution.errorCode, ""), ErrorCode: resolution.errorCode, Redacted: false}
+		if resolution.presentation != nil {
+			presentation = *resolution.presentation
+			presentation.DisplayStatus = status
+			if presentation.Title == "" {
+				presentation.Title = resolution.presentationTitle
+			}
+			if presentation.ErrorCode == "" {
+				presentation.ErrorCode = resolution.errorCode
+			}
+		}
+		payload["connector_presentation"] = presentation
 	}
 	if resolution.decisionID != "" {
 		payload["decision_id"] = resolution.decisionID

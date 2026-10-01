@@ -35,6 +35,19 @@ func TestConstraintsRequireBothLayersAndExplicitAuthority(t *testing.T) {
 	}
 }
 
+func TestLegacyConstraintDefaultsToAskAndDirectConstraintIsExplicit(t *testing.T) {
+	owner := uuid.New()
+	legacy, err := DecodeConstraint([]byte(`{"schema_version":1,"allowed_operation_ids":["github.issue.create"],"target_boundaries":[{"type":"chat","id":"*","scope":"live","version_id":"*"}],"audience_owner":"` + owner.String() + `","expires_at":null,"deny_reasons":[]}`))
+	if err != nil || legacy.AuthorizationModeValue() != AuthorizationModeAsk || legacy.DirectlyAuthorized() {
+		t.Fatalf("legacy constraint mode = %#v, err=%v", legacy, err)
+	}
+	direct := OwnerConstraint(owner, []Identifier{"github.issue.create"})
+	direct.AuthorizationMode = AuthorizationModeDirect
+	if err := direct.Validate(); err != nil || !direct.DirectlyAuthorized() {
+		t.Fatalf("direct constraint = %#v, err=%v", direct, err)
+	}
+}
+
 func TestDraftBoundaryDoesNotAuthorizePublishedVersion(t *testing.T) {
 	owner := uuid.New()
 	id := uuid.NewString()

@@ -191,6 +191,39 @@ assert.deepEqual(
   ['github-attention', 'offline-source']
 );
 
+const connectionNames = new Map([
+  ['github', ['我的代码仓库', 'Repo Alpha']],
+  ['web-search', ['每日检索']],
+]);
+for (const query of ['我的代码仓库', 'Repo Alpha']) {
+  assert.deepEqual(
+    filterConnectorCatalog(catalog, { query, status: 'all', connectionNames }).map(item => item.id),
+    ['github'],
+    `${query}: a saved Connection name must find its own Connector`
+  );
+}
+assert.deepEqual(
+  filterConnectorCatalog(catalog, { query: '每日检索', status: 'all', connectionNames }).map(
+    item => item.id
+  ),
+  ['web-search'],
+  'a Connection name must never match another Connector'
+);
+assert.deepEqual(
+  filterConnectorCatalog(catalog, {
+    query: 'repository 我的代码仓库',
+    status: 'all',
+    connectionNames,
+  }).map(item => item.id),
+  ['github'],
+  'a multi-term query must combine Connector metadata with Connection names'
+);
+assert.deepEqual(
+  filterConnectorCatalog(catalog, { query: 'Repo Alpha', status: 'all' }).map(item => item.id),
+  [],
+  'Connection names stay owner-scoped and are only searched when the caller supplies them'
+);
+
 assert.equal(getConnectorCatalogRowState(catalog[0]), 'connected');
 assert.equal(getConnectorCatalogRowState(catalog[1]), 'not_connected');
 assert.equal(getConnectorCatalogRowState(catalog[2]), 'reconnect_required');

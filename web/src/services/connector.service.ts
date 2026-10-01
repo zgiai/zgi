@@ -19,6 +19,7 @@ import type {
   ConnectorTargetRef,
   CreateConnectorTargetBindingRequest,
   DetachConnectorTargetBindingRequest,
+  UpdateConnectorTargetBindingAuthorizationRequest,
   GetConnectorCatalogParams,
   GetPersonalConnectionsParams,
   KeySetupRequest,
@@ -336,6 +337,17 @@ class ConnectorService extends BaseService {
     return this.request(
       'delete',
       `/connector-target-bindings/${encodeURIComponent(bindingId)}`,
+      data
+    );
+  }
+
+  updateTargetBindingAuthorization(
+    bindingId: string,
+    data: UpdateConnectorTargetBindingAuthorizationRequest
+  ): Promise<ApiResponseData<ConnectorTargetBinding>> {
+    return this.request(
+      'patch',
+      `/connector-target-bindings/${encodeURIComponent(bindingId)}/authorization`,
       data
     );
   }

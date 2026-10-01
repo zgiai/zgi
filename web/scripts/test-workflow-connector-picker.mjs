@@ -143,8 +143,8 @@ assert.match(manager, /picker\.workflowConnectionHint/);
 assert.match(manager, /\[nodeId, workflowId, readOnly\]/);
 assert.match(manager, /unavailableLabel:\s*connectorT\('status\.unavailable'\)/);
 assert.match(manager, /onRequestSwitch/);
-assert.match(manager, /setConnectorConnection\(request\.connection\.id\)/);
-assert.match(manager, /setConnectorConnection\(''\)/);
+assert.match(manager, /setPendingConnectorSelection/);
+assert.match(manager, /picker\.authorization\.confirm/);
 assert.doesNotMatch(
   manager,
   /connectorService|attachTargetBinding|createTargetBinding/,

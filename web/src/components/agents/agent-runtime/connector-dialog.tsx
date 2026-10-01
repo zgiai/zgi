@@ -20,6 +20,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useT } from '@/i18n';
 import { useLocale } from '@/hooks/use-locale';
 import type { AgentConnectorBinding } from '@/services/types/agent';
@@ -43,15 +45,24 @@ interface AgentConnectorSetupContext {
   replacedBinding?: ConnectorPickerBindingRef;
 }
 
+interface AgentConnectorAuthorizationContext {
+  connector: ConnectorCatalogItem;
+  connection: PersonalConnection;
+}
+
 function draftBindingRef(
   agentID: string,
   binding: AgentConnectorBinding
 ): ConnectorPickerBindingRef {
   return {
-    id: `agent-draft:${agentID}:${binding.connector_id}:${binding.connection_id}`,
+    id:
+      binding.binding_id ||
+      `agent-draft:${agentID}:${binding.connector_id}:${binding.connection_id}`,
     connection_id: binding.connection_id,
     connector_id: binding.connector_id,
     status: 'active',
+    revision: binding.revision,
+    authorization_mode: binding.authorization_mode,
   };
 }
 
@@ -79,28 +90,108 @@ function EnabledAgentRuntimeConnectorDialog({
   const t = useT('connectors');
   const { locale } = useLocale();
   const [setup, setSetup] = useState<AgentConnectorSetupContext>();
+  const [authorization, setAuthorization] = useState<AgentConnectorAuthorizationContext>();
+  const [authorizationMode, setAuthorizationMode] = useState<'ask_each_time' | 'direct'>(
+    'ask_each_time'
+  );
   const pickerFocusRef = useRef({ open, anchorElement });
   pickerFocusRef.current = { open, anchorElement };
 
   useEffect(() => {
     setSetup(undefined);
+    setAuthorization(undefined);
+    setAuthorizationMode('ask_each_time');
   }, [open, agentId]);
 
   const pickerBindings = useMemo(
     () => connectorBindings.map(binding => draftBindingRef(agentId, binding)),
     [agentId, connectorBindings]
   );
-  const selectConnectionInDraft = (
+  const beginAuthorization = (
     connector: ConnectorCatalogItem,
     connection: PersonalConnection
   ) => {
-    onConfirmConnectorBindings(
-      normalizeAgentConnectorBindings([
-        ...connectorBindings,
-        { connector_id: connector.id, connection_id: connection.id },
-      ])
-    );
+    const current = connectorBindings.find(binding => binding.connector_id === connector.id);
+    setAuthorizationMode(current?.authorization_mode === 'direct' ? 'direct' : 'ask_each_time');
+    setAuthorization({ connector, connection });
   };
+
+  if (authorization) {
+    const connectionName =
+      authorization.connection.name ||
+      authorization.connection.external_display_name ||
+      authorization.connector.name;
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent size="sm" className="overflow-hidden p-0">
+          <DialogHeader className="border-b pb-4 pr-12">
+            <DialogTitle>{t('picker.authorization.addToAgentTitle')}</DialogTitle>
+            <DialogDescription>
+              {t('picker.authorization.selectedConnection', { connection: connectionName })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogBody className="space-y-4 p-5">
+            <div className="space-y-2 rounded-lg border border-primary/30 bg-primary/5 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <Label htmlFor="agent-connector-authorization-mode">
+                  {t('picker.authorization.modeLabel')}
+                </Label>
+                <span className="text-xs text-muted-foreground">
+                  {t('picker.authorization.required')}
+                </span>
+              </div>
+              <Select
+                value={authorizationMode}
+                onValueChange={value =>
+                  setAuthorizationMode(value === 'direct' ? 'direct' : 'ask_each_time')
+                }
+              >
+                <SelectTrigger id="agent-connector-authorization-mode">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ask_each_time">
+                    {t('picker.authorization.askShort')}
+                  </SelectItem>
+                  <SelectItem value="direct">
+                    {t('picker.authorization.directShort')}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <p className="rounded-lg bg-primary/10 px-3 py-2 text-xs leading-5 text-primary">
+              {t('picker.authorization.agentScopeHint')}
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => setAuthorization(undefined)}>
+                {t('picker.authorization.cancel')}
+              </Button>
+              <Button
+                type="button"
+                onClick={() => {
+                  const next = normalizeAgentConnectorBindings([
+                    ...connectorBindings.filter(
+                      binding => binding.connector_id !== authorization.connector.id
+                    ),
+                    {
+                      connector_id: authorization.connector.id,
+                      connection_id: authorization.connection.id,
+                      authorization_mode: authorizationMode,
+                    },
+                  ]);
+                  onConfirmConnectorBindings(next);
+                  setAuthorization(undefined);
+                  onOpenChange(false);
+                }}
+              >
+                {t('picker.authorization.confirmAdd')}
+              </Button>
+            </div>
+          </DialogBody>
+        </DialogContent>
+      </Dialog>
+    );
+  }
 
   if (setup) {
     const setupConnector = localizeConnectorCatalogItem(setup.connector, locale);
@@ -156,7 +247,7 @@ function EnabledAgentRuntimeConnectorDialog({
                   toast.success(t('picker.connectionReadyNotAdded'));
                   return;
                 }
-                selectConnectionInDraft(setup.connector, connection);
+                beginAuthorization(setup.connector, connection);
                 setSetup(undefined);
               }}
             />
@@ -181,9 +272,9 @@ function EnabledAgentRuntimeConnectorDialog({
         if (connectorBindings.some(binding => binding.connector_id === request.connector.id)) {
           throw new Error('connector switch confirmation is required');
         }
-        selectConnectionInDraft(request.connector, request.connection);
+        beginAuthorization(request.connector, request.connection);
       }}
-      onRequestSwitch={request => selectConnectionInDraft(request.connector, request.connection)}
+      onRequestSwitch={request => beginAuthorization(request.connector, request.connection)}
       onRequestConnectAndAdd={request =>
         setSetup({ connector: request.connector, replacedBinding: request.replacedBinding })
       }

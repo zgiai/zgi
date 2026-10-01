@@ -77,7 +77,7 @@ export function ConnectorDetailPage({
           <ConnectorPageMessage
             kind="disabled"
             title={t('title')}
-            description={featureLoading ? t('description') : t('disabledDescription')}
+            description={featureLoading ? t('catalog.loading') : t('disabledDescription')}
           />
         </div>
       </div>

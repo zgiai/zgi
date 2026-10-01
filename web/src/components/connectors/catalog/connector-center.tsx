@@ -1,8 +1,9 @@
 'use client';
 
 import { mailDisplayGroup } from '../mail-display-model';
-import { useDeferredValue } from 'react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { usePendingSetups } from '@/hooks/connectors/use-pending-setups';
+import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import Link from 'next/link';
 import { useLocale } from 'next-intl';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
@@ -30,7 +31,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { connectorCatalogItems, useConnectorCatalog } from '@/hooks/connectors/use-connectors';
+import {
+  connectorCatalogItems,
+  personalConnectionItems,
+  useConnectorCatalog,
+  usePersonalConnections,
+} from '@/hooks/connectors/use-connectors';
 import { useT } from '@/i18n';
 import type {
   ConnectorCatalogStatus,
@@ -57,6 +63,9 @@ function catalogTag(value: string | null): ConnectorTag | undefined {
     : undefined;
 }
 
+/** The URL carries the query for sharing; the input itself must never wait on it. */
+const SEARCH_URL_SYNC_DELAY_MS = 300;
+
 interface ConnectorCenterProps {
   enabled: boolean;
   featureLoading?: boolean;
@@ -69,13 +78,26 @@ export function ConnectorCenter({ enabled, featureLoading = false }: ConnectorCe
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const query = searchParams.get('q') ?? '';
-  const deferredQuery = useDeferredValue(query);
+  const queryFromUrl = searchParams.get('q') ?? '';
+  const [searchText, setSearchText] = useState(queryFromUrl);
+  const debouncedSearchText = useDebouncedValue(searchText, SEARCH_URL_SYNC_DELAY_MS);
+  const deferredQuery = useDeferredValue(searchText);
   const status = catalogStatus(searchParams.get('status'));
   const category = catalogCategory(searchParams.get('category'));
   const tag = catalogTag(searchParams.get('tag'));
   const catalogQuery = useConnectorCatalog(undefined, enabled);
   const pendingQuery = usePendingSetups('feishu', enabled);
+  const connectionsQuery = usePersonalConnections(undefined, enabled);
+  const connectionNames = useMemo(() => {
+    const names = new Map<string, string[]>();
+    for (const connection of personalConnectionItems(connectionsQuery.data?.data)) {
+      const values = names.get(connection.connector_id) ?? [];
+      if (connection.name) values.push(connection.name);
+      if (connection.external_display_name) values.push(connection.external_display_name);
+      names.set(connection.connector_id, values);
+    }
+    return names;
+  }, [connectionsQuery.data]);
   const items = connectorCatalogItems(catalogQuery.data?.data)
     .filter(item => isConnectorListed(item.id))
     .map(item =>
@@ -86,47 +108,64 @@ export function ConnectorCenter({ enabled, featureLoading = false }: ConnectorCe
     );
   const filteredItems = filterConnectorCatalog(
     items,
-    { query: deferredQuery, status, category, tag },
+    { query: deferredQuery, status, category, tag, connectionNames },
     new Set((pendingQuery.data?.data.items ?? []).map(item => item.connector_id))
   );
   const partitioned = partitionConnectorCatalog(filteredItems);
 
-  const updateParams = (values: {
-    q?: string;
-    status?: ConnectorCatalogStatus;
-    category?: ConnectorCategory;
-    tag?: ConnectorTag;
-  }) => {
-    const params = new URLSearchParams(searchParams.toString());
-    if (values.q !== undefined) {
-      if (values.q) params.set('q', values.q);
-      else params.delete('q');
-    }
-    if (values.status !== undefined) {
-      if (values.status === 'all') params.delete('status');
-      else params.set('status', values.status);
-    }
-    if ('category' in values) {
-      if (values.category) params.set('category', values.category);
-      else params.delete('category');
-    }
-    if ('tag' in values) {
-      if (values.tag) params.set('tag', values.tag);
-      else params.delete('tag');
-    }
-    const next = params.toString();
-    router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
-  };
+  const updateParams = useCallback(
+    (values: {
+      q?: string;
+      status?: ConnectorCatalogStatus;
+      category?: ConnectorCategory;
+      tag?: ConnectorTag;
+    }) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (values.q !== undefined) {
+        if (values.q) params.set('q', values.q);
+        else params.delete('q');
+      }
+      if (values.status !== undefined) {
+        if (values.status === 'all') params.delete('status');
+        else params.set('status', values.status);
+      }
+      if ('category' in values) {
+        if (values.category) params.set('category', values.category);
+        else params.delete('category');
+      }
+      if ('tag' in values) {
+        if (values.tag) params.set('tag', values.tag);
+        else params.delete('tag');
+      }
+      const next = params.toString();
+      router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
+    },
+    [pathname, router, searchParams]
+  );
 
-  const resetFilters = () => {
+  const resetFilters = useCallback(() => {
     const params = new URLSearchParams(searchParams.toString());
     params.delete('q');
     params.delete('status');
     params.delete('category');
     params.delete('tag');
     const next = params.toString();
+    setSearchText('');
     router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
-  };
+  }, [pathname, router, searchParams]);
+
+  // Adopt URL changes that did not come from the search box, such as back/forward or a shared link.
+  useEffect(() => {
+    setSearchText(queryFromUrl);
+  }, [queryFromUrl]);
+
+  // Persist the settled text so the URL stays shareable without driving the input value.
+  useEffect(() => {
+    const nextQuery = debouncedSearchText.trim();
+    if (nextQuery !== searchText.trim()) return;
+    if (nextQuery === queryFromUrl) return;
+    updateParams({ q: nextQuery });
+  }, [debouncedSearchText, queryFromUrl, searchText, updateParams]);
 
   if (!enabled) {
     return (
@@ -135,7 +174,7 @@ export function ConnectorCenter({ enabled, featureLoading = false }: ConnectorCe
           <ConnectorPageMessage
             kind="disabled"
             title={t('title')}
-            description={featureLoading ? t('description') : t('disabledDescription')}
+            description={featureLoading ? t('catalog.loading') : t('disabledDescription')}
           />
         </div>
       </div>
@@ -173,8 +212,8 @@ export function ConnectorCenter({ enabled, featureLoading = false }: ConnectorCe
           </div>
 
           <SearchInput
-            value={query}
-            onChange={event => updateParams({ q: event.target.value })}
+            value={searchText}
+            onChange={event => setSearchText(event.target.value)}
             placeholder={t('searchPlaceholder')}
             aria-label={t('searchAria')}
             className="h-10 w-full bg-background"

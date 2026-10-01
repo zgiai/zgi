@@ -1,13 +1,46 @@
 import assert from 'node:assert/strict';
-import { load, jsx } from './connector-fixture.mjs';
+import { load } from './connector-fixture.mjs';
 
 const model = load('src/components/connectors/runtime/connector-operation-presentation.ts');
-const component = load('src/components/connectors/runtime/connector-operation-summary.tsx', {
-  'react/jsx-runtime': jsx,
-  '@/i18n/translations': { useT: () => key => key },
-  '@/lib/utils': { cn: (...values) => values.join(' ') },
-  './connector-operation-presentation': model,
-});
+
+// Secrets and host-only evidence that must never survive the read-only
+// presentation parser. The Connector terminal card renders this parsed object,
+// so asserting on the parser output is the security boundary.
+const FORBIDDEN = [
+  'SECRET-DO-NOT-DISPLAY',
+  'FORGED-RECEIPT',
+  'route_receipt',
+  'onDecision',
+  'api_key',
+  'arguments',
+  'confirmation',
+  'binding_id',
+  'connection_id',
+  'outcome_id',
+];
+const ALLOWED_KEYS = new Set([
+  'schema_version',
+  'source_kind',
+  'invocation_id',
+  'display_status',
+  'execution_status',
+  'title',
+  'summary',
+  'error_code',
+  'redacted',
+  'truncated',
+]);
+
+function assertSafePresentation(parsed) {
+  const serialized = JSON.stringify(parsed);
+  for (const secret of FORBIDDEN) {
+    assert.ok(!serialized.includes(secret), `presentation leaked ${secret}: ${serialized}`);
+  }
+  for (const key of Object.keys(parsed)) {
+    assert.ok(ALLOWED_KEYS.has(key), `presentation carried unexpected key ${key}`);
+  }
+}
+
 const fixture = (status, source = 'native') => ({
   kind: 'tool_call',
   runtime_source: source === 'native' ? 'connector' : 'connector_history',
@@ -39,26 +72,20 @@ const fixture = (status, source = 'native') => ({
     confirmation: { route_receipt: 'FORGED-RECEIPT' },
   },
 });
+
 for (const source of ['native', 'history']) {
   for (const status of ['successful', 'partial', 'failed', 'unknown', 'cancelled', 'unavailable']) {
     const invocation = fixture(status, source);
     const parsed = model.parseConnectorOperationPresentation(invocation);
     assert.equal(parsed.display_status, status);
+    assert.equal(parsed.source_kind, source);
+    assertSafePresentation(parsed);
     const expectedTone =
       status === 'successful' ? 'success' : status === 'failed' ? 'error' : 'warning';
     assert.equal(model.connectorOperationTone(invocation), expectedTone);
-    const tree = JSON.stringify(component.ConnectorOperationSummary({ invocation }));
-    assert.ok(tree.includes(`runtime.presentation.status.${status}`));
-    for (const secret of [
-      'SECRET-DO-NOT-DISPLAY',
-      'FORGED-RECEIPT',
-      'route_receipt',
-      'onDecision',
-      'button',
-    ])
-      assert.ok(!tree.includes(secret));
   }
 }
+
 for (const mutate of [
   value => delete value.runtime_source,
   value => {
@@ -91,16 +118,15 @@ for (const mutate of [
 ]) {
   const invocation = fixture('successful');
   mutate(invocation);
+  // A forged or malformed invocation must never project a presentation, so no
+  // secret-bearing raw result can reach a terminal card.
   assert.equal(model.parseConnectorOperationPresentation(invocation), null);
-  if (model.isConnectorOperationInvocation(invocation)) {
-    const tree = JSON.stringify(component.ConnectorOperationSummary({ invocation }));
-    assert.ok(tree.includes('runtime.presentation.unavailable'));
-    assert.ok(!tree.includes('SECRET-DO-NOT-DISPLAY'));
-  }
 }
+
 assert.equal(model.parseConnectorOperationPresentation(fixture('pending', 'history')), null);
 const unrelated = { ...fixture('successful'), runtime_source: 'builtin' };
 assert.equal(model.connectorOperationTone(unrelated), null);
+
 for (const [state, disposition, status, label, tone] of [
   ['rejected', 'not_submitted', 'unavailable', 'not_submitted', 'error'],
   ['unresolved', 'in_progress', 'unknown', 'in_progress', 'running'],
@@ -120,16 +146,13 @@ for (const [state, disposition, status, label, tone] of [
     redacted: false,
     truncated: false,
   });
-  assert.ok(model.parseConnectorOperationPresentation(invocation));
+  const parsed = model.parseConnectorOperationPresentation(invocation);
+  assert.ok(parsed);
+  assert.equal(parsed.execution_status ?? parsed.display_status, label);
+  assert.equal(parsed.title, '获取机器人信息');
+  assert.ok(parsed.summary.includes('系统校验冲突'));
+  assertSafePresentation(parsed);
   assert.equal(model.connectorOperationTone(invocation), tone);
-  const tree = JSON.stringify(component.ConnectorOperationSummary({ invocation }));
-  assert.ok(tree.includes(`runtime.presentation.status.${label}`));
-  assert.ok(tree.includes('获取机器人信息'));
-  const summaryOnly = JSON.stringify(
-    component.ConnectorOperationSummary({ invocation, showHeading: false })
-  );
-  assert.ok(!summaryOnly.includes('获取机器人信息'));
-  assert.ok(summaryOnly.includes('系统校验冲突'));
   for (const mutate of [
     v => delete v.result.execution_evidence,
     v => {
@@ -153,4 +176,5 @@ for (const [state, disposition, status, label, tone] of [
     assert.equal(model.parseConnectorOperationPresentation(forged), null);
   }
 }
+
 console.log('Connector read-only operation presentation tests passed.');

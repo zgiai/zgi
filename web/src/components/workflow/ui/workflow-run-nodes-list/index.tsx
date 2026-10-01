@@ -19,6 +19,7 @@ import {
 } from './utils';
 import { RuntimeStructuredView, RuntimeValuePreview } from './runtime-structured-view';
 import { ConnectorWorkflowResult } from '@/components/connectors/runtime/connector-workflow-result';
+import { parseConnectorNodeResult } from '@/components/connectors/runtime/connector-runtime-source';
 
 export type { NodeRunStatus, WorkflowRunNodeListItem } from './types';
 const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
@@ -143,6 +144,8 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
         );
         const raw = executions[selectedIndex];
         if (!raw) return null;
+        const connectorResult = parseConnectorNodeResult(raw.executionMetadata, raw.nodeOutput);
+        const isConnectorNode = Boolean(connectorResult);
         const itemKey = group.key;
         const executionKey = raw.executionId ?? `${raw.nodeId}-${selectedIndex}`;
         const summary = getNodeSummary(raw, runtimeLabel);
@@ -395,7 +398,7 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                 </div>
               </div>
             ) : null}
-            {!isCanvasVariant && showFailureDetails && raw.error ? (
+            {!isCanvasVariant && showFailureDetails && raw.error && !isConnectorNode ? (
               <div
                 className="mt-2 rounded-md border border-destructive/15 bg-destructive/[0.03] px-2.5 py-2"
                 title={raw.error}
@@ -602,6 +605,7 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                   if (
                     !showDetail ||
                     inContainerRoundsView ||
+                    isConnectorNode ||
                     raw.nodeOutput === undefined ||
                     raw.nodeType === 'loop'
                   ) {

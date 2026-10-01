@@ -155,14 +155,12 @@ export function AIChatSkillTracePanel({
 
   const events = useMemo<SkillTraceEvent[]>(
     () =>
-      invocations.map(invocation => {
+      invocations.filter(invocation => !isConnectorOperationInvocation(invocation)).map(invocation => {
         const skillId = invocation.skill_id || t('consoleChat.skills.trace.unknownSkill');
         const baseSkill =
           skillDisplayById[skillId] ?? getFallbackAIChatSkillDisplayInfo(skillId, locale);
         const isConnector = isConnectorOperationInvocation(invocation);
-        const skill = isConnector
-          ? { ...baseSkill, label: t('consoleChat.connectedApps.title') }
-          : baseSkill;
+        const skill = baseSkill;
         const fallbackToolName =
           getAIChatSkillToolDisplayName(invocation.skill_id, invocation.tool_name, locale) ||
           (isConnector ? null : invocation.path) ||

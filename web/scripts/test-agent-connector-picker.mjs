@@ -91,6 +91,20 @@ assert.deepEqual(
 
 assert.deepEqual(
   normalizeAgentConnectorBindings([
+    { ...connector('github', 'connection-direct'), authorization_mode: 'direct', revision: 3 },
+  ]),
+  [
+    {
+      ...connector('github', 'connection-direct'),
+      authorization_mode: 'direct',
+      revision: 3,
+    },
+  ],
+  'Agent authorization mode survives normalization and remains bound to the selected connection'
+);
+
+assert.deepEqual(
+  normalizeAgentConnectorBindings([
     connector('github', 'connection-current'),
     connector('github', 'connection-confirmed-replacement'),
   ]),
@@ -368,9 +382,10 @@ assert.match(dialog, /onRequestSwitch/);
 assert.match(dialog, /ConnectorKeySetupPanel/);
 assert.match(dialog, /normalizeAgentConnectorBindings/);
 assert.match(dialog, /connectionReadyNotAdded/);
-assert.match(dialog, /useEffect\(\(\) => \{\s*setSetup\(undefined\);\s*\}, \[open, agentId\]\)/);
+assert.match(dialog, /useEffect\(\(\) => \{[\s\S]*setSetup\(undefined\);[\s\S]*setAuthorization\(undefined\)/);
 assert.doesNotMatch(dialog, /connectorService|attachTargetBinding|createTargetBinding/);
-assert.doesNotMatch(dialog, /Checkbox|allowed_action_ids|allowedActions|grant|policy|scope/);
+assert.match(dialog, /authorizationMode|addToAgentTitle/);
+assert.match(dialog, /picker\.authorization\.confirm/);
 assert.match(dialogs, /<AgentRuntimeConnectorDialog \{\.\.\.model\.dialogs\.connector\} \/>/);
 assert.doesNotMatch(dialogs, /connectorsEnabled|externalIntegrationsEnabled/);
 assert.match(bindingHealth, /bindingHealth\.types\.connector_connection/);

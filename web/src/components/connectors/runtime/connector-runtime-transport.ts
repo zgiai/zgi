@@ -123,12 +123,6 @@ export class ConnectorRuntimeDecisionTransport {
       ? 'submitting'
       : this.settledByReceipt.get(key)?.result.state;
   }
-  markUnconfirmed(receipt: string, scope: string) {
-    const key = JSON.stringify([scope, receipt]);
-    if (this.pendingByReceipt.has(key) || this.settledByReceipt.has(key)) return;
-    this.settledByReceipt.set(key, { decision: 'confirmed', result: unknownResult(receipt) });
-    this.emit();
-  }
   acceptStatus(receipt: string, value: unknown, scope = '') {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
     const { resolution, ...result } = value as Record<string, unknown>;

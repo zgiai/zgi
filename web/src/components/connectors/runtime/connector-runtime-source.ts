@@ -11,6 +11,19 @@ function stringValue(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function isConnectorSkillInvocation(invocation: Record<string, unknown> | undefined): boolean {
+  if (!invocation) return false;
+  if (stringValue(invocation.runtime_source) === 'connector') return true;
+  // Legacy persisted traces predate runtime_source but are still
+  // unambiguously Connector-native when they belong to connector-runtime and
+  // carry the host operation/presentation fields.
+  if (stringValue(invocation.runtime_source) !== '' || stringValue(invocation.skill_id) !== 'connector-runtime') {
+    return false;
+  }
+  const result = record(invocation.result);
+  return Boolean(result?.operation || result?.connector_presentation);
+}
+
 /**
  * Returns the server-issued receipt represented by either Connector timeline
  * source. Connector skill events are kept as a separate source for history,
@@ -32,7 +45,7 @@ export function connectorReceiptFromTimelineItem(value: unknown): string | null 
   }
   if (item.type !== 'skill_event') return null;
   const invocation = record(item.invocation);
-  if (stringValue(invocation?.runtime_source) !== 'connector') return null;
+  if (!isConnectorSkillInvocation(invocation)) return null;
   const result = record(invocation?.result);
   const confirmation = record(result?.confirmation ?? invocation?.confirmation);
   const receipt =
@@ -46,7 +59,7 @@ export function isPendingConnectorSkillEvent(value: unknown): boolean {
   const item = record(value);
   if (item?.type !== 'skill_event') return false;
   const invocation = record(item.invocation);
-  if (stringValue(invocation?.runtime_source) !== 'connector') return false;
+  if (!isConnectorSkillInvocation(invocation)) return false;
   const result = record(invocation?.result);
   return stringValue(result?.state) === 'requires_confirmation';
 }
@@ -72,8 +85,58 @@ export function parseConnectorSkillEventResult(value: unknown) {
   const item = record(value);
   if (item?.type !== 'skill_event') return null;
   const invocation = record(item.invocation);
-  if (stringValue(invocation?.runtime_source) !== 'connector') return null;
-  return parseConnectorRuntimeExecutionResult(invocation?.result);
+  if (!isConnectorSkillInvocation(invocation)) return null;
+  const result = record(invocation?.result);
+  if (!result) return null;
+  // Skill invocation results also carry host-authored operation/evidence
+  // fields. Project only the Runtime envelope before applying its strict
+  // parser; otherwise valid Connector-native Skill results fall back to the
+  // legacy Skill card simply because they contain those extra trusted fields.
+  return parseConnectorRuntimeExecutionResult({
+    state: result.state,
+    ...(result.decision_id !== undefined ? { decision_id: result.decision_id } : {}),
+    ...(result.error_code !== undefined ? { error_code: result.error_code } : {}),
+    ...(result.confirmation !== undefined ? { confirmation: result.confirmation } : {}),
+    ...(result.connector_presentation !== undefined
+      ? { connector_presentation: result.connector_presentation }
+      : {}),
+  });
+}
+
+/**
+ * Returns the stable display identity shared by progress and skill sources.
+ * Logical operation ids are authoritative; receipts and invocation ids keep
+ * older history readable until every producer emits the new presentation.
+ */
+export function connectorOperationIdentityFromTimelineItem(value: unknown): string | null {
+  const item = record(value);
+  if (!item) return null;
+  if (item.type === 'progress_text') {
+    const result = parseConnectorProgressResult({ phase: stringValue(item.phase), result: item.result });
+    const presentation = record(record(result)?.connector_presentation);
+    return (
+      stringValue(presentation?.invocation_id) ||
+      stringValue(item.progress_id) ||
+      stringValue(record(record(result)?.confirmation)?.route_receipt)
+    ) || null;
+  }
+  if (item.type !== 'skill_event') return null;
+  const invocation = record(item.invocation);
+  if (!isConnectorSkillInvocation(invocation)) return null;
+  const result = parseConnectorSkillEventResult(value);
+  const presentation = record(record(result)?.connector_presentation);
+  const confirmation = record(record(invocation?.result)?.confirmation);
+  return (
+    stringValue(presentation?.invocation_id) ||
+    stringValue(invocation?.invocation_id) ||
+    stringValue(invocation?.runtime_id) ||
+    stringValue(confirmation?.route_receipt)
+  ) || null;
+}
+
+function connectorOperationIdentityFromResult(value: unknown, fallback: string): string {
+  const presentation = record(record(value)?.connector_presentation);
+  return stringValue(presentation?.invocation_id) || fallback;
 }
 
 export function parseConnectorNodeResult(metadata: unknown, value: unknown) {
@@ -122,6 +185,9 @@ export function connectorChatEvents(
           ...(event.decision_id !== undefined ? { decision_id: event.decision_id } : {}),
           ...(event.error_code !== undefined ? { error_code: event.error_code } : {}),
           ...(event.confirmation !== undefined ? { confirmation: event.confirmation } : {}),
+          ...(event.connector_presentation !== undefined
+            ? { connector_presentation: event.connector_presentation }
+            : {}),
         },
       });
       if (
@@ -299,10 +365,23 @@ export function withoutSupersededConnectorProgress<T>(
   events: ReturnType<typeof connectorChatEvents>
 ): T[] {
   const restored = new Set(events.filter(event => !event.live).map(event => event.receipt));
+  const progressIdentities = new Set(
+    timeline
+      .map(value => {
+        const item = record(value);
+        return item?.type === 'progress_text' ? connectorOperationIdentityFromTimelineItem(value) : null;
+      })
+      .filter((identity): identity is string => Boolean(identity))
+  );
+  const eventIdentities = new Set(
+    events.map(event => connectorOperationIdentityFromResult(event.result, event.receipt))
+  );
   return timeline.filter(value => {
     const item = record(value);
     const itemReceipt = connectorReceiptFromTimelineItem(value);
     if (item?.type === 'skill_event') {
+      const identity = connectorOperationIdentityFromTimelineItem(value);
+      if (identity && (progressIdentities.has(identity) || eventIdentities.has(identity))) return false;
       return !(itemReceipt && isPendingConnectorSkillEvent(value) && restored.has(itemReceipt));
     }
     if (item?.type !== 'progress_text') return true;

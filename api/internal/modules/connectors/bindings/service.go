@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
 )
 
@@ -63,6 +64,12 @@ type ConnectionReader interface {
 	GetConnection(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (core.PersonalConnection, error)
 }
 
+// DefinitionCatalog supplies the server-owned contract digest captured when
+// a binding explicitly opts into direct execution.
+type DefinitionCatalog interface {
+	Get(string) (catalog.Definition, bool)
+}
+
 type UpsertBindingCommand struct {
 	OrganizationID    uuid.UUID
 	ActingPrincipalID uuid.UUID
@@ -70,6 +77,7 @@ type UpsertBindingCommand struct {
 	IdempotencyKey    string `json:"-"`
 	Target            core.TargetRef
 	ExpectedRevision  int
+	AuthorizationMode string
 }
 
 type UpsertBindingResult struct {
@@ -87,6 +95,17 @@ type DetachBindingCommand struct {
 	ExpectedRevision  int
 }
 
+// UpdateBindingAuthorizationCommand changes only the durable authorization
+// mode of an active owner-scoped binding. It is a CAS mutation so a stale
+// picker cannot silently grant or revoke direct execution.
+type UpdateBindingAuthorizationCommand struct {
+	OrganizationID    uuid.UUID
+	ActingPrincipalID uuid.UUID
+	BindingID         uuid.UUID
+	ExpectedRevision  int
+	AuthorizationMode string
+}
+
 // RemovalImpact is the Connector-native binding impact for a Personal
 // Connection. Legacy read-only projections remain available through target
 // listing, but they never block or participate in the native removal lifecycle.
@@ -101,17 +120,23 @@ type Service struct {
 	repository  Repository
 	connections ConnectionReader
 	targets     TargetAuthority
+	catalog     DefinitionCatalog
 	now         func() time.Time
 }
 
-func NewService(repository Repository, connections ConnectionReader, targets TargetAuthority) (*Service, error) {
+func NewService(repository Repository, connections ConnectionReader, targets TargetAuthority, catalogs ...DefinitionCatalog) (*Service, error) {
 	if repository == nil || connections == nil || targets == nil {
 		return nil, core.NewError(core.ErrorCodeInternal, false, nil)
+	}
+	var definitionCatalog DefinitionCatalog
+	if len(catalogs) > 0 {
+		definitionCatalog = catalogs[0]
 	}
 	return &Service{
 		repository:  repository,
 		connections: connections,
 		targets:     targets,
+		catalog:     definitionCatalog,
 		now:         func() time.Time { return time.Now().UTC() },
 	}, nil
 }
@@ -162,6 +187,18 @@ func (service *Service) UpsertBinding(ctx context.Context, command UpsertBinding
 		Revision:  revision,
 		CreatedAt: now,
 		UpdatedAt: now,
+	}
+	if command.AuthorizationMode != "" {
+		binding.Constraint.AuthorizationMode = command.AuthorizationMode
+		if command.AuthorizationMode == core.AuthorizationModeDirect {
+			binding.Constraint.AuthorizationConnectionRevision = connection.Revision
+			binding.Constraint.AuthorizationCredentialVersion = connection.CredentialVersion
+			contractDigest, digestErr := service.authorizationContractDigest(connection.ConnectorID)
+			if digestErr != nil {
+				return UpsertBindingResult{}, digestErr
+			}
+			binding.Constraint.AuthorizationContractDigest = contractDigest
+		}
 	}
 	mutationRepository, ok := service.repository.(LifecycleMutationRepository)
 	if !ok {
@@ -295,6 +332,78 @@ func (service *Service) DetachBinding(ctx context.Context, command DetachBinding
 	return detached, nil
 }
 
+// UpdateBindingAuthorization persists the explicit ask_each_time/direct
+// choice without replacing the connection or target identity.
+func (service *Service) UpdateBindingAuthorization(ctx context.Context, command UpdateBindingAuthorizationCommand) (core.TargetBinding, error) {
+	if err := service.available(); err != nil {
+		return core.TargetBinding{}, err
+	}
+	if !validOwnerScope(command.OrganizationID, command.ActingPrincipalID) ||
+		command.BindingID == uuid.Nil || command.ExpectedRevision < 1 ||
+		(command.AuthorizationMode != core.AuthorizationModeAsk && command.AuthorizationMode != core.AuthorizationModeDirect) {
+		return core.TargetBinding{}, core.NewError(core.ErrorCodeInvalidInput, false, nil)
+	}
+	binding, err := service.repository.GetBinding(ctx, command.OrganizationID, command.ActingPrincipalID, command.BindingID)
+	if err != nil {
+		return core.TargetBinding{}, safeBindingDependencyError(err)
+	}
+	if binding.OrganizationID != command.OrganizationID || binding.OwnerAccountID != command.ActingPrincipalID ||
+		binding.ID != command.BindingID || binding.Target.Type != core.TargetTypeChat {
+		return core.TargetBinding{}, core.NewError(core.ErrorCodeAccessDenied, false, nil)
+	}
+	target := TargetIdentity{Type: binding.Target.Type, ID: binding.Target.ID, Scope: binding.Target.Scope, VersionID: binding.Target.VersionID}
+	if err := service.requireTargetEdit(ctx, command.OrganizationID, command.ActingPrincipalID, target); err != nil {
+		return core.TargetBinding{}, err
+	}
+	if binding.Status != core.BindingStatusActive || binding.Revision != command.ExpectedRevision {
+		return core.TargetBinding{}, core.NewError(core.ErrorCodeConflict, false, nil)
+	}
+	if binding.Constraint == nil || binding.Constraint.Validate() != nil {
+		return core.TargetBinding{}, core.NewError(core.ErrorCodeInternal, false, nil)
+	}
+	constraint := *binding.Constraint
+	constraint.AuthorizationMode = command.AuthorizationMode
+	constraint.AuthorizationConnectionRevision = 0
+	constraint.AuthorizationCredentialVersion = 0
+	constraint.AuthorizationContractDigest = ""
+	if command.AuthorizationMode == core.AuthorizationModeDirect {
+		connection, connectionErr := service.ownedConnection(ctx, command.OrganizationID, command.ActingPrincipalID, binding.ConnectionID)
+		if connectionErr != nil {
+			return core.TargetBinding{}, connectionErr
+		}
+		if connection.State != core.ReadinessReady {
+			return core.TargetBinding{}, core.NewError(core.ErrorCodeConnectionNotReady, false, nil)
+		}
+		constraint.AuthorizationConnectionRevision = connection.Revision
+		constraint.AuthorizationCredentialVersion = connection.CredentialVersion
+		contractDigest, digestErr := service.authorizationContractDigest(connection.ConnectorID)
+		if digestErr != nil {
+			return core.TargetBinding{}, digestErr
+		}
+		constraint.AuthorizationContractDigest = contractDigest
+	}
+	mutationRepository, ok := service.repository.(AuthorizationMutationRepository)
+	if !ok {
+		return core.TargetBinding{}, core.NewError(core.ErrorCodeInternal, false, nil)
+	}
+	updated, err := mutationRepository.UpdateBindingAuthorizationWithLifecycle(
+		ctx, command.OrganizationID, command.ActingPrincipalID, command.BindingID, &constraint, command.ExpectedRevision,
+		BindingLifecycleMutation{
+			ID: uuid.New(), MutationType: MutationBindingUpserted,
+			CorrelationID: bindingAuthorizationCorrelation(command.BindingID, command.ExpectedRevision, command.AuthorizationMode),
+			CreatedAt:     service.now().UTC(),
+		},
+	)
+	if err != nil {
+		return core.TargetBinding{}, safeBindingDependencyError(err)
+	}
+	if updated.ID != binding.ID || updated.Revision != binding.Revision+1 || updated.Constraint == nil ||
+		updated.Constraint.AuthorizationModeValue() != command.AuthorizationMode {
+		return core.TargetBinding{}, core.NewError(core.ErrorCodeInternal, false, nil)
+	}
+	return updated, nil
+}
+
 // GetRemovalImpact does not require current edit authority on every referenced
 // target: an owner must still see stale or published
 // references before removal. It never mutates a binding.
@@ -353,6 +462,23 @@ func (service *Service) ownedConnection(
 	return connection, nil
 }
 
+func (service *Service) authorizationContractDigest(connectorID core.Identifier) (string, error) {
+	if service.catalog == nil {
+		// Isolated callers that do not inject the catalog retain the legacy
+		// compatibility path; production wiring always supplies it.
+		return "", nil
+	}
+	definition, ok := service.catalog.Get(connectorID.String())
+	if !ok {
+		return "", core.NewError(core.ErrorCodeConnectorUnavailable, false, nil)
+	}
+	digest, err := catalog.DefinitionContractDigest(definition)
+	if err != nil || digest == "" {
+		return "", core.NewError(core.ErrorCodeConnectorUnavailable, false, nil)
+	}
+	return digest, nil
+}
+
 func (service *Service) requireTargetEdit(
 	ctx context.Context,
 	organizationID, actingPrincipalID uuid.UUID,
@@ -374,7 +500,8 @@ func (service *Service) available() error {
 func validateUpsertCommand(command UpsertBindingCommand) error {
 	if !validOwnerScope(command.OrganizationID, command.ActingPrincipalID) || command.ConnectionID == uuid.Nil ||
 		len(command.IdempotencyKey) < bindingIdempotencyKeyMinBytes || len(command.IdempotencyKey) > bindingIdempotencyKeyMaxBytes ||
-		command.ExpectedRevision < 0 || !validExactTarget(command.Target) {
+		command.ExpectedRevision < 0 || !validExactTarget(command.Target) ||
+		(command.AuthorizationMode != "" && command.AuthorizationMode != core.AuthorizationModeAsk && command.AuthorizationMode != core.AuthorizationModeDirect) {
 		return core.NewError(core.ErrorCodeInvalidInput, false, nil)
 	}
 	return nil
@@ -440,6 +567,10 @@ func bindingUpsertCorrelation(idempotencyKey string) string {
 
 func bindingDetachCorrelation(bindingID uuid.UUID, expectedRevision int) string {
 	return "binding-detach:" + bindingID.String() + ":" + strconv.Itoa(expectedRevision)
+}
+
+func bindingAuthorizationCorrelation(bindingID uuid.UUID, expectedRevision int, mode string) string {
+	return "binding-authorization:" + bindingID.String() + ":" + strconv.Itoa(expectedRevision) + ":" + mode
 }
 
 func safeBindingDependencyError(err error) error {

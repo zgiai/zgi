@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"github.com/google/uuid"
 	core "github.com/zgiai/zgi/api/internal/modules/connectors/core"
 )
@@ -15,6 +16,7 @@ type workflowConnectorSelection struct {
 	ConnectionID uuid.UUID
 	ConnectorID  core.Identifier
 	OperationID  core.Identifier
+	AuthorizationMode string
 }
 
 func (s *WorkflowService) workflowConnectorBindingRows(ctx context.Context, workflow *Workflow, graph map[string]interface{}, accountID string) ([]workflowConnectorSelection, error) {
@@ -78,7 +80,11 @@ func (s *WorkflowService) workflowConnectorBindingRows(ctx context.Context, work
 				return nil, fmt.Errorf("Connector binding is invalid")
 			}
 		}
-		result = append(result, workflowConnectorSelection{NodeID: nodeID, OwnerID: owner, ConnectionID: connection, ConnectorID: connector, OperationID: operation, BindingID: binding})
+		authorizationMode := strings.TrimSpace(workflowString(ref, "authorization_mode"))
+		if authorizationMode != "" && authorizationMode != core.AuthorizationModeAsk && authorizationMode != core.AuthorizationModeDirect {
+			return nil, fmt.Errorf("Connector authorization mode is invalid")
+		}
+		result = append(result, workflowConnectorSelection{NodeID: nodeID, OwnerID: owner, ConnectionID: connection, ConnectorID: connector, OperationID: operation, BindingID: binding, AuthorizationMode: authorizationMode})
 	}
 	return result, nil
 }

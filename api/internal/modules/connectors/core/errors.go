@@ -54,7 +54,7 @@ func (code ErrorCode) Valid() bool {
 		ErrorCodeVerificationWaiting, ErrorCodeProviderResponseUnrecognized, ErrorCodeVerificationUncertain,
 		ErrorCodeMailAuthenticationRejected, ErrorCodeMailAppPasswordRequired, ErrorCodeMailTLSRequired,
 		ErrorCodeMailPolicyRestricted, ErrorCodeMailReferenceExpired, ErrorCodeMailSizeExceeded, ErrorCodeMailRecipientRejected, ErrorCodeMailSubmissionRejected,
-		ErrorCodeMailClientIdentityRequired, ErrorCodeMailAuthMechanismUnsupported:
+		ErrorCodeMailClientIdentityRequired, ErrorCodeMailAuthMechanismUnsupported, ErrorCodeMailUidStateUnavailable:
 		return true
 	default:
 		return false

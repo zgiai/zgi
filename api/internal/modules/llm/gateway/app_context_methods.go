@@ -220,7 +220,7 @@ func (s *llmGatewayServiceImpl) createEmbeddingsInternal(
 	if err != nil {
 		return nil, err
 	}
-	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, "", req.Model, 3)
+	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, req.Provider, req.Model, 3)
 	if err != nil {
 		reportLLMSelectionFailure(ctx, err, req.Model, organizationID.String(), shadowOrganizationID.String())
 		return nil, fmt.Errorf("failed to select provider: %w", err)

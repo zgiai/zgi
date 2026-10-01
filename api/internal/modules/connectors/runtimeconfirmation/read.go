@@ -61,7 +61,7 @@ func (service *Service) ReadStatus(ctx context.Context, query StatusQuery) (Stat
 	if continuation.State == execution.ConfirmationContinuationCancelled {
 		command.Decision = execution.ConfirmationDecisionCancelled
 	}
-	result, err := projectExisting(continuation, command.Decision)
+	result, err := projectExisting(ctx, continuation, command.Decision)
 	if err != nil {
 		return StatusResult{}, err
 	}

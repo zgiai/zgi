@@ -20,7 +20,7 @@ import (
 func connectorBindingViews(bindings []connectorcore.TargetBinding) []dto.AgentConnectorBinding {
 	result := make([]dto.AgentConnectorBinding, 0, len(bindings))
 	for _, binding := range bindings {
-		result = append(result, dto.AgentConnectorBinding{BindingID: binding.ID.String(), Revision: binding.Revision, ConnectorID: binding.ConnectorID.String(), ConnectionID: binding.ConnectionID.String()})
+		result = append(result, dto.AgentConnectorBinding{BindingID: binding.ID.String(), Revision: binding.Revision, ConnectorID: binding.ConnectorID.String(), ConnectionID: binding.ConnectionID.String(), AuthorizationMode: binding.Constraint.AuthorizationModeValue()})
 	}
 	return normalizeAgentConnectorBindings(result)
 }

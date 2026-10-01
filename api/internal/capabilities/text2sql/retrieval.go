@@ -21,7 +21,7 @@ type fieldSearchVectorDB interface {
 }
 
 type EmbeddingModelResolver interface {
-	ResolveEmbedding(ctx context.Context, organizationID string) (provider, model string, err error)
+	ResolveEmbedding(ctx context.Context, organizationID, dataSourceID string) (provider, model string, err error)
 }
 
 type RetrievalService struct {
@@ -51,7 +51,7 @@ func (s *RetrievalService) Retrieve(ctx context.Context, req Request) (SchemaSel
 	if s == nil || s.repo == nil || s.models == nil || s.embedder == nil || s.vectors == nil || s.sql == nil {
 		return SchemaSelection{}, ErrIndexNotReady
 	}
-	provider, model, err := s.models.ResolveEmbedding(ctx, req.Scope.OrganizationID)
+	provider, model, err := s.models.ResolveEmbedding(ctx, req.Scope.OrganizationID, req.DataSourceID)
 	if err != nil || provider == "" || model == "" {
 		return SchemaSelection{}, fmt.Errorf("%w: embedding model", ErrIndexNotReady)
 	}

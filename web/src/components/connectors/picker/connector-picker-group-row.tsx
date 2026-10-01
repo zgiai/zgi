@@ -83,7 +83,7 @@ export function ConnectorPickerGroupRow({
     onSelect(row, triggerRef.current);
   };
   const summaryClass =
-    'col-start-2 h-[54px] w-full min-w-0 shrink-0 justify-between rounded-lg px-3 sm:w-[228px]';
+    'h-[54px] w-full min-w-0 shrink-0 justify-between rounded-lg px-3 md:col-start-3';
 
   return (
     <article className="min-w-0 rounded-xl border bg-background p-3.5 shadow-xs">

@@ -67,12 +67,75 @@ func (c *Client) openReference(in providers.CredentialInput, value, kind string)
 	}
 	n := c.handles.NonceSize()
 	plain, err := c.handles.Open(nil, encoded[:n], encoded[n:], []byte(c.profile.ID+"-reference-v1"))
-	if err != nil || json.Unmarshal(plain, &r) != nil || r.Kind != kind || r.Scope != scopeHash(in.ResourceScope) || r.Expires <= c.now().Unix() || r.Validity == 0 || !validMailbox(r.Mailbox) {
+	if err != nil || json.Unmarshal(plain, &r) != nil || r.Kind != kind || r.Scope != scopeHash(in.ResourceScope) || r.Expires <= c.now().Unix() || !validMailbox(r.Mailbox) {
 		return reference{}, expiredReference()
 	}
 	return r, nil
 }
 func expiredReference() error { return &providers.Failure{Code: core.ErrorCodeMailReferenceExpired} }
+
+func uidStateUnavailable() error {
+	return &providers.Failure{Code: core.ErrorCodeMailUidStateUnavailable}
+}
+
+// RFC 3501 makes UIDNEXT and UIDVALIDITY optional on SELECT/EXAMINE, and the
+// locked IMAP client only collects them from untagged responses. Recover them
+// with STATUS before treating a mailbox as unusable.
+func (c *Client) resolveUIDs(cl *client.Client, mailbox string, status *imap.MailboxStatus) {
+	if status.UidValidity != 0 && status.UidNext != 0 {
+		return
+	}
+	extra, err := cl.Status(mailbox, []imap.StatusItem{imap.StatusUidValidity, imap.StatusUidNext})
+	if err != nil || extra == nil {
+		return
+	}
+	if status.UidValidity == 0 {
+		status.UidValidity = extra.UidValidity
+	}
+	if status.UidNext == 0 {
+		status.UidNext = extra.UidNext
+	}
+}
+
+// highestUID returns one past the largest UID in the selected mailbox. RFC 3501
+// leaves UIDNEXT optional in the SELECT reply, so backward pagination derives
+// its bound from the UIDs themselves rather than treating a missing UIDNEXT as
+// fatal.
+func highestUID(cl *client.Client) (uint32, error) {
+	set := new(imap.SeqSet)
+	set.AddRange(1, 0)
+	uids, err := cl.UidSearch(&imap.SearchCriteria{Uid: set})
+	if err != nil {
+		return 0, protocolFailure(err, false)
+	}
+	var max uint32
+	for _, uid := range uids {
+		if uid > max {
+			max = uid
+		}
+	}
+	return max + 1, nil
+}
+
+// uidBound resolves the exclusive upper UID bound for backward pagination.
+// Verification and listing share it so they cannot disagree about whether a
+// mailbox is usable.
+func uidBound(cl *client.Client, status *imap.MailboxStatus) (uint32, error) {
+	if status.Messages == 0 {
+		return 0, nil
+	}
+	before := status.UidNext
+	if before == 0 {
+		var err error
+		if before, err = highestUID(cl); err != nil {
+			return 0, err
+		}
+	}
+	if before <= 1 {
+		return 0, uidStateUnavailable()
+	}
+	return before, nil
+}
 func validMailbox(value string) bool {
 	return value != "" && len(value) <= 1024 && !strings.ContainsAny(value, "\r\n\x00")
 }
@@ -113,10 +176,8 @@ func (c *Client) read(ctx context.Context, in providers.CredentialInput, operati
 	if err != nil {
 		return nil, c.readFailure(err)
 	}
-	if status.UidValidity == 0 {
-		return nil, expiredReference()
-	}
-	if ref.Validity != 0 && ref.Validity != status.UidValidity {
+	c.resolveUIDs(cl, mailbox, status)
+	if ref.Validity != 0 && status.UidValidity != 0 && ref.Validity != status.UidValidity {
 		return nil, expiredReference()
 	}
 	switch operation {
@@ -182,15 +243,16 @@ func (c *Client) listMessages(cl *client.Client, closeSession func(), in provide
 		return nil, providers.Invalid()
 	}
 	result := []map[string]any{}
-	before := status.UidNext
-	if ref.Before > 0 {
-		before = ref.Before
-	}
-	if status.Messages == 0 {
-		return map[string]any{"messages": result, "next_cursor": ""}, nil
-	}
+	before := ref.Before
 	if before == 0 {
-		return nil, expiredReference()
+		bound, boundErr := uidBound(cl, status)
+		if boundErr != nil {
+			return nil, boundErr
+		}
+		before = bound
+	}
+	if before <= 1 {
+		return map[string]any{"messages": result, "next_cursor": ""}, nil
 	}
 	// UID windows keep the protocol response bounded even for huge mailboxes.
 	// Sparse windows can return an empty page with a continuation cursor.

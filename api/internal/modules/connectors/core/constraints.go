@@ -48,11 +48,23 @@ type AccessConstraint struct {
 	ExpiresAt           *time.Time       `json:"expires_at"`
 	DenyReasons         []string         `json:"deny_reasons"`
 	SourceDigest        string           `json:"source_digest,omitempty"`
+	AuthorizationMode   string           `json:"authorization_mode,omitempty"`
+	// These snapshots make a direct binding authorization stale after a
+	// credential rotation or any connection policy revision. Zero preserves
+	// compatibility for non-Chat projections that predate this field.
+	AuthorizationConnectionRevision int `json:"authorization_connection_revision,omitempty"`
+	AuthorizationCredentialVersion  int `json:"authorization_credential_version,omitempty"`
+	AuthorizationContractDigest      string `json:"authorization_contract_digest,omitempty"`
 }
+
+const (
+	AuthorizationModeAsk    = "ask_each_time"
+	AuthorizationModeDirect = "direct"
+)
 
 func OwnerConstraint(owner uuid.UUID, operations []Identifier) *AccessConstraint {
 	return &AccessConstraint{SchemaVersion: 1, AudienceOwner: owner,
-		AllowedOperationIDs: append([]Identifier{}, operations...), DenyReasons: []string{},
+		AllowedOperationIDs: append([]Identifier{}, operations...), DenyReasons: []string{}, AuthorizationMode: AuthorizationModeAsk,
 		TargetBoundaries: []TargetBoundary{{TargetTypeChat, "*", "live", "*"}, {TargetTypeAgent, "*", "*", "*"}, {TargetTypeWorkflow, "*", "*", "*"}},
 	}
 }
@@ -83,6 +95,15 @@ func (constraint *AccessConstraint) Validate() error {
 		constraint.AllowedOperationIDs == nil || constraint.TargetBoundaries == nil || constraint.DenyReasons == nil {
 		return invalidModel()
 	}
+	if constraint.AuthorizationMode != "" && constraint.AuthorizationMode != AuthorizationModeAsk && constraint.AuthorizationMode != AuthorizationModeDirect {
+		return invalidModel()
+	}
+	if constraint.AuthorizationConnectionRevision < 0 || constraint.AuthorizationCredentialVersion < 0 {
+		return invalidModel()
+	}
+	if constraint.AuthorizationContractDigest != "" && !hmacSHA256HexPattern.MatchString(constraint.AuthorizationContractDigest) {
+		return invalidModel()
+	}
 	seen := map[Identifier]bool{}
 	for _, id := range constraint.AllowedOperationIDs {
 		if !id.Valid() || seen[id] {
@@ -99,6 +120,20 @@ func (constraint *AccessConstraint) Validate() error {
 		return invalidModel()
 	}
 	return nil
+}
+
+// DirectlyAuthorized reports whether this binding explicitly opted into
+// running its currently allowed operations without a per-invocation prompt.
+// Missing mode is the legacy-safe ask_each_time behavior.
+func (constraint *AccessConstraint) DirectlyAuthorized() bool {
+	return constraint != nil && constraint.AuthorizationMode == AuthorizationModeDirect
+}
+
+func (constraint *AccessConstraint) AuthorizationModeValue() string {
+	if constraint == nil || constraint.AuthorizationMode == "" {
+		return AuthorizationModeAsk
+	}
+	return constraint.AuthorizationMode
 }
 
 func (constraint *AccessConstraint) Allows(owner uuid.UUID, operation Identifier, target TargetRef, now time.Time) bool {

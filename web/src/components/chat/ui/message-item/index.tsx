@@ -5,7 +5,7 @@ import type { Message, NodeRunStatus } from '@/components/chat/types';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import WorkflowRunMonitor from '@/components/chat/ui/workflow-run-monitor';
-import { Bot, CirclePause, CircleStop, Copy, Loader } from 'lucide-react';
+import { Bot, CirclePause, CircleStop, Copy, ImagePlus, Loader } from 'lucide-react';
 import { ModelIcon } from 'modelicons';
 import { useT } from '@/i18n';
 import { isSensitiveOutputBlockedValue } from '@/utils/model-output-filter';
@@ -57,6 +57,8 @@ interface MessageItemProps {
   showAvatar?: boolean;
   /** Show copy button */
   showCopyButton?: boolean;
+  /** Add an action to use a generated image as the next reference image */
+  onUseImageAsReference?: (message: Message, index: number) => void;
 }
 
 const MessageItemComponent: React.FC<MessageItemProps> = ({
@@ -69,6 +71,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   showAvatar = true,
   showCopyButton = true,
   messageAddon,
+  onUseImageAsReference,
 }) => {
   const t = useT('common');
   const tAgents = useT('agents');
@@ -110,7 +113,8 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   const displayAnswer = imageGenerationErrorText || safeAnswer;
   const hasAi = useMemo(() => displayAnswer && displayAnswer.length > 0, [displayAnswer]);
   const isImageGenerating = isActiveImageGenerationStatus(imageGenerationStatus);
-  const isImageCancelled = imageGenerationStatus === 'cancelled' || imageGenerationStatus === 'canceled';
+  const isImageCancelled =
+    imageGenerationStatus === 'cancelled' || imageGenerationStatus === 'canceled';
   const referenceImage = useMemo(() => getMessageReferenceImage(message), [message]);
   const imageModelLabel =
     stringValue(message.messageData?.model_label) ||
@@ -362,12 +366,27 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
                           </div>
                         </div>
                       ) : (
-                        <MarkdownImage
-                          src={img.url}
-                          alt={img.alt || `Generated image ${idx + 1}`}
-                          className="w-full h-full flex [&>div]:w-full [&>div]:h-full"
-                          imageClassName="w-full h-full object-cover transition-all group-hover:scale-105 max-h-none"
-                        />
+                        <>
+                          <MarkdownImage
+                            src={img.url}
+                            alt={img.alt || `Generated image ${idx + 1}`}
+                            className="w-full h-full"
+                            frameClassName="w-full h-full"
+                            imageClassName="w-full h-full object-cover transition-all group-hover:scale-105 max-h-none"
+                            compactActions
+                          />
+                          {onUseImageAsReference ? (
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              className="absolute bottom-1 right-1 h-6 gap-1 rounded-md bg-background/90 px-1.5 text-[11px] opacity-100 shadow-sm transition-opacity sm:opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                              onClick={() => onUseImageAsReference(message, idx)}
+                            >
+                              <ImagePlus className="h-3 w-3" />
+                              {tWebapp('chat.imageInput.editImage')}
+                            </Button>
+                          ) : null}
+                        </>
                       )}
                     </div>
                   ))}
@@ -450,6 +469,7 @@ const MessageItem = memo(MessageItemComponent, (prev, next) => {
     prev.defaultWorkflowDetailOpen === next.defaultWorkflowDetailOpen &&
     prev.showAvatar === next.showAvatar &&
     prev.showCopyButton === next.showCopyButton &&
+    prev.onUseImageAsReference === next.onUseImageAsReference &&
     prev.messageAddon === next.messageAddon
   );
 });
@@ -495,7 +515,9 @@ function getImageGenerationStatus(message: Message): string {
   ).toLowerCase();
   const messageStatus = stringValue(message.messageData?.status).toLowerCase();
   const messageError =
-    stringValue(message.messageData?.error) || stringValue(metadata?.image_task_error) || message.answer;
+    stringValue(message.messageData?.error) ||
+    stringValue(metadata?.image_task_error) ||
+    message.answer;
   if (isActiveImageGenerationStatus(status) && isImageMessageOlderThanTimeout(message)) {
     return 'failed';
   }
@@ -507,7 +529,11 @@ function getImageGenerationStatus(message: Message): string {
   ) {
     return 'failed';
   }
-  if (status === 'runtime_lease_expired' || status === 'image_task_timeout' || status === 'timeout') {
+  if (
+    status === 'runtime_lease_expired' ||
+    status === 'image_task_timeout' ||
+    status === 'timeout'
+  ) {
     return 'failed';
   }
   return status;

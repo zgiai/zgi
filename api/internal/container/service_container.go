@@ -1138,6 +1138,7 @@ func (c *ServiceContainer) GetConnectorBindingService() *connectorbindings.Servi
 			c.GetConnectorBindingRepository(),
 			c.GetConnectorConnectionService(),
 			c.GetConnectorTargetAuthority(),
+			c.GetConnectorPluginManager(),
 		)
 		if err != nil {
 			panic(fmt.Sprintf("initialize Connector binding service: %v", err))

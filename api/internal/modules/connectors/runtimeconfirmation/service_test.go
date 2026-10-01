@@ -38,6 +38,9 @@ func TestServiceContinueRestoresFrozenRequestAndPersistsCompletedTerminal(t *tes
 		result.ExecutionResult.Outcome.ID != outcomeID {
 		t.Fatalf("trusted continuation result = %#v", result)
 	}
+	if result.Presentation == nil || result.Presentation.InvocationID == "" || result.Presentation.DisplayStatus != "successful" {
+		t.Fatalf("missing safe terminal presentation = %#v", result.Presentation)
+	}
 	if result.Authorization == nil || result.Authorization.ConnectionID != store.continuation.Frozen.Request.ConnectionID ||
 		result.Authorization.BindingID != store.continuation.Frozen.Request.BindingID ||
 		result.Authorization.OperationID != store.continuation.Frozen.Request.OperationID {
@@ -115,6 +118,9 @@ func TestServiceContinueDuplicateAndConflictingDecisionsDoNotRouteAgain(t *testi
 	}
 	if duplicate.RequestIdentity != first.RequestIdentity {
 		t.Fatalf("duplicate request identity = %#v, want %#v", duplicate.RequestIdentity, first.RequestIdentity)
+	}
+	if duplicate.Presentation == nil || duplicate.Presentation.DisplayStatus != "successful" {
+		t.Fatalf("duplicate lost terminal presentation = %#v", duplicate.Presentation)
 	}
 	conflicting := command
 	conflicting.Decision = execution.ConfirmationDecisionCancelled
@@ -1026,5 +1032,44 @@ func TestServiceContinueNonDigitalHumanRememberForSessionStillRoutes(t *testing.
 				t.Fatalf("%s remember router calls = %d, want 1", surface, router.calls)
 			}
 		})
+	}
+}
+
+func TestFallbackPresentationIsSafeLocalizedAndNotRedacted(t *testing.T) {
+	request := execution.ExecutionRequest{
+		ConnectorID:        core.Identifier("github"),
+		OperationID:        core.Identifier("create_issue"),
+		LogicalOperationID: "logical-operation-1",
+	}
+	operation := runtimeConfirmationAcceptedOperation()
+	operation.Operation.NameI18n = catalog.LocalizedText{"en-US": "Create issue", "zh-Hans": "创建 Issue"}
+
+	en := fallbackPresentation(execution.WithPresentationLocale(context.Background(), "en-US"), request, operation, StateCompleted, "")
+	if en.Redacted || en.DisplayStatus != "successful" || en.Title != "Create issue" ||
+		en.Summary != "The Connector operation completed successfully." {
+		t.Fatalf("en completed fallback = %#v", en)
+	}
+
+	zh := fallbackPresentation(execution.WithPresentationLocale(context.Background(), "zh-Hans"), request, operation, StateCompleted, "")
+	if zh.Redacted || zh.Title != "创建 Issue" || zh.Summary != "连接器操作已成功完成。" {
+		t.Fatalf("zh completed fallback = %#v", zh)
+	}
+
+	failed := fallbackPresentation(execution.WithPresentationLocale(context.Background(), "zh-Hans"), request, operation, StateFailed, core.ErrorCodeMailSubmissionRejected)
+	if failed.Redacted || failed.DisplayStatus != "failed" ||
+		failed.ErrorCode != string(core.ErrorCodeMailSubmissionRejected) ||
+		failed.Summary != "邮件服务器拒绝了本次提交，请检查邮件服务状态后重试。" {
+		t.Fatalf("failed fallback = %#v", failed)
+	}
+
+	unknown := fallbackPresentation(context.Background(), request, operation, StateUnknown, core.ErrorCodeOutcomeUnknown)
+	if unknown.Redacted || unknown.DisplayStatus != "unknown" ||
+		unknown.ErrorCode != string(core.ErrorCodeOutcomeUnknown) || unknown.Summary == "" {
+		t.Fatalf("unknown fallback = %#v", unknown)
+	}
+
+	cancelled := fallbackPresentation(context.Background(), request, operation, StateCancelled, "")
+	if cancelled.Redacted || cancelled.DisplayStatus != "cancelled" || cancelled.Summary != "" {
+		t.Fatalf("cancelled fallback = %#v", cancelled)
 	}
 }

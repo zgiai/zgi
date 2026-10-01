@@ -291,6 +291,7 @@ const messages = {
     },
     runtime: {
       waitingAnswer: 'Waiting for answer',
+      continue: 'Continue',
       chooseOne: 'Choose one option',
       submitting: 'Submitting',
       submitted: 'Answer submitted',

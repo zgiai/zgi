@@ -17,7 +17,7 @@ export type ConnectorPickerRowState =
 
 export type ConnectorPickerBindingRef = Pick<
   ConnectorTargetBinding,
-  'id' | 'connection_id' | 'connector_id' | 'status'
+  'id' | 'connection_id' | 'connector_id' | 'status' | 'authorization_mode'
 > & { revision?: number };
 
 export type ConnectorPickerSelectionMode = 'single-per-connector' | 'multiple-connections';

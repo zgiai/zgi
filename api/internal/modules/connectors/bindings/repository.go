@@ -42,6 +42,14 @@ type LifecycleMutationRepository interface {
 	SetBindingStatusWithLifecycle(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, core.BindingStatus, int, BindingLifecycleMutation) (core.TargetBinding, error)
 }
 
+// AuthorizationMutationRepository updates only the binding constraint. It is
+// separate from UpsertBindingWithLifecycle because generic upsert intersects
+// constraints (correct for replacement) and therefore cannot represent an
+// explicit direct -> ask_each_time revocation.
+type AuthorizationMutationRepository interface {
+	UpdateBindingAuthorizationWithLifecycle(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, *core.AccessConstraint, int, BindingLifecycleMutation) (core.TargetBinding, error)
+}
+
 type bindingLifecycleDecisionRecord struct {
 	TargetScope        string         `gorm:"column:target_scope"`
 	TargetVersionID    string         `gorm:"column:target_version_id"`
@@ -95,8 +103,9 @@ type GormRepository struct {
 }
 
 var (
-	_ Repository                  = (*GormRepository)(nil)
-	_ LifecycleMutationRepository = (*GormRepository)(nil)
+	_ Repository                      = (*GormRepository)(nil)
+	_ LifecycleMutationRepository     = (*GormRepository)(nil)
+	_ AuthorizationMutationRepository = (*GormRepository)(nil)
 )
 
 func NewGormRepository(db *gorm.DB) *GormRepository {
@@ -261,6 +270,68 @@ func (repository *GormRepository) SetBindingStatusWithLifecycle(
 	return stored, nil
 }
 
+// UpdateBindingAuthorizationWithLifecycle persists an explicit authorization
+// mode change with owner scope, revision CAS, and the normal lifecycle audit.
+func (repository *GormRepository) UpdateBindingAuthorizationWithLifecycle(
+	ctx context.Context,
+	organizationID, ownerAccountID, bindingID uuid.UUID,
+	constraint *core.AccessConstraint,
+	expectedRevision int,
+	mutation BindingLifecycleMutation,
+) (core.TargetBinding, error) {
+	if err := repository.available(); err != nil {
+		return core.TargetBinding{}, err
+	}
+	if constraint == nil || constraint.Validate() != nil || expectedRevision < 1 ||
+		!validBindingLifecycleMutation(mutation, MutationBindingUpserted) {
+		return core.TargetBinding{}, invalidInputError("update connector target binding authorization lifecycle")
+	}
+	encoded, err := json.Marshal(constraint)
+	if err != nil {
+		return core.TargetBinding{}, internalError("encode connector target binding authorization")
+	}
+	var stored core.TargetBinding
+	err = repository.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		observed, lookupErr := getBindingByID(ctx, tx, organizationID, ownerAccountID, bindingID, true)
+		if lookupErr != nil {
+			return lookupErr
+		}
+		before, conversionErr := observed.toDomain()
+		if conversionErr != nil {
+			return conversionErr
+		}
+		if before.Status != core.BindingStatusActive || before.Revision != expectedRevision {
+			return conflictError("update connector target binding authorization")
+		}
+		authorities, authorityErr := lockBindingLifecycleAuthorities(ctx, tx, before)
+		if authorityErr != nil {
+			return authorityErr
+		}
+		now := time.Now().UTC()
+		result := tx.Model(&bindingRecord{}).
+			Where("organization_id = ? AND owner_account_id = ? AND id = ? AND revision = ?", organizationID, ownerAccountID, bindingID, expectedRevision).
+			Updates(map[string]any{"binding_constraint": datatypes.JSON(encoded), "revision": expectedRevision + 1, "updated_at": now})
+		if result.Error != nil {
+			return internalError("update connector target binding authorization")
+		}
+		if result.RowsAffected != 1 {
+			return conflictError("update connector target binding authorization")
+		}
+		before.Constraint = constraint
+		before.Revision = expectedRevision + 1
+		before.UpdatedAt = now
+		stored = before
+		if _, locked := authorities[bindingLifecycleAuthorityIdentity(stored)]; !locked {
+			return conflictError("lock connector target binding authorization authority")
+		}
+		return appendBindingLifecycleMutationLocked(ctx, tx, stored, mutation)
+	})
+	if err != nil {
+		return core.TargetBinding{}, err
+	}
+	return stored, nil
+}
+
 // UpsertBinding creates or replaces one native binding by its stable logical
 // key: organization, owner, target type/id, Connector, and (for Workflows)
 // binding instance. expectedRevision is zero for creation/idempotent replay and
@@ -331,6 +402,21 @@ func (repository *GormRepository) upsertBinding(ctx context.Context, organizatio
 		}
 		if replaceAuthorizedConstraint {
 			narrowed = prepared.Constraint
+		} else {
+			// The prepared binding is the current explicit authorization choice.
+			// Constraint intersection still narrows operations/targets, but the
+			// mode itself must support an intentional direct grant or revocation;
+			// otherwise a legacy ask_each_time row could never be changed.
+			narrowed.AuthorizationMode = prepared.Constraint.AuthorizationModeValue()
+			if narrowed.AuthorizationMode == core.AuthorizationModeDirect {
+				narrowed.AuthorizationConnectionRevision = prepared.Constraint.AuthorizationConnectionRevision
+				narrowed.AuthorizationCredentialVersion = prepared.Constraint.AuthorizationCredentialVersion
+				narrowed.AuthorizationContractDigest = prepared.Constraint.AuthorizationContractDigest
+			} else {
+				narrowed.AuthorizationConnectionRevision = 0
+				narrowed.AuthorizationCredentialVersion = 0
+				narrowed.AuthorizationContractDigest = ""
+			}
 		}
 		record.Constraint, constraintErr = json.Marshal(narrowed)
 		if constraintErr != nil {
@@ -713,10 +799,11 @@ func equivalentBindingLifecycleJSON(left, right datatypes.JSON) bool {
 }
 
 func bindingLifecycleDetails(binding core.TargetBinding) map[string]any {
-	details := map[string]any{
+		details := map[string]any{
 		"binding_id": binding.ID.String(), "target_type": string(binding.Target.Type), "target_id": binding.Target.ID,
 		"binding_instance_id": binding.Target.BindingInstanceID, "status": string(binding.Status),
-		"revision": binding.Revision, "created_at": binding.CreatedAt.UTC().Format(time.RFC3339Nano),
+		"authorization_mode": binding.Constraint.AuthorizationModeValue(),
+		"revision":           binding.Revision, "created_at": binding.CreatedAt.UTC().Format(time.RFC3339Nano),
 		"updated_at": binding.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
 	if binding.DisabledAt != nil {

@@ -3873,6 +3873,17 @@ function timelineRenderItem(
     case 'workflow_run':
       return { renderType: 'workflow', key: item.id, item };
     case 'skill_event':
+      {
+        const connectorRuntimeResult = parseConnectorSkillEventResult(item);
+        if (connectorRuntimeResult) {
+          return {
+            renderType: 'connector_runtime',
+            readOnly: !['pending', 'streaming', 'waiting_approval'].includes(messageStatus ?? ''),
+            key: item.id,
+            result: connectorRuntimeResult,
+          };
+        }
+      }
       return {
         renderType: 'skill',
         key: item.id,

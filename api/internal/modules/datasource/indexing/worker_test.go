@@ -7,12 +7,15 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
@@ -76,6 +79,47 @@ func TestAuthorizeWorkspaceUsesExistingWorkspacePermissions(t *testing.T) {
 	}
 }
 
+func TestStartRejectsEnableWhileCleanupPending(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB, PreferSimpleProtocol: true}), &gorm.Config{SkipDefaultTransaction: true, Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dataSourceID := uuid.NewString()
+	organizationID := uuid.NewString()
+	workspaceID := uuid.NewString()
+	accountID := uuid.NewString()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "data_sources" WHERE id = $1 AND organization_id = $2 LIMIT $3`)).
+		WithArgs(dataSourceID, organizationID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "organization_id", "workspace_id"}).AddRow(dataSourceID, organizationID, workspaceID))
+	mock.ExpectExec(regexp.QuoteMeta(`SELECT pg_advisory_lock(hashtextextended($1, 0))`)).
+		WithArgs("schema-index:database:" + dataSourceID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "database_schema_index_settings" WHERE data_source_id = $1 LIMIT $2`)).
+		WithArgs(dataSourceID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"data_source_id"}))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT count(*) FROM "text2sql_schema_indexes" WHERE data_source_id = $1`)).
+		WithArgs(dataSourceID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectExec(regexp.QuoteMeta(`SELECT pg_advisory_unlock(hashtextextended($1, 0))`)).
+		WithArgs("schema-index:database:" + dataSourceID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	service := NewService(db, nil, &testModels{model: "embedding-v1"}, nil, nil, nil, &testAccess{}, zap.NewNop())
+	err = service.Start(context.Background(), organizationID, dataSourceID, accountID)
+	if !errors.Is(err, ErrCleanupPending) {
+		t.Fatalf("Start() error = %v, want ErrCleanupPending", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 type testSQL struct {
 	sql_base.SQLBase
 	tables map[int]*sql_base.Table
@@ -94,10 +138,25 @@ type testLLM struct {
 	calls      atomic.Int32
 	fail       bool
 	badBilling atomic.Bool
+	mu         sync.Mutex
+	request    *adapter.EmbeddingsRequest
+	started    chan struct{}
+	release    <-chan struct{}
+	startOnce  sync.Once
 }
 
-func (l *testLLM) AppEmbed(_ context.Context, app *llmclient.AppContext, _ *adapter.EmbeddingsRequest) (*adapter.EmbeddingsResponse, error) {
+func (l *testLLM) AppEmbed(_ context.Context, app *llmclient.AppContext, request *adapter.EmbeddingsRequest) (*adapter.EmbeddingsResponse, error) {
 	l.calls.Add(1)
+	l.mu.Lock()
+	copyRequest := *request
+	l.request = &copyRequest
+	l.mu.Unlock()
+	if l.started != nil {
+		l.startOnce.Do(func() { close(l.started) })
+	}
+	if l.release != nil {
+		<-l.release
+	}
 	if app.BillingSubjectType != llmclient.BillingSubjectTypeWorkspace || app.WorkspaceID == "" || app.AccountID == "" || app.WorkflowID != "" {
 		l.badBilling.Store(true)
 	}
@@ -105,6 +164,56 @@ func (l *testLLM) AppEmbed(_ context.Context, app *llmclient.AppContext, _ *adap
 		return nil, context.DeadlineExceeded
 	}
 	return &adapter.EmbeddingsResponse{Data: []adapter.Embedding{{Embedding: []float32{0.1, 0.2}}}}, nil
+}
+
+func TestEmbedderPreservesConfiguredProvider(t *testing.T) {
+	llm := &testLLM{}
+	settings := Settings{
+		DataSourceID: "ds-1", OrganizationID: "org-1", WorkspaceID: "workspace-1", RequestedBy: "account-1",
+		EmbeddingProvider: "provider-a", EmbeddingModel: "shared-model",
+	}
+	service := &Service{llm: llm}
+	if _, err := (embedder{service: service, settings: settings}).Embed(context.Background(), settings.EmbeddingProvider, settings.EmbeddingModel, "schema"); err != nil {
+		t.Fatal(err)
+	}
+	llm.mu.Lock()
+	defer llm.mu.Unlock()
+	if llm.request == nil {
+		t.Fatal("embedding request is nil")
+	}
+	if llm.request.Provider != settings.EmbeddingProvider {
+		t.Fatalf("embedding provider = %q, want %q", llm.request.Provider, settings.EmbeddingProvider)
+	}
+}
+
+func TestNotifySchemaChangedDoesNotWaitForReconcileAdvisoryLock(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB, PreferSimpleProtocol: true}), &gorm.Config{SkipDefaultTransaction: true, Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataSourceID := uuid.NewString()
+	pendingRunID := uuid.NewString()
+	targetIDs, _ := json.Marshal([]string{uuid.NewString()})
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "database_schema_index_settings" WHERE data_source_id = $1 LIMIT $2 FOR UPDATE`)).
+		WithArgs(dataSourceID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"data_source_id", "target_ids", "pending_run_id"}).AddRow(dataSourceID, targetIDs, pendingRunID))
+	mock.ExpectExec(regexp.QuoteMeta(`UPDATE "database_schema_index_settings" SET`)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	service := &Service{db: db, log: zap.NewNop()}
+	if err := service.NotifySchemaChanged(context.Background(), dataSourceID, TriggerTableMetadataChanged); err != nil {
+		t.Fatalf("NotifySchemaChanged() error = %v, want nil", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 type fixture struct {
@@ -147,7 +256,7 @@ func newFixture(t *testing.T, n int) fixture {
 		"ALTER TABLE text2sql_schema_indexes ADD build_attempts integer NOT NULL DEFAULT 0",
 		"CREATE UNIQUE INDEX identity_unique ON text2sql_schema_indexes(workspace_id,data_source_id,asset_table_id,fingerprint,embedding_provider,embedding_model)",
 		"CREATE TABLE data_sources(id uuid PRIMARY KEY,organization_id uuid,workspace_id uuid)",
-		"CREATE TABLE data_source_tables(id uuid PRIMARY KEY,organization_id uuid,data_source_id uuid,table_id integer)",
+		"CREATE TABLE data_source_tables(id uuid PRIMARY KEY,organization_id uuid,data_source_id uuid,table_id integer,name text NOT NULL,description text NOT NULL)",
 	} {
 		if err := db.Exec(sql).Error; err != nil {
 			t.Fatal(err)
@@ -160,7 +269,7 @@ func newFixture(t *testing.T, n int) fixture {
 	catalog := testSQL{tables: map[int]*sql_base.Table{}}
 	for i := 1; i <= n; i++ {
 		catalog.tables[i] = &sql_base.Table{ID: i, Schema: "public", Name: fmt.Sprintf("table_%03d", i)}
-		if err := db.Exec("INSERT INTO data_source_tables VALUES(?,?,?,?)", uuid.NewString(), setting.OrganizationID, setting.DataSourceID, i).Error; err != nil {
+		if err := db.Exec("INSERT INTO data_source_tables VALUES(?,?,?,?,?,?)", uuid.NewString(), setting.OrganizationID, setting.DataSourceID, i, fmt.Sprintf("Table %03d", i), fmt.Sprintf("Description %03d", i)).Error; err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -216,6 +325,263 @@ func (f fixture) status(t *testing.T) *Status {
 		t.Fatal(err)
 	}
 	return status
+}
+
+func TestAutomaticPendingTriggerPreservesInitialBuildAndDistinguishesLaterCreates(t *testing.T) {
+	got, err := automaticPendingTrigger(Settings{TargetIDs: []byte("[]")}, TriggerTableCreated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != TriggerInitial {
+		t.Fatalf("first table trigger = %q, want %q", got, TriggerInitial)
+	}
+
+	pending := TriggerTableCreated
+	got, err = automaticPendingTrigger(Settings{TargetIDs: []byte(`["existing"]`), PendingTrigger: &pending}, TriggerSchemaChanged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != TriggerTableCreated {
+		t.Fatalf("coalesced trigger = %q, want %q", got, TriggerTableCreated)
+	}
+
+	got, err = automaticPendingTrigger(Settings{TargetIDs: []byte(`["existing"]`)}, TriggerTableCreated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != TriggerTableCreated {
+		t.Fatalf("later table trigger = %q, want %q", got, TriggerTableCreated)
+	}
+}
+
+func TestReconcileDataSourceRecordsFailureBeforeUnlock(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB, PreferSimpleProtocol: true}), &gorm.Config{SkipDefaultTransaction: true, Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runID := uuid.NewString()
+	dataSourceID := uuid.NewString()
+	pendingTrigger := TriggerTableMetadataChanged
+	now := time.Now()
+	reconcileErr := errors.New("database unavailable")
+	mock.ExpectExec(regexp.QuoteMeta(`SELECT pg_advisory_lock(hashtextextended($1, 0))`)).
+		WithArgs("schema-index:database:" + dataSourceID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "database_schema_index_settings"`)).WillReturnRows(sqlmock.NewRows([]string{
+		"data_source_id", "organization_id", "workspace_id", "requested_by", "embedding_provider", "embedding_model", "target_ids", "pending_run_id", "pending_trigger", "created_at", "updated_at",
+	}).AddRow(dataSourceID, uuid.NewString(), uuid.NewString(), uuid.NewString(), "test", "embedding-v1", []byte("[]"), runID, pendingTrigger, now, now))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "data_sources"`)).WillReturnError(reconcileErr)
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "database_schema_index_runs" WHERE id = $1 AND data_source_id = $2`)).
+		WithArgs(runID, dataSourceID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO "database_schema_index_runs"`)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE "database_schema_index_settings" SET .*"pending_run_id"=.*"pending_trigger"=`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta(`SELECT pg_advisory_unlock(hashtextextended($1, 0))`)).
+		WithArgs("schema-index:database:" + dataSourceID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	service := &Service{db: db, log: zap.NewNop()}
+	if err := service.ReconcileDataSource(context.Background(), dataSourceID); !errors.Is(err, reconcileErr) {
+		t.Fatalf("ReconcileDataSource() error = %v, want %v", err, reconcileErr)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFailPendingRunRecordsOnlyCurrentGeneration(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB, PreferSimpleProtocol: true}), &gorm.Config{SkipDefaultTransaction: true, Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pendingRunID := uuid.NewString()
+	trigger := TriggerTableCreated
+	setting := Settings{
+		DataSourceID: uuid.NewString(), OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
+		EmbeddingProvider: "test", EmbeddingModel: "embedding-v1", PendingRunID: &pendingRunID, PendingTrigger: &trigger,
+	}
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "database_schema_index_runs" WHERE id = $1 AND data_source_id = $2`)).
+		WithArgs(pendingRunID, setting.DataSourceID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO "database_schema_index_runs"`)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	service := &Service{db: db}
+	if err := service.failPendingRun(context.Background(), db, setting, "preparation_failed"); err != nil {
+		t.Fatalf("failPendingRun() error = %v, want nil", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFailPendingRunUpdatesCurrentBuildingRun(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB, PreferSimpleProtocol: true}), &gorm.Config{SkipDefaultTransaction: true, Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pendingRunID := uuid.NewString()
+	trigger := TriggerTableCreated
+	tables, _ := json.Marshal([]RunTable{{Name: "table_001"}})
+	setting := Settings{DataSourceID: uuid.NewString(), PendingRunID: &pendingRunID, PendingTrigger: &trigger}
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "database_schema_index_runs" WHERE id = $1 AND data_source_id = $2`)).
+		WithArgs(pendingRunID, setting.DataSourceID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "status", "tables"}).AddRow(pendingRunID, "building", tables))
+	mock.ExpectExec(regexp.QuoteMeta(`UPDATE "database_schema_index_runs" SET`)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	service := &Service{db: db}
+	if err := service.failPendingRun(context.Background(), db, setting, "preparation_failed"); err != nil {
+		t.Fatalf("failPendingRun() error = %v, want nil", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFinalizeRunsFailsRunWhenTargetWasSuperseded(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB, PreferSimpleProtocol: true}), &gorm.Config{SkipDefaultTransaction: true, Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runID := uuid.NewString()
+	dataSourceID := uuid.NewString()
+	targetID := uuid.NewString()
+	targets, _ := json.Marshal([]string{targetID})
+	tables, _ := json.Marshal([]RunTable{{Name: "table_001"}})
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "database_schema_index_runs"`)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "data_source_id", "status", "target_ids", "tables"}).
+			AddRow(runID, dataSourceID, "building", targets, tables))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "text2sql_schema_indexes"`)).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectExec(regexp.QuoteMeta(`UPDATE "database_schema_index_runs" SET`)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	service := &Service{db: db}
+	if err := service.finalizeRuns(context.Background(), dataSourceID); err != nil {
+		t.Fatalf("finalizeRuns() error = %v, want nil", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReconcileDataSourceFinalizesRunsAfterDisable(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB, PreferSimpleProtocol: true}), &gorm.Config{SkipDefaultTransaction: true, Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runID := uuid.NewString()
+	dataSourceID := uuid.NewString()
+	targetID := uuid.NewString()
+	targets, _ := json.Marshal([]string{targetID})
+	tables, _ := json.Marshal([]RunTable{{Name: "table_001"}})
+	mock.ExpectExec(regexp.QuoteMeta(`SELECT pg_advisory_lock(hashtextextended($1, 0))`)).
+		WithArgs("schema-index:database:" + dataSourceID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "database_schema_index_settings"`)).
+		WillReturnRows(sqlmock.NewRows([]string{"data_source_id"}))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "text2sql_schema_indexes" WHERE data_source_id = $1`)).
+		WithArgs(dataSourceID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "database_schema_index_runs" WHERE data_source_id = $1 AND status = $2`)).
+		WithArgs(dataSourceID, "building").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "data_source_id", "status", "target_ids", "tables"}).
+			AddRow(runID, dataSourceID, "building", targets, tables))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "text2sql_schema_indexes" WHERE id IN ($1)`)).
+		WithArgs(targetID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectExec(regexp.QuoteMeta(`UPDATE "database_schema_index_runs" SET`)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta(`SELECT pg_advisory_unlock(hashtextextended($1, 0))`)).
+		WithArgs("schema-index:database:" + dataSourceID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	service := &Service{db: db, log: zap.NewNop()}
+	if err := service.ReconcileDataSource(context.Background(), dataSourceID); err != nil {
+		t.Fatalf("ReconcileDataSource() error = %v, want nil", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateTaskUsesMetadataEnrichedTableSnapshot(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB, PreferSimpleProtocol: true}), &gorm.Config{SkipDefaultTransaction: true, Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	setting := Settings{
+		DataSourceID: uuid.NewString(), OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(), RequestedBy: uuid.NewString(),
+		EmbeddingProvider: "test", EmbeddingModel: "embedding-v1",
+	}
+	assetID := uuid.NewString()
+	physical := &sql_base.Table{ID: 1, Schema: "public", Name: "physical_table"}
+	catalog := testSQL{tables: map[int]*sql_base.Table{1: physical}}
+	assetRows := func() *sqlmock.Rows {
+		return sqlmock.NewRows([]string{"id", "table_id", "name", "description"}).AddRow(assetID, 1, "Business name", "Business description")
+	}
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, table_id, name, description FROM "data_source_tables"`)).WillReturnRows(assetRows())
+	snapshot, err := text2sql.NewIndexRepository(db).SnapshotTable(context.Background(), assetID, catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := text2sql.NewSchemaIndex(setting.OrganizationID, setting.WorkspaceID, setting.DataSourceID, assetID, snapshot.Table, setting.EmbeddingProvider, setting.EmbeddingModel)
+	setting.TargetIDs, err = json.Marshal([]string{row.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "database_schema_index_settings"`)).WillReturnRows(sqlmock.NewRows([]string{
+		"data_source_id", "organization_id", "workspace_id", "requested_by", "embedding_provider", "embedding_model", "target_ids", "created_at", "updated_at",
+	}).AddRow(setting.DataSourceID, setting.OrganizationID, setting.WorkspaceID, setting.RequestedBy, setting.EmbeddingProvider, setting.EmbeddingModel, setting.TargetIDs, now, now))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "data_sources"`)).WillReturnRows(sqlmock.NewRows([]string{"id", "organization_id", "workspace_id"}).AddRow(setting.DataSourceID, setting.OrganizationID, setting.WorkspaceID))
+	mock.ExpectQuery(`SELECT (\*|id, table_id, name, description) FROM "data_source_tables"`).WillReturnRows(assetRows())
+
+	service := NewService(db, catalog, &testModels{model: setting.EmbeddingModel}, nil, nil, nil, &testAccess{}, zap.NewNop())
+	if err := service.validateTask(context.Background(), setting, row); err != nil {
+		t.Fatalf("validateTask() error = %v, want nil", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestPostgresTwoHundredTablesResumeAndReuse(t *testing.T) {
@@ -312,7 +678,7 @@ func TestPostgresTimeoutRetryBudgetAndManualRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if page.Total != 2 || page.Items[0].Trigger != "manual_retry" || page.Items[0].Status != "succeeded" || page.Items[1].Status != "failed" {
+	if page.Total != 2 || page.Items[0].Trigger != TriggerManualRetry || page.Items[0].Status != "succeeded" || page.Items[1].Status != "failed" {
 		t.Fatalf("unexpected retry history: %+v", page.Items)
 	}
 	firstPage, err := f.service.History(context.Background(), f.setting.OrganizationID, f.setting.DataSourceID, f.setting.RequestedBy, 1, 1)
@@ -361,5 +727,244 @@ func TestPostgresPermissionModelChangeAndMove(t *testing.T) {
 	f.service.db.Model(&Settings{}).Count(&count)
 	if count != 0 {
 		t.Fatal("moved database remains enabled in old workspace")
+	}
+}
+
+func TestPostgresDisableWaitsForInFlightBuildAndLeavesIndexDeleting(t *testing.T) {
+	f := newFixture(t, 1)
+	f.start(t)
+	row := f.rows(t)[0]
+	started := make(chan struct{})
+	release := make(chan struct{})
+	f.llm.started = started
+	f.llm.release = release
+
+	buildDone := make(chan error, 1)
+	go func() {
+		buildDone <- f.service.handleTask(context.Background(), indexTask(row))
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("embedding request did not start")
+	}
+
+	disableDone := make(chan error, 1)
+	go func() {
+		disableDone <- f.service.Configure(context.Background(), f.setting.OrganizationID, f.setting.DataSourceID, f.setting.RequestedBy, ConfigureRequest{Enabled: false})
+	}()
+	select {
+	case err := <-disableDone:
+		t.Fatalf("Configure(false) returned before the in-flight build finished: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	close(release)
+	if err := <-buildDone; err != nil {
+		t.Fatalf("handleTask() error = %v", err)
+	}
+	if err := <-disableDone; err != nil {
+		t.Fatalf("Configure(false) error = %v", err)
+	}
+	var stored text2sql.SchemaIndex
+	if err := f.service.db.Take(&stored, "id = ?", row.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != text2sql.IndexDeleting {
+		t.Fatalf("index status = %q, want %q", stored.Status, text2sql.IndexDeleting)
+	}
+}
+
+func TestPostgresSchemaNotificationDoesNotWaitForReconcileLock(t *testing.T) {
+	f := newFixture(t, 1)
+	if err := f.service.Start(context.Background(), f.setting.OrganizationID, f.setting.DataSourceID, f.setting.RequestedBy); err != nil {
+		t.Fatal(err)
+	}
+	var before Settings
+	if err := f.service.db.Take(&before, "data_source_id = ?", f.setting.DataSourceID).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	sqlDB, err := f.service.db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := sqlDB.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	lockKey := "schema-index:database:" + f.setting.DataSourceID
+	if _, err := conn.ExecContext(context.Background(), "SELECT pg_advisory_lock(hashtextextended($1, 0))", lockKey); err != nil {
+		t.Fatal(err)
+	}
+	defer conn.ExecContext(context.Background(), "SELECT pg_advisory_unlock(hashtextextended($1, 0))", lockKey)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := f.service.NotifySchemaChanged(ctx, f.setting.DataSourceID, TriggerTableMetadataChanged); err != nil {
+		t.Fatalf("NotifySchemaChanged() waited for reconcile lock: %v", err)
+	}
+	var after Settings
+	if err := f.service.db.Take(&after, "data_source_id = ?", f.setting.DataSourceID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if before.PendingRunID == nil || after.PendingRunID == nil || *before.PendingRunID == *after.PendingRunID {
+		t.Fatalf("pending run id did not advance: before=%v after=%v", before.PendingRunID, after.PendingRunID)
+	}
+}
+
+func TestPostgresCatalogLoadsSamplesFromCurrentUUIDIndex(t *testing.T) {
+	f := newFixture(t, 1)
+	f.start(t)
+	row := f.rows(t)[0]
+	if err := f.service.handleTask(context.Background(), indexTask(row)); err != nil {
+		t.Fatal(err)
+	}
+
+	loader := text2sql.NewSQLCatalogLoader(f.service.db, f.service.sql)
+	catalog, err := loader.Load(context.Background(), text2sql.CatalogRequest{
+		Scope: text2sql.Scope{
+			OrganizationID: f.setting.OrganizationID,
+			WorkspaceID:    f.setting.WorkspaceID,
+		},
+		DataSourceID: f.setting.DataSourceID,
+		Tables:       []text2sql.TableRef{{AssetID: row.AssetTableID, PhysicalID: row.PhysicalTableID}},
+	})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(catalog.Tables) != 1 || catalog.Tables[0].Ref.AssetID != row.AssetTableID {
+		t.Fatalf("catalog = %#v, want current indexed table", catalog)
+	}
+}
+
+func TestPostgresTableMetadataChangeRebuildsIndexAndKeepsTrigger(t *testing.T) {
+	f := newFixture(t, 1)
+	f.start(t)
+	before := f.rows(t)[0]
+	var initial Run
+	if err := f.service.db.Where("data_source_id = ? AND trigger = ?", f.setting.DataSourceID, TriggerInitial).Take(&initial).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := f.service.db.Table("data_source_tables").Where("data_source_id = ?", f.setting.DataSourceID).Updates(map[string]any{
+		"name": "Renamed table", "description": "Updated description",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.NotifySchemaChanged(context.Background(), f.setting.DataSourceID, TriggerTableMetadataChanged); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	after := f.rows(t)[0]
+	if after.ID == before.ID {
+		t.Fatal("table metadata change reused the previous index")
+	}
+	if err := f.service.handleTask(context.Background(), indexTask(after)); err != nil {
+		t.Fatal(err)
+	}
+	var run Run
+	if err := f.service.db.Where("data_source_id = ? AND trigger = ?", f.setting.DataSourceID, TriggerTableMetadataChanged).Take(&run).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.db.Take(&initial, "id = ?", initial.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if initial.Status != "failed" || initial.CompletedAt == nil {
+		t.Fatalf("superseded initial run status = %q, completed_at = %v; want failed with completion time", initial.Status, initial.CompletedAt)
+	}
+}
+
+func TestPostgresTableCreateAndDeleteKeepDistinctTriggers(t *testing.T) {
+	f := newFixture(t, 1)
+	f.start(t)
+	assetID := uuid.NewString()
+	f.service.sql.(testSQL).tables[2] = &sql_base.Table{ID: 2, Schema: "public", Name: "table_002"}
+	if err := f.service.db.Exec("INSERT INTO data_source_tables VALUES(?,?,?,?,?,?)", assetID, f.setting.OrganizationID, f.setting.DataSourceID, 2, "Second table", "Created later").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.NotifySchemaChanged(context.Background(), f.setting.DataSourceID, TriggerTableCreated); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var created Run
+	if err := f.service.db.Where("data_source_id = ? AND trigger = ?", f.setting.DataSourceID, TriggerTableCreated).Take(&created).Error; err != nil {
+		t.Fatal(err)
+	}
+	if created.TableCount != 1 {
+		t.Fatalf("created table count = %d, want 1", created.TableCount)
+	}
+
+	if err := f.service.db.Exec("DELETE FROM data_source_tables WHERE id = ?", assetID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.NotifySchemaChanged(context.Background(), f.setting.DataSourceID, TriggerTableDeleted); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var deleted Run
+	if err := f.service.db.Where("data_source_id = ? AND trigger = ?", f.setting.DataSourceID, TriggerTableDeleted).Take(&deleted).Error; err != nil {
+		t.Fatal(err)
+	}
+	if deleted.TableCount != 1 {
+		t.Fatalf("deleted table count = %d, want 1", deleted.TableCount)
+	}
+	if err := f.service.db.Take(&created, "id = ?", created.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if created.Status != "failed" || created.CompletedAt == nil {
+		t.Fatalf("superseded create run status = %q, completed_at = %v; want failed with completion time", created.Status, created.CompletedAt)
+	}
+}
+
+func TestPostgresReconcileFailureIsScopedToPendingRun(t *testing.T) {
+	f := newFixture(t, 1)
+	f.start(t)
+
+	var active Run
+	if err := f.service.db.Where("data_source_id = ? AND trigger = ?", f.setting.DataSourceID, TriggerInitial).Take(&active).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.NotifySchemaChanged(context.Background(), f.setting.DataSourceID, TriggerTableMetadataChanged); err != nil {
+		t.Fatal(err)
+	}
+	var setting Settings
+	if err := f.service.db.Where("data_source_id = ?", f.setting.DataSourceID).Take(&setting).Error; err != nil {
+		t.Fatal(err)
+	}
+	if setting.PendingRunID == nil {
+		t.Fatal("pending run id is nil")
+	}
+	pendingRunID := *setting.PendingRunID
+	f.access.deny = true
+	if err := f.service.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := f.service.db.Take(&active, "id = ?", active.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if active.Status != "building" {
+		t.Fatalf("previous run status = %q, want building", active.Status)
+	}
+	var failed Run
+	if err := f.service.db.Take(&failed, "id = ?", pendingRunID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if failed.Status != "failed" || failed.Trigger != TriggerTableMetadataChanged {
+		t.Fatalf("pending run = %+v, want failed metadata-change run", failed)
+	}
+	if err := f.service.db.Where("data_source_id = ?", f.setting.DataSourceID).Take(&setting).Error; err != nil {
+		t.Fatal(err)
+	}
+	if setting.PendingRunID != nil || setting.PendingTrigger != nil {
+		t.Fatalf("pending state = (%v, %v), want cleared", setting.PendingRunID, setting.PendingTrigger)
 	}
 }

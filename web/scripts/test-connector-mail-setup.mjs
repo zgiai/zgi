@@ -79,13 +79,13 @@ for (const email of [
 }
 assert.equal(mail.normalizeMailAppPassword('Abcd efgh\tijkl\r\nmnop\u00a0'), 'Abcdefghijklmnop');
 for (const password of [
-  'my-normal-password',
   'abcd\u200befghijklmnop',
   'abcdefghijklmnop\u202e',
   'abcd\vefghijklmnop',
 ]) {
   assert.equal(mail.normalizeMailAppPassword(password), undefined);
 }
+assert.equal(mail.normalizeMailAppPassword('my-normal-password'), 'my-normal-password');
 assert.equal(
   mail.normalizeMailAppPassword('abcd1234efgh5678'),
   'abcd1234efgh5678',
@@ -361,7 +361,7 @@ for (const provider of ['qqmail', 'netease163']) {
   assert.equal(mail.normalizeMailSecret(provider, ' Abcdefghijklmnop '), 'Abcdefghijklmnop');
   assert.equal(
     mail.normalizeMailSecret(provider, 'Abcd efghijklmnop'),
-    provider === 'netease163' ? 'Abcdefghijklmnop' : undefined
+    provider === 'netease163' ? 'Abcdefghijklmnop' : 'Abcd efghijklmnop'
   );
   assert.equal(
     mail.normalizeMailSecret(provider, 'ABCD\u00a0EFGH\nIJKL\tMNOP'),
@@ -369,7 +369,7 @@ for (const provider of ['qqmail', 'netease163']) {
   );
   assert.equal(
     mail.normalizeMailSecret(provider, 'abcd1234efgh5678'),
-    provider === 'qqmail' ? 'abcd1234efgh5678' : undefined
+    'abcd1234efgh5678'
   );
   for (const usage of ['read', 'send', 'read_send']) {
     let resolve;

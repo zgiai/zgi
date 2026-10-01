@@ -36,6 +36,9 @@ func TestPresentationUsesTrustedOutcomeAndNeverProviderControlFields(t *testing.
 		if presentation == nil || presentation.DisplayStatus != test.want || presentation.InvocationID != identity.LogicalOperationID || presentation.SourceKind != "native" {
 			t.Fatalf("wrong presentation: %#v", presentation)
 		}
+		if test.want == "successful" && presentation.Summary == "" {
+			t.Fatal("successful operation lost safe summary")
+		}
 		encoded, _ := json.Marshal(presentation)
 		if strings.Contains(string(encoded), "SECRET-SENTINEL") || strings.Contains(string(encoded), "confirmation") {
 			t.Fatal("presentation exposed control data or provider contents")
@@ -78,5 +81,54 @@ func TestDispatchEvidenceAndBoundedCatalogLabels(t *testing.T) {
 	label, truncated := boundedPresentationText("获取\u202e机器人\n信息", 120)
 	if label != "获取机器人信息" || truncated {
 		t.Fatal("control characters escaped label sanitization")
+	}
+}
+
+func TestPresentationMapsSafeMailFailureCodeWithoutProviderText(t *testing.T) {
+	identity := dispatch.Identity{BindingID: uuid.New(), ConnectionID: uuid.New(), ConnectorID: "qqmail", OperationID: "qqmail.message.send", LogicalOperationID: "mail-action-1", Target: core.TargetRef{Type: core.TargetTypeChat, ID: "chat"}}
+	result := execution.ExecutionResult{
+		State: execution.ExecutionStateCompleted,
+		Outcome: core.OperationOutcome{
+			ID:             uuid.New(),
+			Status:         core.OutcomeStatusFailed,
+			DiagnosticCode: string(core.ErrorCodeMailSubmissionRejected),
+		},
+		Display: &execution.OperationDisplay{Locale: "zh-Hans"},
+	}
+	metadata, ok := ResultFromMessage(MessagesForInvocation(result, identity)[0])
+	if !ok || metadata.Presentation == nil {
+		t.Fatal("missing failure presentation")
+	}
+	if metadata.Presentation.ErrorCode != string(core.ErrorCodeMailSubmissionRejected) ||
+		metadata.Presentation.Summary != "邮件服务器拒绝了本次提交，请检查邮件服务状态后重试。" {
+		t.Fatalf("unsafe or incomplete failure presentation: %#v", metadata.Presentation)
+	}
+}
+
+// A generic fallback hides the remedy, so each mail code that has one needs its
+// own wording.
+func TestPresentationWordsActionableMailFailures(t *testing.T) {
+	for _, tc := range []struct {
+		code    core.ErrorCode
+		summary string
+	}{
+		{core.ErrorCodeMailUidStateUnavailable, "邮箱服务器未返回该文件夹的 UID 范围，暂时无法列出邮件。请稍后重试或检查该邮箱的 IMAP 设置。"},
+		{core.ErrorCodeMailReferenceExpired, "该邮件引用已失效，请重新列出邮件后再打开。"},
+	} {
+		t.Run(string(tc.code), func(t *testing.T) {
+			identity := dispatch.Identity{BindingID: uuid.New(), ConnectionID: uuid.New(), ConnectorID: "netease163", OperationID: "netease163.message.list", LogicalOperationID: "mail-read-1", Target: core.TargetRef{Type: core.TargetTypeChat, ID: "chat"}}
+			result := execution.ExecutionResult{
+				State:   execution.ExecutionStateCompleted,
+				Outcome: core.OperationOutcome{ID: uuid.New(), Status: core.OutcomeStatusFailed, DiagnosticCode: string(tc.code)},
+				Display: &execution.OperationDisplay{Locale: "zh-Hans"},
+			}
+			metadata, ok := ResultFromMessage(MessagesForInvocation(result, identity)[0])
+			if !ok || metadata.Presentation == nil {
+				t.Fatal("missing failure presentation")
+			}
+			if metadata.Presentation.ErrorCode != string(tc.code) || metadata.Presentation.Summary != tc.summary {
+				t.Fatalf("unexpected presentation: %#v", metadata.Presentation)
+			}
+		})
 	}
 }

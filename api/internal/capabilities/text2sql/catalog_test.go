@@ -170,7 +170,7 @@ func TestSQLCatalogLoaderLoadsValueSamples(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("ds-1"))
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, table_id, description FROM "data_source_tables"`)).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "table_id", "description"}).AddRow("table-1", 7, nil))
-	mock.ExpectQuery(`SELECT .*idx\.asset_table_id, idx\.value_samples FROM text2sql_schema_indexes AS idx JOIN database_schema_index_settings AS settings`).
+	mock.ExpectQuery(`SELECT .*idx\.asset_table_id, idx\.value_samples FROM text2sql_schema_indexes AS idx JOIN database_schema_index_settings AS settings .*target\.id = idx\.id::text`).
 		WillReturnRows(sqlmock.NewRows([]string{"asset_table_id", "value_samples"}).AddRow("table-1", datatypes.JSON([]byte(`{"v":1,"columns":{"campaign_status":["active","completed"]}}`))))
 	loader := NewSQLCatalogLoader(db, &recordingCatalogSQLBase{table: &sql_base.Table{ID: 7, Schema: "public", Name: "campaigns"}})
 
@@ -183,6 +183,29 @@ func TestSQLCatalogLoaderLoadsValueSamples(t *testing.T) {
 	}
 	if got := catalog.Tables[0].ValueSamples["campaign_status"]; len(got) != 2 || got[1] != "completed" {
 		t.Fatalf("ValueSamples = %#v, want campaign status values", catalog.Tables[0].ValueSamples)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSQLCatalogLoaderReturnsValueSampleQueryError(t *testing.T) {
+	db, mock, closeDB := newCatalogTestDB(t)
+	defer closeDB()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT "id" FROM "data_sources"`)).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("ds-1"))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, table_id, description FROM "data_source_tables"`)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "table_id", "description"}).AddRow("table-1", 7, nil))
+	mock.ExpectQuery(`SELECT .*idx\.asset_table_id, idx\.value_samples FROM text2sql_schema_indexes AS idx JOIN database_schema_index_settings AS settings .*target\.id = idx\.id::text`).
+		WillReturnError(errors.New("value sample query failed"))
+	loader := NewSQLCatalogLoader(db, &recordingCatalogSQLBase{table: &sql_base.Table{ID: 7, Schema: "public", Name: "campaigns"}})
+
+	_, err := loader.Load(context.Background(), CatalogRequest{
+		Scope: Scope{OrganizationID: "org-1", WorkspaceID: "workspace-1"}, DataSourceID: "ds-1",
+		Tables: []TableRef{{AssetID: "table-1", PhysicalID: 7}},
+	})
+	if !errors.Is(err, ErrSchemaLoad) {
+		t.Fatalf("Load error = %v, want ErrSchemaLoad", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
@@ -213,6 +236,6 @@ func newCatalogTestDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock, func()) {
 }
 
 func expectCatalogValueSamples(mock sqlmock.Sqlmock) {
-	mock.ExpectQuery(`SELECT .*idx\.asset_table_id, idx\.value_samples FROM text2sql_schema_indexes AS idx JOIN database_schema_index_settings AS settings`).
+	mock.ExpectQuery(`SELECT .*idx\.asset_table_id, idx\.value_samples FROM text2sql_schema_indexes AS idx JOIN database_schema_index_settings AS settings .*target\.id = idx\.id::text`).
 		WillReturnRows(sqlmock.NewRows([]string{"asset_table_id", "value_samples"}))
 }

@@ -66,6 +66,9 @@ export function normalizeAgentConnectorBindings(
     byConnectorID.set(connectorID, {
       ...(binding.binding_id ? { binding_id: binding.binding_id } : {}),
       ...(binding.revision !== undefined ? { revision: binding.revision } : {}),
+      ...(binding.authorization_mode
+        ? { authorization_mode: binding.authorization_mode }
+        : {}),
       connector_id: connectorID,
       connection_id: connectionID,
     });
