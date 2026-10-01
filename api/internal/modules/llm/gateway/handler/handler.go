@@ -141,7 +141,7 @@ func (h *LLMHandler) CreateResponse(c *gin.Context) {
 	resp, err := h.gatewayService.CreateResponseRaw(gatewayRequestContext(c), apiKey, req)
 	if err != nil {
 		recordServiceError(c, err)
-		if writeRawProtocolError(c, err, req.Model, "openai") {
+		if h.writeRawProtocolError(c, err, req.Model, "openai") {
 			return
 		}
 		writeOpenAIProtocolError(c, h.localizedProtocolError(c, err))
@@ -180,7 +180,7 @@ func (h *LLMHandler) CreateAnthropicMessage(c *gin.Context) {
 	resp, err := h.gatewayService.CreateAnthropicMessage(gatewayRequestContext(c), apiKey, req)
 	if err != nil {
 		recordServiceError(c, err)
-		if writeRawProtocolError(c, err, req.Model, "anthropic") {
+		if h.writeRawProtocolError(c, err, req.Model, "anthropic") {
 			return
 		}
 		writeAnthropicProtocolError(c, h.localizedProtocolError(c, err))
@@ -218,7 +218,7 @@ func (h *LLMHandler) CreateGeminiContent(c *gin.Context) {
 	resp, err := service.CreateGeminiContent(gatewayRequestContext(c), apiKey, req)
 	if err != nil {
 		recordServiceError(c, err)
-		if writeRawProtocolError(c, err, req.Model, "gemini") {
+		if h.writeRawProtocolError(c, err, req.Model, "gemini") {
 			return
 		}
 		writeGeminiProtocolError(c, h.localizedProtocolError(c, err))
@@ -269,7 +269,7 @@ func (h *LLMHandler) handleResponseStream(c *gin.Context, apiKey *apikeymodel.Te
 	streamChan, err := h.gatewayService.CreateResponseStream(gatewayRequestContext(c), apiKey, req)
 	if err != nil {
 		recordServiceError(c, err)
-		if writeRawProtocolError(c, err, req.Model, "openai") {
+		if h.writeRawProtocolError(c, err, req.Model, "openai") {
 			return
 		}
 		writeOpenAIProtocolError(c, h.localizedProtocolError(c, err))
@@ -302,7 +302,7 @@ func (h *LLMHandler) handleAnthropicMessageStream(c *gin.Context, apiKey *apikey
 	streamChan, err := h.gatewayService.CreateAnthropicMessageStream(gatewayRequestContext(c), apiKey, req)
 	if err != nil {
 		recordServiceError(c, err)
-		if writeRawProtocolError(c, err, req.Model, "anthropic") {
+		if h.writeRawProtocolError(c, err, req.Model, "anthropic") {
 			return
 		}
 		writeAnthropicProtocolError(c, h.localizedProtocolError(c, err))
@@ -340,7 +340,7 @@ func (h *LLMHandler) handleGeminiContentStream(c *gin.Context, apiKey *apikeymod
 	streamChan, err := service.CreateGeminiContentStream(gatewayRequestContext(c), apiKey, req)
 	if err != nil {
 		recordServiceError(c, err)
-		if writeRawProtocolError(c, err, req.Model, "gemini") {
+		if h.writeRawProtocolError(c, err, req.Model, "gemini") {
 			return
 		}
 		writeGeminiProtocolError(c, h.localizedProtocolError(c, err))
@@ -354,7 +354,7 @@ func (h *LLMHandler) handleGeminiContentStream(c *gin.Context, apiKey *apikeymod
 	for event := range streamChan {
 		if event.Error != nil {
 			recordStreamServiceError(c, event.Error)
-			_ = streamWriter.WriteEvent(adapter.RawStreamEvent{Data: geminiStreamErrorBody(h.localizedProtocolError(c, event.Error))})
+			_ = streamWriter.WriteEvent(adapter.RawStreamEvent{Data: geminiStreamErrorBody(c, h.localizedProtocolError(c, event.Error))})
 			return
 		}
 		if event.Done {
@@ -644,7 +644,7 @@ func parseGeminiGenerateContentRequest(c *gin.Context) (*adapter.GeminiGenerateC
 	return &adapter.GeminiGenerateContentRequest{Model: strings.TrimSpace(model), Stream: stream, Body: body}, nil
 }
 
-func writeRawProtocolError(c *gin.Context, err error, logicalModel, protocol string) bool {
+func (h *LLMHandler) writeRawProtocolError(c *gin.Context, err error, logicalModel, protocol string) bool {
 	var rawErr *adapter.RawProtocolError
 	if !errors.As(err, &rawErr) || rawErr == nil {
 		return false
@@ -659,8 +659,39 @@ func writeRawProtocolError(c *gin.Context, err error, logicalModel, protocol str
 	if !strings.Contains(strings.ToLower(contentType), "json") {
 		contentType = "application/json"
 	}
+	body = h.relayRawErrorEnvelope(c, body)
 	c.Data(status, contentType, body)
 	return true
+}
+
+// relayRawErrorEnvelope keeps a relayed Console error envelope correlated with
+// this edge. Console already sends the cataloged envelope in the body, but the
+// header is not carried over and the body's request_id is Console's, not the
+// X-Request-ID this edge returned. Only a code registered in this catalog is
+// echoed; any other body is relayed unchanged.
+func (h *LLMHandler) relayRawErrorEnvelope(c *gin.Context, body []byte) []byte {
+	if h == nil || h.errorProjector == nil {
+		return body
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return body
+	}
+	code, _ := payload["error_code"].(string)
+	if strings.TrimSpace(code) == "" {
+		code, _ = payload["code"].(string)
+	}
+	if !h.errorProjector.Registered(code) {
+		return body
+	}
+	c.Header(apptransport.HeaderApplicationErrorCode, strings.TrimSpace(code))
+	if requestID := requestIDFromContext(c); requestID != "" {
+		payload["request_id"] = requestID
+		if updated, err := json.Marshal(payload); err == nil {
+			return updated
+		}
+	}
+	return body
 }
 
 func publicRawProtocolStatus(status int) int {
@@ -682,30 +713,43 @@ func writeRawProtocolFallback(c *gin.Context, status int, protocol string) {
 	}
 }
 
-func geminiStreamErrorBody(protocolErr protocolError) json.RawMessage {
-	body, _ := json.Marshal(gin.H{"error": gin.H{"code": protocolErr.openAIStatus, "message": protocolErr.message, "status": geminiErrorStatus(protocolErr.openAIStatus)}})
+func geminiStreamErrorBody(c *gin.Context, protocolErr protocolError) json.RawMessage {
+	body, _ := json.Marshal(applyStreamErrorEnvelope(c, gin.H{"error": gin.H{"code": protocolErr.openAIStatus, "message": protocolErr.message, "status": geminiErrorStatus(protocolErr.openAIStatus)}}, protocolErr))
 	return body
 }
 
 func (h *LLMHandler) openAIStreamError(c *gin.Context, err error) []byte {
 	protocolErr := h.localizedProtocolError(c, err)
-	data, _ := json.Marshal(gin.H{
+	data, _ := json.Marshal(applyStreamErrorEnvelope(c, gin.H{
 		"type":    "error",
 		"message": protocolErr.message,
 		"code":    protocolErr.openAICode,
 		"param":   nil,
-	})
+	}, protocolErr))
 	return data
 }
 
 func (h *LLMHandler) anthropicStreamError(c *gin.Context, err error) []byte {
 	protocolErr := h.localizedProtocolError(c, err)
-	data, _ := json.Marshal(gin.H{
+	data, _ := json.Marshal(applyStreamErrorEnvelope(c, gin.H{
 		"type": "error",
 		"error": gin.H{
 			"type":    protocolErr.anthropicType,
 			"message": protocolErr.message,
 		},
-	})
+	}, protocolErr))
 	return data
+}
+
+// applyStreamErrorEnvelope adds the cataloged envelope fields to an in-stream
+// error frame. It is additive: a frame that already has a top-level code (the
+// OpenAI frame's legacy wire code) keeps it, and the cataloged identity is
+// carried by error_code.
+func applyStreamErrorEnvelope(c *gin.Context, frame gin.H, protocolErr protocolError) gin.H {
+	legacyCode, hasLegacyCode := frame["code"]
+	frame = applyProtocolErrorEnvelope(c, frame, protocolErr)
+	if hasLegacyCode {
+		frame["code"] = legacyCode
+	}
+	return frame
 }

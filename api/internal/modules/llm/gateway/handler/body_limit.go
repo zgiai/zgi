@@ -53,21 +53,9 @@ func isBodyLimitedGatewayPath(path string) bool {
 }
 
 func writeGatewayBodyTooLarge(c *gin.Context) {
-	writeGatewayRequestError(c, http.StatusRequestEntityTooLarge, llmerrors.AppCodeRequestTooLarge.String(), "Request body too large")
+	abortWithProtocolError(c, newAppProtocolError(llmerrors.AppCodeRequestTooLarge, http.StatusRequestEntityTooLarge, "invalid_request_error", llmerrors.AppCodeRequestTooLarge.String(), "invalid_request_error", "Request body too large", false))
 }
 
 func writeGatewayMalformedBody(c *gin.Context) {
-	writeGatewayRequestError(c, http.StatusBadRequest, "invalid_request", "Invalid request body")
-}
-
-func writeGatewayRequestError(c *gin.Context, status int, code, message string) {
-	path := strings.ToLower(c.Request.URL.Path)
-	switch {
-	case strings.Contains(path, "/messages"):
-		c.AbortWithStatusJSON(status, gin.H{"type": "error", "error": gin.H{"type": "invalid_request_error", "message": message}})
-	case strings.Contains(path, "/v1beta/models/"):
-		c.AbortWithStatusJSON(status, gin.H{"error": gin.H{"code": status, "message": message, "status": geminiErrorStatus(status)}})
-	default:
-		c.AbortWithStatusJSON(status, gin.H{"error": gin.H{"message": message, "type": "invalid_request_error", "code": code, "param": nil}})
-	}
+	abortWithProtocolError(c, invalidRequestProtocolError("Invalid request body"))
 }

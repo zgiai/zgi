@@ -136,6 +136,21 @@ func NewProjector(productCatalog *catalog.Catalog, options ...Option) (*Projecto
 	return projector, nil
 }
 
+// Registered reports whether code is an application code in this catalog.
+// An edge relaying another edge's envelope checks it before echoing that code
+// as its own, so an arbitrary upstream string never becomes a contract code.
+func (p *Projector) Registered(code string) bool {
+	if p == nil || p.catalog == nil {
+		return false
+	}
+	parsed, err := apperror.ParseCode(strings.TrimSpace(code))
+	if err != nil {
+		return false
+	}
+	_, ok := p.catalog.Definition(parsed)
+	return ok
+}
+
 // Project returns a safe public presentation for err. Unknown errors and
 // rendering failures use the catalog fallback instead of exposing err.Error().
 // It always assigns a fresh error_id and emits one diagnostic record.

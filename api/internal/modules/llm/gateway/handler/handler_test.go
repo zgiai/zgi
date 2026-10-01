@@ -38,7 +38,7 @@ func TestWriteRawProtocolErrorSanitizesProviderDetails(t *testing.T) {
 		Body:        []byte(`{"error":{"message":"provider dashscope rejected model qwen-upstream-2026","model":"qwen-upstream-2026","provider":"dashscope"}}`),
 	}
 
-	if !writeRawProtocolError(c, err, "qwen-logical", "openai") {
+	if !(&LLMHandler{}).writeRawProtocolError(c, err, "qwen-logical", "openai") {
 		t.Fatal("raw protocol error was not handled")
 	}
 	if recorder.Code != http.StatusTooManyRequests {
@@ -68,7 +68,7 @@ func TestWriteRawProtocolErrorReplacesNonJSONWithProtocolError(t *testing.T) {
 		Body:        []byte("private provider host failed"),
 	}
 
-	if !writeRawProtocolError(c, err, "claude-logical", "anthropic") {
+	if !(&LLMHandler{}).writeRawProtocolError(c, err, "claude-logical", "anthropic") {
 		t.Fatal("raw protocol error was not handled")
 	}
 	body := recorder.Body.String()
