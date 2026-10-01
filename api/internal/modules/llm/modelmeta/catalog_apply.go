@@ -1009,9 +1009,23 @@ func endpointColumnsForPublishedModel(useCases []string, endpoints *llmmodel.Mod
 			resolved.MusicGeneration = resolved.MusicGeneration || endpoints.MusicGeneration
 		}
 	}
-	// Use cases are the canonical semantic capability declaration. Keep every
-	// legacy endpoint projection enabled when an older or incomplete
-	// authoritative endpoint payload says false.
+	// use_cases are the canonical semantic capability declaration, so for the
+	// routed operation endpoints they decide in both directions: a removed use
+	// case clears the column instead of leaving a stale true behind. Only the
+	// non-authoritative overlay is converged — an endpoint payload the publisher
+	// marked authoritative keeps winning, and an empty use_cases list says
+	// nothing. This is the same rule Console's publication projection applies.
+	if endpoints != nil && !authoritative && len(llmmodel.NormalizeUseCases(useCases)) > 0 {
+		resolved.ChatCompletions = derived.ChatCompletions
+		resolved.Embeddings = derived.Embeddings
+		resolved.ImageGeneration = derived.ImageGeneration
+		resolved.Videos = derived.Videos
+		resolved.MusicGeneration = derived.MusicGeneration
+		resolved.SpeechGeneration = derived.SpeechGeneration
+		resolved.Transcription = derived.Transcription
+	}
+	// Keep every legacy endpoint projection enabled when an older or
+	// incomplete authoritative endpoint payload says false.
 	resolved.ChatCompletions = resolved.ChatCompletions || derived.ChatCompletions
 	resolved.Responses = resolved.Responses || derived.Responses
 	resolved.Realtime = resolved.Realtime || derived.Realtime
