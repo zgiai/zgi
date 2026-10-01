@@ -321,3 +321,39 @@ func TestParseSSEAcceptsDataLineWithSpace(t *testing.T) {
 		t.Fatalf("data = %q, want output text JSON", got)
 	}
 }
+
+// A Console envelope that says retryable:false is terminal: repeating the call
+// cannot succeed (here the upstream rejected the platform credential) and only
+// multiplies upstream calls. A retryable 5xx keeps the existing retries.
+func TestHTTPClientHonoursConsoleRetryableFalse(t *testing.T) {
+	cases := []struct {
+		name      string
+		body      string
+		wantCalls int
+	}{
+		{"retryable false is terminal", `{"code":"llm.provider.auth_failed","error_code":"llm.provider.auth_failed","retryable":false,"error":{"code":"upstream_auth_failed","type":"api_error","message":"x"}}`, 1},
+		{"retryable true still retries", `{"code":"llm.invocation.failed","error_code":"llm.invocation.failed","retryable":true,"error":{"code":"upstream_error","type":"api_error","message":"x"}}`, 2},
+		{"plain provider body still retries", `{"retryable":false,"error":{"code":"server_error","message":"x"}}`, 2},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			requestCount := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requestCount++
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadGateway)
+				_, _ = w.Write([]byte(testCase.body))
+			}))
+			defer server.Close()
+
+			client := NewHTTPClientWithOptions(time.Second, 1, HTTPClientOptions{})
+			response, _ := client.DoRequestDetailed(context.Background(), http.MethodPost, server.URL, nil, map[string]interface{}{})
+			if response == nil || response.StatusCode != http.StatusBadGateway {
+				t.Fatalf("response = %#v, want the 502", response)
+			}
+			if requestCount != testCase.wantCalls {
+				t.Fatalf("request count = %d, want %d", requestCount, testCase.wantCalls)
+			}
+		})
+	}
+}

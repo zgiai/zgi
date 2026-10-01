@@ -423,13 +423,22 @@ func isTerminalPlatformChannelResponse(statusCode int, body []byte) bool {
 		return false
 	}
 	var payload struct {
-		Error struct {
+		// Console's cataloged envelope: a stable code plus whether repeating
+		// the call can help. retryable:false (for example an upstream that
+		// rejected the platform credential) is terminal; retrying only
+		// multiplies upstream calls.
+		ErrorCode string `json:"error_code"`
+		Retryable *bool  `json:"retryable"`
+		Error     struct {
 			Code string `json:"code"`
 			Type string `json:"type"`
 		} `json:"error"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return false
+	}
+	if strings.TrimSpace(payload.ErrorCode) != "" && payload.Retryable != nil && !*payload.Retryable {
+		return true
 	}
 	return payload.Error.Code == ErrorCodePlatformChannelUnavailable ||
 		payload.Error.Type == ErrorCodePlatformChannelUnavailable ||
