@@ -160,10 +160,16 @@ func (r *ChannelRouter) CandidateRoutesForModels(
 	return result, nil
 }
 
+// isModelUnavailableForRouteListing reports a per-model routing miss that the
+// catalog listing skips instead of failing the whole directory. The router's
+// own "no routable channel" answer wraps ErrProviderUnavailable, a different
+// sentinel from the domain no-provider error, so both must be recognised.
 func isModelUnavailableForRouteListing(err error) bool {
 	return errors.Is(err, llmerrors.DomainErrModelNotFound) ||
 		errors.Is(err, llmerrors.DomainErrNoProviderAvailable) ||
-		errors.Is(err, llmerrors.DomainErrRouteNotFound)
+		errors.Is(err, llmerrors.DomainErrRouteNotFound) ||
+		errors.Is(err, ErrProviderUnavailable) ||
+		errors.Is(err, ErrNoProviderAvailable)
 }
 
 func (r *ChannelRouter) candidateRoutesForResolvedModel(

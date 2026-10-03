@@ -1180,6 +1180,41 @@ func TestCandidateRoutesForModelsSkipsAmbiguousCatalogModelUnavailableOnEnabledR
 	require.Len(t, routesByModel[availableModel], 1)
 }
 
+// TestCandidateRoutesForModelsSkipsCatalogModelWithoutRoutableChannel pins
+// G2: one catalog model that no enabled route serves must be left out of the
+// listing instead of failing the whole directory with provider unavailable.
+func TestCandidateRoutesForModelsSkipsCatalogModelWithoutRoutableChannel(t *testing.T) {
+	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
+	db := openGatewayCatalogDB(t)
+	organizationID := uuid.New()
+	availableModel := "available-model"
+	channellessModel := "channelless-model"
+	insertGatewayCatalogModel(t, db, uuid.New(), "supplier-c", availableModel)
+	insertGatewayCatalogModel(t, db, uuid.New(), "supplier-d", channellessModel)
+	route := &channelmodel.LLMRoute{
+		ID:                     uuid.New(),
+		OrganizationID:         organizationID,
+		Type:                   shared.RouteTypeZGICloud,
+		ChannelProvider:        "zgi-cloud",
+		Models:                 []string{availableModel},
+		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "supplier-c", Model: availableModel}},
+		IsEnabled:              true,
+		IsOfficial:             true,
+	}
+	router := &ChannelRouter{
+		db:                      db,
+		organizationIDRouteRepo: &fakeCandidateRouteRepo{routes: []*channelmodel.LLMRoute{route}},
+		strategyFactory:         NewStrategyFactory(),
+	}
+
+	_, singleErr := router.CandidateRoutesForModels(t.Context(), organizationID, []string{channellessModel}, 1)
+	require.NoError(t, singleErr)
+	routesByModel, err := router.CandidateRoutesForModels(t.Context(), organizationID, []string{channellessModel, availableModel}, 1)
+	require.NoError(t, err)
+	require.Empty(t, routesByModel[channellessModel])
+	require.Len(t, routesByModel[availableModel], 1)
+}
+
 func TestPrepareCandidateRoutes_GuardLetsFourthHealthyRouteFillAttemptWindow(t *testing.T) {
 	db := openGatewayUpstreamGuardDB(t)
 	organizationID := uuid.New()
