@@ -1250,6 +1250,34 @@ func (s *RemoteBilling) recoverStalePredeductedRemoteAttempt(ctx context.Context
 	if attempt.RouteID != nil {
 		bc.ChannelID = attempt.RouteID
 	}
+	// The attempt ledger keeps only catalog ids; restore the names so the
+	// outcome is mirrored into a usage bill like any other settlement.
+	s.localService.enrichBillingContextCatalogFields(ctx, bc)
+
+	// Console owns the hold. An async call (a video whose client never polls)
+	// is settled there, or is still running, long after this timeout, so
+	// Console's state decides the outcome: rolling back blindly marks a charged
+	// call ROLLED_BACK without a bill, and settling it at zero releases a hold
+	// whose task is still running.
+	if s.consoleAPIBaseURL != "" {
+		result, err := queryConsoleSettlement(ctx, s.consoleAPIBaseURL+"/billing/settlements/by-attempt", attempt.OrganizationID.String(), attempt.AttemptID)
+		if err != nil {
+			return fmt.Errorf("query console settlement for stale prededuct: %w", err)
+		}
+		switch {
+		case result.Found && strings.EqualFold(result.SettlementStatus, billingAttemptStatusSettled):
+			return s.mirrorQueriedSettlement(ctx, &attempt, result)
+		case result.Found && result.Retryable:
+			// Still open on Console: its task settlement or hold expiry resolves
+			// it, and a later sweep mirrors whichever outcome it reaches.
+			return nil
+		case result.Found && strings.EqualFold(result.SettlementStatus, billingAttemptStatusRolledBack):
+			// Console already released the hold (for example it expired), so a
+			// settle call would be refused; mirror the release locally.
+			bc.ErrorMessage = "console released the remote prededuct before provider settlement"
+			return s.finalizeRemoteSettlement(ctx, bc)
+		}
+	}
 	return s.settleViaGRPC(ctx, bc)
 }
 
