@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	appconfig "github.com/zgiai/zgi/api/config"
 	accessmodel "github.com/zgiai/zgi/api/internal/modules/llm/developeraccess/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	"gorm.io/gorm"
@@ -43,6 +44,11 @@ func (c *countingSettleQuotaClient) Close() error { return nil }
 // polls the task.
 func seedStaleRemotePrededuct(t *testing.T, db *gorm.DB, client *countingSettleQuotaClient, consoleURL string) (*RemoteBilling, *BillingContext) {
 	t.Helper()
+	// The settlement query reads the Console credential from the app config;
+	// pin a minimal one instead of loading the process environment.
+	prevConfig := appconfig.GlobalConfig
+	t.Cleanup(func() { appconfig.GlobalConfig = prevConfig })
+	appconfig.GlobalConfig = &appconfig.Config{}
 	if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {
 		t.Fatalf("migrate developer grant: %v", err)
 	}
