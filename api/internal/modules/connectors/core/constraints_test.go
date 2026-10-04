@@ -1,9 +1,11 @@
 package core
 
 import (
-	"github.com/google/uuid"
+	"encoding/json"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func TestConstraintsRequireBothLayersAndExplicitAuthority(t *testing.T) {
@@ -61,6 +63,80 @@ func TestDraftBoundaryDoesNotAuthorizePublishedVersion(t *testing.T) {
 	}
 	if _, err := DecodeConstraint([]byte(`{"schema_version":1}`)); err == nil {
 		t.Fatal("incomplete constraint accepted")
+	}
+}
+
+func TestHostDelegationRequiresOwnerAndExactPublishedTarget(t *testing.T) {
+	owner := uuid.New()
+	target := TargetRef{Type: TargetTypeDigitalHuman, ID: uuid.NewString(), Scope: ScopePublished, VersionID: uuid.NewString(), BindingInstanceID: uuid.NewString()}
+	constraint := OwnerConstraint(owner, []Identifier{"web.search"})
+	constraint.TargetBoundaries = []TargetBoundary{{Type: target.Type, ID: target.ID, Scope: string(target.Scope), VersionID: target.VersionID}}
+	constraint.HostDelegation = &HostDelegation{GrantedBy: owner, Audiences: []HostAudience{HostAudienceWorkspace, HostAudienceAPI, HostAudienceChannel}}
+	if err := constraint.Validate(); err != nil {
+		t.Fatalf("owner-approved published grant rejected: %v", err)
+	}
+	encoded, err := json.Marshal(constraint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := DecodeConstraint(encoded)
+	if err != nil || restored.HostDelegation == nil || restored.HostDelegation.GrantedBy != owner || len(restored.HostDelegation.Audiences) != 3 {
+		t.Fatalf("persisted grant = %#v, error = %v", restored, err)
+	}
+	now := time.Now().UTC()
+	if constraint.Allows(uuid.New(), "web.search", target, now) {
+		t.Fatal("host grant silently widened the personal owner constraint")
+	}
+	if !constraint.AllowsHostAudience(owner, "web.search", target, HostAudienceAPI, now) {
+		t.Fatal("explicit published grant did not permit its API audience")
+	}
+	withoutGrant := *constraint
+	withoutGrant.HostDelegation = nil
+	otherVersion := target
+	otherVersion.VersionID = uuid.NewString()
+	for _, testCase := range []struct {
+		constraint *AccessConstraint
+		owner      uuid.UUID
+		operation  Identifier
+		target     TargetRef
+		audience   HostAudience
+	}{
+		{&withoutGrant, owner, "web.search", target, HostAudienceAPI},
+		{constraint, uuid.New(), "web.search", target, HostAudienceAPI},
+		{constraint, owner, "web.write", target, HostAudienceAPI},
+		{constraint, owner, "web.search", otherVersion, HostAudienceAPI},
+		{constraint, owner, "web.search", target, "unknown"},
+	} {
+		if testCase.constraint.AllowsHostAudience(testCase.owner, testCase.operation, testCase.target, testCase.audience, now) {
+			t.Fatal("missing or mismatched published grant permitted a delegated operation")
+		}
+	}
+	for _, change := range []struct {
+		name   string
+		change func(*AccessConstraint)
+	}{
+		{"wrong approver", func(c *AccessConstraint) { c.HostDelegation.GrantedBy = uuid.New() }},
+		{"unknown audience", func(c *AccessConstraint) { c.HostDelegation.Audiences = []HostAudience{"everyone"} }},
+		{"duplicate audience", func(c *AccessConstraint) {
+			c.HostDelegation.Audiences = []HostAudience{HostAudienceAPI, HostAudienceAPI}
+		}},
+		{"draft grant", func(c *AccessConstraint) { c.TargetBoundaries[0].Scope = "draft" }},
+		{"wildcard version", func(c *AccessConstraint) { c.TargetBoundaries[0].VersionID = "*" }},
+		{"multiple hosts", func(c *AccessConstraint) {
+			c.TargetBoundaries = append(c.TargetBoundaries, TargetBoundary{Type: TargetTypeAgent, ID: uuid.NewString(), Scope: "published", VersionID: uuid.NewString()})
+		}},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			copy := *constraint
+			grant := *constraint.HostDelegation
+			grant.Audiences = append([]HostAudience(nil), grant.Audiences...)
+			copy.HostDelegation = &grant
+			copy.TargetBoundaries = append([]TargetBoundary(nil), constraint.TargetBoundaries...)
+			change.change(&copy)
+			if err := copy.Validate(); err == nil {
+				t.Fatal("invalid host delegation accepted")
+			}
+		})
 	}
 }
 

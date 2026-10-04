@@ -30,6 +30,30 @@ type Presentation struct {
 	Preview *execution.ConfirmationPreview `json:"preview"`
 }
 
+type PendingResult struct {
+	Items    []execution.PendingConfirmationRef `json:"items"`
+	Page     int                                `json:"page"`
+	PageSize int                                `json:"page_size"`
+	HasMore  bool                               `json:"has_more"`
+}
+
+func (service *Service) ListPending(ctx context.Context, organizationID, ownerAccountID uuid.UUID, page, pageSize int) (PendingResult, error) {
+	if service == nil || service.store == nil {
+		return PendingResult{}, core.NewError(core.ErrorCodeInternal, false, nil)
+	}
+	reader, ok := service.store.(interface {
+		ListPending(context.Context, uuid.UUID, uuid.UUID, int, int) ([]execution.PendingConfirmationRef, bool, error)
+	})
+	if !ok {
+		return PendingResult{}, core.NewError(core.ErrorCodeInternal, false, nil)
+	}
+	items, more, err := reader.ListPending(ctx, organizationID, ownerAccountID, page, pageSize)
+	if err != nil {
+		return PendingResult{}, err
+	}
+	return PendingResult{Items: items, Page: page, PageSize: pageSize, HasMore: more}, nil
+}
+
 // ReadStatus is strictly observational. A pending row is unresolved, not a
 // failed operation. In particular, this method never routes, recovers by
 // submission, records a terminal, or resumes a Chat/Workflow host.

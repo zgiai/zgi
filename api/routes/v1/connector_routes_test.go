@@ -686,6 +686,31 @@ func TestConnectorTargetBindingRoutesUseActorScopeAndStrictContract(t *testing.T
 	}
 }
 
+func TestConnectorHostDelegationRouteUsesAuthenticatedOwnerAndExplicitAudiences(t *testing.T) {
+	organizationID, ownerID, bindingID := uuid.New(), uuid.New(), uuid.New()
+	binding := connectorcore.TargetBinding{ID: bindingID, OwnerAccountID: ownerID, OrganizationID: organizationID, Revision: 2, Constraint: connectorcore.OwnerConstraint(ownerID, []connectorcore.Identifier{"web.search"})}
+	binding.Constraint.HostDelegation = &connectorcore.HostDelegation{GrantedBy: ownerID, Audiences: []connectorcore.HostAudience{connectorcore.HostAudienceWorkspace, connectorcore.HostAudienceAPI}}
+	service := &connectorRouteRecordingBindingService{upsertResult: connectorbindings.UpsertBindingResult{Binding: binding}}
+	router := newConnectorRouteTestRouter(newConnectorRouteTestCatalog(t), &connectorRouteRecordingService{}, organizationID, ownerID, service)
+	path := "/console/api/connector-target-bindings/" + bindingID.String() + "/host-delegation"
+	result := connectorRouteRequest(t, router, http.MethodPatch, path, `{"revision":1,"audiences":["workspace","api"]}`, nil)
+	if result.Code != http.StatusOK || !strings.Contains(result.Body.String(), `"host_audiences":["workspace","api"]`) {
+		t.Fatalf("delegation response = %d %s", result.Code, result.Body.String())
+	}
+	if len(service.hostGrantCalls) != 1 || service.hostGrantCalls[0].ActingPrincipalID != ownerID || service.hostGrantCalls[0].OrganizationID != organizationID || service.hostGrantCalls[0].BindingID != bindingID || service.hostGrantCalls[0].ExpectedRevision != 1 {
+		t.Fatal("delegation did not use the authenticated owner and revision")
+	}
+	for _, body := range []string{`{"revision":1}`, `{"revision":1,"audiences":["workspace"],"owner_account_id":"` + uuid.NewString() + `"}`} {
+		invalid := connectorRouteRequest(t, router, http.MethodPatch, path, body, nil)
+		if invalid.Code != http.StatusBadRequest {
+			t.Fatalf("invalid delegation accepted: %d", invalid.Code)
+		}
+	}
+	if len(service.hostGrantCalls) != 1 {
+		t.Fatal("invalid delegation request reached the service")
+	}
+}
+
 func TestConnectorTargetBindingRoutesProjectAuthorityDenial(t *testing.T) {
 	organizationID, ownerID := uuid.New(), uuid.New()
 	bindingService := &connectorRouteRecordingBindingService{
@@ -1093,6 +1118,7 @@ type connectorRouteRecordingBindingService struct {
 	listCalls          []connectorRouteBindingListCall
 	upsertCalls        []connectorbindings.UpsertBindingCommand
 	authorizationCalls []connectorbindings.UpdateBindingAuthorizationCommand
+	hostGrantCalls     []connectorbindings.UpdateHostDelegationCommand
 	detachCalls        []connectorbindings.DetachBindingCommand
 	impactCalls        []connectorRouteImpactCall
 	listResult         []connectorcore.TargetBinding
@@ -1111,6 +1137,14 @@ func (service *connectorRouteRecordingBindingService) UpdateBindingAuthorization
 	command connectorbindings.UpdateBindingAuthorizationCommand,
 ) (connectorcore.TargetBinding, error) {
 	service.authorizationCalls = append(service.authorizationCalls, command)
+	if service.authorizationErr != nil {
+		return connectorcore.TargetBinding{}, service.authorizationErr
+	}
+	return service.upsertResult.Binding, nil
+}
+
+func (service *connectorRouteRecordingBindingService) UpdateHostDelegation(_ context.Context, command connectorbindings.UpdateHostDelegationCommand) (connectorcore.TargetBinding, error) {
+	service.hostGrantCalls = append(service.hostGrantCalls, command)
 	if service.authorizationErr != nil {
 		return connectorcore.TargetBinding{}, service.authorizationErr
 	}

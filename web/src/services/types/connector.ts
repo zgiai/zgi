@@ -267,7 +267,10 @@ export interface ConnectorTargetBinding {
   status: 'active' | 'disabled' | 'needs_replacement';
   revision: number;
   authorization_mode?: 'ask_each_time' | 'direct';
+  host_audiences?: ConnectorHostAudience[];
 }
+
+export type ConnectorHostAudience = 'workspace' | 'api' | 'channel';
 
 export interface ConnectorTargetBindingListResponse {
   items: ConnectorTargetBinding[];
@@ -287,6 +290,11 @@ export interface DetachConnectorTargetBindingRequest {
 export interface UpdateConnectorTargetBindingAuthorizationRequest {
   revision: number;
   authorization_mode: 'ask_each_time' | 'direct';
+}
+
+export interface UpdateConnectorHostDelegationRequest {
+  revision: number;
+  audiences: ConnectorHostAudience[];
 }
 
 export interface PersonalConnectionDetail extends PersonalConnection {

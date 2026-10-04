@@ -60,25 +60,95 @@ func (s *service) resolveConnectorCapabilities(
 		if s.connectorDigitalHumanRuntime == nil {
 			return connectorruntimeauth.ChatCapabilitySnapshot{}, nil
 		}
-		return s.connectorDigitalHumanRuntime.ResolveDigitalHumanCapabilities(ctx, connectorruntimeauth.DigitalHumanCapabilityRequest{
+		request := connectorruntimeauth.DigitalHumanCapabilityRequest{
 			OrganizationID: scope.OrganizationID,
 			OwnerAccountID: scope.AccountID,
 			DigitalHumanID: targetID,
 			Scope:          targetScope,
 			VersionID:      versionID,
-		})
+		}
+		snapshot, err := s.connectorDigitalHumanRuntime.ResolveDigitalHumanCapabilities(ctx, request)
+		if snapshot.HasOperations() || targetScope != core.ScopePublished {
+			return snapshot, err
+		}
+		delegated, ok := s.connectorDigitalHumanRuntime.(connectorruntimeauth.DelegatedDigitalHumanRuntimeResolver)
+		if !ok {
+			return snapshot, nil
+		}
+		if err != nil && !core.IsErrorCode(err, core.ErrorCodeAccessDenied) {
+			return snapshot, err
+		}
+		delegatedSnapshot, delegatedErr := delegated.ResolveDelegatedCapabilities(ctx, delegatedHostRequest(scope, caller, core.TargetTypeDigitalHuman, targetID, targetScope, versionID, hostAudienceForSource(caller.Source)))
+		if delegatedErr != nil {
+			return delegatedSnapshot, delegatedErr
+		}
+		return delegatedSnapshot, nil
 	case runtimemodel.ConversationCallerAgent:
 		if s.connectorAgentRuntime == nil {
 			return connectorruntimeauth.ChatCapabilitySnapshot{}, nil
 		}
-		return s.connectorAgentRuntime.ResolveAgentCapabilities(ctx, connectorruntimeauth.AgentCapabilityRequest{
+		request := connectorruntimeauth.AgentCapabilityRequest{
 			OrganizationID: scope.OrganizationID,
 			OwnerAccountID: scope.AccountID,
 			AgentID:        targetID, Scope: targetScope, VersionID: versionID,
-		})
+		}
+		snapshot, err := s.connectorAgentRuntime.ResolveAgentCapabilities(ctx, request)
+		if snapshot.HasOperations() || targetScope != core.ScopePublished {
+			return snapshot, err
+		}
+		delegated, ok := s.connectorAgentRuntime.(connectorruntimeauth.DelegatedAgentRuntimeResolver)
+		if !ok {
+			return snapshot, nil
+		}
+		if err != nil && !core.IsErrorCode(err, core.ErrorCodeAccessDenied) {
+			return snapshot, err
+		}
+		delegatedSnapshot, delegatedErr := delegated.ResolveDelegatedCapabilities(ctx, delegatedHostRequest(scope, caller, core.TargetTypeAgent, targetID, targetScope, versionID, hostAudienceForSource(caller.Source)))
+		if delegatedErr != nil {
+			return delegatedSnapshot, delegatedErr
+		}
+		return delegatedSnapshot, nil
 	default:
 		return connectorruntimeauth.ChatCapabilitySnapshot{}, nil
 	}
+}
+
+func delegatedHostRequest(scope Scope, caller Caller, targetType core.TargetType, targetID string, targetScope core.TargetScope, versionID string, audience core.HostAudience) connectorruntimeauth.DelegatedHostRequest {
+	return connectorruntimeauth.DelegatedHostRequest{
+		OrganizationID: scope.OrganizationID,
+		RequesterID:    scope.AccountID,
+		RunID:          valueOrNil(caller.RunID),
+		Target: core.TargetRef{
+			Type: targetType, ID: targetID, Scope: targetScope, VersionID: versionID,
+			BindingInstanceID: delegatedBindingInstance(targetType),
+		},
+		Audience: audience,
+	}
+}
+
+func hostAudienceForSource(source string) core.HostAudience {
+	switch normalizeConversationSource(source) {
+	case runtimemodel.ConversationSourceExternalAPI:
+		return core.HostAudienceAPI
+	case runtimemodel.ConversationSourceChannel:
+		return core.HostAudienceChannel
+	default:
+		return core.HostAudienceWorkspace
+	}
+}
+
+func delegatedBindingInstance(targetType core.TargetType) string {
+	if targetType == core.TargetTypeDigitalHuman {
+		return "00000000-0000-0000-0000-000000000001"
+	}
+	return ""
+}
+
+func valueOrNil(value *uuid.UUID) uuid.UUID {
+	if value == nil {
+		return uuid.Nil
+	}
+	return *value
 }
 
 // applyAIChatConnectorSkillConfig records the request-scoped native Skill IDs
@@ -291,6 +361,8 @@ func projectConnectorOperations(
 		skillID     string
 		connectorID string
 		instanceID  string
+		ownerID     string
+		bindingID   string
 		operation   catalog.Operation
 		description string
 	}
@@ -325,8 +397,16 @@ func projectConnectorOperations(
 				}
 				description = projected
 			}
+			ownerID := ""
+			if capability.OwnerAccountID != uuid.Nil {
+				ownerID = capability.OwnerAccountID.String()
+			}
+			bindingID := ""
+			if capability.BindingID != uuid.Nil {
+				bindingID = capability.BindingID.String()
+			}
 			projections = append(projections, operationProjection{
-				skillID: skillID, connectorID: connectorID, instanceID: strings.TrimSpace(capability.Target.BindingInstanceID), operation: operation,
+				skillID: skillID, connectorID: connectorID, instanceID: strings.TrimSpace(capability.Target.BindingInstanceID), ownerID: ownerID, bindingID: bindingID, operation: operation,
 				description: description,
 			})
 		}
@@ -379,7 +459,8 @@ func projectConnectorOperations(
 			}
 			if existing.ConnectorNative &&
 				strings.TrimSpace(existing.ProviderID) == projection.connectorID &&
-				strings.TrimSpace(existing.ConnectorOperationID) == strings.TrimSpace(projection.operation.ID) {
+				strings.TrimSpace(existing.ConnectorOperationID) == strings.TrimSpace(projection.operation.ID) &&
+				existing.ConnectorOwnerAccountID == projection.ownerID && existing.ConnectorBindingID == projection.bindingID {
 				duplicate = true
 				break
 			}
@@ -403,6 +484,8 @@ func projectConnectorOperations(
 			ConnectorNative:            true,
 			ConnectorOperationID:       strings.TrimSpace(projection.operation.ID),
 			ConnectorBindingInstanceID: instanceID,
+			ConnectorOwnerAccountID:    projection.ownerID,
+			ConnectorBindingID:         projection.bindingID,
 		})
 		doc.Metadata.Tools = appendUniqueStrings(doc.Metadata.Tools, toolName)
 		doc.Metadata.RuntimeType = skills.SkillRuntimeTypeTool

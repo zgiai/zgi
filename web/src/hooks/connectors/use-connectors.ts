@@ -150,3 +150,24 @@ export function useConnectorTargetBindings(target: ConnectorTargetRef | undefine
     retry: false,
   });
 }
+
+export function useUpdateConnectorTargetBindingHostDelegation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ bindingId, revision, audiences }: {
+      bindingId: string;
+      revision: number;
+      audiences: Array<'workspace' | 'api' | 'channel'>;
+    }) => connectorService.updateTargetBindingHostDelegation(bindingId, { revision, audiences }),
+    onSuccess: response => {
+      const binding = response.data;
+      if (binding?.target) {
+        void queryClient.invalidateQueries({
+          queryKey: CONNECTOR_KEYS.targetBindings(binding.target),
+        });
+      } else {
+        void queryClient.invalidateQueries({ queryKey: [...CONNECTOR_KEYS.all, 'target-bindings'] });
+      }
+    },
+  });
+}

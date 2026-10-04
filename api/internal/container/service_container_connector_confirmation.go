@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/uuid"
 	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	connectorcredentials "github.com/zgiai/zgi/api/internal/modules/connectors/credentials"
 	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
@@ -16,6 +17,7 @@ import (
 // previously registered route may resume an operation.
 type ConnectorRuntimeConfirmationService interface {
 	ReadStatus(context.Context, connectorruntimeconfirmation.StatusQuery) (connectorruntimeconfirmation.StatusResult, error)
+	ListPending(context.Context, uuid.UUID, uuid.UUID, int, int) (connectorruntimeconfirmation.PendingResult, error)
 	Continue(
 		context.Context,
 		connectorruntimeconfirmation.Command,
@@ -126,6 +128,17 @@ func (gate *connectorRuntimeConfirmationBoundary) ReadStatus(ctx context.Context
 		return connectorruntimeconfirmation.StatusResult{}, connectorcore.NewError(connectorcore.ErrorCodeConnectorUnavailable, false, nil)
 	}
 	return service.ReadStatus(ctx, query)
+}
+
+func (gate *connectorRuntimeConfirmationBoundary) ListPending(ctx context.Context, organizationID, ownerAccountID uuid.UUID, page, pageSize int) (connectorruntimeconfirmation.PendingResult, error) {
+	if gate == nil || gate.container == nil {
+		return connectorruntimeconfirmation.PendingResult{}, connectorcore.NewError(connectorcore.ErrorCodeConnectorUnavailable, false, nil)
+	}
+	service := gate.container.getConnectorRuntimeConfirmationCore()
+	if service == nil {
+		return connectorruntimeconfirmation.PendingResult{}, connectorcore.NewError(connectorcore.ErrorCodeConnectorUnavailable, false, nil)
+	}
+	return service.ListPending(ctx, organizationID, ownerAccountID, page, pageSize)
 }
 
 func (gate *connectorRuntimeConfirmationBoundary) Continue(

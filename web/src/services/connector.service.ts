@@ -20,6 +20,7 @@ import type {
   CreateConnectorTargetBindingRequest,
   DetachConnectorTargetBindingRequest,
   UpdateConnectorTargetBindingAuthorizationRequest,
+  UpdateConnectorHostDelegationRequest,
   GetConnectorCatalogParams,
   GetPersonalConnectionsParams,
   KeySetupRequest,
@@ -348,6 +349,17 @@ class ConnectorService extends BaseService {
     return this.request(
       'patch',
       `/connector-target-bindings/${encodeURIComponent(bindingId)}/authorization`,
+      data
+    );
+  }
+
+  updateTargetBindingHostDelegation(
+    bindingId: string,
+    data: UpdateConnectorHostDelegationRequest
+  ): Promise<ApiResponseData<ConnectorTargetBinding>> {
+    return this.request(
+      'patch',
+      `/connector-target-bindings/${encodeURIComponent(bindingId)}/host-delegation`,
       data
     );
   }

@@ -1206,7 +1206,10 @@ func (c *ServiceContainer) GetConnectorDigitalHumanRuntimeResolver() *connectorr
 	if err != nil {
 		panic(fmt.Sprintf("initialize DigitalHuman Connector resolver: %v", err))
 	}
-	return resolver
+	return resolver.WithDelegatedHostAccess(
+		c.GetConnectorBindingService(),
+		c.GetConnectorHostDelegationAuthorizer(),
+	)
 }
 
 // GetDigitalHumanCredentialCipher returns the purpose-separated cipher used for

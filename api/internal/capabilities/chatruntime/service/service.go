@@ -170,6 +170,7 @@ func executionModeModelUseCase(mode string) string {
 type Caller struct {
 	Type             string
 	ID               *uuid.UUID
+	RunID            *uuid.UUID
 	ConversationType string
 	Source           string
 	SourceWebAppID   *uuid.UUID

@@ -248,6 +248,7 @@ export function AgentRuntimeOrchestrationPanel({
               <Separator className="h-px" />
 
               <AgentRuntimeConnectorSection
+                agentId={agentId}
                 open={openSections.connectors}
                 connectorBindings={connectorBindings}
 

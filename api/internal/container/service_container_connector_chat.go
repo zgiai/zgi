@@ -39,5 +39,8 @@ func (c *ServiceContainer) GetConnectorAgentRuntimeResolver() *connectorruntimea
 	if err != nil {
 		panic(fmt.Sprintf("initialize Agent Connector runtime resolver: %v", err))
 	}
-	return resolver
+	return resolver.WithDelegatedHostAccess(
+		c.GetConnectorBindingService(),
+		c.GetConnectorHostDelegationAuthorizer(),
+	)
 }

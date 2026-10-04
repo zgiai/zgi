@@ -50,6 +50,15 @@ type AuthorizationMutationRepository interface {
 	UpdateBindingAuthorizationWithLifecycle(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, *core.AccessConstraint, int, BindingLifecycleMutation) (core.TargetBinding, error)
 }
 
+// HostDelegationCandidateRepository reads active published bindings that have
+// explicitly delegated a target to one host audience. It is deliberately
+// separate from Repository because this lookup is organization-scoped rather
+// than owner-scoped and must only be exposed through the audited service
+// boundary.
+type HostDelegationCandidateRepository interface {
+	ListPublishedHostDelegations(context.Context, uuid.UUID, core.TargetRef, core.HostAudience) ([]core.TargetBinding, error)
+}
+
 type bindingLifecycleDecisionRecord struct {
 	TargetScope        string         `gorm:"column:target_scope"`
 	TargetVersionID    string         `gorm:"column:target_version_id"`
@@ -517,6 +526,51 @@ func (repository *GormRepository) ListBindingsByTarget(
 	return findBindings(query.Order("connector_id ASC, binding_instance_id ASC NULLS FIRST, created_at ASC, id ASC"), "list connector target bindings by target")
 }
 
+func (repository *GormRepository) ListPublishedHostDelegations(ctx context.Context, organizationID uuid.UUID, target core.TargetRef, audience core.HostAudience) ([]core.TargetBinding, error) {
+	if err := repository.available(); err != nil {
+		return nil, err
+	}
+	if organizationID == uuid.Nil || (target.Type != core.TargetTypeAgent && target.Type != core.TargetTypeDigitalHuman) ||
+		target.EffectiveScope() != core.ScopePublished || target.Validate() != nil ||
+		(audience != core.HostAudienceWorkspace && audience != core.HostAudienceAPI && audience != core.HostAudienceChannel) {
+		return nil, invalidInputError("list published host delegations")
+	}
+	grant, err := json.Marshal(map[string]any{"host_delegation": map[string]any{"audiences": []core.HostAudience{audience}}})
+	if err != nil {
+		return nil, internalError("encode host delegation audience")
+	}
+	var records []bindingRecord
+	err = repository.db.WithContext(ctx).Where(
+		"organization_id = ? AND target_type = ? AND target_id = ? AND target_scope = ? AND target_version_id = ? AND status = ?",
+		organizationID, target.Type, target.ID, core.ScopePublished, target.VersionID, core.BindingStatusActive,
+	).Where("binding_constraint @> ?::jsonb", datatypes.JSON(grant)).
+		Order("connector_id ASC, binding_instance_id ASC NULLS FIRST, id ASC").Limit(51).Find(&records).Error
+	if err != nil || len(records) > 50 {
+		return nil, internalError("list published host delegations")
+	}
+	bindings := make([]core.TargetBinding, 0, len(records))
+	for _, record := range records {
+		binding, err := record.toDomain()
+		if err != nil || binding.OrganizationID != organizationID || binding.Target.Type != target.Type ||
+			binding.Target.ID != target.ID || binding.Target.EffectiveScope() != core.ScopePublished || binding.Target.VersionID != target.VersionID ||
+			binding.Status != core.BindingStatusActive || binding.Constraint == nil || binding.Constraint.HostDelegation == nil ||
+			binding.Constraint.HostDelegation.GrantedBy != binding.OwnerAccountID {
+			return nil, internalError("validate published host delegation")
+		}
+		allowed := false
+		for _, operation := range binding.Constraint.AllowedOperationIDs {
+			if binding.Constraint.AllowsHostAudience(binding.OwnerAccountID, operation, binding.Target, audience, time.Now().UTC()) {
+				allowed = true
+				break
+			}
+		}
+		if allowed {
+			bindings = append(bindings, binding)
+		}
+	}
+	return bindings, nil
+}
+
 // ListBindingsByConnection supplies the complete owner-visible removal impact;
 // callers can restrict it to active states with ListOptions when required.
 func (repository *GormRepository) ListBindingsByConnection(
@@ -799,7 +853,7 @@ func equivalentBindingLifecycleJSON(left, right datatypes.JSON) bool {
 }
 
 func bindingLifecycleDetails(binding core.TargetBinding) map[string]any {
-		details := map[string]any{
+	details := map[string]any{
 		"binding_id": binding.ID.String(), "target_type": string(binding.Target.Type), "target_id": binding.Target.ID,
 		"binding_instance_id": binding.Target.BindingInstanceID, "status": string(binding.Status),
 		"authorization_mode": binding.Constraint.AuthorizationModeValue(),
