@@ -3,7 +3,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
 import { createTextIconValue, type IconValue } from '@/components/common/icon-input/types';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
@@ -275,7 +274,6 @@ function DigitalHumanConfigureStep({
       // An invalid selection must block creation with a visible error rather
       // than create a draft that cannot carry the chosen authority.
       setSubmitError(t('createFlow.form.invalidSelection'));
-      toast.error(t('createFlow.form.invalidSelection'));
       setSubmitting(false);
       return;
     }
@@ -330,7 +328,6 @@ function DigitalHumanConfigureStep({
     } catch {
       // Keep every field so the user can retry.
       setSubmitError(t('createFlow.form.createFailed'));
-      toast.error(t('createFlow.form.createFailed'));
     } finally {
       setSubmitting(false);
     }

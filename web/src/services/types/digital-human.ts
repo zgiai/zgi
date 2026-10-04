@@ -357,8 +357,8 @@ export interface DigitalHumanRun {
    */
   waiting_reason?: DigitalHumanRunWaitingReason;
   /**
-   * Opaque server-side receipt for a `waiting_approval` run. It is the seam a
-   * future confirmation action would submit; the current UI only carries it.
+   * Opaque server-side receipt for a `waiting_approval` run. Connector
+   * confirmation continues to use this receipt-scoped path.
    */
   waiting_receipt?: string | null;
   conversation_id?: string | null;
@@ -392,6 +392,11 @@ export interface DigitalHumanRunRuntimeLog {
    * before rendering consent UI.
    */
   pending_connector_confirmation?: unknown;
+  /** Inline workflow approval data for a run paused on a generic approval node. */
+  pending_workflow_approval?: {
+    approval_token: string;
+    approval_form: unknown;
+  };
 }
 
 export interface ManualDigitalHumanInvocationRequest {

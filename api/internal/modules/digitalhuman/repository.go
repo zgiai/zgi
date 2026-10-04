@@ -176,7 +176,10 @@ func (r *GormRepository) ListDefinitions(ctx context.Context, scope Scope, query
 		return nil, 0, fmt.Errorf("count digital humans: %w", err)
 	}
 	items := make([]*Definition, 0, query.PageSize)
-	if err := db.Order("updated_at DESC, id DESC").
+	// State transitions update updated_at. Keep card order stable across
+	// publish/unpublish/status edits by sorting on creation time instead of the
+	// mutable audit timestamp.
+	if err := db.Order("created_at DESC, id DESC").
 		Offset((query.Page - 1) * query.PageSize).
 		Limit(query.PageSize).
 		Find(&items).Error; err != nil {
