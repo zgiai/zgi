@@ -1088,7 +1088,7 @@ function taskForm(task: DigitalHumanTask): TaskFormState {
   return {
     name: task.name,
     goal: task.goal,
-    successCriteria: task.success_criteria.join('\n'),
+    successCriteria: (task.success_criteria ?? []).join('\n'),
     priority: task.priority,
     scheduleType: task.schedule.type,
     runAt: task.schedule.run_at ? localDateTime(task.schedule.run_at, task.schedule.timezone || 'UTC') : '',
