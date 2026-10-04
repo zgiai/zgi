@@ -83,11 +83,11 @@ export function ConnectorPickerGroupRow({
     onSelect(row, triggerRef.current);
   };
   const summaryClass =
-    'h-[54px] w-full min-w-0 shrink-0 justify-between rounded-lg px-3 md:col-start-3';
+    'min-h-[54px] w-full min-w-0 shrink-0 justify-between rounded-lg px-3';
 
   return (
     <article className="min-w-0 rounded-xl border bg-background p-3.5 shadow-xs">
-      <div className="grid min-w-0 grid-cols-[40px_minmax(0,1fr)] items-center gap-3 sm:flex sm:min-h-[62px] sm:gap-4">
+      <div className="grid min-w-0 grid-cols-[40px_minmax(0,1fr)] items-center gap-3 sm:grid-cols-[40px_minmax(0,1fr)_minmax(220px,320px)] sm:gap-4">
         <ConnectorIcon
           connectorId={group.id}
           name={groupName}
