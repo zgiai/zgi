@@ -25,10 +25,12 @@ type agentExecutionScope struct {
 }
 
 type agentExecutionBinding struct {
-	ID         string `json:"id"`
-	Status     string `json:"status"`
-	Generation int64  `json:"generation"`
-	Recreated  bool   `json:"-"`
+	ID            string `json:"id"`
+	Status        string `json:"status"`
+	Generation    int64  `json:"generation"`
+	NetworkPolicy string `json:"network_policy"`
+	NetworkMode   string `json:"network_mode"`
+	Recreated     bool   `json:"-"`
 }
 
 type agentExecutionJob struct {
@@ -154,12 +156,17 @@ func (g *agentExecutionHTTPGateway) CreateBinding(ctx context.Context, scope age
 	if len(homeSnapshotIDs) > 0 {
 		homeSnapshotID = strings.TrimSpace(homeSnapshotIDs[0])
 	}
+	networkPolicy := "offline"
+	if len(homeSnapshotIDs) > 1 && strings.TrimSpace(homeSnapshotIDs[1]) != "" {
+		networkPolicy = strings.TrimSpace(homeSnapshotIDs[1])
+	}
 	seen := make(map[string]struct{})
 	for attempt := 0; attempt <= agentExecutionMaxBindingReplacements; attempt++ {
 		var result agentExecutionBinding
 		err := g.request(ctx, scope, http.MethodPost, "bindings", map[string]any{
 			"agent_id": agentID, "conversation_id": conversationID, "profile_id": profileID,
 			"backend": backend, "idempotency_key": key, "home_snapshot_id": homeSnapshotID,
+			"network_policy": networkPolicy,
 		}, &result)
 		var gatewayErr agentExecutionGatewayHTTPError
 		if errors.As(err, &gatewayErr) && gatewayErr.statusCode == http.StatusConflict && gatewayErr.code == "idempotency_conflict" {

@@ -65,8 +65,8 @@ func (h *AgentsHandler) attachConsoleAgentExecutionTools(runConfig *runtimeservi
 			OrganizationID: scope.OrganizationID.String(), SubjectID: scope.AccountID.String(),
 		}
 		return []skillloop.RuntimeTool{
-			newAgentExecutionShellTool(gateway, executionScope, agentID.String(), prepared.Conversation.ID.String(), prepared.Message.ID.String(), profileID, backend, prepared.RuntimeAttachmentRefs(), fileReader, skillResolver),
-			newAgentExecutionExportTool(gateway, persister, executionScope, agentID.String(), prepared.Conversation.ID.String(), prepared.Message.ID.String(), profileID, backend),
+			newAgentExecutionShellToolWithNetworkPolicy(gateway, executionScope, agentID.String(), prepared.Conversation.ID.String(), prepared.Message.ID.String(), profileID, backend, cfg.ExecutionRuntime.PolicyID, prepared.RuntimeAttachmentRefs(), fileReader, skillResolver),
+			newAgentExecutionExportTool(gateway, persister, executionScope, agentID.String(), prepared.Conversation.ID.String(), prepared.Message.ID.String(), profileID, backend, cfg.ExecutionRuntime.PolicyID),
 		}
 	}
 	return nil
@@ -77,6 +77,10 @@ type agentRuntimeAttachmentReader interface {
 }
 
 func newAgentExecutionShellTool(gateway agentExecutionGateway, scope agentExecutionScope, agentID, conversationID, messageID, profileID, backend string, attachments []runtimeservice.RuntimeAttachmentRef, fileReader agentRuntimeAttachmentReader, skillResolvers ...agentSkillPackageResolver) skillloop.RuntimeTool {
+	return newAgentExecutionShellToolWithNetworkPolicy(gateway, scope, agentID, conversationID, messageID, profileID, backend, "offline", attachments, fileReader, skillResolvers...)
+}
+
+func newAgentExecutionShellToolWithNetworkPolicy(gateway agentExecutionGateway, scope agentExecutionScope, agentID, conversationID, messageID, profileID, backend, networkPolicy string, attachments []runtimeservice.RuntimeAttachmentRef, fileReader agentRuntimeAttachmentReader, skillResolvers ...agentSkillPackageResolver) skillloop.RuntimeTool {
 	var stageOnce sync.Once
 	var inputPaths []string
 	var stageErr error
@@ -103,12 +107,16 @@ func newAgentExecutionShellTool(gateway agentExecutionGateway, scope agentExecut
 			},
 		}},
 		Handler: func(ctx context.Context, call adapter.ToolCall) skillloop.RuntimeToolResult {
-			return executeAgentShellTool(ctx, gateway, scope, agentID, conversationID, messageID, profileID, backend, call, stage, skillResolvers...)
+			return executeAgentShellToolWithNetworkPolicy(ctx, gateway, scope, agentID, conversationID, messageID, profileID, backend, networkPolicy, call, stage, skillResolvers...)
 		},
 	}
 }
 
 func executeAgentShellTool(ctx context.Context, gateway agentExecutionGateway, scope agentExecutionScope, agentID, conversationID, messageID, profileID, backend string, call adapter.ToolCall, stage func(context.Context, string, agentExecutionCapabilities) ([]string, error), skillResolvers ...agentSkillPackageResolver) skillloop.RuntimeToolResult {
+	return executeAgentShellToolWithNetworkPolicy(ctx, gateway, scope, agentID, conversationID, messageID, profileID, backend, "offline", call, stage, skillResolvers...)
+}
+
+func executeAgentShellToolWithNetworkPolicy(ctx context.Context, gateway agentExecutionGateway, scope agentExecutionScope, agentID, conversationID, messageID, profileID, backend, networkPolicy string, call adapter.ToolCall, stage func(context.Context, string, agentExecutionCapabilities) ([]string, error), skillResolvers ...agentSkillPackageResolver) skillloop.RuntimeToolResult {
 	failed := func(code string, err error) skillloop.RuntimeToolResult {
 		return skillloop.RuntimeToolResult{
 			Status: "failed", Result: map[string]interface{}{"error_code": code},
@@ -150,7 +158,7 @@ func executeAgentShellTool(ctx context.Context, gateway agentExecutionGateway, s
 	timeout := time.Duration(args.TimeoutSeconds) * time.Second
 	operationCtx, cancel := context.WithTimeout(ctx, timeout+120*time.Second)
 	defer cancel()
-	binding, err := readyAgentExecutionBinding(operationCtx, gateway, scope, agentID, conversationID, profileID, backend)
+	binding, err := readyAgentExecutionBinding(operationCtx, gateway, scope, agentID, conversationID, profileID, backend, networkPolicy)
 	if err != nil {
 		return failed("binding_failed", err)
 	}

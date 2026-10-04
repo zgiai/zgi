@@ -45,6 +45,12 @@ func TestHTTPAPIBindingJobAndFileFlow(t *testing.T) {
 	if response.Code != http.StatusCreated {
 		t.Fatalf("create binding response = %d %s", response.Code, response.Body.String())
 	}
+	if got := responseDataString(t, response.Body.Bytes(), "network_policy"); got != "offline" {
+		t.Fatalf("network policy = %q, want offline", got)
+	}
+	if got := responseDataString(t, response.Body.Bytes(), "network_mode"); got != "disabled" {
+		t.Fatalf("network mode = %q, want disabled", got)
+	}
 	bindingID := responseDataString(t, response.Body.Bytes(), "id")
 	response = performAgentRuntimeRequest(t, api, http.MethodGet, agentRuntimePathPrefix+"bindings/by-idempotency?key=binding-request-1", nil, "org-1", "user-1")
 	if response.Code != http.StatusOK || responseDataString(t, response.Body.Bytes(), "id") != bindingID {
@@ -86,6 +92,14 @@ func TestHTTPAPIBindingJobAndFileFlow(t *testing.T) {
 	response = performAgentRuntimeRequest(t, api, http.MethodGet, agentRuntimePathPrefix+"bindings/"+bindingID, nil, "org-other", "user-1")
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("cross-tenant binding response = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestHTTPAPIRejectsUnsupportedNetworkPolicy(t *testing.T) {
+	api := newTestHTTPAPI(t)
+	response := performAgentRuntimeRequest(t, api, http.MethodPost, agentRuntimePathPrefix+"bindings", strings.NewReader(`{"agent_id":"agent-1","conversation_id":"conversation-unsupported","profile_id":"profile-1","backend":"fake","network_policy":"controlled-http","idempotency_key":"binding-request-unsupported"}`), "org-1", "user-1")
+	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), `"backend_unavailable"`) {
+		t.Fatalf("unsupported policy response = %d %s", response.Code, response.Body.String())
 	}
 }
 

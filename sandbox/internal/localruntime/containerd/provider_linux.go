@@ -185,6 +185,9 @@ func (p *Provider) Connect(_ context.Context, allocation agentexecution.Allocati
 }
 
 func (p *Provider) launch(ctx context.Context, spec agentexecution.CreateSpec) (agentexecution.Allocation, error) {
+	if networkMode := strings.TrimSpace(spec.NetworkMode); networkMode != "" && networkMode != "disabled" {
+		return agentexecution.Allocation{}, fmt.Errorf("%w: local gVisor runtime network mode %q is not available", agentexecution.ErrBackendUnavailable, networkMode)
+	}
 	allocation, profile, err := p.resolveCreate(spec)
 	if err != nil {
 		return allocation, err

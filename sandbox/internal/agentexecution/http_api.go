@@ -109,7 +109,7 @@ func (a *HTTPAPI) handleBindings(w http.ResponseWriter, request *http.Request, s
 		}
 		binding, err := a.control.CreateBinding(request.Context(), CreateBindingRequest{
 			Scope: scope, AgentID: body.AgentID, ConversationID: body.ConversationID,
-			ProfileID: body.ProfileID, HomeSnapshotID: body.HomeSnapshotID,
+			ProfileID: body.ProfileID, NetworkPolicy: body.NetworkPolicy, HomeSnapshotID: body.HomeSnapshotID,
 			Backend: body.Backend, IdempotencyKey: body.IdempotencyKey,
 		})
 		a.writeResult(w, http.StatusCreated, bindingResponseFrom(binding), err)
@@ -405,6 +405,7 @@ type createBindingBody struct {
 	AgentID        string `json:"agent_id"`
 	ConversationID string `json:"conversation_id"`
 	ProfileID      string `json:"profile_id"`
+	NetworkPolicy  string `json:"network_policy,omitempty"`
 	HomeSnapshotID string `json:"home_snapshot_id,omitempty"`
 	Backend        string `json:"backend"`
 	IdempotencyKey string `json:"idempotency_key"`
@@ -431,6 +432,8 @@ type bindingResponse struct {
 	AgentID            string        `json:"agent_id"`
 	ConversationID     string        `json:"conversation_id"`
 	ProfileID          string        `json:"profile_id"`
+	NetworkPolicy      string        `json:"network_policy"`
+	NetworkMode        string        `json:"network_mode"`
 	HomeSnapshotID     string        `json:"home_snapshot_id,omitempty"`
 	WorkspaceID        string        `json:"workspace_id"`
 	Backend            string        `json:"backend"`
@@ -445,7 +448,8 @@ type bindingResponse struct {
 func bindingResponseFrom(binding Binding) bindingResponse {
 	return bindingResponse{
 		ID: binding.ID, AgentID: binding.AgentID, ConversationID: binding.ConversationID,
-		ProfileID: binding.ProfileID, HomeSnapshotID: binding.HomeSnapshotID, WorkspaceID: binding.WorkspaceID, Backend: binding.Backend,
+		ProfileID: binding.ProfileID, NetworkPolicy: binding.NetworkPolicy, NetworkMode: binding.NetworkMode,
+		HomeSnapshotID: binding.HomeSnapshotID, WorkspaceID: binding.WorkspaceID, Backend: binding.Backend,
 		Status: binding.Status, Generation: binding.Generation, CreatedAt: binding.CreatedAt,
 		UpdatedAt: binding.UpdatedAt, ExpiresAt: binding.ExpiresAt,
 		RetentionExpiresAt: binding.RetentionExpiresAt,

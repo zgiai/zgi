@@ -14,7 +14,7 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
-func newAgentExecutionExportTool(gateway agentExecutionGateway, persister agentExecutionArtifactPersister, scope agentExecutionScope, agentID, conversationID, messageID, profileID, backend string) skillloop.RuntimeTool {
+func newAgentExecutionExportTool(gateway agentExecutionGateway, persister agentExecutionArtifactPersister, scope agentExecutionScope, agentID, conversationID, messageID, profileID, backend string, networkPolicyIDs ...string) skillloop.RuntimeTool {
 	return skillloop.RuntimeTool{
 		SkillID: "agent_execution",
 		Definition: adapter.Tool{Type: "function", Function: adapter.Function{
@@ -27,12 +27,12 @@ func newAgentExecutionExportTool(gateway agentExecutionGateway, persister agentE
 			},
 		}},
 		Handler: func(ctx context.Context, call adapter.ToolCall) skillloop.RuntimeToolResult {
-			return exportAgentExecutionFile(ctx, gateway, persister, scope, agentID, conversationID, messageID, profileID, backend, call)
+			return exportAgentExecutionFile(ctx, gateway, persister, scope, agentID, conversationID, messageID, profileID, backend, firstAgentExecutionNetworkPolicy(networkPolicyIDs...), call)
 		},
 	}
 }
 
-func exportAgentExecutionFile(ctx context.Context, gateway agentExecutionGateway, persister agentExecutionArtifactPersister, scope agentExecutionScope, agentID, conversationID, messageID, profileID, backend string, call adapter.ToolCall) skillloop.RuntimeToolResult {
+func exportAgentExecutionFile(ctx context.Context, gateway agentExecutionGateway, persister agentExecutionArtifactPersister, scope agentExecutionScope, agentID, conversationID, messageID, profileID, backend, networkPolicy string, call adapter.ToolCall) skillloop.RuntimeToolResult {
 	failed := func(code string, err error) skillloop.RuntimeToolResult {
 		return skillloop.RuntimeToolResult{
 			Status: "failed", Result: map[string]interface{}{"error_code": code},
@@ -59,7 +59,7 @@ func exportAgentExecutionFile(ctx context.Context, gateway agentExecutionGateway
 	}
 	operationCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
-	binding, err := readyAgentExecutionBinding(operationCtx, gateway, scope, agentID, conversationID, profileID, backend)
+	binding, err := readyAgentExecutionBinding(operationCtx, gateway, scope, agentID, conversationID, profileID, backend, networkPolicy)
 	if err != nil {
 		return failed("binding_unavailable", err)
 	}

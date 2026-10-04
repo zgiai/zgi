@@ -48,6 +48,55 @@ func TestCreateBindingRejectsIdempotencyKeyReuse(t *testing.T) {
 	}
 }
 
+func TestCreateBindingRejectsUnsupportedNetworkPolicyBeforeAllocation(t *testing.T) {
+	repository := newMemoryRepository()
+	backend := &fakeBackend{}
+	service := newTestService(t, repository, backend)
+	request := testCreateRequest()
+	request.NetworkPolicy = "approved-http"
+	if _, err := service.CreateBinding(context.Background(), request); !errors.Is(err, ErrBackendUnavailable) {
+		t.Fatalf("unsupported network policy error = %v, want ErrBackendUnavailable", err)
+	}
+	if backend.createCalls != 0 {
+		t.Fatalf("backend create calls = %d, want 0", backend.createCalls)
+	}
+}
+
+func TestCreateBindingDefaultsToOfflineNetworkContract(t *testing.T) {
+	repository := newMemoryRepository()
+	service := newTestService(t, repository, &fakeBackend{})
+	binding, err := service.CreateBinding(context.Background(), testCreateRequest())
+	if err != nil {
+		t.Fatalf("create binding: %v", err)
+	}
+	if binding.NetworkPolicy != "offline" || binding.NetworkMode != "disabled" {
+		t.Fatalf("network contract = (%q, %q), want (offline, disabled)", binding.NetworkPolicy, binding.NetworkMode)
+	}
+}
+
+func TestCreateBindingReusesLegacyOfflineFingerprint(t *testing.T) {
+	repository := newMemoryRepository()
+	backend := &fakeBackend{}
+	service := newTestService(t, repository, backend)
+	request := testCreateRequest()
+	binding, err := service.CreateBinding(context.Background(), request)
+	if err != nil {
+		t.Fatalf("create binding: %v", err)
+	}
+	repository.mu.Lock()
+	legacy := repository.bindings[binding.ID]
+	legacy.RequestHash = legacyRequestFingerprint(normalizeCreateRequest(request))
+	repository.bindings[binding.ID] = legacy
+	repository.mu.Unlock()
+	reused, err := service.CreateBinding(context.Background(), request)
+	if err != nil || reused.ID != binding.ID {
+		t.Fatalf("legacy binding reuse = %+v, %v", reused, err)
+	}
+	if backend.createCalls != 1 {
+		t.Fatalf("backend create calls = %d, want 1", backend.createCalls)
+	}
+}
+
 func TestCreateBindingQueuesCleanupWhenActivationWriteFails(t *testing.T) {
 	repository := newMemoryRepository()
 	repository.failUpdate = true

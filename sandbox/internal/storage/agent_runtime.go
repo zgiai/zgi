@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	agentruntime "github.com/zgiai/zgi-sandbox/internal/agentexecution"
@@ -14,22 +15,28 @@ var _ agentruntime.Repository = (*Store)(nil)
 
 const agentRuntimeBindingColumns = `
 	id, organization_id, subject_id, agent_id, conversation_id, profile_id,
-	home_snapshot_id, workspace_id, backend, backend_ref, workspace_ref, checkpoint_key, pending_checkpoint_key,
+	network_policy, network_mode, home_snapshot_id, workspace_id, backend, backend_ref, workspace_ref, checkpoint_key, pending_checkpoint_key,
 	idempotency_key, request_hash, status, generation, failure_reason,
 	created_at, updated_at, last_activity_at, expires_at, retention_expires_at, home_snapshot_ref`
 
 func (s *Store) ReserveBinding(ctx context.Context, binding agentruntime.Binding) (agentruntime.Binding, bool, error) {
+	if strings.TrimSpace(binding.NetworkPolicy) == "" {
+		binding.NetworkPolicy = "offline"
+	}
+	if strings.TrimSpace(binding.NetworkMode) == "" {
+		binding.NetworkMode = "disabled"
+	}
 	row := s.db.QueryRowContext(ctx, `
 		INSERT INTO agent_runtime_bindings (
 			id, organization_id, subject_id, agent_id, conversation_id, profile_id,
-			home_snapshot_id, workspace_id, backend, backend_ref, workspace_ref, checkpoint_key, pending_checkpoint_key,
+			network_policy, network_mode, home_snapshot_id, workspace_id, backend, backend_ref, workspace_ref, checkpoint_key, pending_checkpoint_key,
 			idempotency_key, request_hash, status, generation, failure_reason,
 			created_at, updated_at, last_activity_at, expires_at, retention_expires_at, home_snapshot_ref
 		) VALUES (
 			$1, $2, $3, $4, $5, $6,
-			$7, $8, $9, $10, $11, $12, $13,
-			$14, $15, $16, $17, $18,
-			$19, $20, $21, $22, $23, $24
+			$7, $8, $9, $10, $11, $12, $13, $14, $15,
+			$16, $17, $18, $19,
+			$20, $21, $22, $23, $24, $25, $26
 		)
 		ON CONFLICT (organization_id, subject_id, idempotency_key) DO NOTHING
 		RETURNING `+agentRuntimeBindingColumns,
@@ -39,6 +46,8 @@ func (s *Store) ReserveBinding(ctx context.Context, binding agentruntime.Binding
 		binding.AgentID,
 		binding.ConversationID,
 		binding.ProfileID,
+		binding.NetworkPolicy,
+		binding.NetworkMode,
 		binding.HomeSnapshotID,
 		binding.WorkspaceID,
 		binding.Backend,
@@ -305,6 +314,8 @@ func scanAgentRuntimeBinding(scanner rowScanner) (agentruntime.Binding, error) {
 		&binding.AgentID,
 		&binding.ConversationID,
 		&binding.ProfileID,
+		&binding.NetworkPolicy,
+		&binding.NetworkMode,
 		&binding.HomeSnapshotID,
 		&binding.WorkspaceID,
 		&binding.Backend,

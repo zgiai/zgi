@@ -96,6 +96,14 @@ func TestResolveCreateRejectsUnknownProfileAndMismatchedAllocation(t *testing.T)
 	}
 }
 
+func TestLaunchRejectsUnsupportedNetworkModeBeforeAllocation(t *testing.T) {
+	provider := &Provider{}
+	_, err := provider.launch(context.Background(), agentexecution.CreateSpec{NetworkMode: "controlled-http"})
+	if !errors.Is(err, agentexecution.ErrBackendUnavailable) {
+		t.Fatalf("unsupported network mode error = %v, want ErrBackendUnavailable", err)
+	}
+}
+
 func TestResolveCreateUsesApprovedPinnedHomeImage(t *testing.T) {
 	provider := &Provider{profiles: map[string]Profile{"python": {Image: testImage}}}
 	prepared := "registry.example.invalid/zgi/prepared@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"

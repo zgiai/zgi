@@ -274,6 +274,15 @@ var schemaMigrations = []schemaMigration{
 			FOR EACH ROW EXECUTE FUNCTION prevent_referenced_home_snapshot_delete();`,
 		},
 	},
+	{
+		version:     2026100501,
+		description: "agent runtime binding network policy contract",
+		statements: []string{
+			`ALTER TABLE agent_runtime_bindings ADD COLUMN network_policy TEXT NOT NULL DEFAULT 'offline';`,
+			`ALTER TABLE agent_runtime_bindings ADD COLUMN network_mode TEXT NOT NULL DEFAULT 'disabled';`,
+			`CREATE INDEX idx_agent_runtime_bindings_network_policy ON agent_runtime_bindings (network_policy, network_mode);`,
+		},
+	},
 }
 
 func (s *Store) applyMigrations(ctx context.Context) error {

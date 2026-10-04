@@ -219,6 +219,10 @@ func TestBackendRejectsUnapprovedProfilesAndInvalidConfiguration(t *testing.T) {
 	if !errors.Is(err, agentexecution.ErrInvalidRequest) {
 		t.Fatalf("unapproved profile error = %v", err)
 	}
+	_, err = backend.CreateBinding(context.Background(), agentexecution.CreateSpec{ProfileID: "standard", NetworkMode: "controlled-http"})
+	if !errors.Is(err, agentexecution.ErrBackendUnavailable) {
+		t.Fatalf("unsupported network mode error = %v, want ErrBackendUnavailable", err)
+	}
 }
 
 func writeJSON(writer http.ResponseWriter, status int, value any) {

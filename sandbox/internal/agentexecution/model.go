@@ -49,6 +49,8 @@ type Binding struct {
 	AgentID              string
 	ConversationID       string
 	ProfileID            string
+	NetworkPolicy        string
+	NetworkMode          string
 	HomeSnapshotID       string
 	HomeSnapshotRef      string
 	WorkspaceID          string
@@ -246,6 +248,8 @@ type CreateSpec struct {
 	OrganizationID      string
 	SubjectID           string
 	ProfileID           string
+	NetworkPolicy       string
+	NetworkMode         string
 	HomeSnapshotID      string
 	HomeSnapshotRef     string
 }

@@ -20,22 +20,23 @@ import (
 )
 
 type fakeAgentExecutionGateway struct {
-	binding      agentExecutionBinding
-	job          agentExecutionJob
-	getJob       func(context.Context) (agentExecutionJob, error)
-	cancelCalls  int
-	canceledJob  string
-	canceledGen  int64
-	cancelCtxErr error
-	output       []agentExecutionOutputChunk
-	capabilities agentExecutionCapabilities
-	command      string
-	args         []string
-	scope        agentExecutionScope
-	uploads      map[string][]byte
-	downloads    map[string][]byte
-	resumeCalls  int
-	setupJobs    int
+	binding       agentExecutionBinding
+	job           agentExecutionJob
+	getJob        func(context.Context) (agentExecutionJob, error)
+	cancelCalls   int
+	canceledJob   string
+	canceledGen   int64
+	cancelCtxErr  error
+	output        []agentExecutionOutputChunk
+	capabilities  agentExecutionCapabilities
+	command       string
+	args          []string
+	scope         agentExecutionScope
+	uploads       map[string][]byte
+	downloads     map[string][]byte
+	resumeCalls   int
+	setupJobs     int
+	networkPolicy string
 }
 
 type fakeRuntimeAttachmentReader struct {
@@ -62,8 +63,11 @@ func (r *fakeRuntimeAttachmentReader) DownloadFile(_ context.Context, fileID str
 	return append([]byte(nil), r.files[fileID]...), nil
 }
 
-func (f *fakeAgentExecutionGateway) CreateBinding(_ context.Context, scope agentExecutionScope, _, _, _, _ string, _ ...string) (agentExecutionBinding, error) {
+func (f *fakeAgentExecutionGateway) CreateBinding(_ context.Context, scope agentExecutionScope, _, _, _, _ string, options ...string) (agentExecutionBinding, error) {
 	f.scope = scope
+	if len(options) > 1 {
+		f.networkPolicy = options[1]
+	}
 	return f.binding, nil
 }
 
@@ -159,11 +163,15 @@ func TestAgentExecutionHTTPGatewayReplacesDeletedBindingIdempotently(t *testing.
 		}
 		var body struct {
 			IdempotencyKey string `json:"idempotency_key"`
+			NetworkPolicy  string `json:"network_policy"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Errorf("decode binding request: %v", err)
 		}
 		keys = append(keys, body.IdempotencyKey)
+		if body.NetworkPolicy != "offline" {
+			t.Errorf("network policy = %q, want offline", body.NetworkPolicy)
+		}
 		switch body.IdempotencyKey {
 		case "conversation:conversation-1":
 			_, _ = io.WriteString(w, `{"data":{"id":"binding-old","status":"deleted","generation":5}}`)
@@ -239,6 +247,18 @@ func TestAgentExecutionShellToolKeepsCommandAndOutputOutOfTrace(t *testing.T) {
 	}
 	if result.ModelResult["stdout"] != "private output" || result.ModelResult["stderr"] != "private diagnostics" {
 		t.Fatalf("model-visible output = %#v", result.ModelResult)
+	}
+}
+
+func TestAgentExecutionShellPassesNetworkPolicyToBinding(t *testing.T) {
+	fake := &fakeAgentExecutionGateway{
+		binding: agentExecutionBinding{ID: "binding-1", Status: "active"},
+		job:     agentExecutionJob{ID: "job-1", Status: "succeeded"},
+	}
+	tool := newAgentExecutionShellToolWithNetworkPolicy(fake, agentExecutionScope{OrganizationID: "org-1", SubjectID: "account-1"}, "agent-1", "conversation-1", "message-1", "standard", "local-gvisor", "controlled-http", nil, nil)
+	result := tool.Handler(t.Context(), adapter.ToolCall{ID: "call-1", Function: adapter.FunctionCall{Arguments: `{"command":"echo test","timeout_seconds":2}`}})
+	if result.Error != nil || fake.networkPolicy != "controlled-http" {
+		t.Fatalf("tool result = %#v, network policy = %q", result, fake.networkPolicy)
 	}
 }
 

@@ -105,7 +105,7 @@ func TestAgentRuntimeMigrationAndBindingRepository(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load binding: %v", err)
 	}
-	if loaded.Status != agentruntime.BindingStatusActive || loaded.Generation != 2 || loaded.CheckpointKey != binding.CheckpointKey || loaded.PendingCheckpointKey != binding.PendingCheckpointKey || loaded.HomeSnapshotRef != binding.HomeSnapshotRef {
+	if loaded.Status != agentruntime.BindingStatusActive || loaded.Generation != 2 || loaded.CheckpointKey != binding.CheckpointKey || loaded.PendingCheckpointKey != binding.PendingCheckpointKey || loaded.HomeSnapshotRef != binding.HomeSnapshotRef || loaded.NetworkPolicy != "offline" || loaded.NetworkMode != "disabled" {
 		t.Fatalf("loaded binding = %+v", loaded)
 	}
 	touchedAt := now.Add(time.Minute)

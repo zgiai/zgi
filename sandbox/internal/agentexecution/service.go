@@ -21,6 +21,7 @@ type CreateBindingRequest struct {
 	AgentID        string
 	ConversationID string
 	ProfileID      string
+	NetworkPolicy  string
 	HomeSnapshotID string
 	Backend        string
 	IdempotencyKey string
@@ -140,6 +141,8 @@ func (s *Service) CreateBinding(ctx context.Context, request CreateBindingReques
 		AgentID:            request.AgentID,
 		ConversationID:     request.ConversationID,
 		ProfileID:          request.ProfileID,
+		NetworkPolicy:      request.NetworkPolicy,
+		NetworkMode:        networkModeForPolicy(request.NetworkPolicy),
 		HomeSnapshotID:     request.HomeSnapshotID,
 		HomeSnapshotRef:    homeSnapshotRef,
 		WorkspaceID:        workspaceID,
@@ -178,6 +181,8 @@ func (s *Service) CreateBinding(ctx context.Context, request CreateBindingReques
 		OrganizationID:      binding.OrganizationID,
 		SubjectID:           binding.SubjectID,
 		ProfileID:           binding.ProfileID,
+		NetworkPolicy:       binding.NetworkPolicy,
+		NetworkMode:         binding.NetworkMode,
 		HomeSnapshotID:      binding.HomeSnapshotID,
 		HomeSnapshotRef:     binding.HomeSnapshotRef,
 	})
@@ -214,7 +219,8 @@ func (s *Service) existingBinding(ctx context.Context, request CreateBindingRequ
 	if err != nil {
 		return Binding{}, err
 	}
-	if binding.RequestHash != requestFingerprint(request) {
+	if binding.RequestHash != requestFingerprint(request) &&
+		!(request.NetworkPolicy == "offline" && binding.RequestHash == legacyRequestFingerprint(request)) {
 		return Binding{}, ErrIdempotencyConflict
 	}
 	return binding, nil
@@ -312,6 +318,7 @@ func (s *Service) ResumeBinding(ctx context.Context, scope Scope, bindingID stri
 		BindingID: binding.ID, WorkspaceID: binding.WorkspaceID,
 		OrganizationID: binding.OrganizationID, SubjectID: binding.SubjectID,
 		ProfileID: binding.ProfileID, HomeSnapshotID: binding.HomeSnapshotID, HomeSnapshotRef: binding.HomeSnapshotRef,
+		NetworkPolicy: binding.NetworkPolicy, NetworkMode: binding.NetworkMode,
 	}
 	allocation, err := backend.ResumeBinding(ctx, spec, Allocation{
 		BindingRef: binding.BackendRef, WorkspaceRef: binding.WorkspaceRef,
@@ -547,6 +554,7 @@ func normalizeCreateRequest(request CreateBindingRequest) CreateBindingRequest {
 	request.AgentID = strings.TrimSpace(request.AgentID)
 	request.ConversationID = strings.TrimSpace(request.ConversationID)
 	request.ProfileID = strings.TrimSpace(request.ProfileID)
+	request.NetworkPolicy = normalizeNetworkPolicy(request.NetworkPolicy)
 	request.HomeSnapshotID = strings.TrimSpace(request.HomeSnapshotID)
 	request.Backend = strings.TrimSpace(request.Backend)
 	request.IdempotencyKey = strings.TrimSpace(request.IdempotencyKey)
@@ -556,6 +564,9 @@ func normalizeCreateRequest(request CreateBindingRequest) CreateBindingRequest {
 func validateCreateRequest(request CreateBindingRequest) error {
 	if request.Scope.OrganizationID == "" || request.Scope.SubjectID == "" || request.AgentID == "" || request.ConversationID == "" || request.ProfileID == "" || request.Backend == "" || request.IdempotencyKey == "" {
 		return fmt.Errorf("%w: organization, subject, agent, conversation, profile, backend, and idempotency key are required", ErrInvalidRequest)
+	}
+	if request.NetworkPolicy != "offline" {
+		return fmt.Errorf("%w: network policy %q is not available in this runtime", ErrBackendUnavailable, request.NetworkPolicy)
 	}
 	return nil
 }
@@ -567,11 +578,41 @@ func requestFingerprint(request CreateBindingRequest) string {
 		request.AgentID,
 		request.ConversationID,
 		request.ProfileID,
+		request.NetworkPolicy,
 		request.HomeSnapshotID,
 		request.Backend,
 	}, "\x00")
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:])
+}
+
+func legacyRequestFingerprint(request CreateBindingRequest) string {
+	value := strings.Join([]string{
+		request.Scope.OrganizationID,
+		request.Scope.SubjectID,
+		request.AgentID,
+		request.ConversationID,
+		request.ProfileID,
+		request.HomeSnapshotID,
+		request.Backend,
+	}, "\x00")
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
+}
+
+func normalizeNetworkPolicy(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	if value == "" {
+		return "offline"
+	}
+	return value
+}
+
+func networkModeForPolicy(value string) string {
+	if normalizeNetworkPolicy(value) == "offline" {
+		return "disabled"
+	}
+	return "controlled-http"
 }
 
 func owns(scope Scope, binding Binding) bool {

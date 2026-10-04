@@ -120,6 +120,9 @@ func New(options Options) (*Backend, error) {
 }
 
 func (b *Backend) CreateBinding(ctx context.Context, spec agentexecution.CreateSpec) (agentexecution.Allocation, error) {
+	if networkMode := strings.TrimSpace(spec.NetworkMode); networkMode != "" && networkMode != "disabled" {
+		return agentexecution.Allocation{}, fmt.Errorf("%w: E2B runtime network mode %q is not available", agentexecution.ErrBackendUnavailable, networkMode)
+	}
 	profile, ok := b.profiles[strings.TrimSpace(spec.ProfileID)]
 	if !ok {
 		return agentexecution.Allocation{}, fmt.Errorf("%w: E2B profile is not approved", agentexecution.ErrInvalidRequest)
