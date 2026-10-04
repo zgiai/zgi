@@ -52,8 +52,8 @@ export function DigitalHumanChat({ id }: { id: string }) {
       update: (taskId, request) => digitalHumanService.updateMyTask(id, taskId, request),
       action: (taskId, action, revision) =>
         digitalHumanService.applyMyTaskAction(id, taskId, action, revision),
-      runs: taskId => digitalHumanService.listMyTaskRuns(id, taskId),
-      activities: taskId => digitalHumanService.listMyTaskActivities(id, taskId),
+      runs: (taskId, page) => digitalHumanService.listMyTaskRuns(id, taskId, page),
+      activities: (taskId, page) => digitalHumanService.listMyTaskActivities(id, taskId, page),
     }),
     [id]
   );

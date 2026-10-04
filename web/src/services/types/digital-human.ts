@@ -750,6 +750,18 @@ export interface DigitalHumanTaskSchedule {
   timezone?: string;
 }
 
+export interface DigitalHumanTaskSchedulePreviewRequest {
+  type: 'once' | 'cron';
+  local_run_at?: string;
+  cron?: string;
+  timezone: string;
+}
+
+export interface DigitalHumanTaskSchedulePreview {
+  schedule: DigitalHumanTaskSchedule;
+  next_run_at?: string;
+}
+
 export interface DigitalHumanTask {
   id: string;
   digital_human_id: string;

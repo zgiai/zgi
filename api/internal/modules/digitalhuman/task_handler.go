@@ -29,6 +29,7 @@ func (h *TaskHandler) RegisterRoutes(router *gin.RouterGroup) {
 	group := router.Group("/digital-humans/:id/tasks")
 	group.GET("", h.list)
 	group.POST("", h.create)
+	group.POST("/schedule-preview", h.previewSchedule)
 	group.GET("/:task_id", h.get)
 	group.PATCH("/:task_id", h.update)
 	group.POST("/:task_id/actions/:action", h.applyAction)
@@ -85,6 +86,23 @@ func optionalRFC3339Query(raw string) (*time.Time, error) {
 		return nil, err
 	}
 	return &parsed, nil
+}
+
+func (h *TaskHandler) previewSchedule(c *gin.Context) {
+	scope, id, ok := h.base.scopeAndID(c)
+	if !ok {
+		return
+	}
+	var req TaskSchedulePreviewRequest
+	if !h.base.decode(c, &req) {
+		return
+	}
+	result, err := h.service.PreviewTaskSchedule(c.Request.Context(), sharedTaskAccess(scope, id), req)
+	if err != nil {
+		h.base.writeError(c, taskApplicationError(err, "digital_human.task.schedule_preview"))
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, result)
 }
 
 func (h *TaskHandler) create(c *gin.Context) {

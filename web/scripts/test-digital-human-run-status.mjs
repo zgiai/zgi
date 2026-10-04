@@ -554,7 +554,7 @@ const confirmationCardSource = read(
 assert.match(
   confirmationCardSource,
   /requireCompletePreview = false/,
-  'the complete-preview gate must be opt-in and default off'
+  'the missing-preview warning must be opt-in and default off'
 );
 assert.match(
   confirmationCardSource,
@@ -568,13 +568,13 @@ assert.match(
 );
 assert.match(
   confirmationCardSource,
-  /decision === 'confirmed' && requireCompletePreview && !previewReady/,
-  'the card must refuse approval without a complete preview'
+  /decision === 'confirmed' && !previewReady/,
+  'the card must refuse approval without a complete preview for every host'
 );
 assert.match(
   confirmationCardSource,
-  /disabled: !canConfirm/,
-  'the Confirm action must be disabled until the preview requirement is met'
+  /const canConfirm = canDecide && previewReady;[\s\S]*disabled: !canConfirm/,
+  'the Confirm action must be disabled until a complete preview is available'
 );
 assert.match(
   confirmationCardSource,

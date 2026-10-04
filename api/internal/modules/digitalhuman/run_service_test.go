@@ -27,6 +27,53 @@ import (
 	"gorm.io/datatypes"
 )
 
+func TestScheduledAPIEndUserTaskDoesNotBorrowPersonalConnectors(t *testing.T) {
+	event := invocation.Event{Origin: invocation.Origin{Kind: invocation.OriginSchedule}}
+	for _, testCase := range []struct {
+		name string
+		run  *Run
+		want bool
+	}{
+		{"API end user", &Run{Surface: SurfaceTask, UserSubjectKind: string(usersubject.APIEndUser)}, true},
+		{"account owner", &Run{Surface: SurfaceTask, UserSubjectKind: string(usersubject.Account)}, false},
+		{"shared task", &Run{Surface: SurfaceTask}, false},
+		{"manual API call", &Run{Surface: SurfaceAPI, UserSubjectKind: string(usersubject.APIEndUser)}, false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			config := chatruntime.RunConfig{}
+			applyScheduledConnectorPolicy(&config, testCase.run, event)
+			if config.ConnectorToolsDisabled != testCase.want {
+				t.Fatalf("ConnectorToolsDisabled = %v, want %v", config.ConnectorToolsDisabled, testCase.want)
+			}
+		})
+	}
+}
+
+func TestScheduledAPIEndUserTaskPreparesChatWithoutPersonalConnectors(t *testing.T) {
+	store, dispatcher, chat := newFakeRunStore(), &fakeRunDispatcher{}, &fakeDigitalHumanChat{}
+	service := newTestRuntimeService(t, store, dispatcher, chat)
+	scope, digitalHumanID, subjectID := testRunScope(), uuid.New(), uuid.New()
+	scope.ActorID, scope.PrincipalID = subjectID, subjectID
+	scope.PrincipalType, scope.Surface = string(invocation.PrincipalSystem), SurfaceTask
+	scope.UserSubjectKind, scope.UserSubjectID = string(usersubject.APIEndUser), &subjectID
+	event := invocation.Event{
+		ID: uuid.NewString(), Type: invocation.EventTypeSchedule,
+		Origin: invocation.Origin{Kind: invocation.OriginSchedule},
+		Target: runtimeidentity.SubjectRef{Type: runtimeidentity.SubjectTypeDigitalHuman, ID: digitalHumanID, OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID},
+		Sender: invocation.PrincipalRef{Type: invocation.PrincipalSystem, ID: "digital-human-task-scheduler"}, OccurredAt: service.now(),
+	}
+	run, created, err := service.SubmitInvocation(t.Context(), scope, event, "Reply without using a connector", nil)
+	if err != nil || !created {
+		t.Fatalf("SubmitInvocation() = created %v, err %v", created, err)
+	}
+	if err := service.Execute(t.Context(), run.ID); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if chat.prepareCalls != 1 || !chat.config.ConnectorToolsDisabled || chat.request.Query == "" {
+		t.Fatal("API end-user task reached ChatRuntime without the account-safe Connector policy")
+	}
+}
+
 func TestRuntimeServiceSubmitIsDurableAndIdempotent(t *testing.T) {
 	store, dispatcher, chat := newFakeRunStore(), &fakeRunDispatcher{}, &fakeDigitalHumanChat{}
 	service := newTestRuntimeService(t, store, dispatcher, chat)

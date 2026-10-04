@@ -1,6 +1,6 @@
 'use client';
 
-import { useDeferredValue, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useDeferredValue, useEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
@@ -19,6 +19,7 @@ import {
   Search,
   XCircle,
 } from 'lucide-react';
+import { isAxiosError } from 'axios';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -51,7 +52,9 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { digitalHumanChannelProvider } from '@/components/digital-human/digital-human-channel-providers';
-import { digitalHumanTaskDisplayStatus } from '@/components/digital-human/digital-human-task-presentation';
+import { digitalHumanTaskDisplayStatus, digitalHumanTaskScheduleSummary } from '@/components/digital-human/digital-human-task-presentation';
+import { DigitalHumanTaskActivityItem, DigitalHumanTaskHistoryPager, DigitalHumanTaskRunSummary } from '@/components/digital-human/digital-human-task-history';
+import { useLocale } from '@/hooks/use-locale';
 import {
   useDigitalHumanTaskDetail,
   useDigitalHumanTaskMutations,
@@ -60,11 +63,13 @@ import {
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
+import { digitalHumanService } from '@/services/digital-human.service';
 import type {
   CreateDigitalHumanTaskRequest,
   DigitalHumanTask,
   DigitalHumanTaskPriority,
   DigitalHumanTaskScheduleType,
+  DigitalHumanTaskSchedulePreview,
   DigitalHumanTaskStatus,
 } from '@/services/types/digital-human';
 
@@ -76,10 +81,15 @@ const summaryStatuses: DigitalHumanTaskStatus[] = [
   'proposed',
   'pending',
   'in_progress',
+  'waiting',
   'blocked',
   'completed',
+  'canceled',
 ];
 const taskParam = 'task';
+const taskTimezones = ['UTC', ...(typeof Intl.supportedValuesOf === 'function'
+  ? Intl.supportedValuesOf('timeZone')
+  : ['Asia/Shanghai', 'Asia/Tokyo', 'Europe/London', 'America/New_York'])];
 
 export function DigitalHumanTasks({ id }: { id: string }) {
   const t = useT('digitalHumans');
@@ -89,14 +99,25 @@ export function DigitalHumanTasks({ id }: { id: string }) {
   const permissions = useAccountPermissions();
   const canUpdate = permissions.hasPermission('digital_human.update');
   const canRun = permissions.hasPermission('digital_human.run');
-  const [search, setSearch] = useState('');
+  const urlSearch = searchParams.get('q') ?? '';
+  const [search, setSearch] = useState(urlSearch);
+  const pendingSearchRef = useRef<string | null>(null);
   const deferredSearch = useDeferredValue(search);
-  const [status, setStatus] = useState<StatusFilter>('open');
-  const [priority, setPriority] = useState<PriorityFilter>('all');
-  const [schedule, setSchedule] = useState<ScheduleFilter>('all');
+  const rawStatus = searchParams.get('status');
+  const status: StatusFilter = rawStatus === 'all' || taskStatuses.includes(rawStatus as DigitalHumanTaskStatus)
+    ? rawStatus as StatusFilter : 'open';
+  const rawPriority = searchParams.get('priority');
+  const priority: PriorityFilter = taskPriorities.includes(rawPriority as DigitalHumanTaskPriority)
+    ? rawPriority as DigitalHumanTaskPriority : 'all';
+  const rawSchedule = searchParams.get('schedule');
+  const schedule: ScheduleFilter = taskSchedules.includes(rawSchedule as DigitalHumanTaskScheduleType)
+    ? rawSchedule as DigitalHumanTaskScheduleType : 'all';
+  const rawPage = Number(searchParams.get('page') ?? 1);
+  const page = Number.isSafeInteger(rawPage) && rawPage > 0 && rawPage <= 10_000 ? rawPage : 1;
   const selectedTaskID = searchParams.get(taskParam) ?? '';
   const [editorTask, setEditorTask] = useState<DigitalHumanTask | null | undefined>();
   const query = useDigitalHumanTasks(id, {
+    page,
     query: deferredSearch.trim() || undefined,
     status:
       status === 'all'
@@ -112,13 +133,33 @@ export function DigitalHumanTasks({ id }: { id: string }) {
   const hasFilters = Boolean(
     search.trim() || status !== 'open' || priority !== 'all' || schedule !== 'all'
   );
-  const setSelectedTaskID = (taskId?: string) => {
+  const updateParams = useCallback((updates: Record<string, string | null>) => {
     const params = new URLSearchParams(searchParams.toString());
-    if (taskId) params.set(taskParam, taskId);
-    else params.delete(taskParam);
-    const query = params.toString();
-    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
-  };
+    if (!('q' in updates) && search !== urlSearch) {
+      if (search) params.set('q', search);
+      else params.delete('q');
+    }
+    for (const [key, value] of Object.entries(updates)) {
+      if (value) params.set(key, value);
+      else params.delete(key);
+    }
+    const next = params.toString();
+    if (params.get('q') !== searchParams.get('q')) pendingSearchRef.current = params.get('q') ?? '';
+    router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
+  }, [pathname, router, search, searchParams, urlSearch]);
+  useEffect(() => {
+    if (pendingSearchRef.current === urlSearch) {
+      pendingSearchRef.current = null;
+      return;
+    }
+    setSearch(urlSearch);
+  }, [urlSearch]);
+  useEffect(() => {
+    if (search === urlSearch) return;
+    const timer = window.setTimeout(() => updateParams({ q: search || null, page: null }), 300);
+    return () => window.clearTimeout(timer);
+  }, [search, updateParams, urlSearch]);
+  const setSelectedTaskID = (taskId?: string) => updateParams({ [taskParam]: taskId ?? null });
 
   return (
     <main className="mx-auto flex min-h-full w-full max-w-[1600px] flex-col gap-5 px-4 py-6 md:px-8 md:py-8">
@@ -149,7 +190,7 @@ export function DigitalHumanTasks({ id }: { id: string }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-7">
         {summaryStatuses.map(item => (
           <button
             key={item}
@@ -158,7 +199,7 @@ export function DigitalHumanTasks({ id }: { id: string }) {
               'rounded-xl border bg-card p-4 text-left outline-none transition-colors hover:border-primary/30 hover:bg-primary/[0.02] focus-visible:ring-2 focus-visible:ring-ring',
               status === item && 'border-primary/40 bg-primary/5'
             )}
-            onClick={() => setStatus(current => (current === item ? 'open' : item))}
+            onClick={() => updateParams({ status: status === item ? null : item, page: null })}
           >
             <p className="text-xs text-muted-foreground">{t(`tasks.status.${item}`)}</p>
             <p className="mt-1 text-2xl font-semibold tabular-nums">{counts[item] ?? 0}</p>
@@ -179,7 +220,7 @@ export function DigitalHumanTasks({ id }: { id: string }) {
           <div className="grid flex-1 grid-cols-1 gap-2 sm:grid-cols-3 xl:flex xl:justify-end">
             <TaskFilter
               value={status}
-              onChange={value => setStatus(value as StatusFilter)}
+              onChange={value => updateParams({ status: value === 'open' ? null : value, page: null })}
               label={t('tasks.filters.status')}
             >
               <SelectItem value="open">{t('tasks.filters.openStatuses')}</SelectItem>
@@ -192,7 +233,7 @@ export function DigitalHumanTasks({ id }: { id: string }) {
             </TaskFilter>
             <TaskFilter
               value={priority}
-              onChange={value => setPriority(value as PriorityFilter)}
+              onChange={value => updateParams({ priority: value === 'all' ? null : value, page: null })}
               label={t('tasks.filters.priority')}
             >
               <SelectItem value="all">{t('tasks.filters.allPriorities')}</SelectItem>
@@ -204,7 +245,7 @@ export function DigitalHumanTasks({ id }: { id: string }) {
             </TaskFilter>
             <TaskFilter
               value={schedule}
-              onChange={value => setSchedule(value as ScheduleFilter)}
+              onChange={value => updateParams({ schedule: value === 'all' ? null : value, page: null })}
               label={t('tasks.filters.schedule')}
             >
               <SelectItem value="all">{t('tasks.filters.allSchedules')}</SelectItem>
@@ -221,9 +262,7 @@ export function DigitalHumanTasks({ id }: { id: string }) {
               size="sm"
               onClick={() => {
                 setSearch('');
-                setStatus('open');
-                setPriority('all');
-                setSchedule('all');
+                updateParams({ q: null, status: null, priority: null, schedule: null, page: null });
               }}
             >
               {t('tasks.filters.clear')}
@@ -301,6 +340,25 @@ export function DigitalHumanTasks({ id }: { id: string }) {
             </div>
           </>
         )}
+        {query.data && (query.data.data.total > 0 || page > 1) ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3 text-sm text-muted-foreground">
+            <span>{t('tasks.pagination.range', {
+              from: items.length ? (page - 1) * 100 + 1 : 0,
+              to: items.length ? (page - 1) * 100 + items.length : 0,
+              total: query.data.data.total,
+            })}</span>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" disabled={page <= 1 || query.isFetching}
+                onClick={() => updateParams({ page: page === 2 ? null : String(page - 1) })}>
+                {t('tasks.pagination.previous')}
+              </Button>
+              <Button variant="outline" size="sm" disabled={!query.data.data.has_more || query.isFetching}
+                onClick={() => updateParams({ page: String(page + 1) })}>
+                {t('tasks.pagination.next')}
+              </Button>
+            </div>
+          </div>
+        ) : null}
       </section>
 
       <TaskEditorDialog
@@ -388,6 +446,7 @@ function PriorityBadge({ priority }: { priority: DigitalHumanTaskPriority }) {
   const t = useT('digitalHumans');
   return (
     <Badge
+      title={t('tasks.priorityNote')}
       variant={priority === 'urgent' ? 'destructive' : priority === 'high' ? 'warning' : 'outline'}
     >
       {t(`tasks.priority.${priority}`)}
@@ -397,13 +456,9 @@ function PriorityBadge({ priority }: { priority: DigitalHumanTaskPriority }) {
 
 function TaskScheduleLabel({ task }: { task: DigitalHumanTask }) {
   const t = useT('digitalHumans');
-  if (task.schedule.type === 'manual') {
-    return <span>{t('tasks.schedule.manual')}</span>;
-  }
-  if (task.schedule.type === 'once') {
-    return <span>{t('tasks.schedule.once')}</span>;
-  }
-  return <span>{t('tasks.schedule.cron')}</span>;
+  const { locale } = useLocale();
+  const label = digitalHumanTaskScheduleSummary(task, t, locale);
+  return <span className="block max-w-full truncate" title={label}>{label}</span>;
 }
 
 function TaskState({
@@ -447,15 +502,38 @@ function TaskDetailSheet({
   onOpenChange: (open: boolean) => void;
 }) {
   const t = useT('digitalHumans');
-  const detail = useDigitalHumanTaskDetail(id, taskId);
+  const { locale } = useLocale();
+  const [runPage, setRunPage] = useState(1);
+  const [activityPage, setActivityPage] = useState(1);
+  useEffect(() => { setRunPage(1); setActivityPage(1); }, [taskId]);
+  const detail = useDigitalHumanTaskDetail(id, taskId, runPage, activityPage);
   const mutations = useDigitalHumanTaskMutations(id);
   const task = detail.task.data?.data;
+  const actionPendingRef = useRef(false);
   const [confirmAction, setConfirmAction] = useState<'decline' | 'cancel' | 'archive' | null>(null);
   const perform = async (action: string) => {
-    if (!task) return;
-    await mutations.action.mutateAsync({ taskId: task.id, action, revision: task.revision });
-    setConfirmAction(null);
-    toast.success(t('tasks.actionApplied'));
+    if (!open || !task || actionPendingRef.current) return;
+    actionPendingRef.current = true;
+    try {
+      const latest = await detail.task.refetch();
+      if (latest.isError || !latest.data?.data || latest.data.data.id !== taskId) {
+        toast.error(t('tasks.loadError'));
+        return;
+      }
+      if (latest.data.data.revision !== task.revision ||
+        latest.data.data.work_status !== task.work_status ||
+        latest.data.data.lifecycle_status !== task.lifecycle_status) {
+        toast.error(t('tasks.actionStale'));
+        return;
+      }
+      await mutations.action.mutateAsync({ taskId, action, revision: latest.data.data.revision });
+      setConfirmAction(null);
+      toast.success(t('tasks.actionApplied'));
+    } catch {
+      void detail.task.refetch();
+    } finally {
+      actionPendingRef.current = false;
+    }
   };
 
   return (
@@ -507,11 +585,11 @@ function TaskDetailSheet({
                 />
                 <DetailValue label={t('tasks.fields.source')} value={sourceLabel(task, t)} />
               </section>
-              {task.success_criteria.length ? (
+              {(task.success_criteria ?? []).length ? (
                 <section>
                   <h3 className="text-sm font-semibold">{t('tasks.fields.successCriteria')}</h3>
                   <ul className="mt-2 space-y-2">
-                    {task.success_criteria.map((item, index) => (
+                    {(task.success_criteria ?? []).map((item, index) => (
                       <li key={`${index}-${item}`} className="flex gap-2 text-sm">
                         <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
                         {item}
@@ -525,73 +603,45 @@ function TaskDetailSheet({
                 <div className="mt-3 space-y-2">
                   {detail.runs.isLoading ? (
                     <Skeleton className="h-20" />
+                  ) : detail.runs.isError ? (
+                    <Button variant="outline" size="sm" onClick={() => void detail.runs.refetch()}>{t('tasks.retry')}</Button>
                   ) : (detail.runs.data?.data.items ?? []).length === 0 ? (
                     <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
                       {t('tasks.detail.noRuns')}
                     </p>
                   ) : (
                     (detail.runs.data?.data.items ?? []).map(run => (
-                      <div
-                        key={run.id}
-                        className="flex items-center justify-between gap-3 rounded-lg border p-3"
-                      >
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium">
-                            {t('tasks.detail.attempt', { value: run.attempt })}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {formatDate(run.created_at)}
-                          </p>
-                          {run.error_summary ? (
-                            <p className="mt-1 line-clamp-2 text-xs text-destructive">
-                              {run.error_summary}
-                            </p>
-                          ) : null}
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Badge
-                            variant={
-                              run.status === 'succeeded'
-                                ? 'success'
-                                : run.status === 'failed'
-                                  ? 'destructive'
-                                  : 'subtle'
-                            }
-                          >
-                            {t(`tasks.runStatus.${normalizeRunStatus(run.status)}`)}
-                          </Badge>
-                          {run.digital_human_run_id ? (
-                            <Button asChild variant="ghost" size="sm">
-                              <Link
-                                href={`/console/digital-humans/${id}/runs?run=${run.digital_human_run_id}`}
-                              >
-                                {t('tasks.detail.viewLog')}
-                              </Link>
-                            </Button>
-                          ) : null}
-                        </div>
-                      </div>
+                      <DigitalHumanTaskRunSummary key={run.id} run={run}>
+                        {run.digital_human_run_id ? (
+                          <Button asChild variant="ghost" size="sm" className="mt-2">
+                            <Link href={`/console/digital-humans/${id}/runs?run=${run.digital_human_run_id}`}>
+                              {t('tasks.detail.viewLog')}
+                            </Link>
+                          </Button>
+                        ) : null}
+                      </DigitalHumanTaskRunSummary>
                     ))
                   )}
                 </div>
+                <DigitalHumanTaskHistoryPager data={detail.runs.data?.data ?? null} page={runPage} onPage={setRunPage} />
               </section>
               <section>
                 <h3 className="text-sm font-semibold">{t('tasks.detail.activities')}</h3>
-                <div className="mt-3 border-l pl-4">
+                <ol className="mt-3 space-y-0">
                   {detail.activities.isLoading ? (
                     <Skeleton className="h-28" />
+                  ) : detail.activities.isError ? (
+                    <Button variant="outline" size="sm" onClick={() => void detail.activities.refetch()}>{t('tasks.retry')}</Button>
+                  ) : (detail.activities.data?.data.items ?? []).length === 0 ? (
+                    <p className="text-sm text-muted-foreground">{t('tasks.detail.noActivities')}</p>
                   ) : (
-                    (detail.activities.data?.data.items ?? []).map(activity => (
-                      <div key={activity.id} className="relative pb-4 last:pb-0">
-                        <span className="absolute -left-[21px] top-1 size-2 rounded-full bg-primary" />
-                        <p className="text-sm">{activityLabel(activity.action, t)}</p>
-                        <p className="mt-0.5 text-xs text-muted-foreground">
-                          {formatDate(activity.created_at)}
-                        </p>
-                      </div>
+                    (detail.activities.data?.data.items ?? []).map((activity, index, items) => (
+                      <DigitalHumanTaskActivityItem key={activity.id} activity={activity} locale={locale}
+                        isLast={index === items.length - 1} defaultOpen={index === 0} />
                     ))
                   )}
-                </div>
+                </ol>
+                <DigitalHumanTaskHistoryPager data={detail.activities.data?.data ?? null} page={activityPage} onPage={setActivityPage} />
               </section>
             </div>
           </div>
@@ -636,7 +686,7 @@ function TaskDetailSheet({
                 {t('tasks.actions.retry')}
               </Button>
             ) : null}
-            {!['proposed', 'in_progress', 'canceled'].includes(task.work_status) && canRun ? (
+            {!['proposed', 'in_progress', 'canceled', 'blocked'].includes(task.work_status) && canRun ? (
               <Button
                 size="sm"
                 onClick={() => void perform('run_now')}
@@ -718,24 +768,59 @@ function TaskEditorDialog({
   const t = useT('digitalHumans');
   const mutations = useDigitalHumanTaskMutations(id);
   const [form, setForm] = useState<TaskFormState>(() => emptyTaskForm());
+  const [schedulePreview, setSchedulePreview] = useState<{
+    key: string;
+    value?: DigitalHumanTaskSchedulePreview;
+    error?: 'invalid' | 'unavailable';
+  }>({ key: '' });
+  const [previewRetry, setPreviewRetry] = useState(0);
   useEffect(() => {
-    if (open) setForm(task ? taskForm(task) : emptyTaskForm());
+    if (open) {
+      setForm(task ? taskForm(task) : emptyTaskForm());
+      setSchedulePreview({ key: '' });
+    }
   }, [open, task]);
   const set = <K extends keyof TaskFormState>(key: K, value: TaskFormState[K]) =>
     setForm(current => ({ ...current, [key]: value }));
-  const valid =
-    form.name.trim() &&
-    form.goal.trim() &&
-    (form.scheduleType !== 'once' || form.runAt) &&
-    (form.scheduleType !== 'cron' || form.cron.trim());
+  const timezone = form.timezone.trim() || 'UTC';
+  const scheduleInput = form.scheduleType === 'once' ? form.runAt : form.cron.trim();
+  const scheduleKey = JSON.stringify([form.scheduleType, scheduleInput, timezone]);
+  useEffect(() => {
+    if (!open || form.scheduleType === 'manual' || !scheduleInput) return;
+    let active = true;
+    const timer = window.setTimeout(() => {
+      void digitalHumanService.previewTaskSchedule(id, {
+        type: form.scheduleType === 'once' ? 'once' : 'cron',
+        timezone,
+        ...(form.scheduleType === 'once' ? { local_run_at: scheduleInput } : { cron: scheduleInput }),
+      }).then(response => {
+        if (active) setSchedulePreview({ key: scheduleKey, value: response.data });
+      }).catch(error => {
+        if (active) {
+          setSchedulePreview({
+            key: scheduleKey,
+            error: isAxiosError(error) && error.response?.status === 400 ? 'invalid' : 'unavailable',
+          });
+        }
+      });
+    }, 350);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [form.scheduleType, id, open, previewRetry, scheduleInput, scheduleKey, timezone]);
+  const previewReady = form.scheduleType === 'manual' ||
+    (schedulePreview.key === scheduleKey && Boolean(schedulePreview.value?.next_run_at));
+  const timeout = Number(form.timeout);
+  const attempts = Number(form.attempts);
+  const valid = Boolean(
+    form.name.trim() && form.goal.trim() && previewReady &&
+    Number.isInteger(timeout) && timeout >= 30 && timeout <= 1800 &&
+    Number.isInteger(attempts) && attempts >= 1 && attempts <= 3
+  );
   const submit = async () => {
     if (!valid) return;
-    const schedule = {
-      type: form.scheduleType,
-      timezone: form.timezone.trim() || 'UTC',
-      ...(form.scheduleType === 'once' ? { run_at: new Date(form.runAt).toISOString() } : {}),
-      ...(form.scheduleType === 'cron' ? { cron: form.cron.trim() } : {}),
-    };
+    const schedule = form.scheduleType === 'manual'
+      ? { type: 'manual' as const }
+      : schedulePreview.value?.schedule;
+    if (!schedule) return;
     const request: CreateDigitalHumanTaskRequest = {
       name: form.name.trim(),
       goal: form.goal.trim(),
@@ -747,15 +832,32 @@ function TaskEditorDialog({
       max_attempts: Number(form.attempts),
     };
     if (task) {
-      await mutations.update.mutateAsync({
-        taskId: task.id,
-        request: { ...request, expected_revision: task.revision },
-      });
-    } else {
-      await mutations.create.mutateAsync(request);
+      let latest;
+      try {
+        latest = await digitalHumanService.getTask(id, task.id);
+      } catch {
+        toast.error(t('tasks.loadError'));
+        return;
+      }
+      if (latest.data.revision !== task.revision) {
+        toast.error(t('tasks.editor.conflict'));
+        return;
+      }
     }
-    toast.success(task ? t('tasks.updated') : t('tasks.created'));
-    onOpenChange(false);
+    try {
+      if (task) {
+        await mutations.update.mutateAsync({
+          taskId: task.id,
+          request: { ...request, expected_revision: task.revision },
+        });
+      } else {
+        await mutations.create.mutateAsync(request);
+      }
+      toast.success(task ? t('tasks.updated') : t('tasks.created'));
+      onOpenChange(false);
+    } catch {
+      return;
+    }
   };
   const pending = mutations.create.isPending || mutations.update.isPending;
   return (
@@ -792,6 +894,7 @@ function TaskEditorDialog({
                   ))}
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground">{t('tasks.priorityNote')}</p>
             </Field>
           </div>
           <Field label={t('tasks.fields.goal')} required>
@@ -849,11 +952,34 @@ function TaskEditorDialog({
           </div>
           {form.scheduleType !== 'manual' ? (
             <Field label={t('tasks.fields.timezone')}>
-              <Input
-                value={form.timezone}
-                onChange={event => set('timezone', event.target.value)}
-              />
+              <Select value={timezone} onValueChange={value => set('timezone', value)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent className="max-h-72">
+                  {!taskTimezones.includes(timezone) ? <SelectItem value={timezone}>{timezone}</SelectItem> : null}
+                  {taskTimezones.map(value => <SelectItem key={value} value={value}>{value}</SelectItem>)}
+                </SelectContent>
+              </Select>
             </Field>
+          ) : null}
+          {form.scheduleType !== 'manual' && scheduleInput ? (
+            <div role="status" className={cn('flex flex-wrap items-center gap-2 text-sm',
+              schedulePreview.key === scheduleKey && schedulePreview.error === 'invalid' ? 'text-destructive' : 'text-muted-foreground')}>
+              <span>{schedulePreview.key !== scheduleKey
+                ? t('tasks.editor.checkingSchedule')
+                : schedulePreview.error === 'invalid'
+                  ? t('tasks.editor.invalidSchedule')
+                  : schedulePreview.error === 'unavailable'
+                    ? t('tasks.editor.previewUnavailable')
+                    : schedulePreview.value?.next_run_at
+                      ? t('tasks.editor.nextRunPreview', { value: new Date(schedulePreview.value.next_run_at).toLocaleString(undefined, { timeZone: timezone }) })
+                      : t('tasks.editor.invalidSchedule')}</span>
+              {schedulePreview.key === scheduleKey && schedulePreview.error === 'unavailable' ? (
+                <Button variant="outline" size="sm" onClick={() => {
+                  setSchedulePreview({ key: '' });
+                  setPreviewRetry(value => value + 1);
+                }}>{t('tasks.retry')}</Button>
+              ) : null}
+            </div>
           ) : null}
           <details className="rounded-xl border">
             <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
@@ -888,6 +1014,9 @@ function TaskEditorDialog({
                   value={form.timeout}
                   onChange={event => set('timeout', event.target.value)}
                 />
+                {(!Number.isInteger(timeout) || timeout < 30 || timeout > 1800) ? (
+                  <p role="alert" className="text-xs text-destructive">{t('tasks.editor.timeoutRange')}</p>
+                ) : null}
               </Field>
               <Field label={t('tasks.fields.attempts')}>
                 <Input
@@ -897,6 +1026,9 @@ function TaskEditorDialog({
                   value={form.attempts}
                   onChange={event => set('attempts', event.target.value)}
                 />
+                {(!Number.isInteger(attempts) || attempts < 1 || attempts > 3) ? (
+                  <p role="alert" className="text-xs text-destructive">{t('tasks.editor.attemptsRange')}</p>
+                ) : null}
               </Field>
             </div>
           </details>
@@ -959,7 +1091,7 @@ function taskForm(task: DigitalHumanTask): TaskFormState {
     successCriteria: task.success_criteria.join('\n'),
     priority: task.priority,
     scheduleType: task.schedule.type,
-    runAt: task.schedule.run_at ? localDateTime(task.schedule.run_at) : '',
+    runAt: task.schedule.run_at ? localDateTime(task.schedule.run_at, task.schedule.timezone || 'UTC') : '',
     cron: task.schedule.cron ?? '0 9 * * 1-5',
     timezone: task.schedule.timezone || 'UTC',
     deliveryMode: task.delivery_mode,
@@ -967,10 +1099,12 @@ function taskForm(task: DigitalHumanTask): TaskFormState {
     attempts: String(task.max_attempts),
   };
 }
-function localDateTime(value: string) {
-  const date = new Date(value);
-  const offset = date.getTimezoneOffset() * 60_000;
-  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+function localDateTime(value: string, timezone: string) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(new Date(value)).map(part => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
 }
 function splitLines(value: string) {
   return value
@@ -999,29 +1133,6 @@ function sourceLabel(task: DigitalHumanTask, t: ReturnType<typeof useT<'digitalH
     : task.source_conversation_type === 'direct'
       ? t('tasks.source.channelDirect', { provider: providerName })
       : t('tasks.source.channel', { provider: providerName });
-}
-const taskActivityActions = [
-  'created',
-  'updated',
-  'status_changed',
-  'confirm',
-  'decline',
-  'run_now',
-  'pause',
-  'resume',
-  'retry',
-  'cancel',
-  'archive',
-  'run_finished',
-  'proposal_expired',
-  'status_repaired',
-] as const;
-type TaskActivityAction = (typeof taskActivityActions)[number];
-function isTaskActivityAction(value: string): value is TaskActivityAction {
-  return (taskActivityActions as readonly string[]).includes(value);
-}
-function activityLabel(action: string, t: ReturnType<typeof useT<'digitalHumans'>>) {
-  return isTaskActivityAction(action) ? t(`tasks.activity.${action}`) : action.replaceAll('_', ' ');
 }
 function confirmationCopy(
   action: 'decline' | 'cancel' | 'archive' | null,

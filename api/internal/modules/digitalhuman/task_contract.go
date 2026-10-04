@@ -135,6 +135,18 @@ type TaskSchedule struct {
 	Timezone string           `json:"timezone,omitempty"`
 }
 
+type TaskSchedulePreviewRequest struct {
+	Type       TaskScheduleType `json:"type"`
+	LocalRunAt string           `json:"local_run_at,omitempty"`
+	Cron       string           `json:"cron,omitempty"`
+	Timezone   string           `json:"timezone,omitempty"`
+}
+
+type TaskSchedulePreview struct {
+	Schedule  TaskSchedule `json:"schedule"`
+	NextRunAt *time.Time   `json:"next_run_at,omitempty"`
+}
+
 // Task is the product-facing projection of a subject-owned automation task.
 type Task struct {
 	ID               uuid.UUID            `json:"id"`
@@ -333,6 +345,7 @@ type TaskResultDeliverer interface {
 // TaskHandlerService is the DigitalHuman task application boundary shared by
 // HTTP, runtime tools, and the scheduler integration.
 type TaskHandlerService interface {
+	PreviewTaskSchedule(context.Context, TaskAccessContext, TaskSchedulePreviewRequest) (*TaskSchedulePreview, error)
 	ListTasks(context.Context, TaskAccessContext, TaskListQuery) (*TaskListResult, error)
 	CreateTask(context.Context, TaskAccessContext, CreateTaskRequest, TaskMutationContext) (*Task, error)
 	GetTask(context.Context, TaskAccessContext, uuid.UUID) (*Task, error)

@@ -43,7 +43,7 @@ func TestRunDigitalHumanExecutorReturnsPendingExternalRun(t *testing.T) {
 	if result == nil || !result.Pending || result.ExternalRunType != "digital_human" || result.ExternalRunID == "" {
 		t.Fatalf("ExecuteAction() result = %#v", result)
 	}
-	if runner.request.ActionRunID != actionRun.ID || runner.request.DigitalHumanID != subjectID || runner.request.ReplyTo == nil ||
+	if runner.request.ActionRunID != actionRun.ID || runner.request.DigitalHumanID != subjectID || runner.request.CreatorAccountID != task.CreatedBy || runner.request.ReplyTo == nil ||
 		runner.request.ReplyTo.ConversationID != "chat-1" || runner.request.ReplyTo.RecipientID != "ou_creator" ||
 		runner.request.DeliveryMode != "source_conversation" ||
 		runner.request.OwnerKind != string(ownerKind) || runner.request.OwnerConversationID != ownerConversationID ||

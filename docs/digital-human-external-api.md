@@ -356,6 +356,17 @@ model with channel-created tasks. Channel-created tasks instead bind a private
 or group conversation as their primary destination; their results are sent back
 to that conversation while the task center remains the fallback record.
 
+API end-user scheduled tasks do not inherit an account owner from the API key,
+so they cannot use personal Connector capabilities. Channel-conversation tasks
+use the channel installation's current connection owner for account-scoped
+capabilities. If that owner no longer belongs to the workspace or the channel
+binding is no longer active, the scheduled run is rejected before invoking the
+DigitalHuman.
+
+API 终端用户的定时任务不会从 API Key 推断个人账号，因此不使用个人 Connector 能力。
+渠道会话任务只使用当前渠道安装的连接所有者账号；该账号失去工作区成员资格，
+或渠道绑定失效时，任务会在调用数字人之前被拒绝。
+
 Create a manual task:
 
 ```bash

@@ -45,6 +45,8 @@ import type {
   DigitalHumanTaskRun,
   DigitalHumanTaskActivity,
   DigitalHumanTaskPage,
+  DigitalHumanTaskSchedulePreview,
+  DigitalHumanTaskSchedulePreviewRequest,
   DigitalHumanAccessSettings,
   DigitalHumanAPIKey,
   DigitalHumanAPIKeyCreated,
@@ -430,6 +432,13 @@ class DigitalHumanService extends BaseService {
     );
   }
 
+  previewTaskSchedule(
+    id: string,
+    request: DigitalHumanTaskSchedulePreviewRequest
+  ): Promise<ApiResponseData<DigitalHumanTaskSchedulePreview>> {
+    return this.request('post', `/digital-humans/${id}/tasks/schedule-preview`, request);
+  }
+
   listTasks(
     id: string,
     params?: {
@@ -476,12 +485,12 @@ class DigitalHumanService extends BaseService {
     return this.request('post', `/digital-humans/${id}/my-tasks/${taskId}/actions/${action}`, { expected_revision: expectedRevision });
   }
 
-  listMyTaskRuns(id: string, taskId: string): Promise<ApiResponseData<DigitalHumanTaskPage<DigitalHumanTaskRun>>> {
-    return this.request('get', `/digital-humans/${id}/my-tasks/${taskId}/runs`);
+  listMyTaskRuns(id: string, taskId: string, page = 1): Promise<ApiResponseData<DigitalHumanTaskPage<DigitalHumanTaskRun>>> {
+    return this.request('get', `/digital-humans/${id}/my-tasks/${taskId}/runs`, undefined, { params: { page } });
   }
 
-  listMyTaskActivities(id: string, taskId: string): Promise<ApiResponseData<DigitalHumanTaskPage<DigitalHumanTaskActivity>>> {
-    return this.request('get', `/digital-humans/${id}/my-tasks/${taskId}/activities`);
+  listMyTaskActivities(id: string, taskId: string, page = 1): Promise<ApiResponseData<DigitalHumanTaskPage<DigitalHumanTaskActivity>>> {
+    return this.request('get', `/digital-humans/${id}/my-tasks/${taskId}/activities`, undefined, { params: { page } });
   }
 
   createTask(
@@ -516,16 +525,18 @@ class DigitalHumanService extends BaseService {
 
   listTaskRuns(
     id: string,
-    taskId: string
+    taskId: string,
+    page = 1
   ): Promise<ApiResponseData<DigitalHumanTaskPage<DigitalHumanTaskRun>>> {
-    return this.request('get', `/digital-humans/${id}/tasks/${taskId}/runs`);
+    return this.request('get', `/digital-humans/${id}/tasks/${taskId}/runs`, undefined, { params: { page } });
   }
 
   listTaskActivities(
     id: string,
-    taskId: string
+    taskId: string,
+    page = 1
   ): Promise<ApiResponseData<DigitalHumanTaskPage<DigitalHumanTaskActivity>>> {
-    return this.request('get', `/digital-humans/${id}/tasks/${taskId}/activities`);
+    return this.request('get', `/digital-humans/${id}/tasks/${taskId}/activities`, undefined, { params: { page } });
   }
 }
 

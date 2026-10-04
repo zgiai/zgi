@@ -774,6 +774,7 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 	}
 	config.ConnectorRunID = run.ID.String()
 	config.ConnectorInteractive = event.Origin.Kind == invocation.OriginManual
+	applyScheduledConnectorPolicy(&config, run, event)
 	var channelContextPreparation *ChannelContextPreparation
 	if s.channelContext != nil {
 		channelContextPreparation, err = s.channelContext.Prepare(ctx, run, resolved, event, config.ModelProvider, config.Model)
@@ -851,7 +852,7 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 	}
 	callerID := run.DigitalHumanID
 	caller := chatruntime.Caller{
-		Type: runtimemodel.ConversationCallerDigitalHuman, ID: &callerID, Source: digitalHumanConversationSourceForEvent(event),
+		Type: runtimemodel.ConversationCallerDigitalHuman, ID: &callerID, RunID: &run.ID, Source: digitalHumanConversationSourceForEvent(event),
 	}
 	if webAppID, ok := stringContextValue(event.Context, "web_app_id"); ok {
 		if parsed, parseErr := uuid.Parse(webAppID); parseErr == nil && parsed != uuid.Nil {
@@ -1344,9 +1345,17 @@ func runScope(run *Run) Scope {
 	}
 }
 
+func applyScheduledConnectorPolicy(config *chatruntime.RunConfig, run *Run, event invocation.Event) {
+	if config != nil && run != nil && run.Surface == SurfaceTask && event.Origin.Kind == invocation.OriginSchedule && run.UserSubjectKind == string(usersubject.APIEndUser) {
+		config.ConnectorToolsDisabled = true
+	}
+}
+
 func persistedRunActorID(scope Scope, principalType, surface string) *uuid.UUID {
 	if scope.ActorID == uuid.Nil || surface == SurfaceAPI ||
-		(surface == SurfaceWebApp && principalType != string(invocation.PrincipalAccount)) {
+		(surface == SurfaceWebApp && principalType != string(invocation.PrincipalAccount)) ||
+		(surface == SurfaceTask && principalType == string(invocation.PrincipalSystem) &&
+			(scope.UserSubjectKind != string(usersubject.Account) || scope.UserSubjectID == nil || *scope.UserSubjectID != scope.ActorID)) {
 		return nil
 	}
 	return cloneUUIDPointer(&scope.ActorID)

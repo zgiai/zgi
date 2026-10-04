@@ -12,6 +12,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/runtimeidentity"
 	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
+	automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	digitalhuman "github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 	authmodel "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
@@ -49,18 +50,17 @@ func (r *digitalHumanAutomationRunner) RunDigitalHuman(ctx context.Context, req 
 	if err := r.preflight(ctx, organizationID, workspaceID, digitalHumanID, owner, req); err != nil {
 		return nil, errDigitalHumanTaskExecutionUnavailable
 	}
-	actorID := digitalHumanID
-	scope := digitalhuman.Scope{
-		OrganizationID: organizationID, WorkspaceID: workspaceID, ActorID: actorID,
-		PrincipalType: string(invocation.PrincipalSystem), Surface: digitalhuman.SurfaceTask,
+	executionAccountID := uuid.Nil
+	switch owner.Kind {
+	case digitalhuman.TaskOwnerDigitalHuman:
+		executionAccountID, err = r.taskCreatorAccount(ctx, organizationID, workspaceID, digitalHumanID, req)
+	case digitalhuman.TaskOwnerConversation:
+		executionAccountID, err = r.channelTaskAccount(ctx, organizationID, workspaceID, digitalHumanID, req)
 	}
-	if owner.Kind == digitalhuman.TaskOwnerUserSubject {
-		subjectID := owner.Subject.ID
-		scope.UserSubjectKind, scope.UserSubjectID = string(owner.Subject.Kind), &subjectID
-		if owner.Subject.Kind == usersubject.Account {
-			scope.ActorID = subjectID
-		}
+	if err != nil {
+		return nil, errDigitalHumanTaskExecutionUnavailable
 	}
+	scope := taskRunScope(organizationID, workspaceID, owner, executionAccountID)
 	criteria := ""
 	if len(req.SuccessCriteria) > 0 {
 		criteria = "\nSuccess criteria:\n- " + strings.Join(req.SuccessCriteria, "\n- ")
@@ -72,6 +72,67 @@ func (r *digitalHumanAutomationRunner) RunDigitalHuman(ctx context.Context, req 
 		return nil, err
 	}
 	return &automationaction.DigitalHumanRunResult{RunID: run.ID.String()}, nil
+}
+
+func taskRunScope(organizationID, workspaceID uuid.UUID, owner digitalhuman.TaskOwnerRef, executionAccountID uuid.UUID) digitalhuman.Scope {
+	scope := digitalhuman.Scope{
+		OrganizationID: organizationID, WorkspaceID: workspaceID,
+		PrincipalType: string(invocation.PrincipalSystem), Surface: digitalhuman.SurfaceTask,
+	}
+	if (owner.Kind == digitalhuman.TaskOwnerDigitalHuman || owner.Kind == digitalhuman.TaskOwnerConversation) && executionAccountID != uuid.Nil {
+		scope.ActorID, scope.PrincipalID = executionAccountID, executionAccountID
+	}
+	if owner.Kind == digitalhuman.TaskOwnerUserSubject {
+		subjectID := owner.Subject.ID
+		scope.UserSubjectKind, scope.UserSubjectID = string(owner.Subject.Kind), &subjectID
+		scope.ActorID, scope.PrincipalID = subjectID, subjectID
+	}
+	return scope
+}
+
+func (r *digitalHumanAutomationRunner) taskCreatorAccount(ctx context.Context, organizationID, workspaceID, digitalHumanID uuid.UUID, req automationaction.DigitalHumanRunRequest) (uuid.UUID, error) {
+	accountID, accountErr := uuid.Parse(strings.TrimSpace(req.CreatorAccountID))
+	taskID, taskErr := uuid.Parse(strings.TrimSpace(req.TaskID))
+	if accountErr != nil || accountID == uuid.Nil || taskErr != nil || taskID == uuid.Nil {
+		return uuid.Nil, errDigitalHumanTaskExecutionUnavailable
+	}
+	var count int64
+	err := r.db.WithContext(ctx).Table("automation_tasks AS tasks").
+		Joins("JOIN workspace_members AS members ON members.workspace_id = tasks.workspace_id AND members.account_id = ?", accountID).
+		Joins("JOIN accounts ON accounts.id = members.account_id AND accounts.deleted_at IS NULL").
+		Joins("JOIN workspaces ON workspaces.id = members.workspace_id").
+		Where("tasks.id = ? AND tasks.organization_id = ? AND tasks.workspace_id = ? AND tasks.subject_id = ? AND tasks.task_kind = ? AND tasks.owner_kind = ? AND tasks.created_by = ?", taskID, organizationID, workspaceID, digitalHumanID.String(), automationmodel.AutomationTaskKindDigitalHuman, automationmodel.AutomationTaskOwnerDigitalHuman, accountID).
+		Where("workspaces.organization_id = ? AND workspaces.status = ? AND accounts.status IN ?", organizationID, workspacemodel.WorkspaceStatusNormal, []authmodel.AccountStatus{authmodel.AccountStatusActive, authmodel.AccountStatusPending}).
+		Count(&count).Error
+	if err != nil || count != 1 {
+		return uuid.Nil, errDigitalHumanTaskExecutionUnavailable
+	}
+	return accountID, nil
+}
+
+func (r *digitalHumanAutomationRunner) channelTaskAccount(ctx context.Context, organizationID, workspaceID, digitalHumanID uuid.UUID, req automationaction.DigitalHumanRunRequest) (uuid.UUID, error) {
+	installationID, err := uuid.Parse(strings.TrimSpace(req.ChannelInstallationID))
+	if err != nil || installationID == uuid.Nil || strings.TrimSpace(req.ChannelConversationID) == "" {
+		return uuid.Nil, errDigitalHumanTaskExecutionUnavailable
+	}
+	var owner struct {
+		AccountID uuid.UUID `gorm:"column:account_id"`
+	}
+	err = r.db.WithContext(ctx).Table("channel_installations AS installations").
+		Select("installations.connection_owner_id AS account_id").
+		Joins("JOIN external_conversation_mappings AS mappings ON mappings.installation_id = installations.id AND mappings.organization_id = installations.organization_id AND mappings.workspace_id = installations.workspace_id").
+		Joins("JOIN channel_bindings AS bindings ON bindings.conversation_mapping_id = mappings.id AND bindings.installation_id = installations.id AND bindings.deleted_at IS NULL").
+		Joins("JOIN workspace_members AS members ON members.workspace_id = installations.workspace_id AND members.account_id = installations.connection_owner_id").
+		Joins("JOIN accounts ON accounts.id = members.account_id AND accounts.deleted_at IS NULL").
+		Joins("JOIN workspaces ON workspaces.id = members.workspace_id").
+		Where("installations.id = ? AND installations.organization_id = ? AND installations.workspace_id = ? AND installations.provider = ? AND installations.status = ? AND installations.deleted_at IS NULL", installationID, organizationID, workspaceID, strings.ToLower(strings.TrimSpace(req.ChannelProvider)), channelruntime.InstallationStatusActive).
+		Where("mappings.external_conversation_id = ? AND bindings.subject_type = ? AND bindings.subject_id = ? AND bindings.enabled = ?", strings.TrimSpace(req.ChannelConversationID), runtimeidentity.SubjectTypeDigitalHuman, digitalHumanID, true).
+		Where("workspaces.organization_id = ? AND workspaces.status = ? AND accounts.status IN ?", organizationID, workspacemodel.WorkspaceStatusNormal, []authmodel.AccountStatus{authmodel.AccountStatusActive, authmodel.AccountStatusPending}).
+		Take(&owner).Error
+	if err != nil || owner.AccountID == uuid.Nil {
+		return uuid.Nil, errDigitalHumanTaskExecutionUnavailable
+	}
+	return owner.AccountID, nil
 }
 
 func taskOwnerFromRunRequest(req automationaction.DigitalHumanRunRequest) (digitalhuman.TaskOwnerRef, error) {
