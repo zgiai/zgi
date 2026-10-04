@@ -1876,7 +1876,9 @@ export function AIChatShell({
             layout={isEmbedded ? 'embedded' : 'full'}
             messageDensity={messageDensity}
             showMemoryKey={surface !== 'agent-webapp' && surface !== 'digital-human'}
-            showSkillEventDetails={surface !== 'agent-webapp'}
+            // Tool calls remain expandable on the agent web surface so users can
+            // inspect the sanitized arguments and result details.
+            showSkillEventDetails
             showWorkflowFailureDetails={surface !== 'agent-webapp'}
             showContextualOperationStatus={effectiveRuntimeSurface === 'contextual_sidebar'}
             showPlanningPlaceholder={showPlanningPlaceholder}

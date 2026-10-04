@@ -261,6 +261,184 @@ func TestRetrieveAgentKnowledgeIgnoresDatasetIDs(t *testing.T) {
 	}
 }
 
+func TestRetrieveAgentKnowledgeAddsControlForAgentInvocation(t *testing.T) {
+	service := &fakeRetrievalService{}
+	tool, err := NewProvider(service).GetTool(ToolRetrieveAgentKnowledge)
+	if err != nil {
+		t.Fatalf("GetTool() error = %v", err)
+	}
+	tool = tool.ForkToolRuntime(&tools.ToolRuntime{
+		TenantID:   "tenant-1",
+		InvokeFrom: tools.ToolInvokeFromAgent,
+		RuntimeParameters: map[string]interface{}{
+			knowledgeRetrievalRoundParam:  2,
+			knowledgeRetrievalBudgetParam: 20,
+			knowledgeRetrievalHistoryParam: []map[string]interface{}{
+				{"arguments": map[string]interface{}{"query": "previous query"}},
+			},
+		},
+	})
+
+	messages, err := tool.Invoke(context.Background(), "account-1", map[string]interface{}{
+		"query": "current query",
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	control, ok := messages[0].Data["control"].(*dataset_service.KnowledgeRetrievalControl)
+	if !ok || control == nil {
+		t.Fatalf("control = %#v, want Agent control payload", messages[0].Data["control"])
+	}
+	if control.Round != 2 || control.RemainingRounds != 18 || control.NewEvidenceCount != 1 || !control.ContinuationAllowed {
+		t.Fatalf("control = %#v, want round 2 with one new resource and 18 remaining", control)
+	}
+}
+
+func TestRetrieveAgentKnowledgeBlocksDuplicateQuery(t *testing.T) {
+	service := &fakeRetrievalService{}
+	tool, err := NewProvider(service).GetTool(ToolRetrieveAgentKnowledge)
+	if err != nil {
+		t.Fatalf("GetTool() error = %v", err)
+	}
+	tool = tool.ForkToolRuntime(&tools.ToolRuntime{
+		TenantID:   "tenant-1",
+		InvokeFrom: tools.ToolInvokeFromAgent,
+		RuntimeParameters: map[string]interface{}{
+			knowledgeRetrievalRoundParam:  2,
+			knowledgeRetrievalBudgetParam: 20,
+			knowledgeRetrievalHistoryParam: []map[string]interface{}{
+				{"arguments": map[string]interface{}{"query": "Apple   Intel"}},
+			},
+		},
+	})
+
+	messages, err := tool.Invoke(context.Background(), "account-1", map[string]interface{}{
+		"query": " apple intel ",
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if service.agentRetrieveCalled {
+		t.Fatal("RetrieveAgentKnowledge should not be called for a duplicate query")
+	}
+	if messages[0].Data["status"] != dataset_service.KnowledgeRetrieveStatusBlocked {
+		t.Fatalf("status = %#v, want blocked", messages[0].Data["status"])
+	}
+	control, ok := messages[0].Data["control"].(*dataset_service.KnowledgeRetrievalControl)
+	if !ok || control.StopReason == nil || *control.StopReason != "duplicate_query" || !control.ContinuationAllowed {
+		t.Fatalf("control = %#v, want duplicate_query", messages[0].Data["control"])
+	}
+}
+
+func TestRetrieveAgentKnowledgeBlocksWhenBudgetIsExhausted(t *testing.T) {
+	service := &fakeRetrievalService{}
+	tool, err := NewProvider(service).GetTool(ToolRetrieveAgentKnowledge)
+	if err != nil {
+		t.Fatalf("GetTool() error = %v", err)
+	}
+	tool = tool.ForkToolRuntime(&tools.ToolRuntime{
+		TenantID:   "tenant-1",
+		InvokeFrom: tools.ToolInvokeFromAgent,
+		RuntimeParameters: map[string]interface{}{
+			knowledgeRetrievalRoundParam:  21,
+			knowledgeRetrievalBudgetParam: 20,
+		},
+	})
+
+	messages, err := tool.Invoke(context.Background(), "account-1", map[string]interface{}{
+		"query": "new query",
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if service.agentRetrieveCalled {
+		t.Fatal("RetrieveAgentKnowledge should not be called after the budget is exhausted")
+	}
+	control, ok := messages[0].Data["control"].(*dataset_service.KnowledgeRetrievalControl)
+	if !ok || control.StopReason == nil || *control.StopReason != "retrieval_round_limit" {
+		t.Fatalf("control = %#v, want retrieval_round_limit", messages[0].Data["control"])
+	}
+}
+
+func TestRetrieveAgentKnowledgeReturnsStructuredQueryRequired(t *testing.T) {
+	service := &fakeRetrievalService{}
+	tool, err := NewProvider(service).GetTool(ToolRetrieveAgentKnowledge)
+	if err != nil {
+		t.Fatalf("GetTool() error = %v", err)
+	}
+	tool = tool.ForkToolRuntime(&tools.ToolRuntime{
+		TenantID:   "tenant-1",
+		InvokeFrom: tools.ToolInvokeFromAgent,
+	})
+	messages, err := tool.Invoke(context.Background(), "account-1", map[string]interface{}{}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if service.agentRetrieveCalled {
+		t.Fatal("RetrieveAgentKnowledge should not be called for an empty query")
+	}
+	control, ok := messages[0].Data["control"].(*dataset_service.KnowledgeRetrievalControl)
+	if !ok || control.StopReason == nil || *control.StopReason != "query_required" || !control.ContinuationAllowed {
+		t.Fatalf("control = %#v, want query_required with correction allowed", messages[0].Data["control"])
+	}
+}
+
+func TestRetrieveAgentKnowledgeStopsAfterConsecutiveNoNewEvidence(t *testing.T) {
+	service := &fakeRetrievalService{
+		agentResponse: &dataset_service.KnowledgeRetrieveResponse{
+			Query:     "new query",
+			Status:    dataset_service.KnowledgeRetrieveStatusNoResults,
+			Resources: []dataset_service.KnowledgeRetrieverResource{},
+		},
+	}
+	tool, err := NewProvider(service).GetTool(ToolRetrieveAgentKnowledge)
+	if err != nil {
+		t.Fatalf("GetTool() error = %v", err)
+	}
+	tool = tool.ForkToolRuntime(&tools.ToolRuntime{
+		TenantID:   "tenant-1",
+		InvokeFrom: tools.ToolInvokeFromAgent,
+		RuntimeParameters: map[string]interface{}{
+			knowledgeRetrievalRoundParam:  2,
+			knowledgeRetrievalBudgetParam: 20,
+			knowledgeRetrievalHistoryParam: []map[string]interface{}{
+				{"result": map[string]interface{}{
+					"control": &dataset_service.KnowledgeRetrievalControl{NewEvidenceCount: 0},
+				}},
+			},
+		},
+	})
+
+	messages, err := tool.Invoke(context.Background(), "account-1", map[string]interface{}{
+		"query": "different query",
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	control, ok := messages[0].Data["control"].(*dataset_service.KnowledgeRetrievalControl)
+	if !ok || control.StopReason == nil || *control.StopReason != "no_new_evidence" || control.ContinuationAllowed {
+		t.Fatalf("control = %#v, want no_new_evidence hard stop", messages[0].Data["control"])
+	}
+}
+
+func TestRetrieveAgentKnowledgeOmitsControlForAIChatInvocation(t *testing.T) {
+	service := &fakeRetrievalService{}
+	tool, err := NewProvider(service).GetTool(ToolRetrieveAgentKnowledge)
+	if err != nil {
+		t.Fatalf("GetTool() error = %v", err)
+	}
+	tool = tool.ForkToolRuntime(&tools.ToolRuntime{TenantID: "tenant-1", InvokeFrom: tools.ToolInvokeFromAIChat})
+	messages, err := tool.Invoke(context.Background(), "account-1", map[string]interface{}{
+		"query": "refund policy",
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if _, ok := messages[0].Data["control"]; ok {
+		t.Fatalf("AIChat payload unexpectedly contains Agent control: %#v", messages[0].Data)
+	}
+}
+
 func TestRetrievalMessagesExcludeGraphExecutionDetails(t *testing.T) {
 	messages, err := retrievalMessages(&dataset_service.KnowledgeRetrieveResponse{
 		Query:       "MacBook",

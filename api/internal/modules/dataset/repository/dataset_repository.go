@@ -110,14 +110,18 @@ func (r *datasetRepository) Delete(ctx context.Context, id string) error {
 
 func (r *datasetRepository) GetByTenantID(ctx context.Context, workspaceID string) ([]*model.Dataset, error) {
 	var datasets []*model.Dataset
-	err := r.db.WithContext(ctx).Where("workspace_id = ? AND provider <> '"+model.ProviderDigitalHumanMemory+"'", workspaceID).Find(&datasets).Error
+	err := r.db.WithContext(ctx).
+		Where("workspace_id = ?", workspaceID).
+		Where("LOWER(provider) <> ?", model.ProviderDigitalHumanMemory).
+		Find(&datasets).Error
 	return datasets, err
 }
 
 func (r *datasetRepository) GetByTenantIDs1(ctx context.Context, workspaceIDs []string, offset, limit int) ([]*model.Dataset, error) {
 	var datasets []*model.Dataset
 	err := r.db.WithContext(ctx).
-		Where("workspace_id IN ? AND provider <> '"+model.ProviderDigitalHumanMemory+"'", workspaceIDs).
+		Where("workspace_id IN ?", workspaceIDs).
+		Where("LOWER(provider) <> ?", model.ProviderDigitalHumanMemory).
 		Offset(offset).Limit(limit).
 		Find(&datasets).Error
 	return datasets, err
@@ -128,7 +132,9 @@ func (r *datasetRepository) GetPaginatedByTenantIDs(ctx context.Context, workspa
 	var total int64
 
 	// Build base query
-	query := r.db.WithContext(ctx).Model(&model.Dataset{}).Where("workspace_id IN ? AND provider <> '"+model.ProviderDigitalHumanMemory+"'", workspaceIDs)
+	query := r.db.WithContext(ctx).Model(&model.Dataset{}).
+		Where("workspace_id IN ?", workspaceIDs).
+		Where("LOWER(provider) <> ?", model.ProviderDigitalHumanMemory)
 
 	// Add search filter if provided
 	if search != "" {
@@ -178,7 +184,9 @@ func (r *datasetRepository) GetPaginatedByTenantIDsWithPermissions(ctx context.C
 	_ = allGroupTenantIDs
 	_ = accountID
 
-	query := r.db.WithContext(ctx).Model(&model.Dataset{}).Where("workspace_id IN ? AND provider <> '"+model.ProviderDigitalHumanMemory+"'", queryWorkspaceIDs)
+	query := r.db.WithContext(ctx).Model(&model.Dataset{}).
+		Where("workspace_id IN ?", queryWorkspaceIDs).
+		Where("LOWER(provider) <> ?", model.ProviderDigitalHumanMemory)
 
 	// Add search filter if provided
 	if search != "" {
@@ -265,7 +273,9 @@ func (r *datasetRepository) GetByTenantIDs(
 	var datasets []*model.Dataset
 	var total int64
 
-	query := r.db.WithContext(ctx).Model(&model.Dataset{}).Where("workspace_id IN ? AND provider <> '"+model.ProviderDigitalHumanMemory+"'", workspaceIDs)
+	query := r.db.WithContext(ctx).Model(&model.Dataset{}).
+		Where("workspace_id IN ?", workspaceIDs).
+		Where("LOWER(provider) <> ?", model.ProviderDigitalHumanMemory)
 
 	if search != "" {
 		query = query.Where("name ILIKE ?", "%"+search+"%")

@@ -10,6 +10,12 @@ import (
 	"github.com/zgiai/zgi/api/internal/dto"
 )
 
+// ProviderDigitalHumanMemory identifies the system-managed dataset used as the
+// DigitalHuman long-term memory projection. It is intentionally excluded from
+// user-facing knowledge-base listings, while remaining available to the
+// internal memory/retrieval pipeline.
+const ProviderDigitalHumanMemory = "digital_human_memory"
+
 // JSONMap custom JSON type for JSONB fields
 type JSONMap map[string]interface{}
 
@@ -107,10 +113,6 @@ type Dataset struct {
 	Tags         []interface{}          `json:"tags" gorm:"-"`
 	DocForm      string                 `json:"doc_form" gorm:"-"`
 }
-
-// ProviderDigitalHumanMemory is a runtime-managed projection. It must never
-// be selectable, bindable, or rendered as a user knowledge base.
-const ProviderDigitalHumanMemory = "digital_human_memory"
 
 // TableName specifies table name
 func (Dataset) TableName() string {
