@@ -1,19 +1,20 @@
 # Agent Runtime M6A Deployment Gate
 
-This document is the deployment and acceptance checklist for the first M6A slice. It makes the network contract explicit without enabling outbound networking yet.
+This document is the deployment and acceptance checklist for the first M6A slice. The local gVisor backend now supports a narrowly scoped HTTPS egress bridge; hosted E2B remains fail-closed until it exposes an equivalent allowlist gateway.
 
 ## What this slice enables
 
 M6A adds an immutable network policy to each Agent Runtime Binding. The policy is copied from the approved console Agent configuration into the API request, stored in PostgreSQL, and passed to the selected Worker backend.
 
-The only accepted policy in this slice is `offline`:
+The accepted policies are:
 
 - `offline` maps to `network_mode=disabled`.
 - An omitted policy is normalized to `offline`, preserving old clients.
-- Any other policy is rejected as `backend_unavailable` and no backend allocation is started.
-- Local gVisor and E2B both fail closed if a non-disabled mode reaches the backend.
+- `controlled-http` maps to `network_mode=controlled-http` and is available only to a local gVisor Profile with a non-empty `egress_allowed_hosts` list.
+- Hosted E2B still rejects `controlled-http` because its current adapter cannot enforce the same domain allowlist.
+- Unknown policies are rejected as `backend_unavailable` and no backend allocation is started.
 
-This is a deployment gate, not an outbound-network feature. Do not publish `controlled-http`, `public-web`, or any other policy as usable until the M6A egress gateway and its deny tests are implemented.
+The local bridge keeps the gVisor network namespace disconnected. Jobs receive only a loopback HTTP proxy; the Worker dials HTTPS port 443 after exact or single-label-wildcard host, DNS, private-CIDR and special-address checks. HTTP, raw TCP, non-443 ports and proxy bypass are not supported.
 
 ## Required configuration
 
@@ -33,6 +34,26 @@ The approved profile map must contain an explicit `offline` policy, for example:
     "backend": "local-gvisor",
     "organization_ids": ["<organization UUID>"],
     "policy_ids": ["offline"]
+  },
+  "controlled-standard": {
+    "backend": "local-gvisor",
+    "organization_ids": ["<organization UUID>"],
+    "policy_ids": ["controlled-http"],
+    "dependency_preparation": true,
+    "dependency_preparation_mode": "controlled-http"
+  }
+}
+```
+
+The corresponding local Worker profile for `controlled-standard` must carry the allowlist:
+
+```json
+{
+  "controlled-standard": {
+    "image": "registry.example/zgi-agent-runtime@sha256:<digest>",
+    "dependency_preparation": true,
+    "dependency_preparation_mode": "controlled-http",
+    "egress_allowed_hosts": ["pypi.org", "*.pythonhosted.org", "registry.npmjs.org"]
   }
 }
 ```
@@ -81,11 +102,11 @@ With a Worker running against an isolated PostgreSQL database, call the dedicate
 
 1. Create a binding without `network_policy`. Expect HTTP 201 and response fields `network_policy=offline` and `network_mode=disabled`.
 2. Create a binding with `network_policy=offline`. Expect HTTP 201 (or the idempotent existing Binding) with the same fields.
-3. Create a binding with `network_policy=controlled-http` or another non-offline value. Expect HTTP 503 with error code `backend_unavailable`. Confirm that no local containerd task/container or E2B Sandbox was created.
+3. Create a local binding with `network_policy=controlled-http` and an approved allowlist. Expect HTTP 201 with `network_mode=controlled-http`; verify that a job can reach an allowlisted HTTPS endpoint through the loopback proxy and that a non-allowlisted host, private destination, non-443 port and HTTP URL are denied. Create the same binding against E2B and expect `backend_unavailable` until an equivalent hosted gateway is available.
 4. Run the existing offline Shell, upload/download, suspend/resume, and cleanup contract. Confirm the Binding keeps the persisted policy and mode after resume.
 5. Repeat the negative policy request after a Worker restart. It must remain rejected; restarting must not turn an unsupported policy into an allowed one.
 
-For local gVisor, additionally verify the task has no network namespace connectivity. For E2B, verify the provider request still carries its existing forced-deny settings. These checks are evidence for the offline gate only.
+For local gVisor, additionally verify the task has no network namespace connectivity and that only the host-visible bridge socket exists. For E2B, verify the provider request still carries its existing forced-deny settings.
 
 ## Rollback
 
@@ -100,12 +121,12 @@ The migration is additive and has defaults, so an older Worker can be upgraded o
 
 ## Not accepted by M6A
 
-This gate does not yet provide:
+This slice does not yet provide:
 
-- allowlisted outbound HTTPS;
-- DNS, redirect, private-CIDR, IPv6, raw-TCP, or proxy-bypass enforcement in Agent Runtime;
+- hosted/E2B allowlisted outbound HTTPS;
+- redirect policy beyond the package-manager client (the proxy only permits HTTPS CONNECT and re-checks every target);
 - organization-level policy revocation during a running Job;
-- model-directed third-party dependency installation;
+- arbitrary online installation or system dependency builds;
 - unrestricted shell, network, or external SSH access.
 
 Those are separate M6A/M6B deliverables and require a real data-plane gateway plus local and hosted deny/allow evidence before exposure.
