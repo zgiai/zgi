@@ -106,6 +106,31 @@ func TestAgentExecutionDependencyPreparationProgramRebuildsInvalidCache(t *testi
 	if third["status"] != "reused" || third["cache_status"] != "reused" {
 		t.Fatalf("valid cache was not reused: %#v", third)
 	}
+	dependencyRoot, ok := third["dependency_root"].(string)
+	if !ok || dependencyRoot == "" {
+		t.Fatalf("reused result did not return dependency_root: %#v", third)
+	}
+	markerPath := filepath.Join(workspace, filepath.FromSlash(dependencyRoot), "prepare.json")
+	markerData, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tampered map[string]interface{}
+	if err := json.Unmarshal(markerData, &tampered); err != nil {
+		t.Fatal(err)
+	}
+	tampered["dependency_root"] = "home/other-cache"
+	tamperedData, err := json.Marshal(tampered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(markerPath, append(tamperedData, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fourth := run()
+	if fourth["status"] != "ready" || fourth["cache_status"] != "created" {
+		t.Fatalf("tampered cache was reused: %#v", fourth)
+	}
 }
 
 func TestAgentExecutionDependencyPreparationRunsOfflineJob(t *testing.T) {

@@ -59,19 +59,25 @@ marker = output_root / 'prepare.json'
 def cache_is_usable(previous):
     if not isinstance(previous, dict) or previous.get('fingerprint') != fingerprint:
         return False
-    if previous.get('status') not in ('ready', 'no_dependencies', 'reused') or not output_root.is_dir():
+    if previous.get('status') not in ('ready', 'no_dependencies', 'reused') or not output_root.is_dir() or output_root.is_symlink():
         return False
     if previous.get('source_mode') != 'offline-bundled' or previous.get('preparation_version') != 'v2':
+        return False
+    if previous.get('dependency_root') != str(output_root.relative_to(workspace)):
         return False
     for key, expected_type in (('python_path', 'file'), ('node_path', 'directory')):
         value = previous.get(key)
         if value is None:
             continue
-        candidate = (workspace / str(value)).resolve()
+        raw_candidate = workspace / str(value)
+        if raw_candidate.is_symlink():
+            return False
+        candidate = raw_candidate.resolve()
         exists = candidate.is_file() if expected_type == 'file' else candidate.is_dir()
         if not candidate.is_relative_to(home) or not exists:
             return False
-    return (output_root / 'prepare.json').is_file()
+    marker = output_root / 'prepare.json'
+    return marker.is_file() and not marker.is_symlink() and marker.stat().st_size <= 64 * 1024
 
 if marker.is_file():
     try:
@@ -160,6 +166,8 @@ if not python_requirements and not node_dependencies:
     temporary = pathlib.Path(tempfile.mkdtemp(prefix='.deps-', dir=str(output_root.parent)))
     result = {'status': 'no_dependencies', 'cache_status': 'created', 'preparation_version': 'v2', 'source_mode': 'offline-bundled', 'fingerprint': fingerprint, 'dependency_root': str(output_root.relative_to(workspace)), 'manifests': [path.name for path in manifest_files]}
     (temporary / 'prepare.json').write_text(json.dumps(result, sort_keys=True) + '\n')
+    if output_root.is_symlink():
+        fail('offline_dependency_cache_invalid', path=str(output_root.relative_to(home)))
     if output_root.exists():
         shutil.rmtree(output_root)
     os.replace(temporary, output_root)
@@ -190,6 +198,8 @@ try:
         result['node_env'] = 'NODE_PATH=' + result['node_path']
     (temporary / 'prepare.json').write_text(json.dumps(result, sort_keys=True) + '\n')
     output_root.parent.mkdir(parents=True, exist_ok=True)
+    if output_root.is_symlink():
+        fail('offline_dependency_cache_invalid', path=str(output_root.relative_to(home)))
     if output_root.exists():
         shutil.rmtree(output_root)
     os.replace(temporary, output_root)
