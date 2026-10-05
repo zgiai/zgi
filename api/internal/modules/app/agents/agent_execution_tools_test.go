@@ -293,6 +293,23 @@ func TestAgentExecutionShellToolRejectsNetworkedProfile(t *testing.T) {
 	}
 }
 
+func TestAgentExecutionDependencyPreparationFailsClosedWithoutCapability(t *testing.T) {
+	exitCode := 0
+	fake := &fakeAgentExecutionGateway{
+		binding:      agentExecutionBinding{ID: "binding-1", Status: "active"},
+		job:          agentExecutionJob{ID: "job-1", Status: "succeeded", ExitCode: &exitCode},
+		capabilities: agentExecutionCapabilities{Shell: true, FileTransfer: true, NetworkMode: "disabled"},
+	}
+	tool := newAgentExecutionDependencyPreparationTool(fake, agentExecutionScope{OrganizationID: "org-1", SubjectID: "account-1"}, "agent-1", "conversation-1", "message-1", "standard", "local-gvisor", "offline", func(context.Context, string) (agentSkillPackage, error) {
+		t.Fatal("skill resolver must not run when capability is denied")
+		return agentSkillPackage{}, nil
+	})
+	result := tool.Handler(t.Context(), adapter.ToolCall{Function: adapter.FunctionCall{Arguments: `{"skill_id":"portable-example","package_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`}})
+	if result.Status != "failed" || result.Result["error_code"] != "dependency_preparation_denied" || fake.command != "" {
+		t.Fatalf("dependency preparation was not denied: %#v", result)
+	}
+}
+
 func TestAgentExecutionShellStagesAuthorizedAttachmentsOnce(t *testing.T) {
 	fileID := uuid.NewString()
 	reader := &fakeRuntimeAttachmentReader{files: map[string][]byte{fileID: []byte("a,b\n1,2\n")}}
@@ -366,6 +383,40 @@ func TestConsoleAgentExecutionToolFactoryIsCallerScoped(t *testing.T) {
 	prepared.Scope.AccountID = uuid.New()
 	if got := runConfig.RuntimeToolFactory(prepared); len(got) != 0 {
 		t.Fatalf("different account received console tools: %#v", got)
+	}
+}
+
+func TestConsoleAgentExecutionDependencyToolRequiresProfileApproval(t *testing.T) {
+	agentID := uuid.New()
+	orgID := uuid.New()
+	accountID := uuid.New()
+	h := &AgentsHandler{
+		executionApprovals: agentExecutionApprovals{GatewayReady: true, Profiles: map[string]agentExecutionApproval{
+			"standard": {Backend: "local-gvisor", OrganizationIDs: []string{orgID.String()}, PolicyIDs: []string{"offline"}, DependencyPreparation: true},
+		}},
+		executionGateway: &fakeAgentExecutionGateway{},
+	}
+	runConfig := runtimeservice.RunConfig{}
+	if err := h.attachConsoleAgentExecutionTools(&runConfig, runtimeservice.Scope{OrganizationID: orgID, AccountID: accountID}, agentID, dto.AgentConfigResponse{ExecutionRuntime: &dto.AgentExecutionRuntime{Enabled: true, ProfileID: "standard", PolicyID: "offline"}}); err != nil {
+		t.Fatalf("attach console tools: %v", err)
+	}
+	prepared := &runtimeservice.PreparedChat{
+		Scope:        runtimeservice.Scope{OrganizationID: orgID, AccountID: accountID},
+		Caller:       runtimeservice.Caller{Type: runtimemodel.ConversationCallerAgent, ID: &agentID, Source: runtimemodel.ConversationSourceConsole},
+		Conversation: &runtimemodel.Conversation{ID: uuid.New()}, Message: &runtimemodel.Message{ID: uuid.New()},
+	}
+	tools := runConfig.RuntimeToolFactory(prepared)
+	if len(tools) != 3 || tools[2].Definition.Function.Name != "workspace_prepare_dependencies" {
+		t.Fatalf("approved console tools = %#v", tools)
+	}
+
+	h.executionApprovals.Profiles["standard"] = agentExecutionApproval{Backend: "local-gvisor", OrganizationIDs: []string{orgID.String()}, PolicyIDs: []string{"offline"}}
+	runConfig = runtimeservice.RunConfig{}
+	if err := h.attachConsoleAgentExecutionTools(&runConfig, runtimeservice.Scope{OrganizationID: orgID, AccountID: accountID}, agentID, dto.AgentConfigResponse{ExecutionRuntime: &dto.AgentExecutionRuntime{Enabled: true, ProfileID: "standard", PolicyID: "offline"}}); err != nil {
+		t.Fatalf("attach console tools without dependency approval: %v", err)
+	}
+	if tools := runConfig.RuntimeToolFactory(prepared); len(tools) != 2 {
+		t.Fatalf("unapproved dependency tool was exposed: %#v", tools)
 	}
 }
 

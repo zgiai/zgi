@@ -38,7 +38,8 @@ func (h *AgentsHandler) attachConsoleAgentExecutionTools(runConfig *runtimeservi
 		return apperror.New(AppCodeAgentExecutionRuntimeUnavailable, apperror.WithOperation("agent_execution.gateway_unavailable"))
 	}
 	profileID := strings.TrimSpace(cfg.ExecutionRuntime.ProfileID)
-	backend := h.executionApprovals.Profiles[profileID].Backend
+	profileApproval := h.executionApprovals.Profiles[profileID]
+	backend := profileApproval.Backend
 	gateway := h.executionGateway
 	if cfg.ExecutionRuntime.HomeSnapshotID != nil && strings.TrimSpace(*cfg.ExecutionRuntime.HomeSnapshotID) != "" {
 		gateway = agentExecutionSnapshotGateway{
@@ -64,10 +65,14 @@ func (h *AgentsHandler) attachConsoleAgentExecutionTools(runConfig *runtimeservi
 		executionScope := agentExecutionScope{
 			OrganizationID: scope.OrganizationID.String(), SubjectID: scope.AccountID.String(),
 		}
-		return []skillloop.RuntimeTool{
+		tools := []skillloop.RuntimeTool{
 			newAgentExecutionShellToolWithNetworkPolicy(gateway, executionScope, agentID.String(), prepared.Conversation.ID.String(), prepared.Message.ID.String(), profileID, backend, cfg.ExecutionRuntime.PolicyID, prepared.RuntimeAttachmentRefs(), fileReader, skillResolver),
 			newAgentExecutionExportTool(gateway, persister, executionScope, agentID.String(), prepared.Conversation.ID.String(), prepared.Message.ID.String(), profileID, backend, cfg.ExecutionRuntime.PolicyID),
 		}
+		if profileApproval.DependencyPreparation {
+			tools = append(tools, newAgentExecutionDependencyPreparationTool(gateway, executionScope, agentID.String(), prepared.Conversation.ID.String(), prepared.Message.ID.String(), profileID, backend, cfg.ExecutionRuntime.PolicyID, skillResolver))
+		}
+		return tools
 	}
 	return nil
 }

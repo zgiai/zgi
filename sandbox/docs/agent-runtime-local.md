@@ -38,7 +38,7 @@ Required environment:
 |---|---|
 | `ZGI_AGENT_RUNTIME_API_KEY` | Dedicated internal bearer credential. Do not reuse `ZGI_SANDBOX_API_KEY` or a Runtime Workspace credential. |
 | `ZGI_AGENT_RUNTIME_DATABASE_URL` | PostgreSQL control-plane database. |
-| `ZGI_AGENT_RUNTIME_PROFILES_JSON` | Approved Profile object, for example `{"standard":{"image":"registry.example/zgi/agent-runtime@sha256:..."}}`. |
+| `ZGI_AGENT_RUNTIME_PROFILES_JSON` | Approved Profile object, for example `{"standard":{"image":"registry.example/zgi/agent-runtime@sha256:...","dependency_preparation":false}}`. Set `dependency_preparation=true` only on a test Profile whose API approval also enables the same capability. |
 
 Important optional settings are `ZGI_AGENT_RUNTIME_LISTEN` (default `127.0.0.1:2670`), `ZGI_AGENT_RUNTIME_WORKER_ID`, `ZGI_AGENT_RUNTIME_ROOT` (default `/var/lib/zgi-agent-runtime`), `ZGI_AGENT_RUNTIME_CONTAINERD_ADDRESS`, `ZGI_AGENT_RUNTIME_MAX_WORKERS`, `ZGI_AGENT_RUNTIME_IDLE_TTL_SECONDS` (default 1800), `ZGI_AGENT_RUNTIME_STARTUP_TIMEOUT_SECONDS` (default 30), and the `MEMORY_BYTES`, `PIDS`, `CPU_PERIOD`, and `CPU_QUOTA` variables with the `ZGI_AGENT_RUNTIME_` prefix.
 

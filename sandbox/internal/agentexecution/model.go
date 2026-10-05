@@ -180,12 +180,15 @@ type JobResult struct {
 }
 
 type RuntimeCapabilities struct {
-	Shell            bool   `json:"shell"`
-	PTY              bool   `json:"pty"`
-	FileTransfer     bool   `json:"file_transfer"`
-	NetworkMode      string `json:"network_mode"`
-	MaxUploadBytes   int64  `json:"max_upload_bytes"`
-	MaxDownloadBytes int64  `json:"max_download_bytes"`
+	Shell        bool `json:"shell"`
+	PTY          bool `json:"pty"`
+	FileTransfer bool `json:"file_transfer"`
+	// DependencyPreparation permits user-space preparation from staged,
+	// offline package sources. It never implies network or system installs.
+	DependencyPreparation bool   `json:"dependency_preparation"`
+	NetworkMode           string `json:"network_mode"`
+	MaxUploadBytes        int64  `json:"max_upload_bytes"`
+	MaxDownloadBytes      int64  `json:"max_download_bytes"`
 }
 
 type FileInfo struct {

@@ -63,6 +63,28 @@ func TestBackendRunsJobStreamsOutputAndIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestBackendAdvertisesDependencyPreparationOnlyWhenEnabled(t *testing.T) {
+	backend, err := New(Options{WorkspaceRoot: t.TempDir(), NetworkMode: "disabled"})
+	if err != nil {
+		t.Fatalf("new disabled backend: %v", err)
+	}
+	caps, err := backend.Capabilities(context.Background(), agentexecution.Allocation{})
+	if err != nil || caps.DependencyPreparation {
+		t.Fatalf("disabled capabilities = %+v, error=%v", caps, err)
+	}
+	_ = backend.Close()
+
+	backend, err = New(Options{WorkspaceRoot: t.TempDir(), NetworkMode: "disabled", DependencyPreparation: true})
+	if err != nil {
+		t.Fatalf("new enabled backend: %v", err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+	caps, err = backend.Capabilities(context.Background(), agentexecution.Allocation{})
+	if err != nil || !caps.DependencyPreparation || caps.NetworkMode != "disabled" {
+		t.Fatalf("enabled capabilities = %+v, error=%v", caps, err)
+	}
+}
+
 func TestBackendDoesNotExposeRuntimeControlEnvironment(t *testing.T) {
 	t.Setenv("ZGI_RUNTIME_AGENT_TOKEN", "host-secret")
 	t.Setenv("ZGI_RUNTIME_AGENT_LISTEN", "tcp://control-only")

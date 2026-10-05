@@ -36,10 +36,11 @@ func run(parent context.Context) error {
 	}
 	workspace := envValue("ZGI_RUNTIME_AGENT_WORKSPACE", "/workspace")
 	backend, err := runtimeagent.New(runtimeagent.Options{
-		WorkspaceRoot:    workspace,
-		NetworkMode:      envValue("ZGI_RUNTIME_AGENT_NETWORK_MODE", "disabled"),
-		MaxUploadBytes:   envInt64("ZGI_RUNTIME_AGENT_MAX_UPLOAD_BYTES", 64*1024*1024),
-		MaxDownloadBytes: envInt64("ZGI_RUNTIME_AGENT_MAX_DOWNLOAD_BYTES", 64*1024*1024),
+		WorkspaceRoot:         workspace,
+		NetworkMode:           envValue("ZGI_RUNTIME_AGENT_NETWORK_MODE", "disabled"),
+		DependencyPreparation: envBool("ZGI_RUNTIME_AGENT_DEPENDENCY_PREPARATION_ENABLED", false),
+		MaxUploadBytes:        envInt64("ZGI_RUNTIME_AGENT_MAX_UPLOAD_BYTES", 64*1024*1024),
+		MaxDownloadBytes:      envInt64("ZGI_RUNTIME_AGENT_MAX_DOWNLOAD_BYTES", 64*1024*1024),
 	})
 	if err != nil {
 		return err
@@ -86,6 +87,18 @@ func run(parent context.Context) error {
 			return err
 		}
 		return <-serveResult
+	}
+}
+
+func envBool(name string, fallback bool) bool {
+	value := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
+	switch value {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
 	}
 }
 

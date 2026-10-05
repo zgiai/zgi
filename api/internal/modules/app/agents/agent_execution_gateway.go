@@ -47,11 +47,12 @@ type agentExecutionOutputChunk struct {
 }
 
 type agentExecutionCapabilities struct {
-	Shell            bool   `json:"shell"`
-	FileTransfer     bool   `json:"file_transfer"`
-	NetworkMode      string `json:"network_mode"`
-	MaxUploadBytes   int64  `json:"max_upload_bytes"`
-	MaxDownloadBytes int64  `json:"max_download_bytes"`
+	Shell                 bool   `json:"shell"`
+	FileTransfer          bool   `json:"file_transfer"`
+	DependencyPreparation bool   `json:"dependency_preparation"`
+	NetworkMode           string `json:"network_mode"`
+	MaxUploadBytes        int64  `json:"max_upload_bytes"`
+	MaxDownloadBytes      int64  `json:"max_download_bytes"`
 }
 
 type agentExecutionGateway interface {

@@ -120,6 +120,9 @@ func nativeActiveSessionScriptsSystemMessage(resolved *skills.ResolvedSkills, ac
 	for _, skillID := range activeSkillIDs {
 		if doc, ok := resolved.Get(skillID); ok {
 			if script := portableSessionScriptPayload(doc); script != nil {
+				if nativeRuntimeToolAvailable(runtimeTools, "workspace_prepare_dependencies") {
+					script["dependency_preparation_tool"] = "workspace_prepare_dependencies"
+				}
 				scripts = append(scripts, script)
 			}
 		}
@@ -316,13 +319,16 @@ func (r *Runner) handleNativeSessionControlCall(
 		for _, skillID := range append(append([]string(nil), activation.ActivatedSkillIDs...), activation.AlreadyActiveSkillIDs...) {
 			if doc, ok := resolved.Get(skillID); ok {
 				if script := portableSessionScriptPayload(doc); script != nil {
+					if nativeRuntimeToolAvailable(runtimeTools, "workspace_prepare_dependencies") {
+						script["dependency_preparation_tool"] = "workspace_prepare_dependencies"
+					}
 					sessionScripts = append(sessionScripts, script)
 				}
 			}
 		}
 		if len(sessionScripts) > 0 {
 			payload["session_scripts"] = sessionScripts
-			payload["next_action"] = "Use shell_exec with skill_id and the activated Skill's package_sha256 to stage its script package, then run its script from $ZGI_SKILL_DIR/scripts/."
+			payload["next_action"] = "Use shell_exec with skill_id and the activated Skill's package_sha256 to stage its script package, then run its script from $ZGI_SKILL_DIR/scripts/. If workspace_prepare_dependencies is available, call it first when the Skill declares dependencies."
 		}
 	}
 	trace := skills.SkillTrace{

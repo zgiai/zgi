@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -59,8 +60,9 @@ var (
 )
 
 type Profile struct {
-	Image            string `json:"image"`
-	RuntimeAgentPath string `json:"runtime_agent_path,omitempty"`
+	Image                 string `json:"image"`
+	RuntimeAgentPath      string `json:"runtime_agent_path,omitempty"`
+	DependencyPreparation bool   `json:"dependency_preparation,omitempty"`
 }
 
 type Options struct {
@@ -244,6 +246,7 @@ func (p *Provider) launch(ctx context.Context, spec agentexecution.CreateSpec) (
 				"ZGI_RUNTIME_AGENT_WORKSPACE=/workspace",
 				"ZGI_RUNTIME_AGENT_LISTEN=unix:///run/zgi-agent/" + runtimeSocketName,
 				"ZGI_RUNTIME_AGENT_NETWORK_MODE=disabled",
+				"ZGI_RUNTIME_AGENT_DEPENDENCY_PREPARATION_ENABLED=" + strconv.FormatBool(profile.DependencyPreparation),
 			}),
 			oci.WithRootFSReadonly(),
 			oci.WithLinuxNamespace(specs.LinuxNamespace{Type: specs.NetworkNamespace}),

@@ -59,7 +59,7 @@ Set the shared Worker variables documented in `agent-runtime-local.md`, then sel
 |---|---|
 | `ZGI_AGENT_RUNTIME_BACKEND=e2b` | Selects only the E2B backend for this Worker instance. |
 | `ZGI_AGENT_RUNTIME_E2B_API_KEY` | E2B control-plane credential. Never reuse the Worker API credential. |
-| `ZGI_AGENT_RUNTIME_E2B_PROFILES_JSON` | Approved map, for example `{"standard":{"template_id":"zgi-runtime-template"}}`. |
+| `ZGI_AGENT_RUNTIME_E2B_PROFILES_JSON` | Approved map, for example `{"standard":{"template_id":"zgi-runtime-template","dependency_preparation":false}}`. Set `dependency_preparation=true` only on a test template whose API approval also enables the same capability. |
 | `ZGI_AGENT_RUNTIME_E2B_API_URL` | Optional control-plane URL; defaults to `https://api.e2b.app`. |
 | `ZGI_AGENT_RUNTIME_E2B_DOMAIN` | Optional Sandbox domain; defaults to `e2b.app`. |
 | `ZGI_AGENT_RUNTIME_E2B_TIMEOUT_SECONDS` | Create/connect TTL and auto-pause deadline; defaults to 1800. |
@@ -87,4 +87,3 @@ make -C sandbox test-agent-runtime-e2b
 ```
 
 The tagged test intentionally fails when credentials or the template are absent. It creates and cleans a real environment, verifies stdout/stderr, file upload/download, pause/resume retention, outbound-network denial, cancellation, and final deletion. Do not mark M3 complete until this test has passed and the E2B dashboard confirms no orphaned environment.
-

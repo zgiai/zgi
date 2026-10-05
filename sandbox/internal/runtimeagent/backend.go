@@ -25,21 +25,23 @@ import (
 )
 
 type Options struct {
-	WorkspaceRoot    string
-	NetworkMode      string
-	MaxUploadBytes   int64
-	MaxDownloadBytes int64
+	WorkspaceRoot         string
+	NetworkMode           string
+	DependencyPreparation bool
+	MaxUploadBytes        int64
+	MaxDownloadBytes      int64
 }
 
 type Backend struct {
-	workspace        *os.Root
-	workspaceName    string
-	networkMode      string
-	maxUploadBytes   int64
-	maxDownloadBytes int64
-	mu               sync.Mutex
-	jobs             map[string]trackedJob
-	closed           bool
+	workspace             *os.Root
+	workspaceName         string
+	networkMode           string
+	dependencyPreparation bool
+	maxUploadBytes        int64
+	maxDownloadBytes      int64
+	mu                    sync.Mutex
+	jobs                  map[string]trackedJob
+	closed                bool
 }
 
 const sessionHomeDirectory = ".zgi-runtime-home"
@@ -75,7 +77,8 @@ func New(options Options) (*Backend, error) {
 	}
 	return &Backend{
 		workspace: root, workspaceName: root.Name(), networkMode: mode,
-		maxUploadBytes: options.MaxUploadBytes, maxDownloadBytes: options.MaxDownloadBytes,
+		dependencyPreparation: options.DependencyPreparation,
+		maxUploadBytes:        options.MaxUploadBytes, maxDownloadBytes: options.MaxDownloadBytes,
 		jobs: make(map[string]trackedJob),
 	}, nil
 }
@@ -103,7 +106,7 @@ func (b *Backend) Close() error {
 
 func (b *Backend) Capabilities(context.Context, agentexecution.Allocation) (agentexecution.RuntimeCapabilities, error) {
 	return agentexecution.RuntimeCapabilities{
-		Shell: true, PTY: supportsPTY(), FileTransfer: true, NetworkMode: b.networkMode,
+		Shell: true, PTY: supportsPTY(), FileTransfer: true, DependencyPreparation: b.dependencyPreparation, NetworkMode: b.networkMode,
 		MaxUploadBytes: b.maxUploadBytes, MaxDownloadBytes: b.maxDownloadBytes,
 	}, nil
 }

@@ -32,9 +32,10 @@ func CatalogDefinitions() []appcatalog.Definition {
 // agentExecutionApproval is an operator-owned allowlist, not Agent-authored
 // configuration. An absent or malformed list always disables publication.
 type agentExecutionApproval struct {
-	Backend         string   `json:"backend"`
-	OrganizationIDs []string `json:"organization_ids"`
-	PolicyIDs       []string `json:"policy_ids"`
+	Backend               string   `json:"backend"`
+	OrganizationIDs       []string `json:"organization_ids"`
+	PolicyIDs             []string `json:"policy_ids"`
+	DependencyPreparation bool     `json:"dependency_preparation"`
 }
 
 type agentExecutionApprovals struct {
