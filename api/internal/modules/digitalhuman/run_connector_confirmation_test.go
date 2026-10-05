@@ -271,7 +271,7 @@ func TestRuntimeServiceWithholdsPendingConnectorConfirmationOnUnverifiedState(t 
 
 func TestRuntimeServicePendingConnectorConfirmationOmitsSecretsAndFrozenInput(t *testing.T) {
 	const (
-		credentialSecret = "sk-live-connector-credential"
+		credentialSecret = "connector-credential-fixture"
 		inputSecret      = "provider-operation-input"
 		previewSecret    = "preview-provider-value"
 		metadataSecret   = "raw-runtime-metadata"

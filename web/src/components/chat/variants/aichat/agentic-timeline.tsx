@@ -3644,7 +3644,7 @@ function filterTimelineForRendering(
   // The generic governance placeholder can arrive before the dedicated task
   // workflow event on the live stream. A task mutation invocation is already
   // enough context to suppress that placeholder; otherwise users briefly see
-  // a meaningless yellow "运行此工具" row before it disappears on refresh.
+  // a meaningless yellow "Run this tool" row before it disappears on refresh.
   const hasDigitalHumanTaskContext =
     hasDigitalHumanTaskWorkflow ||
     compactedDigitalHumanTaskRuns.some(

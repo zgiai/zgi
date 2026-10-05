@@ -41,7 +41,7 @@ export interface CreateDigitalHumanPayloadInput extends DigitalHumanCreateFormSt
  * Compose the persona written into the new digital human.
  *
  * The format is fixed on purpose: the template persona first, then an explicit
- * "职责范围" section that carries the user-confirmed responsibility, so a later
+ * "Responsibilities" section that carries the user-confirmed responsibility, so a later
  * reader can tell template text from user intent.
  */
 export function buildPersona(

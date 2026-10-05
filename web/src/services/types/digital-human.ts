@@ -160,7 +160,7 @@ export interface UpdateDigitalHumanRequest {
   description?: string;
   /**
    * Publication status. `disabled` takes a published digital human offline
-   * (下架) so it can no longer be run or reached, and is the prerequisite for
+   * so it can no longer be run or reached, and is the prerequisite for
    * deleting it; `active` brings it back online.
    */
   status?: DigitalHumanDefinition['status'];
