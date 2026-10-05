@@ -16,6 +16,7 @@ import (
 
 	"github.com/zgiai/zgi-sandbox/internal/agentexecution"
 	"github.com/zgiai/zgi-sandbox/internal/localruntime"
+	"github.com/zgiai/zgi-sandbox/internal/runtimeagent"
 	"github.com/zgiai/zgi-sandbox/internal/workspacecheckpoint"
 )
 
@@ -283,6 +284,91 @@ func TestContainerdGVisorContract(t *testing.T) {
 	}
 	if !canceled.Canceled {
 		t.Fatalf("canceled result = %+v", canceled)
+	}
+}
+
+func TestContainerdGVisorControlledHTTPS(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Fatal("controlled HTTPS contract test must run as root on the worker node")
+	}
+	image := strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_TEST_IMAGE"))
+	if image == "" {
+		t.Fatal("ZGI_AGENT_RUNTIME_TEST_IMAGE must contain a preloaded digest-qualified image")
+	}
+	provider, err := New(Options{
+		Address: strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_CONTAINERD_ADDRESS")),
+		RootDir: t.TempDir(),
+		Profiles: map[string]Profile{
+			"controlled": {
+				Image: image, DependencyPreparation: true,
+				DependencyPreparationMode: runtimeagent.DependencyPreparationModeControlledHTTP,
+				EgressAllowedHosts:        []string{"pypi.org", "*.pythonhosted.org", "registry.npmjs.org"},
+			},
+		},
+		StartupLimit: 45 * time.Second,
+		MemoryBytes:  256 * 1024 * 1024,
+		PIDs:         64,
+		CPUQuota:     100000,
+		CPUPeriod:    100000,
+	})
+	if err != nil {
+		t.Fatalf("new controlled provider: %v", err)
+	}
+	t.Cleanup(func() { _ = provider.Close() })
+	backend, err := localruntime.New(provider)
+	if err != nil {
+		t.Fatalf("new controlled backend: %v", err)
+	}
+	spec := agentexecution.CreateSpec{
+		BindingID: "controlled-binding", WorkspaceID: "controlled-workspace",
+		OrganizationID: "contract-org", SubjectID: "contract-user", ProfileID: "controlled",
+		NetworkMode: "controlled-http",
+	}
+	allocation, err := backend.CreateBinding(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("create controlled binding: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupContext, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = backend.DestroyBinding(cleanupContext, allocation)
+	})
+
+	capabilities, err := backend.Capabilities(context.Background(), allocation)
+	if err != nil {
+		t.Fatalf("controlled capabilities: %v", err)
+	}
+	if !capabilities.Shell || !capabilities.FileTransfer || capabilities.NetworkMode != "controlled-http" || capabilities.DependencyPreparationMode != runtimeagent.DependencyPreparationModeControlledHTTP || capabilities.EgressProxyAddress == "" {
+		t.Fatalf("controlled capabilities = %+v", capabilities)
+	}
+
+	allowed, allowedOutput := runContractJob(t, backend, allocation, agentexecution.JobSpec{
+		JobID: "controlled-allow", Command: "python3", Timeout: 30 * time.Second,
+		Args: []string{"-c", "import urllib.request; response=urllib.request.urlopen('https://pypi.org/simple/pip/', timeout=15); print('allowed='+str(response.status))"},
+	})
+	if allowed.ExitCode != 0 || !bytes.Contains(allowedOutput, []byte("allowed=200")) {
+		t.Fatalf("controlled allow result = %+v, output = %q", allowed, allowedOutput)
+	}
+
+	denied, deniedOutput := runContractJob(t, backend, allocation, agentexecution.JobSpec{
+		JobID: "controlled-deny", Command: "python3", Timeout: 30 * time.Second,
+		Args: []string{"-c", `import urllib.request
+targets = (
+    ('unallowlisted', 'https://example.com/'),
+    ('private', 'https://127.0.0.1:443/'),
+    ('http', 'http://pypi.org/'),
+    ('port', 'https://pypi.org:444/'),
+)
+for label, url in targets:
+    try:
+        urllib.request.urlopen(url, timeout=10)
+    except Exception as exc:
+        print(label + ':denied:' + type(exc).__name__)
+    else:
+        raise SystemExit('unexpectedly allowed ' + label)`},
+	})
+	if denied.ExitCode != 0 || !bytes.Contains(deniedOutput, []byte("unallowlisted:denied")) || !bytes.Contains(deniedOutput, []byte("private:denied")) || !bytes.Contains(deniedOutput, []byte("http:denied")) || !bytes.Contains(deniedOutput, []byte("port:denied")) {
+		t.Fatalf("controlled deny result = %+v, output = %q", denied, deniedOutput)
 	}
 }
 
