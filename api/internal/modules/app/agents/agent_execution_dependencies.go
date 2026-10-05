@@ -16,12 +16,15 @@ import (
 )
 
 const (
-	agentExecutionDependencyPreparationTimeout = 60 * time.Second
+	agentExecutionDependencyPreparationTimeout = 180 * time.Second
 	agentExecutionDependencyPreparationProgram = `import ast, hashlib, json, os, pathlib, re, shutil, stat, subprocess, sys, tempfile
 
 package_root = pathlib.Path(sys.argv[1]).resolve()
 skill_id = sys.argv[2]
 digest = sys.argv[3]
+source_mode = (sys.argv[4] if len(sys.argv) > 4 else 'offline-bundled').strip().lower()
+if source_mode not in ('offline-bundled', 'controlled-http'):
+    raise ValueError('unsupported dependency preparation mode')
 workspace = pathlib.Path('/workspace').resolve()
 home_value = os.environ.get('HOME', '').strip()
 if not home_value:
@@ -36,9 +39,28 @@ if not (package_root / '.zgi-ready').is_file():
 if (package_root / '.zgi-ready').read_text().strip() != digest:
     raise ValueError('Skill package integrity marker mismatch')
 
-output_root = (home / '.zgi-dependencies' / skill_id / digest).resolve()
-if not output_root.is_relative_to(home):
-    raise ValueError('invalid dependency output root')
+def fail(reason, code=78, **extra):
+    result = {'status': 'blocked', 'reason': reason, **extra}
+    if 'fingerprint' in globals():
+        result['fingerprint'] = fingerprint
+    print(json.dumps(result, sort_keys=True))
+    raise SystemExit(code)
+
+def has_symlink_component(path, root):
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return True
+    current = root
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            return True
+    return False
+
+output_root = home / '.zgi-dependencies' / skill_id / digest
+if not output_root.is_relative_to(home) or has_symlink_component(output_root, home):
+    fail('dependency_cache_invalid', path=str(output_root.relative_to(home)))
 manifest_names = ('requirements.txt', 'package.json')
 manifest_files = [package_root / name for name in manifest_names if (package_root / name).is_file()]
 unsupported = [name for name in ('pyproject.toml', 'Pipfile', 'npm-shrinkwrap.json') if (package_root / name).is_file()]
@@ -47,8 +69,9 @@ if unsupported:
 if any(path.stat().st_size > 256 * 1024 for path in manifest_files):
     raise ValueError('dependency manifest is too large')
 
+preparation_version = 'v3' if source_mode == 'controlled-http' else 'v2'
 fingerprint_hash = hashlib.sha256()
-fingerprint_hash.update(('zgi-agent-dependencies-v2:' + digest + '\n').encode())
+fingerprint_hash.update((('zgi-agent-dependencies-v3:' + source_mode + ':' if source_mode == 'controlled-http' else 'zgi-agent-dependencies-v2:') + digest + '\n').encode())
 for manifest in manifest_files:
     fingerprint_hash.update(manifest.name.encode())
     fingerprint_hash.update(b'\0')
@@ -61,7 +84,7 @@ def cache_is_usable(previous):
         return False
     if previous.get('status') not in ('ready', 'no_dependencies', 'reused') or not output_root.is_dir() or output_root.is_symlink():
         return False
-    if previous.get('source_mode') != 'offline-bundled' or previous.get('preparation_version') != 'v2':
+    if previous.get('source_mode') != source_mode or previous.get('preparation_version') != preparation_version:
         return False
     if previous.get('dependency_root') != str(output_root.relative_to(workspace)):
         return False
@@ -70,11 +93,11 @@ def cache_is_usable(previous):
         if value is None:
             continue
         raw_candidate = workspace / str(value)
-        if raw_candidate.is_symlink():
+        if has_symlink_component(raw_candidate, workspace):
             return False
         candidate = raw_candidate.resolve()
         exists = candidate.is_file() if expected_type == 'file' else candidate.is_dir()
-        if not candidate.is_relative_to(home) or not exists:
+        if not candidate.is_relative_to(output_root) or not exists:
             return False
     marker = output_root / 'prepare.json'
     return marker.is_file() and not marker.is_symlink() and marker.stat().st_size <= 64 * 1024
@@ -90,10 +113,11 @@ if marker.is_file():
         print(json.dumps(previous, sort_keys=True))
         raise SystemExit(0)
 
-def fail(reason, code=78, **extra):
-    result = {'status': 'blocked', 'fingerprint': fingerprint, 'reason': reason, **extra}
-    print(json.dumps(result, sort_keys=True))
-    raise SystemExit(code)
+def remove_existing_output():
+    if has_symlink_component(output_root, home) or (output_root.exists() and not output_root.is_dir()):
+        fail('dependency_cache_invalid', path=str(output_root.relative_to(home)))
+    if output_root.exists():
+        shutil.rmtree(output_root)
 
 def read_requirements(path):
     requirements = []
@@ -174,6 +198,7 @@ def detect_node_imports():
 def copy_regular_tree(source, destination):
     if not source.is_dir() or source.is_symlink():
         fail('offline_dependency_source_missing', source=str(source.relative_to(package_root)))
+    destination.mkdir(parents=True, exist_ok=True)
     total = 0
     for item in source.rglob('*'):
         if item.is_symlink():
@@ -196,7 +221,7 @@ def copy_regular_tree(source, destination):
 
 def run_checked(command, cwd):
     try:
-        result = subprocess.run(command, cwd=str(cwd), capture_output=True, text=True, timeout=45, check=False)
+        result = subprocess.run(command, cwd=str(cwd), capture_output=True, text=True, timeout=(180 if source_mode == 'controlled-http' else 45), check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:
         fail('dependency_prepare_command_failed', command=command[0], detail=str(exc)[:240])
     if result.returncode != 0:
@@ -231,12 +256,9 @@ if not python_requirements and not node_dependencies:
         fail('dependency_manifest_required', python=detected_python, node=detected_node, detail='declare dependencies in requirements.txt or package.json before preparation')
     output_root.parent.mkdir(parents=True, exist_ok=True)
     temporary = pathlib.Path(tempfile.mkdtemp(prefix='.deps-', dir=str(output_root.parent)))
-    result = {'status': 'no_dependencies', 'cache_status': 'created', 'preparation_version': 'v2', 'source_mode': 'offline-bundled', 'fingerprint': fingerprint, 'dependency_root': str(output_root.relative_to(workspace)), 'manifests': [path.name for path in manifest_files]}
+    result = {'status': 'no_dependencies', 'cache_status': 'created', 'preparation_version': preparation_version, 'source_mode': source_mode, 'fingerprint': fingerprint, 'dependency_root': str(output_root.relative_to(workspace)), 'manifests': [path.name for path in manifest_files]}
     (temporary / 'prepare.json').write_text(json.dumps(result, sort_keys=True) + '\n')
-    if output_root.is_symlink():
-        fail('offline_dependency_cache_invalid', path=str(output_root.relative_to(home)))
-    if output_root.exists():
-        shutil.rmtree(output_root)
+    remove_existing_output()
     os.replace(temporary, output_root)
     print(json.dumps(result, sort_keys=True))
     raise SystemExit(0)
@@ -244,31 +266,38 @@ if not python_requirements and not node_dependencies:
 output_root.parent.mkdir(parents=True, exist_ok=True)
 temporary = pathlib.Path(tempfile.mkdtemp(prefix='.deps-', dir=str(output_root.parent)))
 try:
-    result = {'status': 'ready', 'cache_status': 'created', 'preparation_version': 'v2', 'source_mode': 'offline-bundled', 'fingerprint': fingerprint, 'dependency_root': str(output_root.relative_to(workspace)), 'manifests': [path.name for path in manifest_files]}
+    result = {'status': 'ready', 'cache_status': 'created', 'preparation_version': preparation_version, 'source_mode': source_mode, 'fingerprint': fingerprint, 'dependency_root': str(output_root.relative_to(workspace)), 'manifests': [path.name for path in manifest_files]}
     if python_requirements:
         wheels = package_root / 'vendor' / 'python'
-        if not wheels.is_dir():
-            fail('offline_dependency_source_missing', language='python3', source='vendor/python', required=python_requirements)
-        wheel_files = [item for item in wheels.iterdir() if item.is_file() and not item.is_symlink()]
-        if not wheel_files or any(item.suffix.lower() != '.whl' for item in wheel_files):
-            fail('offline_python_wheels_required', source='vendor/python')
         python_root = temporary / 'python'
         run_checked(['python3', '-m', 'venv', '--copies', str(python_root)], package_root)
-        run_checked([str(python_root / 'bin' / 'python'), '-m', 'pip', 'install', '--disable-pip-version-check', '--no-input', '--no-index', '--only-binary=:all:', '--find-links', str(wheels), '-r', str(package_root / 'requirements.txt')], package_root)
+        pip_command = [str(python_root / 'bin' / 'python'), '-m', 'pip', 'install', '--disable-pip-version-check', '--no-input', '--only-binary=:all:']
+        if source_mode == 'offline-bundled':
+            wheels = package_root / 'vendor' / 'python'
+            if not wheels.is_dir():
+                fail('offline_dependency_source_missing', language='python3', source='vendor/python', required=python_requirements)
+            wheel_files = [item for item in wheels.iterdir() if item.is_file() and not item.is_symlink()]
+            if not wheel_files or any(item.suffix.lower() != '.whl' for item in wheel_files):
+                fail('offline_python_wheels_required', source='vendor/python')
+            pip_command.extend(['--no-index', '--find-links', str(wheels)])
+        pip_command.extend(['-r', str(package_root / 'requirements.txt')])
+        run_checked(pip_command, package_root)
         result['python_path'] = str((output_root / 'python' / 'bin' / 'python').relative_to(workspace))
         result['python_command'] = result['python_path']
     if node_dependencies:
-        modules = package_root / 'vendor' / 'node_modules'
         node_root = temporary / 'node'
-        copy_regular_tree(modules, node_root / 'node_modules')
+        if source_mode == 'offline-bundled':
+            modules = package_root / 'vendor' / 'node_modules'
+            copy_regular_tree(modules, node_root / 'node_modules')
+        else:
+            node_root.mkdir(parents=True, exist_ok=True)
+            (node_root / 'package.json').write_text(json.dumps({'private': True, 'dependencies': node_dependencies}, sort_keys=True))
+            run_checked(['npm', 'install', '--ignore-scripts', '--no-audit', '--no-fund', '--package-lock=false', '--prefix', str(node_root)], package_root)
         result['node_path'] = str((output_root / 'node' / 'node_modules').relative_to(workspace))
         result['node_env'] = 'NODE_PATH=' + result['node_path']
     (temporary / 'prepare.json').write_text(json.dumps(result, sort_keys=True) + '\n')
     output_root.parent.mkdir(parents=True, exist_ok=True)
-    if output_root.is_symlink():
-        fail('offline_dependency_cache_invalid', path=str(output_root.relative_to(home)))
-    if output_root.exists():
-        shutil.rmtree(output_root)
+    remove_existing_output()
     os.replace(temporary, output_root)
     print(json.dumps(result, sort_keys=True))
 finally:
@@ -281,7 +310,7 @@ func newAgentExecutionDependencyPreparationTool(gateway agentExecutionGateway, s
 		SkillID: "agent_execution",
 		Definition: adapter.Tool{Type: "function", Function: adapter.Function{
 			Name:        "workspace_prepare_dependencies",
-			Description: "Prepare a custom Skill's Python or Node dependencies inside the isolated session Home from offline package sources bundled in the Skill. Results are content-addressed and safely reused only when their prepared paths still exist. This never enables network access or system-package installation; missing offline sources return a diagnostic result.",
+			Description: "Prepare a custom Skill's Python or Node dependencies inside the isolated session Home. Offline profiles use bundled wheels/modules; approved controlled-HTTPS profiles may fetch only through the worker's allowlisted proxy. Results are content-addressed and safely reused; this never installs system packages or enables unrestricted network access.",
 			Parameters: map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
@@ -343,8 +372,14 @@ func executeAgentExecutionDependencyPreparation(ctx context.Context, gateway age
 		// only previously advertised preparation mode was offline bundled data.
 		dependencyMode = "offline-bundled"
 	}
-	if !capabilities.Shell || !capabilities.FileTransfer || !capabilities.DependencyPreparation || dependencyMode != "offline-bundled" || capabilities.NetworkMode != "disabled" {
-		return failed("dependency_preparation_denied", fmt.Errorf("the approved runtime does not permit offline dependency preparation"), map[string]interface{}{"network_mode": capabilities.NetworkMode})
+	controlled := dependencyMode == "controlled-http" && capabilities.NetworkMode == "controlled-http" && strings.TrimSpace(capabilities.EgressProxyAddress) != ""
+	offline := dependencyMode == "offline-bundled" && capabilities.NetworkMode == "disabled"
+	preparationVersion := "v2"
+	if controlled {
+		preparationVersion = "v3"
+	}
+	if !capabilities.Shell || !capabilities.FileTransfer || !capabilities.DependencyPreparation || (!offline && !controlled) {
+		return failed("dependency_preparation_denied", fmt.Errorf("the approved runtime does not permit the requested dependency source policy"), map[string]interface{}{"network_mode": capabilities.NetworkMode, "dependency_preparation_mode": dependencyMode})
 	}
 	pack, err := skillResolvers[0](operationCtx, args.SkillID)
 	if err != nil {
@@ -361,7 +396,7 @@ func executeAgentExecutionDependencyPreparation(ctx context.Context, gateway age
 	if callID == "" {
 		callID = uuid.NewString()
 	}
-	job, err := gateway.SubmitJob(operationCtx, scope, binding.ID, "dependency-prepare:"+messageID+":"+callID+":"+args.SkillID+":"+args.PackageSHA256, "python3", []string{"-c", agentExecutionDependencyPreparationProgram, "/workspace/" + skillPath, args.SkillID, args.PackageSHA256}, agentExecutionDependencyPreparationTimeout)
+	job, err := gateway.SubmitJob(operationCtx, scope, binding.ID, "dependency-prepare:"+messageID+":"+callID+":"+args.SkillID+":"+args.PackageSHA256, "python3", []string{"-c", agentExecutionDependencyPreparationProgram, "/workspace/" + skillPath, args.SkillID, args.PackageSHA256, dependencyMode}, agentExecutionDependencyPreparationTimeout)
 	if err != nil {
 		return failed("dependency_prepare_submission_failed", err, nil)
 	}
@@ -384,8 +419,8 @@ func executeAgentExecutionDependencyPreparation(ctx context.Context, gateway age
 	if err != nil {
 		return failed("dependency_prepare_output_failed", err, map[string]interface{}{"job_id": job.ID})
 	}
-	result := map[string]interface{}{"job_id": job.ID, "status": job.Status, "exit_code": job.ExitCode, "truncated": truncated, "skill_workspace_path": skillPath, "network_mode": capabilities.NetworkMode, "dependency_preparation_mode": dependencyMode, "offline_only": true, "source_mode": "offline-bundled", "preparation_version": "v2"}
-	modelResult := map[string]interface{}{"job_id": job.ID, "status": job.Status, "exit_code": job.ExitCode, "stdout": stdout, "stderr": stderr, "truncated": truncated, "skill_workspace_path": skillPath, "dependency_preparation_mode": dependencyMode, "offline_only": true, "source_mode": "offline-bundled", "preparation_version": "v2"}
+	result := map[string]interface{}{"job_id": job.ID, "status": job.Status, "exit_code": job.ExitCode, "truncated": truncated, "skill_workspace_path": skillPath, "network_mode": capabilities.NetworkMode, "dependency_preparation_mode": dependencyMode, "offline_only": offline, "source_mode": dependencyMode, "preparation_version": preparationVersion}
+	modelResult := map[string]interface{}{"job_id": job.ID, "status": job.Status, "exit_code": job.ExitCode, "stdout": stdout, "stderr": stderr, "truncated": truncated, "skill_workspace_path": skillPath, "dependency_preparation_mode": dependencyMode, "offline_only": offline, "source_mode": dependencyMode, "preparation_version": preparationVersion}
 	if job.Status != "succeeded" || job.ExitCode == nil || *job.ExitCode != 0 {
 		return failed("dependency_prepare_failed", fmt.Errorf("dependency preparation exited with status %s", job.Status), modelResult)
 	}

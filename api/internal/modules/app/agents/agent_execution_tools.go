@@ -99,7 +99,7 @@ func newAgentExecutionShellToolWithNetworkPolicy(gateway agentExecutionGateway, 
 		SkillID: "agent_execution",
 		Definition: adapter.Tool{Type: "function", Function: adapter.Function{
 			Name:        "shell_exec",
-			Description: "Run a command in the approved, isolated offline Linux workspace for this console conversation. Current-turn uploaded files are staged under inputs/ before the command. To run an active custom Skill's packaged Python or Node script, pass skill_id and the package_sha256 supplied in session_scripts, then use $ZGI_SKILL_DIR/scripts/... in the command. Reload or reactivate the Skill if its package version changes. The workspace may be released after inactivity.",
+			Description: "Run a command in the approved, isolated Linux workspace for this console conversation. The default policy is offline; a separately approved controlled-HTTPS Profile exposes only its loopback proxy and host allowlist. Current-turn uploaded files are staged under inputs/ before the command. To run an active custom Skill's packaged Python or Node script, pass skill_id and the package_sha256 supplied in session_scripts, then use $ZGI_SKILL_DIR/scripts/... in the command. Reload or reactivate the Skill if its package version changes. The workspace may be released after inactivity.",
 			Parameters: map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
@@ -171,8 +171,8 @@ func executeAgentShellToolWithNetworkPolicy(ctx context.Context, gateway agentEx
 	if err != nil {
 		return failed("capability_check_failed", err)
 	}
-	if !capabilities.Shell || capabilities.NetworkMode != "disabled" {
-		return failed("capability_denied", fmt.Errorf("agent execution profile does not provide an offline shell"))
+	if !capabilities.Shell || !agentExecutionShellNetworkAllowed(capabilities) {
+		return failed("capability_denied", fmt.Errorf("agent execution profile does not provide an approved shell network policy"))
 	}
 	var inputPaths []string
 	if stage != nil {
@@ -237,6 +237,13 @@ func executeAgentShellToolWithNetworkPolicy(ctx context.Context, gateway agentEx
 		Status: "success", Arguments: map[string]interface{}{"command_bytes": len(args.Command)}, Result: result,
 		ModelResult: map[string]interface{}{"job_id": job.ID, "status": job.Status, "exit_code": job.ExitCode, "stdout": stdout, "stderr": stderr, "truncated": truncated, "input_files": inputPaths, "workspace_recreated": binding.Recreated, "skill_workspace_path": skillPath},
 	}
+}
+
+func agentExecutionShellNetworkAllowed(capabilities agentExecutionCapabilities) bool {
+	if capabilities.NetworkMode == "disabled" {
+		return true
+	}
+	return capabilities.NetworkMode == "controlled-http" && strings.TrimSpace(capabilities.EgressProxyAddress) != ""
 }
 
 func cancelInterruptedAgentExecutionJob(ctx context.Context, gateway agentExecutionGateway, scope agentExecutionScope, job agentExecutionJob) error {

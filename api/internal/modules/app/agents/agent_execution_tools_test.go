@@ -262,6 +262,18 @@ func TestAgentExecutionShellPassesNetworkPolicyToBinding(t *testing.T) {
 	}
 }
 
+func TestAgentExecutionShellNetworkPolicyRequiresProxyCapability(t *testing.T) {
+	if !agentExecutionShellNetworkAllowed(agentExecutionCapabilities{NetworkMode: "disabled"}) {
+		t.Fatal("offline shell should be allowed")
+	}
+	if agentExecutionShellNetworkAllowed(agentExecutionCapabilities{NetworkMode: "controlled-http"}) {
+		t.Fatal("controlled shell without proxy should be denied")
+	}
+	if !agentExecutionShellNetworkAllowed(agentExecutionCapabilities{NetworkMode: "controlled-http", EgressProxyAddress: "127.0.0.1:3128"}) {
+		t.Fatal("controlled shell with proxy should be allowed")
+	}
+}
+
 func TestAgentExecutionShellCancelsJobWhenPollingLosesContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()

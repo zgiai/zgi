@@ -18,6 +18,7 @@ import (
 var AppCodeAgentExecutionRuntimeUnavailable = apperror.MustCode("agent.execution.runtime.unavailable")
 
 const agentExecutionDependencyPreparationModeOffline = "offline-bundled"
+const agentExecutionDependencyPreparationModeControlledHTTP = "controlled-http"
 
 // CatalogDefinitions returns the public Agent execution error definition.
 func CatalogDefinitions() []appcatalog.Definition {
@@ -105,8 +106,11 @@ func (a agentExecutionApprovals) validate(organizationID string, cfg *dto.AgentE
 		return invalid("agent_execution.policy_unapproved")
 	}
 	dependencyMode := strings.ToLower(strings.TrimSpace(profile.DependencyPreparationMode))
-	if dependencyMode != "" && dependencyMode != agentExecutionDependencyPreparationModeOffline {
+	if dependencyMode != "" && dependencyMode != agentExecutionDependencyPreparationModeOffline && dependencyMode != agentExecutionDependencyPreparationModeControlledHTTP {
 		return invalid("agent_execution.dependency_preparation_mode_unapproved")
+	}
+	if (dependencyMode == agentExecutionDependencyPreparationModeControlledHTTP || strings.EqualFold(strings.TrimSpace(cfg.PolicyID), agentExecutionDependencyPreparationModeControlledHTTP)) && profile.Backend != "local-gvisor" {
+		return invalid("agent_execution.controlled_http_backend_unavailable")
 	}
 	if !profile.DependencyPreparation && dependencyMode != "" {
 		return invalid("agent_execution.dependency_preparation_mode_without_capability")
