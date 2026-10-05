@@ -10,10 +10,13 @@ M6B 第一轮只开放“隔离的用户空间、离线来源”依赖准备。�
 {
   "test": {
     "image": "registry.example/zgi-agent-runtime@sha256:<digest>",
-    "dependency_preparation": true
+    "dependency_preparation": true,
+    "dependency_preparation_mode": "offline-bundled"
   }
 }
 ```
+
+`dependency_preparation_mode` 目前只有 `offline-bundled`，省略时由 Runtime Agent 向后兼容地补齐该值。其他值会在 Worker 侧拒绝，不能通过配置字段提前打开联网安装。
 
 同时，API 的 `ZGI_AGENT_RUNTIME_APPROVED_PROFILES_JSON` 中对应 Profile 必须包含：
 
