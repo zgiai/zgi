@@ -39,7 +39,9 @@ M6B 第一轮只开放“隔离的用户空间、离线来源”依赖准备。�
 
 没有依赖声明时会返回 `no_dependencies`。声明依赖但没有离线来源时返回 `offline_dependency_source_missing`；这不是联网重试，也不会在 API 宿主机安装包。`pyproject.toml`、远程 URL、Git、`file:`、系统包和任意安装命令目前不支持。
 
-准备结果写入会话 Home 的内容寻址目录，并以 manifest 指纹复用。环境暂停、重建或重新连接后，只要 Home/Workspace 恢复，后续调用会返回 `reused`，不会重复安装。指纹改变会生成新的目录，不覆盖旧结果。
+准备结果写入会话 Home 的内容寻址目录，并以 Skill 摘要和依赖清单计算的指纹复用。结果协议包含 `preparation_version`、`source_mode=offline-bundled`、`fingerprint` 和 `cache_status`：首次成功准备为 `cache_status=created`，完整且仍存在的结果再次调用为 `status=reused`、`cache_status=reused`。复用前会校验 `prepare.json`、指纹以及 Python/Node 产物路径；缓存目录损坏或产物缺失时会自动重建，而不会把损坏结果报告为已复用。环境暂停、重建或重新连接后，只要 Home/Workspace 恢复，后续调用会返回 `reused`，不会重复安装。指纹改变会生成新的目录，不覆盖旧结果。
+
+当前准备协议版本为 `v2`。升级协议版本会使旧 Home 结果重新准备，避免旧格式的路径或安全假设被静默沿用。
 
 模型收到相对工作区路径（例如 `.zgi-runtime-home/.zgi-dependencies/<skill>/<digest>/python/bin/python`）和 stdout/stderr 诊断。运行 Skill 时应显式使用返回的 Python 路径，或设置对应的 `NODE_PATH`；不要假设宿主机路径或系统全局包已改变。
 

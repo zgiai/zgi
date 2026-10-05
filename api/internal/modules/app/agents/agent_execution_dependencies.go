@@ -48,20 +48,39 @@ if any(path.stat().st_size > 256 * 1024 for path in manifest_files):
     raise ValueError('dependency manifest is too large')
 
 fingerprint_hash = hashlib.sha256()
-fingerprint_hash.update(('zgi-agent-dependencies-v1:' + digest + '\n').encode())
+fingerprint_hash.update(('zgi-agent-dependencies-v2:' + digest + '\n').encode())
 for manifest in manifest_files:
     fingerprint_hash.update(manifest.name.encode())
     fingerprint_hash.update(b'\0')
     fingerprint_hash.update(manifest.read_bytes())
 fingerprint = fingerprint_hash.hexdigest()
 marker = output_root / 'prepare.json'
+
+def cache_is_usable(previous):
+    if not isinstance(previous, dict) or previous.get('fingerprint') != fingerprint:
+        return False
+    if previous.get('status') not in ('ready', 'no_dependencies', 'reused') or not output_root.is_dir():
+        return False
+    if previous.get('source_mode') != 'offline-bundled' or previous.get('preparation_version') != 'v2':
+        return False
+    for key, expected_type in (('python_path', 'file'), ('node_path', 'directory')):
+        value = previous.get(key)
+        if value is None:
+            continue
+        candidate = (workspace / str(value)).resolve()
+        exists = candidate.is_file() if expected_type == 'file' else candidate.is_dir()
+        if not candidate.is_relative_to(home) or not exists:
+            return False
+    return (output_root / 'prepare.json').is_file()
+
 if marker.is_file():
     try:
         previous = json.loads(marker.read_text())
     except Exception:
         previous = None
-    if isinstance(previous, dict) and previous.get('fingerprint') == fingerprint and previous.get('status') in ('ready', 'no_dependencies'):
+    if cache_is_usable(previous):
         previous['status'] = 'reused'
+        previous['cache_status'] = 'reused'
         print(json.dumps(previous, sort_keys=True))
         raise SystemExit(0)
 
@@ -139,7 +158,7 @@ if (package_root / 'package.json').is_file():
 if not python_requirements and not node_dependencies:
     output_root.parent.mkdir(parents=True, exist_ok=True)
     temporary = pathlib.Path(tempfile.mkdtemp(prefix='.deps-', dir=str(output_root.parent)))
-    result = {'status': 'no_dependencies', 'fingerprint': fingerprint, 'dependency_root': str(output_root.relative_to(workspace)), 'manifests': [path.name for path in manifest_files]}
+    result = {'status': 'no_dependencies', 'cache_status': 'created', 'preparation_version': 'v2', 'source_mode': 'offline-bundled', 'fingerprint': fingerprint, 'dependency_root': str(output_root.relative_to(workspace)), 'manifests': [path.name for path in manifest_files]}
     (temporary / 'prepare.json').write_text(json.dumps(result, sort_keys=True) + '\n')
     if output_root.exists():
         shutil.rmtree(output_root)
@@ -150,7 +169,7 @@ if not python_requirements and not node_dependencies:
 output_root.parent.mkdir(parents=True, exist_ok=True)
 temporary = pathlib.Path(tempfile.mkdtemp(prefix='.deps-', dir=str(output_root.parent)))
 try:
-    result = {'status': 'ready', 'fingerprint': fingerprint, 'dependency_root': str(output_root.relative_to(workspace)), 'manifests': [path.name for path in manifest_files]}
+    result = {'status': 'ready', 'cache_status': 'created', 'preparation_version': 'v2', 'source_mode': 'offline-bundled', 'fingerprint': fingerprint, 'dependency_root': str(output_root.relative_to(workspace)), 'manifests': [path.name for path in manifest_files]}
     if python_requirements:
         wheels = package_root / 'vendor' / 'python'
         if not wheels.is_dir():
@@ -185,7 +204,7 @@ func newAgentExecutionDependencyPreparationTool(gateway agentExecutionGateway, s
 		SkillID: "agent_execution",
 		Definition: adapter.Tool{Type: "function", Function: adapter.Function{
 			Name:        "workspace_prepare_dependencies",
-			Description: "Prepare a custom Skill's Python or Node dependencies inside the isolated session Home from offline package sources bundled in the Skill. This never enables network access or system-package installation; missing offline sources return a diagnostic result.",
+			Description: "Prepare a custom Skill's Python or Node dependencies inside the isolated session Home from offline package sources bundled in the Skill. Results are content-addressed and safely reused only when their prepared paths still exist. This never enables network access or system-package installation; missing offline sources return a diagnostic result.",
 			Parameters: map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
@@ -282,8 +301,8 @@ func executeAgentExecutionDependencyPreparation(ctx context.Context, gateway age
 	if err != nil {
 		return failed("dependency_prepare_output_failed", err, map[string]interface{}{"job_id": job.ID})
 	}
-	result := map[string]interface{}{"job_id": job.ID, "status": job.Status, "exit_code": job.ExitCode, "truncated": truncated, "skill_workspace_path": skillPath, "network_mode": capabilities.NetworkMode, "offline_only": true}
-	modelResult := map[string]interface{}{"job_id": job.ID, "status": job.Status, "exit_code": job.ExitCode, "stdout": stdout, "stderr": stderr, "truncated": truncated, "skill_workspace_path": skillPath, "offline_only": true}
+	result := map[string]interface{}{"job_id": job.ID, "status": job.Status, "exit_code": job.ExitCode, "truncated": truncated, "skill_workspace_path": skillPath, "network_mode": capabilities.NetworkMode, "offline_only": true, "source_mode": "offline-bundled", "preparation_version": "v2"}
+	modelResult := map[string]interface{}{"job_id": job.ID, "status": job.Status, "exit_code": job.ExitCode, "stdout": stdout, "stderr": stderr, "truncated": truncated, "skill_workspace_path": skillPath, "offline_only": true, "source_mode": "offline-bundled", "preparation_version": "v2"}
 	if job.Status != "succeeded" || job.ExitCode == nil || *job.ExitCode != 0 {
 		return failed("dependency_prepare_failed", fmt.Errorf("dependency preparation exited with status %s", job.Status), modelResult)
 	}
