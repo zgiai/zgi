@@ -184,6 +184,8 @@ func TestIsFileAssetProcessableExtension(t *testing.T) {
 	}{
 		{ext: "pdf", want: true},
 		{ext: ".docx", want: true},
+		{ext: ".pptx", want: true},
+		{ext: "ppt", want: true},
 		{ext: "png", want: true},
 		{ext: ".jpg", want: true},
 		{ext: "webp", want: true},

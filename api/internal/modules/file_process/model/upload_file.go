@@ -170,7 +170,7 @@ func initDocumentExtensions() {
 	// Base document types supported without any third-party API
 	baseExtensions := []string{
 		"txt", "markdown", "md", "mdx", "pdf", "html", "htm",
-		"xlsx", "xls", "docx", "csv", "doc",
+		"xlsx", "xls", "docx", "doc", "pptx", "ppt", "csv",
 		"eml", "msg", "xml", "epub",
 	}
 

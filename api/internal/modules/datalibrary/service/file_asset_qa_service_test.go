@@ -55,6 +55,10 @@ func TestFileAssetQAServiceBuildAnswerRequestUsesSelectedAnswerModel(t *testing.
 	if req.Model != "gpt-4.1-mini" {
 		t.Fatalf("req.Model = %q, want %q", req.Model, "gpt-4.1-mini")
 	}
+	systemPrompt, _ := req.Messages[0].Content.(string)
+	if !strings.Contains(systemPrompt, "same language") {
+		t.Fatalf("system prompt does not preserve the user's language: %q", req.Messages[0].Content)
+	}
 }
 
 func TestFileAssetQAServiceBuildAnswerRequestFallsBackToDefaultAnswerModel(t *testing.T) {

@@ -41,7 +41,7 @@ func FileExtensionProviderOrder(fileName string) ([]string, string) {
 	case ".md", ".markdown", ".txt":
 		return []string{"local"}, ext
 	case ".pptx", ".ppt":
-		return []string{"reducto", "mineru"}, ext
+		return []string{"reducto", "mineru", "local"}, ext
 	default:
 		return []string{"local"}, ext
 	}

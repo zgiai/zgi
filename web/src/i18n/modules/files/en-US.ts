@@ -3,6 +3,20 @@ const messages = {
   eyebrow: 'Asset Library',
   description:
     'Upload and parse source files, then use generated chunks for knowledge base references to improve AI chat accuracy.',
+  knowledgeBase: {
+    dialogTitle: 'Add to Knowledge Base',
+    dialogDescription: 'Choose a knowledge base in this workspace for the ready file.',
+    selectPlaceholder: 'Select a knowledge base',
+    loading: 'Loading knowledge bases...',
+    loadFailed: 'Failed to load knowledge bases.',
+    empty: 'No knowledge bases are available in this workspace.',
+    missingSelection: 'Select a knowledge base first.',
+    addSuccess: 'File added to the knowledge base.',
+    alreadyAdded: 'The file is already in this knowledge base.',
+    addFailed: 'Failed to add the file to the knowledge base.',
+    cancel: 'Cancel',
+    confirm: 'Add',
+  },
 
   // Sidebar
   sidebar: {
@@ -216,6 +230,7 @@ const messages = {
     datasetBreadcrumb: 'Knowledge Base',
     previewOriginal: 'Preview Original',
     downloadOriginal: 'Download Original',
+    addToKnowledgeBase: 'Add to Knowledge Base',
     processing: 'Processing',
     fileType: '{extension} File',
     createdAt: 'Uploaded {time}',
