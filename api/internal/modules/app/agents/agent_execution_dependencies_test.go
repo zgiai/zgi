@@ -144,6 +144,7 @@ func TestAgentExecutionDependencyPreparationProgramReportsUndeclaredImports(t *t
 	}
 	workspace := t.TempDir()
 	packageRoot := filepath.Join(workspace, "skill")
+	home := filepath.Join(workspace, "home")
 	if err := os.MkdirAll(filepath.Join(packageRoot, "scripts"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -167,6 +168,7 @@ func TestAgentExecutionDependencyPreparationProgramReportsUndeclaredImports(t *t
 	}
 	program := strings.Replace(agentExecutionDependencyPreparationProgram, "pathlib.Path('/workspace').resolve()", "pathlib.Path("+string(workspaceLiteral)+").resolve()", 1)
 	cmd := exec.Command(python, "-c", program, packageRoot, "manifest-demo", digest)
+	cmd.Env = append(os.Environ(), "HOME="+home)
 	output, runErr := cmd.CombinedOutput()
 	if runErr != nil {
 		if exitErr, ok := runErr.(*exec.ExitError); ok && exitErr.ExitCode() == 9009 {
