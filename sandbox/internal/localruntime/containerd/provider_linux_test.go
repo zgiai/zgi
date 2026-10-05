@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	runtimeoptions "github.com/containerd/containerd/api/types/runtimeoptions/v1"
 	corecontainers "github.com/containerd/containerd/v2/core/containers"
 	"github.com/containerd/containerd/v2/pkg/oci"
 	"github.com/opencontainers/runtime-spec/specs-go"
@@ -131,5 +132,30 @@ func TestResolveCreateRequiresControlledEgressAllowlist(t *testing.T) {
 	provider.profiles["python"] = Profile{Image: testImage, EgressAllowedHosts: []string{"pypi.org"}}
 	if _, _, err := provider.resolveCreate(agentexecution.CreateSpec{BindingID: "binding-1", WorkspaceID: "workspace-1", ProfileID: "python", NetworkMode: "controlled-http"}); err != nil {
 		t.Fatalf("valid controlled profile rejected: %v", err)
+	}
+}
+
+func TestRunscRuntimeOptionsOnlyEnableControlledLoopback(t *testing.T) {
+	if options := runscRuntimeOptions("disabled", filepath.Join(t.TempDir(), "runsc.toml")); options != nil {
+		t.Fatalf("disabled runtime options = %#v, want nil", options)
+	}
+	options, ok := runscRuntimeOptions("controlled-http", "/var/lib/zgi/runsc-controlled.toml").(*runtimeoptions.Options)
+	if !ok || options.TypeUrl != "io.containerd.runsc.v1.options" || options.ConfigPath != "/var/lib/zgi/runsc-controlled.toml" {
+		t.Fatalf("controlled runtime options = %#v", options)
+	}
+}
+
+func TestEnsureControlledRunscConfigRejectsSymlink(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target.toml")
+	if err := os.WriteFile(target, []byte("[runsc_config]\nnetwork = \"host\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "runsc-controlled.toml")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&Provider{runscConfig: link}).ensureControlledRunscConfig(); err == nil {
+		t.Fatal("symlinked runsc config was accepted")
 	}
 }

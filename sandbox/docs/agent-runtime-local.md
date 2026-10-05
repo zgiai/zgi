@@ -6,6 +6,8 @@ The local Agent execution backend is an opt-in Linux worker capability. It is se
 
 Each active Binding runs in a dedicated containerd task using the `io.containerd.runsc.v1` runtime. The worker rejects any other runtime name. It also requires an approved image reference pinned by SHA-256 digest, creates a new network namespace without attaching a network, uses a read-only root filesystem, drops Linux capabilities, enables `no_new_privs`, and applies memory, PID, and CPU limits.
 
+For a `controlled-http` Binding, the worker supplies containerd with a private runsc configuration under its own runtime root. That configuration selects gVisor's `network=none` mode: the sandbox receives an in-sandbox loopback interface but no host network device. The Runtime Agent listens on that loopback and forwards only allowlisted HTTPS requests over the host-owned egress UDS. Operators do not need to edit the host-wide `/etc/containerd/runsc.toml`; the worker-owned file is regenerated before each controlled launch and is rejected if it is a symbolic link.
+
 The workspace and Runtime Agent socket are the only writable host bind mounts. `/tmp` is a bounded tmpfs. The Runtime Agent listens on a mode `0600` Unix socket and requires a randomly generated bearer token. Tokens are stored in the worker's local secret directory, never in Agent execution database records. The worker root must therefore be owned and writable only by the worker service account.
 
 The Runtime Agent is not an isolation boundary by itself. Do not run the local provider with runc as a substitute for gVisor, and do not expose the Runtime Agent socket or token to API clients.

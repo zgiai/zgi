@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	runtimeoptions "github.com/containerd/containerd/api/types/runtimeoptions/v1"
 	containerdclient "github.com/containerd/containerd/v2/client"
 	corecontainers "github.com/containerd/containerd/v2/core/containers"
 	"github.com/containerd/containerd/v2/pkg/cio"
@@ -90,6 +91,7 @@ type Options struct {
 type Provider struct {
 	client       *containerdclient.Client
 	rootDir      string
+	runscConfig  string
 	runtimeName  string
 	profiles     map[string]Profile
 	startupLimit time.Duration
@@ -120,7 +122,7 @@ func New(options Options) (*Provider, error) {
 		return nil, fmt.Errorf("connect containerd: %w", err)
 	}
 	return &Provider{
-		client: client, rootDir: rootDir, runtimeName: options.RuntimeName,
+		client: client, rootDir: rootDir, runscConfig: filepath.Join(rootDir, "runsc-controlled.toml"), runtimeName: options.RuntimeName,
 		profiles: cloneProfiles(options.Profiles), startupLimit: options.StartupLimit,
 		memoryBytes: options.MemoryBytes, pids: options.PIDs,
 		cpuPeriod: options.CPUPeriod, cpuQuota: options.CPUQuota,
@@ -248,10 +250,15 @@ func (p *Provider) launch(ctx context.Context, spec agentexecution.CreateSpec) (
 		}
 		return allocation, fmt.Errorf("get profile image: %w", err)
 	}
+	if networkMode == "controlled-http" {
+		if err := p.ensureControlledRunscConfig(); err != nil {
+			return allocation, err
+		}
+	}
 	container, err := p.client.NewContainer(startupContext, allocation.BindingRef,
 		containerdclient.WithImage(image),
 		containerdclient.WithNewSnapshot(allocation.BindingRef+"-rootfs", image),
-		containerdclient.WithRuntime(p.runtimeName, nil),
+		containerdclient.WithRuntime(p.runtimeName, runscRuntimeOptions(networkMode, p.runscConfig)),
 		containerdclient.WithContainerLabels(map[string]string{
 			"zgi.agent-runtime.managed": "true",
 			"zgi.agent-runtime.binding": spec.BindingID,
@@ -320,6 +327,48 @@ func (p *Provider) launch(ctx context.Context, spec agentexecution.CreateSpec) (
 		}
 	}
 	return allocation, nil
+}
+
+// runscRuntimeOptions keeps the controlled HTTP profile on gVisor's isolated
+// netstack with loopback available. A fresh OCI network namespace has no
+// configured link, so the default runsc network mode cannot even bind the
+// loopback proxy address. The "none" mode intentionally provides only the
+// in-sandbox loopback; outbound traffic still has to cross the host bridge
+// through the runtime-agent UDS.
+func runscRuntimeOptions(networkMode, configPath string) interface{} {
+	if networkMode != "controlled-http" {
+		return nil
+	}
+	return &runtimeoptions.Options{
+		TypeUrl:    "io.containerd.runsc.v1.options",
+		ConfigPath: configPath,
+	}
+}
+
+func (p *Provider) ensureControlledRunscConfig() error {
+	info, err := os.Lstat(p.runscConfig)
+	if err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("controlled gVisor runtime config cannot be a symbolic link")
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect controlled gVisor runtime config: %w", err)
+	}
+	file, err := os.OpenFile(p.runscConfig, os.O_CREATE|os.O_TRUNC|os.O_WRONLY|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return fmt.Errorf("create controlled gVisor runtime config: %w", err)
+	}
+	if _, err := file.WriteString("[runsc_config]\nnetwork = \"none\"\n"); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("write controlled gVisor runtime config: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("sync controlled gVisor runtime config: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close controlled gVisor runtime config: %w", err)
+	}
+	return nil
 }
 
 func (p *Provider) waitReady(ctx context.Context, allocation agentexecution.Allocation) error {
