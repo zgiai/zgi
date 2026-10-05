@@ -38,6 +38,8 @@ func run(parent context.Context) error {
 	backend, err := runtimeagent.New(runtimeagent.Options{
 		WorkspaceRoot:             workspace,
 		NetworkMode:               envValue("ZGI_RUNTIME_AGENT_NETWORK_MODE", "disabled"),
+		EgressProxyAddress:        envValue("ZGI_RUNTIME_AGENT_EGRESS_PROXY_ADDRESS", "127.0.0.1:3128"),
+		EgressSocketPath:          envValue("ZGI_RUNTIME_AGENT_EGRESS_SOCKET", "/run/zgi-agent/egress.sock"),
 		DependencyPreparation:     envBool("ZGI_RUNTIME_AGENT_DEPENDENCY_PREPARATION_ENABLED", false),
 		DependencyPreparationMode: envValue("ZGI_RUNTIME_AGENT_DEPENDENCY_PREPARATION_MODE", ""),
 		MaxUploadBytes:            envInt64("ZGI_RUNTIME_AGENT_MAX_UPLOAD_BYTES", 64*1024*1024),

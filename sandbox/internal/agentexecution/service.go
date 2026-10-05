@@ -565,7 +565,7 @@ func validateCreateRequest(request CreateBindingRequest) error {
 	if request.Scope.OrganizationID == "" || request.Scope.SubjectID == "" || request.AgentID == "" || request.ConversationID == "" || request.ProfileID == "" || request.Backend == "" || request.IdempotencyKey == "" {
 		return fmt.Errorf("%w: organization, subject, agent, conversation, profile, backend, and idempotency key are required", ErrInvalidRequest)
 	}
-	if request.NetworkPolicy != "offline" {
+	if request.NetworkPolicy != "offline" && request.NetworkPolicy != "controlled-http" {
 		return fmt.Errorf("%w: network policy %q is not available in this runtime", ErrBackendUnavailable, request.NetworkPolicy)
 	}
 	return nil

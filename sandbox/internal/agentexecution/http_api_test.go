@@ -97,7 +97,7 @@ func TestHTTPAPIBindingJobAndFileFlow(t *testing.T) {
 
 func TestHTTPAPIRejectsUnsupportedNetworkPolicy(t *testing.T) {
 	api := newTestHTTPAPI(t)
-	response := performAgentRuntimeRequest(t, api, http.MethodPost, agentRuntimePathPrefix+"bindings", strings.NewReader(`{"agent_id":"agent-1","conversation_id":"conversation-unsupported","profile_id":"profile-1","backend":"fake","network_policy":"controlled-http","idempotency_key":"binding-request-unsupported"}`), "org-1", "user-1")
+	response := performAgentRuntimeRequest(t, api, http.MethodPost, agentRuntimePathPrefix+"bindings", strings.NewReader(`{"agent_id":"agent-1","conversation_id":"conversation-unsupported","profile_id":"profile-1","backend":"fake","network_policy":"unrestricted","idempotency_key":"binding-request-unsupported"}`), "org-1", "user-1")
 	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), `"backend_unavailable"`) {
 		t.Fatalf("unsupported policy response = %d %s", response.Code, response.Body.String())
 	}

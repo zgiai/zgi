@@ -106,6 +106,9 @@ func New(options Options) (*Backend, error) {
 		if name == "" || profile.TemplateID == "" {
 			return nil, fmt.Errorf("%w: E2B profile names and template IDs are required", agentexecution.ErrInvalidRequest)
 		}
+		if strings.EqualFold(strings.TrimSpace(profile.DependencyPreparationMode), runtimeagent.DependencyPreparationModeControlledHTTP) {
+			return nil, fmt.Errorf("%w: E2B does not provide the controlled HTTPS egress bridge", agentexecution.ErrBackendUnavailable)
+		}
 		profiles[name] = profile
 	}
 	if len(profiles) == 0 {

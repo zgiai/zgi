@@ -96,9 +96,9 @@ func TestResolveCreateRejectsUnknownProfileAndMismatchedAllocation(t *testing.T)
 	}
 }
 
-func TestLaunchRejectsUnsupportedNetworkModeBeforeAllocation(t *testing.T) {
+func TestLaunchRejectsUnknownNetworkModeBeforeAllocation(t *testing.T) {
 	provider := &Provider{}
-	_, err := provider.launch(context.Background(), agentexecution.CreateSpec{NetworkMode: "controlled-http"})
+	_, err := provider.launch(context.Background(), agentexecution.CreateSpec{NetworkMode: "public-web"})
 	if !errors.Is(err, agentexecution.ErrBackendUnavailable) {
 		t.Fatalf("unsupported network mode error = %v, want ErrBackendUnavailable", err)
 	}
@@ -119,5 +119,17 @@ func TestResolveCreateUsesApprovedPinnedHomeImage(t *testing.T) {
 		HomeSnapshotID: "prepared", HomeSnapshotRef: "registry.example.invalid/zgi/prepared:latest",
 	}); !errors.Is(err, agentexecution.ErrInvalidRequest) {
 		t.Fatalf("floating prepared image accepted: %v", err)
+	}
+}
+
+func TestResolveCreateRequiresControlledEgressAllowlist(t *testing.T) {
+	provider := &Provider{profiles: map[string]Profile{"python": {Image: testImage}}}
+	_, _, err := provider.resolveCreate(agentexecution.CreateSpec{BindingID: "binding-1", WorkspaceID: "workspace-1", ProfileID: "python", NetworkMode: "controlled-http"})
+	if !errors.Is(err, agentexecution.ErrInvalidRequest) {
+		t.Fatalf("missing egress allowlist error = %v", err)
+	}
+	provider.profiles["python"] = Profile{Image: testImage, EgressAllowedHosts: []string{"pypi.org"}}
+	if _, _, err := provider.resolveCreate(agentexecution.CreateSpec{BindingID: "binding-1", WorkspaceID: "workspace-1", ProfileID: "python", NetworkMode: "controlled-http"}); err != nil {
+		t.Fatalf("valid controlled profile rejected: %v", err)
 	}
 }

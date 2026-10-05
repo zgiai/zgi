@@ -6,7 +6,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -17,6 +19,7 @@ import (
 	"time"
 
 	"github.com/zgiai/zgi-sandbox/internal/agentexecution"
+	"github.com/zgiai/zgi-sandbox/internal/egressproxy"
 )
 
 func TestBackendRunsJobStreamsOutputAndIsIdempotent(t *testing.T) {
@@ -69,7 +72,7 @@ func TestBackendAdvertisesDependencyPreparationOnlyWhenEnabled(t *testing.T) {
 		t.Fatalf("new disabled backend: %v", err)
 	}
 	caps, err := backend.Capabilities(context.Background(), agentexecution.Allocation{})
-	if err != nil || caps.DependencyPreparation {
+	if err != nil || caps.DependencyPreparation || caps.EgressProxyAddress != "" {
 		t.Fatalf("disabled capabilities = %+v, error=%v", caps, err)
 	}
 	_ = backend.Close()
@@ -89,6 +92,99 @@ func TestBackendRejectsUnknownDependencyPreparationMode(t *testing.T) {
 	backend, err := New(Options{WorkspaceRoot: t.TempDir(), NetworkMode: "disabled", DependencyPreparation: true, DependencyPreparationMode: "controlled-http"})
 	if backend != nil || !errors.Is(err, agentexecution.ErrBackendUnavailable) {
 		t.Fatalf("unknown dependency mode result = backend=%v error=%v", backend, err)
+	}
+}
+
+func TestControlledHTTPProxyUsesHostVisibleBridge(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "egress.sock")
+	backend, err := New(Options{WorkspaceRoot: t.TempDir(), NetworkMode: "controlled-http", EgressProxyAddress: "127.0.0.1:0", EgressSocketPath: socketPath})
+	if err != nil {
+		t.Fatalf("new controlled backend: %v", err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+	caps, err := backend.Capabilities(context.Background(), agentexecution.Allocation{})
+	if err != nil || caps.NetworkMode != "controlled-http" || caps.EgressProxyAddress == "" {
+		t.Fatalf("controlled capabilities = %+v, error=%v", caps, err)
+	}
+	bridgeReady := make(chan error, 1)
+	go func() {
+		connection, dialErr := net.Dial("unix", socketPath)
+		if dialErr != nil {
+			bridgeReady <- dialErr
+			return
+		}
+		defer connection.Close()
+		frame, readErr := egressproxy.ReadFrame(connection)
+		if readErr != nil {
+			bridgeReady <- readErr
+			return
+		}
+		if frame.Type != egressproxy.FrameTypeConnect || frame.Target != "packages.example:443" {
+			bridgeReady <- fmt.Errorf("unexpected bridge frame: %+v", frame)
+			return
+		}
+		if writeErr := egressproxy.WriteFrame(connection, egressproxy.Frame{Type: egressproxy.FrameTypeResult, OK: true}); writeErr != nil {
+			bridgeReady <- writeErr
+			return
+		}
+		buffer := make([]byte, 4)
+		if _, readErr := io.ReadFull(connection, buffer); readErr != nil {
+			bridgeReady <- readErr
+			return
+		}
+		_, writeErr := connection.Write([]byte("pong"))
+		bridgeReady <- writeErr
+	}()
+	proxy, err := net.Dial("tcp", backend.egressProxyAddress)
+	if err != nil {
+		t.Fatalf("dial loopback proxy: %v", err)
+	}
+	defer proxy.Close()
+	if _, err := io.WriteString(proxy, "CONNECT packages.example:443 HTTP/1.1\r\nHost: packages.example:443\r\n\r\n"); err != nil {
+		t.Fatalf("write CONNECT: %v", err)
+	}
+	response := make([]byte, 64)
+	count, err := proxy.Read(response)
+	if err != nil || !strings.Contains(string(response[:count]), "200 Connection Established") {
+		t.Fatalf("proxy response=%q error=%v", response[:count], err)
+	}
+	if _, err := proxy.Write([]byte("ping")); err != nil {
+		t.Fatalf("write tunnel: %v", err)
+	}
+	pong := make([]byte, 4)
+	if _, err := io.ReadFull(proxy, pong); err != nil || string(pong) != "pong" {
+		t.Fatalf("tunnel response=%q error=%v", pong, err)
+	}
+	if err := <-bridgeReady; err != nil {
+		t.Fatalf("bridge: %v", err)
+	}
+}
+
+func TestControlledJobForcesLoopbackProxyEnvironment(t *testing.T) {
+	backend, err := New(Options{WorkspaceRoot: t.TempDir(), NetworkMode: "controlled-http", EgressProxyAddress: "127.0.0.1:0", EgressSocketPath: filepath.Join(t.TempDir(), "egress.sock")})
+	if err != nil {
+		t.Fatalf("new controlled backend: %v", err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+	var output bytes.Buffer
+	running, err := backend.StartJob(context.Background(), agentexecution.Allocation{}, agentexecution.JobSpec{
+		JobID: "job-controlled-env", Command: "/bin/sh",
+		Args:        []string{"-c", `printf '%s|%s|%s|%s' "$HTTP_PROXY" "$HTTPS_PROXY" "$ALL_PROXY" "$NO_PROXY"`},
+		Environment: map[string]string{"HTTP_PROXY": "http://bypass.invalid:8080", "NO_PROXY": "*"}, Timeout: time.Second,
+	}, func(chunk agentexecution.OutputChunk) error {
+		_, _ = output.Write(chunk.Data)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("start controlled job: %v", err)
+	}
+	result, err := running.Wait(context.Background())
+	if err != nil || result.ExitCode != 0 {
+		t.Fatalf("controlled job result=%+v error=%v", result, err)
+	}
+	parts := strings.Split(output.String(), "|")
+	if len(parts) != 4 || parts[0] != "http://"+backend.egressProxyAddress || parts[1] != parts[0] || parts[2] != parts[0] || parts[3] != "127.0.0.1,localhost" {
+		t.Fatalf("controlled proxy environment = %q", output.String())
 	}
 }
 

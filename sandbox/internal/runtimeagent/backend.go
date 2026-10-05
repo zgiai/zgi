@@ -27,6 +27,8 @@ import (
 type Options struct {
 	WorkspaceRoot             string
 	NetworkMode               string
+	EgressProxyAddress        string
+	EgressSocketPath          string
 	DependencyPreparation     bool
 	DependencyPreparationMode string
 	MaxUploadBytes            int64
@@ -41,6 +43,8 @@ type Backend struct {
 	dependencyPreparationMode string
 	maxUploadBytes            int64
 	maxDownloadBytes          int64
+	egressProxyAddress        string
+	egress                    *egressProxy
 	mu                        sync.Mutex
 	jobs                      map[string]trackedJob
 	closed                    bool
@@ -49,6 +53,7 @@ type Backend struct {
 const sessionHomeDirectory = ".zgi-runtime-home"
 
 const DependencyPreparationModeOfflineBundled = "offline-bundled"
+const DependencyPreparationModeControlledHTTP = "controlled-http"
 
 type trackedJob struct {
 	specHash string
@@ -84,16 +89,39 @@ func New(options Options) (*Backend, error) {
 		if dependencyMode == "" {
 			dependencyMode = DependencyPreparationModeOfflineBundled
 		}
-		if dependencyMode != DependencyPreparationModeOfflineBundled {
+		if dependencyMode != DependencyPreparationModeOfflineBundled && dependencyMode != DependencyPreparationModeControlledHTTP {
 			return nil, fmt.Errorf("%w: dependency preparation mode %q is not available", agentexecution.ErrBackendUnavailable, dependencyMode)
 		}
 	} else if dependencyMode != "" {
 		return nil, fmt.Errorf("%w: dependency preparation mode requires dependency preparation", agentexecution.ErrInvalidRequest)
 	}
+	var proxy *egressProxy
+	proxyAddress := strings.TrimSpace(options.EgressProxyAddress)
+	if mode == "controlled-http" {
+		if proxyAddress == "" {
+			proxyAddress = defaultEgressProxyAddress
+		}
+		socketPath := strings.TrimSpace(options.EgressSocketPath)
+		if socketPath == "" {
+			socketPath = defaultEgressSocketPath
+		}
+		proxy, err = newEgressProxy(proxyAddress, socketPath)
+		if err != nil {
+			_ = root.Close()
+			return nil, err
+		}
+		proxyAddress = proxy.proxyListener.Addr().String()
+	} else if dependencyMode == DependencyPreparationModeControlledHTTP {
+		_ = root.Close()
+		return nil, fmt.Errorf("%w: controlled-http dependency preparation requires controlled-http network mode", agentexecution.ErrBackendUnavailable)
+	} else {
+		proxyAddress = ""
+	}
 	return &Backend{
 		workspace: root, workspaceName: root.Name(), networkMode: mode,
 		dependencyPreparation: options.DependencyPreparation, dependencyPreparationMode: dependencyMode,
 		maxUploadBytes: options.MaxUploadBytes, maxDownloadBytes: options.MaxDownloadBytes,
+		egressProxyAddress: proxyAddress, egress: proxy,
 		jobs: make(map[string]trackedJob),
 	}, nil
 }
@@ -116,12 +144,15 @@ func (b *Backend) Close() error {
 		_, _ = job.Wait(waitContext)
 		cancel()
 	}
+	if b.egress != nil {
+		_ = b.egress.Close()
+	}
 	return b.workspace.Close()
 }
 
 func (b *Backend) Capabilities(context.Context, agentexecution.Allocation) (agentexecution.RuntimeCapabilities, error) {
 	return agentexecution.RuntimeCapabilities{
-		Shell: true, PTY: supportsPTY(), FileTransfer: true, DependencyPreparation: b.dependencyPreparation, DependencyPreparationMode: b.dependencyPreparationMode, NetworkMode: b.networkMode,
+		Shell: true, PTY: supportsPTY(), FileTransfer: true, DependencyPreparation: b.dependencyPreparation, DependencyPreparationMode: b.dependencyPreparationMode, NetworkMode: b.networkMode, EgressProxyAddress: b.egressProxyAddress,
 		MaxUploadBytes: b.maxUploadBytes, MaxDownloadBytes: b.maxDownloadBytes,
 	}, nil
 }
@@ -138,6 +169,19 @@ func (b *Backend) StartJob(ctx context.Context, _ agentexecution.Allocation, spe
 	}
 	spec.Environment = cloneJobEnvironment(spec.Environment)
 	spec.Environment["HOME"] = filepath.Join(b.workspaceName, sessionHomeDirectory)
+	if b.networkMode == "controlled-http" {
+		// Force all supported HTTP clients through the loopback proxy. User
+		// supplied proxy values are not allowed to bypass the worker policy.
+		proxy := "http://" + b.egressProxyAddress
+		spec.Environment["HTTP_PROXY"] = proxy
+		spec.Environment["HTTPS_PROXY"] = proxy
+		spec.Environment["ALL_PROXY"] = proxy
+		spec.Environment["http_proxy"] = proxy
+		spec.Environment["https_proxy"] = proxy
+		spec.Environment["all_proxy"] = proxy
+		spec.Environment["NO_PROXY"] = "127.0.0.1,localhost"
+		spec.Environment["no_proxy"] = "127.0.0.1,localhost"
+	}
 	workDir, err := b.resolveWorkDir(spec.WorkDir)
 	if err != nil {
 		return nil, err

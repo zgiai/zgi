@@ -14,7 +14,17 @@ import (
 	"time"
 
 	"github.com/zgiai/zgi-sandbox/internal/agentexecution"
+	"github.com/zgiai/zgi-sandbox/internal/runtimeagent"
 )
+
+func TestNewRejectsControlledHTTPProfile(t *testing.T) {
+	_, err := New(Options{APIKey: "provider-secret", Profiles: map[string]Profile{
+		"standard": {TemplateID: "template-zgi-runtime", DependencyPreparationMode: runtimeagent.DependencyPreparationModeControlledHTTP},
+	}})
+	if !errors.Is(err, agentexecution.ErrBackendUnavailable) {
+		t.Fatalf("controlled-http profile error = %v, want ErrBackendUnavailable", err)
+	}
+}
 
 func TestBackendUsesSecuredOfflineE2BContract(t *testing.T) {
 	var mu sync.Mutex

@@ -183,16 +183,20 @@ type RuntimeCapabilities struct {
 	Shell        bool `json:"shell"`
 	PTY          bool `json:"pty"`
 	FileTransfer bool `json:"file_transfer"`
-	// DependencyPreparation permits user-space preparation from staged,
-	// offline package sources. It never implies network or system installs.
+	// DependencyPreparation permits user-space preparation. The approved mode
+	// determines whether sources are staged offline or fetched through a
+	// controlled HTTPS proxy; it never permits system package installation.
 	DependencyPreparation bool `json:"dependency_preparation"`
 	// DependencyPreparationMode identifies the approved source policy. An empty
 	// value is retained for older workers and is interpreted as offline-bundled
 	// when DependencyPreparation is true.
 	DependencyPreparationMode string `json:"dependency_preparation_mode,omitempty"`
 	NetworkMode               string `json:"network_mode"`
-	MaxUploadBytes            int64  `json:"max_upload_bytes"`
-	MaxDownloadBytes          int64  `json:"max_download_bytes"`
+	// EgressProxyAddress is a loopback-only proxy inside the isolated runtime.
+	// It is empty when the runtime cannot provide controlled HTTPS egress.
+	EgressProxyAddress string `json:"egress_proxy_address,omitempty"`
+	MaxUploadBytes     int64  `json:"max_upload_bytes"`
+	MaxDownloadBytes   int64  `json:"max_download_bytes"`
 }
 
 type FileInfo struct {

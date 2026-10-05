@@ -13,11 +13,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -28,6 +30,7 @@ import (
 	"github.com/containerd/errdefs"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/zgiai/zgi-sandbox/internal/agentexecution"
+	"github.com/zgiai/zgi-sandbox/internal/egressproxy"
 	"github.com/zgiai/zgi-sandbox/internal/localruntime"
 	"github.com/zgiai/zgi-sandbox/internal/runtimeagent"
 )
@@ -61,10 +64,11 @@ var (
 )
 
 type Profile struct {
-	Image                     string `json:"image"`
-	RuntimeAgentPath          string `json:"runtime_agent_path,omitempty"`
-	DependencyPreparation     bool   `json:"dependency_preparation,omitempty"`
-	DependencyPreparationMode string `json:"dependency_preparation_mode,omitempty"`
+	Image                     string   `json:"image"`
+	RuntimeAgentPath          string   `json:"runtime_agent_path,omitempty"`
+	DependencyPreparation     bool     `json:"dependency_preparation,omitempty"`
+	DependencyPreparationMode string   `json:"dependency_preparation_mode,omitempty"`
+	EgressAllowedHosts        []string `json:"egress_allowed_hosts,omitempty"`
 }
 
 type Options struct {
@@ -96,6 +100,8 @@ type Provider struct {
 	userID       uint32
 	groupID      uint32
 	newToken     func() (string, error)
+	bridgeMu     sync.Mutex
+	bridges      map[string]context.CancelFunc
 }
 
 var _ localruntime.Provider = (*Provider)(nil)
@@ -119,10 +125,17 @@ func New(options Options) (*Provider, error) {
 		memoryBytes: options.MemoryBytes, pids: options.PIDs,
 		cpuPeriod: options.CPUPeriod, cpuQuota: options.CPUQuota,
 		userID: options.UserID, groupID: options.GroupID, newToken: options.NewToken,
+		bridges: make(map[string]context.CancelFunc),
 	}, nil
 }
 
 func (p *Provider) Close() error {
+	p.bridgeMu.Lock()
+	for bindingID, cancel := range p.bridges {
+		cancel()
+		delete(p.bridges, bindingID)
+	}
+	p.bridgeMu.Unlock()
 	return p.client.Close()
 }
 
@@ -134,6 +147,7 @@ func (p *Provider) Suspend(ctx context.Context, allocation agentexecution.Alloca
 	if err := validateAllocation(allocation); err != nil {
 		return err
 	}
+	p.stopEgressBridge(allocation.BindingRef)
 	if err := p.stopCompute(ctx, allocation.BindingRef); err != nil {
 		return err
 	}
@@ -164,6 +178,7 @@ func (p *Provider) Destroy(ctx context.Context, allocation agentexecution.Alloca
 	if err := validateAllocation(allocation); err != nil {
 		return err
 	}
+	p.stopEgressBridge(allocation.BindingRef)
 	if err := p.stopCompute(ctx, allocation.BindingRef); err != nil {
 		return err
 	}
@@ -189,7 +204,8 @@ func (p *Provider) Connect(_ context.Context, allocation agentexecution.Allocati
 }
 
 func (p *Provider) launch(ctx context.Context, spec agentexecution.CreateSpec) (agentexecution.Allocation, error) {
-	if networkMode := strings.TrimSpace(spec.NetworkMode); networkMode != "" && networkMode != "disabled" {
+	networkMode := strings.TrimSpace(spec.NetworkMode)
+	if networkMode != "" && networkMode != "disabled" && networkMode != "controlled-http" {
 		return agentexecution.Allocation{}, fmt.Errorf("%w: local gVisor runtime network mode %q is not available", agentexecution.ErrBackendUnavailable, networkMode)
 	}
 	allocation, profile, err := p.resolveCreate(spec)
@@ -198,6 +214,7 @@ func (p *Provider) launch(ctx context.Context, spec agentexecution.CreateSpec) (
 	}
 	startupContext, cancelStartup := context.WithTimeout(ctx, p.startupLimit)
 	defer cancelStartup()
+	p.stopEgressBridge(allocation.BindingRef)
 	if err := p.stopCompute(startupContext, allocation.BindingRef); err != nil {
 		return allocation, fmt.Errorf("remove stale local runtime compute: %w", err)
 	}
@@ -248,7 +265,9 @@ func (p *Provider) launch(ctx context.Context, spec agentexecution.CreateSpec) (
 				"ZGI_RUNTIME_AGENT_TOKEN=" + token,
 				"ZGI_RUNTIME_AGENT_WORKSPACE=/workspace",
 				"ZGI_RUNTIME_AGENT_LISTEN=unix:///run/zgi-agent/" + runtimeSocketName,
-				"ZGI_RUNTIME_AGENT_NETWORK_MODE=disabled",
+				"ZGI_RUNTIME_AGENT_NETWORK_MODE=" + fallback(networkMode, "disabled"),
+				"ZGI_RUNTIME_AGENT_EGRESS_PROXY_ADDRESS=127.0.0.1:3128",
+				"ZGI_RUNTIME_AGENT_EGRESS_SOCKET=/run/zgi-agent/egress.sock",
 				"ZGI_RUNTIME_AGENT_DEPENDENCY_PREPARATION_ENABLED=" + strconv.FormatBool(profile.DependencyPreparation),
 				"ZGI_RUNTIME_AGENT_DEPENDENCY_PREPARATION_MODE=" + strings.TrimSpace(profile.DependencyPreparationMode),
 			}),
@@ -292,6 +311,14 @@ func (p *Provider) launch(ctx context.Context, spec agentexecution.CreateSpec) (
 		cancel()
 		return allocation, err
 	}
+	if networkMode == "controlled-http" {
+		if err := p.startEgressBridge(startupContext, allocation, profile); err != nil {
+			cleanupContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			_ = p.stopCompute(cleanupContext, allocation.BindingRef)
+			cancel()
+			return allocation, err
+		}
+	}
 	return allocation, nil
 }
 
@@ -316,6 +343,58 @@ func (p *Provider) waitReady(ctx context.Context, allocation agentexecution.Allo
 		case <-ticker.C:
 		}
 	}
+}
+
+func (p *Provider) startEgressBridge(ctx context.Context, allocation agentexecution.Allocation, profile Profile) error {
+	policy := egressproxy.Policy{AllowedHosts: append([]string(nil), profile.EgressAllowedHosts...)}
+	if err := policy.Validate(); err != nil {
+		return fmt.Errorf("%w: %v", agentexecution.ErrInvalidRequest, err)
+	}
+	bridgeContext, cancel := context.WithCancel(context.Background())
+	p.bridgeMu.Lock()
+	if previous := p.bridges[allocation.BindingRef]; previous != nil {
+		previous()
+	}
+	p.bridges[allocation.BindingRef] = cancel
+	p.bridgeMu.Unlock()
+	socketPath := filepath.Join(p.controlDir(allocation.BindingRef), "egress.sock")
+	go func() {
+		defer func() {
+			p.bridgeMu.Lock()
+			if current := p.bridges[allocation.BindingRef]; current != nil {
+				delete(p.bridges, allocation.BindingRef)
+			}
+			p.bridgeMu.Unlock()
+		}()
+		for {
+			if bridgeContext.Err() != nil {
+				return
+			}
+			connection, err := (&net.Dialer{Timeout: time.Second}).DialContext(bridgeContext, "unix", socketPath)
+			if err != nil {
+				select {
+				case <-bridgeContext.Done():
+					return
+				case <-time.After(100 * time.Millisecond):
+					continue
+				}
+			}
+			if err := egressproxy.ServeConnection(bridgeContext, connection, policy); err != nil && bridgeContext.Err() == nil {
+				// A denied or failed connection is one-shot; reconnect so the
+				// next proxy request cannot inherit a stale tunnel.
+			}
+		}
+	}()
+	return nil
+}
+
+func (p *Provider) stopEgressBridge(bindingRef string) {
+	p.bridgeMu.Lock()
+	if cancel := p.bridges[bindingRef]; cancel != nil {
+		cancel()
+		delete(p.bridges, bindingRef)
+	}
+	p.bridgeMu.Unlock()
 }
 
 func (p *Provider) stopCompute(ctx context.Context, bindingRef string) error {
@@ -377,6 +456,11 @@ func (p *Provider) resolveCreate(spec agentexecution.CreateSpec) (agentexecution
 			return allocation, Profile{}, fmt.Errorf("%w: approved Home Snapshot image must be pinned by digest", agentexecution.ErrInvalidRequest)
 		}
 		profile.Image = spec.HomeSnapshotRef
+	}
+	if strings.TrimSpace(spec.NetworkMode) == "controlled-http" {
+		if err := (egressproxy.Policy{AllowedHosts: profile.EgressAllowedHosts}).Validate(); err != nil {
+			return allocation, profile, fmt.Errorf("%w: controlled-http profile egress policy: %v", agentexecution.ErrInvalidRequest, err)
+		}
 	}
 	return allocation, profile, nil
 }
@@ -462,6 +546,15 @@ func validateOptions(options Options) error {
 		}
 		if !filepath.IsAbs(profile.RuntimeAgentPath) {
 			return fmt.Errorf("%w: profile %q runtime agent path must be absolute", agentexecution.ErrInvalidRequest, id)
+		}
+		if len(profile.EgressAllowedHosts) > 0 {
+			if err := (egressproxy.Policy{AllowedHosts: profile.EgressAllowedHosts}).Validate(); err != nil {
+				return fmt.Errorf("%w: profile %q egress policy: %v", agentexecution.ErrInvalidRequest, id, err)
+			}
+		}
+		mode := strings.ToLower(strings.TrimSpace(profile.DependencyPreparationMode))
+		if mode != "" && mode != runtimeagent.DependencyPreparationModeOfflineBundled && mode != runtimeagent.DependencyPreparationModeControlledHTTP {
+			return fmt.Errorf("%w: profile %q dependency preparation mode %q is not supported", agentexecution.ErrInvalidRequest, id, mode)
 		}
 	}
 	return nil
@@ -553,6 +646,7 @@ func randomToken() (string, error) {
 func cloneProfiles(source map[string]Profile) map[string]Profile {
 	result := make(map[string]Profile, len(source))
 	for id, profile := range source {
+		profile.EgressAllowedHosts = append([]string(nil), profile.EgressAllowedHosts...)
 		result[id] = profile
 	}
 	return result
