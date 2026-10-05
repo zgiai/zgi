@@ -180,6 +180,10 @@ The local Sandbox volume now contains the verified `stdlib` profile artifact use
 
 The current M4 server-side rollout is closed unless all three operator settings are supplied: `ZGI_AGENT_RUNTIME_URL` (HTTPS origin, or loopback HTTP), `ZGI_AGENT_RUNTIME_API_KEY` (the Worker's dedicated credential), and `ZGI_AGENT_RUNTIME_APPROVED_PROFILES_JSON`. The latter is a JSON object keyed by Profile ID; each entry requires a `backend` (`local-gvisor` or `e2b`), explicit `organization_ids`, and explicit `policy_ids`, for example `{"standard":{"backend":"local-gvisor","organization_ids":["<organization UUID>"],"policy_ids":["offline"]}}`. These are deployment settings, not Agent-editable fields. The Worker must separately have the matching approved Profile. Optional Home Snapshot publication additionally requires `ZGI_AGENT_RUNTIME_APPROVED_HOME_SNAPSHOTS_JSON` and a matching approved Worker database row; without both, a nonempty Home Snapshot reference is rejected. The Shell tool additionally requires the Worker's binding capabilities to report `shell=true` and `network_mode=disabled`.
 
+## M6B contract-hardening verification
+
+The Windows host cannot run the API package's CGO-backed SQLite tests because GCC is not installed. The same checkout was mounted into the repository's pinned `golang:1.26.2-bookworm` Docker image with `CGO_ENABLED=1`; `go test ./internal/modules/app/agents ./internal/dto -count=1` and `go vet ./internal/modules/app/agents ./internal/dto` both passed. The focused dependency-preparation tests also passed in that Linux image, including cache rebuild after output deletion, tampered-marker rejection, and undeclared Python/Node import diagnostics. No source workaround or runtime-data deletion was used.
+
 ## Compatibility gates
 
 Every later stage must continue to verify:
