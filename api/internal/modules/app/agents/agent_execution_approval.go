@@ -17,6 +17,8 @@ import (
 // operator-approved execution environment without exposing internal details.
 var AppCodeAgentExecutionRuntimeUnavailable = apperror.MustCode("agent.execution.runtime.unavailable")
 
+const agentExecutionDependencyPreparationModeOffline = "offline-bundled"
+
 // CatalogDefinitions returns the public Agent execution error definition.
 func CatalogDefinitions() []appcatalog.Definition {
 	return []appcatalog.Definition{{
@@ -32,10 +34,11 @@ func CatalogDefinitions() []appcatalog.Definition {
 // agentExecutionApproval is an operator-owned allowlist, not Agent-authored
 // configuration. An absent or malformed list always disables publication.
 type agentExecutionApproval struct {
-	Backend               string   `json:"backend"`
-	OrganizationIDs       []string `json:"organization_ids"`
-	PolicyIDs             []string `json:"policy_ids"`
-	DependencyPreparation bool     `json:"dependency_preparation"`
+	Backend                   string   `json:"backend"`
+	OrganizationIDs           []string `json:"organization_ids"`
+	PolicyIDs                 []string `json:"policy_ids"`
+	DependencyPreparation     bool     `json:"dependency_preparation"`
+	DependencyPreparationMode string   `json:"dependency_preparation_mode,omitempty"`
 }
 
 type agentExecutionApprovals struct {
@@ -100,6 +103,13 @@ func (a agentExecutionApprovals) validate(organizationID string, cfg *dto.AgentE
 	}
 	if !containsAgentExecutionApproval(profile.PolicyIDs, strings.TrimSpace(cfg.PolicyID)) {
 		return invalid("agent_execution.policy_unapproved")
+	}
+	dependencyMode := strings.ToLower(strings.TrimSpace(profile.DependencyPreparationMode))
+	if dependencyMode != "" && dependencyMode != agentExecutionDependencyPreparationModeOffline {
+		return invalid("agent_execution.dependency_preparation_mode_unapproved")
+	}
+	if !profile.DependencyPreparation && dependencyMode != "" {
+		return invalid("agent_execution.dependency_preparation_mode_without_capability")
 	}
 	if cfg.HomeSnapshotID != nil && strings.TrimSpace(*cfg.HomeSnapshotID) != "" {
 		snapshot, ok := a.HomeSnapshots[strings.TrimSpace(*cfg.HomeSnapshotID)]

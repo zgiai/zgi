@@ -26,7 +26,8 @@ M6B 第一轮只开放“隔离的用户空间、离线来源”依赖准备。�
     "backend": "local-gvisor",
     "organization_ids": ["<test-organization>"],
     "policy_ids": ["offline"],
-    "dependency_preparation": true
+    "dependency_preparation": true,
+    "dependency_preparation_mode": "offline-bundled"
   }
 }
 ```
