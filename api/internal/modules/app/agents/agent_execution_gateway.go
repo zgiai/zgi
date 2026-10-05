@@ -50,6 +50,7 @@ type agentExecutionCapabilities struct {
 	Shell                 bool   `json:"shell"`
 	FileTransfer          bool   `json:"file_transfer"`
 	DependencyPreparation bool   `json:"dependency_preparation"`
+	DependencyPreparationMode string `json:"dependency_preparation_mode"`
 	NetworkMode           string `json:"network_mode"`
 	MaxUploadBytes        int64  `json:"max_upload_bytes"`
 	MaxDownloadBytes      int64  `json:"max_download_bytes"`

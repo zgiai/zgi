@@ -61,9 +61,10 @@ var (
 )
 
 type Profile struct {
-	Image                 string `json:"image"`
-	RuntimeAgentPath      string `json:"runtime_agent_path,omitempty"`
-	DependencyPreparation bool   `json:"dependency_preparation,omitempty"`
+	Image                     string `json:"image"`
+	RuntimeAgentPath          string `json:"runtime_agent_path,omitempty"`
+	DependencyPreparation     bool   `json:"dependency_preparation,omitempty"`
+	DependencyPreparationMode string `json:"dependency_preparation_mode,omitempty"`
 }
 
 type Options struct {
@@ -249,6 +250,7 @@ func (p *Provider) launch(ctx context.Context, spec agentexecution.CreateSpec) (
 				"ZGI_RUNTIME_AGENT_LISTEN=unix:///run/zgi-agent/" + runtimeSocketName,
 				"ZGI_RUNTIME_AGENT_NETWORK_MODE=disabled",
 				"ZGI_RUNTIME_AGENT_DEPENDENCY_PREPARATION_ENABLED=" + strconv.FormatBool(profile.DependencyPreparation),
+				"ZGI_RUNTIME_AGENT_DEPENDENCY_PREPARATION_MODE=" + strings.TrimSpace(profile.DependencyPreparationMode),
 			}),
 			oci.WithRootFSReadonly(),
 			oci.WithLinuxNamespace(specs.LinuxNamespace{Type: specs.NetworkNamespace}),

@@ -29,8 +29,9 @@ const (
 )
 
 type Profile struct {
-	TemplateID            string `json:"template_id"`
-	DependencyPreparation bool   `json:"dependency_preparation,omitempty"`
+	TemplateID                string `json:"template_id"`
+	DependencyPreparation     bool   `json:"dependency_preparation,omitempty"`
+	DependencyPreparationMode string `json:"dependency_preparation_mode,omitempty"`
 }
 
 type Options struct {
@@ -153,6 +154,7 @@ func (b *Backend) CreateBinding(ctx context.Context, spec agentexecution.CreateS
 			"ZGI_RUNTIME_AGENT_LISTEN":                         fmt.Sprintf("tcp://0.0.0.0:%d", b.agentPort),
 			"ZGI_RUNTIME_AGENT_NETWORK_MODE":                   "disabled",
 			"ZGI_RUNTIME_AGENT_DEPENDENCY_PREPARATION_ENABLED": fmt.Sprintf("%t", profile.DependencyPreparation),
+			"ZGI_RUNTIME_AGENT_DEPENDENCY_PREPARATION_MODE":    strings.TrimSpace(profile.DependencyPreparationMode),
 		},
 		TimeoutSeconds: b.timeoutSeconds, AllowInternet: false,
 		AutoPause: true, AutoPauseMemory: true, AutoResume: autoResumeConfig{Enabled: false},

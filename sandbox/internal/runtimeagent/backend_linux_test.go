@@ -80,8 +80,15 @@ func TestBackendAdvertisesDependencyPreparationOnlyWhenEnabled(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = backend.Close() })
 	caps, err = backend.Capabilities(context.Background(), agentexecution.Allocation{})
-	if err != nil || !caps.DependencyPreparation || caps.NetworkMode != "disabled" {
+	if err != nil || !caps.DependencyPreparation || caps.DependencyPreparationMode != DependencyPreparationModeOfflineBundled || caps.NetworkMode != "disabled" {
 		t.Fatalf("enabled capabilities = %+v, error=%v", caps, err)
+	}
+}
+
+func TestBackendRejectsUnknownDependencyPreparationMode(t *testing.T) {
+	backend, err := New(Options{WorkspaceRoot: t.TempDir(), NetworkMode: "disabled", DependencyPreparation: true, DependencyPreparationMode: "controlled-http"})
+	if backend != nil || !errors.Is(err, agentexecution.ErrBackendUnavailable) {
+		t.Fatalf("unknown dependency mode result = backend=%v error=%v", backend, err)
 	}
 }
 

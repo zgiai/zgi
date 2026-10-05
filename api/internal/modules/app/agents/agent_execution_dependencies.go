@@ -260,7 +260,13 @@ func executeAgentExecutionDependencyPreparation(ctx context.Context, gateway age
 	if err != nil {
 		return failed("capability_check_failed", err, nil)
 	}
-	if !capabilities.Shell || !capabilities.FileTransfer || !capabilities.DependencyPreparation || capabilities.NetworkMode != "disabled" {
+	dependencyMode := strings.TrimSpace(capabilities.DependencyPreparationMode)
+	if dependencyMode == "" && capabilities.DependencyPreparation {
+		// Workers predating the explicit mode field are still safe because the
+		// only previously advertised preparation mode was offline bundled data.
+		dependencyMode = "offline-bundled"
+	}
+	if !capabilities.Shell || !capabilities.FileTransfer || !capabilities.DependencyPreparation || dependencyMode != "offline-bundled" || capabilities.NetworkMode != "disabled" {
 		return failed("dependency_preparation_denied", fmt.Errorf("the approved runtime does not permit offline dependency preparation"), map[string]interface{}{"network_mode": capabilities.NetworkMode})
 	}
 	pack, err := skillResolvers[0](operationCtx, args.SkillID)
@@ -301,8 +307,8 @@ func executeAgentExecutionDependencyPreparation(ctx context.Context, gateway age
 	if err != nil {
 		return failed("dependency_prepare_output_failed", err, map[string]interface{}{"job_id": job.ID})
 	}
-	result := map[string]interface{}{"job_id": job.ID, "status": job.Status, "exit_code": job.ExitCode, "truncated": truncated, "skill_workspace_path": skillPath, "network_mode": capabilities.NetworkMode, "offline_only": true, "source_mode": "offline-bundled", "preparation_version": "v2"}
-	modelResult := map[string]interface{}{"job_id": job.ID, "status": job.Status, "exit_code": job.ExitCode, "stdout": stdout, "stderr": stderr, "truncated": truncated, "skill_workspace_path": skillPath, "offline_only": true, "source_mode": "offline-bundled", "preparation_version": "v2"}
+	result := map[string]interface{}{"job_id": job.ID, "status": job.Status, "exit_code": job.ExitCode, "truncated": truncated, "skill_workspace_path": skillPath, "network_mode": capabilities.NetworkMode, "dependency_preparation_mode": dependencyMode, "offline_only": true, "source_mode": "offline-bundled", "preparation_version": "v2"}
+	modelResult := map[string]interface{}{"job_id": job.ID, "status": job.Status, "exit_code": job.ExitCode, "stdout": stdout, "stderr": stderr, "truncated": truncated, "skill_workspace_path": skillPath, "dependency_preparation_mode": dependencyMode, "offline_only": true, "source_mode": "offline-bundled", "preparation_version": "v2"}
 	if job.Status != "succeeded" || job.ExitCode == nil || *job.ExitCode != 0 {
 		return failed("dependency_prepare_failed", fmt.Errorf("dependency preparation exited with status %s", job.Status), modelResult)
 	}

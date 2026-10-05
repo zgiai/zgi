@@ -185,10 +185,14 @@ type RuntimeCapabilities struct {
 	FileTransfer bool `json:"file_transfer"`
 	// DependencyPreparation permits user-space preparation from staged,
 	// offline package sources. It never implies network or system installs.
-	DependencyPreparation bool   `json:"dependency_preparation"`
-	NetworkMode           string `json:"network_mode"`
-	MaxUploadBytes        int64  `json:"max_upload_bytes"`
-	MaxDownloadBytes      int64  `json:"max_download_bytes"`
+	DependencyPreparation bool `json:"dependency_preparation"`
+	// DependencyPreparationMode identifies the approved source policy. An empty
+	// value is retained for older workers and is interpreted as offline-bundled
+	// when DependencyPreparation is true.
+	DependencyPreparationMode string `json:"dependency_preparation_mode,omitempty"`
+	NetworkMode               string `json:"network_mode"`
+	MaxUploadBytes            int64  `json:"max_upload_bytes"`
+	MaxDownloadBytes          int64  `json:"max_download_bytes"`
 }
 
 type FileInfo struct {
