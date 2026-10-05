@@ -17,7 +17,7 @@ import (
 
 const (
 	agentExecutionDependencyPreparationTimeout = 60 * time.Second
-	agentExecutionDependencyPreparationProgram = `import hashlib, json, os, pathlib, re, shutil, stat, subprocess, sys, tempfile
+	agentExecutionDependencyPreparationProgram = `import ast, hashlib, json, os, pathlib, re, shutil, stat, subprocess, sys, tempfile
 
 package_root = pathlib.Path(sys.argv[1]).resolve()
 skill_id = sys.argv[2]
@@ -108,6 +108,69 @@ def read_requirements(path):
         requirements.append(line)
     return requirements
 
+python_stdlib = set(getattr(sys, 'stdlib_module_names', ()))
+python_stdlib.update(('__future__', 'builtins'))
+
+def detect_python_imports():
+    scripts = package_root / 'scripts'
+    if not scripts.is_dir():
+        return []
+    local_modules = set()
+    for item in scripts.rglob('*.py'):
+        relative = item.relative_to(scripts)
+        if relative.name == '__init__.py' and len(relative.parts) > 1:
+            local_modules.add(relative.parts[0])
+        elif len(relative.parts) == 1:
+            local_modules.add(relative.stem)
+    detected = set()
+    for item in scripts.rglob('*.py'):
+        try:
+            tree = ast.parse(item.read_text(), filename=str(item))
+        except (OSError, SyntaxError):
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                names = [node.module]
+            else:
+                continue
+            for name in names:
+                top_level = name.split('.')[0]
+                if top_level not in python_stdlib and top_level not in local_modules:
+                    detected.add(top_level)
+    return sorted(detected)
+
+node_builtin_modules = set(('assert', 'async_hooks', 'buffer', 'child_process', 'cluster', 'console', 'constants', 'crypto', 'dgram', 'diagnostics_channel', 'dns', 'domain', 'events', 'fs', 'http', 'http2', 'https', 'inspector', 'module', 'net', 'os', 'path', 'perf_hooks', 'process', 'punycode', 'querystring', 'readline', 'repl', 'stream', 'string_decoder', 'sys', 'test', 'timers', 'tls', 'trace_events', 'tty', 'url', 'util', 'v8', 'vm', 'wasi', 'worker_threads', 'zlib'))
+
+def detect_node_imports():
+    scripts = package_root / 'scripts'
+    if not scripts.is_dir():
+        return []
+    local_modules = set()
+    node_modules = scripts / 'node_modules'
+    if node_modules.is_dir():
+        for item in node_modules.iterdir():
+            if item.name.startswith('@') and item.is_dir():
+                local_modules.update(item.name + '/' + child.name for child in item.iterdir())
+            elif not item.name.startswith('.'):
+                local_modules.add(item.name)
+    detected = set()
+    patterns = (re.compile(r"require\s*\(\s*['\"]([^'\"]+)"), re.compile(r"(?:from|import)\s*['\"]([^'\"]+)"), re.compile(r"import\s*\(\s*['\"]([^'\"]+)"))
+    for item in list(scripts.rglob('*.js')) + list(scripts.rglob('*.mjs')) + list(scripts.rglob('*.cjs')):
+        try:
+            source = item.read_text()
+        except OSError:
+            continue
+        for pattern in patterns:
+            for name in pattern.findall(source):
+                if name.startswith('.') or name.startswith('node:'):
+                    continue
+                package_name = '/'.join(name.split('/')[:2]) if name.startswith('@') else name.split('/')[0]
+                if package_name not in node_builtin_modules and package_name not in local_modules:
+                    detected.add(package_name)
+    return sorted(detected)
+
 def copy_regular_tree(source, destination):
     if not source.is_dir() or source.is_symlink():
         fail('offline_dependency_source_missing', source=str(source.relative_to(package_root)))
@@ -162,6 +225,10 @@ if (package_root / 'package.json').is_file():
             node_dependencies[name] = version
 
 if not python_requirements and not node_dependencies:
+    detected_python = detect_python_imports()
+    detected_node = detect_node_imports()
+    if detected_python or detected_node:
+        fail('dependency_manifest_required', python=detected_python, node=detected_node, detail='declare dependencies in requirements.txt or package.json before preparation')
     output_root.parent.mkdir(parents=True, exist_ok=True)
     temporary = pathlib.Path(tempfile.mkdtemp(prefix='.deps-', dir=str(output_root.parent)))
     result = {'status': 'no_dependencies', 'cache_status': 'created', 'preparation_version': 'v2', 'source_mode': 'offline-bundled', 'fingerprint': fingerprint, 'dependency_root': str(output_root.relative_to(workspace)), 'manifests': [path.name for path in manifest_files]}

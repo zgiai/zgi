@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -130,6 +131,63 @@ func TestAgentExecutionDependencyPreparationProgramRebuildsInvalidCache(t *testi
 	fourth := run()
 	if fourth["status"] != "ready" || fourth["cache_status"] != "created" {
 		t.Fatalf("tampered cache was reused: %#v", fourth)
+	}
+}
+
+func TestAgentExecutionDependencyPreparationProgramReportsUndeclaredImports(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		python, err = exec.LookPath("python")
+	}
+	if err != nil {
+		t.Skip("python interpreter is not available on this host")
+	}
+	workspace := t.TempDir()
+	packageRoot := filepath.Join(workspace, "skill")
+	if err := os.MkdirAll(filepath.Join(packageRoot, "scripts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(packageRoot, "SKILL.md"), []byte("Skill package\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(packageRoot, "scripts", "run.py"), []byte("import requests\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(packageRoot, "scripts", "run.js"), []byte("const axios = require('axios');\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	digestBytes := sha256.Sum256([]byte("manifest-required-test"))
+	digest := hex.EncodeToString(digestBytes[:])
+	if err := os.WriteFile(filepath.Join(packageRoot, ".zgi-ready"), []byte(digest+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	workspaceLiteral, err := json.Marshal(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	program := strings.Replace(agentExecutionDependencyPreparationProgram, "pathlib.Path('/workspace').resolve()", "pathlib.Path("+string(workspaceLiteral)+").resolve()", 1)
+	cmd := exec.Command(python, "-c", program, packageRoot, "manifest-demo", digest)
+	output, runErr := cmd.CombinedOutput()
+	if runErr != nil {
+		if exitErr, ok := runErr.(*exec.ExitError); ok && exitErr.ExitCode() == 9009 {
+			t.Skip("python interpreter is not executable on this host")
+		}
+		var exitErr *exec.ExitError
+		if !errors.As(runErr, &exitErr) || exitErr.ExitCode() != 78 {
+			t.Fatalf("unexpected dependency preparation error: %v\n%s", runErr, strings.TrimSpace(string(output)))
+		}
+	} else {
+		t.Fatalf("dependency preparation unexpectedly succeeded: %s", strings.TrimSpace(string(output)))
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(output, &result); err != nil {
+		t.Fatalf("dependency preparation output is not JSON: %v\n%s", err, output)
+	}
+	if result["status"] != "blocked" || result["reason"] != "dependency_manifest_required" {
+		t.Fatalf("unexpected manifest diagnostic: %#v", result)
+	}
+	if !strings.Contains(string(output), "requests") || !strings.Contains(string(output), "axios") {
+		t.Fatalf("diagnostic did not include detected imports: %s", output)
 	}
 }
 

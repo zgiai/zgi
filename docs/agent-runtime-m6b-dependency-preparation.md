@@ -40,7 +40,7 @@ M6B 第一轮只开放“隔离的用户空间、离线来源”依赖准备。�
 - Python：`requirements.txt` 加 `vendor/python/*.whl`。只使用 wheel、`--no-index`，不执行源码构建。
 - Node.js：`package.json` 的 `dependencies`/`optionalDependencies` 加 `vendor/node_modules/`。复制到会话 Home，不执行 npm 生命周期脚本。
 
-没有依赖声明时会返回 `no_dependencies`。声明依赖但没有离线来源时返回 `offline_dependency_source_missing`；这不是联网重试，也不会在 API 宿主机安装包。`pyproject.toml`、远程 URL、Git、`file:`、系统包和任意安装命令目前不支持。
+没有依赖声明且脚本只使用标准库/包内本地模块时会返回 `no_dependencies`。如果脚本包含可识别的第三方 Python/Node import 但没有 `requirements.txt` 或 `package.json`，会返回 `dependency_manifest_required` 并列出检测到的包名；这不是联网重试，也不会在 API 宿主机安装包。声明依赖但没有离线来源时返回 `offline_dependency_source_missing`。`pyproject.toml`、远程 URL、Git、`file:`、系统包和任意安装命令目前不支持。
 
 准备结果写入会话 Home 的内容寻址目录，并以 Skill 摘要和依赖清单计算的指纹复用。结果协议包含 `preparation_version`、`source_mode=offline-bundled`、`fingerprint` 和 `cache_status`：首次成功准备为 `cache_status=created`，完整且仍存在的结果再次调用为 `status=reused`、`cache_status=reused`。复用前会校验 `prepare.json`、指纹以及 Python/Node 产物路径；缓存目录损坏或产物缺失时会自动重建，而不会把损坏结果报告为已复用。环境暂停、重建或重新连接后，只要 Home/Workspace 恢复，后续调用会返回 `reused`，不会重复安装。指纹改变会生成新的目录，不覆盖旧结果。
 
