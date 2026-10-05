@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -241,6 +242,7 @@ func (p *Provider) launch(ctx context.Context, spec agentexecution.CreateSpec) (
 		containerdclient.WithNewSpec(
 			oci.WithImageConfig(image),
 			oci.WithProcessArgs(profile.RuntimeAgentPath),
+			oci.WithTTY,
 			oci.WithEnv([]string{
 				"ZGI_RUNTIME_AGENT_TOKEN=" + token,
 				"ZGI_RUNTIME_AGENT_WORKSPACE=/workspace",
@@ -261,7 +263,14 @@ func (p *Provider) launch(ctx context.Context, spec agentexecution.CreateSpec) (
 	if err != nil {
 		return allocation, fmt.Errorf("create gVisor container: %w", err)
 	}
-	task, err := container.NewTask(startupContext, cio.NullIO)
+	// The gVisor containerd shim requires a terminal-mode stdio configuration to
+	// complete the task start handshake. Keep the streams detached from the host
+	// while still providing FIFO paths; cio.NullIO leaves the shim in a
+	// created/unknown state on valid workers.
+	task, err := container.NewTask(startupContext, cio.NewCreator(
+		cio.WithTerminal,
+		cio.WithStreams(strings.NewReader(""), io.Discard, io.Discard),
+	))
 	if err != nil {
 		cleanupContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		_ = container.Delete(cleanupContext, containerdclient.WithSnapshotCleanup)
