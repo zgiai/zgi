@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/google/uuid"
@@ -139,7 +140,7 @@ func (r *FileProcessRunner) Run(ctx context.Context, processingRequestID uuid.UU
 	parseRequest := buildFileParseRequest(asset, uploadFile, sourceBytes, request)
 	artifact, routePlan, err := r.parseFile(ctx, parseRequest, request)
 	if err != nil {
-		return r.failRequest(ctx, request, asset, "parse_failed", err)
+		return r.failRequest(ctx, request, asset, "parse_failed", formatParseFailure(uploadFile.Name, len(sourceBytes), err))
 	}
 	if r.imageAssets != nil {
 		if _, err := r.imageAssets.Normalize(ctx, datalibraryservice.ParseArtifactImageAssetNormalizeInput{
@@ -459,9 +460,11 @@ func (r *FileProcessRunner) loadSourceFile(ctx context.Context, asset *model.Doc
 }
 
 func (r *FileProcessRunner) failRequest(ctx context.Context, request *model.ProcessingRequest, asset *model.DocumentAsset, code string, cause error) error {
+	stage := processingStageForFailure(code)
 	if request != nil && r.processingService != nil {
 		_, _ = r.processingService.FailRequest(ctx, request.OrganizationID, request.ID, code, cause.Error(), map[string]any{
-			"executor_key": FileProcessExecutorKey,
+			"executor_key":     FileProcessExecutorKey,
+			"processing_stage": stage,
 		})
 	}
 	if request != nil && asset != nil && asset.ProcessingRunID != nil && *asset.ProcessingRunID == request.ID {
@@ -471,6 +474,7 @@ func (r *FileProcessRunner) failRequest(ctx context.Context, request *model.Proc
 				AssetID:            asset.ID,
 				ProcessingRunID:    request.ID,
 				GenerationNo:       asset.GenerationNo,
+				ProcessingStage:    stage,
 				ProcessingProgress: asset.ProcessingProgress,
 			},
 			ErrorCode:    code,
@@ -478,6 +482,40 @@ func (r *FileProcessRunner) failRequest(ctx context.Context, request *model.Proc
 		})
 	}
 	return cause
+}
+
+func processingStageForFailure(code string) string {
+	switch code {
+	case "asset_load_failed", "asset_not_found", "source_load_failed":
+		return model.DocumentAssetProcessingStageUpload
+	case "parse_failed", "mark_parsing_failed":
+		return model.DocumentAssetProcessingStageParse
+	case "quality_check_failed":
+		return model.DocumentAssetProcessingStageReview
+	case "artifact_persist_failed", "mark_generating_failed", "generate_enqueue_failed":
+		return model.DocumentAssetProcessingStageChunk
+	default:
+		return model.DocumentAssetProcessingStageParse
+	}
+}
+
+func formatParseFailure(fileName string, size int, cause error) error {
+	message := strings.TrimSpace(cause.Error())
+	if message == "" {
+		message = "解析器未返回具体错误"
+	}
+	ext := strings.ToLower(strings.TrimSpace(filepath.Ext(fileName)))
+	hints := make([]string, 0, 2)
+	if size >= 40*1024*1024 {
+		hints = append(hints, "文件较大或包含较多多媒体内容，请压缩图片、音视频后重试")
+	}
+	if ext == ".ppt" {
+		hints = append(hints, "旧版 .ppt 兼容性有限，建议转换为 .pptx 后重试")
+	}
+	if len(hints) == 0 {
+		return fmt.Errorf("%s", message)
+	}
+	return fmt.Errorf("%s；%s", message, strings.Join(hints, "；"))
 }
 
 func buildFileParseRequest(asset *model.DocumentAsset, uploadFile *filemodel.UploadFile, data []byte, request *model.ProcessingRequest) contracts.ParseRequest {

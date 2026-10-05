@@ -92,10 +92,29 @@ func forcedRoutePlan(profile contracts.ParseProfile, provider contracts.ParsePro
 
 func buildFileRouteProviderStatuses(fileName string, catalog *contracts.ParseProviderCatalog, health *contracts.ParseHealth) ([]playgroundProviderStatus, string) {
 	names, ext := routing.FileExtensionProviderOrder(fileName)
-	statuses := make([]playgroundProviderStatus, 0, len(names))
+	statuses := make([]playgroundProviderStatus, 0, len(names)+1)
 	for index, name := range names {
-		statuses = append(statuses, buildFileRouteProviderStatus(name, index, catalog, health))
+		statuses = append(statuses, buildFileRouteProviderStatus(name, index+1, catalog, health))
 	}
+	selectable := false
+	for _, status := range statuses {
+		if status.Selectable {
+			selectable = true
+			break
+		}
+	}
+	statuses = append([]playgroundProviderStatus{{
+		Key:         "auto",
+		DisplayName: "Auto Route",
+		Type:        string(contracts.ParseProviderTypeBuiltin),
+		Enabled:     selectable,
+		Configured:  selectable,
+		Available:   selectable,
+		Selectable:  selectable,
+		RouteRank:   0,
+		Status:      map[bool]string{true: "available", false: "unavailable"}[selectable],
+		Reason:      "use the configured route and fallback providers for this file type",
+	}}, statuses...)
 	return statuses, ext
 }
 
