@@ -228,6 +228,109 @@ func TestServiceReturnsRuntimeConfirmationBeforeCredentialOrProviderAccess(t *te
 	}
 }
 
+func TestServiceDirectBindingAuthorizationSkipsConfirmationForMatchingOperation(t *testing.T) {
+	harness := newExecutionHarness(t)
+	harness.risk.classification = RiskHigh
+	harness.bindings.binding.Constraint.AuthorizationMode = core.AuthorizationModeDirect
+	digest, err := catalog.DefinitionContractDigest(validDefinition())
+	if err != nil {
+		t.Fatal(err)
+	}
+	harness.bindings.binding.Constraint.AuthorizationConnectionRevision = harness.connections.connection.Revision
+	harness.bindings.binding.Constraint.AuthorizationCredentialVersion = harness.connections.connection.CredentialVersion
+	harness.bindings.binding.Constraint.AuthorizationContractDigest = digest
+	result, err := harness.service.InvokeConnector(context.Background(), harness.pinned)
+	if err != nil || result.State != ExecutionStateCompleted || result.Outcome.Status != core.OutcomeStatusSuccessful {
+		t.Fatalf("direct binding execution = %#v, %v", result, err)
+	}
+	if harness.provider.calls != 1 || len(harness.audit.decisions) != 1 || !harness.audit.decisions[0].Details["preauthorized"].(bool) {
+		t.Fatalf("direct binding audit/provider = %d/%#v", harness.provider.calls, harness.audit.decisions)
+	}
+}
+
+func TestServiceDirectBindingAuthorizationExpiresAfterConnectionRevisionChanges(t *testing.T) {
+	harness := newExecutionHarness(t)
+	harness.risk.classification = RiskHigh
+	harness.bindings.binding.Constraint.AuthorizationMode = core.AuthorizationModeDirect
+	harness.bindings.binding.Constraint.AuthorizationConnectionRevision = 1
+	harness.bindings.binding.Constraint.AuthorizationCredentialVersion = 1
+	harness.connections.connection.Revision = 2
+
+	result, err := harness.service.InvokeConnector(context.Background(), harness.pinned)
+	if err != nil || result.State != ExecutionStateRequiresConfirmation || result.Confirmation == nil {
+		t.Fatalf("stale direct binding = %#v, %v", result, err)
+	}
+	if harness.provider.calls != 0 || len(harness.audit.decisions) != 0 {
+		t.Fatalf("stale direct authorization executed/audited = provider:%d decisions:%d", harness.provider.calls, len(harness.audit.decisions))
+	}
+}
+
+func freshDirectAuthorization(t *testing.T, harness *executionHarness) {
+	t.Helper()
+	digest, err := catalog.DefinitionContractDigest(validDefinition())
+	if err != nil {
+		t.Fatal(err)
+	}
+	constraint := harness.bindings.binding.Constraint
+	constraint.AuthorizationMode = core.AuthorizationModeDirect
+	constraint.AuthorizationConnectionRevision = harness.connections.connection.Revision
+	constraint.AuthorizationCredentialVersion = harness.connections.connection.CredentialVersion
+	constraint.AuthorizationContractDigest = digest
+}
+
+func TestServiceDirectBindingAuthorizationExpiresAfterCredentialVersionChanges(t *testing.T) {
+	harness := newExecutionHarness(t)
+	harness.risk.classification = RiskHigh
+	freshDirectAuthorization(t, harness)
+	harness.connections.connection.CredentialVersion += 1
+
+	result, err := harness.service.InvokeConnector(context.Background(), harness.pinned)
+	if err != nil || result.State != ExecutionStateRequiresConfirmation || result.Confirmation == nil {
+		t.Fatalf("credential-rotated direct binding = %#v, %v", result, err)
+	}
+	if harness.provider.calls != 0 || len(harness.audit.decisions) != 0 {
+		t.Fatalf("rotated credential direct authorization executed/audited = provider:%d decisions:%d", harness.provider.calls, len(harness.audit.decisions))
+	}
+}
+
+func TestServiceDirectBindingAuthorizationExpiresAfterContractDigestChanges(t *testing.T) {
+	harness := newExecutionHarness(t)
+	harness.risk.classification = RiskHigh
+	freshDirectAuthorization(t, harness)
+	digest := harness.bindings.binding.Constraint.AuthorizationContractDigest
+	last := digest[len(digest)-1]
+	replacement := byte('1')
+	if last == '1' {
+		replacement = '0'
+	}
+	harness.bindings.binding.Constraint.AuthorizationContractDigest = digest[:len(digest)-1] + string(replacement)
+
+	result, err := harness.service.InvokeConnector(context.Background(), harness.pinned)
+	if err != nil || result.State != ExecutionStateRequiresConfirmation || result.Confirmation == nil {
+		t.Fatalf("contract-changed direct binding = %#v, %v", result, err)
+	}
+	if harness.provider.calls != 0 || len(harness.audit.decisions) != 0 {
+		t.Fatalf("contract-changed direct authorization executed/audited = provider:%d decisions:%d", harness.provider.calls, len(harness.audit.decisions))
+	}
+}
+
+func TestServiceBlocksNonInteractiveHighRiskWithoutProviderCall(t *testing.T) {
+	harness := newExecutionHarness(t)
+	harness.risk.classification = RiskHigh
+	harness.pinned.Request.Interactive = false
+
+	result, err := harness.service.InvokeConnector(context.Background(), harness.pinned)
+	if result.State != ExecutionStateBlocked || !core.IsErrorCode(err, core.ErrorCodeConfirmationRequired) {
+		t.Fatalf("non-interactive high-risk = %#v, %v", result, err)
+	}
+	if harness.provider.calls != 0 || harness.credentials.calls != 0 {
+		t.Fatalf("blocked operation reached provider/credentials = %d/%d", harness.provider.calls, harness.credentials.calls)
+	}
+	if len(harness.audit.decisions) != 1 || harness.audit.decisions[0].Status != core.DecisionStatusBlocked {
+		t.Fatalf("blocked decision = %#v", harness.audit.decisions)
+	}
+}
+
 func TestServiceResumesConfirmationWithFrozenAcceptedContractWithoutRepinning(t *testing.T) {
 	harness := newExecutionHarness(t)
 	definition := validDefinition()

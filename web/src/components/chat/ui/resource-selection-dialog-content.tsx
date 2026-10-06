@@ -16,6 +16,7 @@ export function ResourceSelectionDialogContent({
   description,
   children,
   footer,
+  headerExtra,
   bodyClassName,
   headerClassName,
   footerClassName,
@@ -27,12 +28,14 @@ export function ResourceSelectionDialogContent({
   bodyClassName?: string;
   headerClassName?: string;
   footerClassName?: string;
+  headerExtra?: ReactNode;
 }) {
   return (
     <DialogContent {...props} {...(!description ? { 'aria-describedby': undefined } : {})}>
       <DialogHeader className={headerClassName}>
         <DialogTitle>{title}</DialogTitle>
         {description ? <DialogDescription>{description}</DialogDescription> : null}
+        {headerExtra ? <div className="mt-2">{headerExtra}</div> : null}
       </DialogHeader>
       <DialogBody className={bodyClassName}>{children}</DialogBody>
       {footer ? <DialogFooter className={footerClassName}>{footer}</DialogFooter> : null}

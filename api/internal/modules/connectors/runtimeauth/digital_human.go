@@ -34,11 +34,17 @@ type DigitalHumanRuntimeResolver interface {
 	ResolveDigitalHumanCapabilities(context.Context, DigitalHumanCapabilityRequest) (ChatCapabilitySnapshot, error)
 }
 
+type DelegatedDigitalHumanRuntimeResolver interface {
+	ResolveDelegatedCapabilities(context.Context, DelegatedHostRequest) (ChatCapabilitySnapshot, error)
+}
+
 // DigitalHumanResolver keeps the host type, its exact scope/version and every
 // resource binding instance intact. The injected lister owns current host
 // permission checks, so a persisted draft row cannot outlive owner loss.
 type DigitalHumanResolver struct {
-	base *ChatResolver
+	base       *ChatResolver
+	candidates HostGrantCandidateReader
+	authorizer DelegatedRunAuthorizer
 }
 
 var _ DigitalHumanRuntimeResolver = (*DigitalHumanResolver)(nil)
@@ -53,6 +59,20 @@ func NewDigitalHumanResolver(
 		return nil, err
 	}
 	return &DigitalHumanResolver{base: base}, nil
+}
+
+func (resolver *DigitalHumanResolver) WithDelegatedHostAccess(candidates HostGrantCandidateReader, authorizer DelegatedRunAuthorizer) *DigitalHumanResolver {
+	if resolver != nil {
+		resolver.candidates, resolver.authorizer = candidates, authorizer
+	}
+	return resolver
+}
+
+func (resolver *DigitalHumanResolver) ResolveDelegatedCapabilities(ctx context.Context, request DelegatedHostRequest) (ChatCapabilitySnapshot, error) {
+	if resolver == nil || resolver.base == nil || request.Target.Type != core.TargetTypeDigitalHuman {
+		return ChatCapabilitySnapshot{}, core.NewError(core.ErrorCodeAccessDenied, false, nil)
+	}
+	return resolver.base.resolveDelegatedHostCapabilities(ctx, request, resolver.candidates, resolver.authorizer, catalog.SurfaceDigitalHuman)
 }
 
 // ResolveDigitalHumanCapabilities returns only operations backed by a current

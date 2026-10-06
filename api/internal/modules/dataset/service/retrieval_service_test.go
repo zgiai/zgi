@@ -317,6 +317,19 @@ func TestGraphRetrievalConfigDefaultsCombinedSearchToHybridMode(t *testing.T) {
 	}
 }
 
+func TestExplicitVectorRetrievalModeOverridesLegacyGraphSearchMethod(t *testing.T) {
+	config, err := NormalizeGraphRetrievalConfig("graph_search", "vectorAndBM25", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.ActualMode != RetrievalModeVector {
+		t.Fatalf("actual mode=%q, want %q", config.ActualMode, RetrievalModeVector)
+	}
+	if ShouldPropagateRetrievalError(config, true) {
+		t.Fatal("vectorAndBM25 mode must not propagate a graph failure")
+	}
+}
+
 func TestFilterAndLimitFinalRecordsSortsAndAppliesThresholdBeforeTopK(t *testing.T) {
 	records := []dto.HitTestingRecordResponse{
 		{Segment: dto.SegmentResponse{ID: "mid"}, Score: 0.72},
@@ -428,6 +441,23 @@ func TestFilterAndLimitFinalRecordsAppliesThresholdToRerankScores(t *testing.T) 
 
 	if len(got) != 0 {
 		t.Fatalf("len(got) = %d, want 0", len(got))
+	}
+}
+
+func TestFilterAndLimitFinalRecordsKeepsTextAndGraphQuotasForHybrid(t *testing.T) {
+	records := []dto.HitTestingRecordResponse{
+		{Segment: dto.SegmentResponse{ID: "text-1"}, Score: 0.95, MatchType: "hybrid"},
+		{Segment: dto.SegmentResponse{ID: "text-2"}, Score: 0.85, MatchType: "hybrid"},
+		{Segment: dto.SegmentResponse{ID: "graph-1"}, Score: 0.80, MatchType: dto.MatchTypeGraphKnowledge},
+		{Segment: dto.SegmentResponse{ID: "graph-2"}, Score: 0.70, MatchType: dto.MatchTypeGraphKnowledge},
+	}
+
+	got := filterAndLimitFinalRecords(records, &RetrievalOptions{TopK: 1, SourceQuotaTopK: true})
+	if len(got) != 2 {
+		t.Fatalf("len(got) = %d, want 2", len(got))
+	}
+	if got[0].Segment.ID != "text-1" || got[1].Segment.ID != "graph-1" {
+		t.Fatalf("got IDs = %q, %q; want text-1, graph-1", got[0].Segment.ID, got[1].Segment.ID)
 	}
 }
 

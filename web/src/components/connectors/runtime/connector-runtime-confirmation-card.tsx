@@ -47,9 +47,8 @@ interface ConnectorRuntimeConfirmationCardProps {
   compact?: boolean;
   className?: string;
   /**
-   * Opt-in. When true, Confirm is disabled until the owner-scoped receipt
-   * preview exists with `complete === true`. Default false preserves Chat and
-   * Agent behavior.
+   * Opt-in. When true, show a warning until the owner-scoped receipt preview
+   * exists with `complete === true`. Confirm always requires a complete preview.
    */
   requireCompletePreview?: boolean;
   /**
@@ -156,15 +155,10 @@ export function ConnectorRuntimeConfirmationCard({
         if (current) setVerifiedIdentity(identity);
       })
       .catch(() => {
-        if (!current) return;
-        decisionScope.current = receiptScope;
-        const unconfirmed: ConnectorRuntimeDecisionState = {
-          status: 'unknown',
-          routeReceipt: confirmation.route_receipt,
-          decision: 'confirmed',
-        };
-        decisionStateRef.current = unconfirmed;
-        setDecisionState(unconfirmed);
+        // A failed read is a temporary status-read failure, not an unknown
+        // execution outcome. Leave the decision idle and let receipt.readFailed
+        // drive a retryable prompt; never fabricate a transport_unconfirmed.
+        if (current) setVerifiedIdentity('');
       });
     return () => {
       current = false;
@@ -175,6 +169,7 @@ export function ConnectorRuntimeConfirmationCard({
     setChecking(true);
     try {
       await receipt.check();
+      if (mounted.current && identityRef.current === identity) setVerifiedIdentity(identity);
     } finally {
       if (mounted.current && identityRef.current === identity) setChecking(false);
     }
@@ -184,7 +179,7 @@ export function ConnectorRuntimeConfirmationCard({
   const canDecide =
     verifiedIdentity === identity && isConnectorRuntimeDecisionAvailable(visibleState, result);
   const previewReady = receipt.preview?.complete === true;
-  const canConfirm = canDecide && (!requireCompletePreview || previewReady);
+  const canConfirm = canDecide && previewReady;
   const riskIsHigh = confirmation.risk_classification === 'high';
   const effect = effectLabel(confirmation.consequence.external_effect, t);
 
@@ -197,9 +192,9 @@ export function ConnectorRuntimeConfirmationCard({
 
   const submitDecision = async (decision: ConnectorRuntimeConfirmationDecision) => {
     if (!canDecide) return;
-    // Opt-in consent guard: a confirmation host that requires the owner-scoped
-    // preview must never approve while that preview is missing or incomplete.
-    if (decision === 'confirmed' && requireCompletePreview && !previewReady) return;
+    // A confirmation host must never approve while the owner-scoped
+    // preview is missing or incomplete.
+    if (decision === 'confirmed' && !previewReady) return;
     const current =
       decisionScope.current === receipt.scope
         ? effectiveDecisionState(decisionStateRef.current, confirmation.route_receipt)
@@ -241,13 +236,6 @@ export function ConnectorRuntimeConfirmationCard({
   }
 
   const items: OperationCardMetaItem[] = [];
-  if (confirmation.consequence.external_destination) {
-    items.push({
-      id: 'destination',
-      label: t('runtime.confirmation.fields.destination'),
-      value: confirmation.consequence.external_destination,
-    });
-  }
   if (showPreview && receipt.preview) {
     items.push({
       id: 'preview-account-name',
@@ -310,6 +298,16 @@ export function ConnectorRuntimeConfirmationCard({
       tone: 'warning',
     });
   }
+  const showReadFailed = receipt.readFailed && visibleState.status === 'idle';
+  if (showReadFailed) {
+    statusLabel = t('runtime.confirmation.statusReadFailed');
+    warnings.push({
+      id: 'status-read-failed',
+      title: t('runtime.confirmation.statusReadFailed'),
+      description: t('runtime.confirmation.statusReadFailedHint'),
+      tone: 'warning',
+    });
+  }
   const resolved = visibleState.status === 'resolved' || visibleState.status === 'unknown';
   return (
     <OperationConfirmationCard
@@ -318,23 +316,25 @@ export function ConnectorRuntimeConfirmationCard({
       eyebrow={t('runtime.confirmation.eyebrow', {
         risk: riskIsHigh ? t('runtime.risk.high') : t('runtime.risk.unclassified'),
       })}
-      title={confirmation.connector_name + ' · ' + confirmation.action_name}
-      description={
-        confirmation.consequence.data_egress
-          ? t('runtime.confirmation.dataEgressDescription')
-          : undefined
-      }
+      title={t('runtime.confirmation.title')}
+      description={t('runtime.confirmation.description')}
       status={status}
       statusLabel={statusLabel}
       summary={riskIsHigh ? t('runtime.confirmation.consequenceFallback', { effect }) : undefined}
       items={items}
       warnings={warnings}
       actions={
-        visibleState.status === 'unknown'
+        visibleState.status === 'unknown' || showReadFailed
           ? [
               {
-                id: 'check-connector-status',
-                label: t('runtime.confirmation.checkStatus'),
+                id:
+                  visibleState.status === 'unknown'
+                    ? 'check-connector-status'
+                    : 'retry-connector-status',
+                label:
+                  visibleState.status === 'unknown'
+                    ? t('runtime.confirmation.checkStatus')
+                    : t('runtime.confirmation.retryStatus'),
                 icon: <RefreshCw className="size-3.5" />,
                 disabled: checking,
                 loading: checking,

@@ -73,6 +73,7 @@ function pickerBinding(binding: ConnectorTargetBinding): ConnectorPickerBindingR
     connector_id: binding.connector_id,
     status: binding.status,
     revision: binding.revision,
+    authorization_mode: binding.authorization_mode,
   };
 }
 
@@ -237,8 +238,13 @@ function AIChatConnectorDialog({
                 connection_id: connection.id,
                 target: attachTarget,
                 expected_revision: replacedBinding.revision,
+                authorization_mode: 'ask_each_time',
               }
-            : { connection_id: connection.id, target: attachTarget },
+            : {
+                connection_id: connection.id,
+                target: attachTarget,
+                authorization_mode: 'ask_each_time',
+              },
           newIdempotencyKey()
         );
       } finally {
@@ -327,42 +333,42 @@ function AIChatConnectorDialog({
   }
 
   return (
-    <ConnectorPickerDialog
-      groupByConnector
-      open={open}
-      anchorElement={anchorElement}
-      target={{ type: 'chat', id: conversationId }}
-      targetName={targetName}
-      bindings={nativeBindings}
-      onOpenChange={onOpenChange}
-      onRequestAdd={request => attachConnection(request.connection)}
-      onRequestSwitch={request =>
-        attachConnection(request.connection, target, request.replacedBinding)
-      }
-      onRequestConnectAndAdd={request =>
-        setSetup({
-          connector: request.connector,
-          target,
-          targetName,
-          replacedBinding: request.replacedBinding,
-        })
-      }
-      onRequestUpdateKey={request => {
-        onOpenChange(false);
-        router.push(connectorDetailURL(request));
-      }}
-      onRequestViewReason={request => {
-        onOpenChange(false);
-        router.push(connectorDetailURL(request));
-      }}
-      onRequestDetach={async request => {
-        if (!request.binding.revision) throw new Error('connector binding revision is required');
-        await connectorService.detachTargetBinding(request.binding.id, {
-          revision: request.binding.revision,
-        });
-        await bindingsQuery.refetch();
-      }}
-    />
+      <ConnectorPickerDialog
+        groupByConnector
+        open={open}
+        anchorElement={anchorElement}
+        target={{ type: 'chat', id: conversationId }}
+        targetName={targetName}
+        bindings={nativeBindings}
+        onOpenChange={onOpenChange}
+        onRequestAdd={request => attachConnection(request.connection)}
+        onRequestSwitch={request =>
+          attachConnection(request.connection, target, request.replacedBinding)
+        }
+        onRequestConnectAndAdd={request =>
+          setSetup({
+            connector: request.connector,
+            target,
+            targetName,
+            replacedBinding: request.replacedBinding,
+          })
+        }
+        onRequestUpdateKey={request => {
+          onOpenChange(false);
+          router.push(connectorDetailURL(request));
+        }}
+        onRequestViewReason={request => {
+          onOpenChange(false);
+          router.push(connectorDetailURL(request));
+        }}
+        onRequestDetach={async request => {
+          if (!request.binding.revision) throw new Error('connector binding revision is required');
+          await connectorService.detachTargetBinding(request.binding.id, {
+            revision: request.binding.revision,
+          });
+          await bindingsQuery.refetch();
+        }}
+      />
   );
 }
 

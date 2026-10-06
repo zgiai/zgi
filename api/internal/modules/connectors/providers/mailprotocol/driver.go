@@ -103,8 +103,13 @@ func (c *Client) VerifyCredentials(ctx context.Context, in providers.CredentialI
 	if in.MailUsage == "read" || in.MailUsage == "read_send" {
 		cl, closeSession, err := c.openIMAP(ctx, in)
 		if err == nil {
-			_, err = cl.Select("INBOX", true)
+			status, selectErr := cl.Select("INBOX", true)
+			if selectErr == nil {
+				c.resolveUIDs(cl, "INBOX", status)
+				_, selectErr = uidBound(cl, status)
+			}
 			closeSession()
+			err = selectErr
 		}
 		if err != nil {
 			evidence.IMAPStatus = "failed"

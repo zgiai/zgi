@@ -15,6 +15,110 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/connectors/runtimeauth"
 )
 
+func TestDelegatedDigitalHumanCapabilitiesRequireRunAuthorization(t *testing.T) {
+	harness := newDigitalHumanHarness(t)
+	versionID := uuid.NewString()
+	binding := harness.addBinding(t, core.ScopePublished, versionID)
+	binding.Constraint.HostDelegation = &core.HostDelegation{GrantedBy: harness.ownerID, Audiences: []core.HostAudience{core.HostAudienceWorkspace}}
+	harness.bindings.items[len(harness.bindings.items)-1] = binding
+	candidate := &delegatedCandidateSpy{bindings: []core.TargetBinding{binding}}
+	request := runtimeauth.DelegatedHostRequest{OrganizationID: harness.organizationID, RequesterID: uuid.New(), RunID: uuid.New(), Target: binding.Target, Audience: core.HostAudienceWorkspace}
+	if _, err := harness.resolver.ResolveDelegatedCapabilities(t.Context(), request); !core.IsErrorCode(err, core.ErrorCodeAccessDenied) || candidate.calls != 0 {
+		t.Fatalf("missing run authorizer exposed host grant: %v", err)
+	}
+	verifier := &delegatedRunAuthorizerSpy{err: core.NewError(core.ErrorCodeAccessDenied, false, nil)}
+	harness.resolver.WithDelegatedHostAccess(candidate, verifier)
+	if _, err := harness.resolver.ResolveDelegatedCapabilities(t.Context(), request); !core.IsErrorCode(err, core.ErrorCodeAccessDenied) || harness.bindings.calls != 0 {
+		t.Fatalf("rejected run reached owner binding: %v", err)
+	}
+	verifier.err = nil
+	ungranted := binding
+	constraint := *binding.Constraint
+	constraint.HostDelegation = nil
+	ungranted.Constraint = &constraint
+	candidate.bindings = []core.TargetBinding{ungranted}
+	verifier.last = runtimeauth.DelegatedHostRequest{}
+	if _, err := harness.resolver.ResolveDelegatedCapabilities(t.Context(), request); !core.IsErrorCode(err, core.ErrorCodeAccessDenied) || verifier.last.BindingID != uuid.Nil {
+		t.Fatalf("owner-only candidate reached run authorizer: %v, proof=%#v", err, verifier.last)
+	}
+	candidate.bindings = []core.TargetBinding{binding}
+	snapshot, err := harness.resolver.ResolveDelegatedCapabilities(t.Context(), request)
+	if err != nil || len(snapshot.Capabilities) != 1 || snapshot.Capabilities[0].BindingID != binding.ID || snapshot.Capabilities[0].OwnerAccountID != harness.ownerID || verifier.last.BindingID != binding.ID || verifier.last.RequesterID != request.RequesterID {
+		t.Fatalf("authorized host grant = %#v, proof=%#v, error=%v", snapshot, verifier.last, err)
+	}
+}
+
+func TestDelegatedAgentCapabilitiesUseOnlyAuthorizedPublishedBinding(t *testing.T) {
+	harness := newDigitalHumanHarness(t)
+	binding := harness.binding
+	binding.ID = uuid.New()
+	binding.Target = core.TargetRef{Type: core.TargetTypeAgent, ID: uuid.NewString(), Scope: core.ScopePublished, VersionID: uuid.NewString()}
+	binding.Constraint = core.OwnerConstraint(harness.ownerID, harness.operations)
+	binding.Constraint.TargetBoundaries = []core.TargetBoundary{{Type: binding.Target.Type, ID: binding.Target.ID, Scope: string(binding.Target.Scope), VersionID: binding.Target.VersionID}}
+	binding.Constraint.HostDelegation = &core.HostDelegation{GrantedBy: harness.ownerID, Audiences: []core.HostAudience{core.HostAudienceWorkspace}}
+	harness.bindings.items = append(harness.bindings.items, binding)
+	candidate := &delegatedCandidateSpy{bindings: []core.TargetBinding{binding}}
+	verifier := &delegatedRunAuthorizerSpy{}
+	resolver, err := runtimeauth.NewAgentResolver(harness.bindings, harness.connections, definitionMap{harness.definition.ID: harness.definition})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver.WithDelegatedHostAccess(candidate, verifier)
+	request := runtimeauth.DelegatedHostRequest{OrganizationID: harness.organizationID, RequesterID: uuid.New(), ConversationID: uuid.NewString(), Target: binding.Target, Audience: core.HostAudienceWorkspace}
+	snapshot, err := resolver.ResolveDelegatedCapabilities(t.Context(), request)
+	if err != nil || len(snapshot.Capabilities) != 1 || snapshot.Capabilities[0].BindingID != binding.ID || snapshot.Capabilities[0].OwnerAccountID != harness.ownerID {
+		t.Fatalf("authorized Agent host grant = %#v, error=%v", snapshot, err)
+	}
+}
+
+func TestDelegatedAgentCapabilitiesRejectAmbiguousOwners(t *testing.T) {
+	harness := newDigitalHumanHarness(t)
+	target := core.TargetRef{Type: core.TargetTypeAgent, ID: uuid.NewString(), Scope: core.ScopePublished, VersionID: uuid.NewString()}
+	ownerIDs := []uuid.UUID{harness.ownerID, uuid.New()}
+	candidates := make([]core.TargetBinding, 0, 2)
+	for _, ownerID := range ownerIDs {
+		binding := harness.binding
+		binding.ID, binding.OwnerAccountID, binding.Target = uuid.New(), ownerID, target
+		binding.Constraint = core.OwnerConstraint(ownerID, harness.operations)
+		binding.Constraint.TargetBoundaries = []core.TargetBoundary{{Type: target.Type, ID: target.ID, Scope: string(target.Scope), VersionID: target.VersionID}}
+		binding.Constraint.HostDelegation = &core.HostDelegation{GrantedBy: ownerID, Audiences: []core.HostAudience{core.HostAudienceWorkspace}}
+		connection := digitalHumanConnection(harness.organizationID, ownerID, harness.definition, harness.operations)
+		binding.ConnectionID = connection.ID
+		harness.connections.connections[connection.ID] = connection
+		harness.bindings.items = append(harness.bindings.items, binding)
+		candidates = append(candidates, binding)
+	}
+	resolver, err := runtimeauth.NewAgentResolver(harness.bindings, harness.connections, definitionMap{harness.definition.ID: harness.definition})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver.WithDelegatedHostAccess(&delegatedCandidateSpy{bindings: candidates}, &delegatedRunAuthorizerSpy{})
+	request := runtimeauth.DelegatedHostRequest{OrganizationID: harness.organizationID, RequesterID: uuid.New(), ConversationID: uuid.NewString(), Target: target, Audience: core.HostAudienceWorkspace}
+	if _, err := resolver.ResolveDelegatedCapabilities(t.Context(), request); !core.IsErrorCode(err, core.ErrorCodeConflict) {
+		t.Fatalf("different Agent binding owners were collapsed: %v", err)
+	}
+}
+
+type delegatedCandidateSpy struct {
+	bindings []core.TargetBinding
+	calls    int
+}
+
+func (spy *delegatedCandidateSpy) ListPublishedHostDelegations(_ context.Context, _ uuid.UUID, _ core.TargetRef, _ core.HostAudience) ([]core.TargetBinding, error) {
+	spy.calls++
+	return spy.bindings, nil
+}
+
+type delegatedRunAuthorizerSpy struct {
+	last runtimeauth.DelegatedHostRequest
+	err  error
+}
+
+func (spy *delegatedRunAuthorizerSpy) AuthorizeHostUse(_ context.Context, request runtimeauth.DelegatedHostRequest) error {
+	spy.last = request
+	return spy.err
+}
+
 // TestDigitalHumanResolverAllowsMultipleInstancesOfOneConnector proves that a
 // DigitalHuman host may bind the same Connector more than once. Chat, Agent and
 // Workflow intentionally keep a single active binding per Connector, so this

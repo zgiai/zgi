@@ -18,6 +18,7 @@ interface ChatMessageViewportProps {
   itemClassName?: string;
   trailingContent?: React.ReactNode;
   showCopyButton?: boolean;
+  onUseImageAsReference?: (message: Message, index: number) => void;
 }
 
 export function ChatMessageViewport({
@@ -35,6 +36,7 @@ export function ChatMessageViewport({
   itemClassName,
   trailingContent,
   showCopyButton,
+  onUseImageAsReference,
 }: ChatMessageViewportProps) {
   if (isLoadingDetail) {
     return (
@@ -70,6 +72,7 @@ export function ChatMessageViewport({
                   showWorkflowDetail={false}
                   showAvatar={false}
                   showCopyButton={showCopyButton}
+                  onUseImageAsReference={onUseImageAsReference}
                 />
               </div>
             ))}

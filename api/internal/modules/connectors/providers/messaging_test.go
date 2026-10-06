@@ -2,11 +2,12 @@ package providers
 
 import (
 	"context"
+	"testing"
+
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/connections"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
-	"testing"
 )
 
 type messagingDriverFixture struct {

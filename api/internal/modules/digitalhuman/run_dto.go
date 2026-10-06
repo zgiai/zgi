@@ -59,6 +59,15 @@ type RunRuntimeLog struct {
 	// public RuntimeConfirmation presentation fields; the frozen Preview and
 	// operation input stay behind the owner-scoped receipt status endpoint.
 	PendingConnectorConfirmation *connectorexecution.RuntimeConfirmation `json:"pending_connector_confirmation,omitempty"`
+	// PendingWorkflowApproval is the owner-scoped approval form for a generic
+	// workflow pause. It is returned only while the linked message is waiting
+	// for approval and the workflow explicitly allows inline approval.
+	PendingWorkflowApproval *RunWorkflowApproval `json:"pending_workflow_approval,omitempty"`
+}
+
+type RunWorkflowApproval struct {
+	ApprovalToken string                 `json:"approval_token"`
+	ApprovalForm  map[string]interface{} `json:"approval_form"`
 }
 
 func publicRun(run *Run) *Run {

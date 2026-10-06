@@ -157,7 +157,9 @@ func (s *service) runConfiguredClientActionContinuationStream(
 	}
 	req.Status = status
 
-	continuation, err := s.beginClientActionContinuationForCaller(ctx, scope, caller, conversationID, messageID, actionID)
+	continuation, err := s.beginConfiguredClientActionContinuation(
+		ctx, scope, caller, conversationID, messageID, actionID,
+	)
 	if err != nil {
 		if IsContinuationAlreadyRunningError(err) {
 			if streamErr := s.StreamConversationEventsForCaller(ctx, scope, caller, conversationID, messageID, "", onEvent); streamErr != nil {
@@ -167,7 +169,7 @@ func (s *service) runConfiguredClientActionContinuationStream(
 		}
 		return nil, err
 	}
-	conversation, message, err := s.reloadClientActionContinuationMessageForCaller(ctx, scope, caller, conversationID, messageID)
+	conversation, message, err := s.reloadConfiguredClientActionContinuationMessage(ctx, scope, caller, conversationID, messageID)
 	if err != nil {
 		s.failClientActionContinuation(context.WithoutCancel(ctx), continuation, err, onEvent)
 		return nil, newFinalizedStreamError(err)
@@ -306,10 +308,30 @@ func clientActionRequiresModelContinuation(payload map[string]interface{}) bool 
 }
 
 func (s *service) beginClientActionContinuation(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, actionID string) (*ClientActionContinuation, error) {
-	return s.beginClientActionContinuationForCaller(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, conversationID, messageID, actionID)
+	return s.beginConfiguredClientActionContinuation(
+		ctx,
+		scope,
+		Caller{Type: runtimemodel.ConversationCallerAIChat},
+		conversationID,
+		messageID,
+		actionID,
+	)
 }
 
+// beginClientActionContinuationForCaller is the caller-aware entry point used
+// by external Agent and web-app continuations. The configured implementation
+// applies caller and external-user scoping consistently with other continuations.
 func (s *service) beginClientActionContinuationForCaller(ctx context.Context, scope Scope, caller Caller, conversationID, messageID uuid.UUID, actionID string) (*ClientActionContinuation, error) {
+	return s.beginConfiguredClientActionContinuation(ctx, scope, caller, conversationID, messageID, actionID)
+}
+
+func (s *service) beginConfiguredClientActionContinuation(
+	ctx context.Context,
+	scope Scope,
+	caller Caller,
+	conversationID, messageID uuid.UUID,
+	actionID string,
+) (*ClientActionContinuation, error) {
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err
 	}
@@ -396,7 +418,26 @@ func isConnectorRuntimeConfirmationClientAction(event map[string]interface{}) bo
 	)
 }
 
+func (s *service) reloadClientActionContinuationMessage(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID) (*runtimemodel.Conversation, *runtimemodel.Message, error) {
+	return s.reloadConfiguredClientActionContinuationMessage(
+		ctx,
+		scope,
+		Caller{Type: runtimemodel.ConversationCallerAIChat},
+		conversationID,
+		messageID,
+	)
+}
+
 func (s *service) reloadClientActionContinuationMessageForCaller(ctx context.Context, scope Scope, caller Caller, conversationID, messageID uuid.UUID) (*runtimemodel.Conversation, *runtimemodel.Message, error) {
+	return s.reloadConfiguredClientActionContinuationMessage(ctx, scope, caller, conversationID, messageID)
+}
+
+func (s *service) reloadConfiguredClientActionContinuationMessage(
+	ctx context.Context,
+	scope Scope,
+	caller Caller,
+	conversationID, messageID uuid.UUID,
+) (*runtimemodel.Conversation, *runtimemodel.Message, error) {
 	conversation, err := s.getInteractiveContinuationConversation(ctx, scope, caller, conversationID)
 	if err != nil {
 		return nil, nil, err
@@ -439,6 +480,11 @@ func (s *service) prepareConfiguredClientActionContinuationChat(
 		return nil, err
 	}
 	message := continuation.Message
+	if normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAgent {
+		if normalizeCallerID(caller.ID) == nil {
+			return nil, fmt.Errorf("%w: Agent caller is required", ErrInvalidInput)
+		}
+	}
 	regenerateReq := applyRunConfigToRegenerateRequest(config, runtimedto.RegenerateMessageRequest{
 		Surface:          req.Surface,
 		RuntimeContext:   req.RuntimeContext,

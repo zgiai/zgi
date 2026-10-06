@@ -4,6 +4,7 @@ import type {
   ConnectorRuntimeConfirmationDecision,
   ConnectorRuntimeDecisionResult,
   ConnectorRuntimeExecutionResult,
+  ConnectorRuntimeOperationPresentation,
 } from '@/services/types/connector';
 
 export type ConnectorRuntimeExecutionState = ConnectorRuntimeExecutionResult['state'];
@@ -24,6 +25,8 @@ export type {
   ConnectorRuntimeRequiresConfirmationResult,
   ConnectorRuntimeRiskClassification,
   ConnectorRuntimeUnknownResult,
+  ConnectorRuntimeOperationPresentation,
+  ConnectorRuntimeTerminalPresentation,
 } from '@/services/types/connector';
 
 /** Host callback for a single receipt decision, optionally remembered in-session. */
@@ -326,11 +329,22 @@ export function parseConnectorRuntimeExecutionResult(
   value: unknown
 ): ConnectorRuntimeExecutionResult | null {
   const record = recordOf(value);
-  if (!record || !hasOnlyKeys(record, ['state', 'decision_id', 'error_code', 'confirmation'])) {
+  if (
+    !record ||
+    !hasOnlyKeys(record, [
+      'state',
+      'decision_id',
+      'error_code',
+      'confirmation',
+      'connector_presentation',
+    ])
+  ) {
     return null;
   }
   if (!optionalSafeDisplayString(record.decision_id)) return null;
   if (!optionalSafeDisplayString(record.error_code, 128)) return null;
+  const presentation = parseConnectorRuntimeOperationPresentation(record.connector_presentation);
+  if (record.connector_presentation !== undefined && !presentation) return null;
 
   if (record.state === 'requires_confirmation') {
     if (record.error_code !== undefined) return null;
@@ -351,6 +365,7 @@ export function parseConnectorRuntimeExecutionResult(
     return {
       state: record.state,
       ...(record.decision_id ? { decision_id: record.decision_id } : {}),
+      ...(presentation ? { connector_presentation: presentation } : {}),
     };
   }
 
@@ -362,7 +377,65 @@ export function parseConnectorRuntimeExecutionResult(
       state: record.state,
       ...(record.decision_id ? { decision_id: record.decision_id } : {}),
       ...(record.error_code ? { error_code: record.error_code } : {}),
+      ...(presentation ? { connector_presentation: presentation } : {}),
     };
   }
   return null;
+}
+
+function parseConnectorRuntimeOperationPresentation(
+  value: unknown
+): ConnectorRuntimeOperationPresentation | null {
+  if (value === undefined) return null;
+  const record = recordOf(value);
+  if (
+    !record ||
+    !hasOnlyKeys(record, [
+      'schema_version',
+      'source_kind',
+      'invocation_id',
+      'connector_id',
+      'operation_id',
+      'display_status',
+      'title',
+      'summary',
+      'error_code',
+      'redacted',
+      'truncated',
+    ]) ||
+    record.schema_version !== 1 ||
+    !['native', 'history'].includes(String(record.source_kind)) ||
+    !safeDisplayString(record.invocation_id, 256) ||
+    ![
+      'successful',
+      'partial',
+      'failed',
+      'unknown',
+      'cancelled',
+      'unavailable',
+      'pending',
+    ].includes(String(record.display_status)) ||
+    typeof record.redacted !== 'boolean' ||
+    typeof record.truncated !== 'boolean' ||
+    !optionalSafeDisplayString(record.connector_id, 128) ||
+    !optionalSafeDisplayString(record.operation_id, 128) ||
+    !optionalSafeDisplayString(record.title, 120) ||
+    !optionalSafeDisplayString(record.summary, 800) ||
+    !optionalSafeDisplayString(record.error_code, 128)
+  ) {
+    return null;
+  }
+  return {
+    schema_version: 1,
+    source_kind: record.source_kind as 'native' | 'history',
+    invocation_id: record.invocation_id as string,
+    ...(record.connector_id ? { connector_id: record.connector_id as string } : {}),
+    ...(record.operation_id ? { operation_id: record.operation_id as string } : {}),
+    display_status: record.display_status as ConnectorRuntimeOperationPresentation['display_status'],
+    ...(record.title ? { title: record.title as string } : {}),
+    ...(record.summary ? { summary: record.summary as string } : {}),
+    ...(record.error_code ? { error_code: record.error_code as string } : {}),
+    redacted: record.redacted,
+    truncated: record.truncated,
+  };
 }

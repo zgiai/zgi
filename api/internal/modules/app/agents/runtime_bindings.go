@@ -654,6 +654,7 @@ func normalizeAgentConnectorBindings(input []dto.AgentConnectorBinding) []dto.Ag
 		byConnectorID[connectorID] = dto.AgentConnectorBinding{
 			ConnectorID:  connectorID,
 			ConnectionID: connectionID, BindingID: binding.BindingID, Revision: binding.Revision,
+			AuthorizationMode: binding.AuthorizationMode,
 		}
 	}
 	connectorIDs := make([]string, 0, len(byConnectorID))

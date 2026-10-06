@@ -266,7 +266,11 @@ export interface ConnectorTargetBinding {
   target_name?: string;
   status: 'active' | 'disabled' | 'needs_replacement';
   revision: number;
+  authorization_mode?: 'ask_each_time' | 'direct';
+  host_audiences?: ConnectorHostAudience[];
 }
+
+export type ConnectorHostAudience = 'workspace' | 'api' | 'channel';
 
 export interface ConnectorTargetBindingListResponse {
   items: ConnectorTargetBinding[];
@@ -276,10 +280,21 @@ export interface CreateConnectorTargetBindingRequest {
   connection_id: string;
   target: ConnectorTargetRef;
   expected_revision?: number;
+  authorization_mode?: 'ask_each_time' | 'direct';
 }
 
 export interface DetachConnectorTargetBindingRequest {
   revision: number;
+}
+
+export interface UpdateConnectorTargetBindingAuthorizationRequest {
+  revision: number;
+  authorization_mode: 'ask_each_time' | 'direct';
+}
+
+export interface UpdateConnectorHostDelegationRequest {
+  revision: number;
+  audiences: ConnectorHostAudience[];
 }
 
 export interface PersonalConnectionDetail extends PersonalConnection {
@@ -493,13 +508,38 @@ export interface ConnectorRuntimeUnknownResult {
   confirmation?: never;
 }
 
+export interface ConnectorRuntimeOperationPresentation {
+  schema_version: 1;
+  source_kind: 'native' | 'history';
+  invocation_id: string;
+  connector_id?: string;
+  operation_id?: string;
+  display_status:
+    | 'successful'
+    | 'partial'
+    | 'failed'
+    | 'unknown'
+    | 'cancelled'
+    | 'unavailable'
+    | 'pending';
+  title?: string;
+  summary?: string;
+  error_code?: string;
+  redacted: boolean;
+  truncated: boolean;
+}
+
+export interface ConnectorRuntimeTerminalPresentation {
+  connector_presentation?: ConnectorRuntimeOperationPresentation;
+}
+
 export type ConnectorRuntimeExecutionResult =
   | ConnectorRuntimeRequiresConfirmationResult
-  | ConnectorRuntimeBlockedResult
-  | ConnectorRuntimeCancelledResult
-  | ConnectorRuntimeCompletedResult
-  | ConnectorRuntimeFailedResult
-  | ConnectorRuntimeUnknownResult;
+  | (ConnectorRuntimeBlockedResult & ConnectorRuntimeTerminalPresentation)
+  | (ConnectorRuntimeCancelledResult & ConnectorRuntimeTerminalPresentation)
+  | (ConnectorRuntimeCompletedResult & ConnectorRuntimeTerminalPresentation)
+  | (ConnectorRuntimeFailedResult & ConnectorRuntimeTerminalPresentation)
+  | (ConnectorRuntimeUnknownResult & ConnectorRuntimeTerminalPresentation);
 
 export type ConnectorRuntimeConfirmationDecision = 'confirmed' | 'cancelled';
 

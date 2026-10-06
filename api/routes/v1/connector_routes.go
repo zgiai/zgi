@@ -43,6 +43,8 @@ type connectorConnectionService interface {
 type connectorBindingService interface {
 	ListTargetBindings(context.Context, uuid.UUID, uuid.UUID, connectorbindings.TargetIdentity) ([]connectorcore.TargetBinding, error)
 	UpsertBinding(context.Context, connectorbindings.UpsertBindingCommand) (connectorbindings.UpsertBindingResult, error)
+	UpdateBindingAuthorization(context.Context, connectorbindings.UpdateBindingAuthorizationCommand) (connectorcore.TargetBinding, error)
+	UpdateHostDelegation(context.Context, connectorbindings.UpdateHostDelegationCommand) (connectorcore.TargetBinding, error)
 	DetachBinding(context.Context, connectorbindings.DetachBindingCommand) (connectorcore.TargetBinding, error)
 	GetRemovalImpact(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (connectorbindings.RemovalImpact, error)
 }
@@ -141,6 +143,8 @@ func (handler *connectorHandler) register(group *gin.RouterGroup) {
 	group.POST("/connector-unavailable-references/:referenceId/resolve", handler.resolveUnavailableReference)
 	group.GET("/connector-target-bindings", handler.listTargetBindings)
 	group.POST("/connector-target-bindings", handler.createTargetBinding)
+	group.PATCH("/connector-target-bindings/:bindingId/authorization", handler.updateTargetBindingAuthorization)
+	group.PATCH("/connector-target-bindings/:bindingId/host-delegation", handler.updateHostDelegation)
 	group.DELETE("/connector-target-bindings/:bindingId", handler.detachTargetBinding)
 }
 
@@ -236,13 +240,15 @@ type connectorPersonalConnectionDetailResponse struct {
 }
 
 type connectorTargetBindingResponse struct {
-	ID           uuid.UUID                   `json:"id"`
-	ConnectionID uuid.UUID                   `json:"connection_id"`
-	ConnectorID  string                      `json:"connector_id"`
-	Target       connectorTargetResponse     `json:"target"`
-	TargetName   string                      `json:"target_name,omitempty"`
-	Status       connectorcore.BindingStatus `json:"status"`
-	Revision     int                         `json:"revision"`
+	ID                uuid.UUID                    `json:"id"`
+	ConnectionID      uuid.UUID                    `json:"connection_id"`
+	ConnectorID       string                       `json:"connector_id"`
+	Target            connectorTargetResponse      `json:"target"`
+	TargetName        string                       `json:"target_name,omitempty"`
+	Status            connectorcore.BindingStatus  `json:"status"`
+	Revision          int                          `json:"revision"`
+	AuthorizationMode string                       `json:"authorization_mode"`
+	HostAudiences     []connectorcore.HostAudience `json:"host_audiences,omitempty"`
 }
 
 type connectorTargetResponse struct {
@@ -262,13 +268,24 @@ type connectorTargetRequest struct {
 }
 
 type connectorCreateTargetBindingRequest struct {
-	ConnectionID     uuid.UUID              `json:"connection_id"`
-	Target           connectorTargetRequest `json:"target"`
-	ExpectedRevision int                    `json:"expected_revision,omitempty"`
+	ConnectionID      uuid.UUID              `json:"connection_id"`
+	Target            connectorTargetRequest `json:"target"`
+	ExpectedRevision  int                    `json:"expected_revision,omitempty"`
+	AuthorizationMode string                 `json:"authorization_mode,omitempty"`
 }
 
 type connectorDetachTargetBindingRequest struct {
 	Revision int `json:"revision"`
+}
+
+type connectorUpdateTargetBindingAuthorizationRequest struct {
+	Revision          int    `json:"revision"`
+	AuthorizationMode string `json:"authorization_mode"`
+}
+
+type connectorUpdateHostDelegationRequest struct {
+	Revision  int                          `json:"revision"`
+	Audiences []connectorcore.HostAudience `json:"audiences"`
 }
 
 type connectorTargetBindingListResponse struct {
@@ -334,10 +351,19 @@ func (handler *connectorHandler) listCatalog(c *gin.Context) {
 		return
 	}
 	connectionsByConnector := groupConnectionsByConnector(connections)
-	definitions := handler.catalog.List(filter)
+	// The member search is applied here rather than in the catalog so a
+	// Connector also matches on its own Connection names, which the definition
+	// catalog deliberately does not own.
+	definitionFilter := filter
+	definitionFilter.Query = ""
+	definitions := handler.catalog.List(definitionFilter)
 	items := make([]connectorCatalogItemResponse, 0, len(definitions))
 	for _, definition := range definitions {
-		item := handler.projectCatalog(definition, connectionsByConnector[definition.ID])
+		connectorConnections := connectionsByConnector[definition.ID]
+		if !connectorCatalogQueryMatches(definition, filter.Query, connectorConnections) {
+			continue
+		}
+		item := handler.projectCatalog(definition, connectorConnections)
 		if catalogItemMatchesStatus(item, status) {
 			items = append(items, item)
 		}
@@ -745,7 +771,7 @@ func (handler *connectorHandler) createTargetBinding(c *gin.Context) {
 	result, err := handler.bindings.UpsertBinding(c.Request.Context(), connectorbindings.UpsertBindingCommand{
 		OrganizationID: organizationID, ActingPrincipalID: accountID,
 		ConnectionID: request.ConnectionID, IdempotencyKey: idempotencyKey, Target: target,
-		ExpectedRevision: request.ExpectedRevision,
+		ExpectedRevision: request.ExpectedRevision, AuthorizationMode: request.AuthorizationMode,
 	})
 	if err != nil {
 		connectorRouteError(c, err)
@@ -778,6 +804,59 @@ func (handler *connectorHandler) detachTargetBinding(c *gin.Context) {
 		return
 	}
 	response.Success(c, projectTargetBinding(detached))
+}
+
+func (handler *connectorHandler) updateTargetBindingAuthorization(c *gin.Context) {
+	organizationID, accountID, ok := connectorActor(c)
+	if !ok {
+		return
+	}
+	bindingID, err := parseConnectorUUID(c.Param("bindingId"))
+	if err != nil {
+		connectorRouteError(c, err)
+		return
+	}
+	var request connectorUpdateTargetBindingAuthorizationRequest
+	if err := decodeConnectorJSON(c, &request); err != nil || request.Revision < 1 {
+		connectorRouteError(c, connectorcore.NewError(connectorcore.ErrorCodeInvalidInput, false, nil))
+		return
+	}
+	updated, err := handler.bindings.UpdateBindingAuthorization(c.Request.Context(), connectorbindings.UpdateBindingAuthorizationCommand{
+		OrganizationID: organizationID, ActingPrincipalID: accountID,
+		BindingID: bindingID, ExpectedRevision: request.Revision,
+		AuthorizationMode: request.AuthorizationMode,
+	})
+	if err != nil {
+		connectorRouteError(c, err)
+		return
+	}
+	response.Success(c, projectTargetBinding(updated))
+}
+
+func (handler *connectorHandler) updateHostDelegation(c *gin.Context) {
+	organizationID, accountID, ok := connectorActor(c)
+	if !ok {
+		return
+	}
+	bindingID, err := parseConnectorUUID(c.Param("bindingId"))
+	if err != nil {
+		connectorRouteError(c, err)
+		return
+	}
+	var request connectorUpdateHostDelegationRequest
+	if err := decodeConnectorJSON(c, &request); err != nil || request.Revision < 1 || request.Audiences == nil {
+		connectorRouteError(c, connectorcore.NewError(connectorcore.ErrorCodeInvalidInput, false, nil))
+		return
+	}
+	updated, err := handler.bindings.UpdateHostDelegation(c.Request.Context(), connectorbindings.UpdateHostDelegationCommand{
+		OrganizationID: organizationID, ActingPrincipalID: accountID, BindingID: bindingID,
+		ExpectedRevision: request.Revision, Audiences: request.Audiences,
+	})
+	if err != nil {
+		connectorRouteError(c, err)
+		return
+	}
+	response.Success(c, projectTargetBinding(updated))
 }
 
 func connectorActor(c *gin.Context) (uuid.UUID, uuid.UUID, bool) {
@@ -907,6 +986,30 @@ func (request connectorTargetRequest) targetRef() (connectorcore.TargetRef, erro
 		return connectorcore.TargetRef{}, connectorcore.NewError(connectorcore.ErrorCodeInvalidInput, false, nil)
 	}
 	return target, nil
+}
+
+// connectorCatalogQueryMatches reports whether a catalog entry satisfies a
+// member search query, either through its own definition metadata or through
+// the name of one of the member's saved Connections.
+func connectorCatalogQueryMatches(
+	definition connectorcatalog.Definition,
+	query string,
+	connections []connectorcore.PersonalConnection,
+) bool {
+	if connectorcatalog.DefinitionMatchesQuery(definition, query) {
+		return true
+	}
+	needle := strings.ToLower(strings.TrimSpace(query))
+	for _, connection := range connections {
+		if strings.Contains(strings.ToLower(connection.Name), needle) {
+			return true
+		}
+		if connection.ExternalDisplayName != nil &&
+			strings.Contains(strings.ToLower(*connection.ExternalDisplayName), needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func groupConnectionsByConnector(items []connectorcore.PersonalConnection) map[string][]connectorcore.PersonalConnection {
@@ -1087,14 +1190,20 @@ func projectPersonalConnection(connection connectorcore.PersonalConnection) conn
 }
 
 func projectTargetBinding(binding connectorcore.TargetBinding) connectorTargetBindingResponse {
+	var audiences []connectorcore.HostAudience
+	if binding.Constraint != nil && binding.Constraint.HostDelegation != nil {
+		audiences = append(audiences, binding.Constraint.HostDelegation.Audiences...)
+	}
 	return connectorTargetBindingResponse{
 		ID: binding.ID, ConnectionID: binding.ConnectionID, ConnectorID: binding.ConnectorID.String(),
 		Target: connectorTargetResponse{
 			Type: binding.Target.Type, ID: binding.Target.ID, BindingInstanceID: binding.Target.BindingInstanceID,
 			Scope: binding.Target.EffectiveScope(), VersionID: binding.Target.VersionID,
 		},
-		Status:   binding.Status,
-		Revision: binding.Revision,
+		Status:            binding.Status,
+		Revision:          binding.Revision,
+		AuthorizationMode: binding.Constraint.AuthorizationModeValue(),
+		HostAudiences:     audiences,
 	}
 }
 

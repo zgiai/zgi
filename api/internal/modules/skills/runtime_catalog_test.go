@@ -49,6 +49,36 @@ func TestKnowledgeSystemSkillsExposeExpectedTools(t *testing.T) {
 	}
 }
 
+func TestAgentKnowledgeRetrievalContractUsesCanonicalModes(t *testing.T) {
+	contract := ExpectedSkillToolArguments(SkillAgentKnowledge, "retrieve_agent_knowledge")
+	if contract == nil {
+		t.Fatal("retrieve_agent_knowledge contract is missing")
+	}
+	schema, ok := contract["schema"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("schema = %#v, want object schema", contract["schema"])
+	}
+	properties, ok := schema["properties"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("properties = %#v, want object properties", schema["properties"])
+	}
+	retrievalMode, ok := properties["retrieval_mode"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("retrieval_mode = %#v, want enum schema", properties["retrieval_mode"])
+	}
+	enum, ok := retrievalMode["enum"].([]string)
+	if !ok {
+		t.Fatalf("retrieval_mode enum = %#v, want []string", retrievalMode["enum"])
+	}
+	if !sameStrings(enum, []string{"hybrid", "vectorAndBM25", "graph"}) {
+		t.Fatalf("retrieval_mode enum = %#v, want canonical modes", enum)
+	}
+	topK, ok := properties["top_k"].(map[string]interface{})
+	if !ok || topK["minimum"] != float64(1) || topK["maximum"] != float64(10) {
+		t.Fatalf("top_k schema = %#v, want minimum 1 and maximum 10", properties["top_k"])
+	}
+}
+
 func TestWebSearchIsNotExposedAsASystemSkill(t *testing.T) {
 	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
 	if runtime.SystemSkillExists("web-search") {

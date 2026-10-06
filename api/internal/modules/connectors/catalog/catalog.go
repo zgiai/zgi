@@ -262,7 +262,6 @@ func (catalog *Catalog) List(filter Filter) []Definition {
 	}
 	catalog.mu.RLock()
 	defer catalog.mu.RUnlock()
-	query := strings.ToLower(strings.TrimSpace(filter.Query))
 	result := make([]Definition, 0, len(catalog.definitions))
 	for _, definition := range catalog.definitions {
 		if filter.Classification != "" && definition.Classification != filter.Classification {
@@ -277,15 +276,8 @@ func (catalog *Catalog) List(filter Filter) []Definition {
 				continue
 			}
 		}
-		if query != "" {
-			parts := []string{definition.ID, definition.Name, definition.Description, string(presentation.Category)}
-			for _, tag := range presentation.Tags {
-				parts = append(parts, string(tag))
-			}
-			haystack := strings.ToLower(strings.Join(parts, "\n"))
-			if !strings.Contains(haystack, query) {
-				continue
-			}
+		if !DefinitionMatchesQuery(definition, filter.Query) {
+			continue
 		}
 		result = append(result, cloneDefinition(definition))
 	}
@@ -297,6 +289,30 @@ func (catalog *Catalog) List(filter Filter) []Definition {
 		return left < right
 	})
 	return result
+}
+
+// DefinitionMatchesQuery reports whether a definition satisfies a member
+// search query. An empty query matches every definition. The match covers the
+// definition identity, display copy (including localized variants), the
+// presentation category and tags; it deliberately excludes owner and Connection
+// state, so callers that hold that state must OR their own match with this one.
+func DefinitionMatchesQuery(definition Definition, query string) bool {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return true
+	}
+	presentation, _ := PresentationFor(definition.ID)
+	parts := []string{definition.ID, definition.Name, definition.Description, string(presentation.Category)}
+	for _, tag := range presentation.Tags {
+		parts = append(parts, string(tag))
+	}
+	for _, value := range definition.NameI18n {
+		parts = append(parts, value)
+	}
+	for _, value := range definition.DescriptionI18n {
+		parts = append(parts, value)
+	}
+	return strings.Contains(strings.ToLower(strings.Join(parts, "\n")), query)
 }
 
 func slicesContainsConnectorTag(values []ConnectorTag, want ConnectorTag) bool {

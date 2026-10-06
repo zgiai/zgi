@@ -106,6 +106,7 @@ func ownedAgentConnectorBindingsWithRepository(
 		projected = append(projected, dto.AgentConnectorBinding{
 			ConnectorID:  binding.ConnectorID.String(),
 			ConnectionID: binding.ConnectionID.String(), BindingID: binding.ID.String(), Revision: binding.Revision,
+			AuthorizationMode: binding.Constraint.AuthorizationModeValue(),
 		})
 	}
 	return normalizeAgentConnectorBindings(projected), nil
@@ -184,7 +185,7 @@ func (s *agentsService) syncAgentConnectorTargetBindings(
 	}
 	target := connectorcore.TargetRef{Type: connectorcore.TargetTypeAgent, ID: agent.ID.String()}
 	repository := connectorbindings.NewGormRepository(tx)
-	return syncAgentConnectorTargetBindingsWithRepository(ctx, repository, organizationID, ownerID, target, desired)
+	return syncAgentConnectorTargetBindingsWithRepository(ctx, repository, organizationID, ownerID, target, desired, tx)
 }
 
 func syncAgentConnectorTargetBindingsWithRepository(
@@ -193,6 +194,7 @@ func syncAgentConnectorTargetBindingsWithRepository(
 	organizationID, ownerID uuid.UUID,
 	target connectorcore.TargetRef,
 	desired []dto.AgentConnectorBinding,
+	databases ...*gorm.DB,
 ) ([]connectorcore.TargetBinding, error) {
 	if repository == nil || organizationID == uuid.Nil || ownerID == uuid.Nil || target.Validate() != nil || target.Type != connectorcore.TargetTypeAgent {
 		return nil, fmt.Errorf("Agent Connector Target Binding context is invalid")
@@ -239,6 +241,9 @@ func syncAgentConnectorTargetBindingsWithRepository(
 			candidate.CreatedAt = previous.CreatedAt
 			candidate.Constraint = previous.Constraint
 		}
+		if item.AuthorizationMode != "" {
+			candidate.Constraint.AuthorizationMode = item.AuthorizationMode
+		}
 		if item.BindingID != "" {
 			sourceID, err := uuid.Parse(item.BindingID)
 			if err != nil {
@@ -254,6 +259,11 @@ func syncAgentConnectorTargetBindingsWithRepository(
 			candidate.Constraint, err = connectorcore.IntersectConstraints(candidate.Constraint, source.Constraint)
 			if err != nil {
 				return nil, err
+			}
+		}
+		if candidate.Constraint.DirectlyAuthorized() && len(databases) > 0 && databases[0] != nil {
+			if err := applyAgentAuthorizationSnapshot(ctx, databases[0], organizationID, ownerID, connectionID, connectorID, candidate.Constraint); err != nil {
+				return nil, connectorBindingMutationError(err)
 			}
 		}
 		binding, _, upsertErr := repository.UpsertBinding(ctx, organizationID, ownerID, candidate, expectedRevision)
@@ -272,6 +282,38 @@ func syncAgentConnectorTargetBindingsWithRepository(
 		}
 	}
 	return stored, nil
+}
+
+func applyAgentAuthorizationSnapshot(
+	ctx context.Context,
+	db *gorm.DB,
+	organizationID, ownerID, connectionID uuid.UUID,
+	connectorID connectorcore.Identifier,
+	constraint *connectorcore.AccessConstraint,
+) error {
+	if db == nil || constraint == nil || !constraint.DirectlyAuthorized() {
+		return nil
+	}
+	var row struct {
+		Revision          int    `gorm:"column:revision"`
+		CredentialVersion int    `gorm:"column:credential_version"`
+		ContractDigest    string `gorm:"column:contract_digest"`
+	}
+	err := db.WithContext(ctx).Table("connector_connections AS connection").
+		Select("connection.revision, connection.credential_version, definition.contract_digest").
+		Joins("JOIN connector_definitions AS definition ON definition.connector_id = connection.connector_id").
+		Where("connection.id = ? AND connection.organization_id = ? AND connection.owner_account_id = ? AND connection.connector_id = ? AND connection.state = ? AND connection.deleted_at IS NULL", connectionID, organizationID, ownerID, connectorID.String(), connectorcore.ReadinessReady).
+		Take(&row).Error
+	if err != nil || row.Revision < 1 || row.CredentialVersion < 1 || row.ContractDigest == "" {
+		if err != nil {
+			return fmt.Errorf("load Agent Connector authorization snapshot: %w", err)
+		}
+		return fmt.Errorf("load Agent Connector authorization snapshot: incomplete")
+	}
+	constraint.AuthorizationConnectionRevision = row.Revision
+	constraint.AuthorizationCredentialVersion = row.CredentialVersion
+	constraint.AuthorizationContractDigest = row.ContractDigest
+	return nil
 }
 
 func connectorBindingMutationError(err error) error {

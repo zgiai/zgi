@@ -234,6 +234,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
   const [questionAnswerPrompt, setQuestionAnswerPrompt] =
     useState<QuestionAnswerRuntimePromptState | null>(null);
   const [questionAnswerSubmitting, setQuestionAnswerSubmitting] = useState(false);
+  const [questionAnswerOriginalQuery, setQuestionAnswerOriginalQuery] = useState('');
   const [workflowRunId, setWorkflowRunId] = useState<string | null>(null);
   const {
     state: approvalRuntimeState,
@@ -256,6 +257,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
   const workflowFinishedRef = useRef(false);
   const startWorkflowRunEventStreamRef = useRef<(payload?: unknown) => void>(() => {});
   const questionAnswerResumeRef = useRef(false);
+  const questionAnswerNodeIdRef = useRef<string | null>(null);
   const isAuthenticated = useAuthStore.use.isAuthenticated();
   const { ref: runContainerRef, width: runContainerWidth } = useMeasuredRunWidth();
   const isCompactLayout = runContainerWidth === 0 || runContainerWidth < COMPACT_RUN_LAYOUT_WIDTH;
@@ -514,6 +516,17 @@ export const WebappRun: React.FC<WebappRunProps> = ({
     });
   }, []);
 
+  const markQuestionAnswerResumedNode = useCallback((nodeId?: string) => {
+    if (!nodeId) return;
+    setRunItems(items =>
+      items.map(item =>
+        item.nodeId === nodeId && item.nodeType === 'question-answer'
+          ? { ...item, status: 'succeeded' as const }
+          : item
+      )
+    );
+  }, []);
+
   const { start, stop, isStarting } = useRunWebAppWorkflowStream(versionUuid, {
     enabled: true,
     agentId: config.config.agent_id,
@@ -524,6 +537,11 @@ export const WebappRun: React.FC<WebappRunProps> = ({
       rememberWorkflowRunId(runId || null);
       setIsRunning(true);
       if (isQuestionAnswerResume) {
+        markQuestionAnswerResumedNode(questionAnswerNodeIdRef.current ?? undefined);
+        questionAnswerNodeIdRef.current = null;
+        resetApprovalRuntime();
+        setApprovalPaused(false);
+        setQuestionAnswerOriginalQuery('');
         setQuestionAnswerPrompt(null);
         setQuestionAnswerSubmitting(false);
         workflowFinishedRef.current = false;
@@ -536,6 +554,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
       setFinalResult(null);
       resetApprovalRuntime();
       setApprovalPaused(false);
+      setQuestionAnswerOriginalQuery('');
       setQuestionAnswerPrompt(null);
       setQuestionAnswerSubmitting(false);
       cancelWorkflowRunEvents();
@@ -949,6 +968,13 @@ export const WebappRun: React.FC<WebappRunProps> = ({
         markApprovalPausedNodes(parsed.approval.nodeIds, payload);
       }
       if (parsed.hasQuestionAnswer) {
+        questionAnswerNodeIdRef.current =
+          parsed.questionAnswer.prompt?.nodeId ?? parsed.questionAnswer.nodeIds[0] ?? null;
+        const currentValues = formRef.current?.getValues();
+        const originalQuery = currentValues?.query;
+        if (typeof originalQuery === 'string' && originalQuery.trim()) {
+          setQuestionAnswerOriginalQuery(originalQuery);
+        }
         if (parsed.questionAnswer.prompt) {
           setQuestionAnswerPrompt({
             nodeId: parsed.questionAnswer.prompt.nodeId,
@@ -980,6 +1006,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
         choices: parsed.choices,
         round: parsed.round,
       });
+      questionAnswerNodeIdRef.current = parsed.nodeId ?? null;
       setQuestionAnswerSubmitting(false);
       if (parsed.nodeId) markQuestionAnswerPausedNodes([parsed.nodeId], payload);
       setActiveTab('input');
@@ -1296,9 +1323,12 @@ export const WebappRun: React.FC<WebappRunProps> = ({
           break;
         }
         case 'workflow_resumed': {
+          markQuestionAnswerResumedNode(questionAnswerNodeIdRef.current ?? undefined);
+          questionAnswerNodeIdRef.current = null;
           setIsRunning(true);
           setApprovalPaused(false);
           resetApprovalRuntime();
+          setQuestionAnswerOriginalQuery('');
           setQuestionAnswerPrompt(null);
           setQuestionAnswerSubmitting(false);
           break;
@@ -1330,6 +1360,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
             choices: parsed.choices,
             round: parsed.round,
           });
+          questionAnswerNodeIdRef.current = parsed.nodeId ?? null;
           setQuestionAnswerSubmitting(false);
           if (parsed.nodeId) markQuestionAnswerPausedNodes([parsed.nodeId], event);
           setActiveTab('input');
@@ -1517,6 +1548,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
       globalT,
       markApprovalPausedNodes,
       markQuestionAnswerPausedNodes,
+      markQuestionAnswerResumedNode,
       normalizeOutputs,
       notifyPublishedWorkflowFailure,
       rememberWorkflowRunId,
@@ -1718,10 +1750,26 @@ export const WebappRun: React.FC<WebappRunProps> = ({
     ]
   );
 
-  const isApprovalPending = Boolean(
+  const hasApprovalPending = Boolean(
     approvalPaused || approvalEntry || approvalToken || approvalForm || approvalSubmittedAction
   );
   const isQuestionAnswerPending = Boolean(questionAnswerPrompt);
+  const displayedStartVariables = useMemo(
+    () =>
+      isQuestionAnswerPending
+        ? startVariables.map(variable =>
+            variable.variable === 'query'
+              ? {
+                  ...variable,
+                  label: '回答',
+                  description: '请填写对上方问题的回答',
+                }
+              : variable
+          )
+        : startVariables,
+    [isQuestionAnswerPending, startVariables]
+  );
+  const isApprovalPending = hasApprovalPending && !isQuestionAnswerPending;
   const questionAnswerHasChoices = Boolean((questionAnswerPrompt?.choices.length ?? 0) > 0);
   const hasExecutionActivity = isRunning || runItems.length > 0;
   const hasRunState = runItems.length > 0 || Boolean(finalResult) || streamedText.trim().length > 0;
@@ -1883,6 +1931,12 @@ export const WebappRun: React.FC<WebappRunProps> = ({
 
   const questionAnswerNotice = questionAnswerPrompt ? (
     <div className="mb-3">
+      {questionAnswerOriginalQuery ? (
+        <div className="mb-3 border-l-2 border-primary/30 pl-3 text-xs text-muted-foreground">
+          <div className="font-medium text-foreground/80">本次需求</div>
+          <div className="mt-1 whitespace-pre-wrap break-words">{questionAnswerOriginalQuery}</div>
+        </div>
+      ) : null}
       <QuestionAnswerRuntimePrompt
         question={questionAnswerPrompt.question}
         choices={questionAnswerPrompt.choices}
@@ -1899,6 +1953,23 @@ export const WebappRun: React.FC<WebappRunProps> = ({
     return <WebAppOfflineState />;
   }
 
+  const questionAnswerAction =
+    isQuestionAnswerPending && !questionAnswerHasChoices ? (
+      <Button
+        type="button"
+        onClick={() => {
+          formRef.current?.submit();
+        }}
+        disabled={isStarting || questionAnswerSubmitting}
+        className="mt-3 h-10 w-full font-medium shadow-sm"
+      >
+        <Play className="mr-2 size-4" />
+        {questionAnswerSubmitting
+          ? t('run.starting')
+          : globalT('nodes.questionAnswer.runtime.continue')}
+      </Button>
+    ) : null;
+
   const inputFormContent = (
     <>
       {startVariables.length === 0 && !isQuestionAnswerPending ? (
@@ -1907,9 +1978,9 @@ export const WebappRun: React.FC<WebappRunProps> = ({
         </div>
       ) : null}
       <WorkflowInputForm
-        key={varsSig}
+        key={`${varsSig}:${questionAnswerPrompt ? `${questionAnswerPrompt.nodeId ?? 'question'}:${questionAnswerPrompt.round ?? ''}` : 'start'}`}
         ref={formRef}
-        startVariables={startVariables}
+        startVariables={displayedStartVariables}
         isStarting={
           isStarting ||
           isRunning ||
@@ -1942,6 +2013,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
           </>
         }
       />
+      {questionAnswerAction}
     </>
   );
 
@@ -2005,7 +2077,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
             ? 'bg-emerald-500'
             : 'bg-muted-foreground/50';
 
-  const runActionFooter = waitingForInput ? null : (
+  const runActionFooter = isApprovalPending || isQuestionAnswerPending ? null : (
     <div
       className={cn(
         'shrink-0 bg-background/95 backdrop-blur',

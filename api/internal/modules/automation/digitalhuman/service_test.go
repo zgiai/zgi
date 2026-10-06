@@ -179,6 +179,35 @@ func TestServiceStoresCanonicalCronSchedule(t *testing.T) {
 	}
 }
 
+func TestServicePreviewTaskScheduleUsesCanonicalTimezoneAndCron(t *testing.T) {
+	service, _, access, _ := newTaskService(t)
+	preview, err := service.PreviewTaskSchedule(t.Context(), access, digitalhuman.TaskSchedulePreviewRequest{
+		Type: digitalhuman.TaskScheduleOnce, LocalRunAt: "2026-12-15T09:30", Timezone: "Asia/Shanghai",
+	})
+	if err != nil || preview.NextRunAt == nil || preview.Schedule.RunAt == nil ||
+		preview.Schedule.RunAt.UTC().Format(time.RFC3339) != "2026-12-15T01:30:00Z" {
+		t.Fatalf("once preview = %#v, error = %v", preview, err)
+	}
+	preview, err = service.PreviewTaskSchedule(t.Context(), access, digitalhuman.TaskSchedulePreviewRequest{
+		Type: digitalhuman.TaskScheduleCron, Cron: "0 9 * * 1-5", Timezone: "Asia/Shanghai",
+	})
+	if err != nil || preview.NextRunAt == nil || preview.Schedule.Cron != "0 9 * * 1-5" {
+		t.Fatalf("cron preview = %#v, error = %v", preview, err)
+	}
+	for _, request := range []digitalhuman.TaskSchedulePreviewRequest{
+		{Type: digitalhuman.TaskScheduleCron, Cron: "not a cron", Timezone: "UTC"},
+		{Type: digitalhuman.TaskScheduleCron, Cron: "0 9 * * *", Timezone: "Invalid/Timezone"},
+		{Type: digitalhuman.TaskScheduleOnce, LocalRunAt: "not a date", Timezone: "UTC"},
+		{Type: digitalhuman.TaskScheduleOnce, LocalRunAt: "2026-03-08T02:30", Timezone: "America/New_York"},
+		{Type: digitalhuman.TaskScheduleOnce, LocalRunAt: "2026-11-01T01:30", Timezone: "America/New_York"},
+		{Type: digitalhuman.TaskScheduleManual, Timezone: "UTC"},
+	} {
+		if _, err := service.PreviewTaskSchedule(t.Context(), access, request); err == nil {
+			t.Fatalf("invalid schedule accepted: %#v", request)
+		}
+	}
+}
+
 func TestServiceRejectsCompletingAnActiveRecurringTask(t *testing.T) {
 	service, _, access, digitalHumanID := newTaskService(t)
 	created, err := service.CreateTask(t.Context(), access, digitalhuman.CreateTaskRequest{

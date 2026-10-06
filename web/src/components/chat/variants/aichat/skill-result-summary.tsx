@@ -3,8 +3,6 @@
 import { useMemo } from 'react';
 import { useT, type ScopedTranslations } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
-import { isConnectorOperationInvocation } from '@/components/connectors/runtime/connector-operation-presentation';
-import { ConnectorOperationSummary } from '@/components/connectors/runtime/connector-operation-summary';
 import { sanitizeTimelineDisplayPayload } from '@/components/chat/variants/aichat/timeline-display-safety';
 
 const KNOWLEDGE_RESULT_KEYS = [
@@ -247,14 +245,11 @@ interface AIChatSkillResultSummaryProps {
 }
 
 export function AIChatSkillResultSummary({
-  invocation,
   result,
   className,
 }: AIChatSkillResultSummaryProps) {
   const t = useT('webapp');
-  const connector = isConnectorOperationInvocation(invocation);
   const summary = useMemo(() => {
-    if (connector) return { rows: [], tone: null };
     const safeResult = sanitizeTimelineDisplayPayload(
       result,
       t('consoleChat.skills.trace.values.hidden'),
@@ -265,19 +260,9 @@ export function AIChatSkillResultSummary({
       rows: buildResultRows(safeResult, t),
       tone: null,
     };
-  }, [connector, result, t]);
+  }, [result, t]);
 
   const { rows, tone } = summary;
-
-  if (connector) {
-    return (
-      <ConnectorOperationSummary
-        invocation={invocation}
-        className={className}
-        showHeading={false}
-      />
-    );
-  }
 
   if (!rows.length) return null;
 

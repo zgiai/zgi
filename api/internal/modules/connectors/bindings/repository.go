@@ -42,6 +42,23 @@ type LifecycleMutationRepository interface {
 	SetBindingStatusWithLifecycle(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, core.BindingStatus, int, BindingLifecycleMutation) (core.TargetBinding, error)
 }
 
+// AuthorizationMutationRepository updates only the binding constraint. It is
+// separate from UpsertBindingWithLifecycle because generic upsert intersects
+// constraints (correct for replacement) and therefore cannot represent an
+// explicit direct -> ask_each_time revocation.
+type AuthorizationMutationRepository interface {
+	UpdateBindingAuthorizationWithLifecycle(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, *core.AccessConstraint, int, BindingLifecycleMutation) (core.TargetBinding, error)
+}
+
+// HostDelegationCandidateRepository reads active published bindings that have
+// explicitly delegated a target to one host audience. It is deliberately
+// separate from Repository because this lookup is organization-scoped rather
+// than owner-scoped and must only be exposed through the audited service
+// boundary.
+type HostDelegationCandidateRepository interface {
+	ListPublishedHostDelegations(context.Context, uuid.UUID, core.TargetRef, core.HostAudience) ([]core.TargetBinding, error)
+}
+
 type bindingLifecycleDecisionRecord struct {
 	TargetScope        string         `gorm:"column:target_scope"`
 	TargetVersionID    string         `gorm:"column:target_version_id"`
@@ -95,8 +112,9 @@ type GormRepository struct {
 }
 
 var (
-	_ Repository                  = (*GormRepository)(nil)
-	_ LifecycleMutationRepository = (*GormRepository)(nil)
+	_ Repository                      = (*GormRepository)(nil)
+	_ LifecycleMutationRepository     = (*GormRepository)(nil)
+	_ AuthorizationMutationRepository = (*GormRepository)(nil)
 )
 
 func NewGormRepository(db *gorm.DB) *GormRepository {
@@ -261,6 +279,68 @@ func (repository *GormRepository) SetBindingStatusWithLifecycle(
 	return stored, nil
 }
 
+// UpdateBindingAuthorizationWithLifecycle persists an explicit authorization
+// mode change with owner scope, revision CAS, and the normal lifecycle audit.
+func (repository *GormRepository) UpdateBindingAuthorizationWithLifecycle(
+	ctx context.Context,
+	organizationID, ownerAccountID, bindingID uuid.UUID,
+	constraint *core.AccessConstraint,
+	expectedRevision int,
+	mutation BindingLifecycleMutation,
+) (core.TargetBinding, error) {
+	if err := repository.available(); err != nil {
+		return core.TargetBinding{}, err
+	}
+	if constraint == nil || constraint.Validate() != nil || expectedRevision < 1 ||
+		!validBindingLifecycleMutation(mutation, MutationBindingUpserted) {
+		return core.TargetBinding{}, invalidInputError("update connector target binding authorization lifecycle")
+	}
+	encoded, err := json.Marshal(constraint)
+	if err != nil {
+		return core.TargetBinding{}, internalError("encode connector target binding authorization")
+	}
+	var stored core.TargetBinding
+	err = repository.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		observed, lookupErr := getBindingByID(ctx, tx, organizationID, ownerAccountID, bindingID, true)
+		if lookupErr != nil {
+			return lookupErr
+		}
+		before, conversionErr := observed.toDomain()
+		if conversionErr != nil {
+			return conversionErr
+		}
+		if before.Status != core.BindingStatusActive || before.Revision != expectedRevision {
+			return conflictError("update connector target binding authorization")
+		}
+		authorities, authorityErr := lockBindingLifecycleAuthorities(ctx, tx, before)
+		if authorityErr != nil {
+			return authorityErr
+		}
+		now := time.Now().UTC()
+		result := tx.Model(&bindingRecord{}).
+			Where("organization_id = ? AND owner_account_id = ? AND id = ? AND revision = ?", organizationID, ownerAccountID, bindingID, expectedRevision).
+			Updates(map[string]any{"binding_constraint": datatypes.JSON(encoded), "revision": expectedRevision + 1, "updated_at": now})
+		if result.Error != nil {
+			return internalError("update connector target binding authorization")
+		}
+		if result.RowsAffected != 1 {
+			return conflictError("update connector target binding authorization")
+		}
+		before.Constraint = constraint
+		before.Revision = expectedRevision + 1
+		before.UpdatedAt = now
+		stored = before
+		if _, locked := authorities[bindingLifecycleAuthorityIdentity(stored)]; !locked {
+			return conflictError("lock connector target binding authorization authority")
+		}
+		return appendBindingLifecycleMutationLocked(ctx, tx, stored, mutation)
+	})
+	if err != nil {
+		return core.TargetBinding{}, err
+	}
+	return stored, nil
+}
+
 // UpsertBinding creates or replaces one native binding by its stable logical
 // key: organization, owner, target type/id, Connector, and (for Workflows)
 // binding instance. expectedRevision is zero for creation/idempotent replay and
@@ -331,6 +411,21 @@ func (repository *GormRepository) upsertBinding(ctx context.Context, organizatio
 		}
 		if replaceAuthorizedConstraint {
 			narrowed = prepared.Constraint
+		} else {
+			// The prepared binding is the current explicit authorization choice.
+			// Constraint intersection still narrows operations/targets, but the
+			// mode itself must support an intentional direct grant or revocation;
+			// otherwise a legacy ask_each_time row could never be changed.
+			narrowed.AuthorizationMode = prepared.Constraint.AuthorizationModeValue()
+			if narrowed.AuthorizationMode == core.AuthorizationModeDirect {
+				narrowed.AuthorizationConnectionRevision = prepared.Constraint.AuthorizationConnectionRevision
+				narrowed.AuthorizationCredentialVersion = prepared.Constraint.AuthorizationCredentialVersion
+				narrowed.AuthorizationContractDigest = prepared.Constraint.AuthorizationContractDigest
+			} else {
+				narrowed.AuthorizationConnectionRevision = 0
+				narrowed.AuthorizationCredentialVersion = 0
+				narrowed.AuthorizationContractDigest = ""
+			}
 		}
 		record.Constraint, constraintErr = json.Marshal(narrowed)
 		if constraintErr != nil {
@@ -429,6 +524,51 @@ func (repository *GormRepository) ListBindingsByTarget(
 	)
 	query = applyListOptions(query, options)
 	return findBindings(query.Order("connector_id ASC, binding_instance_id ASC NULLS FIRST, created_at ASC, id ASC"), "list connector target bindings by target")
+}
+
+func (repository *GormRepository) ListPublishedHostDelegations(ctx context.Context, organizationID uuid.UUID, target core.TargetRef, audience core.HostAudience) ([]core.TargetBinding, error) {
+	if err := repository.available(); err != nil {
+		return nil, err
+	}
+	if organizationID == uuid.Nil || (target.Type != core.TargetTypeAgent && target.Type != core.TargetTypeDigitalHuman) ||
+		target.EffectiveScope() != core.ScopePublished || target.Validate() != nil ||
+		(audience != core.HostAudienceWorkspace && audience != core.HostAudienceAPI && audience != core.HostAudienceChannel) {
+		return nil, invalidInputError("list published host delegations")
+	}
+	grant, err := json.Marshal(map[string]any{"host_delegation": map[string]any{"audiences": []core.HostAudience{audience}}})
+	if err != nil {
+		return nil, internalError("encode host delegation audience")
+	}
+	var records []bindingRecord
+	err = repository.db.WithContext(ctx).Where(
+		"organization_id = ? AND target_type = ? AND target_id = ? AND target_scope = ? AND target_version_id = ? AND status = ?",
+		organizationID, target.Type, target.ID, core.ScopePublished, target.VersionID, core.BindingStatusActive,
+	).Where("binding_constraint @> ?::jsonb", datatypes.JSON(grant)).
+		Order("connector_id ASC, binding_instance_id ASC NULLS FIRST, id ASC").Limit(51).Find(&records).Error
+	if err != nil || len(records) > 50 {
+		return nil, internalError("list published host delegations")
+	}
+	bindings := make([]core.TargetBinding, 0, len(records))
+	for _, record := range records {
+		binding, err := record.toDomain()
+		if err != nil || binding.OrganizationID != organizationID || binding.Target.Type != target.Type ||
+			binding.Target.ID != target.ID || binding.Target.EffectiveScope() != core.ScopePublished || binding.Target.VersionID != target.VersionID ||
+			binding.Status != core.BindingStatusActive || binding.Constraint == nil || binding.Constraint.HostDelegation == nil ||
+			binding.Constraint.HostDelegation.GrantedBy != binding.OwnerAccountID {
+			return nil, internalError("validate published host delegation")
+		}
+		allowed := false
+		for _, operation := range binding.Constraint.AllowedOperationIDs {
+			if binding.Constraint.AllowsHostAudience(binding.OwnerAccountID, operation, binding.Target, audience, time.Now().UTC()) {
+				allowed = true
+				break
+			}
+		}
+		if allowed {
+			bindings = append(bindings, binding)
+		}
+	}
+	return bindings, nil
 }
 
 // ListBindingsByConnection supplies the complete owner-visible removal impact;
@@ -716,7 +856,8 @@ func bindingLifecycleDetails(binding core.TargetBinding) map[string]any {
 	details := map[string]any{
 		"binding_id": binding.ID.String(), "target_type": string(binding.Target.Type), "target_id": binding.Target.ID,
 		"binding_instance_id": binding.Target.BindingInstanceID, "status": string(binding.Status),
-		"revision": binding.Revision, "created_at": binding.CreatedAt.UTC().Format(time.RFC3339Nano),
+		"authorization_mode": binding.Constraint.AuthorizationModeValue(),
+		"revision":           binding.Revision, "created_at": binding.CreatedAt.UTC().Format(time.RFC3339Nano),
 		"updated_at": binding.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
 	if binding.DisabledAt != nil {

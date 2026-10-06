@@ -2,23 +2,34 @@
 
 import { personalConnectionDisplayName } from '@/components/connectors/connections/personal-connections-model';
 import { Trash2 } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { localizeConnectorCatalogItem } from '@/components/connectors/connector-metadata';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   connectorCatalogItems,
+  connectorTargetBindingItems,
   personalConnectionItems,
   useConnectorCatalog,
   usePersonalConnections,
+  useConnectorTargetBindings,
+  useUpdateConnectorTargetBindingHostDelegation,
 } from '@/hooks';
 import { useT } from '@/i18n';
 import { useLocale } from '@/hooks/use-locale';
 import type { AgentBindingHealth, AgentConnectorBinding } from '@/services/types/agent';
+import { agentService } from '@/services/agent.service';
+import type { ConnectorHostAudience } from '@/services/types/connector';
+import { getErrorMessage } from '@/utils/error-notifications';
 import { AgentRuntimeResourceCard, AgentRuntimeResourceSection } from '../resource-section';
 import type { AgentConfigSection } from '../types';
 
 interface AgentRuntimeConnectorSectionProps {
+  agentId: string;
   open: boolean;
   connectorBindings: AgentConnectorBinding[];
   menuOpen: boolean;
@@ -30,6 +41,7 @@ interface AgentRuntimeConnectorSectionProps {
 }
 
 export function AgentRuntimeConnectorSection({
+  agentId,
   open,
   connectorBindings,
   menuOpen,
@@ -42,6 +54,30 @@ export function AgentRuntimeConnectorSection({
   const t = useT('agents.agentRuntime');
   const connectorT = useT('connectors');
   const { locale } = useLocale();
+  const publishedVersionsQuery = useQuery({
+    queryKey: ['agent-runtime', agentId, 'published-versions'],
+    queryFn: () => agentService.getPublishedVersions(agentId),
+    enabled: Boolean(agentId),
+    staleTime: 30_000,
+    retry: false,
+  });
+  const currentPublishedVersionId = publishedVersionsQuery.data?.data?.data?.find(
+    version => version.is_current
+  )?.version_uuid;
+  const publishedTarget = currentPublishedVersionId
+    ? {
+        type: 'agent' as const,
+        id: agentId,
+        scope: 'published' as const,
+        version_id: currentPublishedVersionId,
+      }
+    : undefined;
+  const publishedBindingsQuery = useConnectorTargetBindings(
+    publishedTarget,
+    Boolean(publishedTarget)
+  );
+  const updateHostDelegation = useUpdateConnectorTargetBindingHostDelegation();
+  const publishedBindings = connectorTargetBindingItems(publishedBindingsQuery.data?.data);
   const shouldLoadConnectorBindings = connectorBindings.length > 0;
   const connectorCatalogQuery = useConnectorCatalog(undefined, shouldLoadConnectorBindings);
   const connectorConnectionsQuery = usePersonalConnections(undefined, shouldLoadConnectorBindings);
@@ -64,7 +100,7 @@ export function AgentRuntimeConnectorSection({
       open={open}
       count={connectorBindings.length}
       addLabel={connectorT('picker.title')}
-      helpText={connectorT('description')}
+      helpText={connectorT('sections.connectorsDescription')}
       emptyText={connectorT('sections.empty')}
       isLoading={connectorBindingsLoading}
       onToggleSection={onToggleSection}
@@ -89,6 +125,22 @@ export function AgentRuntimeConnectorSection({
             : (connector?.description ?? connectorT('status.unavailable'));
           const classification = connector?.classification ?? 'connector';
           const status = connection?.state ?? 'unavailable';
+          const publishedBinding = publishedBindings.find(
+            item =>
+              item.connector_id === binding.connector_id &&
+              item.connection_id === binding.connection_id
+          );
+          const hostAudiences = new Set<ConnectorHostAudience>(
+            publishedBinding?.host_audiences ?? []
+          );
+          const audienceOptions: Array<{ value: ConnectorHostAudience; label: string }> = [
+            {
+              value: 'workspace',
+              label: connectorT('picker.authorization.hostAudienceWorkspace'),
+            },
+            { value: 'api', label: connectorT('picker.authorization.hostAudienceApi') },
+            { value: 'channel', label: connectorT('picker.authorization.hostAudienceChannel') },
+          ];
 
           return (
             <AgentRuntimeResourceCard
@@ -156,6 +208,72 @@ export function AgentRuntimeConnectorSection({
                       : connectorT('status.unavailable')}
                 </Badge>
               </div>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <span className="text-xs font-medium text-muted-foreground">
+                  {connectorT('picker.authorization.modeLabel')}
+                </span>
+                <Select
+                  value={binding.authorization_mode === 'direct' ? 'direct' : 'ask_each_time'}
+                  disabled={readOnly}
+                  onValueChange={value =>
+                    onChangeConnectorBindings(
+                      connectorBindings.map(item =>
+                        item === binding
+                          ? {
+                              ...item,
+                              authorization_mode: value === 'direct' ? 'direct' : 'ask_each_time',
+                            }
+                          : item
+                      )
+                    )
+                  }
+                >
+                  <SelectTrigger className="h-8 w-auto min-w-36 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ask_each_time">
+                      {connectorT('picker.authorization.askShort')}
+                    </SelectItem>
+                    <SelectItem value="direct">
+                      {connectorT('picker.authorization.directShort')}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {publishedBinding ? (
+                <div className="mt-3 flex flex-wrap gap-3">
+                  {audienceOptions.map(option => (
+                    <label key={option.value} className="flex items-center gap-2 text-xs">
+                      <Checkbox
+                        checked={hostAudiences.has(option.value)}
+                        disabled={readOnly || updateHostDelegation.isPending}
+                        onCheckedChange={async checked => {
+                          const next = new Set(hostAudiences);
+                          if (checked === true) next.add(option.value);
+                          else next.delete(option.value);
+                          try {
+                            await updateHostDelegation.mutateAsync({
+                              bindingId: publishedBinding.id,
+                              revision: publishedBinding.revision,
+                              audiences: Array.from(next),
+                            });
+                            toast.success(
+                              connectorT('picker.authorization.hostDelegationSaved')
+                            );
+                          } catch (error) {
+                            toast.error(
+                              getErrorMessage(error) ||
+                                connectorT('picker.authorization.hostDelegationSaveFailed')
+                            );
+                          }
+                        }}
+                      />
+                      {option.label}
+                    </label>
+                  ))}
+                </div>
+              ) : null}
             </AgentRuntimeResourceCard>
           );
         })}

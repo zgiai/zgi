@@ -44,6 +44,44 @@ func NewService(db *gorm.DB, dispatcher RunDispatcher, runner automationaction.D
 	return &Service{db: db, dispatcher: dispatcher, runner: runner, now: func() time.Time { return time.Now().UTC() }}
 }
 
+func (s *Service) PreviewTaskSchedule(_ context.Context, access digitalhuman.TaskAccessContext, request digitalhuman.TaskSchedulePreviewRequest) (*digitalhuman.TaskSchedulePreview, error) {
+	if err := validateBoundary(access); err != nil {
+		return nil, err
+	}
+	if len(request.Timezone) > 128 || len(request.Cron) > 256 || len(request.LocalRunAt) > 32 {
+		return nil, digitalhuman.ErrInvalidRequest
+	}
+	timezone := strings.TrimSpace(request.Timezone)
+	if timezone == "" {
+		timezone = "UTC"
+	}
+	location, err := time.LoadLocation(timezone)
+	if err != nil {
+		return nil, digitalhuman.ErrInvalidRequest
+	}
+	schedule := digitalhuman.TaskSchedule{Type: request.Type, Cron: strings.TrimSpace(request.Cron), Timezone: timezone}
+	if request.Type == digitalhuman.TaskScheduleOnce {
+		local := strings.TrimSpace(request.LocalRunAt)
+		runAt, err := time.ParseInLocation("2006-01-02T15:04", local, location)
+		if err != nil || runAt.In(location).Format("2006-01-02T15:04") != local {
+			return nil, digitalhuman.ErrInvalidRequest
+		}
+		for offset := -3 * time.Hour; offset <= 3*time.Hour; offset += 15 * time.Minute {
+			if offset != 0 && runAt.Add(offset).In(location).Format("2006-01-02T15:04") == local {
+				return nil, digitalhuman.ErrInvalidRequest
+			}
+		}
+		schedule.RunAt = &runAt
+	} else if request.Type != digitalhuman.TaskScheduleCron {
+		return nil, digitalhuman.ErrInvalidRequest
+	}
+	_, _, _, next, err := compileSchedule(schedule)
+	if err != nil {
+		return nil, digitalhuman.ErrInvalidRequest
+	}
+	return &digitalhuman.TaskSchedulePreview{Schedule: schedule, NextRunAt: next}, nil
+}
+
 func (s *Service) ListTasks(ctx context.Context, access digitalhuman.TaskAccessContext, query digitalhuman.TaskListQuery) (*digitalhuman.TaskListResult, error) {
 	if err := validateBoundary(access); err != nil {
 		return nil, err

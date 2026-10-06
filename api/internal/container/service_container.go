@@ -1138,6 +1138,7 @@ func (c *ServiceContainer) GetConnectorBindingService() *connectorbindings.Servi
 			c.GetConnectorBindingRepository(),
 			c.GetConnectorConnectionService(),
 			c.GetConnectorTargetAuthority(),
+			c.GetConnectorPluginManager(),
 		)
 		if err != nil {
 			panic(fmt.Sprintf("initialize Connector binding service: %v", err))
@@ -1205,7 +1206,10 @@ func (c *ServiceContainer) GetConnectorDigitalHumanRuntimeResolver() *connectorr
 	if err != nil {
 		panic(fmt.Sprintf("initialize DigitalHuman Connector resolver: %v", err))
 	}
-	return resolver
+	return resolver.WithDelegatedHostAccess(
+		c.GetConnectorBindingService(),
+		c.GetConnectorHostDelegationAuthorizer(),
+	)
 }
 
 // GetDigitalHumanCredentialCipher returns the purpose-separated cipher used for

@@ -116,6 +116,8 @@ func validateMailContract(d Definition) error {
 
 // NormalizeMailValues mutates only this disposable credential map. It does not
 // infer account equivalence from Gmail dots, plus tags, aliases or domain MX.
+// Provider-specific credential validity is left to the real protocol verifier;
+// this function only enforces safe input boundaries.
 func NormalizeMailValues(values map[string]string) error {
 	if len(values) != 2 {
 		return invalid("mail_values")
@@ -144,11 +146,8 @@ func NormalizeMailValues(values map[string]string) error {
 		}
 		return r
 	}, password)
-	if len(password) != 16 {
-		return invalid("mail_password")
-	}
 	for _, r := range password {
-		if r < 33 || r > 126 {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			return invalid("mail_password")
 		}
 	}

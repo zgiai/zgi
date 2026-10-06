@@ -226,11 +226,34 @@ func (f *fixtureDialer) imap(conn net.Conn) {
 				_, _ = fmt.Fprintf(conn, "%s NO Unsafe Login\r\n", tag)
 				continue
 			}
-			_, _ = fmt.Fprintf(conn, "* FLAGS (\\Seen)\r\n* 1 EXISTS\r\n* OK [UIDVALIDITY %d] valid\r\n* OK [UIDNEXT 8] next\r\n%s OK [READ-ONLY] examined\r\n", f.uidValidity, tag)
+			omitValidity := f.mode == "uid_codes_absent" || f.mode == "uid_codes_missing_everywhere"
+			omitNext := omitValidity || f.mode == "uid_next_absent" || f.mode == "uid_search_empty"
+			response := "* FLAGS (\\Seen)\r\n* 1 EXISTS\r\n"
+			if !omitValidity {
+				response += fmt.Sprintf("* OK [UIDVALIDITY %d] valid\r\n", f.uidValidity)
+			}
+			if !omitNext {
+				response += "* OK [UIDNEXT 8] next\r\n"
+			}
+			_, _ = fmt.Fprintf(conn, "%s%s OK [READ-ONLY] examined\r\n", response, tag)
+		case "STATUS":
+			if f.mode == "uid_codes_missing_everywhere" || f.mode == "uid_search_empty" {
+				_, _ = fmt.Fprintf(conn, "* STATUS \"INBOX\" (MESSAGES 1)\r\n%s OK status\r\n", tag)
+				continue
+			}
+			_, _ = fmt.Fprintf(conn, "* STATUS \"INBOX\" (MESSAGES 1 UIDVALIDITY %d UIDNEXT 8)\r\n%s OK status\r\n", f.uidValidity, tag)
 		case "LIST":
 			_, _ = fmt.Fprintf(conn, "* LIST () \"/\" INBOX\r\n%s OK folders\r\n", tag)
 		case "UID":
 			f.record(strings.TrimSpace(strings.Join(fields[2:], " ")))
+			if strings.Contains(line, "SEARCH") {
+				if f.mode == "uid_search_empty" {
+					_, _ = fmt.Fprintf(conn, "* SEARCH\r\n%s OK searched\r\n", tag)
+					continue
+				}
+				_, _ = fmt.Fprintf(conn, "* SEARCH 7\r\n%s OK searched\r\n", tag)
+				continue
+			}
 			switch {
 			case strings.Contains(line, "RFC822.SIZE"):
 				_, _ = fmt.Fprintf(conn, "* 1 FETCH (UID 7 RFC822.SIZE %d)\r\n", len(f.body))
@@ -400,6 +423,83 @@ func TestMailHandlesAreScopedAndReadsUsePeek(t *testing.T) {
 	_, err = c.InvokeCredentials(context.Background(), "gmail.message.get", in, map[string]any{"message_handle": handle})
 	if providers.FailureOf(err).Code != core.ErrorCodeMailReferenceExpired {
 		t.Fatal("UIDVALIDITY change did not expire handle")
+	}
+}
+
+// RFC 3501 lets a server withhold UIDNEXT and UIDVALIDITY from EXAMINE. A bare
+// message list carries no reference, so that must not become reference_expired.
+func TestReadsRecoverUIDRangeFromStatus(t *testing.T) {
+	for _, mode := range []string{"uid_next_absent", "uid_codes_absent"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newFixture(t)
+			f.mode = mode
+			c := testClient(t, f, 465)
+			result, err := c.InvokeCredentials(context.Background(), "gmail.message.list", testInput("read"), map[string]any{})
+			if err != nil {
+				t.Fatalf("list: %v", err)
+			}
+			if messages := result.Value["messages"].([]map[string]any); len(messages) != 1 {
+				t.Fatal("missing list item")
+			}
+			_, commands := f.snapshot()
+			if !strings.Contains(strings.Join(commands, " "), "STATUS") {
+				t.Fatal("UID range was not recovered with STATUS")
+			}
+		})
+	}
+}
+
+// 163 omits UIDNEXT and UIDVALIDITY from EXAMINE and reports neither via
+// STATUS. Listing must still work by deriving the bound from the UIDs.
+func TestReadsDeriveUIDBoundWhenServerWithholdsUIDMetadata(t *testing.T) {
+	f := newFixture(t)
+	f.mode = "uid_codes_missing_everywhere"
+	c := testClient(t, f, 465)
+	in := testInput("read")
+	result, err := c.InvokeCredentials(context.Background(), "gmail.message.list", in, map[string]any{})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	messages := result.Value["messages"].([]map[string]any)
+	if len(messages) != 1 {
+		t.Fatal("missing list item")
+	}
+	_, commands := f.snapshot()
+	if !strings.Contains(strings.Join(commands, " "), "SEARCH") {
+		t.Fatal("UID bound was not derived from UID SEARCH")
+	}
+	handle := messages[0]["message_handle"].(string)
+	if _, err = c.InvokeCredentials(context.Background(), "gmail.message.get", in, map[string]any{"message_handle": handle}); err != nil {
+		t.Fatalf("handle from a UID-less mailbox: %v", err)
+	}
+
+	f = newFixture(t)
+	f.mode = "uid_codes_missing_everywhere"
+	c = testClient(t, f, 465)
+	v, err := c.VerifyCredentials(context.Background(), testInput("read"))
+	if err != nil || v.Evidence.Mail.IMAPStatus != "verified" {
+		t.Fatalf("verification rejected a listable mailbox: %v", err)
+	}
+}
+
+func TestUIDBoundWithoutUIDsFailsVerificationUpFront(t *testing.T) {
+	f := newFixture(t)
+	f.mode = "uid_search_empty"
+	c := testClient(t, f, 465)
+	_, err := c.InvokeCredentials(context.Background(), "gmail.message.list", testInput("read"), map[string]any{})
+	if providers.FailureOf(err).Code != core.ErrorCodeMailUidStateUnavailable {
+		t.Fatalf("list failure: %v", err)
+	}
+
+	f = newFixture(t)
+	f.mode = "uid_search_empty"
+	c = testClient(t, f, 465)
+	v, err := c.VerifyCredentials(context.Background(), testInput("read"))
+	if providers.FailureOf(err).Code != core.ErrorCodeMailUidStateUnavailable {
+		t.Fatalf("verification failure: %v", err)
+	}
+	if v.Evidence.Mail.IMAPStatus != "failed" || v.Evidence.Mail.CredentialVerified {
+		t.Fatal("mailbox without a UID bound was promoted")
 	}
 }
 func TestCancellationAndResourceBounds(t *testing.T) {

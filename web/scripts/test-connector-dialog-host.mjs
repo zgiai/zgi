@@ -68,6 +68,7 @@ const bridge = harness(actualReact => {
     },
     './use-runtime-receipt': { useConnectorRuntimeReceipt: () => receipt },
     './connector-runtime-confirmation-card': { ConnectorRuntimeConfirmationCard: 'LegacyCard' },
+    './connector-runtime-preview-summary': { ConnectorRuntimePreviewSummary: 'PreviewSummary' },
     './connector-runtime-blocked-state': { ConnectorRuntimeBlockedState: 'BlockedState' },
     './connector-runtime-terminal-state': { ConnectorRuntimeTerminalState: 'TerminalState' },
   });

@@ -135,6 +135,44 @@ func (store *GormConfirmationContinuationStore) Load(
 	return store.continuationFromRecord(ctx, record)
 }
 
+type PendingConfirmationRef struct {
+	RouteReceipt RouteClaimReceipt `json:"route_receipt"`
+	CreatedAt    time.Time         `json:"created_at"`
+}
+
+func (store *GormConfirmationContinuationStore) ListPending(ctx context.Context, organizationID, ownerAccountID uuid.UUID, page, pageSize int) ([]PendingConfirmationRef, bool, error) {
+	if err := store.available(); err != nil {
+		return nil, false, err
+	}
+	if ctx == nil || organizationID == uuid.Nil || ownerAccountID == uuid.Nil || page < 1 || page > 1000 || pageSize < 1 || pageSize > 100 {
+		return nil, false, connectorError(core.ErrorCodeInvalidInput, false)
+	}
+	var rows []struct {
+		RouteReceipt uuid.UUID `gorm:"column:route_receipt"`
+		CreatedAt    time.Time `gorm:"column:created_at"`
+	}
+	err := store.db.WithContext(ctx).Model(&confirmationContinuationRecord{}).
+		Select("route_receipt, created_at").
+		Where("organization_id = ? AND owner_account_id = ? AND state = ?", organizationID, ownerAccountID, ConfirmationContinuationPending).
+		Order("created_at DESC, route_receipt DESC").
+		Limit(pageSize + 1).Offset((page - 1) * pageSize).Scan(&rows).Error
+	if err != nil {
+		return nil, false, connectorError(core.ErrorCodeInternal, false)
+	}
+	more := len(rows) > pageSize
+	if more {
+		rows = rows[:pageSize]
+	}
+	refs := make([]PendingConfirmationRef, 0, len(rows))
+	for _, row := range rows {
+		if row.RouteReceipt == uuid.Nil || row.CreatedAt.IsZero() {
+			return nil, false, connectorError(core.ErrorCodeInternal, false)
+		}
+		refs = append(refs, PendingConfirmationRef{RouteReceipt: RouteClaimReceipt(row.RouteReceipt.String()), CreatedAt: row.CreatedAt.UTC()})
+	}
+	return refs, more, nil
+}
+
 // RecordTerminal performs a single pending-to-terminal compare-and-swap. An
 // exact replay returns the already stored safe result. Any different replay,
 // including confirm racing cancel, returns a conflict without changing the

@@ -73,6 +73,35 @@ func TestPersistedRunActorIDKeepsOnlyAccountBackedActors(t *testing.T) {
 	if actorID := persistedRunActorID(anonymousScope, string(invocation.PrincipalExternalUser), SurfaceWebApp); actorID != nil {
 		t.Fatal("an anonymous WebApp session must not be persisted in the account actor foreign key")
 	}
+
+	digitalHumanID := uuid.New()
+	taskScope := Scope{ActorID: digitalHumanID, PrincipalID: digitalHumanID}
+	if actorID := persistedRunActorID(taskScope, string(invocation.PrincipalSystem), SurfaceTask); actorID != nil {
+		t.Fatal("a system task must not store its digital human id in the account actor foreign key")
+	}
+	accountTaskScope := Scope{ActorID: accountID, PrincipalID: digitalHumanID, UserSubjectKind: string(usersubject.Account), UserSubjectID: &accountID}
+	if actorID := persistedRunActorID(accountTaskScope, string(invocation.PrincipalSystem), SurfaceTask); actorID == nil || *actorID != accountID {
+		t.Fatal("an account-owned task must retain its actual account actor")
+	}
+	apiSubjectID := uuid.New()
+	apiTaskScope := Scope{ActorID: apiSubjectID, PrincipalID: apiSubjectID, UserSubjectKind: string(usersubject.APIEndUser), UserSubjectID: &apiSubjectID}
+	if actorID := persistedRunActorID(apiTaskScope, string(invocation.PrincipalSystem), SurfaceTask); actorID != nil {
+		t.Fatal("an API end-user task must not store its subject id in the account actor foreign key")
+	}
+}
+
+func TestSystemTaskRunScopeUsesPrincipalWithoutAccountActor(t *testing.T) {
+	digitalHumanID := uuid.New()
+	run := &Run{
+		OrganizationID: uuid.New(), WorkspaceID: uuid.New(), DigitalHumanID: digitalHumanID,
+		PrincipalType: string(invocation.PrincipalSystem), PrincipalID: &digitalHumanID, Surface: SurfaceTask,
+	}
+	if scope := runScope(run); scope.ActorID != digitalHumanID || scope.PrincipalID != digitalHumanID {
+		t.Fatal("system task run must retain a usable non-account principal")
+	}
+	if scope := runtimeScope(run); scope.AccountID != digitalHumanID || !scope.SkipAccessCheck {
+		t.Fatal("system task runtime must retain scoped conversation identity without an account actor")
+	}
 }
 
 func TestRunScopeFallsBackToExternalPrincipalWithoutPersistingAccountActor(t *testing.T) {

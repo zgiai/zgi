@@ -106,6 +106,27 @@ func TestGormConfirmationContinuationStoreLoadIsOwnerScoped(t *testing.T) {
 	}
 }
 
+func TestGormConfirmationContinuationStoreListPendingIsOwnerScopedAndMetadataOnly(t *testing.T) {
+	fixture := newConfirmationContinuationTestFixture(t)
+	receipt, err := uuid.Parse(string(fixture.frozen.RouteReceipt))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.mock.ExpectQuery(`(?s)SELECT route_receipt, created_at FROM "connector_confirmation_continuations" WHERE .*organization_id.*owner_account_id.*state.*ORDER BY created_at DESC, route_receipt DESC LIMIT`).
+		WithArgs(fixture.frozen.Request.OrganizationID, fixture.frozen.Request.OwnerAccountID, string(ConfirmationContinuationPending), sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"route_receipt", "created_at"}).AddRow(receipt, time.Now().UTC()))
+	refs, more, err := fixture.store.ListPending(context.Background(), fixture.frozen.Request.OrganizationID, fixture.frozen.Request.OwnerAccountID, 1, 1)
+	if err != nil || more || len(refs) != 1 || refs[0].RouteReceipt != fixture.frozen.RouteReceipt {
+		t.Fatalf("ListPending() = %#v, more=%v, err=%v", refs, more, err)
+	}
+	if _, _, err := fixture.store.ListPending(context.Background(), uuid.Nil, fixture.frozen.Request.OwnerAccountID, 1, 1); !core.IsErrorCode(err, core.ErrorCodeInvalidInput) {
+		t.Fatalf("unscoped ListPending() error = %v", err)
+	}
+	if err := fixture.mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestGormConfirmationContinuationStoreRecordTerminalIsIdempotentOnlyForExactResult(t *testing.T) {
 	fixture := newConfirmationContinuationTestFixture(t)
 	expectContinuationFreeze(fixture, 1, "v1.sealed-envelope.1")

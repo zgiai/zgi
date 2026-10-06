@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { IconInput } from '@/components/common/icon-input';
 import { createTextIconValue, type IconValue } from '@/components/common/icon-input/types';
@@ -22,6 +23,8 @@ import { useCreateDb, useUpdateDb } from '@/hooks/db/use-dbs';
 import { useT } from '@/i18n';
 import { ChevronLeft, Database as DatabaseIcon, Pencil } from 'lucide-react';
 import { ICON_BG, ICON_TEXT } from '@/lib/config';
+import { EmbeddingSettings } from '@/components/datasets/indexing-config';
+import { useInitializeDefaultModelByUseCase } from '@/hooks/model/use-default-model-by-use-case';
 
 import { useCurrentWorkspace, type Workspace } from '@/store/workspace-store';
 
@@ -80,6 +83,8 @@ export default function CreateDbDialog({ open, onOpenChange }: CreateDbDialogPro
 
   const [iconValue, setIconValue] = useState<IconValue>(initialIconValue);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [schemaIndexEnabled, setSchemaIndexEnabled] = useState(false);
+  const [embeddingModel, setEmbeddingModel] = useState({ provider: '', model: '' });
   const [formData, setFormData] = useState<{
     name: string;
     description: string;
@@ -122,6 +127,15 @@ export default function CreateDbDialog({ open, onOpenChange }: CreateDbDialogPro
 
   // Track if form has been submitted to show validation errors only after submit
   const [hasSubmitted, setHasSubmitted] = useState(false);
+  const isEmbeddingModelValid =
+    !schemaIndexEnabled || Boolean(embeddingModel.provider && embeddingModel.model);
+
+  useInitializeDefaultModelByUseCase({
+    useCase: 'embedding',
+    currentModel: embeddingModel,
+    enabled: open && schemaIndexEnabled,
+    onInitialize: setEmbeddingModel,
+  });
 
   // Reset hasSubmitted when dialog opens
   useEffect(() => {
@@ -147,7 +161,10 @@ export default function CreateDbDialog({ open, onOpenChange }: CreateDbDialogPro
     e.preventDefault();
     setHasSubmitted(true);
     const workspaceId = formData.workspace?.id || db?.workspace_id || currentWorkspace?.id || '';
-    if (!isNameValid || !workspaceId) return;
+    if (!isNameValid || !workspaceId || !isEmbeddingModelValid) {
+      if (!isEmbeddingModelValid) setShowAdvanced(true);
+      return;
+    }
 
     const iconPayload = iconValueToDatasetPayload(iconValue, {
       existing: isEdit
@@ -175,10 +192,21 @@ export default function CreateDbDialog({ open, onOpenChange }: CreateDbDialogPro
           icon_type: iconPayload.icon_type,
           icon: iconPayload.icon,
           icon_background: iconPayload.icon_background,
+          schema_index: {
+            enabled: schemaIndexEnabled,
+            ...(schemaIndexEnabled
+              ? {
+                  embedding_model_provider: embeddingModel.provider,
+                  embedding_model: embeddingModel.model,
+                }
+              : {}),
+          },
         } as CreateDbRequest);
         onOpenChange(false);
         setFormData({ name: '', description: '', workspace: undefined });
         setIconValue(createTextIconValue('', ICON_BG));
+        setSchemaIndexEnabled(false);
+        setEmbeddingModel({ provider: '', model: '' });
       }
     } catch (error) {
       console.error('CreateDbDialog submit error:', error);
@@ -189,6 +217,8 @@ export default function CreateDbDialog({ open, onOpenChange }: CreateDbDialogPro
     setFormData({ name: '', description: '', workspace: undefined });
     setIconValue(createTextIconValue('', ICON_BG));
     setHasSubmitted(false);
+    setSchemaIndexEnabled(false);
+    setEmbeddingModel({ provider: '', model: '' });
   };
 
   const handleDialogOpenChange = (nextOpen: boolean) => {
@@ -273,6 +303,41 @@ export default function CreateDbDialog({ open, onOpenChange }: CreateDbDialogPro
                     showAdvanced ? 'h-auto opacity-100 py-4' : 'h-0 opacity-0'
                   )}
                 >
+                  <div className="rounded-lg border p-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="space-y-1">
+                        <Label htmlFor="database-schema-index">
+                          {t('createModal.schemaIndexLabel')}
+                        </Label>
+                        <p className="text-xs leading-relaxed text-muted-foreground">
+                          {t('createModal.schemaIndexDescription')}
+                        </p>
+                      </div>
+                      <Switch
+                        id="database-schema-index"
+                        checked={schemaIndexEnabled}
+                        onCheckedChange={setSchemaIndexEnabled}
+                        aria-label={t('createModal.schemaIndexLabel')}
+                      />
+                    </div>
+                  </div>
+
+                  {schemaIndexEnabled && (
+                    <EmbeddingSettings
+                      embeddingModel={embeddingModel}
+                      onChange={setEmbeddingModel}
+                      required
+                      title={t('createModal.embeddingModelLabel')}
+                      placeholder={t('createModal.embeddingModelPlaceholder')}
+                      hasError={hasSubmitted && !isEmbeddingModelValid}
+                      errorMessage={
+                        hasSubmitted && !isEmbeddingModelValid
+                          ? t('createModal.embeddingModelRequired')
+                          : undefined
+                      }
+                    />
+                  )}
+
                   {/* Icon */}
                   <div className="space-y-2">
                     <Label>{t('createModal.iconLabel')}</Label>

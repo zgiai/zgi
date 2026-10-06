@@ -40,6 +40,19 @@ type TargetBoundary struct {
 	VersionID string     `json:"version_id"`
 }
 
+type HostAudience string
+
+const (
+	HostAudienceWorkspace HostAudience = "workspace"
+	HostAudienceAPI       HostAudience = "api"
+	HostAudienceChannel   HostAudience = "channel"
+)
+
+type HostDelegation struct {
+	GrantedBy uuid.UUID      `json:"granted_by"`
+	Audiences []HostAudience `json:"audiences"`
+}
+
 type AccessConstraint struct {
 	SchemaVersion       int              `json:"schema_version"`
 	AllowedOperationIDs []Identifier     `json:"allowed_operation_ids"`
@@ -48,11 +61,24 @@ type AccessConstraint struct {
 	ExpiresAt           *time.Time       `json:"expires_at"`
 	DenyReasons         []string         `json:"deny_reasons"`
 	SourceDigest        string           `json:"source_digest,omitempty"`
+	AuthorizationMode   string           `json:"authorization_mode,omitempty"`
+	HostDelegation      *HostDelegation  `json:"host_delegation,omitempty"`
+	// These snapshots make a direct binding authorization stale after a
+	// credential rotation or any connection policy revision. Zero preserves
+	// compatibility for non-Chat projections that predate this field.
+	AuthorizationConnectionRevision int    `json:"authorization_connection_revision,omitempty"`
+	AuthorizationCredentialVersion  int    `json:"authorization_credential_version,omitempty"`
+	AuthorizationContractDigest     string `json:"authorization_contract_digest,omitempty"`
 }
+
+const (
+	AuthorizationModeAsk    = "ask_each_time"
+	AuthorizationModeDirect = "direct"
+)
 
 func OwnerConstraint(owner uuid.UUID, operations []Identifier) *AccessConstraint {
 	return &AccessConstraint{SchemaVersion: 1, AudienceOwner: owner,
-		AllowedOperationIDs: append([]Identifier{}, operations...), DenyReasons: []string{},
+		AllowedOperationIDs: append([]Identifier{}, operations...), DenyReasons: []string{}, AuthorizationMode: AuthorizationModeAsk,
 		TargetBoundaries: []TargetBoundary{{TargetTypeChat, "*", "live", "*"}, {TargetTypeAgent, "*", "*", "*"}, {TargetTypeWorkflow, "*", "*", "*"}},
 	}
 }
@@ -83,6 +109,15 @@ func (constraint *AccessConstraint) Validate() error {
 		constraint.AllowedOperationIDs == nil || constraint.TargetBoundaries == nil || constraint.DenyReasons == nil {
 		return invalidModel()
 	}
+	if constraint.AuthorizationMode != "" && constraint.AuthorizationMode != AuthorizationModeAsk && constraint.AuthorizationMode != AuthorizationModeDirect {
+		return invalidModel()
+	}
+	if constraint.AuthorizationConnectionRevision < 0 || constraint.AuthorizationCredentialVersion < 0 {
+		return invalidModel()
+	}
+	if constraint.AuthorizationContractDigest != "" && !hmacSHA256HexPattern.MatchString(constraint.AuthorizationContractDigest) {
+		return invalidModel()
+	}
 	seen := map[Identifier]bool{}
 	for _, id := range constraint.AllowedOperationIDs {
 		if !id.Valid() || seen[id] {
@@ -98,7 +133,41 @@ func (constraint *AccessConstraint) Validate() error {
 	if constraint.SourceDigest != "" && !hmacSHA256HexPattern.MatchString(constraint.SourceDigest) {
 		return invalidModel()
 	}
+	if grant := constraint.HostDelegation; grant != nil {
+		if grant.GrantedBy != constraint.AudienceOwner || len(grant.Audiences) == 0 || len(grant.Audiences) > 3 || len(constraint.TargetBoundaries) != 1 {
+			return invalidModel()
+		}
+		boundary := constraint.TargetBoundaries[0]
+		targetID, targetErr := uuid.Parse(boundary.ID)
+		versionID, versionErr := uuid.Parse(boundary.VersionID)
+		if (boundary.Type != TargetTypeAgent && boundary.Type != TargetTypeDigitalHuman) || boundary.Scope != string(ScopePublished) ||
+			targetErr != nil || targetID == uuid.Nil || targetID.String() != boundary.ID ||
+			versionErr != nil || versionID == uuid.Nil || versionID.String() != boundary.VersionID {
+			return invalidModel()
+		}
+		seenAudiences := make(map[HostAudience]bool, len(grant.Audiences))
+		for _, audience := range grant.Audiences {
+			if (audience != HostAudienceWorkspace && audience != HostAudienceAPI && audience != HostAudienceChannel) || seenAudiences[audience] {
+				return invalidModel()
+			}
+			seenAudiences[audience] = true
+		}
+	}
 	return nil
+}
+
+// DirectlyAuthorized reports whether this binding explicitly opted into
+// running its currently allowed operations without a per-invocation prompt.
+// Missing mode is the legacy-safe ask_each_time behavior.
+func (constraint *AccessConstraint) DirectlyAuthorized() bool {
+	return constraint != nil && constraint.AuthorizationMode == AuthorizationModeDirect
+}
+
+func (constraint *AccessConstraint) AuthorizationModeValue() string {
+	if constraint == nil || constraint.AuthorizationMode == "" {
+		return AuthorizationModeAsk
+	}
+	return constraint.AuthorizationMode
 }
 
 func (constraint *AccessConstraint) Allows(owner uuid.UUID, operation Identifier, target TargetRef, now time.Time) bool {
@@ -118,6 +187,19 @@ func (constraint *AccessConstraint) Allows(owner uuid.UUID, operation Identifier
 	}
 	for _, boundary := range constraint.TargetBoundaries {
 		if boundary.Type == target.Type && matchesBoundary(boundary.ID, target.ID) && matchesBoundary(boundary.Scope, string(target.EffectiveScope())) && matchesBoundary(boundary.VersionID, target.VersionID) {
+			return true
+		}
+	}
+	return false
+}
+
+func (constraint *AccessConstraint) AllowsHostAudience(owner uuid.UUID, operation Identifier, target TargetRef, audience HostAudience, now time.Time) bool {
+	if constraint == nil || constraint.HostDelegation == nil || target.EffectiveScope() != ScopePublished ||
+		!constraint.Allows(owner, operation, target, now) {
+		return false
+	}
+	for _, granted := range constraint.HostDelegation.Audiences {
+		if granted == audience {
 			return true
 		}
 	}

@@ -53,15 +53,17 @@ export const digitalHumanWebAppService = {
     );
   },
 
-  listTaskRuns(webAppId: string, taskId: string): Promise<ApiResponseData<DigitalHumanTaskPage<DigitalHumanTaskRun>>> {
+  listTaskRuns(webAppId: string, taskId: string, page = 1): Promise<ApiResponseData<DigitalHumanTaskPage<DigitalHumanTaskRun>>> {
     return createDigitalHumanWebAppHttp(webAppId).get(
-      `/api/v1/digital-human-webapps/${encodeURIComponent(webAppId)}/tasks/${encodeURIComponent(taskId)}/runs`
+      `/api/v1/digital-human-webapps/${encodeURIComponent(webAppId)}/tasks/${encodeURIComponent(taskId)}/runs`,
+      { params: { page } }
     );
   },
 
-  listTaskActivities(webAppId: string, taskId: string): Promise<ApiResponseData<DigitalHumanTaskPage<DigitalHumanTaskActivity>>> {
+  listTaskActivities(webAppId: string, taskId: string, page = 1): Promise<ApiResponseData<DigitalHumanTaskPage<DigitalHumanTaskActivity>>> {
     return createDigitalHumanWebAppHttp(webAppId).get(
-      `/api/v1/digital-human-webapps/${encodeURIComponent(webAppId)}/tasks/${encodeURIComponent(taskId)}/activities`
+      `/api/v1/digital-human-webapps/${encodeURIComponent(webAppId)}/tasks/${encodeURIComponent(taskId)}/activities`,
+      { params: { page } }
     );
   },
 };

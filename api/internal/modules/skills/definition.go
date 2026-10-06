@@ -293,6 +293,8 @@ type SkillToolDefinition struct {
 	// instance selected by the server-side projection. It is required to build
 	// a DigitalHuman target and is never member-authored.
 	ConnectorBindingInstanceID string `json:"-" yaml:"-"`
+	ConnectorOwnerAccountID    string `json:"-" yaml:"-"`
+	ConnectorBindingID         string `json:"-" yaml:"-"`
 }
 
 type SkillFrontmatter struct {

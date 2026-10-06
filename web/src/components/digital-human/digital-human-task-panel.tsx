@@ -4,18 +4,14 @@ import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } f
 import {
   Archive,
   ArrowRight,
-  AlertTriangle,
   CalendarClock,
   CheckCircle2,
-  ChevronDown,
   ChevronRight,
-  CircleDot,
   Inbox,
   Info,
   ListTodo,
   Loader2,
   Pause,
-  Pencil,
   Play,
   Plus,
   RefreshCw,
@@ -41,7 +37,8 @@ import { useT } from '@/i18n';
 import { useLocale } from '@/hooks/use-locale';
 import { getErrorMessage } from '@/utils/error-notifications';
 import { translateTimezone } from '@/utils/timezone';
-import { digitalHumanTaskDisplayStatus } from '@/components/digital-human/digital-human-task-presentation';
+import { digitalHumanTaskDisplayStatus, digitalHumanTaskScheduleSummary } from '@/components/digital-human/digital-human-task-presentation';
+import { DigitalHumanTaskActivityItem, DigitalHumanTaskHistoryPager, DigitalHumanTaskRunSummary } from '@/components/digital-human/digital-human-task-history';
 import type {
   CreateDigitalHumanTaskRequest,
   DigitalHumanTask,
@@ -78,9 +75,10 @@ export interface DigitalHumanTaskPanelClient {
     action: string,
     revision: number
   ) => Promise<ApiResponseData<DigitalHumanTask>>;
-  runs: (taskId: string) => Promise<ApiResponseData<DigitalHumanTaskPage<DigitalHumanTaskRun>>>;
+  runs: (taskId: string, page: number) => Promise<ApiResponseData<DigitalHumanTaskPage<DigitalHumanTaskRun>>>;
   activities: (
-    taskId: string
+    taskId: string,
+    page: number
   ) => Promise<ApiResponseData<DigitalHumanTaskPage<DigitalHumanTaskActivity>>>;
 }
 
@@ -100,8 +98,12 @@ export function DigitalHumanTaskPanel({
   const [tasks, setTasks] = useState<DigitalHumanTaskList | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
-  const [runs, setRuns] = useState<DigitalHumanTaskRun[]>([]);
-  const [activities, setActivities] = useState<DigitalHumanTaskActivity[]>([]);
+  const [runs, setRuns] = useState<DigitalHumanTaskPage<DigitalHumanTaskRun> | null>(null);
+  const [activities, setActivities] = useState<DigitalHumanTaskPage<DigitalHumanTaskActivity> | null>(null);
+  const [runPage, setRunPage] = useState(1);
+  const [activityPage, setActivityPage] = useState(1);
+  const [historyRefresh, setHistoryRefresh] = useState(0);
+  const [historyError, setHistoryError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -109,6 +111,8 @@ export function DigitalHumanTaskPanel({
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('open');
   const [priority, setPriority] = useState('all');
+  const [page, setPage] = useState(1);
+  const loadSequenceRef = useRef(0);
   const deferredSearch = useDeferredValue(search);
   const loadErrorText = t('tasks.loadError');
   const clientRef = useRef(client);
@@ -122,6 +126,7 @@ export function DigitalHumanTaskPanel({
   );
 
   const load = useCallback(async () => {
+    const sequence = ++loadSequenceRef.current;
     try {
       const statusValues =
         status === 'open'
@@ -130,12 +135,13 @@ export function DigitalHumanTaskPanel({
             ? [status]
             : undefined;
       const response = await clientRef.current.list({
-        page: 1,
+        page,
         page_size: 100,
         ...(deferredSearch.trim() ? { query: deferredSearch.trim() } : {}),
         ...(statusValues ? { status: statusValues } : {}),
         ...(priority !== 'all' ? { priority: [priority] } : {}),
       });
+      if (sequence !== loadSequenceRef.current) return;
       setTasks(response.data);
       setSelectedId(current =>
         response.data.items.some(item => item.id === current)
@@ -143,14 +149,16 @@ export function DigitalHumanTaskPanel({
           : (response.data.items[0]?.id ?? null)
       );
     } catch (error) {
-      toast.error(getErrorMessage(error) || loadErrorTextRef.current);
+      if (sequence === loadSequenceRef.current) toast.error(getErrorMessage(error) || loadErrorTextRef.current);
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (sequence === loadSequenceRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
-  }, [deferredSearch, priority, status]);
+  }, [deferredSearch, page, priority, status]);
 
-  const loadFilterKey = `${deferredSearch}\u0000${priority}\u0000${status}\u0000${refreshKey}`;
+  const loadFilterKey = `${deferredSearch}\u0000${priority}\u0000${status}\u0000${page}\u0000${refreshKey}`;
   useEffect(() => {
     if (lastLoadFilterKeyRef.current === loadFilterKey) return;
     if (refreshKey > 0) setRefreshing(true);
@@ -181,24 +189,38 @@ export function DigitalHumanTaskPanel({
   }, [load, shouldPoll]);
 
   useEffect(() => {
+    setRunPage(1);
+    setActivityPage(1);
+    setRuns(null);
+    setActivities(null);
+    setHistoryError(false);
+  }, [selectedId]);
+
+  useEffect(() => {
     if (!selected) {
-      setRuns([]);
-      setActivities([]);
+      setRuns(null);
+      setActivities(null);
       return;
     }
+    let active = true;
     void Promise.all([
-      clientRef.current.runs(selected.id),
-      clientRef.current.activities(selected.id),
+      clientRef.current.runs(selected.id, runPage),
+      clientRef.current.activities(selected.id, activityPage),
     ])
       .then(([runResponse, activityResponse]) => {
-        setRuns(runResponse.data.items);
-        setActivities(activityResponse.data.items);
+        if (!active) return;
+        setRuns(runResponse.data);
+        setActivities(activityResponse.data);
+        setHistoryError(false);
       })
       .catch(() => {
-        setRuns([]);
-        setActivities([]);
+        if (!active) return;
+        setRuns(null);
+        setActivities(null);
+        setHistoryError(true);
       });
-  }, [selectedId, selected]);
+    return () => { active = false; };
+  }, [selectedId, selected, runPage, activityPage, historyRefresh]);
 
   const visibleTasks = useMemo(() => tasks?.items ?? [], [tasks]);
 
@@ -339,12 +361,18 @@ export function DigitalHumanTaskPanel({
       >
         <Input
           value={search}
-          onChange={event => setSearch(event.target.value)}
+          onChange={event => {
+            setSearch(event.target.value);
+            setPage(1);
+          }}
           placeholder={t('tasks.filters.search')}
           aria-label={t('tasks.filters.search')}
         />
         <div className={compact ? 'grid grid-cols-2 gap-2' : 'contents'}>
-          <Select value={status} onValueChange={setStatus}>
+          <Select value={status} onValueChange={value => {
+            setStatus(value);
+            setPage(1);
+          }}>
             <SelectTrigger className="h-9 min-w-0" aria-label={t('tasks.filters.status')}>
               <SelectValue />
             </SelectTrigger>
@@ -357,7 +385,10 @@ export function DigitalHumanTaskPanel({
               ))}
             </SelectContent>
           </Select>
-          <Select value={priority} onValueChange={setPriority}>
+          <Select value={priority} onValueChange={value => {
+            setPriority(value);
+            setPage(1);
+          }}>
             <SelectTrigger className="h-9 min-w-0" aria-label={t('tasks.filters.priority')}>
               <SelectValue />
             </SelectTrigger>
@@ -429,7 +460,7 @@ export function DigitalHumanTaskPanel({
                           {t(`tasks.status.${displayStatus}`)}
                         </Badge>
                         {task.priority !== 'normal' ? (
-                          <Badge variant="secondary" className="text-[10px]">
+                          <Badge variant="secondary" className="text-[10px]" title={t('tasks.priorityNote')}>
                             {t(`tasks.priority.${task.priority}`)}
                           </Badge>
                         ) : null}
@@ -439,7 +470,7 @@ export function DigitalHumanTaskPanel({
                   </div>
                   <div className="mt-1.5 flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground">
                     <CalendarClock className="size-3 shrink-0" />
-                    <span className="truncate">{taskScheduleSummary(task, t, locale)}</span>
+                    <span className="truncate">{digitalHumanTaskScheduleSummary(task, t, locale)}</span>
                   </div>
                   {task.next_run_at ? (
                     <div className="mt-0.5 truncate pl-4 text-[11px] text-muted-foreground/80">
@@ -455,6 +486,25 @@ export function DigitalHumanTaskPanel({
               );
             })
           )}
+          {tasks && (tasks.total > 0 || page > 1) ? (
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t px-1 pt-3 text-xs text-muted-foreground">
+              <span>{t('tasks.pagination.range', {
+                from: tasks.items.length ? (page - 1) * 100 + 1 : 0,
+                to: tasks.items.length ? (page - 1) * 100 + tasks.items.length : 0,
+                total: tasks.total,
+              })}</span>
+              <div className="flex gap-1">
+                <Button variant="outline" size="sm" disabled={page <= 1 || refreshing}
+                  onClick={() => { setPage(page - 1); setLoading(true); setDetailOpen(false); }}>
+                  {t('tasks.pagination.previous')}
+                </Button>
+                <Button variant="outline" size="sm" disabled={!tasks.has_more || refreshing}
+                  onClick={() => { setPage(page + 1); setLoading(true); setDetailOpen(false); }}>
+                  {t('tasks.pagination.next')}
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </div>
         {!compact ? (
           <div className="min-w-0 p-4">
@@ -462,8 +512,10 @@ export function DigitalHumanTaskPanel({
               selected={selected}
               editing={editing}
               draft={draft}
-              runs={runs}
-              activities={activities}
+              history={{ runs, activities, runPage, activityPage, historyError,
+                onRunPage: page => { setRunPage(page); setRuns(null); },
+                onActivityPage: page => { setActivityPage(page); setActivities(null); },
+                onRetry: () => setHistoryRefresh(value => value + 1) }}
               title={title}
               onDraftChange={setDraft}
               onCreate={create}
@@ -490,8 +542,10 @@ export function DigitalHumanTaskPanel({
                 selected={selected}
                 editing={editing}
                 draft={draft}
-                runs={runs}
-                activities={activities}
+                history={{ runs, activities, runPage, activityPage, historyError,
+                  onRunPage: page => { setRunPage(page); setRuns(null); },
+                onActivityPage: page => { setActivityPage(page); setActivities(null); },
+                  onRetry: () => setHistoryRefresh(value => value + 1) }}
                 title={title}
                 onDraftChange={setDraft}
                 onCreate={create}
@@ -519,12 +573,22 @@ interface TaskDraft {
   goal: string;
 }
 
+interface TaskHistoryState {
+  runs: DigitalHumanTaskPage<DigitalHumanTaskRun> | null;
+  activities: DigitalHumanTaskPage<DigitalHumanTaskActivity> | null;
+  runPage: number;
+  activityPage: number;
+  historyError: boolean;
+  onRunPage: (page: number) => void;
+  onActivityPage: (page: number) => void;
+  onRetry: () => void;
+}
+
 function TaskDetailContent({
   selected,
   editing,
   draft,
-  runs,
-  activities,
+  history,
   title,
   onDraftChange,
   onCreate,
@@ -539,8 +603,7 @@ function TaskDetailContent({
   selected: DigitalHumanTask | null;
   editing: boolean;
   draft: TaskDraft;
-  runs: DigitalHumanTaskRun[];
-  activities: DigitalHumanTaskActivity[];
+  history: TaskHistoryState;
   title: 'my' | 'shared';
   onDraftChange: (draft: TaskDraft) => void;
   onCreate: () => Promise<void>;
@@ -554,6 +617,8 @@ function TaskDetailContent({
 }) {
   const t = useT('digitalHumans');
   const { locale } = useLocale();
+  const runs = history.runs?.items ?? [];
+  const activities = history.activities?.items ?? [];
   const [confirmingAction, setConfirmingAction] = useState<'cancel' | 'archive' | null>(null);
 
   if (editing) {
@@ -622,7 +687,7 @@ function TaskDetailContent({
           </span>
         ) : null}
         {allowDirectMutations &&
-        ['pending', 'waiting', 'blocked'].includes(selected.work_status) ? (
+        ['pending', 'waiting'].includes(selected.work_status) ? (
           <Button size="sm" onClick={() => void onAction('run_now')}>
             <Play className="mr-1 size-3" />
             {t('tasks.actions.runNow')}
@@ -699,7 +764,7 @@ function TaskDetailContent({
         <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
           <TaskScheduleDetail
             label={t('tasks.fields.schedule')}
-            value={taskScheduleSummary(selected, t, locale)}
+            value={digitalHumanTaskScheduleSummary(selected, t, locale)}
           />
           {selected.schedule.type === 'once' && selected.schedule.run_at ? (
             <TaskScheduleDetail
@@ -747,84 +812,38 @@ function TaskDetailContent({
       </section>
       <div className="border-t pt-3">
         <h4 className="text-xs font-medium text-muted-foreground">{t('tasks.detail.runs')}</h4>
-        {runs.length === 0 ? (
+        {history.historyError ? (
+          <Button variant="outline" size="sm" onClick={history.onRetry}>{t('tasks.retry')}</Button>
+        ) : !history.runs ? (
+          <Loader2 className="mt-2 size-4 animate-spin" aria-label={t('tasks.detail.runs')} />
+        ) : runs.length === 0 ? (
           <p className="mt-2 text-xs text-muted-foreground">{t('tasks.detail.noRuns')}</p>
-        ) : (
-          runs.slice(0, 3).map(run => (
-            <div key={run.id} className="mt-2 rounded-md bg-muted/50 p-2 text-xs">
-              <div className="flex justify-between">
-                <span>{runStatusLabel(run.status, t)}</span>
-                <span>{run.finished_at ? new Date(run.finished_at).toLocaleString() : '—'}</span>
-              </div>
-              {run.result_delivery_status ? (
-                <div className="mt-1 text-muted-foreground">
-                  {t('tasks.detail.resultDelivery')}：
-                  {runDeliveryStatusLabel(run.result_delivery_status, t)}
-                  {run.result_delivery_error ? ` · ${run.result_delivery_error}` : ''}
-                </div>
-              ) : null}
-              {run.result_summary ? (
-                <p className="mt-1 whitespace-pre-wrap text-muted-foreground">
-                  {run.result_summary}
-                </p>
-              ) : null}
-            </div>
-          ))
-        )}
+        ) : runs.map(run => (
+          <div key={run.id} className="mt-2"><DigitalHumanTaskRunSummary run={run} /></div>
+        ))}
+        <DigitalHumanTaskHistoryPager data={history.runs} page={history.runPage} onPage={history.onRunPage} />
       </div>
-      {activities.length > 0 ? (
-        <div className="border-t pt-4">
-          <div className="flex items-center justify-between gap-2">
-            <h4 className="text-xs font-medium text-muted-foreground">
-              {t('tasks.detail.activities')}
-            </h4>
-            <span className="text-[11px] text-muted-foreground">{activities.length}</span>
-          </div>
-          <ol className="mt-3 space-y-0">
-            {activities.slice(0, 8).map((activity, index) => {
-              return (
-                <li key={activity.id} className="relative pl-6">
-                  {index < Math.min(activities.length, 8) - 1 ? (
-                    <span
-                      aria-hidden="true"
-                      className="absolute bottom-0 left-[7px] top-4 w-px bg-border"
-                    />
-                  ) : null}
-                  <span
-                    aria-hidden="true"
-                    className={`absolute left-0 top-0.5 flex size-4 items-center justify-center rounded-full bg-background ${activityTone(activity.action)}`}
-                  >
-                    <ActivityIcon action={activity.action} />
-                  </span>
-                  <div className="pb-4 last:pb-0">
-                    <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">
-                      <span className="text-xs font-medium text-foreground">
-                        {activityLabel(activity.action, t)}
-                      </span>
-                      <time
-                        dateTime={activity.created_at}
-                        title={formatTaskDate(activity.created_at)}
-                        className="text-[11px] text-muted-foreground"
-                      >
-                        {formatActivityTime(activity.created_at, locale)}
-                      </time>
-                    </div>
-                    <div className="mt-0.5 text-[11px] text-muted-foreground">
-                      {activityActorLabel(activity.actor_type, t)}
-                    </div>
-                    <ActivityChangeDetails
-                      activity={activity}
-                      locale={locale}
-                      t={t}
-                      defaultOpen={index === 0}
-                    />
-                  </div>
-                </li>
-              );
-            })}
-          </ol>
+      <div className="border-t pt-4">
+        <div className="flex items-center justify-between gap-2">
+          <h4 className="text-xs font-medium text-muted-foreground">{t('tasks.detail.activities')}</h4>
+          {history.activities ? <span className="text-[11px] text-muted-foreground">{history.activities.total}</span> : null}
         </div>
-      ) : null}
+        {history.historyError ? (
+          <Button variant="outline" size="sm" onClick={history.onRetry}>{t('tasks.retry')}</Button>
+        ) : !history.activities ? (
+          <Loader2 className="mt-2 size-4 animate-spin" aria-label={t('tasks.detail.activities')} />
+        ) : activities.length === 0 ? (
+          <p className="mt-2 text-xs text-muted-foreground">{t('tasks.detail.noActivities')}</p>
+        ) : (
+          <ol className="mt-3 space-y-0">
+            {activities.map((activity, index) => (
+              <DigitalHumanTaskActivityItem key={activity.id} activity={activity} locale={locale}
+                isLast={index === activities.length - 1} defaultOpen={index === 0 && history.activityPage === 1} />
+            ))}
+          </ol>
+        )}
+        <DigitalHumanTaskHistoryPager data={history.activities} page={history.activityPage} onPage={history.onActivityPage} />
+      </div>
     </div>
   );
 }
@@ -838,378 +857,6 @@ function TaskScheduleDetail({ label, value }: { label: string; value: string }) 
   );
 }
 
-type TaskActivityTranslator = ReturnType<typeof useT<'digitalHumans'>>;
-
-function activityLabel(action: string, t: TaskActivityTranslator): string {
-  const labels: Record<string, string> = {
-    created: t('tasks.activity.created'),
-    updated: t('tasks.activity.updated'),
-    status_changed: t('tasks.activity.status_changed'),
-    confirm: t('tasks.activity.confirm'),
-    decline: t('tasks.activity.decline'),
-    run_now: t('tasks.activity.run_now'),
-    pause: t('tasks.activity.pause'),
-    resume: t('tasks.activity.resume'),
-    retry: t('tasks.activity.retry'),
-    cancel: t('tasks.activity.cancel'),
-    archive: t('tasks.activity.archive'),
-    blocked: t('tasks.activity.blocked'),
-    run_finished: t('tasks.activity.run_finished'),
-    proposal_expired: t('tasks.activity.proposal_expired'),
-    status_repaired: t('tasks.activity.status_repaired'),
-  };
-  if (labels[action]) return labels[action];
-  return action.replace(/[_-]+/g, ' ').replace(/\b\w/g, character => character.toUpperCase());
-}
-
-function activityActorLabel(actorType: string, t: TaskActivityTranslator): string {
-  return actorType === 'system' ? t('tasks.activity.system') : t('tasks.activity.actorSelf');
-}
-
-function activityTone(action: string): string {
-  if (action === 'created' || action === 'confirm' || action === 'run_finished') {
-    return 'text-emerald-600';
-  }
-  if (action === 'decline' || action === 'cancel' || action === 'archive' || action === 'blocked') {
-    return 'text-destructive';
-  }
-  return 'text-primary';
-}
-
-function ActivityIcon({ action }: { action: string }) {
-  if (action === 'created') {
-    return <CircleDot className="size-2.5" />;
-  }
-  if (action === 'confirm' || action === 'run_finished') {
-    return <CheckCircle2 className="size-2.5" />;
-  }
-  if (action === 'blocked') {
-    return <AlertTriangle className="size-2.5" />;
-  }
-  if (action === 'updated' || action === 'status_changed') {
-    return <Pencil className="size-2.5" />;
-  }
-  return <CircleDot className="size-2.5" />;
-}
-
-function ActivityChangeDetails({
-  activity,
-  locale,
-  t,
-  defaultOpen,
-}: {
-  activity: DigitalHumanTaskActivity;
-  locale?: string;
-  t: TaskActivityTranslator;
-  defaultOpen: boolean;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  const changes = formatActivityChanges(activity.changes, activity.action, locale);
-  if (changes.length === 0) return null;
-
-  return (
-    <div className="mt-1.5">
-      <button
-        type="button"
-        className="inline-flex min-h-7 items-center gap-1 rounded-md px-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        aria-expanded={open}
-        onClick={() => setOpen(value => !value)}
-      >
-        <ChevronDown className={`size-3 transition-transform ${open ? '' : '-rotate-90'}`} />
-        {open ? t('tasks.activity.hideChanges') : t('tasks.activity.viewChanges')}
-      </button>
-      {open ? (
-        <div className="mt-1.5 space-y-1 rounded-md bg-muted/50 px-2.5 py-2 text-[11px] leading-5">
-          {changes.map(change => (
-            <div key={change.key} className="grid gap-0.5 sm:grid-cols-[minmax(5rem,8rem)_minmax(0,1fr)] sm:gap-2">
-              <span className="text-muted-foreground">{change.label}</span>
-              <span className="min-w-0 break-words font-medium text-foreground">
-                {change.before !== undefined ? (
-                  <>
-                    <span className="text-muted-foreground line-through">
-                      {formatActivityValue(change.key, change.before, locale)}
-                    </span>
-                    <ArrowRight className="mx-1 inline-block size-3 align-[-2px] text-muted-foreground" />
-                  </>
-                ) : null}
-                {change.after !== undefined
-                  ? formatActivityValue(change.key, change.after, locale)
-                  : t('tasks.activity.removed')}
-              </span>
-            </div>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function formatActivityTime(value: string, locale?: string): string {
-  const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) return value;
-  const elapsed = Math.max(0, Date.now() - timestamp);
-  const minute = 60 * 1000;
-  const hour = 60 * minute;
-  const day = 24 * hour;
-  if (elapsed < minute) return locale?.startsWith('zh') ? '刚刚' : 'Just now';
-  if (elapsed < hour) {
-    const count = Math.max(1, Math.floor(elapsed / minute));
-    return locale?.startsWith('zh') ? `${count} 分钟前` : `${count}m ago`;
-  }
-  if (elapsed < day) {
-    const count = Math.max(1, Math.floor(elapsed / hour));
-    return locale?.startsWith('zh') ? `${count} 小时前` : `${count}h ago`;
-  }
-  if (elapsed < 7 * day) {
-    const count = Math.max(1, Math.floor(elapsed / day));
-    return locale?.startsWith('zh') ? `${count} 天前` : `${count}d ago`;
-  }
-  return new Intl.DateTimeFormat(locale === 'zh-Hans' ? 'zh-CN' : locale, {
-    month: 'numeric',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(timestamp));
-}
-
-function formatActivityChanges(
-  changes: Record<string, unknown> | undefined,
-  action: string,
-  locale?: string
-): Array<{ key: string; label: string; before?: unknown; after?: unknown }> {
-  if (!changes) return [];
-  const labels: Record<string, string> = locale?.startsWith('zh')
-    ? {
-        name: '名称',
-        goal: '目标',
-        priority: '优先级',
-        work_status: '状态',
-        lifecycle_status: '生命周期',
-        delivery_mode: '交付方式',
-        schedule: '执行计划',
-        reason: '原因',
-        run_status: '执行状态',
-        digital_human_status: '数字人状态',
-      }
-    : {
-        name: 'Name',
-        goal: 'Goal',
-        priority: 'Priority',
-        work_status: 'Status',
-        lifecycle_status: 'Lifecycle',
-        delivery_mode: 'Delivery',
-        schedule: 'Schedule',
-        reason: 'Reason',
-        run_status: 'Run status',
-        digital_human_status: 'Digital human status',
-      };
-  const entries: Array<{ key: string; label: string; before?: unknown; after?: unknown }> = [];
-  for (const [key, rawValue] of Object.entries(changes)) {
-    if (rawValue === undefined || rawValue === null) continue;
-    if (isActivityChange(rawValue)) {
-      entries.push({
-        key,
-        label: labels[key] ?? key,
-        before: rawValue.before,
-        after: rawValue.after,
-      });
-      continue;
-    }
-    if (typeof rawValue === 'object') {
-      entries.push({ key, label: labels[key] ?? key, after: activityObjectSummary(key, locale) });
-      continue;
-    }
-    entries.push({
-      key,
-      label: labels[key] ?? key,
-      before: inferredActivityBefore(action, key, rawValue),
-      after: rawValue,
-    });
-  }
-  return entries;
-}
-
-function isActivityChange(value: unknown): value is { before?: unknown; after?: unknown } {
-  return typeof value === 'object' && value !== null && ('before' in value || 'after' in value);
-}
-
-function inferredActivityBefore(action: string, key: string, after: unknown): unknown {
-  if (action !== 'confirm') return undefined;
-  if (key === 'work_status' && after === 'pending') return 'proposed';
-  if (key === 'status' && after === 'active') return 'draft';
-  return undefined;
-}
-
-function activityObjectSummary(key: string, locale?: string): string {
-  if (key === 'schedule') {
-    return locale?.startsWith('zh') ? '执行计划已更新' : 'Execution plan updated';
-  }
-  return locale?.startsWith('zh') ? '已更新' : 'Updated';
-}
-
-function formatActivityValue(key: string, value: unknown, locale?: string): string {
-  const zh = locale?.startsWith('zh');
-  const maps: Record<string, Record<string, string>> = {
-    work_status: zh
-      ? {
-          proposed: '待确认',
-          pending: '待执行',
-          in_progress: '执行中',
-          waiting: '等待输入',
-          blocked: '执行受阻',
-          completed: '已完成',
-          canceled: '已取消',
-        }
-      : {
-          proposed: 'Needs confirmation',
-          pending: 'Ready to run',
-          in_progress: 'In progress',
-          waiting: 'Waiting for input',
-          blocked: 'Blocked',
-          completed: 'Completed',
-          canceled: 'Canceled',
-        },
-    status: zh
-      ? { draft: '未启用', active: '已启用', paused: '已暂停', archived: '已归档' }
-      : { draft: 'Not active', active: 'Enabled', paused: 'Paused', archived: 'Archived' },
-    priority: zh
-      ? { low: '低', normal: '普通', high: '高', urgent: '紧急' }
-      : { low: 'Low', normal: 'Normal', high: 'High', urgent: 'Urgent' },
-    delivery_mode: zh
-      ? { task_only: '仅保留在待办详情', source_conversation: '回复到来源会话' }
-      : { task_only: 'Keep in task details', source_conversation: 'Reply to source conversation' },
-    reason: zh
-      ? { execution_unavailable: '执行环境不可用' }
-      : { execution_unavailable: 'Execution environment unavailable' },
-    run_status: zh
-      ? { queued: '排队中', running: '执行中', succeeded: '已完成', failed: '失败', canceled: '已取消' }
-      : { queued: 'Queued', running: 'Running', succeeded: 'Succeeded', failed: 'Failed', canceled: 'Canceled' },
-  };
-  if (typeof value === 'string') return maps[key]?.[value] ?? value;
-  if (typeof value === 'boolean') return value ? (zh ? '是' : 'Yes') : zh ? '否' : 'No';
-  if (Array.isArray(value)) return value.join(zh ? '、' : ', ');
-  if (value === null || value === undefined) return zh ? '无' : 'None';
-  return String(value);
-}
-
-function taskScheduleSummary(
-  task: DigitalHumanTask,
-  t: ReturnType<typeof useT<'digitalHumans'>>,
-  locale?: string
-): string {
-  const schedule = task.schedule;
-  if (schedule.type === 'manual') return t('tasks.schedule.manual');
-  if (schedule.type === 'once') {
-    return `${t('tasks.schedule.once')} · ${schedule.run_at ? formatTaskDate(schedule.run_at) : '—'}`;
-  }
-  const description = describeCronSchedule(schedule.cron, t);
-  return schedule.timezone
-    ? `${description} · ${translateTimezone(schedule.timezone, locale)}`
-    : description;
-}
-
-function describeCronSchedule(
-  expression: string | undefined,
-  t: ReturnType<typeof useT<'digitalHumans'>>
-): string {
-  const fields = expression?.trim().split(/\s+/) ?? [];
-  if (fields.length !== 5) return t('tasks.schedule.custom');
-
-  const [minutes, hours, dayOfMonth, month, dayOfWeek] = fields;
-  const simpleTime = parseSimpleCronTime(minutes, hours);
-  if (simpleTime && dayOfMonth === '*' && month === '*') {
-    if (dayOfWeek === '*') return t('tasks.schedule.daily', { time: simpleTime });
-
-    const weekdays = parseCronWeekdays(dayOfWeek);
-    if (weekdays.length > 0) {
-      const weekdayLabels: Record<string, string> = {
-        sun: t('tasks.weekdays.sun'),
-        mon: t('tasks.weekdays.mon'),
-        tue: t('tasks.weekdays.tue'),
-        wed: t('tasks.weekdays.wed'),
-        thu: t('tasks.weekdays.thu'),
-        fri: t('tasks.weekdays.fri'),
-        sat: t('tasks.weekdays.sat'),
-      };
-      const isWeekdays = weekdays.join(',') === 'mon,tue,wed,thu,fri';
-      if (isWeekdays) return t('tasks.schedule.weekdays', { time: simpleTime });
-      return t('tasks.schedule.weekly', {
-        days: weekdays.map(day => weekdayLabels[day]).join(', '),
-        time: simpleTime,
-      });
-    }
-  }
-
-  const everyMinutes = /^\*(\/(\d+))?$/.exec(minutes);
-  if (
-    everyMinutes?.[2] &&
-    hours === '*' &&
-    dayOfMonth === '*' &&
-    month === '*' &&
-    dayOfWeek === '*'
-  ) {
-    return t('tasks.schedule.everyMinutes', { value: everyMinutes[2] });
-  }
-
-  const everyHours = minutes === '0' ? /^\*(\/(\d+))?$/.exec(hours) : null;
-  if (everyHours?.[2] && dayOfMonth === '*' && month === '*' && dayOfWeek === '*') {
-    return t('tasks.schedule.everyHours', { value: everyHours[2] });
-  }
-
-  if (simpleTime && /^\d{1,2}$/.test(dayOfMonth) && month === '*' && dayOfWeek === '*') {
-    return t('tasks.schedule.monthly', {
-      day: String(Number(dayOfMonth)),
-      time: simpleTime,
-    });
-  }
-
-  return t('tasks.schedule.custom');
-}
-
-function parseSimpleCronTime(minutes: string, hours: string): string | null {
-  if (!/^\d{1,2}$/.test(minutes) || !/^\d{1,2}$/.test(hours)) return null;
-  const minute = Number(minutes);
-  const hour = Number(hours);
-  if (minute > 59 || hour > 23) return null;
-  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
-}
-
-function parseCronWeekdays(value: string): string[] {
-  const aliases = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
-  const result = new Set<number>();
-  for (const token of value.split(',')) {
-    const normalized = token.trim().toLowerCase();
-    const range = normalized.split('-');
-    if (range.length === 2) {
-      const start = parseCronWeekday(range[0]);
-      const end = parseCronWeekday(range[1]);
-      if (start !== null && end !== null && start <= end) {
-        for (let day = start; day <= end; day += 1) result.add(day);
-      }
-      continue;
-    }
-    const day = parseCronWeekday(normalized);
-    if (day !== null) result.add(day);
-  }
-  return [...result].sort((a, b) => a - b).map(day => aliases[day]);
-}
-
-function parseCronWeekday(value: string): number | null {
-  const aliases: Record<string, number> = {
-    sun: 0,
-    mon: 1,
-    tue: 2,
-    wed: 3,
-    thu: 4,
-    fri: 5,
-    sat: 6,
-  };
-  if (value in aliases) return aliases[value];
-  if (!/^\d$/.test(value)) return null;
-  const day = Number(value);
-  return day === 7 ? 0 : day <= 6 ? day : null;
-}
-
 function formatTaskDate(value: string): string {
   const timestamp = Date.parse(value);
   if (!Number.isFinite(timestamp)) return value;
@@ -1217,33 +864,4 @@ function formatTaskDate(value: string): string {
     dateStyle: 'medium',
     timeStyle: 'short',
   });
-}
-
-function runStatusLabel(status: string, t: ReturnType<typeof useT<'digitalHumans'>>) {
-  switch (status) {
-    case 'queued':
-      return t('tasks.runStatus.queued');
-    case 'running':
-      return t('tasks.runStatus.running');
-    case 'succeeded':
-      return t('tasks.runStatus.succeeded');
-    case 'failed':
-      return t('tasks.runStatus.failed');
-    case 'canceled':
-      return t('tasks.runStatus.canceled');
-    default:
-      return t('tasks.runStatus.unknown');
-  }
-}
-
-function runDeliveryStatusLabel(
-  status: NonNullable<DigitalHumanTaskRun['result_delivery_status']>,
-  t: ReturnType<typeof useT<'digitalHumans'>>
-) {
-  const key = ['pending', 'processing', 'succeeded', 'failed', 'unknown', 'dismissed'].includes(
-    status
-  )
-    ? status
-    : 'unknown';
-  return t(`tasks.deliveryStatus.${key}` as const);
 }

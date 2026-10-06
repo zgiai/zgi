@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -57,6 +58,52 @@ func TestConnectorToolsDisabledSkipsAgentCapabilityResolution(t *testing.T) {
 	)
 	if err != nil || len(resolver.requests) != 0 || parts.ConnectorToolsEnabled || len(parts.ConnectorSkillIDs) != 0 {
 		t.Fatalf("disabled Connector projection resolved capabilities: parts=%#v requests=%#v err=%v", parts, resolver.requests, err)
+	}
+}
+
+func TestConnectorToolsDisabledSkipsDigitalHumanCapabilityResolution(t *testing.T) {
+	t.Parallel()
+
+	resolver := &digitalHumanRuntimeResolverStub{}
+	svc := &service{connectorDigitalHumanRuntime: resolver}
+	digitalHumanID := uuid.New()
+	parts := &chatRequestParts{
+		ConnectorToolsDisabled:   true,
+		ConnectorTargetScope:     string(core.ScopePublished),
+		ConnectorTargetVersionID: uuid.NewString(),
+	}
+	err := svc.applyConnectorSkillConfig(
+		context.Background(),
+		Scope{OrganizationID: uuid.New(), AccountID: uuid.New()},
+		Caller{Type: runtimemodel.ConversationCallerDigitalHuman, ID: &digitalHumanID},
+		parts,
+	)
+	if err != nil || len(resolver.requests) != 0 || parts.ConnectorToolsEnabled || len(parts.ConnectorSkillIDs) != 0 {
+		t.Fatalf("disabled DigitalHuman Connector projection resolved capabilities: parts=%#v requests=%#v err=%v", parts, resolver.requests, err)
+	}
+}
+
+func TestPublishedAgentFallsBackToDelegatedHostCapabilities(t *testing.T) {
+	t.Parallel()
+
+	organizationID := uuid.New()
+	requesterID := uuid.New()
+	agentID := uuid.New()
+	runID := uuid.New()
+	resolver := &delegatedAgentRuntimeResolverStub{snapshot: connectorChatTestSnapshot(organizationID, requesterID, agentID)}
+	svc := &service{connectorAgentRuntime: resolver}
+
+	snapshot, err := svc.resolveConnectorCapabilities(
+		context.Background(),
+		Scope{OrganizationID: organizationID, AccountID: requesterID},
+		Caller{Type: runtimemodel.ConversationCallerAgent, ID: &agentID, RunID: &runID, Source: runtimemodel.ConversationSourceExternalAPI},
+		agentID.String(), core.ScopePublished, uuid.NewString(),
+	)
+	if err != nil || !snapshot.HasOperations() {
+		t.Fatalf("delegated capabilities = %#v, error = %v", snapshot, err)
+	}
+	if resolver.delegatedRequest.Audience != core.HostAudienceAPI || resolver.delegatedRequest.RequesterID != requesterID || resolver.delegatedRequest.RunID != runID {
+		t.Fatalf("delegated request = %#v", resolver.delegatedRequest)
 	}
 }
 
@@ -233,6 +280,22 @@ func TestConnectorRuntimeOptionalDependencyIsInjected(t *testing.T) {
 	}
 }
 
+func TestAgentConnectorProjectionRejectsAmbiguousDelegatedOwners(t *testing.T) {
+	snapshot := digitalHumanConnectorTestSnapshot(uuid.NewString(), uuid.NewString())
+	for index := range snapshot.Capabilities {
+		capability := &snapshot.Capabilities[index]
+		capability.Target = core.TargetRef{Type: core.TargetTypeAgent, ID: uuid.NewString(), Scope: core.ScopePublished, VersionID: uuid.NewString()}
+		capability.Definition.Surfaces = []catalog.Surface{catalog.SurfaceAgent}
+		capability.OwnerAccountID = uuid.New()
+		capability.BindingID = uuid.New()
+	}
+	snapshot.Capabilities[1].Target = snapshot.Capabilities[0].Target
+	projected, err := projectConnectorOperations(nil, snapshot, catalog.SurfaceAgent)
+	if err == nil || projected != nil {
+		t.Fatalf("different owners silently collapsed into one Agent operation: %#v, %v", projected, err)
+	}
+}
+
 func TestDigitalHumanConnectorCapabilitiesResolveByHostScopeAndVersion(t *testing.T) {
 	t.Parallel()
 
@@ -272,6 +335,24 @@ func TestDigitalHumanConnectorCapabilitiesResolveByHostScopeAndVersion(t *testin
 	}
 	if !parts.ConnectorToolsEnabled || len(parts.ConnectorSkillIDs) != 1 || parts.ConnectorSkillIDs[0] != skills.SkillConnectorRuntime {
 		t.Fatalf("DigitalHuman projection = %#v", parts)
+	}
+}
+
+func TestProjectedConnectorOwnerIsServerOnly(t *testing.T) {
+	snapshot := digitalHumanConnectorTestSnapshot(uuid.NewString())
+	ownerID := uuid.New()
+	snapshot.Capabilities[0].OwnerAccountID = ownerID
+	projected, err := projectConnectorOperations(nil, snapshot, catalog.SurfaceDigitalHuman)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, ok := projected.Get(skills.SkillConnectorRuntime)
+	if !ok || len(doc.Tools) != 1 || doc.Tools[0].ConnectorOwnerAccountID != ownerID.String() || doc.Tools[0].ConnectorBindingID != snapshot.Capabilities[0].BindingID.String() {
+		t.Fatal("projected native tool lost its server-owned binding owner or binding")
+	}
+	encoded, err := json.Marshal(doc.Tools)
+	if err != nil || strings.Contains(string(encoded), ownerID.String()) || strings.Contains(string(encoded), snapshot.Capabilities[0].BindingID.String()) || strings.Contains(string(encoded), "connector_owner_account_id") {
+		t.Fatal("projected tool exposed the account owner to the model")
 	}
 }
 
@@ -751,6 +832,33 @@ type digitalHumanRuntimeResolverStub struct {
 	snapshot         connectorruntimeauth.ChatCapabilitySnapshot
 	requests         []connectorruntimeauth.DigitalHumanCapabilityRequest
 	identityRequests []connectordispatch.IdentityResolutionRequest
+}
+
+type delegatedAgentRuntimeResolverStub struct {
+	snapshot         connectorruntimeauth.ChatCapabilitySnapshot
+	delegatedRequest connectorruntimeauth.DelegatedHostRequest
+}
+
+func (stub *delegatedAgentRuntimeResolverStub) ResolveAgentCapabilities(
+	context.Context,
+	connectorruntimeauth.AgentCapabilityRequest,
+) (connectorruntimeauth.ChatCapabilitySnapshot, error) {
+	return connectorruntimeauth.ChatCapabilitySnapshot{}, core.NewError(core.ErrorCodeAccessDenied, false, nil)
+}
+
+func (stub *delegatedAgentRuntimeResolverStub) ResolveDelegatedCapabilities(
+	_ context.Context,
+	request connectorruntimeauth.DelegatedHostRequest,
+) (connectorruntimeauth.ChatCapabilitySnapshot, error) {
+	stub.delegatedRequest = request
+	return stub.snapshot, nil
+}
+
+func (stub *delegatedAgentRuntimeResolverStub) ResolveConnectorIdentity(
+	_ context.Context,
+	_ connectordispatch.IdentityResolutionRequest,
+) (connectordispatch.Identity, error) {
+	return connectordispatch.Identity{}, nil
 }
 
 func (stub *digitalHumanRuntimeResolverStub) ResolveDigitalHumanCapabilities(

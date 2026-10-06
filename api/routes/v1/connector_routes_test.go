@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -316,6 +317,57 @@ func TestConnectorRoutesCatalogTaxonomyFilters(t *testing.T) {
 	}
 }
 
+func TestConnectorRoutesCatalogSearchMatchesConnectionName(t *testing.T) {
+	definitions, err := connectorcatalog.BuiltinDefinitions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	definitionCatalog, err := connectorcatalog.New(definitions...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	organizationID, ownerID := uuid.New(), uuid.New()
+	displayName := "octocat"
+	service := &connectorRouteRecordingService{connections: []connectorcore.PersonalConnection{{
+		ID: uuid.New(), OrganizationID: organizationID, OwnerAccountID: ownerID,
+		ConnectorID: "github", Name: "我的代码仓库",
+		ExternalDisplayName: &displayName, State: connectorcore.ReadinessReady,
+	}}}
+	router := newConnectorRouteTestRouter(definitionCatalog, service, organizationID, ownerID)
+
+	searched := func(query string) []connectorCatalogItemResponse {
+		t.Helper()
+		path := "/console/api/connectors/catalog?query=" + url.QueryEscape(query)
+		recorder := connectorRouteRequest(t, router, http.MethodGet, path, "", nil)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("search %q status/body = %d %s", query, recorder.Code, recorder.Body.String())
+		}
+		var envelope struct {
+			Data connectorCatalogResponse `json:"data"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
+			t.Fatal(err)
+		}
+		return envelope.Data.Items
+	}
+
+	for _, test := range []struct{ name, query string }{
+		{name: "connection name", query: "我的代码仓库"},
+		{name: "external display name", query: "octocat"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			items := searched(test.query)
+			if len(items) != 1 || items[0].ID != "github" {
+				t.Fatalf("search %q items = %#v, want only github by connection name", test.query, items)
+			}
+		})
+	}
+
+	if items := searched("absent-search-term"); len(items) != 0 {
+		t.Fatalf("unmatched search items = %#v", items)
+	}
+}
+
 func TestConnectorRoutesKeySetupContractDestroysSecretAndUsesActor(t *testing.T) {
 	definitionCatalog := newConnectorRouteTestCatalog(t)
 	organizationID, ownerID := uuid.New(), uuid.New()
@@ -553,7 +605,7 @@ func TestConnectorTargetBindingRoutesUseActorScopeAndStrictContract(t *testing.T
 		t.Fatalf("binding list call = %#v", listCall)
 	}
 
-	createBody := `{"connection_id":"` + connectionID.String() + `","target":{"type":"workflow","id":"workflow-1","binding_instance_id":"node-1"}}`
+	createBody := `{"connection_id":"` + connectionID.String() + `","target":{"type":"workflow","id":"workflow-1","binding_instance_id":"node-1"},"authorization_mode":"direct"}`
 	created := connectorRouteRequest(
 		t, router, http.MethodPost, "/console/api/connector-target-bindings", createBody,
 		map[string]string{"Idempotency-Key": "binding-route-idempotency-0001"},
@@ -570,6 +622,31 @@ func TestConnectorTargetBindingRoutesUseActorScopeAndStrictContract(t *testing.T
 		command.IdempotencyKey != "binding-route-idempotency-0001" || command.Target != native.Target || command.ExpectedRevision != 0 {
 		t.Fatalf("binding upsert command = %#v", command)
 	}
+	if command.AuthorizationMode != connectorcore.AuthorizationModeDirect {
+		t.Fatalf("binding authorization mode = %q, want direct", command.AuthorizationMode)
+	}
+	updated := native
+	updated.Constraint = connectorcore.OwnerConstraint(ownerID, []connectorcore.Identifier{"github.user.get"})
+	updated.Constraint.AuthorizationMode = connectorcore.AuthorizationModeAsk
+	updated.Revision = native.Revision + 1
+	bindingService.upsertResult.Binding = updated
+	authorizationResponse := connectorRouteRequest(
+		t, router, http.MethodPatch, "/console/api/connector-target-bindings/"+native.ID.String()+"/authorization",
+		`{"revision":1,"authorization_mode":"ask_each_time"}`, nil,
+	)
+	if authorizationResponse.Code != http.StatusOK || !strings.Contains(authorizationResponse.Body.String(), `"authorization_mode":"ask_each_time"`) {
+		t.Fatalf("binding authorization status/body = %d %s", authorizationResponse.Code, authorizationResponse.Body.String())
+	}
+	if len(bindingService.authorizationCalls) != 1 {
+		t.Fatalf("binding authorization calls = %#v", bindingService.authorizationCalls)
+	}
+	authorizationCommand := bindingService.authorizationCalls[0]
+	if authorizationCommand.OrganizationID != organizationID || authorizationCommand.ActingPrincipalID != ownerID ||
+		authorizationCommand.BindingID != native.ID || authorizationCommand.ExpectedRevision != native.Revision ||
+		authorizationCommand.AuthorizationMode != connectorcore.AuthorizationModeAsk {
+		t.Fatalf("binding authorization command = %#v", authorizationCommand)
+	}
+	assertConnectorRouteBodyIsSecretFree(t, authorizationResponse.Body.String())
 
 	detached := native
 	detached.Status = connectorcore.BindingStatusDisabled
@@ -606,6 +683,31 @@ func TestConnectorTargetBindingRoutesUseActorScopeAndStrictContract(t *testing.T
 	missingTarget := connectorRouteRequest(t, router, http.MethodGet, "/console/api/connector-target-bindings?target_type=agent", "", nil)
 	if missingTarget.Code != http.StatusBadRequest || len(bindingService.listCalls) != 1 {
 		t.Fatalf("missing target status/calls = %d/%d body=%s", missingTarget.Code, len(bindingService.listCalls), missingTarget.Body.String())
+	}
+}
+
+func TestConnectorHostDelegationRouteUsesAuthenticatedOwnerAndExplicitAudiences(t *testing.T) {
+	organizationID, ownerID, bindingID := uuid.New(), uuid.New(), uuid.New()
+	binding := connectorcore.TargetBinding{ID: bindingID, OwnerAccountID: ownerID, OrganizationID: organizationID, Revision: 2, Constraint: connectorcore.OwnerConstraint(ownerID, []connectorcore.Identifier{"web.search"})}
+	binding.Constraint.HostDelegation = &connectorcore.HostDelegation{GrantedBy: ownerID, Audiences: []connectorcore.HostAudience{connectorcore.HostAudienceWorkspace, connectorcore.HostAudienceAPI}}
+	service := &connectorRouteRecordingBindingService{upsertResult: connectorbindings.UpsertBindingResult{Binding: binding}}
+	router := newConnectorRouteTestRouter(newConnectorRouteTestCatalog(t), &connectorRouteRecordingService{}, organizationID, ownerID, service)
+	path := "/console/api/connector-target-bindings/" + bindingID.String() + "/host-delegation"
+	result := connectorRouteRequest(t, router, http.MethodPatch, path, `{"revision":1,"audiences":["workspace","api"]}`, nil)
+	if result.Code != http.StatusOK || !strings.Contains(result.Body.String(), `"host_audiences":["workspace","api"]`) {
+		t.Fatalf("delegation response = %d %s", result.Code, result.Body.String())
+	}
+	if len(service.hostGrantCalls) != 1 || service.hostGrantCalls[0].ActingPrincipalID != ownerID || service.hostGrantCalls[0].OrganizationID != organizationID || service.hostGrantCalls[0].BindingID != bindingID || service.hostGrantCalls[0].ExpectedRevision != 1 {
+		t.Fatal("delegation did not use the authenticated owner and revision")
+	}
+	for _, body := range []string{`{"revision":1}`, `{"revision":1,"audiences":["workspace"],"owner_account_id":"` + uuid.NewString() + `"}`} {
+		invalid := connectorRouteRequest(t, router, http.MethodPatch, path, body, nil)
+		if invalid.Code != http.StatusBadRequest {
+			t.Fatalf("invalid delegation accepted: %d", invalid.Code)
+		}
+	}
+	if len(service.hostGrantCalls) != 1 {
+		t.Fatal("invalid delegation request reached the service")
 	}
 }
 
@@ -1013,18 +1115,40 @@ type connectorRouteBindingListCall struct {
 }
 
 type connectorRouteRecordingBindingService struct {
-	listCalls    []connectorRouteBindingListCall
-	upsertCalls  []connectorbindings.UpsertBindingCommand
-	detachCalls  []connectorbindings.DetachBindingCommand
-	impactCalls  []connectorRouteImpactCall
-	listResult   []connectorcore.TargetBinding
-	upsertResult connectorbindings.UpsertBindingResult
-	detachResult connectorcore.TargetBinding
-	impactResult connectorbindings.RemovalImpact
-	listErr      error
-	upsertErr    error
-	detachErr    error
-	impactErr    error
+	listCalls          []connectorRouteBindingListCall
+	upsertCalls        []connectorbindings.UpsertBindingCommand
+	authorizationCalls []connectorbindings.UpdateBindingAuthorizationCommand
+	hostGrantCalls     []connectorbindings.UpdateHostDelegationCommand
+	detachCalls        []connectorbindings.DetachBindingCommand
+	impactCalls        []connectorRouteImpactCall
+	listResult         []connectorcore.TargetBinding
+	upsertResult       connectorbindings.UpsertBindingResult
+	detachResult       connectorcore.TargetBinding
+	impactResult       connectorbindings.RemovalImpact
+	listErr            error
+	upsertErr          error
+	authorizationErr   error
+	detachErr          error
+	impactErr          error
+}
+
+func (service *connectorRouteRecordingBindingService) UpdateBindingAuthorization(
+	_ context.Context,
+	command connectorbindings.UpdateBindingAuthorizationCommand,
+) (connectorcore.TargetBinding, error) {
+	service.authorizationCalls = append(service.authorizationCalls, command)
+	if service.authorizationErr != nil {
+		return connectorcore.TargetBinding{}, service.authorizationErr
+	}
+	return service.upsertResult.Binding, nil
+}
+
+func (service *connectorRouteRecordingBindingService) UpdateHostDelegation(_ context.Context, command connectorbindings.UpdateHostDelegationCommand) (connectorcore.TargetBinding, error) {
+	service.hostGrantCalls = append(service.hostGrantCalls, command)
+	if service.authorizationErr != nil {
+		return connectorcore.TargetBinding{}, service.authorizationErr
+	}
+	return service.upsertResult.Binding, nil
 }
 
 type connectorRouteImpactCall struct {

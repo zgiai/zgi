@@ -427,6 +427,13 @@ func (r *Runtime) nativeToolSchema(ctx context.Context, skillID string, definiti
 			strings.TrimSpace(definition.ProviderID) == "" || strings.TrimSpace(definition.ConnectorOperationID) == "" {
 			return nil, "", false
 		}
+	}
+	// InputSchema is trusted only for server-owned connector projections and
+	// package-script tools. Provider schemas attached to ordinary skills are
+	// resolved through the provider/argument-contract paths below so a caller
+	// cannot smuggle an arbitrary schema into a native tool definition.
+	if len(definition.InputSchema) > 0 &&
+		(definition.ConnectorNative || strings.TrimSpace(definition.Name) == SkillScriptToolRun) {
 		schema := tools.ModelVisibleJSONSchema(definition.InputSchema)
 		if !validNativeObjectSchema(schema) {
 			return nil, "", false
@@ -436,6 +443,11 @@ func (r *Runtime) nativeToolSchema(ctx context.Context, skillID string, definiti
 			description = "Use " + definition.Name + " from the " + skillID + " skill."
 		}
 		return schema, description, true
+	}
+	if definition.ConnectorNative || normalizeSkillID(skillID) == SkillConnectorRuntime {
+		// A connector operation must always expose its admitted catalog schema;
+		// never fall through to legacy provider parameter projection.
+		return nil, "", false
 	}
 	if contract, ok := SkillToolArgumentContractFor(skillID, definition.Name); ok && validNativeObjectSchema(contract.Schema) {
 		description := strings.TrimSpace(contract.Description)

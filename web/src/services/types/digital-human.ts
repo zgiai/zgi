@@ -160,7 +160,7 @@ export interface UpdateDigitalHumanRequest {
   description?: string;
   /**
    * Publication status. `disabled` takes a published digital human offline
-   * (下架) so it can no longer be run or reached, and is the prerequisite for
+   * so it can no longer be run or reached, and is the prerequisite for
    * deleting it; `active` brings it back online.
    */
   status?: DigitalHumanDefinition['status'];
@@ -357,8 +357,8 @@ export interface DigitalHumanRun {
    */
   waiting_reason?: DigitalHumanRunWaitingReason;
   /**
-   * Opaque server-side receipt for a `waiting_approval` run. It is the seam a
-   * future confirmation action would submit; the current UI only carries it.
+   * Opaque server-side receipt for a `waiting_approval` run. Connector
+   * confirmation continues to use this receipt-scoped path.
    */
   waiting_receipt?: string | null;
   conversation_id?: string | null;
@@ -392,6 +392,11 @@ export interface DigitalHumanRunRuntimeLog {
    * before rendering consent UI.
    */
   pending_connector_confirmation?: unknown;
+  /** Inline workflow approval data for a run paused on a generic approval node. */
+  pending_workflow_approval?: {
+    approval_token: string;
+    approval_form: unknown;
+  };
 }
 
 export interface ManualDigitalHumanInvocationRequest {
@@ -748,6 +753,18 @@ export interface DigitalHumanTaskSchedule {
   run_at?: string;
   cron?: string;
   timezone?: string;
+}
+
+export interface DigitalHumanTaskSchedulePreviewRequest {
+  type: 'once' | 'cron';
+  local_run_at?: string;
+  cron?: string;
+  timezone: string;
+}
+
+export interface DigitalHumanTaskSchedulePreview {
+  schedule: DigitalHumanTaskSchedule;
+  next_run_at?: string;
 }
 
 export interface DigitalHumanTask {

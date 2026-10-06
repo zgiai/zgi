@@ -1,10 +1,14 @@
 'use client';
 
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Ban, Loader2 } from 'lucide-react';
 import { AgentRuntimeLogDetailDrawer } from '@/app/console/agents/[agentId]/logs/_components/agent-runtime-log-detail-drawer';
 import { Button } from '@/components/ui/button';
+import { ApprovalRuntimeForm } from '@/components/workflow/approval/approval-runtime-form';
+import { normalizeApprovalRuntimeForm } from '@/components/workflow/approval/runtime-events';
+import { DigitalHumanRuntimeTransport } from '@/components/chat/transports/digital-human-runtime-transport';
+import type { AIChatStreamCallbacks } from '@/components/chat/transports/aichat-transport';
 import {
   ConnectorRuntimeConfirmationCard,
   type ConnectorRuntimeDecisionHandler,
@@ -23,6 +27,30 @@ import { DIGITAL_HUMAN_KEYS } from '@/hooks/query-keys';
 import { useT } from '@/i18n';
 import type { AgentRuntimeRunItem } from '@/services/types/agent-runtime-log';
 import type { DigitalHumanRun } from '@/services/types/digital-human';
+
+const discardWorkflowApprovalStream: AIChatStreamCallbacks = {
+  onMessageStart: () => undefined,
+  onAgentProgress: () => undefined,
+  onIntermediateAnswer: () => undefined,
+  onUserInputRequested: () => undefined,
+  onFileParseStart: () => undefined,
+  onFileParseEnd: () => undefined,
+  onFileParseError: () => undefined,
+  onSkillLoadStart: () => undefined,
+  onSkillLoadEnd: () => undefined,
+  onSkillReferenceRead: () => undefined,
+  onSkillCallStart: () => undefined,
+  onSkillCallEnd: () => undefined,
+  onSkillCallError: () => undefined,
+  onSkillArtifactCreated: () => undefined,
+  onMemoryMutation: () => undefined,
+  onMessageChunk: () => undefined,
+  onMessageRetract: () => undefined,
+  onMessageEnd: () => undefined,
+  onErrorEvent: () => undefined,
+  onRequestError: () => undefined,
+  onClose: () => undefined,
+};
 
 interface DigitalHumanRunDetailDrawerProps {
   digitalHumanId: string;
@@ -74,6 +102,12 @@ export function DigitalHumanRunDetailDrawer({
     run && run.status === 'waiting' && run.waiting_reason === 'waiting_approval'
   );
   const approvalReceipt = run ? digitalHumanRunApprovalReceipt(run) : null;
+  const [workflowApprovalPending, setWorkflowApprovalPending] = useState(false);
+  const workflowApproval = runtimeLog?.pending_workflow_approval;
+  const workflowApprovalForm = useMemo(
+    () => normalizeApprovalRuntimeForm(workflowApproval?.approval_form),
+    [workflowApproval?.approval_form]
+  );
   const connectorConfirmation = useMemo(
     () =>
       parseDigitalHumanRunConnectorConfirmation(runtimeLog?.pending_connector_confirmation, {
@@ -98,6 +132,49 @@ export function DigitalHumanRunDetailDrawer({
       return outcome;
     },
     [digitalHumanId, runId, queryClient]
+  );
+  const submitWorkflowApproval = useCallback(
+    async ({ inputs, action }: { inputs: Record<string, unknown>; action: string }) => {
+      if (
+        !run?.conversation_id ||
+        !run.message_id ||
+        !workflowApproval?.approval_token ||
+        !workflowApprovalForm
+      ) {
+        return;
+      }
+      setWorkflowApprovalPending(true);
+      try {
+        const transport = new DigitalHumanRuntimeTransport(digitalHumanId);
+        await transport.continueWorkflowApproval(
+          run.conversation_id,
+          run.message_id,
+          {
+            approvalToken: workflowApproval.approval_token,
+            action,
+            inputs,
+          },
+          discardWorkflowApprovalStream
+        );
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: DIGITAL_HUMAN_KEYS.run(digitalHumanId, runId) }),
+          queryClient.invalidateQueries({
+            queryKey: DIGITAL_HUMAN_KEYS.runRuntimeLog(digitalHumanId, runId),
+          }),
+          queryClient.invalidateQueries({ queryKey: DIGITAL_HUMAN_KEYS.runs(digitalHumanId) }),
+        ]);
+      } finally {
+        setWorkflowApprovalPending(false);
+      }
+    },
+    [
+      digitalHumanId,
+      queryClient,
+      run,
+      runId,
+      workflowApproval,
+      workflowApprovalForm,
+    ]
   );
 
   return (
@@ -127,6 +204,14 @@ export function DigitalHumanRunDetailDrawer({
                     accountIdentity: t('runs.connectorConfirmation.accountIdentity'),
                     unavailable: t('runs.connectorConfirmation.previewUnavailable'),
                   }}
+                />
+              </div>
+            ) : workflowApprovalForm && workflowApproval?.approval_token ? (
+              <div className="max-h-[55vh] overflow-y-auto rounded-md border bg-background p-3">
+                <ApprovalRuntimeForm
+                  form={workflowApprovalForm}
+                  isSubmitting={workflowApprovalPending}
+                  onSubmit={submitWorkflowApproval}
                 />
               </div>
             ) : approvalWait && !runtimeQuery.isLoading ? (

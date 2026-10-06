@@ -5,11 +5,19 @@ import { isAxiosError } from 'axios';
 import { Plus, PlugZap, RefreshCw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { toast } from 'sonner';
 import {
   useDigitalHumanDraftBindings,
   useDigitalHumanBindingCandidates,
   useDigitalHumanMutations,
+  useDigitalHuman,
 } from '@/hooks/digital-human/use-digital-humans';
+import {
+  connectorTargetBindingItems,
+  useConnectorTargetBindings,
+  useUpdateConnectorTargetBindingHostDelegation,
+} from '@/hooks';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useT } from '@/i18n';
 import { useAuthStore } from '@/store/auth-store';
@@ -19,6 +27,8 @@ import type {
   DigitalHumanResourceBinding,
   DigitalHumanResourceBindingInput,
 } from '@/services/types/digital-human';
+import type { ConnectorHostAudience } from '@/services/types/connector';
+import { getErrorMessage } from '@/utils/error-notifications';
 import {
   DigitalHumanConnectorCards,
   DigitalHumanConnectorDialog,
@@ -62,6 +72,22 @@ function ScopedConnectorSection({
   const t = useT('digitalHumans');
   const connectorT = useT('connectors');
   const query = useDigitalHumanDraftBindings(id, !preview);
+  const detailQuery = useDigitalHuman(id, !preview);
+  const publishedVersionId = detailQuery.data?.data.published?.id;
+  const publishedTarget = publishedVersionId
+    ? {
+        type: 'digital_human' as const,
+        id,
+        scope: 'published' as const,
+        version_id: publishedVersionId,
+      }
+    : undefined;
+  const publishedBindingsQuery = useConnectorTargetBindings(
+    publishedTarget,
+    Boolean(publishedTarget)
+  );
+  const updateHostDelegation = useUpdateConnectorTargetBindingHostDelegation();
+  const publishedBindings = connectorTargetBindingItems(publishedBindingsQuery.data?.data);
   const previewItems = preview?.map(digitalHumanBindingInput);
   const items = (
     previewItems ?? (query.data?.data.items ?? []).map(digitalHumanBindingInput)
@@ -247,6 +273,59 @@ function ScopedConnectorSection({
                 canUpdate ? (item, trigger) => void open(undefined, item.id, trigger) : undefined
               }
             />
+            {items.map(item => {
+              const publishedBinding = publishedBindings.find(
+                binding =>
+                  binding.connection_id === item.resource_id &&
+                  binding.connector_id === item.parent_resource_id
+              );
+              if (!publishedBinding) return null;
+              const audiences = new Set<ConnectorHostAudience>(publishedBinding.host_audiences ?? []);
+              const options: Array<{ value: ConnectorHostAudience; label: string }> = [
+                {
+                  value: 'workspace',
+                  label: connectorT('picker.authorization.hostAudienceWorkspace'),
+                },
+                { value: 'api', label: connectorT('picker.authorization.hostAudienceApi') },
+                {
+                  value: 'channel',
+                  label: connectorT('picker.authorization.hostAudienceChannel'),
+                },
+              ];
+              return (
+                <div key={`${item.parent_resource_id}:${item.resource_id}`} className="mt-4 flex flex-wrap gap-3">
+                  {options.map(option => (
+                    <label key={option.value} className="flex items-center gap-2 text-xs">
+                      <Checkbox
+                        checked={audiences.has(option.value)}
+                        disabled={!canUpdate || updateHostDelegation.isPending}
+                        onCheckedChange={async checked => {
+                          const next = new Set(audiences);
+                          if (checked === true) next.add(option.value);
+                          else next.delete(option.value);
+                          try {
+                            await updateHostDelegation.mutateAsync({
+                              bindingId: publishedBinding.id,
+                              revision: publishedBinding.revision,
+                              audiences: Array.from(next),
+                            });
+                            toast.success(
+                              connectorT('picker.authorization.hostDelegationSaved')
+                            );
+                          } catch (error) {
+                            toast.error(
+                              getErrorMessage(error) ||
+                                connectorT('picker.authorization.hostDelegationSaveFailed')
+                            );
+                          }
+                        }}
+                      />
+                      {option.label}
+                    </label>
+                  ))}
+                </div>
+              );
+            })}
             {canUpdate ? (
               <Button
                 type="button"

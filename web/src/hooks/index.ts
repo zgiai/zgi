@@ -137,6 +137,7 @@ export {
   usePersonalConnections,
   useRemovePersonalConnection,
   useRenamePersonalConnection,
+  useUpdateConnectorTargetBindingHostDelegation,
 } from './connectors/use-connectors';
 export { useConnectorSetup } from './connectors/use-connector-setup';
 export { useConnectorReconnect } from './connectors/use-connector-reconnect';

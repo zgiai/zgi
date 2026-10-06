@@ -153,6 +153,11 @@ const ToolManager: React.FC<ToolManagerProps> = ({ id: nodeId, className, readOn
   const [showConfig, setShowConfig] = React.useState(false);
   const [showConnectorPicker, setShowConnectorPicker] = React.useState(false);
   const [connectorSetup, setConnectorSetup] = React.useState<WorkflowConnectorSetupContext>();
+  const [directAuthorization, setDirectAuthorization] = React.useState(false);
+  const [pendingConnectorSelection, setPendingConnectorSelection] = React.useState<{
+    connectionID: string;
+    authorizationMode: 'ask_each_time' | 'direct';
+  } | null>(null);
   const localizedSetupConnector = connectorSetup
     ? localizeConnectorCatalogItem(connectorSetup.connector, locale)
     : undefined;
@@ -160,6 +165,8 @@ const ToolManager: React.FC<ToolManagerProps> = ({ id: nodeId, className, readOn
   React.useEffect(() => {
     setShowConnectorPicker(false);
     setConnectorSetup(undefined);
+    setDirectAuthorization(false);
+    setPendingConnectorSelection(null);
   }, [nodeId, workflowId, readOnly]);
 
   // Use store-aware useLocalNodeData for 'tool_parameters' with debouncing
@@ -195,8 +202,20 @@ const ToolManager: React.FC<ToolManagerProps> = ({ id: nodeId, className, readOn
   );
   const personalConnections = personalConnectionItems(personalConnectionsQuery.data?.data);
   const currentConnectionID = nodeData?.connector?.connection_id?.trim() ?? '';
+  React.useEffect(() => {
+    if (!showConnectorPicker) return;
+    setPendingConnectorSelection({
+      connectionID: currentConnectionID,
+      authorizationMode:
+        nodeData?.connector?.authorization_mode === 'direct' ? 'direct' : 'ask_each_time',
+    });
+  }, [showConnectorPicker, currentConnectionID, nodeData?.connector?.authorization_mode]);
+  React.useEffect(() => {
+    setDirectAuthorization(nodeData?.connector?.authorization_mode === 'direct');
+  }, [nodeData?.connector?.authorization_mode]);
+  const selectedConnectionID = pendingConnectorSelection?.connectionID ?? currentConnectionID;
   const selectedPersonalConnection = personalConnections.find(
-    connection => connection.id === currentConnectionID
+    connection => connection.id === selectedConnectionID
   );
   const { pickerBindings, selectedConnectionLabel } = useMemo(
     () =>
@@ -205,7 +224,7 @@ const ToolManager: React.FC<ToolManagerProps> = ({ id: nodeId, className, readOn
         workflowID: workflowId,
         nodeID: nodeId,
         connectorID,
-        currentConnectionID,
+        currentConnectionID: selectedConnectionID,
         personalConnection: selectedPersonalConnection,
         bindingID: nodeData?.connector?.binding_id,
         revision: nodeData?.connector?.revision,
@@ -215,7 +234,7 @@ const ToolManager: React.FC<ToolManagerProps> = ({ id: nodeId, className, readOn
     [
       connectorID,
       connectorT,
-      currentConnectionID,
+      selectedConnectionID,
       nodeId,
       providerDefinition?.icon,
       nodeData?.connector?.binding_id,
@@ -283,8 +302,28 @@ const ToolManager: React.FC<ToolManagerProps> = ({ id: nodeId, className, readOn
       },
       isDirty: true,
     });
+    if (nodeData?.connector_unavailable_ref !== command.reference_id) return;
+    if (command.action === 'detach') {
+      updateNodeData({ connector: undefined, connector_unavailable_ref: undefined });
+      return;
+    }
+    if (command.action === 'replace' && command.connection_id) {
+      const connector = nodeData.connector;
+      if (!connector?.connector_id || !connector.operation_id) return;
+      updateNodeData({
+        connector: {
+          ...connector,
+          connection_id: command.connection_id,
+          ...(command.operation_id ? { operation_id: command.operation_id } : {}),
+        },
+        connector_unavailable_ref: undefined,
+      });
+    }
   };
-  const setConnectorConnection = (connectionID: string) => {
+  const setConnectorConnection = (
+    connectionID: string,
+    authorizationMode: 'ask_each_time' | 'direct' = directAuthorization ? 'direct' : 'ask_each_time'
+  ) => {
     const operationID = toolDefinition?.connector_operation_id;
     if (!operationID || !connectorID || readOnly) {
       throw new Error('connector operation is unavailable');
@@ -295,6 +334,7 @@ const ToolManager: React.FC<ToolManagerProps> = ({ id: nodeId, className, readOn
         connection_id: connectionID,
         connector_id: connectorID,
         operation_id: operationID,
+        authorization_mode: authorizationMode,
       },
     });
   };
@@ -512,9 +552,9 @@ const ToolManager: React.FC<ToolManagerProps> = ({ id: nodeId, className, readOn
                     toast.success(connectorT('picker.connectionReadyNotAdded'));
                     return;
                   }
-                  setConnectorConnection(connection.id);
+                  setPendingConnectorSelection({ connectionID: connection.id, authorizationMode: 'ask_each_time' });
                   setConnectorSetup(undefined);
-                  setShowConnectorPicker(false);
+                  setShowConnectorPicker(true);
                 }}
               />
             </DialogContent>
@@ -529,18 +569,70 @@ const ToolManager: React.FC<ToolManagerProps> = ({ id: nodeId, className, readOn
             onReferenceCommand={stageReferenceCommand}
             pendingReferenceCommands={referenceCommands}
             onOpenChange={setShowConnectorPicker}
+            footerExtra={
+              <div className="flex shrink-0 items-center justify-between gap-3 border-t bg-background px-5 py-3">
+                <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                <span className="font-medium text-foreground">
+                  {connectorT('picker.authorization.modeLabel')}
+                </span>
+                <Select
+                  value={pendingConnectorSelection?.authorizationMode ?? 'ask_each_time'}
+                  onValueChange={value =>
+                    setPendingConnectorSelection(current =>
+                      current
+                        ? { ...current, authorizationMode: value === 'direct' ? 'direct' : 'ask_each_time' }
+                        : current
+                    )
+                  }
+                >
+                  <SelectTrigger className="h-8 w-auto min-w-36 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ask_each_time">
+                      {connectorT('picker.authorization.askShort')}
+                    </SelectItem>
+                    <SelectItem value="direct">
+                      {connectorT('picker.authorization.directShort')}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                </label>
+                <div className="flex gap-2">
+                  <Button type="button" size="sm" variant="outline" onClick={() => setShowConnectorPicker(false)}>
+                    {connectorT('picker.authorization.cancel')}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={!pendingConnectorSelection?.connectionID || readOnly}
+                    onClick={() => {
+                      if (!pendingConnectorSelection) return;
+                      setConnectorConnection(
+                        pendingConnectorSelection.connectionID,
+                        pendingConnectorSelection.authorizationMode
+                      );
+                      setShowConnectorPicker(false);
+                    }}
+                  >
+                    {connectorT('picker.authorization.confirm')}
+                  </Button>
+                </div>
+              </div>
+            }
             onRequestAdd={request => {
               if (request.connector.id !== connectorID) return;
-              if (currentConnectionID) {
+              if (selectedConnectionID) {
                 throw new Error('connector switch confirmation is required');
               }
-              setConnectorConnection(request.connection.id);
-              setShowConnectorPicker(false);
+              setPendingConnectorSelection({ connectionID: request.connection.id, authorizationMode: 'ask_each_time' });
             }}
             onRequestSwitch={request => {
               if (request.connector.id !== connectorID) return;
-              setConnectorConnection(request.connection.id);
-              setShowConnectorPicker(false);
+              setPendingConnectorSelection(current => ({
+                connectionID: request.connection.id,
+                authorizationMode: current?.authorizationMode ?? 'ask_each_time',
+              }));
             }}
             onRequestConnectAndAdd={request => {
               if (request.connector.id !== connectorID) return;
@@ -559,8 +651,7 @@ const ToolManager: React.FC<ToolManagerProps> = ({ id: nodeId, className, readOn
             }}
             onRequestDetach={request => {
               if (request.binding.connection_id !== currentConnectionID) return;
-              setConnectorConnection('');
-              setShowConnectorPicker(false);
+              setPendingConnectorSelection({ connectionID: '', authorizationMode: 'ask_each_time' });
             }}
           />
         )

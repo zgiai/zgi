@@ -17,6 +17,7 @@ Dockerfile*
 specs/
 outputs/
 qa-artifacts/
+.specify/
 
 # Runtime and local-only data
 **/storage/

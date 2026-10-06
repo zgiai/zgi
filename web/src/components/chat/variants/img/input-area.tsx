@@ -47,6 +47,7 @@ interface InputAreaProps {
   currentRuntimeModel?: ImageRuntimeModel;
   topNotice?: React.ReactNode;
   referenceImage?: ImageReferenceAttachment | null;
+  hasReferenceContext?: boolean;
   onReferenceImageChange?: (image: ImageReferenceAttachment | null) => void;
 }
 
@@ -63,6 +64,7 @@ export function InputArea({
   currentRuntimeModel,
   topNotice,
   referenceImage,
+  hasReferenceContext = false,
   onReferenceImageChange,
 }: InputAreaProps) {
   const t = useT('webapp');
@@ -255,13 +257,13 @@ export function InputArea({
             isIcon
             className={cn(
               'h-8 w-8 rounded-full ml-1 transition-all',
-              (input.trim() || referenceImage) && !isPromptTooLong
+              (input.trim() || referenceImage || hasReferenceContext) && !isPromptTooLong
                 ? 'bg-primary text-white hover:bg-primary-hover'
                 : 'bg-muted text-muted-foreground'
             )}
             onClick={handleSend}
             disabled={
-              (!input.trim() && !referenceImage) ||
+              (!input.trim() && !referenceImage && !hasReferenceContext) ||
               isPromptTooLong ||
               isSending ||
               isReferenceUploading ||

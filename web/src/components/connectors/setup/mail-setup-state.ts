@@ -25,10 +25,22 @@ export function normalizeMailEmail(value: string): string | undefined {
     : undefined;
 }
 
-/** Google displays app passwords in groups. Strip only the documented copy separators. */
+/** Keep local credential validation permissive; provider validity is server-authoritative. */
 export function normalizeMailAppPassword(value: string): string | undefined {
   const password = value.replace(/[ \t\r\n\u00a0]/g, '');
-  return /^[\x21-\x7e]{16}$/.test(password) ? password : undefined;
+  if (
+    password.length === 0 ||
+    password.length > 256 ||
+    Array.from(password).some(
+      character =>
+        character.charCodeAt(0) < 32 ||
+        (character.charCodeAt(0) >= 127 && character.charCodeAt(0) <= 159)
+    ) ||
+    /[\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/.test(password)
+  ) {
+    return undefined;
+  }
+  return password;
 }
 
 export function connectionMailUsage(connection?: PersonalConnection): ConnectorMailUsage {
@@ -124,8 +136,18 @@ export function normalizeMailSecret(provider: string, value: string): string | u
   // the settings page. Treat those whitespace separators as presentation
   // only; the IMAP/SMTP credential itself never contains them.
   const secret = provider === 'netease163' ? value.replace(/[\s\uFEFF]/gu, '') : value.trim();
-  if (provider === 'qqmail') return /^[\x21-\x7e]{16}$/.test(secret) ? secret : undefined;
-  if (provider === 'netease163') return /^[A-Za-z]{16}$/.test(secret) ? secret : undefined;
+  if (
+    secret.length === 0 ||
+    Array.from(secret).some(
+      character =>
+        character.charCodeAt(0) < 32 ||
+        (character.charCodeAt(0) >= 127 && character.charCodeAt(0) <= 159)
+    ) ||
+    /[\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/.test(secret)
+  ) {
+    return undefined;
+  }
+  if (provider === 'qqmail' || provider === 'netease163') return secret;
 }
 export function mailSettingsURL(provider: string): string {
   if (provider === 'qqmail') return 'https://help.mail.qq.com/detail/106/985';

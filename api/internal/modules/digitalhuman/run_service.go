@@ -519,11 +519,117 @@ func (s *RuntimeService) GetRunRuntimeLog(ctx context.Context, scope Scope, digi
 	}
 	detail := workflowapp.BuildAgentRuntimeRunDetail(message, conversation)
 	steps := workflowapp.BuildAgentRuntimeSteps(message)
+	overlayRunRuntimeDetail(&detail, run)
 	return &RunRuntimeLog{
 		Detail:                       &detail,
 		Steps:                        channelContextRuntimeSteps(run, steps),
 		PendingConnectorConfirmation: pendingRunConnectorConfirmation(run, message, conversation),
+		PendingWorkflowApproval:      pendingRunWorkflowApproval(run, message),
 	}, nil
+}
+
+func overlayRunRuntimeDetail(detail *dto.AgentRuntimeRunDetail, run *Run) {
+	if detail == nil || run == nil {
+		return
+	}
+	detail.ID = run.ID.String()
+	detail.Status = string(run.Status)
+	detail.Query = run.Query
+	if run.ResultSummary != "" {
+		detail.Answer = run.ResultSummary
+	} else if run.Status == RunStatusFailed || run.Status == RunStatusCanceled || run.Status == RunStatusUnknown {
+		detail.Answer = ""
+	}
+	if run.ErrorMessage != "" {
+		detail.Error = run.ErrorMessage
+	}
+	if !run.CreatedAt.IsZero() {
+		detail.CreatedAt = run.CreatedAt.Unix()
+	}
+	if run.CompletedAt != nil {
+		finishedAt := run.CompletedAt.Unix()
+		detail.FinishedAt = &finishedAt
+	}
+	if run.StartedAt != nil {
+		end := run.UpdatedAt
+		if run.CompletedAt != nil {
+			end = *run.CompletedAt
+		}
+		if !end.Before(*run.StartedAt) {
+			detail.ElapsedTime = float64(end.Sub(*run.StartedAt).Milliseconds())
+		}
+	}
+}
+
+func pendingRunWorkflowApproval(run *Run, message *runtimemodel.Message) *RunWorkflowApproval {
+	if run == nil || message == nil || run.Status != RunStatusWaiting ||
+		run.WaitingReason != runtimemodel.MessageStatusWaitingApproval ||
+		message.Status != runtimemodel.MessageStatusWaitingApproval {
+		return nil
+	}
+	runs, ok := interfaceSlice(message.Metadata["workflow_runs"])
+	if !ok {
+		return nil
+	}
+	for index := len(runs) - 1; index >= 0; index-- {
+		workflowRun, ok := stringMap(runs[index])
+		if !ok {
+			continue
+		}
+		approval, ok := stringMap(workflowRun["approval"])
+		if !ok || !approvalStatusPending(approval["status"]) {
+			continue
+		}
+		if allowed, exists := approval["ui_approval_allowed"].(bool); exists && !allowed {
+			return nil
+		}
+		form, _ := stringMap(approval["approval_form"])
+		token := firstString(approval["approval_token"])
+		if token == "" {
+			token = firstString(form["token"])
+		}
+		if token == "" || len(form) == 0 {
+			return nil
+		}
+		return &RunWorkflowApproval{ApprovalToken: token, ApprovalForm: publicWorkflowApprovalForm(form, token)}
+	}
+	return nil
+}
+
+func approvalStatusPending(value interface{}) bool {
+	status := strings.ToLower(strings.TrimSpace(firstString(value)))
+	return status == "" || status == "pending" || status == "pending_approval" || status == "waiting" || status == "waiting_approval"
+}
+
+func publicWorkflowApprovalForm(form map[string]interface{}, token string) map[string]interface{} {
+	allowed := map[string]struct{}{
+		"id": {}, "form_id": {}, "token": {}, "node_id": {}, "node_title": {}, "content": {},
+		"fields": {}, "actions": {}, "submit_methods": {}, "resolved_default_values": {},
+		"expiration_at": {}, "expires_at": {}, "task_approval": {},
+	}
+	result := make(map[string]interface{}, len(form)+1)
+	for key, value := range form {
+		if _, ok := allowed[key]; ok {
+			result[key] = value
+		}
+	}
+	result["token"] = token
+	return result
+}
+
+func interfaceSlice(value interface{}) ([]interface{}, bool) {
+	items, ok := value.([]interface{})
+	return items, ok
+}
+
+func stringMap(value interface{}) (map[string]interface{}, bool) {
+	items, ok := value.(map[string]interface{})
+	return items, ok
+}
+
+func firstString(value interface{}) string {
+	text, _ := value.(string)
+	return strings.TrimSpace(text)
 }
 
 const (
@@ -736,7 +842,17 @@ func (s *RuntimeService) CancelRun(ctx context.Context, scope Scope, digitalHuma
 	}
 	_ = s.dispatcher.CancelRun(ctx, runID)
 	if run.MessageID != nil && *run.MessageID != uuid.Nil {
-		_, _ = s.chat.StopMessage(ctx, runtimeScope(run), *run.MessageID)
+		stopped, stopErr := s.chat.StopMessage(ctx, runtimeScope(run), *run.MessageID)
+		// StopMessage is the authoritative user-visible terminal transition for
+		// an in-flight turn. Persist the matching durable terminal state here so
+		// a successful user cancellation cannot drift into stale/unknown during
+		// reconciliation.
+		if stopErr == nil && stopped != nil && stopped.Status == runtimemodel.MessageStatusStopped {
+			now := s.now()
+			if completeErr := s.store.CompleteRun(ctx, run.ID, stopped.Answer, executionTraceFromMetadata(stopped.Metadata), now); completeErr == nil {
+				run.Status, run.CompletedAt, run.UpdatedAt, run.ResultSummary = RunStatusCanceled, &now, now, stopped.Answer
+			}
+		}
 	}
 	return run, nil
 }
@@ -774,6 +890,7 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 	}
 	config.ConnectorRunID = run.ID.String()
 	config.ConnectorInteractive = event.Origin.Kind == invocation.OriginManual
+	applyScheduledConnectorPolicy(&config, run, event)
 	var channelContextPreparation *ChannelContextPreparation
 	if s.channelContext != nil {
 		channelContextPreparation, err = s.channelContext.Prepare(ctx, run, resolved, event, config.ModelProvider, config.Model)
@@ -851,7 +968,7 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 	}
 	callerID := run.DigitalHumanID
 	caller := chatruntime.Caller{
-		Type: runtimemodel.ConversationCallerDigitalHuman, ID: &callerID, Source: digitalHumanConversationSourceForEvent(event),
+		Type: runtimemodel.ConversationCallerDigitalHuman, ID: &callerID, RunID: &run.ID, Source: digitalHumanConversationSourceForEvent(event),
 	}
 	if webAppID, ok := stringContextValue(event.Context, "web_app_id"); ok {
 		if parsed, parseErr := uuid.Parse(webAppID); parseErr == nil && parsed != uuid.Nil {
@@ -1344,9 +1461,17 @@ func runScope(run *Run) Scope {
 	}
 }
 
+func applyScheduledConnectorPolicy(config *chatruntime.RunConfig, run *Run, event invocation.Event) {
+	if config != nil && run != nil && run.Surface == SurfaceTask && event.Origin.Kind == invocation.OriginSchedule && run.UserSubjectKind == string(usersubject.APIEndUser) {
+		config.ConnectorToolsDisabled = true
+	}
+}
+
 func persistedRunActorID(scope Scope, principalType, surface string) *uuid.UUID {
 	if scope.ActorID == uuid.Nil || surface == SurfaceAPI ||
-		(surface == SurfaceWebApp && principalType != string(invocation.PrincipalAccount)) {
+		(surface == SurfaceWebApp && principalType != string(invocation.PrincipalAccount)) ||
+		(surface == SurfaceTask && principalType == string(invocation.PrincipalSystem) &&
+			(scope.UserSubjectKind != string(usersubject.Account) || scope.UserSubjectID == nil || *scope.UserSubjectID != scope.ActorID)) {
 		return nil
 	}
 	return cloneUUIDPointer(&scope.ActorID)

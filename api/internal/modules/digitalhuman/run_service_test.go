@@ -27,6 +27,53 @@ import (
 	"gorm.io/datatypes"
 )
 
+func TestScheduledAPIEndUserTaskDoesNotBorrowPersonalConnectors(t *testing.T) {
+	event := invocation.Event{Origin: invocation.Origin{Kind: invocation.OriginSchedule}}
+	for _, testCase := range []struct {
+		name string
+		run  *Run
+		want bool
+	}{
+		{"API end user", &Run{Surface: SurfaceTask, UserSubjectKind: string(usersubject.APIEndUser)}, true},
+		{"account owner", &Run{Surface: SurfaceTask, UserSubjectKind: string(usersubject.Account)}, false},
+		{"shared task", &Run{Surface: SurfaceTask}, false},
+		{"manual API call", &Run{Surface: SurfaceAPI, UserSubjectKind: string(usersubject.APIEndUser)}, false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			config := chatruntime.RunConfig{}
+			applyScheduledConnectorPolicy(&config, testCase.run, event)
+			if config.ConnectorToolsDisabled != testCase.want {
+				t.Fatalf("ConnectorToolsDisabled = %v, want %v", config.ConnectorToolsDisabled, testCase.want)
+			}
+		})
+	}
+}
+
+func TestScheduledAPIEndUserTaskPreparesChatWithoutPersonalConnectors(t *testing.T) {
+	store, dispatcher, chat := newFakeRunStore(), &fakeRunDispatcher{}, &fakeDigitalHumanChat{}
+	service := newTestRuntimeService(t, store, dispatcher, chat)
+	scope, digitalHumanID, subjectID := testRunScope(), uuid.New(), uuid.New()
+	scope.ActorID, scope.PrincipalID = subjectID, subjectID
+	scope.PrincipalType, scope.Surface = string(invocation.PrincipalSystem), SurfaceTask
+	scope.UserSubjectKind, scope.UserSubjectID = string(usersubject.APIEndUser), &subjectID
+	event := invocation.Event{
+		ID: uuid.NewString(), Type: invocation.EventTypeSchedule,
+		Origin: invocation.Origin{Kind: invocation.OriginSchedule},
+		Target: runtimeidentity.SubjectRef{Type: runtimeidentity.SubjectTypeDigitalHuman, ID: digitalHumanID, OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID},
+		Sender: invocation.PrincipalRef{Type: invocation.PrincipalSystem, ID: "digital-human-task-scheduler"}, OccurredAt: service.now(),
+	}
+	run, created, err := service.SubmitInvocation(t.Context(), scope, event, "Reply without using a connector", nil)
+	if err != nil || !created {
+		t.Fatalf("SubmitInvocation() = created %v, err %v", created, err)
+	}
+	if err := service.Execute(t.Context(), run.ID); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if chat.prepareCalls != 1 || !chat.config.ConnectorToolsDisabled || chat.request.Query == "" {
+		t.Fatal("API end-user task reached ChatRuntime without the account-safe Connector policy")
+	}
+}
+
 func TestRuntimeServiceSubmitIsDurableAndIdempotent(t *testing.T) {
 	store, dispatcher, chat := newFakeRunStore(), &fakeRunDispatcher{}, &fakeDigitalHumanChat{}
 	service := newTestRuntimeService(t, store, dispatcher, chat)
@@ -326,6 +373,48 @@ func TestRuntimeServiceGetRunRuntimeLogProjectsModelAndToolSteps(t *testing.T) {
 	}
 	if chat.caller.Type != runtimemodel.ConversationCallerDigitalHuman || chat.caller.ID == nil || *chat.caller.ID != digitalHumanID {
 		t.Fatalf("runtime log caller = %#v", chat.caller)
+	}
+}
+
+func TestRuntimeServiceRunRuntimeLogUsesDurableStateAndProjectsWorkflowApproval(t *testing.T) {
+	store, dispatcher := newFakeRunStore(), &fakeRunDispatcher{}
+	messageID, conversationID := uuid.New(), uuid.New()
+	chat := &fakeDigitalHumanChat{recoveryMessage: &runtimemodel.Message{
+		ID: messageID, ConversationID: conversationID, Query: "run workflow", Status: runtimemodel.MessageStatusWaitingApproval,
+		Metadata: map[string]interface{}{"workflow_runs": []interface{}{map[string]interface{}{
+			"status": "pending_approval",
+			"approval": map[string]interface{}{
+				"approval_token":      "approval-token",
+				"ui_approval_allowed": true,
+				"approval_form": map[string]interface{}{
+					"id": "form-1", "node_id": "approval-node", "node_title": "Approve",
+					"content": "Please approve", "fields": []interface{}{},
+					"actions": []interface{}{map[string]interface{}{"id": "approve", "label": "Approve"}},
+				},
+			},
+		}}},
+	}}
+	service := newTestRuntimeService(t, store, dispatcher, chat)
+	scope, digitalHumanID := testRunScope(), uuid.New()
+	startedAt := time.Date(2026, 8, 18, 6, 0, 0, 0, time.UTC)
+	createdAt := startedAt.Add(-time.Minute)
+	runID := uuid.New()
+	store.runs[runID] = &Run{
+		ID: runID, OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
+		DigitalHumanID: digitalHumanID, MessageID: &messageID, ConversationID: &conversationID,
+		Query: "run workflow", Status: RunStatusWaiting, WaitingReason: runtimemodel.MessageStatusWaitingApproval,
+		CreatedAt: createdAt, StartedAt: &startedAt, UpdatedAt: startedAt.Add(5 * time.Second),
+	}
+
+	log, err := service.GetRunRuntimeLog(t.Context(), scope, digitalHumanID, runID)
+	if err != nil {
+		t.Fatalf("GetRunRuntimeLog() error = %v", err)
+	}
+	if log.Detail == nil || log.Detail.ID != runID.String() || log.Detail.Status != string(RunStatusWaiting) || log.Detail.Query != "run workflow" {
+		t.Fatalf("durable detail = %#v", log.Detail)
+	}
+	if log.PendingWorkflowApproval == nil || log.PendingWorkflowApproval.ApprovalToken != "approval-token" || log.PendingWorkflowApproval.ApprovalForm["id"] != "form-1" {
+		t.Fatalf("pending workflow approval = %#v", log.PendingWorkflowApproval)
 	}
 }
 
@@ -742,6 +831,32 @@ func TestRuntimeServiceCancelUsesDatabaseStateAsAuthority(t *testing.T) {
 	}
 	if len(dispatcher.canceled) != 1 || dispatcher.canceled[0] != run.ID {
 		t.Fatalf("queue cancellation = %v", dispatcher.canceled)
+	}
+}
+
+func TestRuntimeServiceCancelFinalizesStoppedMessage(t *testing.T) {
+	store, dispatcher := newFakeRunStore(), &fakeRunDispatcher{}
+	chat := &fakeDigitalHumanChat{stopMessage: &runtimemodel.Message{
+		Status: runtimemodel.MessageStatusStopped, Answer: "partial answer",
+		Metadata: map[string]interface{}{"runtime_timeline": []interface{}{map[string]interface{}{"kind": "model_call"}}},
+	}}
+	service := newTestRuntimeService(t, store, dispatcher, chat)
+	scope, digitalHumanID := testRunScope(), uuid.New()
+	run, _, err := service.SubmitManual(t.Context(), scope, digitalHumanID, ManualInvocationRequest{RequestID: uuid.New(), Query: "cancel running"})
+	if err != nil {
+		t.Fatalf("SubmitManual() error = %v", err)
+	}
+	run.Status = RunStatusRunning
+	messageID := uuid.New()
+	run.MessageID = &messageID
+	store.runs[run.ID] = run
+
+	canceled, err := service.CancelRun(t.Context(), scope, digitalHumanID, run.ID)
+	if err != nil {
+		t.Fatalf("CancelRun() error = %v", err)
+	}
+	if canceled.Status != RunStatusCanceled || canceled.ResultSummary != "partial answer" || canceled.CompletedAt == nil {
+		t.Fatalf("canceled run = %#v, want terminal canceled state", canceled)
 	}
 }
 
@@ -1165,6 +1280,7 @@ type fakeDigitalHumanChat struct {
 	skills                []skills.SkillDiscoveryMetadata
 	events                []chatruntime.StreamEvent
 	recoveryMessage       *runtimemodel.Message
+	stopMessage           *runtimemodel.Message
 	getMessageCalls       int
 	runCalls              int
 	followUpContext       *chatruntime.RuntimeInputFollowUpContext
@@ -1276,6 +1392,9 @@ func (c *fakeDigitalHumanChat) GetMessageByCaller(_ context.Context, _ chatrunti
 }
 
 func (c *fakeDigitalHumanChat) StopMessage(context.Context, chatruntime.Scope, uuid.UUID) (*runtimemodel.Message, error) {
+	if c.stopMessage != nil {
+		return c.stopMessage, nil
+	}
 	return &runtimemodel.Message{}, nil
 }
 

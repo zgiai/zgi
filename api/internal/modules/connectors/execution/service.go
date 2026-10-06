@@ -375,10 +375,14 @@ func (service *Service) invokePinned(ctx context.Context, pinned PinnedExecution
 	}
 
 	_, sessionGrantMatched := connectorSessionGrantMatches(request, definition, operation, risk)
-	preauthorized := confirmation == nil && sessionGrantMatched
-	if !digitalHuman.sessionGrantPreauthorizes() {
-		preauthorized = false
-	}
+	// Binding-level direct authorization is explicit in the binding constraint.
+	// Legacy bindings have no mode and therefore remain ask_each_time.
+	bindingDirectAuthorization := confirmation == nil && binding.Constraint != nil &&
+		binding.Constraint.DirectlyAuthorized() &&
+		binding.Constraint.Allows(request.OwnerAccountID, request.OperationID, request.Target, service.now().UTC()) &&
+		bindingAuthorizationFresh(binding.Constraint, connection, acceptedOperation.ContractDigest)
+	preauthorized := confirmation == nil && digitalHuman.sessionGrantPreauthorizes() &&
+		(sessionGrantMatched || bindingDirectAuthorization)
 	request.Preauthorized = preauthorized
 	pinned.Request.Preauthorized = preauthorized
 	if risk != RiskTrustedLow && !preauthorized {
@@ -530,6 +534,23 @@ func (service *Service) invokePinned(ctx context.Context, pinned PinnedExecution
 	default:
 		return result, connectorError(core.ErrorCodeOutcomeUnknown, false)
 	}
+}
+
+	// bindingAuthorizationFresh invalidates a persisted direct choice when the
+	// connection was reconnected, rotated, its operation policy revision
+	// changed, or the admitted operation contract changed. A direct row without
+	// a complete snapshot is treated as ask_each_time rather than inheriting
+	// compatibility authority.
+func bindingAuthorizationFresh(constraint *core.AccessConstraint, connection core.PersonalConnection, contractDigest string) bool {
+	if constraint == nil || !constraint.DirectlyAuthorized() {
+		return false
+	}
+	if constraint.AuthorizationConnectionRevision < 1 || constraint.AuthorizationCredentialVersion < 1 || constraint.AuthorizationContractDigest == "" {
+		return false
+	}
+	return constraint.AuthorizationConnectionRevision == connection.Revision &&
+		constraint.AuthorizationCredentialVersion == connection.CredentialVersion &&
+		constraint.AuthorizationContractDigest == contractDigest
 }
 
 func executionOutcomeError(

@@ -26,6 +26,7 @@ type DigitalHumanRunRequest struct {
 	ChannelConversationID string
 	TaskID                string
 	TaskRunID             string
+	CreatorAccountID      string
 	Name                  string
 	Goal                  string
 	SuccessCriteria       []string
@@ -76,7 +77,7 @@ func (e *RunDigitalHumanExecutor) ExecuteAction(ctx context.Context, req ActionE
 	}
 	request := DigitalHumanRunRequest{
 		ActionRunID: req.ActionRun.ID, OrganizationID: req.Task.OrganizationID, WorkspaceID: req.Task.WorkspaceID,
-		DigitalHumanID: *req.Task.SubjectID, TaskID: req.Task.ID, TaskRunID: req.TaskRun.ID,
+		DigitalHumanID: *req.Task.SubjectID, TaskID: req.Task.ID, TaskRunID: req.TaskRun.ID, CreatorAccountID: req.Task.CreatedBy,
 		OwnerKind: stringValue(req.Task.OwnerKind), OwnerSubjectKind: stringValue(req.Task.OwnerSubjectKind),
 		OwnerSubjectID: stringValue(req.Task.OwnerSubjectID), OwnerConversationID: stringValue(req.Task.OwnerConversationID),
 		OriginSurface:         stringValue(req.Task.OriginSurface),

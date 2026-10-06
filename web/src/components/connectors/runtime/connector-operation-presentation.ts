@@ -16,6 +16,7 @@ export interface ConnectorOperationPresentation {
   display_status: ConnectorDisplayStatus;
   title?: string;
   summary?: string;
+  error_code?: string;
   redacted: boolean;
   truncated: boolean;
 }
@@ -29,7 +30,11 @@ function record(value: unknown): Record<string, unknown> | null {
 export function isConnectorOperationInvocation(value: unknown): boolean {
   const invocation = record(value);
   return (
-    invocation?.runtime_source === 'connector' || invocation?.runtime_source === 'connector_history'
+    invocation?.runtime_source === 'connector' ||
+    invocation?.runtime_source === 'connector_history' ||
+    (invocation?.runtime_source === undefined &&
+      invocation?.skill_id === 'connector-runtime' &&
+      Boolean(record(record(invocation.result)?.operation) || record(record(invocation.result)?.connector_presentation)))
   );
 }
 
@@ -84,7 +89,7 @@ export function parseConnectorOperationPresentation(
   const result = record(invocation.result);
   const presentation = record(result?.connector_presentation);
   if (!presentation) return null;
-  const source = invocation.runtime_source === 'connector' ? 'native' : 'history';
+  const source = invocation.runtime_source === 'connector_history' ? 'history' : 'native';
   const allowed = new Set([
     'schema_version',
     'source_kind',
@@ -94,6 +99,7 @@ export function parseConnectorOperationPresentation(
     'display_status',
     'title',
     'summary',
+    'error_code',
     'redacted',
     'truncated',
   ]);
@@ -108,7 +114,8 @@ export function parseConnectorOperationPresentation(
     typeof presentation.redacted !== 'boolean' ||
     typeof presentation.truncated !== 'boolean' ||
     (presentation.title !== undefined && !safeText(presentation.title, 120)) ||
-    (presentation.summary !== undefined && !safeText(presentation.summary, 800))
+    (presentation.summary !== undefined && !safeText(presentation.summary, 800)) ||
+    (presentation.error_code !== undefined && !safeText(presentation.error_code, 128))
   ) {
     return null;
   }
@@ -175,6 +182,7 @@ export function parseConnectorOperationPresentation(
         : {}),
     ...(presentation.title !== undefined ? { title: presentation.title as string } : {}),
     ...(presentation.summary !== undefined ? { summary: presentation.summary as string } : {}),
+    ...(presentation.error_code !== undefined ? { error_code: presentation.error_code as string } : {}),
     redacted: presentation.redacted,
     truncated: presentation.truncated,
   };

@@ -195,6 +195,22 @@ const taskHooks = await readFile(
   new URL('../src/hooks/digital-human/use-digital-human-tasks.ts', import.meta.url),
   'utf8'
 );
+const taskPanel = await readFile(
+  new URL('../src/components/digital-human/digital-human-task-panel.tsx', import.meta.url),
+  'utf8'
+);
+const taskPresentation = await readFile(
+  new URL('../src/components/digital-human/digital-human-task-presentation.ts', import.meta.url),
+  'utf8'
+);
+const taskHistory = await readFile(
+  new URL('../src/components/digital-human/digital-human-task-history.tsx', import.meta.url),
+  'utf8'
+);
+const webAppTaskService = await readFile(
+  new URL('../src/services/digital-human-webapp.service.ts', import.meta.url),
+  'utf8'
+);
 
 for (const [name, source] of [
   ['configuration', configuration],
@@ -471,8 +487,8 @@ assert.match(
 );
 assert.match(
   tasks,
-  /useState<StatusFilter>\('open'\)[\s\S]*openStatuses/,
-  'DigitalHuman task management must default to unfinished work while preserving an all-status filter'
+  /searchParams\.get\('status'\)[\s\S]*: 'open'[\s\S]*openStatuses/,
+  'DigitalHuman task management must default to unfinished work while preserving an all-status filter in the URL'
 );
 assert.match(
   hooks,
@@ -1243,5 +1259,26 @@ assert.doesNotMatch(
   /email/,
   'DigitalHuman run filters must not expose email sources before email delivery exists'
 );
+
+assert.match(taskHooks, /refetchInterval: query => query\.state\.data\?\.data\.work_status/, 'The open task detail must refresh after scheduler changes');
+assert.match(tasks, /const latest = await detail\.task\.refetch\(\)/, 'Actions must refresh the latest revision');
+assert.match(tasks, /latest\.data\.data\.revision !== task\.revision[\s\S]*actionStale/, 'Actions must not apply stale user intent to a changed task');
+assert.match(tasks, /catch \{\s*void detail\.task\.refetch\(\)/, 'Failed actions must refresh without an unhandled rejection');
+assert.match(taskHooks, /page: filters\.page \?\? 1/, 'Task hooks must accept a page beyond the first 100 items');
+assert.match(tasks, /query\.data\.data\.has_more/, 'Console tasks must expose another page');
+assert.match(taskPanel, /tasks\.has_more/, 'Embedded tasks must expose another page');
+assert.match(tasks, /summaryStatuses[\s\S]*'waiting'[\s\S]*'canceled'/, 'Status cards must include waiting and canceled');
+assert.match(tasks, /previewTaskSchedule\(id,[\s\S]*nextRunPreview/, 'Editor must validate and preview schedules');
+assert.match(service, /previewTaskSchedule\([\s\S]*\/schedule-preview/, 'Schedule preview must use the server endpoint');
+assert.match(tasks, /isAxiosError\(error\)[\s\S]*'invalid' : 'unavailable'[\s\S]*setPreviewRetry/, 'Schedule preview must separate input errors from retryable outages');
+assert.match(tasks, /DigitalHumanTaskRunSummary[\s\S]*DigitalHumanTaskActivityItem/, 'Console task detail must share the run and activity presentations');
+assert.match(taskPresentation, /digitalHumanTaskScheduleSummary[\s\S]*describeCronSchedule/, 'Task views must share cron presentation');
+assert.match(taskHooks, /taskRuns\(id, taskId\), runPage[\s\S]*listTaskRuns\(id, taskId, runPage\)/, 'Console run history must request the selected page');
+assert.match(taskPanel, /clientRef\.current\.runs\(selected\.id, runPage\)[\s\S]*clientRef\.current\.activities\(selected\.id, activityPage\)/, 'Embedded history must request each selected page');
+assert.match(webAppTaskService, /listTaskRuns\(webAppId: string, taskId: string, page = 1\)[\s\S]*params: \{ page \}[\s\S]*listTaskActivities\(webAppId: string, taskId: string, page = 1\)/, 'WebApp histories must pass the selected page to owner-scoped endpoints');
+assert.match(tasks, /DigitalHumanTaskHistoryPager data=\{detail\.runs[\s\S]*DigitalHumanTaskHistoryPager data=\{detail\.activities/, 'Console must show run and activity history pagination');
+assert.match(taskHistory, /queryKey: \['digital-human-task-actor', organizationId, memberId\][\s\S]*activityActorLabel\(activity\.actor_type/, 'Task activity must scope account names to the current organization or fall back without exposing raw IDs');
+assert.doesNotMatch(tasks, /from '@\/components\/digital-human\/digital-human-task-panel'/, 'Console must not import the complete embedded panel for shared history UI');
+assert.match(tasks, /updateParams\(\{ status:[\s\S]*page: null/, 'Task status and pagination must be URL-addressable');
 
 console.log('DigitalHuman console contract checks passed.');

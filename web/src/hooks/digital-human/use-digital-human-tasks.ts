@@ -8,6 +8,7 @@ import type { CreateDigitalHumanTaskRequest, UpdateDigitalHumanTaskRequest } fro
 import { getErrorMessage } from '@/utils/error-notifications';
 
 export interface DigitalHumanTaskFilters {
+  page?: number;
   query?: string;
   status?: string[];
   priority?: string[];
@@ -19,7 +20,7 @@ export interface DigitalHumanTaskFilters {
 export function useDigitalHumanTasks(id: string, filters: DigitalHumanTaskFilters = {}) {
   return useQuery({
     queryKey: DIGITAL_HUMAN_KEYS.tasks(id, filters),
-    queryFn: () => digitalHumanService.listTasks(id, { page: 1, page_size: 100, ...filters }),
+    queryFn: () => digitalHumanService.listTasks(id, { page: filters.page ?? 1, page_size: 100, ...filters }),
     enabled: Boolean(id),
     refetchInterval: current => current.state.data?.data.items.some(item => item.work_status === 'in_progress') ? 3_000 : 15_000,
   });
@@ -28,16 +29,33 @@ export function useDigitalHumanTasks(id: string, filters: DigitalHumanTaskFilter
 export function useDigitalHumanMyTasks(id: string, filters: DigitalHumanTaskFilters = {}) {
   return useQuery({
     queryKey: [...DIGITAL_HUMAN_KEYS.tasks(id), 'mine', filters],
-    queryFn: () => digitalHumanService.listMyTasks(id, { page: 1, page_size: 100, ...filters }),
+    queryFn: () => digitalHumanService.listMyTasks(id, { page: filters.page ?? 1, page_size: 100, ...filters }),
     enabled: Boolean(id),
     refetchInterval: current => current.state.data?.data.items.some(item => item.work_status === 'in_progress') ? 3_000 : 15_000,
   });
 }
 
-export function useDigitalHumanTaskDetail(id: string, taskId: string) {
-  const task = useQuery({ queryKey: DIGITAL_HUMAN_KEYS.task(id, taskId), queryFn: () => digitalHumanService.getTask(id, taskId), enabled: Boolean(id && taskId) });
-  const runs = useQuery({ queryKey: DIGITAL_HUMAN_KEYS.taskRuns(id, taskId), queryFn: () => digitalHumanService.listTaskRuns(id, taskId), enabled: Boolean(id && taskId) });
-  const activities = useQuery({ queryKey: DIGITAL_HUMAN_KEYS.taskActivities(id, taskId), queryFn: () => digitalHumanService.listTaskActivities(id, taskId), enabled: Boolean(id && taskId) });
+export function useDigitalHumanTaskDetail(id: string, taskId: string, runPage = 1, activityPage = 1) {
+  const enabled = Boolean(id && taskId);
+  const task = useQuery({
+    queryKey: DIGITAL_HUMAN_KEYS.task(id, taskId),
+    queryFn: () => digitalHumanService.getTask(id, taskId),
+    enabled,
+    refetchInterval: query => query.state.data?.data.work_status === 'in_progress' ? 3_000 : 15_000,
+  });
+  const interval = task.data?.data.work_status === 'in_progress' ? 3_000 : 15_000;
+  const runs = useQuery({
+    queryKey: [...DIGITAL_HUMAN_KEYS.taskRuns(id, taskId), runPage],
+    queryFn: () => digitalHumanService.listTaskRuns(id, taskId, runPage),
+    enabled,
+    refetchInterval: interval,
+  });
+  const activities = useQuery({
+    queryKey: [...DIGITAL_HUMAN_KEYS.taskActivities(id, taskId), activityPage],
+    queryFn: () => digitalHumanService.listTaskActivities(id, taskId, activityPage),
+    enabled,
+    refetchInterval: interval,
+  });
   return { task, runs, activities };
 }
 

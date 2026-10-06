@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -265,12 +266,26 @@ func performConnectorRuntimeConfirmationRequest(
 }
 
 type connectorRuntimeConfirmationServiceSpy struct {
-	statusCalls []connectorconfirmation.StatusQuery
+	statusCalls  []connectorconfirmation.StatusQuery
+	pendingCalls []struct {
+		organizationID uuid.UUID
+		ownerID        uuid.UUID
+		page, pageSize int
+	}
 	result      connectorconfirmation.Result
 	err         error
 	recordErr   error
 	calls       []connectorconfirmation.Command
 	recordCalls []connectorRuntimeConfirmationRecordCall
+}
+
+func (service *connectorRuntimeConfirmationServiceSpy) ListPending(_ context.Context, organizationID, ownerID uuid.UUID, page, pageSize int) (connectorconfirmation.PendingResult, error) {
+	service.pendingCalls = append(service.pendingCalls, struct {
+		organizationID uuid.UUID
+		ownerID        uuid.UUID
+		page, pageSize int
+	}{organizationID, ownerID, page, pageSize})
+	return connectorconfirmation.PendingResult{Items: []connectorexecution.PendingConfirmationRef{{RouteReceipt: connectorexecution.RouteClaimReceipt(uuid.NewString()), CreatedAt: time.Now().UTC()}}, Page: page, PageSize: pageSize}, service.err
 }
 
 func (service *connectorRuntimeConfirmationServiceSpy) ReadStatus(_ context.Context, query connectorconfirmation.StatusQuery) (connectorconfirmation.StatusResult, error) {
@@ -304,6 +319,30 @@ func TestConnectorRuntimeStatusReadIsOwnerScopedAndDoesNotContinue(t *testing.T)
 	}
 	if len(service.statusCalls) != 1 {
 		t.Fatal("invalid query reached service")
+	}
+}
+
+func TestConnectorPendingConfirmationInboxIsOwnerScopedAndReadOnly(t *testing.T) {
+	organizationID, ownerID := uuid.New(), uuid.New()
+	service := &connectorRuntimeConfirmationServiceSpy{}
+	router := newConnectorRuntimeConfirmationRouteTestRouter(service, organizationID, ownerID)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/console/api/connectors/runtime/confirmations?page=2&page_size=1", nil))
+	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" || !strings.Contains(response.Body.String(), `"page":2`) {
+		t.Fatalf("pending inbox response = %d %s", response.Code, response.Body.String())
+	}
+	if len(service.pendingCalls) != 1 || service.pendingCalls[0].organizationID != organizationID || service.pendingCalls[0].ownerID != ownerID || service.pendingCalls[0].page != 2 || service.pendingCalls[0].pageSize != 1 || len(service.calls) != 0 || len(service.recordCalls) != 0 {
+		t.Fatal("pending inbox did not retain authenticated read-only owner scope")
+	}
+	for _, query := range []string{"?page=0", "?page_size=101", "?owner_account_id=" + uuid.NewString(), "?page=1&page=2"} {
+		response = httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/console/api/connectors/runtime/confirmations"+query, nil))
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("invalid inbox query %q returned %d", query, response.Code)
+		}
+	}
+	if len(service.pendingCalls) != 1 {
+		t.Fatal("invalid inbox query reached service")
 	}
 }
 

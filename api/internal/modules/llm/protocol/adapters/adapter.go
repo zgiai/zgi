@@ -173,6 +173,7 @@ type RawStreamEvent struct {
 // EmbeddingsRequest embeddings request format
 type EmbeddingsRequest struct {
 	Input          interface{} `json:"input"` // string or []string or []int or [][]int
+	Provider       string      `json:"-"`
 	Model          string      `json:"model"`
 	EncodingFormat string      `json:"encoding_format,omitempty"` // float or base64
 	Dimensions     int         `json:"dimensions,omitempty"`
