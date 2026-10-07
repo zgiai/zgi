@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"path"
@@ -240,6 +241,7 @@ type WorkerOptions struct {
 	ClaimLease         time.Duration
 	CancelPollInterval time.Duration
 	MaxOutputBytes     int64
+	QuarantineJob      func(context.Context, Job) error
 }
 
 type Worker struct {
@@ -250,6 +252,7 @@ type Worker struct {
 	claimLease         time.Duration
 	cancelPollInterval time.Duration
 	maxOutputBytes     int64
+	quarantineJob      func(context.Context, Job) error
 }
 
 func NewWorker(jobs JobRepository, backends map[string]ExecutionBackend, options WorkerOptions) (*Worker, error) {
@@ -272,6 +275,7 @@ func NewWorker(jobs JobRepository, backends map[string]ExecutionBackend, options
 		jobs: jobs, backends: copyExecutionBackends(backends), ownerID: strings.TrimSpace(options.OwnerID),
 		now: options.Now, claimLease: options.ClaimLease,
 		cancelPollInterval: options.CancelPollInterval, maxOutputBytes: options.MaxOutputBytes,
+		quarantineJob: options.QuarantineJob,
 	}, nil
 }
 
@@ -340,7 +344,14 @@ func (w *Worker) RunOne(ctx context.Context) (bool, error) {
 			if result.err != nil && result.result.Error == "" {
 				result.result.Error = result.err.Error()
 			}
-			return true, w.finishJob(context.WithoutCancel(ctx), job, result.result)
+			var quarantineErr error
+			if result.result.TerminationFailed && w.quarantineJob != nil {
+				cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+				quarantineErr = w.quarantineJob(cleanupCtx, job)
+				cleanupCancel()
+			}
+			finishErr := w.finishJob(context.WithoutCancel(ctx), job, result.result)
+			return true, errors.Join(finishErr, quarantineErr)
 		case <-ticker.C:
 			tickNow := w.now().UTC()
 			if !tickNow.Before(nextRenewal) {

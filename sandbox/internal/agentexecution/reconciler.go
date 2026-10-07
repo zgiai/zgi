@@ -86,6 +86,19 @@ func (r *Reconciler) ReconcileOne(ctx context.Context) (bool, error) {
 		err := fmt.Errorf("%w: %s", ErrBackendUnavailable, task.Backend)
 		return true, r.retryCleanup(ctx, task, err)
 	}
+	if task.Action == "quarantine" && task.ResourceType == "binding" {
+		binding, err := r.repository.Binding(ctx, task.BindingID)
+		if err != nil {
+			return true, r.retryCleanup(ctx, task, err)
+		}
+		if binding.Status == BindingStatusFailed && binding.Generation == task.BindingGeneration && binding.BackendRef == task.BackendRef {
+			if err := backend.SuspendBinding(ctx, Allocation{BindingRef: task.BackendRef, WorkspaceRef: task.WorkspaceRef}); err != nil {
+				return true, r.retryCleanup(ctx, task, err)
+			}
+		}
+		finishedAt := r.now().UTC()
+		return true, r.repository.CompleteCleanup(ctx, task.ID, r.ownerID, true, "", finishedAt, finishedAt)
+	}
 	if task.Action != "destroy" || task.ResourceType != "binding" {
 		err := fmt.Errorf("%w: unsupported cleanup %s/%s", ErrInvalidRequest, task.ResourceType, task.Action)
 		return true, r.retryCleanup(ctx, task, err)
@@ -122,7 +135,8 @@ func (r *Reconciler) reconcileAllocationAttempt(ctx context.Context, task Cleanu
 	}
 	for _, allocation := range allocations {
 		if err == nil && binding.Backend == task.Backend && binding.BackendRef == allocation.BindingRef &&
-			binding.Status != BindingStatusDeleted && binding.Status != BindingStatusDeleting && binding.Status != BindingStatusFailed {
+			binding.Status != BindingStatusDeleted && binding.Status != BindingStatusDeleting &&
+			(binding.Status != BindingStatusFailed || binding.FailureReason == quarantineFailureReason) {
 			continue
 		}
 		if destroyErr := backend.DestroyBinding(ctx, allocation); destroyErr != nil {

@@ -318,17 +318,14 @@ func (j *remoteRunningJob) Wait(ctx context.Context) (agentexecution.JobResult, 
 	defer ticker.Stop()
 	for {
 		if err := j.drainOutput(ctx); err != nil {
-			cancelContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			_ = j.Cancel(cancelContext)
-			cancel()
-			return agentexecution.JobResult{ExitCode: -1, Error: err.Error()}, err
+			return j.stopAfterFailure(ctx, err)
 		}
 		status, err := j.status(ctx)
 		if err != nil {
-			return agentexecution.JobResult{}, err
+			return j.stopAfterFailure(ctx, err)
 		}
 		if status.Truncated {
-			return agentexecution.JobResult{ExitCode: -1, Error: agentexecution.ErrOutputLimit.Error()}, agentexecution.ErrOutputLimit
+			return j.stopAfterFailure(ctx, agentexecution.ErrOutputLimit)
 		}
 		if status.Done {
 			if err := j.drainOutput(ctx); err != nil {
@@ -341,13 +338,23 @@ func (j *remoteRunningJob) Wait(ctx context.Context) (agentexecution.JobResult, 
 		}
 		select {
 		case <-ctx.Done():
-			cancelContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			_ = j.Cancel(cancelContext)
-			cancel()
-			return agentexecution.JobResult{ExitCode: -1, Canceled: true}, ctx.Err()
+			return j.stopAfterFailure(ctx, ctx.Err())
 		case <-ticker.C:
 		}
 	}
+}
+
+// A transport failure is not proof that compute has stopped. Failed cancellation
+// is surfaced to the Worker so it can quarantine the provider allocation.
+func (j *remoteRunningJob) stopAfterFailure(ctx context.Context, cause error) (agentexecution.JobResult, error) {
+	cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	stopErr := j.Cancel(cancelCtx)
+	err := errors.Join(cause, stopErr)
+	return agentexecution.JobResult{
+		ExitCode: -1, Error: err.Error(), Canceled: stopErr == nil && errors.Is(cause, context.Canceled),
+		TerminationFailed: stopErr != nil,
+	}, err
 }
 
 func (j *remoteRunningJob) Cancel(ctx context.Context) error {

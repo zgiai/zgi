@@ -177,12 +177,15 @@ type JobResult struct {
 	ExitCode int    `json:"exit_code"`
 	Canceled bool   `json:"canceled"`
 	Error    string `json:"error,omitempty"`
+	// TerminationFailed requires quarantining compute, not deleting workspace files.
+	TerminationFailed bool `json:"termination_failed,omitempty"`
 }
 
 type RuntimeCapabilities struct {
-	Shell        bool `json:"shell"`
-	PTY          bool `json:"pty"`
-	FileTransfer bool `json:"file_transfer"`
+	PackageSourceDigest string `json:"package_source_digest,omitempty"`
+	Shell               bool   `json:"shell"`
+	PTY                 bool   `json:"pty"`
+	FileTransfer        bool   `json:"file_transfer"`
 	// DependencyPreparation permits user-space preparation. The approved mode
 	// determines whether sources are staged offline or fetched through a
 	// controlled HTTPS proxy; it never permits system package installation.
