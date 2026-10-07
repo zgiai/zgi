@@ -270,9 +270,6 @@ export interface AgentRuntimeConfig {
 
 export interface AgentExecutionRuntimeConfig {
   enabled: boolean;
-  profile_id: string;
-  home_snapshot_id: string | null;
-  policy_id: string;
 }
 
 export type AgentBindingType =

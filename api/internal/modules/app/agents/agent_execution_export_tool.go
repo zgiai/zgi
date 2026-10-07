@@ -64,7 +64,7 @@ func exportAgentExecutionFile(ctx context.Context, gateway agentExecutionGateway
 		return failed("binding_unavailable", err)
 	}
 	capabilities, err := gateway.Capabilities(operationCtx, scope, binding.ID)
-	if err != nil || !capabilities.FileTransfer || (capabilities.NetworkMode != "disabled" && capabilities.NetworkMode != "controlled-http") || capabilities.MaxDownloadBytes <= 0 {
+	if err != nil || !capabilities.FileTransfer || !agentExecutionShellNetworkAllowed(capabilities) || capabilities.MaxDownloadBytes <= 0 {
 		return failed("capability_denied", fmt.Errorf("agent execution download is unavailable"))
 	}
 	data, err := gateway.DownloadFile(operationCtx, scope, binding.ID, filePath)

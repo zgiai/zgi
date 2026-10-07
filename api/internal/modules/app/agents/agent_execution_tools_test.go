@@ -235,7 +235,7 @@ func TestAgentExecutionShellToolKeepsCommandAndOutputOutOfTrace(t *testing.T) {
 	if result.Error != nil || result.Status != "success" {
 		t.Fatalf("tool result = %#v", result)
 	}
-	if fake.command != "/bin/sh" || !reflect.DeepEqual(fake.args, []string{"-lc", "echo private command"}) {
+	if fake.command != "/bin/sh" || !reflect.DeepEqual(fake.args, []string{"-c", "echo private command"}) {
 		t.Fatalf("submitted command = %q %#v", fake.command, fake.args)
 	}
 	if fake.scope != (agentExecutionScope{OrganizationID: "org-1", SubjectID: "account-1"}) {
@@ -262,6 +262,60 @@ func TestAgentExecutionShellPassesNetworkPolicyToBinding(t *testing.T) {
 	}
 }
 
+func TestAgentExecutionShellDescriptionMatchesRequestedMode(t *testing.T) {
+	for _, test := range []struct {
+		mode string
+		want string
+	}{
+		{"offline", "network access and dependency installation are unavailable"},
+		{"package-install", "pip, python -m pip, npm, and guarded apt-get"},
+		{"controlled-http", "only approved HTTP(S) destinations"},
+	} {
+		t.Run(test.mode, func(t *testing.T) {
+			description := agentExecutionShellDescription(test.mode)
+			if !strings.Contains(description, test.want) || !strings.Contains(description, "actual environment") {
+				t.Fatalf("description = %q, want %q and actual capability guidance", description, test.want)
+			}
+			if test.mode == "package-install" && strings.Contains(description, "network access and dependency installation are unavailable") {
+				t.Fatal("package-install was advertised as offline")
+			}
+		})
+	}
+}
+
+func TestAgentExecutionShellReportsActualCapabilitiesWithoutInternalEndpoints(t *testing.T) {
+	for _, mode := range []string{"disabled", "package-install"} {
+		t.Run(mode, func(t *testing.T) {
+			installation := mode == "package-install"
+			packageMode := ""
+			if installation {
+				packageMode = mode
+			}
+			fake := &fakeAgentExecutionGateway{
+				binding: agentExecutionBinding{ID: "binding-1", Status: "active"},
+				job:     agentExecutionJob{ID: "job-1", Status: "succeeded"},
+				capabilities: agentExecutionCapabilities{Shell: true, NetworkMode: mode,
+					DependencyInstallation: installation, PackageNetworkMode: packageMode,
+					EgressProxyAddress: "internal-proxy:3128"},
+			}
+			// An existing conversation can remain offline after operator config changes.
+			tool := newAgentExecutionShellToolWithNetworkPolicy(fake, agentExecutionScope{}, "agent-1", "conversation-1", "message-1", "standard", "e2b", "package-install", nil, nil)
+			result := tool.Handler(t.Context(), adapter.ToolCall{Function: adapter.FunctionCall{Arguments: `{"command":"echo test"}`}})
+			if result.Error != nil {
+				t.Fatal(result.Error)
+			}
+			want := map[string]interface{}{"network_mode": mode, "dependency_installation": installation, "package_network_mode": packageMode}
+			if !reflect.DeepEqual(result.ModelResult["runtime_capabilities"], want) {
+				t.Fatalf("runtime capabilities = %#v, want %#v", result.ModelResult["runtime_capabilities"], want)
+			}
+			encoded, err := json.Marshal(result.ModelResult)
+			if err != nil || strings.Contains(string(encoded), "internal-proxy") {
+				t.Fatalf("internal endpoint leaked: %s, error=%v", encoded, err)
+			}
+		})
+	}
+}
+
 func TestAgentExecutionShellNetworkPolicyRequiresProxyCapability(t *testing.T) {
 	if !agentExecutionShellNetworkAllowed(agentExecutionCapabilities{NetworkMode: "disabled"}) {
 		t.Fatal("offline shell should be allowed")
@@ -271,6 +325,15 @@ func TestAgentExecutionShellNetworkPolicyRequiresProxyCapability(t *testing.T) {
 	}
 	if !agentExecutionShellNetworkAllowed(agentExecutionCapabilities{NetworkMode: "controlled-http", EgressProxyAddress: "127.0.0.1:3128"}) {
 		t.Fatal("controlled shell with proxy should be allowed")
+	}
+	if agentExecutionShellNetworkAllowed(agentExecutionCapabilities{NetworkMode: "package-install", EgressProxyAddress: "127.0.0.1:3128"}) {
+		t.Fatal("package shell without installation capability should be denied")
+	}
+	if !agentExecutionShellNetworkAllowed(agentExecutionCapabilities{NetworkMode: "package-install", PackageNetworkMode: "package-install", DependencyInstallation: true, EgressProxyAddress: "127.0.0.1:3128"}) {
+		t.Fatal("package shell with capability and proxy should be allowed")
+	}
+	if !agentExecutionShellNetworkAllowed(agentExecutionCapabilities{NetworkMode: "package-install", PackageNetworkMode: "package-install", DependencyInstallation: true, PackageNetworkEnforced: true}) {
+		t.Fatal("package shell with provider-enforced network should be allowed")
 	}
 }
 
@@ -368,7 +431,7 @@ func TestConsoleAgentExecutionToolFactoryIsCallerScoped(t *testing.T) {
 	orgID := uuid.New()
 	accountID := uuid.New()
 	h := &AgentsHandler{
-		executionApprovals: agentExecutionApprovals{GatewayReady: true, Profiles: map[string]agentExecutionApproval{
+		executionApprovals: agentExecutionApprovals{Enabled: true, GatewayReady: true, Profiles: map[string]agentExecutionApproval{
 			"standard": {Backend: "local-gvisor", OrganizationIDs: []string{orgID.String()}, PolicyIDs: []string{"offline"}},
 		}},
 		executionGateway: &fakeAgentExecutionGateway{},
@@ -403,7 +466,7 @@ func TestConsoleAgentExecutionDependencyToolRequiresProfileApproval(t *testing.T
 	orgID := uuid.New()
 	accountID := uuid.New()
 	h := &AgentsHandler{
-		executionApprovals: agentExecutionApprovals{GatewayReady: true, Profiles: map[string]agentExecutionApproval{
+		executionApprovals: agentExecutionApprovals{Enabled: true, GatewayReady: true, Profiles: map[string]agentExecutionApproval{
 			"standard": {Backend: "local-gvisor", OrganizationIDs: []string{orgID.String()}, PolicyIDs: []string{"offline"}, DependencyPreparation: true},
 		}},
 		executionGateway: &fakeAgentExecutionGateway{},
@@ -429,6 +492,23 @@ func TestConsoleAgentExecutionDependencyToolRequiresProfileApproval(t *testing.T
 	}
 	if tools := runConfig.RuntimeToolFactory(prepared); len(tools) != 2 {
 		t.Fatalf("unapproved dependency tool was exposed: %#v", tools)
+	}
+
+	for _, backend := range []string{"local-gvisor", "e2b"} {
+		t.Run(backend+"-standard-installation", func(t *testing.T) {
+			h.executionApprovals.Profiles["standard"] = agentExecutionApproval{
+				Backend: backend, OrganizationIDs: []string{orgID.String()}, PolicyIDs: []string{"package-install"},
+				DependencyPreparation: true, DependencyInstallation: true, PackageNetworkMode: "package-install",
+			}
+			runConfig := runtimeservice.RunConfig{}
+			if err := h.attachConsoleAgentExecutionTools(&runConfig, prepared.Scope, agentID, dto.AgentConfigResponse{ExecutionRuntime: &dto.AgentExecutionRuntime{Enabled: true}}); err != nil {
+				t.Fatal(err)
+			}
+			tools := runConfig.RuntimeToolFactory(prepared)
+			if len(tools) != 2 || tools[0].Definition.Function.Name != "shell_exec" || tools[1].Definition.Function.Name != "workspace_export_file" {
+				t.Fatalf("standard installation tools = %#v, want shell and export only", tools)
+			}
+		})
 	}
 }
 
@@ -456,6 +536,32 @@ func TestAgentExecutionExportCreatesDownloadArtifactWithoutTraceContent(t *testi
 		if bad.Result["error_code"] != "invalid_path" {
 			t.Fatalf("unsafe path %q accepted: %#v", unsafe, bad)
 		}
+	}
+}
+
+func TestAgentExecutionExportAcceptsEnforcedPackageNetwork(t *testing.T) {
+	for _, providerEnforced := range []bool{false, true} {
+		t.Run(fmt.Sprint(providerEnforced), func(t *testing.T) {
+			caps := agentExecutionCapabilities{FileTransfer: true, NetworkMode: "package-install",
+				DependencyInstallation: true, PackageNetworkMode: "package-install", MaxDownloadBytes: 1024,
+				PackageNetworkEnforced: providerEnforced}
+			if !providerEnforced {
+				caps.EgressProxyAddress = "127.0.0.1:3128"
+			}
+			fake := &fakeAgentExecutionGateway{binding: agentExecutionBinding{ID: "binding-1", Status: "active"},
+				capabilities: caps, downloads: map[string][]byte{"artifacts/result.txt": []byte("test result")}}
+			tool := newAgentExecutionExportTool(fake, &fakeAgentExecutionArtifactPersister{}, agentExecutionScope{}, "agent-1", "conversation-1", "message-1", "standard", "e2b", "package-install")
+			result := tool.Handler(t.Context(), adapter.ToolCall{Function: adapter.FunctionCall{Arguments: `{"path":"artifacts/result.txt"}`}})
+			if result.Error != nil || len(result.Artifacts) != 1 {
+				t.Fatalf("package export result = %#v", result)
+			}
+			fake.capabilities.PackageNetworkEnforced = false
+			fake.capabilities.EgressProxyAddress = ""
+			denied := tool.Handler(t.Context(), adapter.ToolCall{Function: adapter.FunctionCall{Arguments: `{"path":"artifacts/result.txt"}`}})
+			if denied.Result["error_code"] != "capability_denied" {
+				t.Fatalf("unenforced package export result = %#v", denied)
+			}
+		})
 	}
 }
 

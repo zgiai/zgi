@@ -31,20 +31,21 @@ func (h *AgentsHandler) attachConsoleAgentExecutionTools(runConfig *runtimeservi
 	if runConfig == nil || cfg.ExecutionRuntime == nil || !cfg.ExecutionRuntime.Enabled {
 		return nil
 	}
-	if err := h.executionApprovals.validate(scope.OrganizationID.String(), cfg.ExecutionRuntime); err != nil {
+	resolvedRuntime, err := h.executionApprovals.resolve(scope.OrganizationID.String(), cfg.ExecutionRuntime)
+	if err != nil {
 		return err
 	}
 	if h.executionGateway == nil {
 		return apperror.New(AppCodeAgentExecutionRuntimeUnavailable, apperror.WithOperation("agent_execution.gateway_unavailable"))
 	}
-	profileID := strings.TrimSpace(cfg.ExecutionRuntime.ProfileID)
+	profileID := resolvedRuntime.ProfileID
 	profileApproval := h.executionApprovals.Profiles[profileID]
 	backend := profileApproval.Backend
 	gateway := h.executionGateway
-	if cfg.ExecutionRuntime.HomeSnapshotID != nil && strings.TrimSpace(*cfg.ExecutionRuntime.HomeSnapshotID) != "" {
+	if resolvedRuntime.HomeSnapshotID != nil && strings.TrimSpace(*resolvedRuntime.HomeSnapshotID) != "" {
 		gateway = agentExecutionSnapshotGateway{
 			agentExecutionGateway: gateway,
-			homeSnapshotID:        strings.TrimSpace(*cfg.ExecutionRuntime.HomeSnapshotID),
+			homeSnapshotID:        strings.TrimSpace(*resolvedRuntime.HomeSnapshotID),
 		}
 	}
 	fileReader := h.fileService
@@ -66,11 +67,11 @@ func (h *AgentsHandler) attachConsoleAgentExecutionTools(runConfig *runtimeservi
 			OrganizationID: scope.OrganizationID.String(), SubjectID: scope.AccountID.String(),
 		}
 		tools := []skillloop.RuntimeTool{
-			newAgentExecutionShellToolWithNetworkPolicy(gateway, executionScope, agentID.String(), prepared.Conversation.ID.String(), prepared.Message.ID.String(), profileID, backend, cfg.ExecutionRuntime.PolicyID, prepared.RuntimeAttachmentRefs(), fileReader, skillResolver),
-			newAgentExecutionExportTool(gateway, persister, executionScope, agentID.String(), prepared.Conversation.ID.String(), prepared.Message.ID.String(), profileID, backend, cfg.ExecutionRuntime.PolicyID),
+			newAgentExecutionShellToolWithNetworkPolicy(gateway, executionScope, agentID.String(), prepared.Conversation.ID.String(), prepared.Message.ID.String(), profileID, backend, resolvedRuntime.PolicyID, prepared.RuntimeAttachmentRefs(), fileReader, skillResolver),
+			newAgentExecutionExportTool(gateway, persister, executionScope, agentID.String(), prepared.Conversation.ID.String(), prepared.Message.ID.String(), profileID, backend, resolvedRuntime.PolicyID),
 		}
-		if profileApproval.DependencyPreparation {
-			tools = append(tools, newAgentExecutionDependencyPreparationTool(gateway, executionScope, agentID.String(), prepared.Conversation.ID.String(), prepared.Message.ID.String(), profileID, backend, cfg.ExecutionRuntime.PolicyID, skillResolver))
+		if profileApproval.DependencyPreparation && !profileApproval.DependencyInstallation {
+			tools = append(tools, newAgentExecutionDependencyPreparationTool(gateway, executionScope, agentID.String(), prepared.Conversation.ID.String(), prepared.Message.ID.String(), profileID, backend, resolvedRuntime.PolicyID, skillResolver))
 		}
 		return tools
 	}
@@ -99,7 +100,7 @@ func newAgentExecutionShellToolWithNetworkPolicy(gateway agentExecutionGateway, 
 		SkillID: "agent_execution",
 		Definition: adapter.Tool{Type: "function", Function: adapter.Function{
 			Name:        "shell_exec",
-			Description: "Run a command in the approved, isolated Linux workspace for this console conversation. The default policy is offline; a separately approved controlled-HTTPS Profile exposes only its loopback proxy and host allowlist. Current-turn uploaded files are staged under inputs/ before the command. To run an active custom Skill's packaged Python or Node script, pass skill_id and the package_sha256 supplied in session_scripts, then use $ZGI_SKILL_DIR/scripts/... in the command. Reload or reactivate the Skill if its package version changes. The workspace may be released after inactivity.",
+			Description: agentExecutionShellDescription(networkPolicy),
 			Parameters: map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
@@ -115,6 +116,18 @@ func newAgentExecutionShellToolWithNetworkPolicy(gateway agentExecutionGateway, 
 			return executeAgentShellToolWithNetworkPolicy(ctx, gateway, scope, agentID, conversationID, messageID, profileID, backend, networkPolicy, call, stage, skillResolvers...)
 		},
 	}
+}
+
+func agentExecutionShellDescription(networkPolicy string) string {
+	network := "The requested network mode is offline: network access and dependency installation are unavailable."
+	switch networkPolicy {
+	case agentExecutionPackageNetworkMode:
+		network = "The requested network mode is package-install: pip, python -m pip, npm, and guarded apt-get may install missing packages from approved package sources only. Diagnose missing imports or commands, install the missing package, and retry; no ZGI manifest or dependency declaration is required. Do not call workspace_prepare_dependencies in this mode. General Internet access is unavailable."
+	case agentExecutionDependencyPreparationModeControlledHTTP:
+		network = "The requested network mode is controlled-http: only approved HTTP(S) destinations are accessible. Use workspace_prepare_dependencies only if that legacy tool is explicitly available."
+	}
+	return "Run a command in the approved, isolated Linux workspace for this console conversation. " + network +
+		" The runtime_capabilities in the result report the actual environment; an existing conversation can retain its previous network mode. Current-turn uploaded files are staged under inputs/ before the command. To run an active custom Skill's packaged Python or Node script, pass skill_id and the package_sha256 supplied in session_scripts, then use $ZGI_SKILL_DIR/scripts/... in the command. Reload or reactivate the Skill if its package version changes. The workspace may be released after inactivity."
 }
 
 func executeAgentShellTool(ctx context.Context, gateway agentExecutionGateway, scope agentExecutionScope, agentID, conversationID, messageID, profileID, backend string, call adapter.ToolCall, stage func(context.Context, string, agentExecutionCapabilities) ([]string, error), skillResolvers ...agentSkillPackageResolver) skillloop.RuntimeToolResult {
@@ -206,7 +219,9 @@ func executeAgentShellToolWithNetworkPolicy(ctx context.Context, gateway agentEx
 	if skillPath != "" {
 		command = "ZGI_SKILL_DIR='/workspace/" + skillPath + "'; export ZGI_SKILL_DIR; " + command
 	}
-	job, err := gateway.SubmitJob(operationCtx, scope, binding.ID, "tool:"+messageID+":"+callID, "/bin/sh", []string{"-lc", command}, timeout)
+	// Login shells source /etc/profile and overwrite the injected session PATH
+	// and HOME, sending pip back to the base Profile instead of its retained venv.
+	job, err := gateway.SubmitJob(operationCtx, scope, binding.ID, "tool:"+messageID+":"+callID, "/bin/sh", []string{"-c", command}, timeout)
 	if err != nil {
 		return failed("job_submission_failed", err)
 	}
@@ -235,13 +250,22 @@ func executeAgentShellToolWithNetworkPolicy(ctx context.Context, gateway agentEx
 	}
 	return skillloop.RuntimeToolResult{
 		Status: "success", Arguments: map[string]interface{}{"command_bytes": len(args.Command)}, Result: result,
-		ModelResult: map[string]interface{}{"job_id": job.ID, "status": job.Status, "exit_code": job.ExitCode, "stdout": stdout, "stderr": stderr, "truncated": truncated, "input_files": inputPaths, "workspace_recreated": binding.Recreated, "skill_workspace_path": skillPath},
+		ModelResult: map[string]interface{}{"job_id": job.ID, "status": job.Status, "exit_code": job.ExitCode, "stdout": stdout, "stderr": stderr, "truncated": truncated, "input_files": inputPaths, "workspace_recreated": binding.Recreated, "skill_workspace_path": skillPath,
+			"runtime_capabilities": map[string]interface{}{
+				"network_mode": capabilities.NetworkMode, "dependency_installation": capabilities.DependencyInstallation,
+				"package_network_mode": capabilities.PackageNetworkMode,
+			},
+		},
 	}
 }
 
 func agentExecutionShellNetworkAllowed(capabilities agentExecutionCapabilities) bool {
 	if capabilities.NetworkMode == "disabled" {
 		return true
+	}
+	if capabilities.NetworkMode == "package-install" {
+		return capabilities.DependencyInstallation && capabilities.PackageNetworkMode == "package-install" &&
+			(capabilities.PackageNetworkEnforced || strings.TrimSpace(capabilities.EgressProxyAddress) != "")
 	}
 	return capabilities.NetworkMode == "controlled-http" && strings.TrimSpace(capabilities.EgressProxyAddress) != ""
 }

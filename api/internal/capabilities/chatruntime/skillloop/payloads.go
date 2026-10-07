@@ -597,7 +597,7 @@ func portableSessionScriptPayload(doc *skills.SkillDocument) map[string]interfac
 		"workspace_path": workspacePath,
 		"execution_tool": "shell_exec",
 		"skill_id":       doc.Metadata.ID,
-		"usage":          "In an approved console Agent runtime, pass skill_id and this package_sha256 to shell_exec, then run Python or Node scripts from $ZGI_SKILL_DIR/scripts/. Reload the Skill if the package changes. No dependencies are installed automatically; if workspace_prepare_dependencies is available, use it for explicitly bundled offline sources.",
+		"usage":          "In an approved console Agent runtime, pass skill_id and this package_sha256 to shell_exec, then run Python or Node scripts from $ZGI_SKILL_DIR/scripts/. Reload the Skill if the package changes. Standard Skills may install a missing Python, Node, or approved system package with the runtime's pip/npm/apt-get command; no ZGI dependency declaration is required. Use workspace_prepare_dependencies only when it is explicitly available for a legacy declarative Skill.",
 	}
 }
 

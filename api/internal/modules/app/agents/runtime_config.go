@@ -1801,18 +1801,11 @@ func normalizeAgentExecutionRuntimeConfig(config *dto.AgentExecutionRuntime) *dt
 	if config == nil {
 		return nil
 	}
-	normalized := *config
-	normalized.ProfileID = strings.TrimSpace(config.ProfileID)
-	normalized.PolicyID = strings.TrimSpace(config.PolicyID)
-	if config.HomeSnapshotID != nil {
-		homeSnapshotID := strings.TrimSpace(*config.HomeSnapshotID)
-		if homeSnapshotID != "" {
-			normalized.HomeSnapshotID = &homeSnapshotID
-		} else {
-			normalized.HomeSnapshotID = nil
-		}
-	}
-	return &normalized
+	// The editor only owns the boolean opt-in. Environment selection is an
+	// operator concern and is resolved from deployment settings at validation
+	// and execution time. Dropping legacy IDs here also prevents them from
+	// leaking back through Agent config responses or published snapshots.
+	return &dto.AgentExecutionRuntime{Enabled: config.Enabled}
 }
 
 func agentExecutionRuntimeConfigFromSnapshot(value interface{}) *dto.AgentExecutionRuntime {

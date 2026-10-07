@@ -2547,13 +2547,11 @@ const messages = {
     },
     execution: {
       title: 'Enable isolated Linux environment',
-      description: 'Available to console Agents only. The environment is offline and releases idle compute after 30 minutes.',
-      profileId: 'Approved Profile ID',
-      policyId: 'Approved Policy ID',
-      homeSnapshotId: 'Home Snapshot ID (optional)',
-      homeSnapshotPlaceholder: 'Leave blank for the default environment',
-      approvalNotice: 'Ask an operator for approved IDs. Publishing is blocked when the organization, Profile, Policy, or selected Home Snapshot is not approved.',
-      templateChangeNotice: 'Template changes apply only to new conversations. Existing conversations keep their pinned template. Export needed files, start a new conversation, and upload them there to switch.',
+      description: 'Available to console Agents only. The platform manages the environment configuration.',
+      enabledSummary: 'Scripts and file processing are allowed in the isolated Linux environment.',
+      disabledSummary: 'The isolated Linux environment is disabled.',
+      platformManagedSummary: 'The deployment controls the Profile, network, dependencies, and workspace.',
+      lifecycleSummary: 'Compute is released after 30 minutes of idle time; files follow the platform retention policy.',
     },
     memory: {
       agentTitle: 'Memory',

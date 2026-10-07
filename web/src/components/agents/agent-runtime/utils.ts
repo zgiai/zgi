@@ -45,9 +45,6 @@ export function buildAgentRuntimeSignature(payload: UpdateAgentRuntimeConfigRequ
     execution_runtime: payload.execution_runtime
       ? {
           enabled: payload.execution_runtime.enabled,
-          profile_id: payload.execution_runtime.profile_id,
-          policy_id: payload.execution_runtime.policy_id,
-          home_snapshot_id: payload.execution_runtime.home_snapshot_id,
         }
       : null,
     enabled_skill_ids: [...payload.enabled_skill_ids].sort(),

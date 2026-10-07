@@ -132,7 +132,7 @@ func nativeActiveSessionScriptsSystemMessage(resolved *skills.ResolvedSkills, ac
 	}
 	payload, err := json.Marshal(map[string]interface{}{
 		"session_scripts": scripts,
-		"next_action":     "These Skills are already active. Pass the matching skill_id and package_sha256 to shell_exec, then run the script from $ZGI_SKILL_DIR/scripts/. Do not call load_skill or activate_skills for an already active Skill.",
+		"next_action":     "These Skills are already active. Pass the matching skill_id and package_sha256 to shell_exec, then run the script from $ZGI_SKILL_DIR/scripts/. If a standard Skill reports a missing package, install it with the available pip/npm/apt-get command and retry; use workspace_prepare_dependencies only when explicitly exposed for a legacy Skill. Do not call load_skill or activate_skills for an already active Skill.",
 	})
 	if err != nil {
 		return adapter.Message{}, false
@@ -328,7 +328,7 @@ func (r *Runner) handleNativeSessionControlCall(
 		}
 		if len(sessionScripts) > 0 {
 			payload["session_scripts"] = sessionScripts
-			payload["next_action"] = "Use shell_exec with skill_id and the activated Skill's package_sha256 to stage its script package, then run its script from $ZGI_SKILL_DIR/scripts/. If workspace_prepare_dependencies is available, call it first when the Skill declares dependencies."
+			payload["next_action"] = "Use shell_exec with skill_id and the activated Skill's package_sha256 to stage its script package, then run its script from $ZGI_SKILL_DIR/scripts/. Standard Skills do not need a ZGI manifest or dependency declaration: if Python reports ModuleNotFoundError, Node reports Cannot find module, or a command is missing, install the missing package with the available pip/npm/apt-get command in this isolated runtime and retry. Use workspace_prepare_dependencies only when it is explicitly exposed for a legacy declarative Skill."
 		}
 	}
 	trace := skills.SkillTrace{

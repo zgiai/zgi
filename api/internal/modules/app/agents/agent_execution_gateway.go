@@ -51,6 +51,9 @@ type agentExecutionCapabilities struct {
 	FileTransfer              bool   `json:"file_transfer"`
 	DependencyPreparation     bool   `json:"dependency_preparation"`
 	DependencyPreparationMode string `json:"dependency_preparation_mode"`
+	DependencyInstallation    bool   `json:"dependency_installation"`
+	PackageNetworkMode        string `json:"package_network_mode"`
+	PackageNetworkEnforced    bool   `json:"package_network_enforced"`
 	NetworkMode               string `json:"network_mode"`
 	EgressProxyAddress        string `json:"egress_proxy_address,omitempty"`
 	MaxUploadBytes            int64  `json:"max_upload_bytes"`

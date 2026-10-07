@@ -1,6 +1,5 @@
 'use client';
 
-import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { useT } from '@/i18n';
 import type { AgentExecutionRuntimeConfig } from '@/services/types/agent';
@@ -25,9 +24,6 @@ export function AgentRuntimeExecutionSection({
   const t = useT('agents.agentRuntime');
   const config = value ?? {
     enabled: false,
-    profile_id: '',
-    policy_id: '',
-    home_snapshot_id: null,
   };
 
   return (
@@ -50,48 +46,11 @@ export function AgentRuntimeExecutionSection({
             onCheckedChange={enabled => onChange({ ...config, enabled })}
           />
         </div>
-        {config.enabled ? (
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="space-y-1 text-xs font-medium">
-              <span>{t('execution.profileId')}</span>
-              <Input
-                value={config.profile_id}
-                disabled={readOnly}
-                maxLength={128}
-                placeholder="standard"
-                onChange={event => onChange({ ...config, profile_id: event.target.value })}
-              />
-            </label>
-            <label className="space-y-1 text-xs font-medium">
-              <span>{t('execution.policyId')}</span>
-              <Input
-                value={config.policy_id}
-                disabled={readOnly}
-                maxLength={128}
-                placeholder="offline"
-                onChange={event => onChange({ ...config, policy_id: event.target.value })}
-              />
-            </label>
-            <label className="space-y-1 text-xs font-medium sm:col-span-2">
-              <span>{t('execution.homeSnapshotId')}</span>
-              <Input
-                value={config.home_snapshot_id ?? ''}
-                disabled={readOnly}
-                maxLength={128}
-                placeholder={t('execution.homeSnapshotPlaceholder')}
-                onChange={event =>
-                  onChange({ ...config, home_snapshot_id: event.target.value || null })
-                }
-              />
-            </label>
-            <p className="text-xs text-muted-foreground sm:col-span-2">
-              {t('execution.approvalNotice')}
-            </p>
-            <p className="text-xs text-muted-foreground sm:col-span-2">
-              {t('execution.templateChangeNotice')}
-            </p>
-          </div>
-        ) : null}
+        <div className="space-y-1 text-xs text-muted-foreground">
+          <p>{config.enabled ? t('execution.enabledSummary') : t('execution.disabledSummary')}</p>
+          <p>{t('execution.platformManagedSummary')}</p>
+          <p>{t('execution.lifecycleSummary')}</p>
+        </div>
       </div>
     </RuntimeSection>
   );

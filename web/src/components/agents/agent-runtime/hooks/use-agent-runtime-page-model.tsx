@@ -541,11 +541,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       model: modelValue.model,
       model_parameters: modelValue.params,
       execution_runtime: executionRuntime
-        ? {
-            ...executionRuntime,
-            profile_id: executionRuntime.profile_id.trim(),
-            policy_id: executionRuntime.policy_id.trim(),
-          }
+        ? { enabled: executionRuntime.enabled }
         : null,
       enabled_skill_ids: normalizedSelectedSkillIds,
       use_memory: false,

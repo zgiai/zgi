@@ -230,10 +230,7 @@ func TestApplyAgentConfigRequestPersistsWorkflowBindings(t *testing.T) {
 func TestAgentExecutionRuntimeConfigRoundTripAndLegacySave(t *testing.T) {
 	cfg := &AgentsConfig{}
 	homeSnapshotID := " snapshot-1 "
-	want := &dto.AgentExecutionRuntime{
-		Enabled: true, ProfileID: "local-standard", PolicyID: "offline-standard",
-		HomeSnapshotID: &homeSnapshotID,
-	}
+	want := &dto.AgentExecutionRuntime{Enabled: true}
 	_, err := applyAgentConfigRequestToDraft(cfg, dto.AgentConfigRequest{
 		ExecutionRuntime: &dto.AgentExecutionRuntime{
 			Enabled: true, ProfileID: " local-standard ", PolicyID: " offline-standard ",
@@ -243,8 +240,6 @@ func TestAgentExecutionRuntimeConfigRoundTripAndLegacySave(t *testing.T) {
 	if err != nil {
 		t.Fatalf("apply execution runtime config: %v", err)
 	}
-	trimmedSnapshotID := "snapshot-1"
-	want.HomeSnapshotID = &trimmedSnapshotID
 	if got := agentConfigResponse("agent-1", cfg).ExecutionRuntime; !reflect.DeepEqual(got, want) {
 		t.Fatalf("draft execution runtime = %#v, want %#v", got, want)
 	}
@@ -292,7 +287,7 @@ func TestAgentExecutionRuntimeRollbackRestoresSnapshot(t *testing.T) {
 	}{
 		{name: "legacy snapshot", want: &dto.AgentExecutionRuntime{}},
 		{name: "explicitly disabled", snapshot: &dto.AgentExecutionRuntime{Enabled: false}, want: &dto.AgentExecutionRuntime{}},
-		{name: "enabled snapshot", snapshot: &dto.AgentExecutionRuntime{Enabled: true, ProfileID: "local-standard", PolicyID: "offline-standard"}, want: &dto.AgentExecutionRuntime{Enabled: true, ProfileID: "local-standard", PolicyID: "offline-standard"}},
+		{name: "enabled snapshot", snapshot: &dto.AgentExecutionRuntime{Enabled: true, ProfileID: "local-standard", PolicyID: "offline-standard"}, want: &dto.AgentExecutionRuntime{Enabled: true}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

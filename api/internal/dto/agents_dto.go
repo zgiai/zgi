@@ -280,9 +280,9 @@ type AgentRuntimeModeConfig struct {
 // Authorization and capability checks are separate from this stored config.
 type AgentExecutionRuntime struct {
 	Enabled        bool    `json:"enabled"`
-	ProfileID      string  `json:"profile_id"`
-	HomeSnapshotID *string `json:"home_snapshot_id"`
-	PolicyID       string  `json:"policy_id"`
+	ProfileID      string  `json:"profile_id,omitempty"`
+	HomeSnapshotID *string `json:"home_snapshot_id,omitempty"`
+	PolicyID       string  `json:"policy_id,omitempty"`
 }
 
 // AgentBindingAuthorization preserves the authorization evidence for one

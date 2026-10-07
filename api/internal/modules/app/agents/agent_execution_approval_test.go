@@ -14,6 +14,7 @@ import (
 
 func TestAgentExecutionApprovalFailsClosed(t *testing.T) {
 	valid := agentExecutionApprovals{
+		Enabled:      true,
 		GatewayReady: true,
 		Profiles: map[string]agentExecutionApproval{
 			"standard": {Backend: "local-gvisor", OrganizationIDs: []string{"org-1"}, PolicyIDs: []string{"offline"}},
@@ -32,17 +33,19 @@ func TestAgentExecutionApprovalFailsClosed(t *testing.T) {
 		{name: "legacy config", approvals: valid},
 		{name: "explicitly disabled", approvals: valid, cfg: &dto.AgentExecutionRuntime{}},
 		{name: "approved", approvals: valid, org: "org-1", cfg: &dto.AgentExecutionRuntime{Enabled: true, ProfileID: "standard", PolicyID: "offline"}},
-		{name: "approved controlled HTTPS", approvals: agentExecutionApprovals{GatewayReady: true, Profiles: map[string]agentExecutionApproval{"standard": {Backend: "local-gvisor", OrganizationIDs: []string{"org-1"}, PolicyIDs: []string{"controlled-http"}, DependencyPreparation: true, DependencyPreparationMode: agentExecutionDependencyPreparationModeControlledHTTP}}}, org: "org-1", cfg: &dto.AgentExecutionRuntime{Enabled: true, ProfileID: "standard", PolicyID: "controlled-http"}},
+		{name: "approved controlled HTTPS", approvals: agentExecutionApprovals{Enabled: true, GatewayReady: true, Profiles: map[string]agentExecutionApproval{"standard": {Backend: "local-gvisor", OrganizationIDs: []string{"org-1"}, PolicyIDs: []string{"controlled-http"}, DependencyPreparation: true, DependencyPreparationMode: agentExecutionDependencyPreparationModeControlledHTTP}}}, org: "org-1", cfg: &dto.AgentExecutionRuntime{Enabled: true}},
+		{name: "approved standard package installation", approvals: agentExecutionApprovals{Enabled: true, GatewayReady: true, Profiles: map[string]agentExecutionApproval{"standard": {Backend: "local-gvisor", OrganizationIDs: []string{"org-1"}, PolicyIDs: []string{"offline", agentExecutionPackageNetworkMode}, DependencyInstallation: true, PackageNetworkMode: agentExecutionPackageNetworkMode}}}, org: "org-1", cfg: &dto.AgentExecutionRuntime{Enabled: true}},
+		{name: "approved E2B package installation", approvals: agentExecutionApprovals{Enabled: true, GatewayReady: true, Profiles: map[string]agentExecutionApproval{"standard": {Backend: "e2b", OrganizationIDs: []string{"org-1"}, PolicyIDs: []string{"offline", agentExecutionPackageNetworkMode}, DependencyInstallation: true, PackageNetworkMode: agentExecutionPackageNetworkMode}}}, org: "org-1", cfg: &dto.AgentExecutionRuntime{Enabled: true}},
+		{name: "package mode without installation capability", approvals: agentExecutionApprovals{Enabled: true, GatewayReady: true, Profiles: map[string]agentExecutionApproval{"standard": {Backend: "local-gvisor", OrganizationIDs: []string{"org-1"}, PolicyIDs: []string{agentExecutionPackageNetworkMode}, PackageNetworkMode: agentExecutionPackageNetworkMode}}}, org: "org-1", cfg: &dto.AgentExecutionRuntime{Enabled: true}, wantError: true},
 		{name: "gateway absent", org: "org-1", cfg: &dto.AgentExecutionRuntime{Enabled: true, ProfileID: "standard", PolicyID: "offline"}, wantError: true},
-		{name: "unknown profile", approvals: valid, org: "org-1", cfg: &dto.AgentExecutionRuntime{Enabled: true, ProfileID: "unknown", PolicyID: "offline"}, wantError: true},
+		{name: "client profile is ignored", approvals: valid, org: "org-1", cfg: &dto.AgentExecutionRuntime{Enabled: true, ProfileID: "unknown", PolicyID: "online"}},
 		{name: "wrong organization", approvals: valid, org: "org-2", cfg: &dto.AgentExecutionRuntime{Enabled: true, ProfileID: "standard", PolicyID: "offline"}, wantError: true},
-		{name: "wrong policy", approvals: valid, org: "org-1", cfg: &dto.AgentExecutionRuntime{Enabled: true, ProfileID: "standard", PolicyID: "online"}, wantError: true},
-		{name: "unknown backend", approvals: agentExecutionApprovals{GatewayReady: true, Profiles: map[string]agentExecutionApproval{"standard": {Backend: "unknown", OrganizationIDs: []string{"org-1"}, PolicyIDs: []string{"offline"}}}}, org: "org-1", cfg: &dto.AgentExecutionRuntime{Enabled: true, ProfileID: "standard", PolicyID: "offline"}, wantError: true},
-		{name: "unknown dependency preparation mode", approvals: agentExecutionApprovals{GatewayReady: true, Profiles: map[string]agentExecutionApproval{"standard": {Backend: "local-gvisor", OrganizationIDs: []string{"org-1"}, PolicyIDs: []string{"offline"}, DependencyPreparation: true, DependencyPreparationMode: "future-mode"}}}, org: "org-1", cfg: &dto.AgentExecutionRuntime{Enabled: true, ProfileID: "standard", PolicyID: "offline"}, wantError: true},
-		{name: "dependency mode without capability", approvals: agentExecutionApprovals{GatewayReady: true, Profiles: map[string]agentExecutionApproval{"standard": {Backend: "local-gvisor", OrganizationIDs: []string{"org-1"}, PolicyIDs: []string{"offline"}, DependencyPreparationMode: agentExecutionDependencyPreparationModeOffline}}}, org: "org-1", cfg: &dto.AgentExecutionRuntime{Enabled: true, ProfileID: "standard", PolicyID: "offline"}, wantError: true},
-		{name: "approved snapshot", approvals: valid, org: "org-1", cfg: &dto.AgentExecutionRuntime{Enabled: true, ProfileID: "standard", PolicyID: "offline", HomeSnapshotID: ptrAgentExecutionString("snapshot-1")}},
-		{name: "unowned snapshot", approvals: valid, org: "org-2", cfg: &dto.AgentExecutionRuntime{Enabled: true, ProfileID: "standard", PolicyID: "offline", HomeSnapshotID: ptrAgentExecutionString("snapshot-1")}, wantError: true},
-		{name: "unknown snapshot", approvals: valid, org: "org-1", cfg: &dto.AgentExecutionRuntime{Enabled: true, ProfileID: "standard", PolicyID: "offline", HomeSnapshotID: ptrAgentExecutionString("missing")}, wantError: true},
+		{name: "unknown backend", approvals: agentExecutionApprovals{Enabled: true, GatewayReady: true, Profiles: map[string]agentExecutionApproval{"standard": {Backend: "unknown", OrganizationIDs: []string{"org-1"}, PolicyIDs: []string{"offline"}}}}, org: "org-1", cfg: &dto.AgentExecutionRuntime{Enabled: true}, wantError: true},
+		{name: "unknown dependency preparation mode", approvals: agentExecutionApprovals{Enabled: true, GatewayReady: true, Profiles: map[string]agentExecutionApproval{"standard": {Backend: "local-gvisor", OrganizationIDs: []string{"org-1"}, PolicyIDs: []string{"offline"}, DependencyPreparation: true, DependencyPreparationMode: "future-mode"}}}, org: "org-1", cfg: &dto.AgentExecutionRuntime{Enabled: true}, wantError: true},
+		{name: "dependency mode without capability", approvals: agentExecutionApprovals{Enabled: true, GatewayReady: true, Profiles: map[string]agentExecutionApproval{"standard": {Backend: "local-gvisor", OrganizationIDs: []string{"org-1"}, PolicyIDs: []string{"offline"}, DependencyPreparationMode: agentExecutionDependencyPreparationModeOffline}}}, org: "org-1", cfg: &dto.AgentExecutionRuntime{Enabled: true}, wantError: true},
+		{name: "approved snapshot", approvals: func() agentExecutionApprovals { a := valid; a.DefaultHomeSnapshotID = "snapshot-1"; return a }(), org: "org-1", cfg: &dto.AgentExecutionRuntime{Enabled: true}},
+		{name: "unowned snapshot", approvals: func() agentExecutionApprovals { a := valid; a.DefaultHomeSnapshotID = "snapshot-1"; return a }(), org: "org-2", cfg: &dto.AgentExecutionRuntime{Enabled: true}, wantError: true},
+		{name: "invalid operator snapshot", approvals: func() agentExecutionApprovals { a := valid; a.DefaultHomeSnapshotID = "missing"; return a }(), org: "org-1", cfg: &dto.AgentExecutionRuntime{Enabled: true}, wantError: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -59,6 +62,19 @@ func TestAgentExecutionApprovalFailsClosed(t *testing.T) {
 	}
 }
 
+func TestAgentExecutionPackageInstallationUsesOperatorNetworkMode(t *testing.T) {
+	approvals := agentExecutionApprovals{Enabled: true, GatewayReady: true, Profiles: map[string]agentExecutionApproval{
+		"standard": {Backend: "local-gvisor", OrganizationIDs: []string{"org-1"}, PolicyIDs: []string{"offline", agentExecutionPackageNetworkMode}, DependencyInstallation: true, PackageNetworkMode: agentExecutionPackageNetworkMode},
+	}}
+	resolved, err := approvals.resolve("org-1", &dto.AgentExecutionRuntime{Enabled: true, PolicyID: "user-supplied"})
+	if err != nil {
+		t.Fatalf("resolve package profile: %v", err)
+	}
+	if resolved.PolicyID != agentExecutionPackageNetworkMode {
+		t.Fatalf("resolved package network policy = %q, want %q", resolved.PolicyID, agentExecutionPackageNetworkMode)
+	}
+}
+
 func TestAgentRuntimeGatewayURL(t *testing.T) {
 	for _, tc := range []struct {
 		value string
@@ -67,6 +83,9 @@ func TestAgentRuntimeGatewayURL(t *testing.T) {
 		{"https://worker.example:8443", true},
 		{"http://127.0.0.1:9876", true},
 		{"http://[::1]:9876", true},
+		{"http://zgi-agentworker-m6b:2671", true},
+		{"http://agent-runtime.internal:2671", true},
+		{"http://10.0.0.4:2671", true},
 		{"http://worker.example:9876", false},
 		{"https://user:secret@worker.example", false},
 		{"https://worker.example/v1", false},
@@ -75,6 +94,29 @@ func TestAgentRuntimeGatewayURL(t *testing.T) {
 		if got := validAgentRuntimeGatewayURL(tc.value); got != tc.want {
 			t.Errorf("validAgentRuntimeGatewayURL(%q) = %v, want %v", tc.value, got, tc.want)
 		}
+	}
+}
+
+func TestAgentExecutionApprovalsReadDeploymentGateAndDefaults(t *testing.T) {
+	t.Setenv("ZGI_AGENT_RUNTIME_ENABLED", "true")
+	t.Setenv("ZGI_AGENT_RUNTIME_DEFAULT_PROFILE_ID", "standard")
+	t.Setenv("ZGI_AGENT_RUNTIME_DEFAULT_POLICY_ID", "offline")
+	t.Setenv("ZGI_AGENT_RUNTIME_DEFAULT_HOME_SNAPSHOT_ID", "snapshot-1")
+	t.Setenv("ZGI_AGENT_RUNTIME_URL", "https://worker.example")
+	t.Setenv("ZGI_AGENT_RUNTIME_API_KEY", "worker-secret")
+	t.Setenv("ZGI_AGENT_RUNTIME_APPROVED_PROFILES_JSON", `{"standard":{"backend":"e2b","organization_ids":["org-1"],"policy_ids":["offline"]}}`)
+	t.Setenv("ZGI_AGENT_RUNTIME_APPROVED_HOME_SNAPSHOTS_JSON", `{"snapshot-1":{"backend":"e2b","profile_id":"standard","organization_ids":["org-1"]}}`)
+	approvals := agentExecutionApprovalsFromEnv()
+	if !approvals.Enabled || !approvals.GatewayReady || approvals.DefaultProfileID != "standard" || approvals.DefaultPolicyID != "offline" {
+		t.Fatalf("deployment approvals = %+v", approvals)
+	}
+	resolved, err := approvals.resolve("org-1", &dto.AgentExecutionRuntime{Enabled: true, ProfileID: "user-supplied", PolicyID: "user-supplied"})
+	if err != nil || resolved.ProfileID != "standard" || resolved.PolicyID != "offline" || resolved.HomeSnapshotID == nil || *resolved.HomeSnapshotID != "snapshot-1" {
+		t.Fatalf("resolved runtime = %+v, error = %v", resolved, err)
+	}
+	t.Setenv("ZGI_AGENT_RUNTIME_ENABLED", "false")
+	if err := agentExecutionApprovalsFromEnv().validate("org-1", &dto.AgentExecutionRuntime{Enabled: true}); !apperror.IsCode(err, AppCodeAgentExecutionRuntimeUnavailable) {
+		t.Fatalf("disabled deployment error = %v", err)
 	}
 }
 

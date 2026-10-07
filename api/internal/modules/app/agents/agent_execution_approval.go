@@ -19,6 +19,7 @@ var AppCodeAgentExecutionRuntimeUnavailable = apperror.MustCode("agent.execution
 
 const agentExecutionDependencyPreparationModeOffline = "offline-bundled"
 const agentExecutionDependencyPreparationModeControlledHTTP = "controlled-http"
+const agentExecutionPackageNetworkMode = "package-install"
 
 // CatalogDefinitions returns the public Agent execution error definition.
 func CatalogDefinitions() []appcatalog.Definition {
@@ -40,12 +41,21 @@ type agentExecutionApproval struct {
 	PolicyIDs                 []string `json:"policy_ids"`
 	DependencyPreparation     bool     `json:"dependency_preparation"`
 	DependencyPreparationMode string   `json:"dependency_preparation_mode,omitempty"`
+	DependencyInstallation    bool     `json:"dependency_installation"`
+	PackageNetworkMode        string   `json:"package_network_mode,omitempty"`
 }
 
 type agentExecutionApprovals struct {
 	Profiles      map[string]agentExecutionApproval
 	HomeSnapshots map[string]agentExecutionHomeApproval
-	GatewayReady  bool
+	// Enabled is an operator/deployment setting. It is deliberately not part
+	// of the Agent configuration so an Agent editor can only opt in to the
+	// already approved Linux environment.
+	Enabled               bool
+	DefaultProfileID      string
+	DefaultPolicyID       string
+	DefaultHomeSnapshotID string
+	GatewayReady          bool
 }
 
 type agentExecutionHomeApproval struct {
@@ -64,9 +74,24 @@ func agentExecutionApprovalsFromEnv() agentExecutionApprovals {
 		snapshots = nil
 	}
 	return agentExecutionApprovals{
-		Profiles:      profiles,
-		HomeSnapshots: snapshots,
-		GatewayReady:  validAgentRuntimeGatewayURL(os.Getenv("ZGI_AGENT_RUNTIME_URL")) && strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_API_KEY")) != "",
+		Profiles:              profiles,
+		HomeSnapshots:         snapshots,
+		Enabled:               agentExecutionEnvBool("ZGI_AGENT_RUNTIME_ENABLED", false),
+		DefaultProfileID:      strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_DEFAULT_PROFILE_ID")),
+		DefaultPolicyID:       strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_DEFAULT_POLICY_ID")),
+		DefaultHomeSnapshotID: strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_DEFAULT_HOME_SNAPSHOT_ID")),
+		GatewayReady:          validAgentRuntimeGatewayURL(os.Getenv("ZGI_AGENT_RUNTIME_URL")) && strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_API_KEY")) != "",
+	}
+}
+
+func agentExecutionEnvBool(name string, fallback bool) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
 	}
 }
 
@@ -82,47 +107,112 @@ func validAgentRuntimeGatewayURL(raw string) bool {
 		return false
 	}
 	host := u.Hostname()
-	return strings.EqualFold(host, "localhost") || (net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback())
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		// HTTP is only allowed to loopback/private addresses. Public runtime
+		// gateways must use TLS so the deployment-controlled API key is not
+		// sent over a plaintext public connection.
+		return ip.IsLoopback() || ip.IsPrivate()
+	}
+	// Local container/service DNS names are deployment-owned endpoints. A
+	// public hostname still needs HTTPS; unqualified names and explicit
+	// private suffixes cover Docker/Kubernetes service discovery without
+	// turning arbitrary public HTTP URLs into an approved gateway.
+	return !strings.Contains(host, ".") || strings.HasSuffix(strings.ToLower(host), ".local") || strings.HasSuffix(strings.ToLower(host), ".internal")
 }
 
 func (a agentExecutionApprovals) validate(organizationID string, cfg *dto.AgentExecutionRuntime) error {
+	_, err := a.resolve(organizationID, cfg)
+	return err
+}
+
+// resolve turns the user-facing boolean into the operator-approved runtime
+// configuration. Profile, policy and snapshot values from the request are
+// intentionally ignored. This keeps old stored configs readable while making
+// deployment env the only source of execution-environment configuration.
+func (a agentExecutionApprovals) resolve(organizationID string, cfg *dto.AgentExecutionRuntime) (*dto.AgentExecutionRuntime, error) {
 	if cfg == nil || !cfg.Enabled {
-		return nil
+		return cfg, nil
 	}
 	invalid := func(operation string) error {
 		return apperror.New(AppCodeAgentExecutionRuntimeUnavailable, apperror.WithOperation(operation))
 	}
-	if !a.GatewayReady {
-		return invalid("agent_execution.gateway_unconfigured")
+	if !a.Enabled {
+		return nil, invalid("agent_execution.disabled_by_env")
 	}
-	profile, ok := a.Profiles[strings.TrimSpace(cfg.ProfileID)]
+	if !a.GatewayReady {
+		return nil, invalid("agent_execution.gateway_unconfigured")
+	}
+	profileID := strings.TrimSpace(a.DefaultProfileID)
+	if profileID == "" && len(a.Profiles) == 1 {
+		for id := range a.Profiles {
+			profileID = strings.TrimSpace(id)
+		}
+	}
+	if profileID == "" {
+		return nil, invalid("agent_execution.default_profile_unconfigured")
+	}
+	profile, ok := a.Profiles[profileID]
 	if !ok || (profile.Backend != "local-gvisor" && profile.Backend != "e2b") {
-		return invalid("agent_execution.profile_unapproved")
+		return nil, invalid("agent_execution.profile_unapproved")
 	}
 	if !containsAgentExecutionApproval(profile.OrganizationIDs, organizationID) {
-		return invalid("agent_execution.organization_unapproved")
+		return nil, invalid("agent_execution.organization_unapproved")
 	}
-	if !containsAgentExecutionApproval(profile.PolicyIDs, strings.TrimSpace(cfg.PolicyID)) {
-		return invalid("agent_execution.policy_unapproved")
+	policyID := strings.TrimSpace(a.DefaultPolicyID)
+	if policyID == "" && len(profile.PolicyIDs) == 1 {
+		policyID = strings.TrimSpace(profile.PolicyIDs[0])
+	}
+	if profile.DependencyInstallation && policyID == "" {
+		policyID = agentExecutionPackageNetworkMode
+	}
+	if !containsAgentExecutionApproval(profile.PolicyIDs, policyID) {
+		return nil, invalid("agent_execution.policy_unapproved")
+	}
+	packageMode := strings.ToLower(strings.TrimSpace(profile.PackageNetworkMode))
+	if packageMode != "" && packageMode != agentExecutionPackageNetworkMode {
+		return nil, invalid("agent_execution.package_network_mode_unapproved")
+	}
+	if packageMode == agentExecutionPackageNetworkMode && !profile.DependencyInstallation {
+		return nil, invalid("agent_execution.package_install_capability_missing")
+	}
+	if profile.DependencyInstallation {
+		if profile.Backend != "local-gvisor" && profile.Backend != "e2b" {
+			return nil, invalid("agent_execution.package_install_backend_unavailable")
+		}
+		if packageMode != agentExecutionPackageNetworkMode {
+			return nil, invalid("agent_execution.package_network_mode_required")
+		}
+		if !containsAgentExecutionApproval(profile.PolicyIDs, agentExecutionPackageNetworkMode) {
+			return nil, invalid("agent_execution.package_network_policy_unapproved")
+		}
+		// Package installation is an operator-owned capability. Override the
+		// legacy policy value so stored/user-facing configs cannot select a
+		// broader network mode.
+		policyID = agentExecutionPackageNetworkMode
 	}
 	dependencyMode := strings.ToLower(strings.TrimSpace(profile.DependencyPreparationMode))
 	if dependencyMode != "" && dependencyMode != agentExecutionDependencyPreparationModeOffline && dependencyMode != agentExecutionDependencyPreparationModeControlledHTTP {
-		return invalid("agent_execution.dependency_preparation_mode_unapproved")
+		return nil, invalid("agent_execution.dependency_preparation_mode_unapproved")
 	}
-	if (dependencyMode == agentExecutionDependencyPreparationModeControlledHTTP || strings.EqualFold(strings.TrimSpace(cfg.PolicyID), agentExecutionDependencyPreparationModeControlledHTTP)) && profile.Backend != "local-gvisor" {
-		return invalid("agent_execution.controlled_http_backend_unavailable")
+	if (dependencyMode == agentExecutionDependencyPreparationModeControlledHTTP || strings.EqualFold(policyID, agentExecutionDependencyPreparationModeControlledHTTP)) && profile.Backend != "local-gvisor" {
+		return nil, invalid("agent_execution.controlled_http_backend_unavailable")
 	}
 	if !profile.DependencyPreparation && dependencyMode != "" {
-		return invalid("agent_execution.dependency_preparation_mode_without_capability")
+		return nil, invalid("agent_execution.dependency_preparation_mode_without_capability")
 	}
-	if cfg.HomeSnapshotID != nil && strings.TrimSpace(*cfg.HomeSnapshotID) != "" {
-		snapshot, ok := a.HomeSnapshots[strings.TrimSpace(*cfg.HomeSnapshotID)]
-		if !ok || snapshot.Backend != profile.Backend || snapshot.ProfileID != strings.TrimSpace(cfg.ProfileID) ||
+	var homeSnapshotID *string
+	if a.DefaultHomeSnapshotID != "" {
+		homeSnapshotID = &a.DefaultHomeSnapshotID
+		snapshot, ok := a.HomeSnapshots[a.DefaultHomeSnapshotID]
+		if !ok || snapshot.Backend != profile.Backend || snapshot.ProfileID != profileID ||
 			!containsAgentExecutionApproval(snapshot.OrganizationIDs, organizationID) {
-			return invalid("agent_execution.home_snapshot_unavailable")
+			return nil, invalid("agent_execution.home_snapshot_unavailable")
 		}
 	}
-	return nil
+	return &dto.AgentExecutionRuntime{Enabled: true, ProfileID: profileID, PolicyID: policyID, HomeSnapshotID: homeSnapshotID}, nil
 }
 
 func containsAgentExecutionApproval(allowed []string, value string) bool {
