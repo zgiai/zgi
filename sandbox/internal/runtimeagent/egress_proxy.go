@@ -29,6 +29,30 @@ type egressProxy struct {
 	done           chan struct{}
 	closeOnce      sync.Once
 	wg             sync.WaitGroup
+	directPolicy   *egressproxy.Policy
+}
+
+// newDirectPackageProxy runs inside a hosted VM as the trusted Runtime Agent.
+// The VM firewall restricts non-root Jobs to this loopback port; only the
+// proxy resolves and connects to approved public HTTPS package destinations.
+func newDirectPackageProxy(address string, policy egressproxy.Policy) (*egressProxy, error) {
+	if err := policy.Validate(); err != nil {
+		return nil, err
+	}
+	host, _, err := net.SplitHostPort(address)
+	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
+		return nil, errors.New("direct package proxy must listen on a loopback IP address")
+	}
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		return nil, fmt.Errorf("listen direct package proxy: %w", err)
+	}
+	policy.AllowedHosts = append([]string(nil), policy.AllowedHosts...)
+	proxy := &egressProxy{proxyListener: listener, directPolicy: &policy, done: make(chan struct{})}
+	proxy.server = &http.Server{Handler: http.HandlerFunc(proxy.handle), ReadHeaderTimeout: 5 * time.Second}
+	proxy.wg.Add(1)
+	go proxy.serveProxy()
+	return proxy, nil
 }
 
 func newEgressProxy(proxyAddress, socketPath string) (*egressProxy, error) {
@@ -127,21 +151,43 @@ func (p *egressProxy) handle(writer http.ResponseWriter, request *http.Request) 
 		http.Error(writer, "only HTTPS CONNECT is supported", http.StatusForbidden)
 		return
 	}
-	bridge, err := p.takeBridge(request.Context())
+	var bridge net.Conn
+	var err error
+	if p.directPolicy != nil {
+		bridge, err = p.directPolicy.ResolveAndDial(request.Context(), request.Host)
+		if err != nil {
+			http.Error(writer, "controlled egress destination denied", http.StatusForbidden)
+			return
+		}
+	} else {
+		bridge, err = p.takeBridge(request.Context())
+	}
 	if err != nil {
 		http.Error(writer, "controlled egress is unavailable", http.StatusBadGateway)
 		return
 	}
-	if err := egressproxy.WriteFrame(bridge, egressproxy.Frame{Type: egressproxy.FrameTypeConnect, Target: request.Host}); err != nil {
-		_ = bridge.Close()
-		http.Error(writer, "controlled egress request failed", http.StatusBadGateway)
-		return
-	}
-	result, err := egressproxy.ReadFrame(bridge)
-	if err != nil || result.Type != egressproxy.FrameTypeResult || !result.OK {
-		_ = bridge.Close()
-		http.Error(writer, "controlled egress destination denied", http.StatusForbidden)
-		return
+	defer bridge.Close()
+	finished := make(chan struct{})
+	defer close(finished)
+	go func() {
+		select {
+		case <-p.done:
+			_ = bridge.Close()
+		case <-finished:
+		}
+	}()
+	if p.directPolicy == nil {
+		if err := egressproxy.WriteFrame(bridge, egressproxy.Frame{Type: egressproxy.FrameTypeConnect, Target: request.Host}); err != nil {
+			_ = bridge.Close()
+			http.Error(writer, "controlled egress request failed", http.StatusBadGateway)
+			return
+		}
+		result, err := egressproxy.ReadFrame(bridge)
+		if err != nil || result.Type != egressproxy.FrameTypeResult || !result.OK {
+			_ = bridge.Close()
+			http.Error(writer, "controlled egress destination denied", http.StatusForbidden)
+			return
+		}
 	}
 	hijacker, ok := writer.(http.Hijacker)
 	if !ok {
@@ -189,7 +235,12 @@ func (p *egressProxy) Close() error {
 	var result error
 	p.closeOnce.Do(func() {
 		close(p.done)
-		result = errors.Join(p.server.Close(), p.proxyListener.Close(), p.bridgeListener.Close())
+		result = p.server.Close()
+		if p.bridgeListener == nil {
+			p.wg.Wait()
+			return
+		}
+		result = errors.Join(result, p.bridgeListener.Close())
 		for {
 			select {
 			case connection := <-p.available:

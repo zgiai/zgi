@@ -22,17 +22,32 @@ import (
 	"time"
 
 	"github.com/zgiai/zgi-sandbox/internal/agentexecution"
+	"github.com/zgiai/zgi-sandbox/internal/egressproxy"
 )
 
 type Options struct {
-	WorkspaceRoot             string
-	NetworkMode               string
+	WorkspaceRoot string
+	NetworkMode   string
+	// EgressMode controls how the runtime obtains the package-only boundary.
+	// bridge is used by local gVisor and connects the loopback HTTP proxy to a
+	// host-side allowlist. direct is used by hosted providers: a root-owned
+	// in-VM proxy applies the same HTTPS policy, while the template firewall
+	// restricts Jobs to its loopback port and the provider enforces outer egress.
+	EgressMode                string
 	EgressProxyAddress        string
+	EgressAllowedHosts        []string
 	EgressSocketPath          string
 	DependencyPreparation     bool
 	DependencyPreparationMode string
-	MaxUploadBytes            int64
-	MaxDownloadBytes          int64
+	// DependencyInstallation enables the standard Skill package-manager
+	// contract. It is only valid with package-install network mode, which is
+	// bridged through the worker's fixed package-host allowlist.
+	DependencyInstallation bool
+	PackageNetworkMode     string
+	JobUID                 uint32
+	JobGID                 uint32
+	MaxUploadBytes         int64
+	MaxDownloadBytes       int64
 }
 
 type Backend struct {
@@ -41,6 +56,14 @@ type Backend struct {
 	networkMode               string
 	dependencyPreparation     bool
 	dependencyPreparationMode string
+	dependencyInstallation    bool
+	packageNetworkMode        string
+	packageNetworkEnforced    bool
+	jobUID                    uint32
+	jobGID                    uint32
+	packageLedgerPath         string
+	packageReplayComplete     bool
+	packageLedgerMu           sync.Mutex
 	maxUploadBytes            int64
 	maxDownloadBytes          int64
 	egressProxyAddress        string
@@ -54,6 +77,11 @@ const sessionHomeDirectory = ".zgi-runtime-home"
 
 const DependencyPreparationModeOfflineBundled = "offline-bundled"
 const DependencyPreparationModeControlledHTTP = "controlled-http"
+
+const (
+	EgressModeBridge = "bridge"
+	EgressModeDirect = "direct"
+)
 
 type trackedJob struct {
 	specHash string
@@ -95,9 +123,38 @@ func New(options Options) (*Backend, error) {
 	} else if dependencyMode != "" {
 		return nil, fmt.Errorf("%w: dependency preparation mode requires dependency preparation", agentexecution.ErrInvalidRequest)
 	}
+	packageMode := strings.ToLower(strings.TrimSpace(options.PackageNetworkMode))
+	if packageMode == "" && options.DependencyInstallation {
+		packageMode = "package-install"
+	}
+	if packageMode != "" && packageMode != "package-install" {
+		return nil, fmt.Errorf("%w: package network mode %q is not available", agentexecution.ErrBackendUnavailable, packageMode)
+	}
+	if options.DependencyInstallation && packageMode != "package-install" {
+		return nil, fmt.Errorf("%w: dependency installation requires package-install network mode", agentexecution.ErrBackendUnavailable)
+	}
+	if packageMode == "package-install" && !options.DependencyInstallation {
+		return nil, fmt.Errorf("%w: package-install network mode requires dependency installation", agentexecution.ErrBackendUnavailable)
+	}
+	if packageMode == "package-install" && mode != "package-install" {
+		return nil, fmt.Errorf("%w: package-install network mode must be the runtime network mode", agentexecution.ErrBackendUnavailable)
+	}
+	egressMode := strings.ToLower(strings.TrimSpace(options.EgressMode))
+	if egressMode == "" {
+		egressMode = EgressModeBridge
+	}
+	if egressMode != EgressModeBridge && egressMode != EgressModeDirect {
+		return nil, fmt.Errorf("%w: egress mode %q is not available", agentexecution.ErrBackendUnavailable, egressMode)
+	}
+	if egressMode == EgressModeDirect && mode != "package-install" {
+		return nil, fmt.Errorf("%w: direct egress mode requires package-install network mode", agentexecution.ErrBackendUnavailable)
+	}
+	if dependencyMode == DependencyPreparationModeControlledHTTP && mode != "controlled-http" {
+		return nil, fmt.Errorf("%w: controlled-http dependency preparation requires controlled-http network mode", agentexecution.ErrBackendUnavailable)
+	}
 	var proxy *egressProxy
 	proxyAddress := strings.TrimSpace(options.EgressProxyAddress)
-	if mode == "controlled-http" {
+	if mode == "controlled-http" || (mode == "package-install" && egressMode == EgressModeBridge) {
 		if proxyAddress == "" {
 			proxyAddress = defaultEgressProxyAddress
 		}
@@ -106,6 +163,20 @@ func New(options Options) (*Backend, error) {
 			socketPath = defaultEgressSocketPath
 		}
 		proxy, err = newEgressProxy(proxyAddress, socketPath)
+		if err != nil {
+			_ = root.Close()
+			return nil, err
+		}
+		proxyAddress = proxy.proxyListener.Addr().String()
+	} else if mode == "package-install" && egressMode == EgressModeDirect {
+		if proxyAddress == "" {
+			proxyAddress = defaultEgressProxyAddress
+		}
+		hosts := options.EgressAllowedHosts
+		if len(hosts) == 0 {
+			hosts = []string{"pypi.org", "files.pythonhosted.org", "registry.npmjs.org", "deb.debian.org", "security.debian.org"}
+		}
+		proxy, err = newDirectPackageProxy(proxyAddress, egressproxy.Policy{AllowedHosts: hosts})
 		if err != nil {
 			_ = root.Close()
 			return nil, err
@@ -120,7 +191,11 @@ func New(options Options) (*Backend, error) {
 	return &Backend{
 		workspace: root, workspaceName: root.Name(), networkMode: mode,
 		dependencyPreparation: options.DependencyPreparation, dependencyPreparationMode: dependencyMode,
-		maxUploadBytes: options.MaxUploadBytes, maxDownloadBytes: options.MaxDownloadBytes,
+		dependencyInstallation: options.DependencyInstallation, packageNetworkMode: packageMode,
+		packageNetworkEnforced: packageMode == "package-install" && egressMode == EgressModeDirect,
+		jobUID:                 options.JobUID, jobGID: options.JobGID,
+		packageLedgerPath: filepath.Join(root.Name(), sessionHomeDirectory, "package-install-ledger.json"),
+		maxUploadBytes:    options.MaxUploadBytes, maxDownloadBytes: options.MaxDownloadBytes,
 		egressProxyAddress: proxyAddress, egress: proxy,
 		jobs: make(map[string]trackedJob),
 	}, nil
@@ -152,7 +227,10 @@ func (b *Backend) Close() error {
 
 func (b *Backend) Capabilities(context.Context, agentexecution.Allocation) (agentexecution.RuntimeCapabilities, error) {
 	return agentexecution.RuntimeCapabilities{
-		Shell: true, PTY: supportsPTY(), FileTransfer: true, DependencyPreparation: b.dependencyPreparation, DependencyPreparationMode: b.dependencyPreparationMode, NetworkMode: b.networkMode, EgressProxyAddress: b.egressProxyAddress,
+		Shell: true, PTY: supportsPTY(), FileTransfer: true, DependencyPreparation: b.dependencyPreparation, DependencyPreparationMode: b.dependencyPreparationMode,
+		DependencyInstallation: b.dependencyInstallation, PackageNetworkMode: b.packageNetworkMode,
+		PackageNetworkEnforced: b.packageNetworkEnforced,
+		NetworkMode:            b.networkMode, EgressProxyAddress: b.egressProxyAddress,
 		MaxUploadBytes: b.maxUploadBytes, MaxDownloadBytes: b.maxDownloadBytes,
 	}, nil
 }
@@ -167,9 +245,15 @@ func (b *Backend) StartJob(ctx context.Context, _ agentexecution.Allocation, spe
 	if err := b.workspace.MkdirAll(sessionHomeDirectory, 0o700); err != nil {
 		return nil, fmt.Errorf("prepare session home: %w", err)
 	}
+	if b.dependencyInstallation {
+		if err := b.replayPackageLedger(ctx); err != nil {
+			return nil, fmt.Errorf("restore package installation ledger: %w", err)
+		}
+	}
 	spec.Environment = cloneJobEnvironment(spec.Environment)
-	spec.Environment["HOME"] = filepath.Join(b.workspaceName, sessionHomeDirectory)
-	if b.networkMode == "controlled-http" {
+	home := filepath.Join(b.workspaceName, sessionHomeDirectory)
+	spec.Environment["HOME"] = home
+	if b.egress != nil && (b.networkMode == "controlled-http" || b.networkMode == "package-install") {
 		// Force all supported HTTP clients through the loopback proxy. User
 		// supplied proxy values are not allowed to bypass the worker policy.
 		proxy := "http://" + b.egressProxyAddress
@@ -181,6 +265,50 @@ func (b *Backend) StartJob(ctx context.Context, _ agentexecution.Allocation, spe
 		spec.Environment["all_proxy"] = proxy
 		spec.Environment["NO_PROXY"] = "127.0.0.1,localhost"
 		spec.Environment["no_proxy"] = "127.0.0.1,localhost"
+	} else if b.networkMode == "package-install" && b.packageNetworkEnforced {
+		// The hosted provider enforces package-only egress outside the VM. Clear
+		// caller-provided proxy variables so commands cannot redirect traffic to
+		// an unapproved proxy inside the workspace.
+		spec.Environment["HTTP_PROXY"] = ""
+		spec.Environment["HTTPS_PROXY"] = ""
+		spec.Environment["ALL_PROXY"] = ""
+		spec.Environment["http_proxy"] = ""
+		spec.Environment["https_proxy"] = ""
+		spec.Environment["all_proxy"] = ""
+		spec.Environment["NO_PROXY"] = "*"
+		spec.Environment["no_proxy"] = "*"
+	}
+	if b.dependencyInstallation {
+		// Keep package-manager state in the retained session workspace. The
+		// runtime image remains immutable and ordinary commands still have no
+		// network unless the package-install profile is selected.
+		if err := prepareWorkspaceDirectoryOwnership(b.workspace, sessionHomeDirectory, b.jobUID, b.jobGID); err != nil {
+			return nil, fmt.Errorf("prepare session home ownership: %w", err)
+		}
+		if err := prepareSessionPythonEnvironment(ctx, home, b.jobUID, b.jobGID); err != nil {
+			return nil, fmt.Errorf("prepare session Python environment: %w", err)
+		}
+		venv := filepath.Join(home, ".venv")
+		spec.Environment["VIRTUAL_ENV"] = venv
+		spec.Environment["PIP_CONFIG_FILE"] = "/etc/zgi/pip.conf"
+		spec.Environment["NPM_CONFIG_REGISTRY"] = "https://registry.npmjs.org/"
+		// Standard runtime images ship matching Node headers in /usr/local.
+		// Native builds must not fetch headers from an unapproved host.
+		spec.Environment["NPM_CONFIG_NODEDIR"] = "/usr/local"
+		spec.Environment["PIP_CACHE_DIR"] = filepath.Join(home, ".cache", "pip")
+		spec.Environment["PIP_BREAK_SYSTEM_PACKAGES"] = "1"
+		spec.Environment["NPM_CONFIG_CACHE"] = filepath.Join(home, ".cache", "npm")
+		spec.Environment["NPM_CONFIG_GLOBAL"] = "false"
+		spec.Environment["NPM_CONFIG_FUND"] = "false"
+		spec.Environment["NPM_CONFIG_AUDIT"] = "false"
+		basePath := strings.TrimSpace(spec.Environment["PATH"])
+		if basePath == "" {
+			basePath = strings.TrimSpace(os.Getenv("PATH"))
+		}
+		if basePath == "" {
+			basePath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+		}
+		spec.Environment["PATH"] = filepath.Join(venv, "bin") + string(os.PathListSeparator) + filepath.Join(home, ".local", "bin") + string(os.PathListSeparator) + filepath.Join(b.workspaceName, "node_modules", ".bin") + string(os.PathListSeparator) + basePath
 	}
 	workDir, err := b.resolveWorkDir(spec.WorkDir)
 	if err != nil {
@@ -204,7 +332,7 @@ func (b *Backend) StartJob(ctx context.Context, _ agentexecution.Allocation, spe
 	}
 	var outputMu sync.Mutex
 	var sequence int64
-	running, err := startProcess(ctx, workDir, spec, func(stream agentexecution.OutputStream, value []byte) error {
+	running, err := startProcess(ctx, workDir, spec, b.jobUID, b.jobGID, func(stream agentexecution.OutputStream, value []byte) error {
 		outputMu.Lock()
 		defer outputMu.Unlock()
 		chunk := agentexecution.OutputChunk{
@@ -271,6 +399,9 @@ func (b *Backend) UploadFile(ctx context.Context, _ agentexecution.Allocation, f
 		if err := b.workspace.MkdirAll(parent, 0o750); err != nil {
 			return agentexecution.FileInfo{}, fmt.Errorf("prepare upload directory: %w", err)
 		}
+		if err := prepareWorkspaceDirectoryOwnership(b.workspace, parent, b.jobUID, b.jobGID); err != nil {
+			return agentexecution.FileInfo{}, fmt.Errorf("prepare upload directory ownership: %w", err)
+		}
 	}
 	temporary, err := temporaryName(clean)
 	if err != nil {
@@ -287,6 +418,9 @@ func (b *Backend) UploadFile(ctx context.Context, _ agentexecution.Allocation, f
 			_ = b.workspace.Remove(temporary)
 		}
 	}()
+	if err := prepareJobFileOwnership(file, b.jobUID, b.jobGID); err != nil {
+		return agentexecution.FileInfo{}, fmt.Errorf("prepare upload ownership: %w", err)
+	}
 	written, copyErr := io.CopyN(file, reader, size)
 	if copyErr != nil {
 		return agentexecution.FileInfo{}, fmt.Errorf("write upload after %d bytes: %w", written, copyErr)

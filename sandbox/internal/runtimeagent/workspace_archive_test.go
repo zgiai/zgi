@@ -68,6 +68,9 @@ func TestWorkspaceArchiveRejectsUnsafeEntries(t *testing.T) {
 		{"escape", tar.Header{Name: "../outside", Typeflag: tar.TypeReg, Size: 1}},
 		{"absolute", tar.Header{Name: "/outside", Typeflag: tar.TypeReg, Size: 1}},
 		{"symlink", tar.Header{Name: "link", Typeflag: tar.TypeSymlink, Linkname: "../outside"}},
+		{"absolute-link", tar.Header{Name: "link", Typeflag: tar.TypeSymlink, Linkname: "/etc/passwd"}},
+		{"dangling-link", tar.Header{Name: "link", Typeflag: tar.TypeSymlink, Linkname: "missing"}},
+		{"cyclic-link", tar.Header{Name: "link", Typeflag: tar.TypeSymlink, Linkname: "link"}},
 		{"device", tar.Header{Name: "device", Typeflag: tar.TypeChar}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -91,6 +94,80 @@ func TestWorkspaceArchiveRejectsUnsafeEntries(t *testing.T) {
 				t.Fatalf("import error = %v", err)
 			}
 		})
+	}
+}
+
+func TestWorkspaceArchiveRetainsPackageManagerLinks(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "node_modules", ".bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "node_modules", "cli.js"), []byte("test-cli"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../cli.js", filepath.Join(root, "node_modules", ".bin", "cli")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := os.Symlink("node_modules", filepath.Join(root, "modules")); err != nil {
+		t.Fatal(err)
+	}
+	source, err := New(Options{WorkspaceRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	stream, err := source.ExportWorkspace(t.Context(), agentexecution.Allocation{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(stream)
+	_ = stream.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination, err := New(Options{WorkspaceRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer destination.Close()
+	if err := destination.ImportWorkspace(t.Context(), agentexecution.Allocation{}, bytes.NewReader(data)); err != nil {
+		t.Fatal(err)
+	}
+	target, err := destination.workspace.Readlink("node_modules/.bin/cli")
+	if err != nil || target != "../cli.js" {
+		t.Fatalf("restored CLI link = %q, error=%v", target, err)
+	}
+	got, err := destination.workspace.ReadFile("modules/.bin/cli")
+	if err != nil || string(got) != "test-cli" {
+		t.Fatalf("restored link chain = %q, error=%v", got, err)
+	}
+}
+
+func TestWorkspaceArchiveNeverWritesThroughDeferredLinks(t *testing.T) {
+	for _, entries := range [][]tar.Header{
+		{{Name: "alias", Typeflag: tar.TypeSymlink, Linkname: "target"}, {Name: "alias/data", Typeflag: tar.TypeReg, Size: 1}},
+		{{Name: "first", Typeflag: tar.TypeSymlink, Linkname: "second"}, {Name: "second", Typeflag: tar.TypeSymlink, Linkname: "first"}},
+		{{Name: "first", Typeflag: tar.TypeSymlink, Linkname: "second"}, {Name: "second", Typeflag: tar.TypeSymlink, Linkname: "../outside"}},
+	} {
+		var buffer bytes.Buffer
+		writer := tar.NewWriter(&buffer)
+		for _, entry := range entries {
+			if err := writer.WriteHeader(&entry); err != nil {
+				t.Fatal(err)
+			}
+			if entry.Size > 0 {
+				_, _ = writer.Write([]byte("x"))
+			}
+		}
+		_ = writer.Close()
+		backend, err := New(Options{WorkspaceRoot: t.TempDir()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := backend.ImportWorkspace(t.Context(), agentexecution.Allocation{}, &buffer); !errors.Is(err, agentexecution.ErrInvalidPath) {
+			t.Errorf("malicious link archive %v = %v, want invalid path", entries, err)
+		}
+		_ = backend.Close()
 	}
 }
 

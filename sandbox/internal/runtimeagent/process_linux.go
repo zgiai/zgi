@@ -35,12 +35,19 @@ type runningProcess struct {
 
 func supportsPTY() bool { return true }
 
-func startProcess(parent context.Context, workDir string, spec agentexecution.JobSpec, sink func(agentexecution.OutputStream, []byte) error) (agentexecution.RunningJob, error) {
+func startProcess(parent context.Context, workDir string, spec agentexecution.JobSpec, jobUID, jobGID uint32, sink func(agentexecution.OutputStream, []byte) error) (agentexecution.RunningJob, error) {
 	jobContext, cancel := context.WithCancel(parent)
 	if spec.Timeout > 0 {
 		jobContext, cancel = context.WithTimeout(parent, spec.Timeout)
 	}
 	cmd := exec.CommandContext(jobContext, spec.Command, spec.Args...)
+	if jobUID != 0 && os.Geteuid() == 0 {
+		// E2B does not inherit the OCI noNewPrivileges setting used locally.
+		// Set it in the child before executing untrusted code, without changing
+		// the root Runtime Agent or the separately controlled APT installer.
+		args := append([]string{"--no-new-privs", "--", spec.Command}, spec.Args...)
+		cmd = exec.CommandContext(jobContext, "/usr/bin/setpriv", args...)
+	}
 	cmd.Dir = workDir
 	cmd.Env = mergedEnvironment(spec.Environment)
 	process := &runningProcess{cmd: cmd, cancel: cancel, done: make(chan struct{})}
@@ -51,6 +58,9 @@ func startProcess(parent context.Context, workDir string, spec agentexecution.Jo
 	cmd.WaitDelay = time.Second
 
 	var ptyOutputDone chan struct{}
+	if jobUID != 0 || jobGID != 0 {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Credential: &syscall.Credential{Uid: jobUID, Gid: jobGID}}
+	}
 	if spec.PTY {
 		terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: spec.PTYColumns, Rows: spec.PTYRows})
 		if err != nil {
@@ -64,7 +74,9 @@ func startProcess(parent context.Context, workDir string, spec agentexecution.Jo
 			pumpOutput(terminal, agentexecution.OutputStreamStdout, sink)
 		}()
 	} else {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		if cmd.SysProcAttr == nil {
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		}
 		cmd.Stdout = &outputWriter{stream: agentexecution.OutputStreamStdout, sink: sink}
 		cmd.Stderr = &outputWriter{stream: agentexecution.OutputStreamStderr, sink: sink}
 		if err := cmd.Start(); err != nil {

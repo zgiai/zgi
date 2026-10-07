@@ -565,7 +565,7 @@ func validateCreateRequest(request CreateBindingRequest) error {
 	if request.Scope.OrganizationID == "" || request.Scope.SubjectID == "" || request.AgentID == "" || request.ConversationID == "" || request.ProfileID == "" || request.Backend == "" || request.IdempotencyKey == "" {
 		return fmt.Errorf("%w: organization, subject, agent, conversation, profile, backend, and idempotency key are required", ErrInvalidRequest)
 	}
-	if request.NetworkPolicy != "offline" && request.NetworkPolicy != "controlled-http" {
+	if request.NetworkPolicy != "offline" && request.NetworkPolicy != "controlled-http" && request.NetworkPolicy != "package-install" {
 		return fmt.Errorf("%w: network policy %q is not available in this runtime", ErrBackendUnavailable, request.NetworkPolicy)
 	}
 	return nil
@@ -609,10 +609,14 @@ func normalizeNetworkPolicy(value string) string {
 }
 
 func networkModeForPolicy(value string) string {
-	if normalizeNetworkPolicy(value) == "offline" {
+	switch normalizeNetworkPolicy(value) {
+	case "offline":
 		return "disabled"
+	case "package-install":
+		return "package-install"
+	default:
+		return "controlled-http"
 	}
-	return "controlled-http"
 }
 
 func owns(scope Scope, binding Binding) bool {

@@ -372,6 +372,174 @@ for label, url in targets:
 	}
 }
 
+func TestGVisorControlledDeps(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Fatal("controlled HTTPS dependency test must run as root on the worker node")
+	}
+	image := strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_TEST_IMAGE"))
+	if image == "" {
+		t.Fatal("ZGI_AGENT_RUNTIME_TEST_IMAGE must contain a preloaded digest-qualified image")
+	}
+	provider, err := New(Options{
+		Address: strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_CONTAINERD_ADDRESS")),
+		RootDir: t.TempDir(),
+		Profiles: map[string]Profile{
+			"controlled": {
+				Image: image, DependencyPreparation: true,
+				DependencyPreparationMode: runtimeagent.DependencyPreparationModeControlledHTTP,
+				EgressAllowedHosts:        []string{"pypi.org", "files.pythonhosted.org"},
+			},
+		},
+		StartupLimit: 45 * time.Second,
+		MemoryBytes:  256 * 1024 * 1024,
+		PIDs:         64,
+		CPUQuota:     100000,
+		CPUPeriod:    100000,
+	})
+	if err != nil {
+		t.Fatalf("new controlled dependency provider: %v", err)
+	}
+	t.Cleanup(func() { _ = provider.Close() })
+	backend, err := localruntime.New(provider)
+	if err != nil {
+		t.Fatalf("new controlled dependency backend: %v", err)
+	}
+	spec := agentexecution.CreateSpec{
+		BindingID: "controlled-deps", WorkspaceID: "controlled-deps-ws",
+		OrganizationID: "contract-org", SubjectID: "contract-user", ProfileID: "controlled",
+		NetworkMode: "controlled-http",
+	}
+	allocation, err := backend.CreateBinding(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("create controlled dependency binding: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupContext, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = backend.DestroyBinding(cleanupContext, allocation)
+	})
+
+	result, output := runContractJob(t, backend, allocation, agentexecution.JobSpec{
+		JobID: "controlled-dependency-prepare", Command: "python3", Timeout: 90 * time.Second,
+		Args: []string{"-c", `import pathlib, subprocess, sys
+target = pathlib.Path('/workspace/.zgi-runtime-home/.zgi-dependencies/pip-test')
+target.mkdir(parents=True, exist_ok=True)
+subprocess.run([sys.executable, '-m', 'pip', 'install', '--disable-pip-version-check', '--no-input', '--only-binary=:all:', '--no-cache-dir', '--target', str(target), '--index-url', 'https://pypi.org/simple', 'six==1.16.0'], check=True)
+sys.path.insert(0, str(target))
+import six
+print('prepared='+six.__version__, flush=True)`},
+	})
+	if result.ExitCode != 0 || !bytes.Contains(output, []byte("prepared=1.16.0")) {
+		t.Fatalf("controlled dependency preparation result = %+v, output = %q", result, output)
+	}
+}
+
+func TestGVisorSkillPackageFlow(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Fatal("skill package flow requires a root-owned native Linux worker")
+	}
+	image := strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_TEST_IMAGE"))
+	if image == "" {
+		t.Fatal("ZGI_AGENT_RUNTIME_TEST_IMAGE must contain a preloaded digest-qualified image")
+	}
+	provider, err := New(Options{
+		Address: strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_CONTAINERD_ADDRESS")),
+		RootDir: t.TempDir(),
+		Profiles: map[string]Profile{
+			"controlled": {
+				Image: image, DependencyPreparation: true,
+				DependencyPreparationMode: runtimeagent.DependencyPreparationModeControlledHTTP,
+				EgressAllowedHosts:        []string{"pypi.org", "files.pythonhosted.org"},
+			},
+		},
+		StartupLimit: 45 * time.Second,
+		MemoryBytes:  256 * 1024 * 1024,
+		PIDs:         64,
+		CPUQuota:     100000,
+		CPUPeriod:    100000,
+	})
+	if err != nil {
+		t.Fatalf("new skill package provider: %v", err)
+	}
+	t.Cleanup(func() { _ = provider.Close() })
+	backend, err := localruntime.New(provider)
+	if err != nil {
+		t.Fatalf("new skill package backend: %v", err)
+	}
+	spec := agentexecution.CreateSpec{
+		BindingID: "skill-package", WorkspaceID: "skill-package-ws",
+		OrganizationID: "skill-org", SubjectID: "skill-user", ProfileID: "controlled",
+		NetworkMode: "controlled-http",
+	}
+	allocation, err := backend.CreateBinding(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("create skill package binding: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupContext, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = backend.DestroyBinding(cleanupContext, allocation)
+	})
+
+	readme := "---\nname: portable-skill\ndescription: Aggregate a text input into a JSON artifact.\n---\n\n# Portable skill\n\nRun `scripts/run.py` with an input and output path.\n"
+	if _, err := backend.UploadFile(context.Background(), allocation, "skills/portable-skill/SKILL.md", strings.NewReader(readme), int64(len(readme))); err != nil {
+		t.Fatalf("upload skill instructions: %v", err)
+	}
+	script := `import json
+import sys
+from pathlib import Path
+
+import six
+
+source = Path(sys.argv[1])
+target = Path(sys.argv[2])
+value = source.read_text(encoding="utf-8").strip()
+target.parent.mkdir(parents=True, exist_ok=True)
+payload = {"dependency": six.__version__, "input": value, "length": len(value)}
+target.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+print(json.dumps({"status": "ok", "artifact": str(target), "dependency": six.__version__}, sort_keys=True))`
+	if _, err := backend.UploadFile(context.Background(), allocation, "skills/portable-skill/scripts/run.py", strings.NewReader(script), int64(len(script))); err != nil {
+		t.Fatalf("upload skill script: %v", err)
+	}
+	input := "portable-skill-input\n"
+	if _, err := backend.UploadFile(context.Background(), allocation, "input.txt", strings.NewReader(input), int64(len(input))); err != nil {
+		t.Fatalf("upload skill input: %v", err)
+	}
+	dependencyRoot := "/workspace/.zgi-runtime-home/.zgi-dependencies/portable-skill"
+	prepare, prepareOutput := runContractJob(t, backend, allocation, agentexecution.JobSpec{
+		JobID: "skill-package-dependency-prepare", Command: "python3", Timeout: 90 * time.Second,
+		Args: []string{"-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--only-binary=:all:", "--no-cache-dir", "--target", dependencyRoot, "--index-url", "https://pypi.org/simple", "six==1.16.0"},
+	})
+	if prepare.ExitCode != 0 || !bytes.Contains(prepareOutput, []byte("Successfully installed six-1.16.0")) {
+		t.Fatalf("skill dependency preparation result = %+v, output = %q", prepare, prepareOutput)
+	}
+	runSkill := func(jobID string) (agentexecution.JobResult, []byte) {
+		return runContractJob(t, backend, allocation, agentexecution.JobSpec{
+			JobID: jobID, Command: "python3", Timeout: 20 * time.Second,
+			Args:        []string{"skills/portable-skill/scripts/run.py", "input.txt", "artifacts/result.json"},
+			Environment: map[string]string{"PYTHONPATH": dependencyRoot},
+		})
+	}
+	first, firstOutput := runSkill("skill-package-run-1")
+	if first.ExitCode != 0 || !bytes.Contains(firstOutput, []byte(`"dependency": "1.16.0"`)) {
+		t.Fatalf("first skill run result = %+v, output = %q", first, firstOutput)
+	}
+	second, secondOutput := runSkill("skill-package-run-2")
+	if second.ExitCode != 0 || !bytes.Contains(secondOutput, []byte(`"dependency": "1.16.0"`)) {
+		t.Fatalf("second skill run result = %+v, output = %q", second, secondOutput)
+	}
+	reader, info, err := backend.DownloadFile(context.Background(), allocation, "artifacts/result.json")
+	if err != nil {
+		t.Fatalf("download skill artifact: %v", err)
+	}
+	artifact, readErr := io.ReadAll(reader)
+	_ = reader.Close()
+	expected := `{"dependency": "1.16.0", "input": "portable-skill-input", "length": 20}` + "\n"
+	if readErr != nil || info.Size != int64(len(artifact)) || string(artifact) != expected {
+		t.Fatalf("skill artifact = %q, info = %+v, error = %v", artifact, info, readErr)
+	}
+}
+
 func runContractJob(t *testing.T, backend *localruntime.Backend, allocation agentexecution.Allocation, spec agentexecution.JobSpec) (agentexecution.JobResult, []byte) {
 	t.Helper()
 	var mu sync.Mutex

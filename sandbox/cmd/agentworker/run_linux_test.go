@@ -39,6 +39,39 @@ func TestWorkerConfigParsesApprovedProfilesAndLimits(t *testing.T) {
 	}
 }
 
+func TestWorkerConfigParsesControlledHTTPProfile(t *testing.T) {
+	t.Setenv("ZGI_AGENT_RUNTIME_BACKEND", localBackendName)
+	t.Setenv("ZGI_AGENT_RUNTIME_API_KEY", "dedicated-secret")
+	t.Setenv("ZGI_AGENT_RUNTIME_DATABASE_URL", "postgres://runtime")
+	t.Setenv("ZGI_AGENT_RUNTIME_PROFILES_JSON", `{"controlled":{"image":"registry.example.invalid/zgi/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","dependency_preparation":true,"dependency_preparation_mode":"controlled-http","egress_allowed_hosts":["pypi.org","*.pythonhosted.org","registry.npmjs.org"]}}`)
+	cfg, err := workerConfigFromEnv()
+	if err != nil {
+		t.Fatalf("parse controlled HTTP profile: %v", err)
+	}
+	profile := cfg.Profiles["controlled"]
+	if !profile.DependencyPreparation || profile.DependencyPreparationMode != "controlled-http" {
+		t.Fatalf("controlled profile dependency settings = %+v", profile)
+	}
+	if len(profile.EgressAllowedHosts) != 3 || profile.EgressAllowedHosts[1] != "*.pythonhosted.org" {
+		t.Fatalf("controlled profile egress allowlist = %#v", profile.EgressAllowedHosts)
+	}
+}
+
+func TestWorkerConfigParsesStandardPackageInstallProfile(t *testing.T) {
+	t.Setenv("ZGI_AGENT_RUNTIME_BACKEND", localBackendName)
+	t.Setenv("ZGI_AGENT_RUNTIME_API_KEY", "dedicated-secret")
+	t.Setenv("ZGI_AGENT_RUNTIME_DATABASE_URL", "postgres://runtime")
+	t.Setenv("ZGI_AGENT_RUNTIME_PROFILES_JSON", `{"cc-codex-standard":{"image":"registry.example.invalid/zgi/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","dependency_installation":true,"package_network_mode":"package-install","egress_allowed_hosts":["pypi.org","registry.npmjs.org","deb.debian.org"]}}`)
+	cfg, err := workerConfigFromEnv()
+	if err != nil {
+		t.Fatalf("parse standard package profile: %v", err)
+	}
+	profile := cfg.Profiles["cc-codex-standard"]
+	if !profile.DependencyInstallation || profile.PackageNetworkMode != "package-install" || len(profile.EgressAllowedHosts) != 3 {
+		t.Fatalf("standard package profile = %+v", profile)
+	}
+}
+
 func TestWorkerConfigRejectsNonPositiveLocalStartupTimeout(t *testing.T) {
 	t.Setenv("ZGI_AGENT_RUNTIME_BACKEND", localBackendName)
 	t.Setenv("ZGI_AGENT_RUNTIME_API_KEY", "dedicated-secret")

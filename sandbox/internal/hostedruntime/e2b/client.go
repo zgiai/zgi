@@ -53,8 +53,16 @@ type autoResumeConfig struct {
 }
 
 type networkConfig struct {
-	DenyOut            []string `json:"denyOut"`
-	AllowPublicTraffic bool     `json:"allowPublicTraffic"`
+	AllowOut           []string           `json:"allowOut,omitempty"`
+	DenyOut            []string           `json:"denyOut"`
+	EgressProxy        *egressProxyConfig `json:"egressProxy,omitempty"`
+	AllowPublicTraffic bool               `json:"allowPublicTraffic"`
+}
+
+type egressProxyConfig struct {
+	Address  string `json:"address"`
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
 }
 
 func (c *controlClient) create(ctx context.Context, request createSandboxRequest) (sandboxConnection, error) {

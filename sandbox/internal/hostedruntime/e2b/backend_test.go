@@ -26,11 +26,44 @@ func TestNewRejectsControlledHTTPProfile(t *testing.T) {
 	}
 }
 
+func TestValidateRuntimeCapabilitiesRequiresBakedDependencySupport(t *testing.T) {
+	profile := Profile{TemplateID: "template-zgi-runtime", DependencyPreparation: true}
+	base := agentexecution.RuntimeCapabilities{Shell: true, FileTransfer: true, NetworkMode: "disabled"}
+	if err := validateRuntimeCapabilities(base, profile); !errors.Is(err, agentexecution.ErrBackendUnavailable) {
+		t.Fatalf("missing dependency capability error = %v, want ErrBackendUnavailable", err)
+	}
+	base.DependencyPreparation = true
+	base.DependencyPreparationMode = runtimeagent.DependencyPreparationModeOfflineBundled
+	if err := validateRuntimeCapabilities(base, profile); err != nil {
+		t.Fatalf("offline dependency capability error = %v", err)
+	}
+	base.DependencyPreparationMode = runtimeagent.DependencyPreparationModeControlledHTTP
+	if err := validateRuntimeCapabilities(base, profile); !errors.Is(err, agentexecution.ErrBackendUnavailable) {
+		t.Fatalf("wrong dependency mode error = %v, want ErrBackendUnavailable", err)
+	}
+}
+
+func TestValidateRuntimeCapabilitiesRejectsLegacyDirectPackageTemplate(t *testing.T) {
+	profile := Profile{DependencyInstallation: true}
+	capabilities := agentexecution.RuntimeCapabilities{
+		Shell: true, FileTransfer: true, NetworkMode: "package-install",
+		DependencyInstallation: true, PackageNetworkMode: "package-install", PackageNetworkEnforced: true,
+	}
+	if err := validateRuntimeCapabilities(capabilities, profile); !errors.Is(err, agentexecution.ErrBackendUnavailable) {
+		t.Fatalf("legacy package template error=%v, expected fail-closed", err)
+	}
+	capabilities.EgressProxyAddress = "127.0.0.1:3128"
+	if err := validateRuntimeCapabilities(capabilities, profile); err != nil {
+		t.Fatalf("guarded template rejected: %v", err)
+	}
+}
+
 func TestBackendUsesSecuredOfflineE2BContract(t *testing.T) {
 	var mu sync.Mutex
 	var created createSandboxRequest
 	var agentToken string
 	var uploadedToken string
+	var runtimeNetworkMode string
 	connectCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if strings.HasPrefix(request.URL.Path, "/v2/") || strings.HasPrefix(request.URL.Path, "/sandboxes/") {
@@ -47,6 +80,7 @@ func TestBackendUsesSecuredOfflineE2BContract(t *testing.T) {
 			}
 			mu.Lock()
 			agentToken = created.Environment[agentTokenEnvironment]
+			runtimeNetworkMode = created.Environment["ZGI_RUNTIME_AGENT_NETWORK_MODE"]
 			mu.Unlock()
 			writeJSON(writer, http.StatusCreated, sandboxConnection{
 				SandboxID: "sandbox-1", Domain: "e2b.test",
@@ -91,9 +125,14 @@ func TestBackendUsesSecuredOfflineE2BContract(t *testing.T) {
 				http.Error(writer, "bad Runtime Agent authentication", http.StatusUnauthorized)
 				return
 			}
-			writeJSON(writer, http.StatusOK, map[string]any{"data": agentexecution.RuntimeCapabilities{
-				Shell: true, FileTransfer: true, PTY: true, NetworkMode: "disabled",
-			}})
+			capabilities := agentexecution.RuntimeCapabilities{Shell: true, FileTransfer: true, PTY: true, NetworkMode: runtimeNetworkMode}
+			if runtimeNetworkMode == "package-install" {
+				capabilities.DependencyInstallation = true
+				capabilities.PackageNetworkMode = "package-install"
+				capabilities.PackageNetworkEnforced = true
+				capabilities.EgressProxyAddress = "127.0.0.1:3128"
+			}
+			writeJSON(writer, http.StatusOK, map[string]any{"data": capabilities})
 		case request.Method == http.MethodPost && request.URL.Path == "/sandboxes/sandbox-1/pause":
 			writeJSON(writer, http.StatusConflict, map[string]string{"message": "already paused"})
 		case request.Method == http.MethodDelete && request.URL.Path == "/sandboxes/sandbox-1":
@@ -106,7 +145,10 @@ func TestBackendUsesSecuredOfflineE2BContract(t *testing.T) {
 
 	backend, err := New(Options{
 		APIURL: server.URL, APIKey: "provider-secret",
-		Profiles:   map[string]Profile{"standard": {TemplateID: "template-zgi-runtime"}},
+		Profiles: map[string]Profile{
+			"standard": {TemplateID: "template-zgi-runtime"},
+			"package":  {TemplateID: "template-zgi-runtime", DependencyInstallation: true, PackageNetworkMode: "package-install", EgressAllowedHosts: []string{"pkg.internal"}},
+		},
 		HTTPClient: server.Client(), ReadyTimeout: time.Second,
 	})
 	if err != nil {
@@ -159,6 +201,16 @@ func TestBackendUsesSecuredOfflineE2BContract(t *testing.T) {
 	}
 	if created.TemplateID != "approved-prebuilt-template" {
 		t.Fatalf("template used = %q", created.TemplateID)
+	}
+	packageSpec := agentexecution.CreateSpec{BindingID: "binding-package", WorkspaceID: "workspace-package", ProfileID: "package", NetworkMode: "package-install"}
+	if _, err := backend.CreateBinding(context.Background(), packageSpec); err != nil {
+		t.Fatalf("create package binding: %v", err)
+	}
+	if created.AllowInternet || len(created.Network.DenyOut) != 1 || created.Network.DenyOut[0] != "0.0.0.0/0" || len(created.Network.AllowOut) != 1 || created.Network.AllowOut[0] != "pkg.internal" || created.Network.AllowPublicTraffic {
+		t.Fatalf("unsafe package network request = %+v", created.Network)
+	}
+	if created.Environment["ZGI_RUNTIME_AGENT_NETWORK_MODE"] != "package-install" || created.Environment["ZGI_RUNTIME_AGENT_EGRESS_MODE"] != runtimeagent.EgressModeDirect || created.Environment["ZGI_RUNTIME_AGENT_DEPENDENCY_INSTALLATION_ENABLED"] != "true" || created.Environment["ZGI_RUNTIME_AGENT_JOB_UID"] != "65532" {
+		t.Fatalf("package runtime environment = %#v", created.Environment)
 	}
 }
 
@@ -218,6 +270,12 @@ func TestBackendClassifiesProviderLimitsWithoutReturningBody(t *testing.T) {
 func TestBackendRejectsUnapprovedProfilesAndInvalidConfiguration(t *testing.T) {
 	if _, err := New(Options{}); !errors.Is(err, agentexecution.ErrInvalidRequest) {
 		t.Fatalf("empty config error = %v", err)
+	}
+	if _, err := New(Options{APIKey: "provider-secret", Profiles: map[string]Profile{"standard": {TemplateID: "template", DependencyInstallation: true, PackageNetworkMode: "package-install"}}}); !errors.Is(err, agentexecution.ErrInvalidRequest) {
+		t.Fatalf("E2B package installation error = %v, want invalid request", err)
+	}
+	if _, err := New(Options{APIKey: "provider-secret", Profiles: map[string]Profile{"standard": {TemplateID: "template", DependencyInstallation: true, PackageNetworkMode: "package-install", EgressAllowedHosts: []string{"pkg.internal"}}}}); err != nil {
+		t.Fatalf("valid E2B package profile rejected: %v", err)
 	}
 	backend, err := New(Options{
 		APIKey: "provider-secret", Profiles: map[string]Profile{"standard": {TemplateID: "template"}},

@@ -74,6 +74,20 @@ func TestCreateBindingDefaultsToOfflineNetworkContract(t *testing.T) {
 	}
 }
 
+func TestCreateBindingSupportsOperatorPackageInstallNetworkContract(t *testing.T) {
+	repository := newMemoryRepository()
+	service := newTestService(t, repository, &fakeBackend{})
+	request := testCreateRequest()
+	request.NetworkPolicy = "package-install"
+	binding, err := service.CreateBinding(context.Background(), request)
+	if err != nil {
+		t.Fatalf("create package binding: %v", err)
+	}
+	if binding.NetworkPolicy != "package-install" || binding.NetworkMode != "package-install" {
+		t.Fatalf("package network contract = (%q, %q), want (package-install, package-install)", binding.NetworkPolicy, binding.NetworkMode)
+	}
+}
+
 func TestCreateBindingReusesLegacyOfflineFingerprint(t *testing.T) {
 	repository := newMemoryRepository()
 	backend := &fakeBackend{}

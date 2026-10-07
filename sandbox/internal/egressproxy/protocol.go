@@ -163,8 +163,8 @@ func (p Policy) ResolveAndDial(ctx context.Context, target string) (net.Conn, er
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	var lastErr error
 	for _, address := range ipAddresses {
-		if address.IP.IsLoopback() || address.IP.IsPrivate() || address.IP.IsLinkLocalUnicast() || address.IP.IsLinkLocalMulticast() || address.IP.IsUnspecified() || address.IP.IsMulticast() {
-			lastErr = errors.New("egress destination resolves to a private or special address")
+		if blockedAddress(address.IP) {
+			lastErr = errors.New("egress destination resolves to an IPv6, private, or special address")
 			continue
 		}
 		connection, dialErr := dialer.DialContext(ctx, "tcp", net.JoinHostPort(address.IP.String(), port))
@@ -180,6 +180,10 @@ func (p Policy) ResolveAndDial(ctx context.Context, target string) (net.Conn, er
 	return nil, lastErr
 }
 
+func blockedAddress(address net.IP) bool {
+	return address.To4() == nil || address.IsLoopback() || address.IsPrivate() || address.IsLinkLocalUnicast() || address.IsLinkLocalMulticast() || address.IsUnspecified() || address.IsMulticast()
+}
+
 // ServeConnection handles one host-side bridge connection. A runtime proxy
 // connection is deliberately one-shot so a failed tunnel cannot be reused.
 func ServeConnection(ctx context.Context, connection net.Conn, policy Policy) error {
@@ -193,11 +197,15 @@ func ServeConnection(ctx context.Context, connection net.Conn, policy Policy) er
 		}
 	}()
 	defer close(closed)
-	_ = connection.SetDeadline(time.Now().Add(30 * time.Second))
+	// Bridges are preconnected and queued by the Runtime Agent. An idle
+	// deadline here would close queued bridges during a long compilation,
+	// leaving the next installer with stale connections. Lifecycle cancellation
+	// still closes idle bridges; bound the handshake after a request arrives.
 	frame, err := ReadFrame(connection)
 	if err != nil {
 		return err
 	}
+	_ = connection.SetDeadline(time.Now().Add(30 * time.Second))
 	if frame.Type != FrameTypeConnect {
 		return errors.New("unexpected egress frame type")
 	}

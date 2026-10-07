@@ -57,6 +57,11 @@ const (
 	// do not allow opening existing host sockets.
 	gvisorHostUDSAnnotation = "dev.gvisor.flag.host-uds"
 	gvisorHostUDSCreate     = "create"
+	// Keep more than one bridge available because HTTP clients such as pip
+	// retain CONNECT tunnels with keep-alive while opening a second host.
+	// The bound prevents an idle or malicious client from creating an
+	// unbounded number of host-side bridge connections.
+	maxEgressBridges = 8
 )
 
 var (
@@ -69,6 +74,8 @@ type Profile struct {
 	RuntimeAgentPath          string   `json:"runtime_agent_path,omitempty"`
 	DependencyPreparation     bool     `json:"dependency_preparation,omitempty"`
 	DependencyPreparationMode string   `json:"dependency_preparation_mode,omitempty"`
+	DependencyInstallation    bool     `json:"dependency_installation,omitempty"`
+	PackageNetworkMode        string   `json:"package_network_mode,omitempty"`
 	EgressAllowedHosts        []string `json:"egress_allowed_hosts,omitempty"`
 }
 
@@ -207,7 +214,7 @@ func (p *Provider) Connect(_ context.Context, allocation agentexecution.Allocati
 
 func (p *Provider) launch(ctx context.Context, spec agentexecution.CreateSpec) (agentexecution.Allocation, error) {
 	networkMode := strings.TrimSpace(spec.NetworkMode)
-	if networkMode != "" && networkMode != "disabled" && networkMode != "controlled-http" {
+	if networkMode != "" && networkMode != "disabled" && networkMode != "controlled-http" && networkMode != "package-install" {
 		return agentexecution.Allocation{}, fmt.Errorf("%w: local gVisor runtime network mode %q is not available", agentexecution.ErrBackendUnavailable, networkMode)
 	}
 	allocation, profile, err := p.resolveCreate(spec)
@@ -250,10 +257,14 @@ func (p *Provider) launch(ctx context.Context, spec agentexecution.CreateSpec) (
 		}
 		return allocation, fmt.Errorf("get profile image: %w", err)
 	}
-	if networkMode == "controlled-http" {
+	if networkMode == "controlled-http" || networkMode == "package-install" {
 		if err := p.ensureControlledRunscConfig(); err != nil {
 			return allocation, err
 		}
+	}
+	jobUID, jobGID := uint32(0), uint32(0)
+	if profile.DependencyInstallation {
+		jobUID, jobGID = p.userID, p.groupID
 	}
 	container, err := p.client.NewContainer(startupContext, allocation.BindingRef,
 		containerdclient.WithImage(image),
@@ -277,15 +288,20 @@ func (p *Provider) launch(ctx context.Context, spec agentexecution.CreateSpec) (
 				"ZGI_RUNTIME_AGENT_EGRESS_SOCKET=/run/zgi-agent/egress.sock",
 				"ZGI_RUNTIME_AGENT_DEPENDENCY_PREPARATION_ENABLED=" + strconv.FormatBool(profile.DependencyPreparation),
 				"ZGI_RUNTIME_AGENT_DEPENDENCY_PREPARATION_MODE=" + strings.TrimSpace(profile.DependencyPreparationMode),
+				"ZGI_RUNTIME_AGENT_DEPENDENCY_INSTALLATION_ENABLED=" + strconv.FormatBool(profile.DependencyInstallation),
+				"ZGI_RUNTIME_AGENT_PACKAGE_NETWORK_MODE=" + strings.TrimSpace(profile.PackageNetworkMode),
+				"ZGI_RUNTIME_AGENT_JOB_UID=" + strconv.FormatUint(uint64(jobUID), 10),
+				"ZGI_RUNTIME_AGENT_JOB_GID=" + strconv.FormatUint(uint64(jobGID), 10),
+				"ZGI_RUNTIME_AGENT_PACKAGE_LISTEN=unix:///run/zgi-agent/package.sock",
 			}),
-			oci.WithRootFSReadonly(),
+			withRootFSReadonly(!profile.DependencyInstallation),
 			oci.WithLinuxNamespace(specs.LinuxNamespace{Type: specs.NetworkNamespace}),
 			oci.WithMounts([]specs.Mount{
 				{Destination: "/workspace", Type: "bind", Source: workspaceDir, Options: []string{"rbind", "rw", "nosuid", "nodev"}},
 				{Destination: "/run/zgi-agent", Type: "bind", Source: controlDir, Options: []string{"rbind", "rw", "nosuid", "nodev", "noexec"}},
 				{Destination: "/tmp", Type: "tmpfs", Source: "tmpfs", Options: []string{"nosuid", "nodev", "mode=1777", "size=67108864"}},
 			}),
-			p.hardenSpec(),
+			p.hardenSpec(profile.DependencyInstallation),
 		),
 	)
 	if err != nil {
@@ -318,7 +334,7 @@ func (p *Provider) launch(ctx context.Context, spec agentexecution.CreateSpec) (
 		cancel()
 		return allocation, err
 	}
-	if networkMode == "controlled-http" {
+	if networkMode == "controlled-http" || networkMode == "package-install" {
 		if err := p.startEgressBridge(startupContext, allocation, profile); err != nil {
 			cleanupContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 			_ = p.stopCompute(cleanupContext, allocation.BindingRef)
@@ -336,7 +352,7 @@ func (p *Provider) launch(ctx context.Context, spec agentexecution.CreateSpec) (
 // in-sandbox loopback; outbound traffic still has to cross the host bridge
 // through the runtime-agent UDS.
 func runscRuntimeOptions(networkMode, configPath string) interface{} {
-	if networkMode != "controlled-http" {
+	if networkMode != "controlled-http" && networkMode != "package-install" {
 		return nil
 	}
 	return &runtimeoptions.Options{
@@ -408,6 +424,7 @@ func (p *Provider) startEgressBridge(ctx context.Context, allocation agentexecut
 	p.bridgeMu.Unlock()
 	socketPath := filepath.Join(p.controlDir(allocation.BindingRef), "egress.sock")
 	go func() {
+		bridgeSlots := make(chan struct{}, maxEgressBridges)
 		defer func() {
 			p.bridgeMu.Lock()
 			if current := p.bridges[allocation.BindingRef]; current != nil {
@@ -416,11 +433,18 @@ func (p *Provider) startEgressBridge(ctx context.Context, allocation agentexecut
 			p.bridgeMu.Unlock()
 		}()
 		for {
+			select {
+			case bridgeSlots <- struct{}{}:
+			case <-bridgeContext.Done():
+				return
+			}
 			if bridgeContext.Err() != nil {
+				<-bridgeSlots
 				return
 			}
 			connection, err := (&net.Dialer{Timeout: time.Second}).DialContext(bridgeContext, "unix", socketPath)
 			if err != nil {
+				<-bridgeSlots
 				select {
 				case <-bridgeContext.Done():
 					return
@@ -428,10 +452,10 @@ func (p *Provider) startEgressBridge(ctx context.Context, allocation agentexecut
 					continue
 				}
 			}
-			if err := egressproxy.ServeConnection(bridgeContext, connection, policy); err != nil && bridgeContext.Err() == nil {
-				// A denied or failed connection is one-shot; reconnect so the
-				// next proxy request cannot inherit a stale tunnel.
-			}
+			go func(connection net.Conn) {
+				defer func() { <-bridgeSlots }()
+				_ = egressproxy.ServeConnection(bridgeContext, connection, policy)
+			}(connection)
 		}
 	}()
 	return nil
@@ -506,15 +530,23 @@ func (p *Provider) resolveCreate(spec agentexecution.CreateSpec) (agentexecution
 		}
 		profile.Image = spec.HomeSnapshotRef
 	}
-	if strings.TrimSpace(spec.NetworkMode) == "controlled-http" {
+	if strings.TrimSpace(spec.NetworkMode) == "controlled-http" || strings.TrimSpace(spec.NetworkMode) == "package-install" {
 		if err := (egressproxy.Policy{AllowedHosts: profile.EgressAllowedHosts}).Validate(); err != nil {
-			return allocation, profile, fmt.Errorf("%w: controlled-http profile egress policy: %v", agentexecution.ErrInvalidRequest, err)
+			return allocation, profile, fmt.Errorf("%w: package/profile egress policy: %v", agentexecution.ErrInvalidRequest, err)
+		}
+	}
+	if strings.TrimSpace(spec.NetworkMode) == "package-install" {
+		if !profile.DependencyInstallation || strings.ToLower(strings.TrimSpace(profile.PackageNetworkMode)) != "package-install" {
+			return allocation, profile, fmt.Errorf("%w: profile does not approve package installation", agentexecution.ErrBackendUnavailable)
+		}
+		if err := validatePackageSourceAllowlist(profile.EgressAllowedHosts); err != nil {
+			return allocation, profile, fmt.Errorf("%w: package source allowlist: %v", agentexecution.ErrInvalidRequest, err)
 		}
 	}
 	return allocation, profile, nil
 }
 
-func (p *Provider) hardenSpec() oci.SpecOpts {
+func (p *Provider) hardenSpec(runtimeAgentRoot ...bool) oci.SpecOpts {
 	return func(_ context.Context, _ oci.Client, _ *corecontainers.Container, spec *oci.Spec) error {
 		if spec.Process == nil {
 			return errors.New("OCI process is missing")
@@ -525,10 +557,25 @@ func (p *Provider) hardenSpec() oci.SpecOpts {
 		spec.Annotations[gvisorContainerTypeAnnotation] = gvisorSandboxContainerType
 		spec.Annotations[gvisorHostUDSAnnotation] = gvisorHostUDSCreate
 		spec.Process.Cwd = "/workspace"
-		spec.Process.User.UID = p.userID
-		spec.Process.User.GID = p.groupID
+		if len(runtimeAgentRoot) > 0 && runtimeAgentRoot[0] {
+			spec.Process.User.UID = 0
+			spec.Process.User.GID = 0
+		} else {
+			spec.Process.User.UID = p.userID
+			spec.Process.User.GID = p.groupID
+		}
 		spec.Process.NoNewPrivileges = true
 		spec.Process.Capabilities = &specs.LinuxCapabilities{}
+		if len(runtimeAgentRoot) > 0 && runtimeAgentRoot[0] {
+			// Only the Runtime Agent root process receives the small set of
+			// capabilities needed by dpkg to write the package layer. Jobs are
+			// started with UID/GID 65532 and do not inherit these after exec.
+			capabilities := []string{"CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FOWNER", "CAP_SETGID", "CAP_SETUID"}
+			spec.Process.Capabilities = &specs.LinuxCapabilities{
+				Bounding: capabilities, Effective: capabilities, Inheritable: capabilities,
+				Permitted: capabilities, Ambient: capabilities,
+			}
+		}
 		if spec.Linux == nil {
 			spec.Linux = &specs.Linux{}
 		}
@@ -540,6 +587,13 @@ func (p *Provider) hardenSpec() oci.SpecOpts {
 		}
 		return nil
 	}
+}
+
+func withRootFSReadonly(readonly bool) oci.SpecOpts {
+	if readonly {
+		return oci.WithRootFSReadonly()
+	}
+	return func(context.Context, oci.Client, *corecontainers.Container, *oci.Spec) error { return nil }
 }
 
 func defaultOptions(options Options) Options {
@@ -604,6 +658,55 @@ func validateOptions(options Options) error {
 		mode := strings.ToLower(strings.TrimSpace(profile.DependencyPreparationMode))
 		if mode != "" && mode != runtimeagent.DependencyPreparationModeOfflineBundled && mode != runtimeagent.DependencyPreparationModeControlledHTTP {
 			return fmt.Errorf("%w: profile %q dependency preparation mode %q is not supported", agentexecution.ErrInvalidRequest, id, mode)
+		}
+		packageMode := strings.ToLower(strings.TrimSpace(profile.PackageNetworkMode))
+		if packageMode != "" && packageMode != "package-install" {
+			return fmt.Errorf("%w: profile %q package network mode %q is not supported", agentexecution.ErrInvalidRequest, id, packageMode)
+		}
+		if profile.DependencyInstallation && packageMode != "package-install" {
+			return fmt.Errorf("%w: profile %q dependency installation requires package-install network mode", agentexecution.ErrInvalidRequest, id)
+		}
+		if packageMode == "package-install" && !profile.DependencyInstallation {
+			return fmt.Errorf("%w: profile %q package-install mode requires dependency installation", agentexecution.ErrInvalidRequest, id)
+		}
+		if packageMode == "package-install" && len(profile.EgressAllowedHosts) == 0 {
+			return fmt.Errorf("%w: profile %q package-install mode requires an explicit package-source allowlist", agentexecution.ErrInvalidRequest, id)
+		}
+		if packageMode == "package-install" {
+			if err := validatePackageSourceAllowlist(profile.EgressAllowedHosts); err != nil {
+				return fmt.Errorf("%w: profile %q package source allowlist: %v", agentexecution.ErrInvalidRequest, id, err)
+			}
+		}
+		if packageMode == "package-install" && mode == runtimeagent.DependencyPreparationModeControlledHTTP {
+			return fmt.Errorf("%w: profile %q cannot combine package-install with legacy controlled-http dependency preparation", agentexecution.ErrInvalidRequest, id)
+		}
+	}
+	return nil
+}
+
+// validatePackageSourceAllowlist prevents a package-install Profile from
+// silently becoming a general HTTPS egress Profile. Internal mirrors may use
+// deployment-owned .internal/.local names; public hosts are limited to the
+// registries and Debian mirrors used by the standard runtime.
+func validatePackageSourceAllowlist(hosts []string) error {
+	if err := (egressproxy.Policy{AllowedHosts: hosts}).Validate(); err != nil {
+		return err
+	}
+	knownExact := map[string]struct{}{
+		"pypi.org": {}, "registry.npmjs.org": {}, "registry.yarnpkg.com": {},
+		"deb.debian.org": {}, "security.debian.org": {}, "snapshot.debian.org": {},
+	}
+	for _, raw := range hosts {
+		host := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(raw), "*."))
+		known := strings.HasSuffix(host, ".internal") || strings.HasSuffix(host, ".local")
+		if _, ok := knownExact[host]; ok {
+			known = true
+		}
+		if host == "pythonhosted.org" || strings.HasSuffix(host, ".pythonhosted.org") {
+			known = true
+		}
+		if !known {
+			return fmt.Errorf("host %q is not an approved package source", raw)
 		}
 	}
 	return nil

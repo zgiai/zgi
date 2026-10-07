@@ -8,14 +8,17 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/zgiai/zgi-sandbox/internal/agentexecution"
+	"github.com/zgiai/zgi-sandbox/internal/egressproxy"
 	"github.com/zgiai/zgi-sandbox/internal/runtimeagent"
 )
 
@@ -29,9 +32,21 @@ const (
 )
 
 type Profile struct {
-	TemplateID                string `json:"template_id"`
-	DependencyPreparation     bool   `json:"dependency_preparation,omitempty"`
-	DependencyPreparationMode string `json:"dependency_preparation_mode,omitempty"`
+	TemplateID                string   `json:"template_id"`
+	DependencyPreparation     bool     `json:"dependency_preparation,omitempty"`
+	DependencyPreparationMode string   `json:"dependency_preparation_mode,omitempty"`
+	DependencyInstallation    bool     `json:"dependency_installation,omitempty"`
+	PackageNetworkMode        string   `json:"package_network_mode,omitempty"`
+	EgressAllowedHosts        []string `json:"egress_allowed_hosts,omitempty"`
+}
+
+// EgressProxyConfig is operator-managed E2B network configuration. It is
+// supplied from worker environment, never from Agent configuration or a
+// persisted Binding.
+type EgressProxyConfig struct {
+	Address  string
+	Username string
+	Password string
 }
 
 type Options struct {
@@ -44,6 +59,7 @@ type Options struct {
 	EnvdPort       uint16
 	TimeoutSeconds int
 	ReadyTimeout   time.Duration
+	EgressProxy    *EgressProxyConfig
 }
 
 type Backend struct {
@@ -53,6 +69,7 @@ type Backend struct {
 	envdPort       uint16
 	timeoutSeconds int
 	readyTimeout   time.Duration
+	egressProxy    *EgressProxyConfig
 }
 
 var (
@@ -99,6 +116,11 @@ func New(options Options) (*Backend, error) {
 	if options.HTTPClient == nil {
 		options.HTTPClient = &http.Client{Timeout: 30 * time.Second}
 	}
+	if options.EgressProxy != nil {
+		if err := validateEgressProxy(*options.EgressProxy); err != nil {
+			return nil, err
+		}
+	}
 	profiles := make(map[string]Profile, len(options.Profiles))
 	for name, profile := range options.Profiles {
 		name = strings.TrimSpace(name)
@@ -109,6 +131,19 @@ func New(options Options) (*Backend, error) {
 		if strings.EqualFold(strings.TrimSpace(profile.DependencyPreparationMode), runtimeagent.DependencyPreparationModeControlledHTTP) {
 			return nil, fmt.Errorf("%w: E2B does not provide the controlled HTTPS egress bridge", agentexecution.ErrBackendUnavailable)
 		}
+		packageMode := strings.ToLower(strings.TrimSpace(profile.PackageNetworkMode))
+		if packageMode != "" && packageMode != "package-install" {
+			return nil, fmt.Errorf("%w: E2B package network mode %q is not available", agentexecution.ErrBackendUnavailable, packageMode)
+		}
+		if profile.DependencyInstallation && packageMode != "package-install" {
+			return nil, fmt.Errorf("%w: E2B dependency installation requires package-install network mode", agentexecution.ErrInvalidRequest)
+		}
+		if packageMode == "package-install" {
+			if err := validatePackageSourceAllowlist(profile.EgressAllowedHosts); err != nil {
+				return nil, fmt.Errorf("%w: E2B package source allowlist: %v", agentexecution.ErrInvalidRequest, err)
+			}
+		}
+		profile.EgressAllowedHosts = append([]string(nil), profile.EgressAllowedHosts...)
 		profiles[name] = profile
 	}
 	if len(profiles) == 0 {
@@ -121,11 +156,16 @@ func New(options Options) (*Backend, error) {
 	return &Backend{
 		client: client, profiles: profiles, agentPort: options.AgentPort, envdPort: options.EnvdPort,
 		timeoutSeconds: options.TimeoutSeconds, readyTimeout: options.ReadyTimeout,
+		egressProxy: cloneEgressProxy(options.EgressProxy),
 	}, nil
 }
 
 func (b *Backend) CreateBinding(ctx context.Context, spec agentexecution.CreateSpec) (agentexecution.Allocation, error) {
-	if networkMode := strings.TrimSpace(spec.NetworkMode); networkMode != "" && networkMode != "disabled" {
+	networkMode := strings.ToLower(strings.TrimSpace(spec.NetworkMode))
+	if networkMode == "" {
+		networkMode = "disabled"
+	}
+	if networkMode != "disabled" && networkMode != "package-install" {
 		return agentexecution.Allocation{}, fmt.Errorf("%w: E2B runtime network mode %q is not available", agentexecution.ErrBackendUnavailable, networkMode)
 	}
 	profile, ok := b.profiles[strings.TrimSpace(spec.ProfileID)]
@@ -138,6 +178,11 @@ func (b *Backend) CreateBinding(ctx context.Context, spec agentexecution.CreateS
 		}
 		profile.TemplateID = spec.HomeSnapshotRef
 	}
+	if networkMode == "package-install" {
+		if !profile.DependencyInstallation || strings.ToLower(strings.TrimSpace(profile.PackageNetworkMode)) != "package-install" {
+			return agentexecution.Allocation{}, fmt.Errorf("%w: E2B profile does not approve package installation", agentexecution.ErrBackendUnavailable)
+		}
+	}
 	token, err := newAgentToken()
 	if err != nil {
 		return agentexecution.Allocation{}, fmt.Errorf("create Runtime Agent token: %w", err)
@@ -149,19 +194,41 @@ func (b *Backend) CreateBinding(ctx context.Context, spec agentexecution.CreateS
 	if spec.AllocationAttemptID != "" {
 		metadata["zgi.attempt_id"] = spec.AllocationAttemptID
 	}
+	environment := map[string]string{
+		agentTokenEnvironment:                              token,
+		"ZGI_RUNTIME_AGENT_LISTEN":                         fmt.Sprintf("tcp://0.0.0.0:%d", b.agentPort),
+		"ZGI_RUNTIME_AGENT_NETWORK_MODE":                   networkMode,
+		"ZGI_RUNTIME_AGENT_DEPENDENCY_PREPARATION_ENABLED": fmt.Sprintf("%t", profile.DependencyPreparation),
+		"ZGI_RUNTIME_AGENT_DEPENDENCY_PREPARATION_MODE":    strings.TrimSpace(profile.DependencyPreparationMode),
+	}
+	if networkMode == "package-install" {
+		allowedHostsJSON, marshalErr := json.Marshal(profile.EgressAllowedHosts)
+		if marshalErr != nil {
+			return agentexecution.Allocation{}, fmt.Errorf("encode approved package hosts: %w", marshalErr)
+		}
+		environment["ZGI_RUNTIME_AGENT_EGRESS_ALLOWED_HOSTS_JSON"] = string(allowedHostsJSON)
+		environment["ZGI_RUNTIME_AGENT_DEPENDENCY_INSTALLATION_ENABLED"] = "true"
+		environment["ZGI_RUNTIME_AGENT_PACKAGE_NETWORK_MODE"] = "package-install"
+		environment["ZGI_RUNTIME_AGENT_EGRESS_MODE"] = runtimeagent.EgressModeDirect
+		environment["ZGI_RUNTIME_AGENT_JOB_UID"] = "65532"
+		environment["ZGI_RUNTIME_AGENT_JOB_GID"] = "65532"
+	}
 	connection, err := b.client.create(ctx, createSandboxRequest{
-		TemplateID: profile.TemplateID,
-		Metadata:   metadata,
-		Environment: map[string]string{
-			agentTokenEnvironment:                              token,
-			"ZGI_RUNTIME_AGENT_LISTEN":                         fmt.Sprintf("tcp://0.0.0.0:%d", b.agentPort),
-			"ZGI_RUNTIME_AGENT_NETWORK_MODE":                   "disabled",
-			"ZGI_RUNTIME_AGENT_DEPENDENCY_PREPARATION_ENABLED": fmt.Sprintf("%t", profile.DependencyPreparation),
-			"ZGI_RUNTIME_AGENT_DEPENDENCY_PREPARATION_MODE":    strings.TrimSpace(profile.DependencyPreparationMode),
-		},
+		TemplateID:     profile.TemplateID,
+		Metadata:       metadata,
+		Environment:    environment,
 		TimeoutSeconds: b.timeoutSeconds, AllowInternet: false,
 		AutoPause: true, AutoPauseMemory: true, AutoResume: autoResumeConfig{Enabled: false},
-		Network: networkConfig{DenyOut: []string{"0.0.0.0/0"}, AllowPublicTraffic: false},
+		Network: networkConfig{
+			AllowOut: append([]string(nil), profile.EgressAllowedHosts...),
+			// E2B's network API accepts the IPv4 deny CIDR but rejects ::/0.
+			// E2B sandboxes do not expose an IPv6 egress path, so the provider's
+			// IPv4 deny plus the explicit package allowlist is the supported
+			// package-only boundary.
+			DenyOut:            []string{"0.0.0.0/0"},
+			EgressProxy:        e2bProxyConfig(b.egressProxy, networkMode == "package-install"),
+			AllowPublicTraffic: false,
+		},
 	})
 	if err != nil {
 		return agentexecution.Allocation{}, fmt.Errorf("create E2B environment: %w", err)
@@ -172,7 +239,7 @@ func (b *Backend) CreateBinding(ctx context.Context, spec agentexecution.CreateS
 		var remote *runtimeagent.RemoteBackend
 		remote, err = b.remote(connection, token)
 		if err == nil {
-			err = b.waitReady(ctx, remote, allocation)
+			err = b.waitReady(ctx, remote, allocation, profile)
 		}
 	}
 	if err != nil {
@@ -210,7 +277,7 @@ func (b *Backend) SuspendBinding(ctx context.Context, allocation agentexecution.
 	return nil
 }
 
-func (b *Backend) ResumeBinding(ctx context.Context, _ agentexecution.CreateSpec, allocation agentexecution.Allocation) (agentexecution.Allocation, error) {
+func (b *Backend) ResumeBinding(ctx context.Context, spec agentexecution.CreateSpec, allocation agentexecution.Allocation) (agentexecution.Allocation, error) {
 	sandboxID, err := validateAllocation(allocation)
 	if err != nil {
 		return agentexecution.Allocation{}, err
@@ -220,7 +287,11 @@ func (b *Backend) ResumeBinding(ctx context.Context, _ agentexecution.CreateSpec
 		return agentexecution.Allocation{}, fmt.Errorf("resume E2B environment: %w", err)
 	}
 	resumed := allocationFor(connection.SandboxID)
-	if err := b.waitReady(ctx, remote, resumed); err != nil {
+	profile, ok := b.profiles[strings.TrimSpace(spec.ProfileID)]
+	if !ok {
+		return agentexecution.Allocation{}, fmt.Errorf("%w: E2B profile is not approved", agentexecution.ErrInvalidRequest)
+	}
+	if err := b.waitReady(ctx, remote, resumed, profile); err != nil {
 		return agentexecution.Allocation{}, fmt.Errorf("resume E2B Runtime Agent: %w", err)
 	}
 	return resumed, nil
@@ -242,13 +313,29 @@ func (b *Backend) Capabilities(ctx context.Context, allocation agentexecution.Al
 	if err != nil {
 		return agentexecution.RuntimeCapabilities{}, err
 	}
-	return remote.Capabilities(ctx, allocation)
+	capabilities, err := remote.Capabilities(ctx, allocation)
+	if err == nil && capabilities.NetworkMode == "package-install" {
+		err = validateRuntimeCapabilities(capabilities, Profile{DependencyInstallation: true})
+	}
+	return capabilities, err
 }
 
 func (b *Backend) StartJob(ctx context.Context, allocation agentexecution.Allocation, spec agentexecution.JobSpec, sink func(agentexecution.OutputChunk) error) (agentexecution.RunningJob, error) {
 	remote, err := b.dataPlane(ctx, allocation)
 	if err != nil {
 		return nil, err
+	}
+	// Existing Bindings may still point at a template predating the Job proxy
+	// guard. Reject execution there too, not only on create/resume; file retrieval
+	// and cleanup remain available without launching untrusted commands.
+	capabilities, err := remote.Capabilities(ctx, allocation)
+	if err != nil {
+		return nil, err
+	}
+	if capabilities.NetworkMode == "package-install" {
+		if err := validateRuntimeCapabilities(capabilities, Profile{DependencyInstallation: true}); err != nil {
+			return nil, err
+		}
 	}
 	return remote.StartJob(ctx, allocation, spec, sink)
 }
@@ -326,7 +413,7 @@ func (b *Backend) remote(connection sandboxConnection, token string) (*runtimeag
 	})
 }
 
-func (b *Backend) waitReady(parent context.Context, remote *runtimeagent.RemoteBackend, allocation agentexecution.Allocation) error {
+func (b *Backend) waitReady(parent context.Context, remote *runtimeagent.RemoteBackend, allocation agentexecution.Allocation, profile Profile) error {
 	ctx, cancel := context.WithTimeout(parent, b.readyTimeout)
 	defer cancel()
 	ticker := time.NewTicker(200 * time.Millisecond)
@@ -335,10 +422,7 @@ func (b *Backend) waitReady(parent context.Context, remote *runtimeagent.RemoteB
 	for {
 		capabilities, err := remote.Capabilities(ctx, allocation)
 		if err == nil {
-			if !capabilities.Shell || !capabilities.FileTransfer || capabilities.NetworkMode != "disabled" {
-				return fmt.Errorf("%w: E2B Runtime Agent reported unsafe capabilities", agentexecution.ErrBackendUnavailable)
-			}
-			return nil
+			return validateRuntimeCapabilities(capabilities, profile)
 		}
 		lastErr = err
 		select {
@@ -347,6 +431,85 @@ func (b *Backend) waitReady(parent context.Context, remote *runtimeagent.RemoteB
 		case <-ticker.C:
 		}
 	}
+}
+
+func validateRuntimeCapabilities(capabilities agentexecution.RuntimeCapabilities, profile Profile) error {
+	expectedNetworkMode := "disabled"
+	if profile.DependencyInstallation {
+		expectedNetworkMode = "package-install"
+	}
+	if !capabilities.Shell || !capabilities.FileTransfer || capabilities.NetworkMode != expectedNetworkMode {
+		return fmt.Errorf("%w: E2B Runtime Agent reported unsafe capabilities", agentexecution.ErrBackendUnavailable)
+	}
+	if profile.DependencyPreparation {
+		expectedMode := strings.ToLower(strings.TrimSpace(profile.DependencyPreparationMode))
+		if expectedMode == "" {
+			expectedMode = runtimeagent.DependencyPreparationModeOfflineBundled
+		}
+		if !capabilities.DependencyPreparation || strings.ToLower(strings.TrimSpace(capabilities.DependencyPreparationMode)) != expectedMode {
+			return fmt.Errorf("%w: E2B Runtime Agent template does not provide the approved dependency preparation capability", agentexecution.ErrBackendUnavailable)
+		}
+	}
+	if profile.DependencyInstallation {
+		if !capabilities.DependencyInstallation || capabilities.PackageNetworkMode != "package-install" || capabilities.NetworkMode != "package-install" || !capabilities.PackageNetworkEnforced || capabilities.EgressProxyAddress != "127.0.0.1:3128" {
+			return fmt.Errorf("%w: E2B Runtime Agent template does not provide the guarded package installation capability; rebuild the package template", agentexecution.ErrBackendUnavailable)
+		}
+	}
+	return nil
+}
+
+func validateEgressProxy(proxy EgressProxyConfig) error {
+	address := strings.TrimSpace(proxy.Address)
+	if address == "" {
+		return fmt.Errorf("%w: E2B egress proxy address is required", agentexecution.ErrInvalidRequest)
+	}
+	host, port, err := net.SplitHostPort(address)
+	if err != nil || strings.TrimSpace(host) == "" || strings.TrimSpace(port) == "" {
+		return fmt.Errorf("%w: E2B egress proxy address must use host:port", agentexecution.ErrInvalidRequest)
+	}
+	if strings.ContainsAny(address, "\r\n") || (proxy.Password != "" && proxy.Username == "") {
+		return fmt.Errorf("%w: E2B egress proxy credentials are invalid", agentexecution.ErrInvalidRequest)
+	}
+	return nil
+}
+
+func cloneEgressProxy(proxy *EgressProxyConfig) *EgressProxyConfig {
+	if proxy == nil {
+		return nil
+	}
+	copy := *proxy
+	return &copy
+}
+
+func e2bProxyConfig(proxy *EgressProxyConfig, enabled bool) *egressProxyConfig {
+	if !enabled || proxy == nil {
+		return nil
+	}
+	return &egressProxyConfig{Address: proxy.Address, Username: proxy.Username, Password: proxy.Password}
+}
+
+func validatePackageSourceAllowlist(hosts []string) error {
+	if err := (egressproxy.Policy{AllowedHosts: hosts}).Validate(); err != nil {
+		return err
+	}
+	knownExact := map[string]struct{}{
+		"pypi.org": {}, "files.pythonhosted.org": {}, "registry.npmjs.org": {}, "registry.yarnpkg.com": {},
+		"deb.debian.org": {}, "security.debian.org": {}, "snapshot.debian.org": {},
+	}
+	for _, raw := range hosts {
+		host := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(raw), "*."))
+		known := strings.HasSuffix(host, ".internal") || strings.HasSuffix(host, ".local")
+		if _, ok := knownExact[host]; ok {
+			known = true
+		}
+		if host == "pythonhosted.org" || strings.HasSuffix(host, ".pythonhosted.org") {
+			known = true
+		}
+		if !known {
+			return fmt.Errorf("host %q is not an approved package source", raw)
+		}
+	}
+	return nil
 }
 
 func validateAllocation(allocation agentexecution.Allocation) (string, error) {

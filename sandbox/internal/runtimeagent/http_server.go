@@ -114,6 +114,31 @@ func (s *HTTPServer) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 	}
 }
 
+// ServePackageHTTP is bound only to the mode-0660 package socket inside a
+// package-install runtime. It intentionally has no bearer-token endpoint and
+// accepts only the narrow apt request validated by Backend.InstallSystemPackages.
+func (s *HTTPServer) ServePackageHTTP(w http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost || request.URL.Path != "/v1/package-install" {
+		writeRuntimeAgentMethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	installer, ok := s.backend.(interface {
+		InstallSystemPackages(context.Context, []string) (PackageInstallResult, error)
+	})
+	if !ok {
+		writeRuntimeAgentError(w, http.StatusNotImplemented, "backend_unavailable", "system package installation is unavailable")
+		return
+	}
+	var body struct {
+		Args []string `json:"args"`
+	}
+	if !s.decodeJSON(w, request, &body) {
+		return
+	}
+	result, err := installer.InstallSystemPackages(request.Context(), body.Args)
+	s.writeResult(w, http.StatusOK, result, err)
+}
+
 func (s *HTTPServer) handleWorkspace(w http.ResponseWriter, request *http.Request, segments []string) {
 	if len(segments) != 1 || segments[0] != "archive" {
 		http.NotFound(w, request)

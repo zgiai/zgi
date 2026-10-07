@@ -21,7 +21,8 @@ const (
 
 var _ agentexecution.WorkspaceArchiver = (*Backend)(nil)
 
-// ExportWorkspace emits only directories and regular files. A workspace must
+// ExportWorkspace emits directories, regular files and confined relative
+// symlinks created by language package managers. A workspace must
 // be quiescent before its caller captures a checkpoint; this method does not
 // freeze running processes on its own.
 func (b *Backend) ExportWorkspace(ctx context.Context, _ agentexecution.Allocation) (io.ReadCloser, error) {
@@ -61,6 +62,18 @@ func (b *Backend) writeWorkspaceArchive(ctx context.Context, archive *tar.Writer
 		header := &tar.Header{Name: name, Mode: int64(info.Mode().Perm())}
 		if entry.IsDir() {
 			header.Typeflag = tar.TypeDir
+			return archive.WriteHeader(header)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			target, err := b.workspace.Readlink(name)
+			if err != nil || !safeCheckpointLink(name, target) {
+				return fmt.Errorf("%w: checkpoint contains an escaping link", agentexecution.ErrInvalidPath)
+			}
+			resolved, err := b.workspace.Stat(name)
+			if err != nil || (!resolved.IsDir() && !resolved.Mode().IsRegular()) {
+				return fmt.Errorf("%w: checkpoint link target is unavailable or unsafe", agentexecution.ErrInvalidPath)
+			}
+			header.Typeflag, header.Linkname = tar.TypeSymlink, target
 			return archive.WriteHeader(header)
 		}
 		if !entry.Type().IsRegular() || !info.Mode().IsRegular() {
@@ -107,6 +120,7 @@ func (b *Backend) ImportWorkspace(ctx context.Context, _ agentexecution.Allocati
 	limited := &io.LimitedReader{R: source, N: maximum + 1}
 	archive := tar.NewReader(limited)
 	seen := make(map[string]struct{})
+	var links []tar.Header
 	var total int64
 	for {
 		if err := ctx.Err(); err != nil {
@@ -121,6 +135,28 @@ func (b *Backend) ImportWorkspace(ctx context.Context, _ agentexecution.Allocati
 			}
 			if limited.N == 0 {
 				return agentexecution.ErrOutputLimit
+			}
+			// Restore links last: archive entries can never write through a link.
+			// os.Root then validates the complete link graph, including chains,
+			// dangling targets, cycles and indirect escapes.
+			for _, link := range links {
+				if parent := path.Dir(link.Name); parent != "." {
+					if err := b.workspace.MkdirAll(parent, 0o750); err != nil {
+						return fmt.Errorf("%w: restore link parent: %v", agentexecution.ErrInvalidPath, err)
+					}
+					if err := prepareWorkspaceDirectoryOwnership(b.workspace, parent, b.jobUID, b.jobGID); err != nil {
+						return fmt.Errorf("restore link parent ownership: %w", err)
+					}
+				}
+				if err := b.workspace.Symlink(link.Linkname, link.Name); err != nil {
+					return fmt.Errorf("%w: restore checkpoint link: %v", agentexecution.ErrInvalidPath, err)
+				}
+			}
+			for _, link := range links {
+				info, err := b.workspace.Stat(link.Name)
+				if err != nil || (!info.IsDir() && !info.Mode().IsRegular()) {
+					return fmt.Errorf("%w: restored link target is unavailable or unsafe", agentexecution.ErrInvalidPath)
+				}
 			}
 			return nil
 		}
@@ -141,9 +177,17 @@ func (b *Backend) ImportWorkspace(ctx context.Context, _ agentexecution.Allocati
 		}
 		mode := fs.FileMode(header.Mode) & 0o750
 		switch header.Typeflag {
+		case tar.TypeSymlink:
+			if header.Size != 0 || !safeCheckpointLink(clean, header.Linkname) {
+				return agentexecution.ErrInvalidPath
+			}
+			links = append(links, tar.Header{Name: clean, Linkname: header.Linkname})
 		case tar.TypeDir:
 			if err := b.workspace.MkdirAll(clean, mode|0o700); err != nil {
 				return fmt.Errorf("restore workspace directory: %w", err)
+			}
+			if err := prepareWorkspaceDirectoryOwnership(b.workspace, clean, b.jobUID, b.jobGID); err != nil {
+				return fmt.Errorf("restore directory ownership: %w", err)
 			}
 		case tar.TypeReg, tar.TypeRegA:
 			if header.Size < 0 || header.Size > maxWorkspaceArchiveBytes-total {
@@ -154,10 +198,17 @@ func (b *Backend) ImportWorkspace(ctx context.Context, _ agentexecution.Allocati
 				if err := b.workspace.MkdirAll(parent, 0o750); err != nil {
 					return fmt.Errorf("restore workspace parent: %w", err)
 				}
+				if err := prepareWorkspaceDirectoryOwnership(b.workspace, parent, b.jobUID, b.jobGID); err != nil {
+					return fmt.Errorf("restore parent ownership: %w", err)
+				}
 			}
 			file, err := b.workspace.OpenFile(clean, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode|0o600)
 			if err != nil {
 				return fmt.Errorf("create restored file: %w", err)
+			}
+			if err := prepareJobFileOwnership(file, b.jobUID, b.jobGID); err != nil {
+				_ = file.Close()
+				return fmt.Errorf("restore file ownership: %w", err)
 			}
 			written, copyErr := io.CopyN(file, archive, header.Size)
 			closeErr := file.Close()
@@ -168,4 +219,12 @@ func (b *Backend) ImportWorkspace(ctx context.Context, _ agentexecution.Allocati
 			return fmt.Errorf("%w: checkpoint contains an unsupported entry", agentexecution.ErrInvalidPath)
 		}
 	}
+}
+
+func safeCheckpointLink(name, target string) bool {
+	if target == "" || len(target) > 4096 || strings.ContainsAny(target, "\\\x00") || path.IsAbs(target) {
+		return false
+	}
+	_, err := cleanRelativePath(path.Join(path.Dir(name), target), false)
+	return err == nil
 }

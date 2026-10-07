@@ -93,7 +93,7 @@ func TestRemoteWorkspaceArchiveRoundTripWithoutHTTPTrailer(t *testing.T) {
 	if err != nil || string(got) != `{"total":3}` {
 		t.Fatalf("restored file = %q, %v", got, err)
 	}
-	if err := os.Symlink("result.json", filepath.Join(sourceDir, "unsafe-link")); err != nil {
+	if err := os.Symlink("../outside.json", filepath.Join(sourceDir, "unsafe-link")); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
 	}
 	broken, err := remote.ExportWorkspace(context.Background(), agentexecution.Allocation{})

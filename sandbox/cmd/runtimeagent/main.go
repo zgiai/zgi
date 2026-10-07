@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -17,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/zgiai/zgi-sandbox/internal/agentexecution"
 	"github.com/zgiai/zgi-sandbox/internal/runtimeagent"
 )
 
@@ -35,13 +37,25 @@ func run(parent context.Context) error {
 		return err
 	}
 	workspace := envValue("ZGI_RUNTIME_AGENT_WORKSPACE", "/workspace")
+	var egressAllowedHosts []string
+	if raw := strings.TrimSpace(os.Getenv("ZGI_RUNTIME_AGENT_EGRESS_ALLOWED_HOSTS_JSON")); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &egressAllowedHosts); err != nil || len(egressAllowedHosts) == 0 {
+			return errors.New("ZGI_RUNTIME_AGENT_EGRESS_ALLOWED_HOSTS_JSON must be a non-empty hostname array")
+		}
+	}
 	backend, err := runtimeagent.New(runtimeagent.Options{
 		WorkspaceRoot:             workspace,
 		NetworkMode:               envValue("ZGI_RUNTIME_AGENT_NETWORK_MODE", "disabled"),
+		EgressMode:                envValue("ZGI_RUNTIME_AGENT_EGRESS_MODE", runtimeagent.EgressModeBridge),
 		EgressProxyAddress:        envValue("ZGI_RUNTIME_AGENT_EGRESS_PROXY_ADDRESS", "127.0.0.1:3128"),
+		EgressAllowedHosts:        egressAllowedHosts,
 		EgressSocketPath:          envValue("ZGI_RUNTIME_AGENT_EGRESS_SOCKET", "/run/zgi-agent/egress.sock"),
 		DependencyPreparation:     envBool("ZGI_RUNTIME_AGENT_DEPENDENCY_PREPARATION_ENABLED", false),
 		DependencyPreparationMode: envValue("ZGI_RUNTIME_AGENT_DEPENDENCY_PREPARATION_MODE", ""),
+		DependencyInstallation:    envBool("ZGI_RUNTIME_AGENT_DEPENDENCY_INSTALLATION_ENABLED", false),
+		PackageNetworkMode:        envValue("ZGI_RUNTIME_AGENT_PACKAGE_NETWORK_MODE", ""),
+		JobUID:                    uint32(envInt64("ZGI_RUNTIME_AGENT_JOB_UID", 0)),
+		JobGID:                    uint32(envInt64("ZGI_RUNTIME_AGENT_JOB_GID", 0)),
 		MaxUploadBytes:            envInt64("ZGI_RUNTIME_AGENT_MAX_UPLOAD_BYTES", 64*1024*1024),
 		MaxDownloadBytes:          envInt64("ZGI_RUNTIME_AGENT_MAX_DOWNLOAD_BYTES", 64*1024*1024),
 	})
@@ -64,10 +78,32 @@ func run(parent context.Context) error {
 		return err
 	}
 	defer cleanup()
+	var packageListener net.Listener
+	var packageCleanup func()
+	capabilities, capabilityErr := backend.Capabilities(context.Background(), agentexecution.Allocation{})
+	if capabilityErr != nil {
+		return capabilityErr
+	}
+	if capabilities.DependencyInstallation {
+		packageListener, packageCleanup, err = listenRuntimePackage(envValue("ZGI_RUNTIME_AGENT_PACKAGE_LISTEN", "unix:///run/zgi-agent/package.sock"))
+		if err != nil {
+			return err
+		}
+		defer packageCleanup()
+	}
 	server := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       30 * time.Second,
+	}
+	var packageServer *http.Server
+	if packageListener != nil {
+		packageServer = &http.Server{Handler: http.HandlerFunc(handler.ServePackageHTTP), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
+		go func() {
+			if serveErr := packageServer.Serve(packageListener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+				log.Printf("package install server stopped: %v", serveErr)
+			}
+		}()
 	}
 	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -87,7 +123,13 @@ func run(parent context.Context) error {
 		shutdownContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := server.Shutdown(shutdownContext); err != nil {
+			if packageServer != nil {
+				_ = packageServer.Shutdown(shutdownContext)
+			}
 			return err
+		}
+		if packageServer != nil {
+			_ = packageServer.Shutdown(shutdownContext)
 		}
 		return <-serveResult
 	}
@@ -191,6 +233,27 @@ func listenRuntimeAgent(value string) (net.Listener, func(), error) {
 	default:
 		return nil, func() {}, errors.New("ZGI_RUNTIME_AGENT_LISTEN must use unix:// or tcp://")
 	}
+}
+
+func listenRuntimePackage(value string) (net.Listener, func(), error) {
+	listener, cleanup, err := listenRuntimeAgent(value)
+	if err != nil {
+		return nil, func() {}, err
+	}
+	parsed, parseErr := url.Parse(strings.TrimSpace(value))
+	if parseErr != nil || parsed.Scheme != "unix" {
+		cleanup()
+		return nil, func() {}, errors.New("package install listener must use unix://")
+	}
+	if err := os.Chmod(filepath.Clean(parsed.Path), 0o660); err != nil {
+		cleanup()
+		return nil, func() {}, err
+	}
+	if err := os.Chown(filepath.Clean(parsed.Path), 0, 65532); err != nil {
+		cleanup()
+		return nil, func() {}, err
+	}
+	return listener, cleanup, nil
 }
 
 func envValue(name string, fallback string) string {

@@ -135,6 +135,21 @@ func TestResolveCreateRequiresControlledEgressAllowlist(t *testing.T) {
 	}
 }
 
+func TestResolveCreateRequiresApprovedPackageInstallation(t *testing.T) {
+	provider := &Provider{profiles: map[string]Profile{"standard": {Image: testImage, DependencyInstallation: true, PackageNetworkMode: "package-install", EgressAllowedHosts: []string{"pypi.org"}}}}
+	if _, _, err := provider.resolveCreate(agentexecution.CreateSpec{BindingID: "binding-1", WorkspaceID: "workspace-1", ProfileID: "standard", NetworkMode: "package-install"}); err != nil {
+		t.Fatalf("approved package profile rejected: %v", err)
+	}
+	provider.profiles["standard"] = Profile{Image: testImage, EgressAllowedHosts: []string{"pypi.org"}}
+	if _, _, err := provider.resolveCreate(agentexecution.CreateSpec{BindingID: "binding-1", WorkspaceID: "workspace-1", ProfileID: "standard", NetworkMode: "package-install"}); !errors.Is(err, agentexecution.ErrBackendUnavailable) {
+		t.Fatalf("unapproved package profile error = %v, want backend unavailable", err)
+	}
+	provider.profiles["standard"] = Profile{Image: testImage, DependencyInstallation: true, PackageNetworkMode: "package-install", EgressAllowedHosts: []string{"example.com"}}
+	if _, _, err := provider.resolveCreate(agentexecution.CreateSpec{BindingID: "binding-1", WorkspaceID: "workspace-1", ProfileID: "standard", NetworkMode: "package-install"}); !errors.Is(err, agentexecution.ErrInvalidRequest) {
+		t.Fatalf("unapproved package source error = %v, want invalid request", err)
+	}
+}
+
 func TestRunscRuntimeOptionsOnlyEnableControlledLoopback(t *testing.T) {
 	if options := runscRuntimeOptions("disabled", filepath.Join(t.TempDir(), "runsc.toml")); options != nil {
 		t.Fatalf("disabled runtime options = %#v, want nil", options)
@@ -142,6 +157,9 @@ func TestRunscRuntimeOptionsOnlyEnableControlledLoopback(t *testing.T) {
 	options, ok := runscRuntimeOptions("controlled-http", "/var/lib/zgi/runsc-controlled.toml").(*runtimeoptions.Options)
 	if !ok || options.TypeUrl != "io.containerd.runsc.v1.options" || options.ConfigPath != "/var/lib/zgi/runsc-controlled.toml" {
 		t.Fatalf("controlled runtime options = %#v", options)
+	}
+	if options, ok := runscRuntimeOptions("package-install", "/var/lib/zgi/runsc-controlled.toml").(*runtimeoptions.Options); !ok || options.ConfigPath == "" {
+		t.Fatalf("package-install runtime options = %#v", options)
 	}
 }
 

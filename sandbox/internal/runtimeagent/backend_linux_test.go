@@ -95,6 +95,122 @@ func TestBackendRejectsUnknownDependencyPreparationMode(t *testing.T) {
 	}
 }
 
+func TestBackendAdvertisesPackageInstallationAndInjectsUserCaches(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "egress.sock")
+	backend, err := New(Options{
+		WorkspaceRoot: t.TempDir(), NetworkMode: "package-install",
+		DependencyInstallation: true, PackageNetworkMode: "package-install",
+		EgressProxyAddress: "127.0.0.1:0", EgressSocketPath: socketPath,
+	})
+	if err != nil {
+		t.Fatalf("new package-install backend: %v", err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+	caps, err := backend.Capabilities(context.Background(), agentexecution.Allocation{})
+	if err != nil || !caps.DependencyInstallation || caps.PackageNetworkMode != "package-install" || caps.NetworkMode != "package-install" || caps.EgressProxyAddress == "" {
+		t.Fatalf("package capabilities = %+v, error=%v", caps, err)
+	}
+	if caps.PackageNetworkEnforced {
+		t.Fatalf("bridge package backend unexpectedly advertises provider enforcement: %+v", caps)
+	}
+	var stdout bytes.Buffer
+	running, err := backend.StartJob(context.Background(), agentexecution.Allocation{}, agentexecution.JobSpec{
+		JobID: "package-env", Command: "/bin/sh", Args: []string{"-c", "printf '%s|%s|%s|%s|%s' \"$NPM_CONFIG_GLOBAL\" \"$PIP_CACHE_DIR\" \"$NPM_CONFIG_CACHE\" \"$PATH\" \"$NPM_CONFIG_NODEDIR\""},
+		Environment: map[string]string{"NPM_CONFIG_NODEDIR": "https://unapproved.invalid/headers"},
+		WorkDir:     ".", Timeout: time.Second,
+	}, func(chunk agentexecution.OutputChunk) error {
+		if chunk.Stream == agentexecution.OutputStreamStdout {
+			_, _ = stdout.Write(chunk.Data)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("start package env job: %v", err)
+	}
+	result, err := running.Wait(context.Background())
+	if err != nil || result.ExitCode != 0 || !strings.Contains(stdout.String(), "false|") || !strings.Contains(stdout.String(), "/.cache/npm") || !strings.Contains(stdout.String(), "/usr/bin") || !strings.HasSuffix(stdout.String(), "|/usr/local") {
+		t.Fatalf("package env result=%+v output=%q error=%v", result, stdout.String(), err)
+	}
+}
+
+func TestBackendSupportsProviderEnforcedDirectPackageNetwork(t *testing.T) {
+	backend, err := New(Options{
+		WorkspaceRoot: t.TempDir(), NetworkMode: "package-install", EgressMode: EgressModeDirect,
+		EgressProxyAddress:     "127.0.0.1:0",
+		DependencyInstallation: true, PackageNetworkMode: "package-install",
+	})
+	if err != nil {
+		t.Fatalf("new direct package backend: %v", err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+	caps, err := backend.Capabilities(context.Background(), agentexecution.Allocation{})
+	if err != nil || !caps.DependencyInstallation || !caps.PackageNetworkEnforced || caps.EgressProxyAddress == "" {
+		t.Fatalf("direct package capabilities = %+v, error=%v", caps, err)
+	}
+	var stdout bytes.Buffer
+	running, err := backend.StartJob(context.Background(), agentexecution.Allocation{}, agentexecution.JobSpec{
+		JobID: "direct-package-env", Command: "/bin/sh", Args: []string{"-c", "printf '%s|%s|%s' \"$HTTP_PROXY\" \"$HTTPS_PROXY\" \"$NO_PROXY\""},
+		WorkDir: ".", Timeout: time.Second,
+	}, func(chunk agentexecution.OutputChunk) error {
+		if chunk.Stream == agentexecution.OutputStreamStdout {
+			_, _ = stdout.Write(chunk.Data)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("start direct package env job: %v", err)
+	}
+	result, err := running.Wait(context.Background())
+	expectedProxy := "http://" + caps.EgressProxyAddress
+	if err != nil || result.ExitCode != 0 || stdout.String() != expectedProxy+"|"+expectedProxy+"|127.0.0.1,localhost" {
+		t.Fatalf("direct package env result=%+v output=%q error=%v", result, stdout.String(), err)
+	}
+}
+
+func TestBackendMakesPackageHomeWritableForJobUser(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("requires a root test process to drop to the configured job user")
+	}
+	workspace := filepath.Join(os.TempDir(), fmt.Sprintf("zgi-runtime-home-owner-%d", os.Getpid()))
+	if err := os.Mkdir(workspace, 0o755); err != nil {
+		t.Fatalf("create package workspace: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(workspace) })
+	backend, err := New(Options{
+		WorkspaceRoot: workspace, NetworkMode: "package-install", EgressMode: EgressModeDirect,
+		EgressProxyAddress:     "127.0.0.1:0",
+		DependencyInstallation: true, PackageNetworkMode: "package-install", JobUID: 65532, JobGID: 65532,
+	})
+	if err != nil {
+		t.Fatalf("new package backend: %v", err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+	running, err := backend.StartJob(context.Background(), agentexecution.Allocation{}, agentexecution.JobSpec{
+		JobID: "package-home-owner", Command: "/bin/sh", Args: []string{"-c", `printf 'ok' > "$HOME/ownership.txt"; id -u`}, Timeout: time.Second,
+	}, func(agentexecution.OutputChunk) error { return nil })
+	if err != nil {
+		t.Fatalf("start package home job: %v", err)
+	}
+	result, err := running.Wait(context.Background())
+	if err != nil || result.ExitCode != 0 {
+		t.Fatalf("package home job result=%+v error=%v", result, err)
+	}
+	info, err := os.Stat(filepath.Join(workspace, sessionHomeDirectory, "ownership.txt"))
+	if err != nil {
+		t.Fatalf("stat package home file: %v", err)
+	}
+	if info.Sys().(*syscall.Stat_t).Uid != 65532 || info.Sys().(*syscall.Stat_t).Gid != 65532 {
+		t.Fatalf("package home file owner=%d:%d, want 65532:65532", info.Sys().(*syscall.Stat_t).Uid, info.Sys().(*syscall.Stat_t).Gid)
+	}
+}
+
+func TestBackendRejectsPackageModeWithoutInstallationCapability(t *testing.T) {
+	backend, err := New(Options{WorkspaceRoot: t.TempDir(), NetworkMode: "package-install", PackageNetworkMode: "package-install", EgressProxyAddress: "127.0.0.1:0", EgressSocketPath: filepath.Join(t.TempDir(), "egress.sock")})
+	if backend != nil || !errors.Is(err, agentexecution.ErrBackendUnavailable) {
+		t.Fatalf("package mode without installation result = backend=%v error=%v", backend, err)
+	}
+}
+
 func TestControlledHTTPProxyUsesHostVisibleBridge(t *testing.T) {
 	socketPath := filepath.Join(t.TempDir(), "egress.sock")
 	backend, err := New(Options{WorkspaceRoot: t.TempDir(), NetworkMode: "controlled-http", EgressProxyAddress: "127.0.0.1:0", EgressSocketPath: socketPath})

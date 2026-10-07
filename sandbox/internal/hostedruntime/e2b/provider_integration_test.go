@@ -243,3 +243,175 @@ func TestE2BContract(t *testing.T) {
 		t.Fatalf("restored session home result=%+v output=%q error=%v", homeResult, homeOutput.String(), err)
 	}
 }
+
+// TestE2BPackageInstallContract is intentionally opt-in. It requires a
+// template built from Dockerfile.agent-runtime-e2b and a disposable E2B
+// project whose package Profile has the same registry allowlist as the test.
+// Keeping this separate from TestE2BContract prevents an offline template from
+// being mistaken for evidence that package-only egress works.
+func TestE2BPackageInstallContract(t *testing.T) {
+	apiKey := strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_E2B_API_KEY"))
+	templateID := strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_E2B_TEST_PACKAGE_TEMPLATE"))
+	if apiKey == "" || templateID == "" {
+		t.Fatal("ZGI_AGENT_RUNTIME_E2B_API_KEY and ZGI_AGENT_RUNTIME_E2B_TEST_PACKAGE_TEMPLATE are required")
+	}
+	allowedHosts := []string{
+		"pypi.org", "files.pythonhosted.org", "registry.npmjs.org",
+		"deb.debian.org", "security.debian.org",
+	}
+	backend, err := New(Options{
+		APIURL: strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_E2B_API_URL")),
+		Domain: strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_E2B_DOMAIN")),
+		APIKey: apiKey,
+		Profiles: map[string]Profile{"package": {
+			TemplateID: templateID, DependencyInstallation: true,
+			PackageNetworkMode: "package-install", EgressAllowedHosts: allowedHosts,
+		}},
+		TimeoutSeconds: 600, ReadyTimeout: 120 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("new E2B package backend: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
+	defer cancel()
+	spec := agentexecution.CreateSpec{
+		BindingID:   "e2b-package-integration-" + fmt.Sprint(time.Now().UnixNano()),
+		WorkspaceID: "workspace-package-integration", ProfileID: "package",
+		NetworkMode: "package-install",
+	}
+	allocation, err := backend.CreateBinding(ctx, spec)
+	if err != nil {
+		t.Fatalf("create package binding: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupContext, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cleanupCancel()
+		if err := backend.DestroyBinding(cleanupContext, allocation); err != nil {
+			t.Errorf("cleanup E2B package binding: %v", err)
+		}
+	})
+
+	capabilities, err := backend.Capabilities(ctx, allocation)
+	if err != nil || !capabilities.DependencyInstallation || !capabilities.PackageNetworkEnforced || capabilities.NetworkMode != "package-install" {
+		t.Fatalf("package capabilities=%+v error=%v", capabilities, err)
+	}
+
+	assertJob := func(jobID, command string, args ...string) agentexecution.JobResult {
+		t.Helper()
+		var outputMu sync.Mutex
+		var output bytes.Buffer
+		running, startErr := backend.StartJob(ctx, allocation, agentexecution.JobSpec{
+			JobID: jobID, Command: command, Args: args, Timeout: 5 * time.Minute,
+		}, func(chunk agentexecution.OutputChunk) error {
+			outputMu.Lock()
+			defer outputMu.Unlock()
+			_, err := output.Write(chunk.Data)
+			return err
+		})
+		if startErr != nil {
+			t.Fatalf("start %s: %v", jobID, startErr)
+		}
+		result, waitErr := running.Wait(ctx)
+		if waitErr != nil {
+			t.Fatalf("wait %s: %v", jobID, waitErr)
+		}
+		t.Logf("%s: exit=%d output=%s", jobID, result.ExitCode, output.String())
+		return result
+	}
+
+	pythonResult := assertJob("e2b-package-python", "sh", "-c", "python3 -m pip install --disable-pip-version-check --no-input --no-cache-dir tomlkit==0.13.3 && python3 -c 'import tomlkit; print(tomlkit.__version__)'")
+	if pythonResult.ExitCode != 0 {
+		t.Fatalf("python package install result=%+v", pythonResult)
+	}
+	nodeResult := assertJob("e2b-package-node", "sh", "-c", "npm install --no-save --prefix /workspace zod@3.25.76 && node -e \"require('/workspace/node_modules/zod')\"")
+	if nodeResult.ExitCode != 0 {
+		t.Fatalf("node package install result=%+v", nodeResult)
+	}
+	aptResult := assertJob("e2b-package-apt", "sh", "-c", "apt-get install -y --no-install-recommends tree && tree --version")
+	if aptResult.ExitCode != 0 {
+		t.Fatalf("apt package install result=%+v", aptResult)
+	}
+
+	networkResult := assertJob("e2b-package-network-denied", "python3", "-c", "import urllib.request; urllib.request.urlopen('https://example.com', timeout=5)")
+	if networkResult.ExitCode == 0 {
+		t.Fatalf("ordinary network unexpectedly succeeded: %+v", networkResult)
+	}
+	for _, denied := range []struct{ id, command string }{
+		{"private", "python3 -c \"import socket; socket.create_connection(('169.254.169.254',80),5)\""},
+		{"raw-tcp", "python3 -c \"import socket; socket.create_connection(('1.1.1.1',443),5)\""},
+		{"proxy-bypass", "env -u HTTPS_PROXY -u https_proxy -u ALL_PROXY -u all_proxy python3 -c \"import urllib.request; urllib.request.urlopen('https://pypi.org/simple',timeout=5)\""},
+		{"envd-loopback", "python3 -c \"import socket; socket.create_connection(('127.0.0.1',49983),5)\""},
+		{"control-loopback", "python3 -c \"import socket; socket.create_connection(('127.0.0.1',49984),5)\""},
+		{"raw-tcp-data", "python3 -c \"import socket; s=socket.create_connection(('1.1.1.1',443),5); s.sendall(b'GET / HTTP/1.1\\r\\nHost: one.one.one.one\\r\\nConnection: close\\r\\n\\r\\n'); reply=s.recv(256); print(repr(reply)); assert reply, 'no raw TCP response'\""},
+		{"ipv6", "python3 -c \"import socket; socket.create_connection(('2606:4700:4700::1111',443),5)\""},
+		{"registry-override", "python3 -m pip install --no-input --retries=0 --timeout=5 --index-url=https://example.com/simple zgi-negative-fixture"},
+		{"apt-options", "apt-get install -o APT::Update::Pre-Invoke::=id tree"},
+		{"npm-global", "npm install --global --fetch-retries=0 --fetch-timeout=15000 zod@3.25.76"},
+	} {
+		if result := assertJob("e2b-package-denied-"+denied.id, "sh", "-c", denied.command); result.ExitCode == 0 {
+			t.Errorf("%s unexpectedly succeeded: %+v", denied.id, result)
+		}
+	}
+	if result := assertJob("e2b-package-nonroot", "sh", "-c", "test \"$(id -u)\" = 65532"); result.ExitCode != 0 {
+		t.Fatalf("Job acquired unexpected privileges: %+v", result)
+	}
+	if result := assertJob("e2b-package-session-boundary", "sh", "-c", "grep -Eq '^NoNewPrivs:[[:space:]]+1$' /proc/self/status && python3 -c 'import sys,os; assert sys.prefix == os.environ[\"VIRTUAL_ENV\"]; assert sys.prefix != sys.base_prefix; assert not os.access(\"/usr/local/lib/python3.13/site-packages\", os.W_OK); print(\"session-venv-readonly-base\")'"); result.ExitCode != 0 {
+		t.Fatalf("session virtual environment or base Profile boundary broken: %+v", result)
+	}
+
+	pythonNative := assertJob("e2b-package-python-native", "sh", "-c", "python3 -m pip install --disable-pip-version-check --no-input --no-cache-dir --no-binary=ujson ujson==5.10.0 && python3 -c 'import ujson; assert ujson.loads(ujson.dumps([1,2])) == [1,2]; print(ujson.__version__)'")
+	if pythonNative.ExitCode != 0 {
+		t.Fatalf("Python native build result=%+v", pythonNative)
+	}
+	nodeNative := assertJob("e2b-package-node-native", "sh", "-c", "npm_config_build_from_source=true npm install --no-save --prefix /workspace bufferutil@4.0.9 && node -e \"require('/workspace/node_modules/bufferutil'); console.log('node-native-ok')\"")
+	if nodeNative.ExitCode != 0 {
+		t.Fatalf("Node native build result=%+v", nodeNative)
+	}
+
+	if err := backend.SuspendBinding(ctx, allocation); err != nil {
+		t.Fatalf("pause installed environment: %v", err)
+	}
+	allocation, err = backend.ResumeBinding(ctx, spec, allocation)
+	if err != nil {
+		t.Fatalf("resume installed environment: %v", err)
+	}
+	verifyInstalled := "python3 -c 'import tomlkit,ujson; print(\"python-retained\")' && node -e \"require('/workspace/node_modules/bufferutil'); console.log('node-retained')\" && tree --version"
+	if result := assertJob("e2b-package-after-resume", "sh", "-c", verifyInstalled); result.ExitCode != 0 {
+		t.Fatalf("installed dependencies lost after resume: %+v", result)
+	}
+
+	store, err := workspacecheckpoint.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	archive, err := backend.ExportWorkspace(ctx, allocation)
+	if err != nil {
+		t.Fatalf("export installed workspace: %v", err)
+	}
+	checkpointKey := strings.Repeat("c", 64)
+	if err := store.Save(ctx, checkpointKey, archive); err != nil {
+		_ = archive.Close()
+		t.Fatalf("checkpoint installed dependencies: %v", err)
+	}
+	_ = archive.Close()
+	if err := backend.DestroyBinding(ctx, allocation); err != nil {
+		t.Fatalf("destroy installed compute: %v", err)
+	}
+	allocation, err = backend.CreateBinding(ctx, spec)
+	if err != nil {
+		t.Fatalf("recreate installed environment: %v", err)
+	}
+	archive, err = store.Open(ctx, checkpointKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := backend.ImportWorkspace(ctx, allocation, archive); err != nil {
+		_ = archive.Close()
+		t.Fatalf("restore installed workspace: %v", err)
+	}
+	_ = archive.Close()
+	if result := assertJob("e2b-package-after-rebuild", "sh", "-c", verifyInstalled); result.ExitCode != 0 {
+		t.Fatalf("installed dependencies lost after compute rebuild: %+v", result)
+	}
+}

@@ -3,8 +3,56 @@ package egressproxy
 import (
 	"bytes"
 	"context"
+	"net"
 	"testing"
+	"time"
 )
+
+type idleBridgeConnection struct {
+	net.Conn
+	reading     chan bool
+	deadlineSet bool
+}
+
+func (c *idleBridgeConnection) SetDeadline(deadline time.Time) error {
+	c.deadlineSet = !deadline.IsZero()
+	return c.Conn.SetDeadline(deadline)
+}
+
+func (c *idleBridgeConnection) Read(buffer []byte) (int, error) {
+	select {
+	case c.reading <- c.deadlineSet:
+	default:
+	}
+	return c.Conn.Read(buffer)
+}
+
+func TestQueuedBridgeWaitsForUseUntilLifecycleCancellation(t *testing.T) {
+	server, client := net.Pipe()
+	defer client.Close()
+	connection := &idleBridgeConnection{Conn: server, reading: make(chan bool, 1)}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- ServeConnection(ctx, connection, Policy{AllowedHosts: []string{"pypi.org"}}) }()
+	select {
+	case deadlineSet := <-connection.reading:
+		if deadlineSet {
+			t.Fatal("queued bridge would expire before the next installer uses it")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("bridge did not wait for its first request")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("canceled idle bridge unexpectedly succeeded")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("lifecycle cancellation did not close an idle bridge")
+	}
+}
 
 func TestFrameRoundTripIsBounded(t *testing.T) {
 	var buffer bytes.Buffer
@@ -55,6 +103,17 @@ func TestResolveAndDialRejectsUnallowlistedPrivateAndNonHTTPSTargets(t *testing.
 	}
 	if _, err := policy.ResolveAndDial(context.Background(), "localhost:443"); err == nil {
 		t.Fatal("private localhost address was accepted")
+	}
+}
+
+func TestBlockedAddressRejectsIPv6AndSpecialNetworks(t *testing.T) {
+	for _, address := range []string{"2001:db8::1", "127.0.0.1", "10.0.0.1", "169.254.169.254"} {
+		if !blockedAddress(net.ParseIP(address)) {
+			t.Fatalf("blockedAddress(%q) = false", address)
+		}
+	}
+	if blockedAddress(net.ParseIP("151.101.64.223")) {
+		t.Fatal("public IPv4 address was blocked")
 	}
 }
 

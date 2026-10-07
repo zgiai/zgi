@@ -191,7 +191,19 @@ type RuntimeCapabilities struct {
 	// value is retained for older workers and is interpreted as offline-bundled
 	// when DependencyPreparation is true.
 	DependencyPreparationMode string `json:"dependency_preparation_mode,omitempty"`
-	NetworkMode               string `json:"network_mode"`
+	// DependencyInstallation permits standard Skills to install user-space
+	// Python/Node packages through the runtime's package-only network policy.
+	// It is intentionally distinct from the legacy declaration-based
+	// DependencyPreparation capability.
+	DependencyInstallation bool   `json:"dependency_installation"`
+	PackageNetworkMode     string `json:"package_network_mode,omitempty"`
+	// PackageNetworkEnforced means the outer runtime provider enforces the
+	// package-only egress boundary. Local gVisor reports this through its
+	// worker bridge; hosted providers may enforce it with their own firewall.
+	// It is separate from EgressProxyAddress because a provider-enforced direct
+	// allowlist does not expose a proxy inside the sandbox.
+	PackageNetworkEnforced bool   `json:"package_network_enforced,omitempty"`
+	NetworkMode            string `json:"network_mode"`
 	// EgressProxyAddress is a loopback-only proxy inside the isolated runtime.
 	// It is empty when the runtime cannot provide controlled HTTPS egress.
 	EgressProxyAddress string `json:"egress_proxy_address,omitempty"`

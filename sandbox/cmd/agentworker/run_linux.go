@@ -38,31 +38,34 @@ type runtimeBackend interface {
 }
 
 type workerConfig struct {
-	ListenAddress     string
-	APIKey            string
-	DatabaseURL       string
-	WorkerID          string
-	RootDir           string
-	CheckpointDir     string
-	CheckpointS3      workspacecheckpoint.S3Config
-	ContainerdAddress string
-	Profiles          map[string]containerdprovider.Profile
-	MaxWorkers        int
-	IdleTTL           time.Duration
-	ShutdownTimeout   time.Duration
-	StartupTimeout    time.Duration
-	MemoryBytes       int64
-	PIDs              int64
-	CPUPeriod         uint64
-	CPUQuota          int64
-	Backend           string
-	E2BAPIURL         string
-	E2BDomain         string
-	E2BAPIKey         string
-	E2BProfiles       map[string]e2bprovider.Profile
-	E2BAgentPort      uint16
-	E2BEnvdPort       uint16
-	E2BTimeoutSeconds int
+	ListenAddress          string
+	APIKey                 string
+	DatabaseURL            string
+	WorkerID               string
+	RootDir                string
+	CheckpointDir          string
+	CheckpointS3           workspacecheckpoint.S3Config
+	ContainerdAddress      string
+	Profiles               map[string]containerdprovider.Profile
+	MaxWorkers             int
+	IdleTTL                time.Duration
+	ShutdownTimeout        time.Duration
+	StartupTimeout         time.Duration
+	MemoryBytes            int64
+	PIDs                   int64
+	CPUPeriod              uint64
+	CPUQuota               int64
+	Backend                string
+	E2BAPIURL              string
+	E2BDomain              string
+	E2BAPIKey              string
+	E2BProfiles            map[string]e2bprovider.Profile
+	E2BAgentPort           uint16
+	E2BEnvdPort            uint16
+	E2BTimeoutSeconds      int
+	E2BEgressProxyAddress  string
+	E2BEgressProxyUsername string
+	E2BEgressProxyPassword string
 }
 
 func run(parent context.Context, logger *log.Logger) error {
@@ -232,24 +235,27 @@ func workerConfigFromEnv() (workerConfig, error) {
 			Prefix:       strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_CHECKPOINT_S3_PREFIX")),
 			UsePathStyle: strings.EqualFold(strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_CHECKPOINT_S3_PATH_STYLE")), "true"),
 		},
-		ContainerdAddress: envString("ZGI_AGENT_RUNTIME_CONTAINERD_ADDRESS", "/run/containerd/containerd.sock"),
-		Profiles:          map[string]containerdprovider.Profile{},
-		MaxWorkers:        envInt("ZGI_AGENT_RUNTIME_MAX_WORKERS", 4),
-		IdleTTL:           time.Duration(envInt("ZGI_AGENT_RUNTIME_IDLE_TTL_SECONDS", 1800)) * time.Second,
-		ShutdownTimeout:   time.Duration(envInt("ZGI_AGENT_RUNTIME_SHUTDOWN_TIMEOUT_SECONDS", 30)) * time.Second,
-		StartupTimeout:    time.Duration(envInt("ZGI_AGENT_RUNTIME_STARTUP_TIMEOUT_SECONDS", 30)) * time.Second,
-		MemoryBytes:       envInt64("ZGI_AGENT_RUNTIME_MEMORY_BYTES", 512*1024*1024),
-		PIDs:              envInt64("ZGI_AGENT_RUNTIME_PIDS", 128),
-		CPUPeriod:         uint64(envInt64("ZGI_AGENT_RUNTIME_CPU_PERIOD", 100000)),
-		CPUQuota:          envInt64("ZGI_AGENT_RUNTIME_CPU_QUOTA", 100000),
-		Backend:           envString("ZGI_AGENT_RUNTIME_BACKEND", localBackendName),
-		E2BAPIURL:         strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_E2B_API_URL")),
-		E2BDomain:         strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_E2B_DOMAIN")),
-		E2BAPIKey:         strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_E2B_API_KEY")),
-		E2BProfiles:       map[string]e2bprovider.Profile{},
-		E2BAgentPort:      envUint16("ZGI_AGENT_RUNTIME_E2B_AGENT_PORT", 49984),
-		E2BEnvdPort:       envUint16("ZGI_AGENT_RUNTIME_E2B_ENVD_PORT", 49983),
-		E2BTimeoutSeconds: envInt("ZGI_AGENT_RUNTIME_E2B_TIMEOUT_SECONDS", 1800),
+		ContainerdAddress:      envString("ZGI_AGENT_RUNTIME_CONTAINERD_ADDRESS", "/run/containerd/containerd.sock"),
+		Profiles:               map[string]containerdprovider.Profile{},
+		MaxWorkers:             envInt("ZGI_AGENT_RUNTIME_MAX_WORKERS", 4),
+		IdleTTL:                time.Duration(envInt("ZGI_AGENT_RUNTIME_IDLE_TTL_SECONDS", 1800)) * time.Second,
+		ShutdownTimeout:        time.Duration(envInt("ZGI_AGENT_RUNTIME_SHUTDOWN_TIMEOUT_SECONDS", 30)) * time.Second,
+		StartupTimeout:         time.Duration(envInt("ZGI_AGENT_RUNTIME_STARTUP_TIMEOUT_SECONDS", 30)) * time.Second,
+		MemoryBytes:            envInt64("ZGI_AGENT_RUNTIME_MEMORY_BYTES", 512*1024*1024),
+		PIDs:                   envInt64("ZGI_AGENT_RUNTIME_PIDS", 128),
+		CPUPeriod:              uint64(envInt64("ZGI_AGENT_RUNTIME_CPU_PERIOD", 100000)),
+		CPUQuota:               envInt64("ZGI_AGENT_RUNTIME_CPU_QUOTA", 100000),
+		Backend:                envString("ZGI_AGENT_RUNTIME_BACKEND", localBackendName),
+		E2BAPIURL:              strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_E2B_API_URL")),
+		E2BDomain:              strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_E2B_DOMAIN")),
+		E2BAPIKey:              strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_E2B_API_KEY")),
+		E2BProfiles:            map[string]e2bprovider.Profile{},
+		E2BAgentPort:           envUint16("ZGI_AGENT_RUNTIME_E2B_AGENT_PORT", 49984),
+		E2BEnvdPort:            envUint16("ZGI_AGENT_RUNTIME_E2B_ENVD_PORT", 49983),
+		E2BTimeoutSeconds:      envInt("ZGI_AGENT_RUNTIME_E2B_TIMEOUT_SECONDS", 1800),
+		E2BEgressProxyAddress:  strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_E2B_EGRESS_PROXY_ADDRESS")),
+		E2BEgressProxyUsername: strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_E2B_EGRESS_PROXY_USERNAME")),
+		E2BEgressProxyPassword: os.Getenv("ZGI_AGENT_RUNTIME_E2B_EGRESS_PROXY_PASSWORD"),
 	}
 	if cfg.APIKey == "" || cfg.DatabaseURL == "" {
 		return workerConfig{}, errors.New("ZGI_AGENT_RUNTIME_API_KEY and ZGI_AGENT_RUNTIME_DATABASE_URL are required")
@@ -277,6 +283,9 @@ func workerConfigFromEnv() (workerConfig, error) {
 		}
 		if cfg.E2BAPIKey == "" || len(cfg.E2BProfiles) == 0 || cfg.E2BAgentPort == 0 || cfg.E2BEnvdPort == 0 || cfg.E2BTimeoutSeconds <= 0 {
 			return workerConfig{}, errors.New("E2B API key, approved profiles, ports, and timeout are required")
+		}
+		if cfg.E2BEgressProxyAddress == "" && (cfg.E2BEgressProxyUsername != "" || cfg.E2BEgressProxyPassword != "") {
+			return workerConfig{}, errors.New("E2B egress proxy address is required when proxy credentials are configured")
 		}
 	default:
 		return workerConfig{}, fmt.Errorf("unsupported ZGI_AGENT_RUNTIME_BACKEND %q", cfg.Backend)
@@ -308,7 +317,7 @@ func newRuntimeBackend(cfg workerConfig) (string, runtimeBackend, func(), error)
 		backend, err := e2bprovider.New(e2bprovider.Options{
 			APIURL: cfg.E2BAPIURL, Domain: cfg.E2BDomain, APIKey: cfg.E2BAPIKey,
 			Profiles: cfg.E2BProfiles, AgentPort: cfg.E2BAgentPort, EnvdPort: cfg.E2BEnvdPort,
-			TimeoutSeconds: cfg.E2BTimeoutSeconds,
+			TimeoutSeconds: cfg.E2BTimeoutSeconds, EgressProxy: e2bEgressProxyConfig(cfg),
 		})
 		if err != nil {
 			return "", nil, func() {}, err
@@ -316,6 +325,15 @@ func newRuntimeBackend(cfg workerConfig) (string, runtimeBackend, func(), error)
 		return e2bBackendName, backend, func() {}, nil
 	default:
 		return "", nil, func() {}, fmt.Errorf("unsupported Agent Runtime backend %q", cfg.Backend)
+	}
+}
+
+func e2bEgressProxyConfig(cfg workerConfig) *e2bprovider.EgressProxyConfig {
+	if strings.TrimSpace(cfg.E2BEgressProxyAddress) == "" {
+		return nil
+	}
+	return &e2bprovider.EgressProxyConfig{
+		Address: cfg.E2BEgressProxyAddress, Username: cfg.E2BEgressProxyUsername, Password: cfg.E2BEgressProxyPassword,
 	}
 }
 

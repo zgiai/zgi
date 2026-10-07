@@ -7,6 +7,10 @@ FROM python:3.13-slim-bookworm
 
 ARG NODE_VERSION=22.23.3
 ARG NODE_SHA256=df450af89261115ef9f9e3830c3eeb2cc9213b63c720b1af623cb5dcbe2e02de
+ARG RUNTIME_AGENT_NETWORK_MODE=disabled
+ARG RUNTIME_AGENT_EGRESS_MODE=bridge
+ARG RUNTIME_AGENT_DEPENDENCY_INSTALLATION_ENABLED=false
+ARG RUNTIME_AGENT_PACKAGE_NETWORK_MODE=
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates curl xz-utils && \
@@ -21,23 +25,55 @@ RUN apt-get update && \
 
 COPY e2b-template-build/zgi-runtime-agent /usr/local/bin/zgi-runtime-agent
 COPY scripts/agent-runtime-e2b-bootstrap.sh /usr/local/bin/zgi-runtime-agent-bootstrap
+COPY scripts/zgi-apt-get /usr/local/bin/apt-get
+COPY scripts/zgi-apt-get /usr/local/bin/apt
+COPY profiles/cc-codex-standard/apt-packages.txt /tmp/zgi-profile/apt-packages.txt
+COPY profiles/cc-codex-standard/requirements.lock /tmp/zgi-profile/requirements.lock
+COPY profiles/cc-codex-standard/package.json profiles/cc-codex-standard/pnpm-lock.yaml /opt/zgi-profile/
+COPY profiles/cc-codex-standard/verify.py profiles/cc-codex-standard/verify-node.mjs /opt/zgi-profile/
 
-RUN chmod 0755 /usr/local/bin/zgi-runtime-agent /usr/local/bin/zgi-runtime-agent-bootstrap && \
+RUN chmod 0755 /usr/local/bin/zgi-runtime-agent /usr/local/bin/zgi-runtime-agent-bootstrap /usr/local/bin/apt-get /usr/local/bin/apt && \
     groupadd --gid 65532 zgi-runtime && \
     useradd --uid 65532 --gid 65532 --create-home --home-dir /home/zgi-runtime \
       --shell /usr/sbin/nologin zgi-runtime && \
-    mkdir -p /workspace /run/zgi-agent && \
+    mkdir -p /workspace /run/zgi-agent /etc/zgi && \
+    printf '%s\n' '[global]' 'index-url = https://pypi.org/simple' 'disable-pip-version-check = true' > /etc/zgi/pip.conf && \
+    printf '%s\n' 'Dir::Etc::sourcelist "/etc/apt/sources.list.d/zgi-controlled.sources";' 'Dir::Etc::sourceparts "-";' > /etc/zgi/apt.conf && \
+    rm -f /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources && \
+    printf '%s\n' 'Types: deb' 'URIs: https://deb.debian.org/debian' 'Suites: bookworm bookworm-updates' 'Components: main' '' 'Types: deb' 'URIs: https://security.debian.org/debian-security' 'Suites: bookworm-security' 'Components: main' > /etc/apt/sources.list.d/zgi-controlled.sources && \
+    if [ -d /etc/apt ]; then sed -i 's#http://deb.debian.org#https://deb.debian.org#g; s#http://security.debian.org#https://security.debian.org#g' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true; fi && \
+    /usr/bin/apt-get update && xargs -r /usr/bin/apt-get install -y --no-install-recommends < /tmp/zgi-profile/apt-packages.txt && \
+    python -m pip install --no-cache-dir --break-system-packages -r /tmp/zgi-profile/requirements.lock && \
+    export COREPACK_HOME=/opt/corepack && corepack enable pnpm && corepack prepare pnpm@10.27.0 --activate && cd /opt/zgi-profile && pnpm install --prod --frozen-lockfile && \
+    python verify.py && NODE_PATH=/opt/zgi-profile/node_modules node verify-node.mjs && \
+    mkdir -p /usr/lib/zgi && mv /usr/bin/apt-get /usr/lib/zgi/apt-get.real && mv /usr/bin/apt /usr/lib/zgi/apt.real && \
+    cp /usr/local/bin/apt-get /usr/bin/apt-get && cp /usr/local/bin/apt /usr/bin/apt && \
+    rm -rf /tmp/zgi-profile && \
     chown -R 65532:65532 /workspace /run/zgi-agent /home/zgi-runtime
 
 ENV HOME=/home/zgi-runtime \
-    PATH=/usr/local/bin:/usr/bin:/bin \
+    COREPACK_HOME=/opt/corepack \
+    PATH=/opt/zgi-profile/node_modules/.bin:/usr/local/bin:/usr/bin:/bin \
+    NODE_PATH=/opt/zgi-profile/node_modules \
     PYTHONDONTWRITEBYTECODE=1 \
     ZGI_RUNTIME_AGENT_WORKSPACE=/workspace \
     ZGI_RUNTIME_AGENT_LISTEN=tcp://0.0.0.0:49984 \
-    ZGI_RUNTIME_AGENT_NETWORK_MODE=disabled \
+	ZGI_RUNTIME_AGENT_NETWORK_MODE=${RUNTIME_AGENT_NETWORK_MODE} \
+	ZGI_RUNTIME_AGENT_EGRESS_MODE=${RUNTIME_AGENT_EGRESS_MODE} \
+	ZGI_RUNTIME_AGENT_JOB_UID=65532 \
+	ZGI_RUNTIME_AGENT_JOB_GID=65532 \
+    ZGI_RUNTIME_AGENT_DEPENDENCY_PREPARATION_ENABLED=true \
+    ZGI_RUNTIME_AGENT_DEPENDENCY_PREPARATION_MODE=offline-bundled \
+	ZGI_RUNTIME_AGENT_DEPENDENCY_INSTALLATION_ENABLED=${RUNTIME_AGENT_DEPENDENCY_INSTALLATION_ENABLED} \
+	ZGI_RUNTIME_AGENT_PACKAGE_NETWORK_MODE=${RUNTIME_AGENT_PACKAGE_NETWORK_MODE} \
+    ZGI_RUNTIME_AGENT_PACKAGE_LISTEN=unix:///run/zgi-agent/package.sock \
+    ZGI_RUNTIME_AGENT_APT_PATH=/usr/lib/zgi/apt-get.real \
     ZGI_RUNTIME_AGENT_TOKEN_FILE=/run/zgi-agent/bootstrap-token
 
-USER zgi-runtime
+# The Runtime Agent is the only process allowed to execute the guarded apt
+# helper. Jobs are explicitly switched to UID/GID 65532 by the environment
+# variables above and by the agent's process launcher.
+USER root
 WORKDIR /workspace
 EXPOSE 49984
 ENTRYPOINT ["/usr/local/bin/zgi-runtime-agent-bootstrap"]
