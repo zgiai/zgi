@@ -143,8 +143,8 @@ func (b *Backend) stageDependencyArtifact(ctx context.Context, artifact dependen
 		return result, err
 	}
 	defer root.Close()
-	// The private staging root stays root-owned until the completed directory
-	// is swapped in. Imported children get the ordinary non-root Job owner.
+	// The private staging root stays root-owned during import and fingerprinting.
+	// Imported children get the ordinary non-root Job owner.
 	importer := Backend{workspace: root, jobUID: b.jobUID, jobGID: b.jobGID}
 	if err := importer.ImportWorkspace(ctx, agentexecution.Allocation{}, compressed); err != nil {
 		return result, err

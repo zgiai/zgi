@@ -113,7 +113,7 @@ retained-metadata contract below, not privileged system-package replay.
 ## Retained Python and Node versions
 
 Installation-enabled images/templates must also advertise
-`language_package_ledger_version: 1`; Workers reject an older installation runtime
+`language_package_ledger_version: 2`; Workers reject an older installation runtime
 before readiness. Build and approve the matching runtime and Worker together.
 Offline/legacy Profiles are unaffected.
 
@@ -132,23 +132,56 @@ files, invalid identities, incomplete package directories and excessive inventor
 fail checkpointing explicitly. Limits are 256 KiB per metadata file, 16 MiB total
 metadata, 4,096 records, a 1 MiB ledger and the existing 10,000 Workspace entry limit.
 
-Before the first Job in reconstructed compute, the Agent checks the retained
-inventory against that ledger and its Profile/source/architecture identity. A
-missing package, changed version/path, unexpected extra installation or malformed
-ledger blocks user execution with `language_package_recovery_failed`. Repairing
-the retained checkpoint permits retry; no automatic reinstall or latest-version
-fallback occurs. Checkpointing cannot silently bless a damaged imported inventory.
-Subsequent Jobs may intentionally upgrade or remove dependencies; the next
-quiescent checkpoint records the new state. Callers must stop Jobs before capture,
-as with the existing Workspace archive contract.
+The v2 ledger also references deterministic, content-addressed installed-state
+archives of the session venv and each outermost Workspace `node_modules` tree.
+These contain the installed native binaries and scripts, not upstream wheel/npm
+release archives. No re-download, dependency resolution, lifecycle hook or compiler
+runs during capture or recovery. The original Profile, architecture, sources and
+Python/Node ABI cache identity must match before any replacement is attempted.
 
-Historical checkpoints without this ledger remain readable and gain records on
-their next checkpoint; original unknown versions cannot be recovered retroactively.
-This checks metadata consistency, not every installed file or importability, and
-does not attest package authenticity. Custom `pip --target` directories, editable
-source trees and Node global installs are not claimed as inventoried. Retained
-files remain the recovery mechanism: version-pinned wheel/npm replay and shared
-cross-session package artifacts are separate future work.
+Before the first Job in reconstructed compute, the Agent fingerprints each covered
+installation tree. Matching trees require no recovery. Missing or changed files,
+executable permissions, versions or complete trees are restored from retained
+archives without network access. Each required archive's bounded size, SHA-256,
+confined entries and canonical reconstructed fingerprint are checked in private
+staging before live replacement. All required archives are validated before the
+first replacement; each directory swap has a rename rollback. A subsequent error
+still blocks execution and is retryable, not a transaction across all directories.
+Staging and backup names derive from the ledger target and artifact hash. Following
+an interrupted swap, the next verification restores an absent target from its
+backup and removes only those exact owned temporary paths before retrying.
+Restored files belong to the non-root Job identity; no setuid/setgid bits survive.
+The complete dependency tree is restored to its checkpoint state, not merged with
+uncheckpointed edits. Do not store business results inside venv/node_modules.
+
+Corrupt or absent required archives, malformed locks and unsuccessful verification
+block user execution with `language_package_recovery_failed`; repairing retained
+data allows retry. There is no network or latest-version fallback. A damaged import
+cannot be blessed by another checkpoint. Subsequent Jobs may intentionally install,
+upgrade or remove dependencies; the next quiescent checkpoint records the new state.
+Callers must stop Jobs before capture, as with the existing archive contract.
+
+Self-contained pnpm links are supported. Trees linking to a different Workspace
+directory remain explicitly uncached and use the existing full checkpoint and
+metadata verification path. Their linked business directories are not captured or
+replaced as dependencies. A damaged uncached dependency cannot be auto-repaired.
+
+There are at most 64 installation roots, 256 MiB compressed per archive and 512 MiB
+total dependency archives. Each uncompressed tree retains the 1 GiB/10,000-entry
+checkpoint limits; the complete Workspace still has its original limits. Archives
+add storage overhead. Unchanged content addresses are reused; after a new ledger is
+committed, only its exact superseded artifact references are removed from the live
+Workspace. Durable historical checkpoints keep their own retained copies. This
+is session-scoped, not an organization-wide or cross-tenant shared package cache.
+
+Historical checkpoints without a ledger remain readable. V1 language ledgers retain
+their metadata-only, fail-closed verification and gain artifacts at the next valid
+checkpoint. Unknown original versions or already-lost historical files cannot be
+recovered retroactively. Fingerprints check retained content consistency, not its
+authenticity or importability. Custom `pip --target` directories, editable source
+trees and Node global installs are not claimed as inventoried. Upstream fixed-version
+wheel/npm acquisition, trusted artifact provenance and shared cross-session caches
+are separate work; installed-state archives must not be described as those features.
 
 Package queries and fixed-version installation use the documented Debian
 [dpkg-query fields](https://manpages.debian.org/bookworm/dpkg/dpkg-query.1.en.html)
