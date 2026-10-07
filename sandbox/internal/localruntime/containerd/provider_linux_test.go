@@ -19,6 +19,17 @@ import (
 
 const testImage = "registry.example.invalid/zgi/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
+func TestPackageLedgerCapabilityRejectsOldRuntimeImages(t *testing.T) {
+	for _, version := range []int{0, 1, 3} {
+		if err := validatePackageLedgerCapability(agentexecution.RuntimeCapabilities{SystemPackageLedgerVersion: version}); !errors.Is(err, agentexecution.ErrBackendUnavailable) {
+			t.Errorf("version %d accepted: %v", version, err)
+		}
+	}
+	if err := validatePackageLedgerCapability(agentexecution.RuntimeCapabilities{SystemPackageLedgerVersion: agentexecution.SystemPackageLedgerVersion}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestValidateOptionsRequiresGVisorAndPinnedImages(t *testing.T) {
 	valid := defaultOptions(Options{
 		RootDir:  t.TempDir(),

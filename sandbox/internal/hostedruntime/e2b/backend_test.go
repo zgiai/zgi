@@ -54,6 +54,10 @@ func TestValidateRuntimeCapabilitiesRejectsLegacyDirectPackageTemplate(t *testin
 		t.Fatalf("legacy package template error=%v, expected fail-closed", err)
 	}
 	capabilities.EgressProxyAddress = "127.0.0.1:3128"
+	if err := validateRuntimeCapabilities(capabilities, profile); !errors.Is(err, agentexecution.ErrBackendUnavailable) {
+		t.Fatalf("unversioned recovery template accepted: %v", err)
+	}
+	capabilities.SystemPackageLedgerVersion = agentexecution.SystemPackageLedgerVersion
 	if err := validateRuntimeCapabilities(capabilities, profile); err != nil {
 		t.Fatalf("guarded template rejected: %v", err)
 	}
@@ -142,6 +146,7 @@ func TestBackendUsesSecuredOfflineE2BContract(t *testing.T) {
 				capabilities.PackageNetworkMode = "package-install"
 				capabilities.PackageNetworkEnforced = true
 				capabilities.EgressProxyAddress = "127.0.0.1:3128"
+				capabilities.SystemPackageLedgerVersion = agentexecution.SystemPackageLedgerVersion
 			}
 			writeJSON(writer, http.StatusOK, map[string]any{"data": capabilities})
 		case request.Method == http.MethodPost && request.URL.Path == "/sandboxes/sandbox-1/pause":
@@ -237,6 +242,7 @@ func TestRuntimeCapabilitiesRejectMismatchedPackageSources(t *testing.T) {
 		t.Fatal("old template silently accepted a source override")
 	}
 	caps.PackageSourceDigest = profile.PackageSources.Digest()
+	caps.SystemPackageLedgerVersion = agentexecution.SystemPackageLedgerVersion
 	if err := validateRuntimeCapabilities(caps, profile); err != nil {
 		t.Fatal(err)
 	}

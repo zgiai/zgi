@@ -470,6 +470,9 @@ func validateRuntimeCapabilities(capabilities agentexecution.RuntimeCapabilities
 		}
 	}
 	if profile.DependencyInstallation {
+		if capabilities.SystemPackageLedgerVersion != agentexecution.SystemPackageLedgerVersion {
+			return fmt.Errorf("%w: E2B template lacks fixed-version system package recovery; rebuild the package template", agentexecution.ErrBackendUnavailable)
+		}
 		if !capabilities.DependencyInstallation || capabilities.PackageNetworkMode != "package-install" || capabilities.NetworkMode != "package-install" || !capabilities.PackageNetworkEnforced || capabilities.EgressProxyAddress != "127.0.0.1:3128" {
 			return fmt.Errorf("%w: E2B Runtime Agent template does not provide the guarded package installation capability; rebuild the package template", agentexecution.ErrBackendUnavailable)
 		}

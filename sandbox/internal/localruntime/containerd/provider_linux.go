@@ -334,7 +334,7 @@ func (p *Provider) launch(ctx context.Context, spec agentexecution.CreateSpec) (
 		cancel()
 		return allocation, fmt.Errorf("start gVisor task: %w", err)
 	}
-	if err := p.waitReady(startupContext, allocation); err != nil {
+	if err := p.waitReady(startupContext, allocation, profile); err != nil {
 		cleanupContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		_ = p.stopCompute(cleanupContext, allocation.BindingRef)
 		cancel()
@@ -393,7 +393,7 @@ func (p *Provider) ensureControlledRunscConfig() error {
 	return nil
 }
 
-func (p *Provider) waitReady(ctx context.Context, allocation agentexecution.Allocation) error {
+func (p *Provider) waitReady(ctx context.Context, allocation agentexecution.Allocation, profile Profile) error {
 	readyContext, cancel := context.WithTimeout(ctx, p.startupLimit)
 	defer cancel()
 	ticker := time.NewTicker(50 * time.Millisecond)
@@ -402,7 +402,11 @@ func (p *Provider) waitReady(ctx context.Context, allocation agentexecution.Allo
 	for {
 		connection, err := p.Connect(readyContext, allocation)
 		if err == nil {
-			_, err = connection.Capabilities(readyContext, allocation)
+			var capabilities agentexecution.RuntimeCapabilities
+			capabilities, err = connection.Capabilities(readyContext, allocation)
+			if err == nil && profile.DependencyInstallation {
+				return validatePackageLedgerCapability(capabilities)
+			}
 		}
 		if err == nil {
 			return nil
@@ -414,6 +418,13 @@ func (p *Provider) waitReady(ctx context.Context, allocation agentexecution.Allo
 		case <-ticker.C:
 		}
 	}
+}
+
+func validatePackageLedgerCapability(capabilities agentexecution.RuntimeCapabilities) error {
+	if capabilities.SystemPackageLedgerVersion != agentexecution.SystemPackageLedgerVersion {
+		return fmt.Errorf("%w: local runtime image lacks fixed-version system package recovery; rebuild the package image", agentexecution.ErrBackendUnavailable)
+	}
+	return nil
 }
 
 func (p *Provider) startEgressBridge(ctx context.Context, allocation agentexecution.Allocation, profile Profile) error {
