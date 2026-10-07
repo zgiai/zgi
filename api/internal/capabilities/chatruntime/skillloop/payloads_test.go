@@ -52,6 +52,34 @@ func TestBlockedSkillPlanningFeedbackTraceIsNotGuardrail(t *testing.T) {
 	}
 }
 
+func TestSkillDocumentPayloadDescribesCoreModulePackage(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "core"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "SKILL.md"), []byte("---\nname: portable-core\ndescription: Example.\n---\nImport core.helper.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "core/helper.py"), []byte("VALUE = 30\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	doc, err := skills.LoadCustomSkillDocument(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, ok := skillDocumentPayload(&doc)["session_script"].(map[string]interface{})
+	if !ok || session["skill_id"] != "portable-core" || len(fmt.Sprint(session["package_sha256"])) != 64 {
+		t.Fatalf("session metadata = %#v", session)
+	}
+	usage := fmt.Sprint(session["usage"])
+	if !strings.Contains(usage, "complete package root") || !strings.Contains(usage, "core/") || !strings.Contains(usage, "local module imports") {
+		t.Fatalf("missing actual module layout guidance: %s", usage)
+	}
+	if strings.Contains(fmt.Sprint(session), root) {
+		t.Fatal("host path leaked")
+	}
+}
+
 func TestClientActionRequiredPayloadDoesNotTrustProviderConnectorConfirmation(t *testing.T) {
 	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", nil)
 	trace := skills.SkillTrace{

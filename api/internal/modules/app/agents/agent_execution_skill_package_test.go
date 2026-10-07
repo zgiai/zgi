@@ -231,3 +231,48 @@ func testPortableSkillPackage(t *testing.T) string {
 	}
 	return root
 }
+
+func TestAgentSkillPackageResolverAcceptsCoreModuleWithoutScripts(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:core-skill-package?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&runtimemodel.CustomSkill{}); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "core"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Omitted names must still be inferred from the package name, not its
+	// server-generated storage directory.
+	if err := os.WriteFile(filepath.Join(root, "SKILL.md"), []byte("---\ndescription: Use local modules.\n---\nImport core.helper.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "core/helper.py"), []byte("VALUE = 30\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	organizationID := uuid.New()
+	record := runtimemodel.CustomSkill{
+		ID: uuid.New(), OrganizationID: organizationID, SkillID: "portable-core",
+		Name: "portable-core", Description: "Example", WhenToUse: "Example", RuntimeType: "prompt",
+		StoragePath: root, Status: runtimemodel.CustomSkillStatusActive, CreatedBy: uuid.New(),
+		Display: map[string]interface{}{}, Manifest: map[string]interface{}{},
+	}
+	if err := db.Create(&record).Error; err != nil {
+		t.Fatal(err)
+	}
+	resolve := newAgentSkillPackageResolver(db, organizationID, []string{"portable-core"})
+	pack, err := resolve(t.Context(), "portable-core")
+	if err != nil || pack.Root != root || len(pack.ExpectedDigest) != 64 {
+		t.Fatalf("resolved package = %#v, error = %v", pack, err)
+	}
+	code := 0
+	fake := &fakeAgentExecutionGateway{job: agentExecutionJob{ID: "setup", Status: "succeeded", ExitCode: &code}}
+	if _, err := stageAgentSkillPackage(t.Context(), fake, agentExecutionScope{}, agentExecutionBinding{ID: "binding-core"}, agentExecutionCapabilities{FileTransfer: true, MaxUploadBytes: 64 << 20}, pack); err != nil {
+		t.Fatal(err)
+	}
+	if fake.setupJobs != 1 || len(fake.uploads) != 1 {
+		t.Fatal("core module package was not staged")
+	}
+}

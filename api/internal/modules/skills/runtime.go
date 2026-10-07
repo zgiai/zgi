@@ -370,7 +370,7 @@ func LoadCustomSkillDocumentWithName(root, packageName string) (SkillDocument, e
 		frontmatter.Name = strings.ToLower(strings.TrimSpace(packageName))
 	}
 	id := normalizeSkillID(frontmatter.Name)
-	doc, err := buildSkillDocument(id, root, SkillSourceCustom, frontmatter, body, listReferences(root, SkillSourceCustom), hasScripts(root))
+	doc, err := buildSkillDocument(id, root, SkillSourceCustom, frontmatter, body, listReferences(root, SkillSourceCustom), hasCustomScripts(root))
 	if err != nil {
 		return SkillDocument{}, err
 	}

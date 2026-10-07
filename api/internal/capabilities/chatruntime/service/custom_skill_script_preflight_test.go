@@ -122,6 +122,32 @@ Run scripts/process.js with Node.
 	}
 }
 
+func TestImportPortableSkillWithModulesOutsideScripts(t *testing.T) {
+	for _, module := range []string{"core/gif_builder.py", "helper.py", "lib/helper.js", "lib/helper.mjs", "lib/helper.cjs"} {
+		t.Run(module, func(t *testing.T) {
+			svc := newScriptPreflightService(t)
+			scope := Scope{OrganizationID: uuid.New(), AccountID: uuid.New(), SkipAccessCheck: true}
+			preview, err := svc.PreviewImportCustomSkill(t.Context(), scope, scriptPreflightFileHeader(t, map[string]string{
+				"SKILL.md": "---\nname: portable-core\ndescription: Use a bundled module.\n---\nImport the local module.\n",
+				module:     "# fixture\n",
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !preview.CanImport || !preview.HasScripts || preview.ScriptExecutionMode != skills.SkillScriptExecutionSession || preview.ScriptsSupported {
+				t.Fatalf("preview = %#v, want portable session script without legacy runner", preview)
+			}
+			metadata, err := svc.ConfirmCustomSkillImport(t.Context(), scope, preview.ImportID, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !metadata.HasScripts || metadata.ScriptExecutionMode != skills.SkillScriptExecutionSession {
+				t.Fatalf("import metadata = %#v", metadata)
+			}
+		})
+	}
+}
+
 // Run with ZGI_PORTABLE_SKILL_TEST_ROOT pointing at an unpacked third-party
 // Skill to exercise the importer against real source without copying it into
 // this repository or making the normal test suite depend on a local checkout.

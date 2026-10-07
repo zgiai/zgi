@@ -6,9 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"os"
 	"path"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -50,9 +48,12 @@ func newAgentSkillPackageResolver(db *gorm.DB, organizationID uuid.UUID, enabled
 		if record.StoragePath == "" {
 			return agentSkillPackage{}, fmt.Errorf("enabled custom Skill package has no storage path")
 		}
-		info, err := os.Stat(filepath.Join(record.StoragePath, "scripts"))
-		if err != nil || !info.IsDir() {
-			return agentSkillPackage{}, fmt.Errorf("enabled custom Skill has no scripts directory")
+		doc, err := skills.LoadCustomSkillDocumentWithName(record.StoragePath, skillID)
+		if err != nil {
+			return agentSkillPackage{}, fmt.Errorf("load enabled custom Skill document: %w", err)
+		}
+		if !doc.Metadata.HasScripts {
+			return agentSkillPackage{}, fmt.Errorf("enabled custom Skill has no packaged scripts")
 		}
 		digest, _ := record.Manifest["package_sha256"].(string)
 		if digest == "" {
