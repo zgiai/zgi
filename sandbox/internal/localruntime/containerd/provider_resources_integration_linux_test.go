@@ -122,6 +122,7 @@ func newResourceBinding(t *testing.T, image, bindingID string, memory int64, pid
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	provider, err := New(Options{
+		Address:      strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_CONTAINERD_ADDRESS")),
 		RootDir:      root,
 		Profiles:     map[string]Profile{"contract": {Image: image}},
 		StartupLimit: 45 * time.Second,
