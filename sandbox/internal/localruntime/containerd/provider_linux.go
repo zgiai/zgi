@@ -321,6 +321,9 @@ func (p *Provider) launch(ctx context.Context, spec agentexecution.CreateSpec) (
 	// while still providing FIFO paths; cio.NullIO leaves the shim in a
 	// created/unknown state on valid workers.
 	task, err := container.NewTask(startupContext, cio.NewCreator(
+		// Keep client-side FIFO writes inside this Worker's writable state,
+		// including when systemd protects the shared /run/containerd tree.
+		cio.WithFIFODir(filepath.Join(p.rootDir, "fifo")),
 		cio.WithTerminal,
 		cio.WithStreams(strings.NewReader(""), io.Discard, io.Discard),
 	))
