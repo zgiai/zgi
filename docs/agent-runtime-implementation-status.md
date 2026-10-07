@@ -178,7 +178,14 @@ The legacy API Script Skill real-Sandbox E2E and backtest scenarios passed again
 
 The local Sandbox volume now contains the verified `stdlib` profile artifact used by its preview-process backend. The temporary profile source directory was removed. This data-only change does not alter the image, repository code, or the production-grade secure Sandbox configuration.
 
-The current M4 server-side rollout is closed unless all three operator settings are supplied: `ZGI_AGENT_RUNTIME_URL` (HTTPS origin, or loopback HTTP), `ZGI_AGENT_RUNTIME_API_KEY` (the Worker's dedicated credential), and `ZGI_AGENT_RUNTIME_APPROVED_PROFILES_JSON`. The latter is a JSON object keyed by Profile ID; each entry requires a `backend` (`local-gvisor` or `e2b`), explicit `organization_ids`, and explicit `policy_ids`, for example `{"standard":{"backend":"local-gvisor","organization_ids":["<organization UUID>"],"policy_ids":["offline"]}}`. These are deployment settings, not Agent-editable fields. The Worker must separately have the matching approved Profile. Optional Home Snapshot publication additionally requires `ZGI_AGENT_RUNTIME_APPROVED_HOME_SNAPSHOTS_JSON` and a matching approved Worker database row; without both, a nonempty Home Snapshot reference is rejected. The Shell tool additionally requires the Worker's binding capabilities to report `shell=true` and either `network_mode=disabled` or `network_mode=controlled-http` with a nonempty controlled proxy address.
+The original M4 approval-map and dedicated-credential boundary remains in place.
+Current rollout additionally requires `ZGI_AGENT_RUNTIME_ENABLED=true`,
+operator-selected defaults and a matching approved Worker Profile. Agent authors
+control only the enabled flag, not Profile, policy or Home Snapshot references.
+The updated capability contract accepts the separately enforced `package-install`
+mode as well as approved offline/local controlled-HTTP modes. Use the current
+[deployment configuration](agent-runtime-m6a-deployment.md#required-configuration),
+not historical M4 settings, when enabling the standard Profile.
 
 ## M6B contract-hardening verification
 
@@ -212,6 +219,18 @@ These results belong to their tested revisions. The latest API quality repairs
 must still be deployed and revalidated before a release candidate is declared.
 The delivery gates and remaining work are tracked in
 [the release-candidate checklist](agent-runtime-release-candidate.md).
+
+The public delivery gates were verified locally on 2026-10-08: API tests (327
+packages), Sandbox tests (22 packages), both full vet runs, Web lint (zero errors,
+73 warnings), type-check, focused runtime regressions and production build passed.
+The Sandbox database fixtures now keep their administrator open through cleanup,
+remove only their own allocated database and report cleanup failures. The fresh
+test instance had zero remaining test databases. An explicitly configured but
+unavailable PostgreSQL connection now fails instead of silently skipping coverage.
+The bounded-download test uses the legacy `X-API-Key` contract and additionally
+checks that Bearer authentication does not authorize that endpoint. Product
+authentication was not broadened. ShellCheck, gate preflight tests and actionlint
+passed; these are local validations, not a claim that hosted CI has run.
 
 ### Support boundaries
 
