@@ -44,6 +44,12 @@ func (b *Backend) ExportWorkspace(ctx context.Context, _ agentexecution.Allocati
 }
 
 func (b *Backend) writeWorkspaceArchive(ctx context.Context, archive *tar.Writer) error {
+	return b.writeWorkspaceArchiveMode(ctx, archive, false)
+}
+
+// Dependency fingerprints ignore ownership and non-executable permission bits,
+// which the Workspace import protocol deliberately normalizes.
+func (b *Backend) writeWorkspaceArchiveMode(ctx context.Context, archive *tar.Writer, canonical bool) error {
 	var total int64
 	entries := 0
 	return fs.WalkDir(b.workspace.FS(), ".", func(name string, entry fs.DirEntry, walkErr error) error {
@@ -65,11 +71,20 @@ func (b *Backend) writeWorkspaceArchive(ctx context.Context, archive *tar.Writer
 			return err
 		}
 		header := &tar.Header{Name: name, Mode: int64(info.Mode().Perm())}
+		if canonical {
+			header.Mode = int64(info.Mode().Perm()&0o110 | 0o600)
+		}
 		if entry.IsDir() {
+			if canonical {
+				header.Mode = 0o700
+			}
 			header.Typeflag = tar.TypeDir
 			return archive.WriteHeader(header)
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
+			if canonical {
+				header.Mode = 0o777
+			}
 			target, err := b.workspace.Readlink(name)
 			if err != nil || !safeCheckpointLink(name, target) {
 				return fmt.Errorf("%w: checkpoint contains an escaping link", agentexecution.ErrInvalidPath)
@@ -93,16 +108,16 @@ func (b *Backend) writeWorkspaceArchive(ctx context.Context, archive *tar.Writer
 		if err := archive.WriteHeader(header); err != nil {
 			return err
 		}
-		file, err := b.workspace.Open(name)
+		file, err := openRegularWorkspaceFile(b.workspace, name)
 		if err != nil {
 			return err
 		}
 		openedInfo, err := file.Stat()
-		if err != nil || !openedInfo.Mode().IsRegular() || openedInfo.Size() != info.Size() {
+		if err != nil || !openedInfo.Mode().IsRegular() || !os.SameFile(info, openedInfo) || openedInfo.Size() != info.Size() {
 			_ = file.Close()
 			return fmt.Errorf("%w: workspace changed during checkpoint", agentexecution.ErrInvalidTransition)
 		}
-		_, copyErr := io.CopyN(archive, file, info.Size())
+		_, copyErr := io.CopyN(archive, dependencyContextReader{ctx: ctx, reader: file}, info.Size())
 		return errors.Join(copyErr, file.Close())
 	})
 }

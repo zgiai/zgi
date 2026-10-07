@@ -184,8 +184,8 @@ type JobResult struct {
 // SystemPackageLedgerVersion is the fixed-version system package recovery contract.
 const SystemPackageLedgerVersion = 2
 
-// LanguagePackageLedgerVersion verifies session dependency metadata at recovery.
-const LanguagePackageLedgerVersion = 1
+// LanguagePackageLedgerVersion negotiates retained metadata and offline artifacts.
+const LanguagePackageLedgerVersion = 2
 
 type RuntimeCapabilities struct {
 	SystemPackageLedgerVersion   int    `json:"system_package_ledger_version,omitempty"`

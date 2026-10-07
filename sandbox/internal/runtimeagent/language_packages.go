@@ -82,6 +82,9 @@ func (b *Backend) installedLanguagePackages(ctx context.Context) ([]languagePack
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if name == dependencyArtifactDirectory && entry.IsDir() {
+			return fs.SkipDir
+		}
 		entries++
 		if entries > maxWorkspaceEntries+1 {
 			return agentexecution.ErrOutputLimit

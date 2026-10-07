@@ -77,8 +77,21 @@ func TestLanguageCheckpointRoundTripAndRetryAfterRepair(t *testing.T) {
 	if err := destination.ImportWorkspace(t.Context(), agentexecution.Allocation{}, bytes.NewReader(raw)); err != nil {
 		t.Fatal(err)
 	}
-	// A changed transitive version blocks both execution verification and a new
-	// checkpoint; neither operation can bless an incomplete retained environment.
+	// Damaged retained metadata and a damaged backup must fail closed together.
+	ledgerBefore, _, err := destination.readLanguageLedger()
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifactName := ledgerBefore.Artifacts[len(ledgerBefore.Artifacts)-1].name()
+	validArtifact, err := destination.workspace.ReadFile(artifactName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalidArtifact := bytes.Clone(validArtifact)
+	invalidArtifact[len(invalidArtifact)/2] ^= 0xff
+	if err := destination.workspace.WriteFile(artifactName, invalidArtifact, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	writeLanguageFixture(t, destination, testNodeMetadata, `{"name":"bufferutil","version":"4.1.0"}`)
 	for range 2 {
 		if err := destination.verifyLanguageLedger(t.Context()); err == nil || destination.languageLedgerVerified {
@@ -88,9 +101,15 @@ func TestLanguageCheckpointRoundTripAndRetryAfterRepair(t *testing.T) {
 			t.Fatal("checkpoint hid corrupt restore")
 		}
 	}
-	writeLanguageFixture(t, destination, testNodeMetadata, `{"name":"bufferutil","version":"4.0.9"}`)
+	if err := destination.workspace.WriteFile(artifactName, validArtifact, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := destination.verifyLanguageLedger(t.Context()); err != nil {
 		t.Fatal(err)
+	}
+	metadata, err := destination.workspace.ReadFile(testNodeMetadata)
+	if err != nil || !bytes.Contains(metadata, []byte("4.0.9")) {
+		t.Fatalf("automatic repair: %s %v", metadata, err)
 	}
 	// Intentional subsequent installs/removals are recorded at the next checkpoint.
 	if err := destination.workspace.Remove(testNodeMetadata); err != nil {
@@ -174,7 +193,7 @@ func TestLanguageRecoveryDiagnosticDoesNotLeakMetadata(t *testing.T) {
 	if status != http.StatusServiceUnavailable || code != "language_package_recovery_failed" || message != languageRecoveryMessage || strings.Contains(message, "token") {
 		t.Fatalf("unsafe diagnostic: %d %s %s", status, code, message)
 	}
-	if clientErr := runtimeAgentClientError(code); !errors.Is(clientErr, agentexecution.ErrBackendUnavailable) || !strings.Contains(clientErr.Error(), "no automatic reinstall") {
+	if clientErr := runtimeAgentClientError(code); !errors.Is(clientErr, agentexecution.ErrBackendUnavailable) || !strings.Contains(clientErr.Error(), "no network") {
 		t.Fatalf("lost diagnostic: %v", clientErr)
 	}
 }

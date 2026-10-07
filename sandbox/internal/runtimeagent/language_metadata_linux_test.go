@@ -3,6 +3,7 @@
 package runtimeagent
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path"
@@ -63,6 +64,20 @@ func TestLanguageLedgerBoundsAndMissingPackageBlockUserCommand(t *testing.T) {
 	b.dependencyInstallation = true
 	writeLanguageFixture(t, b, testPythonMetadata, "Name: ujson\nVersion: 5.10.0\n")
 	if err := b.captureLanguageLedger(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	// Historical v1 checkpoints have no artifact fallback and remain fail-closed.
+	ledger, _, err := b.readLanguageLedger()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger.Version = 1
+	ledger.Artifacts = nil
+	raw, err := json.Marshal(ledger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.workspace.WriteFile(languageLedgerName, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	b.languageLedgerVerified = false

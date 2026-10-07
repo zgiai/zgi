@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -42,13 +41,8 @@ func (b *Backend) cacheNamespace(ctx context.Context) (string, error) {
 		return "", err
 	}
 	marker := filepath.Join(sessionHomeDirectory, "runtime-profile.json")
-	file, err := b.workspace.Open(marker)
+	previous, err := readRegularWorkspaceFile(b.workspace, marker, 4096)
 	if err == nil {
-		previous, readErr := io.ReadAll(io.LimitReader(file, 4097))
-		err = errors.Join(readErr, file.Close())
-		if err != nil {
-			return "", err
-		}
 		if string(previous) != string(data) {
 			return "", errors.New("retained dependencies use a different runtime profile or ABI; recover with the original profile")
 		}
@@ -56,11 +50,31 @@ func (b *Backend) cacheNamespace(ctx context.Context) (string, error) {
 		return "", err
 	} else {
 		// The marker is unprivileged workspace data, never a root build input.
-		if err := b.workspace.WriteFile(marker, data, 0o600); err != nil {
+		if err := b.writeCacheMarker(marker, data); err != nil {
 			return "", err
 		}
 	}
 	digest := sha256.Sum256(append(data, []byte(b.packageSources.JSON())...))
 	b.cacheKey = hex.EncodeToString(digest[:])
 	return b.cacheKey, nil
+}
+
+func (b *Backend) writeCacheMarker(marker string, data []byte) error {
+	tmp, err := temporaryName(marker)
+	if err != nil {
+		return err
+	}
+	file, err := b.workspace.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer b.workspace.Remove(tmp)
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := errors.Join(file.Sync(), file.Close()); err != nil {
+		return err
+	}
+	return b.workspace.Rename(tmp, marker)
 }

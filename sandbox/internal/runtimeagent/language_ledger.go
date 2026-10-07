@@ -14,7 +14,7 @@ import (
 )
 
 const languageLedgerName = sessionHomeDirectory + "/language-package-ledger.json"
-const languageRecoveryMessage = "retained Python or Node dependency verification failed; restore the complete checkpoint with its original runtime profile before retrying; no automatic reinstall or latest-version fallback"
+const languageRecoveryMessage = "retained Python or Node dependency recovery failed; verify the original runtime profile and retained artifact integrity before retrying; no network or latest-version fallback"
 
 type languageRecoveryError struct{ cause error }
 
@@ -22,9 +22,12 @@ func (e *languageRecoveryError) Error() string { return languageRecoveryMessage 
 func (e *languageRecoveryError) Unwrap() error { return e.cause }
 
 type languagePackageLedger struct {
-	Version     int                      `json:"version"`
-	Environment packageLedgerEnvironment `json:"environment"`
-	Packages    []languagePackage        `json:"packages"`
+	Version         int                      `json:"version"`
+	Environment     packageLedgerEnvironment `json:"environment"`
+	Packages        []languagePackage        `json:"packages"`
+	Artifacts       []dependencyArtifact     `json:"artifacts,omitempty"`
+	UncachedTargets []string                 `json:"uncached_targets,omitempty"`
+	CacheKey        string                   `json:"runtime_cache_key,omitempty"`
 }
 
 func decodeLanguageLedger(raw []byte, ledger *languagePackageLedger) error {
@@ -54,7 +57,7 @@ func (b *Backend) readLanguageLedger() (languagePackageLedger, bool, error) {
 	if err := decodeLanguageLedger(raw, &ledger); err != nil {
 		return ledger, true, err
 	}
-	if ledger.Version != agentexecution.LanguagePackageLedgerVersion || ledger.Environment != b.packageLedgerEnvironment() {
+	if (ledger.Version != 1 && ledger.Version != agentexecution.LanguagePackageLedgerVersion) || ledger.Environment != b.packageLedgerEnvironment() {
 		return ledger, true, errors.New("language package ledger version or environment mismatch")
 	}
 	if len(ledger.Packages) > maxLanguagePackages {
@@ -67,6 +70,17 @@ func (b *Backend) readLanguageLedger() (languagePackageLedger, bool, error) {
 		}
 		seen[pkg.Path] = true
 	}
+	if ledger.Version == 1 && (len(ledger.Artifacts) != 0 || len(ledger.UncachedTargets) != 0 || ledger.CacheKey != "") {
+		return ledger, true, errors.New("historical ledger cannot contain dependency artifacts")
+	}
+	if ledger.Version == agentexecution.LanguagePackageLedgerVersion {
+		if b.profileIdentity != "" && (len(ledger.CacheKey) != 64 || !lowercaseDigest.MatchString(ledger.CacheKey)) {
+			return ledger, true, errors.New("dependency artifact ABI identity is missing or invalid")
+		}
+		if err := b.validateDependencyArtifacts(ledger); err != nil {
+			return ledger, true, err
+		}
+	}
 	return ledger, true, nil
 }
 
@@ -74,6 +88,11 @@ func (b *Backend) readLanguageLedger() (languagePackageLedger, bool, error) {
 // Thereafter ordinary Jobs may intentionally install, upgrade or remove packages;
 // the next quiescent checkpoint records the resulting state, not stale pins.
 func (b *Backend) verifyLanguageLedger(ctx context.Context) error {
+	ctx, release, err := b.acquirePackageInstallation(ctx)
+	if err != nil {
+		return &languageRecoveryError{cause: err}
+	}
+	defer release()
 	b.languageLedgerMu.Lock()
 	defer b.languageLedgerMu.Unlock()
 	return b.verifyLanguageLedgerLocked(ctx)
@@ -96,6 +115,18 @@ func (b *Backend) verifyLanguageLedgerLocked(ctx context.Context) (err error) {
 		return err
 	}
 	if exists {
+		if ledger.Version == agentexecution.LanguagePackageLedgerVersion {
+			key, err := b.cacheNamespace(ctx)
+			if err != nil {
+				return err
+			}
+			if key != ledger.CacheKey {
+				return errors.New("dependency artifact ABI or cache identity mismatch")
+			}
+			if err := b.restoreDependencyArtifacts(ctx, ledger.Artifacts); err != nil {
+				return err
+			}
+		}
 		actual, err := b.installedLanguagePackages(ctx)
 		if err != nil {
 			return err
@@ -111,6 +142,11 @@ func (b *Backend) verifyLanguageLedgerLocked(ctx context.Context) (err error) {
 }
 
 func (b *Backend) captureLanguageLedger(ctx context.Context) error {
+	ctx, release, err := b.acquirePackageInstallation(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 	b.languageLedgerMu.Lock()
 	defer b.languageLedgerMu.Unlock()
 	// Do not let checkpointing bless a damaged imported environment before its
@@ -122,7 +158,28 @@ func (b *Backend) captureLanguageLedger(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	previous, _, err := b.readLanguageLedger()
+	if err != nil {
+		return err
+	}
+	key, err := b.cacheNamespace(ctx)
+	if err != nil {
+		return err
+	}
+	artifacts, uncached, err := b.captureDependencyArtifacts(ctx, packages)
+	committed := false
+	defer func() {
+		if !committed {
+			b.removeUnreferencedDependencyArtifacts(artifacts, previous.Artifacts)
+		}
+	}()
+	if err != nil {
+		return err
+	}
 	ledger := languagePackageLedger{Version: agentexecution.LanguagePackageLedgerVersion, Environment: b.packageLedgerEnvironment(), Packages: packages}
+	ledger.Artifacts = artifacts
+	ledger.UncachedTargets = uncached
+	ledger.CacheKey = key
 	raw, err := json.MarshalIndent(ledger, "", "  ")
 	if err != nil {
 		return err
@@ -149,5 +206,20 @@ func (b *Backend) captureLanguageLedger(ctx context.Context) error {
 	if err := errors.Join(file.Sync(), file.Close()); err != nil {
 		return err
 	}
-	return b.workspace.Rename(tmp, languageLedgerName)
+	if err := b.workspace.Rename(tmp, languageLedgerName); err != nil {
+		return err
+	}
+	committed = true
+	b.removeUnreferencedDependencyArtifacts(previous.Artifacts, artifacts)
+	return nil
+}
+
+// Only exact previously-owned content-addressed files are removed, never a
+// directory glob or another session's cache. Old durable checkpoints keep copies.
+func (b *Backend) removeUnreferencedDependencyArtifacts(old, current []dependencyArtifact) {
+	for _, artifact := range old {
+		if !slices.ContainsFunc(current, func(value dependencyArtifact) bool { return value.SHA256 == artifact.SHA256 }) {
+			_ = b.workspace.Remove(artifact.name())
+		}
+	}
 }
