@@ -11,7 +11,7 @@ iteration is `99a7fab79` on `px/agent-runtime-execution-environment`.
 |---|---|---|---|
 | 1. Reconcile contracts | Current stage record and explicit limits | Match code, existing real-backend results and public setup/recovery contracts; identify deferred shared caching and rootfs layers | Reconciled; no new deployment claim |
 | 2. Reproducible gates | Public test commands and CI | Go 1.26.2; isolated PostgreSQL with required extensions; API/Sandbox tests and vet; Web lint/type-check/build; independently opted-in real contracts | Local gates verified; CI definitions validated, not yet dispatched |
-| 3. Final deployment | Final tested API/Web and approved Workers | Unmodified Skill import, model-driven installation, execution, content-checked downloads; pause/rebuild; cancellation/timeout/retry; disabled rollout and legacy behavior on both backends | Pending final-revision deployment |
+| 3. Final deployment | Final tested API/Web and approved Workers | Unmodified Skill import, model-driven installation, execution, content-checked downloads; pause/rebuild; cancellation/timeout/retry; disabled rollout and legacy behavior on both backends | Verified in dedicated test environments on 2026-10-08; see the acceptance record |
 | 4. Release candidate | Version manifest and rollback runbook | Upgrade/rollback drills, low-concurrency repeated runs, resource reconciliation, retained-file inventory and recovery verification | Pending |
 
 Run the narrow gate before the full suite. Record failures, their cause and the
@@ -21,6 +21,9 @@ or unavailable infrastructure are blockers, not passing or silently skipped gate
 
 Reproducible commands and CI prerequisites are documented in
 [runtime delivery tests](agent-runtime-delivery-tests.md).
+
+The tested revisions, real results, failure/retry history and remaining rollout
+limits are recorded in [delivery acceptance](agent-runtime-delivery-acceptance.md).
 
 ## Acceptance matrix
 

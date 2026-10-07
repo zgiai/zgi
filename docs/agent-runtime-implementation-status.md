@@ -215,10 +215,14 @@ Profile, by the following real-backend acceptance completed on 2026-10-08:
   PostgreSQL tests used an isolated database with `uuid-ossp`, not an application
   database. Web lint still reports warnings; it has no errors.
 
-These results belong to their tested revisions. The latest API quality repairs
-must still be deployed and revalidated before a release candidate is declared.
-The delivery gates and remaining work are tracked in
-[the release-candidate checklist](agent-runtime-release-candidate.md).
+These results belong to their tested revisions. The subsequent delivery acceptance
+rebuilt and deployed API/Web from `64050cc5a`, including the API quality repairs,
+to dedicated local test services. Both real Workers and the console passed the
+standard-Skill execution/download and same-conversation restoration gates again.
+The acceptance-only containerd fixture correction is `9fbcdbffe`; it does not
+change the deployed product binaries. Exact scope and results are recorded in
+[delivery acceptance](agent-runtime-delivery-acceptance.md), with remaining
+delivery gates tracked in [the release-candidate checklist](agent-runtime-release-candidate.md).
 
 The public delivery gates were verified locally on 2026-10-08: API tests (327
 packages), Sandbox tests (22 packages), both full vet runs, Web lint (zero errors,
