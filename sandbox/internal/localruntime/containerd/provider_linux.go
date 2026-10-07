@@ -421,6 +421,9 @@ func (p *Provider) waitReady(ctx context.Context, allocation agentexecution.Allo
 }
 
 func validatePackageLedgerCapability(capabilities agentexecution.RuntimeCapabilities) error {
+	if capabilities.LanguagePackageLedgerVersion != agentexecution.LanguagePackageLedgerVersion {
+		return fmt.Errorf("%w: local runtime image lacks retained language package verification; rebuild the package image", agentexecution.ErrBackendUnavailable)
+	}
 	if capabilities.SystemPackageLedgerVersion != agentexecution.SystemPackageLedgerVersion {
 		return fmt.Errorf("%w: local runtime image lacks fixed-version system package recovery; rebuild the package image", agentexecution.ErrBackendUnavailable)
 	}

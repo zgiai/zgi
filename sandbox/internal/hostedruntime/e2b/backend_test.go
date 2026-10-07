@@ -58,6 +58,10 @@ func TestValidateRuntimeCapabilitiesRejectsLegacyDirectPackageTemplate(t *testin
 		t.Fatalf("unversioned recovery template accepted: %v", err)
 	}
 	capabilities.SystemPackageLedgerVersion = agentexecution.SystemPackageLedgerVersion
+	if err := validateRuntimeCapabilities(capabilities, profile); !errors.Is(err, agentexecution.ErrBackendUnavailable) {
+		t.Fatalf("template without language verification accepted: %v", err)
+	}
+	capabilities.LanguagePackageLedgerVersion = agentexecution.LanguagePackageLedgerVersion
 	if err := validateRuntimeCapabilities(capabilities, profile); err != nil {
 		t.Fatalf("guarded template rejected: %v", err)
 	}
@@ -147,6 +151,7 @@ func TestBackendUsesSecuredOfflineE2BContract(t *testing.T) {
 				capabilities.PackageNetworkEnforced = true
 				capabilities.EgressProxyAddress = "127.0.0.1:3128"
 				capabilities.SystemPackageLedgerVersion = agentexecution.SystemPackageLedgerVersion
+				capabilities.LanguagePackageLedgerVersion = agentexecution.LanguagePackageLedgerVersion
 			}
 			writeJSON(writer, http.StatusOK, map[string]any{"data": capabilities})
 		case request.Method == http.MethodPost && request.URL.Path == "/sandboxes/sandbox-1/pause":
@@ -243,6 +248,7 @@ func TestRuntimeCapabilitiesRejectMismatchedPackageSources(t *testing.T) {
 	}
 	caps.PackageSourceDigest = profile.PackageSources.Digest()
 	caps.SystemPackageLedgerVersion = agentexecution.SystemPackageLedgerVersion
+	caps.LanguagePackageLedgerVersion = agentexecution.LanguagePackageLedgerVersion
 	if err := validateRuntimeCapabilities(caps, profile); err != nil {
 		t.Fatal(err)
 	}

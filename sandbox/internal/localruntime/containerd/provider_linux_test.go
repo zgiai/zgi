@@ -25,7 +25,12 @@ func TestPackageLedgerCapabilityRejectsOldRuntimeImages(t *testing.T) {
 			t.Errorf("version %d accepted: %v", version, err)
 		}
 	}
-	if err := validatePackageLedgerCapability(agentexecution.RuntimeCapabilities{SystemPackageLedgerVersion: agentexecution.SystemPackageLedgerVersion}); err != nil {
+	for _, version := range []int{0, 2} {
+		if err := validatePackageLedgerCapability(agentexecution.RuntimeCapabilities{SystemPackageLedgerVersion: agentexecution.SystemPackageLedgerVersion, LanguagePackageLedgerVersion: version}); !errors.Is(err, agentexecution.ErrBackendUnavailable) {
+			t.Errorf("language ledger version %d accepted: %v", version, err)
+		}
+	}
+	if err := validatePackageLedgerCapability(agentexecution.RuntimeCapabilities{SystemPackageLedgerVersion: agentexecution.SystemPackageLedgerVersion, LanguagePackageLedgerVersion: agentexecution.LanguagePackageLedgerVersion}); err != nil {
 		t.Fatal(err)
 	}
 }
