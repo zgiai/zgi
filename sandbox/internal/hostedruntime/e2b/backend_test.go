@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/zgiai/zgi-sandbox/internal/agentexecution"
+	"github.com/zgiai/zgi-sandbox/internal/packagesource"
 	"github.com/zgiai/zgi-sandbox/internal/runtimeagent"
 )
 
@@ -63,6 +64,8 @@ func TestBackendUsesSecuredOfflineE2BContract(t *testing.T) {
 	var created createSandboxRequest
 	var agentToken string
 	var uploadedToken string
+	var uploadedConfig packagesource.Bootstrap
+	var uploadOrder []string
 	var runtimeNetworkMode string
 	connectCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -87,7 +90,8 @@ func TestBackendUsesSecuredOfflineE2BContract(t *testing.T) {
 				EnvdAccessToken: "envd-create", TrafficAccessToken: "traffic-create",
 			})
 		case request.Method == http.MethodPost && request.URL.Path == "/files":
-			if request.Header.Get("X-Access-Token") != "envd-create" || request.Header.Get("E2b-Sandbox-Port") != "49983" || request.URL.Query().Get("path") != runtimeAgentBootstrapTokenPath || request.URL.Query().Get("username") != runtimeAgentUser {
+			filePath := request.URL.Query().Get("path")
+			if request.Header.Get("X-Access-Token") != "envd-create" || request.Header.Get("E2b-Sandbox-Port") != "49983" || (filePath != runtimeAgentBootstrapTokenPath && filePath != "/run/zgi-agent/bootstrap-config.json") || request.URL.Query().Get("username") != runtimeAgentUser {
 				http.Error(writer, "bad bootstrap upload", http.StatusUnauthorized)
 				return
 			}
@@ -97,7 +101,14 @@ func TestBackendUsesSecuredOfflineE2BContract(t *testing.T) {
 				return
 			}
 			mu.Lock()
-			uploadedToken = string(value)
+			uploadOrder = append(uploadOrder, filePath)
+			if filePath == runtimeAgentBootstrapTokenPath {
+				uploadedToken = string(value)
+			} else if err := json.Unmarshal(value, &uploadedConfig); err != nil {
+				mu.Unlock()
+				http.Error(writer, "invalid bootstrap config", http.StatusBadRequest)
+				return
+			}
 			mu.Unlock()
 			writeJSON(writer, http.StatusOK, []map[string]string{{"path": runtimeAgentBootstrapTokenPath}})
 		case request.Method == http.MethodPost && request.URL.Path == "/v2/sandboxes/sandbox-1/connect":
@@ -211,6 +222,23 @@ func TestBackendUsesSecuredOfflineE2BContract(t *testing.T) {
 	}
 	if created.Environment["ZGI_RUNTIME_AGENT_NETWORK_MODE"] != "package-install" || created.Environment["ZGI_RUNTIME_AGENT_EGRESS_MODE"] != runtimeagent.EgressModeDirect || created.Environment["ZGI_RUNTIME_AGENT_DEPENDENCY_INSTALLATION_ENABLED"] != "true" || created.Environment["ZGI_RUNTIME_AGENT_JOB_UID"] != "65532" {
 		t.Fatalf("package runtime environment = %#v", created.Environment)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if uploadedConfig.ProfileIdentity != "template-zgi-runtime" || len(uploadedConfig.AllowedHosts) != 1 || uploadedConfig.AllowedHosts[0] != "pkg.internal" || len(uploadOrder) < 2 || uploadOrder[len(uploadOrder)-2] != "/run/zgi-agent/bootstrap-config.json" || uploadOrder[len(uploadOrder)-1] != runtimeAgentBootstrapTokenPath {
+		t.Fatalf("bootstrap config/order=%+v %v", uploadedConfig, uploadOrder)
+	}
+}
+
+func TestRuntimeCapabilitiesRejectMismatchedPackageSources(t *testing.T) {
+	profile := Profile{DependencyInstallation: true, PackageSources: packagesource.Config{PyPI: "https://packages.example/simple"}}
+	caps := agentexecution.RuntimeCapabilities{Shell: true, FileTransfer: true, DependencyInstallation: true, PackageNetworkMode: "package-install", NetworkMode: "package-install", PackageNetworkEnforced: true, EgressProxyAddress: "127.0.0.1:3128"}
+	if err := validateRuntimeCapabilities(caps, profile); err == nil {
+		t.Fatal("old template silently accepted a source override")
+	}
+	caps.PackageSourceDigest = profile.PackageSources.Digest()
+	if err := validateRuntimeCapabilities(caps, profile); err != nil {
+		t.Fatal(err)
 	}
 }
 

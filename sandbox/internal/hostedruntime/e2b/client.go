@@ -172,12 +172,16 @@ func (c *controlClient) environment(ctx context.Context, connection sandboxConne
 }
 
 func (c *controlClient) uploadBootstrapToken(ctx context.Context, connection sandboxConnection, envdPort uint16, token string) error {
+	return c.uploadBootstrapFile(ctx, connection, envdPort, runtimeAgentBootstrapTokenPath, token)
+}
+
+func (c *controlClient) uploadBootstrapFile(ctx context.Context, connection sandboxConnection, envdPort uint16, filePath, content string) error {
 	requestURL := strings.TrimRight(c.sandboxURL(envdPort, connection.SandboxID, connection.Domain), "/") + "/files"
 	query := url.Values{
-		"path":     []string{runtimeAgentBootstrapTokenPath},
+		"path":     []string{filePath},
 		"username": []string{runtimeAgentUser},
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL+"?"+query.Encode(), strings.NewReader(token))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL+"?"+query.Encode(), strings.NewReader(content))
 	if err != nil {
 		return err
 	}

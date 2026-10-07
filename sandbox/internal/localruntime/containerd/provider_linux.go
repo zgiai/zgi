@@ -33,6 +33,7 @@ import (
 	"github.com/zgiai/zgi-sandbox/internal/agentexecution"
 	"github.com/zgiai/zgi-sandbox/internal/egressproxy"
 	"github.com/zgiai/zgi-sandbox/internal/localruntime"
+	"github.com/zgiai/zgi-sandbox/internal/packagesource"
 	"github.com/zgiai/zgi-sandbox/internal/runtimeagent"
 )
 
@@ -70,13 +71,15 @@ var (
 )
 
 type Profile struct {
-	Image                     string   `json:"image"`
-	RuntimeAgentPath          string   `json:"runtime_agent_path,omitempty"`
-	DependencyPreparation     bool     `json:"dependency_preparation,omitempty"`
-	DependencyPreparationMode string   `json:"dependency_preparation_mode,omitempty"`
-	DependencyInstallation    bool     `json:"dependency_installation,omitempty"`
-	PackageNetworkMode        string   `json:"package_network_mode,omitempty"`
-	EgressAllowedHosts        []string `json:"egress_allowed_hosts,omitempty"`
+	Image                     string               `json:"image"`
+	RuntimeAgentPath          string               `json:"runtime_agent_path,omitempty"`
+	DependencyPreparation     bool                 `json:"dependency_preparation,omitempty"`
+	DependencyPreparationMode string               `json:"dependency_preparation_mode,omitempty"`
+	DependencyInstallation    bool                 `json:"dependency_installation,omitempty"`
+	PackageNetworkMode        string               `json:"package_network_mode,omitempty"`
+	EgressAllowedHosts        []string             `json:"egress_allowed_hosts,omitempty"`
+	PackageSources            packagesource.Config `json:"package_sources,omitempty"`
+	PackageSourceCheck        bool                 `json:"package_source_check,omitempty"`
 }
 
 type Options struct {
@@ -293,6 +296,9 @@ func (p *Provider) launch(ctx context.Context, spec agentexecution.CreateSpec) (
 				"ZGI_RUNTIME_AGENT_JOB_UID=" + strconv.FormatUint(uint64(jobUID), 10),
 				"ZGI_RUNTIME_AGENT_JOB_GID=" + strconv.FormatUint(uint64(jobGID), 10),
 				"ZGI_RUNTIME_AGENT_PACKAGE_LISTEN=unix:///run/zgi-agent/package.sock",
+				"ZGI_RUNTIME_AGENT_PACKAGE_SOURCES_JSON=" + profile.PackageSources.JSON(),
+				"ZGI_RUNTIME_AGENT_PACKAGE_SOURCE_CHECK=" + strconv.FormatBool(profile.PackageSourceCheck),
+				"ZGI_RUNTIME_AGENT_PROFILE_IDENTITY=" + profile.Image,
 			}),
 			withRootFSReadonly(!profile.DependencyInstallation),
 			oci.WithLinuxNamespace(specs.LinuxNamespace{Type: specs.NetworkNamespace}),
@@ -539,7 +545,7 @@ func (p *Provider) resolveCreate(spec agentexecution.CreateSpec) (agentexecution
 		if !profile.DependencyInstallation || strings.ToLower(strings.TrimSpace(profile.PackageNetworkMode)) != "package-install" {
 			return allocation, profile, fmt.Errorf("%w: profile does not approve package installation", agentexecution.ErrBackendUnavailable)
 		}
-		if err := validatePackageSourceAllowlist(profile.EgressAllowedHosts); err != nil {
+		if err := validatePackageSourceAllowlist(profile.EgressAllowedHosts, profile.PackageSources); err != nil {
 			return allocation, profile, fmt.Errorf("%w: package source allowlist: %v", agentexecution.ErrInvalidRequest, err)
 		}
 	}
@@ -570,7 +576,7 @@ func (p *Provider) hardenSpec(runtimeAgentRoot ...bool) oci.SpecOpts {
 			// Only the Runtime Agent root process receives the small set of
 			// capabilities needed by dpkg to write the package layer. Jobs are
 			// started with UID/GID 65532 and do not inherit these after exec.
-			capabilities := []string{"CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FOWNER", "CAP_SETGID", "CAP_SETUID"}
+			capabilities := []string{"CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FOWNER", "CAP_SETGID", "CAP_SETUID", "CAP_KILL"}
 			spec.Process.Capabilities = &specs.LinuxCapabilities{
 				Bounding: capabilities, Effective: capabilities, Inheritable: capabilities,
 				Permitted: capabilities, Ambient: capabilities,
@@ -673,7 +679,10 @@ func validateOptions(options Options) error {
 			return fmt.Errorf("%w: profile %q package-install mode requires an explicit package-source allowlist", agentexecution.ErrInvalidRequest, id)
 		}
 		if packageMode == "package-install" {
-			if err := validatePackageSourceAllowlist(profile.EgressAllowedHosts); err != nil {
+			if err := profile.PackageSources.Validate(profile.EgressAllowedHosts); err != nil {
+				return err
+			}
+			if err := validatePackageSourceAllowlist(profile.EgressAllowedHosts, profile.PackageSources); err != nil {
 				return fmt.Errorf("%w: profile %q package source allowlist: %v", agentexecution.ErrInvalidRequest, id, err)
 			}
 		}
@@ -688,13 +697,21 @@ func validateOptions(options Options) error {
 // silently becoming a general HTTPS egress Profile. Internal mirrors may use
 // deployment-owned .internal/.local names; public hosts are limited to the
 // registries and Debian mirrors used by the standard runtime.
-func validatePackageSourceAllowlist(hosts []string) error {
+func validatePackageSourceAllowlist(hosts []string, sources ...packagesource.Config) error {
 	if err := (egressproxy.Policy{AllowedHosts: hosts}).Validate(); err != nil {
 		return err
 	}
 	knownExact := map[string]struct{}{
 		"pypi.org": {}, "registry.npmjs.org": {}, "registry.yarnpkg.com": {},
 		"deb.debian.org": {}, "security.debian.org": {}, "snapshot.debian.org": {},
+	}
+	for _, source := range sources {
+		if err := source.Validate(hosts); err != nil {
+			return err
+		}
+		for _, host := range source.Hosts() {
+			knownExact[strings.ToLower(host)] = struct{}{}
+		}
 	}
 	for _, raw := range hosts {
 		host := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(raw), "*."))

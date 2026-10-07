@@ -19,6 +19,7 @@ import (
 
 	"github.com/zgiai/zgi-sandbox/internal/agentexecution"
 	"github.com/zgiai/zgi-sandbox/internal/egressproxy"
+	"github.com/zgiai/zgi-sandbox/internal/packagesource"
 	"github.com/zgiai/zgi-sandbox/internal/runtimeagent"
 )
 
@@ -32,12 +33,14 @@ const (
 )
 
 type Profile struct {
-	TemplateID                string   `json:"template_id"`
-	DependencyPreparation     bool     `json:"dependency_preparation,omitempty"`
-	DependencyPreparationMode string   `json:"dependency_preparation_mode,omitempty"`
-	DependencyInstallation    bool     `json:"dependency_installation,omitempty"`
-	PackageNetworkMode        string   `json:"package_network_mode,omitempty"`
-	EgressAllowedHosts        []string `json:"egress_allowed_hosts,omitempty"`
+	TemplateID                string               `json:"template_id"`
+	DependencyPreparation     bool                 `json:"dependency_preparation,omitempty"`
+	DependencyPreparationMode string               `json:"dependency_preparation_mode,omitempty"`
+	DependencyInstallation    bool                 `json:"dependency_installation,omitempty"`
+	PackageNetworkMode        string               `json:"package_network_mode,omitempty"`
+	EgressAllowedHosts        []string             `json:"egress_allowed_hosts,omitempty"`
+	PackageSources            packagesource.Config `json:"package_sources,omitempty"`
+	PackageSourceCheck        bool                 `json:"package_source_check,omitempty"`
 }
 
 // EgressProxyConfig is operator-managed E2B network configuration. It is
@@ -139,7 +142,7 @@ func New(options Options) (*Backend, error) {
 			return nil, fmt.Errorf("%w: E2B dependency installation requires package-install network mode", agentexecution.ErrInvalidRequest)
 		}
 		if packageMode == "package-install" {
-			if err := validatePackageSourceAllowlist(profile.EgressAllowedHosts); err != nil {
+			if err := validatePackageSourceAllowlist(profile.EgressAllowedHosts, profile.PackageSources); err != nil {
 				return nil, fmt.Errorf("%w: E2B package source allowlist: %v", agentexecution.ErrInvalidRequest, err)
 			}
 		}
@@ -212,6 +215,9 @@ func (b *Backend) CreateBinding(ctx context.Context, spec agentexecution.CreateS
 		environment["ZGI_RUNTIME_AGENT_EGRESS_MODE"] = runtimeagent.EgressModeDirect
 		environment["ZGI_RUNTIME_AGENT_JOB_UID"] = "65532"
 		environment["ZGI_RUNTIME_AGENT_JOB_GID"] = "65532"
+		environment["ZGI_RUNTIME_AGENT_PACKAGE_SOURCES_JSON"] = profile.PackageSources.JSON()
+		environment["ZGI_RUNTIME_AGENT_PACKAGE_SOURCE_CHECK"] = fmt.Sprint(profile.PackageSourceCheck)
+		environment["ZGI_RUNTIME_AGENT_PROFILE_IDENTITY"] = profile.TemplateID
 	}
 	connection, err := b.client.create(ctx, createSandboxRequest{
 		TemplateID:     profile.TemplateID,
@@ -234,7 +240,17 @@ func (b *Backend) CreateBinding(ctx context.Context, spec agentexecution.CreateS
 		return agentexecution.Allocation{}, fmt.Errorf("create E2B environment: %w", err)
 	}
 	allocation := allocationFor(connection.SandboxID)
-	err = b.client.uploadBootstrapToken(ctx, connection, b.envdPort, token)
+	if networkMode == "package-install" {
+		config, marshalErr := json.Marshal(packagesource.Bootstrap{Sources: profile.PackageSources, AllowedHosts: profile.EgressAllowedHosts, ProfileIdentity: profile.TemplateID, Check: profile.PackageSourceCheck})
+		if marshalErr != nil {
+			err = marshalErr
+		} else {
+			err = b.client.uploadBootstrapFile(ctx, connection, b.envdPort, "/run/zgi-agent/bootstrap-config.json", string(config))
+		}
+	}
+	if err == nil {
+		err = b.client.uploadBootstrapToken(ctx, connection, b.envdPort, token)
+	}
 	if err == nil {
 		var remote *runtimeagent.RemoteBackend
 		remote, err = b.remote(connection, token)
@@ -434,6 +450,9 @@ func (b *Backend) waitReady(parent context.Context, remote *runtimeagent.RemoteB
 }
 
 func validateRuntimeCapabilities(capabilities agentexecution.RuntimeCapabilities, profile Profile) error {
+	if profile.PackageSources != (packagesource.Config{}) && capabilities.PackageSourceDigest != profile.PackageSources.Digest() {
+		return fmt.Errorf("%w: E2B template did not apply approved package sources", agentexecution.ErrBackendUnavailable)
+	}
 	expectedNetworkMode := "disabled"
 	if profile.DependencyInstallation {
 		expectedNetworkMode = "package-install"
@@ -488,13 +507,21 @@ func e2bProxyConfig(proxy *EgressProxyConfig, enabled bool) *egressProxyConfig {
 	return &egressProxyConfig{Address: proxy.Address, Username: proxy.Username, Password: proxy.Password}
 }
 
-func validatePackageSourceAllowlist(hosts []string) error {
+func validatePackageSourceAllowlist(hosts []string, sources ...packagesource.Config) error {
 	if err := (egressproxy.Policy{AllowedHosts: hosts}).Validate(); err != nil {
 		return err
 	}
 	knownExact := map[string]struct{}{
 		"pypi.org": {}, "files.pythonhosted.org": {}, "registry.npmjs.org": {}, "registry.yarnpkg.com": {},
 		"deb.debian.org": {}, "security.debian.org": {}, "snapshot.debian.org": {},
+	}
+	for _, source := range sources {
+		if err := source.Validate(hosts); err != nil {
+			return err
+		}
+		for _, host := range source.Hosts() {
+			knownExact[strings.ToLower(host)] = struct{}{}
+		}
 	}
 	for _, raw := range hosts {
 		host := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(raw), "*."))

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/zgiai/zgi-sandbox/internal/agentexecution"
+	"github.com/zgiai/zgi-sandbox/internal/packagesource"
 	"github.com/zgiai/zgi-sandbox/internal/runtimeagent"
 )
 
@@ -36,7 +37,33 @@ func run(parent context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := runtimeBootstrapConfig("/run/zgi-agent/bootstrap-config.json"); err != nil {
+		return err
+	}
 	workspace := envValue("ZGI_RUNTIME_AGENT_WORKSPACE", "/workspace")
+	var sources packagesource.Config
+	if raw := strings.TrimSpace(os.Getenv("ZGI_RUNTIME_AGENT_PACKAGE_SOURCES_JSON")); raw != "" {
+		decoder := json.NewDecoder(strings.NewReader(raw))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&sources); err != nil {
+			return errors.New("invalid runtime package sources")
+		}
+	}
+	if err := sources.Validate(nil); err != nil {
+		return err
+	}
+	var aptConfigPath string
+	if envBool("ZGI_RUNTIME_AGENT_DEPENDENCY_INSTALLATION_ENABLED", false) {
+		directory, err := os.MkdirTemp("/etc/zgi", "runtime-sources-")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(directory)
+		aptConfigPath, err = sources.WriteAPTConfig(filepath.Join(directory, "config"))
+		if err != nil {
+			return err
+		}
+	}
 	var egressAllowedHosts []string
 	if raw := strings.TrimSpace(os.Getenv("ZGI_RUNTIME_AGENT_EGRESS_ALLOWED_HOSTS_JSON")); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &egressAllowedHosts); err != nil || len(egressAllowedHosts) == 0 {
@@ -58,13 +85,33 @@ func run(parent context.Context) error {
 		MaxPackageOutputBytes:     envInt64("ZGI_RUNTIME_AGENT_PACKAGE_OUTPUT_BYTES", 256*1024),
 		JobUID:                    uint32(envInt64("ZGI_RUNTIME_AGENT_JOB_UID", 0)),
 		JobGID:                    uint32(envInt64("ZGI_RUNTIME_AGENT_JOB_GID", 0)),
-		MaxUploadBytes:            envInt64("ZGI_RUNTIME_AGENT_MAX_UPLOAD_BYTES", 64*1024*1024),
-		MaxDownloadBytes:          envInt64("ZGI_RUNTIME_AGENT_MAX_DOWNLOAD_BYTES", 64*1024*1024),
+		PackageSources:            sources, APTConfigPath: aptConfigPath,
+		ProfileIdentity:  envValue("ZGI_RUNTIME_AGENT_PROFILE_IDENTITY", ""),
+		MaxUploadBytes:   envInt64("ZGI_RUNTIME_AGENT_MAX_UPLOAD_BYTES", 64*1024*1024),
+		MaxDownloadBytes: envInt64("ZGI_RUNTIME_AGENT_MAX_DOWNLOAD_BYTES", 64*1024*1024),
 	})
 	if err != nil {
 		return err
 	}
 	defer backend.Close()
+	if envBool("ZGI_RUNTIME_AGENT_PACKAGE_SOURCE_CHECK", false) {
+		capabilities, err := backend.Capabilities(parent, agentexecution.Allocation{})
+		if err != nil {
+			return err
+		}
+		if !capabilities.DependencyInstallation || capabilities.EgressProxyAddress == "" {
+			return errors.New("package source check requires enforced package installation")
+		}
+		proxyURL, _ := url.Parse("http://" + capabilities.EgressProxyAddress)
+		transport := &http.Transport{Proxy: http.ProxyURL(proxyURL)}
+		defer transport.CloseIdleConnections()
+		checkCtx, cancel := context.WithTimeout(parent, 20*time.Second)
+		err = sources.Check(checkCtx, &http.Client{Transport: transport, Timeout: 5 * time.Second})
+		cancel()
+		if err != nil {
+			return err
+		}
+	}
 	handler, err := runtimeagent.NewHTTPServer(backend, runtimeagent.HTTPServerOptions{
 		Token:                  token,
 		MaxRequestBytes:        envInt64("ZGI_RUNTIME_AGENT_MAX_REQUEST_BYTES", 1024*1024),

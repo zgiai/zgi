@@ -8,6 +8,35 @@ import (
 	"time"
 )
 
+func TestWorkerPackageSourceOverridesRequireApprovedHostOnBothBackends(t *testing.T) {
+	for _, backend := range []string{localBackendName, e2bBackendName} {
+		t.Run(backend, func(t *testing.T) {
+			t.Setenv("ZGI_AGENT_RUNTIME_BACKEND", backend)
+			t.Setenv("ZGI_AGENT_RUNTIME_API_KEY", "worker-test-secret")
+			t.Setenv("ZGI_AGENT_RUNTIME_DATABASE_URL", "postgres://runtime")
+			t.Setenv("ZGI_AGENT_RUNTIME_E2B_API_KEY", "provider-test-secret")
+			t.Setenv("ZGI_AGENT_RUNTIME_PROFILES_JSON", `{"standard":{"image":"registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","dependency_installation":true,"package_network_mode":"package-install","egress_allowed_hosts":["packages.example"]}}`)
+			t.Setenv("ZGI_AGENT_RUNTIME_E2B_PROFILES_JSON", `{"standard":{"template_id":"test-template","dependency_installation":true,"package_network_mode":"package-install","egress_allowed_hosts":["packages.example"]}}`)
+			t.Setenv("ZGI_AGENT_RUNTIME_PYPI_INDEX_URL", "https://packages.example/simple")
+			t.Setenv("ZGI_AGENT_RUNTIME_PACKAGE_SOURCE_CHECK", "true")
+			cfg, err := workerConfigFromEnv()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if backend == localBackendName && (cfg.Profiles["standard"].PackageSources.PyPI != "https://packages.example/simple" || !cfg.Profiles["standard"].PackageSourceCheck) {
+				t.Fatalf("local source override not applied: %+v", cfg.Profiles["standard"])
+			}
+			if backend == e2bBackendName && (cfg.E2BProfiles["standard"].PackageSources.PyPI != "https://packages.example/simple" || !cfg.E2BProfiles["standard"].PackageSourceCheck) {
+				t.Fatalf("E2B source override not applied: %+v", cfg.E2BProfiles["standard"])
+			}
+			t.Setenv("ZGI_AGENT_RUNTIME_PYPI_INDEX_URL", "https://unapproved.example/simple")
+			if _, err := workerConfigFromEnv(); err == nil {
+				t.Fatal("source override silently expanded the network allowlist")
+			}
+		})
+	}
+}
+
 func TestWorkerConfigRequiresDedicatedSecretsAndProfiles(t *testing.T) {
 	t.Setenv("ZGI_AGENT_RUNTIME_BACKEND", localBackendName)
 	t.Setenv("ZGI_AGENT_RUNTIME_API_KEY", "")

@@ -23,6 +23,7 @@ import (
 	e2bprovider "github.com/zgiai/zgi-sandbox/internal/hostedruntime/e2b"
 	"github.com/zgiai/zgi-sandbox/internal/localruntime"
 	containerdprovider "github.com/zgiai/zgi-sandbox/internal/localruntime/containerd"
+	"github.com/zgiai/zgi-sandbox/internal/packagesource"
 	"github.com/zgiai/zgi-sandbox/internal/storage"
 	"github.com/zgiai/zgi-sandbox/internal/workspacecheckpoint"
 )
@@ -158,7 +159,8 @@ func run(parent context.Context, logger *log.Logger) error {
 	}
 	for index := 0; index < cfg.MaxWorkers; index++ {
 		jobWorker, err := agentexecution.NewWorker(store, executionBackends, agentexecution.WorkerOptions{
-			OwnerID: fmt.Sprintf("%s-job-%d", cfg.WorkerID, index+1),
+			OwnerID:       fmt.Sprintf("%s-job-%d", cfg.WorkerID, index+1),
+			QuarantineJob: control.QuarantineJob,
 		})
 		if err != nil {
 			stopWorkers()
@@ -290,6 +292,38 @@ func workerConfigFromEnv() (workerConfig, error) {
 	default:
 		return workerConfig{}, fmt.Errorf("unsupported ZGI_AGENT_RUNTIME_BACKEND %q", cfg.Backend)
 	}
+	sources := packagesource.Config{
+		PyPI:        strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_PYPI_INDEX_URL")),
+		NPM:         strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_NPM_REGISTRY_URL")),
+		APT:         strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_APT_MIRROR_URL")),
+		APTSecurity: strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_APT_SECURITY_MIRROR_URL")),
+	}
+	if err := sources.Validate(nil); err != nil {
+		return workerConfig{}, err
+	}
+	check := strings.EqualFold(strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_PACKAGE_SOURCE_CHECK")), "true")
+	for id, profile := range cfg.Profiles {
+		if !profile.DependencyInstallation {
+			continue
+		}
+		profile.PackageSources = mergePackageSources(profile.PackageSources, sources)
+		profile.PackageSourceCheck = profile.PackageSourceCheck || check
+		if err := profile.PackageSources.Validate(profile.EgressAllowedHosts); err != nil {
+			return workerConfig{}, err
+		}
+		cfg.Profiles[id] = profile
+	}
+	for id, profile := range cfg.E2BProfiles {
+		if !profile.DependencyInstallation {
+			continue
+		}
+		profile.PackageSources = mergePackageSources(profile.PackageSources, sources)
+		profile.PackageSourceCheck = profile.PackageSourceCheck || check
+		if err := profile.PackageSources.Validate(profile.EgressAllowedHosts); err != nil {
+			return workerConfig{}, err
+		}
+		cfg.E2BProfiles[id] = profile
+	}
 	if _, _, err := net.SplitHostPort(cfg.ListenAddress); err != nil {
 		return workerConfig{}, fmt.Errorf("parse ZGI_AGENT_RUNTIME_LISTEN: %w", err)
 	}
@@ -326,6 +360,22 @@ func newRuntimeBackend(cfg workerConfig) (string, runtimeBackend, func(), error)
 	default:
 		return "", nil, func() {}, fmt.Errorf("unsupported Agent Runtime backend %q", cfg.Backend)
 	}
+}
+
+func mergePackageSources(profile, overrides packagesource.Config) packagesource.Config {
+	if overrides.PyPI != "" {
+		profile.PyPI = overrides.PyPI
+	}
+	if overrides.NPM != "" {
+		profile.NPM = overrides.NPM
+	}
+	if overrides.APT != "" {
+		profile.APT = overrides.APT
+	}
+	if overrides.APTSecurity != "" {
+		profile.APTSecurity = overrides.APTSecurity
+	}
+	return profile
 }
 
 func e2bEgressProxyConfig(cfg workerConfig) *e2bprovider.EgressProxyConfig {

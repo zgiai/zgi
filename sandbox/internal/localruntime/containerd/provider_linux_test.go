@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	runtimeoptions "github.com/containerd/containerd/api/types/runtimeoptions/v1"
@@ -35,6 +36,22 @@ func TestValidateOptionsRequiresGVisorAndPinnedImages(t *testing.T) {
 	invalidImage.Profiles = map[string]Profile{"python": {Image: "registry.example.invalid/zgi/runtime:latest", RuntimeAgentPath: defaultAgentPath}}
 	if err := validateOptions(invalidImage); err == nil {
 		t.Fatal("floating image was accepted")
+	}
+}
+
+func TestRootRuntimeAgentCanTerminateNonrootJobsWithoutBroadPrivileges(t *testing.T) {
+	provider := &Provider{memoryBytes: 1024, pids: 8, cpuPeriod: 1000, cpuQuota: 500}
+	spec := &oci.Spec{Process: &specs.Process{}, Linux: &specs.Linux{}}
+	if err := provider.hardenSpec(true)(t.Context(), nil, nil, spec); err != nil {
+		t.Fatal(err)
+	}
+	for _, set := range [][]string{spec.Process.Capabilities.Effective, spec.Process.Capabilities.Permitted, spec.Process.Capabilities.Bounding} {
+		if !slices.Contains(set, "CAP_KILL") || slices.Contains(set, "CAP_SYS_ADMIN") || slices.Contains(set, "CAP_NET_ADMIN") {
+			t.Fatalf("root capabilities = %v", set)
+		}
+	}
+	if spec.Process.User.UID != 0 || !spec.Process.NoNewPrivileges {
+		t.Fatalf("root process = %+v", spec.Process)
 	}
 }
 
