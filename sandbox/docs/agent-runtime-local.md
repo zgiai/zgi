@@ -54,6 +54,9 @@ With either checkpoint store enabled, an independent retention deadline is persi
 
 For immutable, operator-approved prebuilt tools, see [Home Snapshot registration](agent-runtime-home-snapshot.md). This is separate from per-conversation Workspace checkpoints.
 
+For installation-source overrides, session cache isolation, and termination-failure
+handling, see [Runtime package sources and cache](agent-runtime-package-sources.md).
+
 Superseded checkpoint objects are deleted by a leased retryable cleanup task after the replacement reference commits. A failed Binding deletion remains in `deleting` until both compute and the checkpoint are removed; it is not reported as deleted prematurely.
 
 Checkpointing is **off by default**. A single Worker volume is not an object store or a cross-node backup: losing that volume loses its checkpoints. Do not route an existing checkpointed Binding to a Worker lacking the same volume, and do not remove the configured directory before deleting those Bindings. The retention reaper provides a seven-day deletion boundary only while the Worker and its configured checkpoint store remain available; a local volume alone does not provide cross-node recovery. Home Snapshots require separate operator approval and immutable artifacts. Do not advertise production recovery guarantees until the real cross-Worker, UI, and failure-injection gates pass.

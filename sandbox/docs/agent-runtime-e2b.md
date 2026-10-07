@@ -1,5 +1,8 @@
 # E2B Agent Runtime
 
+For operator-controlled package sources, authenticated bootstrap configuration,
+and session caches, see [Runtime package sources and cache](agent-runtime-package-sources.md).
+
 The managed Agent execution backend is an opt-in mode of the independent Agent Runtime worker. It does not add routes to the legacy Sandbox service and it does not grant Shell access to Runtime Workspace credentials.
 
 ## Fixed provider contract
