@@ -17,6 +17,7 @@
     "vercel-build": "npm run build",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
+    "test:agent-execution-job-presentation": "node scripts/test-agent-execution-job-presentation.mjs",
     "test:auth-session-lifecycle": "node scripts/test-auth-session-lifecycle.mjs",
     "test:developer-access-load-error": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-developer-access-load-error.mjs",
     "test:developer-access-live-audit": "node scripts/test-developer-access-live-audit.mjs",

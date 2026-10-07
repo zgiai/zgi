@@ -25,6 +25,7 @@ import { AIChatSkillIcon } from '@/components/chat/variants/aichat/skill-icon';
 import { AIChatSkillResultSummary } from '@/components/chat/variants/aichat/skill-result-summary';
 
 import { sanitizeTimelineDisplayString } from '@/components/chat/variants/aichat/timeline-display-safety';
+import { getAgentExecutionJobPresentation } from './agent-execution-job-presentation';
 
 import {
   formatAIChatTimelineArgumentSummary,
@@ -63,6 +64,8 @@ interface AIChatSkillTracePanelProps {
 function getInvocationTone(invocation: AIChatSkillInvocation): SkillTraceTone {
   const nativeTone = connectorOperationTone(invocation);
   if (nativeTone) return nativeTone;
+  const job = getAgentExecutionJobPresentation(invocation);
+  if (job) return job.tone;
   if (invocation.status === 'loading' || invocation.status === 'running') return 'running';
   if (invocation.status === 'error') return 'error';
   return 'success';
@@ -182,6 +185,7 @@ export function AIChatSkillTracePanel({
           };
         }
         const resultDetail = getAIChatSkillResultDisplay(invocation, locale);
+        const job = getAgentExecutionJobPresentation(invocation);
         const reasonCode = invocation.arguments?.reason_code;
 
         if (invocation.kind === 'skill_load') {
@@ -250,8 +254,11 @@ export function AIChatSkillTracePanel({
           invocation,
           skill,
           tone,
-          title:
-            tone === 'running'
+          title: job
+            ? t(job.labelKey, {
+                exitCode: job.exitCode ?? t('consoleChat.skills.agentic.jobExitUnavailable'),
+              })
+            : tone === 'running'
               ? t('consoleChat.skills.agentic.callingTool', { skill: skill.label, tool: toolName })
               : tone === 'error'
                 ? t('consoleChat.skills.agentic.toolFailed', { skill: skill.label, tool: toolName })

@@ -44,6 +44,7 @@ import {
   parseConnectorOperationPresentation,
 } from '@/components/connectors/runtime/connector-operation-presentation';
 import { ToolInvocationRow } from './tool-invocation-row';
+import { getAgentExecutionJobPresentation } from './agent-execution-job-presentation';
 
 import {
   formatAIChatTimelineArgumentSummary,
@@ -337,6 +338,8 @@ interface ToolGovernanceDecisionViewModel {
 function getInvocationTone(invocation: AIChatSkillInvocation): TimelineTone {
   const connectorTone = connectorOperationTone(invocation);
   if (connectorTone) return connectorTone;
+  const job = getAgentExecutionJobPresentation(invocation);
+  if (job) return job.tone;
   if (invocation.status === 'loading' || invocation.status === 'running') return 'running';
   if (invocation.kind === 'guardrail') return 'success';
   if (
@@ -939,6 +942,12 @@ function buildSkillTitle(
   t: WebappTranslator,
   skillDisplayById?: AIChatSkillDisplayMap
 ): string {
+  const job = getAgentExecutionJobPresentation(invocation);
+  if (job) {
+    return t(job.labelKey, {
+      exitCode: job.exitCode ?? t('consoleChat.skills.agentic.jobExitUnavailable'),
+    });
+  }
   const routeTarget = routeNavigationDisplayTarget(invocation, t);
   if (routeTarget) {
     const alreadyLoaded = routeNavigationAlreadyLoaded(invocation);

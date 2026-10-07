@@ -1273,7 +1273,25 @@ function governanceCorrelationId(value: unknown): string {
   );
 }
 
+function agentExecutionShellInvocationIdentity(invocation: AIChatSkillInvocation): string {
+  if (
+    invocation.kind !== 'tool_call' ||
+    invocation.skill_id !== 'agent_execution' ||
+    invocation.tool_name !== 'shell_exec'
+  ) {
+    return '';
+  }
+  // Shell argument summaries deliberately omit command contents. Distinct
+  // executions must not collapse just because their safe summaries match.
+  const callID = timelineString(invocation.invocation_id);
+  if (callID) return `skill:agent-execution:shell-call:${callID}`;
+  const jobID = timelineString(timelineRecord(invocation.result).job_id);
+  return jobID ? `skill:agent-execution:shell-job:${jobID}` : '';
+}
+
 function timelineSkillInvocationIdentity(invocation: AIChatSkillInvocation): string {
+  const shellIdentity = agentExecutionShellInvocationIdentity(invocation);
+  if (shellIdentity) return shellIdentity;
   if (invocation.kind === 'client_action') {
     const record = invocation as unknown as Record<string, unknown>;
     const result = timelineRecord(invocation.result);
@@ -1348,6 +1366,8 @@ function timelineSkillInvocationIdentity(invocation: AIChatSkillInvocation): str
 }
 
 function timelineSkillInvocationBaseIdentity(invocation: AIChatSkillInvocation): string {
+  const shellIdentity = agentExecutionShellInvocationIdentity(invocation);
+  if (shellIdentity) return shellIdentity;
   return [
     'skill-base',
     invocation.kind ?? 'tool_call',
@@ -1444,6 +1464,10 @@ function timelineItemAliasIdentities(item: AIChatAgenticTimelineItem): string[] 
   }
   if (item.type === 'skill_event' && item.invocation.runtime_id) {
     aliases.add(`runtime:${item.invocation.runtime_id}`);
+  }
+  if (item.type === 'skill_event' && agentExecutionShellInvocationIdentity(item.invocation)) {
+    const jobID = timelineString(timelineRecord(item.invocation.result).job_id);
+    if (jobID) aliases.add(`skill:agent-execution:shell-job:${jobID}`);
   }
   if (item.type === 'tool_governance_decision' && item.event.correlation_id) {
     aliases.add(`governance:${item.event.correlation_id}`);
