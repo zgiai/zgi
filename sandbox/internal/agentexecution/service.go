@@ -187,18 +187,20 @@ func (s *Service) CreateBinding(ctx context.Context, request CreateBindingReques
 		HomeSnapshotRef:     binding.HomeSnapshotRef,
 	})
 	if err != nil {
+		failureContext, cancelFailure := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		defer cancelFailure()
 		var cleanupErr error
 		// A timed-out provider request may have created an environment without
 		// returning its reference. The durable allocation attempt owns discovery
 		// of that outcome; an empty destroy request cannot identify the resource.
 		if attemptID == "" || allocation.BindingRef != "" || allocation.WorkspaceRef != "" {
-			cleanupErr = s.enqueueDestroy(ctx, binding, allocation, err)
+			cleanupErr = s.enqueueDestroy(failureContext, binding, allocation, err)
 		}
 		binding.Status = BindingStatusFailed
 		binding.FailureReason = limitFailureReason(err.Error())
 		binding.UpdatedAt = s.now().UTC()
 		binding.Generation++
-		if updateErr := s.repository.UpdateBinding(ctx, binding, binding.Generation-1); updateErr != nil {
+		if updateErr := s.repository.UpdateBinding(failureContext, binding, binding.Generation-1); updateErr != nil {
 			return Binding{}, errors.Join(fmt.Errorf("create backend binding: %w", err), fmt.Errorf("record failed binding: %w", updateErr), cleanupErr)
 		}
 		return binding, errors.Join(fmt.Errorf("create backend binding: %w", err), cleanupErr)
