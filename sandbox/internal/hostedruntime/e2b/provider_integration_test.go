@@ -9,12 +9,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/zgiai/zgi-sandbox/internal/agentexecution"
+	"github.com/zgiai/zgi-sandbox/internal/packagesource"
 	"github.com/zgiai/zgi-sandbox/internal/workspacecheckpoint"
 )
 
@@ -255,9 +257,15 @@ func TestE2BPackageInstallContract(t *testing.T) {
 	if apiKey == "" || templateID == "" {
 		t.Fatal("ZGI_AGENT_RUNTIME_E2B_API_KEY and ZGI_AGENT_RUNTIME_E2B_TEST_PACKAGE_TEMPLATE are required")
 	}
+	sources := packagesource.Config{PyPI: strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_TEST_PYPI_INDEX_URL"))}
 	allowedHosts := []string{
 		"pypi.org", "files.pythonhosted.org", "registry.npmjs.org",
 		"deb.debian.org", "security.debian.org",
+	}
+	for _, host := range sources.Hosts() {
+		if !slices.Contains(allowedHosts, host) {
+			allowedHosts = append(allowedHosts, host)
+		}
 	}
 	backend, err := New(Options{
 		APIURL: strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_E2B_API_URL")),
@@ -265,7 +273,7 @@ func TestE2BPackageInstallContract(t *testing.T) {
 		APIKey: apiKey,
 		Profiles: map[string]Profile{"package": {
 			TemplateID: templateID, DependencyInstallation: true,
-			PackageNetworkMode: "package-install", EgressAllowedHosts: allowedHosts,
+			PackageNetworkMode: "package-install", EgressAllowedHosts: allowedHosts, PackageSources: sources,
 		}},
 		TimeoutSeconds: 600, ReadyTimeout: 120 * time.Second,
 	})
@@ -295,6 +303,29 @@ func TestE2BPackageInstallContract(t *testing.T) {
 	if err != nil || !capabilities.DependencyInstallation || !capabilities.PackageNetworkEnforced || capabilities.NetworkMode != "package-install" {
 		t.Fatalf("package capabilities=%+v error=%v", capabilities, err)
 	}
+	for _, canceled := range []bool{false, true} {
+		timeout := 500 * time.Millisecond
+		if canceled {
+			timeout = time.Minute
+		}
+		job, err := backend.StartJob(ctx, allocation, agentexecution.JobSpec{JobID: fmt.Sprintf("e2b-termination-%t", canceled), Command: "sh", Args: []string{"-c", "sleep 30 & wait"}, Timeout: timeout}, func(agentexecution.OutputChunk) error { return nil })
+		if err != nil {
+			t.Fatal(err)
+		}
+		start := time.Now()
+		if canceled {
+			if err := job.Cancel(ctx); err != nil {
+				t.Fatal(err)
+			}
+		}
+		waitCtx, waitCancel := context.WithTimeout(ctx, 10*time.Second)
+		result, waitErr := job.Wait(waitCtx)
+		waitCancel()
+		if waitErr != nil || result.TerminationFailed || result.Canceled != canceled || (!canceled && result.Error != "job timed out") || time.Since(start) > 5*time.Second {
+			t.Fatalf("termination canceled=%t result=%+v err=%v elapsed=%s", canceled, result, waitErr, time.Since(start))
+		}
+		t.Logf("termination canceled=%t elapsed=%s result=%+v", canceled, time.Since(start), result)
+	}
 
 	assertJob := func(jobID, command string, args ...string) agentexecution.JobResult {
 		t.Helper()
@@ -315,6 +346,9 @@ func TestE2BPackageInstallContract(t *testing.T) {
 		if waitErr != nil {
 			t.Fatalf("wait %s: %v", jobID, waitErr)
 		}
+		if strings.Contains(jobID, "cache-hit") && !strings.Contains(output.String(), "Using cached") {
+			t.Fatalf("expected pip cache hit: %s", output.String())
+		}
 		t.Logf("%s: exit=%d output=%s", jobID, result.ExitCode, output.String())
 		return result
 	}
@@ -333,6 +367,15 @@ func TestE2BPackageInstallContract(t *testing.T) {
 	aptResult := assertJob("e2b-package-apt", "sh", "-c", "apt-get install -y --no-install-recommends tree && tree --version")
 	if aptResult.ExitCode != 0 {
 		t.Fatalf("apt package install result=%+v", aptResult)
+	}
+	for _, command := range []struct{ id, script string }{
+		{"cache-populate", "python3 -m pip download --no-deps -d /workspace/cache-probe tomlkit==0.13.3 && rm /workspace/cache-probe/*.whl"},
+		{"cache-hit", "python3 -m pip download --no-deps -d /workspace/cache-probe tomlkit==0.13.3 && npm cache verify && test -n \"$(find \"$NPM_CONFIG_CACHE/_cacache\" -type f -print -quit)\""},
+		{"capabilities-zero", "python3 -c \"from pathlib import Path; s=dict(x.split(':',1) for x in Path('/proc/self/status').read_text().splitlines() if ':' in x); assert all(int(s[k].strip(),16)==0 for k in ('CapEff','CapPrm','CapInh','CapAmb')); print('job-capabilities-zero')\""},
+	} {
+		if result := assertJob(command.id, "sh", "-c", command.script); result.ExitCode != 0 {
+			t.Fatalf("%s result=%+v", command.id, result)
+		}
 	}
 
 	networkResult := assertJob("e2b-package-network-denied", "python3", "-c", "import urllib.request; urllib.request.urlopen('https://example.com', timeout=5)")
@@ -378,7 +421,7 @@ func TestE2BPackageInstallContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resume installed environment: %v", err)
 	}
-	verifyInstalled := "python3 -c 'import tomlkit,ujson; print(\"python-retained\")' && node -e \"require('/workspace/node_modules/bufferutil'); console.log('node-retained')\" && tree --version"
+	verifyInstalled := "python3 -c 'import tomlkit,ujson; import os; from pathlib import Path; assert any(Path(os.environ[\"PIP_CACHE_DIR\"]).rglob(\"*.body\")); assert Path(os.environ[\"NPM_CONFIG_CACHE\"],\"_cacache\").is_dir(); print(\"python-and-caches-retained\")' && node -e \"require('/workspace/node_modules/bufferutil'); console.log('node-retained')\" && tree --version"
 	if result := assertJob("e2b-package-after-resume", "sh", "-c", verifyInstalled); result.ExitCode != 0 {
 		t.Fatalf("installed dependencies lost after resume: %+v", result)
 	}
