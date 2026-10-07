@@ -3,6 +3,8 @@ package testutil
 import (
 	"database/sql"
 	"net/url"
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -13,6 +15,9 @@ func TestCreateTestPostgresDSNCleansUpDatabase(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = admin.Close() })
 	if err := admin.Ping(); err != nil {
+		if strings.TrimSpace(os.Getenv("ZGI_SANDBOX_TEST_POSTGRES_ADMIN_DSN")) != "" {
+			t.Fatalf("configured test postgres unavailable: %v", err)
+		}
 		t.Skipf("postgres unavailable: %v", err)
 	}
 	parent := t

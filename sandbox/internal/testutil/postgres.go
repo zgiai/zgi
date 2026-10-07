@@ -20,6 +20,9 @@ func CreateTestPostgresDSN(t *testing.T) string {
 	adminDSN := defaultAdminDSN()
 	admin, err := sql.Open("pgx", adminDSN)
 	if err != nil {
+		if strings.TrimSpace(os.Getenv("ZGI_SANDBOX_TEST_POSTGRES_ADMIN_DSN")) != "" {
+			t.Fatalf("configured test postgres unavailable: %v", err)
+		}
 		t.Skipf("postgres unavailable: %v", err)
 	}
 	t.Cleanup(func() {
@@ -29,6 +32,9 @@ func CreateTestPostgresDSN(t *testing.T) string {
 	})
 
 	if err := admin.Ping(); err != nil {
+		if strings.TrimSpace(os.Getenv("ZGI_SANDBOX_TEST_POSTGRES_ADMIN_DSN")) != "" {
+			t.Fatalf("configured test postgres unavailable: %v", err)
+		}
 		t.Skipf("postgres unavailable: %v", err)
 	}
 
