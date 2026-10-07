@@ -4,7 +4,7 @@ import React, { useState, useCallback } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { useT } from '@/i18n';
-import { Plus, Filter, Eye, EyeOff, Trash2, Search, ChevronDown, ChevronUp } from 'lucide-react';
+import { Filter, Eye, EyeOff, Trash2, Search, ChevronDown, ChevronUp } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -170,11 +170,6 @@ export function SegmentList({ datasetId, documentId }: SegmentListProps) {
   const allExpanded = expandedSegments.size === segments.length && segments.length > 0;
 
   // Segment handlers
-  const handleCreateSegment = useCallback(() => {
-    setEditingSegment(undefined);
-    setIsSegmentEditDialogOpen(true);
-  }, []);
-
   const handleEditSegment = useCallback((segment: SegmentDetail) => {
     setEditingSegment(segment);
     setIsSegmentEditDialogOpen(true);

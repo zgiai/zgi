@@ -623,10 +623,8 @@ for (const entry of ['refreshProfile', 'initializeAuth']) {
         refreshToken: 'old-account-refresh',
       });
       useAuthStore.getState().setUser({ id: 'old-account' });
-      const pending = useAuthStore
-        .getState()
-        [entry]({ force: true })
-        .catch(error => error);
+      const initialState = useAuthStore.getState();
+      const pending = initialState[entry]({ force: true }).catch(error => error);
       f.session.setSession({
         accessToken: 'new-account-access',
         refreshToken: 'new-account-refresh',

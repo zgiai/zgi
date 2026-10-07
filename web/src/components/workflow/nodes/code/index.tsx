@@ -35,7 +35,7 @@ const CodeContent: React.FC<CodeContentProps> = ({ nodeId, data }) => {
 
   const validation = useMemo(() => {
     return checkValid(data, {
-      nodes: nodesExist ? (upstreamIds.map(id => ({ id })) as any) : [],
+      nodes: nodesExist ? upstreamIds.map(id => ({ id })) : [],
     });
   }, [data, nodesExist, upstreamIds]);
   const hasErrors = !validation.isValid;
@@ -53,7 +53,7 @@ const CodeContent: React.FC<CodeContentProps> = ({ nodeId, data }) => {
         <div className="mt-2 space-y-1">
           <div className="text-xs text-red-600 flex items-center gap-1">
             <AlertCircle className="w-3 h-3" />
-            {t(`${validation.errors[0].code}` as any, validation.errors[0].params as any)}
+            {t(validation.errors[0].code, validation.errors[0].params)}
           </div>
         </div>
       ) : null}

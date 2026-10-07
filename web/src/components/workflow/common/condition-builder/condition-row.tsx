@@ -193,7 +193,7 @@ const ConditionRow: React.FC<ConditionRowProps> = React.memo(
                 <SelectContent>
                   {ops.map(op => (
                     <SelectItem key={op} value={op}>
-                      {t(`nodes.ifElse.operators.${operatorI18nKey(op)}` as any)}
+                      {t(`nodes.ifElse.operators.${operatorI18nKey(op)}` as Parameters<typeof t>[0])}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -236,7 +236,7 @@ const ConditionRow: React.FC<ConditionRowProps> = React.memo(
                 {typeof cond.value === 'boolean' ? (
                   <div className="flex h-8 items-center justify-between rounded-md border bg-background px-2.5">
                     <span className="text-xs text-muted-foreground">
-                      {Boolean(cond.value) ? tCommon('yes') : tCommon('no')}
+                      {cond.value ? tCommon('yes') : tCommon('no')}
                     </span>
                     <Switch
                       checked={Boolean(cond.value)}
@@ -272,7 +272,7 @@ const ConditionRow: React.FC<ConditionRowProps> = React.memo(
                         {Array.isArray(cond.value) && cond.value.length > 0 ? (
                           cond.value.map(v => (
                             <Badge key={v} variant="secondary" className="px-1 py-0 text-[10px]">
-                              {t(`nodes.ifElse.fileTypes.${v}` as any)}
+                              {t(`nodes.ifElse.fileTypes.${v}` as Parameters<typeof t>[0])}
                             </Badge>
                           ))
                         ) : (
@@ -297,7 +297,7 @@ const ConditionRow: React.FC<ConditionRowProps> = React.memo(
                           }}
                           onSelect={e => e.preventDefault()}
                         >
-                          {t(`nodes.ifElse.fileTypes.${type}` as any)}
+                          {t(`nodes.ifElse.fileTypes.${type}`)}
                         </DropdownMenuCheckboxItem>
                       ))}
                     </DropdownMenuContent>

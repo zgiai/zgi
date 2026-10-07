@@ -304,6 +304,7 @@ for (const target of [
   { ...validConfirmation.target, binding_instance_id: '' },
   (() => {
     const { binding_instance_id: _omitted, ...rest } = validConfirmation.target;
+    assert.equal(_omitted, validConfirmation.target.binding_instance_id);
     return rest;
   })(),
 ]) {
@@ -323,6 +324,7 @@ for (const value of [
   { ...validConfirmation, risk_classification: 'trusted_low' },
   (() => {
     const { risk_classification: _omitted, ...rest } = validConfirmation;
+    assert.equal(_omitted, validConfirmation.risk_classification);
     return rest;
   })(),
   {

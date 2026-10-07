@@ -81,7 +81,7 @@ export const DEFAULT_CODE_NODE_DATA: CodeNodeData = {
 
 // Validate Code node data based on business rules
 interface ValidationCtx {
-  nodes?: WorkflowNode[];
+  nodes?: Array<Pick<WorkflowNode, 'id'>>;
 }
 
 export const checkValid = (nodeData: CodeNodeData, ctx?: ValidationCtx): ValidationResult => {

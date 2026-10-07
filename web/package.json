@@ -19,6 +19,8 @@
     "lint:fix": "eslint . --fix",
     "test:agent-execution-job-presentation": "node scripts/test-agent-execution-job-presentation.mjs",
     "test:auth-session-lifecycle": "node scripts/test-auth-session-lifecycle.mjs",
+    "test:query-utils-and-debounce": "node scripts/test-query-utils-and-debounce.mjs",
+    "test:sensitive-word-generator": "node scripts/test-sensitive-word-generator.mjs",
     "test:developer-access-load-error": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-developer-access-load-error.mjs",
     "test:developer-access-live-audit": "node scripts/test-developer-access-live-audit.mjs",
     "test:developer-access-credits": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-developer-access-credits.mjs",

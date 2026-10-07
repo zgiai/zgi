@@ -1,4 +1,5 @@
 import type { Edge, Viewport, Node } from '@xyflow/react';
+import type { ConnectorReferenceCommand } from '@/services/types/connector';
 import type { NodesSuffix, AllTranslationKeys } from '@/i18n';
 export type { NodesSuffix, AllTranslationKeys };
 import type { InputVar } from '../types/input-var';
@@ -376,7 +377,7 @@ export interface ConversationVariableDraftItem {
 
 // Payload shape for saving workflow draft to server
 export interface WorkflowDraftSavePayload {
-  connector_reference_commands?: import('@/services/types/connector').ConnectorReferenceCommand[];
+  connector_reference_commands?: ConnectorReferenceCommand[];
   graph: WorkflowData['graph'];
   features: WorkflowData['features'];
   environment_variables: EnvironmentVariable[];
@@ -385,7 +386,7 @@ export interface WorkflowDraftSavePayload {
 }
 
 export interface WorkflowData {
-  connector_reference_commands?: import('@/services/types/connector').ConnectorReferenceCommand[];
+  connector_reference_commands?: ConnectorReferenceCommand[];
   graph: {
     nodes: WorkflowNode[];
     edges: WorkflowEdge[];

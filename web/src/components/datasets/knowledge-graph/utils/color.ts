@@ -4,7 +4,7 @@
  */
 export const generateCategoryColor = (index: number) => {
   const goldenRatioConjugate = 0.618033988749895;
-  let h = (index * goldenRatioConjugate) % 1;
+  const h = (index * goldenRatioConjugate) % 1;
   const hue = h * 360;
 
   // We use fixed saturation and lightness for a consistent "premium" look
@@ -19,7 +19,7 @@ export const generateCategoryColor = (index: number) => {
 /**
  * Generates a map of category IDs to their respective colors.
  */
-export const getCategoryColorMap = (categories: { id: string }[]) => {
+export const getCategoryColorMap = (categories: Array<{ id: string }>) => {
   const map: Record<string, { fill: string; stroke: string; text: string }> = {};
   categories.forEach((cat, index) => {
     map[cat.id] = generateCategoryColor(index);

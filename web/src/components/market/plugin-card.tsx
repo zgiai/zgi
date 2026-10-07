@@ -262,7 +262,7 @@ function formatMetricTip(template: string | undefined, value: string) {
   return template.replaceAll('{{value}}', value);
 }
 
-function getPluginMetrics(plugin: MarketplacePlugin, branding?: MarketplaceBrandingSettings) {
+function getPluginMetrics(plugin: MarketplacePlugin, _branding?: MarketplaceBrandingSettings) {
   const hash = stableHash(plugin.id);
   const installs = plugin.download_count || 0;
   const runs = installs * (4 + (hash % 18));

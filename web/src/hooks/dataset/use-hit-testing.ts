@@ -1,11 +1,6 @@
 import { useMutation } from '@tanstack/react-query';
 import { datasetService } from '@/services';
-import type {
-  HitTestingRequest,
-  HitTestingResponse,
-  ExternalHitTestingRequest,
-  ExternalDatasetHitTestingResponse,
-} from '@/services/types/dataset';
+import type { HitTestingRequest, ExternalHitTestingRequest } from '@/services/types/dataset';
 
 /**
  * @hook useVectorRetrieval

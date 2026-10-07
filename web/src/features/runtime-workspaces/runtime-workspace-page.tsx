@@ -719,12 +719,13 @@ function AppsTab({
                           aria-checked={selected}
                           aria-disabled={isSyncing}
                           onClick={() => {
-                            if (!isSyncing)
+                            if (!isSyncing) {
                               toggleID(
                                 selectedCandidateIds,
                                 candidate.agent_id,
                                 setSelectedCandidateIds
                               );
+                            }
                           }}
                           onKeyDown={event => {
                             if (!isSyncing && (event.key === 'Enter' || event.key === ' ')) {
@@ -919,8 +920,9 @@ function AppsTab({
                   tabIndex={selectable && !isSyncing ? 0 : undefined}
                   aria-checked={batchMode ? selected : undefined}
                   onClick={() => {
-                    if (selectable && !isSyncing)
+                    if (selectable && !isSyncing) {
                       toggleID(selectedBoundIds, app.agent_id, setSelectedBoundIds);
+                    }
                   }}
                   onKeyDown={event => {
                     if (selectable && !isSyncing && (event.key === 'Enter' || event.key === ' ')) {

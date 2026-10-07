@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import type { VariableAggregatorGroup, PrimitiveType, VarSelector } from '../config';
+import type { VariableAggregatorGroup, PrimitiveType } from '../config';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import NodeValueSelector from '../../../common/node-value-selector';

@@ -200,7 +200,7 @@ export const PreprocessingSettings = forwardRef<
                     />
                     <Label htmlFor={rule.id} className="text-sm font-medium cursor-pointer">
                       {t(
-                        `datasets.createWizard.processConfig.preprocessing.rules.${rule.id}` as any
+                        `datasets.createWizard.processConfig.preprocessing.rules.${rule.id}` as Parameters<typeof t>[0]
                       )}
                     </Label>
                   </div>

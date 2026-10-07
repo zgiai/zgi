@@ -22,17 +22,17 @@ export function TableCreationProgressBar({
   const t = useT();
 
   const getStepInfo = (stepNumber: number): StepInfo => {
-    const titles = ['tableCreate.steps.generateStructure', 'tableCreate.steps.mergeEdit'];
-    const descs = ['tableCreate.steps.generateStructureDesc', 'tableCreate.steps.mergeEditDesc'];
+    const titles = ['tableCreate.steps.generateStructure', 'tableCreate.steps.mergeEdit'] as const;
+    const descs = ['tableCreate.steps.generateStructureDesc', 'tableCreate.steps.mergeEditDesc'] as const;
 
     const titleKey = titles[stepNumber - 1] || titles[0];
     const descKey = descs[stepNumber - 1] || descs[0];
 
     return {
-      title: t(`dbs.${titleKey}` as any, {
+      title: t(`dbs.${titleKey}`, {
         defaultMessage: stepNumber === 1 ? '生成表结构' : '合并并编辑',
       }),
-      description: t(`dbs.${descKey}` as any, {
+      description: t(`dbs.${descKey}`, {
         defaultMessage: stepNumber === 1 ? 'AI生成初始表结构' : '合并AI与现有字段并编辑',
       }),
     };

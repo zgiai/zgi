@@ -1,4 +1,22 @@
-export const registerAutoAdaptLabel = (G6: any) => {
+import type G6Module from '@antv/g6';
+import type { Graph } from '@antv/g6';
+
+interface AutoAdaptLabelState {
+  adaptFrame?: number | null;
+  destroyed?: boolean;
+  graph?: Graph;
+}
+
+interface LabelBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export const registerAutoAdaptLabel = (
+  G6: typeof G6Module & { hasRegisteredBehavior?: (name: string) => boolean }
+) => {
   if (G6.hasRegisteredBehavior?.('custom-auto-adapt-label')) return;
 
   G6.registerBehavior('custom-auto-adapt-label', {
@@ -11,7 +29,7 @@ export const registerAutoAdaptLabel = (G6: any) => {
         afterupdate: 'handleAutoAdapt',
       };
     },
-    handleAutoAdapt() {
+    handleAutoAdapt(this: AutoAdaptLabelState) {
       // Collapse bursts of layout and viewport events into one deterministic pass.
       // Pointer movement must not recalculate the visibility of every label.
       if (this.adaptFrame) {
@@ -34,16 +52,16 @@ export const registerAutoAdaptLabel = (G6: any) => {
           const selectedB = b.getID() === selectedNodeId ? 1 : 0;
           if (selectedA !== selectedB) return selectedB - selectedA;
 
-          const priorityA = a.getModel().priority || 0;
-          const priorityB = b.getModel().priority || 0;
+          const priorityA = Number(a.getModel().priority) || 0;
+          const priorityB = Number(b.getModel().priority) || 0;
           return priorityB - priorityA;
         });
 
-        const occupiedBoxes: any[] = [];
+        const occupiedBoxes: LabelBox[] = [];
         const labelEntries = sortedNodes
           .map(node => {
             const group = node.getContainer();
-            const label = group.find((ele: any) => ele.get('name') === 'text-shape');
+            const label = group.find(ele => ele.get('name') === 'text-shape');
             if (!label) return null;
 
             // Measure every label from the same visible state. Measuring a previously
