@@ -245,7 +245,7 @@ func TestE2BContract(t *testing.T) {
 }
 
 // TestE2BPackageInstallContract is intentionally opt-in. It requires a
-// template built from Dockerfile.agent-runtime-e2b and a disposable E2B
+// template built from Dockerfile.agent-runtime-e2b-package and a disposable E2B
 // project whose package Profile has the same registry allowlist as the test.
 // Keeping this separate from TestE2BContract prevents an offline template from
 // being mistaken for evidence that package-only egress works.
@@ -319,6 +319,9 @@ func TestE2BPackageInstallContract(t *testing.T) {
 		return result
 	}
 
+	if result := assertJob("e2b-package-offline-office-resources", "sh", "-c", "python3 /opt/zgi-profile/resources/verify_xml.py && file --version && test ! -w /opt/zgi-profile/resources/xml/catalog.xml"); result.ExitCode != 0 {
+		t.Fatalf("offline Office resources unavailable: %+v", result)
+	}
 	pythonResult := assertJob("e2b-package-python", "sh", "-c", "python3 -m pip install --disable-pip-version-check --no-input --no-cache-dir tomlkit==0.13.3 && python3 -c 'import tomlkit; print(tomlkit.__version__)'")
 	if pythonResult.ExitCode != 0 {
 		t.Fatalf("python package install result=%+v", pythonResult)
@@ -413,5 +416,8 @@ func TestE2BPackageInstallContract(t *testing.T) {
 	_ = archive.Close()
 	if result := assertJob("e2b-package-after-rebuild", "sh", "-c", verifyInstalled); result.ExitCode != 0 {
 		t.Fatalf("installed dependencies lost after compute rebuild: %+v", result)
+	}
+	if result := assertJob("e2b-package-offline-office-after-rebuild", "sh", "-c", "python3 /opt/zgi-profile/resources/verify_xml.py && file --version"); result.ExitCode != 0 {
+		t.Fatalf("offline Office resources unavailable after rebuild: %+v", result)
 	}
 }

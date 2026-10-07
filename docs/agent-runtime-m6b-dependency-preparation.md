@@ -83,6 +83,8 @@ root Runtime Agent 上传和恢复的文件、父目录会通过工作区内的�
 
 ## 安全边界与后续
 
+标准 Profile 预装 `file`，并在只读的 `/opt/zgi-profile/resources/xml/` 中提供 Dublin Core / W3C Schema、递归 DTD、XML Catalog、来源与许可证及 SHA-256 清单。`XML_CATALOG_FILES` 让 libxml2/lxml 将已收录的上游 URL 解析到离线资源，保留原始 DOCX Skill 的 XSD 校验；这不开放非包源网络，也不替任意 HTTP 下载提供代理。Profile 构建检查递归导入、有效和无效 XML 及未知 URL 拒绝。更新资源需要重新构建本地镜像及 E2B 模板，两种环境使用同一份资源。
+
 依赖 Job 仍在已批准环境中执行，并受现有 Job 超时、输出、文件和资源限制约束。离线模式的网络必须为 `disabled`；本地受控在线模式只获得 loopback HTTPS 代理，Worker 对每次 CONNECT 执行域名、端口、DNS 和特殊地址检查，`*.` 规则只匹配一层子域名。E2B 标准包安装模式同时使用供应商 deny/allowOut 和模板内的 root HTTPS 代理；nftables 只允许 Job 访问 `127.0.0.1:3128`，其他 TCP/UDP/IPv6 和 link-local 访问被拒绝，root/envd 保留启动所需通信。规则或权限准备失败时 Runtime Agent 不启动，不能降级为任意联网。模板可用 `ZGI_RUNTIME_AGENT_EGRESS_ALLOWED_HOSTS_JSON` 配置包源；它应与 Worker 批准名单一致，缺省仅为 PyPI、npm、Debian 的五个公共域名。该配置只由运维注入，Job 不继承运行时控制变量。
 
 Runtime Agent 负责受控 APT 安装，子 Job 仍为 UID 65532，并通过 `setpriv --no-new-privs` 防止执行 setuid 或文件 capability 程序获取新权限。安装结果不进入 API 控制面，也不授予系统 root 或任意网络权限；Home 依赖缓存的每一级路径也必须是普通目录，符号链接缓存会被拒绝且不会跟随或删除其目标。

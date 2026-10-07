@@ -1,6 +1,8 @@
 package profilecatalog
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,6 +34,64 @@ func TestLoadRepositoryProfileSources(t *testing.T) {
 	}
 	if !containsPackage(standard.Packages, "system", "python3-venv") {
 		t.Fatalf("expected standard profile to preinstall python3-venv, got %+v", standard.Packages)
+	}
+	if !containsPackage(standard.Packages, "system", "file") {
+		t.Fatal("expected file identification utility in standard profile")
+	}
+}
+
+func TestStandardProfileOfflineXMLResources(t *testing.T) {
+	root := "../../profiles/cc-codex-standard/resources/xml/"
+	checksums, err := os.ReadFile(root + "SHA256SUMS")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := map[string]bool{
+		"catalog.xml": false, "dc.xsd": false, "dcterms.xsd": false,
+		"dcmitype.xsd": false, "xml.xsd": false,
+		"XMLSchema.dtd": false, "datatypes.dtd": false,
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(checksums)), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 || len(fields[0]) != 64 {
+			t.Fatalf("invalid resource checksum entry: %q", line)
+		}
+		if seen, ok := expected[fields[1]]; !ok || seen {
+			t.Fatalf("unexpected or duplicate resource: %s", fields[1])
+		}
+		raw, err := os.ReadFile(root + fields[1])
+		if err != nil {
+			t.Fatal(err)
+		}
+		digest := sha256.Sum256(raw)
+		if hex.EncodeToString(digest[:]) != fields[0] {
+			t.Fatalf("resource checksum mismatch: %s", fields[1])
+		}
+		expected[fields[1]] = true
+	}
+	for name, seen := range expected {
+		if !seen {
+			t.Errorf("missing resource checksum: %s", name)
+		}
+	}
+	for _, file := range []string{
+		"../../Dockerfile.agent-runtime",
+		"../../Dockerfile.agent-runtime-e2b",
+		"../../Dockerfile.agent-runtime-e2b-package",
+	} {
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, contract := range []string{
+			"COPY profiles/cc-codex-standard/resources/ /opt/zgi-profile/resources/",
+			"XML_CATALOG_FILES=/opt/zgi-profile/resources/xml/catalog.xml",
+			"python verify.py",
+		} {
+			if !strings.Contains(string(raw), contract) {
+				t.Errorf("%s is missing offline XML resource contract %q", file, contract)
+			}
+		}
 	}
 }
 

@@ -1,12 +1,12 @@
 {
   "name": "cc-codex-standard",
-  "version": "2026.10.06",
+  "version": "2026.10.07",
   "status": "ready",
   "enabled": true,
   "owner_scope": "global",
   "languages": ["python3", "nodejs"],
   "base_runtime": "debian-bookworm",
-  "checksum": "profile-source:cc-codex-standard:2026.10.06",
+  "checksum": "profile-source:cc-codex-standard:2026.10.07",
   "estimated_size_bytes": 1073741824,
   "description": "Prebuilt Python, Node.js, office, PDF, media, and native-build runtime for standard Claude Code and Codex Skills.",
   "runtime_dependency_installation": true,
@@ -30,7 +30,8 @@
     {"ecosystem": "system", "name": "ffmpeg", "version": "managed"},
     {"ecosystem": "system", "name": "gcc", "version": "managed"},
     {"ecosystem": "system", "name": "python3-venv", "version": "managed"},
-    {"ecosystem": "system", "name": "make", "version": "managed"}
+    {"ecosystem": "system", "name": "make", "version": "managed"},
+    {"ecosystem": "system", "name": "file", "version": "managed"}
   ],
   "required_files": [
     "manifest.json",
@@ -40,6 +41,17 @@
     "package.json",
     "pnpm-lock.yaml",
     "verify.py",
-    "verify-node.mjs"
+    "verify-node.mjs",
+    "resources/verify_xml.py",
+    "resources/xml/catalog.xml",
+    "resources/xml/SHA256SUMS",
+    "resources/xml/README.md",
+    "resources/xml/W3C-LICENSE.txt",
+    "resources/xml/dc.xsd",
+    "resources/xml/dcterms.xsd",
+    "resources/xml/dcmitype.xsd",
+    "resources/xml/xml.xsd",
+    "resources/xml/XMLSchema.dtd",
+    "resources/xml/datatypes.dtd"
   ]
 }

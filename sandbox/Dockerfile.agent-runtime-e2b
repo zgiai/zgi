@@ -31,6 +31,7 @@ COPY profiles/cc-codex-standard/apt-packages.txt /tmp/zgi-profile/apt-packages.t
 COPY profiles/cc-codex-standard/requirements.lock /tmp/zgi-profile/requirements.lock
 COPY profiles/cc-codex-standard/package.json profiles/cc-codex-standard/pnpm-lock.yaml /opt/zgi-profile/
 COPY profiles/cc-codex-standard/verify.py profiles/cc-codex-standard/verify-node.mjs /opt/zgi-profile/
+COPY profiles/cc-codex-standard/resources/ /opt/zgi-profile/resources/
 
 RUN chmod 0755 /usr/local/bin/zgi-runtime-agent /usr/local/bin/zgi-runtime-agent-bootstrap /usr/local/bin/apt-get /usr/local/bin/apt && \
     groupadd --gid 65532 zgi-runtime && \
@@ -56,6 +57,7 @@ ENV HOME=/home/zgi-runtime \
     PATH=/opt/zgi-profile/node_modules/.bin:/usr/local/bin:/usr/bin:/bin \
     NODE_PATH=/opt/zgi-profile/node_modules \
     PYTHONDONTWRITEBYTECODE=1 \
+    XML_CATALOG_FILES=/opt/zgi-profile/resources/xml/catalog.xml \
     ZGI_RUNTIME_AGENT_WORKSPACE=/workspace \
     ZGI_RUNTIME_AGENT_LISTEN=tcp://0.0.0.0:49984 \
 	ZGI_RUNTIME_AGENT_NETWORK_MODE=${RUNTIME_AGENT_NETWORK_MODE} \

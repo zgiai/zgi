@@ -557,7 +557,10 @@ func runContractJob(t *testing.T, backend *localruntime.Backend, allocation agen
 	defer cancel()
 	result, err := running.Wait(waitContext)
 	if err != nil {
-		t.Fatalf("wait job %s: %v", spec.JobID, err)
+		mu.Lock()
+		partial := append([]byte(nil), output.Bytes()...)
+		mu.Unlock()
+		t.Fatalf("wait job %s: %v; partial output=%s", spec.JobID, err, partial)
 	}
 	mu.Lock()
 	defer mu.Unlock()

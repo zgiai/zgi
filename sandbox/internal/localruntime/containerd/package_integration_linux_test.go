@@ -71,6 +71,7 @@ func TestGVisorPackageInstallRecovery(t *testing.T) {
 		}
 	}
 	assertJob("nonroot", "test \"$(id -u)\" = 65532", true)
+	assertJob("offline-office-resources", "python3 /opt/zgi-profile/resources/verify_xml.py && file --version && test ! -w /opt/zgi-profile/resources/xml/catalog.xml", true)
 	assertJob("session-boundary", "grep -Eq '^NoNewPrivs:[[:space:]]+1$' /proc/self/status && python3 -c 'import sys,os; assert sys.prefix == os.environ[\"VIRTUAL_ENV\"]; assert sys.prefix != sys.base_prefix; print(\"session-venv\")'", true)
 	assertJob("python-native", "python3 -m pip install --no-cache-dir --no-input --no-binary=ujson ujson==5.10.0 && python3 -c 'import ujson; assert ujson.loads(ujson.dumps([1,2])) == [1,2]'", true)
 	assertJob("idle-bridge", "sleep 35", true)
@@ -131,4 +132,5 @@ func TestGVisorPackageInstallRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertJob("after-rebuild", verify, true)
+	assertJob("offline-office-resources-after-rebuild", "python3 /opt/zgi-profile/resources/verify_xml.py && file --version", true)
 }
