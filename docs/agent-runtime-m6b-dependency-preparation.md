@@ -87,6 +87,8 @@ root Runtime Agent 上传和恢复的文件、父目录会通过工作区内的�
 
 Runtime Agent 负责受控 APT 安装，子 Job 仍为 UID 65532，并通过 `setpriv --no-new-privs` 防止执行 setuid 或文件 capability 程序获取新权限。安装结果不进入 API 控制面，也不授予系统 root 或任意网络权限；Home 依赖缓存的每一级路径也必须是普通目录，符号链接缓存会被拒绝且不会跟随或删除其目标。
 
+APT 请求在单个环境中串行执行，排队可取消；断开请求、关闭 Runtime HTTP Server 或 Backend 会取消活动安装并清理其进程树。`ZGI_RUNTIME_AGENT_PACKAGE_TIMEOUT_MS`（默认 600000）和 `ZGI_RUNTIME_AGENT_PACKAGE_OUTPUT_BYTES`（默认每个输出流 262144 字节）仅由运维设置，Job 不继承这些控制变量。输出边读边截断而不是运行结束后才限额。系统包账本限定在工作区，拒绝链接与非普通文件，读取上限 1 MiB / 1000 条命令；更新采用唯一临时文件和原子替换，重复成功命令不重复追加。安装取消不保证回滚已执行的 dpkg 步骤，后续恢复仍需显式诊断，不把取消报告为事务回滚。
+
 这一轮的退出条件是：标准 Skill 无 manifest 可导入；常见包来自预构建 Profile；pip/npm/apt 安装与失败诊断可观察；重复执行和环境重建不丢失安装状态；非包源 HTTPS、原始 TCP、私网和代理绕过被拒绝。真实 E2B 和 gVisor 验收必须同时验证原生编译、非 root/无新增权限、暂停恢复、检查点销毁重建和失败恢复，不能由 Mock 替代。
 
 原样 Skill 中如果包含从非包源下载验证 schema、模型、浏览器或其他资源的步骤，安装代码包不能自动补齐这些资源。需要作者随包提供资源，或由运维纳入审核的预构建 Profile；不能以开放任意外网来掩盖此类失败。

@@ -44,6 +44,8 @@ type Options struct {
 	// bridged through the worker's fixed package-host allowlist.
 	DependencyInstallation bool
 	PackageNetworkMode     string
+	PackageInstallTimeout  time.Duration
+	MaxPackageOutputBytes  int64
 	JobUID                 uint32
 	JobGID                 uint32
 	MaxUploadBytes         int64
@@ -61,7 +63,11 @@ type Backend struct {
 	packageNetworkEnforced    bool
 	jobUID                    uint32
 	jobGID                    uint32
-	packageLedgerPath         string
+	packageInstallTimeout     time.Duration
+	maxPackageOutputBytes     int64
+	packageInstallGate        chan struct{}
+	packageInstallDone        chan struct{}
+	packageInstalls           sync.WaitGroup
 	packageReplayComplete     bool
 	packageLedgerMu           sync.Mutex
 	maxUploadBytes            int64
@@ -91,6 +97,9 @@ type trackedJob struct {
 var _ agentexecution.ExecutionBackend = (*Backend)(nil)
 
 func New(options Options) (*Backend, error) {
+	if options.PackageInstallTimeout < 0 || options.MaxPackageOutputBytes < 0 {
+		return nil, fmt.Errorf("%w: package installation limits cannot be negative", agentexecution.ErrInvalidRequest)
+	}
 	options.WorkspaceRoot = strings.TrimSpace(options.WorkspaceRoot)
 	if options.WorkspaceRoot == "" {
 		return nil, fmt.Errorf("%w: workspace root is required", agentexecution.ErrInvalidRequest)
@@ -194,8 +203,9 @@ func New(options Options) (*Backend, error) {
 		dependencyInstallation: options.DependencyInstallation, packageNetworkMode: packageMode,
 		packageNetworkEnforced: packageMode == "package-install" && egressMode == EgressModeDirect,
 		jobUID:                 options.JobUID, jobGID: options.JobGID,
-		packageLedgerPath: filepath.Join(root.Name(), sessionHomeDirectory, "package-install-ledger.json"),
-		maxUploadBytes:    options.MaxUploadBytes, maxDownloadBytes: options.MaxDownloadBytes,
+		packageInstallTimeout: options.PackageInstallTimeout,
+		maxPackageOutputBytes: options.MaxPackageOutputBytes,
+		maxUploadBytes:        options.MaxUploadBytes, maxDownloadBytes: options.MaxDownloadBytes,
 		egressProxyAddress: proxyAddress, egress: proxy,
 		jobs: make(map[string]trackedJob),
 	}, nil
@@ -208,6 +218,9 @@ func (b *Backend) Close() error {
 		return nil
 	}
 	b.closed = true
+	if b.packageInstallDone != nil {
+		close(b.packageInstallDone)
+	}
 	jobs := make([]agentexecution.RunningJob, 0, len(b.jobs))
 	for _, job := range b.jobs {
 		jobs = append(jobs, job.running)
@@ -222,6 +235,7 @@ func (b *Backend) Close() error {
 	if b.egress != nil {
 		_ = b.egress.Close()
 	}
+	b.packageInstalls.Wait()
 	return b.workspace.Close()
 }
 

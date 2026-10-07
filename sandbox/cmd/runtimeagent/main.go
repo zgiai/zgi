@@ -54,6 +54,8 @@ func run(parent context.Context) error {
 		DependencyPreparationMode: envValue("ZGI_RUNTIME_AGENT_DEPENDENCY_PREPARATION_MODE", ""),
 		DependencyInstallation:    envBool("ZGI_RUNTIME_AGENT_DEPENDENCY_INSTALLATION_ENABLED", false),
 		PackageNetworkMode:        envValue("ZGI_RUNTIME_AGENT_PACKAGE_NETWORK_MODE", ""),
+		PackageInstallTimeout:     time.Duration(envInt64("ZGI_RUNTIME_AGENT_PACKAGE_TIMEOUT_MS", 600000)) * time.Millisecond,
+		MaxPackageOutputBytes:     envInt64("ZGI_RUNTIME_AGENT_PACKAGE_OUTPUT_BYTES", 256*1024),
 		JobUID:                    uint32(envInt64("ZGI_RUNTIME_AGENT_JOB_UID", 0)),
 		JobGID:                    uint32(envInt64("ZGI_RUNTIME_AGENT_JOB_GID", 0)),
 		MaxUploadBytes:            envInt64("ZGI_RUNTIME_AGENT_MAX_UPLOAD_BYTES", 64*1024*1024),

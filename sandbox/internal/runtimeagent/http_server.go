@@ -135,7 +135,11 @@ func (s *HTTPServer) ServePackageHTTP(w http.ResponseWriter, request *http.Reque
 	if !s.decodeJSON(w, request, &body) {
 		return
 	}
-	result, err := installer.InstallSystemPackages(request.Context(), body.Args)
+	ctx, cancel := context.WithCancel(request.Context())
+	stop := context.AfterFunc(s.ctx, cancel)
+	defer stop()
+	defer cancel()
+	result, err := installer.InstallSystemPackages(ctx, body.Args)
 	s.writeResult(w, http.StatusOK, result, err)
 }
 
