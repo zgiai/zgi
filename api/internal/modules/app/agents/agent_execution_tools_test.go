@@ -283,6 +283,81 @@ func TestAgentExecutionShellDescriptionMatchesRequestedMode(t *testing.T) {
 	}
 }
 
+func TestAgentExecutionShellDescriptionPreservesSessionAndFailureSemantics(t *testing.T) {
+	for _, mode := range []string{"offline", "package-install", "controlled-http"} {
+		description := agentExecutionShellDescription(mode)
+		for _, guidance := range []string{"/bin/sh -c", "injected PATH and HOME", "bash -c", "POSIX", "PIPESTATUS", "set -eu", "exit status is preserved", "exit_code", "successful tool transport is not successful script execution"} {
+			if !strings.Contains(description, guidance) {
+				t.Errorf("mode %q description lacks %q", mode, guidance)
+			}
+		}
+	}
+}
+
+func TestAgentExecutionShellCommandFailureRemainsModelVisible(t *testing.T) {
+	exitCode := 7
+	fake := &fakeAgentExecutionGateway{
+		binding: agentExecutionBinding{ID: "binding-1", Status: "active"},
+		job:     agentExecutionJob{ID: "job-1", Status: "failed", ExitCode: &exitCode},
+		output:  []agentExecutionOutputChunk{{Stream: "stderr", Data: []byte("missing input")}},
+	}
+	tool := newAgentExecutionShellTool(fake, agentExecutionScope{}, "agent-1", "conversation-1", "message-1", "standard", "local-gvisor", nil, nil)
+	result := tool.Handler(t.Context(), adapter.ToolCall{ID: "call-1", Function: adapter.FunctionCall{Arguments: `{"command":"exit 7"}`}})
+	if result.Error != nil || result.Status != "success" {
+		t.Fatalf("command diagnostics must not become a transport error: %#v", result)
+	}
+	for _, payload := range []map[string]interface{}{result.Result, result.ModelResult} {
+		code, ok := payload["exit_code"].(*int)
+		if payload["status"] != "failed" || !ok || code == nil || *code != 7 {
+			t.Fatalf("terminal Job failure missing from payload: %#v", payload)
+		}
+	}
+	if result.ModelResult["stderr"] != "missing input" {
+		t.Fatalf("model diagnostics = %#v, want missing input", result.ModelResult["stderr"])
+	}
+}
+
+func TestAgentExecutionShellTerminalFailuresRemainDistinct(t *testing.T) {
+	for _, tc := range []struct {
+		name, status, failureCode, wantCode string
+		exitCode                            *int
+	}{
+		{name: "timeout", status: "failed", exitCode: new(-1), wantCode: "job_failed"},
+		{name: "cancellation", status: "canceled", exitCode: new(-1)},
+		{name: "language recovery", status: "failed", failureCode: "language_package_recovery_failed", wantCode: "language_package_recovery_failed"},
+		{name: "system recovery", status: "failed", failureCode: "package_recovery_failed", wantCode: "package_recovery_failed"},
+		{name: "unrecognized worker failure", status: "failed", failureCode: "private worker diagnostics", wantCode: "job_failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeAgentExecutionGateway{
+				binding: agentExecutionBinding{ID: "binding-1", Status: "active"},
+				job:     agentExecutionJob{ID: "job-1", Status: tc.status, ExitCode: tc.exitCode, FailureCode: tc.failureCode},
+				output:  []agentExecutionOutputChunk{{Stream: "stderr", Data: []byte("private diagnostic")}},
+			}
+			tool := newAgentExecutionShellTool(fake, agentExecutionScope{}, "agent-1", "conversation-1", "message-1", "standard", "local-gvisor", nil, nil)
+			result := tool.Handler(t.Context(), adapter.ToolCall{ID: "call-1", Function: adapter.FunctionCall{Arguments: `{"command":"true"}`}})
+			for _, payload := range []map[string]interface{}{result.Result, result.ModelResult} {
+				if payload["status"] != tc.status || payload["exit_code"] != tc.exitCode || payload["job_id"] != "job-1" {
+					t.Fatalf("terminal failure changed: %#v", payload)
+				}
+				if tc.wantCode != "" && payload["error_code"] != tc.wantCode {
+					t.Fatalf("safe failure code = %v, want %q", payload["error_code"], tc.wantCode)
+				}
+			}
+			if (result.Error != nil) != (tc.wantCode != "") {
+				t.Fatalf("infrastructure failure classification changed: %#v", result)
+			}
+			if result.ModelResult["stderr"] != "private diagnostic" {
+				t.Fatal("model lost the diagnostic")
+			}
+			trace, err := json.Marshal(result.Result)
+			if err != nil || strings.Contains(string(trace), "private") {
+				t.Fatalf("safe trace leaked diagnostic: %s, %v", trace, err)
+			}
+		})
+	}
+}
+
 func TestAgentExecutionShellReportsActualCapabilitiesWithoutInternalEndpoints(t *testing.T) {
 	for _, mode := range []string{"disabled", "package-install"} {
 		t.Run(mode, func(t *testing.T) {
