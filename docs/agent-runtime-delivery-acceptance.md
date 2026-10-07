@@ -108,12 +108,81 @@ regression remains a separate compatibility path and gains no installation right
   takes longer. Do not use that display as execution-time or cost accounting.
 - The model-controlled checks JSON used either an object or an array on different
   runs. Verification read the actual shape; this is not output-Schema validation.
+- Read-only review of all four rendered test pages found a model-authored cell
+  annotation on one E2B slide saying `A2 + A3`; the verified workbook uses
+  `SUM(B2:B3)` and the correct cached value 30. The result and charts pass the
+  runtime/content gates, but generated narrative still needs application-level
+  review. This acceptance does not certify every sentence in model output.
 - Long original-Skill conversations consumed substantial tokens. Transcript and
   cost optimization remain productionization work, not a claim of this acceptance.
 - Native PID exhaustion can close the Runtime Agent channel. The resource gate
   verifies the enforced limit and cleanup; it is not a high-availability guarantee.
 - A private SSH test connection was used for the remote Linux Worker. It is not
   a permanent authenticated HTTPS gateway or a production connectivity solution.
+
+## Step 4: rollback, bounded load and final reconciliation
+
+The dedicated four-service API/Web deployment passed this actual sequence:
+
+1. Upgrade to the candidate and verify all four services healthy.
+2. Disable runtime admission; verify rejected new execution requests and retained
+   downloads on both backends; restore admission.
+3. Roll back all four services to their preserved previous images without
+   destructively reverting PostgreSQL or deleting storage. Reload original
+   conversations and download the existing XLSX results with identical hashes.
+4. Restore the candidate, verify all four services healthy, and run the new
+   same-conversation Jobs and restoration-report downloads described above.
+5. Checkpoint retained test Bindings, stop the owned E2B test Worker and close the
+   SSH test connection. Native Worker rollback and `doctor` passed; the original
+   Worker and shared containerd process IDs were unchanged. Both XLSX exports
+   still downloaded with identical hashes after the execution connections stopped.
+
+Both real backends also passed cancellation of an actual native Python compiler,
+an installation timeout, process-tree and Job-temporary-directory cleanup, native
+installation retry, and two concurrent installations each for pip, npm and APT.
+Installed imports and system commands passed after checkpoint restoration. A
+separate root-APT cancellation/retry passed on each backend. This is a small
+bounded concurrency/repetition check, not a throughput benchmark or production
+load certification. The native node has approximately 1.7 GiB memory and was
+tested sequentially across larger contracts.
+
+Final inventories distinguish retained resources from leaks:
+
+| Resource | Final verified state |
+|---|---|
+| Dedicated Linux database | Four retained suspended Bindings with checkpoints; fifteen deleted test Bindings; zero queued/running Jobs; no pending/running cleanup tasks |
+| Native runtime namespace | No running containerd tasks; previous Worker and shared containerd preserved; dedicated deployment rollback/health check passed |
+| Dedicated E2B database | Three suspended Bindings with checkpoints; eleven deleted test Bindings; zero queued/running Jobs |
+| E2B provider, approved template | Two paused Sandboxes, both mapped to retained UI Bindings; no running or unmatched test Sandbox; the third suspended Binding retains its checkpoint without compute |
+| E2B cleanup queue | Sixteen completed tasks; one future allocation-attempt reconciliation associated with a retained Binding, not a due cleanup failure |
+| Local services/storage | Four healthy candidate API/Web services; four stopped previous-version backups; existing application storage, test checkpoints and build caches retained |
+| Disposable validation infrastructure | Owned PostgreSQL/anonymous volume/network and temporary admission-disabled API containers removed; no application database or user result removed |
+
+To verify cleanup of the three deleted E2B test allocations without waiting the
+normal grace period, only their dedicated-database reconciliation due times were
+advanced. The real Worker completed all three. The retained Binding's future task
+was left unchanged. Paused compute and checkpoints are deliberate retention and
+may still incur provider storage charges; they are not described as zero resources.
+
+### Operational handoff
+
+Use [the server deployment guide](agent-runtime-server-deployment.md) and
+[the public delivery gates](agent-runtime-delivery-tests.md) for a repeat run.
+Keep source revision, image IDs/registry digests, Worker binaries and approved
+Profile/template references together in the operator manifest. Before replacing
+services, verify ownership, private listeners, readiness, storage mounts and the
+previous image. Do not retag an old image and call it a new build.
+
+If an upgrade fails, stop new admission, checkpoint only quiescent owned Bindings,
+restore the preserved API/Web deployment and the approved Worker configuration,
+then run health checks, legacy regression and retained-download checks. Preserve
+storage and compatible migrations. Do not downgrade an installed-state format to
+an incompatible runtime. Re-enable only after repeating the relevant real gate.
+
+This run leaves the candidate services available for history/download inspection,
+but new remote execution requires restarting the dedicated E2B Worker or
+re-establishing the approved private Linux test connection. No permanent gateway
+or public Worker port was created. No branch merge, push or PR was performed.
 
 See [the delivery checklist](agent-runtime-release-candidate.md) for the release
 gate and [reproducible tests](agent-runtime-delivery-tests.md) for commands.
