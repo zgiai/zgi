@@ -85,6 +85,7 @@ type Backend struct {
 	jobs                      map[string]trackedJob
 	closed                    bool
 	unsafe                    error
+	temporaryReady            bool // Protected by mu; one runtime owns this workspace.
 	packageSources            packagesource.Config
 	aptConfigPath             string
 	profileIdentity           string
@@ -385,6 +386,15 @@ func (b *Backend) StartJob(ctx context.Context, _ agentexecution.Allocation, spe
 		}
 		return existing.running, nil
 	}
+	temporary, cleanup, err := b.prepareJobTemporaryDirectory()
+	if err != nil {
+		return nil, fmt.Errorf("prepare job temporary directory: %w", err)
+	}
+	// Hash the caller's stable contract before adding the unique directory.
+	// Repeated starts return the same process, not a second temporary owner.
+	for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
+		spec.Environment[key] = temporary
+	}
 	var outputMu sync.Mutex
 	var sequence int64
 	running, err := startProcess(ctx, workDir, spec, b.jobUID, b.jobGID, func(stream agentexecution.OutputStream, value []byte) error {
@@ -396,9 +406,9 @@ func (b *Backend) StartJob(ctx context.Context, _ agentexecution.Allocation, spe
 		}
 		sequence++
 		return sink(chunk)
-	}, b.quarantine)
+	}, b.quarantine, cleanup)
 	if err != nil {
-		return nil, err
+		return nil, errors.Join(err, cleanup(discardTemporary))
 	}
 	b.jobs[spec.JobID] = trackedJob{specHash: hash, running: running}
 	return running, nil

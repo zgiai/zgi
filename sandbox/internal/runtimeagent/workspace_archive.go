@@ -62,6 +62,12 @@ func (b *Backend) writeWorkspaceArchiveMode(ctx context.Context, archive *tar.Wr
 		if name == "." {
 			return nil
 		}
+		if name == jobTemporaryDirectory {
+			if entry.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
 		entries++
 		if entries > maxWorkspaceEntries {
 			return agentexecution.ErrOutputLimit
@@ -187,6 +193,9 @@ func (b *Backend) ImportWorkspace(ctx context.Context, _ agentexecution.Allocati
 		clean, err := cleanRelativePath(name, false)
 		if err != nil || clean != name || len(name) > 4096 {
 			return agentexecution.ErrInvalidPath
+		}
+		if isJobTemporaryPath(clean) {
+			return fmt.Errorf("%w: checkpoint contains reserved temporary data", agentexecution.ErrInvalidPath)
 		}
 		if _, ok := seen[clean]; ok {
 			return fmt.Errorf("%w: duplicate checkpoint path", agentexecution.ErrInvalidPath)

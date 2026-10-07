@@ -39,7 +39,7 @@ type runningProcess struct {
 
 func supportsPTY() bool { return true }
 
-func startProcess(parent context.Context, workDir string, spec agentexecution.JobSpec, jobUID, jobGID uint32, sink func(agentexecution.OutputStream, []byte) error, onUnsafe func(error)) (agentexecution.RunningJob, error) {
+func startProcess(parent context.Context, workDir string, spec agentexecution.JobSpec, jobUID, jobGID uint32, sink func(agentexecution.OutputStream, []byte) error, onUnsafe func(error), cleanup func(temporaryDisposition) error) (agentexecution.RunningJob, error) {
 	var jobContext context.Context
 	var cancel context.CancelFunc
 	if spec.Timeout > 0 {
@@ -114,6 +114,13 @@ func startProcess(parent context.Context, workDir string, spec agentexecution.Jo
 			_ = terminal.Close()
 		}
 		result := processResult(waitErr, contextErr, process.canceled.Load())
+		// A detached background child must not keep writing while its temporary
+		// directory is reclaimed. Fail closed instead of deleting live data.
+		if err := ensureProcessGroupStopped(cmd.Process.Pid); err != nil {
+			process.markTerminationFailure(errors.Join(err, cleanup(retainTemporary)))
+		} else if err := cleanup(discardTemporary); err != nil {
+			process.markTerminationFailure(fmt.Errorf("job temporary cleanup failed: %w", err))
+		}
 		process.mu.Lock()
 		if process.stopErr != nil {
 			result = agentexecution.JobResult{ExitCode: -1, Error: process.stopErr.Error(), TerminationFailed: true}
@@ -124,6 +131,42 @@ func startProcess(parent context.Context, workDir string, spec agentexecution.Jo
 		close(process.done)
 	}()
 	return process, nil
+}
+
+func ensureProcessGroupStopped(group int) error {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if _, err := strconv.Atoi(entry.Name()); err != nil {
+			continue
+		}
+		value, err := os.ReadFile("/proc/" + entry.Name() + "/stat")
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return err
+		}
+		// comm may itself contain spaces and parentheses.
+		end := strings.LastIndexByte(string(value), ')')
+		if end < 0 {
+			return errors.New("invalid process status")
+		}
+		fields := strings.Fields(string(value[end+1:]))
+		if len(fields) < 3 {
+			return errors.New("incomplete process status")
+		}
+		pgrp, err := strconv.Atoi(fields[2])
+		if err != nil {
+			return err
+		}
+		if pgrp == group && fields[0] != "Z" && fields[0] != "X" {
+			return errors.New("job process group is still running")
+		}
+	}
+	return nil
 }
 
 type outputWriter struct {
