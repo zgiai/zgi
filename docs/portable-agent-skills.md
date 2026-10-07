@@ -27,6 +27,10 @@ For example, a Skill can instruct the Agent to run:
 
 For Node.js, use `node "$ZGI_SKILL_DIR/scripts/summarize.js" ...`. Uploaded user files are under `inputs/` for the current turn. A Skill may read its own `references/` and `assets/` through `$ZGI_SKILL_DIR`. Write generated files outside the versioned Skill directory, for example under `outputs/`, then call `workspace_export_file` with the output path to deliver a download card. `shell_exec` returns exit code, stdout, and stderr; non-zero exits and missing modules are visible diagnostics. No third-party packages are installed automatically.
 
+Commands run under `/bin/sh -c`. Preserve the injected `PATH` and `HOME`; a nested login shell such as `bash -lc` can reset them and hide retained session dependencies. Use POSIX syntax by default, or `bash -c` explicitly for Bash-only syntax. For required sequential steps use `set -eu` or `&&`, and preserve the original exit status instead of appending `echo`, `exit 0`, or `|| true`. A successful tool call is not evidence of a successful script: check the terminal Job status and `exit_code`, and inspect stderr. The console displays Shell Job results separately from tool transport success; a missing terminal Job status or exit code is not shown as confirmed success. Independent Shell calls retain separate timeline records, even if a later call succeeds or their safe argument summaries match.
+
+This display reflects the Shell's actual exit status, not the correctness of each inner command. A command that intentionally or accidentally suppresses an error and returns zero still appears successful; inspect diagnostics and validate the resulting files. Prompt guidance reduces this risk but cannot guarantee that every generated command preserves failures. In the current Worker contract, a timeout is a failed Job with `exit_code: -1` and `error_code: job_failed`; cancellation is `canceled`. Neither is successful script execution.
+
 `ZGI_SKILL_DIR` is the complete package root. Use the paths documented by the Skill, not an assumed `scripts/` prefix. If a helper requires Python local module imports, run from the package directory, for example `cd "$ZGI_SKILL_DIR" && python -c 'from core.gif_builder import GIFBuilder'`. Use absolute `/workspace/inputs/...` and `/workspace/outputs/...` paths after changing directories.
 
 Do not call ZGI's `run_script` tool for a portable Skill: that tool uses a separate manifest/input protocol. Conversely, legacy packages can continue to use it unchanged. Offline execution does not provide network access or dependency installation. Bash-specific features, Claude Code dynamic context injection, and other host-specific extensions are not a general compatibility promise.
@@ -54,3 +58,22 @@ This checks import preview and confirmation only. It does not prove backend exec
 For all three, verify non-root execution, retain real errors, install only diagnosed missing dependencies through approved commands, and export results with `workspace_export_file`. Download the files through the console and independently check their contents and SHA256 values. Record package hashes to establish that the original modules were used.
 
 Then checkpoint the idle environment, simulate loss of only the dedicated test compute, and resume the same conversation. Without regenerating files or running installation commands, verify the loaded packages, installed module versions, and every output checksum. Keep checkpoints and test evidence until reviewed. Mock tests and successful import alone are not substitutes for this recovery test.
+
+### Automated real-backend matrix
+
+`TestAgentExecutionStandardSkillMatrix` runs unchanged `xlsx`, `pptx`, and `slack-gif-creator` package helpers from an external checkout. It requires a dedicated authenticated Worker with the standard runtime and approved `package-install` capability. It creates and deletes its own test Binding; do not point it at a production Worker or replace its package-only network policy with unrestricted network access. Set the required API application credentials through your normal local test environment, without putting credentials in command arguments or Git.
+
+```bash
+export ZGI_STANDARD_SKILL_TEST_ROOT=/absolute/path/to/skills
+export ZGI_AGENT_RUNTIME_TEST_URL=http://dedicated-worker:2671
+export ZGI_AGENT_RUNTIME_TEST_PROFILE=cc-codex-standard
+export ZGI_AGENT_RUNTIME_TEST_BACKEND=local-gvisor
+# Set ZGI_AGENT_RUNTIME_TEST_API_KEY securely in the environment.
+# Optionally set ZGI_STANDARD_SKILL_TEST_OUTPUT to an ignored output directory.
+go test -tags=agent_runtime_integration ./internal/modules/app/agents \
+  -run '^TestAgentExecutionStandardSkillMatrix$' -count=1 -v -timeout=15m
+```
+
+Run from `api/` using the repository's Go version. Repeat against the approved E2B Worker with its configured Profile ID and `ZGI_AGENT_RUNTIME_TEST_BACKEND=e2b`. The matrix verifies real Shell execution, original package hashes, spreadsheet formula/cache values, native chart data, PDF conversion, GIF frames, file export, nonzero exit visibility, missing-package diagnostics, registry override/global-install rejection, timeout/cancellation with descendant cleanup, cross-organization rejection, and checkpoint/resume retention. It does **not** replace browser import/download acceptance, network-bypass testing, or simulated compute-loss recovery. The UI-specific Job presentation check is `pnpm test:agent-execution-job-presentation` from `web/`.
+
+Use the Sandbox's existing `TestGVisorPackageInstallRecovery` and `TestE2BPackageInstallContract` real-backend tests for native Python/Node builds, approved system packages, network bypass rejection, compute-loss recovery, and corrupt-artifact/ledger rejection. Recovery must fail closed when retained dependencies are damaged: repair the retained data through the operator recovery workflow, then retry; do not silently resolve different or latest package versions. Keep the existing legacy Script Skill E2E and Linux secure-backend gates separate from the session-runtime matrix.
