@@ -60,8 +60,9 @@ func (s *service) createChatWithInitialConnections(ctx context.Context, scope Sc
 				return err
 			}
 		}
-		transactionService := *s
-		transactionService.repos = repository.NewRepositories(tx)
+		// Conversation creation only needs repositories. Do not copy the service's
+		// synchronization state or share a mutable repository pointer with it.
+		transactionService := &service{repos: repository.NewRepositories(tx)}
 		var err error
 		conversation, err = transactionService.createConversationForCaller(ctx, scope, caller, initialTitle, parts.Surface)
 		if err != nil {
