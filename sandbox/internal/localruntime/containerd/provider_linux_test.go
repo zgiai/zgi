@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	runtimeoptions "github.com/containerd/containerd/api/types/runtimeoptions/v1"
@@ -18,6 +19,31 @@ import (
 )
 
 const testImage = "registry.example.invalid/zgi/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+func TestRuntimeSocketPathLimit(t *testing.T) {
+	for _, test := range []struct {
+		path  string
+		valid bool
+	}{
+		{strings.Repeat("a", 107), true},
+		{strings.Repeat("a", 108), false},
+		{strings.Repeat("界", 36), false},
+		{"/tmp/socket\x00", false},
+	} {
+		err := validateRuntimeSocketPath(test.path)
+		if (err == nil) != test.valid || !test.valid && !errors.Is(err, agentexecution.ErrInvalidRequest) {
+			t.Errorf("path length %d: error %v, valid %t", len(test.path), err, test.valid)
+		}
+	}
+}
+
+func TestLaunchRejectsLongSocketBeforeCreatingCompute(t *testing.T) {
+	provider := &Provider{rootDir: "/" + strings.Repeat("a", 90), profiles: map[string]Profile{"python": {Image: testImage}}}
+	_, err := provider.launch(t.Context(), agentexecution.CreateSpec{BindingID: "binding-1", WorkspaceID: "workspace-1", ProfileID: "python"})
+	if !errors.Is(err, agentexecution.ErrInvalidRequest) || !strings.Contains(err.Error(), "shorten ZGI_AGENT_RUNTIME_ROOT") {
+		t.Fatalf("long socket path error = %v", err)
+	}
+}
 
 func TestPackageLedgerCapabilityRejectsOldRuntimeImages(t *testing.T) {
 	for _, version := range []int{0, 1, 3} {

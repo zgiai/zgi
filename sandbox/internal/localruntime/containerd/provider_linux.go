@@ -224,6 +224,9 @@ func (p *Provider) launch(ctx context.Context, spec agentexecution.CreateSpec) (
 	if err != nil {
 		return allocation, err
 	}
+	if err := validateRuntimeSocketPath(filepath.Join(p.controlDir(allocation.BindingRef), runtimeSocketName)); err != nil {
+		return allocation, err
+	}
 	startupContext, cancelStartup := context.WithTimeout(ctx, p.startupLimit)
 	defer cancelStartup()
 	p.stopEgressBridge(allocation.BindingRef)
@@ -349,6 +352,15 @@ func (p *Provider) launch(ctx context.Context, spec agentexecution.CreateSpec) (
 		}
 	}
 	return allocation, nil
+}
+
+func validateRuntimeSocketPath(path string) error {
+	// Filesystem Unix sockets need one trailing NUL in Linux's sun_path.
+	maximum := len(syscall.RawSockaddrUnix{}.Path) - 1
+	if len(path) > maximum || strings.ContainsRune(path, '\x00') {
+		return fmt.Errorf("%w: local runtime Unix socket path exceeds %d bytes or contains a NUL; shorten ZGI_AGENT_RUNTIME_ROOT", agentexecution.ErrInvalidRequest, maximum)
+	}
+	return nil
 }
 
 // runscRuntimeOptions keeps the controlled HTTP profile on gVisor's isolated
