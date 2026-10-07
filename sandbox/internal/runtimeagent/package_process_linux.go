@@ -11,8 +11,12 @@ import (
 )
 
 func openPackageLedgerFile(root *os.Root) (*os.File, error) {
+	return openRegularWorkspaceFile(root, packageLedgerName)
+}
+
+func openRegularWorkspaceFile(root *os.Root, name string) (*os.File, error) {
 	// Never follow a replaced ledger link or block on a Job-created FIFO.
-	return root.OpenFile(packageLedgerName, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	return root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 }
 
 func configurePackageProcess(command *exec.Cmd) {

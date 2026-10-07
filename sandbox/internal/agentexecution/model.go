@@ -184,12 +184,16 @@ type JobResult struct {
 // SystemPackageLedgerVersion is the fixed-version system package recovery contract.
 const SystemPackageLedgerVersion = 2
 
+// LanguagePackageLedgerVersion verifies session dependency metadata at recovery.
+const LanguagePackageLedgerVersion = 1
+
 type RuntimeCapabilities struct {
-	SystemPackageLedgerVersion int    `json:"system_package_ledger_version,omitempty"`
-	PackageSourceDigest        string `json:"package_source_digest,omitempty"`
-	Shell                      bool   `json:"shell"`
-	PTY                        bool   `json:"pty"`
-	FileTransfer               bool   `json:"file_transfer"`
+	SystemPackageLedgerVersion   int    `json:"system_package_ledger_version,omitempty"`
+	LanguagePackageLedgerVersion int    `json:"language_package_ledger_version,omitempty"`
+	PackageSourceDigest          string `json:"package_source_digest,omitempty"`
+	Shell                        bool   `json:"shell"`
+	PTY                          bool   `json:"pty"`
+	FileTransfer                 bool   `json:"file_transfer"`
 	// DependencyPreparation permits user-space preparation. The approved mode
 	// determines whether sources are staged offline or fetched through a
 	// controlled HTTPS proxy; it never permits system package installation.

@@ -26,6 +26,11 @@ var _ agentexecution.WorkspaceArchiver = (*Backend)(nil)
 // be quiescent before its caller captures a checkpoint; this method does not
 // freeze running processes on its own.
 func (b *Backend) ExportWorkspace(ctx context.Context, _ agentexecution.Allocation) (io.ReadCloser, error) {
+	if b.dependencyInstallation {
+		if err := b.captureLanguageLedger(ctx); err != nil {
+			return nil, err
+		}
+	}
 	reader, writer := io.Pipe()
 	go func() {
 		archive := tar.NewWriter(writer)

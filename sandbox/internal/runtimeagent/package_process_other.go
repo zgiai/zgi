@@ -9,4 +9,6 @@ import (
 
 func openPackageLedgerFile(root *os.Root) (*os.File, error) { return root.Open(packageLedgerName) }
 
+func openRegularWorkspaceFile(root *os.Root, name string) (*os.File, error) { return root.Open(name) }
+
 func configurePackageProcess(command *exec.Cmd) {}

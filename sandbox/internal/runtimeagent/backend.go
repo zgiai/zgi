@@ -74,6 +74,8 @@ type Backend struct {
 	packageInstalls           sync.WaitGroup
 	packageReplayComplete     bool
 	packageLedgerMu           sync.Mutex
+	languageLedgerMu          sync.Mutex
+	languageLedgerVerified    bool
 	packageQueryPath          string // Empty uses the fixed in-sandbox dpkg-query binary.
 	maxUploadBytes            int64
 	maxDownloadBytes          int64
@@ -256,12 +258,15 @@ func (b *Backend) Close() error {
 
 func (b *Backend) Capabilities(context.Context, agentexecution.Allocation) (agentexecution.RuntimeCapabilities, error) {
 	ledgerVersion := 0
+	languageVersion := 0
 	if b.dependencyInstallation {
 		ledgerVersion = packageLedgerVersion
+		languageVersion = agentexecution.LanguagePackageLedgerVersion
 	}
 	return agentexecution.RuntimeCapabilities{
-		SystemPackageLedgerVersion: ledgerVersion,
-		Shell:                      true, PTY: supportsPTY(), FileTransfer: true, DependencyPreparation: b.dependencyPreparation, DependencyPreparationMode: b.dependencyPreparationMode,
+		SystemPackageLedgerVersion:   ledgerVersion,
+		LanguagePackageLedgerVersion: languageVersion,
+		Shell:                        true, PTY: supportsPTY(), FileTransfer: true, DependencyPreparation: b.dependencyPreparation, DependencyPreparationMode: b.dependencyPreparationMode,
 		DependencyInstallation: b.dependencyInstallation, PackageNetworkMode: b.packageNetworkMode,
 		PackageNetworkEnforced: b.packageNetworkEnforced,
 		NetworkMode:            b.networkMode, EgressProxyAddress: b.egressProxyAddress,
@@ -284,6 +289,9 @@ func (b *Backend) StartJob(ctx context.Context, _ agentexecution.Allocation, spe
 		return nil, fmt.Errorf("prepare session home: %w", err)
 	}
 	if b.dependencyInstallation {
+		if err := b.verifyLanguageLedger(ctx); err != nil {
+			return nil, err
+		}
 		if err := b.replayPackageLedger(ctx); err != nil {
 			return nil, fmt.Errorf("restore package installation ledger: %w", err)
 		}

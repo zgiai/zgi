@@ -513,6 +513,10 @@ func hashRuntimeJobRequest(request runtimeJobRequest) (string, error) {
 }
 
 func runtimeAgentErrorResponse(err error) (int, string, string) {
+	var languageRecovery *languageRecoveryError
+	if errors.As(err, &languageRecovery) {
+		return http.StatusServiceUnavailable, "language_package_recovery_failed", languageRecoveryMessage
+	}
 	var recovery *packageRecoveryError
 	if errors.As(err, &recovery) {
 		return http.StatusServiceUnavailable, "package_recovery_failed", packageRecoveryMessage
