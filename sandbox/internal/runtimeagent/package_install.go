@@ -3,15 +3,11 @@ package runtimeagent
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"regexp"
-	"slices"
 	"strings"
 	"time"
 
@@ -88,15 +84,6 @@ func (b *Backend) acquirePackageInstallation(ctx context.Context) (context.Conte
 	}, nil
 }
 
-type packageLedger struct {
-	Entries []packageLedgerEntry `json:"entries"`
-}
-
-type packageLedgerEntry struct {
-	Args      []string  `json:"args"`
-	Installed time.Time `json:"installed_at"`
-}
-
 // InstallSystemPackages runs the real apt binary as the Runtime Agent's root
 // process. The Job itself never receives root or a writable control socket;
 // the wrapper exposes only this validated command subset.
@@ -118,10 +105,15 @@ func (b *Backend) InstallSystemPackages(ctx context.Context, args []string) (Pac
 		return PackageInstallResult{}, err
 	}
 	defer release()
+	// A retained ledger is untrusted. Reject invalid identity or commands before
+	// allowing a new privileged installation to mutate this environment.
+	if _, err := b.readPackageLedger(); err != nil {
+		return PackageInstallResult{}, &packageRecoveryError{cause: err}
+	}
 	result := b.runAPTWithMetadataRetry(ctx, args)
 	if result.ExitCode == 0 && (args[0] == "install" || args[0] == "download") {
-		if err := b.recordPackageLedger(args); err != nil {
-			return result, fmt.Errorf("record package installation ledger: %w", err)
+		if err := b.recordPackageLedger(ctx, args); err != nil {
+			return result, &packageRecoveryError{cause: fmt.Errorf("installation completed but its ledger could not be recorded: %w", err)}
 		}
 	}
 	return result, nil
@@ -238,116 +230,6 @@ func filteredEnvironment(values []string, keys ...string) []string {
 		filtered = append(filtered, value)
 	}
 	return filtered
-}
-
-func (b *Backend) recordPackageLedger(args []string) error {
-	b.packageLedgerMu.Lock()
-	defer b.packageLedgerMu.Unlock()
-	ledger, err := b.readPackageLedger()
-	if err != nil {
-		return err
-	}
-	for _, entry := range ledger.Entries {
-		if slices.Equal(entry.Args, args) {
-			return nil
-		}
-	}
-	if len(ledger.Entries) >= maxPackageLedgerEntries {
-		return agentexecution.ErrOutputLimit
-	}
-	copyArgs := append([]string(nil), args...)
-	ledger.Entries = append(ledger.Entries, packageLedgerEntry{Args: copyArgs, Installed: time.Now().UTC()})
-	raw, err := json.MarshalIndent(ledger, "", "  ")
-	if err != nil {
-		return err
-	}
-	if len(raw) >= maxPackageLedgerBytes {
-		return agentexecution.ErrOutputLimit
-	}
-	tmp := sessionHomeDirectory + "/.package-ledger-" + rand.Text()
-	file, err := b.workspace.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	defer b.workspace.Remove(tmp)
-	if _, err := file.Write(append(raw, '\n')); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err := errors.Join(file.Sync(), file.Close()); err != nil {
-		return err
-	}
-	return b.workspace.Rename(tmp, packageLedgerName)
-}
-
-func (b *Backend) replayPackageLedger(ctx context.Context) error {
-	ctx, release, err := b.acquirePackageInstallation(ctx)
-	if err != nil {
-		return err
-	}
-	defer release()
-	b.packageLedgerMu.Lock()
-	defer b.packageLedgerMu.Unlock()
-	if b.packageReplayComplete {
-		return nil
-	}
-	ledger, err := b.readPackageLedger()
-	if err != nil {
-		return err
-	}
-	for _, entry := range ledger.Entries {
-		if err := validateAPTArgs(entry.Args); err != nil {
-			return err
-		}
-		result := b.runAPTWithMetadataRetry(ctx, entry.Args)
-		if result.ExitCode != 0 {
-			return fmt.Errorf("replay apt command %v failed: %s", entry.Args, result.Stderr)
-		}
-	}
-	// Failed or canceled replays remain retryable and cannot silently turn
-	// into success on the next Job, as they would with sync.Once.
-	b.packageReplayComplete = true
-	return nil
-}
-
-func (b *Backend) readPackageLedger() (packageLedger, error) {
-	var ledger packageLedger
-	info, err := b.workspace.Lstat(packageLedgerName)
-	if errors.Is(err, os.ErrNotExist) {
-		return ledger, nil
-	}
-	if err != nil {
-		return ledger, err
-	}
-	if !info.Mode().IsRegular() {
-		return ledger, errors.New("package installation ledger must be a regular file")
-	}
-	file, err := openPackageLedgerFile(b.workspace)
-	if err != nil {
-		return ledger, err
-	}
-	defer file.Close()
-	opened, err := file.Stat()
-	if err != nil {
-		return ledger, err
-	}
-	if !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
-		return ledger, errors.New("package installation ledger changed during open")
-	}
-	raw, err := io.ReadAll(io.LimitReader(file, maxPackageLedgerBytes+1))
-	if err != nil {
-		return ledger, err
-	}
-	if len(raw) > maxPackageLedgerBytes {
-		return ledger, agentexecution.ErrOutputLimit
-	}
-	if err := json.Unmarshal(raw, &ledger); err != nil {
-		return ledger, err
-	}
-	if len(ledger.Entries) > maxPackageLedgerEntries {
-		return ledger, agentexecution.ErrOutputLimit
-	}
-	return ledger, nil
 }
 
 // Truncate while draining, not after an unbounded bytes.Buffer has filled.

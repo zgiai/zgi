@@ -74,6 +74,7 @@ type Backend struct {
 	packageInstalls           sync.WaitGroup
 	packageReplayComplete     bool
 	packageLedgerMu           sync.Mutex
+	packageQueryPath          string // Empty uses the fixed in-sandbox dpkg-query binary.
 	maxUploadBytes            int64
 	maxDownloadBytes          int64
 	egressProxyAddress        string
@@ -254,8 +255,13 @@ func (b *Backend) Close() error {
 }
 
 func (b *Backend) Capabilities(context.Context, agentexecution.Allocation) (agentexecution.RuntimeCapabilities, error) {
+	ledgerVersion := 0
+	if b.dependencyInstallation {
+		ledgerVersion = packageLedgerVersion
+	}
 	return agentexecution.RuntimeCapabilities{
-		Shell: true, PTY: supportsPTY(), FileTransfer: true, DependencyPreparation: b.dependencyPreparation, DependencyPreparationMode: b.dependencyPreparationMode,
+		SystemPackageLedgerVersion: ledgerVersion,
+		Shell:                      true, PTY: supportsPTY(), FileTransfer: true, DependencyPreparation: b.dependencyPreparation, DependencyPreparationMode: b.dependencyPreparationMode,
 		DependencyInstallation: b.dependencyInstallation, PackageNetworkMode: b.packageNetworkMode,
 		PackageNetworkEnforced: b.packageNetworkEnforced,
 		NetworkMode:            b.networkMode, EgressProxyAddress: b.egressProxyAddress,

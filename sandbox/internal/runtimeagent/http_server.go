@@ -513,6 +513,10 @@ func hashRuntimeJobRequest(request runtimeJobRequest) (string, error) {
 }
 
 func runtimeAgentErrorResponse(err error) (int, string, string) {
+	var recovery *packageRecoveryError
+	if errors.As(err, &recovery) {
+		return http.StatusServiceUnavailable, "package_recovery_failed", packageRecoveryMessage
+	}
 	switch {
 	case errors.Is(err, agentexecution.ErrNotFound):
 		return http.StatusNotFound, "not_found", "resource not found"

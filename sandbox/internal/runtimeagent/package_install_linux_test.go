@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -15,6 +16,35 @@ import (
 	"testing"
 	"time"
 )
+
+func TestSystemPackageInventoryUsesRealDPKG(t *testing.T) {
+	if _, err := os.Stat("/usr/bin/dpkg-query"); err != nil {
+		t.Skip("Debian system package database unavailable")
+	}
+	backend := packageTestBackend(t)
+	backend.packageQueryPath = ""
+	packages, err := backend.installedSystemPackages(t.Context())
+	if err != nil || len(packages) == 0 {
+		t.Fatalf("real inventory: count=%d error=%v", len(packages), err)
+	}
+	// Validate architecture-independent pin syntax without modifying the image.
+	aptPath := "/usr/bin/apt-get"
+	if _, err := os.Stat("/usr/lib/zgi/apt-get.real"); err == nil {
+		aptPath = "/usr/lib/zgi/apt-get.real"
+	}
+	for _, pkg := range packages {
+		if pkg.Architecture != "all" {
+			continue
+		}
+		output, err := exec.CommandContext(t.Context(), aptPath, "--simulate", "install", pkg.key()+"="+pkg.Version).CombinedOutput()
+		if err != nil {
+			t.Fatalf("architecture-independent pin %s: %v: %s", pkg.key(), err, output)
+		}
+		t.Logf("real inventory count=%d; all-architecture pin %s accepted", len(packages), pkg.key())
+		return
+	}
+	t.Logf("real inventory count=%d; no architecture-independent package", len(packages))
+}
 
 func TestPackageTimeoutAndCancellationKillDescendants(t *testing.T) {
 	for _, cancelRequest := range []bool{false, true} {
@@ -116,6 +146,10 @@ func TestAPTMetadataRetryAndReplayUseControlledSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("ZGI_RUNTIME_AGENT_APT_PATH", helper)
+	query := "#!/bin/sh\nif [ -f '" + metadata + "' ]; then printf 'tree\\tamd64\\t2.1.0-1\\tinstalled\\n'; fi\n"
+	if err := os.WriteFile(backend.packageQueryPath, []byte(query), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	result, err := backend.InstallSystemPackages(t.Context(), []string{"install", "tree"})
 	if err != nil || result.ExitCode != 0 || !strings.Contains(result.Stdout, "metadata refreshed") {
 		t.Fatalf("first install=%+v error=%v", result, err)

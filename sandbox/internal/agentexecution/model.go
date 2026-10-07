@@ -181,11 +181,15 @@ type JobResult struct {
 	TerminationFailed bool `json:"termination_failed,omitempty"`
 }
 
+// SystemPackageLedgerVersion is the fixed-version system package recovery contract.
+const SystemPackageLedgerVersion = 2
+
 type RuntimeCapabilities struct {
-	PackageSourceDigest string `json:"package_source_digest,omitempty"`
-	Shell               bool   `json:"shell"`
-	PTY                 bool   `json:"pty"`
-	FileTransfer        bool   `json:"file_transfer"`
+	SystemPackageLedgerVersion int    `json:"system_package_ledger_version,omitempty"`
+	PackageSourceDigest        string `json:"package_source_digest,omitempty"`
+	Shell                      bool   `json:"shell"`
+	PTY                        bool   `json:"pty"`
+	FileTransfer               bool   `json:"file_transfer"`
 	// DependencyPreparation permits user-space preparation. The approved mode
 	// determines whether sources are staged offline or fetched through a
 	// controlled HTTPS proxy; it never permits system package installation.

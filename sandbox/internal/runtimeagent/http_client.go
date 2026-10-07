@@ -417,6 +417,8 @@ func decodeRuntimeResponse(response *http.Response, target any) error {
 
 func runtimeAgentClientError(code string) error {
 	switch code {
+	case "package_recovery_failed":
+		return fmt.Errorf("%w: %s", agentexecution.ErrBackendUnavailable, packageRecoveryMessage)
 	case "not_found":
 		return agentexecution.ErrNotFound
 	case "invalid_request":

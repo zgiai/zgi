@@ -26,6 +26,10 @@ func packageTestBackend(t *testing.T) *Backend {
 	if err := backend.workspace.MkdirAll(sessionHomeDirectory, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	backend.packageQueryPath = filepath.Join(t.TempDir(), "dpkg-query-fixture")
+	if err := os.WriteFile(backend.packageQueryPath, []byte("#!/bin/sh\nprintf 'tree\\tamd64\\t2.1.0-1\\tinstalled\\npoppler-utils\\tamd64\\t22.12.0-2\\tinstalled\\n'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	return backend
 }
 
@@ -45,6 +49,8 @@ func TestValidateAPTArgs(t *testing.T) {
 		{"install", "https://example.invalid/a.deb"},
 		{"install", "git+https://example.invalid/repo"},
 		{"install", "-o", "Dir=/"},
+		{"install", "--allow-downgrades", "tree"},
+		{"install", "tree:amd64=2.1.0-1"},
 	} {
 		if err := validateAPTArgs(args); err == nil {
 			t.Errorf("validateAPTArgs(%v) accepted an unsafe request", args)
@@ -62,7 +68,7 @@ func TestPackageLedgerRejectsSymlink(t *testing.T) {
 	if err := os.Symlink(outside, ledger); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	if err := backend.recordPackageLedger([]string{"install", "poppler-utils"}); err == nil {
+	if err := backend.recordPackageLedger(t.Context(), []string{"install", "poppler-utils"}); err == nil {
 		t.Fatal("package ledger symlink was accepted")
 	}
 }
@@ -139,7 +145,7 @@ func TestPackageQueueWaitIsCancelableAndCloseJoinsOwner(t *testing.T) {
 func TestPackageLedgerIsBoundedAtomicAndDeduplicated(t *testing.T) {
 	backend := packageTestBackend(t)
 	for range 2 {
-		if err := backend.recordPackageLedger([]string{"install", "tree"}); err != nil {
+		if err := backend.recordPackageLedger(t.Context(), []string{"download", "tree"}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -164,7 +170,7 @@ func TestPackageLedgerParentCannotEscapeWorkspace(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(backend.workspaceName, sessionHomeDirectory)); err != nil {
 		t.Skipf("symlink: %v", err)
 	}
-	if err := backend.recordPackageLedger([]string{"install", "tree"}); err == nil {
+	if err := backend.recordPackageLedger(t.Context(), []string{"install", "tree"}); err == nil {
 		t.Fatal("ledger parent escaped workspace")
 	}
 	entries, err := os.ReadDir(outside)
