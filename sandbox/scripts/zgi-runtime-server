@@ -1,0 +1,313 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# The Worker and ctr select the gVisor shim explicitly. Never modify CRI or
+# restart shared containerd, and never fall back to runc.
+DRY_RUN=false
+SETTINGS_FILE=''
+ROLLBACK_DIR=''
+log() { printf '%s\n' "zgi-runtime: $*"; }
+die() { printf '%s\n' "zgi-runtime: error: $*" >&2; exit 1; }
+check_command() { command -v "$1" >/dev/null || die "required command is missing: $1"; }
+run() { if "$DRY_RUN"; then printf '+ '; printf '%q ' "$@"; printf '\n'; else "$@"; fi; }
+usage() {
+  printf '%s\n' 'Usage: zgi-runtime-server <command> [--config settings.json] [--dry-run]'
+  printf '%s\n' 'Commands: preflight doctor host-install install smoke rollback'
+  printf '%s\n' 'host-install verifies the host/image/shim without changing containerd.'
+  printf '%s\n' 'install verifies Worker health; rollback restores only the last Worker installation.'
+  printf '%s\n' 'Required: ZGI_AGENT_RUNTIME_IMAGE_REF (immutable sha256 digest), ZGI_AGENT_RUNTIME_WORKER_SOURCE,'
+  printf '%s\n' '          ZGI_AGENT_RUNTIME_API_KEY, ZGI_AGENT_RUNTIME_DATABASE_URL.'
+  printf '%s\n' 'Optional: ZGI_AGENT_RUNTIME_IMAGE_ARCHIVE, ZGI_AGENT_RUNTIME_CONTAINERD_ADDRESS,'
+  printf '%s\n' '          ZGI_AGENT_RUNTIME_SERVICE_NAME, ZGI_AGENT_RUNTIME_PROFILES_JSON, ZGI_AGENT_RUNTIME_LISTEN.'
+}
+parse_args() {
+  command="${1:-doctor}"
+  shift || true
+  while (($#)); do
+    case "$1" in
+      --dry-run) DRY_RUN=true ;;
+      --config) (($# >= 2)) || die '--config requires a file'; SETTINGS_FILE="$2"; shift ;;
+      *) die "unknown option: $1" ;;
+    esac
+    shift
+  done
+  case "$command" in -h|--help) usage; exit 0 ;; esac
+}
+load_settings() {
+  [[ -n "$SETTINGS_FILE" ]] || return 0
+  check_command jq
+  [[ -f "$SETTINGS_FILE" && ! -L "$SETTINGS_FILE" ]] || die 'settings must be a regular file'
+  [[ "$(stat -c %u "$SETTINGS_FILE")" == "$(id -u)" ]] || die 'settings must be owned by the invoking user'
+  (( (8#$(stat -c %a "$SETTINGS_FILE") & 077) == 0 )) || die 'settings must not be group/world accessible (chmod 600)'
+  (( $(stat -c %s "$SETTINGS_FILE") <= 1048576 )) || die 'settings exceed 1 MiB'
+  jq -e 'type == "object" and all(to_entries[]; (.key | test("^ZGI_AGENT_RUNTIME_[A-Z0-9_]+$")) and (.value | type == "string" and (explode | all(. >= 32 and . != 127))))' "$SETTINGS_FILE" >/dev/null 2>&1 || die 'settings must contain runtime strings without control characters'
+  local key value
+  local keys='API_KEY|DATABASE_URL|BACKEND|CONTAINERD_ADDRESS|CONTAINERD_NAMESPACE|SERVICE_NAME|ENV_FILE|UNIT_FILE|STATE_DIR|ROOT|CHECKPOINT_DIR|WORKER_BINARY|WORKER_SOURCE|IMAGE_REF|IMAGE_ARCHIVE|LISTEN|HEALTH_TIMEOUT_SECONDS|SMOKE_TIMEOUT_SECONDS|PROFILES_JSON|WORKER_ID|MAX_WORKERS|IDLE_TTL_SECONDS|SHUTDOWN_TIMEOUT_SECONDS|STARTUP_TIMEOUT_SECONDS|MEMORY_BYTES|PIDS|CPU_PERIOD|CPU_QUOTA|PYPI_INDEX_URL|NPM_REGISTRY_URL|APT_MIRROR_URL|APT_SECURITY_MIRROR_URL|PACKAGE_SOURCE_CHECK'
+  while IFS= read -r -d '' key && IFS= read -r -d '' value; do
+    [[ "$key" =~ ^ZGI_AGENT_RUNTIME_($keys)$ ]] || die "unsupported setting: $key"
+    export "$key=$value"
+  done \
+    < <(jq -j 'to_entries[] | .key,"\u0000",.value,"\u0000"' "$SETTINGS_FILE")
+}
+initialize() {
+  ADDRESS="${ZGI_AGENT_RUNTIME_CONTAINERD_ADDRESS:-/run/containerd/containerd.sock}"
+  NAMESPACE="${ZGI_AGENT_RUNTIME_CONTAINERD_NAMESPACE:-zgi-agent-runtime}"
+  [[ "$NAMESPACE" == zgi-agent-runtime ]] || die 'Worker namespace is fixed to zgi-agent-runtime'
+  SERVICE="${ZGI_AGENT_RUNTIME_SERVICE_NAME:-zgi-agent-runtime.service}"
+  [[ "$SERVICE" =~ ^zgi-agent-runtime(-[a-z0-9-]+)?\.service$ ]] || die 'invalid Worker service name'
+  ENV_FILE="${ZGI_AGENT_RUNTIME_ENV_FILE:-/etc/zgi-agent-runtime/runtime.env}"
+  [[ "$ENV_FILE" == *.env ]] || die 'Worker environment filename must end in .env'
+  UNIT_FILE="${ZGI_AGENT_RUNTIME_UNIT_FILE:-/etc/systemd/system/$SERVICE}"
+  [[ "${UNIT_FILE##*/}" == "$SERVICE" ]] || die 'unit filename must match service name'
+  STATE_DIR="${ZGI_AGENT_RUNTIME_STATE_DIR:-${ZGI_AGENT_RUNTIME_ROOT:-/var/lib/zgi-ar}}"
+  case "$STATE_DIR" in /etc|/var|/var/lib|/var/tmp|/tmp|/usr|/usr/local|/opt|/run|/home|/root) die 'runtime state must be a dedicated directory, not a shared system root' ;; esac
+  [[ -z "${ZGI_AGENT_RUNTIME_ROOT:-}" || "$ZGI_AGENT_RUNTIME_ROOT" == "$STATE_DIR" ]] || die 'ROOT and STATE_DIR must refer to the same directory'
+  CHECKPOINT_DIR="${ZGI_AGENT_RUNTIME_CHECKPOINT_DIR:-$STATE_DIR/checkpoints}"
+  WORKER_BINARY="${ZGI_AGENT_RUNTIME_WORKER_BINARY:-/usr/local/bin/zgi-agent-runtime-worker}"
+  case "${WORKER_BINARY##*/}" in zgi-agent-runtime-worker|agentworker|worker) ;; *) die 'installed binary must have a dedicated Worker filename' ;; esac
+  IMAGE_REF="${ZGI_AGENT_RUNTIME_IMAGE_REF:-}"
+  IMAGE_ARCHIVE="${ZGI_AGENT_RUNTIME_IMAGE_ARCHIVE:-}"
+  LISTEN="${ZGI_AGENT_RUNTIME_LISTEN:-127.0.0.1:2670}"
+  [[ "$LISTEN" =~ ^127\.0\.0\.1:([0-9]{1,5})$ ]] || die 'installer requires a loopback listener; use an approved private gateway for remote access'
+  PORT="${BASH_REMATCH[1]}"
+  ((10#$PORT > 0 && 10#$PORT <= 65535)) || die 'invalid listener port'
+  [[ "${ZGI_AGENT_RUNTIME_BACKEND:-local-gvisor}" == local-gvisor ]] || die 'installer supports local-gvisor only'
+  [[ -z "${ZGI_AGENT_RUNTIME_CHECKPOINT_S3_BUCKET:-}" ]] || die 'this installer uses local checkpoints; S3 requires separate deployment configuration'
+  local target
+  for target in "$ENV_FILE" "$UNIT_FILE" "$STATE_DIR" "$WORKER_BINARY" "$CHECKPOINT_DIR" "$ADDRESS"; do
+    [[ "$target" =~ ^/[A-Za-z0-9_./-]+$ && "$target" != / ]] || die 'deployment paths must be safe absolute paths'
+    [[ "$(realpath -m "$target")" == "$target" ]] || die 'deployment paths must not traverse symlinks or noncanonical components'
+  done
+  [[ "$STATE_DIR" != /home/* && "$STATE_DIR" != /root/* && "$WORKER_BINARY" != /root/* && "$WORKER_BINARY" != /home/* ]] || die 'runtime state and installed binary must be outside protected home directories'
+  [[ "$CHECKPOINT_DIR" == "$STATE_DIR/"* ]] || die 'local checkpoints must be inside runtime state'
+  [[ "$ENV_FILE" != "$UNIT_FILE" && "$ENV_FILE" != "$WORKER_BINARY" && "$UNIT_FILE" != "$WORKER_BINARY" ]] || die 'installation file targets must be distinct'
+  [[ ${#STATE_DIR} -le 28 ]] || die 'runtime state path exceeds 28 bytes; shorten it to fit Unix sockets'
+  HEALTH_TIMEOUT="${ZGI_AGENT_RUNTIME_HEALTH_TIMEOUT_SECONDS:-45}"
+  SMOKE_TIMEOUT="${ZGI_AGENT_RUNTIME_SMOKE_TIMEOUT_SECONDS:-45}"
+  [[ "$HEALTH_TIMEOUT" =~ ^[1-9][0-9]*$ && "$SMOKE_TIMEOUT" =~ ^[1-9][0-9]*$ ]] || die 'positive health/smoke timeouts required'
+  ((HEALTH_TIMEOUT <= 600 && SMOKE_TIMEOUT <= 600)) || die 'health/smoke timeouts exceed 600 seconds'
+}
+ctr_runtime() { ctr --address "$ADDRESS" --namespace "$NAMESPACE" "$@"; }
+require_root() { [[ "$(id -u)" == 0 ]] || die 'install/rollback require root'; }
+preflight() {
+  [[ "$(uname -s)" == Linux && "$(uname -m)" == x86_64 ]] || die 'Linux x86_64 is required'
+  [[ -f /sys/fs/cgroup/cgroup.controllers ]] || die 'cgroup v2 is required'
+  local tool
+  for tool in ctr runsc containerd containerd-shim-runsc-v1 systemctl timeout curl jq flock realpath stat ss; do check_command "$tool"; done
+  [[ -S "$ADDRESS" ]] || die 'configured containerd socket is unavailable'
+  ctr_runtime version >/dev/null || die 'configured containerd daemon is unreachable'
+  log 'preflight passed; shared containerd will not be modified or restarted'
+}
+validate_image_ref() {
+  [[ "$IMAGE_REF" =~ ^[A-Za-z0-9._:/-]+@sha256:[a-f0-9]{64}$ ]] || die 'image reference must include an immutable sha256 digest'
+}
+ensure_image_reference() {
+  validate_image_ref
+  "$DRY_RUN" && return 0
+  local listing source digest
+  listing="$(ctr_runtime images list)"
+  digest="${IMAGE_REF##*@}"
+  if awk -v name="$IMAGE_REF" -v digest="$digest" '$1 == name && $3 == digest {found=1} END {exit !found}' <<<"$listing"; then return 0; fi
+  source="$(awk -v digest="$digest" '$3 == digest {print $1; exit}' <<<"$listing")"
+  [[ -n "$source" ]] || die 'approved image digest is not preloaded in configured socket/namespace'
+  run ctr --address "$ADDRESS" --namespace "$NAMESPACE" images tag "$source" "$IMAGE_REF"
+}
+import_image() {
+  validate_image_ref
+  if [[ -n "$IMAGE_ARCHIVE" ]]; then
+    [[ -f "$IMAGE_ARCHIVE" && ! -L "$IMAGE_ARCHIVE" ]] || die 'image archive must be a regular file'
+    if [[ "$IMAGE_ARCHIVE" == *.zst ]]; then
+      check_command zstd
+      if "$DRY_RUN"; then log 'would import compressed archive into configured socket/namespace';
+      else zstd -d -c "$IMAGE_ARCHIVE" | ctr_runtime images import --digests -; fi
+    else run ctr --address "$ADDRESS" --namespace "$NAMESPACE" images import --digests "$IMAGE_ARCHIVE"; fi
+  fi
+  ensure_image_reference
+}
+smoke() {
+  validate_image_ref
+  check_command ctr
+  local id="zgi-runtime-smoke-$$" status
+  # Expanded inside the sandbox, not on the host.
+  # shellcheck disable=SC2016
+  local args=(--address "$ADDRESS" --namespace "$NAMESPACE" run --rm --runtime io.containerd.runsc.v1
+    --annotation io.kubernetes.cri.container-type=sandbox --user 65532:65532
+    --memory-limit 268435456 --cpus 1 "$IMAGE_REF" "$id" sh -ec 'test "$(id -u)" = 65532; python --version; node --version; echo zgi-runsc-ok')
+  if "$DRY_RUN"; then run timeout "$SMOKE_TIMEOUT" ctr "${args[@]}"; return; fi
+  if timeout "$SMOKE_TIMEOUT" ctr "${args[@]}"; then log 'gVisor smoke passed'; return; else status=$?; fi
+  ctr_runtime tasks kill --signal SIGKILL "$id" >/dev/null 2>&1 || true
+  ctr_runtime tasks rm "$id" >/dev/null 2>&1 || true
+  ctr_runtime containers rm "$id" >/dev/null 2>&1 || true
+  die "gVisor smoke failed (exit $status); Worker not enabled"
+}
+health() {
+  local pid
+  systemctl is-active --quiet "$SERVICE" || return 1
+  pid="$(systemctl show --property MainPID --value "$SERVICE")"
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  ss -H -lntp "sport = :$PORT" | grep -F "pid=$pid," >/dev/null || return 1
+  curl --noproxy '*' --fail --silent --max-time 2 "http://$LISTEN/health" >/dev/null
+}
+wait_healthy() {
+  local deadline=$((SECONDS + HEALTH_TIMEOUT))
+  while ((SECONDS < deadline)); do if health; then return 0; fi; sleep 1; done
+  return 1
+}
+environment_line() {
+  local key="$1" value="$2"
+  [[ "$value" != *$'\n'* && "$value" != *$'\r'* ]] || die 'environment values must not contain newlines'
+  value="${value//\\/\\\\}"; value="${value//\"/\\\"}"
+  value="${value//\$/\\\$}"; value="${value//\`/\\\`}"
+  printf '%s="%s"\n' "$key" "$value"
+}
+prepare_environment() {
+  [[ -n "${ZGI_AGENT_RUNTIME_API_KEY:-}" && -n "${ZGI_AGENT_RUNTIME_DATABASE_URL:-}" ]] || die 'Worker API key and database URL are required'
+  PROFILES="${ZGI_AGENT_RUNTIME_PROFILES_JSON:-}"
+  if [[ -z "$PROFILES" ]]; then
+    PROFILES="$(jq -cn --arg image "$IMAGE_REF" '{"cc-codex-standard":{image:$image,dependency_installation:true,package_network_mode:"package-install",egress_allowed_hosts:["pypi.org","files.pythonhosted.org","registry.npmjs.org","deb.debian.org","security.debian.org"]}}')"
+    local key url host
+    for key in ZGI_AGENT_RUNTIME_PYPI_INDEX_URL ZGI_AGENT_RUNTIME_NPM_REGISTRY_URL ZGI_AGENT_RUNTIME_APT_MIRROR_URL ZGI_AGENT_RUNTIME_APT_SECURITY_MIRROR_URL; do
+      url="${!key:-}"
+      [[ -n "$url" ]] || continue
+      [[ "$url" =~ ^https://[A-Za-z0-9.-]+(/[^[:space:]]*)?$ ]] || die 'package mirrors must be HTTPS URLs without credentials or custom ports'
+      host="${url#https://}"; host="${host%%/*}"
+      PROFILES="$(jq -c --arg host "$host" '.["cc-codex-standard"].egress_allowed_hosts += [$host] | .["cc-codex-standard"].egress_allowed_hosts |= unique' <<<"$PROFILES")"
+    done
+  fi
+  jq -e --arg image "$IMAGE_REF" 'type == "object" and length > 0 and all(.[]; .image == $image)' <<<"$PROFILES" >/dev/null 2>&1 || die 'every local Profile must use approved image digest'
+}
+write_worker_env() {
+  local destination="$1" key
+  printf '%s\n' '# Managed by zgi-runtime-server; systemd EnvironmentFile, not a shell script.' >"$destination"
+  {
+    environment_line ZGI_AGENT_RUNTIME_BACKEND local-gvisor
+    environment_line ZGI_AGENT_RUNTIME_ROOT "$STATE_DIR"
+    environment_line ZGI_AGENT_RUNTIME_CHECKPOINT_DIR "$CHECKPOINT_DIR"
+    environment_line ZGI_AGENT_RUNTIME_CONTAINERD_ADDRESS "$ADDRESS"
+    environment_line ZGI_AGENT_RUNTIME_LISTEN "$LISTEN"
+    environment_line ZGI_AGENT_RUNTIME_PROFILES_JSON "$PROFILES"
+  } >>"$destination"
+  for key in ZGI_AGENT_RUNTIME_API_KEY ZGI_AGENT_RUNTIME_DATABASE_URL ZGI_AGENT_RUNTIME_WORKER_ID \
+    ZGI_AGENT_RUNTIME_MAX_WORKERS ZGI_AGENT_RUNTIME_IDLE_TTL_SECONDS ZGI_AGENT_RUNTIME_SHUTDOWN_TIMEOUT_SECONDS \
+    ZGI_AGENT_RUNTIME_STARTUP_TIMEOUT_SECONDS ZGI_AGENT_RUNTIME_MEMORY_BYTES ZGI_AGENT_RUNTIME_PIDS \
+    ZGI_AGENT_RUNTIME_CPU_PERIOD ZGI_AGENT_RUNTIME_CPU_QUOTA ZGI_AGENT_RUNTIME_PYPI_INDEX_URL \
+    ZGI_AGENT_RUNTIME_NPM_REGISTRY_URL ZGI_AGENT_RUNTIME_APT_MIRROR_URL \
+    ZGI_AGENT_RUNTIME_APT_SECURITY_MIRROR_URL ZGI_AGENT_RUNTIME_PACKAGE_SOURCE_CHECK; do
+    [[ ! -v "$key" ]] || environment_line "$key" "${!key}" >>"$destination"
+  done
+}
+write_worker_unit() {
+  printf '%s\n' '# Managed by zgi-runtime-server' '[Unit]' 'Description=ZGI Agent Runtime Worker' \
+    'After=network-online.target' 'Wants=network-online.target' '' '[Service]' 'Type=simple' \
+    "EnvironmentFile=$ENV_FILE" "ExecStart=$WORKER_BINARY" 'Restart=on-failure' 'RestartSec=5s' \
+    'TimeoutStopSec=90s' 'KillMode=mixed' 'UMask=0077' 'NoNewPrivileges=true' \
+    'ProtectSystem=strict' 'ProtectHome=true' "ReadWritePaths=$STATE_DIR" 'PrivateTmp=true' \
+    '' '[Install]' 'WantedBy=multi-user.target' >"$1"
+}
+deployment_lock() {
+  [[ ! -L "$STATE_DIR/deployments" && ! -L "$STATE_DIR/deployments/lock" && ! -L "$STATE_DIR/deployments/previous" ]] || die 'deployment state must not be symlinked'
+  mkdir -p "$STATE_DIR/deployments"; chmod 700 "$STATE_DIR/deployments"
+  exec 9>"$STATE_DIR/deployments/lock"
+  flock -n 9 || die 'another deployment operation is active'
+}
+snapshot_installation() {
+  local target label
+  for label in env unit worker; do
+    case "$label" in env) target="$ENV_FILE" ;; unit) target="$UNIT_FILE" ;; worker) target="$WORKER_BINARY" ;; esac
+    [[ ! -f "$target" ]] || cp -p "$target" "$ROLLBACK_DIR/$label"
+  done
+  jq -n --arg service "$SERVICE" --arg env "$ENV_FILE" --arg unit "$UNIT_FILE" --arg worker "$WORKER_BINARY" \
+    --arg active "$(systemctl is-active "$SERVICE" || true)" --arg enabled "$(systemctl is-enabled "$SERVICE" || true)" \
+    '{service:$service,env:$env,unit:$unit,worker:$worker,active:$active,enabled:$enabled}' >"$ROLLBACK_DIR/state.json"
+  printf '%s\n' "$ROLLBACK_DIR" >"$STATE_DIR/deployments/previous"
+}
+restore_installation() {
+  local saved="$1" target label
+  [[ -d "$saved" && ! -L "$saved" && "$saved" == "$STATE_DIR/deployments/release."* && "$(realpath -m "$saved")" == "$saved" ]] || die 'invalid rollback directory'
+  jq -e --arg service "$SERVICE" --arg env "$ENV_FILE" --arg unit "$UNIT_FILE" --arg worker "$WORKER_BINARY" \
+    '.service == $service and .env == $env and .unit == $unit and .worker == $worker' "$saved/state.json" >/dev/null || die 'rollback targets differ from current configuration'
+  if [[ -f "$saved/restored" ]]; then log 'installation already rolled back; no services changed'; return; fi
+  [[ ! -f "$UNIT_FILE" ]] || systemctl stop "$SERVICE"
+  for label in env unit worker; do
+    case "$label" in env) target="$ENV_FILE" ;; unit) target="$UNIT_FILE" ;; worker) target="$WORKER_BINARY" ;; esac
+    if [[ -f "$saved/$label" && ! -L "$saved/$label" ]]; then install -p -m "$(stat -c %a "$saved/$label")" "$saved/$label" "$target"; fi
+  done
+  systemctl daemon-reload
+  if [[ "$(jq -r .enabled "$saved/state.json")" == enabled ]]; then systemctl enable "$SERVICE";
+  elif [[ "$(jq -r .enabled "$saved/state.json")" == enabled-runtime ]]; then systemctl enable --runtime "$SERVICE";
+  elif [[ -f "$UNIT_FILE" ]]; then systemctl disable "$SERVICE"; fi
+  if [[ "$(jq -r .active "$saved/state.json")" == active ]]; then
+    systemctl start "$SERVICE"
+    wait_healthy || die 'previous Worker restored but unhealthy; inspect private journal'
+  fi
+  touch "$saved/restored"
+  log 'rollback completed; shared containerd, workspace files, checkpoints and backups retained'
+}
+install_worker() {
+  require_root; preflight; validate_image_ref; prepare_environment
+  local source="${ZGI_AGENT_RUNTIME_WORKER_SOURCE:-}" target prepared
+  [[ -f "$source" && ! -L "$source" && -x "$source" ]] || die 'an executable regular Worker source is required'
+  for target in "$ENV_FILE" "$UNIT_FILE" "$WORKER_BINARY"; do [[ ! -e "$target" || -f "$target" ]] || die 'installation target must be regular'; done
+  if [[ -f "$UNIT_FILE" ]]; then grep -Fxq '# Managed by zgi-runtime-server' "$UNIT_FILE" || die 'refusing to overwrite unmanaged service'; fi
+  if [[ -f "$ENV_FILE" && -f "$UNIT_FILE" ]]; then
+    grep -Fxq "$(environment_line ZGI_AGENT_RUNTIME_LISTEN "$LISTEN")" "$ENV_FILE" || die 'changing installed listener requires a separate service deployment'
+    grep -Fxq "$(environment_line ZGI_AGENT_RUNTIME_ROOT "$STATE_DIR")" "$ENV_FILE" || die 'changing installed workspace root requires a separate service deployment'
+  fi
+  if [[ -n "$(ss -H -lnt "sport = :$PORT")" ]]; then health || die 'listener occupied by another service'; fi
+  import_image; smoke
+  if "$DRY_RUN"; then log 'would snapshot Worker, write private environment/unit, start and verify health; secrets suppressed'; return; fi
+  deployment_lock
+  mkdir -p "$(dirname "$ENV_FILE")" "$(dirname "$UNIT_FILE")" "$(dirname "$WORKER_BINARY")" "$CHECKPOINT_DIR"
+  chmod 700 "$CHECKPOINT_DIR"
+  ROLLBACK_DIR="$(mktemp -d "$STATE_DIR/deployments/release.XXXXXXXX")"
+  prepared="$ROLLBACK_DIR/prepared"; mkdir -m 700 "$prepared"
+  write_worker_env "$prepared/env"; chmod 600 "$prepared/env"
+  write_worker_unit "$prepared/unit"; chmod 644 "$prepared/unit"
+  if cmp -s "$source" "$WORKER_BINARY" && cmp -s "$prepared/env" "$ENV_FILE" && cmp -s "$prepared/unit" "$UNIT_FILE" && health; then
+    log 'installation unchanged and healthy; previous rollback point retained'; return
+  fi
+  snapshot_installation
+  trap 'status=$?; trap - EXIT; if ((status != 0)); then restore_installation "$ROLLBACK_DIR"; fi; exit "$status"' EXIT
+  [[ ! -f "$UNIT_FILE" ]] || systemctl stop "$SERVICE"
+  local tmp
+  for target in "$ENV_FILE" "$WORKER_BINARY" "$UNIT_FILE"; do
+    tmp="$(mktemp "${target}.XXXXXXXX")"
+    case "$target" in
+      "$ENV_FILE") install -m 600 "$prepared/env" "$tmp" ;;
+      "$WORKER_BINARY") install -m 755 "$source" "$tmp" ;;
+      "$UNIT_FILE") install -m 644 "$prepared/unit" "$tmp" ;;
+    esac
+    mv "$tmp" "$target"
+  done
+  systemctl daemon-reload; systemctl enable "$SERVICE"; systemctl start "$SERVICE"
+  wait_healthy || die 'Worker health failed; restoring previous installation'
+  trap - EXIT
+  log 'installation healthy; rollback retained; no containerd restart'
+}
+doctor() {
+  preflight; validate_image_ref
+  ctr_runtime images list | awk -v name="$IMAGE_REF" -v digest="${IMAGE_REF##*@}" '$1 == name && $3 == digest {found=1} END {exit !found}' || die 'approved image reference/digest is not preloaded'
+  [[ -x "$WORKER_BINARY" && -f "$ENV_FILE" && -f "$UNIT_FILE" ]] || die 'Worker binary/environment/unit not installed'
+  (( (8#$(stat -c %a "$ENV_FILE") & 077) == 0 )) || die 'Worker environment must not be group/world accessible'
+  health || die 'Worker service/health check failed'
+  log 'doctor passed: image, service and database-backed health verified'
+}
+main() {
+  parse_args "$@"; load_settings; initialize
+  case "$command" in
+    preflight) preflight ;;
+    doctor) doctor ;;
+    host-install) preflight; import_image; smoke ;;
+    install) install_worker ;;
+    smoke) smoke ;;
+    rollback)
+      require_root
+      if "$DRY_RUN"; then log 'would restore only recorded Worker inputs; no containerd restart'; return; fi
+      deployment_lock
+      [[ -f "$STATE_DIR/deployments/previous" && ! -L "$STATE_DIR/deployments/previous" ]] || die 'no installation snapshot recorded'
+      restore_installation "$(<"$STATE_DIR/deployments/previous")"
+      ;;
+    *) usage; die "unknown command: $command" ;;
+  esac
+}
+main "$@"

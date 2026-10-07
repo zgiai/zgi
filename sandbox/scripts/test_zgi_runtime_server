@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+set -euo pipefail
+script="$(cd "$(dirname "$0")" && pwd)/zgi-runtime-server"
+bash -n "$script"
+help_output="$(bash "$script" --help)"
+grep -q 'preflight' <<<"$help_output"
+grep -q 'ZGI_AGENT_RUNTIME_IMAGE_ARCHIVE' <<<"$help_output"
+invalid_output="$(ZGI_AGENT_RUNTIME_IMAGE_REF='registry.example/zgi/agent-runtime:latest' bash "$script" smoke 2>&1 || true)"
+grep -q 'immutable sha256 digest' <<<"$invalid_output"
+
+# Mock only host commands. Never contact a real containerd or systemd daemon.
+for tool in jq python3; do command -v "$tool" >/dev/null || { echo "test requires $tool" >&2; exit 1; }; done
+test_dir="$(mktemp -d /tmp/zgi-t.XXXXXX)"
+trap 'rm -rf -- "$test_dir"' EXIT
+mkdir "$test_dir/bin" "$test_dir/runtime"
+export ZGI_TEST_ROOT="$test_dir"
+python3 - "$test_dir/containerd.sock" <<'PY'
+import socket,sys
+s=socket.socket(socket.AF_UNIX);s.bind(sys.argv[1]);s.close()
+PY
+cat >"$test_dir/bin/host-command" <<'SH'
+#!/usr/bin/env bash
+set -eu
+name="${0##*/}"
+printf '%s ' "$name" >>"$ZGI_TEST_ROOT/calls"
+printf '%q ' "$@" >>"$ZGI_TEST_ROOT/calls"; printf '\n' >>"$ZGI_TEST_ROOT/calls"
+case "$name" in
+  id) if [[ "$*" == -u ]]; then echo 0; else /usr/bin/id "$@"; fi ;;
+  stat) if [[ "$*" == '-c %u '* ]]; then echo 0; else /usr/bin/stat "$@"; fi ;;
+  ctr)
+    if [[ "$*" == *'images list'* ]]; then printf 'REF TYPE DIGEST\n%s index %s\n' "$ZGI_AGENT_RUNTIME_IMAGE_REF" "${ZGI_AGENT_RUNTIME_IMAGE_REF##*@}"; fi
+    if [[ "$*" == *' run '* && -f "$ZGI_TEST_ROOT/smoke-fail" ]]; then exit 124; fi
+    ;;
+  systemctl)
+    action="$1"
+    case "$action" in
+      is-active) [[ -f "$ZGI_TEST_ROOT/active" ]] || exit 3; [[ "$*" == *--quiet* ]] || echo active ;;
+      is-enabled) if [[ -f "$ZGI_TEST_ROOT/enabled" ]]; then echo enabled; else echo disabled; exit 1; fi ;;
+      show) echo 88899 ;;
+      stop) rm -f "$ZGI_TEST_ROOT/active" ;;
+      start) touch "$ZGI_TEST_ROOT/active" ;;
+      enable) touch "$ZGI_TEST_ROOT/enabled" ;;
+      disable) rm -f "$ZGI_TEST_ROOT/enabled" ;;
+    esac
+    ;;
+  ss) [[ ! -f "$ZGI_TEST_ROOT/active" ]] || echo 'LISTEN 127.0.0.1:2679 users:(("worker",pid=88899,fd=3))' ;;
+  curl)
+    [[ ! -f "$ZGI_TEST_ROOT/health-fail" ]] || exit 22
+    if grep -Fxq 'exit 2' "$ZGI_AGENT_RUNTIME_WORKER_BINARY"; then exit 22; fi
+    ;;
+esac
+SH
+chmod +x "$test_dir/bin/host-command"
+for tool in ctr containerd runsc containerd-shim-runsc-v1 systemctl ss curl id stat; do ln -s host-command "$test_dir/bin/$tool"; done
+export PATH="$test_dir/bin:$PATH"
+export ZGI_AGENT_RUNTIME_CONTAINERD_ADDRESS="$test_dir/containerd.sock"
+export ZGI_AGENT_RUNTIME_STATE_DIR="$test_dir/runtime"
+export ZGI_AGENT_RUNTIME_SERVICE_NAME=zgi-agent-runtime-test.service
+export ZGI_AGENT_RUNTIME_UNIT_FILE="$test_dir/zgi-agent-runtime-test.service"
+export ZGI_AGENT_RUNTIME_ENV_FILE="$test_dir/runtime.env"
+export ZGI_AGENT_RUNTIME_WORKER_BINARY="$test_dir/worker"
+export ZGI_AGENT_RUNTIME_WORKER_SOURCE="$test_dir/source"
+ZGI_AGENT_RUNTIME_IMAGE_REF="registry.example/zgi/runtime@sha256:$(printf 'a%.0s' {1..64})"
+export ZGI_AGENT_RUNTIME_IMAGE_REF
+export ZGI_AGENT_RUNTIME_LISTEN=127.0.0.1:2679
+export ZGI_AGENT_RUNTIME_HEALTH_TIMEOUT_SECONDS=1
+export ZGI_AGENT_RUNTIME_PYPI_INDEX_URL=https://packages.example/simple
+# Deliberately verify literal shell metacharacters.
+# shellcheck disable=SC2016
+export ZGI_AGENT_RUNTIME_API_KEY='not-a-secret $literal `literal` "quoted" back\slash $(touch never-execute)'
+export ZGI_AGENT_RUNTIME_DATABASE_URL='postgres://fixture@127.0.0.1/test?application_name=two words'
+printf '#!/bin/sh\nexit 0\n' >"$test_dir/source"; chmod +x "$test_dir/source"
+
+fail_with() {
+  local expected="$1"; shift
+  local output
+  if output="$("$@" 2>&1)"; then echo "expected failure: $expected" >&2; exit 1; fi
+  grep -Fq "$expected" <<<"$output" || { echo "$output" >&2; exit 1; }
+}
+fail_with 'fixed to zgi-agent-runtime' env ZGI_AGENT_RUNTIME_CONTAINERD_NAMESPACE=zgi bash "$script" smoke --dry-run
+fail_with 'loopback listener' env ZGI_AGENT_RUNTIME_LISTEN=0.0.0.0:2679 bash "$script" smoke --dry-run
+fail_with 'dedicated directory' env ZGI_AGENT_RUNTIME_STATE_DIR=/var/lib bash "$script" smoke --dry-run
+fail_with 'dedicated Worker filename' env ZGI_AGENT_RUNTIME_WORKER_BINARY=/usr/bin/bash bash "$script" smoke --dry-run
+fail_with 'shorten it' env ZGI_AGENT_RUNTIME_STATE_DIR="$test_dir/too-long-runtime-state-directory" bash "$script" smoke --dry-run
+ln -s "$test_dir/runtime" "$test_dir/link"
+fail_with 'symlinks' env ZGI_AGENT_RUNTIME_STATE_DIR="$test_dir/link" bash "$script" smoke --dry-run
+
+dry_output="$(bash "$script" install --dry-run)"
+grep -Fq -- "--address $ZGI_AGENT_RUNTIME_CONTAINERD_ADDRESS --namespace zgi-agent-runtime" <<<"$dry_output"
+[[ "$dry_output" != *'not-a-secret'* && ! -f "$test_dir/runtime.env" ]]
+
+# JSON is parsed as data, never sourced; permission and type checks fail closed.
+printf '{"ZGI_AGENT_RUNTIME_LISTEN":"127.0.0.1:2681"}\n' >"$test_dir/settings.json"
+chmod 600 "$test_dir/settings.json"
+config_output="$(bash "$script" smoke --config "$test_dir/settings.json" --dry-run)"
+grep -Fq -- '--runtime io.containerd.runsc.v1' <<<"$config_output"
+chmod 644 "$test_dir/settings.json"
+fail_with 'chmod 600' bash "$script" smoke --config "$test_dir/settings.json" --dry-run
+printf '{"PATH":"/tmp"}\n' >"$test_dir/settings.json"; chmod 600 "$test_dir/settings.json"
+fail_with 'runtime strings' bash "$script" smoke --config "$test_dir/settings.json" --dry-run
+printf '{"ZGI_AGENT_RUNTIME_UNSUPPORTED":"value"}\n' >"$test_dir/settings.json"
+fail_with 'unsupported setting' bash "$script" smoke --config "$test_dir/settings.json" --dry-run
+
+touch "$test_dir/smoke-fail"
+fail_with 'exit 124' bash "$script" install
+[[ ! -e "$test_dir/zgi-agent-runtime-test.service" ]]
+grep -Fq -- 'tasks kill --signal SIGKILL zgi-runtime-smoke-' "$test_dir/calls"
+rm "$test_dir/smoke-fail"
+
+bash "$script" install
+[[ -f "$test_dir/active" && -f "$test_dir/enabled" ]]
+[[ "$(stat -c %a "$test_dir/runtime.env")" == 600 ]]
+saved_key="$ZGI_AGENT_RUNTIME_API_KEY"; saved_db="$ZGI_AGENT_RUNTIME_DATABASE_URL"
+# EnvironmentFile escaping follows POSIX double-quote rules for these values.
+# Generated private fixture, not repository source.
+# shellcheck disable=SC1091
+source "$test_dir/runtime.env"
+[[ "$ZGI_AGENT_RUNTIME_API_KEY" == "$saved_key" && "$ZGI_AGENT_RUNTIME_DATABASE_URL" == "$saved_db" ]]
+[[ ! -f never-execute ]]
+jq -e '.["cc-codex-standard"].egress_allowed_hosts | index("packages.example") != null' <<<"$ZGI_AGENT_RUNTIME_PROFILES_JSON" >/dev/null
+unset ZGI_AGENT_RUNTIME_PROFILES_JSON
+rollback_point="$(<"$test_dir/runtime/deployments/previous")"
+starts="$(grep -c 'systemctl start ' "$test_dir/calls")"
+bash "$script" install
+[[ "$(<"$test_dir/runtime/deployments/previous")" == "$rollback_point" ]]
+[[ "$(grep -c 'systemctl start ' "$test_dir/calls")" == "$starts" ]]
+bash "$script" doctor
+
+# Upgrade and explicit rollback restore inputs and prior service state, not files.
+printf '#!/bin/sh\nexit 1\n' >"$test_dir/source"
+touch "$test_dir/runtime/result.txt"
+bash "$script" install
+bash "$script" rollback
+grep -Fxq 'exit 0' "$test_dir/worker"
+[[ -f "$test_dir/active" && -f "$test_dir/runtime/result.txt" ]]
+starts="$(grep -c 'systemctl start ' "$test_dir/calls")"
+bash "$script" rollback
+[[ "$(grep -c 'systemctl start ' "$test_dir/calls")" == "$starts" ]]
+
+# A bad upgrade is automatically restored and still reports failure.
+printf '#!/bin/sh\nexit 2\n' >"$test_dir/source"
+fail_with 'Worker health failed' bash "$script" install
+grep -Fxq 'exit 0' "$test_dir/worker"
+[[ -f "$test_dir/active" && -f "$test_dir/runtime/result.txt" ]]
+[[ -f "$(<"$test_dir/runtime/deployments/previous")/restored" ]]
+
+touch "$test_dir/health-fail"
+fail_with 'another service' bash "$script" install
+rm "$test_dir/health-fail"
+printf 'unmanaged\n' >"$test_dir/zgi-agent-runtime-test.service"
+fail_with 'unmanaged service' bash "$script" install
+if grep -E 'systemctl (restart|stop|disable).*containerd' "$test_dir/calls"; then echo 'shared containerd was touched' >&2; exit 1; fi
+echo 'test-zgi-runtime-server: ok'

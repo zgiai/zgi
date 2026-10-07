@@ -2,6 +2,8 @@
 
 This document is the deployment and acceptance checklist for the first M6A slice. The local gVisor backend supports a narrowly scoped HTTPS egress bridge. Hosted E2B supports the package-install subset through provider-enforced `allowOut` entries, while general controlled HTTP remains fail-closed until an equivalent hosted allowlist gateway is available.
 
+For private settings, systemd installation, health checks and non-destructive Worker rollback on a Linux server, use the [server deployment guide](agent-runtime-server-deployment.md). Host bootstrap never rewrites or restarts shared containerd.
+
 ## What this slice enables
 
 M6A adds an immutable network policy to each Agent Runtime Binding. The policy is copied from the approved console Agent configuration into the API request, stored in PostgreSQL, and passed to the selected Worker backend.
