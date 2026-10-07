@@ -161,6 +161,15 @@ cannot be blessed by another checkpoint. Subsequent Jobs may intentionally insta
 upgrade or remove dependencies; the next quiescent checkpoint records the new state.
 Callers must stop Jobs before capture, as with the existing archive contract.
 
+Console Shell results distinguish infrastructure failures from ordinary command
+exit codes. Retained language recovery failures return
+`error_code: language_package_recovery_failed`; system recovery failures return
+`package_recovery_failed`. The model receives a cataloged safe message explaining
+that the command did not start and that there is no latest-version fallback.
+Unknown infrastructure failures use `job_failed`, without exposing raw Worker
+diagnostics. Ordinary nonzero command exits still return their stdout/stderr and
+exit code through the existing command-result contract.
+
 Self-contained pnpm links are supported. Trees linking to a different Workspace
 directory remain explicitly uncached and use the existing full checkpoint and
 metadata verification path. Their linked business directories are not captured or

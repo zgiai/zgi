@@ -463,6 +463,7 @@ type jobResponse struct {
 	Generation      int64      `json:"generation"`
 	ExitCode        *int       `json:"exit_code,omitempty"`
 	FailureReason   string     `json:"failure_reason,omitempty"`
+	FailureCode     string     `json:"failure_code,omitempty"`
 	CancelRequested bool       `json:"cancel_requested"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
@@ -473,8 +474,24 @@ type jobResponse struct {
 func jobResponseFrom(job Job) jobResponse {
 	return jobResponse{
 		ID: job.ID, BindingID: job.BindingID, Status: job.Status, Generation: job.Generation,
-		ExitCode: job.ExitCode, FailureReason: job.FailureReason, CancelRequested: job.CancelRequested,
+		ExitCode: job.ExitCode, FailureReason: job.FailureReason, FailureCode: publicJobFailureCode(job), CancelRequested: job.CancelRequested,
 		CreatedAt: job.CreatedAt, UpdatedAt: job.UpdatedAt, StartedAt: job.StartedAt, FinishedAt: job.FinishedAt,
+	}
+}
+
+// Persisted failure reasons are diagnostic data. Only exact, fixed recovery
+// diagnostics receive a public identity; arbitrary backend text stays private.
+func publicJobFailureCode(job Job) string {
+	if job.Status != JobStatusFailed || (job.ExitCode != nil && *job.ExitCode >= 0) {
+		return ""
+	}
+	switch job.FailureReason {
+	case "agent runtime backend unavailable: retained Python or Node dependency recovery failed; verify the original runtime profile and retained artifact integrity before retrying; no network or latest-version fallback":
+		return "language_package_recovery_failed"
+	case "agent runtime backend unavailable: system package recovery failed; verify the retained ledger, original profile and sources, and locked package availability before retrying; no latest-version fallback":
+		return "package_recovery_failed"
+	default:
+		return "job_failed"
 	}
 }
 

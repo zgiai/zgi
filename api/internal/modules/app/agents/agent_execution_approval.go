@@ -23,14 +23,14 @@ const agentExecutionPackageNetworkMode = "package-install"
 
 // CatalogDefinitions returns the public Agent execution error definition.
 func CatalogDefinitions() []appcatalog.Definition {
-	return []appcatalog.Definition{{
+	return append([]appcatalog.Definition{{
 		Code: AppCodeAgentExecutionRuntimeUnavailable, Category: appcatalog.CategoryValidation,
 		HTTPStatus: http.StatusBadRequest, Retryable: false,
 		Messages: map[appcatalog.Locale]string{
 			appcatalog.LocaleEnglishUS:         "This Agent execution environment is not approved or available.",
 			appcatalog.LocaleChineseSimplified: "该 Agent 执行环境尚未获批或当前不可用。",
 		},
-	}}
+	}}, agentExecutionJobErrorDefinitions()...)
 }
 
 // agentExecutionApproval is an operator-owned allowlist, not Agent-authored

@@ -70,6 +70,10 @@ func (h *AgentsHandler) attachConsoleAgentExecutionTools(runConfig *runtimeservi
 			newAgentExecutionShellToolWithNetworkPolicy(gateway, executionScope, agentID.String(), prepared.Conversation.ID.String(), prepared.Message.ID.String(), profileID, backend, resolvedRuntime.PolicyID, prepared.RuntimeAttachmentRefs(), fileReader, skillResolver),
 			newAgentExecutionExportTool(gateway, persister, executionScope, agentID.String(), prepared.Conversation.ID.String(), prepared.Message.ID.String(), profileID, backend, resolvedRuntime.PolicyID),
 		}
+		shellHandler := tools[0].Handler
+		tools[0].Handler = func(ctx context.Context, call adapter.ToolCall) skillloop.RuntimeToolResult {
+			return projectAgentExecutionToolFailure(shellHandler(ctx, call), h.appErrorProjector)
+		}
 		if profileApproval.DependencyPreparation && !profileApproval.DependencyInstallation {
 			tools = append(tools, newAgentExecutionDependencyPreparationTool(gateway, executionScope, agentID.String(), prepared.Conversation.ID.String(), prepared.Message.ID.String(), profileID, backend, resolvedRuntime.PolicyID, skillResolver))
 		}
@@ -248,7 +252,7 @@ func executeAgentShellToolWithNetworkPolicy(ctx context.Context, gateway agentEx
 	if skillPath != "" {
 		result["skill_workspace_path"] = skillPath
 	}
-	return skillloop.RuntimeToolResult{
+	toolResult := skillloop.RuntimeToolResult{
 		Status: "success", Arguments: map[string]interface{}{"command_bytes": len(args.Command)}, Result: result,
 		ModelResult: map[string]interface{}{"job_id": job.ID, "status": job.Status, "exit_code": job.ExitCode, "stdout": stdout, "stderr": stderr, "truncated": truncated, "input_files": inputPaths, "workspace_recreated": binding.Recreated, "skill_workspace_path": skillPath,
 			"runtime_capabilities": map[string]interface{}{
@@ -257,6 +261,14 @@ func executeAgentShellToolWithNetworkPolicy(ctx context.Context, gateway agentEx
 			},
 		},
 	}
+	if job.Status == "failed" && (job.FailureCode != "" || job.ExitCode == nil || *job.ExitCode < 0) {
+		code, appCode := agentExecutionJobFailure(job.FailureCode)
+		toolResult.Status = "failed"
+		toolResult.Error = apperror.New(appCode, apperror.WithOperation("agent_execution.shell_job"))
+		toolResult.Result["error_code"] = code
+		toolResult.ModelResult["error_code"] = code
+	}
+	return toolResult
 }
 
 func agentExecutionShellNetworkAllowed(capabilities agentExecutionCapabilities) bool {

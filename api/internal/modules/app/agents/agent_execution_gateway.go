@@ -34,10 +34,11 @@ type agentExecutionBinding struct {
 }
 
 type agentExecutionJob struct {
-	ID         string `json:"id"`
-	Status     string `json:"status"`
-	Generation int64  `json:"generation"`
-	ExitCode   *int   `json:"exit_code"`
+	ID          string `json:"id"`
+	Status      string `json:"status"`
+	Generation  int64  `json:"generation"`
+	ExitCode    *int   `json:"exit_code"`
+	FailureCode string `json:"failure_code"`
 }
 
 type agentExecutionOutputChunk struct {
