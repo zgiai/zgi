@@ -3,6 +3,7 @@
 package runtimeagent
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"syscall"
@@ -21,8 +22,8 @@ func configurePackageProcess(command *exec.Cmd) {
 		if command.Process == nil {
 			return nil
 		}
-		terminateDescendants(command.Process.Pid)
-		_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
-		return command.Process.Kill()
+		return errors.Join(terminateDescendants(command.Process.Pid),
+			terminationSignalError(syscall.Kill(-command.Process.Pid, syscall.SIGKILL)),
+			terminationSignalError(command.Process.Kill()))
 	}
 }

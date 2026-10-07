@@ -78,7 +78,7 @@ func prepareSessionPythonEnvironment(ctx context.Context, home string, uid, gid 
 			// The Home directory is Job-controlled. Never run Python preparation
 			// or recursively chown its contents as root: a concurrent Job could
 			// swap a file for a link between inspection and mutation.
-			command = exec.CommandContext(ctx, "/usr/bin/setpriv", "--no-new-privs", "--", python,
+			command = exec.CommandContext(ctx, "/usr/bin/setpriv", "--no-new-privs", "--inh-caps=-all", "--ambient-caps=-all", "--", python,
 				"-m", "venv", "--copies", "--system-site-packages", venv)
 			command.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uid, Gid: gid}}
 		}

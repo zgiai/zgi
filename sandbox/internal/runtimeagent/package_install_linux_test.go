@@ -104,6 +104,42 @@ func TestConcurrentAPTRequestsAreSerialized(t *testing.T) {
 	}
 }
 
+func TestAPTMetadataRetryAndReplayUseControlledSource(t *testing.T) {
+	backend := packageTestBackend(t)
+	backend.dependencyInstallation, backend.networkMode = true, "package-install"
+	root := t.TempDir()
+	helper := filepath.Join(root, "apt-fixture")
+	metadata := filepath.Join(root, "metadata")
+	log := filepath.Join(root, "commands")
+	script := "#!/bin/sh\necho \"$1\" >> '" + log + "'\nif [ \"$1\" = update ]; then touch '" + metadata + "'; exit 0; fi\nif [ ! -f '" + metadata + "' ]; then echo 'E: Unable to locate package tree' >&2; exit 100; fi\n"
+	if err := os.WriteFile(helper, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ZGI_RUNTIME_AGENT_APT_PATH", helper)
+	result, err := backend.InstallSystemPackages(t.Context(), []string{"install", "tree"})
+	if err != nil || result.ExitCode != 0 || !strings.Contains(result.Stdout, "metadata refreshed") {
+		t.Fatalf("first install=%+v error=%v", result, err)
+	}
+	// A fresh rootfs loses metadata while the workspace ledger survives.
+	if err := os.Remove(metadata); err != nil {
+		t.Fatal(err)
+	}
+	if err := backend.replayPackageLedger(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	commands, err := os.ReadFile(log)
+	if err != nil || string(commands) != "install\nupdate\ninstall\ninstall\nupdate\ninstall\n" {
+		t.Fatalf("commands=%q error=%v", commands, err)
+	}
+	if err := backend.replayPackageLedger(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	commandsAfter, _ := os.ReadFile(log)
+	if string(commandsAfter) != string(commands) {
+		t.Fatal("successful ledger replay was repeated")
+	}
+}
+
 func TestPackageHTTPServerCloseCancelsInstaller(t *testing.T) {
 	backend := packageTestBackend(t)
 	backend.dependencyInstallation, backend.networkMode = true, "package-install"

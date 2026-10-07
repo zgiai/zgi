@@ -22,38 +22,48 @@ import (
 )
 
 type runningProcess struct {
-	cmd        *exec.Cmd
-	cancel     context.CancelFunc
-	done       chan struct{}
-	pty        *os.File
-	ptyMu      sync.Mutex
-	cancelOnce sync.Once
-	canceled   atomic.Bool
-	mu         sync.Mutex
-	result     agentexecution.JobResult
+	cmd         *exec.Cmd
+	cancel      context.CancelFunc
+	done        chan struct{}
+	pty         *os.File
+	ptyMu       sync.Mutex
+	cancelOnce  sync.Once
+	canceled    atomic.Bool
+	mu          sync.Mutex
+	result      agentexecution.JobResult
+	stopFailed  chan struct{}
+	failureOnce sync.Once
+	stopErr     error
+	onUnsafe    func(error)
 }
 
 func supportsPTY() bool { return true }
 
-func startProcess(parent context.Context, workDir string, spec agentexecution.JobSpec, jobUID, jobGID uint32, sink func(agentexecution.OutputStream, []byte) error) (agentexecution.RunningJob, error) {
-	jobContext, cancel := context.WithCancel(parent)
+func startProcess(parent context.Context, workDir string, spec agentexecution.JobSpec, jobUID, jobGID uint32, sink func(agentexecution.OutputStream, []byte) error, onUnsafe func(error)) (agentexecution.RunningJob, error) {
+	var jobContext context.Context
+	var cancel context.CancelFunc
 	if spec.Timeout > 0 {
 		jobContext, cancel = context.WithTimeout(parent, spec.Timeout)
+	} else {
+		jobContext, cancel = context.WithCancel(parent)
 	}
 	cmd := exec.CommandContext(jobContext, spec.Command, spec.Args...)
 	if jobUID != 0 && os.Geteuid() == 0 {
 		// E2B does not inherit the OCI noNewPrivileges setting used locally.
 		// Set it in the child before executing untrusted code, without changing
 		// the root Runtime Agent or the separately controlled APT installer.
-		args := append([]string{"--no-new-privs", "--", spec.Command}, spec.Args...)
+		args := append([]string{"--no-new-privs", "--inh-caps=-all", "--ambient-caps=-all", "--", spec.Command}, spec.Args...)
 		cmd = exec.CommandContext(jobContext, "/usr/bin/setpriv", args...)
 	}
 	cmd.Dir = workDir
 	cmd.Env = mergedEnvironment(spec.Environment)
-	process := &runningProcess{cmd: cmd, cancel: cancel, done: make(chan struct{})}
+	process := &runningProcess{cmd: cmd, cancel: cancel, done: make(chan struct{}), stopFailed: make(chan struct{}), onUnsafe: onUnsafe}
 	cmd.Cancel = func() error {
-		process.kill()
-		return nil
+		err := process.kill()
+		if err != nil {
+			process.markTerminationFailure(err)
+		}
+		return err
 	}
 	cmd.WaitDelay = time.Second
 
@@ -105,6 +115,9 @@ func startProcess(parent context.Context, workDir string, spec agentexecution.Jo
 		}
 		result := processResult(waitErr, contextErr, process.canceled.Load())
 		process.mu.Lock()
+		if process.stopErr != nil {
+			result = agentexecution.JobResult{ExitCode: -1, Error: process.stopErr.Error(), TerminationFailed: true}
+		}
 		process.result = result
 		process.mu.Unlock()
 		cancel()
@@ -129,9 +142,22 @@ func (w outputWriter) Write(value []byte) (int, error) {
 func (p *runningProcess) Wait(ctx context.Context) (agentexecution.JobResult, error) {
 	select {
 	case <-p.done:
+	case <-p.stopFailed:
+		return p.terminationFailure()
 	case <-ctx.Done():
-		_ = p.Cancel(context.Background())
-		<-p.done
+		if err := p.Cancel(ctx); err != nil {
+			return p.terminationFailure()
+		}
+		timer := time.NewTimer(5 * time.Second)
+		defer timer.Stop()
+		select {
+		case <-p.done:
+		case <-p.stopFailed:
+			return p.terminationFailure()
+		case <-timer.C:
+			p.markTerminationFailure(errors.New("process did not exit after termination"))
+			return p.terminationFailure()
+		}
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -146,16 +172,22 @@ func (p *runningProcess) Cancel(context.Context) error {
 	}
 	p.cancelOnce.Do(func() {
 		p.canceled.Store(true)
-		terminateDescendants(p.cmd.Process.Pid)
+		if err := terminateDescendants(p.cmd.Process.Pid); err != nil {
+			p.markTerminationFailure(err)
+		}
 		select {
 		case <-p.done:
 			return
 		case <-time.After(250 * time.Millisecond):
 		}
 		p.cancel()
-		p.kill()
+		if err := p.kill(); err != nil {
+			p.markTerminationFailure(err)
+		}
 	})
-	return nil
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.stopErr
 }
 
 func (p *runningProcess) ResizePTY(_ context.Context, columns uint16, rows uint16) error {
@@ -170,12 +202,38 @@ func (p *runningProcess) ResizePTY(_ context.Context, columns uint16, rows uint1
 	return pty.Setsize(p.pty, &pty.Winsize{Cols: columns, Rows: rows})
 }
 
-func (p *runningProcess) kill() {
+func (p *runningProcess) kill() error {
 	if p.cmd == nil || p.cmd.Process == nil {
-		return
+		return nil
 	}
-	_ = syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
-	_ = p.cmd.Process.Kill()
+	return errors.Join(terminateDescendants(p.cmd.Process.Pid),
+		terminationSignalError(syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)),
+		terminationSignalError(p.cmd.Process.Kill()))
+}
+
+func terminationSignalError(err error) error {
+	if errors.Is(err, syscall.ESRCH) || errors.Is(err, os.ErrProcessDone) {
+		return nil
+	}
+	return err
+}
+
+func (p *runningProcess) markTerminationFailure(err error) {
+	p.failureOnce.Do(func() {
+		p.mu.Lock()
+		p.stopErr = fmt.Errorf("job termination failed: %w", err)
+		p.mu.Unlock()
+		if p.onUnsafe != nil {
+			p.onUnsafe(err)
+		}
+		close(p.stopFailed)
+	})
+}
+
+func (p *runningProcess) terminationFailure() (agentexecution.JobResult, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return agentexecution.JobResult{ExitCode: -1, Error: p.stopErr.Error(), TerminationFailed: true}, p.stopErr
 }
 
 func pumpOutput(reader io.Reader, stream agentexecution.OutputStream, sink func(agentexecution.OutputStream, []byte) error) {
@@ -208,12 +266,13 @@ func processResult(waitErr error, contextErr error, explicitlyCanceled bool) age
 	return agentexecution.JobResult{ExitCode: -1, Error: waitErr.Error()}
 }
 
-func terminateDescendants(parentPID int) {
+func terminateDescendants(parentPID int) error {
+	var result error
 	children := processChildren(parentPID)
 	for _, childPID := range children {
-		terminateDescendants(childPID)
-		_ = syscall.Kill(childPID, syscall.SIGKILL)
+		result = errors.Join(result, terminateDescendants(childPID), terminationSignalError(syscall.Kill(childPID, syscall.SIGKILL)))
 	}
+	return result
 }
 
 func processChildren(parentPID int) []int {

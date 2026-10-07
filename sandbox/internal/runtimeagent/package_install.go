@@ -101,6 +101,9 @@ type packageLedgerEntry struct {
 // process. The Job itself never receives root or a writable control socket;
 // the wrapper exposes only this validated command subset.
 func (b *Backend) InstallSystemPackages(ctx context.Context, args []string) (PackageInstallResult, error) {
+	if err := b.executionReady(); err != nil {
+		return PackageInstallResult{}, err
+	}
 	if !b.dependencyInstallation || b.networkMode != "package-install" {
 		return PackageInstallResult{}, fmt.Errorf("%w: system package installation is not enabled", agentexecution.ErrBackendUnavailable)
 	}
@@ -115,13 +118,37 @@ func (b *Backend) InstallSystemPackages(ctx context.Context, args []string) (Pac
 		return PackageInstallResult{}, err
 	}
 	defer release()
-	result := b.runAPT(ctx, args)
+	result := b.runAPTWithMetadataRetry(ctx, args)
 	if result.ExitCode == 0 && (args[0] == "install" || args[0] == "download") {
 		if err := b.recordPackageLedger(args); err != nil {
 			return result, fmt.Errorf("record package installation ledger: %w", err)
 		}
 	}
 	return result, nil
+}
+
+func (b *Backend) aptConfig() string {
+	if b.aptConfigPath != "" {
+		return b.aptConfigPath
+	}
+	return "/etc/zgi/apt.conf"
+}
+
+// Minimal runtime images can omit APT lists. Retry only the pre-install
+// missing-package case, not a partially executed package configuration.
+func (b *Backend) runAPTWithMetadataRetry(ctx context.Context, args []string) PackageInstallResult {
+	result := b.runAPT(ctx, args)
+	if len(args) == 0 || (args[0] != "install" && args[0] != "download") || result.ExitCode != 100 || !strings.Contains(result.Stderr, "Unable to locate package") {
+		return result
+	}
+	update := b.runAPT(ctx, []string{"update"})
+	if update.ExitCode != 0 {
+		update.Stderr = limitPackageOutput(result.Stderr + "\nAPT metadata refresh failed:\n" + update.Stderr)
+		return update
+	}
+	result = b.runAPT(ctx, args)
+	result.Stdout = limitPackageOutput("APT metadata refreshed before retry:\n" + update.Stdout + "\n" + result.Stdout)
+	return result
 }
 
 func (b *Backend) runAPT(ctx context.Context, args []string) PackageInstallResult {
@@ -138,7 +165,7 @@ func (b *Backend) runAPT(ctx context.Context, args []string) PackageInstallResul
 	command := exec.CommandContext(commandCtx, aptPath, args...)
 	configurePackageProcess(command)
 	command.Env = append(filteredEnvironment(os.Environ(), proxyEnvironmentKeys...),
-		"APT_CONFIG=/etc/zgi/apt.conf",
+		"APT_CONFIG="+b.aptConfig(),
 		"DEBIAN_FRONTEND=noninteractive",
 		"APT_LISTBUGS_FRONTEND=none",
 		"APT_LISTCHANGES_FRONTEND=none",
@@ -272,7 +299,7 @@ func (b *Backend) replayPackageLedger(ctx context.Context) error {
 		if err := validateAPTArgs(entry.Args); err != nil {
 			return err
 		}
-		result := b.runAPT(ctx, entry.Args)
+		result := b.runAPTWithMetadataRetry(ctx, entry.Args)
 		if result.ExitCode != 0 {
 			return fmt.Errorf("replay apt command %v failed: %s", entry.Args, result.Stderr)
 		}

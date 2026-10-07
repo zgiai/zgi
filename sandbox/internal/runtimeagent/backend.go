@@ -23,6 +23,7 @@ import (
 
 	"github.com/zgiai/zgi-sandbox/internal/agentexecution"
 	"github.com/zgiai/zgi-sandbox/internal/egressproxy"
+	"github.com/zgiai/zgi-sandbox/internal/packagesource"
 )
 
 type Options struct {
@@ -48,6 +49,9 @@ type Options struct {
 	MaxPackageOutputBytes  int64
 	JobUID                 uint32
 	JobGID                 uint32
+	PackageSources         packagesource.Config
+	APTConfigPath          string
+	ProfileIdentity        string
 	MaxUploadBytes         int64
 	MaxDownloadBytes       int64
 }
@@ -77,6 +81,12 @@ type Backend struct {
 	mu                        sync.Mutex
 	jobs                      map[string]trackedJob
 	closed                    bool
+	unsafe                    error
+	packageSources            packagesource.Config
+	aptConfigPath             string
+	profileIdentity           string
+	cacheMu                   sync.Mutex
+	cacheKey                  string
 }
 
 const sessionHomeDirectory = ".zgi-runtime-home"
@@ -97,6 +107,9 @@ type trackedJob struct {
 var _ agentexecution.ExecutionBackend = (*Backend)(nil)
 
 func New(options Options) (*Backend, error) {
+	if err := options.PackageSources.Validate(nil); err != nil {
+		return nil, err
+	}
 	if options.PackageInstallTimeout < 0 || options.MaxPackageOutputBytes < 0 {
 		return nil, fmt.Errorf("%w: package installation limits cannot be negative", agentexecution.ErrInvalidRequest)
 	}
@@ -207,7 +220,8 @@ func New(options Options) (*Backend, error) {
 		maxPackageOutputBytes: options.MaxPackageOutputBytes,
 		maxUploadBytes:        options.MaxUploadBytes, maxDownloadBytes: options.MaxDownloadBytes,
 		egressProxyAddress: proxyAddress, egress: proxy,
-		jobs: make(map[string]trackedJob),
+		jobs:           make(map[string]trackedJob),
+		packageSources: options.PackageSources.Resolved(), aptConfigPath: options.APTConfigPath, profileIdentity: options.ProfileIdentity,
 	}, nil
 }
 
@@ -246,10 +260,14 @@ func (b *Backend) Capabilities(context.Context, agentexecution.Allocation) (agen
 		PackageNetworkEnforced: b.packageNetworkEnforced,
 		NetworkMode:            b.networkMode, EgressProxyAddress: b.egressProxyAddress,
 		MaxUploadBytes: b.maxUploadBytes, MaxDownloadBytes: b.maxDownloadBytes,
+		PackageSourceDigest: b.packageSources.Digest(),
 	}, nil
 }
 
 func (b *Backend) StartJob(ctx context.Context, _ agentexecution.Allocation, spec agentexecution.JobSpec, sink func(agentexecution.OutputChunk) error) (agentexecution.RunningJob, error) {
+	if err := b.executionReady(); err != nil {
+		return nil, err
+	}
 	if err := validateJobSpec(spec, sink); err != nil {
 		return nil, err
 	}
@@ -299,19 +317,28 @@ func (b *Backend) StartJob(ctx context.Context, _ agentexecution.Allocation, spe
 		if err := prepareWorkspaceDirectoryOwnership(b.workspace, sessionHomeDirectory, b.jobUID, b.jobGID); err != nil {
 			return nil, fmt.Errorf("prepare session home ownership: %w", err)
 		}
+		cacheKey, err := b.cacheNamespace(ctx)
+		if err != nil {
+			return nil, err
+		}
 		if err := prepareSessionPythonEnvironment(ctx, home, b.jobUID, b.jobGID); err != nil {
 			return nil, fmt.Errorf("prepare session Python environment: %w", err)
 		}
 		venv := filepath.Join(home, ".venv")
 		spec.Environment["VIRTUAL_ENV"] = venv
 		spec.Environment["PIP_CONFIG_FILE"] = "/etc/zgi/pip.conf"
-		spec.Environment["NPM_CONFIG_REGISTRY"] = "https://registry.npmjs.org/"
+		spec.Environment["PIP_INDEX_URL"] = b.packageSources.PyPI
+		spec.Environment["PIP_EXTRA_INDEX_URL"] = ""
+		spec.Environment["PIP_TRUSTED_HOST"] = ""
+		spec.Environment["NPM_CONFIG_REGISTRY"] = b.packageSources.NPM
+		spec.Environment["npm_config_registry"] = b.packageSources.NPM
 		// Standard runtime images ship matching Node headers in /usr/local.
 		// Native builds must not fetch headers from an unapproved host.
 		spec.Environment["NPM_CONFIG_NODEDIR"] = "/usr/local"
-		spec.Environment["PIP_CACHE_DIR"] = filepath.Join(home, ".cache", "pip")
+		spec.Environment["PIP_CACHE_DIR"] = filepath.Join(home, ".cache", "pip", cacheKey)
 		spec.Environment["PIP_BREAK_SYSTEM_PACKAGES"] = "1"
-		spec.Environment["NPM_CONFIG_CACHE"] = filepath.Join(home, ".cache", "npm")
+		spec.Environment["NPM_CONFIG_CACHE"] = filepath.Join(home, ".cache", "npm", cacheKey)
+		spec.Environment["npm_config_cache"] = spec.Environment["NPM_CONFIG_CACHE"]
 		spec.Environment["NPM_CONFIG_GLOBAL"] = "false"
 		spec.Environment["NPM_CONFIG_FUND"] = "false"
 		spec.Environment["NPM_CONFIG_AUDIT"] = "false"
@@ -335,7 +362,7 @@ func (b *Backend) StartJob(ctx context.Context, _ agentexecution.Allocation, spe
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.closed {
+	if b.closed || b.unsafe != nil {
 		return nil, agentexecution.ErrBackendUnavailable
 	}
 	if existing, ok := b.jobs[spec.JobID]; ok {
@@ -355,12 +382,29 @@ func (b *Backend) StartJob(ctx context.Context, _ agentexecution.Allocation, spe
 		}
 		sequence++
 		return sink(chunk)
-	})
+	}, b.quarantine)
 	if err != nil {
 		return nil, err
 	}
 	b.jobs[spec.JobID] = trackedJob{specHash: hash, running: running}
 	return running, nil
+}
+
+func (b *Backend) executionReady() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed || b.unsafe != nil {
+		return fmt.Errorf("%w: execution environment requires recovery", agentexecution.ErrBackendUnavailable)
+	}
+	return nil
+}
+
+func (b *Backend) quarantine(err error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.unsafe == nil {
+		b.unsafe = err
+	}
 }
 
 func cloneJobEnvironment(values map[string]string) map[string]string {
