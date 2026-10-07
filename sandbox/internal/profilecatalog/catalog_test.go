@@ -26,6 +26,13 @@ func TestLoadRepositoryProfileSources(t *testing.T) {
 	if len(office.Packages) == 0 || !containsLanguage(office.Languages, "python3") || !containsLanguage(office.Languages, "nodejs") {
 		t.Fatalf("expected skill-office package and language metadata, got %+v", office)
 	}
+	standard := byName["cc-codex-standard"]
+	if standard.Status != "ready" || !standard.Enabled || !standard.RuntimeDependencyInstallation || standard.PackageNetworkMode != "package-install" {
+		t.Fatalf("expected enabled standard package-install profile, got %+v", standard)
+	}
+	if !containsPackage(standard.Packages, "system", "python3-venv") {
+		t.Fatalf("expected standard profile to preinstall python3-venv, got %+v", standard.Packages)
+	}
 }
 
 func TestLoadRejectsMissingRequiredFile(t *testing.T) {
@@ -98,6 +105,15 @@ func TestValidateRejectsUnpinnedPackage(t *testing.T) {
 func containsLanguage(values []string, expected string) bool {
 	for _, value := range values {
 		if value == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func containsPackage(values []Package, ecosystem, name string) bool {
+	for _, value := range values {
+		if value.Ecosystem == ecosystem && value.Name == name {
 			return true
 		}
 	}

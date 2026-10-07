@@ -43,11 +43,24 @@ type builtManifest struct {
 }
 
 type buildMetadata struct {
-	Checksum           string    `json:"checksum"`
-	SizeBytes          int64     `json:"size_bytes"`
-	BuiltAt            time.Time `json:"built_at"`
-	VerificationPassed bool      `json:"verification_passed"`
-	Builder            string    `json:"builder"`
+	Checksum           string                   `json:"checksum"`
+	RootFSDigest       string                   `json:"rootfs_digest"`
+	SizeBytes          int64                    `json:"size_bytes"`
+	BuiltAt            time.Time                `json:"built_at"`
+	VerificationPassed bool                     `json:"verification_passed"`
+	Builder            string                   `json:"builder"`
+	Packages           []profilecatalog.Package `json:"packages"`
+	SBOM               []sbomEntry              `json:"sbom"`
+	BuildLog           []string                 `json:"build_log"`
+}
+
+// sbomEntry is intentionally a small SPDX-like component record. The profile
+// manifest remains the policy contract; the build metadata gives operators a
+// deterministic inventory to audit alongside the rootfs digest.
+type sbomEntry struct {
+	Ecosystem string `json:"ecosystem"`
+	Name      string `json:"name"`
+	Version   string `json:"version"`
 }
 
 func Build(opts Options) (Result, error) {
@@ -149,10 +162,14 @@ func Build(opts Options) (Result, error) {
 		Profile: builtProfile,
 		Build: buildMetadata{
 			Checksum:           checksum,
+			RootFSDigest:       "sha256:" + checksum,
 			SizeBytes:          size,
 			BuiltAt:            time.Now().UTC(),
 			VerificationPassed: true,
 			Builder:            "zgi-sandbox-profilebuilder",
+			Packages:           append([]profilecatalog.Package(nil), builtProfile.Packages...),
+			SBOM:               profileSBOM(builtProfile.Packages),
+			BuildLog:           append(append([]string(nil), result.Steps...), "verification: passed"),
 		},
 	}
 	raw, err := json.MarshalIndent(manifest, "", "  ")
@@ -176,6 +193,14 @@ func Build(opts Options) (Result, error) {
 	}
 	cleanup = false
 	return result, nil
+}
+
+func profileSBOM(packages []profilecatalog.Package) []sbomEntry {
+	entries := make([]sbomEntry, 0, len(packages))
+	for _, item := range packages {
+		entries = append(entries, sbomEntry{Ecosystem: item.Ecosystem, Name: item.Name, Version: item.Version})
+	}
+	return entries
 }
 
 func managedOfficePackages(languages []string) []profilecatalog.Package {
