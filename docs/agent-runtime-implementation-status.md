@@ -22,13 +22,13 @@ Work only in the dedicated execution-environment worktree. At each iteration, ru
 
 | Stage | Status | Verified evidence |
 |---|---|---|
-| M0 baseline | Complete | Architecture and business plans are present on the implementation branch. Go 1.26.2 Linux API and Sandbox baselines, Kest black-box flow, secure-runtime checks, API-to-Sandbox Script Skill E2E, and local template smoke tests are recorded below. The two pre-existing Sandbox runner process-tree failures remain explicitly listed rather than hidden. |
+| M0 baseline | Complete | Architecture and business plans are present on the implementation branch. Go 1.26.2 Linux API and Sandbox baselines, Kest black-box flow, secure-runtime checks, API-to-Sandbox Script Skill E2E, and local template smoke tests are recorded below. The original runner failures are preserved in the historical baseline; later complete Sandbox and termination regressions passed. |
 | M1 control plane | Complete | Versioned resource tables, idempotent Binding state transitions, tenant ownership, generation fencing, admission leases, leased cleanup reconciliation, fake-backend tests, real PostgreSQL migration tests, and Linux race tests pass. HTTP exposure remains intentionally deferred until the M2 data plane exists. |
 | M2 local backend | Complete | The real containerd/gVisor node contract passes with the standalone Runtime Agent: file transfer, Python Job, PTY, denied outbound traffic, suspend/resume with retained files, and process-tree cancellation. A dedicated real-node test confirms CPU, memory, and PID cgroup enforcement; see the resource-exhaustion behavior and cleanup caveat below. |
 | M3 managed cloud backend | Complete | A direct REST E2B adapter, approved-template mapping, authenticated one-time bootstrap, network-disabled secured creation, pause/resume/destroy lifecycle, restart-safe token recovery, Worker backend selection, and the real-account tagged contract test pass. The provider list showed no matching orphan after cleanup. |
 | M4 first user release | Complete for the scoped local whitelist acceptance | The optional `execution_runtime` defaults off and is limited to approved console Agents; public WebApp/API Key and Runtime Workspace paths do not gain Shell access. Real local gVisor and E2B backend/API contracts pass, as do local gVisor and E2B console Job/export/download flows. The local console completed two-CSV upload, aggregation, cross-turn modification, and download. A portable Skill loaded, ran, and exported a real file; an unchanged `SKILL.md` with a changed script produced a new package digest and new result in the same conversation. The local toggle rollback removed Shell from new conversations while retained ToolFiles remained downloadable, and re-enabling restored a successful Job. Legacy Sandbox Script Skill E2E, disconnect/Stop behavior, targeted Go tests, and the editor build checks passed. Evidence and known limits are detailed below; this is not an M5 retention or M8 production-readiness claim. |
 | M5 retention and templates | Complete for scoped local acceptance | Real gVisor and E2B backend contracts verify Artifact and `$HOME` restoration. Both backends passed Worker/DB restart plus forced compute loss and accelerated seven-day retention cleanup. Two independent E2B Worker containers recovered the same Binding through a shared S3-compatible store; the replacement Worker restored the exact Artifact and Home bytes, then removed the S3 object at expiry. A real E2B allocation/crash-window injection left an orphan that restart reconciliation removed, with the Binding marked failed. Approved Home Snapshots were selected and pinned on real Bindings, including a distinct gVisor image with a prebuilt tool. The local console published a Home Snapshot update, kept an old conversation on its original Binding, created a new Binding pinned to the approved template with an empty Workspace, and transferred a real file by download and re-upload with byte-identical output. This is not multi-host operational failover or M8 production readiness. |
-| M6 controlled expansion | M6A local controlled-HTTPS slice and M6B dual-source dependency preparation implemented, still test-only | Binding-level `network_policy`/`network_mode` is persisted and propagated end to end. Empty/`offline` policy remains the backward-compatible default. Local gVisor `controlled-http` uses a loopback proxy plus host-visible UDS bridge, exact/single-label-wildcard host allowlists, HTTPS/443-only dialing, DNS and private/special-address rejection; E2B remains fail-closed because its current adapter cannot enforce the same domain policy. Profiles and API approvals may explicitly expose `dependency_preparation_mode=offline-bundled` or `controlled-http`; old boolean-only profiles remain compatible, while unknown modes fail closed. `workspace_prepare_dependencies` prepares Python wheels or Node modules offline, or through the approved proxy in controlled mode, reports source/version/cache metadata, validates output paths before reuse, rebuilds tampered or incomplete caches, and diagnoses undeclared third-party imports. The capability is off unless both the worker Profile and API approval set `dependency_preparation=true`; arbitrary online installation, system dependency builds, hosted online preparation, and authorization revocation remain future work. See `docs/agent-runtime-m6a-deployment.md` and `docs/agent-runtime-m6b-dependency-preparation.md`. |
+| M6 controlled expansion | Standard-Skill installation and session recovery verified on local gVisor and E2B; release-candidate gates in progress | The approved `cc-codex-standard` Profile preinstalls language, office, PDF and media tools. Portable Skills need no ZGI manifest. Non-root Jobs can install Python/Node packages and use guarded APT through operator-approved package sources; unsupported or unenforceable networking fails closed. Real contracts on both backends cover native compilation, destination restrictions, cancellation, timeout, compute reconstruction, fixed system-package versions, and retained Python/Node installed-state archives. Console tests cover original XLSX/PPTX/GIF Skills, model-driven installation, real downloads and persistent failed-Job presentation. These are scoped test-environment results, not arbitrary Skill compatibility or production certification. Cross-session shared caches, upstream release archives and rootfs incremental layers remain separate work. The earlier `workspace_prepare_dependencies` path remains a compatibility mode. |
 | M7 self-hosted VM | Not started | Requires a real KVM/Kata integration run. |
 | M8 production readiness | Not started | Requires recovery, cost reconciliation, rollback, and complete legacy regression evidence. |
 
@@ -182,7 +182,63 @@ The current M4 server-side rollout is closed unless all three operator settings 
 
 ## M6B contract-hardening verification
 
-The Windows host cannot run the API package's CGO-backed SQLite tests because GCC is not installed. The same checkout was mounted into the repository's pinned `golang:1.26.2-bookworm` Docker image with `CGO_ENABLED=1`; `go test ./internal/modules/app/agents ./internal/dto -count=1` and `go vet ./internal/modules/app/agents ./internal/dto` both passed. The focused dependency-preparation tests also passed in that Linux image, covering Python wheel preparation and cache reuse, Node bundled-module preparation, missing offline sources, cache rebuild after output deletion, tampered output-path rejection, and undeclared Python/Node import diagnostics. The sandbox gate passed `go test` and `go vet` for the egress protocol, Agent Runtime, local containerd provider, E2B fail-closed adapter, and Runtime Agent; the egress tests cover exact/single-subdomain allowlists, HTTPS/443-only targets, private/unallowlisted destination rejection, bounded framing, and TLS-first tunneling. No source workaround or runtime-data deletion was used. These are contract and fake-backend tests; a real external PyPI/npm fetch through a production gVisor host is still a separate M6A/M6B deployment acceptance gate.
+The initial dependency-preparation tests verified offline wheel/module preparation,
+cache validation and fail-closed controlled egress using Go 1.26.2 Linux containers.
+That initial unit-only evidence is superseded, for the standard installation
+Profile, by the following real-backend acceptance completed on 2026-10-08:
+
+- Local `TestGVisorPackageInstallRecovery` and real-account
+  `TestE2BPackageInstallContract` passed. Both exercised non-root Jobs, Python and
+  Node native modules, guarded APT, denied unapproved destinations, retained files,
+  compute reconstruction, version checks and damaged-ledger/artifact rejection.
+- `TestAgentExecutionStandardSkillMatrix` passed against each real Worker. It
+  checked original Skill helpers, result hashes, nonzero exits, missing-package
+  diagnostics, registry/global-install rejection, cross-organization denial,
+  timeout/cancellation and restoration. Its in-memory export store is not UI
+  download evidence.
+- Separate console tests imported unmodified XLSX, PPTX and GIF Skills, consumed
+  uploaded CSV values, installed a diagnosed missing Python package, and downloaded
+  results through real file cards. Independent checks verified formula/cache
+  values, charts, PDF pages, GIF frames and content hashes. Failed Jobs remained
+  failed after history reload. Existing exports remained downloadable with the
+  E2B Worker stopped.
+- Legacy Python/Node Script Skill E2E, secure Linux execution, Kest flows and
+  Sandbox tests/vet passed. The subsequent quality-gate repair completed the full
+  API suite (327 packages with tests), API vet, and Web lint/type-check/build.
+  PostgreSQL tests used an isolated database with `uuid-ossp`, not an application
+  database. Web lint still reports warnings; it has no errors.
+
+These results belong to their tested revisions. The latest API quality repairs
+must still be deployed and revalidated before a release candidate is declared.
+The delivery gates and remaining work are tracked in
+[the release-candidate checklist](agent-runtime-release-candidate.md).
+
+### Support boundaries
+
+- Agent-editable execution configuration is only `execution_runtime.enabled`.
+  Backend, Profile, network, package sources and snapshots are operator settings.
+  Public API Key/WebApp/Runtime Workspace entries do not gain Shell access.
+- Package networking restricts destinations, not the identity of the requesting
+  binary. It is not general internet access and does not promise that only package
+  managers can reach an approved package host.
+- Python/Node recovery restores session-owned installed-state archives without
+  downloads or lifecycle hooks. It is not an organization-wide cache or a trusted
+  archive of upstream releases. APT uses fixed-version inventory replay and needs
+  approved mirrors to retain those versions; it does not retain `.deb` payloads
+  or build rootfs incremental layers.
+- Shell exit status is the process's real status. A script that masks an internal
+  failure can still return zero; acceptance must check actual outputs as well as
+  model text and Job status.
+- Arbitrary system services, browsers, GPUs, kernel modules, special hardware and
+  unrestricted networking are not supported by this acceptance. Multi-host
+  production failover, M6C platform CLI, M7 Kata/KVM and M8 production readiness
+  remain outside the current delivery claim.
+
+See [portable Skill execution](portable-agent-skills.md),
+[package sources and recovery](../sandbox/docs/agent-runtime-package-sources.md),
+and [server deployment](agent-runtime-server-deployment.md) for current contracts.
+The older [dependency-preparation guide](agent-runtime-m6b-dependency-preparation.md)
+describes the retained compatibility path, not the standard Profile default.
 
 ## Compatibility gates
 
