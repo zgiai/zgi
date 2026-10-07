@@ -40,8 +40,12 @@ func assertLanguageLedgerAndRepair(t *testing.T, ctx context.Context, backend ag
 		return raw
 	}
 	var ledger struct {
-		Version  int                                              `json:"version"`
-		Packages []struct{ Language, Name, Version, Path string } `json:"packages"`
+		Version   int                                              `json:"version"`
+		Packages  []struct{ Language, Name, Version, Path string } `json:"packages"`
+		Artifacts []struct {
+			Target, SHA256 string
+			Size           int64
+		} `json:"artifacts"`
 	}
 	if err := json.Unmarshal(read(".zgi-runtime-home/language-package-ledger.json"), &ledger); err != nil {
 		t.Fatal(err)
@@ -51,7 +55,7 @@ func assertLanguageLedgerAndRepair(t *testing.T, ctx context.Context, backend ag
 		foundPython = foundPython || (pkg.Language == "python" && pkg.Name == "ujson" && pkg.Version == "5.10.0")
 		foundNode = foundNode || (pkg.Language == "node" && pkg.Name == "bufferutil" && pkg.Version == "4.0.9")
 	}
-	if ledger.Version != agentexecution.LanguagePackageLedgerVersion || !foundPython || !foundNode {
+	if ledger.Version != agentexecution.LanguagePackageLedgerVersion || !foundPython || !foundNode || len(ledger.Artifacts) != 2 {
 		t.Fatalf("missing native dependency locks: %+v", ledger)
 	}
 	t.Logf("retained language ledger verified: %d packages", len(ledger.Packages))
@@ -59,13 +63,33 @@ func assertLanguageLedgerAndRepair(t *testing.T, ctx context.Context, backend ag
 		return
 	}
 	const metadataPath = "node_modules/bufferutil/package.json"
-	valid := read(metadataPath)
+	artifactPath := ""
+	for _, artifact := range ledger.Artifacts {
+		if artifact.Target == "node_modules" {
+			artifactPath = ".zgi-runtime-home/.dependency-artifacts/" + artifact.SHA256 + ".tar.gz"
+		}
+	}
+	if artifactPath == "" {
+		t.Fatal("missing native Node artifact")
+	}
+	validArtifact := read(artifactPath)
+	brokenArtifact := bytes.Clone(validArtifact)
+	brokenArtifact[len(brokenArtifact)/2] ^= 0xff
+	if _, err := backend.UploadFile(ctx, allocation, artifactPath, bytes.NewReader(brokenArtifact), int64(len(brokenArtifact))); err != nil {
+		t.Fatal(err)
+	}
+	for _, filePath := range []string{".zgi-runtime-home/.venv/bin/python", "node_modules/bufferutil/build/Release/bufferutil.node"} {
+		broken := []byte("damaged native file")
+		if _, err := backend.UploadFile(ctx, allocation, filePath, bytes.NewReader(broken), int64(len(broken))); err != nil {
+			t.Fatal(err)
+		}
+	}
 	invalid := []byte(`{"name":"bufferutil","version":"99.0.0"}`)
 	if _, err := backend.UploadFile(ctx, allocation, metadataPath, bytes.NewReader(invalid), int64(len(invalid))); err != nil {
 		t.Fatal(err)
 	}
 	job, err := backend.StartJob(ctx, allocation, agentexecution.JobSpec{JobID: "language-mismatch-must-not-run", Command: "touch", Args: []string{"language-must-not-run.txt"}}, func(agentexecution.OutputChunk) error { return nil })
-	if job != nil || !errors.Is(err, agentexecution.ErrBackendUnavailable) || !strings.Contains(err.Error(), "no automatic reinstall") {
+	if job != nil || !errors.Is(err, agentexecution.ErrBackendUnavailable) || !strings.Contains(err.Error(), "no network") {
 		t.Fatalf("damaged language restore accepted: job=%v err=%v", job, err)
 	}
 	if marker, _, err := backend.DownloadFile(ctx, allocation, "language-must-not-run.txt"); err == nil {
@@ -74,9 +98,12 @@ func assertLanguageLedgerAndRepair(t *testing.T, ctx context.Context, backend ag
 	} else if !errors.Is(err, agentexecution.ErrNotFound) {
 		t.Fatal(err)
 	}
-	if _, err := backend.UploadFile(ctx, allocation, metadataPath, bytes.NewReader(valid), int64(len(valid))); err != nil {
+	// Repair only the artifact. The next command must recover both native files
+	// and the original metadata automatically, without pip/npm or build hooks.
+	if _, err := backend.UploadFile(ctx, allocation, artifactPath, bytes.NewReader(validArtifact), int64(len(validArtifact))); err != nil {
 		t.Fatal(err)
 	}
+	t.Log("corrupt artifact blocked user Job; repaired only the archive, leaving Python/Node native files and metadata for automatic restoration")
 }
 
 // systemPackageVerification reads the root-owned ledger through the authenticated
@@ -497,7 +524,7 @@ func TestE2BPackageInstallContract(t *testing.T) {
 	if pythonNative.ExitCode != 0 {
 		t.Fatalf("Python native build result=%+v", pythonNative)
 	}
-	nodeNative := assertJob("e2b-package-node-native", "sh", "-c", "npm_config_build_from_source=true npm install --no-save --prefix /workspace bufferutil@4.0.9 && node -e \"require('/workspace/node_modules/bufferutil'); console.log('node-native-ok')\"")
+	nodeNative := assertJob("e2b-package-node-native", "sh", "-c", "npm_config_build_from_source=true npm install --no-save --prefix /workspace bufferutil@4.0.9 && node -e \"require('/workspace/node_modules/bufferutil/build/Release/bufferutil.node'); console.log('node-native-ok')\"")
 	if nodeNative.ExitCode != 0 {
 		t.Fatalf("Node native build result=%+v", nodeNative)
 	}
@@ -509,7 +536,7 @@ func TestE2BPackageInstallContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resume installed environment: %v", err)
 	}
-	verifyInstalled := "python3 -c 'import tomlkit,ujson; import os; from pathlib import Path; assert any(Path(os.environ[\"PIP_CACHE_DIR\"]).rglob(\"*.body\")); assert Path(os.environ[\"NPM_CONFIG_CACHE\"],\"_cacache\").is_dir(); print(\"python-and-caches-retained\")' && node -e \"require('/workspace/node_modules/bufferutil'); console.log('node-retained')\" && tree --version"
+	verifyInstalled := "python3 -c 'import tomlkit,ujson; import os; from pathlib import Path; assert any(Path(os.environ[\"PIP_CACHE_DIR\"]).rglob(\"*.body\")); assert Path(os.environ[\"NPM_CONFIG_CACHE\"],\"_cacache\").is_dir(); print(\"python-and-caches-retained\")' && node -e \"require('/workspace/node_modules/bufferutil/build/Release/bufferutil.node'); console.log('node-native-retained')\" && tree --version"
 	verifyInstalled += systemPackageVerification(t, ctx, backend, allocation)
 	if result := assertJob("e2b-package-after-resume", "sh", "-c", verifyInstalled); result.ExitCode != 0 {
 		t.Fatalf("installed dependencies lost after resume: %+v", result)

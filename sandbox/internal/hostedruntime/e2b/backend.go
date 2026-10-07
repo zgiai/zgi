@@ -471,7 +471,7 @@ func validateRuntimeCapabilities(capabilities agentexecution.RuntimeCapabilities
 	}
 	if profile.DependencyInstallation {
 		if capabilities.LanguagePackageLedgerVersion != agentexecution.LanguagePackageLedgerVersion {
-			return fmt.Errorf("%w: E2B template lacks retained language package verification; rebuild the package template", agentexecution.ErrBackendUnavailable)
+			return fmt.Errorf("%w: E2B template lacks retained dependency artifact recovery; rebuild the package template", agentexecution.ErrBackendUnavailable)
 		}
 		if capabilities.SystemPackageLedgerVersion != agentexecution.SystemPackageLedgerVersion {
 			return fmt.Errorf("%w: E2B template lacks fixed-version system package recovery; rebuild the package template", agentexecution.ErrBackendUnavailable)
