@@ -45,7 +45,7 @@ type workflowConnectorResolutionBinding struct {
 	BindingInstanceID string    `gorm:"not null"`
 	Status            string    `gorm:"not null"`
 
-	DisabledAt        *time.Time
+	DisabledAt *time.Time
 }
 
 func (workflowConnectorResolutionBinding) TableName() string { return "connector_target_bindings" }
@@ -96,7 +96,7 @@ func newWorkflowConnectorResolutionFixture(t *testing.T) *workflowConnectorResol
 		}
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := db.AutoMigrate(
+	if err := autoMigrateWorkflowTest(db,
 		&Workflow{}, &WorkflowRunLog{}, &WorkflowNodeRuntimeLog{},
 		&workflowConnectorResolutionWorkspace{}, &workflowConnectorResolutionAgent{},
 		&workflowConnectorResolutionBinding{}, &workflowConnectorResolutionConnection{},
@@ -184,7 +184,6 @@ func newWorkflowConnectorResolutionFixture(t *testing.T) *workflowConnectorResol
 			ConnectionID: fixture.connectionID, ConnectorID: fixture.connectorID.String(),
 			TargetType: string(connectorcore.TargetTypeWorkflow), TargetID: fixture.workflowID.String(),
 			BindingInstanceID: fixture.nodeID, Status: string(connectorcore.BindingStatusActive),
-
 		},
 		&workflowpause.RunPause{
 			ID: fixture.pauseID.String(), TenantID: fixture.workspaceID.String(), AppID: fixture.agentID.String(),

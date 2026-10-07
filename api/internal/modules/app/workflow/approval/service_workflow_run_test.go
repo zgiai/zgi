@@ -10,6 +10,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
+	"github.com/zgiai/zgi/api/internal/testutil/testdb"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -122,7 +123,7 @@ func TestEnsureFormSubmissionOptionsPreservesLegacyWebAppDefault(t *testing.T) {
 
 func TestSubmitApprovalProjectsPendingQuestionBeforeAgentContinuation(t *testing.T) {
 	db := newApprovalTestDB(t)
-	if err := db.AutoMigrate(
+	if err := testdb.AutoMigrate(db,
 		&approvalWorkflowRunScope{},
 		&workflowpause.RunPause{},
 		&workflowpause.RunPauseReason{},
@@ -282,7 +283,7 @@ func TestSubmitApprovalProjectsPendingQuestionBeforeAgentContinuation(t *testing
 
 func TestSubmitApprovalAfterQuestionPreservesQuestionResumeInputs(t *testing.T) {
 	db := newApprovalTestDB(t)
-	if err := db.AutoMigrate(
+	if err := testdb.AutoMigrate(db,
 		&approvalWorkflowRunScope{},
 		&workflowpause.RunPause{},
 		&workflowpause.RunPauseReason{},
@@ -413,7 +414,7 @@ func TestSubmitApprovalAfterQuestionPreservesQuestionResumeInputs(t *testing.T) 
 
 func TestSubmitApprovalBeforeDurablePauseRollsBackForm(t *testing.T) {
 	db := newApprovalTestDB(t)
-	if err := db.AutoMigrate(
+	if err := testdb.AutoMigrate(db,
 		&approvalWorkflowRunScope{},
 		&workflowpause.RunPause{},
 		&workflowpause.RunPauseReason{},
@@ -479,7 +480,7 @@ func TestSubmitApprovalBeforeDurablePauseRollsBackForm(t *testing.T) {
 
 func TestApprovalReplayDoesNotUseOutboxFromAnotherPauseGeneration(t *testing.T) {
 	db := newApprovalTestDB(t)
-	if err := db.AutoMigrate(
+	if err := testdb.AutoMigrate(db,
 		&approvalWorkflowRunScope{},
 		&workflowpause.RunPause{},
 		&workflowpause.RunPauseReason{},
@@ -612,7 +613,7 @@ func TestApprovalReplayDoesNotUseOutboxFromAnotherPauseGeneration(t *testing.T) 
 			return
 		}
 		transitioned = true
-		if updateErr := queryDB.Exec(
+		if updateErr := queryDB.Session(&gorm.Session{NewDB: true}).Exec(
 			"UPDATE workflow_run_pauses SET status = ? WHERE id = ?",
 			workflowpause.RunPauseStatusResumeReady,
 			pauseID,

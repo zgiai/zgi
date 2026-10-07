@@ -32,7 +32,7 @@ func TestProjectInternalNodeExecutionMergesOutOfOrderStart(t *testing.T) {
 		}
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&internalProjectionTestRun{}, &WorkflowNodeRuntimeLog{}); err != nil {
+	if err := autoMigrateWorkflowTest(db, &internalProjectionTestRun{}, &WorkflowNodeRuntimeLog{}); err != nil {
 		t.Fatal(err)
 	}
 	run := internalProjectionTestRun{ID: "run-1", TenantID: "tenant-1", AgentID: "agent-1", WorkflowID: "workflow-1", TriggeredFrom: "debugging", CreatedBy: "account-1"}
