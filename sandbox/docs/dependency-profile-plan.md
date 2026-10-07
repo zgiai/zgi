@@ -2,8 +2,11 @@
 
 ## 1. Decision
 
-`zgi-sandbox` should use prebuilt dependency profiles with lockfiles. User code
-must not install packages during normal execution.
+`zgi-sandbox` uses prebuilt dependency profiles with lockfiles for the common
+case, plus a separately approved `cc-codex-standard` profile for standard
+Claude Code/Codex Skills. Those Skills may install missing Python, Node, or
+approved Debian packages on demand through a package-only network policy;
+legacy manifest and declaration-based Skills keep the original offline flow.
 
 The dependency lifecycle is:
 
@@ -137,8 +140,9 @@ profile paths, or package manager write locations.
 
 ## 4. Install Timing
 
-User dependencies are installed during profile build, not during sandbox
-execution.
+Common dependencies are installed during profile build. On-demand installation
+is allowed only inside the approved standard runtime and is recorded in the
+session ledger; it never runs on the API or Worker host.
 
 Allowed install stages:
 
@@ -146,7 +150,7 @@ Allowed install stages:
 - Profile build job for Python and Node lockfile sync.
 - Release or deployment pipeline that publishes verified profile rootfs output.
 
-Disallowed install stages:
+The legacy path disallows install stages:
 
 - `POST /v1/exec/code`
 - `POST /v1/exec/command`
@@ -154,8 +158,10 @@ Disallowed install stages:
 - skill script startup
 - sandbox creation request handling
 
-Sandbox creation should only validate that the requested profile exists, is
-enabled, is ready, matches the runtime backend, and is below configured limits.
+Standard package-install creation additionally enables the guarded runtime
+proxy and root apt facade. Sandbox creation still validates that the requested
+profile exists, is enabled, is ready, matches the runtime backend, and is below
+configured limits.
 
 ## 5. API Contract
 

@@ -15,7 +15,7 @@ The adapter uses E2B's authenticated REST interfaces directly instead of a third
 
 The E2B API key remains in Worker memory. Database allocations contain only the opaque Sandbox ID. envd and traffic tokens are accepted only from the current create/connect response and are never written to Agent execution records.
 
-Every create request sets `allow_internet_access=false`, denies `0.0.0.0/0`, disables public unauthenticated traffic, enables full-memory auto-pause at the Worker timeout, and disables traffic-triggered auto-resume. The ZGI Runtime Agent endpoint therefore requires both E2B's traffic token and its own independently generated bearer token.
+Every create request sets `allow_internet_access=false`, sends E2B's supported forced IPv4 deny `0.0.0.0/0`, disables public unauthenticated traffic, enables full-memory auto-pause at the Worker timeout, and disables traffic-triggered auto-resume. E2B rejects `::/0` in this API and its Sandbox networking does not expose an IPv6 egress path, so the adapter must not send that unsupported CIDR. The ZGI Runtime Agent endpoint therefore requires both E2B's traffic token and its own independently generated bearer token. Package-install mode is enabled only for an approved Profile that supplies an explicit package-source allowlist: the request keeps the forced deny and adds E2B `allowOut` entries for the approved package hosts. It never falls back to public internet. This is provider-enforced package egress, not unrestricted shell networking; a package gateway remains the stronger production option for redirects, mirrors and audit centralization.
 
 ## Approved template contract
 
@@ -36,6 +36,23 @@ npx --yes @e2b/cli@2.20.0 template create <approved-template-name> \
   --ready-cmd 'test -x /usr/local/bin/zgi-runtime-agent && test -x /usr/local/bin/zgi-runtime-agent-bootstrap'
 ```
 
+Build the package-install template as a separate immutable E2B template. The
+build-time defaults are part of the template snapshot and must not rely on
+per-Sandbox environment overrides:
+
+```bash
+docker build \
+  -f sandbox/Dockerfile.agent-runtime-e2b-package \
+  -t zgi-agent-runtime:e2b-package-template-contract \
+  sandbox
+```
+
+Use this package image only for the approved package Profile. Keep
+`Dockerfile.agent-runtime-e2b` for offline Profiles; do not reuse a
+bridge/disabled template for package-install or vice versa. The separate
+Dockerfile is required because the E2B CLI does not expose Docker build args;
+its baked-in environment is part of the immutable template capability.
+
 The generated binary is placed under ignored `sandbox/e2b-template-build/` build storage and
 must not be committed. The template Dockerfile downloads the fixed Node.js
 22.23.3 archive and verifies its pinned SHA-256 before installation. Python
@@ -45,11 +62,37 @@ Runtime Agent as a file-level `COPY`: current CLI upload caching can skip an
 unchanged directory input without materializing its contents in a later build,
 while the explicit file input remains reproducible across cached rebuilds.
 
-Approve the resulting immutable template ID in Worker configuration. The template must preserve the image entrypoint, non-root UID/GID 65532, `/workspace`, Python 3.13, Node.js 22, and port 49984. It must not bake provider credentials or a Runtime Agent token into an image layer.
+Approve the resulting immutable template ID in Worker configuration. The template must preserve the image entrypoint, a root Runtime Agent for the guarded APT helper, non-root Job UID/GID 65532, `/workspace`, Python 3.13, Node.js 22, and port 49984. The Runtime Agent must never run user commands as root. It must not bake provider credentials or a Runtime Agent token into an image layer.
 
 The template start process waits for `/run/zgi-agent/bootstrap-token`. After E2B creates the microVM, the Provider uploads a random per-Binding token through authenticated envd. Runtime Agent accepts only a regular token file, restricts it to mode `0600`, reads it, and removes it before opening port 49984. This handshake is necessary because an E2B template start process is restored from the template snapshot and does not inherit per-Sandbox environment variables supplied later at create time.
 
 Runtime Agent control variables are stripped from every child Job environment, including when a Job tries to override them. Static Profile approval is the only template selection path; arbitrary template IDs are rejected before contacting E2B. Readiness and reconnect fail closed if the injected token cannot be delivered or recovered through authenticated envd.
+
+## Hosted Job package boundary
+
+The package template adds an in-VM boundary to the provider allowlist. Its
+root-owned bootstrap uses native nftables to allow Job UID 65532 to connect
+only to `127.0.0.1:3128`. The root Runtime Agent's HTTPS CONNECT proxy checks
+approved hostnames, port 443, DNS and public IPv4 destinations; Jobs cannot
+bypass it by removing proxy variables, connecting directly to an IP, or
+reaching envd/Runtime Agent loopback ports. Root/envd keep their bootstrap
+communication. Missing firewall support or failed rule setup aborts startup.
+This prevents relying solely on provider filtering, which may still accept a
+TCP handshake before refusing application traffic.
+
+The bootstrap also removes Job write access from `/usr/local`,
+`/opt/zgi-profile` and `/opt/corepack`. Jobs use the session Python venv and
+workspace Node modules, and `setpriv --no-new-privs` prevents acquiring new
+privileges via setuid/file capabilities. The guarded APT installer remains a
+separate root-only process. It does not make the Job root.
+
+Rebuild `Dockerfile.agent-runtime-e2b-package` and the Worker together. A
+package template must report the guarded loopback proxy as well as its package
+capabilities; legacy direct templates are rejected on create, resume, capability
+queries and Job start. Download and cleanup do not require executing a Job.
+Configure a custom package mirror in the template's
+`ZGI_RUNTIME_AGENT_EGRESS_ALLOWED_HOSTS_JSON` and in the Worker allowlist; do not
+rely on per-Sandbox environment variables to update a snapshotted process.
 
 ## Worker configuration
 
@@ -59,12 +102,14 @@ Set the shared Worker variables documented in `agent-runtime-local.md`, then sel
 |---|---|
 | `ZGI_AGENT_RUNTIME_BACKEND=e2b` | Selects only the E2B backend for this Worker instance. |
 | `ZGI_AGENT_RUNTIME_E2B_API_KEY` | E2B control-plane credential. Never reuse the Worker API credential. |
-| `ZGI_AGENT_RUNTIME_E2B_PROFILES_JSON` | Approved map, for example `{"standard":{"template_id":"zgi-runtime-template","dependency_preparation":false}}`. Set `dependency_preparation=true` only on a test template whose API approval also enables the same capability. |
+| `ZGI_AGENT_RUNTIME_E2B_PROFILES_JSON` | Approved map, for example `{"standard":{"template_id":"zgi-runtime-template","dependency_preparation":false}}`. A package-install entry must additionally set `dependency_installation=true`, `package_network_mode=package-install`, and a non-empty `egress_allowed_hosts` list containing only approved package sources. |
 | `ZGI_AGENT_RUNTIME_E2B_API_URL` | Optional control-plane URL; defaults to `https://api.e2b.app`. |
 | `ZGI_AGENT_RUNTIME_E2B_DOMAIN` | Optional Sandbox domain; defaults to `e2b.app`. |
 | `ZGI_AGENT_RUNTIME_E2B_TIMEOUT_SECONDS` | Create/connect TTL and auto-pause deadline; defaults to 1800. |
 | `ZGI_AGENT_RUNTIME_E2B_AGENT_PORT` | Runtime Agent port; defaults to 49984. |
 | `ZGI_AGENT_RUNTIME_E2B_ENVD_PORT` | envd port; defaults to 49983. |
+| `ZGI_AGENT_RUNTIME_E2B_EGRESS_PROXY_ADDRESS` | Optional operator-managed E2B SOCKS5 egress proxy. If set, the Worker sends it only for package-install environments; credentials stay in Worker memory. It is not a substitute for the required `allowOut` allowlist. |
+| `ZGI_AGENT_RUNTIME_E2B_EGRESS_PROXY_USERNAME` / `ZGI_AGENT_RUNTIME_E2B_EGRESS_PROXY_PASSWORD` | Optional proxy credentials; they are passed only to E2B's provider request and never to Jobs. |
 
 Run local-gVisor and E2B workers as separate service instances with distinct Worker IDs. Both may share the control-plane database, but a Binding records one backend and cannot migrate between providers implicitly.
 
@@ -72,7 +117,17 @@ The optional checkpoint settings described in `agent-runtime-local.md` also appl
 
 The Worker records a delayed allocation-reconciliation task before creating an E2B Sandbox. An opaque Sandbox ID lost in a Worker crash can be rediscovered through the per-attempt metadata on running or paused Sandboxes; the reconciler deletes unrecorded allocations while preserving the one referenced by the current Binding. The task runs after a two-hour grace period, beyond the 90-minute maximum create/restore operation. This bounds orphan cleanup but is not a substitute for the still-required real-provider crash-injection acceptance.
 
-An approved [Home Snapshot](agent-runtime-home-snapshot.md) may select a separate, versioned E2B template for new Bindings. The Worker still applies offline network restrictions and requires the Runtime Agent to become healthy before activation.
+An approved [Home Snapshot](agent-runtime-home-snapshot.md) may select a separate, versioned E2B template for new Bindings. The Worker still applies the offline deny or package-source allowlist and requires the Runtime Agent to become healthy before activation.
+
+E2B restores the template's Runtime Agent process from its image/snapshot. The
+per-Sandbox `envVars` request is retained for compatibility, but it is not a
+reliable way to change Runtime Agent capabilities after the template was built.
+When a Profile enables dependency preparation, the Worker now verifies that the
+remote capabilities report the approved offline mode during create and resume;
+an old template fails closed with an actionable backend-unavailable error. A
+package-install Profile must additionally report `package_network_enforced=true`
+and `network_mode=package-install`; an image that only has the local loopback
+bridge is not accepted by the hosted backend.
 
 The archive endpoint appends a version marker and SHA-256 digest to its response body. The Worker removes and verifies that footer before saving the TAR. HTTP trailers are not used for completion because the E2B traffic proxy does not preserve them. Rebuild both the Worker and approved template together when changing this internal archive protocol; a mismatched version fails closed.
 
@@ -86,4 +141,13 @@ ZGI_AGENT_RUNTIME_E2B_TEST_TEMPLATE='...' \
 make -C sandbox test-agent-runtime-e2b
 ```
 
-The tagged test intentionally fails when credentials or the template are absent. It creates and cleans a real environment, verifies stdout/stderr, file upload/download, pause/resume retention, outbound-network denial, cancellation, and final deletion. Do not mark M3 complete until this test has passed and the E2B dashboard confirms no orphaned environment.
+For the package-install template, use the separate gate so an offline template
+cannot be mistaken for package-install evidence:
+
+```bash
+ZGI_AGENT_RUNTIME_E2B_API_KEY='...' \
+ZGI_AGENT_RUNTIME_E2B_TEST_PACKAGE_TEMPLATE='...' \
+make -C sandbox test-agent-runtime-e2b-package
+```
+
+The tagged test intentionally fails when credentials or the template are absent. It creates and cleans a real environment, verifies stdout/stderr, file upload/download, pause/resume retention, outbound-network denial, cancellation, and final deletion. For the package Profile, the real-account gate must additionally install one Python package, one Node package and one approved APT package, then verify that an ordinary HTTPS request and a non-allowlisted package source are denied. Do not mark the hosted package slice complete until this test has passed and the E2B dashboard confirms no orphaned environment.

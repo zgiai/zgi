@@ -1,6 +1,6 @@
 SHELL := /bin/sh
 
-.PHONY: fmt test build check run kest test-linux-secure test-agent-runtime-containerd test-agent-runtime-e2b check-docker-entrypoint check-config-docs profile-build-stdlib profile-build-scientific-data build-agent-runtime-image build-agent-runtime-worker prepare-agent-runtime-e2b
+.PHONY: fmt test build check run kest test-linux-secure test-agent-runtime-containerd test-agent-runtime-e2b test-agent-runtime-e2b-package check-docker-entrypoint check-config-docs test-agent-runtime-server install-agent-runtime-host profile-build-stdlib profile-build-scientific-data profile-build-cc-codex-standard build-agent-runtime-image build-agent-runtime-worker prepare-agent-runtime-e2b
 .PHONY: docker-up docker-down docker-logs
 .PHONY: docker-config
 
@@ -30,11 +30,20 @@ test-agent-runtime-containerd:
 test-agent-runtime-e2b:
 	go test -tags=e2b_integration -count=1 -v ./internal/hostedruntime/e2b -run TestE2BContract
 
+test-agent-runtime-e2b-package:
+	go test -tags=e2b_integration -count=1 -v ./internal/hostedruntime/e2b -run TestE2BPackageInstallContract
+
 check-docker-entrypoint:
 	./scripts/test_docker_entrypoint
 
 check-config-docs:
 	./scripts/check_config_docs
+
+test-agent-runtime-server:
+	./scripts/test_zgi_runtime_server
+
+install-agent-runtime-host:
+	./scripts/zgi-runtime-server host-install
 
 profile-build-stdlib:
 	tmp="$$(mktemp -d /tmp/zgi-profile-build.XXXXXX)"; \
@@ -45,6 +54,11 @@ profile-build-scientific-data:
 	tmp="$$(mktemp -d /tmp/zgi-scientific-data-profile.XXXXXX)"; \
 	trap 'rm -rf "$$tmp"' EXIT; \
 	./scripts/build-profile --profile scientific-data --output-dir "$$tmp"
+
+profile-build-cc-codex-standard:
+	tmp="$$(mktemp -d /tmp/zgi-cc-codex-standard-profile.XXXXXX)"; \
+	trap 'rm -rf "$$tmp"' EXIT; \
+	./scripts/build-profile --profile cc-codex-standard --output-dir "$$tmp"
 
 build-agent-runtime-image:
 	docker build -f Dockerfile.agent-runtime -t zgi-agent-runtime:dev .
