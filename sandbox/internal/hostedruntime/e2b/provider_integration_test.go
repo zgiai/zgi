@@ -22,6 +22,63 @@ import (
 	"github.com/zgiai/zgi-sandbox/internal/workspacecheckpoint"
 )
 
+// This intentionally alters only a disposable contract environment. Recovery
+// must block the user command, survive remote error mapping, and permit repair.
+func assertLanguageLedgerAndRepair(t *testing.T, ctx context.Context, backend agentexecution.ExecutionBackend, allocation agentexecution.Allocation, corrupt bool) {
+	t.Helper()
+	read := func(name string) []byte {
+		t.Helper()
+		reader, _, err := backend.DownloadFile(ctx, allocation, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := io.ReadAll(reader)
+		_ = reader.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	var ledger struct {
+		Version  int                                              `json:"version"`
+		Packages []struct{ Language, Name, Version, Path string } `json:"packages"`
+	}
+	if err := json.Unmarshal(read(".zgi-runtime-home/language-package-ledger.json"), &ledger); err != nil {
+		t.Fatal(err)
+	}
+	foundPython, foundNode := false, false
+	for _, pkg := range ledger.Packages {
+		foundPython = foundPython || (pkg.Language == "python" && pkg.Name == "ujson" && pkg.Version == "5.10.0")
+		foundNode = foundNode || (pkg.Language == "node" && pkg.Name == "bufferutil" && pkg.Version == "4.0.9")
+	}
+	if ledger.Version != agentexecution.LanguagePackageLedgerVersion || !foundPython || !foundNode {
+		t.Fatalf("missing native dependency locks: %+v", ledger)
+	}
+	t.Logf("retained language ledger verified: %d packages", len(ledger.Packages))
+	if !corrupt {
+		return
+	}
+	const metadataPath = "node_modules/bufferutil/package.json"
+	valid := read(metadataPath)
+	invalid := []byte(`{"name":"bufferutil","version":"99.0.0"}`)
+	if _, err := backend.UploadFile(ctx, allocation, metadataPath, bytes.NewReader(invalid), int64(len(invalid))); err != nil {
+		t.Fatal(err)
+	}
+	job, err := backend.StartJob(ctx, allocation, agentexecution.JobSpec{JobID: "language-mismatch-must-not-run", Command: "touch", Args: []string{"language-must-not-run.txt"}}, func(agentexecution.OutputChunk) error { return nil })
+	if job != nil || !errors.Is(err, agentexecution.ErrBackendUnavailable) || !strings.Contains(err.Error(), "no automatic reinstall") {
+		t.Fatalf("damaged language restore accepted: job=%v err=%v", job, err)
+	}
+	if marker, _, err := backend.DownloadFile(ctx, allocation, "language-must-not-run.txt"); err == nil {
+		_ = marker.Close()
+		t.Fatal("user command ran before dependency verification")
+	} else if !errors.Is(err, agentexecution.ErrNotFound) {
+		t.Fatal(err)
+	}
+	if _, err := backend.UploadFile(ctx, allocation, metadataPath, bytes.NewReader(valid), int64(len(valid))); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // systemPackageVerification reads the root-owned ledger through the authenticated
 // data plane, not by relaxing Job file permissions.
 func systemPackageVerification(t *testing.T, ctx context.Context, backend agentexecution.ExecutionBackend, allocation agentexecution.Allocation) string {
@@ -489,6 +546,7 @@ func TestE2BPackageInstallContract(t *testing.T) {
 		t.Fatalf("restore installed workspace: %v", err)
 	}
 	_ = archive.Close()
+	assertLanguageLedgerAndRepair(t, ctx, backend, allocation, true)
 	if result := assertJob("e2b-package-after-rebuild", "sh", "-c", verifyInstalled); result.ExitCode != 0 {
 		t.Fatalf("installed dependencies lost after compute rebuild: %+v", result)
 	}

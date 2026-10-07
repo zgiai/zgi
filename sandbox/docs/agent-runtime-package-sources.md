@@ -107,8 +107,48 @@ must not be described as retroactively locking the original installation.
 Ledgers remain untrusted Workspace data: only bounded, validated package/version
 fields can construct privileged arguments. The 1 MiB ledger limit, 1,000 command
 limit and 4,096 installed-package limit fail explicitly. Environment bindings are
-consistency checks, not cryptographic attestation. Python/npm still use retained
-dependency directories and caches, not this system-package version contract.
+consistency checks, not cryptographic attestation. Python/npm use the separate
+retained-metadata contract below, not privileged system-package replay.
+
+## Retained Python and Node versions
+
+Installation-enabled images/templates must also advertise
+`language_package_ledger_version: 1`; Workers reject an older installation runtime
+before readiness. Build and approve the matching runtime and Worker together.
+Offline/legacy Profiles are unaffected.
+
+At each quiescent Workspace checkpoint, the Agent atomically records actual
+distribution names, versions and metadata locations in a separate session ledger.
+It reads the session virtual environment's `lib/python3.*/site-packages` metadata
+(`.dist-info/METADATA` and directory-form `.egg-info/PKG-INFO`) and installed
+`node_modules` package metadata throughout the Workspace. Nested and scoped Node
+packages have distinct paths; confined pnpm/npm package-directory links are read
+without recursively following link graphs. Preinstalled image packages are covered
+by the immutable Profile identity, not copied into this session inventory.
+
+Collection never starts Python, Node, npm hooks or user code as root. Metadata
+must be a bounded regular file. Escaping links, metadata-file symlinks, FIFO/device
+files, invalid identities, incomplete package directories and excessive inventories
+fail checkpointing explicitly. Limits are 256 KiB per metadata file, 16 MiB total
+metadata, 4,096 records, a 1 MiB ledger and the existing 10,000 Workspace entry limit.
+
+Before the first Job in reconstructed compute, the Agent checks the retained
+inventory against that ledger and its Profile/source/architecture identity. A
+missing package, changed version/path, unexpected extra installation or malformed
+ledger blocks user execution with `language_package_recovery_failed`. Repairing
+the retained checkpoint permits retry; no automatic reinstall or latest-version
+fallback occurs. Checkpointing cannot silently bless a damaged imported inventory.
+Subsequent Jobs may intentionally upgrade or remove dependencies; the next
+quiescent checkpoint records the new state. Callers must stop Jobs before capture,
+as with the existing Workspace archive contract.
+
+Historical checkpoints without this ledger remain readable and gain records on
+their next checkpoint; original unknown versions cannot be recovered retroactively.
+This checks metadata consistency, not every installed file or importability, and
+does not attest package authenticity. Custom `pip --target` directories, editable
+source trees and Node global installs are not claimed as inventoried. Retained
+files remain the recovery mechanism: version-pinned wheel/npm replay and shared
+cross-session package artifacts are separate future work.
 
 Package queries and fixed-version installation use the documented Debian
 [dpkg-query fields](https://manpages.debian.org/bookworm/dpkg/dpkg-query.1.en.html)
