@@ -19,12 +19,12 @@ func TestBlockingPathRootVariableMergeConsistency(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	db, err := initTestDB()
-	require.NoError(t, err)
+	db := initTestDB(t)
 
 	workflowRepo := workflowpkg.NewWorkflowRepository(db)
 	agentsRepo := agents.NewAgentsRepository(db)
-	service := workflowpkg.NewWorkflowService(workflowRepo, agentsRepo, nil, nil, nil)
+	service := workflowpkg.NewWorkflowService(workflowRepo, agentsRepo,
+		workflowpkg.NewWorkflowRunLogRepository(db), workflowpkg.NewWorkflowNodeRuntimeLogRepository(db), nil)
 
 	setupCtx, setupCancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer setupCancel()

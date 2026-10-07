@@ -9,13 +9,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 
-	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/dto"
 	workflowpkg "github.com/zgiai/zgi/api/internal/modules/app/workflow"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
-	"github.com/zgiai/zgi/api/pkg/database"
 )
 
 func TestWorkflowMinimalLoopIntegration(t *testing.T) {
@@ -23,8 +20,7 @@ func TestWorkflowMinimalLoopIntegration(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	db, err := initTestDB()
-	require.NoError(t, err)
+	db := initTestDB(t)
 
 	repo := workflowpkg.NewWorkflowRepository(db)
 	executor := workflowpkg.NewWorkflowExecutor()
@@ -149,10 +145,6 @@ func buildMinimalLoopGraph() map[string]any {
 		"nodes": nodes,
 		"edges": edges,
 	}
-}
-
-func initTestDB() (*gorm.DB, error) {
-	return database.InitDB(config.Current().Database)
 }
 
 func assertStatusSucceeded(t *testing.T, statusMap map[string]any) {
