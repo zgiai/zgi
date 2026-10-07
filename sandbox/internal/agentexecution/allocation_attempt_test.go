@@ -2,19 +2,61 @@ package agentexecution
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
 
 type discoverableBackend struct {
 	fakeBackend
-	attemptID   string
-	allocations []Allocation
+	attemptID     string
+	allocations   []Allocation
+	unknownResult bool
 }
 
 func (b *discoverableBackend) CreateBinding(ctx context.Context, spec CreateSpec) (Allocation, error) {
 	b.attemptID = spec.AllocationAttemptID
+	if b.unknownResult {
+		return Allocation{}, b.createErr
+	}
 	return b.fakeBackend.CreateBinding(ctx, spec)
+}
+
+func TestFailedUnknownAllocationUsesDiscoveryInsteadOfEmptyDestroy(t *testing.T) {
+	for _, orphan := range []bool{false, true} {
+		t.Run(fmt.Sprint(orphan), func(t *testing.T) {
+			repository := newMemoryRepository()
+			cause := errors.New("provider response lost")
+			backend := &discoverableBackend{fakeBackend: fakeBackend{createErr: cause}, unknownResult: true}
+			service := newTestService(t, repository, backend)
+			binding, err := service.CreateBinding(context.Background(), testCreateRequest())
+			if !errors.Is(err, cause) || binding.Status != BindingStatusFailed {
+				t.Fatalf("create = %+v, %v", binding, err)
+			}
+			if len(repository.cleanups) != 1 || repository.cleanups[0].ResourceType != "allocation_attempt" || repository.cleanups[0].ResourceID != backend.attemptID {
+				t.Fatalf("unexpected cleanup journal: %+v", repository.cleanups)
+			}
+			if orphan {
+				backend.allocations = []Allocation{{BindingRef: "response-lost-sandbox"}}
+			}
+			now := repository.cleanups[0].NotBefore
+			reconciler, err := NewReconciler(repository, map[string]Backend{"fake": backend}, ReconcilerOptions{OwnerID: "recovery-worker", Now: func() time.Time { return now }})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if processed, err := reconciler.ReconcileOne(context.Background()); err != nil || !processed {
+				t.Fatalf("reconcile = %t, %v", processed, err)
+			}
+			wantCalls := 0
+			if orphan {
+				wantCalls = 1
+			}
+			if backend.destroyCalls != wantCalls || repository.cleanups[0].Status != "completed" {
+				t.Fatalf("destroy calls = %d, task = %+v", backend.destroyCalls, repository.cleanups[0])
+			}
+		})
+	}
 }
 
 func (b *discoverableBackend) FindAllocations(_ context.Context, attemptID string) ([]Allocation, error) {

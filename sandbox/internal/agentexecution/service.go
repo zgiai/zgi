@@ -187,7 +187,13 @@ func (s *Service) CreateBinding(ctx context.Context, request CreateBindingReques
 		HomeSnapshotRef:     binding.HomeSnapshotRef,
 	})
 	if err != nil {
-		cleanupErr := s.enqueueDestroy(ctx, binding, allocation, err)
+		var cleanupErr error
+		// A timed-out provider request may have created an environment without
+		// returning its reference. The durable allocation attempt owns discovery
+		// of that outcome; an empty destroy request cannot identify the resource.
+		if attemptID == "" || allocation.BindingRef != "" || allocation.WorkspaceRef != "" {
+			cleanupErr = s.enqueueDestroy(ctx, binding, allocation, err)
+		}
 		binding.Status = BindingStatusFailed
 		binding.FailureReason = limitFailureReason(err.Error())
 		binding.UpdatedAt = s.now().UTC()
