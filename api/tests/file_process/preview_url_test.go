@@ -603,6 +603,10 @@ func (s *previewURLOrganizationService) CheckWorkspacePermission(context.Context
 	return s.allowed, nil
 }
 
+func (s *previewURLOrganizationService) CheckWorkspaceOrganizationAnyPermission(context.Context, string, string, string, ...workspace_model.WorkspacePermissionCode) (bool, error) {
+	return s.allowed, nil
+}
+
 func stringPtr(value string) *string {
 	return &value
 }

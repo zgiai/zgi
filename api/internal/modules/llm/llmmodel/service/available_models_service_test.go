@@ -1481,8 +1481,8 @@ func TestModelServiceOfficialAvailabilityUsesExactProviderModelPair(t *testing.T
 	if err != nil {
 		t.Fatalf("ListTenantModels returned error: %v", err)
 	}
-	if len(views) != 2 {
-		t.Fatalf("ListTenantModels returned %d models, want 2", len(views))
+	if len(views) != 1 {
+		t.Fatalf("ListTenantModels returned %d models, want one deduplicated model", len(views))
 	}
 	availability := make(map[string][2]bool, len(views))
 	for _, view := range views {
@@ -1491,8 +1491,8 @@ func TestModelServiceOfficialAvailabilityUsesExactProviderModelPair(t *testing.T
 	if got := availability["openai"]; got != [2]bool{true, true} {
 		t.Fatalf("openai availability = %v, want [true true]", got)
 	}
-	if got := availability["anthropic"]; got != [2]bool{false, false} {
-		t.Fatalf("anthropic availability = %v, want [false false]", got)
+	if _, exists := availability["anthropic"]; exists {
+		t.Fatal("uncallable same-name provider displaced the exact available provider")
 	}
 }
 

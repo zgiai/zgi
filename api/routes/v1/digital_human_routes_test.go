@@ -101,7 +101,7 @@ func TestRegisterDigitalHumanRoutesRegistersLifecycleAPI(t *testing.T) {
 	})
 
 	routes := router.Routes()
-	if got, want := len(routes), 78; got != want {
+	if got, want := len(routes), 79; got != want {
 		t.Fatalf("registered route count = %d, want %d", got, want)
 	}
 	want := map[string]bool{
@@ -134,6 +134,7 @@ func TestRegisterDigitalHumanRoutesRegistersLifecycleAPI(t *testing.T) {
 		"GET /console/api/digital-humans/:id/draft/binding-candidates":                                                    false,
 		"GET /console/api/digital-humans/:id/runs":                                                                        false,
 		"GET /console/api/digital-humans/:id/runs/:run_id":                                                                false,
+		"GET /console/api/digital-humans/:id/runs/:run_id/runtime-log":                                                    false,
 		"POST /console/api/digital-humans/:id/runs/:run_id/cancel":                                                        false,
 		"GET /console/api/digital-humans/:id/runtime/conversations":                                                       false,
 		"GET /console/api/digital-humans/:id/runtime/search":                                                              false,

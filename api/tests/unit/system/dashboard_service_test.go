@@ -521,8 +521,8 @@ func TestDashboardService_GetDashboardStats(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 
 	// 5. Datasets count
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT count(*) FROM "datasets" WHERE workspace_id IN ($1,$2)`)).
-		WithArgs("ws-1", "ws-2").
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT count(*) FROM "datasets" WHERE workspace_id IN ($1,$2) AND provider <> $3`)).
+		WithArgs("ws-1", "ws-2", "digital_human_memory").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(3))
 
 	// tableExists: data_sources
@@ -542,7 +542,7 @@ func TestDashboardService_GetDashboardStats(t *testing.T) {
 		WithArgs("ws-1", "ws-2", "account-1", "AGENT", false, false).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "datasets" WHERE .*created_by`).
-		WithArgs("ws-1", "ws-2", "account-1").
+		WithArgs("ws-1", "ws-2", "account-1", "digital_human_memory").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 
 	// Execute
