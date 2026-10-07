@@ -166,6 +166,21 @@ func TestConnectorPluginAdmissionRefreshesToolsAndInvalidPackageIsIsolated(t *te
 	store := &containerPluginDefinitionStore{state: connectorcatalog.PluginRuntimeState{
 		Statuses: map[string]connectorcatalog.PluginDefinitionStatus{},
 	}}
+	base, found := definitionCatalog.Get("github")
+	if !found {
+		t.Fatal("built-in GitHub definition is missing")
+	}
+	compatible := base
+	compatible.PluginDigest = ""
+	validRoot := writeContainerPluginPackage(t, compatible)
+	// Directory packages hash all files, unlike embedded manifest packages.
+	// Seed the accepted directory version so re-admission checks its exact bytes.
+	loaded, err := container.GetConnectorPluginLoader().LoadDirectory(context.Background(), validRoot)
+	if err != nil || len(loaded.Failures) != 0 {
+		t.Fatalf("load accepted directory package: %v", err)
+	}
+	store.state.Definitions = loaded.Definitions
+	store.state.Statuses[base.PluginID] = connectorcatalog.PluginDefinitionStatusActive
 	lifecycleStore := &containerPluginLifecycleStore{}
 	manager, err := connectorcatalog.NewPluginManager(
 		container.GetConnectorPluginLoader(), definitionCatalog, store, lifecycleStore,
@@ -185,18 +200,9 @@ func TestConnectorPluginAdmissionRefreshesToolsAndInvalidPackageIsIsolated(t *te
 		t.Fatal(err)
 	}
 
-	base, found := definitionCatalog.Get("github")
-	if !found {
-		t.Fatal("built-in GitHub definition is missing")
-	}
-	compatible := base
-	compatible.PluginVersion = "1.2.0"
-	compatible.PluginDigest = ""
-	compatible.Name = "GitHub Cloud"
-	compatible.Description = "Updated GitHub Connector copy"
-	compatible.Operations = append([]connectorcatalog.Operation(nil), base.Operations...)
-	compatible.Operations[0].Name = "Updated operation copy"
-	validRoot := writeContainerPluginPackage(t, compatible)
+	changed := compatible
+	changed.Name = "GitHub Cloud"
+	changedRoot := writeContainerPluginPackage(t, changed)
 	unsupported := base
 	unsupported.ID = "calendar"
 	unsupported.PluginID = "zgi.calendar"
@@ -220,6 +226,10 @@ func TestConnectorPluginAdmissionRefreshesToolsAndInvalidPackageIsIsolated(t *te
 		Kind: connectoraudit.PlatformActorPlatformMaintainer,
 		ID:   uuid.NewString(),
 	})
+	changedReport, err := container.AdmitConnectorPluginDirectories(maintainerContext, []string{changedRoot})
+	if err != nil || len(changedReport.Failures) != 1 || len(changedReport.AdmittedDefinitions) != 0 {
+		t.Fatalf("same-version content replacement was not rejected: %v", err)
+	}
 	report, err := container.AdmitConnectorPluginDirectories(
 		maintainerContext, []string{invalidRoot, unsupportedRoot, validRoot},
 	)
