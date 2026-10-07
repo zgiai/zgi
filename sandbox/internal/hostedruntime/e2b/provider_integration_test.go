@@ -5,6 +5,8 @@ package e2b
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +21,35 @@ import (
 	"github.com/zgiai/zgi-sandbox/internal/packagesource"
 	"github.com/zgiai/zgi-sandbox/internal/workspacecheckpoint"
 )
+
+// systemPackageVerification reads the root-owned ledger through the authenticated
+// data plane, not by relaxing Job file permissions.
+func systemPackageVerification(t *testing.T, ctx context.Context, backend agentexecution.ExecutionBackend, allocation agentexecution.Allocation) string {
+	t.Helper()
+	reader, _, err := backend.DownloadFile(ctx, allocation, ".zgi-runtime-home/package-install-ledger.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, readErr := io.ReadAll(io.LimitReader(reader, (1<<20)+1))
+	closeErr := reader.Close()
+	if readErr != nil || closeErr != nil || len(raw) > 1<<20 {
+		t.Fatalf("read system ledger: bytes=%d read=%v close=%v", len(raw), readErr, closeErr)
+	}
+	var ledger struct {
+		Version  int
+		Packages []struct{ Name, Architecture, Version string }
+	}
+	if err := json.Unmarshal(raw, &ledger); err != nil || ledger.Version != 2 || len(ledger.Packages) == 0 {
+		t.Fatalf("invalid locked ledger: version=%d packages=%d error=%v", ledger.Version, len(ledger.Packages), err)
+	}
+	var rows []string
+	for _, pkg := range ledger.Packages {
+		rows = append(rows, pkg.Name+"\t"+pkg.Architecture+"\t"+pkg.Version)
+	}
+	slices.Sort(rows)
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n")+"\n")))
+	return " && python3 -c 'import hashlib,subprocess; q=subprocess.check_output([\"dpkg-query\",\"-W\",\"-f=${Package}\\t${Architecture}\\t${Version}\\t${db:Status-Status}\\n\"],text=True); rows=sorted(\"\\t\".join(r[:3]) for r in (x.split(\"\\t\") for x in q.splitlines()) if r[3]==\"installed\"); digest=hashlib.sha256((\"\\n\".join(rows)+\"\\n\").encode()).hexdigest(); assert digest==\"" + digest + "\"; print(\"locked-system-versions-verified\",len(rows))'"
+}
 
 func TestE2BContract(t *testing.T) {
 	apiKey := strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_E2B_API_KEY"))
@@ -422,6 +453,7 @@ func TestE2BPackageInstallContract(t *testing.T) {
 		t.Fatalf("resume installed environment: %v", err)
 	}
 	verifyInstalled := "python3 -c 'import tomlkit,ujson; import os; from pathlib import Path; assert any(Path(os.environ[\"PIP_CACHE_DIR\"]).rglob(\"*.body\")); assert Path(os.environ[\"NPM_CONFIG_CACHE\"],\"_cacache\").is_dir(); print(\"python-and-caches-retained\")' && node -e \"require('/workspace/node_modules/bufferutil'); console.log('node-retained')\" && tree --version"
+	verifyInstalled += systemPackageVerification(t, ctx, backend, allocation)
 	if result := assertJob("e2b-package-after-resume", "sh", "-c", verifyInstalled); result.ExitCode != 0 {
 		t.Fatalf("installed dependencies lost after resume: %+v", result)
 	}
@@ -462,5 +494,63 @@ func TestE2BPackageInstallContract(t *testing.T) {
 	}
 	if result := assertJob("e2b-package-offline-office-after-rebuild", "sh", "-c", "python3 /opt/zgi-profile/resources/verify_xml.py && file --version"); result.ExitCode != 0 {
 		t.Fatalf("offline Office resources unavailable after rebuild: %+v", result)
+	}
+	// A malformed retained ledger must block execution through the real remote
+	// protocol, and remain retryable after authenticated operator repair.
+	const ledgerPath = ".zgi-runtime-home/package-install-ledger.json"
+	reader, _, err := backend.DownloadFile(ctx, allocation, ledgerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	validLedger, err := io.ReadAll(reader)
+	_ = reader.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalidLedger := []byte(`{"entries":[{"args":["upgrade"]}]}`)
+	if _, err := backend.UploadFile(ctx, allocation, ledgerPath, bytes.NewReader(invalidLedger), int64(len(invalidLedger))); err != nil {
+		t.Fatal(err)
+	}
+	archive, err = backend.ExportWorkspace(ctx, allocation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpointKey = strings.Repeat("e", 64)
+	if err := store.Save(ctx, checkpointKey, archive); err != nil {
+		_ = archive.Close()
+		t.Fatal(err)
+	}
+	_ = archive.Close()
+	if err := backend.DestroyBinding(ctx, allocation); err != nil {
+		t.Fatal(err)
+	}
+	allocation, err = backend.CreateBinding(ctx, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive, err = store.Open(ctx, checkpointKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = backend.ImportWorkspace(ctx, allocation, archive)
+	_ = archive.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := backend.StartJob(ctx, allocation, agentexecution.JobSpec{JobID: "e2b-invalid-ledger-must-not-run", Command: "touch", Args: []string{"must-not-run.txt"}}, func(agentexecution.OutputChunk) error { return nil })
+	if job != nil || !errors.Is(err, agentexecution.ErrBackendUnavailable) || !strings.Contains(err.Error(), "no latest-version fallback") {
+		t.Fatalf("unsafe recovery accepted or diagnostic lost: job=%v error=%v", job, err)
+	}
+	if marker, _, err := backend.DownloadFile(ctx, allocation, "must-not-run.txt"); err == nil {
+		_ = marker.Close()
+		t.Fatal("user command ran before valid recovery")
+	} else if !errors.Is(err, agentexecution.ErrNotFound) {
+		t.Fatalf("check blocked command: %v", err)
+	}
+	if _, err := backend.UploadFile(ctx, allocation, ledgerPath, bytes.NewReader(validLedger), int64(len(validLedger))); err != nil {
+		t.Fatal(err)
+	}
+	if result := assertJob("e2b-package-after-ledger-repair", "sh", "-c", verifyInstalled); result.ExitCode != 0 {
+		t.Fatalf("repaired ledger could not retry recovery: %+v", result)
 	}
 }

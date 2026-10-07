@@ -66,6 +66,54 @@ unrelated sessions and organizations do not automatically share package contents
 Registry metadata requests may still occur on a cache hit. Runtime template/image
 updates require an explicit retained-environment migration or a new session.
 
+## System-package version recovery
+
+Installation-enabled images and E2B templates must advertise
+`system_package_ledger_version: 2`. Updated Workers reject older installation
+runtimes before readiness; rebuild the image/template before updating its approved
+reference. Do not downgrade a version-locked session to a Worker/template that
+only understands historical command replay. Offline/legacy Profiles without the
+installation capability are unaffected.
+
+After a successful guarded APT installation, the Runtime Agent queries its fixed
+system package database and atomically records installed names, architectures and
+versions, including dependencies and baseline packages. The ledger is bound to
+the runtime Profile identity, CPU architecture and resolved package-source digest.
+Repeated installation refreshes the resolved inventory even when its original
+command was already recorded. Download commands are audit records, not installed
+packages, and are not rerun during recovery. Virtual package requests are tracked
+through the real installed provider inventory rather than a fictitious package.
+
+On compute reconstruction, the Agent compares actual versions with the recorded
+inventory. Matching packages need no installation or network request. Missing or
+changed packages are installed with validated `name:architecture=version` pins;
+only this internal recovery path can request downgrades, and package removal is
+prohibited. A second database query verifies every recorded version before user
+execution can proceed. Extra packages are not automatically removed.
+
+Unavailable versions, dependency conflicts, query failures, mismatched identity,
+malformed locks and failed verification block execution with a retryable error.
+There is no automatic latest-version fallback. Fixed-version recovery therefore
+requires the approved mirror to retain those versions; this feature does not add
+an archive mirror or store `.deb` payloads/rootfs layers. Operators must maintain
+retained package versions or explicitly migrate an environment, not delete its
+Workspace to hide a recovery failure.
+
+Historical unversioned ledgers remain readable. Their install commands are replayed
+under the existing restrictions once, then the actual restored inventory is
+captured as version 2. They cannot reproduce unknown historical versions; migration
+must not be described as retroactively locking the original installation.
+
+Ledgers remain untrusted Workspace data: only bounded, validated package/version
+fields can construct privileged arguments. The 1 MiB ledger limit, 1,000 command
+limit and 4,096 installed-package limit fail explicitly. Environment bindings are
+consistency checks, not cryptographic attestation. Python/npm still use retained
+dependency directories and caches, not this system-package version contract.
+
+Package queries and fixed-version installation use the documented Debian
+[dpkg-query fields](https://manpages.debian.org/bookworm/dpkg/dpkg-query.1.en.html)
+and [APT version selection](https://manpages.debian.org/bookworm/apt/apt-get.8.en.html).
+
 ## Failed termination
 
 Timeouts and explicit cancellation must terminate descendants, not merely stop
