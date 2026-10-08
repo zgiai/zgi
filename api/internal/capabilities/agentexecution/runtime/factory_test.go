@@ -9,6 +9,7 @@ import (
 	execution "github.com/zgiai/zgi/api/internal/capabilities/agentexecution"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
@@ -16,6 +17,70 @@ type factoryTestGateway struct {
 	*fakeAgentExecutionGateway
 	agentID string
 	creates int
+}
+
+func TestPlatformRelayGuardsPinInteractiveIdentityAndRecheckAdmission(t *testing.T) {
+	for _, appType := range []string{"agent", "digital_human"} {
+		for _, entry := range []string{"console", "webapp", "external-api"} {
+			t.Run(appType+"/"+entry, func(t *testing.T) {
+				org, ws, app, user, cid, mid := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+				identity := &execution.Identity{Version: 1, WorkspaceID: ws.String(), ApplicationType: appType, ApplicationID: app.String(), Entry: entry,
+					SubjectKind: "account", ConversationID: cid.String(), PublicationRef: uuid.NewString()}
+				p := &runtimeservice.PreparedChat{Scope: runtimeservice.Scope{OrganizationID: org, WorkspaceID: &ws, AccountID: user},
+					Caller:       runtimeservice.Caller{Type: appType, ID: &app, Source: entry},
+					Conversation: &runtimemodel.Conversation{ID: cid, OrganizationID: org, WorkspaceID: &ws, AccountID: user, CallerType: appType, CallerID: &app, Source: entry},
+					Message:      &runtimemodel.Message{ID: mid, ConversationID: cid}}
+				if entry == "external-api" {
+					identity.SubjectKind = "api_end_user"
+					if appType == "agent" {
+						p.Scope.ExternalUserID, p.Conversation.ExternalUserID = &user, &user
+					}
+				}
+				if entry == "webapp" {
+					id := uuid.New()
+					p.Caller.SourceWebAppID, p.Conversation.SourceWebAppID = &id, &id
+				}
+				scope := execution.Scope{OrganizationID: org.String(), SubjectID: user.String(), Identity: identity}
+				entries, err := execution.ParseEntryAdmission(`{"` + appType + `:` + entry + `":["` + org.String() + `"]}`)
+				if err != nil {
+					t.Fatal(err)
+				}
+				live, ready, checks := true, true, 0
+				gateway := &fakePlatformGateway{fakeAgentExecutionGateway: &fakeAgentExecutionGateway{}}
+				options := FactoryOptions{Gateway: gateway, Entries: entries, InteractiveApproval: true, EntryReady: func(string, string) bool { return ready },
+					ResolveScope: func(*runtimeservice.PreparedChat) (execution.Scope, error) { return scope, nil }, Authorize: func(context.Context) error { return nil },
+					AuthorizePlatform: func(context.Context) error {
+						checks++
+						if !live {
+							return execution.ErrInvalidIdentity
+						}
+						return nil
+					}}
+				frozenScope, frozenIdentity := scope, *identity
+				frozenScope.Identity = &frozenIdentity
+				tool := withPlatformRelay(skillloop.RuntimeTool{}, options, gateway, gateway, &fakeAgentExecutionArtifactPersister{}, p, frozenScope, "")
+				if tool.PlatformOrigin == nil || tool.PlatformOrigin.Validate() != nil || tool.PlatformOrigin.SubjectID != user.String() || tool.PlatformOrigin.ApplicationType != appType || !tool.PlatformInteractiveApproval || tool.BindPlatform == nil {
+					t.Fatal("relay lost server-owned interactive origin")
+				}
+				if err := tool.AuthorizePlatform(t.Context()); err != nil || checks != 1 {
+					t.Fatalf("live relay: %v", err)
+				}
+				live = false
+				if tool.AuthorizePlatform(t.Context()) == nil {
+					t.Fatal("revoked CLI access accepted")
+				}
+				live, ready = true, false
+				if tool.AuthorizePlatform(t.Context()) == nil {
+					t.Fatal("withdrawn entry readiness accepted")
+				}
+				ready = true
+				identity.PublicationRef = uuid.NewString()
+				if tool.AuthorizePlatform(t.Context()) == nil {
+					t.Fatal("CLI publication mutated after creation")
+				}
+			})
+		}
+	}
 }
 
 func (gateway *factoryTestGateway) CreateBinding(ctx context.Context, scope agentExecutionScope, agent, conversation, profile, backend string, options ...string) (agentExecutionBinding, error) {

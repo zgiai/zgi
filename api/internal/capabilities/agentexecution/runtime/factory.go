@@ -8,6 +8,7 @@ import (
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	"github.com/zgiai/zgi/api/internal/capabilities/runtimeplatform"
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/pkg/apperror"
 	"github.com/zgiai/zgi/api/pkg/apperror/catalog"
@@ -46,6 +47,14 @@ type FactoryOptions struct {
 	// files and approval continuation are implemented. Operator allowlists alone
 	// cannot release unfinished identity-scoped entries. Nil fails closed.
 	EntryReady func(applicationType, entry string) bool
+}
+
+// InteractiveEntryImplemented is a code-readiness check, not admission. Every
+// entry still needs operator allowlists, opt-in, verified identity and a capable
+// Worker; anonymous, background and Runtime Workspace entries remain excluded.
+func InteractiveEntryImplemented(applicationType, entry string) bool {
+	return (applicationType == "agent" || applicationType == "digital_human") &&
+		(entry == "console" || entry == "webapp" || entry == "external-api")
 }
 
 func NewToolFactory(options FactoryOptions) func(*runtimeservice.PreparedChat) []skillloop.RuntimeTool {
@@ -182,6 +191,25 @@ func deniedFactoryTool(projector *apptransport.Projector) skillloop.RuntimeToolR
 
 func withPlatformRelay(tool skillloop.RuntimeTool, options FactoryOptions, gateway Gateway, platform agentExecutionPlatformGateway, persister ArtifactPersister, prepared *runtimeservice.PreparedChat, scope execution.Scope, agentID string) skillloop.RuntimeTool {
 	tool.PlatformInteractiveApproval = options.InteractiveApproval
+	tool.AuthorizePlatform = func(ctx context.Context) error {
+		current, err := options.ResolveScope(prepared)
+		if err != nil || !sameFactoryScope(scope, current) || !factoryScopeMatches(current, options.LegacyAgentID, prepared) ||
+			!options.Entries.Allows(current.OrganizationID, prepared.Caller.Type, prepared.Caller.Source) || !factoryEntryReady(options, current) {
+			return execution.ErrInvalidIdentity
+		}
+		if options.Authorize != nil {
+			if err := options.Authorize(ctx); err != nil {
+				return err
+			}
+		}
+		return options.AuthorizePlatform(ctx)
+	}
+	if scope.Identity != nil {
+		i := scope.Identity
+		tool.PlatformOrigin = &toolgovernance.ExecutionOrigin{OrganizationID: scope.OrganizationID, WorkspaceID: i.WorkspaceID,
+			ApplicationType: i.ApplicationType, ApplicationID: i.ApplicationID, Entry: i.Entry, SubjectKind: i.SubjectKind,
+			SubjectID: scope.SubjectID, ConversationID: i.ConversationID, MessageID: prepared.Message.ID.String(), PublicationRef: i.PublicationRef}
+	}
 	var services skillloop.RuntimePlatformServices
 	tool.BindPlatform = func(bound skillloop.RuntimePlatformServices) { services = bound }
 	tool.Definition.Function.Description += " When runtime_capabilities.platform_protocol_version is 1, scripts may use zgi file read/export, zgi model call, and zgi tool call. Every request requires a stable --id. Tool names must be current exposed business functions; no Shell recursion or tool activation. Exit code 75 means approval is required: stop the script and await the existing approval interaction; never bypass it or retry a mutation with a new ID."
@@ -194,7 +222,7 @@ func withPlatformRelay(tool skillloop.RuntimeTool, options FactoryOptions, gatew
 			platformScope.ExecutionIdentity = *scope.Identity
 		}
 		relay := &agentPlatformRelay{agentExecutionGateway: gateway, platform: platform, files: files,
-			services: services, scope: platformScope, authorize: options.AuthorizePlatform}
+			services: services, scope: platformScope, authorize: tool.AuthorizePlatform}
 		defer relay.Close(ctx)
 		shell := newAgentExecutionShellToolWithNetworkPolicy(relay, scope, agentID, prepared.Conversation.ID.String(), prepared.Message.ID.String(), options.ProfileID, options.Backend, options.NetworkPolicy, prepared.RuntimeAttachmentRefs(), options.Files, options.Skills)
 		result := shell.Handler(ctx, call)

@@ -125,16 +125,17 @@ func (r *Runtime) preflightToolGovernance(
 	}
 	if decision.Status == toolgovernance.DecisionStatusNeedsApproval && decision.RequiresApproval {
 		frozen := toolgovernance.NewFrozenInvocation(toolgovernance.FrozenInvocationRequest{
-			CorrelationID:  decision.CorrelationID,
-			Manifest:       decision.Manifest,
-			SkillID:        doc.Metadata.ID,
-			ToolName:       toolDef.Name,
-			ProviderType:   string(toolDef.ProviderType),
-			ProviderID:     toolDef.ProviderID,
-			Arguments:      copyStringAnyMap(arguments),
-			Assets:         decision.Assets,
-			ExpectedAssets: decision.ExpectedAssets,
-			Now:            start,
+			ExecutionOrigin: execCtx.PlatformExecutionOrigin,
+			CorrelationID:   decision.CorrelationID,
+			Manifest:        decision.Manifest,
+			SkillID:         doc.Metadata.ID,
+			ToolName:        toolDef.Name,
+			ProviderType:    string(toolDef.ProviderType),
+			ProviderID:      toolDef.ProviderID,
+			Arguments:       copyStringAnyMap(arguments),
+			Assets:          decision.Assets,
+			ExpectedAssets:  decision.ExpectedAssets,
+			Now:             start,
 		})
 		decisionFrozen := toolgovernance.SealFrozenInvocation(frozen)
 		decision.FrozenInvocation = &decisionFrozen

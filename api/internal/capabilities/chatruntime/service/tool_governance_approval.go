@@ -263,7 +263,11 @@ func (s *service) resolveToolGovernanceDecision(
 	if err := ensurePendingToolGovernanceDecisionMessage(message); err != nil {
 		return nil, nil, err
 	}
-	if toolGovernanceApprovalEveryInvocation(event) {
+	frozen, _, err := toolGovernanceFrozenInvocationFromEvent(event)
+	if err != nil {
+		return nil, nil, err
+	}
+	if toolGovernanceApprovalEveryInvocation(event) || frozen.ExecutionOrigin != nil {
 		// Per-invocation policies may use the approved grant only to resume the
 		// exact frozen call. They must never persist it as a conversation grant.
 		req.RememberForSession = false

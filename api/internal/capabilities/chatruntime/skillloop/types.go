@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/contextmgr"
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
@@ -217,14 +218,17 @@ type RunRequest struct {
 // content-free because they are persisted in traces. ModelResult, when set, is
 // delivered to the current model turn only and is never retained in a trace.
 type RuntimeTool struct {
-	Definition adapter.Tool
-	SkillID    string
-	Handler    func(context.Context, adapter.ToolCall) RuntimeToolResult
+	// PlatformOrigin and AuthorizePlatform are server-only continuation guards.
+	PlatformOrigin    *toolgovernance.ExecutionOrigin `json:"-"`
+	AuthorizePlatform func(context.Context) error     `json:"-"`
+	Definition        adapter.Tool
+	SkillID           string
+	Handler           func(context.Context, adapter.ToolCall) RuntimeToolResult
 	// BindPlatform is called once by the owning Runner before execution. Its
 	// callbacks may only be called synchronously within this turn's Handler.
 	BindPlatform func(RuntimePlatformServices)
-	// PlatformInteractiveApproval is granted by the authenticated console
-	// factory only; ordinary Skill and external Agent calls retain their policy.
+	// PlatformInteractiveApproval is granted only by a server-owned interactive
+	// execution factory; ordinary Skill calls retain their original policy.
 	PlatformInteractiveApproval bool `json:"-"`
 }
 

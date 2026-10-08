@@ -63,6 +63,20 @@ func (s *service) RunConfiguredToolGovernanceDecisionStream(
 	if onEvent == nil {
 		return nil, fmt.Errorf("%w: event callback is required", ErrInvalidInput)
 	}
+	// Read through the caller-scoped repository before recording an approval.
+	// A new entry may not reuse a legacy console approval or another publication.
+	conversation, message, err := s.reloadToolGovernanceContinuationMessageForCaller(ctx, scope, caller, conversationID, messageID)
+	if err != nil {
+		return nil, err
+	}
+	event, exists := toolGovernanceDecisionEventFromMetadata(message.Metadata, correlationID)
+	if !exists {
+		return nil, ErrNotFound
+	}
+	resolved := isResolvedToolGovernanceDecisionEvent(event)
+	if err := checkPlatformApprovalScope(ctx, &PreparedChat{Scope: scope, Caller: caller, RunConfig: config, Conversation: conversation, Message: message}, event, req.Action == toolGovernanceActionApprove && !resolved); err != nil {
+		return nil, err
+	}
 	publicDecision, err := s.submitToolGovernanceDecisionForCaller(ctx, scope, caller, conversationID, messageID, correlationID, req)
 	if err != nil {
 		return nil, err
@@ -78,7 +92,7 @@ func (s *service) RunConfiguredToolGovernanceDecisionStream(
 		return nil, err
 	}
 
-	conversation, message, err := s.reloadToolGovernanceContinuationMessageForCaller(ctx, scope, caller, conversationID, messageID)
+	conversation, message, err = s.reloadToolGovernanceContinuationMessageForCaller(ctx, scope, caller, conversationID, messageID)
 	if err != nil {
 		s.failToolGovernanceContinuation(context.WithoutCancel(ctx), continuation, err, onEvent)
 		return nil, newFinalizedStreamError(err)
@@ -94,6 +108,25 @@ func (s *service) RunConfiguredToolGovernanceDecisionStream(
 		return nil, newFinalizedStreamError(err)
 	}
 	continuation.Event = authoritativeEvent
+	if frozen, found, _ := toolGovernanceFrozenInvocationFromEvent(authoritativeEvent); found && frozen.ExecutionOrigin != nil && publicDecision.Action == toolGovernanceActionReject {
+		// Closing a scoped CLI approval needs neither live compute nor a model
+		// call. The original Shell and its Job grant remain stopped/revoked.
+		prepared := &PreparedChat{Scope: scope, Caller: caller, RunConfig: config, Conversation: conversation, Message: message, Continuation: true}
+		persistCtx := context.WithoutCancel(ctx)
+		if err := s.emitPreparedEvent(persistCtx, prepared, streamEventMessageStart, messageStartPayload(conversation, message, false), onEvent); err != nil {
+			return nil, finalizedRuntimePersistenceError(err)
+		}
+		if err := newProcessTimelineRecorder(ctx, persistCtx, s, prepared, onEvent).RecordEvent(streamEventToolGovernanceDecision, authoritativeEvent); err != nil {
+			return nil, finalizedRuntimePersistenceError(err)
+		}
+		if err := s.completePreparedChat(persistCtx, prepared, message.Answer, message.Metadata); err != nil {
+			return nil, finalizedRuntimePersistenceError(err)
+		}
+		if err := s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayload(prepared, message.Metadata), onEvent); err != nil {
+			return nil, finalizedRuntimePersistenceError(err)
+		}
+		return &ChatResult{Answer: message.Answer, Metadata: message.Metadata, Status: runtimemodel.MessageStatusCompleted}, nil
+	}
 
 	prepared, err := s.prepareConfiguredToolGovernanceContinuationChat(ctx, scope, caller, config, continuation)
 	if err != nil {
@@ -420,6 +453,9 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 	if err := validateToolGovernanceFrozenInvocation(frozen, toolGovernanceCorrelationID(event)); err != nil {
 		return nil, true, err
 	}
+	if err := checkPlatformApprovalScope(ctx, prepared, event, true); err != nil {
+		return nil, true, err
+	}
 	frozen = remapLegacyFileDeleteFrozenInvocation(frozen)
 	prepared.ContinuationType = "tool_governance_approval"
 	prepared.PreferredRestoredSkillID = strings.TrimSpace(frozen.SkillID)
@@ -478,6 +514,11 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 		callID = strings.TrimSpace(frozen.ID)
 	}
 	executionContext := s.skillExecutionContext(prepared)
+	if frozen.ExecutionOrigin != nil {
+		origin := *frozen.ExecutionOrigin
+		executionContext.PlatformExecutionOrigin = &origin
+		executionContext.PlatformInteractiveApproval = true
+	}
 	scriptModel, scriptModelUsage := s.newSkillScriptModelChannel(
 		prepared,
 		s.taskTokenUsageObserver(persistCtx, prepared, onEvent),
@@ -565,6 +606,12 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 	}
 
 	prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, continuationMessageForExecutionMode(toolGovernanceFrozenExecutionContinuationMessage(prepared.Message, event, invocation, executionErr), prepared.parts.ExecutionMode))
+	if frozen.ExecutionOrigin != nil {
+		// A CLI approval resumes one sealed business invocation, not its stopped
+		// script or a new planning loop. Summarization cannot issue more tools.
+		prepared.TerminalOnly = true
+		prepared.RunConfig.RuntimeToolFactory = nil
+	}
 	answer, usage, err := s.runPreparedToolLoop(ctx, persistCtx, prepared, nil, onEvent)
 	usage = addUsageCloned(usage, frozenModelUsage)
 	if err != nil {
@@ -723,6 +770,10 @@ func toolGovernanceFrozenInvocationFromEvent(event map[string]interface{}) (tool
 }
 
 func validateToolGovernanceFrozenInvocation(frozen toolgovernance.FrozenInvocation, correlationID string) error {
+	return validateToolGovernanceFrozenInvocationForDecision(frozen, correlationID, true)
+}
+
+func validateToolGovernanceFrozenInvocationForDecision(frozen toolgovernance.FrozenInvocation, correlationID string, approve bool) error {
 	if strings.TrimSpace(frozen.SkillID) == "" || strings.TrimSpace(frozen.ToolName) == "" {
 		return fmt.Errorf("%w: frozen invocation is missing skill or tool", ErrInvalidInput)
 	}
@@ -737,7 +788,7 @@ func validateToolGovernanceFrozenInvocation(frozen toolgovernance.FrozenInvocati
 	if !toolgovernance.FrozenInvocationHashMatches(frozen) {
 		return fmt.Errorf("%w: frozen invocation hash mismatch", ErrInvalidInput)
 	}
-	if frozen.ExpiresAt != nil && time.Now().UTC().After(frozen.ExpiresAt.UTC()) {
+	if approve && frozen.ExpiresAt != nil && time.Now().UTC().After(frozen.ExpiresAt.UTC()) {
 		return fmt.Errorf("%w: frozen invocation expired", ErrInvalidInput)
 	}
 	return nil

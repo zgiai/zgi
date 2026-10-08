@@ -198,7 +198,7 @@ func (t *GenerateChartTool) Invoke(
 		return nil, fmt.Errorf("failed to create generated chart: %w", err)
 	}
 
-	url, err := tool_file.SignToolFileGlobal(toolFile.ID, ".svg")
+	url, err := tool_file.PublicGeneratedFileURL(toolFile, ".svg")
 	if err != nil {
 		return nil, fmt.Errorf("failed to sign generated chart: %w", err)
 	}
@@ -243,6 +243,7 @@ func (t *GenerateChartTool) Invoke(
 	if toolFile.ExpiresAt != nil {
 		chartData["expires_at"] = toolFile.ExpiresAt.Unix()
 	}
+	tool_file.ProtectGeneratedFileMetadata(toolFile, fileMeta, chartData)
 	return []tools.ToolInvokeMessage{
 		{
 			Type: tools.ToolInvokeMessageTypeFile,

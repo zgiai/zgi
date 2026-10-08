@@ -125,7 +125,7 @@ func (b *imageToolBase) invokeGeneration(
 		}
 		files = append(files, fileMeta)
 		revisedPrompts = append(revisedPrompts, strings.TrimSpace(item.RevisedPrompt))
-		if downloadURL, _ := fileMeta["download_url"].(string); downloadURL != "" {
+		if downloadURL, _ := fileMeta["download_url"].(string); downloadURL != "" || fileMeta["access_mode"] == "authenticated" {
 			messages = append(messages, tools.ToolInvokeMessage{
 				Type: tools.ToolInvokeMessageTypeFile,
 				Text: downloadURL,

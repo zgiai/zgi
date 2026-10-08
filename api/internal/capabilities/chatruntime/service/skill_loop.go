@@ -2128,6 +2128,13 @@ func (s *service) currentAgentBindingVerifier(prepared *PreparedChat) skills.Age
 	return func(ctx context.Context, check skills.AgentBindingCheck) (bool, error) {
 		ref := agentbindings.ScopeRef{AgentID: agentID, Scope: scope}
 		if scope == agentbindings.ScopePublished {
+			if versionID, err := uuid.Parse(prepared.RunConfig.ConnectorTargetVersionID); err == nil && versionID != uuid.Nil {
+				ref.PublishedVersionUUID = &versionID
+				return repo.HasBinding(ctx, ref, agentbindings.Match{
+					BindingType: agentbindings.BindingType(check.BindingType), ResourceID: check.ResourceID,
+					ParentResourceID: check.ParentResourceID, AccessMode: check.AccessMode,
+				})
+			}
 			var versionIDs []uuid.UUID
 			if err := s.repos.DB.WithContext(ctx).Model(&agentbindings.Binding{}).
 				Where("agent_id = ? AND consumer_type = ? AND binding_scope = ? AND published_version_uuid IS NOT NULL", agentID, agentbindings.ConsumerTypeAgent, scope).

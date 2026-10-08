@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	connectordispatch "github.com/zgiai/zgi/api/internal/modules/connectors/dispatch"
 	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
@@ -63,6 +65,8 @@ type skillLocation struct {
 }
 
 type ExecutionContext struct {
+	// PlatformExecutionOrigin is supplied only by the admitted runtime bridge.
+	PlatformExecutionOrigin *toolgovernance.ExecutionOrigin `json:"-"`
 	// PlatformInteractiveApproval is set only by a first-party console CLI
 	// bridge. It cannot be supplied through Skill arguments or runtime JSON.
 	PlatformInteractiveApproval bool `json:"-"`
@@ -651,6 +655,13 @@ func (r *Runtime) CallSkillTool(
 	timeout := docTimeoutSeconds(*doc)
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
+	if execCtx.PlatformExecutionOrigin != nil {
+		protected, err := tool_file.WithExecutionOrigin(runCtx, *execCtx.PlatformExecutionOrigin)
+		if err != nil {
+			return nil, err
+		}
+		runCtx = protected
+	}
 
 	start := time.Now()
 	result, err := r.engine.Invoke(runCtx, tools.InvokeRequest{

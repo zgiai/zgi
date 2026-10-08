@@ -37,9 +37,14 @@ func (r *Runner) runtimePlatformServices(req RunRequest, prepared *PreparedChat,
 	// Copy the context so this capability never leaks into ordinary parent
 	// tools. RuntimeTools are server-owned, not model-selectable policy data.
 	execution.PlatformInteractiveApproval = false
+	execution.PlatformExecutionOrigin = nil
 	for _, tool := range req.RuntimeTools {
 		if tool.BindPlatform != nil && tool.PlatformInteractiveApproval {
 			execution.PlatformInteractiveApproval = true
+			if tool.PlatformOrigin != nil {
+				origin := *tool.PlatformOrigin
+				execution.PlatformExecutionOrigin = &origin
+			}
 			break
 		}
 	}
