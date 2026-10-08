@@ -281,8 +281,13 @@ resume (and therefore available capacity); they currently return a state conflic
 Previously exported persistent download cards are a separate API/storage path.
 This deployment did not repeat browser or the complete standard-Skill matrix.
 
-Still outside this increment: automatic orphan repair, multi-node placement,
+The following increment implements [verified checkpoint backup, isolated recovery
+and audit metrics](agent-runtime-checkpoint-backup.md), with dedicated real gVisor,
+E2B, PostgreSQL and S3-compatible storage acceptance. It does not mutate this
+deployment's existing sessions or re-certify browser/Skill flows.
+
+Still outside these increments: automatic orphan repair, multi-node placement,
 disk-byte/retained-storage quotas, cost/billing reconciliation, provider build
-attestation, stable private connectivity, alerting/SLOs, backup/restore, failure
+attestation, stable private connectivity, installed alerting/SLOs, production DR, failure
 drills and broad production rollout. Existing exported-file retention and prior
 M6C acceptance are not re-certified by these tests.
