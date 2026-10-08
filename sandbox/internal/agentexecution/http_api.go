@@ -95,6 +95,7 @@ func (a *HTTPAPI) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 	if pathValue == "release" && request.Method == http.MethodGet {
 		writeAgentRuntimeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
 			"id": a.releaseID, "contract_version": ReleaseContractVersion, "platform_protocol_version": PlatformProtocolVersion,
+			"execution_identity_version": ExecutionIdentityVersion,
 		}})
 		return
 	}
@@ -374,6 +375,16 @@ func requestScope(request *http.Request) (Scope, bool) {
 		OrganizationID: strings.TrimSpace(request.Header.Get("X-ZGI-Organization-ID")),
 		SubjectID:      strings.TrimSpace(request.Header.Get("X-ZGI-Subject-ID")),
 	}
+	if values, present := request.Header[http.CanonicalHeaderKey(ExecutionIdentityHeader)]; present {
+		if len(values) != 1 {
+			return Scope{}, false
+		}
+		identity, err := DecodeExecutionIdentity(values[0])
+		if err != nil {
+			return Scope{}, false
+		}
+		scope.Identity = identity
+	}
 	return scope, scope.OrganizationID != "" && scope.SubjectID != ""
 }
 
@@ -485,26 +496,28 @@ type submitJobBody struct {
 }
 
 type bindingResponse struct {
-	ID                 string        `json:"id"`
-	AgentID            string        `json:"agent_id"`
-	ConversationID     string        `json:"conversation_id"`
-	ProfileID          string        `json:"profile_id"`
-	NetworkPolicy      string        `json:"network_policy"`
-	NetworkMode        string        `json:"network_mode"`
-	HomeSnapshotID     string        `json:"home_snapshot_id,omitempty"`
-	WorkspaceID        string        `json:"workspace_id"`
-	Backend            string        `json:"backend"`
-	Status             BindingStatus `json:"status"`
-	Generation         int64         `json:"generation"`
-	CreatedAt          time.Time     `json:"created_at"`
-	UpdatedAt          time.Time     `json:"updated_at"`
-	ExpiresAt          time.Time     `json:"expires_at"`
-	RetentionExpiresAt time.Time     `json:"retention_expires_at"`
+	Identity           *ExecutionIdentity `json:"execution_identity,omitempty"`
+	ID                 string             `json:"id"`
+	AgentID            string             `json:"agent_id"`
+	ConversationID     string             `json:"conversation_id"`
+	ProfileID          string             `json:"profile_id"`
+	NetworkPolicy      string             `json:"network_policy"`
+	NetworkMode        string             `json:"network_mode"`
+	HomeSnapshotID     string             `json:"home_snapshot_id,omitempty"`
+	WorkspaceID        string             `json:"workspace_id"`
+	Backend            string             `json:"backend"`
+	Status             BindingStatus      `json:"status"`
+	Generation         int64              `json:"generation"`
+	CreatedAt          time.Time          `json:"created_at"`
+	UpdatedAt          time.Time          `json:"updated_at"`
+	ExpiresAt          time.Time          `json:"expires_at"`
+	RetentionExpiresAt time.Time          `json:"retention_expires_at"`
 }
 
 func bindingResponseFrom(binding Binding) bindingResponse {
 	return bindingResponse{
-		ID: binding.ID, AgentID: binding.AgentID, ConversationID: binding.ConversationID,
+		Identity: cloneExecutionIdentity(binding.Identity),
+		ID:       binding.ID, AgentID: binding.AgentID, ConversationID: binding.ConversationID,
 		ProfileID: binding.ProfileID, NetworkPolicy: binding.NetworkPolicy, NetworkMode: binding.NetworkMode,
 		HomeSnapshotID: binding.HomeSnapshotID, WorkspaceID: binding.WorkspaceID, Backend: binding.Backend,
 		Status: binding.Status, Generation: binding.Generation, CreatedAt: binding.CreatedAt,

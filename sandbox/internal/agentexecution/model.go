@@ -42,12 +42,14 @@ const (
 type Scope struct {
 	OrganizationID string
 	SubjectID      string
+	Identity       *ExecutionIdentity
 }
 
 type Binding struct {
 	ID                   string
 	OrganizationID       string
 	SubjectID            string
+	Identity             *ExecutionIdentity `json:",omitempty"`
 	AgentID              string
 	ConversationID       string
 	ProfileID            string

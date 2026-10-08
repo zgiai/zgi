@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -79,5 +80,40 @@ func TestCheckpointRecoverySnapshotAndEmptyTarget(t *testing.T) {
 	}
 	if _, err := ReadCheckpointBindings(t.Context(), dsn, "fake"); err == nil {
 		t.Fatal("live backup accepted")
+	}
+}
+
+func TestCheckpointRecoveryPreservesDigitalHumanExecutionIdentity(t *testing.T) {
+	dsn := testutil.CreateTestPostgresDSN(t)
+	store, err := Open(config.Config{DatabaseURL: dsn, MaxWorkers: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	binding := admissionBinding("identity-recovery", "organization")
+	binding.AgentID = ""
+	binding.Identity = &agentexecution.ExecutionIdentity{Version: 1, WorkspaceID: "resource-workspace", ApplicationType: "digital_human",
+		ApplicationID: "digital-human", Entry: "external-api", SubjectKind: "api_end_user", ConversationID: binding.ConversationID, PublicationRef: "published-v1"}
+	binding.Status = agentexecution.BindingStatusSuspended
+	binding.CheckpointKey = strings.Repeat("a", 64)
+	if _, _, err := store.ReserveBinding(t.Context(), binding); err != nil {
+		t.Fatal(err)
+	}
+	bindings, err := ReadCheckpointBindings(t.Context(), dsn, "fake")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetDSN := testutil.CreateTestPostgresDSN(t)
+	target, err := Open(config.Config{DatabaseURL: targetDSN, MaxWorkers: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	if err := target.RestoreCheckpointBindings(t.Context(), "fake", bindings); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := target.Binding(t.Context(), binding.ID)
+	if err != nil || restored.AgentID != "" || !reflect.DeepEqual(restored.Identity, binding.Identity) {
+		t.Fatalf("identity lost during recovery: %+v, %v", restored, err)
 	}
 }

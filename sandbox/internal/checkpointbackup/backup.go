@@ -57,8 +57,17 @@ func ValidateBindings(bindings []agentexecution.Binding, backend string, now tim
 	}
 	ids, workspaces, requests := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for _, b := range bindings {
+		if identity := b.Identity; identity != nil {
+			if err := identity.Validate(); err != nil || identity.ConversationID != b.ConversationID ||
+				(identity.ApplicationType == "agent" && identity.ApplicationID != b.AgentID) ||
+				(identity.ApplicationType == "digital_human" && b.AgentID != "") {
+				return errors.New("invalid recovery execution identity")
+			}
+		} else if b.AgentID == "" {
+			return errors.New("legacy recovery requires a console Agent")
+		}
 		request := b.OrganizationID + "\x00" + b.SubjectID + "\x00" + b.IdempotencyKey
-		if b.ID == "" || b.OrganizationID == "" || b.SubjectID == "" || b.AgentID == "" || b.ConversationID == "" || b.ProfileID == "" || b.WorkspaceID == "" || b.IdempotencyKey == "" || b.RequestHash == "" ||
+		if b.ID == "" || b.OrganizationID == "" || b.SubjectID == "" || b.ConversationID == "" || b.ProfileID == "" || b.WorkspaceID == "" || b.IdempotencyKey == "" || b.RequestHash == "" ||
 			b.Backend != backend || b.Status != agentexecution.BindingStatusSuspended || b.Generation < 1 || b.Generation == math.MaxInt64 ||
 			b.BackendRef != "" || b.WorkspaceRef != "" || b.PendingCheckpointKey != "" || b.FailureReason != "" ||
 			!digestPattern.MatchString(b.CheckpointKey) || !b.RetentionExpiresAt.After(now) ||

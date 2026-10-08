@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	execution "github.com/zgiai/zgi/api/internal/capabilities/agentexecution"
 )
 
 const agentExecutionResponseLimit = 2 << 20
@@ -22,10 +24,7 @@ const agentExecutionMaxBindingReplacements = 16
 
 var agentExecutionReleaseIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 
-type agentExecutionScope struct {
-	OrganizationID string
-	SubjectID      string
-}
+type agentExecutionScope = execution.Scope
 
 type agentExecutionBinding struct {
 	ID            string `json:"id"`
@@ -132,6 +131,11 @@ func (g *agentExecutionHTTPGateway) request(ctx context.Context, scope agentExec
 	if g == nil || g.client == nil || scope.OrganizationID == "" || scope.SubjectID == "" {
 		return fmt.Errorf("agent execution gateway is unavailable")
 	}
+	if path != "release" {
+		if err := g.verifyExecutionIdentity(ctx, scope); err != nil {
+			return err
+		}
+	}
 	if (g.releaseRequired || g.releaseID != "") && method == http.MethodPost && (path == "bindings" || strings.HasSuffix(path, "/resume") || strings.HasSuffix(path, "/jobs")) {
 		if g.releaseID == "" {
 			return fmt.Errorf("runtime release identity is missing or invalid; new execution is disabled")
@@ -164,6 +168,9 @@ func (g *agentExecutionHTTPGateway) request(ctx context.Context, scope agentExec
 	req.Header.Set("X-ZGI-Organization-ID", scope.OrganizationID)
 	req.Header.Set("X-ZGI-Subject-ID", scope.SubjectID)
 	req.Header.Set("X-ZGI-Runtime-Release", g.releaseID)
+	if err := setExecutionIdentityHeader(req, scope); err != nil {
+		return err
+	}
 	if input != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -292,6 +299,9 @@ func (g *agentExecutionHTTPGateway) uploadRuntimeFile(ctx context.Context, scope
 	if g == nil || g.client == nil || scope.OrganizationID == "" || scope.SubjectID == "" {
 		return fmt.Errorf("agent execution gateway is unavailable")
 	}
+	if err := g.verifyExecutionIdentity(ctx, scope); err != nil {
+		return err
+	}
 	endpoint := g.baseURL + "/v1/agent-runtime/" + route
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, bytes.NewReader(data))
 	if err != nil {
@@ -301,6 +311,9 @@ func (g *agentExecutionHTTPGateway) uploadRuntimeFile(ctx context.Context, scope
 	req.Header.Set("X-ZGI-Organization-ID", scope.OrganizationID)
 	req.Header.Set("X-ZGI-Subject-ID", scope.SubjectID)
 	req.Header.Set("Content-Type", "application/octet-stream")
+	if err := setExecutionIdentityHeader(req, scope); err != nil {
+		return err
+	}
 	resp, err := g.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("agent execution upload request: %w", err)
@@ -320,6 +333,9 @@ func (g *agentExecutionHTTPGateway) downloadRuntimeFile(ctx context.Context, sco
 	if g == nil || g.client == nil || scope.OrganizationID == "" || scope.SubjectID == "" {
 		return nil, fmt.Errorf("agent execution gateway is unavailable")
 	}
+	if err := g.verifyExecutionIdentity(ctx, scope); err != nil {
+		return nil, err
+	}
 	endpoint := g.baseURL + "/v1/agent-runtime/" + route
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -328,6 +344,9 @@ func (g *agentExecutionHTTPGateway) downloadRuntimeFile(ctx context.Context, sco
 	req.Header.Set("Authorization", "Bearer "+g.apiKey)
 	req.Header.Set("X-ZGI-Organization-ID", scope.OrganizationID)
 	req.Header.Set("X-ZGI-Subject-ID", scope.SubjectID)
+	if err := setExecutionIdentityHeader(req, scope); err != nil {
+		return nil, err
+	}
 	resp, err := g.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("agent execution download request: %w", err)

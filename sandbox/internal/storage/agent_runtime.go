@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -17,9 +18,13 @@ const agentRuntimeBindingColumns = `
 	id, organization_id, subject_id, agent_id, conversation_id, profile_id,
 	network_policy, network_mode, home_snapshot_id, workspace_id, backend, backend_ref, workspace_ref, checkpoint_key, pending_checkpoint_key,
 	idempotency_key, request_hash, status, generation, failure_reason,
-	created_at, updated_at, last_activity_at, expires_at, retention_expires_at, home_snapshot_ref`
+	created_at, updated_at, last_activity_at, expires_at, retention_expires_at, home_snapshot_ref, execution_identity`
 
 func (s *Store) ReserveBinding(ctx context.Context, binding agentruntime.Binding) (agentruntime.Binding, bool, error) {
+	identity, err := encodeBindingIdentity(binding.Identity)
+	if err != nil {
+		return agentruntime.Binding{}, false, err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return agentruntime.Binding{}, false, err
@@ -52,12 +57,12 @@ func (s *Store) ReserveBinding(ctx context.Context, binding agentruntime.Binding
 			id, organization_id, subject_id, agent_id, conversation_id, profile_id,
 			network_policy, network_mode, home_snapshot_id, workspace_id, backend, backend_ref, workspace_ref, checkpoint_key, pending_checkpoint_key,
 			idempotency_key, request_hash, status, generation, failure_reason,
-			created_at, updated_at, last_activity_at, expires_at, retention_expires_at, home_snapshot_ref
+			created_at, updated_at, last_activity_at, expires_at, retention_expires_at, home_snapshot_ref, execution_identity
 		) VALUES (
 			$1, $2, $3, $4, $5, $6,
 			$7, $8, $9, $10, $11, $12, $13, $14, $15,
 			$16, $17, $18, $19,
-			$20, $21, $22, $23, $24, $25, $26
+			$20, $21, $22, $23, $24, $25, $26, $27
 		)
 		ON CONFLICT (organization_id, subject_id, idempotency_key) DO NOTHING
 		RETURNING `+agentRuntimeBindingColumns,
@@ -87,6 +92,7 @@ func (s *Store) ReserveBinding(ctx context.Context, binding agentruntime.Binding
 		binding.ExpiresAt.UTC(),
 		binding.RetentionExpiresAt.UTC(),
 		binding.HomeSnapshotRef,
+		identity,
 	)
 	created, err := scanAgentRuntimeBinding(row)
 	if err == nil {
@@ -341,6 +347,7 @@ func (s *Store) EnqueueCleanup(ctx context.Context, task agentruntime.CleanupTas
 
 func scanAgentRuntimeBinding(scanner rowScanner) (agentruntime.Binding, error) {
 	var binding agentruntime.Binding
+	var identity []byte
 	err := scanner.Scan(
 		&binding.ID,
 		&binding.OrganizationID,
@@ -368,6 +375,23 @@ func scanAgentRuntimeBinding(scanner rowScanner) (agentruntime.Binding, error) {
 		&binding.ExpiresAt,
 		&binding.RetentionExpiresAt,
 		&binding.HomeSnapshotRef,
+		&identity,
 	)
+	if err == nil && string(identity) != "null" {
+		binding.Identity, err = agentruntime.DecodeExecutionIdentity(string(identity))
+	}
 	return binding, err
+}
+
+func encodeBindingIdentity(identity *agentruntime.ExecutionIdentity) (string, error) {
+	if identity != nil {
+		if err := identity.Validate(); err != nil {
+			return "", err
+		}
+	}
+	value, err := json.Marshal(identity)
+	if err != nil {
+		return "", fmt.Errorf("encode execution identity: %w", err)
+	}
+	return string(value), nil
 }

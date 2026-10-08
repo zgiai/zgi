@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	execution "github.com/zgiai/zgi/api/internal/capabilities/agentexecution"
 	"github.com/zgiai/zgi/api/pkg/apperror"
 	"github.com/zgiai/zgi/api/pkg/apperror/catalog"
 )
@@ -38,6 +39,7 @@ const (
 // Scope is supplied by the authenticated relay, never by script arguments.
 // Changing any field requires a new session and invalidates the old grant.
 type Scope struct {
+	ExecutionIdentity execution.Identity
 	OrganizationID    string
 	SubjectID         string
 	AgentID           string
@@ -284,8 +286,17 @@ func copyResponse(response Response) Response {
 }
 
 func validScope(scope Scope) bool {
+	if identity := scope.ExecutionIdentity; identity != (execution.Identity{}) {
+		if identity.Validate() != nil || identity.ConversationID != scope.ConversationID ||
+			(identity.ApplicationType == "agent" && identity.ApplicationID != scope.AgentID) ||
+			(identity.ApplicationType == "digital_human" && scope.AgentID != "") {
+			return false
+		}
+	} else if !validIdentifier(scope.AgentID) {
+		return false
+	}
 	return validIdentifier(scope.OrganizationID) && validIdentifier(scope.SubjectID) &&
-		validIdentifier(scope.AgentID) && validIdentifier(scope.ConversationID) &&
+		validIdentifier(scope.ConversationID) &&
 		validIdentifier(scope.RunID) && validIdentifier(scope.BindingID) &&
 		validIdentifier(scope.JobID) && scope.BindingGeneration > 0
 }

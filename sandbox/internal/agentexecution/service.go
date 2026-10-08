@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -138,6 +139,7 @@ func (s *Service) CreateBinding(ctx context.Context, request CreateBindingReques
 		ID:                 bindingID,
 		OrganizationID:     request.Scope.OrganizationID,
 		SubjectID:          request.Scope.SubjectID,
+		Identity:           cloneExecutionIdentity(request.Scope.Identity),
 		AgentID:            request.AgentID,
 		ConversationID:     request.ConversationID,
 		ProfileID:          request.ProfileID,
@@ -162,6 +164,9 @@ func (s *Service) CreateBinding(ctx context.Context, request CreateBindingReques
 		return Binding{}, fmt.Errorf("reserve agent runtime binding: %w", err)
 	}
 	if !created {
+		if !owns(request.Scope, binding) {
+			return Binding{}, ErrNotFound
+		}
 		if binding.RequestHash != requestFingerprint(request) {
 			return Binding{}, ErrIdempotencyConflict
 		}
@@ -227,8 +232,11 @@ func (s *Service) existingBinding(ctx context.Context, request CreateBindingRequ
 	if err != nil {
 		return Binding{}, err
 	}
+	if !owns(request.Scope, binding) {
+		return Binding{}, ErrNotFound
+	}
 	if binding.RequestHash != requestFingerprint(request) &&
-		!(request.NetworkPolicy == "offline" && binding.RequestHash == legacyRequestFingerprint(request)) {
+		!(request.Scope.Identity == nil && request.NetworkPolicy == "offline" && binding.RequestHash == legacyRequestFingerprint(request)) {
 		return Binding{}, ErrIdempotencyConflict
 	}
 	return binding, nil
@@ -239,7 +247,14 @@ func (s *Service) GetBindingByIdempotency(ctx context.Context, scope Scope, key 
 	if strings.TrimSpace(scope.OrganizationID) == "" || strings.TrimSpace(scope.SubjectID) == "" || key == "" || len(key) > 512 {
 		return Binding{}, ErrInvalidRequest
 	}
-	return s.repository.BindingByIdempotency(ctx, scope, key)
+	binding, err := s.repository.BindingByIdempotency(ctx, scope, key)
+	if err != nil {
+		return Binding{}, err
+	}
+	if !owns(scope, binding) {
+		return Binding{}, ErrNotFound
+	}
+	return binding, nil
 }
 
 func (s *Service) GetBinding(ctx context.Context, scope Scope, bindingID string) (Binding, error) {
@@ -570,6 +585,7 @@ func (s *Service) scheduleAllocationCheck(ctx context.Context, binding Binding, 
 }
 
 func normalizeCreateRequest(request CreateBindingRequest) CreateBindingRequest {
+	request.Scope.Identity = cloneExecutionIdentity(request.Scope.Identity)
 	request.Scope.OrganizationID = strings.TrimSpace(request.Scope.OrganizationID)
 	request.Scope.SubjectID = strings.TrimSpace(request.Scope.SubjectID)
 	request.AgentID = strings.TrimSpace(request.AgentID)
@@ -583,8 +599,20 @@ func normalizeCreateRequest(request CreateBindingRequest) CreateBindingRequest {
 }
 
 func validateCreateRequest(request CreateBindingRequest) error {
-	if request.Scope.OrganizationID == "" || request.Scope.SubjectID == "" || request.AgentID == "" || request.ConversationID == "" || request.ProfileID == "" || request.Backend == "" || request.IdempotencyKey == "" {
+	if request.Scope.OrganizationID == "" || request.Scope.SubjectID == "" || request.ConversationID == "" || request.ProfileID == "" || request.Backend == "" || request.IdempotencyKey == "" {
 		return fmt.Errorf("%w: organization, subject, agent, conversation, profile, backend, and idempotency key are required", ErrInvalidRequest)
+	}
+	if identity := request.Scope.Identity; identity != nil {
+		if err := identity.Validate(); err != nil {
+			return err
+		}
+		if identity.ConversationID != request.ConversationID ||
+			(identity.ApplicationType == "agent" && request.AgentID != identity.ApplicationID) ||
+			(identity.ApplicationType == "digital_human" && request.AgentID != "") {
+			return fmt.Errorf("%w: conflicting execution application or conversation", ErrInvalidRequest)
+		}
+	} else if request.AgentID == "" {
+		return fmt.Errorf("%w: legacy console agent is required", ErrInvalidRequest)
 	}
 	if request.NetworkPolicy != "offline" && request.NetworkPolicy != "controlled-http" && request.NetworkPolicy != "package-install" {
 		return fmt.Errorf("%w: network policy %q is not available in this runtime", ErrBackendUnavailable, request.NetworkPolicy)
@@ -603,6 +631,10 @@ func requestFingerprint(request CreateBindingRequest) string {
 		request.HomeSnapshotID,
 		request.Backend,
 	}, "\x00")
+	if request.Scope.Identity != nil {
+		identity, _ := json.Marshal(request.Scope.Identity) // A validated scalar struct cannot fail encoding.
+		value += "\x00" + string(identity)
+	}
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:])
 }
@@ -642,7 +674,8 @@ func networkModeForPolicy(value string) string {
 
 func owns(scope Scope, binding Binding) bool {
 	return strings.TrimSpace(scope.OrganizationID) != "" && strings.TrimSpace(scope.SubjectID) != "" &&
-		strings.TrimSpace(scope.OrganizationID) == binding.OrganizationID && strings.TrimSpace(scope.SubjectID) == binding.SubjectID
+		strings.TrimSpace(scope.OrganizationID) == binding.OrganizationID && strings.TrimSpace(scope.SubjectID) == binding.SubjectID &&
+		sameExecutionIdentity(scope.Identity, binding.Identity)
 }
 
 func randomID(prefix string) (string, error) {

@@ -137,6 +137,9 @@ func (s *DataPlaneService) GetJob(ctx context.Context, scope Scope, jobID string
 	if !ownsJob(scope, job) {
 		return Job{}, ErrNotFound
 	}
+	if _, err := s.authorizedBinding(ctx, scope, job.BindingID); err != nil {
+		return Job{}, err
+	}
 	return job, nil
 }
 

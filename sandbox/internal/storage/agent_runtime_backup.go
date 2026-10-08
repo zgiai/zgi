@@ -109,9 +109,13 @@ func (s *Store) RestoreCheckpointBindings(ctx context.Context, backend string, b
 		}
 	}
 	for _, b := range bindings {
+		identity, err := encodeBindingIdentity(b.Identity)
+		if err != nil {
+			return err
+		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO agent_runtime_bindings (`+agentRuntimeBindingColumns+`) VALUES (
-		$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'','',$12,'',$13,$14,'suspended',$15,'',$16,$17,$18,$19,$20,$21)`,
-			b.ID, b.OrganizationID, b.SubjectID, b.AgentID, b.ConversationID, b.ProfileID, b.NetworkPolicy, b.NetworkMode, b.HomeSnapshotID, b.WorkspaceID, b.Backend, b.CheckpointKey, b.IdempotencyKey, b.RequestHash, b.Generation+1, b.CreatedAt.UTC(), time.Now().UTC(), b.LastActivityAt.UTC(), b.ExpiresAt.UTC(), b.RetentionExpiresAt.UTC(), b.HomeSnapshotRef)
+		$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'','',$12,'',$13,$14,'suspended',$15,'',$16,$17,$18,$19,$20,$21,$22)`,
+			b.ID, b.OrganizationID, b.SubjectID, b.AgentID, b.ConversationID, b.ProfileID, b.NetworkPolicy, b.NetworkMode, b.HomeSnapshotID, b.WorkspaceID, b.Backend, b.CheckpointKey, b.IdempotencyKey, b.RequestHash, b.Generation+1, b.CreatedAt.UTC(), time.Now().UTC(), b.LastActivityAt.UTC(), b.ExpiresAt.UTC(), b.RetentionExpiresAt.UTC(), b.HomeSnapshotRef, identity)
 		if err != nil {
 			return fmt.Errorf("import recovery binding: %w", err)
 		}

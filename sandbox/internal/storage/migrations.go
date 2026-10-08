@@ -301,6 +301,25 @@ var schemaMigrations = []schemaMigration{
 			`CREATE INDEX idx_agent_runtime_job_capacity ON agent_runtime_jobs (backend, organization_id, binding_id) WHERE status IN ('queued', 'running');`,
 		},
 	},
+	{
+		version:     2026100803,
+		description: "versioned multi-entry execution identity",
+		statements: []string{
+			// JSON null deliberately preserves the legacy console identity and its
+			// checkpoint keys. Never infer external identity from historical rows.
+			`ALTER TABLE agent_runtime_bindings ADD COLUMN execution_identity JSONB NOT NULL DEFAULT 'null'::jsonb CHECK (execution_identity = 'null'::jsonb OR jsonb_typeof(execution_identity) = 'object');`,
+			`CREATE INDEX idx_agent_runtime_binding_end_user ON agent_runtime_bindings (organization_id, subject_id, (execution_identity->>'workspace_id'), (execution_identity->>'application_type'), (execution_identity->>'application_id'), (execution_identity->>'subject_kind')) WHERE execution_identity <> 'null'::jsonb AND status NOT IN ('suspended', 'deleted');`,
+			`CREATE FUNCTION prevent_execution_identity_change() RETURNS trigger AS $$
+			BEGIN
+				IF NEW.execution_identity IS DISTINCT FROM OLD.execution_identity THEN
+					RAISE EXCEPTION 'execution identity is immutable';
+				END IF;
+				RETURN NEW;
+			END;
+			$$ LANGUAGE plpgsql;`,
+			`CREATE TRIGGER trg_execution_identity_immutable BEFORE UPDATE OF execution_identity ON agent_runtime_bindings FOR EACH ROW EXECUTE FUNCTION prevent_execution_identity_change();`,
+		},
+	},
 }
 
 func (s *Store) applyMigrations(ctx context.Context) error {
