@@ -10,6 +10,7 @@ import {
   ListTodo,
   MessageSquarePlus,
   TriangleAlert,
+  Terminal,
 } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Button } from '@/components/ui/button';
@@ -44,7 +45,11 @@ import {
   parseConnectorOperationPresentation,
 } from '@/components/connectors/runtime/connector-operation-presentation';
 import { ToolInvocationRow } from './tool-invocation-row';
-import { getAgentExecutionJobPresentation } from './agent-execution-job-presentation';
+import {
+  agentExecutionDuration,
+  getAgentExecutionDisplay,
+  getAgentExecutionJobPresentation,
+} from './agent-execution-job-presentation';
 
 import {
   formatAIChatTimelineArgumentSummary,
@@ -909,7 +914,15 @@ function timelineDebugRows(invocation: AIChatSkillInvocation, locale: string, t:
     ['skillId', isConnector ? null : invocation.skill_id],
     ['toolName', toolName ?? fallbackToolName],
     ['path', isConnector ? null : invocation.path],
-    ['duration', getDurationText(invocation.duration_ms, t)],
+    [
+      'duration',
+      getDurationText(
+        invocation.skill_id === 'agent_execution'
+          ? agentExecutionDuration(invocation)
+          : invocation.duration_ms,
+        t
+      ),
+    ],
     ['arguments', argumentSummary],
     [
       'message',
@@ -943,10 +956,27 @@ function buildSkillTitle(
   skillDisplayById?: AIChatSkillDisplayMap
 ): string {
   const job = getAgentExecutionJobPresentation(invocation);
-  if (job) {
-    return t(job.labelKey, {
-      exitCode: job.exitCode ?? t('consoleChat.skills.agentic.jobExitUnavailable'),
-    });
+  if (invocation.skill_id === 'agent_execution') {
+    if (invocation.tool_name === 'shell_exec') {
+      const display = getAgentExecutionDisplay(invocation);
+      return `${t(display.runtimeLabelKey)} · ${t(
+        job?.labelKey ??
+          (tone === 'running'
+            ? 'consoleChat.skills.agentic.jobRunning'
+            : tone === 'error'
+              ? 'consoleChat.skills.agentic.jobFailed'
+              : 'consoleChat.skills.agentic.jobUnconfirmed')
+      )}`;
+    }
+    if (invocation.tool_name === 'workspace_export_file') {
+      return t(
+        tone === 'running'
+          ? 'consoleChat.skills.agentic.fileExporting'
+          : tone === 'error'
+            ? 'consoleChat.skills.agentic.fileExportFailed'
+            : 'consoleChat.skills.agentic.fileExported'
+      );
+    }
   }
   const routeTarget = routeNavigationDisplayTarget(invocation, t);
   if (routeTarget) {
@@ -1051,7 +1081,15 @@ function SkillTimelineRow({
   const title = connector
     ? `${presentation?.title ?? connectorT('runtime.presentation.title')} · ${connectorT(`runtime.presentation.status.${presentation?.execution_status ?? presentation?.display_status ?? 'unavailable'}`)}`
     : event.title;
-  const duration = getDurationText(event.item.invocation.duration_ms, t);
+  const invocation = event.item.invocation;
+  const runtime = invocation.skill_id === 'agent_execution';
+  const shell = runtime && invocation.tool_name === 'shell_exec';
+  const job = shell ? getAgentExecutionJobPresentation(invocation) : null;
+  const executionDisplay = shell ? getAgentExecutionDisplay(invocation) : null;
+  const duration = getDurationText(
+    runtime ? agentExecutionDuration(invocation) : invocation.duration_ms,
+    t
+  );
   const detail = !connector && event.detail ? sanitizeDisplayString(event.detail) : null;
   const displayResult = connector
     ? undefined
@@ -1061,13 +1099,26 @@ function SkillTimelineRow({
       tone={event.tone}
       statusIcon={getStatusIcon(event.tone)}
       icon={
-        <AIChatSkillIcon
-          icon={event.skill.icon}
-          className="size-3.5 shrink-0 text-muted-foreground"
-        />
+        runtime ? (
+          <Terminal className="size-4 shrink-0 text-muted-foreground" />
+        ) : (
+          <AIChatSkillIcon
+            icon={event.skill.icon}
+            className="size-3.5 shrink-0 text-muted-foreground"
+          />
+        )
       }
       title={title}
       duration={duration}
+      summary={
+        shell && event.tone === 'error'
+          ? t(
+              executionDisplay?.diagnosticLabelKey ??
+                'consoleChat.skills.agentic.executionFailedHint'
+            )
+          : undefined
+      }
+      defaultOpen={shell && event.tone === 'error'}
     >
       {showDetails ? (
         <>
@@ -1076,33 +1127,57 @@ function SkillTimelineRow({
               {detail}
             </div>
           ) : null}
-          <AIChatSkillResultSummary
-            invocation={event.item.invocation}
-            result={displayResult}
-            skillId={event.item.invocation.skill_id}
-            toolName={event.item.invocation.tool_name}
-            className="mb-2"
-          />
+          {shell ? (
+            <div className="space-y-2 text-xs leading-5">
+              {job ? <p>{t(job.labelKey)}</p> : null}
+              {executionDisplay?.hasOutput ? (
+                <p className="text-muted-foreground">
+                  {t('consoleChat.skills.agentic.executionOutputPrivate')}
+                </p>
+              ) : null}
+            </div>
+          ) : (
+            <AIChatSkillResultSummary
+              invocation={event.item.invocation}
+              result={displayResult}
+              skillId={event.item.invocation.skill_id}
+              toolName={event.item.invocation.tool_name}
+              className="mb-2"
+            />
+          )}
           {!connector ? (
-            <dl className="grid gap-1 rounded-md bg-background/80 p-2 text-[11px]">
-              {timelineDebugRows(event.item.invocation, locale, t).map(([labelKey, value]) => {
-                const formatted =
-                  labelKey === 'arguments'
-                    ? formatAIChatTimelineArgumentSummary(value, t)
-                    : formatDebugValue(value);
-                if (!formatted) return null;
-                return (
-                  <div key={labelKey} className="grid grid-cols-[88px_minmax(0,1fr)] gap-2">
+            <details className="mt-2">
+              <summary className="cursor-pointer text-xs text-muted-foreground">
+                {t('consoleChat.skills.agentic.technicalDetails')}
+              </summary>
+              <dl className="mt-2 grid gap-1 rounded-md bg-background/80 p-2 text-xs">
+                {shell ? (
+                  <div className="grid grid-cols-[88px_minmax(0,1fr)] gap-2">
                     <dt className="text-muted-foreground">
-                      {t(TIMELINE_DEBUG_LABEL_KEYS[labelKey])}
+                      {t('consoleChat.skills.agentic.exitCode')}
                     </dt>
-                    <dd className="min-w-0 max-h-40 overflow-auto whitespace-pre-wrap break-all font-mono text-foreground/80">
-                      {formatted}
-                    </dd>
+                    <dd>{job?.exitCode ?? t('consoleChat.skills.agentic.jobExitUnavailable')}</dd>
                   </div>
-                );
-              })}
-            </dl>
+                ) : null}
+                {timelineDebugRows(event.item.invocation, locale, t).map(([labelKey, value]) => {
+                  const formatted =
+                    labelKey === 'arguments'
+                      ? formatAIChatTimelineArgumentSummary(value, t)
+                      : formatDebugValue(value);
+                  if (!formatted) return null;
+                  return (
+                    <div key={labelKey} className="grid grid-cols-[88px_minmax(0,1fr)] gap-2">
+                      <dt className="text-muted-foreground">
+                        {t(TIMELINE_DEBUG_LABEL_KEYS[labelKey])}
+                      </dt>
+                      <dd className="min-w-0 max-h-40 overflow-auto whitespace-pre-wrap break-all font-mono text-foreground/80">
+                        {formatted}
+                      </dd>
+                    </div>
+                  );
+                })}
+              </dl>
+            </details>
           ) : null}
         </>
       ) : undefined}
@@ -3729,10 +3804,18 @@ function isDigitalHumanTaskGovernanceItem(
     resultTask,
   ].filter((record): record is Record<string, unknown> => Boolean(record));
   return sources.some(record => {
-    const skill = String(record.skill_id ?? '').trim().toLowerCase();
-    const tool = String(record.tool_name ?? '').trim().toLowerCase();
-    const node = String(record.node_id ?? '').trim().toLowerCase();
-    const runID = String(record.workflow_run_id ?? '').trim().toLowerCase();
+    const skill = String(record.skill_id ?? '')
+      .trim()
+      .toLowerCase();
+    const tool = String(record.tool_name ?? '')
+      .trim()
+      .toLowerCase();
+    const node = String(record.node_id ?? '')
+      .trim()
+      .toLowerCase();
+    const runID = String(record.workflow_run_id ?? '')
+      .trim()
+      .toLowerCase();
     const genericTool = !tool || tool === 'tool-governance' || tool === 'tool_governance';
     const genericSkill = skill === 'tool-governance' || skill === 'tool_governance';
     return (

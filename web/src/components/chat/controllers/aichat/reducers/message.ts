@@ -113,6 +113,16 @@ export function removeStreamingStateByConversation(
   const nextStreamingByMessageId = { ...streamingByMessageId };
   Object.values(streamingByMessageId).forEach(streaming => {
     if (streaming.conversation_id === conversationId) {
+      // Finished projections belong to this page, not to a transport connection.
+      // Keep them across history reloads and conversation switches until unmount.
+      if (
+        streaming.presentationItems?.length &&
+        (streaming.status === 'completed' ||
+          streaming.status === 'stopped' ||
+          streaming.status === 'error')
+      ) {
+        return;
+      }
       if (
         streaming.timeline?.length &&
         (streaming.status === 'waiting_approval' ||
@@ -374,17 +384,8 @@ export function applyMessageStartState(
   const nextStreamingByMessageId = {
     ...current.streamingByMessageId,
   };
-  Object.values(current.streamingByMessageId).forEach(streaming => {
-    if (
-      streaming.conversation_id === payload.conversation_id &&
-      streaming.message_id !== payload.message_id &&
-      (streaming.status === 'completed' ||
-        streaming.status === 'stopped' ||
-        streaming.status === 'error')
-    ) {
-      delete nextStreamingByMessageId[streaming.message_id];
-    }
-  });
+  // A new message gets its own projection below; completed messages keep their
+  // page-local process notes without contributing anything to the new run.
   if (shouldMigrateDraftConversation && context.previousConversationId) {
     delete nextMessagesByConversation[context.previousConversationId];
     delete nextMessagePaginationByConversation[context.previousConversationId];
@@ -922,7 +923,7 @@ export function applyMessageEndState(
     // Keep the exact event/presentation snapshot that was already rendered on
     // this page. A terminal message payload may contain a compacted durable
     // projection, but completion must not make finished operations jump to a
-    // new position. The snapshot is cleared by refresh or the next run.
+    // new position. Keep it until page teardown or replacement of this message.
     nextStreamingByMessageId[payload.message_id] = {
       ...previousStreaming,
       ...endedPresentationState,

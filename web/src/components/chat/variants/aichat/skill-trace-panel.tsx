@@ -25,7 +25,10 @@ import { AIChatSkillIcon } from '@/components/chat/variants/aichat/skill-icon';
 import { AIChatSkillResultSummary } from '@/components/chat/variants/aichat/skill-result-summary';
 
 import { sanitizeTimelineDisplayString } from '@/components/chat/variants/aichat/timeline-display-safety';
-import { getAgentExecutionJobPresentation } from './agent-execution-job-presentation';
+import {
+  agentExecutionDuration,
+  getAgentExecutionJobPresentation,
+} from './agent-execution-job-presentation';
 
 import {
   formatAIChatTimelineArgumentSummary,
@@ -113,7 +116,10 @@ function skillTraceDebugRows(
     ['skillId', isConnector ? null : invocation.skill_id],
     ['toolName', externalToolName ?? fallbackToolName],
     ['path', isConnector ? null : invocation.path],
-    ['duration', getDurationText(invocation.duration_ms, t)],
+    ['duration', getDurationText(
+      invocation.skill_id === 'agent_execution' ? agentExecutionDuration(invocation) : invocation.duration_ms,
+      t
+    )],
     ['arguments', formatAIChatTimelineArgumentSummary(argumentSummary, t)],
     [
       'message',
@@ -255,9 +261,7 @@ export function AIChatSkillTracePanel({
           skill,
           tone,
           title: job
-            ? t(job.labelKey, {
-                exitCode: job.exitCode ?? t('consoleChat.skills.agentic.jobExitUnavailable'),
-              })
+            ? `${t(job.labelKey)} · ${t('consoleChat.skills.agentic.exitCode')} ${job.exitCode ?? t('consoleChat.skills.agentic.jobExitUnavailable')}`
             : tone === 'running'
               ? t('consoleChat.skills.agentic.callingTool', { skill: skill.label, tool: toolName })
               : tone === 'error'
@@ -346,7 +350,12 @@ export function AIChatSkillTracePanel({
           <div className="max-h-56 overflow-y-auto pr-2">
             <div className="space-y-2">
               {events.map((event, index) => {
-                const duration = getDurationText(event.invocation.duration_ms, t);
+                const duration = getDurationText(
+                  event.invocation.skill_id === 'agent_execution'
+                    ? agentExecutionDuration(event.invocation)
+                    : event.invocation.duration_ms,
+                  t
+                );
                 const detail = event.detail
                   ? sanitizeTimelineDisplayString(
                       event.detail,

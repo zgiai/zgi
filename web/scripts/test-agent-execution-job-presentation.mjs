@@ -13,9 +13,11 @@ const source = await readFile(
 const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
 }).outputText;
-const { getAgentExecutionJobPresentation: present } = await import(
-  `data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`
-);
+const {
+  getAgentExecutionJobPresentation: present,
+  getAgentExecutionDisplay,
+  agentExecutionDuration,
+} = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 const shell = {
   kind: 'tool_call',
   skill_id: 'agent_execution',
@@ -27,8 +29,9 @@ for (const [status, exitCode, tone, label] of [
   ['failed', 1, 'error', 'jobFailed'],
   ['failed', null, 'error', 'jobFailed'],
   ['succeeded', 7, 'error', 'jobFailed'],
-  ['canceled', null, 'error', 'jobFailed'],
-  ['timed_out', -1, 'error', 'jobFailed'],
+  ['canceled', null, 'warning', 'jobCanceled'],
+  ['cancelled', -1, 'warning', 'jobCanceled'],
+  ['timed_out', -1, 'error', 'jobTimedOut'],
   ['running', null, 'running', 'jobRunning'],
   ['queued', null, 'running', 'jobRunning'],
   ['succeeded', null, 'warning', 'jobUnconfirmed'],
@@ -47,6 +50,40 @@ for (const invocation of [
   { ...shell, tool_name: 'workspace_export_file', result: { job_id: 'job-1', status: 'failed' } },
 ])
   assert.equal(present(invocation), null, 'non-Shell tools must retain their own presentation');
+for (const duration of [undefined, 0, -1, NaN, Infinity]) {
+  assert.equal(agentExecutionDuration({ ...shell, duration_ms: duration }), undefined);
+}
+assert.equal(agentExecutionDuration({ ...shell, duration_ms: 350 }), 350);
+assert.deepEqual(
+  getAgentExecutionDisplay({
+    ...shell,
+    result: {
+      execution_display: {
+        runtime: 'python',
+        diagnostic: 'missing_python_dependency',
+        has_stderr: true,
+      },
+    },
+  }),
+  {
+    runtimeLabelKey: 'consoleChat.skills.agentic.executionPython',
+    diagnosticLabelKey: 'consoleChat.skills.agentic.missingPythonDependency',
+    hasOutput: true,
+  }
+);
+for (const display of [
+  null,
+  [],
+  'secret',
+  { runtime: 'secret', diagnostic: 'secret' },
+  { runtime: '__proto__', diagnostic: 'constructor' },
+]) {
+  assert.deepEqual(getAgentExecutionDisplay({ ...shell, result: { execution_display: display } }), {
+    runtimeLabelKey: 'consoleChat.skills.agentic.executionShell',
+    diagnosticLabelKey: null,
+    hasOutput: false,
+  });
+}
 const transportFailure = present({
   ...shell,
   status: 'error',
