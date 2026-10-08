@@ -44,6 +44,29 @@ func TestTrustedRiskResolverUsesOnlyExactPlatformPolicyAndFailsClosed(t *testing
 	}
 }
 
+func TestGitHubMCPIssueReadsHavePinnedLowRiskPolicy(t *testing.T) {
+	definition := catalog.GitHubMCPDefinition()
+	definitions, err := catalog.New(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver, err := NewTrustedRiskResolver(definitions, BuiltinRiskPolicies())
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := uuid.New()
+	for _, operation := range definition.Operations {
+		risk, err := resolver.ResolveRisk(t.Context(), RiskRequest{
+			OrganizationID: uuid.New(), OwnerAccountID: owner, ActingPrincipalID: owner,
+			ConnectionID: uuid.New(), ConnectorID: core.Identifier(definition.ID), OperationID: core.Identifier(operation.ID),
+			Target: core.TargetRef{Type: core.TargetTypeChat, ID: "chat"},
+		})
+		if err != nil || risk != RiskTrustedLow {
+			t.Fatalf("%s risk = %s, %v", operation.ID, risk, err)
+		}
+	}
+}
+
 func TestTrustedRiskResolverRejectsCatalogToolRemapAndWrongPrincipal(t *testing.T) {
 	definition := riskTestDefinition()
 	definition.Operations[0].ToolName = "replacement_tool"

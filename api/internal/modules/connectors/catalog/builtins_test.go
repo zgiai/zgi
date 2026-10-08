@@ -19,7 +19,7 @@ func TestOwnedBuiltinsPreserveAcceptedExecutableContracts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(current) != 9 || len(baseline) != 2 {
+	if len(current) != 10 || len(baseline) != 2 {
 		t.Fatal("missing builtin")
 	}
 	count := 0

@@ -132,6 +132,12 @@ var connectorPresentationRegistry = map[string]PresentationMetadata{
 		SourceURLs: []string{"https://docs.github.com/en/get-started/start-your-journey/what-is-github"}, Publisher: "GitHub", ReviewedAt: "2026-09-12",
 		Rationale: "GitHub documents code hosting, repositories, issues, review, project planning and software delivery collaboration.",
 	},
+	"github-mcp": {
+		ConnectorID: "github-mcp", Category: ConnectorCategoryDeveloper,
+		Tags:       []ConnectorTag{ConnectorTagCode, ConnectorTagRepository, ConnectorTagIssues},
+		SourceURLs: []string{"https://github.com/github/github-mcp-server"}, Publisher: "GitHub", ReviewedAt: "2026-10-08",
+		Rationale: "GitHub's official remote MCP server exposes read-only issue discovery and retrieval tools.",
+	},
 	"web-search": {
 		ConnectorID: "web-search", Category: ConnectorCategoryInformation,
 		Tags:       []ConnectorTag{ConnectorTagSearch, ConnectorTagWeb, ConnectorTagResearch},

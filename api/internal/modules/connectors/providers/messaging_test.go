@@ -24,7 +24,7 @@ func (d *messagingDriverFixture) InvokeCredentials(context.Context, string, Cred
 func TestMessagingEvidenceCannotInventGrantOrOverrideDenial(t *testing.T) {
 	d, _ := catalog.MessagingDefinition("dingtalk")
 	driver := &messagingDriverFixture{id: d.ID}
-	runtime, err := NewRuntime(&driverFixture{id: "github"}, &driverFixture{id: "web-search"}, &appDriverFixture{}, &serverOpsDriverFixture{}, driver)
+	runtime, err := NewRuntime(&driverFixture{id: "github"}, &driverFixture{id: "github-mcp"}, &driverFixture{id: "web-search"}, &appDriverFixture{}, driver)
 	if err != nil {
 		t.Fatal(err)
 	}
