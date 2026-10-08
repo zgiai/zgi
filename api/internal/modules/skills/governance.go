@@ -99,6 +99,16 @@ func (g *PolicyToolGovernanceGateway) DecideSkillTool(ctx context.Context, req T
 	}
 	approvalMode, preauthorization := governanceAgentAuthorization(params, governance, req.SkillID, req.ToolName, manifest, req.Arguments)
 	preauthorization = verifyCurrentAgentBindings(ctx, params, manifest, preauthorization)
+	// The console CLI may ask the existing governance UI for approval. It
+	// cannot turn a missing/revoked persistent resource binding into a prompt.
+	// Neither a JSON parameter nor an external Agent can grant this capability.
+	if req.ExecutionContext.PlatformInteractiveApproval &&
+		strings.EqualFold(governanceString(params, governance, "tool_governance_caller_type", "caller_type"), SkillCallerAgent) &&
+		strings.TrimSpace(stringMapValue(params, "agent_runtime_source")) == "console" &&
+		preauthorization != nil && !preauthorization.Required &&
+		preauthorization.Code == agentToolNotPreauthorizedCode {
+		approvalMode = toolgovernance.ApprovalModeInteractive
+	}
 	return toolgovernance.Decide(toolgovernance.Request{
 		Manifest:         manifest,
 		PermissionTier:   governancePermissionTier(params, governance),

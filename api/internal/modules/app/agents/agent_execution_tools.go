@@ -16,6 +16,7 @@ import (
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
+	"github.com/zgiai/zgi/api/internal/capabilities/runtimeplatform"
 	"github.com/zgiai/zgi/api/internal/dto"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/pkg/apperror"
@@ -71,6 +72,41 @@ func (h *AgentsHandler) attachConsoleAgentExecutionTools(runConfig *runtimeservi
 			newAgentExecutionExportTool(gateway, persister, executionScope, agentID.String(), prepared.Conversation.ID.String(), prepared.Message.ID.String(), profileID, backend, resolvedRuntime.PolicyID),
 		}
 		shellHandler := tools[0].Handler
+		if agentExecutionEnvBool("ZGI_AGENT_RUNTIME_PLATFORM_CLI_ENABLED", false) {
+			platformGateway, supported := h.executionGateway.(agentExecutionPlatformGateway)
+			live, authorized := h.appService.(interface {
+				authorizeRuntimePlatform(context.Context, string, string, string) error
+			})
+			if supported && authorized {
+				tools[0].PlatformInteractiveApproval = true
+				var services skillloop.RuntimePlatformServices
+				tools[0].BindPlatform = func(bound skillloop.RuntimePlatformServices) { services = bound }
+				tools[0].Definition.Function.Description += " When runtime_capabilities.platform_protocol_version is 1, scripts may use zgi file read/export, zgi model call, and zgi tool call. Every request requires a stable --id. Tool names must be current exposed business functions; no Shell recursion or tool activation. Exit code 75 means console approval is required: stop the script and await the existing approval interaction; never bypass it or retry a mutation with a new ID."
+				shellHandler = func(ctx context.Context, call adapter.ToolCall) skillloop.RuntimeToolResult {
+					files := &agentPlatformFiles{gateway: gateway, transfers: platformGateway, reader: fileReader, persister: persister, attachments: prepared.RuntimeAttachmentRefs(), skillResolver: skillResolver, skillAllowed: services.AuthorizeSkill}
+					relay := &agentPlatformRelay{agentExecutionGateway: gateway, platform: platformGateway, files: files, services: services, scope: runtimeplatform.Scope{OrganizationID: executionScope.OrganizationID, SubjectID: executionScope.SubjectID, AgentID: agentID.String(), ConversationID: prepared.Conversation.ID.String(), RunID: prepared.Message.ID.String()}, authorize: func(checkCtx context.Context) error {
+						return live.authorizeRuntimePlatform(checkCtx, agentID.String(), scope.AccountID.String(), scope.OrganizationID.String())
+					}}
+					defer relay.Close(ctx)
+					tool := newAgentExecutionShellToolWithNetworkPolicy(relay, executionScope, agentID.String(), prepared.Conversation.ID.String(), prepared.Message.ID.String(), profileID, backend, resolvedRuntime.PolicyID, prepared.RuntimeAttachmentRefs(), fileReader, skillResolver)
+					result := tool.Handler(ctx, call)
+					if relay.session != nil && result.ModelResult != nil {
+						if actual, ok := result.ModelResult["runtime_capabilities"].(map[string]interface{}); ok {
+							actual["platform_protocol_version"] = 1
+						}
+					}
+					result.Artifacts = append(result.Artifacts, files.Artifacts()...)
+					result.PendingGovernance, result.PendingConnector = relay.pending.PendingGovernance, relay.pending.PendingConnector
+					result.PendingApproval, result.PendingQuestion = relay.pending.PendingApproval, relay.pending.PendingQuestion
+					result.PendingClientAction, result.PendingUserInput = relay.pending.PendingClientAction, relay.pending.PendingUserInput
+					if relay.pending.NeedsContinuation() {
+						result.Status, result.Error = "awaiting_approval", nil
+						result.ModelResult = map[string]interface{}{"status": "awaiting_approval", "continuation": "console"}
+					}
+					return result
+				}
+			}
+		}
 		tools[0].Handler = func(ctx context.Context, call adapter.ToolCall) skillloop.RuntimeToolResult {
 			return projectAgentExecutionToolFailure(shellHandler(ctx, call), h.appErrorProjector)
 		}
@@ -241,7 +277,7 @@ func executeAgentShellToolWithNetworkPolicy(ctx context.Context, gateway agentEx
 			if operationCtx.Err() != nil {
 				return failed("job_interrupted", cancelInterruptedAgentExecutionJob(operationCtx, gateway, scope, job))
 			}
-			return failed("job_status_failed", err)
+			return failed("job_status_failed", errors.Join(err, cancelInterruptedAgentExecutionJob(operationCtx, gateway, scope, job)))
 		}
 		job = nextJob
 	}
@@ -250,6 +286,7 @@ func executeAgentShellToolWithNetworkPolicy(ctx context.Context, gateway agentEx
 		return failed("job_output_failed", err)
 	}
 	result := map[string]interface{}{"job_id": job.ID, "status": job.Status, "exit_code": job.ExitCode, "truncated": truncated, "input_count": len(inputPaths), "workspace_recreated": binding.Recreated}
+	result["execution_display"] = agentShellExecutionDisplay(args.Command, stdout, stderr, job)
 	if skillPath != "" {
 		result["skill_workspace_path"] = skillPath
 	}

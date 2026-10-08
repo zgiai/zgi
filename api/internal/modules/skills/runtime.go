@@ -63,6 +63,9 @@ type skillLocation struct {
 }
 
 type ExecutionContext struct {
+	// PlatformInteractiveApproval is set only by a first-party console CLI
+	// bridge. It cannot be supplied through Skill arguments or runtime JSON.
+	PlatformInteractiveApproval bool `json:"-"`
 	// ScriptModel is server-owned and never serialized into tool arguments.
 	ScriptModel              *ScriptModelChannel `json:"-"`
 	scriptModelPath          string

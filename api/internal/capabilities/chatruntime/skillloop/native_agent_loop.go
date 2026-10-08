@@ -51,6 +51,7 @@ func runtimeToolForCall(runtimeTools []RuntimeTool, call adapter.ToolCall) (Runt
 }
 
 func handleRuntimeToolCall(ctx context.Context, call adapter.ToolCall, runtimeTool RuntimeTool) skillStepResult {
+	startedAt := time.Now()
 	result := runtimeTool.Handler(ctx, call)
 	status := strings.TrimSpace(result.Status)
 	if status == "" {
@@ -67,6 +68,7 @@ func handleRuntimeToolCall(ctx context.Context, call adapter.ToolCall, runtimeTo
 		Status:       status,
 		Arguments:    result.Arguments,
 		Result:       result.Result,
+		DurationMS:   time.Since(startedAt).Milliseconds(),
 	}
 	if result.Error != nil {
 		trace.Error = status
@@ -80,10 +82,21 @@ func handleRuntimeToolCall(ctx context.Context, call adapter.ToolCall, runtimeTo
 	step.toolResult = result.Result
 	step.artifacts = result.Artifacts
 	step.pendingApproval = result.PendingApproval
+	step.pendingGovernance = result.PendingGovernance
+	step.pendingConnector = result.PendingConnector
+	step.pendingQuestion = result.PendingQuestion
+	step.pendingClientAction = result.PendingClientAction
+	step.pendingUserInput = result.PendingUserInput
 	if result.Recoverable {
 		step = recoverableSkillStep(trace, message, false, true)
 		step.toolResult = result.Result
 		step.pendingApproval = result.PendingApproval
+		step.pendingGovernance = result.PendingGovernance
+		step.pendingConnector = result.PendingConnector
+		step.pendingQuestion = result.PendingQuestion
+		step.pendingClientAction = result.PendingClientAction
+		step.pendingUserInput = result.PendingUserInput
+		step.artifacts = result.Artifacts
 	}
 	return step
 }

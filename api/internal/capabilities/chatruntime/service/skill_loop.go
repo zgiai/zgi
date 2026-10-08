@@ -151,6 +151,7 @@ func (s *service) runPreparedToolLoop(
 		s.taskTokenUsageObserver(persistCtx, prepared, onEvent),
 	)
 	executionContext.ScriptModel = scriptModel
+	platformModel, platformUsage := s.newRuntimePlatformModel(prepared, s.taskTokenUsageObserver(persistCtx, prepared, onEvent))
 	var nativeToolSet *skills.NativeToolSet
 	var nativeSkillSession *skills.NativeSkillSession
 	if nativeLoop {
@@ -251,6 +252,7 @@ func (s *service) runPreparedToolLoop(
 		NativeToolSet:                  nativeToolSet,
 		NativeSkillSession:             nativeSkillSession,
 		RuntimeTools:                   runtimeTools,
+		PlatformModel:                  platformModel,
 		ExecutionContext:               executionContext,
 		PreferExplicitFinalAnswer:      preferExplicitFinalAnswer,
 		SuppressInitialNaturalProgress: prepared.SuppressInitialNaturalProgress,
@@ -284,6 +286,7 @@ func (s *service) runPreparedToolLoop(
 		ContinuationType:         prepared.ContinuationType,
 		TerminalOnly:             prepared.TerminalOnly,
 	})
+	usage = addUsageCloned(usage, platformUsage())
 	if nativeSkillSession != nil {
 		prepared.Message.Metadata["native_skill_diagnostics"] = nativeSkillSessionDiagnostics(nativeSkillSession, prepared.Message.Metadata)
 	}

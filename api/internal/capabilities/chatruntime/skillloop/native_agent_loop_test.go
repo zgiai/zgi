@@ -119,6 +119,29 @@ func TestRunnerNativeAgentLoopCallsBusinessToolDirectly(t *testing.T) {
 	assertNativeProcessCommentaryBeforeSkillCall(t, events)
 }
 
+func TestRunnerNativeRuntimeToolRetainsProcessTextAndMeasuresDuration(t *testing.T) {
+	call := nativeCommentaryTestCall("runtime-call-1", "shell_exec")
+	client := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "数据已经准备好，接下来将生成结果文件。", ToolCalls: []adapter.ToolCall{call}}, FinishReason: "tool_calls"}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "完成。"}, FinishReason: "stop"}}},
+	}}
+	var events []Event
+	tool := RuntimeTool{SkillID: "agent_execution", Definition: adapter.Tool{Type: "function", Function: adapter.Function{Name: "shell_exec"}}, Handler: func(context.Context, adapter.ToolCall) RuntimeToolResult {
+		time.Sleep(10 * time.Millisecond)
+		return RuntimeToolResult{Status: "success", Result: map[string]interface{}{"status": "succeeded"}}
+	}}
+	runner := &Runner{LLMClient: client, SkillRuntime: skills.NewRuntime(nil, nil), AppContext: &llmclient.AppContext{}, OnEvent: func(event Event) error { events = append(events, event); return nil }}
+	prepared := NewPreparedChat("conv-runtime", "msg-runtime", "", "auto", &adapter.ChatRequest{Messages: []adapter.Message{{Role: "user", Content: "处理文件"}}})
+	if _, _, err := runner.Run(t.Context(), RunRequest{Prepared: prepared, Resolved: &skills.ResolvedSkills{}, NativeAgentLoop: true, RuntimeTools: []RuntimeTool{tool}}); err != nil {
+		t.Fatal(err)
+	}
+	assertNativeProcessCommentaryBeforeSkillCall(t, events)
+	step := handleRuntimeToolCall(t.Context(), call, tool)
+	if step.trace.DurationMS <= 0 {
+		t.Fatalf("duration = %d, want measured runtime tool duration", step.trace.DurationMS)
+	}
+}
+
 func TestRunnerNativeStreamConvertsProcessCommentaryBeforeBusinessTool(t *testing.T) {
 	manager := tools.NewToolManager(nil)
 	if err := manager.RegisterProvider(calculator.NewProvider()); err != nil {

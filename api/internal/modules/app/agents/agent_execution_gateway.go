@@ -34,11 +34,14 @@ type agentExecutionBinding struct {
 }
 
 type agentExecutionJob struct {
-	ID          string `json:"id"`
-	Status      string `json:"status"`
-	Generation  int64  `json:"generation"`
-	ExitCode    *int   `json:"exit_code"`
-	FailureCode string `json:"failure_code"`
+	BindingGeneration int64  `json:"binding_generation"`
+	BindingID         string `json:"binding_id"`
+	CancelRequested   bool   `json:"cancel_requested"`
+	ID                string `json:"id"`
+	Status            string `json:"status"`
+	Generation        int64  `json:"generation"`
+	ExitCode          *int   `json:"exit_code"`
+	FailureCode       string `json:"failure_code"`
 }
 
 type agentExecutionOutputChunk struct {
@@ -48,6 +51,7 @@ type agentExecutionOutputChunk struct {
 }
 
 type agentExecutionCapabilities struct {
+	PlatformProtocolVersion   int    `json:"platform_protocol_version,omitempty"`
 	Shell                     bool   `json:"shell"`
 	FileTransfer              bool   `json:"file_transfer"`
 	DependencyPreparation     bool   `json:"dependency_preparation"`
@@ -246,10 +250,14 @@ func (g *agentExecutionHTTPGateway) JobOutput(ctx context.Context, scope agentEx
 }
 
 func (g *agentExecutionHTTPGateway) UploadFile(ctx context.Context, scope agentExecutionScope, bindingID, filePath string, data []byte) error {
+	return g.uploadRuntimeFile(ctx, scope, "bindings/"+url.PathEscape(bindingID)+"/files?path="+url.QueryEscape(filePath), data)
+}
+
+func (g *agentExecutionHTTPGateway) uploadRuntimeFile(ctx context.Context, scope agentExecutionScope, route string, data []byte) error {
 	if g == nil || g.client == nil || scope.OrganizationID == "" || scope.SubjectID == "" {
 		return fmt.Errorf("agent execution gateway is unavailable")
 	}
-	endpoint := g.baseURL + "/v1/agent-runtime/bindings/" + url.PathEscape(bindingID) + "/files?path=" + url.QueryEscape(filePath)
+	endpoint := g.baseURL + "/v1/agent-runtime/" + route
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("create agent execution upload request: %w", err)
@@ -270,10 +278,14 @@ func (g *agentExecutionHTTPGateway) UploadFile(ctx context.Context, scope agentE
 }
 
 func (g *agentExecutionHTTPGateway) DownloadFile(ctx context.Context, scope agentExecutionScope, bindingID, filePath string) ([]byte, error) {
+	return g.downloadRuntimeFile(ctx, scope, "bindings/"+url.PathEscape(bindingID)+"/files?path="+url.QueryEscape(filePath))
+}
+
+func (g *agentExecutionHTTPGateway) downloadRuntimeFile(ctx context.Context, scope agentExecutionScope, route string) ([]byte, error) {
 	if g == nil || g.client == nil || scope.OrganizationID == "" || scope.SubjectID == "" {
 		return nil, fmt.Errorf("agent execution gateway is unavailable")
 	}
-	endpoint := g.baseURL + "/v1/agent-runtime/bindings/" + url.PathEscape(bindingID) + "/files?path=" + url.QueryEscape(filePath)
+	endpoint := g.baseURL + "/v1/agent-runtime/" + route
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create agent execution download request: %w", err)

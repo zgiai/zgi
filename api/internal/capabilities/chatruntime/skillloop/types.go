@@ -2,6 +2,7 @@ package skillloop
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -192,6 +193,7 @@ type RunRequest struct {
 	NativeToolSet                  *skills.NativeToolSet
 	NativeSkillSession             *skills.NativeSkillSession
 	RuntimeTools                   []RuntimeTool
+	PlatformModel                  func(context.Context, string, int) (string, error)
 	ExecutionContext               skills.ExecutionContext
 	PreferExplicitFinalAnswer      bool
 	SuppressInitialNaturalProgress bool
@@ -218,6 +220,34 @@ type RuntimeTool struct {
 	Definition adapter.Tool
 	SkillID    string
 	Handler    func(context.Context, adapter.ToolCall) RuntimeToolResult
+	// BindPlatform is called once by the owning Runner before execution. Its
+	// callbacks may only be called synchronously within this turn's Handler.
+	BindPlatform func(RuntimePlatformServices)
+	// PlatformInteractiveApproval is granted by the authenticated console
+	// factory only; ordinary Skill and external Agent calls retain their policy.
+	PlatformInteractiveApproval bool `json:"-"`
+}
+
+// RuntimePlatformServices exposes no routing credentials or arbitrary API
+// access. Tool calls reenter the current loaded-skill and governance boundary.
+type RuntimePlatformServices struct {
+	AuthorizeSkill func(context.Context, string) (bool, error)
+	Model          func(context.Context, string, int) (string, error)
+	Tool           func(context.Context, string, string, json.RawMessage) (RuntimePlatformToolResult, error)
+}
+
+type RuntimePlatformToolResult struct {
+	Data                json.RawMessage
+	PendingGovernance   map[string]interface{}
+	PendingConnector    map[string]interface{}
+	PendingApproval     map[string]interface{}
+	PendingQuestion     map[string]interface{}
+	PendingClientAction map[string]interface{}
+	PendingUserInput    map[string]interface{}
+}
+
+func (r RuntimePlatformToolResult) NeedsContinuation() bool {
+	return r.PendingGovernance != nil || r.PendingConnector != nil || r.PendingApproval != nil || r.PendingQuestion != nil || r.PendingClientAction != nil || r.PendingUserInput != nil
 }
 
 type RuntimeToolResult struct {
@@ -233,9 +263,14 @@ type RuntimeToolResult struct {
 	// durable workflow-continuation metadata. Runtime tools use this instead
 	// of returning a normal success result so callers can render the approval
 	// interaction in the composer.
-	PendingApproval map[string]interface{}
-	Error           error
-	Recoverable     bool
+	PendingApproval     map[string]interface{}
+	PendingGovernance   map[string]interface{}
+	PendingConnector    map[string]interface{}
+	PendingQuestion     map[string]interface{}
+	PendingClientAction map[string]interface{}
+	PendingUserInput    map[string]interface{}
+	Error               error
+	Recoverable         bool
 }
 
 type TerminalStateGuardDecisionRecord struct {

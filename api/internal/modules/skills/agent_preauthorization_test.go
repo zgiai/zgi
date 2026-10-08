@@ -495,6 +495,49 @@ func TestPolicyToolGovernanceNonBoundAgentToolCannotWaitForApproval(t *testing.T
 	}
 }
 
+func TestPlatformConsoleApprovalDoesNotExpandAutonomousAgentBindings(t *testing.T) {
+	manifest := toolgovernance.Manifest{
+		ToolID: "calculator.evaluate_expression", SkillID: SkillCalculator,
+		Domain: "calculation", Effect: toolgovernance.EffectRead,
+		RiskLevel:              toolgovernance.RiskLevelLow,
+		DefaultApprovalPolicy:  toolgovernance.ApprovalPolicyAlwaysAsk,
+		AllowedPermissionTiers: []toolgovernance.PermissionTier{toolgovernance.PermissionTierBasic},
+	}
+	gateway := NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy())
+	for _, tc := range []struct {
+		name, source, caller, skill string
+		capability                  bool
+		want                        toolgovernance.DecisionStatus
+	}{
+		{"console CLI", "console", SkillCallerAgent, SkillCalculator, true, toolgovernance.DecisionStatusNeedsApproval},
+		{"ordinary console Agent", "console", SkillCallerAgent, SkillCalculator, false, toolgovernance.DecisionStatusDenied},
+		{"webapp", "webapp", SkillCallerAgent, SkillCalculator, true, toolgovernance.DecisionStatusDenied},
+		{"API key", "api", SkillCallerAgent, SkillCalculator, true, toolgovernance.DecisionStatusDenied},
+		{"digital human", "console", SkillCallerDigitalHuman, SkillCalculator, true, toolgovernance.DecisionStatusDenied},
+		{"missing database binding", "console", SkillCallerAgent, SkillAgentDatabase, true, toolgovernance.DecisionStatusDenied},
+		{"missing workflow binding", "console", SkillCallerAgent, SkillAgentWorkflow, true, toolgovernance.DecisionStatusDenied},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			params := agentGovernanceRuntimeParameters(nil)
+			params["agent_runtime_source"] = tc.source
+			params["tool_governance_caller_type"] = tc.caller
+			params[governanceRuntimeParametersKey].(map[string]interface{})["caller_type"] = tc.caller
+			// A forged JSON field cannot replace the typed in-process grant.
+			params["platform_interactive_approval"] = true
+			decision, err := gateway.DecideSkillTool(t.Context(), ToolGovernanceRequest{
+				Manifest: manifest, SkillID: tc.skill, ToolName: "evaluate_expression",
+				ExecutionContext: ExecutionContext{PlatformInteractiveApproval: tc.capability, RuntimeParameters: params},
+			})
+			if err != nil || decision.Status != tc.want {
+				t.Fatalf("decision=%+v err=%v, want %s", decision, err, tc.want)
+			}
+			if tc.want == toolgovernance.DecisionStatusNeedsApproval && (decision.ApprovalEvent == nil || !decision.RequiresApproval) {
+				t.Fatal("interactive request did not produce the existing approval event")
+			}
+		})
+	}
+}
+
 func TestCallSkillToolAgentDenialReturnsModelFeedbackWithoutPendingApproval(t *testing.T) {
 	runtime, resolved := governedRuntimeForTest(t)
 	invocation, err := runtime.CallSkillTool(

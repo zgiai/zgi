@@ -631,6 +631,18 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		continuationType: strings.TrimSpace(req.ContinuationType),
 		terminalOnly:     req.TerminalOnly,
 	}
+	platformServices := r.runtimePlatformServices(req, prepared, resolved, loadedSkills, func() *skills.NativeToolSet {
+		if req.NativeSkillSession != nil {
+			current := req.NativeSkillSession.ToolSet()
+			return &current
+		}
+		return nativeToolSet
+	}, &toolCallCount, skillToolCallCounts, &successfulToolCalls, &traces)
+	for _, tool := range req.RuntimeTools {
+		if tool.BindPlatform != nil {
+			tool.BindPlatform(platformServices)
+		}
+	}
 	completeRetryFailureLimit := func(class retryFailureClass, metrics *retryFailureBudgetMetrics, round int) (string, *adapter.Usage, error) {
 		limitErr := fmt.Errorf("%w: too many %s failures", ErrInvalidInput, class)
 		failure := skills.SkillTrace{}
@@ -792,7 +804,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				candidateStreamed = true
 			}
 			if candidateStreamed && strings.TrimSpace(candidate) != "" {
-				decision := nativeCommentary.classify(candidate, toolCalls, nativeToolSet)
+				decision := nativeCommentary.classify(candidate, toolCalls, nativeToolSet, req.RuntimeTools...)
 				r.emitAnswerRetractWithDisposition(ctx, prepared, candidate, decision.disposition)
 				r.logNativeCommentaryDecision(ctx, prepared, round, decision, planningResult.reasoningObserved)
 				if eventErr := prepared.presentationEventError(); eventErr != nil {
