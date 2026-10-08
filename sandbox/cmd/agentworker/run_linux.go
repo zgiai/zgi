@@ -87,6 +87,8 @@ func run(parent context.Context, logger *log.Logger) error {
 			return printReleaseFingerprint(cfg)
 		case "--audit":
 			return auditRuntime(parent, cfg)
+		case "--audit-metrics":
+			return auditMetrics(parent, cfg)
 		case "--backup-checkpoints", "--verify-checkpoint-backup", "--restore-checkpoints":
 			command, directory, err := backupArguments(os.Args[1:])
 			if err != nil {
