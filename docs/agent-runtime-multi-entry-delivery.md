@@ -19,7 +19,7 @@ files and cleanup must remain available during an admission rollback.
 | P2 | Protected file ownership and authenticated preview/download | Implemented, including CLI business outputs; real entry acceptance remains P5 |
 | P3 | Published Agent and DigitalHuman interactive script integration | Implementation complete: published adapters, DigitalHuman opt-in UI and request-scoped tools; deployment acceptance remains P5 |
 | P4 | Published-resource CLI and frozen, idempotent approval continuation | Implementation and automated gates complete; real dual-backend acceptance remains P5 |
-| P5 | Real local/E2B entry acceptance and rollback verification | Pending |
+| P5 | Real local/E2B entry acceptance and rollback verification | In progress; basic published Agent API/WebApp execution and authenticated downloads passed on both backends; full matrix outstanding |
 
 ## Identity contract
 
@@ -455,3 +455,28 @@ business side effects and admission rollback. Mock and PostgreSQL results above
 do not replace that acceptance. Rollback disables new environment/CLI admission
 while retaining authenticated file reads, existing queries and cleanup; it does
 not delete files, reverse additive tables or replay pending writes.
+
+## P5 initial WebApp correction and focused acceptance
+
+The initial WebApp chat handler omitted execution-tool attachment even though
+continuation contexts attached the tools. Initial chat now reuses the same
+verified scope, caller, published configuration and authorization helper before
+preparing the turn. No anonymous or Runtime Workspace permissions were added.
+Actual handler tests cover enabled, application-disabled, server-disabled,
+anonymous, entry-denied and application-access-denied requests. The Agent package
+tests, targeted published-entry race checks and vet pass with Go 1.26.2.
+
+Real local gVisor and E2B acceptance verified initial WebApp Shell execution,
+stderr diagnostics, export, exact authenticated download bytes and a second-turn
+file modification in the same conversation. Cross-entry file access returns 404.
+Retained files remain downloadable after suspending compute; no active Jobs
+remain. Browser-submitted Shell execution and persisted file cards were checked.
+The embedded browser showed a blank TXT Blob preview and did not deliver a
+download automation event; those UI checks remain unresolved and are not counted
+as successful browser download acceptance. They do not invalidate the separately
+verified authenticated binary download responses.
+
+This is focused regression acceptance, not P5 completion. DigitalHuman, the full
+standard-Skill/two-user matrix, real CLI approvals and admission rollback still
+require real-backend acceptance. Raw evidence, credentials and screenshots stay
+outside Git in the ignored acceptance directory.
