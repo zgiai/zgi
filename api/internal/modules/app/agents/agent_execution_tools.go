@@ -54,6 +54,13 @@ func (h *AgentsHandler) attachConsoleAgentExecutionTools(runConfig *runtimeservi
 			return execution.Scope{OrganizationID: scope.OrganizationID.String(), SubjectID: scope.AccountID.String()}, nil
 		},
 	}
+	if h.fileService != nil {
+		options.ResolveFiles = func(prepared *runtimeservice.PreparedChat, owner execution.Scope) (*executionruntime.ScopedAttachmentReader, error) {
+			return executionruntime.NewScopedAttachmentReader(h.fileService, owner, prepared.RuntimeAttachmentRefs(), func(ctx context.Context, file *dto.UploadFile) error {
+				return runtimeservice.AuthorizeAttachment(ctx, scope, h.organizationService, file)
+			})
+		}
+	}
 	if resolved.HomeSnapshotID != nil {
 		options.HomeSnapshotID = strings.TrimSpace(*resolved.HomeSnapshotID)
 	}

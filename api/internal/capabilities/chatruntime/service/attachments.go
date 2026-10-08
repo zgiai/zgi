@@ -200,6 +200,16 @@ func normalizeAttachmentFileIDs(fileIDs []string, limit int) ([]string, error) {
 }
 
 func (s *service) ensureAttachmentReadable(ctx context.Context, scope Scope, file *dto.UploadFile) error {
+	return AuthorizeAttachment(ctx, scope, s.workspacePerms, file)
+}
+
+// AuthorizeAttachment rechecks the existing chat file permission contract. New
+// application entry adapters must additionally validate upload provenance; this
+// generic check does not establish an application's right to an external upload.
+func AuthorizeAttachment(ctx context.Context, scope Scope, workspacePerms WorkspacePermissionService, file *dto.UploadFile) error {
+	if file == nil {
+		return fmt.Errorf("%w: file is not accessible", ErrPermissionDenied)
+	}
 	if scope.RuntimeWorkspaceID != nil && *scope.RuntimeWorkspaceID != uuid.Nil &&
 		scope.RuntimeSubjectID != nil && *scope.RuntimeSubjectID != uuid.Nil {
 		if scope.RuntimeFileAuthorizer == nil {
@@ -247,10 +257,10 @@ func (s *service) ensureAttachmentReadable(ctx context.Context, scope Scope, fil
 		}
 		return nil
 	}
-	if s.workspacePerms == nil {
+	if workspacePerms == nil {
 		return fmt.Errorf("%w: workspace permission service is unavailable", ErrPermissionDenied)
 	}
-	allowed, err := s.workspacePerms.CheckWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspacemodel.WorkspacePermissionFilePreview)
+	allowed, err := workspacePerms.CheckWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspacemodel.WorkspacePermissionFilePreview)
 	if err != nil {
 		return fmt.Errorf("failed to check workspace file permission: %w", err)
 	}

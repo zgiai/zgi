@@ -23,8 +23,11 @@ type FactoryOptions struct {
 	Persister ArtifactPersister
 	// ResolvePersister binds protected persistence to the prepared message.
 	// A nil result fails closed instead of selecting a legacy public persister.
-	ResolvePersister      func(*runtimeservice.PreparedChat, execution.Scope) ArtifactPersister
-	Files                 AttachmentReader
+	ResolvePersister func(*runtimeservice.PreparedChat, execution.Scope) ArtifactPersister
+	Files            AttachmentReader
+	// ResolveFiles is mandatory for identity-scoped entries. A raw file service
+	// cannot substitute for a turn-scoped, live-authorized input reader.
+	ResolveFiles          func(*runtimeservice.PreparedChat, execution.Scope) (*ScopedAttachmentReader, error)
 	Skills                SkillPackageResolver
 	ResolveScope          func(*runtimeservice.PreparedChat) (execution.Scope, error)
 	Authorize             AuthorizeExecution
@@ -54,8 +57,28 @@ func NewToolFactory(options FactoryOptions) func(*runtimeservice.PreparedChat) [
 		// Copy the identity so an adapter cannot change an existing invocation's
 		// frozen publication or owner by mutating a shared pointer.
 		if scope.Identity != nil {
+			if options.Authorize == nil {
+				return nil // New entries require live application authorization.
+			}
 			identity := *scope.Identity
 			scope.Identity = &identity
+		}
+		attachments := prepared.RuntimeAttachmentRefs()
+		var scopedFiles *ScopedAttachmentReader
+		if options.ResolveFiles != nil {
+			var err error
+			scopedFiles, err = options.ResolveFiles(prepared, scope)
+			if err != nil || !scopedFiles.matches(scope, attachments) {
+				return nil
+			}
+		} else if scope.Identity != nil {
+			return nil
+		}
+		// Keep this invocation's resolved reader local; never mutate captured
+		// options across concurrent conversations.
+		invocation := options
+		if scopedFiles != nil {
+			invocation.Files = scopedFiles
 		}
 		persister := options.Persister
 		if options.ResolvePersister != nil {
@@ -83,18 +106,19 @@ func NewToolFactory(options FactoryOptions) func(*runtimeservice.PreparedChat) [
 		}
 		conversationID, messageID := prepared.Conversation.ID.String(), prepared.Message.ID.String()
 		tools := []skillloop.RuntimeTool{
-			newAgentExecutionShellToolWithNetworkPolicy(gateway, scope, agentID, conversationID, messageID, options.ProfileID, options.Backend, options.NetworkPolicy, prepared.RuntimeAttachmentRefs(), options.Files, options.Skills),
+			newAgentExecutionShellToolWithNetworkPolicy(gateway, scope, agentID, conversationID, messageID, options.ProfileID, options.Backend, options.NetworkPolicy, attachments, invocation.Files, options.Skills),
 			newAgentExecutionExportTool(gateway, persister, scope, agentID, conversationID, messageID, options.ProfileID, options.Backend, options.NetworkPolicy),
 		}
 		platform, supported := options.Gateway.(agentExecutionPlatformGateway)
 		if options.PlatformCLI && supported && options.AuthorizePlatform != nil {
-			tools[0] = withPlatformRelay(tools[0], options, gateway, platform, persister, prepared, scope, agentID)
+			tools[0] = withPlatformRelay(tools[0], invocation, gateway, platform, persister, prepared, scope, agentID)
 		}
 		if options.DependencyPreparation {
 			tools = append(tools, newAgentExecutionDependencyPreparationTool(gateway, scope, agentID, conversationID, messageID, options.ProfileID, options.Backend, options.NetworkPolicy, options.Skills))
 		}
 		for index := range tools {
 			handler := tools[index].Handler
+			isShell := index == 0
 			tools[index].Handler = func(ctx context.Context, call adapter.ToolCall) skillloop.RuntimeToolResult {
 				current, err := options.ResolveScope(prepared)
 				if err != nil || !sameFactoryScope(scope, current) || !factoryScopeMatches(current, options.LegacyAgentID, prepared) ||
@@ -102,6 +126,9 @@ func NewToolFactory(options FactoryOptions) func(*runtimeservice.PreparedChat) [
 					return deniedFactoryTool(options.ErrorProjector)
 				}
 				if options.Authorize != nil && options.Authorize(ctx) != nil {
+					return deniedFactoryTool(options.ErrorProjector)
+				}
+				if isShell && scopedFiles != nil && scopedFiles.CheckAttachments(ctx) != nil {
 					return deniedFactoryTool(options.ErrorProjector)
 				}
 				return projectAgentExecutionToolFailure(handler(ctx, call), options.ErrorProjector)

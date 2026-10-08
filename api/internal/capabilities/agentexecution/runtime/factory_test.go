@@ -52,6 +52,9 @@ func TestSharedFactoryPreservesApplicationIdentityAndBilling(t *testing.T) {
 				options := FactoryOptions{Gateway: gateway, Persister: &fakeAgentExecutionArtifactPersister{}, Entries: entries,
 					ProfileID: "standard", Backend: "fake", NetworkPolicy: "offline",
 					ResolveScope: func(*runtimeservice.PreparedChat) (execution.Scope, error) { return scope, nil },
+					ResolveFiles: func(p *runtimeservice.PreparedChat, s execution.Scope) (*ScopedAttachmentReader, error) {
+						return NewScopedAttachmentReader(&inputTestSource{}, s, p.RuntimeAttachmentRefs(), allowInputTestFile)
+					},
 					Authorize: func(context.Context) error {
 						if revoked {
 							return errors.New("access revoked")
@@ -77,6 +80,29 @@ func TestSharedFactoryPreservesApplicationIdentityAndBilling(t *testing.T) {
 				if entry == "external-api" && prepared.Scope.AccountID != billing {
 					t.Fatal("execution changed the existing billing account")
 				}
+				resolver := options.ResolveFiles
+				options.ResolveFiles = nil
+				if len(NewToolFactory(options)(prepared)) != 0 {
+					t.Fatal("identity entry used an unscoped input reader")
+				}
+				options.ResolveFiles = func(*runtimeservice.PreparedChat, execution.Scope) (*ScopedAttachmentReader, error) { return nil, nil }
+				if len(NewToolFactory(options)(prepared)) != 0 {
+					t.Fatal("missing scoped reader fell back to raw file service")
+				}
+				options.ResolveFiles = func(p *runtimeservice.PreparedChat, s execution.Scope) (*ScopedAttachmentReader, error) {
+					s.SubjectID = uuid.NewString()
+					return NewScopedAttachmentReader(&inputTestSource{}, s, p.RuntimeAttachmentRefs(), allowInputTestFile)
+				}
+				if len(NewToolFactory(options)(prepared)) != 0 {
+					t.Fatal("factory accepted another user's reader")
+				}
+				options.ResolveFiles = resolver
+				authorize := options.Authorize
+				options.Authorize = nil
+				if len(NewToolFactory(options)(prepared)) != 0 {
+					t.Fatal("identity entry omitted live application authorization")
+				}
+				options.Authorize = authorize
 				revoked = true
 				before := gateway.creates
 				if result := tools[0].Handler(t.Context(), call); result.Result["error_code"] != "execution_denied" || gateway.creates != before {
