@@ -24,7 +24,7 @@ files and cleanup must remain available during an admission rollback.
 | P2 | Protected file ownership and authenticated preview/download | Implemented, including CLI business outputs; real entry acceptance remains P5 |
 | P3 | Published Agent and DigitalHuman interactive script integration | Implementation complete: published adapters, DigitalHuman opt-in UI and request-scoped tools; deployment acceptance remains P5 |
 | P4 | Published-resource CLI and frozen, idempotent approval continuation | Implementation and automated gates complete; real dual-backend acceptance remains P5 |
-| P5 | Real local/E2B entry acceptance and rollback verification | In progress; real standard-Skill, approval, CLI model billing and admission rollback gates pass; second authenticated WebApp account and observed E2B browser download remain open |
+| P5 | Real local/E2B entry acceptance and rollback verification | In progress; standard-Skill, approval, CLI model billing and admission rollback samples pass; account isolation, browser file delivery and entry-specific publication/live-authorization closeout remain open |
 
 ## Identity contract
 
@@ -417,10 +417,15 @@ Pending CLI approvals seal organization, resource workspace, application, entry,
 final user, conversation, message and publication into the frozen invocation
 hash. Confirmation checks these coordinates and current resource permissions
 before recording the decision and immediately before invoking the business tool.
-Publication replacement rejects the old call rather than silently using a newer
-configuration. DigitalHuman continuation restores the sealed original run; a
+Publication replacement must never silently substitute a newer configuration.
+DigitalHuman continuation restores the sealed original published run; a
 rotated API credential is used for live authorization without rewriting that run
 or its final-user owner.
+
+The Agent published adapter still requires the current publication to match the
+invocation. Its replacement-publication continuation is not yet at parity with
+DigitalHuman and must not be advertised as accepted. That remaining behavior
+requires focused verification before P5 closeout.
 
 Confirmation executes only the frozen business invocation; rejection executes
 none, including after compute admission is disabled or the invocation expires.
@@ -602,10 +607,27 @@ That transient failure remains in the private acceptance record.
 P5 is not complete. Two distinct API final users are not a substitute for two
 authenticated WebApp accounts: a second dedicated account is still required.
 The E2B CSV browser preview is visibly correct and authenticated binary downloads
-pass, but an actual browser-saved file has not been observed. Neither unresolved
-gate is reported as passing. Wider rollout remains closed.
+pass, but an actual browser-saved file has not been observed; protected TXT Blob
+preview is still blank in the embedded browser. These UI results do not yet
+establish whether the limitation is in the application or the browser integration.
+Publication replacement and live revocation have real DigitalHuman API samples;
+the other entry-specific boundaries retain automated coverage, not a completed
+real-backend matrix. Wider rollout remains closed.
 
 Attachment history distinguishes model content injection from tool file use:
 filtered content is shown neutrally as not directly injected, not as a failed or
 unused file. Original-file access remains subject to existing authorization;
 actual parsing errors still retain their error presentation.
+
+### Additional conversation continuity acceptance
+
+DigitalHuman API and authenticated WebApp now also pass focused continuation
+checks on both local gVisor and E2B. Each starts from the suspended original-Skill
+Binding, resumes the same conversation with a newer generation, asserts the exact
+original 52-byte script output, and exports a modified result through one Shell
+Job. Authenticated result bytes match independently. No missing source file was
+recreated and the original Skill was not rerun. All four Bindings were suspended
+again; owned queued/running Jobs are zero and retained files/checkpoints remain.
+The dedicated test Workers and SSH bridge were stopped afterward. Candidate
+API/Web history and authorized retained-file reads remain available; new execution
+acceptance requires starting the dedicated test compute again.
