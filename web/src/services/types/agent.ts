@@ -1,3 +1,4 @@
+import type { FileUploadSelection } from '@/services/upload.service';
 import type { IconType } from '@/utils/icon-helpers';
 import type { ConnectorReferenceCommand } from './connector';
 
@@ -239,6 +240,7 @@ export interface UpdateWebAppStatusResponse {
 }
 
 export interface AgentRuntimeConfig {
+  file_upload_policy?: FileUploadSelection | null;
   agent_id: string;
   execution_runtime?: AgentExecutionRuntimeConfig | null;
   system_prompt: string;
@@ -479,6 +481,7 @@ export interface AgentMemoryConfigResponse {
 }
 
 export interface UpdateAgentRuntimeConfigRequest {
+  file_upload_policy?: FileUploadSelection | null;
   execution_runtime?: AgentExecutionRuntimeConfig | null;
   system_prompt: string;
   model_provider: string;

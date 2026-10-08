@@ -1,3 +1,4 @@
+import type { FileUploadSelection } from '@/services/upload.service';
 import React, { useEffect, useMemo, useCallback, useState } from 'react';
 import type { Conversation } from '@/components/chat/types';
 import { useChatStore } from '@/components/chat/store';
@@ -125,6 +126,7 @@ interface ImgChatVariantProps {
 }
 
 interface AIChatVariantProps {
+  fileUploadPolicy?: FileUploadSelection | null;
   mode: 'aichat';
   controller: AIChatController;
   modelSelectorValue: AIChatModelValue;

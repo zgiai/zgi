@@ -1111,11 +1111,8 @@ function SkillTimelineRow({
       title={title}
       duration={duration}
       summary={
-        shell && event.tone === 'error'
-          ? t(
-              executionDisplay?.diagnosticLabelKey ??
-                'consoleChat.skills.agentic.executionFailedHint'
-            )
+        shell && event.tone === 'error' && executionDisplay?.diagnosticLabelKey
+          ? t(executionDisplay.diagnosticLabelKey)
           : undefined
       }
       defaultOpen={shell && event.tone === 'error'}

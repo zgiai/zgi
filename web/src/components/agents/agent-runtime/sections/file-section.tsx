@@ -1,6 +1,8 @@
 'use client';
 
 import { Switch } from '@/components/ui/switch';
+import { FileUploadTypeSelector } from '@/components/chat/file-upload-type-selector';
+import type { FileUploadSelection } from '@/services/upload.service';
 import { useT } from '@/i18n';
 import { RuntimeSection } from '../runtime-section';
 import type { AgentConfigSection } from '../types';
@@ -8,6 +10,8 @@ import type { AgentConfigSection } from '../types';
 interface AgentRuntimeFileSectionProps {
   open: boolean;
   fileUploadEnabled: boolean;
+  fileUploadPolicy?: FileUploadSelection | null;
+  onChangeFileUploadPolicy: (value: FileUploadSelection) => void;
   readOnly?: boolean;
   onToggleSection: (section: AgentConfigSection) => void;
   onChangeFileUploadEnabled: (value: boolean) => void;
@@ -16,6 +20,8 @@ interface AgentRuntimeFileSectionProps {
 export function AgentRuntimeFileSection({
   open,
   fileUploadEnabled,
+  fileUploadPolicy,
+  onChangeFileUploadPolicy,
   readOnly = false,
   onToggleSection,
   onChangeFileUploadEnabled,
@@ -40,6 +46,7 @@ export function AgentRuntimeFileSection({
           onCheckedChange={onChangeFileUploadEnabled}
         />
       </div>
+      {fileUploadEnabled ? <div className="mt-3"><FileUploadTypeSelector value={fileUploadPolicy} onChange={onChangeFileUploadPolicy} disabled={readOnly} /></div> : null}
     </RuntimeSection>
   );
 }

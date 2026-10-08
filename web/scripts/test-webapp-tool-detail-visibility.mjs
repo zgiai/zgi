@@ -33,6 +33,9 @@ const { ToolInvocationRow } = load('src/components/chat/variants/aichat/tool-inv
   'lucide-react': { ChevronDown: () => null },
   '@/lib/utils': { cn: (...values) => values.filter(value => typeof value === 'string').join(' ') },
 });
+const { getAgentExecutionDisplay } = load(
+  'src/components/chat/variants/aichat/agent-execution-job-presentation.ts'
+);
 // Execute the actual timeline row with narrow presentation fixtures, avoiding
 // unrelated governance/controller hooks while testing what reaches the DOM.
 const source = read('src/components/chat/variants/aichat/agentic-timeline.tsx');
@@ -60,7 +63,7 @@ const fixtures = {
   isConnectorOperationInvocation: () => false,
   parseConnectorOperationPresentation: () => null,
   getAgentExecutionJobPresentation: () => ({ labelKey: 'job-status', exitCode: 0 }),
-  getAgentExecutionDisplay: () => ({ hasOutput: true }),
+  getAgentExecutionDisplay,
   getDurationText: () => '140ms',
   agentExecutionDuration: () => 140,
   sanitizeDisplayString: value => value,
@@ -114,9 +117,24 @@ for (const toolName of ['shell_exec', 'workspace_export_file', 'run_script']) {
       'WebApp must not mount detail content or an expandable tool row'
     );
     const consoleHTML = render(true);
+    assert.doesNotMatch(publicHTML + consoleHTML, /executionFailedHint/);
     assert.match(consoleHTML, /technicalDetails/);
     assert.match(consoleHTML, /private-command/);
     assert.match(consoleHTML, /aria-expanded/);
+    if (toolName === 'shell_exec' && tone === 'error') {
+      for (const diagnostic of ['', 'unknown', 'command_not_found']) {
+        event.item.invocation.result = { execution_display: { diagnostic } };
+        for (const showDetails of [false, true]) {
+          const html = render(showDetails);
+          assert.doesNotMatch(html, /executionFailedHint/);
+          if (diagnostic === 'command_not_found') {
+            assert.match(html, /commandNotFound/, 'specific safe diagnostics remain visible');
+          } else {
+            assert.doesNotMatch(html, /class="px-3 pb-2/, 'no generic failure explanation');
+          }
+        }
+      }
+    }
   }
 }
 console.log('WebApp status-only tool events and console detail rendering passed');

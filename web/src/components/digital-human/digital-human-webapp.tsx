@@ -330,7 +330,8 @@ export function DigitalHumanWebApp({ webAppId }: { webAppId: string }) {
                   requireModel={false}
                   showMemoryToggle={false}
                   forcedUseMemory={false}
-                  enableUpload={config.file_upload_enabled && isAuthenticated}
+          enableUpload={config.file_upload_enabled && isAuthenticated}
+          fileUploadPolicy={config.file_upload_policy}
                   uploadScope={uploadScope}
                   showFileLibraryPicker={false}
                   allowWorkspaceSwitch={false}

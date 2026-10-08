@@ -42,7 +42,6 @@ import type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
 import type { AIChatToolGovernancePermissionTier } from '@/components/aichat/contextual/types';
 import type { AvailableModelUseCase, ModelUseCase } from '@/services/types/model';
 import {
-  imageAttachmentHintTranslationKey,
   type ScopedTranslatorWithHas,
   tAttachmentForSurface,
   type AIChatComposerSurface,
@@ -341,12 +340,7 @@ export function AIChatInputToolbar({
               <Info className="size-4 shrink-0 text-muted-foreground" />
             </TooltipTrigger>
             <TooltipContent side="top" className="max-w-xs">
-              {tAttachmentForSurface(
-                t as unknown as ScopedTranslatorWithHas,
-                surface,
-                imageAttachmentHintTranslationKey(surface),
-                'imageModelLocked'
-              )}
+              {t('consoleChat.attachments.imageFileHint')}
             </TooltipContent>
           </Tooltip>
         ) : null}
@@ -374,7 +368,7 @@ export function AIChatInputToolbar({
               <Tooltip>
                 <TooltipTrigger asChild>
                   <div>
-                    <DropdownMenuItem onClick={onUploadDocument}>
+                    <DropdownMenuItem disabled={allowedExtensions.length === 0} onClick={onUploadDocument}>
                       <FileText className="mr-2 size-4" />
                       {t('consoleChat.attachments.uploadDocument')}
                     </DropdownMenuItem>
@@ -410,11 +404,7 @@ export function AIChatInputToolbar({
                           types: formatExtensionsForDisplay(imageExtensions).join(' / '),
                         }
                       )
-                    : tAttachmentForSurface(
-                        t as unknown as ScopedTranslatorWithHas,
-                        surface,
-                        'imageVisionRequired'
-                      )}
+                    : t('consoleChat.attachments.imageDisabled')}
                 </TooltipContent>
               </Tooltip>
               {showFileLibraryPicker ? (

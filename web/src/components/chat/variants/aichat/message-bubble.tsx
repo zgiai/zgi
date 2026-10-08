@@ -925,13 +925,13 @@ function AIChatHistoryImagePreview({ file }: AIChatHistoryImagePreviewProps) {
     useFileOriginalPreviewUrl(file.id, {
       enabled: Boolean(file.id),
     });
-  const isFiltered = file.content_status === 'filtered';
   const isError = file.parse_status === 'error' || Boolean(error) || imageLoadFailed;
-  const canPreview = Boolean(previewUrl) && !isError && !isFiltered;
+  // Model input filtering is not a browser preview permission decision.
+  const canPreview = Boolean(previewUrl) && !isError;
   const canRetry =
-    !isLoading && !isFetching && !isFiltered && ((Boolean(error) && !isMissing) || imageLoadFailed);
+    !isLoading && !isFetching && ((Boolean(error) && !isMissing) || imageLoadFailed);
   const canInteract = canPreview || canRetry;
-  const showUnavailableTooltip = !isLoading && !isFetching && (isError || isFiltered);
+  const showUnavailableTooltip = !isLoading && !isFetching && isError;
   const title =
     file.error ||
     error ||
@@ -960,7 +960,7 @@ function AIChatHistoryImagePreview({ file }: AIChatHistoryImagePreviewProps) {
       type="button"
       className={cn(
         'relative size-24 overflow-hidden rounded-lg border bg-background/70 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-        isError || isFiltered ? 'border-destructive/40' : 'border-border',
+        isError ? 'border-destructive/40' : 'border-border',
         canPreview
           ? 'cursor-zoom-in'
           : canRetry
@@ -993,7 +993,7 @@ function AIChatHistoryImagePreview({ file }: AIChatHistoryImagePreviewProps) {
         <div className="flex h-full w-full items-center justify-center text-muted-foreground">
           {isLoading || isFetching ? (
             <Loader2 className="size-5 animate-spin" />
-          ) : isError || isFiltered ? (
+          ) : isError ? (
             <AlertCircle className="size-5 text-destructive" />
           ) : (
             <FileImage className="size-5" />

@@ -1,5 +1,6 @@
 'use client';
 
+import type { FileUploadSelection } from '@/services/upload.service';
 import {
   createElement,
   useCallback,
@@ -184,6 +185,7 @@ interface AIChatShellProps {
   showMemoryToggle?: boolean;
   forcedUseMemory?: boolean;
   enableUpload?: boolean;
+  fileUploadPolicy?: FileUploadSelection | null;
   uploadScope?: AIChatUploadScope;
   showFileLibraryPicker?: boolean;
   allowWorkspaceSwitch?: boolean;
@@ -331,6 +333,7 @@ export function AIChatShell({
   showMemoryToggle = true,
   forcedUseMemory,
   enableUpload = true,
+  fileUploadPolicy,
   uploadScope,
   showFileLibraryPicker = true,
   allowWorkspaceSwitch = false,
@@ -1972,6 +1975,7 @@ export function AIChatShell({
             preferredModelUseCase={preferredModelUseCase}
             showMemoryToggle={showMemoryToggle}
             enableUpload={enableUpload}
+            fileUploadPolicy={fileUploadPolicy}
             uploadScope={uploadScope}
             showFileLibraryPicker={showFileLibraryPicker}
             allowWorkspaceSwitch={allowWorkspaceSwitch}

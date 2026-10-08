@@ -1,5 +1,6 @@
 'use client';
 
+import type { FileUploadSelection } from '@/services/upload.service';
 import type { ModelSelectorParameterValue } from '@/components/common/model-selector';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
@@ -58,6 +59,8 @@ interface AgentRuntimeOrchestrationPanelProps {
   suggestedQuestions: string[];
   isGeneratingSuggestions: boolean;
   fileUploadEnabled: boolean;
+  fileUploadPolicy?: FileUploadSelection | null;
+  onChangeFileUploadPolicy: (value: FileUploadSelection) => void;
   executionRuntime: AgentExecutionRuntimeConfig | null;
   agentMemoryEnabled: boolean;
   agentMemoryAutoExtractionEnabled: boolean;
@@ -126,6 +129,8 @@ export function AgentRuntimeOrchestrationPanel({
   suggestedQuestions,
   isGeneratingSuggestions,
   fileUploadEnabled,
+  fileUploadPolicy,
+  onChangeFileUploadPolicy,
   executionRuntime,
   agentMemoryEnabled,
   agentMemoryAutoExtractionEnabled,
@@ -267,17 +272,12 @@ export function AgentRuntimeOrchestrationPanel({
                 agentId={agentId}
                 open={openSections.connectors}
                 connectorBindings={connectorBindings}
-
                 menuOpen={connectorMenuOpen}
-
-
-
                 bindingHealth={bindingHealth}
                 readOnly={readOnly}
                 onToggleSection={onToggleSection}
                 onOpenDialog={onOpenConnectorDialog}
                 onChangeConnectorBindings={onChangeConnectorBindings}
-
               />
             </>
           ) : null}
@@ -287,6 +287,8 @@ export function AgentRuntimeOrchestrationPanel({
           <AgentRuntimeFileSection
             open={openSections.files}
             fileUploadEnabled={fileUploadEnabled}
+            fileUploadPolicy={fileUploadPolicy}
+            onChangeFileUploadPolicy={onChangeFileUploadPolicy}
             readOnly={readOnly}
             onToggleSection={onToggleSection}
             onChangeFileUploadEnabled={onChangeFileUploadEnabled}

@@ -214,6 +214,7 @@ export function DigitalHumanChat({ id }: { id: string }) {
           showMemoryToggle={false}
           forcedUseMemory={false}
           enableUpload
+          fileUploadPolicy={published?.file_upload_policy}
           uploadScope={{ type: 'console' }}
           showFileLibraryPicker={false}
           allowWorkspaceSwitch={false}

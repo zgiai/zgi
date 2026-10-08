@@ -1,5 +1,6 @@
 'use client';
 
+import type { FileUploadSelection } from '@/services/upload.service';
 import { indexWorkflowBindingCandidates } from '../workflow-candidates';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -340,7 +341,10 @@ export function useAgentRuntimePageModel(agentId: string) {
   const [agentMemoryConfigRevision, setAgentMemoryConfigRevision] = useState('');
   const [agentMemorySlots, setAgentMemorySlots] = useState<AgentMemorySlotConfig[]>([]);
   const [fileUploadEnabled, setFileUploadEnabled] = useState(false);
-  const [executionRuntime, setExecutionRuntime] = useState<AgentExecutionRuntimeConfig | null>(null);
+  const [fileUploadPolicy, setFileUploadPolicy] = useState<FileUploadSelection | null>(null);
+  const [executionRuntime, setExecutionRuntime] = useState<AgentExecutionRuntimeConfig | null>(
+    null
+  );
   const [homeTitle, setHomeTitle] = useState(defaultHomeTitle);
   const [openingStatement, setOpeningStatement] = useState('');
   const [inputPlaceholder, setInputPlaceholder] = useState(defaultInputPlaceholder);
@@ -540,9 +544,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       model_provider: modelValue.provider,
       model: modelValue.model,
       model_parameters: modelValue.params,
-      execution_runtime: executionRuntime
-        ? { enabled: executionRuntime.enabled }
-        : null,
+      execution_runtime: executionRuntime ? { enabled: executionRuntime.enabled } : null,
       enabled_skill_ids: normalizedSelectedSkillIds,
       use_memory: false,
       agent_memory_enabled: agentMemoryEnabled,
@@ -554,6 +556,7 @@ export function useAgentRuntimePageModel(agentId: string) {
         sort_order: index,
       })),
       file_upload_enabled: fileUploadEnabled,
+      file_upload_policy: fileUploadPolicy,
       home_title: homeTitle.trim() || defaultHomeTitle,
       opening_statement: openingStatement,
       input_placeholder: inputPlaceholder.trim() || defaultInputPlaceholder,
@@ -574,6 +577,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       defaultHomeTitle,
       defaultInputPlaceholder,
       fileUploadEnabled,
+      fileUploadPolicy,
       executionRuntime,
       agentMemoryEnabled,
       agentMemoryAutoExtractionEnabled,
@@ -620,6 +624,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     setAgentMemoryAutoExtractionEnabled(payload.agent_memory_auto_extraction_enabled ?? false);
     setAgentMemorySlots(payload.agent_memory_slots ?? []);
     setFileUploadEnabled(payload.file_upload_enabled);
+    setFileUploadPolicy(payload.file_upload_policy ?? null);
     setExecutionRuntime(payload.execution_runtime ?? null);
     setHomeTitle(payload.home_title);
     setOpeningStatement(payload.opening_statement ?? '');
@@ -660,6 +665,7 @@ export function useAgentRuntimePageModel(agentId: string) {
         runtimeConfig.agent_memory_config_revision ?? fallback?.agent_memory_config_revision,
       file_upload_enabled:
         runtimeConfig.file_upload_enabled ?? fallback?.file_upload_enabled ?? false,
+      file_upload_policy: runtimeConfig.file_upload_policy ?? fallback?.file_upload_policy ?? null,
       home_title:
         runtimeConfig.home_title && runtimeConfig.home_title !== 'title'
           ? runtimeConfig.home_title
@@ -1599,6 +1605,10 @@ export function useAgentRuntimePageModel(agentId: string) {
       isGeneratingSuggestions,
       fileUploadEnabled,
       executionRuntime,
+      fileUploadPolicy,
+      onChangeFileUploadPolicy: (value: FileUploadSelection) => {
+        if (!isRuntimeConfigReadOnly) setFileUploadPolicy(value);
+      },
       agentMemoryEnabled,
       agentMemoryAutoExtractionEnabled,
       agentMemorySlots,
@@ -1704,6 +1714,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       useMemory: false,
       fileUploadEnabled,
       suggestions: currentPayload.suggested_questions,
+      fileUploadPolicy,
       inputPlaceholder: currentPayload.input_placeholder,
       openingGuideBrand: agentOpeningGuideBrand,
       homeTitle: currentPayload.home_title || defaultHomeTitle,

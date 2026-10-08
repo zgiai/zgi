@@ -1424,7 +1424,6 @@ const messages: WebappMessages = {
         missingPythonDependency: '缺少 Python 依赖，智能体需要准备依赖后再运行。',
         missingNodeDependency: '缺少 Node.js 依赖，智能体需要准备依赖后再运行。',
         commandNotFound: '环境中未找到所需命令，需要检查工具是否可用。',
-        executionFailedHint: '命令未正常完成，智能体已收到执行结果。',
         executionOutputPrivate: '输出和诊断已提供给智能体，原始命令与日志不写入对话历史。',
         technicalDetails: '技术详情',
         exitCode: '退出码',
@@ -1494,7 +1493,7 @@ const messages: WebappMessages = {
       parsed: '已解析',
       visionReady: '图片已参与视觉输入',
       filtered: '未参与回答',
-      filteredModelWithoutVision: '当前模型不支持图片理解，图片未参与回答。',
+      filteredModelWithoutVision: '当前模型不读取图片内容，原图仍可用于已授权的文件操作。',
       previewLoadError: '无法预览图片，文件可能已过期或您没有访问权限。',
       empty: '无可提取文本',
       parseFailed: '解析失败',
@@ -1507,20 +1506,26 @@ const messages: WebappMessages = {
       exceedCount: '最多可附加 {max} 个文件',
       unsupportedType: '不支持的文件类型。支持：{types}',
       fileTooLarge: '文件过大，最大支持 {max} MB',
+      turnTooLarge: '每轮附件合计不能超过 {max} MiB',
+      imageDisabled: '当前应用未开放图片附件。',
+      allowedTypes: '允许上传的类型',
+      documentType: '文档',
+      imageType: '图片',
+      imageFileHint: '图片可作为文件使用；理解图片内容取决于模型的视觉能力。',
       imageVisionRequired: '只有具备视觉能力的模型支持图片上传。',
       imageModelLocked:
         '由于您已经上传了图片，只能切换具备视觉能力的模型。如果您希望切换到不具备视觉能力的模型，请先移除输入区域的已上传图片。',
       visionReplayWarning: {
         title: '当前模型无法理解原消息中的图片',
         description:
-          '这条消息包含 {count} 张图片。继续后，当前模型只能读取文字内容，图片不会参与回答，结果可能不完整或与原问题不符。',
+          '这条消息包含 {count} 张图片。当前模型会收到文件信息，但不能读取图像内容；已授权的文件操作仍可使用。',
         recommendation: '如果图片是问题的重要依据，建议返回并切换到具备图像理解能力的模型。',
         cancel: '返回切换模型',
-        confirm: '忽略图片并继续',
+        confirm: '保留图片文件并继续',
       },
       uploadDocumentTooltip: '最多可附加 {count} 个文件，每个 {size} MB。支持：{types}。',
       uploadImageTooltip:
-        '图片需要搭配具备视觉能力的模型使用。最多可附加 {count} 个文件，每个 {size} MB。支持：{types}。',
+        '上传图片用于文件处理；图片理解取决于模型。最多 {count} 个文件，每个 {size} MiB。支持：{types}。',
       agentDraft: {
         imageAttachmentHint: '已上传的图片会随本次智能体调试消息一起发送。',
         imageVisionRequired:
@@ -1529,10 +1534,10 @@ const messages: WebappMessages = {
           '上传图片用于本次智能体调试。最多可附加 {count} 个文件，每个 {size} MB。支持：{types}。',
       },
       agentWebapp: {
-        imageAttachmentHint: '已上传的图片会随本次消息一起发送给应用理解。',
+        imageAttachmentHint: '已上传的图片会随本次消息作为文件发送给应用。',
         imageVisionRequired: '该应用暂未开启图片理解，请联系应用管理员。',
         uploadImageTooltip:
-          '上传图片供该应用理解。最多可附加 {count} 个文件，每个 {size} MB。支持：{types}。',
+          '上传图片用于文件处理；图片理解取决于模型。最多 {count} 个文件，每个 {size} MiB。支持：{types}。',
       },
     },
   },

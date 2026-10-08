@@ -1,5 +1,6 @@
 'use client';
 
+import type { FileUploadSelection } from '@/services/upload.service';
 import {
   useEffect,
   useRef,
@@ -45,6 +46,7 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
 import { Pagination } from '@/components/ui/pagination';
 import { Switch } from '@/components/ui/switch';
+import { FileUploadTypeSelector } from '@/components/chat/file-upload-type-selector';
 import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
@@ -135,6 +137,7 @@ function ConfigurationEditor({
   const [executionEnabled, setExecutionEnabled] = useState(
     detail?.draft.execution_runtime?.enabled ?? false
   );
+  const [fileUploadPolicy, setFileUploadPolicy] = useState<FileUploadSelection | null>(detail?.draft.file_upload_policy ?? null);
   const [intermediateMessagesEnabled, setIntermediateMessagesEnabled] = useState(
     detail?.draft.trigger_policy?.channel_response?.intermediate_messages_enabled ?? true
   );
@@ -158,6 +161,7 @@ function ConfigurationEditor({
       rules: detail?.draft.rules ?? [],
       default_model: detail?.draft.default_model ?? '',
       execution_runtime: { enabled: executionEnabled },
+      file_upload_policy: fileUploadPolicy,
       trigger_policy: {
         ...(detail?.draft.trigger_policy ?? {}),
         manual: detail?.draft.trigger_policy?.manual ?? true,
@@ -184,6 +188,7 @@ function ConfigurationEditor({
       rules: normalizedRules,
       default_model: model,
       execution_runtime: { enabled: executionEnabled },
+      file_upload_policy: fileUploadPolicy,
       trigger_policy: {
         ...(detail?.draft.trigger_policy ?? {}),
         manual: detail?.draft.trigger_policy?.manual ?? true,
@@ -526,6 +531,7 @@ function ConfigurationEditor({
               disabled={!editingEnabled}
             />
             <DigitalHumanResourceBindings id={id} />
+            <div className="my-4"><FileUploadTypeSelector value={previewVersion ? previewVersion.file_upload_policy : fileUploadPolicy} onChange={setFileUploadPolicy} disabled={!editingEnabled} /></div>
           </div>
         </section>
       </div>

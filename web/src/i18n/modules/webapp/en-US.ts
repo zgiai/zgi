@@ -1492,8 +1492,6 @@ const messages = {
         missingNodeDependency:
           'A Node.js dependency is missing. The agent needs to prepare it before retrying.',
         commandNotFound: 'The required command is not available. Check the environment tools.',
-        executionFailedHint:
-          'The command did not complete successfully. The agent has received the result.',
         executionOutputPrivate:
           'Output and diagnostics were provided to the agent. Raw commands and logs are not stored in chat history.',
         technicalDetails: 'Technical details',
@@ -1566,7 +1564,7 @@ const messages = {
       visionReady: 'Ready for vision',
       filtered: 'Filtered',
       filteredModelWithoutVision:
-        'The current model does not support image understanding, so this image was not used in the answer.',
+        'The original image is available for file operations. The current model has not read its image content.',
       previewLoadError:
         'Preview is unavailable. The file may have expired or you may not have access.',
       empty: 'No extractable text',
@@ -1580,21 +1578,28 @@ const messages = {
       exceedCount: 'You can attach up to {max} files',
       unsupportedType: 'Unsupported file type. Allowed: {types}',
       fileTooLarge: 'File is too large. Max size: {max} MB',
+      turnTooLarge: 'Attachments in one message must total no more than {max} MiB',
+      imageDisabled: 'Image attachments are disabled for this application.',
+      allowedTypes: 'Allowed attachments',
+      documentType: 'Documents',
+      imageType: 'Images',
+      imageFileHint:
+        'Images can be used as files; understanding their content depends on the model’s vision capability.',
       imageVisionRequired: 'Only models with vision capability support image upload.',
       imageModelLocked:
         'You have uploaded an image, so you can only switch to models with vision capability. Remove the uploaded image first if you want to switch to a non-vision model.',
       visionReplayWarning: {
         title: 'The selected model cannot understand the images in this message',
         description:
-          'This message contains {count} image(s). If you continue, the selected model will only receive the text. The images will not be used, so the response may be incomplete or inaccurate.',
+          'This message contains {count} image(s). The selected model receives file information but cannot read image content. Authorized file operations remain available.',
         recommendation:
           'Go back and switch to a vision-capable model if the images are important to the request.',
         cancel: 'Go back and switch model',
-        confirm: 'Continue without images',
+        confirm: 'Continue with image files',
       },
       uploadDocumentTooltip: 'Attach up to {count} files, {size} MB each. Supported: {types}.',
       uploadImageTooltip:
-        'Attach images with a vision-capable model. Up to {count} files, {size} MB each. Supported: {types}.',
+        'Attach images for file operations. Image understanding depends on the model. Up to {count} files, {size} MiB each. Supported: {types}.',
       agentDraft: {
         imageAttachmentHint: 'Uploaded images will be sent with this agent debug message.',
         imageVisionRequired:
@@ -1603,12 +1608,11 @@ const messages = {
           'Attach images for this agent debug run. Up to {count} files, {size} MB each. Supported: {types}.',
       },
       agentWebapp: {
-        imageAttachmentHint:
-          'Uploaded images will be sent with this message for the app to understand.',
+        imageAttachmentHint: 'Uploaded images will be sent with this message as files.',
         imageVisionRequired:
           'This app has not enabled image understanding. Please contact the app administrator.',
         uploadImageTooltip:
-          'Attach images for this app to understand. Up to {count} files, {size} MB each. Supported: {types}.',
+          'Attach images for file operations. Image understanding depends on the model. Up to {count} files, {size} MiB each. Supported: {types}.',
       },
     },
   },

@@ -1,3 +1,4 @@
+import type { FileUploadSelection } from '@/services/upload.service';
 import type { AgentRuntimeRunDetail, AgentRuntimeStep } from './agent-runtime-log';
 
 export type DigitalHumanStatus = 'draft' | 'active' | 'disabled';
@@ -67,6 +68,7 @@ export interface DigitalHumanDefinition {
 }
 
 export interface DigitalHumanVersion {
+  file_upload_policy?: FileUploadSelection | null;
   id: string;
   digital_human_id: string;
   state: DigitalHumanVersionState;
@@ -140,6 +142,7 @@ export interface DigitalHumanList {
 }
 
 export interface CreateDigitalHumanRequest {
+  file_upload_policy?: FileUploadSelection | null;
   name: string;
   avatar?: string;
   icon_type?: 'text' | 'image';
@@ -176,6 +179,7 @@ export interface UpdateDigitalHumanRequest {
 }
 
 export interface UpdateDigitalHumanDraftRequest {
+  file_upload_policy?: FileUploadSelection | null;
   expected_lock_version: number;
   identity_name?: string;
   persona?: string;
@@ -217,6 +221,7 @@ export interface DigitalHumanAPIKeyCreated extends DigitalHumanAPIKey {
 }
 
 export interface DigitalHumanWebAppConfig {
+  file_upload_policy?: FileUploadSelection | null;
   digital_human_id: string;
   web_app_id: string;
   name: string;
@@ -837,7 +842,13 @@ export interface DigitalHumanTaskRun {
   status: string;
   error_summary?: string;
   result_summary?: string;
-  result_delivery_status?: 'pending' | 'processing' | 'succeeded' | 'failed' | 'unknown' | 'dismissed';
+  result_delivery_status?:
+    | 'pending'
+    | 'processing'
+    | 'succeeded'
+    | 'failed'
+    | 'unknown'
+    | 'dismissed';
   result_delivery_error?: string;
   scheduled_for: string;
   started_at?: string;
