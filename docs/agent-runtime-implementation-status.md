@@ -31,7 +31,7 @@ Work only in the dedicated execution-environment worktree. At each iteration, ru
 | M6 controlled expansion | Standard-Skill installation and session recovery verified on local gVisor and E2B; scoped four-step release-candidate acceptance complete | The approved `cc-codex-standard` Profile preinstalls language, office, PDF and media tools. Portable Skills need no ZGI manifest. Non-root Jobs can install Python/Node packages and use guarded APT through operator-approved package sources; unsupported or unenforceable networking fails closed. Real contracts on both backends cover native compilation, destination restrictions, cancellation, timeout, compute reconstruction, fixed system-package versions, and retained Python/Node installed-state archives. Console tests cover original XLSX/PPTX/GIF Skills, model-driven installation, real downloads and persistent failed-Job presentation. Upgrade/rollback, bounded concurrent installations and final resource reconciliation passed. These are scoped test-environment results, not arbitrary Skill compatibility or production certification. Cross-session shared caches, upstream release archives and rootfs incremental layers remain separate work. The earlier `workspace_prepare_dependencies` path remains a compatibility mode. |
 | M7 self-hosted VM | Not started | Requires a real KVM/Kata integration run. |
 | M6C platform CLI | Complete for scoped console acceptance | Job-scoped grants, bounded relay, CLI, owner/generation fences, authorized input/Skill references and persisted file exports are implemented. Linux race/vet and real PostgreSQL migration tests pass. Real gVisor/E2B transport and console model/duplicate/tool/export/download samples pass; billing confirms one successful CLI model invocation per sample. Real approval executes the frozen business call once and returns 42; rejection executes it zero times. Revoked runtime admission denies confirmation while allowing rejection. The final continuation samples distinguish the stopped Shell from the completed/rejected business call, without replay or a new pending decision. Native PID-exhaustion suspension leaves no cgroup processes and restores retained files; Worker quarantine persistence is separately domain-tested. Process notes survive conversation selection. Temporary approval fixtures are removed and both dedicated APIs are healthy. See the platform CLI evidence; this is not general rollout or M8 production certification. |
-| M8 production readiness | Not started | Requires recovery, cost reconciliation, rollback, and complete legacy regression evidence. |
+| M8 production readiness | Initial release/admission increment implemented; not production certified | Worker binary/configuration and API release gates, API/Web running-image verifier, PostgreSQL-atomic backend/organization/Binding admission limits and read-only local/E2B inventory. New targeted concurrency/race tests and real E2B audit passed; real gVisor inventory and actual pinned-image rollout remain deployment gates. Unattributed resources are reported, never automatically deleted. Recovery, cost/billing reconciliation, stable connectivity, failure drills and production regression evidence remain open. See [release and admission gates](agent-runtime-m8-release-and-admission.md). |
 
 ## M0 verification record
 
@@ -267,6 +267,15 @@ The older [dependency-preparation guide](agent-runtime-m6b-dependency-preparatio
 describes the retained compatibility path, not the standard Profile default.
 
 ## Compatibility gates
+
+The first M8 release/admission increment has dedicated Docker, real gVisor and
+real E2B deployment evidence in [release and admission](agent-runtime-m8-release-and-admission.md).
+Core admission, result-file restoration and failed-upgrade rollback checks passed.
+The follow-up repairs also passed unused-environment checkpoint/resume on both real
+backends, historical empty-task reconciliation and old-Profile file recovery.
+Bounded suspension retries and queue fairness have unit and real PostgreSQL
+coverage. This resolves the three dedicated-deployment blockers, not the remaining
+M8 production-readiness gates.
 
 Every later stage must continue to verify:
 

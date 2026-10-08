@@ -47,7 +47,14 @@ Defaults:
 
 All setting names in the table have the `ZGI_AGENT_RUNTIME_` prefix. Optional Worker resource, idle/startup/shutdown timeout, worker-ID and package-source settings are carried into the service environment. Unknown JSON keys are rejected. Environment variables remain supported for existing operator workflows; `--config` values take precedence.
 
-The default internal Profile is `cc-codex-standard`, using the pinned image and controlled package-install capability. Optional mirror URLs are `PYPI_INDEX_URL`, `NPM_REGISTRY_URL`, `APT_MIRROR_URL`, and `APT_SECURITY_MIRROR_URL`; their HTTPS hostnames are added to the default package allowlist. URLs must not contain credentials or custom ports. For a custom `PROFILES_JSON`, use a JSON-encoded string and provide its approved source hosts explicitly; every Profile must reference the selected image digest. Missing/broken source connectivity is a diagnostic error, not permission to use arbitrary external network access.
+The default internal Profile is `cc-codex-standard`, using the pinned image and controlled package-install capability. Optional mirror URLs are `PYPI_INDEX_URL`, `NPM_REGISTRY_URL`, `APT_MIRROR_URL`, and `APT_SECURITY_MIRROR_URL`; their HTTPS hostnames are added to the default package allowlist. URLs must not contain credentials or custom ports. For a custom `PROFILES_JSON`, use a JSON-encoded string and provide its approved source hosts explicitly. Include the selected image digest; additional, explicitly approved Profile versions must use immutable references already preloaded in the configured containerd socket/namespace. The installer does not pull their images. Missing/broken source connectivity is a diagnostic error, not permission to use arbitrary external network access.
+
+When changing the runtime image, add a versioned internal Profile and make it the
+API's approved default for new environments. Keep the previous Profile/image
+available for retained checkpoints: changing its image in place can invalidate
+the retained dependency ABI identity. Apply the same versioning rule to E2B
+templates. Regenerate the release fingerprint/manifest after changing the Profile
+map. Agent users still configure only `execution_runtime.enabled`.
 
 ## Install and verify
 
@@ -67,6 +74,12 @@ The installed unit runs the control-plane Worker as root because it manages cont
 `doctor` verifies the pinned image, private environment permissions, service PID/listener ownership and database-backed health. This is **not** proof of successful environment creation or dependency installation. Before enabling the API's Linux feature gate, run an authenticated real contract through the Worker: create a binding, upload a fixed input, execute a non-root script, download its result, verify its contents, suspend/resume and recover after compute loss. Also run the public [portable Skill regression](portable-agent-skills.md#regression-checks).
 
 API and Worker need stable connectivity. For same-host deployments, point the API at loopback; for containerized API deployments, use an approved private gateway/service network. Separate hosts need an existing private network or authenticated HTTPS gateway designed for this purpose. Do not expose the Worker publicly or treat a temporary SSH port forward as a production dependency. Keep API organization approval and the Linux feature gate disabled until acceptance succeeds.
+
+For the post-M6C release contract, strict release identity, shared admission limits,
+drained policy updates and read-only resource inventory, see
+[release and admission gates](agent-runtime-m8-release-and-admission.md). The
+installer accepts and persists those operator settings. Strict release verification
+is opt-in for compatibility; enable it explicitly before production rollout.
 
 ## Upgrade and rollback
 
