@@ -1457,15 +1457,20 @@ func (h *AgentsHandler) ChatWebAppAgent(c *gin.Context) {
 		return
 	}
 	runConfig.RuntimeInputPolicy = runtimeservice.RuntimeInputPolicyCheckpointAndFollowUp
+	caller := runtimeservice.Caller{
+		Type:           runtimemodel.ConversationCallerAgent,
+		ID:             &agentID,
+		Source:         runtimemodel.ConversationSourceWebApp,
+		SourceWebAppID: &sourceWebAppID,
+	}
+	if err := h.attachPublishedAgentExecutionTools(c.Request.Context(), &runConfig, scope, caller, published, c.GetBool("is_authenticated"), uuid.Nil); err != nil {
+		h.failRuntime(c, err)
+		return
+	}
 	prepared, err := h.chatRuntimeService.PrepareConfiguredChat(
 		c.Request.Context(),
 		scope,
-		runtimeservice.Caller{
-			Type:           runtimemodel.ConversationCallerAgent,
-			ID:             &agentID,
-			Source:         runtimemodel.ConversationSourceWebApp,
-			SourceWebAppID: &sourceWebAppID,
-		},
+		caller,
 		runConfig,
 		req,
 	)
