@@ -101,6 +101,34 @@ func TestDigitalHumanLinuxAccessRechecksPublicationAndOwnership(t *testing.T) {
 	}
 }
 
+func TestDigitalHumanAttachmentAccessDoesNotRequireLinux(t *testing.T) {
+	for _, surface := range []string{SurfaceConsole, SurfaceWebApp, SurfaceAPI} {
+		t.Run(surface, func(t *testing.T) {
+			s, scope, app, publication := linuxAccessFixture(t, surface)
+			if err := s.db.Model(&Version{}).Where("id = ?", publication).Update("execution_runtime", nil).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := s.AuthorizeAttachmentAccess(t.Context(), scope, app, publication); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.AuthorizeLinuxExecution(t.Context(), scope, app, publication); err == nil {
+				t.Fatal("attachment access enabled Linux")
+			}
+			if err := s.AuthorizeAttachmentAccess(t.Context(), scope, app, uuid.New()); err == nil {
+				t.Fatal("different publication accepted")
+			}
+			if surface == SurfaceAPI {
+				if err := s.db.Model(&APIKey{}).Where("id = ?", scope.PrincipalID).Update("status", APIKeyStatusRevoked).Error; err != nil {
+					t.Fatal(err)
+				}
+				if err := s.AuthorizeAttachmentAccess(t.Context(), scope, app, publication); err == nil {
+					t.Fatal("revoked API credential accepted")
+				}
+			}
+		})
+	}
+}
+
 func TestDigitalHumanLinuxAccessLiveExternalRevocation(t *testing.T) {
 	for _, test := range []struct {
 		name, surface string

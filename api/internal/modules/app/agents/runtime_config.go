@@ -14,6 +14,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
+	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	llmmodelservice "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
@@ -596,6 +598,8 @@ func mergeAgentConfigRequestedFields(current dto.AgentConfigRequest, requested d
 			current.AgentMemoryAutoExtractionEnabled = requested.AgentMemoryAutoExtractionEnabled
 		case "file_upload_enabled":
 			current.FileUpload = requested.FileUpload
+		case "file_upload_policy":
+			current.FileUploadPolicy = chatfile.Clone(requested.FileUploadPolicy)
 		case "home_title":
 			current.HomeTitle = requested.HomeTitle
 		case "opening_statement":
@@ -1349,6 +1353,7 @@ func agentConfigRequestFromResponse(config dto.AgentConfigResponse) dto.AgentCon
 		AgentMemoryEnabled:               config.AgentMemoryEnabled,
 		AgentMemoryAutoExtractionEnabled: config.AgentMemoryAutoExtractionEnabled,
 		FileUpload:                       config.FileUpload,
+		FileUploadPolicy:                 chatfile.Clone(config.FileUploadPolicy),
 		HomeTitle:                        config.HomeTitle,
 		OpeningStatement:                 config.OpeningStatement,
 		InputPlaceholder:                 config.InputPlaceholder,
@@ -1440,6 +1445,7 @@ func (s *agentsService) ensureAgentRuntimeDraftConfig(ctx context.Context, ag *A
 }
 
 func normalizeAgentConfigRequest(req dto.AgentConfigRequest) dto.AgentConfigRequest {
+	req.FileUploadPolicy = chatfile.Clone(req.FileUploadPolicy)
 	req.ExecutionRuntime = normalizeAgentExecutionRuntimeConfig(req.ExecutionRuntime)
 	req.SystemPrompt = strings.TrimSpace(req.SystemPrompt)
 	req.ModelProvider = strings.TrimSpace(req.ModelProvider)
@@ -1467,6 +1473,12 @@ func applyAgentConfigRequestToDraft(cfg *AgentsConfig, req dto.AgentConfigReques
 	}
 	previousMode := agentRuntimeModeFromConfig(cfg)
 	runtimeCfg := normalizeAgentConfigRequest(req)
+	if runtimeCfg.FileUploadPolicy == nil {
+		runtimeCfg.FileUploadPolicy = chatfile.Clone(previousMode.FileUploadPolicy)
+	}
+	if err := runtimeCfg.FileUploadPolicy.Validate(); err != nil {
+		return dto.AgentConfigRequest{}, fmt.Errorf("%w: invalid file upload policy", runtimeservice.ErrInvalidInput)
+	}
 	if runtimeCfg.ExecutionRuntime == nil {
 		// Older editors do not know this field; their full-config saves must not
 		// silently disable an execution environment selected by another editor.
@@ -1510,6 +1522,7 @@ func applyAgentConfigRequestToDraft(cfg *AgentsConfig, req dto.AgentConfigReques
 		AgentMemoryEnabled:               runtimeCfg.AgentMemoryEnabled,
 		AgentMemoryAutoExtractionEnabled: runtimeCfg.AgentMemoryAutoExtractionEnabled,
 		FileUploadEnabled:                runtimeCfg.FileUpload,
+		FileUploadPolicy:                 chatfile.Clone(runtimeCfg.FileUploadPolicy),
 		HomeTitle:                        runtimeCfg.HomeTitle,
 		OpeningStatement:                 runtimeCfg.OpeningStatement,
 		InputPlaceholder:                 runtimeCfg.InputPlaceholder,
@@ -1552,6 +1565,7 @@ func agentConfigResponse(agentID string, cfg *AgentsConfig) *dto.AgentConfigResp
 		AgentMemoryAutoExtractionEnabled: mode.AgentMemoryAutoExtractionEnabled,
 		AgentMemorySlots:                 normalizeAgentMemorySlotConfigs(mode.AgentMemorySlots),
 		FileUpload:                       mode.FileUploadEnabled,
+		FileUploadPolicy:                 chatfile.Clone(mode.FileUploadPolicy),
 		HomeTitle:                        normalizeAgentHomeTitle(mode.HomeTitle),
 		OpeningStatement:                 normalizeAgentOpeningStatement(mode.OpeningStatement),
 		InputPlaceholder:                 normalizeAgentInputPlaceholder(mode.InputPlaceholder),
@@ -1597,6 +1611,7 @@ func agentConfigSnapshot(agentID string, cfg *AgentsConfig) map[string]interface
 		"agent_memory_slots":                   normalizeAgentMemorySlotConfigs(resp.AgentMemorySlots),
 		"agent_memory_config_revision":         resp.AgentMemoryConfigRevision,
 		"file_upload_enabled":                  resp.FileUpload,
+		"file_upload_policy":                   chatfile.Clone(resp.FileUploadPolicy),
 		"home_title":                           resp.HomeTitle,
 		"opening_statement":                    resp.OpeningStatement,
 		"input_placeholder":                    resp.InputPlaceholder,
@@ -1656,6 +1671,15 @@ func agentConfigResponseFromSnapshot(agentID string, snapshot map[string]interfa
 	}
 	if fileUpload, ok := snapshot["file_upload_enabled"].(bool); ok {
 		resp.FileUpload = fileUpload
+	}
+	if value := snapshot["file_upload_policy"]; value != nil {
+		payload, err := json.Marshal(value)
+		policy := &chatfile.Policy{}
+		if err == nil && json.Unmarshal(payload, policy) == nil && policy.Validate() == nil {
+			resp.FileUploadPolicy = policy
+		} else {
+			resp.FileUploadPolicy = &chatfile.Policy{}
+		}
 	}
 	resp.HomeTitle = normalizeAgentHomeTitle(stringFromSnapshot(snapshot, "home_title"))
 	resp.OpeningStatement = normalizeAgentOpeningStatement(stringFromSnapshot(snapshot, "opening_statement"))

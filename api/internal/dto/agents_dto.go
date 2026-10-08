@@ -1,6 +1,7 @@
 package dto
 
 import (
+	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	"time"
 )
@@ -250,6 +251,7 @@ type AgentRuntimeSurfaceGrantSubjectDetail struct {
 }
 
 type AgentRuntimeModeConfig struct {
+	FileUploadPolicy                 *chatfile.Policy            `json:"file_upload_policy,omitempty"`
 	EnabledSkillIDs                  []string                    `json:"enabled_skill_ids"`
 	ExecutionRuntime                 *AgentExecutionRuntime      `json:"execution_runtime,omitempty"`
 	UseMemory                        bool                        `json:"use_memory"`
@@ -308,10 +310,10 @@ type AgentDatabaseBinding struct {
 // Connector Target Binding. It carries only the explicit binding execution
 // mode; operation/risk details and Key material remain server-owned.
 type AgentConnectorBinding struct {
-	BindingID    string `json:"binding_id,omitempty"`
-	Revision     int    `json:"revision,omitempty"`
-	ConnectorID  string `json:"connector_id"`
-	ConnectionID string `json:"connection_id"`
+	BindingID         string `json:"binding_id,omitempty"`
+	Revision          int    `json:"revision,omitempty"`
+	ConnectorID       string `json:"connector_id"`
+	ConnectionID      string `json:"connection_id"`
 	AuthorizationMode string `json:"authorization_mode,omitempty"`
 }
 
@@ -596,6 +598,7 @@ type UpdateAgentMemoryValueRequest struct {
 }
 
 type AgentConfigRequest struct {
+	FileUploadPolicy                 *chatfile.Policy                 `json:"file_upload_policy,omitempty"`
 	ExecutionRuntime                 *AgentExecutionRuntime           `json:"execution_runtime,omitempty"`
 	ConnectorReferenceCommands       []connectorcore.ReferenceCommand `json:"connector_reference_commands,omitempty"`
 	BindingRevision                  string                           `json:"binding_revision,omitempty"`
@@ -643,6 +646,7 @@ type AgentSystemPromptPatchRequest struct {
 }
 
 type AgentConfigResponse struct {
+	FileUploadPolicy                 *chatfile.Policy            `json:"file_upload_policy,omitempty"`
 	ExecutionRuntime                 *AgentExecutionRuntime      `json:"execution_runtime,omitempty"`
 	ConnectorTargetScope             string                      `json:"-"`
 	ConnectorTargetVersionID         string                      `json:"-"`
@@ -794,23 +798,24 @@ type AgentWebAppRuntimeConfigResponse struct {
 }
 
 type AgentPublicWebAppConfigResponse struct {
-	AgentID            string   `json:"agent_id"`
-	WebAppID           string   `json:"web_app_id"`
-	AgentType          string   `json:"agent_type"`
-	Name               string   `json:"name"`
-	Description        string   `json:"description"`
-	Icon               string   `json:"icon"`
-	IconType           string   `json:"icon_type"`
-	IconURL            string   `json:"icon_url"`
-	HomeTitle          string   `json:"home_title"`
-	OpeningStatement   string   `json:"opening_statement"`
-	InputPlaceholder   string   `json:"input_placeholder"`
-	SuggestedQuestions []string `json:"suggested_questions"`
-	FileUpload         bool     `json:"file_upload_enabled"`
-	SupportsVision     bool     `json:"supports_vision"`
-	AgentMemoryEnabled bool     `json:"agent_memory_enabled"`
-	Version            string   `json:"version"`
-	VersionUUID        string   `json:"version_uuid"`
+	FileUploadPolicy   *chatfile.Policy `json:"file_upload_policy,omitempty"`
+	AgentID            string           `json:"agent_id"`
+	WebAppID           string           `json:"web_app_id"`
+	AgentType          string           `json:"agent_type"`
+	Name               string           `json:"name"`
+	Description        string           `json:"description"`
+	Icon               string           `json:"icon"`
+	IconType           string           `json:"icon_type"`
+	IconURL            string           `json:"icon_url"`
+	HomeTitle          string           `json:"home_title"`
+	OpeningStatement   string           `json:"opening_statement"`
+	InputPlaceholder   string           `json:"input_placeholder"`
+	SuggestedQuestions []string         `json:"suggested_questions"`
+	FileUpload         bool             `json:"file_upload_enabled"`
+	SupportsVision     bool             `json:"supports_vision"`
+	AgentMemoryEnabled bool             `json:"agent_memory_enabled"`
+	Version            string           `json:"version"`
+	VersionUUID        string           `json:"version_uuid"`
 }
 
 type AgentWebAppRuntimeCapabilityResponse struct {

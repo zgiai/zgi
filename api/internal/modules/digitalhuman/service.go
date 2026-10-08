@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	"github.com/zgiai/zgi/api/pkg/apperror"
 	"gorm.io/datatypes"
 )
@@ -117,11 +118,15 @@ func (s *Service) Create(ctx context.Context, scope Scope, request CreateRequest
 		Revision: 1, CreatedBy: &actorID, UpdatedBy: &actorID, CreatedAt: now, UpdatedAt: now,
 	}
 	draft := &Version{
-		ID: draftID, DigitalHumanID: definitionID, OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
+		FileUploadPolicy: chatfile.Clone(request.FileUploadPolicy),
+		ID:               draftID, DigitalHumanID: definitionID, OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
 		State: VersionStateDraft, IdentityName: request.IdentityName, Persona: request.Persona, Goals: goals, Rules: rules, DefaultModel: request.DefaultModel,
 		MemoryPolicy: memoryPolicy, TriggerPolicy: triggerPolicy, PresentationPolicy: presentationPolicy, IdentitySnapshot: datatypes.JSON([]byte(`{}`)),
 		ExecutionRuntime: cloneExecutionRuntime(request.ExecutionRuntime),
 		LockVersion:      1, CreatedBy: &actorID, UpdatedBy: &actorID, CreatedAt: now, UpdatedAt: now,
+	}
+	if draft.FileUploadPolicy.Validate() != nil {
+		return nil, applicationError(ErrInvalidRequest, "digital_human.create")
 	}
 	draft.Revision, err = configRevision(draft)
 	if err != nil {
@@ -302,7 +307,8 @@ func (s *Service) Publish(ctx context.Context, scope Scope, id uuid.UUID, reques
 
 		nextDraftID := uuid.New()
 		nextDraft := &Version{
-			ID: nextDraftID, DigitalHumanID: definition.ID, OrganizationID: definition.OrganizationID, WorkspaceID: definition.WorkspaceID,
+			FileUploadPolicy: chatfile.Clone(draft.FileUploadPolicy),
+			ID:               nextDraftID, DigitalHumanID: definition.ID, OrganizationID: definition.OrganizationID, WorkspaceID: definition.WorkspaceID,
 			State: VersionStateDraft, IdentityName: draft.IdentityName, Persona: draft.Persona, Goals: cloneJSON(draft.Goals), Rules: cloneJSON(draft.Rules), DefaultModel: draft.DefaultModel,
 			MemoryPolicy: cloneJSON(draft.MemoryPolicy), TriggerPolicy: cloneJSON(draft.TriggerPolicy), PresentationPolicy: cloneJSON(draft.PresentationPolicy),
 			ExecutionRuntime: cloneExecutionRuntime(draft.ExecutionRuntime),
@@ -605,6 +611,13 @@ func applyDraftUpdate(draft *Version, request UpdateDraftRequest) error {
 		draft.ExecutionRuntime = cloneExecutionRuntime(request.ExecutionRuntime)
 		changed = true
 	}
+	if request.FileUploadPolicy != nil {
+		if request.FileUploadPolicy.Validate() != nil {
+			return ErrInvalidRequest
+		}
+		draft.FileUploadPolicy = chatfile.Clone(request.FileUploadPolicy)
+		changed = true
+	}
 	if !changed {
 		return ErrInvalidRequest
 	}
@@ -781,6 +794,7 @@ func marshalPresentationPolicy(policy PresentationPolicy) (datatypes.JSON, error
 
 func configRevision(version *Version) (string, error) {
 	payload := struct {
+		FileUploadPolicy   *chatfile.Policy        `json:"file_upload_policy,omitempty"`
 		IdentityName       string                  `json:"identity_name"`
 		Persona            string                  `json:"persona"`
 		Goals              json.RawMessage         `json:"goals"`
@@ -791,6 +805,7 @@ func configRevision(version *Version) (string, error) {
 		PresentationPolicy json.RawMessage         `json:"presentation_policy"`
 		ExecutionRuntime   *ExecutionRuntimeConfig `json:"execution_runtime,omitempty"`
 	}{
+		FileUploadPolicy:   chatfile.Clone(version.FileUploadPolicy),
 		IdentityName:       version.IdentityName,
 		Persona:            version.Persona,
 		Goals:              json.RawMessage(cloneJSON(version.Goals)),

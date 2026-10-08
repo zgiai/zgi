@@ -13,6 +13,7 @@ import (
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
+	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	authmodel "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
@@ -77,7 +78,8 @@ func (h *ExternalHandler) GetWebAppConfig(c *gin.Context) {
 	}
 	policy := presentationPolicy(access.Version, access.Definition)
 	writeExternalData(c, http.StatusOK, WebAppConfigResponse{
-		DigitalHumanID: access.Definition.ID.String(), WebAppID: access.Definition.WebAppID.String(),
+		FileUploadPolicy: chatfile.Clone(access.Version.FileUploadPolicy),
+		DigitalHumanID:   access.Definition.ID.String(), WebAppID: access.Definition.WebAppID.String(),
 		Name: access.Definition.Name, Description: access.Definition.Description,
 		Icon: access.Definition.Icon, IconType: access.Definition.IconType, IconURL: access.Definition.IconURL,
 		HomeTitle: policy.HomeTitle, OpeningStatement: policy.OpeningStatement,
@@ -509,7 +511,7 @@ func (h *ExternalHandler) SubmitWebAppConversationRuntimeInput(c *gin.Context) {
 }
 
 func (h *ExternalHandler) GetWebAppUploadConfig(c *gin.Context) {
-	_, _, identity, ok := h.webAppScope(c)
+	_, access, identity, ok := h.webAppScope(c)
 	if !ok {
 		return
 	}
@@ -517,7 +519,9 @@ func (h *ExternalHandler) GetWebAppUploadConfig(c *gin.Context) {
 		h.writeAuthError(c, true)
 		return
 	}
-	writeExternalData(c, http.StatusOK, h.fileService.GetUploadConfig())
+	config := *h.fileService.GetUploadConfig()
+	config.ChatUploadPolicy = config.ChatPolicy(access.Version.FileUploadPolicy)
+	writeExternalData(c, http.StatusOK, config)
 }
 
 func (h *ExternalHandler) UploadWebAppFile(c *gin.Context) {
@@ -541,9 +545,18 @@ func (h *ExternalHandler) UploadWebAppFile(c *gin.Context) {
 		return
 	}
 	defer reader.Close()
-	content, err := io.ReadAll(reader)
+	policy := effectiveFileUploadPolicy(access.Version, h.fileService.GetUploadConfig())
+	if policy.ValidateFile(chatfile.Extension(file.Filename), file.Size) != nil {
+		h.writeApplicationError(c, ErrInvalidRequest, "digital_human.webapp.file.policy")
+		return
+	}
+	content, err := io.ReadAll(io.LimitReader(reader, chatfile.MaxTurnBytes+1))
 	if err != nil {
 		h.writeInternalError(c)
+		return
+	}
+	if policy.ValidateFile(chatfile.Extension(file.Filename), int64(len(content))) != nil {
+		h.writeApplicationError(c, ErrInvalidRequest, "digital_human.webapp.file.policy")
 		return
 	}
 	mimeType := strings.TrimSpace(file.Header.Get("Content-Type"))
@@ -661,25 +674,26 @@ func (h *ExternalHandler) withWebAppConversation(c *gin.Context, operation strin
 }
 
 type WebAppConfigResponse struct {
-	DigitalHumanID            string   `json:"digital_human_id"`
-	WebAppID                  string   `json:"web_app_id"`
-	Name                      string   `json:"name"`
-	Description               string   `json:"description"`
-	Icon                      string   `json:"icon"`
-	IconType                  string   `json:"icon_type"`
-	IconURL                   string   `json:"icon_url"`
-	HomeTitle                 string   `json:"home_title"`
-	OpeningStatement          string   `json:"opening_statement"`
-	InputPlaceholder          string   `json:"input_placeholder"`
-	SuggestedQuestions        []string `json:"suggested_questions"`
-	AnonymousChatEnabled      bool     `json:"anonymous_chat_enabled"`
-	LoginRequired             bool     `json:"login_required"`
-	FileUploadEnabled         bool     `json:"file_upload_enabled"`
-	FileUploadRequiresLogin   bool     `json:"file_upload_requires_login"`
-	RelationshipMemoryEnabled bool     `json:"relationship_memory_enabled"`
-	RuntimeInputEnabled       bool     `json:"runtime_input_enabled"`
-	Version                   int      `json:"version"`
-	VersionUUID               string   `json:"version_uuid"`
+	FileUploadPolicy          *chatfile.Policy `json:"file_upload_policy,omitempty"`
+	DigitalHumanID            string           `json:"digital_human_id"`
+	WebAppID                  string           `json:"web_app_id"`
+	Name                      string           `json:"name"`
+	Description               string           `json:"description"`
+	Icon                      string           `json:"icon"`
+	IconType                  string           `json:"icon_type"`
+	IconURL                   string           `json:"icon_url"`
+	HomeTitle                 string           `json:"home_title"`
+	OpeningStatement          string           `json:"opening_statement"`
+	InputPlaceholder          string           `json:"input_placeholder"`
+	SuggestedQuestions        []string         `json:"suggested_questions"`
+	AnonymousChatEnabled      bool             `json:"anonymous_chat_enabled"`
+	LoginRequired             bool             `json:"login_required"`
+	FileUploadEnabled         bool             `json:"file_upload_enabled"`
+	FileUploadRequiresLogin   bool             `json:"file_upload_requires_login"`
+	RelationshipMemoryEnabled bool             `json:"relationship_memory_enabled"`
+	RuntimeInputEnabled       bool             `json:"runtime_input_enabled"`
+	Version                   int              `json:"version"`
+	VersionUUID               string           `json:"version_uuid"`
 }
 
 type WebAppSessionResponse struct {

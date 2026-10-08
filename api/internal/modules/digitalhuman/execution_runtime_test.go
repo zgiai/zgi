@@ -98,6 +98,44 @@ func (a *linuxExecutionTestAccess) AuthorizeLinuxExecution(_ context.Context, sc
 	return a.err
 }
 
+func (a *linuxExecutionTestAccess) AuthorizeAttachmentAccess(ctx context.Context, scope Scope, application, publication uuid.UUID) error {
+	return a.AuthorizeLinuxExecution(ctx, scope, application, publication)
+}
+
+func TestDigitalHumanAttachmentReaderIndependentOfLinuxAndBoundToRun(t *testing.T) {
+	for _, surface := range []string{SurfaceConsole, SurfaceWebApp, SurfaceAPI} {
+		t.Run(surface, func(t *testing.T) {
+			run, resolved, event, prepared := linuxExecutionFixture(t, surface)
+			options, access, gateway := linuxExecutionOptionsFor(t, run)
+			options.Approvals.Enabled = false
+			options.Gateway = nil
+			provider := NewLinuxExecutionRuntime(options)
+			authorize := provider.AttachmentReadAuthorizer(run, resolved, event, nil)
+			if authorize == nil {
+				t.Fatal("reader requires Linux admission or Worker")
+			}
+			workspace := run.WorkspaceID.String()
+			file := &dto.UploadFile{ID: uuid.NewString(), Name: "source.txt", IsTemporary: true,
+				CreatedBy: prepared.Scope.AccountID.String(), CreatedByRole: dto.CreatedByRoleAccount, WorkspaceID: &workspace}
+			if err := authorize(t.Context(), prepared, file); err != nil {
+				t.Fatal(err)
+			}
+			prepared.Caller.ID = new(uuid.UUID)
+			if err := authorize(t.Context(), prepared, file); err == nil {
+				t.Fatal("different application accepted")
+			}
+			prepared.Caller.ID = &run.DigitalHumanID
+			access.err = errors.New("access revoked")
+			if err := authorize(t.Context(), prepared, file); err == nil {
+				t.Fatal("revoked read accepted")
+			}
+			if gateway.creates != 0 {
+				t.Fatal("file read allocated a Linux environment")
+			}
+		})
+	}
+}
+
 func TestDigitalHumanContinuationCredentialRotationKeepsOriginalUserAndPublication(t *testing.T) {
 	run, resolved, event, prepared := linuxExecutionFixture(t, SurfaceAPI)
 	options, access, gateway := linuxExecutionOptionsFor(t, run)

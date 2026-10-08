@@ -41,7 +41,7 @@ func TestAPIExecutionUploadUsesPublishedResourcesAndStableEndUser(t *testing.T) 
 			}
 			key := &middleware.APIKeyInfo{ID: uuid.New(), AgentID: uuid.New(), TenantID: uuid.New()}
 			published := &dto.AgentWebAppRuntimeConfigResponse{AgentID: key.AgentID.String(), OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
-				Config: dto.AgentConfigResponse{ExecutionRuntime: &dto.AgentExecutionRuntime{Enabled: scenario != "disabled"}}}
+				Config: dto.AgentConfigResponse{FileUpload: true, ExecutionRuntime: &dto.AgentExecutionRuntime{Enabled: scenario != "disabled"}}}
 			files := &executionAPIUploadFiles{externalFileAccessService: &externalFileAccessService{uploaded: &dto.UploadFile{
 				ID: uuid.NewString(), Name: "input.csv", Size: 8, MimeType: "text/csv", CreatedAt: time.Now()}}}
 			h := &ExternalWorkflowHandler{db: db, fileService: files, agentRuntime: &externalAgentRuntimeStub{config: published},
@@ -87,7 +87,7 @@ func TestAPIExecutionUploadUsesPublishedResourcesAndStableEndUser(t *testing.T) 
 				t.Fatal("credential rotation changed end user")
 			}
 			err = execution.AuthorizeUpload(t.Context(), db, files.uploaded.ID, owner)
-			if (scenario == "enabled") != (err == nil) {
+			if err != nil {
 				t.Fatalf("binding scenario=%s err=%v", scenario, err)
 			}
 		})

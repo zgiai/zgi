@@ -120,6 +120,7 @@ func (s *RuntimeService) userInputContinuationConfig(
 		return runtimeservice.RunConfig{}, func() {}, err
 	}
 	cleanup := func() {}
+	s.attachAttachmentReader(&config, run, resolved, event, &scope)
 	config.ConnectorRunID = run.ID.String()
 	if s.linux != nil {
 		config.RuntimeToolFactory, err = s.prepareContinuationLinux(ctx, run, resolved, event, scope)

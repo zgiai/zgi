@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	"gorm.io/datatypes"
 )
 
@@ -86,6 +87,7 @@ func (s *Service) RestoreVersion(ctx context.Context, scope Scope, id uuid.UUID,
 		draft.TriggerPolicy = cloneJSON(target.TriggerPolicy)
 		draft.PresentationPolicy = cloneJSON(target.PresentationPolicy)
 		draft.ExecutionRuntime = cloneExecutionRuntime(target.ExecutionRuntime)
+		draft.FileUploadPolicy = chatfile.Clone(target.FileUploadPolicy)
 		draft.IdentitySnapshot = datatypes.JSON([]byte(`{}`))
 		draft.UpdatedAt = s.now()
 		draft.Revision, err = configRevision(draft)
@@ -207,6 +209,9 @@ func versionChangedFields(current, target *Version) []string {
 	}
 	if !bytes.Equal(executionRuntimeJSON(current.ExecutionRuntime), executionRuntimeJSON(target.ExecutionRuntime)) {
 		fields = append(fields, "execution_runtime")
+	}
+	if !bytes.Equal(fileUploadPolicyJSON(current.FileUploadPolicy), fileUploadPolicyJSON(target.FileUploadPolicy)) {
+		fields = append(fields, "file_upload_policy")
 	}
 	return fields
 }

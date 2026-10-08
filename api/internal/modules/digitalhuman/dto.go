@@ -5,6 +5,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/resourcebindings"
+	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 )
 
 const (
@@ -38,6 +39,7 @@ type PresentationPolicy struct {
 
 // CreateRequest creates a DigitalHuman and its initial mutable draft.
 type CreateRequest struct {
+	FileUploadPolicy   *chatfile.Policy        `json:"file_upload_policy,omitempty"`
 	Name               string                  `json:"name"`
 	Avatar             string                  `json:"avatar"`
 	IconType           string                  `json:"icon_type"`
@@ -71,6 +73,7 @@ type UpdateRequest struct {
 
 // UpdateDraftRequest updates the mutable identity draft.
 type UpdateDraftRequest struct {
+	FileUploadPolicy    *chatfile.Policy        `json:"file_upload_policy,omitempty"`
 	ExpectedLockVersion int64                   `json:"expected_lock_version"`
 	IdentityName        *string                 `json:"identity_name,omitempty"`
 	Persona             *string                 `json:"persona,omitempty"`
@@ -174,6 +177,7 @@ type DeleteImpact struct {
 
 // DraftConfig is the normalized, JSON-compatible version content used for hashing.
 type DraftConfig struct {
+	FileUploadPolicy   *chatfile.Policy        `json:"file_upload_policy,omitempty"`
 	IdentityName       string                  `json:"identity_name"`
 	Persona            string                  `json:"persona"`
 	Goals              []string                `json:"goals"`

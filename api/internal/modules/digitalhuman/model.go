@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	"gorm.io/datatypes"
 )
 
@@ -81,6 +82,7 @@ func (Definition) TableName() string { return "digital_humans" }
 
 // Version stores either the mutable draft or an immutable published snapshot.
 type Version struct {
+	FileUploadPolicy   *chatfile.Policy        `gorm:"serializer:json;type:jsonb;column:file_upload_policy" json:"file_upload_policy,omitempty"`
 	ID                 uuid.UUID               `gorm:"type:uuid;primaryKey" json:"id"`
 	DigitalHumanID     uuid.UUID               `gorm:"type:uuid;not null;column:digital_human_id" json:"digital_human_id"`
 	OrganizationID     uuid.UUID               `gorm:"type:uuid;not null;column:organization_id" json:"organization_id"`

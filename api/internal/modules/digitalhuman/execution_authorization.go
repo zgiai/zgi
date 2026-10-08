@@ -12,6 +12,16 @@ import (
 // The caller separately checks console workspace permission. Credential IDs are
 // references only; raw API keys and credential owners never enter this path.
 func (s *AccessService) AuthorizeLinuxExecution(ctx context.Context, scope Scope, application, publication uuid.UUID) error {
+	return s.authorizeInteractiveAttachmentAccess(ctx, scope, application, publication, true)
+}
+
+// AuthorizeAttachmentAccess checks the published interactive application and
+// credential without requiring the optional Linux execution feature.
+func (s *AccessService) AuthorizeAttachmentAccess(ctx context.Context, scope Scope, application, publication uuid.UUID) error {
+	return s.authorizeInteractiveAttachmentAccess(ctx, scope, application, publication, false)
+}
+
+func (s *AccessService) authorizeInteractiveAttachmentAccess(ctx context.Context, scope Scope, application, publication uuid.UUID, requireLinux bool) error {
 	if s == nil || s.db == nil || application == uuid.Nil || publication == uuid.Nil || scope.OrganizationID == uuid.Nil || scope.WorkspaceID == uuid.Nil ||
 		scope.UserSubjectID == nil || *scope.UserSubjectID == uuid.Nil || scope.ActorID != *scope.UserSubjectID || scope.PrincipalID == uuid.Nil {
 		return ErrNotFound
@@ -38,7 +48,7 @@ func (s *AccessService) AuthorizeLinuxExecution(ctx context.Context, scope Scope
 		return err
 	}
 	if access.Version.ID != publication || access.Version.OrganizationID != scope.OrganizationID || access.Version.WorkspaceID != scope.WorkspaceID ||
-		access.Version.ExecutionRuntime == nil || !access.Version.ExecutionRuntime.Enabled {
+		(requireLinux && (access.Version.ExecutionRuntime == nil || !access.Version.ExecutionRuntime.Enabled)) {
 		return ErrPublishInvalid
 	}
 	switch scope.Surface {

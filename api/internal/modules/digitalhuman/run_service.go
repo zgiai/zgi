@@ -889,6 +889,7 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 		_ = s.store.FailRun(ctx, run.ID, AppCodeRunConflict.String(), "Stored execution configuration is not executable.", s.now())
 		return err
 	}
+	s.attachAttachmentReader(&config, run, resolved, event, nil)
 	if s.linux != nil {
 		factory, prepareErr := s.linux.Prepare(ctx, run, resolved, event)
 		if prepareErr != nil {

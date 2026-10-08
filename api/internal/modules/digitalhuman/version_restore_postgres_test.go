@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/resourcebindings"
+	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -40,6 +41,11 @@ func TestDigitalHumanVersionRestorePostgres(t *testing.T) {
 	scope := Scope{OrganizationID: organizationID, WorkspaceID: workspaceID, ActorID: actorID}
 	service := NewService(NewRepository(tx))
 	detail := createPublishableDigitalHuman(t, service, scope, "Restore integration")
+	policyDraft, err := service.UpdateDraft(t.Context(), scope, detail.Definition.ID, UpdateDraftRequest{ExpectedLockVersion: detail.Draft.LockVersion, FileUploadPolicy: &chatfile.Policy{AllowedFileTypes: []string{"document"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail.Draft = policyDraft
 	bindings, err := service.ReplaceDraftResourceBindings(t.Context(), scope, detail.Definition.ID, ReplaceResourceBindingsRequest{
 		ExpectedDraftLockVersion: detail.Draft.LockVersion,
 		Items:                    []ResourceBindingInput{{Type: resourcebindings.BindingTypeSkill, ResourceID: "time", DisplayName: "Time", AccessMode: resourcebindings.AccessModeExecute, ResourceRevision: "time:v1"}},
@@ -52,7 +58,7 @@ func TestDigitalHumanVersionRestorePostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	changedPersona := "A changed draft persona"
-	changed, err := service.UpdateDraft(t.Context(), scope, detail.Definition.ID, UpdateDraftRequest{ExpectedLockVersion: first.Draft.LockVersion, Persona: &changedPersona})
+	changed, err := service.UpdateDraft(t.Context(), scope, detail.Definition.ID, UpdateDraftRequest{ExpectedLockVersion: first.Draft.LockVersion, Persona: &changedPersona, FileUploadPolicy: &chatfile.Policy{AllowedFileTypes: []string{"image"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,5 +75,8 @@ func TestDigitalHumanVersionRestorePostgres(t *testing.T) {
 	}
 	if restored.Published == nil || restored.Published.ID != first.Published.ID || restored.Draft.Persona != first.Published.Persona {
 		t.Fatalf("restored detail = %#v", restored)
+	}
+	if restored.Draft.FileUploadPolicy == nil || len(restored.Draft.FileUploadPolicy.AllowedFileTypes) != 1 || restored.Draft.FileUploadPolicy.AllowedFileTypes[0] != "document" {
+		t.Fatal("PostgreSQL version restore lost the published upload policy")
 	}
 }

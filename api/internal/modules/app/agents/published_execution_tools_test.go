@@ -12,6 +12,8 @@ import (
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 type publishedExecutionTestService struct {
@@ -144,5 +146,64 @@ func TestPublishedAdapterCannotGrantRuntimeWorkspaceExecution(t *testing.T) {
 	config := runtimeservice.RunConfig{}
 	if err := h.attachPublishedAgentExecutionTools(t.Context(), &config, p.Scope, p.Caller, published, false, uuid.New()); err != nil || config.RuntimeToolFactory != nil {
 		t.Fatalf("Runtime Workspace received Linux: %v", err)
+	}
+}
+
+func TestPublishedAttachmentReaderWorksWithoutLinuxAndRechecksProvenance(t *testing.T) {
+	for _, entry := range []string{"webapp", "external-api"} {
+		t.Run(entry, func(t *testing.T) {
+			p, published := publishedExecutionFixture(entry)
+			published.Config.ExecutionRuntime = nil
+			db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := db.AutoMigrate(&execution.UploadBinding{}); err != nil {
+				t.Fatal(err)
+			}
+			service := &publishedExecutionTestService{stubWebAppStatusHandlerService: &stubWebAppStatusHandlerService{
+				publishedConfigResp: published, runtimeCapabilityResp: &dto.AgentWebAppRuntimeCapabilityResponse{Allowed: true}},
+				keyID: uuid.New(), application: *p.Caller.ID, credentialWorkspace: *p.Scope.WorkspaceID}
+			h := &AgentsHandler{db: db, appService: service}
+			config := runtimeservice.RunConfig{}
+			if err := h.attachPublishedAgentExecutionTools(t.Context(), &config, p.Scope, p.Caller, published, true, service.keyID); err != nil {
+				t.Fatal(err)
+			}
+			if config.AttachmentReadAuthorizer == nil || config.RuntimeToolFactory != nil {
+				t.Fatal("reader depends on Linux")
+			}
+			access := publishedAccessForTest(t, p, published)
+			owner := execution.UploadOwner{OrganizationID: access.organization.String(), WorkspaceID: access.resourceWorkspace.String(),
+				ApplicationType: "agent", ApplicationID: access.application.String(), Entry: entry, SubjectKind: string(access.kind), SubjectID: access.user.String()}
+			file := &dto.UploadFile{ID: uuid.NewString(), IsTemporary: true, CreatedBy: access.user.String(), CreatedByRole: dto.CreatedByRoleEndUser}
+			if err := execution.BindUpload(t.Context(), db, file.ID, owner); err != nil {
+				t.Fatal(err)
+			}
+			read := func() error { return config.AttachmentReadAuthorizer(t.Context(), p, file) }
+			if err := read(); err != nil {
+				t.Fatal(err)
+			}
+			publication := published.VersionUUID
+			published.VersionUUID = uuid.NewString()
+			if err := read(); err == nil {
+				t.Fatal("publication changed during pagination")
+			}
+			published.VersionUUID = publication
+			if entry == "webapp" {
+				service.runtimeCapabilityResp.Allowed = false
+			} else {
+				service.credentialRevoked = true
+			}
+			if err := read(); err == nil {
+				t.Fatal("revoked application access was cached")
+			}
+			service.runtimeCapabilityResp.Allowed, service.credentialRevoked = true, false
+			if err := db.Delete(&execution.UploadBinding{}, "file_id = ?", file.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := read(); err == nil {
+				t.Fatal("revoked upload binding accepted")
+			}
+		})
 	}
 }

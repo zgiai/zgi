@@ -19,6 +19,7 @@ import (
 // readiness callback confirms the entry's protected-file and approval wiring;
 // operator admission and live resource authorization remain separate gates.
 func (h *AgentsHandler) attachPublishedAgentExecutionTools(ctx context.Context, config *runtimeservice.RunConfig, scope runtimeservice.Scope, caller runtimeservice.Caller, published *dto.AgentWebAppRuntimeConfigResponse, authenticated bool, keyID uuid.UUID) error {
+	h.attachPublishedAttachmentReader(config, scope, caller, published, authenticated, keyID)
 	if !h.executionApprovals.Enabled || config == nil || published == nil || published.Config.ExecutionRuntime == nil || !published.Config.ExecutionRuntime.Enabled ||
 		h.executionEntryReady == nil || !h.executionEntryReady(runtimemodel.ConversationCallerAgent, caller.Source) {
 		return nil
@@ -75,8 +76,42 @@ func publishedExecutionDenied(cause error) error {
 }
 
 func (h *AgentsHandler) authorizePublishedExecution(ctx context.Context, access publishedExecutionAccess, keyID uuid.UUID) error {
-	if h.appService == nil {
+	current, err := h.authorizePublishedAttachmentAccess(ctx, access, keyID)
+	if err != nil {
+		return err
+	}
+	if current.Config.ExecutionRuntime == nil || !current.Config.ExecutionRuntime.Enabled {
 		return execution.ErrInvalidIdentity
+	}
+	return h.executionApprovals.validate(access.organization.String(), current.Config.ExecutionRuntime)
+}
+
+// File reading does not depend on Linux admission, but still uses the frozen
+// publication, live application access and immutable upload ownership.
+func (h *AgentsHandler) attachPublishedAttachmentReader(config *runtimeservice.RunConfig, scope runtimeservice.Scope, caller runtimeservice.Caller, published *dto.AgentWebAppRuntimeConfigResponse, authenticated bool, keyID uuid.UUID) {
+	if config == nil {
+		return
+	}
+	access, err := publishedExecutionAccessFor(scope, caller, published, authenticated)
+	if err != nil {
+		return
+	}
+	config.AttachmentReadAuthorizer = func(ctx context.Context, prepared *runtimeservice.PreparedChat, file *dto.UploadFile) error {
+		if _, err := access.resolve(prepared); err != nil {
+			return err
+		}
+		if _, err := h.authorizePublishedAttachmentAccess(ctx, access, keyID); err != nil {
+			return err
+		}
+		owner := execution.UploadOwner{OrganizationID: access.organization.String(), WorkspaceID: access.resourceWorkspace.String(),
+			ApplicationType: "agent", ApplicationID: access.application.String(), Entry: access.entry, SubjectKind: string(access.kind), SubjectID: access.user.String()}
+		return authorizeAgentExecutionUpload(ctx, h.db, owner, file)
+	}
+}
+
+func (h *AgentsHandler) authorizePublishedAttachmentAccess(ctx context.Context, access publishedExecutionAccess, keyID uuid.UUID) (*dto.AgentWebAppRuntimeConfigResponse, error) {
+	if h.appService == nil {
+		return nil, execution.ErrInvalidIdentity
 	}
 	var current *dto.AgentWebAppRuntimeConfigResponse
 	var err error
@@ -84,10 +119,10 @@ func (h *AgentsHandler) authorizePublishedExecution(ctx context.Context, access 
 	case runtimemodel.ConversationSourceWebApp:
 		capability, capabilityErr := h.appService.GetWebAppRuntimeCapability(ctx, access.webApp.String(), access.user.String(), true)
 		if capabilityErr != nil {
-			return capabilityErr
+			return nil, capabilityErr
 		}
 		if capability == nil || !capability.Allowed {
-			return execution.ErrInvalidIdentity
+			return nil, execution.ErrInvalidIdentity
 		}
 		current, err = h.appService.GetPublishedAgentWebAppConfig(ctx, access.webApp.String())
 	case runtimemodel.ConversationSourceExternalAPI:
@@ -95,25 +130,24 @@ func (h *AgentsHandler) authorizePublishedExecution(ctx context.Context, access 
 			authorizePublishedExecutionAPI(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error
 		})
 		if !ok || keyID == uuid.Nil {
-			return execution.ErrInvalidIdentity
+			return nil, execution.ErrInvalidIdentity
 		}
 		if err := live.authorizePublishedExecutionAPI(ctx, access.application, keyID, access.dataWorkspace); err != nil {
-			return err
+			return nil, err
 		}
 		current, err = h.appService.GetPublishedAgentRuntimeConfig(ctx, access.application.String())
 	default:
-		return execution.ErrInvalidIdentity
+		return nil, execution.ErrInvalidIdentity
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// Changing publication requires a fresh turn, never a silent substitution in
 	// an existing invocation. Only the published opt-in is relevant, not a draft.
 	if current == nil || current.AgentType != "AGENT" || current.AgentID != access.application.String() ||
 		current.OrganizationID != access.organization.String() || current.WorkspaceID != access.resourceWorkspace.String() ||
-		current.VersionUUID != access.publication.String() || (access.entry == runtimemodel.ConversationSourceWebApp && current.WebAppID != access.webApp.String()) ||
-		current.Config.ExecutionRuntime == nil || !current.Config.ExecutionRuntime.Enabled {
-		return execution.ErrInvalidIdentity
+		current.VersionUUID != access.publication.String() || (access.entry == runtimemodel.ConversationSourceWebApp && current.WebAppID != access.webApp.String()) {
+		return nil, execution.ErrInvalidIdentity
 	}
-	return h.executionApprovals.validate(access.organization.String(), current.Config.ExecutionRuntime)
+	return current, nil
 }

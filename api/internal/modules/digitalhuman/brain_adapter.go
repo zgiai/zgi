@@ -9,6 +9,7 @@ import (
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	chatruntime "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/capabilities/resourcebindings"
+	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 )
 
 // BrainAdapter maps a sealed DigitalHuman snapshot into the existing ChatRuntime.
@@ -32,7 +33,8 @@ func (a *BrainAdapter) RunConfig(resolved *ResolvedExecution) (chatruntime.RunCo
 		Subject: resolved.Snapshot.Subject, Phase: resourcebindings.PhasePublished, VersionID: &resolved.Snapshot.DigitalHumanVersion,
 	}
 	config := chatruntime.RunConfig{
-		SystemPrompt: buildDigitalHumanSystemPrompt(resolved.Snapshot), SystemPromptVersion: resolved.Snapshot.Revision,
+		FileUploadPolicy: chatfile.Clone(resolved.Snapshot.FileUploadPolicy),
+		SystemPrompt:     buildDigitalHumanSystemPrompt(resolved.Snapshot), SystemPromptVersion: resolved.Snapshot.Revision,
 		Model: resolved.Snapshot.Model, BillingAppID: resolved.Snapshot.Subject.ID.String(),
 		BillingAppType:     runtimemodel.ConversationCallerDigitalHuman,
 		RuntimeInputPolicy: chatruntime.RuntimeInputPolicyCheckpointAndFollowUp,

@@ -52,6 +52,7 @@ func (s *RuntimeService) ContinueToolGovernance(ctx context.Context, scope Scope
 	if err != nil {
 		return nil, err
 	}
+	s.attachAttachmentReader(&config, run, resolved, event, &scope)
 	if request.Action == "approve" {
 		if s.linux == nil {
 			return nil, ErrRunConflict

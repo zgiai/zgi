@@ -19,6 +19,7 @@ import (
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
 	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
@@ -1240,7 +1241,9 @@ func (h *AgentsHandler) GetWebAppUploadConfig(c *gin.Context) {
 		response.Fail(c, response.ErrPermissionDenied)
 		return
 	}
-	response.Success(c, h.fileService.GetUploadConfig())
+	config := *h.fileService.GetUploadConfig()
+	config.ChatUploadPolicy = config.ChatPolicy(published.Config.FileUploadPolicy)
+	response.Success(c, config)
 }
 
 func (h *AgentsHandler) UploadWebAppFile(c *gin.Context) {
@@ -1268,6 +1271,7 @@ func (h *AgentsHandler) UploadWebAppFile(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, chatfile.MaxRequestBytes)
 	file, header, err := c.Request.FormFile("file")
 	if err != nil {
 		response.Fail(c, response.ErrNoFileUploaded)
@@ -1282,9 +1286,22 @@ func (h *AgentsHandler) UploadWebAppFile(c *gin.Context) {
 		response.Fail(c, response.ErrFilenameRequired)
 		return
 	}
-	content, err := io.ReadAll(file)
+	policy := h.fileService.GetUploadConfig().ChatPolicy(published.Config.FileUploadPolicy)
+	if err := policy.ValidateFile(chatfile.Extension(header.Filename), header.Size); err != nil {
+		if errors.Is(err, chatfile.ErrUnsupportedType) {
+			response.Fail(c, response.ErrUnsupportedFileType)
+		} else {
+			response.Fail(c, response.ErrFileTooLarge)
+		}
+		return
+	}
+	content, err := io.ReadAll(io.LimitReader(file, chatfile.MaxTurnBytes+1))
 	if err != nil {
 		response.Fail(c, response.ErrFileReadFailed)
+		return
+	}
+	if policy.ValidateFile(chatfile.Extension(header.Filename), int64(len(content))) != nil {
+		response.Fail(c, response.ErrFileTooLarge)
 		return
 	}
 	mimeType := header.Header.Get("Content-Type")
@@ -1317,7 +1334,8 @@ func (h *AgentsHandler) UploadWebAppFile(c *gin.Context) {
 		}
 		return
 	}
-	if published.Config.ExecutionRuntime != nil && published.Config.ExecutionRuntime.Enabled {
+	// Authenticated attachment reads need provenance even with Linux disabled.
+	if c.GetBool("is_authenticated") || (published.Config.ExecutionRuntime != nil && published.Config.ExecutionRuntime.Enabled) {
 		owner := execution.UploadOwner{OrganizationID: published.OrganizationID, WorkspaceID: published.WorkspaceID,
 			ApplicationType: "agent", ApplicationID: published.AgentID, Entry: "webapp", SubjectKind: "account", SubjectID: accountID}
 		if err := execution.BindUpload(c.Request.Context(), h.db, uploadFile.ID, owner); err != nil {
@@ -1354,6 +1372,7 @@ func publicAgentWebAppConfig(result *dto.AgentWebAppRuntimeConfigResponse) dto.A
 		return dto.AgentPublicWebAppConfigResponse{}
 	}
 	return dto.AgentPublicWebAppConfigResponse{
+		FileUploadPolicy:   chatfile.Clone(result.Config.FileUploadPolicy),
 		AgentID:            result.AgentID,
 		WebAppID:           result.WebAppID,
 		AgentType:          result.AgentType,

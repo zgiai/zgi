@@ -7,6 +7,7 @@ import (
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/util"
@@ -331,6 +332,8 @@ func agentRunConfig(agentID, systemPromptVersion string, cfg dto.AgentConfigResp
 		memoryConfigScope = agentmemory.ConfigScopePublished
 	}
 	return runtimeservice.RunConfig{
+		FileUploadPolicy:     chatfile.Clone(cfg.FileUploadPolicy),
+		FileUploadEnabled:    &cfg.FileUpload,
 		SystemPrompt:         cfg.SystemPrompt,
 		SystemPromptVersion:  systemPromptVersion,
 		ConnectorTargetScope: cfg.ConnectorTargetScope, ConnectorTargetVersionID: cfg.ConnectorTargetVersionID,

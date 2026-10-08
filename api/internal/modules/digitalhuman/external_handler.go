@@ -16,6 +16,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/externalapikey"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
+	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/pkg/apperror"
@@ -27,7 +28,7 @@ const (
 	externalAPIKeyContext   = "digital_human_api_key"
 	externalAccessContext   = "digital_human_published_access"
 	externalRunPollInterval = 250 * time.Millisecond
-	maxExternalUploadBytes  = 100 << 20
+	maxExternalUploadBytes  = chatfile.MaxRequestBytes
 	externalRunEventPrefix  = "run:"
 )
 
@@ -111,9 +112,10 @@ func (h *ExternalHandler) GetConfig(c *gin.Context) {
 	}
 	policy := presentationPolicy(access.Version, access.Definition)
 	writeExternalData(c, http.StatusOK, ExternalConfigResponse{
-		DigitalHumanID: access.Definition.ID.String(),
-		WebAppID:       access.Definition.WebAppID.String(),
-		Name:           access.Definition.Name, Description: access.Definition.Description,
+		FileUploadPolicy: chatfile.Clone(access.Version.FileUploadPolicy),
+		DigitalHumanID:   access.Definition.ID.String(),
+		WebAppID:         access.Definition.WebAppID.String(),
+		Name:             access.Definition.Name, Description: access.Definition.Description,
 		Icon: access.Definition.Icon, IconType: access.Definition.IconType, IconURL: access.Definition.IconURL,
 		HomeTitle: policy.HomeTitle, OpeningStatement: policy.OpeningStatement,
 		InputPlaceholder:   policy.InputPlaceholder,
@@ -460,9 +462,18 @@ func (h *ExternalHandler) UploadFile(c *gin.Context) {
 		return
 	}
 	defer contentReader.Close()
-	content, err := io.ReadAll(contentReader)
+	policy := effectiveFileUploadPolicy(access.Version, h.fileService.GetUploadConfig())
+	if policy.ValidateFile(chatfile.Extension(file.Filename), file.Size) != nil {
+		h.writeApplicationError(c, ErrInvalidRequest, "digital_human.external.file.policy")
+		return
+	}
+	content, err := io.ReadAll(io.LimitReader(contentReader, chatfile.MaxTurnBytes+1))
 	if err != nil {
 		h.writeInternalError(c)
+		return
+	}
+	if policy.ValidateFile(chatfile.Extension(file.Filename), int64(len(content))) != nil {
+		h.writeApplicationError(c, ErrInvalidRequest, "digital_human.external.file.policy")
 		return
 	}
 	mimeType := strings.TrimSpace(file.Header.Get("Content-Type"))
@@ -766,27 +777,28 @@ func safeExternalRunErrorMessage(run *Run) string {
 }
 
 type ExternalConfigResponse struct {
-	DigitalHumanID            string   `json:"digital_human_id"`
-	WebAppID                  string   `json:"web_app_id"`
-	Name                      string   `json:"name"`
-	Description               string   `json:"description"`
-	Icon                      string   `json:"icon"`
-	IconType                  string   `json:"icon_type"`
-	IconURL                   string   `json:"icon_url"`
-	HomeTitle                 string   `json:"home_title"`
-	OpeningStatement          string   `json:"opening_statement"`
-	InputPlaceholder          string   `json:"input_placeholder"`
-	SuggestedQuestions        []string `json:"suggested_questions"`
-	FileUploadEnabled         bool     `json:"file_upload_enabled"`
-	RelationshipMemoryEnabled bool     `json:"relationship_memory_enabled"`
-	MemoryRequiresUser        bool     `json:"memory_requires_user"`
-	ExternalUserRequired      bool     `json:"external_user_required"`
-	RuntimeInputEnabled       bool     `json:"runtime_input_enabled"`
-	RegenerateEnabled         bool     `json:"regenerate_enabled"`
-	LandingPageEnabled        bool     `json:"landing_page_enabled"`
-	APIEnabled                bool     `json:"api_enabled"`
-	Version                   string   `json:"version"`
-	VersionUUID               string   `json:"version_uuid"`
+	FileUploadPolicy          *chatfile.Policy `json:"file_upload_policy,omitempty"`
+	DigitalHumanID            string           `json:"digital_human_id"`
+	WebAppID                  string           `json:"web_app_id"`
+	Name                      string           `json:"name"`
+	Description               string           `json:"description"`
+	Icon                      string           `json:"icon"`
+	IconType                  string           `json:"icon_type"`
+	IconURL                   string           `json:"icon_url"`
+	HomeTitle                 string           `json:"home_title"`
+	OpeningStatement          string           `json:"opening_statement"`
+	InputPlaceholder          string           `json:"input_placeholder"`
+	SuggestedQuestions        []string         `json:"suggested_questions"`
+	FileUploadEnabled         bool             `json:"file_upload_enabled"`
+	RelationshipMemoryEnabled bool             `json:"relationship_memory_enabled"`
+	MemoryRequiresUser        bool             `json:"memory_requires_user"`
+	ExternalUserRequired      bool             `json:"external_user_required"`
+	RuntimeInputEnabled       bool             `json:"runtime_input_enabled"`
+	RegenerateEnabled         bool             `json:"regenerate_enabled"`
+	LandingPageEnabled        bool             `json:"landing_page_enabled"`
+	APIEnabled                bool             `json:"api_enabled"`
+	Version                   string           `json:"version"`
+	VersionUUID               string           `json:"version_uuid"`
 }
 
 type ExternalChatRequest struct {

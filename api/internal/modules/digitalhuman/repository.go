@@ -245,6 +245,7 @@ func (r *GormRepository) UpdateDraftCAS(ctx context.Context, scope Scope, versio
 			"trigger_policy":      version.TriggerPolicy,
 			"presentation_policy": version.PresentationPolicy,
 			"execution_runtime":   executionRuntimeJSON(version.ExecutionRuntime),
+			"file_upload_policy":  fileUploadPolicyJSON(version.FileUploadPolicy),
 			"revision":            version.Revision,
 			"lock_version":        gorm.Expr("lock_version + 1"),
 			"updated_by":          scope.ActorID,

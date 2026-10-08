@@ -26,6 +26,10 @@ type executionUploadTestFiles struct {
 	deleted int
 }
 
+func (s *executionUploadTestFiles) GetUploadConfig() *interfaces.FileUploadConfigResponse {
+	return &interfaces.FileUploadConfigResponse{FileSizeLimit: 50, ImageFileSizeLimit: 10}
+}
+
 func TestPublishedInputReaderMatchesVerifiedConversationAndNotBillingAccount(t *testing.T) {
 	for _, entry := range []string{"webapp", "external-api"} {
 		t.Run(entry, func(t *testing.T) {
@@ -118,10 +122,10 @@ func TestWebAppExecutionUploadBindsBeforeRespondingAndCleansFailures(t *testing.
 			}
 			owner := execution.UploadOwner{OrganizationID: org, WorkspaceID: workspace, ApplicationType: "agent", ApplicationID: agent, Entry: "webapp", SubjectKind: "account", SubjectID: user}
 			err = authorizeAgentExecutionUpload(t.Context(), db, owner, files.file)
-			if (scenario == "enabled") != (err == nil) {
+			if err != nil {
 				t.Fatalf("binding enabled=%s err=%v", scenario, err)
 			}
-			if scenario == "enabled" {
+			if scenario != "store unavailable" {
 				other := owner
 				other.ApplicationID = uuid.NewString()
 				if err := authorizeAgentExecutionUpload(t.Context(), db, other, files.file); err == nil {

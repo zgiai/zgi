@@ -11,6 +11,7 @@ import (
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	"github.com/zgiai/zgi/api/internal/util"
@@ -35,26 +36,27 @@ type apiKeyAgentRegenerateRequest struct {
 }
 
 type apiKeyAgentRuntimeConfigResponse struct {
-	AgentID              string   `json:"agent_id"`
-	WebAppID             string   `json:"web_app_id"`
-	AgentType            string   `json:"agent_type"`
-	Name                 string   `json:"name"`
-	Description          string   `json:"description"`
-	Icon                 string   `json:"icon"`
-	IconType             string   `json:"icon_type"`
-	IconURL              string   `json:"icon_url"`
-	HomeTitle            string   `json:"home_title"`
-	OpeningStatement     string   `json:"opening_statement"`
-	InputPlaceholder     string   `json:"input_placeholder"`
-	ThemeColor           string   `json:"theme_color"`
-	SuggestedQuestions   []string `json:"suggested_questions"`
-	FileUploadEnabled    bool     `json:"file_upload_enabled"`
-	SupportsVision       bool     `json:"supports_vision"`
-	AgentMemoryEnabled   bool     `json:"agent_memory_enabled"`
-	MemoryRequiresUser   bool     `json:"memory_requires_user"`
-	ExternalUserRequired bool     `json:"external_user_required"`
-	Version              string   `json:"version"`
-	VersionUUID          string   `json:"version_uuid"`
+	FileUploadPolicy     *chatfile.Policy `json:"file_upload_policy,omitempty"`
+	AgentID              string           `json:"agent_id"`
+	WebAppID             string           `json:"web_app_id"`
+	AgentType            string           `json:"agent_type"`
+	Name                 string           `json:"name"`
+	Description          string           `json:"description"`
+	Icon                 string           `json:"icon"`
+	IconType             string           `json:"icon_type"`
+	IconURL              string           `json:"icon_url"`
+	HomeTitle            string           `json:"home_title"`
+	OpeningStatement     string           `json:"opening_statement"`
+	InputPlaceholder     string           `json:"input_placeholder"`
+	ThemeColor           string           `json:"theme_color"`
+	SuggestedQuestions   []string         `json:"suggested_questions"`
+	FileUploadEnabled    bool             `json:"file_upload_enabled"`
+	SupportsVision       bool             `json:"supports_vision"`
+	AgentMemoryEnabled   bool             `json:"agent_memory_enabled"`
+	MemoryRequiresUser   bool             `json:"memory_requires_user"`
+	ExternalUserRequired bool             `json:"external_user_required"`
+	Version              string           `json:"version"`
+	VersionUUID          string           `json:"version_uuid"`
 }
 
 // GetAPIKeyAgentRuntimeConfig returns the public, published presentation
@@ -79,6 +81,7 @@ func (h *AgentsHandler) GetAPIKeyAgentRuntimeConfig(c *gin.Context) {
 		memoryEnabled = memoryEnabled && relationshipmemory.RuntimeEnabled()
 	}
 	response.Success(c, apiKeyAgentRuntimeConfigResponse{
+		FileUploadPolicy:     chatfile.Clone(published.Config.FileUploadPolicy),
 		AgentID:              published.AgentID,
 		WebAppID:             published.WebAppID,
 		AgentType:            published.AgentType,

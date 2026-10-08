@@ -14,6 +14,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/resourcebindings"
 	"github.com/zgiai/zgi/api/internal/capabilities/runspec"
 	"github.com/zgiai/zgi/api/internal/capabilities/runtimeidentity"
+	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 )
 
 const executionSnapshotSchemaV1 = "digital_human_execution_snapshot.v1"
@@ -27,6 +28,7 @@ type ResolverStore interface {
 // ExecutionSnapshot contains all model-facing configuration required by a worker.
 // It deliberately contains credential references only, never secret material.
 type ExecutionSnapshot struct {
+	FileUploadPolicy             *chatfile.Policy           `json:"file_upload_policy,omitempty"`
 	SchemaVersion                string                     `json:"schema_version"`
 	Revision                     string                     `json:"revision"`
 	Subject                      runtimeidentity.SubjectRef `json:"subject"`
@@ -103,7 +105,8 @@ func (r *Resolver) Resolve(ctx context.Context, event invocation.Event, versionI
 	now := r.now()
 	userMemoryEnabled := invocationAllowsUserMemory(event)
 	snapshot := ExecutionSnapshot{
-		SchemaVersion: executionSnapshotSchemaV1, Subject: event.Target, DigitalHumanVersion: version.ID,
+		FileUploadPolicy: chatfile.Clone(version.FileUploadPolicy),
+		SchemaVersion:    executionSnapshotSchemaV1, Subject: event.Target, DigitalHumanVersion: version.ID,
 		IdentityName: identityName, Persona: version.Persona, Goals: goals, Rules: rules, Model: version.DefaultModel, Bindings: bindings,
 		UseUserMemory: userMemoryEnabled, UseAgentMemory: false,
 		// Kept in the v1 snapshot for compatibility with persisted runs. DigitalHuman

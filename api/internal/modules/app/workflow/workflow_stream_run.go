@@ -9,11 +9,14 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/app/agents"
 	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 	workflowshared "github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
+	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/database"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
@@ -87,6 +90,27 @@ func (h *WorkflowHandler) runWorkflowStream(c *gin.Context, requestedWorkspaceID
 		h.sendSSEError(c.Request.Context(), c.Writer, err.Error())
 		return
 	}
+	chatFiles, err := ChatAttachmentReferences(req.Files, req.Inputs)
+	if err != nil {
+		h.sendSSEError(c.Request.Context(), c.Writer, "invalid chat attachments")
+		return
+	}
+	if len(chatFiles) > 0 {
+		if h.fileService == nil {
+			h.sendSSEError(c.Request.Context(), c.Writer, "attachment access is unavailable")
+			return
+		}
+		policy := WorkflowChatUploadPolicy(workflowData["features"], h.fileService.GetUploadConfig())
+		scope := runtimeservice.Scope{}
+		scope.AccountID, _ = uuid.Parse(accountID)
+		scope.OrganizationID, _ = uuid.Parse(util.GetOrganizationID(c))
+		if err := ValidateChatAttachments(c.Request.Context(), chatFiles, h.fileService, policy, func(ctx context.Context, file *dto.UploadFile) error {
+			return runtimeservice.AuthorizeAttachment(ctx, scope, h.enterpriseService, file)
+		}); err != nil {
+			h.sendSSEError(c.Request.Context(), c.Writer, "attachments are unavailable or exceed the upload policy")
+			return
+		}
+	}
 	logger.DebugContext(c.Request.Context(), "workflow stream configuration selected",
 		zap.String("workflow_id", workflowID),
 		zap.String("agent_id", appID),
@@ -100,23 +124,7 @@ func (h *WorkflowHandler) runWorkflowStream(c *gin.Context, requestedWorkspaceID
 
 	// isDraft := (runType == "debugging")
 
-	// Add req.Files to inputs for processing if provided
-	if req.Files != nil && len(req.Files) > 0 {
-		if req.Inputs == nil {
-			req.Inputs = make(map[string]interface{})
-		}
-		// Convert []FileInfo to []interface{} for processing
-		filesInterface := make([]interface{}, len(req.Files))
-		for i, f := range req.Files {
-			filesInterface[i] = map[string]interface{}{
-				"type":            f.Type,
-				"transfer_method": f.TransferMethod,
-				"url":             f.URL,
-				"upload_file_id":  f.UploadFileID,
-			}
-		}
-		req.Inputs["#files#"] = filesInterface
-	}
+	req.Inputs = chatInputsWithFiles(req.Inputs, req.Files)
 
 	// Process all file inputs before workflow execution
 	processedInputs := h.processAllFileInputs(c.Request.Context(), req.Inputs, workspaceID, appID)
