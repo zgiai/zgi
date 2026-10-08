@@ -18,6 +18,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "test:agent-execution-job-presentation": "node scripts/test-agent-execution-job-presentation.mjs",
+    "test:webapp-tool-detail-visibility": "node scripts/test-webapp-tool-detail-visibility.mjs",
     "test:protected-execution-files": "node scripts/test-protected-execution-files.mjs",
     "test:auth-session-lifecycle": "node scripts/test-auth-session-lifecycle.mjs",
     "test:query-utils-and-debounce": "node scripts/test-query-utils-and-debounce.mjs",

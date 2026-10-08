@@ -210,6 +210,7 @@ interface AIChatShellProps {
   conversationListDescription?: string;
   defaultSidebarOpen?: boolean;
   showAssistantModelMeta?: boolean;
+  showSkillEventDetails?: boolean;
   enableMessageReplay?: boolean;
   messageDensity?: 'default' | 'compact';
   surface?: 'aichat' | 'agent-draft' | 'agent-webapp' | 'digital-human';
@@ -352,6 +353,7 @@ export function AIChatShell({
   conversationListDescription,
   defaultSidebarOpen = true,
   showAssistantModelMeta = true,
+  showSkillEventDetails = true,
   enableMessageReplay = true,
   messageDensity = 'default',
   surface = 'aichat',
@@ -1878,9 +1880,8 @@ export function AIChatShell({
             layout={isEmbedded ? 'embedded' : 'full'}
             messageDensity={messageDensity}
             showMemoryKey={surface !== 'agent-webapp' && surface !== 'digital-human'}
-            // Tool calls remain expandable on the agent web surface so users can
-            // inspect the sanitized arguments and result details.
-            showSkillEventDetails
+            // Published apps show status, not diagnostic argument/result panels.
+            showSkillEventDetails={surface !== 'agent-webapp' && showSkillEventDetails}
             showWorkflowFailureDetails={surface !== 'agent-webapp'}
             showContextualOperationStatus={effectiveRuntimeSurface === 'contextual_sidebar'}
             showPlanningPlaceholder={showPlanningPlaceholder}

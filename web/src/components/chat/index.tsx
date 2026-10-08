@@ -166,6 +166,7 @@ interface AIChatVariantProps {
   onStartNewConversation?: () => void;
   defaultSidebarOpen?: boolean;
   showAssistantModelMeta?: boolean;
+  showSkillEventDetails?: boolean;
   enableMessageReplay?: boolean;
   messageDensity?: 'default' | 'compact';
   surface?: 'aichat' | 'agent-draft' | 'agent-webapp' | 'digital-human';

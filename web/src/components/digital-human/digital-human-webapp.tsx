@@ -343,6 +343,7 @@ export function DigitalHumanWebApp({ webAppId }: { webAppId: string }) {
                     replaceConversationRoute(null, 'draft-persistence');
                   }}
                   showAssistantModelMeta={false}
+                  showSkillEventDetails={false}
                   enableMessageReplay
                   messageDensity="compact"
                   surface="digital-human"

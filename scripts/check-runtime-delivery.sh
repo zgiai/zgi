@@ -62,6 +62,8 @@ case "$mode" in
     pnpm lint
     pnpm type-check
     pnpm test:agent-execution-job-presentation
+    pnpm test:webapp-tool-detail-visibility
+    pnpm test:protected-execution-files
     pnpm test:chat-runtime-stream-recovery
     pnpm test:user-input-response-history
     pnpm build

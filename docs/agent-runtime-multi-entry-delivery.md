@@ -8,6 +8,11 @@ background tasks, channels and Runtime Workspace credentials do not gain Linux o
 platform CLI permissions. Application editors continue to configure only
 `execution_runtime.enabled`.
 
+Published Agent and DigitalHuman WebApps show tool execution status and duration
+without expandable arguments, results or technical diagnostics. Console debugging
+retains those detail panels. Approval context and confirmation/rejection actions,
+process narration and authenticated artifact cards remain available.
+
 Every stage is gated by the preceding stage's tests. No external entry is enabled
 until authenticated file access and approval continuation are complete. Retained
 files and cleanup must remain available during an admission rollback.
@@ -480,3 +485,9 @@ This is focused regression acceptance, not P5 completion. DigitalHuman, the full
 standard-Skill/two-user matrix, real CLI approvals and admission rollback still
 require real-backend acceptance. Raw evidence, credentials and screenshots stay
 outside Git in the ignored acceptance directory.
+
+The status-only WebApp presentation has rendering regression coverage for running,
+successful and failed Shell/export/legacy-script events, including retained
+console details. It is included in the Web delivery gate and queued for the next
+consolidated deployment acceptance with artifact preview/download and remaining
+P5 checks; it has not yet been deployed to the real-backend candidate environments.
