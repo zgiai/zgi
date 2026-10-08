@@ -24,7 +24,7 @@ files and cleanup must remain available during an admission rollback.
 | P2 | Protected file ownership and authenticated preview/download | Implemented, including CLI business outputs; real entry acceptance remains P5 |
 | P3 | Published Agent and DigitalHuman interactive script integration | Implementation complete: published adapters, DigitalHuman opt-in UI and request-scoped tools; deployment acceptance remains P5 |
 | P4 | Published-resource CLI and frozen, idempotent approval continuation | Implementation and automated gates complete; real dual-backend acceptance remains P5 |
-| P5 | Real local/E2B entry acceptance and rollback verification | In progress; standard-Skill, approval, CLI billing, publication/live-access boundaries and admission rollback samples pass; second-login isolation and browser file delivery remain open |
+| P5 | Real local/E2B entry acceptance and rollback verification | In progress; standard-Skill, approval, CLI billing, publication/live-access boundaries, retained-file revocation, browser delivery and admission rollback samples pass; second-login isolation remains open |
 
 ## Identity contract
 
@@ -687,15 +687,41 @@ and a Blob read asynchronously before clicking. Only the normal attachment
 reported a browser automation download event. File existence and exact bytes,
 not the event alone, therefore determine delivery acceptance.
 
-The actual E2B protected result still has no observed saved file after preview
-and direct-card downloads, including a fresh page reload; its authenticated read
-returns HTTP 200. Synthetic success does not close that gate or establish the
-cause of the difference. No speculative URL-lifetime change was shipped.
+The initial E2B protected-result attempts had no observed saved file after preview
+and direct-card downloads, including a page reload, despite authenticated HTTP
+200 reads. A subsequent fresh-tab acceptance below closes the saved-file gate;
+synthetic success alone did not establish delivery or the cause of the difference.
+No speculative URL-lifetime change was shipped.
 
 The protected-card behavior test now executes the component handler: each
 download makes a fresh scoped read, waits for success before creating a Blob URL,
 uses the original filename, blocks another read while busy and releases the URL.
 Denied and unavailable reads cannot produce a download and expose only the safe
 localized error. These tests guard authorization and lifecycle; they are not
-evidence of browser delivery. P5 still requires a real second login and a saved
-protected result with independently checked bytes.
+evidence of browser delivery. Real delivery is recorded separately below.
+
+### Protected download and live-file authorization closeout
+
+The same-origin comparison additionally saved native, Fetch Blob and XHR Blob
+test files with exact expected bytes. In a fresh in-app browser tab, the actual
+E2B DigitalHuman WebApp card then saved the original 52-byte Skill result. Its
+bytes match the original script stdout, including both line breaks, and SHA-256
+is `8a922f7b3736aa693b85e995fb9ff6254847c783cfc0fc86c3a1485f67130a04`.
+The Blob download still produced no automation event; independent file inspection
+provides the acceptance proof. The retained-tab difference is not assigned an
+unproven cause and did not result in a speculative product patch.
+
+Eight additional real retained-file checks cover Agent and DigitalHuman API and
+WebApp access on both candidates. The owner reads the existing file successfully;
+disabling that entry denies the same authenticated file request; restoring access
+returns the unchanged 52 bytes. Agent API/WebApp denial statuses are 401/403 and
+DigitalHuman API/WebApp statuses are 403/404. All test access flags were restored.
+This proves entry-wide revocation, not a substitute for second-login user-level
+isolation or revocation.
+
+Compute remained stopped throughout these read-only file samples, with no queued
+or running Jobs. Temporary same-origin synthetic files were removed from the
+owned local candidate and their route returns 404 again. Candidate image digests,
+published bindings and result bytes are unchanged. P5 remains open for the real
+second authenticated WebApp account matrix; API external-user tests do not
+substitute for that gate. No push, merge or broader entry admission was performed.
