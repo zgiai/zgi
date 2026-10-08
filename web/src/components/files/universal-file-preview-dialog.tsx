@@ -34,6 +34,7 @@ import {
 import { cn } from '@/lib/utils';
 import { fileManageService } from '@/services/file-manage.service';
 import type { FileSpreadsheetPreviewResponse } from '@/services/types/file';
+import { PlainTextFilePreview } from './plain-text-file-preview';
 
 const maxOfficePreviewBytes = 10 * 1024 * 1024;
 const maxOfficeZipEntries = 256;
@@ -221,13 +222,9 @@ export function UniversalFilePreviewContent({
 
   if (previewKind === 'browser') {
     return (
-      <iframe
-        src={previewUrl}
-        title={file.name}
-        sandbox=""
-        referrerPolicy="no-referrer"
-        className={cn('h-full min-h-[60vh] w-full border-0 bg-background', className)}
-      />
+      <div className={cn('h-full min-h-0', className)}>
+        <PlainTextFilePreview previewUrl={previewUrl} />
+      </div>
     );
   }
 
