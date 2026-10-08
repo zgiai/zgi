@@ -43,18 +43,29 @@ type runtimeRegenerationService interface {
 }
 
 type RuntimeHandler struct {
-	service RuntimeHandlerService
-	base    *Handler
+	service                   RuntimeHandlerService
+	base                      *Handler
+	executionFileApplications ExecutionFileApplicationReader
 }
 
-func NewRuntimeHandler(service RuntimeHandlerService, projector *apptransport.Projector) *RuntimeHandler {
+// ExecutionFileApplicationReader checks current application existence/access,
+// separately from historical conversation ownership and compute admission.
+type ExecutionFileApplicationReader interface {
+	Get(context.Context, Scope, uuid.UUID) (*Detail, error)
+}
+
+func NewRuntimeHandler(service RuntimeHandlerService, projector *apptransport.Projector, fileApplications ...ExecutionFileApplicationReader) *RuntimeHandler {
 	if service == nil {
 		panic("DigitalHuman runtime handler requires service")
 	}
 	if projector == nil {
 		panic("DigitalHuman runtime handler requires application error projector")
 	}
-	return &RuntimeHandler{service: service, base: &Handler{projector: projector}}
+	handler := &RuntimeHandler{service: service, base: &Handler{projector: projector}}
+	if len(fileApplications) > 0 {
+		handler.executionFileApplications = fileApplications[0]
+	}
+	return handler
 }
 
 func (h *RuntimeHandler) RegisterRoutes(router *gin.RouterGroup) {

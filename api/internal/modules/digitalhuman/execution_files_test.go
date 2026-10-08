@@ -81,6 +81,15 @@ type executionFileRuntimeStub struct {
 	denied       bool
 }
 
+type executionFileApplicationStub struct{ denied bool }
+
+func (s *executionFileApplicationStub) Get(_ context.Context, scope Scope, id uuid.UUID) (*Detail, error) {
+	if s.denied {
+		return nil, ErrNotFound
+	}
+	return &Detail{Definition: &Definition{ID: id, OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID}}, nil
+}
+
 func (s *executionFileRuntimeStub) GetConversation(_ context.Context, scope Scope, _ uuid.UUID, _ uuid.UUID) (*runtimemodel.Conversation, error) {
 	if scope.UserSubjectID == nil || scope.UserSubjectKind != "account" || scope.Surface != SurfaceConsole {
 		return nil, ErrInvalidRequest
@@ -140,7 +149,8 @@ func TestDigitalHumanExecutionFileConsoleRouteRechecksAccessWhenExecutionDisable
 	}
 	service := &executionFileRuntimeStub{conversation: &runtimemodel.Conversation{ID: cid, OrganizationID: scope.OrganizationID, WorkspaceID: &scope.WorkspaceID,
 		AccountID: scope.ActorID, CallerType: "digital_human", CallerID: &app, Source: "console"}}
-	router := digitalHumanRuntimeHandlerRouter(t, service, scope)
+	application := &executionFileApplicationStub{}
+	router := digitalHumanRuntimeHandlerRouter(t, service, scope, application)
 	t.Setenv("ZGI_AGENT_RUNTIME_ENABLED", "false")
 	request := httptest.NewRequest(http.MethodGet, "/digital-humans/"+app.String()+"/runtime/conversations/"+cid.String()+"/files/"+file.ID, nil)
 	recorder := httptest.NewRecorder()
@@ -153,5 +163,18 @@ func TestDigitalHumanExecutionFileConsoleRouteRechecksAccessWhenExecutionDisable
 	router.ServeHTTP(recorder, request)
 	if recorder.Code == http.StatusOK || backend.reads != 1 {
 		t.Fatal("revoked access read storage")
+	}
+	service.denied, application.denied = false, true
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code == http.StatusOK || backend.reads != 1 {
+		t.Fatal("revoked application access read storage")
+	}
+	// A host that forgot to inject application authorization must fail closed.
+	router = digitalHumanRuntimeHandlerRouter(t, service, scope)
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code == http.StatusOK || backend.reads != 1 {
+		t.Fatal("missing application authorizer read storage")
 	}
 }

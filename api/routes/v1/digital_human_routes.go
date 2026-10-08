@@ -107,7 +107,7 @@ func RegisterDigitalHumanRoutes(router *gin.RouterGroup, deps DigitalHumanRouteD
 	group.Use(digitalHumanPermissionMiddleware(deps.OrganizationService, errorProjector))
 	digitalhuman.NewHandler(deps.Service, errorProjector).RegisterRoutes(group)
 	digitalhuman.NewAccessHandler(deps.Access, errorProjector).RegisterRoutes(group)
-	digitalhuman.NewRuntimeHandler(deps.Runtime, errorProjector).RegisterRoutes(group)
+	digitalhuman.NewRuntimeHandler(deps.Runtime, errorProjector, deps.Service).RegisterRoutes(group)
 	digitalhuman.NewTaskHandler(deps.Tasks, errorProjector).RegisterRoutes(group)
 	channelHandler.RegisterAuthenticatedRoutes(group)
 }

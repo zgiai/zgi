@@ -342,7 +342,7 @@ func TestRuntimeHandlerAcceptsDigitalHumanRuntimeInput(t *testing.T) {
 	}
 }
 
-func digitalHumanRuntimeHandlerRouter(t *testing.T, service RuntimeHandlerService, scope Scope) *gin.Engine {
+func digitalHumanRuntimeHandlerRouter(t *testing.T, service RuntimeHandlerService, scope Scope, fileApplications ...ExecutionFileApplicationReader) *gin.Engine {
 	t.Helper()
 	definitions := append(appcatalog.DefaultDefinitions(), CatalogDefinitions()...)
 	catalog, err := appcatalog.New(appcatalog.LocaleEnglishUS, appcatalog.CodeInternal, definitions...)
@@ -360,6 +360,6 @@ func digitalHumanRuntimeHandlerRouter(t *testing.T, service RuntimeHandlerServic
 		c.Set("account_id", scope.ActorID.String())
 		c.Next()
 	})
-	NewRuntimeHandler(service, projector).RegisterRoutes(router.Group(""))
+	NewRuntimeHandler(service, projector, fileApplications...).RegisterRoutes(router.Group(""))
 	return router
 }

@@ -17,6 +17,16 @@ func (h *RuntimeHandler) GetExecutionFile(c *gin.Context) {
 	// This route is behind account authentication, unlike tasks and channel
 	// invocations. Construct its explicit subject from that verified account.
 	scope.Surface, scope.UserSubjectKind, scope.UserSubjectID = SurfaceConsole, "account", &scope.ActorID
+	if h.executionFileApplications == nil {
+		h.base.writeError(c, applicationError(ErrNotFound, "digital_human.execution_file.application"))
+		return
+	}
+	detail, err := h.executionFileApplications.Get(c.Request.Context(), scope, digitalHumanID)
+	if err != nil || detail == nil || detail.Definition == nil || detail.Definition.ID != digitalHumanID ||
+		detail.Definition.OrganizationID != scope.OrganizationID || detail.Definition.WorkspaceID != scope.WorkspaceID || detail.Definition.DeletedAt != nil {
+		h.base.writeError(c, applicationError(ErrNotFound, "digital_human.execution_file.application"))
+		return
+	}
 	conversation, err := h.service.GetConversation(c.Request.Context(), scope, digitalHumanID, conversationID)
 	if err != nil {
 		h.base.writeError(c, applicationError(err, "digital_human.execution_file.conversation"))
