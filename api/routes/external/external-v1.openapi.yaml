@@ -1316,6 +1316,8 @@ components:
           $ref: '#/components/schemas/PublishedFeatures'
         file_upload:
           $ref: '#/components/schemas/PublishedFileUploadParameters'
+        chat_upload_policy:
+          $ref: '#/components/schemas/ChatUploadPolicy'
         agent_memory:
           $ref: '#/components/schemas/PublishedAgentMemoryParameters'
         system_parameters:
@@ -1331,14 +1333,14 @@ components:
           supports_vision: true
         file_upload:
           enabled: true
-          number_limits: 10
-          allowed_file_types: [pdf, png, jpg]
+          number_limits: 5
+          allowed_file_types: [document, image]
           transfer_methods: [local_file]
-          image: {enabled: true, number_limits: 10, transfer_methods: [local_file]}
+          image: {enabled: true, number_limits: 5, transfer_methods: [local_file]}
         agent_memory: {enabled: true, requires_user: true}
         system_parameters:
           file_size_limit: 50
-          image_file_size_limit: 20
+          image_file_size_limit: 10
           audio_file_size_limit: 100
           video_file_size_limit: 500
           file_upload_count_limit: 10
@@ -1379,7 +1381,7 @@ components:
         number_limits: {type: integer, minimum: 0, description: Maximum files accepted by one invocation.}
         allowed_file_types:
           type: array
-          description: File extensions/types supported by the current server.
+          description: Published upload categories; new chat configurations use document and image. Legacy workflow categories remain compatible. Use chat_upload_policy.allowed_extensions for the effective extension list.
           items: {type: string}
         transfer_methods:
           type: array
@@ -1396,6 +1398,26 @@ components:
               type: array
               description: Supported image transfer methods; currently local_file.
               items: {type: string, enum: [local_file]}
+    ChatUploadPolicy:
+      type: object
+      description: Server-resolved chat admission limits, independent of model vision support. Sizes are original bytes. Each invocation counts unique attachments only; historical attachments are not added again.
+      required: [allowed_file_types, allowed_extensions, number_limit, document_max_bytes, image_max_bytes, turn_max_bytes]
+      properties:
+        allowed_file_types: {type: array, items: {type: string}, description: Effective upload categories. Legacy workflow categories are preserved.}
+        allowed_extensions: {type: array, items: {type: string}, description: Effective platform-maintained extensions without leading dots.}
+        number_limit: {type: integer, minimum: 0, description: Maximum unique files submitted in one turn.}
+        document_max_bytes: {type: integer, format: int64, maximum: 104857600, description: Original document byte limit; defaults to 50 MiB.}
+        image_max_bytes: {type: integer, format: int64, maximum: 104857600, description: Original image byte limit; defaults to 10 MiB.}
+        turn_max_bytes: {type: integer, format: int64, enum: [104857600], description: Maximum unique original file bytes per turn; 100 MiB.}
+    ChatUploadSelection:
+      type: object
+      description: Published category selection. Missing policy defaults to documents and images; an empty list disables both.
+      properties:
+        allowed_file_types:
+          type: array
+          description: Allowed document/image categories from the frozen published version; an empty list disables attachments.
+          uniqueItems: true
+          items: {type: string, enum: [document, image]}
     PublishedAgentMemoryParameters:
       type: object
       description: Published Agent Memory capability flags used to enable memory-management UI.
@@ -1555,6 +1577,8 @@ components:
           description: Starter prompts displayed on the landing page.
           items: {type: string}
         file_upload_enabled: {type: boolean, description: Whether the published Agent accepts file attachments.}
+        file_upload_policy:
+          $ref: '#/components/schemas/ChatUploadSelection'
         supports_vision: {type: boolean, description: Whether the published model can consume image inputs.}
         agent_memory_enabled: {type: boolean, description: Whether Agent Memory is enabled in the published configuration.}
         memory_requires_user: {type: boolean, description: Whether memory operations require an external-user identity.}

@@ -1078,6 +1078,15 @@ components:
           description: Published starter prompts.
           items: {type: string, description: One starter prompt.}
         file_upload_enabled: {type: boolean, description: Whether chat file upload is available.}
+        file_upload_policy:
+          type: object
+          description: Published document/image selection, independent of model vision support. Missing policy defaults to both categories; an empty list disables both. Upload limits are returned by the authenticated upload configuration endpoint.
+          properties:
+            allowed_file_types:
+              type: array
+              description: Allowed document/image categories from the frozen published version; an empty list disables attachments.
+              uniqueItems: true
+              items: {type: string, enum: [document, image]}
         relationship_memory_enabled: {type: boolean, description: Whether API users may use relationship memory.}
         memory_requires_user: {type: boolean, description: Whether memory requires an explicit user identity.}
         external_user_required: {type: boolean, enum: [true], description: DigitalHuman v1 requires `user` on stateful calls.}
