@@ -24,7 +24,7 @@ files and cleanup must remain available during an admission rollback.
 | P2 | Protected file ownership and authenticated preview/download | Implemented, including CLI business outputs; real entry acceptance remains P5 |
 | P3 | Published Agent and DigitalHuman interactive script integration | Implementation complete: published adapters, DigitalHuman opt-in UI and request-scoped tools; deployment acceptance remains P5 |
 | P4 | Published-resource CLI and frozen, idempotent approval continuation | Implementation and automated gates complete; real dual-backend acceptance remains P5 |
-| P5 | Real local/E2B entry acceptance and rollback verification | In progress; Agent API/WebApp and DigitalHuman interactive execution/files verified on both backends; approval and rollback matrix still incomplete |
+| P5 | Real local/E2B entry acceptance and rollback verification | In progress; real standard-Skill, approval, CLI model billing and admission rollback gates pass; second authenticated WebApp account and observed E2B browser download remain open |
 
 ## Identity contract
 
@@ -565,3 +565,42 @@ application/surface access and API credential validity are still checked on
 confirmation; disabling or revoking them denies execution. Ordinary new
 execution still requires the currently published version. Draft, missing,
 cross-application and cross-tenant versions cannot be continuation targets.
+
+## Latest focused acceptance: 2026-10-09
+
+Real local gVisor and E2B checks now cover:
+
+- Agent and DigitalHuman API/WebApp approval, rejection and duplicate decisions,
+  plus DigitalHuman console approvals. Confirmations create one SVG, rejections
+  create none, and continuations retain one original Shell Job.
+- DigitalHuman pending approvals surviving publication replacement without
+  adopting the new version. Current API access revocation denies confirmation;
+  restored access permits rejection without executing the business call.
+- Original PDF Skill script execution through all four external entry types.
+  Each uploaded a synthetic input, used the existing package without a new
+  manifest, checked its script hash inside Linux and authenticated-downloaded
+  the exact 52-byte validation output. Runtime preload is valid Skill loading;
+  an explicit `load_skill` call is not mandatory after successful preload.
+- CLI model calls returning actual output and producing successful usage bills
+  on all new external entries and DigitalHuman console. Billing follows the
+  configured application; execution identity does not replace billing ownership.
+- Same external-user identifier with another application's valid credential
+  cannot read the original application file. Own reads return 200; other-app
+  reads return 404. Separate API-user and cross-entry refusals also pass.
+- Closing total execution and entry admission prevents new bindings on all
+  eight external entry/backend combinations while authenticated retained-file
+  downloads continue. Original operator settings were restored afterward.
+
+The frozen-publication fix passes impacted Go tests/vet and focused race tests.
+Test-only catalog overrides were removed from both candidate APIs; release
+manifests and their authenticated probes match the deployed candidate images.
+All completed samples retain files/checkpoints and no queued/running Jobs.
+One E2B control-plane allocation failed before obtaining a backend reference;
+the supported retry succeeded and the empty failed allocation was cleaned up.
+That transient failure remains in the private acceptance record.
+
+P5 is not complete. Two distinct API final users are not a substitute for two
+authenticated WebApp accounts: a second dedicated account is still required.
+The E2B CSV browser preview is visibly correct and authenticated binary downloads
+pass, but an actual browser-saved file has not been observed. Neither unresolved
+gate is reported as passing. Wider rollout remains closed.
