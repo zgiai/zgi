@@ -276,3 +276,17 @@ shared boundary; they do not authenticate an anonymous visitor or replace entry
 authentication. The next P3 work is the verified published-entry adapters and
 DigitalHuman runtime injection. New entries remain disabled until P4 is complete;
 P5 real local/E2B acceptance is still outstanding.
+
+## Entry readiness gate
+
+Identity-scoped factories now require an explicit server-supplied readiness
+callback, independently of the operator's organization/entry allowlist. A missing
+or negative callback produces no execution tools. Readiness is rechecked for
+every tool invocation, so withdrawing it denies calls before contacting the
+Worker. The legacy console factory does not change its identity contract.
+
+Readiness must only be wired when the entry's protected files and approval
+continuation are implemented. It is not a client field or an environment-variable
+override. Unit tests exercise missing/negative readiness and withdrawal across
+both application types and all three planned interactive entries. Runtime, Agent
+and DigitalHuman package tests passed with race detection and vet.

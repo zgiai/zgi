@@ -57,9 +57,10 @@ func TestSharedFactoryPreservesApplicationIdentityAndBilling(t *testing.T) {
 				}
 				gateway := &factoryTestGateway{fakeAgentExecutionGateway: &fakeAgentExecutionGateway{
 					binding: agentExecutionBinding{ID: "binding", Status: "active"}, job: agentExecutionJob{ID: "job", Status: "succeeded"}}}
-				revoked := false
+				revoked, entryReady := false, true
 				options := FactoryOptions{Gateway: gateway, Persister: &fakeAgentExecutionArtifactPersister{}, Entries: entries,
-					ProfileID: "standard", Backend: "fake", NetworkPolicy: "offline",
+					EntryReady: func(string, string) bool { return entryReady },
+					ProfileID:  "standard", Backend: "fake", NetworkPolicy: "offline",
 					ResolveScope: func(*runtimeservice.PreparedChat) (execution.Scope, error) { return scope, nil },
 					ResolveFiles: func(p *runtimeservice.PreparedChat, s execution.Scope) (*ScopedAttachmentReader, error) {
 						return NewScopedAttachmentReader(&inputTestSource{}, s, p.RuntimeAttachmentRefs(), allowInputTestFile)
@@ -106,12 +107,28 @@ func TestSharedFactoryPreservesApplicationIdentityAndBilling(t *testing.T) {
 					t.Fatal("factory accepted another user's reader")
 				}
 				options.ResolveFiles = resolver
+				ready := options.EntryReady
+				options.EntryReady = nil
+				if len(NewToolFactory(options)(prepared)) != 0 {
+					t.Fatal("operator allowlist bypassed absent continuation readiness")
+				}
+				options.EntryReady = func(string, string) bool { return false }
+				if len(NewToolFactory(options)(prepared)) != 0 {
+					t.Fatal("unfinished entry received execution tools")
+				}
+				options.EntryReady = ready
 				authorize := options.Authorize
 				options.Authorize = nil
 				if len(NewToolFactory(options)(prepared)) != 0 {
 					t.Fatal("identity entry omitted live application authorization")
 				}
 				options.Authorize = authorize
+				entryReady = false
+				beforeReadiness := gateway.creates
+				if result := tools[0].Handler(t.Context(), call); result.Result["error_code"] != "execution_denied" || gateway.creates != beforeReadiness {
+					t.Fatal("entry readiness withdrawal reached gateway")
+				}
+				entryReady = true
 				revoked = true
 				before := gateway.creates
 				if result := tools[0].Handler(t.Context(), call); result.Result["error_code"] != "execution_denied" || gateway.creates != before {

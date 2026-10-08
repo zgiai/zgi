@@ -42,6 +42,10 @@ type FactoryOptions struct {
 	InteractiveApproval   bool
 	ErrorProjector        *apptransport.Projector
 	Entries               execution.EntryAdmission
+	// EntryReady is supplied by server wiring only after the entry's protected
+	// files and approval continuation are implemented. Operator allowlists alone
+	// cannot release unfinished identity-scoped entries. Nil fails closed.
+	EntryReady func(applicationType, entry string) bool
 }
 
 func NewToolFactory(options FactoryOptions) func(*runtimeservice.PreparedChat) []skillloop.RuntimeTool {
@@ -57,7 +61,7 @@ func NewToolFactory(options FactoryOptions) func(*runtimeservice.PreparedChat) [
 		// Copy the identity so an adapter cannot change an existing invocation's
 		// frozen publication or owner by mutating a shared pointer.
 		if scope.Identity != nil {
-			if options.Authorize == nil {
+			if options.Authorize == nil || !factoryEntryReady(options, scope) {
 				return nil // New entries require live application authorization.
 			}
 			identity := *scope.Identity
@@ -125,7 +129,7 @@ func NewToolFactory(options FactoryOptions) func(*runtimeservice.PreparedChat) [
 				}
 				current, err := options.ResolveScope(prepared)
 				if err != nil || !sameFactoryScope(scope, current) || !factoryScopeMatches(current, options.LegacyAgentID, prepared) ||
-					!options.Entries.Allows(current.OrganizationID, prepared.Caller.Type, prepared.Caller.Source) {
+					!options.Entries.Allows(current.OrganizationID, prepared.Caller.Type, prepared.Caller.Source) || !factoryEntryReady(options, current) {
 					return deniedFactoryTool(options.ErrorProjector)
 				}
 				if options.Authorize != nil && options.Authorize(ctx) != nil {
@@ -139,6 +143,10 @@ func NewToolFactory(options FactoryOptions) func(*runtimeservice.PreparedChat) [
 		}
 		return tools
 	}
+}
+
+func factoryEntryReady(options FactoryOptions, scope execution.Scope) bool {
+	return scope.Identity == nil || (options.EntryReady != nil && options.EntryReady(scope.Identity.ApplicationType, scope.Identity.Entry))
 }
 
 func factoryScopeMatches(scope execution.Scope, legacyAgentID string, prepared *runtimeservice.PreparedChat) bool {
