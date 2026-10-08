@@ -37,7 +37,7 @@ func TestMusicScopeRejectsZeroIdentity(t *testing.T) {
 	util.SetWorkspaceID(context, scope.WorkspaceID.String())
 	context.Set("account_id", uuid.Nil.String())
 
-	if _, ok := musicScope(context); ok {
+	if _, ok := (&Handler{}).musicScope(context); ok {
 		t.Fatal("musicScope() ok = true, want false")
 	}
 	if got, want := recorder.Code, http.StatusUnauthorized; got != want {
