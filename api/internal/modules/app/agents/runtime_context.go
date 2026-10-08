@@ -267,14 +267,15 @@ func (h *AgentsHandler) webAppAgentRuntimeContext(c *gin.Context) (agentRuntimeC
 		return agentRuntimeContext{}, false
 	}
 	runConfig.RuntimeInputPolicy = runtimeservice.RuntimeInputPolicyCheckpointAndFollowUp
+	caller := runtimeservice.Caller{Type: runtimemodel.ConversationCallerAgent, ID: &agentID,
+		Source: runtimemodel.ConversationSourceWebApp, SourceWebAppID: &webAppID}
+	if err := h.attachPublishedAgentExecutionTools(c.Request.Context(), &runConfig, scope, caller, published, c.GetBool("is_authenticated"), uuid.Nil); err != nil {
+		h.failRuntime(c, err)
+		return agentRuntimeContext{}, false
+	}
 	return agentRuntimeContext{
-		Scope: scope,
-		Caller: runtimeservice.Caller{
-			Type:           runtimemodel.ConversationCallerAgent,
-			ID:             &agentID,
-			Source:         runtimemodel.ConversationSourceWebApp,
-			SourceWebAppID: &webAppID,
-		},
+		Scope:     scope,
+		Caller:    caller,
 		RunConfig: runConfig,
 	}, true
 }

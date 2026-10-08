@@ -15,6 +15,7 @@ import (
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/runtimeworkspace"
 	"github.com/zgiai/zgi/api/pkg/response"
@@ -795,6 +796,9 @@ func TestRuntimeWorkspaceMemoryFailsClosedWithoutRelationshipMemory(t *testing.T
 func TestRuntimeWorkspaceRunConfigKeepsPublishedCapabilities(t *testing.T) {
 	t.Setenv("ZGI_RELATIONSHIP_MEMORY_ENABLED", "")
 	config := runtimeWorkspaceRunConfig(runtimeservice.RunConfig{
+		RuntimeToolFactory: func(*runtimeservice.PreparedChat) []skillloop.RuntimeTool {
+			panic("Runtime Workspace must not invoke Linux factory")
+		},
 		EnabledSkillIDs:                  []string{"calculator", "agent-knowledge", "agent-database", "agent-workflow", "connector-runtime"},
 		KnowledgeDatasetIDs:              []string{"dataset-1"},
 		KnowledgeRetrievalConfig:         map[string]interface{}{"mode": "hybrid"},
@@ -818,6 +822,9 @@ func TestRuntimeWorkspaceRunConfigKeepsPublishedCapabilities(t *testing.T) {
 	}
 	if !config.ConnectorToolsDisabled {
 		t.Fatalf("Runtime Workspace Connector projection remained enabled: %#v", config)
+	}
+	if config.RuntimeToolFactory != nil {
+		t.Fatal("Runtime Workspace retained Linux factory")
 	}
 	if config.AgentMemoryEnabled || config.AgentMemoryAutoExtractionEnabled || len(config.AgentMemorySlots) != 0 {
 		t.Fatalf("memory remained enabled while relationship memory was disabled: %#v", config)

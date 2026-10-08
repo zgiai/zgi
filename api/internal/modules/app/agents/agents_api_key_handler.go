@@ -155,6 +155,12 @@ func (h *AgentsHandler) ChatAPIKeyAgent(c *gin.Context) {
 	}
 	if _, runtimeWorkspaceRequest := c.Get("runtime_workspace_principal"); runtimeWorkspaceRequest {
 		runConfig = runtimeWorkspaceRunConfig(runConfig)
+	} else {
+		keyID, _ := uuid.Parse(c.GetString("api_key_id"))
+		if err := h.attachPublishedAgentExecutionTools(ctx, &runConfig, scope, runtimeCtx.Caller, published, false, keyID); err != nil {
+			h.failRuntime(c, err)
+			return
+		}
 	}
 
 	chatReq := runtimedto.ChatRequest{
@@ -503,6 +509,12 @@ func (h *AgentsHandler) apiKeyAgentContinuationRuntimeContext(c *gin.Context) (a
 	}
 	if _, runtimeWorkspaceRequest := c.Get("runtime_workspace_principal"); runtimeWorkspaceRequest {
 		runConfig = runtimeWorkspaceRunConfig(runConfig)
+	} else {
+		keyID, _ := uuid.Parse(c.GetString("api_key_id"))
+		if err := h.attachPublishedAgentExecutionTools(c.Request.Context(), &runConfig, runtimeCtx.Scope, runtimeCtx.Caller, published, false, keyID); err != nil {
+			h.failRuntime(c, err)
+			return agentRuntimeContext{}, false
+		}
 	}
 	runtimeCtx.RunConfig = runConfig
 	return runtimeCtx, true
@@ -553,6 +565,9 @@ func runtimeWorkspaceRunConfig(config runtimeservice.RunConfig) runtimeservice.R
 	// owners, not the internal account that owns an Agent's Connector bindings,
 	// so Connector discovery must not run under their identity.
 	config.ConnectorToolsDisabled = true
+	// Runtime Workspace credentials are not an execution entry. Never carry a
+	// caller-scoped Linux/CLI factory through this compatibility projection.
+	config.RuntimeToolFactory = nil
 	if !relationshipmemory.RuntimeEnabled() {
 		config.AgentMemoryEnabled = false
 		config.AgentMemoryAutoExtractionEnabled = false

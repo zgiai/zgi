@@ -17,7 +17,7 @@ files and cleanup must remain available during an admission rollback.
 | P0 | Versioned identity, Worker negotiation, additive persistence, compatibility | Complete; unit, PostgreSQL, race and vet gates passed |
 | P1 | Shared execution factory, live authorization, end-user admission | Complete; shared factory, regression, race and vet gates passed |
 | P2 | Protected file ownership and authenticated preview/download | File contracts, upload provenance and scoped staging implemented; new entry wiring remains P3 and real acceptance P5 |
-| P3 | Published Agent and DigitalHuman interactive script integration | In progress: DigitalHuman versioned opt-in; execution adapter wiring and UI pending |
+| P3 | Published Agent and DigitalHuman interactive script integration | In progress: gated Agent WebApp/API adapters and DigitalHuman versioned opt-in implemented; DigitalHuman runtime injection and UI pending |
 | P4 | Published-resource CLI and frozen, idempotent approval continuation | Pending |
 | P5 | Real local/E2B entry acceptance and rollback verification | Pending |
 
@@ -290,3 +290,46 @@ continuation are implemented. It is not a client field or an environment-variabl
 override. Unit tests exercise missing/negative readiness and withdrawal across
 both application types and all three planned interactive entries. Runtime, Agent
 and DigitalHuman package tests passed with race detection and vet.
+
+## Published Agent execution adapters
+
+WebApp chat/regeneration configuration and API chat/continuation configuration
+now attach the shared factory through a verified published-entry adapter. The
+server readiness callback remains unset: publishing `execution_runtime.enabled`
+and adding an operator allowlist entry do not yet open these paths. Ordinary
+authenticated and anonymous chat keeps working without an execution gateway.
+
+The adapter freezes application, organization, resource/data workspaces, verified
+final user, billing account and publication UUID as values rather than retaining
+request-owned identity pointers. WebApp execution requires a verified login;
+API execution requires the existing resolved external user and authenticated
+credential ID. Runtime Workspace credentials never acquire this factory.
+
+Every tool invocation rechecks current WebApp access or API credential
+status/expiry/application/workspace and the current API surface policy. It also
+rechecks the published Linux opt-in and operator approvals. A publication change
+fails the existing invocation instead of silently swapping its configuration;
+a new chat turn can select the new publication. P4 must separately freeze pending
+approval calls and their original publication. No platform CLI relay or interactive
+approval is exposed by these P3 adapters.
+
+Input files use the P2 application/end-user upload authorizer; result files use
+the protected, message-bound persister, never public signed URLs. Only operator
+defaults choose the backend/Profile/network/Home. Enabled Skill IDs come from the
+published configuration, and dependency preparation is offered only for approved
+compatibility Profiles, not standard package-install Profiles.
+
+Validation used Go 1.26.2 in Linux containers. Runtime, Agent and DigitalHuman
+package tests passed with race detection and vet. Adapter tests cover frozen
+identity/publication, cross-owner/workspace/entry rejection, explicit final users,
+missing/expired/revoked API credentials, live surface/opt-in revocation, failed
+authorization stores, protected tool wiring and readiness withdrawal. Handler
+contract tests verify that opt-in/allowlist alone cannot release WebApp/API chat
+or API continuation, and that anonymous chat remains available. The API liveness
+queries use isolated SQLite fixtures; no new schema or live database migration
+was introduced. This is not real Skill execution or P5 dual-backend/UI acceptance.
+
+Next: inject DigitalHuman execution using its sealed interactive UserSubject and
+publication, then implement P4 published-resource CLI and frozen approval
+continuation before setting readiness or opening any new entry. P5 remains
+outstanding; no runtime deployment or remote push accompanies these commits.

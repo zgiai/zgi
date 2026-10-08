@@ -51,6 +51,9 @@ type AgentsHandler struct {
 	executionGateway           agentExecutionGateway
 	executionArtifactPersister agentExecutionArtifactPersister
 	appErrorProjector          *apptransport.Projector
+	// Server wiring will supply this only with the corresponding P4 routes.
+	// It is never derived from request fields or the operator entry allowlist.
+	executionEntryReady func(applicationType, entry string) bool
 }
 
 type workflowContinuationRunner interface {
