@@ -26,6 +26,8 @@ func decodeAdmissionLimits(limits *agentexecution.AdmissionLimits) error {
 		{"MAX_JOBS", &limits.Jobs, 2},
 		{"MAX_JOBS_PER_ORG", &limits.JobsPerOrg, 2},
 		{"MAX_JOBS_PER_BINDING", &limits.JobsPerBinding, 1},
+		{"MAX_BINDINGS_PER_END_USER", &limits.BindingsPerEndUser, 2},
+		{"MAX_JOBS_PER_END_USER", &limits.JobsPerEndUser, 1},
 		{"JOB_TIMEOUT_SECONDS", &limits.JobTimeoutSeconds, 300},
 	}
 	for _, value := range values {

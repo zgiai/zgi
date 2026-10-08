@@ -15,7 +15,7 @@ files and cleanup must remain available during an admission rollback.
 | Stage | Deliverable | Status |
 | --- | --- | --- |
 | P0 | Versioned identity, Worker negotiation, additive persistence, compatibility | Complete; unit, PostgreSQL, race and vet gates passed |
-| P1 | Shared execution factory, live authorization, end-user admission | Pending |
+| P1 | Shared execution factory, live authorization, end-user admission | Atomic end-user admission complete; factory extraction pending |
 | P2 | Protected file ownership and authenticated preview/download | Pending |
 | P3 | Published Agent and DigitalHuman interactive script integration | Pending |
 | P4 | Published-resource CLI and frozen, idempotent approval continuation | Pending |
@@ -77,3 +77,23 @@ P0 passed:
 
 The initial shared-database run hit its connection limit. Validation was repeated
 successfully against the isolated database rather than changing live limits.
+
+## End-user admission
+
+Identity-scoped applications default to two active environments and one queued
+or running Job per application/end user. Operator settings are
+`ZGI_AGENT_RUNTIME_MAX_BINDINGS_PER_END_USER` and
+`ZGI_AGENT_RUNTIME_MAX_JOBS_PER_END_USER`; both require positive integers.
+Existing backend, organization, binding and timeout limits continue to apply.
+
+Admission is a PostgreSQL transaction under the existing shared advisory lock,
+not an in-process counter. Counts span backends, entries and publications.
+Suspended/deleted bindings release compute capacity; resume reserves it again.
+Queued Jobs consume capacity immediately, terminal Jobs release it, and
+idempotent retries do not consume a second slot. The historical console contract
+is unchanged until migrated through the shared factory.
+
+Concurrent two-store PostgreSQL tests verify the 2/1 defaults, cross-backend
+counting, independent users/applications, repeated creates, resume at capacity
+and terminal-Job capacity release. Storage, Worker and control-plane tests pass
+with race detection and vet.

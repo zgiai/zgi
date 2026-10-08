@@ -42,7 +42,7 @@ func (s *Store) ReserveBinding(ctx context.Context, binding agentruntime.Binding
 		return agentruntime.Binding{}, false, err
 	}
 	if agentruntime.BindingConsumesCapacity(binding.Status) {
-		if err := s.checkBindingCapacity(ctx, tx, binding.Backend, binding.OrganizationID); err != nil {
+		if err := s.checkBindingCapacity(ctx, tx, binding); err != nil {
 			return agentruntime.Binding{}, false, err
 		}
 	}
@@ -238,7 +238,7 @@ func (s *Store) UpdateBinding(ctx context.Context, binding agentruntime.Binding,
 		if err := s.lockAgentAdmission(ctx, tx, binding.Backend); err != nil {
 			return err
 		}
-		if err := s.checkBindingCapacity(ctx, tx, binding.Backend, binding.OrganizationID); err != nil {
+		if err := s.checkBindingCapacity(ctx, tx, binding); err != nil {
 			return err
 		}
 	}

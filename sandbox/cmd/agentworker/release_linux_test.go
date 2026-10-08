@@ -25,7 +25,7 @@ func TestAdmissionEnvironmentIsStrict(t *testing.T) {
 	if err := decodeAdmissionLimits(&limits); err != nil {
 		t.Fatal(err)
 	}
-	if limits.Bindings != 2 || limits.JobsPerBinding != 1 || limits.JobTimeoutSeconds != 300 {
+	if limits.Bindings != 2 || limits.JobsPerBinding != 1 || limits.JobTimeoutSeconds != 300 || limits.BindingsPerEndUser != 2 || limits.JobsPerEndUser != 1 {
 		t.Fatalf("defaults=%+v", limits)
 	}
 }

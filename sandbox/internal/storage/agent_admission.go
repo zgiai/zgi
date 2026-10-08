@@ -32,7 +32,7 @@ func (s *Store) lockAgentAdmission(ctx context.Context, tx *sql.Tx, backend stri
 	}
 	if err == nil {
 		var limits runtime.AdmissionLimits
-		if json.Unmarshal(existing, &limits) != nil || limits != *s.admission {
+		if json.Unmarshal(existing, &limits) != nil || limits.WithDefaults() != *s.admission {
 			return runtime.ErrAdmissionPolicy
 		}
 		return nil
@@ -45,13 +45,16 @@ func (s *Store) lockAgentAdmission(ctx context.Context, tx *sql.Tx, backend stri
 	return err
 }
 
-func (s *Store) checkBindingCapacity(ctx context.Context, tx *sql.Tx, backend, organization string) error {
+func (s *Store) checkBindingCapacity(ctx context.Context, tx *sql.Tx, binding runtime.Binding) error {
+	if err := s.checkEndUserBindingCapacity(ctx, tx, binding); err != nil {
+		return err
+	}
 	if s.admission == nil {
 		return nil
 	}
 	var total, org int
 	err := tx.QueryRowContext(ctx, `SELECT COUNT(*), COUNT(*) FILTER (WHERE organization_id = $2)
-		FROM agent_runtime_bindings WHERE backend = $1 AND status NOT IN ('suspended', 'deleted')`, backend, organization).Scan(&total, &org)
+		FROM agent_runtime_bindings WHERE backend = $1 AND status NOT IN ('suspended', 'deleted')`, binding.Backend, binding.OrganizationID).Scan(&total, &org)
 	if err != nil {
 		return err
 	}
@@ -62,6 +65,9 @@ func (s *Store) checkBindingCapacity(ctx context.Context, tx *sql.Tx, backend, o
 }
 
 func (s *Store) checkJobCapacity(ctx context.Context, tx *sql.Tx, job runtime.Job) error {
+	if err := s.checkEndUserJobCapacity(ctx, tx, job); err != nil {
+		return err
+	}
 	if s.admission == nil {
 		return nil
 	}

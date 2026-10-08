@@ -75,7 +75,7 @@ func Open(cfg config.Config) (*Store, error) {
 		observerMaxEvents:     cfg.ObserverMaxEvents,
 	}
 	if cfg.AgentRuntimeAdmission != nil {
-		limits := *cfg.AgentRuntimeAdmission
+		limits := cfg.AgentRuntimeAdmission.WithDefaults()
 		store.admission = &limits
 	}
 	if err := store.prepare(ctx); err != nil {
