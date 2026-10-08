@@ -17,7 +17,7 @@ files and cleanup must remain available during an admission rollback.
 | P0 | Versioned identity, Worker negotiation, additive persistence, compatibility | Complete; unit, PostgreSQL, race and vet gates passed |
 | P1 | Shared execution factory, live authorization, end-user admission | Complete; shared factory, regression, race and vet gates passed |
 | P2 | Protected file ownership and authenticated preview/download | File contracts, upload provenance and scoped staging implemented; new entry wiring remains P3 and real acceptance P5 |
-| P3 | Published Agent and DigitalHuman interactive script integration | In progress: gated Agent WebApp/API adapters and DigitalHuman versioned opt-in implemented; DigitalHuman runtime injection and UI pending |
+| P3 | Published Agent and DigitalHuman interactive script integration | In progress: gated Agent WebApp/API adapters, DigitalHuman versioned opt-in and runtime injection implemented; configuration UI and real entry acceptance pending |
 | P4 | Published-resource CLI and frozen, idempotent approval continuation | Pending |
 | P5 | Real local/E2B entry acceptance and rollback verification | Pending |
 
@@ -329,7 +329,61 @@ or API continuation, and that anonymous chat remains available. The API liveness
 queries use isolated SQLite fixtures; no new schema or live database migration
 was introduced. This is not real Skill execution or P5 dual-backend/UI acceptance.
 
-Next: inject DigitalHuman execution using its sealed interactive UserSubject and
-publication, then implement P4 published-resource CLI and frozen approval
-continuation before setting readiness or opening any new entry. P5 remains
-outstanding; no runtime deployment or remote push accompanies these commits.
+The DigitalHuman injection described below completes the next backend adapter.
+Configuration UI and P4 published-resource CLI/frozen approval continuation remain
+before readiness or any new entry can be opened. P5 remains outstanding; no
+runtime deployment or remote push accompanies these commits.
+
+## DigitalHuman interactive execution adapter
+
+RuntimeService prepares the optional Linux factory only after the durable
+invocation, RunSpec and execution snapshot pass their existing integrity checks.
+Preparation failure records a safe failed-run message and stops before preparing
+chat. Existing DigitalHuman billing and model selection are unchanged.
+
+The adapter freezes organization, workspace, DigitalHuman, publication UUID,
+run, entry and explicit UserSubject as values. API runs intentionally have no
+persisted ActorID: their verified API-end-user UserSubject owns execution, not
+the API key or its owner. Console and logged-in WebApp require an account subject
+matching their authenticated principal; WebApp also pins its application ID.
+Prepared conversation/message/run ownership is checked again by the adapter and
+shared factory. Anonymous WebApp chat, scheduled tasks and channels receive no
+Linux tools. Legacy snapshots without the opt-in keep their old behavior.
+
+Every invocation rechecks the current published version and its Linux opt-in.
+WebApp/API surface withdrawal and API-key revocation/expiry deny execution;
+console additionally rechecks workspace run permission. A publication change
+fails the old invocation instead of silently selecting a new version. These
+checks do not increment API-key usage counters or rewrite billing identity.
+
+Enabled Skills come from the sealed binding snapshot. Inputs use the existing
+console ownership or external application/end-user upload authorizer, with live
+execution authorization repeated before staging. Artifacts use the protected
+message-bound persister. Operator approvals alone choose Profile, backend,
+network and Home; compatibility-only dependency preparation follows the shared
+factory contract. No platform CLI relay or interactive approval is exposed yet.
+
+Production wiring deliberately leaves EntryReady unset for all DigitalHuman
+entries, including console. Environment configuration and allowlists cannot
+release incomplete approval paths. The deferred ToolFile manager lookup avoids
+depending on initialization order; an absent manager denies enabled preparation
+instead of falling back to publicly signed result files.
+
+Validation used Go 1.26.2 in Linux containers:
+
+- DigitalHuman, shared execution runtime and Agent package tests passed with
+  race detection; focused DigitalHuman route tests passed with race detection.
+- Vet passed for all four packages.
+- Tests cover all three interactive entries, first-turn conversation allocation,
+  immutable publication/subject values, cross-run/message/application/workspace
+  rejection, missing identity, anonymous/background exclusion, live readiness
+  withdrawal, unavailable dependencies and failure-before-chat ordering.
+- Isolated SQLite fixtures exercise real publication, surface and credential
+  liveness queries, including opt-in disablement, expired/revoked keys, disabled
+  applications and replaced publications. Production wiring tests prove that
+  operator configuration does not grant tools while readiness is unset.
+
+No schema change, live database migration, frontend change, remote push or
+deployment is included. These are backend adapter gates, not real Skill or
+dual-backend acceptance. Next: finish P3 configuration UI, then P4 CLI/approval
+continuation and its entry-specific routes before P5 local/E2B acceptance.

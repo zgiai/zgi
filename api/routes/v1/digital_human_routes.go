@@ -3,17 +3,21 @@ package v1
 import (
 	"context"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/config"
+	execution "github.com/zgiai/zgi/api/internal/capabilities/agentexecution"
+	executionruntime "github.com/zgiai/zgi/api/internal/capabilities/agentexecution/runtime"
 	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
 	channelproviders "github.com/zgiai/zgi/api/internal/capabilities/channelruntime/providers"
 	runtimerepo "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	credentialcrypto "github.com/zgiai/zgi/api/internal/infra/credentialcrypto"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
 	connectordispatch "github.com/zgiai/zgi/api/internal/modules/connectors/dispatch"
 	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
 	connectorruntimeauth "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeauth"
@@ -366,6 +370,7 @@ func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRu
 		digitalhuman.WithChannelTransientDispatcher(transientDispatcher),
 		digitalhuman.WithChannelContextRuntime(digitalhuman.NewChannelContextRuntime(repository, channelAdapters, modelSpecResolver)),
 		digitalhuman.WithManualInvocationFileValidator(digitalhuman.NewConsoleFileValidator(deps.FileService)),
+		digitalhuman.WithLinuxExecutionRuntime(newDigitalHumanLinuxExecution(deps)),
 	)
 	digitalhuman.RegisterRunTaskHandler(deps.TaskRegistry, deps.TaskManager, runtime)
 	digitalhuman.RegisterRuntimeInputFollowUpTaskHandler(deps.TaskRegistry, deps.TaskManager, runtime)
@@ -408,4 +413,34 @@ func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRu
 		Runtime: runtime, Tasks: deps.Tasks, Channels: channels, Receivers: receivers,
 		MemoryProjectionRepairer: memoryProjectionRepairer,
 	}
+}
+
+func newDigitalHumanLinuxExecution(deps DigitalHumanRuntimeDeps) *digitalhuman.LinuxExecutionRuntime {
+	entries, err := execution.ParseEntryAdmission(os.Getenv("ZGI_AGENT_RUNTIME_ENTRY_ALLOWLIST_JSON"))
+	if err != nil {
+		// The zero policy admits no DigitalHuman entry. Do not disable legacy
+		// chat or expose malformed deployment configuration to an end user.
+		entries = execution.EntryAdmission{}
+		logger.Warn("DigitalHuman Linux entry allowlist is invalid; execution remains closed")
+	}
+	return digitalhuman.NewLinuxExecutionRuntime(digitalhuman.LinuxExecutionOptions{
+		DB: deps.DB, Approvals: executionruntime.ApprovalsFromEnv(), Gateway: executionruntime.GatewayFromEnv(),
+		Files: deps.FileService, Access: digitalhuman.NewAccessService(deps.DB), Entries: entries,
+		ArtifactManager: func() *tool_file.ToolFileManager { return tool_file.GlobalToolFileManager },
+		AuthorizeConsole: func(ctx context.Context, scope digitalhuman.Scope) error {
+			if deps.OrganizationService == nil {
+				return digitalhuman.ErrNotFound
+			}
+			allowed, err := deps.OrganizationService.CheckWorkspacePermission(ctx, scope.OrganizationID.String(), scope.WorkspaceID.String(), scope.ActorID.String(), workspacemodel.WorkspacePermissionDigitalHumanRun)
+			if err != nil {
+				return err
+			}
+			if !allowed {
+				return digitalhuman.ErrNotFound
+			}
+			return nil
+		},
+		// EntryReady intentionally remains nil until P4 is implemented. An
+		// operator allowlist cannot open incomplete external approval paths.
+	})
 }
