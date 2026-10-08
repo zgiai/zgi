@@ -54,6 +54,24 @@ for (const duration of [undefined, 0, -1, NaN, Infinity]) {
   assert.equal(agentExecutionDuration({ ...shell, duration_ms: duration }), undefined);
 }
 assert.equal(agentExecutionDuration({ ...shell, duration_ms: 350 }), 350);
+assert.equal(
+  agentExecutionDuration({ ...shell, duration_ms: 500, result: { execution_duration_ms: 2500 } }),
+  2500
+);
+assert.equal(
+  agentExecutionDuration({ ...shell, duration_ms: 500, result: { execution_duration_ms: 0 } }),
+  0
+);
+for (const execution of [-1, NaN, Infinity, '500', 1.5]) {
+  assert.equal(
+    agentExecutionDuration({
+      ...shell,
+      duration_ms: 500,
+      result: { execution_duration_ms: execution },
+    }),
+    500
+  );
+}
 assert.deepEqual(
   getAgentExecutionDisplay({
     ...shell,

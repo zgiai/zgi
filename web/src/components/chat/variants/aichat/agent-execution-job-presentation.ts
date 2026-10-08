@@ -45,8 +45,17 @@ export function getAgentExecutionJobPresentation(invocation: AIChatSkillInvocati
   return { tone: 'warning', labelKey: 'consoleChat.skills.agentic.jobUnconfirmed', exitCode };
 }
 
-/** Old traces have a default zero duration, not a measured sub-millisecond Job. */
+/** Prefer measured Job time; legacy default-zero traces are not measurements. */
 export function agentExecutionDuration(invocation: AIChatSkillInvocation): number | undefined {
+  const execution = invocation.result?.execution_duration_ms;
+  if (
+    invocation.tool_name === 'shell_exec' &&
+    typeof execution === 'number' &&
+    Number.isSafeInteger(execution) &&
+    execution >= 0
+  ) {
+    return execution;
+  }
   const duration = invocation.duration_ms;
   return typeof duration === 'number' && Number.isFinite(duration) && duration > 0
     ? duration

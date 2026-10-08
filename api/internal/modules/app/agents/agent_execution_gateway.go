@@ -37,14 +37,16 @@ type agentExecutionBinding struct {
 }
 
 type agentExecutionJob struct {
-	BindingGeneration int64  `json:"binding_generation"`
-	BindingID         string `json:"binding_id"`
-	CancelRequested   bool   `json:"cancel_requested"`
-	ID                string `json:"id"`
-	Status            string `json:"status"`
-	Generation        int64  `json:"generation"`
-	ExitCode          *int   `json:"exit_code"`
-	FailureCode       string `json:"failure_code"`
+	BindingGeneration int64      `json:"binding_generation"`
+	BindingID         string     `json:"binding_id"`
+	CancelRequested   bool       `json:"cancel_requested"`
+	ID                string     `json:"id"`
+	Status            string     `json:"status"`
+	Generation        int64      `json:"generation"`
+	ExitCode          *int       `json:"exit_code"`
+	FailureCode       string     `json:"failure_code"`
+	StartedAt         *time.Time `json:"started_at,omitempty"`
+	FinishedAt        *time.Time `json:"finished_at,omitempty"`
 }
 
 type agentExecutionOutputChunk struct {

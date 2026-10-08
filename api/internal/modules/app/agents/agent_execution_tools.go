@@ -299,6 +299,11 @@ func executeAgentShellToolWithNetworkPolicy(ctx context.Context, gateway agentEx
 			},
 		},
 	}
+	if job.StartedAt != nil && job.FinishedAt != nil && !job.StartedAt.IsZero() && !job.FinishedAt.Before(*job.StartedAt) {
+		duration := job.FinishedAt.Sub(*job.StartedAt).Milliseconds()
+		toolResult.Result["execution_duration_ms"] = duration
+		toolResult.ModelResult["execution_duration_ms"] = duration
+	}
 	if job.Status == "failed" && (job.FailureCode != "" || job.ExitCode == nil || *job.ExitCode < 0) {
 		code, appCode := agentExecutionJobFailure(job.FailureCode)
 		toolResult.Status = "failed"
