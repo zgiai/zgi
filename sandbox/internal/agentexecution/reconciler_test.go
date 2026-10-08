@@ -70,6 +70,48 @@ func TestReconcilerSchedulesRetryOnBackendFailure(t *testing.T) {
 	}
 }
 
+func TestReconcilerCompletesOnlyProvenEmptyDeletedBindingTasks(t *testing.T) {
+	for _, test := range []struct {
+		name                             string
+		status                           BindingStatus
+		backend, bindingID, publishedRef string
+		missing, wantComplete            bool
+	}{
+		{name: "deleted", status: BindingStatusDeleted, backend: "fake", wantComplete: true},
+		{name: "active", status: BindingStatusActive, backend: "fake"},
+		{name: "deleting", status: BindingStatusDeleting, backend: "fake"},
+		{name: "missing", missing: true},
+		{name: "wrong-backend", status: BindingStatusDeleted, backend: "other"},
+		{name: "wrong-binding", status: BindingStatusDeleted, backend: "fake", bindingID: "other"},
+		{name: "published-resource", status: BindingStatusDeleted, backend: "fake", publishedRef: "must-preserve"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repository := newMemoryRepository()
+			if !test.missing {
+				repository.bindings["binding-1"] = Binding{ID: "binding-1", Backend: test.backend, Status: test.status, BackendRef: test.publishedRef}
+			}
+			repository.cleanups = []CleanupTask{{ID: "legacy-empty", ResourceType: "binding", ResourceID: "binding-1", BindingID: test.bindingID, Backend: "fake", Action: "destroy", Status: "retrying"}}
+			repository.cleanups = append(repository.cleanups, CleanupTask{
+				ID: "allocation-discovery", BindingID: "binding-1", ResourceType: "allocation_attempt",
+				Action: "reconcile", Status: "pending", NotBefore: time.Now().Add(time.Hour),
+			})
+			backend := &fakeBackend{destroyErr: ErrInvalidRequest}
+			reconciler, err := NewReconciler(repository, map[string]Backend{"fake": backend}, ReconcilerOptions{OwnerID: "recovery"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			processed, err := reconciler.ReconcileOne(t.Context())
+			completed := repository.cleanups[0].Status == "completed"
+			if !processed || completed != test.wantComplete || (err == nil) != test.wantComplete || backend.destroyCalls != 0 {
+				t.Fatalf("processed=%v completed=%v error=%v destroy calls=%d; want complete=%v", processed, completed, err, backend.destroyCalls, test.wantComplete)
+			}
+			if len(repository.cleanups) != 2 || repository.cleanups[1].Status != "pending" || repository.cleanups[1].Attempts != 0 {
+				t.Fatal("empty-task recovery changed allocation discovery ownership")
+			}
+		})
+	}
+}
+
 func TestReconcilerCompletesClaimAfterBindingWasAlreadyFinalized(t *testing.T) {
 	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
 	repository := newMemoryRepository()

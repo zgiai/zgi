@@ -103,6 +103,22 @@ func (r *Reconciler) ReconcileOne(ctx context.Context) (bool, error) {
 		err := fmt.Errorf("%w: unsupported cleanup %s/%s", ErrInvalidRequest, task.ResourceType, task.Action)
 		return true, r.retryCleanup(ctx, task, err)
 	}
+	if task.BackendRef == "" && task.WorkspaceRef == "" {
+		// Historical failed-delete retries cannot name a provider resource.
+		// Complete only a proved terminal Binding's empty task; discovery of an
+		// ambiguous allocation is a separate durable task handled above.
+		binding, err := r.repository.Binding(ctx, task.ResourceID)
+		if err != nil {
+			return true, r.retryCleanup(ctx, task, err)
+		}
+		if binding.Status != BindingStatusDeleted || binding.Backend != task.Backend ||
+			binding.BackendRef != "" || binding.WorkspaceRef != "" ||
+			(task.BindingID != "" && task.BindingID != binding.ID) {
+			return true, r.retryCleanup(ctx, task, ErrInvalidTransition)
+		}
+		finishedAt := r.now().UTC()
+		return true, r.repository.CompleteCleanup(ctx, task.ID, r.ownerID, true, "", finishedAt, finishedAt)
+	}
 	if err := backend.DestroyBinding(ctx, Allocation{BindingRef: task.BackendRef, WorkspaceRef: task.WorkspaceRef}); err != nil {
 		return true, r.retryCleanup(ctx, task, err)
 	}

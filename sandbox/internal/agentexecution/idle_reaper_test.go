@@ -2,9 +2,87 @@ package agentexecution
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"testing/synctest"
 	"time"
 )
+
+func TestIdleReaperCancelsStalledSuspension(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		repository := newMemoryRepository()
+		binding := activeTestBinding()
+		binding.ExpiresAt = time.Now().Add(-time.Minute)
+		repository.bindings[binding.ID] = binding
+		reaper, err := NewIdleReaper(repository, stalledSuspender{}, IdleReaperOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		start := time.Now()
+		processed, err := reaper.RunOne(t.Context())
+		if !processed || !errors.Is(err, context.DeadlineExceeded) || time.Since(start) != idleSuspendTimeout {
+			t.Fatalf("stalled attempt = %v, %v after %s", processed, err, time.Since(start))
+		}
+	})
+}
+
+type stalledSuspender struct{}
+
+func (stalledSuspender) SuspendBinding(ctx context.Context, _ Scope, _ string, _ int64) (Binding, error) {
+	<-ctx.Done()
+	return Binding{}, ctx.Err()
+}
+
+func TestIdleReaperBackoffSurvivesRestartWithoutStarvingOtherBindings(t *testing.T) {
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	repository := newMemoryRepository()
+	failed := activeTestBinding()
+	failed.Status, failed.UpdatedAt, failed.ExpiresAt = BindingStatusSuspending, now, now.Add(-time.Hour)
+	repository.bindings[failed.ID] = failed
+	healthy := failed
+	healthy.ID, healthy.Status, healthy.ExpiresAt = "healthy", BindingStatusActive, now.Add(-time.Minute)
+	repository.bindings[healthy.ID] = healthy
+	suspender := &reaperSuspender{failID: failed.ID}
+	for range 2 { // A new reaper has no in-memory retry state.
+		reaper, err := NewIdleReaper(repository, suspender, IdleReaperOptions{Now: func() time.Time { return now }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		processed, err := reaper.RunOne(t.Context())
+		if err != nil || !processed || suspender.lastID != healthy.ID {
+			t.Fatalf("healthy binding starved: processed=%v, id=%s, err=%v", processed, suspender.lastID, err)
+		}
+	}
+	repository.mu.Lock()
+	delete(repository.bindings, healthy.ID)
+	repository.mu.Unlock()
+	reaper, err := NewIdleReaper(repository, suspender, IdleReaperOptions{Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(IdleSuspendRetryDelay - time.Nanosecond)
+	if processed, err := reaper.RunOne(t.Context()); processed || err != nil {
+		t.Fatalf("early retry = %v, %v", processed, err)
+	}
+	now = now.Add(time.Nanosecond)
+	if processed, err := reaper.RunOne(t.Context()); !processed || !errors.Is(err, ErrBackendUnavailable) || suspender.lastID != failed.ID {
+		t.Fatalf("due retry = %v, %v, id=%s", processed, err, suspender.lastID)
+	}
+}
+
+type reaperSuspender struct{ failID, lastID string }
+
+func (s *reaperSuspender) SuspendBinding(ctx context.Context, _ Scope, id string, _ int64) (Binding, error) {
+	s.lastID = id
+	deadline, ok := ctx.Deadline()
+	if !ok || time.Until(deadline) > idleSuspendTimeout {
+		return Binding{}, errors.New("idle suspension has no bounded deadline")
+	}
+	if id == s.failID {
+		return Binding{}, ErrBackendUnavailable
+	}
+	return Binding{}, nil
+}
 
 func TestIdleReaperSuspendsExpiredBinding(t *testing.T) {
 	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)

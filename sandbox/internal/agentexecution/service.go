@@ -389,9 +389,15 @@ func (s *Service) DestroyBinding(ctx context.Context, scope Scope, bindingID str
 		}
 	}
 	allocation := Allocation{BindingRef: binding.BackendRef, WorkspaceRef: binding.WorkspaceRef}
-	if err := backend.DestroyBinding(ctx, allocation); err != nil {
-		cleanupErr := s.enqueueDestroy(ctx, binding, allocation, err)
-		return Binding{}, errors.Join(fmt.Errorf("destroy backend binding: %w", err), cleanupErr)
+	// A failed creation may never publish any provider reference. Empty destroy
+	// requests cannot identify a resource and are rejected by real backends.
+	// Keep the durable allocation-attempt/cleanup tasks intact: they still own
+	// discovery and deletion of any ambiguous provider-side outcome.
+	if allocation.BindingRef != "" || allocation.WorkspaceRef != "" {
+		if err := backend.DestroyBinding(ctx, allocation); err != nil {
+			cleanupErr := s.enqueueDestroy(ctx, binding, allocation, err)
+			return Binding{}, errors.Join(fmt.Errorf("destroy backend binding: %w", err), cleanupErr)
+		}
 	}
 	if s.checkpoints != nil {
 		for _, key := range []string{binding.CheckpointKey, binding.PendingCheckpointKey} {

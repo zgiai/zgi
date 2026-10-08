@@ -270,6 +270,33 @@ func TestDestroyBindingIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestDestroyUnpublishedBindingPreservesAllocationCleanup(t *testing.T) {
+	for _, status := range []BindingStatus{BindingStatusFailed, BindingStatusDeleting} {
+		t.Run(string(status), func(t *testing.T) {
+			repository := newMemoryRepository()
+			binding := activeTestBinding()
+			binding.Backend = "fake"
+			binding.Status = status
+			binding.BackendRef, binding.WorkspaceRef = "", ""
+			repository.bindings[binding.ID] = binding
+			repository.cleanups = []CleanupTask{{ID: "attempt-1", BindingID: binding.ID, ResourceType: "allocation_attempt", Status: "pending"}}
+			backend := &fakeBackend{destroyErr: ErrInvalidRequest}
+			service := newTestService(t, repository, backend)
+			scope := Scope{OrganizationID: binding.OrganizationID, SubjectID: binding.SubjectID}
+			if _, err := service.DestroyBinding(context.Background(), scope, binding.ID, binding.Generation-1); !errors.Is(err, ErrGenerationConflict) {
+				t.Fatalf("stale deletion error = %v", err)
+			}
+			deleted, err := service.DestroyBinding(context.Background(), scope, binding.ID, binding.Generation)
+			if err != nil || deleted.Status != BindingStatusDeleted || backend.destroyCalls != 0 {
+				t.Fatalf("unpublished deletion = %+v, %v; destroy calls = %d", deleted, err, backend.destroyCalls)
+			}
+			if len(repository.cleanups) != 1 || repository.cleanups[0].ID != "attempt-1" || repository.cleanups[0].Status != "pending" {
+				t.Fatalf("allocation ownership lost: %+v", repository.cleanups)
+			}
+		})
+	}
+}
+
 func TestDestroyBindingReturnsConcurrentCompletedDeletion(t *testing.T) {
 	repository := newMemoryRepository()
 	backend := &fakeBackend{}
@@ -522,7 +549,7 @@ func (r *memoryRepository) ExpiredBindings(_ context.Context, now time.Time, lim
 		if len(bindings) >= limit && limit > 0 {
 			break
 		}
-		if (binding.Status == BindingStatusActive || binding.Status == BindingStatusSuspending) && !binding.ExpiresAt.After(now) {
+		if (binding.Status == BindingStatusActive || binding.Status == BindingStatusSuspending && !binding.UpdatedAt.After(now.Add(-IdleSuspendRetryDelay))) && !binding.ExpiresAt.After(now) {
 			bindings = append(bindings, binding)
 		}
 	}

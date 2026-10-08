@@ -11,6 +11,15 @@ type BindingSuspender interface {
 	SuspendBinding(context.Context, Scope, string, int64) (Binding, error)
 }
 
+// IdleSuspendRetryDelay is persisted through the suspending Binding's UpdatedAt.
+// Repositories exclude recent attempts before applying their result limit, so a
+// failing oldest Binding cannot starve the rest of the expired queue.
+const IdleSuspendRetryDelay = 15 * time.Minute
+
+// Preserve the existing archive transport's ten-minute budget. The retry delay
+// is longer than this deadline, avoiding a second reaper retry during capture.
+const idleSuspendTimeout = 10 * time.Minute
+
 type IdleReaperOptions struct {
 	Now func() time.Time
 }
@@ -43,7 +52,9 @@ func (r *IdleReaper) RunOne(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 	binding := bindings[0]
-	_, err = r.control.SuspendBinding(ctx, Scope{
+	attemptContext, cancel := context.WithTimeout(ctx, idleSuspendTimeout)
+	defer cancel()
+	_, err = r.control.SuspendBinding(attemptContext, Scope{
 		OrganizationID: binding.OrganizationID,
 		SubjectID:      binding.SubjectID,
 	}, binding.ID, binding.Generation)

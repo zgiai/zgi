@@ -162,6 +162,11 @@ func (b *Backend) captureLanguageLedger(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Checkpointing can precede the first Job. The ABI/cache marker is stored
+	// under HOME too, so create the confined directory before probing the cache.
+	if err := b.workspace.MkdirAll(sessionHomeDirectory, 0o700); err != nil {
+		return err
+	}
 	key, err := b.cacheNamespace(ctx)
 	if err != nil {
 		return err
@@ -186,9 +191,6 @@ func (b *Backend) captureLanguageLedger(ctx context.Context) error {
 	}
 	if len(raw) >= maxPackageLedgerBytes {
 		return agentexecution.ErrOutputLimit
-	}
-	if err := b.workspace.MkdirAll(sessionHomeDirectory, 0o700); err != nil {
-		return err
 	}
 	tmp, err := temporaryName(languageLedgerName)
 	if err != nil {

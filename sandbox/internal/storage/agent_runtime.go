@@ -188,10 +188,11 @@ func (s *Store) ExpiredBindings(ctx context.Context, now time.Time, limit int) (
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT `+agentRuntimeBindingColumns+`
 		FROM agent_runtime_bindings
-		WHERE status IN ('active', 'suspending') AND expires_at <= $1
+		WHERE expires_at <= $1
+		  AND (status = 'active' OR (status = 'suspending' AND updated_at <= $3))
 		ORDER BY expires_at ASC, id ASC
 		LIMIT $2
-	`, now.UTC(), limit)
+	`, now.UTC(), limit, now.UTC().Add(-agentruntime.IdleSuspendRetryDelay))
 	if err != nil {
 		return nil, err
 	}

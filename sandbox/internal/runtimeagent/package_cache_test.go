@@ -4,11 +4,53 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/zgiai/zgi-sandbox/internal/agentexecution"
 	"github.com/zgiai/zgi-sandbox/internal/packagesource"
 )
+
+func TestUnusedPackageEnvironmentCheckpointInitializesHome(t *testing.T) {
+	// Use controlled ABI-probe executables, not a session interpreter or a
+	// machine-dependent Node installation, so this regression never skips.
+	bin := t.TempDir()
+	for _, name := range []string{"python3", "node"} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\nprintf 'test-abi\\n'\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin)
+	source := packageTestBackend(t)
+	if err := source.workspace.Remove(sessionHomeDirectory); err != nil {
+		t.Fatal(err)
+	}
+	source.profileIdentity = "profile@sha256:blank-checkpoint"
+	source.dependencyInstallation = true
+	archive, err := source.ExportWorkspace(t.Context(), agentexecution.Allocation{})
+	if err != nil {
+		t.Fatalf("checkpoint before first Job: %v", err)
+	}
+	raw, err := io.ReadAll(archive)
+	if closeErr := archive.Close(); err != nil || closeErr != nil {
+		t.Fatalf("read checkpoint: %v, close: %v", err, closeErr)
+	}
+	if len(source.jobs) != 0 {
+		t.Fatal("checkpoint unexpectedly started a Job")
+	}
+	ledger, exists, err := source.readLanguageLedger()
+	if err != nil || !exists || len(ledger.Packages) != 0 || len(ledger.CacheKey) != 64 {
+		t.Fatalf("blank ledger = %+v, exists=%v, err=%v", ledger, exists, err)
+	}
+	destination := newTestBackend(t)
+	if err := destination.ImportWorkspace(t.Context(), agentexecution.Allocation{}, bytes.NewReader(raw)); err != nil {
+		t.Fatal(err)
+	}
+	destination.profileIdentity = source.profileIdentity
+	if err := destination.verifyLanguageLedger(t.Context()); err != nil {
+		t.Fatalf("restore unused environment: %v", err)
+	}
+}
 
 func TestPackageCacheNamespaceSurvivesCheckpointAndRejectsProfileMismatch(t *testing.T) {
 	if _, err := os.Stat("/usr/bin/node"); err != nil {

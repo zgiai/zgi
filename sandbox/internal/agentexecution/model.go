@@ -357,6 +357,8 @@ type BindingReader interface {
 }
 
 type ExpiredBindingRepository interface {
+	// Exclude suspending Bindings updated within IdleSuspendRetryDelay before
+	// applying limit. UpdatedAt records the generation-fenced suspension attempt.
 	ExpiredBindings(context.Context, time.Time, int) ([]Binding, error)
 }
 
