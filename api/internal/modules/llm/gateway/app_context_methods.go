@@ -233,6 +233,11 @@ func (s *llmGatewayServiceImpl) createEmbeddingsInternal(
 	if len(providerSelections) == 0 {
 		return nil, reportedNoProviderAvailableError(ctx, req.Model, organizationID.String(), shadowOrganizationID.String())
 	}
+	// Passthrough models have no catalog capabilities and keep the legacy
+	// behavior; catalog and custom models must declare embeddings.
+	if selection := providerSelections[0]; selection.ModelSource != PricingModelSourcePassthrough && !selection.Model.Embeddings {
+		return nil, fmt.Errorf("%w: model %q does not support embeddings", adapter.ErrCapabilityUnsupported, req.Model)
+	}
 
 	// 5. Try each provider selection
 	var lastErr error
