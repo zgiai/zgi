@@ -19,7 +19,11 @@ import (
 // readiness callback confirms the entry's protected-file and approval wiring;
 // operator admission and live resource authorization remain separate gates.
 func (h *AgentsHandler) attachPublishedAgentExecutionTools(ctx context.Context, config *runtimeservice.RunConfig, scope runtimeservice.Scope, caller runtimeservice.Caller, published *dto.AgentWebAppRuntimeConfigResponse, authenticated bool, keyID uuid.UUID) error {
-	h.attachPublishedAttachmentReader(config, scope, caller, published, authenticated, keyID)
+	return h.attachPublishedExecutionTools(ctx, config, scope, caller, published, authenticated, keyID, false)
+}
+
+func (h *AgentsHandler) attachPublishedExecutionTools(ctx context.Context, config *runtimeservice.RunConfig, scope runtimeservice.Scope, caller runtimeservice.Caller, published *dto.AgentWebAppRuntimeConfigResponse, authenticated bool, keyID uuid.UUID, continuation bool) error {
+	h.attachPublishedAttachmentReaderVersion(config, scope, caller, published, authenticated, keyID, continuation)
 	if !h.executionApprovals.Enabled || config == nil || published == nil || published.Config.ExecutionRuntime == nil || !published.Config.ExecutionRuntime.Enabled ||
 		h.executionEntryReady == nil || !h.executionEntryReady(runtimemodel.ConversationCallerAgent, caller.Source) {
 		return nil
@@ -41,7 +45,9 @@ func (h *AgentsHandler) attachPublishedAgentExecutionTools(ctx context.Context, 
 	if err != nil || !entries.Allows(access.organization.String(), "agent", access.entry) || h.executionGateway == nil || h.fileService == nil || tool_file.GlobalToolFileManager == nil {
 		return apperror.New(AppCodeAgentExecutionRuntimeUnavailable, apperror.WithOperation("agent_execution.published_entry_unavailable"))
 	}
-	authorize := func(ctx context.Context) error { return h.authorizePublishedExecution(ctx, access, keyID) }
+	authorize := func(ctx context.Context) error {
+		return h.authorizePublishedExecutionVersion(ctx, access, keyID, continuation)
+	}
 	if err := authorize(ctx); err != nil {
 		return publishedExecutionDenied(err)
 	}
@@ -76,7 +82,11 @@ func publishedExecutionDenied(cause error) error {
 }
 
 func (h *AgentsHandler) authorizePublishedExecution(ctx context.Context, access publishedExecutionAccess, keyID uuid.UUID) error {
-	current, err := h.authorizePublishedAttachmentAccess(ctx, access, keyID)
+	return h.authorizePublishedExecutionVersion(ctx, access, keyID, false)
+}
+
+func (h *AgentsHandler) authorizePublishedExecutionVersion(ctx context.Context, access publishedExecutionAccess, keyID uuid.UUID, continuation bool) error {
+	current, err := h.authorizePublishedAttachmentVersion(ctx, access, keyID, continuation)
 	if err != nil {
 		return err
 	}
@@ -89,6 +99,10 @@ func (h *AgentsHandler) authorizePublishedExecution(ctx context.Context, access 
 // File reading does not depend on Linux admission, but still uses the frozen
 // publication, live application access and immutable upload ownership.
 func (h *AgentsHandler) attachPublishedAttachmentReader(config *runtimeservice.RunConfig, scope runtimeservice.Scope, caller runtimeservice.Caller, published *dto.AgentWebAppRuntimeConfigResponse, authenticated bool, keyID uuid.UUID) {
+	h.attachPublishedAttachmentReaderVersion(config, scope, caller, published, authenticated, keyID, false)
+}
+
+func (h *AgentsHandler) attachPublishedAttachmentReaderVersion(config *runtimeservice.RunConfig, scope runtimeservice.Scope, caller runtimeservice.Caller, published *dto.AgentWebAppRuntimeConfigResponse, authenticated bool, keyID uuid.UUID, continuation bool) {
 	if config == nil {
 		return
 	}
@@ -100,7 +114,7 @@ func (h *AgentsHandler) attachPublishedAttachmentReader(config *runtimeservice.R
 		if _, err := access.resolve(prepared); err != nil {
 			return err
 		}
-		if _, err := h.authorizePublishedAttachmentAccess(ctx, access, keyID); err != nil {
+		if _, err := h.authorizePublishedAttachmentVersion(ctx, access, keyID, continuation); err != nil {
 			return err
 		}
 		owner := execution.UploadOwner{OrganizationID: access.organization.String(), WorkspaceID: access.resourceWorkspace.String(),
@@ -110,6 +124,10 @@ func (h *AgentsHandler) attachPublishedAttachmentReader(config *runtimeservice.R
 }
 
 func (h *AgentsHandler) authorizePublishedAttachmentAccess(ctx context.Context, access publishedExecutionAccess, keyID uuid.UUID) (*dto.AgentWebAppRuntimeConfigResponse, error) {
+	return h.authorizePublishedAttachmentVersion(ctx, access, keyID, false)
+}
+
+func (h *AgentsHandler) authorizePublishedAttachmentVersion(ctx context.Context, access publishedExecutionAccess, keyID uuid.UUID, continuation bool) (*dto.AgentWebAppRuntimeConfigResponse, error) {
 	if h.appService == nil {
 		return nil, execution.ErrInvalidIdentity
 	}
@@ -142,11 +160,15 @@ func (h *AgentsHandler) authorizePublishedAttachmentAccess(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	// Changing publication requires a fresh turn, never a silent substitution in
-	// an existing invocation. Only the published opt-in is relevant, not a draft.
+	// Only a verified frozen continuation may authorize an older publication.
+	// Current access and opt-in are still authoritative; drafts never suffice.
 	if current == nil || current.AgentType != "AGENT" || current.AgentID != access.application.String() ||
 		current.OrganizationID != access.organization.String() || current.WorkspaceID != access.resourceWorkspace.String() ||
-		current.VersionUUID != access.publication.String() || (access.entry == runtimemodel.ConversationSourceWebApp && current.WebAppID != access.webApp.String()) {
+		(!continuation && current.VersionUUID != access.publication.String()) || (access.entry == runtimemodel.ConversationSourceWebApp && current.WebAppID != access.webApp.String()) {
+		return nil, execution.ErrInvalidIdentity
+	}
+	publication, parseErr := uuid.Parse(current.VersionUUID)
+	if parseErr != nil || publication == uuid.Nil || publication.String() != current.VersionUUID {
 		return nil, execution.ErrInvalidIdentity
 	}
 	return current, nil

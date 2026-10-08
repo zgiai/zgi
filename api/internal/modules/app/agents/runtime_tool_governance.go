@@ -117,6 +117,9 @@ func (h *AgentsHandler) ContinueWebAppAgentRuntimeToolGovernance(c *gin.Context)
 		if !ok {
 			return
 		}
+		if !h.restorePublishedPlatformApproval(c, &runtimeCtx) {
+			return
+		}
 	} else {
 		scope, app, webApp, _, ok := h.webAppAgentRuntimeAccess(c)
 		if !ok {
@@ -144,6 +147,9 @@ func (h *AgentsHandler) ContinueAPIKeyAgentRuntimeToolGovernance(c *gin.Context)
 		var ok bool
 		runtimeCtx, ok = h.apiKeyAgentContinuationRuntimeContext(c)
 		if !ok {
+			return
+		}
+		if !h.restorePublishedPlatformApproval(c, &runtimeCtx) {
 			return
 		}
 	} else {

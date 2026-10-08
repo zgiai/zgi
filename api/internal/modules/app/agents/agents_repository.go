@@ -589,6 +589,14 @@ func (r *agentsRepository) GetLatestAgentPublishedVersion(ctx context.Context, a
 	return &version, nil
 }
 
+func (r *agentsRepository) getAgentPublishedVersionByUUID(ctx context.Context, agentID, versionUUID uuid.UUID) (*AgentPublishedVersion, error) {
+	var version AgentPublishedVersion
+	if err := r.db.WithContext(ctx).Where("agent_id = ? AND version_uuid = ? AND deleted_at IS NULL", agentID, versionUUID).Take(&version).Error; err != nil {
+		return nil, fmt.Errorf("get frozen agent publication: %w", err)
+	}
+	return &version, nil
+}
+
 func (r *agentsRepository) ListAgentPublishedVersions(ctx context.Context, agentID string, limit, offset int) ([]*AgentPublishedVersion, int64, error) {
 	var versions []*AgentPublishedVersion
 	var total int64
