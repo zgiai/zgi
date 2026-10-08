@@ -440,8 +440,15 @@ func (b *Backend) connect(ctx context.Context, sandboxID string) (*runtimeagent.
 
 func (b *Backend) remote(connection sandboxConnection, token string) (*runtimeagent.RemoteBackend, error) {
 	baseURL := b.client.sandboxURL(b.agentPort, connection.SandboxID, connection.Domain)
+	// Large attachment transfers can outlive the short control-plane timeout.
+	// Copy the client so control calls retain their timeout; request contexts
+	// still bound readiness checks, cancellation and individual operations.
+	dataClient := *b.client.httpClient
+	if dataClient.Timeout > 0 && dataClient.Timeout < 2*time.Minute {
+		dataClient.Timeout = 2 * time.Minute
+	}
 	return runtimeagent.NewRemote(runtimeagent.RemoteOptions{
-		BaseURL: baseURL, Token: token, HTTPClient: b.client.httpClient,
+		BaseURL: baseURL, Token: token, HTTPClient: &dataClient,
 		Headers: http.Header{
 			"E2B-Traffic-Access-Token": []string{connection.TrafficAccessToken},
 			"E2b-Sandbox-Id":           []string{connection.SandboxID},

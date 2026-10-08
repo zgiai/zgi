@@ -48,6 +48,22 @@ func TestDataPlaneSubmitsIdempotentTenantScopedJob(t *testing.T) {
 	}
 }
 
+func TestDataPlaneAttachmentUploadLimitDoesNotRaiseExportLimit(t *testing.T) {
+	bindings, jobs := newMemoryRepository(), newMemoryJobRepository()
+	backend := newFakeExecutionBackend()
+	service, err := NewDataPlaneService(bindings, jobs, map[string]ExecutionBackend{"fake": backend}, DataPlaneOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if service.maxFileUploadBytes != 100<<20 || service.maxFileTransferBytes != 64<<20 {
+		t.Fatalf("upload=%d download=%d", service.maxFileUploadBytes, service.maxFileTransferBytes)
+	}
+	service, err = NewDataPlaneService(bindings, jobs, map[string]ExecutionBackend{"fake": backend}, DataPlaneOptions{MaxFileTransferBytes: 1024})
+	if err != nil || service.maxFileUploadBytes != 1024 {
+		t.Fatalf("explicit operator limit changed: service=%+v error=%v", service, err)
+	}
+}
+
 func TestWorkerStreamsAndCompletesJob(t *testing.T) {
 	bindings := newMemoryRepository()
 	bindings.bindings["binding-1"] = activeTestBinding()

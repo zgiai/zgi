@@ -19,6 +19,7 @@ const (
 	defaultCancelPoll      = 100 * time.Millisecond
 	defaultJobOutputBytes  = 4 * 1024 * 1024
 	defaultFileTransferMax = 64 * 1024 * 1024
+	defaultFileUploadMax   = 100 * 1024 * 1024
 )
 
 type SubmitJobRequest struct {
@@ -40,6 +41,7 @@ type DataPlaneOptions struct {
 	Now                  func() time.Time
 	NewID                func(string) (string, error)
 	MaxFileTransferBytes int64
+	MaxFileUploadBytes   int64
 	IdleTTL              time.Duration
 }
 
@@ -51,6 +53,7 @@ type DataPlaneService struct {
 	now                  func() time.Time
 	newID                func(string) (string, error)
 	maxFileTransferBytes int64
+	maxFileUploadBytes   int64
 	idleTTL              time.Duration
 }
 
@@ -63,6 +66,12 @@ func NewDataPlaneService(bindings BindingReader, jobs JobRepository, backends ma
 	}
 	if options.NewID == nil {
 		options.NewID = randomID
+	}
+	if options.MaxFileUploadBytes <= 0 {
+		options.MaxFileUploadBytes = options.MaxFileTransferBytes
+		if options.MaxFileUploadBytes <= 0 {
+			options.MaxFileUploadBytes = defaultFileUploadMax
+		}
 	}
 	if options.MaxFileTransferBytes <= 0 {
 		options.MaxFileTransferBytes = defaultFileTransferMax
@@ -77,7 +86,8 @@ func NewDataPlaneService(bindings BindingReader, jobs JobRepository, backends ma
 		maxJobTimeout: options.MaxJobTimeout,
 		bindings:      bindings, jobs: jobs, backends: copyExecutionBackends(backends),
 		now: options.Now, newID: options.NewID, maxFileTransferBytes: options.MaxFileTransferBytes,
-		idleTTL: options.IdleTTL,
+		maxFileUploadBytes: options.MaxFileUploadBytes,
+		idleTTL:            options.IdleTTL,
 	}, nil
 }
 
@@ -176,7 +186,13 @@ func (s *DataPlaneService) Capabilities(ctx context.Context, scope Scope, bindin
 	if !ok {
 		return RuntimeCapabilities{}, fmt.Errorf("%w: %s", ErrBackendUnavailable, binding.Backend)
 	}
-	return backend.Capabilities(ctx, allocationForBinding(binding))
+	capabilities, err := backend.Capabilities(ctx, allocationForBinding(binding))
+	if err != nil {
+		return RuntimeCapabilities{}, err
+	}
+	capabilities.MaxUploadBytes = min(capabilities.MaxUploadBytes, s.maxFileUploadBytes)
+	capabilities.MaxDownloadBytes = min(capabilities.MaxDownloadBytes, s.maxFileTransferBytes)
+	return capabilities, nil
 }
 
 func (s *DataPlaneService) UploadFile(ctx context.Context, scope Scope, bindingID string, filePath string, reader io.Reader, size int64) (FileInfo, error) {
@@ -184,7 +200,7 @@ func (s *DataPlaneService) UploadFile(ctx context.Context, scope Scope, bindingI
 	if err != nil {
 		return FileInfo{}, err
 	}
-	if reader == nil || size < 0 || size > s.maxFileTransferBytes {
+	if reader == nil || size < 0 || size > s.maxFileUploadBytes {
 		return FileInfo{}, fmt.Errorf("%w: upload size is invalid", ErrInvalidRequest)
 	}
 	binding, err := s.activeBinding(ctx, scope, bindingID, true)

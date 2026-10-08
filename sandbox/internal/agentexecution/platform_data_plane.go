@@ -53,7 +53,7 @@ func (s *DataPlaneService) UploadPlatformFile(ctx context.Context, scope Scope, 
 	if err != nil {
 		return FileInfo{}, err
 	}
-	if reader == nil || size < 0 || size > s.maxFileTransferBytes {
+	if reader == nil || size < 0 || size > s.maxFileUploadBytes {
 		return FileInfo{}, ErrInvalidRequest
 	}
 	job, _, err := s.platformJob(ctx, scope, jobID)
@@ -110,7 +110,7 @@ func (a *HTTPAPI) handlePlatformFiles(w http.ResponseWriter, request *http.Reque
 			writeAgentRuntimeError(w, http.StatusLengthRequired, "content_length_required", "Content-Length is required")
 			return
 		}
-		if request.ContentLength > defaultFileTransferMax {
+		if request.ContentLength > defaultFileUploadMax {
 			writeAgentRuntimeError(w, http.StatusRequestEntityTooLarge, "file_too_large", "file exceeds the transfer limit")
 			return
 		}

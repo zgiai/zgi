@@ -92,7 +92,7 @@ func run(parent context.Context) error {
 		JobGID:                    uint32(envInt64("ZGI_RUNTIME_AGENT_JOB_GID", 0)),
 		PackageSources:            sources, APTConfigPath: aptConfigPath,
 		ProfileIdentity:  envValue("ZGI_RUNTIME_AGENT_PROFILE_IDENTITY", ""),
-		MaxUploadBytes:   envInt64("ZGI_RUNTIME_AGENT_MAX_UPLOAD_BYTES", 64*1024*1024),
+		MaxUploadBytes:   envInt64("ZGI_RUNTIME_AGENT_MAX_UPLOAD_BYTES", 100*1024*1024),
 		MaxDownloadBytes: envInt64("ZGI_RUNTIME_AGENT_MAX_DOWNLOAD_BYTES", 64*1024*1024),
 	})
 	if err != nil {

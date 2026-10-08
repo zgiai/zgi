@@ -499,6 +499,19 @@ func TestAgentExecutionAttachmentStagingChecksCapabilityAndSize(t *testing.T) {
 	}
 }
 
+func TestAgentExecutionAttachmentsRejectWholeOversizedBatchBeforeTransfer(t *testing.T) {
+	reader := &fakeRuntimeAttachmentReader{}
+	gateway := &fakeAgentExecutionGateway{}
+	refs := []runtimeservice.RuntimeAttachmentRef{
+		{ID: uuid.NewString(), Name: "one.pdf", Size: 70 << 20},
+		{ID: uuid.NewString(), Name: "two.pdf", Size: (30 << 20) + 1},
+	}
+	_, err := stageAgentExecutionAttachments(t.Context(), gateway, agentExecutionScope{}, "binding", agentExecutionCapabilities{FileTransfer: true, MaxUploadBytes: 100 << 20}, refs, reader)
+	if err == nil || reader.calls != 0 || len(gateway.uploads) != 0 {
+		t.Fatalf("oversized batch: err=%v reads=%d uploads=%d", err, reader.calls, len(gateway.uploads))
+	}
+}
+
 func TestAgentExecutionExportCreatesDownloadArtifactWithoutTraceContent(t *testing.T) {
 	fake := &fakeAgentExecutionGateway{
 		binding:      agentExecutionBinding{ID: "binding-1", Status: "active"},

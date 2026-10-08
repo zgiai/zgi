@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	"io"
 	"path"
 	"strings"
@@ -78,14 +79,14 @@ func (f *agentPlatformFiles) Handle(ctx context.Context, scope runtimeplatform.S
 		if reference == nil {
 			return runtimeplatform.Response{}, platformFileError(catalog.CodePermissionDenied, "runtime_platform.input_reference", nil)
 		}
-		if reference.Size < 0 || reference.Size > agentExecutionFileLimit || reference.Size > capabilities.MaxUploadBytes {
+		if reference.Size < 0 || reference.Size > chatfile.MaxTurnBytes || reference.Size > capabilities.MaxUploadBytes {
 			return runtimeplatform.Response{}, platformFileError(catalog.CodeRequestInvalid, "runtime_platform.file_size", nil)
 		}
 		data, err := f.reader.DownloadFile(ctx, reference.ID)
 		if err != nil {
 			return runtimeplatform.Response{}, platformFileError(catalog.CodeResourceNotFound, "runtime_platform.input_read", err)
 		}
-		if int64(len(data)) != reference.Size || len(data) > agentExecutionFileLimit || int64(len(data)) > capabilities.MaxUploadBytes {
+		if int64(len(data)) != reference.Size || int64(len(data)) > chatfile.MaxTurnBytes || int64(len(data)) > capabilities.MaxUploadBytes {
 			return runtimeplatform.Response{}, platformFileError(catalog.CodeRequestInvalid, "runtime_platform.file_size", nil)
 		}
 		if err := f.upload(ctx, executionScope, scope.BindingID, scope.JobID, args.Path, data); err != nil {

@@ -313,7 +313,7 @@ func (a *HTTPAPI) handleFiles(w http.ResponseWriter, request *http.Request, scop
 			writeAgentRuntimeError(w, http.StatusLengthRequired, "content_length_required", "Content-Length is required")
 			return
 		}
-		if request.ContentLength > defaultFileTransferMax {
+		if request.ContentLength > defaultFileUploadMax {
 			writeAgentRuntimeError(w, http.StatusRequestEntityTooLarge, "file_too_large", "file exceeds the transfer limit")
 			return
 		}

@@ -76,8 +76,8 @@ func TestScopedInputsRejectInvalidReferences(t *testing.T) {
 	scope := execution.Scope{OrganizationID: uuid.NewString(), SubjectID: uuid.NewString()}
 	for _, refs := range [][]runtimeservice.RuntimeAttachmentRef{
 		{ref, ref}, {{ID: "invalid"}}, {{ID: uuid.NewString(), Size: -1}},
-		{{ID: uuid.NewString(), Size: agentExecutionFileLimit + 1}},
-		{{ID: uuid.NewString(), Size: agentExecutionFileLimit}, ref},
+		{{ID: uuid.NewString(), Size: 100<<20 + 1}},
+		{{ID: uuid.NewString(), Size: 100 << 20}, ref},
 	} {
 		if _, err := NewScopedAttachmentReader(&inputTestSource{}, scope, refs, allowInputTestFile); err == nil {
 			t.Fatalf("accepted refs=%+v", refs)

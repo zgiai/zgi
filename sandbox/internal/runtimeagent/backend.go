@@ -140,7 +140,7 @@ func New(options Options) (*Backend, error) {
 		return nil, fmt.Errorf("open runtime workspace: %w", err)
 	}
 	if options.MaxUploadBytes <= 0 {
-		options.MaxUploadBytes = 64 * 1024 * 1024
+		options.MaxUploadBytes = 100 * 1024 * 1024
 	}
 	if options.MaxDownloadBytes <= 0 {
 		options.MaxDownloadBytes = 64 * 1024 * 1024

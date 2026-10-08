@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 	execution "github.com/zgiai/zgi/api/internal/capabilities/agentexecution"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/pkg/apperror"
 	"github.com/zgiai/zgi/api/pkg/apperror/catalog"
@@ -44,11 +45,11 @@ func NewScopedAttachmentReader(source AttachmentSource, scope execution.Scope, r
 	var total int64
 	for _, ref := range refs {
 		id, err := uuid.Parse(ref.ID)
-		if err != nil || id == uuid.Nil || id.String() != ref.ID || seen[ref.ID] || ref.Size < 0 || ref.Size > agentExecutionFileLimit {
+		if err != nil || id == uuid.Nil || id.String() != ref.ID || seen[ref.ID] || ref.Size < 0 || ref.Size > chatfile.MaxTurnBytes-total {
 			return nil, inputAccessDenied()
 		}
 		total += ref.Size
-		if total > agentExecutionFileLimit {
+		if total > chatfile.MaxTurnBytes {
 			return nil, inputAccessDenied()
 		}
 		seen[ref.ID] = true

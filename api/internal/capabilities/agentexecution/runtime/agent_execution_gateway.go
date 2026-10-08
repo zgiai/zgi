@@ -314,7 +314,11 @@ func (g *agentExecutionHTTPGateway) uploadRuntimeFile(ctx context.Context, scope
 	if err := setExecutionIdentityHeader(req, scope); err != nil {
 		return err
 	}
-	resp, err := g.client.Do(req)
+	uploadClient := *g.client
+	if len(data) > agentExecutionFileLimit && uploadClient.Timeout > 0 && uploadClient.Timeout < 2*time.Minute {
+		uploadClient.Timeout = 2 * time.Minute
+	}
+	resp, err := uploadClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("agent execution upload request: %w", err)
 	}

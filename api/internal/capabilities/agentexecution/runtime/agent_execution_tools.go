@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
+	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/pkg/apperror"
 )
@@ -250,14 +251,20 @@ func stageAgentExecutionAttachments(ctx context.Context, gateway agentExecutionG
 	}
 	paths := make([]string, 0, len(attachments))
 	var total int64
+	// Check the whole batch before transferring anything or running user code.
 	for _, attachment := range attachments {
-		fileID, err := uuid.Parse(attachment.ID)
-		if err != nil || attachment.Size < 0 || attachment.Size > capabilities.MaxUploadBytes || attachment.Size > 64<<20 {
+		if _, err := uuid.Parse(attachment.ID); err != nil || attachment.Size < 0 || attachment.Size > capabilities.MaxUploadBytes {
 			return nil, fmt.Errorf("agent execution attachment is invalid or exceeds the transfer limit")
 		}
-		total += attachment.Size
-		if total > 64<<20 {
+		if attachment.Size > chatfile.MaxTurnBytes-total {
 			return nil, fmt.Errorf("agent execution attachments exceed the per-turn transfer limit")
+		}
+		total += attachment.Size
+	}
+	for _, attachment := range attachments {
+		fileID, err := uuid.Parse(attachment.ID)
+		if err != nil {
+			return nil, fmt.Errorf("agent execution attachment is invalid or exceeds the transfer limit")
 		}
 		data, err := reader.DownloadFile(ctx, attachment.ID)
 		if err != nil {
