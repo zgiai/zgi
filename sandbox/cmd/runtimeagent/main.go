@@ -41,6 +41,9 @@ func run(parent context.Context) error {
 		return err
 	}
 	workspace := envValue("ZGI_RUNTIME_AGENT_WORKSPACE", "/workspace")
+	if envBool("ZGI_RUNTIME_AGENT_PLATFORM_CLI_ENABLED", false) && (os.Geteuid() != 0 || envInt64("ZGI_RUNTIME_AGENT_JOB_UID", 0) <= 0 || envInt64("ZGI_RUNTIME_AGENT_JOB_GID", 0) <= 0) {
+		return errors.New("platform CLI requires a root control process and non-root Jobs")
+	}
 	var sources packagesource.Config
 	if raw := strings.TrimSpace(os.Getenv("ZGI_RUNTIME_AGENT_PACKAGE_SOURCES_JSON")); raw != "" {
 		decoder := json.NewDecoder(strings.NewReader(raw))
@@ -71,6 +74,8 @@ func run(parent context.Context) error {
 		}
 	}
 	backend, err := runtimeagent.New(runtimeagent.Options{
+		PlatformCLI:               envBool("ZGI_RUNTIME_AGENT_PLATFORM_CLI_ENABLED", false),
+		PlatformSocketPath:        envValue("ZGI_RUNTIME_AGENT_PLATFORM_SOCKET", "/run/zgi-agent/platform.sock"),
 		WorkspaceRoot:             workspace,
 		NetworkMode:               envValue("ZGI_RUNTIME_AGENT_NETWORK_MODE", "disabled"),
 		EgressMode:                envValue("ZGI_RUNTIME_AGENT_EGRESS_MODE", runtimeagent.EgressModeBridge),
@@ -146,6 +151,27 @@ func run(parent context.Context) error {
 		IdleTimeout:       30 * time.Second,
 	}
 	var packageServer *http.Server
+	var platformServeError <-chan error
+	if capabilities.PlatformProtocolVersion == agentexecution.PlatformProtocolVersion {
+		platformListener, platformCleanup, err := listenRuntimePackage("unix://" + envValue("ZGI_RUNTIME_AGENT_PLATFORM_SOCKET", "/run/zgi-agent/platform.sock"))
+		if err != nil {
+			return err
+		}
+		defer platformCleanup()
+		platformServer := &http.Server{Handler: backend.PlatformHandler(), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
+		platformResult := make(chan error, 1)
+		platformDone := make(chan struct{})
+		platformServeError = platformResult
+		go func() {
+			defer close(platformDone)
+			serveErr := platformServer.Serve(platformListener)
+			if errors.Is(serveErr, http.ErrServerClosed) {
+				serveErr = nil
+			}
+			platformResult <- serveErr
+		}()
+		defer func() { _ = platformServer.Close(); <-platformDone }()
+	}
 	if packageListener != nil {
 		packageServer = &http.Server{Handler: http.HandlerFunc(handler.ServePackageHTTP), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
 		go func() {
@@ -166,6 +192,12 @@ func run(parent context.Context) error {
 		serveResult <- err
 	}()
 	select {
+	case err := <-platformServeError:
+		_ = server.Close()
+		if packageServer != nil {
+			_ = packageServer.Close()
+		}
+		return err
 	case err := <-serveResult:
 		return err
 	case <-ctx.Done():

@@ -23,7 +23,7 @@ Every create request sets `allow_internet_access=false`, sends E2B's supported f
 ## Approved template contract
 
 E2B Build System 2.0 accepts a single-stage Dockerfile. Prepare the Linux
-Runtime Agent binary, verify the local image contract, then create the template
+Runtime Agent and `zgi` CLI binaries, verify the local image contract, then create the template
 with the pinned CLI version:
 
 ```bash
@@ -36,7 +36,7 @@ npx --yes @e2b/cli@2.20.0 template create <approved-template-name> \
   --path sandbox \
   --dockerfile Dockerfile.agent-runtime-e2b \
   --cmd /usr/local/bin/zgi-runtime-agent-bootstrap \
-  --ready-cmd 'test -x /usr/local/bin/zgi-runtime-agent && test -x /usr/local/bin/zgi-runtime-agent-bootstrap'
+  --ready-cmd 'test -x /usr/local/bin/zgi-runtime-agent && test -x /usr/local/bin/zgi-runtime-agent-bootstrap && zgi --help >/dev/null'
 ```
 
 Build the package-install template as a separate immutable E2B template. The
@@ -104,6 +104,7 @@ Set the shared Worker variables documented in `agent-runtime-local.md`, then sel
 | Variable | Purpose |
 |---|---|
 | `ZGI_AGENT_RUNTIME_BACKEND=e2b` | Selects only the E2B backend for this Worker instance. |
+| `ZGI_AGENT_RUNTIME_PLATFORM_CLI_ENABLED` | Defaults to false. Requires a tested protocol-v1 template containing `zgi`, root control process/non-root Jobs and authenticated bootstrap admission; enable the API flag separately. Does not add platform hosts to package egress. |
 | `ZGI_AGENT_RUNTIME_E2B_API_KEY` | E2B control-plane credential. Never reuse the Worker API credential. |
 | `ZGI_AGENT_RUNTIME_E2B_PROFILES_JSON` | Approved map, for example `{"standard":{"template_id":"zgi-runtime-template","dependency_preparation":false}}`. A package-install entry must additionally set `dependency_installation=true`, `package_network_mode=package-install`, and a non-empty `egress_allowed_hosts` list containing only approved package sources. |
 | `ZGI_AGENT_RUNTIME_E2B_API_URL` | Optional control-plane URL; defaults to `https://api.e2b.app`. |

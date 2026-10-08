@@ -220,6 +220,31 @@ func (a *HTTPAPI) handleJobs(w http.ResponseWriter, request *http.Request, scope
 		return
 	}
 	switch segments[1] {
+	case "platform-files":
+		a.handlePlatformFiles(w, request, scope, jobID)
+	case "platform-requests":
+		platform, ok := a.data.(interface {
+			PlatformRequests(context.Context, Scope, string) ([]PlatformRequest, error)
+			ResolvePlatformRequest(context.Context, Scope, string, PlatformResponse) error
+		})
+		if !ok {
+			a.writeResult(w, http.StatusOK, nil, ErrBackendUnavailable)
+			return
+		}
+		switch request.Method {
+		case http.MethodGet:
+			requests, err := platform.PlatformRequests(request.Context(), scope, jobID)
+			a.writeResult(w, http.StatusOK, requests, err)
+		case http.MethodPost:
+			var body PlatformResponse
+			if !a.decodeJSON(w, request, &body) {
+				return
+			}
+			err := platform.ResolvePlatformRequest(request.Context(), scope, jobID, body)
+			a.writeResult(w, http.StatusOK, nil, err)
+		default:
+			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
+		}
 	case "cancel":
 		if request.Method != http.MethodPost {
 			writeMethodNotAllowed(w, http.MethodPost)
@@ -457,23 +482,25 @@ func bindingResponseFrom(binding Binding) bindingResponse {
 }
 
 type jobResponse struct {
-	ID              string     `json:"id"`
-	BindingID       string     `json:"binding_id"`
-	Status          JobStatus  `json:"status"`
-	Generation      int64      `json:"generation"`
-	ExitCode        *int       `json:"exit_code,omitempty"`
-	FailureReason   string     `json:"failure_reason,omitempty"`
-	FailureCode     string     `json:"failure_code,omitempty"`
-	CancelRequested bool       `json:"cancel_requested"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
-	StartedAt       *time.Time `json:"started_at,omitempty"`
-	FinishedAt      *time.Time `json:"finished_at,omitempty"`
+	BindingGeneration int64      `json:"binding_generation"`
+	ID                string     `json:"id"`
+	BindingID         string     `json:"binding_id"`
+	Status            JobStatus  `json:"status"`
+	Generation        int64      `json:"generation"`
+	ExitCode          *int       `json:"exit_code,omitempty"`
+	FailureReason     string     `json:"failure_reason,omitempty"`
+	FailureCode       string     `json:"failure_code,omitempty"`
+	CancelRequested   bool       `json:"cancel_requested"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
+	StartedAt         *time.Time `json:"started_at,omitempty"`
+	FinishedAt        *time.Time `json:"finished_at,omitempty"`
 }
 
 func jobResponseFrom(job Job) jobResponse {
 	return jobResponse{
-		ID: job.ID, BindingID: job.BindingID, Status: job.Status, Generation: job.Generation,
+		BindingGeneration: job.BindingGeneration,
+		ID:                job.ID, BindingID: job.BindingID, Status: job.Status, Generation: job.Generation,
 		ExitCode: job.ExitCode, FailureReason: job.FailureReason, FailureCode: publicJobFailureCode(job), CancelRequested: job.CancelRequested,
 		CreatedAt: job.CreatedAt, UpdatedAt: job.UpdatedAt, StartedAt: job.StartedAt, FinishedAt: job.FinishedAt,
 	}

@@ -83,6 +83,7 @@ type Profile struct {
 }
 
 type Options struct {
+	PlatformCLI  bool
 	Address      string
 	Namespace    string
 	RootDir      string
@@ -99,6 +100,7 @@ type Options struct {
 }
 
 type Provider struct {
+	platformCLI  bool
 	client       *containerdclient.Client
 	rootDir      string
 	runscConfig  string
@@ -132,7 +134,8 @@ func New(options Options) (*Provider, error) {
 		return nil, fmt.Errorf("connect containerd: %w", err)
 	}
 	return &Provider{
-		client: client, rootDir: rootDir, runscConfig: filepath.Join(rootDir, "runsc-controlled.toml"), runtimeName: options.RuntimeName,
+		platformCLI: options.PlatformCLI,
+		client:      client, rootDir: rootDir, runscConfig: filepath.Join(rootDir, "runsc-controlled.toml"), runtimeName: options.RuntimeName,
 		profiles: cloneProfiles(options.Profiles), startupLimit: options.StartupLimit,
 		memoryBytes: options.MemoryBytes, pids: options.PIDs,
 		cpuPeriod: options.CPUPeriod, cpuQuota: options.CPUQuota,
@@ -150,6 +153,8 @@ func (p *Provider) Close() error {
 	p.bridgeMu.Unlock()
 	return p.client.Close()
 }
+
+func (p *Provider) PlatformCLIEnabled() bool { return p.platformCLI }
 
 func (p *Provider) Create(ctx context.Context, spec agentexecution.CreateSpec) (agentexecution.Allocation, error) {
 	return p.launch(ctx, spec)
@@ -245,6 +250,11 @@ func (p *Provider) launch(ctx context.Context, spec agentexecution.CreateSpec) (
 	if err := prepareOwnedDirectory(controlDir, p.userID, p.groupID, 0o750); err != nil {
 		return allocation, fmt.Errorf("prepare runtime control directory: %w", err)
 	}
+	if p.platformCLI {
+		if err := prepareOwnedDirectory(controlDir, 0, p.groupID, 0o750); err != nil {
+			return allocation, fmt.Errorf("protect platform control directory: %w", err)
+		}
+	}
 	if err := os.MkdirAll(secretDir, 0o700); err != nil {
 		return allocation, fmt.Errorf("prepare runtime secret directory: %w", err)
 	}
@@ -269,7 +279,7 @@ func (p *Provider) launch(ctx context.Context, spec agentexecution.CreateSpec) (
 		}
 	}
 	jobUID, jobGID := uint32(0), uint32(0)
-	if profile.DependencyInstallation {
+	if profile.DependencyInstallation || p.platformCLI {
 		jobUID, jobGID = p.userID, p.groupID
 	}
 	container, err := p.client.NewContainer(startupContext, allocation.BindingRef,
@@ -288,6 +298,7 @@ func (p *Provider) launch(ctx context.Context, spec agentexecution.CreateSpec) (
 			oci.WithEnv([]string{
 				"ZGI_RUNTIME_AGENT_TOKEN=" + token,
 				"ZGI_RUNTIME_AGENT_WORKSPACE=/workspace",
+				"ZGI_RUNTIME_AGENT_PLATFORM_CLI_ENABLED=" + strconv.FormatBool(p.platformCLI),
 				"ZGI_RUNTIME_AGENT_LISTEN=unix:///run/zgi-agent/" + runtimeSocketName,
 				"ZGI_RUNTIME_AGENT_NETWORK_MODE=" + fallback(networkMode, "disabled"),
 				"ZGI_RUNTIME_AGENT_EGRESS_PROXY_ADDRESS=127.0.0.1:3128",
@@ -310,7 +321,7 @@ func (p *Provider) launch(ctx context.Context, spec agentexecution.CreateSpec) (
 				{Destination: "/run/zgi-agent", Type: "bind", Source: controlDir, Options: []string{"rbind", "rw", "nosuid", "nodev", "noexec"}},
 				{Destination: "/tmp", Type: "tmpfs", Source: "tmpfs", Options: []string{"nosuid", "nodev", "mode=1777", "size=67108864"}},
 			}),
-			p.hardenSpec(profile.DependencyInstallation),
+			p.hardenSpec(profile.DependencyInstallation || p.platformCLI),
 		),
 	)
 	if err != nil {
@@ -419,6 +430,9 @@ func (p *Provider) waitReady(ctx context.Context, allocation agentexecution.Allo
 		if err == nil {
 			var capabilities agentexecution.RuntimeCapabilities
 			capabilities, err = connection.Capabilities(readyContext, allocation)
+			if err == nil && p.platformCLI && capabilities.PlatformProtocolVersion != agentexecution.PlatformProtocolVersion {
+				return fmt.Errorf("%w: approved image lacks platform CLI protocol", agentexecution.ErrBackendUnavailable)
+			}
 			if err == nil && profile.DependencyInstallation {
 				return validatePackageLedgerCapability(capabilities)
 			}

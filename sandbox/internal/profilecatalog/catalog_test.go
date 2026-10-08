@@ -87,6 +87,7 @@ func TestStandardProfileOfflineXMLResources(t *testing.T) {
 			"COPY profiles/cc-codex-standard/resources/ /opt/zgi-profile/resources/",
 			"XML_CATALOG_FILES=/opt/zgi-profile/resources/xml/catalog.xml",
 			"python verify.py",
+			"/usr/local/bin/zgi",
 		} {
 			if !strings.Contains(string(raw), contract) {
 				t.Errorf("%s is missing offline XML resource contract %q", file, contract)

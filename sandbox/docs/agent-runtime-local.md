@@ -46,6 +46,15 @@ Required environment:
 
 Important optional settings are `ZGI_AGENT_RUNTIME_LISTEN` (default `127.0.0.1:2670`), `ZGI_AGENT_RUNTIME_WORKER_ID`, `ZGI_AGENT_RUNTIME_ROOT` (default `/var/lib/zgi-agent-runtime`), `ZGI_AGENT_RUNTIME_CONTAINERD_ADDRESS`, `ZGI_AGENT_RUNTIME_MAX_WORKERS`, `ZGI_AGENT_RUNTIME_IDLE_TTL_SECONDS` (default 1800), `ZGI_AGENT_RUNTIME_STARTUP_TIMEOUT_SECONDS` (default 30), and the `MEMORY_BYTES`, `PIDS`, `CPU_PERIOD`, and `CPU_QUOTA` variables with the `ZGI_AGENT_RUNTIME_` prefix.
 
+`ZGI_AGENT_RUNTIME_PLATFORM_CLI_ENABLED` defaults to false. Opting in requires a
+tested image with platform protocol version 1 and `zgi`, plus the same API-side
+switch. The control process runs as root but Jobs remain non-root; rootfs
+writability still depends on the existing package-install Profile, not this flag.
+The CLI uses a separate sandbox-local Unix socket and the existing authenticated
+Worker connection, without changing network egress. See
+[the platform CLI contract](../../docs/agent-runtime-platform-cli.md) for limits
+and the current acceptance status.
+
 Keep the runtime root short: the complete `<root>/control/zgi-ar-<binding-id>/runtime.sock` path must fit Linux's 107-byte filesystem Unix socket limit (bytes, not characters). The Worker rejects an overlong path before creating compute and asks the operator to shorten `ZGI_AGENT_RUNTIME_ROOT`. Increasing the startup timeout does not fix this limit.
 
 `ZGI_AGENT_RUNTIME_CHECKPOINT_DIR` is an optional single-Worker checkpoint setting. When set, the Worker stores an immutable, SHA-256-verified workspace archive on that directory before suspending compute. The directory must be a private, durable Worker volume, separate from the execution workspace, and must remain mounted across Worker restarts. A lost local compute allocation or missing retained workspace is rebuilt from the last committed checkpoint. A queued or running Job prevents suspension until it becomes terminal; new Jobs cannot be admitted after the Binding enters `suspending`. The archive accepts regular files, directories and confined relative symbolic links, with a 1 GiB file-content and 10,000-entry limit. Links are restored after regular entries and checked as a complete graph; absolute, escaping, dangling or cyclic links and device files are rejected. Skill ZIP imports still reject symbolic links. An archive transfer or restore failure does not mark the Binding active or suspended as though it succeeded.
@@ -86,5 +95,13 @@ sudo ZGI_AGENT_RUNTIME_TEST_IMAGE='registry.example/zgi/agent-runtime@sha256:...
 ```
 
 Set `ZGI_AGENT_RUNTIME_CONTAINERD_ADDRESS` only when containerd does not use `/run/containerd/containerd.sock`. The test intentionally fails instead of falling back to runc when runsc, the image, root privileges, or the containerd socket is unavailable.
+
+For an incremental PID-exhaustion follow-up without repeating the accepted CPU
+and memory matrix, run `make -C sandbox test-agent-runtime-containerd-pid-termination`
+with the same root access and pinned-image environment. This checks interrupted
+Job termination classification, real provider suspension, zero surviving cgroup
+processes, and restoration of a retained file after resuming compute. Worker
+quarantine persistence and generation fencing are covered by separate domain
+tests; this provider-level test does not substitute for those checks.
 
 Run this gate on a native Linux worker or Linux VM. A privileged container on Docker Desktop can build and preload the image and is useful for exercising bounded failure and cleanup paths, but nested containerd/gVisor task creation is not a supported deployment topology and does not satisfy the isolation gate. In particular, a nested shim can complete `runsc create` without completing the containerd task-create handshake. The Provider bounds the complete launch path with `ZGI_AGENT_RUNTIME_STARTUP_TIMEOUT_SECONDS`, but the node operator must still reconcile any runtime process that its containerd installation cannot reap.

@@ -188,6 +188,7 @@ const SystemPackageLedgerVersion = 2
 const LanguagePackageLedgerVersion = 2
 
 type RuntimeCapabilities struct {
+	PlatformProtocolVersion      int    `json:"platform_protocol_version,omitempty"`
 	SystemPackageLedgerVersion   int    `json:"system_package_ledger_version,omitempty"`
 	LanguagePackageLedgerVersion int    `json:"language_package_ledger_version,omitempty"`
 	PackageSourceDigest          string `json:"package_source_digest,omitempty"`

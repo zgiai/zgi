@@ -24,11 +24,14 @@ import (
 	"github.com/zgiai/zgi-sandbox/internal/agentexecution"
 	"github.com/zgiai/zgi-sandbox/internal/egressproxy"
 	"github.com/zgiai/zgi-sandbox/internal/packagesource"
+	"github.com/zgiai/zgi-sandbox/internal/platformrelay"
 )
 
 type Options struct {
-	WorkspaceRoot string
-	NetworkMode   string
+	PlatformCLI        bool
+	PlatformSocketPath string
+	WorkspaceRoot      string
+	NetworkMode        string
 	// EgressMode controls how the runtime obtains the package-only boundary.
 	// bridge is used by local gVisor and connects the loopback HTTP proxy to a
 	// host-side allowlist. direct is used by hosted providers: a root-owned
@@ -57,6 +60,8 @@ type Options struct {
 }
 
 type Backend struct {
+	platform                  *platformrelay.Broker
+	platformSocketPath        string
 	workspace                 *os.Root
 	workspaceName             string
 	networkMode               string
@@ -111,6 +116,12 @@ type trackedJob struct {
 var _ agentexecution.ExecutionBackend = (*Backend)(nil)
 
 func New(options Options) (*Backend, error) {
+	if options.PlatformSocketPath == "" {
+		options.PlatformSocketPath = "/run/zgi-agent/platform.sock"
+	}
+	if options.PlatformCLI && (!filepath.IsAbs(options.PlatformSocketPath) || filepath.Clean(options.PlatformSocketPath) != options.PlatformSocketPath || options.PlatformSocketPath == "/") {
+		return nil, agentexecution.ErrInvalidRequest
+	}
 	if err := options.PackageSources.Validate(nil); err != nil {
 		return nil, err
 	}
@@ -214,7 +225,12 @@ func New(options Options) (*Backend, error) {
 	} else {
 		proxyAddress = ""
 	}
+	var platform *platformrelay.Broker
+	if options.PlatformCLI {
+		platform = platformrelay.New()
+	}
 	return &Backend{
+		platform: platform, platformSocketPath: options.PlatformSocketPath,
 		workspace: root, workspaceName: root.Name(), networkMode: mode,
 		dependencyPreparation: options.DependencyPreparation, dependencyPreparationMode: dependencyMode,
 		dependencyInstallation: options.DependencyInstallation, packageNetworkMode: packageMode,
@@ -244,6 +260,9 @@ func (b *Backend) Close() error {
 		jobs = append(jobs, job.running)
 	}
 	b.mu.Unlock()
+	if b.platform != nil {
+		b.platform.Close()
+	}
 	for _, job := range jobs {
 		_ = job.Cancel(context.Background())
 		waitContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -258,6 +277,10 @@ func (b *Backend) Close() error {
 }
 
 func (b *Backend) Capabilities(context.Context, agentexecution.Allocation) (agentexecution.RuntimeCapabilities, error) {
+	platformVersion := 0
+	if b.platform != nil {
+		platformVersion = agentexecution.PlatformProtocolVersion
+	}
 	ledgerVersion := 0
 	languageVersion := 0
 	if b.dependencyInstallation {
@@ -265,6 +288,7 @@ func (b *Backend) Capabilities(context.Context, agentexecution.Allocation) (agen
 		languageVersion = agentexecution.LanguagePackageLedgerVersion
 	}
 	return agentexecution.RuntimeCapabilities{
+		PlatformProtocolVersion:      platformVersion,
 		SystemPackageLedgerVersion:   ledgerVersion,
 		LanguagePackageLedgerVersion: languageVersion,
 		Shell:                        true, PTY: supportsPTY(), FileTransfer: true, DependencyPreparation: b.dependencyPreparation, DependencyPreparationMode: b.dependencyPreparationMode,
@@ -298,6 +322,12 @@ func (b *Backend) StartJob(ctx context.Context, _ agentexecution.Allocation, spe
 		}
 	}
 	spec.Environment = cloneJobEnvironment(spec.Environment)
+	// Jobs never inherit platform grants from a caller or a retained environment.
+	for key := range spec.Environment {
+		if strings.HasPrefix(strings.ToUpper(key), "ZGI_PLATFORM_") {
+			delete(spec.Environment, key)
+		}
+	}
 	home := filepath.Join(b.workspaceName, sessionHomeDirectory)
 	spec.Environment["HOME"] = home
 	if b.egress != nil && (b.networkMode == "controlled-http" || b.networkMode == "package-install") {
@@ -395,9 +425,26 @@ func (b *Backend) StartJob(ctx context.Context, _ agentexecution.Allocation, spe
 	for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
 		spec.Environment[key] = temporary
 	}
+	if spec.Environment["ZGI_JOB_PLATFORM_ENABLED"] == "true" {
+		if b.platform == nil || spec.Timeout <= 0 || spec.Timeout > platformrelay.MaxLifetime {
+			return nil, errors.Join(agentexecution.ErrBackendUnavailable, cleanup(discardTemporary))
+		}
+		token, err := b.platform.OpenJob(ctx, spec.JobID, spec.Timeout)
+		if err != nil {
+			return nil, errors.Join(err, cleanup(discardTemporary))
+		}
+		spec.Environment["ZGI_PLATFORM_SOCKET"] = b.platformSocketPath
+		spec.Environment["ZGI_PLATFORM_JOB_ID"] = spec.JobID
+		spec.Environment["ZGI_PLATFORM_TOKEN"] = token
+		originalCleanup := cleanup
+		cleanup = func(disposition temporaryDisposition) error {
+			b.platform.CloseJob(spec.JobID)
+			return originalCleanup(disposition)
+		}
+	}
 	var outputMu sync.Mutex
 	var sequence int64
-	running, err := startProcess(ctx, workDir, spec, b.jobUID, b.jobGID, func(stream agentexecution.OutputStream, value []byte) error {
+	output := newPlatformOutput(spec.Environment["ZGI_PLATFORM_TOKEN"], func(stream agentexecution.OutputStream, value []byte) error {
 		outputMu.Lock()
 		defer outputMu.Unlock()
 		chunk := agentexecution.OutputChunk{
@@ -406,7 +453,12 @@ func (b *Backend) StartJob(ctx context.Context, _ agentexecution.Allocation, spe
 		}
 		sequence++
 		return sink(chunk)
-	}, b.quarantine, cleanup)
+	})
+	originalOutputCleanup := cleanup
+	cleanup = func(disposition temporaryDisposition) error {
+		return errors.Join(output.Flush(), originalOutputCleanup(disposition))
+	}
+	running, err := startProcess(ctx, workDir, spec, b.jobUID, b.jobGID, output.Write, b.quarantine, cleanup)
 	if err != nil {
 		return nil, errors.Join(err, cleanup(discardTemporary))
 	}

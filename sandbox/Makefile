@@ -3,6 +3,7 @@ SHELL := /bin/sh
 .PHONY: fmt test build check run kest test-linux-secure test-agent-runtime-containerd test-agent-runtime-e2b test-agent-runtime-e2b-package check-docker-entrypoint check-config-docs test-agent-runtime-server install-agent-runtime-host profile-build-stdlib profile-build-scientific-data profile-build-cc-codex-standard build-agent-runtime-image build-agent-runtime-worker prepare-agent-runtime-e2b
 .PHONY: docker-up docker-down docker-logs
 .PHONY: docker-config
+.PHONY: test-agent-runtime-containerd-pid-termination
 
 fmt:
 	gofmt -w $$(find . -name '*.go')
@@ -23,6 +24,9 @@ kest:
 
 test-linux-secure:
 	./scripts/test_linux_secure_container.sh
+
+test-agent-runtime-containerd-pid-termination:
+	go test -tags agent_runtime_integration ./internal/localruntime/containerd -run '^TestContainerdGVisorPIDExhaustionTermination$$' -count=1 -v -timeout 2m
 
 test-agent-runtime-containerd:
 	go test -tags=agent_runtime_integration -count=1 -v ./internal/localruntime/containerd -run 'TestContainerdGVisor(Contract|CheckpointRecovery)'
@@ -69,6 +73,7 @@ build-agent-runtime-worker:
 prepare-agent-runtime-e2b:
 	mkdir -p e2b-template-build
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o e2b-template-build/zgi-runtime-agent ./cmd/runtimeagent
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o e2b-template-build/zgi ./cmd/runtimecli
 
 docker-up:
 	./scripts/start-docker

@@ -20,6 +20,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 COPY e2b-template-build/zgi-runtime-agent /usr/local/bin/zgi-runtime-agent
+COPY e2b-template-build/zgi /usr/local/bin/zgi
 COPY scripts/agent-runtime-e2b-bootstrap.sh /usr/local/bin/zgi-runtime-agent-bootstrap
 COPY scripts/zgi-apt-get /usr/local/bin/apt-get
 COPY scripts/zgi-apt-get /usr/local/bin/apt

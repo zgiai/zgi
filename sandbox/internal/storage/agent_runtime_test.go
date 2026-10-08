@@ -303,6 +303,13 @@ func TestAgentExecutionJobRepository(t *testing.T) {
 	if err != nil || !wasCreated {
 		t.Fatalf("create job: created=%v error=%v", wasCreated, err)
 	}
+	if created.BindingGeneration != job.BindingGeneration {
+		t.Fatalf("job lost Binding fence: got=%d want=%d", created.BindingGeneration, job.BindingGeneration)
+	}
+	loaded, err := store.Job(t.Context(), job.ID)
+	if err != nil || loaded.BindingGeneration != job.BindingGeneration {
+		t.Fatalf("stored job lost Binding fence: got=%d err=%v", loaded.BindingGeneration, err)
+	}
 	if active, err := store.HasActiveJobs(context.Background(), job.BindingID); err != nil || !active {
 		t.Fatalf("queued job activity = %v, %v", active, err)
 	}
@@ -318,7 +325,7 @@ func TestAgentExecutionJobRepository(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("claim job: ok=%v error=%v", ok, err)
 	}
-	if claimed.Status != agentruntime.JobStatusRunning || claimed.Generation != created.Generation+1 {
+	if claimed.Status != agentruntime.JobStatusRunning || claimed.Generation != created.Generation+1 || claimed.BindingGeneration != job.BindingGeneration {
 		t.Fatalf("claimed job = %+v", claimed)
 	}
 	first, err := store.AppendJobOutput(context.Background(), job.ID, agentruntime.OutputChunk{Sequence: 0, Stream: agentruntime.OutputStreamStdout, Data: []byte("hello")}, 16, now)
@@ -388,6 +395,39 @@ func TestAgentExecutionJobRepository(t *testing.T) {
 	}
 	if _, _, err := store.CreateJob(context.Background(), testAgentExecutionJob(now, "job-3", "request-3")); !errors.Is(err, agentruntime.ErrGenerationConflict) {
 		t.Fatalf("job admitted after suspension = %v", err)
+	}
+}
+
+func TestPlatformJobGenerationMigrationDoesNotAuthorizeHistoricalJobs(t *testing.T) {
+	store, err := Open(config.Config{DatabaseURL: testutil.CreateTestPostgresDSN(t), MaxWorkers: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	now := time.Now().UTC()
+	insertActiveJobBinding(t, store, now)
+	job := testAgentExecutionJob(now, "historical-job", "historical-request")
+	if _, _, err := store.CreateJob(t.Context(), job); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate the prior schema only inside this test's isolated database.
+	if _, err := store.db.ExecContext(t.Context(), `ALTER TABLE agent_runtime_jobs DROP COLUMN binding_generation; DELETE FROM sandbox_schema_migrations WHERE version=2026100801;`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.applyMigrations(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.applyMigrations(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.Job(t.Context(), job.ID)
+	if err != nil || loaded.BindingGeneration != 0 || loaded.Status != job.Status {
+		t.Fatalf("migration guessed historical grant or lost Job: %+v %v", loaded, err)
+	}
+	job.ID, job.IdempotencyKey = "new-job", "new-request"
+	created, ok, err := store.CreateJob(t.Context(), job)
+	if err != nil || !ok || created.BindingGeneration != 2 {
+		t.Fatalf("new generation not persisted: %+v %v", created, err)
 	}
 }
 

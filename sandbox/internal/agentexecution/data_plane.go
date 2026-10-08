@@ -415,6 +415,9 @@ func validateSubmitJobRequest(request SubmitJobRequest) error {
 		}
 	}
 	for key, value := range request.Environment {
+		if strings.HasPrefix(strings.ToUpper(key), "ZGI_PLATFORM_") {
+			return fmt.Errorf("%w: platform grants cannot be persisted in job environment", ErrInvalidRequest)
+		}
 		if strings.TrimSpace(key) == "" || strings.ContainsAny(key, "=\x00") || strings.ContainsRune(value, '\x00') {
 			return fmt.Errorf("%w: environment contains an invalid entry", ErrInvalidRequest)
 		}

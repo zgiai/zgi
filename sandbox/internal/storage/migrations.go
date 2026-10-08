@@ -283,6 +283,15 @@ var schemaMigrations = []schemaMigration{
 			`CREATE INDEX idx_agent_runtime_bindings_network_policy ON agent_runtime_bindings (network_policy, network_mode);`,
 		},
 	},
+	{
+		version:     2026100801,
+		description: "persist job binding generation for platform authorization",
+		statements: []string{
+			// Historical Jobs receive no guessed authorization epoch. Existing
+			// execution still works; platform admission requires a new Job.
+			`ALTER TABLE agent_runtime_jobs ADD COLUMN binding_generation BIGINT NOT NULL DEFAULT 0;`,
+		},
+	},
 }
 
 func (s *Store) applyMigrations(ctx context.Context) error {

@@ -20,7 +20,7 @@ const agentExecutionJobColumns = `
 	command, args_json, environment_json, work_dir, pty, pty_columns,
 	pty_rows, timeout_ms, exit_code, failure_reason, cancel_requested,
 	claim_owner, claim_expires_at, attempts, stdout_bytes, stderr_bytes,
-	created_at, updated_at, started_at, finished_at`
+	created_at, updated_at, started_at, finished_at, binding_generation`
 
 func (s *Store) CreateJob(ctx context.Context, job agentruntime.Job) (agentruntime.Job, bool, error) {
 	argsJSON, environmentJSON, commandJSON, err := marshalJobCommand(job)
@@ -39,14 +39,14 @@ func (s *Store) CreateJob(ctx context.Context, job agentruntime.Job) (agentrunti
 			command, args_json, environment_json, command_json, work_dir,
 			pty, pty_columns, pty_rows, timeout_ms, failure_reason,
 			cancel_requested, claim_owner, attempts, stdout_bytes, stderr_bytes,
-			created_at, updated_at
+			created_at, updated_at, binding_generation
 		) SELECT
 			$1, $2, $3, $4, $5, $6,
 			$7, $8, $9, $10, $11,
 			$12, $13::jsonb, $14::jsonb, $15::jsonb, $16,
 			$17, $18, $19, $20, $21,
 			$22, $23, $24, $25, $26,
-			$27, $28
+			$27, $28, $29
 		FROM active_binding
 		ON CONFLICT (binding_id, idempotency_key) WHERE idempotency_key <> '' DO NOTHING
 		RETURNING `+agentExecutionJobColumns,
@@ -333,7 +333,7 @@ func scanAgentExecutionJob(scanner rowScanner) (agentruntime.Job, error) {
 		&job.Command, &argsJSON, &environmentJSON, &job.WorkDir, &job.PTY, &ptyColumns,
 		&ptyRows, &timeoutMilliseconds, &exitCode, &job.FailureReason, &job.CancelRequested,
 		&job.ClaimOwner, &claimExpiresAt, &job.Attempts, &job.StdoutBytes, &job.StderrBytes,
-		&job.CreatedAt, &job.UpdatedAt, &startedAt, &finishedAt,
+		&job.CreatedAt, &job.UpdatedAt, &startedAt, &finishedAt, &job.BindingGeneration,
 	)
 	if err != nil {
 		return agentruntime.Job{}, err

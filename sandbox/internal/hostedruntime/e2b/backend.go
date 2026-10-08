@@ -53,6 +53,7 @@ type EgressProxyConfig struct {
 }
 
 type Options struct {
+	PlatformCLI    bool
 	APIURL         string
 	Domain         string
 	APIKey         string
@@ -66,6 +67,7 @@ type Options struct {
 }
 
 type Backend struct {
+	platformCLI    bool
 	client         *controlClient
 	profiles       map[string]Profile
 	agentPort      uint16
@@ -157,7 +159,8 @@ func New(options Options) (*Backend, error) {
 		httpClient: options.HTTPClient, sandboxURL: defaultSandboxURL,
 	}
 	return &Backend{
-		client: client, profiles: profiles, agentPort: options.AgentPort, envdPort: options.EnvdPort,
+		platformCLI: options.PlatformCLI,
+		client:      client, profiles: profiles, agentPort: options.AgentPort, envdPort: options.EnvdPort,
 		timeoutSeconds: options.TimeoutSeconds, readyTimeout: options.ReadyTimeout,
 		egressProxy: cloneEgressProxy(options.EgressProxy),
 	}, nil
@@ -198,11 +201,16 @@ func (b *Backend) CreateBinding(ctx context.Context, spec agentexecution.CreateS
 		metadata["zgi.attempt_id"] = spec.AllocationAttemptID
 	}
 	environment := map[string]string{
+		"ZGI_RUNTIME_AGENT_PLATFORM_CLI_ENABLED":           fmt.Sprint(b.platformCLI),
 		agentTokenEnvironment:                              token,
 		"ZGI_RUNTIME_AGENT_LISTEN":                         fmt.Sprintf("tcp://0.0.0.0:%d", b.agentPort),
 		"ZGI_RUNTIME_AGENT_NETWORK_MODE":                   networkMode,
 		"ZGI_RUNTIME_AGENT_DEPENDENCY_PREPARATION_ENABLED": fmt.Sprintf("%t", profile.DependencyPreparation),
 		"ZGI_RUNTIME_AGENT_DEPENDENCY_PREPARATION_MODE":    strings.TrimSpace(profile.DependencyPreparationMode),
+	}
+	if b.platformCLI {
+		environment["ZGI_RUNTIME_AGENT_JOB_UID"] = "65532"
+		environment["ZGI_RUNTIME_AGENT_JOB_GID"] = "65532"
 	}
 	if networkMode == "package-install" {
 		allowedHostsJSON, marshalErr := json.Marshal(profile.EgressAllowedHosts)
@@ -240,8 +248,15 @@ func (b *Backend) CreateBinding(ctx context.Context, spec agentexecution.CreateS
 		return agentexecution.Allocation{}, fmt.Errorf("create E2B environment: %w", err)
 	}
 	allocation := allocationFor(connection.SandboxID)
-	if networkMode == "package-install" {
-		config, marshalErr := json.Marshal(packagesource.Bootstrap{Sources: profile.PackageSources, AllowedHosts: profile.EgressAllowedHosts, ProfileIdentity: profile.TemplateID, Check: profile.PackageSourceCheck})
+	if networkMode == "package-install" || b.platformCLI {
+		policy := &packagesource.RuntimeConfig{NetworkMode: networkMode, EgressMode: runtimeagent.EgressModeBridge, DependencyPreparation: profile.DependencyPreparation, DependencyPreparationMode: profile.DependencyPreparationMode}
+		if b.platformCLI || networkMode == "package-install" {
+			policy.JobUID, policy.JobGID = 65532, 65532
+		}
+		if networkMode == "package-install" {
+			policy.EgressMode, policy.PackageNetworkMode, policy.DependencyInstallation = runtimeagent.EgressModeDirect, "package-install", true
+		}
+		config, marshalErr := json.Marshal(packagesource.Bootstrap{PlatformCLI: b.platformCLI, Runtime: policy, Sources: profile.PackageSources, AllowedHosts: profile.EgressAllowedHosts, ProfileIdentity: profile.TemplateID, Check: networkMode == "package-install" && profile.PackageSourceCheck})
 		if marshalErr != nil {
 			err = marshalErr
 		} else {
@@ -330,6 +345,9 @@ func (b *Backend) Capabilities(ctx context.Context, allocation agentexecution.Al
 		return agentexecution.RuntimeCapabilities{}, err
 	}
 	capabilities, err := remote.Capabilities(ctx, allocation)
+	if !b.platformCLI {
+		capabilities.PlatformProtocolVersion = 0
+	}
 	if err == nil && capabilities.NetworkMode == "package-install" {
 		err = validateRuntimeCapabilities(capabilities, Profile{DependencyInstallation: true})
 	}
@@ -337,6 +355,9 @@ func (b *Backend) Capabilities(ctx context.Context, allocation agentexecution.Al
 }
 
 func (b *Backend) StartJob(ctx context.Context, allocation agentexecution.Allocation, spec agentexecution.JobSpec, sink func(agentexecution.OutputChunk) error) (agentexecution.RunningJob, error) {
+	if spec.Environment["ZGI_JOB_PLATFORM_ENABLED"] == "true" && !b.platformCLI {
+		return nil, agentexecution.ErrBackendUnavailable
+	}
 	remote, err := b.dataPlane(ctx, allocation)
 	if err != nil {
 		return nil, err
@@ -438,6 +459,9 @@ func (b *Backend) waitReady(parent context.Context, remote *runtimeagent.RemoteB
 	for {
 		capabilities, err := remote.Capabilities(ctx, allocation)
 		if err == nil {
+			if b.platformCLI && capabilities.PlatformProtocolVersion != agentexecution.PlatformProtocolVersion {
+				return fmt.Errorf("%w: approved E2B template lacks platform CLI protocol", agentexecution.ErrBackendUnavailable)
+			}
 			return validateRuntimeCapabilities(capabilities, profile)
 		}
 		lastErr = err

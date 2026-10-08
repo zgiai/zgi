@@ -31,10 +31,26 @@ type Config struct {
 // Bootstrap is delivered through authenticated envd before releasing the
 // template startup token; restored template processes do not inherit envd env.
 type Bootstrap struct {
-	Sources         Config   `json:"sources"`
-	AllowedHosts    []string `json:"allowed_hosts"`
-	ProfileIdentity string   `json:"profile_identity"`
-	Check           bool     `json:"check"`
+	PlatformCLI     bool           `json:"platform_cli,omitempty"`
+	Runtime         *RuntimeConfig `json:"runtime,omitempty"`
+	Sources         Config         `json:"sources"`
+	AllowedHosts    []string       `json:"allowed_hosts"`
+	ProfileIdentity string         `json:"profile_identity"`
+	Check           bool           `json:"check"`
+}
+
+// RuntimeConfig is Worker-owned startup policy. E2B template environment can
+// shadow create-time variables, so a new template must consume this before
+// advertising capabilities. The optional field preserves older payloads.
+type RuntimeConfig struct {
+	NetworkMode               string `json:"network_mode"`
+	EgressMode                string `json:"egress_mode"`
+	DependencyInstallation    bool   `json:"dependency_installation"`
+	PackageNetworkMode        string `json:"package_network_mode"`
+	DependencyPreparation     bool   `json:"dependency_preparation"`
+	DependencyPreparationMode string `json:"dependency_preparation_mode"`
+	JobUID                    uint32 `json:"job_uid"`
+	JobGID                    uint32 `json:"job_gid"`
 }
 
 func (c Config) Digest() string {

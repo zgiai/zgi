@@ -16,15 +16,17 @@ func TestE2BBootstrapRequiresJobMetadataGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, test := range []struct {
-		name, mode, uid, firewall string
-		wantSuccess, wantGuard    bool
+		name, mode, uid, firewall, platform string
+		wantSuccess, wantGuard              bool
 	}{
-		{"new-rule", "direct", "65532", "new", true, true},
-		{"existing-rule", "direct", "65532", "existing", true, true},
-		{"insert-fails", "direct", "65532", "fail", false, true},
-		{"root-job", "direct", "0", "existing", false, false},
-		{"invalid-job", "direct", "65532 -j ACCEPT", "existing", false, false},
-		{"bridge", "bridge", "65532", "fail", true, false},
+		{"new-rule", "direct", "65532", "new", "false", true, true},
+		{"existing-rule", "direct", "65532", "existing", "false", true, true},
+		{"insert-fails", "direct", "65532", "fail", "false", false, true},
+		{"root-job", "direct", "0", "existing", "false", false, false},
+		{"invalid-job", "direct", "65532 -j ACCEPT", "existing", "false", false, false},
+		{"bridge", "bridge", "65532", "fail", "false", true, false},
+		{"platform-offline", "bridge", "65532", "new", "true", true, true},
+		{"platform-root-denied", "bridge", "0", "new", "true", false, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -51,6 +53,7 @@ func TestE2BBootstrapRequiresJobMetadataGuard(t *testing.T) {
 			}
 			command := exec.CommandContext(t.Context(), "/bin/sh", bootstrap)
 			command.Env = append(os.Environ(), "TEST_ROOT="+root, "TEST_FIREWALL="+test.firewall,
+				"ZGI_RUNTIME_AGENT_PLATFORM_CLI_ENABLED="+test.platform,
 				"ZGI_RUNTIME_AGENT_TOKEN_FILE="+filepath.Join(root, "token"),
 				"ZGI_RUNTIME_AGENT_EGRESS_MODE="+test.mode, "ZGI_RUNTIME_AGENT_JOB_UID="+test.uid)
 			output, err := command.CombinedOutput()
@@ -69,6 +72,9 @@ func TestE2BBootstrapRequiresJobMetadataGuard(t *testing.T) {
 				t.Fatalf("Job metadata guard missing: %s", log)
 			}
 			permissions, _ := os.ReadFile(filepath.Join(root, "permissions.log"))
+			if test.platform == "true" && test.wantSuccess && (!strings.Contains(string(permissions), "chown root:65532 /run/zgi-agent") || !strings.Contains(string(permissions), "chmod 0600 "+filepath.Join(root, "token"))) {
+				t.Fatalf("platform control credentials not protected: %s", permissions)
+			}
 			if test.wantGuard && (!strings.Contains(string(permissions), "chown -R root:root /usr/local /opt/zgi-profile /opt/corepack") || !strings.Contains(string(permissions), "chmod -R go-w /usr/local /opt/zgi-profile /opt/corepack")) {
 				t.Fatalf("Profile permission hardening missing: %s", permissions)
 			}

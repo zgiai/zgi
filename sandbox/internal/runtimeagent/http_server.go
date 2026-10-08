@@ -223,6 +223,8 @@ func (s *HTTPServer) handleJobs(w http.ResponseWriter, request *http.Request, se
 		return
 	}
 	switch segments[1] {
+	case "platform-requests":
+		s.platformRequests(w, request, segments[0])
 	case "output":
 		s.jobOutput(w, request, job)
 	case "cancel":

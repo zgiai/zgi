@@ -19,9 +19,13 @@ func TestWorkerPackageSourceOverridesRequireApprovedHostOnBothBackends(t *testin
 			t.Setenv("ZGI_AGENT_RUNTIME_E2B_PROFILES_JSON", `{"standard":{"template_id":"test-template","dependency_installation":true,"package_network_mode":"package-install","egress_allowed_hosts":["packages.example"]}}`)
 			t.Setenv("ZGI_AGENT_RUNTIME_PYPI_INDEX_URL", "https://packages.example/simple")
 			t.Setenv("ZGI_AGENT_RUNTIME_PACKAGE_SOURCE_CHECK", "true")
+			t.Setenv("ZGI_AGENT_RUNTIME_PLATFORM_CLI_ENABLED", "true")
 			cfg, err := workerConfigFromEnv()
 			if err != nil {
 				t.Fatal(err)
+			}
+			if !cfg.PlatformCLI {
+				t.Fatal("operator platform CLI admission lost")
 			}
 			if backend == localBackendName && (cfg.Profiles["standard"].PackageSources.PyPI != "https://packages.example/simple" || !cfg.Profiles["standard"].PackageSourceCheck) {
 				t.Fatalf("local source override not applied: %+v", cfg.Profiles["standard"])

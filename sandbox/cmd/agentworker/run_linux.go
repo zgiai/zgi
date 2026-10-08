@@ -39,6 +39,7 @@ type runtimeBackend interface {
 }
 
 type workerConfig struct {
+	PlatformCLI            bool
 	ListenAddress          string
 	APIKey                 string
 	DatabaseURL            string
@@ -239,6 +240,7 @@ func workerConfigFromEnv() (workerConfig, error) {
 		},
 		ContainerdAddress:      envString("ZGI_AGENT_RUNTIME_CONTAINERD_ADDRESS", "/run/containerd/containerd.sock"),
 		Profiles:               map[string]containerdprovider.Profile{},
+		PlatformCLI:            strings.EqualFold(strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_PLATFORM_CLI_ENABLED")), "true"),
 		MaxWorkers:             envInt("ZGI_AGENT_RUNTIME_MAX_WORKERS", 4),
 		IdleTTL:                time.Duration(envInt("ZGI_AGENT_RUNTIME_IDLE_TTL_SECONDS", 1800)) * time.Second,
 		ShutdownTimeout:        time.Duration(envInt("ZGI_AGENT_RUNTIME_SHUTDOWN_TIMEOUT_SECONDS", 30)) * time.Second,
@@ -335,6 +337,7 @@ func newRuntimeBackend(cfg workerConfig) (string, runtimeBackend, func(), error)
 	case localBackendName:
 		provider, err := containerdprovider.New(containerdprovider.Options{
 			Address: cfg.ContainerdAddress, RootDir: cfg.RootDir, Profiles: cfg.Profiles,
+			PlatformCLI:  cfg.PlatformCLI,
 			StartupLimit: cfg.StartupTimeout,
 			MemoryBytes:  cfg.MemoryBytes, PIDs: cfg.PIDs, CPUPeriod: cfg.CPUPeriod, CPUQuota: cfg.CPUQuota,
 		})
@@ -349,7 +352,7 @@ func newRuntimeBackend(cfg workerConfig) (string, runtimeBackend, func(), error)
 		return localBackendName, backend, func() { _ = provider.Close() }, nil
 	case e2bBackendName:
 		backend, err := e2bprovider.New(e2bprovider.Options{
-			APIURL: cfg.E2BAPIURL, Domain: cfg.E2BDomain, APIKey: cfg.E2BAPIKey,
+			APIURL: cfg.E2BAPIURL, Domain: cfg.E2BDomain, APIKey: cfg.E2BAPIKey, PlatformCLI: cfg.PlatformCLI,
 			Profiles: cfg.E2BProfiles, AgentPort: cfg.E2BAgentPort, EnvdPort: cfg.E2BEnvdPort,
 			TimeoutSeconds: cfg.E2BTimeoutSeconds, EgressProxy: e2bEgressProxyConfig(cfg),
 		})

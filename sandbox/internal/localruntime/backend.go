@@ -91,10 +91,17 @@ func (b *Backend) Capabilities(ctx context.Context, allocation agentexecution.Al
 	if err != nil {
 		return agentexecution.RuntimeCapabilities{}, err
 	}
-	return connection.Capabilities(ctx, allocation)
+	capabilities, err := connection.Capabilities(ctx, allocation)
+	if !b.platformCLIEnabled() {
+		capabilities.PlatformProtocolVersion = 0
+	}
+	return capabilities, err
 }
 
 func (b *Backend) StartJob(ctx context.Context, allocation agentexecution.Allocation, spec agentexecution.JobSpec, sink func(agentexecution.OutputChunk) error) (agentexecution.RunningJob, error) {
+	if spec.Environment["ZGI_JOB_PLATFORM_ENABLED"] == "true" && !b.platformCLIEnabled() {
+		return nil, agentexecution.ErrBackendUnavailable
+	}
 	connection, err := b.connect(ctx, allocation)
 	if err != nil {
 		return nil, err
