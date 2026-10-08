@@ -17,6 +17,8 @@ var (
 	ErrGenerationConflict  = errors.New("agent runtime generation conflict")
 	ErrInvalidTransition   = errors.New("invalid agent runtime state transition")
 	ErrBackendUnavailable  = errors.New("agent runtime backend unavailable")
+	ErrCapacityExceeded    = errors.New("agent runtime capacity exceeded")
+	ErrAdmissionPolicy     = errors.New("agent runtime admission policy changed")
 	ErrLeaseHeld           = errors.New("agent runtime lease is held by another owner")
 	ErrCleanupClaimLost    = errors.New("agent runtime cleanup claim lost")
 	ErrJobClaimLost        = errors.New("agent execution job claim lost")

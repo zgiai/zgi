@@ -23,11 +23,32 @@ const agentExecutionJobColumns = `
 	created_at, updated_at, started_at, finished_at, binding_generation`
 
 func (s *Store) CreateJob(ctx context.Context, job agentruntime.Job) (agentruntime.Job, bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return agentruntime.Job{}, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := s.lockAgentAdmission(ctx, tx, job.Backend); err != nil {
+		return agentruntime.Job{}, false, err
+	}
+	if job.IdempotencyKey != "" {
+		existing, err := scanAgentExecutionJob(tx.QueryRowContext(ctx, `SELECT `+agentExecutionJobColumns+`
+			FROM agent_runtime_jobs WHERE binding_id = $1 AND idempotency_key = $2`, job.BindingID, job.IdempotencyKey))
+		if err == nil {
+			return existing, false, tx.Commit()
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return agentruntime.Job{}, false, err
+		}
+	}
+	if err := s.checkJobCapacity(ctx, tx, job); err != nil {
+		return agentruntime.Job{}, false, err
+	}
 	argsJSON, environmentJSON, commandJSON, err := marshalJobCommand(job)
 	if err != nil {
 		return agentruntime.Job{}, false, err
 	}
-	row := s.db.QueryRowContext(ctx, `
+	row := tx.QueryRowContext(ctx, `
 		WITH active_binding AS (
 			SELECT id FROM agent_runtime_bindings
 			WHERE id = $2 AND status = 'active' AND generation = $29
@@ -59,12 +80,12 @@ func (s *Store) CreateJob(ctx context.Context, job agentruntime.Job) (agentrunti
 	)
 	created, err := scanAgentExecutionJob(row)
 	if err == nil {
-		return created, true, nil
+		return created, true, tx.Commit()
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return agentruntime.Job{}, false, err
 	}
-	row = s.db.QueryRowContext(ctx, `
+	row = tx.QueryRowContext(ctx, `
 		SELECT `+agentExecutionJobColumns+`
 		FROM agent_runtime_jobs
 		WHERE binding_id = $1 AND idempotency_key = $2
@@ -73,7 +94,10 @@ func (s *Store) CreateJob(ctx context.Context, job agentruntime.Job) (agentrunti
 	if errors.Is(err, sql.ErrNoRows) {
 		return agentruntime.Job{}, false, agentruntime.ErrGenerationConflict
 	}
-	return existing, false, err
+	if err != nil {
+		return agentruntime.Job{}, false, err
+	}
+	return existing, false, tx.Commit()
 }
 
 func (s *Store) HasActiveJobs(ctx context.Context, bindingID string) (bool, error) {

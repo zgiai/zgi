@@ -292,6 +292,15 @@ var schemaMigrations = []schemaMigration{
 			`ALTER TABLE agent_runtime_jobs ADD COLUMN binding_generation BIGINT NOT NULL DEFAULT 0;`,
 		},
 	},
+	{
+		version:     2026100802,
+		description: "backend admission policy and capacity indexes",
+		statements: []string{
+			`CREATE TABLE agent_runtime_admission_policies (backend TEXT PRIMARY KEY, limits_json JSONB NOT NULL);`,
+			`CREATE INDEX idx_agent_runtime_binding_capacity ON agent_runtime_bindings (backend, organization_id) WHERE status NOT IN ('suspended', 'deleted');`,
+			`CREATE INDEX idx_agent_runtime_job_capacity ON agent_runtime_jobs (backend, organization_id, binding_id) WHERE status IN ('queued', 'running');`,
+		},
+	},
 }
 
 func (s *Store) applyMigrations(ctx context.Context) error {

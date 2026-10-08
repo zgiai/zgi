@@ -8,11 +8,14 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/zgiai/zgi-sandbox/internal/agentexecution"
 )
 
 const defaultSecureRuntimeCgroupRoot = "/sys/fs/cgroup/zgi-sandbox-executions"
 
 type Config struct {
+	AgentRuntimeAdmission                      *agentexecution.AdmissionLimits
 	Port                                       string
 	APIKey                                     string
 	MaxWorkers                                 int

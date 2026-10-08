@@ -20,13 +20,34 @@ const agentRuntimeBindingColumns = `
 	created_at, updated_at, last_activity_at, expires_at, retention_expires_at, home_snapshot_ref`
 
 func (s *Store) ReserveBinding(ctx context.Context, binding agentruntime.Binding) (agentruntime.Binding, bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return agentruntime.Binding{}, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := s.lockAgentAdmission(ctx, tx, binding.Backend); err != nil {
+		return agentruntime.Binding{}, false, err
+	}
+	existing, err := scanAgentRuntimeBinding(tx.QueryRowContext(ctx, `SELECT `+agentRuntimeBindingColumns+`
+		FROM agent_runtime_bindings WHERE organization_id = $1 AND subject_id = $2 AND idempotency_key = $3`, binding.OrganizationID, binding.SubjectID, binding.IdempotencyKey))
+	if err == nil {
+		return existing, false, tx.Commit()
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return agentruntime.Binding{}, false, err
+	}
+	if agentruntime.BindingConsumesCapacity(binding.Status) {
+		if err := s.checkBindingCapacity(ctx, tx, binding.Backend, binding.OrganizationID); err != nil {
+			return agentruntime.Binding{}, false, err
+		}
+	}
 	if strings.TrimSpace(binding.NetworkPolicy) == "" {
 		binding.NetworkPolicy = "offline"
 	}
 	if strings.TrimSpace(binding.NetworkMode) == "" {
 		binding.NetworkMode = "disabled"
 	}
-	row := s.db.QueryRowContext(ctx, `
+	row := tx.QueryRowContext(ctx, `
 		INSERT INTO agent_runtime_bindings (
 			id, organization_id, subject_id, agent_id, conversation_id, profile_id,
 			network_policy, network_mode, home_snapshot_id, workspace_id, backend, backend_ref, workspace_ref, checkpoint_key, pending_checkpoint_key,
@@ -69,24 +90,24 @@ func (s *Store) ReserveBinding(ctx context.Context, binding agentruntime.Binding
 	)
 	created, err := scanAgentRuntimeBinding(row)
 	if err == nil {
-		return created, true, nil
+		return created, true, tx.Commit()
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return agentruntime.Binding{}, false, err
 	}
-	row = s.db.QueryRowContext(ctx, `
+	row = tx.QueryRowContext(ctx, `
 		SELECT `+agentRuntimeBindingColumns+`
 		FROM agent_runtime_bindings
 		WHERE organization_id = $1 AND subject_id = $2 AND idempotency_key = $3
 	`, binding.OrganizationID, binding.SubjectID, binding.IdempotencyKey)
-	existing, err := scanAgentRuntimeBinding(row)
+	existing, err = scanAgentRuntimeBinding(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return agentruntime.Binding{}, false, agentruntime.ErrNotFound
 		}
 		return agentruntime.Binding{}, false, err
 	}
-	return existing, false, nil
+	return existing, false, tx.Commit()
 }
 
 func (s *Store) Binding(ctx context.Context, id string) (agentruntime.Binding, error) {
@@ -192,15 +213,27 @@ func (s *Store) UpdateBinding(ctx context.Context, binding agentruntime.Binding,
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, agentAdmissionLockID); err != nil {
+		return err
+	}
 	var previousCheckpointKey string
+	var previousStatus agentruntime.BindingStatus
 	if err := tx.QueryRowContext(ctx, `
-		SELECT checkpoint_key FROM agent_runtime_bindings
+		SELECT checkpoint_key, status FROM agent_runtime_bindings
 		WHERE id = $1 AND generation = $2 FOR UPDATE
-	`, binding.ID, expectedGeneration).Scan(&previousCheckpointKey); err != nil {
+	`, binding.ID, expectedGeneration).Scan(&previousCheckpointKey, &previousStatus); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return agentruntime.ErrGenerationConflict
 		}
 		return err
+	}
+	if !agentruntime.BindingConsumesCapacity(previousStatus) && agentruntime.BindingConsumesCapacity(binding.Status) {
+		if err := s.lockAgentAdmission(ctx, tx, binding.Backend); err != nil {
+			return err
+		}
+		if err := s.checkBindingCapacity(ctx, tx, binding.Backend, binding.OrganizationID); err != nil {
+			return err
+		}
 	}
 	result, err := tx.ExecContext(ctx, `
 		UPDATE agent_runtime_bindings

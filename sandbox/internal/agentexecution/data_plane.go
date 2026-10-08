@@ -36,6 +36,7 @@ type SubmitJobRequest struct {
 }
 
 type DataPlaneOptions struct {
+	MaxJobTimeout        time.Duration
 	Now                  func() time.Time
 	NewID                func(string) (string, error)
 	MaxFileTransferBytes int64
@@ -43,6 +44,7 @@ type DataPlaneOptions struct {
 }
 
 type DataPlaneService struct {
+	maxJobTimeout        time.Duration
 	bindings             BindingReader
 	jobs                 JobRepository
 	backends             map[string]ExecutionBackend
@@ -68,8 +70,12 @@ func NewDataPlaneService(bindings BindingReader, jobs JobRepository, backends ma
 	if options.IdleTTL <= 0 {
 		options.IdleTTL = defaultIdleTTL
 	}
+	if options.MaxJobTimeout < 0 {
+		return nil, fmt.Errorf("%w: invalid maximum Job timeout", ErrInvalidRequest)
+	}
 	return &DataPlaneService{
-		bindings: bindings, jobs: jobs, backends: copyExecutionBackends(backends),
+		maxJobTimeout: options.MaxJobTimeout,
+		bindings:      bindings, jobs: jobs, backends: copyExecutionBackends(backends),
 		now: options.Now, newID: options.NewID, maxFileTransferBytes: options.MaxFileTransferBytes,
 		idleTTL: options.IdleTTL,
 	}, nil
@@ -79,6 +85,14 @@ func (s *DataPlaneService) SubmitJob(ctx context.Context, request SubmitJobReque
 	request = normalizeSubmitJobRequest(request)
 	if err := validateSubmitJobRequest(request); err != nil {
 		return Job{}, err
+	}
+	if s.maxJobTimeout > 0 {
+		if request.Timeout == 0 {
+			request.Timeout = s.maxJobTimeout
+		}
+		if request.Timeout > s.maxJobTimeout {
+			return Job{}, fmt.Errorf("%w: Job timeout exceeds policy", ErrInvalidRequest)
+		}
 	}
 	if request.WorkDir != "" {
 		request.WorkDir, _ = cleanWorkspacePath(request.WorkDir, true)

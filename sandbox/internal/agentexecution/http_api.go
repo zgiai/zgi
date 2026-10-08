@@ -372,6 +372,10 @@ func agentRuntimeErrorResponse(err error) (int, string, string) {
 		return http.StatusConflict, "state_conflict", "resource state changed; refresh and retry"
 	case errors.Is(err, ErrOutputLimit):
 		return http.StatusRequestEntityTooLarge, "limit_exceeded", "configured output or file limit was exceeded"
+	case errors.Is(err, ErrCapacityExceeded):
+		return http.StatusTooManyRequests, "capacity_exceeded", "execution capacity is occupied; retry after a task finishes or an environment is released"
+	case errors.Is(err, ErrAdmissionPolicy):
+		return http.StatusServiceUnavailable, "admission_policy_mismatch", "execution admission configuration does not match the registered backend policy"
 	case errors.Is(err, ErrBackendUnavailable):
 		return http.StatusServiceUnavailable, "backend_unavailable", "execution backend is unavailable"
 	default:
