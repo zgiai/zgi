@@ -15,4 +15,12 @@ assert.match(input, /source:\s*'chat'/, 'console uploads must request the chat p
 assert.doesNotMatch(input, /supportsVision\s*&&\s*imageUploadEnabled|requireVision:\s*true/, 'images must not force vision model selection');
 assert.match(history, /const canPreview = Boolean\(previewUrl\) && !isError/, 'model filtering must not disable original-file preview');
 assert.doesNotMatch(history, /canPreview\s*=.*!isFiltered/, 'model filtering is not a file authorization decision');
+assert.doesNotMatch(history, /isFileError\s*\|\|\s*isFiltered/, 'content filtering must not be rendered as a file failure');
+assert.match(history, /isFiltered\s*\?\s*\(\s*<FileText/, 'filtered document metadata must keep a neutral file icon');
+assert.match(history, /attachments\.filteredContentHint/, 'filtered content must explain retained original-file access');
+for (const locale of ['zh-Hans', 'en-US']) {
+  const messages = read(`src/i18n/modules/webapp/${locale}.ts`);
+  assert.match(messages, /filteredContentHint:/, `${locale} must explain model content injection separately from tool file use`);
+  assert.doesNotMatch(messages, /filtered: '未参与回答'/, 'content injection does not prove whether a tool used the file');
+}
 console.log('Unified document/image upload UI policy checks passed.');

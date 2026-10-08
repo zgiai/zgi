@@ -604,3 +604,8 @@ authenticated WebApp accounts: a second dedicated account is still required.
 The E2B CSV browser preview is visibly correct and authenticated binary downloads
 pass, but an actual browser-saved file has not been observed. Neither unresolved
 gate is reported as passing. Wider rollout remains closed.
+
+Attachment history distinguishes model content injection from tool file use:
+filtered content is shown neutrally as not directly injected, not as a failed or
+unused file. Original-file access remains subject to existing authorization;
+actual parsing errors still retain their error presentation.

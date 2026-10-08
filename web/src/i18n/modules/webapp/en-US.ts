@@ -1562,7 +1562,8 @@ const messages = {
       parsing: 'Parsing',
       parsed: 'Parsed',
       visionReady: 'Ready for vision',
-      filtered: 'Filtered',
+      filtered: 'Content not injected',
+      filteredContentHint: 'The original file is retained. Its content was not injected directly into the model, but authorized tools can still process it.',
       filteredModelWithoutVision:
         'The original image is available for file operations. The current model has not read its image content.',
       previewLoadError:

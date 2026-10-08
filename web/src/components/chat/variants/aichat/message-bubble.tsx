@@ -1579,7 +1579,7 @@ export function AIChatMessageBubble({
                                 key={file.id}
                                 className={cn(
                                   'inline-flex max-w-full items-center gap-1.5 rounded-md border bg-background/70 px-2 py-1 text-xs',
-                                  isFileError || isFiltered
+                                  isFileError
                                     ? 'border-destructive/40 text-destructive'
                                     : 'border-border text-muted-foreground'
                                 )}
@@ -1587,7 +1587,9 @@ export function AIChatMessageBubble({
                                   file.error ||
                                   (file.filtered_reason === 'model_without_vision'
                                     ? t('consoleChat.attachments.filteredModelWithoutVision')
-                                    : file.name)
+                                    : isFiltered
+                                      ? t('consoleChat.attachments.filteredContentHint')
+                                      : file.name)
                                 }
                               >
                                 {isFileParsing ? (
@@ -1597,7 +1599,7 @@ export function AIChatMessageBubble({
                                 ) : isFileExtracted || isVisionReady ? (
                                   <CheckCircle2 className="size-3.5 shrink-0 text-emerald-600" />
                                 ) : isFiltered ? (
-                                  <AlertCircle className="size-3.5 shrink-0" />
+                                  <FileText className="size-3.5 shrink-0" />
                                 ) : file.kind === 'image' ? (
                                   <FileImage className="size-3.5 shrink-0" />
                                 ) : (
