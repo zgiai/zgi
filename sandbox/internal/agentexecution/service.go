@@ -328,9 +328,16 @@ func (s *Service) ResumeBinding(ctx context.Context, scope Scope, bindingID stri
 		ProfileID: binding.ProfileID, HomeSnapshotID: binding.HomeSnapshotID, HomeSnapshotRef: binding.HomeSnapshotRef,
 		NetworkPolicy: binding.NetworkPolicy, NetworkMode: binding.NetworkMode,
 	}
-	allocation, err := backend.ResumeBinding(ctx, spec, Allocation{
-		BindingRef: binding.BackendRef, WorkspaceRef: binding.WorkspaceRef,
-	})
+	var allocation Allocation
+	if binding.BackendRef == "" && binding.WorkspaceRef == "" && s.checkpoints != nil && binding.CheckpointKey != "" {
+		// An operator-restored record intentionally has no live provider refs.
+		// Rebuild from its checkpoint without contacting the source environment.
+		err = ErrNotFound
+	} else {
+		allocation, err = backend.ResumeBinding(ctx, spec, Allocation{
+			BindingRef: binding.BackendRef, WorkspaceRef: binding.WorkspaceRef,
+		})
+	}
 	if errors.Is(err, ErrNotFound) && s.checkpoints != nil && binding.CheckpointKey != "" {
 		var attemptID string
 		attemptID, err = s.scheduleAllocationCheck(ctx, binding, backend)

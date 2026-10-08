@@ -4,6 +4,16 @@ SHELL := /bin/sh
 .PHONY: docker-up docker-down docker-logs
 .PHONY: docker-config
 .PHONY: test-agent-runtime-containerd-pid-termination
+.PHONY: test-agent-runtime-backup test-agent-runtime-backup-real-backend
+
+test-agent-runtime-backup-real-backend:
+	@test -n "$$ZGI_SANDBOX_TEST_POSTGRES_ADMIN_DSN" -a -n "$$ZGI_RUNTIME_BACKUP_TEST_PROFILE" || (echo 'isolated PostgreSQL administrator and approved Profile are required' >&2; exit 1)
+	go test -tags agent_runtime_backup_integration -count=1 -v -timeout 15m ./cmd/agentworker -run '^TestRuntimeBackupRealBackendRecovery$$'
+
+test-agent-runtime-backup:
+	@test -n "$$ZGI_SANDBOX_TEST_POSTGRES_ADMIN_DSN" || (echo 'isolated PostgreSQL administrator is required' >&2; exit 1)
+	@test -n "$$ZGI_CHECKPOINT_S3_TEST_ENDPOINT" -a -n "$$ZGI_CHECKPOINT_S3_TEST_BUCKET" || (echo 'real S3 fixture and pre-created private bucket are required' >&2; exit 1)
+	go test -race -count=1 -v ./internal/checkpointbackup ./internal/storage ./internal/agentexecution ./cmd/agentworker -run 'TestBackup|TestIncompleteBackup|TestCheckpointRecovery|TestAgentRuntimeS3Checkpoint|TestOperatorRecovery|TestRecoveryStorage|TestAuditMetrics'
 
 fmt:
 	gofmt -w $$(find . -name '*.go')

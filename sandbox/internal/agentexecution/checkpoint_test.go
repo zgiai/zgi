@@ -9,6 +9,31 @@ import (
 	"testing"
 )
 
+func TestOperatorRecoveryRebuildsWithoutContactingSource(t *testing.T) {
+	repository := newMemoryRepository()
+	backend := &checkpointBackend{content: []byte("retained dependency and file bytes")}
+	store := &memoryCheckpointStore{data: make(map[string][]byte)}
+	control, err := NewService(repository, map[string]Backend{"fake": backend}, ServiceOptions{Checkpoints: store, Jobs: &testActiveJobs{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := control.CreateBinding(t.Context(), testCreateRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err = control.SuspendBinding(t.Context(), testCreateRequest().Scope, binding.ID, binding.Generation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Logical restore deliberately drops both source references.
+	binding.BackendRef, binding.WorkspaceRef = "", ""
+	repository.bindings[binding.ID] = binding
+	restored, err := control.ResumeBinding(t.Context(), testCreateRequest().Scope, binding.ID, binding.Generation)
+	if err != nil || restored.Status != BindingStatusActive || backend.resumeCalls != 0 || backend.createCalls != 2 || !bytes.Equal(backend.restored, backend.content) {
+		t.Fatalf("restored=%+v error=%v resume=%d create=%d", restored, err, backend.resumeCalls, backend.createCalls)
+	}
+}
+
 func TestCheckpointSurvivesControlRestartAndLostCompute(t *testing.T) {
 	repository := newMemoryRepository()
 	backend := &checkpointBackend{content: []byte("two-csv-result")}

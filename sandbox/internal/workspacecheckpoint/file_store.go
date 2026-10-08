@@ -48,7 +48,16 @@ func NewFileStore(directory string) (*FileStore, error) {
 	if err := os.Chmod(directory, 0o700); err != nil {
 		return nil, fmt.Errorf("secure checkpoint directory: %w", err)
 	}
-	info, err = os.Lstat(directory)
+	return OpenFileStore(directory)
+}
+
+// OpenFileStore opens an existing private store without creating directories or
+// changing permissions. Read-only verification tools use this constructor.
+func OpenFileStore(directory string) (*FileStore, error) {
+	info, err := os.Lstat(directory)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("%w: checkpoint directory must be a real directory", agentexecution.ErrInvalidRequest)
+	}
 	if err != nil || info.Mode().Perm()&0o077 != 0 {
 		return nil, fmt.Errorf("%w: checkpoint directory is not private", agentexecution.ErrInvalidRequest)
 	}

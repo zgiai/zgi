@@ -87,6 +87,12 @@ func run(parent context.Context, logger *log.Logger) error {
 			return printReleaseFingerprint(cfg)
 		case "--audit":
 			return auditRuntime(parent, cfg)
+		case "--backup-checkpoints", "--verify-checkpoint-backup", "--restore-checkpoints":
+			command, directory, err := backupArguments(os.Args[1:])
+			if err != nil {
+				return err
+			}
+			return runCheckpointBackup(parent, cfg, command, directory)
 		case "--set-admission-policy":
 			ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 			defer cancel()
