@@ -223,3 +223,50 @@ Worker archive with public setup examples. Local workflow/static validation is
 not a published release or a dispatched hosted CI run. Start with
 [setup and use](agent-runtime-quickstart.md); deployment configuration and keys
 remain operator-owned and are not bundled.
+
+### Deployed normal-use verification
+
+The subsequent deployment verified source revision `5483b54de` on dedicated
+API/Web test services with both real Workers. API/Web were rebuilt from their
+repository Dockerfiles and their running registry digests were checked. The
+E2B Worker used the public Compose delivery path; the native Linux Worker used
+the checksummed archive and service installer. Approved execution images and
+E2B templates were retained, not rebuilt or implicitly upgraded.
+
+Both console runs uploaded a synthetic two-row CSV, used the original XLSX Skill
+and its `scripts/recalc.py`, then exported and downloaded one workbook. Independent
+ZIP/XML checks verified the input rows, `SUM(B2:B3)`, cached result 30 and the test
+marker. After page reload and explicit history selection, both workbooks downloaded
+again with identical bytes. Tool status, measured duration and file cards survived
+reload. A deliberate `sleep 2` was included in the measured Jobs; Linux reported
+approximately 6 seconds and E2B approximately 41.2 seconds including recalculation.
+
+Process narration remained visible between tool calls and after completion in the
+same page. It did **not** survive reload: the current client defines these notes
+as page-local content, separate from persisted tool metadata and final responses.
+This verifies same-page retention, not durable narration. The Linux shell lacked
+`time`; its failed attempt was visibly reported and the model completed the task
+using the measured Job duration instead. No dependency was installed to conceal
+that environment difference.
+
+The native installer initially could not read a release manifest under `/root`
+with `ProtectHome=true`. Automatic rollback preserved the service; moving the
+operator manifest to `/etc` allowed install, real gVisor smoke and `doctor` to
+pass without weakening isolation. All 69 retained native checkpoint hashes and
+the shared containerd process were unchanged. E2B checkpoint data was copied
+into the retained Worker volume while preserving the stopped original container.
+
+Both newly created test Bindings ended suspended with zero queued/running Jobs.
+Four dedicated API/Web services remained healthy for inspection; previous
+containers and rollback data were retained. The private test registry was stopped
+after verification. Paused provider storage is retained and may incur charges.
+The remote Linux connection still uses private SSH forwarding, not a production
+connectivity solution.
+
+The short tasks consumed approximately 76.7K cumulative tokens on Linux and
+88.2K on E2B. These totals warrant request-level analysis; they do not by themselves
+identify a context-management defect or establish billing cost. Efficiency,
+deployment preflight diagnostics and production operations remain follow-up work.
+This run did not repeat the full historical matrix or certify arbitrary Skills,
+Kata/KVM, hosted CI, or production readiness. Raw evidence, screenshots, filled
+operator settings and downloaded files remain outside Git.

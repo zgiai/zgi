@@ -266,6 +266,25 @@ and [server deployment](agent-runtime-server-deployment.md) for current contract
 The older [dependency-preparation guide](agent-runtime-m6b-dependency-preparation.md)
 describes the retained compatibility path, not the standard Profile default.
 
+## Normal-use delivery closure (2026-10-08)
+
+Source revision `5483b54de` was rebuilt and deployed to dedicated API/Web services
+and both real Worker backends using the public distribution paths. Original XLSX
+Skill execution, uploaded CSV input, recalculation, actual export/download and
+byte-identical downloads after reload passed. Native checkpoint contents and
+shared containerd were preserved; both new test Bindings ended suspended with
+no queued/running Jobs. See [the deployed normal-use evidence](agent-runtime-delivery-acceptance.md#deployed-normal-use-verification).
+
+Tool status, measured duration and file cards restore from history. Intermediate
+process narration remains page-local: same-page retention passed, reload
+persistence is not implemented or claimed. The installation manifest's access
+under service hardening was corrected through operator configuration, not by
+loosening isolation. High cumulative token usage still needs request-level
+analysis. These are scoped delivery results, not completion of M7 or the remaining
+M8 production gates. Existing feature implementations and the maintained evidence
+are committed; runtime state, private configuration and raw acceptance artifacts
+must remain outside Git.
+
 ## Compatibility gates
 
 The next M8 increment adds [verified checkpoint backup and isolated recovery](agent-runtime-checkpoint-backup.md)
