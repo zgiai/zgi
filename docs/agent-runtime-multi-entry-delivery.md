@@ -174,6 +174,12 @@ authenticated request. Protected HTML stays in the isolated preview rather than
 opening an application-origin Blob in a new tab. No package/provider credentials,
 host path or public URL is included in the card.
 
+Plain-text previews decode at most 1 MiB and render escaped text, not a navigated
+Blob iframe. UTF-8 and original line breaks are retained. Oversized text or a
+failed read shows a safe download fallback; closing or switching files cancels
+the read. This preview bound does not change upload or download limits. HTML
+continues to use its separate isolated renderer.
+
 P2 validation so far: protected-file ownership and signed-URL bypass tests,
 Agent/DigitalHuman read-route and cross-scope tests, live/history Skill event
 tests, real isolated PostgreSQL migration/idempotency/immutability tests with race
@@ -608,9 +614,10 @@ That transient failure remains in the private acceptance record.
 P5 is not complete. Two distinct API final users are not a substitute for two
 authenticated WebApp accounts: a second dedicated account is still required.
 The E2B CSV browser preview is visibly correct and authenticated binary downloads
-pass, but an actual browser-saved file has not been observed; protected TXT Blob
-preview is still blank in the embedded browser. These UI results do not yet
-establish whether the limitation is in the application or the browser integration.
+pass, but an actual browser-saved file has not been observed. Protected TXT preview
+now renders the independently verified original text on both backend candidates;
+the remaining download observation does not yet establish whether its limitation
+is in the application or the browser integration.
 Publication replacement and live entry revocation have real Agent and DigitalHuman
 API/WebApp samples on both backends. These entry-wide revocation checks do not
 replace the outstanding two-login user-isolation test. Wider rollout remains closed.
@@ -654,4 +661,20 @@ Owned compute and the SSH bridge are stopped, with zero queued/running Jobs;
 files, checkpoints and rollback containers remain. Authenticated retained-file
 reads still succeed after stopping compute. No push, merge or wider rollout was
 performed. Second-login isolation and observed browser-saved files remain required
-before marking P5 complete; protected TXT preview remains under investigation.
+before marking P5 complete.
+
+### Plain-text preview closeout
+
+The blank protected TXT preview was reproduced with authenticated bytes already
+available. The text renderer now displays bounded, escaped content in the
+application instead of relying on sandboxed Blob iframe navigation. Both local
+and E2B candidate WebApps visibly show the complete original 52-byte Skill result,
+including its line breaks, with compute stopped. No source Skill was rerun and no
+download authorization or HTML sandbox was weakened.
+
+Focused tests cover the byte boundary, streamed UTF-8, escaped markup, safe denied
+reads and cancellation; protected-file transport tests, type-check, lint and the
+production build pass. Preview screenshots remain in ignored acceptance evidence.
+An E2B preview download click still yields no observed saved file or automation
+event, so browser download acceptance remains open. A second authenticated test
+account is also still absent; neither gap is counted as a pass.
