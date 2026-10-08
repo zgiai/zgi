@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
@@ -71,7 +72,19 @@ func (s *RuntimeService) ContinueToolGovernance(ctx context.Context, scope Scope
 	}
 	caller.RunID = cloneUUIDPointer(&run.ID)
 	config.ConnectorRunID = run.ID.String()
-	return runtime.RunConfiguredToolGovernanceDecisionStream(ctx, chatScope, caller, config, conversationID, messageID, strings.TrimSpace(correlation), request, onEvent)
+	result, err := runtime.RunConfiguredToolGovernanceDecisionStream(ctx, chatScope, caller, config, conversationID, messageID, strings.TrimSpace(correlation), request, onEvent)
+	if err != nil {
+		return result, err
+	}
+	if result != nil && result.Status == runtimemodel.MessageStatusCompleted && run.Status == RunStatusWaiting &&
+		run.WaitingReason == runtimemodel.MessageStatusWaitingApproval && run.WaitingReceipt == nil && run.WaitingApprovalOrigin == platformCLIApprovalOrigin {
+		// The repository verifies the completed message and original platform
+		// owner again. Connector receipt-based approvals keep their own lifecycle.
+		if err := s.store.CompleteRun(ctx, run.ID, result.Answer, executionTraceFromMetadata(result.Metadata), s.now()); err != nil {
+			return result, err
+		}
+	}
+	return result, nil
 }
 
 func (s *RuntimeService) prepareContinuationLinux(ctx context.Context, run *Run, resolved *ResolvedExecution, event invocation.Event, scope Scope) (func(*runtimeservice.PreparedChat) []skillloop.RuntimeTool, error) {

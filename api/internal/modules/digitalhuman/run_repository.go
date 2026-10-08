@@ -229,10 +229,23 @@ func (r *GormRepository) CompleteRun(ctx context.Context, runID uuid.UUID, summa
 		if run.Status == RunStatusCanceling || run.CancelRequestedAt != nil {
 			status = RunStatusCanceled
 		} else if run.Status != RunStatusRunning {
-			return ErrRunConflict
+			waitingPlatform := run.Status == RunStatusWaiting && run.WaitingReason == runtimemodel.MessageStatusWaitingApproval && run.WaitingApprovalOrigin == platformCLIApprovalOrigin
+			if (!waitingPlatform && run.Status != RunStatusSucceeded) || run.WaitingReceipt != nil {
+				return ErrRunConflict
+			}
+			matched, err := runHasPlatformGovernanceMessage(tx, &run, runtimemodel.MessageStatusCompleted)
+			if err != nil {
+				return err
+			}
+			if !matched {
+				return ErrRunConflict
+			}
+			if run.Status == RunStatusSucceeded {
+				return nil // Repeated approval must not reopen or complete the run again.
+			}
 		}
 		return tx.Model(&Run{}).Where("id = ?", runID).Updates(map[string]any{
-			"status": status, "result_summary": summary, "execution_trace": trace, "completed_at": now, "updated_at": now,
+			"status": status, "result_summary": summary, "execution_trace": trace, "waiting_reason": "", "waiting_receipt": nil, "waiting_approval_origin": "", "completed_at": now, "updated_at": now,
 		}).Error
 	})
 }
@@ -247,17 +260,29 @@ func (r *GormRepository) MarkRunWaiting(ctx context.Context, runID uuid.UUID, re
 			return ErrRunConflict
 		}
 		var receipt *uuid.UUID
+		approvalOrigin := ""
 		if reason == runtimemodel.MessageStatusWaitingApproval {
 			var rows []struct{ RouteReceipt uuid.UUID }
 			if err := tx.Table("connector_confirmation_continuations").
 				Where("origin_version = ? AND origin_surface = ? AND run_id = ? AND digital_human_id = ? AND state = ?", 2, "digital_human", runID.String(), run.DigitalHumanID.String(), "pending").
-				Limit(2).Find(&rows).Error; err != nil || len(rows) != 1 {
+				Limit(2).Find(&rows).Error; err != nil || len(rows) > 1 {
 				return ErrRunConflict
 			}
-			receipt = &rows[0].RouteReceipt
+			if len(rows) == 1 {
+				receipt = &rows[0].RouteReceipt
+			} else {
+				matched, err := runHasPlatformGovernanceMessage(tx, &run, runtimemodel.MessageStatusWaitingApproval)
+				if err != nil {
+					return err
+				}
+				if !matched {
+					return ErrRunConflict
+				}
+				approvalOrigin = platformCLIApprovalOrigin
+			}
 		}
 		result := tx.Model(&Run{}).Where("id = ? AND status = ?", runID, RunStatusRunning).
-			Updates(map[string]any{"status": RunStatusWaiting, "waiting_reason": reason, "waiting_receipt": receipt, "updated_at": now})
+			Updates(map[string]any{"status": RunStatusWaiting, "waiting_reason": reason, "waiting_receipt": receipt, "waiting_approval_origin": approvalOrigin, "updated_at": now})
 		if result.Error != nil {
 			return result.Error
 		}
@@ -282,7 +307,7 @@ func (r *GormRepository) FailRun(ctx context.Context, runID uuid.UUID, code, mes
 			status = RunStatusCanceled
 		}
 		return tx.Model(&Run{}).Where("id = ?", runID).Updates(map[string]any{
-			"status": status, "error_code": code, "error_message": message, "completed_at": now, "updated_at": now,
+			"status": status, "error_code": code, "error_message": message, "waiting_reason": "", "waiting_receipt": nil, "waiting_approval_origin": "", "completed_at": now, "updated_at": now,
 		}).Error
 	})
 }
@@ -311,8 +336,9 @@ func (r *GormRepository) RequestRunCancel(ctx context.Context, scope Scope, digi
 			return ErrRunConflict
 		}
 		result.CancelRequestedAt, result.UpdatedAt = &now, now
+		result.WaitingReason, result.WaitingReceipt, result.WaitingApprovalOrigin = "", nil, ""
 		return tx.Model(&Run{}).Where("id = ?", runID).Updates(map[string]any{
-			"status": result.Status, "cancel_requested_at": now, "completed_at": result.CompletedAt, "updated_at": now,
+			"status": result.Status, "cancel_requested_at": now, "waiting_reason": "", "waiting_receipt": nil, "waiting_approval_origin": "", "completed_at": result.CompletedAt, "updated_at": now,
 		}).Error
 	})
 	return &result, err

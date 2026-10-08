@@ -6,12 +6,15 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	chatruntime "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
+	"gorm.io/datatypes"
 )
 
 func TestDigitalHumanGovernanceConsoleRouteUsesDedicatedSSEContinuation(t *testing.T) {
@@ -61,6 +64,17 @@ type continuationLinuxProvider struct {
 	run, publication uuid.UUID
 }
 
+type platformGovernanceRunStore struct {
+	*fakeRunStore
+	completions int
+}
+
+func (s *platformGovernanceRunStore) CompleteRun(_ context.Context, id uuid.UUID, _ string, _ datatypes.JSON, _ time.Time) error {
+	s.completions++
+	s.runs[id].Status = RunStatusSucceeded
+	return nil
+}
+
 func (p *continuationLinuxProvider) Prepare(_ context.Context, run *Run, resolved *ResolvedExecution, _ invocation.Event) (func(*chatruntime.PreparedChat) []skillloop.RuntimeTool, error) {
 	p.calls++
 	p.run, p.publication = run.ID, resolved.Snapshot.DigitalHumanVersion
@@ -77,12 +91,14 @@ func TestDigitalHumanGovernanceUsesSealedRunAcrossInteractiveEntries(t *testing.
 				t.Fatal(err)
 			}
 			scope := access.scope()
-			store := newFakeRunStore()
+			store := &platformGovernanceRunStore{fakeRunStore: newFakeRunStore()}
 			store.runs[run.ID] = run
 			chat := &governanceContinuationChat{scopedConversationChat: &scopedConversationChat{fakeDigitalHumanChat: &fakeDigitalHumanChat{}}}
 			linux := &continuationLinuxProvider{}
 			service := NewRuntimeService(store, fakeExecutionResolver{}, fakeBrainAdapter{}, chat, &fakeRunDispatcher{}, WithLinuxExecutionRuntime(linux))
 			for _, action := range []string{"approve", "reject"} {
+				run.Status, run.WaitingReason = RunStatusWaiting, runtimemodel.MessageStatusWaitingApproval
+				run.WaitingApprovalOrigin = platformCLIApprovalOrigin
 				if action == "reject" {
 					service.linux = nil
 				}
@@ -92,6 +108,9 @@ func TestDigitalHumanGovernanceUsesSealedRunAcrossInteractiveEntries(t *testing.
 				}
 				if chat.caller.Type != "digital_human" || chat.caller.Source != prepared.Caller.Source || chat.caller.RunID == nil || *chat.caller.RunID != run.ID || chat.decision != action {
 					t.Fatal("continuation replaced original run/entry")
+				}
+				if run.Status != RunStatusSucceeded {
+					t.Fatalf("%s completed message left host run %s", action, run.Status)
 				}
 			}
 			if linux.calls != 1 || linux.publication != run.DigitalHumanVersionID {
@@ -104,7 +123,7 @@ func TestDigitalHumanGovernanceUsesSealedRunAcrossInteractiveEntries(t *testing.
 			if _, err := service.ContinueToolGovernance(t.Context(), other, run.DigitalHumanID, *run.ConversationID, *run.MessageID, "pending", runtimedto.ToolGovernanceDecisionRequest{Action: "reject"}, func(chatruntime.StreamEvent) error { return nil }); err == nil {
 				t.Fatal("other final user continued approval")
 			}
-			if chat.calls != 2 {
+			if chat.calls != 2 || store.completions != 2 {
 				t.Fatal("cross-user request reached ChatRuntime")
 			}
 		})

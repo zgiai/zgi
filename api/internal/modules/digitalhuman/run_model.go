@@ -44,6 +44,7 @@ type Run struct {
 	Status                    RunStatus      `gorm:"type:varchar(16);not null" json:"status"`
 	WaitingReason             string         `gorm:"type:varchar(32);not null;default:''" json:"waiting_reason,omitempty"`
 	WaitingReceipt            *uuid.UUID     `gorm:"type:uuid" json:"waiting_receipt,omitempty"`
+	WaitingApprovalOrigin     string         `gorm:"type:varchar(32);not null;default:''" json:"-"`
 	ConversationID            *uuid.UUID     `gorm:"type:uuid" json:"conversation_id,omitempty"`
 	MessageID                 *uuid.UUID     `gorm:"type:uuid" json:"message_id,omitempty"`
 	ResultSummary             string         `gorm:"type:text;not null" json:"result_summary,omitempty"`
