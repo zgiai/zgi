@@ -27,19 +27,28 @@ func TestSharedFactoryPreservesApplicationIdentityAndBilling(t *testing.T) {
 	for _, application := range []string{"agent", "digital_human"} {
 		for _, entry := range []string{"console", "webapp", "external-api"} {
 			t.Run(application+"/"+entry, func(t *testing.T) {
-				org, app, user, billing, conversation := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+				org, app, user, billing, conversation, workspace := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
 				prepared := &runtimeservice.PreparedChat{
-					Scope:        runtimeservice.Scope{OrganizationID: org, AccountID: billing},
+					Scope:        runtimeservice.Scope{OrganizationID: org, AccountID: billing, WorkspaceID: &workspace},
 					Caller:       runtimeservice.Caller{Type: application, ID: &app, Source: entry},
-					Conversation: &runtimemodel.Conversation{ID: conversation}, Message: &runtimemodel.Message{ID: uuid.New()},
+					Conversation: &runtimemodel.Conversation{ID: conversation, OrganizationID: org, WorkspaceID: &workspace, CallerType: application, CallerID: &app, Source: entry},
+					Message:      &runtimemodel.Message{ID: uuid.New(), ConversationID: conversation},
 				}
 				kind := "account"
 				if entry == "external-api" {
 					kind = "api_end_user"
+				}
+				if application == "agent" && entry == "external-api" {
+					prepared.Scope.ExternalUserID, prepared.Conversation.ExternalUserID = &user, &user
 				} else {
 					prepared.Scope.AccountID = user
 				}
-				identity := &execution.Identity{Version: 1, WorkspaceID: uuid.NewString(), ApplicationType: application, ApplicationID: app.String(),
+				prepared.Conversation.AccountID = prepared.Scope.AccountID
+				if entry == "webapp" {
+					webApp := uuid.New()
+					prepared.Caller.SourceWebAppID, prepared.Conversation.SourceWebAppID = &webApp, &webApp
+				}
+				identity := &execution.Identity{Version: 1, WorkspaceID: workspace.String(), ApplicationType: application, ApplicationID: app.String(),
 					Entry: entry, SubjectKind: kind, ConversationID: conversation.String(), PublicationRef: "published-v1"}
 				scope := execution.Scope{OrganizationID: org.String(), SubjectID: user.String(), Identity: identity}
 				entries, err := execution.ParseEntryAdmission(`{"` + application + `:` + entry + `":["` + org.String() + `"]}`)
@@ -77,7 +86,7 @@ func TestSharedFactoryPreservesApplicationIdentityAndBilling(t *testing.T) {
 				if application == "digital_human" && gateway.agentID != "" {
 					t.Fatal("DigitalHuman impersonated Agent")
 				}
-				if entry == "external-api" && prepared.Scope.AccountID != billing {
+				if application == "agent" && entry == "external-api" && prepared.Scope.AccountID != billing {
 					t.Fatal("execution changed the existing billing account")
 				}
 				resolver := options.ResolveFiles
@@ -109,6 +118,18 @@ func TestSharedFactoryPreservesApplicationIdentityAndBilling(t *testing.T) {
 					t.Fatal("revoked user reached gateway")
 				}
 				revoked = false
+				messageID := prepared.Message.ID
+				prepared.Message.ID = uuid.New()
+				if result := tools[0].Handler(t.Context(), call); result.Result["error_code"] != "execution_denied" || gateway.creates != before {
+					t.Fatal("tool invocation switched its frozen message")
+				}
+				prepared.Message.ID = messageID
+				conversationOwner := prepared.Conversation.AccountID
+				prepared.Conversation.AccountID = uuid.New()
+				if result := tools[0].Handler(t.Context(), call); result.Result["error_code"] != "execution_denied" || gateway.creates != before {
+					t.Fatal("conversation owner change reached gateway")
+				}
+				prepared.Conversation.AccountID = conversationOwner
 				identity.PublicationRef = "published-v2"
 				if result := tools[0].Handler(t.Context(), call); result.Result["error_code"] != "execution_denied" {
 					t.Fatal("invocation silently changed frozen publication")

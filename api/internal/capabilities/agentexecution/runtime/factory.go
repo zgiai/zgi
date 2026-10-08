@@ -120,6 +120,9 @@ func NewToolFactory(options FactoryOptions) func(*runtimeservice.PreparedChat) [
 			handler := tools[index].Handler
 			isShell := index == 0
 			tools[index].Handler = func(ctx context.Context, call adapter.ToolCall) skillloop.RuntimeToolResult {
+				if prepared.Conversation == nil || prepared.Message == nil || prepared.Message.ID.String() != messageID {
+					return deniedFactoryTool(options.ErrorProjector)
+				}
 				current, err := options.ResolveScope(prepared)
 				if err != nil || !sameFactoryScope(scope, current) || !factoryScopeMatches(current, options.LegacyAgentID, prepared) ||
 					!options.Entries.Allows(current.OrganizationID, prepared.Caller.Type, prepared.Caller.Source) {
@@ -139,7 +142,8 @@ func NewToolFactory(options FactoryOptions) func(*runtimeservice.PreparedChat) [
 }
 
 func factoryScopeMatches(scope execution.Scope, legacyAgentID string, prepared *runtimeservice.PreparedChat) bool {
-	if scope.OrganizationID == "" || scope.SubjectID == "" || scope.OrganizationID != prepared.Scope.OrganizationID.String() || prepared.Caller.ID == nil {
+	if prepared == nil || prepared.Conversation == nil || prepared.Message == nil || scope.OrganizationID == "" || scope.SubjectID == "" ||
+		scope.OrganizationID != prepared.Scope.OrganizationID.String() || prepared.Caller.ID == nil {
 		return false
 	}
 	if scope.Identity == nil {
@@ -147,10 +151,7 @@ func factoryScopeMatches(scope execution.Scope, legacyAgentID string, prepared *
 			prepared.Caller.Source == runtimemodel.ConversationSourceConsole && prepared.Caller.ID.String() == legacyAgentID &&
 			prepared.Scope.AccountID.String() == scope.SubjectID
 	}
-	i := scope.Identity
-	return i.Validate() == nil && i.ApplicationType == string(prepared.Caller.Type) &&
-		i.ApplicationID == prepared.Caller.ID.String() && i.Entry == string(prepared.Caller.Source) &&
-		i.ConversationID == prepared.Conversation.ID.String()
+	return identityMatchesPrepared(scope, prepared)
 }
 
 func sameFactoryScope(expected, current execution.Scope) bool {

@@ -258,3 +258,21 @@ accepts only the application's enabled boolean, not client-selected environment
 settings. Existing Agent approval/publication tests and the shared runtime and
 DigitalHuman packages passed race detection and vet. This refactor does not enable
 new entries or grant DigitalHuman Shell access.
+
+The shared factory also validates identity-scoped requests against the prepared
+conversation and message: organization, runtime-data and resource workspaces,
+application, entry/WebApp, user, billing owner, message/conversation relationship
+and deletion state. Every invocation remains bound to its original message.
+Agent API execution uses the explicit external user without rewriting the billing
+account; DigitalHuman uses its separately verified interactive UserSubject. Runtime
+Workspace credentials are rejected even if an adapter supplies a plausible
+identity. Legacy console bindings keep their existing identity contract.
+
+Unit isolation tests cover both application types across all three planned
+interactive entries, missing/mismatched ownership, revoked/deleted conversation
+state, changed messages and separate resource/data workspaces. Runtime, Agent and
+DigitalHuman tests passed with race detection and vet. These checks defend the
+shared boundary; they do not authenticate an anonymous visitor or replace entry
+authentication. The next P3 work is the verified published-entry adapters and
+DigitalHuman runtime injection. New entries remain disabled until P4 is complete;
+P5 real local/E2B acceptance is still outstanding.
