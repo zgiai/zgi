@@ -335,6 +335,7 @@ curl --request POST \
 | GET | `/api/v1/digital-humans/conversations/{id}/messages` | Message history / 消息历史 |
 | POST | `/api/v1/digital-humans/conversations/{conversation_id}/messages/{message_id}/workflow-continuation` | Submit a task approval and resume the paused chat / 提交任务审批并恢复暂停的对话 |
 | POST | `/api/v1/digital-humans/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue` | Answer a model-generated question and resume the same Agent Loop / 回答模型问题并继续原 Agent Loop |
+| POST | `/api/v1/digital-humans/conversations/{conversation_id}/messages/{message_id}/tool-governance/{correlation_id}/continue` | Confirm/reject an admitted platform CLI frozen business call; body `user`, `action`; never replays Shell / 确认或拒绝获准 CLI 的冻结业务调用，不重跑 Shell |
 | POST | `/api/v1/digital-humans/files/upload` | Upload a chat file / 上传聊天文件 |
 | GET/POST | `/api/v1/digital-humans/tasks` | List or create user-owned tasks / 查询或创建用户私有任务 |
 | GET/PATCH | `/api/v1/digital-humans/tasks/{task_id}` | Read or update one user-owned task / 查询或更新用户私有任务 |

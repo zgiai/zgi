@@ -20,6 +20,7 @@ export function createDigitalHumanWebAppTransport(webAppId: string): AgentRuntim
     chatPath: `${basePath}/chat`,
     client: createDigitalHumanWebAppHttp(webAppId),
     supportsRuntimeInput: true,
+    supportsToolGovernanceApproval: true,
     transformChatPayload: toDigitalHumanWebAppChatRequest,
   });
 }

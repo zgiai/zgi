@@ -23,6 +23,7 @@ const mocks = new Map([
     {
       http: createClient(draftSseCalls),
       webappHttp: createClient(webappSseCalls),
+      createDigitalHumanWebAppHttp: () => createClient(webappSseCalls),
     },
   ],
   [
@@ -38,19 +39,19 @@ const mocks = new Map([
   ],
 ]);
 
-function loadTransportModule() {
-  const source = readFileSync(transportPath, 'utf8');
+function loadTransportModule(modulePath = transportPath) {
+  const source = readFileSync(modulePath, 'utf8');
   const output = ts.transpileModule(source, {
     compilerOptions: {
       module: ts.ModuleKind.CommonJS,
       target: ts.ScriptTarget.ES2022,
       esModuleInterop: true,
     },
-    fileName: transportPath,
+    fileName: modulePath,
   }).outputText;
-  const testModule = new Module(transportPath);
-  testModule.filename = transportPath;
-  testModule.paths = Module._nodeModulePaths(path.dirname(transportPath));
+  const testModule = new Module(modulePath);
+  testModule.filename = modulePath;
+  testModule.paths = Module._nodeModulePaths(path.dirname(modulePath));
 
   const originalLoad = Module._load;
   Module._load = function load(request, parent, isMain) {
@@ -60,7 +61,7 @@ function loadTransportModule() {
     return originalLoad.call(this, request, parent, isMain);
   };
   try {
-    testModule._compile(output, transportPath);
+    testModule._compile(output, modulePath);
     return testModule.exports;
   } finally {
     Module._load = originalLoad;
@@ -75,11 +76,62 @@ function createCallbacks() {
 }
 
 const { createAgentDraftTransport, createAgentWebAppTransport } = loadTransportModule();
-assert.equal(
-  createAgentWebAppTransport('public').continueToolGovernanceDecision,
-  undefined,
-  'Public WebApps must not gain the console approval endpoint'
+mocks.set('@/components/chat/transports/agent-runtime-transport', loadTransportModule());
+mocks.set('@/components/digital-human/digital-human-run-presentation', {
+  isActiveDigitalHumanRunStatus: () => true,
+});
+mocks.set('@/services/digital-human.service', { digitalHumanService: {} });
+const { createDigitalHumanRuntimeTransport } = loadTransportModule(
+  path.join(root, 'src/components/chat/transports/digital-human-runtime-transport.ts')
 );
+const { createDigitalHumanWebAppTransport } = loadTransportModule(
+  path.join(root, 'src/components/chat/transports/digital-human-webapp-transport.ts')
+);
+for (const [transport, calls, prefix] of [
+  [
+    createDigitalHumanRuntimeTransport('human-123'),
+    draftSseCalls,
+    '/console/api/digital-humans/human-123/runtime',
+  ],
+  [
+    createDigitalHumanWebAppTransport('webapp-123'),
+    webappSseCalls,
+    '/api/v1/digital-human-webapps/webapp-123',
+  ],
+]) {
+  for (const action of ['approve', 'reject']) {
+    await transport.continueToolGovernanceDecision(
+      'conversation/one',
+      'message two',
+      'corr?three',
+      { action },
+      createCallbacks()
+    );
+    const call = calls.pop();
+    assert.equal(
+      call.url,
+      `${prefix}/conversations/conversation%2Fone/messages/message%20two/tool-governance/corr%3Fthree/continue`
+    );
+    assert.equal(call.options.method, 'POST');
+    assert.deepEqual(call.options.body, { action });
+  }
+}
+for (const action of ['approve', 'reject']) {
+  await createAgentWebAppTransport('webapp-123').continueToolGovernanceDecision(
+    'conversation/one',
+    'message two',
+    'corr?three',
+    { action },
+    createCallbacks()
+  );
+  const call = webappSseCalls.pop();
+  assert.equal(
+    call.url,
+    '/console/api/webapps/webapp-123/runtime/conversations/conversation%2Fone/messages/message%20two/tool-governance/corr%3Fthree/continue'
+  );
+  assert.equal(call.options.method, 'POST');
+  assert.deepEqual(call.options.body, { action });
+}
 const approvalCallbacks = createCallbacks();
 const approvalPayload = { action: 'approve', remember_for_session: false };
 await createAgentDraftTransport('agent-123').continueToolGovernanceDecision(

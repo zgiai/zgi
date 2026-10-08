@@ -16,9 +16,9 @@ files and cleanup must remain available during an admission rollback.
 | --- | --- | --- |
 | P0 | Versioned identity, Worker negotiation, additive persistence, compatibility | Complete; unit, PostgreSQL, race and vet gates passed |
 | P1 | Shared execution factory, live authorization, end-user admission | Complete; shared factory, regression, race and vet gates passed |
-| P2 | Protected file ownership and authenticated preview/download | File contracts, upload provenance and scoped staging implemented; new entry wiring remains P3 and real acceptance P5 |
-| P3 | Published Agent and DigitalHuman interactive script integration | In progress: gated Agent WebApp/API adapters, DigitalHuman versioned opt-in and runtime injection implemented; configuration UI and real entry acceptance pending |
-| P4 | Published-resource CLI and frozen, idempotent approval continuation | Pending |
+| P2 | Protected file ownership and authenticated preview/download | Implemented, including CLI business outputs; real entry acceptance remains P5 |
+| P3 | Published Agent and DigitalHuman interactive script integration | Implementation complete: published adapters, DigitalHuman opt-in UI and request-scoped tools; deployment acceptance remains P5 |
+| P4 | Published-resource CLI and frozen, idempotent approval continuation | Implementation and automated gates complete; real dual-backend acceptance remains P5 |
 | P5 | Real local/E2B entry acceptance and rollback verification | Pending |
 
 ## Identity contract
@@ -240,9 +240,9 @@ version and v1 execution-snapshot hashes remain unchanged. The additive migratio
 shapes. No runtime tool or new entry permission is granted by persisting this
 setting; entry adapters, operator approval and P4 remain separate gates.
 
-The frontend service contract includes this optional field, but the DigitalHuman
-editor switch is not yet exposed. P3 execution integration and P4 approvals must
-be wired before the UI advertises this as an available capability.
+The frontend service contract and DigitalHuman editor expose this optional
+boolean. Version preview is read-only and renders a missing value as disabled.
+Operator deployment gates still determine whether execution is available.
 
 P3 configuration validation passed: DigitalHuman and migration package tests with
 race detection and vet; real isolated PostgreSQL migration idempotency, JSON
@@ -273,9 +273,9 @@ interactive entries, missing/mismatched ownership, revoked/deleted conversation
 state, changed messages and separate resource/data workspaces. Runtime, Agent and
 DigitalHuman tests passed with race detection and vet. These checks defend the
 shared boundary; they do not authenticate an anonymous visitor or replace entry
-authentication. The next P3 work is the verified published-entry adapters and
-DigitalHuman runtime injection. New entries remain disabled until P4 is complete;
-P5 real local/E2B acceptance is still outstanding.
+authentication. The verified published-entry adapters, DigitalHuman runtime
+injection and dedicated P4 approval routes are implemented below. P5 real
+local/E2B acceptance is still outstanding.
 
 ## Entry readiness gate
 
@@ -294,9 +294,9 @@ and DigitalHuman package tests passed with race detection and vet.
 ## Published Agent execution adapters
 
 WebApp chat/regeneration configuration and API chat/continuation configuration
-now attach the shared factory through a verified published-entry adapter. The
-server readiness callback remains unset: publishing `execution_runtime.enabled`
-and adding an operator allowlist entry do not yet open these paths. Ordinary
+attach the shared factory through a verified published-entry adapter. P4 supplies
+the server readiness callback for the implemented interactive entries; publishing
+`execution_runtime.enabled` alone does not grant admission. Ordinary
 authenticated and anonymous chat keeps working without an execution gateway.
 
 The adapter freezes application, organization, resource/data workspaces, verified
@@ -309,9 +309,9 @@ Every tool invocation rechecks current WebApp access or API credential
 status/expiry/application/workspace and the current API surface policy. It also
 rechecks the published Linux opt-in and operator approvals. A publication change
 fails the existing invocation instead of silently swapping its configuration;
-a new chat turn can select the new publication. P4 must separately freeze pending
-approval calls and their original publication. No platform CLI relay or interactive
-approval is exposed by these P3 adapters.
+a new chat turn can select the new publication. Pending CLI approval calls seal
+their original publication and owner. The CLI relay additionally requires the
+operator platform-CLI switch and live authorization.
 
 Input files use the P2 application/end-user upload authorizer; result files use
 the protected, message-bound persister, never public signed URLs. Only operator
@@ -330,8 +330,8 @@ queries use isolated SQLite fixtures; no new schema or live database migration
 was introduced. This is not real Skill execution or P5 dual-backend/UI acceptance.
 
 The DigitalHuman injection described below completes the next backend adapter.
-Configuration UI and P4 published-resource CLI/frozen approval continuation remain
-before readiness or any new entry can be opened. P5 remains outstanding; no
+Configuration UI and P4 published-resource CLI/frozen approval continuation are
+implemented below. P5 remains outstanding; no
 runtime deployment or remote push accompanies these commits.
 
 ## DigitalHuman interactive execution adapter
@@ -361,11 +361,11 @@ console ownership or external application/end-user upload authorizer, with live
 execution authorization repeated before staging. Artifacts use the protected
 message-bound persister. Operator approvals alone choose Profile, backend,
 network and Home; compatibility-only dependency preparation follows the shared
-factory contract. No platform CLI relay or interactive approval is exposed yet.
+factory contract. CLI relay and approval use the dedicated P4 routes below.
 
-Production wiring deliberately leaves EntryReady unset for all DigitalHuman
-entries, including console. Environment configuration and allowlists cannot
-release incomplete approval paths. The deferred ToolFile manager lookup avoids
+Production wiring supplies EntryReady for console, logged-in WebApp and API
+interactive entries. Operator allowlists, application opt-in, verified identity
+and Worker negotiation remain independent gates. The deferred ToolFile manager lookup avoids
 depending on initialization order; an absent manager denies enabled preparation
 instead of falling back to publicly signed result files.
 
@@ -383,7 +383,75 @@ Validation used Go 1.26.2 in Linux containers:
   applications and replaced publications. Production wiring tests prove that
   operator configuration does not grant tools while readiness is unset.
 
-No schema change, live database migration, frontend change, remote push or
-deployment is included. These are backend adapter gates, not real Skill or
-dual-backend acceptance. Next: finish P3 configuration UI, then P4 CLI/approval
-continuation and its entry-specific routes before P5 local/E2B acceptance.
+The preceding adapter validation was performed before P4 readiness was wired.
+It did not constitute real Skill or dual-backend acceptance.
+
+## P3/P4 interactive CLI closure
+
+DigitalHuman draft and version-preview UI exposes only the Linux enable switch;
+missing fields default to disabled. Agent WebApp/API and DigitalHuman console,
+logged-in WebApp and API use the same server-owned execution factory. Model and
+business-tool CLI calls reenter the current configured model, billing, task
+budget, loaded-Skill and live resource-binding boundaries. No personal connection
+discovery or alternate billing identity is introduced.
+
+`ZGI_AGENT_RUNTIME_PLATFORM_CLI_ENABLED` enables CLI only within already-admitted
+Linux entries. `ZGI_AGENT_RUNTIME_ENTRY_ALLOWLIST_JSON` remains default-closed for
+new entries. Application enablement, organization/Profile approvals, execution
+identity negotiation and live publication/surface authorization are all still
+required. Configuration alone is not a claim of backend acceptance.
+
+Dedicated `tool-governance/{correlation_id}/continue` routes are registered under
+the existing authenticated Agent and DigitalHuman conversation/message routes.
+Agent API uses the existing external-user header or `user` query contract;
+DigitalHuman API requires the existing `user` body field. WebApp uses verified
+login identity. Runtime Workspace, anonymous, task and channel entrypoints do
+not acquire these capabilities.
+
+Pending CLI approvals seal organization, resource workspace, application, entry,
+final user, conversation, message and publication into the frozen invocation
+hash. Confirmation checks these coordinates and current resource permissions
+before recording the decision and immediately before invoking the business tool.
+Publication replacement rejects the old call rather than silently using a newer
+configuration. DigitalHuman continuation restores the sealed original run; a
+rotated API credential is used for live authorization without rewriting that run
+or its final-user owner.
+
+Confirmation executes only the frozen business invocation; rejection executes
+none, including after compute admission is disabled or the invocation expires.
+Neither decision reruns the original Shell or restores its revoked Job grant.
+CLI decisions cannot create reusable session grants, even if requested by the
+client. Completed decisions replay stored events instead of repeating business
+effects. Concurrent claims are transactionally exclusive; uncertain write
+results are reported, never automatically retried.
+
+CLI business tools producing raw or remote ToolFiles inherit the verified final
+user, application, entry and message owner. File, chart, diagram and generated
+image results use authenticated file metadata, not legacy signed links. Legacy
+unprotected outputs retain their prior URL contract. Protected files remain
+unreadable through the legacy signed reader even with a valid signature.
+
+Automated validation (Go 1.26.2 in Linux containers):
+
+- Targeted tests and race checks for shared runtime, chat service/loop,
+  governance, Skills, Agent, DigitalHuman, ToolFile, image assets, file/chart/
+  diagram/image generators and both route packages; targeted vet passed.
+- Six application/entry combinations cover frozen confirm-once/reject-zero,
+  no Shell replay, duplicate result replay, publication/owner mismatch, revoked
+  authorization and rejection without compute. Isolated PostgreSQL 16 tests
+  verify one successful continuation claim among twelve concurrent requests.
+- Actual HTTP handler/SSE tests and production route registration/authentication
+  checks supplement OpenAPI and transport contracts. Missing identities,
+  anonymous login and Runtime Workspace requests fail closed.
+- Frontend approval transports, protected files and DigitalHuman configuration
+  contracts passed. Both localized API guides match 26 operations and 58 SSE
+  event definitions. Type-check, lint and production build passed; lint has
+  existing warnings, no errors.
+
+No application database migration or remote deployment was performed for P4.
+P5 must still run real local gVisor and E2B tests for every new entry, with two
+final users, file download/content inspection, actual model usage, controlled
+business side effects and admission rollback. Mock and PostgreSQL results above
+do not replace that acceptance. Rollback disables new environment/CLI admission
+while retaining authenticated file reads, existing queries and cleanup; it does
+not delete files, reverse additive tables or replay pending writes.

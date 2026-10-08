@@ -900,6 +900,41 @@ curl '{apibase}/digital-humans/conversations/{conversation_id}/messages?user=cus
 
 ---
 
+<Heading url="/api/v1/digital-humans/conversations/{conversation_id}/messages/{message_id}/tool-governance/{correlation_id}/continue" method="POST" title="Resolve a Linux CLI Tool Approval" name="#Continue-Tool-Governance" />
+
+Use this dedicated route only for `tool_governance_approval_requested` emitted by
+an admitted Linux CLI call. It is not a task or workflow approval. Approval
+rechecks current application and resource permissions, then executes the sealed
+business invocation once; rejection executes it zero times. The stopped Shell
+is never replayed. A changed publication fails closed rather than selecting the
+latest version. Duplicate decisions reuse existing results; an uncertain write
+result is not automatically retried.
+
+<Properties>
+  <Property name="user" type="string body" propKey="user">Required stable final-user identifier, matching the original chat; the API key alone does not select the user.</Property>
+  <Property name="action" type="string body" propKey="action">Required: `approve` or `reject`.</Property>
+  <Property name="correlation_id" type="string path" propKey="correlation_id">Opaque identifier from the approval event.</Property>
+</Properties>
+
+<CodeGroup title="Request">
+```bash
+curl --request POST '{apibase}/digital-humans/conversations/{conversation_id}/messages/{message_id}/tool-governance/{correlation_id}/continue' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'Content-Type: application/json' \
+  --data '{"user":"customer_123","action":"approve"}'
+```
+</CodeGroup>
+
+<CodeGroup title="Response">
+```text
+event: tool_governance_decision
+data: {"event":"tool_governance_decision","data":{"action":"approve","approval_status":"approved"}}
+
+event: message_end
+data: {"event":"message_end","data":{"status":"completed"}}
+```
+</CodeGroup>
+
 <Heading url="/api/v1/digital-humans/conversations/{conversation_id}/files/{file_id}" method="GET" title="Read a Protected Execution File" name="#Read-Execution-File" />
 
 Artifacts with `access_mode: authenticated` omit public URLs. Read them using

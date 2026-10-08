@@ -524,5 +524,6 @@ export function createAgentWebAppTransport(webAppId: string): AgentRuntimeTransp
     chatPath: `/console/api/webapps/${webAppId}/chat`,
     client: webappHttp,
     supportsRuntimeInput: true,
+    supportsToolGovernanceApproval: true,
   });
 }

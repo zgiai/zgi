@@ -132,6 +132,9 @@ function ConfigurationEditor({
     return initialRules.length > 0 ? initialRules : [''];
   });
   const [model, setModel] = useState(detail?.draft.default_model ?? '');
+  const [executionEnabled, setExecutionEnabled] = useState(
+    detail?.draft.execution_runtime?.enabled ?? false
+  );
   const [intermediateMessagesEnabled, setIntermediateMessagesEnabled] = useState(
     detail?.draft.trigger_policy?.channel_response?.intermediate_messages_enabled ?? true
   );
@@ -154,6 +157,7 @@ function ConfigurationEditor({
       goals: detail?.draft.goals ?? [],
       rules: detail?.draft.rules ?? [],
       default_model: detail?.draft.default_model ?? '',
+      execution_runtime: { enabled: executionEnabled },
       trigger_policy: {
         ...(detail?.draft.trigger_policy ?? {}),
         manual: detail?.draft.trigger_policy?.manual ?? true,
@@ -179,6 +183,7 @@ function ConfigurationEditor({
       goals: normalizedGoals,
       rules: normalizedRules,
       default_model: model,
+      execution_runtime: { enabled: executionEnabled },
       trigger_policy: {
         ...(detail?.draft.trigger_policy ?? {}),
         manual: detail?.draft.trigger_policy?.manual ?? true,
@@ -509,6 +514,17 @@ function ConfigurationEditor({
             <h2 className="text-sm font-semibold">{t('capabilities.title')}</h2>
           </div>
           <div className="p-4 md:p-5">
+            <PreferenceSwitch
+              title={t('preferences.linuxEnvironment')}
+              description={t('preferences.linuxEnvironmentDescription')}
+              checked={
+                previewVersion
+                  ? (previewVersion.execution_runtime?.enabled ?? false)
+                  : executionEnabled
+              }
+              onCheckedChange={setExecutionEnabled}
+              disabled={!editingEnabled}
+            />
             <DigitalHumanResourceBindings id={id} />
           </div>
         </section>

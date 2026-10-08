@@ -884,6 +884,37 @@ curl '{apibase}/digital-humans/conversations/{conversation_id}/messages?user=cus
 
 ---
 
+<Heading url="/api/v1/digital-humans/conversations/{conversation_id}/messages/{message_id}/tool-governance/{correlation_id}/continue" method="POST" title="处理 Linux CLI 工具审批" name="#Continue-Tool-Governance" />
+
+仅用于已准入 Linux CLI 返回的 `tool_governance_approval_requested`，不能替代任务或工作流审批。
+确认时重新校验当前应用和资源授权，只执行一次冻结的业务调用；拒绝执行零次，均不会重跑已停止的 Shell。
+发布版本变化时拒绝旧调用，不静默切换到最新版本。重复决策复用已有结果；写操作结果不确定时不会自动重试。
+
+<Properties>
+  <Property name="user" type="string body" propKey="user">必填，与原对话一致的稳定最终用户标识；API Key 本身不能选择最终用户。</Property>
+  <Property name="action" type="string body" propKey="action">必填，`approve` 或 `reject`。</Property>
+  <Property name="correlation_id" type="string path" propKey="correlation_id">审批事件中的不透明标识。</Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl --request POST '{apibase}/digital-humans/conversations/{conversation_id}/messages/{message_id}/tool-governance/{correlation_id}/continue' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'Content-Type: application/json' \
+  --data '{"user":"customer_123","action":"approve"}'
+```
+</CodeGroup>
+
+<CodeGroup title="响应">
+```text
+event: tool_governance_decision
+data: {"event":"tool_governance_decision","data":{"action":"approve","approval_status":"approved"}}
+
+event: message_end
+data: {"event":"message_end","data":{"status":"completed"}}
+```
+</CodeGroup>
+
 <Heading url="/api/v1/digital-humans/conversations/{conversation_id}/files/{file_id}" method="GET" title="读取受保护的执行成果" name="#Read-Execution-File" />
 
 标记 `access_mode: authenticated` 的产物不返回公开链接。使用同一数字人凭据

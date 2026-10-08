@@ -25,6 +25,7 @@ export class DigitalHumanRuntimeTransport
       runtimeBasePath: `/console/api/digital-humans/${digitalHumanId}/runtime`,
       chatPath: `/console/api/digital-humans/${digitalHumanId}/invocations`,
       supportsRuntimeInput: true,
+      supportsToolGovernanceApproval: true,
     });
   }
 

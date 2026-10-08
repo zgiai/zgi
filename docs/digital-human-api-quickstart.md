@@ -703,6 +703,7 @@ Implement these operations through the same authenticated BFF pattern:
 | Load messages | `GET /digital-humans/conversations/{id}/messages?page=1&limit=100` | Query `user` |
 | Continue a task approval | `POST /digital-humans/conversations/{conversation_id}/messages/{message_id}/workflow-continuation` | JSON `user`, `approval_token`, and `action` |
 | Answer a model-generated question | `POST /digital-humans/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue` | JSON `user` and `answers`; resumes the same Agent Loop |
+| Confirm/reject an admitted Linux platform CLI call | `POST /digital-humans/conversations/{conversation_id}/messages/{message_id}/tool-governance/{correlation_id}/continue` | JSON `user` and `action` (`approve` or `reject`); executes only the frozen business call, never the original Shell |
 | Upload a file | `POST /digital-humans/files/upload` with multipart `file` | Multipart `user` |
 | List or create private tasks | `GET/POST /digital-humans/tasks` | Query/body `user` |
 | Read or update a private task | `GET/PATCH /digital-humans/tasks/{task_id}` | Query/body `user` |

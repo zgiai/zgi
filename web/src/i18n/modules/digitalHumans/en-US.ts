@@ -472,6 +472,9 @@ const messages = {
     saveHint: 'Saved changes remain in the draft until you publish a new version.',
   },
   preferences: {
+    linuxEnvironment: 'Enable Linux execution environment',
+    linuxEnvironmentDescription:
+      'Run scripts and process files in isolated interactive sessions when enabled by your administrator. Publish changes to apply them to WebApp and API. Anonymous users, scheduled tasks, and channels are not supported.',
     title: 'Settings',
     description:
       'Control channel feedback and other runtime preferences without changing this digital human’s identity.',

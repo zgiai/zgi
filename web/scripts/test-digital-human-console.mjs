@@ -36,6 +36,12 @@ const configurationHub = await readFile(
   new URL('../src/components/digital-human/digital-human-configuration-hub.tsx', import.meta.url),
   'utf8'
 );
+
+assert.match(configuration, /detail\?\.draft\.execution_runtime\?\.enabled \?\? false/);
+assert.match(configuration, /execution_runtime: \{ enabled: executionEnabled \}/);
+assert.match(configuration, /previewVersion\.execution_runtime\?\.enabled \?\? false/);
+assert.match(configuration, /onCheckedChange=\{setExecutionEnabled\}[\s\S]*?disabled=\{!editingEnabled\}/);
+assert.doesNotMatch(configuration, /execution_runtime:\s*\{[^}]*\b(?:profile|policy|home_snapshot|network)\b/);
 const sidebar = await readFile(
   new URL('../src/components/digital-human/digital-human-sidebar.tsx', import.meta.url),
   'utf8'
