@@ -66,7 +66,7 @@ case "$mode" in
     pnpm test:user-input-response-history
     pnpm build
     ;;
-  --real-local|--real-e2b|--real-worker)
+  --real-local|--real-e2b|--real-worker|--real-documents)
     [[ "${ZGI_RUNTIME_REAL_TESTS:-}" == 1 ]] || fail "real contracts require ZGI_RUNTIME_REAL_TESTS=1 and dedicated test resources"
     check_go
     case "$mode" in
@@ -85,20 +85,26 @@ case "$mode" in
         go test -p=1 -tags=e2b_integration -count=1 -v -timeout=20m \
           ./internal/hostedruntime/e2b -run '^TestE2BPackageInstallContract$'
         ;;
-      --real-worker)
+      --real-worker|--real-documents)
         require_env ZGI_STANDARD_SKILL_TEST_ROOT ZGI_AGENT_RUNTIME_TEST_URL \
           ZGI_AGENT_RUNTIME_TEST_API_KEY ZGI_AGENT_RUNTIME_TEST_PROFILE ZGI_AGENT_RUNTIME_TEST_BACKEND
         case "$ZGI_AGENT_RUNTIME_TEST_BACKEND" in local-gvisor|e2b) ;; *) fail "unsupported real Worker backend" ;; esac
-        for skill in xlsx pptx slack-gif-creator; do
+        skills=(xlsx pptx slack-gif-creator)
+        test_name=TestAgentExecutionStandardSkillMatrix
+        if [[ "$mode" == --real-documents ]]; then
+          skills=(docx pdf)
+          test_name=TestAgentExecutionDocumentSkills
+        fi
+        for skill in "${skills[@]}"; do
           [[ -f "${ZGI_STANDARD_SKILL_TEST_ROOT}/${skill}/SKILL.md" ]] || fail "missing external ${skill} Skill"
         done
         export CONNECTOR_CREDENTIAL_ACTIVE_KEY_ID=runtime-delivery-test
         export CONNECTOR_CREDENTIAL_KEYS_JSON='{"runtime-delivery-test":"12345678901234567890123456789012"}'
         cd "${repo_root}/api"
         go test -p=1 -tags=agent_runtime_integration -count=1 -v -timeout=15m \
-          ./internal/modules/app/agents -run '^TestAgentExecutionStandardSkillMatrix$'
+          ./internal/modules/app/agents -run "^${test_name}$"
         ;;
     esac
     ;;
-  *) fail "usage: $0 --api|--sandbox|--web|--real-local|--real-e2b|--real-worker" ;;
+  *) fail "usage: $0 --api|--sandbox|--web|--real-local|--real-e2b|--real-worker|--real-documents" ;;
 esac

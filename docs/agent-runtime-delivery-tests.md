@@ -8,6 +8,7 @@ lower the module version. `ZGI_TEST_PARALLELISM` defaults to 2 for smaller hosts
 
 ```sh
 bash scripts/test-runtime-delivery.sh
+bash scripts/test-runtime-distribution.sh
 bash scripts/check-runtime-delivery.sh --api
 bash scripts/check-runtime-delivery.sh --sandbox
 bash scripts/check-runtime-delivery.sh --web
@@ -16,6 +17,8 @@ bash scripts/check-runtime-delivery.sh --web
 Each gate stops at its first failure. No runtime service or package is installed
 by the script. The preflight test uses mocks only to verify command dispatch and
 failure handling, not to certify execution backends.
+The distribution test additionally requires Docker Compose and `jq`; it renders
+the public E2B example without starting services or contacting a provider.
 
 ## Isolated PostgreSQL
 
@@ -54,11 +57,17 @@ own disposable compute. Do not cancel a run without reconciling its owned resour
 | `bash scripts/check-runtime-delivery.sh --real-local` | Root-owned native Linux node with containerd/runsc; `ZGI_AGENT_RUNTIME_CONTAINERD_ADDRESS`; `ZGI_AGENT_RUNTIME_TEST_IMAGE` pinned with `@sha256:` to the approved standard image |
 | `bash scripts/check-runtime-delivery.sh --real-e2b` | Dedicated E2B project; secret `ZGI_AGENT_RUNTIME_E2B_API_KEY`; approved `ZGI_AGENT_RUNTIME_E2B_TEST_PACKAGE_TEMPLATE` built from the current package-enabled Runtime Agent |
 | `bash scripts/check-runtime-delivery.sh --real-worker` | Authenticated dedicated Worker; `ZGI_AGENT_RUNTIME_TEST_URL`, secret `ZGI_AGENT_RUNTIME_TEST_API_KEY`, `ZGI_AGENT_RUNTIME_TEST_PROFILE`, `ZGI_AGENT_RUNTIME_TEST_BACKEND` (`local-gvisor` or `e2b`); `ZGI_STANDARD_SKILL_TEST_ROOT` containing original `xlsx`, `pptx`, `slack-gif-creator` directories |
+| `bash scripts/check-runtime-delivery.sh --real-documents` | Same dedicated Worker settings; external Skill root containing original `docx` and `pdf` directories; for release-enforced Workers set `ZGI_AGENT_RUNTIME_TEST_RELEASE_ID` to their approved release |
 
 The native and E2B contracts verify installation, native modules, network limits,
 compute loss, retained versions, corrupt-artifact rejection and cleanup. The Worker
 matrix adds original Skill helpers, output checks, errors, tenant rejection and
 termination. Its in-memory export store is not browser download evidence.
+The narrower documents gate runs original DOCX validation/LibreOffice and PDF
+page-image helpers with a two-row CSV total of 30, checks files and measured Job
+duration, and deletes its own Binding. It does not repeat the entire matrix or
+drive a model/browser. Optional `ZGI_STANDARD_SKILL_TEST_OUTPUT` writes exported
+test files to an operator-chosen, ignored output directory.
 
 The **Agent runtime real backend acceptance** workflow is manually dispatched,
 never triggered by pull requests. Configure its protected

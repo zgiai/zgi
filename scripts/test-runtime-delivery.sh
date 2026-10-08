@@ -98,6 +98,14 @@ done
 "${gate[@]}" --real-worker
 grep -F 'TestAgentExecutionStandardSkillMatrix' "$TEST_CALLS" >/dev/null
 
+expect_failure "${gate[@]}" --real-documents
+for skill in docx pdf; do
+  mkdir -p "$test_root/skills/$skill"
+  touch "$test_root/skills/$skill/SKILL.md"
+done
+"${gate[@]}" --real-documents
+grep -F 'TestAgentExecutionDocumentSkills' "$TEST_CALLS" >/dev/null
+
 : >"$TEST_CALLS"
 if MOCK_PNPM_FAIL=lint "${gate[@]}" --web; then echo "lint failure did not stop gate" >&2; exit 1; fi
 [[ "$(wc -l <"$TEST_CALLS")" == 1 ]]

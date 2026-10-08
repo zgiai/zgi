@@ -104,8 +104,8 @@ regression remains a separate compatibility path and gains no installation right
   release archives and rootfs incremental layers are not implemented by this gate.
 - Approved package destinations are network restrictions, not executable identity
   restrictions. This is not arbitrary internet access.
-- Console Job duration can display less than 1 ms although wall-clock execution
-  takes longer. Do not use that display as execution-time or cost accounting.
+- The original console run's duration was not a Job measurement. The normal-use
+  follow-up below adds measured Worker Job time; this is still not cost accounting.
 - The model-controlled checks JSON used either an object or an array on different
   runs. Verification read the actual shape; this is not output-Schema validation.
 - Read-only review of all four rendered test pages found a model-authored cell
@@ -186,3 +186,40 @@ or public Worker port was created. No branch merge, push or PR was performed.
 
 See [the delivery checklist](agent-runtime-release-candidate.md) for the release
 gate and [reproducible tests](agent-runtime-delivery-tests.md) for commands.
+
+## Normal-use delivery follow-up (2026-10-08)
+
+This follow-up prioritizes ordinary setup and original script execution; it does
+not add another failure-injection, load or disaster-recovery round.
+
+- The original DOCX/PDF browser acceptance from October 7–8 also passed on both
+  backends: original ZIP import/preview, binding, uploaded CSV, original DOCX
+  validation/LibreOffice and PDF image helpers, real downloads and retained-file
+  recovery. Downloaded DOCX XML, PDF text and PNGs were independently checked for
+  the test marker and total 30. This records existing evidence, not a new browser
+  run or a claim that every model-generated document is correct.
+- The new narrow document gate passed against the real Linux gVisor Worker in
+  36.34 seconds and real E2B in 65.68 seconds. Each produced DOCX, two PDFs and two
+  PNGs through the API's export path and checked measured Job duration. These five
+  files per backend use the integration test's in-memory export store; this run
+  is not additional browser-download evidence.
+- The E2B run used the new Worker container and public Compose example on a private
+  existing Docker network, with UID 65532, retained state volume and no published
+  port. Its disposable runtime database, container and volume were removed after
+  acceptance. The Linux run reused the approved native Worker/template rather
+  than upgrading its service or shared containerd.
+- Native Worker export and container builds passed from the new shared Dockerfile.
+  The standard execution image built successfully and passed its Python, Node,
+  offline XML catalog and native-module Profile checks. The approved remote
+  execution images/E2B templates were not replaced by this build.
+- Shell results now carry elapsed time from Worker start/finish timestamps. UI
+  tests prefer that measurement, retain a genuinely measured zero and hide old
+  unmeasured zero traces; missing/invalid timestamps do not invent a duration.
+- Focused API tests/vet, UI presentation tests, type-check and lint passed. Lint
+  retains 73 existing warnings and no errors. No full historical matrix was rerun.
+
+The release workflow now builds Worker/runtime images and a checksummed native
+Worker archive with public setup examples. Local workflow/static validation is
+not a published release or a dispatched hosted CI run. Start with
+[setup and use](agent-runtime-quickstart.md); deployment configuration and keys
+remain operator-owned and are not bundled.
