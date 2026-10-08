@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func testExecutionIdentity() *ExecutionIdentity {
@@ -177,5 +178,44 @@ func TestLegacyBindingFingerprintAndIdentityIsolation(t *testing.T) {
 	request.Scope.Identity = testExecutionIdentity()
 	if _, err := service.CreateBinding(context.Background(), request); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("new entry adopted legacy environment: %v", err)
+	}
+}
+
+func TestExecutionIdentitySurvivesIdleAndRetentionReaping(t *testing.T) {
+	repository := newMemoryRepository()
+	backend := &fakeBackend{}
+	service := newTestService(t, repository, backend)
+	request := testCreateRequest()
+	request.Scope.Identity = testExecutionIdentity()
+	binding, err := service.CreateBinding(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := service.now()
+	binding.ExpiresAt = now.Add(-time.Minute)
+	repository.bindings[binding.ID] = binding
+	idle, err := NewIdleReaper(repository, service, IdleReaperOptions{Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if processed, err := idle.RunOne(t.Context()); err != nil || !processed {
+		t.Fatalf("idle reap = %v, %v", processed, err)
+	}
+	binding, err = service.GetBinding(t.Context(), request.Scope, binding.ID)
+	if err != nil || binding.Status != BindingStatusSuspended || backend.suspendCalls != 1 {
+		t.Fatalf("identity-scoped compute was not suspended: %+v, %v", binding, err)
+	}
+	binding.RetentionExpiresAt = now.Add(-time.Minute)
+	repository.bindings[binding.ID] = binding
+	retention, err := NewRetentionReaper(repository, service, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if processed, err := retention.RunOne(t.Context()); err != nil || !processed {
+		t.Fatalf("retention reap = %v, %v", processed, err)
+	}
+	binding, err = service.GetBinding(t.Context(), request.Scope, binding.ID)
+	if err != nil || binding.Status != BindingStatusDeleted || backend.destroyCalls != 1 {
+		t.Fatalf("identity-scoped compute was not deleted: %+v, %v", binding, err)
 	}
 }

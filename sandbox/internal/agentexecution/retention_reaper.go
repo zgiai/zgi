@@ -39,6 +39,7 @@ func (r *RetentionReaper) RunOne(ctx context.Context) (bool, error) {
 	_, err = r.control.DestroyBinding(ctx, Scope{
 		OrganizationID: binding.OrganizationID,
 		SubjectID:      binding.SubjectID,
+		Identity:       cloneExecutionIdentity(binding.Identity),
 	}, binding.ID, binding.Generation)
 	if errors.Is(err, ErrGenerationConflict) || errors.Is(err, ErrNotFound) || errors.Is(err, ErrInvalidTransition) {
 		return true, nil
