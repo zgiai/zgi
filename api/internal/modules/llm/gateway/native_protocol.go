@@ -590,7 +590,7 @@ func (s *llmGatewayServiceImpl) handleNativeStreamBilling(
 	doneSeen := false
 	var lastError error
 	var pendingTerminal *adapter.RawStreamEvent
-	var pendingFailure *adapter.RawStreamEvent
+	failureFrameSeen := false
 	var sawUsage bool
 	var collectedText strings.Builder
 	for event := range inputChan {
@@ -626,13 +626,15 @@ func (s *llmGatewayServiceImpl) handleNativeStreamBilling(
 		if doneSeen {
 			continue
 		}
-		event.Data = sanitizePublicNativeBody(event.Data, model)
 		if failed {
-			pending := event
-			pendingFailure = &pending
+			// The upstream failure frame is never relayed: it can carry
+			// provider-internal fields. The handler projects lastError into the
+			// cataloged error frame of the caller's protocol instead.
+			failureFrameSeen = true
 			lastError = fmt.Errorf("%w: provider returned terminal %s event", adapter.ErrUpstreamError, strings.TrimSpace(event.Event))
 			break
 		}
+		event.Data = sanitizePublicNativeBody(event.Data, model)
 		if terminal {
 			pending := event
 			pendingTerminal = &pending
@@ -647,20 +649,14 @@ func (s *llmGatewayServiceImpl) handleNativeStreamBilling(
 		reportLLMProviderFailureForSelection(ctx, lastError, "llm.provider.stream_failed", providerSelection, billingCtx, attemptIdx, true)
 		if err := s.handleProviderError(ctx, billingCtx, providerSelection, channelID, responseTime, attemptIdx, lastError); err != nil {
 			s.traceNativeLLMStreamOperation(ctx, traceName, nativeTraceOperation(traceName), requestBody, traceOutput, lastUsage, startTime, time.Time{}, billingCtx, err)
-			if pendingFailure != nil {
-				emit(*pendingFailure)
-				emit(adapter.RawStreamEvent{Done: true, Usage: lastUsage})
+			if failureFrameSeen {
+				emit(adapter.RawStreamEvent{Error: lastError, Done: true, Usage: lastUsage})
 				return
 			}
 			emit(adapter.RawStreamEvent{Error: err, Done: true, Usage: lastUsage})
 			return
 		}
 		s.traceNativeLLMStreamOperation(ctx, traceName, nativeTraceOperation(traceName), requestBody, traceOutput, lastUsage, startTime, time.Time{}, billingCtx, lastError)
-		if pendingFailure != nil {
-			emit(*pendingFailure)
-			emit(adapter.RawStreamEvent{Done: true, Usage: lastUsage})
-			return
-		}
 		emit(adapter.RawStreamEvent{Error: lastError, Done: true, Usage: lastUsage})
 		return
 	}

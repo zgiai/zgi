@@ -2008,7 +2008,7 @@ func TestBillingRouting_HandleNativeStreamBilling_InjectsResponsesUsageIntoTermi
 	}
 }
 
-func TestBillingRouting_HandleNativeStreamBilling_PreservesResponsesFailureAndDoesNotSettleSuccess(t *testing.T) {
+func TestBillingRouting_HandleNativeStreamBilling_ProjectsResponsesFailureAndDoesNotSettleSuccess(t *testing.T) {
 	local := &fakeBillingProvider{checkBalanceResult: true}
 	s := &llmGatewayServiceImpl{
 		billing:       &fakeBillingProvider{checkBalanceResult: true},
@@ -2042,11 +2042,11 @@ func TestBillingRouting_HandleNativeStreamBilling_PreservesResponsesFailureAndDo
 	for event := range out {
 		got = append(got, event)
 	}
-	if len(got) != 2 || got[0].Event != "response.failed" || !got[1].Done {
-		t.Fatalf("events = %+v, want native response.failed followed by done", got)
+	if len(got) != 1 || !got[0].Done || !errors.Is(got[0].Error, adapter.ErrUpstreamError) {
+		t.Fatalf("events = %+v, want one terminal upstream error for the handler to project", got)
 	}
-	if got[0].Error != nil || !strings.Contains(string(got[0].Data), `"model":"logical-model"`) || strings.Contains(string(got[0].Data), "upstream-model") {
-		t.Fatalf("failure event was not safely preserved: %+v", got[0])
+	if len(got[0].Data) != 0 || got[0].Event != "" {
+		t.Fatalf("upstream failure frame was relayed: %+v", got[0])
 	}
 	if local.lastSettle == nil || local.lastSettle.Status == "success" {
 		t.Fatalf("local settlement = %+v, must follow failure path", local.lastSettle)
