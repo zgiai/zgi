@@ -159,14 +159,16 @@ func (s *service) buildBudgetedCurrentUserContent(
 	}
 
 	attachmentTokensBefore := s.estimateAttachmentTokens(parts, fullSections)
-	fullContent := userContentWithAttachments(parts.Query, fullSections)
+	previewSections := parts.Attachments.previewContentSections()
+	previewTokens := s.estimateAttachmentTokens(parts, previewSections)
+	fullContent := userContentWithAttachments(parts.Query, previewSections)
 	fullUserContent := s.currentUserContent(parts, fullContent)
 	fullEstimate := s.estimateCurrentPromptTokens(systemPrompt, fullUserContent, parts.ModelName) + extraPromptTokens
 	if fullEstimate <= budget.PromptBudget {
 		return fullUserContent, map[string]interface{}{
 			"attachment_tokens_before": attachmentTokensBefore,
-			"attachment_tokens_after":  attachmentTokensBefore,
-			"attachments_truncated":    false,
+			"attachment_tokens_after":  previewTokens,
+			"attachments_truncated":    attachmentPreviewsTruncated(parts.Attachments.promptFiles()),
 		}, fullEstimate
 	}
 
@@ -183,49 +185,17 @@ func (s *service) buildBudgetedCurrentUserContent(
 }
 
 func (s *service) fitAttachmentSectionsToBudget(parts *chatRequestParts, systemPrompt string, promptBudget int) (string, bool) {
-	selected := make([]attachmentFile, 0, len(parts.Attachments.Files))
-	for _, file := range parts.Attachments.Files {
-		candidate := appendAttachmentFile(selected, file)
-		sections := formatAttachmentSections(candidate, func(item attachmentFile) string {
-			return item.Content
+	files := parts.Attachments.promptFiles()
+	render := func(limit int) string {
+		return formatAttachmentSections(files, func(file attachmentFile) string {
+			return truncateRunes(file.Content, limit)
 		})
-		content := userContentWithAttachments(parts.Query, sections)
-		if s.estimateCurrentPromptTokens(systemPrompt, s.currentUserContent(parts, content), parts.ModelName) <= promptBudget {
-			selected = candidate
-			continue
-		}
-
-		partial, ok := s.truncateAttachmentFileToBudget(parts, systemPrompt, promptBudget, selected, file)
-		if ok {
-			selected = appendAttachmentFile(selected, partial)
-		}
-		return formatAttachmentSections(selected, func(item attachmentFile) string {
-			return item.Content
-		}), true
 	}
-	return formatAttachmentSections(selected, func(item attachmentFile) string {
-		return item.Content
-	}), false
-}
-
-func (s *service) truncateAttachmentFileToBudget(
-	parts *chatRequestParts,
-	systemPrompt string,
-	promptBudget int,
-	selected []attachmentFile,
-	file attachmentFile,
-) (attachmentFile, bool) {
-	runes := []rune(file.Content)
-	low, high := 0, len(runes)
-	best := -1
+	// Reduce previews together, never discard the later files' references.
+	low, high, best := 0, attachmentPreviewRuneLimit, 0
 	for low <= high {
 		mid := (low + high) / 2
-		partial := file
-		partial.Content = string(runes[:mid])
-		candidate := appendAttachmentFile(selected, partial)
-		sections := formatAttachmentSections(candidate, func(item attachmentFile) string {
-			return item.Content
-		})
+		sections := render(mid)
 		content := userContentWithAttachments(parts.Query, sections)
 		if s.estimateCurrentPromptTokens(systemPrompt, s.currentUserContent(parts, content), parts.ModelName) <= promptBudget {
 			best = mid
@@ -234,12 +204,7 @@ func (s *service) truncateAttachmentFileToBudget(
 		}
 		high = mid - 1
 	}
-	if best < 0 {
-		return attachmentFile{}, false
-	}
-	partial := file
-	partial.Content = string(runes[:best])
-	return partial, true
+	return render(best), best < attachmentPreviewRuneLimit || attachmentPreviewsTruncated(files)
 }
 
 func (s *service) estimateCurrentPromptTokens(systemPrompt string, currentContent interface{}, modelName string) int {
@@ -263,24 +228,8 @@ func (s *service) buildFallbackCurrentUserContent(parts *chatRequestParts) (inte
 		return s.currentUserContent(parts, parts.Query), nil
 	}
 
-	selected := make([]attachmentFile, 0, len(parts.Attachments.Files))
-	remaining := fallbackAttachmentContextRuneLimit
-	truncated := false
-	for _, file := range parts.Attachments.Files {
-		contentRunes := []rune(file.Content)
-		if remaining <= 0 {
-			truncated = true
-			break
-		}
-		partial := file
-		if len(contentRunes) > remaining {
-			partial.Content = string(contentRunes[:remaining])
-			truncated = true
-		}
-		selected = append(selected, partial)
-		remaining -= len([]rune(partial.Content))
-	}
-
+	selected := parts.Attachments.promptFiles()
+	truncated := attachmentPreviewsTruncated(selected)
 	sections := formatAttachmentSections(selected, func(item attachmentFile) string {
 		return item.Content
 	})
@@ -297,11 +246,13 @@ func (s *service) buildFallbackCurrentUserContent(parts *chatRequestParts) (inte
 	}
 }
 
-func appendAttachmentFile(files []attachmentFile, file attachmentFile) []attachmentFile {
-	output := make([]attachmentFile, 0, len(files)+1)
-	output = append(output, files...)
-	output = append(output, file)
-	return output
+func attachmentPreviewsTruncated(files []attachmentFile) bool {
+	for _, file := range files {
+		if !file.isImage() && file.ContentChars > runeCount(file.Content) {
+			return true
+		}
+	}
+	return false
 }
 
 func mergeAttachmentContextMetadata(target map[string]interface{}, source map[string]interface{}) {

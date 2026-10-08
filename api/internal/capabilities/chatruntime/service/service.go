@@ -16,6 +16,8 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	"github.com/zgiai/zgi/api/internal/capabilities/resourcebindings"
+	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
+	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	connectorbindings "github.com/zgiai/zgi/api/internal/modules/connectors/bindings"
 	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
@@ -86,6 +88,7 @@ const (
 	executionRouteNativeAgent                = "native_agent"
 	executionRouteNativeSkillsAvailable      = "native_skills_available"
 	executionRouteAgentMemoryAvailable       = "agent_memory_available"
+	executionRouteAttachmentReaderAvailable  = "attachment_reader_available"
 	executionRouteNoUsableSkills             = "no_usable_skills"
 	executionRouteFunctionCallingUnavailable = "function_calling_unavailable"
 	executionRoutePersistedMode              = "persisted_mode"
@@ -177,6 +180,8 @@ type Caller struct {
 }
 
 type RunConfig struct {
+	FileUploadPolicy                 *chatfile.Policy
+	FileUploadEnabled                *bool
 	SystemPrompt                     string
 	SystemPromptVersion              string
 	ModelProvider                    string
@@ -223,6 +228,10 @@ type RunConfig struct {
 	// RuntimeToolFactory binds caller-scoped tools to the prepared conversation.
 	// It is invoked only during execution, after conversation ownership is known.
 	RuntimeToolFactory func(*PreparedChat) []skillloop.RuntimeTool
+	// AttachmentReadAuthorizer rechecks application/entry ownership at read time.
+	// Published adapters supply it independently of Linux enablement. Never
+	// deserialize this server-owned capability from client or stored metadata.
+	AttachmentReadAuthorizer func(context.Context, *PreparedChat, *dto.UploadFile) error `json:"-"`
 	// RuntimeInputPolicy enables durable text submitted while this run is active.
 	// It is opt-in so external APIs, workflows, automations, and autonomous
 	// subjects preserve their existing busy-conversation behavior.
@@ -735,6 +744,9 @@ type chatRequestParts struct {
 	Parameters                       map[string]interface{}
 	ContextControl                   map[string]interface{}
 	Attachments                      *attachmentBundle
+	AttachmentReadFiles              map[string]RuntimeAttachmentRef
+	AttachmentReadAllowed            bool
+	AttachmentToolsEnabled           bool
 	RecentAssetCandidates            []ResourceCandidate
 	RecentGeneratedArtifacts         []map[string]interface{}
 	RecentOperationPlans             []map[string]interface{}

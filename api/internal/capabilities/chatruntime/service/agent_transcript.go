@@ -102,6 +102,9 @@ func normalizeAgentTranscript(source []adapter.Message, answer string) []adapter
 		next := index + 1
 		for next < len(source) && strings.EqualFold(strings.TrimSpace(source[next].Role), "tool") {
 			result := source[next]
+			if content, changed := redactAttachmentReadContent(result.Content); changed {
+				result.Content = content
+			}
 			result.ReasoningContent = ""
 			result.Role = "tool"
 			id := strings.TrimSpace(result.ToolCallID)

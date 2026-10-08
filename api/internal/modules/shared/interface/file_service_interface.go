@@ -2,6 +2,7 @@ package interfaces
 
 import (
 	"context"
+	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/model"
@@ -13,17 +14,27 @@ type FileSource string
 const (
 	FileSourceDatasets FileSource = "datasets"
 	FileSourceWorkflow FileSource = "workflow"
+	FileSourceChat     FileSource = "chat"
 )
 
 // FileUploadConfigResponse file upload configuration response
 type FileUploadConfigResponse struct {
-	FileSizeLimit           int64 `json:"file_size_limit"`            // File size limit (MB)
-	BatchCountLimit         int   `json:"batch_count_limit"`          // File-management concurrency; count limit for other upload surfaces
-	UploadQueueLimit        int   `json:"upload_queue_limit"`         // File-management upload queue limit
-	ImageFileSizeLimit      int64 `json:"image_file_size_limit"`      // Image file size limit (MB)
-	VideoFileSizeLimit      int64 `json:"video_file_size_limit"`      // Video file size limit (MB)
-	AudioFileSizeLimit      int64 `json:"audio_file_size_limit"`      // Audio file size limit (MB)
-	WorkflowFileUploadLimit int   `json:"workflow_file_upload_limit"` // Workflow file upload limit
+	ChatUploadPolicy        chatfile.Effective `json:"chat_upload_policy"`
+	FileSizeLimit           int64              `json:"file_size_limit"`            // File size limit (MB)
+	BatchCountLimit         int                `json:"batch_count_limit"`          // File-management concurrency; count limit for other upload surfaces
+	UploadQueueLimit        int                `json:"upload_queue_limit"`         // File-management upload queue limit
+	ImageFileSizeLimit      int64              `json:"image_file_size_limit"`      // Image file size limit (MB)
+	VideoFileSizeLimit      int64              `json:"video_file_size_limit"`      // Video file size limit (MB)
+	AudioFileSizeLimit      int64              `json:"audio_file_size_limit"`      // Audio file size limit (MB)
+	WorkflowFileUploadLimit int                `json:"workflow_file_upload_limit"` // Workflow file upload limit
+}
+
+// ChatPolicy resolves application selection against platform limits.
+func (c *FileUploadConfigResponse) ChatPolicy(selection *chatfile.Policy) chatfile.Effective {
+	if c == nil {
+		return chatfile.Resolve(selection, 50, 10, chatfile.DefaultCount)
+	}
+	return chatfile.Resolve(selection, c.FileSizeLimit, c.ImageFileSizeLimit, chatfile.DefaultCount)
 }
 
 // FileService defines the interface for file operations

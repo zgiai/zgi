@@ -85,7 +85,10 @@ func (s *service) prepareConfiguredChatDefinition(ctx context.Context, scope Sco
 	}
 	applyRunConfigToParts(config, parts)
 	applyCallerRuntimeSurfacePolicy(caller, parts)
-	attachments, err := s.resolveChatAttachmentReferences(ctx, scope, req.FileIDs)
+	if len(req.FileIDs) > 0 && config.FileUploadEnabled != nil && !*config.FileUploadEnabled {
+		return RunConfig{}, nil, nil, nil, fmt.Errorf("%w: file upload is disabled", ErrPermissionDenied)
+	}
+	attachments, err := s.resolveChatAttachmentReferences(ctx, scope, req.FileIDs, config.FileUploadPolicy)
 	if err != nil {
 		return RunConfig{}, nil, nil, nil, err
 	}
@@ -174,7 +177,7 @@ func (s *service) prepareRootRegeneration(ctx context.Context, scope Scope, call
 	applyRunConfigToParts(config, parts)
 	applyCallerRuntimeSurfacePolicy(caller, parts)
 	applyPersistedConversationSurface(conversation, parts)
-	attachments, err := s.resolveChatAttachmentReferences(ctx, scope, attachmentFileIDsFromMessageMetadata(message.Metadata))
+	attachments, err := s.resolveChatAttachmentReferences(ctx, scope, attachmentFileIDsFromMessageMetadata(message.Metadata), config.FileUploadPolicy)
 	if err != nil {
 		return nil, err
 	}
@@ -397,6 +400,9 @@ func (s *service) resolveParentMessage(ctx context.Context, scope Scope, convers
 }
 
 func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parentID *uuid.UUID, parts *chatRequestParts, conversationIDs ...uuid.UUID) (*contextBudgetResult, error) {
+	if scope.RuntimeFileAuthorizer != nil && scope.RuntimeWorkspaceID != nil && scope.RuntimeSubjectID != nil {
+		parts.AttachmentReadAllowed = true
+	}
 	systemPrompt := strings.TrimSpace(parts.SystemPrompt)
 	if systemPrompt == "" {
 		rendered, err := renderAIChatSystemPrompt(parts.Surface)
@@ -457,6 +463,7 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 			return nil, err
 		}
 		branch := contextState.RawMessages
+		registerAttachmentReadFiles(parts, branch)
 		applyRecentAssetCandidatesFromBranch(parts, branch)
 		applyRecentGeneratedArtifactsFromBranch(ctx, parts, branch)
 		applyRecentOperationPlansFromBranch(parts, branch)
@@ -470,6 +477,7 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 		return result, nil
 	}
 	currentContent, contextMetadata := s.buildFallbackCurrentUserContent(parts)
+	registerAttachmentReadFiles(parts, nil)
 	messages := []adapter.Message{{Role: "system", Content: systemPrompt}}
 	if memoryContext := agentMemoryContextMessage(parts); memoryContext != nil {
 		messages = append(messages, *memoryContext)
@@ -486,6 +494,7 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 			return nil, err
 		}
 		branch := state.RawMessages
+		registerAttachmentReadFiles(parts, branch)
 		if !shouldIsolateHistoryForCurrentTurn(parts) {
 			groups, err := s.historyMessageGroupsForCurrentRequest(ctx, branch, parts)
 			if err != nil {

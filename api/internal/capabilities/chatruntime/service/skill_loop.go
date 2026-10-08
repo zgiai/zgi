@@ -56,6 +56,7 @@ func (s *service) runPreparedToolLoop(
 	}
 	timeline := newProcessTimelineRecorder(ctx, persistCtx, s, prepared, onEvent)
 	runtimeTools := append([]skillloop.RuntimeTool(nil), prepared.parts.RuntimeTools...)
+	runtimeTools = append(runtimeTools, s.attachmentRuntimeTools(prepared)...)
 	if prepared.RunConfig.RuntimeToolFactory != nil {
 		runtimeTools = append(runtimeTools, prepared.RunConfig.RuntimeToolFactory(prepared)...)
 	}
@@ -2948,7 +2949,7 @@ func chatPartsBusinessSkillsEnabled(parts *chatRequestParts) bool {
 
 func chatPartsToolLoopEnabled(parts *chatRequestParts) bool {
 	return parts != nil && parts.ExecutionMode != executionModeDirectChat &&
-		(parts.ProtocolToolsEnabled || parts.AgentMemoryToolsEnabled || parts.ConnectorToolsEnabled || chatPartsBusinessSkillsEnabled(parts))
+		(parts.ProtocolToolsEnabled || parts.AttachmentToolsEnabled || parts.AgentMemoryToolsEnabled || parts.ConnectorToolsEnabled || chatPartsBusinessSkillsEnabled(parts))
 }
 
 func runtimeToolNames(runtimeTools []skillloop.RuntimeTool) []string {

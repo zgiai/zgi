@@ -71,6 +71,7 @@ func applyRunConfigToParts(config RunConfig, parts *chatRequestParts) {
 	parts.AgentMemoryConfigRevision = strings.TrimSpace(config.AgentMemoryConfigRevision)
 	parts.AgentMemoryAgentID = strings.TrimSpace(config.BillingAppID)
 	parts.RuntimeTools = append([]skillloop.RuntimeTool(nil), config.RuntimeTools...)
+	parts.AttachmentReadAllowed = config.AttachmentReadAuthorizer != nil
 	parts.BillingSource = strings.TrimSpace(config.BillingAppType)
 	if runConfigDisablesUserMemory(config) {
 		parts.UseMemory = false
@@ -82,6 +83,10 @@ func applyCallerRuntimeSurfacePolicy(caller Caller, parts *chatRequestParts) {
 		return
 	}
 	parts.Surface = normalizeRuntimeSurfaceForCaller(caller, parts.Surface)
+	if (caller.Type == runtimemodel.ConversationCallerAIChat || caller.Type == runtimemodel.ConversationCallerAgent) &&
+		(caller.Source == "" || caller.Source == runtimemodel.ConversationSourceConsole) {
+		parts.AttachmentReadAllowed = true
+	}
 }
 
 // applyPersistedConversationSurface keeps a conversation on the runtime surface

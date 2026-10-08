@@ -34,6 +34,11 @@ func transcriptEntryKindForRole(role string) (string, bool) {
 
 // protocolMessageToJSON renders one protocol message into its durable JSON form.
 func protocolMessageToJSON(message adapter.Message) (map[string]interface{}, error) {
+	if message.Role == "tool" {
+		if content, changed := redactAttachmentReadContent(message.Content); changed {
+			message.Content = content
+		}
+	}
 	encoded, err := json.Marshal(message)
 	if err != nil {
 		return nil, fmt.Errorf("encode protocol message: %w", err)
@@ -80,12 +85,40 @@ func pruneTranscriptMessageForWrite(entryID uuid.UUID, payload map[string]interf
 	if kind != runtimemodel.TranscriptEntryKindTool {
 		return payload
 	}
+	if content, changed := redactAttachmentReadContent(payload["content"]); changed {
+		out := copyStringAnyMap(payload)
+		out["content"] = content
+		return out
+	}
 	text := messageContentText(payload["content"])
 	// The context manager is the sole component that decides when and how to
 	// compress. Persistence must not apply an independent size threshold.
 	_ = entryID
 	_ = text
 	return payload
+}
+
+// Attachment pages are an explicit ephemeral capability, not context-manager
+// compaction. Persist their range/version receipt, never the retrieved body.
+func redactAttachmentReadContent(content interface{}) (interface{}, bool) {
+	text, ok := content.(string)
+	if !ok {
+		return content, false
+	}
+	var receipt map[string]interface{}
+	if json.Unmarshal([]byte(text), &receipt) != nil || receipt["source"] != "attachment_reader" || receipt["content_redacted_in_history"] != true {
+		return content, false
+	}
+	if _, exists := receipt["content"]; !exists {
+		return content, false
+	}
+	delete(receipt, "content")
+	receipt["content_redacted"] = true
+	encoded, err := json.Marshal(receipt)
+	if err != nil {
+		return content, false
+	}
+	return string(encoded), true
 }
 
 // projectContextMessages decodes a chronological list of transcript previews.
