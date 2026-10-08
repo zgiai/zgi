@@ -74,6 +74,12 @@ for (const [locale, source] of documents) {
   );
 }
 
+assert.deepEqual(spec.components.schemas.RunEndEvent.properties.status.enum,
+  ['waiting', 'succeeded', 'failed', 'canceled', 'unknown'],
+  'run stream boundary must include resumable waiting');
+assert.ok(quickstart.includes("status === 'waiting' ? 'waiting'"),
+  'quickstart must not render a waiting run as failed');
+
 assert.match(
   tocSource,
   /querySelectorAll\('\[data-toc-entry="true"\]'\)/,

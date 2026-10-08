@@ -50,7 +50,7 @@ The browser sends no API key and should not be allowed to choose another account
 1. Fetch `/digital-humans/config` and render `home_title`, `opening_statement`, `suggested_questions`, and `input_placeholder`.
 2. Generate a UUID `request_id`, send `/digital-humans/chat`, and save `X-ZGI-Run-ID` immediately.
 3. Parse SSE incrementally. Save `conversation_id`, `message_id`, and the latest non-empty SSE `id`.
-4. Append `message.data.answer`; finish the message on `message_end`; finish durable execution on the single `run_end`.
+4. Append `message.data.answer`; finish the message on `message_end`; close the current stream on `run_end`. A `waiting` run is resumable, not terminal.
 5. If the connection drops, recover with the saved `run_id`, same `user`, and `Last-Event-ID`. Do not repeat the chat POST after `message_start`.
 6. After a page refresh, load conversation messages before opening a recovery stream.
 
@@ -195,7 +195,7 @@ Dispatch by the JSON `event` or native SSE event. Treat event ids as opaque stri
 | `message`       | Append `answer` for the matching message                                      | Recoverable answer delta              |
 | `message_end`   | Interpret message `status` and `metadata`                                     | Current message phase ended           |
 | `error`         | Show safe `message`; record `code` when present; inspect optional `retryable` | Stream failed after HTTP 200          |
-| `run_end`       | Stop recovery and record final run `status`                                   | Single durable terminal event         |
+| `run_end`       | Close this stream and record run `status`; `waiting` requires continuation    | Waiting is not a terminal run         |
 
 The same event names and payload families used by the Agent API are available for a richer process UI:
 

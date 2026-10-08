@@ -325,7 +325,7 @@ The minimum client state machine uses these six DigitalHuman lifecycle events:
 | `message` | Append `answer` only when its `message_id` matches the active message |
 | `message_end` | End the current message phase and inspect its status |
 | `error` | Show the safe message, log only the stable code, and inspect `retryable` |
-| `run_end` | Stop reconnecting and record the final durable run status |
+| `run_end` | Close this stream and record the durable status; `waiting` requires explicit continuation |
 
 ZGI also emits the same typed process-event families used by the Agent API. They are fully described by `x-zgi-sse-event-data-schemas` in `/api/digital-human-openapi.yaml`:
 
@@ -484,7 +484,7 @@ export function applyZGIEvent(state: ChatState, event: ZGIEvent): ChatState {
       const status = String(data.status);
       return {
         ...state,
-        phase: status === 'succeeded' ? 'completed' : status === 'canceled' ? 'stopped' : 'error',
+        phase: status === 'waiting' ? 'waiting' : status === 'succeeded' ? 'completed' : status === 'canceled' ? 'stopped' : 'error',
         lastEventId,
       };
     }
@@ -494,7 +494,7 @@ export function applyZGIEvent(state: ChatState, event: ZGIEvent): ChatState {
 }
 ```
 
-`message_end` closes the current chat-message stream. `run_end` is the durable terminal boundary. Keep listening after a successful `message_end` until `run_end` arrives.
+`message_end` closes the current chat-message stream. Keep listening until `run_end` arrives, then close that connection. A `run_end` with `status=waiting` is not terminal: keep the conversation/message/correlation IDs and render the pending action. Platform CLI approval uses the dedicated `tool-governance/{correlation_id}/continue` route, not a workflow or task approval route. Confirming or rejecting continues the frozen business invocation without resubmitting the original Shell. Query the durable run for its updated status after the continuation.
 
 ## 6. Render a branded, recoverable page
 

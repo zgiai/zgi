@@ -525,7 +525,7 @@ func (h *ExternalHandler) streamRun(c *gin.Context, writer *digitalHumanSSEWrite
 		if err != nil {
 			_ = h.writeStreamError(writer, runID, err)
 		}
-		run, err = h.waitForRunTerminal(c, scope, digitalHumanID, runID, surface)
+		run, err = h.waitForRunStreamBoundary(c, scope, digitalHumanID, runID, surface)
 		if err != nil && c.Request.Context().Err() == nil {
 			_ = h.writeStreamError(writer, runID, err)
 		}
@@ -560,10 +560,12 @@ func (h *ExternalHandler) waitForRunMessage(c *gin.Context, scope Scope, digital
 	}
 }
 
-func (h *ExternalHandler) waitForRunTerminal(c *gin.Context, scope Scope, digitalHumanID, runID uuid.UUID, surface string) (*Run, error) {
+// A waiting run is resumable, not terminal. Its current message stream must
+// nevertheless finish so clients can submit an approval or other continuation.
+func (h *ExternalHandler) waitForRunStreamBoundary(c *gin.Context, scope Scope, digitalHumanID, runID uuid.UUID, surface string) (*Run, error) {
 	for {
 		run, err := h.ownedRunForSurface(c, scope, digitalHumanID, runID, surface)
-		if err != nil || isTerminalRunStatus(run.Status) {
+		if err != nil || isTerminalRunStatus(run.Status) || run.Status == RunStatusWaiting {
 			return run, err
 		}
 		if err := waitExternalPoll(c, h.pollEvery); err != nil {

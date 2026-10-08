@@ -1,12 +1,17 @@
 package digitalhuman
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 )
@@ -157,9 +162,45 @@ func TestExternalRunTerminalStatuses(t *testing.T) {
 			t.Fatalf("status %q must be terminal", status)
 		}
 	}
-	for _, status := range []RunStatus{RunStatusQueued, RunStatusRunning, RunStatusCanceling} {
+	for _, status := range []RunStatus{RunStatusQueued, RunStatusRunning, RunStatusCanceling, RunStatusWaiting} {
 		if isTerminalRunStatus(status) {
 			t.Fatalf("status %q must not be terminal", status)
+		}
+	}
+}
+
+func TestExternalStreamBoundaryReturnsWaitingWithoutFinalizingRun(t *testing.T) {
+	for _, surface := range []string{SurfaceAPI, SurfaceWebApp} {
+		for _, reason := range []string{
+			runtimemodel.MessageStatusWaitingApproval, runtimemodel.MessageStatusWaitingQuestion,
+			runtimemodel.MessageStatusWaitingClientAction, runtimemodel.MessageStatusWaitingBudget,
+		} {
+			t.Run(surface+"/"+reason, func(t *testing.T) {
+				scope, id, subjectID := testRunScope(), uuid.New(), uuid.New()
+				scope.UserSubjectKind, scope.UserSubjectID = string(usersubject.APIEndUser), &subjectID
+				if surface == SurfaceWebApp {
+					scope.UserSubjectKind = string(usersubject.Account)
+				}
+				run := &Run{ID: uuid.New(), OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
+					DigitalHumanID: id, Surface: surface, UserSubjectKind: scope.UserSubjectKind,
+					UserSubjectID: &subjectID, Status: RunStatusWaiting, WaitingReason: reason}
+				store := newFakeRunStore()
+				store.runs[run.ID] = run
+				handler := &ExternalHandler{runtime: &RuntimeService{store: store}, pollEvery: time.Millisecond}
+				ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+				defer cancel()
+				c, _ := gin.CreateTestContext(httptest.NewRecorder())
+				c.Request = httptest.NewRequest("GET", "/events", nil).WithContext(ctx)
+				got, err := handler.waitForRunStreamBoundary(c, scope, id, run.ID, surface)
+				if err != nil || got != run || isTerminalRunStatus(got.Status) {
+					t.Fatalf("stream boundary = %#v, %v; want unchanged resumable run", got, err)
+				}
+				otherID := uuid.New()
+				scope.UserSubjectID = &otherID
+				if _, err := handler.waitForRunStreamBoundary(c, scope, id, run.ID, surface); !errors.Is(err, ErrRunNotFound) {
+					t.Fatalf("cross-user stream boundary error = %v, want not found", err)
+				}
+			})
 		}
 	}
 }

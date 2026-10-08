@@ -50,7 +50,7 @@ API Key 不能进入浏览器代码、移动端安装包、日志、分析系统
 1. 读取 `/digital-humans/config`，渲染标题、开场白、建议问题和输入提示。
 2. 生成 UUID `request_id`，调用 `/digital-humans/chat`，立即保存 `X-ZGI-Run-ID`。
 3. 增量解析 SSE，保存 `conversation_id`、`message_id` 和最近一个非空事件 `id`。
-4. 追加 `message.data.answer`；`message_end` 结束消息阶段；唯一的 `run_end` 结束 Durable Run。
+4. 追加 `message.data.answer`；`message_end` 结束消息阶段；`run_end` 结束当前流。`waiting` 表示可续接，不是 Run 终态。
 5. 断线后使用相同 `user`、保存的 `run_id` 和 `Last-Event-ID` 恢复；收到 `message_start` 后不要重发聊天 POST。
 6. 页面刷新后先读取消息历史，再决定是否恢复仍在运行的 Run。
 
@@ -195,7 +195,7 @@ data: {"event":"message","data":{"conversation_id":"...","message_id":"...","ans
 | `message`       | 为匹配的消息追加 `answer`                                   | 可恢复的回答增量      |
 | `message_end`   | 解释消息 `status` 和 `metadata`                             | 当前消息阶段结束      |
 | `error`         | 展示安全 `message`；存在时记录 `code`；检查可选 `retryable` | HTTP 200 后的流式错误 |
-| `run_end`       | 停止恢复并记录最终 `status`                                 | 唯一 Durable 终态事件 |
+| `run_end`       | 关闭当前流并记录 `status`；`waiting` 需要显式续接            | 等待不是 Run 终态 |
 
 数字人 API 同时提供与 Agent API 一致的过程事件和载荷分组，可用于实现更完整的运行过程界面：
 

@@ -1178,10 +1178,10 @@ components:
     RunEndEvent:
       type: object
       required: [run_id, status]
-      description: Single durable terminal event for the run stream.
+      description: Ends the current run stream. A waiting status is resumable and is not a terminal run.
       properties:
         run_id: {type: string, format: uuid, description: Durable run identifier.}
-        status: {type: string, enum: [succeeded, failed, canceled, unknown], description: Final run status.}
+        status: {type: string, enum: [waiting, succeeded, failed, canceled, unknown], description: Current durable run status; waiting requires an explicit continuation.}
         conversation_id: {type: string, format: uuid, description: Linked conversation when established.}
         message_id: {type: string, format: uuid, description: Linked message when established.}
     RuntimeEventIdentity:
