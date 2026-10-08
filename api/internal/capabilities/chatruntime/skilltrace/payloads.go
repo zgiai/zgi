@@ -1471,6 +1471,11 @@ func skillArtifactFromToolFile(ids PayloadIDs, trace skills.SkillTrace, message 
 		"download_url":    downloadURL,
 		"transfer_method": stringFromAny(file["transfer_method"]),
 	})
+	if stringFromAny(file["access_mode"]) == "authenticated" {
+		artifact["access_mode"] = "authenticated"
+		delete(artifact, "url")
+		delete(artifact, "download_url")
+	}
 	if invocationID := strings.TrimSpace(trace.InvocationID); invocationID != "" {
 		artifact["invocation_id"] = invocationID
 	}

@@ -51,6 +51,7 @@ func (h *ExternalHandler) RegisterWebAppRoutes(router *gin.RouterGroup) {
 	protected.PATCH("/conversations/:conversation_id", h.UpdateWebAppConversation)
 	protected.DELETE("/conversations/:conversation_id", h.DeleteWebAppConversation)
 	protected.GET("/conversations/:conversation_id/messages", h.ListWebAppConversationMessages)
+	protected.GET("/conversations/:conversation_id/files/:file_id", h.GetWebAppExecutionFile)
 	protected.POST("/conversations/:conversation_id/messages/:message_id/regenerate", h.RegenerateWebAppMessage)
 	protected.GET("/conversations/:conversation_id/events", h.StreamWebAppConversationEvents)
 	protected.POST("/conversations/:conversation_id/stop", h.StopWebAppConversation)

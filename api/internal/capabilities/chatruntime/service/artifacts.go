@@ -168,6 +168,9 @@ func hydrateGeneratedFileURLWithLookup(file map[string]interface{}, toolFiles ma
 		hydrated["artifact_id"] = "tool_file:" + fileID
 	}
 	if toolFile := toolFiles[fileID]; toolFile != nil {
+		if toolFile.ExecutionIdentity != nil {
+			hydrated["access_mode"] = "authenticated"
+		}
 		hydrated["lifecycle"] = string(toolFile.LifecycleValue())
 		delete(hydrated, "expires_at")
 		delete(hydrated, "availability")
@@ -187,6 +190,14 @@ func hydrateGeneratedFileURLWithLookup(file map[string]interface{}, toolFiles ma
 		return hydrated
 	}
 	hydrated["availability"] = conversationArtifactAvailabilityLive
+	// Protected cards use the entry's authenticated file transport, never the
+	// legacy signature route. The row is authoritative; the marker also keeps
+	// history safe when lifecycle lookup is temporarily unavailable.
+	if stringFromAny(hydrated["access_mode"]) == "authenticated" {
+		delete(hydrated, "url")
+		delete(hydrated, "download_url")
+		return hydrated
+	}
 	extension := generatedFileExtension(hydrated)
 	if fileID == "" || extension == "" {
 		return hydrated
@@ -277,6 +288,7 @@ func persistentGeneratedArtifact(artifact map[string]interface{}) map[string]int
 	copyStringField(out, artifact, "extension")
 	copyStringField(out, artifact, "mime_type")
 	copyStringField(out, artifact, "transfer_method")
+	copyStringField(out, artifact, "access_mode")
 	copyStringField(out, artifact, "file_type")
 	copyStringField(out, artifact, "target")
 	copyStringField(out, artifact, "lifecycle")
@@ -365,6 +377,7 @@ func persistentConversationArtifact(artifact map[string]interface{}) map[string]
 		"mime_type",
 		"file_type",
 		"transfer_method",
+		"access_mode",
 		"workspace_id",
 		"folder_id",
 		"skill_id",
@@ -669,6 +682,7 @@ func recentGeneratedArtifactCandidate(file map[string]interface{}, messageID str
 		"mime_type",
 		"file_type",
 		"transfer_method",
+		"access_mode",
 		"target",
 		"skill_id",
 		"tool_name",

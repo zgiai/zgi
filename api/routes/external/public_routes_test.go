@@ -40,6 +40,7 @@ func TestPublicDocumentationExposesDigitalHumanExternalContract(t *testing.T) {
 	for _, required := range []string{
 		"/digital-humans/chat:", "/digital-humans/runs/{run_id}/events:",
 		"/digital-humans/conversations/{conversation_id}/messages:",
+		"/digital-humans/conversations/{conversation_id}/files/{file_id}:", "access_mode:",
 		"/digital-humans/files/upload:", "Last-Event-ID", "X-ZGI-Run-ID",
 		"x-zgi-sse-event-data-schemas:", "run_accepted:", "run_end:",
 	} {
@@ -50,6 +51,8 @@ func TestPublicDocumentationExposesDigitalHumanExternalContract(t *testing.T) {
 	if strings.Contains(spec.Body.String(), "X-External-User-ID") || strings.Contains(spec.Body.String(), "end_user_id") {
 		t.Fatal("DigitalHuman contract must use the user field instead of an identity header or renamed field")
 	}
+	assertOpenAPIRefsResolve(t, document)
+	assertOpenAPIOperationsDocumented(t, document["paths"].(map[string]interface{}))
 }
 
 func TestPublicDocumentationExposesRuntimeWorkspacePhase1Contract(t *testing.T) {
@@ -150,6 +153,7 @@ func TestPublicDocumentationRoutesExposeCurrentAgentContract(t *testing.T) {
 		"/files/upload:",
 		"/agents/chat:",
 		"/agents/conversations/{conversation_id}/messages:",
+		"/agents/conversations/{conversation_id}/files/{file_id}:", "access_mode:",
 		"/agents/messages/{message_id}/regenerate:",
 		"/agents/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue:",
 		"/agents/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue:",
@@ -191,6 +195,7 @@ func TestPublicDocumentationRoutesExposeCurrentAgentContract(t *testing.T) {
 		{http.MethodPatch, "/agents/conversations/{conversation_id}"},
 		{http.MethodDelete, "/agents/conversations/{conversation_id}"},
 		{http.MethodGet, "/agents/conversations/{conversation_id}/messages"},
+		{http.MethodGet, "/agents/conversations/{conversation_id}/files/{file_id}"},
 		{http.MethodGet, "/agents/conversations/{conversation_id}/events"},
 		{http.MethodPost, "/agents/conversations/{conversation_id}/stop"},
 		{http.MethodPost, "/agents/messages/{message_id}/regenerate"},

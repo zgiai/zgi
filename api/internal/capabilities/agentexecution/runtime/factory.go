@@ -19,8 +19,11 @@ import (
 // to a credential owner. LegacyAgentID is exclusively for historical console
 // bindings; all other consumers require an explicit versioned identity.
 type FactoryOptions struct {
-	Gateway               Gateway
-	Persister             ArtifactPersister
+	Gateway   Gateway
+	Persister ArtifactPersister
+	// ResolvePersister binds protected persistence to the prepared message.
+	// A nil result fails closed instead of selecting a legacy public persister.
+	ResolvePersister      func(*runtimeservice.PreparedChat, execution.Scope) ArtifactPersister
 	Files                 AttachmentReader
 	Skills                SkillPackageResolver
 	ResolveScope          func(*runtimeservice.PreparedChat) (execution.Scope, error)
@@ -55,6 +58,12 @@ func NewToolFactory(options FactoryOptions) func(*runtimeservice.PreparedChat) [
 			scope.Identity = &identity
 		}
 		persister := options.Persister
+		if options.ResolvePersister != nil {
+			persister = options.ResolvePersister(prepared, scope)
+			if persister == nil {
+				return nil
+			}
+		}
 		if persister == nil {
 			if scope.Identity != nil {
 				return nil // New entries require the protected artifact path (P2).

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	execution "github.com/zgiai/zgi/api/internal/capabilities/agentexecution"
 	"github.com/zgiai/zgi/api/internal/observability"
 	"github.com/zgiai/zgi/api/pkg/storage"
 	"gorm.io/gorm"
@@ -40,6 +41,10 @@ func NewToolFileManager(db *gorm.DB, storage storage.Storage) *ToolFileManager {
 
 // CreateFileByRaw creates a tool file from raw binary data
 func (tm *ToolFileManager) CreateFileByRaw(ctx context.Context, params CreateFileByRawParams) (*ToolFile, error) {
+	identity, messageID, err := validateExecutionFileOwner(params)
+	if err != nil {
+		return nil, err
+	}
 	lifecycle, expiresAt, err := resolveLifecycle(params.Lifecycle, params.ExpiresAt, params.ExplicitWorkflowLifecycle)
 	if err != nil {
 		return nil, err
@@ -76,15 +81,17 @@ func (tm *ToolFileManager) CreateFileByRaw(ctx context.Context, params CreateFil
 
 	// Create tool file record
 	toolFile := &ToolFile{
-		UserID:         params.UserID,
-		TenantID:       params.TenantID,
-		ConversationID: params.ConversationID,
-		FileKey:        filepath,
-		MimeType:       params.MimeType,
-		Name:           presentFilename,
-		Size:           int64(len(params.FileData)),
-		Lifecycle:      string(lifecycle),
-		ExpiresAt:      expiresAt,
+		UserID:             params.UserID,
+		TenantID:           params.TenantID,
+		ConversationID:     params.ConversationID,
+		FileKey:            filepath,
+		MimeType:           params.MimeType,
+		Name:               presentFilename,
+		Size:               int64(len(params.FileData)),
+		Lifecycle:          string(lifecycle),
+		ExpiresAt:          expiresAt,
+		ExecutionIdentity:  identity,
+		ExecutionMessageID: messageID,
 	}
 
 	// Save to database
@@ -198,6 +205,9 @@ func (tm *ToolFileManager) GetFileBinary(ctx context.Context, toolFileID string)
 	if err := ensureToolFileAvailable(&toolFile, time.Now()); err != nil {
 		return nil, "", err
 	}
+	if toolFile.ExecutionIdentity != nil {
+		return nil, "", ErrExecutionFileAccess
+	}
 
 	// Load file from storage
 	fileData, err := tm.storage.Load(toolFile.FileKey)
@@ -219,6 +229,9 @@ func (tm *ToolFileManager) GetPresignedFileURL(ctx context.Context, toolFileID s
 	toolFile, err := tm.GetToolFileByID(ctx, toolFileID)
 	if err != nil {
 		return "", true, err
+	}
+	if toolFile.ExecutionIdentity != nil {
+		return "", true, ErrExecutionFileAccess
 	}
 	url, err := presigner.PresignedGetURL(toolFile.FileKey, storage.PresignedGetOptions{
 		Expires:             expires,
@@ -242,6 +255,9 @@ func (tm *ToolFileManager) GetFileStream(ctx context.Context, toolFileID string)
 	}
 	if err := ensureToolFileAvailable(&toolFile, time.Now()); err != nil {
 		return nil, nil, err
+	}
+	if toolFile.ExecutionIdentity != nil {
+		return nil, nil, ErrExecutionFileAccess
 	}
 
 	// Load file stream from storage
@@ -395,6 +411,8 @@ type CreateFileByRawParams struct {
 	ExpiresAt      *time.Time
 	// ExplicitWorkflowLifecycle permits expiry only for workflow-declared temporary output.
 	ExplicitWorkflowLifecycle bool
+	ExecutionIdentity         *execution.Identity
+	ExecutionMessageID        *string
 }
 
 // CreateFileByURLParams parameters for creating file by URL

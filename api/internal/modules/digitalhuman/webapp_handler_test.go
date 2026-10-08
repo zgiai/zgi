@@ -24,6 +24,7 @@ func TestRegisterWebAppRoutesIncludesSharedChatRuntimeCompatibility(t *testing.T
 		http.MethodGet + " /api/v1/digital-human-webapps/:web_app_id/config",
 		http.MethodPost + " /api/v1/digital-human-webapps/:web_app_id/chat",
 		http.MethodGet + " /api/v1/digital-human-webapps/:web_app_id/conversations/:conversation_id/events",
+		http.MethodGet + " /api/v1/digital-human-webapps/:web_app_id/conversations/:conversation_id/files/:file_id",
 		http.MethodPost + " /api/v1/digital-human-webapps/:web_app_id/conversations/:conversation_id/stop",
 		http.MethodPost + " /api/v1/digital-human-webapps/:web_app_id/conversations/:conversation_id/messages/:message_id/runtime-inputs",
 		http.MethodPost + " /api/v1/digital-human-webapps/:web_app_id/conversations/:conversation_id/messages/:message_id/user-input/:request_id/continue",
@@ -53,6 +54,7 @@ func TestRegisterAPIRoutesIncludesPrivateTaskContract(t *testing.T) {
 	}
 	for _, required := range []string{
 		http.MethodGet + " /api/v1/digital-humans/tasks",
+		http.MethodGet + " /api/v1/digital-humans/conversations/:conversation_id/files/:file_id",
 		http.MethodPost + " /api/v1/digital-humans/tasks",
 		http.MethodGet + " /api/v1/digital-humans/tasks/:task_id",
 		http.MethodPatch + " /api/v1/digital-humans/tasks/:task_id",

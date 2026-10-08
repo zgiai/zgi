@@ -75,6 +75,7 @@ func (h *RuntimeHandler) RegisterRoutes(router *gin.RouterGroup) {
 	group.PATCH("/runtime/conversations/:conversation_id", h.UpdateConversation)
 	group.DELETE("/runtime/conversations/:conversation_id", h.DeleteConversation)
 	group.GET("/runtime/conversations/:conversation_id/messages", h.ListConversationMessages)
+	group.GET("/runtime/conversations/:conversation_id/files/:file_id", h.GetExecutionFile)
 	group.POST("/runtime/conversations/:conversation_id/messages/:message_id/runtime-inputs", h.SubmitRuntimeInput)
 	group.POST("/runtime/conversations/:conversation_id/messages/:message_id/user-input/:request_id/continue", h.ContinueUserInput)
 	group.POST("/runtime/conversations/:conversation_id/stop", h.StopConversation)

@@ -202,6 +202,7 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 		externalGroup.PATCH("/agents/conversations/:conversation_id", withAgentAPIKeyContext(agentHandler.UpdateAPIKeyAgentRuntimeConversation))
 		externalGroup.DELETE("/agents/conversations/:conversation_id", withAgentAPIKeyContext(agentHandler.DeleteAPIKeyAgentRuntimeConversation))
 		externalGroup.GET("/agents/conversations/:conversation_id/messages", withAgentAPIKeyContext(agentHandler.ListAPIKeyAgentRuntimeMessages))
+		externalGroup.GET("/agents/conversations/:conversation_id/files/:file_id", withAgentAPIKeyContext(agentHandler.GetAPIKeyAgentRuntimeExecutionFile))
 		externalGroup.GET("/agents/conversations/:conversation_id/events", withAgentAPIKeyContext(agentHandler.StreamAPIKeyAgentRuntimeEvents))
 		externalGroup.POST("/agents/conversations/:conversation_id/stop", withAgentAPIKeyContext(agentHandler.StopAPIKeyAgentRuntimeConversation))
 		externalGroup.POST("/agents/messages/:message_id/regenerate", withAgentAPIKeyContext(agentHandler.RegenerateAPIKeyAgentRuntimeMessage))

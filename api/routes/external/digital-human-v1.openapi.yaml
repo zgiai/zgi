@@ -318,6 +318,35 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/MessageListEnvelope'}
         default: {$ref: '#/components/responses/Error'}
+  /digital-humans/conversations/{conversation_id}/files/{file_id}:
+    get:
+      tags: [DigitalHuman conversations]
+      summary: Read a protected execution result file
+      operationId: readDigitalHumanExecutionFile
+      description: Returns file bytes after checking current DigitalHuman access and the original user and conversation ownership. Protected artifacts omit public URLs. Retained files remain readable when Linux execution is disabled, but not after access is revoked.
+      parameters:
+        - $ref: '#/components/parameters/ConversationID'
+        - $ref: '#/components/parameters/UserQuery'
+        - name: file_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: download
+          in: query
+          description: Return an attachment instead of an inline preview.
+          schema: {type: boolean, default: false}
+      responses:
+        '200':
+          description: Authenticated file bytes with private no-store caching.
+          content:
+            application/octet-stream:
+              schema: {type: string, format: binary}
+        '206':
+          description: Requested byte range of the authenticated file.
+          content:
+            application/octet-stream:
+              schema: {type: string, format: binary}
+        default: {$ref: '#/components/responses/Error'}
   /digital-humans/conversations/{conversation_id}/messages/{message_id}/regenerate:
     parameters:
       - $ref: '#/components/parameters/ConversationID'
@@ -1280,6 +1309,7 @@ components:
             size: {type: integer, format: int64, minimum: 0, description: Artifact size in bytes.}
             url: {type: string, description: Public or signed artifact URL when available.}
             download_url: {type: string, description: Download-specific URL when available.}
+            access_mode: {type: string, enum: [authenticated], description: Protected files omit URLs and require the authenticated conversation file endpoint.}
             lifecycle: {type: string, description: Retention or persistence state.}
     ToolGovernanceDecisionEvent:
       description: >-

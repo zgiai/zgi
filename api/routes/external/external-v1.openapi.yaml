@@ -259,6 +259,37 @@ paths:
           $ref: '#/components/responses/MessageListEnvelope'
         default:
           $ref: '#/components/responses/Error'
+  /agents/conversations/{conversation_id}/files/{file_id}:
+    get:
+      tags: [Conversations]
+      summary: Read a protected execution result file
+      operationId: readAgentExecutionFile
+      description: Returns file bytes only after checking the current application, external user and conversation access. The user must match the original conversation owner. Protected artifacts omit public URLs; use this authenticated endpoint for preview or download. Retained files remain readable when Linux execution is disabled, but not after access is revoked.
+      parameters:
+        - $ref: '#/components/parameters/ConversationID'
+        - $ref: '#/components/parameters/ExternalUserID'
+        - $ref: '#/components/parameters/LegacyUser'
+        - name: file_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: download
+          in: query
+          description: Return an attachment instead of an inline preview.
+          schema: {type: boolean, default: false}
+      responses:
+        '200':
+          description: Authenticated file bytes with private no-store caching.
+          content:
+            application/octet-stream:
+              schema: {type: string, format: binary}
+        '206':
+          description: Requested byte range of the authenticated file.
+          content:
+            application/octet-stream:
+              schema: {type: string, format: binary}
+        default:
+          $ref: '#/components/responses/Error'
   /agents/conversations/{conversation_id}/events:
     get:
       tags: [Conversations]
@@ -1007,6 +1038,7 @@ components:
             size: {type: integer, format: int64, minimum: 0, description: Artifact size in bytes.}
             url: {type: string, description: Public or signed artifact URL when available.}
             download_url: {type: string, description: Download-specific URL when available.}
+            access_mode: {type: string, enum: [authenticated], description: Protected files omit URLs and require the authenticated conversation file endpoint.}
             transfer_method: {type: string, description: How the artifact can be retrieved.}
             lifecycle: {type: string, description: Retention or persistence state.}
             expires_at: {description: Expiration time in the runtime-provided representation.}

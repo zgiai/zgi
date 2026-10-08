@@ -71,6 +71,13 @@ func (h *HTTPHandler) GetToolFile(c *gin.Context) {
 		}
 	}
 
+	// A signature authenticates a legacy URL, not the final user. Protected
+	// execution files must never reach either the proxy or storage redirect.
+	file, err := h.manager.GetToolFileByID(c.Request.Context(), toolFileID)
+	if err != nil || file.ExecutionIdentity != nil {
+		response.Fail(c, response.ErrFileNotFound)
+		return
+	}
 	download := shouldDownloadToolFile(c.Query("download"))
 	if shouldDirectDeliverToolFile(c.Query("delivery")) && !download && expiresAt != "" {
 		ttl, err := directToolFileURLTTL(expiresAt, time.Now())
