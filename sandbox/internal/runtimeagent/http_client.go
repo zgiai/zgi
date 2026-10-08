@@ -34,6 +34,7 @@ type RemoteBackend struct {
 	headers      http.Header
 	client       *http.Client
 	pollInterval time.Duration
+	stopTimeout  time.Duration
 }
 
 // NewUnixRemote connects to a Runtime Agent through a host-visible Unix
@@ -84,6 +85,7 @@ func NewRemote(options RemoteOptions) (*RemoteBackend, error) {
 	return &RemoteBackend{
 		baseURL: options.BaseURL, token: options.Token, headers: headers,
 		client: options.HTTPClient, pollInterval: options.PollInterval,
+		stopTimeout: 5 * time.Second,
 	}, nil
 }
 
@@ -347,14 +349,41 @@ func (j *remoteRunningJob) Wait(ctx context.Context) (agentexecution.JobResult, 
 // A transport failure is not proof that compute has stopped. Failed cancellation
 // is surfaced to the Worker so it can quarantine the provider allocation.
 func (j *remoteRunningJob) stopAfterFailure(ctx context.Context, cause error) (agentexecution.JobResult, error) {
-	cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), j.backend.stopTimeout)
 	defer cancel()
 	stopErr := j.Cancel(cancelCtx)
+	if stopErr == nil {
+		// A cancellation acknowledgement only confirms receipt of the request.
+		// Do not release a Job or its platform grant until termination is known.
+		stopErr = j.confirmStopped(cancelCtx)
+	}
 	err := errors.Join(cause, stopErr)
 	return agentexecution.JobResult{
 		ExitCode: -1, Error: err.Error(), Canceled: stopErr == nil && errors.Is(cause, context.Canceled),
 		TerminationFailed: stopErr != nil,
 	}, err
+}
+
+func (j *remoteRunningJob) confirmStopped(ctx context.Context) error {
+	ticker := time.NewTicker(j.backend.pollInterval)
+	defer ticker.Stop()
+	for {
+		status, err := j.status(ctx)
+		if err != nil {
+			return fmt.Errorf("confirm interrupted job termination: %w", err)
+		}
+		if status.Done {
+			if status.Result == nil || status.Result.TerminationFailed {
+				return errors.New("interrupted job termination could not be confirmed")
+			}
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("confirm interrupted job termination: %w", ctx.Err())
+		case <-ticker.C:
+		}
+	}
 }
 
 func (j *remoteRunningJob) Cancel(ctx context.Context) error {

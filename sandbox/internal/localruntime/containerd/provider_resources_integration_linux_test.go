@@ -5,6 +5,7 @@ package containerd
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -15,6 +16,88 @@ import (
 	"github.com/zgiai/zgi-sandbox/internal/agentexecution"
 	"github.com/zgiai/zgi-sandbox/internal/localruntime"
 )
+
+// This is a separate incremental check: it does not repeat the accepted CPU or
+// memory matrix. A PID event alone is not proof that an interrupted job stopped.
+func TestContainerdGVisorPIDExhaustionTermination(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Fatal("PID exhaustion check requires the native worker node")
+	}
+	image := strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_TEST_IMAGE"))
+	if image == "" {
+		t.Fatal("ZGI_AGENT_RUNTIME_TEST_IMAGE must contain a pinned image")
+	}
+	backend, allocation, cgroup := newResourceBinding(t, image, "pid-termination", 512*1024*1024, 64, 50000)
+	const retained = "pid-quarantine-retained"
+	if _, err := backend.UploadFile(t.Context(), allocation, "artifacts/retained.txt", strings.NewReader(retained), int64(len(retained))); err != nil {
+		t.Fatal(err)
+	}
+	before := readCgroupCounter(t, filepath.Join(cgroup, "pids.events"), "max")
+	running, err := backend.StartJob(t.Context(), allocation, agentexecution.JobSpec{
+		JobID: "pid-termination", Command: "python3", Timeout: 20 * time.Second,
+		Args: []string{"-c", `import os, time
+children = []
+try:
+    for i in range(96):
+        try:
+            pid = os.fork()
+        except OSError:
+            break
+        if pid == 0:
+            time.sleep(8)
+            os._exit(0)
+        children.append(pid)
+finally:
+    for pid in children:
+        os.waitpid(pid, 0)`},
+	}, func(agentexecution.OutputChunk) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for readCgroupCounter(t, filepath.Join(cgroup, "pids.events"), "max") <= before {
+		if time.Now().After(deadline) {
+			t.Fatal("PID limit was not reached")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	waitCtx, cancelWait := context.WithTimeout(t.Context(), 5*time.Second)
+	result, waitErr := running.Wait(waitCtx)
+	cancelWait()
+	if waitErr != nil && !result.TerminationFailed && result.ExitCode != -1 {
+		t.Fatalf("interrupted PID job reported success: result=%+v err=%v", result, waitErr)
+	}
+	t.Logf("PID exhaustion terminal classification: exit=%d termination_failed=%v observation_error=%v", result.ExitCode, result.TerminationFailed, waitErr != nil)
+	// Exercise the same real provider suspension used by Worker quarantine.
+	// The Worker persistence transition is covered separately, not claimed by
+	// this provider-level integration test.
+	cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancelCleanup()
+	if err := backend.SuspendBinding(cleanupCtx, allocation); err != nil {
+		t.Fatalf("suspend exhausted allocation: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(cgroup, "pids.current"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if err == nil && strings.TrimSpace(string(data)) != "0" {
+		t.Fatalf("quarantined allocation still has processes: %s", data)
+	}
+	spec := agentexecution.CreateSpec{BindingID: "pid-termination", WorkspaceID: "pid-termination", OrganizationID: "contract-org", SubjectID: "contract-user", ProfileID: "contract"}
+	resumed, err := backend.ResumeBinding(t.Context(), spec, allocation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, _, err := backend.DownloadFile(t.Context(), resumed, "artifacts/retained.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	content, err := io.ReadAll(io.LimitReader(file, 64))
+	if err != nil || string(content) != retained {
+		t.Fatalf("quarantine lost retained file: content=%q err=%v", content, err)
+	}
+}
 
 func TestContainerdGVisorResourceLimits(t *testing.T) {
 	if os.Geteuid() != 0 {
