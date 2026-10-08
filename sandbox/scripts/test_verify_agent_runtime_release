@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+script="$(cd "$(dirname "$0")" && pwd)/verify-agent-runtime-release"
+bash -n "$script"
+for tool in jq python3; do command -v "$tool" >/dev/null; done
+test_dir="$(mktemp -d /tmp/zgi-release-test.XXXXXX)"
+trap 'rm -rf -- "$test_dir"' EXIT
+mkdir "$test_dir/bin"
+export ZGI_RELEASE_TEST_ROOT="$test_dir"
+python3 - "$test_dir" <<'PY'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+digest = 'sha256:' + 'a' * 64
+(root/'release.json').write_text(json.dumps({'version':1,'id':'release-1','api_image':'registry/api@'+digest,'web_image':'registry/web@'+digest}))
+(root/'bin/docker').write_text('''#!/usr/bin/env python3
+import json, os, pathlib, sys
+root = pathlib.Path(os.environ['ZGI_RELEASE_TEST_ROOT'])
+args = sys.argv[1:]
+if args[:2] == ['container','inspect']:
+    print(('false' if (root/'stopped').exists() else 'true') if 'Running' in args[3] else 'sha256:'+'a'*64)
+elif args[:2] == ['image','inspect']:
+    digest = 'sha256:' + ('b' if (root/'mismatch').exists() else 'a') * 64
+    print(json.dumps(['registry/api@'+digest,'registry/web@'+digest]))
+else:
+    raise SystemExit(99)
+''')
+(root/'bin/docker').chmod(0o755)
+PY
+export PATH="$test_dir/bin:$PATH"
+bash "$script" "$test_dir/release.json" api web
+touch "$test_dir/mismatch"
+if bash "$script" "$test_dir/release.json" api web; then echo 'mismatched running image accepted' >&2; exit 1; fi
+rm "$test_dir/mismatch"
+touch "$test_dir/stopped"
+if bash "$script" "$test_dir/release.json" api web; then echo 'stopped container accepted' >&2; exit 1; fi
+rm "$test_dir/stopped"
+if bash "$script" "$test_dir/release.json" --bad web; then echo 'option injection accepted' >&2; exit 1; fi
+ln -s "$test_dir/release.json" "$test_dir/link.json"
+if bash "$script" "$test_dir/link.json" api web; then echo 'symlink accepted' >&2; exit 1; fi
+echo 'test-verify-agent-runtime-release: ok'

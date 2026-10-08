@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +19,8 @@ import (
 const agentExecutionResponseLimit = 2 << 20
 const agentExecutionFileLimit = 64 << 20
 const agentExecutionMaxBindingReplacements = 16
+
+var agentExecutionReleaseIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 
 type agentExecutionScope struct {
 	OrganizationID string
@@ -79,9 +82,11 @@ type agentExecutionGateway interface {
 }
 
 type agentExecutionHTTPGateway struct {
-	baseURL string
-	apiKey  string
-	client  *http.Client
+	releaseRequired bool
+	releaseID       string
+	baseURL         string
+	apiKey          string
+	client          *http.Client
 }
 
 type agentExecutionGatewayHTTPError struct {
@@ -96,11 +101,22 @@ func (e agentExecutionGatewayHTTPError) Error() string {
 func agentExecutionGatewayFromEnv() agentExecutionGateway {
 	baseURL := strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_URL"))
 	apiKey := strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_API_KEY"))
+	releaseID := strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_RELEASE_ID"))
+	required := strings.ToLower(strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_RELEASE_REQUIRED")))
+	invalidRelease := (required != "" && required != "true" && required != "false") ||
+		(releaseID != "" && !agentExecutionReleaseIDPattern.MatchString(releaseID))
+	if invalidRelease {
+		// Keep recovery transports available, but never emit malformed headers
+		// or downgrade new admission when operator configuration is invalid.
+		releaseID = ""
+	}
 	if !validAgentRuntimeGatewayURL(baseURL) || apiKey == "" {
 		return nil
 	}
 	return &agentExecutionHTTPGateway{
-		baseURL: baseURL, apiKey: apiKey,
+		releaseRequired: required == "true" || invalidRelease,
+		releaseID:       releaseID,
+		baseURL:         baseURL, apiKey: apiKey,
 		client: &http.Client{
 			Timeout: 60 * time.Second,
 			CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -113,6 +129,22 @@ func agentExecutionGatewayFromEnv() agentExecutionGateway {
 func (g *agentExecutionHTTPGateway) request(ctx context.Context, scope agentExecutionScope, method, path string, input any, output any) error {
 	if g == nil || g.client == nil || scope.OrganizationID == "" || scope.SubjectID == "" {
 		return fmt.Errorf("agent execution gateway is unavailable")
+	}
+	if (g.releaseRequired || g.releaseID != "") && method == http.MethodPost && (path == "bindings" || strings.HasSuffix(path, "/resume") || strings.HasSuffix(path, "/jobs")) {
+		if g.releaseID == "" {
+			return fmt.Errorf("runtime release identity is missing or invalid; new execution is disabled")
+		}
+		var release struct {
+			ID                      string `json:"id"`
+			ContractVersion         int    `json:"contract_version"`
+			PlatformProtocolVersion int    `json:"platform_protocol_version"`
+		}
+		if err := g.request(ctx, scope, http.MethodGet, "release", nil, &release); err != nil {
+			return fmt.Errorf("runtime release verification failed: %w", err)
+		}
+		if release.ID != g.releaseID || release.ContractVersion != 1 || release.PlatformProtocolVersion != 1 {
+			return fmt.Errorf("API and Worker runtime releases do not match")
+		}
 	}
 	var body io.Reader
 	if input != nil {
@@ -129,6 +161,7 @@ func (g *agentExecutionHTTPGateway) request(ctx context.Context, scope agentExec
 	req.Header.Set("Authorization", "Bearer "+g.apiKey)
 	req.Header.Set("X-ZGI-Organization-ID", scope.OrganizationID)
 	req.Header.Set("X-ZGI-Subject-ID", scope.SubjectID)
+	req.Header.Set("X-ZGI-Runtime-Release", g.releaseID)
 	if input != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

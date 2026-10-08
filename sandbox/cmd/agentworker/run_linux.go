@@ -39,6 +39,9 @@ type runtimeBackend interface {
 }
 
 type workerConfig struct {
+	Admission              agentexecution.AdmissionLimits
+	ReleaseManifestPath    string
+	ReleaseRequired        bool
 	PlatformCLI            bool
 	ListenAddress          string
 	APIKey                 string
@@ -78,8 +81,25 @@ func run(parent context.Context, logger *log.Logger) error {
 	if err != nil {
 		return err
 	}
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "--release-fingerprint":
+			return printReleaseFingerprint(cfg)
+		case "--set-admission-policy":
+			ctx, cancel := context.WithTimeout(parent, 30*time.Second)
+			defer cancel()
+			return storage.ReplaceAdmissionPolicy(ctx, cfg.DatabaseURL, cfg.Backend, cfg.Admission)
+		default:
+			return errors.New("unknown worker command")
+		}
+	}
+	releaseID, err := verifyWorkerRelease(cfg)
+	if err != nil {
+		return err
+	}
 	store, err := storage.Open(config.Config{
-		DatabaseURL: cfg.DatabaseURL, MaxWorkers: cfg.MaxWorkers,
+		AgentRuntimeAdmission: &cfg.Admission,
+		DatabaseURL:           cfg.DatabaseURL, MaxWorkers: cfg.MaxWorkers,
 		ObserverRetentionDays: 7, ObserverMaxEvents: 10000,
 	})
 	if err != nil {
@@ -113,11 +133,11 @@ func run(parent context.Context, logger *log.Logger) error {
 	if err != nil {
 		return err
 	}
-	data, err := agentexecution.NewDataPlaneService(store, store, executionBackends, agentexecution.DataPlaneOptions{IdleTTL: cfg.IdleTTL})
+	data, err := agentexecution.NewDataPlaneService(store, store, executionBackends, agentexecution.DataPlaneOptions{IdleTTL: cfg.IdleTTL, MaxJobTimeout: cfg.Admission.JobTimeout()})
 	if err != nil {
 		return err
 	}
-	api, err := agentexecution.NewHTTPAPI(control, data, agentexecution.HTTPAPIOptions{APIKey: cfg.APIKey})
+	api, err := agentexecution.NewHTTPAPI(control, data, agentexecution.HTTPAPIOptions{APIKey: cfg.APIKey, ReleaseID: releaseID})
 	if err != nil {
 		return err
 	}
@@ -225,12 +245,14 @@ func workerConfigFromEnv() (workerConfig, error) {
 	hostname, _ := os.Hostname()
 	fallbackWorkerID := fmt.Sprintf("%s-%d", hostname, os.Getpid())
 	cfg := workerConfig{
-		ListenAddress: envString("ZGI_AGENT_RUNTIME_LISTEN", "127.0.0.1:2670"),
-		APIKey:        strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_API_KEY")),
-		DatabaseURL:   strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_DATABASE_URL")),
-		WorkerID:      envString("ZGI_AGENT_RUNTIME_WORKER_ID", fallbackWorkerID),
-		RootDir:       envString("ZGI_AGENT_RUNTIME_ROOT", "/var/lib/zgi-agent-runtime"),
-		CheckpointDir: strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_CHECKPOINT_DIR")),
+		ReleaseManifestPath: strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_RELEASE_MANIFEST")),
+		ReleaseRequired:     strings.EqualFold(strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_RELEASE_REQUIRED")), "true"),
+		ListenAddress:       envString("ZGI_AGENT_RUNTIME_LISTEN", "127.0.0.1:2670"),
+		APIKey:              strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_API_KEY")),
+		DatabaseURL:         strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_DATABASE_URL")),
+		WorkerID:            envString("ZGI_AGENT_RUNTIME_WORKER_ID", fallbackWorkerID),
+		RootDir:             envString("ZGI_AGENT_RUNTIME_ROOT", "/var/lib/zgi-agent-runtime"),
+		CheckpointDir:       strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_CHECKPOINT_DIR")),
 		CheckpointS3: workspacecheckpoint.S3Config{
 			Bucket:       strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_CHECKPOINT_S3_BUCKET")),
 			Region:       strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_CHECKPOINT_S3_REGION")),
@@ -260,6 +282,12 @@ func workerConfigFromEnv() (workerConfig, error) {
 		E2BEgressProxyAddress:  strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_E2B_EGRESS_PROXY_ADDRESS")),
 		E2BEgressProxyUsername: strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_E2B_EGRESS_PROXY_USERNAME")),
 		E2BEgressProxyPassword: os.Getenv("ZGI_AGENT_RUNTIME_E2B_EGRESS_PROXY_PASSWORD"),
+	}
+	if err := decodeAdmissionLimits(&cfg.Admission); err != nil {
+		return workerConfig{}, err
+	}
+	if value := strings.ToLower(strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_RELEASE_REQUIRED"))); value != "" && value != "true" && value != "false" {
+		return workerConfig{}, errors.New("ZGI_AGENT_RUNTIME_RELEASE_REQUIRED must be true or false")
 	}
 	if cfg.APIKey == "" || cfg.DatabaseURL == "" {
 		return workerConfig{}, errors.New("ZGI_AGENT_RUNTIME_API_KEY and ZGI_AGENT_RUNTIME_DATABASE_URL are required")

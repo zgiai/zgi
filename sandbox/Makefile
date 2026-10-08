@@ -45,6 +45,7 @@ check-config-docs:
 
 test-agent-runtime-server:
 	./scripts/test_zgi_runtime_server
+	bash ./scripts/test_verify_agent_runtime_release
 
 install-agent-runtime-host:
 	./scripts/zgi-runtime-server host-install

@@ -38,11 +38,13 @@ type DataPlane interface {
 }
 
 type HTTPAPIOptions struct {
+	ReleaseID    string
 	APIKey       string
 	MaxBodyBytes int64
 }
 
 type HTTPAPI struct {
+	releaseID    string
 	control      ControlPlane
 	data         DataPlane
 	apiKey       string
@@ -60,7 +62,10 @@ func NewHTTPAPI(control ControlPlane, data DataPlane, options HTTPAPIOptions) (*
 	if options.MaxBodyBytes <= 0 {
 		options.MaxBodyBytes = 1 * 1024 * 1024
 	}
-	return &HTTPAPI{control: control, data: data, apiKey: options.APIKey, maxBodyBytes: options.MaxBodyBytes}, nil
+	if options.ReleaseID != "" && !releaseIDPattern.MatchString(options.ReleaseID) {
+		return nil, fmt.Errorf("%w: invalid runtime release identity", ErrInvalidRequest)
+	}
+	return &HTTPAPI{control: control, data: data, apiKey: options.APIKey, maxBodyBytes: options.MaxBodyBytes, releaseID: options.ReleaseID}, nil
 }
 
 func (a *HTTPAPI) Register(mux *http.ServeMux) error {
@@ -87,6 +92,21 @@ func (a *HTTPAPI) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 		http.NotFound(w, request)
 		return
 	}
+	if pathValue == "release" && request.Method == http.MethodGet {
+		writeAgentRuntimeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
+			"id": a.releaseID, "contract_version": ReleaseContractVersion, "platform_protocol_version": PlatformProtocolVersion,
+		}})
+		return
+	}
+	// Fail closed only for admission. Existing Jobs, cancellation, cleanup and
+	// retained-file retrieval must remain accessible during a release rollback.
+	if runtimeAdmissionRequest(request.Method, segments) {
+		requested := request.Header.Get(ReleaseHeader)
+		if requested != a.releaseID && (requested != "" || a.releaseID != "") {
+			writeAgentRuntimeError(w, http.StatusServiceUnavailable, "release_mismatch", "API and Worker runtime releases do not match")
+			return
+		}
+	}
 	switch segments[0] {
 	case "bindings":
 		a.handleBindings(w, request, scope, segments[1:])
@@ -95,6 +115,14 @@ func (a *HTTPAPI) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 	default:
 		http.NotFound(w, request)
 	}
+}
+
+func runtimeAdmissionRequest(method string, segments []string) bool {
+	if method != http.MethodPost {
+		return false
+	}
+	return (len(segments) == 1 && segments[0] == "bindings") ||
+		(len(segments) == 3 && segments[0] == "bindings" && (segments[2] == "resume" || segments[2] == "jobs"))
 }
 
 func (a *HTTPAPI) handleBindings(w http.ResponseWriter, request *http.Request, scope Scope, segments []string) {

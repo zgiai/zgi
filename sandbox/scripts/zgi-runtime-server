@@ -42,7 +42,7 @@ load_settings() {
   (( $(stat -c %s "$SETTINGS_FILE") <= 1048576 )) || die 'settings exceed 1 MiB'
   jq -e 'type == "object" and all(to_entries[]; (.key | test("^ZGI_AGENT_RUNTIME_[A-Z0-9_]+$")) and (.value | type == "string" and (explode | all(. >= 32 and . != 127))))' "$SETTINGS_FILE" >/dev/null 2>&1 || die 'settings must contain runtime strings without control characters'
   local key value
-  local keys='API_KEY|DATABASE_URL|BACKEND|CONTAINERD_ADDRESS|CONTAINERD_NAMESPACE|SERVICE_NAME|ENV_FILE|UNIT_FILE|STATE_DIR|ROOT|CHECKPOINT_DIR|WORKER_BINARY|WORKER_SOURCE|IMAGE_REF|IMAGE_ARCHIVE|LISTEN|HEALTH_TIMEOUT_SECONDS|SMOKE_TIMEOUT_SECONDS|PROFILES_JSON|WORKER_ID|MAX_WORKERS|IDLE_TTL_SECONDS|SHUTDOWN_TIMEOUT_SECONDS|STARTUP_TIMEOUT_SECONDS|MEMORY_BYTES|PIDS|CPU_PERIOD|CPU_QUOTA|PYPI_INDEX_URL|NPM_REGISTRY_URL|APT_MIRROR_URL|APT_SECURITY_MIRROR_URL|PACKAGE_SOURCE_CHECK|PLATFORM_CLI_ENABLED'
+  local keys='API_KEY|DATABASE_URL|BACKEND|CONTAINERD_ADDRESS|CONTAINERD_NAMESPACE|SERVICE_NAME|ENV_FILE|UNIT_FILE|STATE_DIR|ROOT|CHECKPOINT_DIR|WORKER_BINARY|WORKER_SOURCE|IMAGE_REF|IMAGE_ARCHIVE|LISTEN|HEALTH_TIMEOUT_SECONDS|SMOKE_TIMEOUT_SECONDS|PROFILES_JSON|WORKER_ID|MAX_WORKERS|IDLE_TTL_SECONDS|SHUTDOWN_TIMEOUT_SECONDS|STARTUP_TIMEOUT_SECONDS|MEMORY_BYTES|PIDS|CPU_PERIOD|CPU_QUOTA|PYPI_INDEX_URL|NPM_REGISTRY_URL|APT_MIRROR_URL|APT_SECURITY_MIRROR_URL|PACKAGE_SOURCE_CHECK|PLATFORM_CLI_ENABLED|RELEASE_MANIFEST|RELEASE_REQUIRED|MAX_BINDINGS|MAX_BINDINGS_PER_ORG|MAX_JOBS|MAX_JOBS_PER_ORG|MAX_JOBS_PER_BINDING|JOB_TIMEOUT_SECONDS'
   while IFS= read -r -d '' key && IFS= read -r -d '' value; do
     [[ "$key" =~ ^ZGI_AGENT_RUNTIME_($keys)$ ]] || die "unsupported setting: $key"
     export "$key=$value"
@@ -174,7 +174,22 @@ prepare_environment() {
       PROFILES="$(jq -c --arg host "$host" '.["cc-codex-standard"].egress_allowed_hosts += [$host] | .["cc-codex-standard"].egress_allowed_hosts |= unique' <<<"$PROFILES")"
     done
   fi
-  jq -e --arg image "$IMAGE_REF" 'type == "object" and length > 0 and all(.[]; .image == $image)' <<<"$PROFILES" >/dev/null 2>&1 || die 'every local Profile must use approved image digest'
+  jq -e --arg image "$IMAGE_REF" 'type == "object" and length > 0
+    and any(.[]; .image == $image)
+    and all(.[]; type == "object" and (.image | type == "string" and test("^[A-Za-z0-9._:/-]+@sha256:[a-f0-9]{64}$")))' \
+    <<<"$PROFILES" >/dev/null 2>&1 || die 'local Profiles must use immutable image digests and include the approved default image'
+  # Keep explicitly approved older versions available for retained checkpoints.
+  # Never pull a secondary Profile implicitly or accept a mutable image tag.
+  if ! "$DRY_RUN"; then
+    local listing profile_image
+    listing="$(ctr_runtime images list)"
+    while IFS= read -r profile_image; do
+      [[ "$profile_image" == "$IMAGE_REF" ]] && continue
+      awk -v name="$profile_image" -v digest="${profile_image##*@}" \
+        '$1 == name && $3 == digest {found=1} END {exit !found}' <<<"$listing" \
+        || die 'secondary Profile image reference/digest is not preloaded in configured socket/namespace'
+    done < <(jq -r '.[].image' <<<"$PROFILES" | sort -u)
+  fi
 }
 write_worker_env() {
   local destination="$1" key
@@ -192,7 +207,9 @@ write_worker_env() {
     ZGI_AGENT_RUNTIME_STARTUP_TIMEOUT_SECONDS ZGI_AGENT_RUNTIME_MEMORY_BYTES ZGI_AGENT_RUNTIME_PIDS \
     ZGI_AGENT_RUNTIME_CPU_PERIOD ZGI_AGENT_RUNTIME_CPU_QUOTA ZGI_AGENT_RUNTIME_PYPI_INDEX_URL \
     ZGI_AGENT_RUNTIME_NPM_REGISTRY_URL ZGI_AGENT_RUNTIME_APT_MIRROR_URL \
-    ZGI_AGENT_RUNTIME_APT_SECURITY_MIRROR_URL ZGI_AGENT_RUNTIME_PACKAGE_SOURCE_CHECK ZGI_AGENT_RUNTIME_PLATFORM_CLI_ENABLED; do
+    ZGI_AGENT_RUNTIME_APT_SECURITY_MIRROR_URL ZGI_AGENT_RUNTIME_PACKAGE_SOURCE_CHECK ZGI_AGENT_RUNTIME_PLATFORM_CLI_ENABLED \
+    ZGI_AGENT_RUNTIME_RELEASE_MANIFEST ZGI_AGENT_RUNTIME_RELEASE_REQUIRED ZGI_AGENT_RUNTIME_MAX_BINDINGS ZGI_AGENT_RUNTIME_MAX_BINDINGS_PER_ORG \
+    ZGI_AGENT_RUNTIME_MAX_JOBS ZGI_AGENT_RUNTIME_MAX_JOBS_PER_ORG ZGI_AGENT_RUNTIME_MAX_JOBS_PER_BINDING ZGI_AGENT_RUNTIME_JOB_TIMEOUT_SECONDS; do
     [[ ! -v "$key" ]] || environment_line "$key" "${!key}" >>"$destination"
   done
 }
