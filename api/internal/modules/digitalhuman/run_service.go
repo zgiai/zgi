@@ -89,6 +89,7 @@ type RuntimeService struct {
 	taskService    TaskHandlerService
 	channelContext ChannelContextRuntimeProvider
 	manualFiles    ManualInvocationFileValidator
+	linux          LinuxExecutionRuntimeProvider
 	now            func() time.Time
 }
 
@@ -887,6 +888,14 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 	if err != nil {
 		_ = s.store.FailRun(ctx, run.ID, AppCodeRunConflict.String(), "Stored execution configuration is not executable.", s.now())
 		return err
+	}
+	if s.linux != nil {
+		factory, prepareErr := s.linux.Prepare(ctx, run, resolved, event)
+		if prepareErr != nil {
+			_ = s.store.FailRun(ctx, run.ID, AppCodeRunConflict.String(), "The DigitalHuman Linux execution environment is not approved or available.", s.now())
+			return prepareErr
+		}
+		config.RuntimeToolFactory = factory
 	}
 	config.ConnectorRunID = run.ID.String()
 	config.ConnectorInteractive = event.Origin.Kind == invocation.OriginManual
