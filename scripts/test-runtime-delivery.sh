@@ -97,6 +97,7 @@ for skill in xlsx pptx slack-gif-creator; do
 done
 "${gate[@]}" --real-worker
 grep -F 'TestAgentExecutionStandardSkillMatrix' "$TEST_CALLS" >/dev/null
+grep -F './internal/capabilities/agentexecution/runtime' "$TEST_CALLS" >/dev/null
 
 expect_failure "${gate[@]}" --real-documents
 for skill in docx pdf; do

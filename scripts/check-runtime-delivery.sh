@@ -102,7 +102,7 @@ case "$mode" in
         export CONNECTOR_CREDENTIAL_KEYS_JSON='{"runtime-delivery-test":"12345678901234567890123456789012"}'
         cd "${repo_root}/api"
         go test -p=1 -tags=agent_runtime_integration -count=1 -v -timeout=15m \
-          ./internal/modules/app/agents -run "^${test_name}$"
+          ./internal/capabilities/agentexecution/runtime -run "^${test_name}$"
         ;;
     esac
     ;;

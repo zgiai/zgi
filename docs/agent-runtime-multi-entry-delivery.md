@@ -15,7 +15,7 @@ files and cleanup must remain available during an admission rollback.
 | Stage | Deliverable | Status |
 | --- | --- | --- |
 | P0 | Versioned identity, Worker negotiation, additive persistence, compatibility | Complete; unit, PostgreSQL, race and vet gates passed |
-| P1 | Shared execution factory, live authorization, end-user admission | Atomic end-user admission complete; factory extraction pending |
+| P1 | Shared execution factory, live authorization, end-user admission | Complete; shared factory, regression, race and vet gates passed |
 | P2 | Protected file ownership and authenticated preview/download | Pending |
 | P3 | Published Agent and DigitalHuman interactive script integration | Pending |
 | P4 | Published-resource CLI and frozen, idempotent approval continuation | Pending |
@@ -97,3 +97,28 @@ Concurrent two-store PostgreSQL tests verify the 2/1 defaults, cross-backend
 counting, independent users/applications, repeated creates, resume at capacity
 and terminal-Job capacity release. Storage, Worker and control-plane tests pass
 with race detection and vet.
+
+## Shared execution factory
+
+`capabilities/agentexecution/runtime` owns Shell, dependency preparation, file
+transfer, Skill placement and CLI relay. Application adapters supply verified
+identity, live authorization, publication and file persistence. The console Agent
+adapter retains the historical binding and artifact contract. DigitalHuman scope
+does not manufacture an Agent ID, and CLI queries, file transfers, cancellation
+and background reclamation preserve the full execution identity.
+
+`ZGI_AGENT_RUNTIME_ENTRY_ALLOWLIST_JSON` is an operator-only mapping from
+`application:entry` to organization UUIDs, for example
+`{"agent:webapp":["00000000-0000-4000-8000-000000000001"]}`. An absent setting
+allows only the existing console Agent path; an explicit empty object denies
+all entries. Wildcards and malformed mappings are rejected. This is an admission
+gate, not a substitute for application permissions or final-user authentication.
+
+New identity-scoped callers require an explicitly supplied protected artifact
+persister. Without it the factory returns no tools; it never falls back to public
+signed ToolFile URLs. P2-P4 must finish before external adapters can be enabled.
+
+P1 validation includes shared factory and CLI identity tests, existing Agent and
+DigitalHuman tests, race checks and vet. Tagged real-backend test files compile
+after relocation. Delivery scripts now run those tests from the shared package;
+their script contract tests pass. These are not P5 real-backend acceptance.

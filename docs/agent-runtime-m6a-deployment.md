@@ -119,8 +119,8 @@ Run the API package tests with the normal CI Connector test-key environment:
 
 ```bash
 cd api
-go test ./internal/modules/app/agents -count=1
-go vet ./internal/modules/app/agents ./internal/dto
+go test ./internal/capabilities/agentexecution/... ./internal/modules/app/agents -count=1
+go vet ./internal/capabilities/agentexecution/... ./internal/modules/app/agents ./internal/dto
 ```
 
 The existing E2B contract test remains opt-in and must use a disposable approved template and a real account. Do not replace it with a mock when accepting a deployment:

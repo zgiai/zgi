@@ -70,7 +70,7 @@ export ZGI_AGENT_RUNTIME_TEST_PROFILE=cc-codex-standard
 export ZGI_AGENT_RUNTIME_TEST_BACKEND=local-gvisor
 # Set ZGI_AGENT_RUNTIME_TEST_API_KEY securely in the environment.
 # Optionally set ZGI_STANDARD_SKILL_TEST_OUTPUT to an ignored output directory.
-go test -tags=agent_runtime_integration ./internal/modules/app/agents \
+go test -tags=agent_runtime_integration ./internal/capabilities/agentexecution/runtime \
   -run '^TestAgentExecutionStandardSkillMatrix$' -count=1 -v -timeout=15m
 ```
 

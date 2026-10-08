@@ -194,8 +194,8 @@ fixtures create/drop only their unique test databases. The script tests need jq
 and Python 3 and mock host/service commands, not a real deployment. From `api/`:
 
 ```bash
-go test -race ./internal/modules/app/agents -run 'TestGatewayReleaseGate|TestStrictGatewayRelease|TestAgentExecutionHTTP|TestAgentExecutionGateway'
-go vet ./internal/modules/app/agents
+go test -race ./internal/capabilities/agentexecution/runtime -run 'TestGatewayReleaseGate|TestStrictGatewayRelease|TestAgentExecutionHTTP|TestAgentExecutionGateway'
+go vet ./internal/capabilities/agentexecution/... ./internal/modules/app/agents
 go build -o /tmp/zgi-api-release-test ./cmd/server
 ```
 
