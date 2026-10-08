@@ -488,6 +488,25 @@ outside Git in the ignored acceptance directory.
 
 The status-only WebApp presentation has rendering regression coverage for running,
 successful and failed Shell/export/legacy-script events, including retained
-console details. It is included in the Web delivery gate and queued for the next
-consolidated deployment acceptance with artifact preview/download and remaining
-P5 checks; it has not yet been deployed to the real-backend candidate environments.
+console details. It is included in the Web delivery gate. The status-only build
+was deployed to the dedicated local gVisor and real E2B candidates with matching
+strict release manifests, preserving the API/Worker binaries, checkpoints and
+rollback containers. Browser-submitted success and deliberate exit-23 Jobs show
+non-expandable status/duration rows; neither WebApp mounts technical-detail
+controls, while existing console events still expose their detail panel.
+
+Both backends restored the prior conversation file, generated a 27-byte CSV and
+rendered its values in the protected preview. Authenticated download bytes match
+exactly on both backends, and cross-entry access returns 404. The Linux WebApp
+download button also produced a local file with the exact bytes. E2B preview and
+authenticated transport pass, but its browser download click has not produced an
+observed local file; that UI check remains open. The prior blank TXT preview also
+remains unresolved. A browser download-event timeout alone is not treated as
+proof of failure: the Linux file was independently verified on disk.
+
+Each deliberate failure executed once with exit code 23 and stderr present; no
+artifact was created by that negative test. Both owned backend environments were
+suspended after acceptance, with no queued/running Jobs; retained CSV downloads
+still pass. Four focused Web regression suites pass. This verifies the WebApp
+presentation change and its adjacent execution/file path, not the remaining P5
+DigitalHuman, two-user, CLI approval or admission-rollback matrix.
