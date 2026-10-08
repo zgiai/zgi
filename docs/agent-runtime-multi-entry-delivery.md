@@ -534,9 +534,10 @@ Focused real acceptance additionally verified:
   content and authenticated reads on local gVisor and E2B. Separate API users
   generated separate files; cross-user, missing-user and cross-entry reads were
   rejected.
-- E2B Agent API confirmation/rejection and repeated decisions; E2B Agent WebApp
-  confirmation; local Agent API confirmation and local Agent WebApp rejection.
+- Agent and DigitalHuman WebApp/API confirmation, rejection and repeated
+  decisions on both local gVisor and E2B: all sixteen combinations passed.
   Confirmed samples produced one SVG each; rejected samples produced none.
+  Each retained one original Shell Job; authenticated SVG downloads were parsed.
 - The corrected E2B DigitalHuman API flow reached persisted waiting, closed the
   SSE stream, then reached succeeded after confirmation. Duplicate confirmation
   retained one SVG and one original Shell Job. Authenticated SVG bytes were
@@ -549,7 +550,7 @@ constraint/migration tests and documentation contracts cover the correction.
 Local candidate deployment retains rollback containers. Test-only always-ask
 catalog fixtures are acceptance inputs, not changes to the shipped Skill catalog.
 
-P5 is still open: complete the remaining entry/backend approval, live revocation,
+P5 is still open: complete DigitalHuman console approvals, live revocation,
 frozen-publication and admission-off retained-download cases before wider rollout.
 The E2B browser CSV preview renders correct values, but no browser download file
 has been observed in the latest check. Authenticated HTTP download success is
