@@ -750,6 +750,10 @@ Normal Agent JSON success responses use `{ "code": "0", "message": "success", "d
 
 ## Agent Event Integration Guide
 
+Artifacts with `access_mode: authenticated` omit `url` and `download_url`. Fetch
+their bytes through the conversation file endpoint using the same API key and
+external-user identity. Never construct a public ToolFile URL from `file_id`.
+
 This section defines the SSE contract shared by chat, stream recovery, and continuation endpoints. Dispatch on the native `event:` field first, then read the event payload from `data.data` in the JSON envelope. Do not parse the whole response as one JSON document or wait for the connection to close before rendering.
 
 ### Common Envelope and Recovery Fields
@@ -1807,6 +1811,43 @@ Every operation in this section requires the same API Key and `X-External-User-I
 
   </Col>
 </Row>
+
+<Heading url="/api/v1/agents/conversations/{conversation_id}/files/{file_id}" method="GET" title="Read a Protected Execution File" name="#Read-Execution-File" />
+
+This endpoint checks current application access and the original conversation,
+application, entry and final-user ownership. Retained results remain available
+when Linux is disabled, but not after access is revoked. A different publication
+does not erase historical file ownership. The response is file bytes, not JSON
+or a public storage link.
+
+<Properties>
+  <Property name="conversation_id" type="uuid path" propKey="conversation_id">Owning conversation.</Property>
+  <Property name="file_id" type="uuid path" propKey="file_id">ID from the authenticated artifact event or message history.</Property>
+  <Property name="X-External-User-ID" type="string header" propKey="X-External-User-ID">Same final-user identity as the conversation; supplied by your trusted backend.</Property>
+  <Property name="download" type="boolean query" propKey="download">Optional; true requests an attachment. Range requests are supported.</Property>
+</Properties>
+
+<CodeGroup title="Request">
+```bash
+curl '{apibase}/agents/conversations/{conversation_id}/files/{file_id}?download=true' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'X-External-User-ID: external-user-1' \
+  --output result.csv
+```
+</CodeGroup>
+
+<CodeGroup title="Response">
+```text
+HTTP/1.1 200 OK
+Cache-Control: private, no-store
+Content-Type: text/csv; charset=utf-8
+
+name,total
+sample,42
+```
+</CodeGroup>
+
+---
 
 ## Agent Memory
 

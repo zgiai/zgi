@@ -742,6 +742,10 @@ Agent 的普通 JSON 成功响应统一为 `{ "code": "0", "message": "success",
 
 ## Agent 事件接入手册
 
+产物标记 `access_mode: authenticated` 时不返回 `url` 或 `download_url`。
+请使用同一 API Key 和最终用户身份，通过会话文件接口获取文件内容；不要根据
+`file_id` 拼接公开 ToolFile 链接。
+
 本节是聊天、断线恢复和继续接口共用的 SSE 契约。先根据原生 `event:` 分发，再读取 JSON envelope 的 `data.data`。不要把整个响应当成一个 JSON，也不要等连接关闭后再渲染。
 
 ### 通用 envelope 与恢复字段
@@ -1773,6 +1777,41 @@ data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-
 
   </Col>
 </Row>
+
+<Heading url="/api/v1/agents/conversations/{conversation_id}/files/{file_id}" method="GET" title="读取受保护的执行成果" name="#Read-Execution-File" />
+
+接口检查应用当前访问权限，以及文件原始所属的应用、入口、最终用户和会话。
+关闭 Linux 后仍可读取保留成果，撤权后不可读取；新发布版本不会清除历史文件归属。
+响应为文件内容，不是 JSON 或公开存储链接。
+
+<Properties>
+  <Property name="conversation_id" type="uuid path" propKey="conversation_id">成果所属会话。</Property>
+  <Property name="file_id" type="uuid path" propKey="file_id">认证产物事件或历史消息中的文件 ID。</Property>
+  <Property name="X-External-User-ID" type="string header" propKey="X-External-User-ID">由可信业务后端传递，必须与会话最终用户一致。</Property>
+  <Property name="download" type="boolean query" propKey="download">可选，true 使用附件响应；支持 Range 分段读取。</Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl '{apibase}/agents/conversations/{conversation_id}/files/{file_id}?download=true' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'X-External-User-ID: external-user-1' \
+  --output result.csv
+```
+</CodeGroup>
+
+<CodeGroup title="响应">
+```text
+HTTP/1.1 200 OK
+Cache-Control: private, no-store
+Content-Type: text/csv; charset=utf-8
+
+name,total
+sample,42
+```
+</CodeGroup>
+
+---
 
 ## Agent Memory
 

@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import type { ChatBranchNavigation } from '@/components/chat/utils/message-tree';
 import type {
   AIChatConversation,
+  ExecutionFileReader,
   AIChatMessage,
   AIChatMessageFile,
   AIChatTokenUsageUpdatedEventData,
@@ -29,6 +30,7 @@ import type {
 } from '@/services/types/connector';
 
 interface AIChatMessageListProps {
+  readExecutionFile?: ExecutionFileReader;
   messages: AIChatMessage[];
   activeConversation: AIChatConversation | null;
   activeMessageCount: number;
@@ -143,6 +145,7 @@ function tokenUsageFromMessage(
  * <AIChatMessageList messages={messages} />
  */
 export function AIChatMessageList({
+  readExecutionFile,
   messages,
   activeConversation,
   activeMessageCount,
@@ -220,6 +223,7 @@ export function AIChatMessageList({
             ) : null}
             {messages.map((message, index) => (
               <AIChatMessageBubble
+                readExecutionFile={readExecutionFile}
                 key={message.id}
                 message={message}
                 isSending={isSending}

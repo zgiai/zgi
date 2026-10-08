@@ -900,6 +900,43 @@ curl '{apibase}/digital-humans/conversations/{conversation_id}/messages?user=cus
 
 ---
 
+<Heading url="/api/v1/digital-humans/conversations/{conversation_id}/files/{file_id}" method="GET" title="Read a Protected Execution File" name="#Read-Execution-File" />
+
+Artifacts with `access_mode: authenticated` omit public URLs. Read them using
+the same DigitalHuman credential and `user` as the conversation. Current access
+and application, entry, user and conversation ownership are checked on every
+request. Disabling Linux does not prevent authorized retained-file reads;
+revoking application or conversation access does. Credential rotation does not
+change the final user's ownership. Never construct a public ToolFile URL.
+
+<Properties>
+  <Property name="conversation_id" type="uuid path" propKey="conversation_id">Owning conversation.</Property>
+  <Property name="file_id" type="uuid path" propKey="file_id">ID from the artifact event or message history.</Property>
+  <Property name="user" type="string query" propKey="user">Required final-user identity from your trusted backend, matching the conversation.</Property>
+  <Property name="download" type="boolean query" propKey="download">Optional; true requests an attachment. Range requests are supported.</Property>
+</Properties>
+
+<CodeGroup title="Request">
+```bash
+curl '{apibase}/digital-humans/conversations/{conversation_id}/files/{file_id}?user=customer_123&download=true' \
+  --header 'Authorization: Bearer {api_key}' \
+  --output result.csv
+```
+</CodeGroup>
+
+<CodeGroup title="Response">
+```text
+HTTP/1.1 200 OK
+Cache-Control: private, no-store
+Content-Type: text/csv; charset=utf-8
+
+name,total
+sample,42
+```
+</CodeGroup>
+
+---
+
 ## File Upload
 
 <Heading

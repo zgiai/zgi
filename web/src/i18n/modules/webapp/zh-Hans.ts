@@ -1487,6 +1487,7 @@ const messages: WebappMessages = {
       expiredGeneratedFile: '文件已过期',
       deletedGeneratedFile: '文件已删除',
       previewGeneratedFile: '预览生成文件',
+      protectedFileReadFailed: '无法读取此文件，请确认访问权限后重试。',
       downloadGeneratedFile: '下载生成文件',
       uploading: '上传中',
       parsing: '正在解析',

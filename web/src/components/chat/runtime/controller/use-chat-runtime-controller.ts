@@ -249,7 +249,16 @@ export function useChatRuntimeController(options?: {
     []
   );
   const viewModel = useChatRuntimeViewModel({ store, topologyRef });
+  const readExecutionFile = useCallback(
+    (conversationId: string, fileId: string, signal?: AbortSignal) => {
+      const reader = transportRef.current.readExecutionFile;
+      if (!reader) return Promise.reject(new Error('Authenticated file transport is unavailable'));
+      return reader.call(transportRef.current, conversationId, fileId, signal);
+    },
+    []
+  );
   return {
+    readExecutionFile: transportRef.current.readExecutionFile ? readExecutionFile : undefined,
     store,
     conversations: viewModel.conversations,
     pagination: viewModel.pagination,

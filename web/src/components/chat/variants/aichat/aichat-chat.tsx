@@ -1838,6 +1838,7 @@ export function AIChatShell({
             : null}
 
           <AIChatMessageList
+            readExecutionFile={controller.readExecutionFile}
             messages={messages}
             activeConversation={activeConversation}
             activeMessageCount={activeMessages.length}

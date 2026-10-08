@@ -26,6 +26,7 @@ import { useWorkspaceStore } from '@/store/workspace-store';
 import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
 import type {
   AIChatGeneratedFile,
+  ExecutionFileReader,
   AIChatMessage,
   AIChatMessageFile,
   AIChatPresentationItem,
@@ -80,8 +81,10 @@ import {
   withoutSupersededConnectorProgress,
 } from '@/components/connectors/runtime/connector-runtime-source';
 import { useConnectorRuntimeReceipt } from '@/components/connectors/runtime/use-runtime-receipt';
+import { ProtectedGeneratedFileCard } from './protected-generated-file-card';
 
 interface AIChatMessageBubbleProps {
+  readExecutionFile?: ExecutionFileReader;
   message: AIChatMessage;
   isSending?: boolean;
   timeline?: AIChatAgenticTimelineItem[];
@@ -1226,6 +1229,7 @@ function AIChatGeneratedImagePreviews({ files }: AIChatGeneratedImagePreviewsPro
  * <AIChatMessageBubble message={message} />
  */
 export function AIChatMessageBubble({
+  readExecutionFile,
   message,
   isSending = false,
   timeline = [],
@@ -1752,9 +1756,18 @@ export function AIChatMessageBubble({
 
         {visibleGeneratedFiles.length > 0 ? (
           <div className="mt-3 flex flex-wrap gap-2">
-            {visibleGeneratedFiles.map(file => (
-              <AIChatGeneratedFileCard key={file.artifact_id || file.file_id} file={file} />
-            ))}
+            {visibleGeneratedFiles.map(file =>
+              file.access_mode === 'authenticated' ? (
+                <ProtectedGeneratedFileCard
+                  key={file.artifact_id || file.file_id}
+                  file={file}
+                  conversationId={message.conversation_id}
+                  readFile={readExecutionFile}
+                />
+              ) : (
+                <AIChatGeneratedFileCard key={file.artifact_id || file.file_id} file={file} />
+              )
+            )}
           </div>
         ) : null}
 

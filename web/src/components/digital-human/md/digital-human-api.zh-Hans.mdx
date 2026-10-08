@@ -884,6 +884,41 @@ curl '{apibase}/digital-humans/conversations/{conversation_id}/messages?user=cus
 
 ---
 
+<Heading url="/api/v1/digital-humans/conversations/{conversation_id}/files/{file_id}" method="GET" title="读取受保护的执行成果" name="#Read-Execution-File" />
+
+标记 `access_mode: authenticated` 的产物不返回公开链接。使用同一数字人凭据
+和会话 `user` 读取；每次请求均校验当前访问权限，以及应用、入口、用户和会话归属。
+关闭 Linux 后仍可读取保留成果，撤销应用或会话权限后不可读取。凭据轮换不改变
+最终用户的文件归属；不要拼接公开 ToolFile 链接。
+
+<Properties>
+  <Property name="conversation_id" type="uuid path" propKey="conversation_id">成果所属会话。</Property>
+  <Property name="file_id" type="uuid path" propKey="file_id">产物事件或历史消息中的文件 ID。</Property>
+  <Property name="user" type="string query" propKey="user">必填，由可信业务后端传递，必须与会话最终用户一致。</Property>
+  <Property name="download" type="boolean query" propKey="download">可选，true 使用附件响应；支持 Range 分段读取。</Property>
+</Properties>
+
+<CodeGroup title="请求">
+```bash
+curl '{apibase}/digital-humans/conversations/{conversation_id}/files/{file_id}?user=customer_123&download=true' \
+  --header 'Authorization: Bearer {api_key}' \
+  --output result.csv
+```
+</CodeGroup>
+
+<CodeGroup title="响应">
+```text
+HTTP/1.1 200 OK
+Cache-Control: private, no-store
+Content-Type: text/csv; charset=utf-8
+
+name,total
+sample,42
+```
+</CodeGroup>
+
+---
+
 ## 文件上传
 
 <Heading

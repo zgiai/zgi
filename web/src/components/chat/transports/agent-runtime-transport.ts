@@ -142,6 +142,16 @@ function paginationFromResponse<T>(
 }
 
 export class AgentRuntimeTransport implements AIChatRuntimeTransport {
+  readExecutionFile(conversationId: string, fileId: string, signal?: AbortSignal): Promise<Blob> {
+    return this.client.get<Blob>(
+      `${this.runtimeBasePath}/conversations/${encodeURIComponent(conversationId)}/files/${encodeURIComponent(fileId)}`,
+      {
+        responseType: 'blob',
+        signal,
+        retryAttemptsOverride: 0,
+      }
+    );
+  }
   readonly supportsRuntimeInput: boolean;
   readonly continueToolGovernanceDecision?: AIChatRuntimeTransport['continueToolGovernanceDecision'];
   private readonly runtimeBasePath: string;
@@ -185,7 +195,9 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
             onOpen: response => notifyAgentRuntimeStreamOpen(response, callbacks),
             onMessage: message =>
               dispatchAIChatStreamEvent(
-                String((message.data as AIChatSseEnvelope | undefined)?.event ?? message.event ?? ''),
+                String(
+                  (message.data as AIChatSseEnvelope | undefined)?.event ?? message.event ?? ''
+                ),
                 (message.data as AIChatSseEnvelope | undefined)?.data ?? message.data,
                 message.id,
                 callbacks

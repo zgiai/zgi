@@ -16,7 +16,7 @@ files and cleanup must remain available during an admission rollback.
 | --- | --- | --- |
 | P0 | Versioned identity, Worker negotiation, additive persistence, compatibility | Complete; unit, PostgreSQL, race and vet gates passed |
 | P1 | Shared execution factory, live authorization, end-user admission | Complete; shared factory, regression, race and vet gates passed |
-| P2 | Protected file ownership and authenticated preview/download | Pending |
+| P2 | Protected file ownership and authenticated preview/download | Export persistence, read routes and cards implemented; upload/staging integration pending |
 | P3 | Published Agent and DigitalHuman interactive script integration | Pending |
 | P4 | Published-resource CLI and frozen, idempotent approval continuation | Pending |
 | P5 | Real local/E2B entry acceptance and rollback verification | Pending |
@@ -122,3 +122,63 @@ P1 validation includes shared factory and CLI identity tests, existing Agent and
 DigitalHuman tests, race checks and vet. Tagged real-backend test files compile
 after relocation. Delivery scripts now run those tests from the shared package;
 their script contract tests pass. These are not P5 real-backend acceptance.
+
+## Protected execution results
+
+New execution artifacts store immutable organization, resource workspace,
+application type/ID, entry, final-user kind/ID, conversation and message ownership.
+Migration `202610080900000000` adds nullable ToolFile columns and a protected-file
+index/immutability trigger. Historical files remain on their existing contract.
+The migration does not delete or rewrite historical rows and has no destructive
+down migration.
+
+Identity-scoped factories require a protected persister bound to the prepared
+message. File bytes are saved with ownership in the initial record, not made
+public and subsequently protected. CLI exports and `workspace_export_file` use
+the same persister. Both live and historical artifact events retain
+`access_mode: authenticated` and omit `url` and `download_url`.
+
+Authenticated file reads use the existing entry authentication and live
+application/conversation permission checks:
+
+| Entry | GET route |
+| --- | --- |
+| Console Agent | `/console/api/agents/{agent_id}/runtime/conversations/{conversation_id}/files/{file_id}` |
+| Agent WebApp | `/console/api/webapps/{web_app_id}/runtime/conversations/{conversation_id}/files/{file_id}` |
+| Agent API | `/api/v1/agents/conversations/{conversation_id}/files/{file_id}` |
+| Console DigitalHuman | `/console/api/digital-humans/{digital_human_id}/runtime/conversations/{conversation_id}/files/{file_id}` |
+| DigitalHuman WebApp | `/api/v1/digital-human-webapps/{web_app_id}/conversations/{conversation_id}/files/{file_id}` |
+| DigitalHuman API | `/api/v1/digital-humans/conversations/{conversation_id}/files/{file_id}` |
+
+API reads require the same existing final-user identity as conversation requests.
+They do not substitute the credential owner. Anonymous WebApps, tasks, channels
+and Runtime Workspace credentials cannot read these artifacts. The legacy public
+ToolFile route denies protected records even with a valid permanent or expiring
+signature. Unscoped ToolFile binary, stream and presigned URL readers also deny
+them. Successful reads return private, no-store bytes rather than a storage URL;
+preview and attachment/range requests use the same ownership check.
+
+File reads deliberately do not depend on compute admission or Profile readiness.
+Disabling Linux leaves authorized retained results downloadable; revoking current
+application or conversation access denies subsequent reads. Changing a published
+version does not erase ownership of historical results.
+
+The chat card obtains preview bytes through its authenticated transport and
+releases the temporary Blob URL when closed. Each download makes a new
+authenticated request. Protected HTML stays in the isolated preview rather than
+opening an application-origin Blob in a new tab. No package/provider credentials,
+host path or public URL is included in the card.
+
+P2 validation so far: protected-file ownership and signed-URL bypass tests,
+Agent/DigitalHuman read-route and cross-scope tests, live/history Skill event
+tests, real isolated PostgreSQL migration/idempotency/immutability tests with race
+detection, changed API package tests and vet, frontend transport/card tests,
+lint (existing warnings only), type-check and production build. Upload/staging
+ownership integration and real UI/backend acceptance are still outstanding;
+new external execution adapters have not been enabled.
+
+The DigitalHuman API documentation contract and the protected-file documentation
+checks pass in both locales. The broader Agent documentation test currently
+fails on missing descriptions in the pre-existing `MemorySettings` schema (also
+present at the baseline); this unrelated contract has not been rewritten as
+part of the execution-file change.

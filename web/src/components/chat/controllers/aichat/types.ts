@@ -1,4 +1,5 @@
 import type {
+  ExecutionFileReader,
   AIChatConversation,
   AIChatInitialConnectorBinding,
   AIChatAgentProgressEventData,
@@ -286,6 +287,7 @@ export interface AIChatControllerStore extends AIChatControllerState {
 }
 
 export interface AIChatController {
+  readExecutionFile?: ExecutionFileReader;
   store: StoreApi<AIChatControllerStore>;
   conversations: AIChatConversation[];
   pagination: AIChatPagination;

@@ -4,6 +4,7 @@ import {
   sanitizeModelOutputValue,
 } from '@/utils/model-output-filter';
 import type {
+  ExecutionFileReader,
   AIChatChatRequest,
   AIChatAgentProgressEventData,
   AIChatClientActionRequiredEventData,
@@ -224,6 +225,7 @@ export interface AIChatWorkflowApprovalContinuationPayload {
 }
 
 export interface AIChatRuntimeTransport {
+  readExecutionFile?: ExecutionFileReader;
   readonly supportsRuntimeInput?: boolean;
   listConversations(params: {
     page: number;

@@ -1558,6 +1558,7 @@ const messages = {
       expiredGeneratedFile: 'File expired',
       deletedGeneratedFile: 'File deleted',
       previewGeneratedFile: 'Preview generated file',
+      protectedFileReadFailed: 'Could not read this file. Check your access and try again.',
       downloadGeneratedFile: 'Download generated file',
       uploading: 'Uploading',
       parsing: 'Parsing',

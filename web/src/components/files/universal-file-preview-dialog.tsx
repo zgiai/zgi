@@ -88,6 +88,7 @@ export interface UniversalFilePreviewDialogProps {
   error?: string | null;
   onDownload?: () => void;
   isDownloading?: boolean;
+  allowExternalHtmlOpen?: boolean;
 }
 
 export interface UniversalFilePreviewContentProps {
@@ -264,6 +265,7 @@ export function UniversalFilePreviewDialog({
   error = null,
   onDownload,
   isDownloading = false,
+  allowExternalHtmlOpen = true,
 }: UniversalFilePreviewDialogProps) {
   const t = useT('files');
   const [previewSession, setPreviewSession] = useState<{
@@ -322,7 +324,8 @@ export function UniversalFilePreviewDialog({
   const title = activeFile?.name || t('preview.title');
   const isImage = isOriginalPreviewImage(activeFile?.extension, activeFile?.mimeType);
   const previewKind = getOriginalPreviewKind(activeFile?.extension, activeFile?.mimeType);
-  const htmlExternalOpenUrl = previewKind === 'html' ? resolvedPreviewUrl : '';
+  const htmlExternalOpenUrl =
+    allowExternalHtmlOpen && previewKind === 'html' ? resolvedPreviewUrl : '';
   const canOpenHtmlExternally = Boolean(htmlExternalOpenUrl);
 
   const openHtmlInNewTab = () => {

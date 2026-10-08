@@ -403,7 +403,14 @@ export interface AIChatMessageFile {
   error?: string;
 }
 
+export type ExecutionFileReader = (
+  conversationId: string,
+  fileId: string,
+  signal?: AbortSignal
+) => Promise<Blob>;
+
 export interface AIChatGeneratedFile {
+  access_mode?: 'authenticated';
   artifact_id?: string;
   artifact_type: 'file';
   invocation_id?: string;
@@ -861,6 +868,7 @@ export interface AIChatSkillCallErrorEventData {
 }
 
 export interface AIChatSkillArtifactFile {
+  access_mode?: 'authenticated';
   artifact_id?: string;
   artifact_type?: 'file';
   file_id: string;
