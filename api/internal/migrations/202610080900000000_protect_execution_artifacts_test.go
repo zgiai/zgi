@@ -25,7 +25,8 @@ func TestProtectExecutionArtifactsMigrationContract(t *testing.T) {
 	}
 }
 
-func TestProtectExecutionArtifactsPostgres(t *testing.T) {
+func openExecutionFileTestPostgres(t *testing.T) *gorm.DB {
+	t.Helper()
 	rawDSN := os.Getenv("ZGI_EXECUTION_FILE_TEST_POSTGRES_ADMIN_DSN")
 	if rawDSN == "" {
 		t.Skip("set ZGI_EXECUTION_FILE_TEST_POSTGRES_ADMIN_DSN for isolated PostgreSQL validation")
@@ -64,6 +65,11 @@ func TestProtectExecutionArtifactsPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
+	return db
+}
+
+func TestProtectExecutionArtifactsPostgres(t *testing.T) {
+	db := openExecutionFileTestPostgres(t)
 	if err := db.Exec(`CREATE TABLE tool_files (id uuid PRIMARY KEY, tenant_id uuid NOT NULL, user_id uuid NOT NULL, conversation_id uuid, file_key text NOT NULL, name text NOT NULL)`).Error; err != nil {
 		t.Fatal(err)
 	}

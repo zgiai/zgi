@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
+	execution "github.com/zgiai/zgi/api/internal/capabilities/agentexecution"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
@@ -1310,6 +1311,18 @@ func (h *AgentsHandler) UploadWebAppFile(c *gin.Context) {
 			response.FailWithMessage(c, response.ErrorCode{Code: 210002, Message: "Failed to upload file", UserVisible: true}, err.Error())
 		}
 		return
+	}
+	if published.Config.ExecutionRuntime != nil && published.Config.ExecutionRuntime.Enabled {
+		owner := execution.UploadOwner{OrganizationID: published.OrganizationID, WorkspaceID: published.WorkspaceID,
+			ApplicationType: "agent", ApplicationID: published.AgentID, Entry: "webapp", SubjectKind: "account", SubjectID: accountID}
+		if err := execution.BindUpload(c.Request.Context(), h.db, uploadFile.ID, owner); err != nil {
+			if cleanupErr := h.fileService.DeleteFiles(c.Request.Context(), []string{uploadFile.ID}); cleanupErr != nil {
+				logger.ErrorContext(c.Request.Context(), "failed to clean up unbound execution upload", cleanupErr)
+			}
+			logger.ErrorContext(c.Request.Context(), "failed to bind execution upload", err)
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
 	}
 	response.Success(c, dto.NewFileUploadResponse(uploadFile))
 }

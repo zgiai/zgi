@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	execution "github.com/zgiai/zgi/api/internal/capabilities/agentexecution"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/app/agents"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow"
@@ -977,8 +978,23 @@ func (h *ExternalWorkflowHandler) UploadFile(c *gin.Context) {
 
 	tenantID := keyInfo.TenantID.String()
 	userID := keyInfo.ID.String()
+	var uploadOwner *execution.UploadOwner
 	if externalAppMode(agent.AgentsType) == "agent" {
 		userID = agents.DeriveExternalUserID(keyInfo.TenantID, keyInfo.AgentID, user).String()
+		// Historical adapters without a publication resolver cannot enable new
+		// execution entries. Their upload contract remains unchanged; unbound
+		// uploads will never pass identity-scoped execution authorization.
+		if h.agentRuntime != nil {
+			published, err := h.agentRuntime.GetPublishedAgentRuntimeConfig(c.Request.Context(), agent.ID.String())
+			if err != nil || published == nil || published.AgentID != agent.ID.String() {
+				response.Fail(c, response.ErrAppNotFound)
+				return
+			}
+			if published.Config.ExecutionRuntime != nil && published.Config.ExecutionRuntime.Enabled {
+				uploadOwner = &execution.UploadOwner{OrganizationID: published.OrganizationID, WorkspaceID: published.WorkspaceID,
+					ApplicationType: "agent", ApplicationID: published.AgentID, Entry: "external-api", SubjectKind: "api_end_user", SubjectID: userID}
+			}
+		}
 	}
 
 	logger.Info("External API - File upload started",
@@ -1054,6 +1070,17 @@ func (h *ExternalWorkflowHandler) UploadFile(c *gin.Context) {
 		logger.CriticalContext(c.Request.Context(), "external api failed to upload file", "tenant_id", tenantID, "filename", file.Filename, err)
 		response.Fail(c, response.ErrSystemError)
 		return
+	}
+
+	if uploadOwner != nil {
+		if err := execution.BindUpload(c.Request.Context(), h.db, uploadedFile.ID, *uploadOwner); err != nil {
+			if cleanupErr := h.fileService.DeleteFiles(c.Request.Context(), []string{uploadedFile.ID}); cleanupErr != nil {
+				logger.ErrorContext(c.Request.Context(), "failed to clean up unbound execution upload", cleanupErr)
+			}
+			logger.ErrorContext(c.Request.Context(), "failed to bind execution upload", err)
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
 	}
 
 	// Get file extension

@@ -16,7 +16,7 @@ files and cleanup must remain available during an admission rollback.
 | --- | --- | --- |
 | P0 | Versioned identity, Worker negotiation, additive persistence, compatibility | Complete; unit, PostgreSQL, race and vet gates passed |
 | P1 | Shared execution factory, live authorization, end-user admission | Complete; shared factory, regression, race and vet gates passed |
-| P2 | Protected file ownership and authenticated preview/download | Export persistence, read routes and cards implemented; upload/staging integration pending |
+| P2 | Protected file ownership and authenticated preview/download | File contracts, upload provenance and scoped staging implemented; new entry wiring remains P3 and real acceptance P5 |
 | P3 | Published Agent and DigitalHuman interactive script integration | Pending |
 | P4 | Published-resource CLI and frozen, idempotent approval continuation | Pending |
 | P5 | Real local/E2B entry acceptance and rollback verification | Pending |
@@ -174,11 +174,52 @@ Agent/DigitalHuman read-route and cross-scope tests, live/history Skill event
 tests, real isolated PostgreSQL migration/idempotency/immutability tests with race
 detection, changed API package tests and vet, frontend transport/card tests,
 lint (existing warnings only), type-check and production build. Upload/staging
-ownership integration and real UI/backend acceptance are still outstanding;
-new external execution adapters have not been enabled.
+ownership contracts now have additional unit, race and PostgreSQL validation as
+described below. New entry factory wiring and real UI/backend acceptance remain
+outstanding; new external execution adapters have not been enabled.
 
 The DigitalHuman API documentation contract and the protected-file documentation
 checks pass in both locales. The broader Agent documentation test currently
 fails on missing descriptions in the pre-existing `MemorySettings` schema (also
 present at the baseline); this unrelated contract has not been rewritten as
 part of the execution-file change.
+
+## Execution input ownership
+
+Identity-scoped execution requires a turn-scoped attachment reader as well as a
+protected artifact persister and live application authorization. The reader
+freezes only the prepared turn's admitted IDs, names and sizes. It rechecks file
+metadata and current authorization before reading bytes. Every Shell invocation
+also rechecks all admitted inputs before reaching the Worker, including when
+staging was cached. CLI input reads use that same reader, not the generic file
+service. Missing authorizers, missing ownership stores or mismatched scope fail
+closed. Revocation does not remove files already present in an environment; it
+prevents subsequent authorized execution/read requests from using them.
+
+New Agent WebApp/API uploads for a Linux-enabled published Agent are bound to
+organization, resource workspace, application, entry and stable final user before
+the upload ID is returned. Migration `202610081000000000` creates an additive
+ownership table and immutable trigger without rewriting historical uploads. A
+binding failure attempts to delete the newly uploaded file and returns no file
+ID. API credential IDs and billing accounts are not upload owners; credential
+rotation preserves the existing external-user derivation. Generic temporary-file
+metadata may contain a zero tenant or nil workspace, so immutable ownership is
+checked separately against the published resource workspace.
+
+Historical unbound Agent uploads are not automatically adopted into new execution
+entries: upload them again through the appropriate authenticated application when
+Linux is enabled. Explicitly attaching an authorized upload to another conversation
+of the same application/user remains possible; no environment inherits input
+files implicitly. Ordinary chat when Linux is disabled retains its previous
+upload contract. DigitalHuman uses its existing external-file binding and a live
+execution input authorizer rather than duplicating that domain's records. Its
+console, anonymous, task and channel upload rules are not broadened.
+
+Input validation passed for revoked/deleted files, mismatched metadata, arbitrary
+file IDs, cross-user/application/entry ownership, missing stores and authorizers,
+failed-upload cleanup, explicit API users and preserved billing identity. Real
+isolated PostgreSQL tests cover repeated migrations, immutable ownership and two
+concurrent claims producing exactly one owner. Changed backend packages passed
+tests with race detection and vet. These are contract tests, not P5 end-to-end
+acceptance. P3 must supply the protected reader from each verified entry adapter;
+P4 approval continuation remains required before external execution is opened.
