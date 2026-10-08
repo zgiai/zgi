@@ -102,6 +102,10 @@ func (a *linuxExecutionTestAccess) AuthorizeAttachmentAccess(ctx context.Context
 	return a.AuthorizeLinuxExecution(ctx, scope, application, publication)
 }
 
+func (a *linuxExecutionTestAccess) AuthorizeLinuxContinuation(ctx context.Context, scope Scope, application, publication uuid.UUID) error {
+	return a.AuthorizeLinuxExecution(ctx, scope, application, publication)
+}
+
 func TestDigitalHumanAttachmentReaderIndependentOfLinuxAndBoundToRun(t *testing.T) {
 	for _, surface := range []string{SurfaceConsole, SurfaceWebApp, SurfaceAPI} {
 		t.Run(surface, func(t *testing.T) {

@@ -129,6 +129,54 @@ func TestDigitalHumanAttachmentAccessDoesNotRequireLinux(t *testing.T) {
 	}
 }
 
+func TestDigitalHumanLinuxContinuationUsesFrozenPublicationAndLiveAccess(t *testing.T) {
+	for _, surface := range []string{SurfaceConsole, SurfaceWebApp, SurfaceAPI} {
+		t.Run(surface, func(t *testing.T) {
+			s, scope, app, original := linuxAccessFixture(t, surface)
+			var next Version
+			if err := s.db.First(&next, "id = ?", original).Error; err != nil {
+				t.Fatal(err)
+			}
+			next.ID = uuid.New()
+			if err := s.db.Create(&next).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := s.db.Model(&Definition{}).Where("id = ?", app).Update("published_version_id", next.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := s.AuthorizeLinuxExecution(t.Context(), scope, app, original); err == nil {
+				t.Fatal("ordinary execution accepted a stale publication")
+			}
+			if err := s.AuthorizeLinuxContinuation(t.Context(), scope, app, original); err != nil {
+				t.Fatalf("verified continuation lost frozen publication: %v", err)
+			}
+			for _, mutate := range []map[string]any{
+				{"digital_human_id": uuid.New()}, {"organization_id": uuid.New()}, {"workspace_id": uuid.New()},
+				{"state": VersionStateDraft}, {"execution_runtime": nil},
+			} {
+				tx := s.db.Begin()
+				if err := tx.Model(&Version{}).Where("id = ?", original).Updates(mutate).Error; err != nil {
+					t.Fatal(err)
+				}
+				probe := NewAccessService(tx)
+				err := probe.AuthorizeLinuxContinuation(t.Context(), scope, app, original)
+				if rollback := tx.Rollback().Error; rollback != nil {
+					t.Fatal(rollback)
+				}
+				if err == nil {
+					t.Fatalf("invalid frozen version accepted: %v", mutate)
+				}
+			}
+			if err := s.db.Model(&Version{}).Where("id = ?", next.ID).Update("execution_runtime", nil).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := s.AuthorizeLinuxContinuation(t.Context(), scope, app, original); err == nil {
+				t.Fatal("current execution revocation ignored")
+			}
+		})
+	}
+}
+
 func TestDigitalHumanLinuxAccessLiveExternalRevocation(t *testing.T) {
 	for _, test := range []struct {
 		name, surface string
@@ -169,6 +217,9 @@ func TestDigitalHumanLinuxAccessLiveExternalRevocation(t *testing.T) {
 			}
 			if err := s.AuthorizeLinuxExecution(t.Context(), scope, app, publication); err == nil {
 				t.Fatal("revoked external access still allowed")
+			}
+			if err := s.AuthorizeLinuxContinuation(t.Context(), scope, app, publication); err == nil {
+				t.Fatal("continuation ignored live access revocation")
 			}
 		})
 	}

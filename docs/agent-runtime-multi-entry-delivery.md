@@ -555,3 +555,13 @@ frozen-publication and admission-off retained-download cases before wider rollou
 The E2B browser CSV preview renders correct values, but no browser download file
 has been observed in the latest check. Authenticated HTTP download success is
 recorded separately; it is not presented as browser-download completion.
+
+### Frozen publication authorization
+
+DigitalHuman approval continuation authorizes the original immutable published
+version separately from current application access. Publishing a newer version
+does not by itself invalidate a pending sealed call. Current Linux opt-in,
+application/surface access and API credential validity are still checked on
+confirmation; disabling or revoking them denies execution. Ordinary new
+execution still requires the currently published version. Draft, missing,
+cross-application and cross-tenant versions cannot be continuation targets.

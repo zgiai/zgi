@@ -133,7 +133,17 @@ func (r *LinuxExecutionRuntime) prepare(ctx context.Context, run *Run, resolved 
 				return err
 			}
 		}
-		if err := o.Access.AuthorizeLinuxExecution(ctx, authorizationScope, access.application, access.publication); err != nil {
+		authorizeExecution := o.Access.AuthorizeLinuxExecution
+		if current != nil {
+			continuationAccess, ok := o.Access.(interface {
+				AuthorizeLinuxContinuation(context.Context, Scope, uuid.UUID, uuid.UUID) error
+			})
+			if !ok {
+				return execution.ErrInvalidIdentity
+			}
+			authorizeExecution = continuationAccess.AuthorizeLinuxContinuation
+		}
+		if err := authorizeExecution(ctx, authorizationScope, access.application, access.publication); err != nil {
 			return err
 		}
 		_, err := o.Approvals.Resolve(access.organization.String(), true)
