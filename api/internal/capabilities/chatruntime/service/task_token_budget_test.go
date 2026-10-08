@@ -25,6 +25,17 @@ func TestTaskTokenBudgetAccumulatesProviderUsage(t *testing.T) {
 	}
 }
 
+func TestTaskTokenUsageObserverReturnsUntypedNilBelowBudget(t *testing.T) {
+	prepared := &PreparedChat{Conversation: &runtimemodel.Conversation{ID: uuid.New()}, Message: &runtimemodel.Message{ID: uuid.New()}, taskTokenBudget: newTaskTokenBudget(100)}
+	observer := (&service{}).taskTokenUsageObserver(t.Context(), prepared, nil)
+	if err := observer(&adapter.Usage{TotalTokens: 10}); err != nil {
+		t.Fatalf("normal usage treated as failure: %v", err)
+	}
+	if err := observer(&adapter.Usage{TotalTokens: 90}); err == nil {
+		t.Fatal("exhausted budget did not stop")
+	}
+}
+
 func TestTaskTokenBudgetMetadataRoundTrip(t *testing.T) {
 	original := newTaskTokenBudget(500)
 	original.UsedTokens = 123

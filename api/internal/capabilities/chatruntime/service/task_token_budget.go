@@ -156,7 +156,10 @@ func (s *service) taskTokenUsageObserver(
 	return func(usage *adapter.Usage) error {
 		budgetErr := accountTaskTokenUsage(prepared, usage)
 		s.emitTaskTokenUsageUpdated(persistCtx, prepared, usage, onEvent)
-		return budgetErr
+		if budgetErr != nil {
+			return budgetErr
+		}
+		return nil
 	}
 }
 func taskTokenBudgetRequestPayload(budget *taskTokenBudgetState) map[string]interface{} {
