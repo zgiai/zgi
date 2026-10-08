@@ -2,7 +2,7 @@
 
 The local Agent execution backend is an opt-in Linux worker capability. It is separate from the existing one-shot Sandbox API and from Runtime Workspace credentials.
 
-For self-hosted installation, use [agent-runtime-install.md](agent-runtime-install.md). The installer performs the containerd/runsc registration, immutable image import, Worker unit setup, and disposable runtime smoke test described below.
+For self-hosted installation, use [agent-runtime-install.md](agent-runtime-install.md). The installer verifies the existing containerd/runsc prerequisites, imports an approved immutable image, sets up only the Worker unit, and performs a disposable runtime smoke test. It does not register or restart shared containerd.
 
 ## Security boundary
 
@@ -24,7 +24,7 @@ make -C sandbox build-agent-runtime-image
 
 Push it to the deployment registry, resolve the resulting immutable digest, preload that digest on the worker node, and put only that digest-qualified reference in the approved Profile map. The worker does not pull images while creating a Binding.
 
-The image must contain `/usr/local/bin/zgi-runtime-agent` and the commands promised by its Profile. `Dockerfile.agent-runtime` provides the Runtime Agent, Python 3.13, and Node.js 22; build the `cc-codex-standard` dependency source with `make -C sandbox profile-build-cc-codex-standard` and bake its verified output into the approved image before publishing the digest. The built `manifest.json` records the rootfs digest, package inventory/SBOM, build steps, and verification result; publishing the OCI image adds the final image digest. Adding packages produces a new image digest; it must not mutate an existing approved Profile in place.
+The image must contain `/usr/local/bin/zgi-runtime-agent` and the commands promised by its Profile. `Dockerfile.agent-runtime` already installs and verifies Python 3.13, Node.js 22 and the standard office/PDF/media dependencies directly from the Profile inputs; no separate Profile build is required for this image. The separate `profile-build-cc-codex-standard` command is for dependency-rootfs artifacts and their inventory/SBOM/verification manifest. Publishing the OCI image supplies its immutable digest. Adding packages produces a new image digest; it must not mutate an existing approved Profile in place. See [setup and use](../../docs/agent-runtime-quickstart.md) for the Worker image and native binary build.
 
 ## Worker process
 

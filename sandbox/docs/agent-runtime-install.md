@@ -2,8 +2,10 @@
 
 The self-hosted Worker is installed by scripts/zgi-runtime-server. The user
 only needs a supported Linux host, an immutable Profile image, and the control
-plane credentials. The script owns the low-level containerd and gVisor setup;
-users do not need to edit containerd runtime handlers by hand.
+plane credentials. Install containerd, ctr, runsc and containerd-shim-runsc-v1
+before invoking the script. The Worker selects the gVisor shim directly; users
+do not need to edit CRI runtime handlers by hand. The installer does not download
+host runtimes, change shared containerd configuration or restart containerd.
 
 ## Host requirements
 
@@ -33,9 +35,8 @@ checks that the requested digest is present before enabling the Worker.
 ## Install
 
 To validate only the host runtime before the control-plane credentials are
-available, use the host-only command. It imports the image, registers runsc,
-restarts containerd, and runs a disposable gVisor command without starting a
-Worker:
+available, use the host-only command. It imports/verifies the image and runs a
+disposable gVisor command without starting a Worker or changing containerd:
 
     sudo env \
       ZGI_AGENT_RUNTIME_IMAGE_REF='registry.example/zgi/agent-runtime@sha256:...' \
@@ -57,10 +58,12 @@ operator-owned cc-codex-standard Profile with package-only egress to PyPI, npm
 and Debian mirrors. Profile, policy, snapshot and network choices are not
 exposed to end users.
 
-The install is idempotent. It backs up the containerd configuration, creates a
-root-owned /var/lib/zgi-agent-runtime, writes the Worker environment with mode
-0600, installs a systemd unit, restarts containerd, and runs a disposable
-io.containerd.runsc.v1 smoke command.
+The install is idempotent. It preserves the previous Worker inputs, creates a
+root-owned /var/lib/zgi-ar, writes the Worker environment with mode 0600,
+installs a systemd unit and verifies database-backed Worker health. It does not
+back up or modify shared containerd configuration. See
+[setup and use](../../docs/agent-runtime-quickstart.md) for private settings-file
+examples that avoid putting credentials in command arguments.
 
 ## Diagnostics and rollback
 
@@ -69,7 +72,8 @@ io.containerd.runsc.v1 smoke command.
     sudo ./scripts/zgi-runtime-server smoke
     sudo ./scripts/zgi-runtime-server rollback
 
-doctor checks the runtime handler, runsc config, image and Worker inputs.
+doctor checks the pinned image, private environment, service PID/listener and
+database-backed health; it is not a full script-execution test.
 rollback stops the Worker and restores the newest installer backup; it does
 not remove user workspaces or checkpoint data.
 

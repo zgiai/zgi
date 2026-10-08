@@ -41,3 +41,6 @@ scripts/rag_evaluation/input/
 scripts/rag_evaluation/middle/
 scripts/rag_evaluation/result/
 scripts/rag_evaluation/graph_evaluation/
+# Private runtime deployment configuration (keep only maintained examples).
+sandbox/deploy/*.env
+sandbox/deploy/settings.json
