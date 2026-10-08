@@ -280,6 +280,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	protectedWebApps.GET("/:web_app_id/runtime/conversations/:conversation_id/events", appHandler.StreamWebAppAgentRuntimeEvents)
 	protectedWebApps.POST("/:web_app_id/runtime/conversations/:conversation_id/messages/:message_id/workflow-continuation", appHandler.ContinueWebAppAgentRuntimeWorkflowApproval)
 	protectedWebApps.POST("/:web_app_id/runtime/conversations/:conversation_id/messages/:message_id/user-input/:request_id/continue", appHandler.ContinueWebAppAgentRuntimeUserInput)
+	protectedWebApps.POST("/:web_app_id/runtime/conversations/:conversation_id/messages/:message_id/tool-governance/:correlation_id/continue", appHandler.ContinueWebAppAgentRuntimeToolGovernance)
 	protectedWebApps.POST("/:web_app_id/runtime/messages/:message_id/regenerate", appHandler.RegenerateWebAppAgentRuntimeMessage)
 	protectedWebApps.GET("/:web_app_id/memory", appHandler.GetWebAppMemory)
 	protectedWebApps.PUT("/:web_app_id/memory/:key", appHandler.PutWebAppMemory)

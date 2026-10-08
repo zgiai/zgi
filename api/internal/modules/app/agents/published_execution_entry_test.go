@@ -23,6 +23,7 @@ func TestPublishedEntryWiringKeepsUnfinishedExecutionClosed(t *testing.T) {
 				agentID: *p.Caller.ID, webAppID: *p.Caller.SourceWebAppID, conversationID: uuid.New(), messageID: uuid.New()}
 			runtime := &apiKeyChatRuntimeService{ids: ids}
 			h := NewAgentsHandler(service, nil, nil, nil, nil, runtime)
+			h.executionEntryReady = nil // Missing server readiness still fails closed.
 			// Even a published opt-in plus operator allowlist cannot enable an entry
 			// while code readiness is absent. Normal chat must not need a Worker.
 			h.executionApprovals = agentExecutionApprovals{}

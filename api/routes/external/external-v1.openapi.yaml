@@ -372,6 +372,37 @@ paths:
           $ref: '#/components/responses/AgentEventStream'
         default:
           $ref: '#/components/responses/Error'
+  /agents/conversations/{conversation_id}/messages/{message_id}/tool-governance/{correlation_id}/continue:
+    post:
+      tags: [Continuations]
+      summary: Confirm or reject a paused platform CLI tool call
+      operationId: continueAgentPlatformToolGovernance
+      description: Requires an admitted Linux session and the same verified final user. Confirmation executes the frozen business invocation once, never the original Shell. Current application, publication and resource authorization are rechecked; approval cannot grant an unbound resource. Rejection remains available after execution is disabled. Duplicate decisions recover the existing result. This endpoint does not accept Runtime Workspace credentials or workflow approval tokens.
+      parameters:
+        - $ref: '#/components/parameters/ConversationID'
+        - $ref: '#/components/parameters/MessageID'
+        - name: correlation_id
+          in: path
+          required: true
+          schema: {type: string, minLength: 1, maxLength: 256}
+        - $ref: '#/components/parameters/ExternalUserID'
+        - $ref: '#/components/parameters/LegacyUser'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: {type: string, enum: [approve, reject]}
+                reason: {type: string}
+                remember_for_session: {type: boolean, default: false, description: Per-invocation policies ignore this flag.}
+      responses:
+        '200':
+          $ref: '#/components/responses/AgentEventStream'
+        default:
+          $ref: '#/components/responses/Error'
   /agents/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue:
     post:
       tags: [Continuations]
@@ -1050,7 +1081,7 @@ components:
             operation_id: {type: string, description: Asset operation identifier.}
             asset_operation_audit: {type: object, additionalProperties: true, description: Public asset-operation audit summary.}
     ToolGovernanceDecisionEventData:
-      description: Non-interactive authorization decision for a published Agent tool invocation. It may allow or deny execution, but never asks the external user to approve it.
+      description: Authorization decision for a published Agent tool invocation. Ordinary calls remain non-interactive. An admitted platform CLI call may require explicit approval through the tool-governance continuation endpoint; resource authorization is still mandatory.
       allOf:
         - $ref: '#/components/schemas/SkillEventData'
         - type: object
@@ -1058,7 +1089,7 @@ components:
           properties:
             correlation_id: {type: string, description: Stable id for correlating the authorization decision with tool lifecycle and audit records.}
             decision: {type: string, description: Non-interactive authorization result, such as allowed or denied.}
-            requires_approval: {type: boolean, enum: [false], description: Always false for the published Agent API; Agent bindings are evaluated non-interactively.}
+            requires_approval: {type: boolean, description: True only for a server-authorized interactive platform CLI invocation.}
             reason: {type: string, description: User-facing rationale for the decision.}
             risk_level: {type: string, description: Public risk classification.}
             effect: {type: string, description: Expected external side effect.}

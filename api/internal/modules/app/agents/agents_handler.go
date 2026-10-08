@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	execution "github.com/zgiai/zgi/api/internal/capabilities/agentexecution"
+	executionruntime "github.com/zgiai/zgi/api/internal/capabilities/agentexecution/runtime"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
@@ -81,6 +82,7 @@ func NewAgentsHandler(appService AgentsService, tenantService interfaces.Workspa
 		chatRuntimeService:         chatRuntimeService,
 		executionApprovals:         agentExecutionApprovalsFromEnv(),
 		executionGateway:           agentExecutionGatewayFromEnv(),
+		executionEntryReady:        executionruntime.InteractiveEntryImplemented,
 		executionArtifactPersister: defaultAgentExecutionArtifactPersister{},
 	}
 }

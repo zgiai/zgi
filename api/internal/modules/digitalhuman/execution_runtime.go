@@ -32,7 +32,8 @@ type LinuxExecutionAccess interface {
 }
 
 // LinuxExecutionOptions contains server-resolved dependencies, never client
-// environment settings. EntryReady remains nil until P4 continuation is wired.
+// environment settings. EntryReady is supplied by production wiring only for
+// entries with protected files and dedicated approval continuation.
 type LinuxExecutionOptions struct {
 	DB               *gorm.DB
 	Approvals        executionruntime.Approvals
@@ -44,6 +45,7 @@ type LinuxExecutionOptions struct {
 	EntryReady       func(applicationType, entry string) bool
 	Entries          execution.EntryAdmission
 	ErrorProjector   *apptransport.Projector
+	PlatformCLI      bool
 }
 
 // LinuxExecutionRuntime attaches identity-scoped tools to approved interactive runs.
@@ -62,6 +64,16 @@ func WithLinuxExecutionRuntime(provider LinuxExecutionRuntimeProvider) RuntimeSe
 // Prepare freezes a verified run's execution identity before preparing chat.
 // Unreleased entries keep normal chat behavior without receiving Linux tools.
 func (r *LinuxExecutionRuntime) Prepare(ctx context.Context, run *Run, resolved *ResolvedExecution, event invocation.Event) (func(*chatruntime.PreparedChat) []skillloop.RuntimeTool, error) {
+	return r.prepare(ctx, run, resolved, event, nil)
+}
+
+// PrepareContinuation uses the currently authenticated credential for live
+// authorization without changing the durable run or its final-user identity.
+func (r *LinuxExecutionRuntime) PrepareContinuation(ctx context.Context, run *Run, resolved *ResolvedExecution, event invocation.Event, caller Scope) (func(*chatruntime.PreparedChat) []skillloop.RuntimeTool, error) {
+	return r.prepare(ctx, run, resolved, event, &caller)
+}
+
+func (r *LinuxExecutionRuntime) prepare(ctx context.Context, run *Run, resolved *ResolvedExecution, event invocation.Event, current *Scope) (func(*chatruntime.PreparedChat) []skillloop.RuntimeTool, error) {
 	if run == nil || resolved == nil || resolved.Snapshot.ExecutionRuntime == nil || !resolved.Snapshot.ExecutionRuntime.Enabled {
 		return nil, nil
 	}
@@ -81,12 +93,25 @@ func (r *LinuxExecutionRuntime) Prepare(ctx context.Context, run *Run, resolved 
 		return nil, nil // Never attach tools to tasks or channel turns.
 	}
 	o := r.options
+	if !o.Approvals.Enabled {
+		return nil, nil
+	}
 	if o.EntryReady == nil || !o.EntryReady("digital_human", entry) {
 		return nil, nil
 	}
 	access, err := executionAccessFor(run, resolved, event)
 	if err != nil {
 		return nil, executionPreparationDenied(err)
+	}
+	authorizationScope := access.scope()
+	if current != nil {
+		if !continuationRunOwnedByScope(run, *current, access.application) || current.ActorID != access.user || current.PrincipalID == uuid.Nil ||
+			current.PrincipalType != authorizationScope.PrincipalType {
+			return nil, executionPreparationDenied(execution.ErrInvalidIdentity)
+		}
+		if access.surface == SurfaceAPI {
+			authorizationScope.PrincipalID = current.PrincipalID
+		}
 	}
 	if !o.Entries.Allows(access.organization.String(), "digital_human", entry) || o.Gateway == nil || o.Files == nil || o.Access == nil || o.ArtifactManager == nil {
 		return nil, executionPreparationDenied(execution.ErrInvalidIdentity)
@@ -108,7 +133,7 @@ func (r *LinuxExecutionRuntime) Prepare(ctx context.Context, run *Run, resolved 
 				return err
 			}
 		}
-		if err := o.Access.AuthorizeLinuxExecution(ctx, access.scope(), access.application, access.publication); err != nil {
+		if err := o.Access.AuthorizeLinuxExecution(ctx, authorizationScope, access.application, access.publication); err != nil {
 			return err
 		}
 		_, err := o.Approvals.Resolve(access.organization.String(), true)
@@ -151,11 +176,13 @@ func (r *LinuxExecutionRuntime) Prepare(ctx context.Context, run *Run, resolved 
 			})
 		},
 	}
+	if o.PlatformCLI {
+		options.PlatformCLI, options.InteractiveApproval = true, true
+		options.AuthorizePlatform = authorize
+	}
 	if approved.HomeSnapshotID != nil {
 		options.HomeSnapshotID = *approved.HomeSnapshotID
 	}
-	// P4 will add the published-resource relay and its own continuation routes.
-	// Task approvals and console Agent approvals cannot substitute for those.
 	return executionruntime.NewToolFactory(options), nil
 }
 

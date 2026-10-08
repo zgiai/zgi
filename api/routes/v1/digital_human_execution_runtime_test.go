@@ -10,7 +10,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestDigitalHumanProductionLinuxReadinessRemainsClosed(t *testing.T) {
+func TestDigitalHumanProductionLinuxRequiresIdentityEvenWithOperatorAdmission(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
@@ -35,8 +35,8 @@ func TestDigitalHumanProductionLinuxReadinessRemainsClosed(t *testing.T) {
 			run := &digitalhuman.Run{OrganizationID: organization, Surface: surface}
 			resolved := &digitalhuman.ResolvedExecution{Snapshot: digitalhuman.ExecutionSnapshot{ExecutionRuntime: &digitalhuman.ExecutionRuntimeConfig{Enabled: true}}}
 			factory, err := provider.Prepare(t.Context(), run, resolved, invocation.Event{})
-			if err != nil || factory != nil {
-				t.Fatalf("operator env opened an unfinished entry or broke legacy chat: surface=%s err=%v", surface, err)
+			if factory != nil || (surface != digitalhuman.SurfaceWebApp && err == nil) {
+				t.Fatalf("operator env bypassed verified identity: surface=%s err=%v", surface, err)
 			}
 		}
 	}

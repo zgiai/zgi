@@ -82,7 +82,7 @@ func (s *RuntimeService) ContinueTaskTokenBudget(
 	if err != nil {
 		return nil, err
 	}
-	config, cleanup, err := s.userInputContinuationConfig(ctx, run, resolved, event)
+	config, cleanup, err := s.userInputContinuationConfig(ctx, run, resolved, event, scope)
 	if err != nil {
 		return nil, err
 	}

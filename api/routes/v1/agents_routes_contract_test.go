@@ -39,6 +39,19 @@ func TestAgentsRoutes_WebAppCapabilityStaysBehindWebAppAuthMiddleware(t *testing
 	}
 }
 
+func TestAgentsRoutes_WebAppToolGovernanceUsesAuthenticatedDedicatedHandler(t *testing.T) {
+	source, err := os.ReadFile("agents_routers.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	route := `protectedWebApps.POST("/:web_app_id/runtime/conversations/:conversation_id/messages/:message_id/tool-governance/:correlation_id/continue", appHandler.ContinueWebAppAgentRuntimeToolGovernance)`
+	auth := strings.Index(text, `protectedWebApps.Use(middleware.WebAppAuthMiddleware())`)
+	if auth < 0 || strings.Index(text, route) < auth || strings.Contains(text, `publicWebApps.POST("/:web_app_id/runtime/conversations/:conversation_id/messages/:message_id/tool-governance/`) {
+		t.Fatal("WebApp approval route is missing or bypasses authenticated routing")
+	}
+}
+
 func TestAgentsRoutes_RollbackPreviewUsesVersionScopedGET(t *testing.T) {
 	source, err := os.ReadFile("agents_routers.go")
 	if err != nil {

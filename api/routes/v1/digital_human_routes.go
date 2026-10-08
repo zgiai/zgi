@@ -425,7 +425,9 @@ func newDigitalHumanLinuxExecution(deps DigitalHumanRuntimeDeps) *digitalhuman.L
 	}
 	return digitalhuman.NewLinuxExecutionRuntime(digitalhuman.LinuxExecutionOptions{
 		DB: deps.DB, Approvals: executionruntime.ApprovalsFromEnv(), Gateway: executionruntime.GatewayFromEnv(),
-		Files: deps.FileService, Access: digitalhuman.NewAccessService(deps.DB), Entries: entries,
+		PlatformCLI: executionruntime.EnvBool("ZGI_AGENT_RUNTIME_PLATFORM_CLI_ENABLED", false),
+		EntryReady:  executionruntime.InteractiveEntryImplemented,
+		Files:       deps.FileService, Access: digitalhuman.NewAccessService(deps.DB), Entries: entries,
 		ArtifactManager: func() *tool_file.ToolFileManager { return tool_file.GlobalToolFileManager },
 		AuthorizeConsole: func(ctx context.Context, scope digitalhuman.Scope) error {
 			if deps.OrganizationService == nil {
@@ -440,7 +442,5 @@ func newDigitalHumanLinuxExecution(deps DigitalHumanRuntimeDeps) *digitalhuman.L
 			}
 			return nil
 		},
-		// EntryReady intentionally remains nil until P4 is implemented. An
-		// operator allowlist cannot open incomplete external approval paths.
 	})
 }

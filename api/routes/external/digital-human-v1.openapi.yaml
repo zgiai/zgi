@@ -413,6 +413,36 @@ paths:
                 message_end: {$ref: '#/components/schemas/MessageEndEvent'}
                 error: {$ref: '#/components/schemas/StreamErrorEvent'}
         default: {$ref: '#/components/responses/Error'}
+  /digital-humans/conversations/{conversation_id}/messages/{message_id}/tool-governance/{correlation_id}/continue:
+    parameters:
+      - $ref: '#/components/parameters/ConversationID'
+      - $ref: '#/components/parameters/MessageID'
+      - name: correlation_id
+        in: path
+        required: true
+        schema: {type: string, minLength: 1, maxLength: 256}
+    post:
+      tags: [DigitalHuman conversations]
+      summary: Confirm or reject a paused platform CLI tool call
+      operationId: continueDigitalHumanPlatformToolGovernance
+      description: Uses the original sealed DigitalHuman run and explicit final user. Current application and publication authorization is checked again. Confirmation executes one frozen business invocation, not the stopped Shell. Rejection executes nothing and remains available after execution is disabled. Duplicate requests recover existing results. This is not a task or workflow approval endpoint.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user, action]
+              properties:
+                user: {type: string, minLength: 1, maxLength: 250, description: Same opaque final-user identifier as the original conversation; not an independent authentication credential.}
+                action: {type: string, enum: [approve, reject]}
+      responses:
+        '200':
+          description: Recoverable SSE stream containing message_start, tool_governance_decision, result lifecycle, message_end or error events.
+          content:
+            text/event-stream:
+              schema: {type: string}
+        default: {$ref: '#/components/responses/Error'}
   /digital-humans/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue:
     parameters:
       - $ref: '#/components/parameters/ConversationID'
@@ -1313,7 +1343,9 @@ components:
             lifecycle: {type: string, description: Retention or persistence state.}
     ToolGovernanceDecisionEvent:
       description: >-
-        Non-interactive authorization decision for a published tool invocation.
+        Authorization decision for a published tool invocation. An admitted
+        platform CLI call may ask for approval through the tool-governance
+        continuation endpoint; approval cannot grant missing resource access.
         For DigitalHuman task mutations this event is retained internally for
         audit and replay, but is not emitted on the public DigitalHuman SSE
         stream; clients should handle the corresponding approval and workflow

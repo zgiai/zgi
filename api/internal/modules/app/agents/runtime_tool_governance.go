@@ -28,6 +28,16 @@ func (h *AgentsHandler) continueConsoleRuntimeToolGovernance(c *gin.Context, run
 		response.Fail(c, response.ErrPermissionDenied)
 		return
 	}
+	h.continueRuntimeToolGovernance(c, runtimeCtx, nil)
+}
+
+func (h *AgentsHandler) continueRuntimeToolGovernance(c *gin.Context, runtimeCtx agentRuntimeContext, request *runtimedto.ToolGovernanceDecisionRequest) {
+	if runtimeCtx.Caller.Type != runtimemodel.ConversationCallerAgent || runtimeCtx.Caller.ID == nil ||
+		(runtimeCtx.Caller.Source != "console" && runtimeCtx.Caller.Source != "webapp" && runtimeCtx.Caller.Source != "external-api") ||
+		runtimeCtx.Scope.RuntimeWorkspaceID != nil || runtimeCtx.Scope.RuntimeSubjectID != nil {
+		response.Fail(c, response.ErrPermissionDenied)
+		return
+	}
 	conversationID, ok := uuidParam(c, "conversation_id")
 	if !ok {
 		return
@@ -38,7 +48,13 @@ func (h *AgentsHandler) continueConsoleRuntimeToolGovernance(c *gin.Context, run
 	}
 	correlationID := strings.TrimSpace(c.Param("correlation_id"))
 	var req runtimedto.ToolGovernanceDecisionRequest
-	if correlationID == "" || len(correlationID) > 256 || c.ShouldBindJSON(&req) != nil || (req.Action != "approve" && req.Action != "reject") {
+	if request != nil {
+		req = *request
+	} else if c.ShouldBindJSON(&req) != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if correlationID == "" || len(correlationID) > 256 || (req.Action != "approve" && req.Action != "reject") {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
@@ -54,7 +70,11 @@ func (h *AgentsHandler) continueConsoleRuntimeToolGovernance(c *gin.Context, run
 			Conversation: &runtimemodel.Conversation{ID: conversationID},
 			Message:      &runtimemodel.Message{ID: messageID},
 		}
-		if !consolePlatformApprovalAvailable(runtimeCtx.RunConfig, prepared) {
+		available := agentExecutionEnvBool("ZGI_AGENT_RUNTIME_PLATFORM_CLI_ENABLED", false) && runtimeCtx.RunConfig.RuntimeToolFactory != nil
+		if runtimeCtx.Caller.Source == "console" {
+			available = consolePlatformApprovalAvailable(runtimeCtx.RunConfig, prepared)
+		}
+		if !available {
 			response.Fail(c, response.ErrPermissionDenied)
 			return
 		}
@@ -76,6 +96,78 @@ func (h *AgentsHandler) continueConsoleRuntimeToolGovernance(c *gin.Context, run
 		"conversation_id": conversationID.String(), "message_id": messageID.String(),
 		"message": response.ErrSystemError.Message, "code": response.ErrSystemError.Code,
 	})
+}
+
+// ContinueWebAppAgentRuntimeToolGovernance authenticates the login separately
+// from Linux admission, so rejection remains possible after compute is disabled.
+func (h *AgentsHandler) ContinueWebAppAgentRuntimeToolGovernance(c *gin.Context) {
+	if !c.GetBool("is_authenticated") {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	var req runtimedto.ToolGovernanceDecisionRequest
+	if c.ShouldBindJSON(&req) != nil || (req.Action != "approve" && req.Action != "reject") {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	var runtimeCtx agentRuntimeContext
+	if req.Action == "approve" {
+		var ok bool
+		runtimeCtx, ok = h.webAppAgentRuntimeContext(c)
+		if !ok {
+			return
+		}
+	} else {
+		scope, app, webApp, _, ok := h.webAppAgentRuntimeAccess(c)
+		if !ok {
+			return
+		}
+		runtimeCtx = agentRuntimeContext{Scope: scope, Caller: runtimeservice.Caller{Type: "agent", ID: &app, Source: "webapp", SourceWebAppID: &webApp}}
+	}
+	h.continueRuntimeToolGovernance(c, runtimeCtx, &req)
+}
+
+// ContinueAPIKeyAgentRuntimeToolGovernance uses the trusted backend's existing
+// final-user contract. Runtime Workspace credentials never enter this route.
+func (h *AgentsHandler) ContinueAPIKeyAgentRuntimeToolGovernance(c *gin.Context) {
+	if _, exists := c.Get("runtime_workspace_principal"); exists || c.GetString("runtime_workspace_id") != "" || c.GetString("runtime_subject_id") != "" {
+		response.Fail(c, response.ErrPermissionDenied)
+		return
+	}
+	var req runtimedto.ToolGovernanceDecisionRequest
+	if c.ShouldBindJSON(&req) != nil || (req.Action != "approve" && req.Action != "reject") {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	var runtimeCtx agentRuntimeContext
+	if req.Action == "approve" {
+		var ok bool
+		runtimeCtx, ok = h.apiKeyAgentContinuationRuntimeContext(c)
+		if !ok {
+			return
+		}
+	} else {
+		var ok bool
+		runtimeCtx, ok = h.apiKeyAgentUserRuntimeContext(c, c.Query("user"))
+		if !ok || runtimeCtx.Caller.ID == nil {
+			return
+		}
+		published, err := h.appService.GetPublishedAgentRuntimeConfig(c.Request.Context(), runtimeCtx.Caller.ID.String())
+		if err != nil {
+			h.failRuntime(c, err)
+			return
+		}
+		if published == nil {
+			response.Fail(c, response.ErrPermissionDenied)
+			return
+		}
+		runtimeCtx.Scope, err = scopeWithAgentResourceWorkspace(runtimeCtx.Scope, published.WorkspaceID)
+		if err != nil {
+			h.failRuntime(c, err)
+			return
+		}
+	}
+	h.continueRuntimeToolGovernance(c, runtimeCtx, &req)
 }
 
 func consolePlatformApprovalAvailable(config runtimeservice.RunConfig, prepared *runtimeservice.PreparedChat) bool {

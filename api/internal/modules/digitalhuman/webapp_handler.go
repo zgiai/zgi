@@ -57,6 +57,7 @@ func (h *ExternalHandler) RegisterWebAppRoutes(router *gin.RouterGroup) {
 	protected.POST("/conversations/:conversation_id/stop", h.StopWebAppConversation)
 	protected.POST("/conversations/:conversation_id/messages/:message_id/runtime-inputs", h.SubmitWebAppConversationRuntimeInput)
 	protected.POST("/conversations/:conversation_id/messages/:message_id/user-input/:request_id/continue", h.ContinueWebAppUserInput)
+	protected.POST("/conversations/:conversation_id/messages/:message_id/tool-governance/:correlation_id/continue", h.ContinueWebAppToolGovernance)
 	protected.POST("/conversations/:conversation_id/messages/:message_id/workflow-continuation", h.ContinueWebAppTaskApproval)
 	protected.GET("/files/upload", h.GetWebAppUploadConfig)
 	protected.POST("/files/upload", h.UploadWebAppFile)

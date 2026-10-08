@@ -72,7 +72,7 @@ func (s *RuntimeService) ContinueUserInput(
 	if err != nil {
 		return nil, err
 	}
-	config, cleanup, err := s.userInputContinuationConfig(ctx, run, resolved, event)
+	config, cleanup, err := s.userInputContinuationConfig(ctx, run, resolved, event, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -82,6 +82,7 @@ func (s *RuntimeService) ContinueUserInput(
 	if err != nil {
 		return nil, err
 	}
+	caller.RunID = cloneUUIDPointer(&run.ID)
 	return continuationRuntime.RunConfiguredUserInputContinuationStream(
 		ctx, runtimeScope, caller, config, conversationID, messageID, strings.TrimSpace(requestID), request, onEvent,
 	)
@@ -112,12 +113,20 @@ func (s *RuntimeService) userInputContinuationConfig(
 	run *Run,
 	resolved *ResolvedExecution,
 	event invocation.Event,
+	scope Scope,
 ) (runtimeservice.RunConfig, func(), error) {
 	config, err := s.brain.RunConfig(resolved)
 	if err != nil {
 		return runtimeservice.RunConfig{}, func() {}, err
 	}
 	cleanup := func() {}
+	config.ConnectorRunID = run.ID.String()
+	if s.linux != nil {
+		config.RuntimeToolFactory, err = s.prepareContinuationLinux(ctx, run, resolved, event, scope)
+		if err != nil {
+			return runtimeservice.RunConfig{}, cleanup, err
+		}
+	}
 
 	if s.channelContext != nil && event.Origin.Kind == invocation.OriginChannel {
 		preparation, prepareErr := s.channelContext.Prepare(ctx, run, resolved, event, config.ModelProvider, config.Model)

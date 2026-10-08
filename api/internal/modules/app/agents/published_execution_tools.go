@@ -16,9 +16,10 @@ import (
 )
 
 // Published entries never inherit console tools or creator authorization. The
-// readiness callback remains unset until their approval continuation is wired.
+// readiness callback confirms the entry's protected-file and approval wiring;
+// operator admission and live resource authorization remain separate gates.
 func (h *AgentsHandler) attachPublishedAgentExecutionTools(ctx context.Context, config *runtimeservice.RunConfig, scope runtimeservice.Scope, caller runtimeservice.Caller, published *dto.AgentWebAppRuntimeConfigResponse, authenticated bool, keyID uuid.UUID) error {
-	if config == nil || published == nil || published.Config.ExecutionRuntime == nil || !published.Config.ExecutionRuntime.Enabled ||
+	if !h.executionApprovals.Enabled || config == nil || published == nil || published.Config.ExecutionRuntime == nil || !published.Config.ExecutionRuntime.Enabled ||
 		h.executionEntryReady == nil || !h.executionEntryReady(runtimemodel.ConversationCallerAgent, caller.Source) {
 		return nil
 	}
@@ -61,8 +62,10 @@ func (h *AgentsHandler) attachPublishedAgentExecutionTools(ctx context.Context, 
 	if resolved.HomeSnapshotID != nil {
 		options.HomeSnapshotID = *resolved.HomeSnapshotID
 	}
-	// Platform CLI is deliberately not enabled here before P4 routes and frozen
-	// approvals are available. Published entries cannot borrow console approval.
+	if agentExecutionEnvBool("ZGI_AGENT_RUNTIME_PLATFORM_CLI_ENABLED", false) {
+		options.PlatformCLI, options.InteractiveApproval = true, true
+		options.AuthorizePlatform = authorize
+	}
 	config.RuntimeToolFactory = executionruntime.NewToolFactory(options)
 	return nil
 }

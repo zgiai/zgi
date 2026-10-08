@@ -89,6 +89,7 @@ func (h *RuntimeHandler) RegisterRoutes(router *gin.RouterGroup) {
 	group.GET("/runtime/conversations/:conversation_id/files/:file_id", h.GetExecutionFile)
 	group.POST("/runtime/conversations/:conversation_id/messages/:message_id/runtime-inputs", h.SubmitRuntimeInput)
 	group.POST("/runtime/conversations/:conversation_id/messages/:message_id/user-input/:request_id/continue", h.ContinueUserInput)
+	group.POST("/runtime/conversations/:conversation_id/messages/:message_id/tool-governance/:correlation_id/continue", h.ContinueToolGovernance)
 	group.POST("/runtime/conversations/:conversation_id/stop", h.StopConversation)
 	group.GET("/runtime/conversations/:conversation_id/events", h.StreamConversationEvents)
 	group.POST("/runtime/conversations/:conversation_id/messages/:message_id/workflow-continuation", h.ContinueTaskApproval)

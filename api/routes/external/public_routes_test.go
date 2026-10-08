@@ -55,6 +55,29 @@ func TestPublicDocumentationExposesDigitalHumanExternalContract(t *testing.T) {
 	assertOpenAPIOperationsDocumented(t, document["paths"].(map[string]interface{}))
 }
 
+func TestAgentGovernanceContinuationIsRegisteredBehindAPIKeyAuthentication(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	RegisterAPIKeyRoutes(router.Group("/api"), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	path := "/api/v1/agents/conversations/:conversation_id/messages/:message_id/tool-governance/:correlation_id/continue"
+	found := false
+	for _, route := range router.Routes() {
+		if route.Path == path && route.Method == http.MethodPost {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("production API router has no tool-governance continuation")
+	}
+	w := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/agents/conversations/"+uuid.NewString()+"/messages/"+uuid.NewString()+"/tool-governance/frozen/continue", strings.NewReader(`{"action":"approve"}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, request)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated governance route: %d %s", w.Code, w.Body)
+	}
+}
+
 func TestPublicDocumentationExposesRuntimeWorkspacePhase1Contract(t *testing.T) {
 	t.Setenv("ZGI_RUNTIME_WORKSPACE_ENABLED", "true")
 	gin.SetMode(gin.TestMode)
@@ -156,6 +179,7 @@ func TestPublicDocumentationRoutesExposeCurrentAgentContract(t *testing.T) {
 		"/agents/conversations/{conversation_id}/files/{file_id}:", "access_mode:",
 		"/agents/messages/{message_id}/regenerate:",
 		"/agents/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue:",
+		"/agents/conversations/{conversation_id}/messages/{message_id}/tool-governance/{correlation_id}/continue:",
 		"/agents/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue:",
 		"x-zgi-sse-event-data-schemas:",
 		"/agents/memory/{key}:",
@@ -169,7 +193,6 @@ func TestPublicDocumentationRoutesExposeCurrentAgentContract(t *testing.T) {
 	for _, forbidden := range []string{
 		"client_action_required",
 		"client_action_result",
-		"/tool-governance/",
 		"/client-actions/",
 		"waiting_client_action",
 	} {
@@ -201,6 +224,7 @@ func TestPublicDocumentationRoutesExposeCurrentAgentContract(t *testing.T) {
 		{http.MethodPost, "/agents/messages/{message_id}/regenerate"},
 		{http.MethodPost, "/agents/conversations/{conversation_id}/messages/{message_id}/workflow-continuation"},
 		{http.MethodPost, "/agents/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue"},
+		{http.MethodPost, "/agents/conversations/{conversation_id}/messages/{message_id}/tool-governance/{correlation_id}/continue"},
 		{http.MethodPost, "/agents/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue"},
 		{http.MethodGet, "/agents/memory"},
 		{http.MethodDelete, "/agents/memory"},

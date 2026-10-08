@@ -87,13 +87,45 @@ type linuxExecutionTestAccess struct {
 	err                               error
 	subject, application, publication uuid.UUID
 	uploads                           int
+	principal                         uuid.UUID
 }
 
 func (a *linuxExecutionTestAccess) AuthorizeLinuxExecution(_ context.Context, scope Scope, application, publication uuid.UUID) error {
 	if scope.UserSubjectID == nil || *scope.UserSubjectID != a.subject || scope.ActorID != a.subject || application != a.application || publication != a.publication {
 		return execution.ErrInvalidIdentity
 	}
+	a.principal = scope.PrincipalID
 	return a.err
+}
+
+func TestDigitalHumanContinuationCredentialRotationKeepsOriginalUserAndPublication(t *testing.T) {
+	run, resolved, event, prepared := linuxExecutionFixture(t, SurfaceAPI)
+	options, access, gateway := linuxExecutionOptionsFor(t, run)
+	provider := NewLinuxExecutionRuntime(options)
+	owner, err := executionAccessFor(run, resolved, event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := owner.scope()
+	oldCredential, replacement := *run.PrincipalID, uuid.New()
+	current.PrincipalID = replacement
+	factory, err := provider.PrepareContinuation(t.Context(), run, resolved, event, current)
+	if err != nil || factory == nil || access.principal != replacement || *run.PrincipalID != oldCredential {
+		t.Fatalf("credential rotation rewrote run or reused old authorization: %v", err)
+	}
+	tools := factory(prepared)
+	if len(tools) == 0 {
+		t.Fatal("rotated credential lost execution tools")
+	}
+	tools[0].Handler(t.Context(), adapter.ToolCall{ID: "call", Function: adapter.FunctionCall{Arguments: `{"command":"printf ok"}`}})
+	if gateway.scope.SubjectID != owner.user.String() || gateway.scope.Identity == nil || gateway.scope.Identity.PublicationRef != run.DigitalHumanVersionID.String() {
+		t.Fatal("rotated credential changed final user or publication")
+	}
+	other := uuid.New()
+	current.UserSubjectID, current.ActorID = &other, other
+	if _, err := provider.PrepareContinuation(t.Context(), run, resolved, event, current); err == nil {
+		t.Fatal("rotated credential adopted another user")
+	}
 }
 
 func (a *linuxExecutionTestAccess) AuthorizeExecutionUpload(context.Context, Scope, uuid.UUID, *dto.UploadFile) error {
@@ -215,7 +247,7 @@ func TestDigitalHumanLinuxPreparationRequiresAllGates(t *testing.T) {
 			options, _, gateway := linuxExecutionOptionsFor(t, run)
 			mutate(&options)
 			factory, err := NewLinuxExecutionRuntime(options).Prepare(t.Context(), run, resolved, event)
-			closed := name == "missing readiness" || name == "not ready"
+			closed := name == "missing readiness" || name == "not ready" || name == "deployment disabled"
 			if factory != nil || (err == nil) != closed || gateway.creates != 0 {
 				t.Fatalf("factory=%v err=%v creates=%d", factory != nil, err, gateway.creates)
 			}
