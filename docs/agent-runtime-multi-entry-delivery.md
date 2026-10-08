@@ -678,3 +678,24 @@ production build pass. Preview screenshots remain in ignored acceptance evidence
 An E2B preview download click still yields no observed saved file or automation
 event, so browser download acceptance remains open. A second authenticated test
 account is also still absent; neither gap is counted as a pass.
+
+### Download diagnostic boundary
+
+A loopback-only synthetic comparison saved all four test files: a normal HTTP
+attachment, detached Blob anchor, attached Blob anchor with delayed URL release,
+and a Blob read asynchronously before clicking. Only the normal attachment
+reported a browser automation download event. File existence and exact bytes,
+not the event alone, therefore determine delivery acceptance.
+
+The actual E2B protected result still has no observed saved file after preview
+and direct-card downloads, including a fresh page reload; its authenticated read
+returns HTTP 200. Synthetic success does not close that gate or establish the
+cause of the difference. No speculative URL-lifetime change was shipped.
+
+The protected-card behavior test now executes the component handler: each
+download makes a fresh scoped read, waits for success before creating a Blob URL,
+uses the original filename, blocks another read while busy and releases the URL.
+Denied and unavailable reads cannot produce a download and expose only the safe
+localized error. These tests guard authorization and lifecycle; they are not
+evidence of browser delivery. P5 still requires a real second login and a saved
+protected result with independently checked bytes.
