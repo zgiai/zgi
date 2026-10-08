@@ -85,6 +85,8 @@ func run(parent context.Context, logger *log.Logger) error {
 		switch os.Args[1] {
 		case "--release-fingerprint":
 			return printReleaseFingerprint(cfg)
+		case "--audit":
+			return auditRuntime(parent, cfg)
 		case "--set-admission-policy":
 			ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 			defer cancel()
