@@ -24,7 +24,7 @@ files and cleanup must remain available during an admission rollback.
 | P2 | Protected file ownership and authenticated preview/download | Implemented, including CLI business outputs; real entry acceptance remains P5 |
 | P3 | Published Agent and DigitalHuman interactive script integration | Implementation complete: published adapters, DigitalHuman opt-in UI and request-scoped tools; deployment acceptance remains P5 |
 | P4 | Published-resource CLI and frozen, idempotent approval continuation | Implementation and automated gates complete; real dual-backend acceptance remains P5 |
-| P5 | Real local/E2B entry acceptance and rollback verification | In progress; standard-Skill, approval, CLI model billing and admission rollback samples pass; account isolation, browser file delivery and entry-specific publication/live-authorization closeout remain open |
+| P5 | Real local/E2B entry acceptance and rollback verification | In progress; standard-Skill, approval, CLI billing, publication/live-access boundaries and admission rollback samples pass; second-login isolation and browser file delivery remain open |
 
 ## Identity contract
 
@@ -555,15 +555,15 @@ constraint/migration tests and documentation contracts cover the correction.
 Local candidate deployment retains rollback containers. Test-only always-ask
 catalog fixtures are acceptance inputs, not changes to the shipped Skill catalog.
 
-P5 is still open: complete DigitalHuman console approvals, live revocation,
-frozen-publication and admission-off retained-download cases before wider rollout.
+The initial samples below are supplemented by the focused acceptance record.
+P5 remains open pending second-login isolation and browser file delivery.
 The E2B browser CSV preview renders correct values, but no browser download file
 has been observed in the latest check. Authenticated HTTP download success is
 recorded separately; it is not presented as browser-download completion.
 
 ### Frozen publication authorization
 
-DigitalHuman approval continuation authorizes the original immutable published
+Agent and DigitalHuman approval continuation authorize the original immutable published
 version separately from current application access. Publishing a newer version
 does not by itself invalidate a pending sealed call. Current Linux opt-in,
 application/surface access and API credential validity are still checked on
@@ -578,9 +578,10 @@ Real local gVisor and E2B checks now cover:
 - Agent and DigitalHuman API/WebApp approval, rejection and duplicate decisions,
   plus DigitalHuman console approvals. Confirmations create one SVG, rejections
   create none, and continuations retain one original Shell Job.
-- DigitalHuman pending approvals surviving publication replacement without
-  adopting the new version. Current API access revocation denies confirmation;
-  restored access permits rejection without executing the business call.
+- Agent and DigitalHuman API/WebApp pending approvals surviving publication
+  replacement without adopting the new version. Current entry access revocation
+  denies confirmation; restored access permits the original decision without
+  replaying Shell. Agent published Linux disablement also denies confirmation.
 - Original PDF Skill script execution through all four external entry types.
   Each uploaded a synthetic input, used the existing package without a new
   manifest, checked its script hash inside Linux and authenticated-downloaded
@@ -610,9 +611,9 @@ The E2B CSV browser preview is visibly correct and authenticated binary download
 pass, but an actual browser-saved file has not been observed; protected TXT Blob
 preview is still blank in the embedded browser. These UI results do not yet
 establish whether the limitation is in the application or the browser integration.
-Publication replacement and live revocation have real DigitalHuman API samples;
-the other entry-specific boundaries retain automated coverage, not a completed
-real-backend matrix. Wider rollout remains closed.
+Publication replacement and live entry revocation have real Agent and DigitalHuman
+API/WebApp samples on both backends. These entry-wide revocation checks do not
+replace the outstanding two-login user-isolation test. Wider rollout remains closed.
 
 Attachment history distinguishes model content injection from tool file use:
 filtered content is shown neutrally as not directly injected, not as a failed or
@@ -631,3 +632,26 @@ again; owned queued/running Jobs are zero and retained files/checkpoints remain.
 The dedicated test Workers and SSH bridge were stopped afterward. Candidate
 API/Web history and authorized retained-file reads remain available; new execution
 acceptance requires starting the dedicated test compute again.
+
+### Agent publication and entry-access closeout
+
+Agent confirmation resolves the original publication only from the authoritative,
+caller-scoped sealed invocation. The historical version must belong to the same
+application and resource workspace; its model, instructions and bindings remain
+frozen. Current Linux opt-in, entry access and credential validity remain live
+checks. Ordinary execution cannot select a historical version.
+
+Four Agent API/WebApp backend pairs pass publication replacement and Linux
+disable/restore checks. Six additional samples cover Agent API surface revocation,
+Agent WebApp offline status and DigitalHuman WebApp access revocation on both
+backends. Each checks zero business artifacts while revoked and one original
+Shell Job after duplicate decisions; DigitalHuman WebApp also retains its original
+publication after replacement. Authorized SVG bytes were independently parsed.
+Impacted Go packages, focused race tests, vet and the static Linux build pass.
+
+Acceptance-only catalog mounts were removed and test application bindings restored.
+Owned compute and the SSH bridge are stopped, with zero queued/running Jobs;
+files, checkpoints and rollback containers remain. Authenticated retained-file
+reads still succeed after stopping compute. No push, merge or wider rollout was
+performed. Second-login isolation and observed browser-saved files remain required
+before marking P5 complete; protected TXT preview remains under investigation.
