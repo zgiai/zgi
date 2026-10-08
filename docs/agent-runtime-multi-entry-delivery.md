@@ -24,7 +24,7 @@ files and cleanup must remain available during an admission rollback.
 | P2 | Protected file ownership and authenticated preview/download | Implemented, including CLI business outputs; real entry acceptance remains P5 |
 | P3 | Published Agent and DigitalHuman interactive script integration | Implementation complete: published adapters, DigitalHuman opt-in UI and request-scoped tools; deployment acceptance remains P5 |
 | P4 | Published-resource CLI and frozen, idempotent approval continuation | Implementation and automated gates complete; real dual-backend acceptance remains P5 |
-| P5 | Real local/E2B entry acceptance and rollback verification | In progress; basic published Agent API/WebApp execution and authenticated downloads passed on both backends; full matrix outstanding |
+| P5 | Real local/E2B entry acceptance and rollback verification | In progress; Agent API/WebApp and DigitalHuman interactive execution/files verified on both backends; approval and rollback matrix still incomplete |
 
 ## Identity contract
 
@@ -510,3 +510,47 @@ suspended after acceptance, with no queued/running Jobs; retained CSV downloads
 still pass. Four focused Web regression suites pass. This verifies the WebApp
 presentation change and its adjacent execution/file path, not the remaining P5
 DigitalHuman, two-user, CLI approval or admission-rollback matrix.
+
+## P5 focused approval lifecycle correction
+
+DigitalHuman platform CLI approvals now have a dedicated persisted
+`waiting_approval_origin=platform_cli`. Migration
+`202610090100000000_digital_human_platform_cli_approval` adds that internal field
+and extends the waiting constraint without changing existing Connector receipts.
+Only a persisted frozen invocation matching the original application, entry,
+publication, final user, conversation and message can enter this waiting state.
+Connector receipt-based approvals retain their existing continuation lifecycle.
+
+The current SSE connection ends at a waiting boundary; `run_end.status=waiting`
+is resumable, not a terminal result. Approval/rejection completes the original
+host run after the message completes. Repeated confirmation reuses its result
+without resubmitting Shell. Cancellation/failure clear waiting-only fields.
+Deploy the additive migration before the new API; do not remove the column or
+reinstate the old constraint while platform approvals remain pending.
+
+Focused real acceptance additionally verified:
+
+- DigitalHuman console, authenticated WebApp and API Shell execution, file
+  content and authenticated reads on local gVisor and E2B. Separate API users
+  generated separate files; cross-user, missing-user and cross-entry reads were
+  rejected.
+- E2B Agent API confirmation/rejection and repeated decisions; E2B Agent WebApp
+  confirmation; local Agent API confirmation and local Agent WebApp rejection.
+  Confirmed samples produced one SVG each; rejected samples produced none.
+- The corrected E2B DigitalHuman API flow reached persisted waiting, closed the
+  SSE stream, then reached succeeded after confirmation. Duplicate confirmation
+  retained one SVG and one original Shell Job. Authenticated SVG bytes were
+  independently downloaded and parsed.
+- A real Agent CLI model call returned its result and recorded model usage in
+  the organization billing lane. Cross-Job CLI status access was denied.
+
+Go 1.26.2 changed-package tests/vet, focused race tests, isolated PostgreSQL
+constraint/migration tests and documentation contracts cover the correction.
+Local candidate deployment retains rollback containers. Test-only always-ask
+catalog fixtures are acceptance inputs, not changes to the shipped Skill catalog.
+
+P5 is still open: complete the remaining entry/backend approval, live revocation,
+frozen-publication and admission-off retained-download cases before wider rollout.
+The E2B browser CSV preview renders correct values, but no browser download file
+has been observed in the latest check. Authenticated HTTP download success is
+recorded separately; it is not presented as browser-download completion.
