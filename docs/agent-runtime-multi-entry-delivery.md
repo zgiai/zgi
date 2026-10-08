@@ -17,7 +17,7 @@ files and cleanup must remain available during an admission rollback.
 | P0 | Versioned identity, Worker negotiation, additive persistence, compatibility | Complete; unit, PostgreSQL, race and vet gates passed |
 | P1 | Shared execution factory, live authorization, end-user admission | Complete; shared factory, regression, race and vet gates passed |
 | P2 | Protected file ownership and authenticated preview/download | File contracts, upload provenance and scoped staging implemented; new entry wiring remains P3 and real acceptance P5 |
-| P3 | Published Agent and DigitalHuman interactive script integration | Pending |
+| P3 | Published Agent and DigitalHuman interactive script integration | In progress: DigitalHuman versioned opt-in; execution adapter wiring and UI pending |
 | P4 | Published-resource CLI and frozen, idempotent approval continuation | Pending |
 | P5 | Real local/E2B entry acceptance and rollback verification | Pending |
 
@@ -223,3 +223,29 @@ concurrent claims producing exactly one owner. Changed backend packages passed
 tests with race detection and vet. These are contract tests, not P5 end-to-end
 acceptance. P3 must supply the protected reader from each verified entry adapter;
 P4 approval continuation remains required before external execution is opened.
+
+## DigitalHuman execution configuration
+
+DigitalHuman drafts accept the optional `execution_runtime: {"enabled": true}`
+application opt-in. Profile, policy, backend, network and Home Snapshot are not
+accepted in this object. Omitting it (or sending null on an update) leaves the
+draft unchanged; `{"enabled": false}` clears it. New versions without an opt-in
+remain disabled.
+
+Publication, the next draft, version restore and sealed execution snapshots copy
+the setting independently. Later draft edits cannot change a published or
+already resolved execution. Disabled settings are normalized to absence so old
+version and v1 execution-snapshot hashes remain unchanged. The additive migration
+`202610081100000000` leaves historical rows null and rejects unsupported JSON
+shapes. No runtime tool or new entry permission is granted by persisting this
+setting; entry adapters, operator approval and P4 remain separate gates.
+
+The frontend service contract includes this optional field, but the DigitalHuman
+editor switch is not yet exposed. P3 execution integration and P4 approvals must
+be wired before the UI advertises this as an available capability.
+
+P3 configuration validation passed: DigitalHuman and migration package tests with
+race detection and vet; real isolated PostgreSQL migration idempotency, JSON
+constraints and model serializer/clear-and-reenable checks; frontend type-check
+and lint (73 existing warnings, no errors). No live application database was
+migrated. This is not an execution or dual-backend acceptance result.

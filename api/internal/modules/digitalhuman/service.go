@@ -120,7 +120,8 @@ func (s *Service) Create(ctx context.Context, scope Scope, request CreateRequest
 		ID: draftID, DigitalHumanID: definitionID, OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
 		State: VersionStateDraft, IdentityName: request.IdentityName, Persona: request.Persona, Goals: goals, Rules: rules, DefaultModel: request.DefaultModel,
 		MemoryPolicy: memoryPolicy, TriggerPolicy: triggerPolicy, PresentationPolicy: presentationPolicy, IdentitySnapshot: datatypes.JSON([]byte(`{}`)),
-		LockVersion: 1, CreatedBy: &actorID, UpdatedBy: &actorID, CreatedAt: now, UpdatedAt: now,
+		ExecutionRuntime: cloneExecutionRuntime(request.ExecutionRuntime),
+		LockVersion:      1, CreatedBy: &actorID, UpdatedBy: &actorID, CreatedAt: now, UpdatedAt: now,
 	}
 	draft.Revision, err = configRevision(draft)
 	if err != nil {
@@ -304,6 +305,7 @@ func (s *Service) Publish(ctx context.Context, scope Scope, id uuid.UUID, reques
 			ID: nextDraftID, DigitalHumanID: definition.ID, OrganizationID: definition.OrganizationID, WorkspaceID: definition.WorkspaceID,
 			State: VersionStateDraft, IdentityName: draft.IdentityName, Persona: draft.Persona, Goals: cloneJSON(draft.Goals), Rules: cloneJSON(draft.Rules), DefaultModel: draft.DefaultModel,
 			MemoryPolicy: cloneJSON(draft.MemoryPolicy), TriggerPolicy: cloneJSON(draft.TriggerPolicy), PresentationPolicy: cloneJSON(draft.PresentationPolicy),
+			ExecutionRuntime: cloneExecutionRuntime(draft.ExecutionRuntime),
 			IdentitySnapshot: datatypes.JSON([]byte(`{}`)), LockVersion: 1,
 			CreatedBy: &actorID, UpdatedBy: &actorID, CreatedAt: now, UpdatedAt: now,
 		}
@@ -599,6 +601,10 @@ func applyDraftUpdate(draft *Version, request UpdateDraftRequest) error {
 		draft.PresentationPolicy = encoded
 		changed = true
 	}
+	if request.ExecutionRuntime != nil {
+		draft.ExecutionRuntime = cloneExecutionRuntime(request.ExecutionRuntime)
+		changed = true
+	}
 	if !changed {
 		return ErrInvalidRequest
 	}
@@ -775,14 +781,15 @@ func marshalPresentationPolicy(policy PresentationPolicy) (datatypes.JSON, error
 
 func configRevision(version *Version) (string, error) {
 	payload := struct {
-		IdentityName       string          `json:"identity_name"`
-		Persona            string          `json:"persona"`
-		Goals              json.RawMessage `json:"goals"`
-		Rules              json.RawMessage `json:"rules"`
-		DefaultModel       string          `json:"default_model"`
-		MemoryPolicy       json.RawMessage `json:"memory_policy"`
-		TriggerPolicy      json.RawMessage `json:"trigger_policy"`
-		PresentationPolicy json.RawMessage `json:"presentation_policy"`
+		IdentityName       string                  `json:"identity_name"`
+		Persona            string                  `json:"persona"`
+		Goals              json.RawMessage         `json:"goals"`
+		Rules              json.RawMessage         `json:"rules"`
+		DefaultModel       string                  `json:"default_model"`
+		MemoryPolicy       json.RawMessage         `json:"memory_policy"`
+		TriggerPolicy      json.RawMessage         `json:"trigger_policy"`
+		PresentationPolicy json.RawMessage         `json:"presentation_policy"`
+		ExecutionRuntime   *ExecutionRuntimeConfig `json:"execution_runtime,omitempty"`
 	}{
 		IdentityName:       version.IdentityName,
 		Persona:            version.Persona,
@@ -792,6 +799,7 @@ func configRevision(version *Version) (string, error) {
 		MemoryPolicy:       json.RawMessage(cloneJSON(version.MemoryPolicy)),
 		TriggerPolicy:      json.RawMessage(cloneJSON(version.TriggerPolicy)),
 		PresentationPolicy: json.RawMessage(cloneJSON(version.PresentationPolicy)),
+		ExecutionRuntime:   cloneExecutionRuntime(version.ExecutionRuntime),
 	}
 	return hashRevision(payload)
 }

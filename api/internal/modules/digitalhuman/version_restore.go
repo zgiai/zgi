@@ -85,6 +85,7 @@ func (s *Service) RestoreVersion(ctx context.Context, scope Scope, id uuid.UUID,
 		draft.MemoryPolicy = cloneJSON(target.MemoryPolicy)
 		draft.TriggerPolicy = cloneJSON(target.TriggerPolicy)
 		draft.PresentationPolicy = cloneJSON(target.PresentationPolicy)
+		draft.ExecutionRuntime = cloneExecutionRuntime(target.ExecutionRuntime)
 		draft.IdentitySnapshot = datatypes.JSON([]byte(`{}`))
 		draft.UpdatedAt = s.now()
 		draft.Revision, err = configRevision(draft)
@@ -203,6 +204,9 @@ func versionChangedFields(current, target *Version) []string {
 	}
 	if !bytes.Equal(current.PresentationPolicy, target.PresentationPolicy) {
 		fields = append(fields, "presentation_policy")
+	}
+	if !bytes.Equal(executionRuntimeJSON(current.ExecutionRuntime), executionRuntimeJSON(target.ExecutionRuntime)) {
+		fields = append(fields, "execution_runtime")
 	}
 	return fields
 }

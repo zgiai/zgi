@@ -41,6 +41,7 @@ type ExecutionSnapshot struct {
 	UseAgentMemory               bool                       `json:"use_agent_memory"`
 	UserMemoryAutoCaptureAllowed bool                       `json:"user_memory_auto_capture_allowed"`
 	ChannelResponsePolicy        *ChannelResponsePolicy     `json:"channel_response_policy,omitempty"`
+	ExecutionRuntime             *ExecutionRuntimeConfig    `json:"execution_runtime,omitempty"`
 	ResolvedAt                   time.Time                  `json:"resolved_at"`
 }
 
@@ -110,6 +111,7 @@ func (r *Resolver) Resolve(ctx context.Context, event invocation.Event, versionI
 		// setting is the only per-user automatic-capture control.
 		UserMemoryAutoCaptureAllowed: userMemoryEnabled,
 		ChannelResponsePolicy:        channelResponsePolicyPointer(channelResponsePolicyFromTriggerPolicy(version.TriggerPolicy)),
+		ExecutionRuntime:             cloneExecutionRuntime(version.ExecutionRuntime),
 		ResolvedAt:                   now,
 	}
 	snapshot.Revision, err = executionSnapshotRevision(snapshot)

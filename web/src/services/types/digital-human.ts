@@ -40,6 +40,11 @@ export interface DigitalHumanPresentationPolicy {
   suggested_questions: string[];
 }
 
+/** Application opt-in only; deployment settings own the environment policy. */
+export interface DigitalHumanExecutionRuntimeConfig {
+  enabled: boolean;
+}
+
 export interface DigitalHumanDefinition {
   id: string;
   web_app_id: string;
@@ -78,6 +83,7 @@ export interface DigitalHumanVersion {
   memory_policy?: Record<string, unknown>;
   trigger_policy?: DigitalHumanTriggerPolicy;
   presentation_policy?: DigitalHumanPresentationPolicy;
+  execution_runtime?: DigitalHumanExecutionRuntimeConfig | null;
   published_at?: string | null;
   created_at: string;
   updated_at: string;
@@ -149,6 +155,7 @@ export interface CreateDigitalHumanRequest {
   memory_policy?: Record<string, unknown>;
   trigger_policy?: DigitalHumanTriggerPolicy;
   presentation_policy?: DigitalHumanPresentationPolicy;
+  execution_runtime?: DigitalHumanExecutionRuntimeConfig | null;
 }
 
 export interface UpdateDigitalHumanRequest {
@@ -178,6 +185,8 @@ export interface UpdateDigitalHumanDraftRequest {
   memory_policy?: Record<string, unknown>;
   trigger_policy?: DigitalHumanTriggerPolicy;
   presentation_policy?: DigitalHumanPresentationPolicy;
+  /** Omitted/null leaves the draft unchanged; enabled:false clears the opt-in. */
+  execution_runtime?: DigitalHumanExecutionRuntimeConfig | null;
 }
 
 export interface DigitalHumanAccessSettings {
