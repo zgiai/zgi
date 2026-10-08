@@ -238,6 +238,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	appsGroup.POST("/:agent_id/runtime/conversations/:conversation_id/stop", appHandler.StopAgentRuntimeConversation)
 	appsGroup.GET("/:agent_id/runtime/conversations/:conversation_id/events", appHandler.StreamAgentRuntimeEvents)
 	appsGroup.POST("/:agent_id/runtime/conversations/:conversation_id/messages/:message_id/workflow-continuation", appHandler.ContinueAgentRuntimeWorkflowApproval)
+	appsGroup.POST("/:agent_id/runtime/conversations/:conversation_id/messages/:message_id/tool-governance/:correlation_id/continue", appHandler.ContinueAgentRuntimeToolGovernance)
 	appsGroup.POST("/:agent_id/runtime/conversations/:conversation_id/messages/:message_id/user-input/:request_id/continue", appHandler.ContinueAgentRuntimeUserInput)
 	appsGroup.POST("/:agent_id/runtime/messages/:message_id/regenerate", appHandler.RegenerateAgentRuntimeMessage)
 	appsGroup.PUT("/:agent_id", appHandler.UpdateAgent)

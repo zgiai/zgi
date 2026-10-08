@@ -16,6 +16,7 @@ import type {
   AIChatSearchResponse,
   AIChatSseEnvelope,
   AIChatStopConversationResponseData,
+  AIChatToolGovernanceDecisionRequest,
   AIChatSubmitRuntimeInputRequest,
   AIChatSubmitRuntimeInputResponseData,
   AIChatUserInputContinuationRequest,
@@ -52,6 +53,7 @@ interface AgentRuntimeTransportOptions {
   chatPath: string;
   client?: RuntimeClient;
   supportsRuntimeInput?: boolean;
+  supportsToolGovernanceApproval?: boolean;
   transformChatPayload?: (payload: AIChatChatRequest) => unknown;
 }
 
@@ -141,6 +143,7 @@ function paginationFromResponse<T>(
 
 export class AgentRuntimeTransport implements AIChatRuntimeTransport {
   readonly supportsRuntimeInput: boolean;
+  readonly continueToolGovernanceDecision?: AIChatRuntimeTransport['continueToolGovernanceDecision'];
   private readonly runtimeBasePath: string;
   private readonly chatPath: string;
   private readonly client: RuntimeClient;
@@ -151,6 +154,7 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
     chatPath,
     client = http,
     supportsRuntimeInput = false,
+    supportsToolGovernanceApproval = false,
     transformChatPayload = payload => payload,
   }: AgentRuntimeTransportOptions) {
     this.runtimeBasePath = runtimeBasePath;
@@ -158,6 +162,39 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
     this.client = client;
     this.supportsRuntimeInput = supportsRuntimeInput;
     this.transformChatPayload = transformChatPayload;
+    // Only the authenticated draft transport has a console approval route.
+    // Public WebApp/API transports must not advertise interactive approval.
+    if (supportsToolGovernanceApproval) {
+      this.continueToolGovernanceDecision = (
+        conversationId,
+        messageId,
+        correlationId,
+        payload,
+        callbacks,
+        abortSignal
+      ) =>
+        this.client.sse<AIChatSseEnvelope, AIChatToolGovernanceDecisionRequest>(
+          `${this.runtimeBasePath}/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/tool-governance/${encodeURIComponent(correlationId)}/continue`,
+          {
+            method: 'POST',
+            body: payload,
+            abortSignal,
+            idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
+            skipErrorHandling: true,
+            isTerminalMessage: runtimeTerminalMessage,
+            onOpen: response => notifyAgentRuntimeStreamOpen(response, callbacks),
+            onMessage: message =>
+              dispatchAIChatStreamEvent(
+                String((message.data as AIChatSseEnvelope | undefined)?.event ?? message.event ?? ''),
+                (message.data as AIChatSseEnvelope | undefined)?.data ?? message.data,
+                message.id,
+                callbacks
+              ),
+            onError: callbacks.onRequestError,
+            onClose: callbacks.onClose,
+          }
+        );
+    }
   }
 
   async listConversations(params: {
@@ -465,6 +502,7 @@ export function createAgentDraftTransport(agentId: string): AgentRuntimeTranspor
     runtimeBasePath: `/console/api/agents/${agentId}/runtime`,
     chatPath: `/console/api/agents/${agentId}/chat`,
     supportsRuntimeInput: true,
+    supportsToolGovernanceApproval: true,
   });
 }
 

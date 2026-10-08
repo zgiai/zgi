@@ -793,6 +793,9 @@ func toolGovernanceFrozenExecutionContinuationMessage(
 		"Approved operation summary JSON:\n" + compactJSON(operationSummary),
 		"Model-visible runtime result JSON:\n" + compactJSON(toolResult),
 	}
+	if toolGovernanceHasStoppedPlatformShell(message) {
+		contentParts = append(contentParts, "Platform CLI continuation state: the original Shell ran until the approval boundary and was stopped there. It is not still running or awaiting another approval. This continuation attempted only the frozen business tool, not the Shell. Do not invent a new pending Shell, replay it, or claim that its remaining script statements executed. Its earlier awaiting_approval trace describes history, not current work.")
+	}
 	if planState := toolGovernanceContinuationPlanStateSummary(message); len(planState) > 0 {
 		contentParts = append(contentParts, "Current operation plan continuation state JSON:\n"+compactJSON(planState))
 	}
@@ -1189,8 +1192,17 @@ func toolGovernanceModelVisibleToolResult(event map[string]interface{}, invocati
 	if instruction := strings.TrimSpace(stringFromAny(payload["instruction"])); instruction != "" {
 		result["tool_guidance"] = instruction
 	}
-	if len(result) == 1 && len(payload) > 0 {
-		result["details"] = toolGovernanceSanitizedModelVisibleValue(payload)
+	// Generic business outputs (for example calculator values) must not be
+	// discarded merely because governance also supplies an action/effect.
+	// Keep file-operation projections narrow and preserve their existing rules.
+	if executionErr == nil && len(payload) > 0 && (len(result) == 1 || toolGovernanceUserVisibleAssetType(event) != "file") {
+		details := toolGovernanceSanitizedModelVisibleValue(payload)
+		encoded, err := json.Marshal(details)
+		if err == nil && len(encoded) <= 32<<10 {
+			result["details"] = details
+		} else {
+			result["details_truncated"] = true
+		}
 	}
 	return result
 }
@@ -1708,6 +1720,9 @@ func toolGovernanceRejectionLLMRequest(message *runtimemodel.Message, req runtim
 		"Rejected operation summary JSON:\n" + compactJSON(toolGovernanceRejectedOperationSummary(event)),
 		"Completed work before this rejection JSON:\n" + compactJSON(toolGovernanceCompletedWorkSummary(message)),
 	}, "\n\n")
+	if toolGovernanceHasStoppedPlatformShell(message) {
+		content += "\n\nPlatform CLI rejection state: the original Shell ran until the business tool requested approval and was stopped. Only the frozen business tool was rejected and not executed. Do not claim the original Shell never started or that another approval is pending. Do not replay the Shell or the rejected operation."
+	}
 	chatReq := &adapter.ChatRequest{
 		Provider: provider,
 		Model:    model,
@@ -1724,6 +1739,18 @@ func toolGovernanceRejectionLLMRequest(message *runtimemodel.Message, req runtim
 		applyModelParameters(chatReq, message.ModelParameters)
 	}
 	return chatReq
+}
+
+func toolGovernanceHasStoppedPlatformShell(message *runtimemodel.Message) bool {
+	if message == nil {
+		return false
+	}
+	for _, trace := range mapSliceFromAny(message.Metadata["skill_invocations"]) {
+		if trace["skill_id"] == "agent_execution" && trace["tool_name"] == "shell_exec" && trace["status"] == "awaiting_approval" {
+			return true
+		}
+	}
+	return false
 }
 
 func toolGovernanceCompletedWorkSummary(message *runtimemodel.Message) map[string]interface{} {

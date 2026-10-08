@@ -5,10 +5,58 @@ import (
 	"testing"
 	"time"
 
+	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
+
+func TestApprovedBusinessResultSurvivesGovernanceActionProjection(t *testing.T) {
+	invocation := &skills.ToolInvocationResult{Messages: []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"result": float64(42), "expression": "6*7", "internal_id": "private-id",
+			"nested": map[string]interface{}{"correlation_id": "private-correlation", "value": "retained"},
+		},
+	}}}
+	event := map[string]interface{}{"effect": "read", "asset_type": "number"}
+	result := toolGovernanceModelVisibleToolResult(event, invocation, nil)
+	details := mapFromOperationContext(result["details"])
+	if details["result"] != float64(42) || details["expression"] != "6*7" || details["internal_id"] != nil || mapFromOperationContext(details["nested"])["correlation_id"] != nil {
+		t.Fatalf("approved numeric result=%#v", result)
+	}
+	message := toolGovernanceFrozenExecutionContinuationMessage(&runtimemodel.Message{Query: "calculate", Metadata: map[string]interface{}{
+		"skill_invocations": []map[string]interface{}{{"skill_id": "agent_execution", "tool_name": "shell_exec", "status": "awaiting_approval"}},
+	}}, event, invocation, nil)
+	if content := messageContentText(message.Content); !strings.Contains(content, `"result":42`) || strings.Contains(content, "private-correlation") || !strings.Contains(content, "not still running or awaiting another approval") {
+		t.Fatalf("model did not receive sanitized result: %s", content)
+	}
+	event["asset_type"] = "file"
+	if result := toolGovernanceModelVisibleToolResult(event, invocation, nil); result["details"] != nil {
+		t.Fatalf("file projection expanded: %#v", result)
+	}
+	event["asset_type"] = "number"
+	invocation.Messages[0].Data = map[string]interface{}{"large": strings.Repeat("x", 32<<10)}
+	if result := toolGovernanceModelVisibleToolResult(event, invocation, nil); result["details"] != nil || result["details_truncated"] != true {
+		t.Fatalf("oversized result was admitted: %#v", result)
+	}
+}
+
+func TestPlatformRejectionDoesNotNegateOriginalShellExecution(t *testing.T) {
+	message := &runtimemodel.Message{Metadata: map[string]interface{}{
+		"skill_invocations": []map[string]interface{}{{"skill_id": "agent_execution", "tool_name": "shell_exec", "status": "awaiting_approval"}},
+	}}
+	request := toolGovernanceRejectionLLMRequest(message, runtimedto.ToolGovernanceDecisionRequest{Action: "reject"}, nil)
+	if content := messageContentText(request.Messages[1].Content); !strings.Contains(content, "Do not claim the original Shell never started") || !strings.Contains(content, "Only the frozen business tool was rejected") {
+		t.Fatalf("rejection lost stopped Shell state: %s", content)
+	}
+	message.Metadata = nil
+	request = toolGovernanceRejectionLLMRequest(message, runtimedto.ToolGovernanceDecisionRequest{Action: "reject"}, nil)
+	if strings.Contains(messageContentText(request.Messages[1].Content), "Platform CLI rejection state") {
+		t.Fatal("ordinary approvals were reclassified as CLI")
+	}
+}
 
 func TestApprovedOrdinaryGovernedSuccessDoesNotWriteExternalProviderSummary(t *testing.T) {
 	frozen := toolgovernance.NewFrozenInvocation(toolgovernance.FrozenInvocationRequest{

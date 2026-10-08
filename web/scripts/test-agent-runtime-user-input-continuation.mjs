@@ -75,6 +75,37 @@ function createCallbacks() {
 }
 
 const { createAgentDraftTransport, createAgentWebAppTransport } = loadTransportModule();
+assert.equal(
+  createAgentWebAppTransport('public').continueToolGovernanceDecision,
+  undefined,
+  'Public WebApps must not gain the console approval endpoint'
+);
+const approvalCallbacks = createCallbacks();
+const approvalPayload = { action: 'approve', remember_for_session: false };
+await createAgentDraftTransport('agent-123').continueToolGovernanceDecision(
+  'conversation/one',
+  'message two',
+  'corr?three',
+  approvalPayload,
+  approvalCallbacks
+);
+const approvalCall = draftSseCalls.pop();
+assert.equal(
+  approvalCall.url,
+  '/console/api/agents/agent-123/runtime/conversations/conversation%2Fone/messages/message%20two/tool-governance/corr%3Fthree/continue'
+);
+assert.strictEqual(approvalCall.options.body, approvalPayload);
+assert.equal(approvalCall.options.method, 'POST');
+approvalCall.options.onMessage({
+  data: { event: 'tool_governance_decision', data: { approval_status: 'approved' } },
+  id: 'approval-event',
+});
+assert.deepEqual(dispatchCalls.pop(), [
+  'tool_governance_decision',
+  { approval_status: 'approved' },
+  'approval-event',
+  approvalCallbacks,
+]);
 const payload = {
   answers: { environment: 'production', region: 'us-east-1' },
   surface: 'agent',
