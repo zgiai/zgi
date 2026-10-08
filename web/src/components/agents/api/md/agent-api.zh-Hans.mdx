@@ -626,6 +626,58 @@ Agent 的普通 JSON 成功响应统一为 `{ "code": "0", "message": "success",
 ---
 
 <Heading
+  url="/api/v1/agents/conversations/{conversation_id}/messages/{message_id}/tool-governance/{correlation_id}/continue"
+  method="POST"
+  title="确认或拒绝平台 CLI 调用"
+  name="#Continue-Agent-Tool-Governance"
+/>
+
+<Row>
+  <Col>
+    仅服务端准入的 Linux 平台 CLI 调用可能要求此审批，普通绑定工具仍为非交互授权。
+    保留原最终用户身份，从 `requires_approval=true` 的 `tool_governance_decision`
+    复制 `correlation_id`，不能使用工作流审批令牌或 Skill 用户输入续接接口。
+
+    <Properties>
+      <Property name="conversation_id / message_id" type="uuid" propKey="conversation_id">必填，原会话及等待消息。</Property>
+      <Property name="correlation_id" type="string" propKey="correlation_id">必填，冻结调用标识，最多 256 字符。</Property>
+      <Property name="Authorization" type="string" propKey="Authorization">必填，绑定同一应用的 Agent API Key。</Property>
+      <Property name="X-External-User-ID" type="string" propKey="X-External-User-ID">必填，原最终用户；现有 user 查询参数兼容方式含义相同。</Property>
+      <Property name="action" type="approve | reject" propKey="action">必填。approve 只执行一次冻结业务调用；reject 执行零次。</Property>
+      <Property name="reason" type="string" propKey="reason">可选，决策说明。</Property>
+      <Property name="remember_for_session" type="boolean" propKey="remember_for_session">默认 false，平台 CLI 不因此获得可复用审批。</Property>
+    </Properties>
+
+    返回原消息的 `text/event-stream`。确认重新校验原发布版本和当前资源权限，不能补足未绑定或
+    已撤销的权限。确认和拒绝均不重跑 Shell；重复请求恢复已有结果，结果不确定的写操作不自动重试。
+    关闭执行准入后仍可拒绝。Runtime Workspace 凭据不能调用此接口。
+  </Col>
+  <Col sticky>
+    <CodeGroup title="请求">
+
+    ```bash
+    curl --no-buffer '{apibase}/agents/conversations/{conversation_id}/messages/{message_id}/tool-governance/{correlation_id}/continue' \
+      --header 'Content-Type: application/json' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1' \
+      --data '{"action":"approve"}'
+    ```
+
+    </CodeGroup>
+    <CodeGroup title="响应" label="200 SSE">
+
+    ```text
+    event: tool_governance_decision
+    data: {"event":"tool_governance_decision","data":{"correlation_id":"frozen-call","decision":"allowed","requires_approval":false}}
+    ```
+
+    </CodeGroup>
+  </Col>
+</Row>
+
+---
+
+<Heading
   url="/api/v1/agents/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue"
   method="POST"
   title="回答 Skill 用户输入请求"
@@ -984,7 +1036,7 @@ data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-
 | `skill_call_end`           | 工具调用成功结束                            | 用相同 `invocation_id` 完成步骤，读取公开 `result`         | `skill_id`, `tool_name`, `invocation_id`, `result?`, `duration_ms?`, `status`                               |
 | `skill_call_error`         | 工具调用失败                                | 标记该调用失败并展示安全 `message`；模型仍可能继续回答     | `skill_id`, `tool_name`, `invocation_id`, `message?`, `error_code?`, `duration_ms?`, `status`               |
 | `skill_artifact_created`   | Skill 生成了可下载文件产物                  | 展示文件卡片；优先使用 `download_url`，并遵守 `expires_at` | 调用标识及 `artifact_id?`, `file_id?`, `filename?`, `mime_type?`, `size?`, `url?`, `download_url?`          |
-| `tool_governance_decision` | 已发布 Agent 根据绑定对工具执行做非交互授权 | 可展示允许/拒绝原因或只写入日志；绝不能弹出人工审批        | `correlation_id`, `decision`, `requires_approval=false`, `reason?`, `risk_level?`, `effect?`, `asset_type?` |
+| `tool_governance_decision` | 绑定工具或已准入平台 CLI 调用的授权决策 | 仅在 `requires_approval=true` 时展示确认，调用专用 tool-governance 续接，不走工作流审批 | `correlation_id`, `decision`, `requires_approval`, `reason?`, `risk_level?`, `effect?`, `asset_type?` |
 
 所有 `arguments`、`arguments_summary`、`result` 和 `governance` 都是公开摘要，不是稳定的 Provider 原始对象。客户端可以展示或记录，但不应依赖未在文档中声明的嵌套字段完成业务逻辑。
 
@@ -1050,16 +1102,16 @@ data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-
     资产操作标识和公开公开审计摘要。
   </Property>
   <Property name="correlation_id" type="string" propKey="correlation_id">
-    关联治理决定、工具调用和资产审计的标识；不是继续接口参数。
+    关联治理决定、工具调用和资产审计的标识；requires_approval 为 true 时用于专用 CLI 续接路径。
   </Property>
   <Property name="decision" type="string" propKey="decision">
     通常为允许或拒绝结果。拒绝表示工具没有执行，最终回答仍可能正常完成。
   </Property>
-  <Property name="requires_approval" type="false" propKey="requires_approval">
-    在已发布 Agent API 中固定为 `false`。
+  <Property name="requires_approval" type="boolean" propKey="requires_approval">
+    仅服务端准入的平台 CLI 交互调用可以为 true；普通工具调用为 false。
   </Property>
   <Property name="approval_every_invocation" type="boolean?" propKey="approval_every_invocation">
-    策略是否禁止把一次授权复用于后续调用；这是审计字段，不会让外部用户进入审批流。
+    策略是否禁止把一次授权复用于后续调用；平台 CLI 不能因此获得可复用会话授权。
   </Property>
   <Property name="reason / risk_level / effect / asset_type" type="string?" propKey="reason">
     可展示的治理原因、风险级别、预期外部副作用和受影响资产类别。
@@ -1307,7 +1359,7 @@ data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-
 | `user_input_requested` 且 `source=agent_workflow_question_answer` | `waiting_question` | 会话/消息 id、用户答案及可选 choice id | workflow continuation，`type=question_answer` |
 | 其他 `user_input_requested` | `waiting_question` | 会话/消息/request id、以问题 id 为键的 `answers` | Skill user-input continue |
 
-继续请求返回的仍是同一条消息的 SSE 流，可能再次等待。不要新建消息；持续处理到真正终态。工具治理对已发布 Agent 是非交互的，`tool_governance_decision.requires_approval` 固定为 `false`，不对应人工继续接口。
+继续请求返回的仍是同一条消息的 SSE 流，可能再次等待。不要新建消息；持续处理到真正终态。普通已发布工具仍为非交互授权；仅服务端准入的 Linux 平台 CLI 调用可通过 `tool_governance_decision.requires_approval=true` 要求专用 tool-governance 续接。审批不能补足资源权限，也不会重跑 Shell。
 
 ---
 
@@ -2228,6 +2280,75 @@ sample,42
 
   </Col>
 </Row>
+
+<Heading url="/api/v1/agents/memory/settings" method="GET" title="读取当前用户记忆设置" name="#Get-Agent-Memory-Settings" />
+
+<Row>
+  <Col>
+    使用原最终用户身份，设置不授予 Linux 或平台 CLI 权限。
+    <Properties>
+      <Property name="Authorization / X-External-User-ID" type="string" propKey="Authorization">必填，应用 API Key 和最终用户身份。</Property>
+      <Property name="memory_enabled / auto_capture_enabled" type="boolean" propKey="memory_enabled">当前用户的记忆和自动提取开关。</Property>
+      <Property name="settings_revision / memory_epoch" type="integer" propKey="settings_revision">设置并发版本和记忆代次。</Property>
+    </Properties>
+  </Col>
+  <Col sticky>
+    <CodeGroup title="请求">
+
+    ```bash
+    curl '{apibase}/agents/memory/settings' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+    <CodeGroup title="响应" label="200 JSON">
+
+    ```json
+    {"code":0,"data":{"memory_enabled":true,"auto_capture_enabled":false,"settings_revision":0,"memory_epoch":0}}
+    ```
+
+    </CodeGroup>
+  </Col>
+</Row>
+
+---
+
+<Heading url="/api/v1/agents/memory/settings" method="PATCH" title="更新当前用户记忆设置" name="#Update-Agent-Memory-Settings" />
+
+<Row>
+  <Col>
+    修改仍受已发布 Agent 配置限制，过期更新被拒绝。
+    <Properties>
+      <Property name="Authorization / X-External-User-ID" type="string" propKey="Authorization">必填，应用 API Key 和最终用户身份。</Property>
+      <Property name="expected_revision" type="integer" propKey="expected_revision">必填，读取所得 settings_revision。</Property>
+      <Property name="memory_enabled / auto_capture_enabled" type="boolean" propKey="memory_enabled">可选，用户记忆和自动提取开关。</Property>
+      <Property name="settings_revision / memory_epoch" type="integer" propKey="settings_revision">响应中的新版本和记忆代次。</Property>
+    </Properties>
+  </Col>
+  <Col sticky>
+    <CodeGroup title="请求">
+
+    ```bash
+    curl --request PATCH '{apibase}/agents/memory/settings' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1' \
+      --header 'Content-Type: application/json' \
+      --data '{"expected_revision":0,"memory_enabled":true,"auto_capture_enabled":false}'
+    ```
+
+    </CodeGroup>
+    <CodeGroup title="响应" label="200 JSON">
+
+    ```json
+    {"code":0,"data":{"memory_enabled":true,"auto_capture_enabled":false,"settings_revision":1,"memory_epoch":0}}
+    ```
+
+    </CodeGroup>
+  </Col>
+</Row>
+
+---
 
 ## JSON 错误响应
 

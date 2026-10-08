@@ -633,6 +633,62 @@ Normal Agent JSON success responses use `{ "code": "0", "message": "success", "d
 ---
 
 <Heading
+  url="/api/v1/agents/conversations/{conversation_id}/messages/{message_id}/tool-governance/{correlation_id}/continue"
+  method="POST"
+  title="Confirm or Reject a Platform CLI Call"
+  name="#Continue-Agent-Tool-Governance"
+/>
+
+<Row>
+  <Col>
+    Only server-admitted Linux platform CLI calls can require this approval. Ordinary
+    bound-tool calls remain non-interactive. Keep the original final-user identity and
+    copy `correlation_id` from `tool_governance_decision` with `requires_approval=true`.
+    Do not use workflow approval tokens or Skill user-input continuation.
+
+    <Properties>
+      <Property name="conversation_id / message_id" type="uuid" propKey="conversation_id">Required original conversation and waiting message.</Property>
+      <Property name="correlation_id" type="string" propKey="correlation_id">Required frozen invocation identifier, at most 256 characters.</Property>
+      <Property name="Authorization" type="string" propKey="Authorization">Required Agent API Key, bound to the same application.</Property>
+      <Property name="X-External-User-ID" type="string" propKey="X-External-User-ID">Required original final user; the existing user query fallback has the same meaning.</Property>
+      <Property name="action" type="approve | reject" propKey="action">Required. Approve executes the frozen business invocation once; reject executes none.</Property>
+      <Property name="reason" type="string" propKey="reason">Optional decision explanation.</Property>
+      <Property name="remember_for_session" type="boolean" propKey="remember_for_session">Default false. Does not grant reusable approval for platform CLI calls.</Property>
+    </Properties>
+
+    The response is `text/event-stream` for the original message. Confirmation rechecks
+    the original publication and current resource permissions; it cannot authorize an
+    unbound or revoked resource. Neither decision reruns the Shell. Duplicate decisions
+    recover the existing result, and uncertain writes are not automatically retried.
+    Rejection remains available after execution admission is disabled. Runtime Workspace
+    credentials cannot call this endpoint.
+  </Col>
+  <Col sticky>
+    <CodeGroup title="Request">
+
+    ```bash
+    curl --no-buffer '{apibase}/agents/conversations/{conversation_id}/messages/{message_id}/tool-governance/{correlation_id}/continue' \
+      --header 'Content-Type: application/json' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1' \
+      --data '{"action":"approve"}'
+    ```
+
+    </CodeGroup>
+    <CodeGroup title="Response" label="200 SSE">
+
+    ```text
+    event: tool_governance_decision
+    data: {"event":"tool_governance_decision","data":{"correlation_id":"frozen-call","decision":"allowed","requires_approval":false}}
+    ```
+
+    </CodeGroup>
+  </Col>
+</Row>
+
+---
+
+<Heading
   url="/api/v1/agents/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue"
   method="POST"
   title="Answer a Skill User-Input Request"
@@ -1006,7 +1062,7 @@ data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-
 | `skill_call_end`           | A tool invocation succeeds                                                          | Complete the matching `invocation_id` step and read the public `result`              | `skill_id`, `tool_name`, `invocation_id`, `result?`, `duration_ms?`, `status`                               |
 | `skill_call_error`         | A tool invocation fails                                                             | Mark the invocation failed and show the safe `message`; the model may still continue | `skill_id`, `tool_name`, `invocation_id`, `message?`, `error_code?`, `duration_ms?`, `status`               |
 | `skill_artifact_created`   | A Skill creates a downloadable file artifact                                        | Render a file card, prefer `download_url`, and honor `expires_at`                    | Invocation ids plus `artifact_id?`, `file_id?`, `filename?`, `mime_type?`, `size?`, `url?`, `download_url?` |
-| `tool_governance_decision` | The published Agent makes a non-interactive authorization decision for a bound tool | Optionally show or log the allow/deny reason; never open a human approval dialog     | `correlation_id`, `decision`, `requires_approval=false`, `reason?`, `risk_level?`, `effect?`, `asset_type?` |
+| `tool_governance_decision` | Authorization for a bound tool or an admitted platform CLI call | Show confirmation only when `requires_approval=true`; use the dedicated tool-governance continuation, not workflow approval | `correlation_id`, `decision`, `requires_approval`, `reason?`, `risk_level?`, `effect?`, `asset_type?` |
 
 `arguments`, `arguments_summary`, `result`, and `governance` are public summaries, not stable raw provider objects. They may be displayed or logged, but business logic must not depend on undocumented nested fields.
 
@@ -1075,19 +1131,19 @@ data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-
     Asset operation id and public audit summary.
   </Property>
   <Property name="correlation_id" type="string" propKey="correlation_id">
-    Correlates a governance decision, tool invocation, and asset audit. It is not a continuation
-    parameter.
+    Correlates a governance decision, tool invocation, and asset audit. When
+    requires_approval is true, use it in the dedicated CLI continuation path.
   </Property>
   <Property name="decision" type="string" propKey="decision">
     Usually an allow or deny decision. A denial means the tool did not run; the final answer may
     still complete normally.
   </Property>
-  <Property name="requires_approval" type="false" propKey="requires_approval">
-    Always `false` in the published Agent API.
+  <Property name="requires_approval" type="boolean" propKey="requires_approval">
+    True only for a server-authorized interactive platform CLI invocation. Ordinary tool calls use false.
   </Property>
   <Property name="approval_every_invocation" type="boolean?" propKey="approval_every_invocation">
     Whether policy forbids reusing one authorization for later invocations. This is an audit field;
-    it never puts the external user into an approval flow.
+    admitted CLI invocations cannot turn it into reusable session authorization.
   </Property>
   <Property name="reason / risk_level / effect / asset_type" type="string?" propKey="reason">
     A displayable decision reason, risk level, expected external side effect, and affected asset
@@ -1345,7 +1401,7 @@ Workflow events describe execution traces and pending interactions. Maintain the
 | `user_input_requested` with `source=agent_workflow_question_answer` | `waiting_question` | Conversation/message ids, answer, and optional choice id | Workflow continuation with `type=question_answer` |
 | Other `user_input_requested` | `waiting_question` | Conversation/message/request ids and `answers` keyed by question id | Skill user-input continuation |
 
-The continuation response is another SSE stream for the same message and may pause again. Do not create a new message; keep processing until a terminal status. Tool governance is non-interactive for a published Agent: `tool_governance_decision.requires_approval` is always `false` and has no human continuation endpoint.
+The continuation response is another SSE stream for the same message and may pause again. Do not create a new message; keep processing until a terminal status. Ordinary published tools remain non-interactive. For server-admitted Linux platform CLI calls only, `tool_governance_decision.requires_approval=true` uses the dedicated tool-governance continuation. Approval never grants missing resource permissions or reruns the Shell.
 
 ---
 
@@ -2300,6 +2356,86 @@ These two read-only endpoints are retained for clients that share integrations w
 
   </Col>
 </Row>
+
+<Heading
+  url="/api/v1/agents/memory/settings"
+  method="GET"
+  title="Get User Memory Settings"
+  name="#Get-Agent-Memory-Settings"
+/>
+
+<Row>
+  <Col>
+    Use the original final-user identity. Memory settings do not grant Linux or platform CLI access.
+    <Properties>
+      <Property name="Authorization / X-External-User-ID" type="string" propKey="Authorization">Required application API Key and final-user identity.</Property>
+
+      <Property name="memory_enabled / auto_capture_enabled" type="boolean" propKey="memory_enabled">Per-user memory and automatic capture switches; changes remain subject to the published configuration.</Property>
+      <Property name="settings_revision / memory_epoch" type="integer" propKey="settings_revision">Settings concurrency revision and memory generation in the response.</Property>
+    </Properties>
+  </Col>
+  <Col sticky>
+    <CodeGroup title="Request">
+
+    ```bash
+    curl '{apibase}/agents/memory/settings' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+    <CodeGroup title="Response" label="200 JSON">
+
+    ```json
+    {"code":0,"data":{"memory_enabled":true,"auto_capture_enabled":false,"settings_revision":0,"memory_epoch":0}}
+    ```
+
+    </CodeGroup>
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/memory/settings"
+  method="PATCH"
+  title="Update User Memory Settings"
+  name="#Update-Agent-Memory-Settings"
+/>
+
+<Row>
+  <Col>
+    Use the original final-user identity. Memory settings do not grant Linux or platform CLI access.
+    <Properties>
+      <Property name="Authorization / X-External-User-ID" type="string" propKey="Authorization">Required application API Key and final-user identity.</Property>
+      <Property name="expected_revision" type="integer" propKey="expected_revision">Required settings_revision from the last read; stale updates are rejected.</Property>
+      <Property name="memory_enabled / auto_capture_enabled" type="boolean" propKey="memory_enabled">Per-user memory and automatic capture switches; changes remain subject to the published configuration.</Property>
+      <Property name="settings_revision / memory_epoch" type="integer" propKey="settings_revision">Settings concurrency revision and memory generation in the response.</Property>
+    </Properties>
+  </Col>
+  <Col sticky>
+    <CodeGroup title="Request">
+
+    ```bash
+    curl --request PATCH '{apibase}/agents/memory/settings' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1' \
+      --header 'Content-Type: application/json' \
+      --data '{"expected_revision":0,"memory_enabled":true,"auto_capture_enabled":false}'
+    ```
+
+    </CodeGroup>
+    <CodeGroup title="Response" label="200 JSON">
+
+    ```json
+    {"code":0,"data":{"memory_enabled":true,"auto_capture_enabled":false,"settings_revision":1,"memory_epoch":0}}
+    ```
+
+    </CodeGroup>
+  </Col>
+</Row>
+
+---
 
 ## JSON Errors
 

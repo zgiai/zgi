@@ -1857,10 +1857,10 @@ components:
       type: object
       required: [memory_enabled, auto_capture_enabled, settings_revision, memory_epoch]
       properties:
-        memory_enabled: {type: boolean}
-        auto_capture_enabled: {type: boolean}
-        settings_revision: {type: integer, format: int64, minimum: 0}
-        memory_epoch: {type: integer, format: int64, minimum: 0}
+        memory_enabled: {type: boolean, description: Whether memory is enabled for this final user and published Agent.}
+        auto_capture_enabled: {type: boolean, description: Whether automatic memory capture is enabled for this final user.}
+        settings_revision: {type: integer, format: int64, minimum: 0, description: Optimistic concurrency revision for memory settings updates.}
+        memory_epoch: {type: integer, format: int64, minimum: 0, description: Memory generation used to invalidate earlier pending mutations after a clear.}
     MemorySettingsEnvelope:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'

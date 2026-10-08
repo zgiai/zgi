@@ -69,12 +69,27 @@ func TestAgentGovernanceContinuationIsRegisteredBehindAPIKeyAuthentication(t *te
 	if !found {
 		t.Fatal("production API router has no tool-governance continuation")
 	}
-	w := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/agents/conversations/"+uuid.NewString()+"/messages/"+uuid.NewString()+"/tool-governance/frozen/continue", strings.NewReader(`{"action":"approve"}`))
-	request.Header.Set("Content-Type", "application/json")
-	router.ServeHTTP(w, request)
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("unauthenticated governance route: %d %s", w.Code, w.Body)
+	for _, tc := range []struct {
+		name, body string
+		headers    map[string]string
+	}{
+		{name: "approve without credential", body: `{"action":"approve"}`},
+		{name: "reject without credential", body: `{"action":"reject"}`},
+		{name: "client cannot claim console identity", body: `{"action":"approve","source":"console","caller_type":"agent"}`,
+			headers: map[string]string{"X-External-User-ID": "user-a", "X-ZGI-Execution-Identity": `{"version":1,"entry":"console"}`}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/agents/conversations/"+uuid.NewString()+"/messages/"+uuid.NewString()+"/tool-governance/frozen/continue", strings.NewReader(tc.body))
+			request.Header.Set("Content-Type", "application/json")
+			for key, value := range tc.headers {
+				request.Header.Set(key, value)
+			}
+			router.ServeHTTP(w, request)
+			if w.Code != http.StatusUnauthorized {
+				t.Fatalf("unauthenticated governance route: %d %s", w.Code, w.Body)
+			}
+		})
 	}
 }
 
