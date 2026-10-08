@@ -249,3 +249,12 @@ race detection and vet; real isolated PostgreSQL migration idempotency, JSON
 constraints and model serializer/clear-and-reenable checks; frontend type-check
 and lint (73 existing warnings, no errors). No live application database was
 migrated. This is not an execution or dual-backend acceptance result.
+
+Operator Profile/Home approval resolution now lives in the shared execution
+capability. The Agent adapter preserves its existing public error code,
+configuration compatibility and diagnostics; new application adapters can use the
+same environment defaults without importing the Agent module. The shared resolver
+accepts only the application's enabled boolean, not client-selected environment
+settings. Existing Agent approval/publication tests and the shared runtime and
+DigitalHuman packages passed race detection and vet. This refactor does not enable
+new entries or grant DigitalHuman Shell access.
