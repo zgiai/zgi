@@ -216,8 +216,21 @@ jobs:
           go-version-file: api/go.mod
           cache-dependency-path: api/go.sum
 
-      - name: Install PostgreSQL client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Prepare PostgreSQL client
+        run: |
+          cat > "$RUNNER_TEMP/psql" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          exec docker exec \
+            -e PGHOST="${PGHOST:-}" \
+            -e PGPORT="${PGPORT:-}" \
+            -e PGUSER="${PGUSER:-}" \
+            -e PGPASSWORD="${PGPASSWORD:-}" \
+            -e PGDATABASE="${PGDATABASE:-}" \
+            '${{ job.services.postgres.id }}' psql "$@"
+          EOF
+          chmod +x "$RUNNER_TEMP/psql"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
       - name: Enable test database extensions
         run: docker exec '${{ job.services.postgres.id }}' psql -U postgres -d zgi_runtime_api_ci -v ON_ERROR_STOP=1 -c 'CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'
@@ -308,8 +321,26 @@ jobs:
             | tar -xz -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/ripgrep-14.1.1-x86_64-unknown-linux-musl" >> "$GITHUB_PATH"
 
-      - name: Install PostgreSQL client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Set up Python with virtual environment support
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Prepare PostgreSQL client
+        run: |
+          cat > "$RUNNER_TEMP/psql" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          exec docker exec \
+            -e PGHOST="${PGHOST:-}" \
+            -e PGPORT="${PGPORT:-}" \
+            -e PGUSER="${PGUSER:-}" \
+            -e PGPASSWORD="${PGPASSWORD:-}" \
+            -e PGDATABASE="${PGDATABASE:-}" \
+            '${{ job.services.postgres.id }}' psql "$@"
+          EOF
+          chmod +x "$RUNNER_TEMP/psql"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
       - name: Run sandbox delivery gate
         env:
