@@ -677,6 +677,8 @@ export interface AIChatErrorEventData {
   message_id?: string;
   message?: string;
   code?: string | number;
+  /** Stable catalog identity, e.g. llm.model.not_found. */
+  error_code?: string;
   params?: Record<string, unknown>;
   retryable?: boolean;
 }

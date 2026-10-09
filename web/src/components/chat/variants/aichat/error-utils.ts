@@ -8,6 +8,8 @@ import {
   type WorkflowBillingMessageOptions,
   type WorkflowTranslator,
 } from '@/utils/workflow/billing';
+import { applicationErrorCopy } from '@/services/application-error-i18n';
+import { isAIChatApplicationErrorCode } from '@/components/chat/variants/aichat/stream-error-code';
 import {
   classifyWorkflowRuntimeError,
   type WorkflowRuntimeErrorKind,
@@ -254,6 +256,22 @@ export function resolveAIChatErrorMessage(
       ? String(parsed.code).trim() || undefined
       : undefined);
   const isBilling = isWorkflowBillingErrorCode(billingCode);
+  // A stable catalog code (llm.model.not_found, ...) carries its own localized
+  // copy. It is used before the text heuristics, which would otherwise read a
+  // stored English diagnostic or the generic system error as a server failure.
+  if (!isBilling && isAIChatApplicationErrorCode(code)) {
+    const copy = applicationErrorCopy(code);
+    if (copy) {
+      return {
+        code,
+        title: copy.title,
+        description: copy.action,
+        isBilling: false,
+        kind: code.startsWith('llm.provider.') ? 'provider' : 'unknown',
+      };
+    }
+  }
+
   if (!isBilling) {
     const runtimeErrorCode = resolveAIChatRuntimeErrorCode(input?.code, rawMessage);
     if (runtimeErrorCode) {
