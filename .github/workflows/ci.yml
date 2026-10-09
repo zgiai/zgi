@@ -222,8 +222,8 @@ jobs:
           #!/usr/bin/env bash
           set -euo pipefail
           exec docker exec \
-            -e PGHOST="${PGHOST:-}" \
-            -e PGPORT="${PGPORT:-}" \
+            -e PGHOST=127.0.0.1 \
+            -e PGPORT=5432 \
             -e PGUSER="${PGUSER:-}" \
             -e PGPASSWORD="${PGPASSWORD:-}" \
             -e PGDATABASE="${PGDATABASE:-}" \
@@ -332,8 +332,8 @@ jobs:
           #!/usr/bin/env bash
           set -euo pipefail
           exec docker exec \
-            -e PGHOST="${PGHOST:-}" \
-            -e PGPORT="${PGPORT:-}" \
+            -e PGHOST=127.0.0.1 \
+            -e PGPORT=5432 \
             -e PGUSER="${PGUSER:-}" \
             -e PGPASSWORD="${PGPASSWORD:-}" \
             -e PGDATABASE="${PGDATABASE:-}" \
