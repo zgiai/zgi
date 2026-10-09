@@ -21,10 +21,10 @@ files and cleanup must remain available during an admission rollback.
 | --- | --- | --- |
 | P0 | Versioned identity, Worker negotiation, additive persistence, compatibility | Complete; unit, PostgreSQL, race and vet gates passed |
 | P1 | Shared execution factory, live authorization, end-user admission | Complete; shared factory, regression, race and vet gates passed |
-| P2 | Protected file ownership and authenticated preview/download | Implemented, including CLI business outputs; real entry acceptance remains P5 |
-| P3 | Published Agent and DigitalHuman interactive script integration | Implementation complete: published adapters, DigitalHuman opt-in UI and request-scoped tools; deployment acceptance remains P5 |
-| P4 | Published-resource CLI and frozen, idempotent approval continuation | Implementation and automated gates complete; real dual-backend acceptance remains P5 |
-| P5 | Real local/E2B entry acceptance and rollback verification | In progress; standard-Skill, approval, CLI billing, publication/live-access boundaries, retained-file revocation, browser delivery and admission rollback samples pass; second-login isolation remains open |
+| P2 | Protected file ownership and authenticated preview/download | Complete; automated gates and scoped dual-backend delivery acceptance passed |
+| P3 | Published Agent and DigitalHuman interactive script integration | Complete; published entry adapters and scoped real execution accepted |
+| P4 | Published-resource CLI and frozen, idempotent approval continuation | Complete; automated gates and real approval/billing boundaries accepted |
+| P5 | Real local/E2B entry acceptance and rollback verification | Complete for the scoped local candidates; real second-login isolation, account revocation, protected browser delivery and rollback gates passed; broader rollout remains closed |
 
 ## Identity contract
 
@@ -428,10 +428,10 @@ DigitalHuman continuation restores the sealed original published run; a
 rotated API credential is used for live authorization without rewriting that run
 or its final-user owner.
 
-The Agent published adapter still requires the current publication to match the
-invocation. Its replacement-publication continuation is not yet at parity with
-DigitalHuman and must not be advertised as accepted. That remaining behavior
-requires focused verification before P5 closeout.
+At the initial P4 audit, the Agent published adapter still required the current
+publication to match the invocation. The P5 frozen-publication correction and
+real acceptance recorded below close that limitation; it was not counted as
+accepted by the original P4 automated gate.
 
 Confirmation executes only the frozen business invocation; rejection executes
 none, including after compute admission is disabled or the invocation expires.
@@ -725,3 +725,75 @@ owned local candidate and their route returns 404 again. Candidate image digests
 published bindings and result bytes are unchanged. P5 remains open for the real
 second authenticated WebApp account matrix; API external-user tests do not
 substitute for that gate. No push, merge or broader entry admission was performed.
+
+### Second-login isolation and P5 closeout
+
+The remaining login-identity gate was completed with two real password-authenticated
+accounts in the same organization and workspace. The dedicated second account has
+ordinary member roles, not administrator privileges. No client-supplied identity,
+forged token or API external-user identifier substitutes for that login.
+
+Both local gVisor and E2B candidates passed the Agent and DigitalHuman WebApp pairs:
+
+- Account B uploads a distinct two-field input and runs the unchanged original PDF
+  script with its verified source hash. Each authenticated download contains the
+  exact 52-byte two-field result; A's original one-field results remain unchanged.
+- Both accounts receive 404 for the other's conversation, message history and
+  protected file. B's environment asserts A's output file is absent. Persisted
+  Bindings use B's actual account subject and separate application/conversation
+  identities, without fallback to the resource creator.
+- The real Worker returns each account's retained Job and output, but rejects
+  both cross-account directions and cross-application Job requests with 404.
+  These checks read existing Jobs; they do not start replacement Shell commands.
+- B cannot confirm or reject A's real frozen approvals. Existing business artifact
+  counts are unchanged. Earlier confirm-once/reject-zero and duplicate/no-Shell-
+  replay samples remain the positive side-effect proof.
+- Disabling B's account denies retained-file reads on both applications and
+  backends. Restoring it restores the exact original bytes. All temporary account
+  status changes are reverted; B remains an ordinary active member.
+
+The last check exposed a real JWT WebApp gap: token validation did not recheck
+account availability. WebApp JWT authentication now uses the existing shared
+account-status check before granting authenticated or anonymous-migration context.
+Banned, frozen, closed and missing accounts fail closed; UUID-only anonymous chat
+keeps its previous contract and receives no new Linux permissions. The Agent
+legacy banned-account response remains HTTP 400/code `201016`; DigitalHuman
+returns HTTP 401. This preserves established error contracts rather than treating
+every non-401 denial as success.
+
+Organization membership and public application access are distinct. Removing an
+organization-only grant does not revoke an independent public audience grant.
+Administrators must revoke the applicable audience/access grant or disable the
+account; organization membership changes must not be described as a global ban.
+
+The cross-account approval sample also exposed an error-classification defect:
+Agent rejection correctly stopped at caller-scoped lookup but reported a generic
+system error. It now emits the safe localized not-found message with existing
+SSE code `404001`, never the diagnostic cause. Confirmation may return HTTP 404
+before streaming; rejection may return HTTP 200 with a terminal SSE error.
+Clients must inspect the event, not treat the streaming HTTP status as approval.
+DigitalHuman emits its existing `digital_human.conversation.not_found` error.
+
+In the in-app browser, B logs in as a normal member, views its own protected
+result and saves the actual 52-byte file. Independent byte inspection confirms
+`Read 2 fields` followed by the original success line; SHA-256 is
+`f7c0f418c8f8c324cc52d53a3ce43acc4056d6e207fd8fba9b8a7f70b66a5694`.
+The previously recorded E2B saved-file proof remains valid. A missing Blob
+automation event is not used to negate an independently verified saved file.
+
+Go 1.26.2 middleware, account-status, Agent, DigitalHuman and production-route
+tests pass, with race checks for middleware and Agent and targeted vet. These
+focused checks supplement, rather than replace, the earlier PostgreSQL,
+frontend, publication, CLI billing, continuity, signed-file protection and
+eight-entry admission-rollback gates. No already-accepted office/media matrix
+was rerun. Raw credentials, identifiers, logs, screenshots and downloads stay
+outside Git in ignored local acceptance evidence.
+
+This closes P0–P5 for the agreed local candidate scope, not a general production
+rollout or M7/M8 certification. Only the owned candidate APIs were updated; prior
+containers and retained files/checkpoints remain available. Temporary Workers
+and the SSH-only transport are stopped after acceptance, with no queued/running
+Jobs. Application bindings, account access and admission settings are restored.
+No push, merge, external deployment or broader organization/entry admission was
+performed. Rollback still closes new execution/CLI admission without deleting
+user files or destructively reverting additive migrations.
