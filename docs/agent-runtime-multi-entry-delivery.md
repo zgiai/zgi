@@ -2,10 +2,12 @@
 
 ## Scope and rollout
 
-This work extends the existing conversation-owned Linux environment to authenticated
+The P0–P5 baseline extends the existing conversation-owned Linux environment to authenticated
 Agent WebApp/API and DigitalHuman interactive conversations. Anonymous chat,
 background tasks, channels and Runtime Workspace credentials do not gain Linux or
-platform CLI permissions. Application editors continue to configure only
+platform CLI permissions in that baseline. The background extension below adds
+DigitalHuman channel/task Linux execution separately; its acceptance status must
+not be inferred from P5. Application editors continue to configure only
 `execution_runtime.enabled`.
 
 Published Agent and DigitalHuman WebApps show tool execution status and duration
@@ -797,3 +799,137 @@ Jobs. Application bindings, account access and admission settings are restored.
 No push, merge, external deployment or broader organization/entry admission was
 performed. Rollback still closes new execution/CLI admission without deleting
 user files or destructively reverting additive migrations.
+
+## DigitalHuman channel/task extension
+
+Published Linux-enabled Agent and DigitalHuman WebApps require login, using the
+existing generic login flow. Previously issued anonymous sessions cannot execute
+against a Linux-enabled publication. Anonymous chat remains available only when
+both Linux and file upload are disabled in the published configuration.
+
+Agent and DigitalHuman authoring share the file-upload switch and document/image
+selector. Disabling hides the selector; re-enabling preserves the current draft
+selection. DigitalHuman keeps its existing policy representation: an explicit
+empty `allowed_file_types` disables uploads, while an omitted policy retains the
+default enabled behavior. Save, publish and published read-only previews use the
+same policy; public sessions do not read an unpublished draft.
+
+DigitalHuman background execution requires explicit organization admission for
+`digital_human:channel` or `digital_human:task` in
+`ZGI_AGENT_RUNTIME_ENTRY_ALLOWLIST_JSON`, in addition to the existing Linux flags,
+approved backend/Profile and published `execution_runtime.enabled`. Defaults do
+not enable these entries. Preserve existing allowlist entries when adding them.
+Background requests require the Worker release capability
+`background_execution_identity_version: 2`; the interactive version stays `1`.
+Unsupported Workers fail closed, without falling back to a creator account.
+
+Channel environments belong to the verified channel conversation and application,
+not the billing actor or a model-supplied user. Live installation, mapping,
+binding, publication and actor availability are checked before each tool call.
+New Linux scheduled actions receive a fresh task conversation; retries of the
+same accepted action reuse it. Existing historical task runs are not relabeled.
+Task cancellation, ownership and action/run correlation are checked live. Billing
+remains unchanged. Background Linux does not enable the platform CLI or invent
+interactive approval support; existing background business-tool rules remain.
+
+Apply versioned API migrations before accepting background file exports. The
+additive background-artifact constraint accepts the exact version-2 channel/task
+identity shapes, preserves version-1 and legacy files, and does not weaken the
+existing immutable-ownership trigger. A once schedule becomes lifecycle-completed
+at dispatch: only its still-queued/running correlated action remains authorized.
+Paused, archived, canceled and unrelated actions remain rejected. Shared scheduled
+tasks authorize the persisted confirmed principal without requiring an interactive
+actor; that principal is not used as the writable environment owner.
+
+Completed background runs use the existing protected file card directly in the
+console run drawer for authenticated preview/download. No separate `files` page
+is needed, and model-supplied URLs are ignored.
+
+Channel generated files use explicit adapter capabilities:
+
+- Feishu uploads and sends native file messages (nonempty files up to 30,000,000
+  bytes, at most eight files per delivery). The application needs the provider's
+  file upload and message-send permissions. Bodies are read sequentially, not as
+  one buffered batch.
+- Unadapted providers, empty files and files exceeding a provider's attachment
+  limit use direct download links from the existing file service, without a
+  frontend landing page or platform login. Configure a reachable `FILES_URL`
+  (or its existing internal fallback) for recipients. A verified delivery route
+  and tenant/file ownership are required before minting a grant; protected
+  runtime files additionally require exact frozen run ownership.
+  Channel fallback files use a purpose-bound channel-delivery HMAC, not a
+  generic ToolFile signature. Its server-controlled TTL defaults to 30 days and
+  is capped at 30 days and the original file expiry; permanent grants are
+  rejected. Set `CHANNEL_DELIVERY_FILE_TTL` in seconds to choose a shorter
+  platform-wide value. `FILES_ACCESS_TIMEOUT` remains unchanged for ordinary
+  file links.
+  Possession of a link permits download until expiry, including forwarding it.
+  Channel/application access is checked at issuance, not reauthenticated on each
+  bearer download; deleted or expired files are still rejected at read time.
+- Protected file ownership is checked against the exact frozen run, message,
+  application, workspace and execution identity. Generic legacy signatures still
+  cannot read protected artifacts or acquire a channel grant. Interactive Agent,
+  WebApp and API artifacts are not eligible for these grants. The direct endpoint
+  forces attachment delivery, never redirects to public storage, and returns
+  no-store responses. Historical unprotected channel files use the same
+  purpose-bound channel grant after tenant and delivery ownership are checked.
+  No file copy or ownership mutation is required.
+- Lack of attachment support selects links before sending. Native send failure
+  does not trigger link fallback. Partial or uncertain message delivery is
+  terminal/unknown, preventing automatic whole-batch retries and duplicate sends.
+  Disabling Linux creation does not revoke otherwise-authorized retained-file
+  downloads. Console authenticated reads continue to check application/account
+  access; already-issued channel bearer grants expire according to their TTL.
+
+Automated coverage includes background identity/capability negotiation, task
+conversation idempotency, live authorization and revocation, anonymous login
+gates, protected file ownership/downloads, native multipart/message protocol,
+link selection and partial-send handling. These are implementation gates, not
+real-provider delivery certification. The earlier P5 evidence applies only to
+its original interactive scope.
+
+### Focused candidate acceptance (2026-10-09)
+
+The owned local API/Web candidates and both test Workers were updated. In the
+in-app browser, document/image selection, disable/hide, re-enable/restore,
+save/reload and publish were verified. A Linux-enabled publication with uploads
+disabled still rejects anonymous session creation; the dedicated fixture was
+then published with both file types enabled again.
+
+Real scheduler-triggered once tasks, not just `run_now`, passed on gVisor and E2B.
+Each used `shell_exec` to write a synthetic JSON file and `workspace_export_file`
+to persist it. Independent authenticated HTTP downloads contained the exact
+backend-specific marker and numeric total `42`; both tools succeeded and the
+task work status completed. Anonymous file access was denied using the existing
+authentication error contract; mismatched run/file identifiers returned 404.
+Shared application task results remained readable by an authorized workspace
+member with application log access: these are not private user-task fixtures.
+Browser protected-file preview was verified; a native saved-download event was
+not captured, so that narrower browser assertion remains unverified.
+
+Acceptance exposed and repaired the scheduler's absent interactive actor, the
+once-schedule dispatch lifecycle and the legacy version-1-only artifact database
+constraint. Synthetic environments left by earlier attempts also reached the
+test Worker's two-binding capacity; they were suspended with retained checkpoints
+before retrying, rather than weakening admission. Final test Jobs were drained,
+all owned background bindings suspended and temporary Workers/SSH transport
+stopped. Retained files and previous containers were not deleted; the existing
+local API services were restored.
+
+Go 1.26.2 targeted API/Worker tests, vet, background authorization race checks and
+real PostgreSQL migration/constraint tests passed. Frontend focused tests, full
+lint, type-check and production build passed. Raw credentials, test identifiers,
+outputs and screenshots remain in ignored local evidence, not public docs.
+
+Real Feishu native delivery and an unadapted-provider direct-download delivery
+remain pending: this environment has no installed channel or specified test
+recipient. Adapter tests do not substitute for those two gates. No messages were
+sent to unspecified conversations, and no push, merge or external rollout was
+performed.
+
+The subsequent direct-download adjustment removed the file landing page and its
+metadata client. Background console cards now preview/download inline. Focused
+HTTP tests cover actual channel-link download, attachment headers, native
+selection, finite expiry, tampering, wrong file/delivery, generic-signature
+rejection, deleted files and interactive-file exclusion. Earlier browser landing
+page evidence above is historical, not acceptance of the revised direct link.
