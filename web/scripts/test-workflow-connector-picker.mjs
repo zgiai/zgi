@@ -145,6 +145,7 @@ assert.match(manager, /unavailableLabel:\s*connectorT\('status\.unavailable'\)/)
 assert.match(manager, /onRequestSwitch/);
 assert.match(manager, /setPendingConnectorSelection/);
 assert.match(manager, /picker\.authorization\.confirm/);
+assert.match(manager, /useConnectorUnavailableReferences/);
 assert.doesNotMatch(
   manager,
   /connectorService|attachTargetBinding|createTargetBinding/,

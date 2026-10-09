@@ -47,7 +47,11 @@ func BuiltinDefinitions() ([]Definition, error) {
 		}
 		mail = append(mail, d)
 	}
-	return append(append(append(definitions, feishu), messaging...), mail...), nil
+	mcp := GitHubMCPDefinition()
+	if err := Validate(mcp); err != nil {
+		return nil, fmt.Errorf("validate GitHub MCP definition: %w", err)
+	}
+	return append(append(append(append(definitions, feishu), messaging...), mail...), mcp), nil
 }
 
 func ValidateBuiltinPackage(definitions []Definition) error {

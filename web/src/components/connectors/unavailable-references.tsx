@@ -20,6 +20,15 @@ import type {
   ConnectorUnavailableReference,
 } from '@/services/types/connector';
 
+export function useConnectorUnavailableReferences(target: ConnectorTargetRef, enabled = true) {
+  return useQuery({
+    queryKey: ['connectors', 'unavailable-references', target],
+    queryFn: () => connectorService.getUnavailableReferences(target),
+    enabled: enabled && Boolean(target.id),
+    retry: false,
+  });
+}
+
 export interface ConnectorReferenceRepairProps {
   onReferenceCommand?: (command: ConnectorReferenceCommand) => void | Promise<void>;
   pendingReferenceCommands?: readonly ConnectorReferenceCommand[];
@@ -48,13 +57,7 @@ export function ConnectorUnavailableReferences({
   const t = useT('connectors');
   const locale = useLocale();
   const client = useQueryClient();
-  const key = ['connectors', 'unavailable-references', target];
-  const references = useQuery({
-    queryKey: key,
-    queryFn: () => connectorService.getUnavailableReferences(target),
-    enabled: enabled && Boolean(target.id),
-    retry: false,
-  });
+  const references = useConnectorUnavailableReferences(target, enabled);
   const [selection, setSelection] = useState<Record<string, string>>({});
   const [operation, setOperation] = useState<Record<string, string>>({});
   const [pending, setPending] = useState<string>();
@@ -155,11 +158,17 @@ export function ConnectorUnavailableReferences({
                 {targetLabel}
               </span>
             </div>
+            {!item.former_reference_id.startsWith('unconfigured:') ? (
+              <p className="text-xs text-muted-foreground">
+                {t('references.originalConnection', { connection: item.former_reference_id })}
+              </p>
+            ) : null}
             <p className="text-xs text-muted-foreground">
-              {t('references.originalConnection', { connection: item.former_reference_id })}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              {t(referenceReasonKey(item.reason_code))}
+              {t(
+                item.former_reference_id.startsWith('unconfigured:')
+                  ? 'references.reasonUnconfigured'
+                  : referenceReasonKey(item.reason_code)
+              )}
             </p>
             <p className="text-xs text-muted-foreground">
               {t(

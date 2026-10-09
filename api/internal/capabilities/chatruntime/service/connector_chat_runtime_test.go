@@ -137,6 +137,27 @@ func TestConnectorOnlyChatEntersNativeToolLoop(t *testing.T) {
 	}
 }
 
+func TestGitHubMCPBoundChatProjectsOnlyIssueReads(t *testing.T) {
+	definition := catalog.GitHubMCPDefinition()
+	snapshot := connectorruntimeauth.ChatCapabilitySnapshot{Capabilities: []connectorruntimeauth.ChatCapability{{
+		BindingID: uuid.New(), ConnectionID: uuid.New(), ConnectorID: core.Identifier(definition.ID),
+		Definition: definition, Operations: definition.Operations,
+	}}}
+	projected, err := projectConnectorOperations(&skills.ResolvedSkills{}, snapshot, catalog.SurfaceChat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, ok := projected.Get(skills.SkillConnectorRuntime)
+	if !ok || len(doc.Tools) != 2 {
+		t.Fatalf("GitHub MCP chat tools: %#v", doc.Tools)
+	}
+	for i, tool := range doc.Tools {
+		if tool.ProviderID != definition.ID || tool.ConnectorOperationID != definition.Operations[i].ID || !tool.ConnectorNative || tool.Name != definition.Operations[i].ToolName {
+			t.Fatalf("unexpected GitHub MCP projection: %#v", tool)
+		}
+	}
+}
+
 func TestPreparedConnectorProjectionRechecksDetachAtRunBoundary(t *testing.T) {
 	t.Parallel()
 

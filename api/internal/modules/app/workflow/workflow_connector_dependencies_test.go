@@ -34,6 +34,38 @@ func TestWorkflowDraftSelectionsRejectRetiredHandlesAndInvalidOperations(t *test
 		})
 	}
 }
+
+func TestWorkflowServiceSetConnectorCatalogEnablesConnectorValidation(t *testing.T) {
+	definitions, err := catalog.BuiltinDefinitions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	connectorCatalog, err := catalog.New(definitions...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &WorkflowService{executor: NewWorkflowExecutor()}
+	service.SetConnectorCatalog(connectorCatalog)
+
+	data := map[string]interface{}{
+		"provider_type": "connector",
+		"connector": map[string]interface{}{
+			"connection_id": uuid.NewString(),
+			"connector_id":  "github",
+			"operation_id":  "github.user.get",
+		},
+	}
+	graph := map[string]interface{}{
+		"nodes": []interface{}{map[string]interface{}{"id": "node", "data": data}},
+	}
+	rows, err := service.workflowConnectorBindingRows(t.Context(), &Workflow{}, graph, uuid.NewString())
+	if err != nil {
+		t.Fatalf("connector validation failed after catalog injection: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("binding row count = %d, want 1", len(rows))
+	}
+}
 func TestWorkflowPublishRequiresConfiguredNativeReference(t *testing.T) {
 	for _, data := range []map[string]interface{}{{"provider_type": "connector"}, {"provider_type": "connector", "connector_unavailable_ref": uuid.NewString()}, {"provider_type": "connector", "connector": map[string]interface{}{"connection_id": uuid.NewString()}}} {
 		if validateWorkflowConnectorNodesConfigured(map[string]interface{}{"nodes": []interface{}{map[string]interface{}{"id": "node", "data": data}}}) == nil {

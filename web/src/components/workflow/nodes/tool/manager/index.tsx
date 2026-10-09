@@ -48,6 +48,7 @@ import { workflowConnectorSelection } from './workflow-connector-selection';
 import ValueSourceEditor from '../../../common/value-source-editor';
 import { personalConnectionItems, usePersonalConnections } from '@/hooks/connectors/use-connectors';
 import type { ConnectorCatalogItem } from '@/services/types/connector';
+import { useConnectorUnavailableReferences } from '@/components/connectors/unavailable-references';
 
 import {
   useNodeData,
@@ -158,6 +159,7 @@ const ToolManager: React.FC<ToolManagerProps> = ({ id: nodeId, className, readOn
     connectionID: string;
     authorizationMode: 'ask_each_time' | 'direct';
   } | null>(null);
+  const [savingConnectorSelection, setSavingConnectorSelection] = React.useState(false);
   const localizedSetupConnector = connectorSetup
     ? localizeConnectorCatalogItem(connectorSetup.connector, locale)
     : undefined;
@@ -287,6 +289,13 @@ const ToolManager: React.FC<ToolManagerProps> = ({ id: nodeId, className, readOn
   const referenceCommands = useWorkflowStore(
     state => state.workflowData?.connector_reference_commands
   );
+  const needsReferenceLookup = Boolean(
+    nodeData?.connector_unavailable_ref || referenceCommands?.length
+  );
+  const unavailableReferences = useConnectorUnavailableReferences(
+    { type: 'workflow', id: workflowId, binding_instance_id: nodeId },
+    Boolean(showConnectorPicker && needsReferenceLookup && workflowId)
+  );
   const stageReferenceCommand = (command: ConnectorReferenceCommand) => {
     const state = useWorkflowStore.getState();
     if (!state.workflowData || readOnly) return;
@@ -302,31 +311,38 @@ const ToolManager: React.FC<ToolManagerProps> = ({ id: nodeId, className, readOn
       },
       isDirty: true,
     });
-    if (nodeData?.connector_unavailable_ref !== command.reference_id) return;
-    if (command.action === 'detach') {
-      updateNodeData({ connector: undefined, connector_unavailable_ref: undefined });
-      return;
-    }
-    if (command.action === 'replace' && command.connection_id) {
-      const connector = nodeData.connector;
-      if (!connector?.connector_id || !connector.operation_id) return;
-      updateNodeData({
-        connector: {
-          ...connector,
-          connection_id: command.connection_id,
-          ...(command.operation_id ? { operation_id: command.operation_id } : {}),
-        },
-        connector_unavailable_ref: undefined,
-      });
-    }
   };
-  const setConnectorConnection = (
+  const setConnectorConnection = async (
     connectionID: string,
     authorizationMode: 'ask_each_time' | 'direct' = directAuthorization ? 'direct' : 'ask_each_time'
   ) => {
     const operationID = toolDefinition?.connector_operation_id;
     if (!operationID || !connectorID || readOnly) {
       throw new Error('connector operation is unavailable');
+    }
+    const unavailableID = nodeData?.connector_unavailable_ref;
+    const stagedReferenceIDs = new Set(
+      (useWorkflowStore.getState().workflowData?.connector_reference_commands ?? []).map(
+        command => command.reference_id
+      )
+    );
+    if (unavailableID || stagedReferenceIDs.size > 0) {
+      const reference = unavailableReferences.data?.data.items.find(
+        item =>
+          (item.id === unavailableID || stagedReferenceIDs.has(item.id)) &&
+          item.status === 'needs_replacement' &&
+          item.target.binding_instance_id === nodeId
+      );
+      if (unavailableID && !reference) throw new Error('connector reference is unavailable');
+      if (reference) {
+        stageReferenceCommand({
+          reference_id: reference.id,
+          expected_revision: reference.revision,
+          action: 'replace',
+          connection_id: connectionID,
+          operation_id: operationID,
+        });
+      }
     }
     updateNodeData({
       connector: {
@@ -336,6 +352,7 @@ const ToolManager: React.FC<ToolManagerProps> = ({ id: nodeId, className, readOn
         operation_id: operationID,
         authorization_mode: authorizationMode,
       },
+      connector_unavailable_ref: undefined,
     });
   };
 
@@ -605,14 +622,22 @@ const ToolManager: React.FC<ToolManagerProps> = ({ id: nodeId, className, readOn
                   <Button
                     type="button"
                     size="sm"
-                    disabled={!pendingConnectorSelection?.connectionID || readOnly}
+                    disabled={
+                      !pendingConnectorSelection?.connectionID ||
+                      readOnly ||
+                      savingConnectorSelection ||
+                      (needsReferenceLookup && unavailableReferences.isFetching)
+                    }
                     onClick={() => {
                       if (!pendingConnectorSelection) return;
-                      setConnectorConnection(
+                      setSavingConnectorSelection(true);
+                      void setConnectorConnection(
                         pendingConnectorSelection.connectionID,
                         pendingConnectorSelection.authorizationMode
-                      );
-                      setShowConnectorPicker(false);
+                      )
+                        .then(() => setShowConnectorPicker(false))
+                        .catch(() => toast.error(connectorT('picker.actionFailed')))
+                        .finally(() => setSavingConnectorSelection(false));
                     }}
                   >
                     {connectorT('picker.authorization.confirm')}

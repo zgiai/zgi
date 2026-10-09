@@ -27,6 +27,7 @@ import (
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	automationdefinition "github.com/zgiai/zgi/api/internal/modules/automation/service/definition"
 	connectorbindings "github.com/zgiai/zgi/api/internal/modules/connectors/bindings"
+	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
 	quota_model "github.com/zgiai/zgi/api/internal/modules/quota/model"
@@ -300,6 +301,15 @@ func NewWorkflowServiceWithContentExtractor(repo WorkflowRepository, agentsRepo 
 
 func (s *WorkflowService) SetDiagnoser(diagnoser *diagnosis.Diagnoser) {
 	s.diagnoser = diagnoser
+}
+
+// SetConnectorCatalog provides the connector definitions used to validate and
+// execute connector-backed workflow nodes.
+func (s *WorkflowService) SetConnectorCatalog(catalog connectorexecution.DefinitionCatalog) {
+	if s == nil || s.executor == nil {
+		return
+	}
+	s.executor.connectorCatalog = catalog
 }
 
 // RegisterRunningWorkflow registers a cancel function for a running workflow

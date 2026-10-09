@@ -391,7 +391,7 @@ func TestConnectorToolDiscoveryIndependentOfLegacyExternalIntegrations(t *testin
 	if err := container.registerConnectorToolProviders(manager); err != nil {
 		t.Fatal(err)
 	}
-	for _, providerID := range []string{"github", "web-search"} {
+	for _, providerID := range []string{"github", "github-mcp", "web-search"} {
 		provider, err := manager.GetProvider(
 			context.Background(),
 			tools.ToolProviderTypeConnector,

@@ -28,6 +28,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	automationdefinition "github.com/zgiai/zgi/api/internal/modules/automation/service/definition"
+	connectorcatalog "github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
@@ -772,6 +773,7 @@ func newWorkflowRoutesTestRouterWithConversationAndAccountService(t *testing.T, 
 		OrganizationService:         workflowRoutesOrganizationService{},
 		LLMClient:                   struct{}{},
 		ToolEngine:                  struct{}{},
+		ConnectorCatalog:            newWorkflowRoutesConnectorCatalog(t),
 		GraphFlowService:            &graphflow.Service{},
 		PromptResolver:              workflowRoutesPromptService{},
 		AutomationDefinitionService: workflowRoutesAutomationDefinitionService{},
@@ -783,6 +785,15 @@ func newWorkflowRoutesTestRouterWithConversationAndAccountService(t *testing.T, 
 		ShortLinkService:            shortlinkcap.NewServiceWithDB(db),
 	})
 	return router, webAppID, userID, conversationID
+}
+
+func newWorkflowRoutesConnectorCatalog(t *testing.T) *connectorcatalog.Catalog {
+	t.Helper()
+	definitions, err := connectorcatalog.BuiltinDefinitions()
+	require.NoError(t, err)
+	catalog, err := connectorcatalog.New(definitions...)
+	require.NoError(t, err)
+	return catalog
 }
 
 type workflowRoutesAccountService struct{ interfaces.AccountService }
