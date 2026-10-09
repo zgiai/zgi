@@ -38,6 +38,26 @@ func streamErrorRetryable(code string) (retryable bool, known bool) {
 	return definition.Retryable, true
 }
 
+// streamErrorCatalogMessage renders the catalog's public message for a stable
+// application error code in the given locale. It reports false when the code is
+// unknown or the catalog has not been published, so callers keep their own
+// message.
+func streamErrorCatalogMessage(code string, locale appcatalog.Locale) (string, bool) {
+	catalog := applicationErrorCatalog.Load()
+	if catalog == nil || code == "" {
+		return "", false
+	}
+	parsed, err := apperror.ParseCode(code)
+	if err != nil {
+		return "", false
+	}
+	presentation, err := catalog.Present(parsed, locale, nil)
+	if err != nil || presentation.Message == "" {
+		return "", false
+	}
+	return presentation.Message, true
+}
+
 // CatalogDefinitions returns chat-runtime-owned product error definitions.
 func CatalogDefinitions() []appcatalog.Definition {
 	return nil

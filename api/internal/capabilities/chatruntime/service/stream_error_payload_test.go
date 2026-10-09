@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -332,5 +333,63 @@ func TestBuildStreamErrorPayloadMapsModelNotFoundAndNoProvider(t *testing.T) {
 		if got, ok := payload["retryable"]; !ok || got != tc.retryable {
 			t.Fatalf("%s: retryable = %#v, want %t from the catalog", tc.name, got, tc.retryable)
 		}
+	}
+}
+
+// An error without a product-specific message used to be published as the
+// fixed English "Internal server error" whatever Accept-Language said. It is
+// now the catalog message of its error_code in the caller's locale; product
+// messages are kept, and without a catalog the generic message stays.
+func TestBuildLocalizedStreamErrorPayloadRendersCatalogMessageInLocale(t *testing.T) {
+	catalog, err := appcatalog.New(
+		appcatalog.LocaleEnglishUS,
+		appcatalog.CodeInternal,
+		append(appcatalog.DefaultDefinitions(), llmerrors.CatalogDefinitions()...)...,
+	)
+	if err != nil {
+		t.Fatalf("compose catalog: %v", err)
+	}
+	SetApplicationErrorCatalog(catalog)
+	t.Cleanup(func() { SetApplicationErrorCatalog(nil) })
+
+	prepared := streamErrorTestPrepared()
+	unknownModel := fmt.Errorf("failed to select provider: %w", llmerrors.NewModelNotFoundErrorWithName("zzz-unknown-qa"))
+	want := func(locale appcatalog.Locale) string {
+		presentation, err := catalog.Present(llmerrors.AppCodeModelNotFound, locale, nil)
+		if err != nil {
+			t.Fatalf("present: %v", err)
+		}
+		return presentation.Message
+	}
+
+	zh := BuildLocalizedStreamErrorPayload(prepared, unknownModel, "", appcatalog.LocaleChineseSimplified)
+	en := BuildLocalizedStreamErrorPayload(prepared, unknownModel, "", appcatalog.LocaleEnglishUS)
+	if zh["message"] != want(appcatalog.LocaleChineseSimplified) || en["message"] != want(appcatalog.LocaleEnglishUS) {
+		t.Fatalf("messages = zh %#v / en %#v, want the catalog messages of llm.model.not_found", zh["message"], en["message"])
+	}
+	if zh["message"] == en["message"] || zh["message"] == response.ErrSystemError.Message {
+		t.Fatalf("zh-Hans message = %#v, want a localized catalog message", zh["message"])
+	}
+
+	// The locale carried on the context from Accept-Language is the one used.
+	ctx := WithStreamLocale(context.Background(), "zh-CN,zh;q=0.9,en;q=0.8")
+	if got := StreamLocale(ctx); got != appcatalog.LocaleChineseSimplified {
+		t.Fatalf("StreamLocale = %q, want zh-Hans", got)
+	}
+	if got := StreamLocale(WithStreamLocale(context.Background(), "")); got != "" {
+		t.Fatalf("StreamLocale without header = %q, want empty", got)
+	}
+
+	// A product-specific message is not replaced.
+	idle := BuildLocalizedStreamErrorPayload(prepared, ErrModelIdleTimeout, "", appcatalog.LocaleChineseSimplified)
+	if idle["message"] != aichatModelServiceTimeoutMessage {
+		t.Fatalf("idle timeout message = %#v, want the product message", idle["message"])
+	}
+
+	// Without a published catalog the generic message stays.
+	SetApplicationErrorCatalog(nil)
+	bare := BuildLocalizedStreamErrorPayload(prepared, unknownModel, "", appcatalog.LocaleChineseSimplified)
+	if bare["message"] != response.ErrSystemError.Message {
+		t.Fatalf("message without catalog = %#v, want %q", bare["message"], response.ErrSystemError.Message)
 	}
 }

@@ -668,6 +668,7 @@ func (h *Handler) chatForSurface(c *gin.Context, surface string) {
 	// Carry the transport request id into the runtime so a stream error frame
 	// can be correlated with the request that produced it.
 	streamCtx := runtimeservice.WithStreamRequestID(c.Request.Context(), c.GetHeader("X-Request-ID"))
+	streamCtx = runtimeservice.WithStreamLocale(streamCtx, c.GetHeader("Accept-Language"))
 
 	prepared, err := h.service.PrepareChat(streamCtx, scope, req)
 	if err != nil {
@@ -724,7 +725,7 @@ func writeChatChunk(c *gin.Context, prepared *runtimeservice.PreparedChat, chunk
 
 func writeChatError(c *gin.Context, prepared *runtimeservice.PreparedChat, err error) {
 	logger.WarnContext(c.Request.Context(), "aichat stream failed", "message_id", prepared.Message.ID.String(), err)
-	_ = writeSSE(c, "error", runtimeservice.BuildStreamErrorPayload(prepared, err, c.Writer.Header().Get("X-Request-ID")))
+	_ = writeSSE(c, "error", runtimeservice.BuildLocalizedStreamErrorPayload(prepared, err, c.Writer.Header().Get("X-Request-ID"), apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language"))))
 }
 
 func writeChatEnd(c *gin.Context, prepared *runtimeservice.PreparedChat, result *runtimeservice.ChatResult) {

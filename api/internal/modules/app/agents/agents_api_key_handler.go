@@ -13,6 +13,7 @@ import (
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/util"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
@@ -188,7 +189,7 @@ func (h *AgentsHandler) ChatAPIKeyAgent(c *gin.Context) {
 		if errors.Is(err, runtimeservice.ErrMessageStopped) {
 			status = runtimemodel.MessageStatusStopped
 		}
-		_ = writeAgentSSE(c, "error", runtimeservice.BuildStreamErrorPayload(prepared, err, c.Writer.Header().Get("X-Request-ID")))
+		_ = writeAgentSSE(c, "error", runtimeservice.BuildLocalizedStreamErrorPayload(prepared, err, c.Writer.Header().Get("X-Request-ID"), apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language"))))
 		_ = writeAgentSSE(c, "message_end", gin.H{
 			"conversation_id": prepared.Conversation.ID.String(),
 			"message_id":      prepared.Message.ID.String(),

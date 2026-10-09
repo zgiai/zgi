@@ -17,6 +17,7 @@ import (
 	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
 	"go.uber.org/zap"
@@ -794,7 +795,7 @@ func (s *service) finalizePreparedError(ctx context.Context, prepared *PreparedC
 	}
 	// The transport request id travels on the context from the HTTP edge; the
 	// catalog code stays the product word list the payload already publishes.
-	s.emitPreparedEvent(ctx, prepared, streamEventError, BuildStreamErrorPayload(prepared, cause, StreamRequestID(ctx)), eventCallback)
+	s.emitPreparedEvent(ctx, prepared, streamEventError, BuildLocalizedStreamErrorPayload(prepared, cause, StreamRequestID(ctx), StreamLocale(ctx)), eventCallback)
 	return nil
 }
 
@@ -1079,8 +1080,21 @@ func suppressClientStreamEvent(eventType string, payload map[string]interface{})
 // requestID is the transport request identity when the caller has one; it is
 // omitted for runtime-internal emissions that never crossed an HTTP boundary.
 func BuildStreamErrorPayload(prepared *PreparedChat, err error, requestID string) map[string]interface{} {
+	return BuildLocalizedStreamErrorPayload(prepared, err, requestID, "")
+}
+
+// BuildLocalizedStreamErrorPayload is BuildStreamErrorPayload with the caller's
+// locale. An error without a product-specific message is described by the
+// catalog entry of its error_code in that locale instead of the fixed English
+// "Internal server error"; the zero Locale uses the catalog's fallback language.
+func BuildLocalizedStreamErrorPayload(prepared *PreparedChat, err error, requestID string, locale appcatalog.Locale) map[string]interface{} {
 	message := publicAichatErrorMessage(err)
 	errorCode := stableAichatErrorCode(err)
+	if _, _, structured := publicAichatStructuredError(err); !structured {
+		if catalogMessage, ok := streamErrorCatalogMessage(errorCode, locale); ok {
+			message = catalogMessage
+		}
+	}
 	payload := map[string]interface{}{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
