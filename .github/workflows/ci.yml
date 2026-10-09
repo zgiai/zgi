@@ -321,11 +321,6 @@ jobs:
             | tar -xz -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/ripgrep-14.1.1-x86_64-unknown-linux-musl" >> "$GITHUB_PATH"
 
-      - name: Set up Python with virtual environment support
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-
       - name: Run sandbox delivery gate
         env:
           CGO_ENABLED: '1'
