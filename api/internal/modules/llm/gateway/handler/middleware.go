@@ -24,9 +24,12 @@ func LLMAPIKeyAuthMiddleware(apiKeyRepo apikeyrepo.APIKeyRepository, projectors 
 		projector = projectors[0]
 	}
 	return func(c *gin.Context) {
-		apiKey, errCode, ok := extractGatewayAPIKey(c)
+		apiKey, _, ok := extractGatewayAPIKey(c)
 		if !ok {
-			abortWithProtocolError(c, invalidAPIKeyProtocolError(errCode))
+			// A missing or conflicting key header is answered like an unknown
+			// key: the catalog's llm.api_key.invalid message, in the caller's
+			// language.
+			abortWithProtocolError(c, localizedInvalidAPIKeyProtocolError(c, projector))
 			return
 		}
 
