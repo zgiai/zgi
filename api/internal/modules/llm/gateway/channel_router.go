@@ -730,7 +730,11 @@ func (r *ChannelRouter) filterCandidateRoutes(
 		return nil, err
 	}
 	if len(validRoutes) == 0 {
-		return nil, fmt.Errorf("%w: no routable channel found for model %s", ErrProviderUnavailable, modelName)
+		// The model exists but no enabled route can serve it: no provider is
+		// configured for it, the same outcome Console publishes as
+		// llm.provider.none_available. ErrProviderUnavailable is kept for a
+		// provider that is configured but failing.
+		return nil, fmt.Errorf("%w: no routable channel found for model %s", ErrNoProviderAvailable, modelName)
 	}
 	return validRoutes, nil
 }
