@@ -15,6 +15,7 @@ import {
 } from '@/components/connectors/runtime/connector-runtime-confirmation-card';
 import { submitConnectorRuntimeDecision } from '@/components/connectors/runtime/connector-runtime-transport';
 import { parseDigitalHumanRunConnectorConfirmation } from '@/components/digital-human/digital-human-run-confirmation-presentation';
+import { DigitalHumanBackgroundRunFiles } from './digital-human-background-run-files';
 import {
   digitalHumanRunApprovalReceipt,
   isActiveDigitalHumanRunStatus,
@@ -157,7 +158,9 @@ export function DigitalHumanRunDetailDrawer({
           discardWorkflowApprovalStream
         );
         await Promise.all([
-          queryClient.invalidateQueries({ queryKey: DIGITAL_HUMAN_KEYS.run(digitalHumanId, runId) }),
+          queryClient.invalidateQueries({
+            queryKey: DIGITAL_HUMAN_KEYS.run(digitalHumanId, runId),
+          }),
           queryClient.invalidateQueries({
             queryKey: DIGITAL_HUMAN_KEYS.runRuntimeLog(digitalHumanId, runId),
           }),
@@ -167,14 +170,7 @@ export function DigitalHumanRunDetailDrawer({
         setWorkflowApprovalPending(false);
       }
     },
-    [
-      digitalHumanId,
-      queryClient,
-      run,
-      runId,
-      workflowApproval,
-      workflowApprovalForm,
-    ]
+    [digitalHumanId, queryClient, run, runId, workflowApproval, workflowApprovalForm]
   );
 
   return (
@@ -241,7 +237,9 @@ export function DigitalHumanRunDetailDrawer({
               </Button>
             </div>
           </div>
-        ) : null
+        ) : (
+          <DigitalHumanBackgroundRunFiles digitalHumanId={digitalHumanId} run={run} />
+        )
       }
     />
   );

@@ -2543,15 +2543,11 @@ const messages = {
     },
     files: {
       title: 'Allow file upload',
-      description: 'When enabled, users can upload documents or images for the Agent to analyze.',
+      description: 'Allow users to upload documents or images.',
     },
     execution: {
-      title: 'Enable isolated Linux environment',
-      description: 'Available to console Agents only. The platform manages the environment configuration.',
-      enabledSummary: 'Scripts and file processing are allowed in the isolated Linux environment.',
-      disabledSummary: 'The isolated Linux environment is disabled.',
-      platformManagedSummary: 'The deployment controls the Profile, network, dependencies, and workspace.',
-      lifecycleSummary: 'Compute is released after 30 minutes of idle time; files follow the platform retention policy.',
+      title: 'Enable Linux environment',
+      description: 'Run scripts and process files in a platform-managed environment.',
     },
     memory: {
       agentTitle: 'Memory',

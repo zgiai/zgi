@@ -2379,15 +2379,11 @@ const messages: AgentsMessages = {
     },
     files: {
       title: '允许文件上传',
-      description: '开启后，用户可以向智能体上传文档或图片进行分析。',
+      description: '允许用户上传文档或图片。',
     },
     execution: {
-      title: '启用隔离 Linux 环境',
-      description: '仅控制台智能体可用。环境配置由平台统一管理。',
-      enabledSummary: '已允许在隔离 Linux 环境中运行脚本和处理文件。',
-      disabledSummary: '未启用隔离 Linux 环境。',
-      platformManagedSummary: 'Profile、网络、依赖和工作目录由部署配置统一决定。',
-      lifecycleSummary: '环境空闲 30 分钟后释放，工作文件按平台保留策略处理。',
+      title: '启用 Linux 环境',
+      description: '运行脚本、处理文件，环境由平台管理。',
     },
     memory: {
       addCustomSlot: '自定义记忆',

@@ -97,6 +97,7 @@ export interface WebAppWorkflowConfig {
   features: WebAppFeatures;
   config: WebAppWorkflowMeta;
   agent_config?: {
+    login_required?: boolean;
     agent_memory_enabled?: boolean;
     file_upload_enabled?: boolean;
     file_upload_policy?: { allowed_file_types: Array<'document' | 'image'> };

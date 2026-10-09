@@ -46,7 +46,7 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
 import { Pagination } from '@/components/ui/pagination';
 import { Switch } from '@/components/ui/switch';
-import { FileUploadTypeSelector } from '@/components/chat/file-upload-type-selector';
+import { PolicyFileUploadSettings } from '@/components/chat/file-upload-settings';
 import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
@@ -531,7 +531,7 @@ function ConfigurationEditor({
               disabled={!editingEnabled}
             />
             <DigitalHumanResourceBindings id={id} />
-            <div className="my-4"><FileUploadTypeSelector value={previewVersion ? previewVersion.file_upload_policy : fileUploadPolicy} onChange={setFileUploadPolicy} disabled={!editingEnabled} /></div>
+            <div className="my-4"><PolicyFileUploadSettings value={previewVersion ? previewVersion.file_upload_policy : fileUploadPolicy} onChange={setFileUploadPolicy} disabled={!editingEnabled} /></div>
           </div>
         </section>
       </div>

@@ -213,7 +213,7 @@ export function DigitalHumanChat({ id }: { id: string }) {
           requireModel={false}
           showMemoryToggle={false}
           forcedUseMemory={false}
-          enableUpload
+          enableUpload={published?.file_upload_policy == null || published.file_upload_policy.allowed_file_types.length > 0}
           fileUploadPolicy={published?.file_upload_policy}
           uploadScope={{ type: 'console' }}
           showFileLibraryPicker={false}

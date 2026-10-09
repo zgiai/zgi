@@ -474,7 +474,7 @@ const messages = {
   preferences: {
     linuxEnvironment: 'Enable Linux execution environment',
     linuxEnvironmentDescription:
-      'Run scripts and process files in isolated interactive sessions when enabled by your administrator. Publish changes to apply them to WebApp and API. Anonymous users, scheduled tasks, and channels are not supported.',
+      'Run scripts and process files in a platform-managed environment.',
     title: 'Settings',
     description:
       'Control channel feedback and other runtime preferences without changing this digital human’s identity.',

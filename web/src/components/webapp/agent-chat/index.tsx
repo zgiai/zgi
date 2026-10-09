@@ -69,8 +69,9 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
   const agentConfig = config.agent_config;
   const memoryEnabled = Boolean(agentConfig?.agent_memory_enabled);
   const supportsVision = Boolean(agentConfig?.supports_vision);
-  const requiresLoginForMemory =
-    memoryEnabled && isAuthInitialized && !isAuthLoading && !isAuthenticated;
+  const requiresLogin =
+    Boolean(agentConfig?.login_required ?? (memoryEnabled || agentConfig?.file_upload_enabled)) &&
+    isAuthInitialized && !isAuthLoading && !isAuthenticated;
   const canUseFiles = Boolean(agentConfig?.file_upload_enabled && isAuthenticated);
   const homeTitle = agentConfig?.home_title || t('agentChat.defaultHomeTitle');
   const inputPlaceholder = agentConfig?.input_placeholder || t('chat.enterCommand');
@@ -92,7 +93,7 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
   const uploadScope = useMemo(() => ({ type: 'webapp' as const, webAppId }), [webAppId]);
   const controller = useAIChatController({ transport, requireModel: false });
   const modelPrecheck = usePublishedAgentModelPrecheck(webAppId, {
-    enabled: !requiresLoginForMemory,
+    enabled: !requiresLogin,
   });
   const modelPrecheckWarnings = visibleAgentModelPrecheckWarnings(modelPrecheck.data);
   const handleBeforeSend = useCallback(
@@ -147,7 +148,7 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
   }, [initController, startNewConversation]);
 
   useEffect(() => {
-    if (requiresLoginForMemory) return;
+    if (requiresLogin) return;
     if (lastInitializedConversationIdRef.current === conversationIdParam) return;
     lastInitializedConversationIdRef.current = conversationIdParam;
     routeHandoffRef.current = conversationIdParam
@@ -168,7 +169,7 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
     ) {
       startNewConversationRef.current();
     }
-  }, [activeConversationId, conversationIdParam, requiresLoginForMemory]);
+  }, [activeConversationId, conversationIdParam, requiresLogin]);
 
   useEffect(() => {
     const decision = resolveConversationRouteSync({
@@ -220,7 +221,7 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
     replaceConversationRoute(null, 'draft-persistence');
   }, [replaceConversationRoute]);
 
-  if (requiresLoginForMemory) {
+  if (requiresLogin) {
     return (
       <div className="flex h-full w-full items-center justify-center px-4">
         <div className="flex max-w-md flex-col items-center text-center">
@@ -235,9 +236,6 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
             />
           </div>
           <h1 className="text-lg font-semibold">{t('agentChat.memoryLoginRequiredTitle')}</h1>
-          <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            {t('agentChat.memoryLoginRequiredDescription')}
-          </p>
           <Button className="mt-5 gap-2" onClick={handleLogin}>
             <LogIn className="size-4" />
             {t('header.login')}

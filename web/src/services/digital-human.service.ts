@@ -58,6 +58,15 @@ class DigitalHumanService extends BaseService {
     super({ basePath: '/console/api', endpoint: 'main' });
   }
 
+  downloadBackgroundFile(id: string, runId: string, fileId: string, signal?: AbortSignal) {
+    return this.request<Blob>(
+      'get',
+      `/digital-humans/${id}/runs/${runId}/files/${fileId}`,
+      undefined,
+      { responseType: 'blob', signal }
+    );
+  }
+
   list(params?: {
     page?: number;
     page_size?: number;

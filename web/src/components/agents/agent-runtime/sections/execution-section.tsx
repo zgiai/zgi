@@ -33,24 +33,17 @@ export function AgentRuntimeExecutionSection({
       open={open}
       onToggle={onToggleSection}
     >
-      <div className="space-y-3 rounded-md border p-3">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="text-sm font-medium">{t('execution.title')}</div>
-            <p className="text-xs text-muted-foreground">{t('execution.description')}</p>
-          </div>
-          <Switch
-            checked={config.enabled}
-            disabled={readOnly}
-            aria-label={t('execution.title')}
-            onCheckedChange={enabled => onChange({ ...config, enabled })}
-          />
+      <div className="flex items-center justify-between gap-3 rounded-md border p-3">
+        <div>
+          <div className="text-sm font-medium">{t('execution.title')}</div>
+          <p className="text-xs text-muted-foreground">{t('execution.description')}</p>
         </div>
-        <div className="space-y-1 text-xs text-muted-foreground">
-          <p>{config.enabled ? t('execution.enabledSummary') : t('execution.disabledSummary')}</p>
-          <p>{t('execution.platformManagedSummary')}</p>
-          <p>{t('execution.lifecycleSummary')}</p>
-        </div>
+        <Switch
+          checked={config.enabled}
+          disabled={readOnly}
+          aria-label={t('execution.title')}
+          onCheckedChange={enabled => onChange({ ...config, enabled })}
+        />
       </div>
     </RuntimeSection>
   );

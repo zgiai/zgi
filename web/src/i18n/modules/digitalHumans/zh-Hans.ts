@@ -440,7 +440,7 @@ const messages: DigitalHumansMessages = {
   preferences: {
     linuxEnvironment: '启用 Linux 执行环境',
     linuxEnvironmentDescription:
-      '在管理员允许的交互会话中隔离运行脚本、处理文件。修改发布后应用于 WebApp 和 API；匿名用户、定时任务和消息渠道不支持。',
+      '运行脚本、处理文件，环境由平台管理。',
     title: '设置',
     description: '单独管理渠道反馈等运行偏好，不改变数字人的身份与人设。',
     channelResponseTitle: '渠道回复体验',

@@ -1,7 +1,6 @@
 'use client';
 
-import { Switch } from '@/components/ui/switch';
-import { FileUploadTypeSelector } from '@/components/chat/file-upload-type-selector';
+import { FileUploadSettings } from '@/components/chat/file-upload-settings';
 import type { FileUploadSelection } from '@/services/upload.service';
 import { useT } from '@/i18n';
 import { RuntimeSection } from '../runtime-section';
@@ -35,18 +34,13 @@ export function AgentRuntimeFileSection({
       open={open}
       onToggle={onToggleSection}
     >
-      <div className="flex items-center justify-between rounded-md border p-3">
-        <div>
-          <div className="text-sm font-medium">{t('files.title')}</div>
-          <div className="text-xs text-muted-foreground">{t('files.description')}</div>
-        </div>
-        <Switch
-          checked={fileUploadEnabled}
-          disabled={readOnly}
-          onCheckedChange={onChangeFileUploadEnabled}
-        />
-      </div>
-      {fileUploadEnabled ? <div className="mt-3"><FileUploadTypeSelector value={fileUploadPolicy} onChange={onChangeFileUploadPolicy} disabled={readOnly} /></div> : null}
+      <FileUploadSettings
+        enabled={fileUploadEnabled}
+        value={fileUploadPolicy}
+        onChangeEnabled={onChangeFileUploadEnabled}
+        onChange={onChangeFileUploadPolicy}
+        disabled={readOnly}
+      />
     </RuntimeSection>
   );
 }
