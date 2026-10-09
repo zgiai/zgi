@@ -59,33 +59,45 @@ func prepareSessionPythonEnvironment(ctx context.Context, home string, uid, gid 
 			return errors.New("session Python virtual environment is not a directory")
 		}
 		python := filepath.Join(venv, "bin", "python")
+		// A venv created without --copies may expose the interpreter as a
+		// symlink to the profile runtime, so follow this path when checking
+		// completeness. The venv directory itself is still checked with Lstat.
 		pythonInfo, statErr := os.Stat(python)
-		if statErr != nil || !pythonInfo.Mode().IsRegular() {
-			return errors.New("session Python virtual environment is incomplete")
+		if statErr == nil && pythonInfo.Mode().IsRegular() {
+			return nil
+		}
+		if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+			return statErr
+		}
+		// A failed or interrupted venv creation can leave a directory that
+		// passes the parent check but cannot run Python. Remove that incomplete
+		// state while the caller holds the per-backend preparation lock.
+		if removeErr := os.RemoveAll(venv); removeErr != nil {
+			return fmt.Errorf("remove incomplete session Python virtual environment: %w", removeErr)
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
-	} else {
-		if err := os.MkdirAll(home, 0o700); err != nil {
-			return err
-		}
-		python := strings.TrimSpace(os.Getenv("ZGI_RUNTIME_AGENT_PYTHON"))
-		if python == "" {
-			python = "python3"
-		}
-		command := exec.CommandContext(ctx, python, "-m", "venv", "--copies", "--system-site-packages", venv)
-		if uid != 0 && os.Geteuid() == 0 {
-			// The Home directory is Job-controlled. Never run Python preparation
-			// or recursively chown its contents as root: a concurrent Job could
-			// swap a file for a link between inspection and mutation.
-			command = exec.CommandContext(ctx, "/usr/bin/setpriv", "--no-new-privs", "--inh-caps=-all", "--ambient-caps=-all", "--", python,
-				"-m", "venv", "--copies", "--system-site-packages", venv)
-			command.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uid, Gid: gid}}
-		}
-		output, runErr := command.CombinedOutput()
-		if runErr != nil {
-			return fmt.Errorf("create virtual environment: %w: %s", runErr, limitPackageOutput(string(output)))
-		}
+	}
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		return err
+	}
+	python := strings.TrimSpace(os.Getenv("ZGI_RUNTIME_AGENT_PYTHON"))
+	if python == "" {
+		python = "python3"
+	}
+	command := exec.CommandContext(ctx, python, "-m", "venv", "--copies", "--system-site-packages", venv)
+	if uid != 0 && os.Geteuid() == 0 {
+		// The Home directory is Job-controlled. Never run Python preparation
+		// or recursively chown its contents as root: a concurrent Job could
+		// swap a file for a link between inspection and mutation.
+		command = exec.CommandContext(ctx, "/usr/bin/setpriv", "--no-new-privs", "--inh-caps=-all", "--ambient-caps=-all", "--", python,
+			"-m", "venv", "--copies", "--system-site-packages", venv)
+		command.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uid, Gid: gid}}
+	}
+	output, runErr := command.CombinedOutput()
+	if runErr != nil {
+		_ = os.RemoveAll(venv)
+		return fmt.Errorf("create virtual environment: %w: %s", runErr, limitPackageOutput(string(output)))
 	}
 	return nil
 }

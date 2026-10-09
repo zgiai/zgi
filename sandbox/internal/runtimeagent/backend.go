@@ -80,6 +80,7 @@ type Backend struct {
 	packageReplayComplete     bool
 	packageLedgerMu           sync.Mutex
 	languageLedgerMu          sync.Mutex
+	pythonEnvironmentMu       sync.Mutex
 	languageLedgerVerified    bool
 	packageQueryPath          string // Empty uses the fixed in-sandbox dpkg-query binary.
 	maxUploadBytes            int64
@@ -273,6 +274,10 @@ func (b *Backend) Close() error {
 		_ = b.egress.Close()
 	}
 	b.packageInstalls.Wait()
+	// Session Python environments are created lazily by StartJob. Wait for an
+	// in-flight preparation before closing the workspace that contains them.
+	b.pythonEnvironmentMu.Lock()
+	b.pythonEnvironmentMu.Unlock()
 	return b.workspace.Close()
 }
 
@@ -366,7 +371,7 @@ func (b *Backend) StartJob(ctx context.Context, _ agentexecution.Allocation, spe
 		if err != nil {
 			return nil, err
 		}
-		if err := prepareSessionPythonEnvironment(ctx, home, b.jobUID, b.jobGID); err != nil {
+		if err := b.prepareSessionPythonEnvironment(ctx, home, b.jobUID, b.jobGID); err != nil {
 			return nil, fmt.Errorf("prepare session Python environment: %w", err)
 		}
 		venv := filepath.Join(home, ".venv")
@@ -464,6 +469,19 @@ func (b *Backend) StartJob(ctx context.Context, _ agentexecution.Allocation, spe
 	}
 	b.jobs[spec.JobID] = trackedJob{specHash: hash, running: running}
 	return running, nil
+}
+
+func (b *Backend) prepareSessionPythonEnvironment(ctx context.Context, home string, uid, gid uint32) error {
+	b.pythonEnvironmentMu.Lock()
+	defer b.pythonEnvironmentMu.Unlock()
+
+	b.mu.Lock()
+	closed := b.closed
+	b.mu.Unlock()
+	if closed {
+		return agentexecution.ErrBackendUnavailable
+	}
+	return prepareSessionPythonEnvironment(ctx, home, uid, gid)
 }
 
 func (b *Backend) executionReady() error {
