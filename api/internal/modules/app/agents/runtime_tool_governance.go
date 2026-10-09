@@ -8,6 +8,8 @@ import (
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/pkg/apperror"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
@@ -92,9 +94,20 @@ func (h *AgentsHandler) continueRuntimeToolGovernance(c *gin.Context, runtimeCtx
 	}
 	logger.WarnContext(c.Request.Context(), "agent tool governance continuation failed",
 		"conversation_id", conversationID.String(), "message_id", messageID.String(), err)
+	failure := response.ErrSystemError
+	appCode := appcatalog.CodeInternal
+	if errors.Is(err, runtimeservice.ErrNotFound) {
+		failure = response.ErrNotFound
+		appCode = appcatalog.CodeResourceNotFound
+	}
+	message := failure.Message
+	if h.appErrorProjector != nil {
+		locale, _ := appcatalog.ParseLocale(c.GetHeader("Accept-Language"))
+		message = h.appErrorProjector.Project(apperror.Wrap(err, appCode), locale).Presentation.Message
+	}
 	_ = writeAgentSSEEvent(c, "", "error", gin.H{
 		"conversation_id": conversationID.String(), "message_id": messageID.String(),
-		"message": response.ErrSystemError.Message, "code": response.ErrSystemError.Code,
+		"message": message, "code": failure.Code,
 	})
 }
 

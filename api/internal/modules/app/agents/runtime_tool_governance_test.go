@@ -2,6 +2,7 @@ package agents
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,7 +14,58 @@ import (
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
+
+func TestGovernanceContinuationClassifiesScopedDenialWithoutLeakingCause(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	productCatalog, err := appcatalog.NewDefault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	projector, err := apptransport.NewProjector(productCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range []string{"console", "webapp", "external-api"} {
+		for _, notFound := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/not_found=%t", entry, notFound), func(t *testing.T) {
+				app, conversation, message := uuid.New(), uuid.New(), uuid.New()
+				cause := errors.New("private-upstream-token")
+				wantCode := response.ErrSystemError.Code
+				if notFound {
+					cause = fmt.Errorf("private-upstream-token: %w", runtimeservice.ErrNotFound)
+					wantCode = response.ErrNotFound.Code
+				}
+				svc := &webAppRuntimePermissionService{toolGovernanceErr: cause}
+				h := &AgentsHandler{chatRuntimeService: svc, appErrorProjector: projector}
+				ctx := agentRuntimeContext{Scope: runtimeservice.Scope{OrganizationID: uuid.New(), AccountID: uuid.New()},
+					Caller: runtimeservice.Caller{Type: "agent", ID: &app, Source: entry}}
+				router := gin.New()
+				router.POST("/conversations/:conversation_id/messages/:message_id/tool-governance/:correlation_id/continue", func(c *gin.Context) {
+					h.continueRuntimeToolGovernance(c, ctx, nil)
+				})
+				w := httptest.NewRecorder()
+				r := httptest.NewRequest(http.MethodPost, "/conversations/"+conversation.String()+"/messages/"+message.String()+"/tool-governance/frozen/continue", strings.NewReader(`{"action":"reject"}`))
+				r.Header.Set("Content-Type", "application/json")
+				r.Header.Set("Accept-Language", "zh-Hans")
+				router.ServeHTTP(w, r)
+				body := w.Body.String()
+				if w.Code != http.StatusOK || !svc.toolGovernanceCalled || !strings.Contains(w.Header().Get("Content-Type"), "text/event-stream") || !strings.Contains(body, fmt.Sprintf(`"code":%d`, wantCode)) {
+					t.Fatalf("scoped continuation error: status=%d, body=%s", w.Code, body)
+				}
+				if strings.Contains(body, "private-upstream-token") || strings.Contains(body, "tool_end") || strings.Contains(body, "message_end") {
+					t.Fatalf("denial leaked a cause or success event: %s", body)
+				}
+				if notFound && !strings.Contains(body, "未找到请求的内容") {
+					t.Fatalf("scoped denial lost localized catalog message: %s", body)
+				}
+			})
+		}
+	}
+}
 
 func TestConsolePlatformGovernanceContinuationIsScopedAndFailsClosed(t *testing.T) {
 	gin.SetMode(gin.TestMode)
