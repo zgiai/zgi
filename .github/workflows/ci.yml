@@ -216,22 +216,6 @@ jobs:
           go-version-file: api/go.mod
           cache-dependency-path: api/go.sum
 
-      - name: Prepare PostgreSQL client
-        run: |
-          cat > "$RUNNER_TEMP/psql" <<'EOF'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          exec docker exec \
-            -e PGHOST=127.0.0.1 \
-            -e PGPORT=5432 \
-            -e PGUSER="${PGUSER:-}" \
-            -e PGPASSWORD="${PGPASSWORD:-}" \
-            -e PGDATABASE="${PGDATABASE:-}" \
-            '${{ job.services.postgres.id }}' psql "$@"
-          EOF
-          chmod +x "$RUNNER_TEMP/psql"
-          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
-
       - name: Enable test database extensions
         run: docker exec '${{ job.services.postgres.id }}' psql -U postgres -d zgi_runtime_api_ci -v ON_ERROR_STOP=1 -c 'CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'
 
@@ -246,7 +230,23 @@ jobs:
           SQLMETA_TEST_DB_USER: postgres
           SQLMETA_TEST_DB_PASS: runtime-api-ci-only
           SQLMETA_TEST_DB_NAME: zgi_runtime_api_ci
-        run: bash scripts/check-runtime-delivery.sh --api
+        run: |
+          docker run --rm --network host \
+            -e CGO_ENABLED=1 \
+            -e GOMAXPROCS=2 \
+            -e GOGC=50 \
+            -e TEST_POSTGRES_DSN \
+            -e SQLMETA_TEST_DB_HOST \
+            -e SQLMETA_TEST_DB_PORT \
+            -e SQLMETA_TEST_DB_USER \
+            -e SQLMETA_TEST_DB_PASS \
+            -e SQLMETA_TEST_DB_NAME \
+            -e CONNECTOR_CREDENTIAL_ACTIVE_KEY_ID=runtime-delivery-test \
+            -e CONNECTOR_CREDENTIAL_KEYS_JSON='{"runtime-delivery-test":"12345678901234567890123456789012"}' \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            golang:1.26.2-bookworm \
+            bash -lc 'apt-get update -qq && apt-get install -y -qq postgresql-client && bash scripts/check-runtime-delivery.sh --api'
 
   sandbox:
     name: Sandbox runtime tests
@@ -326,22 +326,6 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Prepare PostgreSQL client
-        run: |
-          cat > "$RUNNER_TEMP/psql" <<'EOF'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          exec docker exec \
-            -e PGHOST=127.0.0.1 \
-            -e PGPORT=5432 \
-            -e PGUSER="${PGUSER:-}" \
-            -e PGPASSWORD="${PGPASSWORD:-}" \
-            -e PGDATABASE="${PGDATABASE:-}" \
-            '${{ job.services.postgres.id }}' psql "$@"
-          EOF
-          chmod +x "$RUNNER_TEMP/psql"
-          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
-
       - name: Run sandbox delivery gate
         env:
           CGO_ENABLED: '1'
@@ -351,7 +335,19 @@ jobs:
           PGUSER: zgi_sandbox
           PGPASSWORD: zgi_sandbox_ci
           PGDATABASE: zgi_sandbox_ci
-        run: bash scripts/check-runtime-delivery.sh --sandbox
+        run: |
+          docker run --rm --network host \
+            -e CGO_ENABLED=1 \
+            -e ZGI_SANDBOX_TEST_POSTGRES_ADMIN_DSN \
+            -e PGHOST \
+            -e PGPORT \
+            -e PGUSER \
+            -e PGPASSWORD \
+            -e PGDATABASE \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            golang:1.26.2-bookworm \
+            bash -lc 'apt-get update -qq && apt-get install -y -qq postgresql-client python3 python3-venv && bash scripts/check-runtime-delivery.sh --sandbox'
 
       - name: Check sandbox config docs
         run: make -C sandbox check-config-docs
