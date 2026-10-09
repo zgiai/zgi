@@ -1120,6 +1120,16 @@ func stableAichatErrorCode(err error) string {
 			return "billing.model.pricing_not_configured"
 		}
 	}
+	// Same sentinels as gateway.ApplicationCodeForError, so an unknown model is
+	// published as not found (not retryable) instead of an invocation failure.
+	if errors.Is(err, llmerrors.DomainErrModelNotFound) || errors.Is(err, gateway.ErrModelNotFound) ||
+		errors.Is(err, gateway.ErrModelNotActive) || errors.Is(err, adapter.ErrModelNotFound) {
+		return "llm.model.not_found"
+	}
+	if errors.Is(err, llmerrors.DomainErrRouteNotFound) || errors.Is(err, gateway.ErrNoProviderAvailable) ||
+		errors.Is(err, llmerrors.DomainErrNoProviderAvailable) || errors.Is(err, adapter.ErrNoProviderAvailable) {
+		return "llm.provider.none_available"
+	}
 	if errors.Is(err, adapter.ErrTimeout) || errors.Is(err, ErrModelIdleTimeout) || errors.Is(err, skillloop.ErrModelIdleTimeout) {
 		return "llm.provider.timeout"
 	}

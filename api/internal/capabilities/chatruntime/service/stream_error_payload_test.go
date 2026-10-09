@@ -295,3 +295,42 @@ func TestBuildStreamErrorPayloadPublishesCatalogRetryableAndRequestID(t *testing
 		t.Fatalf("request_id = %#v, want omitted without a transport request id", payload["request_id"])
 	}
 }
+
+// An unknown model, and a model no route can serve, are published with their
+// own cataloged codes. They used to fall through to llm.invocation.failed with
+// retryable=true, while the skill loop already treats a missing model as not
+// retryable.
+func TestBuildStreamErrorPayloadMapsModelNotFoundAndNoProvider(t *testing.T) {
+	catalog, err := appcatalog.New(
+		appcatalog.LocaleEnglishUS,
+		appcatalog.CodeInternal,
+		append(appcatalog.DefaultDefinitions(), llmerrors.CatalogDefinitions()...)...,
+	)
+	if err != nil {
+		t.Fatalf("compose catalog: %v", err)
+	}
+	SetApplicationErrorCatalog(catalog)
+	t.Cleanup(func() { SetApplicationErrorCatalog(nil) })
+
+	prepared := streamErrorTestPrepared()
+	for _, tc := range []struct {
+		name      string
+		err       error
+		code      string
+		retryable bool
+	}{
+		{"domain model not found", fmt.Errorf("failed to select provider: %w", llmerrors.NewModelNotFoundErrorWithName("zzz-unknown-qa")), "llm.model.not_found", false},
+		{"gateway model not found", fmt.Errorf("resolve: %w", gateway.ErrModelNotFound), "llm.model.not_found", false},
+		{"adapter model not found", fmt.Errorf("upstream: %w", adapter.ErrModelNotFound), "llm.model.not_found", false},
+		{"no provider", fmt.Errorf("select: %w", gateway.ErrNoProviderAvailable), "llm.provider.none_available", true},
+		{"route not found", fmt.Errorf("select: %w", llmerrors.DomainErrRouteNotFound), "llm.provider.none_available", true},
+	} {
+		payload := BuildStreamErrorPayload(prepared, tc.err, "")
+		if got := payload["error_code"]; got != tc.code {
+			t.Fatalf("%s: error_code = %#v, want %s", tc.name, got, tc.code)
+		}
+		if got, ok := payload["retryable"]; !ok || got != tc.retryable {
+			t.Fatalf("%s: retryable = %#v, want %t from the catalog", tc.name, got, tc.retryable)
+		}
+	}
+}
