@@ -329,6 +329,10 @@ jobs:
       - name: Run sandbox delivery gate
         env:
           CGO_ENABLED: '1'
+          # Postgres-backed sandbox packages create and migrate isolated
+          # databases. Keep package execution serial so the small CI service
+          # is not overwhelmed by concurrent migration checkpoints.
+          ZGI_TEST_PARALLELISM: '1'
           ZGI_SANDBOX_TEST_POSTGRES_ADMIN_DSN: postgres://zgi_sandbox:zgi_sandbox_ci@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/zgi_sandbox_ci?sslmode=disable
           PGHOST: 127.0.0.1
           PGPORT: ${{ job.services.postgres.ports['5432'] }}
@@ -338,6 +342,7 @@ jobs:
         run: |
           docker run --rm --network host \
             -e CGO_ENABLED=1 \
+            -e ZGI_TEST_PARALLELISM \
             -e ZGI_SANDBOX_TEST_POSTGRES_ADMIN_DSN \
             -e PGHOST \
             -e PGPORT \
