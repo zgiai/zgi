@@ -95,7 +95,8 @@ func (a *HTTPAPI) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 	if pathValue == "release" && request.Method == http.MethodGet {
 		writeAgentRuntimeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
 			"id": a.releaseID, "contract_version": ReleaseContractVersion, "platform_protocol_version": PlatformProtocolVersion,
-			"execution_identity_version": ExecutionIdentityVersion,
+			"execution_identity_version":            ExecutionIdentityVersion,
+			"background_execution_identity_version": BackgroundExecutionIdentityVersion,
 		}})
 		return
 	}

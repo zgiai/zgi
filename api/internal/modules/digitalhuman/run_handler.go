@@ -79,6 +79,7 @@ func (h *RuntimeHandler) RegisterRoutes(router *gin.RouterGroup) {
 	group.GET("/runs", h.ListRuns)
 	group.GET("/runs/:run_id", h.GetRun)
 	group.GET("/runs/:run_id/runtime-log", h.GetRunRuntimeLog)
+	group.GET("/runs/:run_id/files/:file_id", h.GetBackgroundExecutionFile)
 	group.POST("/runs/:run_id/cancel", h.CancelRun)
 	group.GET("/runtime/conversations", h.ListConversations)
 	group.GET("/runtime/search", h.SearchConversations)

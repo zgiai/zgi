@@ -2,6 +2,7 @@ package digitalhuman
 
 import (
 	"context"
+	"maps"
 
 	"github.com/google/uuid"
 	execution "github.com/zgiai/zgi/api/internal/capabilities/agentexecution"
@@ -48,7 +49,7 @@ type LinuxExecutionOptions struct {
 	PlatformCLI      bool
 }
 
-// LinuxExecutionRuntime attaches identity-scoped tools to approved interactive runs.
+// LinuxExecutionRuntime attaches identity-scoped tools to approved runs.
 type LinuxExecutionRuntime struct{ options LinuxExecutionOptions }
 
 // NewLinuxExecutionRuntime constructs a provider with server-owned admission rules.
@@ -82,15 +83,19 @@ func (r *LinuxExecutionRuntime) prepare(ctx context.Context, run *Run, resolved 
 	case SurfaceConsole:
 		entry = "console"
 	case SurfaceWebApp:
-		// Anonymous WebApp chat deliberately has no UserSubject and remains usable.
-		if run.UserSubjectID == nil && run.UserSubjectKind == "" && run.PrincipalType == string(invocation.PrincipalExternalUser) {
-			return nil, nil
-		}
 		entry = "webapp"
 	case SurfaceAPI:
 		entry = "external-api"
+	case SurfaceChannel:
+		entry = SurfaceChannel
+	case SurfaceTask:
+		marker, _ := stringContextValue(event.Context, backgroundExecutionEntryKey)
+		if marker != backgroundTaskEntry {
+			return nil, nil // Previously persisted tasks retain their original path.
+		}
+		entry = backgroundTaskEntry
 	default:
-		return nil, nil // Never attach tools to tasks or channel turns.
+		return nil, nil
 	}
 	o := r.options
 	if !o.Approvals.Enabled {
@@ -102,6 +107,19 @@ func (r *LinuxExecutionRuntime) prepare(ctx context.Context, run *Run, resolved 
 	access, err := executionAccessFor(run, resolved, event)
 	if err != nil {
 		return nil, executionPreparationDenied(err)
+	}
+	frozenRun, frozenEvent := *run, event
+	frozenRun.ConversationID = cloneUUIDPointer(run.ConversationID)
+	frozenRun.ActorID = cloneUUIDPointer(run.ActorID)
+	frozenRun.PrincipalID = cloneUUIDPointer(run.PrincipalID)
+	frozenRun.UserSubjectID = cloneUUIDPointer(run.UserSubjectID)
+	frozenEvent.Context = maps.Clone(event.Context)
+	if event.ReplyTo != nil {
+		reply := *event.ReplyTo
+		frozenEvent.ReplyTo = &reply
+	}
+	if current != nil && access.background {
+		return nil, executionPreparationDenied(execution.ErrInvalidIdentity)
 	}
 	authorizationScope := access.scope()
 	if current != nil {
@@ -125,6 +143,19 @@ func (r *LinuxExecutionRuntime) prepare(ctx context.Context, run *Run, resolved 
 		return nil, executionPreparationDenied(err)
 	}
 	authorize := func(ctx context.Context) error {
+		if access.background {
+			background, ok := o.Access.(interface {
+				AuthorizeBackgroundLinuxExecution(context.Context, *Run, invocation.Event) error
+			})
+			if !ok {
+				return execution.ErrInvalidIdentity
+			}
+			if err := background.AuthorizeBackgroundLinuxExecution(ctx, &frozenRun, frozenEvent); err != nil {
+				return err
+			}
+			_, err := o.Approvals.Resolve(access.organization.String(), true)
+			return err
+		}
 		if access.surface == SurfaceConsole {
 			if o.AuthorizeConsole == nil {
 				return execution.ErrInvalidIdentity
@@ -186,7 +217,9 @@ func (r *LinuxExecutionRuntime) prepare(ctx context.Context, run *Run, resolved 
 			})
 		},
 	}
-	if o.PlatformCLI {
+	// Background channels/tasks have no interactive platform-CLI approval
+	// continuation. Do not inherit that capability from an interactive profile.
+	if o.PlatformCLI && !access.background {
 		options.PlatformCLI, options.InteractiveApproval = true, true
 		options.AuthorizePlatform = authorize
 	}

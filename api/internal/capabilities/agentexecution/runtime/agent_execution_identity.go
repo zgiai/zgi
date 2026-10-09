@@ -20,7 +20,8 @@ func (g *agentExecutionHTTPGateway) verifyExecutionIdentity(ctx context.Context,
 		return err
 	}
 	var release struct {
-		IdentityVersion int `json:"execution_identity_version"`
+		IdentityVersion           int `json:"execution_identity_version"`
+		BackgroundIdentityVersion int `json:"background_execution_identity_version"`
 	}
 	legacyScope := agentExecutionScope{OrganizationID: scope.OrganizationID, SubjectID: scope.SubjectID}
 	if err := g.request(ctx, legacyScope, http.MethodGet, "release", nil, &release); err != nil {
@@ -28,6 +29,9 @@ func (g *agentExecutionHTTPGateway) verifyExecutionIdentity(ctx context.Context,
 	}
 	if release.IdentityVersion != execution.IdentityVersion {
 		return fmt.Errorf("Worker does not support the required execution identity contract")
+	}
+	if scope.Identity.Version == execution.BackgroundIdentityVersion && release.BackgroundIdentityVersion != execution.BackgroundIdentityVersion {
+		return fmt.Errorf("worker does not support background execution identities")
 	}
 	return nil
 }

@@ -62,3 +62,27 @@ func TestExecutionIdentityNegotiatesBeforeQueriesJobsAndFiles(t *testing.T) {
 		})
 	}
 }
+
+func TestBackgroundIdentityRequiresSeparateWorkerNegotiation(t *testing.T) {
+	for _, version := range []int{0, 1, 2, 3} {
+		t.Run(fmt.Sprint(version), func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v1/agent-runtime/release" {
+					_, _ = fmt.Fprintf(w, `{"data":{"execution_identity_version":1,"background_execution_identity_version":%d}}`, version)
+					return
+				}
+				calls.Add(1)
+				_, _ = w.Write([]byte(`{"data":{}}`))
+			}))
+			defer server.Close()
+			gateway := &agentExecutionHTTPGateway{baseURL: server.URL, apiKey: "key", client: server.Client()}
+			scope := agentExecutionScope{OrganizationID: "org", SubjectID: "channel-conversation", Identity: &execution.Identity{Version: execution.BackgroundIdentityVersion,
+				WorkspaceID: "workspace", ApplicationType: "digital_human", ApplicationID: "app", Entry: "channel", SubjectKind: execution.SubjectChannelConversation, ConversationID: "conversation", PublicationRef: "published"}}
+			err := gateway.request(t.Context(), scope, http.MethodPost, "bindings", nil, nil)
+			if (err == nil) != (version == 2) || (version != 2 && calls.Load() != 0) {
+				t.Fatalf("capability=%d calls=%d error=%v", version, calls.Load(), err)
+			}
+		})
+	}
+}

@@ -297,7 +297,7 @@ func TestDigitalHumanLinuxPreparationRequiresAllGates(t *testing.T) {
 	}
 }
 
-func TestDigitalHumanLinuxDoesNotGrantAnonymousTasksOrChannels(t *testing.T) {
+func TestDigitalHumanLinuxRejectsUnverifiedBackgroundAndAnonymousRuns(t *testing.T) {
 	for _, surface := range []string{SurfaceWebApp, SurfaceTask, SurfaceChannel} {
 		t.Run(surface, func(t *testing.T) {
 			run, resolved, event, _ := linuxExecutionFixture(t, SurfaceWebApp)
@@ -305,7 +305,7 @@ func TestDigitalHumanLinuxDoesNotGrantAnonymousTasksOrChannels(t *testing.T) {
 			run.Surface = surface
 			run.UserSubjectID, run.UserSubjectKind, run.PrincipalType = nil, "", string(invocation.PrincipalExternalUser)
 			factory, err := NewLinuxExecutionRuntime(options).Prepare(t.Context(), run, resolved, event)
-			if err != nil || factory != nil || gateway.creates != 0 {
+			if (surface != SurfaceTask && err == nil) || factory != nil || gateway.creates != 0 {
 				t.Fatalf("unsupported surface granted Linux: %v", err)
 			}
 		})

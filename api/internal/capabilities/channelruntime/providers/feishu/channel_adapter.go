@@ -59,9 +59,12 @@ func NewDirectChannelAdapter(provider *Adapter, connections providertransport.Cr
 
 func (*ChannelAdapter) Provider() string { return IntegrationID }
 
-func (*ChannelAdapter) Capabilities() channelruntime.ProviderCapabilities {
+func (adapter *ChannelAdapter) Capabilities() channelruntime.ProviderCapabilities {
 	return channelruntime.ProviderCapabilities{
+		NativeAttachments:          true,
+		MaxAttachmentBytes:         maxChannelFileBytes,
 		ContextRead:                true,
+		ProcessingMarker:           adapter.directProviderAvailable(),
 		MessageRoundTripTest:       true,
 		ConversationCapabilityTest: true,
 	}
@@ -309,7 +312,7 @@ func (*ChannelAdapter) Acknowledgement() channelruntime.WebhookResponse {
 func (adapter *ChannelAdapter) Deliver(ctx context.Context, request channelruntime.DeliveryRequest) (*channelruntime.DeliveryReceipt, error) {
 	if adapter == nil || !adapter.directProviderAvailable() || request.OrganizationID == uuid.Nil || request.WorkspaceID == uuid.Nil ||
 		request.ActorID == uuid.Nil || request.ConnectionID == uuid.Nil || request.RunID == uuid.Nil ||
-		request.DeliveryID == uuid.Nil || strings.TrimSpace(request.ExternalConversationID) == "" || strings.TrimSpace(request.Text) == "" {
+		request.DeliveryID == uuid.Nil || strings.TrimSpace(request.ExternalConversationID) == "" || (strings.TrimSpace(request.Text) == "" && len(request.Attachments) == 0) {
 		return nil, channelruntime.ErrInvalidWebhook
 	}
 	return adapter.deliverDirect(ctx, request)
@@ -358,6 +361,9 @@ func (adapter *ChannelAdapter) deliverDirect(ctx context.Context, request channe
 	token, tokenMeta, err := adapter.provider.tenantAccessToken(ctx, connection, region)
 	if err != nil {
 		return nil, err
+	}
+	if len(request.Attachments) != 0 {
+		return adapter.deliverWithAttachments(ctx, region, token, request)
 	}
 	messageID, meta, err := adapter.sendChannelMessage(ctx, region, token, request)
 	meta.Attempts += tokenMeta.Attempts

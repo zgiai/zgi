@@ -1,10 +1,11 @@
 package digitalhuman
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
+	"io"
 	"path/filepath"
 	"strings"
 	"time"
@@ -20,7 +21,6 @@ const (
 	maxChannelDeliveryArtifacts = 8
 	maxChannelDeliveryMentions  = 8
 	maxChannelArtifactNameRunes = 256
-	maxChannelArtifactURLRunes  = 2048
 	maxChannelMentionIDRunes    = 255
 	maxChannelMentionNameRunes  = 128
 )
@@ -47,15 +47,27 @@ type channelArtifactLinker interface {
 	Resolve(context.Context, *channelruntime.Delivery, []channelDeliveryArtifact) ([]channelArtifactLink, error)
 }
 
-type toolFileChannelArtifactLinker struct{}
+type channelExecutionArtifactReader interface {
+	DescribeChannelExecutionArtifact(context.Context, *channelruntime.Delivery, string) (*toolfile.ToolFile, error)
+	ReadChannelExecutionArtifact(context.Context, *channelruntime.Delivery, string) ([]byte, error)
+}
 
-func (toolFileChannelArtifactLinker) Resolve(
+type toolFileChannelArtifactLinker struct {
+	runtime channelExecutionArtifactReader
+}
+
+func (linker toolFileChannelArtifactLinker) Resolve(
 	ctx context.Context,
 	delivery *channelruntime.Delivery,
 	artifacts []channelDeliveryArtifact,
 ) ([]channelArtifactLink, error) {
+	links, _, err := linker.ResolveDelivery(ctx, delivery, artifacts, channelruntime.ProviderCapabilities{})
+	return links, err
+}
+
+func (linker toolFileChannelArtifactLinker) ResolveDelivery(ctx context.Context, delivery *channelruntime.Delivery, artifacts []channelDeliveryArtifact, capabilities channelruntime.ProviderCapabilities) ([]channelArtifactLink, []channelruntime.DeliveryAttachment, error) {
 	if delivery == nil || delivery.OrganizationID == uuid.Nil || len(artifacts) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	ids := make([]string, 0, len(artifacts))
 	seen := make(map[string]struct{}, len(artifacts))
@@ -71,17 +83,71 @@ func (toolFileChannelArtifactLinker) Resolve(
 		ids = append(ids, id)
 	}
 	if len(ids) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	files, err := toolfile.GetToolFilesByIDsGlobal(ctx, ids)
 	if err != nil {
-		return nil, fmt.Errorf("load channel generated files: %w", err)
+		return nil, nil, fmt.Errorf("load channel generated files: %w", err)
 	}
 	now := time.Now()
 	links := make([]channelArtifactLink, 0, len(artifacts))
+	attachments := make([]channelruntime.DeliveryAttachment, 0, len(artifacts))
+	seen = make(map[string]struct{}, len(artifacts))
 	for _, artifact := range artifacts {
 		file := files[strings.TrimSpace(artifact.ToolFileID)]
 		if file == nil || file.TenantID != delivery.OrganizationID.String() || file.IsExpired(now) {
+			continue
+		}
+		if _, duplicate := seen[file.ID]; duplicate {
+			continue
+		}
+		seen[file.ID] = struct{}{}
+		protected := file.ExecutionIdentity != nil || file.ExecutionMessageID != nil
+		if protected {
+			if linker.runtime == nil {
+				return nil, nil, toolfile.ErrExecutionFileAccess
+			}
+			file, err = linker.runtime.DescribeChannelExecutionArtifact(ctx, delivery, file.ID)
+			if err != nil {
+				return nil, nil, err
+			}
+			if file == nil {
+				return nil, nil, toolfile.ErrExecutionFileAccess
+			}
+		}
+		filename := safeChannelArtifactFilename(file.Name)
+		if filename == "" {
+			filename = "generated-file" + file.GetFileExtension()
+		}
+		if capabilities.NativeAttachments && file.Size > 0 && file.Size <= capabilities.MaxAttachmentBytes {
+			fileID, expectedSize := file.ID, file.Size
+			attachments = append(attachments, channelruntime.DeliveryAttachment{ID: fileID, Filename: filename, MimeType: file.MimeType, Size: expectedSize,
+				Open: func(ctx context.Context) (io.ReadCloser, error) {
+					var data []byte
+					var readErr error
+					if protected {
+						data, readErr = linker.runtime.ReadChannelExecutionArtifact(ctx, delivery, fileID)
+					} else {
+						// Historical unprotected files retain their tenant-scoped contract.
+						manager := toolfile.GlobalToolFileManager
+						if manager == nil {
+							return nil, toolfile.ErrExecutionFileAccess
+						}
+						var current *toolfile.ToolFile
+						current, readErr = manager.GetToolFileByID(ctx, fileID)
+						if readErr != nil || current == nil || current.TenantID != delivery.OrganizationID.String() || current.ExecutionIdentity != nil || current.ExecutionMessageID != nil || current.IsExpired(time.Now()) {
+							return nil, toolfile.ErrExecutionFileAccess
+						}
+						data, _, readErr = manager.GetFileBinary(ctx, fileID)
+					}
+					if readErr != nil {
+						return nil, readErr
+					}
+					if int64(len(data)) != expectedSize {
+						return nil, toolfile.ErrExecutionFileAccess
+					}
+					return io.NopCloser(bytes.NewReader(data)), nil
+				}})
 			continue
 		}
 		extension := normalizeChannelArtifactExtension(artifact.Extension)
@@ -91,18 +157,11 @@ func (toolFileChannelArtifactLinker) Resolve(
 		if extension == "" {
 			extension = normalizeChannelArtifactExtension(file.GetFileExtension())
 		}
-		if extension == "" {
-			continue
-		}
-		downloadURL, signErr := toolfile.SignToolFileGlobal(file.ID, extension)
+		downloadURL, signErr := toolfile.SignChannelDeliveryFileGlobal(file, delivery.ID.String(), extension)
 		if signErr != nil {
-			return nil, fmt.Errorf("sign channel generated file: %w", signErr)
+			return nil, nil, fmt.Errorf("sign channel delivery download: %w", signErr)
 		}
-		downloadURL, signErr = appendChannelDownloadQuery(downloadURL)
-		if signErr != nil {
-			return nil, signErr
-		}
-		filename := safeChannelArtifactFilename(artifact.Filename)
+		filename = safeChannelArtifactFilename(artifact.Filename)
 		if filename == "" {
 			filename = safeChannelArtifactFilename(file.Name)
 		}
@@ -111,7 +170,7 @@ func (toolFileChannelArtifactLinker) Resolve(
 		}
 		links = append(links, channelArtifactLink{Filename: filename, URL: downloadURL})
 	}
-	return links, nil
+	return links, attachments, nil
 }
 
 func channelDeliveryArtifacts(trace datatypes.JSON) []channelDeliveryArtifact {
@@ -201,20 +260,6 @@ func normalizeChannelArtifactExtension(value string) string {
 func safeChannelArtifactFilename(value string) string {
 	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
 	return boundedRunes(value, maxChannelArtifactNameRunes)
-}
-
-func appendChannelDownloadQuery(rawURL string) (string, error) {
-	if strings.TrimSpace(rawURL) == "" || utf8.RuneCountInString(rawURL) > maxChannelArtifactURLRunes {
-		return "", fmt.Errorf("channel generated file URL is invalid")
-	}
-	parsed, err := url.Parse(rawURL)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
-		return "", fmt.Errorf("channel generated file URL is invalid")
-	}
-	query := parsed.Query()
-	query.Set("download", "1")
-	parsed.RawQuery = query.Encode()
-	return parsed.String(), nil
 }
 
 func renderChannelDeliveryText(text string, links []channelArtifactLink) string {

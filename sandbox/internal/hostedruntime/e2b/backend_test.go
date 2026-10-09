@@ -67,6 +67,18 @@ func TestValidateRuntimeCapabilitiesRejectsLegacyDirectPackageTemplate(t *testin
 	}
 }
 
+func TestValidateRuntimeCapabilitiesUsesRequestedNetworkMode(t *testing.T) {
+	profile := Profile{DependencyInstallation: true}
+	caps := agentexecution.RuntimeCapabilities{Shell: true, FileTransfer: true, NetworkMode: "disabled"}
+
+	if err := validateRuntimeCapabilitiesForNetworkMode(caps, profile, "disabled"); err != nil {
+		t.Fatalf("offline session rejected for install-capable profile: %v", err)
+	}
+	if err := validateRuntimeCapabilitiesForNetworkMode(caps, profile, "package-install"); !errors.Is(err, agentexecution.ErrBackendUnavailable) {
+		t.Fatalf("package session accepted disabled capabilities: %v", err)
+	}
+}
+
 func TestBackendUsesSecuredOfflineE2BContract(t *testing.T) {
 	var mu sync.Mutex
 	var created createSandboxRequest

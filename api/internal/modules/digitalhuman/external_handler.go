@@ -120,7 +120,7 @@ func (h *ExternalHandler) GetConfig(c *gin.Context) {
 		HomeTitle: policy.HomeTitle, OpeningStatement: policy.OpeningStatement,
 		InputPlaceholder:   policy.InputPlaceholder,
 		SuggestedQuestions: nonNilStrings(policy.SuggestedQuestions),
-		FileUploadEnabled:  true, RelationshipMemoryEnabled: true,
+		FileUploadEnabled:  fileUploadEnabled(access.Version), RelationshipMemoryEnabled: true,
 		MemoryRequiresUser: true, ExternalUserRequired: true,
 		RuntimeInputEnabled: true, RegenerateEnabled: true,
 		LandingPageEnabled: access.Settings.WebAppEnabled, APIEnabled: access.Settings.APIEnabled,

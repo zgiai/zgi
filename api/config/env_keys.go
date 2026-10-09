@@ -178,6 +178,8 @@ const (
 	envAppName = "APP_NAME"
 	// envFilesAccessTimeout sets how long generated file access links remain valid in seconds. Default: 3600.
 	envFilesAccessTimeout = "FILES_ACCESS_TIMEOUT"
+	// envChannelDeliveryFileTTL sets how long channel-delivery download links remain valid in seconds. Default: 2592000 (30 days).
+	envChannelDeliveryFileTTL = "CHANNEL_DELIVERY_FILE_TTL"
 	// envAppVersion sets the application version string. Default: 1.0.0.
 	envAppVersion = "APP_VERSION"
 	// envFilesURL sets the public base URL for file access. Default: http://localhost:2679.

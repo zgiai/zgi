@@ -33,8 +33,9 @@ func (a *BrainAdapter) RunConfig(resolved *ResolvedExecution) (chatruntime.RunCo
 		Subject: resolved.Snapshot.Subject, Phase: resourcebindings.PhasePublished, VersionID: &resolved.Snapshot.DigitalHumanVersion,
 	}
 	config := chatruntime.RunConfig{
-		FileUploadPolicy: chatfile.Clone(resolved.Snapshot.FileUploadPolicy),
-		SystemPrompt:     buildDigitalHumanSystemPrompt(resolved.Snapshot), SystemPromptVersion: resolved.Snapshot.Revision,
+		FileUploadEnabled: new(fileUploadEnabled(&Version{FileUploadPolicy: resolved.Snapshot.FileUploadPolicy})),
+		FileUploadPolicy:  chatfile.Clone(resolved.Snapshot.FileUploadPolicy),
+		SystemPrompt:      buildDigitalHumanSystemPrompt(resolved.Snapshot), SystemPromptVersion: resolved.Snapshot.Revision,
 		Model: resolved.Snapshot.Model, BillingAppID: resolved.Snapshot.Subject.ID.String(),
 		BillingAppType:     runtimemodel.ConversationCallerDigitalHuman,
 		RuntimeInputPolicy: chatruntime.RuntimeInputPolicyCheckpointAndFollowUp,

@@ -545,6 +545,28 @@ func TestRequireAuthenticatedWebAppAgentWhenMemoryEnabled(t *testing.T) {
 	require.True(t, requireAuthenticatedWebAppAgentWhenMemoryEnabled(c, published))
 }
 
+func TestAgentWebAppRequiresLoginForLinuxAndFileUploads(t *testing.T) {
+	for name, config := range map[string]dto.AgentConfigResponse{
+		"linux":  {ExecutionRuntime: &dto.AgentExecutionRuntime{Enabled: true}},
+		"files":  {FileUpload: true},
+		"memory": {AgentMemoryEnabled: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+			published := &dto.AgentWebAppRuntimeConfigResponse{Config: config}
+			require.True(t, publicAgentWebAppConfig(published).LoginRequired)
+			require.False(t, requireAuthenticatedWebAppAgentWhenMemoryEnabled(c, published))
+			require.Equal(t, http.StatusUnauthorized, recorder.Code)
+			c.Set("is_authenticated", true)
+			require.True(t, requireAuthenticatedWebAppAgentWhenMemoryEnabled(c, published))
+		})
+	}
+	require.False(t, agentWebAppRequiresLogin(dto.AgentConfigResponse{}))
+	require.False(t, agentWebAppRequiresLogin(dto.AgentConfigResponse{ExecutionRuntime: &dto.AgentExecutionRuntime{Enabled: false}}))
+}
+
 func TestRequireAuthenticatedWebAppAgentFileAccess(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

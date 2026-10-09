@@ -9,7 +9,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
+	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	authmodel "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 )
 
 func TestRegisterWebAppRoutesIncludesSharedChatRuntimeCompatibility(t *testing.T) {
@@ -97,7 +100,7 @@ func TestWebAppScopeSeparatesAnonymousPrincipalFromAccountMemorySubject(t *testi
 	definition := &Definition{
 		ID: uuid.New(), WebAppID: uuid.New(), OrganizationID: uuid.New(), WorkspaceID: uuid.New(),
 	}
-	access := &PublishedAccess{Definition: definition, Version: &Version{ID: uuid.New()}}
+	access := &PublishedAccess{Definition: definition, Version: &Version{ID: uuid.New(), FileUploadPolicy: &chatfile.Policy{AllowedFileTypes: []string{}}}}
 
 	t.Run("anonymous", func(t *testing.T) {
 		context, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -126,4 +129,39 @@ func TestWebAppScopeSeparatesAnonymousPrincipalFromAccountMemorySubject(t *testi
 			t.Fatalf("authenticated scope = %#v", scope)
 		}
 	})
+}
+
+func TestLinuxEnabledWebAppRequiresLoginWithoutAnonymousFallback(t *testing.T) {
+	catalog, err := appcatalog.New(appcatalog.LocaleEnglishUS, appcatalog.CodeInternal, appcatalog.DefaultDefinitions()...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projector, err := apptransport.NewProjector(catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	access := &PublishedAccess{Definition: &Definition{ID: uuid.New(), WebAppID: uuid.New(), OrganizationID: uuid.New(), WorkspaceID: uuid.New()}, Version: &Version{ExecutionRuntime: &ExecutionRuntimeConfig{Enabled: true}}}
+	if !webAppLoginRequired(access) {
+		t.Fatal("published Linux config did not require login")
+	}
+	for _, authenticated := range []bool{false, true} {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/chat", nil)
+		c.Set(webAppAccessContext, access)
+		c.Set(webAppIdentityContext, webAppRequestIdentity{ID: uuid.New(), Authenticated: authenticated})
+		handler := &ExternalHandler{base: &Handler{projector: projector}}
+		_, _, _, ok := handler.webAppScope(c)
+		if ok != authenticated || (!authenticated && recorder.Code != http.StatusUnauthorized) {
+			t.Fatalf("authenticated=%t accepted=%t status=%d", authenticated, ok, recorder.Code)
+		}
+	}
+	access.Version.ExecutionRuntime = nil
+	if !webAppLoginRequired(access) {
+		t.Fatal("file upload enabled without login")
+	}
+	access.Version.FileUploadPolicy = &chatfile.Policy{AllowedFileTypes: []string{}}
+	if webAppLoginRequired(access) || fileUploadEnabled(access.Version) {
+		t.Fatal("both disabled still required login or allowed uploads")
+	}
 }

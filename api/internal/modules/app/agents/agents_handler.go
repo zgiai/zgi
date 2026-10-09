@@ -1388,17 +1388,22 @@ func publicAgentWebAppConfig(result *dto.AgentWebAppRuntimeConfigResponse) dto.A
 		FileUpload:         result.Config.FileUpload,
 		SupportsVision:     result.Config.SupportsVision,
 		AgentMemoryEnabled: result.Config.AgentMemoryEnabled,
+		LoginRequired:      agentWebAppRequiresLogin(result.Config),
 		Version:            result.Version,
 		VersionUUID:        result.VersionUUID,
 	}
 }
 
 func requireAuthenticatedWebAppAgentWhenMemoryEnabled(c *gin.Context, published *dto.AgentWebAppRuntimeConfigResponse) bool {
-	if published != nil && published.Config.AgentMemoryEnabled && !c.GetBool("is_authenticated") {
+	if published != nil && agentWebAppRequiresLogin(published.Config) && !c.GetBool("is_authenticated") {
 		response.Fail(c, response.ErrUnauthorized)
 		return false
 	}
 	return true
+}
+
+func agentWebAppRequiresLogin(config dto.AgentConfigResponse) bool {
+	return config.AgentMemoryEnabled || config.FileUpload || (config.ExecutionRuntime != nil && config.ExecutionRuntime.Enabled)
 }
 
 func requireAuthenticatedWebAppAgentFileAccess(c *gin.Context) bool {

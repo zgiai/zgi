@@ -17,6 +17,34 @@ func testExecutionIdentity() *ExecutionIdentity {
 		ConversationID: "conversation-1", PublicationRef: "published-v1"}
 }
 
+func TestBackgroundExecutionIdentityIsDigitalHumanOnlyAndVersioned(t *testing.T) {
+	for _, entry := range []string{"channel", "task"} {
+		t.Run(entry, func(t *testing.T) {
+			i := testExecutionIdentity()
+			i.Version, i.ApplicationType, i.Entry = 2, "digital_human", entry
+			i.SubjectKind = "channel_conversation"
+			if entry == "task" {
+				i.SubjectKind = "scheduled_task"
+			}
+			if err := i.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			for _, mutate := range []func(*ExecutionIdentity){
+				func(i *ExecutionIdentity) { i.Version = 1 },
+				func(i *ExecutionIdentity) { i.ApplicationType = "agent" },
+				func(i *ExecutionIdentity) { i.SubjectKind = "account" },
+				func(i *ExecutionIdentity) { i.Entry = "console" },
+			} {
+				invalid := *i
+				mutate(&invalid)
+				if err := invalid.Validate(); err == nil {
+					t.Fatal("background identity downgraded")
+				}
+			}
+		})
+	}
+}
+
 func TestExecutionIdentityRejectsIncompleteOrAmbiguousScope(t *testing.T) {
 	mutations := map[string]func(*ExecutionIdentity){
 		"future version":       func(i *ExecutionIdentity) { i.Version = 2 },

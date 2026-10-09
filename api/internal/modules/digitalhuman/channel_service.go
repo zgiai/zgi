@@ -102,6 +102,8 @@ func NewChannelService(store ChannelStore, subjects ChannelSubjectStore, runtime
 		now:       func() time.Time { return time.Now().UTC() },
 	}
 	service.markers, _ = store.(ChannelProcessingMarkerStore)
+	reader, _ := runtime.(channelExecutionArtifactReader)
+	service.artifacts = toolFileChannelArtifactLinker{runtime: reader}
 	return service
 }
 
@@ -1300,13 +1302,22 @@ func (service *ChannelService) DispatchDeliveries(ctx context.Context, limit int
 			))
 			continue
 		}
-		links, linkErr := service.artifacts.Resolve(ctx, delivery, payload.Artifacts)
+		var links []channelArtifactLink
+		var attachments []channelruntime.DeliveryAttachment
+		var linkErr error
+		if resolver, ok := service.artifacts.(interface {
+			ResolveDelivery(context.Context, *channelruntime.Delivery, []channelDeliveryArtifact, channelruntime.ProviderCapabilities) ([]channelArtifactLink, []channelruntime.DeliveryAttachment, error)
+		}); ok {
+			links, attachments, linkErr = resolver.ResolveDelivery(ctx, delivery, payload.Artifacts, adapter.Capabilities())
+		} else {
+			links, linkErr = service.artifacts.Resolve(ctx, delivery, payload.Artifacts)
+		}
 		if linkErr != nil {
 			combined = errors.Join(combined, service.finishDeliveryFailure(ctx, delivery, linkErr))
 			continue
 		}
 		text := renderChannelDeliveryText(payload.Text, links)
-		if strings.TrimSpace(text) == "" {
+		if strings.TrimSpace(text) == "" && len(attachments) == 0 {
 			combined = errors.Join(combined, service.store.FailDelivery(
 				ctx, delivery.ID, channelruntime.DeliveryFailed, "channel.delivery.payload_invalid",
 				"The committed delivery payload is invalid.", service.now(),
@@ -1322,7 +1333,7 @@ func (service *ChannelService) DispatchDeliveries(ctx context.Context, limit int
 			},
 			RunID: delivery.RunID, DeliveryID: delivery.ID,
 			ExternalConversationID: delivery.ExternalConversationID, ExternalThreadID: delivery.ExternalThreadID,
-			Text: text, Mentions: append([]channelruntime.DeliveryMention(nil), payload.Mentions...),
+			Text: text, Mentions: append([]channelruntime.DeliveryMention(nil), payload.Mentions...), Attachments: attachments,
 		})
 		if deliveryErr != nil {
 			combined = errors.Join(combined, service.finishDeliveryFailure(ctx, delivery, deliveryErr))
@@ -1342,6 +1353,9 @@ func (service *ChannelService) DispatchDeliveries(ctx context.Context, limit int
 func (service *ChannelService) finishDeliveryFailure(ctx context.Context, delivery *channelruntime.Delivery, deliveryErr error) error {
 	if delivery == nil {
 		return ErrInvalidRequest
+	}
+	if diagnostics := providertransport.ProviderDiagnosticsFromError(deliveryErr); diagnostics != (providertransport.ProviderDiagnostics{}) {
+		logger.WarnContext(ctx, "DigitalHuman channel delivery provider rejection", "delivery_id", delivery.ID.String(), "provider", delivery.Provider, "error_code", diagnostics.ErrorCode, "request_id", diagnostics.RequestID, "http_status", diagnostics.HTTPStatus, "invalid_field", diagnostics.InvalidField)
 	}
 	now := service.now()
 	if errors.Is(deliveryErr, channelruntime.ErrDeliveryOutcomeUnknown) {

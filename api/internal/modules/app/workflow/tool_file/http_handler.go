@@ -44,6 +44,10 @@ func (h *HTTPHandler) GetToolFile(c *gin.Context) {
 		response.Fail(c, response.ErrFileIdRequired)
 		return
 	}
+	if c.Query(channelDeliveryQueryKey) != "" {
+		h.serveChannelDeliveryFile(c, toolFileID)
+		return
+	}
 
 	expiresAt := c.Query("expires_at")
 	nonce := c.Query("nonce")

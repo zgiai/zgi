@@ -12,6 +12,9 @@ import (
 )
 
 const IdentityVersion = 1
+const BackgroundIdentityVersion = 2
+const SubjectChannelConversation = "channel_conversation"
+const SubjectScheduledTask = "scheduled_task"
 const IdentityHeader = "X-ZGI-Execution-Identity"
 
 var ErrInvalidIdentity = errors.New("verified execution identity is required")
@@ -59,6 +62,9 @@ func NewScope(subject VerifiedSubject) (Scope, error) {
 		Entry: subject.Entry, SubjectKind: string(subject.User.Kind),
 		ConversationID: subject.ConversationID.String(), PublicationRef: subject.PublicationRef,
 	}
+	if subject.Entry == "channel" || subject.Entry == "task" {
+		identity.Version = BackgroundIdentityVersion
+	}
 	if err := identity.Validate(); err != nil {
 		return Scope{}, err
 	}
@@ -66,7 +72,7 @@ func NewScope(subject VerifiedSubject) (Scope, error) {
 }
 
 func (identity Identity) Validate() error {
-	if identity.Version != IdentityVersion || (identity.ApplicationType != "agent" && identity.ApplicationType != "digital_human") {
+	if (identity.Version != IdentityVersion && identity.Version != BackgroundIdentityVersion) || (identity.ApplicationType != "agent" && identity.ApplicationType != "digital_human") {
 		return ErrInvalidIdentity
 	}
 	for _, value := range []string{identity.WorkspaceID, identity.ApplicationID, identity.ConversationID, identity.PublicationRef} {
@@ -75,16 +81,35 @@ func (identity Identity) Validate() error {
 		}
 	}
 	switch identity.Entry {
+	case "channel", "task":
+		kind := SubjectChannelConversation
+		if identity.Entry == "task" {
+			kind = SubjectScheduledTask
+		}
+		if identity.Version != BackgroundIdentityVersion || identity.ApplicationType != "digital_human" || identity.SubjectKind != kind {
+			return ErrInvalidIdentity
+		}
 	case "console", "webapp":
-		if identity.SubjectKind != string(usersubject.Account) {
+		if identity.Version != IdentityVersion || identity.SubjectKind != string(usersubject.Account) {
 			return ErrInvalidIdentity
 		}
 	case "external-api":
-		if identity.SubjectKind != string(usersubject.APIEndUser) {
+		if identity.Version != IdentityVersion || identity.SubjectKind != string(usersubject.APIEndUser) {
 			return ErrInvalidIdentity
 		}
 	default:
 		return ErrInvalidIdentity
 	}
 	return nil
+}
+
+// BackgroundSubject isolates a verified provider conversation or scheduled run
+// from the billing account and every interactive end user. It is not a login.
+func BackgroundSubject(organization, workspace, application, conversation uuid.UUID, entry string) usersubject.Ref {
+	kind := SubjectChannelConversation
+	if entry == "task" {
+		kind = SubjectScheduledTask
+	}
+	seed := strings.Join([]string{"zgi-background-execution", organization.String(), workspace.String(), application.String(), entry, conversation.String()}, "\x00")
+	return usersubject.Ref{Kind: usersubject.Kind(kind), ID: uuid.NewSHA1(uuid.NameSpaceOID, []byte(seed))}
 }

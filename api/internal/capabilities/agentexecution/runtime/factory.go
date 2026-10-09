@@ -57,6 +57,12 @@ func InteractiveEntryImplemented(applicationType, entry string) bool {
 		(entry == "console" || entry == "webapp" || entry == "external-api")
 }
 
+// DigitalHumanEntryImplemented includes server-authenticated provider and
+// scheduler invocations. Admission and live ownership checks remain mandatory.
+func DigitalHumanEntryImplemented(applicationType, entry string) bool {
+	return applicationType == "digital_human" && (InteractiveEntryImplemented(applicationType, entry) || entry == "channel" || entry == "task")
+}
+
 func NewToolFactory(options FactoryOptions) func(*runtimeservice.PreparedChat) []skillloop.RuntimeTool {
 	return func(prepared *runtimeservice.PreparedChat) []skillloop.RuntimeTool {
 		if prepared == nil || prepared.Conversation == nil || prepared.Message == nil || options.Gateway == nil || options.ResolveScope == nil {

@@ -2,14 +2,18 @@ package feishu
 
 const (
 	IntegrationID = "feishu"
-	DriverID      = "feishu-open-api"
+	// DriverID and TenantAppAuthMethodID are the canonical identifiers used by
+	// the Connector catalog. DigitalHuman channel installations resolve their
+	// credentials through Connector PersonalConnections, so these values must
+	// stay aligned with the persisted connection contract.
+	DriverID = "feishu-openapi-v1"
 
 	RegionCN     = "cn"
 	RegionGlobal = "global"
 
 	UserOAuthAuthMethodID         = "feishu_user_oauth"
 	OrganizationOAuthAuthMethodID = "organization_feishu_user_oauth"
-	TenantAppAuthMethodID         = "feishu_tenant_app"
+	TenantAppAuthMethodID         = "feishu.app_credentials"
 
 	ScopeOfflineAccess    = "offline_access"
 	ScopeTenantRead       = "tenant:tenant:readonly"

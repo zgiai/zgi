@@ -85,16 +85,20 @@ func (h *ExternalHandler) GetWebAppConfig(c *gin.Context) {
 		HomeTitle: policy.HomeTitle, OpeningStatement: policy.OpeningStatement,
 		InputPlaceholder:     policy.InputPlaceholder,
 		SuggestedQuestions:   nonNilStrings(policy.SuggestedQuestions),
-		AnonymousChatEnabled: true, LoginRequired: false,
-		FileUploadEnabled: true, FileUploadRequiresLogin: true,
+		AnonymousChatEnabled: !webAppLoginRequired(access), LoginRequired: webAppLoginRequired(access),
+		FileUploadEnabled: fileUploadEnabled(access.Version), FileUploadRequiresLogin: true,
 		RelationshipMemoryEnabled: true, RuntimeInputEnabled: true,
 		Version: access.Version.VersionNumber, VersionUUID: access.Version.ID.String(),
 	})
 }
 
 func (h *ExternalHandler) CreateWebAppSession(c *gin.Context) {
-	webAppID, _, ok := h.resolveWebApp(c)
+	webAppID, access, ok := h.resolveWebApp(c)
 	if !ok {
+		return
+	}
+	if webAppLoginRequired(access) {
+		h.writeAuthError(c, false)
 		return
 	}
 	if h.sessions == nil {
@@ -153,6 +157,11 @@ func (h *ExternalHandler) authenticateWebApp(c *gin.Context) {
 		}
 		statuscache.TouchAccountLastActive(identity.ID.String())
 		identity.Authenticated = true
+	}
+	if webAppLoginRequired(access) && !identity.Authenticated {
+		h.writeAuthError(c, false)
+		c.Abort()
+		return
 	}
 	c.Set(webAppAccessContext, access)
 	c.Set(webAppIdentityContext, identity)
@@ -622,7 +631,8 @@ func (h *ExternalHandler) webAppScope(c *gin.Context) (Scope, *PublishedAccess, 
 	identityValue, identityOK := c.Get(webAppIdentityContext)
 	access, accessTypeOK := accessValue.(*PublishedAccess)
 	identity, identityTypeOK := identityValue.(webAppRequestIdentity)
-	if !accessOK || !identityOK || !accessTypeOK || !identityTypeOK || access == nil || access.Definition == nil || identity.ID == uuid.Nil {
+	if !accessOK || !identityOK || !accessTypeOK || !identityTypeOK || access == nil || access.Definition == nil || identity.ID == uuid.Nil ||
+		(webAppLoginRequired(access) && !identity.Authenticated) {
 		h.writeAuthError(c, false)
 		return Scope{}, nil, webAppRequestIdentity{}, false
 	}
@@ -640,6 +650,10 @@ func (h *ExternalHandler) webAppScope(c *gin.Context) (Scope, *PublishedAccess, 
 		scope.UserSubjectID = &subjectID
 	}
 	return scope, access, identity, true
+}
+
+func webAppLoginRequired(access *PublishedAccess) bool {
+	return access != nil && access.Version != nil && (fileUploadEnabled(access.Version) || (access.Version.ExecutionRuntime != nil && access.Version.ExecutionRuntime.Enabled))
 }
 
 func (h *ExternalHandler) webAppRunRequest(c *gin.Context) (Scope, *PublishedAccess, webAppRequestIdentity, uuid.UUID, bool) {

@@ -270,7 +270,7 @@ func (b *Backend) CreateBinding(ctx context.Context, spec agentexecution.CreateS
 		var remote *runtimeagent.RemoteBackend
 		remote, err = b.remote(connection, token)
 		if err == nil {
-			err = b.waitReady(ctx, remote, allocation, profile)
+			err = b.waitReady(ctx, remote, allocation, profile, networkMode)
 		}
 	}
 	if err != nil {
@@ -322,7 +322,11 @@ func (b *Backend) ResumeBinding(ctx context.Context, spec agentexecution.CreateS
 	if !ok {
 		return agentexecution.Allocation{}, fmt.Errorf("%w: E2B profile is not approved", agentexecution.ErrInvalidRequest)
 	}
-	if err := b.waitReady(ctx, remote, resumed, profile); err != nil {
+	networkMode := strings.ToLower(strings.TrimSpace(spec.NetworkMode))
+	if networkMode == "" {
+		networkMode = "disabled"
+	}
+	if err := b.waitReady(ctx, remote, resumed, profile, networkMode); err != nil {
 		return agentexecution.Allocation{}, fmt.Errorf("resume E2B Runtime Agent: %w", err)
 	}
 	return resumed, nil
@@ -457,7 +461,7 @@ func (b *Backend) remote(connection sandboxConnection, token string) (*runtimeag
 	})
 }
 
-func (b *Backend) waitReady(parent context.Context, remote *runtimeagent.RemoteBackend, allocation agentexecution.Allocation, profile Profile) error {
+func (b *Backend) waitReady(parent context.Context, remote *runtimeagent.RemoteBackend, allocation agentexecution.Allocation, profile Profile, networkMode string) error {
 	ctx, cancel := context.WithTimeout(parent, b.readyTimeout)
 	defer cancel()
 	ticker := time.NewTicker(200 * time.Millisecond)
@@ -469,7 +473,7 @@ func (b *Backend) waitReady(parent context.Context, remote *runtimeagent.RemoteB
 			if b.platformCLI && capabilities.PlatformProtocolVersion != agentexecution.PlatformProtocolVersion {
 				return fmt.Errorf("%w: approved E2B template lacks platform CLI protocol", agentexecution.ErrBackendUnavailable)
 			}
-			return validateRuntimeCapabilities(capabilities, profile)
+			return validateRuntimeCapabilitiesForNetworkMode(capabilities, profile, networkMode)
 		}
 		lastErr = err
 		select {
@@ -481,11 +485,26 @@ func (b *Backend) waitReady(parent context.Context, remote *runtimeagent.RemoteB
 }
 
 func validateRuntimeCapabilities(capabilities agentexecution.RuntimeCapabilities, profile Profile) error {
+	networkMode := "disabled"
+	if profile.DependencyInstallation {
+		networkMode = "package-install"
+	}
+	return validateRuntimeCapabilitiesForNetworkMode(capabilities, profile, networkMode)
+}
+
+func validateRuntimeCapabilitiesForNetworkMode(capabilities agentexecution.RuntimeCapabilities, profile Profile, networkMode string) error {
 	if profile.PackageSources != (packagesource.Config{}) && capabilities.PackageSourceDigest != profile.PackageSources.Digest() {
 		return fmt.Errorf("%w: E2B template did not apply approved package sources", agentexecution.ErrBackendUnavailable)
 	}
+	networkMode = strings.ToLower(strings.TrimSpace(networkMode))
+	if networkMode == "" {
+		networkMode = "disabled"
+	}
+	if networkMode != "disabled" && networkMode != "package-install" {
+		return fmt.Errorf("%w: unsupported E2B network mode %q", agentexecution.ErrBackendUnavailable, networkMode)
+	}
 	expectedNetworkMode := "disabled"
-	if profile.DependencyInstallation {
+	if networkMode == "package-install" {
 		expectedNetworkMode = "package-install"
 	}
 	if !capabilities.Shell || !capabilities.FileTransfer || capabilities.NetworkMode != expectedNetworkMode {
@@ -500,7 +519,7 @@ func validateRuntimeCapabilities(capabilities agentexecution.RuntimeCapabilities
 			return fmt.Errorf("%w: E2B Runtime Agent template does not provide the approved dependency preparation capability", agentexecution.ErrBackendUnavailable)
 		}
 	}
-	if profile.DependencyInstallation {
+	if networkMode == "package-install" {
 		if capabilities.LanguagePackageLedgerVersion != agentexecution.LanguagePackageLedgerVersion {
 			return fmt.Errorf("%w: E2B template lacks retained dependency artifact recovery; rebuild the package template", agentexecution.ErrBackendUnavailable)
 		}

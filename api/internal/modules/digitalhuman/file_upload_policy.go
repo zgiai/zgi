@@ -2,10 +2,15 @@ package digitalhuman
 
 import (
 	"encoding/json"
+
 	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"gorm.io/datatypes"
 )
+
+func fileUploadEnabled(version *Version) bool {
+	return version != nil && (version.FileUploadPolicy == nil || len(version.FileUploadPolicy.AllowedFileTypes) > 0)
+}
 
 func fileUploadPolicyJSON(policy *chatfile.Policy) datatypes.JSON {
 	if policy == nil {

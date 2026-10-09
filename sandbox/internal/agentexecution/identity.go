@@ -10,6 +10,7 @@ import (
 // ExecutionIdentityVersion is negotiated separately from the legacy release
 // protocol. Workers without this capability must not receive new entry points.
 const ExecutionIdentityVersion = 1
+const BackgroundExecutionIdentityVersion = 2
 const ExecutionIdentityHeader = "X-ZGI-Execution-Identity"
 
 // ExecutionIdentity is supplied only by the authenticated API, never by a Job
@@ -27,7 +28,7 @@ type ExecutionIdentity struct {
 }
 
 func (identity ExecutionIdentity) Validate() error {
-	if identity.Version != ExecutionIdentityVersion {
+	if identity.Version != ExecutionIdentityVersion && identity.Version != BackgroundExecutionIdentityVersion {
 		return fmt.Errorf("%w: unsupported execution identity version", ErrInvalidRequest)
 	}
 	for _, value := range []string{identity.WorkspaceID, identity.ApplicationID, identity.ConversationID, identity.PublicationRef} {
@@ -39,12 +40,20 @@ func (identity ExecutionIdentity) Validate() error {
 		return fmt.Errorf("%w: unsupported execution application", ErrInvalidRequest)
 	}
 	switch identity.Entry {
+	case "channel", "task":
+		kind := "channel_conversation"
+		if identity.Entry == "task" {
+			kind = "scheduled_task"
+		}
+		if identity.Version != BackgroundExecutionIdentityVersion || identity.ApplicationType != "digital_human" || identity.SubjectKind != kind {
+			return fmt.Errorf("%w: verified background identity is required", ErrInvalidRequest)
+		}
 	case "console", "webapp":
-		if identity.SubjectKind != "account" {
+		if identity.Version != ExecutionIdentityVersion || identity.SubjectKind != "account" {
 			return fmt.Errorf("%w: authenticated account is required", ErrInvalidRequest)
 		}
 	case "external-api":
-		if identity.SubjectKind != "api_end_user" {
+		if identity.Version != ExecutionIdentityVersion || identity.SubjectKind != "api_end_user" {
 			return fmt.Errorf("%w: API end user is required", ErrInvalidRequest)
 		}
 	default:

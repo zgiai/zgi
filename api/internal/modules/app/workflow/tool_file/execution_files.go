@@ -30,6 +30,9 @@ func (access ExecutionFileAccess) valid() bool {
 		WorkspaceID: access.WorkspaceID, ApplicationType: access.ApplicationType,
 		ApplicationID: access.ApplicationID, Entry: access.Entry, SubjectKind: access.SubjectKind,
 		ConversationID: access.ConversationID, PublicationRef: "file-access"}
+	if access.Entry == "channel" || access.Entry == "task" {
+		identity.Version = execution.BackgroundIdentityVersion
+	}
 	return validFileUUID(access.OrganizationID) && validFileUUID(access.SubjectID) &&
 		validFileUUID(access.WorkspaceID) && validFileUUID(access.ApplicationID) &&
 		validFileUUID(access.ConversationID) && identity.Validate() == nil

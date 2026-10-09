@@ -12,6 +12,13 @@ const (
 	MaxChunkSize     = 1000
 	TempFileTenantID = "00000000-0000-0000-0000-000000000000"
 
+	// DefaultChannelDeliveryFileTTLSeconds is the default lifetime of a
+	// channel-delivery bearer download link.
+	DefaultChannelDeliveryFileTTLSeconds = 30 * 24 * 60 * 60
+	// MaxChannelDeliveryFileTTLSeconds bounds channel-delivery links even when
+	// the deployment supplies an invalidly long value.
+	MaxChannelDeliveryFileTTLSeconds = 30 * 24 * 60 * 60
+
 	// DefaultOrgInviteDefaultPassword is the self-hosted fallback password used
 	// when ZGI_ORG_INVITE_DEFAULT_PASSWORD is not configured.
 	DefaultOrgInviteDefaultPassword = "ZGI@Welcome1"
@@ -147,6 +154,9 @@ type AppConfig struct {
 	FilesURL           string `json:"files_url"`
 	InternalFilesURL   string `json:"internal_files_url"`
 	FilesAccessTimeout int    `json:"files_access_timeout"`
+	// ChannelDeliveryFileTTL is server-controlled and intentionally omitted
+	// from public configuration responses.
+	ChannelDeliveryFileTTL int `json:"-"`
 }
 
 type ConsoleConfig struct {

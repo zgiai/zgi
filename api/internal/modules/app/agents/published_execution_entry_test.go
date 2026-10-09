@@ -50,6 +50,12 @@ func TestPublishedEntryWiringKeepsUnfinishedExecutionClosed(t *testing.T) {
 				c.Request = httptest.NewRequest(http.MethodPost, "/webapps/"+ids.webAppID.String()+"/chat", nil)
 				c.Params = gin.Params{{Key: "web_app_id", Value: ids.webAppID.String()}}
 				result, ok := h.webAppAgentRuntimeContext(c)
+				if entry == "anonymous-webapp" {
+					if ok || recorder.Code != http.StatusUnauthorized || runtime.lastRunConfig.RuntimeToolFactory != nil {
+						t.Fatal("Linux-enabled WebApp accepted anonymous continuation")
+					}
+					return
+				}
 				if !ok || result.RunConfig.RuntimeToolFactory != nil {
 					t.Fatalf("closed WebApp changed ordinary chat: %s", recorder.Body)
 				}

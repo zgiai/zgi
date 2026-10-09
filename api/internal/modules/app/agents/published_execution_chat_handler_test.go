@@ -53,7 +53,8 @@ func TestPublishedWebAppInitialChatExecutionTools(t *testing.T) {
 		{"enabled", true, true, true, true, true, http.StatusOK, true},
 		{"application disabled", true, false, true, true, true, http.StatusOK, false},
 		{"server disabled", true, true, false, true, true, http.StatusOK, false},
-		{"anonymous", false, true, true, true, true, http.StatusOK, false},
+		{"anonymous requires login", false, true, true, true, true, http.StatusUnauthorized, false},
+		{"anonymous without Linux", false, false, true, true, true, http.StatusOK, false},
 		{"entry denied", true, true, true, false, true, http.StatusBadRequest, false},
 		{"application access denied", true, true, true, true, false, http.StatusForbidden, false},
 	} {

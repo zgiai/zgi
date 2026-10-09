@@ -798,6 +798,7 @@ type AgentWebAppRuntimeConfigResponse struct {
 }
 
 type AgentPublicWebAppConfigResponse struct {
+	LoginRequired      bool             `json:"login_required"`
 	FileUploadPolicy   *chatfile.Policy `json:"file_upload_policy,omitempty"`
 	AgentID            string           `json:"agent_id"`
 	WebAppID           string           `json:"web_app_id"`

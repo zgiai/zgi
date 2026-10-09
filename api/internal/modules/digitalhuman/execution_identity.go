@@ -10,16 +10,22 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 )
 
-// executionAccess freezes values from a verified, durable interactive run. It
-// intentionally does not use ScopeFromRun/runtimeScope's legacy actor fallback.
+// executionAccess freezes the data owner from a verified durable run. For
+// interactive runs it never falls back to the actor; background runs use a
+// distinct derived owner and keep the existing billing account separately.
 type executionAccess struct {
 	organization, workspace, application, publication uuid.UUID
 	run, user, principal, webApp, conversation        uuid.UUID
 	surface, entry, principalType                     string
 	kind                                              usersubject.Kind
+	background                                        bool
+	billing                                           uuid.UUID
 }
 
 func executionAccessFor(run *Run, resolved *ResolvedExecution, event invocation.Event) (executionAccess, error) {
+	if run != nil && (run.Surface == SurfaceChannel || run.Surface == SurfaceTask) {
+		return backgroundExecutionAccessFor(run, resolved, event)
+	}
 	invalid := execution.ErrInvalidIdentity
 	if run == nil || resolved == nil || run.ID == uuid.Nil || run.OrganizationID == uuid.Nil || run.WorkspaceID == uuid.Nil ||
 		run.DigitalHumanID == uuid.Nil || run.DigitalHumanVersionID == uuid.Nil || run.UserSubjectID == nil || *run.UserSubjectID == uuid.Nil ||
@@ -92,6 +98,9 @@ func (a executionAccess) scope() Scope {
 }
 
 func (a executionAccess) resolve(prepared *chatruntime.PreparedChat) (execution.Scope, error) {
+	if a.background {
+		return a.resolveBackground(prepared)
+	}
 	if prepared == nil || prepared.Conversation == nil || prepared.Message == nil || prepared.Scope.AccountID != a.user ||
 		prepared.Scope.OrganizationID != a.organization || prepared.Scope.WorkspaceID == nil || *prepared.Scope.WorkspaceID != a.workspace ||
 		prepared.Scope.AgentResourceWorkspaceID() == nil || *prepared.Scope.AgentResourceWorkspaceID() != a.workspace ||

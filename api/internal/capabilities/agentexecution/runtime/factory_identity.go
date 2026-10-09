@@ -50,8 +50,16 @@ func identityMatchesPrepared(scope execution.Scope, prepared *runtimeservice.Pre
 		return chatScope.ExternalUserID != nil && *chatScope.ExternalUserID != uuid.Nil &&
 			scope.SubjectID == chatScope.ExternalUserID.String() && conversation.ExternalUserID != nil && *conversation.ExternalUserID == *chatScope.ExternalUserID
 	}
+	if identity.Entry == "channel" || identity.Entry == "task" {
+		if caller.Type != runtimemodel.ConversationCallerDigitalHuman || caller.RunID == nil || *caller.RunID == uuid.Nil ||
+			chatScope.ExternalUserID != nil || conversation.ExternalUserID != nil {
+			return false
+		}
+		subject := execution.BackgroundSubject(chatScope.OrganizationID, *resourceWorkspace, *caller.ID, conversation.ID, identity.Entry)
+		return scope.SubjectID == subject.ID.String() && identity.SubjectKind == string(subject.Kind)
+	}
 	// DigitalHuman's durable runtime explicitly projects its verified UserSubject
-	// into AccountID. Its adapter must reject anonymous, task and channel events;
+	// into AccountID. Its interactive adapter must reject anonymous events;
 	// the factory never substitutes its principal or creator here.
 	return scope.SubjectID == chatScope.AccountID.String() && chatScope.ExternalUserID == nil && conversation.ExternalUserID == nil
 }

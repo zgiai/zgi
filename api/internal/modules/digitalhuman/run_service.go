@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -374,6 +375,17 @@ func (s *RuntimeService) SubmitInvocation(ctx context.Context, scope Scope, even
 	resolved, err := s.resolver.Resolve(ctx, validated, nil)
 	if err != nil {
 		return nil, false, err
+	}
+	// Only newly accepted, opted-in scheduler runs use the task execution
+	// namespace. Historical runs keep their persisted source and conversation.
+	if validated.Origin.Kind == invocation.OriginSchedule && resolved.Snapshot.ExecutionRuntime != nil && resolved.Snapshot.ExecutionRuntime.Enabled {
+		validated.Context = maps.Clone(validated.Context)
+		if validated.Context == nil {
+			validated.Context = make(map[string]any)
+		}
+		validated.Context[backgroundExecutionEntryKey] = backgroundTaskEntry
+		id := uuid.New()
+		conversationID = &id
 	}
 	eventJSON, specJSON, snapshotJSON, err := marshalRunSnapshots(validated, resolved)
 	if err != nil {
@@ -978,16 +990,20 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 	}
 	callerID := run.DigitalHumanID
 	caller := chatruntime.Caller{
-		Type: runtimemodel.ConversationCallerDigitalHuman, ID: &callerID, RunID: &run.ID, Source: digitalHumanConversationSourceForEvent(event),
+		Type: runtimemodel.ConversationCallerDigitalHuman, ID: &callerID, RunID: &run.ID, Source: digitalHumanConversationSourceForRun(run),
 	}
 	if webAppID, ok := stringContextValue(event.Context, "web_app_id"); ok {
 		if parsed, parseErr := uuid.Parse(webAppID); parseErr == nil && parsed != uuid.Nil {
 			caller.SourceWebAppID = &parsed
 		}
 	}
-	if event.Origin.Kind == invocation.OriginChannel && run.ConversationID != nil {
+	if (event.Origin.Kind == invocation.OriginChannel || caller.Source == backgroundTaskEntry) && run.ConversationID != nil {
+		title := "Channel conversation"
+		if caller.Source == backgroundTaskEntry {
+			title = "Scheduled task"
+		}
 		if _, err := s.chat.EnsureConversationForCaller(
-			ctx, runtimeScope(run), caller, *run.ConversationID, "Channel conversation",
+			ctx, runtimeScope(run), caller, *run.ConversationID, title,
 		); err != nil {
 			_ = s.store.FailRun(ctx, run.ID, "digital_human.run.conversation_prepare_failed", "The channel conversation could not be prepared.", s.now())
 			return err
@@ -1303,6 +1319,14 @@ func digitalHumanConversationSourceForEvent(event invocation.Event) string {
 }
 
 func digitalHumanConversationSourceForRun(run *Run) string {
+	if run != nil && run.Surface == SurfaceTask {
+		var event invocation.Event
+		if json.Unmarshal(run.InvocationEvent, &event) == nil {
+			if entry, _ := stringContextValue(event.Context, backgroundExecutionEntryKey); entry == backgroundTaskEntry {
+				return backgroundTaskEntry
+			}
+		}
+	}
 	if run != nil && strings.TrimSpace(run.Surface) != "" {
 		return digitalHumanConversationSourceForSurface(run.Surface)
 	}

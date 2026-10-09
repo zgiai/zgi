@@ -28,6 +28,12 @@ func TestFeishuConnectionModesAndMigration(t *testing.T) {
 	if mode := receiver.Mode(channelruntime.ResolvedChannelCredential{Values: legacy}); mode != "webhook" {
 		t.Fatalf("legacy mode = %q, want webhook", mode)
 	}
+	if mode := receiver.Mode(channelruntime.ResolvedChannelCredential{
+		Values: map[string]string{"app_id": "cli_test", "app_secret": "secret"},
+		Source: channelruntime.CredentialSourcePersonalConnection,
+	}); mode != "websocket" {
+		t.Fatalf("connector mode = %q, want websocket", mode)
+	}
 	for _, test := range []struct {
 		name             string
 		current, updates map[string]string

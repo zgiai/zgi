@@ -64,6 +64,7 @@ func TestDigitalHumanPermissionForRequest(t *testing.T) {
 		{http.MethodPost, "/console/api/digital-humans/:id/channels/installations", workspacemodel.WorkspacePermissionDigitalHumanUpdate},
 		{http.MethodDelete, "/console/api/digital-humans/:id/channels/bindings/:binding_id", workspacemodel.WorkspacePermissionDigitalHumanUpdate},
 		{http.MethodGet, "/console/api/digital-humans/:id/channels/events", workspacemodel.WorkspacePermissionDigitalHumanLogsView},
+		{http.MethodGet, "/console/api/digital-humans/:id/runs/:run_id/files/:file_id", workspacemodel.WorkspacePermissionDigitalHumanLogsView},
 		{http.MethodGet, "/console/api/digital-humans/:id/channels/deliveries", workspacemodel.WorkspacePermissionDigitalHumanLogsView},
 		{http.MethodPost, "/console/api/digital-humans/:id/channels/deliveries/:delivery_id/retry", workspacemodel.WorkspacePermissionDigitalHumanRun},
 		{http.MethodPost, "/console/api/digital-humans/:id/channels/deliveries/:delivery_id/dismiss", workspacemodel.WorkspacePermissionDigitalHumanRun},
@@ -102,10 +103,11 @@ func TestRegisterDigitalHumanRoutesRegistersLifecycleAPI(t *testing.T) {
 	})
 
 	routes := router.Routes()
-	if got, want := len(routes), 81; got != want {
+	if got, want := len(routes), 82; got != want {
 		t.Fatalf("registered route count = %d, want %d", got, want)
 	}
 	want := map[string]bool{
+		"GET /console/api/digital-humans/:id/runs/:run_id/files/:file_id":                                                                           false,
 		"POST /console/api/digital-humans/:id/runtime/conversations/:conversation_id/messages/:message_id/tool-governance/:correlation_id/continue": false,
 		"GET /console/api/digital-humans/:id/runtime/conversations/:conversation_id/files/:file_id":                                                 false,
 		"GET /console/api/digital-human-skill-candidates":                                                                                           false,

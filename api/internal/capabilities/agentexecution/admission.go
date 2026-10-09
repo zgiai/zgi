@@ -59,6 +59,9 @@ func (policy EntryAdmission) Allows(organization, application, entry string) boo
 }
 
 func validEntry(application, entry string) bool {
+	if application == "digital_human" && (entry == "channel" || entry == "task") {
+		return true
+	}
 	return (application == "agent" || application == "digital_human") &&
 		(entry == "console" || entry == "webapp" || entry == "external-api")
 }

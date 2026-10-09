@@ -3,6 +3,7 @@ package digitalhuman
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -174,6 +175,15 @@ func (s *RuntimeService) ContinueChannelTaskApproval(
 	}
 	messages, _, err := lister.ListConversationMessagesByCaller(ctx, runtimeScope, caller, conversationID, 1, 50)
 	if err != nil {
+		// A channel mapping reserves its local conversation ID before the
+		// first runtime input is submitted. Until that input creates the
+		// conversation, the approval lookup naturally returns not found.
+		// Treat that state as "no pending approval" and let the normal
+		// channel invocation path create the conversation. Other errors
+		// (including permission and storage failures) must still fail closed.
+		if errors.Is(err, service.ErrNotFound) {
+			return false, nil
+		}
 		return false, err
 	}
 	var pending *runtimemodel.Message

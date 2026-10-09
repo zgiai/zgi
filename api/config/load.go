@@ -432,13 +432,21 @@ func loadAppConfig(cfg *Config, source *envSource) error {
 	if err != nil {
 		return err
 	}
+	channelDeliveryFileTTL, err := source.int(DefaultChannelDeliveryFileTTLSeconds, envChannelDeliveryFileTTL)
+	if err != nil {
+		return err
+	}
+	if channelDeliveryFileTTL <= 0 || channelDeliveryFileTTL > MaxChannelDeliveryFileTTLSeconds {
+		return fmt.Errorf("%s must be between 1 and %d seconds", envChannelDeliveryFileTTL, MaxChannelDeliveryFileTTLSeconds)
+	}
 
 	cfg.App = AppConfig{
-		Name:               source.string("ZGI-GinKit", envAppName),
-		SecretKey:          source.string("", envSecretKey),
-		FilesURL:           source.string("http://localhost:2679", envFilesURL),
-		InternalFilesURL:   source.string("", envInternalFilesURL),
-		FilesAccessTimeout: filesAccessTimeout,
+		Name:                   source.string("ZGI-GinKit", envAppName),
+		SecretKey:              source.string("", envSecretKey),
+		FilesURL:               source.string("http://localhost:2679", envFilesURL),
+		InternalFilesURL:       source.string("", envInternalFilesURL),
+		FilesAccessTimeout:     filesAccessTimeout,
+		ChannelDeliveryFileTTL: channelDeliveryFileTTL,
 	}
 	return nil
 }

@@ -426,7 +426,7 @@ func newDigitalHumanLinuxExecution(deps DigitalHumanRuntimeDeps) *digitalhuman.L
 	return digitalhuman.NewLinuxExecutionRuntime(digitalhuman.LinuxExecutionOptions{
 		DB: deps.DB, Approvals: executionruntime.ApprovalsFromEnv(), Gateway: executionruntime.GatewayFromEnv(),
 		PlatformCLI: executionruntime.EnvBool("ZGI_AGENT_RUNTIME_PLATFORM_CLI_ENABLED", false),
-		EntryReady:  executionruntime.InteractiveEntryImplemented,
+		EntryReady:  executionruntime.DigitalHumanEntryImplemented,
 		Files:       deps.FileService, Access: digitalhuman.NewAccessService(deps.DB), Entries: entries,
 		ArtifactManager: func() *tool_file.ToolFileManager { return tool_file.GlobalToolFileManager },
 		AuthorizeConsole: func(ctx context.Context, scope digitalhuman.Scope) error {

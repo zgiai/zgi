@@ -36,6 +36,12 @@ func feishuConnectionMode(credential channelruntime.ResolvedChannelCredential) s
 	if mode := strings.TrimSpace(credential.Values["connection_mode"]); mode != "" {
 		return mode
 	}
+	// Connector-backed Feishu credentials do not store channel transport
+	// metadata. They are the new long-connection path; legacy embedded
+	// credentials without an explicit mode retain the webhook fallback.
+	if credential.Source == channelruntime.CredentialSourcePersonalConnection {
+		return "websocket"
+	}
 	return "webhook"
 }
 

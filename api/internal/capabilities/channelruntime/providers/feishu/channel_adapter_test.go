@@ -22,6 +22,13 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/runtimeidentity"
 )
 
+func TestChannelConnectionSpecUsesConnectorCatalogIdentifiers(t *testing.T) {
+	spec := (&ChannelAdapter{}).ConnectionSpec()
+	if spec.IntegrationID != "feishu" || spec.DriverID != "feishu-openapi-v1" || spec.AuthMethodID != "feishu.app_credentials" {
+		t.Fatalf("ConnectionSpec() = %#v, want canonical Feishu Connector identifiers", spec)
+	}
+}
+
 func TestChannelAdapterVerifiesEncryptedSignedEventAndNormalizesMention(t *testing.T) {
 	now := time.Date(2026, 8, 19, 10, 30, 0, 0, time.UTC)
 	plain := []byte(`{

@@ -189,6 +189,11 @@ func (s *agentsService) GetWebAppRuntimeCapability(ctx context.Context, webAppID
 		decision = surface.Evaluate(runtimeauth.RuntimeAudience{})
 	}
 	privateAudienceEnabled := webAppSurfaceHasPrivateAudience(surface)
+	publishedConfig := agentConfigResponseFromSnapshot(ag.ID.String(), version.ConfigSnapshot)
+	if ok && !authenticated && publishedConfig != nil && agentWebAppRequiresLogin(*publishedConfig) {
+		decision.Allowed = false
+		decision.Reason = runtimeauth.RuntimeAccessDecisionReason(agentWebAppCapabilityReasonLoginRequired)
+	}
 	if ok && !decision.Allowed && privateAudienceEnabled {
 		if !authenticated {
 			decision.Reason = runtimeauth.RuntimeAccessDecisionReason(agentWebAppCapabilityReasonLoginRequired)

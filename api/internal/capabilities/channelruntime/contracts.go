@@ -4,6 +4,7 @@ package channelruntime
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"time"
 
@@ -299,6 +300,10 @@ type Provisioner interface {
 // ProviderCapabilities declares optional channel behavior without requiring
 // provider-name branches in DigitalHuman orchestration.
 type ProviderCapabilities struct {
+	// NativeAttachments is true only after the adapter implements authenticated
+	// file upload and delivery. Other adapters receive authorized download links.
+	NativeAttachments          bool
+	MaxAttachmentBytes         int64
 	ContextRead                bool
 	Edit                       bool
 	Retract                    bool
@@ -388,6 +393,18 @@ type DeliveryRequest struct {
 	ExternalThreadID       string
 	Text                   string
 	Mentions               []DeliveryMention
+	Attachments            []DeliveryAttachment
+}
+
+// DeliveryAttachment is request-scoped and must not be serialized or retained.
+// Open rechecks ownership before reading; the adapter closes each reader before
+// opening the next file. ID is the stable file identity, not a storage path.
+type DeliveryAttachment struct {
+	ID       string
+	Filename string
+	MimeType string
+	Size     int64
+	Open     func(context.Context) (io.ReadCloser, error)
 }
 
 // DeliveryMention identifies one provider-native mention that should accompany

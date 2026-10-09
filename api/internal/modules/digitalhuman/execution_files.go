@@ -1,6 +1,8 @@
 package digitalhuman
 
 import (
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
@@ -8,6 +10,57 @@ import (
 	"github.com/zgiai/zgi/api/pkg/apperror"
 	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
 )
+
+// GetBackgroundExecutionFile is a console-authenticated, logs-permission route
+// for channel/task artifacts. A link is not an access token. Compute admission
+// is deliberately not checked so retained results survive disabling Linux.
+func (h *RuntimeHandler) GetBackgroundExecutionFile(c *gin.Context) {
+	scope, app, runID, ok := h.scopeAndRunID(c)
+	if !ok {
+		return
+	}
+	deny := func() { h.base.writeError(c, applicationError(ErrNotFound, "digital_human.execution_file.background")) }
+	if h.executionFileApplications == nil || tool_file.GlobalToolFileManager == nil {
+		deny()
+		return
+	}
+	detail, err := h.executionFileApplications.Get(c.Request.Context(), scope, app)
+	if err != nil || detail == nil || detail.Definition == nil || detail.Definition.ID != app || detail.Definition.OrganizationID != scope.OrganizationID || detail.Definition.WorkspaceID != scope.WorkspaceID || detail.Definition.DeletedAt != nil {
+		deny()
+		return
+	}
+	run, err := h.service.GetRun(c.Request.Context(), scope, app, runID)
+	if err != nil || run == nil || run.ID != runID || run.OrganizationID != scope.OrganizationID || run.WorkspaceID != scope.WorkspaceID || run.DigitalHumanID != app {
+		deny()
+		return
+	}
+	// A workspace log reader must not acquire a private task user's files.
+	if run.Surface == SurfaceTask && run.UserSubjectID != nil && (run.UserSubjectKind != "account" || *run.UserSubjectID != scope.ActorID) {
+		deny()
+		return
+	}
+	manager := tool_file.GlobalToolFileManager
+	file, err := manager.GetToolFileByID(c.Request.Context(), c.Param("file_id"))
+	if err != nil {
+		deny()
+		return
+	}
+	access, err := backgroundExecutionFileAccess(run, file)
+	if err != nil {
+		deny()
+		return
+	}
+	if c.Query("metadata") == "1" {
+		writeDigitalHumanData(c, http.StatusOK, map[string]any{"file_id": file.ID, "filename": file.Name, "mime_type": file.MimeType, "size": file.Size})
+		return
+	}
+	data, file, err := manager.GetExecutionFileBinary(c.Request.Context(), access, file.ID)
+	if err != nil {
+		deny()
+		return
+	}
+	tool_file.WriteExecutionFile(c, file, data)
+}
 
 func (h *RuntimeHandler) GetExecutionFile(c *gin.Context) {
 	scope, digitalHumanID, conversationID, ok := h.conversationScope(c)
