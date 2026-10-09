@@ -147,6 +147,11 @@ func registerRuntime(lc fx.Lifecycle, params runtimeParams) error {
 		params.Logger,
 	)
 	RegisterRuntimeWorkspaceCredentialCleanupLifecycle(lc, runtimeworkspace.NewService(params.ServiceContainer.GetDB()), params.Logger)
+	RegisterRuntimeWorkspaceFileObjectDeletionLifecycle(
+		lc,
+		runtimeworkspace.NewFileObjectDeletionWorker(params.ServiceContainer.GetDB(), params.ServiceContainer.GetStorage()),
+		params.Logger,
+	)
 	RegisterGRPCServerLifecycle(lc, params.GRPCServer, params.GRPCListener, params.Logger)
 	RegisterHTTPServerLifecycle(lc, params.HTTPServer, params.HTTPListener, params.Logger)
 	RegisterSQLAuditRecorderLifecycle(lc, params.ServiceContainer, params.Logger)
@@ -190,6 +195,67 @@ func RegisterRuntimeWorkspaceCredentialCleanupLifecycle(lc fx.Lifecycle, cleaner
 		OnStop: func(context.Context) error {
 			if cancel != nil {
 				cancel()
+			}
+			return nil
+		},
+	})
+}
+
+type runtimeWorkspaceFileObjectDeletionRunner interface {
+	RunOnce(context.Context) error
+}
+
+// RegisterRuntimeWorkspaceFileObjectDeletionLifecycle keeps the deferred
+// object deletion table progressing after Runtime Workspace metadata is
+// removed. It deliberately runs regardless of the feature flag so disabling
+// new workspace creation cannot strand already-scheduled objects.
+func RegisterRuntimeWorkspaceFileObjectDeletionLifecycle(
+	lc fx.Lifecycle,
+	runner runtimeWorkspaceFileObjectDeletionRunner,
+	log *zap.Logger,
+) {
+	if runner == nil {
+		return
+	}
+	if log == nil {
+		log = zap.NewNop()
+	}
+	var cancel context.CancelFunc
+	var done chan struct{}
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			if err := runner.RunOnce(ctx); err != nil {
+				log.Warn("Initial Runtime Workspace file object deletion failed", zap.Error(err))
+			}
+			workerContext, stop := context.WithCancel(context.Background())
+			cancel = stop
+			done = make(chan struct{})
+			go func() {
+				defer close(done)
+				ticker := time.NewTicker(5 * time.Minute)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-workerContext.Done():
+						return
+					case <-ticker.C:
+						if err := runner.RunOnce(workerContext); err != nil {
+							log.Warn("Runtime Workspace file object deletion failed", zap.Error(err))
+						}
+					}
+				}
+			}()
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			if cancel != nil {
+				cancel()
+			}
+			if done != nil {
+				select {
+				case <-done:
+				case <-ctx.Done():
+				}
 			}
 			return nil
 		},

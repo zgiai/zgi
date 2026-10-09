@@ -166,6 +166,7 @@ type ServiceContainer struct {
 	db                       *gorm.DB
 	tokenMgr                 *helper.TokenManager
 	config                   *config.Config
+	storageClient            storage.Storage
 
 	// Repositories
 	workspaceRepo       workspace_repo.WorkspaceRepository
@@ -347,6 +348,16 @@ func (c *ServiceContainer) GetPaymentServices() *payment_service.PaymentServices
 
 func (c *ServiceContainer) GetDB() *gorm.DB {
 	return c.db
+}
+
+// GetStorage returns the storage instance initialized for this application.
+// Background consumers must use the same configured backend as request-scoped
+// services instead of constructing a separate storage client.
+func (c *ServiceContainer) GetStorage() storage.Storage {
+	if c.storageClient == nil {
+		c.storageClient = storage.GetStorage()
+	}
+	return c.storageClient
 }
 
 func (c *ServiceContainer) GetTaskManager() *queue.TaskManager {
@@ -571,6 +582,7 @@ func NewServiceContainer(
 		db:                       db,
 		tokenMgr:                 tokenMgr,
 		config:                   cfg,
+		storageClient:            storageClient,
 		workspaceRepo:            workspaceRepo,
 		workspaceMemberRepo:      workspaceMemberRepo,
 		platformContainer:        platformContainer,
