@@ -12,6 +12,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/providers"
+	"github.com/zgiai/zgi/api/pkg/mcpclient"
 )
 
 func testRemote(t *testing.T, includeRead bool) (*Client, func(), *[]string) {
@@ -124,5 +125,28 @@ func TestGitHubMCPRejectsInvalidPAT(t *testing.T) {
 	}
 	if len(*calls) != 0 {
 		t.Fatalf("invalid PAT called MCP tool: %#v", *calls)
+	}
+}
+
+func TestGitHubMCPReadsDirectTextIssueResult(t *testing.T) {
+	issueJSON := `{"number":4851,"title":"Pooled skippedNodes panic","body":"Details","state":"open","updated_at":"2026-10-08T00:00:00Z","user":{"login":"reporter"}}`
+	block, err := json.Marshal(map[string]any{"text": issueJSON})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := mcpclient.ToolCallResult{Content: []mcpclient.ContentBlock{{Type: "text", Raw: block}}}
+	remote, err := resultObject(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue, err := detailOutput(remote, "gin-gonic", "gin", 4851)
+	if err != nil || issue["html_url"] != "https://github.com/gin-gonic/gin/issues/4851" || issue["body"] != "Details" {
+		t.Fatalf("direct issue projection: %#v, %v", issue, err)
+	}
+	if _, err := detailOutput(remote, "gin-gonic", "gin", 4852); err == nil {
+		t.Fatal("mismatched issue number accepted")
+	}
+	if _, err := detailOutput(map[string]any{"method": "get_comments", "issue": remote}, "gin-gonic", "gin", 4851); err == nil {
+		t.Fatal("unexpected issue_read method accepted")
 	}
 }

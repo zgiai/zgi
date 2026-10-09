@@ -94,7 +94,7 @@ func (s *WorkflowService) resolveWorkflowConnectorReferences(ctx context.Context
 				break
 			}
 		}
-		if data == nil || workflowString(data, "connector_unavailable_ref") != r.ID.String() {
+		if data == nil || !workflowReferencePlacementMatches(data, r, command) {
 			return fmt.Errorf("Connector reference placement changed")
 		}
 		binding, err := bindings.ResolveReferenceInTransaction(ctx, tx, org, owner, target, command)
@@ -119,4 +119,19 @@ func (s *WorkflowService) resolveWorkflowConnectorReferences(ctx context.Context
 	}
 	w.Graph = string(encoded)
 	return nil
+}
+
+// The editor may optimistically show a selected connection before the draft is
+// saved. In that case the pending command must agree with the visible node.
+func workflowReferencePlacementMatches(data map[string]any, reference core.UnavailableReference, command core.ReferenceCommand) bool {
+	if marker := workflowString(data, "connector_unavailable_ref"); marker != "" {
+		return marker == reference.ID.String()
+	}
+	if command.Action == "detach" {
+		return workflowString(data, "provider_type") == "connector" && data["connector"] == nil
+	}
+	connector, ok := data["connector"].(map[string]any)
+	return ok && workflowString(data, "provider_type") == "connector" &&
+		workflowString(connector, "connection_id") == command.ConnectionID.String() &&
+		workflowString(connector, "operation_id") == command.OperationID.String()
 }

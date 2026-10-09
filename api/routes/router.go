@@ -81,6 +81,7 @@ func RegisterRoutes(r *gin.Engine, serviceContainer *container.ServiceContainer,
 		ConnectorDispatcher:        serviceContainer.GetConnectorSurfaceDispatcher(),
 		ConnectorAgentRuntime:      serviceContainer.GetConnectorAgentRuntimeResolver(),
 		ConnectorConfirmationStore: serviceContainer.GetConnectorConfirmationContinuationStore(),
+		ConnectorCatalog:           serviceContainer.GetConnectorPluginManager(),
 	})
 
 	registerConsoleInternalRoutes(r, serviceContainer.GetDB())

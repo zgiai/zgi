@@ -350,12 +350,16 @@ func listOutput(remote map[string]any, owner, repo string, limit int) ([]any, er
 	return items, nil
 }
 func detailOutput(remote map[string]any, owner, repo string, wantNumber int) (map[string]any, error) {
-	if text(remote, "method") != "get" {
-		return nil, errors.New("unexpected issue method")
-	}
-	row, ok := remote["issue"].(map[string]any)
-	if !ok {
-		return nil, errors.New("issue missing")
+	row := remote
+	if method, wrapped := remote["method"]; wrapped {
+		if method != "get" {
+			return nil, errors.New("unexpected issue method")
+		}
+		var ok bool
+		row, ok = remote["issue"].(map[string]any)
+		if !ok {
+			return nil, errors.New("issue missing")
+		}
 	}
 	number := providers.Number(row, "number")
 	if number != wantNumber {
