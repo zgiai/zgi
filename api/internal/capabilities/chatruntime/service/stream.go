@@ -408,6 +408,7 @@ func (s *service) openChatStream(ctx context.Context, prepared *PreparedChat) (<
 	}
 	if s.llmClient == nil {
 		err := fmt.Errorf("llm client is not configured")
+		s.recordPreparedErrorIdentity(ctx, prepared, err)
 		_ = s.repos.Message.UpdateError(ctx, prepared.Message.ID, err.Error())
 		return nil, err
 	}
@@ -456,6 +457,7 @@ func (s *service) openChatStream(ctx context.Context, prepared *PreparedChat) (<
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
+			s.recordPreparedErrorIdentity(ctx, prepared, result.err)
 			_ = s.repos.Message.UpdateError(ctx, prepared.Message.ID, result.err.Error())
 			return nil, result.err
 		}
@@ -639,6 +641,7 @@ func (s *service) collectStreamAnswerWithEventsAndProgress(ctx context.Context, 
 					_ = s.persistStoppedAnswer(context.WithoutCancel(ctx), prepared, answer, usage)
 					return answer, usage, ErrMessageStopped
 				}
+				s.recordPreparedErrorIdentity(context.WithoutCancel(ctx), prepared, chunk.Error)
 				_ = s.repos.Message.UpdateError(context.WithoutCancel(ctx), prepared.Message.ID, chunk.Error.Error())
 				return "", nil, chunk.Error
 			}
@@ -813,25 +816,44 @@ func finalizedRuntimeOwnershipError(err error) error {
 	return newFinalizedStreamError(err)
 }
 
-func (s *service) completePreparedError(ctx context.Context, prepared *PreparedChat, cause error) error {
-	message := publicAichatErrorMessage(cause)
+// recordPreparedErrorIdentity stores the failed turn's public error identity in
+// the message metadata while the message is still mutable, so a reloaded
+// conversation renders the same error the stream frame published. A product
+// error keeps its own code; any other failure records its stable catalog code
+// (for example llm.model.not_found), which used to be dropped. Paths that end
+// the message early call it before writing the error, because a finished
+// message no longer accepts metadata.
+func (s *service) recordPreparedErrorIdentity(ctx context.Context, prepared *PreparedChat, cause error) {
+	if prepared == nil || prepared.Message == nil || cause == nil {
+		return
+	}
+	metadata := copyStringAnyMap(prepared.Message.Metadata)
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
 	if code, params, ok := publicAichatStructuredError(cause); ok {
-		metadata := copyStringAnyMap(prepared.Message.Metadata)
-		if metadata == nil {
-			metadata = map[string]interface{}{}
-		}
 		metadata["error_code"] = code
 		if len(params) > 0 {
 			metadata["error_params"] = params
 		} else {
 			delete(metadata, "error_params")
 		}
-		if err := s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {
-			logger.WarnContext(ctx, "failed to persist aichat error metadata", "message_id", prepared.Message.ID.String(), err)
-		} else {
-			prepared.Message.Metadata = metadata
-		}
+	} else {
+		metadata["error_code"] = stableAichatErrorCode(cause)
+		delete(metadata, "error_params")
 	}
+	if err := s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			logger.WarnContext(ctx, "failed to persist aichat error metadata", "message_id", prepared.Message.ID.String(), err)
+		}
+		return
+	}
+	prepared.Message.Metadata = metadata
+}
+
+func (s *service) completePreparedError(ctx context.Context, prepared *PreparedChat, cause error) error {
+	message := publicAichatErrorMessage(cause)
+	s.recordPreparedErrorIdentity(ctx, prepared, cause)
 	if err := s.repos.Message.UpdateError(ctx, prepared.Message.ID, message); err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
