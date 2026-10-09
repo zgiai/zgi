@@ -9,7 +9,7 @@ func TestPresentationRegistryIsCoveredAndStable(t *testing.T) {
 	if err := ValidatePresentationRegistry(); err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"weixin", "wecom", "dingtalk", "feishu", "gmail", "qqmail", "netease163", "github", "web-search"} {
+	for _, id := range []string{"weixin", "wecom", "dingtalk", "feishu", "gmail", "qqmail", "netease163", "github", "github-mcp", "web-search"} {
 		metadata, ok := PresentationMetadataFor(id)
 		if !ok {
 			t.Fatalf("missing presentation metadata for %s", id)
@@ -67,13 +67,17 @@ func TestCatalogPresentationFiltersDoNotChangeDefinitionContract(t *testing.T) {
 	}
 	for _, test := range []struct {
 		category ConnectorCategory
-		want     string
+		want     []string
 	}{
-		{ConnectorCategoryInformation, "web-search"},
-		{ConnectorCategoryDeveloper, "github"},
+		{ConnectorCategoryInformation, []string{"web-search"}},
+		{ConnectorCategoryDeveloper, []string{"github", "github-mcp"}},
 	} {
 		items := catalog.List(Filter{Category: test.category})
-		if len(items) != 1 || items[0].ID != test.want {
+		ids := make([]string, 0, len(items))
+		for _, item := range items {
+			ids = append(ids, item.ID)
+		}
+		if !reflect.DeepEqual(ids, test.want) {
 			t.Fatalf("category %s = %#v", test.category, items)
 		}
 	}

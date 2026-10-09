@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import {
   AlertCircle,
   ArrowLeft,
@@ -29,6 +30,7 @@ import {
   Dialog,
   DialogBody,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -54,6 +56,7 @@ import { FileQAPanel } from '@/components/files/detail/file-qa-panel';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { contentParseService } from '@/services/content-parse.service';
+import { datasetService } from '@/services/dataset.service';
 import type { ContentParseFileRouteProviderStatus } from '@/services/types/content-parse';
 import type {
   FileAssetProductStatus,
@@ -62,9 +65,10 @@ import type {
   FileQuestionAnswerSource,
 } from '@/services/types/file';
 import { useDownloadFile } from '@/hooks/use-files';
-import { useFileDetail } from '@/hooks/file/use-file-detail';
+import { getFileDetailKey, useFileDetail } from '@/hooks/file/use-file-detail';
 import { useCreateFileProcessingRequest } from '@/hooks/file/use-file-processing-request';
 import { usePrepareFileQAIndex } from '@/hooks/file/use-file-qa';
+import { useDatasets } from '@/hooks/dataset/use-datasets';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
 import { formatDate, formatFileSize } from '@/utils/format';
@@ -153,44 +157,56 @@ type WorkbenchStepState = 'done' | 'active' | 'attention' | 'failed' | 'blocked'
 function getWorkbenchStepStates(
   status: string,
   embeddingCount: number,
-  vectorStatus?: string
+  vectorStatus?: string,
+  processingStage?: string
 ): Array<{ key: string; state: WorkbenchStepState; count?: number }> {
+  const failedStage = processingStage || (status === 'parse_failed' ? 'parse' : '');
+  const parsedState: WorkbenchStepState =
+    status === 'stored_only'
+      ? 'pending'
+      : status === 'parsing'
+        ? 'active'
+        : status === 'confirming'
+          ? 'attention'
+          : status === 'parse_failed' && failedStage === 'parse'
+            ? 'failed'
+            : 'done';
+  const chunksState: WorkbenchStepState =
+    status === 'generating'
+      ? 'active'
+      : status === 'ready'
+        ? 'done'
+        : status === 'parse_failed' && failedStage === 'chunk'
+          ? 'failed'
+          : status === 'parse_failed'
+            ? 'blocked'
+            : 'pending';
+  const indexState: WorkbenchStepState =
+    status === 'ready' && vectorStatus === 'ready'
+      ? 'done'
+      : status === 'generating' || status === 'ready' || embeddingCount > 0
+        ? 'active'
+        : status === 'parse_failed' && (failedStage === 'vectorize' || failedStage === 'sync')
+          ? 'failed'
+          : status === 'parse_failed'
+            ? 'blocked'
+            : 'pending';
   return [
-    { key: 'uploaded', state: 'done' },
+    {
+      key: 'uploaded',
+      state: status === 'parse_failed' && failedStage === 'upload' ? 'failed' : 'done',
+    },
     {
       key: 'parsed',
-      state:
-        status === 'stored_only'
-          ? 'pending'
-          : status === 'parsing'
-            ? 'active'
-            : status === 'confirming'
-              ? 'attention'
-            : status === 'parse_failed'
-              ? 'failed'
-              : 'done',
+      state: parsedState,
     },
     {
       key: 'chunks',
-      state:
-        status === 'generating'
-          ? 'active'
-          : status === 'ready'
-            ? 'done'
-            : status === 'parse_failed'
-              ? 'blocked'
-              : 'pending',
+      state: chunksState,
     },
     {
       key: 'index',
-      state:
-        status === 'ready' && vectorStatus === 'ready'
-          ? 'done'
-          : status === 'generating' || status === 'ready' || embeddingCount > 0
-            ? 'active'
-            : status === 'parse_failed'
-              ? 'blocked'
-              : 'pending',
+      state: indexState,
     },
     {
       key: 'ready',
@@ -274,15 +290,17 @@ function ProcessingWorkbenchOverview({
   chunkCount,
   embeddingCount,
   vectorStatus,
+  processingStage,
 }: {
   status: string;
   pendingCount: number;
   chunkCount: number;
   embeddingCount: number;
   vectorStatus?: string;
+  processingStage?: string;
 }) {
   const t = useT('files');
-  const steps = getWorkbenchStepStates(status, embeddingCount, vectorStatus);
+  const steps = getWorkbenchStepStates(status, embeddingCount, vectorStatus, processingStage);
   const banner = getWorkbenchBannerTone(status);
   const BannerIcon = banner.icon;
 
@@ -673,6 +691,109 @@ function FilePreviewChunksWorkbench({
   );
 }
 
+function AddToKnowledgeBaseDialog({
+  open,
+  fileId,
+  workspaceId,
+  assetId,
+  onOpenChange,
+}: {
+  open: boolean;
+  fileId: string;
+  workspaceId?: string;
+  assetId?: string;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const t = useT('files');
+  const queryClient = useQueryClient();
+  const [datasetId, setDatasetId] = useState('');
+  const { pages, isLoading, error } = useDatasets(
+    { workspace_id: workspaceId, limit: 100 },
+    { enabled: open && Boolean(workspaceId) }
+  );
+  const datasets = useMemo(() => pages.flat(), [pages]);
+  const createRef = useMutation({
+    mutationFn: () => {
+      if (!datasetId || !assetId) throw new Error(t('knowledgeBase.missingSelection'));
+      return datasetService.createDatasetFileRefs(datasetId, [assetId]);
+    },
+    onSuccess: response => {
+      const item = response.data?.items?.[0];
+      if (item?.success) {
+        toast.success(t('knowledgeBase.addSuccess'));
+        void queryClient.invalidateQueries({ queryKey: getFileDetailKey(fileId) });
+        onOpenChange(false);
+        return;
+      }
+      if (item?.reason === 'already_added') {
+        toast.info(t('knowledgeBase.alreadyAdded'));
+        void queryClient.invalidateQueries({ queryKey: getFileDetailKey(fileId) });
+        onOpenChange(false);
+        return;
+      }
+      toast.error(t('knowledgeBase.addFailed'));
+    },
+    onError: (mutationError: unknown) => {
+      toast.error(
+        mutationError instanceof Error ? mutationError.message : t('knowledgeBase.addFailed')
+      );
+    },
+  });
+
+  useEffect(() => {
+    if (!open) {
+      setDatasetId('');
+      return;
+    }
+    if (!datasetId && datasets.length > 0) setDatasetId(datasets[0].id);
+  }, [datasetId, datasets, open]);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-[520px]">
+        <DialogHeader>
+          <DialogTitle>{t('knowledgeBase.dialogTitle')}</DialogTitle>
+          <DialogDescription>{t('knowledgeBase.dialogDescription')}</DialogDescription>
+        </DialogHeader>
+        <DialogBody className="space-y-3">
+          {isLoading ? (
+            <div className="text-sm text-muted-foreground">{t('knowledgeBase.loading')}</div>
+          ) : error ? (
+            <div className="text-sm text-destructive">{t('knowledgeBase.loadFailed')}</div>
+          ) : datasets.length === 0 ? (
+            <div className="text-sm text-muted-foreground">{t('knowledgeBase.empty')}</div>
+          ) : (
+            <Select value={datasetId} onValueChange={setDatasetId}>
+              <SelectTrigger>
+                <SelectValue placeholder={t('knowledgeBase.selectPlaceholder')} />
+              </SelectTrigger>
+              <SelectContent>
+                {datasets.map(dataset => (
+                  <SelectItem key={dataset.id} value={dataset.id}>
+                    {dataset.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            {t('knowledgeBase.cancel')}
+          </Button>
+          <Button
+            onClick={() => createRef.mutate()}
+            disabled={!datasetId || !assetId || datasets.length === 0 || createRef.isPending}
+            loading={createRef.isPending}
+          >
+            {t('knowledgeBase.confirm')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -697,6 +818,7 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const [qaIndexPrepareError, setQAIndexPrepareError] = useState<string | null>(null);
   const [qaIndexRevision, setQAIndexRevision] = useState(0);
   const [reparseConfirmOpen, setReparseConfirmOpen] = useState(false);
+  const [addKnowledgeBaseOpen, setAddKnowledgeBaseOpen] = useState(false);
   const [pendingParserConfigProvider, setPendingParserConfigProvider] = useState<
     'mineru' | 'reducto' | null
   >(null);
@@ -768,6 +890,7 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
   const showHeaderRefresh = !isFullyReady;
   const canRequestProcessing = canUpdateFile;
   const canReparse = canRequestProcessing && (status === 'ready' || status === 'parse_failed');
+  const canAddToKnowledgeBase = Boolean(asset?.id && file?.workspace_id && status === 'ready');
   const providerStatusQuery = useQuery({
     queryKey: ['content-parse', 'file-route-providers', file?.name],
     queryFn: () => contentParseService.listFileRouteProviders(file?.name ?? ''),
@@ -1008,6 +1131,15 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
               loading={createProcessingRequest.isPending}
               onReparse={() => setReparseConfirmOpen(true)}
             />
+            {canAddToKnowledgeBase ? (
+              <Button
+                variant="outline"
+                className="h-9 gap-2 rounded-md px-3 text-sm"
+                onClick={() => setAddKnowledgeBaseOpen(true)}
+              >
+                {t('detail.addToKnowledgeBase')}
+              </Button>
+            ) : null}
             {canDownload ? (
               <Button
                 variant="outline"
@@ -1070,6 +1202,9 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
             chunkCount={chunkCount}
             embeddingCount={embeddingCount}
             vectorStatus={vectorStatus}
+            processingStage={
+              processing?.summary.processing_stage ?? asset?.processing_stage ?? file.processing_stage
+            }
           />
         </div>
       ) : null}
@@ -1136,6 +1271,13 @@ export function FileDetailShell({ fileId }: FileDetailShellProps) {
           setReparseConfirmOpen(false);
         }}
         loading={createProcessingRequest.isPending}
+      />
+      <AddToKnowledgeBaseDialog
+        open={addKnowledgeBaseOpen}
+        fileId={fileId}
+        workspaceId={file.workspace_id}
+        assetId={asset?.id}
+        onOpenChange={setAddKnowledgeBaseOpen}
       />
       <ConfirmDialog
         variant="default"

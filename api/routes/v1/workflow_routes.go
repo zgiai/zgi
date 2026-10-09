@@ -21,6 +21,7 @@ import (
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	automationdefinition "github.com/zgiai/zgi/api/internal/modules/automation/service/definition"
+	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
@@ -43,6 +44,7 @@ type WorkflowRouteDeps struct {
 	OrganizationService         interfaces.OrganizationService
 	LLMClient                   interface{}
 	ToolEngine                  interface{}
+	ConnectorCatalog            connectorexecution.DefinitionCatalog
 	GraphFlowService            *graphflow.Service
 	PromptResolver              promptservice.PromptService
 	AutomationDefinitionService automationdefinition.Service
@@ -86,6 +88,7 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) *wo
 		deps.AutomationDefinitionService,
 		deps.EngineFactory,
 	)
+	workflowService.SetConnectorCatalog(deps.ConnectorCatalog)
 	deps.AutomationRunnerSetter.SetAutomationWorkflowRunner(workflowService)
 
 	// Initialize user migration service
@@ -279,6 +282,9 @@ func validateWorkflowRouteDeps(deps WorkflowRouteDeps) {
 	}
 	if deps.ToolEngine == nil {
 		panic("workflow routes require tool engine")
+	}
+	if deps.ConnectorCatalog == nil {
+		panic("workflow routes require connector catalog")
 	}
 	if deps.GraphFlowService == nil {
 		panic("workflow routes require graph flow service")

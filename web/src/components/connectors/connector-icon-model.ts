@@ -3,7 +3,7 @@ export type ConnectorBrand = 'exa' | 'github' | 'feishu' | 'dingtalk' | 'weixin'
 export function connectorBrand(connectorId?: string, icon?: string): ConnectorBrand | undefined {
   const id = connectorId?.trim().toLowerCase();
   if (id === 'web-search' || id === 'exa') return 'exa';
-  if (id === 'github') return 'github';
+  if (id === 'github' || id === 'github-mcp') return 'github';
   if (id === 'feishu' || id === 'lark') return 'feishu';
   if (id === 'dingtalk') return 'dingtalk';
   if (id === 'weixin' || id === 'wechat') return 'weixin';

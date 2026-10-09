@@ -53,7 +53,7 @@ func (d *sshDriverFixture) calls() int { return d.verifyCalls + d.invokeCalls }
 func TestRuntimeRejectsForgedLeafIdentityWithoutProviderCall(t *testing.T) {
 	github := &driverFixture{id: "github", operations: []string{"github.user.get"}}
 	ssh := &sshDriverFixture{}
-	runtime, err := NewRuntime(github, &driverFixture{id: "web-search"}, &appDriverFixture{}, ssh)
+	runtime, err := NewRuntime(github, &driverFixture{id: "github-mcp"}, &driverFixture{id: "web-search"}, &appDriverFixture{}, ssh)
 	if err != nil {
 		t.Fatal(err)
 	}

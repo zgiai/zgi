@@ -95,6 +95,36 @@ func TestConnectorActionPersistencePostgres(t *testing.T) {
 	if _, err := resolve(ctx, identity, map[string]any{"body": "changed"}); err == nil {
 		t.Fatal("orphan durable claim was treated as a first execution")
 	}
+	t.Run("sequential_issue_reads", func(t *testing.T) {
+		issueMessage := uuid.New()
+		if err := tx.Exec(`INSERT INTO chat_runtime_messages(id,conversation_id,status,runtime_run_id) VALUES (?,?,'streaming',?)`, issueMessage, conversation, run).Error; err != nil {
+			t.Fatal(err)
+		}
+		resolveIssue := ConnectorActionResolver(tx, issueMessage, conversation, org, owner)
+		listIdentity := identity
+		listIdentity.ConnectorID = "github-mcp"
+		listIdentity.OperationID = "github-mcp.issue.list"
+		list, err := resolveIssue(ctx, listIdentity, map[string]any{"owner": "gin-gonic", "repo": "gin", "limit": 5})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Exec(`INSERT INTO connector_invocation_claims VALUES (?, ?, ?, ?)`, org, owner, list.CorrelationID, list.LogicalOperationID).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := (&messageRepository{db: tx}).UpdateMetadata(ctx, issueMessage, map[string]any{"phase": "after list"}); err != nil {
+			t.Fatal(err)
+		}
+		readIdentity := listIdentity
+		readIdentity.OperationID = "github-mcp.issue.get"
+		read, err := resolveIssue(ctx, readIdentity, map[string]any{"owner": "gin-gonic", "repo": "gin", "issue_number": 11})
+		if err != nil || read.LogicalOperationID == list.LogicalOperationID {
+			t.Fatal("list followed by issue detail lost its action identity", err)
+		}
+		var retained int
+		if err := tx.Raw(`SELECT count(*) FROM chat_runtime_messages, jsonb_each(metadata->'connector_action_instances'->'instances') WHERE id=?`, issueMessage).Scan(&retained).Error; err != nil || retained != 2 {
+			t.Fatalf("sequential issue ledger entries = %d, %v", retained, err)
+		}
+	})
 	t.Run("durable_plan_steps", func(t *testing.T) {
 		plannedMessage := uuid.New()
 		if err := tx.Exec(`INSERT INTO chat_runtime_messages(id,conversation_id,status,runtime_run_id) VALUES (?,?,'streaming',?)`, plannedMessage, conversation, run).Error; err != nil {

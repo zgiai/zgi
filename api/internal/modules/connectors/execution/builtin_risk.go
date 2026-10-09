@@ -20,6 +20,8 @@ func BuiltinRiskPolicies() []TrustedOperationRiskPolicy {
 		{"github", "github-rest", "personal_access_token", "github.issue.comment.list", "list_github_issue_comments", RiskTrustedLow},
 		{"github", "github-rest", "personal_access_token", "github.issue.create", "create_github_issue", RiskHigh},
 		{"github", "github-rest", "personal_access_token", "github.issue.comment.create", "create_github_issue_comment", RiskHigh},
+		{"github-mcp", "github-mcp-remote", "personal_access_token", "github-mcp.issue.list", "list_github_mcp_issues", RiskTrustedLow},
+		{"github-mcp", "github-mcp-remote", "personal_access_token", "github-mcp.issue.get", "read_github_mcp_issue", RiskTrustedLow},
 		{"web-search", "exa", "personal_api_key", "web.search", "search_web", RiskTrustedLow},
 		{"web-search", "exa", "personal_api_key", "web.fetch", "fetch_webpage", RiskTrustedLow},
 	}

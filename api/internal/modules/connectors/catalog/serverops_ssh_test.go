@@ -527,12 +527,13 @@ func TestServerOpsSSHIsAdmittedLastAndExistingBuiltinsAreUnchanged(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The SSH contract is admitted to the catalog last, after the nine accepted
+	// The SSH contract is admitted to the catalog last, after the ten accepted
 	// built-ins. Admission is contract-only: no runtime driver, execution gate,
 	// route, or per-use approval is registered by this package, so the admitted
 	// contract remains unreachable until a later driver registration batch.
 	wantDigests := map[string]string{
 		"github":     "0744103a6141e0a18a977b18b8234c9d90b7e3c866dc67bc1ff859770fd7382b",
+		"github-mcp": "f70d1fb134f46cb0bd374b023c46f52541a39140358f23d6f4c470587ebe3e01",
 		"web-search": "53b87c613241aaff73012b5d2f505fb7461c8e34c5d4d6c4982552fd5f9b356a",
 		"feishu":     "d9db772907e21bf034a8ba78ea6a84f1fa829de397c5c0b0284996968452e2e3",
 		"dingtalk":   "e22bf6cf6f3b5133c6bad0252e641625fc1c8b02d1ac8845385d95ad23803970",

@@ -25,6 +25,7 @@ type ExternalRouteDeps struct {
 	ConnectorDispatcher        connectordispatch.Dispatcher
 	ConnectorAgentRuntime      connectorruntimeauth.AgentRuntimeResolver
 	ConnectorConfirmationStore connectorexecution.ConfirmationContinuationStore
+	ConnectorCatalog           connectorexecution.DefinitionCatalog
 	DB                         *gorm.DB
 	AccountService             interfaces.AccountService
 	FileService                interfaces.FileService
@@ -79,7 +80,7 @@ func RegisterExternalRoutes(r *gin.Engine, deps ExternalRouteDeps) {
 			deps.ResourcePermission,
 			deps.WorkflowEngineFactory,
 			deps.SkillManifestResolver,
-			deps.ConnectorDispatcher, deps.ConnectorAgentRuntime, deps.ConnectorConfirmationStore,
+			deps.ConnectorDispatcher, deps.ConnectorAgentRuntime, deps.ConnectorConfirmationStore, deps.ConnectorCatalog,
 		)
 	}
 
@@ -114,6 +115,9 @@ func validateExternalRouteDeps(deps ExternalRouteDeps) {
 	}
 	if deps.ToolManager == nil {
 		panic("external routes require tool manager")
+	}
+	if deps.ConnectorCatalog == nil {
+		panic("external routes require connector catalog")
 	}
 	if deps.GraphFlowService == nil {
 		panic("external routes require graph flow service")

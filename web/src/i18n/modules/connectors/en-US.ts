@@ -325,6 +325,7 @@ const messages = {
     reasonUnsupported: 'The original connection method or provider is no longer supported.',
     reasonAccess: 'The original owner or access restrictions do not permit this operation.',
     reasonSelection: 'This snapshot needs a connection selected for the current account.',
+    reasonUnconfigured: 'This workflow node was saved without a connection. Choose one and save the workflow to finish setup.',
     reasonUnavailable: 'The connection or operation is unavailable.',
   },
   title: 'Connectors',

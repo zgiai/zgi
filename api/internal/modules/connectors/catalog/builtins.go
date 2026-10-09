@@ -57,7 +57,13 @@ func BuiltinDefinitions() ([]Definition, error) {
 	if err := Validate(serveropsSSH); err != nil {
 		return nil, err
 	}
-	return append(append(append(definitions, feishu), messaging...), append(mail, serveropsSSH)...), nil
+	mcp := GitHubMCPDefinition()
+	if err := Validate(mcp); err != nil {
+		return nil, fmt.Errorf("validate GitHub MCP definition: %w", err)
+	}
+	// Keep the SSH contract as the final catalog entry; callers use that stable
+	// position when validating the isolated Server Operations surface.
+	return append(append(append(append(append(definitions, feishu), messaging...), mail...), mcp), serveropsSSH), nil
 }
 
 // ValidateBuiltinPackage admits exactly one package for a built-in plugin as

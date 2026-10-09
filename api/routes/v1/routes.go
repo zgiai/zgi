@@ -214,6 +214,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		OrganizationService:         serviceContainer.GetOrganizationService(),
 		LLMClient:                   serviceContainer.GetLLMClient(),
 		ToolEngine:                  serviceContainer.GetToolEngine(),
+		ConnectorCatalog:            serviceContainer.GetConnectorPluginManager(),
 		GraphFlowService:            serviceContainer.GetGraphFlowService(),
 		PromptResolver:              serviceContainer.GetPromptService(),
 		AutomationDefinitionService: automationDefinitionService,
@@ -243,7 +244,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 
 	// ---------- Agent ----------
 	resourcePermissionService := serviceContainer.GetResourcePermissionService()
-	agentsService := RegisterAgentsRoutes(v1, db, accountService, tenantService, resourcePermissionService, serviceContainer.GetOrganizationService(), serviceContainer.GetQuotaService(), serviceContainer.GetFileService(), serviceContainer.GetContentExtractor(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetToolManager(), serviceContainer.GetMemoryService(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetDataSourceService(), serviceContainer.GetKnowledgeRetrievalService(), workflowEngineFactory, serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetWorkflowTestService(), serviceContainer.GetScheduler(), config.Current().TaskQueue.WorkflowTestTaskBackend, serviceContainer.GetConnectorAgentRuntimeResolver(), serviceContainer.GetConnectorConfirmationContinuationStore(), serviceContainer.GetConnectorSurfaceDispatcher(), applicationErrorCatalog)
+	agentsService := RegisterAgentsRoutes(v1, db, accountService, tenantService, resourcePermissionService, serviceContainer.GetOrganizationService(), serviceContainer.GetQuotaService(), serviceContainer.GetFileService(), serviceContainer.GetContentExtractor(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetToolManager(), serviceContainer.GetMemoryService(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetDataSourceService(), serviceContainer.GetKnowledgeRetrievalService(), workflowEngineFactory, serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetWorkflowTestService(), serviceContainer.GetScheduler(), config.Current().TaskQueue.WorkflowTestTaskBackend, serviceContainer.GetConnectorAgentRuntimeResolver(), serviceContainer.GetConnectorConfirmationContinuationStore(), serviceContainer.GetConnectorSurfaceDispatcher(), serviceContainer.GetConnectorPluginManager(), applicationErrorCatalog)
 
 	// ---------- DigitalHuman ----------
 	digitalHumanRuntime = InitializeDigitalHumanRuntime(DigitalHumanRuntimeDeps{

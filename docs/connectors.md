@@ -9,6 +9,21 @@ QQ Mail and 163 Mail use their respective client authorization codes.
 Connections remain personal: no organization-shared credentials,
 general-purpose OAuth editor, or editable provider permission policies are introduced.
 
+### GitHub · MCP trial
+
+**GitHub · MCP** is a separate, read-only Connector alongside the existing GitHub
+REST Connector. Choose it in the Connector catalog, provide a GitHub PAT with
+access to the target repository's Issues, and connect. Setup verifies the account
+through GitHub's official remote MCP server and checks that its issue tools are
+available. The PAT uses the existing personal encrypted Key lifecycle.
+
+Bind the connection to a chat and select it there. For example, ask: “查看
+`gin-gonic/gin` 最近更新的 5 个未关闭 Issue，列出标题和链接，再详细说明其中一个。”
+The chat can list open Issues in descending update order and read one Issue's
+details. Execution passes through the normal Connector binding, authorization
+and audit path. The [MCP guide](mcp-client.md) records the endpoint, tool
+allowlist, read-only headers and focused tests.
+
 GitHub and Exa both appear in the **Connectors** section. Exa is shown as
 **Exa Web Search** in English and **Exa 网页搜索** in Simplified Chinese: it is an
 external service requiring a personal Key, not model-native browsing or a

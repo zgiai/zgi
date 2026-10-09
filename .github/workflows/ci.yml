@@ -335,3 +335,27 @@ jobs:
         env:
           ZGI_MIGRATION_TEST_DSN: postgres://zgi_sandbox:zgi_sandbox_ci@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/zgi_sandbox_ci?sslmode=disable
         run: go test ./internal/migrations -run '^TestPersonalKeyLegacyQuotaMigration' -count=1 -v
+
+  mcp-client:
+    name: MCP client protocol and interoperability
+    runs-on: ${{ fromJSON(vars.CI_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: api/go.mod
+          cache-dependency-path: api/go.sum
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install independent Python MCP server
+        run: python -m pip install mcp==2.3.0
+      - name: Test MCP client, GitHub Connector and Python interoperability
+        env:
+          MCP_PYTHON_EXECUTABLE: python
+        run: |
+          go test ./pkg/mcpclient/... ./internal/modules/connectors/providers/githubmcp/... -count=1
+          go test -race ./pkg/mcpclient/... -count=1

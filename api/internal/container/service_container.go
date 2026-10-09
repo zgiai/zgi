@@ -38,6 +38,7 @@ import (
 	connectorexa "github.com/zgiai/zgi/api/internal/modules/connectors/providers/exa"
 	connectorfeishu "github.com/zgiai/zgi/api/internal/modules/connectors/providers/feishu"
 	connectorgithub "github.com/zgiai/zgi/api/internal/modules/connectors/providers/github"
+	connectorgithubmcp "github.com/zgiai/zgi/api/internal/modules/connectors/providers/githubmcp"
 	connectorgmail "github.com/zgiai/zgi/api/internal/modules/connectors/providers/gmail"
 	connectormail "github.com/zgiai/zgi/api/internal/modules/connectors/providers/mailprotocol"
 	connectorserveropsssh "github.com/zgiai/zgi/api/internal/modules/connectors/providers/serveropsssh"
@@ -1249,6 +1250,10 @@ func (c *ServiceContainer) GetConnectorCandidateVerifier() *connectorproviders.R
 		if err != nil {
 			panic(fmt.Sprintf("initialize GitHub Connector: %v", err))
 		}
+		githubMCP, err := connectorgithubmcp.New(nil)
+		if err != nil {
+			panic(fmt.Sprintf("initialize GitHub MCP Connector: %v", err))
+		}
 		exa, err := connectorexa.New(nil)
 		if err != nil {
 			panic(fmt.Sprintf("initialize Exa Connector: %v", err))
@@ -1270,7 +1275,7 @@ func (c *ServiceContainer) GetConnectorCandidateVerifier() *connectorproviders.R
 		// connection is attempted until a candidate verification, an approved
 		// invocation, or a host-key probe reaches the capability.
 		_, serverOpsSSH := c.getServerOpsSSHClient()
-		drivers := append([]connectorproviders.Driver{github, exa, feishu, gmail, serverOpsSSH}, c.messagingDrivers()...)
+		drivers := append([]connectorproviders.Driver{github, githubMCP, exa, feishu, gmail, serverOpsSSH}, c.messagingDrivers()...)
 		for _, id := range []string{"qqmail", "netease163"} {
 			driver, err := connectormail.New(connectormail.Options{Provider: id, HandleKey: c.config.Connectors.CredentialKeys[c.config.Connectors.CredentialActiveKeyID]})
 			if err != nil {

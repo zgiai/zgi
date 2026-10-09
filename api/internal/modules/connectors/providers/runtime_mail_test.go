@@ -36,7 +36,7 @@ func (*mailDriverFixture) InvokeCredentials(context.Context, string, CredentialI
 }
 func TestRuntimeSetsMailPurposeBeforeDriverAndProjectsOnlyProtocolEvidence(t *testing.T) {
 	f := &mailDriverFixture{}
-	runtime, err := NewRuntime(&driverFixture{id: "github"}, &driverFixture{id: "web-search"}, &appDriverFixture{}, &sshDriverFixture{}, f)
+	runtime, err := NewRuntime(&driverFixture{id: "github"}, &driverFixture{id: "github-mcp"}, &driverFixture{id: "web-search"}, &appDriverFixture{}, &sshDriverFixture{}, f)
 	if err != nil {
 		t.Fatal(err)
 	}

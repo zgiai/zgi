@@ -289,6 +289,7 @@ const messages: ConnectorMessages = {
     reasonUnsupported: '原连接方式或服务已不再支持。',
     reasonAccess: '原所有者或权限限制不允许执行此操作。',
     reasonSelection: '此快照需要为当前账号重新选择连接。',
+    reasonUnconfigured: '此工作流节点上次保存时尚未选择连接。选择连接并保存工作流即可完成设置。',
     reasonUnavailable: '连接或操作当前不可用。',
   },
   title: '连接器',

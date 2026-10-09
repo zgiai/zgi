@@ -119,8 +119,9 @@ func TestServerOpsSSHUnclassifiedOperationFailsClosed(t *testing.T) {
 func TestBuiltinRiskPoliciesAddOnlyServerOpsSSHAndKeepExistingClassifications(t *testing.T) {
 	policies := BuiltinRiskPolicies()
 	// The github/exa static list is the only unexported-count group: it must
-	// still contribute exactly its ten reviewed entries.
-	wantExisting := 10 + len(feishuRiskPolicies()) + len(mailRiskPolicies()) + len(messagingRiskPolicies())
+	// still contribute exactly its twelve reviewed entries, including the two
+	// read-only GitHub MCP operations from the main branch.
+	wantExisting := 12 + len(feishuRiskPolicies()) + len(mailRiskPolicies()) + len(messagingRiskPolicies())
 	if len(policies) != wantExisting+3 {
 		t.Fatalf("builtin policy count = %d, want %d existing + 3 SSH", len(policies), wantExisting)
 	}

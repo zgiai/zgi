@@ -289,17 +289,15 @@ func TestConnectorRoutesCatalogTaxonomyFilters(t *testing.T) {
 	}
 	router := newConnectorRouteTestRouter(definitionCatalog, &connectorRouteRecordingService{}, uuid.New(), uuid.New())
 	for _, test := range []struct {
-		query, want string
+		query string
+		want  []string
 	}{
-		{"category=information", "web-search"},
-		{"tag=code", "github"},
+		{"category=information", []string{"web-search"}},
+		{"tag=code", []string{"github", "github-mcp"}},
 	} {
 		recorder := connectorRouteRequest(t, router, http.MethodGet, "/console/api/connectors/catalog?"+test.query, "", nil)
 		if recorder.Code != http.StatusOK {
 			t.Fatalf("taxonomy filter %s status/body = %d %s", test.query, recorder.Code, recorder.Body.String())
-		}
-		if !strings.Contains(recorder.Body.String(), `"id":"`+test.want+`"`) {
-			t.Fatalf("taxonomy filter %s missing %s: %s", test.query, test.want, recorder.Body.String())
 		}
 		var envelope struct {
 			Data connectorCatalogResponse `json:"data"`
@@ -307,8 +305,17 @@ func TestConnectorRoutesCatalogTaxonomyFilters(t *testing.T) {
 		if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
 			t.Fatal(err)
 		}
-		if len(envelope.Data.Items) != 1 || envelope.Data.Items[0].ID != test.want {
+		got := make(map[string]bool, len(envelope.Data.Items))
+		for _, item := range envelope.Data.Items {
+			got[item.ID] = true
+		}
+		if len(got) != len(test.want) {
 			t.Fatalf("taxonomy filter %s = %#v", test.query, envelope.Data.Items)
+		}
+		for _, want := range test.want {
+			if !got[want] {
+				t.Fatalf("taxonomy filter %s missing %s: %#v", test.query, want, envelope.Data.Items)
+			}
 		}
 	}
 	bad := connectorRouteRequest(t, router, http.MethodGet, "/console/api/connectors/catalog?category=unknown", "", nil)
