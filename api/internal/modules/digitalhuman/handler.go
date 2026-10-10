@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	executionruntime "github.com/zgiai/zgi/api/internal/capabilities/agentexecution/runtime"
 	"github.com/zgiai/zgi/api/internal/capabilities/memoryruntime"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/apperror"
@@ -49,8 +50,9 @@ type HandlerService interface {
 
 // Handler exposes the DigitalHuman lifecycle API.
 type Handler struct {
-	service   HandlerService
-	projector *apptransport.Projector
+	service            HandlerService
+	projector          *apptransport.Projector
+	executionApprovals executionruntime.Approvals
 }
 
 // NewHandler constructs a DigitalHuman HTTP handler.
@@ -61,7 +63,7 @@ func NewHandler(service HandlerService, projector *apptransport.Projector) *Hand
 	if projector == nil {
 		panic("digital human handler requires application error projector")
 	}
-	return &Handler{service: service, projector: projector}
+	return &Handler{service: service, projector: projector, executionApprovals: executionruntime.ApprovalsFromEnv()}
 }
 
 // RegisterRoutes registers workspace-scoped lifecycle routes.
@@ -203,7 +205,7 @@ func (h *Handler) Create(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
-	writeDigitalHumanData(c, http.StatusCreated, result)
+	writeDigitalHumanData(c, http.StatusCreated, h.decorateExecutionRuntimeCapability(scope, result))
 }
 
 // List handles workspace-scoped pagination.
@@ -228,7 +230,8 @@ func (h *Handler) List(c *gin.Context) {
 // Get handles DigitalHuman detail retrieval.
 func (h *Handler) Get(c *gin.Context) {
 	h.withDetail(c, func(ctx context.Context, scope Scope, id uuid.UUID) (any, error) {
-		return h.service.Get(ctx, scope, id)
+		result, err := h.service.Get(ctx, scope, id)
+		return h.decorateExecutionRuntimeCapability(scope, result), err
 	})
 }
 
@@ -258,7 +261,7 @@ func (h *Handler) Update(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
-	writeDigitalHumanData(c, http.StatusOK, result)
+	writeDigitalHumanData(c, http.StatusOK, h.decorateExecutionRuntimeCapability(scope, result))
 }
 
 // UpdateDraft handles mutable identity configuration updates.
@@ -294,7 +297,7 @@ func (h *Handler) Publish(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
-	writeDigitalHumanData(c, http.StatusOK, result)
+	writeDigitalHumanData(c, http.StatusOK, h.decorateExecutionRuntimeCapability(scope, result))
 }
 
 // PublishedVersions handles immutable version history pagination.
@@ -350,7 +353,7 @@ func (h *Handler) RestoreVersion(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
-	writeDigitalHumanData(c, http.StatusOK, result)
+	writeDigitalHumanData(c, http.StatusOK, h.decorateExecutionRuntimeCapability(scope, result))
 }
 
 // DeleteImpact handles deletion preflight.
@@ -464,6 +467,33 @@ func (h *Handler) ReplaceDraftResourceBindings(c *gin.Context) {
 
 func (h *Handler) withDetail(c *gin.Context, load func(context.Context, Scope, uuid.UUID) (any, error)) {
 	h.withScopedID(c, load)
+}
+
+func (h *Handler) decorateExecutionRuntimeCapability(scope Scope, result any) any {
+	detail, ok := result.(*Detail)
+	if !ok || detail == nil {
+		return result
+	}
+	capability := &ExecutionRuntimeCapability{}
+	_, err := h.executionApprovals.Resolve(scope.OrganizationID.String(), true)
+	if err == nil {
+		capability.Available = true
+		capability.CanEnable = true
+		detail.ExecutionRuntimeCapability = capability
+		return detail
+	}
+	capability.Reason = "runtime_unavailable"
+	var denied *executionruntime.ApprovalError
+	if errors.As(err, &denied) {
+		switch denied.Operation {
+		case "agent_execution.disabled_by_env":
+			capability.Reason = "disabled"
+		case "agent_execution.organization_unapproved":
+			capability.Reason = "organization_not_enabled"
+		}
+	}
+	detail.ExecutionRuntimeCapability = capability
+	return detail
 }
 
 func (h *Handler) withScopedID(c *gin.Context, load func(context.Context, Scope, uuid.UUID) (any, error)) {

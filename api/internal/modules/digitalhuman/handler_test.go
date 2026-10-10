@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	executionruntime "github.com/zgiai/zgi/api/internal/capabilities/agentexecution/runtime"
 	"github.com/zgiai/zgi/api/internal/util"
 	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
 	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
@@ -103,6 +104,30 @@ func TestHandlerRequiresWorkspaceScope(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/digital-humans", nil))
 	assertDigitalHumanError(t, recorder, http.StatusUnauthorized, appcatalog.CodeAuthenticationRequired.String())
+}
+
+func TestHandlerProjectsSafeExecutionCapability(t *testing.T) {
+	scope := testScope()
+	h := &Handler{executionApprovals: executionruntime.Approvals{
+		Enabled:          true,
+		GatewayReady:     true,
+		DefaultProfileID: "standard",
+		Profiles: map[string]executionruntime.ProfileApproval{
+			"standard": {Backend: "local-gvisor", OrganizationIDs: []string{scope.OrganizationID.String()}, PolicyIDs: []string{"offline"}},
+		},
+	}}
+	result := h.decorateExecutionRuntimeCapability(scope, &Detail{})
+	detail, ok := result.(*Detail)
+	if !ok || detail.ExecutionRuntimeCapability == nil || !detail.ExecutionRuntimeCapability.Available || !detail.ExecutionRuntimeCapability.CanEnable {
+		t.Fatalf("capability = %#v", result)
+	}
+	encoded, err := json.Marshal(detail.ExecutionRuntimeCapability)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encoded, []byte("standard")) || bytes.Contains(encoded, []byte("local-gvisor")) {
+		t.Fatalf("runtime internals leaked in capability: %s", encoded)
+	}
 }
 
 func digitalHumanHandlerRouter(t *testing.T, service HandlerService, scope *Scope) *gin.Engine {

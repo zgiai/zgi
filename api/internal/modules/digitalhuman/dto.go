@@ -112,9 +112,19 @@ type ListResult struct {
 
 // Detail combines aggregate metadata with its draft and latest publication.
 type Detail struct {
-	Definition *Definition `json:"definition"`
-	Draft      *Version    `json:"draft"`
-	Published  *Version    `json:"published,omitempty"`
+	Definition                 *Definition                 `json:"definition"`
+	Draft                      *Version                    `json:"draft"`
+	Published                  *Version                    `json:"published,omitempty"`
+	ExecutionRuntimeCapability *ExecutionRuntimeCapability `json:"execution_runtime_capability,omitempty"`
+}
+
+// ExecutionRuntimeCapability is the safe, editor-facing projection of the
+// deployment-owned Linux runtime admission decision. It intentionally omits
+// profile, policy, backend, snapshot, and organization identifiers.
+type ExecutionRuntimeCapability struct {
+	Available bool   `json:"available"`
+	CanEnable bool   `json:"can_enable"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 // PublishedVersionsResult is a newest-first publication history page.

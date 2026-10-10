@@ -75,6 +75,28 @@ func TestAgentExecutionPackageInstallationUsesOperatorNetworkMode(t *testing.T) 
 	}
 }
 
+func TestAgentExecutionCapabilityProjectsOnlySafeAdmissionState(t *testing.T) {
+	base := agentExecutionApprovals{
+		Enabled:          true,
+		GatewayReady:     true,
+		DefaultProfileID: "standard",
+		Profiles: map[string]agentExecutionApproval{
+			"standard": {Backend: "local-gvisor", OrganizationIDs: []string{"org-1"}, PolicyIDs: []string{"offline"}},
+		},
+	}
+	if got := base.capability("org-1"); !got.Available || !got.CanEnable || got.Reason != "" {
+		t.Fatalf("approved capability = %+v", got)
+	}
+	if got := base.capability("org-2"); got.Available || got.CanEnable || got.Reason != "organization_not_enabled" {
+		t.Fatalf("unapproved capability = %+v", got)
+	}
+	denied := base
+	denied.Enabled = false
+	if got := denied.capability("org-1"); got.Available || got.CanEnable || got.Reason != "disabled" {
+		t.Fatalf("disabled capability = %+v", got)
+	}
+}
+
 func TestAgentRuntimeGatewayURL(t *testing.T) {
 	for _, tc := range []struct {
 		value string

@@ -12,14 +12,25 @@ const dependencyPreparationModeOffline = "offline-bundled"
 const dependencyPreparationModeControlledHTTP = "controlled-http"
 const packageNetworkMode = "package-install"
 
+const (
+	// OrganizationAccessModeAllowlist keeps the original fail-closed behavior.
+	OrganizationAccessModeAllowlist = "allowlist"
+	// OrganizationAccessModeAllAuthenticated is intended for private deployments
+	// where every authenticated organization is entitled to the shared runtime.
+	// It never admits an empty organization ID.
+	OrganizationAccessModeAllAuthenticated = "all_authenticated"
+)
+
 // ApprovalError is an internal operator diagnosis. Entry adapters project it
 // through their own public error catalog, never exposing Operation to clients.
 type ApprovalError struct{ Operation string }
 
 func (*ApprovalError) Error() string { return "execution environment is not approved or available" }
 
-// ProfileApproval is an operator-owned allowlist, not application-authored
-// configuration. An absent or malformed list always denies execution.
+// ProfileApproval is operator-owned, not application-authored configuration.
+// OrganizationIDs is required in allowlist mode; the explicit
+// all-authenticated deployment mode admits any non-empty authenticated
+// organization without changing the profile payload.
 type ProfileApproval struct {
 	Backend                   string   `json:"backend"`
 	OrganizationIDs           []string `json:"organization_ids"`
@@ -43,9 +54,14 @@ type Approvals struct {
 	DefaultPolicyID       string
 	DefaultHomeSnapshotID string
 	GatewayReady          bool
+	// OrganizationAccessMode is deployment-owned. The zero value preserves the
+	// legacy allowlist behavior, so older deployments remain fail-closed.
+	OrganizationAccessMode string
 }
 
-// HomeApproval restricts a prebuilt Home to one backend/Profile and its tenants.
+// HomeApproval restricts a prebuilt Home to one backend/Profile and its tenants
+// when the deployment uses the default allowlist mode. In the explicit
+// all-authenticated mode, a non-empty organization ID is sufficient.
 type HomeApproval struct {
 	Backend         string   `json:"backend"`
 	ProfileID       string   `json:"profile_id"`
@@ -64,13 +80,14 @@ func ApprovalsFromEnv() Approvals {
 		snapshots = nil
 	}
 	return Approvals{
-		Profiles:              profiles,
-		HomeSnapshots:         snapshots,
-		Enabled:               EnvBool("ZGI_AGENT_RUNTIME_ENABLED", false),
-		DefaultProfileID:      strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_DEFAULT_PROFILE_ID")),
-		DefaultPolicyID:       strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_DEFAULT_POLICY_ID")),
-		DefaultHomeSnapshotID: strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_DEFAULT_HOME_SNAPSHOT_ID")),
-		GatewayReady:          ValidGatewayURL(os.Getenv("ZGI_AGENT_RUNTIME_URL")) && strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_API_KEY")) != "",
+		Profiles:               profiles,
+		HomeSnapshots:          snapshots,
+		Enabled:                EnvBool("ZGI_AGENT_RUNTIME_ENABLED", false),
+		DefaultProfileID:       strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_DEFAULT_PROFILE_ID")),
+		DefaultPolicyID:        strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_DEFAULT_POLICY_ID")),
+		DefaultHomeSnapshotID:  strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_DEFAULT_HOME_SNAPSHOT_ID")),
+		GatewayReady:           ValidGatewayURL(os.Getenv("ZGI_AGENT_RUNTIME_URL")) && strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_API_KEY")) != "",
+		OrganizationAccessMode: normalizeOrganizationAccessMode(os.Getenv("ZGI_AGENT_RUNTIME_ORG_MODE")),
 	}
 }
 
@@ -103,7 +120,7 @@ func (a Approvals) Resolve(organizationID string, enabled bool) (*dto.AgentExecu
 	if !ok || (profile.Backend != "local-gvisor" && profile.Backend != "e2b") {
 		return nil, invalid("agent_execution.profile_unapproved")
 	}
-	if !containsApproval(profile.OrganizationIDs, organizationID) {
+	if !organizationApproved(a.OrganizationAccessMode, profile.OrganizationIDs, organizationID) {
 		return nil, invalid("agent_execution.organization_unapproved")
 	}
 	policyID := strings.TrimSpace(a.DefaultPolicyID)
@@ -153,11 +170,33 @@ func (a Approvals) Resolve(organizationID string, enabled bool) (*dto.AgentExecu
 		homeSnapshotID = &a.DefaultHomeSnapshotID
 		snapshot, ok := a.HomeSnapshots[a.DefaultHomeSnapshotID]
 		if !ok || snapshot.Backend != profile.Backend || snapshot.ProfileID != profileID ||
-			!containsApproval(snapshot.OrganizationIDs, organizationID) {
+			!organizationApproved(a.OrganizationAccessMode, snapshot.OrganizationIDs, organizationID) {
 			return nil, invalid("agent_execution.home_snapshot_unavailable")
 		}
 	}
 	return &dto.AgentExecutionRuntime{Enabled: true, ProfileID: profileID, PolicyID: policyID, HomeSnapshotID: homeSnapshotID}, nil
+}
+
+func normalizeOrganizationAccessMode(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case OrganizationAccessModeAllAuthenticated:
+		return OrganizationAccessModeAllAuthenticated
+	case OrganizationAccessModeAllowlist:
+		return OrganizationAccessModeAllowlist
+	default:
+		return OrganizationAccessModeAllowlist
+	}
+}
+
+func organizationApproved(mode string, allowed []string, organizationID string) bool {
+	organizationID = strings.TrimSpace(organizationID)
+	if organizationID == "" {
+		return false
+	}
+	if normalizeOrganizationAccessMode(mode) == OrganizationAccessModeAllAuthenticated {
+		return true
+	}
+	return containsApproval(allowed, organizationID)
 }
 
 func containsApproval(allowed []string, value string) bool {

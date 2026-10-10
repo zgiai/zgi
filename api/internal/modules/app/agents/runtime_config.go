@@ -49,6 +49,7 @@ func (s *agentsService) GetAgentConfig(ctx context.Context, agentID, accountID s
 		return nil, err
 	}
 	resp := agentConfigResponse(ag.ID.String(), cfg)
+	s.decorateAgentExecutionRuntimeCapability(ctx, ag, resp)
 	if err := s.projectOwnedAgentConnectorBindings(ctx, s.db, ag, accountID, resp); err != nil {
 		return nil, err
 	}
@@ -71,6 +72,7 @@ func (s *agentsService) GetAgentDraftRuntimeConfig(ctx context.Context, agentID,
 		return nil, err
 	}
 	resp := agentConfigResponse(ag.ID.String(), cfg)
+	s.decorateAgentExecutionRuntimeCapability(ctx, ag, resp)
 	if err := s.projectOwnedAgentConnectorBindings(ctx, s.db, ag, accountID, resp); err != nil {
 		return nil, err
 	}
@@ -210,6 +212,7 @@ func (s *agentsService) UpdateAgentConfig(ctx context.Context, agentID, accountI
 		}
 	}
 	resp := agentConfigResponse(ag.ID.String(), cfg)
+	s.decorateAgentExecutionRuntimeCapability(ctx, ag, resp)
 	resp.BindingRevision = agentBindingRevisionWithConnectors(rows, resp.ConnectorBindings)
 	resp.BindingHealth = s.resolveAgentBindingHealth(ctx, ag, accountID, resp, rows)
 	resp.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
@@ -572,6 +575,7 @@ func (s *agentsService) updateAgentConfigWithSystemPromptPatchCAS(ctx context.Co
 		return nil, err
 	}
 	resp := agentConfigResponse(ag.ID.String(), saved)
+	s.decorateAgentExecutionRuntimeCapability(ctx, ag, resp)
 	resp.BindingRevision = agentBindingRevisionWithConnectors(savedRows, resp.ConnectorBindings)
 	resp.BindingHealth = s.resolveAgentBindingHealth(ctx, ag, accountID, resp, savedRows)
 	resp.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
@@ -1156,6 +1160,7 @@ func (s *agentsService) RollbackAgentPublishedVersion(ctx context.Context, agent
 	if err != nil {
 		return nil, err
 	}
+	s.decorateAgentExecutionRuntimeCapability(ctx, ag, resp)
 	resp.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
 	resp.AgentMemoryConfigRevision = agentMemoryConfigRevision(resp.AgentMemoryEnabled, resp.AgentMemoryAutoExtractionEnabled, resp.AgentMemorySlots)
 	return resp, nil
@@ -1592,6 +1597,14 @@ func agentConfigResponse(agentID string, cfg *AgentsConfig) *dto.AgentConfigResp
 		resp.UpdatedAt = cfg.UpdatedAt.Unix()
 	}
 	return resp
+}
+
+func (s *agentsService) decorateAgentExecutionRuntimeCapability(ctx context.Context, ag *Agent, resp *dto.AgentConfigResponse) {
+	if s == nil || ag == nil || resp == nil {
+		return
+	}
+	organizationID := s.organizationIDForAgentWorkspace(ctx, ag.TenantID.String())
+	resp.ExecutionRuntimeCapability = s.executionApprovals.capability(organizationID)
 }
 
 func agentConfigSnapshot(agentID string, cfg *AgentsConfig) map[string]interface{} {
