@@ -47,10 +47,35 @@ const messages = {
     saving: 'Saving...',
     saved: 'Saved',
   },
+  modelRouting: {
+    title: 'Model routing strategy',
+    description:
+      'Controls all platform model calls for this organization, including agents, workflows, datasets, and background jobs.',
+    save: 'Save strategy',
+    saving: 'Saving...',
+    saved: 'Saved',
+    options: {
+      stability: {
+        label: 'Stability first',
+        description:
+          'Prefers channels with higher recent success rates and fewer consecutive failures.',
+      },
+      speed: {
+        label: 'Speed first',
+        description:
+          'Prefers channels with faster time to first token and higher generation throughput.',
+      },
+      price: {
+        label: 'Price first',
+        description:
+          'Uses configured sale prices and estimated usage to prefer the lowest expected cost.',
+      },
+    },
+  },
   pricingFallback: {
     title: 'Missing-price billing policy',
     description:
-      'Model prices are used first. Missing prices use admin policy, then system defaults.',
+      'Model prices are used first. This policy is a legacy compatibility layer for missing prices; when no model price matches, admin policy and system defaults apply.',
     enableFallback: 'Enable missing-price policy',
     enableFallbackDesc:
       'When disabled, requests without upstream model prices fail before provider calls.',
@@ -66,7 +91,10 @@ const messages = {
     effectiveRules: 'Effective rules',
     effectiveSummaryTitle: 'Effective billing rules',
     effectiveSummaryDesc:
-      'Edit prices in the table and save. Unchanged rows keep system defaults, and model prices still take priority.',
+      'Summarises the fallback rules that are actually in effect. Rows without an override keep the system defaults, and model prices still take priority. This panel is read-only.',
+    readOnlyHint:
+      'Fallback prices are display-only and are used only when a model has no price. To adjust prices, configure them per model in the model module.',
+    readOnlyHintLink: 'Go to model access',
     emptyDefaultRules: 'No system default rules.',
     emptyEffectiveRules: 'No effective rules.',
     emptyOverrideRules: 'No admin override rules yet. Add a token or image rule.',
@@ -80,6 +108,11 @@ const messages = {
     tokenRuleHelp: 'Used by chat, embeddings, rerank, and other token-priced models.',
     imageRuleHelp: 'Used by image generation. Final cost is multiplied by image count n.',
     refresh: 'Refresh',
+    loadTemplate: 'Load template',
+    templateLoaded: 'Template loaded. Review the rules and save to apply.',
+    templateEmpty: 'This deployment has no fallback template prices configured.',
+    expand: 'Expand',
+    collapse: 'Collapse',
     save: 'Save',
     remove: 'Remove',
     resetDefault: 'Reset',

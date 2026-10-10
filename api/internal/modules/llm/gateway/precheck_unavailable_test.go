@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	"testing"
 
 	"github.com/google/uuid"
@@ -64,7 +65,7 @@ func TestEvaluateCandidateRouteWarningsReportsKnownUnavailableCredentials(t *tes
 				if err := db.Create(&ChannelWallet{
 					ChannelID:      route.ID,
 					OrganizationID: organizationID,
-					Balance:        workflowPrivateChannelLowBalanceThreshold,
+					Balance:        millipoints.MilliPoints(workflowPrivateChannelLowBalanceThreshold),
 					Status:         channelWalletStatusActive,
 				}).Error; err != nil {
 					t.Fatalf("create channel wallet: %v", err)

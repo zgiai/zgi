@@ -166,7 +166,7 @@ func (a *OllamaAdapter) openAIBaseURL() string {
 // ChatCompletion sends a non-streaming chat completion request through Ollama's OpenAI-compatible API.
 func (a *OllamaAdapter) ChatCompletion(ctx context.Context, request *adapter.ChatRequest) (*adapter.ChatResponse, error) {
 	endpoint := a.chatEndpoint()
-	respBody, statusCode, err := a.httpClient.DoRequest(ctx, "POST", endpoint, a.buildHeaders(""), buildOpenAICompatibleChatPayload(request))
+	respBody, statusCode, err := a.httpClient.DoRequest(ctx, "POST", endpoint, a.buildHeaders(""), buildCompatibleProviderChatPayload(request))
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -185,7 +185,7 @@ func (a *OllamaAdapter) ChatCompletion(ctx context.Context, request *adapter.Cha
 func (a *OllamaAdapter) ChatCompletionStream(ctx context.Context, request *adapter.ChatRequest) (<-chan adapter.StreamResponse, error) {
 	request.Stream = true
 	endpoint := a.chatEndpoint()
-	resp, err := a.httpClient.DoStreamRequest(ctx, "POST", endpoint, a.buildHeaders(""), buildOpenAICompatibleChatPayload(request))
+	resp, err := a.httpClient.DoStreamRequest(ctx, "POST", endpoint, a.buildHeaders(""), buildCompatibleProviderChatPayload(request))
 	if err != nil {
 		return nil, fmt.Errorf("stream request failed: %w", err)
 	}

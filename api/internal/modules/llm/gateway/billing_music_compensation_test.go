@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	accessmodel "github.com/zgiai/zgi/api/internal/modules/llm/developeraccess/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"gorm.io/datatypes"
 	"gorm.io/driver/sqlite"
@@ -102,8 +103,8 @@ func TestBillingServiceCompensatePrivateMusicDeliveryDoesNotRefundRenewedGrant(t
 
 	if err := db.Model(&accessmodel.Grant{}).Where("id = ?", grantID).Updates(map[string]any{
 		"authorization_version": 2,
-		"used_quota":            0,
-		"remain_quota":          1000,
+		"used_quota":            millipoints.MilliPoints(0),
+		"remain_quota":          millipoints.MilliPoints(1000),
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -140,8 +141,8 @@ func TestBillingServiceCompensatePrivateMusicDeliveryRefundsFundWhenGrantRenewed
 
 	if err := db.Model(&accessmodel.Grant{}).Where("id = ?", grantID).Updates(map[string]any{
 		"authorization_version": 2,
-		"used_quota":            0,
-		"remain_quota":          1000,
+		"used_quota":            millipoints.MilliPoints(0),
+		"remain_quota":          millipoints.MilliPoints(1000),
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -350,11 +351,12 @@ func newMusicCompensationFixtureForSubjectState(t *testing.T, useGrant, settle b
 	if useGrant {
 		workspaceID := uuid.NewString()
 		principalID := uuid.NewString()
+		grantQuota := millipoints.MilliPoints(quotaLimit)
 		grant := accessmodel.Grant{
 			OrganizationID: organizationID.String(), WorkspaceID: workspaceID,
 			PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: principalID,
 			Source: "approved_request", Status: accessmodel.GrantStatusActive,
-			QuotaLimit: &quotaLimit, RemainQuota: quotaLimit, MaxKeys: 1,
+			QuotaLimit: &grantQuota, RemainQuota: grantQuota, MaxKeys: 1,
 			AllowedModels: []string{}, AuthorizationVersion: 1,
 		}
 		if err := db.Create(&grant).Error; err != nil {

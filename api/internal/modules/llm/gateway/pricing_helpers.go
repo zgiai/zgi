@@ -20,7 +20,8 @@ const (
 	// requested max_tokens value. These floors keep pre-deduction conservative
 	// without reserving a model's entire output window.
 	reasoningPromptReservationFloor     = 64
-	reasoningCompletionReservationFloor = 32
+	reasoningCompletionReservationFloor = 512
+	reasoningCompletionReservationCap   = 4096
 )
 
 func (s *llmGatewayServiceImpl) pricing() PricingEngine {
@@ -73,7 +74,28 @@ func (s *llmGatewayServiceImpl) quoteTokenPricingForSelection(
 		return authority.QuotePlatformTokenPricing(ctx, model, promptTokens, completionTokens)
 	}
 	promptTokens, completionTokens = conservativeReasoningReservationTokens(selection, promptTokens, completionTokens)
-	return s.quoteTokenPricing(ctx, model, promptTokens, completionTokens)
+	quote, err := s.quoteTokenPricing(ctx, model, promptTokens, completionTokens)
+	if err != nil {
+		return PricingQuote{}, err
+	}
+	return s.enrichPrivateTokenQuoteForSettlement(ctx, model, quote)
+}
+
+type privateTokenQuoteEnricher interface {
+	enrichTokenQuoteWithCachePricingBasis(context.Context, PricingModelRef, PricingQuote) (PricingQuote, error)
+}
+
+func (s *llmGatewayServiceImpl) enrichPrivateTokenQuoteForSettlement(
+	ctx context.Context,
+	model PricingModelRef,
+	quote PricingQuote,
+) (PricingQuote, error) {
+	engine := s.pricing()
+	enricher, ok := engine.(privateTokenQuoteEnricher)
+	if !ok {
+		return quote, nil
+	}
+	return enricher.enrichTokenQuoteWithCachePricingBasis(ctx, model, quote)
 }
 
 func conservativePlatformReservationTokens(selection *ProviderSelection, promptTokens, completionTokens int) (int, int) {
@@ -93,10 +115,43 @@ func conservativeReasoningReservationTokens(selection *ProviderSelection, prompt
 	if promptTokens > 0 && promptTokens < reasoningPromptReservationFloor {
 		promptTokens = reasoningPromptReservationFloor
 	}
-	if completionTokens > 0 && completionTokens < reasoningCompletionReservationFloor {
-		completionTokens = reasoningCompletionReservationFloor
-	}
+	completionTokens = conservativeReasoningCompletionTokens(selection.Model.MaxOutputTokens, completionTokens)
 	return promptTokens, completionTokens
+}
+
+func conservativeReasoningCompletionTokens(maxOutputTokens, completionTokens int) int {
+	if completionTokens < 0 {
+		completionTokens = 0
+	}
+	reserved := max(completionTokens, reasoningCompletionReservationFloor)
+	if maxOutputTokens > 0 {
+		catalogBound := min(maxOutputTokens, reasoningCompletionReservationCap)
+		reserved = max(reserved, catalogBound)
+	}
+	return reserved
+}
+
+// chatCompletionReservationCap bounds the completion side of a chat reservation
+// when the request omits max_tokens and the catalog advertises a large output
+// window. Over-reserving is refunded at settlement, but an unbounded window
+// (for example 128k) would freeze an amount most organizations cannot
+// pre-deduct, so the catalog value is capped.
+const chatCompletionReservationCap = 4096
+
+// reservationCompletionTokens returns the completion token basis used for a
+// pre-deduct reservation. An explicit request max_tokens always wins; when the
+// request omits it, the selected catalog model's max_output_tokens is used
+// (capped) instead of the estimator's small generic default, which made long
+// answers exceed the reservation almost immediately.
+func reservationCompletionTokens(selection *ProviderSelection, requestedMaxTokens *int, estimated int) int {
+	if requestedMaxTokens != nil && *requestedMaxTokens > 0 {
+		return estimated
+	}
+	if selection == nil || selection.Model.MaxOutputTokens <= 0 {
+		return estimated
+	}
+	bound := min(selection.Model.MaxOutputTokens, chatCompletionReservationCap)
+	return max(estimated, bound)
 }
 
 func (s *llmGatewayServiceImpl) quoteTokenPricingForSettlement(
@@ -122,6 +177,22 @@ func (s *llmGatewayServiceImpl) quoteTokenPricingForSettlementUsage(
 	model PricingModelRef,
 	usage TokenUsage,
 ) (PricingQuote, error) {
+	usage = normalizeGatewayTokenUsage(usage)
+	model = normalizePricingModelRef(model)
+	if model.Operation == PricingOperationRealtimeAudio {
+		// Prefer upstream audio tokens here so both the locked-quote fast path
+		// and the pricing engine bill the audio quantities, not the text split.
+		usage = realtimeAudioTokenUsage(usage)
+	}
+	if bc != nil && bc.LockedTokenQuote != nil && bc.LockedTokenQuote.CacheBillingSupported != nil && !*bc.LockedTokenQuote.CacheBillingSupported {
+		usage.CacheReadTokens = 0
+		usage.CacheWriteTokens = 0
+		usage.CacheWrite5mTokens = 0
+		usage.CacheWrite1hTokens = 0
+	}
+	if bc != nil && bc.LockedTokenQuote != nil && lockedTokenQuoteSupportsUsage(*bc.LockedTokenQuote, usage) {
+		return repriceLockedTokenUsage(*bc.LockedTokenQuote, usage)
+	}
 	if usage.CacheReadTokens == 0 && usage.CacheWriteTokens == 0 && usage.CacheWrite5mTokens == 0 && usage.CacheWrite1hTokens == 0 {
 		return s.quoteTokenPricingForSettlement(ctx, bc, model, usage.InputTokens, usage.OutputTokens)
 	}
@@ -171,9 +242,39 @@ func (s *llmGatewayServiceImpl) quoteImagePricingForSelection(
 		return PricingQuote{}, fmt.Errorf("failed to resolve billing lane for image pricing: %w", err)
 	}
 	if lane == UsageBillingLanePlatform {
-		return PricingQuote{}, nil
+		// Cloud/official image prices are owned by Console.  Do not consult the
+		// Pre pricing engine and do not manufacture a uniform image estimate:
+		// the remote proxy performs the authoritative deduction and returns the
+		// settlement facts after the upstream call.
+		return PricingQuote{
+			PricingSource: PricingSourcePlatformRemoteAuthority,
+			UsageSource:   UsageSourceRequestParameters,
+		}, nil
 	}
 	return s.quoteImagePricing(ctx, model, req)
+}
+
+func fallbackPlatformTokenPredeductQuote(promptTokens, completionTokens int) PricingQuote {
+	const estimateUSDPerMillionTokens = int64(10)
+	unit := decimal.NewFromInt(estimateUSDPerMillionTokens).Div(decimal.NewFromInt(1_000_000))
+	inputUSD := decimal.NewFromInt(int64(max(promptTokens, 0))).Mul(unit)
+	outputUSD := decimal.NewFromInt(int64(max(completionTokens, 0))).Mul(unit)
+	return newUSDQuote(inputUSD, outputUSD, PricingSourcePlatformPredeductEstimate, "platform.uniform.max-token-estimate", UsageSourceEstimatedUsage, buildPricingSnapshot(map[string]interface{}{
+		"pricing_source":             PricingSourcePlatformPredeductEstimate,
+		"estimate_usd_per_1m_tokens": estimateUSDPerMillionTokens,
+	}))
+}
+
+func fallbackPlatformImagePredeductQuote(req *adapter.ImageRequest) PricingQuote {
+	count := 1
+	if req != nil && req.N != nil && *req.N > 0 {
+		count = *req.N
+	}
+	return newOutputOnlyUSDQuote(decimal.NewFromInt(int64(count)), PricingSourcePlatformPredeductEstimate, "platform.uniform.image-estimate", UsageSourceEstimatedUsage, buildPricingSnapshot(map[string]interface{}{
+		"pricing_source":         PricingSourcePlatformPredeductEstimate,
+		"estimate_usd_per_image": 1,
+		"image_count":            count,
+	}))
 }
 
 func pricingErrorParamsFromModelRef(model PricingModelRef) map[string]interface{} {
@@ -206,6 +307,10 @@ func pricingModelRefFromSelection(selection *ProviderSelection) PricingModelRef 
 	if selection == nil {
 		return PricingModelRef{Source: PricingModelSourceGlobal}
 	}
+	// Supplier catalog rows are the source of configured prices. The hydrated
+	// ModelVendor identity is a logical owner row and is intentionally created
+	// without pricing, so it must not replace the selected supplier model here.
+	modelID := selection.Model.ID
 	provider := strings.TrimSpace(selection.Model.Provider)
 	if provider == "" {
 		provider = strings.TrimSpace(selection.ChannelProvider)
@@ -218,7 +323,7 @@ func pricingModelRefFromSelection(selection *ProviderSelection) PricingModelRef 
 		model = strings.TrimSpace(selection.Model.ModelName)
 	}
 	return normalizePricingModelRef(PricingModelRef{
-		ModelID:        selection.Model.ID,
+		ModelID:        modelID,
 		OrganizationID: selection.OrganizationID,
 		Source:         selection.ModelSource,
 		Provider:       provider,
@@ -259,7 +364,13 @@ func applyPricingQuoteToBillingContext(bc *BillingContext, quote PricingQuote) {
 	if bc.UsageSource != UsageSourceEstimatedUsage && quote.UsageSource != "" {
 		bc.UsageSource = quote.UsageSource
 	}
-	bc.PricingSnapshot = quote.PricingSnapshot
+	if len(quote.PricingSnapshot) > 0 && string(quote.PricingSnapshot) != "null" {
+		bc.PricingSnapshot = quote.PricingSnapshot
+	}
+}
+
+func pricingQuoteHasTokenLock(quote PricingQuote) bool {
+	return quote.InputTokenPriceResolved || quote.OutputTokenPriceResolved
 }
 
 func lockTokenPricingQuote(bc *BillingContext, quote PricingQuote) {

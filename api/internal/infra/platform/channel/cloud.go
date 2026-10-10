@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zgiai/zgi/api/internal/infra/platform/consolecred"
 	"github.com/zgiai/zgi/api/internal/observability"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
@@ -126,11 +127,14 @@ func (c *Cloud) fetchFromConsole(ctx context.Context) ([]*OfficialChannel, error
 		Message string `json:"message"`
 		Data    struct {
 			Channels []struct {
-				ID       string   `json:"id"`
-				Provider string   `json:"provider"`
-				Models   []string `json:"models"`
-				Priority int      `json:"priority"`
-				Weight   int      `json:"weight"`
+				ID                 string              `json:"id"`
+				Provider           string              `json:"provider"`
+				Models             []string            `json:"models"`
+				Priority           int                 `json:"priority"`
+				Weight             int                 `json:"weight"`
+				SupportedProtocols []string            `json:"supported_protocols"`
+				ModelProtocols     map[string][]string `json:"model_protocols"`
+				ModelOperations    map[string][]string `json:"model_operations"`
 			} `json:"channels"`
 		} `json:"data"`
 	}
@@ -146,24 +150,31 @@ func (c *Cloud) fetchFromConsole(ctx context.Context) ([]*OfficialChannel, error
 	channels := make([]*OfficialChannel, 0, len(consoleResp.Data.Channels))
 	for _, ch := range consoleResp.Data.Channels {
 		channels = append(channels, &OfficialChannel{
-			ID:         ch.ID,
-			Provider:   ch.Provider,
-			Models:     ch.Models,
-			Priority:   ch.Priority,
-			Weight:     ch.Weight,
-			APIBaseURL: c.baseURL + "/v1/internal", // console-api internal endpoint acts as OpenAI-compatible base
+			ID:                 ch.ID,
+			Provider:           ch.Provider,
+			Models:             ch.Models,
+			Priority:           ch.Priority,
+			Weight:             ch.Weight,
+			SupportedProtocols: append([]string(nil), ch.SupportedProtocols...),
+			ModelProtocols:     cloneModelProtocols(ch.ModelProtocols),
+			ModelOperations:    cloneModelProtocols(ch.ModelOperations),
+			APIBaseURL:         c.baseURL + "/v1/internal", // console-api internal endpoint acts as OpenAI-compatible base
 		})
 	}
 
 	return channels, nil
 }
 
-// signRequest adds HMAC-SHA256 authentication headers to an outgoing request.
-// It sets X-Internal-Timestamp and X-Internal-Signature headers.
+// signRequest adds the authenticated Console credential to an outgoing request.
+// The configured credential is sent raw in the existing X-ZGI-Internal-Secret
+// slot: Console resolves it against api_keys to recover the caller identity, or
+// falls back to the transitional shared-secret comparison. The HMAC headers are
+// kept for that compatibility path.
 func (c *Cloud) signRequest(req *http.Request) {
 	if c.internalAPIKey == "" {
 		return
 	}
+	req.Header.Set("X-ZGI-Internal-Secret", c.internalAPIKey)
 	ts := strconv.FormatInt(time.Now().Unix(), 10)
 	message := ts + "|" + req.URL.Path
 	mac := hmac.New(sha256.New, []byte(c.internalAPIKey))
@@ -171,6 +182,10 @@ func (c *Cloud) signRequest(req *http.Request) {
 	sig := hex.EncodeToString(mac.Sum(nil))
 	req.Header.Set("X-Internal-Timestamp", ts)
 	req.Header.Set("X-Internal-Signature", sig)
+
+	// MERGE-NOTE(codex-video-image-rollback): per-instance credential on top of the
+	// legacy shared secret. Merge: keep this single line.
+	consolecred.SignRequest(req)
 }
 
 // deepCopy returns a deep copy of the cached channels to prevent callers from mutating cache.
@@ -180,6 +195,9 @@ func (c *Cloud) deepCopy() []*OfficialChannel {
 		copied := *ch
 		copied.Models = make([]string, len(ch.Models))
 		copy(copied.Models, ch.Models)
+		copied.SupportedProtocols = append([]string(nil), ch.SupportedProtocols...)
+		copied.ModelProtocols = cloneModelProtocols(ch.ModelProtocols)
+		copied.ModelOperations = cloneModelProtocols(ch.ModelOperations)
 		result[i] = &copied
 	}
 	return result

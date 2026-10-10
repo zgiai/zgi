@@ -2,9 +2,9 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -25,6 +25,13 @@ import (
 type LLMHandler struct {
 	gatewayService types.GatewayService
 	errorProjector *apptransport.Projector
+}
+
+// geminiGatewayService is deliberately additive so existing GatewayService
+// implementations and test doubles remain source-compatible.
+type geminiGatewayService interface {
+	CreateGeminiContent(context.Context, *apikeymodel.TenantAPIKey, *adapter.GeminiGenerateContentRequest) (*adapter.RawResponse, error)
+	CreateGeminiContentStream(context.Context, *apikeymodel.TenantAPIKey, *adapter.GeminiGenerateContentRequest) (<-chan adapter.RawStreamEvent, error)
 }
 
 // NewLLMHandler creates a new LLM handler
@@ -48,13 +55,13 @@ func (h *LLMHandler) ChatCompletions(c *gin.Context) {
 	// 2. Parse request
 	var req adapter.ChatRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeOpenAIProtocolError(c, invalidRequestProtocolError(fmt.Sprintf("Invalid request: %v", err)))
+		writeOpenAIProtocolError(c, h.localizedInvalidRequest(c, invalidRequestProtocolError("Invalid JSON request body")))
 		return
 	}
 
 	// 3. Validate required parameters
-	if req.Model == "" {
-		writeOpenAIProtocolError(c, invalidRequestProtocolError("Model field is required"))
+	if err := validatePublicChatRequest(&req); err != nil {
+		writeOpenAIProtocolError(c, h.localizedInvalidRequest(c, invalidRequestProtocolError(publicInputMessage(err))))
 		return
 	}
 
@@ -70,7 +77,7 @@ func (h *LLMHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
-	resp, err := h.gatewayService.ChatCompletion(c.Request.Context(), apiKey, &req)
+	resp, err := h.gatewayService.ChatCompletion(gatewayRequestContext(c), apiKey, &req)
 	if err != nil {
 		h.handleError(c, err)
 		return
@@ -90,7 +97,7 @@ func (h *LLMHandler) Embeddings(c *gin.Context) {
 	// 2. Parse request
 	var req adapter.EmbeddingsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeOpenAIProtocolError(c, invalidRequestProtocolError(fmt.Sprintf("Invalid request: %v", err)))
+		writeOpenAIProtocolError(c, h.localizedInvalidRequest(c, invalidRequestProtocolError("Invalid JSON request body")))
 		return
 	}
 
@@ -113,12 +120,16 @@ func (h *LLMHandler) CreateResponse(c *gin.Context) {
 
 	req, err := parseRawResponseRequest(c)
 	if err != nil {
-		writeOpenAIProtocolError(c, invalidRequestProtocolError(err.Error()))
+		writeOpenAIProtocolError(c, h.localizedInvalidRequest(c, invalidRequestProtocolError(publicInputMessage(err))))
 		return
 	}
 
 	if req.Model == "" {
-		writeOpenAIProtocolError(c, invalidRequestProtocolError("Model field is required"))
+		writeOpenAIProtocolError(c, h.localizedInvalidRequest(c, invalidRequestProtocolError("Model field is required")))
+		return
+	}
+	if err := validatePublicNativeBody(req.Body, "responses"); err != nil {
+		writeOpenAIProtocolError(c, h.localizedInvalidRequest(c, invalidRequestProtocolError(publicInputMessage(err))))
 		return
 	}
 
@@ -127,9 +138,12 @@ func (h *LLMHandler) CreateResponse(c *gin.Context) {
 		return
 	}
 
-	resp, err := h.gatewayService.CreateResponseRaw(c.Request.Context(), apiKey, req)
+	resp, err := h.gatewayService.CreateResponseRaw(gatewayRequestContext(c), apiKey, req)
 	if err != nil {
 		recordServiceError(c, err)
+		if h.writeRawProtocolError(c, err, req.Model, "openai") {
+			return
+		}
 		writeOpenAIProtocolError(c, h.localizedProtocolError(c, err))
 		return
 	}
@@ -146,11 +160,15 @@ func (h *LLMHandler) CreateAnthropicMessage(c *gin.Context) {
 
 	req, err := parseAnthropicMessageRequest(c)
 	if err != nil {
-		writeAnthropicProtocolError(c, invalidRequestProtocolError(err.Error()))
+		writeAnthropicProtocolError(c, h.localizedInvalidRequest(c, invalidRequestProtocolError(publicInputMessage(err))))
 		return
 	}
 	if req.Model == "" {
-		writeAnthropicProtocolError(c, invalidRequestProtocolError("Model field is required"))
+		writeAnthropicProtocolError(c, h.localizedInvalidRequest(c, invalidRequestProtocolError("Model field is required")))
+		return
+	}
+	if err := validatePublicNativeBody(req.Body, "messages"); err != nil {
+		writeAnthropicProtocolError(c, h.localizedInvalidRequest(c, invalidRequestProtocolError(publicInputMessage(err))))
 		return
 	}
 
@@ -159,9 +177,12 @@ func (h *LLMHandler) CreateAnthropicMessage(c *gin.Context) {
 		return
 	}
 
-	resp, err := h.gatewayService.CreateAnthropicMessage(c.Request.Context(), apiKey, req)
+	resp, err := h.gatewayService.CreateAnthropicMessage(gatewayRequestContext(c), apiKey, req)
 	if err != nil {
 		recordServiceError(c, err)
+		if h.writeRawProtocolError(c, err, req.Model, "anthropic") {
+			return
+		}
 		writeAnthropicProtocolError(c, h.localizedProtocolError(c, err))
 		return
 	}
@@ -169,9 +190,46 @@ func (h *LLMHandler) CreateAnthropicMessage(c *gin.Context) {
 	c.Data(http.StatusOK, "application/json", resp.Body)
 }
 
+// CreateGeminiContent handles both Gemini generateContent actions. The model
+// and stream mode come from the native path; the JSON body is forwarded intact.
+func (h *LLMHandler) CreateGeminiContent(c *gin.Context) {
+	apiKey, ok := apiKeyFromContext(c)
+	if !ok {
+		return
+	}
+	req, err := parseGeminiGenerateContentRequest(c)
+	if err != nil {
+		writeGeminiProtocolError(c, h.localizedInvalidRequest(c, invalidRequestProtocolError(publicInputMessage(err))))
+		return
+	}
+	if err := validatePublicNativeBody(req.Body, "gemini"); err != nil {
+		writeGeminiProtocolError(c, h.localizedInvalidRequest(c, invalidRequestProtocolError(publicInputMessage(err))))
+		return
+	}
+	if req.Stream {
+		h.handleGeminiContentStream(c, apiKey, req)
+		return
+	}
+	service, ok := h.gatewayService.(geminiGatewayService)
+	if !ok {
+		writeGeminiProtocolError(c, classifyProtocolError(adapter.ErrCapabilityUnsupported))
+		return
+	}
+	resp, err := service.CreateGeminiContent(gatewayRequestContext(c), apiKey, req)
+	if err != nil {
+		recordServiceError(c, err)
+		if h.writeRawProtocolError(c, err, req.Model, "gemini") {
+			return
+		}
+		writeGeminiProtocolError(c, h.localizedProtocolError(c, err))
+		return
+	}
+	c.Data(http.StatusOK, "application/json", resp.Body)
+}
+
 // handleStreamingRequest handles streaming chat completions
 func (h *LLMHandler) handleStreamingRequest(c *gin.Context, apiKey *apikeymodel.TenantAPIKey, req *adapter.ChatRequest) {
-	streamChan, err := h.gatewayService.ChatCompletionStream(c.Request.Context(), apiKey, req)
+	streamChan, err := h.gatewayService.ChatCompletionStream(gatewayRequestContext(c), apiKey, req)
 	if err != nil {
 		h.handleError(c, err)
 		return
@@ -208,9 +266,12 @@ func (h *LLMHandler) handleStreamingRequest(c *gin.Context, apiKey *apikeymodel.
 }
 
 func (h *LLMHandler) handleResponseStream(c *gin.Context, apiKey *apikeymodel.TenantAPIKey, req *adapter.RawResponseRequest) {
-	streamChan, err := h.gatewayService.CreateResponseStream(c.Request.Context(), apiKey, req)
+	streamChan, err := h.gatewayService.CreateResponseStream(gatewayRequestContext(c), apiKey, req)
 	if err != nil {
 		recordServiceError(c, err)
+		if h.writeRawProtocolError(c, err, req.Model, "openai") {
+			return
+		}
 		writeOpenAIProtocolError(c, h.localizedProtocolError(c, err))
 		return
 	}
@@ -238,9 +299,12 @@ func (h *LLMHandler) handleResponseStream(c *gin.Context, apiKey *apikeymodel.Te
 }
 
 func (h *LLMHandler) handleAnthropicMessageStream(c *gin.Context, apiKey *apikeymodel.TenantAPIKey, req *adapter.AnthropicMessageRequest) {
-	streamChan, err := h.gatewayService.CreateAnthropicMessageStream(c.Request.Context(), apiKey, req)
+	streamChan, err := h.gatewayService.CreateAnthropicMessageStream(gatewayRequestContext(c), apiKey, req)
 	if err != nil {
 		recordServiceError(c, err)
+		if h.writeRawProtocolError(c, err, req.Model, "anthropic") {
+			return
+		}
 		writeAnthropicProtocolError(c, h.localizedProtocolError(c, err))
 		return
 	}
@@ -267,6 +331,41 @@ func (h *LLMHandler) handleAnthropicMessageStream(c *gin.Context, apiKey *apikey
 	}
 }
 
+func (h *LLMHandler) handleGeminiContentStream(c *gin.Context, apiKey *apikeymodel.TenantAPIKey, req *adapter.GeminiGenerateContentRequest) {
+	service, ok := h.gatewayService.(geminiGatewayService)
+	if !ok {
+		writeGeminiProtocolError(c, classifyProtocolError(adapter.ErrCapabilityUnsupported))
+		return
+	}
+	streamChan, err := service.CreateGeminiContentStream(gatewayRequestContext(c), apiKey, req)
+	if err != nil {
+		recordServiceError(c, err)
+		if h.writeRawProtocolError(c, err, req.Model, "gemini") {
+			return
+		}
+		writeGeminiProtocolError(c, h.localizedProtocolError(c, err))
+		return
+	}
+	streamWriter, err := llmshared.NewRawEventStreamWriter(c)
+	if err != nil {
+		writeGeminiProtocolError(c, internalProtocolError())
+		return
+	}
+	for event := range streamChan {
+		if event.Error != nil {
+			recordStreamServiceError(c, event.Error)
+			_ = streamWriter.WriteEvent(adapter.RawStreamEvent{Data: geminiStreamErrorBody(c, h.localizedProtocolError(c, event.Error))})
+			return
+		}
+		if event.Done {
+			return
+		}
+		if err := streamWriter.WriteEvent(event); err != nil {
+			return
+		}
+	}
+}
+
 // ListModels handles GET /v1/models
 func (h *LLMHandler) ListModels(c *gin.Context) {
 	apiKey, ok := apiKeyFromContext(c)
@@ -281,21 +380,21 @@ func (h *LLMHandler) ListModels(c *gin.Context) {
 		return
 	}
 
-	// 3. Return OpenAI-compatible response
-	modelList := make([]gin.H, 0, len(models))
-	for _, m := range models {
-		modelList = append(modelList, gin.H{
-			"id":       m.ID,
-			"object":   "model",
-			"created":  m.Created,
-			"owned_by": m.OwnedBy,
-		})
-	}
+	writeModelsCatalog(c, models)
+}
 
-	c.JSON(http.StatusOK, gin.H{
-		"object": "list",
-		"data":   modelList,
-	})
+// GetModel handles GET /v1/models/{model_id} for Anthropic and OpenAI clients.
+func (h *LLMHandler) GetModel(c *gin.Context) {
+	apiKey, ok := apiKeyFromContext(c)
+	if !ok {
+		return
+	}
+	models, err := h.gatewayService.ListAvailableModels(c.Request.Context(), apiKey)
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+	writeModelsDetail(c, models)
 }
 
 // handleError converts service errors to the public OpenAI-compatible contract.
@@ -372,7 +471,11 @@ func serviceFailureReportHint(err error) observability.FailureReportHint {
 			Retryable: true,
 		},
 	}
-	if protocolErr.openAIStatus == http.StatusInternalServerError {
+	// Gateway-owned failures: the internal_error branch (published as the
+	// catalog's 502 llm.invocation.failed) and the billing reserve/settle
+	// failures (500). Ownership must not follow the HTTP status alone, or an
+	// internal failure would be reported as a provider outage.
+	if protocolErr.openAICode == "internal_error" || protocolErr.openAIStatus == http.StatusInternalServerError {
 		hint.Classification = observability.ErrorClassification{
 			Category: observability.ErrorCategoryApplication,
 			Source:   observability.ErrorSourceZGI,
@@ -436,7 +539,11 @@ func streamFailureReportHint(err error) observability.FailureReportHint {
 			Retryable: true,
 		},
 	}
-	if protocolErr.openAIStatus == http.StatusInternalServerError {
+	// Gateway-owned failures: the internal_error branch (published as the
+	// catalog's 502 llm.invocation.failed) and the billing reserve/settle
+	// failures (500). Ownership must not follow the HTTP status alone, or an
+	// internal failure would be reported as a provider outage.
+	if protocolErr.openAICode == "internal_error" || protocolErr.openAIStatus == http.StatusInternalServerError {
 		hint.Classification = observability.ErrorClassification{
 			Category:  observability.ErrorCategoryApplication,
 			Source:    observability.ErrorSourceZGI,
@@ -468,14 +575,14 @@ func apiKeyFromContext(c *gin.Context) (*apikeymodel.TenantAPIKey, bool) {
 func parseRawResponseRequest(c *gin.Context) (*adapter.RawResponseRequest, error) {
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		return nil, fmt.Errorf("read request body: %w", err)
+		return nil, newPublicInputErrorf("invalid JSON request body")
 	}
 	var meta struct {
 		Model  string `json:"model"`
 		Stream bool   `json:"stream"`
 	}
 	if err := json.Unmarshal(body, &meta); err != nil {
-		return nil, fmt.Errorf("invalid JSON: %w", err)
+		return nil, newPublicInputErrorf("invalid JSON request body")
 	}
 	return &adapter.RawResponseRequest{
 		Model:  strings.TrimSpace(meta.Model),
@@ -484,17 +591,25 @@ func parseRawResponseRequest(c *gin.Context) (*adapter.RawResponseRequest, error
 	}, nil
 }
 
+func gatewayRequestContext(c *gin.Context) context.Context {
+	ctx := c.Request.Context()
+	if requestID := requestIDFromContext(c); requestID != "" {
+		ctx = context.WithValue(ctx, llmshared.ContextKeyRequestID, requestID)
+	}
+	return ctx
+}
+
 func parseAnthropicMessageRequest(c *gin.Context) (*adapter.AnthropicMessageRequest, error) {
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		return nil, fmt.Errorf("read request body: %w", err)
+		return nil, newPublicInputErrorf("invalid JSON request body")
 	}
 	var meta struct {
 		Model  string `json:"model"`
 		Stream bool   `json:"stream"`
 	}
 	if err := json.Unmarshal(body, &meta); err != nil {
-		return nil, fmt.Errorf("invalid JSON: %w", err)
+		return nil, newPublicInputErrorf("invalid JSON request body")
 	}
 	headers := map[string]string{}
 	for _, key := range []string{"anthropic-version", "anthropic-beta"} {
@@ -510,25 +625,159 @@ func parseAnthropicMessageRequest(c *gin.Context) (*adapter.AnthropicMessageRequ
 	}, nil
 }
 
+func parseGeminiGenerateContentRequest(c *gin.Context) (*adapter.GeminiGenerateContentRequest, error) {
+	modelAction := strings.TrimPrefix(strings.TrimSpace(c.Param("modelAction")), "/")
+	model, action, ok := strings.Cut(modelAction, ":")
+	if !ok || strings.TrimSpace(model) == "" {
+		return nil, newPublicInputErrorf("Gemini path must be /v1beta/models/{model}:generateContent")
+	}
+	stream := false
+	switch action {
+	case "generateContent":
+	case "streamGenerateContent":
+		stream = true
+	default:
+		return nil, newPublicInputErrorf("unsupported Gemini action %s", action)
+	}
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		return nil, newPublicInputErrorf("invalid JSON request body")
+	}
+	if len(strings.TrimSpace(string(body))) == 0 {
+		body = []byte(`{}`)
+	}
+	if !json.Valid(body) {
+		return nil, newPublicInputErrorf("invalid JSON request body")
+	}
+	return &adapter.GeminiGenerateContentRequest{Model: strings.TrimSpace(model), Stream: stream, Body: body}, nil
+}
+
+func (h *LLMHandler) writeRawProtocolError(c *gin.Context, err error, logicalModel, protocol string) bool {
+	var rawErr *adapter.RawProtocolError
+	if !errors.As(err, &rawErr) || rawErr == nil {
+		return false
+	}
+	status := publicRawProtocolStatus(rawErr.StatusCode)
+	body := gateway.SanitizePublicNativeErrorBody(rawErr.Body, logicalModel)
+	if len(body) == 0 {
+		writeRawProtocolFallback(c, status, protocol)
+		return true
+	}
+	contentType := strings.TrimSpace(rawErr.ContentType)
+	if !strings.Contains(strings.ToLower(contentType), "json") {
+		contentType = "application/json"
+	}
+	body = h.relayRawErrorEnvelope(c, body)
+	c.Data(status, contentType, body)
+	return true
+}
+
+// relayRawErrorEnvelope keeps a relayed Console error envelope correlated with
+// this edge. Console already sends the cataloged envelope in the body, but the
+// header is not carried over and the body's request_id is Console's, not the
+// X-Request-ID this edge returned. Only a code registered in this catalog is
+// echoed; any other body is relayed unchanged.
+func (h *LLMHandler) relayRawErrorEnvelope(c *gin.Context, body []byte) []byte {
+	if h == nil || h.errorProjector == nil {
+		return body
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return body
+	}
+	code, _ := payload["error_code"].(string)
+	if strings.TrimSpace(code) == "" {
+		code, _ = payload["code"].(string)
+	}
+	if !h.errorProjector.Registered(code) {
+		return body
+	}
+	c.Header(apptransport.HeaderApplicationErrorCode, strings.TrimSpace(code))
+	if requestID := requestIDFromContext(c); requestID != "" {
+		payload["request_id"] = requestID
+		if updated, err := json.Marshal(payload); err == nil {
+			return updated
+		}
+	}
+	return body
+}
+
+func publicRawProtocolStatus(status int) int {
+	if status >= 400 && status <= 599 {
+		return status
+	}
+	return http.StatusBadGateway
+}
+
+// writeRawProtocolFallback answers an upstream failure that carried no body.
+// It goes through the same envelope and header writers as every other public
+// exit so the three protocol shapes each stay correct while still carrying the
+// cataloged fields and X-ZGI-App-Error-Code.
+func writeRawProtocolFallback(c *gin.Context, status int, protocol string) {
+	switch strings.ToLower(strings.TrimSpace(protocol)) {
+	case "anthropic":
+		writeAnthropicProtocolError(c, rawFallbackProtocolError(status))
+	case "gemini":
+		writeGeminiProtocolError(c, rawFallbackProtocolError(status))
+	default:
+		writeOpenAIProtocolError(c, rawFallbackProtocolError(status))
+	}
+}
+
+// rawFallbackProtocolError picks the cataloged identity the upstream status
+// implies. Raw passthrough deliberately preserves the upstream status, so the
+// code is chosen to match it rather than the catalog's own status for the code.
+func rawFallbackProtocolError(status int) protocolError {
+	const message = "Upstream request failed"
+	switch status {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return newAppProtocolError(llmerrors.AppCodeProviderAuthFailed, status, "invalid_request_error", "upstream_auth_failed", "authentication_error", message, false)
+	case http.StatusTooManyRequests:
+		return newAppProtocolError(llmerrors.AppCodeProviderRateLimited, status, "rate_limit_error", "rate_limit_exceeded", "rate_limit_error", message, true)
+	case http.StatusBadRequest:
+		return newAppProtocolError(llmerrors.AppCodeRequestInvalid, status, "invalid_request_error", "invalid_request", "invalid_request_error", message, false)
+	default:
+		return newAppProtocolError(llmerrors.AppCodeInvocationFailed, publicRawProtocolStatus(status), "server_error", "upstream_error", "api_error", message, true)
+	}
+}
+
+func geminiStreamErrorBody(c *gin.Context, protocolErr protocolError) json.RawMessage {
+	body, _ := json.Marshal(applyStreamErrorEnvelope(c, gin.H{"error": gin.H{"code": protocolErr.openAIStatus, "message": protocolErr.message, "status": geminiErrorStatus(protocolErr.openAIStatus)}}, protocolErr))
+	return body
+}
+
 func (h *LLMHandler) openAIStreamError(c *gin.Context, err error) []byte {
 	protocolErr := h.localizedProtocolError(c, err)
-	data, _ := json.Marshal(gin.H{
+	data, _ := json.Marshal(applyStreamErrorEnvelope(c, gin.H{
 		"type":    "error",
 		"message": protocolErr.message,
 		"code":    protocolErr.openAICode,
 		"param":   nil,
-	})
+	}, protocolErr))
 	return data
 }
 
 func (h *LLMHandler) anthropicStreamError(c *gin.Context, err error) []byte {
 	protocolErr := h.localizedProtocolError(c, err)
-	data, _ := json.Marshal(gin.H{
+	data, _ := json.Marshal(applyStreamErrorEnvelope(c, gin.H{
 		"type": "error",
 		"error": gin.H{
 			"type":    protocolErr.anthropicType,
 			"message": protocolErr.message,
 		},
-	})
+	}, protocolErr))
 	return data
+}
+
+// applyStreamErrorEnvelope adds the cataloged envelope fields to an in-stream
+// error frame. It is additive: a frame that already has a top-level code (the
+// OpenAI frame's legacy wire code) keeps it, and the cataloged identity is
+// carried by error_code.
+func applyStreamErrorEnvelope(c *gin.Context, frame gin.H, protocolErr protocolError) gin.H {
+	legacyCode, hasLegacyCode := frame["code"]
+	frame = applyProtocolErrorEnvelope(c, frame, protocolErr)
+	if hasLegacyCode {
+		frame["code"] = legacyCode
+	}
+	return frame
 }

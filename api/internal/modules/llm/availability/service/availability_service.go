@@ -139,7 +139,10 @@ func (s *availabilityService) filterRoutesForModel(
 	var validRoutes []*channelmodel.LLMRoute
 
 	for _, route := range routes {
-		if route.SupportsModelForProvider(provider, modelName) {
+		// Availability must answer the same question the router will ask at
+		// invocation time, otherwise it reports a model as available and the
+		// call then finds no candidate.
+		if route.SupportsPlatformModel(provider, modelName) {
 			validRoutes = append(validRoutes, route)
 		}
 	}

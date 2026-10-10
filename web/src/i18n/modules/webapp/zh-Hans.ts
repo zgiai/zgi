@@ -425,6 +425,14 @@ const messages: WebappMessages = {
     notAvailable: '对话服务不可用',
     modelConfig: '模型',
     modelRequired: '请先选择模型',
+    routingStrategy: {
+      label: '路由策略',
+      options: {
+        speed: '速度优先',
+        price: '价格优先',
+        stability: '稳定优先',
+      },
+    },
     modelUnavailable: '当前模型已不再支持 AI Chat，请重新选择模型。原配置已保留。',
     modelUnavailableAdminDescription: '请检查可用模型与渠道配置，恢复后即可继续发送消息。',
     modelUnavailableMemberDescription: '请切换到其他可用模型，或联系组织管理员恢复模型配置。',

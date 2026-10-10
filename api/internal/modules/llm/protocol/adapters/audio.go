@@ -60,17 +60,19 @@ type TranscriptionRequest struct {
 
 // TranscriptionResponse contains the final editable transcript.
 type TranscriptionResponse struct {
-	RequestID string `json:"request_id"`
-	Text      string `json:"text"`
+	RequestID  string            `json:"request_id"`
+	Text       string            `json:"text"`
+	Settlement *SettlementResult `json:"-"`
 }
 
 // SpeechRequest carries one complete text input for an MP3 response stream.
 type SpeechRequest struct {
-	RequestID      string `json:"-"`
-	Model          string `json:"model"`
-	Input          string `json:"input"`
-	Voice          string `json:"voice"`
-	ResponseFormat string `json:"response_format"`
+	RequestID      string            `json:"-"`
+	Model          string            `json:"model"`
+	Input          string            `json:"input"`
+	Voice          string            `json:"voice"`
+	ResponseFormat string            `json:"response_format"`
+	Settlement     *SettlementResult `json:"-"`
 }
 
 type MusicMode string
@@ -83,12 +85,13 @@ const (
 
 // MusicRequest carries one complete music generation request.
 type MusicRequest struct {
-	RequestID      string    `json:"-"`
-	Model          string    `json:"model"`
-	Mode           MusicMode `json:"mode"`
-	Prompt         string    `json:"prompt"`
-	Lyrics         string    `json:"lyrics"`
-	ResponseFormat string    `json:"response_format"`
+	RequestID      string            `json:"-"`
+	Model          string            `json:"model"`
+	Mode           MusicMode         `json:"mode"`
+	Prompt         string            `json:"prompt"`
+	Lyrics         string            `json:"lyrics"`
+	ResponseFormat string            `json:"response_format"`
+	Settlement     *SettlementResult `json:"-"`
 }
 
 // LyricsRequest carries one provider-authored lyrics request.
@@ -100,7 +103,8 @@ type LyricsRequest struct {
 
 // LyricsResult contains complete lyrics and display metadata.
 type LyricsResult struct {
-	Title     string   `json:"title"`
-	StyleTags []string `json:"style_tags"`
-	Lyrics    string   `json:"lyrics"`
+	Title      string            `json:"title"`
+	StyleTags  []string          `json:"style_tags"`
+	Lyrics     string            `json:"lyrics"`
+	Settlement *SettlementResult `json:"-"`
 }

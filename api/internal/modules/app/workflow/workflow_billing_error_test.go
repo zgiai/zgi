@@ -290,3 +290,79 @@ func TestWrapNodeExecutionError_PreservesBillingUserErrorChain(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildWorkflowStreamErrorPayload_GenericBillingSettleFailure(t *testing.T) {
+	// The exact shape the gateway produces: the settle failure wraps a billing
+	// chain carrying internal request/attempt ids.
+	err := fmt.Errorf("workflow execution failed at node [n1]: %w",
+		fmt.Errorf("LLM invocation failed: %w",
+			fmt.Errorf("%w: %w", llmerrors.DomainErrBillingFailed,
+				fmt.Errorf("%w: request_id=abc attempt_id=abc-a1 route_id=r1 billing_mode=remote: console proxy settlement status is not settled", gateway.ErrBillingSettleFailed))))
+
+	payload := buildWorkflowStreamErrorPayload(err)
+
+	if got := payload["code"]; got != response.ErrWorkflowBillingSettleFailed.Code {
+		t.Fatalf("code = %#v, want %d", got, response.ErrWorkflowBillingSettleFailed.Code)
+	}
+	message, _ := payload["message"].(string)
+	if message != response.ErrWorkflowBillingSettleFailed.Message {
+		t.Fatalf("message = %q, want %q", message, response.ErrWorkflowBillingSettleFailed.Message)
+	}
+	for _, leaked := range []string{"request_id", "attempt_id", "route_id", "console proxy settlement"} {
+		if strings.Contains(message, leaked) {
+			t.Fatalf("message leaks internal detail %q: %s", leaked, message)
+		}
+	}
+}
+
+func TestBuildWorkflowStreamErrorPayload_ExchangeRateUnavailableIsSpecific(t *testing.T) {
+	// The settle failure wraps the exchange-rate cause, so it must classify as
+	// the more specific exchange-rate error rather than the generic settle one.
+	err := fmt.Errorf("%w: %w", gateway.ErrBillingSettleFailed,
+		fmt.Errorf("apply platform settlement currency snapshot: %w: console settlement recorded no USD to CNY rate", gateway.ErrExchangeRateUnavailable))
+
+	payload := buildWorkflowStreamErrorPayload(err)
+
+	if got := payload["code"]; got != response.ErrWorkflowBillingExchangeRateUnavailable.Code {
+		t.Fatalf("code = %#v, want %d", got, response.ErrWorkflowBillingExchangeRateUnavailable.Code)
+	}
+}
+
+// TestBuildWorkflowStreamErrorPayload_ExecutionTimeout guards that a node which
+// exhausts its budget (context.DeadlineExceeded, usually a stalled upstream) or
+// an explicit upstream timeout is projected to the cataloged timeout instead of
+// leaking the raw error string.
+func TestBuildWorkflowStreamErrorPayload_ExecutionTimeout(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{
+			name: "node deadline",
+			err:  fmt.Errorf("workflow execution failed at node [n1]: text2sql generation failed: %w", context.DeadlineExceeded),
+		},
+		{
+			name: "upstream adapter timeout",
+			err:  fmt.Errorf("provider timeout: %w", adapter.ErrTimeout),
+		},
+		{
+			name: "domain upstream timeout",
+			err:  fmt.Errorf("all providers failed: %w", llmerrors.DomainErrUpstreamTimeout),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := buildWorkflowStreamErrorPayload(tc.err)
+			if got := payload["code"]; got != llmerrors.AppCodeProviderTimeout.String() {
+				t.Fatalf("code = %#v, want %s", got, llmerrors.AppCodeProviderTimeout.String())
+			}
+			message, _ := payload["message"].(string)
+			if message != response.ErrWorkflowExecutionTimeout.Message {
+				t.Fatalf("message = %q, want %q", message, response.ErrWorkflowExecutionTimeout.Message)
+			}
+			if strings.Contains(message, "context deadline exceeded") || strings.Contains(message, "n1") {
+				t.Fatalf("message leaked raw error detail: %s", message)
+			}
+		})
+	}
+}

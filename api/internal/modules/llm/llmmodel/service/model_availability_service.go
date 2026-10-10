@@ -213,7 +213,9 @@ func (s *modelAvailabilityService) availabilityForModel(
 func countSupportingRoutes(routes []*channelmodel.LLMRoute, provider, modelName string) int {
 	count := 0
 	for _, route := range routes {
-		if route.SupportsModelForProvider(provider, modelName) {
+		// Same question as the availability service: can this route serve this
+		// exact platform model? Must match what the router enforces.
+		if route.SupportsPlatformModel(provider, modelName) {
 			count++
 		}
 	}

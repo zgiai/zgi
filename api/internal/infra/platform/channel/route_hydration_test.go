@@ -35,8 +35,8 @@ func TestHydrateOfficialRoutesUsesPlatformProviderModelCatalog(t *testing.T) {
 		Models:          []string{"private-model"},
 	}
 	provider := &hydrationProvider{channels: []*OfficialChannel{
-		{Provider: "openai", Models: []string{"gpt-5", " shared-model "}},
-		{Provider: "anthropic", Models: []string{"claude-4", "shared-model"}},
+		{Provider: "openai", Models: []string{"gpt-5", " shared-model "}, ModelProtocols: map[string][]string{"gpt-5": {"openai_chat_completions", "openai_responses"}, " shared-model ": {"openai_responses"}}},
+		{Provider: "anthropic", Models: []string{"claude-4", "shared-model"}, ModelProtocols: map[string][]string{"claude-4": {"anthropic_messages"}, "shared-model": {"anthropic_messages"}}},
 	}}
 
 	routes, err := HydrateOfficialRoutes(t.Context(), provider, uuid.New(), []*channelmodel.LLMRoute{officialRoute, privateRoute})
@@ -57,6 +57,9 @@ func TestHydrateOfficialRoutesUsesPlatformProviderModelCatalog(t *testing.T) {
 	}
 	if !reflect.DeepEqual(routes[0].OfficialProviderModels, wantPairs) {
 		t.Fatalf("official provider/model pairs = %#v, want %#v", routes[0].OfficialProviderModels, wantPairs)
+	}
+	if !reflect.DeepEqual(routes[0].OfficialModelProtocols["shared-model"], []string{"openai_responses", "anthropic_messages"}) {
+		t.Fatalf("shared model protocols = %#v", routes[0].OfficialModelProtocols["shared-model"])
 	}
 	if !reflect.DeepEqual(privateRoute.Models, []string{"private-model"}) {
 		t.Fatalf("private route models changed = %#v", privateRoute.Models)

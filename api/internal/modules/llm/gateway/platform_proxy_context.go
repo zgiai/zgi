@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -18,6 +19,10 @@ const (
 	headerZGIModelName             = "X-ZGI-Model-Name"
 	headerZGIProviderName          = "X-ZGI-Provider-Name"
 	headerZGIIsStreaming           = "X-ZGI-Is-Streaming"
+	headerZGIRoutingStrategy       = "X-ZGI-Routing-Strategy"
+	headerZGIEstimatedInputTokens  = "X-ZGI-Estimated-Input-Tokens"
+	headerZGIEstimatedOutputTokens = "X-ZGI-Estimated-Output-Tokens"
+	headerZGISettlementTransport   = "X-ZGI-Settlement-Transport"
 )
 
 type platformProxyContextKey struct{}
@@ -34,6 +39,9 @@ type platformProxyMetadata struct {
 	ModelName             string
 	ProviderName          string
 	IsStreaming           bool
+	RoutingStrategy       string
+	EstimatedInputTokens  int
+	EstimatedOutputTokens int
 }
 
 func withPlatformProxyMetadata(ctx context.Context, bc *BillingContext) context.Context {
@@ -55,6 +63,9 @@ func withPlatformProxyMetadata(ctx context.Context, bc *BillingContext) context.
 		ModelName:             strings.TrimSpace(bc.ModelName),
 		ProviderName:          strings.TrimSpace(bc.ProviderName),
 		IsStreaming:           bc.IsStreaming,
+		RoutingStrategy:       strings.TrimSpace(bc.RoutingStrategy),
+		EstimatedInputTokens:  bc.EstimatedInputTokens,
+		EstimatedOutputTokens: bc.EstimatedOutputTokens,
 	}
 	if bc.AppID != nil {
 		meta.AppID = bc.AppID.String()
@@ -84,8 +95,14 @@ func applyPlatformProxyHeaders(req *http.Request) {
 	setHeaderIfNotEmpty(req, headerZGIAppType, meta.AppType)
 	setHeaderIfNotEmpty(req, headerZGIModelName, meta.ModelName)
 	setHeaderIfNotEmpty(req, headerZGIProviderName, meta.ProviderName)
+	setHeaderIfNotEmpty(req, headerZGIRoutingStrategy, meta.RoutingStrategy)
+	if meta.EstimatedInputTokens > 0 || meta.EstimatedOutputTokens > 0 {
+		req.Header.Set(headerZGIEstimatedInputTokens, strconv.Itoa(meta.EstimatedInputTokens))
+		req.Header.Set(headerZGIEstimatedOutputTokens, strconv.Itoa(meta.EstimatedOutputTokens))
+	}
 	if meta.IsStreaming {
 		req.Header.Set(headerZGIIsStreaming, "true")
+		req.Header.Set(headerZGISettlementTransport, "trailers")
 	}
 }
 

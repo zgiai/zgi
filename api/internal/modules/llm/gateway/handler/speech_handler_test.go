@@ -100,7 +100,9 @@ func TestSpeechHandlerMapsErrorsBeforeAudioStarts(t *testing.T) {
 	}{
 		{name: "unsupported model", err: adapter.ErrCapabilityUnsupported, status: http.StatusBadRequest},
 		{name: "model not found", err: gateway.ErrModelNotFound, status: http.StatusNotFound},
-		{name: "insufficient balance", err: adapter.ErrInsufficientBalance, status: http.StatusTooManyRequests},
+		// The ledger records llm.balance.insufficient (403) for a declined
+		// reservation, so the egress must answer 403 and not a retryable 429.
+		{name: "insufficient balance", err: adapter.ErrInsufficientBalance, status: http.StatusForbidden},
 		{name: "timeout", err: context.DeadlineExceeded, status: http.StatusGatewayTimeout},
 		{name: "cancelled", err: context.Canceled, status: statusClientClosedRequest},
 	}
@@ -215,4 +217,37 @@ type speechFlushRecorder struct {
 func (r *speechFlushRecorder) Flush() {
 	r.flushes++
 	r.ResponseRecorder.Flush()
+}
+
+// TestSpeechHandlerProjectsFailuresWithTheProjector is the speech equivalent of
+// the transcription projector test: the egress must carry the catalog identity
+// and localized message once a projector is attached.
+func TestSpeechHandlerProjectsFailuresWithTheProjector(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewSpeechHandler(&speechServiceStub{err: adapter.ErrInsufficientBalance})
+	handler.SetErrorProjector(testApplicationErrorProjector(t))
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Set("llm_api_key", &apikeymodel.TenantAPIKey{})
+	c.Request = newSpeechRequest(t, gateway.SpeechRequest{
+		Model: "seed-tts-2.0", Input: "text", Voice: "voice", ResponseFormat: "mp3",
+	})
+	c.Request.Header.Set("Accept-Language", "zh-CN")
+
+	handler.Generate(c)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusForbidden, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("X-ZGI-App-Error-Code"); got != "llm.balance.insufficient" {
+		t.Fatalf("X-ZGI-App-Error-Code = %q, want llm.balance.insufficient", got)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["error_code"] != "llm.balance.insufficient" {
+		t.Fatalf("error_code = %v, want llm.balance.insufficient", body["error_code"])
+	}
 }

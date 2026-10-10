@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	platformchannel "github.com/zgiai/zgi/api/internal/infra/platform/channel"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
@@ -119,6 +120,10 @@ func (r *ChannelRouter) CandidateRoutesForModels(
 	if err != nil {
 		return nil, fmt.Errorf("failed to get enabled routes: %w", err)
 	}
+	routes, err = platformchannel.HydrateOfficialRoutes(ctx, r.channelProvider, organizationID, routes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to hydrate official routes: %w", err)
+	}
 	if len(routes) == 0 && len(modelNames) > 0 {
 		return nil, fmt.Errorf("%w: no enabled routes found for organizationID %s", llmerrors.DomainErrRouteNotFound, organizationID)
 	}
@@ -131,7 +136,12 @@ func (r *ChannelRouter) CandidateRoutesForModels(
 		}
 		llmModel, privateModel, err := r.resolveCandidateModel(ctx, organizationID, "", normalizedModelName)
 		if err != nil {
-			if !errors.Is(err, llmerrors.DomainErrModelNotFound) {
+			if errors.Is(err, errAmbiguousActiveCatalogModel) {
+				llmModel, err = r.resolveCatalogModelForRoutes(ctx, routes, normalizedModelName)
+			}
+		}
+		if err != nil {
+			if !isModelUnavailableForRouteListing(err) {
 				return nil, err
 			}
 			result[normalizedModelName] = nil
@@ -139,7 +149,7 @@ func (r *ChannelRouter) CandidateRoutesForModels(
 		}
 		candidates, err := r.candidateRoutesForResolvedModel(ctx, organizationID, normalizedModelName, "", maxSelections, routes, llmModel, privateModel)
 		if err != nil {
-			if !errors.Is(err, llmerrors.DomainErrModelNotFound) {
+			if !isModelUnavailableForRouteListing(err) {
 				return nil, err
 			}
 			result[normalizedModelName] = nil
@@ -148,6 +158,18 @@ func (r *ChannelRouter) CandidateRoutesForModels(
 		result[normalizedModelName] = candidates
 	}
 	return result, nil
+}
+
+// isModelUnavailableForRouteListing reports a per-model routing miss that the
+// catalog listing skips instead of failing the whole directory. The router's
+// own "no routable channel" answer wraps ErrProviderUnavailable, a different
+// sentinel from the domain no-provider error, so both must be recognised.
+func isModelUnavailableForRouteListing(err error) bool {
+	return errors.Is(err, llmerrors.DomainErrModelNotFound) ||
+		errors.Is(err, llmerrors.DomainErrNoProviderAvailable) ||
+		errors.Is(err, llmerrors.DomainErrRouteNotFound) ||
+		errors.Is(err, ErrProviderUnavailable) ||
+		errors.Is(err, ErrNoProviderAvailable)
 }
 
 func (r *ChannelRouter) candidateRoutesForResolvedModel(

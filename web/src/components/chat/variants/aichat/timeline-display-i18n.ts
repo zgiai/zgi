@@ -1,4 +1,5 @@
 import type { ScopedTranslations } from '@/i18n/translations';
+import { applicationErrorCopy } from '@/services/application-error-i18n';
 import {
   formatTimelineDebugValue,
   sanitizeTimelineDisplayString,
@@ -142,6 +143,14 @@ export function localizeAIChatRuntimeErrorCode(value: unknown, t: WebappTranslat
   if (typeof value !== 'string') return null;
   const normalized = value.trim().toLowerCase();
   if (!normalized) return null;
+  // Pre application codes (billing.*, llm.*, video.*, image.*, music.*) share
+  // the common error catalog so the streaming path renders them by code.
+  const applicationCopy = applicationErrorCopy(normalized);
+  if (applicationCopy) {
+    return applicationCopy.action
+      ? `${applicationCopy.title} ${applicationCopy.action}`
+      : applicationCopy.title;
+  }
   return normalized.startsWith('connector_')
     ? t('consoleChat.skills.trace.errors.externalAppFailed')
     : null;

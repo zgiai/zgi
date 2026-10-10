@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	accessmodel "github.com/zgiai/zgi/api/internal/modules/llm/developeraccess/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -22,7 +23,7 @@ func TestRevokeWorkspaceDeveloperAccessInvalidatesMembershipAuthority(t *testing
 
 	organizationID, workspaceID := uuid.NewString(), uuid.NewString()
 	otherWorkspaceID, accountID, otherAccountID := uuid.NewString(), uuid.NewString(), uuid.NewString()
-	quota := int64(100)
+	quota := millipoints.MilliPoints(100)
 	targetGrant := accessmodel.Grant{
 		OrganizationID: organizationID, WorkspaceID: workspaceID,
 		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: accountID,

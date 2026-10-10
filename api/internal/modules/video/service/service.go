@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
+	"math"
 	"net/url"
 	"os"
 	"os/exec"
@@ -42,9 +44,6 @@ const (
 	videoPosterMIMEType          = "image/jpeg"
 	videoPosterExtension         = ".jpg"
 	videoPosterMaxBytes          = 10 << 20
-
-	videoPredeductPointsPerSecond int64 = 143
-	internalCreditsPerPoint       int64 = 1000
 )
 
 type LLMVideoClient interface {
@@ -217,7 +216,7 @@ func (s *service) Generate(ctx context.Context, scope Scope, req GenerateRequest
 		ResponsePayload:  jsonData(map[string]any{}),
 		CreatedAt:        now,
 		UpdatedAt:        now,
-		EstimatedCredits: estimateVideoTaskCredits(options),
+		EstimatedCredits: millipoints.MilliPoints(estimateVideoTaskCredits(model, options)),
 		ActualCredits:    0,
 	}
 	if err := s.tasks.create(operationCtx, record); err != nil {
@@ -234,7 +233,10 @@ func (s *service) Generate(ctx context.Context, scope Scope, req GenerateRequest
 	return &GenerateResult{Task: task}, nil
 }
 
-func estimateVideoTaskCredits(options GenerateOptions) int64 {
+func estimateVideoTaskCredits(model *llmmodelsvc.AvailableModel, options GenerateOptions) int64 {
+	if model == nil || len(model.Pricing) == 0 {
+		return 0
+	}
 	duration := options.Duration
 	if duration <= 0 {
 		duration = defaultDuration
@@ -243,7 +245,61 @@ func estimateVideoTaskCredits(options GenerateOptions) int64 {
 	if count <= 0 {
 		count = 1
 	}
-	return int64(duration) * int64(count) * videoPredeductPointsPerSecond * internalCreditsPerPoint
+	var root map[string]any
+	if err := json.Unmarshal(model.Pricing, &root); err != nil {
+		return 0
+	}
+	video, ok := root["video_generation"].(map[string]any)
+	if !ok {
+		return 0
+	}
+	billingUnit, _ := video["billing_unit"].(string)
+	rates, _ := video["rates"].([]any)
+	if len(rates) == 0 {
+		return 0
+	}
+	rate, _ := rates[0].(map[string]any)
+	if rate == nil {
+		return 0
+	}
+	quantity := float64(count)
+	unitPrice := 0.0
+	switch billingUnit {
+	case "second":
+		unitPrice, _ = rate["price_per_second"].(float64)
+		quantity = float64(duration * count)
+	case "task":
+		unitPrice, _ = rate["price_per_task"].(float64)
+	case "million_video_tokens":
+		price, _ := rate["price_per_million_tokens"].(float64)
+		estimation, _ := video["token_estimation"].(map[string]any)
+		var tokensPerSecond float64
+		if rules, ok := estimation["rules"].([]any); ok && len(rules) > 0 {
+			if first, ok := rules[0].(map[string]any); ok {
+				tokensPerSecond, _ = first["tokens_per_second"].(float64)
+			}
+		}
+		if price <= 0 || tokensPerSecond <= 0 {
+			return 0
+		}
+		unitPrice = price
+		quantity = tokensPerSecond * float64(duration*count) / 1_000_000
+	default:
+		return 0
+	}
+	if unitPrice <= 0 || quantity <= 0 {
+		return 0
+	}
+	currency := strings.ToUpper(strings.TrimSpace(fmt.Sprint(video["currency"])))
+	totalSource := unitPrice * quantity
+	totalUSD := totalSource
+	if currency == "CNY" {
+		return 0
+	}
+	if currency != "" && currency != "USD" {
+		return 0
+	}
+	return int64(math.Ceil(totalUSD * 1_000_000))
 }
 
 func normalizeClientRequestID(value string) string {
@@ -284,10 +340,10 @@ func (s *service) startUpstreamVideoTask(record videoTaskRecord, appCtx *llmclie
 		}
 
 		if resp.EstimatedCredits > 0 {
-			record.EstimatedCredits = resp.EstimatedCredits
+			record.EstimatedCredits = millipoints.MilliPoints(resp.EstimatedCredits)
 		}
 		if resp.ActualCredits > 0 {
-			record.ActualCredits = resp.ActualCredits
+			record.ActualCredits = millipoints.MilliPoints(resp.ActualCredits)
 		}
 
 		upstreamID := upstreamTaskID(resp)
@@ -511,10 +567,10 @@ func (s *service) refreshTask(ctx context.Context, scope Scope, record *videoTas
 		record.VideoURL = videoURL
 	}
 	if record.Status != "failed" && resp.EstimatedCredits > 0 {
-		record.EstimatedCredits = resp.EstimatedCredits
+		record.EstimatedCredits = millipoints.MilliPoints(resp.EstimatedCredits)
 	}
 	if record.Status != "failed" && resp.ActualCredits > 0 {
-		record.ActualCredits = resp.ActualCredits
+		record.ActualCredits = millipoints.MilliPoints(resp.ActualCredits)
 	}
 	record.ResponsePayload = jsonData(payload)
 	record.UpdatedAt = time.Now().UTC()
@@ -1111,8 +1167,8 @@ func taskFromRecord(record videoTaskRecord) VideoTask {
 		HasInputVideo:    record.HasInputVideo,
 		GenerateAudio:    record.GenerateAudio,
 		Voice:            record.Voice,
-		EstimatedCredits: record.EstimatedCredits,
-		ActualCredits:    record.ActualCredits,
+		EstimatedCredits: record.EstimatedCredits.Int64(),
+		ActualCredits:    record.ActualCredits.Int64(),
 		RequestPayload:   mapFromJSON(record.RequestPayload),
 		ResponsePayload:  mapFromJSON(record.ResponsePayload),
 		CreatedAt:        record.CreatedAt,

@@ -8,6 +8,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/infra/platform/consoleauth"
+	"github.com/zgiai/zgi/api/internal/infra/platform/consolecred"
 	pb "github.com/zgiai/zgi/api/pkg/rpc/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -25,6 +27,7 @@ type OfficialCreditChecker interface {
 
 type consoleOfficialCreditChecker struct {
 	grpcAddr       string
+	apiKey         string
 	dialTimeout    time.Duration
 	requestTimeout time.Duration
 }
@@ -33,6 +36,7 @@ type consoleOfficialCreditChecker struct {
 func NewConsoleOfficialCreditChecker() OfficialCreditChecker {
 	return &consoleOfficialCreditChecker{
 		grpcAddr:       resolveConsoleGRPCAddr(),
+		apiKey:         resolveConsoleInternalAPIKey(),
 		dialTimeout:    defaultConsoleGRPCDialTimeout,
 		requestTimeout: defaultConsoleGRPCRequestTimeout,
 	}
@@ -43,15 +47,30 @@ func (c *consoleOfficialCreditChecker) GetOfficialBalance(ctx context.Context, o
 		return 0, fmt.Errorf("%w: console grpc address is empty", ErrOfficialCreditUnavailable)
 	}
 
+	// The official channel fails closed while the console link is stale. The instance
+	// credential stays loaded (the sync client needs it to repair the link), so this call
+	// site checks the explicit stale flag instead of relying on a cleared credential.
+	if consolecred.Global().Stale() {
+		return 0, fmt.Errorf("%w: console link is stale", ErrOfficialCreditUnavailable)
+	}
+
 	dialCtx, cancelDial := context.WithTimeout(ctx, c.dialTimeout)
 	defer cancelDial()
 
-	conn, err := grpc.DialContext(
-		dialCtx,
-		c.grpcAddr,
+	dialOptions := []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithBlock(),
-	)
+		// Two distinct credentials travel on the balance RPC. The per-instance
+		// control-plane credential is attached first: it contributes the X-Internal-*
+		// HMAC headers the console instance interceptor verifies. The Console-issued
+		// downstream client key is attached below so that it owns the "authorization"
+		// metadata key the console downstream interceptor resolves.
+		grpc.WithPerRPCCredentials(consolecred.NewGRPCCredentials()),
+	}
+	if key := strings.TrimSpace(c.apiKey); key != "" {
+		dialOptions = append(dialOptions, grpc.WithPerRPCCredentials(consoleauth.Credentials{Token: key}))
+	}
+	conn, err := grpc.DialContext(dialCtx, c.grpcAddr, dialOptions...)
 	if err != nil {
 		return 0, fmt.Errorf("%w: dial console grpc failed: %v", ErrOfficialCreditUnavailable, err)
 	}
@@ -82,4 +101,8 @@ func (c *consoleOfficialCreditChecker) GetOfficialBalance(ctx context.Context, o
 
 func resolveConsoleGRPCAddr() string {
 	return strings.TrimSpace(config.Current().Console.GRPCAddr)
+}
+
+func resolveConsoleInternalAPIKey() string {
+	return strings.TrimSpace(config.Current().Console.InternalAPIKey)
 }

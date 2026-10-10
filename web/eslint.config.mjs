@@ -195,6 +195,101 @@ const config = [
     },
   },
 
+  // Money safety: the billing and model-price presentation layer must not run
+  // money arithmetic on binary floats. Money is canonical USD handled through
+  // decimal.js, so parseFloat / Number() arithmetic / Math.round are rejected.
+  {
+    files: [
+      'src/utils/money.ts',
+      'src/utils/billing-display.ts',
+      'src/utils/model-price.ts',
+      'src/utils/build-custom-model-pricing.ts',
+      'src/components/providers/model-price-dialog.tsx',
+      'src/components/providers/custom-model-dialog.tsx',
+    ],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "CallExpression[callee.name='parseFloat']",
+          message: 'Money must use decimal.js, not parseFloat().',
+        },
+        {
+          selector: "MemberExpression[object.name='Number'][property.name='parseFloat']",
+          message: 'Money must use decimal.js, not Number.parseFloat().',
+        },
+        {
+          selector: "BinaryExpression[operator='+']:has(CallExpression[callee.name='Number'])",
+          message: 'Money must use decimal.js, not Number() arithmetic.',
+        },
+        {
+          selector: "BinaryExpression[operator='-']:has(CallExpression[callee.name='Number'])",
+          message: 'Money must use decimal.js, not Number() arithmetic.',
+        },
+        {
+          selector: "BinaryExpression[operator='*']:has(CallExpression[callee.name='Number'])",
+          message: 'Money must use decimal.js, not Number() arithmetic.',
+        },
+        {
+          selector: "BinaryExpression[operator='/']:has(CallExpression[callee.name='Number'])",
+          message: 'Money must use decimal.js, not Number() arithmetic.',
+        },
+        {
+          selector: "BinaryExpression[operator='%']:has(CallExpression[callee.name='Number'])",
+          message: 'Money must use decimal.js, not Number() arithmetic.',
+        },
+      ],
+    },
+  },
+
+  // Rounding of money values must happen through decimal.js only. The dialogs
+  // are excluded because they round non-money config parameters with Math.round.
+  {
+    files: [
+      'src/utils/money.ts',
+      'src/utils/billing-display.ts',
+      'src/utils/model-price.ts',
+      'src/utils/build-custom-model-pricing.ts',
+    ],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "CallExpression[callee.name='parseFloat']",
+          message: 'Money must use decimal.js, not parseFloat().',
+        },
+        {
+          selector: "MemberExpression[object.name='Number'][property.name='parseFloat']",
+          message: 'Money must use decimal.js, not Number.parseFloat().',
+        },
+        {
+          selector: "BinaryExpression[operator='+']:has(CallExpression[callee.name='Number'])",
+          message: 'Money must use decimal.js, not Number() arithmetic.',
+        },
+        {
+          selector: "BinaryExpression[operator='-']:has(CallExpression[callee.name='Number'])",
+          message: 'Money must use decimal.js, not Number() arithmetic.',
+        },
+        {
+          selector: "BinaryExpression[operator='*']:has(CallExpression[callee.name='Number'])",
+          message: 'Money must use decimal.js, not Number() arithmetic.',
+        },
+        {
+          selector: "BinaryExpression[operator='/']:has(CallExpression[callee.name='Number'])",
+          message: 'Money must use decimal.js, not Number() arithmetic.',
+        },
+        {
+          selector: "BinaryExpression[operator='%']:has(CallExpression[callee.name='Number'])",
+          message: 'Money must use decimal.js, not Number() arithmetic.',
+        },
+        {
+          selector: "CallExpression[callee.object.name='Math'][callee.property.name='round']",
+          message: 'Money must be rounded with decimal.js, not Math.round().',
+        },
+      ],
+    },
+  },
+
   // Configuration files exceptions
   {
     files: ['*.config.{js,mjs,ts}', 'tailwind.config.ts', 'next.config.js', 'postcss.config.mjs'],

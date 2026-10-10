@@ -1238,7 +1238,7 @@ func (handler *connectorHandler) mailCredentialError(c *gin.Context, err error, 
 		}{presentation, verification})
 		return
 	}
-	projected := handler.errorProjector.Project(projectable, apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language"))).Presentation
+	projected := handler.errorProjector.ProjectWithRequestID(projectable, apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language")), c.Writer.Header().Get("X-Request-ID")).Presentation
 	retryable := false
 	var domainError *connectorcore.Error
 	if errors.As(err, &domainError) {

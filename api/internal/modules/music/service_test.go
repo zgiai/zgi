@@ -61,6 +61,28 @@ func TestServiceCreateQueuesValidatedMusicTask(t *testing.T) {
 	}
 }
 
+func TestServiceCreateAcceptsCanonicalMusicUseCaseWithoutEndpointFlag(t *testing.T) {
+	repo := newMemoryRepository()
+	dispatcher := &dispatcherStub{}
+	service := NewService(repo, dispatcher, &availableModelsStub{models: []*llmmodelsvc.AvailableModel{{
+		Name:     "music-3.0",
+		UseCases: []string{string(llmmodel.UseCaseMusicGen)},
+	}}}, &assetStoreStub{})
+
+	task, err := service.Create(t.Context(), testScope(), CreateRequest{
+		RequestID: uuid.New(),
+		Model:     "music-3.0",
+		Mode:      adapter.MusicModeInstrumental,
+		Prompt:    "warm piano",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v, want success for canonical music use case", err)
+	}
+	if task.Status != StatusQueued {
+		t.Fatalf("task status = %s, want %s", task.Status, StatusQueued)
+	}
+}
+
 func TestServiceCreatesPersonalMusicTaskWithoutWorkspace(t *testing.T) {
 	repo := newMemoryRepository()
 	service := NewService(repo, &dispatcherStub{}, availableMusicModelStub(), &assetStoreStub{})

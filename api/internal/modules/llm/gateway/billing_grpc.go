@@ -2,9 +2,11 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	"strings"
 	"time"
 
@@ -14,6 +16,7 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -23,12 +26,15 @@ import (
 // since it only needs read access to zgi-api DB.
 // This is used in CLOUD mode where console-api is the billing authority.
 type RemoteBilling struct {
-	localService *BillingService
-	grpcClient   quotaClient
+	localService      *BillingService
+	grpcClient        quotaClient
+	consoleAPIBaseURL string
+	reconcileWorkerID string
 }
 
 type quotaClient interface {
 	PreDeductQuota(ctx context.Context, req *PreDeductQuotaRequest) (*PreDeductQuotaResponse, error)
+	PreDeductMeteredUsage(ctx context.Context, req *PreDeductMeteredUsageRequest) (*PreDeductMeteredUsageResponse, error)
 	SettleQuota(ctx context.Context, req *SettleQuotaRequest) (*SettleQuotaResponse, error)
 	CheckCreditBalance(ctx context.Context, organizationID string, estimatedCredits int64) (bool, int64, error)
 	Close() error
@@ -45,6 +51,7 @@ const (
 	defaultReconcileBaseBackoff           = 30 * time.Second
 	defaultReconcileMaxBackoff            = 10 * time.Minute
 	defaultSettlePendingTimeout           = 2 * time.Minute
+	defaultRemotePredeductTimeout         = 3 * time.Minute
 	defaultRemoteInitTimeout              = 10 * time.Minute
 	defaultRemoteCleanupTimeout           = 10 * time.Second
 	reservationPolicyAuthoritativeQuoteV1 = "authoritative_quote_v1"
@@ -66,8 +73,12 @@ func NewRemoteBilling(grpcAddr string, localService *BillingService) (*RemoteBil
 	logger.Info("remote billing connected", "grpc_addr", grpcAddr)
 
 	rb := &RemoteBilling{
-		localService: localService,
-		grpcClient:   client,
+		localService:      localService,
+		grpcClient:        client,
+		reconcileWorkerID: "pre-settlement-" + uuid.NewString(),
+	}
+	if base, baseErr := resolveOfficialRouteBaseURL(); baseErr == nil {
+		rb.consoleAPIBaseURL = base
 	}
 	go rb.startPartialSettleReconcileWorker(context.Background())
 
@@ -110,8 +121,17 @@ func (s *RemoteBilling) QuotePlatformTokenPricing(
 	if model.ModelID != uuid.Nil {
 		modelID = model.ModelID.String()
 	}
+	// Console resolves the authoritative reservation ceiling with the same
+	// normalized pricing path used by proxy settlement, including the highest
+	// sale price across every catalog provider row for the logical model.
 	resp, err := client.CalculateDualCost(ctx, modelID, model.Provider, model.Model, promptTokens, completionTokens)
 	if err != nil {
+		// A stable Console ErrorInfo.Reason must classify the failure (for
+		// example billing.model.pricing_not_configured -> 402) instead of
+		// collapsing into a generic internal_error at the projector.
+		if mapped, ok := mapBillingRPCErrorCode(billingRPCErrorReason(err), ""); ok {
+			return PricingQuote{}, wrapPricingNotConfiguredError(mapped, pricingErrorParamsFromModelRef(model))
+		}
 		return PricingQuote{}, fmt.Errorf("calculate authoritative token cost: %w", err)
 	}
 	if resp == nil || !resp.Success {
@@ -136,9 +156,9 @@ func (s *RemoteBilling) QuotePlatformTokenPricing(
 		InputCredits:      resp.InputCredits,
 		OutputCredits:     resp.OutputCredits,
 		TotalCredits:      resp.TotalCredits,
-		InputUSD:          decimal.NewFromFloat(resp.InputUSD),
-		OutputUSD:         decimal.NewFromFloat(resp.OutputUSD),
-		TotalUSD:          decimal.NewFromFloat(resp.TotalUSD),
+		InputUSD:          resp.InputUSD,
+		OutputUSD:         resp.OutputUSD,
+		TotalUSD:          resp.TotalUSD,
 		PricingSource:     PricingSourceUpstreamModelPrice,
 		UsageSource:       UsageSourceEstimatedUsage,
 		ReservationPolicy: reservationPolicyAuthoritativeQuoteV1,
@@ -147,20 +167,37 @@ func (s *RemoteBilling) QuotePlatformTokenPricing(
 		OutputTokenPriceUSDPer1M: outputPrice,
 		InputTokenPriceResolved:  inputResolved,
 		OutputTokenPriceResolved: outputResolved,
+		PricingSnapshot: buildPricingSnapshot(map[string]interface{}{
+			"pricing_source":                 PricingSourceUpstreamModelPrice,
+			"usage_source":                   UsageSourceEstimatedUsage,
+			"reservation_policy":             reservationPolicyAuthoritativeQuoteV1,
+			"provider":                       model.Provider,
+			"model":                          model.Model,
+			"prompt_tokens":                  promptTokens,
+			"completion_tokens":              completionTokens,
+			"input_credits":                  resp.InputCredits,
+			"output_credits":                 resp.OutputCredits,
+			"total_credits":                  resp.TotalCredits,
+			"input_usd":                      resp.InputUSD.String(),
+			"output_usd":                     resp.OutputUSD.String(),
+			"total_usd":                      resp.TotalUSD.String(),
+			"input_price_usd_per_1m_tokens":  inputPrice.String(),
+			"output_price_usd_per_1m_tokens": outputPrice.String(),
+		}),
 	}, nil
 }
 
-func deriveAuthoritativeTokenPrice(costUSD float64, tokenCount int) (decimal.Decimal, bool, error) {
-	if tokenCount < 0 || costUSD < 0 || math.IsNaN(costUSD) || math.IsInf(costUSD, 0) {
+func deriveAuthoritativeTokenPrice(costUSD decimal.Decimal, tokenCount int) (decimal.Decimal, bool, error) {
+	if tokenCount < 0 || costUSD.IsNegative() {
 		return decimal.Zero, false, fmt.Errorf("invalid authoritative token cost")
 	}
 	if tokenCount == 0 {
-		if costUSD != 0 {
+		if !costUSD.IsZero() {
 			return decimal.Zero, false, fmt.Errorf("non-zero cost without tokens")
 		}
 		return decimal.Zero, false, nil
 	}
-	price := decimal.NewFromFloat(costUSD).
+	price := costUSD.
 		Mul(decimal.NewFromInt(1_000_000)).
 		Div(decimal.NewFromInt(int64(tokenCount)))
 	return price, true, nil
@@ -198,6 +235,11 @@ func (s *RemoteBilling) preDeductViaGRPC(ctx context.Context, bc *BillingContext
 		return fmt.Errorf("pre-deduct subject quota failed: %w", err)
 	}
 
+	fact, hasMeteredFact := shared.MeteredUsageFromContext(ctx)
+	if meteredPredeductEligible(bc, fact, hasMeteredFact) {
+		return s.preDeductMeteredViaGRPC(ctx, bc, fact)
+	}
+
 	req := &PreDeductQuotaRequest{
 		OrganizationID:    bc.OrganizationID,
 		EstimatedCredits:  bc.EstimatedCredits,
@@ -208,12 +250,16 @@ func (s *RemoteBilling) preDeductViaGRPC(ctx context.Context, bc *BillingContext
 		RequestID:         bc.RequestID,
 		AttemptID:         bc.AttemptID,
 		ReservationPolicy: bc.ReservationPolicy,
+		PricingSnapshot:   pricingSnapshotJSON(bc.PricingSnapshot),
 	}
 
 	resp, err := s.grpcClient.PreDeductQuota(ctx, req)
 	if err != nil {
 		if rollbackErr := s.rollbackLocalSubjectQuotaAndMarkFailed(ctx, bc, "PREDEDUCT_FAILED", err.Error()); rollbackErr != nil {
 			return fmt.Errorf("grpc pre-deduct failed: %v (local subject rollback failed: %w)", err, rollbackErr)
+		}
+		if mapped, ok := mapBillingRPCErrorCode(billingRPCErrorReason(err), ""); ok {
+			return mapped
 		}
 		return fmt.Errorf("grpc pre-deduct failed: %w", err)
 	}
@@ -222,26 +268,31 @@ func (s *RemoteBilling) preDeductViaGRPC(ctx context.Context, bc *BillingContext
 		if rollbackErr := s.rollbackLocalSubjectQuotaAndMarkFailed(ctx, bc, "PREDEDUCT_FAILED", resp.ErrorMessage); rollbackErr != nil {
 			return fmt.Errorf("pre-deduct failed: %s (local subject rollback failed: %w)", resp.ErrorMessage, rollbackErr)
 		}
-		switch resp.ErrorCode {
-		case "INSUFFICIENT_CREDITS":
-			return ErrInsufficientBalance
-		case "ORG_NOT_FOUND":
-			return ErrBalanceNotFound
-		case "INVALID_REQUEST":
-			return ErrInvalidRequest
-		default:
-			return fmt.Errorf("pre-deduct failed: %s", resp.ErrorMessage)
+		if mapped, ok := mapBillingRPCErrorCode(resp.ErrorCode, resp.ErrorMessage); ok {
+			return mapped
 		}
+		return fmt.Errorf("pre-deduct failed: %s", resp.ErrorMessage)
 	}
 
-	if strings.TrimSpace(resp.DeductionID) == "" {
+	if err := s.finalizeRemotePreDeductBinding(ctx, bc, resp.DeductionID); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// finalizeRemotePreDeductBinding is the shared tail of both remote pre-deduct
+// paths: it validates the non-empty deduction id, binds it to the local attempt,
+// and compensates the remote reservation when that binding cannot commit.
+func (s *RemoteBilling) finalizeRemotePreDeductBinding(ctx context.Context, bc *BillingContext, deductionID string) error {
+	if strings.TrimSpace(deductionID) == "" {
 		invalidResponseErr := fmt.Errorf("pre-deduct succeeded but deduction_id is empty (request_id=%s)", bc.RequestID)
 		if rollbackErr := s.rollbackLocalSubjectQuotaAndMarkFailed(ctx, bc, "PREDEDUCT_INVALID_RESPONSE", invalidResponseErr.Error()); rollbackErr != nil {
 			return fmt.Errorf("%v (local subject rollback failed: %w)", invalidResponseErr, rollbackErr)
 		}
 		return invalidResponseErr
 	}
-	bc.DeductionID = strings.TrimSpace(resp.DeductionID)
+	bc.DeductionID = strings.TrimSpace(deductionID)
 	if err := s.localService.db.Transaction(func(tx *gorm.DB) error {
 		var attempt BillingAttempt
 		if err := tx.WithContext(ctx).
@@ -297,8 +348,18 @@ func (s *RemoteBilling) preDeductViaGRPC(ctx context.Context, bc *BillingContext
 		}
 		return fmt.Errorf("persist remote deduction binding failed: %w", err)
 	}
-
 	return nil
+}
+
+func pricingSnapshotJSON(snapshot datatypes.JSON) string {
+	raw := strings.TrimSpace(string(snapshot))
+	if raw == "" || raw == "null" {
+		return ""
+	}
+	if !json.Valid(snapshot) {
+		return ""
+	}
+	return raw
 }
 
 func (s *RemoteBilling) settleViaGRPC(ctx context.Context, bc *BillingContext) error {
@@ -345,9 +406,9 @@ func (s *RemoteBilling) settleViaGRPC(ctx context.Context, bc *BillingContext) e
 		PromptTokens:      bc.PromptTokens,
 		CompletionTokens:  bc.CompletionTokens,
 		TotalTokens:       bc.TotalTokens,
-		InputCost:         bc.InputCost.InexactFloat64(),
-		OutputCost:        bc.OutputCost.InexactFloat64(),
-		TotalCost:         bc.TotalCost.InexactFloat64(),
+		InputCost:         bc.InputCost,
+		OutputCost:        bc.OutputCost,
+		TotalCost:         bc.TotalCost,
 		ModelID:           bc.ModelID.String(),
 		ModelName:         bc.ModelName,
 		ProviderID:        bc.ProviderID.String(),
@@ -428,7 +489,10 @@ func (s *RemoteBilling) prepareRemoteSettlement(ctx context.Context, bc *Billing
 			return err
 		}
 		invocation := invocationResultFromBillingStatus(bc.Status)
-		return s.localService.updateAttemptStatus(ctx, tx, bc, billingAttemptStatusSettlePending, &invocation, nil, nil)
+		if err := s.localService.updateAttemptStatus(ctx, tx, bc, billingAttemptStatusSettlePending, &invocation, nil, nil); err != nil {
+			return err
+		}
+		return tx.WithContext(ctx).Model(&BillingAttempt{}).Where("attempt_id = ?", bc.AttemptID).Updates(map[string]interface{}{"settlement_state": billingAttemptStatusSettling, "settlement_version": gorm.Expr("settlement_version + 1"), "updated_at": time.Now()}).Error
 	})
 	return alreadyFinalized, err
 }
@@ -467,6 +531,15 @@ func (s *RemoteBilling) finalizeRemoteSettlement(ctx context.Context, bc *Billin
 		if err := s.localService.updateAttemptStatus(ctx, tx, bc, status, &invocation, nil, nil); err != nil {
 			return err
 		}
+		settlementState := billingAttemptStatusSettled
+		if status == billingAttemptStatusRolledBack {
+			settlementState = billingAttemptStatusRolledBack
+		}
+		if err := tx.WithContext(ctx).Model(&BillingAttempt{}).Where("attempt_id = ?", bc.AttemptID).Updates(map[string]interface{}{"settlement_state": settlementState, "console_settlement_id": strings.TrimSpace(bc.DeductionID), "console_settlement_status": settlementState, "settlement_next_retry_at": nil, "settlement_last_error_code": nil, "settlement_last_error_message": nil, "settlement_version": gorm.Expr("settlement_version + 1"), "updated_at": time.Now()}).Error; err != nil {
+			return err
+		}
+		s.localService.applyRouteAttributionWithLookup(ctx, bc)
+		finalizeMediaTimingSnapshot(bc)
 		if shouldMirrorRemoteUsageBill(bc) {
 			if err := s.localService.upsertUsageBill(ctx, tx, bc, usageBillStatusFromBillingContext(bc.Status), nil, nil); err != nil {
 				return fmt.Errorf("upsert remote usage bill: %w", err)
@@ -518,8 +591,14 @@ func (s *RemoteBilling) startPartialSettleReconcileWorker(ctx context.Context) {
 			logger.InfoContext(ctx, "remote billing reconcile worker stopped")
 			return
 		case <-ticker.C:
+			if err := s.reconcilePendingSettlementQueries(ctx); err != nil {
+				logger.ErrorContext(ctx, "remote billing settlement query sweep failed", err)
+			}
 			if err := s.recoverStaleRemoteInitAttempts(ctx); err != nil {
 				logger.ErrorContext(ctx, "remote billing stale init recovery failed", err)
+			}
+			if err := s.recoverStalePredeductedRemoteAttempts(ctx); err != nil {
+				logger.ErrorContext(ctx, "remote billing stale prededuct recovery failed", err)
 			}
 			if err := s.recoverStaleSettlePendingAttempts(ctx); err != nil {
 				logger.ErrorContext(ctx, "remote billing stale settle pending recovery failed", err)
@@ -532,6 +611,191 @@ func (s *RemoteBilling) startPartialSettleReconcileWorker(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// reconcilePendingSettlementQueries confirms attempts whose stream did not
+// carry a settlement event. A positive Console response is recorded as
+// authoritative evidence, but local ledger mirroring remains a separate
+// transaction and is never assumed complete.
+func (s *RemoteBilling) reconcilePendingSettlementQueries(ctx context.Context) error {
+	now := time.Now()
+	attempts, err := s.claimPendingSettlementAttempts(ctx, now)
+	if err != nil {
+		return err
+	}
+	for _, attempt := range attempts {
+		logger.InfoContext(ctx, "settlement query reconcile attempt", zap.String("attempt_id", attempt.AttemptID), zap.String("request_id", attempt.RequestID), zap.String("settlement_state", attempt.SettlementState), zap.Int("retry_count", attempt.SettlementRetryCount))
+		result, err := queryConsoleSettlement(ctx, s.consoleAPIBaseURL+"/billing/settlements/by-attempt", attempt.OrganizationID.String(), attempt.AttemptID)
+		if err != nil {
+			logger.WarnContext(ctx, "settlement query failed; queued for retry", zap.String("attempt_id", attempt.AttemptID), zap.String("request_id", attempt.RequestID), zap.Int("retry_count", attempt.SettlementRetryCount+1), zap.Error(err))
+			_ = s.localService.db.WithContext(ctx).Model(&BillingAttempt{}).Where("attempt_id = ? AND settlement_claimed_by = ?", attempt.AttemptID, s.reconcileWorkerID).Updates(map[string]interface{}{"settlement_state": billingAttemptStatusFailedRetryable, "settlement_last_error_code": "SETTLEMENT_QUERY_FAILED", "settlement_last_error_message": err.Error(), "settlement_retry_count": gorm.Expr("settlement_retry_count + 1"), "settlement_next_retry_at": now.Add(reconcileBackoff(attempt.SettlementRetryCount + 1)), "settlement_version": gorm.Expr("settlement_version + 1"), "updated_at": now})
+			s.releaseSettlementClaim(ctx, attempt.AttemptID)
+			continue
+		}
+		updates := map[string]interface{}{"console_settlement_status": result.SettlementStatus, "settlement_next_retry_at": nil, "settlement_version": gorm.Expr("settlement_version + 1"), "updated_at": now}
+		if strings.TrimSpace(result.SettlementID) != "" {
+			updates["console_settlement_id"] = result.SettlementID
+		}
+		if result.Found && strings.EqualFold(result.SettlementStatus, "SETTLED") {
+			updates["settlement_state"] = billingAttemptStatusPartial
+			// Console is authoritative, but local mirroring is still required.
+			// Rebuild the minimal billing context from the durable attempt ledger;
+			// no stream metadata is trusted for this recovery path.
+			if err := s.mirrorQueriedSettlement(ctx, &attempt, result); err != nil {
+				logger.ErrorContext(ctx, "authoritative settlement found but local mirror failed", err, zap.String("attempt_id", attempt.AttemptID), zap.String("settlement_id", result.SettlementID), zap.String("result", "partial"))
+				updates["settlement_last_error_code"] = "LOCAL_MIRROR_FAILED"
+				updates["settlement_last_error_message"] = err.Error()
+				updates["settlement_retry_count"] = gorm.Expr("settlement_retry_count + 1")
+			} else {
+				logger.InfoContext(ctx, "settlement reconciliation completed", zap.String("attempt_id", attempt.AttemptID), zap.String("settlement_id", result.SettlementID), zap.String("result", "mirrored"))
+				updates["settlement_state"] = billingAttemptStatusSettled
+			}
+		} else if !result.Found {
+			retry := attempt.SettlementRetryCount + 1
+			updates["settlement_state"] = billingAttemptStatusFailedRetryable
+			updates["settlement_last_error_code"] = "SETTLEMENT_NOT_FOUND"
+			updates["settlement_last_error_message"] = "console settlement not found"
+			updates["settlement_retry_count"] = gorm.Expr("settlement_retry_count + 1")
+			updates["settlement_next_retry_at"] = now.Add(reconcileBackoff(retry))
+			if retry >= defaultReconcileMaxRetries {
+				updates["settlement_state"] = billingAttemptStatusFailedFinal
+			}
+		} else if result.Found && !result.Retryable {
+			updates["settlement_state"] = billingAttemptStatusFailedFinal
+		}
+		updates["settlement_claimed_by"] = nil
+		updates["settlement_claimed_until"] = nil
+		_ = s.localService.db.WithContext(ctx).Model(&BillingAttempt{}).Where("attempt_id = ? AND settlement_claimed_by = ?", attempt.AttemptID, s.reconcileWorkerID).Updates(updates)
+		s.releaseSettlementClaim(ctx, attempt.AttemptID)
+	}
+	return nil
+}
+
+func (s *RemoteBilling) claimPendingSettlementAttempts(ctx context.Context, now time.Time) ([]BillingAttempt, error) {
+	var attempts []BillingAttempt
+	err := s.localService.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).Where("lane = ? AND settlement_state IN ? AND (settlement_next_retry_at IS NULL OR settlement_next_retry_at <= ?) AND (settlement_claimed_until IS NULL OR settlement_claimed_until < ?)", billingAttemptLaneRemote, []string{"PENDING", billingAttemptStatusSettlePending, billingAttemptStatusSettling, billingAttemptStatusPartial, billingAttemptStatusFailedRetryable}, now, now).Order("updated_at ASC").Limit(defaultReconcileBatchSize).Find(&attempts).Error; err != nil {
+			return err
+		}
+		leaseUntil := now.Add(2 * time.Minute)
+		for i := range attempts {
+			if err := tx.Model(&BillingAttempt{}).Where("attempt_id = ?", attempts[i].AttemptID).Updates(map[string]interface{}{"settlement_claimed_by": s.reconcileWorkerID, "settlement_claimed_until": leaseUntil, "settlement_version": gorm.Expr("settlement_version + 1"), "updated_at": now}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return attempts, err
+}
+
+func (s *RemoteBilling) releaseSettlementClaim(ctx context.Context, attemptID string) {
+	_ = s.localService.db.WithContext(ctx).Model(&BillingAttempt{}).Where("attempt_id = ? AND settlement_claimed_by = ?", attemptID, s.reconcileWorkerID).Updates(map[string]interface{}{"settlement_claimed_by": nil, "settlement_claimed_until": nil})
+}
+
+func (s *RemoteBilling) mirrorQueriedSettlement(ctx context.Context, attempt *BillingAttempt, result *settlementQueryResponse) error {
+	if attempt == nil || result == nil || strings.TrimSpace(result.SettlementID) == "" {
+		return fmt.Errorf("incomplete authoritative settlement result")
+	}
+	if result.AttemptID != "" && result.AttemptID != attempt.AttemptID {
+		return fmt.Errorf("settlement attempt mismatch: got=%s want=%s", result.AttemptID, attempt.AttemptID)
+	}
+	if result.OrganizationID != "" && !strings.EqualFold(result.OrganizationID, attempt.OrganizationID.String()) {
+		return fmt.Errorf("settlement organization mismatch: got=%s want=%s", result.OrganizationID, attempt.OrganizationID)
+	}
+	if result.DeductionID != "" && result.DeductionID != result.SettlementID {
+		return fmt.Errorf("settlement deduction mismatch: settlement_id=%s deduction_id=%s", result.SettlementID, result.DeductionID)
+	}
+	if result.SettledCredits < 0 || result.RefundedCredits < 0 {
+		return fmt.Errorf("negative settlement amounts")
+	}
+	if result.RequestID != "" && result.RequestID != attempt.RequestID {
+		return fmt.Errorf("settlement request mismatch: got=%s want=%s", result.RequestID, attempt.RequestID)
+	}
+	if result.ActualQuantity < 0 || result.EstimatedQuantity < 0 {
+		return fmt.Errorf("negative settlement quantity")
+	}
+	if len(result.PricingSnapshot) > 0 && !json.Valid(result.PricingSnapshot) {
+		return fmt.Errorf("invalid settlement pricing snapshot")
+	}
+	return s.localService.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var current BillingAttempt
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("attempt_id = ?", attempt.AttemptID).First(&current).Error; err != nil {
+			return err
+		}
+		if current.ConsoleSettlementID != nil && strings.TrimSpace(*current.ConsoleSettlementID) != "" && strings.TrimSpace(*current.ConsoleSettlementID) != strings.TrimSpace(result.SettlementID) {
+			return fmt.Errorf("settlement_id mismatch: stored=%s received=%s", *current.ConsoleSettlementID, result.SettlementID)
+		}
+		var fund BillingAttemptEntry
+		if err := tx.Where("attempt_id = ? AND entry_type = ? AND ledger_type = ?", current.AttemptID, billingEntryTypeFund, billingLedgerTypeOrgFunds).First(&fund).Error; err != nil {
+			return err
+		}
+		if fund.ReservedAmount > 0 && result.SettledCredits+result.RefundedCredits > fund.ReservedAmount.Int64() {
+			return fmt.Errorf("settlement amounts exceed reserved credits: reserved=%d settled=%d refunded=%d", fund.ReservedAmount, result.SettledCredits, result.RefundedCredits)
+		}
+		bc := &BillingContext{
+			OrganizationID:    current.OrganizationID.String(),
+			RequestID:         current.RequestID,
+			AttemptID:         current.AttemptID,
+			QuotaSubjectType:  current.QuotaSubjectType,
+			QuotaSubjectID:    current.QuotaSubjectID,
+			DeductionID:       strings.TrimSpace(firstNonEmptyString(result.SettlementID, derefString(fund.IdempotencyKey))),
+			EstimatedCredits:  fund.ReservedAmount.Int64(),
+			ActualCredits:     result.SettledCredits,
+			Status:            "success",
+			BillingLane:       UsageBillingLanePlatform,
+			UseSystemProvider: true,
+			InvocationSource:  current.InvocationSource,
+			RequestCreatedAt:  current.CreatedAt,
+			SettledAt:         time.Now().UTC(),
+		}
+		if len(result.PricingSnapshot) > 0 && string(result.PricingSnapshot) != "null" {
+			bc.PricingSnapshot = datatypes.JSON(result.PricingSnapshot)
+		}
+		restoreBillingContextAttribution(bc, &current)
+		if current.RouteID != nil {
+			bc.RouteID = current.RouteID
+			bc.ChannelID = current.RouteID
+		}
+		if current.ModelID != nil {
+			bc.ModelID = *current.ModelID
+		}
+		if current.ProviderID != nil {
+			bc.ProviderID = *current.ProviderID
+		}
+		if err := s.restorePartialUsageBillContext(ctx, bc); err != nil {
+			return err
+		}
+		s.localService.enrichBillingContextCatalogFields(ctx, bc)
+		settlement := settlementFromQueryResult(result)
+		applyPlatformSettlementTokenUsage(bc, settlement)
+		if err := applyPlatformSettlementCostSnapshot(bc, settlement); err != nil {
+			return fmt.Errorf("apply platform settlement currency snapshot: %w", err)
+		}
+		s.localService.applyRouteAttributionWithLookup(ctx, bc)
+		finalizeMediaTimingSnapshot(bc)
+		if err := s.localService.settleSubjectQuota(ctx, tx, bc); err != nil {
+			return err
+		}
+		if err := s.localService.updateAttemptEntriesAfterSettle(ctx, tx, bc, billingLedgerTypeOrgFunds, current.OrganizationID.String()); err != nil {
+			return err
+		}
+		if err := tx.Model(&BillingAttempt{}).Where("attempt_id = ?", current.AttemptID).Updates(map[string]interface{}{"status": billingAttemptStatusSettled, "settlement_state": billingAttemptStatusSettled, "console_settlement_id": result.SettlementID, "console_settlement_status": result.SettlementStatus, "next_reconcile_at": nil, "settlement_next_retry_at": nil, "settlement_version": gorm.Expr("settlement_version + 1"), "updated_at": time.Now()}).Error; err != nil {
+			return err
+		}
+		if hasUsageBillProjectionIdentity(bc) {
+			if err := s.localService.upsertUsageBill(ctx, tx, bc, usageBillStatusSuccess, nil, nil); err != nil {
+				return fmt.Errorf("upsert reconciled usage bill: %w", err)
+			}
+		}
+		return nil
+	})
+}
+
+func derefString(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
 }
 
 func (s *RemoteBilling) persistRemoteCompensationPending(
@@ -682,7 +946,7 @@ func (s *RemoteBilling) reconcileRemoteCompensationAttempt(ctx context.Context, 
 	}
 	bc := &BillingContext{
 		OrganizationID: attempt.OrganizationID.String(), AttemptID: attempt.AttemptID, RequestID: attempt.RequestID,
-		DeductionID: strings.TrimSpace(*fundEntry.IdempotencyKey), EstimatedCredits: fundEntry.ReservedAmount,
+		DeductionID: strings.TrimSpace(*fundEntry.IdempotencyKey), EstimatedCredits: fundEntry.ReservedAmount.Int64(),
 		BillingLane: UsageBillingLanePlatform, UseSystemProvider: true, Status: "error",
 	}
 	restoreBillingContextAttribution(bc, &attempt)
@@ -807,8 +1071,8 @@ func (s *RemoteBilling) recoverStaleRemoteInitAttempt(ctx context.Context, attem
 		bc := &BillingContext{
 			OrganizationID: attempt.OrganizationID.String(), AttemptID: attempt.AttemptID, RequestID: attempt.RequestID,
 			InvocationSource: normalizeInvocationSource(attempt.InvocationSource), QuotaSubjectType: attempt.QuotaSubjectType,
-			QuotaSubjectID: attempt.QuotaSubjectID, EstimatedCredits: fundEntry.ReservedAmount,
-			SubjectReservedCredits: subjectEntry.ReservedAmount, ActualCredits: 0,
+			QuotaSubjectID: attempt.QuotaSubjectID, EstimatedCredits: fundEntry.ReservedAmount.Int64(),
+			SubjectReservedCredits: subjectEntry.ReservedAmount.Int64(), ActualCredits: 0,
 			BillingLane: UsageBillingLanePlatform, UseSystemProvider: true, Status: "error",
 			ErrorMessage: "stale remote pre-deduct without a bound deduction id was rolled back",
 		}
@@ -905,6 +1169,118 @@ func (s *RemoteBilling) claimAttemptForReconcile(ctx context.Context, attemptID 
 	return res.RowsAffected == 1, nil
 }
 
+func (s *RemoteBilling) recoverStalePredeductedRemoteAttempts(ctx context.Context) error {
+	cutoff := time.Now().Add(-defaultRemotePredeductTimeout)
+	var attempts []BillingAttempt
+	if err := s.localService.db.WithContext(ctx).
+		Where("status = ? AND lane = ? AND updated_at < ?", billingAttemptStatusPre, billingAttemptLaneRemote, cutoff).
+		Order("updated_at ASC").
+		Limit(defaultReconcileBatchSize).
+		Find(&attempts).Error; err != nil {
+		return fmt.Errorf("query stale remote prededucted attempts: %w", err)
+	}
+	for _, attempt := range attempts {
+		if err := s.recoverStalePredeductedRemoteAttempt(ctx, attempt.AttemptID, cutoff); err != nil {
+			logger.ErrorContext(ctx, "remote billing stale prededuct attempt recovery failed", err, zap.String("attempt_id", attempt.AttemptID))
+		}
+	}
+	return nil
+}
+
+func (s *RemoteBilling) recoverStalePredeductedRemoteAttempt(ctx context.Context, attemptID string, cutoff time.Time) error {
+	var attempt BillingAttempt
+	if err := s.localService.db.WithContext(ctx).
+		Where("attempt_id = ? AND status = ? AND lane = ? AND updated_at < ?", attemptID, billingAttemptStatusPre, billingAttemptLaneRemote, cutoff).
+		First(&attempt).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+
+	var fundEntry BillingAttemptEntry
+	if err := s.localService.db.WithContext(ctx).
+		Where("attempt_id = ? AND entry_type = ? AND ledger_type = ?", attemptID, billingEntryTypeFund, billingLedgerTypeOrgFunds).
+		First(&fundEntry).Error; err != nil {
+		return fmt.Errorf("load stale prededuct fund entry: %w", err)
+	}
+	if fundEntry.IdempotencyKey == nil || strings.TrimSpace(*fundEntry.IdempotencyKey) == "" {
+		return nil
+	}
+
+	var subjectEntry BillingAttemptEntry
+	if err := s.localService.db.WithContext(ctx).
+		Where("attempt_id = ? AND entry_type = ?", attemptID, billingEntryTypeSubject).
+		First(&subjectEntry).Error; err != nil {
+		return fmt.Errorf("load stale prededuct subject entry: %w", err)
+	}
+
+	bc := &BillingContext{
+		OrganizationID:         attempt.OrganizationID.String(),
+		DeductionID:            strings.TrimSpace(*fundEntry.IdempotencyKey),
+		AttemptID:              attempt.AttemptID,
+		RequestID:              attempt.RequestID,
+		InvocationSource:       normalizeInvocationSource(attempt.InvocationSource),
+		EstimatedCredits:       fundEntry.ReservedAmount.Int64(),
+		SubjectReservedCredits: subjectEntry.ReservedAmount.Int64(),
+		ActualCredits:          0,
+		QuotaSubjectType:       attempt.QuotaSubjectType,
+		QuotaSubjectID:         attempt.QuotaSubjectID,
+		BillingLane:            UsageBillingLanePlatform,
+		UseSystemProvider:      true,
+		Status:                 "error",
+		ErrorMessage:           fmt.Sprintf("stale remote prededuct timed out after %s without provider settlement", defaultRemotePredeductTimeout),
+	}
+	restoreBillingContextAttribution(bc, &attempt)
+	if attempt.QuotaSubjectType == quotaSubjectTypeAPIKey {
+		bc.APIKeyID = attempt.QuotaSubjectID
+	}
+	if attempt.QuotaSubjectType == quotaSubjectTypeAccessGrant {
+		bc.AccessGrantID = attempt.QuotaSubjectID
+	}
+	if attempt.QuotaSubjectType == quotaSubjectTypeWorkspace {
+		bc.WorkspaceID = attempt.QuotaSubjectID
+	}
+	if attempt.ProviderID != nil {
+		bc.ProviderID = *attempt.ProviderID
+	}
+	if attempt.ModelID != nil {
+		bc.ModelID = *attempt.ModelID
+	}
+	if attempt.RouteID != nil {
+		bc.ChannelID = attempt.RouteID
+	}
+	// The attempt ledger keeps only catalog ids; restore the names so the
+	// outcome is mirrored into a usage bill like any other settlement.
+	s.localService.enrichBillingContextCatalogFields(ctx, bc)
+
+	// Console owns the hold. An async call (a video whose client never polls)
+	// is settled there, or is still running, long after this timeout, so
+	// Console's state decides the outcome: rolling back blindly marks a charged
+	// call ROLLED_BACK without a bill, and settling it at zero releases a hold
+	// whose task is still running.
+	if s.consoleAPIBaseURL != "" {
+		result, err := queryConsoleSettlement(ctx, s.consoleAPIBaseURL+"/billing/settlements/by-attempt", attempt.OrganizationID.String(), attempt.AttemptID)
+		if err != nil {
+			return fmt.Errorf("query console settlement for stale prededuct: %w", err)
+		}
+		switch {
+		case result.Found && strings.EqualFold(result.SettlementStatus, billingAttemptStatusSettled):
+			return s.mirrorQueriedSettlement(ctx, &attempt, result)
+		case result.Found && result.Retryable:
+			// Still open on Console: its task settlement or hold expiry resolves
+			// it, and a later sweep mirrors whichever outcome it reaches.
+			return nil
+		case result.Found && strings.EqualFold(result.SettlementStatus, billingAttemptStatusRolledBack):
+			// Console already released the hold (for example it expired), so a
+			// settle call would be refused; mirror the release locally.
+			bc.ErrorMessage = "console released the remote prededuct before provider settlement"
+			return s.finalizeRemoteSettlement(ctx, bc)
+		}
+	}
+	return s.settleViaGRPC(ctx, bc)
+}
+
 func (s *RemoteBilling) recoverStaleSettlePendingAttempts(ctx context.Context) error {
 	cutoff := time.Now().Add(-defaultSettlePendingTimeout)
 	return s.localService.db.WithContext(ctx).
@@ -970,14 +1346,14 @@ func (s *RemoteBilling) reconcileAttempt(ctx context.Context, attemptID string) 
 		AttemptID:        attempt.AttemptID,
 		RequestID:        attempt.RequestID,
 		InvocationSource: normalizeInvocationSource(attempt.InvocationSource),
-		EstimatedCredits: fundEntry.ReservedAmount,
+		EstimatedCredits: fundEntry.ReservedAmount.Int64(),
 		SubjectReservedCredits: func() int64 {
 			if subjectEntry != nil {
-				return subjectEntry.ReservedAmount
+				return subjectEntry.ReservedAmount.Int64()
 			}
-			return fundEntry.ReservedAmount
+			return fundEntry.ReservedAmount.Int64()
 		}(),
-		ActualCredits:     actualCredits,
+		ActualCredits:     actualCredits.Int64(),
 		QuotaSubjectType:  attempt.QuotaSubjectType,
 		QuotaSubjectID:    attempt.QuotaSubjectID,
 		BillingLane:       UsageBillingLanePlatform,
@@ -1146,6 +1522,97 @@ func reconcileBackoff(reconcileAttempts int) time.Duration {
 	return backoff
 }
 
+// preDeductMeteredViaGRPC reserves a metered price on the platform billing
+// authority. It mirrors preDeductViaGRPC: local subject pre-deduct first,
+// remote metered reservation second, then the shared binding tail with the
+// same compensation and rollback behavior.
+func (s *RemoteBilling) preDeductMeteredViaGRPC(ctx context.Context, bc *BillingContext, fact shared.MeteredUsageFact) error {
+	// The caller already reserved the local subject quota (preDeductViaGRPC does
+	// that before branching), so this function owns only the remote reservation
+	// and must not reserve again.
+	req := &PreDeductMeteredUsageRequest{
+		OrganizationID: bc.OrganizationID,
+		ModelID:        bc.ModelID.String(),
+		ProviderName:   bc.ProviderName,
+		ModelName:      bc.ModelName,
+		RequestID:      bc.RequestID,
+		AttemptID:      bc.AttemptID,
+		Usage: MeteredUsageFact{
+			Operation:  fact.Operation,
+			Meter:      fact.Meter,
+			BaseUnit:   fact.BaseUnit,
+			Quantity:   fact.Quantity,
+			Dimensions: fact.Dimensions,
+		},
+	}
+
+	resp, err := s.grpcClient.PreDeductMeteredUsage(ctx, req)
+	if err != nil {
+		if rollbackErr := s.rollbackLocalSubjectQuotaAndMarkFailed(ctx, bc, "PREDEDUCT_FAILED", err.Error()); rollbackErr != nil {
+			return fmt.Errorf("grpc metered pre-deduct failed: %v (local subject rollback failed: %w)", err, rollbackErr)
+		}
+		if mapped, ok := mapBillingRPCErrorCode(billingRPCErrorReason(err), ""); ok {
+			return mapped
+		}
+		return fmt.Errorf("grpc metered pre-deduct failed: %w", err)
+	}
+	if !resp.Success {
+		if rollbackErr := s.rollbackLocalSubjectQuotaAndMarkFailed(ctx, bc, "PREDEDUCT_FAILED", resp.ErrorMessage); rollbackErr != nil {
+			return fmt.Errorf("metered pre-deduct failed: %s (local subject rollback failed: %w)", resp.ErrorMessage, rollbackErr)
+		}
+		return mapMeteredPreDeductError(resp.ErrorCode, resp.ErrorMessage)
+	}
+	return s.finalizeRemotePreDeductBinding(ctx, bc, resp.DeductionID)
+}
+
+// mapMeteredPreDeductError maps a metered pre-deduct failure to a Pre sentinel,
+// preferring the stable error_code over the free-text message.
+func mapMeteredPreDeductError(errorCode, message string) error {
+	if mapped, ok := mapBillingRPCErrorCode(errorCode, message); ok {
+		return mapped
+	}
+	return fmt.Errorf("pre-deduct failed: %s", message)
+}
+
+// mapBillingRPCErrorCode maps a Console billing failure to a Pre sentinel. It
+// prefers the stable error_code / ErrorInfo.Reason and keeps a temporary
+// substring compatibility branch for Console builds that only populate the
+// free-text message. T21 removes the compatibility branch once every Console
+// failure carries a stable code.
+func mapBillingRPCErrorCode(errorCode, errorMessage string) (error, bool) {
+	switch strings.TrimSpace(errorCode) {
+	case "billing.organization.balance_insufficient",
+		"billing.private_channel.balance_insufficient",
+		"llm.balance.insufficient",
+		"INSUFFICIENT_CREDITS":
+		return ErrInsufficientBalance, true
+	case "billing.workspace.quota_insufficient",
+		"llm.quota.exceeded":
+		return ErrInsufficientQuota, true
+	case "billing.model.pricing_not_configured":
+		return ErrPricingNotConfigured, true
+	case "billing.prededuct.failed":
+		return ErrBillingPreDeductFailed, true
+	case "billing.deduction.not_found", "ORG_NOT_FOUND":
+		return ErrBalanceNotFound, true
+	case "billing.request.invalid", "INVALID_REQUEST":
+		return ErrInvalidRequest, true
+	}
+
+	// Temporary compatibility branch (T21 removal). Older Console builds only
+	// populated error_message, so the sentinels are detected by substring.
+	lowered := strings.ToLower(strings.TrimSpace(errorMessage))
+	switch {
+	case strings.Contains(lowered, "insufficient"):
+		return ErrInsufficientBalance, true
+	case strings.Contains(lowered, "organization") && strings.Contains(lowered, "not found"):
+		return ErrBalanceNotFound, true
+	case strings.Contains(lowered, "invalid"):
+		return ErrInvalidRequest, true
+	}
+	return nil, false
+}
+
 func (s *RemoteBilling) preDeductLocalSubjectQuota(ctx context.Context, bc *BillingContext) error {
 	return s.localService.db.Transaction(func(tx *gorm.DB) error {
 		if err := s.localService.upsertAttemptInit(ctx, tx, bc); err != nil {
@@ -1271,7 +1738,7 @@ func (s *RemoteBilling) rollbackLocalSubjectQuotaAndMarkFailed(ctx context.Conte
 		if err := tx.WithContext(ctx).Model(&BillingAttemptEntry{}).
 			Where("attempt_id = ? AND entry_type = ?", rollbackCtx.AttemptID, billingEntryTypeSubject).
 			Updates(map[string]any{
-				"actual_amount": 0, "refunded_amount": subjectReservedCredits(&rollbackCtx),
+				"actual_amount": 0, "refunded_amount": millipoints.MilliPoints(subjectReservedCredits(&rollbackCtx)),
 				"status": billingEntryStatusRolled, "error_code": code, "error_message": msg, "updated_at": now,
 			}).Error; err != nil {
 			return err
@@ -1362,6 +1829,9 @@ func (s *RemoteBilling) markAttemptSettleFailed(ctx context.Context, bc *Billing
 			&code,
 			&msg,
 		); err != nil {
+			return err
+		}
+		if err := tx.WithContext(ctx).Model(&BillingAttempt{}).Where("attempt_id = ?", bc.AttemptID).Updates(map[string]interface{}{"settlement_state": billingAttemptStatusFailedRetryable, "settlement_last_error_code": code, "settlement_last_error_message": msg, "settlement_retry_count": gorm.Expr("settlement_retry_count + 1"), "settlement_version": gorm.Expr("settlement_version + 1"), "updated_at": time.Now()}).Error; err != nil {
 			return err
 		}
 		return s.localService.upsertUsageBill(ctx, tx, bc, usageBillStatusPartial, &code, &msg)

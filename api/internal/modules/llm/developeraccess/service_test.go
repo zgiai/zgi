@@ -10,6 +10,7 @@ import (
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	apikeyrepo "github.com/zgiai/zgi/api/internal/modules/llm/apikey/repository"
 	accessmodel "github.com/zgiai/zgi/api/internal/modules/llm/developeraccess/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	accountmodel "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"gorm.io/driver/sqlite"
@@ -89,7 +90,7 @@ func TestPutPolicyUsesFiniteCeilingsAsSecureDefaults(t *testing.T) {
 	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
 	now := time.Date(2026, time.September, 6, 1, 0, 0, 0, time.UTC)
 	service.now = func() time.Time { return now }
-	maxQuota, maxTTL := int64(40), int64(7200)
+	maxQuota, maxTTL := millipoints.MilliPoints(40), int64(7200)
 
 	policy, err := service.PutPolicy(context.Background(), workspaceID, ownerID, PolicyInput{
 		Mode: accessmodel.AccessModeSelfService, MaxQuota: &maxQuota, MaxKeys: 2, MaxTTLSeconds: &maxTTL,
@@ -124,7 +125,7 @@ func TestLegacyPolicyFiniteCeilingsBoundApprovedGrant(t *testing.T) {
 	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
 	now := time.Date(2026, time.September, 6, 2, 0, 0, 0, time.UTC)
 	service.now = func() time.Time { return now }
-	maxQuota, maxTTL := int64(75), int64(3600)
+	maxQuota, maxTTL := millipoints.MilliPoints(75), int64(3600)
 	policy := accessmodel.Policy{
 		OrganizationID: organizationID, WorkspaceID: workspaceID,
 		Mode: accessmodel.AccessModeApprovalRequired, MaxQuota: &maxQuota, MaxKeys: 2,
@@ -386,14 +387,14 @@ func TestSelfServiceRenewsExpiredGrantAsNewBudgetPeriod(t *testing.T) {
 	db := openDeveloperAccessTestDB(t)
 	workspaceID, organizationID, ownerID, memberID := seedDeveloperWorkspace(t, db)
 	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
-	quota, ttl := int64(900), int64(3600)
+	quota, ttl := millipoints.MilliPoints(900), int64(3600)
 	if _, err := service.PutPolicy(context.Background(), workspaceID, ownerID, PolicyInput{
 		Mode: accessmodel.AccessModeSelfService, DefaultQuota: &quota, MaxKeys: 2, DefaultTTLSeconds: &ttl,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	expiredAt := time.Now().Add(-time.Minute)
-	oldQuota := int64(400)
+	oldQuota := millipoints.MilliPoints(400)
 	grant := accessmodel.Grant{
 		OrganizationID: organizationID, WorkspaceID: workspaceID, PrincipalType: accessmodel.PrincipalTypeUser,
 		PrincipalID: memberID, Source: "self_service", Status: accessmodel.GrantStatusActive,
@@ -424,13 +425,13 @@ func TestSelfServiceRejoinedMemberRenewsRevokedGrantAsNewBudgetPeriod(t *testing
 	db := openDeveloperAccessTestDB(t)
 	workspaceID, organizationID, ownerID, memberID := seedDeveloperWorkspace(t, db)
 	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
-	quota, ttl := int64(900), int64(3600)
+	quota, ttl := millipoints.MilliPoints(900), int64(3600)
 	if _, err := service.PutPolicy(context.Background(), workspaceID, ownerID, PolicyInput{
 		Mode: accessmodel.AccessModeSelfService, DefaultQuota: &quota, MaxKeys: 2, DefaultTTLSeconds: &ttl,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	oldQuota := int64(400)
+	oldQuota := millipoints.MilliPoints(400)
 	grant := accessmodel.Grant{
 		OrganizationID: organizationID, WorkspaceID: workspaceID, PrincipalType: accessmodel.PrincipalTypeUser,
 		PrincipalID: memberID, Source: "self_service", Status: accessmodel.GrantStatusRevoked,
@@ -484,7 +485,7 @@ func TestExhaustedGrantRejectsKeyCreationReactivationAndRotation(t *testing.T) {
 	db := openDeveloperAccessTestDB(t)
 	workspaceID, organizationID, _, memberID := seedDeveloperWorkspace(t, db)
 	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
-	quota := int64(100)
+	quota := millipoints.MilliPoints(100)
 	grant := accessmodel.Grant{
 		OrganizationID: organizationID, WorkspaceID: workspaceID, PrincipalType: accessmodel.PrincipalTypeUser,
 		PrincipalID: memberID, Source: "approval", Status: accessmodel.GrantStatusActive,
@@ -539,14 +540,14 @@ func TestApprovalManagerRenewsExpiredGrantAsNewBudgetPeriod(t *testing.T) {
 	db := openDeveloperAccessTestDB(t)
 	workspaceID, organizationID, ownerID, _ := seedDeveloperWorkspace(t, db)
 	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
-	quota, ttl := int64(700), int64(3600)
+	quota, ttl := millipoints.MilliPoints(700), int64(3600)
 	if _, err := service.PutPolicy(context.Background(), workspaceID, ownerID, PolicyInput{
 		Mode: accessmodel.AccessModeApprovalRequired, DefaultQuota: &quota, MaxKeys: 2, DefaultTTLSeconds: &ttl,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	expiredAt := time.Now().Add(-time.Minute)
-	oldQuota := int64(300)
+	oldQuota := millipoints.MilliPoints(300)
 	grant := accessmodel.Grant{
 		OrganizationID: organizationID, WorkspaceID: workspaceID, PrincipalType: accessmodel.PrincipalTypeUser,
 		PrincipalID: ownerID, Source: "workspace_admin", Status: accessmodel.GrantStatusActive,
@@ -570,13 +571,13 @@ func TestApprovalManagerRejoinedAfterRemovalRenewsRevokedGrant(t *testing.T) {
 	db := openDeveloperAccessTestDB(t)
 	workspaceID, organizationID, ownerID, _ := seedDeveloperWorkspace(t, db)
 	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
-	quota, ttl := int64(700), int64(3600)
+	quota, ttl := millipoints.MilliPoints(700), int64(3600)
 	if _, err := service.PutPolicy(context.Background(), workspaceID, ownerID, PolicyInput{
 		Mode: accessmodel.AccessModeApprovalRequired, DefaultQuota: &quota, MaxKeys: 2, DefaultTTLSeconds: &ttl,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	oldQuota := int64(300)
+	oldQuota := millipoints.MilliPoints(300)
 	grant := accessmodel.Grant{
 		OrganizationID: organizationID, WorkspaceID: workspaceID, PrincipalType: accessmodel.PrincipalTypeUser,
 		PrincipalID: ownerID, Source: "workspace_admin", Status: accessmodel.GrantStatusRevoked,
@@ -601,7 +602,7 @@ func TestApprovalOfExpiredGrantStartsNewBudgetPeriod(t *testing.T) {
 	db := openDeveloperAccessTestDB(t)
 	workspaceID, _, ownerID, memberID := seedDeveloperWorkspace(t, db)
 	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
-	oldQuota := int64(300)
+	oldQuota := millipoints.MilliPoints(300)
 	first, err := service.CreateRequest(context.Background(), workspaceID, memberID, CreateRequestInput{Purpose: "Initial access", RequestedQuota: &oldQuota})
 	if err != nil {
 		t.Fatal(err)
@@ -617,7 +618,7 @@ func TestApprovalOfExpiredGrantStartsNewBudgetPeriod(t *testing.T) {
 	if err := db.Model(&grant).Updates(map[string]interface{}{"used_quota": oldQuota, "remain_quota": 0, "expires_at": expiredAt}).Error; err != nil {
 		t.Fatal(err)
 	}
-	newQuota := int64(800)
+	newQuota := millipoints.MilliPoints(800)
 	second, err := service.CreateRequest(context.Background(), workspaceID, memberID, CreateRequestInput{Purpose: "Renew access", RequestedQuota: &newQuota})
 	if err != nil {
 		t.Fatal(err)
@@ -637,7 +638,7 @@ func TestApprovalUpdateOfActiveGrantPreservesUsage(t *testing.T) {
 	db := openDeveloperAccessTestDB(t)
 	workspaceID, _, ownerID, memberID := seedDeveloperWorkspace(t, db)
 	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
-	oldQuota := int64(300)
+	oldQuota := millipoints.MilliPoints(300)
 	first, err := service.CreateRequest(context.Background(), workspaceID, memberID, CreateRequestInput{Purpose: "Initial access", RequestedQuota: &oldQuota})
 	if err != nil {
 		t.Fatal(err)
@@ -649,10 +650,10 @@ func TestApprovalUpdateOfActiveGrantPreservesUsage(t *testing.T) {
 	if err := db.Where("workspace_id = ? AND principal_id = ?", workspaceID, memberID).First(&grant).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Model(&grant).Updates(map[string]interface{}{"used_quota": int64(100), "remain_quota": int64(200)}).Error; err != nil {
+	if err := db.Model(&grant).Updates(map[string]interface{}{"used_quota": millipoints.MilliPoints(100), "remain_quota": millipoints.MilliPoints(200)}).Error; err != nil {
 		t.Fatal(err)
 	}
-	newQuota := int64(500)
+	newQuota := millipoints.MilliPoints(500)
 	second, err := service.CreateRequest(context.Background(), workspaceID, memberID, CreateRequestInput{Purpose: "Expand active access", RequestedQuota: &newQuota})
 	if err != nil {
 		t.Fatal(err)
@@ -907,11 +908,11 @@ func TestDeveloperAuditIsScopedAndHydrated(t *testing.T) {
 		 total_points, response_time_ms, request_created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		"attempt-1", "request-1", organizationID, workspaceID, accessmodel.PrincipalTypeUser, memberID,
-		"personal_api_key", key.ID, "qwen-test", "qwen", "success", 10, 5, 15, 20, 100, time.Now()).Error; err != nil {
+		"personal_api_key", key.ID, "qwen-test", "qwen", "success", 10, 5, 15, 20000, 100, time.Now()).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Exec(`INSERT INTO billing_attempt_entries (attempt_id, entry_type, reserved_amount, actual_amount, refunded_amount)
-		VALUES (?, ?, ?, ?, ?)`, "attempt-1", "subject", 20, 15, 5).Error; err != nil {
+		VALUES (?, ?, ?, ?, ?)`, "attempt-1", "subject", 20000, 15000, 5000).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Exec(`INSERT INTO llm_usage_bills
@@ -930,11 +931,11 @@ func TestDeveloperAuditIsScopedAndHydrated(t *testing.T) {
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		"attempt-previous-organization", "request-previous-organization", uuid.NewString(), workspaceID,
 		accessmodel.PrincipalTypeUser, memberID, "personal_api_key", key.ID, "private-model", "private-provider",
-		"success", 100, 50, 150, 200, 300, time.Now().Add(2*time.Second)).Error; err != nil {
+		"success", 100, 50, 150, 200000, 300, time.Now().Add(2*time.Second)).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Exec(`INSERT INTO billing_attempt_entries (attempt_id, entry_type, reserved_amount, actual_amount, refunded_amount)
-		VALUES (?, ?, ?, ?, ?)`, "attempt-compensated", "subject", 20, 15, 20).Error; err != nil {
+		VALUES (?, ?, ?, ?, ?)`, "attempt-compensated", "subject", 20000, 15000, 20000).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Exec(`INSERT INTO llm_usage_bills
@@ -962,7 +963,7 @@ func TestDeveloperAuditIsScopedAndHydrated(t *testing.T) {
 		itemsByAttempt[item.AttemptID] = item
 	}
 	ordinary := itemsByAttempt["attempt-1"]
-	if ordinary.PrincipalEmail != "member@example.test" || ordinary.APIKeyName != "audited key" || ordinary.QuotaChargedPoints != 15 || ordinary.QuotaOveragePoints != 5 {
+	if ordinary.PrincipalEmail != "member@example.test" || ordinary.APIKeyName != "audited key" || ordinary.QuotaChargedPoints != 15000 || ordinary.QuotaOveragePoints != 5000 {
 		t.Fatalf("unexpected ordinary audit item: %#v", ordinary)
 	}
 	compensated := itemsByAttempt["attempt-compensated"]
@@ -1088,7 +1089,7 @@ func TestOwnerCanCreateKeyUnderDefaultMemberApprovalPolicy(t *testing.T) {
 func TestZeroDefaultQuotaDoesNotAdvertiseOrCreateGrant(t *testing.T) {
 	db := openDeveloperAccessTestDB(t)
 	workspaceID, organizationID, _, memberID := seedDeveloperWorkspace(t, db)
-	zero := int64(0)
+	zero := millipoints.MilliPoints(0)
 	policy := accessmodel.Policy{
 		OrganizationID: organizationID, WorkspaceID: workspaceID,
 		Mode: accessmodel.AccessModeSelfService, DefaultQuota: &zero,
@@ -1148,7 +1149,7 @@ func TestZeroDefaultQuotaDoesNotAdvertiseOrCreateGrant(t *testing.T) {
 func TestListKeysReportsAuthoritativeActivationCapability(t *testing.T) {
 	db := openDeveloperAccessTestDB(t)
 	workspaceID, organizationID, ownerID, memberID := seedDeveloperWorkspace(t, db)
-	quota := int64(100)
+	quota := millipoints.MilliPoints(100)
 	policy := accessmodel.Policy{
 		OrganizationID: organizationID, WorkspaceID: workspaceID,
 		Mode: accessmodel.AccessModeApprovalRequired, DefaultQuota: &quota,
@@ -1246,7 +1247,7 @@ func TestListKeysReportsAuthoritativeActivationCapability(t *testing.T) {
 func TestCreateGrantReloadsConcurrentWinner(t *testing.T) {
 	db := openDeveloperAccessTestDB(t)
 	workspaceID, organizationID, ownerID, _ := seedDeveloperWorkspace(t, db)
-	quota := int64(1000)
+	quota := millipoints.MilliPoints(1000)
 	winner := accessmodel.Grant{
 		OrganizationID: organizationID, WorkspaceID: workspaceID,
 		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: ownerID,
@@ -1293,7 +1294,7 @@ func TestCreateGrantReloadsConcurrentWinner(t *testing.T) {
 func TestApprovalAppliesLimitsToExistingSelfServiceGrant(t *testing.T) {
 	db := openDeveloperAccessTestDB(t)
 	workspaceID, organizationID, ownerID, memberID := seedDeveloperWorkspace(t, db)
-	oldQuota := int64(5000)
+	oldQuota := millipoints.MilliPoints(5000)
 	winner := accessmodel.Grant{
 		OrganizationID: organizationID, WorkspaceID: workspaceID,
 		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: memberID,
@@ -1305,7 +1306,7 @@ func TestApprovalAppliesLimitsToExistingSelfServiceGrant(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	approvedQuota := int64(1000)
+	approvedQuota := millipoints.MilliPoints(1000)
 	expiresAt := time.Now().Add(time.Hour)
 	scope := &workspaceScope{Workspace: &workspacemodel.Workspace{ID: workspaceID, OrganizationID: &organizationID}}
 	if err := db.Transaction(func(tx *gorm.DB) error {
@@ -1331,7 +1332,7 @@ func TestMemberApprovalCreatesGrantBeforePersonalKey(t *testing.T) {
 	if _, err := service.CreateKey(context.Background(), workspaceID, memberID, CreateKeyInput{Name: "blocked"}); !errors.Is(err, ErrApprovalNeeded) {
 		t.Fatalf("CreateKey error = %v, want approval required", err)
 	}
-	quota := int64(1200)
+	quota := millipoints.MilliPoints(1200)
 	request, err := service.CreateRequest(context.Background(), workspaceID, memberID, CreateRequestInput{Purpose: "Evaluate retrieval quality", Environment: "development", RequestedQuota: &quota})
 	if err != nil {
 		t.Fatal(err)

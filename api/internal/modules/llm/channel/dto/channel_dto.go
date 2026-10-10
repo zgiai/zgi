@@ -39,6 +39,7 @@ type CreateRouteRequest struct {
 	Models          []string                          `json:"models"`
 	APIBaseURL      string                            `json:"api_base_url"`
 	NativeProtocols channelmodel.NativeProtocolConfig `json:"native_protocols"`
+	ModelOperations map[string][]string               `json:"model_operations"`
 	InitialFunds    int64                             `json:"initial_funds" binding:"gte=0"`
 	ModelMaps       map[string]any                    `json:"model_maps"`
 	ParamOverride   map[string]any                    `json:"param_override"`
@@ -55,6 +56,7 @@ type UpdateRouteRequest struct {
 	Models          []string                           `json:"models"`
 	APIBaseURL      *string                            `json:"api_base_url"`
 	NativeProtocols *channelmodel.NativeProtocolConfig `json:"native_protocols"`
+	ModelOperations map[string][]string                `json:"model_operations"`
 	ModelMaps       map[string]any                     `json:"model_maps"`
 	ParamOverride   map[string]any                     `json:"param_override"`
 	HeaderOverride  map[string]any                     `json:"header_override"`
@@ -106,6 +108,7 @@ type ChannelView struct {
 	RemainingFunds   int64                             `json:"remaining_funds"`
 	APIBaseURL       string                            `json:"api_base_url,omitempty"`
 	NativeProtocols  channelmodel.NativeProtocolConfig `json:"native_protocols,omitempty"`
+	ModelOperations  map[string][]string               `json:"model_operations,omitempty"`
 	ValidationReport map[string]any                    `json:"validation_report,omitempty"`
 	Warnings         []string                          `json:"warnings,omitempty"`
 	Priority         int                               `json:"priority"`

@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { useQueries } from '@tanstack/react-query';
+import { useQuery, useQueries } from '@tanstack/react-query';
 import { Activity, Brain, Copy, KeyRound, Loader2, Search, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAllModelsInfinite, useProviderModelsInfinite } from '@/hooks/model/use-model';
@@ -451,6 +451,17 @@ export function ModelPlazaPage() {
     shouldUseProviderSearch,
   ]);
 
+  const { data: pricingIssuesData } = useQuery({
+    queryKey: ['model-plaza', 'pricing-issues'],
+    queryFn: async () => {
+      const response = await modelService.getPricingIssues();
+      return response.data;
+    },
+    staleTime: 60_000,
+  });
+  const pricingIssues = pricingIssuesData?.items ?? [];
+  const missingPricingCount = pricingIssues.reduce((total, issue) => total + issue.missing.length, 0);
+
   const handleRefresh = React.useCallback(async () => {
     try {
       await refetch();
@@ -493,6 +504,25 @@ export function ModelPlazaPage() {
               </Button>
             </div>
           </div>
+
+          {missingPricingCount > 0 && (
+            <div className="rounded-lg border border-amber-300/60 bg-amber-50/80 px-4 py-3 text-sm text-amber-950">
+              <p className="font-medium">{t('plaza.pricingIssuesTitle', { count: missingPricingCount })}</p>
+              <p className="mt-1 text-xs text-amber-900/80">{t('plaza.pricingIssuesDescription')}</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {pricingIssues.map(issue => (
+                  <Button key={issue.id} asChild variant="outline" size="sm" className="h-7 border-amber-300 bg-white/80 text-xs">
+                    <Link href={`/dashboard/provider/${encodeURIComponent(issue.provider)}?pricing=1&model=${encodeURIComponent(issue.model)}`}>
+                      {issue.model_name || issue.model}
+                      <Badge variant="secondary" className="ml-2 h-5 rounded px-1.5 text-[10px]">
+                        {issue.missing.length}
+                      </Badge>
+                    </Link>
+                  </Button>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
             <Input

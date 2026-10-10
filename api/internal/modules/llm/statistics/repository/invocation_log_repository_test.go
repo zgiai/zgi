@@ -67,13 +67,13 @@ func TestInvocationLogSummaryAggregatesRecordedCallTimeCurrencyTotals(t *testing
 	rows := []map[string]any{
 		{
 			"request_id": "request-1", "organization_id": "org-1", "invocation_source": "product",
-			"model_name": "model-a", "total_tokens": 100, "total_points": 100,
+			"model_name": "model-a", "total_tokens": 100, "total_points": 100000,
 			"pricing_snapshot":   datatypes.JSON(`{"total_cost_usd":"0.1","total_cost_cny":"0.7","cny_per_usd":"7"}`),
 			"request_created_at": started,
 		},
 		{
 			"request_id": "request-2", "organization_id": "org-1", "invocation_source": "product",
-			"model_name": "model-a", "total_tokens": 200, "total_points": 200,
+			"model_name": "model-a", "total_tokens": 200, "total_points": 200000,
 			"pricing_snapshot":   datatypes.JSON(`{"total_cost_usd":"0.2","total_cost_cny":"1.6","cny_per_usd":"8"}`),
 			"request_created_at": started.Add(time.Minute),
 		},
@@ -117,13 +117,13 @@ func TestInvocationLogSummaryOmitsCNYWhenAnyBillLacksRecordedConversion(t *testi
 	rows := []map[string]any{
 		{
 			"request_id": "request-recorded", "organization_id": "org-1", "invocation_source": "product",
-			"model_name": "model-a", "total_tokens": 100, "total_points": 100,
+			"model_name": "model-a", "total_tokens": 100, "total_points": 100000,
 			"pricing_snapshot":   datatypes.JSON(`{"total_cost_usd":"0.1","total_cost_cny":"0.7"}`),
 			"request_created_at": started,
 		},
 		{
 			"request_id": "request-usd-only", "organization_id": "org-1", "invocation_source": "product",
-			"model_name": "model-a", "total_tokens": 100, "total_points": 100,
+			"model_name": "model-a", "total_tokens": 100, "total_points": 100000,
 			"pricing_snapshot":   datatypes.JSON(`{"total_cost_usd":"0.1"}`),
 			"request_created_at": started.Add(time.Minute),
 		},
@@ -201,15 +201,62 @@ func TestInvocationPricingDetailsKeepPlatformSettlementWithoutInventingPrices(t 
 	}
 }
 
+func TestInvocationPricingDetailsExposeMeteredOperation(t *testing.T) {
+	bill := invocationBillRow{
+		BillingLane:   "platform",
+		PricingSource: "platform_remote_authority",
+		PricingSnapshot: datatypes.JSON(`{
+			"actual_provider":"zgi-cloud",
+			"media_operation":"image_generation",
+			"actual_channel_name":"ZGI Cloud",
+			"actual_upstream_model":"gpt-image-2"
+		}`),
+	}
+
+	details := invocationPricingDetails(bill)
+	if details == nil {
+		t.Fatal("invocationPricingDetails() = nil")
+	}
+	if details.MeteredOperation != "image_generation" {
+		t.Fatalf("metered operation = %q, want image_generation", details.MeteredOperation)
+	}
+	if details.MeteredUnit != "per_image" {
+		t.Fatalf("metered unit = %q, want per_image", details.MeteredUnit)
+	}
+	if details.InputPriceUSDPer1MTokens != nil || details.OutputPriceUSDPer1MTokens != nil {
+		t.Fatalf("metered details must not invent token prices: %#v", details)
+	}
+}
+
+func TestMeteredUnitForOperation(t *testing.T) {
+	tests := map[string]string{
+		"image_generation":  "per_image",
+		"image_edit":        "per_image",
+		"video_generation":  "per_second",
+		"music_generation":  "per_track",
+		"speech_generation": "per_character",
+		"transcription":     "per_millisecond",
+		"chat":              "",
+		"":                  "",
+	}
+	for operation, want := range tests {
+		if got := meteredUnitForOperation(operation); got != want {
+			t.Fatalf("meteredUnitForOperation(%q) = %q, want %q", operation, got, want)
+		}
+	}
+}
+
 func TestGetInvocationLogGroupsAttemptsAndIsolatesOrganization(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Exec(`CREATE TABLE llm_usage_bills (
-		request_id TEXT NOT NULL, organization_id TEXT NOT NULL, app_id TEXT, app_type TEXT,
+		request_id TEXT NOT NULL, attempt_id TEXT, organization_id TEXT NOT NULL, app_id TEXT, app_type TEXT,
 		invocation_source TEXT NOT NULL, model_name TEXT NOT NULL, provider_name TEXT NOT NULL,
 		channel_id TEXT,
+		remote_deduction_id TEXT,
+		pricing_snapshot JSON NOT NULL DEFAULT '{}',
 		status TEXT NOT NULL, prompt_tokens INTEGER NOT NULL, cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_write_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL,
 		total_tokens INTEGER NOT NULL, total_points INTEGER NOT NULL, response_time_ms INTEGER NOT NULL,
 		error_code TEXT, request_created_at DATETIME NOT NULL, settled_at DATETIME NOT NULL
@@ -237,7 +284,9 @@ func TestGetInvocationLogGroupsAttemptsAndIsolatesOrganization(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := db.Table(usageBillTable).Where("request_id = ?", "req-product").Updates(map[string]any{
-		"app_type": "agent", "model_name": "agent-model", "channel_id": "channel-1",
+		"app_type": "agent", "model_name": "deepseek-v4-pro", "provider_name": "agicto", "channel_id": "channel-1",
+		"remote_deduction_id": "settlement-product-1",
+		"pricing_snapshot":    `{"actual_channel_name":"硅基流动","actual_provider":"siliconflow"}`,
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +301,7 @@ func TestGetInvocationLogGroupsAttemptsAndIsolatesOrganization(t *testing.T) {
 	if result.Summary.InvocationCount != 2 || result.Summary.APICount != 1 || result.Summary.ProductCount != 1 {
 		t.Fatalf("unexpected summary: %#v", result.Summary)
 	}
-	if result.Summary.TotalTokens != 50 || result.Summary.TotalPoints != 20 {
+	if result.Summary.TotalTokens != 50 || result.Summary.TotalPoints != 20000 {
 		t.Fatalf("unexpected totals: %#v", result.Summary)
 	}
 	if len(result.Items) != 2 {
@@ -271,13 +320,13 @@ func TestGetInvocationLogGroupsAttemptsAndIsolatesOrganization(t *testing.T) {
 	if retried == nil || retried.AttemptCount != 2 || retried.Status != "success" || retried.TotalTokens != 30 {
 		t.Fatalf("unexpected retried invocation: %#v", retried)
 	}
-	if product == nil || product.ChannelName != "Official Cloud A" || !product.ContentAvailable || product.ContentExpiresAt == nil || retried.ContentAvailable {
+	if product == nil || product.ProviderName != "deepseek" || product.ChannelName != "Official Cloud A" || product.SupplierName != "siliconflow" || product.ActualChannelName != "硅基流动" || product.SettlementID != "settlement-product-1" || !product.ContentAvailable || product.ContentExpiresAt == nil || retried.ContentAvailable {
 		t.Fatalf("unexpected content availability: product=%#v retried=%#v", product, retried)
 	}
 
 	productSource := "product"
 	agentApp := "agent"
-	agentModel := "agent-model"
+	agentModel := "deepseek-v4-pro"
 	filtered, err := repo.GetInvocationLog(context.Background(), "org-1", &dto.InvocationLogRequest{
 		StartTime: started.Add(-time.Hour).Unix(), EndTime: started.Add(time.Hour).Unix(), Limit: 20,
 		InvocationSource: &productSource, AppType: &agentApp, ModelName: &agentModel,
@@ -385,14 +434,14 @@ func TestGetInvocationLogKeepsRetryAttemptsInsideSelectedTimeRange(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Summary.InvocationCount != 1 || result.Summary.TotalTokens != 20 || result.Summary.TotalPoints != 8 {
+	if result.Summary.InvocationCount != 1 || result.Summary.TotalTokens != 20 || result.Summary.TotalPoints != 8000 {
 		t.Fatalf("unexpected summary: %#v", result.Summary)
 	}
 	if len(result.Items) != 1 {
 		t.Fatalf("items = %d, want 1", len(result.Items))
 	}
 	item := result.Items[0]
-	if item.AttemptCount != 1 || item.TotalTokens != 20 || item.TotalPoints != 8 || item.StartedAt < boundary.UnixMilli() {
+	if item.AttemptCount != 1 || item.TotalTokens != 20 || item.TotalPoints != 8000 || item.StartedAt < boundary.UnixMilli() {
 		t.Fatalf("out-of-range retry leaked into item: %#v", item)
 	}
 }
@@ -459,13 +508,16 @@ func TestGetInvocationLogKeepsBaseLogAvailableWithoutOptionalContentTable(t *tes
 	}
 }
 
+// insertInvocationBill seeds one usage bill. points is the product-facing points
+// amount; llm_usage_bills.total_points stores milli-points (points x1000), which
+// is the same unit the wire and the UI work in.
 func insertInvocationBill(t *testing.T, db *gorm.DB, orgID, requestID, source, status string, started time.Time, tokens, points int64) {
 	t.Helper()
 	if err := db.Table(usageBillTable).Create(map[string]any{
 		"request_id": requestID, "organization_id": orgID, "app_type": "workflow",
 		"invocation_source": source, "model_name": "gpt-test", "provider_name": "test-provider",
 		"status": status, "prompt_tokens": tokens / 2, "completion_tokens": tokens - tokens/2,
-		"total_tokens": tokens, "total_points": points, "response_time_ms": 100,
+		"total_tokens": tokens, "total_points": points * 1000, "response_time_ms": 100,
 		"request_created_at": started, "settled_at": started.Add(100 * time.Millisecond),
 	}).Error; err != nil {
 		t.Fatal(err)

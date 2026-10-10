@@ -146,6 +146,38 @@ func TestGenerateMusicUsesStableRequestIDAndCompleteOfficialStream(t *testing.T)
 	}
 }
 
+func TestGenerateMusicAcceptsCanonicalUseCaseWithoutLegacyEndpointFlag(t *testing.T) {
+	organizationID := uuid.New()
+	var requestCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestCount.Add(1)
+		w.Header().Set("Content-Type", "audio/mpeg")
+		w.Header().Set("Trailer", "X-ZGI-Stream-Status")
+		_, _ = io.WriteString(w, "MP3")
+		w.Header().Set("X-ZGI-Stream-Status", "complete")
+	}))
+	defer server.Close()
+	setMusicGatewayTestConfig(t, server.URL)
+
+	service := newMusicGatewayTestService(t, organizationID, false)
+	err := service.GenerateMusic(t.Context(), &apikeymodel.TenantAPIKey{
+		ID:             uuid.NewString(),
+		OrganizationID: organizationID.String(),
+	}, &MusicRequest{
+		RequestID:      uuid.NewString(),
+		Model:          musicGatewayTestModel,
+		Mode:           adapter.MusicModeInstrumental,
+		Prompt:         "warm piano",
+		ResponseFormat: "mp3",
+	}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("GenerateMusic() error = %v, want canonical use case to enable generation", err)
+	}
+	if got := requestCount.Load(); got != 1 {
+		t.Fatalf("request count = %d, want 1", got)
+	}
+}
+
 func TestGenerateMusicRejectsModelWithoutCapabilityBeforeDispatch(t *testing.T) {
 	organizationID := uuid.New()
 	var requestCount atomic.Int32
@@ -156,6 +188,11 @@ func TestGenerateMusicRejectsModelWithoutCapabilityBeforeDispatch(t *testing.T) 
 	setMusicGatewayTestConfig(t, server.URL)
 
 	service := newMusicGatewayTestService(t, organizationID, false)
+	if err := service.db.Model(&llmmodel.LLMModel{}).
+		Where("name = ?", musicGatewayTestModel).
+		Update("use_cases", llmmodel.StringArray{}).Error; err != nil {
+		t.Fatal(err)
+	}
 	err := service.GenerateMusic(t.Context(), &apikeymodel.TenantAPIKey{
 		ID:             uuid.NewString(),
 		OrganizationID: organizationID.String(),
@@ -402,6 +439,59 @@ func TestGenerateMusicPrivateProviderFailureRollsBackReservation(t *testing.T) {
 	}
 	if local.preDeductCalls != 1 || local.settleCalls != 1 || local.lastSettle == nil || local.lastSettle.Status != "error" || local.lastSettle.ActualCredits != 0 {
 		t.Fatalf("rollback = %d/%d/%#v", local.preDeductCalls, local.settleCalls, local.lastSettle)
+	}
+}
+
+// T13 acceptance 2: when the upstream music generation succeeds but settlement
+// fails, the gateway must surface the settlement error instead of reporting
+// success, and the same request must stay compensatable so the pre-deduct hold
+// is refunded rather than left un-settled.
+func TestT13GenerateMusicSettlementFailureSurfacesAndCompensates(t *testing.T) {
+	organizationID := uuid.New()
+	requestID := uuid.NewString()
+	providerAdapter := &privateMusicGatewayAdapter{}
+	factory := adapter.NewDefaultAdapterFactory()
+	factory.Register("minimax", func(*adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {
+		return providerAdapter, nil
+	})
+	settleErr := errors.New("music settlement transaction failed")
+	local := &privateMusicCompensationBilling{
+		fakeBillingProvider: fakeBillingProvider{checkBalanceResult: true, settleErr: settleErr},
+	}
+	service := newPrivateMusicGatewayTestService(t, organizationID)
+	service.adapterFactory = factory
+	service.billing = &fakeBillingProvider{checkBalanceResult: true}
+	service.localBilling = local
+	service.pricingEngine = &fakePricingEngine{meteredQuote: PricingQuote{TotalCredits: 17, OutputCredits: 17}}
+
+	err := service.GenerateMusic(t.Context(), &apikeymodel.TenantAPIKey{
+		ID:             uuid.NewString(),
+		OrganizationID: organizationID.String(),
+	}, &MusicRequest{
+		RequestID:      requestID,
+		Model:          musicGatewayTestModel,
+		Mode:           adapter.MusicModeInstrumental,
+		Prompt:         "warm piano",
+		ResponseFormat: "mp3",
+	}, &bytes.Buffer{})
+	if !errors.Is(err, ErrBillingSettleFailed) {
+		t.Fatalf("GenerateMusic() error = %v, want surfaced ErrBillingSettleFailed", err)
+	}
+	if !errors.Is(err, settleErr) {
+		t.Fatalf("GenerateMusic() error = %v, want wrapped settlement cause", err)
+	}
+	if local.settleCalls != 1 || local.lastSettle == nil || local.lastSettle.Status != "success" {
+		t.Fatalf("settlement calls/context = %d/%#v", local.settleCalls, local.lastSettle)
+	}
+
+	if err := service.CompensateMusicDelivery(t.Context(), &apikeymodel.TenantAPIKey{
+		ID:             uuid.NewString(),
+		OrganizationID: organizationID.String(),
+	}, requestID); err != nil {
+		t.Fatalf("CompensateMusicDelivery() error = %v", err)
+	}
+	if local.calls != 1 || local.organizationID != organizationID || local.requestID != requestID {
+		t.Fatalf("compensation = calls=%d org=%s request=%s", local.calls, local.organizationID, local.requestID)
 	}
 }
 

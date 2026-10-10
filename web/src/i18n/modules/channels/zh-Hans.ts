@@ -13,7 +13,7 @@ const messages: ChannelsMessages = {
   },
   credit: {
     points: '点',
-    rate: '换算比例：$1.00 = 10,000 点',
+    rate: '换算比例：$1.00 = 1,000 点',
     approxUsd: '约 {amount}',
     usdToPoints: '{usd} = {points} 点',
     quickAmount: '${amount}',
@@ -464,7 +464,7 @@ const messages: ChannelsMessages = {
     decrease: '减少',
     noChange: '无变化',
     maxLimit: '最大额度：{max} 点',
-    rateHint: '10,000 点约等于 $1.00 调用额度',
+    rateHint: '1,000 点约等于 $1.00 调用额度',
     validation: {
       required: '请输入目标额度',
       min: '额度不能为负数',

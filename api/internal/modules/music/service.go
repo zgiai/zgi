@@ -70,7 +70,7 @@ func (s *Service) Create(ctx context.Context, scope Scope, request CreateRequest
 	}
 	available := false
 	for _, model := range models {
-		if model != nil && model.Name == request.Model && model.Endpoints.MusicGeneration {
+		if model != nil && model.Name == request.Model && musicModelIsAvailable(model) {
 			available = true
 			break
 		}
@@ -108,6 +108,26 @@ func (s *Service) Create(ctx context.Context, scope Scope, request CreateRequest
 		return nil, errors.Join(fmt.Errorf("enqueue music task: %w", err), transitionErr)
 	}
 	return task, nil
+}
+
+// musicModelIsAvailable accepts both capability representations used by the
+// catalog. Newer rows carry the canonical music-gen use case, while older
+// rows may only have the music_generation endpoint flag populated. The list
+// endpoint already exposes both shapes, so task creation must use the same
+// compatibility rule or a selectable model fails with MODEL_UNAVAILABLE.
+func musicModelIsAvailable(model *llmmodelsvc.AvailableModel) bool {
+	if model == nil {
+		return false
+	}
+	if model.Endpoints.MusicGeneration {
+		return true
+	}
+	for _, useCase := range model.UseCases {
+		if strings.EqualFold(strings.TrimSpace(useCase), string(llmmodel.UseCaseMusicGen)) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) Get(ctx context.Context, scope Scope, id uuid.UUID) (*TaskView, error) {

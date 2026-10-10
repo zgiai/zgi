@@ -13,15 +13,15 @@ type AppInfo struct {
 
 // RecommendedApp represents a recommended app with its metadata
 type RecommendedApp struct {
-	App             AppInfo `json:"app"`
-	AppID           string  `json:"app_id"`
-	Description     *string `json:"description"`
-	Copyright       *string `json:"copyright"`
-	PrivacyPolicy   *string `json:"privacy_policy"`
+	App              AppInfo `json:"app"`
+	AppID            string  `json:"app_id"`
+	Description      *string `json:"description"`
+	Copyright        *string `json:"copyright"`
+	PrivacyPolicy    *string `json:"privacy_policy"`
 	CustomDisclaimer *string `json:"custom_disclaimer,omitempty"`
-	Category        string  `json:"category"`
-	Position        int     `json:"position"`
-	IsListed        bool    `json:"is_listed"`
+	Category         string  `json:"category"`
+	Position         int     `json:"position"`
+	IsListed         bool    `json:"is_listed"`
 }
 
 // RecommendedAppListResponse represents the response for listing recommended apps

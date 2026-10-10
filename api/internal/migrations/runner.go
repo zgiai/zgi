@@ -127,7 +127,12 @@ func runMigrationChain(db *gorm.DB, plan migrationPlan) error {
 		options.UseTransaction = true
 		m = gormigrate.New(db, options, plan.migrations)
 	}
-	return m.Migrate()
+	if err := m.Migrate(); err != nil {
+		return err
+	}
+	// The credit columns must hold milli-points in BIGINT; a fractional column
+	// would make every amount 1000x wrong, so refuse to serve with one.
+	return assertMilliPointSchema(db)
 }
 
 // RunToConnectorCheckpoint supports the two published maintenance boundaries.

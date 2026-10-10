@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	"strings"
 	"sync"
 	"time"
@@ -45,43 +46,46 @@ type BillingService struct {
 
 // BillingContext contains billing-related information for a request
 type BillingContext struct {
-	APIKeyID             string
-	OrganizationID       string
-	DeductionID          string
-	AttemptID            string
-	QuotaSubjectType     string
-	QuotaSubjectID       string
-	AccountID            *uuid.UUID // Internal user ID when using models
-	PrincipalType        string
-	PrincipalID          string
-	AccessGrantID        string
-	AuthMethod           string
-	GroupID              *uuid.UUID // Organization ID (formerly Shadow Tenant ID)
-	WorkspaceID          string
-	AppID                *uuid.UUID // App ID (agent or dataset)
-	AppType              *string    // App type: 'agent' or 'dataset'
-	InvocationSource     InvocationSource
-	SessionID            string
-	ConversationID       string
-	WorkflowID           string
-	WorkflowRunID        string
-	NodeID               string
-	NodeType             string
-	ModelID              uuid.UUID
-	ModelSource          PricingModelSource
-	PricingOperation     PricingOperation
-	ModelName            string // Model name for logging
-	ProviderID           uuid.UUID
-	ProviderName         string     // Provider name for logging
-	RouteID              *uuid.UUID // Selected route ID when the request is routed
-	ChannelID            *uuid.UUID // Tenant channel ID, nil if using system provider
-	CredentialID         uuid.UUID
-	CredentialGeneration int64
-	ChannelProvider      string
-	UpstreamWouldGuard   bool
-	UpstreamHalfOpen     bool
-	AccountProviderID    *uint // Deprecated, kept for compatibility
-	EstimatedCredits     int64 // Estimated credits to deduct
+	APIKeyID              string
+	OrganizationID        string
+	DeductionID           string
+	AttemptID             string
+	QuotaSubjectType      string
+	QuotaSubjectID        string
+	AccountID             *uuid.UUID // Internal user ID when using models
+	PrincipalType         string
+	PrincipalID           string
+	AccessGrantID         string
+	AuthMethod            string
+	GroupID               *uuid.UUID // Organization ID (formerly Shadow Tenant ID)
+	WorkspaceID           string
+	AppID                 *uuid.UUID // App ID (agent or dataset)
+	AppType               *string    // App type: 'agent' or 'dataset'
+	InvocationSource      InvocationSource
+	SessionID             string
+	ConversationID        string
+	WorkflowID            string
+	WorkflowRunID         string
+	NodeID                string
+	NodeType              string
+	ModelID               uuid.UUID
+	ModelSource           PricingModelSource
+	PricingOperation      PricingOperation
+	ModelName             string // Model name for logging
+	ProviderID            uuid.UUID
+	ProviderName          string // Provider name for logging
+	RoutingStrategy       string
+	EstimatedInputTokens  int
+	EstimatedOutputTokens int
+	RouteID               *uuid.UUID // Selected route ID when the request is routed
+	ChannelID             *uuid.UUID // Tenant channel ID, nil if using system provider
+	CredentialID          uuid.UUID
+	CredentialGeneration  int64
+	ChannelProvider       string
+	UpstreamWouldGuard    bool
+	UpstreamHalfOpen      bool
+	AccountProviderID     *uint // Deprecated, kept for compatibility
+	EstimatedCredits      int64 // Estimated credits to deduct
 	// SubjectReservedCredits is the amount reserved from the quota subject.
 	// It can differ from EstimatedCredits when a platform-priced request has no
 	// local quote: a bounded developer grant reserves its remaining allowance to
@@ -167,6 +171,9 @@ func (b *BillingService) PreDeduct(ctx context.Context, bc *BillingContext) erro
 		if usageLane == UsageBillingLanePrivate {
 			if err := captureOrganizationBillingCurrency(ctx, tx, bc); err != nil {
 				return fmt.Errorf("capture billing currency snapshot: %w", err)
+			}
+			if err := applyLocalBillingCurrencySnapshot(bc); err != nil {
+				return fmt.Errorf("apply pre-deduct billing currency snapshot: %w", err)
 			}
 		}
 		if err := b.upsertAttemptInit(ctx, tx, bc); err != nil {
@@ -275,7 +282,9 @@ func (b *BillingService) Settle(ctx context.Context, bc *BillingContext) error {
 			if err := captureOrganizationBillingCurrency(ctx, tx, bc); err != nil {
 				return fmt.Errorf("capture billing currency snapshot: %w", err)
 			}
-			applyLocalBillingCurrencySnapshot(bc)
+			if err := applyLocalBillingCurrencySnapshot(bc); err != nil {
+				return fmt.Errorf("apply settle billing currency snapshot: %w", err)
+			}
 		}
 		attemptID, err := b.ensureAttemptID(bc)
 		if err != nil {
@@ -344,6 +353,8 @@ func (b *BillingService) Settle(ctx context.Context, bc *BillingContext) error {
 		if err := b.updateAttemptStatus(ctx, tx, bc, attemptStatus, &invocation, nil, nil); err != nil {
 			return fmt.Errorf("failed to update billing attempt status: %w", err)
 		}
+		b.applyRouteAttributionWithLookup(ctx, bc)
+		finalizeMediaTimingSnapshot(bc)
 		if err := b.upsertUsageBill(ctx, tx, bc, usageBillStatusFromBillingContext(bc.Status), nil, nil); err != nil {
 			return fmt.Errorf("failed to upsert usage bill: %w", err)
 		}
@@ -374,6 +385,8 @@ func (b *BillingService) Settle(ctx context.Context, bc *BillingContext) error {
 			); err != nil {
 				return err
 			}
+			b.applyRouteAttributionWithLookup(ctx, bc)
+			finalizeMediaTimingSnapshot(bc)
 			return b.upsertUsageBill(ctx, tx, bc, usageBillStatusPartial, &code, &msg)
 		})
 		if markErr != nil {
@@ -528,7 +541,7 @@ func (b *BillingService) preDeductAccessGrantQuota(ctx context.Context, tx *gorm
 	if availableQuota > remainingByLimit {
 		availableQuota = remainingByLimit
 	}
-	reservation := bc.EstimatedCredits
+	reservation := millipoints.MilliPoints(bc.EstimatedCredits)
 	usageLane, err := normalizeBillingContextUsageLane(bc)
 	if err != nil {
 		return err
@@ -543,7 +556,7 @@ func (b *BillingService) preDeductAccessGrantQuota(ctx context.Context, tx *gorm
 	if availableQuota <= 0 || availableQuota < reservation {
 		return ErrInsufficientQuota
 	}
-	bc.SubjectReservedCredits = reservation
+	bc.SubjectReservedCredits = reservation.Int64()
 	grant.RemainQuota = availableQuota - reservation
 	return tx.WithContext(ctx).Save(&grant).Error
 }
@@ -589,11 +602,11 @@ func (b *BillingService) preDeductWorkspaceQuota(
 	if workspaceQuota.QuotaLimit == nil {
 		return nil
 	}
-	if workspaceQuota.RemainQuota < bc.EstimatedCredits {
+	if workspaceQuota.RemainQuota < millipoints.MilliPoints(bc.EstimatedCredits) {
 		return ErrInsufficientQuota
 	}
 
-	workspaceQuota.RemainQuota -= bc.EstimatedCredits
+	workspaceQuota.RemainQuota -= millipoints.MilliPoints(bc.EstimatedCredits)
 	workspaceQuota.UpdatedAt = time.Now()
 	return tx.WithContext(ctx).Save(workspaceQuota).Error
 }
@@ -658,7 +671,7 @@ func (b *BillingService) settleAccessGrantQuota(ctx context.Context, tx *gorm.DB
 		return nil
 	}
 	if grant.QuotaLimit == nil {
-		grant.UsedQuota += bc.ActualCredits
+		grant.UsedQuota += millipoints.MilliPoints(bc.ActualCredits)
 		charged := bc.ActualCredits
 		bc.QuotaChargedCredits = &charged
 		return tx.WithContext(ctx).Save(&grant).Error
@@ -667,7 +680,7 @@ func (b *BillingService) settleAccessGrantQuota(ctx context.Context, tx *gorm.DB
 	// amount this attempt may charge is therefore the post-reservation balance
 	// plus its own reservation. Provider usage can exceed an estimate (notably
 	// hidden reasoning tokens), but a member grant must remain a hard boundary.
-	reservedCredits := subjectReservedCredits(bc)
+	reservedCredits := millipoints.MilliPoints(subjectReservedCredits(bc))
 	availableForAttempt := grant.RemainQuota + reservedCredits
 	if availableForAttempt < 0 {
 		availableForAttempt = 0
@@ -679,16 +692,17 @@ func (b *BillingService) settleAccessGrantQuota(ctx context.Context, tx *gorm.DB
 	if availableForAttempt > remainingByLimit {
 		availableForAttempt = remainingByLimit
 	}
-	charged := bc.ActualCredits
+	charged := millipoints.MilliPoints(bc.ActualCredits)
 	if charged > availableForAttempt {
 		charged = availableForAttempt
 	}
 	if charged < 0 {
 		charged = 0
 	}
-	bc.QuotaChargedCredits = &charged
+	chargedInt := charged.Int64()
+	bc.QuotaChargedCredits = &chargedInt
 	diff := reservedCredits - charged
-	grant.RemainQuota = clampQuotaRemainAtZero(grant.RemainQuota + diff)
+	grant.RemainQuota = millipoints.MilliPoints(clampQuotaRemainAtZero((grant.RemainQuota + diff).Int64()))
 	grant.UsedQuota += charged
 	if grant.QuotaLimit != nil && grant.UsedQuota > *grant.QuotaLimit {
 		grant.UsedQuota = *grant.QuotaLimit
@@ -716,15 +730,15 @@ func (b *BillingService) settleWorkspaceQuota(
 	}
 
 	if workspaceQuota.QuotaLimit == nil {
-		workspaceQuota.UsedQuota += bc.ActualCredits
+		workspaceQuota.UsedQuota += millipoints.MilliPoints(bc.ActualCredits)
 		workspaceQuota.UpdatedAt = time.Now()
 		return tx.WithContext(ctx).Save(workspaceQuota).Error
 	}
 
 	diff := bc.EstimatedCredits - bc.ActualCredits
 	// Subject quota must never go below zero.
-	workspaceQuota.RemainQuota = clampQuotaRemainAtZero(workspaceQuota.RemainQuota + diff)
-	workspaceQuota.UsedQuota += bc.ActualCredits
+	workspaceQuota.RemainQuota = millipoints.MilliPoints(clampQuotaRemainAtZero(workspaceQuota.RemainQuota.Int64() + diff))
+	workspaceQuota.UsedQuota += millipoints.MilliPoints(bc.ActualCredits)
 	workspaceQuota.UpdatedAt = time.Now()
 	return tx.WithContext(ctx).Save(workspaceQuota).Error
 }
@@ -861,15 +875,23 @@ func (b *BillingService) deductTenantCredits(ctx context.Context, tx *gorm.DB, b
 			GroupID:           account.GroupID,
 			CurrencyType:      string(paymentModel.CurrencyTypePurchasedCredits),
 			TransactionType:   string(paymentModel.TransactionTypeAIConsumption),
-			Amount:            float64(-creditsToDeduct),
-			BalanceBefore:     float64(accountBefore.PurchasedCredits),
-			BalanceAfter:      float64(account.PurchasedCredits),
+			Amount:            legacyTransactionFloat(-creditsToDeduct),
+			BalanceBefore:     legacyTransactionFloat(int64(accountBefore.PurchasedCredits)),
+			BalanceAfter:      legacyTransactionFloat(int64(account.PurchasedCredits)),
 			TransactionDetail: transactionDetail,
 			CreatedAt:         now,
 		},
 	}
 
 	return b.creditTxRepo.CreateBatch(ctx, transactions)
+}
+
+// legacyTransactionFloat converts an exact integer credit-ledger value to the
+// legacy float64 decimal(16,4) payment-transaction column. Internal billing
+// keeps exact int64 amounts, so this is the only float boundary on the local
+// credit ledger; whole values below 2^53 convert losslessly.
+func legacyTransactionFloat(value int64) float64 {
+	return float64(value)
 }
 
 func billingContextNeedsTokenReprice(bc *BillingContext) bool {

@@ -1,0 +1,1383 @@
+{
+  "$schema": "zgi.rating.vectors/1",
+  "version": 1,
+  "status": "frozen",
+  "amendments": [
+    "2026-09-30: appended V024a-V028 (report M2 video audio/input_video/duration dimensions, M6 realtime text+audio sum and text/audio cache-read split). Existing vectors are unchanged."
+  ],
+  "points_per_usd": 1000,
+  "milli_points_per_usd": 1000000,
+  "comparison_rules": {
+    "points_mp": "整数精确比较（唯一记账断言）",
+    "usd": "十进制比较，默认容差 1e-15；points_mp 为准",
+    "snapshot_required_fields": [
+      "rate",
+      "rate_source",
+      "rate_at",
+      "display_currency"
+    ]
+  },
+  "vectors": [
+    {
+      "id": "V001-chat-input",
+      "description": "1000 input tokens @ 1 USD/1M",
+      "tags": [
+        "chat",
+        "token"
+      ],
+      "lane": "platform",
+      "rate": "7",
+      "rate_source": "console_system",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "rules": [
+          {
+            "id": "chat-input_token",
+            "operation": "chat",
+            "meter": "input_token",
+            "unit": "per_1m_tokens",
+            "price": "1",
+            "configured": true
+          }
+        ]
+      },
+      "usage": {
+        "operation": "chat",
+        "meter": "input_token",
+        "base_unit": "per_1m_tokens",
+        "input_tokens": 1000
+      },
+      "expected": {
+        "usd": "0.001",
+        "points_mp": 1000,
+        "total_points": "1",
+        "error": null
+      }
+    },
+    {
+      "id": "V002-chat-in-out",
+      "description": "1000 in / 2000 out @ 1/2 USD per 1M",
+      "tags": [
+        "chat",
+        "token"
+      ],
+      "lane": "platform",
+      "rate": "7",
+      "rate_source": "console_system",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "rules": [
+          {
+            "id": "chat-input_token",
+            "operation": "chat",
+            "meter": "input_token",
+            "unit": "per_1m_tokens",
+            "price": "1",
+            "configured": true
+          },
+          {
+            "id": "chat-output_token",
+            "operation": "chat",
+            "meter": "output_token",
+            "unit": "per_1m_tokens",
+            "price": "2",
+            "configured": true
+          }
+        ]
+      },
+      "usage": {
+        "operation": "chat",
+        "input_tokens": 1000,
+        "output_tokens": 2000
+      },
+      "expected": {
+        "usd": "0.005",
+        "points_mp": 5000,
+        "total_points": "5",
+        "error": null
+      }
+    },
+    {
+      "id": "V003-chat-cache",
+      "description": "input/cache_read/cache_write 混合",
+      "tags": [
+        "chat",
+        "cache"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "rules": [
+          {
+            "id": "chat-input_token",
+            "operation": "chat",
+            "meter": "input_token",
+            "unit": "per_1m_tokens",
+            "price": "1",
+            "configured": true
+          },
+          {
+            "id": "chat-cache_read_token",
+            "operation": "chat",
+            "meter": "cache_read_token",
+            "unit": "per_1m_tokens",
+            "price": "0.1",
+            "configured": true
+          },
+          {
+            "id": "chat-cache_write_token",
+            "operation": "chat",
+            "meter": "cache_write_token",
+            "unit": "per_1m_tokens",
+            "price": "1.25",
+            "configured": true
+          }
+        ]
+      },
+      "usage": {
+        "operation": "chat",
+        "input_tokens": 1000,
+        "cache_read_tokens": 10000,
+        "cache_write_tokens": 2000
+      },
+      "expected": {
+        "usd": "0.0045",
+        "points_mp": 4500,
+        "total_points": "4.5",
+        "error": null
+      }
+    },
+    {
+      "id": "V004-image-per-image",
+      "description": "1 张 @ 1 USD/张",
+      "tags": [
+        "image",
+        "per_image",
+        "P0-2"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "rules": [
+          {
+            "id": "image_generation-image",
+            "operation": "image_generation",
+            "meter": "image",
+            "unit": "per_image",
+            "price": "1",
+            "configured": true
+          }
+        ],
+        "price_per_image": 1
+      },
+      "usage": {
+        "operation": "image_generation",
+        "meter": "image",
+        "base_unit": "per_image",
+        "quantity": 1
+      },
+      "expected": {
+        "usd": "1",
+        "points_mp": 1000000,
+        "total_points": "1000",
+        "error": null
+      }
+    },
+    {
+      "id": "V005-image-per-image-3",
+      "description": "3 张 @ 0.04 USD/张",
+      "tags": [
+        "image",
+        "per_image"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "rules": [
+          {
+            "id": "image_generation-image",
+            "operation": "image_generation",
+            "meter": "image",
+            "unit": "per_image",
+            "price": "0.04",
+            "configured": true
+          }
+        ],
+        "price_per_image": 0.04
+      },
+      "usage": {
+        "operation": "image_generation",
+        "meter": "image",
+        "base_unit": "per_image",
+        "quantity": 3
+      },
+      "expected": {
+        "usd": "0.12",
+        "points_mp": 120000,
+        "total_points": "120",
+        "error": null
+      }
+    },
+    {
+      "id": "V006-image-token-3tiers",
+      "description": "图片按 token 三档：text 5 / image 8 / output 30",
+      "tags": [
+        "image",
+        "image_token",
+        "P0-2"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "image_token_pricing": {
+          "currency": "USD",
+          "text_input_price_per_million": 5,
+          "image_input_price_per_million": 8,
+          "output_price_per_million": 30
+        }
+      },
+      "usage": {
+        "operation": "image_generation",
+        "text_input_tokens": 1000,
+        "input_image_tokens": 2000,
+        "output_tokens": 500
+      },
+      "expected": {
+        "usd": "0.036",
+        "points_mp": 36000,
+        "total_points": "36",
+        "error": null
+      }
+    },
+    {
+      "id": "V007-video-second",
+      "description": "5 秒 @ 1 USD/秒",
+      "tags": [
+        "video",
+        "second",
+        "P1-8"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "video_generation": {
+          "rates": [
+            {
+              "id": "video-rate-0",
+              "model_tier": "720p",
+              "resolution": "720p",
+              "price_per_second": 1
+            }
+          ]
+        }
+      },
+      "usage": {
+        "operation": "video_generation",
+        "meter": "output_video_second",
+        "base_unit": "second",
+        "quantity": 5,
+        "dimensions": {
+          "resolution": "720p"
+        }
+      },
+      "expected": {
+        "usd": "5",
+        "points_mp": 5000000,
+        "total_points": "5000",
+        "error": null
+      }
+    },
+    {
+      "id": "V008-video-task",
+      "description": "1 任务 @ 1 USD/任务",
+      "tags": [
+        "video",
+        "task",
+        "P0-1"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "video_generation": {
+          "rates": [
+            {
+              "id": "video-rate-0",
+              "model_tier": "720p",
+              "resolution": "720p",
+              "price_per_task": 1
+            }
+          ]
+        }
+      },
+      "usage": {
+        "operation": "video_generation",
+        "meter": "output_video_task",
+        "base_unit": "task",
+        "quantity": 1,
+        "dimensions": {
+          "resolution": "720p"
+        }
+      },
+      "expected": {
+        "usd": "1",
+        "points_mp": 1000000,
+        "total_points": "1000",
+        "error": null
+      }
+    },
+    {
+      "id": "V009-video-million-tokens",
+      "description": "2,000,000 video tokens @ 3 USD/1M",
+      "tags": [
+        "video",
+        "video_token"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "video_generation": {
+          "rates": [
+            {
+              "id": "video-rate-0",
+              "resolution": "720p",
+              "price_per_million_tokens": 3
+            }
+          ]
+        }
+      },
+      "usage": {
+        "operation": "video_generation",
+        "meter": "output_video_token",
+        "base_unit": "million_video_tokens",
+        "quantity": 2000000,
+        "dimensions": {
+          "resolution": "720p"
+        }
+      },
+      "expected": {
+        "usd": "6",
+        "points_mp": 6000000,
+        "total_points": "6000",
+        "error": null
+      }
+    },
+    {
+      "id": "V010a-transcription-hour",
+      "description": "3,600,000 ms @ 1 USD/3600000ms",
+      "tags": [
+        "transcription",
+        "metered"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "metered": [
+          {
+            "operation": "transcription",
+            "meter": "input_audio_duration",
+            "base_unit": "millisecond",
+            "price": {
+              "amount": "1",
+              "currency": "USD",
+              "per_quantity": 3600000
+            }
+          }
+        ]
+      },
+      "usage": {
+        "operation": "transcription",
+        "meter": "input_audio_duration",
+        "base_unit": "millisecond",
+        "quantity": 3600000
+      },
+      "expected": {
+        "usd": "1",
+        "points_mp": 1000000,
+        "total_points": "1000",
+        "error": null
+      }
+    },
+    {
+      "id": "V010b-transcription-60s",
+      "description": "60,000 ms @ 1 USD/3600000ms → ceil 毫点",
+      "tags": [
+        "transcription",
+        "metered",
+        "rounding"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "metered": [
+          {
+            "operation": "transcription",
+            "meter": "input_audio_duration",
+            "base_unit": "millisecond",
+            "price": {
+              "amount": "1",
+              "currency": "USD",
+              "per_quantity": 3600000
+            }
+          }
+        ]
+      },
+      "usage": {
+        "operation": "transcription",
+        "meter": "input_audio_duration",
+        "base_unit": "millisecond",
+        "quantity": 60000
+      },
+      "expected": {
+        "usd": "0.016666666666666667",
+        "usd_tolerance": "1e-15",
+        "points_mp": 16667,
+        "total_points": "16.667",
+        "error": null
+      }
+    },
+    {
+      "id": "V011-speech-chars",
+      "description": "1000 字 @ 3 USD/10000 字",
+      "tags": [
+        "speech",
+        "metered"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "metered": [
+          {
+            "operation": "speech_generation",
+            "meter": "input_text",
+            "base_unit": "billed_character",
+            "price": {
+              "amount": "3",
+              "currency": "USD",
+              "per_quantity": 10000
+            }
+          }
+        ]
+      },
+      "usage": {
+        "operation": "speech_generation",
+        "meter": "input_text",
+        "base_unit": "billed_character",
+        "quantity": 1000
+      },
+      "expected": {
+        "usd": "0.3",
+        "points_mp": 300000,
+        "total_points": "300",
+        "error": null
+      }
+    },
+    {
+      "id": "V012-music-track",
+      "description": "1 track @ 1 USD/track",
+      "tags": [
+        "music",
+        "metered"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "metered": [
+          {
+            "operation": "music_generation",
+            "meter": "output_track",
+            "base_unit": "track",
+            "price": {
+              "amount": "1",
+              "currency": "USD",
+              "per_quantity": 1
+            }
+          }
+        ]
+      },
+      "usage": {
+        "operation": "music_generation",
+        "meter": "output_track",
+        "base_unit": "track",
+        "quantity": 1
+      },
+      "expected": {
+        "usd": "1",
+        "points_mp": 1000000,
+        "total_points": "1000",
+        "error": null
+      }
+    },
+    {
+      "id": "V013-lyrics-request",
+      "description": "1 request @ 0.05 USD",
+      "tags": [
+        "lyrics",
+        "metered"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "metered": [
+          {
+            "operation": "lyrics_generation",
+            "meter": "request",
+            "base_unit": "request",
+            "price": {
+              "amount": "0.05",
+              "currency": "USD",
+              "per_quantity": 1
+            }
+          }
+        ]
+      },
+      "usage": {
+        "operation": "lyrics_generation",
+        "meter": "request",
+        "base_unit": "request",
+        "quantity": 1
+      },
+      "expected": {
+        "usd": "0.05",
+        "points_mp": 50000,
+        "total_points": "50",
+        "error": null
+      }
+    },
+    {
+      "id": "V014-realtime-audio",
+      "description": "audio 1000 in / 1000 out @ 32/64 USD per 1M",
+      "tags": [
+        "realtime_audio",
+        "audio_token",
+        "P1-11"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "rules": [
+          {
+            "id": "realtime_audio-input_token",
+            "operation": "realtime_audio",
+            "meter": "input_token",
+            "unit": "per_1m_tokens",
+            "price": "32",
+            "configured": true
+          },
+          {
+            "id": "realtime_audio-output_token",
+            "operation": "realtime_audio",
+            "meter": "output_token",
+            "unit": "per_1m_tokens",
+            "price": "64",
+            "configured": true
+          }
+        ]
+      },
+      "usage": {
+        "operation": "realtime_audio",
+        "audio_input_tokens": 1000,
+        "audio_output_tokens": 1000
+      },
+      "expected": {
+        "usd": "0.096",
+        "points_mp": 96000,
+        "total_points": "96",
+        "error": null
+      }
+    },
+    {
+      "id": "V015-incident-ceil",
+      "description": "事故模型价 0.000462962962963 USD/1M × 1000 tokens → ceil 1 毫点",
+      "tags": [
+        "rounding",
+        "incident",
+        "原始-1"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "rules": [
+          {
+            "id": "chat-input_token",
+            "operation": "chat",
+            "meter": "input_token",
+            "unit": "per_1m_tokens",
+            "price": "0.000462962962963",
+            "configured": true
+          }
+        ]
+      },
+      "usage": {
+        "operation": "chat",
+        "input_tokens": 1000
+      },
+      "expected": {
+        "usd": "0.000000462962962963",
+        "points_mp": 1,
+        "total_points": "0.001",
+        "error": null
+      }
+    },
+    {
+      "id": "V016-rounding-tiny",
+      "description": "0.1 USD/1M × 1 token → 0.1 毫点 → ceil 1",
+      "tags": [
+        "rounding"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "rules": [
+          {
+            "id": "chat-input_token",
+            "operation": "chat",
+            "meter": "input_token",
+            "unit": "per_1m_tokens",
+            "price": "0.1",
+            "configured": true
+          }
+        ]
+      },
+      "usage": {
+        "operation": "chat",
+        "input_tokens": 1
+      },
+      "expected": {
+        "usd": "0.0000001",
+        "points_mp": 1,
+        "total_points": "0.001",
+        "error": null
+      }
+    },
+    {
+      "id": "V017-rounding-exact",
+      "description": "1 USD/1M × 1,000,000 tokens = 1 USD 精确",
+      "tags": [
+        "rounding"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "rules": [
+          {
+            "id": "chat-input_token",
+            "operation": "chat",
+            "meter": "input_token",
+            "unit": "per_1m_tokens",
+            "price": "1",
+            "configured": true
+          }
+        ]
+      },
+      "usage": {
+        "operation": "chat",
+        "input_tokens": 1000000
+      },
+      "expected": {
+        "usd": "1",
+        "points_mp": 1000000,
+        "total_points": "1000",
+        "error": null
+      }
+    },
+    {
+      "id": "V018-explicit-zero",
+      "description": "显式配置 0 价 → 0 点，不是错误",
+      "tags": [
+        "zero"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "rules": [
+          {
+            "id": "chat-input_token",
+            "operation": "chat",
+            "meter": "input_token",
+            "unit": "per_1m_tokens",
+            "price": "0",
+            "configured": true
+          }
+        ]
+      },
+      "usage": {
+        "operation": "chat",
+        "input_tokens": 1000
+      },
+      "expected": {
+        "usd": "0",
+        "points_mp": 0,
+        "total_points": "0",
+        "error": null
+      }
+    },
+    {
+      "id": "V019-missing-price",
+      "description": "缺 input_token 价 → 未配价错误，不 500",
+      "tags": [
+        "fail-closed",
+        "P0-2"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "rules": [
+          {
+            "id": "chat-output_token",
+            "operation": "chat",
+            "meter": "output_token",
+            "unit": "per_1m_tokens",
+            "price": "2",
+            "configured": true
+          }
+        ]
+      },
+      "usage": {
+        "operation": "chat",
+        "input_tokens": 1000
+      },
+      "expected": {
+        "usd": null,
+        "points_mp": null,
+        "total_points": null,
+        "error": {
+          "code": "billing.model.pricing_not_configured",
+          "http": 402,
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "V019b-image-token-not-per-image",
+      "description": "请求 image_token 但只配了 per_image → 必须报未配价，禁止回退按张",
+      "tags": [
+        "fail-closed",
+        "P0-2",
+        "image"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "rules": [
+          {
+            "id": "image_generation-image",
+            "operation": "image_generation",
+            "meter": "image",
+            "unit": "per_image",
+            "price": "0.1",
+            "configured": true
+          }
+        ],
+        "price_per_image": 0.1
+      },
+      "usage": {
+        "operation": "image_generation",
+        "meter": "input_image_token",
+        "base_unit": "per_1m_tokens",
+        "quantity": 2000
+      },
+      "expected": {
+        "usd": null,
+        "points_mp": null,
+        "total_points": null,
+        "error": {
+          "code": "billing.model.pricing_not_configured",
+          "http": 402,
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "V020-missing-rate",
+      "description": "private 车道缺汇率 → fail-closed",
+      "tags": [
+        "fail-closed",
+        "P2-15"
+      ],
+      "lane": "private",
+      "rate": null,
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "rules": [
+          {
+            "id": "chat-input_token",
+            "operation": "chat",
+            "meter": "input_token",
+            "unit": "per_1m_tokens",
+            "price": "1",
+            "configured": true
+          }
+        ]
+      },
+      "usage": {
+        "operation": "chat",
+        "input_tokens": 1000
+      },
+      "expected": {
+        "usd": null,
+        "points_mp": null,
+        "total_points": null,
+        "error": {
+          "code": "billing.exchange_rate.unavailable",
+          "http": 503,
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "V021-cny-source-normalized",
+      "description": "7 CNY/1M 按汇率 7 归一为 1 USD/1M",
+      "tags": [
+        "normalization",
+        "原始-1"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "rules": [
+          {
+            "id": "chat-input_token",
+            "operation": "chat",
+            "meter": "input_token",
+            "unit": "per_1m_tokens",
+            "price": "1",
+            "configured": true
+          }
+        ],
+        "source": {
+          "amount": "7",
+          "currency": "CNY",
+          "rate": "7",
+          "rate_at": "2026-09-20T23:31:07+08:00"
+        },
+        "price_exchange_rate": "7",
+        "price_currency_status": "converted_from_cny"
+      },
+      "usage": {
+        "operation": "chat",
+        "input_tokens": 1000
+      },
+      "expected": {
+        "usd": "0.001",
+        "points_mp": 1000,
+        "total_points": "1",
+        "error": null
+      }
+    },
+    {
+      "id": "V022-platform-lane",
+      "description": "platform 车道同输入同结果，rate_source=console_system",
+      "tags": [
+        "lane",
+        "P1-5"
+      ],
+      "lane": "platform",
+      "rate": "6",
+      "rate_source": "console_system",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "rules": [
+          {
+            "id": "chat-input_token",
+            "operation": "chat",
+            "meter": "input_token",
+            "unit": "per_1m_tokens",
+            "price": "1",
+            "configured": true
+          },
+          {
+            "id": "chat-output_token",
+            "operation": "chat",
+            "meter": "output_token",
+            "unit": "per_1m_tokens",
+            "price": "2",
+            "configured": true
+          }
+        ]
+      },
+      "usage": {
+        "operation": "chat",
+        "input_tokens": 1000,
+        "output_tokens": 2000
+      },
+      "expected": {
+        "usd": "0.005",
+        "points_mp": 5000,
+        "total_points": "5",
+        "error": null
+      }
+    },
+    {
+      "id": "V023-cross-engine-equivalence",
+      "description": "Console 与 Pre 对同一向量必须得到相同 points_mp",
+      "tags": [
+        "conformance",
+        "P2-16"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "rules": [
+          {
+            "id": "chat-input_token",
+            "operation": "chat",
+            "meter": "input_token",
+            "unit": "per_1m_tokens",
+            "price": "1",
+            "configured": true
+          },
+          {
+            "id": "chat-output_token",
+            "operation": "chat",
+            "meter": "output_token",
+            "unit": "per_1m_tokens",
+            "price": "2",
+            "configured": true
+          },
+          {
+            "id": "image_generation-image",
+            "operation": "image_generation",
+            "meter": "image",
+            "unit": "per_image",
+            "price": "0.04",
+            "configured": true
+          }
+        ]
+      },
+      "usage": {
+        "operation": "chat",
+        "input_tokens": 1000,
+        "output_tokens": 2000
+      },
+      "expected": {
+        "usd": "0.005",
+        "points_mp": 5000,
+        "total_points": "5",
+        "error": null
+      }
+    },
+    {
+      "id": "V024a-video-audio-priced",
+      "description": "同分辨率有声视频 10 秒 @ 0.4 USD/秒（M2）",
+      "tags": [
+        "video",
+        "second",
+        "M2"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "video_generation": {
+          "rates": [
+            {
+              "id": "video-rate-0",
+              "resolution": "720p",
+              "audio": false,
+              "price_per_second": 0.1
+            },
+            {
+              "id": "video-rate-1",
+              "resolution": "720p",
+              "audio": true,
+              "price_per_second": 0.4
+            }
+          ]
+        }
+      },
+      "usage": {
+        "operation": "video_generation",
+        "meter": "output_video_second",
+        "base_unit": "second",
+        "quantity": 10,
+        "dimensions": {
+          "resolution": "720p",
+          "audio": true
+        }
+      },
+      "expected": {
+        "usd": "4",
+        "points_mp": 4000000,
+        "total_points": "4000",
+        "error": null
+      }
+    },
+    {
+      "id": "V024b-video-silent-priced",
+      "description": "同分辨率无声视频 10 秒 @ 0.1 USD/秒（M2）",
+      "tags": [
+        "video",
+        "second",
+        "M2"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "video_generation": {
+          "rates": [
+            {
+              "id": "video-rate-0",
+              "resolution": "720p",
+              "audio": false,
+              "price_per_second": 0.1
+            },
+            {
+              "id": "video-rate-1",
+              "resolution": "720p",
+              "audio": true,
+              "price_per_second": 0.4
+            }
+          ]
+        }
+      },
+      "usage": {
+        "operation": "video_generation",
+        "meter": "output_video_second",
+        "base_unit": "second",
+        "quantity": 10,
+        "dimensions": {
+          "resolution": "720p",
+          "audio": false
+        }
+      },
+      "expected": {
+        "usd": "1",
+        "points_mp": 1000000,
+        "total_points": "1000",
+        "error": null
+      }
+    },
+    {
+      "id": "V025-video-input-video-priced",
+      "description": "带输入视频 5 秒 @ 1 USD/秒，无输入视频费率为 2（M2）",
+      "tags": [
+        "video",
+        "second",
+        "M2"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "video_generation": {
+          "rates": [
+            {
+              "id": "video-rate-0",
+              "input_video": false,
+              "price_per_second": 2
+            },
+            {
+              "id": "video-rate-1",
+              "input_video": true,
+              "price_per_second": 1
+            }
+          ]
+        }
+      },
+      "usage": {
+        "operation": "video_generation",
+        "meter": "output_video_second",
+        "base_unit": "second",
+        "quantity": 5,
+        "dimensions": {
+          "input_video": true
+        }
+      },
+      "expected": {
+        "usd": "5",
+        "points_mp": 5000000,
+        "total_points": "5000",
+        "error": null
+      }
+    },
+    {
+      "id": "V026-video-duration-mismatch",
+      "description": "费率声明 8 秒，请求 10 秒，必须 fail-closed（M2）",
+      "tags": [
+        "video",
+        "second",
+        "M2"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "video_generation": {
+          "rates": [
+            {
+              "id": "video-rate-0",
+              "duration_seconds": 8,
+              "price_per_second": 1
+            }
+          ]
+        }
+      },
+      "usage": {
+        "operation": "video_generation",
+        "meter": "output_video_second",
+        "base_unit": "second",
+        "quantity": 10,
+        "dimensions": {
+          "duration_seconds": 10
+        }
+      },
+      "expected": {
+        "usd": null,
+        "points_mp": null,
+        "total_points": null,
+        "error": {
+          "code": "billing.model.pricing_not_configured",
+          "http": 402,
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "V027-realtime-text-plus-audio",
+      "description": "realtime 音频 1M/1M @ 32/64 + 文本 1M/1M @ 4/16 求和（M6）",
+      "tags": [
+        "realtime_audio",
+        "M6"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "rules": [
+          {
+            "id": "realtime_audio-input_token",
+            "operation": "realtime_audio",
+            "meter": "input_token",
+            "unit": "per_1m_tokens",
+            "price": "32",
+            "configured": true
+          },
+          {
+            "id": "realtime_audio-output_token",
+            "operation": "realtime_audio",
+            "meter": "output_token",
+            "unit": "per_1m_tokens",
+            "price": "64",
+            "configured": true
+          },
+          {
+            "id": "chat-input_token",
+            "operation": "chat",
+            "meter": "input_token",
+            "unit": "per_1m_tokens",
+            "price": "4",
+            "configured": true
+          },
+          {
+            "id": "chat-output_token",
+            "operation": "chat",
+            "meter": "output_token",
+            "unit": "per_1m_tokens",
+            "price": "16",
+            "configured": true
+          }
+        ]
+      },
+      "usage": {
+        "operation": "realtime_audio",
+        "audio_input_tokens": 1000000,
+        "audio_output_tokens": 1000000,
+        "text_input_tokens": 1000000,
+        "text_output_tokens": 1000000
+      },
+      "expected": {
+        "usd": "116",
+        "points_mp": 116000000,
+        "total_points": "116000",
+        "error": null
+      }
+    },
+    {
+      "id": "V028-realtime-cache-read-split",
+      "description": "realtime 音频缓存读 1M @ 0.4 + 文本缓存读 2M @ 0.1（M6）",
+      "tags": [
+        "realtime_audio",
+        "cache",
+        "M6"
+      ],
+      "lane": "private",
+      "rate": "7",
+      "rate_source": "pre_org",
+      "display_currency": "CNY",
+      "pricing": {
+        "currency": "USD",
+        "deployment_scope": "global",
+        "rules": [
+          {
+            "id": "realtime_audio-cache_read_token",
+            "operation": "realtime_audio",
+            "meter": "cache_read_token",
+            "unit": "per_1m_tokens",
+            "price": "0.4",
+            "configured": true
+          },
+          {
+            "id": "chat-cache_read_token",
+            "operation": "chat",
+            "meter": "cache_read_token",
+            "unit": "per_1m_tokens",
+            "price": "0.1",
+            "configured": true
+          }
+        ]
+      },
+      "usage": {
+        "operation": "realtime_audio",
+        "cache_read_tokens": 1000000,
+        "text_cache_read_tokens": 2000000
+      },
+      "expected": {
+        "usd": "0.6",
+        "points_mp": 600000,
+        "total_points": "600",
+        "error": null
+      }
+    }
+  ],
+  "editor_roundtrip_vectors": [
+    {
+      "id": "R001",
+      "description": "CNY 输入往返：rate 7",
+      "currency": "CNY",
+      "rate": "7",
+      "submitted_amount": "7",
+      "expect_stored_usd": "1",
+      "expect_populated_amount": "7",
+      "expect_resubmit_stored_usd": "1"
+    },
+    {
+      "id": "R002",
+      "description": "换汇率回填不复利：存 1 USD，rate 6 → 显示 6",
+      "currency": "CNY",
+      "rate": "6",
+      "submitted_amount": "6",
+      "expect_stored_usd": "1",
+      "expect_populated_amount": "6",
+      "expect_resubmit_stored_usd": "1"
+    },
+    {
+      "id": "R003",
+      "description": "USD 输入往返恒等",
+      "currency": "USD",
+      "rate": "7",
+      "submitted_amount": "1.6667",
+      "expect_stored_usd": "1.6667",
+      "expect_populated_amount": "1.6667",
+      "expect_resubmit_stored_usd": "1.6667"
+    }
+  ]
+}

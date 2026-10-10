@@ -1,5 +1,8 @@
 import type { Organization } from '@/services/types/organization';
-import Decimal from 'decimal.js-light';
+import Decimal from 'decimal.js';
+
+// @ts-ignore Node's direct TypeScript runner requires an explicit extension.
+import { POINTS_PER_USD } from './billing-units.ts';
 
 export type BillingDisplayCurrency = 'USD' | 'CNY';
 
@@ -21,7 +24,7 @@ export const DEFAULT_BILLING_DISPLAY: BillingDisplaySettings = {
   usdToCnyRate: 7,
 };
 
-export const NORMALIZED_AI_CREDITS_PER_USD = 1_000;
+export const NORMALIZED_AI_CREDITS_PER_USD = POINTS_PER_USD;
 const BILLING_DECIMAL_PLACES = 12;
 const CANONICAL_PRICE_QUANTIZATION = new Decimal('0.000000000001');
 const DISPLAY_TAIL_RELATIVE_TOLERANCE = new Decimal('0.000000001');

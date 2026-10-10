@@ -53,6 +53,7 @@ import { AIChatSpeechAutoPlayControl } from '@/components/chat/variants/aichat/v
 
 interface AIChatInputToolbarProps {
   modelSelectorValue: AIChatModelValue;
+  modelProps?: ModelSelectorModelProps | null;
   modelSelectorWarning?: boolean;
   isModelInitializing?: boolean;
   modelMissing: boolean;
@@ -223,7 +224,6 @@ export function AIChatInputToolbar({
   const showStopButton = canStop ?? isSending;
   const activeGovernanceTier = getToolGovernanceTierDisplay(toolGovernancePermissionTier, t);
   const ActiveGovernanceIcon = activeGovernanceTier.Icon;
-
   return (
     <div className="flex items-center justify-between gap-2 px-1">
       <div className="flex min-w-0 items-center gap-1.5">

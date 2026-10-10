@@ -20,8 +20,10 @@ import (
 	"github.com/zgiai/zgi/api/internal/infra/platform"
 	pchannel "github.com/zgiai/zgi/api/internal/infra/platform/channel"
 	pconsole "github.com/zgiai/zgi/api/internal/infra/platform/console"
+	"github.com/zgiai/zgi/api/internal/infra/platform/consolecred"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	apikeyrepo "github.com/zgiai/zgi/api/internal/modules/llm/apikey/repository"
+	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/channelprovider"
 	"github.com/zgiai/zgi/api/internal/modules/llm/credential/upstreamstate"
 	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
@@ -452,6 +454,7 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 	llmModel *llmmodel.LLMModel,
 	startTime time.Time,
 	channelID *uuid.UUID,
+	autoBan bool,
 ) {
 	defer close(outputChan)
 
@@ -568,7 +571,6 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 
 		// Record failure for health tracking
 		if channelID != nil {
-			autoBan := billingCtx.ChannelID != nil
 			s.healthTracker.RecordFailure(ctx, *channelID, autoBan)
 		}
 	} else {
@@ -624,7 +626,6 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 			billingCtx.ResponseTime = responseTime
 
 			if channelID != nil {
-				autoBan := billingCtx.ChannelID != nil
 				s.healthTracker.RecordFailure(ctx, *channelID, autoBan)
 			}
 
@@ -659,6 +660,8 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 			return
 		}
 
+		audioInputTokens := 0
+		audioOutputTokens := 0
 		if useSystemProvider && !sawUsage {
 			clearBillingContextTokenUsage(billingCtx)
 		} else {
@@ -668,6 +671,8 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 				billingCtx.CacheWriteTokens = latestUsage.CacheWriteTokens
 				billingCtx.CacheWrite5mTokens = latestUsage.CacheWrite5mTokens
 				billingCtx.CacheWrite1hTokens = latestUsage.CacheWrite1hTokens
+				audioInputTokens = latestUsage.AudioInputTokens
+				audioOutputTokens = latestUsage.AudioOutputTokens
 			} else {
 				billingCtx.PromptTokens = totalPromptTokens
 			}
@@ -682,6 +687,7 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 				InputTokens: billingCtx.PromptTokens, CacheReadTokens: billingCtx.CacheReadTokens,
 				CacheWriteTokens: billingCtx.CacheWriteTokens, CacheWrite5mTokens: billingCtx.CacheWrite5mTokens,
 				CacheWrite1hTokens: billingCtx.CacheWrite1hTokens, OutputTokens: billingCtx.CompletionTokens,
+				AudioInputTokens: audioInputTokens, AudioOutputTokens: audioOutputTokens,
 			})
 			if err != nil {
 				wrappedErr := wrapPricingCalculationError(err)
@@ -856,21 +862,118 @@ func (s *llmGatewayServiceImpl) ListAvailableModels(
 	// Convert to adapter models
 	result := make([]adapter.Model, 0, len(models))
 	for _, m := range models {
-		if len(routableModels[normalizeRequestedModelName(m.Model)]) == 0 {
+		routes := routableModels[normalizeRequestedModelName(m.Model)]
+		if len(routes) == 0 {
+			continue
+		}
+		protocols := supportedProtocolsForRoutes(routes, &m)
+		if len(protocols) == 0 {
+			// A route exists but no protocol is actually serviceable, so listing
+			// the model would hand clients a model they cannot call. Console's
+			// catalog hides these too; keep the two directories consistent.
 			continue
 		}
 
 		result = append(result, adapter.Model{
-			ID:            m.Model,
-			Name:          m.ModelName,
-			Description:   "",
-			ContextLength: m.ContextWindow,
-			Created:       m.CreatedAt.Unix(),
-			OwnedBy:       m.Provider,
+			ID:                 m.Model,
+			Name:               m.ModelName,
+			Description:        m.Description,
+			ContextLength:      m.ContextWindow,
+			MaxInputTokens:     m.MaxInputTokens,
+			MaxOutputTokens:    m.MaxOutputTokens,
+			InputModalities:    append([]string(nil), m.InputModalities...),
+			ParallelToolCalls:  m.ParallelToolCalls,
+			Capabilities:       publicModelCapabilities(&m),
+			Created:            m.CreatedAt.Unix(),
+			OwnedBy:            m.Provider,
+			SupportedProtocols: protocols,
 		})
 	}
 
 	return result, nil
+}
+
+func publicModelCapabilities(model *llmmodel.LLMModel) []string {
+	if model == nil {
+		return nil
+	}
+	result := make([]string, 0, 6)
+	if model.SupportsStreaming {
+		result = append(result, "streaming")
+	}
+	if model.SupportsToolCall {
+		result = append(result, "tool_use")
+	}
+	if model.ParallelToolCalls {
+		result = append(result, "parallel_tool_use")
+	}
+	if model.SupportsReasoning {
+		result = append(result, "thinking")
+	}
+	if model.SupportsVision {
+		result = append(result, "vision")
+	}
+	if model.SystemPrompt {
+		result = append(result, "system")
+	}
+	return result
+}
+
+func supportedProtocolsForRoutes(routes []*channelmodel.LLMRoute, model *llmmodel.LLMModel) []string {
+	modelName := ""
+	if model != nil {
+		modelName = model.Model
+	}
+	checks := []struct {
+		name string
+		ok   func(*channelmodel.LLMRoute) bool
+	}{
+		{protocolOpenAIChatCompletions, func(route *channelmodel.LLMRoute) bool {
+			if supported, declared := routeProtocolDeclaration(route, modelName, protocolOpenAIChatCompletions); declared {
+				return supported
+			}
+			// The model's own capability decides. Without this, dedicated
+			// image/embedding/video models were advertised as chat models and
+			// the call then fell through to billing or the upstream instead of
+			// being rejected as unsupported.
+			if model != nil && !model.ChatCompletions && !model.Responses {
+				return false
+			}
+			return true
+		}},
+		{protocolOpenAIResponses, func(route *channelmodel.LLMRoute) bool {
+			// Require the model capability on every route, official included.
+			// The previous "official routes always support Responses" shortcut
+			// advertised Responses for models the gateway then refused to
+			// route, which the client saw as a 502.
+			if model == nil || !model.Responses {
+				return false
+			}
+			return routeSupportsOpenAIResponses(route, modelName)
+		}},
+		{protocolAnthropicMessages, func(route *channelmodel.LLMRoute) bool {
+			// Messages is a conversational protocol. For organization-owned
+			// routes the model capability is authoritative, so an image or
+			// embedding model cannot enter Messages just because the channel
+			// enabled the native endpoint. Official routes follow Console's
+			// per-model declaration instead, like the chat/responses guards above.
+			if !isOfficialRoute(route) && model != nil && !model.ChatCompletions && !model.Responses {
+				return false
+			}
+			return routeSupportsAnthropicMessages(route, modelName)
+		}},
+		{protocolGeminiGenerateContent, func(route *channelmodel.LLMRoute) bool { return routeSupportsGeminiGenerateContent(route, modelName) }},
+	}
+	result := make([]string, 0, len(checks))
+	for _, check := range checks {
+		for _, route := range routes {
+			if route != nil && check.ok(route) {
+				result = append(result, check.name)
+				break
+			}
+		}
+	}
+	return result
 }
 
 // validateRequest validates the chat request
@@ -941,7 +1044,7 @@ func (s *llmGatewayServiceImpl) createAdapterConfig(selection *ProviderSelection
 		ProviderName:        adapterProvider,
 		ProviderID:          selection.Provider.ID.String(),
 		BaseURL:             selection.Provider.APIBaseURL,
-		Timeout:             500 * time.Second,
+		Timeout:             adapterTimeoutFromSelection(selection),
 		MaxRetries:          3,
 		GuardOutboundURL:    llmConfig.OutboundURLGuardEnabled(),
 		GuardOutboundDNS:    llmConfig.GuardOutboundDNS,
@@ -979,14 +1082,18 @@ func (s *llmGatewayServiceImpl) createAdapterConfig(selection *ProviderSelection
 	return config
 }
 
-// buildConsoleAuthHook returns an AuthHook that signs requests with HMAC-SHA256
-// for console-api internal endpoints.
+// buildConsoleAuthHook returns an AuthHook that authenticates requests to
+// console-api internal endpoints. The configured credential is sent raw in the
+// existing X-ZGI-Internal-Secret slot: Console resolves it against api_keys to
+// recover the caller identity, or falls back to the transitional shared-secret
+// comparison. The HMAC signature is kept for that compatibility path.
 func (s *llmGatewayServiceImpl) buildConsoleAuthHook(organizationID uuid.UUID) func(req *http.Request) {
 	internalAPIKey := appconfig.Current().Console.InternalAPIKey
 	if internalAPIKey == "" {
 		return nil
 	}
 	return func(req *http.Request) {
+		req.Header.Set("X-ZGI-Internal-Secret", internalAPIKey)
 		signConsoleRequest(req, internalAPIKey)
 		if organizationID != uuid.Nil {
 			req.Header.Set("X-Organization-ID", organizationID.String())
@@ -997,6 +1104,9 @@ func (s *llmGatewayServiceImpl) buildConsoleAuthHook(organizationID uuid.UUID) f
 
 // signConsoleRequest adds HMAC-SHA256 authentication headers to an outgoing request.
 func signConsoleRequest(req *http.Request, internalAPIKey string) {
+	if internalAPIKey == "" {
+		return
+	}
 	ts := fmt.Sprintf("%d", time.Now().Unix())
 	message := ts + "|" + req.URL.Path
 	mac := hmac.New(sha256.New, []byte(internalAPIKey))
@@ -1004,6 +1114,10 @@ func signConsoleRequest(req *http.Request, internalAPIKey string) {
 	sig := hex.EncodeToString(mac.Sum(nil))
 	req.Header.Set("X-Internal-Timestamp", ts)
 	req.Header.Set("X-Internal-Signature", sig)
+
+	// MERGE-NOTE(codex-video-image-rollback): per-instance credential on top of the
+	// legacy shared secret. Merge: keep this single line.
+	consolecred.SignRequest(req)
 }
 
 // rollbackPreDeduction releases a pre-deducted reservation after a failed provider attempt.

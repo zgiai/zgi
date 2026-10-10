@@ -78,7 +78,7 @@ func (handler *connectorHandler) preferenceError(c *gin.Context, err error) {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": connectorpreferences.AppCodeInternal.String(), "message": "Unable to load or save new-chat Connector defaults.", "retryable": false})
 		return
 	}
-	projected := handler.errorProjector.Project(err, apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language"))).Presentation
+	projected := handler.errorProjector.ProjectWithRequestID(err, apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language")), c.Writer.Header().Get("X-Request-ID")).Presentation
 	c.Header(apptransport.HeaderApplicationErrorCode, projected.Code.String())
 	c.JSON(projected.HTTPStatus, gin.H{"code": projected.Code.String(), "message": projected.Message, "retryable": projected.Retryable})
 }

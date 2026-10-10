@@ -287,3 +287,31 @@ jobs:
         run: |
           go test ./pkg/mcpclient/... ./internal/modules/connectors/providers/githubmcp/... -count=1
           go test -race ./pkg/mcpclient/... -count=1
+
+  ratingcore:
+    name: ratingcore vector contract
+    runs-on: ${{ fromJSON(vars.CI_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    steps:
+      - name: Repair workspace ownership
+        working-directory: ${{ runner.temp }}
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            alpine:3.22 \
+            chown -R "$(id -u):$(id -g)" /workspace
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: api/go.mod
+          cache: false
+
+      # ratingcore is mirrored byte-for-byte from zgi-console. This test runs
+      # the frozen cross-repo vectors and verifies the sha256 contract lock.
+      - name: Verify ratingcore mirror vectors and hash lock
+        working-directory: api
+        run: go test ./internal/modules/llm/gateway/ratingcore/... -count=1 -v
+

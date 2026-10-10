@@ -81,6 +81,34 @@ func TestUpdateOrganizationUpdatesBillingDisplaySettings(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestUpdateOrganizationUpdatesLLMRoutingStrategy(t *testing.T) {
+	t.Parallel()
+
+	db, mock := newOrganizationUpdateMockDB(t)
+	expectOrganizationRoleLookup(mock, "org-1", "acc-1", string(model.OrganizationRoleAdmin))
+	strategy := model.LLMRoutingStrategyPrice
+	repo := &stubOrganizationUpdateRepo{
+		db: db,
+		organization: &model.Organization{
+			ID:                 "org-1",
+			Name:               "Old Name",
+			Status:             model.OrganizationStatusActive,
+			LLMRoutingStrategy: model.LLMRoutingStrategyStability,
+		},
+	}
+	svc := &organizationService{organizationRepo: repo}
+
+	updated, err := svc.UpdateOrganization(context.Background(), "org-1", "acc-1", &shared_dto.UpdateOrganizationRequest{
+		Name:               "Old Name",
+		LLMRoutingStrategy: &strategy,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, model.LLMRoutingStrategyPrice, updated.LLMRoutingStrategy)
+	require.True(t, repo.updated)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestUpdateOrganizationRejectsInvalidBillingDisplaySettings(t *testing.T) {
 	t.Parallel()
 
@@ -100,6 +128,13 @@ func TestUpdateOrganizationRejectsInvalidBillingDisplaySettings(t *testing.T) {
 		USDToCNYRate: &invalidRate,
 	})
 	require.ErrorIs(t, err, ErrInvalidOrganizationBillingDisplayConfig)
+
+	invalidStrategy := model.LLMRoutingStrategy("balanced")
+	_, err = svc.UpdateOrganization(context.Background(), "org-1", "acc-1", &shared_dto.UpdateOrganizationRequest{
+		Name:               "Org",
+		LLMRoutingStrategy: &invalidStrategy,
+	})
+	require.ErrorIs(t, err, ErrInvalidOrganizationBillingDisplayConfig)
 	require.False(t, repo.updated)
 }
 
@@ -114,6 +149,7 @@ func TestCurrentOrganizationResponseUsesBillingDisplayDefaults(t *testing.T) {
 
 	require.Equal(t, model.BillingDisplayCurrencyUSD, response.BillingDisplayCurrency)
 	require.Equal(t, float64(model.DefaultUSDToCNYRate), response.USDToCNYRate)
+	require.Equal(t, model.LLMRoutingStrategyStability, response.LLMRoutingStrategy)
 }
 
 func TestUpdateOrganizationRejectsDuplicateName(t *testing.T) {

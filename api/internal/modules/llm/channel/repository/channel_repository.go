@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -48,14 +49,25 @@ func NewTenantRouteRepository(db *gorm.DB) TenantRouteRepository {
 }
 
 func (r *tenantRouteRepository) Create(ctx context.Context, route *model.LLMRoute) error {
-	return r.db.WithContext(ctx).Create(route).Error
+	if err := r.db.WithContext(ctx).Create(route).Error; err != nil {
+		return err
+	}
+	return r.persistModelOperations(ctx, route)
 }
 
 func (r *tenantRouteRepository) BatchCreate(ctx context.Context, routes []*model.LLMRoute) error {
 	if len(routes) == 0 {
 		return nil
 	}
-	return r.db.WithContext(ctx).CreateInBatches(routes, 100).Error
+	if err := r.db.WithContext(ctx).CreateInBatches(routes, 100).Error; err != nil {
+		return err
+	}
+	for _, route := range routes {
+		if err := r.persistModelOperations(ctx, route); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *tenantRouteRepository) GetByID(ctx context.Context, organizationID, id uuid.UUID) (*model.LLMRoute, error) {
@@ -65,6 +77,9 @@ func (r *tenantRouteRepository) GetByID(ctx context.Context, organizationID, id 
 		Where("id = ? AND organization_id = ?", id, organizationID).
 		First(&route).Error
 	if err != nil {
+		return nil, err
+	}
+	if err := r.hydrateModelOperations(ctx, &route); err != nil {
 		return nil, err
 	}
 	if err := officialmodel.HydrateRoute(ctx, r.db, &route); err != nil {
@@ -98,15 +113,21 @@ func (r *tenantRouteRepository) List(ctx context.Context, organizationID uuid.UU
 	if err := officialmodel.HydrateRoutes(ctx, r.db, routes); err != nil {
 		return nil, 0, err
 	}
+	if err := r.hydrateModelOperationsForRoutes(ctx, routes); err != nil {
+		return nil, 0, err
+	}
 
 	return routes, total, nil
 }
 
 func (r *tenantRouteRepository) Update(ctx context.Context, route *model.LLMRoute) error {
 	// Use Updates with Select to only update specific fields and avoid constraint violations
-	return r.db.WithContext(ctx).Model(route).
+	if err := r.db.WithContext(ctx).Model(route).
 		Select(routeUpdateFields(route, false)).
-		Updates(route).Error
+		Updates(route).Error; err != nil {
+		return err
+	}
+	return r.persistModelOperations(ctx, route)
 }
 
 func (r *tenantRouteRepository) UpdateWithExpectedCredential(
@@ -132,7 +153,7 @@ func (r *tenantRouteRepository) UpdateWithExpectedCredential(
 	if result.RowsAffected != 1 {
 		return ErrCredentialBindingChanged
 	}
-	return nil
+	return r.persistModelOperations(ctx, route)
 }
 
 func routeUpdateFields(route *model.LLMRoute, includeCredential bool) []string {
@@ -189,6 +210,9 @@ AND usr_cred.deleted_at IS NULL
 		Order("llm_routes.priority DESC, llm_routes.weight DESC").
 		Find(&routes).Error
 
+	if err == nil {
+		err = r.hydrateModelOperationsForRoutes(ctx, routes)
+	}
 	if err == nil {
 		err = officialmodel.HydrateRoutes(ctx, r.db, routes)
 	}
@@ -252,7 +276,60 @@ func (r *tenantRouteRepository) GetPlatformChannels(ctx context.Context) ([]*mod
 	if err := officialmodel.HydrateRoutes(ctx, r.db, routes); err != nil {
 		return nil, fmt.Errorf("failed to hydrate platform channel models: %w", err)
 	}
+	if err := r.hydrateModelOperationsForRoutes(ctx, routes); err != nil {
+		return nil, fmt.Errorf("failed to load platform channel operations: %w", err)
+	}
 	return routes, nil
+}
+
+func (r *tenantRouteRepository) hasModelOperationsColumn() bool {
+	return r.db.Migrator().HasColumn("llm_routes", "model_operations")
+}
+
+func (r *tenantRouteRepository) persistModelOperations(ctx context.Context, route *model.LLMRoute) error {
+	if route == nil || !r.hasModelOperationsColumn() {
+		return nil
+	}
+	raw, err := json.Marshal(route.ModelOperations)
+	if err != nil {
+		return err
+	}
+	return r.db.WithContext(ctx).Table("llm_routes").Where("id = ?", route.ID).Update("model_operations", raw).Error
+}
+
+func (r *tenantRouteRepository) hydrateModelOperations(ctx context.Context, route *model.LLMRoute) error {
+	return r.hydrateModelOperationsForRoutes(ctx, []*model.LLMRoute{route})
+}
+
+func (r *tenantRouteRepository) hydrateModelOperationsForRoutes(ctx context.Context, routes []*model.LLMRoute) error {
+	if len(routes) == 0 || !r.hasModelOperationsColumn() {
+		return nil
+	}
+	ids := make([]uuid.UUID, 0, len(routes))
+	byID := make(map[uuid.UUID]*model.LLMRoute, len(routes))
+	for _, route := range routes {
+		if route == nil {
+			continue
+		}
+		ids = append(ids, route.ID)
+		byID[route.ID] = route
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	var rows []struct {
+		ID  uuid.UUID `gorm:"column:id"`
+		Raw []byte    `gorm:"column:model_operations"`
+	}
+	if err := r.db.WithContext(ctx).Table("llm_routes").Select("id, model_operations").Where("id IN ?", ids).Scan(&rows).Error; err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if route := byID[row.ID]; route != nil && len(row.Raw) > 0 && string(row.Raw) != "null" {
+			_ = json.Unmarshal(row.Raw, &route.ModelOperations)
+		}
+	}
+	return nil
 }
 
 // FindByModel finds all enabled routes that support a specific model
@@ -291,6 +368,9 @@ func (r *tenantRouteRepository) FindByModel(ctx context.Context, organizationID 
 			return nil, fmt.Errorf("failed to hydrate official routes by model %s: %w", modelName, err)
 		}
 		routes = append(routes, officialRoutes...)
+	}
+	if err := r.hydrateModelOperationsForRoutes(ctx, routes); err != nil {
+		return nil, fmt.Errorf("failed to load route operations for model %s: %w", modelName, err)
 	}
 
 	return routes, nil

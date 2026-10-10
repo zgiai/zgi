@@ -397,6 +397,11 @@ function mapImageRuntimeModelToModelItem(item: ImageRuntimeModel): ModelItem {
   return {
     id: `${item.provider}/${item.model}`,
     provider: item.provider,
+    // Runtime models are projected into the same platform-model shape used by
+    // ModelSelector. Platform aggregation groups by the logical vendor and
+    // intentionally skips entries without one, so preserve the provider as a
+    // vendor fallback for both Cloud and custom-channel runtime models.
+    vendor: item.provider,
     model: item.model,
     model_name: label,
     family: item.model,

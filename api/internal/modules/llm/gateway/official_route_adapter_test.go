@@ -1,7 +1,9 @@
 package gateway
 
 import (
+	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/config"
@@ -197,5 +199,37 @@ func TestAdapterProviderOverrideForRoute_QwenImageOpenAIProtocolOnly(t *testing.
 	route.NativeProtocols.OpenAIResponses.Enabled = false
 	if got := adapterProviderOverrideForRoute(route, modelCategoryImage); got != "" {
 		t.Fatalf("native qwen override = %q, want empty", got)
+	}
+}
+
+func TestCreateAdapterConfig_OfficialRouteUsesCloudDefaultTimeout(t *testing.T) {
+	setGatewayTestConfig(t)
+	svc := &llmGatewayServiceImpl{}
+	cfg := svc.createAdapterConfig(&ProviderSelection{
+		UseSystemProvider: true,
+		ChannelProvider:   "zgi-cloud",
+		APIBaseURL:        "http://console.internal/v1/internal",
+		ParamOverride: map[string]interface{}{
+			"upstream_timeout_seconds": json.Number("15"),
+		},
+	}, uuid.New())
+	if cfg.Timeout != defaultOfficialAdapterTimeout {
+		t.Fatalf("official timeout = %s, want %s", cfg.Timeout, defaultOfficialAdapterTimeout)
+	}
+}
+
+func TestCreateAdapterConfig_PrivateRouteReadsUpstreamTimeoutOverride(t *testing.T) {
+	setGatewayTestConfig(t)
+	svc := &llmGatewayServiceImpl{}
+	cfg := svc.createAdapterConfig(&ProviderSelection{
+		UseSystemProvider: false,
+		ChannelProvider:   "openai",
+		APIBaseURL:        "https://api.openai.com/v1",
+		ParamOverride: map[string]interface{}{
+			"upstream_timeout_seconds": json.Number("15"),
+		},
+	}, uuid.New())
+	if cfg.Timeout != 15*time.Second {
+		t.Fatalf("private timeout = %s, want 15s", cfg.Timeout)
 	}
 }

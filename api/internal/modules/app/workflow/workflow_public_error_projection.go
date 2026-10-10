@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/errors/failureprojection"
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 )
@@ -44,11 +45,25 @@ func projectWorkflowEventDataForInvocation(invokeFrom, eventType string, input m
 	case workflowpause.EventNodeFinished,
 		"iteration_completed", "loop_completed":
 		data = projectWorkflowExecutionEventError(data)
+		if workflowEventHasFailureStatus(data) {
+			data = withWorkflowFailureMetadata(data)
+		}
 	case "iteration_failed", "loop_failed":
 		data = failureprojection.ProjectPublicPayload(data, workflowPublicFailureMessage, true)
+		data = withWorkflowFailureMetadata(data)
 	case "workflow_snapshot":
 		redactWorkflowSnapshotErrors(data)
 	}
+	return data
+}
+
+func withWorkflowFailureMetadata(data map[string]interface{}) map[string]interface{} {
+	if data == nil {
+		data = map[string]interface{}{}
+	}
+	data["error_code"] = "llm.invocation.failed"
+	data["params"] = map[string]interface{}{}
+	data["error_id"] = uuid.NewString()
 	return data
 }
 
@@ -84,7 +99,14 @@ func workflowEventHasFailureStatus(data map[string]interface{}) bool {
 }
 
 func workflowPublicFailurePayload() map[string]interface{} {
-	return map[string]interface{}{"message": workflowPublicFailureMessage}
+	return map[string]interface{}{
+		"message":    workflowPublicFailureMessage,
+		"code":       "llm.invocation.failed",
+		"error_code": "llm.invocation.failed",
+		"params":     map[string]interface{}{},
+		"retryable":  true,
+		"error_id":   uuid.NewString(),
+	}
 }
 
 func projectWorkflowExecutionEventError(data map[string]interface{}) map[string]interface{} {

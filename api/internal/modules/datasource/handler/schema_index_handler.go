@@ -140,6 +140,6 @@ func (h *SchemaIndexHandler) fail(c *gin.Context, err error) {
 		err = apperror.Wrap(err, code, apperror.WithOperation("database.schema_index"))
 	}
 	locale, _ := catalog.ParseLocale(c.GetHeader("Accept-Language"))
-	result := h.projector.Project(err, locale).Presentation
+	result := h.projector.ProjectWithRequestID(err, locale, c.Writer.Header().Get("X-Request-ID")).Presentation
 	c.JSON(result.HTTPStatus, response.Response{Code: result.Code.String(), Message: result.Message})
 }

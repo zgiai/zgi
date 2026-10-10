@@ -86,7 +86,7 @@ func (s *llmGatewayServiceImpl) GenerateLyrics(
 	if len(selections) == 0 {
 		return nil, reportedNoProviderAvailableError(ctx, request.Model, organizationID.String(), shadowOrganizationID.String())
 	}
-	if !selections[0].Model.MusicGeneration {
+	if !modelSupportsMusicGeneration(&selections[0].Model) {
 		return nil, fmt.Errorf("%w: model %q does not support music generation", adapter.ErrCapabilityUnsupported, request.Model)
 	}
 
@@ -112,6 +112,7 @@ func (s *llmGatewayServiceImpl) GenerateLyrics(
 				APIKeyID:              strings.TrimSpace(apiKey.ID),
 				ModelName:             request.Model,
 				ProviderName:          selection.Provider.Provider,
+				RoutingStrategy:       selection.RoutingStrategy,
 			})
 			result, err := lyricsAdapter.GenerateLyrics(callContext, &adapter.LyricsRequest{
 				RequestID: request.RequestID,
@@ -120,6 +121,9 @@ func (s *llmGatewayServiceImpl) GenerateLyrics(
 			})
 			if err != nil {
 				reportLLMProviderFailure(ctx, err, "llm.provider.request_failed", selection.Provider.Provider, selection.Model.Model, organizationID.String(), 0, getChannelID(selection), true, true)
+			}
+			if err == nil {
+				err = s.mirrorPlatformMediaSettlement(ctx, apiKey, selection, shadowOrganizationID, request.RequestID, request.RequestID+":lyrics", PricingOperationLyrics, false, startedAt, result.Settlement)
 			}
 			return result, err
 		}
@@ -141,7 +145,7 @@ func (s *llmGatewayServiceImpl) GenerateLyrics(
 			startedAt,
 			request.RequestID,
 			request.RequestID+":lyrics",
-			"",
+			quote,
 		)
 		if err != nil {
 			return nil, err
@@ -231,7 +235,7 @@ func (s *llmGatewayServiceImpl) GenerateMusic(
 	if len(selections) == 0 {
 		return reportedNoProviderAvailableError(ctx, request.Model, organizationID.String(), shadowOrganizationID.String())
 	}
-	if !selections[0].Model.MusicGeneration {
+	if !modelSupportsMusicGeneration(&selections[0].Model) {
 		return fmt.Errorf("%w: model %q does not support music generation", adapter.ErrCapabilityUnsupported, request.Model)
 	}
 
@@ -258,6 +262,7 @@ func (s *llmGatewayServiceImpl) GenerateMusic(
 				ModelName:             request.Model,
 				ProviderName:          selection.Provider.Provider,
 				IsStreaming:           true,
+				RoutingStrategy:       selection.RoutingStrategy,
 			})
 		}
 		destination := &musicDestinationWriter{dst: dst}
@@ -274,7 +279,10 @@ func (s *llmGatewayServiceImpl) GenerateMusic(
 			if err != nil && (destination.writeErr == nil || !errors.Is(err, destination.writeErr)) {
 				reportLLMProviderFailure(ctx, err, "llm.provider.stream_failed", selection.Provider.Provider, selection.Model.Model, organizationID.String(), 0, getChannelID(selection), true, true)
 			}
-			return err
+			if err != nil {
+				return err
+			}
+			return s.mirrorPlatformMediaSettlement(ctx, apiKey, selection, shadowOrganizationID, request.RequestID, request.RequestID, PricingOperationMusic, true, startedAt, adapterRequest.Settlement)
 		}
 
 		usage := MeteredUsage{Operation: PricingOperationMusic, Meter: meterOutputTrack, BaseUnit: baseUnitTrack, Quantity: 1}
@@ -294,7 +302,7 @@ func (s *llmGatewayServiceImpl) GenerateMusic(
 			startedAt,
 			request.RequestID,
 			request.RequestID,
-			"",
+			quote,
 		)
 		if err != nil {
 			return err
@@ -381,6 +389,24 @@ func (s *llmGatewayServiceImpl) CompensateMusicDelivery(
 		APIKeyID:              strings.TrimSpace(apiKey.ID),
 	})
 	return compensator.CompensateMusicDelivery(callContext, requestID)
+}
+
+// modelSupportsMusicGeneration accepts both catalog capability shapes. The
+// endpoint boolean is retained for legacy rows, while newer publications use
+// the canonical music-gen use case label.
+func modelSupportsMusicGeneration(model *llmmodel.LLMModel) bool {
+	if model == nil {
+		return false
+	}
+	if model.MusicGeneration {
+		return true
+	}
+	for _, useCase := range model.UseCases {
+		if strings.EqualFold(strings.TrimSpace(useCase), string(llmmodel.UseCaseMusicGen)) {
+			return true
+		}
+	}
+	return false
 }
 
 func validateMusicGatewayRequest(request *MusicRequest, dst io.Writer) error {

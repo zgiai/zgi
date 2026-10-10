@@ -129,6 +129,10 @@ func (f *fakeModelService) BatchToggleModels(ctx context.Context, organizationID
 	return nil
 }
 
+func (f *fakeModelService) ListPricingIssues(ctx context.Context, organizationID uuid.UUID) (*dto.PricingIssuesListResponse, error) {
+	return &dto.PricingIssuesListResponse{Items: nil, Total: 0}, nil
+}
+
 func (f *fakeModelService) ListOfficialModels(ctx context.Context) ([]*model.LLMModel, error) {
 	return nil, errors.New("not implemented")
 }

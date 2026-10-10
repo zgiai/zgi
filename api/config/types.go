@@ -18,6 +18,10 @@ const (
 
 	defaultServerPort = 2670
 	defaultGRPCPort   = 50051
+
+	// defaultOrganizationReportInterval is how often pre reports its organization
+	// inventory to console when CONSOLE_SYNC_ORGANIZATION_REPORT_INTERVAL is unset.
+	defaultOrganizationReportInterval = 5 * time.Minute
 )
 
 type Config struct {
@@ -153,6 +157,17 @@ type ConsoleConfig struct {
 	GRPCAddr       string `json:"grpc_addr"`
 	InternalAPIKey string `json:"-"`
 	WebURL         string `json:"web_url"`
+
+	// Per-instance control-plane credential issued by console (Cloud mode).
+	InstanceID     string `json:"instance_id,omitempty"`
+	InstanceSecret string `json:"-"`
+
+	// Control-plane sync loop cadence (Cloud mode only).
+	SyncEnabled     bool `json:"sync_enabled"`
+	SyncIntervalSec int  `json:"sync_interval_sec"`
+	SyncStaleSec    int  `json:"sync_stale_sec"`
+	// Organization inventory report cadence (Cloud mode only). 0 disables the report.
+	SyncOrganizationReportInterval time.Duration `json:"sync_organization_report_interval"`
 }
 
 type LLMPolicyPromptConfig struct {

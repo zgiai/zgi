@@ -1,14 +1,19 @@
 /**
  * Simplified error notification utilities for HTTP client.
- * Only handles network errors with i18n support.
- * Other errors are thrown directly with backend messages.
+ * Renders cataloged Pre application codes with localized title, action hint,
+ * error_id, and a retry entry when the code is retryable.
  */
-import { toast } from 'sonner';
+import { toast, type Action } from 'sonner';
 import { AxiosError } from 'axios';
 import type { ReactNode } from 'react';
 import { getCurrentLocale } from '@/lib/i18n';
 import zhHans from '@/i18n/modules/common/zh-Hans';
 import enUS from '@/i18n/modules/common/en-US';
+import {
+  applicationErrorCodeFromValue,
+  applicationErrorCopy,
+  isApplicationErrorCode,
+} from '@/services/application-error-i18n';
 
 const isClient = (): boolean => typeof window !== 'undefined';
 const getIsZhHans = (): boolean => getCurrentLocale() === 'zh-Hans';
@@ -21,6 +26,7 @@ interface ToastInput {
   variant?: ToastVariant;
   duration?: number;
   id?: string | number;
+  action?: Action;
 }
 
 interface NormalizeToastDescriptionOptions {
@@ -70,23 +76,24 @@ export function normalizeToastDescription(
 const safeToast = (props: ToastInput): void => {
   if (!isClient()) return;
 
-  const { title, variant, description, duration, id } = props;
+  const { title, variant, description, duration, id, action } = props;
+  const shared = { description, duration, id, action };
 
   switch (variant) {
     case 'success':
-      toast.success(title, { description, duration, id });
+      toast.success(title, shared);
       break;
     case 'destructive':
-      toast.error(title, { description, duration, id });
+      toast.error(title, shared);
       break;
     case 'warning':
-      toast.warning(title, { description, duration, id });
+      toast.warning(title, shared);
       break;
     case 'info':
-      toast.info(title, { description, duration, id });
+      toast.info(title, shared);
       break;
     default:
-      toast(title, { description, duration, id });
+      toast(title, shared);
   }
 };
 
@@ -110,14 +117,112 @@ export interface ErrorInfo {
 }
 
 /**
- * Get network error message based on current locale
+ * ApplicationErrorPresentation is the code-first rendering of a Pre API error.
+ * The browser consumes Pre's projected code, never the internal ErrorInfo or
+ * the raw transport text.
  */
-function getNetworkErrorMessage(): string {
-  return getIsZhHans() ? zhHans.networkError : enUS.networkError;
+export interface ApplicationErrorPresentation {
+  code?: string;
+  title: string;
+  description?: string;
+  errorId?: string;
+  retryable: boolean;
 }
 
 function getCommonMessages() {
   return getIsZhHans() ? zhHans : enUS;
+}
+
+function recordValue(value: unknown, key: string): unknown {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>)[key] : undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function extractErrorId(error: unknown): string | undefined {
+  const data = recordValue(recordValue(error, 'response'), 'data');
+  const nestedError = recordValue(data, 'error');
+  return (
+    stringValue(recordValue(data, 'error_id')) ??
+    stringValue(recordValue(nestedError, 'error_id'))
+  );
+}
+
+function extractRetryable(error: unknown): boolean {
+  const data = recordValue(recordValue(error, 'response'), 'data');
+  return recordValue(data, 'retryable') === true;
+}
+
+function isNetworkFailure(error: unknown): boolean {
+  if (!(error instanceof AxiosError)) {
+    return false;
+  }
+  if (error.response) {
+    return error.response.status === 0;
+  }
+  return (
+    error.code === 'NETWORK_ERROR' ||
+    error.code === 'ERR_NETWORK' ||
+    error.code === 'ECONNABORTED' ||
+    error.message === 'Network Error'
+  );
+}
+
+/**
+ * Get the code-first presentation for an error, or null when the error has no
+ * cataloged code and no network/status classification. Callers must not echo
+ * the raw backend message for a recognized product domain.
+ */
+export function getApplicationErrorPresentation(error: unknown): ApplicationErrorPresentation | null {
+  if (isAuthSessionError(error)) {
+    return { title: getCommonMessages().requestErrors.sessionExpired, retryable: false };
+  }
+
+  const code = applicationErrorCodeFromValue(error) ?? undefined;
+  const errorId = extractErrorId(error);
+  const serverRetryable = extractRetryable(error);
+  const copy = code ? applicationErrorCopy(code) : null;
+  if (code && copy) {
+    return {
+      code,
+      title: copy.title,
+      description: copy.action,
+      errorId,
+      retryable: serverRetryable || copy.retryable,
+    };
+  }
+
+  if (code && isApplicationErrorCode(code)) {
+    // Known product domain, unknown code: render a safe generic title instead
+    // of leaking the backend message.
+    return { code, title: getCommonMessages().requestErrors.generic, errorId, retryable: serverRetryable };
+  }
+
+  if (isNetworkFailure(error)) {
+    return { title: getNetworkErrorMessage(), errorId, retryable: false };
+  }
+
+  return null;
+}
+
+function formatApplicationError(presentation: ApplicationErrorPresentation): string {
+  const parts = [presentation.title];
+  if (presentation.description) {
+    parts.push(presentation.description);
+  }
+  if (presentation.errorId) {
+    parts.push(`${getCommonMessages().requestErrors.errorId}: ${presentation.errorId}`);
+  }
+  return parts.join('\n');
+}
+
+/**
+ * Get network error message based on current locale
+ */
+function getNetworkErrorMessage(): string {
+  return getIsZhHans() ? zhHans.networkError : enUS.networkError;
 }
 
 function normalizeBackendMessage(
@@ -215,14 +320,56 @@ export class ErrorNotificationService {
       duration: 5000,
     });
   }
+
+  /**
+   * Show a code-first API error toast. The title and action hint come from the
+   * catalog; error_id is shown for support and a retry action is offered when
+   * the code is retryable.
+   */
+  static showApiError(
+    error: unknown,
+    options: { onRetry?: () => void; id?: string | number } = {}
+  ): void {
+    if (!isClient()) return;
+
+    const presentation = getApplicationErrorPresentation(error);
+    const title = presentation?.title || getCommonMessages().requestErrors.generic;
+    const descriptionLines: string[] = [];
+    if (presentation?.description) {
+      descriptionLines.push(presentation.description);
+    }
+    if (presentation?.errorId) {
+      descriptionLines.push(
+        `${getCommonMessages().requestErrors.errorId}: ${presentation.errorId}`
+      );
+    }
+    const action =
+      presentation?.retryable && options.onRetry
+        ? {
+            label: getCommonMessages().requestErrors.retry,
+            onClick: options.onRetry,
+          }
+        : undefined;
+
+    safeToast({
+      title,
+      description: descriptionLines.length > 0 ? descriptionLines.join('\n') : undefined,
+      variant: 'destructive',
+      duration: 5000,
+      id: options.id,
+      action,
+    });
+  }
 }
 
 /**
- * Extract error message from unknown error types
+ * Extract a user-safe error message. Cataloged codes are rendered by code;
+ * everything else keeps the legacy network/status/backend-message behavior.
  */
 export function getErrorMessage(error: unknown): string {
-  if (isAuthSessionError(error)) {
-    return getCommonMessages().requestErrors.sessionExpired;
+  const presentation = getApplicationErrorPresentation(error);
+  if (presentation) {
+    return formatApplicationError(presentation);
   }
 
   if (error instanceof AxiosError) {
@@ -274,4 +421,9 @@ export function isCanceledRequestError(error: unknown): boolean {
   return /\babort(?:ed)?\b/i.test(msg) || /\bcancell?ed\b/i.test(msg);
 }
 
-export const { showNetworkError, showValidationError, showError } = ErrorNotificationService;
+export const {
+  showNetworkError,
+  showValidationError,
+  showError,
+  showApiError,
+} = ErrorNotificationService;

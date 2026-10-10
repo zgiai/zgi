@@ -164,6 +164,23 @@ func TestCatalogFromResponseIncludesVendorDirectory(t *testing.T) {
 	require.Equal(t, "openai", catalog.Vendors[0].Metadata["icon_key"])
 }
 
+func TestCatalogFromResponseCorrectsLegacyQwen35PlusLimits(t *testing.T) {
+	resp := &pb.GetPublishedCatalogResponse{Models: []*pb.CatalogModel{
+		{Provider: "agicto", Model: "qwen3.5-plus", ContextWindow: 100000, MaxOutputTokens: 4096},
+		{Provider: "agicto", Model: "qwen3.5-plus-2026-02-15", ContextWindow: 100000, MaxOutputTokens: 8192},
+		{Provider: "other", Model: "other-model", ContextWindow: 100000, MaxOutputTokens: 4096},
+	}}
+
+	catalog := catalogFromResponse(resp)
+	require.Len(t, catalog.Models, 3)
+	require.Equal(t, 1000000, catalog.Models[0].ContextWindow)
+	require.Equal(t, 65536, catalog.Models[0].MaxOutputTokens)
+	require.Equal(t, 1000000, catalog.Models[1].ContextWindow)
+	require.Equal(t, 8192, catalog.Models[1].MaxOutputTokens)
+	require.Equal(t, 100000, catalog.Models[2].ContextWindow)
+	require.Equal(t, 4096, catalog.Models[2].MaxOutputTokens)
+}
+
 func TestPublishedModelLifecycleFieldsMapping(t *testing.T) {
 	resp := &pb.GetPublishedCatalogResponse{
 		Version:     12,

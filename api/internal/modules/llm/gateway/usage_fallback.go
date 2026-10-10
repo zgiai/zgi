@@ -13,6 +13,7 @@ type nativeUsageBodyFormat string
 const (
 	nativeUsageBodyFormatResponses nativeUsageBodyFormat = "responses"
 	nativeUsageBodyFormatAnthropic nativeUsageBodyFormat = "anthropic"
+	nativeUsageBodyFormatGemini    nativeUsageBodyFormat = "gemini"
 )
 
 func (s *llmGatewayServiceImpl) estimateMissingChatUsage(req *adapter.ChatRequest, resp *adapter.ChatResponse) *adapter.Usage {
@@ -234,6 +235,14 @@ func nativeUsageStreamEvent(model string, usage *adapter.Usage, format nativeUsa
 				"output_tokens": usage.CompletionTokens,
 			},
 		})
+	case nativeUsageBodyFormatGemini:
+		return rawJSONStreamEvent("", map[string]any{
+			"usageMetadata": map[string]any{
+				"promptTokenCount":     usage.PromptTokens,
+				"candidatesTokenCount": usage.CompletionTokens,
+				"totalTokenCount":      usage.TotalTokens,
+			},
+		})
 	default:
 		return rawJSONStreamEvent("response.completed", map[string]any{
 			"type": "response.completed",
@@ -262,9 +271,37 @@ func isNativeTerminalStreamEvent(format nativeUsageBodyFormat, event adapter.Raw
 	switch format {
 	case nativeUsageBodyFormatAnthropic:
 		return eventName == "message_stop"
+	case nativeUsageBodyFormatGemini:
+		return false
 	default:
 		return eventName == "response.completed"
 	}
+}
+
+func isNativeFailureStreamEvent(format nativeUsageBodyFormat, event adapter.RawStreamEvent) bool {
+	eventName := strings.TrimSpace(event.Event)
+	switch format {
+	case nativeUsageBodyFormatAnthropic:
+		if eventName == "error" {
+			return true
+		}
+	case nativeUsageBodyFormatResponses:
+		if eventName == "response.failed" {
+			return true
+		}
+	}
+	if len(event.Data) == 0 {
+		return false
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(event.Data, &payload); err != nil {
+		return false
+	}
+	if eventType, _ := payload["type"].(string); eventType == "response.failed" || eventType == "error" {
+		return true
+	}
+	_, hasError := payload["error"]
+	return format == nativeUsageBodyFormatGemini && hasError
 }
 
 func injectUsageIntoNativeTerminalEvent(event adapter.RawStreamEvent, model string, usage *adapter.Usage, format nativeUsageBodyFormat) (adapter.RawStreamEvent, bool) {
@@ -353,8 +390,9 @@ func nativeRawBodyHasUsage(body json.RawMessage) bool {
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return false
 	}
-	_, ok := payload["usage"]
-	return ok
+	_, usageOK := payload["usage"]
+	_, geminiUsageOK := payload["usageMetadata"]
+	return usageOK || geminiUsageOK
 }
 
 func ensureEmbeddingUsage(resp *adapter.EmbeddingsResponse, promptTokens int) (actualTokens int, estimated bool) {
@@ -563,6 +601,12 @@ func setNativeUsageInRawBody(body json.RawMessage, usage *adapter.Usage, format 
 		payload["usage"] = map[string]any{
 			"input_tokens":  usage.PromptTokens,
 			"output_tokens": usage.CompletionTokens,
+		}
+	case nativeUsageBodyFormatGemini:
+		payload["usageMetadata"] = map[string]any{
+			"promptTokenCount":     usage.PromptTokens,
+			"candidatesTokenCount": usage.CompletionTokens,
+			"totalTokenCount":      usage.TotalTokens,
 		}
 	default:
 		payload["usage"] = map[string]any{

@@ -890,6 +890,7 @@ func (h *OrganizationHandler) CreateOrganization(c *gin.Context) {
 			Status:                 organization.Status,
 			BillingDisplayCurrency: organization.BillingDisplayCurrency,
 			USDToCNYRate:           usdToCNYRate,
+			LLMRoutingStrategy:     organization.LLMRoutingStrategy,
 			CreatedAt:              organization.CreatedAt.Unix(),
 			OrganizationRole:       model.OrganizationRoleOwner,
 		},
@@ -3274,6 +3275,7 @@ func (h *OrganizationHandler) UpdateOrganization(c *gin.Context) {
 		ShortName              *string                       `json:"short_name"`
 		BillingDisplayCurrency *model.BillingDisplayCurrency `json:"billing_display_currency"`
 		USDToCNYRate           *float64                      `json:"usd_to_cny_rate"`
+		LLMRoutingStrategy     *model.LLMRoutingStrategy     `json:"llm_routing_strategy"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -3292,6 +3294,7 @@ func (h *OrganizationHandler) UpdateOrganization(c *gin.Context) {
 		ShortName:              req.ShortName,
 		BillingDisplayCurrency: req.BillingDisplayCurrency,
 		USDToCNYRate:           req.USDToCNYRate,
+		LLMRoutingStrategy:     req.LLMRoutingStrategy,
 	})
 	if err != nil {
 		h.handleUpdateOrganizationError(c, err)
@@ -3313,6 +3316,7 @@ func (h *OrganizationHandler) PatchOrganization(c *gin.Context) {
 		ShortName              *string                       `json:"short_name"`
 		BillingDisplayCurrency *model.BillingDisplayCurrency `json:"billing_display_currency"`
 		USDToCNYRate           *float64                      `json:"usd_to_cny_rate"`
+		LLMRoutingStrategy     *model.LLMRoutingStrategy     `json:"llm_routing_strategy"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -3334,6 +3338,7 @@ func (h *OrganizationHandler) PatchOrganization(c *gin.Context) {
 		ShortName:              req.ShortName,
 		BillingDisplayCurrency: req.BillingDisplayCurrency,
 		USDToCNYRate:           req.USDToCNYRate,
+		LLMRoutingStrategy:     req.LLMRoutingStrategy,
 	})
 	if err != nil {
 		h.handleUpdateOrganizationError(c, err)

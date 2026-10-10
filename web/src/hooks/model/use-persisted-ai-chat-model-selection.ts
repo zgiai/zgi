@@ -17,7 +17,11 @@ import {
   type AiModelScope,
 } from '@/utils/ui-local';
 
-const EMPTY_MODEL_VALUE: AIChatModelValue = { provider: '', model: '', params: {} };
+const EMPTY_MODEL_VALUE: AIChatModelValue = {
+  provider: '',
+  model: '',
+  params: {},
+};
 
 function modelMatches(
   candidate: Pick<AIChatModelValue, 'provider' | 'model'> | null | undefined,
@@ -31,7 +35,21 @@ function isModelAvailable(
   candidate: Pick<AIChatModelValue, 'provider' | 'model'> | null | undefined,
   models: ModelItem[]
 ) {
-  return models.some(model => modelMatches(candidate, model));
+  if (models.some(model => modelMatches(candidate, model))) return true;
+  if (!candidate?.provider || !candidate.model) return false;
+  const equivalents = models.filter(
+    model =>
+      !model.is_custom &&
+      model.model === candidate.model &&
+      (model.vendor === candidate.provider || model.provider === candidate.provider)
+  );
+  if (equivalents.length > 0) return true;
+  const vendors = new Set(
+    models
+      .filter(model => !model.is_custom && model.model === candidate.model)
+      .map(model => model.vendor || model.provider)
+  );
+  return vendors.size === 1;
 }
 
 function toAIChatModelValue(value: DefaultModelValue): AIChatModelValue {
@@ -72,7 +90,13 @@ export function usePersistedAIChatModelSelection({
   const [modelSelectorValue, setModelSelectorValue] = useState<AIChatModelValue>(() => {
     if (!accountId) return EMPTY_MODEL_VALUE;
     const saved = getLastSelectedAiModel(accountId, scope);
-    return saved ? { provider: saved.provider, model: saved.model, params: {} } : EMPTY_MODEL_VALUE;
+    return saved
+      ? {
+          provider: saved.provider,
+          model: saved.model,
+          params: {},
+        }
+      : EMPTY_MODEL_VALUE;
   });
   const [isInitialModelResolved, setIsInitialModelResolved] = useState(false);
   const availableModels = useAvailableModels({ use_case: availabilityUseCase ?? useCase });
@@ -146,9 +170,7 @@ export function usePersistedAIChatModelSelection({
     }
 
     const legacySaved =
-      legacyScope && legacyScope !== scope
-        ? getLastSelectedAiModel(accountId, legacyScope)
-        : null;
+      legacyScope && legacyScope !== scope ? getLastSelectedAiModel(accountId, legacyScope) : null;
     if (
       legacySaved?.provider &&
       legacySaved.model &&

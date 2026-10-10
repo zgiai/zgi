@@ -18,7 +18,7 @@ func (h *LLMHandler) CreateImage(c *gin.Context) {
 	// 2. Parse request
 	var req adapter.ImageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeOpenAIProtocolError(c, invalidRequestProtocolError(fmt.Sprintf("Invalid request: %v", err)))
+		writeOpenAIProtocolError(c, h.localizedInvalidRequest(c, invalidRequestProtocolError(fmt.Sprintf("Invalid request: %v", err))))
 		return
 	}
 
