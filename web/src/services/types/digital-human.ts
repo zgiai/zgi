@@ -50,7 +50,11 @@ export interface DigitalHumanExecutionRuntimeConfig {
 export interface DigitalHumanExecutionRuntimeCapability {
   available: boolean;
   can_enable: boolean;
-  reason?: 'disabled' | 'organization_not_enabled' | 'runtime_unavailable' | string;
+  reason?: 'disabled' | 'organization_not_enabled' | 'runtime_unavailable' | 'entry_not_enabled' | string;
+  entry_capabilities?: Record<string, {
+    available: boolean;
+    reason?: string;
+  }>;
 }
 
 export interface DigitalHumanDefinition {

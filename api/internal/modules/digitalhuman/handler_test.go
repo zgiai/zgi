@@ -108,6 +108,7 @@ func TestHandlerRequiresWorkspaceScope(t *testing.T) {
 
 func TestHandlerProjectsSafeExecutionCapability(t *testing.T) {
 	scope := testScope()
+	t.Setenv("ZGI_AGENT_RUNTIME_ENTRY_ALLOWLIST_JSON", `{"digital_human:console":["`+scope.OrganizationID.String()+`"]}`)
 	h := &Handler{executionApprovals: executionruntime.Approvals{
 		Enabled:          true,
 		GatewayReady:     true,
@@ -128,6 +129,55 @@ func TestHandlerProjectsSafeExecutionCapability(t *testing.T) {
 	if bytes.Contains(encoded, []byte("standard")) || bytes.Contains(encoded, []byte("local-gvisor")) {
 		t.Fatalf("runtime internals leaked in capability: %s", encoded)
 	}
+	if entry := detail.ExecutionRuntimeCapability.EntryCapabilities["console"]; !entry.Available || entry.Reason != "" {
+		t.Fatalf("console capability = %+v", entry)
+	}
+	if entry := detail.ExecutionRuntimeCapability.EntryCapabilities["channel"]; entry.Available || entry.Reason != "entry_not_enabled" {
+		t.Fatalf("channel capability = %+v", entry)
+	}
+}
+
+func TestHandlerProjectsDigitalHumanEntryAdmission(t *testing.T) {
+	scope := testScope()
+	base := &Handler{executionApprovals: executionruntime.Approvals{
+		Enabled:          true,
+		GatewayReady:     true,
+		DefaultProfileID: "standard",
+		Profiles: map[string]executionruntime.ProfileApproval{
+			"standard": {Backend: "local-gvisor", OrganizationIDs: []string{scope.OrganizationID.String()}, PolicyIDs: []string{"offline"}},
+		},
+	}}
+
+	t.Run("explicit empty admission closes every entry", func(t *testing.T) {
+		t.Setenv("ZGI_AGENT_RUNTIME_ENTRY_ALLOWLIST_JSON", `{}`)
+		result := base.decorateExecutionRuntimeCapability(scope, &Detail{}).(*Detail)
+		capability := result.ExecutionRuntimeCapability
+		if capability.Available || capability.CanEnable || capability.Reason != "entry_not_enabled" {
+			t.Fatalf("capability = %+v", capability)
+		}
+		if len(capability.EntryCapabilities) != 5 {
+			t.Fatalf("entry capabilities = %+v", capability.EntryCapabilities)
+		}
+	})
+	t.Run("one admitted entry makes capability usable", func(t *testing.T) {
+		t.Setenv("ZGI_AGENT_RUNTIME_ENTRY_ALLOWLIST_JSON", `{"digital_human:channel":["`+scope.OrganizationID.String()+`"]}`)
+		result := base.decorateExecutionRuntimeCapability(scope, &Detail{}).(*Detail)
+		capability := result.ExecutionRuntimeCapability
+		if !capability.Available || !capability.CanEnable || capability.Reason != "" {
+			t.Fatalf("capability = %+v", capability)
+		}
+		if !capability.EntryCapabilities["channel"].Available || capability.EntryCapabilities["console"].Available {
+			t.Fatalf("entry capabilities = %+v", capability.EntryCapabilities)
+		}
+	})
+	t.Run("legacy empty environment does not admit digital human", func(t *testing.T) {
+		t.Setenv("ZGI_AGENT_RUNTIME_ENTRY_ALLOWLIST_JSON", "")
+		result := base.decorateExecutionRuntimeCapability(scope, &Detail{}).(*Detail)
+		capability := result.ExecutionRuntimeCapability
+		if capability.Available || capability.CanEnable || capability.Reason != "entry_not_enabled" {
+			t.Fatalf("capability = %+v", capability)
+		}
+	})
 }
 
 func digitalHumanHandlerRouter(t *testing.T, service HandlerService, scope *Scope) *gin.Engine {

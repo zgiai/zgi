@@ -476,21 +476,39 @@ func (h *Handler) decorateExecutionRuntimeCapability(scope Scope, result any) an
 	}
 	capability := &ExecutionRuntimeCapability{}
 	_, err := h.executionApprovals.Resolve(scope.OrganizationID.String(), true)
-	if err == nil {
-		capability.Available = true
-		capability.CanEnable = true
+	if err != nil {
+		capability.Reason = "runtime_unavailable"
+		var denied *executionruntime.ApprovalError
+		if errors.As(err, &denied) {
+			switch denied.Operation {
+			case "agent_execution.disabled_by_env":
+				capability.Reason = "disabled"
+			case "agent_execution.organization_unapproved":
+				capability.Reason = "organization_not_enabled"
+			}
+		}
 		detail.ExecutionRuntimeCapability = capability
 		return detail
 	}
-	capability.Reason = "runtime_unavailable"
-	var denied *executionruntime.ApprovalError
-	if errors.As(err, &denied) {
-		switch denied.Operation {
-		case "agent_execution.disabled_by_env":
-			capability.Reason = "disabled"
-		case "agent_execution.organization_unapproved":
-			capability.Reason = "organization_not_enabled"
+	entries, admissionErr := executionruntime.EntryAdmissionFromEnv()
+	for _, entry := range []string{"console", "webapp", "external-api", "channel", "task"} {
+		entryCapability := ExecutionRuntimeEntryCapability{}
+		if admissionErr == nil && executionruntime.DigitalHumanEntryImplemented("digital_human", entry) && entries.Allows(scope.OrganizationID.String(), "digital_human", entry) {
+			entryCapability.Available = true
+			capability.Available = true
 		}
+		if !entryCapability.Available {
+			entryCapability.Reason = "entry_not_enabled"
+		}
+		if capability.EntryCapabilities == nil {
+			capability.EntryCapabilities = make(map[string]ExecutionRuntimeEntryCapability, 5)
+		}
+		capability.EntryCapabilities[entry] = entryCapability
+	}
+	if capability.Available {
+		capability.CanEnable = true
+	} else {
+		capability.Reason = "entry_not_enabled"
 	}
 	detail.ExecutionRuntimeCapability = capability
 	return detail

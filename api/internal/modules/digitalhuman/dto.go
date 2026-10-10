@@ -122,8 +122,16 @@ type Detail struct {
 // deployment-owned Linux runtime admission decision. It intentionally omits
 // profile, policy, backend, snapshot, and organization identifiers.
 type ExecutionRuntimeCapability struct {
+	Available         bool                                       `json:"available"`
+	CanEnable         bool                                       `json:"can_enable"`
+	Reason            string                                     `json:"reason,omitempty"`
+	EntryCapabilities map[string]ExecutionRuntimeEntryCapability `json:"entry_capabilities,omitempty"`
+}
+
+// ExecutionRuntimeEntryCapability describes admission for one DigitalHuman
+// entry. It contains no deployment-owned profile or organization details.
+type ExecutionRuntimeEntryCapability struct {
 	Available bool   `json:"available"`
-	CanEnable bool   `json:"can_enable"`
 	Reason    string `json:"reason,omitempty"`
 }
 

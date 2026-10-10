@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/pkg/apperror"
 	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
@@ -76,6 +77,7 @@ func TestAgentExecutionPackageInstallationUsesOperatorNetworkMode(t *testing.T) 
 }
 
 func TestAgentExecutionCapabilityProjectsOnlySafeAdmissionState(t *testing.T) {
+	t.Setenv("ZGI_AGENT_RUNTIME_ENTRY_ALLOWLIST_JSON", "")
 	base := agentExecutionApprovals{
 		Enabled:          true,
 		GatewayReady:     true,
@@ -95,6 +97,43 @@ func TestAgentExecutionCapabilityProjectsOnlySafeAdmissionState(t *testing.T) {
 	if got := denied.capability("org-1"); got.Available || got.CanEnable || got.Reason != "disabled" {
 		t.Fatalf("disabled capability = %+v", got)
 	}
+}
+
+func TestAgentExecutionCapabilityRespectsEntryAdmission(t *testing.T) {
+	organizationID := uuid.NewString()
+	base := agentExecutionApprovals{
+		Enabled:          true,
+		GatewayReady:     true,
+		DefaultProfileID: "standard",
+		Profiles: map[string]agentExecutionApproval{
+			"standard": {Backend: "local-gvisor", OrganizationIDs: []string{organizationID}, PolicyIDs: []string{"offline"}},
+		},
+	}
+
+	t.Run("legacy default admits agent console", func(t *testing.T) {
+		t.Setenv("ZGI_AGENT_RUNTIME_ENTRY_ALLOWLIST_JSON", "")
+		if got := base.capability(organizationID); !got.Available || !got.CanEnable || got.Reason != "" {
+			t.Fatalf("capability = %+v", got)
+		}
+	})
+	t.Run("explicit admission admits agent console", func(t *testing.T) {
+		t.Setenv("ZGI_AGENT_RUNTIME_ENTRY_ALLOWLIST_JSON", `{"agent:console":["`+organizationID+`"]}`)
+		if got := base.capability(organizationID); !got.Available || !got.CanEnable || got.Reason != "" {
+			t.Fatalf("capability = %+v", got)
+		}
+	})
+	t.Run("empty admission denies agent console", func(t *testing.T) {
+		t.Setenv("ZGI_AGENT_RUNTIME_ENTRY_ALLOWLIST_JSON", `{}`)
+		if got := base.capability(organizationID); got.Available || got.CanEnable || got.Reason != "entry_not_enabled" {
+			t.Fatalf("capability = %+v", got)
+		}
+	})
+	t.Run("malformed admission denies agent console", func(t *testing.T) {
+		t.Setenv("ZGI_AGENT_RUNTIME_ENTRY_ALLOWLIST_JSON", `{invalid`)
+		if got := base.capability(organizationID); got.Available || got.CanEnable || got.Reason != "entry_not_enabled" {
+			t.Fatalf("capability = %+v", got)
+		}
+	})
 }
 
 func TestAgentRuntimeGatewayURL(t *testing.T) {

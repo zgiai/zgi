@@ -279,7 +279,7 @@ export interface AgentExecutionRuntimeConfig {
 export interface AgentExecutionRuntimeCapability {
   available: boolean;
   can_enable: boolean;
-  reason?: 'disabled' | 'organization_not_enabled' | 'runtime_unavailable' | string;
+  reason?: 'disabled' | 'organization_not_enabled' | 'runtime_unavailable' | 'entry_not_enabled' | string;
 }
 
 export type AgentBindingType =

@@ -2,7 +2,6 @@ package agents
 
 import (
 	"context"
-	"os"
 
 	"github.com/google/uuid"
 	execution "github.com/zgiai/zgi/api/internal/capabilities/agentexecution"
@@ -41,7 +40,7 @@ func (h *AgentsHandler) attachPublishedExecutionTools(ctx context.Context, confi
 	if err != nil {
 		return err
 	}
-	entries, err := execution.ParseEntryAdmission(os.Getenv("ZGI_AGENT_RUNTIME_ENTRY_ALLOWLIST_JSON"))
+	entries, err := executionruntime.EntryAdmissionFromEnv()
 	if err != nil || !entries.Allows(access.organization.String(), "agent", access.entry) || h.executionGateway == nil || h.fileService == nil || tool_file.GlobalToolFileManager == nil {
 		return apperror.New(AppCodeAgentExecutionRuntimeUnavailable, apperror.WithOperation("agent_execution.published_entry_unavailable"))
 	}

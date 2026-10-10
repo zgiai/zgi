@@ -56,22 +56,26 @@ func (a agentExecutionApprovals) validate(organizationID string, cfg *dto.AgentE
 func (a agentExecutionApprovals) capability(organizationID string) *dto.AgentExecutionRuntimeCapability {
 	capability := &dto.AgentExecutionRuntimeCapability{}
 	_, err := executionruntime.Approvals(a).Resolve(organizationID, true)
-	if err == nil {
-		capability.Available = true
-		capability.CanEnable = true
+	if err != nil {
+		capability.Reason = "runtime_unavailable"
+		var denied *executionruntime.ApprovalError
+		if errors.As(err, &denied) {
+			switch denied.Operation {
+			case "agent_execution.disabled_by_env":
+				capability.Reason = "disabled"
+			case "agent_execution.organization_unapproved":
+				capability.Reason = "organization_not_enabled"
+			}
+		}
 		return capability
 	}
-
-	capability.Reason = "runtime_unavailable"
-	var denied *executionruntime.ApprovalError
-	if errors.As(err, &denied) {
-		switch denied.Operation {
-		case "agent_execution.disabled_by_env":
-			capability.Reason = "disabled"
-		case "agent_execution.organization_unapproved":
-			capability.Reason = "organization_not_enabled"
-		}
+	entries, admissionErr := executionruntime.EntryAdmissionFromEnv()
+	if admissionErr != nil || !entries.Allows(organizationID, "agent", "console") {
+		capability.Reason = "entry_not_enabled"
+		return capability
 	}
+	capability.Available = true
+	capability.CanEnable = true
 	return capability
 }
 

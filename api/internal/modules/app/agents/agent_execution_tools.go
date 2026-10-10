@@ -2,7 +2,6 @@ package agents
 
 import (
 	"context"
-	"os"
 	"strings"
 
 	"github.com/google/uuid"
@@ -34,7 +33,7 @@ func (h *AgentsHandler) attachConsoleAgentExecutionTools(runConfig *runtimeservi
 		return apperror.New(AppCodeAgentExecutionRuntimeUnavailable, apperror.WithOperation("agent_execution.gateway_unavailable"))
 	}
 	profile := h.executionApprovals.Profiles[resolved.ProfileID]
-	entries, err := execution.ParseEntryAdmission(os.Getenv("ZGI_AGENT_RUNTIME_ENTRY_ALLOWLIST_JSON"))
+	entries, err := executionruntime.EntryAdmissionFromEnv()
 	if err != nil || !entries.Allows(scope.OrganizationID.String(), "agent", "console") {
 		return apperror.New(AppCodeAgentExecutionRuntimeUnavailable, apperror.WithOperation("agent_execution.entry_unapproved"))
 	}

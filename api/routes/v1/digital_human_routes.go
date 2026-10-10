@@ -3,14 +3,12 @@ package v1
 import (
 	"context"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/config"
-	execution "github.com/zgiai/zgi/api/internal/capabilities/agentexecution"
 	executionruntime "github.com/zgiai/zgi/api/internal/capabilities/agentexecution/runtime"
 	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
 	channelproviders "github.com/zgiai/zgi/api/internal/capabilities/channelruntime/providers"
@@ -416,11 +414,8 @@ func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRu
 }
 
 func newDigitalHumanLinuxExecution(deps DigitalHumanRuntimeDeps) *digitalhuman.LinuxExecutionRuntime {
-	entries, err := execution.ParseEntryAdmission(os.Getenv("ZGI_AGENT_RUNTIME_ENTRY_ALLOWLIST_JSON"))
+	entries, err := executionruntime.EntryAdmissionFromEnv()
 	if err != nil {
-		// The zero policy admits no DigitalHuman entry. Do not disable legacy
-		// chat or expose malformed deployment configuration to an end user.
-		entries = execution.EntryAdmission{}
 		logger.Warn("DigitalHuman Linux entry allowlist is invalid; execution remains closed")
 	}
 	return digitalhuman.NewLinuxExecutionRuntime(digitalhuman.LinuxExecutionOptions{
