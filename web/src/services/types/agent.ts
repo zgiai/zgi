@@ -243,6 +243,7 @@ export interface AgentRuntimeConfig {
   file_upload_policy?: FileUploadSelection | null;
   agent_id: string;
   execution_runtime?: AgentExecutionRuntimeConfig | null;
+  execution_runtime_capability?: AgentExecutionRuntimeCapability | null;
   system_prompt: string;
   model_provider: string;
   model: string;
@@ -272,6 +273,13 @@ export interface AgentRuntimeConfig {
 
 export interface AgentExecutionRuntimeConfig {
   enabled: boolean;
+}
+
+/** Server-owned admission state for the editor's Linux toggle. */
+export interface AgentExecutionRuntimeCapability {
+  available: boolean;
+  can_enable: boolean;
+  reason?: 'disabled' | 'organization_not_enabled' | 'runtime_unavailable' | string;
 }
 
 export type AgentBindingType =

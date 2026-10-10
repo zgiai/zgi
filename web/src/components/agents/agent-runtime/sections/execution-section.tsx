@@ -2,13 +2,17 @@
 
 import { Switch } from '@/components/ui/switch';
 import { useT } from '@/i18n';
-import type { AgentExecutionRuntimeConfig } from '@/services/types/agent';
+import type {
+  AgentExecutionRuntimeCapability,
+  AgentExecutionRuntimeConfig,
+} from '@/services/types/agent';
 import { RuntimeSection } from '../runtime-section';
 import type { AgentConfigSection } from '../types';
 
 interface AgentRuntimeExecutionSectionProps {
   open: boolean;
   value: AgentExecutionRuntimeConfig | null;
+  capability?: AgentExecutionRuntimeCapability | null;
   readOnly?: boolean;
   onToggleSection: (section: AgentConfigSection) => void;
   onChange: (value: AgentExecutionRuntimeConfig) => void;
@@ -17,6 +21,7 @@ interface AgentRuntimeExecutionSectionProps {
 export function AgentRuntimeExecutionSection({
   open,
   value,
+  capability,
   readOnly = false,
   onToggleSection,
   onChange,
@@ -25,6 +30,8 @@ export function AgentRuntimeExecutionSection({
   const config = value ?? {
     enabled: false,
   };
+  const canEnable = capability?.can_enable ?? true;
+  const unavailable = capability != null && !capability.available && !config.enabled;
 
   return (
     <RuntimeSection
@@ -37,12 +44,15 @@ export function AgentRuntimeExecutionSection({
         <div>
           <div className="text-sm font-medium">{t('execution.title')}</div>
           <p className="text-xs text-muted-foreground">{t('execution.description')}</p>
+          {unavailable ? (
+            <p className="mt-1 text-xs text-muted-foreground">{t('execution.unavailable')}</p>
+          ) : null}
         </div>
         <Switch
           checked={config.enabled}
-          disabled={readOnly}
+          disabled={readOnly || (!config.enabled && !canEnable)}
           aria-label={t('execution.title')}
-          onCheckedChange={enabled => onChange({ ...config, enabled })}
+          onCheckedChange={enabled => onChange({ enabled })}
         />
       </div>
     </RuntimeSection>

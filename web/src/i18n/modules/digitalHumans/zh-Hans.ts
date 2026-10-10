@@ -441,6 +441,7 @@ const messages: DigitalHumansMessages = {
     linuxEnvironment: '启用 Linux 执行环境',
     linuxEnvironmentDescription:
       '运行脚本、处理文件，环境由平台管理。',
+    linuxEnvironmentUnavailable: '当前组织暂未开放 Linux 环境。',
     title: '设置',
     description: '单独管理渠道反馈等运行偏好，不改变数字人的身份与人设。',
     channelResponseTitle: '渠道回复体验',

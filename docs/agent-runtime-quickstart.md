@@ -73,9 +73,13 @@ not install missing containerd/runsc or modify the host's containerd configurati
 Complete the linked host setup first. Image archives may be imported offline.
 
 Apply [the local API example](../sandbox/deploy/api.local.env.example) to the
-existing API environment and replace the organization ID. The sample loopback
-URL is for a native same-host API. A Docker API or separate host needs an approved
-private connection; do not publish the Worker publicly. Temporary SSH forwarding
+existing API environment. The example uses the fail-closed `allowlist` mode;
+replace the organization ID with the UUID of each entitled organization. For a
+private deployment that should admit every authenticated organization, set
+`ZGI_AGENT_RUNTIME_ORG_MODE=all_authenticated` and use an empty
+`organization_ids` list instead. The sample loopback URL is for a native
+same-host API. A Docker API or separate host needs an approved private
+connection; do not publish the Worker publicly. Temporary SSH forwarding
 remains a development option, not a permanent deployment solution.
 
 ## E2B setup
@@ -94,7 +98,8 @@ docker compose -f compose.e2b.yaml up -d
 
 The Worker runs as UID 65532 with a retained state volume and no published port.
 Add [the E2B API example](../sandbox/deploy/api.e2b.env.example) to the existing
-API environment, replace the organization ID and use the same Worker credential.
+API environment, replace the organization ID (or explicitly choose
+`all_authenticated` as described above) and use the same Worker credential.
 Recreate only your intended API service to apply its environment changes. Keep
 the state volume when recreating the Worker; `down -v` deletes retained files.
 The API and Worker must be on the specified private network.

@@ -25,6 +25,7 @@ The API and Worker must continue to use separate credentials and separate endpoi
 
 ```text
 ZGI_AGENT_RUNTIME_ENABLED                 # explicit feature gate; false/unset keeps Linux execution off
+ZGI_AGENT_RUNTIME_ORG_MODE                # allowlist (default) or all_authenticated for private deployments
 ZGI_AGENT_RUNTIME_DEFAULT_PROFILE_ID      # operator-selected Profile used by every enabled Agent
 ZGI_AGENT_RUNTIME_DEFAULT_POLICY_ID       # operator-selected network/dependency policy
 ZGI_AGENT_RUNTIME_DEFAULT_HOME_SNAPSHOT_ID # optional operator-selected Home Snapshot
@@ -44,6 +45,13 @@ boolean. Profile, policy, Home Snapshot, dependency preparation and network
 settings are deployment-owned. The API resolves the defaults above and ignores
 legacy IDs submitted by older clients. Keep the feature gate unset or false
 until the Worker and its approved template have passed the acceptance checks.
+
+Organization admission is fail-closed by default. In `allowlist` mode, every
+profile and Home Snapshot must list the organization UUID explicitly. A private
+deployment can set `ZGI_AGENT_RUNTIME_ORG_MODE=all_authenticated` to admit any
+non-empty authenticated organization to the same operator-selected profile and
+policy; this is a deployment choice, not a user-facing configuration and does
+not admit anonymous requests. Unknown values fall back to `allowlist`.
 
 The approved profile map must contain an explicit `offline` policy, for example:
 

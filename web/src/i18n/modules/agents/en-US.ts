@@ -2548,6 +2548,7 @@ const messages = {
     execution: {
       title: 'Enable Linux environment',
       description: 'Run scripts and process files in a platform-managed environment.',
+      unavailable: 'The Linux environment is not available for this organization.',
     },
     memory: {
       agentTitle: 'Memory',

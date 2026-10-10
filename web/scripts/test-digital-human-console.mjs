@@ -40,7 +40,15 @@ const configurationHub = await readFile(
 assert.match(configuration, /detail\?\.draft\.execution_runtime\?\.enabled \?\? false/);
 assert.match(configuration, /execution_runtime: \{ enabled: executionEnabled \}/);
 assert.match(configuration, /previewVersion\.execution_runtime\?\.enabled \?\? false/);
-assert.match(configuration, /onCheckedChange=\{setExecutionEnabled\}[\s\S]*?disabled=\{!editingEnabled\}/);
+assert.match(
+  configuration,
+  /executionRuntimeCapability = detail\?\.execution_runtime_capability \?\? null/
+);
+assert.match(
+  configuration,
+  /onCheckedChange=\{setExecutionEnabled\}[\s\S]*?canEnableExecution/
+);
+assert.match(configuration, /linuxEnvironmentUnavailable/);
 assert.doesNotMatch(configuration, /execution_runtime:\s*\{[^}]*\b(?:profile|policy|home_snapshot|network)\b/);
 const sidebar = await readFile(
   new URL('../src/components/digital-human/digital-human-sidebar.tsx', import.meta.url),

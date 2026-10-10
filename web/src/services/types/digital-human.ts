@@ -46,6 +46,13 @@ export interface DigitalHumanExecutionRuntimeConfig {
   enabled: boolean;
 }
 
+/** Server-owned admission state for the DigitalHuman Linux toggle. */
+export interface DigitalHumanExecutionRuntimeCapability {
+  available: boolean;
+  can_enable: boolean;
+  reason?: 'disabled' | 'organization_not_enabled' | 'runtime_unavailable' | string;
+}
+
 export interface DigitalHumanDefinition {
   id: string;
   web_app_id: string;
@@ -95,6 +102,7 @@ export interface DigitalHumanDetail {
   definition: DigitalHumanDefinition;
   draft: DigitalHumanVersion;
   published?: DigitalHumanVersion | null;
+  execution_runtime_capability?: DigitalHumanExecutionRuntimeCapability | null;
 }
 
 export interface DigitalHumanVersionList {

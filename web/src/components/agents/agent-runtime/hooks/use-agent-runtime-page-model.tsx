@@ -345,6 +345,7 @@ export function useAgentRuntimePageModel(agentId: string) {
   const [executionRuntime, setExecutionRuntime] = useState<AgentExecutionRuntimeConfig | null>(
     null
   );
+  const executionRuntimeCapability = configResponse?.data?.execution_runtime_capability ?? null;
   const [homeTitle, setHomeTitle] = useState(defaultHomeTitle);
   const [openingStatement, setOpeningStatement] = useState('');
   const [inputPlaceholder, setInputPlaceholder] = useState(defaultInputPlaceholder);
@@ -1605,6 +1606,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       isGeneratingSuggestions,
       fileUploadEnabled,
       executionRuntime,
+      executionRuntimeCapability,
       fileUploadPolicy,
       onChangeFileUploadPolicy: (value: FileUploadSelection) => {
         if (!isRuntimeConfigReadOnly) setFileUploadPolicy(value);

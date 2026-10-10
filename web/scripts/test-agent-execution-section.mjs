@@ -15,7 +15,7 @@ for (const locale of ['zh-Hans', 'en-US']) {
     }
   );
 
-  assert.deepEqual(Object.keys(messages.execution).sort(), ['description', 'title']);
+  assert.deepEqual(Object.keys(messages.execution).sort(), ['description', 'title', 'unavailable']);
   assert.doesNotMatch(messages.execution.description, /仅控制台|console.*only|Profile|30/);
   for (const value of [null, { enabled: false }, { enabled: true }]) {
     for (const readOnly of [false, true]) {
@@ -41,6 +41,41 @@ for (const locale of ['zh-Hans', 'en-US']) {
       assert.deepEqual(changed, { enabled: !toggle.props.checked });
     }
   }
+
+  let unavailableChanged;
+  const unavailableTree = AgentRuntimeExecutionSection({
+    open: true,
+    value: { enabled: false },
+    capability: { available: false, can_enable: false, reason: 'organization_not_enabled' },
+    onToggleSection: () => {},
+    onChange: next => {
+      unavailableChanged = next;
+    },
+  });
+  const unavailableNodes = nodes(unavailableTree);
+  const unavailableDescriptions = unavailableNodes.filter(node => node.type === 'p');
+  assert.equal(unavailableDescriptions.length, 2, 'show unavailable status below the description');
+  assert.equal(unavailableDescriptions[1].props.children, messages.execution.unavailable);
+  const unavailableToggle = unavailableNodes.find(node => node.type === 'Switch');
+  assert.equal(unavailableToggle.props.disabled, true);
+  assert.equal(unavailableChanged, undefined);
+
+  let enabledUnavailableChanged;
+  const enabledUnavailableTree = AgentRuntimeExecutionSection({
+    open: true,
+    value: { enabled: true },
+    capability: { available: false, can_enable: false, reason: 'runtime_unavailable' },
+    onToggleSection: () => {},
+    onChange: next => {
+      enabledUnavailableChanged = next;
+    },
+  });
+  const enabledUnavailableToggle = nodes(enabledUnavailableTree).find(
+    node => node.type === 'Switch'
+  );
+  assert.equal(enabledUnavailableToggle.props.disabled, false);
+  enabledUnavailableToggle.props.onCheckedChange(false);
+  assert.deepEqual(enabledUnavailableChanged, { enabled: false });
 }
 
 console.log('Agent execution section checks passed');

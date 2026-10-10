@@ -12,6 +12,7 @@ import type {
   AgentDatabaseBinding,
   AgentConnectorBinding,
   AgentExecutionRuntimeConfig,
+  AgentExecutionRuntimeCapability,
   AgentMemorySlotConfig,
   AgentBindingHealth,
   AgentWorkflowBinding,
@@ -62,6 +63,7 @@ interface AgentRuntimeOrchestrationPanelProps {
   fileUploadPolicy?: FileUploadSelection | null;
   onChangeFileUploadPolicy: (value: FileUploadSelection) => void;
   executionRuntime: AgentExecutionRuntimeConfig | null;
+  executionRuntimeCapability?: AgentExecutionRuntimeCapability | null;
   agentMemoryEnabled: boolean;
   agentMemoryAutoExtractionEnabled: boolean;
   agentMemorySlots: AgentMemorySlotConfig[];
@@ -132,6 +134,7 @@ export function AgentRuntimeOrchestrationPanel({
   fileUploadPolicy,
   onChangeFileUploadPolicy,
   executionRuntime,
+  executionRuntimeCapability,
   agentMemoryEnabled,
   agentMemoryAutoExtractionEnabled,
   agentMemorySlots,
@@ -200,6 +203,7 @@ export function AgentRuntimeOrchestrationPanel({
           <AgentRuntimeExecutionSection
             open={openSections.execution}
             value={executionRuntime}
+            capability={executionRuntimeCapability}
             readOnly={readOnly}
             onToggleSection={onToggleSection}
             onChange={onChangeExecutionRuntime}

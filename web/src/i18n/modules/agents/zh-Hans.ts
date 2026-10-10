@@ -2384,6 +2384,7 @@ const messages: AgentsMessages = {
     execution: {
       title: '启用 Linux 环境',
       description: '运行脚本、处理文件，环境由平台管理。',
+      unavailable: '当前组织暂未开放 Linux 环境。',
     },
     memory: {
       addCustomSlot: '自定义记忆',

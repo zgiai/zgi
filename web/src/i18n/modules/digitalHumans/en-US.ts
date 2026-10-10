@@ -475,6 +475,7 @@ const messages = {
     linuxEnvironment: 'Enable Linux execution environment',
     linuxEnvironmentDescription:
       'Run scripts and process files in a platform-managed environment.',
+    linuxEnvironmentUnavailable: 'The Linux environment is not available for this organization.',
     title: 'Settings',
     description:
       'Control channel feedback and other runtime preferences without changing this digital human’s identity.',

@@ -137,6 +137,8 @@ function ConfigurationEditor({
   const [executionEnabled, setExecutionEnabled] = useState(
     detail?.draft.execution_runtime?.enabled ?? false
   );
+  const executionRuntimeCapability = detail?.execution_runtime_capability ?? null;
+  const canEnableExecution = executionRuntimeCapability?.can_enable ?? true;
   const [fileUploadPolicy, setFileUploadPolicy] = useState<FileUploadSelection | null>(detail?.draft.file_upload_policy ?? null);
   const [intermediateMessagesEnabled, setIntermediateMessagesEnabled] = useState(
     detail?.draft.trigger_policy?.channel_response?.intermediate_messages_enabled ?? true
@@ -242,6 +244,13 @@ function ConfigurationEditor({
 
   if (!detail) return null;
   const previewVersion = versionPreview?.version;
+  const displayedExecutionEnabled = previewVersion
+    ? (previewVersion.execution_runtime?.enabled ?? false)
+    : executionEnabled;
+  const executionUnavailable =
+    executionRuntimeCapability != null &&
+    !executionRuntimeCapability.available &&
+    !displayedExecutionEnabled;
   const displayedIdentityName = previewVersion?.identity_name ?? identityName;
   const displayedPersona = previewVersion?.persona ?? persona;
   const displayedGoals = previewVersion
@@ -522,14 +531,17 @@ function ConfigurationEditor({
             <PreferenceSwitch
               title={t('preferences.linuxEnvironment')}
               description={t('preferences.linuxEnvironmentDescription')}
-              checked={
-                previewVersion
-                  ? (previewVersion.execution_runtime?.enabled ?? false)
-                  : executionEnabled
-              }
+              checked={displayedExecutionEnabled}
               onCheckedChange={setExecutionEnabled}
-              disabled={!editingEnabled}
+              disabled={
+                !editingEnabled || (!executionEnabled && !canEnableExecution)
+              }
             />
+            {executionUnavailable ? (
+              <p className="mt-2 text-xs text-muted-foreground">
+                {t('preferences.linuxEnvironmentUnavailable')}
+              </p>
+            ) : null}
             <DigitalHumanResourceBindings id={id} />
             <div className="my-4"><PolicyFileUploadSettings value={previewVersion ? previewVersion.file_upload_policy : fileUploadPolicy} onChange={setFileUploadPolicy} disabled={!editingEnabled} /></div>
           </div>
