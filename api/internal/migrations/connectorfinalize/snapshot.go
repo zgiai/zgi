@@ -96,7 +96,15 @@ func readRows(rows *sql.Rows, bytesRead *int) ([]row, error) {
 
 // Plan is read-only, repeatable and bounded. A partial schema fails; it is never
 // interpreted as a successful repeat. Verify handles an already-finalized schema.
-type Options struct{ Credentials *credentials.Store }
+type Options struct {
+	Credentials *credentials.Store
+
+	// allowDiscardInspect is used only by the explicit discard maintenance
+	// command. It lets that command inventory a schema1 database whose
+	// readiness row is conversion_required without treating that state as a
+	// successful conversion.
+	allowDiscardInspect bool
+}
 
 func Plan(ctx context.Context, db *gorm.DB, options ...Options) (Report, error) {
 	var report Report
@@ -134,7 +142,7 @@ func inspect(db *gorm.DB, option Options) (Report, snapshot, error) {
 		return r, nil, err
 	}
 	r.SchemaVersion, r.State = version.SchemaVersion, version.State
-	if version.SchemaVersion != 1 || version.State != "ready" {
+	if version.SchemaVersion != 1 || (version.State != "ready" && !option.allowDiscardInspect) {
 		return r, nil, fmt.Errorf("ready schema1 checkpoint required")
 	}
 	bytesRead := 0
