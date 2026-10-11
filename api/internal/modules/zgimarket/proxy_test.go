@@ -127,3 +127,14 @@ func TestForwardRefusesBeforeAskingTheConsole(t *testing.T) {
 		t.Errorf("an unconfigured proxy answered %d", recorder.Code)
 	}
 }
+
+func TestForwardReachesTheCallRecordsOfTheOrganization(t *testing.T) {
+	engine, seen := newTestProxy(t, true, false)
+	recorder := send(engine, http.MethodGet, "/workspaces/current/zgi-market/calls?outcome=refused", "", nil)
+	if recorder.Code != http.StatusCreated || len(*seen) != 1 {
+		t.Fatalf("answer = %d, console calls = %d", recorder.Code, len(*seen))
+	}
+	if call := (*seen)[0]; call.path != "/v1/internal/zgi-market/proxy/calls" || call.query != "outcome=refused" {
+		t.Fatalf("forwarded %s?%s", call.path, call.query)
+	}
+}

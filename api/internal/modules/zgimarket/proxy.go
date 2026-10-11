@@ -46,6 +46,8 @@ var errAnswerTooLarge = errors.New("the market answer is too large")
 var resources = map[string]bool{
 	"categories": true, "listings": true, "subscriptions": true, "credentials": true,
 	"bindings": true, "connections": true, "usage": true, "statements": true,
+	// The record of the organization's own gateway and MCP calls.
+	"calls": true,
 }
 
 // forwardedHeaders are the request headers handed on to the market.
