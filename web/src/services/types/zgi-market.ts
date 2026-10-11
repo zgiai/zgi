@@ -103,6 +103,29 @@ export interface MarketSubscription {
   status: string;
 }
 
+/** An organization skill that was installed from a market listing. */
+export interface MarketInstalledSkill {
+  slug: string;
+  skill_id: string;
+  name: string;
+  version: string;
+}
+
+/**
+ * What installing a skill listing did: the skill is installed, or its package was refused by the
+ * import checks, or it would replace a skill of the organization that came from elsewhere.
+ */
+export interface MarketSkillInstall {
+  installed: boolean;
+  enabled: boolean;
+  skill_id?: string;
+  name?: string;
+  version?: string;
+  validation_errors?: string[];
+  warnings?: string[];
+  conflict?: string;
+}
+
 export interface MarketListingQuery {
   kind?: MarketListingKind;
   category?: string;

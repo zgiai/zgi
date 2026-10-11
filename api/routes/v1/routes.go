@@ -77,9 +77,6 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	// ---------- Plugin Runner (Tenant Level) ----------
 	RegisterPluginRunnerTenantRoutes(v1, accountService, tenantServiceImpl, db)
 
-	// ---------- ZGI Market (members of the current organization) ----------
-	RegisterZGIMarketRoutes(v1, accountService, tenantServiceImpl)
-
 	// ---------- Tool ----------
 	RegisterToolRoutes(v1, ToolRouteDeps{
 		ToolManager:                serviceContainer.GetToolManager(),
@@ -349,6 +346,9 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		ApplicationErrorCatalog:    applicationErrorCatalog,
 	}
 	chatService := RegisterAIChatRoutes(v1, chatRouteDeps)
+
+	// ---------- ZGI Market (members of the current organization) ----------
+	RegisterZGIMarketRoutes(v1, accountService, tenantServiceImpl, chatService)
 	RegisterConnectorRuntimeConfirmationRoutes(v1, ConnectorRuntimeConfirmationRouteDeps{
 		Service: serviceContainer.GetConnectorRuntimeConfirmationService(),
 		Recorder: connectorRuntimeConfirmationSurfaceRecorder{

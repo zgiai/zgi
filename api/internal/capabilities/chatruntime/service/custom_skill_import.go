@@ -49,6 +49,16 @@ func (s *service) PreviewImportCustomSkill(ctx context.Context, scope Scope, fil
 	if fileHeader == nil {
 		return nil, fmt.Errorf("%w: skill package is required", ErrInvalidInput)
 	}
+	data, err := readUploadedSkillPackage(fileHeader)
+	if err != nil {
+		return nil, err
+	}
+	return s.previewCustomSkillPackage(ctx, scope, data, fileHeader.Filename)
+}
+
+// previewCustomSkillPackage stores and validates one package as an import preview. Every way a
+// package enters the organization goes through it, so each is held to the same checks.
+func (s *service) previewCustomSkillPackage(ctx context.Context, scope Scope, data []byte, filename string) (*SkillImportPreview, error) {
 	if s.skillRuntime == nil {
 		return nil, fmt.Errorf("%w: skill runtime is not configured", ErrInvalidInput)
 	}
@@ -58,12 +68,8 @@ func (s *service) PreviewImportCustomSkill(ctx context.Context, scope Scope, fil
 	if s.customSkillStorage == nil {
 		return nil, fmt.Errorf("custom skill storage is not configured")
 	}
-	data, err := readUploadedSkillPackage(fileHeader)
-	if err != nil {
-		return nil, err
-	}
 	importID := uuid.New().String()
-	preview, err := s.customSkillStorage.SavePreviewPackage(ctx, scope.OrganizationID, importID, data, fileHeader.Filename)
+	preview, err := s.customSkillStorage.SavePreviewPackage(ctx, scope.OrganizationID, importID, data, filename)
 	if err != nil {
 		return nil, err
 	}
@@ -123,10 +129,10 @@ func (s *service) PreviewImportCustomSkill(ctx context.Context, scope Scope, fil
 }
 
 func (s *service) ConfirmCustomSkillImport(ctx context.Context, scope Scope, importID string, overwriteConfirmed bool) (*skills.SkillDiscoveryMetadata, error) {
-	return s.confirmCustomSkillImport(ctx, scope, importID, overwriteConfirmed)
+	return s.confirmCustomSkillImport(ctx, scope, importID, overwriteConfirmed, nil)
 }
 
-func (s *service) confirmCustomSkillImport(ctx context.Context, scope Scope, importID string, overwriteConfirmed bool) (*skills.SkillDiscoveryMetadata, error) {
+func (s *service) confirmCustomSkillImport(ctx context.Context, scope Scope, importID string, overwriteConfirmed bool, origin *SkillPackageOrigin) (*skills.SkillDiscoveryMetadata, error) {
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err
 	}
@@ -169,6 +175,9 @@ func (s *service) confirmCustomSkillImport(ctx context.Context, scope Scope, imp
 	doc.Metadata.RootPath = finalRoot
 	extracted := extractedSkillPackageFromPreview(preview)
 	record := customSkillRecordFromDocument(scope, doc, finalRoot, extracted)
+	if origin != nil {
+		record.Manifest[customSkillOriginManifestKey] = origin.manifest()
+	}
 	if err := s.repos.CustomSkill.Upsert(ctx, record); err != nil {
 		published.rollback()
 		return nil, err

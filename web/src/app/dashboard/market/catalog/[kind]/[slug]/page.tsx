@@ -1,6 +1,6 @@
 'use client';
 
-import { use } from 'react';
+import { use, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Check } from 'lucide-react';
 import { toast } from 'sonner';
@@ -13,6 +13,8 @@ import { marketAmount, marketText } from '@/components/zgi-market/market-format'
 import { useLocale } from '@/hooks/use-locale';
 import {
   useActivateZgiMarketListing,
+  useInstallZgiMarketSkill,
+  useZgiMarketInstalledSkills,
   useZgiMarketListing,
   useZgiMarketSubscriptions,
 } from '@/hooks/use-zgi-market';
@@ -63,6 +65,10 @@ export default function ZgiMarketListingPage({ params }: PageProps) {
   const listing = useZgiMarketListing(kind, slug);
   const subscriptions = useZgiMarketSubscriptions();
   const activate = useActivateZgiMarketListing();
+  const installedSkills = useZgiMarketInstalledSkills(kind === 'skill');
+  const install = useInstallZgiMarketSkill();
+  // The organization's own skill a package would replace; the administrator decides.
+  const [conflict, setConflict] = useState<string | null>(null);
 
   const back = (
     <Link
@@ -128,8 +134,32 @@ export default function ZgiMarketListingPage({ params }: PageProps) {
       meter: known ? t(`market.catalog.meters.${known}`) : price.meter,
     });
   };
-  // A connector is connected, not activated, and an API is activated per offering.
-  const activatesWhole = data.kind !== 'api' && data.kind !== 'connector';
+  // A connector is connected, not activated, and an API is activated per offering. A skill is
+  // installed: the market activates it and its package becomes a skill of the organization.
+  const installs = data.kind === 'skill';
+  const activatesWhole = data.kind !== 'api' && data.kind !== 'connector' && !installs;
+  const installedSkill = (installedSkills.data ?? []).find(skill => skill.slug === data.slug);
+  const installSkill = (overwrite = false) =>
+    install.mutate(
+      { slug: data.slug, overwrite },
+      {
+        onSuccess: result => {
+          if (result.installed) {
+            setConflict(null);
+            toast.success(t('market.catalog.installDone'));
+          } else if (result.conflict) {
+            setConflict(result.conflict);
+          } else {
+            toast.error(
+              t('market.catalog.installRefused', {
+                reason: result.validation_errors?.[0] ?? '',
+              })
+            );
+          }
+        },
+        onError: () => toast.error(t('market.catalog.installFailed')),
+      }
+    );
 
   return (
     <div className="flex h-full flex-col overflow-y-auto px-6 py-5">
@@ -156,6 +186,52 @@ export default function ZgiMarketListingPage({ params }: PageProps) {
             </div>
           ) : null}
         </div>
+        {installs ? (
+          <div className="flex max-w-xs flex-col items-end gap-1.5 text-right">
+            {installedSkill ? (
+              <>
+                <Badge variant="success" className="gap-1">
+                  <Check className="size-3.5" aria-hidden="true" />
+                  {installedSkill.version
+                    ? t('market.catalog.installedVersion', { version: installedSkill.version })
+                    : t('market.catalog.installed')}
+                </Badge>
+                <Link href="/console/skills" className="text-xs text-primary hover:underline">
+                  {t('market.catalog.manageSkills')}
+                </Link>
+              </>
+            ) : (
+              <Button
+                disabled={install.isPending || installedSkills.isPending}
+                onClick={() => installSkill()}
+              >
+                {t('market.catalog.install')}
+              </Button>
+            )}
+            {listingPrices.map(price => (
+              <span key={price.meter} className="text-xs text-muted-foreground">
+                {priceText(price)}
+              </span>
+            ))}
+            <p className="text-xs text-muted-foreground">{t('market.catalog.installHint')}</p>
+            {conflict ? (
+              <div role="alert" className="rounded-md border border-destructive/40 p-2 text-left">
+                <p className="text-xs text-destructive">
+                  {t('market.catalog.installConflict', { name: conflict })}
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-2"
+                  disabled={install.isPending}
+                  onClick={() => installSkill(true)}
+                >
+                  {t('market.catalog.installOverwrite')}
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         {activatesWhole ? (
           <div className="flex flex-col items-end gap-1">
             {isActivated() ? (

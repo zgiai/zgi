@@ -478,6 +478,8 @@ type Service interface {
 	PreviewImportCustomSkill(ctx context.Context, scope Scope, fileHeader *multipart.FileHeader) (*SkillImportPreview, error)
 	ConfirmCustomSkillImport(ctx context.Context, scope Scope, importID string, overwriteConfirmed bool) (*skills.SkillDiscoveryMetadata, error)
 	CancelCustomSkillImportPreview(ctx context.Context, scope Scope, importID string) error
+	ImportCustomSkillPackage(ctx context.Context, scope Scope, data []byte, filename string, origin SkillPackageOrigin, overwrite bool) (*SkillImportPreview, *skills.SkillDiscoveryMetadata, error)
+	ListInstalledSkillPackages(ctx context.Context, scope Scope, source string) ([]InstalledSkillPackage, error)
 	DeleteSkill(ctx context.Context, scope Scope, skillID, agentBindingAction, impactToken string) error
 	CleanupStaleActiveMessages(ctx context.Context) (int64, error)
 	CleanupExpiredCustomSkillImportPreviews(ctx context.Context) error

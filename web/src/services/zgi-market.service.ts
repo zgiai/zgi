@@ -1,10 +1,12 @@
 import { BaseService } from '@/lib/http/services';
 import type {
   MarketCategory,
+  MarketInstalledSkill,
   MarketListing,
   MarketListingKind,
   MarketListingPage,
   MarketListingQuery,
+  MarketSkillInstall,
   MarketSubscription,
 } from './types/zgi-market';
 
@@ -77,6 +79,28 @@ class ZgiMarketService extends BaseService {
       'post',
       '/subscriptions',
       { listing_id: listingId, ...(offeringId ? { offering_id: offeringId } : {}) }
+    );
+    return response.data;
+  }
+
+  /** The organization skills that were installed from market listings. */
+  async getInstalledSkills(): Promise<MarketInstalledSkill[]> {
+    const response = await this.request<MarketEnvelope<MarketInstalledSkill[]>>(
+      'get',
+      '/installs/skills'
+    );
+    return response.data ?? [];
+  }
+
+  /**
+   * Installs a skill listing into the organization: the market activates it, and this instance
+   * imports its package as an organization skill.
+   */
+  async installSkill(slug: string, overwrite = false): Promise<MarketSkillInstall> {
+    const response = await this.request<MarketEnvelope<MarketSkillInstall>>(
+      'post',
+      `/installs/skills/${encodeURIComponent(slug)}`,
+      { overwrite }
     );
     return response.data;
   }
