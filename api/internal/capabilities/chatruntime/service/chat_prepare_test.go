@@ -242,6 +242,10 @@ func (f fakeWaitingMessageRepo) UpdateWaitingClientAction(context.Context, uuid.
 	panic("not implemented")
 }
 
+func (f fakeWaitingMessageRepo) GetStatus(context.Context, uuid.UUID) (string, error) {
+	return f.status, nil
+}
+
 func (f fakeWaitingMessageRepo) UpdateError(context.Context, uuid.UUID, string) error {
 	panic("not implemented")
 }

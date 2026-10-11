@@ -389,6 +389,11 @@ func TestZGICloudAdapterChatCompletion_ForwardsToConsoleInternal(t *testing.T) {
 		w.Header().Set(headerOutputPriceUSD, "30")
 		w.Header().Set(headerInputCostUSD, "0.000055")
 		w.Header().Set(headerOutputCostUSD, "0.00021")
+		w.Header().Set(headerActualChannelID, "channel-siliconflow")
+		w.Header().Set(headerActualChannelName, "硅基流动")
+		w.Header().Set(headerActualProvider, "siliconflow")
+		w.Header().Set(headerActualProtocol, "native")
+		w.Header().Set(headerActualUpstreamModel, "deepseek-ai/DeepSeek-V4-Pro")
 		fmt.Fprint(w, `{
 			"id":"chatcmpl-zgi-cloud-1",
 			"object":"chat.completion",
@@ -443,6 +448,9 @@ func TestZGICloudAdapterChatCompletion_ForwardsToConsoleInternal(t *testing.T) {
 	if resp.Settlement.InputPriceUSDPer1MTokens != "5" || resp.Settlement.OutputPriceUSDPer1MTokens != "30" || resp.Settlement.InputCostUSD != "0.000055" || resp.Settlement.OutputCostUSD != "0.00021" {
 		t.Fatalf("settlement component pricing = %+v", resp.Settlement)
 	}
+	if resp.Settlement.ActualChannelID != "channel-siliconflow" || resp.Settlement.ActualChannelName != "硅基流动" || resp.Settlement.ActualProvider != "siliconflow" || resp.Settlement.ActualProtocol != "native" || resp.Settlement.ActualUpstreamModel != "deepseek-ai/DeepSeek-V4-Pro" {
+		t.Fatalf("settlement actual channel = %+v", resp.Settlement)
+	}
 }
 
 func TestZGICloudAdapterChatCompletionStream_ConsumesSettlementEvent(t *testing.T) {
@@ -457,7 +465,7 @@ func TestZGICloudAdapterChatCompletionStream_ConsumesSettlementEvent(t *testing.
 		fmt.Fprint(w, "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"}}]}\n\n")
 		fmt.Fprint(w, "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2,\"total_tokens\":5}}\n\n")
 		fmt.Fprint(w, "event: zgi.settlement\n")
-		fmt.Fprint(w, "data: {\"settlement_id\":\"deduction-stream\",\"official_points\":9,\"remaining_balance\":91,\"status\":\"settled\",\"total_cost_usd\":\"0.009\",\"total_cost_cny\":\"0.0648\",\"cny_per_usd\":\"7.2\"}\n\n")
+		fmt.Fprint(w, "data: {\"settlement_id\":\"deduction-stream\",\"official_points\":9,\"remaining_balance\":91,\"status\":\"settled\",\"total_cost_usd\":\"0.009\",\"total_cost_cny\":\"0.0648\",\"cny_per_usd\":\"7.2\",\"actual_channel_id\":\"channel-siliconflow\",\"actual_channel_name\":\"硅基流动\",\"actual_provider\":\"siliconflow\",\"actual_protocol\":\"native\",\"actual_upstream_model\":\"deepseek-ai/DeepSeek-V4-Pro\"}\n\n")
 		fmt.Fprint(w, "data: [DONE]\n\n")
 	}))
 	defer server.Close()
@@ -503,6 +511,128 @@ func TestZGICloudAdapterChatCompletionStream_ConsumesSettlementEvent(t *testing.
 	}
 	if done.Settlement.TotalCostCNY != "0.0648" || done.Settlement.CNYPerUSD != "7.2" {
 		t.Fatalf("done settlement cost snapshot = %+v", done.Settlement)
+	}
+	if done.Settlement.ActualChannelID != "channel-siliconflow" || done.Settlement.ActualChannelName != "硅基流动" || done.Settlement.ActualProvider != "siliconflow" || done.Settlement.ActualProtocol != "native" || done.Settlement.ActualUpstreamModel != "deepseek-ai/DeepSeek-V4-Pro" {
+		t.Fatalf("done settlement actual channel = %+v", done.Settlement)
+	}
+	if done.Usage == nil || done.Usage.TotalTokens != 5 {
+		t.Fatalf("done usage = %+v, want total 5", done.Usage)
+	}
+}
+
+func TestZGICloudAdapterChatCompletionStream_ConsumesSettlementTrailersAfterDone(t *testing.T) {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Trailer", strings.Join([]string{headerSettlementID, headerOfficialPoints, headerSettlementStatus, headerActualChannelID, headerActualChannelName, headerActualProvider, headerActualProtocol, headerActualUpstreamModel}, ", "))
+		fmt.Fprint(w, "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2,\"total_tokens\":5}}\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+		w.Header().Set(headerSettlementID, "deduction-trailer")
+		w.Header().Set(headerOfficialPoints, "9")
+		w.Header().Set(headerSettlementStatus, "settled")
+		w.Header().Set(headerActualChannelID, "channel-siliconflow")
+		w.Header().Set(headerActualChannelName, "SiliconFlow Primary")
+		w.Header().Set(headerActualProvider, "siliconflow")
+		w.Header().Set(headerActualProtocol, "openai")
+		w.Header().Set(headerActualUpstreamModel, "deepseek-ai/DeepSeek-V4-Pro")
+	}))
+	defer server.Close()
+
+	a, err := NewZGICloudAdapter(&adapter.AdapterConfig{
+		BaseURL: server.URL,
+		AuthHook: func(req *http.Request) {
+			req.Header.Set("X-Test-Signature", "signed")
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewZGICloudAdapter() error = %v", err)
+	}
+
+	stream, err := a.ChatCompletionStream(context.Background(), &adapter.ChatRequest{
+		Model:    "gpt-4o-mini",
+		Messages: []adapter.Message{{Role: "user", Content: "hello"}},
+	})
+	if err != nil {
+		t.Fatalf("ChatCompletionStream() error = %v", err)
+	}
+
+	var done adapter.StreamResponse
+	for event := range stream {
+		if event.Done {
+			done = event
+		}
+	}
+	if done.Settlement == nil || done.Settlement.SettlementID != "deduction-trailer" || done.Settlement.OfficialPoints != 9 {
+		t.Fatalf("done settlement = %+v, want deduction-trailer/9", done.Settlement)
+	}
+	if done.Settlement.ActualChannelID != "channel-siliconflow" || done.Settlement.ActualProvider != "siliconflow" || done.Settlement.ActualUpstreamModel != "deepseek-ai/DeepSeek-V4-Pro" {
+		t.Fatalf("done actual route = %+v", done.Settlement)
+	}
+	if done.Usage == nil || done.Usage.TotalTokens != 5 {
+		t.Fatalf("done usage = %+v, want total 5", done.Usage)
+	}
+}
+
+func TestZGICloudAdapterChatCompletionStream_AllowsSettlementAfterCallerCancellation(t *testing.T) {
+	t.Helper()
+
+	allowSettlement := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"}}]}\n\n")
+		fmt.Fprint(w, "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2,\"total_tokens\":5}}\n\n")
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		<-allowSettlement
+		fmt.Fprint(w, "event: zgi.settlement\n")
+		fmt.Fprint(w, "data: {\"settlement_id\":\"deduction-after-cancel\",\"official_points\":9,\"remaining_balance\":91,\"status\":\"settled\"}\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	a, err := NewZGICloudAdapter(&adapter.AdapterConfig{
+		BaseURL: server.URL + "/v1/internal",
+		AuthHook: func(req *http.Request) {
+			req.Header.Set("X-Test-Signature", "signed")
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewZGICloudAdapter() error = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream, err := a.ChatCompletionStream(ctx, &adapter.ChatRequest{
+		Model:    "gpt-4o-mini",
+		Messages: []adapter.Message{{Role: "user", Content: "hello"}},
+	})
+	if err != nil {
+		t.Fatalf("ChatCompletionStream() error = %v", err)
+	}
+
+	var done adapter.StreamResponse
+	settlementReleased := false
+	for event := range stream {
+		if event.Error != nil {
+			t.Fatalf("stream error = %v", event.Error)
+		}
+		if !settlementReleased && streamResponseFinished(event) {
+			cancel()
+			close(allowSettlement)
+			settlementReleased = true
+		}
+		if event.Done {
+			done = event
+		}
+	}
+
+	if !settlementReleased {
+		t.Fatal("stream did not emit a model finish event")
+	}
+	if done.Settlement == nil || done.Settlement.SettlementID != "deduction-after-cancel" {
+		t.Fatalf("done settlement = %+v, want deduction-after-cancel", done.Settlement)
 	}
 	if done.Usage == nil || done.Usage.TotalTokens != 5 {
 		t.Fatalf("done usage = %+v, want total 5", done.Usage)
@@ -625,6 +755,73 @@ func TestZGICloudAdapterCreateResponseRaw_ForwardsToConsoleInternalResponses(t *
 	}
 	if resp.Usage == nil || resp.Usage.PromptTokens != 6 || resp.Usage.CompletionTokens != 4 || resp.Usage.TotalTokens != 10 {
 		t.Fatalf("usage = %+v, want prompt=6 completion=4 total=10", resp.Usage)
+	}
+}
+
+func TestZGICloudAdapterCreateResponseRawRejectsEmbeddedHTTP200Error(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"error":{"type":"invalid_request_error","message":"not implemented"}}`)
+	}))
+	defer server.Close()
+
+	a, err := NewZGICloudAdapter(&adapter.AdapterConfig{
+		BaseURL:  server.URL + "/v1/internal",
+		AuthHook: func(*http.Request) {},
+	})
+	if err != nil {
+		t.Fatalf("NewZGICloudAdapter() error = %v", err)
+	}
+	_, err = a.CreateResponseRaw(context.Background(), &adapter.RawResponseRequest{
+		Model: "logical-model", Body: json.RawMessage(`{"model":"logical-model","input":"hello"}`),
+	})
+	if err == nil {
+		t.Fatal("CreateResponseRaw() error = nil, want embedded protocol error")
+	}
+	var rawErr *adapter.RawProtocolError
+	if !errors.As(err, &rawErr) {
+		t.Fatalf("error = %T %v, want RawProtocolError", err, err)
+	}
+	if rawErr.StatusCode != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want %d", rawErr.StatusCode, http.StatusNotImplemented)
+	}
+	if !errors.Is(err, adapter.ErrCapabilityUnsupported) {
+		t.Fatalf("error = %v, want ErrCapabilityUnsupported", err)
+	}
+}
+
+func TestZGICloudAdapterCreateResponseRawDoesNotRetrySettlementFailure(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestCount++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"error":{"message":"Response could not be finalized","type":"api_error","code":"billing_settlement_failed"}}`)
+	}))
+	defer server.Close()
+
+	a, err := NewZGICloudAdapter(&adapter.AdapterConfig{
+		BaseURL:    server.URL + "/v1/internal",
+		AuthHook:   func(*http.Request) {},
+		MaxRetries: 3,
+	})
+	if err != nil {
+		t.Fatalf("NewZGICloudAdapter() error = %v", err)
+	}
+
+	_, err = a.CreateResponseRaw(context.Background(), &adapter.RawResponseRequest{
+		Model: "deepseek-v4-pro",
+		Body:  json.RawMessage(`{"model":"deepseek-v4-pro","input":"hello","max_output_tokens":16}`),
+	})
+	if err == nil {
+		t.Fatal("CreateResponseRaw() error = nil, want settlement failure")
+	}
+	var rawErr *adapter.RawProtocolError
+	if !errors.As(err, &rawErr) || rawErr.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("error = %T %v, want HTTP 500 RawProtocolError", err, err)
+	}
+	if requestCount != 1 {
+		t.Fatalf("request count = %d, want 1 because repeating may repurchase upstream output", requestCount)
 	}
 }
 
@@ -1213,6 +1410,89 @@ func TestZGICloudAdapterRerank_ForwardsToConsoleInternal(t *testing.T) {
 	}
 	if len(resp.Results) != 2 {
 		t.Fatalf("results len = %d, want 2", len(resp.Results))
+	}
+}
+
+func TestZGICloudAdapterGeminiGenerateContentPreservesProtocolAndUsage(t *testing.T) {
+	var gotBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.URL.Path, "/v1/internal/v1beta/models/gemini-2.5-pro:generateContent"; got != want {
+			t.Errorf("path = %q, want %q", got, want)
+		}
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(headerSettlementID, "settlement-gemini")
+		w.Header().Set(headerOfficialPoints, "13")
+		fmt.Fprint(w, `{"candidates":[{"content":{"parts":[{"text":"hello"}]}}],"usageMetadata":{"promptTokenCount":11,"candidatesTokenCount":5,"totalTokenCount":16,"cachedContentTokenCount":3,"thoughtsTokenCount":2}}`)
+	}))
+	defer server.Close()
+
+	a, err := NewZGICloudAdapter(&adapter.AdapterConfig{BaseURL: server.URL + "/v1/internal", AuthHook: func(*http.Request) {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := a.CreateGeminiContent(t.Context(), &adapter.GeminiGenerateContentRequest{
+		Model: "gemini-2.5-pro", Body: json.RawMessage(`{"contents":[{"parts":[{"text":"hi"}]}]}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(gotBody, []byte(`"contents"`)) || !bytes.Contains(resp.Body, []byte(`"candidates"`)) {
+		t.Fatalf("request=%s response=%s", gotBody, resp.Body)
+	}
+	if resp.Usage == nil || resp.Usage.PromptTokens != 11 || resp.Usage.CompletionTokens != 5 || resp.Usage.CacheReadTokens != 3 || resp.Usage.CompletionTokensDetails.ReasoningTokens != 2 {
+		t.Fatalf("usage = %#v", resp.Usage)
+	}
+	if resp.Settlement == nil || resp.Settlement.SettlementID != "settlement-gemini" || resp.Settlement.OfficialPoints != 13 {
+		t.Fatalf("settlement = %#v", resp.Settlement)
+	}
+}
+
+func TestZGICloudAdapterGeminiStreamReadsSettlementTrailersWithoutPrivateEvents(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.URL.Path, "/v1/internal/v1beta/models/gemini-2.5-flash:streamGenerateContent"; got != want {
+			t.Errorf("path = %q, want %q", got, want)
+		}
+		if got := r.URL.Query().Get("alt"); got != "sse" {
+			t.Errorf("alt = %q, want sse", got)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Add("Trailer", headerSettlementID)
+		w.Header().Add("Trailer", headerOfficialPoints)
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hello\"}]}}],\"usageMetadata\":{\"promptTokenCount\":7,\"candidatesTokenCount\":4,\"totalTokenCount\":11}}\n\n")
+		w.Header().Set(headerSettlementID, "settlement-gemini-stream")
+		w.Header().Set(headerOfficialPoints, "17")
+	}))
+	defer server.Close()
+
+	a, err := NewZGICloudAdapter(&adapter.AdapterConfig{BaseURL: server.URL + "/v1/internal", AuthHook: func(*http.Request) {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := a.CreateGeminiContentStream(t.Context(), &adapter.GeminiGenerateContentRequest{
+		Model: "gemini-2.5-flash", Stream: true, Body: json.RawMessage(`{"contents":[]}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dataEvents int
+	var done adapter.RawStreamEvent
+	for event := range events {
+		if event.Done {
+			done = event
+			continue
+		}
+		dataEvents++
+		if event.Usage == nil || event.Usage.TotalTokens != 11 {
+			t.Fatalf("event usage = %#v", event.Usage)
+		}
+	}
+	if dataEvents != 1 {
+		t.Fatalf("data events = %d, want 1", dataEvents)
+	}
+	if done.Settlement == nil || done.Settlement.SettlementID != "settlement-gemini-stream" || done.Settlement.OfficialPoints != 17 {
+		t.Fatalf("done settlement = %#v", done.Settlement)
 	}
 }
 

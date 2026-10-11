@@ -100,6 +100,9 @@ const messages = {
     retryLater: 'Please try again later.',
     searchPlaceholder: 'Search by model name, maker, or capability',
     modelCount: '{count} models',
+    pricingIssuesTitle: '{count} capability prices are missing',
+    pricingIssuesDescription: 'Open a model to configure pricing. Counts match backend MissingPricing semantics.',
+    configurePricing: 'Configure pricing',
     useCase: 'Use case',
     manufacturer: 'Model maker',
     all: 'All',
@@ -208,6 +211,11 @@ const messages = {
     tags: {
       agent: 'Recommended',
     },
+    pricingMissing: 'No price',
+    pricingMissingHint:
+      'This model has no sale price configured, so calls cannot be billed correctly. Configure pricing in model management first.',
+    pricingMissingConfigure: 'Configure pricing',
+    pricingMissingContactAdmin: 'Ask an admin to configure pricing before using this model.',
     empty: {
       noModelsTitle: 'Model setup required',
       noResults: 'No models found matching',

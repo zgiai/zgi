@@ -124,6 +124,7 @@ func RegisterCommonRoutes(r *gin.RouterGroup, m *LLMModule) {
 		modelsAdmin.Use(middleware.EnterpriseAdminOrOwnerRequired())
 		modelsAdmin.POST("", m.ModelHandler.CreateGlobal)
 		models.GET("", m.ModelHandler.ListGlobal)
+		models.GET("/pricing-issues", m.ModelHandler.ListPricingIssues)
 		models.GET("/:id", m.ModelHandler.GetGlobal)
 		modelsAdmin.PUT("/:id", m.ModelHandler.UpdateGlobal)
 		modelsAdmin.DELETE("/:id", m.ModelHandler.DeleteGlobal)

@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
+	modelpricing "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/pricing"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	"gorm.io/gorm"
@@ -21,11 +24,7 @@ type videoCapableAdapter interface {
 	GetVideoTask(ctx context.Context, request *adapter.VideoTaskRequest) (*adapter.VideoResponse, error)
 }
 
-const (
-	defaultVideoPredeductPointsPerSecond int64 = 143
-	internalCreditsPerPoint              int64 = 1000
-	defaultVideoPredeductDurationSeconds       = 5
-)
+const defaultVideoPredeductDurationSeconds = 5
 
 func (s *llmGatewayServiceImpl) CreateVideo(
 	ctx context.Context,
@@ -54,6 +53,7 @@ func (s *llmGatewayServiceImpl) CreateVideoWithAppContext(
 	}
 
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, "video")
+	ctx = context.WithValue(ctx, shared.ContextKeyModelOperation, operationVideoCreate)
 	if useCase := modelUseCaseForAppContext(appCtx); useCase != "" {
 		ctx = context.WithValue(ctx, shared.ContextKeyModelUseCase, useCase)
 	}
@@ -152,6 +152,7 @@ func (s *llmGatewayServiceImpl) GetVideoTaskWithAppContext(
 	}
 
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, "video")
+	ctx = context.WithValue(ctx, shared.ContextKeyModelOperation, operationVideoRetrieve)
 	if useCase := modelUseCaseForAppContext(appCtx); useCase != "" {
 		ctx = context.WithValue(ctx, shared.ContextKeyModelUseCase, useCase)
 	}
@@ -199,11 +200,24 @@ func (s *llmGatewayServiceImpl) beginVideoPredeductAttempt(
 	startTime time.Time,
 	attemptIdx int,
 ) (*BillingContext, error) {
-	quote := defaultVideoPredeductQuoteFromCreate(selection, req)
-	if quote.TotalCredits <= 0 {
-		return nil, nil
+	lane, err := usageBillingLaneFromContext(selection, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve billing lane for video prededuct: %w", err)
+	}
+	var quote PricingQuote
+	if lane == UsageBillingLanePlatform {
+		quote = PricingQuote{
+			PricingSource: PricingSourcePlatformRemoteAuthority,
+			UsageSource:   UsageSourceRequestParameters,
+		}
+	} else {
+		quote, err = s.videoPredeductQuoteFromCreate(ctx, selection, req)
+		if err != nil {
+			return nil, err
+		}
 	}
 	requestID, attemptID := videoPredeductIDs(appCtx, attemptIdx)
+	ctx = withVideoMeteredUsage(ctx, selection, req)
 	billingCtx, err := s.beginBillingAttempt(
 		ctx,
 		apiKey,
@@ -216,7 +230,7 @@ func (s *llmGatewayServiceImpl) beginVideoPredeductAttempt(
 		startTime,
 		requestID,
 		attemptID,
-		"",
+		quote,
 	)
 	if err != nil {
 		return nil, err
@@ -241,7 +255,7 @@ func videoPredeductRequestID(appCtx *AppContext) string {
 	return "video:" + appCtx.AppID.String()
 }
 
-func defaultVideoPredeductQuoteFromCreate(selection *ProviderSelection, req *adapter.VideoRequest) PricingQuote {
+func (s *llmGatewayServiceImpl) videoPredeductQuoteFromCreate(ctx context.Context, selection *ProviderSelection, req *adapter.VideoRequest) (PricingQuote, error) {
 	seconds := defaultVideoPredeductDurationSeconds
 	if req != nil && req.Duration != nil && *req.Duration > 0 {
 		seconds = *req.Duration
@@ -250,10 +264,21 @@ func defaultVideoPredeductQuoteFromCreate(selection *ProviderSelection, req *ada
 	if req != nil && req.N != nil && *req.N > 0 {
 		count = *req.N
 	}
-	return defaultVideoPredeductQuote(selection, strings.TrimSpace(reqModelName(req)), seconds, count)
+	costReq := videoGenerationCostRequestFromCreate(req, seconds, count)
+	return s.videoPredeductQuote(ctx, selection, strings.TrimSpace(reqModelName(req)), costReq)
 }
 
-func defaultVideoPredeductQuoteFromTask(selection *ProviderSelection, req *adapter.VideoTaskRequest) PricingQuote {
+func (s *llmGatewayServiceImpl) videoPredeductQuoteFromTask(ctx context.Context, selection *ProviderSelection, req *adapter.VideoTaskRequest) (PricingQuote, error) {
+	lane, err := usageBillingLaneFromContext(selection, nil)
+	if err != nil {
+		return PricingQuote{}, fmt.Errorf("failed to resolve billing lane for video prededuct: %w", err)
+	}
+	if lane == UsageBillingLanePlatform {
+		return PricingQuote{
+			PricingSource: PricingSourcePlatformRemoteAuthority,
+			UsageSource:   UsageSourceRequestParameters,
+		}, nil
+	}
 	seconds := intFromAny(videoTaskAdditionalParam(req, "duration"))
 	if seconds <= 0 {
 		seconds = defaultVideoPredeductDurationSeconds
@@ -266,44 +291,279 @@ func defaultVideoPredeductQuoteFromTask(selection *ProviderSelection, req *adapt
 	if req != nil {
 		modelName = strings.TrimSpace(req.Model)
 	}
-	return defaultVideoPredeductQuote(selection, modelName, seconds, count)
+	costReq := videoGenerationCostRequestFromTask(req, nil, seconds, count)
+	return s.videoPredeductQuote(ctx, selection, modelName, costReq)
 }
 
-func defaultVideoPredeductQuote(selection *ProviderSelection, requestModel string, seconds int, count int) PricingQuote {
-	if seconds <= 0 {
-		seconds = defaultVideoPredeductDurationSeconds
+func (s *llmGatewayServiceImpl) videoPredeductQuote(ctx context.Context, selection *ProviderSelection, requestModel string, costReq modelpricing.VideoGenerationCostRequest) (PricingQuote, error) {
+	if costReq.DurationSeconds <= 0 {
+		costReq.DurationSeconds = defaultVideoPredeductDurationSeconds
 	}
-	if count <= 0 {
-		count = 1
+	if costReq.Count <= 0 {
+		costReq.Count = 1
 	}
-	totalCredits := int64(seconds) * int64(count) * defaultVideoPredeductPointsPerSecond * internalCreditsPerPoint
-	totalUSD := decimal.NewFromInt(totalCredits).Div(decimal.NewFromInt(pricingCreditsPerUSD))
-	provider := ""
+	// The organization rate is only consulted for CNY pricing. A missing rate
+	// fails closed inside quoteVideoFromModelPricing; a USD price book does not
+	// require one.
+	rate := decimal.Zero
+	if s != nil && selection != nil {
+		if loaded, err := s.organizationUSDToCNYRate(ctx, selection.OrganizationID); err == nil {
+			rate = loaded
+		}
+	}
+	quote, err := quoteVideoFromModelPricing(selection, requestModel, costReq, rate)
+	if err != nil {
+		return PricingQuote{}, err
+	}
+	if quote.TotalCredits <= 0 {
+		return PricingQuote{}, fmt.Errorf("%w: video pricing is not configured", ErrPricingNotConfigured)
+	}
+	return quote, nil
+}
+
+// defaultVideoTokenReservation bounds the reservation for a token-metered video
+// model that has no token_estimation rule. The upstream token count is only
+// known after generation, so the pre-deduct reserves one priced unit and the
+// settlement trues up to the actual count.
+const defaultVideoTokenReservation = 1_000_000
+
+// quoteVideoFromModelPricing derives the reservation from the selected model's
+// structured video rule. A CNY price book without a positive rate is
+// fail-closed.
+func quoteVideoFromModelPricing(selection *ProviderSelection, requestModel string, costReq modelpricing.VideoGenerationCostRequest, cnyPerUSD decimal.Decimal) (PricingQuote, error) {
+	if selection == nil || len(selection.Model.Pricing) == 0 {
+		return PricingQuote{}, fmt.Errorf("%w: video pricing is not configured", ErrPricingNotConfigured)
+	}
+	cost, present, err := modelpricing.ResolveVideoGenerationCost(json.RawMessage(selection.Model.Pricing), costReq)
+	if err != nil {
+		// Token-metered video without an estimator: retry with one priced unit.
+		fallbackReq := costReq
+		fallbackReq.VideoTokens = defaultVideoTokenReservation
+		if retryCost, retryPresent, retryErr := modelpricing.ResolveVideoGenerationCost(json.RawMessage(selection.Model.Pricing), fallbackReq); retryErr == nil {
+			cost, present, err = retryCost, retryPresent, nil
+		}
+	}
+	if err != nil || !present || cost.SourceCost <= 0 {
+		return PricingQuote{}, fmt.Errorf("%w: video pricing is not configured", ErrPricingNotConfigured)
+	}
+	currency := strings.ToUpper(strings.TrimSpace(cost.Currency))
+	if currency == "" {
+		currency = strings.ToUpper(strings.TrimSpace(selection.Model.Currency))
+	}
+	// Explicit boundary: the video cost resolver projects legacy JSON as a
+	// float. Convert once here; settlement arithmetic below is decimal.
+	totalSource := decimal.NewFromFloat(cost.SourceCost)
+	totalUSD := totalSource
+	if currency == "CNY" {
+		if !cnyPerUSD.IsPositive() {
+			return PricingQuote{}, fmt.Errorf("%w: video CNY pricing requires a positive USD to CNY rate", ErrExchangeRateUnavailable)
+		}
+		totalUSD = totalSource.Div(cnyPerUSD)
+	} else if currency != "" && currency != "USD" {
+		return PricingQuote{}, fmt.Errorf("%w: unsupported video pricing currency %q", ErrPricingNotConfigured, currency)
+	}
 	modelName := strings.TrimSpace(requestModel)
-	modelID := ""
-	if selection != nil {
-		provider = strings.TrimSpace(selection.Model.Provider)
-		if strings.TrimSpace(selection.Model.Model) != "" {
-			modelName = strings.TrimSpace(selection.Model.Model)
-		}
-		if selection.Model.ID != uuid.Nil {
-			modelID = selection.Model.ID.String()
+	if strings.TrimSpace(selection.Model.Model) != "" {
+		modelName = strings.TrimSpace(selection.Model.Model)
+	}
+	snapshot := buildPricingSnapshot(map[string]any{
+		"pricing_source":     PricingSourceUpstreamModelPrice,
+		"usage_source":       UsageSourceRequestParameters,
+		"operation":          PricingOperationVideo,
+		"model_id":           selection.Model.ID.String(),
+		"provider":           selection.Model.Provider,
+		"model":              modelName,
+		"billing_unit":       cost.BillingUnit,
+		"unit_price":         cost.UnitPrice,
+		"estimated_quantity": cost.Quantity,
+		"duration_seconds":   cost.DurationSeconds,
+		"count":              costReq.Count,
+		"resolution":         cost.Resolution,
+		"input_video":        cost.InputVideo,
+		"audio":              cost.Audio,
+		"pricing_rule_id":    cost.RuleID,
+	})
+	ruleID := strings.TrimSpace(cost.RuleID)
+	if ruleID == "" {
+		ruleID = "model.video_generation"
+	}
+	return newOutputOnlyUSDQuote(totalUSD, PricingSourceUpstreamModelPrice, ruleID, UsageSourceRequestParameters, snapshot), nil
+}
+
+// videoMeteredFact declares the video metered identity used by the unified
+// metered pre-deduct. The billing unit and the integer base-unit quantity come
+// from the synced catalog, so the platform lane reserves exactly what the
+// catalogue defines; when the model has no video price there is no identity to
+// declare and the caller keeps the legacy path.
+func videoMeteredFact(pricing json.RawMessage, req *adapter.VideoRequest) (shared.MeteredUsageFact, bool) {
+	seconds := defaultVideoPredeductDurationSeconds
+	if req != nil && req.Duration != nil && *req.Duration > 0 {
+		seconds = *req.Duration
+	}
+	count := 1
+	if req != nil && req.N != nil && *req.N > 0 {
+		count = *req.N
+	}
+	if len(pricing) == 0 {
+		return shared.MeteredUsageFact{}, false
+	}
+	costReq := videoGenerationCostRequestFromCreate(req, seconds, count)
+	cost, present, err := modelpricing.ResolveVideoGenerationCost(pricing, costReq)
+	if err != nil {
+		// Token-metered video without an estimator: retry with one priced unit so
+		// the platform pre-deduct still holds a bounded reservation.
+		fallbackReq := costReq
+		fallbackReq.VideoTokens = defaultVideoTokenReservation
+		if retryCost, retryPresent, retryErr := modelpricing.ResolveVideoGenerationCost(pricing, fallbackReq); retryErr == nil {
+			cost, present, err = retryCost, retryPresent, nil
 		}
 	}
-	snapshot := buildPricingSnapshot(map[string]interface{}{
-		"pricing_source":             PricingSourceCodeDefaultFallback,
-		"usage_source":               UsageSourceRequestParameters,
-		"operation":                  PricingOperationVideo,
-		"model_id":                   modelID,
-		"provider":                   provider,
-		"model":                      modelName,
-		"request_model":              strings.TrimSpace(requestModel),
-		"duration_seconds":           seconds,
-		"count":                      count,
-		"points_per_second":          defaultVideoPredeductPointsPerSecond,
-		"internal_credits_per_point": internalCreditsPerPoint,
-	})
-	return newOutputOnlyUSDQuote(totalUSD, PricingSourceCodeDefaultFallback, "video.default.per_second", UsageSourceRequestParameters, snapshot)
+	if err != nil || !present || strings.TrimSpace(cost.BillingUnit) == "" {
+		return shared.MeteredUsageFact{}, false
+	}
+	quantity := int64(cost.Quantity)
+	if cost.BillingUnit == "million_video_tokens" {
+		quantity = int64(cost.VideoTokens)
+	}
+	if quantity <= 0 {
+		return shared.MeteredUsageFact{}, false
+	}
+	fact := shared.MeteredUsageFact{
+		Operation: string(PricingOperationVideo),
+		Meter:     "video",
+		BaseUnit:  cost.BillingUnit,
+		Quantity:  quantity,
+		Dimensions: map[string]string{
+			"resolution":       cost.Resolution,
+			"input_video":      strconv.FormatBool(cost.InputVideo),
+			"audio":            strconv.FormatBool(cost.Audio),
+			"duration_seconds": strconv.FormatFloat(cost.DurationSeconds, 'f', -1, 64),
+			"count":            strconv.Itoa(costReq.Count),
+		},
+	}
+	// Console rebuilds the metered snapshot from these dimensions, so the token
+	// count used for the estimate must be the resolved one (which may be the
+	// bounded fallback), not only the request-provided count.
+	if cost.VideoTokens > 0 {
+		fact.Dimensions["video_tokens"] = strconv.Itoa(cost.VideoTokens)
+	}
+	return fact, true
+}
+
+func withVideoMeteredUsage(ctx context.Context, selection *ProviderSelection, req *adapter.VideoRequest) context.Context {
+	if selection == nil {
+		return ctx
+	}
+	fact, ok := videoMeteredFact(json.RawMessage(selection.Model.Pricing), req)
+	if !ok {
+		return ctx
+	}
+	return context.WithValue(ctx, shared.ContextKeyMeteredUsage, &fact)
+}
+
+func videoGenerationCostRequestFromCreate(req *adapter.VideoRequest, seconds, count int) modelpricing.VideoGenerationCostRequest {
+	costReq := modelpricing.VideoGenerationCostRequest{
+		DurationSeconds: float64(seconds),
+		Count:           count,
+	}
+	if req == nil {
+		return costReq
+	}
+	costReq.Resolution = videoCreateResolution(req)
+	costReq.InputVideo = videoCreateInputVideo(req)
+	costReq.Audio = videoCreateAudio(req)
+	if tokens := videoCreateTokenCount(req); tokens > 0 {
+		costReq.VideoTokens = tokens
+	}
+	return costReq
+}
+
+func videoGenerationCostRequestFromTask(req *adapter.VideoTaskRequest, resp *adapter.VideoResponse, seconds, count int) modelpricing.VideoGenerationCostRequest {
+	costReq := modelpricing.VideoGenerationCostRequest{
+		DurationSeconds: float64(seconds),
+		Count:           count,
+		Resolution:      videoPricingResolution(req, resp),
+		InputVideo:      videoPricingInputVideo(req, resp),
+	}
+	if req != nil && req.AdditionalParameters != nil {
+		if value, ok := boolFromAny(req.AdditionalParameters["audio"]); ok {
+			costReq.Audio = value
+		} else if value, ok := boolFromAny(req.AdditionalParameters["output_audio"]); ok {
+			costReq.Audio = value
+		} else if value, ok := boolFromAny(req.AdditionalParameters["generate_audio"]); ok {
+			costReq.Audio = value
+		}
+	}
+	if resp != nil && resp.Raw != nil {
+		if value, ok := boolFromAny(resp.Raw["audio"]); ok {
+			costReq.Audio = value
+		} else if value, ok := boolFromAny(resp.Raw["output_audio"]); ok {
+			costReq.Audio = value
+		} else if value, ok := boolFromAny(resp.Raw["generate_audio"]); ok {
+			costReq.Audio = value
+		}
+	}
+	costReq.VideoTokens = videoPricingTokenCount(req, resp)
+	return costReq
+}
+
+func videoCreateResolution(req *adapter.VideoRequest) string {
+	if req == nil {
+		return ""
+	}
+	if value := strings.ToLower(strings.TrimSpace(req.Resolution)); value != "" {
+		return value
+	}
+	if value := strings.ToLower(strings.TrimSpace(req.Size)); value != "" {
+		return value
+	}
+	return ""
+}
+
+func videoCreateInputVideo(req *adapter.VideoRequest) bool {
+	if req == nil {
+		return false
+	}
+	if strings.TrimSpace(req.VideoURL) != "" {
+		return true
+	}
+	for _, refType := range req.ReferenceTypes {
+		switch strings.ToLower(strings.TrimSpace(refType)) {
+		case "video", "video_url", "input_video":
+			return true
+		}
+	}
+	for _, refURL := range req.ReferenceURLs {
+		if strings.TrimSpace(refURL) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func videoCreateAudio(req *adapter.VideoRequest) bool {
+	if req == nil {
+		return false
+	}
+	if req.GenerateAudio != nil {
+		return *req.GenerateAudio
+	}
+	if strings.TrimSpace(req.AudioURL) != "" {
+		return true
+	}
+	return false
+}
+
+func videoCreateTokenCount(req *adapter.VideoRequest) int {
+	if req == nil || req.AdditionalParameters == nil {
+		return 0
+	}
+	for _, key := range []string{"video_tokens", "total_video_tokens", "output_video_tokens", "completion_tokens", "total_tokens"} {
+		if value := intFromAny(req.AdditionalParameters[key]); value > 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 func reqModelName(req *adapter.VideoRequest) string {
@@ -368,10 +628,7 @@ func videoTaskEstimatedCredits(req *adapter.VideoTaskRequest, fallback int64) in
 	if estimated := int64FromAny(videoTaskAdditionalParam(req, "billing_estimated_credits")); estimated > 0 {
 		return estimated
 	}
-	if fallback > 0 {
-		return fallback
-	}
-	return defaultVideoPredeductQuoteFromTask(nil, req).TotalCredits
+	return fallback
 }
 func videoBillingIDsFromTask(appCtx *AppContext, req *adapter.VideoTaskRequest) (string, string) {
 	requestID := videoTaskStringParam(req, "billing_request_id")
@@ -627,8 +884,8 @@ func (s *llmGatewayServiceImpl) settleVideoTask(
 	if isFailedVideoStatus(resp.Status) {
 		return s.settleVideoTaskFailure(ctx, apiKey, appCtx, selection, billingOrganizationID, ownerID, req, resp)
 	}
-	if estimated := videoTaskEstimatedCredits(req, defaultVideoPredeductQuoteFromTask(selection, req).TotalCredits); estimated > 0 {
-		resp.EstimatedCredits = estimated
+	if quote, err := s.videoPredeductQuoteFromTask(ctx, selection, req); err == nil && quote.TotalCredits > 0 {
+		resp.EstimatedCredits = videoTaskEstimatedCredits(req, quote.TotalCredits)
 	}
 	return nil
 }
@@ -654,16 +911,22 @@ func (s *llmGatewayServiceImpl) settleVideoTaskSuccess(
 		return nil
 	}
 
+	lane, err := usageBillingLaneFromContext(selection, nil)
+	if err != nil {
+		return fmt.Errorf("failed to resolve billing lane for video settlement: %w", err)
+	}
 	quote, err := s.quoteVideoPricingForSelection(ctx, selection, req, resp)
 	if err != nil {
 		return err
 	}
-	fallbackQuote := defaultVideoPredeductQuoteFromTask(selection, req)
-	if quote.TotalCredits <= 0 {
-		quote = fallbackQuote
+	// Platform lane settles from Console authority (resp.Settlement), so a zero
+	// local quote is expected; only the private lane must fail closed here.
+	if videoSettlementRequiresLocalPrice(lane) && quote.TotalCredits <= 0 {
+		return fmt.Errorf("%w: video pricing is not configured", ErrPricingNotConfigured)
 	}
-	if quote.TotalCredits <= 0 {
-		return nil
+	predeductQuote, err := s.videoPredeductQuoteFromTask(ctx, selection, req)
+	if err != nil {
+		return err
 	}
 
 	billingCtx, err := s.videoBillingContextFromTask(
@@ -674,21 +937,41 @@ func (s *llmGatewayServiceImpl) settleVideoTaskSuccess(
 		billingOrganizationID,
 		ownerID,
 		req,
-		videoTaskEstimatedCredits(req, fallbackQuote.TotalCredits),
+		videoTaskEstimatedCredits(req, predeductQuote.TotalCredits),
 	)
 	if err != nil {
 		return err
 	}
 	billingCtx.PricingOperation = PricingOperationVideo
-	if resp.Usage != nil {
-		billingCtx.PromptTokens = resp.Usage.PromptTokens
-		billingCtx.CompletionTokens = resp.Usage.CompletionTokens
-		billingCtx.TotalTokens = resp.Usage.TotalTokens
+	if !selection.UseSystemProvider {
+		// Video usage is a separate metered dimension. Keep it in total_tokens
+		// for the local bill, without fabricating prompt/completion tokens.
+		videoTokens := videoResponseTokenCount(resp)
+		if videoTokens > 0 {
+			billingCtx.PromptTokens = 0
+			billingCtx.CompletionTokens = 0
+			billingCtx.TotalTokens = videoTokens
+		}
 	}
 	billingCtx.ActualCredits = quote.TotalCredits
 	billingCtx.Status = billingContextStatusSuccess
-	billingCtx.ResponseTime = 0
 	applyPricingQuoteToBillingContext(billingCtx, quote)
+	finalizeVideoTimingSnapshot(billingCtx, resp.Status)
+	if selection.UseSystemProvider && resp.Settlement != nil {
+		billingCtx.DeductionID = resp.Settlement.SettlementID
+		decision, err := s.resolveBillingDecision(selection, billingCtx)
+		if err != nil {
+			return err
+		}
+		settlementCtx, cancel := billingFinalizationContext(ctx)
+		defer cancel()
+		if err := s.finalizePlatformProxySettlement(settlementCtx, billingCtx, resp.Settlement, decision); err != nil {
+			return err
+		}
+		resp.EstimatedCredits = billingCtx.EstimatedCredits
+		resp.ActualCredits = billingCtx.ActualCredits
+		return nil
+	}
 
 	if err := s.settleVideoBillingContext(ctx, selection, billingCtx); err != nil {
 		return err
@@ -697,6 +980,26 @@ func (s *llmGatewayServiceImpl) settleVideoTaskSuccess(
 	resp.EstimatedCredits = billingCtx.EstimatedCredits
 	resp.ActualCredits = billingCtx.ActualCredits
 	return nil
+}
+
+func videoResponseTokenCount(resp *adapter.VideoResponse) int {
+	if resp == nil {
+		return 0
+	}
+	if resp.Usage != nil {
+		if resp.Usage.TotalTokens > 0 {
+			return resp.Usage.TotalTokens
+		}
+		if resp.Usage.PromptTokens > 0 || resp.Usage.CompletionTokens > 0 {
+			return resp.Usage.PromptTokens + resp.Usage.CompletionTokens
+		}
+	}
+	for _, key := range []string{"video_tokens", "total_video_tokens", "output_video_tokens"} {
+		if value := intFromAny(resp.Raw[key]); value > 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 func (s *llmGatewayServiceImpl) settleVideoTaskFailure(
@@ -712,7 +1015,10 @@ func (s *llmGatewayServiceImpl) settleVideoTaskFailure(
 	if resp == nil || !isFailedVideoStatus(resp.Status) {
 		return nil
 	}
-	quote := defaultVideoPredeductQuoteFromTask(selection, req)
+	predeductQuote, err := s.videoPredeductQuoteFromTask(ctx, selection, req)
+	if err != nil {
+		return err
+	}
 	billingCtx, err := s.videoBillingContextFromTask(
 		ctx,
 		apiKey,
@@ -721,7 +1027,7 @@ func (s *llmGatewayServiceImpl) settleVideoTaskFailure(
 		billingOrganizationID,
 		ownerID,
 		req,
-		videoTaskEstimatedCredits(req, quote.TotalCredits),
+		videoTaskEstimatedCredits(req, predeductQuote.TotalCredits),
 	)
 	if err != nil {
 		return err
@@ -729,7 +1035,6 @@ func (s *llmGatewayServiceImpl) settleVideoTaskFailure(
 	billingCtx.PricingOperation = PricingOperationVideo
 	billingCtx.ActualCredits = 0
 	billingCtx.Status = billingContextStatusError
-	billingCtx.ResponseTime = 0
 	billingCtx.InputUSD = decimal.Zero
 	billingCtx.OutputUSD = decimal.Zero
 	billingCtx.TotalUSD = decimal.Zero
@@ -739,6 +1044,7 @@ func (s *llmGatewayServiceImpl) settleVideoTaskFailure(
 	if resp.Error != nil {
 		billingCtx.ErrorMessage = fmt.Sprint(resp.Error)
 	}
+	finalizeVideoTimingSnapshot(billingCtx, resp.Status)
 
 	if err := s.settleVideoBillingContext(ctx, selection, billingCtx); err != nil {
 		return err
@@ -776,8 +1082,40 @@ func (s *llmGatewayServiceImpl) videoBillingContextFromTask(
 		attemptID,
 	)
 	billingCtx.InvocationSource = resolveInvocationSource(ctx, appCtx)
+	billingCtx.RoutingStrategy = selection.RoutingStrategy
+	if s != nil && s.db != nil {
+		var attempt BillingAttempt
+		if err := s.db.WithContext(ctx).
+			Select("created_at").
+			Where("attempt_id = ?", attemptID).
+			Take(&attempt).Error; err == nil && !attempt.CreatedAt.IsZero() {
+			billingCtx.RequestCreatedAt = attempt.CreatedAt.UTC()
+		}
+	}
 	_ = ownerID
 	return billingCtx, nil
+}
+
+func finalizeVideoTimingSnapshot(billingCtx *BillingContext, providerStatus string) {
+	if billingCtx == nil {
+		return
+	}
+	finishedAt := time.Now().UTC()
+	if billingCtx.RequestCreatedAt.IsZero() || billingCtx.RequestCreatedAt.After(finishedAt) {
+		billingCtx.RequestCreatedAt = finishedAt
+	}
+	billingCtx.ResponseTime = finishedAt.Sub(billingCtx.RequestCreatedAt).Milliseconds()
+	values := map[string]interface{}{}
+	if len(billingCtx.PricingSnapshot) > 0 && string(billingCtx.PricingSnapshot) != "null" {
+		_ = json.Unmarshal(billingCtx.PricingSnapshot, &values)
+	}
+	values["video_task_submitted_at"] = billingCtx.RequestCreatedAt.Format(time.RFC3339Nano)
+	values["video_task_finalized_at"] = finishedAt.Format(time.RFC3339Nano)
+	values["video_end_to_end_ms"] = billingCtx.ResponseTime
+	values["video_provider_status"] = strings.TrimSpace(providerStatus)
+	values["video_queue_time"] = "provider_not_reported"
+	values["video_generation_time"] = "provider_not_reported"
+	billingCtx.PricingSnapshot = buildPricingSnapshot(values)
 }
 
 func (s *llmGatewayServiceImpl) settleVideoBillingContext(ctx context.Context, selection *ProviderSelection, billingCtx *BillingContext) error {
@@ -827,7 +1165,7 @@ func (s *llmGatewayServiceImpl) findSettledVideoUsageBill(ctx context.Context, a
 		return 0, false, nil
 	}
 	var row struct {
-		TotalPoints int64 `gorm:"column:total_points"`
+		TotalPoints millipoints.MilliPoints `gorm:"column:total_points"`
 	}
 	err := s.db.WithContext(ctx).
 		Table("llm_usage_bills").
@@ -841,7 +1179,14 @@ func (s *llmGatewayServiceImpl) findSettledVideoUsageBill(ctx context.Context, a
 		}
 		return 0, false, err
 	}
-	return row.TotalPoints, true, nil
+	return row.TotalPoints.Int64(), true, nil
+}
+
+// videoSettlementRequiresLocalPrice reports whether a billing lane settles from
+// local model pricing. Platform-lane video settles from Console authority, so a
+// zero local quote is expected there and must not fail closed.
+func videoSettlementRequiresLocalPrice(lane UsageBillingLane) bool {
+	return lane != UsageBillingLanePlatform
 }
 
 func (s *llmGatewayServiceImpl) quoteVideoPricingForSelection(ctx context.Context, selection *ProviderSelection, req *adapter.VideoTaskRequest, resp *adapter.VideoResponse) (PricingQuote, error) {
@@ -865,15 +1210,28 @@ func (s *llmGatewayServiceImpl) quoteVideoPricingForSelection(ctx context.Contex
 	priceUSD := rate
 	currency := strings.ToUpper(strings.TrimSpace(selection.Model.Currency))
 	if currency == "CNY" {
-		rateUSDToCNY := s.organizationUSDToCNYRate(ctx, selection.OrganizationID)
+		// CNY settlement needs the organization rate. A missing rate is
+		// fail-closed; it never falls back to a hard-coded 7.
+		rateUSDToCNY, rateErr := s.organizationUSDToCNYRate(ctx, selection.OrganizationID)
+		if rateErr != nil {
+			return PricingQuote{}, fmt.Errorf("%w: video CNY settlement requires an exchange rate: %v", ErrExchangeRateUnavailable, rateErr)
+		}
 		priceUSD = rate.Div(rateUSDToCNY)
 	}
 	totalUSD := decimal.Zero
 	usageSource := UsageSourceRequestParameters
 	videoTokens := videoPricingTokenCount(req, resp)
+	// The requested duration is only a reservation estimate. Settlement must
+	// never fall back to it: the upstream-reported actual duration is the only
+	// acceptable input for by-second pricing.
+	actualDurationSeconds := resp.VideoActualDurationSeconds()
 	durationSeconds := intFromAny(videoTaskAdditionalParam(req, "duration"))
 	if durationSeconds <= 0 {
 		durationSeconds = defaultVideoPredeductDurationSeconds
+	}
+	var snapshotDuration interface{} = durationSeconds
+	if actualDurationSeconds > 0 {
+		snapshotDuration = actualDurationSeconds
 	}
 	count := intFromAny(videoTaskAdditionalParam(req, "count"))
 	if count <= 0 {
@@ -887,7 +1245,19 @@ func (s *llmGatewayServiceImpl) quoteVideoPricingForSelection(ctx context.Contex
 		totalUSD = tokenUSD(priceUSD, videoTokens)
 		usageSource = UsageSourceProviderUsage
 	case "second":
-		totalUSD = priceUSD.Mul(decimal.NewFromInt(int64(durationSeconds))).Mul(decimal.NewFromInt(int64(count)))
+		if actualDurationSeconds <= 0 {
+			// Fail closed without settling: the generated video exists but the
+			// upstream did not report how long it is, so there is no trustworthy
+			// amount to charge. The reservation stays for reconciliation.
+			return PricingQuote{}, fmt.Errorf("%w: upstream video duration is unavailable for by-second settlement", ErrBillingSettleFailed)
+		}
+		// The measured duration is not money. It is converted to exact decimal
+		// once here so the rate multiplication stays exact.
+		totalUSD = priceUSD.Mul(decimal.NewFromFloat(actualDurationSeconds)).Mul(decimal.NewFromInt(int64(count)))
+	case "task":
+		// Task-priced video is billed per task. The same count drives
+		// pre-deduct and settlement, so the reservation equals the charge.
+		totalUSD = priceUSD.Mul(decimal.NewFromInt(int64(count)))
 	default:
 		return PricingQuote{}, nil
 	}
@@ -903,102 +1273,56 @@ func (s *llmGatewayServiceImpl) quoteVideoPricingForSelection(ctx context.Contex
 		"input_video":      inputVideo,
 		"pricing_mode":     pricingMode,
 		"video_tokens":     videoTokens,
-		"duration_seconds": durationSeconds,
+		"duration_seconds": snapshotDuration,
 		"count":            count,
 		"source_currency":  currency,
 	})
 	return newOutputOnlyUSDQuote(totalUSD, PricingSourceUpstreamModelPrice, "", usageSource, snapshot), nil
 }
 
-type videoPricingRate struct {
-	Resolution               string          `json:"resolution"`
-	InputVideo               *bool           `json:"input_video"`
-	PricePerMillionTokens    decimal.Decimal `json:"price_per_million_tokens"`
-	PricePerMillionVideo     decimal.Decimal `json:"price_per_million_video_tokens"`
-	PricePerSecond           decimal.Decimal `json:"price_per_second"`
-	PriceUSDPerSecond        decimal.Decimal `json:"price_usd_per_second"`
-	TokensPerSecond          decimal.Decimal `json:"tokens_per_second"`
-	VideoTokensPerSecond     decimal.Decimal `json:"video_tokens_per_second"`
-	VideoTokens              decimal.Decimal `json:"video_tokens"`
-	MillionVideoTokensPerSec decimal.Decimal `json:"million_video_tokens_per_second"`
-}
-
 func videoPriceForSelection(selection *ProviderSelection, req *adapter.VideoTaskRequest, resp *adapter.VideoResponse) (decimal.Decimal, string, bool, string, bool, error) {
 	if selection == nil || len(selection.Model.Pricing) == 0 || string(selection.Model.Pricing) == "null" {
 		return decimal.Zero, "", false, "", false, nil
 	}
-	var pricing struct {
-		VideoGeneration struct {
-			BillingUnit     string             `json:"billing_unit"`
-			Rates           []videoPricingRate `json:"rates"`
-			ResolutionRates []struct {
-				Resolution string             `json:"resolution"`
-				Rates      []videoPricingRate `json:"rates"`
-			} `json:"resolution_rates"`
-		} `json:"video_generation"`
+	seconds := intFromAny(videoTaskAdditionalParam(req, "duration"))
+	if actual := resp.VideoActualDurationSeconds(); actual > 0 {
+		// Rate conditions may pin a duration; match against the upstream actual
+		// duration rather than the requested estimate.
+		seconds = int(actual)
 	}
-	if err := json.Unmarshal(selection.Model.Pricing, &pricing); err != nil {
+	if seconds <= 0 {
+		seconds = defaultVideoPredeductDurationSeconds
+	}
+	count := intFromAny(videoTaskAdditionalParam(req, "count"))
+	if count <= 0 {
+		count = 1
+	}
+	costReq := videoGenerationCostRequestFromTask(req, resp, seconds, count)
+	cost, present, err := modelpricing.ResolveVideoGenerationUnitPrice(json.RawMessage(selection.Model.Pricing), costReq)
+	if err != nil {
 		return decimal.Zero, "", false, "", false, fmt.Errorf("invalid video pricing: %w", err)
 	}
-	resolution := videoPricingResolution(req, resp)
-	inputVideo := videoPricingInputVideo(req, resp)
-	if rate, matchedResolution, mode, ok := matchVideoRate(pricing.VideoGeneration.Rates, resolution, inputVideo, pricing.VideoGeneration.BillingUnit); ok {
-		return rate, matchedResolution, inputVideo, mode, true, nil
+	if !present {
+		return decimal.Zero, costReq.Resolution, costReq.InputVideo, "", false, nil
 	}
-	for _, resolutionRate := range pricing.VideoGeneration.ResolutionRates {
-		if resolution != "" && !strings.EqualFold(strings.TrimSpace(resolutionRate.Resolution), resolution) {
-			continue
-		}
-		if rate, matchedResolution, mode, ok := matchVideoRate(resolutionRate.Rates, resolution, inputVideo, pricing.VideoGeneration.BillingUnit); ok {
-			if matchedResolution == "" {
-				matchedResolution = strings.TrimSpace(resolutionRate.Resolution)
-			}
-			return rate, matchedResolution, inputVideo, mode, true, nil
-		}
+	mode := cost.BillingUnit
+	var rate decimal.Decimal
+	// Explicit boundary: the unit price comes from legacy JSON as a float and
+	// is converted once per settlement mode; rate math below stays decimal.
+	switch mode {
+	case "second":
+		rate = decimal.NewFromFloat(cost.UnitPrice)
+	case "million_video_tokens":
+		rate = decimal.NewFromFloat(cost.UnitPrice)
+	case "task":
+		rate = decimal.NewFromFloat(cost.UnitPrice)
+	default:
+		return decimal.Zero, cost.Resolution, cost.InputVideo, "", false, nil
 	}
-	if resolution != "" {
-		return decimal.Zero, resolution, inputVideo, "", false, nil
+	if !rate.IsPositive() {
+		return decimal.Zero, cost.Resolution, cost.InputVideo, mode, false, nil
 	}
-	for _, resolutionRate := range pricing.VideoGeneration.ResolutionRates {
-		if rate, matchedResolution, mode, ok := matchVideoRate(resolutionRate.Rates, "", inputVideo, pricing.VideoGeneration.BillingUnit); ok {
-			if matchedResolution == "" {
-				matchedResolution = strings.TrimSpace(resolutionRate.Resolution)
-			}
-			return rate, matchedResolution, inputVideo, mode, true, nil
-		}
-	}
-	return decimal.Zero, resolution, inputVideo, "", false, nil
-}
-
-func matchVideoRate(rates []videoPricingRate, resolution string, inputVideo bool, billingUnit string) (decimal.Decimal, string, string, bool) {
-	for _, rate := range rates {
-		if resolution != "" && strings.TrimSpace(rate.Resolution) != "" && !strings.EqualFold(strings.TrimSpace(rate.Resolution), resolution) {
-			continue
-		}
-		if rate.InputVideo != nil && *rate.InputVideo != inputVideo {
-			continue
-		}
-		matchedResolution := strings.TrimSpace(rate.Resolution)
-		if matchedResolution == "" {
-			matchedResolution = resolution
-		}
-		if rate.PricePerMillionTokens.IsPositive() {
-			return rate.PricePerMillionTokens, matchedResolution, "million_video_tokens", true
-		}
-		if rate.PricePerMillionVideo.IsPositive() {
-			return rate.PricePerMillionVideo, matchedResolution, "million_video_tokens", true
-		}
-		if rate.PricePerSecond.IsPositive() {
-			return rate.PricePerSecond, matchedResolution, "second", true
-		}
-		if rate.PriceUSDPerSecond.IsPositive() {
-			return rate.PriceUSDPerSecond, matchedResolution, "second", true
-		}
-	}
-	if strings.EqualFold(strings.TrimSpace(billingUnit), "second") {
-		return decimal.Zero, resolution, "second", false
-	}
-	return decimal.Zero, resolution, "", false
+	return rate, cost.Resolution, cost.InputVideo, mode, true, nil
 }
 
 func videoPricingTokenCount(req *adapter.VideoTaskRequest, resp *adapter.VideoResponse) int {
@@ -1060,9 +1384,9 @@ func videoPricingInputVideo(req *adapter.VideoTaskRequest, resp *adapter.VideoRe
 	return false
 }
 
-func (s *llmGatewayServiceImpl) organizationUSDToCNYRate(ctx context.Context, organizationID uuid.UUID) decimal.Decimal {
+func (s *llmGatewayServiceImpl) organizationUSDToCNYRate(ctx context.Context, organizationID uuid.UUID) (decimal.Decimal, error) {
 	if s == nil {
-		return decimal.NewFromInt(7)
+		return decimal.Zero, fmt.Errorf("%w: billing service is nil", ErrExchangeRateUnavailable)
 	}
 	return loadOrganizationUSDToCNYRate(ctx, s.db, organizationID)
 }

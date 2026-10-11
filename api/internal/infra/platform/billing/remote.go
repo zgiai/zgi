@@ -3,7 +3,10 @@ package billing
 import (
 	"context"
 	"fmt"
+	"strings"
 
+	"github.com/zgiai/zgi/api/internal/infra/platform/consoleauth"
+	"github.com/zgiai/zgi/api/internal/infra/platform/consolecred"
 	"github.com/zgiai/zgi/api/internal/observability"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	pb "github.com/zgiai/zgi/api/pkg/rpc/v1"
@@ -18,9 +21,22 @@ type Remote struct {
 	fallback bool // Whether to allow requests on gRPC failure
 }
 
-// NewRemote creates a new remote billing provider.
-func NewRemote(addr string) (*Remote, error) {
+// NewRemote creates a new remote billing provider. apiKey is the Console-issued
+// downstream client key; when set, every billing RPC carries it so Console can
+// resolve the downstream identity. An empty key keeps the transitional
+// unauthenticated behavior.
+func NewRemote(addr, apiKey string) (*Remote, error) {
 	dialOptions := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+	// Two distinct credentials travel on every billing RPC. The per-instance
+	// control-plane credential is attached first: it contributes the X-Internal-*
+	// HMAC headers (signed through consolecred over the full gRPC method) the console
+	// instance interceptor verifies. The Console-issued downstream client key is
+	// attached last so that it owns the "authorization" metadata key the console
+	// downstream interceptor resolves. An empty key keeps the previous behavior.
+	dialOptions = append(dialOptions, grpc.WithPerRPCCredentials(consolecred.NewGRPCCredentials()))
+	if token := strings.TrimSpace(apiKey); token != "" {
+		dialOptions = append(dialOptions, grpc.WithPerRPCCredentials(consoleauth.Credentials{Token: token}))
+	}
 	dialOptions = append(dialOptions, observability.GRPCDialOptions()...)
 	conn, err := grpc.Dial(addr, dialOptions...)
 	if err != nil {

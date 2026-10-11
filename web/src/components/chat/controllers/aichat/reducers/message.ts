@@ -18,6 +18,7 @@ import {
   SENSITIVE_OUTPUT_BLOCKED_TOKEN,
   isSensitiveOutputBlockedValue,
 } from '@/utils/model-output-filter';
+import { resolveAIChatErrorCode } from '@/components/chat/variants/aichat/stream-error-code';
 import {
   DEFAULT_AICHAT_MESSAGE_PAGINATION,
   type AIChatControllerState,
@@ -1053,10 +1054,11 @@ export function applyStreamErrorState(
   const conversationId = payload.conversation_id || fallbackConversationId;
   const messageId = payload.message_id;
   const message = payload.message || 'AIChat stream error';
+  const errorCode = resolveAIChatErrorCode(payload.code, payload.error_code);
   const errorMetadata =
-    payload.code || payload.params
+    errorCode || payload.params
       ? {
-          error_code: payload.code,
+          error_code: errorCode,
           error_params: payload.params,
         }
       : undefined;

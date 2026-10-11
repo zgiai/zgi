@@ -5,18 +5,34 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	"strings"
 	"sync"
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"github.com/zgiai/zgi/api/internal/modules/llm/billingsettings"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway/ratingcore"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	modelpricing "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/pricing"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
-const pricingCreditsPerUSD = int64(1_000_000)
+// NormalizedPointsPerUSD is the display conversion rate exposed to organization
+// settings readers for fiat-to-points previews in the console UI.
+func NormalizedPointsPerUSD() int64 {
+	return billingsettings.Default().PointsPerUSD()
+}
+
+// localMilliPointsPerUSD is the local points_per_usd expressed in milli-points
+// (points_per_usd x 1000), so USD -> milli-points stays exact. points_per_usd
+// is pinned to the platform default (see billingsettings.Store.PointsPerUSD); a
+// synced or stored value does not change it.
+func localMilliPointsPerUSD() int64 {
+	return NormalizedPointsPerUSD() * millipoints.UnitsPerPoint
+}
 
 var (
 	ErrPricingNotConfigured  = errors.New("model pricing is not configured")
@@ -67,8 +83,11 @@ type PricingQuote struct {
 	CacheWrite5mPriceResolved bool
 	CacheWrite1hPriceResolved bool
 	OutputTokenPriceResolved  bool
-	InputRuleID               string
-	OutputRuleID              string
+	// CacheBillingSupported is derived from canonical pricing capability
+	// metadata, never from legacy scalar cache columns.
+	CacheBillingSupported *bool
+	InputRuleID           string
+	OutputRuleID          string
 
 	MeteredOperation       PricingOperation
 	MeteredMeter           string
@@ -93,6 +112,13 @@ type TokenUsage struct {
 	CacheWrite5mTokens int
 	CacheWrite1hTokens int
 	OutputTokens       int
+	// AudioInputTokens / AudioOutputTokens carry the upstream realtime audio
+	// token split (OpenAI input_tokens_details.audio_tokens /
+	// output_tokens_details.audio_tokens). For realtime_audio they are
+	// preferred over Input/OutputTokens; when absent the normal prompt /
+	// completion counts are billed against the same realtime rules.
+	AudioInputTokens  int
+	AudioOutputTokens int
 }
 
 type PricingEngine interface {
@@ -124,6 +150,7 @@ type pricingModelRecord struct {
 	CacheWrite1hPriceConfigured      bool            `gorm:"column:cache_write_1h_price_configured"`
 	ImagePrices                      datatypes.JSON  `gorm:"column:image_prices"`
 	Pricing                          datatypes.JSON  `gorm:"column:pricing"`
+	CacheBillingSupported            bool            `gorm:"-"`
 	InputPriceOrganizationOverride   bool            `gorm:"-"`
 	OutputPriceOrganizationOverride  bool            `gorm:"-"`
 	CacheReadOrganizationOverride    bool            `gorm:"-"`
@@ -145,6 +172,10 @@ func (e *pricingEngine) QuoteTokens(ctx context.Context, ref PricingModelRef, pr
 	model, found, err := e.loadModel(ctx, ref)
 	if err != nil {
 		return PricingQuote{}, err
+	}
+
+	if ref.Operation == PricingOperationRealtimeAudio {
+		return e.quoteRealtimeAudioTokens(ref, model, found, promptTokens, completionTokens)
 	}
 
 	if found && tokenPricesConfiguredForUsage(model, requiredPrices) {
@@ -169,6 +200,7 @@ func (e *pricingEngine) QuoteTokens(ctx context.Context, ref PricingModelRef, pr
 			"output_price_configured":        model.OutputPriceConfigured,
 		})
 		quote := newUSDQuote(inputUSD, outputUSD, PricingSourceUpstreamModelPrice, "", UsageSourceProviderUsage, snapshot)
+		quote.CacheBillingSupported = boolPtr(model.CacheBillingSupported)
 		return withTokenPricingBasis(
 			quote,
 			model.InputPrice,
@@ -184,20 +216,34 @@ func (e *pricingEngine) QuoteTokens(ctx context.Context, ref PricingModelRef, pr
 }
 
 func (e *pricingEngine) QuoteTokenUsage(ctx context.Context, ref PricingModelRef, usage TokenUsage) (PricingQuote, error) {
-	if usage.InputTokens < 0 || usage.CacheReadTokens < 0 || usage.CacheWriteTokens < 0 || usage.CacheWrite5mTokens < 0 || usage.CacheWrite1hTokens < 0 || usage.OutputTokens < 0 {
+	if usage.InputTokens < 0 || usage.CacheReadTokens < 0 || usage.CacheWriteTokens < 0 || usage.CacheWrite5mTokens < 0 || usage.CacheWrite1hTokens < 0 || usage.OutputTokens < 0 || usage.AudioInputTokens < 0 || usage.AudioOutputTokens < 0 {
 		return PricingQuote{}, fmt.Errorf("token count must be greater than or equal to zero")
 	}
 	usage = normalizeGatewayTokenUsage(usage)
+	ref = normalizePricingModelRef(ref)
+	if ref.Operation == PricingOperationRealtimeAudio {
+		// Prefer upstream audio tokens; without them the normal prompt and
+		// completion counts are billed against the same realtime_audio rules.
+		usage = realtimeAudioTokenUsage(usage)
+	}
+	model, found, err := e.loadModel(ctx, ref)
+	if err != nil {
+		return PricingQuote{}, err
+	}
+	// Cache usage is ignored unless the model's canonical pricing explicitly
+	// declares cache meters. This makes historical scalar cache prices inert.
+	if !found || model == nil || !model.CacheBillingSupported {
+		usage.CacheReadTokens = 0
+		usage.CacheWriteTokens = 0
+		usage.CacheWrite5mTokens = 0
+		usage.CacheWrite1hTokens = 0
+	}
 	quote, err := e.QuoteTokens(ctx, ref, usage.InputTokens, usage.OutputTokens)
 	if err != nil {
 		return PricingQuote{}, err
 	}
 	if usage.CacheReadTokens == 0 && usage.CacheWriteTokens == 0 {
 		return quote, nil
-	}
-	model, found, err := e.loadModel(ctx, ref)
-	if err != nil {
-		return PricingQuote{}, err
 	}
 	if !found || model == nil {
 		return PricingQuote{}, fmt.Errorf("%w: cache token pricing requires a configured model", ErrPricingNotConfigured)
@@ -268,12 +314,127 @@ func (e *pricingEngine) QuoteTokenUsage(ctx context.Context, ref PricingModelRef
 	result.CacheWritePriceResolved = model.CacheWritePriceConfigured
 	result.CacheWrite5mPriceResolved = cacheWrite5mResolved
 	result.CacheWrite1hPriceResolved = cacheWrite1hResolved
+	result.CacheBillingSupported = boolPtr(model.CacheBillingSupported)
 	return result, nil
+}
+
+// quoteRealtimeAudioTokens bills a realtime audio request from the model's
+// canonical realtime_audio rules (audio input/output tokens). The chat scalar
+// columns represent text tokens and must not be used for audio billing.
+func (e *pricingEngine) quoteRealtimeAudioTokens(
+	ref PricingModelRef,
+	model *pricingModelRecord,
+	found bool,
+	inputTokens int,
+	outputTokens int,
+) (PricingQuote, error) {
+	if !found || model == nil {
+		return PricingQuote{}, fmt.Errorf("%w: realtime audio pricing requires a configured model", ErrPricingNotConfigured)
+	}
+	inputPrice, outputPrice, ok, err := resolveRealtimeAudioTokenPrices(model.Pricing)
+	if err != nil {
+		return PricingQuote{}, err
+	}
+	if !ok {
+		return PricingQuote{}, fmt.Errorf("%w: realtime audio token pricing is not configured", ErrPricingNotConfigured)
+	}
+	inputUSD := tokenUSD(inputPrice, inputTokens)
+	outputUSD := tokenUSD(outputPrice, outputTokens)
+	snapshot := buildPricingSnapshot(map[string]interface{}{
+		"pricing_source":                 PricingSourceUpstreamModelPrice,
+		"usage_source":                   UsageSourceProviderUsage,
+		"operation":                      ref.Operation,
+		"model_id":                       model.ID.String(),
+		"provider":                       strings.TrimSpace(model.Provider),
+		"model":                          strings.TrimSpace(model.Name),
+		"prompt_tokens":                  inputTokens,
+		"completion_tokens":              outputTokens,
+		"input_price_usd_per_1m_tokens":  inputPrice.String(),
+		"output_price_usd_per_1m_tokens": outputPrice.String(),
+		"input_cost_usd":                 inputUSD.String(),
+		"output_cost_usd":                outputUSD.String(),
+	})
+	quote := newUSDQuote(inputUSD, outputUSD, PricingSourceUpstreamModelPrice, "", UsageSourceProviderUsage, snapshot)
+	return withTokenPricingBasis(quote, inputPrice, outputPrice, true, true, "", ""), nil
+}
+
+func resolveRealtimeAudioTokenPrices(raw datatypes.JSON) (decimal.Decimal, decimal.Decimal, bool, error) {
+	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
+		return decimal.Zero, decimal.Zero, false, nil
+	}
+	var envelope struct {
+		Rules []struct {
+			Operation string          `json:"operation"`
+			Meter     string          `json:"meter"`
+			Price     json.RawMessage `json:"price"`
+		} `json:"rules"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return decimal.Zero, decimal.Zero, false, fmt.Errorf("%w: invalid realtime audio pricing: %v", ErrPricingNotConfigured, err)
+	}
+	operation := string(PricingOperationRealtimeAudio)
+	var inputPrice, outputPrice decimal.Decimal
+	var hasInput, hasOutput bool
+	for _, rule := range envelope.Rules {
+		if rule.Operation != operation {
+			continue
+		}
+		amount, ok := parseRealtimeAudioRulePrice(rule.Price)
+		if !ok {
+			continue
+		}
+		switch rule.Meter {
+		case string(PricingMeterInputToken):
+			inputPrice, hasInput = amount, true
+		case string(PricingMeterOutputToken):
+			outputPrice, hasOutput = amount, true
+		}
+	}
+	if !hasInput && !hasOutput {
+		return decimal.Zero, decimal.Zero, false, nil
+	}
+	return inputPrice, outputPrice, true, nil
+}
+
+func parseRealtimeAudioRulePrice(raw json.RawMessage) (decimal.Decimal, bool) {
+	if len(raw) == 0 {
+		return decimal.Zero, false
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		amount, err := decimal.NewFromString(strings.TrimSpace(text))
+		if err != nil || amount.IsNegative() {
+			return decimal.Zero, false
+		}
+		return amount, true
+	}
+	// Explicit boundary: legacy pricing JSON can encode the amount as a JSON
+	// number. Convert once here; every pricing computation afterward is decimal.
+	var number float64
+	if err := json.Unmarshal(raw, &number); err != nil || number < 0 {
+		return decimal.Zero, false
+	}
+	return decimal.NewFromFloat(number), true
 }
 
 func normalizeGatewayTokenUsage(usage TokenUsage) TokenUsage {
 	if usage.CacheWriteTokens == 0 {
 		usage.CacheWriteTokens = usage.CacheWrite5mTokens + usage.CacheWrite1hTokens
+	}
+	return usage
+}
+
+// realtimeAudioTokenUsage prefers upstream audio_tokens when present and falls
+// back to the prompt/completion token counts otherwise. Missing audio tokens
+// must not fail closed: a modality-aware realtime price is still billed from
+// the text-token split against the same realtime_audio rules. This mirrors the
+// pure ratingcore fallback so Pre rates realtime audio identically.
+func realtimeAudioTokenUsage(usage TokenUsage) TokenUsage {
+	if usage.AudioInputTokens > 0 {
+		usage.InputTokens = usage.AudioInputTokens
+	}
+	if usage.AudioOutputTokens > 0 {
+		usage.OutputTokens = usage.AudioOutputTokens
 	}
 	return usage
 }
@@ -399,14 +560,20 @@ func (e *pricingEngine) QuoteImage(ctx context.Context, ref PricingModelRef, req
 		if quote, ok := quoteConfiguredOrganizationImageUnitPrice(model, &r, count); ok {
 			return quote, nil
 		}
+		if quote, ok := quoteConfiguredStructuredImagePrice(model, &r, count); ok {
+			return quote, nil
+		}
 		prices, configured, err := configuredImagePricingRules(model)
 		if err != nil {
 			return PricingQuote{}, err
 		}
 		if configured {
-			var matched llmmodel.PricingRule
-			if matchImagePricingRule(&r, prices, &matched) {
-				return quoteConfiguredImageRule(model, &r, matched, count)
+			matched, err := matchImagePricingRule(&r, prices)
+			if err != nil {
+				return PricingQuote{}, err
+			}
+			if matched != nil {
+				return quoteConfiguredImageRule(model, &r, *matched, count)
 			}
 		}
 		if !configured {
@@ -417,6 +584,93 @@ func (e *pricingEngine) QuoteImage(ctx context.Context, ref PricingModelRef, req
 	}
 
 	return e.quoteImageWithFallback(ctx, ref, model, found, &r, count)
+}
+
+// ImageTokenUsage is the upstream image token split used to bill the
+// three-tier image_token_pricing block: text input, image input, and output.
+type ImageTokenUsage struct {
+	TextInputTokens  int
+	ImageInputTokens int
+	OutputTokens     int
+}
+
+// imageTokenPricingEngine is the optional pricing capability for token-metered
+// image generation. It is deliberately separate from PricingEngine so fake
+// engines used by unrelated tests keep the per-image path.
+type imageTokenPricingEngine interface {
+	QuoteImageTokenUsage(ctx context.Context, ref PricingModelRef, usage ImageTokenUsage) (PricingQuote, error)
+}
+
+// QuoteImageTokenUsage rates image generation from upstream token usage with the
+// explicit three-tier image_token_pricing block. It never falls back to the flat
+// per-image price: a model without the block is not token priced. The amount is
+// produced by the shared ratingcore kernel so Pre and Console agree on T1.
+func (e *pricingEngine) QuoteImageTokenUsage(ctx context.Context, ref PricingModelRef, usage ImageTokenUsage) (PricingQuote, error) {
+	ref = normalizePricingModelRef(PricingModelRef{
+		ModelID:        ref.ModelID,
+		OrganizationID: ref.OrganizationID,
+		Source:         ref.Source,
+		Operation:      PricingOperationImage,
+		Provider:       ref.Provider,
+		Model:          ref.Model,
+	})
+	model, found, err := e.loadModel(ctx, ref)
+	if err != nil {
+		return PricingQuote{}, err
+	}
+	if !found || model == nil {
+		return PricingQuote{}, fmt.Errorf("%w: image token pricing requires a configured model", ErrPricingNotConfigured)
+	}
+	var pricing ratingcore.Pricing
+	if err := json.Unmarshal(model.Pricing, &pricing); err != nil {
+		return PricingQuote{}, fmt.Errorf("%w: invalid image token pricing: %v", ErrPricingNotConfigured, err)
+	}
+	if pricing.ImageTokenPricing == nil {
+		return PricingQuote{}, fmt.Errorf("%w: image token pricing is not configured", ErrPricingNotConfigured)
+	}
+	operation := string(PricingOperationImage)
+	inputUSD, err := ratingcore.Resolve(pricing, ratingcore.Usage{
+		Operation:        operation,
+		Meter:            "input_text_token",
+		BaseUnit:         "per_1m_tokens",
+		TextInputTokens:  int64(usage.TextInputTokens),
+		InputImageTokens: int64(usage.ImageInputTokens),
+	})
+	if err != nil {
+		return PricingQuote{}, fmt.Errorf("%w: %v", ErrPricingNotConfigured, err)
+	}
+	outputUSD, err := ratingcore.Resolve(pricing, ratingcore.Usage{
+		Operation:    operation,
+		Meter:        "output_token",
+		BaseUnit:     "per_1m_tokens",
+		OutputTokens: int64(usage.OutputTokens),
+	})
+	if err != nil {
+		return PricingQuote{}, fmt.Errorf("%w: %v", ErrPricingNotConfigured, err)
+	}
+	tiers := pricing.ImageTokenPricing
+	snapshot := buildPricingSnapshot(map[string]interface{}{
+		"pricing_source":                PricingSourceUpstreamModelPrice,
+		"usage_source":                  UsageSourceProviderUsage,
+		"operation":                     PricingOperationImage,
+		"model_id":                      model.ID.String(),
+		"provider":                      strings.TrimSpace(model.Provider),
+		"model":                         strings.TrimSpace(model.Name),
+		"text_input_tokens":             usage.TextInputTokens,
+		"image_input_tokens":            usage.ImageInputTokens,
+		"output_tokens":                 usage.OutputTokens,
+		"text_input_price_per_million":  tiers.TextInputPricePerMillion.String(),
+		"image_input_price_per_million": tiers.ImageInputPricePerMillion.String(),
+		"output_price_per_million":      tiers.OutputPricePerMillion.String(),
+		"input_cost_usd":                inputUSD.String(),
+		"output_cost_usd":               outputUSD.String(),
+	})
+	quote := newUSDQuote(inputUSD, outputUSD, PricingSourceUpstreamModelPrice, "pricing.image_token_pricing", UsageSourceProviderUsage, snapshot)
+	quote.InputTokenPriceUSDPer1M = tiers.TextInputPricePerMillion
+	quote.OutputTokenPriceUSDPer1M = tiers.OutputPricePerMillion
+	quote.InputTokenPriceResolved = true
+	quote.OutputTokenPriceResolved = true
+	return quote, nil
 }
 
 func configuredImagePricingRules(model *pricingModelRecord) ([]llmmodel.PricingRule, bool, error) {
@@ -523,6 +777,9 @@ func (e *pricingEngine) quoteTokensWithFallback(
 	})
 
 	quote := newUSDQuote(inputUSD, outputUSD, source, ruleID, UsageSourceProviderUsage, snapshot)
+	if model != nil {
+		quote.CacheBillingSupported = boolPtr(model.CacheBillingSupported)
+	}
 	return withTokenPricingBasis(
 		quote,
 		inputPrice,
@@ -604,6 +861,7 @@ func (e *pricingEngine) quoteImageWithFallback(
 
 func quoteConfiguredImageRule(model *pricingModelRecord, req *adapter.ImageRequest, matched llmmodel.PricingRule, count int64) (PricingQuote, error) {
 	if matched.Price.Amount > 0 {
+		// Explicit boundary: the structured rule amount is a legacy JSON float.
 		totalUSD := decimal.NewFromFloat(matched.Price.Amount).Mul(decimal.NewFromInt(count))
 		snapshot := configuredImagePricingSnapshot(model, req, matched, count, matched.Price.Amount, 0)
 		return newOutputOnlyUSDQuote(totalUSD, PricingSourceUpstreamModelPrice, matched.ID, UsageSourceRequestParameters, snapshot), nil
@@ -633,6 +891,41 @@ func quoteConfiguredImageUnitPrice(model *pricingModelRecord, req *adapter.Image
 	totalUSD := price.Mul(decimal.NewFromInt(count))
 	snapshot := configuredImageUnitPriceSnapshot(model, req, count, price, column)
 	return newOutputOnlyUSDQuote(totalUSD, PricingSourceUpstreamModelPrice, "", UsageSourceRequestParameters, snapshot), true
+}
+
+// quoteConfiguredStructuredImagePrice reads the canonical model pricing
+// snapshot written by Console. This bridges the newer price_per_image field
+// to the legacy image_prices/output_price runtime projections.
+func quoteConfiguredStructuredImagePrice(model *pricingModelRecord, req *adapter.ImageRequest, count int64) (PricingQuote, bool) {
+	if model == nil || len(model.Pricing) == 0 || string(model.Pricing) == "null" {
+		return PricingQuote{}, false
+	}
+	var pricing struct {
+		PricePerImage *float64 `json:"price_per_image"`
+	}
+	if err := json.Unmarshal(model.Pricing, &pricing); err != nil || pricing.PricePerImage == nil || *pricing.PricePerImage < 0 {
+		return PricingQuote{}, false
+	}
+	// Explicit boundary: price_per_image is projected from legacy JSON as a
+	// float. Convert once here and keep the pricing arithmetic decimal.
+	price := decimal.NewFromFloat(*pricing.PricePerImage)
+	totalUSD := price.Mul(decimal.NewFromInt(count))
+	provider, modelName := pricingModelIdentity(PricingModelRef{}, model, true)
+	snapshot := buildPricingSnapshot(map[string]interface{}{
+		"pricing_source": PricingSourceUpstreamModelPrice,
+		"usage_source":   UsageSourceRequestParameters,
+		"operation":      PricingOperationImage,
+		"model_id":       pricingModelID(model),
+		"provider":       provider,
+		"model":          modelName,
+		"request_model":  strings.TrimSpace(req.Model),
+		"size":           strings.TrimSpace(req.Size),
+		"quality":        strings.TrimSpace(req.Quality),
+		"image_count":    count,
+		"usd_per_image":  price.String(),
+		"price_column":   "pricing.price_per_image",
+	})
+	return newOutputOnlyUSDQuote(totalUSD, PricingSourceUpstreamModelPrice, "pricing.price_per_image", UsageSourceRequestParameters, snapshot), true
 }
 
 func quoteConfiguredOrganizationImageUnitPrice(model *pricingModelRecord, req *adapter.ImageRequest, count int64) (PricingQuote, bool) {
@@ -741,6 +1034,7 @@ type pricingModelConfigOverride struct {
 	CacheWritePriceOverride   *decimal.Decimal `gorm:"column:cache_write_price_override"`
 	CacheWrite5mPriceOverride *decimal.Decimal `gorm:"column:cache_write_5m_price_override"`
 	CacheWrite1hPriceOverride *decimal.Decimal `gorm:"column:cache_write_1h_price_override"`
+	PricingOverride           datatypes.JSON   `gorm:"column:pricing_override"`
 }
 
 func (e *pricingEngine) applyOrganizationPriceOverride(ctx context.Context, record *pricingModelRecord, organizationID uuid.UUID) error {
@@ -762,34 +1056,37 @@ func (e *pricingEngine) applyOrganizationPriceOverride(ctx context.Context, reco
 	}
 	if cfg.InputPriceOverride != nil {
 		record.InputPrice = *cfg.InputPriceOverride
-		record.InputPriceConfigured = true
 		record.InputPriceOrganizationOverride = true
 	}
 	if cfg.OutputPriceOverride != nil {
 		record.OutputPrice = *cfg.OutputPriceOverride
-		record.OutputPriceConfigured = true
 		record.OutputPriceOrganizationOverride = true
 	}
 	if cfg.CacheReadPriceOverride != nil {
 		record.CacheReadPrice = *cfg.CacheReadPriceOverride
-		record.CacheReadPriceConfigured = true
 		record.CacheReadOrganizationOverride = true
 	}
 	if cfg.CacheWritePriceOverride != nil {
 		record.CacheWritePrice = *cfg.CacheWritePriceOverride
-		record.CacheWritePriceConfigured = true
 		record.CacheWriteOrganizationOverride = true
 	}
 	if cfg.CacheWrite5mPriceOverride != nil {
 		record.CacheWrite5mPrice = *cfg.CacheWrite5mPriceOverride
-		record.CacheWrite5mPriceConfigured = true
 		record.CacheWrite5mOrganizationOverride = true
 	}
 	if cfg.CacheWrite1hPriceOverride != nil {
 		record.CacheWrite1hPrice = *cfg.CacheWrite1hPriceOverride
-		record.CacheWrite1hPriceConfigured = true
 		record.CacheWrite1hOrganizationOverride = true
 	}
+	if len(cfg.PricingOverride) > 0 && string(cfg.PricingOverride) != "null" {
+		merged := modelpricing.MergeOrganizationPricingOverride(
+			json.RawMessage(record.Pricing),
+			json.RawMessage(cfg.PricingOverride),
+			"",
+		)
+		record.Pricing = datatypes.JSON(merged)
+	}
+	applyResolvedConfiguredToRecord(record)
 	return nil
 }
 
@@ -801,6 +1098,11 @@ func (e *pricingEngine) modelConfigOverrideColumns() string {
 		} else {
 			columns = append(columns, "NULL AS "+column)
 		}
+	}
+	if e.hasColumn("llm_model_configs", "pricing_override") {
+		columns = append(columns, "pricing_override")
+	} else {
+		columns = append(columns, "NULL AS pricing_override")
 	}
 	return strings.Join(columns, ", ")
 }
@@ -819,35 +1121,16 @@ func normalizePricingModelRef(ref PricingModelRef) PricingModelRef {
 
 func (e *pricingEngine) loadModelFromTable(ctx context.Context, table string, modelID uuid.UUID) (*pricingModelRecord, bool, error) {
 	selects := []string{"id", "provider", "name", "input_price", "output_price"}
-	if e.hasColumn(table, "input_price_configured") {
-		selects = append(selects, "input_price_configured")
-	} else {
-		selects = append(selects, "false AS input_price_configured")
-	}
-	if e.hasColumn(table, "output_price_configured") {
-		selects = append(selects, "output_price_configured")
-	} else {
-		selects = append(selects, "false AS output_price_configured")
-	}
 	if e.hasColumn(table, "image_prices") {
 		selects = append(selects, "image_prices")
 	} else {
 		selects = append(selects, "'[]' AS image_prices")
 	}
-	for _, pricingColumn := range []struct{ column, configuredAlias string }{
-		{"cost_cache_read", "cache_read_price_configured"},
-		{"cost_cache_write", "cache_write_price_configured"},
-		{"cost_cache_write_5m", "cache_write_5m_price_configured"},
-		{"cost_cache_write_1h", "cache_write_1h_price_configured"},
-	} {
-		if e.hasColumn(table, pricingColumn.column) {
-			configuredExpr := pricingColumn.column + " IS NOT NULL AS " + pricingColumn.configuredAlias
-			if e.hasColumn(table, pricingColumn.configuredAlias) {
-				configuredExpr = pricingColumn.configuredAlias
-			}
-			selects = append(selects, pricingColumn.column, configuredExpr)
+	for _, column := range []string{"cost_cache_read", "cost_cache_write", "cost_cache_write_5m", "cost_cache_write_1h"} {
+		if e.hasColumn(table, column) {
+			selects = append(selects, column)
 		} else {
-			selects = append(selects, "0 AS "+pricingColumn.column, "false AS "+pricingColumn.configuredAlias)
+			selects = append(selects, "0 AS "+column)
 		}
 	}
 	if e.hasColumn(table, "pricing") {
@@ -868,7 +1151,30 @@ func (e *pricingEngine) loadModelFromTable(ctx context.Context, table string, mo
 		}
 		return nil, false, err
 	}
+	applyResolvedConfiguredToRecord(&model)
 	return &model, true, nil
+}
+
+func applyResolvedConfiguredToRecord(record *pricingModelRecord) {
+	if record == nil {
+		return
+	}
+	overrides := modelpricing.OrganizationOverrides{
+		Input:        record.InputPriceOrganizationOverride,
+		Output:       record.OutputPriceOrganizationOverride,
+		CacheRead:    record.CacheReadOrganizationOverride,
+		CacheWrite:   record.CacheWriteOrganizationOverride,
+		CacheWrite5m: record.CacheWrite5mOrganizationOverride,
+		CacheWrite1h: record.CacheWrite1hOrganizationOverride,
+	}
+	resolved := modelpricing.ApplyOrganizationOverrides(modelpricing.ResolveConfigured([]byte(record.Pricing)), overrides)
+	record.CacheBillingSupported = modelpricing.CacheBillingSupported([]byte(record.Pricing))
+	record.InputPriceConfigured = resolved.Input
+	record.OutputPriceConfigured = resolved.Output
+	record.CacheReadPriceConfigured = resolved.CacheRead
+	record.CacheWritePriceConfigured = resolved.CacheWrite
+	record.CacheWrite5mPriceConfigured = resolved.CacheWrite5m
+	record.CacheWrite1hPriceConfigured = resolved.CacheWrite1h
 }
 
 func (e *pricingEngine) hasColumn(table, column string) bool {
@@ -922,7 +1228,10 @@ func enrichPricingSnapshotTotal(snapshot datatypes.JSON, totalUSD decimal.Decima
 		_ = json.Unmarshal(snapshot, &values)
 	}
 	values["total_cost_usd"] = totalUSD.String()
+	// Credit amounts in the snapshot are milli-points, the same unit as the
+	// column, the wire and the in-process type.
 	values["charged_credits"] = chargedCredits
+	values["points_per_usd"] = NormalizedPointsPerUSD()
 	return buildPricingSnapshot(values)
 }
 
@@ -942,6 +1251,127 @@ func withTokenPricingBasis(
 	quote.InputRuleID = inputRuleID
 	quote.OutputRuleID = outputRuleID
 	return quote
+}
+
+func (e *pricingEngine) enrichTokenQuoteWithCachePricingBasis(
+	ctx context.Context,
+	ref PricingModelRef,
+	quote PricingQuote,
+) (PricingQuote, error) {
+	model, found, err := e.loadModel(ctx, ref)
+	if err != nil {
+		return PricingQuote{}, err
+	}
+	if !found || model == nil {
+		return quote, nil
+	}
+	if model.CacheReadPriceConfigured {
+		quote.CacheReadPriceUSDPer1M = model.CacheReadPrice
+		quote.CacheReadPriceResolved = true
+	}
+	if model.CacheWritePriceConfigured {
+		quote.CacheWritePriceUSDPer1M = model.CacheWritePrice
+		quote.CacheWritePriceResolved = true
+	}
+	if cacheWrite5mPrice, resolved, _ := resolveCacheWrite5mPrice(model); resolved {
+		quote.CacheWrite5mPriceUSDPer1M = cacheWrite5mPrice
+		quote.CacheWrite5mPriceResolved = true
+	}
+	if cacheWrite1hPrice, resolved, _ := resolveCacheWrite1hPrice(model); resolved {
+		quote.CacheWrite1hPriceUSDPer1M = cacheWrite1hPrice
+		quote.CacheWrite1hPriceResolved = true
+	}
+	return quote, nil
+}
+
+func lockedTokenQuoteSupportsUsage(quote PricingQuote, usage TokenUsage) bool {
+	usage = normalizeGatewayTokenUsage(usage)
+	if usage.InputTokens > 0 && !quote.InputTokenPriceResolved {
+		return false
+	}
+	if usage.OutputTokens > 0 && !quote.OutputTokenPriceResolved {
+		return false
+	}
+	if usage.CacheReadTokens > 0 && !quote.CacheReadPriceResolved {
+		return false
+	}
+	cacheWriteLegacy := legacyCacheWriteTokens(usage)
+	if cacheWriteLegacy > 0 && !quote.CacheWritePriceResolved {
+		return false
+	}
+	if usage.CacheWrite5mTokens > 0 && !quote.CacheWrite5mPriceResolved {
+		return false
+	}
+	if usage.CacheWrite1hTokens > 0 && !quote.CacheWrite1hPriceResolved {
+		return false
+	}
+	return true
+}
+
+func repriceLockedTokenUsage(quote PricingQuote, usage TokenUsage) (PricingQuote, error) {
+	usage = normalizeGatewayTokenUsage(usage)
+	if usage.CacheReadTokens == 0 && usage.CacheWriteTokens == 0 && usage.CacheWrite5mTokens == 0 && usage.CacheWrite1hTokens == 0 {
+		return repriceLockedTokenQuote(quote, usage.InputTokens, usage.OutputTokens)
+	}
+	if !lockedTokenQuoteSupportsUsage(quote, usage) {
+		return PricingQuote{}, fmt.Errorf("locked token pricing does not cover usage components")
+	}
+
+	uncachedInputUSD := tokenUSD(quote.InputTokenPriceUSDPer1M, usage.InputTokens)
+	cacheReadUSD := tokenUSD(quote.CacheReadPriceUSDPer1M, usage.CacheReadTokens)
+	cacheWriteLegacy := legacyCacheWriteTokens(usage)
+	cacheWriteLegacyUSD := tokenUSD(quote.CacheWritePriceUSDPer1M, cacheWriteLegacy)
+	cacheWrite5mUSD := tokenUSD(quote.CacheWrite5mPriceUSDPer1M, usage.CacheWrite5mTokens)
+	cacheWrite1hUSD := tokenUSD(quote.CacheWrite1hPriceUSDPer1M, usage.CacheWrite1hTokens)
+	cacheWriteUSD := cacheWriteLegacyUSD.Add(cacheWrite5mUSD).Add(cacheWrite1hUSD)
+	inputUSD := uncachedInputUSD.Add(cacheReadUSD).Add(cacheWriteUSD)
+	outputUSD := tokenUSD(quote.OutputTokenPriceUSDPer1M, usage.OutputTokens)
+
+	usageSource := quote.UsageSource
+	if usageSource == "" {
+		usageSource = UsageSourceProviderUsage
+	}
+	snapshot := buildPricingSnapshot(map[string]interface{}{
+		"pricing_source":                         quote.PricingSource,
+		"usage_source":                           usageSource,
+		"prompt_tokens":                          usage.InputTokens,
+		"cache_read_tokens":                      usage.CacheReadTokens,
+		"cache_write_tokens":                     usage.CacheWriteTokens,
+		"cache_write_legacy_tokens":              cacheWriteLegacy,
+		"cache_write_5m_tokens":                  usage.CacheWrite5mTokens,
+		"cache_write_1h_tokens":                  usage.CacheWrite1hTokens,
+		"completion_tokens":                      usage.OutputTokens,
+		"input_price_usd_per_1m_tokens":          quote.InputTokenPriceUSDPer1M.String(),
+		"cache_read_price_usd_per_1m_tokens":     quote.CacheReadPriceUSDPer1M.String(),
+		"cache_write_price_usd_per_1m_tokens":    quote.CacheWritePriceUSDPer1M.String(),
+		"cache_write_5m_price_usd_per_1m_tokens": quote.CacheWrite5mPriceUSDPer1M.String(),
+		"cache_write_1h_price_usd_per_1m_tokens": quote.CacheWrite1hPriceUSDPer1M.String(),
+		"output_price_usd_per_1m_tokens":         quote.OutputTokenPriceUSDPer1M.String(),
+		"input_cost_usd":                         uncachedInputUSD.String(),
+		"cache_read_cost_usd":                    cacheReadUSD.String(),
+		"cache_write_cost_usd":                   cacheWriteUSD.String(),
+		"output_cost_usd":                        outputUSD.String(),
+		"locked_pricing":                         true,
+	})
+	repriced := newUSDQuote(inputUSD, outputUSD, quote.PricingSource, quote.RuleID, usageSource, snapshot)
+	repriced.CacheReadUSD = cacheReadUSD
+	repriced.CacheWriteUSD = cacheWriteUSD
+	repriced.InputTokenPriceUSDPer1M = quote.InputTokenPriceUSDPer1M
+	repriced.OutputTokenPriceUSDPer1M = quote.OutputTokenPriceUSDPer1M
+	repriced.CacheReadPriceUSDPer1M = quote.CacheReadPriceUSDPer1M
+	repriced.CacheWritePriceUSDPer1M = quote.CacheWritePriceUSDPer1M
+	repriced.CacheWrite5mPriceUSDPer1M = quote.CacheWrite5mPriceUSDPer1M
+	repriced.CacheWrite1hPriceUSDPer1M = quote.CacheWrite1hPriceUSDPer1M
+	repriced.InputTokenPriceResolved = quote.InputTokenPriceResolved
+	repriced.OutputTokenPriceResolved = quote.OutputTokenPriceResolved
+	repriced.CacheReadPriceResolved = quote.CacheReadPriceResolved
+	repriced.CacheWritePriceResolved = quote.CacheWritePriceResolved
+	repriced.CacheWrite5mPriceResolved = quote.CacheWrite5mPriceResolved
+	repriced.CacheWrite1hPriceResolved = quote.CacheWrite1hPriceResolved
+	repriced.CacheBillingSupported = quote.CacheBillingSupported
+	repriced.InputRuleID = quote.InputRuleID
+	repriced.OutputRuleID = quote.OutputRuleID
+	return repriced, nil
 }
 
 func repriceLockedTokenQuote(quote PricingQuote, promptTokens, completionTokens int) (PricingQuote, error) {
@@ -985,7 +1415,7 @@ func repriceLockedTokenQuote(quote PricingQuote, promptTokens, completionTokens 
 		usageSource,
 		snapshot,
 	)
-	return withTokenPricingBasis(
+	repriced = withTokenPricingBasis(
 		repriced,
 		quote.InputTokenPriceUSDPer1M,
 		quote.OutputTokenPriceUSDPer1M,
@@ -993,27 +1423,69 @@ func repriceLockedTokenQuote(quote PricingQuote, promptTokens, completionTokens 
 		quote.OutputTokenPriceResolved,
 		quote.InputRuleID,
 		quote.OutputRuleID,
-	), nil
+	)
+	repriced.CacheBillingSupported = quote.CacheBillingSupported
+	return repriced, nil
 }
 
 func creditsFromUSD(totalUSD decimal.Decimal) int64 {
 	if !totalUSD.IsPositive() {
 		return 0
 	}
-	return totalUSD.Mul(decimal.NewFromInt(pricingCreditsPerUSD)).Ceil().IntPart()
+	return millipoints.FromUSD(totalUSD, NormalizedPointsPerUSD()).Int64()
 }
 
-func matchImagePricingRule(req *adapter.ImageRequest, prices []llmmodel.PricingRule, matched *llmmodel.PricingRule) bool {
-	if matched == nil {
-		return false
-	}
-	for _, rule := range prices {
-		if matchImageCondition(req, rule.Conditions) {
-			*matched = rule
-			return true
+func matchImagePricingRule(req *adapter.ImageRequest, prices []llmmodel.PricingRule) (*llmmodel.PricingRule, error) {
+	bestScore := -1
+	var best *llmmodel.PricingRule
+	ambiguous := false
+	for index := range prices {
+		rule := prices[index]
+		score, ok := scoreImagePricingRule(rule.Conditions, req)
+		if !ok {
+			continue
+		}
+		if score > bestScore {
+			best = &prices[index]
+			bestScore = score
+			ambiguous = false
+			continue
+		}
+		if score == bestScore && best != nil && rule.ID != best.ID {
+			ambiguous = true
 		}
 	}
-	return false
+	if ambiguous {
+		return nil, fmt.Errorf("%w: ambiguous image pricing rules", ErrPricingNotConfigured)
+	}
+	return best, nil
+}
+
+func scoreImagePricingRule(conditions map[string]interface{}, req *adapter.ImageRequest) (int, bool) {
+	if len(conditions) == 0 {
+		return 0, true
+	}
+	score := 0
+	for key, expected := range conditions {
+		switch key {
+		case "size":
+			if !matchStringOrArray(req.Size, expected) {
+				return 0, false
+			}
+		case "quality":
+			if !matchStringOrArray(req.Quality, expected) {
+				return 0, false
+			}
+		case "style":
+			if !matchStringOrArray(req.Style, expected) {
+				return 0, false
+			}
+		default:
+			return 0, false
+		}
+		score++
+	}
+	return score, true
 }
 
 func newOutputOnlyUSDQuote(totalUSD decimal.Decimal, source PricingSource, ruleID string, usageSource UsageSource, snapshot datatypes.JSON) PricingQuote {
@@ -1269,8 +1741,9 @@ func splitCreditsByUSD(inputUSD, outputUSD decimal.Decimal, totalCredits int64) 
 		return totalCredits, 0
 	}
 
-	rawInputCredits := inputUSD.Mul(decimal.NewFromInt(pricingCreditsPerUSD))
-	rawOutputCredits := outputUSD.Mul(decimal.NewFromInt(pricingCreditsPerUSD))
+	multiplier := decimal.NewFromInt(localMilliPointsPerUSD())
+	rawInputCredits := inputUSD.Mul(multiplier)
+	rawOutputCredits := outputUSD.Mul(multiplier)
 
 	inputFloor := rawInputCredits.Floor().IntPart()
 	outputFloor := rawOutputCredits.Floor().IntPart()

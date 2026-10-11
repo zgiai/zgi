@@ -17,6 +17,7 @@ import (
 	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
 	"go.uber.org/zap"
@@ -433,6 +434,15 @@ func conversationHasActiveMessage(conversation *runtimemodel.Conversation, messa
 	return conversation.RuntimeStatus == runtimemodel.ConversationRuntimeStatusStreaming && *conversation.ActiveMessageID == messageID
 }
 
+func isTerminalMessageStatus(status string) bool {
+	switch strings.TrimSpace(status) {
+	case runtimemodel.MessageStatusCompleted, runtimemodel.MessageStatusStopped, runtimemodel.MessageStatusError:
+		return true
+	default:
+		return false
+	}
+}
+
 func isTerminalStreamEvent(event StreamEvent) bool {
 	switch event.EventType {
 	case streamEventError:
@@ -456,6 +466,7 @@ func (s *service) openChatStream(ctx context.Context, prepared *PreparedChat) (<
 	}
 	if s.llmClient == nil {
 		err := fmt.Errorf("llm client is not configured")
+		s.recordPreparedErrorIdentity(ctx, prepared, err)
 		_ = s.repos.Message.UpdateError(ctx, prepared.Message.ID, err.Error())
 		return nil, err
 	}
@@ -504,6 +515,7 @@ func (s *service) openChatStream(ctx context.Context, prepared *PreparedChat) (<
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
+			s.recordPreparedErrorIdentity(ctx, prepared, result.err)
 			_ = s.repos.Message.UpdateError(ctx, prepared.Message.ID, result.err.Error())
 			return nil, result.err
 		}
@@ -693,6 +705,7 @@ func (s *service) collectStreamAnswerWithEventsAndProgress(ctx context.Context, 
 					_ = s.persistStoppedAnswer(context.WithoutCancel(ctx), prepared, answer, usage)
 					return answer, usage, ErrMessageStopped
 				}
+				s.recordPreparedErrorIdentity(context.WithoutCancel(ctx), prepared, chunk.Error)
 				_ = s.repos.Message.UpdateError(context.WithoutCancel(ctx), prepared.Message.ID, chunk.Error.Error())
 				return "", nil, chunk.Error
 			}
@@ -867,7 +880,7 @@ func (s *service) finalizePreparedError(ctx context.Context, prepared *PreparedC
 	} else {
 		s.dispatchPreparedRuntimeInputFollowUp(ctx, prepared)
 	}
-	s.emitPreparedEvent(ctx, prepared, streamEventError, BuildStreamErrorPayload(prepared, cause), eventCallback)
+	s.emitPreparedEvent(ctx, prepared, streamEventError, BuildLocalizedStreamErrorPayload(prepared, cause, StreamRequestID(ctx), StreamLocale(ctx)), eventCallback)
 	return nil
 }
 
@@ -883,6 +896,37 @@ func finalizedRuntimeOwnershipError(err error) error {
 		return nil
 	}
 	return newFinalizedStreamError(err)
+}
+
+// recordPreparedErrorIdentity stores the failed turn's public error identity in
+// message metadata while the message is still mutable, so a reloaded
+// conversation renders the same error the stream frame published.
+func (s *service) recordPreparedErrorIdentity(ctx context.Context, prepared *PreparedChat, cause error) {
+	if prepared == nil || prepared.Message == nil || cause == nil {
+		return
+	}
+	metadata := copyStringAnyMap(prepared.Message.Metadata)
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	if code, params, ok := publicAichatStructuredError(cause); ok {
+		metadata["error_code"] = code
+		if len(params) > 0 {
+			metadata["error_params"] = params
+		} else {
+			delete(metadata, "error_params")
+		}
+	} else {
+		metadata["error_code"] = stableAichatErrorCode(cause)
+		delete(metadata, "error_params")
+	}
+	if err := s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			logger.WarnContext(ctx, "failed to persist aichat error metadata", "message_id", prepared.Message.ID.String(), err)
+		}
+		return
+	}
+	prepared.Message.Metadata = metadata
 }
 
 func (s *service) completePreparedError(ctx context.Context, prepared *PreparedChat, cause error) error {
@@ -935,6 +979,15 @@ func (s *service) completePreparedError(ctx context.Context, prepared *PreparedC
 		err = s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			return finish(repository.NewRepositories(tx))
 		})
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		// A previous finalizer may have completed this message after this run
+		// lost ownership. Treat that terminal state as already finalized, while
+		// leaving an active message owned by another run untouched.
+		status, statusErr := s.repos.Message.GetStatus(ctx, prepared.Message.ID)
+		if statusErr == nil && isTerminalMessageStatus(status) {
+			return nil
+		}
 	}
 	if err == nil && metadataChanged {
 		prepared.Message.Metadata = metadata
@@ -1176,12 +1229,34 @@ func shouldSuppressDigitalHumanTaskGovernanceEvent(caller Caller, eventType stri
 }
 
 // BuildStreamErrorPayload returns the public SSE error payload for an AIChat turn.
-func BuildStreamErrorPayload(prepared *PreparedChat, err error) map[string]interface{} {
+// requestID is the transport request identity when the caller has one.
+func BuildStreamErrorPayload(prepared *PreparedChat, err error, requestID string) map[string]interface{} {
+	return BuildLocalizedStreamErrorPayload(prepared, err, requestID, "")
+}
+
+// BuildLocalizedStreamErrorPayload is BuildStreamErrorPayload with the caller's
+// locale. Unknown failures use the catalog's stable code and localized message.
+func BuildLocalizedStreamErrorPayload(prepared *PreparedChat, err error, requestID string, locale appcatalog.Locale) map[string]interface{} {
 	message := publicAichatErrorMessage(err)
+	errorCode := stableAichatErrorCode(err)
+	if _, _, structured := publicAichatStructuredError(err); !structured {
+		if catalogMessage, ok := streamErrorCatalogMessage(errorCode, locale); ok {
+			message = catalogMessage
+		}
+	}
 	payload := map[string]interface{}{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
 		"message":         message,
+		"error_code":      errorCode,
+		"params":          map[string]interface{}{},
+		"error_id":        uuid.NewString(),
+	}
+	if retryable, known := streamErrorRetryable(errorCode); known {
+		payload["retryable"] = retryable
+	}
+	if trimmed := strings.TrimSpace(requestID); trimmed != "" {
+		payload["request_id"] = trimmed
 	}
 	if code, params, ok := publicAichatStructuredError(err); ok {
 		payload["code"] = code
@@ -1192,6 +1267,36 @@ func BuildStreamErrorPayload(prepared *PreparedChat, err error) map[string]inter
 		payload["code"] = response.ErrSystemError.Code
 	}
 	return payload
+}
+
+func stableAichatErrorCode(err error) string {
+	if code, _, ok := publicAichatErrorCodeAndMessage(err); ok {
+		switch code {
+		case response.ErrWorkflowOrganizationBalanceInsufficient.Code:
+			return "billing.organization.balance_insufficient"
+		case response.ErrWorkflowWorkspaceQuotaInsufficient.Code:
+			return "billing.workspace.quota_insufficient"
+		case response.ErrWorkflowPrivateChannelBalanceInsufficient.Code:
+			return "billing.private_channel.balance_insufficient"
+		case response.ErrWorkflowModelPricingNotConfigured.Code:
+			return "billing.model.pricing_not_configured"
+		}
+	}
+	if errors.Is(err, llmerrors.DomainErrModelNotFound) || errors.Is(err, gateway.ErrModelNotFound) ||
+		errors.Is(err, gateway.ErrModelNotActive) || errors.Is(err, adapter.ErrModelNotFound) {
+		return "llm.model.not_found"
+	}
+	if errors.Is(err, llmerrors.DomainErrRouteNotFound) || errors.Is(err, gateway.ErrNoProviderAvailable) ||
+		errors.Is(err, llmerrors.DomainErrNoProviderAvailable) || errors.Is(err, adapter.ErrNoProviderAvailable) {
+		return "llm.provider.none_available"
+	}
+	if errors.Is(err, adapter.ErrTimeout) || errors.Is(err, ErrModelIdleTimeout) || errors.Is(err, skillloop.ErrModelIdleTimeout) {
+		return "llm.provider.timeout"
+	}
+	if errors.Is(err, adapter.ErrUpstreamError) || errors.Is(err, adapter.ErrStreamClosed) || errors.Is(err, adapter.ErrProxyError) || errors.Is(err, adapter.ErrPlatformChannelUnavailable) {
+		return "llm.provider.unavailable"
+	}
+	return "llm.invocation.failed"
 }
 
 func publicAichatErrorMessage(err error) string {

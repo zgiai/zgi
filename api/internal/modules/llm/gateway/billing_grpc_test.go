@@ -12,6 +12,7 @@ import (
 	"github.com/shopspring/decimal"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	accessmodel "github.com/zgiai/zgi/api/internal/modules/llm/developeraccess/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
@@ -22,6 +23,10 @@ type failingSettleQuotaClient struct{}
 
 func (failingSettleQuotaClient) PreDeductQuota(context.Context, *PreDeductQuotaRequest) (*PreDeductQuotaResponse, error) {
 	return nil, errors.New("unexpected pre-deduct")
+}
+
+func (failingSettleQuotaClient) PreDeductMeteredUsage(context.Context, *PreDeductMeteredUsageRequest) (*PreDeductMeteredUsageResponse, error) {
+	return nil, errors.New("unexpected metered pre-deduct")
 }
 
 func (failingSettleQuotaClient) SettleQuota(context.Context, *SettleQuotaRequest) (*SettleQuotaResponse, error) {
@@ -40,6 +45,10 @@ func (successfulPreDeductFailingSettleClient) PreDeductQuota(context.Context, *P
 	return &PreDeductQuotaResponse{Success: true, DeductionID: uuid.NewString()}, nil
 }
 
+func (successfulPreDeductFailingSettleClient) PreDeductMeteredUsage(context.Context, *PreDeductMeteredUsageRequest) (*PreDeductMeteredUsageResponse, error) {
+	return nil, errors.New("unexpected metered pre-deduct")
+}
+
 func (successfulPreDeductFailingSettleClient) SettleQuota(context.Context, *SettleQuotaRequest) (*SettleQuotaResponse, error) {
 	return nil, errors.New("temporary quota service outage")
 }
@@ -54,6 +63,10 @@ type successfulSettleQuotaClient struct{ settledCredits int64 }
 
 func (successfulSettleQuotaClient) PreDeductQuota(context.Context, *PreDeductQuotaRequest) (*PreDeductQuotaResponse, error) {
 	return nil, errors.New("unexpected pre-deduct")
+}
+
+func (successfulSettleQuotaClient) PreDeductMeteredUsage(context.Context, *PreDeductMeteredUsageRequest) (*PreDeductMeteredUsageResponse, error) {
+	return nil, errors.New("unexpected metered pre-deduct")
 }
 
 func (c successfulSettleQuotaClient) SettleQuota(context.Context, *SettleQuotaRequest) (*SettleQuotaResponse, error) {
@@ -78,6 +91,10 @@ func (c *authoritativeQuoteQuotaClient) PreDeductQuota(context.Context, *PreDedu
 	return nil, errors.New("unexpected pre-deduct")
 }
 
+func (c *authoritativeQuoteQuotaClient) PreDeductMeteredUsage(context.Context, *PreDeductMeteredUsageRequest) (*PreDeductMeteredUsageResponse, error) {
+	return nil, errors.New("unexpected metered pre-deduct")
+}
+
 func (c *authoritativeQuoteQuotaClient) SettleQuota(context.Context, *SettleQuotaRequest) (*SettleQuotaResponse, error) {
 	return nil, errors.New("unexpected settle")
 }
@@ -98,7 +115,7 @@ func (*authoritativeQuoteQuotaClient) Close() error { return nil }
 func TestRemoteBillingQuotePlatformTokenPricingUsesAuthoritativeCredits(t *testing.T) {
 	client := &authoritativeQuoteQuotaClient{response: &DualCostQuotaResponse{
 		Success: true, InputCredits: 25, OutputCredits: 20, TotalCredits: 45,
-		InputUSD: 0.000025, OutputUSD: 0.00002, TotalUSD: 0.000045,
+		InputUSD: decimal.RequireFromString("0.000025"), OutputUSD: decimal.RequireFromString("0.00002"), TotalUSD: decimal.RequireFromString("0.000045"),
 	}}
 	rb := &RemoteBilling{grpcClient: client}
 	localModelID := uuid.New()
@@ -135,6 +152,9 @@ func TestRemoteBillingQuotePlatformTokenPricingUsesAuthoritativeCredits(t *testi
 	if repriced.TotalCredits != 30 {
 		t.Fatalf("repriced credits = %d, want 30", repriced.TotalCredits)
 	}
+	if len(quote.PricingSnapshot) == 0 || string(quote.PricingSnapshot) == "{}" || string(quote.PricingSnapshot) == "null" {
+		t.Fatalf("pricing snapshot = %s, want authoritative quote snapshot", string(quote.PricingSnapshot))
+	}
 }
 
 func TestRemoteBillingQuotePlatformTokenPricingRequiresCanonicalIdentity(t *testing.T) {
@@ -158,6 +178,10 @@ func (c *capturingFailingSettleQuotaClient) PreDeductQuota(context.Context, *Pre
 	return nil, errors.New("unexpected pre-deduct")
 }
 
+func (c *capturingFailingSettleQuotaClient) PreDeductMeteredUsage(context.Context, *PreDeductMeteredUsageRequest) (*PreDeductMeteredUsageResponse, error) {
+	return nil, errors.New("unexpected metered pre-deduct")
+}
+
 func (c *capturingFailingSettleQuotaClient) SettleQuota(_ context.Context, req *SettleQuotaRequest) (*SettleQuotaResponse, error) {
 	copy := *req
 	c.settleRequest = &copy
@@ -174,6 +198,10 @@ type emptyDeductionIDQuotaClient struct{}
 
 func (emptyDeductionIDQuotaClient) PreDeductQuota(context.Context, *PreDeductQuotaRequest) (*PreDeductQuotaResponse, error) {
 	return &PreDeductQuotaResponse{Success: true}, nil
+}
+
+func (emptyDeductionIDQuotaClient) PreDeductMeteredUsage(context.Context, *PreDeductMeteredUsageRequest) (*PreDeductMeteredUsageResponse, error) {
+	return nil, errors.New("unexpected metered pre-deduct")
 }
 
 func (emptyDeductionIDQuotaClient) SettleQuota(context.Context, *SettleQuotaRequest) (*SettleQuotaResponse, error) {
@@ -199,6 +227,10 @@ func (c *lateDeductionQuotaClient) PreDeductQuota(ctx context.Context, _ *PreDed
 	return &PreDeductQuotaResponse{Success: true, DeductionID: "remote-deduction-after-timeout"}, nil
 }
 
+func (c *lateDeductionQuotaClient) PreDeductMeteredUsage(context.Context, *PreDeductMeteredUsageRequest) (*PreDeductMeteredUsageResponse, error) {
+	return nil, errors.New("unexpected metered pre-deduct")
+}
+
 func (c *lateDeductionQuotaClient) SettleQuota(_ context.Context, req *SettleQuotaRequest) (*SettleQuotaResponse, error) {
 	copy := *req
 	c.requests = append(c.requests, &copy)
@@ -217,7 +249,9 @@ func (c *lateDeductionQuotaClient) Close() error { return nil }
 
 func openRemoteBillingTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	// A shared-cache memory database keeps every pooled connection on the same
+	// database; a bare ":memory:" DSN gives each connection its own.
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open sqlite db: %v", err)
 	}
@@ -300,7 +334,7 @@ func TestRemoteBillingReconcileFinalizesPartialUsageBill(t *testing.T) {
 	if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {
 		t.Fatalf("migrate developer grant: %v", err)
 	}
-	quota := int64(100)
+	quota := millipoints.MilliPoints(100)
 	grant := accessmodel.Grant{
 		OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
 		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),
@@ -371,7 +405,7 @@ func TestRemoteBillingEmptyDeductionIDRollsBackLocalGrantReservation(t *testing.
 	if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {
 		t.Fatalf("migrate developer grant: %v", err)
 	}
-	quota := int64(100)
+	quota := millipoints.MilliPoints(100)
 	grant := accessmodel.Grant{
 		OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
 		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),
@@ -448,7 +482,7 @@ func testRemoteBillingInsufficientGrantQuotaPreservesSentinelAndFailureLedger(t 
 	if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {
 		t.Fatalf("migrate developer grant: %v", err)
 	}
-	quota := int64(1)
+	quota := millipoints.MilliPoints(1)
 	grant := accessmodel.Grant{
 		OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
 		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),
@@ -528,7 +562,7 @@ func TestRemoteBillingRejectsInactivePersonalKeyAndRollsBackGrantReservation(t *
 	if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {
 		t.Fatalf("migrate developer grant: %v", err)
 	}
-	quota := int64(100)
+	quota := millipoints.MilliPoints(100)
 	grant := accessmodel.Grant{
 		OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
 		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),
@@ -568,7 +602,7 @@ func TestRemoteBillingRejectsExpiredPersonalKeyAndRollsBackGrantReservation(t *t
 	if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {
 		t.Fatalf("migrate developer grant: %v", err)
 	}
-	quota := int64(100)
+	quota := millipoints.MilliPoints(100)
 	grant := accessmodel.Grant{
 		OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
 		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),
@@ -613,7 +647,7 @@ func TestRemoteBillingRecoversStaleInitWithoutBoundDeduction(t *testing.T) {
 	if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {
 		t.Fatalf("migrate developer grant: %v", err)
 	}
-	quota := int64(100)
+	quota := millipoints.MilliPoints(100)
 	grant := accessmodel.Grant{
 		OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
 		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),
@@ -633,7 +667,7 @@ func TestRemoteBillingRecoversStaleInitWithoutBoundDeduction(t *testing.T) {
 		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: grant.PrincipalID,
 		AccessGrantID: grant.ID, GrantAuthorizationVersion: &version,
 		QuotaSubjectType: quotaSubjectTypeAccessGrant, QuotaSubjectID: grant.ID,
-		EstimatedCredits: quota,
+		EstimatedCredits: quota.Int64(),
 	}
 	seedRemoteBillingPersonalKey(t, db, &grant, bc, "active")
 	remote := &RemoteBilling{localService: &BillingService{db: db}}
@@ -676,7 +710,7 @@ func TestRemoteBillingRecoversStaleInitWithoutBoundDeduction(t *testing.T) {
 	if err := db.Where("attempt_id = ? AND entry_type = ?", bc.AttemptID, billingEntryTypeFund).First(&fundEntry).Error; err != nil {
 		t.Fatal(err)
 	}
-	if subjectEntry.Status != billingEntryStatusRolled || subjectEntry.ActualAmount != 0 || subjectEntry.RefundedAmount != quota {
+	if subjectEntry.Status != billingEntryStatusRolled || subjectEntry.ActualAmount != 0 || subjectEntry.RefundedAmount.Int64() != quota.Int64() {
 		t.Fatalf("stale INIT subject entry = %#v", subjectEntry)
 	}
 	if fundEntry.Status != billingEntryStatusFailed || fundEntry.RefundedAmount != 0 {
@@ -699,7 +733,7 @@ func TestRemoteBillingPersistsAndRetriesFailedLateDeductionCompensation(t *testi
 	if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {
 		t.Fatalf("migrate developer grant: %v", err)
 	}
-	quota := int64(100)
+	quota := millipoints.MilliPoints(100)
 	grant := accessmodel.Grant{
 		OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
 		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),
@@ -719,7 +753,7 @@ func TestRemoteBillingPersistsAndRetriesFailedLateDeductionCompensation(t *testi
 		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: grant.PrincipalID,
 		AccessGrantID: grant.ID, GrantAuthorizationVersion: &version,
 		QuotaSubjectType: quotaSubjectTypeAccessGrant, QuotaSubjectID: grant.ID,
-		EstimatedCredits: quota, SubjectReservedCredits: quota,
+		EstimatedCredits: quota.Int64(), SubjectReservedCredits: quota.Int64(),
 	}
 	seedRemoteBillingPersonalKey(t, db, &grant, bc, "active")
 	client := &lateDeductionQuotaClient{}
@@ -784,7 +818,7 @@ func TestRemoteBillingPersistsAndRetriesFailedLateDeductionCompensation(t *testi
 	if err := db.First(&fundEntry, "id = ?", fundEntryID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if fundEntry.Status != billingEntryStatusRolled || fundEntry.ActualAmount != 0 || fundEntry.RefundedAmount != quota {
+	if fundEntry.Status != billingEntryStatusRolled || fundEntry.ActualAmount != 0 || fundEntry.RefundedAmount.Int64() != quota.Int64() {
 		t.Fatalf("reconciled compensation fund entry = %#v", fundEntry)
 	}
 	if err := db.First(&grant, "id = ?", grant.ID).Error; err != nil {
@@ -801,7 +835,7 @@ func TestRemoteBillingFinalizationIsIdempotentUnderAttemptLock(t *testing.T) {
 		t.Fatalf("migrate developer grant: %v", err)
 	}
 	organizationID := uuid.New()
-	quota := int64(100)
+	quota := millipoints.MilliPoints(100)
 	grant := accessmodel.Grant{
 		OrganizationID: organizationID.String(), WorkspaceID: uuid.NewString(),
 		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),

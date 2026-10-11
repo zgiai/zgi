@@ -43,6 +43,7 @@ func openPricingEngineTestDB(t *testing.T) *gorm.DB {
 		model_id text,
 		input_price_override decimal,
 		output_price_override decimal,
+		pricing_override json,
 		deleted_at datetime
 	)`).Error; err != nil {
 		t.Fatalf("create llm_model_configs: %v", err)
@@ -158,6 +159,7 @@ func TestPricingEngineQuoteTokenUsageSeparatesCacheComponents(t *testing.T) {
 	if err := db.Exec(`UPDATE llm_models SET cost_cache_read = ?, cost_cache_write = ? WHERE id = ?`, "0.25", "1.25", modelID).Error; err != nil {
 		t.Fatal(err)
 	}
+	updateModelTokenPricing(t, db, modelID, "1", "2", true, true, "0.25", "1.25", "", "")
 
 	engine := NewPricingEngine(db).(cacheTokenPricingEngine)
 	quote, err := engine.QuoteTokenUsage(context.Background(), PricingModelRef{ModelID: modelID}, TokenUsage{
@@ -176,7 +178,9 @@ func TestPricingEngineQuoteTokenUsageSeparatesCacheComponents(t *testing.T) {
 	if err := json.Unmarshal(quote.PricingSnapshot, &snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if snapshot["total_cost_usd"] != "0.001" || snapshot["charged_credits"] != float64(1000) {
+	// charged_credits is milli-points in the snapshot, the same unit as the
+	// column and the wire: 0.001 USD = 1000 milli-points = 1 point.
+	if snapshot["total_cost_usd"] != "0.001" || snapshot["charged_credits"] != float64(1000) || snapshot["points_per_usd"] != float64(1000) {
 		t.Fatalf("exact total and charged credits missing from snapshot: %#v", snapshot)
 	}
 }
@@ -194,19 +198,21 @@ func TestPricingEngineQuoteTokenUsageUsesCustomModelCachePrices(t *testing.T) {
 		input_price_configured boolean,
 		output_price_configured boolean,
 		cache_read_price_configured boolean,
-		cache_write_price_configured boolean
+		cache_write_price_configured boolean,
+		pricing json DEFAULT '{}'
 	)`).Error; err != nil {
 		t.Fatal(err)
 	}
 
 	modelID := uuid.New()
+	customPricing := buildTokenPricingJSON("1", "2", true, true, "0.25", "1.25", "", "")
 	if err := db.Exec(`INSERT INTO llm_custom_models (
 		id, provider, name, input_price, output_price, cost_cache_read, cost_cache_write,
 		input_price_configured, output_price_configured,
-		cache_read_price_configured, cache_write_price_configured
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		cache_read_price_configured, cache_write_price_configured, pricing
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		modelID.String(), "custom-openai", "custom-model", "1", "2", "0.25", "1.25",
-		true, true, true, true,
+		true, true, true, true, customPricing,
 	).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -226,6 +232,48 @@ func TestPricingEngineQuoteTokenUsageUsesCustomModelCachePrices(t *testing.T) {
 	}
 	if !quote.CacheWriteUSD.Equal(decimal.RequireFromString("0.000375")) {
 		t.Fatalf("cache write cost = %s, want 0.000375", quote.CacheWriteUSD)
+	}
+}
+
+func TestPricingEngineIgnoresHistoricalCachePricesWithoutCapabilityMetadata(t *testing.T) {
+	db := openPricingEngineTestDB(t)
+	if err := db.Exec(`CREATE TABLE llm_custom_models (
+		id text PRIMARY KEY,
+		provider text,
+		name text,
+		input_price decimal,
+		output_price decimal,
+		cost_cache_read decimal,
+		cost_cache_write decimal,
+		input_price_configured boolean,
+		output_price_configured boolean,
+		cache_read_price_configured boolean,
+		cache_write_price_configured boolean,
+		pricing json DEFAULT '{}'
+	)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	modelID := uuid.New()
+	if err := db.Exec(`INSERT INTO llm_custom_models (
+		id, provider, name, input_price, output_price, cost_cache_read, cost_cache_write,
+		input_price_configured, output_price_configured,
+		cache_read_price_configured, cache_write_price_configured, pricing
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		modelID.String(), "music-provider", "music-model", "1", "2", "0.25", "1.25",
+		true, true, true, true, `{"deployment_scope":"global","token_tiers":[{"min_input_tokens":0,"input_price_per_million":1,"output_price_per_million":2}],"rules":[{"operation":"music_generation","meter":"output_track","unit":"track","price":"1","configured":true}]}`,
+	).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	quote, err := NewPricingEngine(db).(cacheTokenPricingEngine).QuoteTokenUsage(context.Background(), PricingModelRef{
+		ModelID: modelID,
+		Source:  PricingModelSourceCustom,
+	}, TokenUsage{InputTokens: 100, CacheReadTokens: 200, CacheWriteTokens: 300, OutputTokens: 400})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !quote.CacheReadUSD.IsZero() || !quote.CacheWriteUSD.IsZero() {
+		t.Fatalf("historical cache prices were charged: read=%s write=%s", quote.CacheReadUSD, quote.CacheWriteUSD)
 	}
 }
 
@@ -261,6 +309,7 @@ func TestPricingEngineQuoteTokenUsageUsesCacheWriteTTLPrices(t *testing.T) {
 		"0.5", "0", "3", "6", modelID).Error; err != nil {
 		t.Fatal(err)
 	}
+	updateModelTokenPricing(t, db, modelID, "5", "25", true, true, "0.5", "", "3", "6")
 
 	engine := NewPricingEngine(db).(cacheTokenPricingEngine)
 	quote, err := engine.QuoteTokenUsage(context.Background(), PricingModelRef{ModelID: modelID}, TokenUsage{
@@ -290,11 +339,91 @@ func insertPricingModelNamed(t *testing.T, db *gorm.DB, modelID uuid.UUID, provi
 	if imagePrices == "" {
 		imagePrices = "[]"
 	}
+	pricing := buildTokenPricingJSON(inputPrice, outputPrice, inputConfigured, outputConfigured, "", "", "", "")
 	if err := db.Exec(
-		`INSERT INTO llm_models (id, provider, name, input_price, output_price, input_price_configured, output_price_configured, image_prices) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		modelID.String(), provider, name, inputPrice, outputPrice, inputConfigured, outputConfigured, imagePrices,
+		`INSERT INTO llm_models (id, provider, name, input_price, output_price, input_price_configured, output_price_configured, image_prices, pricing) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		modelID.String(), provider, name, inputPrice, outputPrice, inputConfigured, outputConfigured, imagePrices, pricing,
 	).Error; err != nil {
 		t.Fatalf("insert model: %v", err)
+	}
+}
+
+func buildTokenPricingJSON(inputPrice, outputPrice string, inputConfigured, outputConfigured bool, cacheRead, cacheWrite, cacheWrite5m, cacheWrite1h string) string {
+	tier := map[string]interface{}{"min_input_tokens": 0}
+	rules := make([]map[string]interface{}, 0, 6)
+	if inputConfigured {
+		if value, err := decimal.NewFromString(inputPrice); err == nil {
+			f, _ := value.Float64()
+			tier["input_price_per_million"] = f
+		}
+		rules = append(rules, tokenPricingRule("chat-input", "input_token", inputPrice, true))
+	}
+	if outputConfigured {
+		if value, err := decimal.NewFromString(outputPrice); err == nil {
+			f, _ := value.Float64()
+			tier["output_price_per_million"] = f
+		}
+		rules = append(rules, tokenPricingRule("chat-output", "output_token", outputPrice, true))
+	}
+	if strings.TrimSpace(cacheRead) != "" {
+		if value, err := decimal.NewFromString(cacheRead); err == nil {
+			f, _ := value.Float64()
+			tier["cached_input_price_per_million"] = f
+		}
+		rules = append(rules, tokenPricingRule("chat-cache-read", "cache_read_token", cacheRead, true))
+	}
+	if strings.TrimSpace(cacheWrite) != "" {
+		if value, err := decimal.NewFromString(cacheWrite); err == nil {
+			f, _ := value.Float64()
+			tier["cache_write_price_per_million"] = f
+		}
+		rules = append(rules, tokenPricingRule("chat-cache-write", "cache_write_token", cacheWrite, true))
+	}
+	if strings.TrimSpace(cacheWrite5m) != "" {
+		if value, err := decimal.NewFromString(cacheWrite5m); err == nil {
+			f, _ := value.Float64()
+			tier["cache_write_5m_price_per_million"] = f
+		}
+		rules = append(rules, tokenPricingRule("chat-cache-write-5m", "cache_write_5m_token", cacheWrite5m, true))
+	}
+	if strings.TrimSpace(cacheWrite1h) != "" {
+		if value, err := decimal.NewFromString(cacheWrite1h); err == nil {
+			f, _ := value.Float64()
+			tier["cache_write_1h_price_per_million"] = f
+		}
+		rules = append(rules, tokenPricingRule("chat-cache-write-1h", "cache_write_1h_token", cacheWrite1h, true))
+	}
+	payload := map[string]interface{}{
+		"version":          2,
+		"deployment_scope": "global",
+		"token_tiers":      []map[string]interface{}{tier},
+	}
+	if len(rules) > 0 {
+		payload["rules"] = rules
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return "{}"
+	}
+	return string(raw)
+}
+
+func tokenPricingRule(id, meter, price string, configured bool) map[string]interface{} {
+	return map[string]interface{}{
+		"id":         id,
+		"operation":  "chat",
+		"meter":      meter,
+		"unit":       "per_1m_tokens",
+		"price":      price,
+		"configured": configured,
+	}
+}
+
+func updateModelTokenPricing(t *testing.T, db *gorm.DB, modelID uuid.UUID, inputPrice, outputPrice string, inputConfigured, outputConfigured bool, cacheRead, cacheWrite, cacheWrite5m, cacheWrite1h string) {
+	t.Helper()
+	pricing := buildTokenPricingJSON(inputPrice, outputPrice, inputConfigured, outputConfigured, cacheRead, cacheWrite, cacheWrite5m, cacheWrite1h)
+	if err := db.Exec(`UPDATE llm_models SET pricing = ? WHERE id = ?`, pricing, modelID.String()).Error; err != nil {
+		t.Fatalf("update pricing: %v", err)
 	}
 }
 
@@ -305,12 +434,33 @@ func savePricingFallbackForOrg(t *testing.T, db *gorm.DB, organizationID uuid.UU
 	}
 }
 
+// pricingFallbackDefaultPricesJSON is the deployment configuration tests use
+// for the built-in fallback skeletons; the prices are no longer hardcoded.
+const pricingFallbackDefaultPricesJSON = `{
+	"token.chat.input.default": "1",
+	"token.chat.output.default": "2",
+	"token.embedding.input.default": "1",
+	"token.rerank.input.default": "1",
+	"image.qwen.default": 160,
+	"image.doubao.default": 100,
+	"image.openai.default": 200,
+	"image.gcp.default": 180,
+	"image.midjourney.default": 300,
+	"image.generic.default": 200
+}`
+
 func enableDefaultPricingFallbackForOrg(t *testing.T, db *gorm.DB, organizationID uuid.UUID) {
 	t.Helper()
+	t.Setenv(PricingFallbackDefaultPricesEnv, pricingFallbackDefaultPricesJSON)
 	savePricingFallbackForOrg(t, db, organizationID, UpdatePricingFallbackRequest{Enabled: true})
 }
 
 func insertPricingModelConfigOverride(t *testing.T, db *gorm.DB, organizationID, modelID uuid.UUID, inputPriceOverride, outputPriceOverride *string) {
+	t.Helper()
+	insertPricingModelConfigOverrideWithPricing(t, db, organizationID, modelID, inputPriceOverride, outputPriceOverride, nil)
+}
+
+func insertPricingModelConfigOverrideWithPricing(t *testing.T, db *gorm.DB, organizationID, modelID uuid.UUID, inputPriceOverride, outputPriceOverride *string, pricingOverride *string) {
 	t.Helper()
 	var inputValue interface{}
 	if inputPriceOverride != nil {
@@ -320,9 +470,13 @@ func insertPricingModelConfigOverride(t *testing.T, db *gorm.DB, organizationID,
 	if outputPriceOverride != nil {
 		outputValue = *outputPriceOverride
 	}
+	var pricingValue interface{}
+	if pricingOverride != nil {
+		pricingValue = *pricingOverride
+	}
 	if err := db.Exec(
-		`INSERT INTO llm_model_configs (id, organization_id, model_id, input_price_override, output_price_override) VALUES (?, ?, ?, ?, ?)`,
-		uuid.NewString(), organizationID.String(), modelID.String(), inputValue, outputValue,
+		`INSERT INTO llm_model_configs (id, organization_id, model_id, input_price_override, output_price_override, pricing_override) VALUES (?, ?, ?, ?, ?, ?)`,
+		uuid.NewString(), organizationID.String(), modelID.String(), inputValue, outputValue, pricingValue,
 	).Error; err != nil {
 		t.Fatalf("insert model config override: %v", err)
 	}
@@ -449,6 +603,48 @@ func TestPricingEngineQuoteTokensUnconfiguredZeroFailsWithoutOrganizationFallbac
 	if err == nil {
 		t.Fatalf("QuoteTokens error = nil, want missing organization fallback error")
 	}
+	if !errors.Is(err, ErrPricingNotConfigured) {
+		t.Fatalf("error = %v, want ErrPricingNotConfigured", err)
+	}
+}
+
+func TestPricingEngineQuoteRealtimeAudioUsesAudioTokens(t *testing.T) {
+	db := openPricingEngineTestDB(t)
+	modelID := uuid.New()
+	insertPricingModelNamed(t, db, modelID, "openai", "gpt-realtime", "0", "0", false, false, "[]")
+	rules := `{"deployment_scope":"global","rules":[{"operation":"realtime_audio","meter":"input_token","unit":"per_1m_tokens","price":"32","configured":true},{"operation":"realtime_audio","meter":"output_token","unit":"per_1m_tokens","price":"64","configured":true}]}`
+	if err := db.Exec(`UPDATE llm_models SET pricing = ? WHERE id = ?`, rules, modelID.String()).Error; err != nil {
+		t.Fatalf("update pricing: %v", err)
+	}
+
+	quote, err := NewPricingEngine(db).QuoteTokens(context.Background(), PricingModelRef{
+		ModelID:   modelID,
+		Source:    PricingModelSourceGlobal,
+		Operation: PricingOperationRealtimeAudio,
+	}, 1000, 1000)
+	if err != nil {
+		t.Fatalf("QuoteTokens error = %v", err)
+	}
+	// $32/1M in + $64/1M out over 1k + 1k tokens = $0.096 = 96,000 credits.
+	if quote.TotalCredits != 96000 {
+		t.Fatalf("total credits = %d, want 96000", quote.TotalCredits)
+	}
+	if quote.InputTokenPriceUSDPer1M.String() != "32" || quote.OutputTokenPriceUSDPer1M.String() != "64" {
+		t.Fatalf("token prices = %s/%s, want 32/64", quote.InputTokenPriceUSDPer1M, quote.OutputTokenPriceUSDPer1M)
+	}
+}
+
+func TestPricingEngineQuoteRealtimeAudioFailsClosedWithoutAudioRules(t *testing.T) {
+	db := openPricingEngineTestDB(t)
+	modelID := uuid.New()
+	// Chat scalar prices are configured, but there is no realtime_audio rule.
+	insertPricingModelNamed(t, db, modelID, "openai", "gpt-realtime", "1", "2", true, true, "[]")
+
+	_, err := NewPricingEngine(db).QuoteTokens(context.Background(), PricingModelRef{
+		ModelID:   modelID,
+		Source:    PricingModelSourceGlobal,
+		Operation: PricingOperationRealtimeAudio,
+	}, 1000, 1000)
 	if !errors.Is(err, ErrPricingNotConfigured) {
 		t.Fatalf("error = %v, want ErrPricingNotConfigured", err)
 	}
@@ -697,6 +893,30 @@ func TestPricingEngineQuoteImageUsesConfiguredImagePrices(t *testing.T) {
 	}
 }
 
+func TestPricingEngineQuoteImageUsesStructuredModelPrice(t *testing.T) {
+	db := openPricingEngineTestDB(t)
+	modelID := uuid.New()
+	insertPricingModel(t, db, modelID, "openai", "0", "0", false, false, "[]")
+	if err := db.Exec(`UPDATE llm_models SET pricing = ? WHERE id = ?`,
+		`{"deployment_scope":"global","price_per_image":0.04}`, modelID.String()).Error; err != nil {
+		t.Fatal(err)
+	}
+	n := 3
+	quote, err := NewPricingEngine(db).QuoteImage(context.Background(), PricingModelRef{
+		ModelID: modelID,
+		Source:  PricingModelSourceGlobal,
+	}, &adapter.ImageRequest{Model: "gpt-image", N: &n})
+	if err != nil {
+		t.Fatalf("QuoteImage returned error: %v", err)
+	}
+	if !quote.TotalUSD.Equal(decimal.RequireFromString("0.12")) {
+		t.Fatalf("total USD = %s, want 0.12", quote.TotalUSD)
+	}
+	if quote.RuleID != "pricing.price_per_image" {
+		t.Fatalf("rule id = %q, want pricing.price_per_image", quote.RuleID)
+	}
+}
+
 func TestPricingEngineQuoteImageFailsWithoutOrganizationFallback(t *testing.T) {
 	db := openPricingEngineTestDB(t)
 	modelID := uuid.New()
@@ -747,6 +967,51 @@ func TestPricingEngineQuoteImagePrefersOrganizationOutputOverrideOverConfiguredI
 	}
 	if snapshot["price_column"] != "output_price_override" {
 		t.Fatalf("snapshot price_column = %v, want output_price_override", snapshot["price_column"])
+	}
+}
+
+func TestPricingEngineAppliesPricingOverrideWithoutReplacingOtherOperations(t *testing.T) {
+	db := openPricingEngineTestDB(t)
+	modelID := uuid.New()
+	organizationID := uuid.New()
+	insertPricingModel(t, db, modelID, "openai", "1", "2", true, true, "[]")
+	pricing := `{
+		"version":2,
+		"rules":[
+			{"id":"chat-input","operation":"chat","meter":"input_token","unit":"per_1m_tokens","price":"1","configured":true},
+			{"id":"chat-output","operation":"chat","meter":"output_token","unit":"per_1m_tokens","price":"2","configured":true},
+			{"id":"image-default","operation":"image_generation","meter":"image","unit":"per_image","price":"0.04","configured":true}
+		]
+	}`
+	if err := db.Exec(`UPDATE llm_models SET pricing = ? WHERE id = ?`, pricing, modelID.String()).Error; err != nil {
+		t.Fatalf("update pricing: %v", err)
+	}
+	override := `{"rules":[{"id":"image-default","operation":"image_generation","meter":"image","unit":"per_image","price":"0.08","configured":true}]}`
+	insertPricingModelConfigOverrideWithPricing(t, db, organizationID, modelID, nil, nil, &override)
+
+	tokenQuote, err := NewPricingEngine(db).QuoteTokens(context.Background(), PricingModelRef{
+		ModelID:        modelID,
+		OrganizationID: organizationID,
+		Source:         PricingModelSourceGlobal,
+	}, 1_000_000, 0)
+	if err != nil {
+		t.Fatalf("QuoteTokens returned error: %v", err)
+	}
+	if tokenQuote.TotalCredits != 1_000_000 {
+		t.Fatalf("token credits = %d, want 1000000 from model chat price", tokenQuote.TotalCredits)
+	}
+
+	n := 1
+	imageQuote, err := NewPricingEngine(db).QuoteImage(context.Background(), PricingModelRef{
+		ModelID:        modelID,
+		OrganizationID: organizationID,
+		Source:         PricingModelSourceGlobal,
+	}, &adapter.ImageRequest{Model: "gpt-image-1", N: &n})
+	if err != nil {
+		t.Fatalf("QuoteImage returned error: %v", err)
+	}
+	if imageQuote.TotalCredits != 80000 {
+		t.Fatalf("image credits = %d, want 80000 from override", imageQuote.TotalCredits)
 	}
 }
 
@@ -987,6 +1252,7 @@ func TestPricingEngineQuoteTokensUsesPassthroughIdentityForFallback(t *testing.T
 func TestPricingEngineQuoteImageAdminWildcardDoesNotOverrideSpecificDefault(t *testing.T) {
 	db := openPricingEngineTestDB(t)
 	organizationID := uuid.New()
+	t.Setenv(PricingFallbackDefaultPricesEnv, pricingFallbackDefaultPricesJSON)
 	savePricingFallbackForOrg(t, db, organizationID, UpdatePricingFallbackRequest{
 		Enabled: true,
 		OverrideRules: []PricingFallbackRule{
@@ -1316,5 +1582,71 @@ func TestRepriceLockedTokenQuoteFailsWhenOutputPriceWasNotLocked(t *testing.T) {
 	_, err := repriceLockedTokenQuote(locked, 1000, 1)
 	if err == nil {
 		t.Fatalf("repriceLockedTokenQuote error = nil, want missing output price error")
+	}
+}
+
+func TestEnrichTokenQuoteWithCachePricingBasisLocksCacheUnitPrices(t *testing.T) {
+	db := openPricingEngineTestDB(t)
+	if err := db.Exec(`ALTER TABLE llm_models ADD COLUMN cost_cache_read decimal`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`ALTER TABLE llm_models ADD COLUMN cost_cache_write decimal`).Error; err != nil {
+		t.Fatal(err)
+	}
+	modelID := uuid.New()
+	insertPricingModel(t, db, modelID, "openai", "1", "2", true, true, `[]`)
+	if err := db.Exec(`UPDATE llm_models SET cost_cache_read = ?, cost_cache_write = ? WHERE id = ?`, "0.25", "1.25", modelID).Error; err != nil {
+		t.Fatal(err)
+	}
+	updateModelTokenPricing(t, db, modelID, "1", "2", true, true, "0.25", "1.25", "", "")
+
+	engine := NewPricingEngine(db).(*pricingEngine)
+	base := withTokenPricingBasis(
+		newUSDQuote(decimal.Zero, decimal.Zero, PricingSourceUpstreamModelPrice, "", UsageSourceEstimatedUsage, nil),
+		decimal.RequireFromString("1"),
+		decimal.RequireFromString("2"),
+		true,
+		true,
+		"",
+		"",
+	)
+	enriched, err := engine.enrichTokenQuoteWithCachePricingBasis(context.Background(), PricingModelRef{ModelID: modelID}, base)
+	if err != nil {
+		t.Fatalf("enrichTokenQuoteWithCachePricingBasis() error = %v", err)
+	}
+	if !enriched.CacheReadPriceResolved || !enriched.CacheWritePriceResolved {
+		t.Fatalf("cache prices were not locked: %#v", enriched)
+	}
+	if !enriched.CacheReadPriceUSDPer1M.Equal(decimal.RequireFromString("0.25")) {
+		t.Fatalf("cache read price = %s, want 0.25", enriched.CacheReadPriceUSDPer1M)
+	}
+}
+
+func TestRepriceLockedTokenUsageUsesLockedCacheUnitPrices(t *testing.T) {
+	locked := withTokenPricingBasis(
+		newUSDQuote(decimal.Zero, decimal.Zero, PricingSourceUpstreamModelPrice, "", UsageSourceEstimatedUsage, nil),
+		decimal.RequireFromString("1"),
+		decimal.RequireFromString("2"),
+		true,
+		true,
+		"",
+		"",
+	)
+	locked.CacheReadPriceUSDPer1M = decimal.RequireFromString("0.25")
+	locked.CacheWritePriceUSDPer1M = decimal.RequireFromString("1.25")
+	locked.CacheReadPriceResolved = true
+	locked.CacheWritePriceResolved = true
+
+	quote, err := repriceLockedTokenUsage(locked, TokenUsage{
+		InputTokens: 400, CacheReadTokens: 300, CacheWriteTokens: 100, OutputTokens: 200,
+	})
+	if err != nil {
+		t.Fatalf("repriceLockedTokenUsage() error = %v", err)
+	}
+	if quote.TotalCredits != 1000 {
+		t.Fatalf("total credits = %d, want 1000", quote.TotalCredits)
+	}
+	if !quote.CacheReadUSD.Equal(decimal.RequireFromString("0.000075")) || !quote.CacheWriteUSD.Equal(decimal.RequireFromString("0.000125")) {
+		t.Fatalf("cache costs read/write = %s/%s", quote.CacheReadUSD, quote.CacheWriteUSD)
 	}
 }

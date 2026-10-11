@@ -272,6 +272,7 @@ func (h *WorkflowHandler) runWorkflowStream(c *gin.Context, requestedWorkspaceID
 			if errors.As(err, &busyErr) {
 				h.sendSSEErrorData(c.Request.Context(), c.Writer, map[string]interface{}{
 					"code":            workflowConversationBusyCode,
+					"error_code":      workflowBusyContractCode,
 					"message":         busyErr.Error(),
 					"conversation_id": busyErr.ConversationID,
 					"workflow_run_id": busyErr.WorkflowRunID,

@@ -399,7 +399,7 @@ func (h *connectorHandler) credentialError(c *gin.Context, err error) {
 		connectorRouteError(c, core.NewError(core.ErrorCodeInternal, false, nil))
 		return
 	}
-	projected := h.errorProjector.Project(projectable, apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language"))).Presentation
+	projected := h.errorProjector.ProjectWithRequestID(projectable, apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language")), c.Writer.Header().Get("X-Request-ID")).Presentation
 	c.Header(apptransport.HeaderApplicationErrorCode, projected.Code.String())
 	c.JSON(projected.HTTPStatus, gin.H{"code": string(core.ErrorCodeOf(err)), "message": projected.Message, "retryable": core.ErrorCodeOf(err) == core.ErrorCodeRateLimited})
 }

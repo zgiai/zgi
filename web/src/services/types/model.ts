@@ -158,6 +158,8 @@ export interface ModelItem {
   vendor_name?: string;
   vendor_cn_name?: string;
   vendor_en_name?: string;
+  is_custom?: boolean;
+  source_channel?: string;
   model: string; // Renamed from name (used in API)
   model_name: string; // Renamed from display_name
   slug?: string; // App-internal
@@ -308,6 +310,7 @@ export interface CreateCustomModelRequest {
   cache_write_price?: string;
   cache_write_5m_price?: string;
   cache_write_1h_price?: string;
+  pricing?: ModelPricing;
   knowledge_cutoff?: string;
   description?: string;
   endpoints?: ModelEndpoints;
@@ -393,6 +396,28 @@ export interface PricingFallbackRule {
   pricing_source?: PricingFallbackSource;
 }
 
+export interface ModelPricingIssueItem {
+  use_case: string;
+  operation: string;
+  meter: string;
+}
+
+export interface ModelPricingIssue {
+  id: string;
+  provider: string;
+  model: string;
+  model_name: string;
+  use_cases: string[];
+  missing: ModelPricingIssueItem[];
+  configured: boolean;
+  is_custom?: boolean;
+}
+
+export interface ModelPricingIssuesResponse {
+  items: ModelPricingIssue[];
+  total: number;
+}
+
 export interface PricingFallbackConfig {
   enabled: boolean;
   default_rules: PricingFallbackRule[];
@@ -403,4 +428,8 @@ export interface PricingFallbackConfig {
 export interface UpdatePricingFallbackConfigRequest {
   enabled: boolean;
   override_rules: PricingFallbackRule[];
+}
+
+export interface PricingFallbackTemplate {
+  rules: PricingFallbackRule[];
 }

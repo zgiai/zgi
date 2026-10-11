@@ -967,7 +967,11 @@ func isUniqueConstraintError(err error) bool {
 
 // createModel creates a new model in the database
 func (s *Service) createModel(ctx context.Context, meta *ModelMetaData, result *SyncResult) error {
-	values := buildPublishedModelColumns(s.db, publishedModelFromMeta(meta))
+	model, err := normalizePublishedModelForWrite(publishedModelFromMeta(meta))
+	if err != nil {
+		return err
+	}
+	values := buildPublishedModelColumns(s.db, model)
 	values["id"] = uuid.NewString()
 	values["created_at"] = time.Now().UTC()
 	values["updated_at"] = values["created_at"]
@@ -982,7 +986,11 @@ func (s *Service) createModel(ctx context.Context, meta *ModelMetaData, result *
 
 // updateModel updates an existing model in the database
 func (s *Service) updateModel(ctx context.Context, existing *llmmodel.LLMModel, meta *ModelMetaData, result *SyncResult) error {
-	updates := buildPublishedModelColumns(s.db, publishedModelFromMeta(meta))
+	model, err := normalizePublishedModelForWrite(publishedModelFromMeta(meta))
+	if err != nil {
+		return err
+	}
+	updates := buildPublishedModelColumns(s.db, model)
 	updates["updated_at"] = time.Now().UTC()
 
 	tx := s.db.WithContext(ctx).Model(existing).Updates(updates)

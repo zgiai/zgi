@@ -71,7 +71,9 @@ func loadCoreRuntimeConfig(cfg *Config, source *envSource) error {
 		requiredConfigLoader("jwt", loadJWTConfig),
 		requiredConfigLoader("log", loadLogConfig),
 
-		optionalConfigLoader("console", loadConsoleConfig),
+		// Console is optional in effect (every field has a default) but the loader
+		// validates the organization report interval, so it is registered as required.
+		requiredConfigLoader("console", loadConsoleConfig),
 		optionalConfigLoader("platform", loadPlatformConfig),
 		optionalConfigLoader("feature", loadFeatureConfig),
 		requiredConfigLoader("chat runtime", loadChatRuntimeConfig),
@@ -451,13 +453,29 @@ func loadAppConfig(cfg *Config, source *envSource) error {
 	return nil
 }
 
-func loadConsoleConfig(cfg *Config, source *envSource) {
-	cfg.Console = ConsoleConfig{
-		APIURL:         source.string(defaultLocalConsoleAPIURL(cfg), envConsoleAPIURL),
-		GRPCAddr:       source.string("", envConsoleAPIGRPCAddr),
-		InternalAPIKey: source.string("", envConsoleInternalAPIKey),
-		WebURL:         source.string(cfg.Email.ConsoleWebURL, envEmailConsoleWebURL),
+func loadConsoleConfig(cfg *Config, source *envSource) error {
+	syncIntervalSec, _ := source.int(45, envConsoleSyncIntervalSec)
+	syncStaleSec, _ := source.int(300, envConsoleSyncStaleSec)
+	organizationReportInterval, err := source.duration(
+		defaultOrganizationReportInterval, envConsoleSyncOrganizationReportInterval,
+	)
+	if err != nil {
+		return err
 	}
+
+	cfg.Console = ConsoleConfig{
+		APIURL:                         source.string(defaultLocalConsoleAPIURL(cfg), envConsoleAPIURL),
+		GRPCAddr:                       source.string("", envConsoleAPIGRPCAddr),
+		InternalAPIKey:                 source.string("", envConsoleInternalAPIKey),
+		WebURL:                         source.string(cfg.Email.ConsoleWebURL, envEmailConsoleWebURL),
+		InstanceID:                     source.string("", envConsoleInstanceID),
+		InstanceSecret:                 source.string("", envConsoleInstanceSecret),
+		SyncEnabled:                    mustBool(source.bool(true, envConsoleSyncEnabled)),
+		SyncIntervalSec:                syncIntervalSec,
+		SyncStaleSec:                   syncStaleSec,
+		SyncOrganizationReportInterval: organizationReportInterval,
+	}
+	return nil
 }
 
 func defaultLocalConsoleAPIURL(cfg *Config) string {

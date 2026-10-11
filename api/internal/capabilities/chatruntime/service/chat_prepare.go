@@ -261,7 +261,23 @@ func (s *service) resolveWorkspaceID(ctx context.Context, scope Scope) (*uuid.UU
 }
 
 func (s *service) ensureConversationAllowsNewTurn(ctx context.Context, scope Scope, conversation *runtimemodel.Conversation, allowRuntimeInputFollowUp bool) error {
-	if conversation == nil {
+	if conversation != nil &&
+		conversation.RuntimeStatus == runtimemodel.ConversationRuntimeStatusStreaming &&
+		conversation.ActiveMessageID != nil {
+		activeMessage, err := s.repos.Message.GetScoped(ctx, *conversation.ActiveMessageID, scope.OrganizationID, scope.AccountID)
+		if err != nil {
+			return mapRepoError(err)
+		}
+		switch activeMessage.Status {
+		case runtimemodel.MessageStatusCompleted, runtimemodel.MessageStatusStopped, runtimemodel.MessageStatusError:
+			if err := s.repos.Conversation.ClearActiveMessage(ctx, conversation.ID, activeMessage.ID); err != nil {
+				return err
+			}
+			conversation.RuntimeStatus = runtimemodel.ConversationRuntimeStatusIdle
+			conversation.ActiveMessageID = nil
+		}
+	}
+	if conversation == nil || conversation.CurrentLeafMessageID == nil {
 		return nil
 	}
 	if conversation.RuntimeStatus != runtimemodel.ConversationRuntimeStatusIdle {
@@ -921,13 +937,23 @@ func mergeUserMemoryMetadata(metadata map[string]interface{}, memoryMetadata map
 
 func newLLMChatRequest(parts *chatRequestParts, messages []adapter.Message) *adapter.ChatRequest {
 	req := &adapter.ChatRequest{
-		Provider: parts.Provider,
-		Model:    parts.ModelName,
-		Messages: messages,
-		Stream:   true,
+		Provider:        parts.Provider,
+		Model:           parts.ModelName,
+		RoutingStrategy: parts.RoutingStrategy,
+		Messages:        messages,
+		Stream:          true,
 	}
 	applyModelParameters(req, parts.Parameters)
 	return req
+}
+
+func normalizeRoutingStrategy(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "speed", "price", "stability":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return "stability"
+	}
 }
 
 func normalizeModelParameters(input map[string]interface{}) (map[string]interface{}, error) {

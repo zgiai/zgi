@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	llmmodelsvc "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
@@ -37,9 +38,12 @@ func (f *fakeVideoArtifactSaver) SavePosterImage(_ context.Context, _ Scope, pos
 	return f.posterURL, nil
 }
 
-func TestEstimateVideoTaskCreditsUsesDefaultPerSecondPoints(t *testing.T) {
-	got := estimateVideoTaskCredits(GenerateOptions{Duration: 4, Count: 1})
-	const want int64 = 572000
+func TestEstimateVideoTaskCreditsUsesModelPricing(t *testing.T) {
+	model := &llmmodelsvc.AvailableModel{
+		Pricing: []byte(`{"video_generation":{"currency":"USD","billing_unit":"second","rates":[{"price_per_second":0.02}]}}`),
+	}
+	got := estimateVideoTaskCredits(model, GenerateOptions{Duration: 4, Count: 1})
+	const want int64 = 80000
 	if got != want {
 		t.Fatalf("estimateVideoTaskCredits() = %d, want %d", got, want)
 	}
@@ -55,11 +59,10 @@ func TestVideoErrorMessageExtractsEmbeddedOpenAIErrorMessage(t *testing.T) {
 	}
 }
 
-func TestEstimateVideoTaskCreditsFallsBackToDefaults(t *testing.T) {
-	got := estimateVideoTaskCredits(GenerateOptions{})
-	const want int64 = 715000
-	if got != want {
-		t.Fatalf("estimateVideoTaskCredits() = %d, want %d", got, want)
+func TestEstimateVideoTaskCreditsReturnsZeroWhenPricingMissing(t *testing.T) {
+	got := estimateVideoTaskCredits(nil, GenerateOptions{})
+	if got != 0 {
+		t.Fatalf("estimateVideoTaskCredits() = %d, want 0", got)
 	}
 }
 

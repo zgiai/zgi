@@ -39,12 +39,12 @@ func (wcv *WorkflowConversationVariable) GetDataAsVariableData() (*VariableData,
 	if wcv.Data == "" {
 		return &VariableData{}, nil
 	}
-	
+
 	err := json.Unmarshal([]byte(wcv.Data), &data)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return &data, nil
 }
 
@@ -54,7 +54,7 @@ func (wcv *WorkflowConversationVariable) SetDataFromVariableData(data *VariableD
 	if err != nil {
 		return err
 	}
-	
+
 	wcv.Data = string(jsonData)
 	wcv.UpdatedAt = time.Now()
 	return nil
@@ -66,12 +66,12 @@ func (wcv *WorkflowConversationVariable) GetDataAsMap() (map[string]interface{},
 	if wcv.Data == "" {
 		return make(map[string]interface{}), nil
 	}
-	
+
 	err := json.Unmarshal([]byte(wcv.Data), &data)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return data, nil
 }
 
@@ -81,7 +81,7 @@ func (wcv *WorkflowConversationVariable) SetDataFromMap(data map[string]interfac
 	if err != nil {
 		return err
 	}
-	
+
 	wcv.Data = string(jsonData)
 	wcv.UpdatedAt = time.Now()
 	return nil
@@ -95,7 +95,7 @@ func CreateWorkflowConversationVariable(conversationID, appID uuid.UUID, name st
 		ValueType:   valueType,
 		Description: description,
 	}
-	
+
 	wcv := &WorkflowConversationVariable{
 		ID:             uuid.New(),
 		ConversationID: conversationID,
@@ -103,7 +103,7 @@ func CreateWorkflowConversationVariable(conversationID, appID uuid.UUID, name st
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
 	}
-	
+
 	wcv.SetDataFromVariableData(variableData)
 	return wcv
 }
@@ -116,6 +116,6 @@ func (wcv *WorkflowConversationVariable) UpdateVariable(name string, value inter
 		ValueType:   valueType,
 		Description: description,
 	}
-	
+
 	return wcv.SetDataFromVariableData(variableData)
 }

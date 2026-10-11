@@ -1608,6 +1608,7 @@ export function AIChatInputArea({
             {!hasBlockingApproval ? (
               <AIChatInputToolbar
                 modelSelectorValue={modelSelectorValue}
+                modelProps={selectedModelProps ?? modelProps}
                 modelSelectorWarning={modelSelectorWarning}
                 isModelInitializing={isModelInitializing}
                 modelMissing={modelMissing}

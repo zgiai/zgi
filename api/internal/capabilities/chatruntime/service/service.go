@@ -741,6 +741,7 @@ type chatRequestParts struct {
 	ModelName                        string
 	Provider                         string
 	ProviderPtr                      *string
+	RoutingStrategy                  string
 	Parameters                       map[string]interface{}
 	ContextControl                   map[string]interface{}
 	Attachments                      *attachmentBundle

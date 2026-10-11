@@ -28,6 +28,10 @@ const (
 	CategoryRateLimit
 	CategoryUpstream
 	CategoryInternal
+	// CategoryConfiguration identifies missing or invalid product
+	// configuration (unconfigured pricing, an unavailable exchange rate) that
+	// an administrator must fix. It is fail-closed, not a user mistake.
+	CategoryConfiguration
 )
 
 func (c Category) String() string {
@@ -50,13 +54,15 @@ func (c Category) String() string {
 		return "upstream"
 	case CategoryInternal:
 		return "internal"
+	case CategoryConfiguration:
+		return "configuration"
 	default:
 		return "unknown"
 	}
 }
 
 func (c Category) valid() bool {
-	return c >= CategoryValidation && c <= CategoryInternal
+	return (c >= CategoryValidation && c <= CategoryInternal) || c == CategoryConfiguration
 }
 
 // ParamType restricts public-message substitutions to known scalar types.

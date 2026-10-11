@@ -26,6 +26,7 @@ type ModelConfig struct {
 	CacheWritePriceOverride   *decimal.Decimal       `gorm:"type:decimal(24,12)" json:"cache_write_price_override,omitempty"`
 	CacheWrite5mPriceOverride *decimal.Decimal       `gorm:"column:cache_write_5m_price_override;type:decimal(24,12)" json:"cache_write_5m_price_override,omitempty"`
 	CacheWrite1hPriceOverride *decimal.Decimal       `gorm:"column:cache_write_1h_price_override;type:decimal(24,12)" json:"cache_write_1h_price_override,omitempty"`
+	PricingOverride           datatypes.JSON         `gorm:"column:pricing_override;type:jsonb" json:"pricing_override,omitempty"`
 	AccessScope               AccessScope            `gorm:"type:varchar(20);default:'all'" json:"access_scope"`
 	VisibleGroups             []string               `gorm:"type:jsonb;serializer:json;default:'[]'" json:"visible_groups"`
 	VisibleUsers              []string               `gorm:"type:jsonb;serializer:json;default:'[]'" json:"visible_users"`
@@ -222,6 +223,7 @@ type CustomModel struct {
 	CacheWritePriceConfigured   bool            `gorm:"column:cache_write_price_configured;default:false" json:"cache_write_price_configured"`
 	CacheWrite5mPriceConfigured bool            `gorm:"column:cache_write_5m_price_configured;default:false" json:"cache_write_5m_price_configured"`
 	CacheWrite1hPriceConfigured bool            `gorm:"column:cache_write_1h_price_configured;default:false" json:"cache_write_1h_price_configured"`
+	Pricing                     datatypes.JSON  `gorm:"column:pricing;type:jsonb;default:'{}'" json:"pricing,omitempty"`
 
 	// Status and ordering
 	IsActive  bool                   `gorm:"default:true;index" json:"is_active"`
@@ -427,7 +429,8 @@ type ModelView struct {
 	CacheWritePriceOverride     *float64       `json:"cache_write_price_override"`
 	CacheWrite5mPriceOverride   *float64       `json:"cache_write_5m_price_override"`
 	CacheWrite1hPriceOverride   *float64       `json:"cache_write_1h_price_override"`
-	Pricing                     datatypes.JSON `json:"pricing,omitempty"`
+	Pricing                     datatypes.JSON `gorm:"column:pricing;type:jsonb;default:'{}'" json:"pricing,omitempty"`
+	PricingOverride             datatypes.JSON `json:"pricing_override,omitempty"`
 
 	// Context
 	ContextWindow   int `json:"context_window"`

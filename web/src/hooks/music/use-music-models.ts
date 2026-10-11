@@ -18,6 +18,13 @@ export function useMusicModels() {
 
   return {
     ...query,
-    models: query.data?.data.items.filter(model => model.endpoints.music_generation === true) ?? [],
+    // Older catalog rows may carry the canonical use case but miss the
+    // legacy endpoint boolean. Keep music models visible in both shapes.
+    models:
+      query.data?.data.items.filter(
+        model =>
+          model.endpoints.music_generation === true ||
+          model.use_cases?.includes('music-gen')
+      ) ?? [],
   };
 }

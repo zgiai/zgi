@@ -128,6 +128,9 @@ func (a *CohereAdapter) ChatCompletionStream(ctx context.Context, request *adapt
 		}()
 
 		scanner := bufio.NewScanner(resp.Body)
+		// Without this the scanner keeps bufio's 64KB default, which any
+		// moderately large frame overruns with ErrTooLong.
+		scanner.Buffer(nil, adapter.MaxSSEFrameBytes)
 		var messageID string
 		var finalUsage *adapter.Usage
 

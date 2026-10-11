@@ -247,6 +247,10 @@ var (
 	ErrWorkflowModelPricingNotConfigured         = ErrorCode{207014, "模型未配置价格，请先在模型管理或计费策略中配置价格。", true}
 	ErrWorkflowPrivateChannelUpstreamUnavailable = ErrorCode{207015, "当前模型的全部渠道暂不可用，请联系组织管理员检查渠道后重试。", true}
 	ErrWorkflowPlatformChannelUnavailable        = ErrorCode{207016, "当前模型服务暂时不可用，请稍后重试或选择其他模型。", true}
+	ErrWorkflowBillingExchangeRateUnavailable    = ErrorCode{207017, "汇率不可用，无法完成本次计费，请联系管理员。", true}
+	ErrWorkflowBillingPreDeductFailed            = ErrorCode{207018, "请求预扣费失败，请重试；如持续发生，请联系管理员。", true}
+	ErrWorkflowBillingSettleFailed               = ErrorCode{207019, "请求已完成，但计费结算失败，系统将自动对账；如持续发生，请联系管理员。", true}
+	ErrWorkflowExecutionTimeout                  = ErrorCode{207020, "执行超时，请重试；如持续发生，请检查上游模型/数据源服务或适当调大节点超时时间。", true}
 )
 
 var (

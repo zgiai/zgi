@@ -60,7 +60,7 @@ func TestBillingService_GetOrCreateWorkspaceQuotaForUpdate_DuplicateCreateFallsB
 			"updated_at",
 		}))
 	mock.ExpectExec(insertWithConflict).
-		WithArgs(workspaceID, sqlmock.AnyArg(), int64(0), int64(0), nil, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(workspaceID, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), nil, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(selectForUpdate).
 		WithArgs(workspaceID, 1).

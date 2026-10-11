@@ -21,10 +21,15 @@ const (
 
 type BillingDisplayCurrency string
 
+type LLMRoutingStrategy string
+
 const (
-	BillingDisplayCurrencyUSD BillingDisplayCurrency = "USD"
-	BillingDisplayCurrencyCNY BillingDisplayCurrency = "CNY"
-	DefaultUSDToCNYRate                              = 7
+	BillingDisplayCurrencyUSD   BillingDisplayCurrency = "USD"
+	BillingDisplayCurrencyCNY   BillingDisplayCurrency = "CNY"
+	DefaultUSDToCNYRate                                = 7
+	LLMRoutingStrategySpeed     LLMRoutingStrategy     = "speed"
+	LLMRoutingStrategyPrice     LLMRoutingStrategy     = "price"
+	LLMRoutingStrategyStability LLMRoutingStrategy     = "stability"
 )
 
 // OrganizationRole represents a role in an organization
@@ -44,6 +49,7 @@ type Organization struct {
 	Status                   OrganizationStatus     `gorm:"type:varchar(16);not null;default:'active'" json:"status"`
 	BillingDisplayCurrency   BillingDisplayCurrency `gorm:"type:varchar(3);not null;default:'USD'" json:"billing_display_currency"`
 	USDToCNYRate             decimal.Decimal        `gorm:"type:numeric(18,6);not null;default:7" json:"usd_to_cny_rate"`
+	LLMRoutingStrategy       LLMRoutingStrategy     `gorm:"type:varchar(16);not null;default:'stability'" json:"llm_routing_strategy"`
 	LLMContentCaptureEnabled bool                   `gorm:"not null;default:false" json:"llm_content_capture_enabled"`
 	LLMContentRetentionDays  *int                   `json:"llm_content_retention_days"`
 	CreatedAt                time.Time              `json:"created_at"`
@@ -75,6 +81,9 @@ func (org *Organization) BeforeCreate(tx *gorm.DB) error {
 	}
 	if !org.USDToCNYRate.GreaterThan(decimal.Zero) {
 		org.USDToCNYRate = decimal.NewFromInt(DefaultUSDToCNYRate)
+	}
+	if org.LLMRoutingStrategy == "" {
+		org.LLMRoutingStrategy = LLMRoutingStrategyStability
 	}
 
 	// Set timestamps

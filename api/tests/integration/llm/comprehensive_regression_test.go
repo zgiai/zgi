@@ -804,7 +804,7 @@ func getGroupBalance(t *testing.T, groupID string) float64 {
 	if err := db.Where("group_id = ?", groupID).First(&account).Error; err != nil {
 		t.Fatalf("Failed to get account: %v", err)
 	}
-	return float64(account.SubscriptionCredits + account.PurchasedCredits)
+	return float64(account.SubscriptionCredits + account.PurchasedCredits.Int64())
 }
 
 func getTestAPIKey(t *testing.T) *apikeymodel.TenantAPIKey {

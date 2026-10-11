@@ -403,7 +403,7 @@ const messages = {
     usedQuota: 'Used Quota',
     remainQuota: 'Remaining Quota',
     quotaLimit: 'Quota Limit',
-    pointsLabel: '{points} credits',
+    pointsLabel: '{points} points',
     approxFiat: '≈ {amount}',
     updateSuccess: 'Quota updated successfully',
     updateError: 'Failed to update quota',

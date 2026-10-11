@@ -9,6 +9,7 @@ import (
 	apikeyrepo "github.com/zgiai/zgi/api/internal/modules/llm/apikey/repository"
 	accessmodel "github.com/zgiai/zgi/api/internal/modules/llm/developeraccess/model"
 	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/pkg/apperror"
 )
@@ -28,7 +29,7 @@ func TestPrincipalQuotaClassificationAfterAuthorization(t *testing.T) {
 			if err := db.First(&key, "id = ?", created.ID).Error; err != nil {
 				t.Fatal(err)
 			}
-			updates := map[string]any{"quota_limit": int64(100), "used_quota": int64(100), "remain_quota": int64(0)}
+			updates := map[string]any{"quota_limit": millipoints.MilliPoints(100), "used_quota": millipoints.MilliPoints(100), "remain_quota": millipoints.MilliPoints(0)}
 			if scenario == "unlimited" {
 				updates["quota_limit"] = nil
 			}

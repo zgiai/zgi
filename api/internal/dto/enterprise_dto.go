@@ -29,6 +29,7 @@ type OrganizationWithRoleResponse struct {
 	Status                 model.OrganizationStatus     `json:"status"`
 	BillingDisplayCurrency model.BillingDisplayCurrency `json:"billing_display_currency"`
 	USDToCNYRate           float64                      `json:"usd_to_cny_rate"`
+	LLMRoutingStrategy     model.LLMRoutingStrategy     `json:"llm_routing_strategy"`
 	CreatedAt              int64                        `json:"created_at"`
 	OrganizationRole       model.OrganizationRole       `json:"organization_role"`
 }
@@ -219,6 +220,8 @@ type CurrentOrganizationResponse struct {
 	Status                 model.OrganizationStatus     `json:"status"`
 	BillingDisplayCurrency model.BillingDisplayCurrency `json:"billing_display_currency"`
 	USDToCNYRate           float64                      `json:"usd_to_cny_rate"`
+	PointsPerUSD           int64                        `json:"points_per_usd"`
+	LLMRoutingStrategy     model.LLMRoutingStrategy     `json:"llm_routing_strategy"`
 	CreatedAt              int64                        `json:"created_at"`
 	OrganizationRole       model.OrganizationRole       `json:"organization_role"`
 }
@@ -288,6 +291,7 @@ type UpdateOrganizationRequest struct {
 	ShortName              *string                       `json:"short_name,omitempty"`
 	BillingDisplayCurrency *model.BillingDisplayCurrency `json:"billing_display_currency,omitempty"`
 	USDToCNYRate           *float64                      `json:"usd_to_cny_rate,omitempty"`
+	LLMRoutingStrategy     *model.LLMRoutingStrategy     `json:"llm_routing_strategy,omitempty"`
 }
 
 // AddWorkspaceToOrganizationRequest represents the request to add a tenant to enterprise

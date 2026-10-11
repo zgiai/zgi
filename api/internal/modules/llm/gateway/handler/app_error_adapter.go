@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/pkg/apperror"
 	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
@@ -49,50 +50,87 @@ func principalAccessProtocolError(c *gin.Context, err error, projector *apptrans
 	return legacy
 }
 
-// localizedProtocolError is an error-only compatibility adapter. The protocol
-// classifier continues to own status, type, code, and wire shape; the
-// application catalog may replace only the safe public message.
+// localizedProtocolError projects the application error at the protocol
+// boundary. The classifier keeps ownership of status, type, and legacy wire
+// code; the catalog supplies the localized message, stable code, and retryable
+// flag, and the projector mints the error_id.
 func (h *LLMHandler) localizedProtocolError(c *gin.Context, err error) protocolError {
+	var projector *apptransport.Projector
+	if h != nil {
+		projector = h.errorProjector
+	}
+	return projectProtocolError(c, projector, err)
+}
+
+// projectProtocolError is the projector-backed half of localizedProtocolError,
+// shared with the handlers that keep their own projector instead of embedding
+// an LLMHandler. Passing a nil projector degrades to the raw classifier.
+func projectProtocolError(c *gin.Context, projector *apptransport.Projector, err error) protocolError {
 	legacy := classifyProtocolError(err)
-	if h == nil || h.errorProjector == nil {
+	if projector == nil || err == nil {
 		return legacy
 	}
-	appErr, supported := gatewayApplicationError(err)
+	projectionTarget, supported := applicationErrorFor(err)
 	if !supported {
-		return legacy
+		projectionTarget = err
 	}
 
-	legacyKey := legacyOpenAIUpstreamTimeout
-	if isAnthropicRequest(c) {
-		legacyKey = legacyAnthropicTimeoutError
-	}
 	locale := apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language"))
-	message := h.errorProjector.ProjectLegacyMessage(appErr, locale, legacyKey)
-	if message.Resolution == apptransport.ResolutionMatched {
-		legacy.message = message.Message
+	result := projector.ProjectWithRequestID(projectionTarget, locale, c.Writer.Header().Get("X-Request-ID"))
+	legacy.errorID = result.ErrorID
+	if result.Resolution == apptransport.ResolutionMatched {
+		legacy.message = result.Presentation.Message
+		legacy.appCode = result.Presentation.Code.String()
+		legacy.retryable = result.Presentation.Retryable
+		// The HTTP status follows the resolved code too, so the published
+		// (status, code, retryable) triple is always the catalog's. A protocol
+		// that deliberately answers with its own status (Anthropic 402 for an
+		// exhausted key quota) keeps it.
+		if status := result.Presentation.HTTPStatus; status > 0 {
+			if legacy.anthropicStatus == legacy.openAIStatus {
+				legacy.anthropicStatus = status
+			}
+			legacy.openAIStatus = status
+		}
 	}
 	return legacy
 }
 
+// localizedChatStreamError returns a safe projected message for every stream
+// failure. Diagnostic causes never reach the client, whether or not the error
+// has a registered catalog code.
 func (h *LLMHandler) localizedChatStreamError(c *gin.Context, err error) string {
-	if _, supported := gatewayApplicationError(err); !supported {
-		return err.Error()
-	}
 	return h.localizedProtocolError(c, err).message
 }
 
-func gatewayApplicationError(err error) (error, bool) {
-	if apperror.IsCode(err, llmerrors.AppCodeProviderTimeout) {
-		return err, true
+// localizedInvalidAPIKeyProtocolError keeps the invalid_api_key wire shape and
+// takes the message and error_id from the catalog's llm.api_key.invalid entry,
+// so an unknown key is answered in the caller's language.
+func localizedInvalidAPIKeyProtocolError(c *gin.Context, projector *apptransport.Projector) protocolError {
+	protocolErr := invalidAPIKeyProtocolError("Invalid API key")
+	if projector == nil {
+		return protocolErr
 	}
-	if !isGatewayProviderTimeout(err) {
-		return err, false
+	locale := apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language"))
+	result := projector.ProjectWithRequestID(apperror.New(llmerrors.AppCodeAPIKeyInvalid), locale, c.Writer.Header().Get("X-Request-ID"))
+	protocolErr.errorID = result.ErrorID
+	if result.Resolution == apptransport.ResolutionMatched {
+		protocolErr.message = result.Presentation.Message
 	}
-	return apperror.Wrap(
-		err,
-		llmerrors.AppCodeProviderTimeout,
-		apperror.WithOperation("gateway.protocol_error"),
-	), true
+	return protocolErr
+}
+
+// localizedInvalidRequest overlays the catalog's locale-specific request
+// message while preserving each protocol's legacy status/type/code shape.
+// Validation errors are created at the protocol boundary, so they otherwise
+// bypass the application-error projector and leak the English detail string.
+func (h *LLMHandler) localizedInvalidRequest(c *gin.Context, protocolErr protocolError) protocolError {
+	projected := h.localizedProtocolError(c, gateway.ErrInvalidRequest)
+	protocolErr.message = projected.message
+	protocolErr.appCode = projected.appCode
+	protocolErr.retryable = projected.retryable
+	protocolErr.errorID = projected.errorID
+	return protocolErr
 }
 
 func isGatewayProviderTimeout(err error) bool {
@@ -110,6 +148,6 @@ func isGatewayProviderTimeout(err error) bool {
 }
 
 func normalizeGatewayApplicationError(err error) error {
-	appErr, _ := gatewayApplicationError(err)
+	appErr, _ := applicationErrorFor(err)
 	return appErr
 }

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
@@ -39,7 +38,37 @@ func hasBillableTokenUsage(usage *adapter.Usage) bool {
 	if usage == nil {
 		return false
 	}
-	return usage.PromptTokens > 0 || usage.CompletionTokens > 0 || usage.CacheReadTokens > 0 || usage.CacheWriteTokens > 0
+	return usage.PromptTokens > 0 || usage.CompletionTokens > 0 || usage.CacheReadTokens > 0 || usage.CacheWriteTokens > 0 ||
+		usage.AudioInputTokens > 0 || usage.AudioOutputTokens > 0
+}
+
+// applyUsageToBillingContext normalizes adapter usage into the disjoint token
+// buckets persisted by llm_usage_bills. It is used by private media paths;
+// platform paths must wait for Console's authoritative settlement snapshot.
+func applyUsageToBillingContext(billingCtx *BillingContext, usage *adapter.Usage) {
+	if billingCtx == nil || usage == nil {
+		return
+	}
+	if usage.PromptTokens == 0 {
+		usage.PromptTokens = usage.InputTokens
+	}
+	if usage.CompletionTokens == 0 {
+		usage.CompletionTokens = usage.OutputTokens
+	}
+	if usage.TotalTokens == 0 {
+		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	}
+	usage.NormalizeCacheTokens()
+	billingCtx.PromptTokens = usage.UncachedInputTokens
+	billingCtx.CacheReadTokens = usage.CacheReadTokens
+	billingCtx.CacheWriteTokens = usage.CacheWriteTokens
+	billingCtx.CacheWrite5mTokens = usage.CacheWrite5mTokens
+	billingCtx.CacheWrite1hTokens = usage.CacheWrite1hTokens
+	billingCtx.CompletionTokens = usage.CompletionTokens
+	billingCtx.TotalTokens = usage.TotalTokens
+	if billingCtx.TotalTokens <= 0 {
+		billingCtx.TotalTokens = billingCtx.PromptTokens + billingCtx.CacheReadTokens + billingCtx.CacheWriteTokens + billingCtx.CompletionTokens
+	}
 }
 
 func missingTokenUsageError(providerName, modelName string) error {
@@ -58,48 +87,10 @@ func missingTokenUsageError(providerName, modelName string) error {
 }
 
 func stableInvocationErrorCode(err error) string {
-	switch {
-	case errors.Is(err, adapter.ErrTimeout):
-		return llmerrors.AppCodeProviderTimeout.String()
-	case errors.Is(err, adapter.ErrAuthFailed):
-		return llmerrors.AppCodeProviderAuthFailed.String()
-	case errors.Is(err, adapter.ErrRateLimited), errors.Is(err, adapter.ErrQuotaExhausted):
-		return llmerrors.AppCodeProviderRateLimited.String()
-	case errors.Is(err, adapter.ErrInvalidRequest), errors.Is(err, adapter.ErrContentPolicyViolation):
-		return llmerrors.AppCodeRequestInvalid.String()
-	case errors.Is(err, adapter.ErrModelNotFound):
-		return llmerrors.AppCodeModelNotFound.String()
-	case errors.Is(err, adapter.ErrPlatformChannelUnavailable), errors.Is(err, adapter.ErrUpstreamError),
-		errors.Is(err, adapter.ErrProxyError), errors.Is(err, adapter.ErrInsufficientBalance),
-		errors.Is(err, adapter.ErrBillingUnavailable):
-		return llmerrors.AppCodeProviderUnavailable.String()
+	if code, ok := ApplicationCodeForError(err); ok {
+		return code.String()
 	}
-
-	statusCode := 0
-	var adapterErr *adapter.AdapterError
-	if errors.As(err, &adapterErr) {
-		statusCode = adapterErr.StatusCode
-	}
-	var statusErr *adapter.HTTPStatusError
-	if errors.As(err, &statusErr) {
-		statusCode = statusErr.StatusCode
-	}
-	switch {
-	case statusCode == http.StatusBadRequest:
-		return llmerrors.AppCodeRequestInvalid.String()
-	case statusCode == http.StatusNotFound:
-		return llmerrors.AppCodeModelNotFound.String()
-	case statusCode == http.StatusGatewayTimeout:
-		return llmerrors.AppCodeProviderTimeout.String()
-	case statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden:
-		return llmerrors.AppCodeProviderAuthFailed.String()
-	case statusCode == http.StatusTooManyRequests:
-		return llmerrors.AppCodeProviderRateLimited.String()
-	case statusCode >= http.StatusInternalServerError:
-		return llmerrors.AppCodeProviderUnavailable.String()
-	default:
-		return llmerrors.AppCodeInvocationFailed.String()
-	}
+	return llmerrors.AppCodeInvocationFailed.String()
 }
 
 func setBillingFailure(billingCtx *BillingContext, err error) {
@@ -199,13 +190,17 @@ func (s *llmGatewayServiceImpl) createBillingContext(
 		ChannelProvider:      providerSelection.ChannelProvider,
 		UpstreamWouldGuard:   providerSelection.UpstreamWouldGuard,
 		UpstreamHalfOpen:     providerSelection.UpstreamHalfOpen,
-		EstimatedCredits:     estimatedCredits,
-		BillingLane:          billingLane,
-		UseSystemProvider:    usageBillingLaneUsesSystemProvider(billingLane),
-		IsStreaming:          isStreaming,
-		RequestID:            requestID,
-		RequestCreatedAt:     requestCreatedAt,
-		AttemptID:            attemptID,
+		RoutingStrategy:      normalizeConsoleRoutingStrategy(providerSelection.RoutingStrategy),
+		// Chat is the default billing operation; embedding/rerank/audio/image/
+		// video/music callers override it explicitly right after creation.
+		PricingOperation:  PricingOperationChat,
+		EstimatedCredits:  estimatedCredits,
+		BillingLane:       billingLane,
+		UseSystemProvider: usageBillingLaneUsesSystemProvider(billingLane),
+		IsStreaming:       isStreaming,
+		RequestID:         requestID,
+		RequestCreatedAt:  requestCreatedAt,
+		AttemptID:         attemptID,
 	}
 	if apiKey.AccessGrantID != nil && apiKey.PrincipalType != nil && apiKey.PrincipalID != nil && apiKey.WorkspaceID != nil {
 		keyAuthorizationVersion := apiKey.AuthorizationVersion
@@ -223,6 +218,11 @@ func (s *llmGatewayServiceImpl) createBillingContext(
 	} else {
 		billingCtx.AuthMethod = "legacy_api_key"
 	}
+	// Billing identity follows the selected supplier model, not the logical
+	// model vendor. A route may call a Doubao model through an Agicto supplier;
+	// the supplier owns the configured price and must be sent to Console for
+	// metered settlement. ModelVendor remains routing/catalog metadata and must
+	// not overwrite ProviderName/ProviderID/ModelID here.
 	if appCtx != nil {
 		billingCtx.AppID = appCtx.AppID
 		billingCtx.AppType = appCtx.AppType
@@ -263,7 +263,7 @@ func (s *llmGatewayServiceImpl) beginBillingAttempt(
 	requestCreatedAt time.Time,
 	requestID string,
 	attemptID string,
-	reservationPolicy string,
+	quote PricingQuote,
 ) (*BillingContext, error) {
 	channelID := getChannelID(providerSelection)
 
@@ -280,7 +280,11 @@ func (s *llmGatewayServiceImpl) beginBillingAttempt(
 		attemptID,
 	)
 	billingCtx.InvocationSource = resolveInvocationSource(ctx, appCtx)
-	billingCtx.ReservationPolicy = strings.TrimSpace(reservationPolicy)
+	billingCtx.ReservationPolicy = strings.TrimSpace(quote.ReservationPolicy)
+	applyPricingQuoteToBillingContext(billingCtx, quote)
+	if pricingQuoteHasTokenLock(quote) {
+		lockTokenPricingQuote(billingCtx, quote)
+	}
 	switch useCase, _ := ctx.Value(shared.ContextKeyModelUseCase).(string); llmmodel.UseCase(useCase) {
 	case llmmodel.UseCaseTextToSpeech:
 		billingCtx.PricingOperation = PricingOperationSpeech
@@ -292,7 +296,6 @@ func (s *llmGatewayServiceImpl) beginBillingAttempt(
 	if err != nil {
 		return nil, wrapBillingLaneMismatchError(err)
 	}
-
 	logBillingEvent(
 		billingCode("BILLING_LANE_SELECTED", decision.UseSystemProvider),
 		billingCtx,
@@ -545,7 +548,7 @@ func (s *llmGatewayServiceImpl) handleProviderError(
 	s.logProviderError(ctx, attemptIdx, providerSelection, err, "provider_call_failed")
 
 	if channelID != nil {
-		autoBan := providerSelection.HasRoute() && providerSelection.AutoBan
+		autoBan := providerSelection != nil && providerSelection.HasRoute() && providerSelection.AutoBan
 		if trackErr := s.healthTracker.RecordFailure(ctx, *channelID, autoBan); trackErr != nil {
 			logger.WarnContext(ctx, "failed to record channel failure",
 				"provider", providerSelection.Provider.Provider,
@@ -626,10 +629,17 @@ func (s *llmGatewayServiceImpl) settleChatSuccess(
 	actualPromptTokens := usage.UncachedInputTokens
 	actualCompletionTokens := usage.CompletionTokens
 
-	quote, err := s.quoteTokenPricingForSettlementUsage(ctx, billingCtx, pricingModelRefFromSelection(providerSelection), TokenUsage{
+	settlementModel := pricingModelRefFromSelection(providerSelection)
+	if billingCtx != nil && billingCtx.PricingOperation != "" {
+		// Carry the declared operation (e.g. realtime_audio) so the audio token
+		// split is billed against the realtime rules, not the chat scalars.
+		settlementModel.Operation = billingCtx.PricingOperation
+	}
+	quote, err := s.quoteTokenPricingForSettlementUsage(ctx, billingCtx, settlementModel, TokenUsage{
 		InputTokens: actualPromptTokens, CacheReadTokens: usage.CacheReadTokens,
 		CacheWriteTokens: usage.CacheWriteTokens, CacheWrite5mTokens: usage.CacheWrite5mTokens,
 		CacheWrite1hTokens: usage.CacheWrite1hTokens, OutputTokens: actualCompletionTokens,
+		AudioInputTokens: usage.AudioInputTokens, AudioOutputTokens: usage.AudioOutputTokens,
 	})
 	if err != nil {
 		return wrapPricingCalculationError(err)

@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/apperror"
 	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
@@ -52,13 +53,13 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 }
 
 func (h *Handler) Create(c *gin.Context) {
-	scope, ok := musicScope(c)
+	scope, ok := h.musicScope(c)
 	if !ok {
 		return
 	}
 	mediaType, _, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
 	if err != nil || mediaType != "application/json" {
-		writeMusicError(c, http.StatusBadRequest, "INVALID_REQUEST", messageJSONContentTypeRequired)
+		h.writeApplicationError(c, apperror.Wrap(errors.New(messageJSONContentTypeRequired), AppCodeRequestInvalid, apperror.WithOperation("music.request")))
 		return
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxCreateRequestBytes)
@@ -66,11 +67,11 @@ func (h *Handler) Create(c *gin.Context) {
 	decoder.DisallowUnknownFields()
 	var request CreateRequest
 	if err := decoder.Decode(&request); err != nil {
-		writeMusicError(c, http.StatusBadRequest, "INVALID_REQUEST", messageInvalidGenerationRequest)
+		h.writeApplicationError(c, apperror.Wrap(errors.New(messageInvalidGenerationRequest), AppCodeRequestInvalid, apperror.WithOperation("music.request")))
 		return
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		writeMusicError(c, http.StatusBadRequest, "INVALID_REQUEST", messageInvalidGenerationRequest)
+		h.writeApplicationError(c, apperror.Wrap(errors.New(messageInvalidGenerationRequest), AppCodeRequestInvalid, apperror.WithOperation("music.request")))
 		return
 	}
 	task, err := h.service.Create(c.Request.Context(), scope, request)
@@ -86,13 +87,13 @@ func (h *Handler) Create(c *gin.Context) {
 }
 
 func (h *Handler) Get(c *gin.Context) {
-	scope, ok := musicScope(c)
+	scope, ok := h.musicScope(c)
 	if !ok {
 		return
 	}
 	id, err := uuid.Parse(strings.TrimSpace(c.Param("id")))
 	if err != nil {
-		writeMusicError(c, http.StatusBadRequest, "INVALID_TASK_ID", messageInvalidTaskID)
+		h.writeMusicCatalogError(c, AppCodeRequestInvalid, "music.task.get", messageInvalidTaskID)
 		return
 	}
 	view, err := h.service.Get(c.Request.Context(), scope, id)
@@ -108,7 +109,7 @@ func (h *Handler) Get(c *gin.Context) {
 }
 
 func (h *Handler) List(c *gin.Context) {
-	scope, ok := musicScope(c)
+	scope, ok := h.musicScope(c)
 	if !ok {
 		return
 	}
@@ -130,13 +131,13 @@ func (h *Handler) List(c *gin.Context) {
 }
 
 func (h *Handler) Delete(c *gin.Context) {
-	scope, ok := musicScope(c)
+	scope, ok := h.musicScope(c)
 	if !ok {
 		return
 	}
 	id, err := uuid.Parse(strings.TrimSpace(c.Param("id")))
 	if err != nil {
-		writeMusicError(c, http.StatusBadRequest, "INVALID_TASK_ID", messageInvalidTaskID)
+		h.writeMusicCatalogError(c, AppCodeRequestInvalid, "music.task.get", messageInvalidTaskID)
 		return
 	}
 	if err := h.service.Delete(c.Request.Context(), scope, id); err != nil {
@@ -169,18 +170,18 @@ func parseListRequest(c *gin.Context) (ListRequest, error) {
 	return request, nil
 }
 
-func musicScope(c *gin.Context) (Scope, bool) {
+func (h *Handler) musicScope(c *gin.Context) (Scope, bool) {
 	organizationID, organizationErr := uuid.Parse(strings.TrimSpace(util.GetOrganizationID(c)))
 	accountID, accountErr := uuid.Parse(strings.TrimSpace(util.GetAccountID(c)))
 	if organizationErr != nil || accountErr != nil || organizationID == uuid.Nil || accountID == uuid.Nil {
-		writeMusicError(c, http.StatusUnauthorized, "UNAUTHORIZED", messageInvalidAuthContext)
+		h.writeMusicCatalogError(c, llmerrors.AppCodeAPIKeyInvalid, "music.task.scope", messageInvalidAuthContext)
 		return Scope{}, false
 	}
 	var workspaceID *uuid.UUID
 	if raw := strings.TrimSpace(util.GetWorkspaceID(c)); raw != "" {
 		parsed, err := uuid.Parse(raw)
 		if err != nil || parsed == uuid.Nil {
-			writeMusicError(c, http.StatusUnauthorized, "UNAUTHORIZED", messageInvalidAuthContext)
+			h.writeMusicCatalogError(c, llmerrors.AppCodeAPIKeyInvalid, "music.task.scope", messageInvalidAuthContext)
 			return Scope{}, false
 		}
 		workspaceID = &parsed
@@ -191,29 +192,67 @@ func musicScope(c *gin.Context) (Scope, bool) {
 func (h *Handler) handleMusicServiceError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrInvalidRequest):
-		writeMusicError(c, http.StatusBadRequest, "INVALID_REQUEST", messageInvalidGenerationRequest)
+		h.writeApplicationError(c, apperror.Wrap(err, AppCodeRequestInvalid, apperror.WithOperation("music.request")))
 	case errors.Is(err, ErrModelUnavailable):
-		writeMusicError(c, http.StatusBadRequest, "MODEL_UNAVAILABLE", messageModelUnavailable)
+		h.writeApplicationError(c, apperror.Wrap(err, AppCodeModelUnavailable, apperror.WithOperation("music.model")))
 	case errors.Is(err, ErrTaskNotFound):
-		writeMusicError(c, http.StatusNotFound, "TASK_NOT_FOUND", messageTaskNotFound)
+		h.writeApplicationError(c, apperror.Wrap(err, AppCodeTaskNotFound, apperror.WithOperation("music.task.get")))
 	case errors.Is(err, ErrTaskConflict):
-		writeMusicError(c, http.StatusConflict, "TASK_CONFLICT", messageTaskConflict)
+		h.writeApplicationError(c, apperror.Wrap(err, AppCodeTaskConflict, apperror.WithOperation("music.task.create")))
 	case apperror.IsCode(err, AppCodeTaskNotDeletable):
 		h.writeApplicationError(c, err)
 	default:
-		writeMusicError(c, http.StatusInternalServerError, "MUSIC_TASK_FAILED", messageTaskProcessingFailed)
+		h.writeApplicationError(c, apperror.Wrap(err, AppCodeTaskFailed, apperror.WithOperation("music.task")))
 	}
 }
 
 func (h *Handler) writeApplicationError(c *gin.Context, err error) {
 	locale := apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language"))
-	presentation := h.errorProjector.Project(err, locale).Presentation
-	c.JSON(presentation.HTTPStatus, gin.H{
-		"code":    presentation.Code.String(),
-		"message": presentation.Message,
-	})
+	result := h.errorProjector.ProjectWithRequestID(err, locale, c.Writer.Header().Get("X-Request-ID"))
+	body := gin.H{
+		"code":      result.Presentation.Code.String(),
+		"message":   result.Presentation.Message,
+		"retryable": result.Presentation.Retryable,
+	}
+	// The contract header belongs on every music failure, not only on the
+	// handler-authored ones.
+	c.Header(apptransport.HeaderApplicationErrorCode, result.Presentation.Code.String())
+	if result.ErrorID != "" {
+		body["error_id"] = result.ErrorID
+	}
+	if requestID := strings.TrimSpace(c.GetString("request_id")); requestID != "" {
+		body["request_id"] = requestID
+	} else if requestID := strings.TrimSpace(c.Writer.Header().Get("X-Request-ID")); requestID != "" {
+		body["request_id"] = requestID
+	}
+	if result.Presentation.HTTPStatus == http.StatusTooManyRequests {
+		c.Header("Retry-After", "60")
+	}
+	c.JSON(result.Presentation.HTTPStatus, body)
 }
 
-func writeMusicError(c *gin.Context, status int, code, message string) {
-	c.JSON(status, gin.H{"code": code, "message": message})
+// writeMusicCatalogError routes a handler-authored failure through the same
+// cataloged envelope as every other music error, instead of the bare
+// {code, message} body that had no contract code, headers, or correlation id.
+func (h *Handler) writeMusicCatalogError(c *gin.Context, code apperror.Code, operation, message string) {
+	if h == nil || h.errorProjector == nil {
+		c.JSON(appcatalogStatusFor(code), gin.H{"code": code.String(), "message": message})
+		return
+	}
+	h.writeApplicationError(c, musicRequestError(code, operation, message))
+}
+
+func musicRequestError(code apperror.Code, operation, message string) error {
+	return apperror.Wrap(errors.New(message), code, apperror.WithOperation(operation))
+}
+
+// appcatalogStatusFor is the fallback status when no projector is configured;
+// it keeps the catalog's own status for the codes this handler raises.
+func appcatalogStatusFor(code apperror.Code) int {
+	switch code {
+	case llmerrors.AppCodeAPIKeyInvalid:
+		return http.StatusUnauthorized
+	default:
+		return http.StatusBadRequest
+	}
 }

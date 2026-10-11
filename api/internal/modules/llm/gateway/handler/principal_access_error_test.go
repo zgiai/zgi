@@ -64,11 +64,21 @@ func TestPrincipalQuotaMessagePreservesAuthenticationContract(t *testing.T) {
 					}
 					anthropic := path == "/v1/messages" || strings.HasPrefix(path, "/anthropic/")
 					if anthropic {
-						if len(body) != 3 || len(protocol) != 2 || body["type"] != "error" || body["request_id"] != "req-quota" || protocol["type"] != "authentication_error" {
+						// Legacy Anthropic shape is preserved; the catalog fields
+						// are additive on top of it.
+						if body["type"] != "error" || protocol["type"] != "authentication_error" {
 							t.Fatalf("Anthropic contract changed: %v", body)
 						}
-					} else if len(body) != 1 || len(protocol) != 4 || protocol["type"] != "invalid_request_error" || protocol["code"] != "invalid_api_key" || protocol["param"] != nil {
-						t.Fatalf("OpenAI contract changed: %v", body)
+					} else if protocol["type"] != "invalid_request_error" || protocol["code"] != "invalid_api_key" || protocol["param"] != nil {
+						t.Fatalf("OpenAI legacy contract changed: %v", body)
+					}
+					// Shell-layer errors now carry the same catalog identity as
+					// business errors, so a client can render them by code.
+					if body["code"] != llmerrors.AppCodeAPIKeyInvalid.String() || body["error_code"] != llmerrors.AppCodeAPIKeyInvalid.String() {
+						t.Fatalf("missing catalog code on shell error: %v", body)
+					}
+					if body["request_id"] != "req-quota" {
+						t.Fatalf("missing request id: %v", body)
 					}
 					message, _ := protocol["message"].(string)
 					if strings.Contains(response.Body.String(), "private-database-detail") {
@@ -120,5 +130,45 @@ func TestPrincipalLifecycleMessagesPreserveWireContract(t *testing.T) {
 				t.Fatalf("lifecycle projection: %#v", got)
 			}
 		}
+	}
+}
+
+type unknownKeyRepository struct {
+	apikeyrepo.APIKeyRepository
+}
+
+func (unknownKeyRepository) GetByKey(context.Context, string) (*apikeymodel.TenantAPIKey, error) {
+	return nil, errors.New("record not found")
+}
+
+// An unknown API key is answered in the caller's language from the catalog's
+// llm.api_key.invalid entry, keeping the invalid_api_key wire shape.
+func TestUnknownAPIKeyMessageIsLocalized(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	projector := testApplicationErrorProjector(t)
+	for locale, want := range map[string]string{"zh-CN": "API 密钥", "en-US": "API key"} {
+		t.Run(locale, func(t *testing.T) {
+			router := gin.New()
+			router.Use(LLMAPIKeyAuthMiddleware(unknownKeyRepository{}, projector))
+			router.Any("/v1/chat/completions", func(c *gin.Context) { t.Error("denied request reached provider handler") })
+			request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+			request.Header.Set("Authorization", "Bearer sk-bogus")
+			request.Header.Set("Accept-Language", locale)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+
+			var body map[string]any
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			protocol, _ := body["error"].(map[string]any)
+			if response.Code != http.StatusUnauthorized || protocol["code"] != "invalid_api_key" || body["error_code"] != llmerrors.AppCodeAPIKeyInvalid.String() {
+				t.Fatalf("wire contract changed: %d %v", response.Code, body)
+			}
+			message, _ := body["message"].(string)
+			if message == "Invalid API key" || !strings.Contains(message, want) || protocol["message"] != message {
+				t.Fatalf("message = %q (protocol %v), want the catalog text containing %q", message, protocol["message"], want)
+			}
+		})
 	}
 }

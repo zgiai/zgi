@@ -1,5 +1,5 @@
 import type { ModelImagePriceRule, ModelUseCase } from '@/services/types/model';
-import Decimal from 'decimal.js-light';
+import Decimal from 'decimal.js';
 import {
   type BillingDisplaySettings,
   DEFAULT_BILLING_DISPLAY,
@@ -77,6 +77,11 @@ interface VideoGenerationResolutionRate {
 
 interface StructuredModelPricing {
   currency?: string | null;
+  rules?: Array<{
+    operation?: string | null;
+    meter?: string | null;
+    price?: number | string | null;
+  }> | null;
   price_per_image?: number | null;
   token_tiers?: Array<{
     min_input_tokens?: number | null;
@@ -132,9 +137,35 @@ interface GetModelPriceDisplayParams {
   imagePrices?: ModelImagePriceRule[] | null;
   currency: string | null | undefined;
   useCases?: ModelUseCase[] | null;
+  endpoints?: Record<string, boolean> | null;
   billingDisplay?: BillingDisplaySettings;
   labels?: ModelPriceDisplayLabels;
   videoDisplayMode?: 'detailed' | 'summary';
+}
+
+/** Cache billing is opt-in: only explicit cache meters in the canonical pricing
+ * document can authorize cache UI or billing. Legacy scalar columns alone are
+ * intentionally ignored so historical prices cannot revive cache charges. */
+export function hasCacheBillingCapability(pricing: unknown): boolean {
+  if (!isRecord(pricing)) return false;
+  if (Array.isArray(pricing.rules)) {
+    if (pricing.rules.some(rule => {
+      if (!isRecord(rule)) return false;
+      return ['cache_read_token', 'cache_write_token', 'cache_write_5m_token', 'cache_write_1h_token'].includes(String(rule.meter));
+    })) return true;
+  }
+  if (Array.isArray(pricing.token_tiers)) {
+    return pricing.token_tiers.some(tier => isRecord(tier) && [
+      'cached_input_price_per_million',
+      'cache_read_price_per_million',
+      'cache_write_price_per_million',
+      'cache_write_5m_price_per_million',
+      'cache_write_1h_price_per_million',
+      'cache_creation_5m_price_per_million',
+      'cache_creation_1h_price_per_million',
+    ].some(key => hasNumericPrice(tier[key])));
+  }
+  return false;
 }
 
 /**
@@ -148,16 +179,143 @@ export function isVideoGenerationModel(useCases?: ModelUseCase[] | null): boolea
   return Array.isArray(useCases) && useCases.includes('video-gen');
 }
 
-export function isInputOnlyPriceModel(useCases?: ModelUseCase[] | null): boolean {
+export function isInputOnlyPriceModel(
+  useCases?: ModelUseCase[] | null,
+  endpoints?: Record<string, boolean> | null,
+): boolean {
   const cases = Array.isArray(useCases) ? useCases : [];
   return (
-    cases.some(useCase => useCase === 'embedding' || useCase === 'rerank') &&
+    (cases.some(useCase => useCase === 'embedding' || useCase === 'rerank') || endpoints?.embeddings === true) &&
     !cases.some(useCase =>
-      ['text-chat', 'vision', 'reasoning', 'function-calling', 'image-gen', 'video-gen'].includes(
+      ['text-chat', 'vision', 'reasoning', 'function-calling', 'realtime-audio', 'image-gen', 'video-gen'].includes(
         useCase
       )
     )
   );
+}
+
+export interface ModelPricingConfiguredInput {
+  use_cases?: ModelUseCase[] | null;
+  endpoints?: Record<string, boolean> | null;
+  pricing?: StructuredModelPricing | Record<string, unknown> | null;
+  image_prices?: ModelImagePriceRule[] | null;
+  input_price?: number | null;
+  synced_input_price?: number | null;
+  input_price_override?: number | null;
+  input_price_configured?: boolean | null;
+  output_price_configured?: boolean | null;
+}
+
+/**
+ * True when the model has a usable sale price for billing.
+ * Matches catalog publish: structured pricing, or both token columns
+ * (input-only / image models can use a single column).
+ */
+export function isModelPricingConfigured(
+  model: ModelPricingConfiguredInput | null | undefined
+): boolean {
+  if (!model) return false;
+  const inputOnlyModel = isInputOnlyPriceModel(model.use_cases, model.endpoints);
+  if (inputOnlyModel && hasInputOnlyStructuredPricing(model.pricing)) return true;
+  if (hasStructuredSalePricing(model.pricing)) return true;
+  if (Array.isArray(model.image_prices) && model.image_prices.length > 0) {
+    return model.image_prices.some(rule => hasNumericPrice(rule?.price?.amount));
+  }
+  if (isImageGenerationModel(model.use_cases)) {
+    return Boolean(model.output_price_configured || model.input_price_configured);
+  }
+  if (isVideoGenerationModel(model.use_cases)) {
+    return false;
+  }
+  if (inputOnlyModel) {
+    return Boolean(
+      model.input_price_configured ||
+        isPositiveNumber(model.input_price) ||
+        isPositiveNumber(model.input_price_override) ||
+        isPositiveNumber(model.synced_input_price)
+    );
+  }
+  return Boolean(model.input_price_configured && model.output_price_configured);
+}
+
+function hasStructuredSalePricing(pricing: unknown): boolean {
+  if (!isRecord(pricing)) return false;
+  if (hasNumericPrice(pricing.price_per_image)) return true;
+  if (Array.isArray(pricing.token_tiers) && pricing.token_tiers.some(isPricedTokenTier)) {
+    return true;
+  }
+  if (isRecord(pricing.video_generation)) {
+    const video = pricing.video_generation;
+    const rates = Array.isArray(video.rates) ? video.rates : [];
+    const grouped = Array.isArray(video.resolution_rates) ? video.resolution_rates : [];
+    if (rates.some(isPricedVideoRate)) return true;
+    if (
+      grouped.some(
+        group => isRecord(group) && Array.isArray(group.rates) && group.rates.some(isPricedVideoRate)
+      )
+    ) {
+      return true;
+    }
+  }
+  if (Array.isArray(pricing.metered) && pricing.metered.some(isPricedMeteredEntry)) {
+    return true;
+  }
+  if (isRecord(pricing.token_pricing)) {
+    return Object.values(pricing.token_pricing).some(entry => {
+      if (!isRecord(entry)) return false;
+      return (
+        hasNumericPrice(entry.input_price_per_million) ||
+        hasNumericPrice(entry.output_price_per_million)
+      );
+    });
+  }
+  return false;
+}
+
+function hasInputOnlyStructuredPricing(pricing: unknown): boolean {
+  if (!isRecord(pricing) || !Array.isArray(pricing.rules)) return false;
+  return pricing.rules.some(rule => {
+    if (!isRecord(rule) || !hasNumericPrice(rule.price)) return false;
+    return (
+      (rule.operation === 'embedding' || rule.operation === 'rerank') &&
+      rule.meter === 'input_token'
+    );
+  });
+}
+
+function isPricedTokenTier(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return (
+    hasNumericPrice(value.input_price_per_million) ||
+    hasNumericPrice(value.output_price_per_million)
+  );
+}
+
+function isPricedVideoRate(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return (
+    hasNumericPrice(value.price_per_second) ||
+    hasNumericPrice(value.price_per_task) ||
+    hasNumericPrice(value.price_per_million_tokens)
+  );
+}
+
+function isPricedMeteredEntry(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return isRecord(value.price) && hasNumericPrice(value.price.amount);
+}
+
+function hasNumericPrice(value: unknown): boolean {
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (typeof value === 'string' && value.trim() !== '') {
+    return Number.isFinite(Number(value));
+  }
+  return false;
+}
+
+function isPositiveNumber(value: unknown): boolean {
+  if (!hasNumericPrice(value)) return false;
+  return Number(value) > 0;
 }
 
 /**
@@ -180,6 +338,7 @@ export function getModelPriceDisplay({
   imagePrices,
   currency,
   useCases,
+  endpoints,
   billingDisplay = DEFAULT_BILLING_DISPLAY,
   labels,
   videoDisplayMode = 'detailed',
@@ -187,7 +346,7 @@ export function getModelPriceDisplay({
   if (isVideoGenerationModel(useCases)) {
     const videoRows = getVideoPriceDisplayRows(pricing, currency, labels);
     if (videoRows.length > 0) {
-      if (videoDisplayMode === 'summary') return summarizeVideoPriceRows(videoRows);
+      if (videoDisplayMode === 'summary') return summarizeVideoPriceRows(videoRows, billingDisplay);
       return videoRows.map(row =>
         buildSourceCurrencyModelPriceDisplayItem(
           'video',
@@ -204,7 +363,7 @@ export function getModelPriceDisplay({
     ];
   }
 
-  const cacheItems = buildCachePriceDisplayItems({
+  const cacheItems = hasCacheBillingCapability(pricing) ? buildCachePriceDisplayItems({
     cacheReadPrice,
     cacheWritePrice,
     cacheWrite5mPrice,
@@ -214,15 +373,20 @@ export function getModelPriceDisplay({
     cacheWrite5mPriceConfigured,
     cacheWrite1hPriceConfigured,
     billingDisplay,
-  });
-  const structuredItems = getStructuredPriceDisplay(pricing, currency, labels);
+  }) : [];
+  const structuredItems = getStructuredPriceDisplay(pricing, currency, billingDisplay, labels);
   if (structuredItems.length > 0) {
     const structuredLabels = new Set(structuredItems.map(item => item.label));
     return [...structuredItems, ...cacheItems.filter(item => !structuredLabels.has(item.label))];
   }
 
   if (isImageGenerationModel(useCases)) {
-    const configuredImagePriceItems = getImagePriceDisplayItems(imagePrices, currency, labels);
+    const configuredImagePriceItems = getImagePriceDisplayItems(
+      imagePrices,
+      currency,
+      billingDisplay,
+      labels
+    );
     if (configuredImagePriceItems.length > 0) {
       return configuredImagePriceItems;
     }
@@ -244,7 +408,7 @@ export function getModelPriceDisplay({
     ];
   }
 
-  if (isInputOnlyPriceModel(useCases)) {
+  if (isInputOnlyPriceModel(useCases, endpoints)) {
     return [
       buildModelPriceDisplayItem(
         'input',
@@ -278,6 +442,7 @@ export function getModelPriceDisplay({
 function getStructuredPriceDisplay(
   pricing: StructuredModelPricing | null | undefined,
   fallbackCurrency: string | null | undefined,
+  billingDisplay: BillingDisplaySettings,
   labels?: ModelPriceDisplayLabels
 ): ModelPriceDisplayItem[] {
   if (!isRecord(pricing)) return [];
@@ -289,7 +454,8 @@ function getStructuredPriceDisplay(
         labels?.image ?? '图像',
         pricing.price_per_image,
         safeCurrency(fallbackCurrency, pricing.currency, 'CNY'),
-        labels?.perImage ?? '/ 张'
+        labels?.perImage ?? '/ 张',
+        billingDisplay
       ),
     ];
   }
@@ -306,14 +472,16 @@ function getStructuredPriceDisplay(
         labels?.input ?? '输入',
         finiteNumberOrUndefined(tokenTier.input_price_per_million),
         safeCurrency(fallbackCurrency, pricing.currency, 'USD'),
-        labels?.perMillionTokens ?? '/ 百万 tokens'
+        labels?.perMillionTokens ?? '/ 百万 tokens',
+        billingDisplay
       ),
       buildOptionalStructuredPriceItem(
         'output',
         labels?.output ?? '输出',
         finiteNumberOrUndefined(tokenTier.output_price_per_million),
         safeCurrency(fallbackCurrency, pricing.currency, 'USD'),
-        labels?.perMillionTokens ?? '/ 百万 tokens'
+        labels?.perMillionTokens ?? '/ 百万 tokens',
+        billingDisplay
       ),
       buildOptionalStructuredPriceItem(
         'cacheRead',
@@ -322,14 +490,16 @@ function getStructuredPriceDisplay(
           tokenTier.cache_read_price_per_million ?? tokenTier.cached_input_price_per_million
         ),
         safeCurrency(fallbackCurrency, pricing.currency, 'USD'),
-        labels?.perMillionTokens ?? '/ 百万 tokens'
+        labels?.perMillionTokens ?? '/ 百万 tokens',
+        billingDisplay
       ),
       buildOptionalStructuredPriceItem(
         'cacheWrite',
         labels?.cacheWrite ?? '缓存写入',
         finiteNumberOrUndefined(tokenTier.cache_write_price_per_million),
         safeCurrency(fallbackCurrency, pricing.currency, 'USD'),
-        labels?.perMillionTokens ?? '/ 百万 tokens'
+        labels?.perMillionTokens ?? '/ 百万 tokens',
+        billingDisplay
       ),
       buildOptionalStructuredPriceItem(
         'cacheWrite5m',
@@ -339,7 +509,8 @@ function getStructuredPriceDisplay(
             tokenTier.cache_creation_5m_price_per_million
         ),
         safeCurrency(fallbackCurrency, pricing.currency, 'USD'),
-        labels?.perMillionTokens ?? '/ 百万 tokens'
+        labels?.perMillionTokens ?? '/ 百万 tokens',
+        billingDisplay
       ),
       buildOptionalStructuredPriceItem(
         'cacheWrite1h',
@@ -349,17 +520,37 @@ function getStructuredPriceDisplay(
             tokenTier.cache_creation_1h_price_per_million
         ),
         safeCurrency(fallbackCurrency, pricing.currency, 'USD'),
-        labels?.perMillionTokens ?? '/ 百万 tokens'
+        labels?.perMillionTokens ?? '/ 百万 tokens',
+        billingDisplay
       ),
     ].filter((item): item is ModelPriceDisplayItem => item !== null);
+  }
+
+  const inputTokenRule = (Array.isArray(pricing.rules) ? pricing.rules : []).find(rule =>
+    (rule.operation === 'embedding' || rule.operation === 'rerank') &&
+    rule.meter === 'input_token' &&
+    hasNumericPrice(rule.price)
+  );
+  if (inputTokenRule) {
+    return [
+      buildStructuredPriceItem(
+        'input',
+        labels?.input ?? '输入',
+        String(inputTokenRule.price),
+        safeCurrency(fallbackCurrency, pricing.currency, 'USD'),
+        labels?.perMillionTokens ?? '/ 百万 tokens',
+        billingDisplay
+      ),
+    ];
   }
 
   const metered = Array.isArray(pricing.metered) ? pricing.metered : [];
   return metered.flatMap(rawItem => {
     if (!isRecord(rawItem)) return [];
     const price = isRecord(rawItem.price) ? rawItem.price : undefined;
-    const amount = Number(price?.amount);
-    if (!Number.isFinite(amount)) return [];
+    const amount = price?.amount;
+    if (typeof amount !== 'number' && typeof amount !== 'string') return [];
+    if (!hasNumericPrice(amount)) return [];
     return [
       buildStructuredPriceItem(
         'output',
@@ -373,7 +564,8 @@ function getStructuredPriceDisplay(
           nonEmptyString(rawItem.base_unit),
           finiteNumberOrUndefined(price?.per_quantity),
           labels
-        )
+        ),
+        billingDisplay
       ),
     ];
   });
@@ -382,6 +574,7 @@ function getStructuredPriceDisplay(
 function getImagePriceDisplayItems(
   imagePrices: ModelImagePriceRule[] | null | undefined,
   fallbackCurrency: string | null | undefined,
+  billingDisplay: BillingDisplaySettings,
   labels?: ModelPriceDisplayLabels
 ): ModelPriceDisplayItem[] {
   if (!Array.isArray(imagePrices) || imagePrices.length === 0) return [];
@@ -400,7 +593,8 @@ function getImagePriceDisplayItems(
           labels?.image ?? '图像',
           amount,
           safeCurrency(price?.currency, fallbackCurrency, 'USD'),
-          labels?.perImage ?? '/ 张'
+          labels?.perImage ?? '/ 张',
+          billingDisplay
         ),
       ];
     }
@@ -427,40 +621,81 @@ function getImagePriceDisplayItems(
 function buildOptionalStructuredPriceItem(
   label: ModelPriceLabel,
   detail: string,
-  amount: number | null | undefined,
+  amount: number | string | null | undefined,
   currency: string,
-  displayUnit: string
+  displayUnit: string,
+  billingDisplay: BillingDisplaySettings
 ): ModelPriceDisplayItem | null {
-  if (typeof amount !== 'number' || !Number.isFinite(amount)) return null;
-  return buildStructuredPriceItem(label, detail, amount, currency, displayUnit);
+  const parsed = parseMoneyValue(amount);
+  if (parsed === null) return null;
+  return buildStructuredPriceItem(label, detail, parsed, currency, displayUnit, billingDisplay);
 }
 
 function buildStructuredPriceItem(
   label: ModelPriceLabel,
   detail: string,
-  amount: number,
+  amount: number | string | Decimal,
   currency: string,
-  displayUnit: string
+  displayUnit: string,
+  billingDisplay: BillingDisplaySettings
 ): ModelPriceDisplayItem {
+  const parsed = parseMoneyValue(amount);
   return {
     label,
     detail,
-    formattedValue: formatStructuredAmount(amount, currency),
+    formattedValue: formatStructuredAmount(parsed ?? amount, currency, billingDisplay),
     unit: label === 'image' ? 'perImage' : 'perMillionTokens',
     isConfigured: true,
-    isFree: amount === 0,
+    isFree: parsed !== null && parsed.isZero(),
     displayUnit,
   };
 }
 
-function formatStructuredAmount(amount: number, currency: string): string {
+/**
+ * Formats a canonical structured price in the organization display currency.
+ * Values already in the display currency keep their plain symbol; values coming
+ * from another currency are converted with the current rate and marked with ≈.
+ */
+function formatStructuredAmount(
+  amount: number | string | Decimal,
+  currency: string,
+  billingDisplay: BillingDisplaySettings
+): string {
+  const parsed = parseMoneyValue(amount);
+  if (parsed === null) return '-';
   const normalizedCurrency = safeCurrency(currency, 'USD').trim().toUpperCase();
-  const symbol =
-    normalizedCurrency === 'CNY' ? '¥' : normalizedCurrency === 'USD' ? '$' : `${currency} `;
-  return `${symbol}${amount.toLocaleString(undefined, {
+  if (normalizedCurrency === billingDisplay.currency) {
+    return formatAmountWithSymbol(parsed, normalizedCurrency);
+  }
+  if (!Number.isFinite(billingDisplay.usdToCnyRate) || billingDisplay.usdToCnyRate <= 0) {
+    return formatAmountWithSymbol(parsed, normalizedCurrency);
+  }
+  try {
+    const amountUSD =
+      normalizedCurrency === 'CNY' ? parsed.div(billingDisplay.usdToCnyRate) : parsed;
+    const formatted = formatBillingDisplayAmountFromUSD(amountUSD.toString(), billingDisplay);
+    return formatted.startsWith('≈') ? formatted : `≈${formatted}`;
+  } catch {
+    return formatAmountWithSymbol(parsed, normalizedCurrency);
+  }
+}
+
+function formatAmountWithSymbol(amount: Decimal, currency: string): string {
+  const symbol = currency === 'CNY' ? '¥' : currency === 'USD' ? '$' : `${currency} `;
+  return `${symbol}${amount.toNumber().toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+}
+
+function parseMoneyValue(value: number | string | Decimal | null | undefined): Decimal | null {
+  if (value === null || value === undefined) return null;
+  try {
+    const parsed = new Decimal(value);
+    return parsed.isFinite() ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 function structuredOperationLabel(operation: string, labels?: ModelPriceDisplayLabels): string {
@@ -608,7 +843,15 @@ function formatSourceCurrencyAmount(
       normalizedCurrency === 'CNY'
         ? new Decimal(price).div(billingDisplay.usdToCnyRate)
         : new Decimal(price);
-    return formatBillingDisplayAmountFromUSD(priceUSD.toString(), billingDisplay);
+    const formatted = formatBillingDisplayAmountFromUSD(priceUSD.toString(), billingDisplay);
+    if (
+      normalizedCurrency &&
+      normalizedCurrency !== billingDisplay.currency &&
+      !formatted.startsWith('≈')
+    ) {
+      return `≈${formatted}`;
+    }
+    return formatted;
   } catch {
     return '-';
   }
@@ -645,7 +888,10 @@ function getVideoPriceDisplayRows(
   });
 }
 
-function summarizeVideoPriceRows(rows: VideoPriceDisplayRow[]): ModelPriceDisplayItem[] {
+function summarizeVideoPriceRows(
+  rows: VideoPriceDisplayRow[],
+  billingDisplay: BillingDisplaySettings
+): ModelPriceDisplayItem[] {
   const groups = [
     { detail: '有参考视频', rows: rows.filter(row => row.detail.includes('含视频输入')) },
     { detail: '无参考视频', rows: rows.filter(row => row.detail.includes('无视频输入')) },
@@ -653,22 +899,27 @@ function summarizeVideoPriceRows(rows: VideoPriceDisplayRow[]): ModelPriceDispla
 
   return groups.flatMap(group => {
     if (group.rows.length === 0) return [];
-    const prices = group.rows.map(row => Number(row.price)).filter(Number.isFinite);
+    const prices = group.rows
+      .map(row => parseMoneyValue(row.price))
+      .filter((price): price is Decimal => price !== null);
     if (prices.length === 0) return [];
-    const min = Math.min(...prices);
-    const max = Math.max(...prices);
+    const min = prices.reduce((left, right) => (right.lt(left) ? right : left));
+    const max = prices.reduce((left, right) => (right.gt(left) ? right : left));
     const currency = group.rows[0]?.currency || 'CNY';
     return [
       {
         label: 'video' as const,
         detail: group.detail,
-        formattedValue:
-          min === max
-            ? formatStructuredAmount(min, currency)
-            : `${formatStructuredAmount(min, currency)}–${formatStructuredAmount(max, currency)}`,
+        formattedValue: min.eq(max)
+          ? formatStructuredAmount(min, currency, billingDisplay)
+          : `${formatStructuredAmount(min, currency, billingDisplay)}–${formatStructuredAmount(
+              max,
+              currency,
+              billingDisplay
+            )}`,
         unit: 'perMillionVideoTokens' as const,
         isConfigured: true,
-        isFree: min === 0 && max === 0,
+        isFree: min.isZero() && max.isZero(),
         displayUnit: '/ 百万视频 tokens',
       },
     ];

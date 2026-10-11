@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -104,9 +105,9 @@ func (s *AICreditService) GetMyAccountOverview(ctx context.Context, accountID uu
 		AccountID:           account.AccountID,
 		GroupID:             account.GroupID,
 		SubscriptionCredits: 0,
-		PurchasedCredits:    account.PurchasedCredits,
-		TotalEarned:         account.TotalEarned,
-		TotalSpent:          account.TotalSpent,
+		PurchasedCredits:    account.PurchasedCredits.Int64(),
+		TotalEarned:         account.TotalEarned.Int64(),
+		TotalSpent:          account.TotalSpent.Int64(),
 		LastResetAt:         nil,
 		NextResetAt:         nil,
 		CreatedAt:           account.CreatedAt,
@@ -135,7 +136,7 @@ func (s *AICreditService) ConsumeCredits(ctx context.Context, accountID uuid.UUI
 			return fmt.Errorf("account not found: %w", err)
 		}
 
-		if account.PurchasedCredits < amount {
+		if account.PurchasedCredits < millipoints.MilliPoints(amount) {
 			return fmt.Errorf("insufficient credits")
 		}
 
@@ -201,8 +202,8 @@ func (s *AICreditService) RefundCredits(ctx context.Context, accountID uuid.UUID
 		balanceBefore := purchasedBalanceBefore
 
 		updates := map[string]interface{}{
-			"total_spent":       gorm.Expr("total_spent - ?", amount),
-			"purchased_credits": gorm.Expr("purchased_credits + ?", amount),
+			"total_spent":       gorm.Expr("total_spent - ?", millipoints.MilliPoints(amount)),
+			"purchased_credits": gorm.Expr("purchased_credits + ?", millipoints.MilliPoints(amount)),
 		}
 
 		if err := s.accountRepo.UpdateCredits(txCtx, accountID, groupID, updates); err != nil {

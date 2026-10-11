@@ -129,13 +129,25 @@ func (h *Handler) scope(c *gin.Context) (imageservice.Scope, bool) {
 }
 
 func (h *Handler) fail(c *gin.Context, err error) {
-	if _, ok := apperror.As(err); ok && h.errorProjector != nil {
+	appErr := imageApplicationError(err)
+	if appErr != nil && h.errorProjector != nil {
 		locale := apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language"))
-		presentation := h.errorProjector.Project(err, locale).Presentation
-		c.JSON(presentation.HTTPStatus, gin.H{
-			"code":    presentation.Code.String(),
-			"message": presentation.Message,
-		})
+		result := h.errorProjector.ProjectWithRequestID(appErr, locale, imageRequestIDFromContext(c))
+		body := gin.H{
+			"code":      result.Presentation.Code.String(),
+			"message":   result.Presentation.Message,
+			"retryable": result.Presentation.Retryable,
+		}
+		if result.ErrorID != "" {
+			body["error_id"] = result.ErrorID
+		}
+		if requestID := imageRequestIDFromContext(c); requestID != "" {
+			body["request_id"] = requestID
+		}
+		if result.Presentation.HTTPStatus == http.StatusTooManyRequests {
+			c.Header("Retry-After", "60")
+		}
+		c.JSON(result.Presentation.HTTPStatus, body)
 		return
 	}
 	code := imageservice.ErrorCode(err)
@@ -147,6 +159,40 @@ func (h *Handler) fail(c *gin.Context, err error) {
 		status = http.StatusForbidden
 	}
 	c.JSON(status, gin.H{"code": code, "message": publicErrorMessage(code)})
+}
+
+// imageApplicationError maps the legacy image service sentinels to cataloged
+// codes. Errors that already carry an application error pass through unchanged,
+// and unregistered conditions return nil so the legacy response is preserved.
+func imageApplicationError(err error) error {
+	if appErr, ok := apperror.As(err); ok {
+		return appErr
+	}
+	switch imageservice.ErrorCode(err) {
+	case "PROMPT_REQUIRED", "PROMPT_TOO_LONG", "MODEL_NOT_AVAILABLE", "IMAGE_PARAMETER_NOT_SUPPORTED",
+		"UNSUPPORTED_SIZE", "UNSUPPORTED_COUNT", "IMAGE_GENERATION_MODE_INVALID",
+		"IMAGE_MAX_IMAGES_REQUIRED", "IMAGE_MAX_IMAGES_NOT_ALLOWED", "IMAGE_MAX_IMAGES_OUT_OF_RANGE",
+		"BILLING_CONTEXT_REQUIRED", "REFERENCE_IMAGE_REQUIRED", "REFERENCE_IMAGE_INVALID",
+		"REFERENCE_IMAGE_UNSUPPORTED":
+		return apperror.Wrap(err, imageservice.AppCodeRequestInvalid, apperror.WithOperation("image.request"))
+	case "IMAGE_TASK_TIMEOUT":
+		return apperror.Wrap(err, imageservice.AppCodeTaskTimeout, apperror.WithOperation("image.task"))
+	case "UPSTREAM_FAILED":
+		return apperror.Wrap(err, imageservice.AppCodeUpstreamFailed, apperror.WithOperation("image.upstream"))
+	case "IMAGE_SAVE_FAILED":
+		return apperror.Wrap(err, imageservice.AppCodeAssetSaveFailed, apperror.WithOperation("image.asset"))
+	case "CONVERSATION_NOT_ACCESSIBLE":
+		return nil
+	default:
+		return apperror.Wrap(err, imageservice.AppCodeRuntimeFailed, apperror.WithOperation("image.runtime"))
+	}
+}
+
+func imageRequestIDFromContext(c *gin.Context) string {
+	if requestID := strings.TrimSpace(c.GetString("request_id")); requestID != "" {
+		return requestID
+	}
+	return strings.TrimSpace(c.Writer.Header().Get("X-Request-ID"))
 }
 
 func publicErrorMessage(code string) string {

@@ -1024,6 +1024,13 @@ func (s *service) StopMessage(ctx context.Context, scope Scope, id uuid.UUID) (*
 			return err
 		}
 		if !isStoppableMessageStatus(message.Status) {
+			// A failed finalization can leave the conversation pointing at a
+			// message that is already terminal. Stop must still repair that stale
+			// active pointer, otherwise every subsequent turn is rejected as an
+			// already-streaming conversation.
+			if err := txRepos.Conversation.ClearActiveMessage(ctx, message.ConversationID, id); err != nil {
+				return err
+			}
 			stopped = message
 			return nil
 		}

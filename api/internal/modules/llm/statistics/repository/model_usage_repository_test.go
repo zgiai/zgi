@@ -74,7 +74,7 @@ func TestQueryModelUsageByAppTypeKeepsKnownTypesAndBucketsUnknownTypes(t *testin
 		got[row.AppType] = row
 		totalAttempts += row.AttemptCount
 		totalTokens += row.TotalTokens
-		totalPoints += row.TotalPoints
+		totalPoints += row.TotalPoints.Int64()
 	}
 	if len(got) != len(knownTypes)+1 {
 		t.Fatalf("app type groups = %#v, want %d known groups plus unknown", got, len(knownTypes))
@@ -87,14 +87,14 @@ func TestQueryModelUsageByAppTypeKeepsKnownTypesAndBucketsUnknownTypes(t *testin
 	if got["unknown"].AttemptCount != 5 {
 		t.Fatalf("unknown attempt count = %d, want 5", got["unknown"].AttemptCount)
 	}
-	if got["unknown"].TotalTokens != 30 || got["unknown"].TotalPoints != 50 {
+	if got["unknown"].TotalTokens != 30 || got["unknown"].TotalPoints != 50000 {
 		t.Fatalf(
 			"unknown totals = tokens:%d points:%d, want tokens:30 points:50",
 			got["unknown"].TotalTokens,
 			got["unknown"].TotalPoints,
 		)
 	}
-	if totalAttempts != 15 || totalTokens != 90 || totalPoints != 150 {
+	if totalAttempts != 15 || totalTokens != 90 || totalPoints != 150000 {
 		t.Fatalf(
 			"group totals = attempts:%d tokens:%d points:%d, want attempts:15 tokens:90 points:150",
 			totalAttempts,
@@ -133,9 +133,9 @@ func insertModelUsageAppTypeBill(t *testing.T, db *gorm.DB, requestTime time.Tim
 		"prompt_tokens":      2,
 		"completion_tokens":  4,
 		"total_tokens":       6,
-		"official_points":    10,
+		"official_points":    10000,
 		"private_points":     0,
-		"total_points":       10,
+		"total_points":       10000,
 	}).Error; err != nil {
 		t.Fatalf("insert usage bill: %v", err)
 	}

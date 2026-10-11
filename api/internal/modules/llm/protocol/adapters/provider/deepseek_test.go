@@ -352,3 +352,21 @@ func containsDeepSeekValue(values []string, target string) bool {
 	}
 	return false
 }
+
+func TestShapeDeepSeekChatRequestNormalizesNamedToolChoice(t *testing.T) {
+	req := &adapter.ChatRequest{
+		ToolChoice: map[string]interface{}{
+			"type": "tool",
+			"name": "get_weather",
+		},
+	}
+	got := shapeDeepSeekChatRequest(req)
+	named, _ := got.ToolChoice.(map[string]interface{})
+	function, _ := named["function"].(map[string]string)
+	if named["type"] != "function" || function["name"] != "get_weather" {
+		t.Fatalf("tool_choice = %#v, want OpenAI function object", got.ToolChoice)
+	}
+	if req.ToolChoice.(map[string]interface{})["type"] != "tool" {
+		t.Fatal("original request tool_choice was mutated")
+	}
+}

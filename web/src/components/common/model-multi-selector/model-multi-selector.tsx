@@ -649,6 +649,7 @@ function ModelMultiSelectorBase({
                                             'models.selector.tooltip.replacementSuggestion'
                                           ),
                                           useCases: t('models.selector.tooltip.useCases'),
+                                          pricingMissing: t('models.selector.pricingMissingHint'),
                                         }}
                                       />
                                     </TooltipContent>

@@ -276,8 +276,9 @@ func TestNativeCapabilities(t *testing.T) {
 			wantOpenAIResponses: true,
 		},
 		{
-			name:                  "kimi alias supports anthropic messages only",
+			name:                  "kimi alias supports responses and anthropic messages",
 			provider:              "kimi",
+			wantOpenAIResponses:   true,
 			wantAnthropicMessages: true,
 		},
 		{

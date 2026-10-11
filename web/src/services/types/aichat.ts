@@ -704,6 +704,7 @@ export interface AIChatChatRequest {
   operation_context?: unknown;
   model: string;
   provider?: string;
+  routing_strategy?: 'speed' | 'price' | 'stability';
   file_ids?: string[];
   response_mode: 'streaming';
   parameters?: AIChatModelParameters;
@@ -723,6 +724,7 @@ export interface AIChatRegenerateMessageRequest {
   operation_context?: unknown;
   model?: string;
   provider?: string;
+  routing_strategy?: 'speed' | 'price' | 'stability';
   parameters?: AIChatModelParameters;
 }
 
@@ -772,6 +774,8 @@ export interface AIChatErrorEventData {
   message_id?: string;
   message?: string;
   code?: string | number;
+  /** Stable catalog identity, e.g. llm.model.not_found. */
+  error_code?: string;
   params?: Record<string, unknown>;
   retryable?: boolean;
 }

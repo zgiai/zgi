@@ -60,6 +60,7 @@ type MessageRepository interface {
 	UpdateWaitingQuestion(ctx context.Context, id uuid.UUID, metadata map[string]interface{}) error
 	UpdateWaitingClientAction(ctx context.Context, id uuid.UUID, metadata map[string]interface{}) error
 	UpdateError(ctx context.Context, id uuid.UUID, message string) error
+	GetStatus(ctx context.Context, id uuid.UUID) (string, error)
 	UpdatePartialAnswer(ctx context.Context, id uuid.UUID, answer string, metadata map[string]interface{}) error
 	MarkStopped(ctx context.Context, id uuid.UUID) error
 	UpdateStoppedAnswer(ctx context.Context, id uuid.UUID, answer string, metadata map[string]interface{}) error
@@ -1408,6 +1409,20 @@ func (r *messageRepository) UpdateError(ctx context.Context, id uuid.UUID, messa
 		return gorm.ErrRecordNotFound
 	}
 	return nil
+}
+
+// GetStatus returns a message's current status without any run-ownership scope,
+// so a finalizer can tell "this run already finalized it" (terminal status)
+// apart from "another run owns it" (still active).
+func (r *messageRepository) GetStatus(ctx context.Context, id uuid.UUID) (string, error) {
+	var message runtimemodel.Message
+	if err := r.db.WithContext(ctx).
+		Select("id", "status").
+		Where("id = ? AND deleted_at IS NULL", id).
+		Take(&message).Error; err != nil {
+		return "", err
+	}
+	return message.Status, nil
 }
 
 func (r *messageRepository) UpdatePartialAnswer(ctx context.Context, id uuid.UUID, answer string, metadata map[string]interface{}) error {

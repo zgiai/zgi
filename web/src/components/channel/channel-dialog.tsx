@@ -327,6 +327,37 @@ function hasNativeQwenModel(models: ModelItem[]): boolean {
   });
 }
 
+function inferModelOperations(models: ModelItem[]): Record<string, string[]> {
+  const result: Record<string, string[]> = {};
+  for (const model of models) {
+    const endpoints = model.endpoints ?? {};
+    const useCases = model.use_cases ?? [];
+    const operations = new Set<string>();
+    if (
+      endpoints.chat_completions ||
+      endpoints.responses ||
+      endpoints.realtime ||
+      endpoints.assistants ||
+      useCases.includes('text-chat') ||
+      useCases.includes('vision')
+    ) {
+      operations.add('chat.completions');
+    }
+    if (endpoints.embeddings || useCases.includes('embedding')) operations.add('embeddings');
+    if (endpoints.image_generation || useCases.includes('image-gen')) {
+      operations.add('images.generations');
+    }
+    if (endpoints.image_edit) operations.add('images.edits');
+    if (endpoints.videos || useCases.includes('video-gen')) {
+      operations.add('videos.create');
+      operations.add('videos.retrieve');
+    }
+    if (useCases.includes('rerank')) operations.add('rerank');
+    if (operations.size > 0) result[model.model] = Array.from(operations);
+  }
+  return result;
+}
+
 function getCompatibilityWarningKey(
   channelProvider: string,
   selectedModels: ModelItem[]
@@ -510,8 +541,9 @@ function ChannelForm({
         name: name.trim(),
         api_key: apiKey.trim(),
         ...common,
-        models: modelsSelected.length ? modelsSelected : undefined,
-        initial_funds: initialFundsPoints,
+		models: modelsSelected.length ? modelsSelected : undefined,
+		model_operations: inferModelOperations(selectedModelItems),
+		initial_funds: initialFundsPoints,
       };
       await createChannel(payload);
       onOpenChange(false);
@@ -537,9 +569,10 @@ function ChannelForm({
     if (updateApiKey && apiKey.trim()) {
       update.api_key = apiKey.trim();
     }
-    if (JSON.stringify(modelsSelected) !== JSON.stringify(initial.models ?? [])) {
-      update.models = modelsSelected;
-    }
+	if (JSON.stringify(modelsSelected) !== JSON.stringify(initial.models ?? [])) {
+		update.models = modelsSelected;
+		update.model_operations = inferModelOperations(selectedModelItems);
+	}
     if (isEnabled !== (initial.is_enabled ?? true)) {
       update.is_enabled = isEnabled;
     }

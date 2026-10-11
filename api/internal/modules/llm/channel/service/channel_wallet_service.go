@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	"strings"
 	"time"
 
@@ -35,12 +36,12 @@ func (channelWalletRouteSnapshot) TableName() string {
 }
 
 type channelWalletRecord struct {
-	ChannelID      uuid.UUID `gorm:"column:channel_id"`
-	OrganizationID uuid.UUID `gorm:"column:organization_id"`
-	Balance        int64     `gorm:"column:balance"`
-	Status         string    `gorm:"column:status"`
-	CreatedAt      time.Time `gorm:"column:created_at"`
-	UpdatedAt      time.Time `gorm:"column:updated_at"`
+	ChannelID      uuid.UUID               `gorm:"column:channel_id"`
+	OrganizationID uuid.UUID               `gorm:"column:organization_id"`
+	Balance        millipoints.MilliPoints `gorm:"column:balance"`
+	Status         string                  `gorm:"column:status"`
+	CreatedAt      time.Time               `gorm:"column:created_at"`
+	UpdatedAt      time.Time               `gorm:"column:updated_at"`
 }
 
 func (channelWalletRecord) TableName() string {
@@ -48,15 +49,15 @@ func (channelWalletRecord) TableName() string {
 }
 
 type channelWalletTransactionRecord struct {
-	ID            uuid.UUID              `gorm:"column:id"`
-	ChannelID     uuid.UUID              `gorm:"column:channel_id"`
-	AttemptID     *string                `gorm:"column:attempt_id"`
-	Type          string                 `gorm:"column:type"`
-	Amount        int64                  `gorm:"column:amount"`
-	BalanceBefore int64                  `gorm:"column:balance_before"`
-	BalanceAfter  int64                  `gorm:"column:balance_after"`
-	Metadata      map[string]interface{} `gorm:"column:metadata;type:jsonb;serializer:json"`
-	CreatedAt     time.Time              `gorm:"column:created_at"`
+	ID            uuid.UUID               `gorm:"column:id"`
+	ChannelID     uuid.UUID               `gorm:"column:channel_id"`
+	AttemptID     *string                 `gorm:"column:attempt_id"`
+	Type          string                  `gorm:"column:type"`
+	Amount        millipoints.MilliPoints `gorm:"column:amount"`
+	BalanceBefore millipoints.MilliPoints `gorm:"column:balance_before"`
+	BalanceAfter  millipoints.MilliPoints `gorm:"column:balance_after"`
+	Metadata      map[string]interface{}  `gorm:"column:metadata;type:jsonb;serializer:json"`
+	CreatedAt     time.Time               `gorm:"column:created_at"`
 }
 
 func (channelWalletTransactionRecord) TableName() string {
@@ -86,7 +87,7 @@ func (s *channelService) AdjustChannelWallet(
 		}
 
 		balanceBefore := wallet.Balance
-		balanceAfter := balanceBefore + req.Amount
+		balanceAfter := balanceBefore + millipoints.MilliPoints(req.Amount)
 		newStatus := channelWalletStatusActive
 		if balanceAfter < 0 {
 			newStatus = channelWalletStatusDebt
@@ -104,12 +105,12 @@ func (s *channelService) AdjustChannelWallet(
 			return fmt.Errorf("failed to update channel wallet balance: %w", err)
 		}
 
-		if err := s.syncRouteBalanceForAdjust(ctx, tx, organizationID, channelID, balanceAfter, now); err != nil {
+		if err := s.syncRouteBalanceForAdjust(ctx, tx, organizationID, channelID, balanceAfter.Int64(), now); err != nil {
 			return err
 		}
 
 		txRecord, err := s.createChannelWalletAdjustTransaction(
-			ctx, tx, organizationID, channelID, req, balanceBefore, balanceAfter, now,
+			ctx, tx, organizationID, channelID, req, balanceBefore.Int64(), balanceAfter.Int64(), now,
 		)
 		if err != nil {
 			return err
@@ -119,8 +120,8 @@ func (s *channelService) AdjustChannelWallet(
 			ChannelID:      channelID,
 			OrganizationID: organizationID,
 			Amount:         req.Amount,
-			BalanceBefore:  balanceBefore,
-			BalanceAfter:   balanceAfter,
+			BalanceBefore:  balanceBefore.Int64(),
+			BalanceAfter:   balanceAfter.Int64(),
 			Status:         newStatus,
 			TransactionID:  txRecord.ID,
 			UpdatedAt:      now.Format(time.RFC3339),
@@ -183,7 +184,7 @@ func (s *channelService) getOrCreateChannelWalletForAdjust(
 	wallet = channelWalletRecord{
 		ChannelID:      route.ID,
 		OrganizationID: route.OrganizationID,
-		Balance:        initialBalance,
+		Balance:        millipoints.MilliPoints(initialBalance),
 		Status:         initialStatus,
 		CreatedAt:      now,
 		UpdatedAt:      now,
@@ -237,9 +238,9 @@ func (s *channelService) createChannelWalletAdjustTransaction(
 		ID:            uuid.New(),
 		ChannelID:     channelID,
 		Type:          channelWalletTxTypeAdjust,
-		Amount:        req.Amount,
-		BalanceBefore: balanceBefore,
-		BalanceAfter:  balanceAfter,
+		Amount:        millipoints.MilliPoints(req.Amount),
+		BalanceBefore: millipoints.MilliPoints(balanceBefore),
+		BalanceAfter:  millipoints.MilliPoints(balanceAfter),
 		Metadata:      metadata,
 		CreatedAt:     now,
 	}

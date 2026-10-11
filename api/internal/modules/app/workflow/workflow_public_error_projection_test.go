@@ -91,6 +91,11 @@ func TestPublicWorkflowSSEFailurePayloadsAreRedacted(t *testing.T) {
 			if !strings.Contains(body, workflowPublicFailureMessage) {
 				t.Fatalf("public SSE payload = %s, want generic failure message %q", body, workflowPublicFailureMessage)
 			}
+			for _, field := range []string{"error_code", "params", "error_id"} {
+				if !strings.Contains(body, field) {
+					t.Fatalf("public SSE payload missing %q: %s", field, body)
+				}
+			}
 		})
 	}
 }
@@ -162,6 +167,11 @@ func TestWebAppDirectSSEErrorUsesGenericMessage(t *testing.T) {
 	}
 	if !strings.Contains(body, workflowPublicFailureMessage) {
 		t.Fatalf("public direct SSE error = %s, want generic failure message %q", body, workflowPublicFailureMessage)
+	}
+	for _, field := range []string{"error_code", "params", "error_id"} {
+		if !strings.Contains(body, field) {
+			t.Fatalf("public direct SSE payload missing %q: %s", field, body)
+		}
 	}
 }
 

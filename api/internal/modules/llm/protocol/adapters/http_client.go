@@ -19,6 +19,24 @@ import (
 	"github.com/zgiai/zgi/api/internal/observability"
 )
 
+// MaxSSEFrameBytes bounds a single SSE frame for every stream parser in the
+// gateway. The Responses response.completed frame embeds the entire response
+// object (all output items plus reasoning), so it is the largest frame on the
+// wire and sets the floor for this value. It is deliberately not raised
+// further: the buffer is per in-flight stream, so the ceiling multiplies by
+// concurrency. Console applies the same limit, so keep the two in step.
+const MaxSSEFrameBytes = 8 << 20
+
+// annotateSSEFrameLimit makes the frame cap visible. Left as a bare
+// bufio.ErrTooLong it is indistinguishable from an ordinary network error, and
+// the limit shows up in production only as "occasional stream interruptions".
+func annotateSSEFrameLimit(err error) error {
+	if !errors.Is(err, bufio.ErrTooLong) {
+		return err
+	}
+	return fmt.Errorf("upstream SSE frame exceeds %d bytes: %w", MaxSSEFrameBytes, err)
+}
+
 // HTTPClient wrapped HTTP client
 type HTTPClient struct {
 	client       *http.Client
@@ -317,13 +335,24 @@ func (c *HTTPClient) DoRequestDetailed(ctx context.Context, method, url string, 
 			return &HTTPResponse{Body: respBody, StatusCode: resp.StatusCode, Header: resp.Header.Clone()}, nil
 		}
 
-		// 5xx server errors, retry
+		// 5xx server errors, retry. Carry the typed upstream-failure identity so
+		// the gateway classifier and the error catalog can project the retried
+		// failure; a bare fmt.Errorf reached the protocol boundary unclassified
+		// and leaked the English fallback message in every locale.
 		if resp.StatusCode >= 500 {
 			bodySnippet := string(respBody)
 			if len(bodySnippet) > 500 {
 				bodySnippet = bodySnippet[:500] + "..."
 			}
-			lastErr = fmt.Errorf("server error %d: %s", resp.StatusCode, bodySnippet)
+			// Keep the platform channel's own identity through the retry loop.
+			// Without this a 5xx that exhausts its retries is reported as a
+			// generic upstream failure, so the client sees llm.invocation.failed
+			// instead of, say, llm.provider.none_available.
+			sentinel := error(ErrUpstreamError)
+			if consoleSentinel, ok := ConsoleSentinelFromBody(respBody); ok {
+				sentinel = consoleSentinel
+			}
+			lastErr = fmt.Errorf("%w: server error %d: %s", sentinel, resp.StatusCode, bodySnippet)
 			continue
 		}
 
@@ -402,7 +431,13 @@ func isTerminalPlatformChannelResponse(statusCode int, body []byte) bool {
 		return false
 	}
 	var payload struct {
-		Error struct {
+		// Console's cataloged envelope: a stable code plus whether repeating
+		// the call can help. retryable:false (for example an upstream that
+		// rejected the platform credential) is terminal; retrying only
+		// multiplies upstream calls.
+		ErrorCode string `json:"error_code"`
+		Retryable *bool  `json:"retryable"`
+		Error     struct {
 			Code string `json:"code"`
 			Type string `json:"type"`
 		} `json:"error"`
@@ -410,8 +445,12 @@ func isTerminalPlatformChannelResponse(statusCode int, body []byte) bool {
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return false
 	}
+	if strings.TrimSpace(payload.ErrorCode) != "" && payload.Retryable != nil && !*payload.Retryable {
+		return true
+	}
 	return payload.Error.Code == ErrorCodePlatformChannelUnavailable ||
-		payload.Error.Type == ErrorCodePlatformChannelUnavailable
+		payload.Error.Type == ErrorCodePlatformChannelUnavailable ||
+		payload.Error.Code == "billing_settlement_failed"
 }
 
 // DoStreamRequest executes streaming HTTP request
@@ -494,8 +533,19 @@ func (c *HTTPClient) doSingleRequest(
 // ParseSSE parses Server-Sent Events stream
 // It also handles non-SSE JSON error responses from upstream providers
 func ParseSSE(reader io.Reader, dataChan chan<- string, errChan chan<- error) {
+	parseSSE(reader, dataChan, errChan, true)
+}
+
+// ParseSSEToEOF parses an SSE response through EOF so HTTP response trailers
+// are populated. This is intended for internal gateway transports that place
+// settlement metadata in trailers after the public [DONE] marker.
+func ParseSSEToEOF(reader io.Reader, dataChan chan<- string, errChan chan<- error) {
+	parseSSE(reader, dataChan, errChan, false)
+}
+
+func parseSSE(reader io.Reader, dataChan chan<- string, errChan chan<- error, stopAtDone bool) {
 	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(nil, bufio.MaxScanTokenSize<<9)
+	scanner.Buffer(nil, MaxSSEFrameBytes)
 	var dataBuffer strings.Builder
 
 	lineCount := 0
@@ -525,8 +575,11 @@ func ParseSSE(reader io.Reader, dataChan chan<- string, errChan chan<- error) {
 		if data, ok := parseSSEDataLine(line); ok {
 			// [DONE] indicates stream end
 			if data == "[DONE]" {
-				close(dataChan)
-				return
+				if stopAtDone {
+					close(dataChan)
+					return
+				}
+				continue
 			}
 
 			dataBuffer.WriteString(data)
@@ -535,7 +588,7 @@ func ParseSSE(reader io.Reader, dataChan chan<- string, errChan chan<- error) {
 
 	// Check for scanner errors
 	if err := scanner.Err(); err != nil {
-		errChan <- err
+		errChan <- annotateSSEFrameLimit(err)
 		close(dataChan)
 		return
 	}
@@ -565,7 +618,7 @@ func parseSSEDataLine(line string) (string, bool) {
 // ParseSSEEvents parses Server-Sent Events while preserving event names and raw data.
 func ParseSSEEvents(reader io.Reader, eventChan chan<- RawStreamEvent, errChan chan<- error) {
 	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(nil, bufio.MaxScanTokenSize<<9)
+	scanner.Buffer(nil, MaxSSEFrameBytes)
 
 	var dataBuffer strings.Builder
 	eventName := ""
@@ -613,7 +666,7 @@ func ParseSSEEvents(reader io.Reader, eventChan chan<- RawStreamEvent, errChan c
 	}
 
 	if err := scanner.Err(); err != nil {
-		errChan <- err
+		errChan <- annotateSSEFrameLimit(err)
 		close(eventChan)
 		return
 	}

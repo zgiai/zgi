@@ -22,11 +22,12 @@ const (
 )
 
 type PublishedCatalog struct {
-	Version     int64
-	PublishedAt time.Time
-	Providers   []PublishedProvider
-	Models      []PublishedModel
-	Vendors     []PublishedVendor
+	Version      int64
+	PublishedAt  time.Time
+	PointsPerUSD int64
+	Providers    []PublishedProvider
+	Models       []PublishedModel
+	Vendors      []PublishedVendor
 }
 
 type PublishedVendor struct {
@@ -109,18 +110,35 @@ type PublishedModel struct {
 }
 
 func (s *Service) ApplyPublishedCatalog(ctx context.Context, catalog PublishedCatalog) error {
+	_, err := s.ApplyPublishedCatalogWithReport(ctx, catalog)
+	return err
+}
+
+// ApplyPublishedCatalogWithReport applies a Console catalog snapshot after
+// normalizing newly written/synced CNY prices to canonical USD. It returns a
+// diff report keyed by provider+model covering price, unit, currency, and
+// normalized identity key changes. The snapshot itself is never mutated, so a
+// replayed snapshot produces the same stored result.
+func (s *Service) ApplyPublishedCatalogWithReport(ctx context.Context, catalog PublishedCatalog) (CatalogApplyReport, error) {
 	if err := validatePublishedCatalog(catalog); err != nil {
-		return err
+		return CatalogApplyReport{}, err
+	}
+	normalized, report, err := normalizePublishedCatalog(catalog)
+	if err != nil {
+		return CatalogApplyReport{}, err
+	}
+	if err := validatePublishedCatalog(normalized); err != nil {
+		return CatalogApplyReport{}, err
 	}
 
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txService := *s
 		txService.db = tx
 
 		skippedProviders := make(map[string]bool)
-		providerNames := make([]string, 0, len(catalog.Providers))
-		appliedProviderNames := make([]string, 0, len(catalog.Providers))
-		for _, provider := range catalog.Providers {
+		providerNames := make([]string, 0, len(normalized.Providers))
+		appliedProviderNames := make([]string, 0, len(normalized.Providers))
+		for _, provider := range normalized.Providers {
 			providerNames = append(providerNames, provider.Provider)
 			skipped, err := txService.upsertPublishedProvider(ctx, provider)
 			if err != nil {
@@ -136,8 +154,8 @@ func (s *Service) ApplyPublishedCatalog(ctx context.Context, catalog PublishedCa
 			return err
 		}
 
-		modelKeys := make([]catalogModelKey, 0, len(catalog.Models))
-		for _, model := range catalog.Models {
+		modelKeys := make([]catalogModelKey, 0, len(normalized.Models))
+		for _, model := range normalized.Models {
 			if skippedProviders[model.Provider] {
 				continue
 			}
@@ -152,12 +170,26 @@ func (s *Service) ApplyPublishedCatalog(ctx context.Context, catalog PublishedCa
 		if _, err := txService.markPublishedModelsMissingFromCatalogDeprecated(ctx, appliedProviderNames, modelKeys); err != nil {
 			return err
 		}
+		if err := txService.ensurePublishedModelVendorIdentities(ctx, normalized); err != nil {
+			return err
+		}
 
-		return txService.upsertCatalogSyncState(ctx, catalog.Version, catalog.PublishedAt, "")
+		return txService.upsertCatalogSyncState(ctx, normalized.Version, normalized.PublishedAt, "")
 	})
 	if err != nil {
-		return err
+		return CatalogApplyReport{}, err
 	}
+	RefreshPublishedCatalogProjection(normalized)
+	if invalidator := currentModelCacheInvalidator(); invalidator != nil {
+		invalidator.InvalidateModelCache(ctx)
+	}
+	return report, nil
+}
+
+// RefreshPublishedCatalogProjection rebuilds Console-owned model-vendor display
+// metadata in memory. The synchronizer calls this at startup for the last
+// applied immutable snapshot, even when no newer catalog event exists.
+func RefreshPublishedCatalogProjection(catalog PublishedCatalog) {
 	vendors := make([]catalogvendor.Entry, 0, len(catalog.Models))
 	for _, catalogModel := range catalog.Models {
 		vendors = append(vendors, catalogvendor.Entry{
@@ -180,10 +212,6 @@ func (s *Service) ApplyPublishedCatalog(ctx context.Context, catalog PublishedCa
 		})
 	}
 	catalogvendor.ReplaceMetadata(vendorMetadata)
-	if invalidator := currentModelCacheInvalidator(); invalidator != nil {
-		invalidator.InvalidateModelCache(ctx)
-	}
-	return nil
 }
 
 func validatePublishedCatalog(catalog PublishedCatalog) error {
@@ -276,8 +304,104 @@ func (s *Service) upsertPublishedModel(ctx context.Context, model PublishedModel
 	if existing.DeletedAt.Valid {
 		return false, nil
 	}
+	if isLocalPrivatePricing(existing.Pricing) {
+		// A locally authored price on this provider/model pair is authoritative
+		// for Pre. The Console catalog may keep the row's lifecycle current but
+		// must never overwrite the tenant's local private price.
+		return true, nil
+	}
 
 	return true, s.updatePublishedModel(ctx, existing.ID, model)
+}
+
+// ensurePublishedModelVendorIdentities materializes the stable logical model
+// identity used by platform billing and statistics. A catalog model's Provider
+// is the supplier that can serve it, while Vendor is the model owner. Supplier
+// rows remain the source for availability and pricing; the inactive owner rows
+// below exist only so every published (vendor, model) pair has durable IDs.
+func (s *Service) ensurePublishedModelVendorIdentities(ctx context.Context, catalog PublishedCatalog) error {
+	vendors := make(map[string]PublishedVendor, len(catalog.Vendors))
+	for _, vendor := range catalog.Vendors {
+		vendors[strings.ToLower(strings.TrimSpace(vendor.Vendor))] = vendor
+	}
+
+	ensuredProviders := make(map[string]struct{})
+	ensuredModels := make(map[catalogModelKey]struct{})
+	for _, source := range catalog.Models {
+		vendor := strings.ToLower(strings.TrimSpace(source.Vendor))
+		if vendor == "" || strings.EqualFold(vendor, strings.TrimSpace(source.Provider)) {
+			continue
+		}
+
+		if _, ok := ensuredProviders[vendor]; !ok {
+			if err := s.ensureModelVendorProviderIdentity(ctx, vendor, vendors[vendor]); err != nil {
+				return err
+			}
+			ensuredProviders[vendor] = struct{}{}
+		}
+
+		key := catalogModelKey{Provider: vendor, Model: strings.TrimSpace(source.Model)}
+		if _, ok := ensuredModels[key]; ok {
+			continue
+		}
+		ensuredModels[key] = struct{}{}
+		if _, err := s.findExistingPublishedModel(ctx, key.Provider, key.Model); err == nil {
+			continue
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+
+		identity := source
+		identity.Provider = vendor
+		identity.Status = llmmodel.ModelStatusDeprecated
+		identity.IsActive = false
+		identity.IsSystemEnabled = false
+		identity.InputPrice = 0
+		identity.OutputPrice = 0
+		identity.CachedInputPrice = 0
+		identity.CacheReadPrice = nil
+		identity.CacheWritePrice = nil
+		identity.Pricing = nil
+		identity.InputPriceConfigured = false
+		identity.OutputPriceConfigured = false
+		identity.ReplacementProvider = ""
+		identity.ReplacementModel = ""
+		identity.DeprecationReason = "model vendor identity"
+		if err := s.createPublishedModel(ctx, identity); err != nil {
+			return fmt.Errorf("create model vendor identity %s/%s: %w", key.Provider, key.Model, err)
+		}
+	}
+	return nil
+}
+
+func (s *Service) ensureModelVendorProviderIdentity(ctx context.Context, vendor string, metadata PublishedVendor) error {
+	if _, err := s.findExistingProvider(ctx, vendor); err == nil {
+		return nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+
+	name := strings.TrimSpace(metadata.VendorName)
+	if name == "" {
+		name = strings.TrimSpace(metadata.ENName)
+	}
+	if name == "" {
+		name = vendor
+	}
+	provider := PublishedProvider{
+		Provider:        vendor,
+		ProviderName:    name,
+		Description:     metadata.Description,
+		Website:         metadata.Website,
+		CountryCode:     metadata.CountryCode,
+		Status:          llmmodel.ModelStatusDeprecated,
+		IsActive:        false,
+		IsSystemEnabled: false,
+	}
+	if err := s.createPublishedProvider(ctx, provider); err != nil {
+		return fmt.Errorf("create model vendor provider identity %s: %w", vendor, err)
+	}
+	return nil
 }
 
 type existingProviderForSync struct {
@@ -383,20 +507,40 @@ type catalogModelKey struct {
 type existingPublishedModelForSync struct {
 	ID        string         `gorm:"column:id"`
 	DeletedAt gorm.DeletedAt `gorm:"column:deleted_at"`
+	Pricing   string         `gorm:"column:pricing"`
 }
 
 func (s *Service) findExistingPublishedModel(ctx context.Context, provider, model string) (*existingPublishedModelForSync, error) {
+	columns := []string{"id", "deleted_at"}
+	if hasColumn(s.db, "llm_models", "pricing") {
+		columns = append(columns, "pricing")
+	}
 	var existing existingPublishedModelForSync
 	err := s.db.WithContext(ctx).
 		Unscoped().
 		Table("llm_models").
-		Select("id", "deleted_at").
+		Select(columns).
 		Where("provider = ? AND name = ?", provider, model).
 		First(&existing).Error
 	if err != nil {
 		return nil, err
 	}
 	return &existing, nil
+}
+
+// isLocalPrivatePricing reports whether a stored pricing JSON marks the row as
+// a locally authored price that the published catalog must not overwrite.
+func isLocalPrivatePricing(raw string) bool {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || trimmed == "null" {
+		return false
+	}
+	var object map[string]interface{}
+	if err := json.Unmarshal([]byte(trimmed), &object); err != nil {
+		return false
+	}
+	origin, _ := object["catalog_origin"].(string)
+	return strings.EqualFold(strings.TrimSpace(origin), "pre_custom")
 }
 
 func (s *Service) createPublishedModel(ctx context.Context, model PublishedModel) error {
@@ -676,18 +820,6 @@ func buildPublishedModelColumns(db *gorm.DB, model PublishedModel) map[string]in
 	if hasColumn(db, "llm_models", "cost_cache_write_1h") {
 		values["cost_cache_write_1h"] = nullablePublishedPrice(tokenPrices.cacheWrite1h)
 	}
-	if hasColumn(db, "llm_models", "cache_read_price_configured") {
-		values["cache_read_price_configured"] = tokenPrices.cacheRead != nil
-	}
-	if hasColumn(db, "llm_models", "cache_write_price_configured") {
-		values["cache_write_price_configured"] = tokenPrices.cacheWrite != nil
-	}
-	if hasColumn(db, "llm_models", "cache_write_5m_price_configured") {
-		values["cache_write_5m_price_configured"] = tokenPrices.cacheWrite5m != nil
-	}
-	if hasColumn(db, "llm_models", "cache_write_1h_price_configured") {
-		values["cache_write_1h_price_configured"] = tokenPrices.cacheWrite1h != nil
-	}
 	if hasColumn(db, "llm_models", "is_active") {
 		values["is_active"] = model.IsActive
 	}
@@ -695,12 +827,6 @@ func buildPublishedModelColumns(db *gorm.DB, model PublishedModel) map[string]in
 		values["is_system_enabled"] = model.IsSystemEnabled
 	}
 
-	if hasColumn(db, "llm_models", "input_price_configured") {
-		values["input_price_configured"] = tokenPrices.inputConfigured
-	}
-	if hasColumn(db, "llm_models", "output_price_configured") {
-		values["output_price_configured"] = tokenPrices.outputConfigured
-	}
 	if hasColumn(db, "llm_models", "pricing") {
 		values["pricing"] = serializePricing(model.Pricing)
 	}
@@ -859,7 +985,8 @@ func applyPublishedLifecycleColumns(db *gorm.DB, values map[string]interface{}, 
 }
 
 func endpointColumnsForPublishedModel(useCases []string, endpoints *llmmodel.ModelEndpoints, authoritative bool) map[string]bool {
-	resolved := llmmodel.DefaultEndpointsForUseCases(useCases)
+	derived := llmmodel.DefaultEndpointsForUseCases(useCases)
+	resolved := derived
 	if endpoints != nil {
 		if authoritative {
 			resolved = *endpoints
@@ -882,6 +1009,39 @@ func endpointColumnsForPublishedModel(useCases []string, endpoints *llmmodel.Mod
 			resolved.MusicGeneration = resolved.MusicGeneration || endpoints.MusicGeneration
 		}
 	}
+	// use_cases are the canonical semantic capability declaration, so for the
+	// routed operation endpoints they decide in both directions: a removed use
+	// case clears the column instead of leaving a stale true behind. Only the
+	// non-authoritative overlay is converged — an endpoint payload the publisher
+	// marked authoritative keeps winning, and an empty use_cases list says
+	// nothing. This is the same rule Console's publication projection applies.
+	if endpoints != nil && !authoritative && len(llmmodel.NormalizeUseCases(useCases)) > 0 {
+		resolved.ChatCompletions = derived.ChatCompletions
+		resolved.Embeddings = derived.Embeddings
+		resolved.ImageGeneration = derived.ImageGeneration
+		resolved.Videos = derived.Videos
+		resolved.MusicGeneration = derived.MusicGeneration
+		resolved.SpeechGeneration = derived.SpeechGeneration
+		resolved.Transcription = derived.Transcription
+	}
+	// Keep every legacy endpoint projection enabled when an older or
+	// incomplete authoritative endpoint payload says false.
+	resolved.ChatCompletions = resolved.ChatCompletions || derived.ChatCompletions
+	resolved.Responses = resolved.Responses || derived.Responses
+	resolved.Realtime = resolved.Realtime || derived.Realtime
+	resolved.Assistants = resolved.Assistants || derived.Assistants
+	resolved.Batch = resolved.Batch || derived.Batch
+	resolved.Embeddings = resolved.Embeddings || derived.Embeddings
+	resolved.FineTuning = resolved.FineTuning || derived.FineTuning
+	resolved.ImageGeneration = resolved.ImageGeneration || derived.ImageGeneration
+	resolved.Vision = resolved.Vision || derived.Vision
+	resolved.SpeechGeneration = resolved.SpeechGeneration || derived.SpeechGeneration
+	resolved.Transcription = resolved.Transcription || derived.Transcription
+	resolved.Translation = resolved.Translation || derived.Translation
+	resolved.Moderation = resolved.Moderation || derived.Moderation
+	resolved.Videos = resolved.Videos || derived.Videos
+	resolved.ImageEdit = resolved.ImageEdit || derived.ImageEdit
+	resolved.MusicGeneration = resolved.MusicGeneration || derived.MusicGeneration
 
 	return map[string]bool{
 		"chat_completions":  resolved.ChatCompletions,

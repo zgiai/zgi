@@ -1,5 +1,7 @@
 package shared
 
+import "context"
+
 // Common types and constants for LLM module
 
 // ProviderType defines the type of provider
@@ -41,6 +43,35 @@ const (
 
 // Context keys
 const (
-	ContextKeyModelCategory = "llm_model_category" // "chat", "image", "embedding", etc.
-	ContextKeyModelUseCase  = "llm_model_use_case" // "agent", "text-chat", etc.
+	ContextKeyModelCategory  = "llm_model_category" // "chat", "image", "embedding", etc.
+	ContextKeyModelOperation = "llm_model_operation"
+	ContextKeyModelUseCase   = "llm_model_use_case" // "agent", "text-chat", etc.
+	ContextKeyRequestID      = "llm_request_id"
+	// ContextKeyMeteredUsage carries an optional *MeteredUsageFact so a caller
+	// can declare a non-token billing identity before the pre-deduct runs.
+	ContextKeyMeteredUsage = "llm_metered_usage"
 )
+
+// MeteredUsageFact declares the metered billing identity of one request. It
+// lets the platform billing authority resolve the price without inferring it.
+// Quantity is a raw base-unit count, never a point or token amount.
+type MeteredUsageFact struct {
+	Operation  string
+	Meter      string
+	BaseUnit   string
+	Quantity   int64
+	Dimensions map[string]string
+}
+
+// MeteredUsageFromContext returns the declared metered identity when a caller
+// attached one. The second result is false for a missing or malformed value.
+func MeteredUsageFromContext(ctx context.Context) (MeteredUsageFact, bool) {
+	if ctx == nil {
+		return MeteredUsageFact{}, false
+	}
+	fact, ok := ctx.Value(ContextKeyMeteredUsage).(*MeteredUsageFact)
+	if !ok || fact == nil {
+		return MeteredUsageFact{}, false
+	}
+	return *fact, true
+}

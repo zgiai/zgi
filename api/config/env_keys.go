@@ -199,6 +199,24 @@ const (
 	envConsoleAPIGRPCAddr = "CONSOLE_API_GRPC_ADDR"
 	// envConsoleInternalAPIKey sets the internal API key shared with the console service. Default: empty.
 	envConsoleInternalAPIKey = "CONSOLE_INTERNAL_API_KEY"
+	// envConsoleInstanceID selects the per-instance Console credential issued by the
+	// console control plane (Cloud mode). Default: empty.
+	envConsoleInstanceID = "CONSOLE_INSTANCE_ID"
+	// envConsoleInstanceSecret is the per-instance secret that signs every console call.
+	// The plaintext is never logged. Default: empty.
+	envConsoleInstanceSecret = "CONSOLE_INSTANCE_SECRET"
+	// envConsoleSyncEnabled turns on the console control-plane sync loop. Cloud mode
+	// only; SELF_HOSTED ignores it. Default: true in Cloud mode.
+	envConsoleSyncEnabled = "CONSOLE_SYNC_ENABLED"
+	// envConsoleSyncIntervalSec sets the normal poll cadence in seconds. Default: 45.
+	envConsoleSyncIntervalSec = "CONSOLE_SYNC_INTERVAL_SEC"
+	// envConsoleSyncStaleSec is the age at which the console link counts as stale and
+	// the official channel is cut off. Default: 300.
+	envConsoleSyncStaleSec = "CONSOLE_SYNC_STALE_SEC"
+	// envConsoleSyncOrganizationReportInterval is how often pre pushes its organization
+	// inventory to console, as a Go duration string ("5m", "90s"). Default: 5m. Set to
+	// 0 to disable the report.
+	envConsoleSyncOrganizationReportInterval = "CONSOLE_SYNC_ORGANIZATION_REPORT_INTERVAL"
 
 	// Bootstrap credentials.
 	// envZGIAdminPass sets the static admin token for self-hosted platform identity calls. Default: empty.

@@ -146,6 +146,13 @@ func InitConsole() {
 	SetLogger(l)
 }
 
+// IsInitialized reports whether SetLogger or Init has installed the package
+// logger. Callers that must avoid lazy file-based initialization can use it to
+// emit diagnostics only when the process logger is already configured.
+func IsInitialized() bool {
+	return logInstance != nil
+}
+
 // L returns the package logger.
 func L() *zap.Logger {
 	if logInstance == nil {

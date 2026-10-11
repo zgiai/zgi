@@ -19,17 +19,19 @@ type ChatRequest struct {
 	FileIDs          []string               `json:"file_ids,omitempty"`
 	Model            string                 `json:"model" binding:"required"`
 	Provider         string                 `json:"provider,omitempty"`
+	RoutingStrategy  string                 `json:"routing_strategy,omitempty"`
 	ResponseMode     string                 `json:"response_mode,omitempty"`
 	Parameters       map[string]interface{} `json:"parameters,omitempty"`
 	UseMemory        bool                   `json:"use_memory,omitempty"`
 }
 
 type RegenerateMessageRequest struct {
-	Query      *string                `json:"query,omitempty"`
-	Model      *string                `json:"model,omitempty"`
-	Provider   *string                `json:"provider,omitempty"`
-	Parameters map[string]interface{} `json:"parameters,omitempty"`
-	UseMemory  *bool                  `json:"use_memory,omitempty"`
+	Query           *string                `json:"query,omitempty"`
+	Model           *string                `json:"model,omitempty"`
+	Provider        *string                `json:"provider,omitempty"`
+	RoutingStrategy *string                `json:"routing_strategy,omitempty"`
+	Parameters      map[string]interface{} `json:"parameters,omitempty"`
+	UseMemory       *bool                  `json:"use_memory,omitempty"`
 }
 
 type StopConversationResponse struct {

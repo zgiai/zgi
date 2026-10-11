@@ -198,6 +198,95 @@ func TestStopConversationCancelsQueuedRuntimeInputFollowUp(t *testing.T) {
 	}
 }
 
+func TestStopMessageClearsStaleActivePointerForTerminalError(t *testing.T) {
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	db := openStopConversationTestDB(t)
+	conversation := &runtimemodel.Conversation{
+		ID: conversationID, OrganizationID: organizationID, AccountID: accountID,
+		CallerType: runtimemodel.ConversationCallerAIChat, ConversationType: runtimemodel.ConversationTypeChat,
+		Title: "stale error", Status: runtimemodel.ConversationStatusNormal,
+		RuntimeStatus:        runtimemodel.ConversationRuntimeStatusStreaming,
+		CurrentLeafMessageID: &messageID, ActiveMessageID: &messageID,
+	}
+	messageError := "model service timeout"
+	message := &runtimemodel.Message{
+		ID: messageID, ConversationID: conversationID, Query: "run", Answer: "partial answer",
+		Status: runtimemodel.MessageStatusError, Error: &messageError, ModelName: "test",
+	}
+	if err := db.Create(conversation).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(message).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	repos := repository.NewRepositories(db)
+	repos.Access = stopConversationAccessRepo{}
+	svc := &service{repos: repos, streams: newStreamRegistry()}
+	stopped, err := svc.StopMessage(t.Context(), Scope{OrganizationID: organizationID, AccountID: accountID}, messageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stopped.Status != runtimemodel.MessageStatusError {
+		t.Fatalf("message status = %q, want original terminal error", stopped.Status)
+	}
+	var persistedConversation runtimemodel.Conversation
+	if err := db.First(&persistedConversation, "id = ?", conversationID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if persistedConversation.RuntimeStatus != runtimemodel.ConversationRuntimeStatusIdle || persistedConversation.ActiveMessageID != nil {
+		t.Fatalf("conversation runtime = %q active=%v, want idle with no active message", persistedConversation.RuntimeStatus, persistedConversation.ActiveMessageID)
+	}
+}
+
+func TestEnsureConversationAllowsNewTurnRepairsTerminalActivePointer(t *testing.T) {
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	db := openStopConversationTestDB(t)
+	conversation := &runtimemodel.Conversation{
+		ID: conversationID, OrganizationID: organizationID, AccountID: accountID,
+		CallerType: runtimemodel.ConversationCallerAIChat, ConversationType: runtimemodel.ConversationTypeChat,
+		Title: "stale completed", Status: runtimemodel.ConversationStatusNormal,
+		RuntimeStatus:        runtimemodel.ConversationRuntimeStatusStreaming,
+		CurrentLeafMessageID: &messageID, ActiveMessageID: &messageID,
+	}
+	message := &runtimemodel.Message{
+		ID: messageID, ConversationID: conversationID, Query: "run", Answer: "finished",
+		Status: runtimemodel.MessageStatusCompleted, ModelName: "test",
+	}
+	if err := db.Create(conversation).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(message).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	repos := repository.NewRepositories(db)
+	repos.Access = stopConversationAccessRepo{}
+	svc := &service{repos: repos, streams: newStreamRegistry()}
+	if err := svc.ensureConversationAllowsNewTurn(t.Context(), Scope{
+		OrganizationID: organizationID,
+		AccountID:      accountID,
+	}, conversation, false); err != nil {
+		t.Fatal(err)
+	}
+	if conversation.RuntimeStatus != runtimemodel.ConversationRuntimeStatusIdle || conversation.ActiveMessageID != nil {
+		t.Fatalf("in-memory conversation runtime = %q active=%v, want idle with no active message", conversation.RuntimeStatus, conversation.ActiveMessageID)
+	}
+	var persistedConversation runtimemodel.Conversation
+	if err := db.First(&persistedConversation, "id = ?", conversationID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if persistedConversation.RuntimeStatus != runtimemodel.ConversationRuntimeStatusIdle || persistedConversation.ActiveMessageID != nil {
+		t.Fatalf("persisted conversation runtime = %q active=%v, want idle with no active message", persistedConversation.RuntimeStatus, persistedConversation.ActiveMessageID)
+	}
+}
+
 func TestStopMessageDoesNotOverwriteNewerAnswerFromStaleSnapshot(t *testing.T) {
 	organizationID := uuid.New()
 	accountID := uuid.New()

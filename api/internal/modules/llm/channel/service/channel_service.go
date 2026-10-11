@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	"math/rand"
 	"slices"
 	"strings"
@@ -231,6 +232,7 @@ func (s *channelService) CreateRoute(ctx context.Context, organizationID uuid.UU
 		Models:           normalizedModels,
 		APIBaseURL:       req.APIBaseURL,
 		NativeProtocols:  req.NativeProtocols,
+		ModelOperations:  req.ModelOperations,
 		ModelMaps:        req.ModelMaps,
 		ParamOverride:    req.ParamOverride,
 		HeaderOverride:   req.HeaderOverride,
@@ -327,7 +329,7 @@ func (s *channelService) createRouteWithInitialFunds(
 		wallet := &channelWalletRecord{
 			ChannelID:      route.ID,
 			OrganizationID: route.OrganizationID,
-			Balance:        initialFunds,
+			Balance:        millipoints.MilliPoints(initialFunds),
 			Status:         channelWalletStatusActive,
 			CreatedAt:      now,
 			UpdatedAt:      now,
@@ -454,6 +456,7 @@ func (s *channelService) buildChannelView(route *model.LLMRoute, walletBalances 
 		RemainingFunds:   walletBalances[route.ID],
 		APIBaseURL:       route.APIBaseURL,
 		NativeProtocols:  route.NativeProtocols,
+		ModelOperations:  route.ModelOperations,
 		ValidationReport: route.ValidationReport,
 		Warnings:         channelprovider.WarningMessages(route.ValidationReport),
 		Priority:         route.Priority,
@@ -602,7 +605,7 @@ func (s *channelService) loadChannelWalletBalances(
 		return nil, err
 	}
 	for _, wallet := range wallets {
-		walletBalances[wallet.ChannelID] = wallet.Balance
+		walletBalances[wallet.ChannelID] = wallet.Balance.Int64()
 	}
 	return walletBalances, nil
 }
@@ -831,6 +834,9 @@ func (s *channelService) UpdateRoute(ctx context.Context, organizationID, id uui
 	}
 	if req.NativeProtocols != nil {
 		route.NativeProtocols = *req.NativeProtocols
+	}
+	if req.ModelOperations != nil {
+		route.ModelOperations = req.ModelOperations
 	}
 	if req.ModelMaps != nil {
 		route.ModelMaps = req.ModelMaps

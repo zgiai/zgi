@@ -25,6 +25,7 @@ type conversationTitleGenerationInput struct {
 	FallbackTitle     string
 	PreferredProvider string
 	PreferredModel    string
+	RoutingStrategy   string
 	LegacyFallback    bool
 }
 
@@ -106,6 +107,7 @@ func (s *service) enqueueConversationTitleGeneration(
 			FallbackTitle:     input.FallbackTitle,
 			PreferredProvider: input.PreferredProvider,
 			PreferredModel:    input.PreferredModel,
+			RoutingStrategy:   input.RoutingStrategy,
 			PreferredUseCase:  string(llmmodelmodel.UseCaseTextChat),
 		})
 		if err != nil || result == nil {

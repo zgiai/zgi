@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zgiai/zgi/api/internal/infra/platform/consolecred"
 	"github.com/zgiai/zgi/api/internal/observability"
 )
 
@@ -665,12 +666,16 @@ func (r *Remote) GetBankTransferVoucher(ctx context.Context, key string) (*BankT
 	}, nil
 }
 
-// signRequest adds HMAC-SHA256 authentication headers to an outgoing request.
-// It sets X-Internal-Timestamp and X-Internal-Signature headers.
+// signRequest adds the authenticated Console credential to an outgoing request.
+// The configured credential is sent raw in the existing X-ZGI-Internal-Secret
+// slot: Console resolves it against api_keys to recover the caller identity, or
+// falls back to the transitional shared-secret comparison. The HMAC headers are
+// kept for that compatibility path.
 func (r *Remote) signRequest(req *http.Request) {
 	if r.internalAPIKey == "" {
 		return
 	}
+	req.Header.Set("X-ZGI-Internal-Secret", r.internalAPIKey)
 	ts := strconv.FormatInt(time.Now().Unix(), 10)
 	message := ts + "|" + req.URL.Path
 	mac := hmac.New(sha256.New, []byte(r.internalAPIKey))
@@ -678,6 +683,10 @@ func (r *Remote) signRequest(req *http.Request) {
 	sig := hex.EncodeToString(mac.Sum(nil))
 	req.Header.Set("X-Internal-Timestamp", ts)
 	req.Header.Set("X-Internal-Signature", sig)
+
+	// MERGE-NOTE(codex-video-image-rollback): adds the per-instance credential on top of
+	// the legacy shared secret. Merge: keep this single line next to the branch signer.
+	consolecred.SignRequest(req)
 }
 
 func (r *Remote) doJSON(

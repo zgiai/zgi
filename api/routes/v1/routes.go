@@ -366,10 +366,11 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 			ApplicationErrorCatalog: applicationErrorCatalog,
 		})
 		RegisterVideoRuntimeRoutes(v1, VideoRuntimeRouteDeps{
-			DB:              db,
-			AvailableModels: llmModule.LLMModelModule.AvailableModelsSvc,
-			LLMClient:       serviceContainer.GetLLMClient(),
-			AccountService:  accountService,
+			DB:                      db,
+			AvailableModels:         llmModule.LLMModelModule.AvailableModelsSvc,
+			LLMClient:               serviceContainer.GetLLMClient(),
+			AccountService:          accountService,
+			ApplicationErrorCatalog: applicationErrorCatalog,
 		})
 		RegisterMusicRoutes(v1, MusicRouteDeps{
 			DB:                      db,

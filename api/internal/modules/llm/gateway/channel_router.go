@@ -7,9 +7,11 @@ import (
 	"math/rand"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	platformchannel "github.com/zgiai/zgi/api/internal/infra/platform/channel"
+	"github.com/zgiai/zgi/api/internal/modules/llm/catalogvendor"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	channelrepo "github.com/zgiai/zgi/api/internal/modules/llm/channel/repository"
 	"github.com/zgiai/zgi/api/internal/modules/llm/channelprovider"
@@ -39,6 +41,8 @@ type ChannelRouter struct {
 	channelProvider         platformchannel.ChannelProvider // Platform official channels
 	privateModels           llmmodelsvc.PrivateModelLookupService
 	upstreamState           *upstreamstate.Service
+	routingResolver         *RoutingStrategyResolver
+	now                     func() time.Time
 }
 
 type channelModelSource string
@@ -58,6 +62,11 @@ type ProviderSelection struct {
 	ModelSource       PricingModelSource
 	BillingLane       UsageBillingLane
 	UseSystemProvider bool
+	// ModelVendor is the catalog owner of the logical model. It is deliberately
+	// separate from ChannelProvider, which identifies the route/supplier.
+	ModelVendor           string
+	ModelVendorProviderID uuid.UUID
+	ModelVendorModelID    uuid.UUID
 
 	// Channel configuration from the selected route
 	RouteID                     uuid.UUID
@@ -79,7 +88,10 @@ type ProviderSelection struct {
 	UpstreamProbe               bool
 	UpstreamProbeRequiresBackup bool
 	UpstreamProbeHasBackup      bool
+	RoutingStrategy             string
 }
+
+var errAmbiguousActiveCatalogModel = errors.New("ambiguous active catalog model")
 
 // HasRoute returns true if this selection has a valid route
 func (ps *ProviderSelection) HasRoute() bool {
@@ -102,6 +114,7 @@ type ChannelSelection struct {
 	Model                       *llmmodel.LLMModel
 	Priority                    int
 	Weight                      int
+	AutoBan                     bool
 	BillingLane                 UsageBillingLane
 	UseSystemProvider           bool
 	IsOfficial                  bool // True for official aggregated routes
@@ -113,6 +126,7 @@ type ChannelSelection struct {
 	UpstreamHalfOpen            bool
 	UpstreamProbe               bool
 	UpstreamProbeRequiresBackup bool
+	RoutingStrategy             string
 }
 
 // NewChannelRouter creates a new channel router using V2 architecture
@@ -125,6 +139,8 @@ func NewChannelRouter(db *gorm.DB, cryptoService shared.CryptoService, privateMo
 		strategyFactory:         NewStrategyFactory(),
 		privateModels:           privateModels,
 		upstreamState:           upstreamstate.NewService(db, cryptoService),
+		routingResolver:         NewRoutingStrategyResolver(db),
+		now:                     func() time.Time { return time.Now().UTC() },
 	}
 }
 
@@ -186,25 +202,32 @@ func (r *ChannelRouter) SelectChannelsForProvider(
 	llmModel, privateModel, err := r.resolveSelectionModel(ctx, organizationID, providerHint, modelName)
 	isPrivateCustomModel := privateModel != nil
 	isPassthroughMode := false
+	isAmbiguousCatalogModel := false
 	modelProvider := ""
 	if err != nil {
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
+		if errors.Is(err, errAmbiguousActiveCatalogModel) && providerHint == "" {
+			// A logical model may be published by multiple upstream suppliers. Defer
+			// choosing the local catalog row until the enabled platform route has
+			// been hydrated, so callers can continue to select by model only.
+			isAmbiguousCatalogModel = true
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 			logger.ErrorContext(logCtx, "failed to resolve LLM model", err)
 			return nil, fmt.Errorf("failed to resolve LLM model %q: %w", modelName, err)
+		} else {
+			knownGlobalModel, knownErr := r.globalModelExists(ctx, providerHint, modelName)
+			if knownErr != nil {
+				logger.ErrorContext(logCtx, "failed to check LLM model lifecycle", knownErr)
+				return nil, fmt.Errorf("failed to check LLM model %q: %w", modelName, knownErr)
+			}
+			if knownGlobalModel {
+				logger.DebugContext(logCtx, "LLM model exists in global registry but is not active")
+				return nil, llmerrors.NewModelNotFoundErrorWithName(modelName)
+			}
+			// Model not in local registries - enable passthrough mode
+			logger.DebugContext(logCtx, "LLM model not found in local registries, using passthrough mode")
+			isPassthroughMode = true
+			modelProvider = providerHint
 		}
-		knownGlobalModel, knownErr := r.globalModelExists(ctx, providerHint, modelName)
-		if knownErr != nil {
-			logger.ErrorContext(logCtx, "failed to check LLM model lifecycle", knownErr)
-			return nil, fmt.Errorf("failed to check LLM model %q: %w", modelName, knownErr)
-		}
-		if knownGlobalModel {
-			logger.DebugContext(logCtx, "LLM model exists in global registry but is not active")
-			return nil, llmerrors.NewModelNotFoundErrorWithName(modelName)
-		}
-		// Model not in local registries - enable passthrough mode
-		logger.DebugContext(logCtx, "LLM model not found in local registries, using passthrough mode")
-		isPassthroughMode = true
-		modelProvider = providerHint
 	} else {
 		modelProvider = llmModel.Provider
 	}
@@ -233,6 +256,14 @@ func (r *ChannelRouter) SelectChannelsForProvider(
 	if len(routes) == 0 {
 		return nil, fmt.Errorf("%w: no enabled routes found for organizationID %s. Please configure at least one active channel in your workspace", llmerrors.DomainErrRouteNotFound, organizationID)
 	}
+	if isAmbiguousCatalogModel {
+		llmModel, err = r.resolveCatalogModelForRoutes(ctx, routes, modelName)
+		if err != nil {
+			return nil, err
+		}
+		modelProvider = llmModel.Provider
+		logCtx = logger.WithFields(logCtx, zap.String("provider", modelProvider))
+	}
 
 	validRoutes, err := r.prepareCandidateRoutes(ctx, organizationID, routes, modelName, modelProvider, isPrivateCustomModel, llmModel, isPassthroughMode, true)
 	if err != nil {
@@ -242,7 +273,12 @@ func (r *ChannelRouter) SelectChannelsForProvider(
 	logger.DebugContext(logCtx, "valid LLM routes filtered",
 		zap.Int("valid_route_count", len(validRoutes)),
 	)
-	selectedRoutes := r.selectRoutesByPriorityAndWeight(validRoutes, maxSelections)
+	resolver := r.routingResolver
+	if resolver == nil {
+		resolver = NewRoutingStrategyResolver(r.db)
+	}
+	policy := resolver.Resolve(ctx, organizationID)
+	selectedRoutes := r.selectRoutesByRoutingPolicy(ctx, organizationID, modelName, privateModel, validRoutes, maxSelections, policy)
 
 	for i, route := range selectedRoutes {
 		logger.DebugContext(logCtx, "selected LLM route",
@@ -251,6 +287,7 @@ func (r *ChannelRouter) SelectChannelsForProvider(
 			zap.String("route_type", string(route.Type)),
 			zap.Int("priority", route.Priority),
 			zap.Int("weight", route.Weight),
+			zap.String("routing_strategy", policy.Strategy),
 		)
 	}
 
@@ -266,6 +303,7 @@ func (r *ChannelRouter) SelectChannelsForProvider(
 			)
 			continue
 		}
+		selection.RoutingStrategy = policy.Strategy
 		selections = append(selections, selection)
 	}
 
@@ -284,17 +322,38 @@ func (r *ChannelRouter) SelectChannelsForProvider(
 }
 
 func filterRoutesForNativeProtocol(routes []*channelmodel.LLMRoute, llmModel *llmmodel.LLMModel, modelCategory string) []*channelmodel.LLMRoute {
+	modelName := ""
+	if llmModel != nil {
+		modelName = llmModel.Model
+	}
 	switch modelCategory {
-	case modelCategoryResponses:
+	case "chat":
 		return filterRoutesByCapability(routes, func(route *channelmodel.LLMRoute) bool {
-			if llmModel != nil && !llmModel.Responses {
+			// For organization-owned routes the model capability is authoritative.
+			// Without this check a legacy route with no protocol declaration could
+			// make an image/audio-only custom model enter Chat Completions.
+			if !isOfficialRoute(route) && llmModel != nil && !llmModel.ChatCompletions {
 				return false
 			}
-			return routeSupportsOpenAIResponses(route)
+			if supported, declared := routeProtocolDeclaration(route, modelName, protocolOpenAIChatCompletions); declared {
+				return supported
+			}
+			return true
+		})
+	case modelCategoryResponses:
+		return filterRoutesByCapability(routes, func(route *channelmodel.LLMRoute) bool {
+			if !isOfficialRoute(route) && llmModel != nil && !llmModel.Responses {
+				return false
+			}
+			return routeSupportsOpenAIResponses(route, modelName)
 		})
 	case modelCategoryAnthropicMessages:
 		return filterRoutesByCapability(routes, func(route *channelmodel.LLMRoute) bool {
-			return routeSupportsAnthropicMessages(route)
+			return routeSupportsAnthropicMessages(route, modelName)
+		})
+	case modelCategoryGemini:
+		return filterRoutesByCapability(routes, func(route *channelmodel.LLMRoute) bool {
+			return routeSupportsGeminiGenerateContent(route, modelName)
 		})
 	default:
 		return routes
@@ -323,9 +382,20 @@ func filterRoutesByCapability(routes []*channelmodel.LLMRoute, supports func(*ch
 	return filtered
 }
 
-func routeSupportsOpenAIResponses(route *channelmodel.LLMRoute) bool {
+func routeSupportsOpenAIResponses(route *channelmodel.LLMRoute, modelName ...string) bool {
 	if route == nil {
 		return false
+	}
+	if supported, declared := routeProtocolDeclaration(route, firstModelName(modelName), protocolOpenAIResponses); declared {
+		return supported
+	}
+	// Validated provider gaps override the provider-level optimistic default;
+	// an explicit per-model declaration above stays authoritative.
+	if knownProviderModelProtocolUnsupported(route.ChannelProvider, firstModelName(modelName), protocolOpenAIResponses) {
+		return false
+	}
+	if route.NativeProtocols.OpenAIResponses.Enabled {
+		return true
 	}
 	capability := channelprovider.OpenAIResponsesCapability(route.ChannelProvider)
 	if !capability.Supported {
@@ -337,9 +407,18 @@ func routeSupportsOpenAIResponses(route *channelmodel.LLMRoute) bool {
 	return true
 }
 
-func routeSupportsAnthropicMessages(route *channelmodel.LLMRoute) bool {
+func routeSupportsAnthropicMessages(route *channelmodel.LLMRoute, modelName ...string) bool {
 	if route == nil {
 		return false
+	}
+	if supported, declared := routeProtocolDeclaration(route, firstModelName(modelName), protocolAnthropicMessages); declared {
+		return supported
+	}
+	if knownProviderModelProtocolUnsupported(route.ChannelProvider, firstModelName(modelName), protocolAnthropicMessages) {
+		return false
+	}
+	if route.NativeProtocols.AnthropicMessages.Enabled {
+		return true
 	}
 	capability := channelprovider.AnthropicMessagesCapability(route.ChannelProvider)
 	if !capability.Supported {
@@ -349,6 +428,59 @@ func routeSupportsAnthropicMessages(route *channelmodel.LLMRoute) bool {
 		return route.NativeProtocols.AnthropicMessages.Enabled
 	}
 	return true
+}
+
+func routeSupportsGeminiGenerateContent(route *channelmodel.LLMRoute, modelName ...string) bool {
+	if route == nil {
+		return false
+	}
+	if supported, declared := routeProtocolDeclaration(route, firstModelName(modelName), protocolGeminiGenerateContent); declared {
+		return supported
+	}
+	// Gemini is a new public protocol for the platform lane. Do not advertise
+	// or route it until Console has supplied an explicit per-model capability;
+	// this keeps a pre-first rolling deployment safe against an older Console.
+	if isOfficialRoute(route) {
+		return false
+	}
+	if route.NativeProtocols.GeminiGenerateContent.Enabled {
+		return true
+	}
+	capability := channelprovider.GeminiGenerateContentCapability(route.ChannelProvider)
+	if !capability.Supported {
+		return false
+	}
+	if capability.RequiresExplicitConfig {
+		return route.NativeProtocols.GeminiGenerateContent.Enabled
+	}
+	return true
+}
+
+func firstModelName(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
+}
+
+func routeProtocolDeclaration(route *channelmodel.LLMRoute, model, protocol string) (bool, bool) {
+	model = normalizeRequestedModelName(model)
+	var protocols []string
+	var ok bool
+	if isOfficialRoute(route) {
+		protocols, ok = route.OfficialModelProtocols[model]
+	} else {
+		protocols, ok = route.NativeProtocols.ModelProtocols[model]
+	}
+	if !ok {
+		return false, false
+	}
+	for _, candidate := range protocols {
+		if strings.EqualFold(strings.TrimSpace(candidate), protocol) {
+			return true, true
+		}
+	}
+	return false, true
 }
 
 func (r *ChannelRouter) resolveSelectionModel(ctx context.Context, organizationID uuid.UUID, providerHint string, modelName string) (*llmmodel.LLMModel, *llmmodel.CustomModel, error) {
@@ -421,6 +553,11 @@ func llmModelFromPrivateModel(customModel *llmmodel.CustomModel) *llmmodel.LLMMo
 		MaxOutputTokens:   customModel.MaxOutputTokens,
 		InputPrice:        customModel.InputPrice,
 		OutputPrice:       customModel.OutputPrice,
+		CostCacheRead:     customModel.CostCacheRead,
+		CostCacheWrite:    customModel.CostCacheWrite,
+		CostCacheWrite5m:  customModel.CostCacheWrite5m,
+		CostCacheWrite1h:  customModel.CostCacheWrite1h,
+		Pricing:           append([]byte(nil), customModel.Pricing...),
 		IsActive:          customModel.IsActive,
 	}
 }
@@ -449,7 +586,7 @@ func (r *ChannelRouter) queryActiveModel(ctx context.Context, provider, modelNam
 			return nil, gorm.ErrRecordNotFound
 		}
 		if len(providers) > 1 {
-			return nil, fmt.Errorf("ambiguous active catalog model %q across providers; provider hint is required", modelName)
+			return nil, fmt.Errorf("%w %q across providers", errAmbiguousActiveCatalogModel, modelName)
 		}
 		provider = providers[0]
 	}
@@ -460,6 +597,26 @@ func (r *ChannelRouter) queryActiveModel(ctx context.Context, provider, modelNam
 		return nil, err
 	}
 	return &m, nil
+}
+
+func (r *ChannelRouter) resolveCatalogModelForRoutes(ctx context.Context, routes []*channelmodel.LLMRoute, modelName string) (*llmmodel.LLMModel, error) {
+	var models []llmmodel.LLMModel
+	if err := r.activeModelQuery(ctx, "", modelName).
+		Order("llm_models.provider ASC").
+		Find(&models).Error; err != nil {
+		return nil, err
+	}
+	for _, route := range routes {
+		for i := range models {
+			// Same-vendor suppliers are interchangeable here: the route
+			// advertises an adapter/model pair while the catalog row may be
+			// keyed by the commercial supplier of the same logical vendor.
+			if route.SupportsPlatformModel(models[i].Provider, modelName) {
+				return &models[i], nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("%w: logical model %q has no provider available on an enabled route", llmerrors.DomainErrNoProviderAvailable, modelName)
 }
 
 func (r *ChannelRouter) activeModelQuery(ctx context.Context, provider, modelName string) *gorm.DB {
@@ -554,17 +711,73 @@ func (r *ChannelRouter) filterCandidateRoutes(
 	isPassthroughMode bool,
 ) ([]*channelmodel.LLMRoute, error) {
 	validRoutes := r.filterRoutesForSelection(routes, modelName, modelProvider, isPrivateCustomModel, isPassthroughMode)
+	if isPassthroughMode && len(validRoutes) == 0 && !anyRouteDeclaresModel(routes, modelName) {
+		// Passthrough means the model is in neither the catalog nor the global
+		// registry. When no enabled route names it either (a "*" route would),
+		// nothing in this organization knows the name: that is an unknown model,
+		// not an unavailable provider, and retrying cannot help. A route that
+		// names the model but was rejected for another reason keeps the
+		// provider-unavailable answer below.
+		return nil, llmerrors.NewModelNotFoundErrorWithName(modelName)
+	}
 	modelUseCase, _ := ctx.Value(shared.ContextKeyModelUseCase).(string)
 	validRoutes = filterRoutesForModelScene(validRoutes, modelName, llmModel, modelUseCase, isPrivateCustomModel)
 	modelCategory, _ := ctx.Value(shared.ContextKeyModelCategory).(string)
+	modelOperation, _ := ctx.Value(shared.ContextKeyModelOperation).(string)
+	validRoutes = filterRoutesForOperation(validRoutes, modelName, modelOperation)
 	validRoutes, err := filterRoutesForNativeProtocolOrError(validRoutes, llmModel, modelCategory)
 	if err != nil {
 		return nil, err
 	}
 	if len(validRoutes) == 0 {
-		return nil, llmerrors.NewModelNotFoundErrorWithName(modelName)
+		// The model exists but no enabled route can serve it: no provider is
+		// configured for it, the same outcome Console publishes as
+		// llm.provider.none_available. ErrProviderUnavailable is kept for a
+		// provider that is configured but failing.
+		return nil, fmt.Errorf("%w: no routable channel found for model %s", ErrNoProviderAvailable, modelName)
 	}
 	return validRoutes, nil
+}
+
+func anyRouteDeclaresModel(routes []*channelmodel.LLMRoute, modelName string) bool {
+	for _, route := range routes {
+		if route != nil && route.DeclaresModel(modelName) {
+			return true
+		}
+	}
+	return false
+}
+
+// filterRoutesForOperation enforces channel capability boundaries. Missing
+// metadata is intentionally treated as legacy-compatible so existing routes
+// continue to work until their channel capabilities are edited.
+func filterRoutesForOperation(routes []*channelmodel.LLMRoute, modelName, operation string) []*channelmodel.LLMRoute {
+	operation = strings.TrimSpace(operation)
+	if operation == "" {
+		return routes
+	}
+	filtered := make([]*channelmodel.LLMRoute, 0, len(routes))
+	for _, route := range routes {
+		if route == nil {
+			continue
+		}
+		operations, declared := route.ModelOperations[modelName]
+		if !declared {
+			// Some routes use a wildcard model declaration.
+			operations, declared = route.ModelOperations["*"]
+		}
+		if !declared || len(operations) == 0 {
+			filtered = append(filtered, route)
+			continue
+		}
+		for _, candidate := range operations {
+			if strings.EqualFold(strings.TrimSpace(candidate), operation) {
+				filtered = append(filtered, route)
+				break
+			}
+		}
+	}
+	return filtered
 }
 
 func (r *ChannelRouter) prepareCandidateRoutes(
@@ -842,9 +1055,18 @@ func (r *ChannelRouter) buildChannelSelection(
 
 	isOfficial := route.IsOfficial || route.Type == shared.RouteTypeZGICloud
 	if llmModel != nil {
+		// Keep the selected supplier model identity: billing and price lookup
+		// must follow the supplier that owns the configured price. Official
+		// routes accept it when the adapter/model pair they advertise belongs
+		// to the same logical vendor, so one supplier can front several
+		// vendors' models without a per-supplier route change.
 		modelProvider = llmModel.Provider
 	}
-	if !route.SupportsModelForProvider(modelProvider, targetModelName) {
+	supportsModel := route.SupportsModelForProvider(modelProvider, targetModelName)
+	if isOfficial {
+		supportsModel = route.SupportsPlatformModel(modelProvider, targetModelName)
+	}
+	if !supportsModel {
 		return nil, fmt.Errorf("model %s not supported by route %s (supported: %v)", targetModelName, route.ID, models)
 	}
 
@@ -860,6 +1082,7 @@ func (r *ChannelRouter) buildChannelSelection(
 		ModelName:                   targetModelName,
 		Priority:                    route.Priority,
 		Weight:                      route.Weight,
+		AutoBan:                     route.AutoBan,
 		BillingLane:                 billingLane,
 		UseSystemProvider:           usageBillingLaneUsesSystemProvider(billingLane),
 		IsOfficial:                  isOfficial,
@@ -969,6 +1192,8 @@ func applyNativeProtocolBaseURL(selection *ChannelSelection, modelCategory strin
 		endpoint = selection.NativeProtocols.OpenAIResponses
 	case modelCategoryAnthropicMessages:
 		endpoint = selection.NativeProtocols.AnthropicMessages
+	case modelCategoryGemini:
+		endpoint = selection.NativeProtocols.GeminiGenerateContent
 	default:
 		return nil
 	}
@@ -1055,12 +1280,14 @@ func (cs *ChannelSelection) ConvertToProviderSelectionWithCache(ctx context.Cont
 			HeaderOverride:              cs.HeaderOverride,
 			Priority:                    cs.Priority,
 			Weight:                      cs.Weight,
+			AutoBan:                     cs.AutoBan,
 			CredentialID:                cs.CredentialID,
 			CredentialGeneration:        cs.CredentialGeneration,
 			UpstreamWouldGuard:          cs.UpstreamWouldGuard,
 			UpstreamHalfOpen:            cs.UpstreamHalfOpen,
 			UpstreamProbe:               cs.UpstreamProbe,
 			UpstreamProbeRequiresBackup: cs.UpstreamProbeRequiresBackup,
+			RoutingStrategy:             cs.RoutingStrategy,
 		}, nil
 	}
 
@@ -1104,7 +1331,7 @@ func (cs *ChannelSelection) ConvertToProviderSelectionWithCache(ctx context.Cont
 		return nil, fmt.Errorf("provider %s not found or inactive", providerName)
 	}
 
-	return &ProviderSelection{
+	selection := &ProviderSelection{
 		OrganizationID:              cs.OrganizationID,
 		Provider:                    *provider,
 		Model:                       modelForSelection(cs),
@@ -1122,13 +1349,60 @@ func (cs *ChannelSelection) ConvertToProviderSelectionWithCache(ctx context.Cont
 		HeaderOverride:              cs.HeaderOverride,
 		Priority:                    cs.Priority,
 		Weight:                      cs.Weight,
+		AutoBan:                     cs.AutoBan,
 		CredentialID:                cs.CredentialID,
 		CredentialGeneration:        cs.CredentialGeneration,
 		UpstreamWouldGuard:          cs.UpstreamWouldGuard,
 		UpstreamHalfOpen:            cs.UpstreamHalfOpen,
 		UpstreamProbe:               cs.UpstreamProbe,
 		UpstreamProbeRequiresBackup: cs.UpstreamProbeRequiresBackup,
-	}, nil
+		RoutingStrategy:             cs.RoutingStrategy,
+	}
+	if err := hydratePlatformModelIdentity(ctx, db, selection); err != nil {
+		return nil, err
+	}
+	return selection, nil
+}
+
+func hydratePlatformModelIdentity(ctx context.Context, db *gorm.DB, selection *ProviderSelection) error {
+	if selection == nil || !selection.UseSystemProvider || db == nil {
+		return nil
+	}
+	vendor := strings.TrimSpace(catalogvendor.Lookup(selection.Model.Provider, selection.Model.Model))
+	if vendor == "" {
+		// The catalog vendor projection is process-local and may not have been
+		// hydrated yet after a Pre restart. Official model identity still has a
+		// stable provider/model pair, so use the selected provider as the
+		// fallback owner and resolve the catalog row directly.
+		vendor = strings.TrimSpace(selection.Model.Provider)
+	}
+	if vendor == "" {
+		vendor = strings.TrimSpace(selection.Model.Vendor)
+	}
+	if vendor == "" {
+		return nil
+	}
+
+	var provider providermodel.LLMProvider
+	if err := db.WithContext(ctx).Unscoped().Where("provider = ?", vendor).Take(&provider).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			logger.WarnContext(ctx, "catalog model vendor provider identity is unavailable; using supplier identity", zap.String("vendor", vendor), zap.String("model", selection.Model.Model))
+			return nil
+		}
+		return fmt.Errorf("resolve catalog model vendor provider %q: %w", vendor, err)
+	}
+	var model llmmodel.LLMModel
+	if err := db.WithContext(ctx).Unscoped().Where("provider = ? AND name = ?", vendor, selection.Model.Model).Take(&model).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			logger.WarnContext(ctx, "catalog model vendor identity is unavailable; using supplier identity", zap.String("vendor", vendor), zap.String("model", selection.Model.Model))
+			return nil
+		}
+		return fmt.Errorf("resolve catalog model vendor model %q/%q: %w", vendor, selection.Model.Model, err)
+	}
+	selection.ModelVendor = vendor
+	selection.ModelVendorProviderID = provider.ID
+	selection.ModelVendorModelID = model.ID
+	return nil
 }
 
 func pricingModelSourceFromChannelModelSource(source channelModelSource) PricingModelSource {

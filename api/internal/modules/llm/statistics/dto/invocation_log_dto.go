@@ -6,6 +6,7 @@ type InvocationLogRequest struct {
 	InvocationSource *string `form:"invocation_source" binding:"omitempty,oneof=api product unknown"`
 	AppType          *string `form:"app_type" binding:"omitempty,max=50"`
 	ModelName        *string `form:"model_name" binding:"omitempty,max=100"`
+	AttemptID        *string `form:"attempt_id" binding:"omitempty,max=100"`
 	CursorTime       *string `form:"cursor_time"`
 	CursorID         *string `form:"cursor_id" binding:"omitempty,max=100"`
 	Limit            int     `form:"limit" binding:"omitempty,min=1,max=100"`
@@ -24,30 +25,33 @@ type InvocationLogSummary struct {
 }
 
 type InvocationLogItem struct {
-	InvocationID     string                    `json:"invocation_id"`
-	InvocationSource string                    `json:"invocation_source"`
-	AppID            *string                   `json:"app_id,omitempty"`
-	AppType          string                    `json:"app_type"`
-	ModelName        string                    `json:"model_name"`
-	ProviderName     string                    `json:"provider_name"`
-	ChannelName      string                    `json:"channel_name"`
-	Status           string                    `json:"status"`
-	AttemptCount     int64                     `json:"attempt_count"`
-	PromptTokens     int64                     `json:"prompt_tokens"`
-	CacheReadTokens  int64                     `json:"cache_read_tokens"`
-	CacheWriteTokens int64                     `json:"cache_write_tokens"`
-	CompletionTokens int64                     `json:"completion_tokens"`
-	TotalTokens      int64                     `json:"total_tokens"`
-	TotalPoints      int64                     `json:"total_points"`
-	TotalCostUSD     *string                   `json:"total_cost_usd,omitempty"`
-	TotalCostCNY     *string                   `json:"total_cost_cny,omitempty"`
-	PricingDetails   *InvocationPricingDetails `json:"pricing_details,omitempty"`
-	DurationMS       int64                     `json:"duration_ms"`
-	StartedAt        int64                     `json:"started_at"`
-	SettledAt        int64                     `json:"settled_at"`
-	ErrorCode        *string                   `json:"error_code,omitempty"`
-	ContentAvailable bool                      `json:"content_available"`
-	ContentExpiresAt *int64                    `json:"content_expires_at,omitempty"`
+	InvocationID      string                    `json:"invocation_id"`
+	InvocationSource  string                    `json:"invocation_source"`
+	AppID             *string                   `json:"app_id,omitempty"`
+	AppType           string                    `json:"app_type"`
+	ModelName         string                    `json:"model_name"`
+	ProviderName      string                    `json:"provider_name"`
+	ChannelName       string                    `json:"channel_name"`
+	SupplierName      string                    `json:"supplier_name,omitempty"`
+	ActualChannelName string                    `json:"actual_channel_name,omitempty"`
+	SettlementID      string                    `json:"settlement_id,omitempty"`
+	Status            string                    `json:"status"`
+	AttemptCount      int64                     `json:"attempt_count"`
+	PromptTokens      int64                     `json:"prompt_tokens"`
+	CacheReadTokens   int64                     `json:"cache_read_tokens"`
+	CacheWriteTokens  int64                     `json:"cache_write_tokens"`
+	CompletionTokens  int64                     `json:"completion_tokens"`
+	TotalTokens       int64                     `json:"total_tokens"`
+	TotalPoints       int64                     `json:"total_points"`
+	TotalCostUSD      *string                   `json:"total_cost_usd,omitempty"`
+	TotalCostCNY      *string                   `json:"total_cost_cny,omitempty"`
+	PricingDetails    *InvocationPricingDetails `json:"pricing_details,omitempty"`
+	DurationMS        int64                     `json:"duration_ms"`
+	StartedAt         int64                     `json:"started_at"`
+	SettledAt         int64                     `json:"settled_at"`
+	ErrorCode         *string                   `json:"error_code,omitempty"`
+	ContentAvailable  bool                      `json:"content_available"`
+	ContentExpiresAt  *int64                    `json:"content_expires_at,omitempty"`
 }
 
 type InvocationPricingDetails struct {
@@ -68,6 +72,11 @@ type InvocationPricingDetails struct {
 	CacheReadPriceSource          string  `json:"cache_read_price_source,omitempty"`
 	CacheWritePriceSource         string  `json:"cache_write_price_source,omitempty"`
 	OutputPriceSource             string  `json:"output_price_source,omitempty"`
+
+	// Metered (non-token) operations carry no per-token prices, so the UI must
+	// not render a token formula for them.
+	MeteredOperation string `json:"metered_operation,omitempty"`
+	MeteredUnit      string `json:"metered_unit,omitempty"`
 }
 
 type InvocationLogCursor struct {
