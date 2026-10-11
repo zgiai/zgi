@@ -60,6 +60,8 @@ const CONSOLE_MODULES: ModuleName[] = [
   'connectors',
   'music',
   'digitalHumans',
+  // The ZGI Market tools section of the agent and digital human editors.
+  'market',
 ];
 
 const DASHBOARD_MODULES: ModuleName[] = [

@@ -128,6 +128,10 @@ class ZgiMarketService extends BaseService {
     return response.data;
   }
 
+  async deleteConnection(id: number): Promise<void> {
+    await this.request('delete', `/connections/${id}`);
+  }
+
   /** Forwards the vendor's redirect to the market and returns the page to open next. */
   async completeOAuth(query: string): Promise<string> {
     const response = await this.request<MarketEnvelope<{ redirect: string }>>(

@@ -94,7 +94,7 @@ func (s *service) overlayMarketTools(ctx context.Context, prepared *PreparedChat
 		return resolved, nil
 	}
 	result := cloneResolvedSkills(resolved)
-	result.Skills = append(result.Skills, marketToolsSkillDocument(prepared.Caller, found))
+	result.Skills = append(result.Skills, MarketToolsSkillDocument(prepared.Caller, found))
 	parts.MarketSkillIDs = []string{skills.SkillZGIMarketTools}
 	parts.SkillIDs = mergeNormalizedSkillIDs(parts.SkillIDs, parts.MarketSkillIDs)
 	parts.ToolSkillIDs = mergeNormalizedSkillIDs(parts.ToolSkillIDs, parts.MarketSkillIDs)
@@ -102,9 +102,9 @@ func (s *service) overlayMarketTools(ctx context.Context, prepared *PreparedChat
 	return result, nil
 }
 
-// marketToolsSkillDocument builds the market Skill. Tool names stay the vendor's unless two bound
+// MarketToolsSkillDocument builds the market Skill. Tool names stay the vendor's unless two bound
 // listings share one; the provider identity always names the listing.
-func marketToolsSkillDocument(caller Caller, found []MarketTool) skills.SkillDocument {
+func MarketToolsSkillDocument(caller Caller, found []MarketTool) skills.SkillDocument {
 	supportedCallers := []string{skills.SkillCallerAgent}
 	if normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerDigitalHuman {
 		supportedCallers = []string{skills.SkillCallerDigitalHuman}

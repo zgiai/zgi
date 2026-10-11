@@ -50,6 +50,12 @@ export function ZgiMarketRequiredConnectors({ kind, slug, connectors }: ZgiMarke
     try {
       const returnUrl = `${window.location.origin}/dashboard/market/catalog/${kind}/${slug}?connected=1`;
       const name = marketText(connector.title, locale) || connector.slug;
+      // An authorization that was started and never finished keeps the name; it is replaced.
+      for (const abandoned of connections.data ?? []) {
+        if (abandoned.connector_slug === connector.slug && abandoned.status === 'pending') {
+          await zgiMarketService.deleteConnection(abandoned.id);
+        }
+      }
       const started = await zgiMarketService.connect(connector.slug, name, returnUrl);
       if (!started.authorize_url) {
         await connections.refetch();
@@ -86,7 +92,12 @@ export function ZgiMarketRequiredConnectors({ kind, slug, connectors }: ZgiMarke
                   {t('market.catalog.connectors.connected')}
                 </Badge>
               ) : connector.auth_type === 'oauth2' || connector.auth_type === 'none' ? (
-                <Button size="sm" disabled={pending !== null} onClick={() => void connect(connector)}>
+                // Until the connections are known the organization may already be connected.
+                <Button
+                  size="sm"
+                  disabled={pending !== null || !connections.isSuccess}
+                  onClick={() => void connect(connector)}
+                >
                   {pending === connector.slug
                     ? t('market.catalog.connectors.connecting')
                     : t('market.catalog.connectors.connect')}

@@ -3,6 +3,7 @@ package zgimarket
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -26,6 +27,11 @@ func (t *Tools) MarketToolProvider(_ context.Context, organizationID, name strin
 	return &marketProvider{tools: t, organizationID: organization, name: name}, nil
 }
 
+// ToolNamePrefix is what the runtime puts before a tool name that two bound listings share.
+func ToolNamePrefix(slug string) string {
+	return strings.ReplaceAll(slug, "-", "_") + "__"
+}
+
 type marketProvider struct {
 	tools          *Tools
 	organizationID uuid.UUID
@@ -44,6 +50,10 @@ func (*marketProvider) GetProviderType() tools.ToolProviderType { return tools.T
 // GetTool returns the tool without asking the gateway: the gateway refuses a tool the listing
 // does not have, and the runtime only offers the tools the gateway listed.
 func (p *marketProvider) GetTool(name string) (tools.Tool, error) {
+	// The runtime tells two bound listings with the same tool name apart by a listing prefix.
+	if _, _, slug, ok := parseProviderName(p.name); ok {
+		name = strings.TrimPrefix(name, ToolNamePrefix(slug))
+	}
 	if !toolNamePattern.MatchString(name) {
 		return nil, fmt.Errorf("market tool %q is not valid", name)
 	}

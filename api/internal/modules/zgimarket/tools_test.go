@@ -249,6 +249,16 @@ func TestBindingAnAgentCreatesAMarketBindingAndSealsItsCredential(t *testing.T) 
 	assert.Equal(t, "lookup:go", result.Messages[0].Text)
 	assert.Equal(t, []string{"lookup"}, fixture.gateway.called)
 
+	// A name the runtime prefixed with the listing, because two listings share it, reaches the
+	// vendor's tool.
+	result, err = engine.Invoke(context.Background(), tools.InvokeRequest{
+		ProviderType: tools.ToolProviderTypeMarket, ProviderID: listed[0].ProviderID, ToolName: ToolNamePrefix("wiki") + "lookup",
+		TenantID: fixture.org.String(), Parameters: map[string]interface{}{"topic": "rust"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "lookup:rust", result.Messages[0].Text)
+	fixture.gateway.called = fixture.gateway.called[:1]
+
 	// Another organization cannot reach the subject's tools by naming its provider.
 	_, err = engine.Invoke(context.Background(), tools.InvokeRequest{
 		ProviderType: tools.ToolProviderTypeMarket, ProviderID: listed[0].ProviderID, ToolName: "lookup",
