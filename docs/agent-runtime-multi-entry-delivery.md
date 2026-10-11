@@ -1,0 +1,935 @@
+# Multi-entry Linux execution delivery
+
+## Scope and rollout
+
+The P0–P5 baseline extends the existing conversation-owned Linux environment to authenticated
+Agent WebApp/API and DigitalHuman interactive conversations. Anonymous chat,
+background tasks, channels and Runtime Workspace credentials do not gain Linux or
+platform CLI permissions in that baseline. The background extension below adds
+DigitalHuman channel/task Linux execution separately; its acceptance status must
+not be inferred from P5. Application editors continue to configure only
+`execution_runtime.enabled`.
+
+Published Agent and DigitalHuman WebApps show tool execution status and duration
+without expandable arguments, results or technical diagnostics. Console debugging
+retains those detail panels. Approval context and confirmation/rejection actions,
+process narration and authenticated artifact cards remain available.
+
+Every stage is gated by the preceding stage's tests. No external entry is enabled
+until authenticated file access and approval continuation are complete. Retained
+files and cleanup must remain available during an admission rollback.
+
+| Stage | Deliverable | Status |
+| --- | --- | --- |
+| P0 | Versioned identity, Worker negotiation, additive persistence, compatibility | Complete; unit, PostgreSQL, race and vet gates passed |
+| P1 | Shared execution factory, live authorization, end-user admission | Complete; shared factory, regression, race and vet gates passed |
+| P2 | Protected file ownership and authenticated preview/download | Complete; automated gates and scoped dual-backend delivery acceptance passed |
+| P3 | Published Agent and DigitalHuman interactive script integration | Complete; published entry adapters and scoped real execution accepted |
+| P4 | Published-resource CLI and frozen, idempotent approval continuation | Complete; automated gates and real approval/billing boundaries accepted |
+| P5 | Real local/E2B entry acceptance and rollback verification | Complete for the scoped local candidates; real second-login isolation, account revocation, protected browser delivery and rollback gates passed; broader rollout remains closed |
+
+## Identity contract
+
+The authenticated internal Worker API advertises `execution_identity_version: 1`
+on `/v1/agent-runtime/release`. An API must negotiate that exact version before
+sending identity-scoped requests, including queries and file transfers. Missing or
+unsupported capabilities must not fall back to the historical console account.
+
+The internal `X-ZGI-Execution-Identity` header carries a validated JSON object:
+
+| Field | Meaning |
+| --- | --- |
+| `version` | Identity contract version, currently `1` |
+| `workspace_id` | Resource workspace, not the credential's personal workspace |
+| `application_type` | `agent` or `digital_human` |
+| `application_id` | Actual application ID; DigitalHuman never uses an Agent ID |
+| `entry` | `console`, `webapp` or `external-api` |
+| `subject_kind` | `account` for login entries; `api_end_user` for API entries |
+| `conversation_id` | Conversation that exclusively owns the environment |
+| `publication_ref` | Frozen publication/snapshot reference supplied by the API |
+
+Organization and stable end-user ID remain in the existing internal scope headers.
+These headers require the dedicated Worker credential; they are not public API
+authentication and must never be copied from client-controlled execution fields.
+API end-user IDs use the existing trusted application-backend identity contract;
+the identifier is not independent proof of the person's identity. Billing and
+resource authorization remain separate from execution ownership.
+
+Bindings persist immutable identity JSON. Legacy rows retain JSON `null`, their
+existing account ownership, idempotency hashes, workspace names and checkpoint
+keys. New identity scopes cannot adopt legacy bindings. Binding, idempotency,
+Job, output and file access all require the complete matching scope.
+
+Migration `2026100803` adds the identity and a capacity index. It does not rename
+existing resources, infer historical external users, delete data or require a
+destructive rollback. Backup/recovery preserves the explicit identity, including
+DigitalHuman bindings with no Agent ID.
+
+## Validation record
+
+The P0 validation uses Go 1.26.2 in Linux containers. Unit coverage includes
+missing/invalid identities, unsupported versions, anonymous/background rejection,
+application/entry/user/conversation isolation, legacy hash compatibility and CLI
+grant identity pinning. PostgreSQL tests cover migration idempotency, immutable
+identity persistence and checkpoint recovery. Real backend and UI acceptance is
+reserved for P5; these tests do not claim to replace it.
+
+P0 passed:
+
+- Sandbox `agentexecution`, `storage`, `checkpointbackup`: tests with race and vet.
+- API `agentexecution`, `runtimeplatform`, `agents`: tests and vet; race for the
+  two identity/grant capability packages.
+- Storage tests used a dedicated ephemeral PostgreSQL 16 instance with no
+  published host port. Existing application databases were not migrated.
+
+The initial shared-database run hit its connection limit. Validation was repeated
+successfully against the isolated database rather than changing live limits.
+
+## End-user admission
+
+Identity-scoped applications default to two active environments and one queued
+or running Job per application/end user. Operator settings are
+`ZGI_AGENT_RUNTIME_MAX_BINDINGS_PER_END_USER` and
+`ZGI_AGENT_RUNTIME_MAX_JOBS_PER_END_USER`; both require positive integers.
+Existing backend, organization, binding and timeout limits continue to apply.
+
+Admission is a PostgreSQL transaction under the existing shared advisory lock,
+not an in-process counter. Counts span backends, entries and publications.
+Suspended/deleted bindings release compute capacity; resume reserves it again.
+Queued Jobs consume capacity immediately, terminal Jobs release it, and
+idempotent retries do not consume a second slot. The historical console contract
+is unchanged until migrated through the shared factory.
+
+Concurrent two-store PostgreSQL tests verify the 2/1 defaults, cross-backend
+counting, independent users/applications, repeated creates, resume at capacity
+and terminal-Job capacity release. Storage, Worker and control-plane tests pass
+with race detection and vet.
+
+## Shared execution factory
+
+`capabilities/agentexecution/runtime` owns Shell, dependency preparation, file
+transfer, Skill placement and CLI relay. Application adapters supply verified
+identity, live authorization, publication and file persistence. The console Agent
+adapter retains the historical binding and artifact contract. DigitalHuman scope
+does not manufacture an Agent ID, and CLI queries, file transfers, cancellation
+and background reclamation preserve the full execution identity.
+
+`ZGI_AGENT_RUNTIME_ENTRY_ALLOWLIST_JSON` is an operator-only mapping from
+`application:entry` to organization UUIDs, for example
+`{"agent:webapp":["00000000-0000-4000-8000-000000000001"]}`. An absent setting
+allows only the existing console Agent path; an explicit empty object denies
+all entries. Wildcards and malformed mappings are rejected. This is an admission
+gate, not a substitute for application permissions or final-user authentication.
+
+New identity-scoped callers require an explicitly supplied protected artifact
+persister. Without it the factory returns no tools; it never falls back to public
+signed ToolFile URLs. P2-P4 must finish before external adapters can be enabled.
+
+P1 validation includes shared factory and CLI identity tests, existing Agent and
+DigitalHuman tests, race checks and vet. Tagged real-backend test files compile
+after relocation. Delivery scripts now run those tests from the shared package;
+their script contract tests pass. These are not P5 real-backend acceptance.
+
+## Protected execution results
+
+New execution artifacts store immutable organization, resource workspace,
+application type/ID, entry, final-user kind/ID, conversation and message ownership.
+Migration `202610080900000000` adds nullable ToolFile columns and a protected-file
+index/immutability trigger. Historical files remain on their existing contract.
+The migration does not delete or rewrite historical rows and has no destructive
+down migration.
+
+Identity-scoped factories require a protected persister bound to the prepared
+message. File bytes are saved with ownership in the initial record, not made
+public and subsequently protected. CLI exports and `workspace_export_file` use
+the same persister. Both live and historical artifact events retain
+`access_mode: authenticated` and omit `url` and `download_url`.
+
+Authenticated file reads use the existing entry authentication and live
+application/conversation permission checks:
+
+| Entry | GET route |
+| --- | --- |
+| Console Agent | `/console/api/agents/{agent_id}/runtime/conversations/{conversation_id}/files/{file_id}` |
+| Agent WebApp | `/console/api/webapps/{web_app_id}/runtime/conversations/{conversation_id}/files/{file_id}` |
+| Agent API | `/api/v1/agents/conversations/{conversation_id}/files/{file_id}` |
+| Console DigitalHuman | `/console/api/digital-humans/{digital_human_id}/runtime/conversations/{conversation_id}/files/{file_id}` |
+| DigitalHuman WebApp | `/api/v1/digital-human-webapps/{web_app_id}/conversations/{conversation_id}/files/{file_id}` |
+| DigitalHuman API | `/api/v1/digital-humans/conversations/{conversation_id}/files/{file_id}` |
+
+API reads require the same existing final-user identity as conversation requests.
+They do not substitute the credential owner. Anonymous WebApps, tasks, channels
+and Runtime Workspace credentials cannot read these artifacts. The legacy public
+ToolFile route denies protected records even with a valid permanent or expiring
+signature. Unscoped ToolFile binary, stream and presigned URL readers also deny
+them. Successful reads return private, no-store bytes rather than a storage URL;
+preview and attachment/range requests use the same ownership check.
+
+File reads deliberately do not depend on compute admission or Profile readiness.
+Disabling Linux leaves authorized retained results downloadable; revoking current
+application or conversation access denies subsequent reads. Changing a published
+version does not erase ownership of historical results.
+
+The chat card obtains preview bytes through its authenticated transport and
+releases the temporary Blob URL when closed. Each download makes a new
+authenticated request. Protected HTML stays in the isolated preview rather than
+opening an application-origin Blob in a new tab. No package/provider credentials,
+host path or public URL is included in the card.
+
+Plain-text previews decode at most 1 MiB and render escaped text, not a navigated
+Blob iframe. UTF-8 and original line breaks are retained. Oversized text or a
+failed read shows a safe download fallback; closing or switching files cancels
+the read. This preview bound does not change upload or download limits. HTML
+continues to use its separate isolated renderer.
+
+P2 validation so far: protected-file ownership and signed-URL bypass tests,
+Agent/DigitalHuman read-route and cross-scope tests, live/history Skill event
+tests, real isolated PostgreSQL migration/idempotency/immutability tests with race
+detection, changed API package tests and vet, frontend transport/card tests,
+lint (existing warnings only), type-check and production build. Upload/staging
+ownership contracts now have additional unit, race and PostgreSQL validation as
+described below. New entry factory wiring and real UI/backend acceptance remain
+outstanding; new external execution adapters have not been enabled.
+
+The DigitalHuman API documentation contract and the protected-file documentation
+checks pass in both locales. The broader Agent documentation test currently
+fails on missing descriptions in the pre-existing `MemorySettings` schema (also
+present at the baseline); this unrelated contract has not been rewritten as
+part of the execution-file change.
+
+## Execution input ownership
+
+Identity-scoped execution requires a turn-scoped attachment reader as well as a
+protected artifact persister and live application authorization. The reader
+freezes only the prepared turn's admitted IDs, names and sizes. It rechecks file
+metadata and current authorization before reading bytes. Every Shell invocation
+also rechecks all admitted inputs before reaching the Worker, including when
+staging was cached. CLI input reads use that same reader, not the generic file
+service. Missing authorizers, missing ownership stores or mismatched scope fail
+closed. Revocation does not remove files already present in an environment; it
+prevents subsequent authorized execution/read requests from using them.
+
+New Agent WebApp/API uploads for a Linux-enabled published Agent are bound to
+organization, resource workspace, application, entry and stable final user before
+the upload ID is returned. Migration `202610081000000000` creates an additive
+ownership table and immutable trigger without rewriting historical uploads. A
+binding failure attempts to delete the newly uploaded file and returns no file
+ID. API credential IDs and billing accounts are not upload owners; credential
+rotation preserves the existing external-user derivation. Generic temporary-file
+metadata may contain a zero tenant or nil workspace, so immutable ownership is
+checked separately against the published resource workspace.
+
+Historical unbound Agent uploads are not automatically adopted into new execution
+entries: upload them again through the appropriate authenticated application when
+Linux is enabled. Explicitly attaching an authorized upload to another conversation
+of the same application/user remains possible; no environment inherits input
+files implicitly. Ordinary chat when Linux is disabled retains its previous
+upload contract. DigitalHuman uses its existing external-file binding and a live
+execution input authorizer rather than duplicating that domain's records. Its
+console, anonymous, task and channel upload rules are not broadened.
+
+Input validation passed for revoked/deleted files, mismatched metadata, arbitrary
+file IDs, cross-user/application/entry ownership, missing stores and authorizers,
+failed-upload cleanup, explicit API users and preserved billing identity. Real
+isolated PostgreSQL tests cover repeated migrations, immutable ownership and two
+concurrent claims producing exactly one owner. Changed backend packages passed
+tests with race detection and vet. These are contract tests, not P5 end-to-end
+acceptance. P3 must supply the protected reader from each verified entry adapter;
+P4 approval continuation remains required before external execution is opened.
+
+## DigitalHuman execution configuration
+
+DigitalHuman drafts accept the optional `execution_runtime: {"enabled": true}`
+application opt-in. Profile, policy, backend, network and Home Snapshot are not
+accepted in this object. Omitting it (or sending null on an update) leaves the
+draft unchanged; `{"enabled": false}` clears it. New versions without an opt-in
+remain disabled.
+
+Publication, the next draft, version restore and sealed execution snapshots copy
+the setting independently. Later draft edits cannot change a published or
+already resolved execution. Disabled settings are normalized to absence so old
+version and v1 execution-snapshot hashes remain unchanged. The additive migration
+`202610081100000000` leaves historical rows null and rejects unsupported JSON
+shapes. No runtime tool or new entry permission is granted by persisting this
+setting; entry adapters, operator approval and P4 remain separate gates.
+
+The frontend service contract and DigitalHuman editor expose this optional
+boolean. Version preview is read-only and renders a missing value as disabled.
+Operator deployment gates still determine whether execution is available.
+
+P3 configuration validation passed: DigitalHuman and migration package tests with
+race detection and vet; real isolated PostgreSQL migration idempotency, JSON
+constraints and model serializer/clear-and-reenable checks; frontend type-check
+and lint (73 existing warnings, no errors). No live application database was
+migrated. This is not an execution or dual-backend acceptance result.
+
+Operator Profile/Home approval resolution now lives in the shared execution
+capability. The Agent adapter preserves its existing public error code,
+configuration compatibility and diagnostics; new application adapters can use the
+same environment defaults without importing the Agent module. The shared resolver
+accepts only the application's enabled boolean, not client-selected environment
+settings. Existing Agent approval/publication tests and the shared runtime and
+DigitalHuman packages passed race detection and vet. This refactor does not enable
+new entries or grant DigitalHuman Shell access.
+
+The shared factory also validates identity-scoped requests against the prepared
+conversation and message: organization, runtime-data and resource workspaces,
+application, entry/WebApp, user, billing owner, message/conversation relationship
+and deletion state. Every invocation remains bound to its original message.
+Agent API execution uses the explicit external user without rewriting the billing
+account; DigitalHuman uses its separately verified interactive UserSubject. Runtime
+Workspace credentials are rejected even if an adapter supplies a plausible
+identity. Legacy console bindings keep their existing identity contract.
+
+Unit isolation tests cover both application types across all three planned
+interactive entries, missing/mismatched ownership, revoked/deleted conversation
+state, changed messages and separate resource/data workspaces. Runtime, Agent and
+DigitalHuman tests passed with race detection and vet. These checks defend the
+shared boundary; they do not authenticate an anonymous visitor or replace entry
+authentication. The verified published-entry adapters, DigitalHuman runtime
+injection and dedicated P4 approval routes are implemented below. P5 real
+local/E2B acceptance is still outstanding.
+
+## Entry readiness gate
+
+Identity-scoped factories now require an explicit server-supplied readiness
+callback, independently of the operator's organization/entry allowlist. A missing
+or negative callback produces no execution tools. Readiness is rechecked for
+every tool invocation, so withdrawing it denies calls before contacting the
+Worker. The legacy console factory does not change its identity contract.
+
+Readiness must only be wired when the entry's protected files and approval
+continuation are implemented. It is not a client field or an environment-variable
+override. Unit tests exercise missing/negative readiness and withdrawal across
+both application types and all three planned interactive entries. Runtime, Agent
+and DigitalHuman package tests passed with race detection and vet.
+
+## Published Agent execution adapters
+
+WebApp chat/regeneration configuration and API chat/continuation configuration
+attach the shared factory through a verified published-entry adapter. P4 supplies
+the server readiness callback for the implemented interactive entries; publishing
+`execution_runtime.enabled` alone does not grant admission. Ordinary
+authenticated and anonymous chat keeps working without an execution gateway.
+
+The adapter freezes application, organization, resource/data workspaces, verified
+final user, billing account and publication UUID as values rather than retaining
+request-owned identity pointers. WebApp execution requires a verified login;
+API execution requires the existing resolved external user and authenticated
+credential ID. Runtime Workspace credentials never acquire this factory.
+
+Every tool invocation rechecks current WebApp access or API credential
+status/expiry/application/workspace and the current API surface policy. It also
+rechecks the published Linux opt-in and operator approvals. A publication change
+fails the existing invocation instead of silently swapping its configuration;
+a new chat turn can select the new publication. Pending CLI approval calls seal
+their original publication and owner. The CLI relay additionally requires the
+operator platform-CLI switch and live authorization.
+
+Input files use the P2 application/end-user upload authorizer; result files use
+the protected, message-bound persister, never public signed URLs. Only operator
+defaults choose the backend/Profile/network/Home. Enabled Skill IDs come from the
+published configuration, and dependency preparation is offered only for approved
+compatibility Profiles, not standard package-install Profiles.
+
+Validation used Go 1.26.2 in Linux containers. Runtime, Agent and DigitalHuman
+package tests passed with race detection and vet. Adapter tests cover frozen
+identity/publication, cross-owner/workspace/entry rejection, explicit final users,
+missing/expired/revoked API credentials, live surface/opt-in revocation, failed
+authorization stores, protected tool wiring and readiness withdrawal. Handler
+contract tests verify that opt-in/allowlist alone cannot release WebApp/API chat
+or API continuation, and that anonymous chat remains available. The API liveness
+queries use isolated SQLite fixtures; no new schema or live database migration
+was introduced. This is not real Skill execution or P5 dual-backend/UI acceptance.
+
+The DigitalHuman injection described below completes the next backend adapter.
+Configuration UI and P4 published-resource CLI/frozen approval continuation are
+implemented below. P5 remains outstanding; no
+runtime deployment or remote push accompanies these commits.
+
+## DigitalHuman interactive execution adapter
+
+RuntimeService prepares the optional Linux factory only after the durable
+invocation, RunSpec and execution snapshot pass their existing integrity checks.
+Preparation failure records a safe failed-run message and stops before preparing
+chat. Existing DigitalHuman billing and model selection are unchanged.
+
+The adapter freezes organization, workspace, DigitalHuman, publication UUID,
+run, entry and explicit UserSubject as values. API runs intentionally have no
+persisted ActorID: their verified API-end-user UserSubject owns execution, not
+the API key or its owner. Console and logged-in WebApp require an account subject
+matching their authenticated principal; WebApp also pins its application ID.
+Prepared conversation/message/run ownership is checked again by the adapter and
+shared factory. Anonymous WebApp chat, scheduled tasks and channels receive no
+Linux tools. Legacy snapshots without the opt-in keep their old behavior.
+
+Every invocation rechecks the current published version and its Linux opt-in.
+WebApp/API surface withdrawal and API-key revocation/expiry deny execution;
+console additionally rechecks workspace run permission. A publication change
+fails the old invocation instead of silently selecting a new version. These
+checks do not increment API-key usage counters or rewrite billing identity.
+
+Enabled Skills come from the sealed binding snapshot. Inputs use the existing
+console ownership or external application/end-user upload authorizer, with live
+execution authorization repeated before staging. Artifacts use the protected
+message-bound persister. Operator approvals alone choose Profile, backend,
+network and Home; compatibility-only dependency preparation follows the shared
+factory contract. CLI relay and approval use the dedicated P4 routes below.
+
+Production wiring supplies EntryReady for console, logged-in WebApp and API
+interactive entries. Operator allowlists, application opt-in, verified identity
+and Worker negotiation remain independent gates. The deferred ToolFile manager lookup avoids
+depending on initialization order; an absent manager denies enabled preparation
+instead of falling back to publicly signed result files.
+
+Validation used Go 1.26.2 in Linux containers:
+
+- DigitalHuman, shared execution runtime and Agent package tests passed with
+  race detection; focused DigitalHuman route tests passed with race detection.
+- Vet passed for all four packages.
+- Tests cover all three interactive entries, first-turn conversation allocation,
+  immutable publication/subject values, cross-run/message/application/workspace
+  rejection, missing identity, anonymous/background exclusion, live readiness
+  withdrawal, unavailable dependencies and failure-before-chat ordering.
+- Isolated SQLite fixtures exercise real publication, surface and credential
+  liveness queries, including opt-in disablement, expired/revoked keys, disabled
+  applications and replaced publications. Production wiring tests prove that
+  operator configuration does not grant tools while readiness is unset.
+
+The preceding adapter validation was performed before P4 readiness was wired.
+It did not constitute real Skill or dual-backend acceptance.
+
+## P3/P4 interactive CLI closure
+
+DigitalHuman draft and version-preview UI exposes only the Linux enable switch;
+missing fields default to disabled. Agent WebApp/API and DigitalHuman console,
+logged-in WebApp and API use the same server-owned execution factory. Model and
+business-tool CLI calls reenter the current configured model, billing, task
+budget, loaded-Skill and live resource-binding boundaries. No personal connection
+discovery or alternate billing identity is introduced.
+
+`ZGI_AGENT_RUNTIME_PLATFORM_CLI_ENABLED` enables CLI only within already-admitted
+Linux entries. `ZGI_AGENT_RUNTIME_ENTRY_ALLOWLIST_JSON` remains default-closed for
+new entries. Application enablement, organization/Profile approvals, execution
+identity negotiation and live publication/surface authorization are all still
+required. Configuration alone is not a claim of backend acceptance.
+
+Dedicated `tool-governance/{correlation_id}/continue` routes are registered under
+the existing authenticated Agent and DigitalHuman conversation/message routes.
+Agent API uses the existing external-user header or `user` query contract;
+DigitalHuman API requires the existing `user` body field. WebApp uses verified
+login identity. Runtime Workspace, anonymous, task and channel entrypoints do
+not acquire these capabilities.
+
+Pending CLI approvals seal organization, resource workspace, application, entry,
+final user, conversation, message and publication into the frozen invocation
+hash. Confirmation checks these coordinates and current resource permissions
+before recording the decision and immediately before invoking the business tool.
+Publication replacement must never silently substitute a newer configuration.
+DigitalHuman continuation restores the sealed original published run; a
+rotated API credential is used for live authorization without rewriting that run
+or its final-user owner.
+
+At the initial P4 audit, the Agent published adapter still required the current
+publication to match the invocation. The P5 frozen-publication correction and
+real acceptance recorded below close that limitation; it was not counted as
+accepted by the original P4 automated gate.
+
+Confirmation executes only the frozen business invocation; rejection executes
+none, including after compute admission is disabled or the invocation expires.
+Neither decision reruns the original Shell or restores its revoked Job grant.
+CLI decisions cannot create reusable session grants, even if requested by the
+client. Completed decisions replay stored events instead of repeating business
+effects. Concurrent claims are transactionally exclusive; uncertain write
+results are reported, never automatically retried.
+
+CLI business tools producing raw or remote ToolFiles inherit the verified final
+user, application, entry and message owner. File, chart, diagram and generated
+image results use authenticated file metadata, not legacy signed links. Legacy
+unprotected outputs retain their prior URL contract. Protected files remain
+unreadable through the legacy signed reader even with a valid signature.
+
+Automated validation (Go 1.26.2 in Linux containers):
+
+- Targeted tests and race checks for shared runtime, chat service/loop,
+  governance, Skills, Agent, DigitalHuman, ToolFile, image assets, file/chart/
+  diagram/image generators and both route packages; targeted vet passed.
+- Six application/entry combinations cover frozen confirm-once/reject-zero,
+  no Shell replay, duplicate result replay, publication/owner mismatch, revoked
+  authorization and rejection without compute. Isolated PostgreSQL 16 tests
+  verify one successful continuation claim among twelve concurrent requests.
+- Actual HTTP handler/SSE tests and production route registration/authentication
+  checks supplement OpenAPI and transport contracts. Missing identities,
+  anonymous login and Runtime Workspace requests fail closed.
+- Frontend approval transports, protected files and DigitalHuman configuration
+  contracts passed. Both localized API guides match 26 operations and 58 SSE
+  event definitions. Type-check, lint and production build passed; lint has
+  existing warnings, no errors.
+
+No application database migration or remote deployment was performed for P4.
+P5 must still run real local gVisor and E2B tests for every new entry, with two
+final users, file download/content inspection, actual model usage, controlled
+business side effects and admission rollback. Mock and PostgreSQL results above
+do not replace that acceptance. Rollback disables new environment/CLI admission
+while retaining authenticated file reads, existing queries and cleanup; it does
+not delete files, reverse additive tables or replay pending writes.
+
+## P5 initial WebApp correction and focused acceptance
+
+The initial WebApp chat handler omitted execution-tool attachment even though
+continuation contexts attached the tools. Initial chat now reuses the same
+verified scope, caller, published configuration and authorization helper before
+preparing the turn. No anonymous or Runtime Workspace permissions were added.
+Actual handler tests cover enabled, application-disabled, server-disabled,
+anonymous, entry-denied and application-access-denied requests. The Agent package
+tests, targeted published-entry race checks and vet pass with Go 1.26.2.
+
+Real local gVisor and E2B acceptance verified initial WebApp Shell execution,
+stderr diagnostics, export, exact authenticated download bytes and a second-turn
+file modification in the same conversation. Cross-entry file access returns 404.
+Retained files remain downloadable after suspending compute; no active Jobs
+remain. Browser-submitted Shell execution and persisted file cards were checked.
+The embedded browser showed a blank TXT Blob preview and did not deliver a
+download automation event; those UI checks remain unresolved and are not counted
+as successful browser download acceptance. They do not invalidate the separately
+verified authenticated binary download responses.
+
+This is focused regression acceptance, not P5 completion. DigitalHuman, the full
+standard-Skill/two-user matrix, real CLI approvals and admission rollback still
+require real-backend acceptance. Raw evidence, credentials and screenshots stay
+outside Git in the ignored acceptance directory.
+
+The status-only WebApp presentation has rendering regression coverage for running,
+successful and failed Shell/export/legacy-script events, including retained
+console details. It is included in the Web delivery gate. The status-only build
+was deployed to the dedicated local gVisor and real E2B candidates with matching
+strict release manifests, preserving the API/Worker binaries, checkpoints and
+rollback containers. Browser-submitted success and deliberate exit-23 Jobs show
+non-expandable status/duration rows; neither WebApp mounts technical-detail
+controls, while existing console events still expose their detail panel.
+
+Both backends restored the prior conversation file, generated a 27-byte CSV and
+rendered its values in the protected preview. Authenticated download bytes match
+exactly on both backends, and cross-entry access returns 404. The Linux WebApp
+download button also produced a local file with the exact bytes. E2B preview and
+authenticated transport pass, but its browser download click has not produced an
+observed local file; that UI check remains open. The prior blank TXT preview also
+remains unresolved. A browser download-event timeout alone is not treated as
+proof of failure: the Linux file was independently verified on disk.
+
+Each deliberate failure executed once with exit code 23 and stderr present; no
+artifact was created by that negative test. Both owned backend environments were
+suspended after acceptance, with no queued/running Jobs; retained CSV downloads
+still pass. Four focused Web regression suites pass. This verifies the WebApp
+presentation change and its adjacent execution/file path, not the remaining P5
+DigitalHuman, two-user, CLI approval or admission-rollback matrix.
+
+## P5 focused approval lifecycle correction
+
+DigitalHuman platform CLI approvals now have a dedicated persisted
+`waiting_approval_origin=platform_cli`. Migration
+`202610090100000000_digital_human_platform_cli_approval` adds that internal field
+and extends the waiting constraint without changing existing Connector receipts.
+Only a persisted frozen invocation matching the original application, entry,
+publication, final user, conversation and message can enter this waiting state.
+Connector receipt-based approvals retain their existing continuation lifecycle.
+
+The current SSE connection ends at a waiting boundary; `run_end.status=waiting`
+is resumable, not a terminal result. Approval/rejection completes the original
+host run after the message completes. Repeated confirmation reuses its result
+without resubmitting Shell. Cancellation/failure clear waiting-only fields.
+Deploy the additive migration before the new API; do not remove the column or
+reinstate the old constraint while platform approvals remain pending.
+
+Focused real acceptance additionally verified:
+
+- DigitalHuman console, authenticated WebApp and API Shell execution, file
+  content and authenticated reads on local gVisor and E2B. Separate API users
+  generated separate files; cross-user, missing-user and cross-entry reads were
+  rejected.
+- Agent and DigitalHuman WebApp/API confirmation, rejection and repeated
+  decisions on both local gVisor and E2B: all sixteen combinations passed.
+  Confirmed samples produced one SVG each; rejected samples produced none.
+  Each retained one original Shell Job; authenticated SVG downloads were parsed.
+- The corrected E2B DigitalHuman API flow reached persisted waiting, closed the
+  SSE stream, then reached succeeded after confirmation. Duplicate confirmation
+  retained one SVG and one original Shell Job. Authenticated SVG bytes were
+  independently downloaded and parsed.
+- A real Agent CLI model call returned its result and recorded model usage in
+  the organization billing lane. Cross-Job CLI status access was denied.
+
+Go 1.26.2 changed-package tests/vet, focused race tests, isolated PostgreSQL
+constraint/migration tests and documentation contracts cover the correction.
+Local candidate deployment retains rollback containers. Test-only always-ask
+catalog fixtures are acceptance inputs, not changes to the shipped Skill catalog.
+
+The initial samples below are supplemented by the focused acceptance record.
+P5 remains open pending second-login isolation and browser file delivery.
+The E2B browser CSV preview renders correct values, but no browser download file
+has been observed in the latest check. Authenticated HTTP download success is
+recorded separately; it is not presented as browser-download completion.
+
+### Frozen publication authorization
+
+Agent and DigitalHuman approval continuation authorize the original immutable published
+version separately from current application access. Publishing a newer version
+does not by itself invalidate a pending sealed call. Current Linux opt-in,
+application/surface access and API credential validity are still checked on
+confirmation; disabling or revoking them denies execution. Ordinary new
+execution still requires the currently published version. Draft, missing,
+cross-application and cross-tenant versions cannot be continuation targets.
+
+## Latest focused acceptance: 2026-10-09
+
+Real local gVisor and E2B checks now cover:
+
+- Agent and DigitalHuman API/WebApp approval, rejection and duplicate decisions,
+  plus DigitalHuman console approvals. Confirmations create one SVG, rejections
+  create none, and continuations retain one original Shell Job.
+- Agent and DigitalHuman API/WebApp pending approvals surviving publication
+  replacement without adopting the new version. Current entry access revocation
+  denies confirmation; restored access permits the original decision without
+  replaying Shell. Agent published Linux disablement also denies confirmation.
+- Original PDF Skill script execution through all four external entry types.
+  Each uploaded a synthetic input, used the existing package without a new
+  manifest, checked its script hash inside Linux and authenticated-downloaded
+  the exact 52-byte validation output. Runtime preload is valid Skill loading;
+  an explicit `load_skill` call is not mandatory after successful preload.
+- CLI model calls returning actual output and producing successful usage bills
+  on all new external entries and DigitalHuman console. Billing follows the
+  configured application; execution identity does not replace billing ownership.
+- Same external-user identifier with another application's valid credential
+  cannot read the original application file. Own reads return 200; other-app
+  reads return 404. Separate API-user and cross-entry refusals also pass.
+- Closing total execution and entry admission prevents new bindings on all
+  eight external entry/backend combinations while authenticated retained-file
+  downloads continue. Original operator settings were restored afterward.
+
+The frozen-publication fix passes impacted Go tests/vet and focused race tests.
+Test-only catalog overrides were removed from both candidate APIs; release
+manifests and their authenticated probes match the deployed candidate images.
+All completed samples retain files/checkpoints and no queued/running Jobs.
+One E2B control-plane allocation failed before obtaining a backend reference;
+the supported retry succeeded and the empty failed allocation was cleaned up.
+That transient failure remains in the private acceptance record.
+
+P5 is not complete. Two distinct API final users are not a substitute for two
+authenticated WebApp accounts: a second dedicated account is still required.
+The E2B CSV browser preview is visibly correct and authenticated binary downloads
+pass, but an actual browser-saved file has not been observed. Protected TXT preview
+now renders the independently verified original text on both backend candidates;
+the remaining download observation does not yet establish whether its limitation
+is in the application or the browser integration.
+Publication replacement and live entry revocation have real Agent and DigitalHuman
+API/WebApp samples on both backends. These entry-wide revocation checks do not
+replace the outstanding two-login user-isolation test. Wider rollout remains closed.
+
+Attachment history distinguishes model content injection from tool file use:
+filtered content is shown neutrally as not directly injected, not as a failed or
+unused file. Original-file access remains subject to existing authorization;
+actual parsing errors still retain their error presentation.
+
+### Additional conversation continuity acceptance
+
+DigitalHuman API and authenticated WebApp now also pass focused continuation
+checks on both local gVisor and E2B. Each starts from the suspended original-Skill
+Binding, resumes the same conversation with a newer generation, asserts the exact
+original 52-byte script output, and exports a modified result through one Shell
+Job. Authenticated result bytes match independently. No missing source file was
+recreated and the original Skill was not rerun. All four Bindings were suspended
+again; owned queued/running Jobs are zero and retained files/checkpoints remain.
+The dedicated test Workers and SSH bridge were stopped afterward. Candidate
+API/Web history and authorized retained-file reads remain available; new execution
+acceptance requires starting the dedicated test compute again.
+
+### Agent publication and entry-access closeout
+
+Agent confirmation resolves the original publication only from the authoritative,
+caller-scoped sealed invocation. The historical version must belong to the same
+application and resource workspace; its model, instructions and bindings remain
+frozen. Current Linux opt-in, entry access and credential validity remain live
+checks. Ordinary execution cannot select a historical version.
+
+Four Agent API/WebApp backend pairs pass publication replacement and Linux
+disable/restore checks. Six additional samples cover Agent API surface revocation,
+Agent WebApp offline status and DigitalHuman WebApp access revocation on both
+backends. Each checks zero business artifacts while revoked and one original
+Shell Job after duplicate decisions; DigitalHuman WebApp also retains its original
+publication after replacement. Authorized SVG bytes were independently parsed.
+Impacted Go packages, focused race tests, vet and the static Linux build pass.
+
+Acceptance-only catalog mounts were removed and test application bindings restored.
+Owned compute and the SSH bridge are stopped, with zero queued/running Jobs;
+files, checkpoints and rollback containers remain. Authenticated retained-file
+reads still succeed after stopping compute. No push, merge or wider rollout was
+performed. Second-login isolation and observed browser-saved files remain required
+before marking P5 complete.
+
+### Plain-text preview closeout
+
+The blank protected TXT preview was reproduced with authenticated bytes already
+available. The text renderer now displays bounded, escaped content in the
+application instead of relying on sandboxed Blob iframe navigation. Both local
+and E2B candidate WebApps visibly show the complete original 52-byte Skill result,
+including its line breaks, with compute stopped. No source Skill was rerun and no
+download authorization or HTML sandbox was weakened.
+
+Focused tests cover the byte boundary, streamed UTF-8, escaped markup, safe denied
+reads and cancellation; protected-file transport tests, type-check, lint and the
+production build pass. Preview screenshots remain in ignored acceptance evidence.
+An E2B preview download click still yields no observed saved file or automation
+event, so browser download acceptance remains open. A second authenticated test
+account is also still absent; neither gap is counted as a pass.
+
+### Download diagnostic boundary
+
+A loopback-only synthetic comparison saved all four test files: a normal HTTP
+attachment, detached Blob anchor, attached Blob anchor with delayed URL release,
+and a Blob read asynchronously before clicking. Only the normal attachment
+reported a browser automation download event. File existence and exact bytes,
+not the event alone, therefore determine delivery acceptance.
+
+The initial E2B protected-result attempts had no observed saved file after preview
+and direct-card downloads, including a page reload, despite authenticated HTTP
+200 reads. A subsequent fresh-tab acceptance below closes the saved-file gate;
+synthetic success alone did not establish delivery or the cause of the difference.
+No speculative URL-lifetime change was shipped.
+
+The protected-card behavior test now executes the component handler: each
+download makes a fresh scoped read, waits for success before creating a Blob URL,
+uses the original filename, blocks another read while busy and releases the URL.
+Denied and unavailable reads cannot produce a download and expose only the safe
+localized error. These tests guard authorization and lifecycle; they are not
+evidence of browser delivery. Real delivery is recorded separately below.
+
+### Protected download and live-file authorization closeout
+
+The same-origin comparison additionally saved native, Fetch Blob and XHR Blob
+test files with exact expected bytes. In a fresh in-app browser tab, the actual
+E2B DigitalHuman WebApp card then saved the original 52-byte Skill result. Its
+bytes match the original script stdout, including both line breaks, and SHA-256
+is `8a922f7b3736aa693b85e995fb9ff6254847c783cfc0fc86c3a1485f67130a04`.
+The Blob download still produced no automation event; independent file inspection
+provides the acceptance proof. The retained-tab difference is not assigned an
+unproven cause and did not result in a speculative product patch.
+
+Eight additional real retained-file checks cover Agent and DigitalHuman API and
+WebApp access on both candidates. The owner reads the existing file successfully;
+disabling that entry denies the same authenticated file request; restoring access
+returns the unchanged 52 bytes. Agent API/WebApp denial statuses are 401/403 and
+DigitalHuman API/WebApp statuses are 403/404. All test access flags were restored.
+This proves entry-wide revocation, not a substitute for second-login user-level
+isolation or revocation.
+
+Compute remained stopped throughout these read-only file samples, with no queued
+or running Jobs. Temporary same-origin synthetic files were removed from the
+owned local candidate and their route returns 404 again. Candidate image digests,
+published bindings and result bytes are unchanged. P5 remains open for the real
+second authenticated WebApp account matrix; API external-user tests do not
+substitute for that gate. No push, merge or broader entry admission was performed.
+
+### Second-login isolation and P5 closeout
+
+The remaining login-identity gate was completed with two real password-authenticated
+accounts in the same organization and workspace. The dedicated second account has
+ordinary member roles, not administrator privileges. No client-supplied identity,
+forged token or API external-user identifier substitutes for that login.
+
+Both local gVisor and E2B candidates passed the Agent and DigitalHuman WebApp pairs:
+
+- Account B uploads a distinct two-field input and runs the unchanged original PDF
+  script with its verified source hash. Each authenticated download contains the
+  exact 52-byte two-field result; A's original one-field results remain unchanged.
+- Both accounts receive 404 for the other's conversation, message history and
+  protected file. B's environment asserts A's output file is absent. Persisted
+  Bindings use B's actual account subject and separate application/conversation
+  identities, without fallback to the resource creator.
+- The real Worker returns each account's retained Job and output, but rejects
+  both cross-account directions and cross-application Job requests with 404.
+  These checks read existing Jobs; they do not start replacement Shell commands.
+- B cannot confirm or reject A's real frozen approvals. Existing business artifact
+  counts are unchanged. Earlier confirm-once/reject-zero and duplicate/no-Shell-
+  replay samples remain the positive side-effect proof.
+- Disabling B's account denies retained-file reads on both applications and
+  backends. Restoring it restores the exact original bytes. All temporary account
+  status changes are reverted; B remains an ordinary active member.
+
+The last check exposed a real JWT WebApp gap: token validation did not recheck
+account availability. WebApp JWT authentication now uses the existing shared
+account-status check before granting authenticated or anonymous-migration context.
+Banned, frozen, closed and missing accounts fail closed; UUID-only anonymous chat
+keeps its previous contract and receives no new Linux permissions. The Agent
+legacy banned-account response remains HTTP 400/code `201016`; DigitalHuman
+returns HTTP 401. This preserves established error contracts rather than treating
+every non-401 denial as success.
+
+Organization membership and public application access are distinct. Removing an
+organization-only grant does not revoke an independent public audience grant.
+Administrators must revoke the applicable audience/access grant or disable the
+account; organization membership changes must not be described as a global ban.
+
+The cross-account approval sample also exposed an error-classification defect:
+Agent rejection correctly stopped at caller-scoped lookup but reported a generic
+system error. It now emits the safe localized not-found message with existing
+SSE code `404001`, never the diagnostic cause. Confirmation may return HTTP 404
+before streaming; rejection may return HTTP 200 with a terminal SSE error.
+Clients must inspect the event, not treat the streaming HTTP status as approval.
+DigitalHuman emits its existing `digital_human.conversation.not_found` error.
+
+In the in-app browser, B logs in as a normal member, views its own protected
+result and saves the actual 52-byte file. Independent byte inspection confirms
+`Read 2 fields` followed by the original success line; SHA-256 is
+`f7c0f418c8f8c324cc52d53a3ce43acc4056d6e207fd8fba9b8a7f70b66a5694`.
+The previously recorded E2B saved-file proof remains valid. A missing Blob
+automation event is not used to negate an independently verified saved file.
+
+Go 1.26.2 middleware, account-status, Agent, DigitalHuman and production-route
+tests pass, with race checks for middleware and Agent and targeted vet. These
+focused checks supplement, rather than replace, the earlier PostgreSQL,
+frontend, publication, CLI billing, continuity, signed-file protection and
+eight-entry admission-rollback gates. No already-accepted office/media matrix
+was rerun. Raw credentials, identifiers, logs, screenshots and downloads stay
+outside Git in ignored local acceptance evidence.
+
+This closes P0–P5 for the agreed local candidate scope, not a general production
+rollout or M7/M8 certification. Only the owned candidate APIs were updated; prior
+containers and retained files/checkpoints remain available. Temporary Workers
+and the SSH-only transport are stopped after acceptance, with no queued/running
+Jobs. Application bindings, account access and admission settings are restored.
+No push, merge, external deployment or broader organization/entry admission was
+performed. Rollback still closes new execution/CLI admission without deleting
+user files or destructively reverting additive migrations.
+
+## DigitalHuman channel/task extension
+
+Published Linux-enabled Agent and DigitalHuman WebApps require login, using the
+existing generic login flow. Previously issued anonymous sessions cannot execute
+against a Linux-enabled publication. Anonymous chat remains available only when
+both Linux and file upload are disabled in the published configuration.
+
+Agent and DigitalHuman authoring share the file-upload switch and document/image
+selector. Disabling hides the selector; re-enabling preserves the current draft
+selection. DigitalHuman keeps its existing policy representation: an explicit
+empty `allowed_file_types` disables uploads, while an omitted policy retains the
+default enabled behavior. Save, publish and published read-only previews use the
+same policy; public sessions do not read an unpublished draft.
+
+DigitalHuman background execution requires explicit organization admission for
+`digital_human:channel` or `digital_human:task` in
+`ZGI_AGENT_RUNTIME_ENTRY_ALLOWLIST_JSON`, in addition to the existing Linux flags,
+approved backend/Profile and published `execution_runtime.enabled`. Defaults do
+not enable these entries. Preserve existing allowlist entries when adding them.
+Background requests require the Worker release capability
+`background_execution_identity_version: 2`; the interactive version stays `1`.
+Unsupported Workers fail closed, without falling back to a creator account.
+
+Channel environments belong to the verified channel conversation and application,
+not the billing actor or a model-supplied user. Live installation, mapping,
+binding, publication and actor availability are checked before each tool call.
+New Linux scheduled actions receive a fresh task conversation; retries of the
+same accepted action reuse it. Existing historical task runs are not relabeled.
+Task cancellation, ownership and action/run correlation are checked live. Billing
+remains unchanged. Background Linux does not enable the platform CLI or invent
+interactive approval support; existing background business-tool rules remain.
+
+Apply versioned API migrations before accepting background file exports. The
+additive background-artifact constraint accepts the exact version-2 channel/task
+identity shapes, preserves version-1 and legacy files, and does not weaken the
+existing immutable-ownership trigger. A once schedule becomes lifecycle-completed
+at dispatch: only its still-queued/running correlated action remains authorized.
+Paused, archived, canceled and unrelated actions remain rejected. Shared scheduled
+tasks authorize the persisted confirmed principal without requiring an interactive
+actor; that principal is not used as the writable environment owner.
+
+Completed background runs use the existing protected file card directly in the
+console run drawer for authenticated preview/download. No separate `files` page
+is needed, and model-supplied URLs are ignored.
+
+Channel generated files use explicit adapter capabilities:
+
+- Feishu uploads and sends native file messages (nonempty files up to 30,000,000
+  bytes, at most eight files per delivery). The application needs the provider's
+  file upload and message-send permissions. Bodies are read sequentially, not as
+  one buffered batch.
+- Unadapted providers, empty files and files exceeding a provider's attachment
+  limit use direct download links from the existing file service, without a
+  frontend landing page or platform login. Configure a reachable `FILES_URL`
+  (or its existing internal fallback) for recipients. A verified delivery route
+  and tenant/file ownership are required before minting a grant; protected
+  runtime files additionally require exact frozen run ownership.
+  Channel fallback files use a purpose-bound channel-delivery HMAC, not a
+  generic ToolFile signature. Its server-controlled TTL defaults to 30 days and
+  is capped at 30 days and the original file expiry; permanent grants are
+  rejected. Set `CHANNEL_DELIVERY_FILE_TTL` in seconds to choose a shorter
+  platform-wide value. `FILES_ACCESS_TIMEOUT` remains unchanged for ordinary
+  file links.
+  Possession of a link permits download until expiry, including forwarding it.
+  Channel/application access is checked at issuance, not reauthenticated on each
+  bearer download; deleted or expired files are still rejected at read time.
+- Protected file ownership is checked against the exact frozen run, message,
+  application, workspace and execution identity. Generic legacy signatures still
+  cannot read protected artifacts or acquire a channel grant. Interactive Agent,
+  WebApp and API artifacts are not eligible for these grants. The direct endpoint
+  forces attachment delivery, never redirects to public storage, and returns
+  no-store responses. Historical unprotected channel files use the same
+  purpose-bound channel grant after tenant and delivery ownership are checked.
+  No file copy or ownership mutation is required.
+- Lack of attachment support selects links before sending. Native send failure
+  does not trigger link fallback. Partial or uncertain message delivery is
+  terminal/unknown, preventing automatic whole-batch retries and duplicate sends.
+  Disabling Linux creation does not revoke otherwise-authorized retained-file
+  downloads. Console authenticated reads continue to check application/account
+  access; already-issued channel bearer grants expire according to their TTL.
+
+Automated coverage includes background identity/capability negotiation, task
+conversation idempotency, live authorization and revocation, anonymous login
+gates, protected file ownership/downloads, native multipart/message protocol,
+link selection and partial-send handling. These are implementation gates, not
+real-provider delivery certification. The earlier P5 evidence applies only to
+its original interactive scope.
+
+### Focused candidate acceptance (2026-10-09)
+
+The owned local API/Web candidates and both test Workers were updated. In the
+in-app browser, document/image selection, disable/hide, re-enable/restore,
+save/reload and publish were verified. A Linux-enabled publication with uploads
+disabled still rejects anonymous session creation; the dedicated fixture was
+then published with both file types enabled again.
+
+Real scheduler-triggered once tasks, not just `run_now`, passed on gVisor and E2B.
+Each used `shell_exec` to write a synthetic JSON file and `workspace_export_file`
+to persist it. Independent authenticated HTTP downloads contained the exact
+backend-specific marker and numeric total `42`; both tools succeeded and the
+task work status completed. Anonymous file access was denied using the existing
+authentication error contract; mismatched run/file identifiers returned 404.
+Shared application task results remained readable by an authorized workspace
+member with application log access: these are not private user-task fixtures.
+Browser protected-file preview was verified; a native saved-download event was
+not captured, so that narrower browser assertion remains unverified.
+
+Acceptance exposed and repaired the scheduler's absent interactive actor, the
+once-schedule dispatch lifecycle and the legacy version-1-only artifact database
+constraint. Synthetic environments left by earlier attempts also reached the
+test Worker's two-binding capacity; they were suspended with retained checkpoints
+before retrying, rather than weakening admission. Final test Jobs were drained,
+all owned background bindings suspended and temporary Workers/SSH transport
+stopped. Retained files and previous containers were not deleted; the existing
+local API services were restored.
+
+Go 1.26.2 targeted API/Worker tests, vet, background authorization race checks and
+real PostgreSQL migration/constraint tests passed. Frontend focused tests, full
+lint, type-check and production build passed. Raw credentials, test identifiers,
+outputs and screenshots remain in ignored local evidence, not public docs.
+
+Real Feishu native delivery and an unadapted-provider direct-download delivery
+remain pending: this environment has no installed channel or specified test
+recipient. Adapter tests do not substitute for those two gates. No messages were
+sent to unspecified conversations, and no push, merge or external rollout was
+performed.
+
+The subsequent direct-download adjustment removed the file landing page and its
+metadata client. Background console cards now preview/download inline. Focused
+HTTP tests cover actual channel-link download, attachment headers, native
+selection, finite expiry, tampering, wrong file/delivery, generic-signature
+rejection, deleted files and interactive-file exclusion. Earlier browser landing
+page evidence above is historical, not acceptance of the revised direct link.

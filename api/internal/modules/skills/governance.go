@@ -99,6 +99,14 @@ func (g *PolicyToolGovernanceGateway) DecideSkillTool(ctx context.Context, req T
 	}
 	approvalMode, preauthorization := governanceAgentAuthorization(params, governance, req.SkillID, req.ToolName, manifest, req.Arguments)
 	preauthorization = verifyCurrentAgentBindings(ctx, params, manifest, preauthorization)
+	// An admitted interactive CLI may ask the existing governance UI for approval. It
+	// cannot turn a missing/revoked persistent resource binding into a prompt.
+	// A client JSON parameter cannot grant this server-owned capability.
+	if platformInteractiveGovernanceAllowed(req.ExecutionContext, params, governance) &&
+		preauthorization != nil && !preauthorization.Required &&
+		preauthorization.Code == agentToolNotPreauthorizedCode {
+		approvalMode = toolgovernance.ApprovalModeInteractive
+	}
 	return toolgovernance.Decide(toolgovernance.Request{
 		Manifest:         manifest,
 		PermissionTier:   governancePermissionTier(params, governance),
@@ -115,6 +123,20 @@ func (g *PolicyToolGovernanceGateway) DecideSkillTool(ctx context.Context, req T
 		SessionGrants:    governanceSessionGrants(params, governance),
 		CorrelationID:    governanceString(params, governance, governanceCorrelationIDKey, "correlation_id"),
 	}, g.policy), nil
+}
+
+func platformInteractiveGovernanceAllowed(execution ExecutionContext, params, governance map[string]interface{}) bool {
+	if !execution.PlatformInteractiveApproval {
+		return false
+	}
+	caller := governanceString(params, governance, "tool_governance_caller_type", "caller_type")
+	entry := strings.TrimSpace(stringMapValue(params, "agent_runtime_source"))
+	if execution.PlatformExecutionOrigin == nil {
+		return strings.EqualFold(caller, SkillCallerAgent) && entry == "console"
+	}
+	o := execution.PlatformExecutionOrigin
+	return o.Validate() == nil && o.OrganizationID == execution.OrganizationID && o.ApplicationID == execution.AppID &&
+		o.ConversationID == execution.ConversationID && o.MessageID == execution.MessageID && o.Entry == entry && strings.EqualFold(caller, o.ApplicationType)
 }
 
 func verifyCurrentAgentBindings(

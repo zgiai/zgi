@@ -45,6 +45,7 @@ func (s *service) persistWorkflowApprovalPendingResult(ctx context.Context, prep
 	metadata = preparedResultMetadataForPrepared(prepared, metadata, usage)
 	metadata["agent_workflow_continuation"] = compactWorkflowRun(map[string]interface{}{
 		"status":                      "waiting_approval",
+		"kind":                        firstNonEmptyString(pendingPayload["kind"]),
 		"workflow_run_id":             firstNonEmptyString(pendingPayload["workflow_run_id"]),
 		"workflow_id":                 firstNonEmptyString(pendingPayload["workflow_id"]),
 		"agent_id":                    firstNonEmptyString(pendingPayload["agent_id"]),
@@ -57,6 +58,15 @@ func (s *service) persistWorkflowApprovalPendingResult(ctx context.Context, prep
 		"approval_token":              firstNonEmptyString(pendingPayload["approval_token"]),
 		"approval_url":                firstNonEmptyString(pendingPayload["approval_url"]),
 		"ui_approval_allowed":         pendingPayload["ui_approval_allowed"],
+		"approval_form":               pendingPayload["approval_form"],
+		"task_id":                     firstNonEmptyString(pendingPayload["task_id"]),
+		"task_name":                   firstNonEmptyString(pendingPayload["task_name"]),
+		"task_revision":               pendingPayload["task_revision"],
+		"task_action":                 firstNonEmptyString(pendingPayload["task_action"]),
+		"owner_kind":                  firstNonEmptyString(pendingPayload["owner_kind"]),
+		"owner_conversation_id":       firstNonEmptyString(pendingPayload["owner_conversation_id"]),
+		"task":                        pendingPayload["task"],
+		"requested_inputs":            pendingPayload["requested_inputs"],
 		"resume_policy":               "same_message",
 	})
 	prepared.Message.Metadata = metadata
@@ -157,7 +167,7 @@ func workflowRunFromEvent(eventType string, payload map[string]interface{}) map[
 		"workflow_run_id": runID,
 		"status":          workflowRunStatusFromEvent(eventType, payload),
 	}
-	copyWorkflowFields(run, payload, "workflow_id", "agent_id", "version", "inputs", "outputs", "elapsed_time", "error", "created_at",
+	copyWorkflowFields(run, payload, "kind", "workflow_id", "agent_id", "version", "task_id", "task_name", "operation_id", "task_action", "inputs", "outputs", "elapsed_time", "error", "created_at",
 		"invocation_id", "invocation_mode", "invocation_protocol_version", "binding_id", "sequence", "schema_version", "payload_version", "execution_id")
 	if createdAt := workflowCreatedAt(payload); createdAt != nil {
 		run["created_at"] = createdAt
@@ -513,7 +523,7 @@ func workflowContainerNodeWithChild(nodeType string, nodeID string, indexValue i
 
 func workflowApprovalFromEvent(payload map[string]interface{}) map[string]interface{} {
 	approval := map[string]interface{}{}
-	copyWorkflowFields(approval, payload, "approval_form_id", "approval_token", "approval_url", "approval_form", "ui_approval_allowed")
+	copyWorkflowFields(approval, payload, "approval_form_id", "approval_token", "approval_url", "approval_form", "ui_approval_allowed", "task_name", "task_id")
 	return compactWorkflowRun(approval)
 }
 

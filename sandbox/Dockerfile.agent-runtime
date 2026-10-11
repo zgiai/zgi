@@ -1,0 +1,76 @@
+# syntax=docker/dockerfile:1
+
+ARG RUNTIME_AGENT_LISTEN=unix:///run/zgi-agent/runtime.sock
+
+FROM --platform=$BUILDPLATFORM golang:1.26.2-bookworm AS builder
+
+ARG TARGETOS
+ARG TARGETARCH
+ARG GOPROXY=
+
+WORKDIR /src
+ENV GOPROXY=${GOPROXY}
+
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY . .
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /out/zgi-runtime-agent ./cmd/runtimeagent
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /out/zgi ./cmd/runtimecli
+
+FROM node:22-bookworm-slim AS node-runtime
+
+FROM python:3.13-slim-bookworm
+
+ARG RUNTIME_AGENT_LISTEN
+
+COPY --from=node-runtime /usr/local/ /usr/local/
+COPY --from=builder /out/zgi-runtime-agent /usr/local/bin/zgi-runtime-agent
+COPY --from=builder /out/zgi /usr/local/bin/zgi
+COPY scripts/zgi-apt-get /usr/local/bin/apt-get
+COPY scripts/zgi-apt-get /usr/local/bin/apt
+COPY profiles/cc-codex-standard/apt-packages.txt /tmp/zgi-profile/apt-packages.txt
+COPY profiles/cc-codex-standard/requirements.lock /tmp/zgi-profile/requirements.lock
+COPY profiles/cc-codex-standard/package.json profiles/cc-codex-standard/pnpm-lock.yaml /opt/zgi-profile/
+COPY profiles/cc-codex-standard/verify.py profiles/cc-codex-standard/verify-node.mjs /opt/zgi-profile/
+COPY profiles/cc-codex-standard/resources/ /opt/zgi-profile/resources/
+
+RUN groupadd --gid 65532 zgi-runtime && \
+    useradd --uid 65532 --gid 65532 --create-home --home-dir /home/zgi-runtime \
+      --shell /usr/sbin/nologin zgi-runtime && \
+    chmod 0755 /usr/local/bin/apt-get /usr/local/bin/apt && \
+    mkdir -p /workspace /run/zgi-agent /etc/zgi && \
+    printf '%s\n' '[global]' 'index-url = https://pypi.org/simple' 'disable-pip-version-check = true' > /etc/zgi/pip.conf && \
+    printf '%s\n' 'Dir::Etc::sourcelist "/etc/apt/sources.list.d/zgi-controlled.sources";' 'Dir::Etc::sourceparts "-";' > /etc/zgi/apt.conf && \
+    rm -f /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources && \
+    printf '%s\n' 'Types: deb' 'URIs: https://deb.debian.org/debian' 'Suites: bookworm bookworm-updates' 'Components: main' '' 'Types: deb' 'URIs: https://security.debian.org/debian-security' 'Suites: bookworm-security' 'Components: main' > /etc/apt/sources.list.d/zgi-controlled.sources && \
+    if [ -d /etc/apt ]; then sed -i 's#http://deb.debian.org#https://deb.debian.org#g; s#http://security.debian.org#https://security.debian.org#g' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true; fi && \
+    /usr/bin/apt-get update && xargs -r /usr/bin/apt-get install -y --no-install-recommends < /tmp/zgi-profile/apt-packages.txt && \
+    python -m pip install --no-cache-dir --break-system-packages -r /tmp/zgi-profile/requirements.lock && \
+    export COREPACK_HOME=/opt/corepack && corepack enable pnpm && corepack prepare pnpm@10.27.0 --activate && cd /opt/zgi-profile && pnpm install --prod --frozen-lockfile && \
+    python verify.py && NODE_PATH=/opt/zgi-profile/node_modules node verify-node.mjs && \
+    mkdir -p /usr/lib/zgi && mv /usr/bin/apt-get /usr/lib/zgi/apt-get.real && mv /usr/bin/apt /usr/lib/zgi/apt.real && \
+    cp /usr/local/bin/apt-get /usr/bin/apt-get && cp /usr/local/bin/apt /usr/bin/apt && \
+    rm -rf /tmp/zgi-profile && \
+    chown -R 65532:65532 /workspace /run/zgi-agent /home/zgi-runtime
+
+ENV HOME=/home/zgi-runtime \
+    COREPACK_HOME=/opt/corepack \
+    PATH=/opt/zgi-profile/node_modules/.bin:/usr/local/bin:/usr/bin:/bin \
+    NODE_PATH=/opt/zgi-profile/node_modules \
+    PYTHONDONTWRITEBYTECODE=1 \
+    XML_CATALOG_FILES=/opt/zgi-profile/resources/xml/catalog.xml \
+    ZGI_RUNTIME_AGENT_WORKSPACE=/workspace \
+    ZGI_RUNTIME_AGENT_LISTEN=${RUNTIME_AGENT_LISTEN} \
+    ZGI_RUNTIME_AGENT_NETWORK_MODE=disabled \
+    ZGI_RUNTIME_AGENT_PACKAGE_LISTEN=unix:///run/zgi-agent/package.sock \
+    ZGI_RUNTIME_AGENT_APT_PATH=/usr/lib/zgi/apt-get.real
+
+USER 65532:65532
+WORKDIR /workspace
+ENTRYPOINT ["/usr/local/bin/zgi-runtime-agent"]

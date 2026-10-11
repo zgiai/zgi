@@ -178,6 +178,8 @@ const (
 	envAppName = "APP_NAME"
 	// envFilesAccessTimeout sets how long generated file access links remain valid in seconds. Default: 3600.
 	envFilesAccessTimeout = "FILES_ACCESS_TIMEOUT"
+	// envChannelDeliveryFileTTL sets how long channel-delivery download links remain valid in seconds. Default: 2592000 (30 days).
+	envChannelDeliveryFileTTL = "CHANNEL_DELIVERY_FILE_TTL"
 	// envAppVersion sets the application version string. Default: 1.0.0.
 	envAppVersion = "APP_VERSION"
 	// envFilesURL sets the public base URL for file access. Default: http://localhost:2679.
@@ -382,7 +384,7 @@ const (
 	envCodeExecutionEnableNetwork = "CODE_EXECUTION_ENABLE_NETWORK"
 	// envCodeExecutionSystemOfficeProfile sets the managed dependency profile used by system Office/PDF/PPTX file tools. Default: skill-office.
 	envCodeExecutionSystemOfficeProfile = "CODE_EXECUTION_SYSTEM_OFFICE_PROFILE"
-	// envCodeExecutionSystemDataProfile sets the prebuilt dependency profile used when runtime dependency builds are disabled. Default: scientific-data.
+	// envCodeExecutionSystemDataProfile sets the prebuilt Python dependency profile used when runtime dependency builds are disabled. Default: scientific-data.
 	envCodeExecutionSystemDataProfile = "CODE_EXECUTION_SYSTEM_DATA_PROFILE"
 	// envCodeExecutionSkillDependencyScanEnabled controls per-skill dependency discovery and managed profile builds. Default: true.
 	envCodeExecutionSkillDependencyScanEnabled = "CODE_EXECUTION_SKILL_DEPENDENCY_SCAN_ENABLED"
@@ -515,6 +517,8 @@ const (
 	// Dependency services.
 	// envModelMetaAPIURL sets the ModelMeta-compatible API base URL. Default: https://models.zgi.ai.
 	envModelMetaAPIURL = "MODELMETA_API_URL"
+	// envModelMetaAutoSyncEnabled controls the one-shot local ModelMeta sync at startup. Default: true.
+	envModelMetaAutoSyncEnabled = "MODELMETA_AUTO_SYNC_ENABLED"
 	// envNeo4jURI sets the Neo4j connection URI. Default: empty, which disables GraphFlow Neo4j integration.
 	envNeo4jURI = "NEO4J_URI"
 	// envNeo4jUsername sets the Neo4j username. Default: neo4j.
@@ -641,6 +645,14 @@ const (
 	envConnectorCredentialKeysJSON    = "CONNECTOR_CREDENTIAL_KEYS_JSON"
 	// JSON array of trusted local Agent Plugin package roots.
 	envConnectorPluginDirectoriesJSON = "CONNECTOR_PLUGIN_DIRECTORIES_JSON"
+
+	// Legacy DigitalHuman channel credential keyring. Independent from the
+	// Connector keyring; API_KEY_ENCRYPTION_KEY is retained as key id "legacy"
+	// so pre-Connector v1/v2 channel envelopes stay readable.
+	// envDigitalHumanCredentialKeysJSON sets the optional legacy JSON keyring. Default: empty.
+	envDigitalHumanCredentialKeysJSON = "DIGITAL_HUMAN_CREDENTIAL_KEYS_JSON"
+	// envDigitalHumanCredentialActiveKeyID selects the key used for new DigitalHuman envelopes. Default: legacy.
+	envDigitalHumanCredentialActiveKeyID = "DIGITAL_HUMAN_CREDENTIAL_ACTIVE_KEY_ID"
 
 	// Knowledge retrieval limit switch.
 	// envKnowledgeRateLimitEnabled controls whether knowledge retrieval rate limiting is enabled. Default: false.

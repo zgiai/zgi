@@ -175,7 +175,7 @@ for (const [rawStatus, normalizedStatus] of [
 ]) {
   assert.match(
     runStatusBadge,
-    new RegExp(`['\"]${rawStatus}['\"][\\s\\S]{0,160}['\"]${normalizedStatus}['\"]`),
+    new RegExp(`['"]${rawStatus}['"][\\s\\S]{0,160}['"]${normalizedStatus}['"]`),
     `Runtime status ${rawStatus} must be normalized to ${normalizedStatus}.`
   );
 }

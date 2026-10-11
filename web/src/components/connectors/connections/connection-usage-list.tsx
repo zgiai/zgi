@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Bot, MessageCircle, Workflow } from 'lucide-react';
+import { Bot, MessageCircle, UserRound, Workflow } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,12 +14,14 @@ const SURFACE_STYLE: Record<ConnectorTargetType, string> = {
   chat: 'border-transparent bg-primary/10 text-primary',
   agent: 'border-transparent bg-violet-500/10 text-violet-600 dark:text-violet-300',
   workflow: 'border-transparent bg-cyan-500/10 text-cyan-700 dark:text-cyan-300',
+  digital_human: 'border-transparent bg-amber-500/10 text-amber-700 dark:text-amber-300',
 };
 
 function SurfaceIcon({ type }: { type: ConnectorTargetType }) {
   const className = 'size-4';
   if (type === 'chat') return <MessageCircle aria-hidden="true" className={className} />;
   if (type === 'agent') return <Bot aria-hidden="true" className={className} />;
+  if (type === 'digital_human') return <UserRound aria-hidden="true" className={className} />;
   return <Workflow aria-hidden="true" className={className} />;
 }
 
@@ -35,6 +37,7 @@ export function ConnectionUsageList({ bindings, className }: ConnectionUsageList
   const surfaceLabel = (type: ConnectorTargetType) => {
     if (type === 'chat') return t('usage.surfaces.chat');
     if (type === 'agent') return t('usage.surfaces.agent');
+    if (type === 'digital_human') return t('usage.surfaces.digitalHuman');
     return t('usage.surfaces.workflow');
   };
 

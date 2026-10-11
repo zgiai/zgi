@@ -59,6 +59,26 @@ export const WORKSPACE_KEYS = {
     [...WORKSPACE_KEYS.all, 'permissions', orgId, wsId, accountId] as const,
 } as const;
 
+export const RUNTIME_WORKSPACE_KEYS = {
+  all: ['runtime-workspace'] as const,
+  current: (workspaceId: string | null) => [...RUNTIME_WORKSPACE_KEYS.all, 'current', workspaceId],
+  apps: (workspaceId: string | null) => [...RUNTIME_WORKSPACE_KEYS.all, 'apps', workspaceId],
+  candidateScopes: (workspaceId: string | null) => [
+    ...RUNTIME_WORKSPACE_KEYS.all,
+    'candidates',
+    workspaceId,
+  ],
+  candidates: (workspaceId: string | null, scope: 'current' | 'authorized') => [
+    ...RUNTIME_WORKSPACE_KEYS.candidateScopes(workspaceId),
+    scope,
+  ],
+  credentials: (workspaceId: string | null) => [
+    ...RUNTIME_WORKSPACE_KEYS.all,
+    'credentials',
+    workspaceId,
+  ],
+} as const;
+
 // 3. Agent Related
 export const AGENT_KEYS = {
   all: ['agents'] as const,
@@ -78,6 +98,11 @@ export const AGENT_KEYS = {
     [...AGENT_KEYS.all, 'runnable-webapps', workspaceId || 'all', params] as const,
   runnableInfinite: (workspaceId?: string | null, params?: unknown) =>
     [...AGENT_KEYS.all, 'runnable-webapps-infinite', workspaceId || 'all', params] as const,
+  runnableTagFacets: (workspaceId?: string | null, params?: unknown) =>
+    [...AGENT_KEYS.all, 'runnable-webapp-tag-facets', workspaceId || 'all', params] as const,
+  catalogTags: (agentId: string) => [...AGENT_KEYS.detail(agentId), 'catalog-tags'] as const,
+  catalogTagFacets: (workspaceId?: string | null, assetKind?: string) =>
+    [...AGENT_KEYS.all, 'catalog-tag-facets', workspaceId || 'all', assetKind || 'all'] as const,
   runtimeSurfaces: (agentId: string) =>
     [...AGENT_KEYS.detail(agentId), 'runtime-surfaces'] as const,
   runtimeRuns: (agentId: string, params: unknown) =>
@@ -90,6 +115,52 @@ export const AGENT_KEYS = {
     [...AGENT_KEYS.detail(agentId), 'model-precheck', provider, model] as const,
 } as const;
 
+export const DIGITAL_HUMAN_KEYS = {
+  all: ['digital-humans'] as const,
+  lists: () => [...DIGITAL_HUMAN_KEYS.all, 'list'] as const,
+  list: (params: unknown) => [...DIGITAL_HUMAN_KEYS.lists(), params] as const,
+  details: () => [...DIGITAL_HUMAN_KEYS.all, 'detail'] as const,
+  detail: (id: string) => [...DIGITAL_HUMAN_KEYS.details(), id] as const,
+  versions: (id: string) => [...DIGITAL_HUMAN_KEYS.detail(id), 'versions'] as const,
+  versionRestorePreview: (id: string, versionId: string) =>
+    [...DIGITAL_HUMAN_KEYS.versions(id), versionId, 'restore-preview'] as const,
+  personaTemplates: (params?: unknown) =>
+    params === undefined
+      ? ([...DIGITAL_HUMAN_KEYS.all, 'persona-templates'] as const)
+      : ([...DIGITAL_HUMAN_KEYS.all, 'persona-templates', params] as const),
+  draftBindings: (id: string) => [...DIGITAL_HUMAN_KEYS.detail(id), 'draft-bindings'] as const,
+  bindingCandidates: (id: string, params: unknown) =>
+    [...DIGITAL_HUMAN_KEYS.detail(id), 'binding-candidates', params] as const,
+  /** Workspace skills a new digital human may bind, available before creation. */
+  skillCandidates: () => [...DIGITAL_HUMAN_KEYS.all, 'skill-candidates'] as const,
+  /**
+   * Owner Connector connections a new digital human may attach, available
+   * before creation. Query and limit are part of the key so a server search and
+   * the full 512-candidate page never share a cache entry.
+   */
+  connectorCandidates: (params: { query?: string; limit?: number }) =>
+    [...DIGITAL_HUMAN_KEYS.all, 'connector-candidates', params] as const,
+  runs: (id: string, params?: unknown) =>
+    [...DIGITAL_HUMAN_KEYS.detail(id), 'runs', params].filter(Boolean),
+  run: (id: string, runId: string) => [...DIGITAL_HUMAN_KEYS.detail(id), 'run', runId] as const,
+  runRuntimeLog: (id: string, runId: string) =>
+    [...DIGITAL_HUMAN_KEYS.run(id, runId), 'runtime-log'] as const,
+  memories: (id: string, params?: unknown) =>
+    [...DIGITAL_HUMAN_KEYS.detail(id), 'memory', params].filter(Boolean),
+  channelInstallations: (id: string) =>
+    [...DIGITAL_HUMAN_KEYS.detail(id), 'channel-installations'] as const,
+  channelEvents: (id: string, params?: unknown) =>
+    [...DIGITAL_HUMAN_KEYS.detail(id), 'channel-events', params].filter(Boolean),
+  channelDeliveries: (id: string, params?: unknown) =>
+    [...DIGITAL_HUMAN_KEYS.detail(id), 'channel-deliveries', params].filter(Boolean),
+  tasks: (id: string, params?: unknown) =>
+    [...DIGITAL_HUMAN_KEYS.detail(id), 'tasks', params].filter(Boolean),
+  task: (id: string, taskId: string) => [...DIGITAL_HUMAN_KEYS.detail(id), 'task', taskId] as const,
+  taskRuns: (id: string, taskId: string) =>
+    [...DIGITAL_HUMAN_KEYS.task(id, taskId), 'runs'] as const,
+  taskActivities: (id: string, taskId: string) =>
+    [...DIGITAL_HUMAN_KEYS.task(id, taskId), 'activities'] as const,
+} as const;
 
 export const CONNECTOR_KEYS = {
   all: ['connectors'] as const,
@@ -106,7 +177,13 @@ export const CONNECTOR_KEYS = {
     [...CONNECTOR_KEYS.connection(connectionId), 'removal-impact'] as const,
   setups: () => [...CONNECTOR_KEYS.all, 'key-setups'] as const,
   setup: (attemptId: string) => [...CONNECTOR_KEYS.setups(), attemptId] as const,
-  targetBindings: (target?: { type?: string; id?: string; binding_instance_id?: string; scope?: string; version_id?: string }) =>
+  targetBindings: (target?: {
+    type?: string;
+    id?: string;
+    binding_instance_id?: string;
+    scope?: string;
+    version_id?: string;
+  }) =>
     [
       ...CONNECTOR_KEYS.all,
       'target-bindings',

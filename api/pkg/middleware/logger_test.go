@@ -30,3 +30,18 @@ func TestSafeRequestLogPathDropsMalformedQuery(t *testing.T) {
 		t.Fatalf("safeRequestLogPath() = %q", got)
 	}
 }
+
+func TestSafeRequestLogPathRedactsOpaqueExternalUser(t *testing.T) {
+	requestURL, err := url.Parse("/v1/agents/memory?user=customer_123&expected_revision=2")
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+
+	got := safeRequestLogPath(requestURL)
+	if strings.Contains(got, "customer_123") {
+		t.Fatalf("safeRequestLogPath() leaked external user in %q", got)
+	}
+	if !strings.Contains(got, "user=%5BREDACTED%5D") || !strings.Contains(got, "expected_revision=2") {
+		t.Fatalf("safeRequestLogPath() removed safe query structure: %q", got)
+	}
+}

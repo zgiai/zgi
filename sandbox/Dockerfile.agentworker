@@ -1,0 +1,32 @@
+# syntax=docker/dockerfile:1
+
+FROM --platform=$BUILDPLATFORM golang:1.26.2-bookworm AS builder
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+ARG GOPROXY
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY . .
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -trimpath -buildvcs=false -ldflags="-s -w" -o /out/zgi-agent-runtime-worker ./cmd/agentworker
+
+# Export the native Linux service executable without a host Go installation.
+FROM scratch AS binary
+COPY --from=builder /out/zgi-agent-runtime-worker /zgi-agent-runtime-worker
+
+# Managed E2B control-plane Worker. Native gVisor uses the binary above on Linux.
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /var/lib/zgi-ar && chown 65532:65532 /var/lib/zgi-ar
+COPY --from=builder /out/zgi-agent-runtime-worker /usr/local/bin/agentworker
+ENV ZGI_AGENT_RUNTIME_BACKEND=e2b \
+    ZGI_AGENT_RUNTIME_LISTEN=0.0.0.0:2670 \
+    ZGI_AGENT_RUNTIME_ROOT=/var/lib/zgi-ar \
+    ZGI_AGENT_RUNTIME_CHECKPOINT_DIR=/var/lib/zgi-ar/checkpoints
+USER 65532:65532
+EXPOSE 2670
+ENTRYPOINT ["/usr/local/bin/agentworker"]

@@ -58,6 +58,27 @@ export function supportsAppSetup(connector: ConnectorCatalogItem): boolean {
     connector.credential_fields?.length === 3
   );
 }
+
+// The exact SSH identity is duplicated from serverops-ssh-setup-state.ts so this
+// pure setup-state module keeps no runtime dependency. Test fixtures load it
+// standalone, and the dedicated panel owns the credential contract.
+const SERVEROPS_SSH_CONNECTOR_ID = 'serverops_ssh';
+const SERVEROPS_SSH_SETUP_METHOD = 'ssh_credentials';
+
+/**
+ * The frozen SSH identity admits its dedicated Connector Center panel. Only the
+ * exact id plus setup dialect with an available manual method qualifies; secret
+ * handling and route scoping stay in the dedicated panel.
+ */
+export function supportsServerOpsSSHConnectorSetup(connector: ConnectorCatalogItem): boolean {
+  return (
+    connector.id === SERVEROPS_SSH_CONNECTOR_ID &&
+    connector.setup_method === SERVEROPS_SSH_SETUP_METHOD &&
+    connector.setup?.methods.includes('manual') === true &&
+    connector.setup_availability?.enabled !== false &&
+    (!connector.setup_availability || connector.setup_availability.methods.includes('manual'))
+  );
+}
 export function activeOnboarding(flow?: ConnectorOnboardingFlow): boolean {
   return Boolean(
     flow &&
@@ -81,6 +102,11 @@ export function supportsConnectorSetup(connector: ConnectorCatalogItem): boolean
   }
   if (supportsAppSetup(connector)) return true;
   if (mailSetupEnabled(connector)) return true;
+  // The SSH identity is closed: only its frozen descriptor may claim it, so a
+  // malformed item can never fall through to a generic Key contract.
+  if (connector.id === SERVEROPS_SSH_CONNECTOR_ID) {
+    return supportsServerOpsSSHConnectorSetup(connector);
+  }
   // Schema 1.3 adds host surfaces while retaining each service's credential contract.
   if (connector.extension_schema_version && connector.extension_schema_version !== '1.3.0') {
     return false;

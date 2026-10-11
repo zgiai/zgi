@@ -553,6 +553,10 @@ func (s *previewURLFileService) IsFileSizeWithinLimit(string, int64) bool {
 
 func (s *previewURLFileService) ParseFileContent(context.Context, string) {}
 
+func (s *previewURLFileService) IsRuntimeExternalFile(context.Context, string) (bool, error) {
+	return false, nil
+}
+
 func (s *previewURLFileService) GetFileByID(context.Context, string) (*dto.UploadFile, error) {
 	return s.file, nil
 }
@@ -596,6 +600,10 @@ type previewURLOrganizationService struct {
 }
 
 func (s *previewURLOrganizationService) CheckWorkspacePermission(context.Context, string, string, string, workspace_model.WorkspacePermissionCode) (bool, error) {
+	return s.allowed, nil
+}
+
+func (s *previewURLOrganizationService) CheckWorkspaceOrganizationAnyPermission(context.Context, string, string, string, ...workspace_model.WorkspacePermissionCode) (bool, error) {
 	return s.allowed, nil
 }
 

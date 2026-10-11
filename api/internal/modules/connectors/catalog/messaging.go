@@ -16,7 +16,7 @@ func (d Definition) IsMessagingCredentials() bool {
 	return d.ExtensionSchemaVersion == ZGIMetadataSchemaVersion12 || d.IsDigitalHumanContract() && d.SetupMethod == SetupMethodCredentials
 }
 func (d Definition) UsesCredentials() bool {
-	return d.IsAppCredentials() || d.IsMessagingCredentials() || d.IsMailCredentials()
+	return d.IsAppCredentials() || d.IsMessagingCredentials() || d.IsMailCredentials() || d.IsServerOpsSSHCredentials()
 }
 
 // MessagingDefinitions are static platform contracts. Their presence does not

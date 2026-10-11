@@ -70,6 +70,35 @@ func TestMergeSkillTraceMetadataStoresTurnStateOutsideVisibleInvocations(t *test
 	}
 }
 
+func TestClientVisibleMessageMetadataHidesInternalDigitalHumanTaskGovernance(t *testing.T) {
+	metadata := map[string]interface{}{
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":                    "tool_governance",
+				"skill_id":                "digital-human-tasks",
+				"tool_name":               "manage_digital_human_task",
+				"presentation_visibility": "internal",
+				"status":                  "needs_approval",
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"skill_id":  "time",
+				"tool_name": "get_current_time",
+				"status":    "success",
+			},
+		},
+	}
+
+	visible := ClientVisibleMessageMetadata(metadata)
+	invocations := skillInvocationsFromMetadata(visible["skill_invocations"])
+	if len(invocations) != 1 {
+		t.Fatalf("visible skill_invocations = %#v, want only the real tool call", invocations)
+	}
+	if got := stringFromAny(invocations[0]["tool_name"]); got != "get_current_time" {
+		t.Fatalf("visible tool_name = %q, want get_current_time", got)
+	}
+}
+
 func TestMergeSkillTraceMetadataStoresBlockedSkillLoadAttempt(t *testing.T) {
 	metadata := mergeSkillTraceMetadata(nil, []skills.SkillTrace{{
 		Kind:     "skill_load_attempt",

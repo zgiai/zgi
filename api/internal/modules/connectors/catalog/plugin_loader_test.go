@@ -58,6 +58,61 @@ func TestPluginLoaderAdmitsAgentPluginsV1ZGIConnectorMetadata(t *testing.T) {
 	}
 }
 
+func TestPluginLoaderAdmitsDigitalHumanConnectorMetadata(t *testing.T) {
+	t.Parallel()
+
+	loader := newPluginLoaderForTest(t)
+	metadata := connectorMetadataFixture("digital-human", ClassificationConnector)
+	metadata["surfaces"] = []interface{}{"chat", "agent", "workflow", "digital_human"}
+	root := writePluginManifest(t, map[string]interface{}{
+		"$schema": AgentPluginsV1ManifestSchemaID,
+		"name":    "acme.digital-human",
+		"version": "2.0.0-digitalhuman.1",
+		"extensions": map[string]interface{}{
+			ZGIConnectorExtensionNamespace: map[string]interface{}{
+				"schema_version": ZGIMetadataSchemaVersion13,
+				"connectors":     []interface{}{metadata},
+			},
+		},
+	})
+
+	plugin, err := loader.LoadDirectory(context.Background(), root)
+	if err != nil {
+		t.Fatalf("LoadDirectory() error = %v", err)
+	}
+	if len(plugin.Failures) != 0 || len(plugin.Definitions) != 1 {
+		t.Fatalf("loaded definitions/failures = %d/%#v", len(plugin.Definitions), plugin.Failures)
+	}
+	definition := plugin.Definitions[0]
+	if !definition.IsDigitalHumanContract() || !definition.Supports(SurfaceDigitalHuman) {
+		t.Fatalf("digital human metadata not admitted: %#v", definition)
+	}
+	if definition.ExtensionSchemaVersion != ZGIMetadataSchemaVersion13 || definition.ContractVersion != 4 {
+		t.Fatalf("extension/contract version = %q/%d", definition.ExtensionSchemaVersion, definition.ContractVersion)
+	}
+
+	manifest, err := BuildAgentPluginManifest([]Definition{definition})
+	if err != nil {
+		t.Fatalf("BuildAgentPluginManifest() error = %v", err)
+	}
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(manifest, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	extensions, _ := decoded["extensions"].(map[string]interface{})[ZGIConnectorExtensionNamespace].(map[string]interface{})
+	if extensions["schema_version"] != ZGIMetadataSchemaVersion13 {
+		t.Fatalf("manifest extension version = %#v", extensions["schema_version"])
+	}
+	roundTripped, err := loader.LoadManifestPackage(context.Background(), manifest)
+	if err != nil {
+		t.Fatalf("LoadManifestPackage() error = %v", err)
+	}
+	if len(roundTripped.Failures) != 0 || len(roundTripped.Definitions) != 1 ||
+		!roundTripped.Definitions[0].IsDigitalHumanContract() {
+		t.Fatalf("round-tripped digital human package = %#v", roundTripped)
+	}
+}
+
 func TestBuiltInDefinitionsMustRoundTripThroughConformingManifestAdmission(t *testing.T) {
 	loader := newPluginLoaderForTest(t)
 	definition := pluginContractDefinitionFixture()

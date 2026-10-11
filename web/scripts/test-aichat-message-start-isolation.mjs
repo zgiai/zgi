@@ -5,10 +5,7 @@ import path from 'node:path';
 import ts from 'typescript';
 
 const root = process.cwd();
-const reducerPath = path.join(
-  root,
-  'src/components/chat/controllers/aichat/reducers/message.ts'
-);
+const reducerPath = path.join(root, 'src/components/chat/controllers/aichat/reducers/message.ts');
 const output = ts.transpileModule(readFileSync(reducerPath, 'utf8'), {
   compilerOptions: {
     module: ts.ModuleKind.CommonJS,
@@ -71,7 +68,14 @@ testModule.require = moduleID => {
       ],
     };
   }
-  if (moduleID === '../selectors') return { getNextActiveSendingState: () => false };
+  if (moduleID === '@/components/chat/utils/runtime-input-reconcile') {
+    return { applyAuthoritativeRuntimeInputSnapshot: messages => messages };
+  }
+  if (moduleID === '../selectors')
+    return {
+      getNextActiveSendingState: () => false,
+      sanitizeTimelineForMessage: (_message, timeline) => timeline,
+    };
   if (moduleID === './shared') {
     return {
       createAIChatFileMetadata: () => undefined,
@@ -83,25 +87,30 @@ testModule.require = moduleID => {
     };
   }
   if (moduleID === '../presentation-order') {
-    return {
-      captureAnswerTimelineBoundary: value => value,
-      clearAnswerTimelineBoundaryWithoutDurableTimeline: value => value,
-      finalPresentationAnswer: value => value,
-      mergePresentationItems: (left, right) => right ?? left,
-      presentationPositionFromPayload: () => ({}),
-      presentationStateFromMetadata: () => ({}),
-      processTextPresentationItem: value => value,
-      removePresentationSegment: value => value,
-      upsertPresentationItem: value => value,
-      withPresentationItems: value => value,
-    };
+    const sourcePath = path.join(
+      root,
+      'src/components/chat/controllers/aichat/presentation-order.ts'
+    );
+    const actual = new Module(sourcePath);
+    actual._compile(
+      ts.transpileModule(readFileSync(sourcePath, 'utf8'), {
+        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+      }).outputText,
+      sourcePath
+    );
+    return actual.exports;
   }
   if (moduleID === './skill') return { updateSkillInvocationMetadata: value => value };
   return originalRequire(moduleID);
 };
 testModule._compile(output, reducerPath);
 
-const { applyMessageStartState } = testModule.exports;
+const {
+  applyMessageStartState,
+  applyMessageEndState,
+  removeStreamingStateByConversation,
+  mergeAIChatMessages,
+} = testModule.exports;
 
 const baseState = {
   conversations: [
@@ -150,9 +159,105 @@ const nextTurn = applyMessageStartState(
 );
 
 assert.deepEqual(
+  nextTurn.streamingByMessageId['message-1'],
+  baseState.streamingByMessageId['message-1'],
+  'A new turn must preserve older page-local snapshots.'
+);
+
+assert.deepEqual(
   nextTurn.streamingByMessageId['message-2'].timeline,
   [],
   'A new turn in an existing conversation must not inherit the previous message timeline.'
+);
+
+const processItem = {
+  presentation_version: 2,
+  presentation_id: 'message-1:text:1',
+  presentation_sequence: 1,
+  kind: 'text',
+  segment_id: 'message-1:text:1',
+  content_phase: 'process',
+  content: '正在处理文件。',
+};
+const live = {
+  ...baseState,
+  streamingByMessageId: {
+    'message-1': {
+      ...baseState.streamingByMessageId['message-1'],
+      status: 'streaming',
+      timeline: [],
+      presentationVersion: 2,
+      presentationItems: [processItem],
+    },
+  },
+};
+const ended = applyMessageEndState(live, {
+  conversation_id: 'conversation-1',
+  message_id: 'message-1',
+  status: 'completed',
+  answer: '完成。',
+  metadata: { presentation: { version: 2, items: [] } },
+});
+assert.deepEqual(
+  ended.streamingByMessageId['message-1'].presentationItems,
+  [processItem],
+  'Completion must retain live process text omitted from durable metadata.'
+);
+const switched = removeStreamingStateByConversation(ended.streamingByMessageId, 'conversation-1');
+assert.deepEqual(
+  switched['message-1'].presentationItems,
+  [processItem],
+  'Conversation selection must preserve completed process text.'
+);
+const history = mergeAIChatMessages(ended.messagesByConversation['conversation-1'], [
+  {
+    ...baseState.messagesByConversation['conversation-1'][0],
+    status: 'completed',
+    metadata: { presentation: { version: 2, items: [] } },
+  },
+]);
+assert.equal(
+  history[0].metadata.presentation.items.length,
+  0,
+  'History can stay compact: the separate page snapshot is the visual authority.'
+);
+assert.deepEqual(ended.streamingByMessageId['message-1'].presentationItems, [processItem]);
+const replaced = applyMessageStartState(
+  ended,
+  {
+    conversation_id: 'conversation-1',
+    message_id: 'message-1',
+    replace: true,
+  },
+  { previousConversationId: 'conversation-1' }
+);
+assert.equal(
+  replaced.streamingByMessageId['message-1'].presentationItems,
+  undefined,
+  'Regenerating the same message must clear its old process text.'
+);
+
+const utilitiesPath = path.join(
+  root,
+  'src/components/chat/runtime/controller/chat-runtime-controller-utils.ts'
+);
+const utilities = new Module(utilitiesPath);
+utilities.require = name =>
+  name === '@/utils/client-id' ? { generateClientId: () => 'test-id' } : originalRequire(name);
+utilities._compile(
+  ts.transpileModule(readFileSync(utilitiesPath, 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText,
+  utilitiesPath
+);
+const refreshed = utilities.exports.removeRunningStreamingStateByConversation(
+  ended.streamingByMessageId,
+  'conversation-1'
+);
+assert.deepEqual(
+  refreshed['message-1'].presentationItems,
+  [processItem],
+  'Silent idle refresh must keep completed presentation-only snapshots.'
 );
 
 const draftState = {
@@ -160,9 +265,7 @@ const draftState = {
   conversations: [createConversation('draft-aichat-1')],
   activeConversationId: 'draft-aichat-1',
   messagesByConversation: {
-    'draft-aichat-1': [
-      createMessage({ id: 'draft-message-1', conversationId: 'draft-aichat-1' }),
-    ],
+    'draft-aichat-1': [createMessage({ id: 'draft-message-1', conversationId: 'draft-aichat-1' })],
   },
   messagePaginationByConversation: {
     'draft-aichat-1': { page: 1, page_size: 20, total: 1 },

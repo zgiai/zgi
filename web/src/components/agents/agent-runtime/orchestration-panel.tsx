@@ -1,5 +1,6 @@
 'use client';
 
+import type { FileUploadSelection } from '@/services/upload.service';
 import type { ModelSelectorParameterValue } from '@/components/common/model-selector';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
@@ -10,6 +11,8 @@ import type { OpeningStatementDialogValue } from '@/components/workflow/ui/featu
 import type {
   AgentDatabaseBinding,
   AgentConnectorBinding,
+  AgentExecutionRuntimeConfig,
+  AgentExecutionRuntimeCapability,
   AgentMemorySlotConfig,
   AgentBindingHealth,
   AgentWorkflowBinding,
@@ -17,6 +20,7 @@ import type {
 } from '@/services/types/agent';
 import type { Dataset } from '@/services/types/dataset';
 import { AgentRuntimeDatabaseSection } from './sections/database-section';
+import { AgentRuntimeExecutionSection } from './sections/execution-section';
 import { AgentRuntimeExperienceSection } from './sections/experience-section';
 import { AgentRuntimeFileSection } from './sections/file-section';
 import { AgentRuntimeKnowledgeSection } from './sections/knowledge-section';
@@ -56,6 +60,10 @@ interface AgentRuntimeOrchestrationPanelProps {
   suggestedQuestions: string[];
   isGeneratingSuggestions: boolean;
   fileUploadEnabled: boolean;
+  fileUploadPolicy?: FileUploadSelection | null;
+  onChangeFileUploadPolicy: (value: FileUploadSelection) => void;
+  executionRuntime: AgentExecutionRuntimeConfig | null;
+  executionRuntimeCapability?: AgentExecutionRuntimeCapability | null;
   agentMemoryEnabled: boolean;
   agentMemoryAutoExtractionEnabled: boolean;
   agentMemorySlots: AgentMemorySlotConfig[];
@@ -89,6 +97,7 @@ interface AgentRuntimeOrchestrationPanelProps {
   ) => Promise<{ questions: string[]; warnings?: string[] } | undefined>;
   onChangeSuggestedQuestions: (value: string[]) => void;
   onChangeFileUploadEnabled: (value: boolean) => void;
+  onChangeExecutionRuntime: (value: AgentExecutionRuntimeConfig) => void;
   onChangeAgentMemoryEnabled: (value: boolean) => void;
   onChangeAgentMemoryAutoExtractionEnabled: (value: boolean) => void;
   onChangeAgentMemorySlots: (value: AgentMemorySlotConfig[]) => void;
@@ -122,6 +131,10 @@ export function AgentRuntimeOrchestrationPanel({
   suggestedQuestions,
   isGeneratingSuggestions,
   fileUploadEnabled,
+  fileUploadPolicy,
+  onChangeFileUploadPolicy,
+  executionRuntime,
+  executionRuntimeCapability,
   agentMemoryEnabled,
   agentMemoryAutoExtractionEnabled,
   agentMemorySlots,
@@ -153,6 +166,7 @@ export function AgentRuntimeOrchestrationPanel({
   onGenerateSuggestedQuestions,
   onChangeSuggestedQuestions,
   onChangeFileUploadEnabled,
+  onChangeExecutionRuntime,
   onChangeAgentMemoryEnabled,
   onChangeAgentMemoryAutoExtractionEnabled,
   onChangeAgentMemorySlots,
@@ -182,6 +196,17 @@ export function AgentRuntimeOrchestrationPanel({
             readOnly={readOnly}
             onToggleSection={onToggleSection}
             onChangeModelValue={onChangeModelValue}
+          />
+
+          <Separator className="h-px" />
+
+          <AgentRuntimeExecutionSection
+            open={openSections.execution}
+            value={executionRuntime}
+            capability={executionRuntimeCapability}
+            readOnly={readOnly}
+            onToggleSection={onToggleSection}
+            onChange={onChangeExecutionRuntime}
           />
 
           <Separator className="h-px" />
@@ -248,19 +273,15 @@ export function AgentRuntimeOrchestrationPanel({
               <Separator className="h-px" />
 
               <AgentRuntimeConnectorSection
+                agentId={agentId}
                 open={openSections.connectors}
                 connectorBindings={connectorBindings}
-
                 menuOpen={connectorMenuOpen}
-
-
-
                 bindingHealth={bindingHealth}
                 readOnly={readOnly}
                 onToggleSection={onToggleSection}
                 onOpenDialog={onOpenConnectorDialog}
                 onChangeConnectorBindings={onChangeConnectorBindings}
-
               />
             </>
           ) : null}
@@ -270,6 +291,8 @@ export function AgentRuntimeOrchestrationPanel({
           <AgentRuntimeFileSection
             open={openSections.files}
             fileUploadEnabled={fileUploadEnabled}
+            fileUploadPolicy={fileUploadPolicy}
+            onChangeFileUploadPolicy={onChangeFileUploadPolicy}
             readOnly={readOnly}
             onToggleSection={onToggleSection}
             onChangeFileUploadEnabled={onChangeFileUploadEnabled}

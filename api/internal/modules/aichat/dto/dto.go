@@ -42,23 +42,24 @@ type StopConversationResponse struct {
 }
 
 type SkillResponse struct {
-	SkillID          string                `json:"skill_id"`
-	Source           string                `json:"source"`
-	Name             string                `json:"name"`
-	Description      string                `json:"description"`
-	WhenToUse        string                `json:"when_to_use"`
-	Display          SkillDisplayResponse  `json:"display"`
-	RuntimeType      string                `json:"runtime_type"`
-	Enabled          bool                  `json:"enabled"`
-	HasTools         bool                  `json:"has_tools"`
-	HasReferences    bool                  `json:"has_references"`
-	HasScripts       bool                  `json:"has_scripts"`
-	ScriptsSupported bool                  `json:"scripts_supported"`
-	MaxCallsPerTurn  int                   `json:"max_calls_per_turn"`
-	TimeoutSeconds   int                   `json:"timeout_seconds"`
-	Status           string                `json:"status"`
-	ValidationError  string                `json:"validation_error,omitempty"`
-	Exposure         SkillExposureResponse `json:"exposure"`
+	SkillID             string                `json:"skill_id"`
+	Source              string                `json:"source"`
+	Name                string                `json:"name"`
+	Description         string                `json:"description"`
+	WhenToUse           string                `json:"when_to_use"`
+	Display             SkillDisplayResponse  `json:"display"`
+	RuntimeType         string                `json:"runtime_type"`
+	Enabled             bool                  `json:"enabled"`
+	HasTools            bool                  `json:"has_tools"`
+	HasReferences       bool                  `json:"has_references"`
+	HasScripts          bool                  `json:"has_scripts"`
+	ScriptsSupported    bool                  `json:"scripts_supported"`
+	ScriptExecutionMode string                `json:"script_execution_mode,omitempty"`
+	MaxCallsPerTurn     int                   `json:"max_calls_per_turn"`
+	TimeoutSeconds      int                   `json:"timeout_seconds"`
+	Status              string                `json:"status"`
+	ValidationError     string                `json:"validation_error,omitempty"`
+	Exposure            SkillExposureResponse `json:"exposure"`
 }
 
 type SkillExposureResponse struct {
@@ -84,20 +85,21 @@ type ImportSkillPreviewFile struct {
 }
 
 type ImportSkillPreviewResponse struct {
-	ImportID         string                   `json:"import_id,omitempty"`
-	ExpiresAt        int64                    `json:"expires_at,omitempty"`
-	Skill            *SkillResponse           `json:"skill,omitempty"`
-	WillOverwrite    bool                     `json:"will_overwrite"`
-	ExistingSkill    *ExistingSkillResponse   `json:"existing_skill,omitempty"`
-	FileCount        int                      `json:"file_count"`
-	TotalSize        int64                    `json:"total_size"`
-	Files            []ImportSkillPreviewFile `json:"files"`
-	References       []string                 `json:"references"`
-	HasScripts       bool                     `json:"has_scripts"`
-	ScriptsSupported bool                     `json:"scripts_supported"`
-	Warnings         []string                 `json:"warnings"`
-	ValidationErrors []string                 `json:"validation_errors"`
-	CanImport        bool                     `json:"can_import"`
+	ImportID            string                   `json:"import_id,omitempty"`
+	ExpiresAt           int64                    `json:"expires_at,omitempty"`
+	Skill               *SkillResponse           `json:"skill,omitempty"`
+	WillOverwrite       bool                     `json:"will_overwrite"`
+	ExistingSkill       *ExistingSkillResponse   `json:"existing_skill,omitempty"`
+	FileCount           int                      `json:"file_count"`
+	TotalSize           int64                    `json:"total_size"`
+	Files               []ImportSkillPreviewFile `json:"files"`
+	References          []string                 `json:"references"`
+	HasScripts          bool                     `json:"has_scripts"`
+	ScriptsSupported    bool                     `json:"scripts_supported"`
+	ScriptExecutionMode string                   `json:"script_execution_mode,omitempty"`
+	Warnings            []string                 `json:"warnings"`
+	ValidationErrors    []string                 `json:"validation_errors"`
+	CanImport           bool                     `json:"can_import"`
 }
 
 type ConfirmImportSkillRequest struct {

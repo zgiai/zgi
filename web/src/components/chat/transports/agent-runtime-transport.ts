@@ -16,6 +16,9 @@ import type {
   AIChatSearchResponse,
   AIChatSseEnvelope,
   AIChatStopConversationResponseData,
+  AIChatToolGovernanceDecisionRequest,
+  AIChatSubmitRuntimeInputRequest,
+  AIChatSubmitRuntimeInputResponseData,
   AIChatUserInputContinuationRequest,
   AIChatWorkflowQuestionAnswerInputs,
 } from '@/services/types/aichat';
@@ -49,6 +52,9 @@ interface AgentRuntimeTransportOptions {
   runtimeBasePath: string;
   chatPath: string;
   client?: RuntimeClient;
+  supportsRuntimeInput?: boolean;
+  supportsToolGovernanceApproval?: boolean;
+  transformChatPayload?: (payload: AIChatChatRequest) => unknown;
 }
 
 const AGENT_RUNTIME_CONVERSATION_ID_HEADER = 'X-ZGI-Conversation-ID';
@@ -109,9 +115,8 @@ function runtimeTerminalMessage(message: { event: string | null; data: unknown }
       'waiting_approval',
       'waiting_client_action',
       'waiting_question',
-    ].includes(
-      String((data as Record<string, unknown>).status)
-    )
+      'waiting_budget',
+    ].includes(String((data as Record<string, unknown>).status))
   );
 }
 
@@ -137,14 +142,71 @@ function paginationFromResponse<T>(
 }
 
 export class AgentRuntimeTransport implements AIChatRuntimeTransport {
+  readExecutionFile(conversationId: string, fileId: string, signal?: AbortSignal): Promise<Blob> {
+    return this.client.get<Blob>(
+      `${this.runtimeBasePath}/conversations/${encodeURIComponent(conversationId)}/files/${encodeURIComponent(fileId)}`,
+      {
+        responseType: 'blob',
+        signal,
+        retryAttemptsOverride: 0,
+      }
+    );
+  }
+  readonly supportsRuntimeInput: boolean;
+  readonly continueToolGovernanceDecision?: AIChatRuntimeTransport['continueToolGovernanceDecision'];
   private readonly runtimeBasePath: string;
   private readonly chatPath: string;
   private readonly client: RuntimeClient;
+  private readonly transformChatPayload: (payload: AIChatChatRequest) => unknown;
 
-  constructor({ runtimeBasePath, chatPath, client = http }: AgentRuntimeTransportOptions) {
+  constructor({
+    runtimeBasePath,
+    chatPath,
+    client = http,
+    supportsRuntimeInput = false,
+    supportsToolGovernanceApproval = false,
+    transformChatPayload = payload => payload,
+  }: AgentRuntimeTransportOptions) {
     this.runtimeBasePath = runtimeBasePath;
     this.chatPath = chatPath;
     this.client = client;
+    this.supportsRuntimeInput = supportsRuntimeInput;
+    this.transformChatPayload = transformChatPayload;
+    // Only the authenticated draft transport has a console approval route.
+    // Public WebApp/API transports must not advertise interactive approval.
+    if (supportsToolGovernanceApproval) {
+      this.continueToolGovernanceDecision = (
+        conversationId,
+        messageId,
+        correlationId,
+        payload,
+        callbacks,
+        abortSignal
+      ) =>
+        this.client.sse<AIChatSseEnvelope, AIChatToolGovernanceDecisionRequest>(
+          `${this.runtimeBasePath}/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/tool-governance/${encodeURIComponent(correlationId)}/continue`,
+          {
+            method: 'POST',
+            body: payload,
+            abortSignal,
+            idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
+            skipErrorHandling: true,
+            isTerminalMessage: runtimeTerminalMessage,
+            onOpen: response => notifyAgentRuntimeStreamOpen(response, callbacks),
+            onMessage: message =>
+              dispatchAIChatStreamEvent(
+                String(
+                  (message.data as AIChatSseEnvelope | undefined)?.event ?? message.event ?? ''
+                ),
+                (message.data as AIChatSseEnvelope | undefined)?.data ?? message.data,
+                message.id,
+                callbacks
+              ),
+            onError: callbacks.onRequestError,
+            onClose: callbacks.onClose,
+          }
+        );
+    }
   }
 
   async listConversations(params: {
@@ -230,14 +292,27 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
     return response.data;
   }
 
+  async submitRuntimeInput(
+    conversationId: string,
+    messageId: string,
+    payload: AIChatSubmitRuntimeInputRequest
+  ): Promise<AIChatSubmitRuntimeInputResponseData> {
+    const response = await this.client.post<ApiResponseData<AIChatSubmitRuntimeInputResponseData>>(
+      `${this.runtimeBasePath}/conversations/${conversationId}/messages/${messageId}/runtime-inputs`,
+      payload,
+      { skipErrorHandling: true }
+    );
+    return response.data;
+  }
+
   streamChat(
     payload: AIChatChatRequest,
     callbacks: AIChatStreamCallbacks,
     abortSignal?: AbortSignal
   ) {
-    return this.client.sse<AIChatSseEnvelope, AIChatChatRequest>(this.chatPath, {
+    return this.client.sse<AIChatSseEnvelope, unknown>(this.chatPath, {
       method: 'POST',
-      body: payload,
+      body: this.transformChatPayload(payload),
       abortSignal,
       idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
       skipErrorHandling: true,
@@ -438,6 +513,8 @@ export function createAgentDraftTransport(agentId: string): AgentRuntimeTranspor
   return new AgentRuntimeTransport({
     runtimeBasePath: `/console/api/agents/${agentId}/runtime`,
     chatPath: `/console/api/agents/${agentId}/chat`,
+    supportsRuntimeInput: true,
+    supportsToolGovernanceApproval: true,
   });
 }
 
@@ -446,5 +523,7 @@ export function createAgentWebAppTransport(webAppId: string): AgentRuntimeTransp
     runtimeBasePath: `/console/api/webapps/${webAppId}/runtime`,
     chatPath: `/console/api/webapps/${webAppId}/chat`,
     client: webappHttp,
+    supportsRuntimeInput: true,
+    supportsToolGovernanceApproval: true,
   });
 }

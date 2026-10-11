@@ -106,6 +106,27 @@ func TestGormConfirmationContinuationStoreLoadIsOwnerScoped(t *testing.T) {
 	}
 }
 
+func TestGormConfirmationContinuationStoreListPendingIsOwnerScopedAndMetadataOnly(t *testing.T) {
+	fixture := newConfirmationContinuationTestFixture(t)
+	receipt, err := uuid.Parse(string(fixture.frozen.RouteReceipt))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.mock.ExpectQuery(`(?s)SELECT route_receipt, created_at FROM "connector_confirmation_continuations" WHERE .*organization_id.*owner_account_id.*state.*ORDER BY created_at DESC, route_receipt DESC LIMIT`).
+		WithArgs(fixture.frozen.Request.OrganizationID, fixture.frozen.Request.OwnerAccountID, string(ConfirmationContinuationPending), sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"route_receipt", "created_at"}).AddRow(receipt, time.Now().UTC()))
+	refs, more, err := fixture.store.ListPending(context.Background(), fixture.frozen.Request.OrganizationID, fixture.frozen.Request.OwnerAccountID, 1, 1)
+	if err != nil || more || len(refs) != 1 || refs[0].RouteReceipt != fixture.frozen.RouteReceipt {
+		t.Fatalf("ListPending() = %#v, more=%v, err=%v", refs, more, err)
+	}
+	if _, _, err := fixture.store.ListPending(context.Background(), uuid.Nil, fixture.frozen.Request.OwnerAccountID, 1, 1); !core.IsErrorCode(err, core.ErrorCodeInvalidInput) {
+		t.Fatalf("unscoped ListPending() error = %v", err)
+	}
+	if err := fixture.mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestGormConfirmationContinuationStoreRecordTerminalIsIdempotentOnlyForExactResult(t *testing.T) {
 	fixture := newConfirmationContinuationTestFixture(t)
 	expectContinuationFreeze(fixture, 1, "v1.sealed-envelope.1")
@@ -249,6 +270,159 @@ func TestGormConfirmationContinuationStoreRejectsOwnerMismatchOnTerminalCAS(t *t
 	}
 }
 
+func TestGormConfirmationContinuationStoreFreezesDigitalHumanOrigin(t *testing.T) {
+	fixture := newDigitalHumanConfirmationContinuationTestFixture(t)
+	target := fixture.frozen.Request.Target
+
+	expectContinuationFreeze(fixture, 1, "v1.sealed-envelope.1")
+	first, err := fixture.store.Freeze(context.Background(), fixture.frozen)
+	if err != nil {
+		t.Fatalf("Freeze() error = %v", err)
+	}
+	if first.State != ConfirmationContinuationPending || first.Frozen.Origin != fixture.frozen.Origin {
+		t.Fatalf("Freeze() = %#v", first)
+	}
+
+	record := fixture.pendingRecord("v1.sealed-envelope.1")
+	if record.OriginVersion != confirmationOriginVersionDigitalHuman ||
+		record.DigitalHumanID == nil || *record.DigitalHumanID != target.ID {
+		t.Fatalf("persisted digital human origin = %#v", record)
+	}
+	expectContinuationLoad(fixture, record)
+	loaded, err := fixture.store.Load(
+		context.Background(), fixture.frozen.Request.OrganizationID,
+		fixture.frozen.Request.OwnerAccountID, fixture.frozen.RouteReceipt,
+	)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if loaded.Frozen.Origin != fixture.frozen.Origin || loaded.Frozen.Request.Target != target {
+		t.Fatalf("Load() = %#v", loaded)
+	}
+	if err := fixture.mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGormConfirmationContinuationStoreBindsOmittedDigitalHumanOrigin(t *testing.T) {
+	fixture := newDigitalHumanConfirmationContinuationTestFixture(t)
+	target := fixture.frozen.Request.Target
+	request := fixture.frozen
+	// The shared runtime builds the host surface references but leaves the
+	// digital human id and origin version to the store, which owns the target.
+	request.Origin.OriginVersion = 0
+	request.Origin.DigitalHumanID = ""
+
+	expectContinuationFreezeForOrigin(fixture, fixture.frozen.Origin, 1, "v1.sealed-envelope.1")
+	continuation, err := fixture.store.Freeze(context.Background(), request)
+	if err != nil {
+		t.Fatalf("Freeze() error = %v", err)
+	}
+	if continuation.Frozen.Origin.OriginVersion != confirmationOriginVersionDigitalHuman ||
+		continuation.Frozen.Origin.DigitalHumanID != target.ID {
+		t.Fatalf("bound origin = %#v, want target %s", continuation.Frozen.Origin, target.ID)
+	}
+	if err := fixture.mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGormConfirmationContinuationStoreRejectsDriftedDigitalHumanClaim(t *testing.T) {
+	for name, mutate := range map[string]func(*invocationRecord){
+		"other digital human": func(claim *invocationRecord) { claim.TargetID = uuid.NewString() },
+		"other version":       func(claim *invocationRecord) { claim.TargetVersionID = uuid.NewString() },
+		"other instance":      func(claim *invocationRecord) { claim.BindingInstanceID = uuid.NewString() },
+		"other surface":       func(claim *invocationRecord) { claim.TargetType = string(core.TargetTypeAgent) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			fixture := newDigitalHumanConfirmationContinuationTestFixture(t)
+			mutate(&fixture.claim)
+			fixture.mock.ExpectQuery(`SELECT .* FROM "connector_invocation_claims"`).WillReturnRows(nativeInvocationRows(fixture.claim))
+			if _, err := fixture.store.Freeze(context.Background(), fixture.frozen); !core.IsErrorCode(err, core.ErrorCodeAccessDenied) {
+				t.Fatalf("drifted digital human claim accepted: %v", err)
+			}
+			if err := fixture.mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestValidateConfirmationOriginDigitalHumanScope(t *testing.T) {
+	target := core.TargetRef{
+		Type: core.TargetTypeDigitalHuman, ID: uuid.NewString(),
+		Scope: core.ScopePublished, VersionID: uuid.NewString(), BindingInstanceID: uuid.NewString(),
+	}
+	valid := ConfirmationOrigin{
+		Surface: core.TargetTypeDigitalHuman, OriginVersion: confirmationOriginVersionDigitalHuman,
+		DigitalHumanID: target.ID, ConversationID: uuid.NewString(),
+		MessageID: uuid.NewString(), RunID: uuid.NewString(),
+	}
+	if err := validateConfirmationOrigin(valid, target); err != nil {
+		t.Fatalf("valid digital human origin rejected: %v", err)
+	}
+	for name, mutate := range map[string]func(*ConfirmationOrigin){
+		"other digital human":   func(origin *ConfirmationOrigin) { origin.DigitalHumanID = uuid.NewString() },
+		"missing digital human": func(origin *ConfirmationOrigin) { origin.DigitalHumanID = "" },
+		"wrong origin version":  func(origin *ConfirmationOrigin) { origin.OriginVersion = 1 },
+		"non canonical run":     func(origin *ConfirmationOrigin) { origin.RunID = "not-a-uuid" },
+		"agent field":           func(origin *ConfirmationOrigin) { origin.AgentID = target.ID },
+		"workflow field":        func(origin *ConfirmationOrigin) { origin.WorkflowID = target.ID },
+		"node field":            func(origin *ConfirmationOrigin) { origin.NodeID = uuid.NewString() },
+		"missing conversation":  func(origin *ConfirmationOrigin) { origin.ConversationID = "" },
+		"missing message":       func(origin *ConfirmationOrigin) { origin.MessageID = "" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			origin := valid
+			mutate(&origin)
+			if err := validateConfirmationOrigin(origin, target); err == nil {
+				t.Fatalf("origin %#v accepted for %#v, want invalid input", origin, target)
+			}
+		})
+	}
+	if err := validateConfirmationOrigin(valid, core.TargetRef{Type: core.TargetTypeChat, ID: valid.ConversationID}); err == nil {
+		t.Fatal("digital human origin accepted for a chat target")
+	}
+	if err := validateConfirmationOrigin(ConfirmationOrigin{
+		Surface: core.TargetTypeChat, OriginVersion: confirmationOriginVersionDigitalHuman,
+		DigitalHumanID: target.ID, ConversationID: "conversation-1", MessageID: "message-1",
+	}, core.TargetRef{Type: core.TargetTypeChat, ID: "conversation-1"}); err == nil {
+		t.Fatal("chat origin carrying digital human fields was accepted")
+	}
+}
+
+func TestBindConfirmationOriginOnlyTouchesDigitalHumanSurface(t *testing.T) {
+	target := core.TargetRef{Type: core.TargetTypeDigitalHuman, ID: uuid.NewString()}
+	frozen := FrozenConfirmationRequest{
+		Request: ExecutionRequest{Target: target},
+		Origin: ConfirmationOrigin{
+			Surface: core.TargetTypeDigitalHuman, ConversationID: uuid.NewString(),
+			MessageID: uuid.NewString(), RunID: uuid.NewString(),
+		},
+	}
+	bound := bindConfirmationOrigin(frozen)
+	if bound.Origin.OriginVersion != confirmationOriginVersionDigitalHuman || bound.Origin.DigitalHumanID != target.ID {
+		t.Fatalf("bound origin = %#v", bound.Origin)
+	}
+
+	// A caller-supplied disagreement is preserved so validation rejects it
+	// instead of silently rebinding the receipt to a different digital human.
+	frozen.Origin.OriginVersion = 1
+	frozen.Origin.DigitalHumanID = uuid.NewString()
+	mismatched := bindConfirmationOrigin(frozen)
+	if mismatched.Origin != frozen.Origin {
+		t.Fatalf("mismatched origin was rewritten: %#v", mismatched.Origin)
+	}
+
+	chat := FrozenConfirmationRequest{
+		Request: ExecutionRequest{Target: core.TargetRef{Type: core.TargetTypeChat, ID: "conversation-1"}},
+		Origin:  ConfirmationOrigin{Surface: core.TargetTypeChat, ConversationID: "conversation-1", MessageID: "message-1"},
+	}
+	if got := bindConfirmationOrigin(chat); got.Origin != chat.Origin {
+		t.Fatalf("chat origin changed: %#v", got.Origin)
+	}
+}
+
 type confirmationContinuationTestFixture struct {
 	store     *GormConfirmationContinuationStore
 	mock      sqlmock.Sqlmock
@@ -260,8 +434,34 @@ type confirmationContinuationTestFixture struct {
 
 func newConfirmationContinuationTestFixture(t *testing.T) *confirmationContinuationTestFixture {
 	t.Helper()
+	request := validExecutionRequest()
+	return newConfirmationContinuationTestFixtureFor(t, request, ConfirmationOrigin{
+		Surface: core.TargetTypeChat, ConversationID: request.Target.ID, MessageID: "message-1",
+	})
+}
+
+func newDigitalHumanConfirmationContinuationTestFixture(t *testing.T) *confirmationContinuationTestFixture {
+	t.Helper()
+	request := validExecutionRequest()
+	request.Target = core.TargetRef{
+		Type: core.TargetTypeDigitalHuman, ID: uuid.NewString(),
+		Scope: core.ScopePublished, VersionID: uuid.NewString(), BindingInstanceID: uuid.NewString(),
+	}
+	return newConfirmationContinuationTestFixtureFor(t, request, ConfirmationOrigin{
+		Surface: core.TargetTypeDigitalHuman, OriginVersion: confirmationOriginVersionDigitalHuman,
+		DigitalHumanID: request.Target.ID, ConversationID: uuid.NewString(),
+		MessageID: uuid.NewString(), RunID: uuid.NewString(),
+	})
+}
+
+func newConfirmationContinuationTestFixtureFor(
+	t *testing.T,
+	request ExecutionRequest,
+	origin ConfirmationOrigin,
+) *confirmationContinuationTestFixture {
+	t.Helper()
 	db, mock := openExecutionPersistenceMock(t)
-	claim := routeResolutionRequest(validExecutionRequest())
+	claim := routeResolutionRequest(request)
 	receiptID := uuid.New()
 	definition := validDefinition()
 	definition.Operations[0].ID = claim.OperationID.String()
@@ -277,9 +477,7 @@ func newConfirmationContinuationTestFixture(t *testing.T) *confirmationContinuat
 			LogicalOperationID: claim.LogicalOperationID, CorrelationID: claim.CorrelationID,
 			Interactive: true, Input: map[string]any{"query": "zgi"},
 		},
-		Origin: ConfirmationOrigin{
-			Surface: core.TargetTypeChat, ConversationID: claim.Target.ID, MessageID: "message-1",
-		},
+		Origin:            origin,
 		AcceptedOperation: acceptedOperation,
 	}
 	digest, _ := invocationInputDigest(frozen.Request.Input)
@@ -323,14 +521,27 @@ func expectContinuationFreeze(
 	rowsAffected int64,
 	envelope string,
 ) {
+	expectContinuationFreezeForOrigin(fixture, fixture.frozen.Origin, rowsAffected, envelope)
+}
+
+func expectContinuationFreezeForOrigin(
+	fixture *confirmationContinuationTestFixture,
+	origin ConfirmationOrigin,
+	rowsAffected int64,
+	envelope string,
+) {
 	fixture.mock.ExpectQuery(`(?s)SELECT .* FROM "connector_invocation_claims" WHERE receipt_id = \$1 AND organization_id = \$2 AND owner_account_id = \$3.*LIMIT \$4`).
 		WithArgs(fixture.claim.ReceiptID, fixture.claim.OrganizationID, fixture.claim.OwnerAccountID, 1).
 		WillReturnRows(nativeInvocationRows(fixture.claim))
 	fixture.mock.ExpectExec(`(?s)INSERT INTO "connector_confirmation_continuations" .*ON CONFLICT \("route_receipt"\) DO NOTHING`).
 		WithArgs(
 			fixture.claim.ReceiptID, fixture.claim.OrganizationID, fixture.claim.OwnerAccountID,
-			string(core.TargetTypeChat), fixture.claim.TargetID, "message-1",
-			nil, nil, nil, nil, envelope, string(ConfirmationContinuationPending),
+			origin.OriginVersion, nullableContinuationStringDriverValue(origin.DigitalHumanID),
+			string(origin.Surface), nullableContinuationStringDriverValue(origin.ConversationID),
+			nullableContinuationStringDriverValue(origin.MessageID), nullableContinuationStringDriverValue(origin.AgentID),
+			nullableContinuationStringDriverValue(origin.WorkflowID), nullableContinuationStringDriverValue(origin.RunID),
+			nullableContinuationStringDriverValue(origin.NodeID),
+			envelope, string(ConfirmationContinuationPending),
 			nil, nil, nil, fixture.now, fixture.now, nil,
 		).
 		WillReturnResult(sqlmock.NewResult(0, rowsAffected))
@@ -379,7 +590,8 @@ func expectContinuationTerminalUpdateForOwner(
 
 func confirmationContinuationRows(record confirmationContinuationRecord) *sqlmock.Rows {
 	return sqlmock.NewRows(confirmationContinuationColumns()).AddRow(
-		record.RouteReceipt, record.OrganizationID, record.OwnerAccountID, record.OriginSurface,
+		record.RouteReceipt, record.OrganizationID, record.OwnerAccountID,
+		record.OriginVersion, record.DigitalHumanID, record.OriginSurface,
 		record.ConversationID, record.MessageID, record.AgentID, record.WorkflowID, record.RunID, record.NodeID,
 		record.ProtectedPayloadEnvelope, record.State, record.DecisionID, record.OutcomeID, record.DiagnosticCode,
 		record.CreatedAt, record.UpdatedAt, record.TerminalAt,
@@ -388,7 +600,7 @@ func confirmationContinuationRows(record confirmationContinuationRecord) *sqlmoc
 
 func confirmationContinuationColumns() []string {
 	return []string{
-		"route_receipt", "organization_id", "owner_account_id", "origin_surface",
+		"route_receipt", "organization_id", "owner_account_id", "origin_version", "digital_human_id", "origin_surface",
 		"conversation_id", "message_id", "agent_id", "workflow_id", "run_id", "node_id",
 		"protected_payload_envelope", "state", "decision_id", "outcome_id", "diagnostic_code",
 		"created_at", "updated_at", "terminal_at",

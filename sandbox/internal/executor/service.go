@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -43,6 +44,25 @@ type Service struct {
 	activeExecutionsByProfile      map[string]int
 	activeExecutionsByOrganization map[string]int
 	queuedExecutionsByOrganization map[string]int
+}
+
+// Skill package archives have a stable cross-service contract. Keep these
+// values aligned with the API's custom-skill import and snapshot limits.
+const (
+	maxSkillPackageArchiveFiles    = 600
+	maxSkillPackageArchiveFileSize = 10 * 1024 * 1024
+	// SkillPackageMaxExtractedBytes is the maximum extracted size accepted for a
+	// Skill package. The app layer uses it to size the JSON transport cap before
+	// the request can be decoded as a Skill upload.
+	SkillPackageMaxExtractedBytes = 64 * 1024 * 1024
+)
+
+func skillPackageArchiveLimits() archiveLimits {
+	return archiveLimits{
+		maxFiles:     maxSkillPackageArchiveFiles,
+		maxFileSize:  maxSkillPackageArchiveFileSize,
+		maxTotalSize: SkillPackageMaxExtractedBytes,
+	}
 }
 
 type CodeRequest struct {
@@ -134,6 +154,7 @@ type ArchiveUploadRequest struct {
 	ArchiveBase64         string `json:"archive_base64"`
 	Format                string `json:"format"`
 	StripRoot             bool   `json:"strip_root"`
+	SkillPackage          bool   `json:"skill_package"`
 	ValidateSkillManifest bool   `json:"validate_skill_manifest"`
 }
 
@@ -147,14 +168,20 @@ type ArchiveUploadResult struct {
 }
 
 type SkillExecutionManifest struct {
-	Entrypoint           string   `json:"entrypoint"`
-	Language             string   `json:"language"`
-	DependencyProfile    string   `json:"dependency_profile"`
-	TimeoutMS            int      `json:"timeout_ms"`
-	AllowedArtifactPaths []string `json:"allowed_artifact_paths"`
-	MaxArtifactCount     int      `json:"max_artifact_count"`
-	MaxArtifactBytes     int64    `json:"max_artifact_bytes"`
-	ResultMode           string   `json:"result_mode"`
+	Entrypoint           string           `json:"entrypoint"`
+	Language             string           `json:"language"`
+	DependencyProfile    string           `json:"dependency_profile"`
+	BundledPackages      []BundledPackage `json:"bundled_packages,omitempty"`
+	TimeoutMS            int              `json:"timeout_ms"`
+	AllowedArtifactPaths []string         `json:"allowed_artifact_paths"`
+	MaxArtifactCount     int              `json:"max_artifact_count"`
+	MaxArtifactBytes     int64            `json:"max_artifact_bytes"`
+	ResultMode           string           `json:"result_mode"`
+}
+
+type BundledPackage struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
 }
 
 type FileInfo struct {
@@ -1423,6 +1450,9 @@ func (s *Service) UploadArchive(req ArchiveUploadRequest) (*ArchiveUploadResult,
 		maxFiles:     256,
 		maxFileSize:  s.policy.MaxFileSizeBytes(),
 		maxTotalSize: s.policy.MaxFileSizeBytes() * 256,
+	}
+	if req.SkillPackage || req.ValidateSkillManifest {
+		limit = skillPackageArchiveLimits()
 	}
 	totalSize, err := validateArchiveEntriesWithinLimits(entries, limit)
 	if err != nil {
@@ -2796,13 +2826,14 @@ func parseSkillExecutionManifest(content []byte, names map[string]bool, policySe
 }
 
 func validateSkillManifestFields(manifest *SkillExecutionManifest, names map[string]bool, policyService *policy.Service, sandboxDependencyProfile string, organizationID string) error {
-	manifest.Entrypoint = filepath.ToSlash(strings.TrimSpace(manifest.Entrypoint))
+	manifest.Entrypoint = strings.TrimSpace(manifest.Entrypoint)
 	if manifest.Entrypoint == "" {
 		return errors.New("skill manifest entrypoint is required")
 	}
 	if unsafeArchivePath(manifest.Entrypoint) {
 		return fmt.Errorf("skill manifest entrypoint escapes package root: %s", manifest.Entrypoint)
 	}
+	manifest.Entrypoint = filepath.ToSlash(filepath.Clean(manifest.Entrypoint))
 	if !strings.HasPrefix(manifest.Entrypoint, "scripts/") {
 		return fmt.Errorf("skill manifest entrypoint must be under scripts: %s", manifest.Entrypoint)
 	}
@@ -2823,6 +2854,9 @@ func validateSkillManifestFields(manifest *SkillExecutionManifest, names map[str
 		if filepath.Ext(manifest.Entrypoint) != ".js" {
 			return fmt.Errorf("skill manifest nodejs entrypoint must use .js: %s", manifest.Entrypoint)
 		}
+	}
+	if err := validateBundledPackages(manifest, names); err != nil {
+		return err
 	}
 	if policyService == nil {
 		return errors.New("dependency profile policy is not configured")
@@ -2857,13 +2891,13 @@ func validateSkillManifestFields(manifest *SkillExecutionManifest, names map[str
 		return errors.New("skill manifest allowed_artifact_paths is required")
 	}
 	for i, rawPath := range manifest.AllowedArtifactPaths {
-		path := filepath.ToSlash(strings.TrimSpace(rawPath))
-		if path == "" {
+		if strings.TrimSpace(rawPath) == "" {
 			return errors.New("skill manifest allowed_artifact_paths contains an empty path")
 		}
-		if unsafeArchivePath(path) {
-			return fmt.Errorf("skill manifest allowed artifact path escapes package root: %s", path)
+		if unsafeArchivePath(rawPath) {
+			return fmt.Errorf("skill manifest allowed artifact path escapes package root: %s", rawPath)
 		}
+		path := filepath.ToSlash(filepath.Clean(strings.TrimSpace(rawPath)))
 		if path != "artifacts" && !strings.HasPrefix(path, "artifacts/") {
 			return fmt.Errorf("skill manifest allowed artifact path must be under artifacts: %s", path)
 		}
@@ -2877,6 +2911,94 @@ func validateSkillManifestFields(manifest *SkillExecutionManifest, names map[str
 	default:
 		return errors.New("skill manifest result_mode must be stdout_json, stdout_text, artifacts, or mixed")
 	}
+}
+
+var (
+	pythonBundledPackageNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	nodeBundledPackageNamePattern   = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]*$`)
+)
+
+func validateBundledPackages(manifest *SkillExecutionManifest, names map[string]bool) error {
+	seenNames := make(map[string]struct{}, len(manifest.BundledPackages))
+	seenPaths := make(map[string]struct{}, len(manifest.BundledPackages))
+	for index := range manifest.BundledPackages {
+		item := &manifest.BundledPackages[index]
+		item.Name = strings.TrimSpace(item.Name)
+		item.Path = strings.TrimSpace(item.Path)
+		if item.Name == "" {
+			return errors.New("skill manifest bundled package name is required")
+		}
+		namePattern := nodeBundledPackageNamePattern
+		if manifest.Language == "python3" {
+			namePattern = pythonBundledPackageNamePattern
+		}
+		if !namePattern.MatchString(item.Name) {
+			return fmt.Errorf("skill manifest bundled package name is invalid for %s: %s", manifest.Language, item.Name)
+		}
+		if unsafeArchivePath(item.Path) {
+			return fmt.Errorf("skill manifest bundled package path must be under scripts/: %s", item.Path)
+		}
+		item.Path = filepath.ToSlash(filepath.Clean(item.Path))
+		if item.Path == "scripts" || !strings.HasPrefix(item.Path, "scripts/") {
+			return fmt.Errorf("skill manifest bundled package path must be under scripts/: %s", item.Path)
+		}
+		nameKey := strings.ToLower(item.Name)
+		pathKey := strings.ToLower(item.Path)
+		if _, exists := seenNames[nameKey]; exists {
+			return fmt.Errorf("skill manifest bundled package name is duplicated: %s", item.Name)
+		}
+		if _, exists := seenPaths[pathKey]; exists {
+			return fmt.Errorf("skill manifest bundled package path is duplicated: %s", item.Path)
+		}
+		seenNames[nameKey] = struct{}{}
+		seenPaths[pathKey] = struct{}{}
+		if !archivePathExists(names, item.Path) {
+			return fmt.Errorf("skill manifest bundled package path is missing from package: %s", item.Path)
+		}
+		if manifest.Language == "python3" {
+			importRoot := filepath.ToSlash(filepath.Dir(filepath.FromSlash(manifest.Entrypoint)))
+			expected := filepath.ToSlash(filepath.Join(filepath.FromSlash(importRoot), item.Name))
+			switch item.Path {
+			case expected:
+				if !archivePathIsDirectory(names, item.Path) {
+					return fmt.Errorf("skill manifest bundled Python package %s must use .py when it is a regular file", item.Name)
+				}
+			case expected + ".py":
+				if !names[item.Path] {
+					return fmt.Errorf("skill manifest bundled Python package %s path ending in .py must be a regular file", item.Name)
+				}
+			default:
+				return fmt.Errorf("skill manifest bundled Python package %s must resolve from the entrypoint directory", item.Name)
+			}
+		}
+	}
+	return nil
+}
+
+func archivePathExists(names map[string]bool, path string) bool {
+	if names[path] {
+		return true
+	}
+	prefix := strings.TrimSuffix(path, "/") + "/"
+	for name := range names {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func archivePathIsDirectory(names map[string]bool, path string) bool {
+	if names[path] {
+		return false
+	}
+	prefix := strings.TrimSuffix(path, "/") + "/"
+	for name := range names {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeSkillLanguage(value string) string {

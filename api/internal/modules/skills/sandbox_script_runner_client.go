@@ -60,14 +60,20 @@ func (r *SandboxScriptRunner) createSandbox(ctx context.Context, execCtx Executi
 	return response.ID, nil
 }
 
-func (r *SandboxScriptRunner) uploadArchive(ctx context.Context, sandboxID string, archiveBase64 string, execCtx ExecutionContext, validateSkillManifest bool) error {
+type archiveUploadOptions struct {
+	skillPackage          bool
+	validateSkillManifest bool
+}
+
+func (r *SandboxScriptRunner) uploadArchive(ctx context.Context, sandboxID string, archiveBase64 string, execCtx ExecutionContext, options archiveUploadOptions) error {
 	payload := map[string]interface{}{
 		"sandbox_id":              sandboxID,
 		"path":                    ".",
 		"archive_base64":          archiveBase64,
 		"format":                  "zip",
 		"strip_root":              false,
-		"validate_skill_manifest": validateSkillManifest,
+		"skill_package":           options.skillPackage,
+		"validate_skill_manifest": options.validateSkillManifest,
 	}
 	if organizationID := strings.TrimSpace(execCtx.OrganizationID); organizationID != "" {
 		payload["organization_id"] = organizationID

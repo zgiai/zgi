@@ -77,6 +77,11 @@ func validateUpdateTaskRequest(req automationdto.UpdateTaskRequest) error {
 
 func validateSchedule(scheduleType automationmodel.AutomationScheduleType, config map[string]interface{}) error {
 	switch scheduleType {
+	case automationmodel.AutomationScheduleTypeManual:
+		if len(config) > 0 {
+			return fmt.Errorf("manual schedule config must be empty")
+		}
+		return nil
 	case automationmodel.AutomationScheduleTypeOnce:
 		_, err := parseOnceRunAt(config)
 		return err

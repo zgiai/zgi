@@ -17,6 +17,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
+import { formatNumber } from '@/utils/format';
 import type { ChatBranchNavigation } from '@/components/chat/utils/message-tree';
 import type { AIChatSpeechPlaybackPhase } from '@/components/chat/variants/aichat/voice/speech-playback';
 
@@ -40,6 +41,9 @@ interface AssistantMessageToolbarProps {
   canRegenerate: boolean;
   isDisabled: boolean;
   toolbarVisibility: string;
+  showActions?: boolean;
+  tokenCount?: number;
+  tokenUsageTitle?: string;
   branchNavigation?: ChatBranchNavigation;
   canSwitchBranch: boolean;
   onRegenerate?: () => void;
@@ -92,11 +96,7 @@ function CopyActionButton({ text, title }: CopyActionButtonProps) {
       onClick={handleCopy}
       title={title}
     >
-      {copied ? (
-        <Check className="size-3.5 text-success" />
-      ) : (
-        <Copy className="size-3.5" />
-      )}
+      {copied ? <Check className="size-3.5 text-success" /> : <Copy className="size-3.5" />}
     </Button>
   );
 }
@@ -204,6 +204,9 @@ export function AssistantMessageToolbar({
   canRegenerate,
   isDisabled,
   toolbarVisibility,
+  showActions = true,
+  tokenCount,
+  tokenUsageTitle,
   branchNavigation,
   canSwitchBranch,
   onRegenerate,
@@ -222,7 +225,7 @@ export function AssistantMessageToolbar({
 
   return (
     <div className="mt-2 flex items-center gap-1">
-      {branchNavigation ? (
+      {showActions && branchNavigation ? (
         <div className="flex items-center gap-0.5 text-muted-foreground">
           <Button
             variant="ghost"
@@ -250,44 +253,52 @@ export function AssistantMessageToolbar({
           </Button>
         </div>
       ) : null}
-      <div className={cn('flex items-center gap-1 transition-opacity', toolbarVisibility)}>
-        {answer && onToggleSpeech ? (
-          <Button
-            variant="ghost"
-            isIcon
-            size="xs"
-            className="size-6 text-muted-foreground"
-            disabled={isDisabled}
-            onClick={onToggleSpeech}
-            title={speechActionLabel}
-            aria-label={speechActionLabel}
-          >
-            {speechPhase === 'loading' ? (
-              <Loader2 className="size-3.5 animate-spin" />
-            ) : speechPhase === 'playing' ? (
-              <Pause className="size-3.5" />
-            ) : (
-              <Play className="size-3.5" />
-            )}
-          </Button>
-        ) : null}
-        {answer ? (
-          <CopyActionButton text={answer} title={t('chat.copy')} />
-        ) : null}
-        {canRegenerate ? (
-          <Button
-            variant="ghost"
-            isIcon
-            size="xs"
-            className="size-6 text-muted-foreground"
-            disabled={isDisabled}
-            onClick={onRegenerate}
-            title={t('chat.regenerate')}
-          >
-            <RotateCcw className="size-3.5" />
-          </Button>
-        ) : null}
-      </div>
+      {showActions ? (
+        <div className={cn('flex items-center gap-1 transition-opacity', toolbarVisibility)}>
+          {answer && onToggleSpeech ? (
+            <Button
+              variant="ghost"
+              isIcon
+              size="xs"
+              className="size-6 text-muted-foreground"
+              disabled={isDisabled}
+              onClick={onToggleSpeech}
+              title={speechActionLabel}
+              aria-label={speechActionLabel}
+            >
+              {speechPhase === 'loading' ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : speechPhase === 'playing' ? (
+                <Pause className="size-3.5" />
+              ) : (
+                <Play className="size-3.5" />
+              )}
+            </Button>
+          ) : null}
+          {answer ? <CopyActionButton text={answer} title={t('chat.copy')} /> : null}
+          {canRegenerate ? (
+            <Button
+              variant="ghost"
+              isIcon
+              size="xs"
+              className="size-6 text-muted-foreground"
+              disabled={isDisabled}
+              onClick={onRegenerate}
+              title={t('chat.regenerate')}
+            >
+              <RotateCcw className="size-3.5" />
+            </Button>
+          ) : null}
+          {typeof tokenCount === 'number' && tokenCount > 0 ? (
+            <span
+              className="ml-1 shrink-0 text-xs tabular-nums text-muted-foreground"
+              title={tokenUsageTitle}
+            >
+              {t('consoleChat.tokenUsage.count', { count: formatNumber(tokenCount) })}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

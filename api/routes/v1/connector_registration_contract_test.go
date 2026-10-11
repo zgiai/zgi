@@ -7,6 +7,61 @@ import (
 	"testing"
 )
 
+func TestDigitalHumanProductionConnectorWiring(t *testing.T) {
+	for _, check := range []struct{ file, function, call string }{
+		{"routes.go", "RegisterRoutes", "GetConnectorSurfaceDispatcher"},
+		{"digital_human_routes.go", "InitializeDigitalHumanRuntime", "newDigitalHumanSkillRuntime"},
+	} {
+		source, err := parser.ParseFile(token.NewFileSet(), check.file, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, declaration := range source.Decls {
+			fn, ok := declaration.(*ast.FuncDecl)
+			if !ok || fn.Name.Name != check.function {
+				continue
+			}
+			ast.Inspect(fn, func(node ast.Node) bool {
+				if check.file == "routes.go" {
+					literal, ok := node.(*ast.CompositeLit)
+					if !ok {
+						return true
+					}
+					name, ok := literal.Type.(*ast.Ident)
+					if !ok || name.Name != "DigitalHumanRuntimeDeps" {
+						return true
+					}
+					for _, element := range literal.Elts {
+						field, ok := element.(*ast.KeyValueExpr)
+						if !ok {
+							continue
+						}
+						key, ok := field.Key.(*ast.Ident)
+						if !ok || key.Name != "ConnectorDispatcher" {
+							continue
+						}
+						call, ok := field.Value.(*ast.CallExpr)
+						if !ok {
+							continue
+						}
+						selector, ok := call.Fun.(*ast.SelectorExpr)
+						found = ok && selector.Sel.Name == check.call
+					}
+				} else if call, ok := node.(*ast.CallExpr); ok {
+					if name, ok := call.Fun.(*ast.Ident); ok && name.Name == check.call {
+						found = true
+					}
+				}
+				return true
+			})
+		}
+		if !found {
+			t.Errorf("%s must wire DigitalHuman through %s", check.function, check.call)
+		}
+	}
+}
+
 func TestRegisterRoutesAlwaysInitializesConnectors(t *testing.T) {
 	source, err := parser.ParseFile(token.NewFileSet(), "routes.go", nil, 0)
 	if err != nil {

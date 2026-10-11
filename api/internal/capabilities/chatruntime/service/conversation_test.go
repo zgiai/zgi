@@ -11,3 +11,9 @@ func TestNormalizeConversationSourcePreservesExternalAPI(t *testing.T) {
 		t.Fatalf("normalizeConversationSource(external-api) = %q, want %q", got, runtimemodel.ConversationSourceExternalAPI)
 	}
 }
+
+func TestNormalizeConversationSourcePreservesScheduledTask(t *testing.T) {
+	if got := normalizeConversationSource(runtimemodel.ConversationSourceTask); got != runtimemodel.ConversationSourceTask {
+		t.Fatalf("scheduled task source became %q", got)
+	}
+}

@@ -40,6 +40,8 @@ const (
 	SkillAgentDatabase          = "agent-database"
 	SkillAgentWorkflow          = "agent-workflow"
 	SkillAgentMemory            = "agent-memory"
+	SkillDigitalHumanMemory     = "digital-human-memory"
+	SkillDigitalHumanTasks      = "digital-human-tasks"
 	SkillUserMemory             = "user-memory"
 	SkillConnectorRuntime       = "connector-runtime"
 
@@ -55,9 +57,10 @@ const (
 
 	SkillScriptToolRun = "run_script"
 
-	SkillCallerAIChat   = "aichat"
-	SkillCallerAgent    = "agent"
-	SkillCallerWorkflow = "workflow"
+	SkillCallerAIChat       = "aichat"
+	SkillCallerAgent        = "agent"
+	SkillCallerDigitalHuman = "digital_human"
+	SkillCallerWorkflow     = "workflow"
 
 	SkillRequiredConfigAgentKnowledge = "agent_knowledge"
 	SkillRequiredConfigAgentDatabase  = "agent_database"
@@ -109,7 +112,7 @@ type SkillExposureProfile struct {
 
 func IsHiddenSystemSkill(skillID string) bool {
 	switch normalizeSkillID(skillID) {
-	case SkillAgentManagement, SkillFileManager, SkillIntentRouter, SkillAgentKnowledge, SkillAgentDatabase, SkillAgentWorkflow, SkillAgentMemory, SkillUserMemory, SkillConnectorRuntime:
+	case SkillAgentManagement, SkillFileManager, SkillIntentRouter, SkillAgentKnowledge, SkillAgentDatabase, SkillAgentWorkflow, SkillAgentMemory, SkillDigitalHumanMemory, SkillUserMemory, SkillConnectorRuntime:
 		return true
 	default:
 		return false
@@ -182,6 +185,15 @@ func SystemSkillExposureProfile(skillID string) SkillExposureProfile {
 			GovernanceRisk:      SkillGovernanceRiskMixed,
 		}
 	case SkillAgentMemory, SkillUserMemory:
+		return SkillExposureProfile{
+			Category:            SkillExposureHiddenRuntime,
+			UserSelectable:      false,
+			RuntimeManaged:      true,
+			SystemAsset:         false,
+			PageContextRequired: false,
+			GovernanceRisk:      SkillGovernanceRiskLow,
+		}
+	case SkillDigitalHumanMemory:
 		return SkillExposureProfile{
 			Category:            SkillExposureHiddenRuntime,
 			UserSelectable:      false,
@@ -277,6 +289,12 @@ type SkillToolDefinition struct {
 	// never member-authored Skill metadata.
 	ConnectorNative      bool   `json:"-" yaml:"-"`
 	ConnectorOperationID string `json:"-" yaml:"-"`
+	// ConnectorBindingInstanceID is the exact persisted Target Binding
+	// instance selected by the server-side projection. It is required to build
+	// a DigitalHuman target and is never member-authored.
+	ConnectorBindingInstanceID string `json:"-" yaml:"-"`
+	ConnectorOwnerAccountID    string `json:"-" yaml:"-"`
+	ConnectorBindingID         string `json:"-" yaml:"-"`
 }
 
 type SkillFrontmatter struct {
@@ -319,6 +337,7 @@ type SkillMetadata struct {
 	References            []SkillReference            `json:"references,omitempty"`
 	HasScripts            bool                        `json:"has_scripts"`
 	ScriptsSupported      bool                        `json:"scripts_supported"`
+	ScriptExecutionMode   string                      `json:"script_execution_mode,omitempty"`
 	MaxCallsPerTurn       int                         `json:"max_calls_per_turn"`
 	TimeoutSeconds        int                         `json:"timeout_seconds"`
 	RootPath              string                      `json:"-"`
@@ -365,6 +384,7 @@ type SkillDiscoveryMetadata struct {
 	HasReferences         bool                        `json:"has_references"`
 	HasScripts            bool                        `json:"has_scripts"`
 	ScriptsSupported      bool                        `json:"scripts_supported"`
+	ScriptExecutionMode   string                      `json:"script_execution_mode,omitempty"`
 	MaxCallsPerTurn       int                         `json:"max_calls_per_turn"`
 	TimeoutSeconds        int                         `json:"timeout_seconds"`
 	Status                string                      `json:"status"`
@@ -546,6 +566,7 @@ func skillDiscoveryMetadata(skill SkillDocument) SkillDiscoveryMetadata {
 		HasReferences:         len(metadata.References) > 0,
 		HasScripts:            metadata.HasScripts,
 		ScriptsSupported:      metadata.ScriptsSupported,
+		ScriptExecutionMode:   metadata.ScriptExecutionMode,
 		MaxCallsPerTurn:       metadata.MaxCallsPerTurn,
 		TimeoutSeconds:        metadata.TimeoutSeconds,
 		Status:                SkillStatusActive,

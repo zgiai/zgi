@@ -50,7 +50,7 @@ func TestConnectorServicesInitializeWithoutLegacyExternalIntegrations(t *testing
 		t.Fatalf("GitHub Connector definition = %#v, found=%v", githubDefinition, githubFound)
 	}
 	if !exaFound || exaDefinition.Classification != connectorcatalog.ClassificationConnector ||
-		exaDefinition.PluginVersion != "1.2.1" || len(exaDefinition.CapabilityTypes) != 1 ||
+		exaDefinition.PluginVersion != "1.2.1-digitalhuman.1" || len(exaDefinition.CapabilityTypes) != 1 ||
 		exaDefinition.CapabilityTypes[0] != connectorcatalog.CapabilityTypeData {
 		t.Fatalf("Exa Connector definition = %#v, found=%v", exaDefinition, exaFound)
 	}
@@ -83,12 +83,104 @@ func TestConnectorServicesInitializeWithoutLegacyExternalIntegrations(t *testing
 	}
 }
 
+func TestBuiltinConnectorCatalogProjectsSupportedSurfacesForDigitalHumans(t *testing.T) {
+	container := &ServiceContainer{}
+	catalog := container.GetConnectorCatalog()
+
+	for _, id := range []string{"github", "web-search", "feishu", "dingtalk", "wecom", "weixin", "serverops_ssh"} {
+		definition, found := catalog.Get(id)
+		if !found {
+			t.Fatalf("builtin connector %q is missing from the catalog", id)
+		}
+		if !definition.Supports(connectorcatalog.SurfaceDigitalHuman) {
+			t.Fatalf("builtin connector %q does not support the Digital-Human surface: %v", id, definition.Surfaces)
+		}
+	}
+
+	// Mail providers retain their separate mail credential contract and are not
+	// silently exposed as Digital-Human host connectors by the projection.
+	for _, id := range []string{"gmail", "qqmail", "netease163"} {
+		definition, found := catalog.Get(id)
+		if !found {
+			t.Fatalf("builtin mail connector %q is missing from the catalog", id)
+		}
+		if definition.Supports(connectorcatalog.SurfaceDigitalHuman) {
+			t.Fatalf("mail connector %q was unexpectedly projected to Digital-Human: %v", id, definition.Surfaces)
+		}
+	}
+}
+
+// TestConnectorCandidateVerifierRegistersNetworkFreeSSHServerOpsDriver pins the
+// production SSH Server Operations wiring. providers.NewRuntime fails closed
+// when any non-messaging, non-mail built-in lacks its driver, so a successful
+// verifier assembly while the SSH contract is admitted proves the SSH driver is
+// registered. Assembly builds the capability through serverops.New, which is
+// constructor-only and never dials, so the whole graph is constructed without
+// network work and remains the single cached instance.
+func TestConnectorCandidateVerifierRegistersNetworkFreeSSHServerOpsDriver(t *testing.T) {
+	container := &ServiceContainer{config: connectorOnlyTestConfig()}
+	if _, admitted := container.GetConnectorCatalog().Get(connectorcatalog.ServerOpsSSHConnectorID); !admitted {
+		t.Fatal("SSH Server Operations contract is not admitted")
+	}
+	verifier := container.GetConnectorCandidateVerifier()
+	if verifier == nil {
+		t.Fatal("candidate verifier did not register the SSH Server Operations driver")
+	}
+	if container.GetConnectorCandidateVerifier() != verifier {
+		t.Fatal("candidate verifier getter is not stable")
+	}
+}
+
+// TestServerOpsSSHHostKeyProbeReusesCandidateCapability pins the shared SSH
+// capability wiring: the probe getter returns the cached adapter client, and
+// assembling the candidate verifier reuses the exact same *serverops.Service
+// instead of building a second capability for probing.
+func TestServerOpsSSHHostKeyProbeReusesCandidateCapability(t *testing.T) {
+	container := &ServiceContainer{config: connectorOnlyTestConfig()}
+	probe := container.GetServerOpsSSHHostKeyProbe()
+	if probe == nil {
+		t.Fatal("host-key probe is not wired")
+	}
+	if container.GetServerOpsSSHHostKeyProbe() != probe {
+		t.Fatal("host-key probe getter is not stable")
+	}
+	service := container.connectorServerOpsService
+	client := container.connectorServerOpsSSHClient
+	if service == nil || client == nil {
+		t.Fatal("server operations capability/client was not cached")
+	}
+	if any(probe) != any(client) {
+		t.Fatal("probe does not return the cached adapter client")
+	}
+	if container.GetConnectorCandidateVerifier() == nil {
+		t.Fatal("candidate verifier did not register the SSH driver")
+	}
+	if container.connectorServerOpsService != service || container.connectorServerOpsSSHClient != client {
+		t.Fatal("candidate verifier built a second server operations capability")
+	}
+}
+
 func TestConnectorPluginAdmissionRefreshesToolsAndInvalidPackageIsIsolated(t *testing.T) {
 	container := &ServiceContainer{config: connectorOnlyTestConfig()}
 	definitionCatalog := container.GetConnectorCatalog()
 	store := &containerPluginDefinitionStore{state: connectorcatalog.PluginRuntimeState{
 		Statuses: map[string]connectorcatalog.PluginDefinitionStatus{},
 	}}
+	base, found := definitionCatalog.Get("github")
+	if !found {
+		t.Fatal("built-in GitHub definition is missing")
+	}
+	compatible := base
+	compatible.PluginDigest = ""
+	validRoot := writeContainerPluginPackage(t, compatible)
+	// Directory packages hash all files, unlike embedded manifest packages.
+	// Seed the accepted directory version so re-admission checks its exact bytes.
+	loaded, err := container.GetConnectorPluginLoader().LoadDirectory(context.Background(), validRoot)
+	if err != nil || len(loaded.Failures) != 0 {
+		t.Fatalf("load accepted directory package: %v", err)
+	}
+	store.state.Definitions = loaded.Definitions
+	store.state.Statuses[base.PluginID] = connectorcatalog.PluginDefinitionStatusActive
 	lifecycleStore := &containerPluginLifecycleStore{}
 	manager, err := connectorcatalog.NewPluginManager(
 		container.GetConnectorPluginLoader(), definitionCatalog, store, lifecycleStore,
@@ -108,18 +200,9 @@ func TestConnectorPluginAdmissionRefreshesToolsAndInvalidPackageIsIsolated(t *te
 		t.Fatal(err)
 	}
 
-	base, found := definitionCatalog.Get("github")
-	if !found {
-		t.Fatal("built-in GitHub definition is missing")
-	}
-	compatible := base
-	compatible.PluginVersion = "1.2.0"
-	compatible.PluginDigest = ""
-	compatible.Name = "GitHub Cloud"
-	compatible.Description = "Updated GitHub Connector copy"
-	compatible.Operations = append([]connectorcatalog.Operation(nil), base.Operations...)
-	compatible.Operations[0].Name = "Updated operation copy"
-	validRoot := writeContainerPluginPackage(t, compatible)
+	changed := compatible
+	changed.Name = "GitHub Cloud"
+	changedRoot := writeContainerPluginPackage(t, changed)
 	unsupported := base
 	unsupported.ID = "calendar"
 	unsupported.PluginID = "zgi.calendar"
@@ -143,6 +226,10 @@ func TestConnectorPluginAdmissionRefreshesToolsAndInvalidPackageIsIsolated(t *te
 		Kind: connectoraudit.PlatformActorPlatformMaintainer,
 		ID:   uuid.NewString(),
 	})
+	changedReport, err := container.AdmitConnectorPluginDirectories(maintainerContext, []string{changedRoot})
+	if err != nil || len(changedReport.Failures) != 1 || len(changedReport.AdmittedDefinitions) != 0 {
+		t.Fatalf("same-version content replacement was not rejected: %v", err)
+	}
 	report, err := container.AdmitConnectorPluginDirectories(
 		maintainerContext, []string{invalidRoot, unsupportedRoot, validRoot},
 	)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -19,6 +20,7 @@ import (
 type ConnectorRuntimeConfirmationService interface {
 	Continue(context.Context, connectorconfirmation.Command) (connectorconfirmation.Result, error)
 	ReadStatus(context.Context, connectorconfirmation.StatusQuery) (connectorconfirmation.StatusResult, error)
+	ListPending(context.Context, uuid.UUID, uuid.UUID, int, int) (connectorconfirmation.PendingResult, error)
 }
 
 // ConnectorRuntimeConfirmationResolutionRecorder durably projects the safe
@@ -63,7 +65,46 @@ type connectorRuntimeConfirmationHandler struct {
 
 func (handler *connectorRuntimeConfirmationHandler) register(group *gin.RouterGroup) {
 	group.POST("/connectors/runtime/confirmations", handler.continueConfirmation)
+	group.GET("/connectors/runtime/confirmations", handler.listPending)
 	group.GET("/connectors/runtime/confirmations/:receipt", handler.readStatus)
+}
+
+func (handler *connectorRuntimeConfirmationHandler) listPending(c *gin.Context) {
+	organizationID, accountID, ok := connectorActor(c)
+	if !ok {
+		return
+	}
+	values, err := url.ParseQuery(c.Request.URL.RawQuery)
+	page, pageSize := 1, 20
+	if err == nil {
+		for key, value := range values {
+			if len(value) != 1 || key != "page" && key != "page_size" {
+				err = connectorcore.NewError(connectorcore.ErrorCodeInvalidInput, false, nil)
+				break
+			}
+			parsed, parseErr := strconv.Atoi(value[0])
+			if parseErr != nil {
+				err = parseErr
+				break
+			}
+			if key == "page" {
+				page = parsed
+			} else {
+				pageSize = parsed
+			}
+		}
+	}
+	if err != nil || page < 1 || page > 1000 || pageSize < 1 || pageSize > 100 {
+		connectorRouteError(c, connectorcore.NewError(connectorcore.ErrorCodeInvalidInput, false, nil))
+		return
+	}
+	result, err := handler.service.ListPending(c.Request.Context(), organizationID, accountID, page, pageSize)
+	if err != nil {
+		connectorRouteError(c, err)
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	connectorSuccess(c, http.StatusOK, result)
 }
 
 func (handler *connectorRuntimeConfirmationHandler) readStatus(c *gin.Context) {

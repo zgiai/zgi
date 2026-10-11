@@ -10,6 +10,7 @@ tools:
 supported_callers:
   - aichat
   - agent
+  - digital_human
 max_calls_per_turn: 5
 timeout_seconds: 5
 tool_governance:

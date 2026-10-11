@@ -123,7 +123,15 @@ func (service *Service) PrepareInvocation(ctx context.Context, request Execution
 		return InvocationSnapshot{}, err
 	}
 	now := service.now().UTC()
-	if !connection.Constraint.Allows(request.OwnerAccountID, request.OperationID, request.Target, now) || !binding.Constraint.Allows(request.OwnerAccountID, request.OperationID, request.Target, now) {
+	// The historical Connection constraint predates the DigitalHuman host
+	// boundary, so checking each layer independently rejects every published
+	// DigitalHuman target even when an owner-created Target Binding pins the
+	// exact host. core.ConstraintsAllow preserves that historical Connection
+	// boundary while letting the exact persisted binding supply the newly added
+	// host boundary; owner, operation, deny and expiry restrictions still apply
+	// to both layers. The projection only applies to an exact DigitalHuman
+	// target, so Chat, Agent and Workflow keep their existing behavior.
+	if !core.ConstraintsAllow(connection.Constraint, binding.Constraint, request.OwnerAccountID, request.OperationID, request.Target, now) {
 		return InvocationSnapshot{}, connectorError(core.ErrorCodeAccessDenied, false)
 	}
 	accepted, ok := acceptedCatalogOperation(service.catalog, request)

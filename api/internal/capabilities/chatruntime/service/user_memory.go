@@ -135,6 +135,10 @@ func cloneChatRequestPartsForUserMemoryPreflight(parts *chatRequestParts) *chatR
 	clone.AgentMemorySlots = append([]AgentMemorySlotConfig{}, parts.AgentMemorySlots...)
 	clone.ConnectorTargetScope = parts.ConnectorTargetScope
 	clone.ConnectorTargetVersionID = parts.ConnectorTargetVersionID
+	clone.ConnectorToolsDisabled = parts.ConnectorToolsDisabled
+	clone.ConnectorTargetType = parts.ConnectorTargetType
+	clone.ConnectorRunID = parts.ConnectorRunID
+	clone.ConnectorInteractive = parts.ConnectorInteractive
 	clone.AgentMemoryConfigScope = parts.AgentMemoryConfigScope
 	clone.AgentMemoryConfigRevision = parts.AgentMemoryConfigRevision
 	if parts.ModelTurnIntent != nil {

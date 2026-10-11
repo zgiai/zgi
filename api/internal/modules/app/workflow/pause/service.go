@@ -503,6 +503,9 @@ func (s *Service) prepareResumeTx(ctx context.Context, tx *gorm.DB, workflowRunI
 		return nil, fmt.Errorf("create workflow resume outbox: %w", result.Error)
 	}
 	if result.RowsAffected == 0 {
+		// First includes a populated destination's primary key in its predicate.
+		// The generated ID belongs to the rejected insert, not the existing row.
+		outbox = RuntimeOutbox{}
 		if err := tx.Where("idempotency_key = ?", idempotencyKey).First(&outbox).Error; err != nil {
 			return nil, fmt.Errorf("load workflow resume outbox: %w", err)
 		}

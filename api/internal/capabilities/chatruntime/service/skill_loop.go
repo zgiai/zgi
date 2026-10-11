@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
 	"unicode"
+
+	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
@@ -17,6 +18,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/contextmgr"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
+	"github.com/zgiai/zgi/api/internal/capabilities/resourcebindings"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
@@ -53,7 +55,12 @@ func (s *service) runPreparedToolLoop(
 		return "", nil, fmt.Errorf("llm client is not configured")
 	}
 	timeline := newProcessTimelineRecorder(ctx, persistCtx, s, prepared, onEvent)
-	runtimeTools := s.agentMemoryRuntimeTools(persistCtx, prepared, timeline)
+	runtimeTools := append([]skillloop.RuntimeTool(nil), prepared.parts.RuntimeTools...)
+	runtimeTools = append(runtimeTools, s.attachmentRuntimeTools(prepared)...)
+	if prepared.RunConfig.RuntimeToolFactory != nil {
+		runtimeTools = append(runtimeTools, prepared.RunConfig.RuntimeToolFactory(prepared)...)
+	}
+	runtimeTools = append(runtimeTools, s.agentMemoryRuntimeTools(persistCtx, prepared, timeline)...)
 	resolved := &skills.ResolvedSkills{}
 	if chatPartsBusinessSkillsEnabled(prepared.parts) {
 		if s.skillRuntime == nil {
@@ -104,7 +111,9 @@ func (s *service) runPreparedToolLoop(
 			s.writeAgentContextPromptDumpBestEffort(ctx, prepared, phase, round, request, decision)
 		},
 		OnModelInvocation: func(trace skillloop.ModelInvocationTrace) {
+			accountTaskTokenUsage(prepared, trace.Usage)
 			s.persistModelInvocationBestEffort(persistCtx, prepared, trace)
+			s.emitTaskTokenUsageUpdated(persistCtx, prepared, trace.Usage, onEvent)
 		},
 	}
 	loopPrepared := skillloop.NewPreparedChat(
@@ -138,8 +147,12 @@ func (s *service) runPreparedToolLoop(
 		additionalSystemMessages = append(additionalSystemMessages, agentmemoryruntime.PolicyMessage(enabledAgentMemorySlots(prepared.parts.AgentMemorySlots), proactiveAllowed))
 	}
 	executionContext := s.skillExecutionContext(prepared)
-	scriptModel, scriptModelUsage := s.newSkillScriptModelChannel(prepared)
+	scriptModel, _ := s.newSkillScriptModelChannel(
+		prepared,
+		s.taskTokenUsageObserver(persistCtx, prepared, onEvent),
+	)
 	executionContext.ScriptModel = scriptModel
+	platformModel, platformUsage := s.newRuntimePlatformModel(prepared, s.taskTokenUsageObserver(persistCtx, prepared, onEvent))
 	var nativeToolSet *skills.NativeToolSet
 	var nativeSkillSession *skills.NativeSkillSession
 	if nativeLoop {
@@ -240,6 +253,7 @@ func (s *service) runPreparedToolLoop(
 		NativeToolSet:                  nativeToolSet,
 		NativeSkillSession:             nativeSkillSession,
 		RuntimeTools:                   runtimeTools,
+		PlatformModel:                  platformModel,
 		ExecutionContext:               executionContext,
 		PreferExplicitFinalAnswer:      preferExplicitFinalAnswer,
 		SuppressInitialNaturalProgress: prepared.SuppressInitialNaturalProgress,
@@ -249,12 +263,31 @@ func (s *service) runPreparedToolLoop(
 		OnTerminalStateGuardDecision:   onTerminalStateGuardDecision,
 		OnTerminalCompletion:           onTerminalCompletion,
 		OnChunk:                        onChunk,
-		PlanningOutputTokenLimit:       planningOutputTokenLimit(prepared),
-		AuthorizeSkillStep:             authorizeSkillStep,
-		PreferredRestoredSkillID:       prepared.PreferredRestoredSkillID,
-		ContinuationType:               prepared.ContinuationType,
-		TerminalOnly:                   prepared.TerminalOnly,
+		BeforeModelRound: func(checkpointCtx context.Context, round int) ([]adapter.Message, error) {
+			if prepared.taskTokenBudget != nil {
+				if budgetErr := prepared.taskTokenBudget.exhausted(); budgetErr != nil {
+					return nil, budgetErr
+				}
+			}
+			return s.claimRuntimeInputsForCurrentRun(
+				checkpointCtx,
+				prepared,
+				runtimeInputCheckpoint{Name: runtimeInputCheckpointBeforeModelRound, ModelRound: round + 1},
+				func(payload map[string]interface{}) error {
+					return timeline.RecordEvent(streamEventRuntimeInputApplied, payload)
+				},
+			)
+		},
+		AfterModelRound: func(checkpointCtx context.Context, _ int, accepted bool) error {
+			return s.settleClaimedRuntimeInputBatches(checkpointCtx, prepared, accepted)
+		},
+		PlanningOutputTokenLimit: planningOutputTokenLimit(prepared),
+		AuthorizeSkillStep:       authorizeSkillStep,
+		PreferredRestoredSkillID: prepared.PreferredRestoredSkillID,
+		ContinuationType:         prepared.ContinuationType,
+		TerminalOnly:             prepared.TerminalOnly,
 	})
+	usage = addUsageCloned(usage, platformUsage())
 	if nativeSkillSession != nil {
 		prepared.Message.Metadata["native_skill_diagnostics"] = nativeSkillSessionDiagnostics(nativeSkillSession, prepared.Message.Metadata)
 	}
@@ -267,7 +300,6 @@ func (s *service) runPreparedToolLoop(
 	// The metadata snapshot is no longer written; legacy turns are still read
 	// through the metadata fallback.
 	s.syncAgentTranscriptEntries(persistCtx, prepared, contextManager)
-	usage = addUsageCloned(usage, scriptModelUsage())
 	if err != nil && strings.TrimSpace(answer) != "" {
 		s.persistPartialSkillLoopAnswerBestEffort(persistCtx, prepared, answer, usage)
 	}
@@ -750,7 +782,7 @@ func (s *service) currentAgentSkillStepAuthorizer(prepared *PreparedChat) func(c
 		organizationID = prepared.Scope.OrganizationID
 	}
 	organizationAuthorizer := s.currentOrganizationSkillStepAuthorizer(organizationID)
-	if prepared == nil || normalizeCallerType(prepared.Caller.Type) != runtimemodel.ConversationCallerAgent {
+	if prepared == nil || !isAutonomousSubjectCaller(prepared.Caller.Type) {
 		return organizationAuthorizer
 	}
 	bindingVerifier := s.currentAgentBindingVerifier(prepared)
@@ -900,7 +932,7 @@ func skillLoopPrefersExplicitFinalAnswer(prepared *PreparedChat) bool {
 	if prepared.parts != nil && prepared.parts.ExecutionMode == executionModeLegacyToolChat {
 		return false
 	}
-	if normalizeCallerType(prepared.Caller.Type) == runtimemodel.ConversationCallerAgent {
+	if isAutonomousSubjectCaller(prepared.Caller.Type) {
 		return false
 	}
 	return skillLoopHasOperationPlan(prepared)
@@ -1947,7 +1979,7 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 		appID = strings.TrimSpace(prepared.RunConfig.BillingAppID)
 	}
 	invokeFrom := tools.ToolInvokeFromAIChat
-	if normalizeCallerType(prepared.Caller.Type) == runtimemodel.ConversationCallerAgent {
+	if isAutonomousSubjectCaller(prepared.Caller.Type) {
 		invokeFrom = tools.ToolInvokeFromAgent
 	}
 	runtimeParameters := skillRuntimeParametersForPrepared(prepared)
@@ -1970,11 +2002,15 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 		PresentationLocale: presentationLocale,
 		OrganizationID:     prepared.Scope.OrganizationID.String(),
 		UserID:             prepared.Scope.AccountID.String(),
+		ExternalUserID:     preparedExternalUserID(prepared),
 		ConversationID:     prepared.Conversation.ID.String(),
 		AppID:              appID,
 		MessageID:          prepared.Message.ID.String(),
 		InvokeFrom:         invokeFrom,
 		RuntimeParameters:  runtimeParameters,
+	}
+	if s == nil {
+		return executionContext
 	}
 	if invokeFrom == tools.ToolInvokeFromAIChat {
 		executionContext.ConnectorIdentityResolver = s.connectorChatRuntime
@@ -1982,6 +2018,26 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 		executionContext.ConnectorIdentityResolver = s.connectorAgentRuntime
 		executionContext.ConnectorTargetScope = connectorcore.TargetScope(prepared.RunConfig.ConnectorTargetScope)
 		executionContext.ConnectorTargetVersionID = prepared.RunConfig.ConnectorTargetVersionID
+	}
+	// ConnectorTargetType is server-owned and empty for Chat, Agent and Workflow
+	// callers, whose Connector target is derived from InvokeFrom.
+	executionContext.ConnectorTargetType = prepared.RunConfig.ConnectorTargetType
+	if isDigitalHumanCaller(prepared.Caller.Type) {
+		// A DigitalHuman host keeps the compatibility ToolInvokeFromAgent profile
+		// so its existing Skill surface is unchanged, but it must never borrow the
+		// Agent target implied by InvokeFrom. The explicit host type plus the
+		// published scope/version carried above and the run id below let the Skills
+		// layer validate the exact bound instance before dispatch.
+		executionContext.ConnectorTargetType = connectorcore.TargetTypeDigitalHuman
+		// The compatibility ToolInvokeFromAgent profile above would otherwise leave
+		// the Agent identity resolver in place; select the DigitalHuman resolver
+		// explicitly so its absence fails closed instead of borrowing Agent identity.
+		executionContext.ConnectorIdentityResolver = s.connectorDigitalHumanRuntime
+		executionContext.ConnectorRunID = strings.TrimSpace(prepared.RunConfig.ConnectorRunID)
+		executionContext.ConnectorInteractive = prepared.RunConfig.ConnectorInteractive
+		if prepared.Caller.ID != nil {
+			executionContext.AppID = prepared.Caller.ID.String()
+		}
 	}
 	executionContext.ConnectorConfirmationStore = s.connectorConfirmationStore
 	if s.connectorActionResolverFactory != nil {
@@ -2044,9 +2100,24 @@ func (s *service) consoleNavigationRouteAuthorizer(prepared *PreparedChat) conso
 }
 
 func (s *service) currentAgentBindingVerifier(prepared *PreparedChat) skills.AgentBindingVerifier {
-	if s == nil || s.repos == nil || s.repos.DB == nil || prepared == nil ||
-		normalizeCallerType(prepared.Caller.Type) != runtimemodel.ConversationCallerAgent ||
-		prepared.Caller.ID == nil || *prepared.Caller.ID == uuid.Nil {
+	if prepared == nil || prepared.Caller.ID == nil || *prepared.Caller.ID == uuid.Nil {
+		return nil
+	}
+	if isDigitalHumanCaller(prepared.Caller.Type) {
+		if prepared.RunConfig.BindingReader == nil {
+			return nil
+		}
+		reader := prepared.RunConfig.BindingReader
+		ref := prepared.RunConfig.BindingSnapshot
+		return func(ctx context.Context, check skills.AgentBindingCheck) (bool, error) {
+			decision, err := reader.Verify(ctx, ref, resourcebindings.Match{
+				Type: resourcebindings.BindingType(check.BindingType), ResourceID: check.ResourceID,
+				ParentResourceID: check.ParentResourceID, AccessMode: resourcebindings.AccessMode(check.AccessMode), ActionID: check.ActionID,
+			})
+			return decision.Allowed, err
+		}
+	}
+	if s == nil || s.repos == nil || s.repos.DB == nil || normalizeCallerType(prepared.Caller.Type) != runtimemodel.ConversationCallerAgent {
 		return nil
 	}
 	agentID := *prepared.Caller.ID
@@ -2058,6 +2129,13 @@ func (s *service) currentAgentBindingVerifier(prepared *PreparedChat) skills.Age
 	return func(ctx context.Context, check skills.AgentBindingCheck) (bool, error) {
 		ref := agentbindings.ScopeRef{AgentID: agentID, Scope: scope}
 		if scope == agentbindings.ScopePublished {
+			if versionID, err := uuid.Parse(prepared.RunConfig.ConnectorTargetVersionID); err == nil && versionID != uuid.Nil {
+				ref.PublishedVersionUUID = &versionID
+				return repo.HasBinding(ctx, ref, agentbindings.Match{
+					BindingType: agentbindings.BindingType(check.BindingType), ResourceID: check.ResourceID,
+					ParentResourceID: check.ParentResourceID, AccessMode: check.AccessMode,
+				})
+			}
 			var versionIDs []uuid.UUID
 			if err := s.repos.DB.WithContext(ctx).Model(&agentbindings.Binding{}).
 				Where("agent_id = ? AND consumer_type = ? AND binding_scope = ? AND published_version_uuid IS NOT NULL", agentID, agentbindings.ConsumerTypeAgent, scope).
@@ -2276,8 +2354,8 @@ func preparedSkillWorkspaceID(prepared *PreparedChat) string {
 	if prepared == nil {
 		return ""
 	}
-	if prepared.Scope.WorkspaceID != nil && *prepared.Scope.WorkspaceID != uuid.Nil {
-		return prepared.Scope.WorkspaceID.String()
+	if workspaceID := prepared.Scope.AgentResourceWorkspaceID(); workspaceID != nil && *workspaceID != uuid.Nil {
+		return workspaceID.String()
 	}
 	if prepared.Conversation != nil && prepared.Conversation.WorkspaceID != nil && *prepared.Conversation.WorkspaceID != uuid.Nil {
 		return prepared.Conversation.WorkspaceID.String()
@@ -2871,7 +2949,7 @@ func chatPartsBusinessSkillsEnabled(parts *chatRequestParts) bool {
 
 func chatPartsToolLoopEnabled(parts *chatRequestParts) bool {
 	return parts != nil && parts.ExecutionMode != executionModeDirectChat &&
-		(parts.ProtocolToolsEnabled || parts.AgentMemoryToolsEnabled || parts.ConnectorToolsEnabled || chatPartsBusinessSkillsEnabled(parts))
+		(parts.ProtocolToolsEnabled || parts.AttachmentToolsEnabled || parts.AgentMemoryToolsEnabled || parts.ConnectorToolsEnabled || chatPartsBusinessSkillsEnabled(parts))
 }
 
 func runtimeToolNames(runtimeTools []skillloop.RuntimeTool) []string {

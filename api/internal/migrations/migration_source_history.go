@@ -53,4 +53,4 @@ var historicalMigrationSourceDigests = map[string]string{
 	"20260903120000_messaging_connector_protocol":                   "ed9b3d60b9d21a5b320a2391579762087544e826bcd46b542f4966b5c438bd52",
 }
 
-const retirementSchemaSourceDigest = "8eaafdc6b525b3c5f8f6cd740dae9cf0d50c986dca31efcaed3900ea59069f52"
+const retirementSchemaSourceDigest = "78934a074aa1e5f5a3da4fd22936eef26dc9e7ec6ffa9e9bc7678252649eb215"

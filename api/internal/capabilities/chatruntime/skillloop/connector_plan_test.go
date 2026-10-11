@@ -3,6 +3,7 @@ package skillloop
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -79,6 +80,21 @@ func TestNativePlanCompletionAndOrdinaryAuthority(t *testing.T) {
 		if got := operationPlanPhaseRequiredByServer(item.phase, nil); got != item.want {
 			t.Fatalf("authority=%t phase=%v", got, item.phase)
 		}
+	}
+}
+
+func TestConnectorPhaseAuthorityDoesNotRelaxOrdinaryToolEvidence(t *testing.T) {
+	state := nativeRunnerTestState("successful")
+	ordinary := map[string]any{"id": "phase-ordinary", "step": "Run script", "status": "completed", "completion_mode": "tool"}
+	step := (&Runner{}).handleUpdatePlanCall("plan", map[string]any{"plan": []any{
+		nativeRunnerPhase("phase-send", "completed"),
+		ordinary,
+	}}, state, 1)
+	if !step.recoverable {
+		t.Fatal("completed ordinary tool phase without runtime evidence was accepted")
+	}
+	if !strings.Contains(step.trace.Error, "phase-ordinary") {
+		t.Fatalf("error = %q, want the ordinary tool phase to require runtime evidence", step.trace.Error)
 	}
 }
 

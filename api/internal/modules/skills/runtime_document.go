@@ -75,6 +75,9 @@ func (r *Runtime) loadSkillDocumentFromLocation(location skillLocation) (SkillDo
 	if err != nil {
 		return SkillDocument{}, fmt.Errorf("failed to parse skill %s: %w", id, err)
 	}
+	if source == SkillSourceCustom && strings.TrimSpace(frontmatter.Name) == "" {
+		frontmatter.Name = id
+	}
 	doc, err := buildSkillDocument(id, root, source, frontmatter, body, listLocationReferences(location), hasLocationScripts(location))
 	if err != nil {
 		return SkillDocument{}, err
@@ -142,6 +145,19 @@ func (r *Runtime) applyScriptSupport(doc *SkillDocument) {
 	if doc == nil || !doc.Metadata.HasScripts {
 		return
 	}
+	if doc.Metadata.Source == SkillSourceCustom {
+		mode, err := CustomSkillScriptExecutionMode(doc.Metadata.RootPath)
+		if err == nil {
+			doc.Metadata.ScriptExecutionMode = mode
+		}
+		if err != nil || mode == SkillScriptExecutionSession {
+			doc.Metadata.ScriptsSupported = false
+			doc.Tools = slices.DeleteFunc(doc.Tools, func(tool SkillToolDefinition) bool {
+				return strings.TrimSpace(tool.Name) == SkillScriptToolRun
+			})
+			return
+		}
+	}
 	doc.Metadata.ScriptsSupported = r.ScriptsSupported()
 	if !doc.Metadata.ScriptsSupported {
 		doc.Tools = slices.DeleteFunc(doc.Tools, func(tool SkillToolDefinition) bool {
@@ -189,6 +205,11 @@ func normalizeSkillCallers(id string, source string, callers []string) []string 
 				seen[SkillCallerAgent] = struct{}{}
 				out = append(out, SkillCallerAgent)
 			}
+		case SkillCallerDigitalHuman:
+			if _, ok := seen[SkillCallerDigitalHuman]; !ok {
+				seen[SkillCallerDigitalHuman] = struct{}{}
+				out = append(out, SkillCallerDigitalHuman)
+			}
 		case SkillCallerWorkflow:
 			if _, ok := seen[SkillCallerWorkflow]; !ok {
 				seen[SkillCallerWorkflow] = struct{}{}
@@ -199,13 +220,20 @@ func normalizeSkillCallers(id string, source string, callers []string) []string 
 	if len(out) > 0 {
 		return out
 	}
+	if normalizeSkillSource(source) == SkillSourceCustom {
+		return []string{SkillCallerAIChat, SkillCallerAgent, SkillCallerDigitalHuman}
+	}
 	switch normalizeSkillID(id) {
 	case SkillInternalKnowledge, SkillInternalDatabase:
 		return []string{SkillCallerAIChat}
 	case SkillAgentKnowledge, SkillAgentDatabase, SkillAgentWorkflow:
 		return []string{SkillCallerAgent}
 	default:
-		return []string{SkillCallerAIChat, SkillCallerAgent}
+		// A general-purpose system skill that does not restrict its callers is
+		// available to every conversational surface, including digital humans.
+		// Skills that must stay off a surface declare `supported_callers`
+		// explicitly, which short-circuits the branch above.
+		return []string{SkillCallerAIChat, SkillCallerAgent, SkillCallerDigitalHuman}
 	}
 }
 

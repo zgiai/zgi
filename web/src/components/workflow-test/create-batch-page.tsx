@@ -60,7 +60,6 @@ export function CreateBatchPage({ agentId, agentName, agentDescription }: Create
   const t = useT('agents.workflowTest.createBatchPage');
   const commonT = useT('agents.workflowTest.common');
   const typeT = useT('agents.workflowTest.questionTypes');
-  const batchStatusT = useT('agents.workflowTest.batchStatus');
   const router = useRouter();
   const batchesHref = getAgentDetailBatchTestHref(agentId, 'workflow', 'batches');
   const getBatchResultHref = (batchId: string) =>

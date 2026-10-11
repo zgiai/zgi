@@ -1,5 +1,6 @@
 'use client';
 
+import type { FileUploadSelection } from '@/services/upload.service';
 import {
   useCallback,
   useEffect,
@@ -59,9 +60,6 @@ import {
   getNormalizedExtension,
   getUploadedAIChatFiles,
   isImageExtension,
-  isVisionModel,
-  type ScopedTranslatorWithHas,
-  tAttachmentForSurface,
   toAIChatMessageFile,
   type AIChatComposerSurface,
 } from '@/components/chat/variants/aichat/input-area-utils';
@@ -81,7 +79,10 @@ import type { AIChatVoiceTranscriber } from '@/components/chat/variants/aichat/v
 import { useAgentVoiceInput } from '@/components/chat/variants/aichat/voice/use-agent-voice-input';
 import { getVoiceInputErrorKey } from '@/components/chat/variants/aichat/voice/voice-input-errors';
 
-export type AIChatUploadScope = { type: 'console' } | { type: 'webapp'; webAppId: string };
+export type AIChatUploadScope =
+  | { type: 'console' }
+  | { type: 'webapp'; webAppId: string }
+  | { type: 'digital-human-webapp'; webAppId: string };
 
 const FileSelectorDialog = dynamic(() => import('@/components/files/file-selector-dialog'), {
   ssr: false,
@@ -205,6 +206,8 @@ interface AIChatInputAreaProps {
   isModelInitializing?: boolean;
   modelMissing: boolean;
   isSending: boolean;
+  allowRuntimeInput?: boolean;
+  runtimeInputQueueFull?: boolean;
   disabled?: boolean;
   canStop?: boolean;
   isStopping: boolean;
@@ -231,6 +234,7 @@ interface AIChatInputAreaProps {
   preferredModelUseCase?: ModelUseCase;
   showMemoryToggle?: boolean;
   enableUpload?: boolean;
+  fileUploadPolicy?: FileUploadSelection | null;
   uploadScope?: AIChatUploadScope;
   showFileLibraryPicker?: boolean;
   allowWorkspaceSwitch?: boolean;
@@ -305,11 +309,11 @@ export function AIChatInputArea({
   input,
   modelSelectorValue,
   modelSelectorWarning = false,
-  modelProps,
-  supportsVisionOverride,
   isModelInitializing = false,
   modelMissing,
   isSending,
+  allowRuntimeInput = false,
+  runtimeInputQueueFull = false,
   disabled = false,
   canStop,
   isStopping,
@@ -329,6 +333,7 @@ export function AIChatInputArea({
   preferredModelUseCase,
   showMemoryToggle = true,
   enableUpload = true,
+  fileUploadPolicy,
   uploadScope = { type: 'console' },
   showFileLibraryPicker = true,
   allowWorkspaceSwitch = false,
@@ -368,9 +373,7 @@ export function AIChatInputArea({
   const [attachments, setAttachments] = useState<AIChatInputAttachment[]>([]);
   const [isFileSelectorOpen, setIsFileSelectorOpen] = useState(false);
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
-  const [selectedModelProps, setSelectedModelProps] = useState<ModelSelectorModelProps | null>(
-    null
-  );
+  const [, setSelectedModelProps] = useState<ModelSelectorModelProps | null>(null);
   const [useMemory, setUseMemory] = useState(false);
   const [isPreparingSend, setIsPreparingSend] = useState(false);
   const [isComposerExpanded, setIsComposerExpanded] = useState(false);
@@ -466,14 +469,41 @@ export function AIChatInputArea({
 
   const { data: uploadConfig } = useUploadConfig({
     enabled: enableUpload,
-    scope: uploadScope.type === 'webapp' ? uploadScope : undefined,
+    scope: uploadScope.type === 'console' ? undefined : uploadScope,
   });
   const currentWorkspace = useCurrentWorkspace();
+  const attachmentLimit = uploadConfig?.chat_upload_policy?.number_limit ?? AICHAT_ATTACHMENT_LIMIT;
+  const turnMaxBytes = uploadConfig?.chat_upload_policy?.turn_max_bytes ?? 100 * 1024 * 1024;
   const allowedExtensions = useMemo(
-    () => filterLowercaseExtensions([...AICHAT_DOCUMENT_EXTENSIONS]),
-    []
+    () =>
+      fileUploadPolicy && !fileUploadPolicy.allowed_file_types.includes('document')
+        ? []
+        : filterLowercaseExtensions(
+            uploadConfig?.chat_upload_policy
+              ? uploadConfig.chat_upload_policy.allowed_file_types.includes('document')
+                ? uploadConfig.chat_upload_policy.allowed_extensions.filter(
+                    ext => !IMAGE_EXTENSIONS.includes(ext)
+                  )
+                : []
+              : [...AICHAT_DOCUMENT_EXTENSIONS]
+          ),
+    [uploadConfig?.chat_upload_policy, fileUploadPolicy]
   );
-  const imageExtensions = useMemo(() => filterLowercaseExtensions([...IMAGE_EXTENSIONS]), []);
+  const imageExtensions = useMemo(
+    () =>
+      fileUploadPolicy && !fileUploadPolicy.allowed_file_types.includes('image')
+        ? []
+        : filterLowercaseExtensions(
+            uploadConfig?.chat_upload_policy
+              ? uploadConfig.chat_upload_policy.allowed_file_types.includes('image')
+                ? uploadConfig.chat_upload_policy.allowed_extensions.filter(ext =>
+                    IMAGE_EXTENSIONS.includes(ext)
+                  )
+                : []
+              : [...IMAGE_EXTENSIONS]
+          ),
+    [uploadConfig?.chat_upload_policy, fileUploadPolicy]
+  );
   const allSelectableExtensions = useMemo(
     () => filterLowercaseExtensions([...allowedExtensions, ...imageExtensions]),
     [allowedExtensions, imageExtensions]
@@ -483,27 +513,28 @@ export function AIChatInputArea({
     [allowedExtensions]
   );
   const maxSizeMB = useMemo(() => {
-    const limit = uploadConfig?.file_size_limit;
-    return typeof limit === 'number' && limit > 0 ? limit : 100;
-  }, [uploadConfig?.file_size_limit]);
+    const limit = uploadConfig?.chat_upload_policy
+      ? uploadConfig.chat_upload_policy.document_max_bytes / 1024 / 1024
+      : uploadConfig?.file_size_limit;
+    return Math.min(
+      typeof limit === 'number' && limit > 0 ? limit : 50,
+      turnMaxBytes / 1024 / 1024
+    );
+  }, [uploadConfig?.file_size_limit, uploadConfig?.chat_upload_policy, turnMaxBytes]);
   const imageMaxSizeMB = useMemo(() => {
-    const limit = uploadConfig?.image_file_size_limit;
-    return typeof limit === 'number' && limit > 0 ? limit : 50;
-  }, [uploadConfig?.image_file_size_limit]);
+    const limit = uploadConfig?.chat_upload_policy
+      ? uploadConfig.chat_upload_policy.image_max_bytes / 1024 / 1024
+      : uploadConfig?.image_file_size_limit;
+    return Math.min(
+      typeof limit === 'number' && limit > 0 ? limit : 10,
+      turnMaxBytes / 1024 / 1024
+    );
+  }, [uploadConfig?.image_file_size_limit, uploadConfig?.chat_upload_policy, turnMaxBytes]);
 
   const isUploading = attachments.some(attachment => attachment.status === 'uploading');
   const hasUploadError = attachments.some(attachment => attachment.status === 'error');
-  const hasImageAttachment = attachments.some(attachment => attachment.kind === 'image');
-  const effectiveModelProps = modelProps ?? selectedModelProps;
-  const canUseImage =
-    typeof supportsVisionOverride === 'boolean'
-      ? supportsVisionOverride
-      : isVisionModel(effectiveModelProps);
-  const modelCapabilityFilter = useMemo(
-    () => (hasImageAttachment ? { features_vision: true } : undefined),
-    [hasImageAttachment]
-  );
-  const remainingSlots = Math.max(0, AICHAT_ATTACHMENT_LIMIT - attachments.length);
+  const canUseImage = imageExtensions.length > 0;
+  const remainingSlots = Math.max(0, attachmentLimit - attachments.length);
   const acceptedTypesLabel = useMemo(
     () => formatExtensionsForDisplay(allSelectableExtensions).join(' / '),
     [allSelectableExtensions]
@@ -520,6 +551,7 @@ export function AIChatInputArea({
     !isModelInitializing &&
     !isPreparingSend &&
     !isUploading &&
+    !(isSending && runtimeInputQueueFull) &&
     !hasUploadError &&
     !disabled;
   const interactionDisabled = disabled || isSending;
@@ -754,16 +786,9 @@ export function AIChatInputArea({
       if (file.size > sizeLimitMB * 1024 * 1024) {
         return t('consoleChat.attachments.fileTooLarge', { max: sizeLimitMB });
       }
-      if (kind === 'image' && !canUseImage) {
-        return tAttachmentForSurface(
-          t as unknown as ScopedTranslatorWithHas,
-          surface,
-          'imageVisionRequired'
-        );
-      }
       return null;
     },
-    [allowedExtensions, canUseImage, imageExtensions, imageMaxSizeMB, maxSizeMB, surface, t]
+    [allowedExtensions, imageExtensions, imageMaxSizeMB, maxSizeMB, t]
   );
 
   const uploadOneFile = useCallback(
@@ -778,11 +803,16 @@ export function AIChatInputArea({
         const response =
           uploadScope.type === 'webapp'
             ? await uploadService.uploadWebAppSingle(uploadScope.webAppId, file, { onProgress })
-            : await uploadService.uploadSingle(file, {
-                is_temporary: true,
-                workspace_id: currentWorkspace?.id,
-                onProgress,
-              });
+            : uploadScope.type === 'digital-human-webapp'
+              ? await uploadService.uploadDigitalHumanWebAppSingle(uploadScope.webAppId, file, {
+                  onProgress,
+                })
+              : await uploadService.uploadSingle(file, {
+                  is_temporary: true,
+                  source: 'chat',
+                  workspace_id: currentWorkspace?.id,
+                  onProgress,
+                });
         const uploadedFile = toAIChatMessageFile(response, kind);
         setAttachments(current =>
           current.map(attachment =>
@@ -832,17 +862,18 @@ export function AIChatInputArea({
         return;
       }
 
-      const availableSlots = Math.max(0, AICHAT_ATTACHMENT_LIMIT - attachments.length);
+      const availableSlots = Math.max(0, attachmentLimit - attachments.length);
       if (availableSlots <= 0) {
-        toast.error(t('consoleChat.attachments.exceedCount', { max: AICHAT_ATTACHMENT_LIMIT }));
+        toast.error(t('consoleChat.attachments.exceedCount', { max: attachmentLimit }));
         return;
       }
 
       const selectedFiles = files.slice(0, availableSlots);
       if (selectedFiles.length < files.length) {
-        toast.error(t('consoleChat.attachments.exceedCount', { max: AICHAT_ATTACHMENT_LIMIT }));
+        toast.error(t('consoleChat.attachments.exceedCount', { max: attachmentLimit }));
       }
 
+      let totalBytes = attachments.reduce((sum, file) => sum + file.size, 0);
       selectedFiles.forEach(file => {
         const fileExtension = getNormalizedExtension(file.name.split('.').pop());
         const kind =
@@ -852,6 +883,13 @@ export function AIChatInputArea({
           toast.error(validationError);
           return;
         }
+        if (file.size > turnMaxBytes - totalBytes) {
+          toast.error(
+            t('consoleChat.attachments.turnTooLarge', { max: turnMaxBytes / 1024 / 1024 })
+          );
+          return;
+        }
+        totalBytes += file.size;
 
         const localId = createAttachmentId();
         setAttachments(current => [
@@ -871,7 +909,9 @@ export function AIChatInputArea({
       });
     },
     [
-      attachments.length,
+      attachments,
+      attachmentLimit,
+      turnMaxBytes,
       enableUpload,
       imageExtensions,
       isSending,
@@ -931,18 +971,8 @@ export function AIChatInputArea({
   );
 
   const handleImageUpload = useCallback(() => {
-    if (!canUseImage) {
-      toast.info(
-        tAttachmentForSurface(
-          t as unknown as ScopedTranslatorWithHas,
-          surface,
-          'imageVisionRequired'
-        )
-      );
-      return;
-    }
     imageInputRef.current?.click();
-  }, [canUseImage, surface, t]);
+  }, []);
 
   const handleSystemFilesConfirm = useCallback(
     (files: FileItem[]) => {
@@ -955,8 +985,8 @@ export function AIChatInputArea({
         const nextItems: AIChatInputAttachment[] = [];
 
         for (const file of files) {
-          if (current.length + nextItems.length >= AICHAT_ATTACHMENT_LIMIT) {
-            toast.error(t('consoleChat.attachments.exceedCount', { max: AICHAT_ATTACHMENT_LIMIT }));
+          if (current.length + nextItems.length >= attachmentLimit) {
+            toast.error(t('consoleChat.attachments.exceedCount', { max: attachmentLimit }));
             break;
           }
           if (existingIds.has(file.id)) {
@@ -976,13 +1006,17 @@ export function AIChatInputArea({
             );
             continue;
           }
-          if (isImage && !canUseImage) {
+          const maxBytes = (isImage ? imageMaxSizeMB : maxSizeMB) * 1024 * 1024;
+          if (file.size < 0 || file.size > maxBytes) {
+            toast.error(t('consoleChat.attachments.fileTooLarge', { max: maxBytes / 1024 / 1024 }));
+            continue;
+          }
+          if (
+            file.size >
+            turnMaxBytes - [...current, ...nextItems].reduce((sum, item) => sum + item.size, 0)
+          ) {
             toast.error(
-              tAttachmentForSurface(
-                t as unknown as ScopedTranslatorWithHas,
-                surface,
-                'imageVisionRequired'
-              )
+              t('consoleChat.attachments.turnTooLarge', { max: turnMaxBytes / 1024 / 1024 })
             );
             continue;
           }
@@ -1005,11 +1039,49 @@ export function AIChatInputArea({
         return nextItems.length > 0 ? [...current, ...nextItems] : current;
       });
     },
-    [allSelectableExtensions, allowedExtensions, canUseImage, imageExtensions, surface, t]
+    [
+      allSelectableExtensions,
+      allowedExtensions,
+      attachmentLimit,
+      turnMaxBytes,
+      imageMaxSizeMB,
+      maxSizeMB,
+      imageExtensions,
+      t,
+    ]
   );
 
   const handleSend = useCallback(async () => {
     if (!input.trim() || isPreparingSend || isUploading || hasUploadError || voiceInputBusy) return;
+    if (attachments.length > attachmentLimit) {
+      toast.error(t('consoleChat.attachments.exceedCount', { max: attachmentLimit }));
+      return;
+    }
+    if (attachments.reduce((sum, file) => sum + file.size, 0) > turnMaxBytes) {
+      toast.error(t('consoleChat.attachments.turnTooLarge', { max: turnMaxBytes / 1024 / 1024 }));
+      return;
+    }
+    if (
+      attachments.some(
+        file =>
+          !allSelectableExtensions.includes(file.extension)
+      )
+    ) {
+      toast.error(
+        t('consoleChat.attachments.unsupportedType', { types: allSelectableExtensions.join(', ') })
+      );
+      return;
+    }
+    const oversized = attachments.find(
+      file => file.size >
+        (IMAGE_EXTENSIONS.includes(file.extension) ? imageMaxSizeMB : maxSizeMB) * 1024 * 1024
+    );
+    if (oversized) {
+      toast.error(t('consoleChat.attachments.fileTooLarge', {
+        max: IMAGE_EXTENSIONS.includes(oversized.extension) ? imageMaxSizeMB : maxSizeMB,
+      }));
+      return;
+    }
     setIsPreparingSend(true);
     try {
       const sent = await onSend(uploadedFiles, useMemory);
@@ -1020,6 +1092,13 @@ export function AIChatInputArea({
       setIsPreparingSend(false);
     }
   }, [
+    attachments,
+    attachmentLimit,
+    turnMaxBytes,
+    t,
+    allSelectableExtensions,
+    imageMaxSizeMB,
+    maxSizeMB,
     hasUploadError,
     input,
     isPreparingSend,
@@ -1070,6 +1149,48 @@ export function AIChatInputArea({
       onInputChange(event.target.value);
     },
     [onInputChange]
+  );
+
+  const handleComposerKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLTextAreaElement>) => {
+      if (event.key === 'Escape' && (canStop ?? isSending) && !input.trim()) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!isStopping) onStop();
+        return;
+      }
+      if (event.key !== 'Enter' || event.shiftKey) return;
+      if (shouldIgnoreCompositionEnter(event)) return;
+      if (
+        disabled ||
+        (isSending && !allowRuntimeInput) ||
+        isPreparingSend ||
+        isModelInitializing ||
+        isUploading ||
+        hasUploadError ||
+        voiceInputBusy
+      ) {
+        return;
+      }
+      event.preventDefault();
+      void handleSend();
+    },
+    [
+      allowRuntimeInput,
+      canStop,
+      disabled,
+      handleSend,
+      hasUploadError,
+      input,
+      isModelInitializing,
+      isPreparingSend,
+      isSending,
+      isStopping,
+      isUploading,
+      onStop,
+      shouldIgnoreCompositionEnter,
+      voiceInputBusy,
+    ]
   );
 
   const adjustComposerTextareaHeight = useCallback(() => {
@@ -1224,7 +1345,7 @@ export function AIChatInputArea({
           isSending={interactionDisabled}
           isUploading={isUploading}
           remainingSlots={remainingSlots}
-          attachmentLimit={AICHAT_ATTACHMENT_LIMIT}
+          attachmentLimit={attachmentLimit}
           acceptedTypesLabel={acceptedTypesLabel}
         />
       ) : null}
@@ -1250,9 +1371,11 @@ export function AIChatInputArea({
               ? 'max-w-full'
               : surface === 'agent-draft'
                 ? 'max-w-[560px]'
-                : isHome && !isLoadingMessages
-                  ? 'max-w-3xl'
-                  : 'max-w-4xl'
+                : surface === 'digital-human' && isHome && !isLoadingMessages
+                  ? 'max-w-3xl xl:max-w-4xl 2xl:max-w-5xl'
+                  : isHome && !isLoadingMessages
+                    ? 'max-w-3xl'
+                    : 'max-w-4xl'
           )}
         >
           {modelMissing && !hasBlockingApproval && !hasActiveUserInputRequest ? (
@@ -1436,24 +1559,13 @@ export function AIChatInputArea({
                     onPaste={handlePaste}
                     onCompositionStart={handleCompositionStart}
                     onCompositionEnd={handleCompositionEnd}
-                    onKeyDown={event => {
-                      if (event.key === 'Enter' && !event.shiftKey) {
-                        if (shouldIgnoreCompositionEnter(event)) return;
-                        if (
-                          interactionDisabled ||
-                          isPreparingSend ||
-                          isModelInitializing ||
-                          isUploading ||
-                          hasUploadError ||
-                          voiceInputBusy
-                        ) {
-                          return;
-                        }
-                        event.preventDefault();
-                        void handleSend();
-                      }
-                    }}
-                    placeholder={inputPlaceholder || t('chat.enterCommand')}
+                    onKeyDown={handleComposerKeyDown}
+                    aria-keyshortcuts="Enter Shift+Enter Escape"
+                    placeholder={
+                      isSending && allowRuntimeInput
+                        ? t('consoleChat.runtimeInput.placeholder')
+                        : inputPlaceholder || t('chat.enterCommand')
+                    }
                     className={cn(
                       'min-h-12 resize-none overflow-y-hidden border-0 bg-transparent py-2 pl-3 pr-4 text-sm shadow-none focus-visible:ring-0',
                       '[scrollbar-width:thin] [scrollbar-color:rgba(113,113,122,0.45)_transparent]',
@@ -1500,16 +1612,19 @@ export function AIChatInputArea({
                 modelSelectorWarning={modelSelectorWarning}
                 isModelInitializing={isModelInitializing}
                 modelMissing={modelMissing}
-                modelCapabilityFilter={modelCapabilityFilter}
-                hasImageAttachment={hasImageAttachment}
+                modelCapabilityFilter={undefined}
+                hasImageAttachment={attachments.some(file => file.kind === 'image')}
                 isSending={interactionDisabled}
+                allowRuntimeInput={allowRuntimeInput && !disabled}
+                hasInput={Boolean(input.trim())}
+                runtimeInputQueueFull={runtimeInputQueueFull}
                 canStop={canStop}
                 isUploading={isUploading || isPreparingSend}
                 isStopping={isStopping}
                 canSend={!hasActiveUserInputRequest && canClickSend && !voiceInputBusy}
                 canUseImage={canUseImage}
                 remainingSlots={remainingSlots}
-                attachmentLimit={AICHAT_ATTACHMENT_LIMIT}
+                attachmentLimit={attachmentLimit}
                 maxSizeMB={maxSizeMB}
                 imageMaxSizeMB={imageMaxSizeMB}
                 allowedExtensions={allowedExtensions}

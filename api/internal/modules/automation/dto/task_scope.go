@@ -11,7 +11,8 @@ type TaskScope struct {
 // TaskFilter represents list filters for automation task queries.
 type TaskFilter struct {
 	TaskScope
-	Statuses []automationmodel.AutomationTaskStatus `json:"statuses,omitempty"`
-	Page     int                                    `json:"page,omitempty"`
-	Limit    int                                    `json:"limit,omitempty"`
+	TaskKinds []automationmodel.AutomationTaskKind   `json:"task_kinds,omitempty"`
+	Statuses  []automationmodel.AutomationTaskStatus `json:"statuses,omitempty"`
+	Page      int                                    `json:"page,omitempty"`
+	Limit     int                                    `json:"limit,omitempty"`
 }

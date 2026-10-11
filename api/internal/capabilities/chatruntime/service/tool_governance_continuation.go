@@ -63,6 +63,20 @@ func (s *service) RunConfiguredToolGovernanceDecisionStream(
 	if onEvent == nil {
 		return nil, fmt.Errorf("%w: event callback is required", ErrInvalidInput)
 	}
+	// Read through the caller-scoped repository before recording an approval.
+	// A new entry may not reuse a legacy console approval or another publication.
+	conversation, message, err := s.reloadToolGovernanceContinuationMessageForCaller(ctx, scope, caller, conversationID, messageID)
+	if err != nil {
+		return nil, err
+	}
+	event, exists := toolGovernanceDecisionEventFromMetadata(message.Metadata, correlationID)
+	if !exists {
+		return nil, ErrNotFound
+	}
+	resolved := isResolvedToolGovernanceDecisionEvent(event)
+	if err := checkPlatformApprovalScope(ctx, &PreparedChat{Scope: scope, Caller: caller, RunConfig: config, Conversation: conversation, Message: message}, event, req.Action == toolGovernanceActionApprove && !resolved); err != nil {
+		return nil, err
+	}
 	publicDecision, err := s.submitToolGovernanceDecisionForCaller(ctx, scope, caller, conversationID, messageID, correlationID, req)
 	if err != nil {
 		return nil, err
@@ -78,7 +92,7 @@ func (s *service) RunConfiguredToolGovernanceDecisionStream(
 		return nil, err
 	}
 
-	conversation, message, err := s.reloadToolGovernanceContinuationMessageForCaller(ctx, scope, caller, conversationID, messageID)
+	conversation, message, err = s.reloadToolGovernanceContinuationMessageForCaller(ctx, scope, caller, conversationID, messageID)
 	if err != nil {
 		s.failToolGovernanceContinuation(context.WithoutCancel(ctx), continuation, err, onEvent)
 		return nil, newFinalizedStreamError(err)
@@ -94,6 +108,25 @@ func (s *service) RunConfiguredToolGovernanceDecisionStream(
 		return nil, newFinalizedStreamError(err)
 	}
 	continuation.Event = authoritativeEvent
+	if frozen, found, _ := toolGovernanceFrozenInvocationFromEvent(authoritativeEvent); found && frozen.ExecutionOrigin != nil && publicDecision.Action == toolGovernanceActionReject {
+		// Closing a scoped CLI approval needs neither live compute nor a model
+		// call. The original Shell and its Job grant remain stopped/revoked.
+		prepared := &PreparedChat{Scope: scope, Caller: caller, RunConfig: config, Conversation: conversation, Message: message, Continuation: true}
+		persistCtx := context.WithoutCancel(ctx)
+		if err := s.emitPreparedEvent(persistCtx, prepared, streamEventMessageStart, messageStartPayload(conversation, message, false), onEvent); err != nil {
+			return nil, finalizedRuntimePersistenceError(err)
+		}
+		if err := newProcessTimelineRecorder(ctx, persistCtx, s, prepared, onEvent).RecordEvent(streamEventToolGovernanceDecision, authoritativeEvent); err != nil {
+			return nil, finalizedRuntimePersistenceError(err)
+		}
+		if err := s.completePreparedChat(persistCtx, prepared, message.Answer, message.Metadata); err != nil {
+			return nil, finalizedRuntimePersistenceError(err)
+		}
+		if err := s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayload(prepared, message.Metadata), onEvent); err != nil {
+			return nil, finalizedRuntimePersistenceError(err)
+		}
+		return &ChatResult{Answer: message.Answer, Metadata: message.Metadata, Status: runtimemodel.MessageStatusCompleted}, nil
+	}
 
 	prepared, err := s.prepareConfiguredToolGovernanceContinuationChat(ctx, scope, caller, config, continuation)
 	if err != nil {
@@ -294,7 +327,7 @@ func (s *service) prepareConfiguredToolGovernanceContinuationChat(ctx context.Co
 		return nil, err
 	}
 	applyProtocolToolsPolicy(caller, parts)
-	applyManagedUserMemoryPolicy(caller, parts)
+	applyCallerMemoryPolicy(caller, parts)
 	if err := s.applySkillConfig(ctx, scope, caller, &config, parts); err != nil {
 		return nil, err
 	}
@@ -320,6 +353,7 @@ func (s *service) prepareConfiguredToolGovernanceContinuationChat(ctx context.Co
 		SuppressInitialNaturalProgress: true,
 		parts:                          parts,
 		contextBudget:                  contextResult,
+		taskTokenBudget:                taskTokenBudgetFromMetadata(message.Metadata),
 	}, nil
 }
 
@@ -342,8 +376,14 @@ func (s *service) runToolGovernanceApprovedContinuation(ctx context.Context, pre
 		return result, nil
 	}
 	prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, continuationMessageForExecutionMode(toolGovernanceApprovalContinuationMessage(event), prepared.parts.ExecutionMode))
+	if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, "", nil, nil, onEvent); handled {
+		return result, budgetErr
+	}
 	answer, usage, err := s.runPreparedToolLoop(ctx, persistCtx, prepared, nil, onEvent)
 	if err != nil {
+		if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, answer, usage, err, onEvent); handled {
+			return result, budgetErr
+		}
 		var pendingGovernance *skillloop.ToolGovernancePendingError
 		if errors.As(err, &pendingGovernance) {
 			metadata, persistErr := s.persistToolGovernanceApprovalPendingResult(persistCtx, prepared, pendingGovernance.Payload, usage)
@@ -385,6 +425,9 @@ func (s *service) runToolGovernanceApprovedContinuation(ctx context.Context, pre
 		}
 		return nil, newFinalizedStreamError(err)
 	}
+	if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, answer, usage, nil, onEvent); handled {
+		return result, budgetErr
+	}
 	metadata := preparedResultMetadataForPrepared(prepared, prepared.Message.Metadata, usage)
 	if err := s.completePreparedChat(persistCtx, prepared, answer, metadata); err != nil {
 		return nil, finalizedRuntimePersistenceError(err)
@@ -410,9 +453,15 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 	if err := validateToolGovernanceFrozenInvocation(frozen, toolGovernanceCorrelationID(event)); err != nil {
 		return nil, true, err
 	}
+	if err := checkPlatformApprovalScope(ctx, prepared, event, true); err != nil {
+		return nil, true, err
+	}
 	frozen = remapLegacyFileDeleteFrozenInvocation(frozen)
 	prepared.ContinuationType = "tool_governance_approval"
 	prepared.PreferredRestoredSkillID = strings.TrimSpace(frozen.SkillID)
+	if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, "", nil, nil, onEvent); handled {
+		return result, true, budgetErr
+	}
 	if s.skillRuntime == nil {
 		return nil, true, fmt.Errorf("%w: skill runtime is not configured", ErrInvalidInput)
 	}
@@ -465,7 +514,15 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 		callID = strings.TrimSpace(frozen.ID)
 	}
 	executionContext := s.skillExecutionContext(prepared)
-	scriptModel, scriptModelUsage := s.newSkillScriptModelChannel(prepared)
+	if frozen.ExecutionOrigin != nil {
+		origin := *frozen.ExecutionOrigin
+		executionContext.PlatformExecutionOrigin = &origin
+		executionContext.PlatformInteractiveApproval = true
+	}
+	scriptModel, scriptModelUsage := s.newSkillScriptModelChannel(
+		prepared,
+		s.taskTokenUsageObserver(persistCtx, prepared, onEvent),
+	)
 	executionContext.ScriptModel = scriptModel
 	executionContext.RuntimeParameters = skills.WithToolGovernanceCorrelationID(
 		executionContext.RuntimeParameters,
@@ -483,6 +540,7 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 		executionContext,
 		callID,
 	)
+	frozenModelUsage := scriptModelUsage()
 	executionErr := err
 	if invocation == nil {
 		if executionErr == nil {
@@ -519,12 +577,12 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 					return nil, true, finalizedRuntimePersistenceError(err)
 				}
 				if clientActionRequiresModelContinuation(payload) {
-					metadata, persistErr := s.persistClientActionPendingResult(persistCtx, prepared, payload, nil)
+					metadata, persistErr := s.persistClientActionPendingResult(persistCtx, prepared, payload, frozenModelUsage)
 					if ownershipErr := finalizedRuntimeOwnershipError(persistErr); ownershipErr != nil {
 						return nil, true, ownershipErr
 					}
 					s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingClientAction), onEvent)
-					return &ChatResult{Answer: "", Metadata: metadata, Usage: nil, Status: runtimemodel.MessageStatusWaitingClientAction}, true, nil
+					return &ChatResult{Answer: "", Metadata: metadata, Usage: frozenModelUsage, Status: runtimemodel.MessageStatusWaitingClientAction}, true, nil
 				}
 			}
 		}
@@ -548,9 +606,18 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 	}
 
 	prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, continuationMessageForExecutionMode(toolGovernanceFrozenExecutionContinuationMessage(prepared.Message, event, invocation, executionErr), prepared.parts.ExecutionMode))
+	if frozen.ExecutionOrigin != nil {
+		// A CLI approval resumes one sealed business invocation, not its stopped
+		// script or a new planning loop. Summarization cannot issue more tools.
+		prepared.TerminalOnly = true
+		prepared.RunConfig.RuntimeToolFactory = nil
+	}
 	answer, usage, err := s.runPreparedToolLoop(ctx, persistCtx, prepared, nil, onEvent)
-	usage = addUsageCloned(usage, scriptModelUsage())
+	usage = addUsageCloned(usage, frozenModelUsage)
 	if err != nil {
+		if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, answer, usage, err, onEvent); handled {
+			return result, true, budgetErr
+		}
 		var pendingGovernance *skillloop.ToolGovernancePendingError
 		if errors.As(err, &pendingGovernance) {
 			metadata, persistErr := s.persistToolGovernanceApprovalPendingResult(persistCtx, prepared, pendingGovernance.Payload, usage)
@@ -588,6 +655,9 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingQuestion}, true, nil
 		}
 		return nil, true, err
+	}
+	if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, answer, usage, nil, onEvent); handled {
+		return result, true, budgetErr
 	}
 	metadata := preparedResultMetadataForPrepared(prepared, prepared.Message.Metadata, usage)
 	if err := s.completePreparedChat(persistCtx, prepared, answer, metadata); err != nil {
@@ -700,6 +770,10 @@ func toolGovernanceFrozenInvocationFromEvent(event map[string]interface{}) (tool
 }
 
 func validateToolGovernanceFrozenInvocation(frozen toolgovernance.FrozenInvocation, correlationID string) error {
+	return validateToolGovernanceFrozenInvocationForDecision(frozen, correlationID, true)
+}
+
+func validateToolGovernanceFrozenInvocationForDecision(frozen toolgovernance.FrozenInvocation, correlationID string, approve bool) error {
 	if strings.TrimSpace(frozen.SkillID) == "" || strings.TrimSpace(frozen.ToolName) == "" {
 		return fmt.Errorf("%w: frozen invocation is missing skill or tool", ErrInvalidInput)
 	}
@@ -714,7 +788,7 @@ func validateToolGovernanceFrozenInvocation(frozen toolgovernance.FrozenInvocati
 	if !toolgovernance.FrozenInvocationHashMatches(frozen) {
 		return fmt.Errorf("%w: frozen invocation hash mismatch", ErrInvalidInput)
 	}
-	if frozen.ExpiresAt != nil && time.Now().UTC().After(frozen.ExpiresAt.UTC()) {
+	if approve && frozen.ExpiresAt != nil && time.Now().UTC().After(frozen.ExpiresAt.UTC()) {
 		return fmt.Errorf("%w: frozen invocation expired", ErrInvalidInput)
 	}
 	return nil
@@ -769,6 +843,9 @@ func toolGovernanceFrozenExecutionContinuationMessage(
 		outcome,
 		"Approved operation summary JSON:\n" + compactJSON(operationSummary),
 		"Model-visible runtime result JSON:\n" + compactJSON(toolResult),
+	}
+	if toolGovernanceHasStoppedPlatformShell(message) {
+		contentParts = append(contentParts, "Platform CLI continuation state: the original Shell ran until the approval boundary and was stopped there. It is not still running or awaiting another approval. This continuation attempted only the frozen business tool, not the Shell. Do not invent a new pending Shell, replay it, or claim that its remaining script statements executed. Its earlier awaiting_approval trace describes history, not current work.")
 	}
 	if planState := toolGovernanceContinuationPlanStateSummary(message); len(planState) > 0 {
 		contentParts = append(contentParts, "Current operation plan continuation state JSON:\n"+compactJSON(planState))
@@ -1166,8 +1243,17 @@ func toolGovernanceModelVisibleToolResult(event map[string]interface{}, invocati
 	if instruction := strings.TrimSpace(stringFromAny(payload["instruction"])); instruction != "" {
 		result["tool_guidance"] = instruction
 	}
-	if len(result) == 1 && len(payload) > 0 {
-		result["details"] = toolGovernanceSanitizedModelVisibleValue(payload)
+	// Generic business outputs (for example calculator values) must not be
+	// discarded merely because governance also supplies an action/effect.
+	// Keep file-operation projections narrow and preserve their existing rules.
+	if executionErr == nil && len(payload) > 0 && (len(result) == 1 || toolGovernanceUserVisibleAssetType(event) != "file") {
+		details := toolGovernanceSanitizedModelVisibleValue(payload)
+		encoded, err := json.Marshal(details)
+		if err == nil && len(encoded) <= 32<<10 {
+			result["details"] = details
+		} else {
+			result["details_truncated"] = true
+		}
 	}
 	return result
 }
@@ -1458,6 +1544,9 @@ func toolGovernanceDropModelVisibleKey(key string) bool {
 
 func (s *service) runToolGovernanceRejectionContinuation(ctx context.Context, prepared *PreparedChat, req runtimedto.ToolGovernanceDecisionRequest, event map[string]interface{}, onEvent func(StreamEvent) error) (*ChatResult, error) {
 	persistCtx := context.WithoutCancel(ctx)
+	if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, "", nil, nil, onEvent); handled {
+		return result, budgetErr
+	}
 	prepared.LLMRequest = toolGovernanceRejectionLLMRequest(prepared.Message, req, event)
 	stream, err := s.openChatStream(ctx, prepared)
 	if err != nil {
@@ -1472,6 +1561,11 @@ func (s *service) runToolGovernanceRejectionContinuation(ctx context.Context, pr
 			return nil, finalizedRuntimePersistenceError(finalizeErr)
 		}
 		return nil, newFinalizedStreamError(err)
+	}
+	accountTaskTokenUsage(prepared, usage)
+	s.emitTaskTokenUsageUpdated(persistCtx, prepared, usage, onEvent)
+	if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, answer, usage, nil, onEvent); handled {
+		return result, budgetErr
 	}
 	metadata := preparedResultMetadataForPrepared(prepared, prepared.Message.Metadata, usage)
 	if err := s.completePreparedChat(persistCtx, prepared, answer, metadata); err != nil {
@@ -1677,6 +1771,9 @@ func toolGovernanceRejectionLLMRequest(message *runtimemodel.Message, req runtim
 		"Rejected operation summary JSON:\n" + compactJSON(toolGovernanceRejectedOperationSummary(event)),
 		"Completed work before this rejection JSON:\n" + compactJSON(toolGovernanceCompletedWorkSummary(message)),
 	}, "\n\n")
+	if toolGovernanceHasStoppedPlatformShell(message) {
+		content += "\n\nPlatform CLI rejection state: the original Shell ran until the business tool requested approval and was stopped. Only the frozen business tool was rejected and not executed. Do not claim the original Shell never started or that another approval is pending. Do not replay the Shell or the rejected operation."
+	}
 	chatReq := &adapter.ChatRequest{
 		Provider: provider,
 		Model:    model,
@@ -1693,6 +1790,18 @@ func toolGovernanceRejectionLLMRequest(message *runtimemodel.Message, req runtim
 		applyModelParameters(chatReq, message.ModelParameters)
 	}
 	return chatReq
+}
+
+func toolGovernanceHasStoppedPlatformShell(message *runtimemodel.Message) bool {
+	if message == nil {
+		return false
+	}
+	for _, trace := range mapSliceFromAny(message.Metadata["skill_invocations"]) {
+		if trace["skill_id"] == "agent_execution" && trace["tool_name"] == "shell_exec" && trace["status"] == "awaiting_approval" {
+			return true
+		}
+	}
+	return false
 }
 
 func toolGovernanceCompletedWorkSummary(message *runtimemodel.Message) map[string]interface{} {

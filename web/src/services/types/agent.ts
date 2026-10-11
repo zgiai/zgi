@@ -1,4 +1,6 @@
+import type { FileUploadSelection } from '@/services/upload.service';
 import type { IconType } from '@/utils/icon-helpers';
+import type { ConnectorReferenceCommand } from './connector';
 
 // Agent type enumeration
 export enum AgentType {
@@ -33,6 +35,8 @@ export type WebAppStatus = 'active' | 'inactive';
 // Basic agent interface (for list response)
 export interface Agent {
   id: string;
+  tenant_id?: string;
+  workspace_id?: string;
   web_app_id?: string;
   name: string;
   description: string;
@@ -47,6 +51,7 @@ export interface Agent {
   updated_at: number;
   can_edit: boolean;
   web_app_status?: WebAppStatus;
+  tags?: AgentCatalogTag[];
 }
 
 // Agent detail interface (for detail response)
@@ -142,6 +147,7 @@ export interface AgentListParams {
   asset_kind?: AgentAssetKind;
   is_published?: boolean;
   web_app_status?: WebAppStatus;
+  tag_ids?: string;
   sort?: string;
   order?: 'asc' | 'desc';
 }
@@ -150,9 +156,49 @@ export interface RunnableWebAppsParams {
   workspace_id?: string;
   web_app_id?: string;
   web_app_ids?: string;
+  tag_ids?: string;
   keyword?: string;
   page?: number;
   page_size?: number;
+}
+
+export interface AgentCatalogTag {
+  id: string;
+  name: string;
+}
+
+export interface AgentCatalogTagInput {
+  id?: string;
+  name?: string;
+}
+
+export interface AgentCatalogTagsData {
+  items: AgentCatalogTag[];
+}
+
+export interface RunnableWebAppTagFacet extends AgentCatalogTag {
+  count: number;
+}
+
+export interface RunnableWebAppTagFacetsData {
+  items: RunnableWebAppTagFacet[];
+}
+
+export interface AgentCatalogTagFacet extends AgentCatalogTag {
+  count: number;
+}
+
+export interface AgentCatalogTagFacetsData {
+  items: AgentCatalogTagFacet[];
+}
+
+export interface AgentCatalogTagFacetsParams {
+  workspace_id?: string;
+  asset_kind?: AgentAssetKind;
+}
+
+export interface ReplaceAgentCatalogTagsRequest {
+  tags: AgentCatalogTagInput[];
 }
 
 export interface RunnableWebAppItem {
@@ -170,6 +216,7 @@ export interface RunnableWebAppMetaData {
   icon_url?: string;
   desc: string | null;
   agent_type: AgentType | string;
+  tags: AgentCatalogTag[];
 }
 
 export interface RunnableWebAppsData {
@@ -193,7 +240,10 @@ export interface UpdateWebAppStatusResponse {
 }
 
 export interface AgentRuntimeConfig {
+  file_upload_policy?: FileUploadSelection | null;
   agent_id: string;
+  execution_runtime?: AgentExecutionRuntimeConfig | null;
+  execution_runtime_capability?: AgentExecutionRuntimeCapability | null;
   system_prompt: string;
   model_provider: string;
   model: string;
@@ -215,10 +265,21 @@ export interface AgentRuntimeConfig {
   database_bindings?: AgentDatabaseBinding[];
   workflow_bindings?: AgentWorkflowBinding[];
   connector_bindings?: AgentConnectorBinding[];
-  connector_reference_commands?: import('./connector').ConnectorReferenceCommand[];
+  connector_reference_commands?: ConnectorReferenceCommand[];
   binding_revision?: string;
   binding_health?: AgentBindingHealth;
   updated_at: number;
+}
+
+export interface AgentExecutionRuntimeConfig {
+  enabled: boolean;
+}
+
+/** Server-owned admission state for the editor's Linux toggle. */
+export interface AgentExecutionRuntimeCapability {
+  available: boolean;
+  can_enable: boolean;
+  reason?: 'disabled' | 'organization_not_enabled' | 'runtime_unavailable' | 'entry_not_enabled' | string;
 }
 
 export type AgentBindingType =
@@ -428,6 +489,8 @@ export interface AgentMemoryConfigResponse {
 }
 
 export interface UpdateAgentRuntimeConfigRequest {
+  file_upload_policy?: FileUploadSelection | null;
+  execution_runtime?: AgentExecutionRuntimeConfig | null;
   system_prompt: string;
   model_provider: string;
   model: string;
@@ -449,7 +512,7 @@ export interface UpdateAgentRuntimeConfigRequest {
   database_bindings?: AgentDatabaseBinding[];
   workflow_bindings?: AgentWorkflowBinding[];
   connector_bindings?: AgentConnectorBinding[];
-  connector_reference_commands?: import('./connector').ConnectorReferenceCommand[];
+  connector_reference_commands?: ConnectorReferenceCommand[];
   binding_revision?: string;
 }
 

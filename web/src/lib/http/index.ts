@@ -32,6 +32,11 @@ export { HttpClient, httpClientFactory, http } from './client';
 
 // Webapp-specific client (separate token logic)
 export { webappHttp, ensureWebAppToken, getWebAppToken, WEBAPP_TOKEN_KEY } from './webapp';
+export {
+  clearDigitalHumanWebAppSession,
+  createDigitalHumanWebAppHttp,
+  ensureDigitalHumanWebAppSession,
+} from './digital-human-webapp';
 
 // Services
 export { BaseService, type ServiceConfig, type PaginationParams } from './services';

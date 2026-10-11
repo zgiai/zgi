@@ -19,7 +19,9 @@ import { useConnectorReconnect } from '@/hooks/connectors/use-connector-reconnec
 import { useT, type ScopedTranslations } from '@/i18n';
 import type { ConnectorCatalogItem, PersonalConnection } from '@/services/types/connector';
 import { supportsMailSetup, connectionMailUsage } from '../setup/mail-setup-state';
+import { supportsServerOpsSSHConnectorSetup } from '../setup/app-setup-state';
 import { ConnectorMailSetupPanel } from '../setup/connector-mail-setup-panel';
+import { ServerOpsSSHSetupPanel } from '../setup/serverops-ssh-setup-panel';
 
 function errorText(t: ScopedTranslations<'connectors'>, code: string | undefined): string {
   if (
@@ -53,6 +55,9 @@ interface ConnectionReconnectDialogProps {
 
 export function ConnectionReconnectDialog(props: ConnectionReconnectDialogProps) {
   const t = useT('connectors');
+  if (supportsServerOpsSSHConnectorSetup(props.connector)) {
+    return <ServerOpsSSHReconnectDialog {...props} />;
+  }
   if (supportsMailSetup(props.connector)) {
     return (
       <Dialog open={props.open} onOpenChange={props.onOpenChange}>
@@ -86,6 +91,41 @@ export function ConnectionReconnectDialog(props: ConnectionReconnectDialogProps)
     );
   }
   return <KeyReconnectDialog {...props} />;
+}
+
+/**
+ * Pinned-host-key SSH reconnect. The panel reuses the connection id, so a
+ * matching username@host:port identity updates this connection in place, while a
+ * different verified identity is reported as a separate connection rather than
+ * silently replaced. Alias management stays in Connection Center.
+ */
+function ServerOpsSSHReconnectDialog({
+  open,
+  onOpenChange,
+  connector,
+  connection,
+}: ConnectionReconnectDialogProps) {
+  const t = useT('connectors');
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent size="md">
+        <DialogHeader>
+          <DialogTitle>{t('serveropsSsh.reconnectTitle')}</DialogTitle>
+          <DialogDescription>{t('serveropsSsh.reconnectDescription')}</DialogDescription>
+        </DialogHeader>
+        <DialogBody>
+          {open && connection ? (
+            <ServerOpsSSHSetupPanel connector={connector} updateConnection={connection} embedded />
+          ) : null}
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            {t('reconnect.close')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 function KeyReconnectDialog({

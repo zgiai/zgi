@@ -13,6 +13,7 @@ const GROUP_SOURCES = {
   auth: 'AUTH_MODULES',
   console: 'CONSOLE_MODULES',
   dashboard: 'DASHBOARD_MODULES',
+  digitalHumanWebApp: 'DIGITAL_HUMAN_WEBAPP_MODULES',
   webapp: 'WEBAPP_MODULES',
   appToken: 'APP_TOKEN_MODULES',
   announcementToken: 'ANNOUNCEMENT_TOKEN_MODULES',
@@ -49,6 +50,14 @@ const GROUP_OWNERS = [
       'src/hooks/channel/',
       'src/hooks/organization/',
       'src/hooks/pay/',
+    ],
+  },
+  {
+    group: 'digitalHumanWebApp',
+    prefixes: [
+      'src/app/digital-human/',
+      'src/components/digital-human/digital-human-webapp.tsx',
+      'src/hooks/digital-human/use-digital-human-webapp.ts',
     ],
   },
   {

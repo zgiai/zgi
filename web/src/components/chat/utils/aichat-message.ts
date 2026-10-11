@@ -40,6 +40,8 @@ export function normalizeAIChatStatus(status: unknown): AIChatMessageStatus {
       return 'waiting_client_action';
     case 'waiting_question':
       return 'waiting_question';
+    case 'waiting_budget':
+      return 'waiting_budget';
     case 'completed':
       return 'completed';
     case 'stopped':

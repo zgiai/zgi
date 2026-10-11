@@ -247,7 +247,7 @@ func createGeneratedFileForRuntime(ctx context.Context, tenantID string, runtime
 		return nil, fmt.Errorf("failed to create generated file: %w", err)
 	}
 
-	url, err := tool_file.SignToolFileGlobal(toolFile.ID, params.extension)
+	url, err := tool_file.PublicGeneratedFileURL(toolFile, params.extension)
 	if err != nil {
 		return nil, fmt.Errorf("failed to sign generated file: %w", err)
 	}
@@ -289,6 +289,7 @@ func createGeneratedFileForRuntime(ctx context.Context, tenantID string, runtime
 	if toolFile.ExpiresAt != nil {
 		fileData["expires_at"] = toolFile.ExpiresAt.Unix()
 	}
+	tool_file.ProtectGeneratedFileMetadata(toolFile, fileMeta, fileData)
 	return []tools.ToolInvokeMessage{
 		{
 			Type: tools.ToolInvokeMessageTypeFile,
@@ -1001,6 +1002,9 @@ func firstNonEmptyStringParam(values ...string) string {
 }
 
 func appendDownloadQuery(rawURL string) string {
+	if rawURL == "" {
+		return ""
+	}
 	if strings.Contains(rawURL, "?") {
 		return rawURL + "&download=1"
 	}

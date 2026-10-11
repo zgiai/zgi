@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Label } from '@/components/ui/label';
 import { API_URL } from '@/lib/config';
 import MarkdownViewer from '@/components/common/markdown-viewer';
-import { Loader2, Send, Key, Bot, User } from 'lucide-react';
+import { Loader2, Send, Key, Bot } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function ApiKeyTestPage() {
@@ -17,7 +17,11 @@ export default function ApiKeyTestPage() {
   const [userContent, setUserContent] = useState('你好，请介绍一下你自己。');
   const [response, setResponse] = useState('');
   const [loading, setLoading] = useState(false);
-  const [usage, setUsage] = useState<any>(null);
+  const [usage, setUsage] = useState<{
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  } | null>(null);
 
   const handleTest = async () => {
     if (!apiKey) {
@@ -65,10 +69,11 @@ export default function ApiKeyTestPage() {
       setResponse(data.choices[0]?.message?.content || '未获取到响应内容');
       setUsage(data.usage);
       toast.success('请求成功');
-    } catch (error: any) {
+    } catch (error) {
       console.error('Test failed:', error);
-      toast.error(`测试失败: ${error.message}`);
-      setResponse(`Error: ${error.message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(`测试失败: ${message}`);
+      setResponse(`Error: ${message}`);
     } finally {
       setLoading(false);
     }

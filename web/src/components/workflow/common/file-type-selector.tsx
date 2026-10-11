@@ -51,13 +51,19 @@ interface FileTypeSelectorProps {
   selectedTypes: string[];
   onChange: (types: string[]) => void;
   label?: string;
+  availableTypes?: readonly FileType[];
 }
 
 /**
  * FileTypeSelector - A card-based file type selector component
  * Each card displays the type name, icon, and supported file extensions
  */
-export function FileTypeSelector({ selectedTypes, onChange, label }: FileTypeSelectorProps) {
+export function FileTypeSelector({
+  selectedTypes,
+  onChange,
+  label,
+  availableTypes = FILE_TYPES,
+}: FileTypeSelectorProps) {
   const t = useT('nodes');
 
   // Check if custom is selected (exclusive mode)
@@ -110,7 +116,7 @@ export function FileTypeSelector({ selectedTypes, onChange, label }: FileTypeSel
 
   // Memoize the file type cards
   const typeCards = useMemo(() => {
-    return FILE_TYPES.map(type => {
+    return availableTypes.map(type => {
       const isSelected = selectedTypes.includes(type);
       const Icon = FILE_TYPE_ICONS[type];
       const colors = FILE_TYPE_COLORS[type];
@@ -167,7 +173,14 @@ export function FileTypeSelector({ selectedTypes, onChange, label }: FileTypeSel
         </button>
       );
     });
-  }, [selectedTypes, isCustomSelected, handleTypeClick, t, getExtensionsDescription]);
+  }, [
+    availableTypes,
+    selectedTypes,
+    isCustomSelected,
+    handleTypeClick,
+    t,
+    getExtensionsDescription,
+  ]);
 
   return (
     <div className="space-y-3">

@@ -17,7 +17,6 @@ Dockerfile*
 specs/
 outputs/
 qa-artifacts/
-**/.local/
 .specify/
 
 # Runtime and local-only data
@@ -25,3 +24,4 @@ qa-artifacts/
 **/__pycache__/
 **/*.pyc
 **/.venv/
+**/.local/

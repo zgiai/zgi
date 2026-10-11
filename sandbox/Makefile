@@ -1,8 +1,19 @@
 SHELL := /bin/sh
 
-.PHONY: fmt test build check run kest test-linux-secure check-docker-entrypoint check-config-docs profile-build-stdlib profile-build-scientific-data
+.PHONY: fmt test build check run kest test-linux-secure test-agent-runtime-containerd test-agent-runtime-e2b test-agent-runtime-e2b-package check-docker-entrypoint check-config-docs test-agent-runtime-server install-agent-runtime-host profile-build-stdlib profile-build-scientific-data profile-build-cc-codex-standard build-agent-runtime-image build-agent-runtime-worker prepare-agent-runtime-e2b
 .PHONY: docker-up docker-down docker-logs
 .PHONY: docker-config
+.PHONY: test-agent-runtime-containerd-pid-termination
+.PHONY: test-agent-runtime-backup test-agent-runtime-backup-real-backend
+
+test-agent-runtime-backup-real-backend:
+	@test -n "$$ZGI_SANDBOX_TEST_POSTGRES_ADMIN_DSN" -a -n "$$ZGI_RUNTIME_BACKUP_TEST_PROFILE" || (echo 'isolated PostgreSQL administrator and approved Profile are required' >&2; exit 1)
+	go test -tags agent_runtime_backup_integration -count=1 -v -timeout 15m ./cmd/agentworker -run '^TestRuntimeBackupRealBackendRecovery$$'
+
+test-agent-runtime-backup:
+	@test -n "$$ZGI_SANDBOX_TEST_POSTGRES_ADMIN_DSN" || (echo 'isolated PostgreSQL administrator is required' >&2; exit 1)
+	@test -n "$$ZGI_CHECKPOINT_S3_TEST_ENDPOINT" -a -n "$$ZGI_CHECKPOINT_S3_TEST_BUCKET" || (echo 'real S3 fixture and pre-created private bucket are required' >&2; exit 1)
+	go test -race -count=1 -v ./internal/checkpointbackup ./internal/storage ./internal/agentexecution ./cmd/agentworker -run 'TestBackup|TestIncompleteBackup|TestCheckpointRecovery|TestAgentRuntimeS3Checkpoint|TestOperatorRecovery|TestRecoveryStorage|TestAuditMetrics'
 
 fmt:
 	gofmt -w $$(find . -name '*.go')
@@ -24,11 +35,30 @@ kest:
 test-linux-secure:
 	./scripts/test_linux_secure_container.sh
 
+test-agent-runtime-containerd-pid-termination:
+	go test -tags agent_runtime_integration ./internal/localruntime/containerd -run '^TestContainerdGVisorPIDExhaustionTermination$$' -count=1 -v -timeout 2m
+
+test-agent-runtime-containerd:
+	go test -tags=agent_runtime_integration -count=1 -v ./internal/localruntime/containerd -run 'TestContainerdGVisor(Contract|CheckpointRecovery)'
+
+test-agent-runtime-e2b:
+	go test -tags=e2b_integration -count=1 -v ./internal/hostedruntime/e2b -run TestE2BContract
+
+test-agent-runtime-e2b-package:
+	go test -tags=e2b_integration -count=1 -v ./internal/hostedruntime/e2b -run TestE2BPackageInstallContract
+
 check-docker-entrypoint:
 	./scripts/test_docker_entrypoint
 
 check-config-docs:
 	./scripts/check_config_docs
+
+test-agent-runtime-server:
+	./scripts/test_zgi_runtime_server
+	bash ./scripts/test_verify_agent_runtime_release
+
+install-agent-runtime-host:
+	./scripts/zgi-runtime-server host-install
 
 profile-build-stdlib:
 	tmp="$$(mktemp -d /tmp/zgi-profile-build.XXXXXX)"; \
@@ -39,6 +69,22 @@ profile-build-scientific-data:
 	tmp="$$(mktemp -d /tmp/zgi-scientific-data-profile.XXXXXX)"; \
 	trap 'rm -rf "$$tmp"' EXIT; \
 	./scripts/build-profile --profile scientific-data --output-dir "$$tmp"
+
+profile-build-cc-codex-standard:
+	tmp="$$(mktemp -d /tmp/zgi-cc-codex-standard-profile.XXXXXX)"; \
+	trap 'rm -rf "$$tmp"' EXIT; \
+	./scripts/build-profile --profile cc-codex-standard --output-dir "$$tmp"
+
+build-agent-runtime-image:
+	docker build -f Dockerfile.agent-runtime -t zgi-agent-runtime:dev .
+
+build-agent-runtime-worker:
+	CGO_ENABLED=0 GOOS=linux go build -trimpath -o bin/zgi-agent-runtime-worker ./cmd/agentworker
+
+prepare-agent-runtime-e2b:
+	mkdir -p e2b-template-build
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o e2b-template-build/zgi-runtime-agent ./cmd/runtimeagent
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o e2b-template-build/zgi ./cmd/runtimecli
 
 docker-up:
 	./scripts/start-docker

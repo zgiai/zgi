@@ -46,6 +46,7 @@ func (store *GormConfirmationContinuationStore) Freeze(
 	if err := store.available(); err != nil {
 		return ConfirmationContinuation{}, err
 	}
+	frozen = bindConfirmationOrigin(frozen)
 	if err := validateFrozenConfirmationRequest(frozen); err != nil {
 		return ConfirmationContinuation{}, err
 	}
@@ -132,6 +133,44 @@ func (store *GormConfirmationContinuationStore) Load(
 		return ConfirmationContinuation{}, connectorError(core.ErrorCodeInternal, false)
 	}
 	return store.continuationFromRecord(ctx, record)
+}
+
+type PendingConfirmationRef struct {
+	RouteReceipt RouteClaimReceipt `json:"route_receipt"`
+	CreatedAt    time.Time         `json:"created_at"`
+}
+
+func (store *GormConfirmationContinuationStore) ListPending(ctx context.Context, organizationID, ownerAccountID uuid.UUID, page, pageSize int) ([]PendingConfirmationRef, bool, error) {
+	if err := store.available(); err != nil {
+		return nil, false, err
+	}
+	if ctx == nil || organizationID == uuid.Nil || ownerAccountID == uuid.Nil || page < 1 || page > 1000 || pageSize < 1 || pageSize > 100 {
+		return nil, false, connectorError(core.ErrorCodeInvalidInput, false)
+	}
+	var rows []struct {
+		RouteReceipt uuid.UUID `gorm:"column:route_receipt"`
+		CreatedAt    time.Time `gorm:"column:created_at"`
+	}
+	err := store.db.WithContext(ctx).Model(&confirmationContinuationRecord{}).
+		Select("route_receipt, created_at").
+		Where("organization_id = ? AND owner_account_id = ? AND state = ?", organizationID, ownerAccountID, ConfirmationContinuationPending).
+		Order("created_at DESC, route_receipt DESC").
+		Limit(pageSize + 1).Offset((page - 1) * pageSize).Scan(&rows).Error
+	if err != nil {
+		return nil, false, connectorError(core.ErrorCodeInternal, false)
+	}
+	more := len(rows) > pageSize
+	if more {
+		rows = rows[:pageSize]
+	}
+	refs := make([]PendingConfirmationRef, 0, len(rows))
+	for _, row := range rows {
+		if row.RouteReceipt == uuid.Nil || row.CreatedAt.IsZero() {
+			return nil, false, connectorError(core.ErrorCodeInternal, false)
+		}
+		refs = append(refs, PendingConfirmationRef{RouteReceipt: RouteClaimReceipt(row.RouteReceipt.String()), CreatedAt: row.CreatedAt.UTC()})
+	}
+	return refs, more, nil
 }
 
 // RecordTerminal performs a single pending-to-terminal compare-and-swap. An
@@ -275,6 +314,8 @@ type confirmationContinuationRecord struct {
 	RouteReceipt             uuid.UUID  `gorm:"column:route_receipt;type:uuid;primaryKey"`
 	OrganizationID           uuid.UUID  `gorm:"column:organization_id;type:uuid;not null;index:idx_connector_confirmation_continuations_owner_state,priority:1"`
 	OwnerAccountID           uuid.UUID  `gorm:"column:owner_account_id;type:uuid;not null;index:idx_connector_confirmation_continuations_owner_state,priority:2"`
+	OriginVersion            int        `gorm:"column:origin_version;not null;default:0"`
+	DigitalHumanID           *string    `gorm:"column:digital_human_id;type:varchar(255)"`
 	OriginSurface            string     `gorm:"column:origin_surface;type:varchar(16);not null"`
 	ConversationID           *string    `gorm:"column:conversation_id;type:varchar(255)"`
 	MessageID                *string    `gorm:"column:message_id;type:varchar(255)"`
@@ -306,6 +347,7 @@ func confirmationContinuationRecordFromFrozen(
 	return confirmationContinuationRecord{
 		RouteReceipt: receiptID, OrganizationID: frozen.Request.OrganizationID,
 		OwnerAccountID: frozen.Request.OwnerAccountID, OriginSurface: string(origin.Surface),
+		OriginVersion: origin.OriginVersion, DigitalHumanID: optionalContinuationString(origin.DigitalHumanID),
 		ConversationID: optionalContinuationString(origin.ConversationID),
 		MessageID:      optionalContinuationString(origin.MessageID),
 		AgentID:        optionalContinuationString(origin.AgentID),
@@ -357,6 +399,9 @@ func validateStoredConfirmationOrigin(origin ConfirmationOrigin) error {
 			return connectorError(core.ErrorCodeInvalidInput, false)
 		}
 	}
+	if origin.Surface != core.TargetTypeDigitalHuman && (origin.OriginVersion != 0 || origin.DigitalHumanID != "") {
+		return connectorError(core.ErrorCodeInvalidInput, false)
+	}
 	switch origin.Surface {
 	case core.TargetTypeChat:
 		if origin.ConversationID == "" || origin.MessageID == "" || origin.AgentID != "" ||
@@ -368,6 +413,8 @@ func validateStoredConfirmationOrigin(origin ConfirmationOrigin) error {
 			origin.WorkflowID != "" || origin.NodeID != "" {
 			return connectorError(core.ErrorCodeInvalidInput, false)
 		}
+	case core.TargetTypeDigitalHuman:
+		return validateConfirmationOrigin(origin, core.TargetRef{Type: core.TargetTypeDigitalHuman, ID: origin.DigitalHumanID})
 	case core.TargetTypeWorkflow:
 		if origin.WorkflowID == "" || origin.RunID == "" || origin.NodeID == "" ||
 			origin.ConversationID != "" || origin.MessageID != "" || origin.AgentID != "" {
@@ -381,6 +428,7 @@ func validateStoredConfirmationOrigin(origin ConfirmationOrigin) error {
 
 func confirmationOriginFromRecord(record confirmationContinuationRecord) ConfirmationOrigin {
 	return ConfirmationOrigin{
+		OriginVersion: record.OriginVersion, DigitalHumanID: dereferenceContinuationString(record.DigitalHumanID),
 		Surface: core.TargetType(record.OriginSurface), ConversationID: dereferenceContinuationString(record.ConversationID),
 		MessageID: dereferenceContinuationString(record.MessageID), AgentID: dereferenceContinuationString(record.AgentID),
 		WorkflowID: dereferenceContinuationString(record.WorkflowID), RunID: dereferenceContinuationString(record.RunID),

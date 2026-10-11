@@ -8,6 +8,8 @@ import type {
   AIChatMessageEndEventData,
   AIChatMessageRetractEventData,
   AIChatMessageStartEventData,
+  AIChatUsage,
+  AIChatTokenUsageUpdatedEventData,
   AIChatSkillInvocation,
   AIChatUserInputRequestedEventData,
 } from '@/services/types/aichat';
@@ -31,7 +33,8 @@ import {
   replaceAIChatConversation,
   upsertAIChatMessage,
 } from '@/components/chat/utils/aichat-message';
-import { getNextActiveSendingState } from '../selectors';
+import { applyAuthoritativeRuntimeInputSnapshot } from '@/components/chat/utils/runtime-input-reconcile';
+import { getNextActiveSendingState, sanitizeTimelineForMessage } from '../selectors';
 import {
   createAIChatFileMetadata,
   mergeMessageMetadata,
@@ -65,9 +68,10 @@ export function mergeAIChatMessages(
     byId.set(message.id, existing ? mergeAIChatMessage(existing, message) : message);
   });
 
-  return Array.from(byId.values()).sort(
+  const merged = Array.from(byId.values()).sort(
     (a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id)
   );
+  return applyAuthoritativeRuntimeInputSnapshot(merged, incomingMessages);
 }
 
 function mergeAIChatMessage(existing: AIChatMessage, incoming: AIChatMessage): AIChatMessage {
@@ -91,6 +95,7 @@ function mergeTerminalMessageMetadata(
     status === 'waiting_approval' ||
     status === 'waiting_client_action' ||
     status === 'waiting_question' ||
+    status === 'waiting_budget' ||
     status === 'pending' ||
     status === 'streaming'
   ) {
@@ -109,11 +114,22 @@ export function removeStreamingStateByConversation(
   const nextStreamingByMessageId = { ...streamingByMessageId };
   Object.values(streamingByMessageId).forEach(streaming => {
     if (streaming.conversation_id === conversationId) {
+      // Finished projections belong to this page, not to a transport connection.
+      // Keep them across history reloads and conversation switches until unmount.
+      if (
+        streaming.presentationItems?.length &&
+        (streaming.status === 'completed' ||
+          streaming.status === 'stopped' ||
+          streaming.status === 'error')
+      ) {
+        return;
+      }
       if (
         streaming.timeline?.length &&
         (streaming.status === 'waiting_approval' ||
           streaming.status === 'waiting_client_action' ||
-          streaming.status === 'waiting_question')
+          streaming.status === 'waiting_question' ||
+          streaming.status === 'waiting_budget')
       ) {
         return;
       }
@@ -369,17 +385,8 @@ export function applyMessageStartState(
   const nextStreamingByMessageId = {
     ...current.streamingByMessageId,
   };
-  Object.values(current.streamingByMessageId).forEach(streaming => {
-    if (
-      streaming.conversation_id === payload.conversation_id &&
-      streaming.message_id !== payload.message_id &&
-      (streaming.status === 'completed' ||
-        streaming.status === 'stopped' ||
-        streaming.status === 'error')
-    ) {
-      delete nextStreamingByMessageId[streaming.message_id];
-    }
-  });
+  // A new message gets its own projection below; completed messages keep their
+  // page-local process notes without contributing anything to the new run.
   if (shouldMigrateDraftConversation && context.previousConversationId) {
     delete nextMessagesByConversation[context.previousConversationId];
     delete nextMessagePaginationByConversation[context.previousConversationId];
@@ -638,6 +645,7 @@ export function applyMessageChunkState(
         replay_offset: replayOffset,
         replace: previousStreaming?.replace,
         sensitiveOutputBlocked: isSensitiveBlocked || previousStreaming?.sensitiveOutputBlocked,
+        tokenUsage: previousStreaming?.tokenUsage,
       },
     },
   };
@@ -848,7 +856,16 @@ export function applyMessageEndState(
   if (isStaleAIChatStreamEvent(eventId, previousStreaming?.last_event_id)) {
     return current;
   }
-  const nextTimeline = removeTransientProgressItems(previousStreaming?.timeline);
+  const rawNextTimeline = removeTransientProgressItems(previousStreaming?.timeline);
+  const timelineMessage = endedMessage
+    ? {
+        ...endedMessage,
+        metadata: mergeMessageMetadata(endedMessage.metadata, payload.metadata),
+      }
+    : undefined;
+  const nextTimeline = timelineMessage
+    ? sanitizeTimelineForMessage(timelineMessage, rawNextTimeline)
+    : rawNextTimeline;
   let endedPresentationState = presentationStateFromMetadata(payload.metadata);
   const nextMessages = messages.map(message => {
     if (message.id !== payload.message_id) {
@@ -907,7 +924,7 @@ export function applyMessageEndState(
     // Keep the exact event/presentation snapshot that was already rendered on
     // this page. A terminal message payload may contain a compacted durable
     // projection, but completion must not make finished operations jump to a
-    // new position. The snapshot is cleared by refresh or the next run.
+    // new position. Keep it until page teardown or replacement of this message.
     nextStreamingByMessageId[payload.message_id] = {
       ...previousStreaming,
       ...endedPresentationState,
@@ -951,6 +968,81 @@ export function applyMessageEndState(
       [payload.conversation_id]: false,
     },
     isSending: getNextActiveSendingState(current, payload.conversation_id, false),
+  };
+}
+
+export function applyTokenUsageUpdatedState(
+  current: AIChatControllerState,
+  payload: AIChatTokenUsageUpdatedEventData,
+  eventId?: string | null
+): AIChatControllerState {
+  if (!payload.conversation_id || !payload.message_id) {
+    return current;
+  }
+  const previousStreaming = current.streamingByMessageId[payload.message_id];
+  if (isStaleAIChatStreamEvent(eventId, previousStreaming?.last_event_id)) {
+    return current;
+  }
+
+  // API events carry a cumulative budget counter. Console/debug runs do not
+  // have a budget, so accumulate their per-invocation deltas in the client to
+  // keep the message footer showing the task total in real time.
+  const previousUsage = previousStreaming?.tokenUsage?.usage;
+  const usage = payload.task_token_budget
+    ? payload.usage
+    : addAIChatUsage(previousUsage, payload.usage);
+  const nextPayload: AIChatTokenUsageUpdatedEventData = {
+    ...payload,
+    usage,
+  };
+
+  const messages = current.messagesByConversation[payload.conversation_id] ?? [];
+  const nextMessages = messages.map(message =>
+    message.id === payload.message_id
+      ? {
+          ...message,
+          metadata: {
+            ...(message.metadata ?? {}),
+            usage,
+            ...(payload.task_token_budget ? { task_token_budget: payload.task_token_budget } : {}),
+          },
+          updated_at: Math.floor(Date.now() / 1000),
+        }
+      : message
+  );
+  const fallbackStreaming: AIChatStreamingMessageState = {
+    conversation_id: payload.conversation_id,
+    message_id: payload.message_id,
+    answer: messages.find(message => message.id === payload.message_id)?.answer ?? '',
+    status: 'streaming',
+  };
+
+  return {
+    ...current,
+    messagesByConversation: {
+      ...current.messagesByConversation,
+      [payload.conversation_id]: nextMessages,
+    },
+    streamingByMessageId: {
+      ...current.streamingByMessageId,
+      [payload.message_id]: {
+        ...(previousStreaming ?? fallbackStreaming),
+        tokenUsage: nextPayload,
+        last_event_id: eventId ?? previousStreaming?.last_event_id,
+      },
+    },
+  };
+}
+
+function addAIChatUsage(previous: AIChatUsage | undefined, next: AIChatUsage): AIChatUsage {
+  const prompt = Math.max(0, previous?.prompt_tokens ?? 0) + Math.max(0, next.prompt_tokens ?? 0);
+  const completion =
+    Math.max(0, previous?.completion_tokens ?? 0) + Math.max(0, next.completion_tokens ?? 0);
+  const total = Math.max(0, previous?.total_tokens ?? 0) + Math.max(0, next.total_tokens ?? 0);
+  return {
+    prompt_tokens: prompt || undefined,
+    completion_tokens: completion || undefined,
+    total_tokens: total || undefined,
   };
 }
 

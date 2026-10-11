@@ -37,7 +37,7 @@ func runConnectorCheckpoint(args []string) error {
 
 func runConnectorFinalize(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: connector-finalize plan|apply|verify [--report PATH] [--expected-report SHA256] [--archive PATH --archive-key-file PATH]")
+		return fmt.Errorf("usage: connector-finalize plan|apply|verify [--report PATH] [--expected-report SHA256] [--advanced-checkpoint MIGRATION_ID] [--archive PATH --archive-key-file PATH]")
 	}
 	command := args[0]
 	if command != "plan" && command != "apply" && command != "verify" {
@@ -48,14 +48,28 @@ func runConnectorFinalize(args []string) error {
 	expected := flags.String("expected-report", "", "exact clean plan digest required by apply")
 	archivePath := flags.String("archive", "", "encrypted retirement archive outside the repository")
 	keyPath := flags.String("archive-key-file", "", "independent binary 32-byte archive key; plan creates it exclusively when absent")
+	advancedCheckpoint := flags.String("advanced-checkpoint", "", "exact applied migration ID for a schema1 head later than the registered checkpoint; valid for plan and apply only")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
+	// flags.Visit reports only the flags that actually appeared, so an explicit
+	// empty --advanced-checkpoint is distinguishable from the flag being absent.
+	advancedSet := false
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "advanced-checkpoint" {
+			advancedSet = true
+		}
+	})
 	if flags.NArg() != 0 || (*archivePath == "") != (*keyPath == "") {
 		return fmt.Errorf("archive and archive-key-file must be supplied together")
 	}
 	if command == "verify" && *archivePath != "" {
 		return fmt.Errorf("schema2 verification uses native data, not historical archives")
+	}
+	// Validate the command/flag contract before opening any database connection.
+	option, err := connectorFinalizeOptions(command, advancedSet, *advancedCheckpoint)
+	if err != nil {
+		return err
 	}
 	cfg, err := config.Load()
 	if err != nil {
@@ -66,7 +80,6 @@ func runConnectorFinalize(args []string) error {
 		return fmt.Errorf("open configured finalization database: %w", err)
 	}
 	db = db.Session(&gorm.Session{Logger: logger.Default.LogMode(logger.Silent)})
-	option := connectorfinalize.Options{}
 	if len(cfg.Connectors.CredentialKeys) > 0 {
 		option.Credentials, err = credentials.NewStore(cfg.Connectors.CredentialActiveKeyID, cfg.Connectors.CredentialKeys)
 		if err != nil {
@@ -135,6 +148,22 @@ func runConnectorFinalize(args []string) error {
 		return fmt.Errorf("report contains %d unresolved issues; no database changes applied", len(report.Issues))
 	}
 	return nil
+}
+
+// connectorFinalizeOptions validates the command against its flags before any
+// database connection is opened. advancedSet records whether
+// --advanced-checkpoint appeared at all, so an explicit empty value is rejected
+// instead of being silently treated as the default. The explicit advanced
+// checkpoint is a plan/apply opt-in: verify reads the applied schema2 state, so
+// it rejects the flag even when its value is empty.
+func connectorFinalizeOptions(command string, advancedSet bool, advancedCheckpoint string) (connectorfinalize.Options, error) {
+	if advancedSet && command == "verify" {
+		return connectorfinalize.Options{}, fmt.Errorf("verify reads the applied schema2 state; --advanced-checkpoint is valid for plan and apply only")
+	}
+	if advancedSet && advancedCheckpoint == "" {
+		return connectorfinalize.Options{}, fmt.Errorf("--advanced-checkpoint requires a non-empty migration ID")
+	}
+	return connectorfinalize.Options{AdvancedCheckpoint: advancedCheckpoint}, nil
 }
 
 func readBounded(path string, limit int64) ([]byte, error) {

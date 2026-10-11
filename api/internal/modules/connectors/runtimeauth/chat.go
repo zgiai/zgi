@@ -39,17 +39,42 @@ type ChatCapabilityRequest struct {
 
 // ChatCapability contains only the safe catalog and stable relationship
 // identities required to expose currently usable operations. A Connection's
-// encrypted credential envelope is deliberately not retained here.
+// encrypted credential envelope is deliberately not retained here. The
+// optional user-controlled display label is metadata only: it never
+// participates in authorization or dispatch and is sanitized before it reaches
+// a model-visible description.
 type ChatCapability struct {
-	BindingID    uuid.UUID
-	ConnectionID uuid.UUID
-	ConnectorID  core.Identifier
-	Definition   catalog.Definition
-	Operations   []catalog.Operation
+	Target          core.TargetRef
+	BindingID       uuid.UUID
+	ConnectionID    uuid.UUID
+	OwnerAccountID  uuid.UUID `json:"-"`
+	ConnectionLabel string
+	ConnectorID     core.Identifier
+	Definition      catalog.Definition
+	Operations      []catalog.Operation
 }
 
 type ChatCapabilitySnapshot struct {
 	Capabilities []ChatCapability
+}
+
+type DelegatedHostRequest struct {
+	OrganizationID uuid.UUID
+	RequesterID    uuid.UUID
+	RunID          uuid.UUID
+	ConversationID string
+	BindingID      uuid.UUID
+	OwnerAccountID uuid.UUID
+	Target         core.TargetRef
+	Audience       core.HostAudience
+}
+
+type DelegatedRunAuthorizer interface {
+	AuthorizeHostUse(context.Context, DelegatedHostRequest) error
+}
+
+type HostGrantCandidateReader interface {
+	ListPublishedHostDelegations(context.Context, uuid.UUID, core.TargetRef, core.HostAudience) ([]core.TargetBinding, error)
 }
 
 func (snapshot ChatCapabilitySnapshot) HasOperations() bool {
@@ -143,11 +168,21 @@ func (resolver *ChatResolver) resolveTargetCapabilities(
 		if binding.Status != core.BindingStatusActive {
 			continue
 		}
-		if !binding.Target.SameIdentity(target) ||
+		// A DigitalHuman host owns several independent binding instances of the
+		// same Connector. The caller identifies only the host and version, so the
+		// persisted instance is compared against each binding instead of a
+		// caller-supplied placeholder.
+		comparisonTarget := target
+		if target.Type == core.TargetTypeDigitalHuman {
+			comparisonTarget.BindingInstanceID = binding.Target.BindingInstanceID
+		}
+		if binding.Target.Validate() != nil || !binding.Target.SameIdentity(comparisonTarget) ||
 			binding.OrganizationID != organizationID || binding.OwnerAccountID != ownerAccountID {
 			return ChatCapabilitySnapshot{}, core.NewError(core.ErrorCodeInternal, false, nil)
 		}
-		if _, duplicate := seenConnectors[binding.ConnectorID]; duplicate {
+		// Chat, Agent and Workflow keep one active binding per Connector; only a
+		// DigitalHuman host may legitimately bind the same Connector repeatedly.
+		if _, duplicate := seenConnectors[binding.ConnectorID]; duplicate && target.Type != core.TargetTypeDigitalHuman {
 			return ChatCapabilitySnapshot{}, core.NewError(core.ErrorCodeConflict, false, nil)
 		}
 
@@ -169,20 +204,95 @@ func (resolver *ChatResolver) resolveTargetCapabilities(
 		if !ok || catalog.Validate(definition) != nil || !definition.Supports(surface) {
 			continue
 		}
-		operations := permittedOperations(definition, connection, binding.Constraint, ownerAccountID, target, time.Now())
+		operations := permittedOperations(definition, connection, binding.Constraint, ownerAccountID, binding.Target, time.Now())
 		if len(operations) == 0 {
 			continue
 		}
 		seenConnectors[binding.ConnectorID] = struct{}{}
 		capabilities = append(capabilities, ChatCapability{
-			BindingID: binding.ID, ConnectionID: binding.ConnectionID,
-			ConnectorID: binding.ConnectorID, Definition: definition, Operations: operations,
+			Target:    binding.Target,
+			BindingID: binding.ID, ConnectionID: binding.ConnectionID, OwnerAccountID: binding.OwnerAccountID,
+			// Only the owner-scoped display name is copied. Credentials, host
+			// values and other private connection metadata stay in persistence.
+			ConnectionLabel: connection.Name,
+			ConnectorID:     binding.ConnectorID, Definition: definition, Operations: operations,
 		})
 	}
 	sort.Slice(capabilities, func(i, j int) bool {
+		if capabilities[i].ConnectorID == capabilities[j].ConnectorID {
+			return capabilities[i].Target.BindingInstanceID < capabilities[j].Target.BindingInstanceID
+		}
 		return capabilities[i].ConnectorID.String() < capabilities[j].ConnectorID.String()
 	})
 	return ChatCapabilitySnapshot{Capabilities: capabilities}, nil
+}
+
+func (resolver *ChatResolver) resolveDelegatedHostCapabilities(ctx context.Context, request DelegatedHostRequest, candidates HostGrantCandidateReader, authorizer DelegatedRunAuthorizer, surface catalog.Surface) (ChatCapabilitySnapshot, error) {
+	if resolver == nil || candidates == nil || authorizer == nil || request.OrganizationID == uuid.Nil || request.RequesterID == uuid.Nil ||
+		request.Target.Validate() != nil || request.Target.EffectiveScope() != core.ScopePublished ||
+		(request.Target.Type != core.TargetTypeAgent && request.Target.Type != core.TargetTypeDigitalHuman) ||
+		(request.Audience != core.HostAudienceWorkspace && request.Audience != core.HostAudienceAPI && request.Audience != core.HostAudienceChannel) {
+		return ChatCapabilitySnapshot{}, core.NewError(core.ErrorCodeAccessDenied, false, nil)
+	}
+	if request.Target.Type == core.TargetTypeDigitalHuman && request.RunID == uuid.Nil {
+		return ChatCapabilitySnapshot{}, core.NewError(core.ErrorCodeAccessDenied, false, nil)
+	}
+	items, err := candidates.ListPublishedHostDelegations(ctx, request.OrganizationID, request.Target, request.Audience)
+	if err != nil {
+		return ChatCapabilitySnapshot{}, err
+	}
+	if len(items) > 50 {
+		return ChatCapabilitySnapshot{}, core.NewError(core.ErrorCodeInternal, false, nil)
+	}
+	result := ChatCapabilitySnapshot{Capabilities: make([]ChatCapability, 0, len(items))}
+	seen := map[core.Identifier]bool{}
+	for _, binding := range items {
+		if binding.ID == uuid.Nil || binding.OwnerAccountID == uuid.Nil || binding.OrganizationID != request.OrganizationID ||
+			binding.Status != core.BindingStatusActive || binding.Constraint == nil || binding.Constraint.Validate() != nil ||
+			binding.Constraint.HostDelegation == nil || binding.Constraint.HostDelegation.GrantedBy != binding.OwnerAccountID ||
+			binding.Target.Type != request.Target.Type || binding.Target.ID != request.Target.ID ||
+			binding.Target.EffectiveScope() != core.ScopePublished || binding.Target.VersionID != request.Target.VersionID {
+			return ChatCapabilitySnapshot{}, core.NewError(core.ErrorCodeAccessDenied, false, nil)
+		}
+		proof := request
+		proof.BindingID, proof.OwnerAccountID = binding.ID, binding.OwnerAccountID
+		if err := authorizer.AuthorizeHostUse(ctx, proof); err != nil {
+			return ChatCapabilitySnapshot{}, err
+		}
+		snapshot, err := resolver.resolveTargetCapabilities(ctx, request.OrganizationID, binding.OwnerAccountID, request.Target, surface)
+		if err != nil {
+			return ChatCapabilitySnapshot{}, err
+		}
+		matched := false
+		for _, capability := range snapshot.Capabilities {
+			if capability.BindingID != binding.ID {
+				continue
+			}
+			if matched || !capability.Target.SameIdentity(binding.Target) || capability.OwnerAccountID != binding.OwnerAccountID {
+				return ChatCapabilitySnapshot{}, core.NewError(core.ErrorCodeAccessDenied, false, nil)
+			}
+			matched = true
+			allowed := make([]catalog.Operation, 0, len(capability.Operations))
+			for _, operation := range capability.Operations {
+				if binding.Constraint.AllowsHostAudience(binding.OwnerAccountID, core.Identifier(operation.ID), binding.Target, request.Audience, time.Now().UTC()) {
+					allowed = append(allowed, operation)
+				}
+			}
+			if len(allowed) == 0 {
+				continue
+			}
+			if request.Target.Type == core.TargetTypeAgent && seen[capability.ConnectorID] {
+				return ChatCapabilitySnapshot{}, core.NewError(core.ErrorCodeConflict, false, nil)
+			}
+			seen[capability.ConnectorID] = true
+			capability.Operations = allowed
+			result.Capabilities = append(result.Capabilities, capability)
+		}
+		if !matched {
+			return ChatCapabilitySnapshot{}, core.NewError(core.ErrorCodeTargetNotReady, false, nil)
+		}
+	}
+	return result, nil
 }
 
 // Both first-chat initialization and ordinary discovery use this exact filter;
@@ -202,7 +312,7 @@ func permittedOperations(definition catalog.Definition, connection core.Personal
 		if _, unavailable := connection.UnavailableOperations[core.Identifier(operation.ID)]; unavailable {
 			continue
 		}
-		if !connection.Constraint.Allows(owner, core.Identifier(operation.ID), target, now) || !bindingConstraint.Allows(owner, core.Identifier(operation.ID), target, now) {
+		if !core.ConstraintsAllow(connection.Constraint, bindingConstraint, owner, core.Identifier(operation.ID), target, now) {
 			continue
 		}
 		operations = append(operations, operation)

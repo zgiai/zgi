@@ -96,7 +96,14 @@ func readRows(rows *sql.Rows, bytesRead *int) ([]row, error) {
 
 // Plan is read-only, repeatable and bounded. A partial schema fails; it is never
 // interpreted as a successful repeat. Verify handles an already-finalized schema.
-type Options struct{ Credentials *credentials.Store }
+type Options struct {
+	Credentials *credentials.Store
+	// AdvancedCheckpoint is an explicit opt-in for a schema1 database whose
+	// applied migration head has advanced past CheckpointID without running the
+	// API-owned retirement finalizer. It must name an exact applied migration ID,
+	// never a prefix or table. Empty keeps the original Plan behavior.
+	AdvancedCheckpoint string
+}
 
 func Plan(ctx context.Context, db *gorm.DB, options ...Options) (Report, error) {
 	var report Report
@@ -123,7 +130,17 @@ func inspect(db *gorm.DB, option Options) (Report, snapshot, error) {
 		return r, nil, err
 	}
 	r.DatabaseFingerprint = digest(identity)
-	if err := db.Raw("SELECT max(id) FROM public.migrations").Scan(&r.Checkpoint).Error; err != nil {
+	// The complete ordered ledger is read in this inventory snapshot, so the
+	// sealed report commits the whole applied history rather than only its head.
+	ledger, err := readMigrationLedger(db)
+	if err != nil {
+		return r, nil, err
+	}
+	r.MigrationLedgerDigest = migrationLedgerDigest(ledger)
+	if len(ledger) > 0 {
+		r.Checkpoint = ledger[len(ledger)-1]
+	}
+	if err := validateAdvancedCheckpoint(option.AdvancedCheckpoint, ledger); err != nil {
 		return r, nil, err
 	}
 	var version struct {
@@ -138,11 +155,10 @@ func inspect(db *gorm.DB, option Options) (Report, snapshot, error) {
 		return r, nil, fmt.Errorf("ready schema1 checkpoint required")
 	}
 	bytesRead := 0
-	var err error
 	if r.Source, err = readTables(db, RetiredTables(), data, &bytesRead); err != nil {
 		return r, nil, err
 	}
-	if r.Native, err = readTables(db, NativeTables(), data, &bytesRead); err != nil {
+	if r.Native, r.DeferredNativeTables, err = readNativeTables(db, data, &bytesRead); err != nil {
 		return r, nil, err
 	}
 	if r.Hosts, err = readTables(db, hostTables(), data, &bytesRead); err != nil {
@@ -158,8 +174,29 @@ func inspect(db *gorm.DB, option Options) (Report, snapshot, error) {
 	}
 	r.SchemaDigest = digest([]any{objects, dependencies})
 	validateRetirementDependencies(dependencies, &r)
+	// The channel scope trigger function is the one surviving host function that
+	// names a retired relation. Only the exact pinned old body, the exact three
+	// trigger bindings and empty channel scope tables make it an explicit,
+	// convertible transition; every other reference or drift stays an issue.
+	observation, err := observeChannelScopeFunction(db)
+	if err != nil {
+		return r, nil, err
+	}
+	transition, transitionErr := classifyChannelScopeFunction(observation)
+	convertibleFunction := transitionErr == nil
+	if convertibleFunction {
+		if transition.Replace {
+			r.HostFunctionTransitions = 1
+		}
+		r.HostFunctionDigest = transition.Digest
+	} else {
+		addIssue(&r, "retirement_schema", "channel_scope_function_transition_unavailable")
+	}
 	for _, object := range objects {
 		if text(object, "kind") != "function" && text(object, "kind") != "view" {
+			continue
+		}
+		if convertibleFunction && text(object, "kind") == "function" && text(object, "name") == channelScopeFunctionName {
 			continue
 		}
 		for _, table := range RetiredTables() {

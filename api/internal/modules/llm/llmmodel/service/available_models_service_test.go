@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -13,7 +12,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	platformchannel "github.com/zgiai/zgi/api/internal/infra/platform/channel"
-	"github.com/zgiai/zgi/api/internal/modules/llm/catalogvendor"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	llmmodeldto "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/dto"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
@@ -343,76 +341,7 @@ func TestAvailableModels_ReturnsMusicGenerationCapability(t *testing.T) {
 	}
 }
 
-func TestAvailableModels_InfersMusicUseCaseFromEndpoint(t *testing.T) {
-	organizationID := uuid.New()
-	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{{
-		ID:              uuid.New(),
-		Provider:        "custom-provider",
-		Model:           "music-model",
-		ModelName:       "Music model",
-		IsActive:        true,
-		UseCases:        types.StringArray{},
-		MusicGeneration: true,
-	}}}
-	routeRepo := &availableRouteRepoFake{routes: []*channelmodel.LLMRoute{{
-		Type:                   shared.RouteTypeZGICloud,
-		IsOfficial:             true,
-		Models:                 []string{"music-model"},
-		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "custom-provider", Model: "music-model"}},
-	}}}
-	svc := NewAvailableModelsService(modelRepo, &availableConfigRepoFake{}, &availableCustomRepoFake{}, routeRepo)
-
-	models, err := svc.ListAvailable(t.Context(), organizationID, "custom-provider", string(llmmodel.UseCaseMusicGen))
-	if err != nil {
-		t.Fatalf("ListAvailable() error = %v", err)
-	}
-	if len(models) != 1 {
-		t.Fatalf("models length = %d, want 1", len(models))
-	}
-	if !slices.Contains(models[0].UseCases, string(llmmodel.UseCaseMusicGen)) {
-		t.Fatalf("use_cases = %#v, want music-gen", models[0].UseCases)
-	}
-}
-
-func TestAvailableModels_InfersImageGenerationUseCaseFromEndpoint(t *testing.T) {
-	organizationID := uuid.New()
-	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{{
-		ID:              uuid.New(),
-		Provider:        "doubao",
-		Model:           "doubao-seedream-2-0-260128",
-		ModelName:       "Doubao Seedream 2.0",
-		IsActive:        true,
-		ImageGeneration: true,
-		// Simulate a legacy publication with no use_cases backfill.
-		UseCases: types.StringArray{},
-	}}}
-	routeRepo := &availableRouteRepoFake{routes: []*channelmodel.LLMRoute{{
-		Type:                   shared.RouteTypeZGICloud,
-		IsOfficial:             true,
-		Models:                 []string{"doubao-seedream-2-0-260128"},
-		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "doubao", Model: "doubao-seedream-2-0-260128"}},
-	}}}
-	svc := NewAvailableModelsService(modelRepo, &availableConfigRepoFake{}, &availableCustomRepoFake{}, routeRepo)
-
-	models, err := svc.ListAvailable(t.Context(), organizationID, "doubao", string(llmmodel.UseCaseImageGen))
-	if err != nil {
-		t.Fatalf("ListAvailable() error = %v", err)
-	}
-	if len(models) != 1 {
-		t.Fatalf("models length = %d, want 1", len(models))
-	}
-	if !containsUseCase(types.StringArray(models[0].UseCases), string(llmmodel.UseCaseImageGen)) {
-		t.Fatalf("use_cases = %v, want image-gen", models[0].UseCases)
-	}
-}
-
 func TestAvailableModels_CloudOfficialRouteUsesPlatformChannelCatalog(t *testing.T) {
-	catalogvendor.Replace([]catalogvendor.Entry{{Provider: "openai", Model: "gpt-cloud", Vendor: "openai"}})
-	catalogvendor.ReplaceMetadata([]catalogvendor.Metadata{{Vendor: "openai", VendorName: "OpenAI"}})
-	t.Cleanup(func() {
-		catalogvendor.Replace(nil)
-		catalogvendor.ReplaceMetadata(nil)
-	})
 	organizationID := uuid.New()
 	modelName := "gpt-cloud"
 	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{{
@@ -435,9 +364,6 @@ func TestAvailableModels_CloudOfficialRouteUsesPlatformChannelCatalog(t *testing
 	}
 	if len(models) != 1 || models[0].Provider != "openai" || models[0].Name != modelName {
 		t.Fatalf("available models = %#v, want openai/%s", models, modelName)
-	}
-	if models[0].Vendor != "openai" || models[0].VendorName == "" {
-		t.Fatalf("platform vendor = %q/%q, want openai metadata", models[0].Vendor, models[0].VendorName)
 	}
 	if platformProvider.callCount != 1 {
 		t.Fatalf("platform ListChannels calls = %d, want 1", platformProvider.callCount)
@@ -652,9 +578,6 @@ func TestAvailableModels_AgentCustomModelRequiresTagEnabledRouteButNotAdapterWhi
 	if len(models) != 1 || models[0].Name != "custom-agent" {
 		t.Fatalf("agent models = %#v, want only custom-agent", models)
 	}
-	if !models[0].IsCustom {
-		t.Fatal("custom model must remain marked as custom")
-	}
 }
 
 func TestRouteBacksModelForUseCase_GlobalAgentKeepsAdapterWhitelist(t *testing.T) {
@@ -676,7 +599,7 @@ func TestRouteBacksModelForUseCase_GlobalAgentKeepsAdapterWhitelist(t *testing.T
 	}
 }
 
-func TestAvailableModels_OfficialRouteAvailabilityIsIndependentOfSupplierProvider(t *testing.T) {
+func TestAvailableModels_OfficialRouteRequiresExactProviderModelPair(t *testing.T) {
 	modelName := "same-name"
 	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{
 		{
@@ -713,86 +636,9 @@ func TestAvailableModels_OfficialRouteAvailabilityIsIndependentOfSupplierProvide
 	if err != nil {
 		t.Fatalf("ListAvailable returned error: %v", err)
 	}
-	if len(models) != 2 {
-		t.Fatalf("available same-name models = %#v, want both catalog records for UI aggregation", models)
+	if len(models) != 1 || models[0].Provider != "openai" || models[0].Name != modelName {
+		t.Fatalf("available same-name models = %#v, want only openai/%s", models, modelName)
 	}
-	gotProviders := map[string]bool{}
-	for _, item := range models {
-		gotProviders[item.Provider] = true
-	}
-	if !gotProviders["openai"] || !gotProviders["anthropic"] {
-		t.Fatalf("available providers = %#v, want logical model independent of supplier", gotProviders)
-	}
-}
-
-func TestAvailableModels_CustomModelRequiresEnabledPrivateRoute(t *testing.T) {
-	organizationID := uuid.New()
-	modelName := "qwen2.5-14b-instruct"
-	newCustomRepo := func() *availableCustomRepoFake {
-		return &availableCustomRepoFake{models: []*llmmodel.CustomModel{{
-			ID:             uuid.New(),
-			OrganizationID: organizationID,
-			Provider:       "1",
-			Name:           modelName,
-			DisplayName:    modelName,
-			IsActive:       true,
-			UseCases:       types.StringArray{string(llmmodel.UseCaseTextChat)},
-		}}}
-	}
-	// The enabled official route advertises the same logical model under a
-	// different supplier. It must not satisfy the tenant's custom
-	// provider/model record; only an enabled private route may do that.
-	officialRoute := &channelmodel.LLMRoute{
-		Type:                   shared.RouteTypeZGICloud,
-		IsOfficial:             true,
-		Models:                 []string{modelName},
-		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "gpustack", Model: modelName}},
-	}
-
-	t.Run("disabled private route stays hidden", func(t *testing.T) {
-		svc := NewAvailableModelsService(
-			&availableModelRepoFake{},
-			&availableConfigRepoFake{},
-			newCustomRepo(),
-			&availableRouteRepoFake{routes: []*channelmodel.LLMRoute{officialRoute}},
-		)
-		models, err := svc.ListAvailable(context.Background(), organizationID, "", string(llmmodel.UseCaseTextChat))
-		if err != nil {
-			t.Fatalf("ListAvailable returned error: %v", err)
-		}
-		for _, item := range models {
-			if item.IsCustom && item.Provider == "1" && item.Name == modelName {
-				t.Fatalf("custom model from a disabled channel was exposed through an official route: %#v", item)
-			}
-		}
-	})
-
-	t.Run("enabled private route exposes custom model", func(t *testing.T) {
-		privateRoute := &channelmodel.LLMRoute{
-			Type:            shared.RouteTypePrivate,
-			ChannelProvider: "openai-compatible",
-			Models:          []string{modelName},
-		}
-		svc := NewAvailableModelsService(
-			&availableModelRepoFake{},
-			&availableConfigRepoFake{},
-			newCustomRepo(),
-			&availableRouteRepoFake{routes: []*channelmodel.LLMRoute{officialRoute, privateRoute}},
-		)
-		models, err := svc.ListAvailable(context.Background(), organizationID, "", string(llmmodel.UseCaseTextChat))
-		if err != nil {
-			t.Fatalf("ListAvailable returned error: %v", err)
-		}
-		found := false
-		for _, item := range models {
-			if item.IsCustom && item.Provider == "1" && item.Name == modelName {
-				found = true
-			}
-		}
-		if !found {
-			t.Fatalf("enabled private route did not expose custom model: %#v", models)
-		}
-	})
 }
 
 func TestAvailableModels_OfficialLegacySnapshotWithoutProviderPairsKeepsModelsAvailable(t *testing.T) {
@@ -1459,7 +1305,7 @@ func TestModelAvailabilityBatchMatchesSingleDeprecatedModel(t *testing.T) {
 	}
 }
 
-func TestModelAvailabilitySingleAndBatchUseLogicalOfficialModel(t *testing.T) {
+func TestModelAvailabilitySingleAndBatchRejectWrongOfficialProvider(t *testing.T) {
 	organizationID := uuid.New()
 	modelID := uuid.New()
 	modelName := "same-name"
@@ -1478,17 +1324,12 @@ func TestModelAvailabilitySingleAndBatchUseLogicalOfficialModel(t *testing.T) {
 	}}}
 	svc := NewModelAvailabilityService(modelRepo, &availableConfigRepoFake{}, routeRepo)
 
-	// The route advertises openai/same-name only. At invocation the router
-	// tries resolveSameVendorModelForOfficialRoute, finds no openai pair that
-	// maps to the anthropic vendor, and rejects the call. Availability must
-	// report the same answer rather than promising a route that cannot serve
-	// this platform model.
 	single, err := svc.CheckModelAvailable(context.Background(), organizationID, modelID)
 	if err != nil {
 		t.Fatalf("CheckModelAvailable returned error: %v", err)
 	}
 	if single.Available || single.ChannelCount != 0 {
-		t.Fatalf("single availability = %#v, want unavailable for a different-vendor supplier", single)
+		t.Fatalf("single availability = %#v, want unavailable for wrong official provider", single)
 	}
 
 	batch, err := svc.BatchCheckAvailability(context.Background(), organizationID, []string{modelName})
@@ -1496,44 +1337,7 @@ func TestModelAvailabilitySingleAndBatchUseLogicalOfficialModel(t *testing.T) {
 		t.Fatalf("BatchCheckAvailability returned error: %v", err)
 	}
 	if got := batch.Items[modelName]; got == nil || got.Available || got.ChannelCount != 0 {
-		t.Fatalf("batch availability = %#v, want unavailable for a different-vendor supplier", got)
-	}
-}
-
-// The counterpart to the test above: when the route's supplier differs but maps
-// to the same logical vendor, the router resolves to that sibling supplier and
-// the call succeeds, so availability must report the model as available.
-func TestModelAvailabilityAllowsSameVendorSupplier(t *testing.T) {
-	catalogvendor.Replace([]catalogvendor.Entry{
-		{Provider: "agicto", Model: "deepseek-v4-pro", Vendor: "deepseek"},
-		{Provider: "siliconflow", Model: "deepseek-v4-pro", Vendor: "deepseek"},
-	})
-	t.Cleanup(func() { catalogvendor.Replace(nil) })
-
-	organizationID := uuid.New()
-	modelID := uuid.New()
-	modelName := "deepseek-v4-pro"
-	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{{
-		ID:       modelID,
-		Provider: "agicto",
-		Model:    modelName,
-		IsActive: true,
-		Status:   llmmodel.ModelStatusActive,
-	}}}
-	routeRepo := &availableRouteRepoFake{routes: []*channelmodel.LLMRoute{{
-		Type:                   shared.RouteTypeZGICloud,
-		IsOfficial:             true,
-		Models:                 []string{modelName},
-		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "siliconflow", Model: modelName}},
-	}}}
-	svc := NewModelAvailabilityService(modelRepo, &availableConfigRepoFake{}, routeRepo)
-
-	single, err := svc.CheckModelAvailable(context.Background(), organizationID, modelID)
-	if err != nil {
-		t.Fatalf("CheckModelAvailable returned error: %v", err)
-	}
-	if !single.Available || single.ChannelCount != 1 {
-		t.Fatalf("single availability = %#v, want available through the same-vendor supplier", single)
+		t.Fatalf("batch availability = %#v, want unavailable for wrong official provider", got)
 	}
 }
 
@@ -1657,7 +1461,7 @@ func TestModelAvailabilitySingleAndBatchKeepSingleProviderAvailable(t *testing.T
 	}
 }
 
-func TestModelServiceOfficialAvailabilityUsesLogicalModel(t *testing.T) {
+func TestModelServiceOfficialAvailabilityUsesExactProviderModelPair(t *testing.T) {
 	db := openOfficialModelServiceDB(t)
 	organizationID := uuid.New()
 	modelName := "same-name"
@@ -1678,14 +1482,21 @@ func TestModelServiceOfficialAvailabilityUsesLogicalModel(t *testing.T) {
 		t.Fatalf("ListTenantModels returned error: %v", err)
 	}
 	if len(views) != 1 {
-		t.Fatalf("ListTenantModels returned %d models, want one logical model", len(views))
+		t.Fatalf("ListTenantModels returned %d models, want one deduplicated model", len(views))
 	}
-	if !views[0].IsAvailable || !views[0].ZgiOfficialAvailable {
-		t.Fatalf("logical model availability = %#v, want platform available", views[0])
+	availability := make(map[string][2]bool, len(views))
+	for _, view := range views {
+		availability[view.Provider] = [2]bool{view.IsAvailable, view.ZgiOfficialAvailable}
+	}
+	if got := availability["openai"]; got != [2]bool{true, true} {
+		t.Fatalf("openai availability = %v, want [true true]", got)
+	}
+	if _, exists := availability["anthropic"]; exists {
+		t.Fatal("uncallable same-name provider displaced the exact available provider")
 	}
 }
 
-func TestListOfficialModelsRejectsDifferentVendor(t *testing.T) {
+func TestListOfficialModelsRequiresExactProviderModelPair(t *testing.T) {
 	db := openOfficialModelServiceDB(t)
 	organizationID := uuid.New()
 	modelName := "same-name"
@@ -1706,34 +1517,6 @@ func TestListOfficialModelsRejectsDifferentVendor(t *testing.T) {
 	}
 	if len(models) != 1 || models[0].Provider != "openai" || models[0].Model != modelName {
 		t.Fatalf("official models = %#v, want only openai/%s", models, modelName)
-	}
-}
-
-func TestListOfficialModelsIncludesSameVendorSupplier(t *testing.T) {
-	db := openOfficialModelServiceDB(t)
-	organizationID := uuid.New()
-	modelName := "doubao-seedance-2-0-mini-260615"
-	insertOfficialRouteAndSnapshot(t, db, organizationID, modelName, []channelmodel.ProviderModel{{Provider: "doubao", Model: modelName}})
-	catalogvendor.Replace([]catalogvendor.Entry{{
-		Provider: "agicto 供应商",
-		Model:    modelName,
-		Vendor:   "doubao",
-	}})
-	t.Cleanup(func() { catalogvendor.Replace(nil) })
-	if err := db.Exec(
-		"INSERT INTO llm_models (id, provider, name, is_active, sort_order) VALUES (?, ?, ?, ?, ?)",
-		uuid.New().String(), "agicto 供应商", modelName, true, 0,
-	).Error; err != nil {
-		t.Fatalf("insert supplier model: %v", err)
-	}
-	svc := &modelService{db: db}
-
-	models, err := svc.ListOfficialModels(context.Background())
-	if err != nil {
-		t.Fatalf("ListOfficialModels returned error: %v", err)
-	}
-	if len(models) != 1 || models[0].Provider != "agicto 供应商" || models[0].Model != modelName {
-		t.Fatalf("official models = %#v, want supplier agicto 供应商/%s", models, modelName)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/contextmgr"
+	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/llm/tokenestimate"
@@ -39,14 +40,17 @@ type contextBudgetResult struct {
 }
 
 type budgetComputation struct {
-	SafeLimit            int
-	PromptBudget         int
-	ReservedOutputTokens int
-	BasePromptTokens     int
-	OriginalMaxTokens    *int
-	EffectiveMaxTokens   *int
-	MaxTokensClamped     bool
-	Tokenizer            string
+	ConfiguredAgentWindowK int
+	AgentContextWindow     int
+	AgentWindowClamped     bool
+	SafeLimit              int
+	PromptBudget           int
+	ReservedOutputTokens   int
+	BasePromptTokens       int
+	OriginalMaxTokens      *int
+	EffectiveMaxTokens     *int
+	MaxTokensClamped       bool
+	Tokenizer              string
 }
 
 func (s *service) buildTokenBudgetMessages(
@@ -155,14 +159,16 @@ func (s *service) buildBudgetedCurrentUserContent(
 	}
 
 	attachmentTokensBefore := s.estimateAttachmentTokens(parts, fullSections)
-	fullContent := userContentWithAttachments(parts.Query, fullSections)
+	previewSections := parts.Attachments.previewContentSections()
+	previewTokens := s.estimateAttachmentTokens(parts, previewSections)
+	fullContent := userContentWithAttachments(parts.Query, previewSections)
 	fullUserContent := s.currentUserContent(parts, fullContent)
 	fullEstimate := s.estimateCurrentPromptTokens(systemPrompt, fullUserContent, parts.ModelName) + extraPromptTokens
 	if fullEstimate <= budget.PromptBudget {
 		return fullUserContent, map[string]interface{}{
 			"attachment_tokens_before": attachmentTokensBefore,
-			"attachment_tokens_after":  attachmentTokensBefore,
-			"attachments_truncated":    false,
+			"attachment_tokens_after":  previewTokens,
+			"attachments_truncated":    attachmentPreviewsTruncated(parts.Attachments.promptFiles()),
 		}, fullEstimate
 	}
 
@@ -179,49 +185,17 @@ func (s *service) buildBudgetedCurrentUserContent(
 }
 
 func (s *service) fitAttachmentSectionsToBudget(parts *chatRequestParts, systemPrompt string, promptBudget int) (string, bool) {
-	selected := make([]attachmentFile, 0, len(parts.Attachments.Files))
-	for _, file := range parts.Attachments.Files {
-		candidate := appendAttachmentFile(selected, file)
-		sections := formatAttachmentSections(candidate, func(item attachmentFile) string {
-			return item.Content
+	files := parts.Attachments.promptFiles()
+	render := func(limit int) string {
+		return formatAttachmentSections(files, func(file attachmentFile) string {
+			return truncateRunes(file.Content, limit)
 		})
-		content := userContentWithAttachments(parts.Query, sections)
-		if s.estimateCurrentPromptTokens(systemPrompt, s.currentUserContent(parts, content), parts.ModelName) <= promptBudget {
-			selected = candidate
-			continue
-		}
-
-		partial, ok := s.truncateAttachmentFileToBudget(parts, systemPrompt, promptBudget, selected, file)
-		if ok {
-			selected = appendAttachmentFile(selected, partial)
-		}
-		return formatAttachmentSections(selected, func(item attachmentFile) string {
-			return item.Content
-		}), true
 	}
-	return formatAttachmentSections(selected, func(item attachmentFile) string {
-		return item.Content
-	}), false
-}
-
-func (s *service) truncateAttachmentFileToBudget(
-	parts *chatRequestParts,
-	systemPrompt string,
-	promptBudget int,
-	selected []attachmentFile,
-	file attachmentFile,
-) (attachmentFile, bool) {
-	runes := []rune(file.Content)
-	low, high := 0, len(runes)
-	best := -1
+	// Reduce previews together, never discard the later files' references.
+	low, high, best := 0, attachmentPreviewRuneLimit, 0
 	for low <= high {
 		mid := (low + high) / 2
-		partial := file
-		partial.Content = string(runes[:mid])
-		candidate := appendAttachmentFile(selected, partial)
-		sections := formatAttachmentSections(candidate, func(item attachmentFile) string {
-			return item.Content
-		})
+		sections := render(mid)
 		content := userContentWithAttachments(parts.Query, sections)
 		if s.estimateCurrentPromptTokens(systemPrompt, s.currentUserContent(parts, content), parts.ModelName) <= promptBudget {
 			best = mid
@@ -230,12 +204,7 @@ func (s *service) truncateAttachmentFileToBudget(
 		}
 		high = mid - 1
 	}
-	if best < 0 {
-		return attachmentFile{}, false
-	}
-	partial := file
-	partial.Content = string(runes[:best])
-	return partial, true
+	return render(best), best < attachmentPreviewRuneLimit || attachmentPreviewsTruncated(files)
 }
 
 func (s *service) estimateCurrentPromptTokens(systemPrompt string, currentContent interface{}, modelName string) int {
@@ -259,24 +228,8 @@ func (s *service) buildFallbackCurrentUserContent(parts *chatRequestParts) (inte
 		return s.currentUserContent(parts, parts.Query), nil
 	}
 
-	selected := make([]attachmentFile, 0, len(parts.Attachments.Files))
-	remaining := fallbackAttachmentContextRuneLimit
-	truncated := false
-	for _, file := range parts.Attachments.Files {
-		contentRunes := []rune(file.Content)
-		if remaining <= 0 {
-			truncated = true
-			break
-		}
-		partial := file
-		if len(contentRunes) > remaining {
-			partial.Content = string(contentRunes[:remaining])
-			truncated = true
-		}
-		selected = append(selected, partial)
-		remaining -= len([]rune(partial.Content))
-	}
-
+	selected := parts.Attachments.promptFiles()
+	truncated := attachmentPreviewsTruncated(selected)
 	sections := formatAttachmentSections(selected, func(item attachmentFile) string {
 		return item.Content
 	})
@@ -293,11 +246,13 @@ func (s *service) buildFallbackCurrentUserContent(parts *chatRequestParts) (inte
 	}
 }
 
-func appendAttachmentFile(files []attachmentFile, file attachmentFile) []attachmentFile {
-	output := make([]attachmentFile, 0, len(files)+1)
-	output = append(output, files...)
-	output = append(output, file)
-	return output
+func attachmentPreviewsTruncated(files []attachmentFile) bool {
+	for _, file := range files {
+		if !file.isImage() && file.ContentChars > runeCount(file.Content) {
+			return true
+		}
+	}
+	return false
 }
 
 func mergeAttachmentContextMetadata(target map[string]interface{}, source map[string]interface{}) {
@@ -313,6 +268,9 @@ func (s *service) computeContextBudget(spec ModelSpec, parts *chatRequestParts, 
 	if spec.ContextWindow <= 0 {
 		spec.ContextWindow = contextmgr.DefaultModelContextWindowTokens
 	}
+	// The effective Agent window follows the selected model's physical context
+	// window. The old configurable cap was removed by the mainline context
+	// manager; keep the diagnostic fields populated for existing telemetry.
 	agentContextWindow := spec.ContextWindow
 	safeLimit := agentContextWindow
 	minOutput := minOutputReserve(agentContextWindow)
@@ -373,14 +331,17 @@ func (s *service) computeContextBudget(spec ModelSpec, parts *chatRequestParts, 
 	}
 
 	return &budgetComputation{
-		SafeLimit:            safeLimit,
-		PromptBudget:         promptBudget,
-		ReservedOutputTokens: reservedOutput,
-		BasePromptTokens:     baseEstimate.Tokens,
-		OriginalMaxTokens:    originalMaxTokens,
-		EffectiveMaxTokens:   effectiveMaxTokens,
-		MaxTokensClamped:     maxTokensClamped,
-		Tokenizer:            baseEstimate.Tokenizer,
+		ConfiguredAgentWindowK: agentContextWindow / 1000,
+		AgentContextWindow:     agentContextWindow,
+		AgentWindowClamped:     false,
+		SafeLimit:              safeLimit,
+		PromptBudget:           promptBudget,
+		ReservedOutputTokens:   reservedOutput,
+		BasePromptTokens:       baseEstimate.Tokens,
+		OriginalMaxTokens:      originalMaxTokens,
+		EffectiveMaxTokens:     effectiveMaxTokens,
+		MaxTokensClamped:       maxTokensClamped,
+		Tokenizer:              baseEstimate.Tokenizer,
 	}, nil
 }
 
@@ -467,6 +428,7 @@ func (s *service) historyMessageGroupsForCurrentRequest(ctx context.Context, bra
 	if shouldIsolateHistoryForCurrentTurn(parts) {
 		return nil, nil
 	}
+	branch = supplementalHistoryBranch(branch, parts)
 	includeImages := false
 	if parts != nil {
 		includeImages = parts.ModelSupportsVision
@@ -474,7 +436,38 @@ func (s *service) historyMessageGroupsForCurrentRequest(ctx context.Context, bra
 	return s.historyMessageGroups(ctx, branch, includeImages)
 }
 
+func supplementalHistoryBranch(branch []*runtimemodel.Message, parts *chatRequestParts) []*runtimemodel.Message {
+	if parts == nil || parts.HistoryPolicy == nil || parts.HistoryPolicy.Mode != runtimedto.ConversationHistoryModeSupplemental {
+		return branch
+	}
+	excluded := make(map[string]struct{}, len(parts.HistoryPolicy.ExcludedTexts))
+	for _, value := range parts.HistoryPolicy.ExcludedTexts {
+		if value = normalizedHistoryContent(value); value != "" {
+			excluded[value] = struct{}{}
+		}
+	}
+	filtered := make([]*runtimemodel.Message, 0, len(branch))
+	for _, message := range branch {
+		if message == nil {
+			continue
+		}
+		_, queryExcluded := excluded[normalizedHistoryContent(message.Query)]
+		_, answerExcluded := excluded[normalizedHistoryContent(message.Answer)]
+		if queryExcluded || answerExcluded {
+			continue
+		}
+		filtered = append(filtered, message)
+	}
+	if limit := parts.HistoryPolicy.MaxTurns; limit > 0 && len(filtered) > limit {
+		filtered = filtered[len(filtered)-limit:]
+	}
+	return filtered
+}
+
 func shouldIsolateHistoryForCurrentTurn(parts *chatRequestParts) bool {
+	if parts != nil && parts.HistoryPolicy != nil && parts.HistoryPolicy.Mode == runtimedto.ConversationHistoryModeIsolated {
+		return true
+	}
 	if parts == nil || !isContextualAIChatSurface(parts.Surface) {
 		return false
 	}
@@ -1758,20 +1751,23 @@ func countAdapterMessages(groups [][]adapter.Message) int {
 
 func contextControlMetadata(spec ModelSpec, budget *budgetComputation, estimatedPromptTokens int, historyBefore int, historyAfter int) map[string]interface{} {
 	return map[string]interface{}{
-		"strategy":                contextControlStrategyTokenBudget,
-		"context_window":          spec.ContextWindow,
-		"model_max_output_tokens": spec.MaxOutputTokens,
-		"safe_context_limit":      budget.SafeLimit,
-		"prompt_budget":           budget.PromptBudget,
-		"estimated_prompt_tokens": estimatedPromptTokens,
-		"history_messages_before": historyBefore,
-		"history_messages_after":  historyAfter,
-		"truncated":               historyAfter < historyBefore,
-		"max_tokens_clamped":      budget.MaxTokensClamped,
-		"original_max_tokens":     optionalIntValue(budget.OriginalMaxTokens),
-		"effective_max_tokens":    optionalIntValue(budget.EffectiveMaxTokens),
-		"reserved_output_tokens":  budget.ReservedOutputTokens,
-		"tokenizer":               budget.Tokenizer,
+		"strategy":                  contextControlStrategyTokenBudget,
+		"context_window":            spec.ContextWindow,
+		"configured_agent_window_k": budget.ConfiguredAgentWindowK,
+		"agent_context_window":      budget.AgentContextWindow,
+		"agent_window_clamped":      budget.AgentWindowClamped,
+		"model_max_output_tokens":   spec.MaxOutputTokens,
+		"safe_context_limit":        budget.SafeLimit,
+		"prompt_budget":             budget.PromptBudget,
+		"estimated_prompt_tokens":   estimatedPromptTokens,
+		"history_messages_before":   historyBefore,
+		"history_messages_after":    historyAfter,
+		"truncated":                 historyAfter < historyBefore,
+		"max_tokens_clamped":        budget.MaxTokensClamped,
+		"original_max_tokens":       optionalIntValue(budget.OriginalMaxTokens),
+		"effective_max_tokens":      optionalIntValue(budget.EffectiveMaxTokens),
+		"reserved_output_tokens":    budget.ReservedOutputTokens,
+		"tokenizer":                 budget.Tokenizer,
 	}
 }
 

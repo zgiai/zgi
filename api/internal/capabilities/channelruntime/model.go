@@ -1,0 +1,253 @@
+package channelruntime
+
+import (
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/runtimeidentity"
+	"gorm.io/datatypes"
+	"gorm.io/gorm"
+)
+
+type InstallationStatus string
+
+const (
+	InstallationStatusActive   InstallationStatus = "active"
+	InstallationStatusDisabled InstallationStatus = "disabled"
+)
+
+// CredentialSource identifies where an installation leases provider secret
+// material from. It is an enum only and never carries secret material itself.
+type CredentialSource string
+
+const (
+	// CredentialSourceEmbedded is an installation-owned encrypted credential.
+	CredentialSourceEmbedded CredentialSource = "embedded"
+	// CredentialSourcePersonalConnection is an owner-scoped Connector
+	// PersonalConnection credential opened through the Connector security
+	// boundary.
+	CredentialSourcePersonalConnection CredentialSource = "personal_connection"
+	// CredentialSourceLegacy marks an installation persisted before credential
+	// source tracking existed. It keeps resolving through the embedded
+	// credential path so existing installations keep working.
+	CredentialSourceLegacy CredentialSource = "legacy"
+)
+
+// Installation binds one provider application to a workspace. ConnectionID is
+// a credential locator: it equals the installation ID for installation-owned
+// credentials, or references an owner-scoped Connector PersonalConnection when
+// an existing credential is selected. ConnectorID, ConnectionOwnerID,
+// ConnectionRevision, and ConnectionCredentialVersion describe that reference
+// so the credential resolver can validate a lease without interpreting
+// provider semantics. ConnectionOwnerID is private and is never serialized.
+// Secret material never crosses into this table.
+type Installation struct {
+	ID                          uuid.UUID                    `gorm:"type:uuid;primaryKey" json:"id"`
+	OrganizationID              uuid.UUID                    `gorm:"type:uuid;not null" json:"organization_id"`
+	WorkspaceID                 uuid.UUID                    `gorm:"type:uuid;not null" json:"workspace_id"`
+	Provider                    string                       `gorm:"type:varchar(32);not null" json:"provider"`
+	ConnectorID                 string                       `gorm:"type:varchar(128)" json:"connector_id,omitempty"`
+	ConnectionID                uuid.UUID                    `gorm:"type:uuid;not null" json:"connection_id"`
+	ConnectionOwnerID           uuid.UUID                    `gorm:"type:uuid" json:"-"`
+	CredentialSource            CredentialSource             `gorm:"type:varchar(32);not null;default:legacy" json:"credential_source"`
+	ConnectionRevision          int                          `gorm:"not null;default:0" json:"connection_revision,omitempty"`
+	ConnectionCredentialVersion int                          `gorm:"not null;default:0" json:"connection_credential_version,omitempty"`
+	Name                        string                       `gorm:"type:varchar(128);not null" json:"name"`
+	ExternalTenantID            string                       `gorm:"type:varchar(255);not null" json:"external_tenant_id,omitempty"`
+	ExternalBotID               string                       `gorm:"type:varchar(255);not null" json:"external_bot_id,omitempty"`
+	DefaultSubjectType          *runtimeidentity.SubjectType `gorm:"type:varchar(32)" json:"default_subject_type,omitempty"`
+	DefaultSubjectID            *uuid.UUID                   `gorm:"type:uuid" json:"default_subject_id,omitempty"`
+	Status                      InstallationStatus           `gorm:"type:varchar(16);not null" json:"status"`
+	Revision                    int64                        `gorm:"not null" json:"revision"`
+	CreatedBy                   uuid.UUID                    `gorm:"type:uuid;not null" json:"created_by"`
+	UpdatedBy                   uuid.UUID                    `gorm:"type:uuid;not null" json:"updated_by"`
+	CreatedAt                   time.Time                    `gorm:"not null" json:"created_at"`
+	UpdatedAt                   time.Time                    `gorm:"not null" json:"updated_at"`
+	DeletedAt                   gorm.DeletedAt               `gorm:"index" json:"-"`
+}
+
+func (Installation) TableName() string { return "channel_installations" }
+
+// ConversationMapping maps one provider conversation to one stable local
+// ChatRuntime conversation without making that mapping a memory partition.
+type ConversationMapping struct {
+	ID                     uuid.UUID        `gorm:"type:uuid;primaryKey" json:"id"`
+	OrganizationID         uuid.UUID        `gorm:"type:uuid;not null" json:"organization_id"`
+	WorkspaceID            uuid.UUID        `gorm:"type:uuid;not null" json:"workspace_id"`
+	InstallationID         uuid.UUID        `gorm:"type:uuid;not null;uniqueIndex:idx_external_conversation_mappings_identity,priority:1" json:"installation_id"`
+	ExternalConversationID string           `gorm:"type:varchar(255);not null;uniqueIndex:idx_external_conversation_mappings_identity,priority:2" json:"external_conversation_id"`
+	ConversationType       ConversationType `gorm:"type:varchar(16);not null" json:"conversation_type"`
+	LocalConversationID    *uuid.UUID       `gorm:"type:uuid" json:"local_conversation_id,omitempty"`
+	LastEventAt            *time.Time       `json:"last_event_at,omitempty"`
+	CreatedAt              time.Time        `gorm:"not null" json:"created_at"`
+	UpdatedAt              time.Time        `gorm:"not null" json:"updated_at"`
+}
+
+func (ConversationMapping) TableName() string { return "external_conversation_mappings" }
+
+type WakePolicy string
+
+const (
+	WakePolicyDirectAndMention WakePolicy = "direct_and_mention"
+	WakePolicyMentionOnly      WakePolicy = "mention_only"
+)
+
+// Binding assigns one external conversation to one runtime subject.
+type Binding struct {
+	ID                    uuid.UUID                   `gorm:"type:uuid;primaryKey" json:"id"`
+	OrganizationID        uuid.UUID                   `gorm:"type:uuid;not null" json:"organization_id"`
+	WorkspaceID           uuid.UUID                   `gorm:"type:uuid;not null" json:"workspace_id"`
+	InstallationID        uuid.UUID                   `gorm:"type:uuid;not null" json:"installation_id"`
+	ConversationMappingID uuid.UUID                   `gorm:"type:uuid;not null;uniqueIndex:idx_channel_bindings_conversation" json:"conversation_mapping_id"`
+	SubjectType           runtimeidentity.SubjectType `gorm:"type:varchar(32);not null" json:"subject_type"`
+	SubjectID             uuid.UUID                   `gorm:"type:uuid;not null" json:"subject_id"`
+	WakePolicy            WakePolicy                  `gorm:"type:varchar(32);not null" json:"wake_policy"`
+	Enabled               bool                        `gorm:"not null" json:"enabled"`
+	Revision              int64                       `gorm:"not null" json:"revision"`
+	CreatedBy             uuid.UUID                   `gorm:"type:uuid;not null" json:"created_by"`
+	UpdatedBy             uuid.UUID                   `gorm:"type:uuid;not null" json:"updated_by"`
+	CreatedAt             time.Time                   `gorm:"not null" json:"created_at"`
+	UpdatedAt             time.Time                   `gorm:"not null" json:"updated_at"`
+	DeletedAt             gorm.DeletedAt              `gorm:"index" json:"-"`
+}
+
+func (Binding) TableName() string { return "channel_bindings" }
+
+type InboundEventStatus string
+
+const (
+	InboundEventReceived InboundEventStatus = "received"
+	InboundEventIgnored  InboundEventStatus = "ignored"
+	InboundEventAccepted InboundEventStatus = "accepted"
+	InboundEventFailed   InboundEventStatus = "failed"
+)
+
+// InboundEvent is the deduplicated audit record for one provider callback.
+// It stores a bounded display preview of the triggering message, identifiers,
+// and a digest, but never the raw callback, fetched channel history, or secrets.
+type InboundEvent struct {
+	ID                     uuid.UUID          `gorm:"type:uuid;primaryKey" json:"id"`
+	OrganizationID         uuid.UUID          `gorm:"type:uuid;not null" json:"organization_id"`
+	WorkspaceID            uuid.UUID          `gorm:"type:uuid;not null" json:"workspace_id"`
+	InstallationID         uuid.UUID          `gorm:"type:uuid;not null;uniqueIndex:idx_channel_inbound_events_provider_event,priority:1;uniqueIndex:idx_channel_inbound_events_provider_message,priority:1,where:provider_message_id <> ''" json:"installation_id"`
+	BindingID              *uuid.UUID         `gorm:"type:uuid" json:"binding_id,omitempty"`
+	ProviderEventID        string             `gorm:"type:varchar(255);not null;uniqueIndex:idx_channel_inbound_events_provider_event,priority:2" json:"provider_event_id"`
+	ProviderMessageID      string             `gorm:"type:varchar(255);not null;uniqueIndex:idx_channel_inbound_events_provider_message,priority:2,where:provider_message_id <> ''" json:"provider_message_id"`
+	ExternalConversationID string             `gorm:"type:varchar(255);not null" json:"external_conversation_id"`
+	SenderExternalID       string             `gorm:"type:varchar(255);not null" json:"sender_external_id"`
+	ConversationType       ConversationType   `gorm:"type:varchar(16);not null" json:"conversation_type"`
+	ContentPreview         string             `gorm:"type:varchar(512);not null" json:"content_preview"`
+	MentionOnly            bool               `gorm:"not null" json:"mention_only"`
+	EventType              string             `gorm:"type:varchar(64);not null" json:"event_type"`
+	PayloadDigest          string             `gorm:"type:varchar(71);not null" json:"payload_digest"`
+	Status                 InboundEventStatus `gorm:"type:varchar(16);not null" json:"status"`
+	ReasonCode             string             `gorm:"type:varchar(128);not null" json:"reason_code,omitempty"`
+	InvocationRunID        *uuid.UUID         `gorm:"type:uuid" json:"invocation_run_id,omitempty"`
+	ReceivedAt             time.Time          `gorm:"not null" json:"received_at"`
+	ProcessedAt            *time.Time         `json:"processed_at,omitempty"`
+	CreatedAt              time.Time          `gorm:"not null" json:"created_at"`
+	UpdatedAt              time.Time          `gorm:"not null" json:"updated_at"`
+}
+
+func (InboundEvent) TableName() string { return "channel_inbound_events" }
+
+type ProcessingMarkerStatus string
+
+const (
+	ProcessingMarkerPendingAdd ProcessingMarkerStatus = "pending_add"
+	ProcessingMarkerAdding     ProcessingMarkerStatus = "adding"
+	ProcessingMarkerActive     ProcessingMarkerStatus = "active"
+	ProcessingMarkerRemoving   ProcessingMarkerStatus = "removing"
+	ProcessingMarkerRemoved    ProcessingMarkerStatus = "removed"
+	ProcessingMarkerFailed     ProcessingMarkerStatus = "failed"
+)
+
+// ProcessingMarker is the durable lifecycle record for a provider-native
+// "working" indicator attached to an inbound message. It contains identifiers
+// only; no message body or credential is persisted here.
+type ProcessingMarker struct {
+	ID                uuid.UUID                   `gorm:"type:uuid;primaryKey" json:"id"`
+	OrganizationID    uuid.UUID                   `gorm:"type:uuid;not null" json:"organization_id"`
+	WorkspaceID       uuid.UUID                   `gorm:"type:uuid;not null" json:"workspace_id"`
+	InstallationID    uuid.UUID                   `gorm:"type:uuid;not null" json:"installation_id"`
+	InboundEventID    uuid.UUID                   `gorm:"type:uuid;not null;uniqueIndex" json:"inbound_event_id"`
+	RunID             uuid.UUID                   `gorm:"type:uuid;not null;index" json:"run_id"`
+	Provider          string                      `gorm:"type:varchar(32);not null" json:"provider"`
+	ConnectionID      uuid.UUID                   `gorm:"type:uuid;not null" json:"connection_id"`
+	ActorID           uuid.UUID                   `gorm:"type:uuid;not null" json:"actor_id"`
+	SubjectType       runtimeidentity.SubjectType `gorm:"type:varchar(32);not null" json:"subject_type"`
+	SubjectID         uuid.UUID                   `gorm:"type:uuid;not null" json:"subject_id"`
+	ProviderMessageID string                      `gorm:"type:varchar(255);not null" json:"provider_message_id"`
+	ProviderMarkerID  string                      `gorm:"type:varchar(255);not null" json:"provider_marker_id,omitempty"`
+	ProviderRequestID string                      `gorm:"type:varchar(128);not null" json:"provider_request_id,omitempty"`
+	Status            ProcessingMarkerStatus      `gorm:"type:varchar(16);not null" json:"status"`
+	AttemptCount      int                         `gorm:"not null" json:"attempt_count"`
+	AvailableAt       time.Time                   `gorm:"not null" json:"available_at"`
+	ClaimedAt         *time.Time                  `json:"claimed_at,omitempty"`
+	RemovedAt         *time.Time                  `json:"removed_at,omitempty"`
+	ErrorCode         string                      `gorm:"type:varchar(128);not null" json:"error_code,omitempty"`
+	ErrorMessage      string                      `gorm:"type:text;not null" json:"error_message,omitempty"`
+	CreatedAt         time.Time                   `gorm:"not null" json:"created_at"`
+	UpdatedAt         time.Time                   `gorm:"not null" json:"updated_at"`
+}
+
+func (ProcessingMarker) TableName() string { return "channel_processing_markers" }
+
+type DeliveryStatus string
+
+const (
+	DeliveryPending    DeliveryStatus = "pending"
+	DeliveryProcessing DeliveryStatus = "processing"
+	DeliverySucceeded  DeliveryStatus = "succeeded"
+	DeliveryFailed     DeliveryStatus = "failed"
+	DeliveryUnknown    DeliveryStatus = "unknown"
+	DeliveryDismissed  DeliveryStatus = "dismissed"
+)
+
+type DeliveryKind string
+
+const (
+	DeliveryKindAcknowledgement DeliveryKind = "acknowledgement"
+	DeliveryKindProgress        DeliveryKind = "progress"
+	DeliveryKindFinal           DeliveryKind = "final"
+)
+
+// Delivery is the durable channel send intent. Payload contains bounded public
+// message content only; credentials are resolved from the installation's
+// credential locator at execution.
+type Delivery struct {
+	ID                     uuid.UUID                   `gorm:"type:uuid;primaryKey" json:"id"`
+	OrganizationID         uuid.UUID                   `gorm:"type:uuid;not null" json:"organization_id"`
+	WorkspaceID            uuid.UUID                   `gorm:"type:uuid;not null" json:"workspace_id"`
+	InstallationID         uuid.UUID                   `gorm:"type:uuid;not null" json:"installation_id"`
+	BindingID              uuid.UUID                   `gorm:"type:uuid;not null" json:"binding_id"`
+	InboundEventID         *uuid.UUID                  `gorm:"type:uuid" json:"inbound_event_id,omitempty"`
+	RunID                  uuid.UUID                   `gorm:"type:uuid;not null;index:idx_channel_delivery_outbox_run" json:"run_id"`
+	Kind                   DeliveryKind                `gorm:"column:delivery_kind;type:varchar(24);not null;default:final" json:"kind"`
+	DeliveryKey            string                      `gorm:"type:varchar(128);not null;default:final" json:"delivery_key"`
+	Sequence               int64                       `gorm:"not null;default:9223372036854775807" json:"sequence"`
+	Provider               string                      `gorm:"type:varchar(32);not null" json:"provider"`
+	ConnectionID           uuid.UUID                   `gorm:"type:uuid;not null" json:"connection_id"`
+	ActorID                uuid.UUID                   `gorm:"type:uuid;not null" json:"actor_id"`
+	SubjectType            runtimeidentity.SubjectType `gorm:"type:varchar(32);not null" json:"subject_type"`
+	SubjectID              uuid.UUID                   `gorm:"type:uuid;not null" json:"subject_id"`
+	ExternalConversationID string                      `gorm:"type:varchar(255);not null" json:"external_conversation_id"`
+	ExternalThreadID       string                      `gorm:"type:varchar(255);not null" json:"external_thread_id,omitempty"`
+	Payload                datatypes.JSON              `gorm:"type:jsonb;not null" json:"payload"`
+	PayloadDigest          string                      `gorm:"type:varchar(71);not null" json:"payload_digest"`
+	Status                 DeliveryStatus              `gorm:"type:varchar(16);not null" json:"status"`
+	AttemptCount           int                         `gorm:"not null" json:"attempt_count"`
+	AvailableAt            time.Time                   `gorm:"not null" json:"available_at"`
+	ClaimedAt              *time.Time                  `json:"claimed_at,omitempty"`
+	DeliveredAt            *time.Time                  `json:"delivered_at,omitempty"`
+	ProviderMessageID      string                      `gorm:"type:varchar(255);not null" json:"provider_message_id,omitempty"`
+	ProviderRequestID      string                      `gorm:"type:varchar(128);not null" json:"provider_request_id,omitempty"`
+	ErrorCode              string                      `gorm:"type:varchar(128);not null" json:"error_code,omitempty"`
+	ErrorMessage           string                      `gorm:"type:text;not null" json:"error_message,omitempty"`
+	DismissedAt            *time.Time                  `json:"dismissed_at,omitempty"`
+	DismissedBy            *uuid.UUID                  `gorm:"type:uuid" json:"dismissed_by,omitempty"`
+	CreatedAt              time.Time                   `gorm:"not null" json:"created_at"`
+	UpdatedAt              time.Time                   `gorm:"not null" json:"updated_at"`
+}
+
+func (Delivery) TableName() string { return "channel_delivery_outbox" }

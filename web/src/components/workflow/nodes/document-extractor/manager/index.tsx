@@ -5,7 +5,6 @@ import type { DocumentExtractorNodeData } from '../config';
 import NodeValueSelector from '../../../common/node-value-selector';
 import type { WorkflowVariable } from '../../../store/type';
 import OutputVariablesView from '../../../common/output-variables-view';
-import { useMemo } from 'react';
 import { useT } from '@/i18n';
 
 import { useNodeData, useNodeDataUpdate, useNodeOutputVariables } from '../../../hooks';
@@ -18,7 +17,7 @@ interface DocumentExtractorManagerProps {
 
 const DocumentExtractorManager: React.FC<DocumentExtractorManagerProps> = ({
   id,
-  className,
+  className: _className,
   readOnly = false,
 }) => {
   const t = useT();

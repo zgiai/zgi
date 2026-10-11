@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label';
 import { SelectTrigger } from '@/components/ui/select';
 import { TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import { toggleVariants } from '@/components/ui/toggle';
+import type { toggleVariants } from '@/components/ui/toggle';
 import { cn } from '@/lib/utils';
 import {
   WORKFLOW_CONTROL_COMPACT_CLASS,
@@ -17,26 +17,19 @@ import {
   WORKFLOW_TABS_TRIGGER_COMPACT_CLASS,
 } from './form-density';
 
-interface WorkflowCompactFieldLabelProps extends React.ComponentProps<typeof Label> {}
+type WorkflowCompactFieldLabelProps = React.ComponentProps<typeof Label>;
 
-export function WorkflowCompactFieldLabel({
-  className,
-  ...props
-}: WorkflowCompactFieldLabelProps) {
+export function WorkflowCompactFieldLabel({ className, ...props }: WorkflowCompactFieldLabelProps) {
   return <Label className={cn(WORKFLOW_FIELD_LABEL_COMPACT_CLASS, className)} {...props} />;
 }
 
-interface WorkflowCompactFieldHintProps extends React.HTMLAttributes<HTMLParagraphElement> {}
+type WorkflowCompactFieldHintProps = React.HTMLAttributes<HTMLParagraphElement>;
 
-export function WorkflowCompactFieldHint({
-  className,
-  ...props
-}: WorkflowCompactFieldHintProps) {
+export function WorkflowCompactFieldHint({ className, ...props }: WorkflowCompactFieldHintProps) {
   return <p className={cn(WORKFLOW_FIELD_HINT_COMPACT_CLASS, className)} {...props} />;
 }
 
-interface WorkflowCompactSelectTriggerProps
-  extends React.ComponentPropsWithoutRef<typeof SelectTrigger> {}
+type WorkflowCompactSelectTriggerProps = React.ComponentPropsWithoutRef<typeof SelectTrigger>;
 
 export function WorkflowCompactSelectTrigger({
   className,
@@ -45,17 +38,13 @@ export function WorkflowCompactSelectTrigger({
   return <SelectTrigger className={cn(WORKFLOW_CONTROL_COMPACT_CLASS, className)} {...props} />;
 }
 
-interface WorkflowCompactTabsListProps extends React.ComponentPropsWithoutRef<typeof TabsList> {}
+type WorkflowCompactTabsListProps = React.ComponentPropsWithoutRef<typeof TabsList>;
 
-export function WorkflowCompactTabsList({
-  className,
-  ...props
-}: WorkflowCompactTabsListProps) {
+export function WorkflowCompactTabsList({ className, ...props }: WorkflowCompactTabsListProps) {
   return <TabsList className={cn(WORKFLOW_TABS_LIST_COMPACT_CLASS, className)} {...props} />;
 }
 
-interface WorkflowCompactTabsTriggerProps
-  extends React.ComponentPropsWithoutRef<typeof TabsTrigger> {}
+type WorkflowCompactTabsTriggerProps = React.ComponentPropsWithoutRef<typeof TabsTrigger>;
 
 export function WorkflowCompactTabsTrigger({
   className,

@@ -33,6 +33,29 @@ func (s *agentsService) GetPublishedAgentRuntimeConfig(ctx context.Context, agen
 	return s.publishedAgentRuntimeConfig(ctx, ag, false, false, false)
 }
 
+// Only an authenticated continuation may select an immutable historical version.
+// Ordinary turns continue to resolve the latest published configuration.
+func (s *agentsService) getPublishedAgentRuntimeConfigAtVersion(ctx context.Context, agentID, publication uuid.UUID) (*dto.AgentWebAppRuntimeConfigResponse, error) {
+	ag, err := s.agentsRepo.GetByID(ctx, agentID.String())
+	if err != nil {
+		return nil, err
+	}
+	reader, ok := s.agentsRepo.(interface {
+		getAgentPublishedVersionByUUID(context.Context, uuid.UUID, uuid.UUID) (*AgentPublishedVersion, error)
+	})
+	if !ok || ag == nil || ag.ID != agentID || ag.AgentsType != "AGENT" || publication == uuid.Nil {
+		return nil, errAgentWebAppNotPublished
+	}
+	version, err := reader.getAgentPublishedVersionByUUID(ctx, agentID, publication)
+	if err != nil {
+		return nil, err
+	}
+	if version == nil || version.DeletedAt != nil || version.AgentID != ag.ID || version.WorkspaceID != ag.TenantID || version.VersionUUID != publication {
+		return nil, errAgentWebAppNotPublished
+	}
+	return s.agentRuntimeConfigForPublishedVersion(ctx, ag, version, true, "")
+}
+
 func (s *agentsService) publishedAgentRuntimeConfig(ctx context.Context, ag *Agent, requireActiveWebApp bool, requireWebAppSurface bool, failOnOrganizationError bool) (*dto.AgentWebAppRuntimeConfigResponse, error) {
 	if ag == nil {
 		return nil, fmt.Errorf("agent not found")
@@ -166,6 +189,11 @@ func (s *agentsService) GetWebAppRuntimeCapability(ctx context.Context, webAppID
 		decision = surface.Evaluate(runtimeauth.RuntimeAudience{})
 	}
 	privateAudienceEnabled := webAppSurfaceHasPrivateAudience(surface)
+	publishedConfig := agentConfigResponseFromSnapshot(ag.ID.String(), version.ConfigSnapshot)
+	if ok && !authenticated && publishedConfig != nil && agentWebAppRequiresLogin(*publishedConfig) {
+		decision.Allowed = false
+		decision.Reason = runtimeauth.RuntimeAccessDecisionReason(agentWebAppCapabilityReasonLoginRequired)
+	}
 	if ok && !decision.Allowed && privateAudienceEnabled {
 		if !authenticated {
 			decision.Reason = runtimeauth.RuntimeAccessDecisionReason(agentWebAppCapabilityReasonLoginRequired)

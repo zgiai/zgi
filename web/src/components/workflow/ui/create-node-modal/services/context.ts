@@ -1,5 +1,4 @@
 import { useWorkflowStore } from '../../../store';
-import { isContainerNode } from '../../../store/type';
 
 export function resolveContainerContextId(args: {
   originatingHandle?: { nodeId: string } | null;

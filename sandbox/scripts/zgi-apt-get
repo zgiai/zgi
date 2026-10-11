@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""Small in-sandbox facade for the Runtime Agent's guarded apt endpoint."""
+import http.client
+import json
+import os
+import socket
+import sys
+
+
+class UnixHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, socket_path):
+        super().__init__("localhost")
+        self.socket_path = socket_path
+
+    def connect(self):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.connect(self.socket_path)
+
+
+def main():
+    socket_path = os.environ.get("ZGI_RUNTIME_AGENT_PACKAGE_SOCKET", "/run/zgi-agent/package.sock")
+    body = json.dumps({"args": sys.argv[1:]}).encode("utf-8")
+    connection = UnixHTTPConnection(socket_path)
+    try:
+        connection.request("POST", "/v1/package-install", body=body, headers={"Content-Type": "application/json", "Content-Length": str(len(body))})
+        response = connection.getresponse()
+        payload = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        print(f"zgi apt proxy unavailable: {exc}", file=sys.stderr)
+        return 127
+    finally:
+        connection.close()
+    if response.status >= 400:
+        error = payload.get("error", {}).get("message", "package install request failed")
+        print(error, file=sys.stderr)
+        return 1
+    result = payload.get("data", {})
+    if result.get("stdout"):
+        sys.stdout.write(result["stdout"])
+    if result.get("stderr"):
+        sys.stderr.write(result["stderr"])
+    if result.get("error"):
+        print(result["error"], file=sys.stderr)
+    return int(result.get("exit_code", 1))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

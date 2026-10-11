@@ -16,6 +16,7 @@ import {
   ShieldCheck,
   Users,
   Workflow,
+  KeyRound,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -26,6 +27,7 @@ import { useWorkspaceQuota } from '@/hooks/workspace-quota/use-workspace-quota';
 import { useWorkspaceStatistics } from '@/hooks/workspace/use-workspace-statistics';
 import { useLocale } from '@/hooks/use-locale';
 import { useT, type WorkspaceKey } from '@/i18n';
+import { ENABLE_RUNTIME_WORKSPACE } from '@/lib/config';
 import { cn } from '@/lib/utils';
 import { useCurrentWorkspace } from '@/store/workspace-store';
 import { formatAiCreditFiatEstimate, formatChannelCreditPoints } from '@/utils/ai-credits';
@@ -244,6 +246,14 @@ export default function WorkspacePage() {
       href: '/console/workspace/settings',
       icon: Settings,
       enabled: canManageWorkspace,
+    },
+    {
+      key: 'runtime',
+      title: t('workspace.overview.management.runtimeTitle'),
+      description: t('workspace.overview.management.runtimeDescription'),
+      href: '/console/workspace/runtime-workspaces',
+      icon: KeyRound,
+      enabled: ENABLE_RUNTIME_WORKSPACE && canManageWorkspace,
     },
     {
       key: 'agents',

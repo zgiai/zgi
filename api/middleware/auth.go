@@ -810,6 +810,11 @@ func WebAppAuthMiddleware() gin.HandlerFunc {
 					return
 				}
 
+				if err := ensureAuthenticatedAccount(c.Request.Context(), userID); err != nil {
+					failAccountAuthorization(c, userID, err)
+					return
+				}
+
 				authenticatedAccountID = userID
 				isAuthenticated = true
 				logger.Debug("WebAppAuth: JWT token parsed successfully, user_id=%s", userID)

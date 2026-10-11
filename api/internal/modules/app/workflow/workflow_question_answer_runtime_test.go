@@ -96,7 +96,7 @@ func TestDurableWorkflowResumeInputsReachEveryQuestionInDirectResume(t *testing.
 				}
 				t.Fatalf("open sqlite: %v", err)
 			}
-			if err := db.AutoMigrate(&workflowpause.RuntimeOutbox{}); err != nil {
+			if err := autoMigrateWorkflowTest(db, &workflowpause.RuntimeOutbox{}); err != nil {
 				t.Fatalf("migrate workflow outbox: %v", err)
 			}
 
@@ -184,7 +184,7 @@ func TestWorkflowStreamResumeAppliesDurableInputsBeforeClaim(t *testing.T) {
 		}
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := db.AutoMigrate(&workflowpause.RuntimeOutbox{}); err != nil {
+	if err := autoMigrateWorkflowTest(db, &workflowpause.RuntimeOutbox{}); err != nil {
 		t.Fatalf("migrate workflow outbox: %v", err)
 	}
 

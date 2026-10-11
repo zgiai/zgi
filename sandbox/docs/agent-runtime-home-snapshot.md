@@ -1,0 +1,39 @@
+# Approved Home Snapshots (M5 operator path)
+
+A Home Snapshot is an immutable, prebuilt base environment for new Agent Runtime Bindings. It is **not** a copy of a live conversation. A local gVisor snapshot points to a digest-pinned container image; an E2B snapshot points to an approved, versioned E2B template. Build these artifacts in an independent, operator-controlled environment and keep the image/template available while any published Agent or Binding references it.
+
+## Prepare the artifact
+
+1. Start from a reviewed Runtime Agent base image/template. Prepare only approved tools and offline dependencies during the separate build. Do not copy `/workspace`, customer files, `.env` files, provider credentials, sockets, runtime tokens, caches containing user data, or command histories into the artifact.
+2. For local gVisor, publish and preload an immutable `repository@sha256:<64 lowercase hex>` image in the Worker's containerd namespace. For E2B, publish a distinct template ID for each immutable build. The Runtime Agent protocol and offline network policy must be compatible with the Worker version.
+3. Launch a disposable validation environment from the artifact. Verify that `/workspace` is empty, a Python or Node tool expected from the template runs without runtime installation, no user data or control credentials are readable by the Job user, and the network remains disabled. Destroy the disposable environment after verification.
+
+The local runtime binds a fresh workspace over `/workspace` and uses a read-only image root filesystem. Each Job receives a writable `HOME=/workspace/.zgi-runtime-home`, which is part of the session checkpoint rather than the immutable base image. E2B templates need explicit validation that their built filesystem contains no previous session data. Neither backend copies a live Binding into a Home Snapshot. Put prepared executables in immutable image/template locations such as `/usr/local/bin`; do not assume a prebuilt user's home directory becomes the writable session home.
+
+## Register and approve
+
+Insert one record into the Worker's PostgreSQL `agent_runtime_home_snapshots` table using an operator account. Use an organization-wide record (`subject_id = ''`) and a new ID for every artifact version. Required values are `id`, `organization_id`, `profile_id`, `backend` (`local-gvisor` or `e2b`), `backend_ref`, `status = 'approved'`, `generation = 1`, and timestamps. Once approved, database triggers prohibit changing its organization, profile, backend, or artifact reference. The database also refuses a new Binding with an unavailable or cross-organization template and refuses deletion while a live Binding references it. Published Agent versions live in the API database, so operators must additionally check those references before retiring a template. Do not reuse an ID for a rebuild.
+
+The API also needs an operator-owned publication allowlist, for example:
+
+```json
+ZGI_AGENT_RUNTIME_APPROVED_HOME_SNAPSHOTS_JSON={"prepared-v1":{"backend":"local-gvisor","profile_id":"standard","organization_ids":["organization-id"]}}
+```
+
+The allowlist must match the database row. The API rejects publication without a matching allowlist entry; the Worker independently checks the database row, organization, profile, backend, approved status, and nonempty artifact reference on every new Binding. A snapshot ID is selected in the console's optional Home Snapshot field. Model Tool arguments cannot override it.
+
+An existing Binding persists the resolved artifact reference, so resuming it does not silently switch to a newer build. Console requests for the same conversation reuse that owner-scoped Binding even after the Agent configuration changes; new conversations use the new configuration. The local backend rejects a floating image tag and requires the image to be preloaded. If an approved artifact must change, register a new ID and publish a new Agent configuration; keep the old artifact until its references are retired.
+
+## Explicit template change for existing work
+
+The supported M5 path creates a **new conversation and Binding**; it does not change a running or suspended Binding in place:
+
+1. In the old conversation, use `workspace_export_file` for each business file that must continue. Download the files and verify their contents. Keep the old conversation available during the transition.
+2. Publish the Agent configuration with the new approved Home Snapshot ID, then start a new console conversation. Confirm the new template's expected offline tool runs there before moving data.
+3. Upload the exported files to the new conversation and continue the task. The old conversation remains pinned to its original artifact and retention deadline; deleting it is a separate explicit action.
+
+This is a manual file handoff, not an automatic clone of every Workspace file. An in-place template switch that preserves the same conversation and transparently migrates its Workspace is not implemented and must not be advertised.
+
+## Current boundary
+
+Checkpoint and seven-day retention cover `/workspace`, including the session's writable `HOME=/workspace/.zgi-runtime-home`. This is separate from the immutable prepared base image/template; absolute writes to `/home/zgi-runtime` on E2B are not checkpointed, and the local gVisor image root remains read-only. Changing the Agent configuration alone does not alter existing Bindings. Do not advertise universal Home-path persistence, automatic file cloning, or in-place template-switch recovery.

@@ -1,6 +1,6 @@
 ﻿'use client';
 
-import React, { useCallback, useMemo, useRef } from 'react';
+import React, { useCallback, useRef } from 'react';
 import { useT } from '@/i18n';
 import { useNodeData, useNodeDataUpdate, useNodeOutputVariables } from '../../../hooks';
 import type { ImageGenNodeData } from '../config';
@@ -17,7 +17,6 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import OutputVariablesView from '../../../common/output-variables-view';
-import type { WorkflowVariable } from '../../../store/type';
 import { ModelSelector } from '@/components/common/model-selector';
 
 interface ImageGenManagerProps {
@@ -58,17 +57,20 @@ const ImageGenManager: React.FC<ImageGenManagerProps> = ({
     [updateData, readOnly]
   );
 
-  const handleInsert = useCallback((value: any) => {
-    if (readOnly) return;
-    const { sourceId } = value;
-    let key = value.key;
-    // Normalize sys variable key
-    if (sourceId === 'sys' && key.startsWith('sys.')) {
-      key = key.slice(4);
-    }
-    editorRef.current?.insertToken(sourceId, key);
-    editorRef.current?.focus();
-  }, [readOnly]);
+  const handleInsert = useCallback(
+    (value: { sourceId: string; key: string }) => {
+      if (readOnly) return;
+      const { sourceId } = value;
+      let key = value.key;
+      // Normalize sys variable key
+      if (sourceId === 'sys' && key.startsWith('sys.')) {
+        key = key.slice(4);
+      }
+      editorRef.current?.insertToken(sourceId, key);
+      editorRef.current?.focus();
+    },
+    [readOnly]
+  );
 
   const updateGeneration = useCallback(
     (patch: Partial<ImageGenNodeData['generation']>) => {
@@ -86,7 +88,6 @@ const ImageGenManager: React.FC<ImageGenManagerProps> = ({
     },
     [updateData, selfNodeData?.generation, readOnly]
   );
-
 
   const outputs = useNodeOutputVariables(nodeId);
 
@@ -214,4 +215,3 @@ const ImageGenManager: React.FC<ImageGenManagerProps> = ({
 };
 
 export default ImageGenManager;
-

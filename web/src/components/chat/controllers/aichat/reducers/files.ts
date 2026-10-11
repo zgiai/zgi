@@ -141,6 +141,7 @@ function normalizeSkillArtifactFile(
   const target = file?.target ?? payload.target;
   const url = file?.url ?? payload.url ?? '';
   const isManagedFile = target === 'managed_file' || Boolean(uploadFileId);
+  const accessMode = file?.access_mode ?? payload.access_mode;
 
   if (
     !payload.skill_id ||
@@ -150,7 +151,7 @@ function normalizeSkillArtifactFile(
     !extension ||
     !mimeType ||
     typeof size !== 'number' ||
-    (!url && !isManagedFile)
+    (!url && !isManagedFile && accessMode !== 'authenticated')
   ) {
     return null;
   }
@@ -161,6 +162,7 @@ function normalizeSkillArtifactFile(
       payload.artifact_id ??
       `${isManagedFile ? 'managed_file' : 'tool_file'}:${fileId}`,
     artifact_type: 'file',
+    access_mode: accessMode,
     invocation_id: payload.invocation_id,
     skill_id: payload.skill_id,
     tool_name: payload.tool_name,
@@ -173,8 +175,9 @@ function normalizeSkillArtifactFile(
     extension,
     mime_type: mimeType,
     size,
-    url,
-    download_url: file?.download_url ?? payload.download_url,
+    url: accessMode === 'authenticated' ? '' : url,
+    download_url:
+      accessMode === 'authenticated' ? undefined : (file?.download_url ?? payload.download_url),
     target,
     lifecycle: file?.lifecycle ?? payload.lifecycle,
     expires_at: file?.expires_at ?? payload.expires_at,

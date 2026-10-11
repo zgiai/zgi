@@ -13,7 +13,6 @@ import { Label } from '@/components/ui/label';
 import { Input, PasswordInput } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { cn } from '@/lib/utils';
 import {
   Select,
   SelectContent,
@@ -114,9 +113,9 @@ const EnvironmentVariableEditorDialog: React.FC<EnvironmentVariableEditorDialogP
                   }
                   const isDup = existingNames.includes(next.trim());
                   if (isDup)
-                    setNameError(
+                    {setNameError(
                       t('agents.workflow.conversationVariables.validation.duplicateName')
-                    );
+                    );}
                   else setNameError('');
                 }}
                 placeholder={t('agents.workflow.environmentVariables.fields.name')}

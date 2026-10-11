@@ -166,8 +166,8 @@ type ModelMetaData struct {
 	Parameters                map[string]interface{} `json:"parameters"`
 	Evaluation                map[string]interface{} `json:"evaluation"`
 	ConfigParameters          json.RawMessage        `json:"config_parameters"`
-	KnowledgeCutoff           string                 `json:"knowledge_cutoff"`
-	ReleaseDate               string                 `json:"release_date"`
+	KnowledgeCutoff           modelMetaDate          `json:"knowledge_cutoff"`
+	ReleaseDate               modelMetaDate          `json:"release_date"`
 	LastUpdated               int64                  `json:"last_updated"`
 	CreatedAt                 int64                  `json:"created_at"`
 	UpdatedAt                 int64                  `json:"updated_at"`
@@ -875,10 +875,10 @@ func mergeModelMetaDetail(base, detail ModelMetaData) ModelMetaData {
 	if len(detail.ConfigParameters) > 0 {
 		base.ConfigParameters = detail.ConfigParameters
 	}
-	if strings.TrimSpace(detail.KnowledgeCutoff) != "" {
+	if strings.TrimSpace(detail.KnowledgeCutoff.String()) != "" {
 		base.KnowledgeCutoff = detail.KnowledgeCutoff
 	}
-	if strings.TrimSpace(detail.ReleaseDate) != "" {
+	if strings.TrimSpace(detail.ReleaseDate.String()) != "" {
 		base.ReleaseDate = detail.ReleaseDate
 	}
 	if detail.LastUpdated > 0 {
@@ -1164,7 +1164,7 @@ func (s *Service) hasChanges(local *llmmodel.LLMModel, remote *ModelMetaData) bo
 	if useCasesDiffer(local.UseCases, ensureRemoteUseCases(remote)) {
 		return true
 	}
-	if local.KnowledgeCutoff != remote.KnowledgeCutoff {
+	if local.KnowledgeCutoff != remote.KnowledgeCutoff.String() {
 		return true
 	}
 	if !equalStringSlices(normalizeStringValues([]string(local.InputModalities)), normalizeStringValues(remote.InputModalities)) {
@@ -1288,8 +1288,8 @@ func (s *Service) computeDiffFields(local *llmmodel.LLMModel, remote *ModelMetaD
 			NewValue: remoteUseCases,
 		})
 	}
-	if local.KnowledgeCutoff != remote.KnowledgeCutoff {
-		diffs = append(diffs, DiffField{Field: "knowledge_cutoff", OldValue: local.KnowledgeCutoff, NewValue: remote.KnowledgeCutoff})
+	if local.KnowledgeCutoff != remote.KnowledgeCutoff.String() {
+		diffs = append(diffs, DiffField{Field: "knowledge_cutoff", OldValue: local.KnowledgeCutoff, NewValue: remote.KnowledgeCutoff.String()})
 	}
 	if !equalStringSlices(normalizeStringValues([]string(local.InputModalities)), normalizeStringValues(remote.InputModalities)) {
 		diffs = append(diffs, DiffField{
@@ -1393,7 +1393,7 @@ func publishedModelFromMeta(meta *ModelMetaData) PublishedModel {
 		UseCases:               llmmodel.EnsureUseCases(meta.UseCases, endpoints),
 		InputModalities:        normalizeStringValues(meta.InputModalities),
 		OutputModalities:       normalizeStringValues(meta.OutputModalities),
-		KnowledgeCutoff:        strings.TrimSpace(meta.KnowledgeCutoff),
+		KnowledgeCutoff:        strings.TrimSpace(meta.KnowledgeCutoff.String()),
 		IsActive:               isActive,
 		IsSystemEnabled:        isActive,
 		SupportedParameters:    marshalJSONRaw(meta.Parameters),

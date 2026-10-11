@@ -12,8 +12,10 @@ import { Pagination } from '@/components/ui/pagination';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   type RunnableWebAppResolvedItem,
+  useRunnableWebAppTagFacets,
   useRunnableWebApps,
 } from '@/hooks/agent/use-runnable-webapps';
+import type { AgentCatalogTag } from '@/services/types/agent';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useT } from '@/i18n/translations';
 import { AppAvatar } from './app-avatar';
@@ -29,6 +31,7 @@ interface AppCardItem {
   desc: string | null;
   iconType: 'image' | 'text';
   src: string;
+  tags: AgentCatalogTag[];
 }
 
 function toAppCard(item: RunnableWebAppResolvedItem): AppCardItem {
@@ -41,6 +44,7 @@ function toAppCard(item: RunnableWebAppResolvedItem): AppCardItem {
     desc: item.meta_data.desc,
     iconType,
     src,
+    tags: item.meta_data.tags,
   };
 }
 
@@ -49,6 +53,7 @@ export default function ConsoleWorkAppHomePage() {
   const [search, setSearch] = useState('');
   const [queryKeyword, setQueryKeyword] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
+  const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const [recentIds, setRecentIds] = useState<string[]>([]);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const debouncedSearch = useDebouncedValue(search.trim(), 300);
@@ -59,10 +64,16 @@ export default function ConsoleWorkAppHomePage() {
   const { items, isLoading, isFetching, canUseResourceList, total, pageSize } = useRunnableWebApps({
     workspaceId: null,
     keyword: queryKeyword || undefined,
+    tagIds: selectedTagIds,
     page: currentPage,
     pageSize: APP_PAGE_SIZE,
   });
-  const shouldLoadRecent = currentPage === 1 && !queryKeyword && recentCandidateIds.length > 0;
+  const { items: tagFacets } = useRunnableWebAppTagFacets({ workspaceId: null });
+  const shouldLoadRecent =
+    currentPage === 1 &&
+    !queryKeyword &&
+    selectedTagIds.length === 0 &&
+    recentCandidateIds.length > 0;
   const { items: recentItems } = useRunnableWebApps({
     workspaceId: null,
     webAppIds: recentCandidateIds,
@@ -120,6 +131,14 @@ export default function ConsoleWorkAppHomePage() {
     setSearch('');
     setQueryKeyword('');
     setCurrentPage(1);
+    setSelectedTagIds([]);
+  };
+
+  const toggleTag = (tagId: string) => {
+    setSelectedTagIds(current =>
+      current.includes(tagId) ? current.filter(id => id !== tagId) : [...current, tagId]
+    );
+    setCurrentPage(1);
   };
 
   const changePage = (page: number) => {
@@ -151,6 +170,42 @@ export default function ConsoleWorkAppHomePage() {
             />
           </div>
         </div>
+        {tagFacets.length > 0 ? (
+          <div
+            className="mb-6 flex flex-wrap items-center gap-2"
+            aria-label={t('appCenter.categories')}
+          >
+            <Button
+              type="button"
+              size="sm"
+              variant={selectedTagIds.length === 0 ? 'default' : 'outline'}
+              className="h-8 rounded-full"
+              onClick={() => {
+                setSelectedTagIds([]);
+                setCurrentPage(1);
+              }}
+            >
+              {t('appCenter.allCategories')}
+            </Button>
+            {tagFacets.map(tag => {
+              const selected = selectedTagIds.includes(tag.id);
+              return (
+                <Button
+                  key={tag.id}
+                  type="button"
+                  size="sm"
+                  variant={selected ? 'default' : 'outline'}
+                  className="h-8 rounded-full"
+                  aria-pressed={selected}
+                  onClick={() => toggleTag(tag.id)}
+                >
+                  {tag.name}
+                  <span className="text-xs opacity-70">{tag.count}</span>
+                </Button>
+              );
+            })}
+          </div>
+        ) : null}
         {showLoading ? (
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
             {Array.from({ length: 6 }).map((_, index) => (
@@ -167,7 +222,7 @@ export default function ConsoleWorkAppHomePage() {
               </Card>
             ))}
           </div>
-        ) : total === 0 && !normalizedSearch ? (
+        ) : total === 0 && !normalizedSearch && selectedTagIds.length === 0 ? (
           <Card className="border-dashed bg-muted/20" role="status" aria-live="polite">
             <CardHeader className="items-center py-12 text-center">
               <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
@@ -219,6 +274,15 @@ export default function ConsoleWorkAppHomePage() {
                           <CardDescription className="mt-2 line-clamp-2 max-w-2xl text-sm leading-6">
                             {recentCard.desc || t('appCenter.recentFallbackDescription')}
                           </CardDescription>
+                          {recentCard.tags.length > 0 ? (
+                            <div className="mt-3 flex flex-wrap gap-1.5">
+                              {recentCard.tags.slice(0, 3).map(tag => (
+                                <Badge key={tag.id} variant="subtle" className="rounded-full">
+                                  {tag.name}
+                                </Badge>
+                              ))}
+                            </div>
+                          ) : null}
                         </div>
                       </div>
                     </div>
@@ -259,6 +323,19 @@ export default function ConsoleWorkAppHomePage() {
                           <CardDescription className="mt-1 min-h-10 line-clamp-2 w-full break-words text-xs leading-5 text-muted-foreground">
                             {card.desc || null}
                           </CardDescription>
+                          {card.tags.length > 0 ? (
+                            <div className="mt-2 flex flex-wrap gap-1">
+                              {card.tags.slice(0, 2).map(tag => (
+                                <Badge
+                                  key={tag.id}
+                                  variant="subtle"
+                                  className="rounded-full text-xs"
+                                >
+                                  {tag.name}
+                                </Badge>
+                              ))}
+                            </div>
+                          ) : null}
                         </div>
                       </div>
                     </CardHeader>

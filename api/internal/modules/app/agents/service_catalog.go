@@ -90,6 +90,10 @@ func (s *agentsService) GetRunnableWebApps(ctx context.Context, accountID string
 	if err != nil {
 		return nil, err
 	}
+	tagIDs, err := parseRunnableWebAppTagIDs(req.TagIDs)
+	if err != nil {
+		return nil, err
+	}
 	authorization, err := s.runnableWebAppAuthorizationFilter(ctx, currentOrganization)
 	if err != nil {
 		return nil, err
@@ -98,6 +102,7 @@ func (s *agentsService) GetRunnableWebApps(ctx context.Context, accountID string
 		WorkspaceID:   req.WorkspaceID,
 		WebAppID:      req.WebAppID,
 		WebAppIDs:     webAppIDs,
+		TagIDs:        tagIDs,
 		Keyword:       req.Keyword,
 		Pagination:    runnableWebAppPaginationForRequest(req),
 		Authorization: authorization,
@@ -114,6 +119,27 @@ func (s *agentsService) GetRunnableWebApps(ctx context.Context, accountID string
 		items, pagination = paginateRunnableWebAppItems(items, req)
 	}
 	pagination.apply(resp)
+
+	tagsByAgent := make(map[uuid.UUID][]dto.AgentCatalogTag, len(items))
+	if s.db != nil {
+		agentIDs := make([]uuid.UUID, 0, len(items))
+		for _, item := range items {
+			agentID, parseErr := uuid.Parse(strings.TrimSpace(item.AgentID))
+			if parseErr != nil {
+				logger.Warn(fmt.Sprintf("skipping catalog tags for invalid runnable web app agent id %q", item.AgentID))
+				continue
+			}
+			agentIDs = append(agentIDs, agentID)
+		}
+		loadedTags, loadErr := s.agentCatalogTagsByAgentIDs(ctx, agentIDs)
+		if loadErr != nil {
+			// Categories are presentation metadata. A transient metadata read must not
+			// hide an otherwise authorized and runnable app from App Center.
+			logger.Warn(fmt.Sprintf("failed to load runnable web app catalog tags: %v", loadErr))
+		} else {
+			tagsByAgent = loadedTags
+		}
+	}
 
 	resp.Items = make([]dto.RunnableWebAppItem, 0, len(items))
 	for _, item := range items {
@@ -133,6 +159,10 @@ func (s *agentsService) GetRunnableWebApps(ctx context.Context, accountID string
 				iconUrl = fileURL
 			}
 		}
+		catalogTags := tagsByAgent[parseUUID(item.AgentID)]
+		if catalogTags == nil {
+			catalogTags = []dto.AgentCatalogTag{}
+		}
 
 		resp.Items = append(resp.Items, dto.RunnableWebAppItem{
 			AgentID:      item.AgentID,
@@ -146,10 +176,61 @@ func (s *agentsService) GetRunnableWebApps(ctx context.Context, accountID string
 				IconUrl:   iconUrl,
 				Desc:      item.AgentDesc,
 				AgentType: normalizeAgentTypeForResponse(item.AgentType),
+				Tags:      catalogTags,
 			},
 		})
 	}
 
+	return resp, nil
+}
+
+func (s *agentsService) GetRunnableWebAppTagFacets(ctx context.Context, accountID string, req dto.GetRunnableWebAppsRequest) (*dto.RunnableWebAppTagFacetsResponse, error) {
+	resp := &dto.RunnableWebAppTagFacetsResponse{Items: []dto.RunnableWebAppTagFacet{}}
+	currentOrganization, err := s.tenantService.GetCurrentOrganization(ctx, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get current organization: %w", err)
+	}
+	if currentOrganization == nil || currentOrganization.OrganizationID == "" {
+		return nil, errCurrentOrganizationNotFound
+	}
+
+	visibleWorkspaceIDs, err := s.runnableWebAppWorkspaceIDs(ctx, currentOrganization)
+	if err != nil {
+		return nil, err
+	}
+	if req.WorkspaceID != "" && !slices.Contains(visibleWorkspaceIDs, req.WorkspaceID) {
+		return resp, nil
+	}
+
+	candidateWorkspaceIDs := visibleWorkspaceIDs
+	if req.WorkspaceID == "" && s.db != nil {
+		candidateWorkspaceIDs, err = s.runnableWebAppOrganizationWorkspaceIDs(ctx, currentOrganization)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(candidateWorkspaceIDs) == 0 {
+		return resp, nil
+	}
+	authorization, err := s.runnableWebAppAuthorizationFilter(ctx, currentOrganization)
+	if err != nil {
+		return nil, err
+	}
+	facets, err := s.agentsRepo.ListRunnableWebAppTagFacets(ctx, candidateWorkspaceIDs, runnableWebAppFilter{
+		WorkspaceID:   req.WorkspaceID,
+		Keyword:       req.Keyword,
+		Authorization: authorization,
+	})
+	if err != nil {
+		return nil, err
+	}
+	resp.Items = make([]dto.RunnableWebAppTagFacet, 0, len(facets))
+	for _, facet := range facets {
+		resp.Items = append(resp.Items, dto.RunnableWebAppTagFacet{
+			AgentCatalogTag: dto.AgentCatalogTag{ID: facet.TagID.String(), Name: facet.Name},
+			Count:           facet.Count,
+		})
+	}
 	return resp, nil
 }
 

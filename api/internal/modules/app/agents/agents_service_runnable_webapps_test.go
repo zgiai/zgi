@@ -75,6 +75,7 @@ func TestAgentsService_GetRunnableWebApps_OrganizationAdminUsesAllNormalOrganiza
 					Name:      "Alpha",
 					Desc:      "desc-alpha",
 					AgentType: "CONVERSATIONAL_WORKFLOW",
+					Tags:      []dto.AgentCatalogTag{},
 				},
 			},
 			{
@@ -86,6 +87,7 @@ func TestAgentsService_GetRunnableWebApps_OrganizationAdminUsesAllNormalOrganiza
 					Name:      "Beta",
 					Desc:      "desc-beta",
 					AgentType: "CONVERSATIONAL_WORKFLOW",
+					Tags:      []dto.AgentCatalogTag{},
 				},
 			},
 		},
@@ -416,6 +418,7 @@ func TestAgentsService_GetRunnableWebApps_AllowsWorkspaceViewWithoutAgentView(t 
 					Name:      "Beta",
 					Desc:      "desc-beta",
 					AgentType: "CONVERSATIONAL_WORKFLOW",
+					Tags:      []dto.AgentCatalogTag{},
 				},
 			},
 		},
@@ -825,6 +828,26 @@ func TestAgentsService_GetRunnableWebApps_ForwardsRecentWebAppCandidates(t *test
 	require.Equal(t, []string{firstID, secondID}, repo.lastWebAppIDs)
 }
 
+func TestAgentsService_GetRunnableWebApps_ForwardsCatalogTagCandidates(t *testing.T) {
+	firstID := uuid.NewString()
+	secondID := uuid.NewString()
+	repo := &stubAgentsRepository{}
+	service := &agentsService{
+		agentsRepo: repo,
+		tenantService: &stubWorkspaceManagementService{currentOrganization: &workspace_model.OrganizationMember{
+			OrganizationID: "org-1",
+			AccountID:      "account-1",
+		}},
+		enterpriseService: &stubOrganizationService{permissionWorkspaceIDs: []string{"workspace-1"}},
+	}
+
+	_, err := service.GetRunnableWebApps(t.Context(), "account-1", dto.GetRunnableWebAppsRequest{
+		TagIDs: firstID + "," + secondID + "," + firstID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{firstID, secondID}, repo.lastTagIDs)
+}
+
 func TestParseRunnableWebAppIDs_RejectsInvalidCandidate(t *testing.T) {
 	ids, err := parseRunnableWebAppIDs(uuid.NewString() + ",invalid")
 	require.ErrorIs(t, err, errInvalidRunnableWebAppIDs)
@@ -840,6 +863,7 @@ type stubAgentsRepository struct {
 	lastWorkspaceID           string
 	lastWebAppID              string
 	lastWebAppIDs             []string
+	lastTagIDs                []string
 	lastKeyword               string
 	listRunnableWebAppsCalled bool
 }
@@ -850,6 +874,7 @@ func (s *stubAgentsRepository) ListRunnableWebApps(_ context.Context, workspaceI
 	s.lastWorkspaceID = filter.WorkspaceID
 	s.lastWebAppID = filter.WebAppID
 	s.lastWebAppIDs = append([]string(nil), filter.WebAppIDs...)
+	s.lastTagIDs = append([]string(nil), filter.TagIDs...)
 	s.lastKeyword = filter.Keyword
 	if s.err != nil {
 		return runnableWebAppListResult{}, s.err

@@ -29,6 +29,7 @@ interface ResourceSidebarProps {
   navItems?: ResourceSidebarNavItem[];
   pathname?: string;
   isNavigationHidden?: boolean;
+  onNavigate?: (event: React.MouseEvent<HTMLAnchorElement>, href: string) => void;
   expandedWidthClassName?: string;
   children?: React.ReactNode | ((isCollapsed: boolean) => React.ReactNode);
 }
@@ -47,7 +48,7 @@ interface ResourceSidebarHeaderProps {
   showExpandedIcon?: boolean;
   backHref?: string;
   backLabel?: string;
-  onBackClick?: () => void;
+  onBackClick?: (event: React.MouseEvent<HTMLAnchorElement>) => void;
   iconActionLabel?: string;
   onIconClick?: () => void;
 }
@@ -103,6 +104,7 @@ export function ResourceSidebar({
   navItems = [],
   pathname = '',
   isNavigationHidden = false,
+  onNavigate,
   expandedWidthClassName = 'w-36',
   children,
 }: ResourceSidebarProps) {
@@ -208,6 +210,7 @@ export function ResourceSidebar({
                     <ResourceSidebarTooltip key={child.href} enabled label={child.title}>
                       <Link
                         href={child.href}
+                        onClick={event => onNavigate?.(event, child.href)}
                         className={cn(
                           'relative flex items-center rounded-md py-1.5 text-xs font-medium transition-colors',
                           isChildActive
@@ -249,6 +252,7 @@ export function ResourceSidebar({
                     <ResourceSidebarTooltip enabled={effectiveIsCollapsed} label={item.title}>
                       <Link
                         href={item.href}
+                        onClick={event => onNavigate?.(event, item.href)}
                         className={cn(
                           'relative flex items-center rounded-md py-1.5 text-xs font-medium transition-colors',
                           isActive
@@ -289,6 +293,7 @@ export function ResourceSidebar({
                           <Link
                             key={child.href}
                             href={child.href}
+                            onClick={event => onNavigate?.(event, child.href)}
                             className={cn(
                               'relative flex w-full items-center rounded-md px-2 py-1.5 text-xs transition-colors',
                               isChildActive

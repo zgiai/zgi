@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 	redisutil "github.com/zgiai/zgi/api/pkg/redis"
@@ -141,17 +142,18 @@ func TestWorkflowCommittedTailWindowHydratesAdjacentLifecycleEvents(t *testing.T
 	})
 
 	db := openWorkflowStopV2TestDB(t)
-	if err := db.AutoMigrate(&workflowpause.RunEvent{}); err != nil {
+	if err := autoMigrateWorkflowTest(db, &workflowpause.RunEvent{}); err != nil {
 		t.Fatalf("migrate workflow events: %v", err)
 	}
 	now := time.Now()
+	tenantID, appID := uuid.NewString(), uuid.NewString()
 	for sequence, eventType := range map[int]string{
 		7: workflowpause.EventWorkflowPaused,
 		8: workflowpause.EventApprovalResultFilled,
 		9: workflowpause.EventWorkflowResumed,
 	} {
 		if err := db.Create(&workflowpause.RunEvent{
-			ID: "event-window-" + eventType, TenantID: "tenant-window", AppID: "app-window",
+			ID: uuid.NewString(), TenantID: tenantID, AppID: appID,
 			WorkflowRunID: "run-window", Sequence: sequence, EventType: eventType,
 			EventData: "{}", SchemaVersion: 2, Category: workflowpause.EventCategoryControl,
 			CreatedAt: now, OccurredAt: now,
@@ -160,7 +162,7 @@ func TestWorkflowCommittedTailWindowHydratesAdjacentLifecycleEvents(t *testing.T
 		}
 	}
 
-	publishWorkflowCommittedTailWindow(context.Background(), workflowpause.NewService(db), "tenant-window", "run-window", 9)
+	publishWorkflowCommittedTailWindow(context.Background(), workflowpause.NewService(db), tenantID, "run-window", 9)
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		stored, hit := readWorkflowCommittedTailAfter(context.Background(), "run-window", 6, 10)

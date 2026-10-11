@@ -85,6 +85,11 @@ const FileUploadSettingsDialog: React.FC<FileUploadSettingsDialogProps> = ({
         <DialogBody className="space-y-8 py-6">
           <div className="space-y-6">
             <FileTypeSelector
+              availableTypes={
+                value?.allowed_file_types?.some(type => !['document', 'image'].includes(type))
+                  ? undefined
+                  : ['document', 'image']
+              }
               selectedTypes={localTypes}
               onChange={types => setLocalTypes(types as FileUploadType[])}
               label={t('workflow.features.allowedTypes')}

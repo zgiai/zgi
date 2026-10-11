@@ -1,6 +1,66 @@
 #!/bin/sh
 set -eu
 
+setup_secure_process_cgroups() {
+  backend="${ZGI_SANDBOX_RUNTIME_BACKEND:-preview}"
+  limit="${ZGI_SANDBOX_SECURE_RUNTIME_PROCESS_LIMIT:-64}"
+  cgroup_root="${ZGI_SANDBOX_SECURE_RUNTIME_CGROUP_ROOT:-/sys/fs/cgroup/zgi-sandbox-executions}"
+
+  [ "$backend" = "linux-secure" ] || return 0
+  case "$limit" in
+    0) return 0 ;;
+    ''|*[!0-9]*)
+      echo "zgi-sandbox: secure runtime process limit must be a non-negative integer" >&2
+      exit 1
+      ;;
+  esac
+
+  case "$cgroup_root" in
+    /sys/fs/cgroup/*) cgroup_name="${cgroup_root#/sys/fs/cgroup/}" ;;
+    *)
+      echo "zgi-sandbox: container cgroup root must be a direct child of /sys/fs/cgroup" >&2
+      exit 1
+      ;;
+  esac
+  case "$cgroup_name" in
+    ''|*/*|.|..|*[!A-Za-z0-9_.-]*)
+      echo "zgi-sandbox: container cgroup root has an unsafe name" >&2
+      exit 1
+      ;;
+  esac
+
+  if [ ! -r /sys/fs/cgroup/cgroup.controllers ] || [ ! -w /sys/fs/cgroup/cgroup.subtree_control ]; then
+    echo "zgi-sandbox: linux-secure process limits require a writable cgroup v2 mount" >&2
+    exit 1
+  fi
+  if ! grep -qw pids /sys/fs/cgroup/cgroup.controllers; then
+    echo "zgi-sandbox: cgroup v2 pids controller is unavailable" >&2
+    exit 1
+  fi
+
+  init_cgroup=""
+  while IFS=: read -r hierarchy controllers path; do
+    if [ "$hierarchy" = "0" ] && [ -z "$controllers" ]; then
+      init_cgroup="$path"
+      break
+    fi
+  done < /proc/1/cgroup
+  if [ "$init_cgroup" != "/" ]; then
+    echo "zgi-sandbox: linux-secure process limits require a private cgroup namespace" >&2
+    exit 1
+  fi
+
+  service_cgroup="$cgroup_root/service"
+  mkdir -p "$service_cgroup"
+  while IFS= read -r pid; do
+    [ -n "$pid" ] || continue
+    echo "$pid" > "$service_cgroup/cgroup.procs"
+  done < /sys/fs/cgroup/cgroup.procs
+  echo +pids > /sys/fs/cgroup/cgroup.subtree_control
+  echo +pids > "$cgroup_root/cgroup.subtree_control"
+  chown zgi:zgi "$cgroup_root" "$cgroup_root/cgroup.procs" "$cgroup_root/cgroup.subtree_control"
+}
+
 seed_prebuilt_dependency_profiles() {
   root="${ZGI_SANDBOX_DEPENDENCY_ROOTFS_DIR:-/var/lib/zgi-sandbox/dependency-rootfs}"
   prebuilt="${ZGI_SANDBOX_PREBUILT_DEPENDENCY_ROOTFS_DIR:-/opt/zgi/prebuilt-dependency-rootfs}"
@@ -29,6 +89,11 @@ seed_prebuilt_dependency_profiles() {
     mv "$tmp_dir" "$target_dir"
   done
 }
+
+if [ "$(id -u)" = "0" ]; then
+  setup_secure_process_cgroups
+  exec setpriv --reuid=zgi --regid=zgi --init-groups -- "$0" "$@"
+fi
 
 seed_prebuilt_dependency_profiles
 

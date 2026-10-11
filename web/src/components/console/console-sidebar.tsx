@@ -20,6 +20,7 @@ import {
   ChevronDown,
   Cable,
   Workflow,
+  ContactRound,
   LayoutGrid,
   House,
   CircleAlert,
@@ -247,6 +248,11 @@ export function ConsoleSidebar({
         key: 'resources',
         title: t('resources'),
         items: [
+          {
+            title: t('digitalHumans'),
+            href: '/console/digital-humans',
+            icon: ContactRound,
+          },
           {
             title: t('agents'),
             href: '/console/agents',
@@ -753,6 +759,11 @@ export function ConsoleMobileSidebar({
         key: 'resources',
         title: t('resources'),
         items: [
+          {
+            title: t('digitalHumans'),
+            href: '/console/digital-humans',
+            icon: ContactRound,
+          },
           {
             title: t('agents'),
             href: '/console/agents',

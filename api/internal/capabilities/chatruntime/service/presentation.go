@@ -156,7 +156,7 @@ func presentationEventID(messageID string, eventType string, reference string, s
 }
 
 func presentationEventReference(payload map[string]interface{}, invocation map[string]interface{}) string {
-	for _, key := range []string{"runtime_id", "event_id", "request_id", "action_id", "approval_id", "workflow_run_id", "node_execution_id"} {
+	for _, key := range []string{"runtime_id", "event_id", "input_id", "request_id", "action_id", "approval_id", "workflow_run_id", "node_execution_id"} {
 		if value := strings.TrimSpace(stringFromAny(payload[key])); value != "" {
 			return value
 		}

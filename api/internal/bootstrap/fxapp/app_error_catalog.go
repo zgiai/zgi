@@ -2,8 +2,10 @@ package fxapp
 
 import (
 	chatruntimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	agents "github.com/zgiai/zgi/api/internal/modules/app/agents"
 	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	connectorpreferences "github.com/zgiai/zgi/api/internal/modules/connectors/preferences"
+	digitalhuman "github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 	imageservice "github.com/zgiai/zgi/api/internal/modules/image/service"
 	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	musicmodule "github.com/zgiai/zgi/api/internal/modules/music"
@@ -18,8 +20,10 @@ import (
 func provideApplicationErrorCatalog() (*appcatalog.Catalog, error) {
 	definitions := appcatalog.DefaultDefinitions()
 	definitions = append(definitions, chatruntimeservice.CatalogDefinitions()...)
+	definitions = append(definitions, agents.CatalogDefinitions()...)
 	definitions = append(definitions, connectorpreferences.CatalogDefinitions()...)
 	definitions = append(definitions, connectorcore.CatalogDefinitions()...)
+	definitions = append(definitions, digitalhuman.CatalogDefinitions()...)
 	definitions = append(definitions, imageservice.CatalogDefinitions()...)
 	definitions = append(definitions, llmerrors.CatalogDefinitions()...)
 	definitions = append(definitions, llmerrors.BillingCatalogDefinitions()...)

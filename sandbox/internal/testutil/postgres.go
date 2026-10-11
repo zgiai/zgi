@@ -1,6 +1,7 @@
 package testutil
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"math/rand"
@@ -19,11 +20,21 @@ func CreateTestPostgresDSN(t *testing.T) string {
 	adminDSN := defaultAdminDSN()
 	admin, err := sql.Open("pgx", adminDSN)
 	if err != nil {
+		if strings.TrimSpace(os.Getenv("ZGI_SANDBOX_TEST_POSTGRES_ADMIN_DSN")) != "" {
+			t.Fatalf("configured test postgres unavailable: %v", err)
+		}
 		t.Skipf("postgres unavailable: %v", err)
 	}
-	defer admin.Close()
+	t.Cleanup(func() {
+		if err := admin.Close(); err != nil {
+			t.Errorf("close test database administrator: %v", err)
+		}
+	})
 
 	if err := admin.Ping(); err != nil {
+		if strings.TrimSpace(os.Getenv("ZGI_SANDBOX_TEST_POSTGRES_ADMIN_DSN")) != "" {
+			t.Fatalf("configured test postgres unavailable: %v", err)
+		}
 		t.Skipf("postgres unavailable: %v", err)
 	}
 
@@ -33,12 +44,13 @@ func CreateTestPostgresDSN(t *testing.T) string {
 	}
 
 	t.Cleanup(func() {
-		_, _ = admin.Exec(`
-			SELECT pg_terminate_backend(pid)
-			FROM pg_stat_activity
-			WHERE datname = $1 AND pid <> pg_backend_pid()
-		`, dbName)
-		_, _ = admin.Exec(`DROP DATABASE IF EXISTS ` + quoteIdentifier(dbName))
+		// Keep the administrator open until this LIFO cleanup has dropped only
+		// the database allocated above, including idle application connections.
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := admin.ExecContext(ctx, `DROP DATABASE IF EXISTS `+quoteIdentifier(dbName)+` WITH (FORCE)`); err != nil {
+			t.Errorf("remove owned test database: %v", err)
+		}
 	})
 
 	parsed, err := url.Parse(adminDSN)

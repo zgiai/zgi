@@ -26,13 +26,54 @@ func (s *service) CreateConversation(ctx context.Context, scope Scope, title str
 
 func (s *service) CreateConversationForCaller(ctx context.Context, scope Scope, caller Caller, title string) (*runtimemodel.Conversation, error) {
 	surface := aiChatSurfaceWorkChat
-	if normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAgent {
+	if isAutonomousSubjectCaller(caller.Type) {
 		surface = aiChatSurfaceExternalPageChat
 	}
 	return s.createConversationForCaller(ctx, scope, caller, title, surface)
 }
 
+// EnsureConversationForCaller creates the exact server-owned conversation ID
+// once and otherwise returns the existing caller-scoped conversation. It is
+// intended for durable external routing keys, not client-selected IDs.
+func (s *service) EnsureConversationForCaller(ctx context.Context, scope Scope, caller Caller, id uuid.UUID, title string) (*runtimemodel.Conversation, error) {
+	if id == uuid.Nil {
+		return nil, fmt.Errorf("%w: conversation_id is required", ErrInvalidInput)
+	}
+	if isAutonomousSubjectCaller(caller.Type) && normalizeCallerID(caller.ID) == nil {
+		return nil, fmt.Errorf("%w: caller_id is required for autonomous subjects", ErrInvalidInput)
+	}
+	if err := s.ensureMember(ctx, scope); err != nil {
+		return nil, err
+	}
+	workspaceID, err := s.resolveWorkspaceID(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	source := normalizeConversationSource(caller.Source)
+	sourceWebAppID := normalizeCallerID(caller.SourceWebAppID)
+	if source == runtimemodel.ConversationSourceWebApp && sourceWebAppID == nil {
+		return nil, fmt.Errorf("%w: source_web_app_id is required for webapp conversations", ErrInvalidInput)
+	}
+	conversation := &runtimemodel.Conversation{
+		ID: id, OrganizationID: scope.OrganizationID, WorkspaceID: workspaceID, AccountID: scope.AccountID,
+		CallerType: normalizeCallerType(caller.Type), CallerID: normalizeCallerID(caller.ID),
+		ConversationType: normalizeConversationType(caller.ConversationType), Title: normalizeTitle(title, defaultConversationTitle),
+		Status: runtimemodel.ConversationStatusNormal, RuntimeStatus: runtimemodel.ConversationRuntimeStatusIdle,
+		Source: source, SourceWebAppID: sourceWebAppID,
+		Metadata: map[string]interface{}{"surface": aiChatSurfaceExternalPageChat},
+	}
+	if err := s.repos.DB.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "id"}}, DoNothing: true,
+	}).Create(conversation).Error; err != nil {
+		return nil, fmt.Errorf("ensure chat runtime conversation: %w", err)
+	}
+	return s.getConversationByCallerScoped(ctx, scope, caller, id)
+}
+
 func (s *service) createConversationForCaller(ctx context.Context, scope Scope, caller Caller, title string, surface string) (*runtimemodel.Conversation, error) {
+	if isAutonomousSubjectCaller(caller.Type) && normalizeCallerID(caller.ID) == nil {
+		return nil, fmt.Errorf("%w: caller_id is required for autonomous subjects", ErrInvalidInput)
+	}
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err
 	}
@@ -73,9 +114,24 @@ func normalizeCallerType(value string) string {
 	switch strings.TrimSpace(value) {
 	case runtimemodel.ConversationCallerAgent:
 		return runtimemodel.ConversationCallerAgent
+	case runtimemodel.ConversationCallerDigitalHuman:
+		return runtimemodel.ConversationCallerDigitalHuman
 	default:
 		return runtimemodel.ConversationCallerAIChat
 	}
+}
+
+func isAutonomousSubjectCaller(value string) bool {
+	switch normalizeCallerType(value) {
+	case runtimemodel.ConversationCallerAgent, runtimemodel.ConversationCallerDigitalHuman:
+		return true
+	default:
+		return false
+	}
+}
+
+func isDigitalHumanCaller(value string) bool {
+	return normalizeCallerType(value) == runtimemodel.ConversationCallerDigitalHuman
 }
 
 func normalizeConversationSource(value string) string {
@@ -84,6 +140,10 @@ func normalizeConversationSource(value string) string {
 		return runtimemodel.ConversationSourceWebApp
 	case runtimemodel.ConversationSourceExternalAPI:
 		return runtimemodel.ConversationSourceExternalAPI
+	case runtimemodel.ConversationSourceChannel:
+		return runtimemodel.ConversationSourceChannel
+	case runtimemodel.ConversationSourceTask:
+		return runtimemodel.ConversationSourceTask
 	case runtimemodel.ConversationSourceMigration:
 		return runtimemodel.ConversationSourceMigration
 	default:
@@ -749,6 +809,7 @@ func (s *service) validateCurrentLeafMessage(ctx context.Context, scope Scope, c
 		runtimemodel.MessageStatusError,
 		runtimemodel.MessageStatusWaitingApproval,
 		runtimemodel.MessageStatusWaitingQuestion,
+		runtimemodel.MessageStatusWaitingBudget,
 		runtimemodel.MessageStatusWaitingClientAction:
 		return nil
 	case runtimemodel.MessageStatusStreaming:
@@ -955,6 +1016,7 @@ func (s *service) StopMessage(ctx context.Context, scope Scope, id uuid.UUID) (*
 	}
 	s.streams.StopCurrent(id)
 	var stopped *runtimemodel.Message
+	var canceledInputs []*runtimemodel.RuntimeInput
 	err := s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txRepos := repository.NewRepositories(tx)
 		message, err := repository.GetMessageScopedForUpdate(ctx, tx, id, scope.OrganizationID, scope.AccountID)
@@ -997,6 +1059,10 @@ func (s *service) StopMessage(ctx context.Context, scope Scope, id uuid.UUID) (*
 		if err := txRepos.Conversation.ClearActiveMessage(ctx, message.ConversationID, id); err != nil {
 			return err
 		}
+		canceledInputs, err = txRepos.RuntimeInput.CancelForStoppedMessage(ctx, message.ConversationID, id, time.Now().UTC())
+		if err != nil {
+			return err
+		}
 		stopped, err = txRepos.Message.GetScoped(ctx, id, scope.OrganizationID, scope.AccountID)
 		return err
 	})
@@ -1004,6 +1070,15 @@ func (s *service) StopMessage(ctx context.Context, scope Scope, id uuid.UUID) (*
 		return nil, mapRepoError(err)
 	}
 	hydrateMessageGeneratedFileState(ctx, stopped)
+	if stopped != nil {
+		for _, input := range canceledInputs {
+			disposition := RuntimeInputDispositionCurrentRun
+			if input != nil && input.ConsumptionMode != nil && *input.ConsumptionMode == runtimemodel.RuntimeInputConsumptionFollowUp {
+				disposition = RuntimeInputDispositionFollowUp
+			}
+			s.appendStreamEventBestEffort(ctx, stopped.ID, stopped.ConversationID, streamEventRuntimeInputCanceled, runtimeInputEventPayload(input, disposition))
+		}
+	}
 	return stopped, nil
 }
 
@@ -1032,6 +1107,16 @@ func (s *service) StopConversation(ctx context.Context, scope Scope, id uuid.UUI
 		}
 	}
 	if messageID == nil {
+		canceledInputs, cancelErr := s.repos.RuntimeInput.CancelPendingFollowUps(ctx, conversation.ID, time.Now().UTC())
+		if cancelErr != nil {
+			return nil, cancelErr
+		}
+		for _, input := range canceledInputs {
+			if input == nil {
+				continue
+			}
+			s.appendStreamEventBestEffort(ctx, input.TargetMessageID, input.ConversationID, streamEventRuntimeInputCanceled, runtimeInputEventPayload(input, RuntimeInputDispositionFollowUp))
+		}
 		return &StopConversationResult{Conversation: conversation}, nil
 	}
 

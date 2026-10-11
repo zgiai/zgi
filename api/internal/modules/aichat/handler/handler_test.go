@@ -118,8 +118,9 @@ func (s *capturingChatSurfaceService) PrepareChat(_ context.Context, _ runtimese
 
 func TestSkillResponsePreservesDisplayTaxonomy(t *testing.T) {
 	metadata := skills.SkillDiscoveryMetadata{
-		ID:             "taxonomy-test",
-		DependencyType: skills.SkillDependencyConnector,
+		ID:                  "taxonomy-test",
+		ScriptExecutionMode: skills.SkillScriptExecutionSession,
+		DependencyType:      skills.SkillDependencyConnector,
 		ConnectorRequirements: []skills.SkillConnectorRequirement{{
 			ConnectorID:  "github",
 			OperationIDs: []string{"github.repository.list"},
@@ -132,6 +133,9 @@ func TestSkillResponsePreservesDisplayTaxonomy(t *testing.T) {
 	}
 
 	response := skillResponse(metadata)
+	if response.ScriptExecutionMode != skills.SkillScriptExecutionSession {
+		t.Fatalf("script mode = %q, want session script", response.ScriptExecutionMode)
+	}
 	if response.Display.Category != metadata.Display.Category {
 		t.Fatalf("category = %q, want %q", response.Display.Category, metadata.Display.Category)
 	}

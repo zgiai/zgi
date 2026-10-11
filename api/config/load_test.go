@@ -50,3 +50,46 @@ func TestLoadTaskQueueConfigRejectsGraphFlowQuotaAboveFour(t *testing.T) {
 		t.Fatalf("loadTaskQueueConfig() error=%v, want graphflow concurrency validation", err)
 	}
 }
+
+func TestLoadAppConfigUsesThirtyDayChannelDeliveryTTL(t *testing.T) {
+	cfg := &Config{}
+	source := &envSource{lookupEnv: func(string) (string, bool) { return "", false }}
+	if err := loadAppConfig(cfg, source); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.App.FilesAccessTimeout != 3600 {
+		t.Fatalf("FilesAccessTimeout=%d, want 3600", cfg.App.FilesAccessTimeout)
+	}
+	if cfg.App.ChannelDeliveryFileTTL != DefaultChannelDeliveryFileTTLSeconds {
+		t.Fatalf("ChannelDeliveryFileTTL=%d, want %d", cfg.App.ChannelDeliveryFileTTL, DefaultChannelDeliveryFileTTLSeconds)
+	}
+}
+
+func TestLoadAppConfigRejectsChannelDeliveryTTLAboveThirtyDays(t *testing.T) {
+	cfg := &Config{}
+	source := &envSource{lookupEnv: func(key string) (string, bool) {
+		if key == envChannelDeliveryFileTTL {
+			return "2592001", true
+		}
+		return "", false
+	}}
+	if err := loadAppConfig(cfg, source); err == nil || !strings.Contains(err.Error(), envChannelDeliveryFileTTL) {
+		t.Fatalf("loadAppConfig() error=%v, want channel TTL validation", err)
+	}
+}
+
+func TestLoadAppConfigUsesConfiguredChannelDeliveryTTL(t *testing.T) {
+	cfg := &Config{}
+	source := &envSource{lookupEnv: func(key string) (string, bool) {
+		if key == envChannelDeliveryFileTTL {
+			return "86400", true
+		}
+		return "", false
+	}}
+	if err := loadAppConfig(cfg, source); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.App.ChannelDeliveryFileTTL != 86400 {
+		t.Fatalf("ChannelDeliveryFileTTL=%d, want 86400", cfg.App.ChannelDeliveryFileTTL)
+	}
+}

@@ -1,11 +1,16 @@
 package connectortools
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
+	"unicode"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
 )
 
@@ -90,5 +95,151 @@ func TestConnectorOperationRuntimeDescriptionBoundsOnlyAddedNames(t *testing.T) 
 	got = OperationRuntimeDescription(definition, operation)
 	if got != operation.Description+"\n\n"+strings.Repeat("查", operationLocalizedNameBudget-2) {
 		t.Fatal("oversized labels did not reserve all available suffix space for the action first")
+	}
+}
+
+func TestDigitalHumanTargetMarkerIsDeterministicAndOpaque(t *testing.T) {
+	const connectionID = "5b0f8a3e-1c2d-4e5f-8a9b-0123456789ab"
+	parsed := uuid.MustParse(connectionID)
+	marker := digitalHumanTargetMarker(parsed)
+	digest := sha256.Sum256([]byte(connectionID))
+	want := hex.EncodeToString(digest[:])[:digitalHumanTargetMarkerHexLength]
+	if marker != want {
+		t.Fatalf("marker = %q, want deterministic sha256 prefix %q", marker, want)
+	}
+	if len(marker) != 10 {
+		t.Fatalf("marker = %q, want 10 hex characters", marker)
+	}
+	for _, character := range marker {
+		if !strings.ContainsRune("0123456789abcdef", character) {
+			t.Fatalf("marker = %q, want lowercase hex only", marker)
+		}
+	}
+	if strings.Contains(marker, connectionID) || strings.Contains(marker, strings.ReplaceAll(connectionID, "-", "")) {
+		t.Fatalf("marker exposed the connection UUID: %q", marker)
+	}
+	// Equivalent parseable spellings derive the same marker because the digest
+	// is taken over the canonical UUID, never the caller's raw spelling.
+	if other := digitalHumanTargetMarker(uuid.MustParse(strings.ToUpper(connectionID))); other != marker {
+		t.Fatalf("equivalent UUID spellings derived different markers: %q vs %q", marker, other)
+	}
+}
+
+func TestDigitalHumanConnectionRuntimeDescriptionSanitizesUntrustedLabel(t *testing.T) {
+	const (
+		connectionID = "5b0f8a3e-1c2d-4e5f-8a9b-0123456789ab"
+		base         = "Read the connected account."
+	)
+	marker := digitalHumanTargetMarker(uuid.MustParse(connectionID))
+	for _, test := range []struct {
+		name           string
+		label          string
+		wantLabel      string
+		wantMarkerOnly bool
+	}{
+		{name: "plain label", label: "Work GitHub", wantLabel: `"Work GitHub"`},
+		{name: "blank label falls back to the marker", label: " \t ", wantMarkerOnly: true},
+		{name: "controls and bidi formatting are stripped", label: "Work\x00\x1b[31m\u202eGitHub\u2069", wantLabel: `"Work [31m GitHub"`},
+		{name: "quotes and backslashes are escaped", label: `he said "hi" \ bye`, wantLabel: `"he said \"hi\" \\ bye"`},
+		{name: "line breaks collapse into a space", label: "Work\nGitHub\tMain", wantLabel: `"Work GitHub Main"`},
+		{name: "zero width joiners are stripped", label: "Wo\u200drd", wantLabel: `"Wo rd"`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			want := base + "\n\n"
+			if test.wantMarkerOnly {
+				want += "Digital Human server target marker: " + marker + "."
+			} else {
+				want += "Digital Human connection label: " + test.wantLabel +
+					" (server target marker " + marker + ")."
+			}
+			got, err := DigitalHumanConnectionRuntimeDescription(base, connectionID, test.label)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != want {
+				t.Fatalf("description = %q, want %q", got, want)
+			}
+			if strings.Contains(got, connectionID) || strings.Contains(got, strings.ReplaceAll(connectionID, "-", "")) {
+				t.Fatalf("description exposed the connection UUID: %q", got)
+			}
+			if strings.Contains(got, "connection id") {
+				t.Fatalf("description still presented the target as a connection id: %q", got)
+			}
+			// Only the identity sentence is user-controlled; the admitted base
+			// description keeps its own line breaks.
+			for _, character := range strings.TrimPrefix(got, base+"\n\n") {
+				if unicode.IsControl(character) || unicode.Is(unicode.Cf, character) {
+					t.Fatalf("description retained a control or bidi character: %q", got)
+				}
+			}
+		})
+	}
+}
+
+func TestDigitalHumanConnectionRuntimeDescriptionBoundsLongLabel(t *testing.T) {
+	const connectionID = "5b0f8a3e-1c2d-4e5f-8a9b-0123456789ab"
+	marker := digitalHumanTargetMarker(uuid.MustParse(connectionID))
+	longLabel := strings.Repeat("图", 200)
+	got, err := DigitalHumanConnectionRuntimeDescription("Read the connected account.", connectionID, longLabel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bounded := strings.Repeat("图", connectionLabelBudget)
+	want := "Read the connected account.\n\nDigital Human connection label: \"" + bounded +
+		"\" (server target marker " + marker + ")."
+	if got != want {
+		t.Fatalf("description = %q, want %q", got, want)
+	}
+	if !utf8.ValidString(got) {
+		t.Fatal("bounding split a character")
+	}
+	if strings.Contains(got, strings.Repeat("图", connectionLabelBudget+1)) {
+		t.Fatal("label exceeded its rune budget")
+	}
+	if strings.Contains(got, connectionID) {
+		t.Fatalf("description exposed the connection UUID: %q", got)
+	}
+}
+
+func TestDigitalHumanConnectionRuntimeDescriptionEdgeCases(t *testing.T) {
+	const connectionID = "5b0f8a3e-1c2d-4e5f-8a9b-0123456789ab"
+	marker := digitalHumanTargetMarker(uuid.MustParse(connectionID))
+	got, err := DigitalHumanConnectionRuntimeDescription(" \n ", connectionID, "Work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "Digital Human connection label: \"Work\" (server target marker " + marker + ")."; got != want {
+		t.Fatalf("empty base did not produce a standalone identity sentence: %q", got)
+	}
+	got, err = DigitalHumanConnectionRuntimeDescription("Read.", connectionID, "\u202e \u2069")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "Read.\n\nDigital Human server target marker: " + marker + "."; got != want {
+		t.Fatalf("blank sanitized label did not fall back to the marker: %q", got)
+	}
+}
+
+func TestDigitalHumanConnectionRuntimeDescriptionRejectsInvalidIdentity(t *testing.T) {
+	for _, connectionID := range []string{
+		"",
+		" \t ",
+		"not-a-uuid",
+		"draft-1",
+		uuid.Nil.String(),
+		"{5b0f8a3e-1c2d-4e5f-8a9b-0123456789ab",
+	} {
+		t.Run(connectionID, func(t *testing.T) {
+			got, err := DigitalHumanConnectionRuntimeDescription("Read the connected account.", connectionID, "Work")
+			if !errors.Is(err, errInvalidDigitalHumanConnectionIdentity) {
+				t.Fatalf("error = %v, want fail-closed identity error", err)
+			}
+			if got != "" {
+				t.Fatalf("invalid identity produced model-visible text: %q", got)
+			}
+			if connectionID != "" && strings.Contains(err.Error(), connectionID) {
+				t.Fatalf("error echoed the rejected identity: %v", err)
+			}
+		})
 	}
 }

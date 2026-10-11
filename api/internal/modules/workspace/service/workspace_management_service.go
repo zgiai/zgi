@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	usererrors "github.com/zgiai/zgi/api/internal/errors"
 	quota_model "github.com/zgiai/zgi/api/internal/modules/quota/model"
+	"github.com/zgiai/zgi/api/internal/modules/runtimeworkspace"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	workspacecache "github.com/zgiai/zgi/api/internal/modules/workspace/cache"
@@ -18,6 +19,8 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/workspace/repository"
 	"gorm.io/gorm"
 )
+
+var ErrWorkspaceHasActiveRuntime = errors.New("workspace has an active Runtime Workspace")
 
 type WorkspaceManagementServiceImpl struct {
 	db                  *gorm.DB
@@ -519,12 +522,50 @@ func (s *WorkspaceManagementServiceImpl) UpdateWorkspace(ctx context.Context, id
 
 // DeleteWorkspace Delete workspace
 func (s *WorkspaceManagementServiceImpl) DeleteWorkspace(ctx context.Context, id string) error {
+	workspaceID, err := uuid.Parse(strings.TrimSpace(id))
+	if err != nil {
+		return fmt.Errorf("invalid Workspace ID: %w", err)
+	}
+	// Keep the fast rejection outside the transaction for callers that try to
+	// delete an active Runtime Workspace. The transactional helper below repeats
+	// this check under the delete transaction to close the race with a concurrent
+	// Runtime activation.
+	var activeRuntimeCount int64
+	if err := s.db.WithContext(ctx).Table("runtime_workspaces").Where("workspace_id = ? AND status = ?", id, runtimeworkspace.StatusActive).Count(&activeRuntimeCount).Error; err != nil {
+		return fmt.Errorf("check active Runtime Workspace: %w", err)
+	}
+	if activeRuntimeCount > 0 {
+		return ErrWorkspaceHasActiveRuntime
+	}
+	if err := runtimeworkspace.NewService(s.db).WaitForRequestDrain(ctx, workspaceID); err != nil {
+		return fmt.Errorf("drain Runtime Workspace requests: %w", err)
+	}
 	workspace, _ := s.workspaceRepo.GetByID(ctx, id)
-	if err := s.workspaceRepo.Delete(ctx, id); err != nil {
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		txService := s.WithTx(tx).(*WorkspaceManagementServiceImpl)
+		return txService.deleteWorkspaceInTx(ctx, id, workspaceID)
+	}); err != nil {
 		return err
 	}
 	if workspace != nil && workspace.OrganizationID != nil {
 		workspacecache.InvalidateOrganizationWithWorkspaceMembers(ctx, s.db, *workspace.OrganizationID)
+	}
+	return nil
+}
+
+func (s *WorkspaceManagementServiceImpl) deleteWorkspaceInTx(ctx context.Context, id string, workspaceID uuid.UUID) error {
+	var activeRuntimeCount int64
+	if err := s.db.WithContext(ctx).Table("runtime_workspaces").Where("workspace_id = ? AND status = ?", id, runtimeworkspace.StatusActive).Count(&activeRuntimeCount).Error; err != nil {
+		return fmt.Errorf("check active Runtime Workspace: %w", err)
+	}
+	if activeRuntimeCount > 0 {
+		return ErrWorkspaceHasActiveRuntime
+	}
+	if _, err := runtimeworkspace.TeardownAttachedWorkspace(ctx, s.db, workspaceID, time.Now().UTC()); err != nil {
+		return fmt.Errorf("teardown Runtime Workspace data: %w", err)
+	}
+	if err := s.workspaceRepo.Delete(ctx, id); err != nil {
+		return err
 	}
 	return nil
 }
@@ -811,8 +852,20 @@ func (s *WorkspaceManagementServiceImpl) removeMemberInternal(ctx context.Contex
 	return nil
 }
 
+func (s *WorkspaceManagementServiceImpl) disableRuntimeWorkspaceForDeletion(ctx context.Context, workspaceID string) error {
+	if s == nil || s.db == nil {
+		return errors.New("workspace database is unavailable")
+	}
+	return s.db.WithContext(ctx).Table("runtime_workspaces").Where("workspace_id = ? AND status = ?", workspaceID, runtimeworkspace.StatusActive).
+		Updates(map[string]any{"status": runtimeworkspace.StatusDisabled, "updated_at": gorm.Expr("CURRENT_TIMESTAMP")}).Error
+}
+
 // DeleteWorkspaceWithMembers Delete workspace and all its members (including owner)
 func (s *WorkspaceManagementServiceImpl) DeleteWorkspaceWithMembers(ctx context.Context, id string) error {
+	workspaceID, err := uuid.Parse(strings.TrimSpace(id))
+	if err != nil {
+		return fmt.Errorf("invalid Workspace ID: %w", err)
+	}
 	workspace, _ := s.workspaceRepo.GetByID(ctx, id)
 	joins, err := s.workspaceMemberRepo.GetJoinsByWorkspaceID(ctx, id)
 	if err != nil {
@@ -826,6 +879,22 @@ func (s *WorkspaceManagementServiceImpl) DeleteWorkspaceWithMembers(ctx context.
 		}
 	}
 
+	// Commit the disablement before waiting. Request leases are released by the
+	// request middleware, so holding this row lock while waiting would deadlock
+	// an in-flight request that is trying to finish and release its lease.
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		txSvc := s.WithTx(tx).(*WorkspaceManagementServiceImpl)
+		if err := txSvc.disableRuntimeWorkspaceForDeletion(ctx, id); err != nil {
+			return fmt.Errorf("disable Runtime Workspace before deletion: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := runtimeworkspace.NewService(s.db).WaitForRequestDrain(ctx, workspaceID); err != nil {
+		return fmt.Errorf("drain Runtime Workspace requests: %w", err)
+	}
+
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
 		txSvc := s.WithTx(tx).(*WorkspaceManagementServiceImpl)
 
@@ -837,7 +906,7 @@ func (s *WorkspaceManagementServiceImpl) DeleteWorkspaceWithMembers(ctx context.
 		}
 
 		// Delete workspace
-		return txSvc.DeleteWorkspace(ctx, id)
+		return txSvc.deleteWorkspaceInTx(ctx, id, workspaceID)
 	}); err != nil {
 		return err
 	}

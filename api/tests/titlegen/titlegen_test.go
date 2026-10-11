@@ -60,9 +60,9 @@ func TestGenerateUsesModelTitle(t *testing.T) {
 	}
 }
 
-func TestGenerateFallsBackOnInvalidJSON(t *testing.T) {
+func TestGenerateFallsBackOnUnusableModelResponse(t *testing.T) {
 	svc := titlegen.NewService(
-		&fakeLLMClient{chatContent: `not json`},
+		&fakeLLMClient{chatContent: ``},
 		&fakeDefaultModelService{resolved: &defaultmodelservice.ResolvedModel{Provider: "openai", Model: "gpt-test"}},
 	)
 	result, err := svc.Generate(context.Background(), validRequest("Fallback Title"))
@@ -71,6 +71,17 @@ func TestGenerateFallsBackOnInvalidJSON(t *testing.T) {
 	}
 	if result.Title != "Fallback Title" || result.Source != titlegen.SourceFallback {
 		t.Fatalf("result = %#v, want fallback", result)
+	}
+}
+
+func TestGenerateAcceptsPlainTextTitle(t *testing.T) {
+	svc := titlegen.NewService(
+		&fakeLLMClient{chatContent: `Travel itinerary`},
+		&fakeDefaultModelService{resolved: &defaultmodelservice.ResolvedModel{Provider: "openai", Model: "gpt-test"}},
+	)
+	result, err := svc.Generate(context.Background(), validRequest("Fallback Title"))
+	if err != nil || result.Title != "Travel itinerary" || result.Source != titlegen.SourceModel {
+		t.Fatalf("plain text title = %#v, %v", result, err)
 	}
 }
 
@@ -115,7 +126,12 @@ func (f *fakeDefaultModelService) ResolveUseCase(context.Context, string, llmmod
 	if f.err != nil {
 		return nil, f.err
 	}
-	return f.resolved, nil
+	if f.resolved == nil {
+		return nil, nil
+	}
+	resolved := *f.resolved
+	resolved.UseCase = string(llmmodelmodel.UseCaseTextChat)
+	return &resolved, nil
 }
 
 func (f *fakeDefaultModelService) ListResolved(context.Context, uuid.UUID) ([]*defaultmodelservice.ResolvedModel, error) {

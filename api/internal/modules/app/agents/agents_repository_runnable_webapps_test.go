@@ -162,6 +162,44 @@ func TestAgentsRepository_ListRunnableWebApps_FiltersByWebAppID(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestAgentsRepository_ListRunnableWebApps_FiltersByAnyCatalogTag(t *testing.T) {
+	db, mock := newRunnableWebAppsMockDB(t)
+	repo := NewAgentsRepository(db)
+
+	workspaceID := uuid.NewString()
+	firstTagID := uuid.NewString()
+	secondTagID := uuid.NewString()
+	mock.ExpectQuery(`(?s)SELECT .* FROM "agents".*agent_catalog_tag_bindings.*tag_id IN \(.*\).*ORDER BY agents\.tenant_id ASC,agents\.created_at DESC,agents\.id ASC`).
+		WithArgs(AgentWebAppStatusActive, workspaceID, "AGENT", "AGENT", "draft", firstTagID, secondTagID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"agent_id", "workspace_id", "web_app_id", "web_app_status", "agent_name",
+			"agent_icon", "agent_icon_type", "agent_desc", "agent_type",
+		}))
+
+	result, err := repo.ListRunnableWebApps(t.Context(), []string{workspaceID}, runnableWebAppFilter{
+		TagIDs: []string{firstTagID, secondTagID},
+	})
+	require.NoError(t, err)
+	require.Empty(t, result.Items)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAgentsRepository_ListRunnableWebAppTagFacetsUsesVisibleRunnableScope(t *testing.T) {
+	db, mock := newRunnableWebAppsMockDB(t)
+	repo := NewAgentsRepository(db)
+
+	workspaceID := uuid.NewString()
+	tagID := uuid.New()
+	mock.ExpectQuery(`(?s)SELECT catalog_tags\.id AS tag_id.*COUNT\(DISTINCT agents\.id\).*FROM "agents".*agent_catalog_tag_bindings.*agent_catalog_tags.*GROUP BY catalog_tags\.id, catalog_tags\.name.*ORDER BY catalog_tags\.name ASC, catalog_tags\.id ASC`).
+		WithArgs(AgentWebAppStatusActive, workspaceID, "AGENT", "AGENT", "draft").
+		WillReturnRows(sqlmock.NewRows([]string{"tag_id", "name", "count"}).AddRow(tagID, "Finance", 3))
+
+	facets, err := repo.ListRunnableWebAppTagFacets(t.Context(), []string{workspaceID}, runnableWebAppFilter{})
+	require.NoError(t, err)
+	require.Equal(t, []runnableWebAppTagFacet{{TagID: tagID, Name: "Finance", Count: 3}}, facets)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func newRunnableWebAppsMockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {
 	t.Helper()
 

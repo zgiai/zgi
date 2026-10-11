@@ -3707,6 +3707,22 @@ func (s *fakeAgentManagementService) GetRunnableWebApps(context.Context, string,
 	return nil, nil
 }
 
+func (s *fakeAgentManagementService) GetRunnableWebAppTagFacets(context.Context, string, dto.GetRunnableWebAppsRequest) (*dto.RunnableWebAppTagFacetsResponse, error) {
+	return nil, nil
+}
+
+func (s *fakeAgentManagementService) GetAgentCatalogTagFacets(context.Context, string, dto.GetAgentCatalogTagFacetsRequest) (*dto.AgentCatalogTagFacetsResponse, error) {
+	return nil, nil
+}
+
+func (s *fakeAgentManagementService) GetAgentCatalogTags(context.Context, string, string) (*dto.AgentCatalogTagsResponse, error) {
+	return nil, nil
+}
+
+func (s *fakeAgentManagementService) ReplaceAgentCatalogTags(context.Context, string, string, dto.ReplaceAgentCatalogTagsRequest) (*dto.AgentCatalogTagsResponse, error) {
+	return nil, nil
+}
+
 func (s *fakeAgentManagementService) CreateAgent(_ context.Context, workspaceID string, req interface{}, _ string) (interface{}, error) {
 	s.createAgentCalls++
 	s.lastCreateAgentWorkspaceID = workspaceID

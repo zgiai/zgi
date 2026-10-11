@@ -26,7 +26,7 @@ func openWorkflowConversationRuntimeTestDB(t *testing.T) *gorm.DB {
 		}
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := db.AutoMigrate(&conversation.AgentConversation{}, &conversation.AgentMessage{}, &WorkflowRunLog{}); err != nil {
+	if err := autoMigrateWorkflowTest(db, &conversation.AgentConversation{}, &conversation.AgentMessage{}, &WorkflowRunLog{}); err != nil {
 		t.Fatalf("migrate workflow conversation runtime: %v", err)
 	}
 	return db

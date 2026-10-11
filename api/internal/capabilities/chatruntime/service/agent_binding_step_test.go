@@ -78,3 +78,24 @@ func newAgentBindingStepTestDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {
 	}
 	return db, mock
 }
+
+func TestCurrentAgentBindingVerifierPinsPublishedInvocationVersion(t *testing.T) {
+	db, mock := newAgentBindingStepTestDB(t)
+	app, version := uuid.New(), uuid.New()
+	// No SELECT of an arbitrary published head: this invocation already has an
+	// immutable publication, and only that version's live binding may authorize.
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT count(*) FROM "agent_resource_bindings" WHERE (agent_id = $1 AND consumer_type = $2 AND binding_scope = $3 AND binding_type = $4 AND resource_id = $5 AND parent_resource_id = $6) AND published_version_uuid = $7 AND access_mode = $8`)).
+		WithArgs(app, "agent", "published", "workflow", "binding-1", "workflow-agent-1", version, "execute").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	svc := &service{repos: &repository.Repositories{DB: db}}
+	verifier := svc.currentAgentBindingVerifier(&PreparedChat{
+		Caller: Caller{Type: "agent", ID: &app, Source: "external-api"}, RunConfig: RunConfig{ConnectorTargetVersionID: version.String()},
+	})
+	matched, err := verifier(t.Context(), skills.AgentBindingCheck{BindingType: "workflow", ResourceID: "binding-1", ParentResourceID: "workflow-agent-1", AccessMode: "execute"})
+	if err != nil || !matched {
+		t.Fatalf("pinned binding: %v %v", matched, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

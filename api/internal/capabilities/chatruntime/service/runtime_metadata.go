@@ -60,13 +60,26 @@ func (s *service) persistModelInvocationBestEffort(ctx context.Context, prepared
 		trace = modelInvocationTraceWithoutContent(trace)
 	}
 	invocation := modelInvocationFromTrace(trace, runtimeUserSystemPrompt(prepared), shouldRedactModelInvocationRequest(prepared))
-	if len(invocation) == 0 {
+	if len(invocation) == 0 && prepared.taskTokenBudget == nil {
 		return
 	}
-	if shouldPersistAgentLogContext(prepared) && !suppressContent {
+	if shouldPersistAgentLogContext(prepared) && !suppressContent && len(invocation) > 0 {
 		invocation["log_context"] = modelInvocationLogContext(trace.Request, runtimeUserSystemPrompt(prepared))
 	}
-	metadata := mergeModelInvocationMetadata(prepared.Message.Metadata, invocation)
+	metadata := copyStringAnyMap(prepared.Message.Metadata)
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	if len(invocation) > 0 {
+		metadata = mergeModelInvocationMetadata(metadata, invocation)
+	}
+	if prepared.taskTokenBudget != nil {
+		status := "running"
+		if prepared.taskTokenBudget.exhausted() != nil {
+			status = "exhausted"
+		}
+		metadata[taskTokenBudgetMetadataKey] = prepared.taskTokenBudget.metadata(status)
+	}
 	provider := ""
 	model := ""
 	if trace.Request != nil {
@@ -422,6 +435,7 @@ func applyPlanUpdateTraceMetadata(metadata map[string]interface{}, trace skills.
 	if len(outcomeSnapshot) > 0 {
 		outcomes := reconcileOperationPlanOutcomeSnapshot(plan, outcomeSnapshot)
 		plan[operationPlanOutcomesKey] = mapsToInterfaceSlice(outcomes)
+		outcomePhases := operationPlanPhasesFromOutcomeSnapshot(mapSliceFromAny(plan["phases"]), outcomes)
 		if len(phases) > 0 {
 			// A joint snapshot supplies the execution contract as well as goals.
 			// Legacy joint arrays pair by position; explicit outcome_id supports
@@ -431,15 +445,13 @@ func applyPlanUpdateTraceMetadata(metadata map[string]interface{}, trace skills.
 					phase["outcome_id"] = outcomes[index]["id"]
 				}
 			}
-			// Internal server plan updates may atomically declare outcomes and
-			// attach canonical action bindings. Reconcile supplied phases onto
-			// generated outcome phases so no outcome or execution fact is lost.
-			outcomePhases := operationPlanPhasesFromOutcomeSnapshot(mapSliceFromAny(plan["phases"]), outcomes)
+			// Internal server plan updates may atomically declare Outcomes and
+			// attach canonical Action bindings. Reconcile the supplied phases onto
+			// the generated Outcome phases so expected_action, ledger epoch, and
+			// other server execution facts are not discarded by Outcome creation.
 			outcomePhases = reconcileOperationPlanOutcomePhaseSnapshot(outcomePhases, phases)
-			plan["phases"] = mapsToInterfaceSlice(outcomePhases)
-		} else {
-			plan["phases"] = mapsToInterfaceSlice(operationPlanPhasesFromOutcomeSnapshot(mapSliceFromAny(plan["phases"]), outcomes))
 		}
+		plan["phases"] = mapsToInterfaceSlice(outcomePhases)
 		operationPlanReconcileOutcomes(plan)
 	} else {
 		phases = reconcileOperationPlanPhaseSnapshot(mapSliceFromAny(plan["phases"]), phases)
@@ -1175,6 +1187,7 @@ func clientVisibleMessageMetadata(source map[string]interface{}) map[string]inte
 	if len(metadata) == 0 {
 		return metadata
 	}
+	filterInternalDigitalHumanTaskGovernanceInvocations(metadata)
 	filtered, changed := filterFinalAnswerInvocations(metadata["skill_invocations"])
 	if !changed {
 		return metadata
@@ -1185,6 +1198,40 @@ func clientVisibleMessageMetadata(source map[string]interface{}) map[string]inte
 	}
 	metadata["skill_invocations"] = skillInvocationsToInterfaceSlice(filtered)
 	return metadata
+}
+
+// filterInternalDigitalHumanTaskGovernanceInvocations removes the generic
+// governance invocation from the public message projection. The durable
+// metadata keeps it for audit and continuation recovery, while DigitalHuman
+// clients receive the task-specific workflow/approval projection instead.
+func filterInternalDigitalHumanTaskGovernanceInvocations(metadata map[string]interface{}) {
+	if len(metadata) == 0 {
+		return
+	}
+	raw := mapSliceFromAny(metadata["skill_invocations"])
+	if len(raw) == 0 {
+		return
+	}
+	filtered := make([]map[string]interface{}, 0, len(raw))
+	changed := false
+	for _, invocation := range raw {
+		kind := strings.ToLower(strings.TrimSpace(stringFromAny(invocation["kind"])))
+		if kind == "tool_governance" &&
+			(strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["presentation_visibility"])), "internal") ||
+				isDigitalHumanTaskGovernancePayload(invocation)) {
+			changed = true
+			continue
+		}
+		filtered = append(filtered, invocation)
+	}
+	if !changed {
+		return
+	}
+	if len(filtered) == 0 {
+		delete(metadata, "skill_invocations")
+		return
+	}
+	metadata["skill_invocations"] = skillInvocationsToInterfaceSlice(filtered)
 }
 
 // ClientVisibleMessageMetadata returns the public projection of durable message

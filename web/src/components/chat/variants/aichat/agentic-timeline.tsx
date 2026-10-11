@@ -1,13 +1,16 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
   ChevronDown,
   CircleHelp,
   Loader2,
+  ListTodo,
+  MessageSquarePlus,
   TriangleAlert,
+  Terminal,
 } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Button } from '@/components/ui/button';
@@ -42,6 +45,11 @@ import {
   parseConnectorOperationPresentation,
 } from '@/components/connectors/runtime/connector-operation-presentation';
 import { ToolInvocationRow } from './tool-invocation-row';
+import {
+  agentExecutionDuration,
+  getAgentExecutionDisplay,
+  getAgentExecutionJobPresentation,
+} from './agent-execution-job-presentation';
 
 import {
   formatAIChatTimelineArgumentSummary,
@@ -197,7 +205,16 @@ interface AIChatAgenticTimelineProps {
   onToolGovernanceDecision?: (
     payload: AIChatToolGovernanceDecisionSubmitPayload
   ) => void | Promise<void>;
+  onTaskProposalAction?: (payload: AITaskProposalActionPayload) => void | Promise<void>;
+  onTaskMutation?: () => void;
   onConnectorRuntimeDecision?: ConnectorRuntimeDecisionHandler;
+}
+
+export interface AITaskProposalActionPayload {
+  action: 'confirm' | 'edit' | 'decline';
+  taskId: string;
+  taskName: string;
+  revision: number;
 }
 
 export interface AIChatToolGovernanceDecisionSubmitPayload {
@@ -233,6 +250,7 @@ type UserInputResponseTimelineItem = Extract<
   { type: 'user_input_response' }
 >;
 type MemoryTimelineItem = Extract<AIChatAgenticTimelineItem, { type: 'memory_event' }>;
+type RuntimeInputTimelineItem = Extract<AIChatAgenticTimelineItem, { type: 'runtime_input' }>;
 type GovernanceTimelineItem = Extract<
   AIChatAgenticTimelineItem,
   { type: 'tool_governance_decision' }
@@ -279,6 +297,11 @@ type TimelineRenderItem =
       item: MemoryTimelineItem;
     }
   | {
+      renderType: 'runtime_input';
+      key: string;
+      item: RuntimeInputTimelineItem;
+    }
+  | {
       renderType: 'tool_governance';
       key: string;
       item: GovernanceTimelineItem;
@@ -320,6 +343,8 @@ interface ToolGovernanceDecisionViewModel {
 function getInvocationTone(invocation: AIChatSkillInvocation): TimelineTone {
   const connectorTone = connectorOperationTone(invocation);
   if (connectorTone) return connectorTone;
+  const job = getAgentExecutionJobPresentation(invocation);
+  if (job) return job.tone;
   if (invocation.status === 'loading' || invocation.status === 'running') return 'running';
   if (invocation.kind === 'guardrail') return 'success';
   if (
@@ -889,7 +914,15 @@ function timelineDebugRows(invocation: AIChatSkillInvocation, locale: string, t:
     ['skillId', isConnector ? null : invocation.skill_id],
     ['toolName', toolName ?? fallbackToolName],
     ['path', isConnector ? null : invocation.path],
-    ['duration', getDurationText(invocation.duration_ms, t)],
+    [
+      'duration',
+      getDurationText(
+        invocation.skill_id === 'agent_execution'
+          ? agentExecutionDuration(invocation)
+          : invocation.duration_ms,
+        t
+      ),
+    ],
     ['arguments', argumentSummary],
     [
       'message',
@@ -922,6 +955,29 @@ function buildSkillTitle(
   t: WebappTranslator,
   skillDisplayById?: AIChatSkillDisplayMap
 ): string {
+  const job = getAgentExecutionJobPresentation(invocation);
+  if (invocation.skill_id === 'agent_execution') {
+    if (invocation.tool_name === 'shell_exec') {
+      const display = getAgentExecutionDisplay(invocation);
+      return `${t(display.runtimeLabelKey)} · ${t(
+        job?.labelKey ??
+          (tone === 'running'
+            ? 'consoleChat.skills.agentic.jobRunning'
+            : tone === 'error'
+              ? 'consoleChat.skills.agentic.jobFailed'
+              : 'consoleChat.skills.agentic.jobUnconfirmed')
+      )}`;
+    }
+    if (invocation.tool_name === 'workspace_export_file') {
+      return t(
+        tone === 'running'
+          ? 'consoleChat.skills.agentic.fileExporting'
+          : tone === 'error'
+            ? 'consoleChat.skills.agentic.fileExportFailed'
+            : 'consoleChat.skills.agentic.fileExported'
+      );
+    }
+  }
   const routeTarget = routeNavigationDisplayTarget(invocation, t);
   if (routeTarget) {
     const alreadyLoaded = routeNavigationAlreadyLoaded(invocation);
@@ -1013,6 +1069,11 @@ function SkillTimelineRow({
   const t = useT('webapp');
   const { locale } = useLocale();
   const connectorT = useT('connectors');
+  if (event.item.invocation.tool_name?.trim() === 'manage_digital_human_task') {
+    // Task mutations are represented by the blocking approval composer. Do
+    // not render a second generic tool row in the assistant timeline.
+    return null;
+  }
   const connector = isConnectorOperationInvocation(event.item.invocation);
   const presentation = connector
     ? parseConnectorOperationPresentation(event.item.invocation)
@@ -1020,7 +1081,15 @@ function SkillTimelineRow({
   const title = connector
     ? `${presentation?.title ?? connectorT('runtime.presentation.title')} · ${connectorT(`runtime.presentation.status.${presentation?.execution_status ?? presentation?.display_status ?? 'unavailable'}`)}`
     : event.title;
-  const duration = getDurationText(event.item.invocation.duration_ms, t);
+  const invocation = event.item.invocation;
+  const runtime = invocation.skill_id === 'agent_execution';
+  const shell = runtime && invocation.tool_name === 'shell_exec';
+  const job = shell ? getAgentExecutionJobPresentation(invocation) : null;
+  const executionDisplay = shell ? getAgentExecutionDisplay(invocation) : null;
+  const duration = getDurationText(
+    runtime ? agentExecutionDuration(invocation) : invocation.duration_ms,
+    t
+  );
   const detail = !connector && event.detail ? sanitizeDisplayString(event.detail) : null;
   const displayResult = connector
     ? undefined
@@ -1030,13 +1099,23 @@ function SkillTimelineRow({
       tone={event.tone}
       statusIcon={getStatusIcon(event.tone)}
       icon={
-        <AIChatSkillIcon
-          icon={event.skill.icon}
-          className="size-3.5 shrink-0 text-muted-foreground"
-        />
+        runtime ? (
+          <Terminal className="size-4 shrink-0 text-muted-foreground" />
+        ) : (
+          <AIChatSkillIcon
+            icon={event.skill.icon}
+            className="size-3.5 shrink-0 text-muted-foreground"
+          />
+        )
       }
       title={title}
       duration={duration}
+      summary={
+        shell && event.tone === 'error' && executionDisplay?.diagnosticLabelKey
+          ? t(executionDisplay.diagnosticLabelKey)
+          : undefined
+      }
+      defaultOpen={shell && event.tone === 'error'}
     >
       {showDetails ? (
         <>
@@ -1045,33 +1124,57 @@ function SkillTimelineRow({
               {detail}
             </div>
           ) : null}
-          <AIChatSkillResultSummary
-            invocation={event.item.invocation}
-            result={displayResult}
-            skillId={event.item.invocation.skill_id}
-            toolName={event.item.invocation.tool_name}
-            className="mb-2"
-          />
+          {shell ? (
+            <div className="space-y-2 text-xs leading-5">
+              {job ? <p>{t(job.labelKey)}</p> : null}
+              {executionDisplay?.hasOutput ? (
+                <p className="text-muted-foreground">
+                  {t('consoleChat.skills.agentic.executionOutputPrivate')}
+                </p>
+              ) : null}
+            </div>
+          ) : (
+            <AIChatSkillResultSummary
+              invocation={event.item.invocation}
+              result={displayResult}
+              skillId={event.item.invocation.skill_id}
+              toolName={event.item.invocation.tool_name}
+              className="mb-2"
+            />
+          )}
           {!connector ? (
-            <dl className="grid gap-1 rounded-md bg-background/80 p-2 text-[11px]">
-              {timelineDebugRows(event.item.invocation, locale, t).map(([labelKey, value]) => {
-                const formatted =
-                  labelKey === 'arguments'
-                    ? formatAIChatTimelineArgumentSummary(value, t)
-                    : formatDebugValue(value);
-                if (!formatted) return null;
-                return (
-                  <div key={labelKey} className="grid grid-cols-[88px_minmax(0,1fr)] gap-2">
+            <details className="mt-2">
+              <summary className="cursor-pointer text-xs text-muted-foreground">
+                {t('consoleChat.skills.agentic.technicalDetails')}
+              </summary>
+              <dl className="mt-2 grid gap-1 rounded-md bg-background/80 p-2 text-xs">
+                {shell ? (
+                  <div className="grid grid-cols-[88px_minmax(0,1fr)] gap-2">
                     <dt className="text-muted-foreground">
-                      {t(TIMELINE_DEBUG_LABEL_KEYS[labelKey])}
+                      {t('consoleChat.skills.agentic.exitCode')}
                     </dt>
-                    <dd className="min-w-0 max-h-40 overflow-auto whitespace-pre-wrap break-all font-mono text-foreground/80">
-                      {formatted}
-                    </dd>
+                    <dd>{job?.exitCode ?? t('consoleChat.skills.agentic.jobExitUnavailable')}</dd>
                   </div>
-                );
-              })}
-            </dl>
+                ) : null}
+                {timelineDebugRows(event.item.invocation, locale, t).map(([labelKey, value]) => {
+                  const formatted =
+                    labelKey === 'arguments'
+                      ? formatAIChatTimelineArgumentSummary(value, t)
+                      : formatDebugValue(value);
+                  if (!formatted) return null;
+                  return (
+                    <div key={labelKey} className="grid grid-cols-[88px_minmax(0,1fr)] gap-2">
+                      <dt className="text-muted-foreground">
+                        {t(TIMELINE_DEBUG_LABEL_KEYS[labelKey])}
+                      </dt>
+                      <dd className="min-w-0 max-h-40 overflow-auto whitespace-pre-wrap break-all font-mono text-foreground/80">
+                        {formatted}
+                      </dd>
+                    </div>
+                  );
+                })}
+              </dl>
+            </details>
           ) : null}
         </>
       ) : undefined}
@@ -3017,6 +3120,30 @@ function WorkflowTimelineRow({
   item: WorkflowTimelineItem;
   showFailureDetails: boolean;
 }) {
+  const t = useT('webapp');
+  if (item.kind === 'digital_human_task') {
+    const label =
+      item.status === 'pending_approval'
+        ? t('consoleChat.taskApproval.timelinePending')
+        : item.status === 'completed'
+          ? t('consoleChat.taskApproval.timelineCompleted')
+          : item.status === 'error'
+            ? t('consoleChat.taskApproval.timelineFailed')
+            : t('consoleChat.taskApproval.timelineRunning');
+    const approvalRecord =
+      item.approval && typeof item.approval === 'object'
+        ? (item.approval as Record<string, unknown>)
+        : {};
+    const taskName =
+      item.taskName?.trim() ||
+      (typeof approvalRecord.task_name === 'string' ? approvalRecord.task_name.trim() : '');
+    return (
+      <div className="flex min-w-0 items-center gap-2 border-l-2 border-warning/40 py-1 pl-3 text-xs text-muted-foreground">
+        <ListTodo className="size-3.5 shrink-0 text-warning-foreground" />
+        <span>{taskName ? `${label} · ${taskName}` : label}</span>
+      </div>
+    );
+  }
   const nodes: WorkflowRunNodeListItem[] = item.nodes.map((node, index) => ({
     title: node.title ?? node.nodeId ?? node.nodeType ?? '',
     nodeId: node.nodeId ?? `workflow-node-${index}`,
@@ -3589,9 +3716,26 @@ function filterTimelineForRendering(
       item.type === 'workflow_run' && item.invocationId ? [item.invocationId] : []
     )
   );
+  const compactedDigitalHumanTaskRuns = compactDigitalHumanTaskWorkflowTimelineItems(timeline);
+  const hasDigitalHumanTaskWorkflow = compactedDigitalHumanTaskRuns.some(
+    item =>
+      item.type === 'workflow_run' &&
+      (item.kind === 'digital_human_task' || item.workflowRunId.startsWith('digital-human-task:'))
+  );
+  // The generic governance placeholder can arrive before the dedicated task
+  // workflow event on the live stream. A task mutation invocation is already
+  // enough context to suppress that placeholder; otherwise users briefly see
+  // a meaningless yellow "Run this tool" row before it disappears on refresh.
+  const hasDigitalHumanTaskContext =
+    hasDigitalHumanTaskWorkflow ||
+    compactedDigitalHumanTaskRuns.some(
+      item =>
+        item.type === 'skill_event' &&
+        item.invocation.tool_name?.trim() === 'manage_digital_human_task'
+    );
   return compactDuplicateRouteNavigationEvents(
     compactTerminalProgressText(
-      compactTerminalIntermediateAnswers(timeline, messageStatus),
+      compactTerminalIntermediateAnswers(compactedDigitalHumanTaskRuns, messageStatus),
       messageStatus
     ).filter(
       item =>
@@ -3614,9 +3758,112 @@ function filterTimelineForRendering(
           enableToolGovernanceApprovals &&
           item.type === 'tool_governance_decision' &&
           isToolGovernanceNeedsApproval(item)
-        )
+        ) &&
+        // DigitalHuman task mutations have a dedicated approval/workflow
+        // presentation. Never render their generic governance audit row,
+        // even when the workflow item is missing during live SSE or when an
+        // older persisted message has incomplete workflow metadata.
+        !isDigitalHumanTaskGovernanceItem(item, hasDigitalHumanTaskContext)
     )
   );
+}
+
+function isDigitalHumanTaskGovernanceItem(
+  item: AIChatAgenticTimelineItem,
+  hasDigitalHumanTaskWorkflow = false
+): boolean {
+  if (item.type !== 'tool_governance_decision') return false;
+  const event = item.event as unknown as Record<string, unknown>;
+  const governance = governanceRecord(event.governance);
+  const approvalEvent =
+    governanceRecord(event.approval_event) ?? governanceRecord(governance?.approval_event);
+  const approvalForm = governanceRecord(approvalEvent?.approval_form);
+  const frozenInvocation =
+    governanceRecord(event.frozen_invocation) ??
+    governanceRecord(approvalEvent?.frozen_invocation) ??
+    governanceRecord(governance?.frozen_invocation);
+  const result =
+    governanceRecord(event.result) ??
+    governanceRecord(event.execution_result) ??
+    governanceRecord(governance?.execution_result);
+  const resultData = governanceRecord(result?.data);
+  const resultTask = governanceRecord(result?.task) ?? governanceRecord(resultData?.task);
+  const frozenArguments = governanceRecord(frozenInvocation?.arguments);
+  const sources = [
+    event,
+    governance,
+    approvalEvent,
+    approvalForm,
+    frozenInvocation,
+    frozenArguments,
+    result,
+    resultData,
+    resultTask,
+  ].filter((record): record is Record<string, unknown> => Boolean(record));
+  return sources.some(record => {
+    const skill = String(record.skill_id ?? '')
+      .trim()
+      .toLowerCase();
+    const tool = String(record.tool_name ?? '')
+      .trim()
+      .toLowerCase();
+    const node = String(record.node_id ?? '')
+      .trim()
+      .toLowerCase();
+    const runID = String(record.workflow_run_id ?? '')
+      .trim()
+      .toLowerCase();
+    const genericTool = !tool || tool === 'tool-governance' || tool === 'tool_governance';
+    const genericSkill = skill === 'tool-governance' || skill === 'tool_governance';
+    return (
+      (skill === 'digital-human-tasks' && tool === 'manage_digital_human_task') ||
+      tool === 'manage_digital_human_task' ||
+      node === 'digital_human_task' ||
+      runID.startsWith('digital-human-task:') ||
+      String(record.task_action ?? '').trim() !== '' ||
+      (hasDigitalHumanTaskWorkflow && (genericTool || genericSkill))
+    );
+  });
+}
+
+function digitalHumanTaskTimelineID(item: WorkflowTimelineItem): string | undefined {
+  if (item.taskId?.trim()) return item.taskId.trim();
+  const match = /^digital-human-task:([^:]+):/.exec(item.workflowRunId);
+  return match?.[1];
+}
+
+function compactDigitalHumanTaskWorkflowTimelineItems(
+  timeline: AIChatAgenticTimelineItem[]
+): AIChatAgenticTimelineItem[] {
+  const result: AIChatAgenticTimelineItem[] = [];
+  const indexByTaskID = new Map<string, number>();
+  timeline.forEach(item => {
+    if (item.type !== 'workflow_run' || item.kind !== 'digital_human_task') {
+      result.push(item);
+      return;
+    }
+    const taskID = digitalHumanTaskTimelineID(item);
+    if (!taskID) {
+      result.push(item);
+      return;
+    }
+    const existingIndex = indexByTaskID.get(taskID);
+    if (existingIndex === undefined) {
+      indexByTaskID.set(taskID, result.length);
+      result.push(item);
+      return;
+    }
+    const existing = result[existingIndex];
+    if (existing.type !== 'workflow_run') {
+      result[existingIndex] = item;
+      return;
+    }
+    // Approval continuations create a new workflow run for the same task.
+    // Keep the newest projection so the timeline cannot show an old approval
+    // and a newer applied/failed state as two unrelated operations.
+    result[existingIndex] = item;
+  });
+  return result;
 }
 
 function skillTimelineViewModel(
@@ -3708,6 +3955,8 @@ function timelineRenderItem(
       return { renderType: 'user_input_response', key: item.id, item };
     case 'memory_event':
       return { renderType: 'memory', key: item.id, item };
+    case 'runtime_input':
+      return { renderType: 'runtime_input', key: item.id, item };
     case 'tool_governance_decision':
       return { renderType: 'tool_governance', key: item.id, item };
     case 'workflow_run':
@@ -3843,6 +4092,8 @@ function TimelineRenderRow({
       return <UserInputResponseTimelineRow item={item.item} />;
     case 'memory':
       return <MemoryTimelineRow item={item.item} showMemoryKey={showMemoryKey} />;
+    case 'runtime_input':
+      return <RuntimeInputTimelineRow item={item.item} />;
     case 'tool_governance':
       return (
         <ToolGovernanceDecisionRow
@@ -3862,6 +4113,25 @@ function TimelineRenderRow({
       }
       return <SkillTimelineRow event={item.view} showDetails={showSkillEventDetails} />;
   }
+}
+
+function RuntimeInputTimelineRow({ item }: { item: RuntimeInputTimelineItem }) {
+  const t = useT('webapp');
+  const title = item.model_round
+    ? t('consoleChat.runtimeInput.appliedBeforeRound', { round: item.model_round })
+    : t('consoleChat.runtimeInput.appliedInChain');
+
+  return (
+    <div className="flex min-w-0 gap-2 border-l-2 border-primary/30 py-1 pl-3">
+      <MessageSquarePlus className="mt-0.5 size-3.5 shrink-0 text-primary" />
+      <div className="min-w-0 space-y-0.5">
+        <div className="text-xs font-medium text-foreground">{title}</div>
+        <div className="line-clamp-3 whitespace-pre-wrap break-words text-xs text-muted-foreground">
+          {item.content}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function IntermediateAnswerTimelineRow({ item }: { item: IntermediateAnswerTimelineItem }) {
@@ -3974,12 +4244,40 @@ export function AIChatAgenticTimeline({
   suppressPendingToolGovernanceApprovals = false,
   messageStatus,
   onToolGovernanceDecision,
+  onTaskMutation,
   onConnectorRuntimeDecision = submitConnectorRuntimeDecision,
 }: AIChatAgenticTimelineProps) {
   const t = useT('webapp');
   const { locale } = useLocale();
   const [isOpen, setIsOpen] = useState(defaultOpen);
+  const notifiedTaskMutationKeysRef = useRef(new Set<string>());
   const pendingApprovalScopeId = useToolGovernancePendingApprovalScope();
+
+  useEffect(() => {
+    if (!onTaskMutation) return;
+    timeline.forEach(item => {
+      if (item.type === 'workflow_run' && item.kind === 'digital_human_task') {
+        if (!['completed', 'error', 'stopped', 'expired'].includes(item.status)) return;
+        const key = `task-workflow:${item.workflowRunId}:${item.status}`;
+        if (notifiedTaskMutationKeysRef.current.has(key)) return;
+        notifiedTaskMutationKeysRef.current.add(key);
+        onTaskMutation();
+        return;
+      }
+      if (item.type !== 'skill_event') return;
+      const invocation = item.invocation;
+      if (
+        invocation.tool_name?.trim() !== 'manage_digital_human_task' ||
+        !['success', 'succeeded', 'completed'].includes(String(invocation.status).toLowerCase())
+      ) {
+        return;
+      }
+      const key = `${item.id}:${invocation.status}`;
+      if (notifiedTaskMutationKeysRef.current.has(key)) return;
+      notifiedTaskMutationKeysRef.current.add(key);
+      onTaskMutation();
+    });
+  }, [onTaskMutation, timeline]);
 
   const pendingGovernanceApprovals = useMemo(() => {
     if (!enableToolGovernanceApprovals) return [];

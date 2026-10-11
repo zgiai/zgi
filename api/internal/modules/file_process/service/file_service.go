@@ -17,6 +17,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	"github.com/zgiai/zgi/api/internal/dto"
 	datalibraryservice "github.com/zgiai/zgi/api/internal/modules/datalibrary/service"
 	dataset_model "github.com/zgiai/zgi/api/internal/modules/dataset/model"
@@ -101,6 +102,7 @@ func (s *fileService) GetUploadConfig() *interfaces.FileUploadConfigResponse {
 
 	// Use centralized configuration values
 	return &interfaces.FileUploadConfigResponse{
+		ChatUploadPolicy:        chatfile.Resolve(nil, int64(cfg.Upload.FileSizeLimit), int64(cfg.Upload.ImageSizeLimit), chatfile.DefaultCount),
 		FileSizeLimit:           int64(cfg.Upload.FileSizeLimit),  // Already in MB from config
 		BatchCountLimit:         cfg.Upload.FileBatchLimit,        // File-management concurrency; count limit elsewhere
 		UploadQueueLimit:        cfg.Upload.UploadQueueLimit,      // File-management upload queue limit
@@ -298,6 +300,14 @@ func (s *fileService) UploadFileWithOptions(ctx context.Context, filename string
 
 	// Check file size
 	fileSize := int64(len(content))
+	if isTemporary && !isIcon && source != nil && *source == interfaces.FileSourceChat {
+		if err := s.GetUploadConfig().ChatUploadPolicy.ValidateFile(extension, fileSize); err != nil {
+			if errors.Is(err, chatfile.ErrUnsupportedType) {
+				return nil, model.ErrUnsupportedFileType
+			}
+			return nil, model.ErrFileTooLarge
+		}
+	}
 	if !s.IsFileSizeWithinLimit(extension, fileSize) {
 		return nil, model.ErrFileTooLarge
 	}
@@ -745,6 +755,14 @@ func (s *fileService) ParseFileContent(ctx context.Context, uploadFileID string)
 	} else if combinedText := dto.ExtractOutputText(extractOutput); combinedText != "" {
 		s.fileRepo.UpdateContentText(ctx, uploadFileID, combinedText)
 	}
+}
+
+func (s *fileService) IsRuntimeExternalFile(ctx context.Context, fileID string) (bool, error) {
+	var count int64
+	if err := s.db.WithContext(ctx).Table("runtime_external_files").Where("file_id = ?", fileID).Count(&count).Error; err != nil {
+		return false, fmt.Errorf("check runtime external file: %w", err)
+	}
+	return count > 0, nil
 }
 
 // GetFileByID retrieves file information by file ID

@@ -14,6 +14,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
+	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	llmmodelservice "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
@@ -47,6 +49,7 @@ func (s *agentsService) GetAgentConfig(ctx context.Context, agentID, accountID s
 		return nil, err
 	}
 	resp := agentConfigResponse(ag.ID.String(), cfg)
+	s.decorateAgentExecutionRuntimeCapability(ctx, ag, resp)
 	if err := s.projectOwnedAgentConnectorBindings(ctx, s.db, ag, accountID, resp); err != nil {
 		return nil, err
 	}
@@ -69,6 +72,7 @@ func (s *agentsService) GetAgentDraftRuntimeConfig(ctx context.Context, agentID,
 		return nil, err
 	}
 	resp := agentConfigResponse(ag.ID.String(), cfg)
+	s.decorateAgentExecutionRuntimeCapability(ctx, ag, resp)
 	if err := s.projectOwnedAgentConnectorBindings(ctx, s.db, ag, accountID, resp); err != nil {
 		return nil, err
 	}
@@ -208,6 +212,7 @@ func (s *agentsService) UpdateAgentConfig(ctx context.Context, agentID, accountI
 		}
 	}
 	resp := agentConfigResponse(ag.ID.String(), cfg)
+	s.decorateAgentExecutionRuntimeCapability(ctx, ag, resp)
 	resp.BindingRevision = agentBindingRevisionWithConnectors(rows, resp.ConnectorBindings)
 	resp.BindingHealth = s.resolveAgentBindingHealth(ctx, ag, accountID, resp, rows)
 	resp.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
@@ -570,6 +575,7 @@ func (s *agentsService) updateAgentConfigWithSystemPromptPatchCAS(ctx context.Co
 		return nil, err
 	}
 	resp := agentConfigResponse(ag.ID.String(), saved)
+	s.decorateAgentExecutionRuntimeCapability(ctx, ag, resp)
 	resp.BindingRevision = agentBindingRevisionWithConnectors(savedRows, resp.ConnectorBindings)
 	resp.BindingHealth = s.resolveAgentBindingHealth(ctx, ag, accountID, resp, savedRows)
 	resp.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
@@ -596,6 +602,8 @@ func mergeAgentConfigRequestedFields(current dto.AgentConfigRequest, requested d
 			current.AgentMemoryAutoExtractionEnabled = requested.AgentMemoryAutoExtractionEnabled
 		case "file_upload_enabled":
 			current.FileUpload = requested.FileUpload
+		case "file_upload_policy":
+			current.FileUploadPolicy = chatfile.Clone(requested.FileUploadPolicy)
 		case "home_title":
 			current.HomeTitle = requested.HomeTitle
 		case "opening_statement":
@@ -752,6 +760,9 @@ func (s *agentsService) PublishAgent(ctx context.Context, agentID, accountID str
 		return nil, err
 	}
 	draftConfig := agentConfigResponse(ag.ID.String(), cfg)
+	if err := s.executionApprovals.validate(organizationID.String(), draftConfig.ExecutionRuntime); err != nil {
+		return nil, err
+	}
 	if err := s.projectOwnedAgentConnectorBindings(ctx, s.db, ag, accountID, draftConfig); err != nil {
 		return nil, err
 	}
@@ -977,6 +988,9 @@ func (s *agentsService) createAgentPublishedVersion(
 		if bindingHealth.SuspendedCount > 0 && !acknowledgeSuspended {
 			return &agentBindingAPIError{Code: agentBindingsSuspendedCode, Message: "agent has suspended bindings", Data: map[string]interface{}{"binding_health": bindingHealth}}
 		}
+		if err := txService.executionApprovals.validate(txService.organizationIDForAgentWorkspace(ctx, ag.TenantID.String()), currentConfig.ExecutionRuntime); err != nil {
+			return err
+		}
 
 		snapshot := agentConfigSnapshot(ag.ID.String(), &current)
 		snapshot["binding_authorizations"] = normalizeAgentBindingAuthorizations(currentConfig.BindingAuthorizations)
@@ -1146,6 +1160,7 @@ func (s *agentsService) RollbackAgentPublishedVersion(ctx context.Context, agent
 	if err != nil {
 		return nil, err
 	}
+	s.decorateAgentExecutionRuntimeCapability(ctx, ag, resp)
 	resp.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
 	resp.AgentMemoryConfigRevision = agentMemoryConfigRevision(resp.AgentMemoryEnabled, resp.AgentMemoryAutoExtractionEnabled, resp.AgentMemorySlots)
 	return resp, nil
@@ -1262,7 +1277,7 @@ func (s *agentsService) rollbackAgentPublishedVersionCAS(
 		if err := txService.recordUnavailableRestoredConnectors(ctx, tx, ag, actorID, version.VersionUUID, originalConnectorBindings, filtered.ConnectorBindings); err != nil {
 			return err
 		}
-		applied, err := applyAgentConfigRequestToDraft(&current, agentConfigRequestFromResponse(filtered), accountID)
+		applied, err := applyAgentConfigRequestToDraft(&current, agentConfigRequestForRollback(filtered), accountID)
 		if err != nil {
 			return err
 		}
@@ -1343,6 +1358,7 @@ func agentConfigRequestFromResponse(config dto.AgentConfigResponse) dto.AgentCon
 		AgentMemoryEnabled:               config.AgentMemoryEnabled,
 		AgentMemoryAutoExtractionEnabled: config.AgentMemoryAutoExtractionEnabled,
 		FileUpload:                       config.FileUpload,
+		FileUploadPolicy:                 chatfile.Clone(config.FileUploadPolicy),
 		HomeTitle:                        config.HomeTitle,
 		OpeningStatement:                 config.OpeningStatement,
 		InputPlaceholder:                 config.InputPlaceholder,
@@ -1360,7 +1376,18 @@ func agentConfigRequestFromResponse(config dto.AgentConfigResponse) dto.AgentCon
 		WorkflowBoundAtUnix:              config.WorkflowBoundAtUnix,
 		ConnectorBindings:                config.ConnectorBindings,
 		BindingAuthorizations:            config.BindingAuthorizations,
+		ExecutionRuntime:                 normalizeAgentExecutionRuntimeConfig(config.ExecutionRuntime),
 	}
+}
+
+func agentConfigRequestForRollback(config dto.AgentConfigResponse) dto.AgentConfigRequest {
+	req := agentConfigRequestFromResponse(config)
+	if req.ExecutionRuntime == nil {
+		// A snapshot predating execution_runtime means that it was disabled.
+		// Unlike a legacy editor save, rollback must restore that state.
+		req.ExecutionRuntime = &dto.AgentExecutionRuntime{}
+	}
+	return req
 }
 
 func (s *agentsService) loadAuthorizedAgentRuntimeDraft(ctx context.Context, agentID, accountID string, ensureConfig bool, permissionCodes ...model.WorkspacePermissionCode) (*Agent, *AgentsConfig, error) {
@@ -1423,6 +1450,8 @@ func (s *agentsService) ensureAgentRuntimeDraftConfig(ctx context.Context, ag *A
 }
 
 func normalizeAgentConfigRequest(req dto.AgentConfigRequest) dto.AgentConfigRequest {
+	req.FileUploadPolicy = chatfile.Clone(req.FileUploadPolicy)
+	req.ExecutionRuntime = normalizeAgentExecutionRuntimeConfig(req.ExecutionRuntime)
 	req.SystemPrompt = strings.TrimSpace(req.SystemPrompt)
 	req.ModelProvider = strings.TrimSpace(req.ModelProvider)
 	req.Model = strings.TrimSpace(req.Model)
@@ -1449,6 +1478,17 @@ func applyAgentConfigRequestToDraft(cfg *AgentsConfig, req dto.AgentConfigReques
 	}
 	previousMode := agentRuntimeModeFromConfig(cfg)
 	runtimeCfg := normalizeAgentConfigRequest(req)
+	if runtimeCfg.FileUploadPolicy == nil {
+		runtimeCfg.FileUploadPolicy = chatfile.Clone(previousMode.FileUploadPolicy)
+	}
+	if err := runtimeCfg.FileUploadPolicy.Validate(); err != nil {
+		return dto.AgentConfigRequest{}, fmt.Errorf("%w: invalid file upload policy", runtimeservice.ErrInvalidInput)
+	}
+	if runtimeCfg.ExecutionRuntime == nil {
+		// Older editors do not know this field; their full-config saves must not
+		// silently disable an execution environment selected by another editor.
+		runtimeCfg.ExecutionRuntime = normalizeAgentExecutionRuntimeConfig(previousMode.ExecutionRuntime)
+	}
 	if err := validateAgentSystemPromptSource(runtimeCfg.SystemPrompt); err != nil {
 		return dto.AgentConfigRequest{}, err
 	}
@@ -1482,10 +1522,12 @@ func applyAgentConfigRequestToDraft(cfg *AgentsConfig, req dto.AgentConfigReques
 	cfg.Configs = &params
 	modeJSON, err := json.Marshal(dto.AgentRuntimeModeConfig{
 		EnabledSkillIDs:                  runtimeCfg.EnabledSkillIDs,
+		ExecutionRuntime:                 runtimeCfg.ExecutionRuntime,
 		UseMemory:                        false,
 		AgentMemoryEnabled:               runtimeCfg.AgentMemoryEnabled,
 		AgentMemoryAutoExtractionEnabled: runtimeCfg.AgentMemoryAutoExtractionEnabled,
 		FileUploadEnabled:                runtimeCfg.FileUpload,
+		FileUploadPolicy:                 chatfile.Clone(runtimeCfg.FileUploadPolicy),
 		HomeTitle:                        runtimeCfg.HomeTitle,
 		OpeningStatement:                 runtimeCfg.OpeningStatement,
 		InputPlaceholder:                 runtimeCfg.InputPlaceholder,
@@ -1522,11 +1564,13 @@ func agentConfigResponse(agentID string, cfg *AgentsConfig) *dto.AgentConfigResp
 		AgentID:                          agentID,
 		ModelParameters:                  params,
 		EnabledSkillIDs:                  normalizeAgentEnabledSkillIDs(mode.EnabledSkillIDs),
+		ExecutionRuntime:                 normalizeAgentExecutionRuntimeConfig(mode.ExecutionRuntime),
 		UseMemory:                        false,
 		AgentMemoryEnabled:               mode.AgentMemoryEnabled,
 		AgentMemoryAutoExtractionEnabled: mode.AgentMemoryAutoExtractionEnabled,
 		AgentMemorySlots:                 normalizeAgentMemorySlotConfigs(mode.AgentMemorySlots),
 		FileUpload:                       mode.FileUploadEnabled,
+		FileUploadPolicy:                 chatfile.Clone(mode.FileUploadPolicy),
 		HomeTitle:                        normalizeAgentHomeTitle(mode.HomeTitle),
 		OpeningStatement:                 normalizeAgentOpeningStatement(mode.OpeningStatement),
 		InputPlaceholder:                 normalizeAgentInputPlaceholder(mode.InputPlaceholder),
@@ -1555,10 +1599,19 @@ func agentConfigResponse(agentID string, cfg *AgentsConfig) *dto.AgentConfigResp
 	return resp
 }
 
+func (s *agentsService) decorateAgentExecutionRuntimeCapability(ctx context.Context, ag *Agent, resp *dto.AgentConfigResponse) {
+	if s == nil || ag == nil || resp == nil {
+		return
+	}
+	organizationID := s.organizationIDForAgentWorkspace(ctx, ag.TenantID.String())
+	resp.ExecutionRuntimeCapability = s.executionApprovals.capability(organizationID)
+}
+
 func agentConfigSnapshot(agentID string, cfg *AgentsConfig) map[string]interface{} {
 	resp := agentConfigResponse(agentID, cfg)
 	return map[string]interface{}{
 		"agent_id":                             resp.AgentID,
+		"execution_runtime":                    resp.ExecutionRuntime,
 		"system_prompt":                        resp.SystemPrompt,
 		"model_provider":                       resp.ModelProvider,
 		"model":                                resp.Model,
@@ -1571,6 +1624,7 @@ func agentConfigSnapshot(agentID string, cfg *AgentsConfig) map[string]interface
 		"agent_memory_slots":                   normalizeAgentMemorySlotConfigs(resp.AgentMemorySlots),
 		"agent_memory_config_revision":         resp.AgentMemoryConfigRevision,
 		"file_upload_enabled":                  resp.FileUpload,
+		"file_upload_policy":                   chatfile.Clone(resp.FileUploadPolicy),
 		"home_title":                           resp.HomeTitle,
 		"opening_statement":                    resp.OpeningStatement,
 		"input_placeholder":                    resp.InputPlaceholder,
@@ -1601,6 +1655,7 @@ func agentConfigResponseFromSnapshot(agentID string, snapshot map[string]interfa
 		return resp
 	}
 	resp.ConnectorTargetScope = stringFromSnapshot(snapshot, "connector_target_scope")
+	resp.ExecutionRuntime = agentExecutionRuntimeConfigFromSnapshot(snapshot["execution_runtime"])
 	resp.ConnectorTargetVersionID = stringFromSnapshot(snapshot, "connector_target_version_id")
 	resp.BindingRevision = strings.TrimSpace(stringFromSnapshot(snapshot, "binding_revision"))
 	resp.SystemPrompt = stringFromSnapshot(snapshot, "system_prompt")
@@ -1629,6 +1684,15 @@ func agentConfigResponseFromSnapshot(agentID string, snapshot map[string]interfa
 	}
 	if fileUpload, ok := snapshot["file_upload_enabled"].(bool); ok {
 		resp.FileUpload = fileUpload
+	}
+	if value := snapshot["file_upload_policy"]; value != nil {
+		payload, err := json.Marshal(value)
+		policy := &chatfile.Policy{}
+		if err == nil && json.Unmarshal(payload, policy) == nil && policy.Validate() == nil {
+			resp.FileUploadPolicy = policy
+		} else {
+			resp.FileUploadPolicy = &chatfile.Policy{}
+		}
 	}
 	resp.HomeTitle = normalizeAgentHomeTitle(stringFromSnapshot(snapshot, "home_title"))
 	resp.OpeningStatement = normalizeAgentOpeningStatement(stringFromSnapshot(snapshot, "opening_statement"))
@@ -1768,6 +1832,32 @@ func agentRuntimeModeFromConfig(cfg *AgentsConfig) dto.AgentRuntimeModeConfig {
 	}
 	_ = json.Unmarshal([]byte(*cfg.AgentMode), &mode)
 	return mode
+}
+
+func normalizeAgentExecutionRuntimeConfig(config *dto.AgentExecutionRuntime) *dto.AgentExecutionRuntime {
+	if config == nil {
+		return nil
+	}
+	// The editor only owns the boolean opt-in. Environment selection is an
+	// operator concern and is resolved from deployment settings at validation
+	// and execution time. Dropping legacy IDs here also prevents them from
+	// leaking back through Agent config responses or published snapshots.
+	return &dto.AgentExecutionRuntime{Enabled: config.Enabled}
+}
+
+func agentExecutionRuntimeConfigFromSnapshot(value interface{}) *dto.AgentExecutionRuntime {
+	if value == nil {
+		return nil
+	}
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	var config dto.AgentExecutionRuntime
+	if err := json.Unmarshal(payload, &config); err != nil {
+		return nil
+	}
+	return normalizeAgentExecutionRuntimeConfig(&config)
 }
 
 func normalizeAgentEnabledSkillIDs(input []string) []string {

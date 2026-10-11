@@ -1,3 +1,4 @@
+import type { FileUploadSelection } from '@/services/upload.service';
 import React, { useEffect, useMemo, useCallback, useState } from 'react';
 import type { Conversation } from '@/components/chat/types';
 import { useChatStore } from '@/components/chat/store';
@@ -26,6 +27,7 @@ import type { ImageRuntimeModel } from '@/services/types/image-runtime';
 import type { AvailableModelUseCase, ModelUseCase } from '@/services/types/model';
 import type { AIChatVoiceTranscriber } from '@/components/chat/variants/aichat/voice/pcm-audio';
 import type { AIChatSpeechSynthesizer } from '@/components/chat/variants/aichat/voice/speech-playback';
+import type { AITaskProposalActionPayload } from '@/components/chat/variants/aichat/agentic-timeline';
 
 interface SingleTestVariantProps {
   mode: 'singleTest';
@@ -124,6 +126,7 @@ interface ImgChatVariantProps {
 }
 
 interface AIChatVariantProps {
+  fileUploadPolicy?: FileUploadSelection | null;
   mode: 'aichat';
   controller: AIChatController;
   modelSelectorValue: AIChatModelValue;
@@ -165,10 +168,15 @@ interface AIChatVariantProps {
   onStartNewConversation?: () => void;
   defaultSidebarOpen?: boolean;
   showAssistantModelMeta?: boolean;
-  surface?: 'aichat' | 'agent-draft' | 'agent-webapp';
+  showSkillEventDetails?: boolean;
+  enableMessageReplay?: boolean;
+  messageDensity?: 'default' | 'compact';
+  surface?: 'aichat' | 'agent-draft' | 'agent-webapp' | 'digital-human';
   runtimeSurface?: AIChatRuntimeSurface;
   themeColor?: string;
   enableToolGovernance?: boolean;
+  onTaskProposalAction?: (payload: AITaskProposalActionPayload) => void | Promise<void>;
+  onTaskMutation?: () => void;
   voiceTranscriber?: AIChatVoiceTranscriber;
   speechSynthesizer?: AIChatSpeechSynthesizer;
   headerRightAction?: React.ReactNode;
@@ -416,6 +424,11 @@ export {
   createAgentDraftTransport,
   createAgentWebAppTransport,
 } from '@/components/chat/transports/agent-runtime-transport';
+export {
+  DigitalHumanRuntimeTransport,
+  createDigitalHumanRuntimeTransport,
+} from '@/components/chat/transports/digital-human-runtime-transport';
+export { createDigitalHumanWebAppTransport } from '@/components/chat/transports/digital-human-webapp-transport';
 export {
   useAIChatController,
   useChatRuntimeController,

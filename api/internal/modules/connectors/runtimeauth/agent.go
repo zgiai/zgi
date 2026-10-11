@@ -28,8 +28,14 @@ type AgentRuntimeResolver interface {
 	ResolveAgentCapabilities(context.Context, AgentCapabilityRequest) (ChatCapabilitySnapshot, error)
 }
 
+type DelegatedAgentRuntimeResolver interface {
+	ResolveDelegatedCapabilities(context.Context, DelegatedHostRequest) (ChatCapabilitySnapshot, error)
+}
+
 type AgentResolver struct {
-	base *ChatResolver
+	base       *ChatResolver
+	candidates HostGrantCandidateReader
+	authorizer DelegatedRunAuthorizer
 }
 
 var _ AgentRuntimeResolver = (*AgentResolver)(nil)
@@ -44,6 +50,20 @@ func NewAgentResolver(
 		return nil, err
 	}
 	return &AgentResolver{base: base}, nil
+}
+
+func (resolver *AgentResolver) WithDelegatedHostAccess(candidates HostGrantCandidateReader, authorizer DelegatedRunAuthorizer) *AgentResolver {
+	if resolver != nil {
+		resolver.candidates, resolver.authorizer = candidates, authorizer
+	}
+	return resolver
+}
+
+func (resolver *AgentResolver) ResolveDelegatedCapabilities(ctx context.Context, request DelegatedHostRequest) (ChatCapabilitySnapshot, error) {
+	if resolver == nil || resolver.base == nil || request.Target.Type != core.TargetTypeAgent {
+		return ChatCapabilitySnapshot{}, core.NewError(core.ErrorCodeAccessDenied, false, nil)
+	}
+	return resolver.base.resolveDelegatedHostCapabilities(ctx, request, resolver.candidates, resolver.authorizer, catalog.SurfaceAgent)
 }
 
 func (resolver *AgentResolver) ResolveAgentCapabilities(

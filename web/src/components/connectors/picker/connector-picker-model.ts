@@ -20,6 +20,21 @@ export type ConnectorPickerBindingRef = Pick<
   'id' | 'connection_id' | 'connector_id' | 'status' | 'authorization_mode'
 > & { revision?: number };
 
+export type ConnectorPickerSelectionMode = 'single-per-connector' | 'multiple-connections';
+
+/** Host candidates only narrow the native catalog; they never grant runtime authority. */
+export interface ConnectorPickerHostEligibility {
+  status: 'loading' | 'ready' | 'error';
+  allowedConnectorIds: readonly string[];
+  connections: Readonly<Record<string, { available: boolean; reason?: string }>>;
+  onRetry?: () => void | Promise<unknown>;
+}
+
+export interface ConnectorPickerOptions {
+  selectionMode?: ConnectorPickerSelectionMode;
+  hostEligibility?: ConnectorPickerHostEligibility;
+}
+
 export interface ConnectorPickerRow {
   key: string;
   connector: ConnectorCatalogItem;
@@ -31,6 +46,8 @@ export interface ConnectorPickerRow {
   replacedConnection?: PersonalConnection;
   state: ConnectorPickerRowState;
   reason?: string;
+  /** A host restriction is informational, not a credential-repair action. */
+  hostUnavailable?: boolean;
 }
 
 export interface ConnectorPickerFilters {
@@ -112,7 +129,8 @@ function rowState(
 export function createConnectorPickerRows(
   catalog: readonly ConnectorCatalogItem[],
   connections: readonly PersonalConnection[],
-  bindings: readonly ConnectorPickerBindingRef[]
+  bindings: readonly ConnectorPickerBindingRef[],
+  { selectionMode = 'single-per-connector', hostEligibility }: ConnectorPickerOptions = {}
 ): ConnectorPickerRow[] {
   const connectionsByConnector = new Map<string, PersonalConnection[]>();
   for (const connection of connections) {
@@ -133,7 +151,10 @@ export function createConnectorPickerRows(
   const rows: ConnectorPickerRow[] = [];
   for (const connector of catalog) {
     const connectorConnections = connectionsByConnector.get(connector.id) ?? [];
-    const activeBinding = currentBindingByConnector.get(connector.id);
+    const activeBinding =
+      selectionMode === 'single-per-connector'
+        ? currentBindingByConnector.get(connector.id)
+        : undefined;
     const activeConnection = activeBinding
       ? connectorConnections.find(connection => connection.id === activeBinding.connection_id)
       : undefined;
@@ -165,7 +186,33 @@ export function createConnectorPickerRows(
       });
     }
   }
-  return rows;
+  if (!hostEligibility) return rows;
+  const allowedConnectors = new Set(hostEligibility.allowedConnectorIds);
+  return rows.flatMap(row => {
+    const allowedConnector = allowedConnectors.has(row.connector.id);
+    // Keep existing selections visible even if their service is no longer supported.
+    if (!allowedConnector && !row.binding) return [];
+    const unavailable = (reason: string): ConnectorPickerRow => ({
+      ...row,
+      state: 'unavailable',
+      reason,
+      hostUnavailable: true,
+    });
+    if (hostEligibility.status !== 'ready') {
+      return [unavailable(`host_candidates_${hostEligibility.status}`)];
+    }
+    if (!allowedConnector) return [unavailable('host_connector_unavailable')];
+    // Setup verifies a new personal connection; the host rechecks its candidate after creation.
+    if (!row.connection) return [row];
+    const eligibility = hostEligibility.connections[row.connection.id];
+    if (
+      !eligibility?.available &&
+      (row.state === 'ready' || row.state === 'added' || row.state === 'not_connected')
+    ) {
+      return [unavailable(eligibility?.reason || 'host_connection_unavailable')];
+    }
+    return [row];
+  });
 }
 
 function searchableText(row: ConnectorPickerRow): string {
@@ -243,6 +290,15 @@ export async function requestConnectorPickerAction(
     reason: row.reason,
     target,
   };
+
+  if (row.hostUnavailable) {
+    if (row.binding?.status === 'active') {
+      await handlers.onRequestDetach?.({ ...request, binding: row.binding });
+    } else {
+      await handlers.onRequestViewReason?.(request);
+    }
+    return;
+  }
 
   if (row.state === 'ready' && row.connection) {
     if (row.replacedBinding) {

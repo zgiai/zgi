@@ -456,6 +456,21 @@ func (r *Runtime) nativeToolSchema(ctx context.Context, skillID string, definiti
 		}
 		return copyStringAnyMap(contract.Schema), description, true
 	}
+	// Package scripts and governed private Skills declare their admitted input
+	// schema inline. A Connector operation never reaches this branch: its schema
+	// must come from the ConnectorNative projection above so an inline schema
+	// cannot override the admitted catalog or bypass per-invocation governance.
+	if len(definition.InputSchema) > 0 && definition.ProviderType != tools.ToolProviderTypeConnector {
+		schema := tools.ModelVisibleJSONSchema(definition.InputSchema)
+		if !validNativeObjectSchema(schema) {
+			return nil, "", false
+		}
+		description := strings.TrimSpace(definition.RuntimeDescription)
+		if description == "" {
+			description = "Use " + definition.Name + " from the " + skillID + " skill."
+		}
+		return schema, description, true
+	}
 	if r == nil || r.manager == nil {
 		return nil, "", false
 	}
@@ -473,6 +488,22 @@ func (r *Runtime) nativeToolSchema(ctx context.Context, skillID string, definiti
 		parameters, err = r.engine.GetToolParameters(ctx, definition.ProviderType, definition.ProviderID, definition.Name, tenantID)
 	} else {
 		parameters, err = tool.GetRuntimeParameters(ctx, nil, nil, nil)
+	}
+	// New connector providers may publish only a JSON InputSchema and leave
+	// the legacy parameter list empty. Preserve that schema when the runtime
+	// adapter has no projected parameters instead of exposing an empty object.
+	if len(parameters) == 0 && len(entity.InputSchema) > 0 {
+		schema := tools.ModelVisibleJSONSchema(entity.InputSchema)
+		if validNativeObjectSchema(schema) {
+			description := strings.TrimSpace(entity.Description.LLM)
+			if description == "" {
+				description = strings.TrimSpace(entity.Description.Human.Get("en_US"))
+			}
+			if description == "" {
+				description = "Use " + definition.Name + " from the " + skillID + " skill."
+			}
+			return schema, description, true
+		}
 	}
 	if err != nil {
 		parameters = entity.Parameters

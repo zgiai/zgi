@@ -26,8 +26,12 @@ func (d *commandDatabase) BeginTx(_ context.Context, options pgx.TxOptions) (pgx
 type commandTransaction struct {
 	pgx.Tx
 	source, converted                              databaseSnapshot
+	migrations                                     []string
+	retiredTables, bindingColumns                  []string
+	constraintNames                                map[string][]string
+	events                                         []string
 	reads, writes, failWrite                       int
-	commitError, invalidConversion                 bool
+	commitError, invalidConversion, failLock       bool
 	committed, rolledBack, validated, readyWritten bool
 }
 
@@ -42,13 +46,34 @@ type existsRow bool
 
 func (r existsRow) Scan(dest ...any) error { *dest[0].(*bool) = bool(r); return nil }
 
+type stringListRow []string
+
+func (r stringListRow) Scan(dest ...any) error {
+	*dest[0].(*[]string) = append([]string(nil), r...)
+	return nil
+}
+
 func (tx *commandTransaction) QueryRow(_ context.Context, query string, args ...any) pgx.Row {
-	if query != "SELECT to_regclass($1) IS NOT NULL" {
-		panic("unexpected command query")
+	switch query {
+	case "SELECT to_regclass($1) IS NOT NULL":
+		tx.events = append(tx.events, "select:to_regclass")
+		name := strings.TrimPrefix(args[0].(string), "public.")
+		_, exists := tx.current()[name]
+		return existsRow(exists)
+	case migrationHistoryQuery:
+		tx.events = append(tx.events, "select:migration-ledger")
+		return stringListRow(tx.migrations)
+	case advancedTableQuery:
+		tx.events = append(tx.events, "select:catalog")
+		return stringListRow(tx.retiredTables)
+	case advancedColumnQuery:
+		tx.events = append(tx.events, "select:catalog")
+		return stringListRow(tx.bindingColumns)
+	case advancedConstraintQuery:
+		tx.events = append(tx.events, "select:catalog")
+		return stringListRow(tx.constraintNames[args[0].(string)])
 	}
-	name := strings.TrimPrefix(args[0].(string), "public.")
-	_, exists := tx.current()[name]
-	return existsRow(exists)
+	panic("unexpected command query")
 }
 
 type snapshotRows struct {
@@ -67,6 +92,7 @@ func (r *snapshotRows) Scan(dest ...any) error {
 }
 
 func (tx *commandTransaction) Query(_ context.Context, query string, _ ...any) (pgx.Rows, error) {
+	tx.events = append(tx.events, "select:snapshot")
 	parts := strings.Split(query, `"`)
 	if len(parts) < 4 {
 		return nil, errors.New("unexpected snapshot query")
@@ -81,14 +107,24 @@ func (tx *commandTransaction) Query(_ context.Context, query string, _ ...any) (
 
 func (tx *commandTransaction) Exec(_ context.Context, query string, _ ...any) (pgconn.CommandTag, error) {
 	switch {
+	case query == migrationLedgerLock:
+		tx.events = append(tx.events, "lock:migration-ledger")
+		if tx.failLock {
+			return pgconn.CommandTag{}, errors.New(secretMarker)
+		}
+	case strings.HasPrefix(query, "SELECT pg_advisory_xact_lock"):
+		tx.events = append(tx.events, "lock:advisory")
 	case strings.HasPrefix(query, "ALTER TABLE connector_confirmation_continuations"):
+		tx.events = append(tx.events, "write:validate")
 		tx.validated = true
 	case strings.HasPrefix(query, "UPDATE connector_schema_readiness"):
+		tx.events = append(tx.events, "write:readiness")
 		if !tx.validated {
 			return pgconn.CommandTag{}, errors.New("readiness before ownership validation")
 		}
 		tx.readyWritten = true
 	case strings.HasPrefix(query, "INSERT "), strings.HasPrefix(query, "UPDATE "):
+		tx.events = append(tx.events, "write:plan")
 		tx.writes++
 		if tx.writes == tx.failWrite {
 			return pgconn.CommandTag{}, errors.New(secretMarker)
@@ -113,8 +149,13 @@ func (tx *commandTransaction) Rollback(context.Context) error {
 }
 
 func commandFixture(t *testing.T) (*commandDatabase, string) {
+	return commandFixtureAt(t, testHistoricalMigrations)
+}
+
+func commandFixtureAt(t *testing.T, history []string) (*commandDatabase, string) {
 	t.Helper()
 	source := fixture(t)
+	source[migrationHistoryKey] = migrationRows(history)
 	if err := inventorySkillFiles(source, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -122,8 +163,43 @@ func commandFixture(t *testing.T) (*commandDatabase, string) {
 	if err != nil || len(plan.Report.Issues) != 0 {
 		t.Fatal("invalid command fixture", err)
 	}
-	tx := &commandTransaction{source: source, converted: applyMemory(t, source, plan)}
+	tx := &commandTransaction{
+		source:          source,
+		converted:       applyMemory(t, source, plan),
+		migrations:      append([]string(nil), history...),
+		retiredTables:   append([]string(nil), advancedRetiredTables...),
+		bindingColumns:  append([]string(nil), advancedBindingColumns...),
+		constraintNames: advancedConstraintFixture(),
+	}
 	return &commandDatabase{tx: tx}, plan.Report.SourceDigest
+}
+
+// advancedConstraintFixture returns the retained constraint names an advanced
+// checkpoint database carries, including the not-yet-validated native claim FK.
+func advancedConstraintFixture() map[string][]string {
+	names := map[string][]string{}
+	for _, group := range advancedConstraintGroups {
+		names["public."+group.table] = append([]string(nil), group.names...)
+	}
+	return names
+}
+
+func eventIndex(events []string, want string) int {
+	for i, event := range events {
+		if event == want {
+			return i
+		}
+	}
+	return -1
+}
+
+func firstEventWithPrefix(events []string, prefix string) int {
+	for i, event := range events {
+		if strings.HasPrefix(event, prefix) {
+			return i
+		}
+	}
+	return -1
 }
 
 func TestConversionCommandsKeepReadOnlyRunsAndFailedWritesUncommitted(t *testing.T) {
@@ -135,7 +211,7 @@ func TestConversionCommandsKeepReadOnlyRunsAndFailedWritesUncommitted(t *testing
 				db.tx.source = db.tx.converted
 				before = hash(db.tx.source)
 			}
-			err := runOnConnection(context.Background(), db, command, testKeys(), digest, "", func(report) error { return nil })
+			err := runOnConnection(context.Background(), db, command, testKeys(), checkpointChoice{}, digest, "", func(report) error { return nil })
 			if err != nil || db.options.AccessMode != pgx.ReadOnly || db.options.IsoLevel != pgx.Serializable || db.tx.writes != 0 || db.tx.committed || !db.tx.rolledBack || hash(db.tx.source) != before {
 				t.Fatal("read-only command mutated or committed", err)
 			}
@@ -155,7 +231,7 @@ func TestConversionCommandsKeepReadOnlyRunsAndFailedWritesUncommitted(t *testing
 				digest = strings.Repeat("0", 64)
 			}
 			var output report
-			err := runOnConnection(context.Background(), db, "apply", testKeys(), digest, "", func(r report) error { output = r; return nil })
+			err := runOnConnection(context.Background(), db, "apply", testKeys(), checkpointChoice{}, digest, "", func(r report) error { output = r; return nil })
 			if db.options.IsoLevel != pgx.Serializable || db.options.AccessMode == pgx.ReadOnly {
 				t.Fatal("apply did not use a writable serializable transaction")
 			}

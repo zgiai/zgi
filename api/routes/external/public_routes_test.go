@@ -16,6 +16,145 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func TestPublicDocumentationExposesDigitalHumanExternalContract(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	RegisterPublicRoutes(router.Group("/api"))
+
+	docs := httptest.NewRecorder()
+	router.ServeHTTP(docs, httptest.NewRequest(http.MethodGet, "/api/docs", nil))
+	if docs.Code != http.StatusOK || !strings.Contains(docs.Body.String(), "/api/v1/digital-humans") ||
+		!strings.Contains(docs.Body.String(), "/api/digital-human-openapi.yaml") {
+		t.Fatalf("docs response = %d %s", docs.Code, docs.Body.String())
+	}
+
+	spec := httptest.NewRecorder()
+	router.ServeHTTP(spec, httptest.NewRequest(http.MethodGet, "/api/digital-human-openapi.yaml", nil))
+	if spec.Code != http.StatusOK || !strings.Contains(spec.Header().Get("Content-Type"), "application/yaml") {
+		t.Fatalf("OpenAPI response = %d %q", spec.Code, spec.Header().Get("Content-Type"))
+	}
+	var document map[string]any
+	if err := yaml.Unmarshal(spec.Body.Bytes(), &document); err != nil {
+		t.Fatalf("OpenAPI is invalid YAML: %v", err)
+	}
+	for _, required := range []string{
+		"/digital-humans/chat:", "/digital-humans/runs/{run_id}/events:",
+		"/digital-humans/conversations/{conversation_id}/messages:",
+		"/digital-humans/conversations/{conversation_id}/files/{file_id}:", "access_mode:",
+		"/digital-humans/files/upload:", "Last-Event-ID", "X-ZGI-Run-ID",
+		"x-zgi-sse-event-data-schemas:", "run_accepted:", "run_end:",
+	} {
+		if !strings.Contains(spec.Body.String(), required) {
+			t.Fatalf("OpenAPI document is missing %q", required)
+		}
+	}
+	if strings.Contains(spec.Body.String(), "X-External-User-ID") || strings.Contains(spec.Body.String(), "end_user_id") {
+		t.Fatal("DigitalHuman contract must use the user field instead of an identity header or renamed field")
+	}
+	assertOpenAPIRefsResolve(t, document)
+	assertOpenAPIOperationsDocumented(t, document["paths"].(map[string]interface{}))
+}
+
+func TestAgentGovernanceContinuationIsRegisteredBehindAPIKeyAuthentication(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	RegisterAPIKeyRoutes(router.Group("/api"), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	path := "/api/v1/agents/conversations/:conversation_id/messages/:message_id/tool-governance/:correlation_id/continue"
+	found := false
+	for _, route := range router.Routes() {
+		if route.Path == path && route.Method == http.MethodPost {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("production API router has no tool-governance continuation")
+	}
+	for _, tc := range []struct {
+		name, body string
+		headers    map[string]string
+	}{
+		{name: "approve without credential", body: `{"action":"approve"}`},
+		{name: "reject without credential", body: `{"action":"reject"}`},
+		{name: "client cannot claim console identity", body: `{"action":"approve","source":"console","caller_type":"agent"}`,
+			headers: map[string]string{"X-External-User-ID": "user-a", "X-ZGI-Execution-Identity": `{"version":1,"entry":"console"}`}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/agents/conversations/"+uuid.NewString()+"/messages/"+uuid.NewString()+"/tool-governance/frozen/continue", strings.NewReader(tc.body))
+			request.Header.Set("Content-Type", "application/json")
+			for key, value := range tc.headers {
+				request.Header.Set(key, value)
+			}
+			router.ServeHTTP(w, request)
+			if w.Code != http.StatusUnauthorized {
+				t.Fatalf("unauthenticated governance route: %d %s", w.Code, w.Body)
+			}
+		})
+	}
+}
+
+func TestPublicDocumentationExposesRuntimeWorkspacePhase1Contract(t *testing.T) {
+	t.Setenv("ZGI_RUNTIME_WORKSPACE_ENABLED", "true")
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	RegisterPublicRoutes(router.Group("/api"))
+
+	docs := httptest.NewRecorder()
+	router.ServeHTTP(docs, httptest.NewRequest(http.MethodGet, "/api/docs", nil))
+	if docs.Code != http.StatusOK || !strings.Contains(docs.Body.String(), "/api/runtime-workspace-openapi.yaml") {
+		t.Fatalf("docs response = %d %s", docs.Code, docs.Body.String())
+	}
+	for _, route := range []string{
+		"token-budget/{request_id}/continue",
+		"GET /console/api/runtime-workspaces/{workspace_id}/agent-candidates",
+		"GET|PUT /console/api/runtime-workspaces/{workspace_id}/agents",
+		"GET /console/api/runtime-workspaces/{workspace_id}/audit-events",
+	} {
+		if !strings.Contains(docs.Body.String(), route) {
+			t.Fatalf("docs response is missing %q: %s", route, docs.Body.String())
+		}
+	}
+
+	spec := httptest.NewRecorder()
+	router.ServeHTTP(spec, httptest.NewRequest(http.MethodGet, "/api/runtime-workspace-openapi.yaml", nil))
+	if spec.Code != http.StatusOK || !strings.Contains(spec.Header().Get("Content-Type"), "application/yaml") {
+		t.Fatalf("OpenAPI response = %d %q", spec.Code, spec.Header().Get("Content-Type"))
+	}
+	var document map[string]interface{}
+	if err := yaml.Unmarshal(spec.Body.Bytes(), &document); err != nil {
+		t.Fatalf("OpenAPI is invalid YAML: %v", err)
+	}
+	assertOpenAPIRefsResolve(t, document)
+	for _, required := range []string{
+		"/apps/{app_key}/config:", "/apps/{app_key}/parameters:", "/apps/{app_key}/chat:", "/apps/{app_key}/conversations:",
+		"/apps/{app_key}/conversations/search:", "/messages/{message_id}/regenerate:", "/apps/{app_key}/memory/{key}:",
+		"/messages/{message_id}/token-budget/{request_id}/continue:", "token_budget_requested:", "TaskTokenBudgetContinuationRequest:",
+		"/apps/{app_key}/memory/settings:", "/memory/operations/{operation_id}/undo:", "/files/{file_id}/download-url:",
+		"X-ZGI-External-User-ID", "Idempotency-Key", "If-Match",
+	} {
+		if !strings.Contains(spec.Body.String(), required) {
+			t.Errorf("Runtime Workspace OpenAPI is missing %q", required)
+		}
+	}
+}
+
+func TestPublicDocumentationHidesRuntimeWorkspaceWhenDisabled(t *testing.T) {
+	t.Setenv("ZGI_RUNTIME_WORKSPACE_ENABLED", "")
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	RegisterPublicRoutes(router.Group("/api"))
+	docs := httptest.NewRecorder()
+	router.ServeHTTP(docs, httptest.NewRequest(http.MethodGet, "/api/docs", nil))
+	if docs.Code != http.StatusOK || strings.Contains(docs.Body.String(), "/api/connect/v1") || strings.Contains(docs.Body.String(), "runtime_workspace_openapi") {
+		t.Fatalf("disabled Runtime Workspace leaked through docs: %d %s", docs.Code, docs.Body.String())
+	}
+	spec := httptest.NewRecorder()
+	router.ServeHTTP(spec, httptest.NewRequest(http.MethodGet, "/api/runtime-workspace-openapi.yaml", nil))
+	if spec.Code != http.StatusNotFound {
+		t.Fatalf("disabled Runtime Workspace OpenAPI status = %d, want %d", spec.Code, http.StatusNotFound)
+	}
+}
+
 func TestPublicDocumentationRoutesExposeCurrentAgentContract(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -52,8 +191,11 @@ func TestPublicDocumentationRoutesExposeCurrentAgentContract(t *testing.T) {
 		"/files/upload:",
 		"/agents/chat:",
 		"/agents/conversations/{conversation_id}/messages:",
+		"/agents/conversations/{conversation_id}/files/{file_id}:", "access_mode:",
 		"/agents/messages/{message_id}/regenerate:",
 		"/agents/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue:",
+		"/agents/conversations/{conversation_id}/messages/{message_id}/tool-governance/{correlation_id}/continue:",
+		"/agents/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue:",
 		"x-zgi-sse-event-data-schemas:",
 		"/agents/memory/{key}:",
 		"X-External-User-ID",
@@ -66,7 +208,6 @@ func TestPublicDocumentationRoutesExposeCurrentAgentContract(t *testing.T) {
 	for _, forbidden := range []string{
 		"client_action_required",
 		"client_action_result",
-		"/tool-governance/",
 		"/client-actions/",
 		"waiting_client_action",
 	} {
@@ -92,14 +233,19 @@ func TestPublicDocumentationRoutesExposeCurrentAgentContract(t *testing.T) {
 		{http.MethodPatch, "/agents/conversations/{conversation_id}"},
 		{http.MethodDelete, "/agents/conversations/{conversation_id}"},
 		{http.MethodGet, "/agents/conversations/{conversation_id}/messages"},
+		{http.MethodGet, "/agents/conversations/{conversation_id}/files/{file_id}"},
 		{http.MethodGet, "/agents/conversations/{conversation_id}/events"},
 		{http.MethodPost, "/agents/conversations/{conversation_id}/stop"},
 		{http.MethodPost, "/agents/messages/{message_id}/regenerate"},
 		{http.MethodPost, "/agents/conversations/{conversation_id}/messages/{message_id}/workflow-continuation"},
 		{http.MethodPost, "/agents/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue"},
+		{http.MethodPost, "/agents/conversations/{conversation_id}/messages/{message_id}/tool-governance/{correlation_id}/continue"},
+		{http.MethodPost, "/agents/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue"},
 		{http.MethodGet, "/agents/memory"},
 		{http.MethodDelete, "/agents/memory"},
 		{http.MethodGet, "/agents/memory/export"},
+		{http.MethodGet, "/agents/memory/settings"},
+		{http.MethodPatch, "/agents/memory/settings"},
 		{http.MethodPut, "/agents/memory/{key}"},
 		{http.MethodDelete, "/agents/memory/{key}"},
 		{http.MethodPost, "/agents/memory/operations/{operation_id}/undo"},

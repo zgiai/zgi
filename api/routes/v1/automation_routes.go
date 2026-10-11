@@ -5,6 +5,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/zgiai/zgi/api/config"
+	digitalhumantask "github.com/zgiai/zgi/api/internal/modules/automation/digitalhuman"
 	automationhandler "github.com/zgiai/zgi/api/internal/modules/automation/handler"
 	automationrepo "github.com/zgiai/zgi/api/internal/modules/automation/repository"
 	automationscheduler "github.com/zgiai/zgi/api/internal/modules/automation/scheduler"
@@ -29,6 +30,7 @@ type AutomationRouteDeps struct {
 	Scheduler                        *pkgscheduler.Scheduler
 	NotificationSMSService           notificationsms.Service
 	AutomationWorkflowRunnerProvider func() automationaction.AutomationWorkflowRunner
+	DigitalHumanRunnerProvider       automationaction.DigitalHumanRunnerProvider
 	AccountService                   interfaces.AccountService
 	OrganizationService              interfaces.OrganizationService
 	WorkspaceManagementService       interfaces.WorkspaceManagementService
@@ -36,8 +38,14 @@ type AutomationRouteDeps struct {
 	DefaultModelService              llmdefaultservice.DefaultModelResolver
 }
 
+type AutomationRouteBundle struct {
+	Definition                 automationdefinition.Service
+	DigitalHumanTasks          *digitalhumantask.Service
+	DigitalHumanTaskReconciler *digitalhumantask.ReconcileHandler
+}
+
 // RegisterAutomationRoutes wires automation MVP routes, workers, and scheduler registration.
-func RegisterAutomationRoutes(router *gin.RouterGroup, deps AutomationRouteDeps) automationdefinition.Service {
+func RegisterAutomationRoutes(router *gin.RouterGroup, deps AutomationRouteDeps) *AutomationRouteBundle {
 	validateAutomationRouteDeps(deps)
 
 	taskRepo := automationrepo.NewTaskRepository(deps.DB)
@@ -50,7 +58,10 @@ func RegisterAutomationRoutes(router *gin.RouterGroup, deps AutomationRouteDeps)
 		automationnotification.NewNotificationSMSSink(deps.NotificationSMSService),
 	)
 	runWorkflowExecutor := automationaction.NewRunWorkflowExecutorWithProvider(deps.AutomationWorkflowRunnerProvider)
-	executor := automationruntime.NewExecutorWithActionExecutors(deps.DB, taskRepo, actionRepo, runRepo, notificationExecutor, runWorkflowExecutor)
+	runDigitalHumanExecutor := automationaction.NewRunDigitalHumanExecutor(deps.DigitalHumanRunnerProvider)
+	executor := automationruntime.NewExecutorWithActionExecutors(deps.DB, taskRepo, actionRepo, runRepo, notificationExecutor, runWorkflowExecutor, runDigitalHumanExecutor)
+	digitalHumanTaskDispatcher := digitalhumantask.NewRunDispatcher(deps.TaskManager)
+	digitalHumanTasks := digitalhumantask.NewService(deps.DB, digitalHumanTaskDispatcher, deps.DigitalHumanRunnerProvider)
 
 	taskHandler := automationhandler.NewTaskHandler(
 		definitionService,
@@ -78,8 +89,12 @@ func RegisterAutomationRoutes(router *gin.RouterGroup, deps AutomationRouteDeps)
 	} else {
 		logger.Info("Automation scheduled dispatch disabled by configuration", nil)
 	}
+	digitalHumanTaskReconciler := digitalhumantask.NewReconcileHandler(deps.DB, digitalHumanTaskDispatcher, deps.DigitalHumanRunnerProvider)
+	if err := deps.Scheduler.RegisterTask(&digitalhumantask.ReconcileTask{}, digitalHumanTaskReconciler); err != nil {
+		panic("register DigitalHuman task reconciler: " + err.Error())
+	}
 
-	return definitionService
+	return &AutomationRouteBundle{Definition: definitionService, DigitalHumanTasks: digitalHumanTasks, DigitalHumanTaskReconciler: digitalHumanTaskReconciler}
 }
 
 func validateAutomationRouteDeps(deps AutomationRouteDeps) {
@@ -100,6 +115,9 @@ func validateAutomationRouteDeps(deps AutomationRouteDeps) {
 	}
 	if deps.AutomationWorkflowRunnerProvider == nil {
 		panic("automation routes require automation workflow runner provider")
+	}
+	if deps.DigitalHumanRunnerProvider == nil {
+		panic("automation routes require digital human runner provider")
 	}
 	if deps.AccountService == nil {
 		panic("automation routes require account service")

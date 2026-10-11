@@ -18,24 +18,33 @@ import (
 	"gorm.io/gorm"
 )
 
+// connectorResolutionDigitalHumanOriginVersion is the sealed origin schema
+// version of a DigitalHuman host continuation. Connector execution refuses to
+// freeze any other version, so this is a defense-in-depth check on the value
+// restored from the immutable continuation.
+const connectorResolutionDigitalHumanOriginVersion = 2
+
 // connectorConfirmationResolution contains the complete set of values that
 // may enter Chat metadata. It cannot carry the provider value or frozen input.
 type connectorConfirmationResolution struct {
-	organizationID    uuid.UUID
-	ownerAccountID    uuid.UUID
-	routeReceipt      string
-	state             connectorconfirmation.State
-	decisionID        string
-	errorCode         string
-	surface           connectorcore.TargetType
-	conversationID    uuid.UUID
-	messageID         uuid.UUID
-	agentID           uuid.UUID
-	operation         *connectortools.OperationRef
-	authorization     *connectorconfirmation.AuthorizationSnapshot
-	outcomeID         uuid.UUID
-	presentationTitle string
-	presentation      *connectortools.OperationPresentation
+	organizationID      uuid.UUID
+	ownerAccountID      uuid.UUID
+	routeReceipt        string
+	state               connectorconfirmation.State
+	decisionID          string
+	errorCode           string
+	surface             connectorcore.TargetType
+	conversationID      uuid.UUID
+	messageID           uuid.UUID
+	agentID             uuid.UUID
+	digitalHumanID      uuid.UUID
+	digitalHumanVersion uuid.UUID
+	runID               uuid.UUID
+	operation           *connectortools.OperationRef
+	authorization       *connectorconfirmation.AuthorizationSnapshot
+	outcomeID           uuid.UUID
+	presentationTitle   string
+	presentation        *connectortools.OperationPresentation
 }
 
 // RecordConnectorConfirmationResolution projects a resolved Connector call
@@ -100,6 +109,11 @@ func (s *service) RecordConnectorConfirmationResolution(
 				return connectorResolutionError(connectorcore.ErrorCodeInternal)
 			}
 			created = added
+			if resolution.surface == connectorcore.TargetTypeDigitalHuman {
+				if updateErr := resumeDigitalHumanRun(ctx, tx, command, resolution); updateErr != nil {
+					return updateErr
+				}
+			}
 			return nil
 		case runtimemodel.MessageStatusCompleted:
 			if !added {
@@ -132,6 +146,14 @@ func validateConnectorConfirmationResolution(
 			command.Decision != connectorexecution.ConfirmationDecisionCancelled) ||
 		(command.RememberForSession && command.Decision != connectorexecution.ConfirmationDecisionConfirmed) {
 		return connectorConfirmationResolution{}, connectorResolutionError(connectorcore.ErrorCodeInvalidInput)
+	}
+	// Defense in depth: a DigitalHuman continuation is always one-shot and never
+	// carries a session grant. The continuation service already rejects this
+	// combination, but this layer must not mint a grant even if it is reached
+	// directly with an impossible command. Reject narrowly instead of silently
+	// ignoring the flag or changing any other surface.
+	if command.RememberForSession && result.Origin.Surface == connectorcore.TargetTypeDigitalHuman {
+		return connectorConfirmationResolution{}, connectorResolutionError(connectorcore.ErrorCodeAccessDenied)
 	}
 	receipt, ok := canonicalConnectorResolutionUUID(string(command.RouteReceipt))
 	if !ok {
@@ -195,6 +217,22 @@ func validateConnectorConfirmationResolution(
 			return connectorConfirmationResolution{}, connectorResolutionError(connectorcore.ErrorCodeAccessDenied)
 		}
 		resolution.agentID = agentID
+	case connectorcore.TargetTypeDigitalHuman:
+		// A DigitalHuman confirmation may only resume the host, published
+		// version, and run that the frozen continuation was sealed for. Every
+		// value here comes from the server-restored origin and identity, never
+		// from the client submission.
+		digitalHumanID, humanOK := canonicalConnectorResolutionUUID(result.Origin.DigitalHumanID)
+		runID, runOK := canonicalConnectorResolutionUUID(result.Origin.RunID)
+		versionID, versionOK := canonicalConnectorResolutionUUID(identity.Target.VersionID)
+		if !humanOK || !runOK || !versionOK ||
+			result.Origin.OriginVersion != connectorResolutionDigitalHumanOriginVersion ||
+			result.Origin.AgentID != "" || result.Origin.WorkflowID != "" || result.Origin.NodeID != "" ||
+			identity.Target.Type != connectorcore.TargetTypeDigitalHuman ||
+			identity.Target.ID != digitalHumanID.String() {
+			return connectorConfirmationResolution{}, connectorResolutionError(connectorcore.ErrorCodeAccessDenied)
+		}
+		resolution.digitalHumanID, resolution.digitalHumanVersion, resolution.runID = digitalHumanID, versionID, runID
 	default:
 		return connectorConfirmationResolution{}, connectorResolutionError(connectorcore.ErrorCodeAccessDenied)
 	}
@@ -290,9 +328,59 @@ func connectorResolutionConversationMatches(
 			normalizeCallerID(conversation.CallerID) == nil
 	}
 	callerID := normalizeCallerID(conversation.CallerID)
+	if resolution.surface == connectorcore.TargetTypeDigitalHuman {
+		return strings.TrimSpace(conversation.CallerType) == runtimemodel.ConversationCallerDigitalHuman &&
+			callerID != nil && *callerID == resolution.digitalHumanID
+	}
 	return resolution.surface == connectorcore.TargetTypeAgent &&
 		strings.TrimSpace(conversation.CallerType) == runtimemodel.ConversationCallerAgent &&
 		callerID != nil && *callerID == resolution.agentID
+}
+
+// resumeDigitalHumanRun moves the exact paused DigitalHuman run that owns this
+// route receipt back to running, or to its terminal state. The WHERE clause
+// pins the tenant, owner, host, published version, conversation, message,
+// waiting status, and the stored receipt, so a confirmation can never resume a
+// run from another owner, host, or pinned version.
+func resumeDigitalHumanRun(
+	ctx context.Context,
+	tx *gorm.DB,
+	command connectorconfirmation.Command,
+	resolution connectorConfirmationResolution,
+) error {
+	receiptID, ok := canonicalConnectorResolutionUUID(resolution.routeReceipt)
+	if !ok {
+		return connectorResolutionError(connectorcore.ErrorCodeConflict)
+	}
+	status, errorCode := "running", ""
+	completedAt := any(nil)
+	switch resolution.state {
+	case connectorconfirmation.StateCancelled:
+		status, completedAt = "canceled", gorm.Expr("CURRENT_TIMESTAMP")
+	case connectorconfirmation.StateFailed:
+		status, errorCode = "failed", resolution.errorCode
+		completedAt = gorm.Expr("CURRENT_TIMESTAMP")
+	case connectorconfirmation.StateUnknown:
+		status, errorCode = "unknown", resolution.errorCode
+		completedAt = gorm.Expr("CURRENT_TIMESTAMP")
+	}
+	result := tx.WithContext(ctx).
+		Table("digital_human_runs").
+		Where(
+			"id = ? AND organization_id = ? AND actor_id = ? AND digital_human_id = ? AND digital_human_version_id = ? AND conversation_id = ? AND message_id = ? AND status = ? AND waiting_receipt = ?",
+			resolution.runID, command.OrganizationID, command.OwnerAccountID,
+			resolution.digitalHumanID, resolution.digitalHumanVersion,
+			resolution.conversationID, resolution.messageID, "waiting", receiptID,
+		).
+		Updates(map[string]any{
+			"status": status, "error_code": errorCode, "waiting_reason": "",
+			"waiting_receipt": nil, "completed_at": completedAt,
+			"updated_at": gorm.Expr("CURRENT_TIMESTAMP"),
+		})
+	if result.Error != nil || result.RowsAffected != 1 {
+		return connectorResolutionError(connectorcore.ErrorCodeConflict)
+	}
+	return nil
 }
 
 func applyConnectorConfirmationResolution(

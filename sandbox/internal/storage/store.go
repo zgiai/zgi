@@ -9,6 +9,7 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/zgiai/zgi-sandbox/internal/agentexecution"
 
 	"github.com/zgiai/zgi-sandbox/internal/config"
 	"github.com/zgiai/zgi-sandbox/internal/observer"
@@ -17,6 +18,7 @@ import (
 )
 
 type Store struct {
+	admission             *agentexecution.AdmissionLimits
 	db                    *sql.DB
 	observerRetentionDays int
 	observerMaxEvents     int
@@ -41,6 +43,11 @@ type DependencyBuildRequestRecord struct {
 }
 
 func Open(cfg config.Config) (*Store, error) {
+	if cfg.AgentRuntimeAdmission != nil {
+		if err := cfg.AgentRuntimeAdmission.Validate(); err != nil {
+			return nil, err
+		}
+	}
 	if cfg.DatabaseURL == "" {
 		return nil, errors.New("database url is required")
 	}
@@ -66,6 +73,10 @@ func Open(cfg config.Config) (*Store, error) {
 		db:                    db,
 		observerRetentionDays: cfg.ObserverRetentionDays,
 		observerMaxEvents:     cfg.ObserverMaxEvents,
+	}
+	if cfg.AgentRuntimeAdmission != nil {
+		limits := cfg.AgentRuntimeAdmission.WithDefaults()
+		store.admission = &limits
 	}
 	if err := store.prepare(ctx); err != nil {
 		_ = db.Close()
@@ -213,7 +224,7 @@ func (s *Store) prepare(ctx context.Context) error {
 			return fmt.Errorf("prepare postgres schema: %w", err)
 		}
 	}
-	return nil
+	return s.applyMigrations(ctx)
 }
 
 func (s *Store) SaveSandbox(box sandbox.Sandbox) error {

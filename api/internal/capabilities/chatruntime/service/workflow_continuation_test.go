@@ -196,6 +196,42 @@ func TestWorkflowTaskContinuationMessageCarriesStructuredToolEvidence(t *testing
 	}
 }
 
+func TestWorkflowTaskContinuationMessageCarriesTaskRevisionInstruction(t *testing.T) {
+	message := workflowTaskContinuationMessage(&WorkflowApprovalContinuation{
+		WorkflowRunID: "run-revision",
+		InvocationID:  "invocation-revision",
+	}, WorkflowContinuationSummaryRequest{
+		WorkflowRunID: "run-revision",
+		Status:        "rejected",
+		Outputs: map[string]interface{}{
+			"applied":       false,
+			"user_feedback": "改成工作日早上九点",
+		},
+		AllowToolReinvoke:       true,
+		ContinuationInstruction: "The previous task proposal was not applied. Call the digital-human task tool again and submit a new proposal for approval.",
+	})
+	content, ok := message.Content.(string)
+	if !ok {
+		t.Fatalf("message content type = %T, want string", message.Content)
+	}
+	for _, expected := range []string{
+		"not applied",
+		"digital-human task tool again",
+		"manage_digital_human_task",
+		"already the next instruction",
+		"Do not ask the user to send another message",
+		"改成工作日早上九点",
+		`"applied":false`,
+	} {
+		if !strings.Contains(content, expected) {
+			t.Fatalf("revision continuation message missing %q:\n%s", expected, content)
+		}
+	}
+	if strings.Contains(content, "do not rerun the same workflow invocation") {
+		t.Fatalf("revision continuation still forbids the required new tool call:\n%s", content)
+	}
+}
+
 func TestWorkflowTaskContinuationMessageHidesPublishedFailureOutputs(t *testing.T) {
 	detail := "provider route secret"
 	message := workflowTaskContinuationMessage(&WorkflowApprovalContinuation{
@@ -413,6 +449,41 @@ func TestWorkflowContinuationCheckpointsAndStopsPartialAnswer(t *testing.T) {
 	}
 }
 
+func TestDigitalHumanTaskTerminalWorkflowEventUpdatesMetadataAfterMessageCompletion(t *testing.T) {
+	messageRepo := &workflowContinuationCheckpointMessageRepo{}
+	svc := &service{repos: &repository.Repositories{Message: messageRepo}}
+	continuation := &WorkflowApprovalContinuation{
+		Kind:           "digital_human_task",
+		MessageID:      uuid.New(),
+		ConversationID: uuid.New(),
+		WorkflowRunID:  "digital-human-task:run-1",
+		MessageStatus:  runtimemodel.MessageStatusCompleted,
+		Metadata: map[string]interface{}{
+			"agent_workflow_continuation": map[string]interface{}{
+				"kind":            "digital_human_task",
+				"workflow_run_id": "digital-human-task:run-1",
+				"task_id":         "task-1",
+				"task_action":     "resume",
+			},
+		},
+	}
+
+	event, err := svc.RecordWorkflowApprovalContinuationEvent(t.Context(), continuation, "workflow_finished", map[string]interface{}{"status": "completed"})
+	if err != nil {
+		t.Fatalf("record terminal DigitalHuman event: %v", err)
+	}
+	if event == nil || event.Payload["kind"] != "digital_human_task" || event.Payload["task_id"] != "task-1" {
+		t.Fatalf("terminal event payload = %#v, want task identity", event)
+	}
+	if messageRepo.terminalMetadataUpdates != 1 {
+		t.Fatalf("terminal metadata updates = %d, want 1", messageRepo.terminalMetadataUpdates)
+	}
+	state := workflowRecordFromAny(messageRepo.terminalMetadata["agent_workflow_continuation"])
+	if got := firstNonEmptyString(state["status"]); got != workflowContinuationStatusCompleted {
+		t.Fatalf("workflow continuation status = %q, want %q", got, workflowContinuationStatusCompleted)
+	}
+}
+
 func TestWorkflowContinuationStoppedAnswerUsesObservedEventText(t *testing.T) {
 	messageRepo := &workflowContinuationCheckpointMessageRepo{}
 	conversationRepo := &workflowContinuationCheckpointConversationRepo{}
@@ -486,12 +557,14 @@ func TestWorkflowContinuationWithoutObservedTextPreservesDatabaseAnswer(t *testi
 
 type workflowContinuationCheckpointMessageRepo struct {
 	repository.MessageRepository
-	partialAnswer          string
-	stoppedAnswer          string
-	partialUpdates         int
-	completedUpdates       int
-	stoppedAnswerUpdates   int
-	preserveStoppedUpdates int
+	partialAnswer           string
+	stoppedAnswer           string
+	partialUpdates          int
+	completedUpdates        int
+	stoppedAnswerUpdates    int
+	preserveStoppedUpdates  int
+	terminalMetadataUpdates int
+	terminalMetadata        map[string]interface{}
 }
 
 func (r *workflowContinuationCheckpointMessageRepo) UpdatePartialAnswer(_ context.Context, _ uuid.UUID, answer string, _ map[string]interface{}) error {
@@ -517,6 +590,12 @@ func (r *workflowContinuationCheckpointMessageRepo) UpdateCompleted(context.Cont
 }
 
 func (r *workflowContinuationCheckpointMessageRepo) UpdateMetadata(context.Context, uuid.UUID, map[string]interface{}) error {
+	return nil
+}
+
+func (r *workflowContinuationCheckpointMessageRepo) UpdateMetadataAnyStatus(_ context.Context, _ uuid.UUID, metadata map[string]interface{}) error {
+	r.terminalMetadataUpdates++
+	r.terminalMetadata = metadata
 	return nil
 }
 

@@ -10,6 +10,7 @@ import (
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
+	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 )
@@ -1069,6 +1070,25 @@ func TestApplyRunConfigToPartsDisablesAccountMemoryForAgentCaller(t *testing.T) 
 
 	if parts.UseMemory {
 		t.Fatal("applyRunConfigToParts() left account memory enabled for agent caller")
+	}
+}
+
+func TestApplyRunConfigToPartsCarriesConnectorHostCoordinates(t *testing.T) {
+	runID := uuid.NewString()
+	versionID := uuid.NewString()
+	parts := &chatRequestParts{}
+
+	applyRunConfigToParts(RunConfig{
+		ConnectorTargetType:      connectorcore.TargetTypeDigitalHuman,
+		ConnectorTargetScope:     "published",
+		ConnectorTargetVersionID: versionID,
+		ConnectorRunID:           runID,
+		ConnectorInteractive:     true,
+	}, parts)
+
+	if parts.ConnectorTargetType != connectorcore.TargetTypeDigitalHuman || parts.ConnectorTargetScope != "published" ||
+		parts.ConnectorTargetVersionID != versionID || parts.ConnectorRunID != runID || !parts.ConnectorInteractive {
+		t.Fatalf("Connector host carrier not propagated: %#v", parts)
 	}
 }
 

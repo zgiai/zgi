@@ -3,10 +3,13 @@ package execution
 import (
 	"context"
 	"encoding/json"
+	"math"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/serverops"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
 )
@@ -120,6 +123,9 @@ func previewText(value string, limit int) (string, bool) {
 }
 
 func buildConfirmationPreview(request ExecutionRequest, connection core.PersonalConnection, recipient string) *ConfirmationPreview {
+	if request.ConnectorID.String() == catalog.ServerOpsSSHConnectorID {
+		return buildServerOpsSSHConfirmationPreview(request, connection)
+	}
 	kind, rules, known := previewRules(string(request.OperationID))
 	p := &ConfirmationPreview{Kind: kind, Fields: []ConfirmationPreviewField{}, Complete: known}
 	p.AccountName, _ = previewText(connection.Name, 128)
@@ -197,12 +203,261 @@ func buildConfirmationPreview(request ExecutionRequest, connection core.Personal
 	return p
 }
 
-func (service *Service) confirmationWithPreview(ctx context.Context, pinned PinnedExecution, accepted catalog.PinnedOperation, binding core.TargetBinding, connection core.PersonalConnection, risk RiskClassification) *RuntimeConfirmation {
-	confirmation := runtimeConfirmation(pinned.Receipt, accepted, pinned.Request.Target, risk)
+// serverOpsSSHServiceNamePattern is the capability's exact systemd unit
+// grammar. It is compiled once from the exported constant so the preview can
+// never advertise a looser service_name than the driver accepts.
+var serverOpsSSHServiceNamePattern = regexp.MustCompile(serverops.SystemdServiceNamePattern)
+
+// buildServerOpsSSHConfirmationPreview builds the closed, complete preview for
+// the SSH Server Operations connector. The preview is derived only from the
+// frozen operation arguments and the already-verified non-secret connection
+// identity; credentials, private keys, passphrases, and remote output are never
+// read or emitted.
+//
+// The snapshot action declares no arguments, so an empty arguments map would
+// otherwise produce an unusable preview. It instead shows the fixed action and
+// pinned target. Every other action must supply exactly its declared arguments:
+// an unknown key, a wrong type, an out-of-range integer, or a malformed
+// service_name marks the preview incomplete rather than being normalized.
+func buildServerOpsSSHConfirmationPreview(request ExecutionRequest, connection core.PersonalConnection) *ConfirmationPreview {
+	preview := &ConfirmationPreview{Kind: "resource", Fields: []ConfirmationPreviewField{}, Complete: true}
+	preview.AccountName, _ = previewText(connection.Name, 128)
+	identity, identityComplete := serverOpsSSHAccountIdentity(connection.ExternalAccountID)
+	preview.AccountIdentity = identity
+	if !identityComplete {
+		preview.Complete = false
+	}
+
+	tool, known := serverOpsSSHTool(request.OperationID.String())
+	if !known {
+		preview.Complete = false
+		return preview
+	}
+	input, ok := serverOpsSSHInputObject(request.Input)
+	if !ok {
+		preview.Complete = false
+		return preview
+	}
+	parameters := make(map[string]serverops.ParameterDescriptor, len(tool.Parameters))
+	for _, parameter := range tool.Parameters {
+		parameters[parameter.Name] = parameter
+	}
+
+	switch tool.ActionID {
+	case serverops.ActionSystemSnapshot:
+		if len(input) != 0 {
+			preview.Complete = false
+			return preview
+		}
+		preview.Fields = append(preview.Fields,
+			serverOpsSSHPreviewField("Action", "动作", serverops.ActionSystemSnapshot),
+			serverOpsSSHPreviewField("Target", "目标", identity),
+		)
+	case serverops.ActionServiceStatus:
+		if !serverOpsSSHOnlyKeys(input, "service_name") {
+			preview.Complete = false
+			return preview
+		}
+		name, nameOK := serverOpsSSHServiceName(input, parameters)
+		if !nameOK {
+			preview.Complete = false
+			return preview
+		}
+		preview.Fields = append(preview.Fields, serverOpsSSHPreviewField("Service", "服务", name))
+	case serverops.ActionJournalTail:
+		if !serverOpsSSHOnlyKeys(input, "service_name", "lines", "since_minutes") {
+			preview.Complete = false
+			return preview
+		}
+		name, nameOK := serverOpsSSHServiceName(input, parameters)
+		lines, linesOK := serverOpsSSHInteger(input, parameters, "lines")
+		sinceMinutes, sinceOK := serverOpsSSHInteger(input, parameters, "since_minutes")
+		if !nameOK || !linesOK || !sinceOK {
+			preview.Complete = false
+			return preview
+		}
+		preview.Fields = append(preview.Fields,
+			serverOpsSSHPreviewField("Service", "服务", name),
+			serverOpsSSHPreviewField("Lines", "行数", strconv.FormatInt(lines, 10)),
+			serverOpsSSHPreviewField("Since minutes", "时间范围（分钟）", strconv.FormatInt(sinceMinutes, 10)),
+		)
+	default:
+		preview.Complete = false
+	}
+	return preview
+}
+
+// serverOpsSSHTool resolves the declared tool contract for one action. The
+// capability manifest is the single source of truth for the accepted argument
+// names, pattern, bounds, and defaults.
+func serverOpsSSHTool(actionID string) (serverops.ToolDescriptor, bool) {
+	for _, tool := range serverops.Skill().Tools {
+		if tool.ActionID == actionID {
+			return tool, true
+		}
+	}
+	return serverops.ToolDescriptor{}, false
+}
+
+// serverOpsSSHAccountIdentity returns the verified, non-secret "username@host:port"
+// identity the adapter stored. A missing, empty, truncated, or altered value is
+// reported incomplete so a governed DigitalHuman approval can never rely on an
+// absent or rewritten target identity.
+func serverOpsSSHAccountIdentity(external *string) (string, bool) {
+	if external == nil {
+		return "", false
+	}
+	value, alteredOrTruncated := previewText(*external, 512)
+	if value == "" || alteredOrTruncated {
+		return value, false
+	}
+	return value, true
+}
+
+// serverOpsSSHInputObject normalizes the frozen arguments to a JSON object
+// without retaining the raw encoding. A non-object value is rejected.
+func serverOpsSSHInputObject(input any) (map[string]any, bool) {
+	if input == nil {
+		return map[string]any{}, true
+	}
+	encoded, err := json.Marshal(input)
+	if err != nil {
+		return nil, false
+	}
+	defer clear(encoded)
+	var object map[string]any
+	if json.Unmarshal(encoded, &object) != nil {
+		return nil, false
+	}
+	if object == nil {
+		object = map[string]any{}
+	}
+	return object, true
+}
+
+// serverOpsSSHOnlyKeys reports whether every supplied argument is declared.
+func serverOpsSSHOnlyKeys(input map[string]any, allowed ...string) bool {
+	for key := range input {
+		matched := false
+		for _, candidate := range allowed {
+			if key == candidate {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
+}
+
+// serverOpsSSHServiceName validates service_name against the exact declared
+// grammar and returns it unchanged. The value is never trimmed or rewritten.
+func serverOpsSSHServiceName(input map[string]any, parameters map[string]serverops.ParameterDescriptor) (string, bool) {
+	descriptor, ok := parameters["service_name"]
+	if !ok || descriptor.Kind != serverops.ParameterKindString || !descriptor.Required {
+		return "", false
+	}
+	raw, exists := input["service_name"]
+	if !exists {
+		return "", false
+	}
+	value, ok := raw.(string)
+	if !ok || !serverOpsSSHServiceNamePattern.MatchString(value) {
+		return "", false
+	}
+	return value, true
+}
+
+// serverOpsSSHInteger resolves one optional integer argument, applying the
+// declared default when it is omitted and rejecting a wrong type or an
+// out-of-range value instead of clamping it.
+func serverOpsSSHInteger(input map[string]any, parameters map[string]serverops.ParameterDescriptor, name string) (int64, bool) {
+	descriptor, ok := parameters[name]
+	if !ok || descriptor.Kind != serverops.ParameterKindInteger {
+		return 0, false
+	}
+	raw, exists := input[name]
+	if !exists {
+		if descriptor.HasDefault {
+			return descriptor.Default, true
+		}
+		return 0, false
+	}
+	value, ok := serverOpsSSHIntegerValue(raw)
+	if !ok || value < descriptor.Minimum || value > descriptor.Maximum {
+		return 0, false
+	}
+	return value, true
+}
+
+func serverOpsSSHIntegerValue(raw any) (int64, bool) {
+	switch value := raw.(type) {
+	case int:
+		return int64(value), true
+	case int32:
+		return int64(value), true
+	case int64:
+		return value, true
+	case float64:
+		if math.IsNaN(value) || math.IsInf(value, 0) || value != math.Trunc(value) ||
+			value < math.MinInt64 || value > math.MaxInt64 {
+			return 0, false
+		}
+		return int64(value), true
+	case json.Number:
+		parsed, err := value.Int64()
+		if err != nil {
+			return 0, false
+		}
+		return parsed, true
+	default:
+		return 0, false
+	}
+}
+
+// serverOpsSSHPreviewField builds one parser-safe localized field.
+func serverOpsSSHPreviewField(en, zh, value string) ConfirmationPreviewField {
+	return ConfirmationPreviewField{
+		Label:     en,
+		LabelI18n: catalog.LocalizedText{"en-US": en, "zh-Hans": zh},
+		Value:     value,
+	}
+}
+
+// confirmationPreview builds the frozen presentation from the pinned request
+// and the current connection. It is shared by the presentation and
+// confirmed-continuation paths so both rebuild the exact same preview.
+func (service *Service) confirmationPreview(ctx context.Context, pinned PinnedExecution, binding core.TargetBinding, connection core.PersonalConnection) *ConfirmationPreview {
 	var recipient string
 	if reader, ok := service.provider.(ConfirmationTargetReader); ok && (pinned.Request.OperationID == "wecom.messages.send" || pinned.Request.OperationID == "weixin.messages.reply") {
 		recipient, _ = reader.ReadConfirmationTarget(ctx, ProviderInvocation{OrganizationID: connection.OrganizationID, OwnerAccountID: connection.OwnerAccountID, ConnectionID: connection.ID, ConnectorID: connection.ConnectorID, CredentialVersion: connection.CredentialVersion, BindingID: binding.ID, BindingRevision: binding.Revision, Target: pinned.Request.Target, OperationID: pinned.Request.OperationID, Input: pinned.Request.Input})
 	}
-	confirmation.Preview = buildConfirmationPreview(pinned.Request, connection, recipient)
+	return buildConfirmationPreview(pinned.Request, connection, recipient)
+}
+
+func (service *Service) confirmationWithPreview(ctx context.Context, pinned PinnedExecution, accepted catalog.PinnedOperation, binding core.TargetBinding, connection core.PersonalConnection, risk RiskClassification) *RuntimeConfirmation {
+	confirmation := runtimeConfirmation(pinned.Receipt, accepted, pinned.Request.Target, risk)
+	confirmation.Preview = service.confirmationPreview(ctx, pinned, binding, connection)
 	return confirmation
+}
+
+// completeDigitalHumanPreview mirrors the web parser's completeness rule. A
+// DigitalHuman approval is never presented or accepted without a complete,
+// non-secret preview: a nil preview, an explicit incomplete marker, a missing
+// account identity, or an empty field set is treated as incomplete.
+func completeDigitalHumanPreview(preview *ConfirmationPreview) bool {
+	return preview != nil && preview.Complete && preview.AccountIdentity != "" && len(preview.Fields) > 0
+}
+
+// digitalHumanApprovalPreviewAllowed is the single server-side rule for
+// presenting or accepting an approval. The shared Chat/Agent/Workflow path is
+// returned unchanged; only a governed DigitalHuman invocation must carry a
+// complete preview.
+func digitalHumanApprovalPreviewAllowed(decision digitalHumanApprovalDecision, preview *ConfirmationPreview) bool {
+	if !decision.governs() {
+		return true
+	}
+	return completeDigitalHumanPreview(preview)
 }

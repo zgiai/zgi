@@ -16,6 +16,7 @@ import (
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	llmmodelrepo "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/repository"
 	llmmodelservice "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
+	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"gorm.io/gorm"
 )
@@ -35,6 +36,7 @@ type agentsService struct {
 	workflowService           interfaces.WorkflowService
 	chatRuntimeService        runtimeservice.Service
 	agentMemoryService        *agentmemory.Service
+	relationshipMemory        *relationshipmemory.AgentAdapter
 	dataSourceService         datasourceservice.DataSourceService
 	knowledgeRetrievalService *datasetservice.KnowledgeRetrievalService
 	resourcePermissionService interfaces.ResourcePermissionService
@@ -46,6 +48,7 @@ type agentsService struct {
 	agentBindings             *agentbindings.Repository
 	connectorTargetBindings   connectorbindings.Repository
 	agentModels               agentModelEligibility
+	executionApprovals        agentExecutionApprovals
 	db                        *gorm.DB
 }
 
@@ -76,8 +79,10 @@ func NewAgentsService(
 		)
 	}
 	var connectorTargetBindings connectorbindings.Repository
+	var relationshipMemory *relationshipmemory.AgentAdapter
 	if db != nil {
 		connectorTargetBindings = connectorbindings.NewGormRepository(db)
+		relationshipMemory = relationshipmemory.NewAgentAdapter(db)
 	}
 	return &agentsService{
 		agentsRepo:                agentsRepo,
@@ -86,6 +91,7 @@ func NewAgentsService(
 		workflowService:           workflowService,
 		chatRuntimeService:        chatRuntimeService,
 		agentMemoryService:        agentMemoryService,
+		relationshipMemory:        relationshipMemory,
 		dataSourceService:         dataSourceService,
 		knowledgeRetrievalService: knowledgeRetrievalService,
 		resourcePermissionService: resourcePermissionService,
@@ -97,6 +103,7 @@ func NewAgentsService(
 		agentBindings:             agentbindings.NewRepository(db),
 		connectorTargetBindings:   connectorTargetBindings,
 		agentModels:               agentModels,
+		executionApprovals:        agentExecutionApprovalsFromEnv(),
 		db:                        db,
 	}
 }

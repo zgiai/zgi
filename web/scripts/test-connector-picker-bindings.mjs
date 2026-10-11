@@ -417,6 +417,7 @@ const confirmSwitch = new Function(
     pendingSwitch, switchPending, connections, bindings, target,
     isConnectorPickerSwitchCurrent, setPendingSwitch, setActionFailed,
     setSwitchPending, onRequestSwitch, setPendingKey, open = true, staleSession = false,
+    disabled = false, actionsDisabled = false, isLoading = false, isError = false,
   } = dependencies;
   const groupByConnector = false;
   const busyRef = { current: false };

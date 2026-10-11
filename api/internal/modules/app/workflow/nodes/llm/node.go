@@ -332,6 +332,10 @@ func (n *Node) executeRun(ctx context.Context, eventChan chan *shared.NodeEventC
 	}
 
 	// Fetch prompt messages - this is the core functionality
+	if err := n.resolveModelVision(logCtx, modelConfig); err != nil {
+		logger.WarnContext(logCtx, "model vision metadata unavailable; using file metadata only", err)
+	}
+	visionEnabled := n.nodeData.Vision.Enabled && n.isContentSupportedByModel(PromptMessageContent{Type: PromptMessageContentTypeImage}, modelConfig)
 	promptMessages, stop, autoInjectedUserPrompt, err := n.fetchPromptMessages(
 		query,
 		files,
@@ -340,7 +344,7 @@ func (n *Node) executeRun(ctx context.Context, eventChan chan *shared.NodeEventC
 		modelConfig,
 		n.nodeData.PromptTemplate,
 		resolvedMemoryConfig,
-		n.nodeData.Vision.Enabled,
+		visionEnabled,
 		n.nodeData.Vision.Configs.Detail,
 		variablePool,
 		n.nodeData.PromptConfig.TemplateVariables,
@@ -367,6 +371,11 @@ func (n *Node) executeRun(ctx context.Context, eventChan chan *shared.NodeEventC
 			ErrMsg:      failedErr.Error(),
 			ErrType:     "PromptPreparationError",
 		}, failedErr
+	}
+	if n.WorkflowType == "chat" || n.WorkflowType == "advanced-chat" {
+		if attachments := variablePool.Get([]string{"sys", "files"}); attachments != nil {
+			promptMessages = append(promptMessages, PromptMessage{Role: PromptMessageRoleUser, Content: fileMetadataText(attachments.ToObject())})
+		}
 	}
 	promptReadyAt := time.Now()
 	logger.InfoContext(logCtx, "workflow llm prompt_ready",
@@ -743,11 +752,12 @@ func (n *Node) fetchTemplateInputs(nodeData NodeData) (map[string]any, error) {
 
 		var value string
 		switch variable.GetType() {
+		case shared.SegmentTypeFile, shared.SegmentTypeArrayFile:
+			value = fileMetadataText(variable.ToObject())
 		case shared.SegmentTypeArrayAny,
 			shared.SegmentTypeArrayString,
 			shared.SegmentTypeArrayNumber,
 			shared.SegmentTypeArrayObject,
-			shared.SegmentTypeArrayFile,
 			shared.SegmentTypeArrayBoolean:
 			obj := variable.ToObject()
 			if arr, ok := obj.([]any); ok {
@@ -1657,6 +1667,10 @@ func (n *Node) segmentGroupToText(segmentGroup *entities.SegmentGroup) string {
 
 	var result strings.Builder
 	for _, segment := range segmentGroup.Value {
+		if segment.GetType() == shared.SegmentTypeFile || segment.GetType() == shared.SegmentTypeArrayFile {
+			result.WriteString(fileMetadataText(segment.ToObject()))
+			continue
+		}
 		obj := segment.ToObject()
 		if str, ok := obj.(string); ok {
 			result.WriteString(str)
@@ -2081,6 +2095,9 @@ func (n *Node) processVisionFiles(
 		var filePrompt PromptMessageContent
 		switch f := item.(type) {
 		case *file.File:
+			if extension := safeDeref(f.Extension); f.Type == file.FileTypeImage && extension != "" && !workflowVisionExtensionSupported(extension) {
+				continue
+			}
 			fileURL, err := n.getFileURL(f)
 			if err != nil {
 				return nil, false, err
@@ -2098,6 +2115,9 @@ func (n *Node) processVisionFiles(
 				return nil, false, err
 			}
 		case map[string]any:
+			if extension := firstNonEmptyString(getStringFromMap(f, "extension"), getStringFromMap(f, "ext")); n.getFileContentTypeFromMap(f) == PromptMessageContentTypeImage && extension != "" && !workflowVisionExtensionSupported(extension) {
+				continue
+			}
 			transferMethod := file.FileTransferMethod(getStringFromMap(f, "transfer_method"))
 			var (
 				fileURL string
@@ -2147,6 +2167,9 @@ func (n *Node) processVisionFiles(
 		filePrompts = append(filePrompts, filePrompt)
 	}
 
+	if len(filePrompts) == 0 {
+		return promptMessages, false, nil
+	}
 	logger.DebugContext(n.logContext(context.Background()), "LLM vision file prompts built",
 		zap.Int("file_prompt_count", len(filePrompts)),
 		zap.Int("system_file_count", len(sysFiles)),
@@ -3762,6 +3785,17 @@ func (n *Node) isContentSupportedByModel(content PromptMessageContent, modelConf
 	// Always support text content
 	if content.Type == PromptMessageContentTypeText {
 		return true
+	}
+	if modelConfig.ModelSchema.Features != nil {
+		if content.Type != PromptMessageContentTypeImage {
+			return false
+		}
+		for _, feature := range modelConfig.ModelSchema.Features {
+			if feature == "vision" {
+				return true
+			}
+		}
+		return false
 	}
 
 	// Check model schema for supported features

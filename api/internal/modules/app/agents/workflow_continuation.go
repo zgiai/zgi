@@ -35,6 +35,10 @@ func (h *AgentsHandler) ContinueAgentRuntimeWorkflowApproval(c *gin.Context) {
 }
 
 func (h *AgentsHandler) continueRuntimeWorkflowApproval(c *gin.Context, runtimeCtx agentRuntimeContext) {
+	if runtimeCtx.ExecutionError != nil {
+		h.failRuntime(c, runtimeCtx.ExecutionError)
+		return
+	}
 	conversationID, ok := uuidParam(c, "conversation_id")
 	if !ok {
 		return

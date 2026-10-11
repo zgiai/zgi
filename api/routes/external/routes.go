@@ -10,12 +10,14 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
 	datasourceservice "github.com/zgiai/zgi/api/internal/modules/datasource/service"
+	"github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	"github.com/zgiai/zgi/api/internal/modules/memory"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
 	"gorm.io/gorm"
 )
 
@@ -41,6 +43,10 @@ type ExternalRouteDeps struct {
 	ResourcePermission         interfaces.ResourcePermissionService
 	WorkflowEngineFactory      *graph_engine.EngineFactory
 	SkillManifestResolver      skills.ToolGovernanceManifestResolver
+	DigitalHumanRuntime        *digitalhuman.RuntimeService
+	DigitalHumanAccess         *digitalhuman.AccessService
+	DigitalHumanTasks          digitalhuman.TaskHandlerService
+	ApplicationErrorCatalog    *appcatalog.Catalog
 }
 
 // RegisterExternalRoutes registers all external API routes
@@ -52,6 +58,7 @@ func RegisterExternalRoutes(r *gin.Engine, deps ExternalRouteDeps) {
 	{
 		// Public APIs that don't require authentication
 		RegisterPublicRoutes(externalV1)
+		RegisterDigitalHumanExternalRoutes(externalV1, deps.DigitalHumanRuntime, deps.DigitalHumanAccess, deps.DigitalHumanTasks, deps.FileService, deps.ApplicationErrorCatalog)
 
 		// APIs that require API key authentication
 		RegisterAPIKeyRoutes(
@@ -120,5 +127,8 @@ func validateExternalRouteDeps(deps ExternalRouteDeps) {
 	}
 	if deps.WorkflowEngineFactory == nil {
 		panic("external routes require workflow engine factory")
+	}
+	if deps.DigitalHumanRuntime == nil || deps.DigitalHumanAccess == nil || deps.DigitalHumanTasks == nil || deps.ApplicationErrorCatalog == nil {
+		panic("external routes require DigitalHuman runtime, access, tasks, and error catalog")
 	}
 }

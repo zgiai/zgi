@@ -2,11 +2,12 @@ package providers
 
 import (
 	"context"
+	"testing"
+
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/connections"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
-	"testing"
 )
 
 type messagingDriverFixture struct {
@@ -24,7 +25,7 @@ func (d *messagingDriverFixture) InvokeCredentials(context.Context, string, Cred
 func TestMessagingEvidenceCannotInventGrantOrOverrideDenial(t *testing.T) {
 	d, _ := catalog.MessagingDefinition("dingtalk")
 	driver := &messagingDriverFixture{id: d.ID}
-	runtime, err := NewRuntime(&driverFixture{id: "github"}, &driverFixture{id: "github-mcp"}, &driverFixture{id: "web-search"}, &appDriverFixture{}, driver)
+	runtime, err := NewRuntime(&driverFixture{id: "github"}, &driverFixture{id: "github-mcp"}, &driverFixture{id: "web-search"}, &appDriverFixture{}, &sshDriverFixture{}, driver)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -50,8 +50,10 @@ var digestPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 var keyIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 var sqlNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
-// Only these tables can be read or locked. No SQL or path comes from a source
-// record or a user-supplied report. History is read but never updated.
+// Only these tables can be read or locked by the conversion lock pass. Advanced
+// apply additionally locks public.migrations first (see migrationLedgerLock);
+// the ledger itself is read but never updated. No SQL or path comes from a
+// source record or a user-supplied report.
 var snapshotTables = []string{
 	"aichat_integration_preferences", "agent_published_versions", "agent_resource_bindings", "agents", "agents_configs",
 	"chat_runtime_conversations", "chat_runtime_custom_skills", "chat_runtime_organization_skill_configs",
@@ -124,7 +126,29 @@ func loadSnapshot(ctx context.Context, tx pgx.Tx) (databaseSnapshot, error) {
 	if len(snapshot["connector_schema_readiness"]) != 1 {
 		return nil, errors.New("apply the native Connector schema migration before conversion")
 	}
+	history, err := loadMigrationHistory(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	snapshot[migrationHistoryKey] = history
 	return snapshot, nil
+}
+
+// loadMigrationHistory reads the complete, ordered migration ledger in the same
+// transaction snapshot as the conversion source so the source digest binds it.
+// Advanced apply holds the ledger lock while this read runs, so no concurrent
+// migration marker can change the reviewed ledger; only IDs are read and the
+// ledger is never written.
+func loadMigrationHistory(ctx context.Context, tx pgx.Tx) ([]row, error) {
+	var ids []string
+	if err := tx.QueryRow(ctx, migrationHistoryQuery).Scan(&ids); err != nil {
+		return nil, errors.New("cannot read the applied migration ledger")
+	}
+	history := make([]row, 0, len(ids))
+	for _, id := range ids {
+		history = append(history, row{"id": id})
+	}
+	return history, nil
 }
 func inventory(snapshot databaseSnapshot) report {
 	r := report{State: "inventory", SourceDigest: hash(snapshot), Counts: map[string]int{}, Issues: []issue{}}

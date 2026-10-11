@@ -9,3 +9,39 @@ An explicit temporary output lifecycle on a workflow (for example, an image gene
 Download links may have a short validity period independent of file retention. Refresh the conversation or request a new signed URL to access a retained file after its link expires.
 
 The migration on deployment clears expiry from existing conversation-bound generated files. It cannot recover files whose stored content was already deleted. Files without a conversation binding are not migrated because they may be explicitly temporary workflow outputs.
+
+## Attachment context and on-demand reading
+
+Document attachments contribute file metadata and an unmodified source-text preview, not their entire extracted body. Current and historical turns use the same limits: at most 4,000 Unicode characters per file and 12,000 preview characters per turn. The context budget can reduce previews further; metadata for later files is retained even when their text preview is omitted. Images always contribute file metadata; visual input is included only when both the selected model and the image format support it. A non-visual model is explicitly told that image content has not been read. Uploading an image does not grant OCR, Linux or network access.
+
+Function-calling chat models can use the first-party `read_attachment` tool for files in the current conversation branch. No File Reader Skill or Linux environment is required. Pass `file_id`, a zero-based Unicode `offset` (default 0), and `limit` (default 4,000, maximum 12,000). Results include `content`, `total_chars`, `next_offset`, `has_more`, and a `content_version` hash; pass that hash on subsequent pages to detect changes. Read until `has_more=false` when the task requires all extracted text. File parsing itself remains subject to extractor limits; this is not a promise of complete binary, table, or layout fidelity.
+
+Only the retrieved page reaches the current model turn. Durable tool receipts retain range/version metadata, not the page body. After a continuation the model can read again; it must not infer missing content. A model without confirmed function-calling support receives bounded previews only and must not claim to have read an omitted tail.
+
+Reads recheck file permissions and, for published Agent and DigitalHuman entries, live application access and upload provenance. They cannot browse the file library or read arbitrary file IDs. New authenticated Agent uploads record provenance even with Linux disabled. Legacy published uploads without a provenance binding are not automatically adopted; upload them again through the intended entry if a protected read is denied. Anonymous entries do not acquire this new read capability.
+
+The existing `file-reader/read_file` compatibility tool also accepts `offset` and returns `next_offset`/`has_more`; its `max_chars` argument keeps the existing 4,000 default and 12,000 maximum. Original uploaded bytes remain available to authorized Shell/Skill processing; prompt previews do not truncate those files.
+
+## Chat upload admission
+
+New chat upload settings select documents and/or images, independently of model capabilities and parser availability. Agent and DigitalHuman settings use `file_upload_policy.allowed_file_types` and are stored with the published version. Missing policies retain the default of both categories; an explicit empty list permits neither. Existing workflow custom/media configurations and typed file variables retain their compatibility contract.
+
+Document files follow `UPLOAD_FILE_SIZE_LIMIT` (default 50 MiB); images follow `UPLOAD_IMAGE_FILE_SIZE_LIMIT` (default 10 MiB). Each turn permits at most 100 MiB of unique original file bytes, including files selected from the file library. Ordinary chat permits five attachments; workflow chat retains its configured count. Upload configuration responses include a server-resolved `chat_upload_policy` with allowed extensions, count and byte limits. Parser support is not an upload whitelist. When text extraction is unavailable, the original remains available for authorized file operations; missing files and permission failures still fail.
+
+Linux attachment input uses these same limits rather than a separate 64 MiB cap. Files transfer individually, and previous turns are not added to the current turn's allowance. Worker and Runtime Agent binaries must be updated together to advertise the 100 MiB input transport. This does not raise the 64 MiB Skill package or result-export limits, file-management limits, or knowledge-base limits.
+
+The maintained chat document extensions are `txt`, `md`, `markdown`, `mdx`, `pdf`, `html`, `htm`, `doc`, `docx`, `xls`, `xlsx`, `csv`, `eml`, `msg`, `xml`, `epub`, `ppt`, `pptx`, `json`, `key`, `numbers`, `java`, and `sql`. Image extensions are `jpg`, `jpeg`, `png`, `gif`, `webp`, and `svg`. SVG can be used as a file but is not sent as visual model input. Selecting a file from File Management does not exempt it from chat admission or file authorization.
+
+For workflow chat, the published feature response supplies `file_upload.effective_policy`. Existing custom/media configurations retain their allowed extensions; typed file variables are not converted into chat attachments. An uploaded-file reference is required for conversational attachments, so remote URLs cannot bypass upload admission. File variables render as metadata rather than internal storage locators. Image payloads additionally require the selected model's catalog capability and the LLM node's vision setting.
+
+### Targeted validation
+
+Run the policy and affected application tests from `api/`:
+
+```bash
+go test ./internal/contracts/chatfile ./internal/capabilities/chatruntime/service ./internal/capabilities/agentexecution/runtime ./internal/modules/app/agents ./internal/modules/app/workflow ./internal/modules/app/workflow/nodes/llm ./internal/modules/digitalhuman ./routes/external
+```
+
+From `web/`, run `node scripts/test-chat-upload-unified-policy.mjs`, `pnpm lint`, `pnpm type-check`, and `pnpm build`. The UI source-contract test supplements, rather than replaces, browser upload and download checks.
+
+The opt-in Sandbox tests `TestContainerdChatAttachmentUploadLimits` (`linux,agent_runtime_integration`) and `TestE2BChatAttachmentUploadLimits` (`linux,e2b_integration`) require real updated backends. They check 70 MiB and 100 MiB input, reject 100 MiB plus one byte, and verify the independent 64 MiB download capability. The local test also transforms a PNG and CSV and checks the downloaded image dimensions. Configure the existing test image/containerd or E2B credential/template environment variables before running them; these tests create disposable environments and clean them up.

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, type ReactNode } from 'react';
+import { useId, useState, type ReactNode } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -11,6 +11,8 @@ export function ToolInvocationRow({
   icon,
   title,
   duration,
+  summary,
+  defaultOpen = false,
   children,
 }: {
   tone: 'running' | 'success' | 'warning' | 'error';
@@ -18,9 +20,13 @@ export function ToolInvocationRow({
   icon: ReactNode;
   title: ReactNode;
   duration?: string | null;
+  summary?: ReactNode;
+  defaultOpen?: boolean;
   children?: ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
+  const [userOpen, setUserOpen] = useState<boolean | undefined>();
+  const open = userOpen ?? defaultOpen;
+  const detailId = useId();
   const content = (
     <>
       <span
@@ -36,7 +42,7 @@ export function ToolInvocationRow({
         {statusIcon}
       </span>
       {icon}
-      <span className="min-w-0 flex-1 truncate text-foreground">{title}</span>
+      <span className="min-w-0 flex-1 break-words text-foreground">{title}</span>
       {duration ? <span className="shrink-0 text-muted-foreground">{duration}</span> : null}
       {children ? (
         <ChevronDown
@@ -50,7 +56,7 @@ export function ToolInvocationRow({
   return (
     <div
       className={cn(
-        'rounded-md border bg-background/80 text-xs',
+        'rounded-lg border bg-background/80 text-[13px] leading-5',
         tone === 'error'
           ? 'border-destructive/30'
           : tone === 'warning'
@@ -61,18 +67,26 @@ export function ToolInvocationRow({
       {children ? (
         <button
           type="button"
-          className="flex min-h-8 w-full min-w-0 items-center gap-2 px-2.5 py-1.5 text-left"
+          className="flex min-h-10 w-full min-w-0 items-center gap-2 px-3 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           aria-expanded={open}
-          onClick={() => setOpen(value => !value)}
+          aria-controls={detailId}
+          onClick={() => setUserOpen(!open)}
         >
           {content}
         </button>
       ) : (
-        <div className="flex min-h-8 w-full min-w-0 items-center gap-2 px-2.5 py-1.5 text-left">
+        <div className="flex min-h-10 w-full min-w-0 items-center gap-2 px-3 py-2 text-left">
           {content}
         </div>
       )}
-      {children && open ? <div className="border-t bg-muted/20 px-2.5 py-2">{children}</div> : null}
+      {summary ? (
+        <div className="px-3 pb-2 text-xs leading-5 text-muted-foreground">{summary}</div>
+      ) : null}
+      {children ? (
+        <div id={detailId} hidden={!open} className="border-t bg-muted/20 px-3 py-2">
+          {children}
+        </div>
+      ) : null}
     </div>
   );
 }

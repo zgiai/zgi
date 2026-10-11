@@ -34,6 +34,7 @@ import {
 import { cn } from '@/lib/utils';
 import { fileManageService } from '@/services/file-manage.service';
 import type { FileSpreadsheetPreviewResponse } from '@/services/types/file';
+import { PlainTextFilePreview } from './plain-text-file-preview';
 
 const maxOfficePreviewBytes = 10 * 1024 * 1024;
 const maxOfficeZipEntries = 256;
@@ -88,6 +89,7 @@ export interface UniversalFilePreviewDialogProps {
   error?: string | null;
   onDownload?: () => void;
   isDownloading?: boolean;
+  allowExternalHtmlOpen?: boolean;
 }
 
 export interface UniversalFilePreviewContentProps {
@@ -220,13 +222,9 @@ export function UniversalFilePreviewContent({
 
   if (previewKind === 'browser') {
     return (
-      <iframe
-        src={previewUrl}
-        title={file.name}
-        sandbox=""
-        referrerPolicy="no-referrer"
-        className={cn('h-full min-h-[60vh] w-full border-0 bg-background', className)}
-      />
+      <div className={cn('h-full min-h-0', className)}>
+        <PlainTextFilePreview previewUrl={previewUrl} />
+      </div>
     );
   }
 
@@ -264,6 +262,7 @@ export function UniversalFilePreviewDialog({
   error = null,
   onDownload,
   isDownloading = false,
+  allowExternalHtmlOpen = true,
 }: UniversalFilePreviewDialogProps) {
   const t = useT('files');
   const [previewSession, setPreviewSession] = useState<{
@@ -322,7 +321,8 @@ export function UniversalFilePreviewDialog({
   const title = activeFile?.name || t('preview.title');
   const isImage = isOriginalPreviewImage(activeFile?.extension, activeFile?.mimeType);
   const previewKind = getOriginalPreviewKind(activeFile?.extension, activeFile?.mimeType);
-  const htmlExternalOpenUrl = previewKind === 'html' ? resolvedPreviewUrl : '';
+  const htmlExternalOpenUrl =
+    allowExternalHtmlOpen && previewKind === 'html' ? resolvedPreviewUrl : '';
   const canOpenHtmlExternally = Boolean(htmlExternalOpenUrl);
 
   const openHtmlInNewTab = () => {

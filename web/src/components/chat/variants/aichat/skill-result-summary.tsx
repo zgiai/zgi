@@ -4,6 +4,8 @@ import { useMemo } from 'react';
 import { useT, type ScopedTranslations } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import { sanitizeTimelineDisplayPayload } from '@/components/chat/variants/aichat/timeline-display-safety';
+import { getAgentExecutionJobPresentation } from './agent-execution-job-presentation';
+import type { AIChatSkillInvocation } from '@/services/types/aichat';
 
 const KNOWLEDGE_RESULT_KEYS = [
   'status',
@@ -237,7 +239,7 @@ function buildResultRows(result: Record<string, unknown>, t: WebappTranslator): 
 }
 
 interface AIChatSkillResultSummaryProps {
-  invocation?: unknown;
+  invocation?: AIChatSkillInvocation;
   result?: Record<string, unknown> | null;
   skillId?: string;
   toolName?: string;
@@ -245,6 +247,7 @@ interface AIChatSkillResultSummaryProps {
 }
 
 export function AIChatSkillResultSummary({
+  invocation,
   result,
   className,
 }: AIChatSkillResultSummaryProps) {
@@ -258,9 +261,16 @@ export function AIChatSkillResultSummary({
     if (!isRecord(safeResult)) return { rows: [], tone: null };
     return {
       rows: buildResultRows(safeResult, t),
-      tone: null,
+      tone: invocation
+        ? (getAgentExecutionJobPresentation(invocation)?.tone ??
+          (safeResult.status === 'failed' || invocation.status === 'error'
+            ? 'error'
+            : invocation.status === 'running'
+              ? 'running'
+              : null))
+        : null,
     };
-  }, [result, t]);
+  }, [result, t, invocation]);
 
   const { rows, tone } = summary;
 
@@ -287,7 +297,9 @@ export function AIChatSkillResultSummary({
             ? 'bg-amber-500/10'
             : tone === 'running'
               ? 'bg-blue-500/10'
-              : 'bg-emerald-500/5',
+              : tone === 'success'
+                ? 'bg-emerald-500/5'
+                : 'bg-muted/30',
         className
       )}
     >

@@ -19,7 +19,12 @@ policy.
 
 The production example uses `ZGI_SANDBOX_RUNTIME_BACKEND=linux-secure`. That
 backend also requires `ZGI_SANDBOX_SECURE_ROOTFS` and
-`ZGI_SANDBOX_BWRAP_BINARY`. When `ZGI_SANDBOX_DEPENDENCY_ROOTFS_DIR` is set,
+`ZGI_SANDBOX_BWRAP_BINARY`. When the process limit is enabled, containerized
+workers also require a private, writable cgroup v2 namespace. The supplied
+Compose definitions start the entrypoint as root only long enough to delegate
+the per-execution cgroup tree, then drop to the unprivileged `zgi` user before
+copying profiles or starting the server. When
+`ZGI_SANDBOX_DEPENDENCY_ROOTFS_DIR` is set,
 the secure runtime resolves dependency profiles from child rootfs directories
 named after each profile. During startup, the service also scans those
 profile-specific rootfs directories for verified profile artifacts and loads
@@ -91,7 +96,8 @@ manifest and read-only binds `/opt/zgi/profiles/<profile>` before execution.
 | `ZGI_SANDBOX_SECURE_RUNTIME_CPU_SECONDS` | Secure Linux backend CPU time limit in seconds. | `2` | Use at least `300` for the managed scientific profile and tune to command profile timeouts. |
 | `ZGI_SANDBOX_SECURE_RUNTIME_MEMORY_BYTES` | Secure Linux backend address-space memory limit. | `268435456` | Use at least `4294967296` for the managed scientific profile; size worker concurrency from this per-execution ceiling. |
 | `ZGI_SANDBOX_SECURE_RUNTIME_OPEN_FILE_LIMIT` | Secure Linux backend open file descriptor limit. | `128` | Keep low unless a managed profile needs more descriptors. |
-| `ZGI_SANDBOX_SECURE_RUNTIME_PROCESS_LIMIT` | Secure Linux backend process count limit. | `64` | Keep low enough to contain fork-heavy workloads. |
+| `ZGI_SANDBOX_SECURE_RUNTIME_PROCESS_LIMIT` | Per-execution secure Linux backend process/thread count limit, enforced with cgroup v2 `pids.max`. | `64` | Set `0` only to disable the process controller; do not use UID-scoped `RLIMIT_NPROC` for this boundary. |
+| `ZGI_SANDBOX_SECURE_RUNTIME_CGROUP_ROOT` | Delegated cgroup v2 directory used to create one child cgroup per secure execution. | `/sys/fs/cgroup/zgi-sandbox-executions` | The container entrypoint prepares this directory when it starts as root in a private, writable cgroup namespace, then drops to `zgi`. |
 | `ZGI_SANDBOX_SECURE_ROOTFS` | Root filesystem path for the secure Linux backend. | empty | Required when using `linux-secure`. |
 | `ZGI_SANDBOX_SERVER_PORT` | HTTP server port. | `2660` | Set to the exposed service port. |
 | `ZGI_SANDBOX_SESSION_TTL_SECONDS` | Session sandbox TTL. | `1800` | Keep bounded and align with cleanup policy. |

@@ -28,6 +28,7 @@ export const AVAILABLE_MODULES = [
   'prompts',
   'connectors',
   'music',
+  'digitalHumans',
 ] as const;
 
 export type ModuleName = (typeof AVAILABLE_MODULES)[number];
@@ -155,6 +156,10 @@ const moduleRegistry: ModuleRegistry = {
   music: {
     'zh-Hans': () => import('./modules/music/zh-Hans'),
     'en-US': () => import('./modules/music/en-US'),
+  },
+  digitalHumans: {
+    'zh-Hans': () => import('./modules/digitalHumans/zh-Hans'),
+    'en-US': () => import('./modules/digitalHumans/en-US'),
   },
 };
 

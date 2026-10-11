@@ -173,7 +173,7 @@ func BuildAgentPluginManifest(definitions []Definition) ([]byte, error) {
 	pluginID := definitions[0].PluginID
 	pluginVersion := definitions[0].PluginVersion
 	extensionVersion := ZGIMetadataSchemaVersion1
-	if definitions[0].UsesCredentials() {
+	if definitions[0].UsesCredentials() || definitions[0].IsDigitalHumanContract() {
 		extensionVersion = definitions[0].ExtensionSchemaVersion
 	}
 	connectors := make([]zgiConnectorMetadata, 0, len(definitions))
@@ -410,7 +410,7 @@ func parseZGIConnectorExtension(
 	if version == "" {
 		version = ZGIMetadataSchemaVersion1
 	}
-	if version != ZGIMetadataSchemaVersion1 && version != ZGIMetadataSchemaVersion11 && version != ZGIMetadataSchemaVersion12 && version != ZGIMetadataSchemaVersion14 && version != ZGIMetadataSchemaVersion15 {
+	if version != ZGIMetadataSchemaVersion1 && version != ZGIMetadataSchemaVersion11 && version != ZGIMetadataSchemaVersion12 && version != ZGIMetadataSchemaVersion13 && version != ZGIMetadataSchemaVersion14 && version != ZGIMetadataSchemaVersion15 {
 		return nil, []PluginComponentFailure{{
 			PluginID: manifest.Name, ConnectorIndex: -1, Code: "unsupported_connector_extension_schema",
 			Err: ErrConnectorMetadataInvalid,
@@ -454,6 +454,9 @@ func parseZGIConnectorExtension(
 		if version == ZGIMetadataSchemaVersion12 {
 			definition.ExtensionSchemaVersion = version
 			definition.ContractVersion = 3
+		}
+		if version == ZGIMetadataSchemaVersion13 {
+			definition.ExtensionSchemaVersion, definition.ContractVersion = version, 4
 		}
 		if version == ZGIMetadataSchemaVersion14 {
 			definition.ExtensionSchemaVersion = version

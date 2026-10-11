@@ -25,6 +25,45 @@ func TestCompatibleDefinitionUpdatePreservesAcceptedContracts(t *testing.T) {
 	}
 }
 
+func TestCompatibleDefinitionUpdateAdmitsAdditiveDigitalHumanSurface(t *testing.T) {
+	t.Parallel()
+	current := pluginContractDefinitionFixture()
+	candidate, err := WithDigitalHumanSurface(current, "1.1.0-digitalhuman.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckCompatibleUpdate(current, candidate); err != nil {
+		t.Fatalf("additive digital human surface rejected: %v", err)
+	}
+
+	// The host surface is additive and one-way: an admitted digital human
+	// contract cannot be reverted to the plain Connector surface set.
+	if err := CheckCompatibleUpdate(candidate, current); !errors.Is(err, ErrIncompatibleDefinitionUpdate) {
+		t.Fatalf("digital human surface removal = %v, want incompatible update", err)
+	}
+}
+
+func TestCompatibleDefinitionUpdatePreservesCredentialDialectForDigitalHumanSurface(t *testing.T) {
+	t.Parallel()
+	current, err := FeishuDefinition()
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := WithDigitalHumanSurface(current, current.PluginVersion+"-digitalhuman.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckCompatibleUpdate(current, candidate); err != nil {
+		t.Fatalf("credential digital human projection rejected: %v", err)
+	}
+
+	mismatched := cloneDefinition(candidate)
+	mismatched.CredentialFields[0].MaxLength++
+	if err := CheckCompatibleUpdate(current, mismatched); !errors.Is(err, ErrIncompatibleDefinitionUpdate) {
+		t.Fatalf("credential field change = %v, want incompatible update", err)
+	}
+}
+
 func TestDefinitionUpdateBlocksIdentitySchemaEffectExposureAndRiskChanges(t *testing.T) {
 	t.Parallel()
 

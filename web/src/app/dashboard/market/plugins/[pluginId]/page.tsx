@@ -43,10 +43,10 @@ import { useAuthStore } from '@/store';
 import { pluginService } from '@/services/plugin.service';
 import type { MarketplaceBrandingSettings, MarketplacePlugin } from '@/services/types/plugin';
 
-type PluginToolDefinition = {
+interface PluginToolDefinition {
   name: string;
   description: string;
-};
+}
 
 export default function MarketplacePluginDetailPage() {
   const { pluginId } = useParams<{ pluginId: string }>();

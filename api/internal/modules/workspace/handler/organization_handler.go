@@ -17,6 +17,7 @@ import (
 	workspace_service "github.com/zgiai/zgi/api/internal/modules/workspace/service"
 	helper "github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/middleware"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
 	"gorm.io/gorm"
 )
@@ -958,11 +959,16 @@ func (h *OrganizationHandler) CreateOrganizationWorkspace(c *gin.Context) {
 
 	var req struct {
 		Name     string  `json:"name" binding:"required"`
-		LeaderID *string `json:"leader_id,omitempty"`
+		LeaderID string  `json:"leader_id" binding:"required"`
 		APIKeyID *string `json:"api_key_id,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	leaderID := strings.TrimSpace(req.LeaderID)
+	if leaderID == "" {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
@@ -994,16 +1000,14 @@ func (h *OrganizationHandler) CreateOrganizationWorkspace(c *gin.Context) {
 		return
 	}
 
-	if req.LeaderID != nil && *req.LeaderID != "" {
-		isMember, err := h.organizationService.IsOrganizationMember(c.Request.Context(), organizationID, *req.LeaderID)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !isMember {
-			response.FailWithMessage(c, response.ErrNotFound, "leader is not a member of the organization")
-			return
-		}
+	isMember, err := h.organizationService.IsOrganizationMember(c.Request.Context(), organizationID, leaderID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	if !isMember {
+		response.FailWithMessage(c, response.ErrNotFound, "leader is not a member of the organization")
+		return
 	}
 
 	// 3.Check if there is already a tenant with the same name in the organization.
@@ -1031,28 +1035,31 @@ func (h *OrganizationHandler) CreateOrganizationWorkspace(c *gin.Context) {
 		APIKeyID:       req.APIKeyID,
 	})
 	if err != nil {
-		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		h.rollbackCreatedOrganizationWorkspace(c, workspace.ID)
+		response.Fail(c, response.ErrSystemError)
 		return
 	}
 
-	var warning string
-	if req.LeaderID != nil && *req.LeaderID != "" {
-		if err := h.workspaceManagementService.CreateWorkspaceMember(c.Request.Context(), workspace.ID, *req.LeaderID, string(model.WorkspaceRoleOwner)); err != nil {
-			warning = err.Error()
-		}
-	}
-
-	if warning != "" {
-		response.Success(c, gin.H{
-			"workspace": workspace,
-			"warning":   warning,
-		})
+	if err := h.workspaceManagementService.CreateWorkspaceMember(c.Request.Context(), workspace.ID, leaderID, string(model.WorkspaceRoleOwner)); err != nil {
+		h.rollbackCreatedOrganizationWorkspace(c, workspace.ID)
+		response.Fail(c, response.ErrSystemError)
 		return
 	}
 
 	response.Success(c, gin.H{
 		"workspace": workspace,
 	})
+}
+
+func (h *OrganizationHandler) rollbackCreatedOrganizationWorkspace(c *gin.Context, workspaceID string) {
+	if err := h.workspaceManagementService.DeleteWorkspaceWithMembers(c.Request.Context(), workspaceID); err != nil {
+		logger.ErrorContext(
+			c.Request.Context(),
+			"failed to roll back organization workspace creation",
+			"workspace_id", workspaceID,
+			err,
+		)
+	}
 }
 
 func (h *OrganizationHandler) UpdateOrganizationWorkspace(c *gin.Context) {
@@ -1310,6 +1317,10 @@ func (h *OrganizationHandler) DeleteOrganizationWorkspace(c *gin.Context) {
 	// Note: We don't need to explicitly remove it from organization first because deleting the workspace
 	// will automatically remove the association. Plus, DeleteWorkspaceWithMembers handles quota release.
 	if err := h.workspaceManagementService.DeleteWorkspaceWithMembers(c.Request.Context(), workspaceID); err != nil {
+		if errors.Is(err, workspace_service.ErrWorkspaceHasActiveRuntime) {
+			c.JSON(http.StatusConflict, response.Response{Code: "workspace_has_active_runtime", Message: "Disable the Runtime Workspace before deleting this Workspace"})
+			return
+		}
 		response.Fail(c, response.ErrSystemError)
 		return
 	}

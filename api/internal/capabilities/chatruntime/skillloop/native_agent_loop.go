@@ -51,6 +51,7 @@ func runtimeToolForCall(runtimeTools []RuntimeTool, call adapter.ToolCall) (Runt
 }
 
 func handleRuntimeToolCall(ctx context.Context, call adapter.ToolCall, runtimeTool RuntimeTool) skillStepResult {
+	startedAt := time.Now()
 	result := runtimeTool.Handler(ctx, call)
 	status := strings.TrimSpace(result.Status)
 	if status == "" {
@@ -60,22 +61,42 @@ func handleRuntimeToolCall(ctx context.Context, call adapter.ToolCall, runtimeTo
 		}
 	}
 	trace := skills.SkillTrace{
-		Kind:      "tool_call",
-		SkillID:   strings.TrimSpace(runtimeTool.SkillID),
-		ToolName:  strings.TrimSpace(runtimeTool.Definition.Function.Name),
-		Status:    status,
-		Arguments: result.Arguments,
-		Result:    result.Result,
+		InvocationID: call.ID,
+		Kind:         "tool_call",
+		SkillID:      strings.TrimSpace(runtimeTool.SkillID),
+		ToolName:     strings.TrimSpace(runtimeTool.Definition.Function.Name),
+		Status:       status,
+		Arguments:    result.Arguments,
+		Result:       result.Result,
+		DurationMS:   time.Since(startedAt).Milliseconds(),
 	}
 	if result.Error != nil {
 		trace.Error = status
 	}
-	message := skills.ToolResultMessage(call.ID, result.Result)
+	modelResult := result.Result
+	if result.ModelResult != nil {
+		modelResult = result.ModelResult
+	}
+	message := skills.ToolResultMessage(call.ID, modelResult)
 	step := successfulSkillStep(trace, message, false, true)
 	step.toolResult = result.Result
+	step.artifacts = result.Artifacts
+	step.pendingApproval = result.PendingApproval
+	step.pendingGovernance = result.PendingGovernance
+	step.pendingConnector = result.PendingConnector
+	step.pendingQuestion = result.PendingQuestion
+	step.pendingClientAction = result.PendingClientAction
+	step.pendingUserInput = result.PendingUserInput
 	if result.Recoverable {
 		step = recoverableSkillStep(trace, message, false, true)
 		step.toolResult = result.Result
+		step.pendingApproval = result.PendingApproval
+		step.pendingGovernance = result.PendingGovernance
+		step.pendingConnector = result.PendingConnector
+		step.pendingQuestion = result.PendingQuestion
+		step.pendingClientAction = result.PendingClientAction
+		step.pendingUserInput = result.PendingUserInput
+		step.artifacts = result.Artifacts
 	}
 	return step
 }
@@ -87,7 +108,7 @@ func nativeAgentLoopSystemMessage() adapter.Message {
 		"Activate or search for skills only when the user outcome genuinely requires an external read, generation, mutation, governed action, or page operation. Never activate, search, update a plan, or submit state merely to inspect capabilities or prepare an answer.",
 		"If a candidate skill is needed, call activate_skills with the smallest relevant set before doing the business work. Use search_skills only when the compact candidate directory omitted the needed capability.",
 		"Skill discovery and activation are internal. Do not name, narrate, summarize, or expose that mechanism to the user. A useful user-facing process note may accompany the same turn when it describes the actual task stage rather than the internal preparation.",
-		"When a business action is needed, call the exposed business function directly. Never call or invent load_skill, call_skill_tool, submit_intermediate_answer, or submit_final_answer.",
+		"When a business action is needed, call the exposed business function directly. Never call or invent load_skill, call_skill_tool, submit_intermediate_answer, or submit_final_answer. An active script Skill is already loaded; use its supplied session_scripts package_sha256 with shell_exec. Activate a candidate only if it is not already active.",
 		"Call a projected external business function directly when it is needed. Do not call update_plan merely to prepare a single Action: the runtime creates the authoritative Outcome, phase, target binding, and execution ledger fields. Use update_plan only when the user's outcome structure genuinely changes; never invent or pass server-owned phase or binding fields.",
 		"For complex or multi-step work, before the first business stage include one brief user-visible process note in ordinary assistant content before the business function call. Add another note only after important evidence arrives, when the work changes stage, when the approach changes, or when recovering from an error.",
 		"A process note must use the language of the user's latest request and state the current judgment or evidence plus the result the next action will produce. Do not merely repeat the request.",
@@ -102,6 +123,34 @@ func nativeAgentLoopSystemMessage() adapter.Message {
 		"Never claim an external action succeeded without a matching successful tool result. Do not repeat a failed tool call with unchanged arguments.",
 		"Read-only calls may be grouped when useful, but call at most one side-effecting or governed mutation in one assistant turn, then wait for its result.",
 	}, "\n")}
+}
+
+func nativeActiveSessionScriptsSystemMessage(resolved *skills.ResolvedSkills, activeSkillIDs []string, runtimeTools []RuntimeTool) (adapter.Message, bool) {
+	if resolved == nil || !nativeRuntimeToolAvailable(runtimeTools, "shell_exec") {
+		return adapter.Message{}, false
+	}
+	scripts := make([]map[string]interface{}, 0, len(activeSkillIDs))
+	for _, skillID := range activeSkillIDs {
+		if doc, ok := resolved.Get(skillID); ok {
+			if script := portableSessionScriptPayload(doc); script != nil {
+				if nativeRuntimeToolAvailable(runtimeTools, "workspace_prepare_dependencies") {
+					script["dependency_preparation_tool"] = "workspace_prepare_dependencies"
+				}
+				scripts = append(scripts, script)
+			}
+		}
+	}
+	if len(scripts) == 0 {
+		return adapter.Message{}, false
+	}
+	payload, err := json.Marshal(map[string]interface{}{
+		"session_scripts": scripts,
+		"next_action":     "These Skills are already active. Pass the matching skill_id and package_sha256 to shell_exec, then run the script from $ZGI_SKILL_DIR/scripts/. If a standard Skill reports a missing package, install it with the available pip/npm/apt-get command and retry; use workspace_prepare_dependencies only when explicitly exposed for a legacy Skill. Do not call load_skill or activate_skills for an already active Skill.",
+	})
+	if err != nil {
+		return adapter.Message{}, false
+	}
+	return adapter.Message{Role: "system", Content: string(payload)}, true
 }
 
 func nativeReferenceReadContinuationSystemMessage(trace skills.SkillTrace) (adapter.Message, bool) {
@@ -176,7 +225,7 @@ func (r *Runner) preloadNativeSkills(
 			"outcome":            "preloaded",
 			"instruction_digest": skillInstructionDigest(doc.Instructions),
 			"instruction_chars":  len([]rune(strings.TrimSpace(doc.Instructions))),
-			"effective_version":  skillInstructionDigest(doc.Instructions),
+			"effective_version":  skillEffectiveVersion(doc),
 			"policy_state":       "allowed",
 			"access_status":      "authorized",
 		}
@@ -215,6 +264,8 @@ func (r *Runner) handleNativeSessionControlCall(
 	ctx context.Context,
 	call adapter.ToolCall,
 	session *skills.NativeSkillSession,
+	resolved *skills.ResolvedSkills,
+	runtimeTools []RuntimeTool,
 ) (nativeSessionControlResult, bool) {
 	name := strings.TrimSpace(call.Function.Name)
 	if name != skills.MetaToolActivateSkills && name != skills.MetaToolSearchSkills {
@@ -276,6 +327,23 @@ func (r *Runner) handleNativeSessionControlCall(
 		"skipped_skills":           activation.SkippedSkills,
 		"next_action":              "call an activated business function directly, or activate another candidate only if the task still requires it",
 	}
+	if nativeRuntimeToolAvailable(runtimeTools, "shell_exec") {
+		sessionScripts := make([]map[string]interface{}, 0)
+		for _, skillID := range append(append([]string(nil), activation.ActivatedSkillIDs...), activation.AlreadyActiveSkillIDs...) {
+			if doc, ok := resolved.Get(skillID); ok {
+				if script := portableSessionScriptPayload(doc); script != nil {
+					if nativeRuntimeToolAvailable(runtimeTools, "workspace_prepare_dependencies") {
+						script["dependency_preparation_tool"] = "workspace_prepare_dependencies"
+					}
+					sessionScripts = append(sessionScripts, script)
+				}
+			}
+		}
+		if len(sessionScripts) > 0 {
+			payload["session_scripts"] = sessionScripts
+			payload["next_action"] = "Use shell_exec with skill_id and the activated Skill's package_sha256 to stage its script package, then run its script from $ZGI_SKILL_DIR/scripts/. Standard Skills do not need a ZGI manifest or dependency declaration: if Python reports ModuleNotFoundError, Node reports Cannot find module, or a command is missing, install the missing package with the available pip/npm/apt-get command in this isolated runtime and retry. Use workspace_prepare_dependencies only when it is explicitly exposed for a legacy declarative Skill."
+		}
+	}
 	trace := skills.SkillTrace{
 		Kind:     "skill_load_attempt",
 		ToolName: skills.MetaToolActivateSkills,
@@ -298,6 +366,15 @@ func (r *Runner) handleNativeSessionControlCall(
 		step = recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, payload), false, false)
 	}
 	return nativeSessionControlResult{step: step, instructions: activation.InstructionMessages}, true
+}
+
+func nativeRuntimeToolAvailable(runtimeTools []RuntimeTool, name string) bool {
+	for _, runtimeTool := range runtimeTools {
+		if runtimeTool.Handler != nil && strings.EqualFold(strings.TrimSpace(runtimeTool.Definition.Function.Name), name) {
+			return true
+		}
+	}
+	return false
 }
 
 func nativeStringSliceArg(args map[string]interface{}, key string) []string {

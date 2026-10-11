@@ -15,7 +15,9 @@ import (
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/runtimeworkspace"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
@@ -104,6 +106,115 @@ func TestContinueAPIKeyAgentRuntimeUserInputUsesPublishedExternalScope(t *testin
 	}
 	if runtimeSvc.lastUserInputRequest.Answers["target"] != "Published Agent" {
 		t.Fatalf("answers = %#v", runtimeSvc.lastUserInputRequest.Answers)
+	}
+	if w.Header().Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("Content-Type = %q, want text/event-stream", w.Header().Get("Content-Type"))
+	}
+}
+
+func TestContinueAPIKeyAgentRuntimeUserInputPreservesRuntimeWorkspaceSubjectScope(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	runtimeWorkspaceID := uuid.New()
+	runtimeSubjectID := uuid.New()
+	ids := webAppRuntimePermissionIDs{
+		organizationID: uuid.New(),
+		workspaceID:    uuid.New(),
+		accountID:      runtimeSubjectID,
+		agentID:        uuid.New(),
+		conversationID: uuid.New(),
+		messageID:      uuid.New(),
+	}
+	runtimeSvc := &webAppRuntimePermissionService{}
+	handler := NewAgentsHandler(newAgentRuntimePermissionAppService(ids), nil, nil, nil, nil, runtimeSvc)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/connect/v1/apps/app-1/conversations/"+ids.conversationID.String()+"/messages/"+ids.messageID.String()+"/user-input/ask-1/continue", bytes.NewBufferString(`{"answers":{"target":"Runtime Workspace"}}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{
+		{Key: "conversation_id", Value: ids.conversationID.String()},
+		{Key: "message_id", Value: ids.messageID.String()},
+		{Key: "request_id", Value: "ask-1"},
+	}
+	setAPIKeyAgentTestContext(c, ids)
+	c.Set("runtime_workspace_id", runtimeWorkspaceID.String())
+	c.Set("runtime_subject_id", runtimeSubjectID.String())
+	c.Set("runtime_workspace_principal", &runtimeworkspace.Principal{})
+	handler.ContinueAPIKeyAgentRuntimeUserInput(c)
+
+	if !runtimeSvc.userInputContinuationCalled {
+		t.Fatal("RunConfiguredUserInputContinuationStream was not called")
+	}
+	if runtimeSvc.lastScope.RuntimeWorkspaceID == nil || *runtimeSvc.lastScope.RuntimeWorkspaceID != runtimeWorkspaceID {
+		t.Fatalf("RuntimeWorkspaceID = %v, want %s", runtimeSvc.lastScope.RuntimeWorkspaceID, runtimeWorkspaceID)
+	}
+	if runtimeSvc.lastScope.RuntimeSubjectID == nil || *runtimeSvc.lastScope.RuntimeSubjectID != runtimeSubjectID {
+		t.Fatalf("RuntimeSubjectID = %v, want %s", runtimeSvc.lastScope.RuntimeSubjectID, runtimeSubjectID)
+	}
+	if runtimeSvc.lastScope.ExternalUserID == nil || *runtimeSvc.lastScope.ExternalUserID != runtimeSubjectID {
+		t.Fatalf("ExternalUserID = %v, want Runtime Subject %s", runtimeSvc.lastScope.ExternalUserID, runtimeSubjectID)
+	}
+	if runtimeSvc.lastScope.AgentMemoryUserID == nil || *runtimeSvc.lastScope.AgentMemoryUserID != runtimeSubjectID {
+		t.Fatalf("AgentMemoryUserID = %v, want Runtime Subject %s", runtimeSvc.lastScope.AgentMemoryUserID, runtimeSubjectID)
+	}
+	if !runtimeSvc.lastRunConfig.ConnectorToolsDisabled {
+		t.Fatal("Runtime Workspace continuation must keep personal Connectors disabled")
+	}
+}
+
+func TestContinueAPIKeyAgentRuntimeTokenBudgetPreservesRuntimeWorkspaceSubjectScope(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	runtimeWorkspaceID := uuid.New()
+	runtimeSubjectID := uuid.New()
+	ids := webAppRuntimePermissionIDs{
+		organizationID: uuid.New(),
+		workspaceID:    uuid.New(),
+		accountID:      runtimeSubjectID,
+		agentID:        uuid.New(),
+		conversationID: uuid.New(),
+		messageID:      uuid.New(),
+	}
+	runtimeSvc := &webAppRuntimePermissionService{}
+	handler := NewAgentsHandler(newAgentRuntimePermissionAppService(ids), nil, nil, nil, nil, runtimeSvc)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/connect/v1/apps/app-1/conversations/"+ids.conversationID.String()+"/messages/"+ids.messageID.String()+"/token-budget/budget-1/continue", bytes.NewBufferString(`{"action":"add","additional_tokens":2048}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{
+		{Key: "conversation_id", Value: ids.conversationID.String()},
+		{Key: "message_id", Value: ids.messageID.String()},
+		{Key: "request_id", Value: "budget-1"},
+	}
+	setAPIKeyAgentTestContext(c, ids)
+	c.Set("runtime_workspace_id", runtimeWorkspaceID.String())
+	c.Set("runtime_subject_id", runtimeSubjectID.String())
+	c.Set("runtime_workspace_principal", &runtimeworkspace.Principal{})
+	handler.ContinueAPIKeyAgentRuntimeTokenBudget(c)
+
+	if !runtimeSvc.tokenBudgetContinuationCalled {
+		t.Fatal("RunConfiguredTaskTokenBudgetContinuationStream was not called")
+	}
+	if runtimeSvc.lastScope.RuntimeWorkspaceID == nil || *runtimeSvc.lastScope.RuntimeWorkspaceID != runtimeWorkspaceID {
+		t.Fatalf("RuntimeWorkspaceID = %v, want %s", runtimeSvc.lastScope.RuntimeWorkspaceID, runtimeWorkspaceID)
+	}
+	if runtimeSvc.lastScope.RuntimeSubjectID == nil || *runtimeSvc.lastScope.RuntimeSubjectID != runtimeSubjectID {
+		t.Fatalf("RuntimeSubjectID = %v, want %s", runtimeSvc.lastScope.RuntimeSubjectID, runtimeSubjectID)
+	}
+	if runtimeSvc.lastScope.ExternalUserID == nil || *runtimeSvc.lastScope.ExternalUserID != runtimeSubjectID {
+		t.Fatalf("ExternalUserID = %v, want Runtime Subject %s", runtimeSvc.lastScope.ExternalUserID, runtimeSubjectID)
+	}
+	if runtimeSvc.lastScope.AgentMemoryUserID == nil || *runtimeSvc.lastScope.AgentMemoryUserID != runtimeSubjectID {
+		t.Fatalf("AgentMemoryUserID = %v, want Runtime Subject %s", runtimeSvc.lastScope.AgentMemoryUserID, runtimeSubjectID)
+	}
+	if runtimeSvc.lastTokenBudgetRequest.Action != "add" || runtimeSvc.lastTokenBudgetRequest.AdditionalTokens != 2048 {
+		t.Fatalf("token budget request = %#v", runtimeSvc.lastTokenBudgetRequest)
+	}
+	if runtimeSvc.lastTokenBudgetRequest.Surface != "external_api" {
+		t.Fatalf("continuation surface = %q, want external_api", runtimeSvc.lastTokenBudgetRequest.Surface)
+	}
+	if !runtimeSvc.lastRunConfig.ConnectorToolsDisabled {
+		t.Fatal("Runtime Workspace continuation must keep personal Connectors disabled")
 	}
 	if w.Header().Get("Content-Type") != "text/event-stream" {
 		t.Fatalf("Content-Type = %q, want text/event-stream", w.Header().Get("Content-Type"))
@@ -257,7 +368,7 @@ func TestExternalAgentInvocationContextPreservesAPISource(t *testing.T) {
 	}
 }
 
-func TestPublishedAgentConfigRequiresExternalUserOnlyWhenMemoryEnabledWithSlots(t *testing.T) {
+func TestPublishedAgentConfigRequiresExternalUserWheneverMemoryIsEnabled(t *testing.T) {
 	tests := []struct {
 		name string
 		cfg  dto.AgentConfigResponse
@@ -280,7 +391,7 @@ func TestPublishedAgentConfigRequiresExternalUserOnlyWhenMemoryEnabledWithSlots(
 					{Key: "", Enabled: true},
 				},
 			},
-			want: false,
+			want: true,
 		},
 		{
 			name: "enabled memory with enabled slot",
@@ -323,6 +434,63 @@ func TestDeriveExternalUserIDStableAcrossAPIKeys(t *testing.T) {
 	}
 }
 
+func TestScopeWithAgentResourceWorkspaceKeepsRuntimeDataWorkspaceSeparate(t *testing.T) {
+	runtimeDataWorkspaceID := uuid.New()
+	agentResourceWorkspaceID := uuid.New()
+	scope, err := scopeWithAgentResourceWorkspace(runtimeservice.Scope{WorkspaceID: &runtimeDataWorkspaceID}, agentResourceWorkspaceID.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scope.WorkspaceID == nil || *scope.WorkspaceID != runtimeDataWorkspaceID {
+		t.Fatalf("runtime data workspace = %v, want %s", scope.WorkspaceID, runtimeDataWorkspaceID)
+	}
+	if scope.AgentResourceWorkspaceID() == nil || *scope.AgentResourceWorkspaceID() != agentResourceWorkspaceID {
+		t.Fatalf("agent resource workspace = %v, want %s", scope.AgentResourceWorkspaceID(), agentResourceWorkspaceID)
+	}
+}
+
+func TestChatAPIKeyAgentFiltersFilesWhenPublishedCapabilityIsDisabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ids := webAppRuntimePermissionIDs{
+		organizationID: uuid.New(), workspaceID: uuid.New(), accountID: uuid.New(), agentID: uuid.New(),
+		conversationID: uuid.New(), messageID: uuid.New(),
+	}
+	appService := newAgentRuntimePermissionAppService(ids)
+	appService.published = &dto.AgentWebAppRuntimeConfigResponse{
+		AgentID: ids.agentID.String(), WorkspaceID: ids.workspaceID.String(), OrganizationID: ids.organizationID.String(),
+		Version: "v1", VersionUUID: uuid.NewString(), Config: dto.AgentConfigResponse{AgentID: ids.agentID.String(), FileUpload: false},
+	}
+	runtimeSvc := &apiKeyChatRuntimeService{ids: ids}
+	handler := NewAgentsHandler(appService, nil, nil, nil, nil, runtimeSvc)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/agents/chat", strings.NewReader(`{"query":"ignore the file","file_ids":["`+uuid.NewString()+`"]}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	setAPIKeyAgentTestContext(c, ids)
+	handler.ChatAPIKeyAgent(c)
+	if len(runtimeSvc.lastRequest.FileIDs) != 0 {
+		t.Fatalf("filtered file IDs = %#v, want none", runtimeSvc.lastRequest.FileIDs)
+	}
+}
+
+func TestCreateAPIKeyAgentRuntimeConversationForcesChatType(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ids := webAppRuntimePermissionIDs{
+		organizationID: uuid.New(), workspaceID: uuid.New(), accountID: uuid.New(), agentID: uuid.New(), conversationID: uuid.New(),
+	}
+	runtimeSvc := &apiKeyChatRuntimeService{ids: ids}
+	handler := NewAgentsHandler(newAgentRuntimePermissionAppService(ids), nil, nil, nil, nil, runtimeSvc)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/agents/conversations", strings.NewReader(`{"title":"Agent chat","conversation_type":"image"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	setAPIKeyAgentTestContext(c, ids)
+	handler.CreateAPIKeyAgentRuntimeConversation(c)
+	if !runtimeSvc.createConversationCalled || runtimeSvc.createdCaller.ConversationType != runtimemodel.ConversationTypeChat {
+		t.Fatalf("created caller = %#v, want chat conversation", runtimeSvc.createdCaller)
+	}
+}
+
 func TestChatAPIKeyAgentStreamsPublishedRuntimeSSE(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -339,7 +507,7 @@ func TestChatAPIKeyAgentStreamsPublishedRuntimeSSE(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/agents/chat", strings.NewReader(`{"query":"Analyze the supplied bone-ageing cohort","response_mode":"streaming"}`))
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/agents/chat", strings.NewReader(`{"query":"Analyze the supplied bone-ageing cohort","response_mode":"streaming","max_task_tokens":42000}`))
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Set("organization_id", ids.organizationID.String())
 	c.Set("workspace_id", ids.workspaceID.String())
@@ -361,7 +529,7 @@ func TestChatAPIKeyAgentStreamsPublishedRuntimeSSE(t *testing.T) {
 	if got := w.Header().Get(agentSSEMessageIDHeader); got != ids.messageID.String() {
 		t.Fatalf("message header = %q, want %s", got, ids.messageID)
 	}
-	for _, expected := range []string{`"event":"message_start"`, `"replace":false`, `"event":"message"`, `"answer":"verified scientific result"`, `"event":"skill_call_end"`, `"event":"message_end"`, `"status":"completed"`} {
+	for _, expected := range []string{`"event":"message_start"`, `"replace":false`, `"event":"message"`, `"answer":"verified scientific result"`, `"event":"skill_call_end"`, `"event":"token_usage_updated"`, `"used_tokens":42`, `"event":"message_end"`, `"status":"completed"`} {
 		if !strings.Contains(w.Body.String(), expected) {
 			t.Fatalf("SSE body missing %q: %s", expected, w.Body.String())
 		}
@@ -369,6 +537,9 @@ func TestChatAPIKeyAgentStreamsPublishedRuntimeSSE(t *testing.T) {
 	assertExternalAgentRuntimeCallerScope(t, runtimeSvc.lastScope, runtimeSvc.lastCaller, ids)
 	if runtimeSvc.lastRunConfig.BillingAppID != ids.agentID.String() || runtimeSvc.lastRunConfig.BillingAppType != runtimemodel.ConversationCallerAgent {
 		t.Fatalf("billing app = %q/%q, want %s/%s", runtimeSvc.lastRunConfig.BillingAppID, runtimeSvc.lastRunConfig.BillingAppType, ids.agentID, runtimemodel.ConversationCallerAgent)
+	}
+	if runtimeSvc.lastRequest.MaxTaskTokens != 42000 {
+		t.Fatalf("max task tokens = %d, want 42000", runtimeSvc.lastRequest.MaxTaskTokens)
 	}
 }
 
@@ -454,6 +625,9 @@ func TestChatAPIKeyAgentSanitizesUnexpectedStreamError(t *testing.T) {
 	}
 	if strings.Count(body, `"event":"error"`) != 1 || strings.Count(body, `"event":"message_end"`) != 1 {
 		t.Fatalf("chat stream error has inconsistent terminal events: %s", body)
+	}
+	if outcome := c.GetString(ExternalAgentRuntimeOutcomeContextKey); outcome != ExternalAgentRuntimeOutcomeFailure {
+		t.Fatalf("runtime outcome = %q, want failure", outcome)
 	}
 }
 
@@ -550,18 +724,29 @@ func assertExternalAgentRuntimeCallerScope(t *testing.T, scope runtimeservice.Sc
 
 type apiKeyChatRuntimeService struct {
 	runtimeservice.Service
-	ids           webAppRuntimePermissionIDs
-	lastScope     runtimeservice.Scope
-	lastCaller    runtimeservice.Caller
-	lastRunConfig runtimeservice.RunConfig
-	result        *runtimeservice.ChatResult
-	runErr        error
+	ids                      webAppRuntimePermissionIDs
+	lastScope                runtimeservice.Scope
+	lastCaller               runtimeservice.Caller
+	lastRunConfig            runtimeservice.RunConfig
+	lastRequest              runtimedto.ChatRequest
+	result                   *runtimeservice.ChatResult
+	runErr                   error
+	createdCaller            runtimeservice.Caller
+	createConversationCalled bool
 }
 
-func (s *apiKeyChatRuntimeService) PrepareConfiguredChat(_ context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, config runtimeservice.RunConfig, _ runtimedto.ChatRequest) (*runtimeservice.PreparedChat, error) {
+func (s *apiKeyChatRuntimeService) CreateConversationForCaller(_ context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, title string) (*runtimemodel.Conversation, error) {
+	s.createConversationCalled = true
+	s.lastScope = scope
+	s.createdCaller = caller
+	return &runtimemodel.Conversation{ID: s.ids.conversationID, Title: title, ConversationType: caller.ConversationType}, nil
+}
+
+func (s *apiKeyChatRuntimeService) PrepareConfiguredChat(_ context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, config runtimeservice.RunConfig, request runtimedto.ChatRequest) (*runtimeservice.PreparedChat, error) {
 	s.lastScope = scope
 	s.lastCaller = caller
 	s.lastRunConfig = config
+	s.lastRequest = request
 	return &runtimeservice.PreparedChat{
 		Conversation: &runtimemodel.Conversation{ID: s.ids.conversationID},
 		Message:      &runtimemodel.Message{ID: s.ids.messageID, ConversationID: s.ids.conversationID, ModelName: "gpt-5.6-sol"},
@@ -582,9 +767,78 @@ func (s *apiKeyChatRuntimeService) RunPreparedStream(_ context.Context, _ *runti
 		if err := onEvents[0](runtimeservice.StreamEvent{ID: "event-1", EventType: "skill_call_end", Payload: map[string]interface{}{"method": "ordinary_least_squares"}}); err != nil {
 			return nil, err
 		}
+		if err := onEvents[0](runtimeservice.StreamEvent{ID: "event-2", EventType: "token_usage_updated", Payload: map[string]interface{}{
+			"usage":             map[string]interface{}{"prompt_tokens": 30, "completion_tokens": 12, "total_tokens": 42},
+			"task_token_budget": map[string]interface{}{"used_tokens": 42, "max_tokens": 42000, "remaining_tokens": 41958, "status": "running"},
+		}}); err != nil {
+			return nil, err
+		}
 	}
 	if s.result != nil {
 		return s.result, nil
 	}
 	return &runtimeservice.ChatResult{Status: runtimemodel.MessageStatusCompleted, Metadata: map[string]interface{}{"usage": map[string]interface{}{"total_tokens": 42}}}, nil
+}
+
+func TestRuntimeWorkspaceMemoryFailsClosedWithoutRelationshipMemory(t *testing.T) {
+	t.Setenv("ZGI_RELATIONSHIP_MEMORY_ENABLED", "")
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/connect/v1/apps/app-key/memory", nil)
+	c.Set("runtime_workspace_principal", &runtimeworkspace.Principal{})
+	NewAgentsHandler(nil, nil, nil, nil, nil).GetAPIKeyAgentMemory(c)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusForbidden, w.Body.String())
+	}
+}
+
+func TestRuntimeWorkspaceRunConfigKeepsPublishedCapabilities(t *testing.T) {
+	t.Setenv("ZGI_RELATIONSHIP_MEMORY_ENABLED", "")
+	config := runtimeWorkspaceRunConfig(runtimeservice.RunConfig{
+		RuntimeToolFactory: func(*runtimeservice.PreparedChat) []skillloop.RuntimeTool {
+			panic("Runtime Workspace must not invoke Linux factory")
+		},
+		EnabledSkillIDs:                  []string{"calculator", "agent-knowledge", "agent-database", "agent-workflow", "connector-runtime"},
+		KnowledgeDatasetIDs:              []string{"dataset-1"},
+		KnowledgeRetrievalConfig:         map[string]interface{}{"mode": "hybrid"},
+		DatabaseBindings:                 []runtimeservice.AgentDatabaseBinding{{DataSourceID: "database-1", TableIDs: []string{"table-1"}}},
+		WorkflowBindings:                 []runtimeservice.AgentWorkflowBinding{{BindingID: "binding-1", AgentID: "agent-1", WorkflowID: "workflow-1"}},
+		BindingAuthorizations:            []runtimeservice.ResourceBindingAuthorization{{BindingType: "workflow", ResourceID: "workflow-1"}},
+		ConnectorTargetScope:             "agent",
+		ConnectorTargetVersionID:         "version-1",
+		AgentMemoryEnabled:               true,
+		AgentMemoryAutoExtractionEnabled: true,
+		AgentMemorySlots:                 []runtimeservice.AgentMemorySlotConfig{{Key: "profile", Enabled: true}},
+	})
+	if strings.Join(config.EnabledSkillIDs, ",") != "calculator,agent-knowledge,agent-database,agent-workflow,connector-runtime" {
+		t.Fatalf("published skills were changed: %#v", config.EnabledSkillIDs)
+	}
+	if len(config.KnowledgeDatasetIDs) != 1 || len(config.DatabaseBindings) != 1 || len(config.WorkflowBindings) != 1 || len(config.BindingAuthorizations) != 1 {
+		t.Fatalf("published bindings were changed: %#v", config)
+	}
+	if config.ConnectorTargetScope != "agent" || config.ConnectorTargetVersionID != "version-1" {
+		t.Fatalf("published connector target was changed: %#v", config)
+	}
+	if !config.ConnectorToolsDisabled {
+		t.Fatalf("Runtime Workspace Connector projection remained enabled: %#v", config)
+	}
+	if config.RuntimeToolFactory != nil {
+		t.Fatal("Runtime Workspace retained Linux factory")
+	}
+	if config.AgentMemoryEnabled || config.AgentMemoryAutoExtractionEnabled || len(config.AgentMemorySlots) != 0 {
+		t.Fatalf("memory remained enabled while relationship memory was disabled: %#v", config)
+	}
+}
+
+func TestRuntimeWorkspaceRunConfigKeepsRelationshipMemory(t *testing.T) {
+	t.Setenv("ZGI_RELATIONSHIP_MEMORY_ENABLED", "true")
+	config := runtimeWorkspaceRunConfig(runtimeservice.RunConfig{
+		AgentMemoryEnabled:               true,
+		AgentMemoryAutoExtractionEnabled: true,
+		AgentMemorySlots:                 []runtimeservice.AgentMemorySlotConfig{{Key: "profile", Enabled: true}},
+	})
+	if !config.AgentMemoryEnabled || !config.AgentMemoryAutoExtractionEnabled || len(config.AgentMemorySlots) != 1 {
+		t.Fatalf("relationship memory config = %#v, want enabled memory", config)
+	}
 }

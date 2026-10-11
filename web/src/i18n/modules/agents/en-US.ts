@@ -11,6 +11,25 @@ const messages = {
   loading: 'Loading...',
   noName: 'No Name',
   noDescription: 'No description',
+  catalogTags: {
+    cardLabel: 'App categories',
+    manage: 'Manage categories',
+    dialogTitle: 'Manage categories',
+    dialogDescription:
+      'Categories support filtering in management lists and App Center. They do not change access permissions or publication status.',
+    addLabel: 'Add category',
+    selected: 'Selected categories',
+    selectedCount: '{count}/{max} selected',
+    placeholder: 'Enter a category',
+    add: 'Add',
+    empty: 'No categories yet. Enter a name above to add one.',
+    suggestions: 'Reuse an existing category',
+    remove: 'Remove {name}',
+    tooLong: 'A category can contain at most 32 characters',
+    limitReached: 'An item can have at most 8 categories',
+    saveSuccess: 'Categories updated',
+    loadError: 'Failed to load categories',
+  },
   conversationCount: 'Conversations {count}',
   messageCount: 'Messages',
   appCount: 'Apps',
@@ -74,6 +93,8 @@ const messages = {
   searchPlaceholder: 'Search agents...',
   workflowSearchPlaceholder: 'Search workflows...',
   listFilters: {
+    category: 'Category',
+    allCategories: 'All categories',
     publishStatus: 'Publication status',
     allPublishStatuses: 'All statuses',
     workflowType: 'Workflow type',
@@ -2240,6 +2261,7 @@ const messages = {
     sections: {
       experience: 'Experience customization',
       model: 'Model',
+      execution: 'Execution environment',
       skills: 'Skill',
       knowledge: 'Knowledge',
       databases: 'Databases',
@@ -2521,7 +2543,12 @@ const messages = {
     },
     files: {
       title: 'Allow file upload',
-      description: 'When enabled, users can upload documents or images for the Agent to analyze.',
+      description: 'Allow users to upload documents or images.',
+    },
+    execution: {
+      title: 'Enable Linux environment',
+      description: 'Run scripts and process files in a platform-managed environment.',
+      unavailable: 'The Linux environment is not available for this organization.',
     },
     memory: {
       agentTitle: 'Memory',

@@ -3,8 +3,9 @@
 import { usePathname } from 'next/navigation';
 import { useT } from '@/i18n';
 import Link from 'next/link';
+import { ENABLE_RUNTIME_WORKSPACE } from '@/lib/config';
 import { cn } from '@/lib/utils';
-import { LayoutDashboard, Loader2, Settings, ShieldAlert, Users } from 'lucide-react';
+import { KeyRound, LayoutDashboard, Loader2, Settings, ShieldAlert, Users } from 'lucide-react';
 import {
   useCurrentWorkspace,
   useWorkspaceContextStatus,
@@ -21,6 +22,11 @@ interface WorkspaceNavItem {
   icon: React.ComponentType<{ className?: string }>;
   href: string;
   visible?: boolean;
+  children?: Array<{
+    id: string;
+    label: string;
+    href: string;
+  }>;
 }
 
 function WorkspaceAccessDeniedState() {
@@ -87,6 +93,19 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
       visible: canManageWorkspace,
     },
     {
+      id: 'runtime',
+      label: t('workspace.navigation.runtime'),
+      desc: t('workspace.navigation.runtimeDesc'),
+      icon: KeyRound,
+      href: '/console/workspace/runtime-workspaces',
+      visible: ENABLE_RUNTIME_WORKSPACE && canManageWorkspace,
+      children: [
+        { id: 'runtime-overview', label: t('workspace.runtime.tabs.overview'), href: '/console/workspace/runtime-workspaces' },
+        { id: 'runtime-agents', label: t('workspace.runtime.tabs.apps'), href: '/console/workspace/runtime-workspaces/agents' },
+        { id: 'runtime-docs', label: t('workspace.runtime.tabs.docs'), href: '/console/workspace/runtime-workspaces/docs' },
+      ],
+    },
+    {
       id: 'settings',
       label: t('navigation.settings'),
       desc: t('navigation.settingsDesc'),
@@ -135,50 +154,47 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
                   const isActive = isWorkspaceNavItemActive(pathname, item.href);
 
                   return (
-                    <Link
-                      key={item.id}
-                      href={item.href}
-                      title={item.label}
-                      className={cn(
-                        'group relative flex items-start justify-center gap-2 rounded-md px-2 py-2 text-sm transition-colors @5xl/console:justify-start @5xl/console:px-2.5',
-                        isActive
-                          ? 'bg-background text-foreground shadow-sm ring-1 ring-border/70'
-                          : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
-                      )}
-                    >
-                      {/* Active indicator */}
-                      {isActive && (
-                        <div className="absolute bottom-2 left-0 top-2 w-0.5 rounded-r-full bg-foreground/70" />
-                      )}
-
-                      <Icon
+                    <div key={item.id}>
+                      <Link
+                        href={item.href}
+                        title={item.label}
                         className={cn(
-                          'mt-0.5 h-4 w-4 flex-shrink-0 transition-colors',
-                          isActive ? 'text-foreground' : 'text-muted-foreground'
+                          'group relative flex items-start justify-center gap-2 rounded-md px-2 py-2 text-sm transition-colors @5xl/console:justify-start @5xl/console:px-2.5',
+                          isActive
+                            ? item.children
+                              ? 'bg-primary/[0.06] text-foreground'
+                              : 'bg-primary/[0.08] text-primary'
+                            : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
                         )}
-                      />
-
-                      <div className="hidden min-w-0 flex-1 @5xl/console:block">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={cn(
-                              'truncate font-medium',
-                              isActive ? 'text-foreground' : 'text-muted-foreground'
-                            )}
-                          >
-                            {item.label}
-                          </span>
+                      >
+                        {isActive && <div className="absolute bottom-2 left-0 top-2 w-0.5 rounded-r-full bg-primary" />}
+                        <Icon className={cn('mt-0.5 h-4 w-4 flex-shrink-0 transition-colors', isActive ? 'text-primary' : 'text-muted-foreground')} />
+                        <div className="hidden min-w-0 flex-1 @5xl/console:block">
+                          <span className={cn('truncate font-medium', isActive ? 'text-foreground' : 'text-muted-foreground')}>{item.label}</span>
+                          {!(isActive && item.children) ? <p className={cn('mt-0.5 line-clamp-1 text-[11px] leading-4', isActive ? 'text-muted-foreground' : 'text-muted-foreground/80')}>{item.desc}</p> : null}
                         </div>
-                        <p
-                          className={cn(
-                            'mt-0.5 line-clamp-1 text-[11px] leading-4',
-                            isActive ? 'text-muted-foreground' : 'text-muted-foreground/80'
-                          )}
-                        >
-                          {item.desc}
-                        </p>
-                      </div>
-                    </Link>
+                      </Link>
+                      {isActive && item.children ? (
+                        <div className="mb-2 ml-4 mt-1 hidden space-y-0.5 border-l border-primary/20 pl-3 @5xl/console:block">
+                          {item.children.map(child => {
+                            const childActive = pathname === child.href;
+                            return (
+                              <Link
+                                key={child.id}
+                                href={child.href}
+                                className={cn(
+                                  'relative block rounded-md px-3 py-2 text-xs transition-colors',
+                                  childActive ? 'bg-primary/[0.08] font-medium text-primary' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
+                                )}
+                              >
+                                {childActive ? <span className="absolute -left-[13px] top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-primary" /> : null}
+                                <span className="truncate">{child.label}</span>
+                              </Link>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                    </div>
                   );
                 })}
             </div>

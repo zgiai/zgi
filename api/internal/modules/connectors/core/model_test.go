@@ -46,6 +46,7 @@ func TestConnectorEnumInvariants(t *testing.T) {
 		TargetTypeChat,
 		TargetTypeAgent,
 		TargetTypeWorkflow,
+		TargetTypeDigitalHuman,
 		BindingStatusActive,
 		BindingStatusDisabled,
 		BindingStatusNeedsReplacement,
@@ -123,6 +124,31 @@ func TestTargetRefAndBindingInvariants(t *testing.T) {
 	binding.Revision = 0
 	if err := binding.Validate(); err == nil {
 		t.Fatal("TargetBinding.Validate() accepted a non-positive revision")
+	}
+}
+
+func TestDigitalHumanTargetRefRequiresCanonicalBindingInstance(t *testing.T) {
+	instanceID := uuid.NewString()
+	for _, target := range []TargetRef{
+		{Type: TargetTypeDigitalHuman, ID: uuid.NewString(), Scope: ScopeDraft, BindingInstanceID: instanceID},
+		{Type: TargetTypeDigitalHuman, ID: uuid.NewString(), BindingInstanceID: instanceID},
+		{Type: TargetTypeDigitalHuman, ID: uuid.NewString(), Scope: ScopePublished, VersionID: uuid.NewString(), BindingInstanceID: instanceID},
+	} {
+		if err := target.Validate(); err != nil {
+			t.Fatalf("TargetRef.Validate(%+v) error = %v", target, err)
+		}
+	}
+
+	for _, target := range []TargetRef{
+		{Type: TargetTypeDigitalHuman, ID: uuid.NewString(), Scope: ScopeDraft},
+		{Type: TargetTypeDigitalHuman, ID: uuid.NewString(), Scope: ScopeDraft, BindingInstanceID: "not-a-uuid"},
+		{Type: TargetTypeDigitalHuman, ID: uuid.NewString(), Scope: ScopeDraft, BindingInstanceID: uuid.Nil.String()},
+		{Type: TargetTypeDigitalHuman, ID: uuid.NewString(), Scope: ScopeDraft, BindingInstanceID: "{" + instanceID + "}"},
+		{Type: TargetTypeDigitalHuman, ID: uuid.NewString(), Scope: ScopeDraft, BindingInstanceID: instanceID, VersionID: uuid.NewString()},
+	} {
+		if err := target.Validate(); err == nil {
+			t.Fatalf("TargetRef.Validate(%+v) unexpectedly succeeded", target)
+		}
 	}
 }
 

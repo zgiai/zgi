@@ -457,7 +457,7 @@ func TestContextualAIChatTurnStrategyPlansRouteBeforeManagedFileCreate(t *testin
 		skills.SkillConsoleNavigator,
 		skills.SkillFileGenerator,
 		skills.SkillFileManager,
-		"exactly one temporary artifact",
+		"each requested destination file has exactly one generated artifact selected",
 		"asset_observation:file.create",
 		"route_required and target_page as navigation context",
 		"not as a fixed tool script",
@@ -586,7 +586,8 @@ func TestContextualAIChatTurnStrategyClassifiesTemporaryFileGeneration(t *testin
 		`"intent":"generate_temporary_file_artifact"`,
 		`"primary_skills":["file-generator"]`,
 		"do not call file-manager/save_file_to_management",
-		"generated_files metadata records the temporary artifact",
+		"the appropriate artifact-producing skill creates exactly one generated artifact per requested file",
+		"generated_files metadata records the generated artifact",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("temporary generation strategy missing %q in:\n%s", want, content)

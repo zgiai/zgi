@@ -608,7 +608,7 @@ func (r *Runner) handleLoadSkillCall(
 				"created_at_ms":      time.Now().UnixMilli(),
 				"requested_skill_id": canonicalSkillID,
 				"instruction_digest": skillInstructionDigest(doc.Instructions),
-				"effective_version":  skillInstructionDigest(doc.Instructions),
+				"effective_version":  skillEffectiveVersion(doc),
 				"policy_state":       "allowed",
 				"access_status":      "authorized",
 				"outcome":            "already_loaded",
@@ -643,7 +643,7 @@ func (r *Runner) handleLoadSkillCall(
 		"outcome":            "first_load",
 		"instruction_digest": skillInstructionDigest(doc.Instructions),
 		"instruction_chars":  len([]rune(strings.TrimSpace(doc.Instructions))),
-		"effective_version":  skillInstructionDigest(doc.Instructions),
+		"effective_version":  skillEffectiveVersion(doc),
 		"policy_state":       "allowed",
 		"access_status":      "authorized",
 	}

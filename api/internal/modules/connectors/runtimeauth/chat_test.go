@@ -157,6 +157,38 @@ func TestChatResolverRejectsForeignOwnerProjection(t *testing.T) {
 	}
 }
 
+func TestChatResolverRejectsBindingForAnotherTarget(t *testing.T) {
+	t.Parallel()
+
+	harness := newChatResolverHarness(t)
+	harness.bindings.items[0].Target.ID = uuid.NewString()
+	_, err := harness.resolver.ResolveChatCapabilities(context.Background(), runtimeauth.ChatCapabilityRequest{
+		OrganizationID: harness.organizationID, OwnerAccountID: harness.ownerID,
+		ConversationID: harness.conversationID,
+	})
+	if !core.IsErrorCode(err, core.ErrorCodeInternal) || harness.connections.calls != 0 {
+		t.Fatalf("foreign-target projection error = %v, connection reads = %d", err, harness.connections.calls)
+	}
+}
+
+func TestChatResolverRejectsDuplicateConnectorBindings(t *testing.T) {
+	t.Parallel()
+
+	harness := newChatResolverHarness(t)
+	duplicate := harness.binding
+	duplicate.ID = uuid.New()
+	duplicate.ConnectionID = uuid.New()
+	harness.bindings.items = append(harness.bindings.items, duplicate)
+
+	_, err := harness.resolver.ResolveChatCapabilities(context.Background(), runtimeauth.ChatCapabilityRequest{
+		OrganizationID: harness.organizationID, OwnerAccountID: harness.ownerID,
+		ConversationID: harness.conversationID,
+	})
+	if !core.IsErrorCode(err, core.ErrorCodeConflict) {
+		t.Fatalf("duplicate binding error = %v, want conflict", err)
+	}
+}
+
 type chatResolverHarness struct {
 	organizationID uuid.UUID
 	ownerID        uuid.UUID

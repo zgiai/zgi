@@ -31,6 +31,7 @@ export * from './automation.service';
 export * from './content-parse.service';
 export * from './prompt.service';
 export * from './shortlink.service';
+export * from './digital-human.service';
 // LLM management services
 export * from './provider.service';
 export * from './model.service';
@@ -40,6 +41,7 @@ export * from './apikey.service';
 export * from './dashboard.service';
 // Workspace Quota service
 export * from './workspace-quota.service';
+export * from './runtime-workspace.service';
 
 // Service types
 export type * from './types/auth';
@@ -78,10 +80,12 @@ export type * from './types/apikey';
 export type * from './types/dashboard';
 // Workspace Quota types
 export type * from './types/workspace-quota';
+export type * from './types/runtime-workspace';
 
 export type * from './types/tool';
 export type * from './types/content-parse';
 export type * from './types/prompt';
+export type * from './types/digital-human';
 
 // Legacy exports for backward compatibility
 export { default as authServiceDefault } from './auth.service';

@@ -22,7 +22,7 @@ func (recorder connectorRuntimeConfirmationSurfaceRecorder) RecordConnectorConfi
 ) error {
 	var target ConnectorRuntimeConfirmationResolutionRecorder
 	switch result.Origin.Surface {
-	case connectorcore.TargetTypeChat, connectorcore.TargetTypeAgent:
+	case connectorcore.TargetTypeChat, connectorcore.TargetTypeAgent, connectorcore.TargetTypeDigitalHuman:
 		target = recorder.chatAndAgent
 	case connectorcore.TargetTypeWorkflow:
 		target = recorder.workflow

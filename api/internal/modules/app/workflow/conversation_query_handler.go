@@ -466,6 +466,13 @@ func (h *ConversationQueryHandler) GetWebAppConfig(c *gin.Context) {
 	}
 
 	// Build app config with workflow type mapping
+	var uploadConfig *interfaces.FileUploadConfigResponse
+	if h.fileService != nil {
+		uploadConfig = h.fileService.GetUploadConfig()
+	}
+	if upload, ok := features["file_upload"].(map[string]interface{}); ok {
+		upload["effective_policy"] = WorkflowChatUploadPolicy(features, uploadConfig)
+	}
 	icon := agent.Icon
 	iconType := agent.IconType
 	iconUrl := ""

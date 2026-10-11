@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import axios from 'axios';
 import ts from 'typescript';
 
 const read = file => readFileSync(path.join(process.cwd(), file), 'utf8');
@@ -251,9 +252,11 @@ const setState = fn => {
 };
 const replace = (items, item) => [...items.filter(existing => existing.id !== item.id), item];
 let draftSequence = 0;
+const runtimeInputReconcile = load('src/components/chat/utils/runtime-input-reconcile.ts');
 const { useChatRuntimeMessageActions } = load(
   'src/components/chat/runtime/controller/use-chat-runtime-message-actions.ts',
   {
+    axios,
     react: { useCallback: fn => fn },
     '@/components/chat/controllers/aichat/selectors': {
       getNextActiveSendingState: (state, id, sending) =>
@@ -276,6 +279,7 @@ const { useChatRuntimeMessageActions } = load(
     },
     '@/components/chat/utils/aichat-parameters': { toAIChatParameters: values => values },
     '@/components/chat/utils/message-tree': { buildCurrentChatPath: (_, messages) => messages },
+    '@/components/chat/utils/runtime-input-reconcile': runtimeInputReconcile,
     '@/components/chat/runtime/controller/chat-runtime-controller-utils': {
       createClientDraftId: prefix => `${prefix}-${++draftSequence}`,
       getErrorMessage: error => error.message,
@@ -402,7 +406,7 @@ assert.equal('initial_connector_defaults_revision' in requests[4], false);
 
 const picker = read('src/components/connectors/picker/connector-picker-dialog.tsx');
 assert.match(picker, /draft \? \{\} : \{ target_type: target.type, target_id: target.id \}/);
-assert.match(picker, /enabled=\{open && !draft\}/);
+assert.match(picker, /enabled=\{open && !draft && showUnavailableReferences\}/);
 const chat = read('src/components/chat/variants/aichat/aichat-chat.tsx');
 assert.match(chat, /connectorSnapshot && !connectorSnapshot\.isCurrent\(\)/);
 assert.doesNotMatch(chat, /initialConnectorDefaultsRevision:/);

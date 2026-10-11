@@ -254,10 +254,12 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 	dependencyProfile := manifest.DependencyProfile
 	resolvedProfile := ""
 	if dependencyProfile == defaultSkillDependencyProfile && r.dependencyScanDisabled {
-		resolvedProfile, err = r.configuredPrebuiltDependencyProfile()
-		if err != nil {
-			recordSkillScriptError(&trace, start, err)
-			return &ToolInvocationResult{Trace: trace}, err
+		if normalizeSkillScriptLanguage(manifest.Language) == "python3" {
+			resolvedProfile, err = r.configuredPrebuiltDependencyProfile()
+			if err != nil {
+				recordSkillScriptError(&trace, start, err)
+				return &ToolInvocationResult{Trace: trace}, err
+			}
 		}
 	} else if dependencyProfile == defaultSkillDependencyProfile && skillPackageHasDependencyHints(doc.Metadata.RootPath) {
 		var usedFallback bool
@@ -309,7 +311,10 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 		}
 	}
 
-	if err := r.uploadArchive(ctx, sandboxID, archiveBase64, execCtx, hasManifest); err != nil {
+	if err := r.uploadArchive(ctx, sandboxID, archiveBase64, execCtx, archiveUploadOptions{
+		skillPackage:          true,
+		validateSkillManifest: hasManifest,
+	}); err != nil {
 		recordSkillScriptError(&trace, start, err)
 		return &ToolInvocationResult{Trace: trace}, err
 	}

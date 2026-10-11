@@ -55,7 +55,7 @@ jobs:
           go test ./internal/migrations -run '^TestCheck' -count=1
 
   web:
-    name: Web type check
+    name: Web lint, type check and build
     runs-on: ${{ fromJSON(vars.CI_RUNNER_LABELS || '["ubuntu-latest"]') }}
     defaults:
       run:
@@ -87,6 +87,9 @@ jobs:
 
       - name: Run registration frontend and type checks
         run: ../scripts/check-registration-auth.sh --frontend-only
+
+      - name: Run runtime delivery frontend gate
+        run: bash ../scripts/check-runtime-delivery.sh --web
 
       - name: Check developer access error states
         run: pnpm test:developer-access-load-error
@@ -159,19 +162,78 @@ jobs:
       - name: Run registration and developer access gates
         run: |
           go_root="$(go env GOROOT)"
+          cache_root="$RUNNER_TEMP/zgi-registration-auth-cache"
+          mkdir -p "$cache_root/home" "$cache_root/go-build" "$cache_root/go"
           docker run --rm \
             --user "$(id -u):$(id -g)" \
             --tmpfs /tmp:rw,exec,nosuid,size=4g \
-            -e HOME=/tmp \
+            -e HOME=/cache/home \
             -e CGO_ENABLED=1 \
-            -e GOCACHE=/tmp/go-build \
-            -e GOPATH=/tmp/go \
+            -e GOCACHE=/cache/go-build \
+            -e GOPATH=/cache/go \
             -e PATH=/opt/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
             -v "$go_root:/opt/go:ro" \
+            -v "$cache_root:/cache" \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace \
             node:22-bookworm \
             bash -c './scripts/check-registration-auth.sh --backend-only && bash ./scripts/check-developer-access.sh && bash ./scripts/check-contextual-permissions.sh'
+
+  api:
+    name: API tests and vet
+    runs-on: ${{ fromJSON(vars.CI_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    services:
+      postgres:
+        image: postgres:16.14-alpine3.24
+        env:
+          POSTGRES_DB: zgi_runtime_api_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: runtime-api-ci-only
+        ports:
+          - 5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d zgi_runtime_api_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      CGO_ENABLED: '1'
+      GOMAXPROCS: '2'
+      GOGC: '50'
+    steps:
+      - name: Repair workspace ownership
+        working-directory: ${{ runner.temp }}
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/workspace" alpine:3.22 \
+            chown -R "$(id -u):$(id -g)" /workspace
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: api/go.mod
+          cache-dependency-path: api/go.sum
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Enable test database extensions
+        run: docker exec '${{ job.services.postgres.id }}' psql -U postgres -d zgi_runtime_api_ci -v ON_ERROR_STOP=1 -c 'CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'
+
+      - name: Check runtime gate preflights
+        run: bash scripts/test-runtime-delivery.sh
+
+      - name: Run API delivery gate
+        env:
+          TEST_POSTGRES_DSN: postgres://postgres:runtime-api-ci-only@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/zgi_runtime_api_ci?sslmode=disable
+          SQLMETA_TEST_DB_HOST: 127.0.0.1
+          SQLMETA_TEST_DB_PORT: ${{ job.services.postgres.ports['5432'] }}
+          SQLMETA_TEST_DB_USER: postgres
+          SQLMETA_TEST_DB_PASS: runtime-api-ci-only
+          SQLMETA_TEST_DB_NAME: zgi_runtime_api_ci
+        run: bash scripts/check-runtime-delivery.sh --api
 
   sandbox:
     name: Sandbox runtime tests
@@ -246,22 +308,32 @@ jobs:
             | tar -xz -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/ripgrep-14.1.1-x86_64-unknown-linux-musl" >> "$GITHUB_PATH"
 
-      - name: Run sandbox Go tests
-        working-directory: sandbox
-        run: go test ./...
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Run sandbox delivery gate
+        env:
+          CGO_ENABLED: '1'
+          ZGI_SANDBOX_TEST_POSTGRES_ADMIN_DSN: postgres://zgi_sandbox:zgi_sandbox_ci@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/zgi_sandbox_ci?sslmode=disable
+          PGHOST: 127.0.0.1
+          PGPORT: ${{ job.services.postgres.ports['5432'] }}
+          PGUSER: zgi_sandbox
+          PGPASSWORD: zgi_sandbox_ci
+          PGDATABASE: zgi_sandbox_ci
+        run: bash scripts/check-runtime-delivery.sh --sandbox
 
       - name: Check sandbox config docs
         run: make -C sandbox check-config-docs
 
       - name: Run sandbox Kest flows
         env:
-          ZGI_SANDBOX_DATABASE_URL: postgres://zgi_sandbox:zgi_sandbox_ci@127.0.0.1:${{ job.services.postgres.ports[5432] }}/zgi_sandbox_ci?sslmode=disable
+          ZGI_SANDBOX_DATABASE_URL: postgres://zgi_sandbox:zgi_sandbox_ci@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/zgi_sandbox_ci?sslmode=disable
         run: make test-sandbox-kest
 
       - name: Verify personal key legacy quota guard on PostgreSQL
         working-directory: api
         env:
-          ZGI_MIGRATION_TEST_DSN: postgres://zgi_sandbox:zgi_sandbox_ci@127.0.0.1:${{ job.services.postgres.ports[5432] }}/zgi_sandbox_ci?sslmode=disable
+          ZGI_MIGRATION_TEST_DSN: postgres://zgi_sandbox:zgi_sandbox_ci@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/zgi_sandbox_ci?sslmode=disable
         run: go test ./internal/migrations -run '^TestPersonalKeyLegacyQuotaMigration' -count=1 -v
 
   mcp-client:
@@ -314,4 +386,3 @@ jobs:
       - name: Verify ratingcore mirror vectors and hash lock
         working-directory: api
         run: go test ./internal/modules/llm/gateway/ratingcore/... -count=1 -v
-

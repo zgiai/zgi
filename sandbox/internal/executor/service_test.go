@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -1475,6 +1476,169 @@ func TestUploadArchiveValidatesSkillManifest(t *testing.T) {
 	}
 }
 
+func TestUploadArchiveUsesSkillPackageLimits(t *testing.T) {
+	service, manager := newTestExecutorService(t)
+	box, err := manager.Create(lifecycle.CreateRequest{RuntimeProfile: string(sandbox.RuntimeSession)})
+	if err != nil {
+		t.Fatalf("create sandbox: %v", err)
+	}
+
+	files := map[string]string{
+		"SKILL.md":             "# Skill",
+		"scripts/run.py":       "print('ok')",
+		"skill.manifest.json":  validSkillManifestJSON("scripts/run.py"),
+		"references/large.bin": strings.Repeat("x", 256*1024+1),
+	}
+	for len(files) < 257 {
+		name := fmt.Sprintf("references/item-%03d.txt", len(files))
+		files[name] = "x"
+	}
+	result, err := service.UploadArchive(ArchiveUploadRequest{
+		SandboxID:             box.ID,
+		Path:                  ".",
+		ArchiveBase64:         zipBase64(t, files),
+		Format:                "zip",
+		ValidateSkillManifest: true,
+	})
+	if err != nil {
+		t.Fatalf("upload 257-file skill package above the generic per-file limit: %v", err)
+	}
+	if result.FileCount != 257 {
+		t.Fatalf("uploaded file count = %d, want 257", result.FileCount)
+	}
+
+	legacyFiles := map[string]string{
+		"SKILL.md":             "# Legacy Skill",
+		"scripts/run.py":       "print('ok')",
+		"references/large.bin": strings.Repeat("x", 256*1024+1),
+	}
+	for len(legacyFiles) < 257 {
+		name := fmt.Sprintf("references/item-%03d.txt", len(legacyFiles))
+		legacyFiles[name] = "x"
+	}
+	legacyResult, err := service.UploadArchive(ArchiveUploadRequest{
+		SandboxID:     box.ID,
+		Path:          "legacy",
+		ArchiveBase64: zipBase64(t, legacyFiles),
+		Format:        "zip",
+		SkillPackage:  true,
+	})
+	if err != nil {
+		t.Fatalf("upload 257-file legacy Skill package above the generic per-file limit: %v", err)
+	}
+	if legacyResult.FileCount != 257 || legacyResult.SkillManifest != nil {
+		t.Fatalf("legacy upload result = %+v, want 257 files without manifest validation", legacyResult)
+	}
+
+	tooManyFiles := map[string]string{
+		"SKILL.md":            "# Skill",
+		"scripts/run.py":      "print('ok')",
+		"skill.manifest.json": validSkillManifestJSON("scripts/run.py"),
+	}
+	for len(tooManyFiles) < maxSkillPackageArchiveFiles+1 {
+		name := fmt.Sprintf("references/item-%03d.txt", len(tooManyFiles))
+		tooManyFiles[name] = "x"
+	}
+	_, err = service.UploadArchive(ArchiveUploadRequest{
+		SandboxID:             box.ID,
+		Path:                  "too-many",
+		ArchiveBase64:         zipBase64(t, tooManyFiles),
+		Format:                "zip",
+		ValidateSkillManifest: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "archive exceeds max file count of 600") {
+		t.Fatalf("UploadArchive() error = %v, want skill package file-count limit", err)
+	}
+}
+
+func TestUploadArchiveValidatesBundledPackages(t *testing.T) {
+	service, manager := newTestExecutorService(t)
+	box, err := manager.Create(lifecycle.CreateRequest{RuntimeProfile: string(sandbox.RuntimeSession)})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	result, err := service.UploadArchive(ArchiveUploadRequest{
+		SandboxID: box.ID,
+		Path:      ".",
+		ArchiveBase64: zipBase64(t, map[string]string{
+			"SKILL.md":                      "# Skill",
+			"scripts/run.py":                "from zgi_local import run\nprint(run())",
+			"scripts/zgi_local/__init__.py": "def run(): return 'ok'\n",
+			"skill.manifest.json":           validSkillManifestJSONWithBundledPackage("scripts/run.py", "python3", "zgi_local", "scripts/zgi_local"),
+		}),
+		Format:                "zip",
+		ValidateSkillManifest: true,
+	})
+	if err != nil {
+		t.Fatalf("expected bundled package declaration to pass, got %v", err)
+	}
+	if result.SkillManifest == nil || len(result.SkillManifest.BundledPackages) != 1 || result.SkillManifest.BundledPackages[0].Name != "zgi_local" {
+		t.Fatalf("unexpected bundled packages: %+v", result.SkillManifest)
+	}
+}
+
+func TestUploadArchiveRejectsInvalidBundledPackages(t *testing.T) {
+	service, manager := newTestExecutorService(t)
+	box, err := manager.Create(lifecycle.CreateRequest{RuntimeProfile: string(sandbox.RuntimeSession)})
+	if err != nil {
+		t.Fatalf("expected sandbox create, got %v", err)
+	}
+
+	tests := []struct {
+		name         string
+		packageName  string
+		packagePath  string
+		includeLocal bool
+		wantError    string
+	}{
+		{name: "missing", packageName: "zgi_local", packagePath: "scripts/zgi_local", wantError: "path is missing"},
+		{name: "escape", packageName: "zgi_local", packagePath: "../zgi_local", wantError: "path must be under scripts"},
+		{name: "scripts subtree escape", packageName: "zgi_local", packagePath: "scripts/../zgi_local", wantError: "path must be under scripts"},
+		{name: "not importable", packageName: "zgi_local", packagePath: "scripts/lib/zgi_local", includeLocal: true, wantError: "must resolve from the entrypoint directory"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			files := map[string]string{
+				"SKILL.md":            "# Skill",
+				"scripts/run.py":      "print('ok')",
+				"skill.manifest.json": validSkillManifestJSONWithBundledPackage("scripts/run.py", "python3", test.packageName, test.packagePath),
+			}
+			if test.includeLocal {
+				files[test.packagePath+"/__init__.py"] = "VALUE = 1\n"
+			}
+			_, err := service.UploadArchive(ArchiveUploadRequest{
+				SandboxID:             box.ID,
+				Path:                  ".",
+				ArchiveBase64:         zipBase64(t, files),
+				Format:                "zip",
+				ValidateSkillManifest: true,
+			})
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("UploadArchive() error = %v, want %q", err, test.wantError)
+			}
+		})
+	}
+
+	t.Run("extensionless module file", func(t *testing.T) {
+		_, err := service.UploadArchive(ArchiveUploadRequest{
+			SandboxID: box.ID,
+			Path:      ".",
+			ArchiveBase64: zipBase64(t, map[string]string{
+				"SKILL.md":            "# Skill",
+				"scripts/run.py":      "import zgi_local",
+				"scripts/zgi_local":   "VALUE = 1\n",
+				"skill.manifest.json": validSkillManifestJSONWithBundledPackage("scripts/run.py", "python3", "zgi_local", "scripts/zgi_local"),
+			}),
+			Format:                "zip",
+			ValidateSkillManifest: true,
+		})
+		if err == nil || !strings.Contains(err.Error(), "must use .py") {
+			t.Fatalf("UploadArchive() error = %v, want Python module suffix error", err)
+		}
+	})
+}
+
 func TestUploadArchiveRejectsSkillManifestDependencyProfileMismatch(t *testing.T) {
 	service, manager := newTestExecutorService(t)
 	box, err := manager.Create(lifecycle.CreateRequest{
@@ -1973,6 +2137,37 @@ func TestPrepareDependenciesIgnoresPythonStdlibAndLocalModules(t *testing.T) {
 	assertMissingDependency(t, result.Packages, "python3", "eda")
 	assertMissingDependency(t, result.Packages, "python3", "tpl-core")
 	assertMissingDependency(t, result.Packages, "python3", "warnings")
+}
+
+func TestPrepareDependenciesIgnoresNodeBuiltinsAndRelativeModules(t *testing.T) {
+	service := NewService(nil, nil, nil, policy.NewService(config.FromEnv()))
+
+	result, err := service.PrepareDependencies(DependencyPrepareRequest{
+		ArchiveBase64: zipBase64(t, map[string]string{
+			"SKILL.md":              "Skill package\n",
+			"skill.manifest.json":   `{"entrypoint":"scripts/run.js","language":"nodejs"}`,
+			"scripts/run.js":        "const fs = require('node:fs'); const hooks = require('async_hooks'); const inspector = require('inspector/promises'); const test = require('node:test'); const path = require('path'); const helper = require('./lib/helper'); const yaml = require('yaml');\n",
+			"scripts/lib/helper.js": "module.exports = { ok: true };\n",
+		}),
+		Format:      "zip",
+		BaseRuntime: "linux-secure",
+	})
+	if err != nil {
+		t.Fatalf("prepare dependencies: %v", err)
+	}
+	if result.Status != "build_required" {
+		t.Fatalf("expected build_required, got %q", result.Status)
+	}
+	if result.PackageCount != 1 {
+		t.Fatalf("expected only the bare third-party import, got %#v", result.Packages)
+	}
+	assertDetectedDependency(t, result.Packages, "nodejs", "yaml", "")
+	assertMissingDependency(t, result.Packages, "nodejs", "fs")
+	assertMissingDependency(t, result.Packages, "nodejs", "async_hooks")
+	assertMissingDependency(t, result.Packages, "nodejs", "inspector")
+	assertMissingDependency(t, result.Packages, "nodejs", "test")
+	assertMissingDependency(t, result.Packages, "nodejs", "path")
+	assertMissingDependency(t, result.Packages, "nodejs", "helper")
 }
 
 func TestPrepareDependenciesUsesManifestEntrypointDirectoryAsPythonImportRoot(t *testing.T) {
@@ -2973,6 +3168,20 @@ func validSkillManifestJSONWithDependencyProfile(entrypoint string, dependencyPr
   "entrypoint": "` + entrypoint + `",
   "language": "python3",
   "dependency_profile": "` + dependencyProfile + `",
+  "timeout_ms": 30000,
+  "allowed_artifact_paths": ["artifacts"],
+  "max_artifact_count": 10,
+  "max_artifact_bytes": 32768,
+  "result_mode": "mixed"
+}`
+}
+
+func validSkillManifestJSONWithBundledPackage(entrypoint string, language string, name string, packagePath string) string {
+	return `{
+  "entrypoint": "` + entrypoint + `",
+  "language": "` + language + `",
+  "dependency_profile": "stdlib",
+  "bundled_packages": [{"name":"` + name + `","path":"` + packagePath + `"}],
   "timeout_ms": 30000,
   "allowed_artifact_paths": ["artifacts"],
   "max_artifact_count": 10,

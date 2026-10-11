@@ -13,7 +13,7 @@ import (
 
 func TestAppendWorkflowRunEventKeepsContainerRoundNodeExecutionsDistinct(t *testing.T) {
 	db := openWorkflowStopV2TestDB(t)
-	if err := db.AutoMigrate(&WorkflowRunLog{}, &WorkflowNodeRuntimeLog{}, &workflowpause.RunEvent{}); err != nil {
+	if err := autoMigrateWorkflowTest(db, &WorkflowRunLog{}, &WorkflowNodeRuntimeLog{}, &workflowpause.RunEvent{}); err != nil {
 		t.Fatalf("migrate runtime event tables: %v", err)
 	}
 	oldDB := database.GetDB()
@@ -90,7 +90,7 @@ func TestAppendWorkflowRunEventKeepsContainerRoundNodeExecutionsDistinct(t *test
 
 func TestWorkflowRunEventDispatcherDoesNotPublishStaleOwnerEvent(t *testing.T) {
 	db := openWorkflowStopV2TestDB(t)
-	if err := db.AutoMigrate(&workflowStopTestRun{}, &workflowpause.RunEvent{}); err != nil {
+	if err := autoMigrateWorkflowTest(db, &workflowStopTestRun{}, &workflowpause.RunEvent{}); err != nil {
 		t.Fatalf("migrate event tables: %v", err)
 	}
 	oldDB := database.GetDB()
@@ -168,7 +168,7 @@ func TestWorkflowRunEventDispatcherPreservesCommittedEnvelope(t *testing.T) {
 
 func TestWorkflowRunEventDispatcherLiveAndReplayUseSameDurableOrder(t *testing.T) {
 	db := openWorkflowStopV2TestDB(t)
-	if err := db.AutoMigrate(&workflowStopTestRun{}, &workflowpause.RunEvent{}); err != nil {
+	if err := autoMigrateWorkflowTest(db, &workflowStopTestRun{}, &workflowpause.RunEvent{}); err != nil {
 		t.Fatalf("migrate event tables: %v", err)
 	}
 	oldDB := database.GetDB()

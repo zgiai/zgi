@@ -3,6 +3,7 @@ package container
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"slices"
 	"testing"
@@ -12,7 +13,7 @@ import (
 
 // Exercise the actual composition root, including any host-specific wrapping,
 // rather than testing only the raw FeishuDefinition returned by the catalog.
-func TestConnectorBootstrapUpgradesFixedFeishuTemplateFromHistoricalDefinition(t *testing.T) {
+func TestConnectorBootstrapRetainsHistoricalFeishuContractAndActivation(t *testing.T) {
 	for _, status := range []catalog.PluginDefinitionStatus{catalog.PluginDefinitionStatusActive, catalog.PluginDefinitionStatusDisabled} {
 		t.Run(string(status), func(t *testing.T) {
 			ctx := context.Background()
@@ -63,20 +64,21 @@ func TestConnectorBootstrapUpgradesFixedFeishuTemplateFromHistoricalDefinition(t
 				t.Fatal(err)
 			}
 			c.connectorPluginManager = manager
-			if _, err := c.BootstrapConnectorPlugins(ctx); err != nil {
+			report, err := c.BootstrapConnectorPlugins(ctx)
+			if err != nil {
 				t.Fatalf("historical Feishu -> production %s failed: %v", target.PluginVersion, err)
 			}
-			expectedWrites := 1
-			if status != catalog.PluginDefinitionStatusActive {
-				expectedWrites = 0
-			}
+			expectedWrites := 0
 			if store.admitCalls != expectedWrites {
 				t.Fatalf("admit calls = %d, want %d", store.admitCalls, expectedWrites)
 			}
 			active, found := manager.Get(old.ID)
 			if status == catalog.PluginDefinitionStatusActive {
-				if !found || !reflect.DeepEqual(active, target) {
-					t.Fatal("bootstrap did not activate the exact production package")
+				if !found || !reflect.DeepEqual(active, old) {
+					t.Fatal("bootstrap changed an incompatible accepted contract")
+				}
+				if len(report.Failures) != 1 || !errors.Is(report.Failures[0].Err, catalog.ErrIncompatibleDefinitionUpdate) {
+					t.Fatalf("incompatible upgrade report = %#v", report)
 				}
 			} else if found {
 				t.Fatal("bootstrap reactivated a disabled Feishu connector")
@@ -99,10 +101,10 @@ func TestConnectorBootstrapUpgradesFixedFeishuTemplateFromHistoricalDefinition(t
 				t.Fatal(err)
 			}
 			if store.admitCalls != expectedWrites {
-				t.Fatal("restart repeated the template migration")
+				t.Fatal("restart admitted an incompatible template update")
 			}
 			after, found := restartedManager.Get(old.ID)
-			if found != (status == catalog.PluginDefinitionStatusActive) || (found && !reflect.DeepEqual(after, target)) {
+			if found != (status == catalog.PluginDefinitionStatusActive) || (found && !reflect.DeepEqual(after, old)) {
 				t.Fatal("restart changed activation or accepted content")
 			}
 			assertHistoryUnchanged()

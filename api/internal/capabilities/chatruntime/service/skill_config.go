@@ -86,7 +86,7 @@ func (s *service) customSkillDiscoveryMetadata(ctx context.Context, organization
 			metadata = append(metadata, invalidCustomSkillMetadata(item, fmt.Errorf("%s", item.ValidationError)))
 			continue
 		}
-		doc, err := s.skillRuntime.LoadCustomSkillDocument(item.StoragePath)
+		doc, err := s.skillRuntime.LoadCustomSkillDocumentWithName(item.StoragePath, item.SkillID)
 		if err == nil {
 			loaded := skillDiscoveryMetadataPtr(doc)
 			metadata = append(metadata, *loaded)
@@ -243,6 +243,22 @@ func effectiveAgentSkillIDs(input []string, catalog []skills.SkillDiscoveryMetad
 		}
 	}
 	sort.Strings(out)
+	return out
+}
+
+func filterDigitalHumanSkillIDs(input []string) []string {
+	forbidden := map[string]struct{}{
+		skills.SkillAgentManagement: {},
+		skills.SkillAgentMemory:     {},
+		skills.SkillUserMemory:      {},
+	}
+	out := make([]string, 0, len(input))
+	for _, id := range input {
+		id = strings.ToLower(strings.TrimSpace(id))
+		if _, denied := forbidden[id]; id != "" && !denied {
+			out = append(out, id)
+		}
+	}
 	return out
 }
 

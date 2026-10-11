@@ -163,7 +163,10 @@ export class HttpClient {
           if (!config?.skipErrorHandling && !shouldSilence) {
             ErrorNotificationService.showNetworkError();
           }
-          if (!shouldSilence) {
+          // Sensitive requests (for example a submitted private key) opt out of
+          // telemetry here because reportRequestError forwards the whole error,
+          // and error.config.data can still hold the request payload.
+          if (!shouldSilence && !config?.skipErrorHandling) {
             this.reportRequestError(error, config, 'network_error');
           }
           return Promise.reject(error);
@@ -206,7 +209,10 @@ export class HttpClient {
           try {
             return await this.handleTokenRefresh(config);
           } catch (refreshError) {
-            if (!isStaleTokenRefreshError(refreshError)) {
+            // Keep the sensitive-request guarantee consistent with the network
+            // and non-2xx branches: never forward a refresh failure for a
+            // request that opted out of error handling.
+            if (!isStaleTokenRefreshError(refreshError) && !config?.skipErrorHandling) {
               this.reportRequestError(refreshError, config, 'token_refresh_failed');
             }
             return Promise.reject(refreshError);

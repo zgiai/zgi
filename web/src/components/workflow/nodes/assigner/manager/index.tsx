@@ -26,13 +26,13 @@ interface AssignerManagerProps {
   readOnly?: boolean;
 }
 
-const MATH_OPERATIONS: AssignerNodeData['items'][number]['operation'][] = ['+=', '-=', '*=', '/='];
-const BASE_OPERATIONS: AssignerNodeData['items'][number]['operation'][] = [
+const MATH_OPERATIONS: Array<AssignerNodeData['items'][number]['operation']> = ['+=', '-=', '*=', '/='];
+const BASE_OPERATIONS: Array<AssignerNodeData['items'][number]['operation']> = [
   'set',
   'over-write',
   'clear',
 ];
-const ALL_OPERATIONS: AssignerNodeData['items'][number]['operation'][] = [
+const ALL_OPERATIONS: Array<AssignerNodeData['items'][number]['operation']> = [
   ...BASE_OPERATIONS,
   ...MATH_OPERATIONS,
 ];

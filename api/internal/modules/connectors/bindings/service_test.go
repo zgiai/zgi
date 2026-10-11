@@ -114,6 +114,79 @@ func TestBindingServiceUpdatesAuthorizationWithRevisionAndConnectionSnapshot(t *
 	}
 }
 
+func TestHostDelegationRequiresBindingOwnerAndExplicitPublishedVersion(t *testing.T) {
+	organizationID, ownerID, hostID, versionID, instanceID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	connection := readyServiceConnection(organizationID, ownerID, uuid.New())
+	binding := core.TargetBinding{
+		ID: uuid.New(), OrganizationID: organizationID, OwnerAccountID: ownerID, ConnectionID: connection.ID,
+		ConnectorID: connection.ConnectorID,
+		Target:      core.TargetRef{Type: core.TargetTypeDigitalHuman, ID: hostID.String(), Scope: core.ScopePublished, VersionID: versionID.String(), BindingInstanceID: instanceID.String()},
+		Status:      core.BindingStatusActive, Revision: 1, Constraint: core.OwnerConstraint(ownerID, []core.Identifier{"web.search"}),
+	}
+	binding.Constraint.TargetBoundaries = []core.TargetBoundary{{Type: binding.Target.Type, ID: binding.Target.ID, Scope: string(binding.Target.Scope), VersionID: binding.Target.VersionID}}
+	repository := newMemoryBindingRepository()
+	repository.bindings[bindingLogicalKey(binding)] = binding
+	authority := &recordingTargetAuthority{}
+	service := mustBindingService(t, repository, &recordingConnectionReader{connection: connection}, authority)
+	command := UpdateHostDelegationCommand{OrganizationID: organizationID, ActingPrincipalID: ownerID, BindingID: binding.ID, ExpectedRevision: 1, Audiences: []core.HostAudience{core.HostAudienceWorkspace, core.HostAudienceAPI}}
+	granted, err := service.UpdateHostDelegation(context.Background(), command)
+	if err != nil || granted.Revision != 2 || granted.Constraint.HostDelegation == nil || granted.Constraint.HostDelegation.GrantedBy != ownerID || len(granted.Constraint.HostDelegation.Audiences) != 2 {
+		t.Fatalf("grant = %#v, error = %v", granted, err)
+	}
+	if len(authority.calls) == 0 || len(repository.mutations) != 1 {
+		t.Fatal("grant skipped host authorization or lifecycle audit")
+	}
+	invalid := command
+	invalid.ExpectedRevision = 2
+	invalid.Audiences = []core.HostAudience{core.HostAudienceAPI, core.HostAudienceAPI}
+	if _, err := service.UpdateHostDelegation(context.Background(), invalid); !core.IsErrorCode(err, core.ErrorCodeInvalidInput) || len(repository.mutations) != 1 {
+		t.Fatalf("invalid audience changed the binding: %v", err)
+	}
+	if _, err := service.UpdateHostDelegation(context.Background(), command); !core.IsErrorCode(err, core.ErrorCodeConflict) {
+		t.Fatalf("stale grant error = %v", err)
+	}
+	command.ActingPrincipalID = uuid.New()
+	command.ExpectedRevision = 2
+	if _, err := service.UpdateHostDelegation(context.Background(), command); err == nil {
+		t.Fatal("another account changed the private binding")
+	}
+	command.ActingPrincipalID, command.Audiences = ownerID, nil
+	revoked, err := service.UpdateHostDelegation(context.Background(), command)
+	if err != nil || revoked.Constraint.HostDelegation != nil || revoked.Revision != 3 {
+		t.Fatalf("revoke = %#v, error = %v", revoked, err)
+	}
+}
+
+func TestAgentHostDelegationNeedsCurrentEditButOwnerCanAlwaysRevoke(t *testing.T) {
+	organizationID, ownerID := uuid.New(), uuid.New()
+	connection := readyServiceConnection(organizationID, ownerID, uuid.New())
+	binding := core.TargetBinding{
+		ID: uuid.New(), OrganizationID: organizationID, OwnerAccountID: ownerID, ConnectionID: connection.ID,
+		ConnectorID: connection.ConnectorID,
+		Target:      core.TargetRef{Type: core.TargetTypeAgent, ID: uuid.NewString(), Scope: core.ScopePublished, VersionID: uuid.NewString()},
+		Status:      core.BindingStatusActive, Revision: 1, Constraint: core.OwnerConstraint(ownerID, []core.Identifier{"web.search"}),
+	}
+	repository := newMemoryBindingRepository()
+	repository.bindings[bindingLogicalKey(binding)] = binding
+	authority := &recordingTargetAuthority{err: core.NewError(core.ErrorCodeAccessDenied, false, nil)}
+	service := mustBindingService(t, repository, &recordingConnectionReader{connection: connection}, authority)
+	command := UpdateHostDelegationCommand{OrganizationID: organizationID, ActingPrincipalID: ownerID, BindingID: binding.ID, ExpectedRevision: 1, Audiences: []core.HostAudience{core.HostAudienceChannel}}
+	if _, err := service.UpdateHostDelegation(context.Background(), command); !core.IsErrorCode(err, core.ErrorCodeAccessDenied) || len(repository.mutations) != 0 {
+		t.Fatalf("revoked editor granted Agent host use: %v", err)
+	}
+	authority.err = nil
+	granted, err := service.UpdateHostDelegation(context.Background(), command)
+	if err != nil || granted.Revision != 2 || granted.Constraint.HostDelegation == nil || len(granted.Constraint.TargetBoundaries) != 1 || granted.Constraint.TargetBoundaries[0].VersionID != binding.Target.VersionID {
+		t.Fatalf("published Agent grant = %#v, error = %v", granted, err)
+	}
+	authority.err = core.NewError(core.ErrorCodeAccessDenied, false, nil)
+	command.ExpectedRevision, command.Audiences = granted.Revision, nil
+	revoked, err := service.UpdateHostDelegation(context.Background(), command)
+	if err != nil || revoked.Revision != 3 || revoked.Constraint.HostDelegation != nil {
+		t.Fatalf("owner could not revoke after losing edit permission: %#v, %v", revoked, err)
+	}
+}
+
 func TestBindingServiceReplacementKeepsBindingUUID(t *testing.T) {
 	organizationID, ownerID := uuid.New(), uuid.New()
 	firstConnection := readyServiceConnection(organizationID, ownerID, uuid.New())
@@ -498,6 +571,13 @@ type recordingTargetAuthority struct {
 }
 
 func (authority *recordingTargetAuthority) RequireTargetEdit(_ context.Context, organizationID, actingPrincipalID uuid.UUID, target TargetIdentity) error {
+	authority.calls = append(authority.calls, targetAuthorityCall{
+		organizationID: organizationID, actingPrincipalID: actingPrincipalID, target: target,
+	})
+	return authority.err
+}
+
+func (authority *recordingTargetAuthority) RequireTargetRead(_ context.Context, organizationID, actingPrincipalID uuid.UUID, target TargetIdentity) error {
 	authority.calls = append(authority.calls, targetAuthorityCall{
 		organizationID: organizationID, actingPrincipalID: actingPrincipalID, target: target,
 	})

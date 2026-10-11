@@ -1,12 +1,7 @@
 'use client';
 
-import React, { useMemo, useCallback } from 'react';
-import type {
-  VariableAggregatorNodeData,
-  VariableAggregatorGroup,
-  PrimitiveType,
-  VarSelector,
-} from '../config';
+import React, { useCallback } from 'react';
+import type { VariableAggregatorGroup, PrimitiveType, VarSelector } from '../config';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { useT } from '@/i18n';
@@ -150,7 +145,6 @@ const VariableAggregatorManager: React.FC<AggregatorManagerProps> = ({ id, readO
   // Group mode handlers
   const addGroup = () => commitGroups([...(groups || []), newGroup(groups.length)]);
   const removeGroupAt = (index: number) => {
-    const gid = groups[index]?.groupId;
     const next = groups.filter((_, i) => i !== index);
     if (next.length === 0) next.push(newGroup(0));
     commitGroups(next);

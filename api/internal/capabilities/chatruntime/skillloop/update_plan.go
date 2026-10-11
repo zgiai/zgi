@@ -519,10 +519,25 @@ func canonicalPlanEvidenceRef(value string) string {
 	return ref
 }
 
+// planPhaseHasConnectorEvidenceAuthority reports whether a plan phase proves its
+// completion through a server-projected Connector operation. Such phases are
+// canonicalized against the exposed native tool set and are already required by
+// validateConnectorPlanSnapshot to carry a successful native invocation outcome,
+// so model-authored evidence_refs are advisory for them.
+func planPhaseHasConnectorEvidenceAuthority(phase map[string]interface{}) bool {
+	return len(connectorPhaseOperation(phase)) > 0
+}
+
 func planEvidenceAuditWarnings(phases []map[string]interface{}, evidence map[string]interface{}) []string {
 	warnings := []string{}
 	for _, phase := range phases {
 		if !strings.EqualFold(strings.TrimSpace(stringFromInterface(phase["status"])), "completed") {
+			continue
+		}
+		if planPhaseHasConnectorEvidenceAuthority(phase) {
+			// Defer to the Connector authority: the server-owned native outcome,
+			// not the model's evidence_refs, decides whether the phase succeeded.
+			// Ordinary tool phases keep the strict runtime evidence_refs contract.
 			continue
 		}
 		phaseID := strings.TrimSpace(stringFromInterface(phase["id"]))

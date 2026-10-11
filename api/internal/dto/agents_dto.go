@@ -1,6 +1,7 @@
 package dto
 
 import (
+	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	"time"
 )
@@ -59,25 +60,69 @@ type GetAgentsListRequest struct {
 	AssetKind     string `form:"asset_kind" json:"asset_kind"`
 	IsPublished   *bool  `form:"is_published" json:"is_published"`
 	WebAppStatus  string `form:"web_app_status" json:"web_app_status"`
+	TagIDs        string `form:"tag_ids" json:"tag_ids" binding:"omitempty,max=800"`
 	Internal      *bool  `form:"internal" json:"internal"`
+}
+
+type GetAgentCatalogTagFacetsRequest struct {
+	WorkspaceID string `form:"workspace_id" json:"workspace_id" binding:"omitempty,uuid"`
+	AssetKind   string `form:"asset_kind" json:"asset_kind"`
 }
 
 type GetRunnableWebAppsRequest struct {
 	WorkspaceID string `form:"workspace_id" json:"workspace_id"`
 	WebAppID    string `form:"web_app_id" json:"web_app_id" binding:"omitempty,uuid"`
 	WebAppIDs   string `form:"web_app_ids" json:"web_app_ids" binding:"omitempty,max=800"`
+	TagIDs      string `form:"tag_ids" json:"tag_ids" binding:"omitempty,max=800"`
 	Keyword     string `form:"keyword" json:"keyword" binding:"omitempty,max=200"`
 	Page        int    `form:"page" json:"page" binding:"omitempty,min=1"`
 	PageSize    int    `form:"page_size" json:"page_size" binding:"omitempty,min=1,max=100"`
 }
 
+type AgentCatalogTag struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type AgentCatalogTagInput struct {
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
+}
+
+type ReplaceAgentCatalogTagsRequest struct {
+	Tags []AgentCatalogTagInput `json:"tags"`
+}
+
+type AgentCatalogTagsResponse struct {
+	Items []AgentCatalogTag `json:"items"`
+}
+
+type AgentCatalogTagFacet struct {
+	AgentCatalogTag
+	Count int64 `json:"count"`
+}
+
+type AgentCatalogTagFacetsResponse struct {
+	Items []AgentCatalogTagFacet `json:"items"`
+}
+
+type RunnableWebAppTagFacet struct {
+	AgentCatalogTag
+	Count int64 `json:"count"`
+}
+
+type RunnableWebAppTagFacetsResponse struct {
+	Items []RunnableWebAppTagFacet `json:"items"`
+}
+
 type RunnableWebAppMetaData struct {
-	Name      string  `json:"name"`
-	Icon      *string `json:"icon"`
-	IconType  *string `json:"icon_type"`
-	IconUrl   string  `json:"icon_url"`
-	Desc      string  `json:"desc"`
-	AgentType string  `json:"agent_type"`
+	Name      string            `json:"name"`
+	Icon      *string           `json:"icon"`
+	IconType  *string           `json:"icon_type"`
+	IconUrl   string            `json:"icon_url"`
+	Desc      string            `json:"desc"`
+	AgentType string            `json:"agent_type"`
+	Tags      []AgentCatalogTag `json:"tags"`
 }
 
 type RunnableWebAppItem struct {
@@ -98,23 +143,24 @@ type RunnableWebAppsResponse struct {
 
 // AgentListItem represents a single agent in the list response
 type AgentListItem struct {
-	ID           string  `json:"id"`
-	Name         string  `json:"name"`
-	Description  string  `json:"description"`
-	AgentType    string  `json:"agent_type"`
-	TenantID     string  `json:"tenant_id"`
-	WorkspaceID  string  `json:"workspace_id"`
-	IconType     *string `json:"icon_type,omitempty"`
-	Icon         *string `json:"icon,omitempty"`
-	IconUrl      string  `json:"icon_url,omitempty"`
-	IsPublic     bool    `json:"is_public"`
-	IsPublished  bool    `json:"is_published"`
-	WebAppStatus string  `json:"web_app_status"`
-	CreatedBy    *string `json:"created_by,omitempty"`
-	CreatedAt    int64   `json:"created_at"`
-	UpdatedAt    int64   `json:"updated_at"`
-	Internal     bool    `json:"internal"`
-	CanEdit      bool    `json:"can_edit"` // Indicates if current user can edit this agent
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Description  string            `json:"description"`
+	AgentType    string            `json:"agent_type"`
+	TenantID     string            `json:"tenant_id"`
+	WorkspaceID  string            `json:"workspace_id"`
+	IconType     *string           `json:"icon_type,omitempty"`
+	Icon         *string           `json:"icon,omitempty"`
+	IconUrl      string            `json:"icon_url,omitempty"`
+	IsPublic     bool              `json:"is_public"`
+	IsPublished  bool              `json:"is_published"`
+	WebAppStatus string            `json:"web_app_status"`
+	CreatedBy    *string           `json:"created_by,omitempty"`
+	CreatedAt    int64             `json:"created_at"`
+	UpdatedAt    int64             `json:"updated_at"`
+	Internal     bool              `json:"internal"`
+	CanEdit      bool              `json:"can_edit"` // Indicates if current user can edit this agent
+	Tags         []AgentCatalogTag `json:"tags"`
 }
 
 // AgentsListResponse represents the paginated response for agent list queries
@@ -205,7 +251,9 @@ type AgentRuntimeSurfaceGrantSubjectDetail struct {
 }
 
 type AgentRuntimeModeConfig struct {
+	FileUploadPolicy                 *chatfile.Policy            `json:"file_upload_policy,omitempty"`
 	EnabledSkillIDs                  []string                    `json:"enabled_skill_ids"`
+	ExecutionRuntime                 *AgentExecutionRuntime      `json:"execution_runtime,omitempty"`
 	UseMemory                        bool                        `json:"use_memory"`
 	AgentMemoryEnabled               bool                        `json:"agent_memory_enabled"`
 	AgentMemoryAutoExtractionEnabled bool                        `json:"agent_memory_auto_extraction_enabled"`
@@ -228,6 +276,24 @@ type AgentRuntimeModeConfig struct {
 	WorkflowBoundAtUnix              int64                       `json:"workflow_bound_at_unix,omitempty"`
 	ConnectorBindings                []AgentConnectorBinding     `json:"connector_bindings,omitempty"`
 	BindingAuthorizations            []AgentBindingAuthorization `json:"binding_authorizations,omitempty"`
+}
+
+// AgentExecutionRuntime records the requested execution environment for an Agent.
+// Authorization and capability checks are separate from this stored config.
+type AgentExecutionRuntime struct {
+	Enabled        bool    `json:"enabled"`
+	ProfileID      string  `json:"profile_id,omitempty"`
+	HomeSnapshotID *string `json:"home_snapshot_id,omitempty"`
+	PolicyID       string  `json:"policy_id,omitempty"`
+}
+
+// AgentExecutionRuntimeCapability is the editor-safe projection of the
+// server-owned runtime admission decision. It deliberately contains no
+// profile, policy, backend, template, or organization identifiers.
+type AgentExecutionRuntimeCapability struct {
+	Available bool   `json:"available"`
+	CanEnable bool   `json:"can_enable"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 // AgentBindingAuthorization preserves the authorization evidence for one
@@ -253,10 +319,10 @@ type AgentDatabaseBinding struct {
 // Connector Target Binding. It carries only the explicit binding execution
 // mode; operation/risk details and Key material remain server-owned.
 type AgentConnectorBinding struct {
-	BindingID    string `json:"binding_id,omitempty"`
-	Revision     int    `json:"revision,omitempty"`
-	ConnectorID  string `json:"connector_id"`
-	ConnectionID string `json:"connection_id"`
+	BindingID         string `json:"binding_id,omitempty"`
+	Revision          int    `json:"revision,omitempty"`
+	ConnectorID       string `json:"connector_id"`
+	ConnectionID      string `json:"connection_id"`
 	AuthorizationMode string `json:"authorization_mode,omitempty"`
 }
 
@@ -541,6 +607,8 @@ type UpdateAgentMemoryValueRequest struct {
 }
 
 type AgentConfigRequest struct {
+	FileUploadPolicy                 *chatfile.Policy                 `json:"file_upload_policy,omitempty"`
+	ExecutionRuntime                 *AgentExecutionRuntime           `json:"execution_runtime,omitempty"`
 	ConnectorReferenceCommands       []connectorcore.ReferenceCommand `json:"connector_reference_commands,omitempty"`
 	BindingRevision                  string                           `json:"binding_revision,omitempty"`
 	SystemPrompt                     string                           `json:"system_prompt"`
@@ -587,41 +655,44 @@ type AgentSystemPromptPatchRequest struct {
 }
 
 type AgentConfigResponse struct {
-	ConnectorTargetScope             string                      `json:"-"`
-	ConnectorTargetVersionID         string                      `json:"-"`
-	AgentID                          string                      `json:"agent_id"`
-	BindingRevision                  string                      `json:"binding_revision"`
-	BindingHealth                    AgentBindingHealth          `json:"binding_health"`
-	SystemPrompt                     string                      `json:"system_prompt"`
-	ModelProvider                    string                      `json:"model_provider"`
-	Model                            string                      `json:"model"`
-	SupportsVision                   bool                        `json:"supports_vision"`
-	ModelParameters                  map[string]interface{}      `json:"model_parameters"`
-	EnabledSkillIDs                  []string                    `json:"enabled_skill_ids"`
-	UseMemory                        bool                        `json:"use_memory"`
-	AgentMemoryEnabled               bool                        `json:"agent_memory_enabled"`
-	AgentMemoryAutoExtractionEnabled bool                        `json:"agent_memory_auto_extraction_enabled"`
-	AgentMemorySlots                 []AgentMemorySlotConfig     `json:"agent_memory_slots"`
-	AgentMemoryConfigRevision        string                      `json:"agent_memory_config_revision,omitempty"`
-	FileUpload                       bool                        `json:"file_upload_enabled"`
-	HomeTitle                        string                      `json:"home_title"`
-	OpeningStatement                 string                      `json:"opening_statement"`
-	InputPlaceholder                 string                      `json:"input_placeholder"`
-	ThemeColor                       string                      `json:"theme_color"`
-	SuggestedQuestions               []string                    `json:"suggested_questions"`
-	UpdatedAt                        int64                       `json:"updated_at"`
-	KnowledgeDatasetIDs              []string                    `json:"knowledge_dataset_ids"`
-	KnowledgeBoundByAccountID        string                      `json:"-"`
-	KnowledgeBoundAtUnix             int64                       `json:"-"`
-	KnowledgeRetrievalConfig         map[string]interface{}      `json:"knowledge_retrieval_config"`
-	DatabaseBindings                 []AgentDatabaseBinding      `json:"database_bindings"`
-	DatabaseBoundByAccountID         string                      `json:"-"`
-	DatabaseBoundAtUnix              int64                       `json:"-"`
-	WorkflowBindings                 []AgentWorkflowBinding      `json:"workflow_bindings"`
-	WorkflowBoundByAccountID         string                      `json:"-"`
-	WorkflowBoundAtUnix              int64                       `json:"-"`
-	ConnectorBindings                []AgentConnectorBinding     `json:"connector_bindings"`
-	BindingAuthorizations            []AgentBindingAuthorization `json:"-"`
+	FileUploadPolicy                 *chatfile.Policy                 `json:"file_upload_policy,omitempty"`
+	ExecutionRuntime                 *AgentExecutionRuntime           `json:"execution_runtime,omitempty"`
+	ExecutionRuntimeCapability       *AgentExecutionRuntimeCapability `json:"execution_runtime_capability,omitempty"`
+	ConnectorTargetScope             string                           `json:"-"`
+	ConnectorTargetVersionID         string                           `json:"-"`
+	AgentID                          string                           `json:"agent_id"`
+	BindingRevision                  string                           `json:"binding_revision"`
+	BindingHealth                    AgentBindingHealth               `json:"binding_health"`
+	SystemPrompt                     string                           `json:"system_prompt"`
+	ModelProvider                    string                           `json:"model_provider"`
+	Model                            string                           `json:"model"`
+	SupportsVision                   bool                             `json:"supports_vision"`
+	ModelParameters                  map[string]interface{}           `json:"model_parameters"`
+	EnabledSkillIDs                  []string                         `json:"enabled_skill_ids"`
+	UseMemory                        bool                             `json:"use_memory"`
+	AgentMemoryEnabled               bool                             `json:"agent_memory_enabled"`
+	AgentMemoryAutoExtractionEnabled bool                             `json:"agent_memory_auto_extraction_enabled"`
+	AgentMemorySlots                 []AgentMemorySlotConfig          `json:"agent_memory_slots"`
+	AgentMemoryConfigRevision        string                           `json:"agent_memory_config_revision,omitempty"`
+	FileUpload                       bool                             `json:"file_upload_enabled"`
+	HomeTitle                        string                           `json:"home_title"`
+	OpeningStatement                 string                           `json:"opening_statement"`
+	InputPlaceholder                 string                           `json:"input_placeholder"`
+	ThemeColor                       string                           `json:"theme_color"`
+	SuggestedQuestions               []string                         `json:"suggested_questions"`
+	UpdatedAt                        int64                            `json:"updated_at"`
+	KnowledgeDatasetIDs              []string                         `json:"knowledge_dataset_ids"`
+	KnowledgeBoundByAccountID        string                           `json:"-"`
+	KnowledgeBoundAtUnix             int64                            `json:"-"`
+	KnowledgeRetrievalConfig         map[string]interface{}           `json:"knowledge_retrieval_config"`
+	DatabaseBindings                 []AgentDatabaseBinding           `json:"database_bindings"`
+	DatabaseBoundByAccountID         string                           `json:"-"`
+	DatabaseBoundAtUnix              int64                            `json:"-"`
+	WorkflowBindings                 []AgentWorkflowBinding           `json:"workflow_bindings"`
+	WorkflowBoundByAccountID         string                           `json:"-"`
+	WorkflowBoundAtUnix              int64                            `json:"-"`
+	ConnectorBindings                []AgentConnectorBinding          `json:"connector_bindings"`
+	BindingAuthorizations            []AgentBindingAuthorization      `json:"-"`
 }
 
 type AgentDraftRuntimeConfigResponse struct {
@@ -737,23 +808,25 @@ type AgentWebAppRuntimeConfigResponse struct {
 }
 
 type AgentPublicWebAppConfigResponse struct {
-	AgentID            string   `json:"agent_id"`
-	WebAppID           string   `json:"web_app_id"`
-	AgentType          string   `json:"agent_type"`
-	Name               string   `json:"name"`
-	Description        string   `json:"description"`
-	Icon               string   `json:"icon"`
-	IconType           string   `json:"icon_type"`
-	IconURL            string   `json:"icon_url"`
-	HomeTitle          string   `json:"home_title"`
-	OpeningStatement   string   `json:"opening_statement"`
-	InputPlaceholder   string   `json:"input_placeholder"`
-	SuggestedQuestions []string `json:"suggested_questions"`
-	FileUpload         bool     `json:"file_upload_enabled"`
-	SupportsVision     bool     `json:"supports_vision"`
-	AgentMemoryEnabled bool     `json:"agent_memory_enabled"`
-	Version            string   `json:"version"`
-	VersionUUID        string   `json:"version_uuid"`
+	LoginRequired      bool             `json:"login_required"`
+	FileUploadPolicy   *chatfile.Policy `json:"file_upload_policy,omitempty"`
+	AgentID            string           `json:"agent_id"`
+	WebAppID           string           `json:"web_app_id"`
+	AgentType          string           `json:"agent_type"`
+	Name               string           `json:"name"`
+	Description        string           `json:"description"`
+	Icon               string           `json:"icon"`
+	IconType           string           `json:"icon_type"`
+	IconURL            string           `json:"icon_url"`
+	HomeTitle          string           `json:"home_title"`
+	OpeningStatement   string           `json:"opening_statement"`
+	InputPlaceholder   string           `json:"input_placeholder"`
+	SuggestedQuestions []string         `json:"suggested_questions"`
+	FileUpload         bool             `json:"file_upload_enabled"`
+	SupportsVision     bool             `json:"supports_vision"`
+	AgentMemoryEnabled bool             `json:"agent_memory_enabled"`
+	Version            string           `json:"version"`
+	VersionUUID        string           `json:"version_uuid"`
 }
 
 type AgentWebAppRuntimeCapabilityResponse struct {
