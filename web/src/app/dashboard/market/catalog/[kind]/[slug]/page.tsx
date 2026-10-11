@@ -113,9 +113,9 @@ export default function ZgiMarketListingPage({ params }: PageProps) {
         onError: () => toast.error(t('market.catalog.activateFailed')),
       }
     );
-  const pricesOf = (offeringId: number) =>
-    (data.prices ?? []).filter(price => price.offering_id === offeringId);
-  const listingPrices = (data.prices ?? []).filter(price => !price.offering_id);
+  const pricesOf = (offering: MarketOffering) =>
+    (data.prices ?? []).filter(price => price.offering_slug === offering.slug);
+  const listingPrices = (data.prices ?? []).filter(price => !price.offering_slug);
   const priceText = (price: (typeof listingPrices)[number]) => {
     if (price.unit_price_micros === 0) {
       return t('market.catalog.free');
@@ -194,7 +194,7 @@ export default function ZgiMarketListingPage({ params }: PageProps) {
                         .join(' · ')}
                     </p>
                     <ul className="mt-2 flex flex-col gap-0.5 text-xs text-muted-foreground">
-                      {pricesOf(offering.id).map(price => (
+                      {pricesOf(offering).map(price => (
                         <li key={price.meter}>{priceText(price)}</li>
                       ))}
                     </ul>

@@ -39,10 +39,12 @@ export interface MarketOffering {
   operations?: MarketOperation[];
 }
 
-/** One price of a listing. An amount is in micros of a yuan, or in milli-points when `currency` is PTS. */
+/**
+ * One price of a listing. An amount is in micros of a yuan, or in milli-points when `currency` is
+ * PTS. `offering_slug` names the offering the price applies to and is absent for usage without one.
+ */
 export interface MarketPrice {
-  offering_id: number;
-  offering?: string;
+  offering_slug?: string;
   meter: string;
   unit_price_micros: number;
   per_quantity: number;

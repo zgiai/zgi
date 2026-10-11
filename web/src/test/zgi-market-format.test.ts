@@ -38,7 +38,7 @@ assert.deepEqual(marketAmount({ unit_price_micros: 1_234_567, currency: 'CNY' })
 });
 
 const price = (unit: number, per: number) => ({
-  offering_id: 1,
+  offering_slug: 'echo-standard',
   meter: 'request',
   unit_price_micros: unit,
   per_quantity: per,
