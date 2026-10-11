@@ -187,15 +187,18 @@ func (s *RuntimeService) ContinueChannelTaskApproval(
 		return false, err
 	}
 	var pending *runtimemodel.Message
+	var pendingKind string
 	for _, message := range messages {
 		if message == nil || message.Status != runtimemodel.MessageStatusWaitingApproval {
 			continue
 		}
 		state := workflowContinuationRecord(message.Metadata)
-		if strings.TrimSpace(stringValue(state["kind"])) != "digital_human_task" {
+		kind := strings.TrimSpace(stringValue(state["kind"]))
+		if kind == "" {
 			continue
 		}
 		pending = message
+		pendingKind = kind
 		break
 	}
 	if pending == nil {
@@ -212,6 +215,22 @@ func (s *RuntimeService) ContinueChannelTaskApproval(
 		if feedback == "" {
 			return false, nil
 		}
+	}
+	if pendingKind != "digital_human_task" {
+		if !s.WorkflowContinuationEnabled() {
+			return false, fmt.Errorf("digital human channel workflow continuation is unavailable")
+		}
+		if action == "revise" {
+			return false, fmt.Errorf("workflow approval does not support revision from channel")
+		}
+		request := service.DigitalHumanTaskApprovalRequest{
+			Type: "approval", ApprovalToken: stringValue(workflowContinuationRecord(pending.Metadata)["approval_token"]),
+			Action: action, Inputs: map[string]interface{}{"supplement": feedback},
+		}
+		if err := s.ContinueWorkflowApproval(ctx, scope, digitalHumanID, conversationID, pending.ID, request, nil); err != nil {
+			return false, err
+		}
+		return true, nil
 	}
 	approvalRuntime, ok := s.chat.(digitalHumanTaskApprovalRuntime)
 	if !ok || s.taskService == nil {

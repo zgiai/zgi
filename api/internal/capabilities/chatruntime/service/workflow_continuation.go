@@ -68,6 +68,7 @@ type WorkflowApprovalContinuation struct {
 // by DigitalHuman task approvals. The task module owns validation and
 // mutation; ChatRuntime only owns pausing/resuming the conversation stream.
 type DigitalHumanTaskApprovalRequest struct {
+	Type          string
 	ApprovalToken string
 	Action        string
 	Inputs        map[string]interface{}

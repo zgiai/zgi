@@ -269,6 +269,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		Tasks:                               automationBundle.DigitalHumanTasks,
 		DefaultModelService:                 serviceContainer.GetDefaultModelService(),
 		KnowledgeRetrievalService:           serviceContainer.GetKnowledgeRetrievalService(),
+		WorkflowService:                     workflowService,
 	})
 	if automationBundle.DigitalHumanTaskReconciler != nil && digitalHumanRuntime.Runtime != nil {
 		automationBundle.DigitalHumanTaskReconciler.SetResultDeliverer(digitalHumanRuntime.Runtime)

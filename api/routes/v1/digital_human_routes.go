@@ -15,6 +15,7 @@ import (
 	runtimerepo "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	credentialcrypto "github.com/zgiai/zgi/api/internal/infra/credentialcrypto"
+	workflowapp "github.com/zgiai/zgi/api/internal/modules/app/workflow"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
 	connectordispatch "github.com/zgiai/zgi/api/internal/modules/connectors/dispatch"
 	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
@@ -76,6 +77,7 @@ type DigitalHumanRuntimeDeps struct {
 	ConnectorConfirmationStore          connectorexecution.ConfirmationContinuationStore
 	Tasks                               digitalhuman.TaskHandlerService
 	MemoryRetriever                     digitalhuman.DigitalHumanMemoryRetriever
+	WorkflowService                     interfaces.WorkflowService
 }
 
 // DigitalHumanRuntimeBundle keeps the model runtime and channel application
@@ -370,6 +372,13 @@ func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRu
 		digitalhuman.WithManualInvocationFileValidator(digitalhuman.NewConsoleFileValidator(deps.FileService)),
 		digitalhuman.WithLinuxExecutionRuntime(newDigitalHumanLinuxExecution(deps)),
 	)
+	if deps.WorkflowService != nil {
+		runtimeOption := digitalhuman.WithWorkflowContinuationRunner(deps.DB,
+			workflowapp.NewWorkflowHandler(deps.WorkflowService, nil, deps.FileService, nil, deps.OrganizationService))
+		// The handler only uses its workflow runner methods here; HTTP permission
+		// dependencies are not consulted by continuation execution.
+		runtimeOption(runtime)
+	}
 	digitalhuman.RegisterRunTaskHandler(deps.TaskRegistry, deps.TaskManager, runtime)
 	digitalhuman.RegisterRuntimeInputFollowUpTaskHandler(deps.TaskRegistry, deps.TaskManager, runtime)
 	if err := deps.Scheduler.RegisterTask(&digitalhuman.ReconcileTask{}, digitalhuman.NewReconcileHandler(runtime)); err != nil {

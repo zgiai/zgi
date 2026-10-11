@@ -25,9 +25,11 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	"github.com/zgiai/zgi/api/internal/dto"
 	workflowapp "github.com/zgiai/zgi/api/internal/modules/app/workflow"
+	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
 	"gorm.io/datatypes"
+	"gorm.io/gorm"
 )
 
 const (
@@ -70,6 +72,18 @@ type digitalHumanTaskApprovalRuntime interface {
 	RunDigitalHumanTaskApprovalContinuation(context.Context, chatruntime.Scope, chatruntime.Caller, chatruntime.RunConfig, uuid.UUID, uuid.UUID, chatruntime.DigitalHumanTaskApprovalRequest, chatruntime.DigitalHumanTaskApprovalHandler, func(chatruntime.StreamEvent) error) (*chatruntime.ChatResult, error)
 }
 
+// WorkflowContinuationRunner is the shared workflow engine boundary used by
+// Agent and DigitalHuman approval continuations.
+type WorkflowContinuationRunner interface {
+	ResumeApprovalWorkflow(context.Context, *approvalruntime.Form) error
+	ResumeQuestionAnswerWorkflow(context.Context, string, map[string]interface{}) error
+}
+
+type workflowContinuationStreamRunner interface {
+	ResumeApprovalWorkflowStream(context.Context, *approvalruntime.Form, func(string, map[string]interface{}) error) error
+	ResumeQuestionAnswerWorkflowStream(context.Context, string, map[string]interface{}, func(string, map[string]interface{}) error) error
+}
+
 // RunDispatcher is a best-effort delivery accelerator. RunStore remains the
 // source of truth for accepted and canceled executions.
 type RunDispatcher interface {
@@ -88,6 +102,8 @@ type RuntimeService struct {
 	memory         MemoryRuntimeProvider
 	tasks          TaskRuntimeProvider
 	taskService    TaskHandlerService
+	workflowRunner WorkflowContinuationRunner
+	workflowDB     *gorm.DB
 	channelContext ChannelContextRuntimeProvider
 	manualFiles    ManualInvocationFileValidator
 	linux          LinuxExecutionRuntimeProvider
@@ -144,6 +160,16 @@ func WithChannelContextRuntime(provider ChannelContextRuntimeProvider) RuntimeSe
 // before a durable run and its immutable invocation context are created.
 func WithManualInvocationFileValidator(validator ManualInvocationFileValidator) RuntimeServiceOption {
 	return func(service *RuntimeService) { service.manualFiles = validator }
+}
+
+// WithWorkflowContinuationRunner enables generic workflow approvals for the
+// DigitalHuman surfaces while keeping task approvals on their compatibility
+// path.
+func WithWorkflowContinuationRunner(db *gorm.DB, runner WorkflowContinuationRunner) RuntimeServiceOption {
+	return func(service *RuntimeService) {
+		service.workflowDB = db
+		service.workflowRunner = runner
+	}
 }
 
 func (s *RuntimeService) SubmitManual(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, request ManualInvocationRequest) (*Run, bool, error) {
@@ -546,6 +572,7 @@ func overlayRunRuntimeDetail(detail *dto.AgentRuntimeRunDetail, run *Run) {
 		return
 	}
 	detail.ID = run.ID.String()
+	detail.CallerType = runtimemodel.ConversationCallerDigitalHuman
 	detail.Status = string(run.Status)
 	detail.Query = run.Query
 	if run.ResultSummary != "" {
@@ -593,8 +620,12 @@ func pendingRunWorkflowApproval(run *Run, message *runtimemodel.Message) *RunWor
 		if !ok || !approvalStatusPending(approval["status"]) {
 			continue
 		}
-		if allowed, exists := approval["ui_approval_allowed"].(bool); exists && !allowed {
-			return nil
+		allowed := true
+		if value, exists := approval["ui_approval_allowed"].(bool); exists {
+			allowed = value
+		}
+		if !allowed {
+			return &RunWorkflowApproval{ApprovalDeliveryMode: "external", UIApprovalAllowed: false, ExternalApprovalRequired: true}
 		}
 		form, _ := stringMap(approval["approval_form"])
 		token := firstString(approval["approval_token"])
@@ -604,7 +635,7 @@ func pendingRunWorkflowApproval(run *Run, message *runtimemodel.Message) *RunWor
 		if token == "" || len(form) == 0 {
 			return nil
 		}
-		return &RunWorkflowApproval{ApprovalToken: token, ApprovalForm: publicWorkflowApprovalForm(form, token)}
+		return &RunWorkflowApproval{ApprovalToken: token, ApprovalForm: publicWorkflowApprovalForm(form, token), ApprovalDeliveryMode: "inline", UIApprovalAllowed: true}
 	}
 	return nil
 }
@@ -1102,27 +1133,49 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 
 func executionTraceFromMetadata(metadata map[string]interface{}) datatypes.JSON {
 	trace := map[string]interface{}{}
+	truncated := false
 	for _, section := range []struct {
 		key     string
 		allowed map[string]struct{}
 	}{
-		{key: "runtime_timeline", allowed: allowedTraceFields("runtime_id", "kind", "source", "source_id", "sequence", "created_at", "created_at_ms")},
-		{key: "skill_invocations", allowed: allowedTraceFields("runtime_id", "invocation_id", "skill_id", "tool_name", "title", "kind", "status", "duration_ms", "created_at", "created_at_ms", "error_code", "approval_status", "workflow_run_id")},
-		{key: "workflow_runs", allowed: allowedTraceFields("workflow_run_id", "task_id", "id", "workflow_id", "agent_id", "version", "status", "elapsed_time", "created_at", "created_at_ms")},
+		{key: "runtime_timeline", allowed: allowedTraceFields("runtime_id", "caller_type", "kind", "source", "source_id", "sequence", "created_at", "created_at_ms", "authorization_status", "approval_status", "error_code")},
+		{key: "skill_invocations", allowed: allowedTraceFields("runtime_id", "caller_type", "invocation_id", "skill_id", "tool_name", "title", "kind", "status", "duration_ms", "created_at", "created_at_ms", "resource_type", "resource_id", "authorization_status", "error_code", "approval_status", "workflow_run_id")},
+		{key: "workflow_runs", allowed: allowedTraceFields("workflow_run_id", "caller_type", "task_id", "id", "workflow_id", "agent_id", "version", "status", "elapsed_time", "created_at", "created_at_ms", "approval_status", "authorization_status", "error_code")},
 		{key: "conversation_artifacts", allowed: allowedTraceFields("artifact_id", "artifact_type", "invocation_id", "skill_id", "tool_name", "file_id", "tool_file_id", "upload_file_id", "filename", "extension", "mime_type", "transfer_method", "target", "lifecycle", "expires_at", "availability", "created_at")},
 		{key: "generated_files", allowed: allowedTraceFields("artifact_id", "artifact_type", "invocation_id", "skill_id", "tool_name", "file_id", "tool_file_id", "upload_file_id", "filename", "extension", "mime_type", "transfer_method", "target", "lifecycle", "expires_at", "availability", "created_at")},
 		{key: "channel_context", allowed: allowedTraceFields("status", "message_count", "author_count", "estimated_tokens", "truncated", "truncated_reason", "duration_ms", "provider_request_ids", "error_code")},
 	} {
 		items := traceMapSlice(metadata[section.key], section.allowed, 100)
+		if traceSliceLength(metadata[section.key]) > 100 {
+			truncated = true
+		}
 		if len(items) > 0 {
 			trace[section.key] = items
 		}
 	}
+	if truncated {
+		trace["truncated"] = true
+	}
 	encoded, err := json.Marshal(trace)
 	if err != nil || len(encoded) > 256*1024 {
-		return datatypes.JSON(`{}`)
+		return datatypes.JSON(`{"truncated":true}`)
 	}
 	return datatypes.JSON(encoded)
+}
+
+func traceSliceLength(value interface{}) int {
+	if raw, ok := value.([]interface{}); ok {
+		return len(raw)
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return 0
+	}
+	var raw []interface{}
+	if json.Unmarshal(encoded, &raw) != nil {
+		return 0
+	}
+	return len(raw)
 }
 
 func allowedTraceFields(fields ...string) map[string]struct{} {
