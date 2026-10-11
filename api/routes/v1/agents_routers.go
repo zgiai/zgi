@@ -29,6 +29,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/shared/titlegen"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
+	"github.com/zgiai/zgi/api/internal/modules/zgimarket"
 	"github.com/zgiai/zgi/api/middleware"
 	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -97,6 +98,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 		runtimeInputDispatcher,
 		connectorAgentRuntime,
 		connectorConfirmationStore,
+		zgimarket.RuntimeResolver(),
 	)
 	cleanupContext, cancelCleanup := context.WithTimeout(context.Background(), 30*time.Second)
 	affected, cleanupErr := chatRuntimeService.CleanupStaleActiveMessages(cleanupContext)

@@ -73,6 +73,8 @@ type Proxy struct {
 	account      func(c *gin.Context) string
 	// skills imports market skill packages; nil leaves installing off.
 	skills SkillInstaller
+	// tools binds market MCP servers to agents and digital humans; nil leaves that off.
+	tools *Tools
 }
 
 // NewProxy creates the proxy.
@@ -186,7 +188,7 @@ func (p *Proxy) Forward(c *gin.Context) {
 		response.FailWithMessage(c, response.ErrServiceUnavailable, "ZGI Market is not configured")
 		return
 	}
-	if p.install(c) {
+	if p.install(c) || p.toolRoute(c) {
 		return
 	}
 	path, _, allowed := resourceOf(c.Param("path"))
@@ -209,6 +211,10 @@ func (p *Proxy) Forward(c *gin.Context) {
 	result, err := p.call(c.Request.Context(), who, c.Request.Method, path, body, c.Request.Header, answerBodyLimit)
 	if err != nil {
 		response.FailWithMessage(c, response.ErrServiceUnavailable, "ZGI Market is unavailable")
+		return
+	}
+	if strings.HasPrefix(path, oauthCallbackPath+"?") || path == oauthCallbackPath {
+		p.relayOAuthCallback(c, result)
 		return
 	}
 	p.relay(c, result)

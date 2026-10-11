@@ -246,6 +246,17 @@ func (s *service) resolvePreparedBusinessSkills(
 	ctx context.Context,
 	prepared *PreparedChat,
 ) (*skills.ResolvedSkills, error) {
+	resolved, err := s.resolvePreparedConnectorSkills(ctx, prepared)
+	if err != nil {
+		return nil, err
+	}
+	return s.overlayMarketTools(ctx, prepared, resolved)
+}
+
+func (s *service) resolvePreparedConnectorSkills(
+	ctx context.Context,
+	prepared *PreparedChat,
+) (*skills.ResolvedSkills, error) {
 	resolved := &skills.ResolvedSkills{}
 	if s == nil || prepared == nil || prepared.parts == nil {
 		return resolved, nil
@@ -255,14 +266,17 @@ func (s *service) resolvePreparedBusinessSkills(
 	// initial prepare boundary (for example, the Skill owning an approved frozen
 	// invocation). Merge those additions into the base set while subtracting the
 	// previously projected Connector IDs, which may now be stale after detach.
-	baseSkillIDs := mergeNormalizedSkillIDs(
+	// The market Skill is request-scoped like the Connector ones and is never resolved from the
+	// catalog; it is overlaid afresh after this.
+	projected := append(append([]string(nil), parts.ConnectorSkillIDs...), parts.MarketSkillIDs...)
+	baseSkillIDs := skillIDsWithout(mergeNormalizedSkillIDs(
 		parts.BaseSkillIDs,
-		skillIDsWithout(parts.SkillIDs, parts.ConnectorSkillIDs),
-	)
-	baseToolSkillIDs := mergeNormalizedSkillIDs(
+		skillIDsWithout(parts.SkillIDs, projected),
+	), []string{skills.SkillZGIMarketTools})
+	baseToolSkillIDs := skillIDsWithout(mergeNormalizedSkillIDs(
 		parts.BaseToolSkillIDs,
-		skillIDsWithout(parts.ToolSkillIDs, parts.ConnectorSkillIDs),
-	)
+		skillIDsWithout(parts.ToolSkillIDs, projected),
+	), []string{skills.SkillZGIMarketTools})
 	if len(baseSkillIDs) > 0 {
 		if s.skillRuntime == nil {
 			return nil, fmt.Errorf("%w: skill runtime is not configured", ErrInvalidInput)

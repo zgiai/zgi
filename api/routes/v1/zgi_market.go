@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -13,9 +14,12 @@ import (
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"github.com/zgiai/zgi/api/internal/modules/zgimarket"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/middleware"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"gorm.io/gorm"
 )
 
 // RegisterZGIMarketRoutes registers the market routes of an organization's members.
@@ -27,6 +31,7 @@ func RegisterZGIMarketRoutes(
 	accountService interfaces.AccountService,
 	tenantService interfaces.WorkspaceManagementService,
 	importer marketSkillImporter,
+	marketTools *zgimarket.Tools,
 ) {
 	settings := zgimarket.Config{}
 	if config.GlobalConfig != nil {
@@ -49,6 +54,7 @@ func RegisterZGIMarketRoutes(
 	if importer != nil {
 		proxy.WithSkillInstaller(marketSkillInstaller{skills: importer})
 	}
+	proxy.WithTools(marketTools)
 	market := router.Group("/workspaces/current/zgi-market",
 		middleware.SetAccountService(accountService),
 		middleware.SetWorkspaceManagementService(tenantService),
@@ -154,4 +160,30 @@ func (i marketSkillInstaller) Installed(ctx context.Context, organizationID, acc
 		})
 	}
 	return installed, nil
+}
+
+// NewZGIMarketTools builds the market tools of this instance and shares them with the chat
+// runtimes and the tool manager. It returns nil when the market is not configured.
+func NewZGIMarketTools(db *gorm.DB, sealer zgimarket.SecretSealer, toolManager *tools.ToolManager) *zgimarket.Tools {
+	if config.GlobalConfig == nil || db == nil || sealer == nil || config.GlobalConfig.Console.APIURL == "" {
+		return nil
+	}
+	console := config.GlobalConfig.Console
+	var gateway *zgimarket.GatewayConfig
+	if console.ZGIMarketGatewayURL != "" {
+		server := config.GlobalConfig.Server
+		production := strings.EqualFold(server.Environment, "production") || strings.EqualFold(server.Mode, "release")
+		allowPrivate := console.ZGIMarketAllowPrivateTargets && !production
+		gateway = &zgimarket.GatewayConfig{URL: console.ZGIMarketGatewayURL, AllowPrivateTargets: allowPrivate}
+	}
+	marketTools, err := zgimarket.NewTools(db, sealer, gateway)
+	if err != nil {
+		logger.Error("ZGI Market tools are off", err)
+		return nil
+	}
+	zgimarket.Share(marketTools)
+	if gateway != nil && toolManager != nil {
+		toolManager.SetMarketToolSource(marketTools)
+	}
+	return marketTools
 }

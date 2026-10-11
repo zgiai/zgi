@@ -29,6 +29,7 @@ const (
 	ToolProviderTypePluginRunner ToolProviderType = "plugin_runner" // Compatibility value for marketplace tools
 	ToolProviderTypeRunner       ToolProviderType = "runner"        // Preferred public alias for marketplace tools
 	ToolProviderTypeConnector    ToolProviderType = "connector"     // External integration actions
+	ToolProviderTypeMarket       ToolProviderType = "market"        // ZGI Market MCP tools bound to an agent or a digital human
 
 	// Not supported - reserved for future extension
 	// ToolProviderTypeAPI              ToolProviderType = "api"               // Custom OpenAPI tools - not supported

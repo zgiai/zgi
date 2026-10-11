@@ -474,6 +474,8 @@ func loadConsoleConfig(cfg *Config, source *envSource) error {
 		SyncIntervalSec:                syncIntervalSec,
 		SyncStaleSec:                   syncStaleSec,
 		SyncOrganizationReportInterval: organizationReportInterval,
+		ZGIMarketGatewayURL:            strings.TrimRight(source.string("", envZGIMarketGatewayURL), "/"),
+		ZGIMarketAllowPrivateTargets:   mustBool(source.bool(false, envZGIMarketAllowPrivateTargets)),
 	}
 	return nil
 }

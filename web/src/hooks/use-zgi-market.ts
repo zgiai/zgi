@@ -1,6 +1,10 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { zgiMarketService } from '@/services/zgi-market.service';
-import type { MarketListingKind, MarketListingQuery } from '@/services/types/zgi-market';
+import type {
+  MarketListingKind,
+  MarketListingQuery,
+  MarketToolSubjectType,
+} from '@/services/types/zgi-market';
 
 const keys = {
   all: ['zgi-market'] as const,
@@ -9,6 +13,10 @@ const keys = {
   listing: (kind: string, slug: string) => ['zgi-market', 'listing', kind, slug] as const,
   subscriptions: ['zgi-market', 'subscriptions'] as const,
   installedSkills: ['zgi-market', 'installed-skills'] as const,
+  connections: ['zgi-market', 'connections'] as const,
+  toolCandidates: ['zgi-market', 'tool-candidates'] as const,
+  subjectTools: (subjectType: string, subjectId: string) =>
+    ['zgi-market', 'subject-tools', subjectType, subjectId] as const,
 };
 
 const staleTime = 60 * 1000;
@@ -75,6 +83,41 @@ export function useInstallZgiMarketSkill() {
       void queryClient.invalidateQueries({ queryKey: keys.installedSkills });
       // The organization's skills and every binding picker read them.
       void queryClient.invalidateQueries({ queryKey: ['aichat'] });
+    },
+  });
+}
+
+export function useZgiMarketConnections(enabled = true) {
+  return useQuery({
+    queryKey: keys.connections,
+    queryFn: () => zgiMarketService.getConnections(),
+    enabled,
+  });
+}
+
+export function useZgiMarketToolCandidates(enabled = true) {
+  return useQuery({
+    queryKey: keys.toolCandidates,
+    queryFn: () => zgiMarketService.getToolCandidates(),
+    enabled,
+  });
+}
+
+export function useZgiMarketSubjectTools(subjectType: MarketToolSubjectType, subjectId: string) {
+  return useQuery({
+    queryKey: keys.subjectTools(subjectType, subjectId),
+    queryFn: () => zgiMarketService.getSubjectTools(subjectType, subjectId),
+    enabled: Boolean(subjectId),
+  });
+}
+
+export function useBindZgiMarketSubjectTools(subjectType: MarketToolSubjectType, subjectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (items: Array<{ listing_id: number; connection_id?: number | null }>) =>
+      zgiMarketService.bindSubjectTools(subjectType, subjectId, items),
+    onSuccess: binding => {
+      queryClient.setQueryData(keys.subjectTools(subjectType, subjectId), binding);
     },
   });
 }

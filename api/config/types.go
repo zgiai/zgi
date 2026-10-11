@@ -179,6 +179,14 @@ type ConsoleConfig struct {
 	SyncStaleSec    int  `json:"sync_stale_sec"`
 	// Organization inventory report cadence (Cloud mode only). 0 disables the report.
 	SyncOrganizationReportInterval time.Duration `json:"sync_organization_report_interval"`
+
+	// ZGIMarketGatewayURL is the public origin of the ZGI Market gateway. Market tools bound to
+	// an agent or a digital human are called there directly; everything else about the market
+	// goes through the console. Empty leaves market tools off.
+	ZGIMarketGatewayURL string `json:"zgi_market_gateway_url"`
+	// ZGIMarketAllowPrivateTargets lets the gateway address resolve to a private or loopback
+	// address. It is for local development only and is refused in production.
+	ZGIMarketAllowPrivateTargets bool `json:"zgi_market_allow_private_targets"`
 }
 
 type LLMPolicyPromptConfig struct {

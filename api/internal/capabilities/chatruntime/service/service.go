@@ -522,6 +522,7 @@ type service struct {
 	connectorConfirmationStore     connectorexecution.ConfirmationContinuationStore
 	connectorActionResolverFactory repository.ConnectorActionResolverFactory
 	runtimeInputDispatcher         RuntimeInputFollowUpDispatcher
+	marketTools                    MarketToolResolver
 	customSkillStorage             customSkillStorage
 	modelIdleTimeout               time.Duration
 	modelProgressSchedule          modelprogress.Schedule
@@ -580,7 +581,11 @@ func NewServiceWithSkillRuntime(
 		connectorActionResolverFactory = repository.NewConnectorActionResolverFactory(repos.DB)
 	}
 	var runtimeInputDispatcher RuntimeInputFollowUpDispatcher
+	var marketTools MarketToolResolver
 	for _, item := range optionalServices {
+		if typed, ok := item.(MarketToolResolver); ok && marketTools == nil {
+			marketTools = typed
+		}
 		// Optional services may intentionally implement more than one contract
 		// (the memory backend provides both context and extraction scheduling),
 		// so these assertions must not be mutually exclusive.
@@ -630,6 +635,7 @@ func NewServiceWithSkillRuntime(
 		connectorConfirmationStore:     connectorConfirmationStore,
 		connectorActionResolverFactory: connectorActionResolverFactory,
 		runtimeInputDispatcher:         runtimeInputDispatcher,
+		marketTools:                    marketTools,
 		customSkillStorage:             newFilesystemCustomSkillStorage(customSkillStorageRoot),
 		modelIdleTimeout:               configuredModelIdleTimeout(),
 	}
@@ -766,6 +772,7 @@ type chatRequestParts struct {
 	BaseSkillIDs                     []string
 	BaseToolSkillIDs                 []string
 	ConnectorSkillIDs                []string
+	MarketSkillIDs                   []string
 	RequiredInitialConnectorBindings []connectorbindings.InitialChatConnection
 	ConnectorToolsEnabled            bool
 	UseMemory                        bool

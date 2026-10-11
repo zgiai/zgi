@@ -199,6 +199,12 @@ const (
 	envConsoleAPIGRPCAddr = "CONSOLE_API_GRPC_ADDR"
 	// envConsoleInternalAPIKey sets the internal API key shared with the console service. Default: empty.
 	envConsoleInternalAPIKey = "CONSOLE_INTERNAL_API_KEY"
+	// envZGIMarketGatewayURL sets the public origin of the ZGI Market gateway that market tools
+	// of agents and digital humans are called at. Default: empty (market tools off).
+	envZGIMarketGatewayURL = "ZGI_MARKET_GATEWAY_URL"
+	// envZGIMarketAllowPrivateTargets lets the market gateway resolve to a private address, for
+	// local development only. Default: false.
+	envZGIMarketAllowPrivateTargets = "ZGI_MARKET_ALLOW_PRIVATE_TARGETS"
 	// envConsoleInstanceID selects the per-instance Console credential issued by the
 	// console control plane (Cloud mode). Default: empty.
 	envConsoleInstanceID = "CONSOLE_INSTANCE_ID"

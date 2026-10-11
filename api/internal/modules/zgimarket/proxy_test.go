@@ -89,11 +89,12 @@ func TestForwardNamesTheCallerItselfAndReturnsTheAnswerUnchanged(t *testing.T) {
 		t.Error("the request to the console is not signed")
 	}
 
-	// A plain member is named as one, and a redirect of the market is handed back as it is.
+	// A plain member is named as one, and the market's redirect after the OAuth callback is
+	// handed back as the page to open.
 	engine, seen = newTestProxy(t, true, false)
 	recorder = send(engine, http.MethodGet, "/workspaces/current/zgi-market/connections/oauth/callback?state=s", "", nil)
-	if recorder.Code != http.StatusFound || recorder.Header().Get("Location") != "https://app.example.com/done" {
-		t.Fatalf("redirect = %d %q", recorder.Code, recorder.Header().Get("Location"))
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "https://app.example.com/done") {
+		t.Fatalf("redirect = %d %q", recorder.Code, recorder.Body.String())
 	}
 	if role := (*seen)[0].header.Get("X-ZGI-Organization-Role"); role != "member" {
 		t.Errorf("role = %q", role)

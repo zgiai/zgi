@@ -27,6 +27,8 @@ const (
 	OnboardingDevice         Purpose = "onboarding-device"
 	MessagingState           Purpose = "messaging-state"
 	MessagingContext         Purpose = "messaging-context"
+	// MarketBindingSecret seals the credential ZGI Market issued for one agent or digital human.
+	MarketBindingSecret Purpose = "market-binding-secret"
 )
 
 var (
@@ -84,7 +86,7 @@ func NewStore(active string, masters map[string]string) (*Store, error) {
 }
 
 func (subject Subject) aad(keyID string) ([]byte, error) {
-	if subject.Purpose != ConnectionKey && subject.Purpose != ConfirmationContinuation && subject.Purpose != OnboardingDevice && subject.Purpose != MessagingState && subject.Purpose != MessagingContext || subject.OrganizationID == uuid.Nil || subject.ID == uuid.Nil || !connectorIDPattern.MatchString(subject.ConnectorID) || subject.Version < 1 {
+	if subject.Purpose != ConnectionKey && subject.Purpose != ConfirmationContinuation && subject.Purpose != OnboardingDevice && subject.Purpose != MessagingState && subject.Purpose != MessagingContext && subject.Purpose != MarketBindingSecret || subject.OrganizationID == uuid.Nil || subject.ID == uuid.Nil || !connectorIDPattern.MatchString(subject.ConnectorID) || subject.Version < 1 {
 		return nil, ErrEnvelope
 	}
 	return json.Marshal([]any{"zgi/connector-secrets", 1, string(subject.Purpose), keyID, subject.OrganizationID.String(), subject.ID.String(), subject.ConnectorID, subject.Version})

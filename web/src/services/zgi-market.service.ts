@@ -1,6 +1,10 @@
 import { BaseService } from '@/lib/http/services';
 import type {
   MarketCategory,
+  MarketConnection,
+  MarketToolBinding,
+  MarketToolCandidates,
+  MarketToolSubjectType,
   MarketInstalledSkill,
   MarketListing,
   MarketListingKind,
@@ -101,6 +105,62 @@ class ZgiMarketService extends BaseService {
       'post',
       `/installs/skills/${encodeURIComponent(slug)}`,
       { overwrite }
+    );
+    return response.data;
+  }
+
+  /** The organization's connections at the market. */
+  async getConnections(): Promise<MarketConnection[]> {
+    const response = await this.request<MarketEnvelope<MarketConnection[]>>('get', '/connections');
+    return response.data ?? [];
+  }
+
+  /**
+   * Starts the OAuth authorization of a connector. The market sends the browser back to
+   * returnUrl, which must be a page of this instance, after the vendor's consent.
+   */
+  async connect(connectorSlug: string, name: string, returnUrl: string): Promise<MarketConnection> {
+    const response = await this.request<MarketEnvelope<MarketConnection>>('post', '/connections', {
+      connector_slug: connectorSlug,
+      name,
+      return_url: returnUrl,
+    });
+    return response.data;
+  }
+
+  /** Forwards the vendor's redirect to the market and returns the page to open next. */
+  async completeOAuth(query: string): Promise<string> {
+    const response = await this.request<MarketEnvelope<{ redirect: string }>>(
+      'get',
+      `/connections/oauth/callback${query.startsWith('?') ? query : `?${query}`}`
+    );
+    return response.data.redirect;
+  }
+
+  /** The activated MCP listings that may be bound, with the organization's connections. */
+  async getToolCandidates(): Promise<MarketToolCandidates> {
+    const response = await this.request<MarketEnvelope<MarketToolCandidates>>('get', '/tools/candidates');
+    return response.data ?? { listings: [], connections: [] };
+  }
+
+  async getSubjectTools(subjectType: MarketToolSubjectType, subjectId: string): Promise<MarketToolBinding> {
+    const response = await this.request<MarketEnvelope<MarketToolBinding>>(
+      'get',
+      `/tools/subjects/${subjectType}/${encodeURIComponent(subjectId)}`
+    );
+    return response.data;
+  }
+
+  /** Replaces the market tools of a subject. An empty list removes them all. */
+  async bindSubjectTools(
+    subjectType: MarketToolSubjectType,
+    subjectId: string,
+    items: Array<{ listing_id: number; connection_id?: number | null }>
+  ): Promise<MarketToolBinding> {
+    const response = await this.request<MarketEnvelope<MarketToolBinding>>(
+      'put',
+      `/tools/subjects/${subjectType}/${encodeURIComponent(subjectId)}`,
+      { items }
     );
     return response.data;
   }

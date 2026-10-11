@@ -27,6 +27,7 @@ import (
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
+	"github.com/zgiai/zgi/api/internal/modules/zgimarket"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/middleware"
 	"github.com/zgiai/zgi/api/pkg/response"
@@ -88,6 +89,7 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 		memoryService,
 		runtimeAgentMemory,
 		connectorRuntime, connectorConfirmationStore,
+		zgimarket.RuntimeResolver(),
 	)
 	var defaultModelResolver llmdefaultservice.DefaultModelResolver
 	if graphFlowService != nil {

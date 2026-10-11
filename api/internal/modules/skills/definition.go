@@ -44,6 +44,9 @@ const (
 	SkillDigitalHumanTasks      = "digital-human-tasks"
 	SkillUserMemory             = "user-memory"
 	SkillConnectorRuntime       = "connector-runtime"
+	// SkillZGIMarketTools is the request-scoped Skill of the ZGI Market tools bound to the
+	// current agent or digital human. It is built per run and never stored.
+	SkillZGIMarketTools = "zgi-market-tools"
 
 	SkillSourceSystem = "system"
 	SkillSourceCustom = "custom"

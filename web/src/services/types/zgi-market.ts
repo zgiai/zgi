@@ -68,6 +68,7 @@ export interface MarketListing {
   offerings: MarketOffering[];
   prices?: MarketPrice[];
   mcp?: { tools: MarketTool[] } | null;
+  required_connectors?: MarketRequiredConnector[];
   current_version?: { label: string; published_at: string } | null;
   published_at?: string | null;
 }
@@ -132,4 +133,59 @@ export interface MarketListingQuery {
   q?: string;
   page: number;
   per_page: number;
+}
+
+/** A connector whose connection the organization needs before it can use a listing. */
+export interface MarketRequiredConnector {
+  slug: string;
+  auth_type: string;
+  title: MarketText;
+}
+
+/** A connection of the organization at the market. */
+export interface MarketConnection {
+  id: number;
+  connector_slug: string;
+  name: string;
+  status: string;
+  auth_type?: string;
+  authorize_url?: string;
+}
+
+export type MarketToolRisk = 'read' | 'write' | 'destructive';
+
+/** An activated MCP listing the organization may bind to an agent or a digital human. */
+export interface MarketToolCandidate {
+  listing_id: number;
+  slug: string;
+  title: MarketText;
+  subscription_id: number;
+  tools: Array<{ name: string; description: MarketText; risk_level: MarketToolRisk }>;
+  required_connectors: MarketRequiredConnector[];
+}
+
+export interface MarketToolCandidates {
+  listings: MarketToolCandidate[];
+  connections: MarketConnection[];
+}
+
+export type MarketToolSubjectType = 'agent' | 'digital_human';
+
+/** One MCP listing bound to a subject. */
+export interface MarketToolBindingItem {
+  listing_id: number;
+  slug: string;
+  title?: string;
+  subscription_id: number;
+  connection_id?: number | null;
+  tools: Array<{ name: string; risk_level: MarketToolRisk }>;
+}
+
+/** The market tools of one agent or digital human. */
+export interface MarketToolBinding {
+  subject_type: MarketToolSubjectType;
+  subject_id: string;
+  items: MarketToolBindingItem[];
+  updated_at: string | null;
+  gateway_configured: boolean;
 }

@@ -244,6 +244,8 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 
 	// ---------- Agent ----------
 	resourcePermissionService := serviceContainer.GetResourcePermissionService()
+	// ZGI Market tools are shared before any chat runtime is built.
+	zgiMarketTools := NewZGIMarketTools(db, serviceContainer.GetConnectorCredentialSealer(), serviceContainer.GetToolManager())
 	agentsService := RegisterAgentsRoutes(v1, db, accountService, tenantService, resourcePermissionService, serviceContainer.GetOrganizationService(), serviceContainer.GetQuotaService(), serviceContainer.GetFileService(), serviceContainer.GetContentExtractor(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetToolManager(), serviceContainer.GetMemoryService(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetDataSourceService(), serviceContainer.GetKnowledgeRetrievalService(), workflowEngineFactory, serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetWorkflowTestService(), serviceContainer.GetScheduler(), config.Current().TaskQueue.WorkflowTestTaskBackend, serviceContainer.GetConnectorAgentRuntimeResolver(), serviceContainer.GetConnectorConfirmationContinuationStore(), serviceContainer.GetConnectorSurfaceDispatcher(), serviceContainer.GetConnectorPluginManager(), applicationErrorCatalog)
 
 	// ---------- DigitalHuman ----------
@@ -348,7 +350,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	chatService := RegisterAIChatRoutes(v1, chatRouteDeps)
 
 	// ---------- ZGI Market (members of the current organization) ----------
-	RegisterZGIMarketRoutes(v1, accountService, tenantServiceImpl, chatService)
+	RegisterZGIMarketRoutes(v1, accountService, tenantServiceImpl, chatService, zgiMarketTools)
 	RegisterConnectorRuntimeConfirmationRoutes(v1, ConnectorRuntimeConfirmationRouteDeps{
 		Service: serviceContainer.GetConnectorRuntimeConfirmationService(),
 		Recorder: connectorRuntimeConfirmationSurfaceRecorder{

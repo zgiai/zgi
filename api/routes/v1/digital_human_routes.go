@@ -27,6 +27,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	"github.com/zgiai/zgi/api/internal/modules/zgimarket"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/middleware"
 	"github.com/zgiai/zgi/api/pkg/apperror"
@@ -319,6 +320,7 @@ func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRu
 		newDigitalHumanSkillRuntime(deps),
 		nil,
 		runtimeInputDispatcher, deps.ConnectorRuntime, deps.ConnectorConfirmationStore,
+		zgimarket.RuntimeResolver(),
 	)
 	dispatcher := digitalhuman.NewAsynqRunDispatcher(deps.TaskManager)
 	memoryService := digitalhuman.NewService(repository)

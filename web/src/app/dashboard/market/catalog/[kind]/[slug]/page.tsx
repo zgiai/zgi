@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import MarketEmptyState from '@/components/market/market-empty-state';
 import { marketAmount, marketText } from '@/components/zgi-market/market-format';
+import { ZgiMarketRequiredConnectors } from '@/components/zgi-market/zgi-market-required-connectors';
 import { useLocale } from '@/hooks/use-locale';
 import {
   useActivateZgiMarketListing,
@@ -319,6 +320,12 @@ export default function ZgiMarketListingPage({ params }: PageProps) {
           </ul>
         </section>
       ) : null}
+
+      <ZgiMarketRequiredConnectors
+        kind={data.kind}
+        slug={data.slug}
+        connectors={data.required_connectors ?? []}
+      />
 
       {data.mcp && data.mcp.tools.length > 0 ? (
         <section className="mt-8 max-w-4xl" aria-labelledby="zgi-market-tools">
