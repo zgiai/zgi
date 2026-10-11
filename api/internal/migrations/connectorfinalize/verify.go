@@ -86,6 +86,7 @@ func verify(db *gorm.DB, option Options, requireMarker bool) (Report, error) {
 	sourceCount := 0
 	archivedRows := 0
 	archiveProof := false
+	discardProof := false
 	for _, record := range data["connector_conversion_records"] {
 		switch text(record, "source_kind") {
 		case "retired_table_v2":
@@ -97,15 +98,17 @@ func verify(db *gorm.DB, option Options, requireMarker bool) (Report, error) {
 			manifest[name] = true
 			sourceCount += count
 		case "retired_source_v2":
-			if text(record, "result") != "archived" || !sha256Digest(text(record, "source_digest")) {
+			if (text(record, "result") != "archived" && text(record, "result") != "discarded") || !sha256Digest(text(record, "source_digest")) {
 				return r, fmt.Errorf("invalid finalized source commitment")
 			}
 			archivedRows++
 		case "retirement_archive_v2":
 			archiveProof = text(record, "source_id") == MigrationID && text(record, "result") == "sealed" && sha256Digest(text(record, "source_digest"))
+		case "retirement_discard_v2":
+			discardProof = text(record, "source_id") == MigrationID && text(record, "result") == "discarded" && sha256Digest(text(record, "source_digest"))
 		}
 	}
-	if len(manifest) != len(RetiredTables()) || archivedRows != sourceCount || (sourceCount > 0 && !archiveProof) {
+	if len(manifest) != len(RetiredTables()) || (sourceCount > 0 && !discardProof && (archivedRows != sourceCount || !archiveProof)) || (sourceCount > 0 && discardProof && archivedRows != sourceCount) {
 		return r, fmt.Errorf("incomplete finalization manifest or sealed source proof")
 	}
 	objects, err := schemaObjects(db)
