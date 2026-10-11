@@ -73,7 +73,8 @@ func runtimeCapabilityConfigFromRunConfig(config RunConfig) RuntimeCapabilityCon
 
 func (c RuntimeCapabilityConfig) RuntimeParameters(scope Scope, billingAppType string) map[string]interface{} {
 	params := map[string]interface{}{
-		"organization_id": scope.OrganizationID.String(),
+		"organization_id":     scope.OrganizationID.String(),
+		"runtime_caller_type": strings.TrimSpace(billingAppType),
 	}
 	if len(c.BindingAuthorizations) > 0 {
 		params["agent_binding_authorizations"] = copyResourceBindingAuthorizations(c.BindingAuthorizations)
@@ -113,10 +114,13 @@ func copyResourceBindingAuthorizations(input []ResourceBindingAuthorization) []R
 		default:
 			continue
 		}
-		authorization.BoundByAccountID = strings.TrimSpace(authorization.BoundByAccountID)
-		if authorization.BindingType == "" || authorization.ResourceID == "" || authorization.AccessMode == "" || authorization.BoundByAccountID == "" || authorization.BoundAtUnix <= 0 {
+		if authorization.BindingType == "" || authorization.ResourceID == "" || authorization.AccessMode == "" {
 			continue
 		}
+		// Preserve incomplete evidence so the governance layer can return a
+		// rebind-required error. Dropping it here made historical bindings look
+		// unbound and hid the actual repair action from users.
+		authorization.BoundByAccountID = strings.TrimSpace(authorization.BoundByAccountID)
 		result = append(result, authorization)
 	}
 	return result

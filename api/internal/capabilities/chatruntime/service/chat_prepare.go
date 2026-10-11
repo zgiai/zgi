@@ -824,7 +824,7 @@ func (s *service) applySkillConfig(ctx context.Context, scope Scope, caller Call
 	callerType := normalizeCallerType(caller.Type)
 	var enabled []string
 	if isAutonomousSubjectCaller(callerType) {
-		enabled = effectiveAgentSkillIDs(parts.ConfiguredSkillIDs, catalog, orgEnabled, config)
+		enabled = effectiveBoundSkillIDs(parts.ConfiguredSkillIDs, catalog, orgEnabled, config, callerType)
 		if callerType == runtimemodel.ConversationCallerDigitalHuman {
 			enabled = filterDigitalHumanSkillIDs(enabled)
 		}

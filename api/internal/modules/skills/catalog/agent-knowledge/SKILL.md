@@ -1,10 +1,13 @@
 ---
 name: agent-knowledge
-description: Retrieve from knowledge bases explicitly configured on the current Agent.
+description: Retrieve from knowledge bases explicitly bound to the current Agent or DigitalHuman.
 when_to_use: Use this skill when a published or agent-scoped assistant needs context from its configured knowledge bases.
 provider_type: builtin
 provider_id: knowledge
 runtime_type: tool
+supported_callers:
+  - agent
+  - digital_human
 tools:
   - retrieve_agent_knowledge
 max_calls_per_turn: 20

@@ -156,8 +156,8 @@ func TestAgentWorkflowSystemSkillExposeExpectedTools(t *testing.T) {
 	if got := toolNames(agent.Tools); !sameStrings(got, expectedTools) {
 		t.Fatalf("agent workflow tools = %v", got)
 	}
-	if !sameStrings(agent.Metadata.SupportedCallers, []string{SkillCallerAgent}) {
-		t.Fatalf("supported callers = %#v, want agent", agent.Metadata.SupportedCallers)
+	if !sameStrings(agent.Metadata.SupportedCallers, []string{SkillCallerAgent, SkillCallerDigitalHuman}) {
+		t.Fatalf("supported callers = %#v, want agent and digital_human", agent.Metadata.SupportedCallers)
 	}
 	if !sameStrings(agent.Metadata.RequiredConfig, []string{SkillRequiredConfigAgentWorkflow}) {
 		t.Fatalf("required config = %#v, want agent_workflow", agent.Metadata.RequiredConfig)

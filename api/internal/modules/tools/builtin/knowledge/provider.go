@@ -283,7 +283,7 @@ func knowledgeToolDescription(kind string) string {
 	case ToolRetrieveKnowledge:
 		return "Retrieve relevant context from explicitly selected knowledge base IDs returned by list_accessible_knowledge_bases."
 	case ToolRetrieveAgentKnowledge:
-		return "Retrieve relevant context only from knowledge bases configured on the current Agent. Use a concise query derived from the user intent; do not pass dataset IDs."
+		return "Retrieve relevant context only from knowledge bases configured on the current Agent or DigitalHuman. Use a concise query derived from the user intent; do not pass dataset IDs."
 	default:
 		return kind
 	}
