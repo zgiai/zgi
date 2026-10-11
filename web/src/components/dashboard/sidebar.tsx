@@ -23,6 +23,7 @@ import {
   ScrollText,
   Settings,
   ShieldCheck,
+  Store,
   Users,
   X,
 } from 'lucide-react';
@@ -205,6 +206,13 @@ function buildDashboardGroups(t: ReturnType<typeof useT<'dashboard'>>) {
           title: t('items.marketplace'),
           href: '/dashboard/market/plugins',
           icon: AppWindow,
+        },
+        {
+          key: 'zgi-market',
+          title: t('items.zgiMarket'),
+          href: '/dashboard/market/catalog',
+          icon: Store,
+          activePrefixes: ['/dashboard/market/catalog'],
         },
       ],
     },

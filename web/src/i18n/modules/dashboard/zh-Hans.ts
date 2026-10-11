@@ -35,6 +35,7 @@ const messages: DashboardMessages = {
     modelSettings: '默认模型',
     parserSettings: '文档解析',
     marketplace: '插件市场',
+    zgiMarket: 'ZGI 市场',
   },
   modelChannels: {
     navigationLabel: '模型与渠道导航',

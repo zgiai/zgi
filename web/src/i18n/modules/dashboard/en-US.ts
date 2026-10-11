@@ -33,6 +33,7 @@ const messages = {
     modelSettings: 'Default Models',
     parserSettings: 'Document Parsing',
     marketplace: 'Marketplace',
+    zgiMarket: 'ZGI Market',
   },
   modelChannels: {
     navigationLabel: 'Models and channels navigation',
