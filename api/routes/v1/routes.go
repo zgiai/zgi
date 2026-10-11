@@ -73,6 +73,9 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	// ---------- Plugin Runner (Tenant Level) ----------
 	RegisterPluginRunnerTenantRoutes(v1, accountService, tenantServiceImpl, db)
 
+	// ---------- ZGI Market (members of the current organization) ----------
+	RegisterZGIMarketRoutes(v1, accountService, tenantServiceImpl)
+
 	// ---------- Tool ----------
 	RegisterToolRoutes(v1, ToolRouteDeps{
 		ToolManager:                serviceContainer.GetToolManager(),
