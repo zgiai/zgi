@@ -1,14 +1,18 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
-import { Check, Plus } from 'lucide-react';
+import { Check, Plus, SlidersHorizontal } from 'lucide-react';
 import { toast } from 'sonner';
 import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { marketText } from '@/components/zgi-market/market-format';
+import { ZgiMarketCallPrice } from '@/components/zgi-market/zgi-market-call-price';
+import { ZgiMarketOperationsDialog } from '@/components/zgi-market/zgi-market-operations-dialog';
 import {
+  bindableOperations,
   candidateToolChips,
   marketItemHref,
   matchesMarketRowFilter,
@@ -45,6 +49,8 @@ export function ZgiMarketConnectorPickerGroup({
   const { locale } = useLocale();
   const selection = useZgiMarketSubjectSelection(subjectType, subjectId);
   const headingId = `zgi-market-picker-${subjectId}`;
+  // The API offering whose operations are being chosen, by its activation.
+  const [choosing, setChoosing] = useState<number | null>(null);
   const filtering = Boolean(filter && (filter.query.trim() || filter.status !== 'all'));
   const listings = filter
     ? selection.listings.filter(listing =>
@@ -67,6 +73,27 @@ export function ZgiMarketConnectorPickerGroup({
       const usable = usableMarketConnections(listing, selection.connections);
       await selection.add(listing, usable[0]?.id);
       toast.success(t('market.tools.addedToast', { name }));
+    } catch (error) {
+      toast.error(t('market.tools.saveFailed', { message: getErrorMessage(error) }));
+    }
+  };
+
+  const chooseOperations = async (
+    listing: MarketToolCandidate,
+    name: string,
+    operations: string[] | undefined
+  ) => {
+    try {
+      const bound = selection.items.find(item => item.subscription_id === listing.subscription_id);
+      if (bound) {
+        await selection.setOperations(listing.subscription_id, operations);
+        toast.success(t('market.tools.operations.savedToast', { name }));
+      } else {
+        const usable = usableMarketConnections(listing, selection.connections);
+        await selection.add(listing, usable[0]?.id, operations);
+        toast.success(t('market.tools.addedToast', { name }));
+      }
+      setChoosing(null);
     } catch (error) {
       toast.error(t('market.tools.saveFailed', { message: getErrorMessage(error) }));
     }
@@ -133,6 +160,11 @@ export function ZgiMarketConnectorPickerGroup({
             const connectorName = listing.required_connectors
               .map(connector => marketText(connector.title, locale) || connector.slug)
               .join(' / ');
+            const bound = selection.items.find(
+              item => item.subscription_id === listing.subscription_id
+            );
+            // An offering with one bindable operation has nothing to choose between.
+            const choosable = listing.kind === 'api' && bindableOperations(listing).length > 1;
             return (
               <article
                 key={listing.subscription_id}
@@ -193,6 +225,24 @@ export function ZgiMarketConnectorPickerGroup({
                         </Badge>
                       ) : null}
                     </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <ZgiMarketCallPrice listing={listing} />
+                      {choosable ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 gap-1 px-2 text-xs"
+                          disabled={
+                            readOnly || selection.isSaving || (needsConnection && !selected)
+                          }
+                          onClick={() => setChoosing(listing.subscription_id)}
+                        >
+                          <SlidersHorizontal className="size-3.5" aria-hidden="true" />
+                          {t('market.tools.operations.choose')}
+                        </Button>
+                      ) : null}
+                    </div>
                   </div>
                   <Button
                     type="button"
@@ -231,6 +281,24 @@ export function ZgiMarketConnectorPickerGroup({
                     )}
                   </Button>
                 </div>
+                {choosable ? (
+                  <ZgiMarketOperationsDialog
+                    open={choosing === listing.subscription_id}
+                    onOpenChange={next => setChoosing(next ? listing.subscription_id : null)}
+                    listing={listing}
+                    name={name}
+                    selected={
+                      bound && !bound.all_operations
+                        ? (bound.operations ?? []).map(operation => operation.key)
+                        : undefined
+                    }
+                    saving={selection.isSaving}
+                    confirmLabel={
+                      bound ? t('market.tools.operations.save') : t('market.tools.addAction')
+                    }
+                    onConfirm={operations => void chooseOperations(listing, name, operations)}
+                  />
+                ) : null}
               </article>
             );
           })}

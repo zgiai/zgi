@@ -1,7 +1,8 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
-import { Trash2 } from 'lucide-react';
+import { SlidersHorizontal, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { Badge } from '@/components/ui/badge';
@@ -14,8 +15,11 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { marketText } from '@/components/zgi-market/market-format';
+import { ZgiMarketCallPrice } from '@/components/zgi-market/zgi-market-call-price';
+import { ZgiMarketOperationsDialog } from '@/components/zgi-market/zgi-market-operations-dialog';
 import { useLocale } from '@/hooks/use-locale';
 import {
+  bindableOperations,
   boundToolChips,
   marketItemHref,
   marketItemKind,
@@ -49,6 +53,8 @@ export function ZgiMarketSelectedServers({
   const t = useT();
   const { locale } = useLocale();
   const selection = useZgiMarketSubjectSelection(subjectType, subjectId);
+  // The bound API offering whose operations are being changed, by its activation.
+  const [choosing, setChoosing] = useState<number | null>(null);
 
   if (selection.items.length === 0) return null;
 
@@ -75,6 +81,8 @@ export function ZgiMarketSelectedServers({
           kind === 'api' && item.offering_slug ? `${title} · ${item.offering_slug}` : title;
         const usable = candidate ? usableMarketConnections(candidate, selection.connections) : [];
         const needsConnection = (candidate?.required_connectors.length ?? 0) > 0;
+        const total = candidate ? bindableOperations(candidate).length : 0;
+        const choosable = kind === 'api' && Boolean(candidate) && total > 1;
         return (
           <li
             key={item.subscription_id}
@@ -128,6 +136,16 @@ export function ZgiMarketSelectedServers({
               <Badge variant="outline" className="text-[10px]">
                 {t('market.tools.fromMarket')}
               </Badge>
+              {kind === 'api' && candidate ? (
+                <Badge variant="outline" className="text-[10px]">
+                  {item.all_operations
+                    ? t('market.tools.operations.summaryAll', { count: item.tools.length })
+                    : t('market.tools.operations.summarySome', {
+                        count: (item.operations ?? []).length,
+                        total,
+                      })}
+                </Badge>
+              ) : null}
               {boundToolChips(item, candidate, locale)
                 .slice(0, 6)
                 .map(tool => (
@@ -146,6 +164,49 @@ export function ZgiMarketSelectedServers({
                 <Badge variant="subtle" className="text-[10px]">
                   +{item.tools.length - 6}
                 </Badge>
+              ) : null}
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <ZgiMarketCallPrice
+                listing={{ kind, slug: item.slug, offering_slug: item.offering_slug }}
+              />
+              {choosable && candidate ? (
+                <>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 gap-1 px-2 text-xs"
+                    disabled={readOnly || selection.isSaving}
+                    aria-label={`${t('market.tools.operations.change')}: ${name}`}
+                    onClick={() => setChoosing(item.subscription_id)}
+                  >
+                    <SlidersHorizontal className="size-3.5" aria-hidden="true" />
+                    {t('market.tools.operations.change')}
+                  </Button>
+                  <ZgiMarketOperationsDialog
+                    open={choosing === item.subscription_id}
+                    onOpenChange={next => setChoosing(next ? item.subscription_id : null)}
+                    listing={candidate}
+                    name={name}
+                    selected={
+                      item.all_operations
+                        ? undefined
+                        : (item.operations ?? []).map(operation => operation.key)
+                    }
+                    saving={selection.isSaving}
+                    confirmLabel={t('market.tools.operations.save')}
+                    onConfirm={operations =>
+                      void run(
+                        async () => {
+                          await selection.setOperations(item.subscription_id, operations);
+                          setChoosing(null);
+                        },
+                        t('market.tools.operations.savedToast', { name })
+                      )
+                    }
+                  />
+                </>
               ) : null}
             </div>
             {needsConnection ? (

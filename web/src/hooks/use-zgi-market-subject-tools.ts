@@ -96,6 +96,24 @@ export function boundToolChips(
   }));
 }
 
+/** The operations of an API candidate that can be tools. */
+export function bindableOperations(listing: Pick<MarketToolCandidate, 'operations'>) {
+  return (listing.operations ?? []).filter(operation => operation.bindable);
+}
+
+/**
+ * What a chosen set of operation keys means for a binding: undefined when it is every bindable
+ * operation, so the item keeps following the listing, and the chosen keys otherwise.
+ */
+export function chosenOperations(
+  listing: Pick<MarketToolCandidate, 'operations'>,
+  keys: string[]
+): string[] | undefined {
+  const bindable = bindableOperations(listing).map(operation => operation.key);
+  const chosen = bindable.filter(key => keys.includes(key));
+  return chosen.length === bindable.length ? undefined : chosen;
+}
+
 /** What a filter of a connector picker asks of the market rows. */
 export interface MarketRowFilter {
   query: string;
@@ -165,16 +183,41 @@ export function useZgiMarketSubjectSelection(
   const listings = candidates.data?.listings ?? [];
   const connections = candidates.data?.connections ?? [];
 
+  /**
+   * Adds a candidate, or replaces it when it is already bound. `operations` are the operation
+   * keys of an API offering to make tools of; without them every bindable operation is, also
+   * ones the listing gains later.
+   */
   const add = useCallback(
-    (listing: MarketToolCandidate, connectionId?: number) =>
+    (listing: MarketToolCandidate, connectionId?: number, operations?: string[]) =>
       bind.mutateAsync([
         ...items.filter(item => item.subscription_id !== listing.subscription_id).map(keptItem),
         {
           listing_id: listing.listing_id,
           ...(connectionId ? { connection_id: connectionId } : {}),
-          ...(listing.kind === 'api' ? { offering_slug: listing.offering_slug } : {}),
+          ...(listing.kind === 'api'
+            ? {
+                offering_slug: listing.offering_slug,
+                ...(operations && operations.length > 0 ? { operations } : {}),
+              }
+            : {}),
         },
       ]),
+    [bind, items]
+  );
+
+  /** Changes which operations of a bound API offering are tools; undefined means all of them. */
+  const setOperations = useCallback(
+    (subscriptionId: number, operations: string[] | undefined) =>
+      bind.mutateAsync(
+        items.map(item => {
+          if (item.subscription_id !== subscriptionId) {
+            return keptItem(item);
+          }
+          const { operations: _dropped, ...kept } = keptItem(item);
+          return operations && operations.length > 0 ? { ...kept, operations } : kept;
+        })
+      ),
     [bind, items]
   );
 
@@ -209,5 +252,6 @@ export function useZgiMarketSubjectSelection(
     add,
     remove,
     setConnection,
+    setOperations,
   };
 }

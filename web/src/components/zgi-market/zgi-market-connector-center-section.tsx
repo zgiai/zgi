@@ -4,36 +4,17 @@ import Link from 'next/link';
 import { ArrowUpRight, Store } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { lowestPrice, marketAmount, marketText } from '@/components/zgi-market/market-format';
+import { marketText } from '@/components/zgi-market/market-format';
+import { ZgiMarketCallPrice } from '@/components/zgi-market/zgi-market-call-price';
 import {
   candidateToolChips,
   marketItemHref,
   usableMarketConnections,
 } from '@/hooks/use-zgi-market-subject-tools';
 import { useLocale } from '@/hooks/use-locale';
-import { useZgiMarketListing, useZgiMarketToolCandidates } from '@/hooks/use-zgi-market';
+import { useZgiMarketToolCandidates } from '@/hooks/use-zgi-market';
 import { useT } from '@/i18n';
 import type { MarketConnection, MarketToolCandidate } from '@/services/types/zgi-market';
-
-function ServerPrice({ listing: candidate }: { listing: MarketToolCandidate }) {
-  const t = useT();
-  const listing = useZgiMarketListing(candidate.kind, candidate.slug);
-  if (!listing.data) return null;
-  // An API offering has its own prices; an MCP server has the listing's.
-  const prices = (listing.data.prices ?? []).filter(
-    entry => candidate.kind !== 'api' || entry.offering_slug === candidate.offering_slug
-  );
-  const price = lowestPrice({ ...listing.data, prices });
-  if (!price) return null;
-  if (price.unit_price_micros === 0) {
-    return <Badge variant="subtle">{t('market.tools.free')}</Badge>;
-  }
-  return (
-    <Badge variant="subtle">
-      {t('market.tools.perCall', { amount: marketAmount(price).amount })}
-    </Badge>
-  );
-}
 
 function ServerRow({
   listing,
@@ -78,7 +59,7 @@ function ServerRow({
           </div>
           <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span>{t('market.tools.toolCount', { count: listing.tools.length })}</span>
-            <ServerPrice listing={listing} />
+            <ZgiMarketCallPrice listing={listing} />
           </p>
           {skipped > 0 ? (
             <p className="mt-1 text-xs text-muted-foreground">
