@@ -67,7 +67,15 @@ export function ZgiMarketUsageGuide({ listing, gateway }: ZgiMarketUsageGuidePro
   const needsConnection = (listing.required_connectors ?? []).length > 0;
   const notes = (
     <div className="flex flex-col gap-2 text-xs leading-5 text-muted-foreground">
-      <p>{t('market.catalog.detail.usage.credential', { env: MARKET_CREDENTIAL_ENV })}</p>
+      <p>
+        {t('market.catalog.detail.usage.credential', { env: MARKET_CREDENTIAL_ENV })}{' '}
+        <Link
+          href="/dashboard/market/credentials"
+          className="font-medium text-primary underline-offset-4 hover:underline"
+        >
+          {t('market.catalog.detail.usage.manageCredentials')}
+        </Link>
+      </p>
       {gateway.configured ? null : (
         <p className="rounded-md border border-dashed px-3 py-2">
           {t('market.catalog.detail.usage.placeholder', { origin: gateway.origin })}

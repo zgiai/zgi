@@ -112,3 +112,9 @@ export function lowestPrice(listing: MarketListing): MarketPrice | undefined {
     undefined
   );
 }
+
+/** The market's error code of a failed request, or an empty string when it carries none. */
+export function marketErrorCode(error: unknown): string {
+  const data = (error as { response?: { data?: { error_code?: unknown } } } | null)?.response?.data;
+  return typeof data?.error_code === 'string' ? data.error_code : '';
+}

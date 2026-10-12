@@ -2,6 +2,8 @@ import { BaseService } from '@/lib/http/services';
 import type {
   MarketCategory,
   MarketConnection,
+  MarketCredential,
+  MarketCredentialCreated,
   MarketToolBinding,
   MarketToolBindingInput,
   MarketToolCandidates,
@@ -115,6 +117,32 @@ class ZgiMarketService extends BaseService {
       { overwrite }
     );
     return response.data;
+  }
+
+  /** The organization's market credentials, newest first. A secret is never among them. */
+  async getCredentials(): Promise<MarketCredential[]> {
+    const response = await this.request<MarketEnvelope<MarketCredential[]>>(
+      'get',
+      '/credentials',
+      undefined,
+      { params: { per_page: 100 } }
+    );
+    return response.data ?? [];
+  }
+
+  /** Creates a credential. The answer carries the secret, this once. */
+  async createCredential(name: string): Promise<MarketCredentialCreated> {
+    const response = await this.request<MarketEnvelope<MarketCredentialCreated>>(
+      'post',
+      '/credentials',
+      { name }
+    );
+    return response.data;
+  }
+
+  /** Revokes a credential for good; calls made with it are refused from then on. */
+  async revokeCredential(id: number): Promise<void> {
+    await this.request('delete', `/credentials/${id}`);
   }
 
   /** The organization's connections at the market. */

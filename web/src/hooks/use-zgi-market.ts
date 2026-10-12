@@ -16,6 +16,7 @@ const keys = {
   meta: ['zgi-market', 'meta'] as const,
   installedSkills: ['zgi-market', 'installed-skills'] as const,
   connections: ['zgi-market', 'connections'] as const,
+  credentials: ['zgi-market', 'credentials'] as const,
   toolCandidates: ['zgi-market', 'tool-candidates'] as const,
   subjectTools: (subjectType: string, subjectId: string) =>
     ['zgi-market', 'subject-tools', subjectType, subjectId] as const,
@@ -104,6 +105,34 @@ export function useZgiMarketConnections(enabled = true) {
     queryKey: keys.connections,
     queryFn: () => zgiMarketService.getConnections(),
     enabled,
+  });
+}
+
+export function useZgiMarketCredentials(enabled = true) {
+  return useQuery({
+    queryKey: keys.credentials,
+    queryFn: () => zgiMarketService.getCredentials(),
+    enabled,
+  });
+}
+
+/** Creates a credential. The secret lives in the mutation result only; nothing caches it. */
+export function useCreateZgiMarketCredential() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => zgiMarketService.createCredential(name),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: keys.credentials }),
+    // A retry would create a second credential whose secret nobody saw.
+    retry: false,
+    gcTime: 0,
+  });
+}
+
+export function useRevokeZgiMarketCredential() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => zgiMarketService.revokeCredential(id),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: keys.credentials }),
   });
 }
 

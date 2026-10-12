@@ -146,6 +146,7 @@ const messages = {
         credential:
           "The examples read the organization's market credential from {env}. Never put a credential in code or commit it.",
         stepActivate: 'Activate',
+        manageCredentials: 'Create or view credentials',
         stepActivateApi: 'Under API, activate the offering the organization will call.',
         stepActivateMcp: 'Activate this MCP server for the organization in the side panel.',
         stepConnect: 'Complete the required connections',
@@ -237,6 +238,57 @@ const messages = {
       failed: 'The authorization did not complete. Go back and try again.',
       back: 'Back to the market',
     },
+  },
+  credentials: {
+    title: 'Market credentials',
+    description:
+      'A credential identifies the organization when something outside ZGI calls the market gateway: an API through the gateway address, or an MCP client. The examples on listing pages read it from {env}. Agents and digital humans do not need one; ZGI keeps theirs.',
+    manage: 'Credentials',
+    create: 'Create credential',
+    createDescription:
+      'Give it a name that says where it will be used, such as the service or the person.',
+    nameLabel: 'Name',
+    namePlaceholder: 'For example: reporting service',
+    cancel: 'Cancel',
+    createFailed: 'The credential could not be created. Try again.',
+    limitReached:
+      'The organization already has 50 active credentials. Revoke one you no longer use first.',
+    copyFailed: 'Could not copy. Select the secret and copy it yourself.',
+    created: {
+      title: 'Save the secret now',
+      description:
+        'This is the only time the secret is shown. It cannot be read again; if it is lost, create another credential and revoke this one.',
+      copy: 'Copy the secret',
+      usage:
+        'Put it in the environment variable {env} of the service that calls the gateway. Do not write it into code or commit it.',
+      done: 'I have saved it',
+    },
+    table: {
+      name: 'Name',
+      key: 'Key',
+      source: 'Used by',
+      status: 'Status',
+      created: 'Created',
+      lastUsed: 'Last used',
+      actions: 'Actions',
+    },
+    secretHint: 'secret ends in {hint}',
+    source: { manual: 'External callers', binding: 'ZGI tool binding' },
+    status: { active: 'Active', revoked: 'Revoked' },
+    neverUsed: 'Never',
+    empty: 'No credentials yet',
+    emptyHint: 'Create one to call the market gateway from outside ZGI.',
+    loadFailed: 'The credentials could not be loaded.',
+    adminOnly: 'Only an organization administrator manages market credentials.',
+    bindingNote:
+      'Credentials of a ZGI tool binding belong to an agent or a digital human. They are revoked when the binding is removed there, not here.',
+    revoke: 'Revoke',
+    revokeNamed: 'Revoke {name}',
+    revokeTitle: 'Revoke {name}?',
+    revokeDescription:
+      'Calls made with this credential are refused at once. This cannot be undone.',
+    revoked: 'The credential was revoked.',
+    revokeFailed: 'The credential could not be revoked. Try again.',
   },
   installs: {
     title: 'From ZGI Market',

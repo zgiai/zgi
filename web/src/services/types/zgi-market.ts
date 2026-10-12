@@ -291,3 +291,27 @@ export interface MarketToolBinding {
   updated_at: string | null;
   gateway_configured: boolean;
 }
+
+/**
+ * A market credential of the organization: the identity of a call on the market's gateway. The
+ * secret is never part of it; `secret_hint` is its last four characters.
+ */
+export interface MarketCredential {
+  id: number;
+  name: string;
+  access_key_id: string;
+  secret_hint: string;
+  /** `external_api` is created by an administrator; `digital_human` belongs to a tool binding. */
+  source: 'external_api' | 'digital_human';
+  binding_id: number | null;
+  status: 'active' | 'revoked';
+  expires_at: string | null;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+}
+
+/** The answer of a creation: the only time the secret is readable. */
+export interface MarketCredentialCreated extends MarketCredential {
+  secret_key: string;
+}

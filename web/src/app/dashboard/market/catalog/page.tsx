@@ -1,7 +1,8 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Search } from 'lucide-react';
+import Link from 'next/link';
+import { KeyRound, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -72,9 +73,17 @@ export default function ZgiMarketCatalogPage() {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <header className="flex flex-col gap-4 border-b px-6 py-5">
-        <div>
-          <h1 className="text-xl font-semibold">{t('market.catalog.title')}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">{t('market.catalog.description')}</p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-xl font-semibold">{t('market.catalog.title')}</h1>
+            <p className="mt-1 text-sm text-muted-foreground">{t('market.catalog.description')}</p>
+          </div>
+          <Button asChild variant="outline" size="sm">
+            <Link href="/dashboard/market/credentials">
+              <KeyRound className="size-4" aria-hidden="true" />
+              {t('market.credentials.manage')}
+            </Link>
+          </Button>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <Tabs

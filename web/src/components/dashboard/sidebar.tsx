@@ -212,7 +212,7 @@ function buildDashboardGroups(t: ReturnType<typeof useT<'dashboard'>>) {
           title: t('items.zgiMarket'),
           href: '/dashboard/market/catalog',
           icon: Store,
-          activePrefixes: ['/dashboard/market/catalog'],
+          activePrefixes: ['/dashboard/market/catalog', '/dashboard/market/credentials'],
         },
       ],
     },

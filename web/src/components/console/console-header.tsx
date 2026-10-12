@@ -113,7 +113,9 @@ export function ConsoleHeader({ hidden, onToggleMobileSidebar }: ConsoleHeaderPr
         title: tDash('items.parserSettings'),
       },
       {
-        match: path => path.startsWith('/dashboard/market/catalog'),
+        match: path =>
+          path.startsWith('/dashboard/market/catalog') ||
+          path.startsWith('/dashboard/market/credentials'),
         title: tDash('items.zgiMarket'),
       },
       {
