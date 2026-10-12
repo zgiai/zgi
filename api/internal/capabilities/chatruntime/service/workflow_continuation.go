@@ -903,9 +903,10 @@ func workflowContinuationAllowsInlineApproval(caller Caller, continuation *Workf
 		return continuation != nil && continuation.UIApprovalAllowed
 	case runtimemodel.ConversationSourceChannel:
 		// A DigitalHuman channel adapter only resumes after recognizing an
-		// explicit confirmation in the bound channel conversation, and the
-		// approval token is still verified on submission.
-		return caller.Type == runtimemodel.ConversationCallerDigitalHuman
+		// explicit confirmation in the bound channel conversation, and only for
+		// an approval the workflow lets the conversation user complete; one
+		// assigned to designated approvers stays with them.
+		return caller.Type == runtimemodel.ConversationCallerDigitalHuman && continuation != nil && continuation.UIApprovalAllowed
 	default:
 		return false
 	}

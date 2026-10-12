@@ -549,6 +549,28 @@ func TestWorkflowApprovalUIAccessFollowsAgentSurfaceAndWorkflowChannel(t *testin
 	}
 }
 
+func TestWorkflowApprovalUIAccessForChannelRequiresDigitalHumanAndInConversationApproval(t *testing.T) {
+	enabled := map[string]interface{}{"submit_methods": map[string]interface{}{"webapp": map[string]interface{}{"enabled": true}}}
+	disabled := map[string]interface{}{"submit_methods": map[string]interface{}{
+		"webapp": map[string]interface{}{"enabled": false},
+		"email":  map[string]interface{}{"enabled": true},
+	}}
+	digitalHumanChannel := &tools.ToolRuntime{RuntimeParameters: map[string]interface{}{
+		agentRuntimeSourceParameter:        "channel",
+		workflowRuntimeCallerTypeParameter: workflowDigitalHumanCallerType,
+	}}
+	if !workflowApprovalUIAccessAllowed(digitalHumanChannel, enabled) {
+		t.Fatal("DigitalHuman channel user should approve when in-conversation approval is enabled")
+	}
+	if workflowApprovalUIAccessAllowed(digitalHumanChannel, disabled) {
+		t.Fatal("DigitalHuman channel user must not approve an approval assigned to designated approvers")
+	}
+	otherChannel := &tools.ToolRuntime{RuntimeParameters: map[string]interface{}{agentRuntimeSourceParameter: "channel"}}
+	if workflowApprovalUIAccessAllowed(otherChannel, enabled) {
+		t.Fatal("non-DigitalHuman channel callers keep the closed default")
+	}
+}
+
 func TestApplyWorkflowApprovalExposureRedactsCredentialsWhenUIApprovalIsUnavailable(t *testing.T) {
 	payload := map[string]interface{}{
 		"approval_token": "top-secret",

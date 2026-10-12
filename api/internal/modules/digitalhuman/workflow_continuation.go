@@ -43,30 +43,44 @@ func (s *RuntimeService) ContinueWorkflowApproval(
 	request chatruntime.DigitalHumanTaskApprovalRequest,
 	onEvent func(chatruntime.StreamEvent) error,
 ) error {
+	_, err := s.continueWorkflowApproval(ctx, scope, digitalHumanID, conversationID, messageID, request, onEvent)
+	return err
+}
+
+// continueWorkflowApproval is ContinueWorkflowApproval that also reports the
+// final answer, so surfaces without an event stream (channels) can deliver
+// the result to the user.
+func (s *RuntimeService) continueWorkflowApproval(
+	ctx context.Context,
+	scope Scope,
+	digitalHumanID, conversationID, messageID uuid.UUID,
+	request chatruntime.DigitalHumanTaskApprovalRequest,
+	onEvent func(chatruntime.StreamEvent) error,
+) (string, error) {
 	if s == nil || !s.WorkflowContinuationEnabled() {
-		return fmt.Errorf("digital human workflow continuation is unavailable")
+		return "", fmt.Errorf("digital human workflow continuation is unavailable")
 	}
 	_, runtimeScope, caller, err := s.conversationContext(scope, digitalHumanID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	config, err := s.workflowContinuationConfig(ctx, scope, digitalHumanID, messageID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	runtime, ok := s.chat.(workflowContinuationChatRuntime)
 	if !ok {
-		return fmt.Errorf("digital human workflow continuation runtime is unavailable")
+		return "", fmt.Errorf("digital human workflow continuation runtime is unavailable")
 	}
 	continuation, err := runtime.BeginWorkflowApprovalContinuation(ctx, runtimeScope, caller, config, conversationID, messageID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if continuation.Kind == "digital_human_task" {
-		return ErrDigitalHumanTaskContinuation
+		return "", ErrDigitalHumanTaskContinuation
 	}
 	if continuation.Completed {
-		return nil
+		return "", nil
 	}
 	// BeginWorkflowApprovalContinuation moved the message to streaming. Every
 	// exit below must leave it paused again, completed or failed, otherwise the
@@ -78,10 +92,11 @@ func (s *RuntimeService) ContinueWorkflowApproval(
 		"conversation_id": conversationID.String(), "message_id": messageID.String(),
 		"workflow_run_id": continuation.WorkflowRunID, "continuation": true,
 	}}); err != nil {
-		return lifecycle.abortBeforeResume(err)
+		return "", lifecycle.abortBeforeResume(err)
 	}
 	streamed, err := s.resumeWorkflowContinuation(ctx, runtimeScope, continuation, request, lifecycle.handle)
-	return lifecycle.finish(streamed, err)
+	err = lifecycle.finish(streamed, err)
+	return lifecycle.answer, err
 }
 
 // resumeWorkflowContinuation submits the approval or question answer and runs
@@ -164,6 +179,8 @@ type digitalHumanWorkflowContinuation struct {
 	runStatus     string
 	runOutputs    map[string]interface{}
 	runError      string
+	// answer is the final assistant answer once the continuation completes.
+	answer string
 }
 
 func (l *digitalHumanWorkflowContinuation) handle(rawEventType string, rawPayload map[string]interface{}) error {
@@ -272,6 +289,7 @@ func (l *digitalHumanWorkflowContinuation) finish(resume workflowContinuationRes
 	metadata := map[string]interface{}{}
 	if result != nil {
 		metadata = result.Metadata
+		l.answer = result.Answer
 	}
 	return l.emitMessageEnd(ctx, runtimemodel.MessageStatusCompleted, metadata)
 }

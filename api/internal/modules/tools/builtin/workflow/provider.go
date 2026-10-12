@@ -29,9 +29,12 @@ const (
 
 	agentRuntimeSourceParameter = "agent_runtime_source"
 	workflowApprovalUIAllowed   = "ui_approval_allowed"
-	publishedWorkflowError      = "workflow run failed"
-	workflowErrorVisibilityKey  = "error_visibility"
-	workflowErrorGeneric        = "generic"
+	// Mirrors chatruntime's runtime_caller_type for DigitalHuman runs.
+	workflowRuntimeCallerTypeParameter = "runtime_caller_type"
+	workflowDigitalHumanCallerType     = "digital_human"
+	publishedWorkflowError             = "workflow run failed"
+	workflowErrorVisibilityKey         = "error_visibility"
+	workflowErrorGeneric               = "generic"
 )
 
 type RunnerProvider func() automationaction.AutomationWorkflowRunner
@@ -679,6 +682,13 @@ func workflowApprovalUIAccessAllowed(runtime *tools.ToolRuntime, payload map[str
 	case "webapp", "external-api":
 		// Published applications must honor the workflow's configured channel.
 		return workflowApprovalWebAppEnabled(payload)
+	case "channel":
+		// A DigitalHuman channel user may approve in the conversation only when
+		// the workflow allows in-conversation approval. Otherwise the approval
+		// belongs to the designated email/SMS approvers and the channel user
+		// is told to wait.
+		return strings.EqualFold(runtimeStringParameter(runtime, workflowRuntimeCallerTypeParameter), workflowDigitalHumanCallerType) &&
+			workflowApprovalWebAppEnabled(payload)
 	default:
 		return false
 	}

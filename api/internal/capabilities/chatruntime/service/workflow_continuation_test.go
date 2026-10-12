@@ -151,9 +151,12 @@ func TestWorkflowApprovalContinuationFromMetadataRestoresInvocationIdentity(t *t
 }
 
 func TestWorkflowContinuationInlineApprovalAllowsOnlyDigitalHumanChannelCaller(t *testing.T) {
-	continuation := &WorkflowApprovalContinuation{}
+	continuation := &WorkflowApprovalContinuation{UIApprovalAllowed: true}
 	if !workflowContinuationAllowsInlineApproval(Caller{Type: runtimemodel.ConversationCallerDigitalHuman, Source: runtimemodel.ConversationSourceChannel}, continuation) {
 		t.Fatal("DigitalHuman channel confirmation was rejected")
+	}
+	if workflowContinuationAllowsInlineApproval(Caller{Type: runtimemodel.ConversationCallerDigitalHuman, Source: runtimemodel.ConversationSourceChannel}, &WorkflowApprovalContinuation{}) {
+		t.Fatal("DigitalHuman channel user approved an approval assigned to designated approvers")
 	}
 	if workflowContinuationAllowsInlineApproval(Caller{Type: runtimemodel.ConversationCallerAgent, Source: runtimemodel.ConversationSourceChannel}, continuation) {
 		t.Fatal("non-DigitalHuman channel caller was allowed to approve inline")

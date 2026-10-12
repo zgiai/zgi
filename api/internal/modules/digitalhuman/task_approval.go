@@ -221,22 +221,7 @@ func (s *RuntimeService) ContinueChannelTaskApproval(
 	channelScope.PrincipalType = string(invocation.PrincipalAccount)
 	channelScope.PrincipalID = scope.ActorID
 	if pendingKind != "digital_human_task" {
-		if !s.WorkflowContinuationEnabled() {
-			return false, fmt.Errorf("digital human channel workflow continuation is unavailable")
-		}
-		if action == "revise" {
-			return false, fmt.Errorf("workflow approval does not support revision from channel")
-		}
-		request := service.DigitalHumanTaskApprovalRequest{
-			Type: "approval", ApprovalToken: stringValue(workflowContinuationRecord(pending.Metadata)["approval_token"]),
-			Action: action, Inputs: map[string]interface{}{"supplement": feedback},
-		}
-		// The channel scope makes the continuation resolve the channel-owned
-		// conversation and identifies the explicit channel confirmation.
-		if err := s.ContinueWorkflowApproval(ctx, channelScope, digitalHumanID, conversationID, pending.ID, request, nil); err != nil {
-			return false, err
-		}
-		return true, nil
+		return s.continueChannelWorkflowApproval(ctx, channelScope, digitalHumanID, conversationID, pending, action, feedback)
 	}
 	approvalRuntime, ok := s.chat.(digitalHumanTaskApprovalRuntime)
 	if !ok || s.taskService == nil {
@@ -291,6 +276,79 @@ func (s *RuntimeService) ContinueChannelTaskApproval(
 		}
 	}
 	return true, nil
+}
+
+// channelWorkflowApprovalWaitingNotice tells a channel user that the pending
+// workflow approval is assigned to designated approvers, not to them.
+const channelWorkflowApprovalWaitingNotice = "这一步需要由指定的审批人通过审批通知（如邮件或短信）完成，当前对话无法直接审批。审批完成后会自动继续执行，请耐心等待。"
+
+// continueChannelWorkflowApproval resumes a generic workflow approval from a
+// channel. Only an approval the workflow lets the conversation user complete
+// (in-conversation approval, exposed as ui_approval_allowed with a token) is
+// submitted; an approval assigned to designated approvers is left untouched
+// and the user is told to wait for it.
+func (s *RuntimeService) continueChannelWorkflowApproval(
+	ctx context.Context,
+	channelScope Scope,
+	digitalHumanID, conversationID uuid.UUID,
+	pending *runtimemodel.Message,
+	action, feedback string,
+) (bool, error) {
+	if !s.WorkflowContinuationEnabled() {
+		return false, fmt.Errorf("digital human channel workflow continuation is unavailable")
+	}
+	state := workflowContinuationRecord(pending.Metadata)
+	token := strings.TrimSpace(stringValue(state["approval_token"]))
+	approvedByCurrentUser, _ := state["ui_approval_allowed"].(bool)
+	if !approvedByCurrentUser || token == "" {
+		if err := s.deliverChannelWorkflowApprovalMessage(ctx, channelScope, digitalHumanID, pending, "approval-wait:"+uuid.NewString(), channelWorkflowApprovalWaitingNotice); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	if action == "revise" {
+		return false, fmt.Errorf("workflow approval does not support revision from channel")
+	}
+	request := service.DigitalHumanTaskApprovalRequest{
+		Type: "approval", ApprovalToken: token,
+		Action: action, Inputs: map[string]interface{}{"supplement": feedback},
+	}
+	// The channel scope makes the continuation resolve the channel-owned
+	// conversation and identifies the explicit channel confirmation.
+	answer, err := s.continueWorkflowApproval(ctx, channelScope, digitalHumanID, conversationID, pending.ID, request, nil)
+	if err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(answer) == "" {
+		return true, nil
+	}
+	key := "approval:" + strings.TrimSpace(stringValue(state["workflow_run_id"]))
+	if err := s.deliverChannelWorkflowApprovalMessage(ctx, channelScope, digitalHumanID, pending, key, answer); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *RuntimeService) deliverChannelWorkflowApprovalMessage(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, pending *runtimemodel.Message, key, text string) error {
+	runLookup, ok := s.store.(channelApprovalRunLookup)
+	if !ok {
+		return fmt.Errorf("digital human channel approval run lookup is unavailable")
+	}
+	deliveryStore, ok := s.store.(channelFinalDeliveryStore)
+	if !ok {
+		return fmt.Errorf("digital human channel approval delivery is unavailable")
+	}
+	run, err := runLookup.RunByMessageID(ctx, scope.OrganizationID, scope.WorkspaceID, digitalHumanID, pending.ID)
+	if err != nil {
+		return err
+	}
+	if run == nil {
+		return ErrRunNotFound
+	}
+	if len(key) > 128 {
+		key = "approval:" + uuid.NewSHA1(uuid.NameSpaceOID, []byte(key)).String()
+	}
+	return deliveryStore.EnqueueRunChannelFinalDelivery(ctx, run.ID, key, text, time.Now().UTC())
 }
 
 func channelTaskApprovalAction(text string) (string, string) {
