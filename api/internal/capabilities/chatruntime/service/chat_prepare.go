@@ -367,16 +367,19 @@ func (s *service) generateConversationTitleAsync(ctx context.Context, scope Scop
 	query := ""
 	preferredProvider := ""
 	preferredModel := ""
+	routingStrategy := "stability"
 	if parts != nil {
 		query = parts.Query
 		preferredProvider = parts.Provider
 		preferredModel = parts.ModelName
+		routingStrategy = parts.RoutingStrategy
 	}
 	s.enqueueConversationTitleGeneration(ctx, scope, caller, conversation, conversationTitleGenerationInput{
 		Messages:          conversationTitleMessagesFromQuery(query),
 		FallbackTitle:     initialTitle,
 		PreferredProvider: preferredProvider,
 		PreferredModel:    preferredModel,
+		RoutingStrategy:   routingStrategy,
 	})
 }
 
@@ -938,8 +941,8 @@ func mergeUserMemoryMetadata(metadata map[string]interface{}, memoryMetadata map
 func newLLMChatRequest(parts *chatRequestParts, messages []adapter.Message) *adapter.ChatRequest {
 	req := &adapter.ChatRequest{
 		Provider:        parts.Provider,
-		Model:           parts.ModelName,
 		RoutingStrategy: parts.RoutingStrategy,
+		Model:           parts.ModelName,
 		Messages:        messages,
 		Stream:          true,
 	}
