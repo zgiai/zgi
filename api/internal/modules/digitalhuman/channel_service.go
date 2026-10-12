@@ -1237,7 +1237,7 @@ func channelMessagePreview(message *channelruntime.InboundMessage) string {
 // channel message before it is admitted as runtime input or a new run.
 type channelTaskApprovalRuntime interface {
 	HasPendingChannelApproval(context.Context, Scope, uuid.UUID, uuid.UUID) (bool, error)
-	ContinueChannelTaskApproval(context.Context, Scope, uuid.UUID, uuid.UUID, string) (bool, error)
+	ContinueChannelTaskApproval(context.Context, Scope, uuid.UUID, uuid.UUID, ChannelApprovalReply) (bool, error)
 }
 
 // The production channel runtime must keep this entry point; the inbound path

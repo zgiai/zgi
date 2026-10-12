@@ -40,23 +40,27 @@ const (
 // from a channel reply after the provider has been acknowledged. Its ID is the
 // inbound event ID, so a provider retry cannot queue the same reply twice.
 type ChannelApprovalJob struct {
-	ID             uuid.UUID                `gorm:"type:uuid;primaryKey"`
-	OrganizationID uuid.UUID                `gorm:"type:uuid;not null"`
-	WorkspaceID    uuid.UUID                `gorm:"type:uuid;not null"`
-	InstallationID uuid.UUID                `gorm:"type:uuid;not null"`
-	InboundEventID uuid.UUID                `gorm:"type:uuid;not null"`
-	ActorID        uuid.UUID                `gorm:"type:uuid;not null"`
-	DigitalHumanID uuid.UUID                `gorm:"column:digital_human_id;type:uuid;not null"`
-	ConversationID uuid.UUID                `gorm:"type:uuid;not null"`
-	Text           string                   `gorm:"type:text;not null"`
-	Status         ChannelApprovalJobStatus `gorm:"type:varchar(16);not null"`
-	AttemptCount   int                      `gorm:"not null"`
-	AvailableAt    time.Time                `gorm:"not null"`
-	ClaimedAt      *time.Time
-	CompletedAt    *time.Time
-	ErrorCode      string    `gorm:"type:varchar(128);not null"`
-	CreatedAt      time.Time `gorm:"not null"`
-	UpdatedAt      time.Time `gorm:"not null"`
+	ID             uuid.UUID `gorm:"type:uuid;primaryKey"`
+	OrganizationID uuid.UUID `gorm:"type:uuid;not null"`
+	WorkspaceID    uuid.UUID `gorm:"type:uuid;not null"`
+	InstallationID uuid.UUID `gorm:"type:uuid;not null"`
+	InboundEventID uuid.UUID `gorm:"type:uuid;not null"`
+	ActorID        uuid.UUID `gorm:"type:uuid;not null"`
+	DigitalHumanID uuid.UUID `gorm:"column:digital_human_id;type:uuid;not null"`
+	ConversationID uuid.UUID `gorm:"type:uuid;not null"`
+	// SenderExternalID and ConversationType identify who answered, so the
+	// worker can reject a group member answering someone else's approval.
+	SenderExternalID string                          `gorm:"column:sender_external_id;type:varchar(255);not null"`
+	ConversationType channelruntime.ConversationType `gorm:"type:varchar(16);not null"`
+	Text             string                          `gorm:"type:text;not null"`
+	Status           ChannelApprovalJobStatus        `gorm:"type:varchar(16);not null"`
+	AttemptCount     int                             `gorm:"not null"`
+	AvailableAt      time.Time                       `gorm:"not null"`
+	ClaimedAt        *time.Time
+	CompletedAt      *time.Time
+	ErrorCode        string    `gorm:"type:varchar(128);not null"`
+	CreatedAt        time.Time `gorm:"not null"`
+	UpdatedAt        time.Time `gorm:"not null"`
 }
 
 func (ChannelApprovalJob) TableName() string { return "digital_human_channel_approval_jobs" }
@@ -212,17 +216,21 @@ func (service *ChannelService) admitChannelApproval(
 ) (bool, error) {
 	scope := Scope{OrganizationID: installation.OrganizationID, WorkspaceID: installation.WorkspaceID, ActorID: installation.CreatedBy}
 	subjectID := route.Binding.SubjectID
-	text := channelInvocationQuery(message)
+	reply := ChannelApprovalReply{
+		Text:             channelInvocationQuery(message),
+		SenderExternalID: strings.TrimSpace(message.SenderExternalID),
+		ConversationType: message.ConversationType,
+	}
 	if service.approvals == nil {
 		// Without a durable job store (minimal deployments and unit tests) the
 		// approval can only be resolved inline.
-		return runtime.ContinueChannelTaskApproval(ctx, scope, subjectID, conversationID, text)
+		return runtime.ContinueChannelTaskApproval(ctx, scope, subjectID, conversationID, reply)
 	}
 	pending, err := runtime.HasPendingChannelApproval(ctx, scope, subjectID, conversationID)
 	if err != nil || !pending {
 		return false, err
 	}
-	text = boundedRunes(strings.TrimSpace(text), maxChannelApprovalTextRune)
+	text := boundedRunes(strings.TrimSpace(reply.Text), maxChannelApprovalTextRune)
 	if text == "" {
 		return false, nil
 	}
@@ -231,6 +239,7 @@ func (service *ChannelService) admitChannelApproval(
 		OrganizationID: installation.OrganizationID, WorkspaceID: installation.WorkspaceID,
 		InstallationID: installation.ID, ActorID: installation.CreatedBy,
 		DigitalHumanID: subjectID, ConversationID: conversationID, Text: text,
+		SenderExternalID: reply.SenderExternalID, ConversationType: reply.ConversationType,
 		Status: ChannelApprovalJobPending, AvailableAt: now, CreatedAt: now, UpdatedAt: now,
 	}
 	created, err := service.approvals.CreateChannelApprovalJob(ctx, job)
@@ -276,7 +285,8 @@ func (service *ChannelService) runChannelApprovalJob(ctx context.Context, runtim
 	_, err := runtime.ContinueChannelTaskApproval(
 		execCtx,
 		Scope{OrganizationID: job.OrganizationID, WorkspaceID: job.WorkspaceID, ActorID: job.ActorID},
-		job.DigitalHumanID, job.ConversationID, job.Text,
+		job.DigitalHumanID, job.ConversationID,
+		ChannelApprovalReply{Text: job.Text, SenderExternalID: job.SenderExternalID, ConversationType: job.ConversationType},
 	)
 	persistCtx := context.WithoutCancel(ctx)
 	now := service.now()

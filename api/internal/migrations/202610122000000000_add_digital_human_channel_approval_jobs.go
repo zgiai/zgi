@@ -14,6 +14,8 @@ const (
 			actor_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE RESTRICT,
 			digital_human_id uuid NOT NULL REFERENCES public.digital_humans(id) ON DELETE CASCADE,
 			conversation_id uuid NOT NULL,
+			sender_external_id varchar(255) NOT NULL DEFAULT '',
+			conversation_type varchar(16) NOT NULL DEFAULT '',
 			text text NOT NULL,
 			status varchar(16) NOT NULL,
 			attempt_count integer NOT NULL DEFAULT 0,

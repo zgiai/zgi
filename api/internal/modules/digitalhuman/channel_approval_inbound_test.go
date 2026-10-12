@@ -19,6 +19,7 @@ type channelApprovalRuntimeStub struct {
 	approvalCalls  int
 	lastApprovalID uuid.UUID
 	lastApproval   string
+	lastSender     string
 }
 
 // HasPendingChannelApproval mirrors the handled flag: a stub that would
@@ -27,10 +28,11 @@ func (runtime *channelApprovalRuntimeStub) HasPendingChannelApproval(context.Con
 	return runtime.handled, nil
 }
 
-func (runtime *channelApprovalRuntimeStub) ContinueChannelTaskApproval(_ context.Context, _ Scope, _ uuid.UUID, conversationID uuid.UUID, text string) (bool, error) {
+func (runtime *channelApprovalRuntimeStub) ContinueChannelTaskApproval(_ context.Context, _ Scope, _ uuid.UUID, conversationID uuid.UUID, reply ChannelApprovalReply) (bool, error) {
 	runtime.approvalCalls++
 	runtime.lastApprovalID = conversationID
-	runtime.lastApproval = text
+	runtime.lastApproval = reply.Text
+	runtime.lastSender = reply.SenderExternalID
 	return runtime.handled, runtime.err
 }
 
@@ -211,7 +213,8 @@ func TestChannelApprovalIsQueuedWithinAcknowledgementAndExecutedByWorker(t *test
 		t.Fatalf("inbound event = %#v", event)
 	}
 	job := jobs.jobs[event.ID]
-	if job == nil || job.Status != ChannelApprovalJobPending || job.Text != "确认" || len(wake.wakes) != 1 {
+	if job == nil || job.Status != ChannelApprovalJobPending || job.Text != "确认" || job.SenderExternalID != "ou_sender" ||
+		job.ConversationType != channelruntime.ConversationTypeGroup || len(wake.wakes) != 1 {
 		t.Fatalf("queued job = %#v, wakes = %v", job, wake.wakes)
 	}
 	if replay, replayErr := service.HandleWebhook(t.Context(), "feishu", installation.ID, channelruntime.WebhookRequest{Body: []byte(`{"safe":true}`)}); replayErr != nil || !replay.Duplicate {
@@ -224,7 +227,7 @@ func TestChannelApprovalIsQueuedWithinAcknowledgementAndExecutedByWorker(t *test
 	if err := service.DispatchChannelApprovals(t.Context(), 1); err != nil {
 		t.Fatalf("DispatchChannelApprovals() error = %v", err)
 	}
-	if approval.approvalCalls != 1 || approval.lastApproval != "确认" || job.Status != ChannelApprovalJobSucceeded {
+	if approval.approvalCalls != 1 || approval.lastApproval != "确认" || approval.lastSender != "ou_sender" || job.Status != ChannelApprovalJobSucceeded {
 		t.Fatalf("approval calls = %d, text = %q, job = %#v", approval.approvalCalls, approval.lastApproval, job)
 	}
 }

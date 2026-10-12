@@ -319,6 +319,7 @@ func TestChannelWorkflowApprovalDeliveryPostgres(t *testing.T) {
 		ID: approvalInbound.ID, InboundEventID: approvalInbound.ID,
 		OrganizationID: organizationID, WorkspaceID: workspaceID, InstallationID: installation.ID,
 		ActorID: actorID, DigitalHumanID: digitalHumanID, ConversationID: uuid.New(), Text: "确认",
+		SenderExternalID: "ou_sender", ConversationType: channelruntime.ConversationTypeGroup,
 		Status: ChannelApprovalJobPending, AvailableAt: now, CreatedAt: now, UpdatedAt: now,
 	}
 	for attempt, wantCreated := range []bool{true, false} {
@@ -328,7 +329,8 @@ func TestChannelWorkflowApprovalDeliveryPostgres(t *testing.T) {
 		}
 	}
 	claimed, err := repository.ClaimChannelApprovalJobs(t.Context(), 5, now)
-	if err != nil || len(claimed) != 1 || claimed[0].AttemptCount != 1 || claimed[0].Text != "确认" {
+	if err != nil || len(claimed) != 1 || claimed[0].AttemptCount != 1 || claimed[0].Text != "确认" ||
+		claimed[0].SenderExternalID != "ou_sender" || claimed[0].ConversationType != channelruntime.ConversationTypeGroup {
 		t.Fatalf("ClaimChannelApprovalJobs() = %#v, %v", claimed, err)
 	}
 	if again, err := repository.ClaimChannelApprovalJobs(t.Context(), 5, now.Add(time.Minute)); err != nil || len(again) != 0 {

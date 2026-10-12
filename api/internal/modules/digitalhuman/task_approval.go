@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
 	"strconv"
 	"strings"
 	"time"
@@ -169,15 +170,35 @@ func (s *RuntimeService) HasPendingChannelApproval(
 	return pending != nil, err
 }
 
+// ChannelApprovalReply is the channel message answering a pending approval,
+// with the sender identity needed to decide whether it may approve.
+type ChannelApprovalReply struct {
+	Text             string
+	SenderExternalID string
+	ConversationType channelruntime.ConversationType
+}
+
 func (s *RuntimeService) ContinueChannelTaskApproval(
 	ctx context.Context,
 	scope Scope,
 	digitalHumanID, conversationID uuid.UUID,
-	text string,
+	reply ChannelApprovalReply,
 ) (bool, error) {
 	pending, pendingKind, err := s.pendingChannelApproval(ctx, scope, digitalHumanID, conversationID)
 	if err != nil || pending == nil {
 		return false, err
+	}
+	text := reply.Text
+	// A group conversation is shared: only the member who started the run
+	// that is now waiting may answer its approval. Anyone else is told to wait
+	// and nothing is submitted.
+	if notice, err := s.channelApprovalSenderNotice(ctx, scope, digitalHumanID, pending, reply); err != nil {
+		return false, err
+	} else if notice != "" {
+		if err := s.deliverChannelWorkflowApprovalMessage(ctx, scope, digitalHumanID, pending, "approval-sender:"+uuid.NewString(), notice); err != nil {
+			return false, err
+		}
+		return true, nil
 	}
 	workspaceID := scope.WorkspaceID
 	callerID := digitalHumanID
@@ -263,6 +284,61 @@ func (s *RuntimeService) ContinueChannelTaskApproval(
 		}
 	}
 	return true, nil
+}
+
+// channelApprovalOtherSenderNotice tells a group member that the pending
+// approval belongs to the member who started the request.
+const channelApprovalOtherSenderNotice = "这个审批需要由发起请求的成员确认，其他成员无法代为审批。请等待发起人处理。"
+
+// channelApprovalUnknownInitiatorNotice is sent when a group approval has no
+// channel member to attribute it to (for example, a scheduled run).
+const channelApprovalUnknownInitiatorNotice = "无法确认这个审批的发起成员，群聊中不能直接审批。请在控制台中完成审批。"
+
+// channelApprovalSenderNotice returns a notice when the reply's sender may not
+// answer the pending approval, or "" when it may. The initiator is the
+// external user recorded on the run that produced the pending message; a run
+// without one can only be answered in a direct conversation.
+func (s *RuntimeService) channelApprovalSenderNotice(
+	ctx context.Context,
+	scope Scope,
+	digitalHumanID uuid.UUID,
+	pending *runtimemodel.Message,
+	reply ChannelApprovalReply,
+) (string, error) {
+	runLookup, ok := s.store.(channelApprovalRunLookup)
+	if !ok {
+		return "", fmt.Errorf("digital human channel approval run lookup is unavailable")
+	}
+	run, err := runLookup.RunByMessageID(ctx, scope.OrganizationID, scope.WorkspaceID, digitalHumanID, pending.ID)
+	if err != nil {
+		return "", err
+	}
+	if run == nil {
+		return "", ErrRunNotFound
+	}
+	initiator := channelApprovalInitiator(run)
+	sender := strings.TrimSpace(reply.SenderExternalID)
+	switch {
+	case initiator != "" && sender == initiator:
+		return "", nil
+	case initiator != "":
+		return channelApprovalOtherSenderNotice, nil
+	case reply.ConversationType == channelruntime.ConversationTypeDirect:
+		return "", nil
+	default:
+		return channelApprovalUnknownInitiatorNotice, nil
+	}
+}
+
+func channelApprovalInitiator(run *Run) string {
+	if run == nil {
+		return ""
+	}
+	var event invocation.Event
+	if json.Unmarshal(run.InvocationEvent, &event) != nil || event.Sender.Type != invocation.PrincipalExternalUser {
+		return ""
+	}
+	return strings.TrimSpace(event.Sender.ID)
 }
 
 // channelWorkflowApprovalWaitingNotice tells a channel user that the pending
