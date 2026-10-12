@@ -135,3 +135,91 @@ export function useBindZgiMarketSubjectTools(
     },
   });
 }
+
+/** A market skill the organization activated but has not installed into its own skills. */
+export interface PendingMarketSkill {
+  slug: string;
+  listingId: number;
+}
+
+/**
+ * The skills the organization holds an active market subscription for and has not installed. A
+ * subscription comes from activating the skill itself or a plugin it is a member of.
+ */
+export function useZgiMarketPendingSkills(enabled = true) {
+  const subscriptions = useQuery({
+    queryKey: keys.subscriptions,
+    queryFn: () => zgiMarketService.getSubscriptions(),
+    enabled,
+    staleTime,
+  });
+  const installed = useZgiMarketInstalledSkills(enabled);
+  const installedSlugs = new Set((installed.data ?? []).map(skill => skill.slug));
+  const seen = new Set<string>();
+  const pending: PendingMarketSkill[] = [];
+  for (const subscription of subscriptions.data ?? []) {
+    if (
+      subscription.listing_kind !== 'skill' ||
+      subscription.status !== 'active' ||
+      installedSlugs.has(subscription.listing_slug) ||
+      seen.has(subscription.listing_slug)
+    ) {
+      continue;
+    }
+    seen.add(subscription.listing_slug);
+    pending.push({ slug: subscription.listing_slug, listingId: subscription.listing_id });
+  }
+  return {
+    pending,
+    installed: installed.data ?? [],
+    isLoading: enabled && (subscriptions.isPending || installed.isPending),
+    isError: subscriptions.isError || installed.isError,
+  };
+}
+
+/** What installing several market skills came to. */
+export interface MarketSkillBatchResult {
+  installed: string[];
+  failed: Array<{ slug: string; reason: 'conflict' | 'refused' | 'error'; detail: string }>;
+}
+
+/**
+ * Installs market skills one after another, so a package that is refused does not stop the rest
+ * and each one is reported by name.
+ */
+export function useInstallZgiMarketSkills() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (slugs: string[]): Promise<MarketSkillBatchResult> => {
+      const result: MarketSkillBatchResult = { installed: [], failed: [] };
+      for (const slug of slugs) {
+        try {
+          const outcome = await zgiMarketService.installSkill(slug);
+          if (outcome.installed) {
+            result.installed.push(slug);
+          } else if (outcome.conflict) {
+            result.failed.push({ slug, reason: 'conflict', detail: outcome.conflict });
+          } else {
+            result.failed.push({
+              slug,
+              reason: 'refused',
+              detail: outcome.validation_errors?.[0] ?? '',
+            });
+          }
+        } catch (error) {
+          result.failed.push({
+            slug,
+            reason: 'error',
+            detail: error instanceof Error ? error.message : '',
+          });
+        }
+      }
+      return result;
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: keys.subscriptions });
+      void queryClient.invalidateQueries({ queryKey: keys.installedSkills });
+      void queryClient.invalidateQueries({ queryKey: ['aichat'] });
+    },
+  });
+}

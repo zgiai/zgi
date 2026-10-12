@@ -31,7 +31,6 @@ import {
 } from '@/components/agents/agent-runtime/workflow-type-display';
 import { ResourceBindingCard } from '@/components/common/resource-binding';
 import { DigitalHumanConnectorSection } from '@/components/digital-human/digital-human-connector-section';
-import { ZgiMarketToolsSection } from '@/components/zgi-market/zgi-market-tools-section';
 import { digitalHumanBindingInput } from '@/components/digital-human/digital-human-connector-model';
 import { useDigitalHumanDraftStore } from '@/components/digital-human/digital-human-draft-store';
 import {
@@ -456,7 +455,6 @@ export function DigitalHumanResourceBindings({ id }: { id: string }) {
           preview={versionPreview?.bindings}
           readOnly={!canConfigure}
         />
-        <ZgiMarketToolsSection subjectType="digital_human" subjectId={id} readOnly={!canConfigure} />
       </div>
 
       {activeDefinition ? (

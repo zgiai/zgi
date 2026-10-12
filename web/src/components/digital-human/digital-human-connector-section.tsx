@@ -39,6 +39,10 @@ import {
   observeConnectorDraft,
   type DigitalHumanConnectorSelection,
 } from './digital-human-connector-model';
+import {
+  useZgiMarketSelectedCount,
+  ZgiMarketSelectedServers,
+} from '@/components/zgi-market/zgi-market-selected-servers';
 
 interface DigitalHumanConnectorSectionProps {
   id: string;
@@ -99,6 +103,7 @@ function ScopedConnectorSection({
   );
   const mutations = useDigitalHumanMutations(id);
   const canUpdate = useAccountPermissions().hasPermission('digital_human.update') && !readOnly;
+  const marketServerCount = useZgiMarketSelectedCount('digital_human', id);
   const [selection, setSelection] = useState<DigitalHumanConnectorSelection>();
   const [initialReplacement, setInitialReplacement] = useState<DigitalHumanResourceBindingInput>();
   const [opening, setOpening] = useState(false);
@@ -208,7 +213,7 @@ function ScopedConnectorSection({
             <PlugZap className="size-4" />
           </span>
           <h3 className="font-medium">{connectorT('title')}</h3>
-          <Badge variant="subtle">{t('bindings.selectedCount', { count: items.length })}</Badge>
+          <Badge variant="subtle">{t('bindings.selectedCount', { count: items.length + marketServerCount })}</Badge>
         </div>
         <Button
           type="button"
@@ -235,7 +240,7 @@ function ScopedConnectorSection({
               {t('bindings.retry')}
             </Button>
           </div>
-        ) : items.length === 0 ? (
+        ) : items.length === 0 && marketServerCount === 0 ? (
           <button
             type="button"
             className="flex min-h-full w-full flex-col items-center justify-center rounded-xl border border-dashed bg-muted/10 px-5 py-6 text-center transition-colors hover:border-primary/40 hover:bg-primary/[0.03] disabled:pointer-events-none"
@@ -326,6 +331,13 @@ function ScopedConnectorSection({
                 </div>
               );
             })}
+            <div className={items.length > 0 ? 'mt-2' : undefined}>
+              <ZgiMarketSelectedServers
+                subjectType="digital_human"
+                subjectId={id}
+                readOnly={!canUpdate}
+              />
+            </div>
             {canUpdate ? (
               <Button
                 type="button"

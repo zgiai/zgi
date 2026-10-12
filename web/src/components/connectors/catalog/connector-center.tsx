@@ -46,6 +46,7 @@ import type {
 import { CONNECTOR_CATEGORIES, CONNECTOR_TAGS } from '@/components/connectors/connector-metadata';
 import { filterConnectorCatalog, partitionConnectorCatalog } from './catalog-model';
 import { ConnectorCatalogSection } from './connector-catalog-section';
+import { ZgiMarketConnectorCenterSection } from '@/components/zgi-market/zgi-market-connector-center-section';
 
 function catalogStatus(value: string | null): ConnectorCatalogStatus {
   return value === 'connected' || value === 'needs_attention' ? value : 'all';
@@ -316,6 +317,9 @@ export function ConnectorCenter({ enabled, featureLoading = false }: ConnectorCe
               />
             </div>
           ) : null}
+          <div className="mt-8">
+            <ZgiMarketConnectorCenterSection />
+          </div>
         </div>
       </main>
     </div>

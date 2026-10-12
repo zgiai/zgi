@@ -82,6 +82,7 @@ import { localizeConnectorCatalogItem } from '@/components/connectors/connector-
 import type { AgentResourceBoundImpact } from '@/services/types/common';
 import { getAgentResourceBoundImpact } from '@/utils/agent-resource-bound';
 import { aichatService } from '@/services/aichat.service';
+import { ZgiMarketSkillOriginBadge } from '@/components/zgi-market/zgi-market-pending-skills';
 
 const SKILL_CARD_GRID_CLASS = 'grid gap-2 sm:grid-cols-2 lg:grid-cols-3';
 const SYSTEM_SKILL_NAME_CONFLICT_ERROR =
@@ -359,6 +360,7 @@ function AIChatSkillCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <h3 className="truncate text-sm font-semibold text-foreground">{display.label}</h3>
+            <ZgiMarketSkillOriginBadge skillId={skill.skill_id} />
             {invalid ? (
               <Badge variant="destructive" className="h-5 shrink-0 rounded-md px-1.5 font-normal">
                 {t('organization.aichatSkills.status.invalid')}

@@ -83,6 +83,8 @@ export interface ConnectorPickerDialogProps extends ConnectorReferenceRepairProp
   renderConnectionDetails?: (row: ConnectorPickerRow) => ReactNode;
   /** Host-owned pending details share this dialog's scroll container and focus trap. */
   children?: ReactNode;
+  /** Host-owned groups listed after the connector rows, inside the same scrolling list. */
+  extraGroups?: ReactNode;
   /** Replace the informational footer with the host's atomic save/cancel controls. */
   footer?: ReactNode;
   disabled?: boolean;
@@ -122,6 +124,7 @@ export function ConnectorPickerDialog({
   hostEligibility,
   renderConnectionDetails,
   children,
+  extraGroups,
   footer,
   disabled = false,
   actionsDisabled = false,
@@ -566,6 +569,7 @@ export function ConnectorPickerDialog({
                     ))}
               </div>
             ) : null}
+            {!isLoading ? extraGroups : null}
           </div>
 
           <p className="sr-only" role="status" aria-live="polite">

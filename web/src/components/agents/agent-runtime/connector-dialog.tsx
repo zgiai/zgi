@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
 import { toast } from 'sonner';
 import { ConnectorPickerDialog } from '@/components/connectors/picker';
+import { ZgiMarketConnectorPickerGroup } from '@/components/zgi-market/zgi-market-connector-picker-group';
 import type {
   ConnectorPickerActionRequest,
   ConnectorPickerBindingRef,
@@ -21,7 +22,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { useT } from '@/i18n';
 import { useLocale } from '@/hooks/use-locale';
 import type { AgentConnectorBinding } from '@/services/types/agent';
@@ -107,10 +114,7 @@ function EnabledAgentRuntimeConnectorDialog({
     () => connectorBindings.map(binding => draftBindingRef(agentId, binding)),
     [agentId, connectorBindings]
   );
-  const beginAuthorization = (
-    connector: ConnectorCatalogItem,
-    connection: PersonalConnection
-  ) => {
+  const beginAuthorization = (connector: ConnectorCatalogItem, connection: PersonalConnection) => {
     const current = connectorBindings.find(binding => binding.connector_id === connector.id);
     setAuthorizationMode(current?.authorization_mode === 'direct' ? 'direct' : 'ask_each_time');
     setAuthorization({ connector, connection });
@@ -153,9 +157,7 @@ function EnabledAgentRuntimeConnectorDialog({
                   <SelectItem value="ask_each_time">
                     {t('picker.authorization.askShort')}
                   </SelectItem>
-                  <SelectItem value="direct">
-                    {t('picker.authorization.directShort')}
-                  </SelectItem>
+                  <SelectItem value="direct">{t('picker.authorization.directShort')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -297,6 +299,7 @@ function EnabledAgentRuntimeConnectorDialog({
           )
         );
       }}
+      extraGroups={<ZgiMarketConnectorPickerGroup subjectType="agent" subjectId={agentId} />}
     />
   );
 }

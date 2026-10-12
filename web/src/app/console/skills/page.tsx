@@ -2,6 +2,7 @@
 
 import { AIChatSkillSettingsSection } from '@/components/dashboard/organization/aichat-skill-settings-section';
 import { PageHeader } from '@/components/page-header';
+import { ZgiMarketPendingSkills } from '@/components/zgi-market/zgi-market-pending-skills';
 import { useT } from '@/i18n';
 
 export default function ConsoleSkillsPage() {
@@ -14,6 +15,7 @@ export default function ConsoleSkillsPage() {
           title={t('organization.aichatSkills.title')}
           description={t('organization.aichatSkills.description')}
         />
+        <ZgiMarketPendingSkills />
         <AIChatSkillSettingsSection />
       </div>
     </div>

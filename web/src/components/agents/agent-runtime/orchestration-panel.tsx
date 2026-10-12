@@ -29,7 +29,6 @@ import { AgentRuntimeModelSection } from './sections/model-section';
 import { AgentRuntimeSkillSection } from './sections/skill-section';
 import { AgentRuntimeWorkflowSection } from './sections/workflow-section';
 import { AgentRuntimeConnectorSection } from './sections/connector-section';
-import { ZgiMarketToolsSection } from '@/components/zgi-market/zgi-market-tools-section';
 import type { AgentConfigSection, AgentRuntimeSelectedSkillItem } from './types';
 import type { AgentMemorySlotValidationError } from './utils';
 
@@ -286,12 +285,6 @@ export function AgentRuntimeOrchestrationPanel({
               />
             </>
           ) : null}
-
-          <Separator className="h-px" />
-
-          <div className="px-1 py-3">
-            <ZgiMarketToolsSection subjectType="agent" subjectId={agentId} readOnly={readOnly} />
-          </div>
 
           <Separator className="h-px" />
 

@@ -15,6 +15,7 @@ import { useMarketLabels } from '@/components/zgi-market/use-market-labels';
 import { ZgiMarketApiSection } from '@/components/zgi-market/zgi-market-api-section';
 import { ZgiMarketListingPanel } from '@/components/zgi-market/zgi-market-listing-panel';
 import { ZgiMarketOverview } from '@/components/zgi-market/zgi-market-overview';
+import { useReportMarketSkillInstalls } from '@/components/zgi-market/zgi-market-pending-skills';
 import { ZgiMarketPricingTable } from '@/components/zgi-market/zgi-market-pricing-table';
 import { ZgiMarketRequiredConnectors } from '@/components/zgi-market/zgi-market-required-connectors';
 import { ZgiMarketUsageGuide } from '@/components/zgi-market/zgi-market-usage-guide';
@@ -25,6 +26,7 @@ import {
   useZgiMarketListing,
   useZgiMarketMeta,
   useZgiMarketSubscriptions,
+  useInstallZgiMarketSkills,
 } from '@/hooks/use-zgi-market';
 import {
   marketListingKinds,
@@ -63,7 +65,9 @@ export default function ZgiMarketListingPage({ params }: PageProps) {
   const meta = useZgiMarketMeta();
   const subscriptions = useZgiMarketSubscriptions();
   const activate = useActivateZgiMarketListing();
-  const installedSkills = useZgiMarketInstalledSkills(kind === 'skill');
+  const installedSkills = useZgiMarketInstalledSkills(kind === 'skill' || kind === 'plugin');
+  const installMany = useInstallZgiMarketSkills();
+  const reportInstalls = useReportMarketSkillInstalls();
   const install = useInstallZgiMarketSkill();
   // The organization's own skill a package would replace; the administrator decides.
   const [conflict, setConflict] = useState<string | null>(null);
@@ -150,11 +154,28 @@ export default function ZgiMarketListingPage({ params }: PageProps) {
     activate.mutate(
       { listingId: data.id, ...(offering ? { offeringId: offering.id } : {}) },
       {
-        onSuccess: () => toast.success(t('market.catalog.activateDone')),
+        onSuccess: () => {
+          toast.success(t('market.catalog.activateDone'));
+          installMembers(missingMemberSkills);
+        },
         onError: () => toast.error(t('market.catalog.activateFailed')),
       }
     );
   const installedSkill = (installedSkills.data ?? []).find(skill => skill.slug === data.slug);
+  // The member skills of a plugin are installed with it: activating a plugin activates them at
+  // the market, and they only become skills of the organization once their packages are imported.
+  const memberSkills =
+    data.kind === 'plugin'
+      ? (data.plugin?.members ?? [])
+          .filter(member => member.kind === 'skill')
+          .map(member => member.slug)
+      : [];
+  const missingMemberSkills = memberSkills.filter(
+    slug => !(installedSkills.data ?? []).some(skill => skill.slug === slug)
+  );
+  const installMembers = (slugs: string[]) => {
+    if (slugs.length > 0) installMany.mutate(slugs, { onSuccess: reportInstalls });
+  };
   const installSkill = (overwrite = false) =>
     install.mutate(
       { slug: data.slug, overwrite },
@@ -228,6 +249,10 @@ export default function ZgiMarketListingPage({ params }: PageProps) {
           <Link href="/console/skills" className="text-sm text-primary hover:underline">
             {t('market.catalog.manageSkills')}
           </Link>
+        ) : isActivated() ? (
+          <Badge variant="warning" className="w-fit">
+            {t('market.installs.pending')}
+          </Badge>
         ) : canAct ? (
           hint(t('market.catalog.installHint'))
         ) : (
@@ -295,13 +320,40 @@ export default function ZgiMarketListingPage({ params }: PageProps) {
         {t('market.catalog.activate')}
       </Button>
     ) : null;
-    actionNote = !canAct
-      ? adminOnly
-      : data.kind === 'mcp'
-        ? hint(t('market.catalog.detail.panel.mcpHint'))
-        : data.kind === 'plugin'
-          ? hint(t('market.catalog.detail.panel.pluginHint'))
-          : null;
+    actionNote = !canAct ? (
+      adminOnly
+    ) : data.kind === 'mcp' ? (
+      <>
+        {hint(t('market.catalog.detail.panel.mcpHint'))}
+        {isActivated() ? (
+          <Link href="/console/connectors" className="text-sm text-primary hover:underline">
+            {t('market.tools.viewInConnectors')}
+          </Link>
+        ) : null}
+      </>
+    ) : data.kind === 'plugin' ? (
+      <>
+        {hint(t('market.catalog.detail.panel.pluginHint'))}
+        {isActivated() && missingMemberSkills.length > 0 ? (
+          <Button
+            size="sm"
+            variant="outline"
+            className="w-full"
+            disabled={installMany.isPending}
+            onClick={() => installMembers(missingMemberSkills)}
+          >
+            {installMany.isPending
+              ? t('market.installs.installing')
+              : t('market.installs.installAll', { count: missingMemberSkills.length })}
+          </Button>
+        ) : null}
+        {isActivated() && memberSkills.length > 0 && missingMemberSkills.length === 0 ? (
+          <Link href="/console/skills" className="text-sm text-primary hover:underline">
+            {t('market.catalog.manageSkills')}
+          </Link>
+        ) : null}
+      </>
+    ) : null;
   }
 
   const requiredConnectors = data.kind === 'connector' ? [] : (data.required_connectors ?? []);
