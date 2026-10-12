@@ -91,6 +91,25 @@ export interface MarketPluginSummary {
   members?: MarketPluginMember[];
 }
 
+/**
+ * What the package of a skill listing is, as the market describes it to anyone who may see the
+ * listing: what SKILL.md declares, the beginning of its text, and the files beside it. The market
+ * caps the file list and says how many it left out.
+ */
+export interface MarketSkillSummary {
+  name?: string;
+  description?: string;
+  when_to_use?: string;
+  excerpt?: string;
+  excerpt_truncated?: boolean;
+  files: Array<{ path: string; size: number }>;
+  file_count: number;
+  files_omitted?: number;
+  total_bytes: number;
+  has_scripts: boolean;
+  interpreters?: string[];
+}
+
 /** How a connector listing authenticates and which listings act through it. */
 export interface MarketConnectorSummary {
   auth_type: string;
@@ -115,6 +134,8 @@ export interface MarketListing {
   prices?: MarketPrice[];
   mcp?: { tools: MarketTool[] } | null;
   plugin?: MarketPluginSummary | null;
+  /** Only on the detail of one skill listing, and only when the market has summarized its package. */
+  skill?: MarketSkillSummary | null;
   connector?: MarketConnectorSummary | null;
   required_connectors?: MarketRequiredConnector[];
   current_version?: { version_no?: number; label: string; published_at: string } | null;

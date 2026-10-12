@@ -228,7 +228,12 @@ export function ZgiMarketOverview({ listing, activatedIds }: ZgiMarketOverviewPr
       ) : null}
       {listing.kind === 'skill' ? (
         <Section id="zgi-market-skill-contents" title={t('market.catalog.detail.skill.title')}>
-          <ZgiMarketSkillContents slug={listing.slug} activated={activatedIds.has(listing.id)} />
+          <ZgiMarketSkillContents
+            slug={listing.slug}
+            summary={listing.skill ?? null}
+            shownDescription={text(listing.card.description)}
+            activated={activatedIds.has(listing.id)}
+          />
         </Section>
       ) : null}
       <PluginSummary listing={listing} />

@@ -67,8 +67,14 @@ const messages = {
           'The market describes the files of a skill package only to an organization that has the skill. Install it to see them here.',
         unavailable: 'The file list could not be loaded.',
         fileCount: '{count} files',
-        scripts: '{count} scripts',
         noScripts: 'Instructions only',
+        declaredName: 'Name in SKILL.md',
+        whenToUse: 'When to use it',
+        hasScripts: 'Brings scripts',
+        excerptTitle: 'From SKILL.md',
+        excerptTruncated: 'Only the beginning of SKILL.md is shown.',
+        filesTitle: 'Files',
+        filesOmitted: 'and {count} more files',
         scriptsNote:
           'This skill brings scripts. An agent runs them only when its execution environment is turned on; without it the skill still gives its instructions.',
         instructionsNote:
