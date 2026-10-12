@@ -242,7 +242,9 @@ func (t *Tools) Candidates(ctx context.Context, who caller) (*ToolCandidates, er
 				continue
 			}
 			candidate.OfferingSlug = subscription.OfferingSlug
-			candidate.Operations = candidateOperations(listing.Offerings[index], firstText(listing.Card.Title))
+			candidate.Operations = candidateOperations(
+				subscription.ListingSlug, listing.Offerings[index], soleHTTPOffering(listing.Offerings), firstText(listing.Card.Title),
+			)
 			for _, operation := range candidate.Operations {
 				if operation.Bindable {
 					text := map[string]string{"zh-CN": operation.Description, "en-US": operation.Description}
@@ -574,25 +576,38 @@ func (t *Tools) SubjectTools(ctx context.Context, organizationID uuid.UUID, subj
 			})
 		}
 	}
-	// The operations of the bound API offerings. Their names carry the offering, so they are
-	// already apart from each other; one that meets a vendor's MCP tool name is left out rather
-	// than renamed, because its name is how a call finds it again.
+	// The operations of the bound API offerings. A short name that another tool of the subject
+	// already has, a vendor's MCP tool or an operation of another offering, gives way to the
+	// operation's full name, which names its offering and request and which a call always finds.
 	for _, item := range binding.Items {
 		if !item.IsAPI() {
 			continue
 		}
 		for _, operation := range t.liveOperations(ctx, binding, item) {
-			if taken[operation.Name] {
+			name, free := freeOperationName(taken, item.OfferingSlug, operation)
+			if !free {
 				continue
 			}
-			taken[operation.Name] = true
 			result = append(result, SubjectTool{
-				ProviderID: providerName(subjectType, subjectID, apiProviderPrefix+item.OfferingSlug), Name: operation.Name,
+				ProviderID: providerName(subjectType, subjectID, apiProviderPrefix+item.OfferingSlug), Name: name,
 				Description: operation.Description, InputSchema: operation.InputSchema, RiskLevel: operation.RiskLevel,
 			})
 		}
 	}
 	return result, nil
+}
+
+// freeOperationName picks the name an operation is listed under among the names a subject
+// already has, and takes it: its short name, or its full name when the short one is taken. It
+// reports false when both are taken, which leaves the operation out.
+func freeOperationName(taken map[string]bool, offeringSlug string, operation BoundOperation) (string, bool) {
+	for _, name := range []string{operation.Name, OperationToolName(offeringSlug, operation.Method, operation.Path)} {
+		if name != "" && !taken[name] {
+			taken[name] = true
+			return name, true
+		}
+	}
+	return "", false
 }
 
 func riskOf(item ToolBindingItem, name string) string {
@@ -681,7 +696,11 @@ func (t *Tools) callOperation(ctx context.Context, binding *ToolBinding, offerin
 		return nil, ErrListingNotBindable
 	}
 	operations := t.liveOperations(ctx, binding, item)
-	index := slices.IndexFunc(operations, func(operation BoundOperation) bool { return operation.Name == tool })
+	// A call names the operation as it was listed: by its short name, or by its full name, which
+	// is what a name that was taken falls back to and what a conversation begun earlier still holds.
+	index := slices.IndexFunc(operations, func(operation BoundOperation) bool {
+		return operation.Name == tool || OperationToolName(offeringSlug, operation.Method, operation.Path) == tool
+	})
 	if index < 0 {
 		return nil, ErrListingNotBindable
 	}

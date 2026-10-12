@@ -117,24 +117,103 @@ func operationRisk(method, declared string) string {
 	return RiskWrite
 }
 
-// OperationToolName derives the tool name of an operation from its offering, method and path:
-// the offering slug and the request, lowercased and joined by underscores, as in
-// `amap_web_service_standard__get_v3_geocode_geo`. A name longer than the limit keeps its head
-// and ends in a digest of the whole, so two long names never meet.
-func OperationToolName(offeringSlug, method, path string) string {
-	clean := func(value string) string {
-		return strings.Trim(nameSeparators.ReplaceAllString(strings.ToLower(value), "_"), "_")
-	}
-	name := clean(offeringSlug) + "__" + clean(method)
-	if tail := clean(path); tail != "" {
-		name += "_" + tail
-	}
+// cleanName lowercases a slug, a method or a path into the words of a tool name.
+func cleanName(value string) string {
+	return strings.Trim(nameSeparators.ReplaceAllString(strings.ToLower(value), "_"), "_")
+}
+
+// fitName keeps a tool name within the limit: one that is too long keeps its head and ends in a
+// digest of what it stands for, so two long names never meet.
+func fitName(name, identity string) string {
 	if len(name) <= maxToolNameLength {
 		return name
 	}
-	sum := sha256.Sum256([]byte(offeringSlug + " " + operationKey(method, path)))
+	sum := sha256.Sum256([]byte(identity))
 	suffix := "_" + hex.EncodeToString(sum[:4])
 	return strings.TrimRight(name[:maxToolNameLength-len(suffix)], "_") + suffix
+}
+
+// OperationToolName is the full name of an operation: its offering and its whole request, as in
+// `amap_web_service_standard__get_v3_geocode_geo`. It is unique among every operation of every
+// offering, so it is the name an operation falls back to, and one a call may always use.
+func OperationToolName(offeringSlug, method, path string) string {
+	name := cleanName(offeringSlug) + "__" + cleanName(method)
+	if tail := cleanName(path); tail != "" {
+		name += "_" + tail
+	}
+	return fitName(name, offeringSlug+" "+operationKey(method, path))
+}
+
+// operationToolNames gives the operations of one offering the names a model reads, by operation
+// key. A name says what the tool is in as few words as tell it apart:
+//
+//   - the base is the listing's slug when the offering is the listing's only one, and the
+//     offering's slug otherwise, so two offerings of one listing never share a name;
+//   - an offering with a single operation is named by the base alone: `zgi_public_holiday`;
+//   - otherwise the method and the last literal segment of the path follow:
+//     `amap_web_service__get_geo`. When two operations would then share a name, every operation
+//     of the offering names its whole path instead: `items__get_v1_items_id`.
+//
+// The names depend on every operation the offering declares, not on which were selected, so
+// choosing fewer operations renames nothing.
+func operationToolNames(listingSlug string, offering marketOffering, sole bool) map[string]string {
+	type entry struct{ key, method, path string }
+	entries := []entry{}
+	seen := map[string]bool{}
+	for _, operation := range offering.Operations {
+		method := strings.ToUpper(strings.TrimSpace(operation.Method))
+		key := operationKey(method, operation.Path)
+		if !methodPattern.MatchString(method) || !strings.HasPrefix(operation.Path, "/") || seen[key] {
+			continue
+		}
+		seen[key] = true
+		entries = append(entries, entry{key: key, method: method, path: operation.Path})
+	}
+	base := cleanName(offering.Slug)
+	if sole && cleanName(listingSlug) != "" {
+		base = cleanName(listingSlug)
+	}
+	names := make(map[string]string, len(entries))
+	if len(entries) == 1 {
+		names[entries[0].key] = fitName(base, offering.Slug+" "+entries[0].key)
+		return names
+	}
+	build := func(tail func(path string) string) (map[string]string, bool) {
+		built, taken := make(map[string]string, len(entries)), map[string]bool{}
+		for _, item := range entries {
+			name := base + "__" + cleanName(item.method)
+			if words := tail(item.path); words != "" {
+				name += "_" + words
+			}
+			name = fitName(name, offering.Slug+" "+item.key)
+			if taken[name] {
+				return nil, false
+			}
+			taken[name] = true
+			built[item.key] = name
+		}
+		return built, true
+	}
+	lastLiteral := func(path string) string {
+		segments := strings.Split(strings.Trim(path, "/"), "/")
+		for index := len(segments) - 1; index >= 0; index-- {
+			if segment := segments[index]; segment != "" && !strings.HasPrefix(segment, "{") {
+				return cleanName(segment)
+			}
+		}
+		return ""
+	}
+	if built, ok := build(lastLiteral); ok {
+		return built
+	}
+	if built, ok := build(cleanName); ok {
+		return built
+	}
+	// Two paths that differ only in punctuation: the full name tells every operation apart.
+	for _, item := range entries {
+		names[item.key] = OperationToolName(offering.Slug, item.method, item.path)
+	}
+	return names
 }
 
 // describeOperation says what an operation is when its schema does not: the request and the
@@ -155,9 +234,10 @@ func describeOperation(operation marketOperation, schema map[string]any, listing
 // candidateOperations turns the operations of an http offering into candidates. An operation
 // becomes a tool only when it declares an input schema of type object: that is what tells a model
 // which arguments to send.
-func candidateOperations(offering marketOffering, listingTitle string) []CandidateOperation {
+func candidateOperations(listingSlug string, offering marketOffering, sole bool, listingTitle string) []CandidateOperation {
 	result := make([]CandidateOperation, 0, len(offering.Operations))
 	seen := map[string]bool{}
+	names := operationToolNames(listingSlug, offering, sole)
 	for _, operation := range offering.Operations {
 		method := strings.ToUpper(strings.TrimSpace(operation.Method))
 		key := operationKey(method, operation.Path)
@@ -166,7 +246,7 @@ func candidateOperations(offering marketOffering, listingTitle string) []Candida
 		}
 		seen[key] = true
 		candidate := CandidateOperation{
-			Key: key, Name: OperationToolName(offering.Slug, method, operation.Path), Method: method, Path: operation.Path,
+			Key: key, Name: names[key], Method: method, Path: operation.Path,
 			RiskLevel: operationRisk(method, operation.RiskLevel), InputSchema: operation.InputSchema, OutputSchema: operation.OutputSchema,
 		}
 		schema, reason := toolSchema(operation.InputSchema)
@@ -241,13 +321,13 @@ func (t *Tools) liveOperations(ctx context.Context, binding *ToolBinding, item T
 		return cached.operations
 	}
 	operations := item.Operations
-	if offering, title, err := t.gateway.Offering(ctx, item.Slug, item.OfferingSlug); err == nil {
+	if offering, title, sole, err := t.gateway.Offering(ctx, item.Slug, item.OfferingSlug); err == nil {
 		selected := map[string]bool{}
 		for _, operation := range item.Operations {
 			selected[operation.Key] = true
 		}
 		fresh := make([]BoundOperation, 0, len(item.Operations))
-		for _, candidate := range candidateOperations(*offering, title) {
+		for _, candidate := range candidateOperations(item.Slug, *offering, sole, title) {
 			if !candidate.Bindable || (!item.AllOperations && !selected[candidate.Key]) || len(fresh) >= maxOfferingOperations {
 				continue
 			}
@@ -361,29 +441,30 @@ func scalarText(value any) (string, bool) {
 }
 
 // Offering reads one offering of a published API listing from the market's public catalog, which
-// is served at the gateway's origin. It sends no credential.
-func (g *gatewayClient) Offering(ctx context.Context, listingSlug, offeringSlug string) (*marketOffering, string, error) {
+// is served at the gateway's origin, with the listing's title and whether it is the listing's
+// only http offering. It sends no credential.
+func (g *gatewayClient) Offering(ctx context.Context, listingSlug, offeringSlug string) (*marketOffering, string, bool, error) {
 	if !marketSlugPattern.MatchString(listingSlug) || !marketSlugPattern.MatchString(offeringSlug) {
-		return nil, "", ErrListingNotBindable
+		return nil, "", false, ErrListingNotBindable
 	}
 	ctx, cancel := context.WithTimeout(ctx, gatewayConnectTimeout)
 	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, g.origin+marketListingPath+listingSlug, nil)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	request.Header.Set("Accept", "application/json")
 	response, err := g.http.Do(request)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	defer response.Body.Close()
 	content, err := io.ReadAll(io.LimitReader(response.Body, gatewayMessageBytes+1))
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	if response.StatusCode != http.StatusOK || len(content) > gatewayMessageBytes {
-		return nil, "", fmt.Errorf("the market answered %d for the listing", response.StatusCode)
+		return nil, "", false, fmt.Errorf("the market answered %d for the listing", response.StatusCode)
 	}
 	var envelope struct {
 		Data struct {
@@ -394,13 +475,24 @@ func (g *gatewayClient) Offering(ctx context.Context, listingSlug, offeringSlug 
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(content, &envelope); err != nil {
-		return nil, "", fmt.Errorf("decode the listing: %w", err)
+		return nil, "", false, fmt.Errorf("decode the listing: %w", err)
 	}
 	index := slices.IndexFunc(envelope.Data.Offerings, func(offering marketOffering) bool { return offering.Slug == offeringSlug })
 	if index < 0 || envelope.Data.Offerings[index].ProtocolFamily != httpProtocolFamily {
-		return nil, "", ErrListingNotBindable
+		return nil, "", false, ErrListingNotBindable
 	}
-	return &envelope.Data.Offerings[index], firstText(envelope.Data.Card.Title), nil
+	return &envelope.Data.Offerings[index], firstText(envelope.Data.Card.Title), soleHTTPOffering(envelope.Data.Offerings), nil
+}
+
+// soleHTTPOffering reports whether a listing has exactly one http offering.
+func soleHTTPOffering(offerings []marketOffering) bool {
+	count := 0
+	for _, offering := range offerings {
+		if offering.ProtocolFamily == httpProtocolFamily {
+			count++
+		}
+	}
+	return count == 1
 }
 
 // CallOperation calls one operation of a bound offering through the gateway. The market bills

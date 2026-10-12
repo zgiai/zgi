@@ -406,6 +406,77 @@ func TestOperationToolNameNamesTheOfferingAndTheRequestWithinTheLimit(t *testing
 	assert.Equal(t, long, OperationToolName("a-very-long-offering-slug-of-a-vendor-standard", "DELETE", "/v1/organizations/{organization}/projects/{project}"), "the name is stable")
 }
 
+func TestOperationsAreNamedInAsFewWordsAsTellThemApart(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object"}`)
+	offering := func(slug string, operations ...marketOperation) marketOffering {
+		return marketOffering{Slug: slug, ProtocolFamily: "http", Operations: operations}
+	}
+	post := func(path string) marketOperation {
+		return marketOperation{Method: "POST", Path: path, InputSchema: schema}
+	}
+	get := func(path string) marketOperation {
+		return marketOperation{Method: "GET", Path: path, InputSchema: schema}
+	}
+
+	// One operation of the listing's only offering: the listing's slug says it all.
+	single := offering("zgi-public-holiday-standard", post("/v1/public-holiday-queries"))
+	assert.Equal(t, map[string]string{"POST /v1/public-holiday-queries": "zgi_public_holiday"},
+		operationToolNames("zgi-public-holiday", single, true))
+	// A listing with several offerings names the offering, so its offerings never share a name.
+	assert.Equal(t, map[string]string{"POST /v1/public-holiday-queries": "zgi_public_holiday_standard"},
+		operationToolNames("zgi-public-holiday", single, false))
+
+	// Several operations: the method and the last literal segment of the path.
+	maps := offering("amap-web-service-standard", get("/v3/geocode/geo"), get("/v3/geocode/regeo"), get("/v3/place/text"), get("/v3/weather/weatherInfo"))
+	assert.Equal(t, map[string]string{
+		"GET /v3/geocode/geo": "amap_web_service__get_geo", "GET /v3/geocode/regeo": "amap_web_service__get_regeo",
+		"GET /v3/place/text": "amap_web_service__get_text", "GET /v3/weather/weatherInfo": "amap_web_service__get_weatherinfo",
+	}, operationToolNames("amap-web-service", maps, true))
+	// A path parameter is not a word; the method tells a read from a removal of the same thing.
+	assert.Equal(t, map[string]string{"GET /v1/items/{id}": "items__get_items", "DELETE /v1/items/{id}": "items__delete_items"},
+		operationToolNames("items", offering("items-standard", get("/v1/items/{id}"), marketOperation{Method: "DELETE", Path: "/v1/items/{id}", InputSchema: schema}), true))
+
+	// Two operations whose last segments are the same: every operation names its whole path.
+	clash := offering("crm-standard", get("/v1/users/{id}/notes"), get("/v1/orders/{id}/notes"), get("/v1/users"))
+	assert.Equal(t, map[string]string{
+		"GET /v1/users/{id}/notes": "crm__get_v1_users_id_notes", "GET /v1/orders/{id}/notes": "crm__get_v1_orders_id_notes",
+		"GET /v1/users": "crm__get_v1_users",
+	}, operationToolNames("crm", clash, true))
+
+	// The names do not depend on which operations have a schema, are within the limit, and are
+	// the same every time.
+	mixed := offering("items-standard", get("/v1/items/{id}"), marketOperation{Method: "GET", Path: "/v1/plain"}, marketOperation{Method: "TRACE", Path: "/v1/items"})
+	assert.Equal(t, map[string]string{"GET /v1/items/{id}": "items__get_items", "GET /v1/plain": "items__get_plain"},
+		operationToolNames("items", mixed, true))
+	long := offering("a-very-long-offering-slug-of-a-vendor-of-many-words-standard",
+		get("/v1/organizations/{organization}/projects"), get("/v1/organizations/{organization}/project-archives"))
+	names := operationToolNames("a-very-long-listing-slug-of-a-vendor-of-many-words-and-more-words", long, true)
+	require.Len(t, names, 2)
+	seen := map[string]bool{}
+	for _, name := range names {
+		assert.LessOrEqual(t, len(name), 64)
+		assert.True(t, toolNamePattern.MatchString(name), name)
+		assert.False(t, seen[name], "two long names never meet")
+		seen[name] = true
+	}
+	assert.Equal(t, names, operationToolNames("a-very-long-listing-slug-of-a-vendor-of-many-words-and-more-words", long, true))
+}
+
+func TestAShortNameThatIsTakenGivesWayToTheFullName(t *testing.T) {
+	// A vendor's MCP tool is called `lookup`, and so is the only operation of the listing `lookup`.
+	taken := map[string]bool{"lookup": true}
+	operation := BoundOperation{Key: "POST /v1/queries", Name: "lookup", Method: "POST", Path: "/v1/queries"}
+	name, free := freeOperationName(taken, "lookup-standard", operation)
+	assert.Equal(t, []any{"lookup_standard__post_v1_queries", true}, []any{name, free})
+	assert.True(t, taken[name], "the name is taken from then on")
+	// Listed again, as a repeated offering would be, both names are taken: it is left out.
+	_, free = freeOperationName(taken, "lookup-standard", operation)
+	assert.False(t, free)
+	// A name nobody has is used as it is.
+	name, free = freeOperationName(taken, "items-standard", BoundOperation{Name: "items", Method: "GET", Path: "/v1/items"})
+	assert.Equal(t, []any{"items", true}, []any{name, free})
+}
+
 func TestOperationArgumentsBecomeThePathTheQueryOrTheBody(t *testing.T) {
 	arguments := map[string]any{
 		"id": "a/b", "scale": float64(2), "deep": true, "tags": []any{"x", "y z", float64(3)},
@@ -447,10 +518,10 @@ func TestAnOperationIsAToolOnlyWithAnObjectInputSchema(t *testing.T) {
 		{Method: "GET", Path: "/v1/items/{id}", InputSchema: json.RawMessage(`{"type":"object"}`)},
 		{Method: "TRACE", Path: "/v1/items"},
 	}}
-	operations := candidateOperations(offering, "Items")
+	operations := candidateOperations("items", offering, true, "Items")
 	require.Len(t, operations, 4, "a repeated operation and an unknown method are dropped")
 	assert.Equal(t, CandidateOperation{
-		Key: "GET /v1/items/{id}", Name: "items_standard__get_v1_items_id", Method: "GET", Path: "/v1/items/{id}",
+		Key: "GET /v1/items/{id}", Name: "items__get_items", Method: "GET", Path: "/v1/items/{id}",
 		Description: "Read one item", RiskLevel: RiskRead, Bindable: true, InputSchema: offering.Operations[0].InputSchema,
 	}, operations[0])
 	assert.Equal(t, RiskWrite, operations[1].RiskLevel, "every method but GET writes")
@@ -467,7 +538,7 @@ func TestAnOperationIsAToolOnlyWithAnObjectInputSchema(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, all)
 	require.Len(t, bound, 1)
-	assert.Equal(t, "items_standard__post_v1_items", bound[0].Name)
+	assert.Equal(t, "items__post_items", bound[0].Name)
 	_, _, err = boundOperations(candidate, []string{"GET /v1/plain"})
 	assert.ErrorIs(t, err, ErrListingNotBindable, "an operation without a schema cannot be selected")
 	_, _, err = boundOperations(candidate, []string{"GET /v1/unknown"})
@@ -476,13 +547,13 @@ func TestAnOperationIsAToolOnlyWithAnObjectInputSchema(t *testing.T) {
 
 func TestAnOperationTakesTheRiskLevelTheMarketDeclares(t *testing.T) {
 	schema := json.RawMessage(`{"type":"object"}`)
-	operations := candidateOperations(marketOffering{Slug: "lookup-standard", ProtocolFamily: "http", Operations: []marketOperation{
+	operations := candidateOperations("lookup", marketOffering{Slug: "lookup-standard", ProtocolFamily: "http", Operations: []marketOperation{
 		// A lookup served by POST: the market says it reads, the method alone would say it writes.
 		{Method: "POST", Path: "/v1/holiday-queries", RiskLevel: "read", InputSchema: schema},
 		{Method: "GET", Path: "/v1/purge", RiskLevel: " Destructive ", InputSchema: schema},
 		{Method: "POST", Path: "/v1/orders", InputSchema: schema},
 		{Method: "POST", Path: "/v1/odd", RiskLevel: "harmless", InputSchema: schema},
-	}}, "")
+	}}, true, "")
 	require.Len(t, operations, 4)
 	assert.Equal(t, RiskRead, operations[0].RiskLevel)
 	assert.Equal(t, RiskDestructive, operations[1].RiskLevel, "a declared level wins over a GET")
@@ -540,9 +611,9 @@ func TestAnAPIOfferingIsBoundAndItsOperationsAreCalledAtTheGateway(t *testing.T)
 	require.Len(t, listed, 4)
 	read, write := listed[2], listed[3]
 	assert.Equal(t, "agent:"+fixture.agent.String()+":api.items-standard", read.ProviderID)
-	assert.Equal(t, []any{"items_standard__get_v1_items_id", "Read one item", RiskRead}, []any{read.Name, read.Description, read.RiskLevel})
+	assert.Equal(t, []any{"items__get_items", "Read one item", RiskRead}, []any{read.Name, read.Description, read.RiskLevel})
 	assert.Equal(t, []any{"id"}, read.InputSchema["required"])
-	assert.Equal(t, []any{"items_standard__post_v1_items", RiskWrite}, []any{write.Name, write.RiskLevel})
+	assert.Equal(t, []any{"items__post_items", RiskWrite}, []any{write.Name, write.RiskLevel})
 
 	manager := tools.NewToolManager(nil)
 	manager.SetMarketToolSource(fixture.tools)
@@ -572,15 +643,21 @@ func TestAnAPIOfferingIsBoundAndItsOperationsAreCalledAtTheGateway(t *testing.T)
 	_, err = invoke(read.Name, map[string]interface{}{"id": "broke"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "402 BILLING.INSUFFICIENT_BALANCE")
+	// The full name of an operation finds it too: a conversation begun before the short names holds it.
+	result, err = invoke("items_standard__get_v1_items_id", map[string]interface{}{"id": "x"})
+	require.NoError(t, err)
+	require.True(t, result.Success)
 	// A tool the offering does not have, and another organization, reach nothing.
-	_, err = invoke("items_standard__get_v1_plain", nil)
-	assert.Error(t, err)
+	for _, unknown := range []string{"items__get_plain", "items_standard__get_v1_plain"} {
+		_, err = invoke(unknown, nil)
+		assert.Error(t, err, unknown)
+	}
 	_, err = engine.Invoke(ctx, tools.InvokeRequest{
 		ProviderType: tools.ToolProviderTypeMarket, ProviderID: read.ProviderID, ToolName: read.Name,
 		TenantID: uuid.NewString(), Parameters: map[string]interface{}{"id": "x"},
 	})
 	assert.Error(t, err)
-	assert.Len(t, fixture.gateway.requests, 3)
+	assert.Len(t, fixture.gateway.requests, 4)
 
 	// A new version of the listing is followed: the operation it drops is no tool any more, and
 	// the one it adds is, because every operation was bound.
@@ -599,7 +676,7 @@ func TestAnAPIOfferingIsBoundAndItsOperationsAreCalledAtTheGateway(t *testing.T)
 	for _, tool := range listed {
 		names = append(names, tool.Name)
 	}
-	assert.Equal(t, []string{"lookup", "edit", "items_standard__get_v1_items_id", "items_standard__delete_v1_items_id"}, names)
+	assert.Equal(t, []string{"lookup", "edit", "items__get_items", "items__delete_items"}, names)
 
 	// A chosen subset stays a subset; an operation without a schema cannot be chosen.
 	status, answer = fixture.send(t, http.MethodPut, path, `{"items":[{"listing_id":20,"offering_slug":"items-standard","operations":["GET /v1/items/{id}"]}]}`)
@@ -611,7 +688,7 @@ func TestAnAPIOfferingIsBoundAndItsOperationsAreCalledAtTheGateway(t *testing.T)
 	listed, err = fixture.tools.SubjectTools(ctx, fixture.org, SubjectAgent, fixture.agent)
 	require.NoError(t, err)
 	require.Len(t, listed, 1)
-	assert.Equal(t, "items_standard__get_v1_items_id", listed[0].Name)
+	assert.Equal(t, "items__get_items", listed[0].Name, "choosing fewer operations renames nothing")
 	status, _ = fixture.send(t, http.MethodPut, path, `{"items":[{"listing_id":20,"offering_slug":"items-standard","operations":["GET /v1/plain"]}]}`)
 	assert.Equal(t, http.StatusBadRequest, status)
 	status, _ = fixture.send(t, http.MethodPut, path, `{"items":[{"listing_id":20,"offering_slug":"items-chat"}]}`)
