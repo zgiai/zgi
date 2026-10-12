@@ -136,19 +136,21 @@ func runOnConnection(db *gorm.DB, options RunOptions) error {
 
 func runMigrationChain(db *gorm.DB, plan migrationPlan) error {
 	deferred := config.ConnectorRetirementDeferred()
-	if deferred {
+	if deferred && plan.validateUnknownMigrations {
 		applied, err := appliedMigrationIDs(db)
 		if err != nil {
 			return err
 		}
-		if err := validateDeferredMigrationHistory(applied); err != nil {
+		if err := validateDeferredMigrationHistoryForPlan(plan, applied, deferred); err != nil {
 			return err
 		}
 	}
 	// The destructive retirement migration is intentionally omitted from the
 	// deferred run list. Validate its marker against the complete public list
 	// ourselves so an already-retired database remains valid without allowing
-	// arbitrary unknown migration IDs.
+	// arbitrary unknown migration IDs in a public-chain plan. The legacy bridge
+	// permits historical IDs only after its schema preflight has succeeded;
+	// preserve that policy here instead of rejecting those IDs a second time.
 	options := migrationOptions(plan.validateUnknownMigrations && !deferred)
 	m := gormigrate.New(db, options, plan.migrations)
 	applied, err := appliedMigrationIDs(db)
@@ -181,6 +183,13 @@ func runMigrationChain(db *gorm.DB, plan migrationPlan) error {
 }
 
 func validateDeferredMigrationHistory(applied map[string]struct{}) error {
+	return validateDeferredMigrationHistoryForPlan(migrationPlan{validateUnknownMigrations: true}, applied, true)
+}
+
+func validateDeferredMigrationHistoryForPlan(plan migrationPlan, applied map[string]struct{}, deferred bool) error {
+	if !deferred || !plan.validateUnknownMigrations {
+		return nil
+	}
 	known := make(map[string]struct{}, len(allMigrations()))
 	for _, migration := range allMigrations() {
 		known[migration.ID] = struct{}{}
