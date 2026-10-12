@@ -34,6 +34,21 @@ func allMigrations() []*gormigrate.Migration {
 	return registeredMigrations()
 }
 
+func migrationsForRun() []*gormigrate.Migration {
+	migrations := allMigrations()
+	if !config.ConnectorRetirementDeferred() {
+		return migrations
+	}
+	filtered := make([]*gormigrate.Migration, 0, len(migrations))
+	for _, migration := range migrations {
+		if migration.ID == connectorfinalize.MigrationID {
+			continue
+		}
+		filtered = append(filtered, migration)
+	}
+	return filtered
+}
+
 func migrationOptions(validateUnknownMigrations bool) *gormigrate.Options {
 	options := *gormigrate.DefaultOptions
 	options.ValidateUnknownMigrations = validateUnknownMigrations
@@ -94,6 +109,14 @@ func runOnConnection(db *gorm.DB, options RunOptions) error {
 			return err
 		}
 	}
+	if config.ConnectorRetirementDeferred() {
+		if err := db.Transaction(func(tx *gorm.DB) error {
+			return connectorfinalize.EnsurePendingSetupsCompatibility(tx)
+		}); err != nil {
+			log.Printf("deferred Connector compatibility repair failed: %v", err)
+			return err
+		}
+	}
 
 	if err := runMigrationChain(db, plan); err != nil {
 		log.Printf("migrations failed: %v", err)
@@ -119,10 +142,23 @@ func runMigrationChain(db *gorm.DB, plan migrationPlan) error {
 		return err
 	}
 	if _, done := applied[connectorfinalize.MigrationID]; !done {
-		// Preserve historical transaction boundaries. Only the final maintenance
-		// step and its migration marker require this additional atomic boundary.
-		if err := m.MigrateTo(connectorfinalize.CheckpointID); err != nil {
-			return err
+		if config.ConnectorRetirementDeferred() {
+			if _, checkpointDone := applied[connectorfinalize.CheckpointID]; !checkpointDone {
+				for appliedID := range applied {
+					if migrationIDPattern.MatchString(appliedID) && appliedID > connectorfinalize.CheckpointID {
+						return fmt.Errorf("deferred Connector retirement requires applied checkpoint %s", connectorfinalize.CheckpointID)
+					}
+				}
+				if err := m.MigrateTo(connectorfinalize.CheckpointID); err != nil {
+					return err
+				}
+			}
+		} else {
+			// Preserve historical transaction boundaries. Only the final maintenance
+			// step and its migration marker require this additional atomic boundary.
+			if err := m.MigrateTo(connectorfinalize.CheckpointID); err != nil {
+				return err
+			}
 		}
 		options.UseTransaction = true
 		m = gormigrate.New(db, options, plan.migrations)

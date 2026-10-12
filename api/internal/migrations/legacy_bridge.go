@@ -132,7 +132,7 @@ func chooseMigrationPlan(state migrationState) (migrationPlan, error) {
 func currentMigrationPlan(name string) migrationPlan {
 	return migrationPlan{
 		name:                      name,
-		migrations:                allMigrations(),
+		migrations:                migrationsForRun(),
 		validateUnknownMigrations: true,
 	}
 }
@@ -140,7 +140,7 @@ func currentMigrationPlan(name string) migrationPlan {
 func legacyBridgeMigrationPlan() migrationPlan {
 	return migrationPlan{
 		name:                      "legacy-bridge",
-		migrations:                allMigrations(),
+		migrations:                migrationsForRun(),
 		validateUnknownMigrations: false,
 		beforeRun: func(db *gorm.DB) error {
 			if err := validateSupportedLegacyShape(db); err != nil {

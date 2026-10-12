@@ -12,7 +12,10 @@ const pendingSetupsMigrationID = "20260904160000_connector_pending_setups"
 // migration IDs without actually applying the pending-setups migration. The
 // statements are deliberately additive and fixed; this is not a general
 // migration runner or a caller-supplied SQL path.
-func ensurePendingSetupsCompatibility(tx *gorm.DB) error {
+func EnsurePendingSetupsCompatibility(tx *gorm.DB) error {
+	if !tx.Migrator().HasTable("connector_onboarding_flows") {
+		return nil
+	}
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS public.connector_pending_setups (
  id uuid PRIMARY KEY, organization_id uuid NOT NULL, owner_account_id uuid NOT NULL,
