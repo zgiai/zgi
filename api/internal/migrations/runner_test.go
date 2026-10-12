@@ -23,6 +23,18 @@ func TestAllMigrationsStartsAtPublicInitialSchema(t *testing.T) {
 	}
 }
 
+func TestValidateDeferredMigrationHistoryAllowsRetirementMarker(t *testing.T) {
+	if err := validateDeferredMigrationHistory(map[string]struct{}{
+		initialSchemaMigrationID:                           {},
+		"202609031410353961_finalize_connector_detachment": {},
+	}); err != nil {
+		t.Fatalf("retirement marker should be recognized: %v", err)
+	}
+	if err := validateDeferredMigrationHistory(map[string]struct{}{"20260101000000_unknown": {}}); err == nil {
+		t.Fatal("unknown migration marker was accepted")
+	}
+}
+
 func TestRegisteredMigrationsAreValid(t *testing.T) {
 	migrations := allMigrations()
 	seen := make(map[string]struct{}, len(migrations))

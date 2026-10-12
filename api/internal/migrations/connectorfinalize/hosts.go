@@ -16,6 +16,158 @@ type hostChange struct {
 	Remove    bool
 }
 
+// discardHostChanges removes only machine-owned references to the retired
+// Connector protocol. User-authored prose, prompts, descriptions and Skill
+// source are left untouched. Agent versions and custom Skill rows remain.
+func discardHostChanges(data snapshot) ([]hostChange, error) {
+	changes := []hostChange{}
+	for _, table := range hostTables() {
+		for _, source := range data[table] {
+			id := text(source, "id")
+			if id == "" {
+				continue
+			}
+			values := row{}
+			switch table {
+			case "chat_runtime_messages":
+				converted, err := convertMessageMetadata(source["metadata"], data, id)
+				if err != nil {
+					return nil, err
+				}
+				if digest(converted) != digest(source["metadata"]) {
+					values["metadata"] = converted
+				}
+			case "agents_configs":
+				converted, changed, err := scrubMachineJSON(source["agent_mode"])
+				if err != nil {
+					return nil, err
+				}
+				if changed {
+					values["agent_mode"] = converted
+				}
+			case "agent_published_versions":
+				converted, changed, err := scrubMachineJSON(source["config_snapshot"])
+				if err != nil {
+					return nil, err
+				}
+				if changed {
+					values["config_snapshot"] = converted
+				}
+			case "workflows", "workflow_runs":
+				converted, changed, err := scrubMachineJSON(source["graph"])
+				if err != nil {
+					return nil, err
+				}
+				if changed {
+					values["graph"] = converted
+				}
+			case "workflow_run_logs", "workflow_node_runtime_logs":
+				for _, column := range []string{"graph", "features", "execution_metadata"} {
+					converted, changed, err := scrubMachineJSON(source[column])
+					if err != nil {
+						return nil, err
+					}
+					if changed {
+						values[column] = converted
+					}
+				}
+			case "chat_runtime_conversations":
+				for _, column := range []string{"metadata", "selected_skill_ids"} {
+					converted, changed, err := scrubMachineJSON(source[column])
+					if err != nil {
+						return nil, err
+					}
+					if changed {
+						values[column] = converted
+					}
+				}
+			case "chat_runtime_organization_skill_configs", "chat_runtime_account_skill_preferences":
+				if text(source, "skill_id") == "external-apps" {
+					values["skill_id"] = "connector-runtime"
+				}
+			case "chat_runtime_custom_skills":
+				if hasRetiredExecutableReference(source["manifest"], 0) && text(source, "status") != "invalid" {
+					values["status"] = "invalid"
+					values["validation_error"] = "This Skill references a retired Connector protocol. Reimport it using native Connector operations."
+				}
+			case "agent_resource_bindings":
+				if text(source, "binding_type") == "integration_connection" {
+					changes = append(changes, hostChange{Table: table, ID: id, Remove: true})
+				}
+			}
+			if len(values) > 0 {
+				if _, err := uuid.Parse(id); err != nil {
+					return nil, fmt.Errorf("host discard requires a UUID identity")
+				}
+				changes = append(changes, hostChange{Table: table, ID: id, Values: values})
+			}
+		}
+	}
+	return changes, nil
+}
+
+func scrubMachineJSON(value any) (any, bool, error) {
+	if value == nil {
+		return value, false, nil
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil, false, err
+	}
+	var decoded any
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.UseNumber()
+	if err := decoder.Decode(&decoded); err != nil {
+		return nil, false, nil
+	}
+	changed := scrubMachineValue(decoded, 0)
+	if !changed {
+		return value, false, nil
+	}
+	if _, ok := value.(string); ok {
+		out, err := json.Marshal(decoded)
+		return string(out), true, err
+	}
+	return decoded, true, nil
+}
+
+func scrubMachineValue(value any, depth int) bool {
+	if depth > 48 {
+		return false
+	}
+	changed := false
+	if list, ok := value.([]any); ok {
+		for _, item := range list {
+			changed = scrubMachineValue(item, depth+1) || changed
+		}
+		return changed
+	}
+	data := object(value)
+	for key, child := range data {
+		switch key {
+		case "integration_bindings", "connector_bindings",
+			"native_external_action_candidates", "native_external_action_intents",
+			"native_external_preparation_hints", "native_external_action_optional_targets",
+			"_native_external_action_candidates", "_native_external_action_projections",
+			"_native_external_action_intent_matched", "_native_external_action_intent_keys",
+			"_native_external_action_intents", "_native_external_preparation_hints",
+			"_native_external_action_optional_targets":
+			delete(data, key)
+			changed = true
+		case "provider_type", "runtime_type":
+			if child == "external_integration" || child == "integration" {
+				delete(data, key)
+				changed = true
+			}
+		case "text", "content", "prompt", "instructions", "description", "arguments", "input", "output":
+			continue
+		default:
+			changed = scrubMachineValue(child, depth+1) || changed
+		}
+	}
+	return changed
+}
+
 func object(value any) row {
 	switch value := value.(type) {
 	case map[string]any:

@@ -103,6 +103,12 @@ type Options struct {
 	// API-owned retirement finalizer. It must name an exact applied migration ID,
 	// never a prefix or table. Empty keeps the original Plan behavior.
 	AdvancedCheckpoint string
+
+	// allowDiscardInspect is used only by the explicit discard maintenance
+	// command. It lets that command inventory a schema1 database whose
+	// readiness row is conversion_required without treating that state as a
+	// successful conversion.
+	allowDiscardInspect bool
 }
 
 func Plan(ctx context.Context, db *gorm.DB, options ...Options) (Report, error) {
@@ -151,8 +157,8 @@ func inspect(db *gorm.DB, option Options) (Report, snapshot, error) {
 		return r, nil, err
 	}
 	r.SchemaVersion, r.State = version.SchemaVersion, version.State
-	if version.SchemaVersion != 1 || version.State != "ready" {
-		return r, nil, fmt.Errorf("ready schema1 checkpoint required")
+	if err := validateSchema1Readiness(version.SchemaVersion, version.State, option.allowDiscardInspect); err != nil {
+		return r, nil, err
 	}
 	bytesRead := 0
 	if r.Source, err = readTables(db, RetiredTables(), data, &bytesRead); err != nil {
@@ -223,6 +229,16 @@ func inspect(db *gorm.DB, option Options) (Report, snapshot, error) {
 	}
 	r.seal()
 	return r, data, nil
+}
+
+func validateSchema1Readiness(schemaVersion int, state string, discard bool) error {
+	if schemaVersion == 1 && (state == "ready" || (discard && state == "conversion_required")) {
+		return nil
+	}
+	if discard {
+		return fmt.Errorf("Connector discard requires schema_version=1 and state=ready or conversion_required; found schema_version=%d state=%q", schemaVersion, state)
+	}
+	return fmt.Errorf("ready schema1 checkpoint required; found schema_version=%d state=%q (use connector-finalize discard for conversion_required)", schemaVersion, state)
 }
 
 func schemaObjects(db *gorm.DB) ([]row, error) {
