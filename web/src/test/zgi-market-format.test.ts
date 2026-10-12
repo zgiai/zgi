@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 
+// prettier-ignore
 // @ts-ignore Node's direct TypeScript runner requires an explicit extension.
-import { lowestPrice, marketAmount, marketText } from '../components/zgi-market/market-format.ts';
+import { lowestPrice, marketAmount, marketDate, marketDisplayPrice, marketExternalUrl, marketText } from '../components/zgi-market/market-format.ts';
+// prettier-ignore
+// @ts-ignore Node's direct TypeScript runner requires an explicit extension.
+import { marketApiQuickStart, marketGatewayOrigin, marketMcpClientConfig, marketMcpServerUrl } from '../components/zgi-market/market-usage.ts';
 
 const text = { 'zh-CN': '搜索', 'en-US': 'Search' };
 assert.equal(marketText(text, 'zh-Hans'), '搜索');
@@ -44,12 +48,77 @@ const price = (unit: number, per: number) => ({
   per_quantity: per,
   currency: 'PTS' as const,
 });
-const listing = (prices?: ReturnType<typeof price>[]) =>
+const listing = (prices?: Array<ReturnType<typeof price>>) =>
   ({ prices }) as unknown as Parameters<typeof lowestPrice>[0];
 assert.equal(lowestPrice(listing()), undefined);
 assert.equal(lowestPrice(listing([])), undefined);
 // The cheapest is judged per unit: 3000 per 1000 is cheaper than 5 per 1.
 assert.equal(lowestPrice(listing([price(5, 1), price(3000, 1000)]))?.unit_price_micros, 3000);
 assert.equal(lowestPrice(listing([price(0, 1), price(10, 1)]))?.unit_price_micros, 0);
+
+// A token price is read per million tokens; other meters keep the quantity of their row.
+assert.deepEqual(
+  marketDisplayPrice({
+    meter: 'token_input',
+    unit_price_micros: 3,
+    per_quantity: 1000,
+    currency: 'PTS',
+  }),
+  { meter: 'token_input', unit_price_micros: 3000, per_quantity: 1_000_000, currency: 'PTS' }
+);
+assert.equal(
+  marketDisplayPrice({
+    meter: 'request',
+    unit_price_micros: 2500,
+    per_quantity: 1,
+    currency: 'PTS',
+  }).per_quantity,
+  1
+);
+assert.equal(marketDate('not a date', 'en-US'), '');
+assert.equal(marketDate('2026-10-12T03:03:58Z', 'en-US').includes('2026'), true);
+// Only an absolute http(s) address becomes a link.
+assert.equal(marketExternalUrl('javascript:alert(1)'), undefined);
+assert.equal(marketExternalUrl('github.com/x/y'), undefined);
+assert.equal(marketExternalUrl('https://github.com/x/y'), 'https://github.com/x/y');
+
+// Usage samples: the gateway of this instance, or a placeholder that says it is one.
+assert.deepEqual(marketGatewayOrigin('https://market.example.com/'), {
+  origin: 'https://market.example.com',
+  configured: true,
+});
+assert.equal(marketGatewayOrigin('').configured, false);
+const origin = 'https://market.example.com';
+assert.equal(marketMcpServerUrl(origin, 'deepwiki'), `${origin}/v1/mcp/deepwiki`);
+assert.equal(marketMcpServerUrl(origin, 'Bad Slug"'), `${origin}/v1/mcp/<server>`);
+assert.equal(
+  JSON.parse(marketMcpClientConfig(origin, 'deepwiki')).mcpServers.deepwiki.type,
+  'http'
+);
+// An http offering shows its first reading operation; a model family shows its protocol's request.
+const declared = marketApiQuickStart(origin, {
+  slug: 'amap-standard',
+  protocol_family: 'http',
+  operations: [
+    { method: 'POST', path: '/v3/write' },
+    { method: 'GET', path: '/v3/geocode/geo' },
+  ],
+});
+assert.equal(declared.concrete, true);
+assert.equal(
+  declared.curl.startsWith(`curl "${origin}/v1/gateway/amap-standard/v3/geocode/geo"`),
+  true
+);
+const chat = marketApiQuickStart(origin, { slug: 'claude', protocol_family: 'anthropic_messages' });
+assert.equal(chat.needsModel, true);
+assert.equal(chat.curl.includes('/v1/gateway/claude/v1/messages'), true);
+// A path that could leave the quoted address is never put into a command.
+const unsafe = marketApiQuickStart(origin, {
+  slug: 'x',
+  protocol_family: 'http',
+  operations: [{ method: 'GET', path: '/a"; rm -rf /' }],
+});
+assert.equal(unsafe.concrete, false);
+assert.equal(unsafe.curl.includes('rm -rf'), false);
 
 console.log('zgi-market-format: ok');

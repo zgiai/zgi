@@ -1,5 +1,75 @@
 import type { MarketListing, MarketPrice, MarketText } from '@/services/types/zgi-market';
 
+/** The meters the market names today. A meter added later is shown by its identifier. */
+export const marketKnownMeters = [
+  'request',
+  'token_input',
+  'token_output',
+  'page',
+  'image',
+  'second',
+  'character',
+  'tool_call',
+  'install',
+] as const;
+export type MarketKnownMeter = (typeof marketKnownMeters)[number];
+
+export function knownMarketMeter(meter: string): MarketKnownMeter | undefined {
+  return marketKnownMeters.find(known => known === meter);
+}
+
+// Customers read a price per a round quantity, not per base unit: a million tokens, a thousand
+// characters. Every other meter is quoted for the quantity the price row names.
+const displayQuantity: Partial<Record<string, number>> = {
+  token_input: 1_000_000,
+  token_output: 1_000_000,
+  character: 1_000,
+};
+
+/**
+ * A price as a customer reads it: for the display quantity of its meter, rounded half up to a
+ * whole milli-point or micro. The arithmetic is BigInt, so no float ever holds money.
+ */
+export function marketDisplayPrice(price: MarketPrice): MarketPrice {
+  const quantity = displayQuantity[price.meter];
+  if (!quantity || price.per_quantity === quantity) {
+    return price;
+  }
+  const per = BigInt(price.per_quantity);
+  const two = BigInt(2);
+  const scaled = (BigInt(price.unit_price_micros) * BigInt(quantity) * two + per) / (per * two);
+  return { ...price, unit_price_micros: Number(scaled), per_quantity: quantity };
+}
+
+/** A date of the market as a calendar day in the reader's language; empty when it is not a date. */
+export function marketDate(value: string | null | undefined, locale: string): string {
+  if (!value) {
+    return '';
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  return new Intl.DateTimeFormat(locale.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  }).format(date);
+}
+
+/** An address the page may link to: an absolute http(s) URL and nothing else. */
+export function marketExternalUrl(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.toString() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** The text of the market in the reader's language, or the other one when it is empty. */
 export function marketText(text: MarketText | undefined, locale: string): string {
   if (!text) {

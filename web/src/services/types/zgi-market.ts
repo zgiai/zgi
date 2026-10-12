@@ -57,20 +57,76 @@ export interface MarketTool {
   risk_level: 'read' | 'write' | 'destructive';
 }
 
+/** Where a listing comes from and under which terms; every member may be empty. */
+export interface MarketListingDetail {
+  body: MarketText;
+  origin_url?: string;
+  source_repository?: string;
+  source_revision?: string;
+  license?: string;
+  review_status?: string;
+}
+
+/** A listing a plugin bundles, when it is published in this market. */
+export interface MarketPluginMember {
+  kind: MarketListingKind;
+  slug: string;
+  listing_id?: number;
+  offering_slug?: string;
+  title?: MarketText;
+}
+
+/** What a plugin listing packages. */
+export interface MarketPluginSummary {
+  manifest?: {
+    name?: string;
+    version?: string;
+    description?: string;
+    author?: string;
+    formats?: string[];
+  };
+  components?: Partial<Record<'skills' | 'commands' | 'agents' | 'mcp_servers' | 'hooks', number>>;
+  has_package?: boolean;
+  requirements?: string[];
+  members?: MarketPluginMember[];
+}
+
+/** How a connector listing authenticates and which listings act through it. */
+export interface MarketConnectorSummary {
+  auth_type: string;
+  used_by?: Array<{
+    kind: MarketListingKind;
+    slug: string;
+    title?: MarketText;
+    tools?: MarketTool[];
+  }>;
+}
+
 export interface MarketListing {
   id: number;
   kind: MarketListingKind;
   slug: string;
   primary_category: MarketCategoryRef | null;
+  secondary_categories?: MarketCategoryRef[];
   tags: string[];
   card: { title: MarketText; subtitle: MarketText; description: MarketText; badges: string[] };
-  detail: { body: MarketText; origin_url?: string };
+  detail: MarketListingDetail;
   offerings: MarketOffering[];
   prices?: MarketPrice[];
   mcp?: { tools: MarketTool[] } | null;
+  plugin?: MarketPluginSummary | null;
+  connector?: MarketConnectorSummary | null;
   required_connectors?: MarketRequiredConnector[];
-  current_version?: { label: string; published_at: string } | null;
+  current_version?: { version_no?: number; label: string; published_at: string } | null;
   published_at?: string | null;
+}
+
+/** What this instance tells a market page beside the market's own answers. */
+export interface MarketMeta {
+  /** The public origin of the market gateway; empty when this instance names none. */
+  gateway_url: string;
+  /** Whether the caller administers the organization. */
+  admin: boolean;
 }
 
 export interface MarketPageMeta {

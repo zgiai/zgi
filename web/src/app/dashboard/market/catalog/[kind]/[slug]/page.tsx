@@ -1,58 +1,55 @@
 'use client';
 
-import { use, useState } from 'react';
+import { use, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Check } from 'lucide-react';
 import { toast } from 'sonner';
-import MarkdownViewer from '@/components/common/markdown-viewer';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import MarketEmptyState from '@/components/market/market-empty-state';
-import { marketAmount, marketText } from '@/components/zgi-market/market-format';
+import { MarketKindIcon } from '@/components/zgi-market/market-kind-icon';
+import { marketGatewayOrigin } from '@/components/zgi-market/market-usage';
+import { useMarketLabels } from '@/components/zgi-market/use-market-labels';
+import { ZgiMarketApiSection } from '@/components/zgi-market/zgi-market-api-section';
+import { ZgiMarketListingPanel } from '@/components/zgi-market/zgi-market-listing-panel';
+import { ZgiMarketOverview } from '@/components/zgi-market/zgi-market-overview';
+import { ZgiMarketPricingTable } from '@/components/zgi-market/zgi-market-pricing-table';
 import { ZgiMarketRequiredConnectors } from '@/components/zgi-market/zgi-market-required-connectors';
-import { useLocale } from '@/hooks/use-locale';
+import { ZgiMarketUsageGuide } from '@/components/zgi-market/zgi-market-usage-guide';
 import {
   useActivateZgiMarketListing,
   useInstallZgiMarketSkill,
   useZgiMarketInstalledSkills,
   useZgiMarketListing,
+  useZgiMarketMeta,
   useZgiMarketSubscriptions,
 } from '@/hooks/use-zgi-market';
-import { useT } from '@/i18n';
 import {
   marketListingKinds,
   type MarketListingKind,
   type MarketOffering,
+  type MarketRequiredConnector,
 } from '@/services/types/zgi-market';
 
 interface PageProps {
   params: Promise<{ kind: string; slug: string }>;
 }
 
-// The meters the market names today. A meter added later is shown by its identifier.
-const knownMeters = [
-  'request',
-  'token_input',
-  'token_output',
-  'page',
-  'image',
-  'second',
-  'character',
-  'tool_call',
-  'install',
-] as const;
+type DetailTab = 'overview' | 'api' | 'pricing' | 'usage';
 
-function Schema({ label, schema }: { label: string; schema: Record<string, unknown> }) {
+/** Whether a failed read says the listing does not exist, rather than that the market failed. */
+function isNotFound(error: unknown): boolean {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+  const candidate = error as { status?: unknown; code?: unknown; response?: { status?: unknown } };
   return (
-    <figure className="overflow-hidden rounded-md border bg-muted/40">
-      <figcaption className="border-b bg-muted/60 px-3 py-1.5 text-xs font-medium text-muted-foreground">
-        {label}
-      </figcaption>
-      <pre className="max-h-72 overflow-auto p-3 text-xs leading-relaxed">
-        <code className="font-mono">{JSON.stringify(schema, null, 2)}</code>
-      </pre>
-    </figure>
+    candidate.status === 404 ||
+    candidate.response?.status === 404 ||
+    candidate.code === 404 ||
+    candidate.code === '404'
   );
 }
 
@@ -61,20 +58,30 @@ export default function ZgiMarketListingPage({ params }: PageProps) {
   const kind = (marketListingKinds as readonly string[]).includes(rawKind)
     ? (rawKind as MarketListingKind)
     : undefined;
-  const t = useT();
-  const { locale } = useLocale();
+  const { t, text } = useMarketLabels();
   const listing = useZgiMarketListing(kind, slug);
+  const meta = useZgiMarketMeta();
   const subscriptions = useZgiMarketSubscriptions();
   const activate = useActivateZgiMarketListing();
   const installedSkills = useZgiMarketInstalledSkills(kind === 'skill');
   const install = useInstallZgiMarketSkill();
   // The organization's own skill a package would replace; the administrator decides.
   const [conflict, setConflict] = useState<string | null>(null);
+  const [tab, setTab] = useState<DetailTab>('overview');
+
+  const activeSubscriptions = useMemo(
+    () => (subscriptions.data ?? []).filter(subscription => subscription.status === 'active'),
+    [subscriptions.data]
+  );
+  const activatedIds = useMemo(
+    () => new Set(activeSubscriptions.map(subscription => subscription.listing_id)),
+    [activeSubscriptions]
+  );
 
   const back = (
     <Link
       href="/dashboard/market/catalog"
-      className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+      className="inline-flex w-fit items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
     >
       <ArrowLeft className="size-4" aria-hidden="true" />
       {t('market.catalog.back')}
@@ -82,36 +89,63 @@ export default function ZgiMarketListingPage({ params }: PageProps) {
   );
 
   if (!kind || listing.isError) {
+    const missing = !kind || isNotFound(listing.error);
     return (
       <div className="flex h-full flex-col overflow-y-auto px-6 py-5">
         {back}
         <MarketEmptyState
-          title={t('market.catalog.notFound')}
-          actionLabel={kind ? t('market.catalog.retry') : undefined}
-          onAction={kind ? () => void listing.refetch() : undefined}
+          title={
+            missing
+              ? t('market.catalog.detail.errors.notFoundTitle')
+              : t('market.catalog.detail.errors.loadFailedTitle')
+          }
+          actionLabel={missing ? undefined : t('market.catalog.retry')}
+          onAction={missing ? undefined : () => void listing.refetch()}
         />
+        <p className="-mt-10 pb-10 text-center text-sm text-muted-foreground" role="status">
+          {!kind
+            ? t('market.catalog.detail.errors.unknownKind')
+            : missing
+              ? t('market.catalog.detail.errors.notFoundDescription')
+              : t('market.catalog.detail.errors.loadFailedDescription')}
+        </p>
       </div>
     );
   }
   if (listing.isPending) {
     return (
-      <div className="flex h-full flex-col gap-4 overflow-y-auto px-6 py-5">
+      <div className="flex h-full flex-col gap-6 overflow-y-auto px-6 py-5">
         {back}
-        <Skeleton className="h-8 w-72" />
-        <Skeleton className="h-24 w-full max-w-3xl" />
-        <Skeleton className="h-48 w-full max-w-3xl" />
+        <div className="flex gap-4">
+          <Skeleton className="size-14 rounded-xl" />
+          <div className="flex flex-1 flex-col gap-2">
+            <Skeleton className="h-8 w-72 max-w-full" />
+            <Skeleton className="h-4 w-full max-w-xl" />
+          </div>
+        </div>
+        <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_20rem]">
+          <Skeleton className="h-96 w-full" />
+          <Skeleton className="h-72 w-full" />
+        </div>
       </div>
     );
   }
 
   const data = listing.data;
-  const title = marketText(data.card.title, locale) || data.slug;
-  const body = marketText(data.detail.body, locale);
-  const active = (subscriptions.data ?? []).filter(
-    subscription => subscription.status === 'active' && subscription.listing_id === data.id
-  );
+  const title = text(data.card.title) || data.slug;
+  const subtitle = text(data.card.subtitle);
+  const description = text(data.card.description);
+  // A member who does not administer the organization reads everything and changes nothing. Until
+  // the role is known the actions stay available: the market itself refuses a member's write.
+  const canAct = meta.data?.admin !== false;
+  const gateway = marketGatewayOrigin(meta.data?.gateway_url);
+
   const isActivated = (offering?: MarketOffering) =>
-    active.some(subscription => !offering || subscription.offering_id === offering.id);
+    activeSubscriptions.some(
+      subscription =>
+        subscription.listing_id === data.id &&
+        (!offering || subscription.offering_id === offering.id)
+    );
   const run = (offering?: MarketOffering) =>
     activate.mutate(
       { listingId: data.id, ...(offering ? { offeringId: offering.id } : {}) },
@@ -120,25 +154,6 @@ export default function ZgiMarketListingPage({ params }: PageProps) {
         onError: () => toast.error(t('market.catalog.activateFailed')),
       }
     );
-  const pricesOf = (offering: MarketOffering) =>
-    (data.prices ?? []).filter(price => price.offering_slug === offering.slug);
-  const listingPrices = (data.prices ?? []).filter(price => !price.offering_slug);
-  const priceText = (price: (typeof listingPrices)[number]) => {
-    if (price.unit_price_micros === 0) {
-      return t('market.catalog.free');
-    }
-    const { amount, unit } = marketAmount(price);
-    const known = knownMeters.find(meter => meter === price.meter);
-    return t(`market.catalog.price.${unit}`, {
-      amount,
-      quantity: price.per_quantity,
-      meter: known ? t(`market.catalog.meters.${known}`) : price.meter,
-    });
-  };
-  // A connector is connected, not activated, and an API is activated per offering. A skill is
-  // installed: the market activates it and its package becomes a skill of the organization.
-  const installs = data.kind === 'skill';
-  const activatesWhole = data.kind !== 'api' && data.kind !== 'connector' && !installs;
   const installedSkill = (installedSkills.data ?? []).find(skill => skill.slug === data.slug);
   const installSkill = (overwrite = false) =>
     install.mutate(
@@ -152,9 +167,7 @@ export default function ZgiMarketListingPage({ params }: PageProps) {
             setConflict(result.conflict);
           } else {
             toast.error(
-              t('market.catalog.installRefused', {
-                reason: result.validation_errors?.[0] ?? '',
-              })
+              t('market.catalog.installRefused', { reason: result.validation_errors?.[0] ?? '' })
             );
           }
         },
@@ -162,203 +175,242 @@ export default function ZgiMarketListingPage({ params }: PageProps) {
       }
     );
 
-  return (
-    <div className="flex h-full flex-col overflow-y-auto px-6 py-5">
-      {back}
-      <header className="mt-4 flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="break-words text-2xl font-semibold">{title}</h1>
-            <Badge variant="secondary">{t(`market.catalog.kinds.${data.kind}`)}</Badge>
-            {data.current_version?.label ? (
-              <Badge variant="outline">{data.current_version.label}</Badge>
-            ) : null}
-          </div>
-          <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
-            {marketText(data.card.description, locale)}
-          </p>
-          {data.tags.length > 0 ? (
-            <div className="mt-3 flex flex-wrap gap-1.5">
-              {data.tags.map(tag => (
-                <Badge key={tag} variant="subtle">
-                  {tag}
-                </Badge>
-              ))}
-            </div>
-          ) : null}
-        </div>
-        {installs ? (
-          <div className="flex max-w-xs flex-col items-end gap-1.5 text-right">
-            {installedSkill ? (
-              <>
-                <Badge variant="success" className="gap-1">
-                  <Check className="size-3.5" aria-hidden="true" />
-                  {installedSkill.version
-                    ? t('market.catalog.installedVersion', { version: installedSkill.version })
-                    : t('market.catalog.installed')}
-                </Badge>
-                <Link href="/console/skills" className="text-xs text-primary hover:underline">
-                  {t('market.catalog.manageSkills')}
-                </Link>
-              </>
-            ) : (
-              <Button
-                disabled={install.isPending || installedSkills.isPending}
-                onClick={() => installSkill()}
-              >
-                {t('market.catalog.install')}
-              </Button>
-            )}
-            {listingPrices.map(price => (
-              <span key={price.meter} className="text-xs text-muted-foreground">
-                {priceText(price)}
-              </span>
-            ))}
-            <p className="text-xs text-muted-foreground">{t('market.catalog.installHint')}</p>
-            {conflict ? (
-              <div role="alert" className="rounded-md border border-destructive/40 p-2 text-left">
-                <p className="text-xs text-destructive">
-                  {t('market.catalog.installConflict', { name: conflict })}
-                </p>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="mt-2"
-                  disabled={install.isPending}
-                  onClick={() => installSkill(true)}
-                >
-                  {t('market.catalog.installOverwrite')}
-                </Button>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-        {activatesWhole ? (
-          <div className="flex flex-col items-end gap-1">
-            {isActivated() ? (
-              <Badge variant="success" className="gap-1">
-                <Check className="size-3.5" aria-hidden="true" />
-                {t('market.catalog.activated')}
-              </Badge>
-            ) : (
-              <Button disabled={activate.isPending} onClick={() => run()}>
-                {t('market.catalog.activate')}
-              </Button>
-            )}
-            {listingPrices.map(price => (
-              <span key={price.meter} className="text-xs text-muted-foreground">
-                {priceText(price)}
-              </span>
-            ))}
-          </div>
-        ) : null}
-      </header>
+  const done = (label: string) => (
+    <p className="flex h-10 items-center justify-center gap-1.5 rounded-md bg-success/10 text-sm font-medium text-success">
+      <Check className="size-4" aria-hidden="true" />
+      {label}
+    </p>
+  );
+  const hint = (value: string) => (
+    <p className="text-xs leading-5 text-muted-foreground">{value}</p>
+  );
+  const adminOnly = hint(t('market.catalog.detail.panel.adminOnly'));
 
-      {data.offerings.length > 0 ? (
-        <section className="mt-8 max-w-4xl" aria-labelledby="zgi-market-offerings">
-          <h2 id="zgi-market-offerings" className="text-base font-semibold">
-            {t('market.catalog.offerings')}
-          </h2>
-          <ul className="mt-3 flex flex-col gap-4">
-            {data.offerings.map(offering => (
-              <li key={offering.id} className="rounded-lg border p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="break-all font-mono text-sm font-medium">{offering.slug}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {[offering.provider, offering.tier, offering.protocol_family]
-                        .filter(Boolean)
-                        .join(' · ')}
-                    </p>
-                    <ul className="mt-2 flex flex-col gap-0.5 text-xs text-muted-foreground">
-                      {pricesOf(offering).map(price => (
-                        <li key={price.meter}>{priceText(price)}</li>
-                      ))}
-                    </ul>
-                  </div>
-                  {data.kind === 'api' ? (
-                    isActivated(offering) ? (
-                      <Badge variant="success" className="gap-1">
-                        <Check className="size-3.5" aria-hidden="true" />
-                        {t('market.catalog.activated')}
-                      </Badge>
-                    ) : (
-                      <Button size="sm" disabled={activate.isPending} onClick={() => run(offering)}>
-                        {t('market.catalog.activate')}
-                      </Button>
-                    )
-                  ) : null}
-                </div>
-                {(offering.operations ?? []).length > 0 ? (
-                  <div className="mt-4 flex flex-col gap-3">
-                    {(offering.operations ?? []).map(operation => (
-                      <div
-                        key={`${operation.method} ${operation.path}`}
-                        className="flex flex-col gap-2"
-                      >
-                        <p className="font-mono text-xs">
-                          <span className="font-semibold">{operation.method}</span> {operation.path}
-                        </p>
-                        {operation.input_schema ? (
-                          <Schema
-                            label={t('market.catalog.inputSchema')}
-                            schema={operation.input_schema}
-                          />
-                        ) : null}
-                        {operation.output_schema ? (
-                          <Schema
-                            label={t('market.catalog.outputSchema')}
-                            schema={operation.output_schema}
-                          />
-                        ) : null}
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-
+  // A connector is connected, an API is activated per offering, a skill is installed: the market
+  // activates it and its package becomes a skill of the organization. Everything else is activated
+  // as a whole.
+  let action: React.ReactNode;
+  let actionNote: React.ReactNode = null;
+  const selfConnector: MarketRequiredConnector[] =
+    data.kind === 'connector'
+      ? [{ slug: data.slug, auth_type: data.connector?.auth_type ?? '', title: data.card.title }]
+      : [];
+  if (data.kind === 'connector') {
+    action = (
       <ZgiMarketRequiredConnectors
         kind={data.kind}
         slug={data.slug}
-        connectors={data.required_connectors ?? []}
+        connectors={selfConnector}
+        canConnect={canAct}
+        embedded
       />
+    );
+    actionNote = canAct ? hint(t('market.catalog.detail.panel.connectorHint')) : adminOnly;
+  } else if (data.kind === 'skill') {
+    action = installedSkill ? (
+      done(
+        installedSkill.version
+          ? t('market.catalog.installedVersion', { version: installedSkill.version })
+          : t('market.catalog.installed')
+      )
+    ) : canAct ? (
+      <Button
+        className="w-full"
+        disabled={install.isPending || installedSkills.isPending}
+        onClick={() => installSkill()}
+      >
+        {t('market.catalog.install')}
+      </Button>
+    ) : null;
+    actionNote = (
+      <>
+        {installedSkill ? (
+          <Link href="/console/skills" className="text-sm text-primary hover:underline">
+            {t('market.catalog.manageSkills')}
+          </Link>
+        ) : canAct ? (
+          hint(t('market.catalog.installHint'))
+        ) : (
+          adminOnly
+        )}
+        {conflict ? (
+          <div role="alert" className="rounded-md border border-destructive/40 p-3">
+            <p className="text-xs leading-5 text-destructive">
+              {t('market.catalog.installConflict', { name: conflict })}
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              className="mt-2"
+              disabled={install.isPending}
+              onClick={() => installSkill(true)}
+            >
+              {t('market.catalog.installOverwrite')}
+            </Button>
+          </div>
+        ) : null}
+      </>
+    );
+  } else if (data.kind === 'api') {
+    const activatedCount = data.offerings.filter(offering => isActivated(offering)).length;
+    const only = data.offerings.length === 1 ? data.offerings[0] : undefined;
+    if (only) {
+      action = isActivated(only) ? (
+        done(t('market.catalog.activated'))
+      ) : canAct ? (
+        <Button className="w-full" disabled={activate.isPending} onClick={() => run(only)}>
+          {t('market.catalog.activate')}
+        </Button>
+      ) : null;
+      actionNote = canAct ? null : adminOnly;
+    } else {
+      action = (
+        <>
+          {activatedCount > 0
+            ? done(
+                t('market.catalog.detail.panel.activatedOfferings', {
+                  count: activatedCount,
+                  total: data.offerings.length,
+                })
+              )
+            : null}
+          {activatedCount < data.offerings.length ? (
+            <Button
+              className="w-full"
+              variant={activatedCount > 0 ? 'outline' : 'default'}
+              onClick={() => setTab('api')}
+            >
+              {t('market.catalog.detail.panel.chooseOffering')}
+            </Button>
+          ) : null}
+        </>
+      );
+      actionNote = canAct ? hint(t('market.catalog.detail.panel.perOffering')) : adminOnly;
+    }
+  } else {
+    action = isActivated() ? (
+      done(t('market.catalog.activated'))
+    ) : canAct ? (
+      <Button className="w-full" disabled={activate.isPending} onClick={() => run()}>
+        {t('market.catalog.activate')}
+      </Button>
+    ) : null;
+    actionNote = !canAct
+      ? adminOnly
+      : data.kind === 'mcp'
+        ? hint(t('market.catalog.detail.panel.mcpHint'))
+        : data.kind === 'plugin'
+          ? hint(t('market.catalog.detail.panel.pluginHint'))
+          : null;
+  }
 
-      {data.mcp && data.mcp.tools.length > 0 ? (
-        <section className="mt-8 max-w-4xl" aria-labelledby="zgi-market-tools">
-          <h2 id="zgi-market-tools" className="text-base font-semibold">
-            {t('market.catalog.tools')}
-          </h2>
-          <ul className="mt-3 divide-y rounded-lg border">
-            {data.mcp.tools.map(tool => (
-              <li key={tool.name} className="flex flex-wrap items-start justify-between gap-3 p-3">
-                <div className="min-w-0">
-                  <p className="font-mono text-sm">{tool.name}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {marketText(tool.description, locale)}
-                  </p>
-                </div>
-                <Badge variant={tool.risk_level === 'read' ? 'subtle' : 'warning'}>
-                  {t(`market.catalog.risk.${tool.risk_level}`)}
+  const requiredConnectors = data.kind === 'connector' ? [] : (data.required_connectors ?? []);
+  const provider = [...new Set(data.offerings.map(offering => offering.provider).filter(Boolean))];
+  const author = data.plugin?.manifest?.author;
+  const byline = provider.length > 0 ? provider.join(' · ') : author;
+
+  return (
+    <div className="flex h-full flex-col overflow-y-auto px-4 py-5 sm:px-6">
+      {back}
+      <header className="mt-4 flex gap-4">
+        <MarketKindIcon kind={data.kind} size="lg" />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            <h1 className="min-w-0 break-words text-2xl font-semibold leading-tight">{title}</h1>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Badge variant="secondary">{t(`market.catalog.kinds.${data.kind}`)}</Badge>
+              {data.current_version?.label ? (
+                <Badge variant="outline">{data.current_version.label}</Badge>
+              ) : null}
+              {data.card.badges.map(badge => (
+                <Badge key={badge} variant="info">
+                  {badge}
                 </Badge>
-              </li>
+              ))}
+            </div>
+          </div>
+          {subtitle ? <p className="mt-1.5 text-sm font-medium">{subtitle}</p> : null}
+          {description && description !== subtitle ? (
+            <p className="mt-1.5 max-w-3xl text-sm leading-6 text-muted-foreground">
+              {description}
+            </p>
+          ) : null}
+          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
+            {byline ? (
+              <span>{t('market.catalog.detail.providedBy', { provider: byline })}</span>
+            ) : null}
+            {data.primary_category ? <span>{text(data.primary_category.name)}</span> : null}
+            {data.tags.map(tag => (
+              <Badge key={tag} variant="subtle">
+                {tag}
+              </Badge>
             ))}
-          </ul>
-        </section>
-      ) : null}
+          </div>
+        </div>
+      </header>
 
-      {body ? (
-        <section className="mt-8 max-w-4xl" aria-labelledby="zgi-market-about">
-          <h2 id="zgi-market-about" className="text-base font-semibold">
-            {t('market.catalog.about')}
-          </h2>
-          {/* The body is written by whoever published the listing: raw HTML is never rendered. */}
-          <MarkdownViewer content={body} allowRawHtml={false} className="mt-3" />
-        </section>
-      ) : null}
+      <div className="mt-6 grid items-start gap-6 pb-8 lg:grid-cols-[minmax(0,1fr)_20rem] lg:gap-8">
+        <div className="order-last min-w-0 lg:order-none">
+          <Tabs value={tab} onValueChange={value => setTab(value as DetailTab)}>
+            <TabsList className="h-auto max-w-full flex-wrap justify-start">
+              <TabsTrigger value="overview">{t('market.catalog.detail.tabs.overview')}</TabsTrigger>
+              {data.kind === 'api' ? (
+                <TabsTrigger value="api">
+                  {t('market.catalog.detail.tabs.api')}
+                  <span className="ml-1.5 text-xs text-muted-foreground">
+                    {data.offerings.length}
+                  </span>
+                </TabsTrigger>
+              ) : null}
+              {data.kind === 'connector' ? null : (
+                <TabsTrigger value="pricing">{t('market.catalog.detail.tabs.pricing')}</TabsTrigger>
+              )}
+              <TabsTrigger value="usage">{t('market.catalog.detail.tabs.usage')}</TabsTrigger>
+            </TabsList>
+            <TabsContent value="overview" className="mt-5">
+              <ZgiMarketOverview listing={data} activatedIds={activatedIds} />
+            </TabsContent>
+            {data.kind === 'api' ? (
+              <TabsContent value="api" className="mt-5">
+                <ZgiMarketApiSection
+                  listing={data}
+                  gatewayOrigin={gateway.origin}
+                  isActivated={isActivated}
+                  onActivate={canAct ? run : undefined}
+                  activating={activate.isPending}
+                />
+              </TabsContent>
+            ) : null}
+            {data.kind === 'connector' ? null : (
+              <TabsContent value="pricing" className="mt-5">
+                <ZgiMarketPricingTable listing={data} />
+              </TabsContent>
+            )}
+            <TabsContent value="usage" className="mt-5">
+              <ZgiMarketUsageGuide listing={data} gateway={gateway} />
+            </TabsContent>
+          </Tabs>
+        </div>
+
+        <ZgiMarketListingPanel listing={data} action={action}>
+          {actionNote}
+          {requiredConnectors.length > 0 ? (
+            <div className="flex flex-col gap-2 border-t pt-4">
+              <h2 className="text-sm font-semibold">{t('market.catalog.connectors.title')}</h2>
+              <p className="text-xs leading-5 text-muted-foreground">
+                {t('market.catalog.connectors.description')}
+              </p>
+              <ZgiMarketRequiredConnectors
+                kind={data.kind}
+                slug={data.slug}
+                connectors={requiredConnectors}
+                canConnect={canAct}
+                embedded
+              />
+            </div>
+          ) : null}
+        </ZgiMarketListingPanel>
+      </div>
     </div>
   );
 }

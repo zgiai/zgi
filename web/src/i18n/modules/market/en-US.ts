@@ -25,7 +25,8 @@ const messages = {
     installDone: 'The skill is installed and can be bound to agents and digital humans.',
     installFailed: 'Could not install. Check the organization balance and try again.',
     installRefused: 'The skill package did not pass the import checks: {reason}',
-    installConflict: 'The organization already has a skill named "{name}" that was not installed from this listing.',
+    installConflict:
+      'The organization already has a skill named "{name}" that was not installed from this listing.',
     installOverwrite: 'Replace and install',
     installHint: 'After installing, bind it in the skill settings of an agent or a digital human.',
     manageSkills: 'Manage organization skills',
@@ -59,9 +60,165 @@ const messages = {
     inputSchema: 'Input schema',
     outputSchema: 'Output schema',
     risk: { read: 'Reads', write: 'Writes', destructive: 'Destructive' },
+    detail: {
+      tabs: {
+        overview: 'Overview',
+        api: 'API',
+        tools: 'Tools',
+        pricing: 'Pricing',
+        usage: 'How to use',
+      },
+      providedBy: 'Provided by {provider}',
+      updatedOn: 'Published {date}',
+      panel: {
+        from: 'from',
+        priceUnknown: 'No price published',
+        adminOnly:
+          'Only an organization administrator can activate, install, and connect. Ask an administrator.',
+        perOffering: 'Activated per offering; choose one under API.',
+        activatedOfferings: '{count} of {total} offerings activated',
+        chooseOffering: 'Choose an offering',
+        connectorHint: 'Once connected, pick this connection when binding an MCP server.',
+        pluginHint: 'After activation, install or bind its skills and MCP servers one by one.',
+        mcpHint: 'After activation, bind it to agents and digital humans; each call is billed.',
+        facts: 'Details',
+        kind: 'Kind',
+        version: 'Version',
+        published: 'Published',
+        category: 'Category',
+        provider: 'Provider',
+        meters: 'Meters',
+        license: 'License',
+        source: 'Source',
+        repository: 'Repository',
+        review: 'Review',
+        reviewStatus: {
+          unreviewed: 'Not reviewed',
+          pending_review: 'In review',
+          reviewed: 'Reviewed',
+          verified: 'Verified',
+        },
+        author: 'Author',
+        slug: 'Identifier',
+      },
+      overview: {
+        empty: 'The publisher has not written more about this listing.',
+        toolsTitle: 'Tools',
+        toolCount: '{count} tools',
+      },
+      api: {
+        offeringCount: '{count} offerings',
+        operationCount: '{count} operations',
+        noOperations:
+          'This offering forwards the vendor protocol unchanged and declares no single operations.',
+        protocol: 'Protocol',
+        baseUrl: 'Base URL',
+        meters: 'Metered by',
+        showSchema: 'Show input and output',
+        hideSchema: 'Hide input and output',
+        noSchema: 'No schema declared',
+        protocols: {
+          http: 'HTTP',
+          openai_chat: 'OpenAI chat protocol',
+          openai_embeddings: 'OpenAI embeddings protocol',
+          openai_rerank: 'OpenAI rerank protocol',
+          anthropic_messages: 'Anthropic Messages protocol',
+        },
+      },
+      pricing: {
+        title: 'Pricing',
+        note: 'A successful call is charged to the organization balance as below; a failed call is not charged.',
+        offering: 'Offering',
+        meter: 'Meter',
+        price: 'Price',
+        wholeListing: 'Whole listing',
+        perUnit: 'per {quantity} {meter}',
+        points: '{amount} pts',
+        yuan: '¥{amount}',
+        empty: 'No price has been published for this listing.',
+      },
+      usage: {
+        copy: 'Copy',
+        copied: 'Copied',
+        copyFailed: 'Could not copy; select the text instead.',
+        placeholder:
+          'This instance has no market gateway address configured; {origin} in the examples is a placeholder. Ask an administrator for the real address.',
+        credential:
+          "The examples read the organization's market credential from {env}. Never put a credential in code or commit it.",
+        stepActivate: 'Activate',
+        stepActivateApi: 'Under API, activate the offering the organization will call.',
+        stepActivateMcp: 'Activate this MCP server for the organization in the side panel.',
+        stepConnect: 'Complete the required connections',
+        stepConnectBody:
+          "This listing calls the vendor with the organization's own account; authorize it in the side panel first.",
+        stepCall: 'Call it',
+        stepCallBody:
+          'Send the request to the market gateway; path and body follow the vendor protocol.',
+        requestExample: 'Example request',
+        modelNote: 'Replace {placeholder} with a model this offering serves.',
+        genericNote:
+          'The catalog declares no single operation; take the path and body from the vendor documentation.',
+        otherOfferings:
+          'The example uses the offering {offering}; for another one, replace the offering in the address.',
+        inZgi: 'Use it in ZGI',
+        inZgiMcp:
+          'After activation, tick it under "ZGI Market tools" of an agent or a digital human. ZGI calls it for you; you keep no credential.',
+        openAgents: 'Open agents',
+        openDigitalHumans: 'Open digital humans',
+        external: 'Use it from an external client',
+        externalBody: 'A client that speaks MCP can connect to this server on the market gateway.',
+        serverUrl: 'Server URL',
+        clientConfig: 'Client configuration',
+        toolsExample: 'List the tools',
+        skillInstall: 'Install to the organization',
+        skillInstallBody:
+          'Install it in the side panel. The package becomes a skill of the organization and is switched on.',
+        skillBind: 'Bind it to an agent or a digital human',
+        skillBindBody:
+          'Tick it in the skill settings of an agent or a digital human to use it in a conversation.',
+        openSkills: 'Manage organization skills',
+        pluginBody:
+          'A plugin bundles skills and MCP servers. After activation, install or bind them one by one from the contents under Overview.',
+        connectorBody:
+          "A connection keeps the organization's authorization at the vendor. Once connected, pick it when binding an MCP server that depends on it.",
+        datasetBody:
+          'An activated dataset is downloaded through the market API; this instance offers no direct way to use it yet.',
+      },
+      plugin: {
+        title: 'Contents',
+        components: {
+          skills: 'Skills',
+          commands: 'Commands',
+          agents: 'Agents',
+          mcp_servers: 'MCP servers',
+          hooks: 'Hooks',
+        },
+        formats: 'Formats',
+        members: 'Members available in this market',
+        noMembers:
+          'Its members are not listed on their own; they come with the plugin package after activation.',
+        requirements: 'Requirements',
+      },
+      connector: {
+        authTitle: 'Authorization',
+        auth: { oauth2: 'OAuth authorization', api_key: 'Key', none: 'No authorization' },
+        usedBy: 'Listings that act through this connection',
+        noUsedBy: 'No listing depends on this connection yet.',
+      },
+      related: { title: 'More in this category' },
+      errors: {
+        notFoundTitle: 'This listing was not found',
+        notFoundDescription:
+          'It may have been delisted, or it is outside the scope of this market.',
+        loadFailedTitle: 'The listing could not be loaded',
+        loadFailedDescription: 'The market did not answer. Try again in a moment.',
+        unknownKind: 'The address names a listing kind that does not exist.',
+      },
+    },
     connectors: {
       title: 'Required connections',
-      description: 'This MCP server calls the vendor with the organization\'s own account. Authorize it first.',
+      description:
+        "This MCP server calls the vendor with the organization's own account. Authorize it first.",
       connected: 'Connected',
       connect: 'Connect',
       connecting: 'Opening the authorization…',
@@ -78,10 +235,12 @@ const messages = {
   },
   tools: {
     title: 'ZGI Market tools',
-    description: 'Bind MCP servers the organization activated. Every call is billed in points; tools that write need a person to approve.',
+    description:
+      'Bind MCP servers the organization activated. Every call is billed in points; tools that write need a person to approve.',
     empty: 'The organization has not activated an MCP server yet.',
     browse: 'Browse the market',
-    gatewayMissing: 'No ZGI Market gateway is configured on this instance. The binding is saved, but the tools cannot be called.',
+    gatewayMissing:
+      'No ZGI Market gateway is configured on this instance. The binding is saved, but the tools cannot be called.',
     connection: 'Connection',
     connectionPlaceholder: 'Choose a connection',
     noConnection: 'No connection yet. Connect it on the listing page first.',
@@ -189,8 +348,7 @@ const messages = {
       title: 'Publish plugin',
       description:
         'Plugin publishing requests are handled by the storefront flow and do not depend on a console-configured target URL.',
-      hint:
-        'This entry is only controlled by the console visibility switch. Package upload, developer information, and review submission can be connected here later.',
+      hint: 'This entry is only controlled by the console visibility switch. Package upload, developer information, and review submission can be connected here later.',
       close: 'Got it',
     },
   },

@@ -12,6 +12,7 @@ const keys = {
   listings: (query: MarketListingQuery) => ['zgi-market', 'listings', query] as const,
   listing: (kind: string, slug: string) => ['zgi-market', 'listing', kind, slug] as const,
   subscriptions: ['zgi-market', 'subscriptions'] as const,
+  meta: ['zgi-market', 'meta'] as const,
   installedSkills: ['zgi-market', 'installed-skills'] as const,
   connections: ['zgi-market', 'connections'] as const,
   toolCandidates: ['zgi-market', 'tool-candidates'] as const,
@@ -29,11 +30,12 @@ export function useZgiMarketCategories(kind?: MarketListingKind) {
   });
 }
 
-export function useZgiMarketListings(query: MarketListingQuery) {
+export function useZgiMarketListings(query: MarketListingQuery, enabled = true) {
   return useQuery({
     queryKey: keys.listings(query),
     queryFn: () => zgiMarketService.getListings(query),
     placeholderData: keepPreviousData,
+    enabled,
     staleTime,
   });
 }
@@ -44,6 +46,15 @@ export function useZgiMarketListing(kind: MarketListingKind | undefined, slug: s
     queryFn: () => zgiMarketService.getListing(kind as MarketListingKind, slug as string),
     enabled: Boolean(kind && slug),
     staleTime,
+  });
+}
+
+/** The caller's role and the market's public gateway, as this instance knows them. */
+export function useZgiMarketMeta() {
+  return useQuery({
+    queryKey: keys.meta,
+    queryFn: () => zgiMarketService.getMeta(),
+    staleTime: 5 * staleTime,
   });
 }
 
@@ -111,7 +122,10 @@ export function useZgiMarketSubjectTools(subjectType: MarketToolSubjectType, sub
   });
 }
 
-export function useBindZgiMarketSubjectTools(subjectType: MarketToolSubjectType, subjectId: string) {
+export function useBindZgiMarketSubjectTools(
+  subjectType: MarketToolSubjectType,
+  subjectId: string
+) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (items: Array<{ listing_id: number; connection_id?: number | null }>) =>

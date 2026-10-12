@@ -138,3 +138,41 @@ func TestForwardReachesTheCallRecordsOfTheOrganization(t *testing.T) {
 		t.Fatalf("forwarded %s?%s", call.path, call.query)
 	}
 }
+
+func TestMetaIsAnsweredHereForAMemberOnly(t *testing.T) {
+	console := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("the console was asked for the meta")
+	}))
+	t.Cleanup(console.Close)
+	gin.SetMode(gin.TestMode)
+	build := func(member, admin bool, gateway string) *gin.Engine {
+		proxy := NewProxy(
+			Config{ConsoleURL: console.URL, GatewayURL: gateway},
+			func(c *gin.Context) string { return c.GetHeader("X-Test-Organization") },
+			func(c *gin.Context) string { return c.GetHeader("X-Test-Account") },
+			func(*gin.Context, string, string) (bool, bool, error) { return member, admin, nil },
+		)
+		engine := gin.New()
+		engine.Any("/workspaces/current/zgi-market/*path", proxy.Forward)
+		return engine
+	}
+	const target = "/workspaces/current/zgi-market/meta"
+
+	recorder := send(build(true, true, "https://market.example.com"), http.MethodGet, target, "", nil)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"gateway_url":"https://market.example.com"`) ||
+		!strings.Contains(recorder.Body.String(), `"admin":true`) {
+		t.Fatalf("administrator: %d %s", recorder.Code, recorder.Body.String())
+	}
+	recorder = send(build(true, false, ""), http.MethodGet, target, "", nil)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"gateway_url":""`) ||
+		!strings.Contains(recorder.Body.String(), `"admin":false`) {
+		t.Fatalf("member without a gateway: %d %s", recorder.Code, recorder.Body.String())
+	}
+	if recorder = send(build(false, false, "https://market.example.com"), http.MethodGet, target, "", nil); recorder.Code == http.StatusOK ||
+		strings.Contains(recorder.Body.String(), "market.example.com") {
+		t.Fatalf("an outsider read the meta: %d %s", recorder.Code, recorder.Body.String())
+	}
+	if recorder = send(build(true, true, ""), http.MethodPost, target, "{}", nil); recorder.Code == http.StatusOK {
+		t.Fatalf("a write to the meta answered %d", recorder.Code)
+	}
+}

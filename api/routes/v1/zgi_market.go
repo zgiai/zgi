@@ -37,6 +37,7 @@ func RegisterZGIMarketRoutes(
 	if config.GlobalConfig != nil {
 		settings.ConsoleURL = config.GlobalConfig.Console.APIURL
 		settings.InternalKey = config.GlobalConfig.Console.InternalAPIKey
+		settings.GatewayURL = config.GlobalConfig.Console.ZGIMarketGatewayURL
 	}
 	proxy := zgimarket.NewProxy(
 		settings,

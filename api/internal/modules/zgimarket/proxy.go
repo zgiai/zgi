@@ -62,6 +62,9 @@ type Config struct {
 	Client      *http.Client
 	// PackageClient fetches skill packages; it allows more time than Client.
 	PackageClient *http.Client
+	// GatewayURL is the public origin of the market gateway, shown to members in usage examples.
+	// Empty when this instance does not name one.
+	GatewayURL string
 }
 
 // Proxy forwards market requests of organization members to the console.
@@ -190,7 +193,7 @@ func (p *Proxy) Forward(c *gin.Context) {
 		response.FailWithMessage(c, response.ErrServiceUnavailable, "ZGI Market is not configured")
 		return
 	}
-	if p.install(c) || p.toolRoute(c) {
+	if p.meta(c) || p.install(c) || p.toolRoute(c) {
 		return
 	}
 	path, _, allowed := resourceOf(c.Param("path"))

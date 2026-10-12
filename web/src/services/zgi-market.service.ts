@@ -10,6 +10,7 @@ import type {
   MarketListingKind,
   MarketListingPage,
   MarketListingQuery,
+  MarketMeta,
   MarketSkillInstall,
   MarketSubscription,
 } from './types/zgi-market';
@@ -65,6 +66,12 @@ class ZgiMarketService extends BaseService {
       'get',
       `/listings/${encodeURIComponent(kind)}/${encodeURIComponent(slug)}`
     );
+    return response.data;
+  }
+
+  /** What this instance knows about the caller and the market's public gateway. */
+  async getMeta(): Promise<MarketMeta> {
+    const response = await this.request<MarketEnvelope<MarketMeta>>('get', '/meta');
     return response.data;
   }
 
@@ -143,11 +150,17 @@ class ZgiMarketService extends BaseService {
 
   /** The activated MCP listings that may be bound, with the organization's connections. */
   async getToolCandidates(): Promise<MarketToolCandidates> {
-    const response = await this.request<MarketEnvelope<MarketToolCandidates>>('get', '/tools/candidates');
+    const response = await this.request<MarketEnvelope<MarketToolCandidates>>(
+      'get',
+      '/tools/candidates'
+    );
     return response.data ?? { listings: [], connections: [] };
   }
 
-  async getSubjectTools(subjectType: MarketToolSubjectType, subjectId: string): Promise<MarketToolBinding> {
+  async getSubjectTools(
+    subjectType: MarketToolSubjectType,
+    subjectId: string
+  ): Promise<MarketToolBinding> {
     const response = await this.request<MarketEnvelope<MarketToolBinding>>(
       'get',
       `/tools/subjects/${subjectType}/${encodeURIComponent(subjectId)}`
