@@ -880,6 +880,8 @@ func (s *service) finalizePreparedError(ctx context.Context, prepared *PreparedC
 	} else {
 		s.dispatchPreparedRuntimeInputFollowUp(ctx, prepared)
 	}
+	// The transport request id travels on the context from the HTTP edge; the
+	// catalog code stays the product word list the payload already publishes.
 	s.emitPreparedEvent(ctx, prepared, streamEventError, BuildLocalizedStreamErrorPayload(prepared, cause, StreamRequestID(ctx), StreamLocale(ctx)), eventCallback)
 	return nil
 }
@@ -899,8 +901,12 @@ func finalizedRuntimeOwnershipError(err error) error {
 }
 
 // recordPreparedErrorIdentity stores the failed turn's public error identity in
-// message metadata while the message is still mutable, so a reloaded
-// conversation renders the same error the stream frame published.
+// the message metadata while the message is still mutable, so a reloaded
+// conversation renders the same error the stream frame published. A product
+// error keeps its own code; any other failure records its stable catalog code
+// (for example llm.model.not_found), which used to be dropped. Paths that end
+// the message early call it before writing the error, because a finished
+// message no longer accepts metadata.
 func (s *service) recordPreparedErrorIdentity(ctx context.Context, prepared *PreparedChat, cause error) {
 	if prepared == nil || prepared.Message == nil || cause == nil {
 		return
@@ -931,28 +937,21 @@ func (s *service) recordPreparedErrorIdentity(ctx context.Context, prepared *Pre
 
 func (s *service) completePreparedError(ctx context.Context, prepared *PreparedChat, cause error) error {
 	message := publicAichatErrorMessage(cause)
-	metadata := copyStringAnyMap(prepared.Message.Metadata)
-	metadataChanged := false
-	if code, params, ok := publicAichatStructuredError(cause); ok {
-		if metadata == nil {
-			metadata = map[string]interface{}{}
-		}
-		metadata["error_code"] = code
-		if len(params) > 0 {
-			metadata["error_params"] = params
-		} else {
-			delete(metadata, "error_params")
-		}
-		metadataChanged = true
-	}
+	s.recordPreparedErrorIdentity(ctx, prepared, cause)
 	finish := func(txRepos *repository.Repositories) error {
-		if metadataChanged {
-			if err := txRepos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {
+		if err := txRepos.Message.UpdateError(ctx, prepared.Message.ID, message); err != nil {
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
 				return err
 			}
-		}
-		if err := txRepos.Message.UpdateError(ctx, prepared.Message.ID, message); err != nil {
-			return err
+			// The message is no longer active. If this run already finalized it
+			// (terminal status), the conversation cleanup and the client error
+			// notification must still run; otherwise the failed run stays
+			// "streaming" forever and the UI hangs. A still-active message owned by
+			// another run is a real ownership loss and is left to the new owner.
+			status, statusErr := txRepos.Message.GetStatus(ctx, prepared.Message.ID)
+			if statusErr != nil || !isTerminalMessageStatus(status) {
+				return gorm.ErrRecordNotFound
+			}
 		}
 		if prepared.ReplaceRoot {
 			if err := txRepos.Conversation.CompleteRootReplacement(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
@@ -979,18 +978,6 @@ func (s *service) completePreparedError(ctx context.Context, prepared *PreparedC
 		err = s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			return finish(repository.NewRepositories(tx))
 		})
-	}
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		// A previous finalizer may have completed this message after this run
-		// lost ownership. Treat that terminal state as already finalized, while
-		// leaving an active message owned by another run untouched.
-		status, statusErr := s.repos.Message.GetStatus(ctx, prepared.Message.ID)
-		if statusErr == nil && isTerminalMessageStatus(status) {
-			return nil
-		}
-	}
-	if err == nil && metadataChanged {
-		prepared.Message.Metadata = metadata
 	}
 	return err
 }
@@ -1229,13 +1216,16 @@ func shouldSuppressDigitalHumanTaskGovernanceEvent(caller Caller, eventType stri
 }
 
 // BuildStreamErrorPayload returns the public SSE error payload for an AIChat turn.
-// requestID is the transport request identity when the caller has one.
+// requestID is the transport request identity when the caller has one; it is
+// omitted for runtime-internal emissions that never crossed an HTTP boundary.
 func BuildStreamErrorPayload(prepared *PreparedChat, err error, requestID string) map[string]interface{} {
 	return BuildLocalizedStreamErrorPayload(prepared, err, requestID, "")
 }
 
 // BuildLocalizedStreamErrorPayload is BuildStreamErrorPayload with the caller's
-// locale. Unknown failures use the catalog's stable code and localized message.
+// locale. An error without a product-specific message is described by the
+// catalog entry of its error_code in that locale instead of the fixed English
+// "Internal server error"; the zero Locale uses the catalog's fallback language.
 func BuildLocalizedStreamErrorPayload(prepared *PreparedChat, err error, requestID string, locale appcatalog.Locale) map[string]interface{} {
 	message := publicAichatErrorMessage(err)
 	errorCode := stableAichatErrorCode(err)
@@ -1252,6 +1242,7 @@ func BuildLocalizedStreamErrorPayload(prepared *PreparedChat, err error, request
 		"params":          map[string]interface{}{},
 		"error_id":        uuid.NewString(),
 	}
+	// The frozen catalog owns the retryable flag; never guess it from the error text.
 	if retryable, known := streamErrorRetryable(errorCode); known {
 		payload["retryable"] = retryable
 	}
@@ -1282,6 +1273,8 @@ func stableAichatErrorCode(err error) string {
 			return "billing.model.pricing_not_configured"
 		}
 	}
+	// Same sentinels as gateway.ApplicationCodeForError, so an unknown model is
+	// published as not found (not retryable) instead of an invocation failure.
 	if errors.Is(err, llmerrors.DomainErrModelNotFound) || errors.Is(err, gateway.ErrModelNotFound) ||
 		errors.Is(err, gateway.ErrModelNotActive) || errors.Is(err, adapter.ErrModelNotFound) {
 		return "llm.model.not_found"

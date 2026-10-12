@@ -158,7 +158,7 @@ func (t *databaseTool) Invoke(ctx context.Context, userID string, params map[str
 }
 
 func (t *databaseTool) scopeForOperation(scope databaseScope, params map[string]interface{}) databaseScope {
-	if scope.InvokeFrom != tools.ToolInvokeFromAgent || t.Runtime() == nil {
+	if !tools.IsBoundRuntimeCaller(scope.InvokeFrom) || t.Runtime() == nil {
 		return scope
 	}
 	dataSourceID := stringValue(params, "data_source_id")
@@ -194,7 +194,7 @@ func (t *databaseTool) scopeForOperation(scope databaseScope, params map[string]
 }
 
 func (t *databaseTool) scopeForDataSource(scope databaseScope, dataSourceID string) databaseScope {
-	if scope.InvokeFrom != tools.ToolInvokeFromAgent || t.Runtime() == nil {
+	if !tools.IsBoundRuntimeCaller(scope.InvokeFrom) || t.Runtime() == nil {
 		return scope
 	}
 	if authorization, ok := tools.AgentBindingAuthorizationFor(
@@ -239,7 +239,7 @@ func (t *databaseTool) scope(userID string) (databaseScope, error) {
 	if runtime != nil {
 		organizationID = strings.TrimSpace(stringValue(runtime.RuntimeParameters, "organization_id"))
 		workspaceID = strings.TrimSpace(stringValue(runtime.RuntimeParameters, "workspace_id"))
-		if runtime.InvokeFrom == tools.ToolInvokeFromAgent {
+		if tools.IsBoundRuntimeCaller(runtime.InvokeFrom) {
 			if boundBy := strings.TrimSpace(stringValue(runtime.RuntimeParameters, "database_bound_by_account_id")); boundBy != "" {
 				accountID = boundBy
 			}
@@ -267,12 +267,12 @@ func (t *databaseTool) scope(userID string) (databaseScope, error) {
 		WorkspaceID:    workspaceID,
 		AccountID:      accountID,
 		InvokeFrom:     invokeFrom,
-		BindingGrant:   runtime != nil && runtime.InvokeFrom == tools.ToolInvokeFromAgent && boolValue(runtime.RuntimeParameters, "database_binding_grant"),
+		BindingGrant:   runtime != nil && tools.IsBoundRuntimeCaller(runtime.InvokeFrom) && boolValue(runtime.RuntimeParameters, "database_binding_grant"),
 	}, nil
 }
 
 func (t *databaseTool) listAccessibleDatabases(ctx context.Context, scope databaseScope, params map[string]interface{}, bindings databaseBindings) ([]tools.ToolInvokeMessage, error) {
-	if scope.InvokeFrom == tools.ToolInvokeFromAgent && len(bindings) == 0 {
+	if tools.IsBoundRuntimeCaller(scope.InvokeFrom) && len(bindings) == 0 {
 		return jsonMessages(map[string]interface{}{"databases": []interface{}{}})
 	}
 	query := strings.ToLower(stringValue(params, "query"))
@@ -323,7 +323,7 @@ func (t *databaseTool) listDatabaseTables(ctx context.Context, scope databaseSco
 		return nil, err
 	}
 	if !bindings.dataSourceAllowed(dataSource.ID) {
-		return nil, fmt.Errorf("database %s is not bound to the current agent", dataSource.ID)
+		return nil, fmt.Errorf("database %s is not bound to the current %s", dataSource.ID, tools.RuntimeCallerLabel(scope.InvokeFrom))
 	}
 	query := strings.ToLower(stringValue(params, "query"))
 	limit := boundedInt(params, "limit", defaultTableListLimit, defaultTableListLimit)
@@ -461,10 +461,10 @@ func (t *databaseTool) authorizedTableFromParams(ctx context.Context, scope data
 	}
 	if write && scope.BindingGrant {
 		if !bindings.tableWritable(dataSource.ID, tableID) {
-			return nil, nil, fmt.Errorf("table %s is not writable by the current agent binding", tableID)
+			return nil, nil, fmt.Errorf("table %s is not writable by the current %s binding", tableID, tools.RuntimeCallerLabel(scope.InvokeFrom))
 		}
 	} else if !bindings.tableAllowed(dataSource.ID, tableID) {
-		return nil, nil, fmt.Errorf("table %s is not bound to the current agent", tableID)
+		return nil, nil, fmt.Errorf("table %s is not bound to the current %s", tableID, tools.RuntimeCallerLabel(scope.InvokeFrom))
 	}
 	table, err := t.dataSources.GetTable(ctx, scope.OrganizationID, dataSource.ID, tableID, scope.AccountID)
 	if err != nil {

@@ -296,14 +296,22 @@ func TestServiceDeleteAllowsDisabledPublishedDigitalHuman(t *testing.T) {
 	}
 }
 
-func TestServiceRejectsDuplicateWorkspaceName(t *testing.T) {
+func TestServiceAllowsDuplicateWorkspaceNames(t *testing.T) {
 	service, _ := newTestService(t)
 	scope := testScope()
-	if _, err := service.Create(t.Context(), scope, CreateRequest{Name: "Atlas"}); err != nil {
+	first, err := service.Create(t.Context(), scope, CreateRequest{Name: "Atlas"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.Create(t.Context(), scope, CreateRequest{Name: " atlas "}); !apperror.IsCode(err, AppCodeNameConflict) {
-		t.Fatalf("Create(duplicate) error = %v, want name conflict", err)
+	if _, err := service.Create(t.Context(), scope, CreateRequest{Name: " atlas "}); err != nil {
+		t.Fatalf("Create(trim/case duplicate) error = %v", err)
+	}
+	name := "ATLAS"
+	if _, err := service.Update(t.Context(), scope, first.Definition.ID, UpdateRequest{
+		ExpectedRevision: first.Definition.Revision,
+		Name:             &name,
+	}); err != nil {
+		t.Fatalf("Update(duplicate name) error = %v", err)
 	}
 }
 

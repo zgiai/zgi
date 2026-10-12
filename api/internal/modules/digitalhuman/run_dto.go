@@ -66,8 +66,11 @@ type RunRuntimeLog struct {
 }
 
 type RunWorkflowApproval struct {
-	ApprovalToken string                 `json:"approval_token"`
-	ApprovalForm  map[string]interface{} `json:"approval_form"`
+	ApprovalToken            string                 `json:"approval_token,omitempty"`
+	ApprovalForm             map[string]interface{} `json:"approval_form,omitempty"`
+	ApprovalDeliveryMode     string                 `json:"approval_delivery_mode,omitempty"`
+	UIApprovalAllowed        bool                   `json:"ui_approval_allowed"`
+	ExternalApprovalRequired bool                   `json:"external_approval_required"`
 }
 
 func publicRun(run *Run) *Run {

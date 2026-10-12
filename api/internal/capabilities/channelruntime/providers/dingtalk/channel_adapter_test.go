@@ -41,6 +41,23 @@ func TestDingTalkChannelPrepareCredentials(t *testing.T) {
 	}
 }
 
+func TestDingTalkChannelNormalizesConnectorCredentialNames(t *testing.T) {
+	adapter := &ChannelAdapter{}
+	prepared, err := adapter.NormalizeCredentials(map[string]string{
+		"client_id": "connector-app", "client_secret": "connector-secret",
+	}, "stream")
+	if err != nil {
+		t.Fatalf("NormalizeCredentials() error = %v", err)
+	}
+	if prepared["app_key"] != "connector-app" || prepared["app_secret"] != "connector-secret" {
+		t.Fatalf("normalized credentials = %#v", prepared)
+	}
+	if _, ok := prepared["client_id"]; ok {
+		t.Fatal("normalized credentials retained client_id")
+	}
+	destroyDingTalkChannelCredentials(prepared)
+}
+
 func TestDingTalkChannelRejectsHTTPWebhook(t *testing.T) {
 	adapter := &ChannelAdapter{}
 	if _, err := adapter.Verify(t.Context(), channelruntime.WebhookRequest{Body: []byte(`{}`)}, channelruntime.ResolvedChannelCredential{}); err != channelruntime.ErrUnsupportedEvent {

@@ -160,8 +160,8 @@ func TestDigitalHumanUsesPinnedBindingVerifierAndAutonomousToolProfile(t *testin
 		t.Fatalf("binding verifier = %v, %v", allowed, err)
 	}
 	execution := runtime.skillExecutionContext(prepared)
-	if execution.InvokeFrom != tools.ToolInvokeFromAgent {
-		t.Fatalf("InvokeFrom = %q, want compatibility autonomous profile", execution.InvokeFrom)
+	if execution.InvokeFrom != tools.ToolInvokeFromDigitalHuman {
+		t.Fatalf("InvokeFrom = %q, want explicit DigitalHuman profile", execution.InvokeFrom)
 	}
 }
 
@@ -190,7 +190,7 @@ func TestDigitalHumanBindingVerifierRejectsUnboundResourceBeforeProvider(t *test
 	}
 }
 
-func TestDigitalHumanSkillExecutionContextKeepsAgentProfileWithDigitalHumanTarget(t *testing.T) {
+func TestDigitalHumanSkillExecutionContextUsesDigitalHumanProfileWithDigitalHumanTarget(t *testing.T) {
 	digitalHumanID := uuid.New()
 	runID := uuid.NewString()
 	versionID := uuid.NewString()
@@ -213,8 +213,8 @@ func TestDigitalHumanSkillExecutionContextKeepsAgentProfileWithDigitalHumanTarge
 
 	runtime := &service{}
 	execution := runtime.skillExecutionContext(prepared)
-	if execution.InvokeFrom != tools.ToolInvokeFromAgent {
-		t.Fatalf("InvokeFrom = %q, want the existing autonomous profile", execution.InvokeFrom)
+	if execution.InvokeFrom != tools.ToolInvokeFromDigitalHuman {
+		t.Fatalf("InvokeFrom = %q, want the DigitalHuman profile", execution.InvokeFrom)
 	}
 	if execution.ConnectorTargetType != connectorcore.TargetTypeDigitalHuman {
 		t.Fatalf("ConnectorTargetType = %q, want explicit DigitalHuman", execution.ConnectorTargetType)
@@ -244,8 +244,8 @@ func TestDigitalHumanSkillExecutionContextUsesDigitalHumanIdentityResolver(t *te
 	dhResolver := &digitalHumanRuntimeResolverStub{}
 	runtime := &service{connectorAgentRuntime: agentResolver, connectorDigitalHumanRuntime: dhResolver}
 	execution := runtime.skillExecutionContext(prepared)
-	if execution.InvokeFrom != tools.ToolInvokeFromAgent {
-		t.Fatalf("InvokeFrom = %q, want the compatibility autonomous profile", execution.InvokeFrom)
+	if execution.InvokeFrom != tools.ToolInvokeFromDigitalHuman {
+		t.Fatalf("InvokeFrom = %q, want the DigitalHuman profile", execution.InvokeFrom)
 	}
 	if execution.ConnectorIdentityResolver != dhResolver {
 		t.Fatalf("ConnectorIdentityResolver = %#v, want the DigitalHuman resolver", execution.ConnectorIdentityResolver)

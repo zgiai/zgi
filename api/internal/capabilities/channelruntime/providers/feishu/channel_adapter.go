@@ -72,9 +72,11 @@ func (adapter *ChannelAdapter) Capabilities() channelruntime.ProviderCapabilitie
 
 func (*ChannelAdapter) ConnectionSpec() channelruntime.ConnectionSpec {
 	return channelruntime.ConnectionSpec{
-		IntegrationID: IntegrationID,
-		DriverID:      DriverID,
-		AuthMethodID:  TenantAppAuthMethodID,
+		IntegrationID:           IntegrationID,
+		DriverID:                DriverID,
+		AuthMethodID:            TenantAppAuthMethodID,
+		CompatibleDriverIDs:     []string{"feishu-openapi-v1"},
+		CompatibleAuthMethodIDs: []string{"feishu.app_credentials"},
 	}
 }
 
@@ -100,9 +102,9 @@ func (*ChannelAdapter) PrepareCredentials(current, updates map[string]string) (m
 			prepared[key] = value
 		}
 	}
-	// Absence on an existing credential means the legacy webhook transport.
-	// New clients default to WebSocket; explicit webhook credentials from older
-	// clients remain valid without silently changing their transport.
+	// Existing credentials without an explicit mode are legacy webhooks. New
+	// credentials default to the SDK WebSocket transport, while an existing
+	// webhook remains valid so migration cannot silently disable callbacks.
 	if prepared["connection_mode"] == "" {
 		prepared["connection_mode"] = "websocket"
 		if len(current) > 0 || prepared["verification_token"] != "" {
@@ -119,6 +121,42 @@ func (*ChannelAdapter) PrepareCredentials(current, updates map[string]string) (m
 		return nil, providertransport.NewError(providertransport.ErrorCodeInvalidInput, "required Feishu credentials are missing for the selected transport", nil)
 	}
 	return prepared, nil
+}
+
+func (adapter *ChannelAdapter) NormalizeCredentials(values map[string]string, transport string) (map[string]string, error) {
+	// Connector-backed Feishu credentials carry no channel transport metadata;
+	// the receiver resolves them to the SDK WebSocket transport.
+	if strings.EqualFold(strings.TrimSpace(transport), "websocket") {
+		prepared := make(map[string]string, len(values))
+		for key, value := range values {
+			key = strings.ToLower(strings.TrimSpace(key))
+			if key != "region" && key != "app_id" && key != "app_secret" {
+				destroyCredentialValues(prepared)
+				return nil, providertransport.NewError(providertransport.ErrorCodeInvalidInput, "unsupported Feishu long connection credential field", nil)
+			}
+			if value = strings.TrimSpace(value); value != "" {
+				prepared[key] = value
+			}
+		}
+		if !validFeishuLongConnectionCredentials(prepared["app_id"], prepared["app_secret"]) {
+			destroyCredentialValues(prepared)
+			return nil, providertransport.NewError(providertransport.ErrorCodeInvalidInput, "Feishu long connection credentials are required", nil)
+		}
+		return prepared, nil
+	}
+	if strings.EqualFold(strings.TrimSpace(transport), "webhook") {
+		webhookValues := make(map[string]string, len(values)+1)
+		for key, value := range values {
+			webhookValues[key] = value
+		}
+		webhookValues["connection_mode"] = "webhook"
+		return adapter.PrepareCredentials(nil, webhookValues)
+	}
+	return adapter.PrepareCredentials(nil, values)
+}
+
+func validFeishuLongConnectionCredentials(appID, appSecret string) bool {
+	return appID != "" && appSecret != "" && len(appID) <= 128 && len(appSecret) <= 16384 && !strings.ContainsAny(appID+appSecret, "\r\n\x00")
 }
 
 func (adapter *ChannelAdapter) ResolveIdentity(ctx context.Context, credential channelruntime.ResolvedChannelCredential) (channelruntime.InstallationIdentity, error) {
@@ -138,8 +176,8 @@ func (adapter *ChannelAdapter) ResolveIdentity(ctx context.Context, credential c
 }
 
 func (adapter *ChannelAdapter) Verify(_ context.Context, request channelruntime.WebhookRequest, credential channelruntime.ResolvedChannelCredential) (*channelruntime.VerifiedWebhook, error) {
-	// Switching transport also disables the old inbound URL. Stored webhook
-	// secrets are retained only so an explicit rollback remains possible.
+	// Switching transport disables the legacy inbound URL. Retain webhook
+	// secrets only so an explicit rollback can restore the old path.
 	if feishuConnectionMode(credential) != "webhook" {
 		return nil, channelruntime.ErrWebhookUnauthorized
 	}
@@ -561,7 +599,7 @@ func firstChannelValue(values ...string) string {
 
 func isChannelCredentialKey(key string) bool {
 	switch strings.ToLower(strings.TrimSpace(key)) {
-	case "app_id", "app_secret", "verification_token", "encrypt_key", "connection_mode":
+	case "region", "app_id", "app_secret", "verification_token", "encrypt_key", "connection_mode":
 		return true
 	default:
 		return false
@@ -601,4 +639,17 @@ func jsonWebhookResponse(body []byte) channelruntime.WebhookResponse {
 		Headers:    http.Header{"Content-Type": []string{"application/json; charset=utf-8"}},
 		Body:       append([]byte(nil), body...),
 	}
+}
+
+func nestedString(value map[string]interface{}, path ...string) string {
+	var current interface{} = value
+	for _, segment := range path {
+		object, ok := current.(map[string]interface{})
+		if !ok {
+			return ""
+		}
+		current = object[segment]
+	}
+	result, _ := current.(string)
+	return strings.TrimSpace(result)
 }

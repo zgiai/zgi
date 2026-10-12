@@ -68,6 +68,7 @@ type WorkflowApprovalContinuation struct {
 // by DigitalHuman task approvals. The task module owns validation and
 // mutation; ChatRuntime only owns pausing/resuming the conversation stream.
 type DigitalHumanTaskApprovalRequest struct {
+	Type          string
 	ApprovalToken string
 	Action        string
 	Inputs        map[string]interface{}
@@ -900,6 +901,12 @@ func workflowContinuationAllowsInlineApproval(caller Caller, continuation *Workf
 		return true
 	case runtimemodel.ConversationSourceWebApp, runtimemodel.ConversationSourceExternalAPI:
 		return continuation != nil && continuation.UIApprovalAllowed
+	case runtimemodel.ConversationSourceChannel:
+		// A DigitalHuman channel adapter only resumes after recognizing an
+		// explicit confirmation in the bound channel conversation, and only for
+		// an approval the workflow lets the conversation user complete; one
+		// assigned to designated approvers stays with them.
+		return caller.Type == runtimemodel.ConversationCallerDigitalHuman && continuation != nil && continuation.UIApprovalAllowed
 	default:
 		return false
 	}

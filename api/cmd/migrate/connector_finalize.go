@@ -37,10 +37,10 @@ func runConnectorCheckpoint(args []string) error {
 
 func runConnectorFinalize(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: connector-finalize plan|apply|verify [--report PATH] [--expected-report SHA256] [--advanced-checkpoint MIGRATION_ID] [--archive PATH --archive-key-file PATH]")
+		return fmt.Errorf("usage: connector-finalize plan|apply|verify|discard [--report PATH] [--expected-report SHA256] [--advanced-checkpoint MIGRATION_ID] [--archive PATH --archive-key-file PATH] [--confirm-discard VALUE]")
 	}
 	command := args[0]
-	if command != "plan" && command != "apply" && command != "verify" {
+	if command != "plan" && command != "apply" && command != "verify" && command != "discard" {
 		return fmt.Errorf("unknown Connector finalization command")
 	}
 	flags := flag.NewFlagSet("connector-finalize", flag.ContinueOnError)
@@ -49,6 +49,7 @@ func runConnectorFinalize(args []string) error {
 	archivePath := flags.String("archive", "", "encrypted retirement archive outside the repository")
 	keyPath := flags.String("archive-key-file", "", "independent binary 32-byte archive key; plan creates it exclusively when absent")
 	advancedCheckpoint := flags.String("advanced-checkpoint", "", "exact applied migration ID for a schema1 head later than the registered checkpoint; valid for plan and apply only")
+	confirmDiscard := flags.String("confirm-discard", "", "required literal confirmation for permanent legacy Connector discard")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -62,6 +63,12 @@ func runConnectorFinalize(args []string) error {
 	})
 	if flags.NArg() != 0 || (*archivePath == "") != (*keyPath == "") {
 		return fmt.Errorf("archive and archive-key-file must be supplied together")
+	}
+	if command == "discard" && *confirmDiscard != "DISCARD_LEGACY_CONNECTOR_DATA" {
+		return fmt.Errorf("discard requires --confirm-discard DISCARD_LEGACY_CONNECTOR_DATA")
+	}
+	if command == "discard" && (*expected != "" || *archivePath != "" || *keyPath != "") {
+		return fmt.Errorf("discard does not accept expected-report or archive arguments")
 	}
 	if command == "verify" && *archivePath != "" {
 		return fmt.Errorf("schema2 verification uses native data, not historical archives")
@@ -126,6 +133,8 @@ func runConnectorFinalize(args []string) error {
 		report, err = connectorfinalize.Apply(ctx, db, connectorfinalize.ApplyOptions{Options: option, ExpectedReport: *expected, Archive: encrypted, ArchiveKey: key})
 	case "verify":
 		report, err = connectorfinalize.Verify(ctx, db, option)
+	case "discard":
+		report, err = connectorfinalize.Discard(ctx, db)
 	}
 	if err != nil {
 		return err
@@ -159,6 +168,9 @@ func runConnectorFinalize(args []string) error {
 func connectorFinalizeOptions(command string, advancedSet bool, advancedCheckpoint string) (connectorfinalize.Options, error) {
 	if advancedSet && command == "verify" {
 		return connectorfinalize.Options{}, fmt.Errorf("verify reads the applied schema2 state; --advanced-checkpoint is valid for plan and apply only")
+	}
+	if advancedSet && command == "discard" {
+		return connectorfinalize.Options{}, fmt.Errorf("discard inspects the legacy schema directly; --advanced-checkpoint is valid for plan and apply only")
 	}
 	if advancedSet && advancedCheckpoint == "" {
 		return connectorfinalize.Options{}, fmt.Errorf("--advanced-checkpoint requires a non-empty migration ID")

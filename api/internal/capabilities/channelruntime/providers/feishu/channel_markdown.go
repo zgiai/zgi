@@ -3,6 +3,7 @@ package feishu
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"html"
 	"regexp"
 	"strings"
@@ -72,6 +73,9 @@ func (adapter *ChannelAdapter) sendChannelMessage(ctx context.Context, region, t
 		fallbackMeta, fallbackErr := adapter.provider.client.sendMessage(ctx, region, token, "chat_id", body, &response)
 		fallbackMeta.Attempts += meta.Attempts
 		meta, err = fallbackMeta, fallbackErr
+	}
+	if err != nil && providertransport.ErrorCode(err) == providertransport.ErrorCodeResponseInvalid {
+		return "", meta, errors.Join(channelruntime.ErrDeliveryOutcomeUnknown, err)
 	}
 	return strings.TrimSpace(response.MessageID), meta, err
 }

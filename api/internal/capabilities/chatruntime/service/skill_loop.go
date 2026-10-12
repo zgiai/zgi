@@ -1979,8 +1979,10 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 		appID = strings.TrimSpace(prepared.RunConfig.BillingAppID)
 	}
 	invokeFrom := tools.ToolInvokeFromAIChat
-	if isAutonomousSubjectCaller(prepared.Caller.Type) {
+	if normalizeCallerType(prepared.Caller.Type) == runtimemodel.ConversationCallerAgent {
 		invokeFrom = tools.ToolInvokeFromAgent
+	} else if isDigitalHumanCaller(prepared.Caller.Type) {
+		invokeFrom = tools.ToolInvokeFromDigitalHuman
 	}
 	runtimeParameters := skillRuntimeParametersForPrepared(prepared)
 	if verifier := s.currentAgentBindingVerifier(prepared); verifier != nil {
@@ -2014,7 +2016,7 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 	}
 	if invokeFrom == tools.ToolInvokeFromAIChat {
 		executionContext.ConnectorIdentityResolver = s.connectorChatRuntime
-	} else if invokeFrom == tools.ToolInvokeFromAgent {
+	} else if invokeFrom == tools.ToolInvokeFromAgent || invokeFrom == tools.ToolInvokeFromDigitalHuman {
 		executionContext.ConnectorIdentityResolver = s.connectorAgentRuntime
 		executionContext.ConnectorTargetScope = connectorcore.TargetScope(prepared.RunConfig.ConnectorTargetScope)
 		executionContext.ConnectorTargetVersionID = prepared.RunConfig.ConnectorTargetVersionID
@@ -2023,15 +2025,10 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 	// callers, whose Connector target is derived from InvokeFrom.
 	executionContext.ConnectorTargetType = prepared.RunConfig.ConnectorTargetType
 	if isDigitalHumanCaller(prepared.Caller.Type) {
-		// A DigitalHuman host keeps the compatibility ToolInvokeFromAgent profile
-		// so its existing Skill surface is unchanged, but it must never borrow the
-		// Agent target implied by InvokeFrom. The explicit host type plus the
-		// published scope/version carried above and the run id below let the Skills
-		// layer validate the exact bound instance before dispatch.
+		// DigitalHuman has an explicit caller profile. It must never borrow the
+		// Agent target implied by InvokeFrom; the published scope/version and run
+		// id below validate the exact bound instance before dispatch.
 		executionContext.ConnectorTargetType = connectorcore.TargetTypeDigitalHuman
-		// The compatibility ToolInvokeFromAgent profile above would otherwise leave
-		// the Agent identity resolver in place; select the DigitalHuman resolver
-		// explicitly so its absence fails closed instead of borrowing Agent identity.
 		executionContext.ConnectorIdentityResolver = s.connectorDigitalHumanRuntime
 		executionContext.ConnectorRunID = strings.TrimSpace(prepared.RunConfig.ConnectorRunID)
 		executionContext.ConnectorInteractive = prepared.RunConfig.ConnectorInteractive

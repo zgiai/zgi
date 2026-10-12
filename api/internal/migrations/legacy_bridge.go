@@ -7,7 +7,9 @@ import (
 	"strings"
 
 	"github.com/go-gormigrate/gormigrate/v2"
+	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/migrations/baseline"
+	"github.com/zgiai/zgi/api/internal/migrations/connectorfinalize"
 	"gorm.io/gorm"
 )
 
@@ -132,7 +134,7 @@ func chooseMigrationPlan(state migrationState) (migrationPlan, error) {
 func currentMigrationPlan(name string) migrationPlan {
 	return migrationPlan{
 		name:                      name,
-		migrations:                allMigrations(),
+		migrations:                migrationsForRun(),
 		validateUnknownMigrations: true,
 	}
 }
@@ -140,7 +142,7 @@ func currentMigrationPlan(name string) migrationPlan {
 func legacyBridgeMigrationPlan() migrationPlan {
 	return migrationPlan{
 		name:                      "legacy-bridge",
-		migrations:                allMigrations(),
+		migrations:                migrationsForRun(),
 		validateUnknownMigrations: false,
 		beforeRun: func(db *gorm.DB) error {
 			if err := validateSupportedLegacyShape(db); err != nil {
@@ -324,12 +326,26 @@ func validatePublicMigrationHistoryComplete(db *gorm.DB) error {
 
 func missingPublicMigrationIDs(appliedIDs map[string]struct{}) []string {
 	var missing []string
-	for _, id := range currentMigrationIDs() {
+	for _, id := range migrationIDsForHistoryCheck() {
 		if _, ok := appliedIDs[id]; !ok {
 			missing = append(missing, id)
 		}
 	}
 	return missing
+}
+
+func migrationIDsForHistoryCheck() []string {
+	ids := currentMigrationIDs()
+	if !config.ConnectorRetirementDeferred() {
+		return ids
+	}
+	filtered := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id != connectorfinalize.MigrationID {
+			filtered = append(filtered, id)
+		}
+	}
+	return filtered
 }
 
 func baselineTableNames() []string {

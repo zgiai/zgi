@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -72,6 +73,7 @@ type ChannelService struct {
 	credentials ChannelCredentialResolver
 	transient   ChannelTransientDispatcher
 	markers     ChannelProcessingMarkerStore
+	approvals   ChannelApprovalJobStore
 	artifacts   channelArtifactLinker
 	receivers   interface {
 		Status(uuid.UUID) channelruntime.ReceiverStatus
@@ -79,6 +81,9 @@ type ChannelService struct {
 	}
 	apiBaseURL string
 	now        func() time.Time
+	// approvalWorker guards the in-process approval fallback used only when
+	// no queue dispatcher is configured.
+	approvalWorker atomic.Bool
 }
 
 func (service *ChannelService) WithReceiverStatus(resolver interface {
@@ -102,6 +107,7 @@ func NewChannelService(store ChannelStore, subjects ChannelSubjectStore, runtime
 		now:       func() time.Time { return time.Now().UTC() },
 	}
 	service.markers, _ = store.(ChannelProcessingMarkerStore)
+	service.approvals, _ = store.(ChannelApprovalJobStore)
 	reader, _ := runtime.(channelExecutionArtifactReader)
 	service.artifacts = toolFileChannelArtifactLinker{runtime: reader}
 	return service
@@ -966,7 +972,10 @@ func (service *ChannelService) handleInboundMessage(
 			result.Accepted, result.RunID = true, stored.InvocationRunID
 			return result, nil
 		}
-		if stored.Status == channelruntime.InboundEventAccepted && stored.ReasonCode == channelRuntimeInputReason {
+		// Runtime input and approval replies are accepted without a run ID; a
+		// provider retry must not submit them a second time.
+		if stored.Status == channelruntime.InboundEventAccepted &&
+			(stored.ReasonCode == channelRuntimeInputReason || stored.ReasonCode == channelTaskApprovalReason) {
 			result.Accepted = true
 			return result, nil
 		}
@@ -992,15 +1001,12 @@ func (service *ChannelService) handleInboundMessage(
 		return nil, err
 	}
 	route.Mapping.LocalConversationID = &conversationID
-	if approvalRuntime, ok := service.runtime.(interface {
-		ContinueChannelTaskApproval(context.Context, Scope, uuid.UUID, uuid.UUID, string) (bool, error)
-	}); ok {
-		handled, approvalErr := approvalRuntime.ContinueChannelTaskApproval(
-			ctx,
-			Scope{OrganizationID: installation.OrganizationID, WorkspaceID: installation.WorkspaceID, ActorID: installation.CreatedBy},
-			route.Binding.SubjectID,
-			conversationID,
-			channelInvocationQuery(message),
+	// A pending approval is waiting_approval, not streaming, so it must be
+	// resolved before runtime-input admission or the confirmation would start a
+	// new run instead of resuming the pending message.
+	if approvalRuntime, ok := service.runtime.(channelTaskApprovalRuntime); ok {
+		handled, approvalErr := service.admitChannelApproval(
+			ctx, approvalRuntime, installation, route, conversationID, stored, message, now,
 		)
 		if approvalErr != nil {
 			_ = service.store.MarkInboundEvent(ctx, stored.ID, channelruntime.InboundEventFailed, "channel.task_approval.failed", nil, now)
@@ -1227,6 +1233,17 @@ func channelMessagePreview(message *channelruntime.InboundMessage) string {
 	return preview
 }
 
+// channelTaskApprovalRuntime resolves a pending approval from an inbound
+// channel message before it is admitted as runtime input or a new run.
+type channelTaskApprovalRuntime interface {
+	HasPendingChannelApproval(context.Context, Scope, uuid.UUID, uuid.UUID) (bool, error)
+	ContinueChannelTaskApproval(context.Context, Scope, uuid.UUID, uuid.UUID, ChannelApprovalReply) (bool, error)
+}
+
+// The production channel runtime must keep this entry point; the inbound path
+// discovers it by type assertion.
+var _ channelTaskApprovalRuntime = (*RuntimeService)(nil)
+
 func channelInvocationQuery(message *channelruntime.InboundMessage) string {
 	if message == nil {
 		return ""
@@ -1413,6 +1430,7 @@ func (service *ChannelService) ReconcileDeliveries(ctx context.Context) error {
 		markerRecovery,
 		service.DispatchDeliveries(ctx, defaultDeliveryBatch),
 		service.DispatchProcessingMarkers(ctx, defaultDeliveryBatch),
+		service.wakeDueChannelApprovals(ctx, now),
 	)
 }
 
