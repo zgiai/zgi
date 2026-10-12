@@ -58,7 +58,9 @@ func RegisterZGIMarketRoutes(
 	market := router.Group("/workspaces/current/zgi-market",
 		middleware.SetAccountService(accountService),
 		middleware.SetWorkspaceManagementService(tenantService),
-		middleware.JWTWithTenant(),
+		// The market belongs to the organization, not to a workspace: a member whose account has
+		// no current workspace, as in the personal space, still reaches it.
+		middleware.JWT(),
 		setOrganizationContext(accountService),
 	)
 	market.Any("/*path", proxy.Forward)
