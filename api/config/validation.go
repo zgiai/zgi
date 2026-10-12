@@ -8,6 +8,9 @@ import (
 )
 
 func validateConfig(cfg *Config) error {
+	if err := validateConsoleAPIURL(cfg); err != nil {
+		return err
+	}
 	if cfg.JWT.Secret == "" && !isDevelopmentMode(cfg) {
 		return fmt.Errorf("%s is required", envSecretKey)
 	}
@@ -131,6 +134,30 @@ func validateConfig(cfg *Config) error {
 		return err
 	}
 
+	return nil
+}
+
+func validateConsoleAPIURL(cfg *Config) error {
+	if cfg == nil {
+		return fmt.Errorf("%s is required", envConsoleAPIURL)
+	}
+	rawURL := strings.TrimSpace(cfg.Console.APIURL)
+	if rawURL == "" {
+		// Hand-built configs used by isolated package tests may omit optional
+		// Console integration settings. The normal loader always supplies the
+		// local default before validation.
+		return nil
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return fmt.Errorf("%s must be an absolute HTTP(S) URL", envConsoleAPIURL)
+	}
+	if (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return fmt.Errorf("%s must not include a path, query, or fragment", envConsoleAPIURL)
+	}
+	if parsed.Scheme != "https" && !isDevelopmentMode(cfg) {
+		return fmt.Errorf("%s must use HTTPS outside development", envConsoleAPIURL)
+	}
 	return nil
 }
 
