@@ -239,4 +239,61 @@ func TestChannelWorkflowApprovalDeliveryPostgres(t *testing.T) {
 	if orphanDeliveries != 0 {
 		t.Fatalf("deliveries for a run without a channel target = %d, want 0", orphanDeliveries)
 	}
+
+	// A database failure while creating the reply intent must not commit the
+	// completion without it: the run stays running and recoverable.
+	retryable, _, err := runtime.SubmitInvocation(t.Context(), scope, invocation.Event{
+		ID: "scheduled-delivery-database-failure", Type: invocation.EventTypeSchedule,
+		Origin: invocation.Origin{Kind: invocation.OriginSchedule},
+		Target: runtimeidentity.SubjectRef{
+			Type: runtimeidentity.SubjectTypeDigitalHuman, ID: digitalHumanID,
+			OrganizationID: organizationID, WorkspaceID: workspaceID,
+		},
+		Sender:     invocation.PrincipalRef{Type: invocation.PrincipalSystem, ID: "digital-human-task-scheduler"},
+		OccurredAt: now,
+		ReplyTo: &invocation.ReplyAddress{
+			Provider: feishu.IntegrationID, InstallationID: installation.ID.String(), ConversationID: mapping.ExternalConversationID,
+		},
+	}, "数据库故障时的任务", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&channelruntime.Installation{}).Where("id = ?", installation.ID).
+		Update("status", channelruntime.InstallationStatusActive).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&Run{}).Where("id = ?", retryable.ID).Updates(map[string]any{
+		"status": RunStatusRunning, "started_at": now, "updated_at": now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	const rejectDeliveries = "zgi_test_reject_channel_delivery"
+	if err := db.Exec("ALTER TABLE channel_delivery_outbox ADD CONSTRAINT " + rejectDeliveries + " CHECK (false) NOT VALID").Error; err != nil {
+		t.Fatal(err)
+	}
+	dropRejection := func() {
+		_ = db.Exec("ALTER TABLE channel_delivery_outbox DROP CONSTRAINT IF EXISTS " + rejectDeliveries).Error
+	}
+	t.Cleanup(dropRejection)
+	if err := repository.CompleteRunWithDelivery(t.Context(), retryable.ID, "数据库恢复后应投递", datatypes.JSON(`{}`), now.Add(3*time.Second)); err == nil {
+		t.Fatal("CompleteRunWithDelivery() returned nil after the reply intent could not be stored")
+	}
+	var stillRunning Run
+	if err := db.Where("id = ?", retryable.ID).Take(&stillRunning).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stillRunning.Status != RunStatusRunning {
+		t.Fatalf("run status after a delivery database failure = %s, want running", stillRunning.Status)
+	}
+	dropRejection()
+	if err := repository.CompleteRunWithDelivery(t.Context(), retryable.ID, "数据库恢复后应投递", datatypes.JSON(`{}`), now.Add(4*time.Second)); err != nil {
+		t.Fatalf("CompleteRunWithDelivery() retry error = %v", err)
+	}
+	var recoveredDeliveries int64
+	if err := db.Model(&channelruntime.Delivery{}).Where("run_id = ?", retryable.ID).Count(&recoveredDeliveries).Error; err != nil {
+		t.Fatal(err)
+	}
+	if recoveredDeliveries != 1 {
+		t.Fatalf("deliveries after retry = %d, want 1", recoveredDeliveries)
+	}
 }

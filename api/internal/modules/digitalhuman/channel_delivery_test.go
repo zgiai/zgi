@@ -2,12 +2,14 @@ package digitalhuman
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/runtimeidentity"
 	"gorm.io/datatypes"
+	"gorm.io/gorm"
 )
 
 func TestDecorateScheduledTaskResultAddsTaskIdentity(t *testing.T) {
@@ -48,5 +50,16 @@ func TestDecorateScheduledTaskResultLeavesInteractiveRunUnchanged(t *testing.T) 
 	const summary = "交互回复"
 	if got := decorateScheduledTaskResult(&Run{InvocationEvent: datatypes.JSON(encoded)}, summary); got != summary {
 		t.Fatalf("interactive result = %q, want %q", got, summary)
+	}
+}
+
+func TestChannelDeliveryLookupErrorSeparatesMissingTargetFromDatabaseFailure(t *testing.T) {
+	missing := channelDeliveryLookupError("load channel installation for delivery", gorm.ErrRecordNotFound)
+	if !errors.Is(missing, errChannelDeliveryTargetUnavailable) || !errors.Is(missing, gorm.ErrRecordNotFound) {
+		t.Fatalf("missing target error = %v, want an unavailable target that keeps its cause", missing)
+	}
+	failure := channelDeliveryLookupError("load channel installation for delivery", errors.New("connection reset"))
+	if errors.Is(failure, errChannelDeliveryTargetUnavailable) {
+		t.Fatalf("database failure %v was classified as an unavailable target", failure)
 	}
 }
