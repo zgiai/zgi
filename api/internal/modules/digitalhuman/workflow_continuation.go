@@ -68,19 +68,17 @@ func (s *RuntimeService) ContinueWorkflowApproval(
 	if continuation.Completed {
 		return nil
 	}
-	if onEvent != nil {
-		if err := onEvent(chatruntime.StreamEvent{EventType: "message_start", Payload: map[string]interface{}{
-			"conversation_id": conversationID.String(), "message_id": messageID.String(),
-			"workflow_run_id": continuation.WorkflowRunID, "continuation": true,
-		}}); err != nil {
-			return err
-		}
-	}
 	// BeginWorkflowApprovalContinuation moved the message to streaming. Every
 	// exit below must leave it paused again, completed or failed, otherwise the
 	// conversation stays blocked on a message no run owns.
 	lifecycle := &digitalHumanWorkflowContinuation{
 		ctx: context.WithoutCancel(ctx), runtime: runtime, scope: runtimeScope, continuation: continuation, onEvent: onEvent,
+	}
+	if err := lifecycle.emit(chatruntime.StreamEvent{EventType: "message_start", Payload: map[string]interface{}{
+		"conversation_id": conversationID.String(), "message_id": messageID.String(),
+		"workflow_run_id": continuation.WorkflowRunID, "continuation": true,
+	}}); err != nil {
+		return lifecycle.abortBeforeResume(err)
 	}
 	streamed, err := s.resumeWorkflowContinuation(ctx, runtimeScope, continuation, request, lifecycle.handle)
 	return lifecycle.finish(streamed, err)
@@ -222,6 +220,11 @@ func (l *digitalHumanWorkflowContinuation) handle(rawEventType string, rawPayloa
 
 func (l *digitalHumanWorkflowContinuation) finish(resume workflowContinuationResume, runErr error) error {
 	ctx := l.ctx
+	if runErr != nil && resume == workflowContinuationNotResumed {
+		// Invalid input or a rejected approval submission: the workflow never
+		// resumed, so the user can still answer the original request.
+		return l.abortBeforeResume(runErr)
+	}
 	if runErr != nil {
 		l.fail(ctx, runErr)
 		return runErr
@@ -271,6 +274,21 @@ func (l *digitalHumanWorkflowContinuation) finish(resume workflowContinuationRes
 		metadata = result.Metadata
 	}
 	return l.emitMessageEnd(ctx, runtimemodel.MessageStatusCompleted, metadata)
+}
+
+// abortBeforeResume restores the waiting state when the client is gone
+// before anything was submitted, so the approval or question can be answered
+// again. A continuation that was not waiting before Begin is failed instead.
+func (l *digitalHumanWorkflowContinuation) abortBeforeResume(cause error) error {
+	switch l.continuation.MessageStatus {
+	case runtimemodel.MessageStatusWaitingApproval, runtimemodel.MessageStatusWaitingQuestion:
+		if _, err := l.runtime.PauseWorkflowApprovalContinuation(l.ctx, l.continuation, l.continuation.MessageStatus); err != nil {
+			l.fail(l.ctx, errors.Join(cause, err))
+		}
+	default:
+		l.fail(l.ctx, cause)
+	}
+	return cause
 }
 
 func (l *digitalHumanWorkflowContinuation) pause(ctx context.Context, status string) error {

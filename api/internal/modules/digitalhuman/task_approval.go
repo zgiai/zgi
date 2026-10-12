@@ -216,6 +216,10 @@ func (s *RuntimeService) ContinueChannelTaskApproval(
 			return false, nil
 		}
 	}
+	channelScope := scope
+	channelScope.Surface = SurfaceChannel
+	channelScope.PrincipalType = string(invocation.PrincipalAccount)
+	channelScope.PrincipalID = scope.ActorID
 	if pendingKind != "digital_human_task" {
 		if !s.WorkflowContinuationEnabled() {
 			return false, fmt.Errorf("digital human channel workflow continuation is unavailable")
@@ -227,7 +231,9 @@ func (s *RuntimeService) ContinueChannelTaskApproval(
 			Type: "approval", ApprovalToken: stringValue(workflowContinuationRecord(pending.Metadata)["approval_token"]),
 			Action: action, Inputs: map[string]interface{}{"supplement": feedback},
 		}
-		if err := s.ContinueWorkflowApproval(ctx, scope, digitalHumanID, conversationID, pending.ID, request, nil); err != nil {
+		// The channel scope makes the continuation resolve the channel-owned
+		// conversation and identifies the explicit channel confirmation.
+		if err := s.ContinueWorkflowApproval(ctx, channelScope, digitalHumanID, conversationID, pending.ID, request, nil); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -247,10 +253,6 @@ func (s *RuntimeService) ContinueChannelTaskApproval(
 	if pendingRun == nil {
 		return false, ErrRunNotFound
 	}
-	channelScope := scope
-	channelScope.Surface = SurfaceChannel
-	channelScope.PrincipalType = string(invocation.PrincipalAccount)
-	channelScope.PrincipalID = scope.ActorID
 	allowTaskMutationTools := action == "revise"
 	continuationConfig, err := s.taskApprovalContinuationConfigForRun(ctx, pendingRun, allowTaskMutationTools)
 	if err != nil {

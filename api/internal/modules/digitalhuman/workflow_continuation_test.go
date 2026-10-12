@@ -64,6 +64,7 @@ func newTestWorkflowContinuationLifecycle(runtime *fakeWorkflowContinuationRunti
 		runtime: runtime,
 		continuation: &chatruntime.WorkflowApprovalContinuation{
 			ConversationID: uuid.New(), MessageID: uuid.New(), WorkflowRunID: "run-1",
+			MessageStatus: runtimemodel.MessageStatusWaitingApproval,
 		},
 		onEvent: func(event chatruntime.StreamEvent) error {
 			*emitted = append(*emitted, event)
@@ -227,5 +228,50 @@ func TestDigitalHumanWorkflowContinuationIgnoresClientEmitFailure(t *testing.T) 
 	}
 	if len(runtime.recorded) != 1 {
 		t.Fatalf("recorded = %v", runtime.recorded)
+	}
+}
+
+func TestDigitalHumanWorkflowContinuationRestoresWaitingStateWhenNotResumed(t *testing.T) {
+	for _, status := range []string{runtimemodel.MessageStatusWaitingApproval, runtimemodel.MessageStatusWaitingQuestion} {
+		t.Run(status, func(t *testing.T) {
+			runtime := &fakeWorkflowContinuationRuntime{}
+			var emitted []chatruntime.StreamEvent
+			lifecycle := newTestWorkflowContinuationLifecycle(runtime, &emitted)
+			lifecycle.continuation.MessageStatus = status
+			cause := errors.New("invalid approval token")
+
+			if err := lifecycle.finish(workflowContinuationNotResumed, cause); !errors.Is(err, cause) {
+				t.Fatalf("finish() error = %v", err)
+			}
+			if len(runtime.paused) != 1 || runtime.paused[0] != status || len(runtime.failed) != 0 {
+				t.Fatalf("paused=%v failed=%v, want the original %s state restored", runtime.paused, runtime.failed, status)
+			}
+		})
+	}
+}
+
+func TestDigitalHumanWorkflowContinuationRestoresWaitingStateWhenMessageStartFails(t *testing.T) {
+	runtime := &fakeWorkflowContinuationRuntime{}
+	var emitted []chatruntime.StreamEvent
+	lifecycle := newTestWorkflowContinuationLifecycle(runtime, &emitted)
+	cause := errors.New("client disconnected")
+
+	if err := lifecycle.abortBeforeResume(cause); !errors.Is(err, cause) {
+		t.Fatalf("abortBeforeResume() error = %v", err)
+	}
+	if len(runtime.paused) != 1 || runtime.paused[0] != runtimemodel.MessageStatusWaitingApproval || len(runtime.failed) != 0 {
+		t.Fatalf("paused=%v failed=%v", runtime.paused, runtime.failed)
+	}
+}
+
+func TestDigitalHumanWorkflowContinuationFailsAbortedStreamingContinuation(t *testing.T) {
+	runtime := &fakeWorkflowContinuationRuntime{}
+	var emitted []chatruntime.StreamEvent
+	lifecycle := newTestWorkflowContinuationLifecycle(runtime, &emitted)
+	lifecycle.continuation.MessageStatus = runtimemodel.MessageStatusStreaming
+
+	_ = lifecycle.abortBeforeResume(errors.New("client disconnected"))
+	if len(runtime.failed) != 1 || len(runtime.paused) != 0 {
+		t.Fatalf("paused=%v failed=%v, want a non-waiting continuation failed", runtime.paused, runtime.failed)
 	}
 }
