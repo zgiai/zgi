@@ -62,6 +62,17 @@ const messages: MarketMessages = {
     outputSchema: '输出 Schema',
     risk: { read: '只读', write: '写入', destructive: '破坏性' },
     detail: {
+      skill: {
+        title: '技能包内容',
+        afterInstall: '市场只向已拥有该技能的组织说明技能包里的文件。安装后可以在这里看到。',
+        unavailable: '文件列表加载失败。',
+        fileCount: '{count} 个文件',
+        scripts: '{count} 个脚本',
+        noScripts: '仅指令',
+        scriptsNote:
+          '这个技能带有脚本。只有开启了执行环境的智能体才会运行它们；未开启时技能仍然提供它的指令。',
+        instructionsNote: '这个技能由指令和参考资料组成，不带可执行的代码。',
+      },
       tabs: { overview: '概览', api: '接口', tools: '工具', pricing: '定价', usage: '使用方式' },
       providedBy: '由 {provider} 提供',
       updatedOn: '发布于 {date}',

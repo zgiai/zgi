@@ -118,3 +118,31 @@ export function marketErrorCode(error: unknown): string {
   const data = (error as { response?: { data?: { error_code?: unknown } } } | null)?.response?.data;
   return typeof data?.error_code === 'string' ? data.error_code : '';
 }
+
+interface SkillPackageFile {
+  path: string;
+  size: number;
+}
+
+const scriptPattern = /\.(py|js|mjs|cjs|ts|sh|bash|rb|pl|php)$/i;
+
+/**
+ * The files of a skill package by top-level directory, the root first, and the ones that are
+ * scripts: a reader should know whether a skill only instructs or also brings code to run.
+ */
+export function skillPackageSummary<T extends SkillPackageFile>(
+  files: T[]
+): { groups: Array<{ directory: string; files: T[] }>; scripts: T[] } {
+  const groups = new Map<string, T[]>();
+  for (const file of [...files].sort((a, b) => a.path.localeCompare(b.path))) {
+    const cut = file.path.indexOf('/');
+    const directory = cut < 0 ? '' : file.path.slice(0, cut);
+    groups.set(directory, [...(groups.get(directory) ?? []), file]);
+  }
+  return {
+    groups: [...groups.entries()]
+      .sort(([a], [b]) => (a === '' ? -1 : b === '' ? 1 : a.localeCompare(b)))
+      .map(([directory, grouped]) => ({ directory, files: grouped })),
+    scripts: files.filter(file => scriptPattern.test(file.path)),
+  };
+}

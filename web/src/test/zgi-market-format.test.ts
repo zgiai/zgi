@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 
 // prettier-ignore
 // @ts-ignore Node's direct TypeScript runner requires an explicit extension.
-import { lowestPrice, marketAmount, marketDate, marketDisplayPrice, marketExternalUrl, marketText } from '../components/zgi-market/market-format.ts';
+import { lowestPrice, marketAmount, marketDate, marketDisplayPrice, marketErrorCode, marketExternalUrl, marketText, skillPackageSummary } from '../components/zgi-market/market-format.ts';
 // prettier-ignore
 // @ts-ignore Node's direct TypeScript runner requires an explicit extension.
 import { marketApiQuickStart, marketGatewayOrigin, marketMcpClientConfig, marketMcpServerUrl } from '../components/zgi-market/market-usage.ts';
@@ -120,5 +120,31 @@ const unsafe = marketApiQuickStart(origin, {
 });
 assert.equal(unsafe.concrete, false);
 assert.equal(unsafe.curl.includes('rm -rf'), false);
+
+// A skill package: the root first, then directories by name; scripts are named so a reader knows
+// whether the skill brings code to run.
+const summary = skillPackageSummary([
+  { path: 'scripts/summarize.py', size: 130 },
+  { path: 'references/usage.md', size: 47 },
+  { path: 'SKILL.md', size: 213 },
+  { path: 'scripts/lib/util.js', size: 9 },
+]);
+assert.deepEqual(
+  summary.groups.map(group => [group.directory, group.files.map(file => file.path)]),
+  [
+    ['', ['SKILL.md']],
+    ['references', ['references/usage.md']],
+    ['scripts', ['scripts/lib/util.js', 'scripts/summarize.py']],
+  ]
+);
+assert.deepEqual(summary.scripts.map(file => file.path), ['scripts/summarize.py', 'scripts/lib/util.js']);
+assert.equal(skillPackageSummary([{ path: 'SKILL.md', size: 1 }]).scripts.length, 0);
+
+assert.equal(
+  marketErrorCode({ response: { data: { error_code: 'MARKET_ACCESS.CREDENTIAL_LIMIT_REACHED' } } }),
+  'MARKET_ACCESS.CREDENTIAL_LIMIT_REACHED'
+);
+assert.equal(marketErrorCode(new Error('network')), '');
+assert.equal(marketErrorCode(null), '');
 
 console.log('zgi-market-format: ok');

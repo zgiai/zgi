@@ -176,3 +176,25 @@ func TestMetaIsAnsweredHereForAMemberOnly(t *testing.T) {
 		t.Fatalf("a write to the meta answered %d", recorder.Code)
 	}
 }
+
+func TestForwardLetsABrowserReadASkillManifestAndNothingElseUnderSkills(t *testing.T) {
+	engine, seen := newTestProxy(t, true, false)
+	recorder := send(engine, http.MethodGet, "/workspaces/current/zgi-market/skills/csv-summary/manifest", "", nil)
+	if recorder.Code != http.StatusCreated || len(*seen) != 1 || (*seen)[0].path != "/v1/internal/zgi-market/proxy/skills/csv-summary/manifest" {
+		t.Fatalf("answer = %d, console calls = %v", recorder.Code, *seen)
+	}
+	for _, refused := range []struct{ method, path string }{
+		{http.MethodGet, "/workspaces/current/zgi-market/skills/csv-summary/package"},
+		{http.MethodPost, "/workspaces/current/zgi-market/skills/csv-summary/manifest"},
+		{http.MethodGet, "/workspaces/current/zgi-market/skills/csv-summary"},
+		{http.MethodGet, "/workspaces/current/zgi-market/skills/CSV/manifest"},
+		{http.MethodGet, "/workspaces/current/zgi-market/skills/a/b/manifest"},
+	} {
+		if recorder := send(engine, refused.method, refused.path, "", nil); recorder.Code == http.StatusCreated {
+			t.Errorf("%s %s was forwarded", refused.method, refused.path)
+		}
+	}
+	if len(*seen) != 1 {
+		t.Fatalf("console calls = %d", len(*seen))
+	}
+}

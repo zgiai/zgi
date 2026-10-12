@@ -15,6 +15,7 @@ import type {
   MarketListingQuery,
   MarketMeta,
   MarketSkillInstall,
+  MarketSkillManifest,
   MarketSubscription,
 } from './types/zgi-market';
 
@@ -115,6 +116,18 @@ class ZgiMarketService extends BaseService {
       'post',
       `/installs/skills/${encodeURIComponent(slug)}`,
       { overwrite }
+    );
+    return response.data;
+  }
+
+  /**
+   * The files of a skill package. The market answers it only to an organization that activated
+   * the skill; before that the request is refused.
+   */
+  async getSkillManifest(slug: string): Promise<MarketSkillManifest> {
+    const response = await this.request<MarketEnvelope<MarketSkillManifest>>(
+      'get',
+      `/skills/${encodeURIComponent(slug)}/manifest`
     );
     return response.data;
   }

@@ -70,5 +70,23 @@ export function useMarketLabels() {
     [t]
   );
 
-  return { t, locale, text, meter, amount, per, from };
+  /** A file size in the reader's number format: bytes below 1 KB, then KB and MB. */
+  const bytes = useCallback(
+    (size: number) => {
+      if (size < 1024) {
+        return `${numbers.format(size)} B`;
+      }
+      const units = ['KB', 'MB', 'GB'];
+      let value = size / 1024;
+      let unit = 0;
+      while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit += 1;
+      }
+      return `${numbers.format(Math.round(value * 10) / 10)} ${units[unit]}`;
+    },
+    [numbers]
+  );
+
+  return { t, locale, text, meter, amount, per, from, bytes };
 }

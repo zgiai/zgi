@@ -14,6 +14,7 @@ import type {
 } from '@/services/types/zgi-market';
 import { useMarketLabels } from './use-market-labels';
 import ZgiMarketCard from './zgi-market-card';
+import { ZgiMarketSkillContents } from './zgi-market-skill-contents';
 
 function Section({
   id,
@@ -196,7 +197,11 @@ export function ZgiMarketOverview({ listing, activatedIds }: ZgiMarketOverviewPr
   const { t, text } = useMarketLabels();
   const body = text(listing.detail.body);
   const tools = listing.mcp?.tools ?? [];
-  const hasContents = tools.length > 0 || Boolean(listing.plugin) || Boolean(listing.connector);
+  const hasContents =
+    tools.length > 0 ||
+    Boolean(listing.plugin) ||
+    Boolean(listing.connector) ||
+    listing.kind === 'skill';
   return (
     <div className="flex flex-col gap-8">
       {/* The header already carries the short description; an empty body adds nothing to it. */}
@@ -219,6 +224,11 @@ export function ZgiMarketOverview({ listing, activatedIds }: ZgiMarketOverviewPr
           aside={t('market.catalog.detail.overview.toolCount', { count: tools.length })}
         >
           <ZgiMarketToolList tools={tools} />
+        </Section>
+      ) : null}
+      {listing.kind === 'skill' ? (
+        <Section id="zgi-market-skill-contents" title={t('market.catalog.detail.skill.title')}>
+          <ZgiMarketSkillContents slug={listing.slug} activated={activatedIds.has(listing.id)} />
         </Section>
       ) : null}
       <PluginSummary listing={listing} />

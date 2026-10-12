@@ -61,6 +61,19 @@ const messages = {
     outputSchema: 'Output schema',
     risk: { read: 'Reads', write: 'Writes', destructive: 'Destructive' },
     detail: {
+      skill: {
+        title: 'What the package holds',
+        afterInstall:
+          'The market describes the files of a skill package only to an organization that has the skill. Install it to see them here.',
+        unavailable: 'The file list could not be loaded.',
+        fileCount: '{count} files',
+        scripts: '{count} scripts',
+        noScripts: 'Instructions only',
+        scriptsNote:
+          'This skill brings scripts. An agent runs them only when its execution environment is turned on; without it the skill still gives its instructions.',
+        instructionsNote:
+          'This skill is instructions and reference material; it brings no code to run.',
+      },
       tabs: {
         overview: 'Overview',
         api: 'API',

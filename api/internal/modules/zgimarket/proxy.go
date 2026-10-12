@@ -13,6 +13,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -115,6 +116,23 @@ func resourceOf(raw string) (path, resource string, ok bool) {
 	return path, resource, resources[resource]
 }
 
+// skillManifestPattern is the one path under `skills` a browser may read: the file list of a skill
+// package. The package itself is fetched by this instance when it installs the skill, never handed
+// to a browser.
+var skillManifestPattern = regexp.MustCompile(`^skills/[a-z0-9][a-z0-9._-]{0,127}/manifest$`)
+
+// forwardable reports whether a member's request may be handed to the console.
+func forwardable(method, raw string) (path string, ok bool) {
+	path, _, allowed := resourceOf(raw)
+	if allowed {
+		return path, true
+	}
+	if method == http.MethodGet && skillManifestPattern.MatchString(path) {
+		return path, true
+	}
+	return "", false
+}
+
 // caller is the member a market request is made for.
 type caller struct {
 	organizationID, accountID string
@@ -196,7 +214,7 @@ func (p *Proxy) Forward(c *gin.Context) {
 	if p.meta(c) || p.install(c) || p.toolRoute(c) {
 		return
 	}
-	path, _, allowed := resourceOf(c.Param("path"))
+	path, allowed := forwardable(c.Request.Method, c.Param("path"))
 	if !allowed {
 		response.Fail(c, response.ErrNotFound)
 		return

@@ -315,3 +315,11 @@ export interface MarketCredential {
 export interface MarketCredentialCreated extends MarketCredential {
   secret_key: string;
 }
+
+/** What the package of a skill holds, as the market describes it to an organization that activated it. */
+export interface MarketSkillManifest {
+  version_label: string;
+  sha256: string;
+  size_bytes: number;
+  files: Array<{ path: string; size: number; sha256: string }>;
+}

@@ -17,6 +17,7 @@ const keys = {
   installedSkills: ['zgi-market', 'installed-skills'] as const,
   connections: ['zgi-market', 'connections'] as const,
   credentials: ['zgi-market', 'credentials'] as const,
+  skillManifest: (slug: string) => ['zgi-market', 'skill-manifest', slug] as const,
   toolCandidates: ['zgi-market', 'tool-candidates'] as const,
   subjectTools: (subjectType: string, subjectId: string) =>
     ['zgi-market', 'subject-tools', subjectType, subjectId] as const,
@@ -105,6 +106,17 @@ export function useZgiMarketConnections(enabled = true) {
     queryKey: keys.connections,
     queryFn: () => zgiMarketService.getConnections(),
     enabled,
+  });
+}
+
+/** The files of an activated skill's package. Disabled until the organization has the skill. */
+export function useZgiMarketSkillManifest(slug: string, enabled: boolean) {
+  return useQuery({
+    queryKey: keys.skillManifest(slug),
+    queryFn: () => zgiMarketService.getSkillManifest(slug),
+    enabled,
+    staleTime,
+    retry: false,
   });
 }
 
