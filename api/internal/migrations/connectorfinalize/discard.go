@@ -16,6 +16,9 @@ import (
 func Discard(ctx context.Context, db *gorm.DB) (Report, error) {
 	var report Report
 	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := ensurePendingSetupsCompatibility(tx); err != nil {
+			return err
+		}
 		if err := lockInventory(tx); err != nil {
 			return err
 		}
@@ -24,8 +27,8 @@ func Discard(ctx context.Context, db *gorm.DB) (Report, error) {
 		if err != nil {
 			return err
 		}
-		if r.Checkpoint != CheckpointID {
-			return fmt.Errorf("discard requires Connector checkpoint %s", CheckpointID)
+		if err := ensureCheckpointApplied(tx); err != nil {
+			return err
 		}
 		if err := ensureDiscardDependencies(r); err != nil {
 			return err
