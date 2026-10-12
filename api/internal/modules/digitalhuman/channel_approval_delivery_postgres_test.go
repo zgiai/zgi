@@ -194,4 +194,49 @@ func TestChannelWorkflowApprovalDeliveryPostgres(t *testing.T) {
 			t.Fatalf("follow-up delivery = %#v, want pending", delivery)
 		}
 	}
+
+	// Completion is the execution-of-record: a channel target that disappears
+	// while the model runs must not leave the run looking like it never ended.
+	orphan, _, err := runtime.SubmitInvocation(t.Context(), scope, invocation.Event{
+		ID: "scheduled-orphaned-target", Type: invocation.EventTypeSchedule,
+		Origin: invocation.Origin{Kind: invocation.OriginSchedule},
+		Target: runtimeidentity.SubjectRef{
+			Type: runtimeidentity.SubjectTypeDigitalHuman, ID: digitalHumanID,
+			OrganizationID: organizationID, WorkspaceID: workspaceID,
+		},
+		Sender:     invocation.PrincipalRef{Type: invocation.PrincipalSystem, ID: "digital-human-task-scheduler"},
+		OccurredAt: now,
+		ReplyTo: &invocation.ReplyAddress{
+			Provider: feishu.IntegrationID, InstallationID: installation.ID.String(), ConversationID: mapping.ExternalConversationID,
+		},
+	}, "安装被停用前开始的任务", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&Run{}).Where("id = ?", orphan.ID).Updates(map[string]any{
+		"status": RunStatusRunning, "started_at": now, "updated_at": now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&channelruntime.Installation{}).Where("id = ?", installation.ID).
+		Update("status", channelruntime.InstallationStatusDisabled).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.CompleteRunWithDelivery(t.Context(), orphan.ID, "任务已完成", datatypes.JSON(`{}`), now.Add(2*time.Second)); err != nil {
+		t.Fatalf("CompleteRunWithDelivery() with an unavailable channel target error = %v", err)
+	}
+	var completed Run
+	if err := db.Where("id = ?", orphan.ID).Take(&completed).Error; err != nil {
+		t.Fatal(err)
+	}
+	if completed.Status != RunStatusSucceeded {
+		t.Fatalf("run status = %s, want the completion committed without a delivery target", completed.Status)
+	}
+	var orphanDeliveries int64
+	if err := db.Model(&channelruntime.Delivery{}).Where("run_id = ?", orphan.ID).Count(&orphanDeliveries).Error; err != nil {
+		t.Fatal(err)
+	}
+	if orphanDeliveries != 0 {
+		t.Fatalf("deliveries for a run without a channel target = %d, want 0", orphanDeliveries)
+	}
 }
