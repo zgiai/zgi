@@ -157,18 +157,27 @@ func (s *RuntimeService) taskApprovalContinuationConfigForRun(ctx context.Contex
 // replaced with the approval form, so the user's short confirmation is routed
 // to the same continuation and task mutation path instead of starting a new
 // model turn.
+// HasPendingChannelApproval reports whether the channel conversation is
+// waiting on an approval. It is the cheap admission check run inside the
+// provider's acknowledgement window; ContinueChannelTaskApproval does the work.
+func (s *RuntimeService) HasPendingChannelApproval(
+	ctx context.Context,
+	scope Scope,
+	digitalHumanID, conversationID uuid.UUID,
+) (bool, error) {
+	pending, _, err := s.pendingChannelApproval(ctx, scope, digitalHumanID, conversationID)
+	return pending != nil, err
+}
+
 func (s *RuntimeService) ContinueChannelTaskApproval(
 	ctx context.Context,
 	scope Scope,
 	digitalHumanID, conversationID uuid.UUID,
 	text string,
 ) (bool, error) {
-	if s == nil || digitalHumanID == uuid.Nil || conversationID == uuid.Nil {
-		return false, ErrInvalidRequest
-	}
-	lister, ok := s.chat.(channelApprovalMessageLister)
-	if !ok {
-		return false, nil
+	pending, pendingKind, err := s.pendingChannelApproval(ctx, scope, digitalHumanID, conversationID)
+	if err != nil || pending == nil {
+		return false, err
 	}
 	workspaceID := scope.WorkspaceID
 	callerID := digitalHumanID
@@ -181,42 +190,6 @@ func (s *RuntimeService) ContinueChannelTaskApproval(
 		OrganizationID: scope.OrganizationID,
 		WorkspaceID:    &workspaceID,
 		AccountID:      scope.ActorID,
-	}
-	messages, _, err := lister.ListConversationMessagesByCaller(ctx, runtimeScope, caller, conversationID, 1, 50)
-	if err != nil {
-		// A channel mapping reserves its local conversation ID before the
-		// first runtime input is submitted. Until that input creates the
-		// conversation, the approval lookup naturally returns not found.
-		// Treat that state as "no pending approval" and let the normal
-		// channel invocation path create the conversation. Other errors
-		// (including permission and storage failures) must still fail closed.
-		if errors.Is(err, service.ErrNotFound) {
-			return false, nil
-		}
-		return false, err
-	}
-	var pending *runtimemodel.Message
-	var pendingKind string
-	for _, message := range messages {
-		if message == nil || message.Status != runtimemodel.MessageStatusWaitingApproval {
-			continue
-		}
-		state := workflowContinuationRecord(message.Metadata)
-		kind := strings.TrimSpace(stringValue(state["kind"]))
-		if kind == "" {
-			// Only DigitalHuman task approvals persist an explicit kind; a
-			// generic workflow approval is identified by its workflow run.
-			if strings.TrimSpace(stringValue(state["workflow_run_id"])) == "" {
-				continue
-			}
-			kind = "workflow"
-		}
-		pending = message
-		pendingKind = kind
-		break
-	}
-	if pending == nil {
-		return false, nil
 	}
 	action, feedback := channelTaskApprovalAction(text)
 	if action == "" {
@@ -363,6 +336,62 @@ func (s *RuntimeService) deliverChannelWorkflowApprovalMessage(ctx context.Conte
 		key = "approval:" + uuid.NewSHA1(uuid.NameSpaceOID, []byte(key)).String()
 	}
 	return deliveryStore.EnqueueRunChannelFinalDelivery(ctx, run.ID, key, text, time.Now().UTC())
+}
+
+func (s *RuntimeService) pendingChannelApproval(
+	ctx context.Context,
+	scope Scope,
+	digitalHumanID, conversationID uuid.UUID,
+) (*runtimemodel.Message, string, error) {
+	if s == nil || digitalHumanID == uuid.Nil || conversationID == uuid.Nil {
+		return nil, "", ErrInvalidRequest
+	}
+	lister, ok := s.chat.(channelApprovalMessageLister)
+	if !ok {
+		return nil, "", nil
+	}
+	workspaceID := scope.WorkspaceID
+	callerID := digitalHumanID
+	caller := service.Caller{
+		Type:   runtimemodel.ConversationCallerDigitalHuman,
+		ID:     &callerID,
+		Source: digitalHumanChannelConversationSource,
+	}
+	runtimeScope := service.Scope{
+		OrganizationID: scope.OrganizationID,
+		WorkspaceID:    &workspaceID,
+		AccountID:      scope.ActorID,
+	}
+	messages, _, err := lister.ListConversationMessagesByCaller(ctx, runtimeScope, caller, conversationID, 1, 50)
+	if err != nil {
+		// A channel mapping reserves its local conversation ID before the
+		// first runtime input is submitted. Until that input creates the
+		// conversation, the approval lookup naturally returns not found.
+		// Treat that state as "no pending approval" and let the normal
+		// channel invocation path create the conversation. Other errors
+		// (including permission and storage failures) must still fail closed.
+		if errors.Is(err, service.ErrNotFound) {
+			return nil, "", nil
+		}
+		return nil, "", err
+	}
+	for _, message := range messages {
+		if message == nil || message.Status != runtimemodel.MessageStatusWaitingApproval {
+			continue
+		}
+		state := workflowContinuationRecord(message.Metadata)
+		kind := strings.TrimSpace(stringValue(state["kind"]))
+		if kind == "" {
+			// Only DigitalHuman task approvals persist an explicit kind; a
+			// generic workflow approval is identified by its workflow run.
+			if strings.TrimSpace(stringValue(state["workflow_run_id"])) == "" {
+				continue
+			}
+			kind = "workflow"
+		}
+		return message, kind, nil
+	}
+	return nil, "", nil
 }
 
 func channelTaskApprovalAction(text string) (string, string) {

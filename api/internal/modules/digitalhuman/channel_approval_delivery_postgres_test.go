@@ -296,4 +296,70 @@ func TestChannelWorkflowApprovalDeliveryPostgres(t *testing.T) {
 	if recoveredDeliveries != 1 {
 		t.Fatalf("deliveries after retry = %d, want 1", recoveredDeliveries)
 	}
+
+	// Channel approval replies are persisted inside the acknowledgement window
+	// and claimed by a worker with a lease that a dead worker cannot keep.
+	approvalInbound, _, err := repository.RecordInboundEvent(t.Context(), &channelruntime.InboundEvent{
+		ID: uuid.New(), OrganizationID: organizationID, WorkspaceID: workspaceID,
+		InstallationID: installation.ID, BindingID: &binding.ID,
+		ProviderEventID: "feishu-event-approval-job", ProviderMessageID: "om_approval_job",
+		ExternalConversationID: mapping.ExternalConversationID, SenderExternalID: "ou_sender",
+		EventType: "channel.mention", PayloadDigest: "sha256:" + strings.Repeat("d", 64),
+		Status: channelruntime.InboundEventReceived, ReceivedAt: now, CreatedAt: now, UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Registered after the fixture cleanup, so it runs first: approval jobs
+	// restrict deleting their organization.
+	t.Cleanup(func() {
+		_ = db.Exec("DELETE FROM digital_human_channel_approval_jobs WHERE organization_id = ?", organizationID).Error
+	})
+	job := &ChannelApprovalJob{
+		ID: approvalInbound.ID, InboundEventID: approvalInbound.ID,
+		OrganizationID: organizationID, WorkspaceID: workspaceID, InstallationID: installation.ID,
+		ActorID: actorID, DigitalHumanID: digitalHumanID, ConversationID: uuid.New(), Text: "确认",
+		Status: ChannelApprovalJobPending, AvailableAt: now, CreatedAt: now, UpdatedAt: now,
+	}
+	for attempt, wantCreated := range []bool{true, false} {
+		created, err := repository.CreateChannelApprovalJob(t.Context(), job)
+		if err != nil || created != wantCreated {
+			t.Fatalf("CreateChannelApprovalJob(attempt %d) = %v, %v; want created=%v", attempt, created, err, wantCreated)
+		}
+	}
+	claimed, err := repository.ClaimChannelApprovalJobs(t.Context(), 5, now)
+	if err != nil || len(claimed) != 1 || claimed[0].AttemptCount != 1 || claimed[0].Text != "确认" {
+		t.Fatalf("ClaimChannelApprovalJobs() = %#v, %v", claimed, err)
+	}
+	if again, err := repository.ClaimChannelApprovalJobs(t.Context(), 5, now.Add(time.Minute)); err != nil || len(again) != 0 {
+		t.Fatalf("claim within the lease = %d jobs, %v; want none", len(again), err)
+	}
+	expired := now.Add(channelApprovalLease + time.Second)
+	reclaimed, err := repository.ClaimChannelApprovalJobs(t.Context(), 5, expired)
+	if err != nil || len(reclaimed) != 1 || reclaimed[0].AttemptCount != 2 {
+		t.Fatalf("claim after lease expiry = %#v, %v; want the job reclaimed", reclaimed, err)
+	}
+	if err := repository.RetryChannelApprovalJob(t.Context(), job.ID, expired.Add(time.Minute), "continuation_failed", expired); err != nil {
+		t.Fatal(err)
+	}
+	if due, err := repository.ListDueChannelApprovalJobs(t.Context(), 5, expired); err != nil || len(due) != 0 {
+		t.Fatalf("due before retry delay = %d, %v", len(due), err)
+	}
+	if due, err := repository.ListDueChannelApprovalJobs(t.Context(), 5, expired.Add(2*time.Minute)); err != nil || len(due) != 1 {
+		t.Fatalf("due after retry delay = %d, %v", len(due), err)
+	}
+	final, err := repository.ClaimChannelApprovalJobs(t.Context(), 5, expired.Add(2*time.Minute))
+	if err != nil || len(final) != 1 {
+		t.Fatalf("claim after retry delay = %#v, %v", final, err)
+	}
+	if err := repository.FinishChannelApprovalJob(t.Context(), job.ID, ChannelApprovalJobSucceeded, "", expired.Add(3*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	var stored ChannelApprovalJob
+	if err := db.Where("id = ?", job.ID).Take(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != ChannelApprovalJobSucceeded || stored.CompletedAt == nil || stored.AttemptCount != 3 {
+		t.Fatalf("finished job = %#v", stored)
+	}
 }
