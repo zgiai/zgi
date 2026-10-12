@@ -12,7 +12,6 @@ import (
 	pb "github.com/zgiai/zgi/api/pkg/rpc/v1"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 // Remote is the Cloud implementation that communicates with zgi-console via gRPC.
@@ -26,7 +25,11 @@ type Remote struct {
 // resolve the downstream identity. An empty key keeps the transitional
 // unauthenticated behavior.
 func NewRemote(addr, apiKey string) (*Remote, error) {
-	dialOptions := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+	transportCredentials, err := consolecred.TransportCredentials(addr)
+	if err != nil {
+		return nil, err
+	}
+	dialOptions := []grpc.DialOption{grpc.WithTransportCredentials(transportCredentials)}
 	// Two distinct credentials travel on every billing RPC. The per-instance
 	// control-plane credential is attached first: it contributes the X-Internal-*
 	// HMAC headers (signed through consolecred over the full gRPC method) the console

@@ -195,6 +195,12 @@ const (
 	envConsoleAPIURL = "CONSOLE_API_URL"
 	// envConsoleAPIGRPCAddr sets the console gRPC endpoint address. Default: empty.
 	envConsoleAPIGRPCAddr = "CONSOLE_API_GRPC_ADDR"
+	// envConsoleAPIGRPCTLS enables TLS for outbound Console gRPC calls. Default: false.
+	envConsoleAPIGRPCTLS = "CONSOLE_API_GRPC_TLS_ENABLED"
+	// envConsoleAPIGRPCTLSCAFile optionally selects a custom CA bundle. Empty uses system roots.
+	envConsoleAPIGRPCTLSCAFile = "CONSOLE_API_GRPC_TLS_CA_FILE"
+	// envConsoleAPIGRPCTLSServerName overrides the TLS server name used for verification.
+	envConsoleAPIGRPCTLSServerName = "CONSOLE_API_GRPC_TLS_SERVER_NAME"
 	// envConsoleInternalAPIKey sets the internal API key shared with the console service. Default: empty.
 	envConsoleInternalAPIKey = "CONSOLE_INTERNAL_API_KEY"
 	// envConsoleInstanceID selects the per-instance Console credential issued by the

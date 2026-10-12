@@ -12,7 +12,6 @@ import (
 	"github.com/zgiai/zgi/api/internal/infra/platform/consolecred"
 	pb "github.com/zgiai/zgi/api/pkg/rpc/v1"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 const (
@@ -57,8 +56,12 @@ func (c *consoleOfficialCreditChecker) GetOfficialBalance(ctx context.Context, o
 	dialCtx, cancelDial := context.WithTimeout(ctx, c.dialTimeout)
 	defer cancelDial()
 
+	transportCredentials, err := consolecred.TransportCredentials(c.grpcAddr)
+	if err != nil {
+		return 0, fmt.Errorf("%w: invalid console grpc TLS configuration: %v", ErrOfficialCreditUnavailable, err)
+	}
 	dialOptions := []grpc.DialOption{
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(transportCredentials),
 		grpc.WithBlock(),
 		// Two distinct credentials travel on the balance RPC. The per-instance
 		// control-plane credential is attached first: it contributes the X-Internal-*
