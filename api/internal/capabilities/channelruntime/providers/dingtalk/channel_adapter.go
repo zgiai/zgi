@@ -49,9 +49,11 @@ func (*ChannelAdapter) Capabilities() channelruntime.ProviderCapabilities {
 
 func (*ChannelAdapter) ConnectionSpec() channelruntime.ConnectionSpec {
 	return channelruntime.ConnectionSpec{
-		IntegrationID: IntegrationID,
-		DriverID:      DriverID,
-		AuthMethodID:  AuthMethodID,
+		IntegrationID:           IntegrationID,
+		DriverID:                DriverID,
+		AuthMethodID:            AuthMethodID,
+		CompatibleDriverIDs:     []string{"dingtalk-http-v1"},
+		CompatibleAuthMethodIDs: []string{"dingtalk.credentials"},
 	}
 }
 
@@ -63,6 +65,7 @@ func (*ChannelAdapter) PrepareCredentials(current, updates map[string]string) (m
 
 			continue
 		}
+		key = canonicalDingTalkCredentialKey(key)
 		if !isDingTalkChannelCredentialKey(key) {
 			destroyDingTalkChannelCredentials(prepared)
 			return nil, providertransport.NewError(providertransport.ErrorCodeInvalidInput, "unsupported DingTalk channel credential field", nil)
@@ -73,6 +76,7 @@ func (*ChannelAdapter) PrepareCredentials(current, updates map[string]string) (m
 	}
 	for key, value := range updates {
 		key = strings.ToLower(strings.TrimSpace(key))
+		key = canonicalDingTalkCredentialKey(key)
 		if !isDingTalkChannelCredentialKey(key) {
 			destroyDingTalkChannelCredentials(prepared)
 			return nil, providertransport.NewError(providertransport.ErrorCodeInvalidInput, "unsupported DingTalk channel credential field", nil)
@@ -86,6 +90,10 @@ func (*ChannelAdapter) PrepareCredentials(current, updates map[string]string) (m
 		return nil, providertransport.NewError(providertransport.ErrorCodeInvalidInput, "DingTalk AppKey and AppSecret are required", nil)
 	}
 	return prepared, nil
+}
+
+func (adapter *ChannelAdapter) NormalizeCredentials(values map[string]string, _ string) (map[string]string, error) {
+	return adapter.PrepareCredentials(nil, values)
 }
 
 func (adapter *ChannelAdapter) ResolveIdentity(ctx context.Context, credential channelruntime.ResolvedChannelCredential) (channelruntime.InstallationIdentity, error) {
@@ -405,6 +413,17 @@ func isDingTalkChannelCredentialKey(key string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func canonicalDingTalkCredentialKey(key string) string {
+	switch key {
+	case "client_id":
+		return "app_key"
+	case "client_secret":
+		return "app_secret"
+	default:
+		return key
 	}
 }
 

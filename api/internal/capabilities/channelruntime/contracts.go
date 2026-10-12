@@ -282,11 +282,15 @@ type ConversationCapabilityTester interface {
 }
 
 // ConnectionSpec describes an optional Connection Center credential accepted
-// by a provider. DigitalHuman does not interpret provider-specific identifiers.
+// by a provider. Compatibility identifiers are declared by the adapter so
+// DigitalHuman can accept deployed Connector metadata without hardcoded
+// provider branches.
 type ConnectionSpec struct {
-	IntegrationID string
-	DriverID      string
-	AuthMethodID  string
+	IntegrationID           string
+	DriverID                string
+	AuthMethodID            string
+	CompatibleDriverIDs     []string
+	CompatibleAuthMethodIDs []string
 }
 
 // Provisioner owns provider-specific credential validation, merging, and
@@ -295,6 +299,16 @@ type Provisioner interface {
 	PrepareCredentials(current, updates map[string]string) (map[string]string, error)
 	ResolveIdentity(context.Context, ResolvedChannelCredential) (InstallationIdentity, error)
 	ConnectionSpec() ConnectionSpec
+}
+
+// CredentialNormalizer lets a provider adapt an already verified Connector
+// envelope to its channel runtime field names before any provider call. The
+// transport is the receiver mode resolved for the credential ("webhook",
+// "websocket", "stream", ...). It is optional so providers whose Connector
+// fields already match keep the plain credential map.
+// Implementations return a disposable map independent of the input map.
+type CredentialNormalizer interface {
+	NormalizeCredentials(map[string]string, string) (map[string]string, error)
 }
 
 // ProviderCapabilities declares optional channel behavior without requiring

@@ -17,9 +17,9 @@ import (
 )
 
 // connectorConfirmationGuardCountQuery is the exact parameterized count the
-// guard must issue. Every predicate is a bound placeholder and the only SQL
-// text is the constant canceled-run exclusion.
-const connectorConfirmationGuardCountQuery = `(?s)SELECT count\(\*\) FROM "digital_human_runs" WHERE id = \$1 AND organization_id = \$2 AND actor_id = \$3 AND digital_human_id = \$4 AND digital_human_version_id = \$5 AND conversation_id = \$6 AND message_id = \$7 AND status = \$8 AND waiting_reason = \$9 AND waiting_receipt = \$10 AND cancel_requested_at IS NULL`
+// guard must issue. Every dynamic predicate is a bound placeholder and the SQL
+// keeps the external-surface exception explicit.
+const connectorConfirmationGuardCountQuery = `(?s)SELECT count\(\*\) FROM "digital_human_runs" WHERE id = \$1 AND organization_id = \$2 AND \(actor_id = \$3 OR \(actor_id IS NULL AND surface IN \(\$4, \$5\)\)\) AND digital_human_id = \$6 AND digital_human_version_id = \$7 AND conversation_id = \$8 AND message_id = \$9 AND status = \$10 AND waiting_reason = \$11 AND waiting_receipt = \$12 AND cancel_requested_at IS NULL`
 
 func newConnectorConfirmationGuardTestDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {
 	t.Helper()
@@ -53,7 +53,7 @@ func newConnectorConfirmationGuardRequest() (
 		RouteReceipt:          connectorexecution.RouteClaimReceipt(receipt.String()),
 	}
 	return request, []driver.Value{
-		request.RunID, request.OrganizationID, request.OwnerAccountID,
+		request.RunID, request.OrganizationID, request.OwnerAccountID, SurfaceAPI, SurfaceWebApp,
 		request.DigitalHumanID, request.DigitalHumanVersionID,
 		request.ConversationID, request.MessageID,
 		RunStatusWaiting, runtimemodel.MessageStatusWaitingApproval, receipt,
