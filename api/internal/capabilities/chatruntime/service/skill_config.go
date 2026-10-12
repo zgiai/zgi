@@ -199,6 +199,10 @@ func validateSkillIDsForCaller(input []string, catalog []skills.SkillDiscoveryMe
 }
 
 func effectiveAgentSkillIDs(input []string, catalog []skills.SkillDiscoveryMetadata, organizationEnabled []string, runConfig *RunConfig) []string {
+	return effectiveBoundSkillIDs(input, catalog, organizationEnabled, runConfig, runtimemodel.ConversationCallerAgent)
+}
+
+func effectiveBoundSkillIDs(input []string, catalog []skills.SkillDiscoveryMetadata, organizationEnabled []string, runConfig *RunConfig, callerType string) []string {
 	catalogByID := catalogSkillByID(catalog)
 	orgEnabled := stringSet(organizationEnabled)
 	seen := map[string]struct{}{}
@@ -209,7 +213,7 @@ func effectiveAgentSkillIDs(input []string, catalog []skills.SkillDiscoveryMetad
 			continue
 		}
 		item, ok := catalogByID[id]
-		if !ok || !skillSupportsCaller(item, runtimemodel.ConversationCallerAgent) {
+		if !ok || !skillSupportsCaller(item, callerType) {
 			continue
 		}
 		if _, ok := orgEnabled[id]; !ok {
@@ -224,19 +228,19 @@ func effectiveAgentSkillIDs(input []string, catalog []skills.SkillDiscoveryMetad
 		seen[id] = struct{}{}
 		out = append(out, id)
 	}
-	if runConfigHasKnowledgeDatasets(runConfig) && agentKnowledgeAvailable(catalog) {
+	if runConfigHasKnowledgeDatasets(runConfig) && boundKnowledgeAvailable(catalog, callerType) {
 		id := skills.SkillAgentKnowledge
 		if _, ok := seen[id]; !ok {
 			out = append(out, id)
 		}
 	}
-	if runConfigHasDatabaseBindings(runConfig) && agentDatabaseAvailable(catalog) {
+	if runConfigHasDatabaseBindings(runConfig) && boundDatabaseAvailable(catalog, callerType) {
 		id := skills.SkillAgentDatabase
 		if _, ok := seen[id]; !ok {
 			out = append(out, id)
 		}
 	}
-	if runConfigHasWorkflowBindings(runConfig) && agentWorkflowAvailable(catalog) {
+	if runConfigHasWorkflowBindings(runConfig) && boundWorkflowAvailable(catalog, callerType) {
 		id := skills.SkillAgentWorkflow
 		if _, ok := seen[id]; !ok {
 			out = append(out, id)
@@ -919,8 +923,12 @@ func runConfigHasAgentMemory(runConfig *RunConfig) bool {
 }
 
 func agentKnowledgeAvailable(catalog []skills.SkillDiscoveryMetadata) bool {
+	return boundKnowledgeAvailable(catalog, runtimemodel.ConversationCallerAgent)
+}
+
+func boundKnowledgeAvailable(catalog []skills.SkillDiscoveryMetadata, callerType string) bool {
 	for _, item := range catalog {
-		if strings.EqualFold(strings.TrimSpace(item.ID), skills.SkillAgentKnowledge) && item.Status != skills.SkillStatusInvalid && skillSupportsCaller(item, runtimemodel.ConversationCallerAgent) {
+		if strings.EqualFold(strings.TrimSpace(item.ID), skills.SkillAgentKnowledge) && item.Status != skills.SkillStatusInvalid && skillSupportsCaller(item, callerType) {
 			return true
 		}
 	}
@@ -928,8 +936,12 @@ func agentKnowledgeAvailable(catalog []skills.SkillDiscoveryMetadata) bool {
 }
 
 func agentDatabaseAvailable(catalog []skills.SkillDiscoveryMetadata) bool {
+	return boundDatabaseAvailable(catalog, runtimemodel.ConversationCallerAgent)
+}
+
+func boundDatabaseAvailable(catalog []skills.SkillDiscoveryMetadata, callerType string) bool {
 	for _, item := range catalog {
-		if strings.EqualFold(strings.TrimSpace(item.ID), skills.SkillAgentDatabase) && item.Status != skills.SkillStatusInvalid && skillSupportsCaller(item, runtimemodel.ConversationCallerAgent) {
+		if strings.EqualFold(strings.TrimSpace(item.ID), skills.SkillAgentDatabase) && item.Status != skills.SkillStatusInvalid && skillSupportsCaller(item, callerType) {
 			return true
 		}
 	}
@@ -937,8 +949,12 @@ func agentDatabaseAvailable(catalog []skills.SkillDiscoveryMetadata) bool {
 }
 
 func agentWorkflowAvailable(catalog []skills.SkillDiscoveryMetadata) bool {
+	return boundWorkflowAvailable(catalog, runtimemodel.ConversationCallerAgent)
+}
+
+func boundWorkflowAvailable(catalog []skills.SkillDiscoveryMetadata, callerType string) bool {
 	for _, item := range catalog {
-		if strings.EqualFold(strings.TrimSpace(item.ID), skills.SkillAgentWorkflow) && item.Status != skills.SkillStatusInvalid && skillSupportsCaller(item, runtimemodel.ConversationCallerAgent) {
+		if strings.EqualFold(strings.TrimSpace(item.ID), skills.SkillAgentWorkflow) && item.Status != skills.SkillStatusInvalid && skillSupportsCaller(item, callerType) {
 			return true
 		}
 	}

@@ -2,12 +2,14 @@ package digitalhuman
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 )
 
 type digitalHumanTaskApprovalRequest struct {
@@ -30,6 +32,27 @@ func (h *RuntimeHandler) ContinueTaskApproval(c *gin.Context) {
 	}
 	writer := newDigitalHumanSSEWriter(c)
 	writer.start(c.Request.Context())
+	if continuation, ok := h.service.(interface {
+		WorkflowContinuationEnabled() bool
+		ContinueWorkflowApproval(context.Context, Scope, uuid.UUID, uuid.UUID, uuid.UUID, runtimeservice.DigitalHumanTaskApprovalRequest, func(runtimeservice.StreamEvent) error) error
+	}); ok && continuation.WorkflowContinuationEnabled() {
+		err := continuation.ContinueWorkflowApproval(c.Request.Context(), scope, digitalHumanID, conversationID, messageID, request, func(event runtimeservice.StreamEvent) error {
+			return writer.write(event.ID, event.EventType, redactConversationValue(event.Payload))
+		})
+		if !errors.Is(err, ErrDigitalHumanTaskContinuation) {
+			if err != nil && c.Request.Context().Err() == nil {
+				locale := apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language"))
+				projected := h.base.projector.Project(applicationError(err, "digital_human.workflow.continuation"), locale).Presentation
+				_ = writer.write("", "error", gin.H{
+					"error":     projected.Message,
+					"code":      projected.Code.String(),
+					"message":   projected.Message,
+					"retryable": projected.Retryable,
+				})
+			}
+			return
+		}
+	}
 	approvalService, ok := h.service.(interface {
 		ContinueTaskApproval(context.Context, Scope, uuid.UUID, uuid.UUID, uuid.UUID, runtimeservice.DigitalHumanTaskApprovalRequest, func(runtimeservice.StreamEvent) error) (*runtimeservice.ChatResult, error)
 	})
@@ -70,6 +93,17 @@ func (h *ExternalHandler) ContinueWebAppTaskApproval(c *gin.Context) {
 	}
 	writer := newDigitalHumanSSEWriter(c)
 	writer.start(c.Request.Context())
+	if h.runtime != nil && h.runtime.WorkflowContinuationEnabled() {
+		err := h.runtime.ContinueWorkflowApproval(c.Request.Context(), scope, access.Definition.ID, conversationID, messageID, request, func(event runtimeservice.StreamEvent) error {
+			return writer.write(event.ID, event.EventType, redactConversationValue(event.Payload))
+		})
+		if !errors.Is(err, ErrDigitalHumanTaskContinuation) {
+			if err != nil && c.Request.Context().Err() == nil {
+				_ = h.writeStreamError(writer, uuid.Nil, err)
+			}
+			return
+		}
+	}
 	result, err := h.runtime.ContinueTaskApproval(c.Request.Context(), scope, access.Definition.ID, conversationID, messageID, request, func(event runtimeservice.StreamEvent) error {
 		return writer.write(event.ID, event.EventType, redactConversationValue(event.Payload))
 	})
@@ -116,6 +150,17 @@ func (h *ExternalHandler) ContinueAPITaskApproval(c *gin.Context) {
 	}
 	writer := newDigitalHumanSSEWriter(c)
 	writer.start(c.Request.Context())
+	if h.runtime != nil && h.runtime.WorkflowContinuationEnabled() {
+		err := h.runtime.ContinueWorkflowApproval(c.Request.Context(), scope, access.Definition.ID, conversationID, messageID, request, func(event runtimeservice.StreamEvent) error {
+			return writer.write(event.ID, event.EventType, redactConversationValue(event.Payload))
+		})
+		if !errors.Is(err, ErrDigitalHumanTaskContinuation) {
+			if err != nil && c.Request.Context().Err() == nil {
+				_ = h.writeStreamError(writer, uuid.Nil, err)
+			}
+			return
+		}
+	}
 	result, err := h.runtime.ContinueTaskApproval(c.Request.Context(), scope, access.Definition.ID, conversationID, messageID, request, func(event runtimeservice.StreamEvent) error {
 		return writer.write(event.ID, event.EventType, redactConversationValue(event.Payload))
 	})
@@ -137,10 +182,14 @@ func decodeTaskApprovalRequest(base *Handler, c *gin.Context) (runtimeservice.Di
 }
 
 func normalizeTaskApprovalRequest(request digitalHumanTaskApprovalRequest) (runtimeservice.DigitalHumanTaskApprovalRequest, error) {
-	if !strings.EqualFold(strings.TrimSpace(request.Type), "approval") || strings.TrimSpace(request.ApprovalToken) == "" {
+	if !strings.EqualFold(strings.TrimSpace(request.Type), "approval") && !strings.EqualFold(strings.TrimSpace(request.Type), "question_answer") {
+		return runtimeservice.DigitalHumanTaskApprovalRequest{}, ErrInvalidRequest
+	}
+	if strings.EqualFold(strings.TrimSpace(request.Type), "approval") && strings.TrimSpace(request.ApprovalToken) == "" {
 		return runtimeservice.DigitalHumanTaskApprovalRequest{}, ErrInvalidRequest
 	}
 	return runtimeservice.DigitalHumanTaskApprovalRequest{
+		Type:          request.Type,
 		ApprovalToken: strings.TrimSpace(request.ApprovalToken),
 		Action:        strings.TrimSpace(request.Action),
 		Inputs:        request.Inputs,

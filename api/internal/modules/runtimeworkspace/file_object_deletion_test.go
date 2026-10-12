@@ -15,13 +15,15 @@ import (
 type deferredDeletionStorage struct {
 	deleted []string
 	err     error
+	// absent makes Exists report the object as already gone.
+	absent bool
 }
 
 func (s *deferredDeletionStorage) Save(string, []byte) error                { return nil }
 func (s *deferredDeletionStorage) Load(string) ([]byte, error)              { return nil, nil }
 func (s *deferredDeletionStorage) LoadStream(string) (<-chan []byte, error) { return nil, nil }
 func (s *deferredDeletionStorage) Download(string, string) error            { return nil }
-func (s *deferredDeletionStorage) Exists(string) (bool, error)              { return true, nil }
+func (s *deferredDeletionStorage) Exists(string) (bool, error)              { return !s.absent, nil }
 func (s *deferredDeletionStorage) Delete(key string) error {
 	s.deleted = append(s.deleted, key)
 	return s.err
@@ -81,6 +83,29 @@ func TestFileObjectDeletionWorkerDeletesDueObject(t *testing.T) {
 	}
 	if len(store.deleted) != 1 || store.deleted[0] != key {
 		t.Fatalf("deleted keys = %#v, want %q", store.deleted, key)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFileObjectDeletionWorkerAcknowledgesProviderNotFound(t *testing.T) {
+	db, mock := newFileObjectDeletionTestDB(t)
+	now := time.Date(2026, 10, 10, 8, 0, 0, 0, time.UTC)
+	id := uuid.New()
+	key := "runtime/workspace/already-gone.pdf"
+	expectDeferredDeletionClaim(mock, id, key, 0, now)
+	mock.ExpectBegin()
+	mock.ExpectExec(`DELETE FROM "file_object_deletions" WHERE id = \$1`).
+		WithArgs(id).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	expectNoDueDeferredDeletion(mock, now)
+
+	store := &deferredDeletionStorage{err: errors.New("qiniu: no such file or directory (612)"), absent: true}
+	worker := NewFileObjectDeletionWorker(db, store)
+	worker.now = func() time.Time { return now }
+	if err := worker.RunOnce(t.Context()); err != nil {
+		t.Fatalf("RunOnce() error = %v, want an already-absent object to count as deleted", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

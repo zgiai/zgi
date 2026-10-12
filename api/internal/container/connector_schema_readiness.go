@@ -3,6 +3,8 @@ package container
 import (
 	"context"
 	"fmt"
+
+	"github.com/zgiai/zgi/api/config"
 )
 
 // EnsureNativeConnectorSchema is checked before any Connector route, worker or
@@ -17,6 +19,9 @@ func (c *ServiceContainer) EnsureNativeConnectorSchema(ctx context.Context) erro
 	}
 	if err := c.db.WithContext(ctx).Table("connector_schema_readiness").Where("id = 1").Take(&row).Error; err != nil {
 		return fmt.Errorf("Connector native schema migration is required")
+	}
+	if row.SchemaVersion == 1 && (row.State == "ready" || row.State == "conversion_required") && config.ConnectorRetirementDeferred() {
+		return nil
 	}
 	if row.SchemaVersion != 2 || row.State != "ready" {
 		return fmt.Errorf("Connector schema2 finalization and verification are required before startup")

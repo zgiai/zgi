@@ -168,6 +168,24 @@ func (resolver *InstallationCredentialResolver) resolvePersonalConnectionCredent
 		destroyChannelCredentials(values)
 		return nil, ErrChannelNotReady
 	}
+	// Connector field names follow the integration catalog, not the channel
+	// runtime contract; let the provider map them for the transport this
+	// credential will be served on.
+	if normalizer, ok := registered.Provisioner.(channelruntime.CredentialNormalizer); ok {
+		transport := "webhook"
+		if registered.Receiver != nil {
+			transport = registered.Receiver.Mode(channelruntime.ResolvedChannelCredential{
+				Source: channelruntime.CredentialSourcePersonalConnection,
+			})
+		}
+		normalized, normalizeErr := normalizer.NormalizeCredentials(values, transport)
+		destroyChannelCredentials(values)
+		if normalizeErr != nil || len(normalized) == 0 {
+			destroyChannelCredentials(normalized)
+			return nil, ErrChannelNotReady
+		}
+		values = normalized
+	}
 	// The envelope is only needed to prove the lease is backed by a ready,
 	// owner-scoped connection; it must never leave this boundary.
 	connection.EncryptedCredentials = ""
@@ -188,8 +206,8 @@ func validPersonalConnectionForChannel(
 		connection.OrganizationID != installation.OrganizationID || connection.OwnerAccountID != ownerID ||
 		!strings.EqualFold(connection.ConnectorID.String(), installation.Provider) ||
 		!strings.EqualFold(connection.ProviderID.String(), spec.IntegrationID) ||
-		!strings.EqualFold(strings.TrimSpace(connection.DriverID.String()), strings.TrimSpace(spec.DriverID)) ||
-		!strings.EqualFold(strings.TrimSpace(connection.AuthMethodID.String()), strings.TrimSpace(spec.AuthMethodID)) ||
+		!connectionIdentityMatches(connection.DriverID.String(), spec.DriverID, spec.CompatibleDriverIDs) ||
+		!connectionIdentityMatches(connection.AuthMethodID.String(), spec.AuthMethodID, spec.CompatibleAuthMethodIDs) ||
 		connection.State != connectorcore.ReadinessReady || connection.DeletedAt != nil ||
 		connection.Revision < 1 || connection.CredentialVersion < 1 || connection.EncryptedCredentials == "" {
 		return false
@@ -199,6 +217,21 @@ func validPersonalConnectionForChannel(
 		return false
 	}
 	return true
+}
+
+// connectionIdentityMatches accepts the provider's canonical Connector
+// identifier or one of the compatibility identifiers it declares for already
+// deployed Connector catalogs.
+func connectionIdentityMatches(actual, canonical string, compatible []string) bool {
+	if strings.EqualFold(strings.TrimSpace(actual), strings.TrimSpace(canonical)) {
+		return true
+	}
+	for _, candidate := range compatible {
+		if strings.EqualFold(strings.TrimSpace(actual), strings.TrimSpace(candidate)) {
+			return true
+		}
+	}
+	return false
 }
 
 // validChannelCredentialSource rejects an unknown source instead of guessing a

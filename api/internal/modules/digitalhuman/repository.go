@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -42,7 +43,7 @@ func (r *GormRepository) CreateDefinition(ctx context.Context, definition *Defin
 		return ErrInvalidRequest
 	}
 	if err := r.db.WithContext(ctx).Create(definition).Error; err != nil {
-		if isUniqueViolation(err) {
+		if isDigitalHumanNameUniqueViolation(err) {
 			return ErrNameConflict
 		}
 		return fmt.Errorf("create digital human definition: %w", err)
@@ -216,7 +217,7 @@ func (r *GormRepository) UpdateDefinitionCAS(ctx context.Context, scope Scope, i
 		Where("id = ? AND revision = ?", id, expectedRevision).
 		Updates(updates)
 	if result.Error != nil {
-		if isUniqueViolation(result.Error) {
+		if isDigitalHumanNameUniqueViolation(result.Error) {
 			return ErrNameConflict
 		}
 		return fmt.Errorf("update digital human definition: %w", result.Error)
@@ -399,4 +400,18 @@ func escapeSearch(value string) string {
 func isUniqueViolation(err error) bool {
 	message := strings.ToLower(err.Error())
 	return strings.Contains(message, "unique constraint") || strings.Contains(message, "duplicate key") || strings.Contains(message, "unique violation")
+}
+
+func isDigitalHumanNameUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23505" && pgErr.ConstraintName == "idx_digital_humans_scope_name"
+	}
+	// SQLite and wrapped driver errors do not expose a typed constraint. Keep
+	// the compatibility mapping narrowly tied to the historical index name.
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "idx_digital_humans_scope_name")
 }

@@ -33,12 +33,15 @@ func NewConnectorConfirmationGuard(db *gorm.DB) (*ConnectorConfirmationGuard, er
 
 // AuthorizeContinuation verifies that the exact durable run sealed into the
 // continuation is still the waiting DigitalHuman host for this receipt. Every
-// predicate is server-restored identity: tenant, owner, host, published
-// version, conversation, message, waiting status, waiting reason, and the
-// stored receipt. A missing, terminal, canceled, reassigned, or otherwise
-// mismatched run fails closed with a sanitized conflict. A durable read error
-// fails closed as internal. The query uses bound parameters only and never
-// interpolates a value into SQL text.
+// predicate is server-restored identity: tenant, owner-backed host identity,
+// published version, conversation, message, waiting status, waiting reason,
+// and the stored receipt. API and anonymous WebApp runs intentionally have no
+// account actor, so their persisted surface is matched while connector owner
+// authorization remains a separate frozen-continuation check. A missing,
+// terminal, canceled, reassigned, or otherwise mismatched run fails closed
+// with a sanitized conflict. A durable read error fails closed as internal.
+// The query uses bound parameters only and never interpolates a value into SQL
+// text.
 //
 // In-flight semantic: this is a point-in-time read. It denies a run that is
 // already canceled when the confirmation arrives, but it cannot stop a
@@ -61,8 +64,8 @@ func (guard *ConnectorConfirmationGuard) AuthorizeContinuation(
 	queryErr := guard.db.WithContext(ctx).
 		Model(&Run{}).
 		Where(
-			"id = ? AND organization_id = ? AND actor_id = ? AND digital_human_id = ? AND digital_human_version_id = ? AND conversation_id = ? AND message_id = ? AND status = ? AND waiting_reason = ? AND waiting_receipt = ? AND cancel_requested_at IS NULL",
-			request.RunID, request.OrganizationID, request.OwnerAccountID,
+			"id = ? AND organization_id = ? AND (actor_id = ? OR (actor_id IS NULL AND surface IN (?, ?))) AND digital_human_id = ? AND digital_human_version_id = ? AND conversation_id = ? AND message_id = ? AND status = ? AND waiting_reason = ? AND waiting_receipt = ? AND cancel_requested_at IS NULL",
+			request.RunID, request.OrganizationID, request.OwnerAccountID, SurfaceAPI, SurfaceWebApp,
 			request.DigitalHumanID, request.DigitalHumanVersionID,
 			request.ConversationID, request.MessageID,
 			RunStatusWaiting, runtimemodel.MessageStatusWaitingApproval, receipt,

@@ -274,7 +274,14 @@ func feishuRegion(connection *providertransport.CredentialLease) (string, error)
 		return "", providertransport.NewError(providertransport.ErrorCodeConnectionInvalid, "Feishu connection is invalid", nil)
 	}
 
-	return RegionCN, nil
+	switch strings.ToLower(strings.TrimSpace(connection.Credentials["region"])) {
+	case "", "feishu", RegionCN:
+		return RegionCN, nil
+	case "lark", RegionGlobal:
+		return RegionGlobal, nil
+	default:
+		return "", providertransport.NewError(providertransport.ErrorCodeConnectionInvalid, "Feishu connection region is invalid", nil)
+	}
 }
 
 func isTenantAppConnection(connection *providertransport.CredentialLease) bool {

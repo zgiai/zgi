@@ -40,6 +40,23 @@ const (
 	// ToolProviderTypePlugin           ToolProviderType = "plugin"            // Legacy plugin type - not supported
 )
 
+// IsBoundRuntimeCaller reports callers that execute against a published,
+// server-owned resource binding.  DigitalHuman is deliberately separate from
+// Agent while sharing the binding authorization checks.
+func IsBoundRuntimeCaller(value ToolInvokeFrom) bool {
+	return value == ToolInvokeFromAgent || value == ToolInvokeFromDigitalHuman
+}
+
+func RuntimeCallerLabel(value ToolInvokeFrom) string {
+	if value == ToolInvokeFromDigitalHuman {
+		return "DigitalHuman"
+	}
+	if value == ToolInvokeFromAgent {
+		return "Agent"
+	}
+	return "AIChat"
+}
+
 // String returns the string representation
 func (t ToolProviderType) String() string {
 	return string(t)
@@ -67,6 +84,10 @@ const (
 	ToolInvokeFromWorkflow ToolInvokeFrom = "workflow"
 	ToolInvokeFromAPI      ToolInvokeFrom = "api"
 	ToolInvokeFromAIChat   ToolInvokeFrom = "aichat"
+	// ToolInvokeFromDigitalHuman identifies a published DigitalHuman runtime.
+	// It is intentionally distinct from Agent so resource bindings and audit
+	// records cannot silently inherit Agent permissions.
+	ToolInvokeFromDigitalHuman ToolInvokeFrom = "digital_human"
 )
 
 // ============================================

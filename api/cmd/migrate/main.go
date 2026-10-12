@@ -322,7 +322,7 @@ Commands:
   make <slug>     Create a timestamped migration file with a random suffix
   seed            Execute seed data
   connector-checkpoint --id ID    Advance to a registered historical Connector checkpoint
-  connector-finalize plan|apply|verify    Review, archive, finalize, and verify schema2
+  connector-finalize plan|apply|verify|discard    Review, archive, finalize, verify, or discard legacy Connector storage
                                           --advanced-checkpoint MIGRATION_ID opts a schema1
                                           head later than the registered checkpoint into
                                           plan/apply (rejected by verify)

@@ -85,6 +85,29 @@ func TestHostConversionPreservesNewLedgerAndOrdinaryTool(t *testing.T) {
 	}
 }
 
+func TestDiscardHostScrubKeepsUserTextAndRemovesMachineReferences(t *testing.T) {
+	value := row{
+		"connector_bindings": []any{row{"id": "old"}},
+		"nested":             row{"runtime_type": "integration", "description": "keep this text"},
+		"content":            "connector_bindings and execute_action remain user text",
+		"ordinary":           row{"tool_name": "read"},
+	}
+	converted, changed, err := scrubMachineJSON(value)
+	if err != nil || !changed {
+		t.Fatalf("scrubMachineJSON() changed=%v err=%v", changed, err)
+	}
+	out := object(converted)
+	if out["connector_bindings"] != nil || object(out["nested"])["runtime_type"] != nil {
+		t.Fatal("retired machine references remain")
+	}
+	if out["content"] != value["content"] || object(out["nested"])["description"] != "keep this text" {
+		t.Fatal("user text changed")
+	}
+	if object(out["ordinary"])["tool_name"] != "read" {
+		t.Fatal("ordinary tool reference changed")
+	}
+}
+
 func TestNativeBindingConstraintRejectsWeakenedOrExpandedEnum(t *testing.T) {
 	valid := "CHECK (((binding_type)::text = ANY ((ARRAY['skill'::character varying, 'knowledge_dataset'::character varying, 'database'::character varying, 'database_table'::character varying, 'workflow'::character varying])::text[])))"
 	if !nativeBindingTypeConstraint(valid) {

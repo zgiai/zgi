@@ -24,7 +24,7 @@ func (r knowledgeRuntime) scope(userID string, appID *string) (dataset_service.K
 	if r.runtime != nil {
 		organizationID = strings.TrimSpace(stringValue(r.runtime.RuntimeParameters, "organization_id"))
 		workspaceID = strings.TrimSpace(stringValue(r.runtime.RuntimeParameters, "workspace_id"))
-		if r.runtime.InvokeFrom == tools.ToolInvokeFromAgent {
+		if tools.IsBoundRuntimeCaller(r.runtime.InvokeFrom) {
 			if boundBy := strings.TrimSpace(stringValue(r.runtime.RuntimeParameters, "knowledge_bound_by_account_id")); boundBy != "" {
 				accountID = boundBy
 			}
@@ -115,7 +115,7 @@ func (r knowledgeRuntime) authorize(kind string) error {
 			return fmt.Errorf("%s is only available to internal AIChat skills", kind)
 		}
 	case ToolRetrieveAgentKnowledge:
-		if r.runtime.InvokeFrom != "" && r.runtime.InvokeFrom != tools.ToolInvokeFromAIChat && r.runtime.InvokeFrom != tools.ToolInvokeFromAgent {
+		if r.runtime.InvokeFrom != "" && r.runtime.InvokeFrom != tools.ToolInvokeFromAIChat && !tools.IsBoundRuntimeCaller(r.runtime.InvokeFrom) {
 			return fmt.Errorf("%s is only available to AIChat or Agent skill runtimes", kind)
 		}
 	}

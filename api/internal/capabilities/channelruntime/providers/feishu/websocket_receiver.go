@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	lark "github.com/larksuite/oapi-sdk-go/v3"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	larkevent "github.com/larksuite/oapi-sdk-go/v3/event"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
@@ -86,6 +87,7 @@ func (receiver *WebSocketReceiver) Run(ctx context.Context, request channelrunti
 		},
 	)
 	options := []larkws.ClientOption{
+		larkws.WithDomain(feishuWebSocketDomain(request.Credential)),
 		larkws.WithEventHandler(events), larkws.WithAutoReconnect(true),
 		larkws.WithLogLevel(larkcore.LogLevelError),
 		larkws.WithOnReady(connected), larkws.WithOnReconnected(connected),
@@ -104,6 +106,17 @@ func (receiver *WebSocketReceiver) Run(ctx context.Context, request channelrunti
 		return feishuReceiverError(err)
 	}
 	return nil
+}
+
+// feishuWebSocketDomain follows the same region values as the HTTP adapter:
+// Lark (international) connections must dial the Lark endpoint.
+func feishuWebSocketDomain(credential channelruntime.ResolvedChannelCredential) string {
+	switch strings.ToLower(strings.TrimSpace(credential.Values["region"])) {
+	case "lark", RegionGlobal:
+		return lark.LarkBaseUrl
+	default:
+		return lark.FeishuBaseUrl
+	}
 }
 
 func (receiver *WebSocketReceiver) handleEvent(ctx context.Context, identity channelruntime.InstallationIdentity, appID string, event *larkim.P2MessageReceiveV1, handle channelruntime.InboundMessageHandler) error {

@@ -79,14 +79,6 @@ func (s *Service) Create(ctx context.Context, scope Scope, request CreateRequest
 	if err != nil {
 		return nil, applicationError(err, "digital_human.create")
 	}
-	exists, err := s.repo.NameExists(ctx, scope, request.Name, uuid.Nil)
-	if err != nil {
-		return nil, applicationError(err, "digital_human.create")
-	}
-	if exists {
-		return nil, applicationError(ErrNameConflict, "digital_human.create")
-	}
-
 	goals, err := marshalStringList(request.Goals)
 	if err != nil {
 		return nil, applicationError(err, "digital_human.create")
@@ -203,15 +195,6 @@ func (s *Service) Update(ctx context.Context, scope Scope, id uuid.UUID, request
 	updates, err := normalizeDefinitionUpdates(definition, request)
 	if err != nil {
 		return nil, applicationError(err, "digital_human.update")
-	}
-	if name, ok := updates["name"].(string); ok {
-		exists, existsErr := s.repo.NameExists(ctx, scope, name, id)
-		if existsErr != nil {
-			return nil, applicationError(existsErr, "digital_human.update")
-		}
-		if exists {
-			return nil, applicationError(ErrNameConflict, "digital_human.update")
-		}
 	}
 	if err := s.repo.UpdateDefinitionCAS(ctx, scope, id, request.ExpectedRevision, updates); err != nil {
 		return nil, applicationError(err, "digital_human.update")

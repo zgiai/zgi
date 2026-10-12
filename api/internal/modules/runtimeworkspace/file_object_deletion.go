@@ -68,7 +68,7 @@ func (w *FileObjectDeletionWorker) RunOnce(ctx context.Context) error {
 			break
 		}
 
-		if err := w.storage.Delete(item.ObjectKey); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := w.storage.Delete(item.ObjectKey); err != nil && !w.objectAbsentAfterDeleteError(item.ObjectKey, err) {
 			if retryErr := w.reschedule(ctx, item, err); retryErr != nil {
 				return errors.Join(
 					fmt.Errorf("record deferred file object deletion failure: %w", retryErr),
@@ -86,6 +86,19 @@ func (w *FileObjectDeletionWorker) RunOnce(ctx context.Context) error {
 		}
 	}
 	return firstErr
+}
+
+// objectAbsentAfterDeleteError treats a failed delete as done when the object
+// is already gone. Backends report a missing key differently (local storage
+// returns ENOENT, others use provider-specific not-found errors), so only an
+// explicit Exists=false from the backend counts; an unanswered check keeps
+// the row for another attempt.
+func (w *FileObjectDeletionWorker) objectAbsentAfterDeleteError(key string, deleteErr error) bool {
+	if errors.Is(deleteErr, os.ErrNotExist) {
+		return true
+	}
+	exists, err := w.storage.Exists(key)
+	return err == nil && !exists
 }
 
 func (w *FileObjectDeletionWorker) claim(ctx context.Context, now time.Time) (*FileObjectDeletion, bool, error) {

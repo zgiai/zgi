@@ -105,6 +105,35 @@ func TestChannelAdapterOwnsCredentialMergeAndRejectsUnknownFields(t *testing.T) 
 	}
 }
 
+func TestFeishuChannelRejectsWebhookCredentialsWithoutVerificationToken(t *testing.T) {
+	adapter := &ChannelAdapter{}
+	if _, err := adapter.NormalizeCredentials(map[string]string{
+		"region": "feishu", "app_id": "cli_connector", "app_secret": "connector-secret",
+	}, "webhook"); err == nil {
+		t.Fatal("NormalizeCredentials() accepted a connection without verification_token")
+	}
+}
+
+func TestFeishuRegionUsesConnectorCredentialRegion(t *testing.T) {
+	for _, test := range []struct {
+		name, region, want string
+	}{
+		{name: "default", region: "", want: RegionCN},
+		{name: "feishu", region: "feishu", want: RegionCN},
+		{name: "lark", region: "lark", want: RegionGlobal},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			region, err := feishuRegion(&providertransport.CredentialLease{
+				ProviderID: IntegrationID, DriverID: DriverID,
+				Credentials: map[string]string{"region": test.region},
+			})
+			if err != nil || region != test.want {
+				t.Fatalf("feishuRegion() = %q, %v; want %q", region, err, test.want)
+			}
+		})
+	}
+}
+
 func TestChannelAdapterVerifiesPlainURLChallengeByToken(t *testing.T) {
 	body := []byte(`{"challenge":"challenge-1","token":"verify-token","type":"url_verification"}`)
 	verified, err := newWebhookTestAdapter().Verify(t.Context(), channelruntime.WebhookRequest{Body: body}, channelCredentialFixture("verify-token", ""))

@@ -21,6 +21,7 @@ import (
 const (
 	ChannelTransientDeliveryTaskType = "digital_human:channel_transient_delivery"
 	ChannelProcessingMarkerTaskType  = "digital_human:channel_processing_marker"
+	ChannelApprovalTaskType          = "digital_human:channel_approval"
 	channelTransientTaskTimeout      = 20 * time.Second
 	channelTransientTaskLifetime     = 2 * time.Minute
 )
@@ -69,6 +70,10 @@ type channelTransientTaskPayload struct {
 
 type channelProcessingMarkerTaskPayload struct {
 	MarkerID string `json:"marker_id"`
+}
+
+type channelApprovalTaskPayload struct {
+	JobID string `json:"job_id"`
 }
 
 func (dispatcher *AsynqChannelTransientDispatcher) EnqueueTransient(_ context.Context, request ChannelTransientDeliveryRequest) error {
@@ -128,6 +133,28 @@ func (dispatcher *AsynqChannelTransientDispatcher) EnqueueProcessingMarker(_ con
 	return nil
 }
 
+// EnqueueChannelApproval wakes a worker for a persisted approval job. The
+// task carries only the job identity; the reply text stays in the database.
+// Each attempt has its own task ID so a retry or an expired lease re-wakes.
+func (dispatcher *AsynqChannelTransientDispatcher) EnqueueChannelApproval(_ context.Context, jobID uuid.UUID, attempt int) error {
+	if jobID == uuid.Nil || attempt < 0 {
+		return ErrInvalidRequest
+	}
+	payload, err := json.Marshal(channelApprovalTaskPayload{JobID: jobID.String()})
+	if err != nil {
+		return fmt.Errorf("encode DigitalHuman channel approval task: %w", err)
+	}
+	task := asynq.NewTask(dispatcher.tasks.GetTaskTypeWithPrefix(ChannelApprovalTaskType), payload)
+	_, err = dispatcher.tasks.GetClient().Enqueue(task,
+		asynq.Queue(runQueueName), asynq.MaxRetry(0), asynq.Timeout(channelApprovalLease), asynq.Retention(0),
+		asynq.TaskID(fmt.Sprintf("digital-human-channel-approval-%s-%d", jobID, attempt)),
+	)
+	if err != nil && !errors.Is(err, asynq.ErrTaskIDConflict) {
+		return fmt.Errorf("enqueue DigitalHuman channel approval task: %w", err)
+	}
+	return nil
+}
+
 func RegisterChannelTransientTaskHandler(
 	registry RunTaskRegistry,
 	prefixer interface{ GetTaskTypeWithPrefix(string) string },
@@ -173,6 +200,29 @@ func RegisterChannelTransientTaskHandler(
 		return nil
 	}) {
 		panic("DigitalHuman processing marker task handler is already registered")
+	}
+	approvalTaskType := prefixer.GetTaskTypeWithPrefix(ChannelApprovalTaskType)
+	if !registry.Register(approvalTaskType, func(ctx context.Context, task *asynq.Task) error {
+		var payload channelApprovalTaskPayload
+		decoder := json.NewDecoder(strings.NewReader(string(task.Payload())))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&payload); err != nil {
+			logger.WarnContext(ctx, "discarding invalid DigitalHuman channel approval task", err)
+			return nil
+		}
+		jobID, err := uuid.Parse(strings.TrimSpace(payload.JobID))
+		if err != nil || jobID == uuid.Nil {
+			logger.WarnContext(ctx, "discarding invalid DigitalHuman channel approval identity", err)
+			return nil
+		}
+		// Claiming is lease-protected; the woken worker drains due jobs rather
+		// than trusting the payload, and failures are recorded on the job.
+		if err := service.DispatchChannelApprovals(ctx, 1); err != nil {
+			logger.WarnContext(ctx, "DigitalHuman channel approval wake-up failed", "job_id", jobID.String(), err)
+		}
+		return nil
+	}) {
+		panic("DigitalHuman channel approval task handler is already registered")
 	}
 }
 

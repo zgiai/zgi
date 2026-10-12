@@ -954,22 +954,16 @@ func (r *GormRepository) MarkStaleDeliveriesUnknown(ctx context.Context, claimed
 }
 
 func (r *GormRepository) CompleteRunWithDelivery(ctx context.Context, runID uuid.UUID, summary string, trace datatypes.JSON, now time.Time) error {
-	var completed Run
-	shouldDeliver := false
-	if err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var run Run
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", runID).Take(&run).Error; err != nil {
 			return err
 		}
 		if run.Status == RunStatusCanceling || run.CancelRequestedAt != nil {
-			if err := tx.Model(&Run{}).Where("id = ?", runID).Updates(map[string]any{
+			return tx.Model(&Run{}).Where("id = ?", runID).Updates(map[string]any{
 				"status": RunStatusCanceled, "result_summary": summary, "execution_trace": trace,
 				"completed_at": now, "updated_at": now,
-			}).Error; err != nil {
-				return err
-			}
-			completed = run
-			return nil
+			}).Error
 		}
 		if run.Status != RunStatusRunning {
 			return ErrRunConflict
@@ -980,26 +974,20 @@ func (r *GormRepository) CompleteRunWithDelivery(ctx context.Context, runID uuid
 		}).Error; err != nil {
 			return err
 		}
-		completed = run
-		shouldDeliver = true
-		return nil
-	}); err != nil {
+		// Completion is the execution-of-record. A reply target that no longer
+		// resolves (for example, an installation revoked while the model ran)
+		// must not turn a completed task into a phantom running task, so only
+		// the delivery savepoint is rolled back and the task center remains the
+		// fallback. Any other failure rolls back the completion too: the run
+		// stays recoverable instead of committing without its reply intent.
+		err := tx.Transaction(func(delivery *gorm.DB) error {
+			return createRunDelivery(ctx, delivery, &run, summary, trace, now)
+		})
+		if errors.Is(err, errChannelDeliveryTargetUnavailable) {
+			return nil
+		}
 		return err
-	}
-	if !shouldDeliver {
-		return nil
-	}
-	// Completion is the execution-of-record. A channel binding can disappear
-	// between scheduling and delivery (for example, an installation may be
-	// revoked while the model is running). Keep the successful run committed so
-	// the task center remains a reliable fallback instead of turning a completed
-	// task into a phantom running task. Target-resolution errors are intentionally
-	// isolated to this outbox transaction and are surfaced as a failed delivery
-	// status by the task runs projection.
-	_ = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return createRunDelivery(ctx, tx, &completed, summary, trace, now)
 	})
-	return nil
 }
 
 func createRunDelivery(ctx context.Context, tx *gorm.DB, run *Run, summary string, trace datatypes.JSON, now time.Time) error {
@@ -1157,6 +1145,42 @@ func (r *GormRepository) RunChannelTransientTarget(ctx context.Context, runID uu
 	}, nil
 }
 
+// errChannelDeliveryTargetUnavailable marks a reply whose channel target can
+// no longer be resolved. It is a permanent condition for that run, unlike a
+// database failure, which must stay retryable.
+var errChannelDeliveryTargetUnavailable = errors.New("channel delivery target is unavailable")
+
+type channelDeliveryTargetError struct {
+	message string
+	cause   error
+}
+
+func (err *channelDeliveryTargetError) Error() string {
+	if err.cause == nil {
+		return err.message
+	}
+	return err.message + ": " + err.cause.Error()
+}
+
+func (err *channelDeliveryTargetError) Unwrap() error { return err.cause }
+
+func (*channelDeliveryTargetError) Is(target error) bool {
+	return target == errChannelDeliveryTargetUnavailable
+}
+
+func channelDeliveryTargetUnavailable(message string, cause error) error {
+	return &channelDeliveryTargetError{message: message, cause: cause}
+}
+
+// channelDeliveryLookupError classifies only a missing row as an unavailable
+// target; every other lookup error is returned as a retryable failure.
+func channelDeliveryLookupError(message string, err error) error {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return channelDeliveryTargetUnavailable(message, err)
+	}
+	return fmt.Errorf("%s: %w", message, err)
+}
+
 func createRunChannelDelivery(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -1178,21 +1202,21 @@ func createRunChannelDelivery(
 	}
 	installationID, err := uuid.Parse(installationIdentity)
 	if err != nil || installationID == uuid.Nil {
-		return fmt.Errorf("channel reply installation identity is invalid")
+		return channelDeliveryTargetUnavailable("channel reply installation identity is invalid", nil)
 	}
 	var binding channelruntime.Binding
 	var inboundEventID *uuid.UUID
 	if event.Origin.Kind == invocation.OriginChannel {
 		inboundID, ok := contextUUID(event.Context, "channel_inbound_event_id")
 		if !ok {
-			return fmt.Errorf("channel invocation is missing inbound event identity")
+			return channelDeliveryTargetUnavailable("channel invocation is missing inbound event identity", nil)
 		}
 		var inbound channelruntime.InboundEvent
 		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND installation_id = ? AND organization_id = ? AND workspace_id = ?", inboundID, installationID, run.OrganizationID, run.WorkspaceID).Take(&inbound).Error; err != nil {
-			return fmt.Errorf("load channel inbound event for delivery: %w", err)
+			return channelDeliveryLookupError("load channel inbound event for delivery", err)
 		}
 		if inbound.InvocationRunID != nil && *inbound.InvocationRunID != run.ID {
-			return fmt.Errorf("channel inbound event is linked to another run")
+			return channelDeliveryTargetUnavailable("channel inbound event is linked to another run", nil)
 		}
 		if inbound.InvocationRunID == nil || inbound.Status != channelruntime.InboundEventAccepted {
 			if err := tx.WithContext(ctx).Model(&channelruntime.InboundEvent{}).Where("id = ?", inbound.ID).Updates(map[string]any{"status": channelruntime.InboundEventAccepted, "reason_code": "", "invocation_run_id": run.ID, "processed_at": now, "updated_at": now}).Error; err != nil {
@@ -1200,10 +1224,10 @@ func createRunChannelDelivery(
 			}
 		}
 		if inbound.BindingID == nil || *inbound.BindingID == uuid.Nil {
-			return fmt.Errorf("channel inbound event is missing binding identity")
+			return channelDeliveryTargetUnavailable("channel inbound event is missing binding identity", nil)
 		}
 		if err := tx.WithContext(ctx).Where("id = ? AND installation_id = ? AND organization_id = ? AND workspace_id = ? AND subject_type = ? AND subject_id = ?", *inbound.BindingID, installationID, run.OrganizationID, run.WorkspaceID, runtimeidentity.SubjectTypeDigitalHuman, run.DigitalHumanID).Take(&binding).Error; err != nil {
-			return fmt.Errorf("load channel binding for delivery: %w", err)
+			return channelDeliveryLookupError("load channel binding for delivery", err)
 		}
 		inboundEventID = &inbound.ID
 		if kind == channelruntime.DeliveryKindFinal {
@@ -1217,7 +1241,7 @@ func createRunChannelDelivery(
 		}
 	} else {
 		if err := tx.WithContext(ctx).Where("installation_id = ? AND organization_id = ? AND workspace_id = ? AND subject_type = ? AND subject_id = ? AND enabled = ?", installationID, run.OrganizationID, run.WorkspaceID, runtimeidentity.SubjectTypeDigitalHuman, run.DigitalHumanID, true).Order("updated_at DESC").Take(&binding).Error; err != nil {
-			return fmt.Errorf("load scheduled channel binding for delivery: %w", err)
+			return channelDeliveryLookupError("load scheduled channel binding for delivery", err)
 		}
 	}
 	var installation channelruntime.Installation
@@ -1225,10 +1249,10 @@ func createRunChannelDelivery(
 		"id = ? AND organization_id = ? AND workspace_id = ? AND status = ?",
 		installationID, run.OrganizationID, run.WorkspaceID, channelruntime.InstallationStatusActive,
 	).Take(&installation).Error; err != nil {
-		return fmt.Errorf("load channel installation for delivery: %w", err)
+		return channelDeliveryLookupError("load channel installation for delivery", err)
 	}
 	if provider := strings.ToLower(strings.TrimSpace(event.ReplyTo.Provider)); provider == "" || provider != strings.ToLower(strings.TrimSpace(installation.Provider)) {
-		return fmt.Errorf("channel reply provider does not match installation")
+		return channelDeliveryTargetUnavailable("channel reply provider does not match installation", nil)
 	}
 	text = boundedRunes(strings.TrimSpace(text), maxChannelDeliveryRunes)
 	if text == "" && len(artifacts) == 0 {
