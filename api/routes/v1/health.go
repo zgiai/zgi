@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/modules/consolesync"
 )
 
@@ -25,6 +26,9 @@ func RegisterHealthRoutes(v1 *gin.RouterGroup) {
 			}
 			if snapshot, ok := consolesync.StatusSnapshot(c.Request.Context()); ok {
 				payload["console_sync"] = snapshot
+			}
+			if config.ConnectorRetirementDeferred() {
+				payload["connector_retirement"] = "deferred"
 			}
 			c.JSON(http.StatusOK, payload)
 		})

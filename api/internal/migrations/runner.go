@@ -111,7 +111,7 @@ func runOnConnection(db *gorm.DB, options RunOptions) error {
 	}
 	if config.ConnectorRetirementDeferred() {
 		if err := db.Transaction(func(tx *gorm.DB) error {
-			return connectorfinalize.EnsurePendingSetupsCompatibility(tx)
+			return connectorfinalize.RepairPendingSetupsCompatibility(tx)
 		}); err != nil {
 			log.Printf("deferred Connector compatibility repair failed: %v", err)
 			return err
@@ -135,20 +135,29 @@ func runOnConnection(db *gorm.DB, options RunOptions) error {
 }
 
 func runMigrationChain(db *gorm.DB, plan migrationPlan) error {
-	options := migrationOptions(plan.validateUnknownMigrations)
+	deferred := config.ConnectorRetirementDeferred()
+	if deferred {
+		applied, err := appliedMigrationIDs(db)
+		if err != nil {
+			return err
+		}
+		if err := validateDeferredMigrationHistory(applied); err != nil {
+			return err
+		}
+	}
+	// The destructive retirement migration is intentionally omitted from the
+	// deferred run list. Validate its marker against the complete public list
+	// ourselves so an already-retired database remains valid without allowing
+	// arbitrary unknown migration IDs.
+	options := migrationOptions(plan.validateUnknownMigrations && !deferred)
 	m := gormigrate.New(db, options, plan.migrations)
 	applied, err := appliedMigrationIDs(db)
 	if err != nil {
 		return err
 	}
 	if _, done := applied[connectorfinalize.MigrationID]; !done {
-		if config.ConnectorRetirementDeferred() {
+		if deferred {
 			if _, checkpointDone := applied[connectorfinalize.CheckpointID]; !checkpointDone {
-				for appliedID := range applied {
-					if migrationIDPattern.MatchString(appliedID) && appliedID > connectorfinalize.CheckpointID {
-						return fmt.Errorf("deferred Connector retirement requires applied checkpoint %s", connectorfinalize.CheckpointID)
-					}
-				}
 				if err := m.MigrateTo(connectorfinalize.CheckpointID); err != nil {
 					return err
 				}
@@ -169,6 +178,19 @@ func runMigrationChain(db *gorm.DB, plan migrationPlan) error {
 	// The credit columns must hold milli-points in BIGINT; a fractional column
 	// would make every amount 1000x wrong, so refuse to serve with one.
 	return assertMilliPointSchema(db)
+}
+
+func validateDeferredMigrationHistory(applied map[string]struct{}) error {
+	known := make(map[string]struct{}, len(allMigrations()))
+	for _, migration := range allMigrations() {
+		known[migration.ID] = struct{}{}
+	}
+	for id := range applied {
+		if _, ok := known[id]; !ok {
+			return fmt.Errorf("deferred Connector retirement found unknown migration %s", id)
+		}
+	}
+	return nil
 }
 
 // RunToConnectorCheckpoint supports the two published maintenance boundaries.
