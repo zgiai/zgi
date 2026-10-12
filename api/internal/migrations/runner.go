@@ -34,6 +34,21 @@ func allMigrations() []*gormigrate.Migration {
 	return registeredMigrations()
 }
 
+func migrationsForRun() []*gormigrate.Migration {
+	migrations := allMigrations()
+	if !config.ConnectorRetirementDeferred() {
+		return migrations
+	}
+	filtered := make([]*gormigrate.Migration, 0, len(migrations))
+	for _, migration := range migrations {
+		if migration.ID == connectorfinalize.MigrationID {
+			continue
+		}
+		filtered = append(filtered, migration)
+	}
+	return filtered
+}
+
 func migrationOptions(validateUnknownMigrations bool) *gormigrate.Options {
 	options := *gormigrate.DefaultOptions
 	options.ValidateUnknownMigrations = validateUnknownMigrations
@@ -94,6 +109,14 @@ func runOnConnection(db *gorm.DB, options RunOptions) error {
 			return err
 		}
 	}
+	if config.ConnectorRetirementDeferred() {
+		if err := db.Transaction(func(tx *gorm.DB) error {
+			return connectorfinalize.RepairPendingSetupsCompatibility(tx)
+		}); err != nil {
+			log.Printf("deferred Connector compatibility repair failed: %v", err)
+			return err
+		}
+	}
 
 	if err := runMigrationChain(db, plan); err != nil {
 		log.Printf("migrations failed: %v", err)
@@ -112,17 +135,39 @@ func runOnConnection(db *gorm.DB, options RunOptions) error {
 }
 
 func runMigrationChain(db *gorm.DB, plan migrationPlan) error {
-	options := migrationOptions(plan.validateUnknownMigrations)
+	deferred := config.ConnectorRetirementDeferred()
+	if deferred {
+		applied, err := appliedMigrationIDs(db)
+		if err != nil {
+			return err
+		}
+		if err := validateDeferredMigrationHistory(applied); err != nil {
+			return err
+		}
+	}
+	// The destructive retirement migration is intentionally omitted from the
+	// deferred run list. Validate its marker against the complete public list
+	// ourselves so an already-retired database remains valid without allowing
+	// arbitrary unknown migration IDs.
+	options := migrationOptions(plan.validateUnknownMigrations && !deferred)
 	m := gormigrate.New(db, options, plan.migrations)
 	applied, err := appliedMigrationIDs(db)
 	if err != nil {
 		return err
 	}
 	if _, done := applied[connectorfinalize.MigrationID]; !done {
-		// Preserve historical transaction boundaries. Only the final maintenance
-		// step and its migration marker require this additional atomic boundary.
-		if err := m.MigrateTo(connectorfinalize.CheckpointID); err != nil {
-			return err
+		if deferred {
+			if _, checkpointDone := applied[connectorfinalize.CheckpointID]; !checkpointDone {
+				if err := m.MigrateTo(connectorfinalize.CheckpointID); err != nil {
+					return err
+				}
+			}
+		} else {
+			// Preserve historical transaction boundaries. Only the final maintenance
+			// step and its migration marker require this additional atomic boundary.
+			if err := m.MigrateTo(connectorfinalize.CheckpointID); err != nil {
+				return err
+			}
 		}
 		options.UseTransaction = true
 		m = gormigrate.New(db, options, plan.migrations)
@@ -133,6 +178,19 @@ func runMigrationChain(db *gorm.DB, plan migrationPlan) error {
 	// The credit columns must hold milli-points in BIGINT; a fractional column
 	// would make every amount 1000x wrong, so refuse to serve with one.
 	return assertMilliPointSchema(db)
+}
+
+func validateDeferredMigrationHistory(applied map[string]struct{}) error {
+	known := make(map[string]struct{}, len(allMigrations()))
+	for _, migration := range allMigrations() {
+		known[migration.ID] = struct{}{}
+	}
+	for id := range applied {
+		if _, ok := known[id]; !ok {
+			return fmt.Errorf("deferred Connector retirement found unknown migration %s", id)
+		}
+	}
+	return nil
 }
 
 // RunToConnectorCheckpoint supports the two published maintenance boundaries.

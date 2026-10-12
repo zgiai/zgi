@@ -16,10 +16,25 @@ import (
 func Discard(ctx context.Context, db *gorm.DB) (Report, error) {
 	var report Report
 	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := ensurePendingSetupsCompatibility(tx); err != nil {
+		var readiness struct {
+			SchemaVersion int
+			State         string
+		}
+		if err := tx.Table("connector_schema_readiness").Where("id=1").Take(&readiness).Error; err != nil {
+			return fmt.Errorf("read Connector schema readiness: %w", err)
+		}
+		if readiness.SchemaVersion == 2 && readiness.State == "ready" {
+			var err error
+			report, err = verify(tx, Options{}, true)
+			return err
+		}
+		if err := validateSchema1Readiness(readiness.SchemaVersion, readiness.State, true); err != nil {
 			return err
 		}
 		if err := lockInventory(tx); err != nil {
+			return err
+		}
+		if err := EnsurePendingSetupsCompatibility(tx); err != nil {
 			return err
 		}
 		option := Options{allowDiscardInspect: true}
