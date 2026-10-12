@@ -290,14 +290,10 @@ func (s *RuntimeService) ContinueChannelTaskApproval(
 // approval belongs to the member who started the request.
 const channelApprovalOtherSenderNotice = "这个审批需要由发起请求的成员确认，其他成员无法代为审批。请等待发起人处理。"
 
-// channelApprovalUnknownInitiatorNotice is sent when a group approval has no
-// channel member to attribute it to (for example, a scheduled run).
-const channelApprovalUnknownInitiatorNotice = "无法确认这个审批的发起成员，群聊中不能直接审批。请在控制台中完成审批。"
-
 // channelApprovalSenderNotice returns a notice when the reply's sender may not
 // answer the pending approval, or "" when it may. The initiator is the
 // external user recorded on the run that produced the pending message; a run
-// without one can only be answered in a direct conversation.
+// without one (for example, a scheduled run) may be answered by any member.
 func (s *RuntimeService) channelApprovalSenderNotice(
 	ctx context.Context,
 	scope Scope,
@@ -317,17 +313,10 @@ func (s *RuntimeService) channelApprovalSenderNotice(
 		return "", ErrRunNotFound
 	}
 	initiator := channelApprovalInitiator(run)
-	sender := strings.TrimSpace(reply.SenderExternalID)
-	switch {
-	case initiator != "" && sender == initiator:
+	if initiator == "" || strings.TrimSpace(reply.SenderExternalID) == initiator {
 		return "", nil
-	case initiator != "":
-		return channelApprovalOtherSenderNotice, nil
-	case reply.ConversationType == channelruntime.ConversationTypeDirect:
-		return "", nil
-	default:
-		return channelApprovalUnknownInitiatorNotice, nil
 	}
+	return channelApprovalOtherSenderNotice, nil
 }
 
 func channelApprovalInitiator(run *Run) string {

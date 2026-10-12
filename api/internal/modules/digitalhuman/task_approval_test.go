@@ -195,13 +195,13 @@ func TestChannelApprovalInGroupOnlyAcceptsTheInitiatingSender(t *testing.T) {
 			notice: channelApprovalOtherSenderNotice,
 		},
 		{
-			name:   "group run without a member initiator",
+			name:   "group run without a recorded initiator",
 			run:    &Run{ID: uuid.New()},
 			reply:  ChannelApprovalReply{Text: "确认", SenderExternalID: "ou_other_member", ConversationType: channelruntime.ConversationTypeGroup},
-			notice: channelApprovalUnknownInitiatorNotice,
+			notice: channelWorkflowApprovalWaitingNotice,
 		},
 		{
-			name:   "direct run without a member initiator",
+			name:   "direct run without a recorded initiator",
 			run:    &Run{ID: uuid.New()},
 			reply:  ChannelApprovalReply{Text: "确认", SenderExternalID: "ou_member", ConversationType: channelruntime.ConversationTypeDirect},
 			notice: channelWorkflowApprovalWaitingNotice,
