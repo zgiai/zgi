@@ -28,6 +28,15 @@ type channelApprovalRunLookup interface {
 	RunByMessageID(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID) (*Run, error)
 }
 
+// Channel approvals discover these capabilities by type assertion; pin them
+// on the production implementations so a missing method fails the build
+// instead of every real channel approval at runtime.
+var (
+	_ channelFinalDeliveryStore    = (*GormRepository)(nil)
+	_ channelApprovalRunLookup     = (*GormRepository)(nil)
+	_ channelApprovalMessageLister = service.Service(nil)
+)
+
 // ContinueTaskApproval resumes a paused DigitalHuman conversation after the
 // approval form in the composer is submitted. No synthetic chat prompt is
 // appended and all task mutations remain behind the same owner check used by
@@ -195,7 +204,12 @@ func (s *RuntimeService) ContinueChannelTaskApproval(
 		state := workflowContinuationRecord(message.Metadata)
 		kind := strings.TrimSpace(stringValue(state["kind"]))
 		if kind == "" {
-			continue
+			// Only DigitalHuman task approvals persist an explicit kind; a
+			// generic workflow approval is identified by its workflow run.
+			if strings.TrimSpace(stringValue(state["workflow_run_id"])) == "" {
+				continue
+			}
+			kind = "workflow"
 		}
 		pending = message
 		pendingKind = kind

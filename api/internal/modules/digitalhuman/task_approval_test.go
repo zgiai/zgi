@@ -88,7 +88,12 @@ func TestContinueChannelWorkflowApprovalAssignedToDesignatedApproversAsksUserToW
 		{name: "non confirmation text", text: "什么时候能好", state: map[string]interface{}{"ui_approval_allowed": false}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			state := map[string]interface{}{"kind": "workflow", "workflow_run_id": "run-1"}
+			// Production shape: generic workflow approvals carry workflow and
+			// approval fields but no explicit kind.
+			state := map[string]interface{}{
+				"workflow_run_id": "run-1", "workflow_id": "workflow-1",
+				"approval_form": map[string]interface{}{"title": "审批"},
+			}
 			for key, value := range tt.state {
 				state[key] = value
 			}
@@ -119,5 +124,26 @@ func TestContinueChannelWorkflowApprovalAssignedToDesignatedApproversAsksUserToW
 				t.Fatalf("workflow resumed %d times, want an approval assigned to others left untouched", runner.calls)
 			}
 		})
+	}
+}
+
+func TestContinueChannelTaskApprovalIgnoresWaitingMessageWithoutWorkflowContinuation(t *testing.T) {
+	store := &channelApprovalStoreStub{run: &Run{ID: uuid.New()}}
+	service := &RuntimeService{
+		chat: channelApprovalChatStub{messages: []*runtimemodel.Message{{
+			ID: uuid.New(), Status: runtimemodel.MessageStatusWaitingApproval,
+			Metadata: map[string]interface{}{"agent_workflow_continuation": map[string]interface{}{"approval_form": map[string]interface{}{}}},
+		}}},
+		store:          store,
+		workflowDB:     &gorm.DB{},
+		workflowRunner: &channelApprovalRunnerStub{},
+	}
+	handled, err := service.ContinueChannelTaskApproval(
+		context.Background(),
+		Scope{OrganizationID: uuid.New(), WorkspaceID: uuid.New(), ActorID: uuid.New()},
+		uuid.New(), uuid.New(), "确认",
+	)
+	if err != nil || handled || len(store.delivered) != 0 {
+		t.Fatalf("handled=%v err=%v delivered=%v, want the message left to normal admission", handled, err, store.delivered)
 	}
 }
