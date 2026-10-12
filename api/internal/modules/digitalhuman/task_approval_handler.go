@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 )
 
 type digitalHumanTaskApprovalRequest struct {
@@ -40,7 +41,14 @@ func (h *RuntimeHandler) ContinueTaskApproval(c *gin.Context) {
 		})
 		if !errors.Is(err, ErrDigitalHumanTaskContinuation) {
 			if err != nil && c.Request.Context().Err() == nil {
-				_ = writer.write("", "error", gin.H{"error": err.Error()})
+				locale := apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language"))
+				projected := h.base.projector.Project(applicationError(err, "digital_human.workflow.continuation"), locale).Presentation
+				_ = writer.write("", "error", gin.H{
+					"error":     projected.Message,
+					"code":      projected.Code.String(),
+					"message":   projected.Message,
+					"retryable": projected.Retryable,
+				})
 			}
 			return
 		}
