@@ -474,6 +474,22 @@ func TestAnOperationIsAToolOnlyWithAnObjectInputSchema(t *testing.T) {
 	assert.ErrorIs(t, err, ErrListingNotBindable)
 }
 
+func TestAnOperationTakesTheRiskLevelTheMarketDeclares(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object"}`)
+	operations := candidateOperations(marketOffering{Slug: "lookup-standard", ProtocolFamily: "http", Operations: []marketOperation{
+		// A lookup served by POST: the market says it reads, the method alone would say it writes.
+		{Method: "POST", Path: "/v1/holiday-queries", RiskLevel: "read", InputSchema: schema},
+		{Method: "GET", Path: "/v1/purge", RiskLevel: " Destructive ", InputSchema: schema},
+		{Method: "POST", Path: "/v1/orders", InputSchema: schema},
+		{Method: "POST", Path: "/v1/odd", RiskLevel: "harmless", InputSchema: schema},
+	}}, "")
+	require.Len(t, operations, 4)
+	assert.Equal(t, RiskRead, operations[0].RiskLevel)
+	assert.Equal(t, RiskDestructive, operations[1].RiskLevel, "a declared level wins over a GET")
+	assert.Equal(t, RiskWrite, operations[2].RiskLevel, "without a declaration the method decides")
+	assert.Equal(t, RiskWrite, operations[3].RiskLevel, "an unknown level is not trusted")
+}
+
 func TestAToolResultIsCutWithAMarkerAndAFailureCarriesTheMarketCode(t *testing.T) {
 	short := `{"value":42}`
 	assert.Equal(t, short, capResult(short))

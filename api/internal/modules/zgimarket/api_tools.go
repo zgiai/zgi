@@ -81,8 +81,11 @@ type CandidateOperation struct {
 
 // marketOperation is an operation of an http offering as the market's listing states it.
 type marketOperation struct {
-	Method       string          `json:"method"`
-	Path         string          `json:"path"`
+	Method string `json:"method"`
+	Path   string `json:"path"`
+	// RiskLevel is what the market says the operation does, when it says so. A lookup served by
+	// POST is a read, which the method alone cannot tell.
+	RiskLevel    string          `json:"risk_level"`
 	InputSchema  json.RawMessage `json:"input_schema"`
 	OutputSchema json.RawMessage `json:"output_schema"`
 }
@@ -100,8 +103,14 @@ func operationKey(method, path string) string {
 	return strings.ToUpper(strings.TrimSpace(method)) + " " + strings.TrimSpace(path)
 }
 
-// operationRisk maps a method onto the market's risk levels: a GET reads, anything else writes.
-func operationRisk(method string) string {
+// operationRisk is the risk level of an operation: the one the market declares for it, and
+// otherwise a guess from the method, where a GET reads and anything else writes. An unknown
+// declared level is not trusted and falls back to the method.
+func operationRisk(method, declared string) string {
+	switch declared = strings.ToLower(strings.TrimSpace(declared)); declared {
+	case RiskRead, RiskWrite, RiskDestructive:
+		return declared
+	}
 	if strings.EqualFold(method, http.MethodGet) {
 		return RiskRead
 	}
@@ -158,7 +167,7 @@ func candidateOperations(offering marketOffering, listingTitle string) []Candida
 		seen[key] = true
 		candidate := CandidateOperation{
 			Key: key, Name: OperationToolName(offering.Slug, method, operation.Path), Method: method, Path: operation.Path,
-			RiskLevel: operationRisk(method), InputSchema: operation.InputSchema, OutputSchema: operation.OutputSchema,
+			RiskLevel: operationRisk(method, operation.RiskLevel), InputSchema: operation.InputSchema, OutputSchema: operation.OutputSchema,
 		}
 		schema, reason := toolSchema(operation.InputSchema)
 		candidate.Bindable, candidate.Reason = reason == "", reason
