@@ -162,7 +162,12 @@ const messages = {
           'The example uses the offering {offering}; for another one, replace the offering in the address.',
         inZgi: 'Use it in ZGI',
         inZgiMcp:
-          'After activation, tick it under "ZGI Market tools" of an agent or a digital human. ZGI calls it for you; you keep no credential.',
+          'Once activated, add it from the "ZGI Market" group under Connectors of an agent or a digital human. ZGI calls it for you in a conversation; you keep no credential.',
+        inZgiApi:
+          'Once activated, add this offering from the "ZGI Market" group under Connectors of an agent or a digital human. Each operation that declares an input schema becomes a tool ({count} of {total}); a GET runs directly, anything else needs a person to approve.',
+        inZgiApiNone:
+          'No operation of this listing declares an input schema, so it cannot be bound to an agent or a digital human as a tool yet. Call the gateway directly instead.',
+        direct: 'Call the gateway directly',
         openAgents: 'Open agents',
         openDigitalHumans: 'Open digital humans',
         external: 'Use it from an external client',
@@ -253,14 +258,16 @@ const messages = {
     pluginMemberFailed: '{count} skills were not installed: {names}',
   },
   tools: {
-    rowDescription: '{kind} server · {count} tools',
+    rowDescription: '{kind} · {count} tools',
     clickToRemove: 'Click to remove',
     billedPerCall: 'Billed per call',
     viewInConnectors: 'See it under Connectors',
     addAction: 'Add',
     group: 'ZGI Market',
     groupHint:
-      'MCP servers the organization activated in ZGI Market. Adding one takes effect at once; every call is billed in points, and tools that write need a person to approve.',
+      'MCP servers and API offerings the organization activated in ZGI Market. Adding one takes effect at once; every call is billed in points, and tools that write need a person to approve.',
+    apiNotBindable: 'No operation declares an input schema, so it cannot be added as tools.',
+    operationsSkipped: '{count} more operations declare no input schema and do not become tools.',
     add: 'Add {name}',
     remove: 'Remove {name}',
     added: 'Added',
@@ -272,15 +279,15 @@ const messages = {
     toolCount: '{count} tools',
     fromMarket: 'From ZGI Market',
     centerDescription:
-      'MCP servers the organization activated in ZGI Market. Add them to an agent or a digital human under Connectors.',
-    centerEmpty: 'The organization has not activated an MCP server yet.',
+      'MCP servers and API offerings the organization activated in ZGI Market. Add them to an agent or a digital human under Connectors.',
+    centerEmpty: 'The organization has not activated an MCP server or an API yet.',
     activated: 'Activated',
     perCall: '{amount} points per call',
     free: 'Free',
     title: 'ZGI Market tools',
     description:
-      'Bind MCP servers the organization activated. Every call is billed in points; tools that write need a person to approve.',
-    empty: 'The organization has not activated an MCP server yet.',
+      'Bind MCP servers and API offerings the organization activated. Every call is billed in points; tools that write need a person to approve.',
+    empty: 'The organization has not activated an MCP server or an API yet.',
     browse: 'Browse the market',
     gatewayMissing:
       'No ZGI Market gateway is configured on this instance. The binding is saved, but the tools cannot be called.',

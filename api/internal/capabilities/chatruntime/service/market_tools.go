@@ -34,10 +34,10 @@ type MarketToolResolver interface {
 	SubjectMarketTools(ctx context.Context, organizationID uuid.UUID, subjectType string, subjectID uuid.UUID) ([]MarketTool, error)
 }
 
-const marketToolsInstructions = `These tools come from the ZGI Market MCP servers an administrator bound to you. Each call is
-billed by ZGI Market. Use one only when it serves the user's request, pass exactly the arguments
-its schema describes, and report what it returned. Tools that change data at the vendor need the
-user's approval and may be refused when nobody can approve.`
+const marketToolsInstructions = `These tools come from the ZGI Market MCP servers and API operations an administrator bound to
+you. Each call is billed by ZGI Market. Use one only when it serves the user's request, pass
+exactly the arguments its schema describes, and report what it returned. Tools that change data at
+the vendor need the user's approval and may be refused when nobody can approve.`
 
 // marketSubject names the subject of a caller that market tools can be bound to.
 func marketSubject(caller Caller) (string, uuid.UUID, bool) {
@@ -138,7 +138,7 @@ func MarketToolsSkillDocument(caller Caller, found []MarketTool) skills.SkillDoc
 	return skills.SkillDocument{
 		Metadata: skills.SkillMetadata{
 			ID: skills.SkillZGIMarketTools, Source: skills.SkillSourceSystem,
-			Name: "ZGI Market tools", Description: "Tools of the ZGI Market MCP servers bound to you.",
+			Name: "ZGI Market tools", Description: "Tools of the ZGI Market MCP servers and API operations bound to you.",
 			WhenToUse:   "Use when one of the bound ZGI Market tools can satisfy the current request.",
 			RuntimeType: skills.SkillRuntimeTypeTool, MaxCallsPerTurn: 20, TimeoutSeconds: 90,
 			SupportedCallers: supportedCallers, Tools: names,

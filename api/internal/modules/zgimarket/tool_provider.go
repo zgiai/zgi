@@ -50,8 +50,9 @@ func (*marketProvider) GetProviderType() tools.ToolProviderType { return tools.T
 // GetTool returns the tool without asking the gateway: the gateway refuses a tool the listing
 // does not have, and the runtime only offers the tools the gateway listed.
 func (p *marketProvider) GetTool(name string) (tools.Tool, error) {
-	// The runtime tells two bound listings with the same tool name apart by a listing prefix.
-	if _, _, slug, ok := parseProviderName(p.name); ok {
+	// The runtime tells two bound MCP listings with the same tool name apart by a listing prefix.
+	// The tool of an API operation already names its offering.
+	if _, _, slug, ok := parseProviderName(p.name); ok && !strings.HasPrefix(slug, apiProviderPrefix) {
 		name = strings.TrimPrefix(name, ToolNamePrefix(slug))
 	}
 	if !toolNamePattern.MatchString(name) {

@@ -82,7 +82,12 @@ export function ZgiMarketUsageGuide({ listing, gateway }: ZgiMarketUsageGuidePro
       return null;
     }
     const quickStart = marketApiQuickStart(gateway.origin, offering);
-    return (
+    // Only an http offering declares operations, and only one with an input schema is a tool.
+    const operations = listing.offerings
+      .filter(entry => entry.protocol_family === 'http')
+      .flatMap(entry => entry.operations ?? []);
+    const bindable = operations.filter(operation => operation.input_schema).length;
+    const direct = (
       <ol className="flex flex-col gap-6">
         <Step index={1} title={t('market.catalog.detail.usage.stepActivate')}>
           <Prose>{t('market.catalog.detail.usage.stepActivateApi')}</Prose>
@@ -107,6 +112,46 @@ export function ZgiMarketUsageGuide({ listing, gateway }: ZgiMarketUsageGuidePro
           {notes}
         </Step>
       </ol>
+    );
+    if (operations.length === 0) {
+      return direct;
+    }
+    return (
+      <div className="flex flex-col gap-4">
+        <Block title={t('market.catalog.detail.usage.inZgi')}>
+          {bindable === 0 ? (
+            <Prose>{t('market.catalog.detail.usage.inZgiApiNone')}</Prose>
+          ) : (
+            <ol className="flex flex-col gap-6">
+              <Step index={1} title={t('market.catalog.detail.usage.stepActivate')}>
+                <Prose>{t('market.catalog.detail.usage.stepActivateApi')}</Prose>
+              </Step>
+              {needsConnection ? (
+                <Step index={2} title={t('market.catalog.detail.usage.stepConnect')}>
+                  <Prose>{t('market.catalog.detail.usage.stepConnectBody')}</Prose>
+                </Step>
+              ) : null}
+              <Step index={needsConnection ? 3 : 2} title={t('market.tools.title')}>
+                <Prose>
+                  {t('market.catalog.detail.usage.inZgiApi', {
+                    count: bindable,
+                    total: operations.length,
+                  })}
+                </Prose>
+                <div className="flex flex-wrap gap-x-5 gap-y-2">
+                  <PageLink href="/console/agents">
+                    {t('market.catalog.detail.usage.openAgents')}
+                  </PageLink>
+                  <PageLink href="/console/digital-humans">
+                    {t('market.catalog.detail.usage.openDigitalHumans')}
+                  </PageLink>
+                </div>
+              </Step>
+            </ol>
+          )}
+        </Block>
+        <Block title={t('market.catalog.detail.usage.direct')}>{direct}</Block>
+      </div>
     );
   }
 

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -30,6 +31,27 @@ type fakeMarket struct {
 	calls    []string
 	bindings map[uint64]map[string]any
 	nextID   uint64
+	// items adds an activated http API offering and a model offering to the subscriptions.
+	items bool
+}
+
+// itemsListing is the API listing "items" as the market answers it, for a member and in public.
+func itemsListing() map[string]any {
+	return map[string]any{
+		"id": 20, "card": map[string]any{"title": map[string]string{"zh-CN": "条目", "en-US": "Items"}},
+		"offerings": []map[string]any{
+			{"id": 31, "slug": "items-standard", "protocol_family": "http", "status": "active", "operations": []map[string]any{
+				{"method": "GET", "path": "/v1/items/{id}", "input_schema": map[string]any{
+					"type": "object", "description": "Read one item", "required": []string{"id"},
+					"properties": map[string]any{"id": map[string]any{"type": "string"}, "scale": map[string]any{"type": "number"}},
+				}},
+				{"method": "POST", "path": "/v1/items", "input_schema": map[string]any{"type": "object"}},
+				{"method": "GET", "path": "/v1/plain"},
+			}},
+			{"id": 32, "slug": "items-chat", "protocol_family": "openai_chat", "status": "active"},
+		},
+		"required_connectors": []map[string]any{},
+	}
 }
 
 func (m *fakeMarket) handler(t *testing.T) http.HandlerFunc {
@@ -46,11 +68,20 @@ func (m *fakeMarket) handler(t *testing.T) http.HandlerFunc {
 		}
 		switch {
 		case r.Method == http.MethodGet && path == "subscriptions":
-			data(http.StatusOK, []map[string]any{
+			subscriptions := []map[string]any{
 				{"id": 11, "listing_id": 7, "listing_kind": "mcp", "listing_slug": "wiki", "status": "active"},
 				{"id": 12, "listing_id": 8, "listing_kind": "api", "listing_slug": "echo", "status": "active"},
 				{"id": 13, "listing_id": 9, "listing_kind": "mcp", "listing_slug": "gone", "status": "cancelled"},
-			})
+			}
+			if m.items {
+				subscriptions = append(subscriptions,
+					map[string]any{"id": 21, "listing_id": 20, "listing_kind": "api", "listing_slug": "items", "offering_slug": "items-standard", "status": "active"},
+					map[string]any{"id": 22, "listing_id": 20, "listing_kind": "api", "listing_slug": "items", "offering_slug": "items-chat", "status": "active"},
+				)
+			}
+			data(http.StatusOK, subscriptions)
+		case r.Method == http.MethodGet && path == "listings/api/items" && m.items:
+			data(http.StatusOK, itemsListing())
 		case r.Method == http.MethodGet && path == "listings/mcp/wiki":
 			data(http.StatusOK, map[string]any{
 				"id": 7, "card": map[string]any{"title": map[string]string{"zh-CN": "百科", "en-US": "Wiki"}},
@@ -84,12 +115,46 @@ type fakeGateway struct {
 	mu          sync.Mutex
 	credentials []string
 	called      []string
+	// requests are the offering calls it received, as "METHOD path?query body".
+	requests []string
+	// listing replaces the public answer for the API listing "items" when set.
+	listing map[string]any
 }
 
 func (g *fakeGateway) handler(w http.ResponseWriter, r *http.Request) {
 	g.mu.Lock()
 	g.credentials = append(g.credentials, r.Header.Get("Authorization"))
 	g.mu.Unlock()
+	// The public catalog is served at the gateway's origin and takes no credential.
+	if r.Method == http.MethodGet && r.URL.Path == "/v1/market/listings/api/items" {
+		g.mu.Lock()
+		listing := g.listing
+		g.mu.Unlock()
+		if listing == nil {
+			listing = itemsListing()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": listing}) //nolint:errcheck // test server
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/v1/gateway/") {
+		body, _ := io.ReadAll(r.Body) //nolint:errcheck // test server
+		g.mu.Lock()
+		g.requests = append(g.requests, strings.TrimSpace(r.Method+" "+r.URL.RequestURI()+" "+string(body)))
+		g.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Header.Get("Authorization") != "Bearer "+testMarketSecret:
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = io.WriteString(w, `{"code":401,"error_code":"MARKET_ACCESS.CREDENTIAL_INVALID","message":"Credential is invalid"}`) //nolint:errcheck // test server
+		case strings.HasSuffix(r.URL.Path, "/v1/items/broke"):
+			w.WriteHeader(http.StatusPaymentRequired)
+			_, _ = io.WriteString(w, `{"code":402,"error_code":"BILLING.INSUFFICIENT_BALANCE","message":"The balance is too low"}`) //nolint:errcheck // test server
+		default:
+			_, _ = io.WriteString(w, `{"item":"`+r.URL.Path+`","scale":"`+r.URL.Query().Get("scale")+`"}`) //nolint:errcheck // test server
+		}
+		return
+	}
 	if r.Header.Get("Authorization") != "Bearer "+testMarketSecret || r.URL.Path != "/v1/mcp/wiki" {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
@@ -324,4 +389,217 @@ func TestTheGatewayMustBeHTTPSOutsideLocalDevelopment(t *testing.T) {
 	require.NoError(t, err)
 	_, err = client.ListTools(context.Background(), "wiki", testMarketSecret)
 	assert.Error(t, err, "a gateway that resolves to a loopback address is refused")
+}
+
+func TestOperationToolNameNamesTheOfferingAndTheRequestWithinTheLimit(t *testing.T) {
+	assert.Equal(t, "amap_web_service_standard__get_v3_geocode_geo", OperationToolName("amap-web-service-standard", "GET", "/v3/geocode/geo"))
+	assert.Equal(t, "items_standard__post_v1_items_id_notes", OperationToolName("items-standard", "post", "/v1/items/{id}/notes"))
+	assert.Equal(t, "echo__get", OperationToolName("echo", "GET", "/"))
+
+	long := OperationToolName("a-very-long-offering-slug-of-a-vendor-standard", "DELETE", "/v1/organizations/{organization}/projects/{project}")
+	other := OperationToolName("a-very-long-offering-slug-of-a-vendor-standard", "DELETE", "/v1/organizations/{organization}/projects/{project}/keys")
+	for _, name := range []string{long, other} {
+		assert.LessOrEqual(t, len(name), 64)
+		assert.True(t, toolNamePattern.MatchString(name), name)
+	}
+	assert.NotEqual(t, long, other, "two long names never meet")
+	assert.Equal(t, long, OperationToolName("a-very-long-offering-slug-of-a-vendor-standard", "DELETE", "/v1/organizations/{organization}/projects/{project}"), "the name is stable")
+}
+
+func TestOperationArgumentsBecomeThePathTheQueryOrTheBody(t *testing.T) {
+	arguments := map[string]any{
+		"id": "a/b", "scale": float64(2), "deep": true, "tags": []any{"x", "y z", float64(3)},
+		"filter": map[string]any{"k": "v"}, "skip": nil,
+	}
+	request, err := buildOperationRequest(http.MethodGet, "/v1/items/{id}", arguments)
+	require.NoError(t, err)
+	assert.Equal(t, "/v1/items/a%2Fb", request.Path, "a path argument is escaped and leaves the rest")
+	assert.Nil(t, request.Body)
+	assert.Equal(t, "deep=true&filter=%7B%22k%22%3A%22v%22%7D&scale=2&tags=x&tags=y+z&tags=3", request.Query.Encode())
+	assert.Len(t, arguments, 6, "the caller's arguments are not changed")
+
+	request, err = buildOperationRequest(http.MethodPost, "/v1/items/{id}/notes", map[string]any{"id": float64(7), "text": "hi", "tags": []any{"x"}})
+	require.NoError(t, err)
+	assert.Equal(t, "/v1/items/7/notes", request.Path)
+	assert.Empty(t, request.Query)
+	assert.JSONEq(t, `{"text":"hi","tags":["x"]}`, string(request.Body))
+
+	request, err = buildOperationRequest(http.MethodDelete, "/v1/items/{id}", map[string]any{"id": "9", "force": false})
+	require.NoError(t, err)
+	assert.Equal(t, "force=false", request.Query.Encode())
+
+	for name, bad := range map[string]map[string]any{
+		"a missing path argument": {"scale": 1},
+		"an empty path argument":  {"id": ""},
+		"a path argument object":  {"id": map[string]any{"x": 1}},
+	} {
+		_, err := buildOperationRequest(http.MethodGet, "/v1/items/{id}", bad)
+		assert.ErrorIs(t, err, errArguments, name)
+	}
+}
+
+func TestAnOperationIsAToolOnlyWithAnObjectInputSchema(t *testing.T) {
+	offering := marketOffering{Slug: "items-standard", ProtocolFamily: "http", Operations: []marketOperation{
+		{Method: "GET", Path: "/v1/items/{id}", InputSchema: json.RawMessage(`{"type":"object","description":"Read one item","properties":{"id":{"type":"string"}}}`)},
+		{Method: "post", Path: "/v1/items", InputSchema: json.RawMessage(`{"type":"object"}`)},
+		{Method: "GET", Path: "/v1/plain"},
+		{Method: "GET", Path: "/v1/list", InputSchema: json.RawMessage(`{"type":"array"}`)},
+		{Method: "GET", Path: "/v1/items/{id}", InputSchema: json.RawMessage(`{"type":"object"}`)},
+		{Method: "TRACE", Path: "/v1/items"},
+	}}
+	operations := candidateOperations(offering, "Items")
+	require.Len(t, operations, 4, "a repeated operation and an unknown method are dropped")
+	assert.Equal(t, CandidateOperation{
+		Key: "GET /v1/items/{id}", Name: "items_standard__get_v1_items_id", Method: "GET", Path: "/v1/items/{id}",
+		Description: "Read one item", RiskLevel: RiskRead, Bindable: true, InputSchema: offering.Operations[0].InputSchema,
+	}, operations[0])
+	assert.Equal(t, RiskWrite, operations[1].RiskLevel, "every method but GET writes")
+	assert.Equal(t, "POST /v1/items (Items)", operations[1].Description)
+	assert.Equal(t, []any{false, ReasonNoInputSchema}, []any{operations[2].Bindable, operations[2].Reason})
+	assert.Equal(t, []any{false, ReasonInputSchemaNotObject}, []any{operations[3].Bindable, operations[3].Reason})
+
+	candidate := ToolCandidate{Kind: ItemKindAPI, OfferingSlug: "items-standard", Operations: operations}
+	bound, all, err := boundOperations(candidate, nil)
+	require.NoError(t, err)
+	assert.True(t, all)
+	assert.Len(t, bound, 2, "no selection is every bindable operation")
+	bound, all, err = boundOperations(candidate, []string{"POST /v1/items"})
+	require.NoError(t, err)
+	assert.False(t, all)
+	require.Len(t, bound, 1)
+	assert.Equal(t, "items_standard__post_v1_items", bound[0].Name)
+	_, _, err = boundOperations(candidate, []string{"GET /v1/plain"})
+	assert.ErrorIs(t, err, ErrListingNotBindable, "an operation without a schema cannot be selected")
+	_, _, err = boundOperations(candidate, []string{"GET /v1/unknown"})
+	assert.ErrorIs(t, err, ErrListingNotBindable)
+}
+
+func TestAToolResultIsCutWithAMarkerAndAFailureCarriesTheMarketCode(t *testing.T) {
+	short := `{"value":42}`
+	assert.Equal(t, short, capResult(short))
+	long := strings.Repeat("好", maxToolResultChars)
+	cut := capResult(long)
+	assert.LessOrEqual(t, len(cut), maxToolResultChars)
+	assert.True(t, strings.HasSuffix(cut, truncatedMarker))
+	assert.True(t, strings.HasPrefix(long, strings.TrimSuffix(cut, truncatedMarker)), "the cut does not split a character")
+
+	assert.Equal(t, "ZGI Market answered 402 BILLING.INSUFFICIENT_BALANCE: The balance is too low",
+		marketFailure(402, []byte(`{"code":402,"error_code":"BILLING.INSUFFICIENT_BALANCE","message":"The balance is too low"}`)))
+	assert.Equal(t, "ZGI Market answered 502: bad gateway", marketFailure(502, []byte("bad gateway")))
+	assert.Equal(t, "ZGI Market answered 500", marketFailure(500, nil))
+}
+
+func TestAnAPIOfferingIsBoundAndItsOperationsAreCalledAtTheGateway(t *testing.T) {
+	fixture := newToolsFixture(t, true)
+	fixture.market.items = true
+	ctx := context.Background()
+
+	// The http offering is a candidate with its operations; the model offering is not listed.
+	status, answer := fixture.send(t, http.MethodGet, "tools/candidates", "")
+	require.Equal(t, http.StatusOK, status, answer)
+	listings := answer["data"].(map[string]any)["listings"].([]any)
+	require.Len(t, listings, 2)
+	offering := listings[1].(map[string]any)
+	assert.Equal(t, []any{"api", "items", "items-standard", float64(21)},
+		[]any{offering["kind"], offering["slug"], offering["offering_slug"], offering["subscription_id"]})
+	operations := offering["operations"].([]any)
+	require.Len(t, operations, 3)
+	assert.Equal(t, ReasonNoInputSchema, operations[2].(map[string]any)["reason"])
+	assert.Len(t, offering["tools"], 2, "the bindable operations are its tools")
+
+	// Bind the MCP server and every operation of the offering to the agent.
+	path := "tools/subjects/agent/" + fixture.agent.String()
+	status, answer = fixture.send(t, http.MethodPut, path, `{"items":[{"listing_id":7},{"listing_id":20,"offering_slug":"items-standard"}]}`)
+	require.Equal(t, http.StatusOK, status, answer)
+	items := answer["data"].(map[string]any)["items"].([]any)
+	require.Len(t, items, 2)
+	bound := items[1].(map[string]any)
+	assert.Equal(t, []any{"api", "items-standard", true}, []any{bound["kind"], bound["offering_slug"], bound["all_operations"]})
+	assert.NotContains(t, fmt.Sprint(bound["operations"]), "input_schema", "a page is not sent the schemas")
+	assert.Equal(t, []any{map[string]any{"subscription_id": float64(11)}, map[string]any{"subscription_id": float64(21)}},
+		fixture.market.bindings[1]["items"], "an offering is one more item of the same market binding")
+
+	listed, err := fixture.tools.SubjectTools(ctx, fixture.org, SubjectAgent, fixture.agent)
+	require.NoError(t, err)
+	require.Len(t, listed, 4)
+	read, write := listed[2], listed[3]
+	assert.Equal(t, "agent:"+fixture.agent.String()+":api.items-standard", read.ProviderID)
+	assert.Equal(t, []any{"items_standard__get_v1_items_id", "Read one item", RiskRead}, []any{read.Name, read.Description, read.RiskLevel})
+	assert.Equal(t, []any{"id"}, read.InputSchema["required"])
+	assert.Equal(t, []any{"items_standard__post_v1_items", RiskWrite}, []any{write.Name, write.RiskLevel})
+
+	manager := tools.NewToolManager(nil)
+	manager.SetMarketToolSource(fixture.tools)
+	engine := tools.NewToolEngine(manager)
+	invoke := func(tool string, parameters map[string]interface{}) (*tools.InvokeResult, error) {
+		return engine.Invoke(ctx, tools.InvokeRequest{
+			ProviderType: tools.ToolProviderTypeMarket, ProviderID: read.ProviderID, ToolName: tool,
+			TenantID: fixture.org.String(), Parameters: parameters,
+		})
+	}
+	// A GET: the path argument fills the path, the rest is the query, the credential is the binding's.
+	result, err := invoke(read.Name, map[string]interface{}{"id": "a b", "scale": float64(2)})
+	require.NoError(t, err)
+	require.True(t, result.Success)
+	assert.JSONEq(t, `{"item":"/v1/gateway/items-standard/v1/items/a b","scale":"2"}`, result.Messages[0].Text)
+	assert.Equal(t, "GET /v1/gateway/items-standard/v1/items/a%20b?scale=2", fixture.gateway.requests[0])
+	// Another method sends the arguments as a JSON body.
+	_, err = invoke(write.Name, map[string]interface{}{"name": "n"})
+	require.NoError(t, err)
+	assert.Equal(t, `POST /v1/gateway/items-standard/v1/items {"name":"n"}`, fixture.gateway.requests[1])
+	// Arguments that do not fit the path reach no gateway.
+	_, err = invoke(read.Name, map[string]interface{}{"scale": float64(2)})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `the path needs the argument "id"`)
+	assert.Len(t, fixture.gateway.requests, 2)
+	// An answer outside 2xx is a tool error with the market's code.
+	_, err = invoke(read.Name, map[string]interface{}{"id": "broke"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "402 BILLING.INSUFFICIENT_BALANCE")
+	// A tool the offering does not have, and another organization, reach nothing.
+	_, err = invoke("items_standard__get_v1_plain", nil)
+	assert.Error(t, err)
+	_, err = engine.Invoke(ctx, tools.InvokeRequest{
+		ProviderType: tools.ToolProviderTypeMarket, ProviderID: read.ProviderID, ToolName: read.Name,
+		TenantID: uuid.NewString(), Parameters: map[string]interface{}{"id": "x"},
+	})
+	assert.Error(t, err)
+	assert.Len(t, fixture.gateway.requests, 3)
+
+	// A new version of the listing is followed: the operation it drops is no tool any more, and
+	// the one it adds is, because every operation was bound.
+	next := itemsListing()
+	next["offerings"].([]map[string]any)[0]["operations"] = []map[string]any{
+		{"method": "GET", "path": "/v1/items/{id}", "input_schema": map[string]any{"type": "object"}},
+		{"method": "DELETE", "path": "/v1/items/{id}", "input_schema": map[string]any{"type": "object"}},
+	}
+	fixture.gateway.mu.Lock()
+	fixture.gateway.listing = next
+	fixture.gateway.mu.Unlock()
+	fixture.tools.now = func() time.Time { return time.Now().Add(2 * toolCatalogTTL) }
+	listed, err = fixture.tools.SubjectTools(ctx, fixture.org, SubjectAgent, fixture.agent)
+	require.NoError(t, err)
+	names := []string{}
+	for _, tool := range listed {
+		names = append(names, tool.Name)
+	}
+	assert.Equal(t, []string{"lookup", "edit", "items_standard__get_v1_items_id", "items_standard__delete_v1_items_id"}, names)
+
+	// A chosen subset stays a subset; an operation without a schema cannot be chosen.
+	status, answer = fixture.send(t, http.MethodPut, path, `{"items":[{"listing_id":20,"offering_slug":"items-standard","operations":["GET /v1/items/{id}"]}]}`)
+	require.Equal(t, http.StatusOK, status, answer)
+	var stored ToolBinding
+	require.NoError(t, fixture.db.First(&stored).Error)
+	require.Len(t, stored.Items, 1)
+	assert.False(t, stored.Items[0].AllOperations)
+	listed, err = fixture.tools.SubjectTools(ctx, fixture.org, SubjectAgent, fixture.agent)
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	assert.Equal(t, "items_standard__get_v1_items_id", listed[0].Name)
+	status, _ = fixture.send(t, http.MethodPut, path, `{"items":[{"listing_id":20,"offering_slug":"items-standard","operations":["GET /v1/plain"]}]}`)
+	assert.Equal(t, http.StatusBadRequest, status)
+	status, _ = fixture.send(t, http.MethodPut, path, `{"items":[{"listing_id":20,"offering_slug":"items-chat"}]}`)
+	assert.Equal(t, http.StatusBadRequest, status, "a model offering is not bindable")
+	status, _ = fixture.send(t, http.MethodPut, path, `{"items":[{"listing_id":20,"offering_slug":"items-standard"},{"listing_id":20,"offering_slug":"items-standard"}]}`)
+	assert.Equal(t, http.StatusBadRequest, status, "one offering is bound once")
 }

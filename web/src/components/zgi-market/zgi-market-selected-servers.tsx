@@ -16,6 +16,9 @@ import {
 import { marketText } from '@/components/zgi-market/market-format';
 import { useLocale } from '@/hooks/use-locale';
 import {
+  boundToolChips,
+  marketItemHref,
+  marketItemKind,
   usableMarketConnections,
   useZgiMarketSubjectSelection,
 } from '@/hooks/use-zgi-market-subject-tools';
@@ -62,18 +65,26 @@ export function ZgiMarketSelectedServers({
     <ul className="space-y-2" data-testid="zgi-market-selected-servers">
       {selection.items.map(item => {
         const candidate = selection.listings.find(
-          listing => listing.listing_id === item.listing_id
+          listing => listing.subscription_id === item.subscription_id
         );
+        const kind = marketItemKind(item);
+        const href = marketItemHref({ kind, slug: item.slug });
         // The stored title is in one language; the listing itself has both.
-        const name = marketText(candidate?.title, locale) || item.title || item.slug;
+        const title = marketText(candidate?.title, locale) || item.title || item.slug;
+        const name =
+          kind === 'api' && item.offering_slug ? `${title} · ${item.offering_slug}` : title;
         const usable = candidate ? usableMarketConnections(candidate, selection.connections) : [];
         const needsConnection = (candidate?.required_connectors.length ?? 0) > 0;
         return (
-          <li key={item.listing_id} className="rounded-md border bg-background p-3">
+          <li
+            key={item.subscription_id}
+            data-market-kind={kind}
+            className="rounded-md border bg-background p-3"
+          >
             <div className="flex items-start gap-3">
               <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted text-primary">
                 <ConnectorIcon
-                  connectorId={`zgi-market:${item.slug}`}
+                  connectorId={`zgi-market:${item.offering_slug ?? item.slug}`}
                   name={name}
                   classification="connector"
                   className="size-8 border-0 shadow-none"
@@ -82,7 +93,7 @@ export function ZgiMarketSelectedServers({
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <Link
-                    href={`/dashboard/market/catalog/mcp/${item.slug}`}
+                    href={href}
                     className="min-w-0 truncate text-sm font-medium hover:underline"
                   >
                     {name}
@@ -90,7 +101,7 @@ export function ZgiMarketSelectedServers({
                 </div>
                 <div className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
                   {t('market.tools.rowDescription', {
-                    kind: t('market.catalog.kinds.mcp'),
+                    kind: t(`market.catalog.kinds.${kind}`),
                     count: item.tools.length,
                   })}
                 </div>
@@ -105,7 +116,7 @@ export function ZgiMarketSelectedServers({
                 disabled={readOnly || selection.isSaving}
                 onClick={() =>
                   void run(
-                    () => selection.remove(item.listing_id),
+                    () => selection.remove(item.subscription_id),
                     t('market.tools.removedToast', { name })
                   )
                 }
@@ -117,23 +128,20 @@ export function ZgiMarketSelectedServers({
               <Badge variant="outline" className="text-[10px]">
                 {t('market.tools.fromMarket')}
               </Badge>
-              {item.tools.slice(0, 6).map(tool => (
-                <Badge
-                  key={tool.name}
-                  variant={tool.risk_level === 'read' ? 'subtle' : 'warning'}
-                  className="text-[10px]"
-                  title={
-                    marketText(
-                      candidate?.tools.find(known => known.name === tool.name)?.description,
-                      locale
-                    ) || tool.name
-                  }
-                >
-                  <span className="font-mono">{tool.name}</span>
-                  {' · '}
-                  {t(`market.catalog.risk.${tool.risk_level}`)}
-                </Badge>
-              ))}
+              {boundToolChips(item, candidate, locale)
+                .slice(0, 6)
+                .map(tool => (
+                  <Badge
+                    key={tool.key}
+                    variant={tool.risk === 'read' ? 'subtle' : 'warning'}
+                    className="text-[10px]"
+                    title={tool.hint}
+                  >
+                    <span className="font-mono">{tool.label}</span>
+                    {' · '}
+                    {t(`market.catalog.risk.${tool.risk}`)}
+                  </Badge>
+                ))}
               {item.tools.length > 6 ? (
                 <Badge variant="subtle" className="text-[10px]">
                   +{item.tools.length - 6}
@@ -146,10 +154,7 @@ export function ZgiMarketSelectedServers({
                   {t('market.tools.connection')}
                 </span>
                 {usable.length === 0 ? (
-                  <Link
-                    href={`/dashboard/market/catalog/mcp/${item.slug}`}
-                    className="text-xs text-primary hover:underline"
-                  >
+                  <Link href={href} className="text-xs text-primary hover:underline">
                     {t('market.tools.noConnection')}
                   </Link>
                 ) : (
@@ -157,7 +162,7 @@ export function ZgiMarketSelectedServers({
                     disabled={readOnly || selection.isSaving}
                     value={item.connection_id ? String(item.connection_id) : ''}
                     onValueChange={value =>
-                      void run(() => selection.setConnection(item.listing_id, Number(value)))
+                      void run(() => selection.setConnection(item.subscription_id, Number(value)))
                     }
                   >
                     <SelectTrigger className="h-8 w-auto min-w-36 text-xs">

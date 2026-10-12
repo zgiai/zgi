@@ -5,17 +5,25 @@ import { ArrowUpRight, Store } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { lowestPrice, marketAmount, marketText } from '@/components/zgi-market/market-format';
-import { usableMarketConnections } from '@/hooks/use-zgi-market-subject-tools';
+import {
+  candidateToolChips,
+  marketItemHref,
+  usableMarketConnections,
+} from '@/hooks/use-zgi-market-subject-tools';
 import { useLocale } from '@/hooks/use-locale';
 import { useZgiMarketListing, useZgiMarketToolCandidates } from '@/hooks/use-zgi-market';
 import { useT } from '@/i18n';
 import type { MarketConnection, MarketToolCandidate } from '@/services/types/zgi-market';
 
-function ServerPrice({ slug }: { slug: string }) {
+function ServerPrice({ listing: candidate }: { listing: MarketToolCandidate }) {
   const t = useT();
-  const listing = useZgiMarketListing('mcp', slug);
+  const listing = useZgiMarketListing(candidate.kind, candidate.slug);
   if (!listing.data) return null;
-  const price = lowestPrice(listing.data);
+  // An API offering has its own prices; an MCP server has the listing's.
+  const prices = (listing.data.prices ?? []).filter(
+    entry => candidate.kind !== 'api' || entry.offering_slug === candidate.offering_slug
+  );
+  const price = lowestPrice({ ...listing.data, prices });
   if (!price) return null;
   if (price.unit_price_micros === 0) {
     return <Badge variant="subtle">{t('market.tools.free')}</Badge>;
@@ -36,8 +44,11 @@ function ServerRow({
 }) {
   const t = useT();
   const { locale } = useLocale();
-  const name = marketText(listing.title, locale) || listing.slug;
-  const href = `/dashboard/market/catalog/mcp/${listing.slug}`;
+  const title = marketText(listing.title, locale) || listing.slug;
+  const name =
+    listing.kind === 'api' && listing.offering_slug ? `${title} · ${listing.offering_slug}` : title;
+  const href = marketItemHref(listing);
+  const skipped = (listing.operations ?? []).filter(operation => !operation.bindable).length;
   const needsConnection =
     listing.required_connectors.length > 0 &&
     usableMarketConnections(listing, connections).length === 0;
@@ -45,7 +56,10 @@ function ServerRow({
     .map(connector => marketText(connector.title, locale) || connector.slug)
     .join(' / ');
   return (
-    <li className="flex h-full flex-col rounded-xl border bg-card p-4 shadow-sm">
+    <li
+      data-market-kind={listing.kind}
+      className="flex h-full flex-col rounded-xl border bg-card p-4 shadow-sm"
+    >
       <div className="flex items-start gap-3">
         <span className="flex size-10 shrink-0 items-center justify-center rounded-lg border bg-muted text-primary">
           <Store className="size-5" aria-hidden="true" />
@@ -54,7 +68,7 @@ function ServerRow({
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="min-w-0 truncate text-sm font-semibold">{name}</h3>
             <Badge variant="outline" className="text-[10px]">
-              {t('market.catalog.kinds.mcp')}
+              {t(`market.catalog.kinds.${listing.kind}`)}
             </Badge>
             <Badge variant={needsConnection ? 'warning' : 'success'} className="text-[10px]">
               {needsConnection
@@ -64,21 +78,28 @@ function ServerRow({
           </div>
           <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span>{t('market.tools.toolCount', { count: listing.tools.length })}</span>
-            <ServerPrice slug={listing.slug} />
+            <ServerPrice listing={listing} />
           </p>
+          {skipped > 0 ? (
+            <p className="mt-1 text-xs text-muted-foreground">
+              {t('market.tools.operationsSkipped', { count: skipped })}
+            </p>
+          ) : null}
         </div>
       </div>
       <div className="mt-3 flex flex-wrap gap-1">
-        {listing.tools.slice(0, 8).map(tool => (
-          <Badge
-            key={tool.name}
-            variant={tool.risk_level === 'read' ? 'subtle' : 'warning'}
-            className="font-mono text-[11px]"
-            title={marketText(tool.description, locale)}
-          >
-            {tool.name} · {t(`market.catalog.risk.${tool.risk_level}`)}
-          </Badge>
-        ))}
+        {candidateToolChips(listing, locale)
+          .slice(0, 8)
+          .map(tool => (
+            <Badge
+              key={tool.key}
+              variant={tool.risk === 'read' ? 'subtle' : 'warning'}
+              className="font-mono text-[11px]"
+              title={tool.hint}
+            >
+              {tool.label} · {t(`market.catalog.risk.${tool.risk}`)}
+            </Badge>
+          ))}
         {listing.tools.length > 8 ? (
           <Badge variant="subtle" className="text-[11px]">
             +{listing.tools.length - 8}
@@ -126,7 +147,7 @@ export function ZgiMarketConnectorCenterSection() {
           </p>
         </div>
         <Link
-          href="/dashboard/market/catalog?kind=mcp"
+          href="/dashboard/market/catalog"
           className="shrink-0 text-sm font-medium text-primary hover:underline"
         >
           {t('market.tools.browse')}
@@ -145,7 +166,7 @@ export function ZgiMarketConnectorCenterSection() {
         <ul className="grid auto-rows-fr gap-4 lg:grid-cols-2">
           {listings.map(listing => (
             <ServerRow
-              key={listing.listing_id}
+              key={listing.subscription_id}
               listing={listing}
               connections={candidates.data?.connections ?? []}
             />

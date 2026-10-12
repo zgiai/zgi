@@ -9,8 +9,12 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { marketText } from '@/components/zgi-market/market-format';
 import {
+  candidateToolChips,
+  marketItemHref,
+  matchesMarketRowFilter,
   usableMarketConnections,
   useZgiMarketSubjectSelection,
+  type MarketRowFilter,
 } from '@/hooks/use-zgi-market-subject-tools';
 import { useLocale } from '@/hooks/use-locale';
 import { useT } from '@/i18n';
@@ -22,27 +26,41 @@ interface ZgiMarketConnectorPickerGroupProps {
   subjectType: MarketToolSubjectType;
   subjectId: string;
   readOnly?: boolean;
+  /** The search and status filter of the picker the group is shown in. */
+  filter?: MarketRowFilter;
 }
 
 /**
- * The organization's activated ZGI Market servers as a group of a connector picker, in the rows
- * the picker gives its own connectors. Adding or removing one replaces the subject's market
- * binding at once.
+ * The organization's activated ZGI Market servers and API offerings as a group of a connector
+ * picker, in the rows the picker gives its own connectors. Adding or removing one replaces the
+ * subject's market binding at once.
  */
 export function ZgiMarketConnectorPickerGroup({
   subjectType,
   subjectId,
   readOnly = false,
+  filter,
 }: ZgiMarketConnectorPickerGroupProps) {
   const t = useT();
   const { locale } = useLocale();
   const selection = useZgiMarketSubjectSelection(subjectType, subjectId);
   const headingId = `zgi-market-picker-${subjectId}`;
+  const filtering = Boolean(filter && (filter.query.trim() || filter.status !== 'all'));
+  const listings = filter
+    ? selection.listings.filter(listing =>
+        matchesMarketRowFilter(listing, selection.connections, filter)
+      )
+    : selection.listings;
+
+  // A search or a status filter that leaves no market row leaves no market group either.
+  if (filtering && !selection.isLoading && !selection.isError && listings.length === 0) {
+    return null;
+  }
 
   const toggle = async (listing: MarketToolCandidate, name: string, selected: boolean) => {
     try {
       if (selected) {
-        await selection.remove(listing.listing_id);
+        await selection.remove(listing.subscription_id);
         toast.success(t('market.tools.removedToast', { name }));
         return;
       }
@@ -61,7 +79,7 @@ export function ZgiMarketConnectorPickerGroup({
           <h3 id={headingId} className="text-sm font-semibold">
             {t('market.tools.group')}
           </h3>
-          <Badge variant="subtle">{selection.listings.length}</Badge>
+          <Badge variant="subtle">{listings.length}</Badge>
         </div>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">
           {t('market.tools.groupHint')}
@@ -86,11 +104,11 @@ export function ZgiMarketConnectorPickerGroup({
         <p className="text-xs text-destructive" role="alert">
           {t('market.tools.loadFailed')}
         </p>
-      ) : selection.listings.length === 0 ? (
+      ) : listings.length === 0 ? (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-dashed bg-background/60 px-5 py-6 text-sm text-muted-foreground">
           <span>{t('market.tools.empty')}</span>
           <Link
-            href="/dashboard/market/catalog?kind=mcp"
+            href="/dashboard/market/catalog"
             className="font-medium text-primary hover:underline"
           >
             {t('market.tools.browse')}
@@ -98,9 +116,17 @@ export function ZgiMarketConnectorPickerGroup({
         </div>
       ) : (
         <div className="space-y-3">
-          {selection.listings.map(listing => {
-            const name = marketText(listing.title, locale) || listing.slug;
-            const selected = selection.items.some(item => item.listing_id === listing.listing_id);
+          {listings.map(listing => {
+            const title = marketText(listing.title, locale) || listing.slug;
+            // Two offerings of one API listing share its title; the offering tells them apart.
+            const name =
+              listing.kind === 'api' && listing.offering_slug
+                ? `${title} · ${listing.offering_slug}`
+                : title;
+            const selected = selection.items.some(
+              item => item.subscription_id === listing.subscription_id
+            );
+            const unbindable = listing.tools.length === 0;
             const needsConnection =
               listing.required_connectors.length > 0 &&
               usableMarketConnections(listing, selection.connections).length === 0;
@@ -109,12 +135,13 @@ export function ZgiMarketConnectorPickerGroup({
               .join(' / ');
             return (
               <article
-                key={listing.listing_id}
+                key={listing.subscription_id}
+                data-market-kind={listing.kind}
                 className="min-w-0 rounded-xl border bg-background p-3.5 shadow-xs"
               >
                 <div className="grid min-w-0 grid-cols-[40px_minmax(0,1fr)] items-center gap-3 sm:grid-cols-[40px_minmax(0,1fr)_minmax(220px,320px)] sm:gap-4">
                   <ConnectorIcon
-                    connectorId={`zgi-market:${listing.slug}`}
+                    connectorId={`zgi-market:${listing.offering_slug ?? listing.slug}`}
                     name={name}
                     classification="connector"
                   />
@@ -128,34 +155,38 @@ export function ZgiMarketConnectorPickerGroup({
                           {t('market.tools.needsConnection', { name: connectorName })}
                           {' · '}
                           <Link
-                            href={`/dashboard/market/catalog/mcp/${listing.slug}`}
+                            href={marketItemHref(listing)}
                             className="font-medium text-primary hover:underline"
                           >
                             {t('market.tools.connect')}
                           </Link>
                         </>
+                      ) : unbindable ? (
+                        t('market.tools.apiNotBindable')
                       ) : (
                         t('market.tools.rowDescription', {
-                          kind: t('market.catalog.kinds.mcp'),
+                          kind: t(`market.catalog.kinds.${listing.kind}`),
                           count: listing.tools.length,
                         })
                       )}
                     </p>
                     <div className="mt-2 flex min-w-0 flex-wrap gap-1">
-                      {listing.tools.slice(0, 4).map(tool => (
-                        <Badge
-                          key={tool.name}
-                          variant={tool.risk_level === 'read' ? 'subtle' : 'warning'}
-                          className="max-w-full font-normal"
-                          title={marketText(tool.description, locale) || tool.name}
-                        >
-                          <span className="truncate font-mono">{tool.name}</span>
-                          <span className="shrink-0">
-                            {' · '}
-                            {t(`market.catalog.risk.${tool.risk_level}`)}
-                          </span>
-                        </Badge>
-                      ))}
+                      {candidateToolChips(listing, locale)
+                        .slice(0, 4)
+                        .map(tool => (
+                          <Badge
+                            key={tool.key}
+                            variant={tool.risk === 'read' ? 'subtle' : 'warning'}
+                            className="max-w-full font-normal"
+                            title={tool.hint}
+                          >
+                            <span className="truncate font-mono">{tool.label}</span>
+                            <span className="shrink-0">
+                              {' · '}
+                              {t(`market.catalog.risk.${tool.risk}`)}
+                            </span>
+                          </Badge>
+                        ))}
                       {listing.tools.length > 4 ? (
                         <Badge variant="subtle" className="font-normal">
                           +{listing.tools.length - 4}
@@ -170,7 +201,11 @@ export function ZgiMarketConnectorPickerGroup({
                       'col-span-2 min-h-[54px] w-full min-w-0 shrink-0 justify-between rounded-lg px-3 sm:col-span-1',
                       selected && 'border-primary/25 bg-primary/[0.03]'
                     )}
-                    disabled={readOnly || selection.isSaving || (needsConnection && !selected)}
+                    disabled={
+                      readOnly ||
+                      selection.isSaving ||
+                      ((needsConnection || unbindable) && !selected)
+                    }
                     aria-pressed={selected}
                     aria-label={
                       selected

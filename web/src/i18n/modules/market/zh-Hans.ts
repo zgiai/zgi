@@ -150,7 +150,12 @@ const messages: MarketMessages = {
         otherOfferings: '示例使用档位 {offering}；其它档位把地址里的档位标识换掉即可。',
         inZgi: '在 ZGI 里使用',
         inZgiMcp:
-          '开通后，在智能体或数字人的「ZGI 市场工具」里勾选它；对话时由 ZGI 代为调用，不需要自己保存凭证。',
+          '开通后，在智能体或数字人的「连接器」里，从「ZGI 市场」分组添加它；对话时由 ZGI 代为调用，不需要自己保存凭证。',
+        inZgiApi:
+          '开通后，在智能体或数字人的「连接器」里，从「ZGI 市场」分组添加这个档位。声明了入参结构的接口各成为一个工具（{count}/{total} 个）；GET 接口直接调用，其它接口需要人确认。',
+        inZgiApiNone:
+          '这个商品的接口都没有声明入参结构，暂时不能作为工具绑定给智能体或数字人，可以直接调用网关。',
+        direct: '直接调用网关',
         openAgents: '去智能体',
         openDigitalHumans: '去数字人',
         external: '在外部客户端使用',
@@ -234,14 +239,16 @@ const messages: MarketMessages = {
     pluginMemberFailed: '{count} 个技能没有装上：{names}',
   },
   tools: {
-    rowDescription: '{kind} 服务 · {count} 个工具',
+    rowDescription: '{kind} · {count} 个工具',
     clickToRemove: '点击移除',
     billedPerCall: '调用时按次扣点',
     viewInConnectors: '在能力中心的连接器里查看',
     addAction: '添加',
     group: 'ZGI 市场',
     groupHint:
-      '组织在 ZGI 市场开通的 MCP 服务。添加后立即生效，调用时按次扣点；写入类工具需要人确认。',
+      '组织在 ZGI 市场开通的 MCP 服务和 API 档位。添加后立即生效，调用时按次扣点；写入类工具需要人确认。',
+    apiNotBindable: '接口没有声明入参结构，不能作为工具添加。',
+    operationsSkipped: '另有 {count} 个接口没有声明入参结构，不会成为工具。',
     add: '添加 {name}',
     remove: '移除 {name}',
     added: '已添加',
@@ -252,14 +259,16 @@ const messages: MarketMessages = {
     viewListing: '查看商品',
     toolCount: '{count} 个工具',
     fromMarket: '来自 ZGI 市场',
-    centerDescription: '组织在 ZGI 市场开通的 MCP 服务，可以在智能体和数字人的「连接器」里添加。',
-    centerEmpty: '组织还没有开通 MCP 服务。',
+    centerDescription:
+      '组织在 ZGI 市场开通的 MCP 服务和 API 档位，可以在智能体和数字人的「连接器」里添加。',
+    centerEmpty: '组织还没有开通 MCP 服务或 API。',
     activated: '已开通',
     perCall: '每次调用 {amount} 点',
     free: '免费',
     title: 'ZGI 市场工具',
-    description: '把组织已开通的 MCP 服务绑定给它，调用时按次扣点；写入类工具需要人确认。',
-    empty: '组织还没有开通 MCP 服务。',
+    description:
+      '把组织已开通的 MCP 服务和 API 档位绑定给它，调用时按次扣点；写入类工具需要人确认。',
+    empty: '组织还没有开通 MCP 服务或 API。',
     browse: '去市场开通',
     gatewayMissing: '本实例未配置 ZGI 市场网关，绑定会保存，但调用时不可用。',
     connection: '连接',

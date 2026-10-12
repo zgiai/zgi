@@ -299,7 +299,9 @@ function EnabledAgentRuntimeConnectorDialog({
           )
         );
       }}
-      extraGroups={<ZgiMarketConnectorPickerGroup subjectType="agent" subjectId={agentId} />}
+      extraGroups={filter => (
+        <ZgiMarketConnectorPickerGroup subjectType="agent" subjectId={agentId} filter={filter} />
+      )}
     />
   );
 }

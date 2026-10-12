@@ -3,6 +3,7 @@ import { zgiMarketService } from '@/services/zgi-market.service';
 import type {
   MarketListingKind,
   MarketListingQuery,
+  MarketToolBindingInput,
   MarketToolSubjectType,
 } from '@/services/types/zgi-market';
 
@@ -128,7 +129,7 @@ export function useBindZgiMarketSubjectTools(
 ) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (items: Array<{ listing_id: number; connection_id?: number | null }>) =>
+    mutationFn: (items: MarketToolBindingInput[]) =>
       zgiMarketService.bindSubjectTools(subjectType, subjectId, items),
     onSuccess: binding => {
       queryClient.setQueryData(keys.subjectTools(subjectType, subjectId), binding);

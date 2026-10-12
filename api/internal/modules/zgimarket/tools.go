@@ -41,13 +41,19 @@ type Tools struct {
 	gateway *gatewayClient
 	now     func() time.Time
 
-	mu      sync.Mutex
-	catalog map[string]cachedCatalog
+	mu         sync.Mutex
+	catalog    map[string]cachedCatalog
+	operations map[string]cachedOperations
 }
 
 type cachedCatalog struct {
 	tools   []GatewayTool
 	expires time.Time
+}
+
+type cachedOperations struct {
+	operations []BoundOperation
+	expires    time.Time
 }
 
 // NewTools builds the market tools. gateway is nil when no gateway address is configured: binding
@@ -56,7 +62,7 @@ type cachedCatalog struct {
 func NewTools(db *gorm.DB, sealer SecretSealer, gateway *GatewayConfig) (*Tools, error) {
 	tools := &Tools{
 		store: toolBindingStore{db: db}, sealer: sealer, now: time.Now,
-		catalog: map[string]cachedCatalog{},
+		catalog: map[string]cachedCatalog{}, operations: map[string]cachedOperations{},
 	}
 	if gateway != nil && gateway.URL != "" {
 		client, err := newGatewayClient(*gateway)
@@ -68,14 +74,21 @@ func NewTools(db *gorm.DB, sealer SecretSealer, gateway *GatewayConfig) (*Tools,
 	return tools, nil
 }
 
-// ToolCandidate is an activated MCP listing of the organization that may be bound.
+// ToolCandidate is an activated listing of the organization that may be bound: an MCP server, or
+// one http offering of an API listing.
 type ToolCandidate struct {
+	// Kind is ItemKindMCP or ItemKindAPI.
+	Kind               string              `json:"kind"`
 	ListingID          uint64              `json:"listing_id"`
 	Slug               string              `json:"slug"`
 	Title              map[string]string   `json:"title"`
 	SubscriptionID     uint64              `json:"subscription_id"`
 	Tools              []CandidateTool     `json:"tools"`
 	RequiredConnectors []RequiredConnector `json:"required_connectors"`
+	// OfferingSlug and Operations describe an API offering. Tools then lists its bindable
+	// operations by tool name.
+	OfferingSlug string               `json:"offering_slug,omitempty"`
+	Operations   []CandidateOperation `json:"operations,omitempty"`
 }
 
 // CandidateTool is one tool of a candidate listing.
@@ -116,12 +129,18 @@ type BindingView struct {
 	GatewayConfigured bool `json:"gateway_configured"`
 }
 
-// BindInput names the listings a subject may use, each with an optional connection.
+// BindInput names the listings a subject may use, each with an optional connection. An item with
+// an offering slug is an API offering; its operations are operation keys, or empty for all.
 type BindInput struct {
-	Items []struct {
-		ListingID    uint64  `json:"listing_id"`
-		ConnectionID *uint64 `json:"connection_id"`
-	} `json:"items"`
+	Items []BindItem `json:"items"`
+}
+
+// BindItem is one requested listing of a subject.
+type BindItem struct {
+	ListingID    uint64   `json:"listing_id"`
+	ConnectionID *uint64  `json:"connection_id"`
+	OfferingSlug string   `json:"offering_slug"`
+	Operations   []string `json:"operations"`
 }
 
 // marketAnswerError carries an answer of the market that the caller should see as it is.
@@ -166,21 +185,25 @@ func (t *Tools) marketData(ctx context.Context, who caller, method, path string,
 	return json.Unmarshal(envelope.Data, into)
 }
 
-// Candidates lists the organization's activated MCP listings and its connections.
+// Candidates lists what the organization activated and may bind, and its connections: its MCP
+// servers, and the http offerings of its API listings with their operations. An offering of a
+// model protocol family has no declared operations and is not listed.
 func (t *Tools) Candidates(ctx context.Context, who caller) (*ToolCandidates, error) {
 	var subscriptions []struct {
-		ID          uint64 `json:"id"`
-		ListingID   uint64 `json:"listing_id"`
-		ListingKind string `json:"listing_kind"`
-		ListingSlug string `json:"listing_slug"`
-		Status      string `json:"status"`
+		ID           uint64 `json:"id"`
+		ListingID    uint64 `json:"listing_id"`
+		ListingKind  string `json:"listing_kind"`
+		ListingSlug  string `json:"listing_slug"`
+		OfferingSlug string `json:"offering_slug"`
+		Status       string `json:"status"`
 	}
 	if err := t.marketData(ctx, who, http.MethodGet, "subscriptions?per_page=100", nil, &subscriptions); err != nil {
 		return nil, err
 	}
 	result := &ToolCandidates{Listings: []ToolCandidate{}, Connections: []Connection{}}
 	for _, subscription := range subscriptions {
-		if subscription.ListingKind != "mcp" || subscription.Status != "active" || len(result.Listings) >= 100 {
+		if (subscription.ListingKind != ItemKindMCP && subscription.ListingKind != ItemKindAPI) ||
+			subscription.Status != "active" || len(result.Listings) >= 100 {
 			continue
 		}
 		var listing struct {
@@ -191,9 +214,10 @@ func (t *Tools) Candidates(ctx context.Context, who caller) (*ToolCandidates, er
 			MCP *struct {
 				Tools []CandidateTool `json:"tools"`
 			} `json:"mcp"`
+			Offerings          []marketOffering    `json:"offerings"`
 			RequiredConnectors []RequiredConnector `json:"required_connectors"`
 		}
-		err := t.marketData(ctx, who, http.MethodGet, "listings/mcp/"+subscription.ListingSlug, nil, &listing)
+		err := t.marketData(ctx, who, http.MethodGet, "listings/"+subscription.ListingKind+"/"+subscription.ListingSlug, nil, &listing)
 		var refused *marketAnswerError
 		if errors.As(err, &refused) && refused.answer.status == http.StatusNotFound {
 			// Delisted since it was activated: it cannot be bound any more.
@@ -203,14 +227,30 @@ func (t *Tools) Candidates(ctx context.Context, who caller) (*ToolCandidates, er
 			return nil, err
 		}
 		candidate := ToolCandidate{
-			ListingID: subscription.ListingID, Slug: subscription.ListingSlug, Title: listing.Card.Title,
-			SubscriptionID: subscription.ID, Tools: []CandidateTool{}, RequiredConnectors: listing.RequiredConnectors,
-		}
-		if listing.MCP != nil {
-			candidate.Tools = listing.MCP.Tools
+			Kind: subscription.ListingKind, ListingID: subscription.ListingID, Slug: subscription.ListingSlug,
+			Title: listing.Card.Title, SubscriptionID: subscription.ID, Tools: []CandidateTool{},
+			RequiredConnectors: listing.RequiredConnectors,
 		}
 		if candidate.RequiredConnectors == nil {
 			candidate.RequiredConnectors = []RequiredConnector{}
+		}
+		if subscription.ListingKind == ItemKindAPI {
+			index := slices.IndexFunc(listing.Offerings, func(offering marketOffering) bool {
+				return offering.Slug == subscription.OfferingSlug
+			})
+			if index < 0 || listing.Offerings[index].ProtocolFamily != httpProtocolFamily {
+				continue
+			}
+			candidate.OfferingSlug = subscription.OfferingSlug
+			candidate.Operations = candidateOperations(listing.Offerings[index], firstText(listing.Card.Title))
+			for _, operation := range candidate.Operations {
+				if operation.Bindable {
+					text := map[string]string{"zh-CN": operation.Description, "en-US": operation.Description}
+					candidate.Tools = append(candidate.Tools, CandidateTool{Name: operation.Name, Description: text, RiskLevel: operation.RiskLevel})
+				}
+			}
+		} else if listing.MCP != nil {
+			candidate.Tools = listing.MCP.Tools
 		}
 		result.Listings = append(result.Listings, candidate)
 	}
@@ -258,9 +298,26 @@ func (t *Tools) Binding(ctx context.Context, who caller, subjectType, rawID stri
 		return nil, err
 	}
 	if binding != nil {
-		view.Items, view.UpdatedAt = binding.Items, &binding.UpdatedAt
+		view.Items, view.UpdatedAt = viewItems(binding.Items), &binding.UpdatedAt
 	}
 	return view, nil
+}
+
+// viewItems are the items as a page shows them: without the schemas kept for the runtime.
+func viewItems(items []ToolBindingItem) []ToolBindingItem {
+	result := make([]ToolBindingItem, 0, len(items))
+	for _, item := range items {
+		if len(item.Operations) > 0 {
+			operations := make([]BoundOperation, 0, len(item.Operations))
+			for _, operation := range item.Operations {
+				operation.InputSchema = nil
+				operations = append(operations, operation)
+			}
+			item.Operations = operations
+		}
+		result = append(result, item)
+	}
+	return result
 }
 
 // Bind replaces the market tools of one subject. The market binding follows: it is created with
@@ -376,19 +433,38 @@ func (t *Tools) resolveItems(ctx context.Context, who caller, input BindInput) (
 	}
 	items := make([]ToolBindingItem, 0, len(input.Items))
 	for _, requested := range input.Items {
+		wantsAPI := requested.OfferingSlug != ""
 		index := slices.IndexFunc(candidates.Listings, func(candidate ToolCandidate) bool {
-			return candidate.ListingID == requested.ListingID
+			if wantsAPI {
+				return candidate.Kind == ItemKindAPI && candidate.ListingID == requested.ListingID && candidate.OfferingSlug == requested.OfferingSlug
+			}
+			return candidate.Kind == ItemKindMCP && candidate.ListingID == requested.ListingID
 		})
-		if index < 0 || slices.ContainsFunc(items, func(item ToolBindingItem) bool { return item.ListingID == requested.ListingID }) {
+		if index < 0 {
 			return nil, ErrListingNotBindable
 		}
 		candidate := candidates.Listings[index]
+		// One subscription is one item of the market binding.
+		if slices.ContainsFunc(items, func(item ToolBindingItem) bool { return item.SubscriptionID == candidate.SubscriptionID }) {
+			return nil, ErrListingNotBindable
+		}
 		item := ToolBindingItem{
-			ListingID: candidate.ListingID, Slug: candidate.Slug, Title: firstText(candidate.Title),
+			Kind: candidate.Kind, ListingID: candidate.ListingID, Slug: candidate.Slug, Title: firstText(candidate.Title),
 			SubscriptionID: candidate.SubscriptionID, ConnectionID: requested.ConnectionID, Tools: []ToolInfo{},
 		}
-		for _, tool := range candidate.Tools {
-			item.Tools = append(item.Tools, ToolInfo{Name: tool.Name, RiskLevel: tool.RiskLevel})
+		if wantsAPI {
+			operations, all, err := boundOperations(candidate, requested.Operations)
+			if err != nil {
+				return nil, err
+			}
+			item.OfferingSlug, item.Operations, item.AllOperations = candidate.OfferingSlug, operations, all
+			for _, operation := range operations {
+				item.Tools = append(item.Tools, ToolInfo{Name: operation.Name, RiskLevel: operation.RiskLevel})
+			}
+		} else {
+			for _, tool := range candidate.Tools {
+				item.Tools = append(item.Tools, ToolInfo{Name: tool.Name, RiskLevel: tool.RiskLevel})
+			}
 		}
 		items = append(items, item)
 	}
@@ -430,6 +506,11 @@ func (t *Tools) forget(bindingID uuid.UUID) {
 			delete(t.catalog, key)
 		}
 	}
+	for key := range t.operations {
+		if strings.HasPrefix(key, prefix) {
+			delete(t.operations, key)
+		}
+	}
 }
 
 // SubjectTool is one market tool of a subject as the runtime exposes it.
@@ -449,9 +530,12 @@ func providerName(subjectType string, subjectID uuid.UUID, slug string) string {
 	return subjectType + ":" + subjectID.String() + ":" + slug
 }
 
+// parseProviderName reads the subject and the listing of a provider name. The listing is the slug
+// of an MCP server, or apiProviderPrefix and the slug of an API offering.
 func parseProviderName(name string) (string, uuid.UUID, string, bool) {
 	parts := strings.SplitN(name, ":", 3)
-	if len(parts) != 3 || (parts[0] != SubjectAgent && parts[0] != SubjectDigitalHuman) || !marketSlugPattern.MatchString(parts[2]) {
+	if len(parts) != 3 || (parts[0] != SubjectAgent && parts[0] != SubjectDigitalHuman) ||
+		!marketSlugPattern.MatchString(strings.TrimPrefix(parts[2], apiProviderPrefix)) {
 		return "", uuid.Nil, "", false
 	}
 	id, err := uuid.Parse(parts[1])
@@ -473,15 +557,38 @@ func (t *Tools) SubjectTools(ctx context.Context, organizationID uuid.UUID, subj
 		return nil, err
 	}
 	result := make([]SubjectTool, 0)
+	taken := map[string]bool{}
 	for _, item := range binding.Items {
+		if item.IsAPI() {
+			continue
+		}
 		listed, err := t.listingTools(ctx, binding, item.Slug)
 		if err != nil {
 			continue
 		}
 		for _, tool := range listed {
+			taken[tool.Name] = true
 			result = append(result, SubjectTool{
 				ProviderID: providerName(subjectType, subjectID, item.Slug), Name: tool.Name,
 				Description: tool.Description, InputSchema: tool.InputSchema, RiskLevel: riskOf(item, tool.Name),
+			})
+		}
+	}
+	// The operations of the bound API offerings. Their names carry the offering, so they are
+	// already apart from each other; one that meets a vendor's MCP tool name is left out rather
+	// than renamed, because its name is how a call finds it again.
+	for _, item := range binding.Items {
+		if !item.IsAPI() {
+			continue
+		}
+		for _, operation := range t.liveOperations(ctx, binding, item) {
+			if taken[operation.Name] {
+				continue
+			}
+			taken[operation.Name] = true
+			result = append(result, SubjectTool{
+				ProviderID: providerName(subjectType, subjectID, apiProviderPrefix+item.OfferingSlug), Name: operation.Name,
+				Description: operation.Description, InputSchema: operation.InputSchema, RiskLevel: operation.RiskLevel,
 			})
 		}
 	}
@@ -553,6 +660,9 @@ func (t *Tools) callTool(ctx context.Context, organizationID uuid.UUID, name, to
 	if binding == nil {
 		return nil, ErrListingNotBindable
 	}
+	if offeringSlug, isAPI := strings.CutPrefix(slug, apiProviderPrefix); isAPI {
+		return t.callOperation(ctx, binding, offeringSlug, tool, arguments)
+	}
 	if _, bound := binding.item(slug); !bound {
 		return nil, ErrListingNotBindable
 	}
@@ -561,4 +671,27 @@ func (t *Tools) callTool(ctx context.Context, organizationID uuid.UUID, name, to
 		return nil, err
 	}
 	return t.gateway.CallTool(ctx, slug, secret, tool, arguments)
+}
+
+// callOperation calls the operation of a bound API offering that the tool name stands for.
+// Arguments that do not fit the operation are answered as a tool error; nothing is called.
+func (t *Tools) callOperation(ctx context.Context, binding *ToolBinding, offeringSlug, tool string, arguments map[string]any) (*GatewayResult, error) {
+	item, bound := binding.offering(offeringSlug)
+	if !bound {
+		return nil, ErrListingNotBindable
+	}
+	operations := t.liveOperations(ctx, binding, item)
+	index := slices.IndexFunc(operations, func(operation BoundOperation) bool { return operation.Name == tool })
+	if index < 0 {
+		return nil, ErrListingNotBindable
+	}
+	request, err := buildOperationRequest(operations[index].Method, operations[index].Path, arguments)
+	if err != nil {
+		return &GatewayResult{Text: err.Error(), IsError: true}, nil
+	}
+	secret, err := t.secret(binding)
+	if err != nil {
+		return nil, err
+	}
+	return t.gateway.CallOperation(ctx, offeringSlug, secret, request)
 }

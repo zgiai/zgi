@@ -3,6 +3,7 @@ import type {
   MarketCategory,
   MarketConnection,
   MarketToolBinding,
+  MarketToolBindingInput,
   MarketToolCandidates,
   MarketToolSubjectType,
   MarketInstalledSkill,
@@ -172,7 +173,7 @@ class ZgiMarketService extends BaseService {
   async bindSubjectTools(
     subjectType: MarketToolSubjectType,
     subjectId: string,
-    items: Array<{ listing_id: number; connection_id?: number | null }>
+    items: MarketToolBindingInput[]
   ): Promise<MarketToolBinding> {
     const response = await this.request<MarketEnvelope<MarketToolBinding>>(
       'put',

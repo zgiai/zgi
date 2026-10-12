@@ -555,13 +555,14 @@ export function DigitalHumanConnectorDialog({
       groupByConnector
       bindings={pickerBindings}
       anchorElement={anchorElement}
-      extraGroups={
+      extraGroups={filter => (
         <ZgiMarketConnectorPickerGroup
           subjectType="digital_human"
           subjectId={id}
           readOnly={readOnly}
+          filter={filter}
         />
-      }
+      )}
       disabled={selection.status === 'saving' || refreshing}
       actionsDisabled={readOnly || selection.status === 'conflict'}
       hostEligibility={hostEligibility}

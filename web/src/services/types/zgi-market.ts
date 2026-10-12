@@ -211,13 +211,38 @@ export interface MarketConnection {
 export type MarketToolRisk = 'read' | 'write' | 'destructive';
 
 /** An activated MCP listing the organization may bind to an agent or a digital human. */
+/** Why an operation of an API offering cannot become a tool. */
+export type MarketOperationReason = 'no_input_schema' | 'input_schema_not_object';
+
+/** One operation of an activated API offering. `key` is its method and path. */
+export interface MarketCandidateOperation {
+  key: string;
+  name: string;
+  method: string;
+  path: string;
+  description: string;
+  risk_level: MarketToolRisk;
+  bindable: boolean;
+  reason?: MarketOperationReason;
+  input_schema?: Record<string, unknown>;
+  output_schema?: Record<string, unknown>;
+}
+
+/** What a subject can be given: an MCP server, or one http offering of an API listing. */
+export type MarketToolItemKind = 'mcp' | 'api';
+
 export interface MarketToolCandidate {
+  kind: MarketToolItemKind;
   listing_id: number;
   slug: string;
   title: MarketText;
+  /** One activation; it identifies the candidate and its item in a binding. */
   subscription_id: number;
+  /** The tools of an MCP server, or the bindable operations of an API offering by tool name. */
   tools: Array<{ name: string; description: MarketText; risk_level: MarketToolRisk }>;
   required_connectors: MarketRequiredConnector[];
+  offering_slug?: string;
+  operations?: MarketCandidateOperation[];
 }
 
 export interface MarketToolCandidates {
@@ -227,14 +252,35 @@ export interface MarketToolCandidates {
 
 export type MarketToolSubjectType = 'agent' | 'digital_human';
 
-/** One MCP listing bound to a subject. */
+/** One MCP server or API offering bound to a subject. An item without a kind is an MCP server. */
 export interface MarketToolBindingItem {
+  kind?: MarketToolItemKind;
   listing_id: number;
   slug: string;
   title?: string;
   subscription_id: number;
   connection_id?: number | null;
   tools: Array<{ name: string; risk_level: MarketToolRisk }>;
+  offering_slug?: string;
+  /** Whether every bindable operation of the offering is a tool, also ones added later. */
+  all_operations?: boolean;
+  operations?: Array<{
+    key: string;
+    name: string;
+    method: string;
+    path: string;
+    risk_level: MarketToolRisk;
+  }>;
+}
+
+/** One requested item of a subject's binding. */
+export interface MarketToolBindingInput {
+  listing_id: number;
+  connection_id?: number | null;
+  /** Names the offering of an API item. */
+  offering_slug?: string;
+  /** Operation keys of an API item; absent for every bindable operation. */
+  operations?: string[];
 }
 
 /** The market tools of one agent or digital human. */
