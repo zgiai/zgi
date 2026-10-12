@@ -966,7 +966,10 @@ func (service *ChannelService) handleInboundMessage(
 			result.Accepted, result.RunID = true, stored.InvocationRunID
 			return result, nil
 		}
-		if stored.Status == channelruntime.InboundEventAccepted && stored.ReasonCode == channelRuntimeInputReason {
+		// Runtime input and approval replies are accepted without a run ID; a
+		// provider retry must not submit them a second time.
+		if stored.Status == channelruntime.InboundEventAccepted &&
+			(stored.ReasonCode == channelRuntimeInputReason || stored.ReasonCode == channelTaskApprovalReason) {
 			result.Accepted = true
 			return result, nil
 		}
@@ -992,9 +995,10 @@ func (service *ChannelService) handleInboundMessage(
 		return nil, err
 	}
 	route.Mapping.LocalConversationID = &conversationID
-	if approvalRuntime, ok := service.runtime.(interface {
-		ContinueChannelTaskApproval(context.Context, Scope, uuid.UUID, uuid.UUID, string) (bool, error)
-	}); ok {
+	// A pending approval is waiting_approval, not streaming, so it must be
+	// resolved before runtime-input admission or the confirmation would start a
+	// new run instead of resuming the pending message.
+	if approvalRuntime, ok := service.runtime.(channelTaskApprovalRuntime); ok {
 		handled, approvalErr := approvalRuntime.ContinueChannelTaskApproval(
 			ctx,
 			Scope{OrganizationID: installation.OrganizationID, WorkspaceID: installation.WorkspaceID, ActorID: installation.CreatedBy},
@@ -1226,6 +1230,16 @@ func channelMessagePreview(message *channelruntime.InboundMessage) string {
 	}
 	return preview
 }
+
+// channelTaskApprovalRuntime resolves a pending approval from an inbound
+// channel message before it is admitted as runtime input or a new run.
+type channelTaskApprovalRuntime interface {
+	ContinueChannelTaskApproval(context.Context, Scope, uuid.UUID, uuid.UUID, string) (bool, error)
+}
+
+// The production channel runtime must keep this entry point; the inbound path
+// discovers it by type assertion.
+var _ channelTaskApprovalRuntime = (*RuntimeService)(nil)
 
 func channelInvocationQuery(message *channelruntime.InboundMessage) string {
 	if message == nil {
