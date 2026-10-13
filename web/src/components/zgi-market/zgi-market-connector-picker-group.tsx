@@ -107,6 +107,15 @@ export function ZgiMarketConnectorPickerGroup({
             {t('market.tools.group')}
           </h3>
           <Badge variant="subtle">{listings.length}</Badge>
+          {/* The way to the market also when something is activated: what is missing is there. */}
+          {listings.length > 0 ? (
+            <Link
+              href="/dashboard/market/catalog"
+              className="ml-auto text-xs font-medium text-primary hover:underline"
+            >
+              {t('market.tools.browse')}
+            </Link>
+          ) : null}
         </div>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">
           {t('market.tools.groupHint')}

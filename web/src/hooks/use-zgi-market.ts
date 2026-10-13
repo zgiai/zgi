@@ -1,4 +1,11 @@
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  type QueryClient,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
+import { AGENT_KEYS, DIGITAL_HUMAN_KEYS } from '@/hooks/query-keys';
 import { zgiMarketService } from '@/services/zgi-market.service';
 import type {
   MarketListingKind,
@@ -87,6 +94,18 @@ export function useZgiMarketInstalledSkills(enabled = true) {
   });
 }
 
+/**
+ * The Skill pickers of agents and digital humans keep their candidates for a while. A skill that
+ * was just installed has to be there when its administrator goes on to bind it.
+ */
+function invalidateSkillCandidates(queryClient: QueryClient) {
+  void queryClient.invalidateQueries({
+    predicate: query =>
+      query.queryKey[0] === AGENT_KEYS.all[0] && query.queryKey.includes('candidates'),
+  });
+  void queryClient.invalidateQueries({ queryKey: DIGITAL_HUMAN_KEYS.skillCandidates() });
+}
+
 export function useInstallZgiMarketSkill() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -97,6 +116,7 @@ export function useInstallZgiMarketSkill() {
       void queryClient.invalidateQueries({ queryKey: keys.installedSkills });
       // The organization's skills and every binding picker read them.
       void queryClient.invalidateQueries({ queryKey: ['aichat'] });
+      invalidateSkillCandidates(queryClient);
     },
   });
 }
@@ -262,6 +282,7 @@ export function useInstallZgiMarketSkills() {
       void queryClient.invalidateQueries({ queryKey: keys.subscriptions });
       void queryClient.invalidateQueries({ queryKey: keys.installedSkills });
       void queryClient.invalidateQueries({ queryKey: ['aichat'] });
+      invalidateSkillCandidates(queryClient);
     },
   });
 }
