@@ -38,6 +38,8 @@ const AGENT_WORKFLOW_SKILL_ID = 'agent-workflow';
 const AGENT_MANAGEMENT_SKILL_ID = 'agent-management';
 const DIGITAL_HUMAN_TASKS_SKILL_ID = 'digital-human-tasks';
 const CONNECTOR_RUNTIME_SKILL_ID = 'connector-runtime';
+// The request-scoped Skill of the ZGI Market tools bound to an agent or a digital human.
+const ZGI_MARKET_TOOLS_SKILL_ID = 'zgi-market-tools';
 const RETIRED_WEB_SEARCH_SKILL_ID = 'web-search';
 
 function normalizeConnectorRequirement(value: unknown): string {
@@ -78,6 +80,7 @@ export function isHiddenSystemSkill(skillId: unknown): boolean {
     normalized === AGENT_MANAGEMENT_SKILL_ID ||
     normalized === DIGITAL_HUMAN_TASKS_SKILL_ID ||
     normalized === CONNECTOR_RUNTIME_SKILL_ID ||
+    normalized === ZGI_MARKET_TOOLS_SKILL_ID ||
     normalized === RETIRED_WEB_SEARCH_SKILL_ID
   );
 }
@@ -252,6 +255,26 @@ const SYSTEM_SKILL_DISPLAY: Record<
     tags: {
       en_US: ['Connected apps', 'External'],
       zh_Hans: ['已连接应用', '外部应用'],
+    },
+    category: 'productivity',
+    icon: 'plug',
+  },
+  [ZGI_MARKET_TOOLS_SKILL_ID]: {
+    label: {
+      en_US: 'ZGI Market',
+      zh_Hans: 'ZGI 市场',
+    },
+    description: {
+      en_US: 'Tools of the ZGI Market MCP servers and API operations bound to this assistant.',
+      zh_Hans: '绑定给当前助手的 ZGI 市场 MCP 服务和 API 接口。',
+    },
+    whenToUse: {
+      en_US: 'Use when a bound ZGI Market tool can complete the user request.',
+      zh_Hans: '当已绑定的 ZGI 市场工具可以完成用户请求时使用。',
+    },
+    tags: {
+      en_US: ['ZGI Market', 'External'],
+      zh_Hans: ['ZGI 市场', '外部服务'],
     },
     category: 'productivity',
     icon: 'plug',
