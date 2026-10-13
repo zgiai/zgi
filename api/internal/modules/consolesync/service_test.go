@@ -244,8 +244,8 @@ func TestApplyAccountStatusWritesOrganizationStatus(t *testing.T) {
 	if ledger.Status != StatusApplied {
 		t.Fatalf("ledger status = %q, want applied", ledger.Status)
 	}
-	if !strings.Contains(ledger.BeforeState, "active") {
-		t.Fatalf("before snapshot lost: %q", ledger.BeforeState)
+	if !strings.Contains(derefString(ledger.BeforeState), "active") {
+		t.Fatalf("before snapshot lost: %q", derefString(ledger.BeforeState))
 	}
 }
 

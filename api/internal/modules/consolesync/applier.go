@@ -48,6 +48,7 @@ func (a *Applier) Apply(ctx context.Context, command *CommandEnvelope) (*Result,
 	}
 
 	var result Result
+	var applyErr error
 	// replayed marks the idempotency-key hit so its stored ACK can be returned to the
 	// caller; a repeated command id and the insert race stay silent as before.
 	replayed := false
@@ -75,14 +76,19 @@ func (a *Applier) Apply(ctx context.Context, command *CommandEnvelope) (*Result,
 				return fmt.Errorf("check applied idempotency key: %w", lookup.Error)
 			}
 			if lookup.RowsAffected > 0 {
-				result.Before = applied.BeforeState
-				result.After = applied.AfterState
+				result.Before = derefString(applied.BeforeState)
+				result.After = derefString(applied.AfterState)
 				replayed = true
 				return ErrAlreadyApplied
 			}
 		}
 
-		before, after, applyErr := a.applyWithin(ctx, tx, command)
+		// Roll back failed business writes without discarding their diagnostic ledger row.
+		if err := tx.Exec("SAVEPOINT command_apply").Error; err != nil {
+			return fmt.Errorf("save command apply: %w", err)
+		}
+		before, after, commandErr := a.applyWithin(ctx, tx, command)
+		applyErr = commandErr
 		result.Before = before
 		result.After = after
 
@@ -92,16 +98,24 @@ func (a *Applier) Apply(ctx context.Context, command *CommandEnvelope) (*Result,
 			Type:           command.Type,
 			IdempotencyKey: idempotencyKeyOrNil(idempotencyKey),
 			Status:         StatusApplied,
-			BeforeState:    before,
-			AfterState:     after,
+			BeforeState:    nullableSnapshot(before),
+			AfterState:     nullableSnapshot(after),
 			AppliedAt:      time.Now().UTC(),
 		}
 		if applyErr != nil {
 			entry.Status = StatusFailed
 			entry.Error = applyErr.Error()
+			commandTargetWarn("[consolesync] command apply failed id=%s seq=%d type=%s err=%v",
+				command.ID, command.Seq, command.Type, applyErr)
+			if err := tx.Exec("ROLLBACK TO SAVEPOINT command_apply").Error; err != nil {
+				return fmt.Errorf("rollback failed command (%v): %w", applyErr, err)
+			}
 			// Only a successful apply owns the key: a failed apply stays retryable, and the
 			// unique index must not reject the retry that then succeeds under the same key.
 			entry.IdempotencyKey = nil
+		}
+		if err := tx.Exec("RELEASE SAVEPOINT command_apply").Error; err != nil {
+			return fmt.Errorf("release command apply: %w", err)
 		}
 		if err := tx.Create(entry).Error; err != nil {
 			// A concurrent duplicate insert means another worker already recorded it.
@@ -110,13 +124,16 @@ func (a *Applier) Apply(ctx context.Context, command *CommandEnvelope) (*Result,
 			}
 			return fmt.Errorf("record applied command: %w", err)
 		}
-		return applyErr
+		return nil
 	})
 	if err != nil {
 		if replayed {
 			return &result, err
 		}
 		return nil, err
+	}
+	if applyErr != nil {
+		return nil, applyErr
 	}
 	return &result, nil
 }
@@ -465,6 +482,22 @@ func rawInt64(raw json.RawMessage) (int64, error) {
 		}
 	}
 	return 0, errors.New("value is not an integer")
+}
+
+// nullableSnapshot keeps absent snapshots out of jsonb columns: PostgreSQL rejects empty strings.
+func nullableSnapshot(raw string) *string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	return &raw
+}
+
+// derefString restores the string view of stored snapshots; NULL means no snapshot.
+func derefString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func marshalMap(value interface{}) string {
