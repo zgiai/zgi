@@ -32,7 +32,9 @@ type fakeMarket struct {
 	bindings map[uint64]map[string]any
 	nextID   uint64
 	// items adds an activated http API offering and a model offering to the subscriptions.
-	items bool
+	items      bool
+	deleted    []string
+	failDelete bool
 }
 
 // itemsListing is the API listing "items" as the market answers it, for a member and in public.
@@ -102,6 +104,11 @@ func (m *fakeMarket) handler(t *testing.T) http.HandlerFunc {
 		case r.Method == http.MethodPut && strings.HasPrefix(path, "bindings/") && strings.HasSuffix(path, "/items"):
 			data(http.StatusOK, map[string]any{"version": 2})
 		case r.Method == http.MethodDelete && strings.HasPrefix(path, "bindings/"):
+			if m.failDelete {
+				w.WriteHeader(http.StatusBadGateway)
+				return
+			}
+			m.deleted = append(m.deleted, path)
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			w.WriteHeader(http.StatusNotFound)
