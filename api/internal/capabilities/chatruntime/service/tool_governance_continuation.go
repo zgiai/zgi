@@ -613,6 +613,11 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 		}
 	}
 
+	if marketInvocation {
+		// The transcript of the turn still ends with the tool result that said the call was
+		// waiting for approval, and a model trusts that over the continuation note that follows.
+		replacePendingMarketToolResult(prepared.LLMRequest, frozen.CorrelationID, toolGovernanceModelVisibleToolResult(event, invocation, executionErr))
+	}
 	prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, continuationMessageForExecutionMode(toolGovernanceFrozenExecutionContinuationMessage(prepared.Message, event, invocation, executionErr), prepared.parts.ExecutionMode))
 	if frozen.ExecutionOrigin != nil {
 		// A CLI approval resumes one sealed business invocation, not its stopped

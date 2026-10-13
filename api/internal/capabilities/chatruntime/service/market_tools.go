@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -213,4 +214,27 @@ func marketToolApprovalEvent(event map[string]interface{}) bool {
 	return err == nil && found && frozen.ExecutionOrigin == nil &&
 		strings.EqualFold(strings.TrimSpace(frozen.ProviderType), string(tools.ToolProviderTypeMarket)) &&
 		strings.EqualFold(strings.TrimSpace(frozen.SkillID), skills.SkillZGIMarketTools)
+}
+
+// replacePendingMarketToolResult puts the outcome of an approved market call where the transcript
+// of the turn still holds its pending-approval answer. It changes the newest tool result that
+// names the approval, and nothing when there is none.
+func replacePendingMarketToolResult(request *adapter.ChatRequest, correlationID string, result map[string]interface{}) bool {
+	correlationID = strings.TrimSpace(correlationID)
+	if request == nil || correlationID == "" || len(result) == 0 {
+		return false
+	}
+	for index := len(request.Messages) - 1; index >= 0; index-- {
+		message := request.Messages[index]
+		if message.Role != "tool" {
+			continue
+		}
+		content, ok := message.Content.(string)
+		if !ok || !strings.Contains(content, correlationID) {
+			continue
+		}
+		request.Messages[index].Content = compactJSON(result)
+		return true
+	}
+	return false
 }

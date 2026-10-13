@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"testing"
 
 	"github.com/google/uuid"
@@ -105,4 +106,22 @@ func TestTheMarketSkillIsAuthorizedOnlyForARunThatWasGivenIt(t *testing.T) {
 		require.NoError(t, err)
 		assert.False(t, allowed, "naming the Skill in a request does not grant it")
 	}
+}
+
+// After an approval the transcript still says the call is waiting; the model must read the outcome.
+func TestAnApprovedMarketCallReplacesItsPendingToolResult(t *testing.T) {
+	request := &adapter.ChatRequest{Messages: []adapter.Message{
+		{Role: "user", Content: "create the item"},
+		{Role: "tool", ToolCallID: "call_0", Content: `{"status":"success"}`},
+		{Role: "tool", ToolCallID: "call_1", Content: `{"governance":{"correlation_id":"corr-1","status":"needs_approval"}}`},
+	}}
+	assert.False(t, replacePendingMarketToolResult(request, "corr-2", map[string]interface{}{"status": "completed"}), "another approval is left alone")
+	assert.Contains(t, request.Messages[2].Content, "needs_approval")
+
+	require.True(t, replacePendingMarketToolResult(request, "corr-1", map[string]interface{}{"status": "completed", "result": "note-1"}))
+	assert.Equal(t, "call_1", request.Messages[2].ToolCallID, "the answer stays paired with its call")
+	assert.NotContains(t, request.Messages[2].Content, "needs_approval")
+	assert.Contains(t, request.Messages[2].Content, "note-1")
+	assert.Equal(t, `{"status":"success"}`, request.Messages[1].Content)
+	assert.False(t, replacePendingMarketToolResult(nil, "corr-1", map[string]interface{}{"status": "completed"}))
 }
