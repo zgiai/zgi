@@ -16,7 +16,6 @@ import (
 	pb "github.com/zgiai/zgi/api/pkg/rpc/v1"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 )
 
@@ -29,8 +28,12 @@ func NewQuotaClient(address string) (*QuotaClient, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	transportCredentials, err := consolecred.TransportCredentials(address)
+	if err != nil {
+		return nil, err
+	}
 	dialOptions := []grpc.DialOption{
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(transportCredentials),
 		grpc.WithBlock(),
 	}
 	// Two distinct credentials travel on every billing RPC. The per-instance

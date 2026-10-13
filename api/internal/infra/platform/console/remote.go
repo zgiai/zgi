@@ -64,9 +64,28 @@ func NewRemote(baseURL string, internalAPIKey string) *Remote {
 		baseURL:        baseURL,
 		internalAPIKey: internalAPIKey,
 		httpClient: observability.HTTPClient(&http.Client{
-			Timeout: 30 * time.Second,
+			Timeout:       30 * time.Second,
+			CheckRedirect: rejectConsoleRedirects,
 		}),
 	}
+}
+
+// rejectConsoleRedirects prevents control-plane credentials from being sent
+// to an unexpected host or downgraded from HTTPS to HTTP. Production config
+// already requires an HTTPS base URL; refusing redirects keeps development
+// and migration paths from relying on a plaintext redirect hop.
+func rejectConsoleRedirects(req *http.Request, via []*http.Request) error {
+	if len(via) == 0 || req == nil || req.URL == nil || via[len(via)-1].URL == nil {
+		return nil
+	}
+	previous := via[len(via)-1].URL
+	if !strings.EqualFold(previous.Host, req.URL.Host) {
+		return fmt.Errorf("refusing Console API redirect to different host %q", req.URL.Host)
+	}
+	if strings.EqualFold(previous.Scheme, "https") && !strings.EqualFold(req.URL.Scheme, "https") {
+		return fmt.Errorf("refusing Console API HTTPS downgrade to %q", req.URL.String())
+	}
+	return http.ErrUseLastResponse
 }
 
 // RegisterOrganization preserves the legacy asynchronous best-effort behavior.

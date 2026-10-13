@@ -6,12 +6,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zgiai/zgi/api/internal/infra/platform/consolecred"
 	"github.com/zgiai/zgi/api/internal/observability"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	pb "github.com/zgiai/zgi/api/pkg/rpc/v1"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"gorm.io/gorm"
 )
 
@@ -200,7 +200,11 @@ func (s *Synchronizer) fullRefresh(ctx context.Context, client channelRPCClient,
 }
 
 func newGRPCChannelClient(addr string) (channelRPCClient, io.Closer, error) {
-	dialOptions := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+	transportCredentials, err := consolecred.TransportCredentials(addr)
+	if err != nil {
+		return nil, nil, err
+	}
+	dialOptions := []grpc.DialOption{grpc.WithTransportCredentials(transportCredentials)}
 	dialOptions = append(dialOptions, observability.GRPCDialOptions()...)
 	conn, err := grpc.Dial(addr, dialOptions...)
 	if err != nil {

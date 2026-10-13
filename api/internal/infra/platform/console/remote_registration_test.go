@@ -65,6 +65,27 @@ func TestRemoteRegisterOrganizationPropagatesHTTPAndNetworkErrors(t *testing.T) 
 	})
 }
 
+func TestRemoteRejectsRedirectsBeforeSendingControlPlaneCredentials(t *testing.T) {
+	redirectTargetCalled := false
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		redirectTargetCalled = true
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer target.Close()
+
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", target.URL)
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer redirector.Close()
+
+	remote := NewRemote(redirector.URL, "secret")
+	err := remote.RegisterOrganizationSync(t.Context(), &RegisterOrganizationRequest{OrganizationID: "org-1"})
+
+	require.ErrorContains(t, err, "refusing Console API redirect to different host")
+	require.False(t, redirectTargetCalled)
+}
+
 func TestRemoteRegisterOrganizationOnlyAcceptsExplicitAlreadyExistsConflict(t *testing.T) {
 	for _, test := range []struct {
 		name    string
