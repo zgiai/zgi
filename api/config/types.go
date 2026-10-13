@@ -189,6 +189,9 @@ type ConsoleConfig struct {
 	// front of one market has its own, and the market has to list it. Empty leaves the market's
 	// default, which is the page of another deployment.
 	ZGIMarketOAuthRedirectURL string `json:"zgi_market_oauth_redirect_url"`
+	// ZGIMarketConfirmAbovePoints is the cost of one call, in points, above which a market tool
+	// asks for approval like a tool that writes. Zero never asks for cost.
+	ZGIMarketConfirmAbovePoints int `json:"zgi_market_confirm_above_points"`
 	// ZGIMarketAllowPrivateTargets lets the gateway address resolve to a private or loopback
 	// address. It is for local development only and is refused in production.
 	ZGIMarketAllowPrivateTargets bool `json:"zgi_market_allow_private_targets"`

@@ -46,6 +46,7 @@ const messages = {
       character: 'characters',
       tool_call: 'tool calls',
       install: 'install',
+      unit: 'upstream units',
     },
     total: '{count} listings',
     previous: 'Previous',
@@ -153,6 +154,7 @@ const messages = {
         price: 'Price',
         wholeListing: 'Whole listing',
         perUnit: 'per {quantity} {meter}',
+        cap: 'At most {amount} points a call',
         points: '{amount} pts',
         yuan: '¥{amount}',
         empty: 'No price has been published for this listing.',
@@ -356,7 +358,7 @@ const messages = {
     addAction: 'Add',
     group: 'ZGI Market',
     groupHint:
-      'MCP servers and API offerings the organization activated in ZGI Market. Adding one takes effect at once; every call is billed in points, and a tool that writes runs only after a person approves it in the debug chat of an agent, and is refused everywhere else.',
+      'MCP servers and API offerings the organization activated in ZGI Market. Adding one takes effect at once; every call is billed in points, and a tool that writes runs only after a person approves it in the debug chat of an agent, and is refused everywhere else. A tool whose single call can cost more points than this instance allows unasked needs the same approval.',
     apiNotBindable: 'No operation declares an input schema, so it cannot be added as tools.',
     operationsSkipped: '{count} more operations declare no input schema and do not become tools.',
     add: 'Add {name}',
@@ -376,10 +378,11 @@ const messages = {
     perCall: '{amount} points per call',
     perCallUpTo: 'Some tools free, up to {amount} points per call',
     perCallRange: '{from}–{to} points per call',
+    perCallAtMost: 'By usage, at most {amount} points a call',
     free: 'Free',
     title: 'ZGI Market tools',
     description:
-      'Bind MCP servers and API offerings the organization activated. Every call is billed in points; a tool that writes runs only after a person approves it in the debug chat of an agent, and is refused everywhere else.',
+      'Bind MCP servers and API offerings the organization activated. Every call is billed in points; a tool that writes runs only after a person approves it in the debug chat of an agent, and is refused everywhere else. A tool whose single call can cost more points than this instance allows unasked needs the same approval.',
     empty: 'The organization has not activated an MCP server or an API yet.',
     browse: 'Browse the market',
     gatewayMissing:

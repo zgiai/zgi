@@ -10,6 +10,7 @@ import {
   lowestPrice,
   marketAmount,
   marketDisplayPrice,
+  marketPriceCap,
   marketText,
 } from './market-format';
 
@@ -50,9 +51,23 @@ export function useMarketLabels() {
     (price: MarketPrice) =>
       t('market.catalog.detail.pricing.perUnit', {
         quantity: numbers.format(marketDisplayPrice(price).per_quantity),
-        meter: meter(price.meter),
+        // The unit meter is called what the offering calls it.
+        meter: price.meter === 'unit' && price.unit_name ? price.unit_name : meter(price.meter),
       }),
     [meter, numbers, t]
+  );
+
+  /** "At most 82 points a call" for an offering whose calls are bounded; empty otherwise. */
+  const cap = useCallback(
+    (listing: Pick<MarketListing, 'price_caps'>, offeringSlug?: string) => {
+      const micros = marketPriceCap(listing, offeringSlug);
+      return micros === undefined
+        ? ''
+        : t('market.catalog.detail.pricing.cap', {
+            amount: marketAmount({ unit_price_micros: micros, currency: 'PTS' }).amount,
+          });
+    },
+    [t]
   );
 
   /** The cheapest price of a listing as a card shows it; empty when it publishes none. */
@@ -92,5 +107,5 @@ export function useMarketLabels() {
     [numbers]
   );
 
-  return { t, locale, text, meter, amount, per, from, bytes };
+  return { t, locale, text, meter, amount, per, cap, from, bytes };
 }

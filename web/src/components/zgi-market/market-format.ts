@@ -11,6 +11,7 @@ export const marketKnownMeters = [
   'character',
   'tool_call',
   'install',
+  'unit',
 ] as const;
 export type MarketKnownMeter = (typeof marketKnownMeters)[number];
 
@@ -99,6 +100,28 @@ export function marketAmount(price: Pick<MarketPrice, 'unit_price_micros' | 'cur
   return price.currency === 'PTS'
     ? { amount: decimal(price.unit_price_micros, 1000, 0), unit: 'points' }
     : { amount: decimal(price.unit_price_micros, 1_000_000, 2), unit: 'yuan' };
+}
+
+/**
+ * The most one call can cost at the list prices, in milli-points: of one offering, or of the
+ * dearest offering when none is named, as for an MCP server whose tools wrap several. Undefined
+ * when the market publishes no cap for it.
+ */
+export function marketPriceCap(
+  listing: Pick<MarketListing, 'price_caps'>,
+  offeringSlug?: string
+): number | undefined {
+  const caps = (listing.price_caps ?? []).filter(
+    cap => (!offeringSlug || cap.offering_slug === offeringSlug) && cap.max_charge_micros > 0
+  );
+  return caps.length > 0 ? Math.max(...caps.map(cap => cap.max_charge_micros)) : undefined;
+}
+
+/** Whether a listing is charged by anything but the call itself, such as a unit the upstream reports. */
+export function chargedByUsage(prices: MarketPrice[]): boolean {
+  return prices.some(
+    price => price.unit_price_micros > 0 && price.meter !== 'request' && price.meter !== 'tool_call'
+  );
 }
 
 /** The cheapest price of a listing, or undefined when it shows none. Zero means free. */

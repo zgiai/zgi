@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 
 // prettier-ignore
 // @ts-ignore Node's direct TypeScript runner requires an explicit extension.
-import { highestPrice, lowestPrice, marketAmount, marketDate, marketDisplayPrice, marketErrorCode, marketExternalUrl, marketSameOrigin, marketText, skillPackageSummary } from '../components/zgi-market/market-format.ts';
+import { chargedByUsage, highestPrice, knownMarketMeter, lowestPrice, marketAmount, marketDate, marketDisplayPrice, marketErrorCode, marketExternalUrl, marketPriceCap, marketSameOrigin, marketText, skillPackageSummary } from '../components/zgi-market/market-format.ts';
 // prettier-ignore
 // @ts-ignore Node's direct TypeScript runner requires an explicit extension.
 import { marketApiQuickStart, marketGatewayOrigin, marketMcpClientConfig, marketMcpServerUrl } from '../components/zgi-market/market-usage.ts';
@@ -56,7 +56,10 @@ assert.equal(lowestPrice(listing([])), undefined);
 assert.equal(lowestPrice(listing([price(5, 1), price(3000, 1000)]))?.unit_price_micros, 3000);
 assert.equal(lowestPrice(listing([price(0, 1), price(10, 1)]))?.unit_price_micros, 0);
 assert.equal(highestPrice(listing()), undefined);
-assert.equal(highestPrice(listing([price(0, 1), price(2000, 1), price(0, 1)]))?.unit_price_micros, 2000);
+assert.equal(
+  highestPrice(listing([price(0, 1), price(2000, 1), price(0, 1)]))?.unit_price_micros,
+  2000
+);
 assert.equal(highestPrice(listing([price(5, 1), price(3000, 1000)]))?.unit_price_micros, 5);
 
 // A token price is read per million tokens; other meters keep the quantity of their row.
@@ -140,7 +143,10 @@ assert.deepEqual(
     ['scripts', ['scripts/lib/util.js', 'scripts/summarize.py']],
   ]
 );
-assert.deepEqual(summary.scripts.map(file => file.path), ['scripts/summarize.py', 'scripts/lib/util.js']);
+assert.deepEqual(
+  summary.scripts.map(file => file.path),
+  ['scripts/summarize.py', 'scripts/lib/util.js']
+);
 assert.equal(skillPackageSummary([{ path: 'SKILL.md', size: 1 }]).scripts.length, 0);
 
 assert.equal(
@@ -150,11 +156,63 @@ assert.equal(
 assert.equal(marketErrorCode(new Error('network')), '');
 assert.equal(marketErrorCode(null), '');
 
-assert.equal(marketSameOrigin('https://pre.example.com/dashboard/market/catalog?connected=1', 'https://pre.example.com'), true);
+assert.equal(
+  marketSameOrigin(
+    'https://pre.example.com/dashboard/market/catalog?connected=1',
+    'https://pre.example.com'
+  ),
+  true
+);
 assert.equal(marketSameOrigin('/dashboard/market/catalog', 'https://pre.example.com'), true);
-assert.equal(marketSameOrigin('https://market.example.com/console/organizations/0?error_code=X', 'https://pre.example.com'), false);
+assert.equal(
+  marketSameOrigin(
+    'https://market.example.com/console/organizations/0?error_code=X',
+    'https://pre.example.com'
+  ),
+  false
+);
 assert.equal(marketSameOrigin('http://pre.example.com/x', 'https://pre.example.com'), false);
 assert.equal(marketSameOrigin('javascript:alert(1)', 'https://pre.example.com'), false);
 assert.equal(marketSameOrigin('https://pre.example.com/x', 'not an origin'), false);
 
 console.log('zgi-market-format: ok');
+
+// The unit meter is one this page names; a meter a newer market adds is none, and is shown by its
+// identifier instead of failing the page.
+assert.equal(knownMarketMeter('unit'), 'unit');
+assert.equal(knownMarketMeter('request'), 'request');
+assert.equal(knownMarketMeter('gpu_hour'), undefined);
+
+// The most one call can cost: of the named offering, or of the dearest one when none is named.
+const capped = {
+  price_caps: [
+    { offering_slug: 'web-search', max_charge_micros: 82_000 },
+    { offering_slug: 'deep-search', max_charge_micros: 250_000 },
+    { offering_slug: 'broken', max_charge_micros: 0 },
+  ],
+};
+assert.equal(marketPriceCap(capped, 'web-search'), 82_000);
+assert.equal(marketPriceCap(capped), 250_000);
+assert.equal(marketPriceCap(capped, 'chat'), undefined);
+assert.equal(marketPriceCap(capped, 'broken'), undefined);
+assert.equal(marketPriceCap({}), undefined);
+
+// A listing is charged by usage when anything but the call itself has a price.
+const perRequest = {
+  meter: 'request',
+  unit_price_micros: 2000,
+  per_quantity: 1,
+  currency: 'PTS' as const,
+};
+const perCredit = {
+  meter: 'unit',
+  unit_name: 'credits',
+  unit_price_micros: 8000,
+  per_quantity: 1,
+  currency: 'PTS' as const,
+};
+assert.equal(chargedByUsage([perRequest]), false);
+assert.equal(chargedByUsage([perRequest, perCredit]), true);
+assert.equal(chargedByUsage([perRequest, { ...perCredit, unit_price_micros: 0 }]), false);
+assert.equal(chargedByUsage([{ ...perRequest, meter: 'tool_call' }]), false);
+assert.equal(chargedByUsage([{ ...perRequest, meter: 'gpu_hour' }]), true);

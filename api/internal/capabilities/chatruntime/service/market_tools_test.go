@@ -27,7 +27,7 @@ func (f *fakeMarketTools) SubjectMarketTools(_ context.Context, organizationID u
 
 func TestMarketToolGovernanceRunsReadToolsAndAsksForTheRest(t *testing.T) {
 	decide := func(risk string, mode toolgovernance.ApprovalMode) toolgovernance.Decision {
-		manifest := marketToolGovernance("tool", risk)
+		manifest := marketToolGovernance("tool", risk, false)
 		_, err := toolgovernance.ValidateManifest(*manifest)
 		require.NoError(t, err, risk)
 		return toolgovernance.Decide(toolgovernance.Request{Manifest: *manifest, ApprovalMode: mode}, toolgovernance.DefaultPolicy())
@@ -39,7 +39,30 @@ func TestMarketToolGovernanceRunsReadToolsAndAsksForTheRest(t *testing.T) {
 		denied := decide(risk, toolgovernance.ApprovalModeNonInteractive)
 		assert.Equal(t, toolgovernance.DecisionStatusDenied, denied.Status, "nobody can approve an unattended %q tool", risk)
 	}
-	assert.True(t, marketToolGovernance("tool", "destructive").ApprovalEveryInvocation)
+	assert.True(t, marketToolGovernance("tool", "destructive", false).ApprovalEveryInvocation)
+}
+
+// A read tool whose one call can cost many points asks like a write: what it reads is paid for.
+func TestACostlyMarketToolAsksAlsoWhenItOnlyReads(t *testing.T) {
+	decide := func(risk string, costly bool, mode toolgovernance.ApprovalMode) toolgovernance.Decision {
+		manifest := marketToolGovernance("tool", risk, costly)
+		_, err := toolgovernance.ValidateManifest(*manifest)
+		require.NoError(t, err, risk)
+		return toolgovernance.Decide(toolgovernance.Request{Manifest: *manifest, ApprovalMode: mode}, toolgovernance.DefaultPolicy())
+	}
+	assert.Equal(t, toolgovernance.DecisionStatusNeedsApproval, decide("read", true, toolgovernance.ApprovalModeInteractive).Status)
+	assert.Equal(t, toolgovernance.DecisionStatusDenied, decide("read", true, toolgovernance.ApprovalModeNonInteractive).Status,
+		"nobody can approve the cost of an unattended call")
+	assert.Equal(t, toolgovernance.DecisionStatusAllowed, decide("read", false, toolgovernance.ApprovalModeNonInteractive).Status)
+	// It still only reads: the cost changes who is asked, not what the tool does.
+	costly := marketToolGovernance("tool", "read", true)
+	assert.Equal(t, toolgovernance.EffectRead, costly.Effect)
+	assert.False(t, costly.ExternalSideEffect)
+	assert.False(t, costly.ApprovalEveryInvocation)
+	// A write is asked for either way.
+	for _, flag := range []bool{false, true} {
+		assert.Equal(t, toolgovernance.DecisionStatusNeedsApproval, decide("write", flag, toolgovernance.ApprovalModeInteractive).Status)
+	}
 }
 
 func TestMarketToolsAreOverlaidForAnAgentOrADigitalHumanOnly(t *testing.T) {

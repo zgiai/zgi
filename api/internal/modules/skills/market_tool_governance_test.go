@@ -78,3 +78,42 @@ func TestAMarketReadRunsWithoutApproval(t *testing.T) {
 		}
 	}
 }
+
+// A costly read asks where a write asks: the console chat of an agent, and nowhere else.
+func TestACostlyMarketReadAsksOnlyInTheConsoleChatOfAnAgent(t *testing.T) {
+	decide := func(callerType, source string) toolgovernance.Decision {
+		t.Helper()
+		params := map[string]interface{}{
+			governanceRuntimeParametersKey: map[string]interface{}{"caller_type": callerType, "permission_tier": "basic"},
+			"agent_runtime_source":         source,
+		}
+		manifest := toolgovernance.Manifest{
+			ToolID: "zgi-market.web_search", SkillID: SkillZGIMarketTools, Domain: "zgi_market",
+			Effect: toolgovernance.EffectRead, RiskLevel: toolgovernance.RiskLevelMedium,
+			DefaultApprovalPolicy:  toolgovernance.ApprovalPolicyAlwaysAsk,
+			AllowedPermissionTiers: []toolgovernance.PermissionTier{toolgovernance.PermissionTierBasic},
+			AuditRequired:          true,
+		}
+		decision, err := NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy()).DecideSkillTool(context.Background(), ToolGovernanceRequest{
+			Manifest: manifest, SkillID: SkillZGIMarketTools, ToolName: "web_search", ProviderType: tools.ToolProviderTypeMarket,
+			ProviderID: "agent:1:api:web-search", Arguments: map[string]interface{}{"query": "one"},
+			ExecutionContext: ExecutionContext{ConversationID: "conversation", OrganizationID: "organization", UserID: "user", RuntimeParameters: params},
+		})
+		if err != nil {
+			t.Fatalf("DecideSkillTool() error = %v", err)
+		}
+		return decision
+	}
+	asked := decide(SkillCallerAgent, "console")
+	if asked.Status != toolgovernance.DecisionStatusNeedsApproval || !asked.RequiresApproval {
+		t.Fatalf("console agent decision = %#v, want a pending approval", asked)
+	}
+	for name, refused := range map[string]toolgovernance.Decision{
+		"a published web app": decide(SkillCallerAgent, "webapp"),
+		"a digital human":     decide(SkillCallerDigitalHuman, "console"),
+	} {
+		if refused.Status != toolgovernance.DecisionStatusDenied || refused.RequiresApproval {
+			t.Fatalf("%s: decision = %#v, want a refusal", name, refused)
+		}
+	}
+}

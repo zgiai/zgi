@@ -476,6 +476,7 @@ func loadConsoleConfig(cfg *Config, source *envSource) error {
 		SyncOrganizationReportInterval: organizationReportInterval,
 		ZGIMarketGatewayURL:            strings.TrimRight(source.string("", envZGIMarketGatewayURL), "/"),
 		ZGIMarketOAuthRedirectURL:      strings.TrimSpace(source.string("", envZGIMarketOAuthRedirectURL)),
+		ZGIMarketConfirmAbovePoints:    max(mustInt(source.int(100, envZGIMarketConfirmAbovePoints)), 0),
 		ZGIMarketAllowPrivateTargets:   mustBool(source.bool(false, envZGIMarketAllowPrivateTargets)),
 	}
 	return nil

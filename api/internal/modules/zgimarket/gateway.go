@@ -30,6 +30,9 @@ type GatewayConfig struct {
 	URL string
 	// AllowPrivateTargets lets the gateway resolve to a private or loopback address.
 	AllowPrivateTargets bool
+	// ConfirmAbovePoints is the cost of one call, in points, above which a tool asks for approval
+	// whatever it does. Zero never asks for cost.
+	ConfirmAbovePoints int
 }
 
 // GatewayTool is a tool the gateway lists for a bound listing.

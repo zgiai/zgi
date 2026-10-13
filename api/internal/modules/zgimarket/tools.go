@@ -44,6 +44,10 @@ type Tools struct {
 	mu         sync.Mutex
 	catalog    map[string]cachedCatalog
 	operations map[string]cachedOperations
+	charges    map[string]cachedCharge
+	// confirmAboveMicros is the cost of one call, in milli-points, above which a tool asks before
+	// it runs. Zero never asks for cost.
+	confirmAboveMicros int64
 }
 
 type cachedCatalog struct {
@@ -56,6 +60,11 @@ type cachedOperations struct {
 	expires    time.Time
 }
 
+type cachedCharge struct {
+	micros  int64
+	expires time.Time
+}
+
 // NewTools builds the market tools. gateway is nil when no gateway address is configured: binding
 // still works, but no tool reaches the runtime. The proxy that reaches the console is attached by
 // Proxy.WithTools.
@@ -63,6 +72,10 @@ func NewTools(db *gorm.DB, sealer SecretSealer, gateway *GatewayConfig) (*Tools,
 	tools := &Tools{
 		store: toolBindingStore{db: db}, sealer: sealer, now: time.Now,
 		catalog: map[string]cachedCatalog{}, operations: map[string]cachedOperations{},
+		charges: map[string]cachedCharge{},
+	}
+	if gateway != nil {
+		tools.confirmAboveMicros = int64(max(gateway.ConfirmAbovePoints, 0)) * 1000
 	}
 	if gateway != nil && gateway.URL != "" {
 		client, err := newGatewayClient(*gateway)
@@ -525,6 +538,11 @@ type SubjectTool struct {
 	// RiskLevel is read, write, or destructive, as the market stated it when the listing was
 	// bound. A tool the market did not describe then counts as write.
 	RiskLevel string
+	// MaxChargeMicros is the most one call can cost at the market's list prices, in milli-points,
+	// and zero when the market publishes no cap. Costly says it is above what this instance lets
+	// a tool spend without asking.
+	MaxChargeMicros int64
+	Costly          bool
 }
 
 // providerName encodes the subject and the listing of a market tool provider.
@@ -568,11 +586,13 @@ func (t *Tools) SubjectTools(ctx context.Context, organizationID uuid.UUID, subj
 		if err != nil {
 			continue
 		}
+		maxCharge := t.listingMaxCharge(ctx, item.Slug)
 		for _, tool := range listed {
 			taken[tool.Name] = true
 			result = append(result, SubjectTool{
 				ProviderID: providerName(subjectType, subjectID, item.Slug), Name: tool.Name,
 				Description: tool.Description, InputSchema: tool.InputSchema, RiskLevel: riskOf(item, tool.Name),
+				MaxChargeMicros: maxCharge, Costly: t.costly(maxCharge),
 			})
 		}
 	}
@@ -591,10 +611,39 @@ func (t *Tools) SubjectTools(ctx context.Context, organizationID uuid.UUID, subj
 			result = append(result, SubjectTool{
 				ProviderID: providerName(subjectType, subjectID, apiProviderPrefix+item.OfferingSlug), Name: name,
 				Description: operation.Description, InputSchema: operation.InputSchema, RiskLevel: operation.RiskLevel,
+				MaxChargeMicros: operation.MaxChargeMicros, Costly: t.costly(operation.MaxChargeMicros),
 			})
 		}
 	}
 	return result, nil
+}
+
+// costly reports whether one call that can cost this much asks before it runs.
+func (t *Tools) costly(maxChargeMicros int64) bool {
+	return t.confirmAboveMicros > 0 && maxChargeMicros > t.confirmAboveMicros
+}
+
+// listingMaxCharge reads the most one tool call of a bound MCP server can cost, from the market's
+// public catalog, and keeps it as long as a tool catalog. A cap that cannot be read is zero: the
+// tool then asks by what it does, as before the market published caps.
+func (t *Tools) listingMaxCharge(ctx context.Context, slug string) int64 {
+	if t.confirmAboveMicros == 0 {
+		return 0
+	}
+	t.mu.Lock()
+	cached, ok := t.charges[slug]
+	t.mu.Unlock()
+	if ok && t.now().Before(cached.expires) {
+		return cached.micros
+	}
+	micros, err := t.gateway.MaxCharge(ctx, slug)
+	if err != nil {
+		micros = 0
+	}
+	t.mu.Lock()
+	t.charges[slug] = cachedCharge{micros: micros, expires: t.now().Add(toolCatalogTTL)}
+	t.mu.Unlock()
+	return micros
 }
 
 // freeOperationName picks the name an operation is listed under among the names a subject

@@ -38,6 +38,7 @@ func (runtimeResolver) SubjectMarketTools(
 		result = append(result, runtimeservice.MarketTool{
 			ProviderID: tool.ProviderID, Name: tool.Name, Description: tool.Description,
 			InputSchema: tool.InputSchema, RiskLevel: tool.RiskLevel,
+			MaxChargeMicros: tool.MaxChargeMicros, Costly: tool.Costly,
 		})
 	}
 	return result, nil

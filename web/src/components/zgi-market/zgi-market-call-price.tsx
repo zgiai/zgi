@@ -1,7 +1,13 @@
 'use client';
 
 import { Badge } from '@/components/ui/badge';
-import { highestPrice, lowestPrice, marketAmount } from '@/components/zgi-market/market-format';
+import {
+  chargedByUsage,
+  highestPrice,
+  lowestPrice,
+  marketAmount,
+  marketPriceCap,
+} from '@/components/zgi-market/market-format';
 import { useZgiMarketListing } from '@/hooks/use-zgi-market';
 import { useT } from '@/i18n';
 import type { MarketToolCandidate } from '@/services/types/zgi-market';
@@ -29,6 +35,20 @@ export function ZgiMarketCallPrice({
   const dearest = highestPrice({ ...listing.data, prices }) ?? price;
   if (dearest.unit_price_micros === 0) {
     return <Badge variant="subtle">{t('market.tools.free')}</Badge>;
+  }
+  // A call charged by what it used has no single price: say what it can cost at most.
+  const cap = marketPriceCap(
+    listing.data,
+    candidate.kind === 'api' ? candidate.offering_slug : undefined
+  );
+  if (cap !== undefined && chargedByUsage(prices)) {
+    return (
+      <Badge variant="subtle">
+        {t('market.tools.perCallAtMost', {
+          amount: marketAmount({ unit_price_micros: cap, currency: 'PTS' }).amount,
+        })}
+      </Badge>
+    );
   }
   if (price.unit_price_micros === 0) {
     return (

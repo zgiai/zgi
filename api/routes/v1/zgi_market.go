@@ -182,7 +182,10 @@ func NewZGIMarketTools(db *gorm.DB, sealer zgimarket.SecretSealer, toolManager *
 		server := config.GlobalConfig.Server
 		production := strings.EqualFold(server.Environment, "production") || strings.EqualFold(server.Mode, "release")
 		allowPrivate := console.ZGIMarketAllowPrivateTargets && !production
-		gateway = &zgimarket.GatewayConfig{URL: console.ZGIMarketGatewayURL, AllowPrivateTargets: allowPrivate}
+		gateway = &zgimarket.GatewayConfig{
+			URL: console.ZGIMarketGatewayURL, AllowPrivateTargets: allowPrivate,
+			ConfirmAbovePoints: console.ZGIMarketConfirmAbovePoints,
+		}
 	}
 	marketTools, err := zgimarket.NewTools(db, sealer, gateway)
 	if err != nil {

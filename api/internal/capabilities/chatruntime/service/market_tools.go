@@ -29,6 +29,10 @@ type MarketTool struct {
 	InputSchema map[string]interface{}
 	// RiskLevel is read, write, or destructive.
 	RiskLevel string
+	// MaxChargeMicros is the most one call can cost, in milli-points; zero when unknown. Costly
+	// says it is above what this instance lets a tool spend without asking.
+	MaxChargeMicros int64
+	Costly          bool
 }
 
 // MarketToolResolver lists the ZGI Market tools bound to an agent or a digital human.
@@ -39,7 +43,8 @@ type MarketToolResolver interface {
 const marketToolsInstructions = `These tools come from the ZGI Market MCP servers and API operations an administrator bound to
 you. Each call is billed by ZGI Market. Use one only when it serves the user's request, pass
 exactly the arguments its schema describes, and report what it returned. Tools that change data at
-the vendor need the user's approval and may be refused when nobody can approve.`
+the vendor need the user's approval and may be refused when nobody can approve, and so do tools whose single
+call can cost many points.`
 
 // marketSubject names the subject of a caller that market tools can be bound to.
 func marketSubject(caller Caller) (string, uuid.UUID, bool) {
@@ -142,7 +147,7 @@ func MarketToolsSkillDocument(caller Caller, found []MarketTool) skills.SkillDoc
 			ProviderID:         tool.ProviderID,
 			InputSchema:        tool.InputSchema,
 			RuntimeDescription: description,
-			Governance:         marketToolGovernance(name, tool.RiskLevel),
+			Governance:         marketToolGovernance(name, tool.RiskLevel, tool.Costly),
 		})
 		names = append(names, name)
 	}
@@ -161,8 +166,10 @@ func MarketToolsSkillDocument(caller Caller, found []MarketTool) skills.SkillDoc
 
 // marketToolGovernance maps the market's risk level onto tool governance. A read tool runs
 // without asking. A write tool always asks, and a destructive one asks for every call; where
-// nobody can approve, such as an unattended digital human, governance refuses them.
-func marketToolGovernance(toolName, riskLevel string) *toolgovernance.Manifest {
+// nobody can approve, such as an unattended digital human, governance refuses them. A costly tool,
+// one whose single call can cost more than the instance lets a tool spend unasked, always asks
+// too, also when it only reads: what it reads is still paid for.
+func marketToolGovernance(toolName, riskLevel string, costly bool) *toolgovernance.Manifest {
 	manifest := &toolgovernance.Manifest{
 		ToolID: "zgi-market." + toolName, SkillID: skills.SkillZGIMarketTools, Domain: "zgi_market",
 		AssetType: "market_tool", DataEgress: true, ExternalDestination: "zgi-market",
@@ -175,6 +182,12 @@ func marketToolGovernance(toolName, riskLevel string) *toolgovernance.Manifest {
 		manifest.Effect, manifest.RiskLevel = toolgovernance.EffectRead, toolgovernance.RiskLevelLow
 		manifest.DefaultApprovalPolicy = toolgovernance.ApprovalPolicyAutoByPermissionTier
 		manifest.Reversible = true
+		if costly {
+			// Nothing changes at the vendor, but the points are spent and are not given back.
+			manifest.RiskLevel = toolgovernance.RiskLevelMedium
+			manifest.DefaultApprovalPolicy = toolgovernance.ApprovalPolicyAlwaysAsk
+			manifest.Reversible = false
+		}
 	case "destructive":
 		manifest.Effect, manifest.RiskLevel = toolgovernance.EffectDelete, toolgovernance.RiskLevelHigh
 		manifest.DefaultApprovalPolicy = toolgovernance.ApprovalPolicyAlwaysAsk

@@ -31,8 +31,9 @@ const (
 )
 
 const (
-	gatewayOfferingPath = "/v1/gateway/"
-	marketListingPath   = "/v1/market/listings/api/"
+	gatewayOfferingPath  = "/v1/gateway/"
+	marketListingPath    = "/v1/market/listings/api/"
+	marketMCPListingPath = "/v1/market/listings/mcp/"
 	// apiProviderPrefix marks the provider of an API offering; an MCP provider names its listing.
 	apiProviderPrefix = "api."
 	// httpProtocolFamily is the one protocol family whose operations are declared and can be tools.
@@ -63,6 +64,10 @@ type BoundOperation struct {
 	Description string         `json:"description,omitempty"`
 	RiskLevel   string         `json:"risk_level"`
 	InputSchema map[string]any `json:"input_schema,omitempty"`
+	// MaxChargeMicros is the most one call of the offering can cost at the market's list prices,
+	// in milli-points, as the market publishes it now. It is read live and never stored: zero
+	// when the market publishes no cap.
+	MaxChargeMicros int64 `json:"-"`
 }
 
 // CandidateOperation is one operation of an activated API offering, bindable or not.
@@ -321,7 +326,7 @@ func (t *Tools) liveOperations(ctx context.Context, binding *ToolBinding, item T
 		return cached.operations
 	}
 	operations := item.Operations
-	if offering, title, sole, err := t.gateway.Offering(ctx, item.Slug, item.OfferingSlug); err == nil {
+	if offering, title, sole, maxCharge, err := t.gateway.Offering(ctx, item.Slug, item.OfferingSlug); err == nil {
 		selected := map[string]bool{}
 		for _, operation := range item.Operations {
 			selected[operation.Key] = true
@@ -335,6 +340,7 @@ func (t *Tools) liveOperations(ctx context.Context, binding *ToolBinding, item T
 			fresh = append(fresh, BoundOperation{
 				Key: candidate.Key, Name: candidate.Name, Method: candidate.Method, Path: candidate.Path,
 				Description: candidate.Description, RiskLevel: candidate.RiskLevel, InputSchema: schema,
+				MaxChargeMicros: maxCharge,
 			})
 		}
 		operations = fresh
@@ -442,46 +448,89 @@ func scalarText(value any) (string, bool) {
 
 // Offering reads one offering of a published API listing from the market's public catalog, which
 // is served at the gateway's origin, with the listing's title and whether it is the listing's
-// only http offering. It sends no credential.
-func (g *gatewayClient) Offering(ctx context.Context, listingSlug, offeringSlug string) (*marketOffering, string, bool, error) {
+// only http offering, and the most one call of it can cost when the market publishes that. It
+// sends no credential.
+func (g *gatewayClient) Offering(ctx context.Context, listingSlug, offeringSlug string) (*marketOffering, string, bool, int64, error) {
 	if !marketSlugPattern.MatchString(listingSlug) || !marketSlugPattern.MatchString(offeringSlug) {
-		return nil, "", false, ErrListingNotBindable
+		return nil, "", false, 0, ErrListingNotBindable
 	}
+	var listing struct {
+		Card struct {
+			Title map[string]string `json:"title"`
+		} `json:"card"`
+		Offerings []marketOffering `json:"offerings"`
+		PriceCaps []marketPriceCap `json:"price_caps"`
+	}
+	if err := g.listing(ctx, marketListingPath+listingSlug, &listing); err != nil {
+		return nil, "", false, 0, err
+	}
+	index := slices.IndexFunc(listing.Offerings, func(offering marketOffering) bool { return offering.Slug == offeringSlug })
+	if index < 0 || listing.Offerings[index].ProtocolFamily != httpProtocolFamily {
+		return nil, "", false, 0, ErrListingNotBindable
+	}
+	maxCharge := int64(0)
+	for _, limit := range listing.PriceCaps {
+		if limit.OfferingSlug == offeringSlug {
+			maxCharge = max(limit.MaxChargeMicros, 0)
+		}
+	}
+	return &listing.Offerings[index], firstText(listing.Card.Title), soleHTTPOffering(listing.Offerings), maxCharge, nil
+}
+
+// marketPriceCap is the most one call of an offering can cost at the market's list prices.
+type marketPriceCap struct {
+	OfferingSlug    string `json:"offering_slug"`
+	MaxChargeMicros int64  `json:"max_charge_micros"`
+}
+
+// MaxCharge reads the most one tool call of a published MCP server can cost: the largest cap among
+// the offerings its tools wrap, since the market does not say which tool wraps which. Zero when
+// the market publishes no cap. It sends no credential.
+func (g *gatewayClient) MaxCharge(ctx context.Context, listingSlug string) (int64, error) {
+	if !marketSlugPattern.MatchString(listingSlug) {
+		return 0, ErrListingNotBindable
+	}
+	var listing struct {
+		PriceCaps []marketPriceCap `json:"price_caps"`
+	}
+	if err := g.listing(ctx, marketMCPListingPath+listingSlug, &listing); err != nil {
+		return 0, err
+	}
+	maxCharge := int64(0)
+	for _, limit := range listing.PriceCaps {
+		maxCharge = max(maxCharge, limit.MaxChargeMicros)
+	}
+	return maxCharge, nil
+}
+
+// listing reads one published listing from the market's public catalog into target.
+func (g *gatewayClient) listing(ctx context.Context, path string, target any) error {
 	ctx, cancel := context.WithTimeout(ctx, gatewayConnectTimeout)
 	defer cancel()
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, g.origin+marketListingPath+listingSlug, nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, g.origin+path, nil)
 	if err != nil {
-		return nil, "", false, err
+		return err
 	}
 	request.Header.Set("Accept", "application/json")
 	response, err := g.http.Do(request)
 	if err != nil {
-		return nil, "", false, err
+		return err
 	}
 	defer response.Body.Close()
 	content, err := io.ReadAll(io.LimitReader(response.Body, gatewayMessageBytes+1))
 	if err != nil {
-		return nil, "", false, err
+		return err
 	}
 	if response.StatusCode != http.StatusOK || len(content) > gatewayMessageBytes {
-		return nil, "", false, fmt.Errorf("the market answered %d for the listing", response.StatusCode)
+		return fmt.Errorf("the market answered %d for the listing", response.StatusCode)
 	}
-	var envelope struct {
-		Data struct {
-			Card struct {
-				Title map[string]string `json:"title"`
-			} `json:"card"`
-			Offerings []marketOffering `json:"offerings"`
-		} `json:"data"`
-	}
+	envelope := struct {
+		Data any `json:"data"`
+	}{Data: target}
 	if err := json.Unmarshal(content, &envelope); err != nil {
-		return nil, "", false, fmt.Errorf("decode the listing: %w", err)
+		return fmt.Errorf("decode the listing: %w", err)
 	}
-	index := slices.IndexFunc(envelope.Data.Offerings, func(offering marketOffering) bool { return offering.Slug == offeringSlug })
-	if index < 0 || envelope.Data.Offerings[index].ProtocolFamily != httpProtocolFamily {
-		return nil, "", false, ErrListingNotBindable
-	}
-	return &envelope.Data.Offerings[index], firstText(envelope.Data.Card.Title), soleHTTPOffering(envelope.Data.Offerings), nil
+	return nil
 }
 
 // soleHTTPOffering reports whether a listing has exactly one http offering.

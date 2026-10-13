@@ -13,7 +13,7 @@ import { useMarketLabels } from './use-market-labels';
 
 /** Every price the listing publishes: what is charged, for how much usage, of which offering. */
 export function ZgiMarketPricingTable({ listing }: { listing: MarketListing }) {
-  const { t, meter, amount, per } = useMarketLabels();
+  const { t, meter, amount, per, cap } = useMarketLabels();
   const prices = listing.prices ?? [];
   if (prices.length === 0) {
     return (
@@ -23,6 +23,10 @@ export function ZgiMarketPricingTable({ listing }: { listing: MarketListing }) {
     );
   }
   const offerings = listing.offerings.length > 0;
+  // What one call can cost at most, per offering the market bounds.
+  const caps = [...new Set((listing.price_caps ?? []).map(entry => entry.offering_slug))]
+    .map(slug => ({ slug, text: cap(listing, slug) }))
+    .filter(entry => entry.text);
   return (
     <div className="flex flex-col gap-3">
       <p className="text-sm text-muted-foreground">{t('market.catalog.detail.pricing.note')}</p>
@@ -59,6 +63,18 @@ export function ZgiMarketPricingTable({ listing }: { listing: MarketListing }) {
           </TableBody>
         </Table>
       </div>
+      {caps.length > 0 ? (
+        <ul className="flex flex-col gap-1 text-sm text-muted-foreground" data-market-price-caps="">
+          {caps.map(entry => (
+            <li key={entry.slug}>
+              {caps.length > 1 ? (
+                <span className="mr-2 break-all font-mono text-xs">{entry.slug}</span>
+              ) : null}
+              {entry.text}
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </div>
   );
 }

@@ -46,6 +46,8 @@ export interface MarketOffering {
 export interface MarketPrice {
   offering_slug?: string;
   meter: string;
+  /** Present for the meter `unit` only: what one unit is in that offering, such as `credits`. */
+  unit_name?: string;
   unit_price_micros: number;
   per_quantity: number;
   currency: 'CNY' | 'PTS';
@@ -132,6 +134,8 @@ export interface MarketListing {
   detail: MarketListingDetail;
   offerings: MarketOffering[];
   prices?: MarketPrice[];
+  /** The most one call of each bounded offering can cost at the list prices, in milli-points. */
+  price_caps?: Array<{ offering_slug: string; max_charge_micros: number }>;
   mcp?: { tools: MarketTool[] } | null;
   plugin?: MarketPluginSummary | null;
   /** Only on the detail of one skill listing, and only when the market has summarized its package. */
