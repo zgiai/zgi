@@ -903,6 +903,7 @@ const messages: WebappMessages = {
       submitFailed: '提交审批决策失败',
       externalToolLabel: '{integration} · {action}',
       approvalPanel: {
+        withMarketCost: '{sentence}单次最高 {max} 点，超过确认阈值 {threshold} 点。',
         title: '需要你确认',
         fileDeleteOne: '删除文件 {name}。',
         fileDeleteMany: '删除 {count} 个文件。',
@@ -996,6 +997,9 @@ const messages: WebappMessages = {
         interactiveApprovalUnavailable: '当前运行环境不支持交互式确认。',
         resourceNotBound: '请求的资源尚未绑定到当前运行环境。',
         externalSideEffect: '此操作会影响外部系统，因此需要确认。',
+        marketWriteUnattended: '该工具会写入数据，需要人工确认，无人值守时不会执行。',
+        marketCostUnattended:
+          '该工具单次最高 {max} 点，超过确认阈值 {threshold} 点，无人值守时不会执行。',
         marketCost: '单次最高 {max} 点，超过确认阈值 {threshold} 点',
         policyDecision: '此结果由当前工具权限和组织策略决定。',
       },

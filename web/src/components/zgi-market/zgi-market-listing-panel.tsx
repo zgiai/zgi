@@ -3,7 +3,13 @@
 import type { ReactNode } from 'react';
 import { ExternalLink } from 'lucide-react';
 import type { MarketListing } from '@/services/types/zgi-market';
-import { chargedByUsage, lowestPrice, marketDate, marketExternalUrl } from './market-format';
+import {
+  chargedByUsage,
+  lowestPrice,
+  marketDate,
+  marketExternalUrl,
+  marketUnitName,
+} from './market-format';
 import { useMarketLabels } from './use-market-labels';
 
 const reviewStatuses = ['unreviewed', 'pending_review', 'reviewed', 'verified'] as const;
@@ -142,7 +148,11 @@ export function ZgiMarketListingPanel({ listing, action, children }: ZgiMarketLi
           ) : null}
           {meters.length > 0 ? (
             <Fact label={t('market.catalog.detail.panel.meters')}>
-              {meters.map(meter).join(' · ')}
+              {meters
+                .map(name =>
+                  name === 'unit' ? marketUnitName(listing) || meter(name) : meter(name)
+                )
+                .join(' · ')}
             </Fact>
           ) : null}
           {listing.detail.license ? (

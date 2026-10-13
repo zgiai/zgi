@@ -155,7 +155,7 @@ func (r *Runtime) preflightToolGovernance(
 	}
 	return decision, true, &ToolInvocationResult{
 		Trace:       trace,
-		ToolMessage: ToolResultMessage(callID, governanceToolFeedback(decision)),
+		ToolMessage: ToolResultMessage(callID, modelFacingGovernanceFeedback(decision)),
 	}, nil
 }
 
@@ -192,6 +192,11 @@ func governanceInstruction(decision toolgovernance.Decision) string {
 		}
 		return "The tool was not executed. Ask the user to clarify the target asset or resolve the asset reference before retrying."
 	case toolgovernance.DecisionStatusDenied:
+		if messages := marketToolUserMessages(decision); messages != nil {
+			return "The tool was not executed and must not be retried. Tell the user why in the language of the conversation, " +
+				"with this sentence and nothing internal such as codes or tool identifiers. Chinese: " + messages["zh-CN"] +
+				". English: " + messages["en-US"] + "."
+		}
 		code, _ := decision.ModelFeedback["authorization_code"].(string)
 		code = strings.TrimSpace(code)
 		if code == agentToolNotPreauthorizedCode {

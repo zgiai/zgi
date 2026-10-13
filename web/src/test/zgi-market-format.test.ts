@@ -236,3 +236,105 @@ assert.deepEqual(
 assert.equal(marketCostApprovalAmounts('tool manifest requires approval'), undefined);
 assert.equal(marketCostApprovalAmounts('one call can cost up to many points'), undefined);
 assert.equal(marketCostApprovalAmounts(undefined), undefined);
+
+// The pending approval says why a market tool asks when the reason is its cost, and nothing more
+// for any other reason. The listing names the unit its offerings count in.
+// prettier-ignore
+// @ts-ignore Node's direct TypeScript runner requires an explicit extension.
+import { marketUnitName, withMarketCostReason } from '../components/zgi-market/market-format.ts';
+import { readFileSync } from 'node:fs';
+
+const say = (values: { sentence: string; max: string; threshold: string }) =>
+  `${values.sentence}单次最高 ${values.max} 点，超过确认阈值 ${values.threshold} 点。`;
+assert.equal(
+  withMarketCostReason(
+    '读取 1 个市场工具。',
+    'one call can cost up to 201 points, above the confirmation threshold of 100 points',
+    say
+  ),
+  '读取 1 个市场工具。单次最高 201 点，超过确认阈值 100 点。'
+);
+assert.equal(
+  withMarketCostReason('调用 1 个市场工具。', 'tool manifest requires approval', say),
+  '调用 1 个市场工具。'
+);
+assert.equal(withMarketCostReason('运行此工具。', undefined, say), '运行此工具。');
+
+const request = {
+  meter: 'request',
+  unit_price_micros: 1000,
+  per_quantity: 1,
+  currency: 'PTS' as const,
+};
+const credit = {
+  meter: 'unit',
+  unit_name: 'credits',
+  unit_price_micros: 20000,
+  per_quantity: 1,
+  currency: 'PTS' as const,
+};
+assert.equal(marketUnitName({ prices: [request, credit] }), 'credits');
+assert.equal(
+  marketUnitName({ prices: [credit, { ...credit, unit_name: 'pages' }, credit] }),
+  'credits / pages'
+);
+assert.equal(marketUnitName({ prices: [request, { ...credit, unit_name: undefined }] }), '');
+assert.equal(marketUnitName({}), '');
+
+// The card a person approves on is built from the action sentence alone: the cost reason has to be
+// put into that sentence, with the reason of the decision, and both languages have the words.
+const here = new URL('.', import.meta.url);
+const timeline = readFileSync(
+  new URL('../components/chat/variants/aichat/agentic-timeline.tsx', here),
+  'utf8'
+);
+assert.match(
+  timeline,
+  /const actionSentence = withMarketCostReason\(\s*governanceActionSentence\([^)]*\),\s*rawReason,/,
+  'the pending approval sentence carries the cost reason'
+);
+assert.match(
+  timeline,
+  /actionSentence: view\.actionSentence/,
+  'the pending approval shows that sentence'
+);
+for (const language of ['zh-Hans', 'en-US']) {
+  const words = readFileSync(new URL(`../i18n/modules/webapp/${language}.ts`, here), 'utf8');
+  assert.match(
+    words,
+    /withMarketCost:\s*'[^']*\{sentence\}[^']*\{max\}[^']*\{threshold\}/,
+    language
+  );
+}
+const panel = readFileSync(
+  new URL('../components/zgi-market/zgi-market-listing-panel.tsx', here),
+  'utf8'
+);
+assert.match(
+  panel.replace(/\s+/g, ' '),
+  /name === 'unit' \? marketUnitName\(listing\) \|\| meter\(name\)/,
+  'the meter row names the unit'
+);
+
+// A refusal where nobody can approve is read back, so the page can say it in its language.
+// prettier-ignore
+// @ts-ignore Node's direct TypeScript runner requires an explicit extension.
+import { marketUnattendedRefusal } from '../components/zgi-market/market-format.ts';
+assert.deepEqual(
+  marketUnattendedRefusal(
+    "This tool writes data and needs a person's confirmation, so it does not run unattended"
+  ),
+  { kind: 'write' }
+);
+assert.deepEqual(
+  marketUnattendedRefusal(
+    'One call of this tool can cost up to 201 points, above the confirmation threshold of 100 points, so it does not run unattended'
+  ),
+  { kind: 'cost', max: '201', threshold: '100' }
+);
+assert.equal(
+  marketUnattendedRefusal(
+    'the current Agent does not have persistent authorization for this tool action'
+  ),
+  undefined
+);

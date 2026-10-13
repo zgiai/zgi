@@ -96,6 +96,11 @@ func (g *PolicyToolGovernanceGateway) DecideSkillTool(ctx context.Context, req T
 		if err != nil {
 			return toolgovernance.Decision{}, fmt.Errorf("resolve organization tool governance policy: %w", err)
 		}
+		// An organization policy decides whether a tool asks; why this tool asks is the tool's own
+		// to say, and a policy that rebuilds the manifest must not lose it.
+		if strings.TrimSpace(resolvedManifest.ApprovalReason) == "" {
+			resolvedManifest.ApprovalReason = manifest.ApprovalReason
+		}
 		manifest = resolvedManifest
 	}
 	approvalMode, preauthorization := governanceAgentAuthorization(params, governance, req.SkillID, req.ToolName, manifest, req.Arguments)
@@ -115,7 +120,7 @@ func (g *PolicyToolGovernanceGateway) DecideSkillTool(ctx context.Context, req T
 	if marketToolApprovalInteractive(req, params, governance, preauthorization) {
 		approvalMode = toolgovernance.ApprovalModeInteractive
 	}
-	return toolgovernance.Decide(toolgovernance.Request{
+	decision := toolgovernance.Decide(toolgovernance.Request{
 		Manifest:         manifest,
 		PermissionTier:   governancePermissionTier(params, governance),
 		ApprovalMode:     approvalMode,
@@ -130,7 +135,8 @@ func (g *PolicyToolGovernanceGateway) DecideSkillTool(ctx context.Context, req T
 		ExpectedAssets:   governanceExpectedAssets(params, governance, manifest),
 		SessionGrants:    governanceSessionGrants(params, governance),
 		CorrelationID:    governanceString(params, governance, governanceCorrelationIDKey, "correlation_id"),
-	}, g.policy), nil
+	}, g.policy)
+	return explainMarketToolRefusal(req, manifest, decision), nil
 }
 
 func marketToolApprovalInteractive(req ToolGovernanceRequest, params, governance map[string]interface{}, preauthorization *toolgovernance.Preauthorization) bool {

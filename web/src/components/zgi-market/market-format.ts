@@ -209,3 +209,50 @@ export function marketCostApprovalAmounts(
   const match = marketCostReasonPattern.exec((reason ?? '').trim());
   return match ? { max: match[1] as string, threshold: match[2] as string } : undefined;
 }
+
+/**
+ * What one unit of the meter `unit` is in a listing, as its offerings call it: `credits`, or
+ * `credits / pages` when two offerings count different things. Empty when no price names one.
+ */
+export function marketUnitName(listing: Pick<MarketListing, 'prices'>): string {
+  const names = (listing.prices ?? [])
+    .filter(price => price.meter === 'unit' && price.unit_name)
+    .map(price => price.unit_name as string);
+  return [...new Set(names)].join(' / ');
+}
+
+/**
+ * The sentence of a pending approval with the reason added when a market tool asks for its cost
+ * alone, so the person who approves reads what one call can cost. `say` puts the two amounts and
+ * the sentence into the reader's language; any other reason leaves the sentence as it is.
+ */
+export function withMarketCostReason(
+  sentence: string,
+  reason: string | null | undefined,
+  say: (values: { sentence: string; max: string; threshold: string }) => string
+): string {
+  const cost = marketCostApprovalAmounts(reason);
+  return cost ? say({ sentence, ...cost }) : sentence;
+}
+
+const marketWriteRefusal =
+  "This tool writes data and needs a person's confirmation, so it does not run unattended";
+const marketCostRefusalPattern =
+  /^One call of this tool can cost up to (\d+(?:\.\d{1,3})?) points, above the confirmation threshold of (\d+(?:\.\d{1,3})?) points, so it does not run unattended$/;
+
+/**
+ * Reads the reason the API gives when a market tool is refused where nobody can approve it: it
+ * writes, or one call can cost too much. Undefined for any other reason.
+ */
+export function marketUnattendedRefusal(
+  reason: string | null | undefined
+): { kind: 'write' } | { kind: 'cost'; max: string; threshold: string } | undefined {
+  const text = (reason ?? '').trim();
+  if (text === marketWriteRefusal) {
+    return { kind: 'write' };
+  }
+  const match = marketCostRefusalPattern.exec(text);
+  return match
+    ? { kind: 'cost', max: match[1] as string, threshold: match[2] as string }
+    : undefined;
+}

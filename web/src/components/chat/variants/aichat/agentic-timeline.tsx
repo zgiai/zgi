@@ -73,7 +73,11 @@ import {
   parseConnectorProgressResult,
 } from '@/components/connectors/runtime/connector-runtime-source';
 import type { WorkflowRunNodeListItem } from '@/components/workflow/ui/workflow-run-nodes-list';
-import { marketCostApprovalAmounts } from '@/components/zgi-market/market-format';
+import {
+  marketCostApprovalAmounts,
+  marketUnattendedRefusal,
+  withMarketCostReason,
+} from '@/components/zgi-market/market-format';
 import {
   ConnectorRuntimeDialogApprovalBridge,
   ConnectorRuntimeSurface,
@@ -1288,6 +1292,18 @@ function governanceReason(item: GovernanceTimelineItem): string {
 function governanceMarketCostReason(reason: string, t: WebappTranslator): string | null {
   const cost = marketCostApprovalAmounts(reason);
   return cost ? t('consoleChat.governance.reasons.marketCost', cost) : null;
+}
+
+/** Why a ZGI Market tool did not run where nobody can approve it, in the reader's language. */
+function governanceMarketRefusalReason(reason: string, t: WebappTranslator): string | null {
+  const refusal = marketUnattendedRefusal(reason);
+  if (!refusal) return null;
+  return refusal.kind === 'write'
+    ? t('consoleChat.governance.reasons.marketWriteUnattended')
+    : t('consoleChat.governance.reasons.marketCostUnattended', {
+        max: refusal.max,
+        threshold: refusal.threshold,
+      });
 }
 
 function governanceApprovalEvent(item: GovernanceTimelineItem) {
@@ -2925,7 +2941,10 @@ function buildToolGovernanceDecisionViewModel(
   const title = buildGovernanceTitle(item, t);
   const toolLabel = governanceToolLabel(item, skillDisplayById, locale, t);
   const rawReason = governanceReason(item);
-  const reason = governanceMarketCostReason(rawReason, t) ?? rawReason;
+  const reason =
+    governanceMarketCostReason(rawReason, t) ??
+    governanceMarketRefusalReason(rawReason, t) ??
+    rawReason;
   const approvalAssets = governanceApprovalAssets(item);
   const displayAssets = governanceDecisionDisplayAssets(item, approvalAssets);
   const assetCount = governanceAssetCount(item, approvalAssets);
@@ -2999,13 +3018,12 @@ function buildToolGovernanceDecisionViewModel(
     });
   };
 
-  const actionSentence = governanceActionSentence(
-    item,
-    approvalAssets,
-    assetCount,
-    t,
-    locale,
-    skillDisplayById
+  // The pending approval shows this sentence and nothing of the reason: a market tool that asks
+  // for its cost alone says so here, or the person approves without knowing why they are asked.
+  const actionSentence = withMarketCostReason(
+    governanceActionSentence(item, approvalAssets, assetCount, t, locale, skillDisplayById),
+    rawReason,
+    values => t('consoleChat.governance.approvalPanel.withMarketCost', values)
   );
 
   return {

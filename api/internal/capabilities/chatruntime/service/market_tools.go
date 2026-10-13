@@ -205,17 +205,9 @@ func marketToolGovernance(toolName string, tool MarketTool) *toolgovernance.Mani
 	}
 	if costly && riskLevel == "read" {
 		// The person is told why a tool that only reads asks: what it can cost, and the line it is over.
-		manifest.ApprovalReason = MarketCostApprovalReason(tool.MaxChargeMicros, tool.ConfirmAboveMicros)
+		manifest.ApprovalReason = skills.MarketCostApprovalReason(marketPoints(tool.MaxChargeMicros), marketPoints(tool.ConfirmAboveMicros))
 	}
 	return manifest
-}
-
-// MarketCostApprovalReason is the reason of an approval that is asked for cost alone. The text
-// is fixed so that a page can read the two amounts back out of it and say them in its language;
-// read as it is, it is a sentence.
-func MarketCostApprovalReason(maxChargeMicros, confirmAboveMicros int64) string {
-	return "one call can cost up to " + marketPoints(maxChargeMicros) +
-		" points, above the confirmation threshold of " + marketPoints(confirmAboveMicros) + " points"
 }
 
 // marketPoints writes milli-points as points with at most three decimals and no padding.
