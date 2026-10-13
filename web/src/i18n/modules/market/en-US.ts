@@ -373,6 +373,8 @@ const messages = {
     centerEmpty: 'The organization has not activated an MCP server or an API yet.',
     activated: 'Activated',
     perCall: '{amount} points per call',
+    perCallUpTo: 'Some tools free, up to {amount} points per call',
+    perCallRange: '{from}–{to} points per call',
     free: 'Free',
     title: 'ZGI Market tools',
     description:

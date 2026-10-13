@@ -1,14 +1,15 @@
 'use client';
 
 import { Badge } from '@/components/ui/badge';
-import { lowestPrice, marketAmount } from '@/components/zgi-market/market-format';
+import { highestPrice, lowestPrice, marketAmount } from '@/components/zgi-market/market-format';
 import { useZgiMarketListing } from '@/hooks/use-zgi-market';
 import { useT } from '@/i18n';
 import type { MarketToolCandidate } from '@/services/types/zgi-market';
 
 /**
  * What one call of a candidate costs the organization: the price of the API offering, or of the
- * MCP server's listing. Nothing is shown until the listing is read or when it publishes no price.
+ * MCP server's listing, as a range when its tools are priced apart. Nothing is shown until the
+ * listing is read or when it publishes no price.
  */
 export function ZgiMarketCallPrice({
   listing: candidate,
@@ -24,8 +25,30 @@ export function ZgiMarketCallPrice({
   );
   const price = lowestPrice({ ...listing.data, prices });
   if (!price) return null;
-  if (price.unit_price_micros === 0) {
+  // The tools of an MCP server may be priced apart: free only when the dearest one is.
+  const dearest = highestPrice({ ...listing.data, prices }) ?? price;
+  if (dearest.unit_price_micros === 0) {
     return <Badge variant="subtle">{t('market.tools.free')}</Badge>;
+  }
+  if (price.unit_price_micros === 0) {
+    return (
+      <Badge variant="subtle">
+        {t('market.tools.perCallUpTo', { amount: marketAmount(dearest).amount })}
+      </Badge>
+    );
+  }
+  if (
+    dearest.unit_price_micros * price.per_quantity !==
+    price.unit_price_micros * dearest.per_quantity
+  ) {
+    return (
+      <Badge variant="subtle">
+        {t('market.tools.perCallRange', {
+          from: marketAmount(price).amount,
+          to: marketAmount(dearest).amount,
+        })}
+      </Badge>
+    );
   }
   return (
     <Badge variant="subtle">

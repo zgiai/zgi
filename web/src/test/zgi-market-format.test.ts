@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 
 // prettier-ignore
 // @ts-ignore Node's direct TypeScript runner requires an explicit extension.
-import { lowestPrice, marketAmount, marketDate, marketDisplayPrice, marketErrorCode, marketExternalUrl, marketText, skillPackageSummary } from '../components/zgi-market/market-format.ts';
+import { highestPrice, lowestPrice, marketAmount, marketDate, marketDisplayPrice, marketErrorCode, marketExternalUrl, marketText, skillPackageSummary } from '../components/zgi-market/market-format.ts';
 // prettier-ignore
 // @ts-ignore Node's direct TypeScript runner requires an explicit extension.
 import { marketApiQuickStart, marketGatewayOrigin, marketMcpClientConfig, marketMcpServerUrl } from '../components/zgi-market/market-usage.ts';
@@ -55,6 +55,9 @@ assert.equal(lowestPrice(listing([])), undefined);
 // The cheapest is judged per unit: 3000 per 1000 is cheaper than 5 per 1.
 assert.equal(lowestPrice(listing([price(5, 1), price(3000, 1000)]))?.unit_price_micros, 3000);
 assert.equal(lowestPrice(listing([price(0, 1), price(10, 1)]))?.unit_price_micros, 0);
+assert.equal(highestPrice(listing()), undefined);
+assert.equal(highestPrice(listing([price(0, 1), price(2000, 1), price(0, 1)]))?.unit_price_micros, 2000);
+assert.equal(highestPrice(listing([price(5, 1), price(3000, 1000)]))?.unit_price_micros, 5);
 
 // A token price is read per million tokens; other meters keep the quantity of their row.
 assert.deepEqual(

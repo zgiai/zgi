@@ -346,6 +346,8 @@ const messages: MarketMessages = {
     centerEmpty: '组织还没有开通 MCP 服务或 API。',
     activated: '已开通',
     perCall: '每次调用 {amount} 点',
+    perCallUpTo: '部分工具免费，最高每次 {amount} 点',
+    perCallRange: '每次调用 {from}–{to} 点',
     free: '免费',
     title: 'ZGI 市场工具',
     description:

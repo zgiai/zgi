@@ -113,6 +113,19 @@ export function lowestPrice(listing: MarketListing): MarketPrice | undefined {
   );
 }
 
+/** The dearest price of a listing, or undefined when it shows none. */
+export function highestPrice(listing: MarketListing): MarketPrice | undefined {
+  return (listing.prices ?? []).reduce<MarketPrice | undefined>(
+    (highest, price) =>
+      !highest ||
+      price.unit_price_micros * highest.per_quantity >
+        highest.unit_price_micros * price.per_quantity
+        ? price
+        : highest,
+    undefined
+  );
+}
+
 /** The market's error code of a failed request, or an empty string when it carries none. */
 export function marketErrorCode(error: unknown): string {
   const data = (error as { response?: { data?: { error_code?: unknown } } } | null)?.response?.data;
