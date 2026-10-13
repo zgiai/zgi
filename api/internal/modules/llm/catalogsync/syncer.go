@@ -175,10 +175,14 @@ func (s *Synchronizer) connect(ctx context.Context) (catalogRPCClient, io.Closer
 		report, err := service.ApplyPublishedCatalogWithReport(ctx, catalog)
 		if err != nil {
 			_ = service.RecordPublishedCatalogSyncError(ctx, err.Error())
-			return nil, closer, nil, err
+			logger.WarnContext(ctx, "Catalog reapply failed, continuing to watch for newer publishes",
+				zap.Int64("version", lastSeenVersion),
+				zap.Error(err),
+			)
+		} else {
+			s.recordCatalogApplyReport(ctx, report)
+			s.applyBillingSettings(ctx, catalog)
 		}
-		s.recordCatalogApplyReport(ctx, report)
-		s.applyBillingSettings(ctx, catalog)
 	}
 
 	stream, err := client.WatchCatalogPublishes(ctx, &pb.WatchCatalogPublishesRequest{
