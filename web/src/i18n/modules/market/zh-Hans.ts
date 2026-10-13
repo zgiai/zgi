@@ -32,6 +32,7 @@ const messages: MarketMessages = {
     installHint: '安装后在智能体或数字人的技能设置里绑定即可使用。',
     manageSkills: '管理组织技能',
     partlyFree: '部分免费',
+    atMost: '单次最高 {amount} 点',
     from: { points: '{amount} 点起', yuan: '¥{amount} 起' },
     price: {
       points: '每 {quantity} {meter} {amount} 点',

@@ -543,6 +543,8 @@ type SubjectTool struct {
 	// a tool spend without asking.
 	MaxChargeMicros int64
 	Costly          bool
+	// ConfirmAboveMicros is that threshold, in milli-points; zero when cost never asks.
+	ConfirmAboveMicros int64
 }
 
 // providerName encodes the subject and the listing of a market tool provider.
@@ -592,7 +594,7 @@ func (t *Tools) SubjectTools(ctx context.Context, organizationID uuid.UUID, subj
 			result = append(result, SubjectTool{
 				ProviderID: providerName(subjectType, subjectID, item.Slug), Name: tool.Name,
 				Description: tool.Description, InputSchema: tool.InputSchema, RiskLevel: riskOf(item, tool.Name),
-				MaxChargeMicros: maxCharge, Costly: t.costly(maxCharge),
+				MaxChargeMicros: maxCharge, Costly: t.costly(maxCharge), ConfirmAboveMicros: t.confirmAboveMicros,
 			})
 		}
 	}
@@ -612,6 +614,7 @@ func (t *Tools) SubjectTools(ctx context.Context, organizationID uuid.UUID, subj
 				ProviderID: providerName(subjectType, subjectID, apiProviderPrefix+item.OfferingSlug), Name: name,
 				Description: operation.Description, InputSchema: operation.InputSchema, RiskLevel: operation.RiskLevel,
 				MaxChargeMicros: operation.MaxChargeMicros, Costly: t.costly(operation.MaxChargeMicros),
+				ConfirmAboveMicros: t.confirmAboveMicros,
 			})
 		}
 	}

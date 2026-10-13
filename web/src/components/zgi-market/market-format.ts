@@ -194,3 +194,18 @@ export function skillPackageSummary<T extends SkillPackageFile>(
     scripts: files.filter(file => scriptPattern.test(file.path)),
   };
 }
+
+const marketCostReasonPattern =
+  /^one call can cost up to (\d+(?:\.\d{1,3})?) points, above the confirmation threshold of (\d+(?:\.\d{1,3})?) points$/;
+
+/**
+ * Reads the two amounts out of the reason the API gives when a market tool asks for approval
+ * because of its cost alone: the most one call can cost and the threshold it is over, in points.
+ * Undefined for any other reason, which is then shown as it is.
+ */
+export function marketCostApprovalAmounts(
+  reason: string | null | undefined
+): { max: string; threshold: string } | undefined {
+  const match = marketCostReasonPattern.exec((reason ?? '').trim());
+  return match ? { max: match[1] as string, threshold: match[2] as string } : undefined;
+}

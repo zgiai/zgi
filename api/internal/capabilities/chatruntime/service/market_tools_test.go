@@ -27,7 +27,7 @@ func (f *fakeMarketTools) SubjectMarketTools(_ context.Context, organizationID u
 
 func TestMarketToolGovernanceRunsReadToolsAndAsksForTheRest(t *testing.T) {
 	decide := func(risk string, mode toolgovernance.ApprovalMode) toolgovernance.Decision {
-		manifest := marketToolGovernance("tool", risk, false)
+		manifest := marketToolGovernance("tool", MarketTool{RiskLevel: risk})
 		_, err := toolgovernance.ValidateManifest(*manifest)
 		require.NoError(t, err, risk)
 		return toolgovernance.Decide(toolgovernance.Request{Manifest: *manifest, ApprovalMode: mode}, toolgovernance.DefaultPolicy())
@@ -39,13 +39,13 @@ func TestMarketToolGovernanceRunsReadToolsAndAsksForTheRest(t *testing.T) {
 		denied := decide(risk, toolgovernance.ApprovalModeNonInteractive)
 		assert.Equal(t, toolgovernance.DecisionStatusDenied, denied.Status, "nobody can approve an unattended %q tool", risk)
 	}
-	assert.True(t, marketToolGovernance("tool", "destructive", false).ApprovalEveryInvocation)
+	assert.True(t, marketToolGovernance("tool", MarketTool{RiskLevel: "destructive"}).ApprovalEveryInvocation)
 }
 
 // A read tool whose one call can cost many points asks like a write: what it reads is paid for.
 func TestACostlyMarketToolAsksAlsoWhenItOnlyReads(t *testing.T) {
 	decide := func(risk string, costly bool, mode toolgovernance.ApprovalMode) toolgovernance.Decision {
-		manifest := marketToolGovernance("tool", risk, costly)
+		manifest := marketToolGovernance("tool", MarketTool{RiskLevel: risk, Costly: costly, MaxChargeMicros: 201_000, ConfirmAboveMicros: 100_000})
 		_, err := toolgovernance.ValidateManifest(*manifest)
 		require.NoError(t, err, risk)
 		return toolgovernance.Decide(toolgovernance.Request{Manifest: *manifest, ApprovalMode: mode}, toolgovernance.DefaultPolicy())
@@ -55,10 +55,20 @@ func TestACostlyMarketToolAsksAlsoWhenItOnlyReads(t *testing.T) {
 		"nobody can approve the cost of an unattended call")
 	assert.Equal(t, toolgovernance.DecisionStatusAllowed, decide("read", false, toolgovernance.ApprovalModeNonInteractive).Status)
 	// It still only reads: the cost changes who is asked, not what the tool does.
-	costly := marketToolGovernance("tool", "read", true)
+	costly := marketToolGovernance("tool", MarketTool{RiskLevel: "read", Costly: true, MaxChargeMicros: 201_500, ConfirmAboveMicros: 100_000})
 	assert.Equal(t, toolgovernance.EffectRead, costly.Effect)
 	assert.False(t, costly.ExternalSideEffect)
 	assert.False(t, costly.ApprovalEveryInvocation)
+	// The reason says what the call can cost and the line it is over, and a write keeps its own.
+	const reason = "one call can cost up to 201.5 points, above the confirmation threshold of 100 points"
+	assert.Equal(t, reason, costly.ApprovalReason)
+	asked := toolgovernance.Decide(toolgovernance.Request{Manifest: *costly, ApprovalMode: toolgovernance.ApprovalModeInteractive}, toolgovernance.DefaultPolicy())
+	assert.Equal(t, reason, asked.Reason)
+	write := marketToolGovernance("tool", MarketTool{RiskLevel: "write", Costly: true, MaxChargeMicros: 201_500, ConfirmAboveMicros: 100_000})
+	assert.Empty(t, write.ApprovalReason, "a tool that writes asks for what it does")
+	assert.Empty(t, marketToolGovernance("tool", MarketTool{RiskLevel: "read"}).ApprovalReason)
+	assert.Equal(t, "0.001", marketPoints(1))
+	assert.Equal(t, "82", marketPoints(82_000))
 	// A write is asked for either way.
 	for _, flag := range []bool{false, true} {
 		assert.Equal(t, toolgovernance.DecisionStatusNeedsApproval, decide("write", flag, toolgovernance.ApprovalModeInteractive).Status)

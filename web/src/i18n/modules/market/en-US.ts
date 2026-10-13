@@ -31,6 +31,7 @@ const messages = {
     installHint: 'After installing, bind it in the skill settings of an agent or a digital human.',
     manageSkills: 'Manage organization skills',
     partlyFree: 'Partly free',
+    atMost: 'at most {amount} points a call',
     from: { points: 'From {amount} points', yuan: 'From ¥{amount}' },
     price: {
       points: '{amount} points per {quantity} {meter}',

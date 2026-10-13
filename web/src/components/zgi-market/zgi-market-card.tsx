@@ -5,7 +5,14 @@ import { Check } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { useT } from '@/i18n';
 import type { MarketListing } from '@/services/types/zgi-market';
-import { highestPrice, lowestPrice, marketAmount, marketText } from './market-format';
+import {
+  chargedByUsage,
+  highestPrice,
+  lowestPrice,
+  marketAmount,
+  marketPriceCap,
+  marketText,
+} from './market-format';
 import { MarketKindIcon } from './market-kind-icon';
 
 interface ZgiMarketCardProps {
@@ -18,6 +25,9 @@ interface ZgiMarketCardProps {
 export default function ZgiMarketCard({ listing, locale, activated }: ZgiMarketCardProps) {
   const t = useT();
   const price = lowestPrice(listing);
+  // A listing charged by what a call used has no single price: the card also says what one call
+  // can cost at most, as the picker and the pricing table do.
+  const cap = chargedByUsage(listing.prices ?? []) ? marketPriceCap(listing) : undefined;
   const title = marketText(listing.card.title, locale) || listing.slug;
   const providers = [
     ...new Set(listing.offerings.map(offering => offering.provider).filter(Boolean)),
@@ -57,6 +67,11 @@ export default function ZgiMarketCard({ listing, locale, activated }: ZgiMarketC
               : t(`market.catalog.from.${marketAmount(price).unit}`, {
                   amount: marketAmount(price).amount,
                 })}
+          {price && cap !== undefined
+            ? ` · ${t('market.catalog.atMost', {
+                amount: marketAmount({ unit_price_micros: cap, currency: 'PTS' }).amount,
+              })}`
+            : ''}
         </span>
         {activated ? (
           <span className="inline-flex shrink-0 items-center gap-1 font-medium text-success">

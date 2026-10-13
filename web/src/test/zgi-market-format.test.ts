@@ -216,3 +216,23 @@ assert.equal(chargedByUsage([perRequest, perCredit]), true);
 assert.equal(chargedByUsage([perRequest, { ...perCredit, unit_price_micros: 0 }]), false);
 assert.equal(chargedByUsage([{ ...perRequest, meter: 'tool_call' }]), false);
 assert.equal(chargedByUsage([{ ...perRequest, meter: 'gpu_hour' }]), true);
+
+// The reason of an approval asked for cost alone is read back into its two amounts.
+// prettier-ignore
+// @ts-ignore Node's direct TypeScript runner requires an explicit extension.
+import { marketCostApprovalAmounts } from '../components/zgi-market/market-format.ts';
+assert.deepEqual(
+  marketCostApprovalAmounts(
+    'one call can cost up to 201 points, above the confirmation threshold of 100 points'
+  ),
+  { max: '201', threshold: '100' }
+);
+assert.deepEqual(
+  marketCostApprovalAmounts(
+    ' one call can cost up to 201.5 points, above the confirmation threshold of 0.001 points '
+  ),
+  { max: '201.5', threshold: '0.001' }
+);
+assert.equal(marketCostApprovalAmounts('tool manifest requires approval'), undefined);
+assert.equal(marketCostApprovalAmounts('one call can cost up to many points'), undefined);
+assert.equal(marketCostApprovalAmounts(undefined), undefined);

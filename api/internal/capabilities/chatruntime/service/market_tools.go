@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -33,6 +35,8 @@ type MarketTool struct {
 	// says it is above what this instance lets a tool spend without asking.
 	MaxChargeMicros int64
 	Costly          bool
+	// ConfirmAboveMicros is that threshold, in milli-points.
+	ConfirmAboveMicros int64
 }
 
 // MarketToolResolver lists the ZGI Market tools bound to an agent or a digital human.
@@ -147,7 +151,7 @@ func MarketToolsSkillDocument(caller Caller, found []MarketTool) skills.SkillDoc
 			ProviderID:         tool.ProviderID,
 			InputSchema:        tool.InputSchema,
 			RuntimeDescription: description,
-			Governance:         marketToolGovernance(name, tool.RiskLevel, tool.Costly),
+			Governance:         marketToolGovernance(name, tool),
 		})
 		names = append(names, name)
 	}
@@ -169,7 +173,8 @@ func MarketToolsSkillDocument(caller Caller, found []MarketTool) skills.SkillDoc
 // nobody can approve, such as an unattended digital human, governance refuses them. A costly tool,
 // one whose single call can cost more than the instance lets a tool spend unasked, always asks
 // too, also when it only reads: what it reads is still paid for.
-func marketToolGovernance(toolName, riskLevel string, costly bool) *toolgovernance.Manifest {
+func marketToolGovernance(toolName string, tool MarketTool) *toolgovernance.Manifest {
+	riskLevel, costly := tool.RiskLevel, tool.Costly
 	manifest := &toolgovernance.Manifest{
 		ToolID: "zgi-market." + toolName, SkillID: skills.SkillZGIMarketTools, Domain: "zgi_market",
 		AssetType: "market_tool", DataEgress: true, ExternalDestination: "zgi-market",
@@ -198,7 +203,28 @@ func marketToolGovernance(toolName, riskLevel string, costly bool) *toolgovernan
 		manifest.DefaultApprovalPolicy = toolgovernance.ApprovalPolicyAlwaysAsk
 		manifest.ExternalSideEffect = true
 	}
+	if costly && riskLevel == "read" {
+		// The person is told why a tool that only reads asks: what it can cost, and the line it is over.
+		manifest.ApprovalReason = MarketCostApprovalReason(tool.MaxChargeMicros, tool.ConfirmAboveMicros)
+	}
 	return manifest
+}
+
+// MarketCostApprovalReason is the reason of an approval that is asked for cost alone. The text
+// is fixed so that a page can read the two amounts back out of it and say them in its language;
+// read as it is, it is a sentence.
+func MarketCostApprovalReason(maxChargeMicros, confirmAboveMicros int64) string {
+	return "one call can cost up to " + marketPoints(maxChargeMicros) +
+		" points, above the confirmation threshold of " + marketPoints(confirmAboveMicros) + " points"
+}
+
+// marketPoints writes milli-points as points with at most three decimals and no padding.
+func marketPoints(micros int64) string {
+	whole, fraction := micros/1000, micros%1000
+	if fraction == 0 {
+		return strconv.FormatInt(whole, 10)
+	}
+	return strconv.FormatInt(whole, 10) + "." + strings.TrimRight(fmt.Sprintf("%03d", fraction), "0")
 }
 
 // PendingMarketToolApproval reports whether the decision a caller is about to answer is the

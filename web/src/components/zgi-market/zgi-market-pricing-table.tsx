@@ -52,7 +52,11 @@ export function ZgiMarketPricingTable({ listing }: { listing: MarketListing }) {
                   </TableCell>
                 ) : null}
                 <TableCell>
-                  <span className="block text-sm">{meter(price.meter)}</span>
+                  <span className="block text-sm">
+                    {price.meter === 'unit' && price.unit_name
+                      ? price.unit_name
+                      : meter(price.meter)}
+                  </span>
                   <span className="block text-xs text-muted-foreground">{per(price)}</span>
                 </TableCell>
                 <TableCell className="whitespace-nowrap text-right text-sm font-medium tabular-nums">

@@ -73,6 +73,7 @@ import {
   parseConnectorProgressResult,
 } from '@/components/connectors/runtime/connector-runtime-source';
 import type { WorkflowRunNodeListItem } from '@/components/workflow/ui/workflow-run-nodes-list';
+import { marketCostApprovalAmounts } from '@/components/zgi-market/market-format';
 import {
   ConnectorRuntimeDialogApprovalBridge,
   ConnectorRuntimeSurface,
@@ -1280,6 +1281,15 @@ function governanceReason(item: GovernanceTimelineItem): string {
   return reason ? (sanitizeDisplayString(reason) ?? '') : '';
 }
 
+/**
+ * The reason of a ZGI Market tool that asks for its cost alone, in the reader's language: what one
+ * call can cost at most and the threshold it is over. Null for every other reason.
+ */
+function governanceMarketCostReason(reason: string, t: WebappTranslator): string | null {
+  const cost = marketCostApprovalAmounts(reason);
+  return cost ? t('consoleChat.governance.reasons.marketCost', cost) : null;
+}
+
 function governanceApprovalEvent(item: GovernanceTimelineItem) {
   return item.event.approval_event ?? item.event.governance?.approval_event;
 }
@@ -2472,13 +2482,16 @@ function governanceIntentText(
   const effect = governanceEventString(item, ['effect']);
   const assetType = governanceEventString(item, ['asset_type']);
   if (!effect && !assetType && assetCount === 0) return null;
-  return t('consoleChat.governance.intentFallback', {
+  const intent = t('consoleChat.governance.intentFallback', {
     effect: effect ? governanceEffectLabel(effect, t) : t('consoleChat.governance.values.unknown'),
     count: assetCount || 1,
     assetType: assetType
       ? governanceAssetTypeLabel(assetType, t)
       : t('consoleChat.governance.values.asset'),
   });
+  // A market tool that only reads asks because of what it can cost: the sentence says so.
+  const cost = governanceMarketCostReason(governanceReason(item), t);
+  return cost ? `${intent} · ${cost}` : intent;
 }
 
 function governanceEffectLabel(effect: string, t: WebappTranslator): string {
@@ -2541,6 +2554,9 @@ function governanceAssetTypeLabel(assetType: string, t: WebappTranslator): strin
     case 'database-table':
     case 'table':
       return t('consoleChat.governance.assetTypes.databaseTable');
+    case 'market_tool':
+    case 'market-tool':
+      return t('consoleChat.governance.assetTypes.marketTool');
     case 'workflow':
       return t('consoleChat.governance.assetTypes.workflow');
     case 'workflow_run':
@@ -2908,7 +2924,8 @@ function buildToolGovernanceDecisionViewModel(
   const approvalStatus = governanceApprovalStatus(item);
   const title = buildGovernanceTitle(item, t);
   const toolLabel = governanceToolLabel(item, skillDisplayById, locale, t);
-  const reason = governanceReason(item);
+  const rawReason = governanceReason(item);
+  const reason = governanceMarketCostReason(rawReason, t) ?? rawReason;
   const approvalAssets = governanceApprovalAssets(item);
   const displayAssets = governanceDecisionDisplayAssets(item, approvalAssets);
   const assetCount = governanceAssetCount(item, approvalAssets);

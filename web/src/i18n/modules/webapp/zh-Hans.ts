@@ -996,6 +996,7 @@ const messages: WebappMessages = {
         interactiveApprovalUnavailable: '当前运行环境不支持交互式确认。',
         resourceNotBound: '请求的资源尚未绑定到当前运行环境。',
         externalSideEffect: '此操作会影响外部系统，因此需要确认。',
+        marketCost: '单次最高 {max} 点，超过确认阈值 {threshold} 点',
         policyDecision: '此结果由当前工具权限和组织策略决定。',
       },
       audit: {
@@ -1089,6 +1090,7 @@ const messages: WebappMessages = {
         database: '数据库',
         databaseTable: '数据表',
         workflow: '工作流',
+        marketTool: '市场工具',
         workflowRun: '工作流运行',
         task: '定时任务',
         memory: '记忆',

@@ -3,7 +3,7 @@
 import type { ReactNode } from 'react';
 import { ExternalLink } from 'lucide-react';
 import type { MarketListing } from '@/services/types/zgi-market';
-import { lowestPrice, marketDate, marketExternalUrl } from './market-format';
+import { chargedByUsage, lowestPrice, marketDate, marketExternalUrl } from './market-format';
 import { useMarketLabels } from './use-market-labels';
 
 const reviewStatuses = ['unreviewed', 'pending_review', 'reviewed', 'verified'] as const;
@@ -49,9 +49,11 @@ interface ZgiMarketListingPanelProps {
 
 /** The side panel of a listing: what it costs, what the organization can do now, and its facts. */
 export function ZgiMarketListingPanel({ listing, action, children }: ZgiMarketListingPanelProps) {
-  const { t, text, meter, amount, per, locale } = useMarketLabels();
+  const { t, text, meter, amount, per, cap, locale } = useMarketLabels();
   const price = lowestPrice(listing);
   const several = (listing.prices ?? []).length > 1;
+  // What one call can cost at most, when the listing is charged by what a call used.
+  const atMost = chargedByUsage(listing.prices ?? []) ? cap(listing) : '';
   const providers = [
     ...new Set(listing.offerings.map(offering => offering.provider).filter(Boolean)),
   ];
@@ -97,6 +99,11 @@ export function ZgiMarketListingPanel({ listing, action, children }: ZgiMarketLi
               </p>
             )}
             {price ? <p className="mt-0.5 text-xs text-muted-foreground">{per(price)}</p> : null}
+            {price && atMost ? (
+              <p className="mt-0.5 text-xs text-muted-foreground" data-market-price-cap="">
+                {atMost}
+              </p>
+            ) : null}
           </div>
         )}
         {action}
