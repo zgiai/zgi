@@ -3,13 +3,14 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
+import { marketSameOrigin } from '@/components/zgi-market/market-format';
 import { useT } from '@/i18n';
 import { zgiMarketService } from '@/services/zgi-market.service';
 
 /**
  * The address the connector vendor sends the browser back to. It hands the vendor's answer to the
  * market through this instance and opens the page the market names, usually the listing page the
- * authorization started from.
+ * authorization started from. A page of another site is not opened: the failure is shown here.
  */
 export default function ZgiMarketOAuthCallbackPage() {
   const t = useT();
@@ -27,7 +28,13 @@ export default function ZgiMarketOAuthCallbackPage() {
     window.history.replaceState(null, '', window.location.pathname);
     zgiMarketService
       .completeOAuth(query)
-      .then(redirect => window.location.replace(redirect))
+      .then(redirect => {
+        if (!marketSameOrigin(redirect, window.location.origin)) {
+          setFailed(true);
+          return;
+        }
+        window.location.replace(redirect);
+      })
       .catch(() => setFailed(true));
   }, []);
 

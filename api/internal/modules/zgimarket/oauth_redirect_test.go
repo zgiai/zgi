@@ -21,6 +21,12 @@ func newRedirectProxy(t *testing.T, address string) (*gin.Engine, *[]seenRequest
 		body, _ := io.ReadAll(r.Body) //nolint:errcheck // test server
 		seen = append(seen, seenRequest{r.Method, r.URL.Path, r.URL.RawQuery, string(body), r.Header.Clone()})
 		if strings.HasSuffix(r.URL.Path, "/oauth/callback") {
+			if strings.Contains(r.URL.RawQuery, "state=unknown") {
+				// The market cannot tell where the authorization started and opens its own website.
+				w.Header().Set("Location", "https://market.example.com/console/organizations/0?error_code=CONNECTOR.OAUTH_STATE_INVALID&tab=market")
+				w.WriteHeader(http.StatusFound)
+				return
+			}
 			w.Header().Set("Location", "https://app.example.com/done")
 			w.WriteHeader(http.StatusFound)
 			return
@@ -135,5 +141,38 @@ func TestWithoutACallbackAddressTheMarketDefaultIsLeftAlone(t *testing.T) {
 		if ValidOAuthRedirectURL(address) != want {
 			t.Fatalf("ValidOAuthRedirectURL(%q) != %v", address, want)
 		}
+	}
+}
+
+func TestAFailedCallbackStaysOnThisInstance(t *testing.T) {
+	engine, _ := newRedirectProxy(t, testOAuthRedirect)
+	recorder := send(engine, http.MethodGet, "/workspaces/current/zgi-market/connections/oauth/callback?state=unknown&code=c1", "", nil)
+	if recorder.Code != http.StatusConflict || strings.Contains(recorder.Body.String(), "market.example.com") ||
+		!strings.Contains(recorder.Body.String(), `"error_code":"CONNECTOR.OAUTH_STATE_INVALID"`) {
+		t.Fatalf("a callback the market sent to its own website answered %d %s", recorder.Code, recorder.Body.String())
+	}
+	if recorder.Header().Get("Location") != "" || recorder.Header().Get("Cache-Control") != "private, no-store" {
+		t.Fatalf("headers = %v", recorder.Header())
+	}
+
+	// Without an address of its own the instance cannot tell its pages from the market's.
+	engine, _ = newRedirectProxy(t, "")
+	recorder = send(engine, http.MethodGet, "/workspaces/current/zgi-market/connections/oauth/callback?state=unknown&code=c1", "", nil)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "market.example.com") {
+		t.Fatalf("without a configured address the callback answered %d %s", recorder.Code, recorder.Body.String())
+	}
+
+	for location, want := range map[string]string{
+		"https://m.example.com/x?error_code=CONNECTOR.OAUTH_STATE_INVALID": "CONNECTOR.OAUTH_STATE_INVALID",
+		"https://m.example.com/x?error_code=%3Cscript%3E":                  "",
+		"https://m.example.com/x":                                          "",
+		"::not a url":                                                      "",
+	} {
+		if got := oauthFailureCode(location); got != want {
+			t.Fatalf("oauthFailureCode(%q) = %q, want %q", location, got, want)
+		}
+	}
+	if originOf("HTTPS://App.Example.com/a?b") != "https://app.example.com" || originOf("/relative") != "" {
+		t.Fatal("originOf")
 	}
 }

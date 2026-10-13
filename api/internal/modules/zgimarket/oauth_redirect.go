@@ -80,3 +80,29 @@ func (p *Proxy) nameOAuthRedirect(method, path, rawQuery string, body []byte) (s
 	}
 	return rawQuery, rewritten
 }
+
+// originOf is the scheme and host of an absolute URL, or empty when raw is not one.
+func originOf(raw string) string {
+	target, err := url.Parse(raw)
+	if err != nil || target.Scheme == "" || target.Host == "" {
+		return ""
+	}
+	return strings.ToLower(target.Scheme + "://" + target.Host)
+}
+
+// oauthFailureCodePattern is the shape of a market error code, such as CONNECTOR.OAUTH_STATE_INVALID.
+var oauthFailureCodePattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]*(\.[A-Z][A-Z0-9_]*)*$`)
+
+// oauthFailureCode reads the market's error code from the page it wanted to open, and nothing
+// that does not look like one.
+func oauthFailureCode(location string) string {
+	target, err := url.Parse(location)
+	if err != nil {
+		return ""
+	}
+	code := target.Query().Get("error_code")
+	if len(code) > 80 || !oauthFailureCodePattern.MatchString(code) {
+		return ""
+	}
+	return code
+}

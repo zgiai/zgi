@@ -103,5 +103,15 @@ func (p *Proxy) relayOAuthCallback(c *gin.Context, result *answer) {
 	}
 	c.Header("Cache-Control", "private, no-store")
 	c.Header("Referrer-Policy", "no-referrer")
+	// The market sends a callback it cannot tie to a started authorization, such as one with an
+	// unknown state, to its own website. A browser that arrived here stays here: the page shows
+	// that the authorization failed instead of opening another site.
+	if own := originOf(p.config.OAuthRedirectURL); own != "" && originOf(location) != own {
+		c.JSON(http.StatusConflict, gin.H{
+			"code": "zgi_market.oauth.not_completed", "message": "The authorization was not completed",
+			"error_code": oauthFailureCode(location),
+		})
+		return
+	}
 	response.Success(c, gin.H{"redirect": location})
 }

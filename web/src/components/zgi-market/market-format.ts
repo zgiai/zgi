@@ -126,6 +126,18 @@ export function highestPrice(listing: MarketListing): MarketPrice | undefined {
   );
 }
 
+/**
+ * Whether a page the market names after an authorization belongs to this site. The callback page
+ * opens nothing else: a callback the market could not place would otherwise leave for its website.
+ */
+export function marketSameOrigin(target: string, origin: string): boolean {
+  try {
+    return new URL(target, origin).origin === new URL(origin).origin;
+  } catch {
+    return false;
+  }
+}
+
 /** The market's error code of a failed request, or an empty string when it carries none. */
 export function marketErrorCode(error: unknown): string {
   const data = (error as { response?: { data?: { error_code?: unknown } } } | null)?.response?.data;

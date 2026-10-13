@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 
 // prettier-ignore
 // @ts-ignore Node's direct TypeScript runner requires an explicit extension.
-import { highestPrice, lowestPrice, marketAmount, marketDate, marketDisplayPrice, marketErrorCode, marketExternalUrl, marketText, skillPackageSummary } from '../components/zgi-market/market-format.ts';
+import { highestPrice, lowestPrice, marketAmount, marketDate, marketDisplayPrice, marketErrorCode, marketExternalUrl, marketSameOrigin, marketText, skillPackageSummary } from '../components/zgi-market/market-format.ts';
 // prettier-ignore
 // @ts-ignore Node's direct TypeScript runner requires an explicit extension.
 import { marketApiQuickStart, marketGatewayOrigin, marketMcpClientConfig, marketMcpServerUrl } from '../components/zgi-market/market-usage.ts';
@@ -149,5 +149,12 @@ assert.equal(
 );
 assert.equal(marketErrorCode(new Error('network')), '');
 assert.equal(marketErrorCode(null), '');
+
+assert.equal(marketSameOrigin('https://pre.example.com/dashboard/market/catalog?connected=1', 'https://pre.example.com'), true);
+assert.equal(marketSameOrigin('/dashboard/market/catalog', 'https://pre.example.com'), true);
+assert.equal(marketSameOrigin('https://market.example.com/console/organizations/0?error_code=X', 'https://pre.example.com'), false);
+assert.equal(marketSameOrigin('http://pre.example.com/x', 'https://pre.example.com'), false);
+assert.equal(marketSameOrigin('javascript:alert(1)', 'https://pre.example.com'), false);
+assert.equal(marketSameOrigin('https://pre.example.com/x', 'not an origin'), false);
 
 console.log('zgi-market-format: ok');
