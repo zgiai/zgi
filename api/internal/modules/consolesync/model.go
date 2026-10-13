@@ -63,12 +63,13 @@ type PreAppliedCommand struct {
 	// IdempotencyKey is the key the console attached to the envelope. It is nullable and
 	// only stored for a successful apply, so failed commands stay retryable and keyless
 	// commands keep their previous behaviour.
-	IdempotencyKey *string   `gorm:"column:idempotency_key;size:128" json:"idempotency_key,omitempty"`
-	Status         string    `gorm:"column:status;size:20;not null" json:"status"`
-	BeforeState    string    `gorm:"column:before_state;type:jsonb" json:"before_state,omitempty"`
-	AfterState     string    `gorm:"column:after_state;type:jsonb" json:"after_state,omitempty"`
-	Error          string    `gorm:"column:error;type:text" json:"error,omitempty"`
-	AppliedAt      time.Time `gorm:"column:applied_at;not null" json:"applied_at"`
+	IdempotencyKey *string `gorm:"column:idempotency_key;size:128" json:"idempotency_key,omitempty"`
+	Status         string  `gorm:"column:status;size:20;not null" json:"status"`
+	// Failed applies have no snapshots; PostgreSQL rejects empty strings for jsonb.
+	BeforeState *string   `gorm:"column:before_state;type:jsonb" json:"before_state,omitempty"`
+	AfterState  *string   `gorm:"column:after_state;type:jsonb" json:"after_state,omitempty"`
+	Error       string    `gorm:"column:error;type:text" json:"error,omitempty"`
+	AppliedAt   time.Time `gorm:"column:applied_at;not null" json:"applied_at"`
 }
 
 // TableName pins the table created by the console sync migration.
