@@ -5,6 +5,7 @@ import { useLocale } from '@/hooks/use-locale';
 import { useT } from '@/i18n';
 import type { MarketListing, MarketPrice, MarketText } from '@/services/types/zgi-market';
 import {
+  highestPrice,
   knownMarketMeter,
   lowestPrice,
   marketAmount,
@@ -62,7 +63,10 @@ export function useMarketLabels() {
         return '';
       }
       if (price.unit_price_micros === 0) {
-        return t('market.catalog.free');
+        // Free only when nothing in the listing is priced, such as every tool of an MCP server.
+        return (highestPrice(listing)?.unit_price_micros ?? 0) === 0
+          ? t('market.catalog.free')
+          : t('market.catalog.partlyFree');
       }
       const shown = marketAmount(price);
       return t(`market.catalog.from.${shown.unit}`, { amount: shown.amount });

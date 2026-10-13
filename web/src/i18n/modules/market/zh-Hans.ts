@@ -31,6 +31,7 @@ const messages: MarketMessages = {
     installOverwrite: '覆盖并安装',
     installHint: '安装后在智能体或数字人的技能设置里绑定即可使用。',
     manageSkills: '管理组织技能',
+    partlyFree: '部分免费',
     from: { points: '{amount} 点起', yuan: '¥{amount} 起' },
     price: {
       points: '每 {quantity} {meter} {amount} 点',
