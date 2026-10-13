@@ -66,6 +66,10 @@ type Config struct {
 	// GatewayURL is the public origin of the market gateway, shown to members in usage examples.
 	// Empty when this instance does not name one.
 	GatewayURL string
+	// OAuthRedirectURL is the callback address of this instance for connector authorizations: the
+	// page a vendor sends the browser back to. It has to be one of the callback addresses the
+	// market is configured with. Empty leaves the choice to the market, which uses its default.
+	OAuthRedirectURL string
 }
 
 // Proxy forwards market requests of organization members to the console.
@@ -90,6 +94,10 @@ func NewProxy(
 	membership func(c *gin.Context, organizationID, accountID string) (member, admin bool, err error),
 ) *Proxy {
 	config.ConsoleURL = strings.TrimRight(strings.TrimSpace(config.ConsoleURL), "/")
+	if config.OAuthRedirectURL = strings.TrimSpace(config.OAuthRedirectURL); !ValidOAuthRedirectURL(config.OAuthRedirectURL) {
+		// An address the market would refuse is not sent; its default is used instead.
+		config.OAuthRedirectURL = ""
+	}
 	if config.Client == nil {
 		config.Client = &http.Client{
 			Timeout: requestTimeout,
@@ -228,15 +236,24 @@ func (p *Proxy) Forward(c *gin.Context) {
 		response.FailWithMessage(c, response.ErrInvalidParams, "Request body is too large")
 		return
 	}
-	if c.Request.URL.RawQuery != "" {
-		path += "?" + c.Request.URL.RawQuery
+	callback := path == oauthCallbackPath
+	headers := c.Request.Header
+	query, named := p.nameOAuthRedirect(c.Request.Method, path, c.Request.URL.RawQuery, body)
+	if len(named) != len(body) || string(named) != string(body) {
+		// A reauthorization may come without a body; the address makes it a JSON one.
+		headers = headers.Clone()
+		headers.Set("Content-Type", "application/json")
+		body = named
 	}
-	result, err := p.call(c.Request.Context(), who, c.Request.Method, path, body, c.Request.Header, answerBodyLimit)
+	if query != "" {
+		path += "?" + query
+	}
+	result, err := p.call(c.Request.Context(), who, c.Request.Method, path, body, headers, answerBodyLimit)
 	if err != nil {
 		response.FailWithMessage(c, response.ErrServiceUnavailable, "ZGI Market is unavailable")
 		return
 	}
-	if strings.HasPrefix(path, oauthCallbackPath+"?") || path == oauthCallbackPath {
+	if callback {
 		p.relayOAuthCallback(c, result)
 		return
 	}

@@ -38,6 +38,11 @@ func RegisterZGIMarketRoutes(
 		settings.ConsoleURL = config.GlobalConfig.Console.APIURL
 		settings.InternalKey = config.GlobalConfig.Console.InternalAPIKey
 		settings.GatewayURL = config.GlobalConfig.Console.ZGIMarketGatewayURL
+		settings.OAuthRedirectURL = config.GlobalConfig.Console.ZGIMarketOAuthRedirectURL
+		if settings.OAuthRedirectURL != "" && !zgimarket.ValidOAuthRedirectURL(settings.OAuthRedirectURL) {
+			logger.Error("ZGI_MARKET_OAUTH_REDIRECT_URL is ignored", fmt.Errorf(
+				"it must be an absolute https URL without credentials, query, or fragment"))
+		}
 	}
 	proxy := zgimarket.NewProxy(
 		settings,

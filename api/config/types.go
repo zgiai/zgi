@@ -184,6 +184,11 @@ type ConsoleConfig struct {
 	// an agent or a digital human are called there directly; everything else about the market
 	// goes through the console. Empty leaves market tools off.
 	ZGIMarketGatewayURL string `json:"zgi_market_gateway_url"`
+	// ZGIMarketOAuthRedirectURL is the callback address of this instance for connector
+	// authorizations of the ZGI Market: where a vendor sends the browser back. Each deployment in
+	// front of one market has its own, and the market has to list it. Empty leaves the market's
+	// default, which is the page of another deployment.
+	ZGIMarketOAuthRedirectURL string `json:"zgi_market_oauth_redirect_url"`
 	// ZGIMarketAllowPrivateTargets lets the gateway address resolve to a private or loopback
 	// address. It is for local development only and is refused in production.
 	ZGIMarketAllowPrivateTargets bool `json:"zgi_market_allow_private_targets"`
