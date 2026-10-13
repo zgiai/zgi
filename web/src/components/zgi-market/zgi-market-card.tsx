@@ -5,7 +5,7 @@ import { Check } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { useT } from '@/i18n';
 import type { MarketListing } from '@/services/types/zgi-market';
-import { lowestPrice, marketAmount, marketText } from './market-format';
+import { highestPrice, lowestPrice, marketAmount, marketText } from './market-format';
 import { MarketKindIcon } from './market-kind-icon';
 
 interface ZgiMarketCardProps {
@@ -50,7 +50,10 @@ export default function ZgiMarketCard({ listing, locale, activated }: ZgiMarketC
           {!price
             ? ''
             : price.unit_price_micros === 0
-              ? t('market.catalog.free')
+              ? // Free only when nothing in the listing is priced, such as every tool of a server.
+                (highestPrice(listing)?.unit_price_micros ?? 0) === 0
+                ? t('market.catalog.free')
+                : t('market.catalog.partlyFree')
               : t(`market.catalog.from.${marketAmount(price).unit}`, {
                   amount: marketAmount(price).amount,
                 })}
