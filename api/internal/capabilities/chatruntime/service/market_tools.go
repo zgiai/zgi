@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -78,6 +79,15 @@ func (s *service) marketSkillIDs(ctx context.Context, scope Scope, caller Caller
 		return nil
 	}
 	return []string{skills.SkillZGIMarketTools}
+}
+
+// preparedHasMarketSkill reports whether the run was given the market Skill, which happens only
+// when its agent or digital human has market tools bound.
+func preparedHasMarketSkill(prepared *PreparedChat) bool {
+	if prepared == nil || prepared.parts == nil {
+		return false
+	}
+	return slices.Contains(prepared.parts.MarketSkillIDs, skills.SkillZGIMarketTools)
 }
 
 // overlayMarketTools adds the request-scoped market Skill to the resolved Skills of the run.
@@ -175,4 +185,32 @@ func marketToolGovernance(toolName, riskLevel string) *toolgovernance.Manifest {
 		manifest.ExternalSideEffect = true
 	}
 	return manifest
+}
+
+// PendingMarketToolApproval reports whether the decision a caller is about to answer is the
+// pending approval of a ZGI Market tool. The console chat of an agent uses it to let a person
+// approve a market write where no platform approval surface is published.
+func (s *service) PendingMarketToolApproval(ctx context.Context, scope Scope, caller Caller, conversationID, messageID uuid.UUID, correlationID string) bool {
+	if s == nil || normalizeCallerType(caller.Type) != runtimemodel.ConversationCallerAgent ||
+		normalizeConversationSource(caller.Source) != runtimemodel.ConversationSourceConsole {
+		return false
+	}
+	_, message, err := s.reloadToolGovernanceContinuationMessageForCaller(ctx, scope, caller, conversationID, messageID)
+	if err != nil || message == nil {
+		return false
+	}
+	event, exists := toolGovernanceDecisionEventFromMetadata(message.Metadata, correlationID)
+	if !exists {
+		return false
+	}
+	return marketToolApprovalEvent(event)
+}
+
+// marketToolApprovalEvent reports whether a governance decision event froze a market tool call.
+// A platform approval carries an execution origin and is never one.
+func marketToolApprovalEvent(event map[string]interface{}) bool {
+	frozen, found, err := toolGovernanceFrozenInvocationFromEvent(event)
+	return err == nil && found && frozen.ExecutionOrigin == nil &&
+		strings.EqualFold(strings.TrimSpace(frozen.ProviderType), string(tools.ToolProviderTypeMarket)) &&
+		strings.EqualFold(strings.TrimSpace(frozen.SkillID), skills.SkillZGIMarketTools)
 }

@@ -1,10 +1,12 @@
 package agents
 
 import (
+	"context"
 	"errors"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
@@ -75,6 +77,14 @@ func (h *AgentsHandler) continueRuntimeToolGovernance(c *gin.Context, runtimeCtx
 		available := agentExecutionEnvBool("ZGI_AGENT_RUNTIME_PLATFORM_CLI_ENABLED", false) && runtimeCtx.RunConfig.RuntimeToolFactory != nil
 		if runtimeCtx.Caller.Source == "console" {
 			available = consolePlatformApprovalAvailable(runtimeCtx.RunConfig, prepared)
+		}
+		if !available && runtimeCtx.Caller.Source == "console" {
+			// A market write waits for a person, not for a published platform surface.
+			if market, ok := h.chatRuntimeService.(interface {
+				PendingMarketToolApproval(context.Context, runtimeservice.Scope, runtimeservice.Caller, uuid.UUID, uuid.UUID, string) bool
+			}); ok {
+				available = market.PendingMarketToolApproval(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID, messageID, correlationID)
+			}
 		}
 		if !available {
 			response.Fail(c, response.ErrPermissionDenied)

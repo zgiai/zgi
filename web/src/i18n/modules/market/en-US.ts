@@ -184,7 +184,7 @@ const messages = {
         inZgiMcp:
           'Once activated, add it from the "ZGI Market" group under Connectors of an agent or a digital human. ZGI calls it for you in a conversation; you keep no credential.',
         inZgiApi:
-          'Once activated, add this offering from the "ZGI Market" group under Connectors of an agent or a digital human. Each operation that declares an input schema becomes a tool ({count} of {total}); a GET runs directly, anything else needs a person to approve.',
+          'Once activated, add this offering from the "ZGI Market" group under Connectors of an agent or a digital human. Each operation that declares an input schema becomes a tool ({count} of {total}); an operation that only reads runs directly, anything else runs only after a person approves it in the debug chat of an agent.',
         inZgiApiNone:
           'No operation of this listing declares an input schema, so it cannot be bound to an agent or a digital human as a tool yet. Call the gateway directly instead.',
         direct: 'Call the gateway directly',
@@ -334,7 +334,7 @@ const messages = {
       change: 'Change',
       title: 'Operations of {name}',
       description:
-        'Each chosen operation becomes one tool. An operation that only reads runs at once; one that writes asks a person to confirm, and is refused where nobody can.',
+        'Each chosen operation becomes one tool. An operation that only reads runs at once; one that writes runs only after a person approves it in the debug chat of an agent, and is refused everywhere else, a digital human included.',
       all: 'Every operation ({count})',
       allHint: 'Also the operations a later version of the listing adds.',
       reasonNoSchema: 'Declares no input schema, so it cannot be a tool.',
@@ -355,7 +355,7 @@ const messages = {
     addAction: 'Add',
     group: 'ZGI Market',
     groupHint:
-      'MCP servers and API offerings the organization activated in ZGI Market. Adding one takes effect at once; every call is billed in points, and tools that write need a person to approve.',
+      'MCP servers and API offerings the organization activated in ZGI Market. Adding one takes effect at once; every call is billed in points, and a tool that writes runs only after a person approves it in the debug chat of an agent, and is refused everywhere else.',
     apiNotBindable: 'No operation declares an input schema, so it cannot be added as tools.',
     operationsSkipped: '{count} more operations declare no input schema and do not become tools.',
     add: 'Add {name}',
@@ -376,7 +376,7 @@ const messages = {
     free: 'Free',
     title: 'ZGI Market tools',
     description:
-      'Bind MCP servers and API offerings the organization activated. Every call is billed in points; tools that write need a person to approve.',
+      'Bind MCP servers and API offerings the organization activated. Every call is billed in points; a tool that writes runs only after a person approves it in the debug chat of an agent, and is refused everywhere else.',
     empty: 'The organization has not activated an MCP server or an API yet.',
     browse: 'Browse the market',
     gatewayMissing:

@@ -787,6 +787,11 @@ func (s *service) currentAgentSkillStepAuthorizer(prepared *PreparedChat) func(c
 	}
 	bindingVerifier := s.currentAgentBindingVerifier(prepared)
 	return func(ctx context.Context, skillID string) (bool, error) {
+		// The market Skill is no catalog entry and no Skill binding: it is built for this request
+		// from the subject's own market bindings, and Tool Governance checks every call it makes.
+		if strings.EqualFold(strings.TrimSpace(skillID), skills.SkillZGIMarketTools) {
+			return preparedHasMarketSkill(prepared), nil
+		}
 		allowed, err := organizationAuthorizer(ctx, skillID)
 		if err != nil || !allowed {
 			return allowed, err

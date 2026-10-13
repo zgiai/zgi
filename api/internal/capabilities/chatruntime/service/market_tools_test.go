@@ -80,3 +80,29 @@ func TestMarketToolsAreOverlaidForAnAgentOrADigitalHumanOnly(t *testing.T) {
 	assert.Empty(t, resolved.Skills, "an ordinary chat has no bound subject")
 	assert.NotContains(t, chat.parts.SkillIDs, skills.SkillZGIMarketTools)
 }
+
+// A run activates the market Skill on demand. The Skill is neither in the organization's
+// catalog nor a Skill binding of the subject, so the step authorizer has to know it.
+func TestTheMarketSkillIsAuthorizedOnlyForARunThatWasGivenIt(t *testing.T) {
+	agentID := uuid.New()
+	s := &service{}
+	for _, callerType := range []string{runtimemodel.ConversationCallerAgent, runtimemodel.ConversationCallerDigitalHuman} {
+		bound := &PreparedChat{
+			Scope:  Scope{OrganizationID: uuid.New()},
+			Caller: Caller{Type: callerType, ID: &agentID},
+			parts:  &chatRequestParts{MarketSkillIDs: []string{skills.SkillZGIMarketTools}},
+		}
+		allowed, err := s.currentAgentSkillStepAuthorizer(bound)(context.Background(), " ZGI-Market-Tools ")
+		require.NoError(t, err)
+		assert.True(t, allowed, callerType)
+
+		unbound := &PreparedChat{
+			Scope:  Scope{OrganizationID: uuid.New()},
+			Caller: Caller{Type: callerType, ID: &agentID},
+			parts:  &chatRequestParts{SkillIDs: []string{skills.SkillZGIMarketTools}},
+		}
+		allowed, err = s.currentAgentSkillStepAuthorizer(unbound)(context.Background(), skills.SkillZGIMarketTools)
+		require.NoError(t, err)
+		assert.False(t, allowed, "naming the Skill in a request does not grant it")
+	}
+}
