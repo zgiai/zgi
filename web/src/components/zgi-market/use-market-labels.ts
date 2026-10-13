@@ -32,7 +32,7 @@ export function useMarketLabels() {
     [t]
   );
 
-  /** The amount of a price alone: "免费", "2.5 点". */
+  /** The amount of a price alone: free, or a number of points such as 2.5. */
   const amount = useCallback(
     (price: MarketPrice) => {
       if (price.unit_price_micros === 0) {
@@ -44,7 +44,7 @@ export function useMarketLabels() {
     [t]
   );
 
-  /** What an amount is charged for: "每 1,000,000 输入 token". */
+  /** What an amount is charged for, such as per 1,000,000 input tokens. */
   const per = useCallback(
     (price: MarketPrice) =>
       t('market.catalog.detail.pricing.perUnit', {
