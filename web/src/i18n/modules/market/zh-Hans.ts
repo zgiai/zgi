@@ -244,7 +244,8 @@ const messages: MarketMessages = {
   },
   callLogs: {
     title: '市场调用日志',
-    subtitle: '智能体和数字人调用过的每一个 ZGI 市场工具：传了什么、返回了什么、花了多少。',
+    subtitle:
+      '智能体、数字人和市场凭证调用过的每一个 ZGI 市场工具：传了什么、返回了什么、花了多少。',
     adminOnly: '只有组织所有者和管理员可以查看市场调用日志。',
     loadFailed: '市场调用日志加载失败。',
     retry: '重试',
