@@ -350,7 +350,7 @@ export interface MarketSkillManifest {
 }
 
 /** How a market tool call ended, as this instance saw it. */
-export type MarketCallStatus = 'succeeded' | 'tool_error' | 'failed';
+export type MarketCallStatus = 'succeeded' | 'tool_error' | 'failed' | 'refused';
 
 /** Whether what the market charged for a call is known. */
 export type MarketCallChargeState = 'pending' | 'charged' | 'none' | 'unknown';
@@ -366,7 +366,8 @@ export interface MarketCallChargeLine {
 /** One market tool call this instance made for an agent or a digital human. */
 export interface MarketCallLog {
   id: string;
-  subject_type: MarketToolSubjectType;
+  /** `credential` is a call made with a market credential outside this instance. */
+  subject_type: MarketToolSubjectType | 'credential';
   subject_id: string;
   subject_name: string;
   item_kind: 'mcp' | 'api';
@@ -382,6 +383,8 @@ export interface MarketCallLog {
   conversation_id: string;
   message_id: string;
   app_id: string;
+  credential_id: number;
+  credential_name: string;
   input: string;
   output: string;
   status: MarketCallStatus;

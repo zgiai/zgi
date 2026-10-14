@@ -263,6 +263,7 @@ const messages: MarketMessages = {
       'external-api': 'API',
       channel: '渠道',
       task: '任务',
+      credential: '凭证直调',
       unknown: '来源未知',
     },
     externalUser: '外部用户 {id}',
@@ -283,12 +284,14 @@ const messages: MarketMessages = {
     subjects: {
       agent: '智能体',
       digital_human: '数字人',
+      credential: '凭证',
     },
     deletedSubject: '已删除',
     status: {
       succeeded: '成功',
       tool_error: '工具报错',
       failed: '调用失败',
+      refused: '被拒绝',
     },
     charge: {
       pending: '结算中',
@@ -303,6 +306,8 @@ const messages: MarketMessages = {
       charges: '扣费明细',
       requestId: '请求 ID',
       noOutput: '没有输出',
+      notKept: '这次调用是拿市场凭证直接调用的，没有经过本平台；市场不保存调用的输入和输出。',
+      credentialUnnamed: '凭证 #{id}',
       conversation: '会话 ID',
       message: '消息 ID',
       line: '{quantity} × {unit} · {amount} 点',

@@ -284,6 +284,7 @@ const messages = {
       'external-api': 'API',
       channel: 'Channel',
       task: 'Task',
+      credential: 'Credential, called directly',
       unknown: 'Unknown source',
     },
     externalUser: 'External user {id}',
@@ -304,12 +305,14 @@ const messages = {
     subjects: {
       agent: 'Agent',
       digital_human: 'Digital human',
+      credential: 'Credential',
     },
     deletedSubject: 'Deleted',
     status: {
       succeeded: 'Succeeded',
       tool_error: 'Tool error',
       failed: 'Failed',
+      refused: 'Refused',
     },
     charge: {
       pending: 'Settling',
@@ -324,6 +327,9 @@ const messages = {
       charges: 'Charges',
       requestId: 'Request ID',
       noOutput: 'No output',
+      notKept:
+        'This call was made with a market credential outside this workspace. The market keeps no input or output of a call.',
+      credentialUnnamed: 'Credential #{id}',
       conversation: 'Conversation ID',
       message: 'Message ID',
       line: '{quantity} × {unit} · {amount} points',

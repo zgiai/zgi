@@ -73,6 +73,9 @@ type CallLog struct {
 	ConversationID string `gorm:"type:varchar(64);not null" json:"conversation_id"`
 	MessageID      string `gorm:"type:varchar(64);not null" json:"message_id"`
 	AppID          string `gorm:"type:varchar(64);not null" json:"app_id"`
+	// CredentialID and CredentialName name the credential of a call made outside this instance.
+	CredentialID   uint64 `gorm:"not null" json:"credential_id"`
+	CredentialName string `gorm:"type:varchar(100);not null" json:"credential_name"`
 	// UserName is the account's name when the logs are read; empty for none or an external user.
 	UserName        string           `gorm:"-" json:"user_name"`
 	Input           string           `gorm:"type:text;not null" json:"input"`
@@ -328,7 +331,7 @@ func (s callLogStore) nameUsers(ctx context.Context, rows []*CallLog) {
 
 func trimmedStatus(status string) (string, bool) {
 	switch status = strings.TrimSpace(status); status {
-	case "", CallSucceeded, CallToolError, CallFailed:
+	case "", CallSucceeded, CallToolError, CallFailed, CallRefused:
 		return status, true
 	}
 	return "", false
