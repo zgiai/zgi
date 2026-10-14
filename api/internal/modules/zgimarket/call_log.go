@@ -59,12 +59,22 @@ type CallLog struct {
 	SubjectID      uuid.UUID `gorm:"type:uuid;not null" json:"subject_id"`
 	// SubjectName is the agent's or digital human's name when the logs are read; empty when it
 	// no longer exists.
-	SubjectName     string           `gorm:"-" json:"subject_name"`
-	ItemKind        string           `gorm:"type:varchar(8);not null" json:"item_kind"`
-	ListingSlug     string           `gorm:"type:varchar(128);not null" json:"listing_slug"`
-	ListingTitle    string           `gorm:"type:varchar(200);not null" json:"listing_title"`
-	OfferingSlug    string           `gorm:"type:varchar(128);not null" json:"offering_slug"`
-	ToolName        string           `gorm:"type:varchar(128);not null" json:"tool_name"`
+	SubjectName  string `gorm:"-" json:"subject_name"`
+	ItemKind     string `gorm:"type:varchar(8);not null" json:"item_kind"`
+	ListingSlug  string `gorm:"type:varchar(128);not null" json:"listing_slug"`
+	ListingTitle string `gorm:"type:varchar(200);not null" json:"listing_title"`
+	OfferingSlug string `gorm:"type:varchar(128);not null" json:"offering_slug"`
+	ToolName     string `gorm:"type:varchar(128);not null" json:"tool_name"`
+	// Source is the surface the conversation came from, as the runtime set it: console (the
+	// debug chat), webapp, external-api, channel, task. Empty when the runtime named none.
+	Source         string `gorm:"type:varchar(32);not null" json:"source"`
+	UserID         string `gorm:"type:varchar(64);not null" json:"user_id"`
+	ExternalUserID string `gorm:"type:varchar(128);not null" json:"external_user_id"`
+	ConversationID string `gorm:"type:varchar(64);not null" json:"conversation_id"`
+	MessageID      string `gorm:"type:varchar(64);not null" json:"message_id"`
+	AppID          string `gorm:"type:varchar(64);not null" json:"app_id"`
+	// UserName is the account's name when the logs are read; empty for none or an external user.
+	UserName        string           `gorm:"-" json:"user_name"`
 	Input           string           `gorm:"type:text;not null" json:"input"`
 	Output          string           `gorm:"type:text;not null" json:"output"`
 	Status          string           `gorm:"type:varchar(16);not null" json:"status"`
@@ -92,9 +102,19 @@ type callTarget struct {
 	tool    string
 }
 
+// CallScene is where a call was made from, as the runtime handed it to the tool.
+type CallScene struct {
+	Source         string
+	UserID         string
+	ExternalUserID string
+	ConversationID string
+	MessageID      string
+	AppID          string
+}
+
 // record keeps one finished call. A row that cannot be written is logged and dropped: the call
 // has been answered and must not fail for its log.
-func (s callLogStore) record(target callTarget, arguments map[string]any, result *GatewayResult, callErr error, started, finished time.Time) {
+func (s callLogStore) record(target callTarget, scene CallScene, arguments map[string]any, result *GatewayResult, callErr error, started, finished time.Time) {
 	if s.db == nil || target.binding == nil {
 		return
 	}
@@ -103,6 +123,8 @@ func (s callLogStore) record(target callTarget, arguments map[string]any, result
 		SubjectType: target.binding.SubjectType, SubjectID: target.binding.SubjectID,
 		ItemKind: ItemKindMCP, ListingSlug: target.item.Slug, ListingTitle: cut(target.item.Title, 200),
 		ToolName: cut(target.tool, 128), Input: callInput(arguments),
+		Source: cut(scene.Source, 32), UserID: cut(scene.UserID, 64), ExternalUserID: cut(scene.ExternalUserID, 128),
+		ConversationID: cut(scene.ConversationID, 64), MessageID: cut(scene.MessageID, 64), AppID: cut(scene.AppID, 64),
 		DurationMS: finished.Sub(started).Milliseconds(), ChargeState: CallChargeUnknown,
 		ChargeLines: []CallChargeLine{}, CreatedAt: started.UTC(),
 	}
@@ -164,6 +186,7 @@ type CallLogQuery struct {
 	SubjectType string
 	SubjectID   *uuid.UUID
 	Listing     string
+	Source      string
 	Page        int
 	PerPage     int
 }
@@ -202,6 +225,9 @@ func (s callLogStore) scope(ctx context.Context, organizationID uuid.UUID, query
 	if query.Listing != "" {
 		db = db.Where("listing_slug = ?", query.Listing)
 	}
+	if query.Source != "" {
+		db = db.Where("source = ?", query.Source)
+	}
 	return db
 }
 
@@ -228,6 +254,7 @@ func (s callLogStore) list(ctx context.Context, organizationID uuid.UUID, query 
 		return nil, err
 	}
 	s.nameSubjects(ctx, page.Data)
+	s.nameUsers(ctx, page.Data)
 	return page, nil
 }
 
@@ -269,6 +296,34 @@ func (s callLogStore) settle(ctx context.Context, id uuid.UUID, state string, mi
 	return s.db.WithContext(ctx).Model(&CallLog{}).Where("id = ?", id).Updates(map[string]any{
 		"charge_state": state, "charge_micros": micros, "charge_lines": string(encoded), "charge_checked_at": at,
 	}).Error
+}
+
+// nameUsers fills in the name of each row's account. A name that cannot be read is left empty.
+func (s callLogStore) nameUsers(ctx context.Context, rows []*CallLog) {
+	ids := []uuid.UUID{}
+	for _, row := range rows {
+		if id, err := uuid.Parse(row.UserID); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	var found []struct {
+		ID   uuid.UUID
+		Name string
+	}
+	if err := s.db.WithContext(ctx).Table("accounts").Select("id, name").Where("id IN ?", ids).Scan(&found).Error; err != nil {
+		logger.WarnContext(ctx, "the names of market call accounts could not be read", "error", err.Error())
+		return
+	}
+	names := map[string]string{}
+	for _, account := range found {
+		names[account.ID.String()] = account.Name
+	}
+	for _, row := range rows {
+		row.UserName = names[row.UserID]
+	}
 }
 
 func trimmedStatus(status string) (string, bool) {

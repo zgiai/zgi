@@ -80,9 +80,14 @@ func (*marketTool) GetProviderType() tools.ToolProviderType { return tools.ToolP
 func (t *marketTool) GetTenantID() string { return t.provider.organizationID.String() }
 
 func (t *marketTool) Invoke(
-	ctx context.Context, _ string, parameters map[string]interface{}, _ *string, _ *string, _ *string,
+	ctx context.Context, userID string, parameters map[string]interface{}, conversationID, appID, messageID *string,
 ) ([]tools.ToolInvokeMessage, error) {
-	result, err := t.provider.tools.callTool(ctx, t.provider.organizationID, t.provider.name, t.name, parameters)
+	scene := CallScene{UserID: userID, ConversationID: deref(conversationID), AppID: deref(appID), MessageID: deref(messageID)}
+	if t.runtime != nil {
+		scene.Source, _ = t.runtime.RuntimeParameters["agent_runtime_source"].(string)
+		scene.ExternalUserID, _ = t.runtime.RuntimeParameters[tools.ExternalUserIDRuntimeParameter].(string)
+	}
+	result, err := t.provider.tools.callTool(ctx, t.provider.organizationID, t.provider.name, t.name, parameters, scene)
 	if err != nil {
 		return nil, fmt.Errorf("the ZGI Market tool could not be called: %w", err)
 	}
@@ -102,3 +107,10 @@ func (t *marketTool) ForkToolRuntime(runtime *tools.ToolRuntime) tools.Tool {
 }
 
 func (*marketTool) ValidateCredentials(context.Context, map[string]interface{}) error { return nil }
+
+func deref(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}

@@ -205,6 +205,7 @@ class ZgiMarketService extends BaseService {
           page: query.page ?? 1,
           per_page: query.per_page ?? 20,
           ...(query.status ? { status: query.status } : {}),
+          ...(query.source ? { source: query.source } : {}),
         },
       }
     );

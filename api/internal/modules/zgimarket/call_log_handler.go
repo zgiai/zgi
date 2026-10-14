@@ -27,7 +27,7 @@ const (
 // callLogRoute answers GET call-logs, the organization's market calls, for administrators. It
 // reports whether the request was that one.
 //
-//	GET call-logs?from=&to=&status=&subject_type=&subject_id=&listing=&page=&per_page=
+//	GET call-logs?from=&to=&status=&subject_type=&subject_id=&listing=&source=&page=&per_page=
 //
 // from and to are Unix seconds, [from, to), at most 31 days apart. Before the page is answered,
 // the calls on it whose charge is still pending are asked for at the market once.
@@ -101,6 +101,12 @@ func callLogQuery(values url.Values) (CallLogQuery, bool) {
 			return CallLogQuery{}, false
 		}
 		query.Listing = listing
+	}
+	if source := values.Get("source"); source != "" {
+		if len(source) > 32 || !marketSlugPattern.MatchString(source) {
+			return CallLogQuery{}, false
+		}
+		query.Source = source
 	}
 	if raw := values.Get("page"); raw != "" {
 		page, err := strconv.Atoi(raw)

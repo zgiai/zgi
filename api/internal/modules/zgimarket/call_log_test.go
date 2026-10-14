@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
@@ -24,6 +25,9 @@ func TestEveryMarketCallIsLoggedWithItsInputOutputAndCharge(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, fixture.db.Exec(`ALTER TABLE agents ADD COLUMN name text`).Error)
 	require.NoError(t, fixture.db.Exec(`UPDATE agents SET name = 'Weather agent'`).Error)
+	account := uuid.New()
+	require.NoError(t, fixture.db.Exec(`CREATE TABLE accounts (id text, name text)`).Error)
+	require.NoError(t, fixture.db.Exec(`INSERT INTO accounts VALUES (?, 'Ada')`, account.String()).Error)
 	status, answer := fixture.send(t, http.MethodPut, "tools/subjects/agent/"+fixture.agent.String(),
 		`{"items":[{"listing_id":7},{"listing_id":20,"offering_slug":"items-standard"}]}`)
 	require.Equal(t, http.StatusOK, status, answer)
@@ -38,6 +42,8 @@ func TestEveryMarketCallIsLoggedWithItsInputOutputAndCharge(t *testing.T) {
 		_, _ = engine.Invoke(ctx, tools.InvokeRequest{ //nolint:errcheck // the log is what is checked
 			ProviderType: tools.ToolProviderTypeMarket, ProviderID: tool.ProviderID, ToolName: tool.Name,
 			TenantID: fixture.org.String(), Parameters: parameters,
+			UserID: account.String(), ConversationID: "conv-1", MessageID: "msg-1", AppID: fixture.agent.String(),
+			RuntimeParameters: map[string]interface{}{"agent_runtime_source": "console"},
 		})
 	}
 	invoke(listed[0], map[string]interface{}{"topic": "rain"})
@@ -54,6 +60,8 @@ func TestEveryMarketCallIsLoggedWithItsInputOutputAndCharge(t *testing.T) {
 	assert.Equal(t, []any{SubjectAgent, fixture.agent, CallChargePending}, []any{mcp.SubjectType, mcp.SubjectID, mcp.ChargeState})
 	assert.Equal(t, []any{ItemKindAPI, "items", "items-standard", CallSucceeded, "api-items-standard/v1/items/a"},
 		[]any{api.ItemKind, api.ListingSlug, api.OfferingSlug, api.Status, api.RequestID})
+	assert.Equal(t, []string{"console", account.String(), "conv-1", "msg-1", fixture.agent.String()},
+		[]string{mcp.Source, mcp.UserID, mcp.ConversationID, mcp.MessageID, mcp.AppID}, "where the call was made from")
 	assert.Equal(t, CallToolError, broke.Status)
 	assert.Contains(t, broke.Output, "402 BILLING.INSUFFICIENT_BALANCE")
 
@@ -74,6 +82,10 @@ func TestEveryMarketCallIsLoggedWithItsInputOutputAndCharge(t *testing.T) {
 	}
 	assert.Equal(t, CallChargeNone, byRequest["mcp-tools/call"]["charge_state"])
 	assert.Equal(t, "Weather agent", byRequest["mcp-tools/call"]["subject_name"])
+	assert.Equal(t, "Ada", byRequest["mcp-tools/call"]["user_name"])
+	status, answer = fixture.send(t, http.MethodGet, "call-logs?from="+from+"&to="+to+"&source=webapp", "")
+	require.Equal(t, http.StatusOK, status, answer)
+	assert.Equal(t, float64(0), answer["data"].(map[string]any)["total"], "no call came from a published app")
 	assert.Equal(t, CallChargeCharged, byRequest["api-items-standard/v1/items/a"]["charge_state"])
 	assert.Len(t, byRequest["api-items-standard/v1/items/a"]["charge_lines"], 1)
 	assert.Equal(t, CallChargePending, byRequest["api-items-standard/v1/items/broke"]["charge_state"])
