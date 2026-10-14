@@ -233,45 +233,51 @@ func (h *WorkflowHandler) resumeQuestionAnswerWorkflow(ctx context.Context, work
 	}
 	var submittedEvent *workflowpause.RunEventPayload
 	if run.RuntimeProtocolVersion >= workflowRuntimeProtocolVersionV2 {
-		submission, submitErr := pauseService.SubmitInteraction(
-			ctx,
-			run.ID,
-			pauseRecord.ID,
-			"question-answer",
-			workflowpause.EventQuestionAnswerSubmitted,
-			buildQuestionAnswerSubmittedEvent(run.ID, pauseState, inputs),
-			questionAnswerSubmissionIdempotencyKey(pauseRecord.ID, pauseRecord.Generation, pauseState, inputs),
-		)
-		if submitErr != nil {
-			return submitErr
-		}
-		if submission != nil {
-			submittedEvent = submission.Event
-			publishWorkflowCommittedTail(ctx, run.ID, submission.Event)
-			for _, pendingEvent := range submission.PendingEvents {
-				publishWorkflowCommittedTail(ctx, run.ID, pendingEvent)
+		// A pause that is already resume-ready has recorded every interaction:
+		// this is the queued resume of a pause whose approval completed after
+		// its question was answered. Submitting the answer again would target
+		// the pause's first node rather than the question, so resume as is.
+		if !questionResumeAlreadyRecorded(pauseRecord) {
+			submission, submitErr := pauseService.SubmitInteraction(
+				ctx,
+				run.ID,
+				pauseRecord.ID,
+				"question-answer",
+				workflowpause.EventQuestionAnswerSubmitted,
+				buildQuestionAnswerSubmittedEvent(run.ID, pauseState, inputs),
+				questionAnswerSubmissionIdempotencyKey(pauseRecord.ID, pauseRecord.Generation, pauseState, inputs),
+			)
+			if submitErr != nil {
+				return submitErr
 			}
-			if !submission.ResumeReady {
-				if onEvent != nil && submission.Event != nil {
-					data := copyWorkflowAnyMap(submission.Event.Data)
-					data["sequence"] = submission.Event.Sequence
-					data["event_id"] = submission.Event.EventID
-					if err := onEvent(workflowpause.EventQuestionAnswerSubmitted, data); err != nil {
-						return err
-					}
-				}
+			if submission != nil {
+				submittedEvent = submission.Event
+				publishWorkflowCommittedTail(ctx, run.ID, submission.Event)
 				for _, pendingEvent := range submission.PendingEvents {
-					if onEvent == nil || pendingEvent == nil {
-						continue
-					}
-					data := copyWorkflowAnyMap(pendingEvent.Data)
-					data["sequence"] = pendingEvent.Sequence
-					data["event_id"] = pendingEvent.EventID
-					if err := onEvent(pendingEvent.Event, data); err != nil {
-						return err
-					}
+					publishWorkflowCommittedTail(ctx, run.ID, pendingEvent)
 				}
-				return nil
+				if !submission.ResumeReady {
+					if onEvent != nil && submission.Event != nil {
+						data := copyWorkflowAnyMap(submission.Event.Data)
+						data["sequence"] = submission.Event.Sequence
+						data["event_id"] = submission.Event.EventID
+						if err := onEvent(workflowpause.EventQuestionAnswerSubmitted, data); err != nil {
+							return err
+						}
+					}
+					for _, pendingEvent := range submission.PendingEvents {
+						if onEvent == nil || pendingEvent == nil {
+							continue
+						}
+						data := copyWorkflowAnyMap(pendingEvent.Data)
+						data["sequence"] = pendingEvent.Sequence
+						data["event_id"] = pendingEvent.EventID
+						if err := onEvent(pendingEvent.Event, data); err != nil {
+							return err
+						}
+					}
+					return nil
+				}
 			}
 		}
 		inputs, err = loadDurableWorkflowResumeInputs(ctx, pauseService, run.ID, pauseRecord, inputs)
@@ -341,6 +347,12 @@ func (h *WorkflowHandler) resumeQuestionAnswerWorkflow(ctx context.Context, work
 		h.executeWorkflowStream(ctx, run.TenantID, run.AgentID, req, run.CreatedBy, run.ID, run.ID, run.WorkflowID, systemInputs, run.SequenceNumber, resultChan, errorChan, doneChan, isDraft, runType, run.TriggeredFrom, nil)
 	}()
 	return h.drainApprovalResumeStream(ctx, pauseService, workflowService, run, resultChan, errorChan, doneChan, resumeStartedAt, runType, systemInputs, inputs, eventDispatcher)
+}
+
+// questionResumeAlreadyRecorded reports whether every interaction of the pause
+// is already recorded, so a question resume only has to run the workflow.
+func questionResumeAlreadyRecorded(pause *workflowpause.RunPause) bool {
+	return pause != nil && (pause.Status == workflowpause.RunPauseStatusResumeReady || pause.Status == workflowpause.RunPauseStatusResuming)
 }
 
 func loadDurableWorkflowResumeInputs(

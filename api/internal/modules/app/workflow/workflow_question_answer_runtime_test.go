@@ -383,3 +383,18 @@ func TestQuestionAnswerSubmissionIdempotencyKeyDistinguishesQuestionsAndRounds(t
 		}
 	}
 }
+
+func TestQueuedQuestionResumeOfAReadyPauseDoesNotSubmitAgain(t *testing.T) {
+	for status, recorded := range map[string]bool{
+		workflowpause.RunPauseStatusPaused:      false,
+		workflowpause.RunPauseStatusResumeReady: true,
+		workflowpause.RunPauseStatusResuming:    true,
+	} {
+		if got := questionResumeAlreadyRecorded(&workflowpause.RunPause{Status: status}); got != recorded {
+			t.Fatalf("pause %s: already recorded = %v, want %v", status, got, recorded)
+		}
+	}
+	if questionResumeAlreadyRecorded(nil) {
+		t.Fatal("a missing pause has nothing recorded")
+	}
+}
