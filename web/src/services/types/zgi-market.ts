@@ -421,3 +421,21 @@ export interface MarketCallLogQuery {
   page?: number;
   per_page?: number;
 }
+
+/** One body of a call as the market kept it: text when it is UTF-8, else base64. */
+export interface MarketCallBody {
+  content_type: string;
+  encoding: 'text' | 'base64';
+  body: string;
+  bytes: number;
+  truncated: boolean;
+}
+
+/** What a call sent and answered, as the market kept it. */
+export interface MarketCallContent {
+  call_id: number;
+  request_id: string;
+  kept: boolean;
+  request: MarketCallBody | null;
+  response: MarketCallBody | null;
+}

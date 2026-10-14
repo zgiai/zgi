@@ -25,10 +25,15 @@ import {
 } from '@/components/ui/table';
 import { marketAmount } from '@/components/zgi-market/market-format';
 import { useMarketLabels } from '@/components/zgi-market/use-market-labels';
-import { useZgiMarketCallLogs, useZgiMarketMeta } from '@/hooks/use-zgi-market';
+import {
+  useZgiMarketCallContent,
+  useZgiMarketCallLogs,
+  useZgiMarketMeta,
+} from '@/hooks/use-zgi-market';
 import { useLocale } from '@/hooks/use-locale';
 import { useT } from '@/i18n';
 import type {
+  MarketCallBody,
   MarketCallChargeLine,
   MarketCallLog,
   MarketCallStatus,
@@ -339,9 +344,7 @@ export function ZgiMarketCallLog() {
                               <TableRow className="bg-muted/20 hover:bg-muted/20">
                                 <TableCell colSpan={COLUMNS} className="space-y-3 p-4">
                                   {row.source === 'credential' ? (
-                                    <p className="text-sm text-muted-foreground">
-                                      {t('market.callLogs.detail.notKept')}
-                                    </p>
+                                    <MarketKeptContent requestId={row.request_id} />
                                   ) : (
                                     <>
                                       <Detail title={t('market.callLogs.detail.input')}>
@@ -456,5 +459,48 @@ function Detail({ title, children }: { title: string; children: ReactNode }) {
       <p className="text-xs font-medium text-muted-foreground">{title}</p>
       {children}
     </div>
+  );
+}
+
+function marketBodyText(body: MarketCallBody): string {
+  return body.encoding === 'text' ? prettyJSON(body.body) : body.body;
+}
+
+/** What a call made outside this workspace sent and answered, read from the market. */
+function MarketKeptContent({ requestId }: { requestId: string }) {
+  const t = useT();
+  const content = useZgiMarketCallContent(requestId, true);
+  if (content.isLoading) {
+    return <Skeleton className="h-24" />;
+  }
+  if (content.isError || !content.data || !content.data.kept) {
+    return <p className="text-sm text-muted-foreground">{t('market.callLogs.detail.notKept')}</p>;
+  }
+  const blocks: Array<[string, MarketCallBody | null]> = [
+    [t('market.callLogs.detail.input'), content.data.request],
+    [t('market.callLogs.detail.output'), content.data.response],
+  ];
+  return (
+    <>
+      {blocks.map(([title, body]) => (
+        <Detail key={title} title={title}>
+          {body && body.bytes > 0 ? (
+            <>
+              <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-all rounded-md bg-background p-3 font-mono text-xs">
+                {marketBodyText(body)}
+              </pre>
+              {body.truncated ? (
+                <p className="text-xs text-muted-foreground">
+                  {t('market.callLogs.detail.truncated')}
+                </p>
+              ) : null}
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">{t('market.callLogs.detail.noOutput')}</p>
+          )}
+        </Detail>
+      ))}
+      <p className="text-xs text-muted-foreground">{t('market.callLogs.detail.fromMarket')}</p>
+    </>
   );
 }

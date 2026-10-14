@@ -26,6 +26,7 @@ const keys = {
   connections: ['zgi-market', 'connections'] as const,
   credentials: ['zgi-market', 'credentials'] as const,
   callLogs: (query: MarketCallLogQuery) => ['zgi-market', 'call-logs', query] as const,
+  callContent: (requestId: string) => ['zgi-market', 'call-content', requestId] as const,
   skillManifest: (slug: string) => ['zgi-market', 'skill-manifest', slug] as const,
   toolCandidates: ['zgi-market', 'tool-candidates'] as const,
   subjectTools: (subjectType: string, subjectId: string) =>
@@ -149,6 +150,16 @@ export function useZgiMarketCallLogs(query: MarketCallLogQuery, enabled = true) 
     queryFn: () => zgiMarketService.getCallLogs(query),
     enabled,
     placeholderData: keepPreviousData,
+  });
+}
+
+/** What a call sent and answered, as the market kept it; read when a direct call is opened. */
+export function useZgiMarketCallContent(requestId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: keys.callContent(requestId),
+    queryFn: () => zgiMarketService.getCallContent(requestId),
+    enabled: enabled && requestId !== '',
+    staleTime,
   });
 }
 
