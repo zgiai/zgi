@@ -309,6 +309,7 @@ export function AIChatInputArea({
   input,
   modelSelectorValue,
   modelSelectorWarning = false,
+  modelProps,
   isModelInitializing = false,
   modelMissing,
   isSending,
@@ -373,7 +374,9 @@ export function AIChatInputArea({
   const [attachments, setAttachments] = useState<AIChatInputAttachment[]>([]);
   const [isFileSelectorOpen, setIsFileSelectorOpen] = useState(false);
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
-  const [, setSelectedModelProps] = useState<ModelSelectorModelProps | null>(null);
+  const [selectedModelProps, setSelectedModelProps] = useState<ModelSelectorModelProps | null>(
+    null
+  );
   const [useMemory, setUseMemory] = useState(false);
   const [isPreparingSend, setIsPreparingSend] = useState(false);
   const [isComposerExpanded, setIsComposerExpanded] = useState(false);
