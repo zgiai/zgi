@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -37,6 +38,8 @@ type fakeMarket struct {
 	failDelete bool
 	// charges answers calls/charges by request id; a request id it lacks is answered none.
 	charges map[string]map[string]any
+	// records are the organization's call records at the market, oldest written first.
+	records []map[string]any
 }
 
 // itemsListing is the API listing "items" as the market answers it, for a member and in public.
@@ -95,6 +98,19 @@ func (m *fakeMarket) handler(t *testing.T) http.HandlerFunc {
 				}},
 				"required_connectors": []map[string]any{},
 			})
+		case r.Method == http.MethodGet && path == "calls":
+			after, _ := strconv.ParseUint(r.URL.Query().Get("after_id"), 10, 64) //nolint:errcheck // test server
+			calls := []map[string]any{}
+			next := after
+			for _, record := range m.records {
+				if id := uint64(record["id"].(int)); id > after {
+					calls = append(calls, record)
+					next = id
+				}
+			}
+			data(http.StatusOK, map[string]any{"calls": calls, "next_after_id": next, "has_more": false})
+		case r.Method == http.MethodGet && path == "credentials":
+			data(http.StatusOK, []map[string]any{{"id": 9, "name": "Ops script"}})
 		case r.Method == http.MethodGet && path == "calls/charges":
 			answers := []map[string]any{}
 			for _, id := range strings.Split(r.URL.Query().Get("request_ids"), ",") {
@@ -238,7 +254,7 @@ func newToolsFixture(t *testing.T, admin bool) *toolsFixture {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&ToolBinding{}, &CallLog{}))
+	require.NoError(t, db.AutoMigrate(&ToolBinding{}, &CallLog{}, &CallLogCursor{}))
 	require.NoError(t, db.Exec(`CREATE TABLE workspaces (id text, organization_id text)`).Error)
 	require.NoError(t, db.Exec(`CREATE TABLE agents (id text, tenant_id text, deleted_at datetime)`).Error)
 	require.NoError(t, db.Exec(`CREATE TABLE digital_humans (id text, organization_id text, deleted_at datetime)`).Error)

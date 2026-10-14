@@ -84,7 +84,7 @@ func callLogQuery(values url.Values) (CallLogQuery, bool) {
 	}
 	query.Status = status
 	switch subjectType := values.Get("subject_type"); subjectType {
-	case "", SubjectAgent, SubjectDigitalHuman:
+	case "", SubjectAgent, SubjectDigitalHuman, SubjectCredential:
 		query.SubjectType = subjectType
 	default:
 		return CallLogQuery{}, false
@@ -125,9 +125,16 @@ func callLogQuery(values url.Values) (CallLogQuery, bool) {
 	return query, true
 }
 
-// CallLogs returns one page of the organization's market calls. The calls on it whose charge is
-// pending are asked for at the market first; a market that cannot answer leaves them pending.
+// CallLogs returns one page of the organization's market calls. The calls made outside this
+// instance are read from the market, and the calls on the page whose charge is pending are asked
+// for at the market; a market that cannot answer leaves them for the next read.
 func (t *Tools) CallLogs(ctx context.Context, who caller, organizationID uuid.UUID, query CallLogQuery) (*CallLogPage, error) {
+	// The calls made with a credential outside this instance are read from the market first. A
+	// market that cannot answer leaves them for the next read.
+	if err := t.syncDirectCalls(ctx, who, organizationID); err != nil {
+		logger.WarnContext(ctx, "the market's call records could not be read; calls made outside this instance are not logged yet",
+			"organization_id", who.organizationID, "error", err.Error())
+	}
 	page, err := t.logs.list(ctx, organizationID, query)
 	if err != nil {
 		return nil, err

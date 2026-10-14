@@ -45,8 +45,8 @@ const DATE_RANGE_DAYS: Record<DateRangeKey, number> = {
 };
 const PER_PAGE = 20;
 const COLUMNS = 7;
-const STATUSES: MarketCallStatus[] = ['succeeded', 'tool_error', 'failed'];
-const SOURCES = ['console', 'webapp', 'external-api', 'channel', 'task'] as const;
+const STATUSES: MarketCallStatus[] = ['succeeded', 'tool_error', 'refused', 'failed'];
+const SOURCES = ['console', 'webapp', 'external-api', 'channel', 'task', 'credential'] as const;
 type KnownSource = (typeof SOURCES)[number];
 
 function points(micros: number): string {
@@ -102,7 +102,10 @@ export function ZgiMarketCallLog() {
 
   const subject = (row: MarketCallLog) =>
     `${t(`market.callLogs.subjects.${row.subject_type}`)} · ${
-      row.subject_name || t('market.callLogs.deletedSubject')
+      row.subject_type === 'credential'
+        ? row.credential_name ||
+          t('market.callLogs.detail.credentialUnnamed', { id: row.credential_id })
+        : row.subject_name || t('market.callLogs.deletedSubject')
     }`;
   const sourceLabel = (row: MarketCallLog) =>
     (SOURCES as readonly string[]).includes(row.source)
@@ -332,18 +335,26 @@ export function ZgiMarketCallLog() {
                             {expanded ? (
                               <TableRow className="bg-muted/20 hover:bg-muted/20">
                                 <TableCell colSpan={COLUMNS} className="space-y-3 p-4">
-                                  <Detail title={t('market.callLogs.detail.input')}>
-                                    <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded-md bg-background p-3 font-mono text-xs">
-                                      {prettyJSON(row.input)}
-                                    </pre>
-                                  </Detail>
-                                  <Detail title={t('market.callLogs.detail.output')}>
-                                    <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-all rounded-md bg-background p-3 font-mono text-xs">
-                                      {row.output
-                                        ? prettyJSON(row.output)
-                                        : t('market.callLogs.detail.noOutput')}
-                                    </pre>
-                                  </Detail>
+                                  {row.source === 'credential' ? (
+                                    <p className="text-sm text-muted-foreground">
+                                      {t('market.callLogs.detail.notKept')}
+                                    </p>
+                                  ) : (
+                                    <>
+                                      <Detail title={t('market.callLogs.detail.input')}>
+                                        <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded-md bg-background p-3 font-mono text-xs">
+                                          {prettyJSON(row.input)}
+                                        </pre>
+                                      </Detail>
+                                      <Detail title={t('market.callLogs.detail.output')}>
+                                        <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-all rounded-md bg-background p-3 font-mono text-xs">
+                                          {row.output
+                                            ? prettyJSON(row.output)
+                                            : t('market.callLogs.detail.noOutput')}
+                                        </pre>
+                                      </Detail>
+                                    </>
+                                  )}
                                   {row.error_message ? (
                                     <Detail title={t('market.callLogs.detail.error')}>
                                       <p className="text-sm text-destructive">

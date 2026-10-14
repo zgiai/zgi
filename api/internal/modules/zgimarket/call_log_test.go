@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -91,10 +92,19 @@ func TestEveryMarketCallIsLoggedWithItsInputOutputAndCharge(t *testing.T) {
 	assert.Equal(t, CallChargePending, byRequest["api-items-standard/v1/items/broke"]["charge_state"])
 
 	// A settled call is not asked for again.
-	asked := len(fixture.market.calls)
+	chargeReads := func() int {
+		count := 0
+		for _, call := range fixture.market.calls {
+			if strings.HasPrefix(call, "GET calls/charges") {
+				count++
+			}
+		}
+		return count
+	}
+	asked := chargeReads()
 	status, _ = fixture.send(t, http.MethodGet, "call-logs?from="+from+"&to="+to+"&status=tool_error", "")
 	require.Equal(t, http.StatusOK, status)
-	assert.Len(t, fixture.market.calls, asked+1, "only the call still pending is asked for")
+	assert.Equal(t, asked+1, chargeReads(), "only the call still pending is asked for")
 
 	for _, bad := range []string{"call-logs", "call-logs?from=" + to + "&to=" + from, "call-logs?from=0&to=" + to, "call-logs?from=" + from + "&to=" + to + "&status=lost"} {
 		status, _ = fixture.send(t, http.MethodGet, bad, "")
@@ -106,4 +116,63 @@ func TestOnlyAdministratorsReadTheCallLogs(t *testing.T) {
 	fixture := newToolsFixture(t, false)
 	status, _ := fixture.send(t, http.MethodGet, "call-logs?from=0&to=100", "")
 	assert.Equal(t, http.StatusForbidden, status)
+}
+
+func TestCallsMadeWithACredentialOutsideThisInstanceAreReadFromTheMarket(t *testing.T) {
+	fixture := newToolsFixture(t, true)
+	now := time.Now()
+	old := now.Add(-time.Hour).UTC().Format(time.RFC3339)
+	str := func(value string) *string { return &value }
+	require.NoError(t, fixture.db.Create(&CallLog{
+		ID: uuid.New(), OrganizationID: fixture.org, SubjectType: SubjectAgent, SubjectID: fixture.agent,
+		ItemKind: ItemKindMCP, ListingSlug: "wiki", ToolName: "lookup", Status: CallSucceeded,
+		RequestID: "req-made-here", ChargeState: CallChargeCharged, ChargeLines: []CallChargeLine{}, CreatedAt: now.Add(-time.Hour),
+	}).Error)
+	fixture.market.records = []map[string]any{
+		{"id": 1, "request_id": "req-init", "route": "mcp", "operation": "initialize", "target": "wiki", "outcome": "succeeded", "occurred_at": old},
+		{"id": 2, "request_id": "req-made-here", "route": "mcp", "operation": "tools/call", "tool_name": "lookup", "target": "wiki", "outcome": "succeeded", "occurred_at": old},
+		{"id": 3, "request_id": "req-script", "route": "api", "method": "GET", "operation": "/v1/items/7", "credential_id": 9,
+			"target": "items-standard", "outcome": "succeeded", "duration_ms": 40, "metering_event_ids": []int{5}, "occurred_at": old},
+		{"id": 4, "request_id": "req-broke", "route": "api", "method": "GET", "operation": "/v1/items/8", "credential_id": 9,
+			"target": "items-standard", "outcome": "refused", "error_code": "BILLING.INSUFFICIENT_BALANCE", "occurred_at": old},
+		{"id": 5, "request_id": "req-binding", "route": "mcp", "operation": "tools/call", "tool_name": "lookup", "credential_id": 3,
+			"consumer_type": str(SubjectAgent), "consumer_ref": str("agent:" + fixture.agent.String()), "target": "wiki", "outcome": "succeeded", "occurred_at": old},
+		{"id": 6, "request_id": "req-young", "route": "api", "operation": "/v1/items/9", "credential_id": 9, "target": "items-standard",
+			"outcome": "succeeded", "occurred_at": now.UTC().Format(time.RFC3339)},
+	}
+	fixture.market.charges = map[string]map[string]any{
+		"req-script": {"state": "charged", "amount_micros": 1000, "lines": []map[string]any{{"meter": "request", "quantity": 1, "amount_micros": 1000}}},
+	}
+	from, to := strconv.FormatInt(now.Add(-2*time.Hour).Unix(), 10), strconv.FormatInt(now.Add(time.Hour).Unix(), 10)
+	status, answer := fixture.send(t, http.MethodGet, "call-logs?from="+from+"&to="+to, "")
+	require.Equal(t, http.StatusOK, status, answer)
+
+	var logs []CallLog
+	require.NoError(t, fixture.db.Order("request_id").Find(&logs).Error)
+	byRequest := map[string]CallLog{}
+	for _, row := range logs {
+		byRequest[row.RequestID] = row
+	}
+	assert.Len(t, logs, 4, "the handshake, the call made here and the young record are not added")
+	script := byRequest["req-script"]
+	assert.Equal(t, []any{SubjectCredential, SourceCredential, ItemKindAPI, "items-standard", "GET /v1/items/7", CallSucceeded, uint64(9), "Ops script", CallChargeCharged, int64(1000), ""},
+		[]any{script.SubjectType, script.Source, script.ItemKind, script.OfferingSlug, script.ToolName, script.Status, script.CredentialID, script.CredentialName, script.ChargeState, script.ChargeMicros, script.Input},
+		"the charge of a call read from the market is settled like any other")
+	assert.Equal(t, []any{CallRefused, "BILLING.INSUFFICIENT_BALANCE", CallChargeNone},
+		[]any{byRequest["req-broke"].Status, byRequest["req-broke"].ErrorMessage, byRequest["req-broke"].ChargeState})
+	assert.Equal(t, []any{SubjectAgent, fixture.agent}, []any{byRequest["req-binding"].SubjectType, byRequest["req-binding"].SubjectID},
+		"a binding's credential used elsewhere still names its agent")
+	var cursor CallLogCursor
+	require.NoError(t, fixture.db.First(&cursor).Error)
+	assert.Equal(t, uint64(5), cursor.AfterID, "the cursor stops before the record that is too young")
+
+	// Read again later: nothing is added twice, and the record that has aged is.
+	fixture.tools.now = func() time.Time { return now.Add(time.Minute) }
+	status, _ = fixture.send(t, http.MethodGet, "call-logs?from="+from+"&to="+to+"&subject_type=credential", "")
+	require.Equal(t, http.StatusOK, status)
+	var count int64
+	require.NoError(t, fixture.db.Model(&CallLog{}).Count(&count).Error)
+	assert.Equal(t, int64(5), count)
+	require.NoError(t, fixture.db.First(&cursor).Error)
+	assert.Equal(t, uint64(6), cursor.AfterID)
 }
