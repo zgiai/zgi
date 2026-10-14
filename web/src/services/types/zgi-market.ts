@@ -348,3 +348,64 @@ export interface MarketSkillManifest {
   size_bytes: number;
   files: Array<{ path: string; size: number; sha256: string }>;
 }
+
+/** How a market tool call ended, as this instance saw it. */
+export type MarketCallStatus = 'succeeded' | 'tool_error' | 'failed';
+
+/** Whether what the market charged for a call is known. */
+export type MarketCallChargeState = 'pending' | 'charged' | 'none' | 'unknown';
+
+/** The charge of one metering event of a call. */
+export interface MarketCallChargeLine {
+  meter: string;
+  unit_name: string;
+  quantity: number;
+  amount_micros: number;
+}
+
+/** One market tool call this instance made for an agent or a digital human. */
+export interface MarketCallLog {
+  id: string;
+  subject_type: MarketToolSubjectType;
+  subject_id: string;
+  subject_name: string;
+  item_kind: 'mcp' | 'api';
+  listing_slug: string;
+  listing_title: string;
+  offering_slug: string;
+  tool_name: string;
+  input: string;
+  output: string;
+  status: MarketCallStatus;
+  error_message: string;
+  duration_ms: number;
+  request_id: string;
+  charge_state: MarketCallChargeState;
+  charge_micros: number;
+  charge_lines: MarketCallChargeLine[];
+  created_at: string;
+}
+
+export interface MarketCallLogSummary {
+  calls: number;
+  succeeded: number;
+  charge_micros: number;
+  pending: number;
+}
+
+export interface MarketCallLogPage {
+  data: MarketCallLog[];
+  total: number;
+  page: number;
+  per_page: number;
+  summary: MarketCallLogSummary;
+}
+
+/** A period in Unix seconds, [from, to), at most 31 days, and optional filters. */
+export interface MarketCallLogQuery {
+  from: number;
+  to: number;
+  status?: MarketCallStatus;
+  page?: number;
+  per_page?: number;
+}

@@ -20,6 +20,7 @@ const messages: DashboardMessages = {
     usageGroup: '分组统计',
     usageDetails: '使用详情',
     invocationLogs: '大模型调用日志',
+    marketCallLogs: '市场调用日志',
     modelChannels: '模型接入',
     llmProviders: '模型管理',
     channel: '渠道管理',

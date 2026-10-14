@@ -8,6 +8,7 @@ import {
 import { AGENT_KEYS, DIGITAL_HUMAN_KEYS } from '@/hooks/query-keys';
 import { zgiMarketService } from '@/services/zgi-market.service';
 import type {
+  MarketCallLogQuery,
   MarketListingKind,
   MarketListingQuery,
   MarketToolBindingInput,
@@ -24,6 +25,7 @@ const keys = {
   installedSkills: ['zgi-market', 'installed-skills'] as const,
   connections: ['zgi-market', 'connections'] as const,
   credentials: ['zgi-market', 'credentials'] as const,
+  callLogs: (query: MarketCallLogQuery) => ['zgi-market', 'call-logs', query] as const,
   skillManifest: (slug: string) => ['zgi-market', 'skill-manifest', slug] as const,
   toolCandidates: ['zgi-market', 'tool-candidates'] as const,
   subjectTools: (subjectType: string, subjectId: string) =>
@@ -137,6 +139,16 @@ export function useZgiMarketSkillManifest(slug: string, enabled: boolean) {
     enabled,
     staleTime,
     retry: false,
+  });
+}
+
+/** The organization's market tool calls for one period; administrators only. */
+export function useZgiMarketCallLogs(query: MarketCallLogQuery, enabled = true) {
+  return useQuery({
+    queryKey: keys.callLogs(query),
+    queryFn: () => zgiMarketService.getCallLogs(query),
+    enabled,
+    placeholderData: keepPreviousData,
   });
 }
 

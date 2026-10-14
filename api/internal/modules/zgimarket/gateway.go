@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -46,6 +47,39 @@ type GatewayTool struct {
 type GatewayResult struct {
 	Text    string
 	IsError bool
+	// RequestID is the X-Request-Id the gateway answered the call with: what the market records
+	// and charges the call under. Empty when the gateway named none.
+	RequestID string
+}
+
+// requestIDHeader is the header the gateway names a call by.
+const requestIDHeader = "X-Request-Id"
+
+// lastRequestID keeps the request id of the latest POST one connection to the gateway answered.
+// A connection sends one JSON-RPC request at a time and the tool call is its last POST, so after
+// the call this is the call's own id rather than the handshake's.
+type lastRequestID struct {
+	next http.RoundTripper
+	mu   sync.Mutex
+	id   string
+}
+
+func (l *lastRequestID) RoundTrip(request *http.Request) (*http.Response, error) {
+	response, err := l.next.RoundTrip(request)
+	if response != nil && request.Method == http.MethodPost {
+		if id := response.Header.Get(requestIDHeader); id != "" {
+			l.mu.Lock()
+			l.id = id
+			l.mu.Unlock()
+		}
+	}
+	return response, err
+}
+
+func (l *lastRequestID) value() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.id
 }
 
 type gatewayClient struct {
@@ -96,9 +130,16 @@ func newGatewayClient(config GatewayConfig) (*gatewayClient, error) {
 	}, nil
 }
 
-func (g *gatewayClient) connect(ctx context.Context, slug, secret string) (*mcpclient.Connection, error) {
+// connect opens an MCP connection to a bound listing. ids, when given, keeps the request id of
+// each answer.
+func (g *gatewayClient) connect(ctx context.Context, slug, secret string, ids *lastRequestID) (*mcpclient.Connection, error) {
 	if !marketSlugPattern.MatchString(slug) || secret == "" || strings.ContainsAny(secret, "\r\n") {
 		return nil, ErrListingNotBindable
+	}
+	httpClient := g.http
+	if ids != nil {
+		ids.next = g.http.Transport
+		httpClient = &http.Client{Transport: ids, CheckRedirect: g.http.CheckRedirect}
 	}
 	credentials := mcpclient.CredentialProviderFunc(func(context.Context, *url.URL) (http.Header, error) {
 		return http.Header{"Authorization": []string{"Bearer " + secret}}, nil
@@ -109,7 +150,7 @@ func (g *gatewayClient) connect(ctx context.Context, slug, secret string) (*mcpc
 			ConnectTimeout: gatewayConnectTimeout, OperationTimeout: gatewayCallTimeout,
 			MaxMessageBytes: gatewayMessageBytes, MaxConcurrentRequests: 2, MaxCatalogItems: 200,
 		},
-	}, mcpclient.Options{HTTPClient: g.http, HTTPAuth: mcpclient.HTTPAuthConfig{Mode: mcpclient.AuthBearer, Credentials: credentials}})
+	}, mcpclient.Options{HTTPClient: httpClient, HTTPAuth: mcpclient.HTTPAuthConfig{Mode: mcpclient.AuthBearer, Credentials: credentials}})
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +165,7 @@ func closeQuietly(connection *mcpclient.Connection) {
 
 // ListTools lists the tools of a bound listing.
 func (g *gatewayClient) ListTools(ctx context.Context, slug, secret string) ([]GatewayTool, error) {
-	connection, err := g.connect(ctx, slug, secret)
+	connection, err := g.connect(ctx, slug, secret, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -162,16 +203,17 @@ func (g *gatewayClient) CallTool(ctx context.Context, slug, secret, tool string,
 	if err != nil {
 		return nil, err
 	}
-	connection, err := g.connect(ctx, slug, secret)
+	ids := &lastRequestID{}
+	connection, err := g.connect(ctx, slug, secret, ids)
 	if err != nil {
 		return nil, err
 	}
 	defer closeQuietly(connection)
 	result, err := connection.CallTool(ctx, mcpclient.ToolCallRequest{Name: tool, Arguments: encoded})
 	if err != nil {
-		return nil, err
+		return &GatewayResult{RequestID: ids.value()}, err
 	}
-	return &GatewayResult{Text: resultText(result), IsError: result.IsError}, nil
+	return &GatewayResult{Text: resultText(result), IsError: result.IsError, RequestID: ids.value()}, nil
 }
 
 // resultText joins the text content of a tool result, falling back to its structured content.

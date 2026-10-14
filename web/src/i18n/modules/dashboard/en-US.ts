@@ -18,6 +18,7 @@ const messages = {
     usageGroup: 'Group Statistics',
     usageDetails: 'Usage Details',
     invocationLogs: 'LLM Invocation Log',
+    marketCallLogs: 'Market Call Log',
     modelChannels: 'Model Access',
     llmProviders: 'Model Management',
     channel: 'Channel Management',
