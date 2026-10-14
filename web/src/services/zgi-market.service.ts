@@ -1,5 +1,6 @@
 import { BaseService } from '@/lib/http/services';
 import type {
+  MarketCallContent,
   MarketCallLogPage,
   MarketCallLogQuery,
   MarketCategory,
@@ -208,6 +209,17 @@ class ZgiMarketService extends BaseService {
           ...(query.source ? { source: query.source } : {}),
         },
       }
+    );
+    return response.data;
+  }
+
+  /** What a call sent and answered, as the market kept it, by its request id. */
+  async getCallContent(requestId: string): Promise<MarketCallContent> {
+    const response = await this.request<MarketEnvelope<MarketCallContent>>(
+      'get',
+      '/calls/content',
+      undefined,
+      { params: { request_id: requestId } }
     );
     return response.data;
   }

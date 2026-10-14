@@ -328,7 +328,10 @@ const messages = {
       requestId: 'Request ID',
       noOutput: 'No output',
       notKept:
-        'This call was made with a market credential outside this workspace. The market keeps no input or output of a call.',
+        'The market kept no input or output of this call, or has deleted them after its retention period.',
+      fromMarket:
+        'This call was made with a market credential outside this workspace; its input and output are as the market kept them.',
+      truncated: 'Cut at the size the market keeps.',
       credentialUnnamed: 'Credential #{id}',
       conversation: 'Conversation ID',
       message: 'Message ID',
