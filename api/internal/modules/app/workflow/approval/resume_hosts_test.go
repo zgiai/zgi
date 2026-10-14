@@ -10,15 +10,17 @@ type stubResumeHost struct {
 	handled   bool
 	err       error
 	calls     int
+	requests  []ResumeRequest
 	abandoned []error
 }
 
-func (h *stubResumeHost) AbandonApprovalForm(_ context.Context, _ *Form, cause error) {
+func (h *stubResumeHost) AbandonWorkflowResume(_ context.Context, _ ResumeRequest, cause error) {
 	h.abandoned = append(h.abandoned, cause)
 }
 
-func (h *stubResumeHost) ResumeApprovalForm(context.Context, *Form) (bool, error) {
+func (h *stubResumeHost) ResumeWorkflow(_ context.Context, req ResumeRequest) (bool, error) {
 	h.calls++
+	h.requests = append(h.requests, req)
 	return h.handled, h.err
 }
 
@@ -91,7 +93,7 @@ func TestRetryingResumeHostsKeepTheQueueRetryWhenTheOwningHostFails(t *testing.T
 	if err := hosts.RetryingResumeCallback(func(context.Context, *Form) error {
 		fallbackCalls++
 		return nil
-	})(context.Background(), &Form{ID: "form-1"}); err != nil || fallbackCalls != 1 {
+	})(context.Background(), &Form{ID: "form-1", WorkflowRunID: "run-1"}); err != nil || fallbackCalls != 1 {
 		t.Fatalf("no waiting host: err = %v, fallback calls = %d", err, fallbackCalls)
 	}
 }
@@ -121,7 +123,7 @@ func TestResumeHostsAbandonTheConversationOnlyWhenGivingUp(t *testing.T) {
 			if test.retrying {
 				callback = hosts.RetryingResumeCallback
 			}
-			_ = callback(func(context.Context, *Form) error { return nil })(context.Background(), &Form{ID: "form-1"})
+			_ = callback(func(context.Context, *Form) error { return nil })(context.Background(), &Form{ID: "form-1", WorkflowRunID: "run-1"})
 			if len(host.abandoned) != test.wantAbandoned || (test.wantAbandoned == 1 && !errors.Is(host.abandoned[0], hostErr)) {
 				t.Fatalf("abandoned = %v, want %d", host.abandoned, test.wantAbandoned)
 			}
@@ -146,5 +148,34 @@ func TestQueuedResumeCallbackRetriesTimeoutsThroughTheQueue(t *testing.T) {
 	unavailable := QueuedResumeCallback(func(context.Context, string) error { return errors.New("redis unavailable") }, fallback)
 	if err := unavailable(context.Background(), &Form{ID: "form-2"}); err != nil || fallbackCalls != 1 {
 		t.Fatalf("err = %v, fallback calls = %d; want the resume run right away", err, fallbackCalls)
+	}
+}
+
+func TestQuestionResumesReachTheHostWithTheirAnswers(t *testing.T) {
+	host := &stubResumeHost{handled: true}
+	hosts := NewResumeHosts()
+	hosts.Register(host)
+	fallbackCalls := 0
+	inputs := map[string]interface{}{"query": "Q4"}
+	err := hosts.RetryingQuestionResumeCallback(func(context.Context, string, map[string]interface{}) error {
+		fallbackCalls++
+		return nil
+	})(context.Background(), "run-1", inputs)
+	if err != nil || fallbackCalls != 0 || len(host.requests) != 1 {
+		t.Fatalf("err = %v, fallback calls = %d, requests = %#v", err, fallbackCalls, host.requests)
+	}
+	if req := host.requests[0]; req.WorkflowRunID != "run-1" || req.Form != nil || req.QuestionInputs["query"] != "Q4" {
+		t.Fatalf("request = %#v, want the question resume with its answers", req)
+	}
+
+	failing := &stubResumeHost{err: errors.New("temporary database error")}
+	retrying := NewResumeHosts()
+	retrying.lastAttempt = func(context.Context) bool { return false }
+	retrying.Register(failing)
+	if err := retrying.RetryingQuestionResumeCallback(func(context.Context, string, map[string]interface{}) error {
+		fallbackCalls++
+		return nil
+	})(context.Background(), "run-1", inputs); err == nil || fallbackCalls != 0 {
+		t.Fatalf("err = %v, fallback calls = %d; want the question resume retried", err, fallbackCalls)
 	}
 }

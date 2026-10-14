@@ -39,7 +39,9 @@ func registerApprovalTaskHandlers(registry approvalTaskRegistry, taskManager *qu
 	if taskManager != nil {
 		questionTaskType = taskManager.GetTaskTypeWithPrefix(questionTaskType)
 	}
-	questionTaskHandler := approvalruntime.NewQuestionResumeTaskHandler(handler.ResumeQuestionAnswerWorkflow)
+	// A question resume also resumes a pause whose approval completed after
+	// its question was answered, so the waiting conversation follows it too.
+	questionTaskHandler := approvalruntime.NewQuestionResumeTaskHandler(hosts.RetryingQuestionResumeCallback(handler.ResumeQuestionAnswerWorkflow))
 	if isNew := registry.Register(questionTaskType, questionTaskHandler); isNew {
 		logger.Info("Registered question resume handler", map[string]interface{}{
 			"task_type": questionTaskType,

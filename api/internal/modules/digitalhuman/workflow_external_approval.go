@@ -39,15 +39,17 @@ type messageFailer interface {
 	FailMessage(context.Context, chatruntime.Scope, chatruntime.FailMessageRequest) (*runtimemodel.Message, error)
 }
 
-// ResumeApprovalForm resumes a workflow approval completed outside the
+// ResumeWorkflow resumes a workflow approval completed outside the
 // conversation (an email or SMS approver, the approval page, or a timeout)
 // together with the DigitalHuman run that waits on it: the workflow events
 // stream into the same continuation lifecycle an in-conversation approval
 // uses, so the message is summarized, completed, failed or paused again and
-// the run settles with it. It reports handled=false when no run waits on the
-// form, or when the conversation already took the approval itself.
-func (s *RuntimeService) ResumeApprovalForm(ctx context.Context, form *approvalruntime.Form) (bool, error) {
-	if s == nil || form == nil || !s.WorkflowContinuationEnabled() {
+// the run settles with it. A question resume, carrying the answers given
+// before the approval completed the pause, is followed the same way. It
+// reports handled=false when no run waits on the workflow, or when the
+// conversation already took the approval itself.
+func (s *RuntimeService) ResumeWorkflow(ctx context.Context, req approvalruntime.ResumeRequest) (bool, error) {
+	if s == nil || (req.Form == nil && req.QuestionInputs == nil) || !s.WorkflowContinuationEnabled() {
 		return false, nil
 	}
 	store, ok := s.store.(workflowApprovalWaitingStore)
@@ -58,7 +60,7 @@ func (s *RuntimeService) ResumeApprovalForm(ctx context.Context, form *approvalr
 	if !ok {
 		return false, nil
 	}
-	run, err := store.RunWaitingOnWorkflowApproval(ctx, form.WorkflowRunID)
+	run, err := store.RunWaitingOnWorkflowApproval(ctx, req.WorkflowRunID)
 	if err != nil || run == nil || run.ConversationID == nil || run.MessageID == nil {
 		return false, err
 	}
@@ -97,19 +99,29 @@ func (s *RuntimeService) ResumeApprovalForm(ctx context.Context, form *approvalr
 		lifecycle.settle = nil
 		return true, lifecycle.abortBeforeResume(err)
 	}
-	resume := workflowContinuationUnobserved
-	if runner, streaming := s.workflowRunner.(workflowContinuationStreamRunner); streaming {
-		resume = workflowContinuationStreamed
-		err = runner.ResumeApprovalWorkflowStream(ctx, form, lifecycle.handle)
-	} else {
-		err = s.workflowRunner.ResumeApprovalWorkflow(ctx, form)
-	}
+	resume, err := s.resumeHostedWorkflow(ctx, req, lifecycle.handle)
 	if workflowResumeNotStarted(err) {
 		// The workflow is still waiting (another approver on the same pause) or
 		// is resumed elsewhere; keep the conversation waiting on it.
 		return true, lifecycle.abortBeforeResume(err)
 	}
 	return true, lifecycle.finish(resume, err)
+}
+
+// resumeHostedWorkflow resumes the workflow the way the request was queued:
+// by its approval form, or with the question answers of the pause.
+func (s *RuntimeService) resumeHostedWorkflow(ctx context.Context, req approvalruntime.ResumeRequest, onEvent func(string, map[string]interface{}) error) (workflowContinuationResume, error) {
+	runner, streaming := s.workflowRunner.(workflowContinuationStreamRunner)
+	switch {
+	case req.Form != nil && streaming:
+		return workflowContinuationStreamed, runner.ResumeApprovalWorkflowStream(ctx, req.Form, onEvent)
+	case req.Form != nil:
+		return workflowContinuationUnobserved, s.workflowRunner.ResumeApprovalWorkflow(ctx, req.Form)
+	case streaming:
+		return workflowContinuationStreamed, runner.ResumeQuestionAnswerWorkflowStream(ctx, req.WorkflowRunID, req.QuestionInputs, onEvent)
+	default:
+		return workflowContinuationUnobserved, s.workflowRunner.ResumeQuestionAnswerWorkflow(ctx, req.WorkflowRunID, req.QuestionInputs)
+	}
 }
 
 func workflowResumeNotStarted(err error) bool {
@@ -137,12 +149,12 @@ func workflowRunCaller(run *Run) chatruntime.Caller {
 	return caller
 }
 
-// AbandonApprovalForm settles the run and the message that wait on the form
-// when the approval resume gives up taking it: the workflow then resumes
+// AbandonWorkflowResume settles the run and the message that wait on the
+// workflow when its resume gives up taking it: the workflow then resumes
 // alone, and the conversation reports that it could not follow it instead of
 // waiting forever.
-func (s *RuntimeService) AbandonApprovalForm(ctx context.Context, form *approvalruntime.Form, cause error) {
-	if s == nil || form == nil {
+func (s *RuntimeService) AbandonWorkflowResume(ctx context.Context, req approvalruntime.ResumeRequest, cause error) {
+	if s == nil || req.WorkflowRunID == "" {
 		return
 	}
 	store, ok := s.store.(workflowApprovalWaitingStore)
@@ -150,14 +162,14 @@ func (s *RuntimeService) AbandonApprovalForm(ctx context.Context, form *approval
 		return
 	}
 	ctx = context.WithoutCancel(ctx)
-	run, err := store.RunWaitingOnWorkflowApproval(ctx, form.WorkflowRunID)
+	run, err := store.RunWaitingOnWorkflowApproval(ctx, req.WorkflowRunID)
 	if err != nil || run == nil || run.ConversationID == nil || run.MessageID == nil {
 		if err != nil {
-			logger.WarnContext(ctx, "failed to find the DigitalHuman run of an abandoned workflow approval", "workflow_run_id", form.WorkflowRunID, err)
+			logger.WarnContext(ctx, "failed to find the DigitalHuman run of an abandoned workflow approval", "workflow_run_id", req.WorkflowRunID, err)
 		}
 		return
 	}
-	logger.WarnContext(ctx, "DigitalHuman conversation stops following its workflow approval", "run_id", run.ID.String(), "workflow_run_id", form.WorkflowRunID, "cause", cause)
+	logger.WarnContext(ctx, "DigitalHuman conversation stops following its workflow approval", "run_id", run.ID.String(), "workflow_run_id", req.WorkflowRunID, "cause", cause)
 	if failer, ok := s.chat.(messageFailer); ok {
 		if _, err := failer.FailMessage(ctx, runtimeScope(run), chatruntime.FailMessageRequest{
 			ConversationID: *run.ConversationID, MessageID: *run.MessageID, ErrorMessage: workflowApprovalAbandonedMessage,

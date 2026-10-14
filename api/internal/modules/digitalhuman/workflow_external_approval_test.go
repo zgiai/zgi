@@ -86,9 +86,10 @@ type workflowEvent struct {
 
 // streamingApprovalRunner resumes the approval by replaying workflow events.
 type streamingApprovalRunner struct {
-	events  []workflowEvent
-	err     error
-	resumed []string
+	events          []workflowEvent
+	err             error
+	resumed         []string
+	questionResumes []map[string]interface{}
 }
 
 func (r *streamingApprovalRunner) ResumeApprovalWorkflow(context.Context, *approvalruntime.Form) error {
@@ -107,8 +108,12 @@ func (r *streamingApprovalRunner) ResumeApprovalWorkflowStream(_ context.Context
 	return r.err
 }
 
-func (r *streamingApprovalRunner) ResumeQuestionAnswerWorkflowStream(context.Context, string, map[string]interface{}, func(string, map[string]interface{}) error) error {
-	return nil
+func (r *streamingApprovalRunner) ResumeQuestionAnswerWorkflowStream(_ context.Context, workflowRunID string, inputs map[string]interface{}, onEvent func(string, map[string]interface{}) error) error {
+	r.questionResumes = append(r.questionResumes, inputs)
+	for _, event := range r.events {
+		_ = onEvent(event.eventType, event.payload)
+	}
+	return r.err
 }
 
 type externalApprovalFixture struct {
@@ -156,15 +161,19 @@ func newExternalApprovalFixture(t *testing.T, runner *streamingApprovalRunner) e
 	}
 }
 
+func (f externalApprovalFixture) request() approvalruntime.ResumeRequest {
+	return approvalruntime.ResumeRequest{WorkflowRunID: f.form.WorkflowRunID, Form: f.form}
+}
+
 func TestExternalApprovalResumesTheWorkflowAndTheConversation(t *testing.T) {
 	f := newExternalApprovalFixture(t, &streamingApprovalRunner{events: []workflowEvent{
 		{"node_finished", map[string]interface{}{"node_id": "approval"}},
 		{"workflow_finished", map[string]interface{}{"status": "succeeded", "outputs": map[string]interface{}{"decision": "approved"}}},
 	}})
 	f.chat.summaryResult = &chatruntime.ChatResult{Status: runtimemodel.MessageStatusCompleted, Answer: "The purchase was approved.", Metadata: map[string]interface{}{}}
-	handled, err := f.service.ResumeApprovalForm(t.Context(), f.form)
+	handled, err := f.service.ResumeWorkflow(t.Context(), f.request())
 	if !handled || err != nil {
-		t.Fatalf("ResumeApprovalForm() = %v, %v", handled, err)
+		t.Fatalf("ResumeWorkflow() = %v, %v", handled, err)
 	}
 	if !equalStrings(f.store.lookups, []string{"workflow-run"}) || !equalStrings(f.runner.resumed, []string{"form-1"}) {
 		t.Fatalf("lookups = %v, resumed = %v", f.store.lookups, f.runner.resumed)
@@ -183,12 +192,32 @@ func TestExternalApprovalResumesTheWorkflowAndTheConversation(t *testing.T) {
 	}
 }
 
+func TestQuestionResumeOfAMixedPauseIsFollowedByTheConversation(t *testing.T) {
+	// The question was answered first; the approval then completed the pause,
+	// so the workflow resumes as a question resume carrying the answer.
+	f := newExternalApprovalFixture(t, &streamingApprovalRunner{events: []workflowEvent{
+		{"workflow_finished", map[string]interface{}{"status": "succeeded", "outputs": map[string]interface{}{"budget": "Q4"}}},
+	}})
+	f.chat.summaryResult = &chatruntime.ChatResult{Status: runtimemodel.MessageStatusCompleted, Answer: "Approved for Q4.", Metadata: map[string]interface{}{}}
+	inputs := map[string]interface{}{"query": "Q4", "question_answer_node_id": "question-node"}
+	handled, err := f.service.ResumeWorkflow(t.Context(), approvalruntime.ResumeRequest{WorkflowRunID: "workflow-run", QuestionInputs: inputs})
+	if !handled || err != nil {
+		t.Fatalf("ResumeWorkflow() = %v, %v", handled, err)
+	}
+	if len(f.runner.resumed) != 0 || len(f.runner.questionResumes) != 1 || f.runner.questionResumes[0]["query"] != "Q4" {
+		t.Fatalf("approval resumes = %v, question resumes = %v; want the question answers kept", f.runner.resumed, f.runner.questionResumes)
+	}
+	if want := []string{"resume", "complete:Approved for Q4."}; !equalStrings(f.store.calls, want) {
+		t.Fatalf("run store calls = %v, want %v", f.store.calls, want)
+	}
+}
+
 func TestExternalApprovalFailsTheRunWhenTheWorkflowFailed(t *testing.T) {
 	f := newExternalApprovalFixture(t, &streamingApprovalRunner{events: []workflowEvent{
 		{"workflow_finished", map[string]interface{}{"status": "failed", "error": "node failed"}},
 	}})
-	if handled, err := f.service.ResumeApprovalForm(t.Context(), f.form); !handled || err != nil {
-		t.Fatalf("ResumeApprovalForm() = %v, %v", handled, err)
+	if handled, err := f.service.ResumeWorkflow(t.Context(), f.request()); !handled || err != nil {
+		t.Fatalf("ResumeWorkflow() = %v, %v", handled, err)
 	}
 	if want := []string{"resume", "fail:digital_human.run.execution_failed"}; !equalStrings(f.store.calls, want) {
 		t.Fatalf("run store calls = %v, want %v", f.store.calls, want)
@@ -199,8 +228,8 @@ func TestExternalApprovalMovesTheConversationToTheNextRequest(t *testing.T) {
 	f := newExternalApprovalFixture(t, &streamingApprovalRunner{events: []workflowEvent{
 		{"question_answer_requested", map[string]interface{}{"question": "Which budget?"}},
 	}})
-	if handled, err := f.service.ResumeApprovalForm(t.Context(), f.form); !handled || err != nil {
-		t.Fatalf("ResumeApprovalForm() = %v, %v", handled, err)
+	if handled, err := f.service.ResumeWorkflow(t.Context(), f.request()); !handled || err != nil {
+		t.Fatalf("ResumeWorkflow() = %v, %v", handled, err)
 	}
 	if len(f.chat.paused) != 1 || f.chat.paused[0] != runtimemodel.MessageStatusWaitingQuestion {
 		t.Fatalf("paused = %v, want the message waiting on the new question", f.chat.paused)
@@ -213,9 +242,9 @@ func TestExternalApprovalMovesTheConversationToTheNextRequest(t *testing.T) {
 func TestExternalApprovalKeepsWaitingWhenTheWorkflowDoesNotResume(t *testing.T) {
 	// A timeout of one approver while others on the same pause are pending.
 	f := newExternalApprovalFixture(t, &streamingApprovalRunner{err: workflowpause.ErrPauseNotResumeReady})
-	handled, err := f.service.ResumeApprovalForm(t.Context(), f.form)
+	handled, err := f.service.ResumeWorkflow(t.Context(), f.request())
 	if !handled || err == nil {
-		t.Fatalf("ResumeApprovalForm() = %v, %v; want the resume error reported", handled, err)
+		t.Fatalf("ResumeWorkflow() = %v, %v; want the resume error reported", handled, err)
 	}
 	if len(f.chat.paused) != 1 || f.chat.paused[0] != runtimemodel.MessageStatusWaitingApproval || len(f.chat.failed) != 0 {
 		t.Fatalf("paused = %v, failed = %v; want the message waiting again", f.chat.paused, f.chat.failed)
@@ -228,13 +257,13 @@ func TestExternalApprovalKeepsWaitingWhenTheWorkflowDoesNotResume(t *testing.T) 
 func TestExternalApprovalLeavesUnownedOrClaimedFormsToTheWorkflow(t *testing.T) {
 	unowned := newExternalApprovalFixture(t, &streamingApprovalRunner{})
 	unowned.store.waiting = nil
-	if handled, err := unowned.service.ResumeApprovalForm(t.Context(), unowned.form); handled || err != nil {
-		t.Fatalf("no waiting run: ResumeApprovalForm() = %v, %v", handled, err)
+	if handled, err := unowned.service.ResumeWorkflow(t.Context(), unowned.request()); handled || err != nil {
+		t.Fatalf("no waiting run: ResumeWorkflow() = %v, %v", handled, err)
 	}
 	claimed := newExternalApprovalFixture(t, &streamingApprovalRunner{})
 	claimed.chat.beginErr = chatruntime.ErrInvalidInput
-	if handled, err := claimed.service.ResumeApprovalForm(t.Context(), claimed.form); handled || err != nil {
-		t.Fatalf("claimed in the conversation: ResumeApprovalForm() = %v, %v", handled, err)
+	if handled, err := claimed.service.ResumeWorkflow(t.Context(), claimed.request()); handled || err != nil {
+		t.Fatalf("claimed in the conversation: ResumeWorkflow() = %v, %v", handled, err)
 	}
 	for name, f := range map[string]externalApprovalFixture{"unowned": unowned, "claimed": claimed} {
 		if len(f.runner.resumed) != 0 || len(f.store.calls) != 0 {
@@ -246,9 +275,9 @@ func TestExternalApprovalLeavesUnownedOrClaimedFormsToTheWorkflow(t *testing.T) 
 func TestExternalApprovalReportsATemporaryTakeoverFailure(t *testing.T) {
 	f := newExternalApprovalFixture(t, &streamingApprovalRunner{})
 	f.chat.beginErr = errors.New("connection reset")
-	handled, err := f.service.ResumeApprovalForm(t.Context(), f.form)
+	handled, err := f.service.ResumeWorkflow(t.Context(), f.request())
 	if handled || err == nil {
-		t.Fatalf("ResumeApprovalForm() = %v, %v; want the failure reported so the resume queue retries", handled, err)
+		t.Fatalf("ResumeWorkflow() = %v, %v; want the failure reported so the resume queue retries", handled, err)
 	}
 	if len(f.runner.resumed) != 0 || len(f.store.calls) != 0 {
 		t.Fatalf("resumed = %v, calls = %v; want nothing resumed or settled", f.runner.resumed, f.store.calls)
@@ -257,7 +286,7 @@ func TestExternalApprovalReportsATemporaryTakeoverFailure(t *testing.T) {
 
 func TestAbandonedExternalApprovalFailsTheWaitingConversation(t *testing.T) {
 	f := newExternalApprovalFixture(t, &streamingApprovalRunner{})
-	f.service.AbandonApprovalForm(t.Context(), f.form, errors.New("model unavailable"))
+	f.service.AbandonWorkflowResume(t.Context(), f.request(), errors.New("model unavailable"))
 	if len(f.chat.failedMessages) != 1 || f.chat.failedMessages[0].MessageID != *f.store.waiting.MessageID ||
 		f.chat.failedMessages[0].ErrorMessage != workflowApprovalAbandonedMessage {
 		t.Fatalf("failed messages = %#v, want the waiting message failed with the public notice", f.chat.failedMessages)
@@ -271,7 +300,7 @@ func TestAbandonedExternalApprovalFailsTheWaitingConversation(t *testing.T) {
 
 	unowned := newExternalApprovalFixture(t, &streamingApprovalRunner{})
 	unowned.store.waiting = nil
-	unowned.service.AbandonApprovalForm(t.Context(), unowned.form, errors.New("model unavailable"))
+	unowned.service.AbandonWorkflowResume(t.Context(), unowned.request(), errors.New("model unavailable"))
 	if len(unowned.chat.failedMessages) != 0 || len(unowned.store.calls) != 0 {
 		t.Fatalf("no waiting run: failed = %v, calls = %v", unowned.chat.failedMessages, unowned.store.calls)
 	}
