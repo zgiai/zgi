@@ -25,7 +25,7 @@ func registerApprovalTaskHandlers(registry approvalTaskRegistry, taskManager *qu
 	if taskManager != nil {
 		taskType = taskManager.GetTaskTypeWithPrefix(taskType)
 	}
-	taskHandler := approvalruntime.NewResumeTaskHandler(service, hosts.ResumeCallback(handler.ResumeApprovalWorkflow))
+	taskHandler := approvalruntime.NewResumeTaskHandler(service, hosts.RetryingResumeCallback(handler.ResumeApprovalWorkflow))
 	if isNew := registry.Register(taskType, taskHandler); isNew {
 		logger.Info("Registered approval resume handler", map[string]interface{}{
 			"task_type": taskType,

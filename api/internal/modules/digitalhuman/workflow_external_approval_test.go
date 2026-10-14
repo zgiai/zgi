@@ -2,6 +2,7 @@ package digitalhuman
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -233,6 +234,18 @@ func TestExternalApprovalLeavesUnownedOrClaimedFormsToTheWorkflow(t *testing.T) 
 		if len(f.runner.resumed) != 0 || len(f.store.calls) != 0 {
 			t.Fatalf("%s: resumed = %v, calls = %v; want the workflow left to its own resume", name, f.runner.resumed, f.store.calls)
 		}
+	}
+}
+
+func TestExternalApprovalReportsATemporaryTakeoverFailure(t *testing.T) {
+	f := newExternalApprovalFixture(t, &streamingApprovalRunner{})
+	f.chat.beginErr = errors.New("connection reset")
+	handled, err := f.service.ResumeApprovalForm(t.Context(), f.form)
+	if handled || err == nil {
+		t.Fatalf("ResumeApprovalForm() = %v, %v; want the failure reported so the resume queue retries", handled, err)
+	}
+	if len(f.runner.resumed) != 0 || len(f.store.calls) != 0 {
+		t.Fatalf("resumed = %v, calls = %v; want nothing resumed or settled", f.runner.resumed, f.store.calls)
 	}
 }
 

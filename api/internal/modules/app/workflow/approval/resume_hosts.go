@@ -2,8 +2,10 @@ package approval
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
+	"github.com/hibiken/asynq"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
@@ -24,10 +26,12 @@ type ResumeHost interface {
 type ResumeHosts struct {
 	mu    sync.RWMutex
 	hosts []ResumeHost
+	// lastAttempt reports whether the running resume has no retry left.
+	lastAttempt func(context.Context) bool
 }
 
 func NewResumeHosts() *ResumeHosts {
-	return &ResumeHosts{}
+	return &ResumeHosts{lastAttempt: lastQueueAttempt}
 }
 
 func (h *ResumeHosts) Register(host ResumeHost) {
@@ -39,10 +43,22 @@ func (h *ResumeHosts) Register(host ResumeHost) {
 	h.hosts = append(h.hosts, host)
 }
 
-// ResumeCallback lets a registered host resume the form and otherwise falls
-// back to resuming the workflow alone. A host that fails before it took the
-// form never blocks the workflow: the fallback still resumes it.
+// RetryingResumeCallback is for the approval resume queue. A host that owns
+// the form but fails to take it returns its error, so the queue retries and
+// the conversation can still follow the workflow once the failure clears. On
+// the queue's last attempt the workflow resumes alone so it is never blocked.
+func (h *ResumeHosts) RetryingResumeCallback(fallback ResumeCallback) ResumeCallback {
+	return h.resumeCallback(fallback, true)
+}
+
+// ResumeCallback is for callers that cannot retry a resume (the timeout scan
+// marks the form before resuming it): a host that fails to take the form is
+// logged and the workflow resumes alone.
 func (h *ResumeHosts) ResumeCallback(fallback ResumeCallback) ResumeCallback {
+	return h.resumeCallback(fallback, false)
+}
+
+func (h *ResumeHosts) resumeCallback(fallback ResumeCallback, retrying bool) ResumeCallback {
 	return func(ctx context.Context, form *Form) error {
 		if h != nil && form != nil {
 			h.mu.RLock()
@@ -53,9 +69,13 @@ func (h *ResumeHosts) ResumeCallback(fallback ResumeCallback) ResumeCallback {
 				if handled {
 					return err
 				}
-				if err != nil {
-					logger.WarnContext(ctx, "approval resume host could not take the form; resuming the workflow alone", "form_id", form.ID, "workflow_run_id", form.WorkflowRunID, err)
+				if err == nil {
+					continue
 				}
+				if retrying && !h.isLastAttempt(ctx) {
+					return fmt.Errorf("approval resume host could not take form %s: %w", form.ID, err)
+				}
+				logger.ErrorContext(ctx, "approval resume host could not take the form; resuming the workflow alone", "form_id", form.ID, "workflow_run_id", form.WorkflowRunID, err)
 			}
 		}
 		if fallback == nil {
@@ -63,4 +83,19 @@ func (h *ResumeHosts) ResumeCallback(fallback ResumeCallback) ResumeCallback {
 		}
 		return fallback(ctx, form)
 	}
+}
+
+func (h *ResumeHosts) isLastAttempt(ctx context.Context) bool {
+	if h.lastAttempt == nil {
+		return lastQueueAttempt(ctx)
+	}
+	return h.lastAttempt(ctx)
+}
+
+// lastQueueAttempt reports whether the running queue task has no retry left.
+// Outside a queue task there is nothing to retry.
+func lastQueueAttempt(ctx context.Context) bool {
+	retried, ok := asynq.GetRetryCount(ctx)
+	maxRetry, maxOK := asynq.GetMaxRetry(ctx)
+	return !ok || !maxOK || retried >= maxRetry
 }
