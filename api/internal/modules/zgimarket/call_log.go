@@ -53,13 +53,13 @@ type CallChargeLine struct {
 
 // CallLog is one market tool call this instance made for an agent or a digital human.
 type CallLog struct {
-	ID              uuid.UUID        `gorm:"type:uuid;primaryKey" json:"id"`
-	OrganizationID  uuid.UUID        `gorm:"type:uuid;not null" json:"-"`
-	SubjectType     string           `gorm:"type:varchar(32);not null" json:"subject_type"`
-	SubjectID       uuid.UUID        `gorm:"type:uuid;not null" json:"subject_id"`
+	ID             uuid.UUID `gorm:"type:uuid;primaryKey" json:"id"`
+	OrganizationID uuid.UUID `gorm:"type:uuid;not null" json:"-"`
+	SubjectType    string    `gorm:"type:varchar(32);not null" json:"subject_type"`
+	SubjectID      uuid.UUID `gorm:"type:uuid;not null" json:"subject_id"`
 	// SubjectName is the agent's or digital human's name when the logs are read; empty when it
 	// no longer exists.
-	SubjectName string `gorm:"-" json:"subject_name"`
+	SubjectName     string           `gorm:"-" json:"subject_name"`
 	ItemKind        string           `gorm:"type:varchar(8);not null" json:"item_kind"`
 	ListingSlug     string           `gorm:"type:varchar(128);not null" json:"listing_slug"`
 	ListingTitle    string           `gorm:"type:varchar(200);not null" json:"listing_title"`
