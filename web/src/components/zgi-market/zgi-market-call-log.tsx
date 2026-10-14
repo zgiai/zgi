@@ -24,6 +24,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { marketAmount } from '@/components/zgi-market/market-format';
+import { useMarketLabels } from '@/components/zgi-market/use-market-labels';
 import { useZgiMarketCallLogs, useZgiMarketMeta } from '@/hooks/use-zgi-market';
 import { useLocale } from '@/hooks/use-locale';
 import { useT } from '@/i18n';
@@ -50,19 +51,25 @@ function points(micros: number): string {
   return marketAmount({ unit_price_micros: micros, currency: 'PTS' }).amount;
 }
 
-/** The input as indented JSON when it is JSON, else as it was stored. */
-function prettyInput(input: string): string {
+/** Text as indented JSON when it is JSON, else as it was stored. */
+function prettyJSON(text: string): string {
   try {
-    return JSON.stringify(JSON.parse(input), null, 2);
+    return JSON.stringify(JSON.parse(text), null, 2);
   } catch {
-    return input;
+    return text;
   }
+}
+
+/** Milliseconds below a second, seconds with one decimal above. */
+function duration(ms: number): string {
+  return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
 }
 
 /** The organization's market tool calls: what was sent, what came back, and what it cost. */
 export function ZgiMarketCallLog() {
   const t = useT();
   const { locale } = useLocale();
+  const { meter } = useMarketLabels();
   const meta = useZgiMarketMeta();
   const admin = meta.data?.admin === true;
   const [dateRange, setDateRange] = useState<DateRangeKey>('today');
@@ -108,7 +115,8 @@ export function ZgiMarketCallLog() {
   const line = (charge: MarketCallChargeLine) =>
     t('market.callLogs.detail.line', {
       quantity: formatNumber(charge.quantity, 0),
-      unit: charge.unit_name || charge.meter,
+      // The unit meter is called what the offering calls it.
+      unit: charge.meter === 'unit' && charge.unit_name ? charge.unit_name : meter(charge.meter),
       amount: points(charge.amount_micros),
     });
 
@@ -280,7 +288,7 @@ export function ZgiMarketCallLog() {
                                 </Badge>
                               </TableCell>
                               <TableCell className="whitespace-nowrap text-right text-sm tabular-nums">
-                                {formatNumber(row.duration_ms, 0)} ms
+                                {duration(row.duration_ms)}
                               </TableCell>
                               <TableCell className="whitespace-nowrap text-right text-sm tabular-nums">
                                 {cost(row)}
@@ -291,12 +299,14 @@ export function ZgiMarketCallLog() {
                                 <TableCell colSpan={COLUMNS} className="space-y-3 p-4">
                                   <Detail title={t('market.callLogs.detail.input')}>
                                     <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded-md bg-background p-3 font-mono text-xs">
-                                      {prettyInput(row.input)}
+                                      {prettyJSON(row.input)}
                                     </pre>
                                   </Detail>
                                   <Detail title={t('market.callLogs.detail.output')}>
                                     <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-all rounded-md bg-background p-3 font-mono text-xs">
-                                      {row.output || t('market.callLogs.detail.noOutput')}
+                                      {row.output
+                                        ? prettyJSON(row.output)
+                                        : t('market.callLogs.detail.noOutput')}
                                     </pre>
                                   </Detail>
                                   {row.error_message ? (
