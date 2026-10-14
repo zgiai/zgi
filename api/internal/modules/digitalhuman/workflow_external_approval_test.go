@@ -58,8 +58,14 @@ func (s *externalApprovalRunStore) FailRun(_ context.Context, _ uuid.UUID, code,
 type externalApprovalChat struct {
 	*fakeDigitalHumanChat
 	*fakeWorkflowContinuationRuntime
-	begun    []chatruntime.Caller
-	beginErr error
+	begun          []chatruntime.Caller
+	beginErr       error
+	failedMessages []chatruntime.FailMessageRequest
+}
+
+func (c *externalApprovalChat) FailMessage(_ context.Context, _ chatruntime.Scope, req chatruntime.FailMessageRequest) (*runtimemodel.Message, error) {
+	c.failedMessages = append(c.failedMessages, req)
+	return &runtimemodel.Message{ID: req.MessageID, Status: runtimemodel.MessageStatusError}, nil
 }
 
 func (c *externalApprovalChat) BeginExternalWorkflowApprovalContinuation(_ context.Context, _ chatruntime.Scope, caller chatruntime.Caller, _ chatruntime.RunConfig, conversationID, messageID uuid.UUID) (*chatruntime.WorkflowApprovalContinuation, error) {
@@ -246,6 +252,28 @@ func TestExternalApprovalReportsATemporaryTakeoverFailure(t *testing.T) {
 	}
 	if len(f.runner.resumed) != 0 || len(f.store.calls) != 0 {
 		t.Fatalf("resumed = %v, calls = %v; want nothing resumed or settled", f.runner.resumed, f.store.calls)
+	}
+}
+
+func TestAbandonedExternalApprovalFailsTheWaitingConversation(t *testing.T) {
+	f := newExternalApprovalFixture(t, &streamingApprovalRunner{})
+	f.service.AbandonApprovalForm(t.Context(), f.form, errors.New("model unavailable"))
+	if len(f.chat.failedMessages) != 1 || f.chat.failedMessages[0].MessageID != *f.store.waiting.MessageID ||
+		f.chat.failedMessages[0].ErrorMessage != workflowApprovalAbandonedMessage {
+		t.Fatalf("failed messages = %#v, want the waiting message failed with the public notice", f.chat.failedMessages)
+	}
+	if want := []string{"fail:digital_human.run.execution_failed"}; !equalStrings(f.store.calls, want) {
+		t.Fatalf("run store calls = %v, want %v", f.store.calls, want)
+	}
+	if len(f.runner.resumed) != 0 {
+		t.Fatalf("resumed = %v; the workflow resumes through the approval fallback, not the host", f.runner.resumed)
+	}
+
+	unowned := newExternalApprovalFixture(t, &streamingApprovalRunner{})
+	unowned.store.waiting = nil
+	unowned.service.AbandonApprovalForm(t.Context(), unowned.form, errors.New("model unavailable"))
+	if len(unowned.chat.failedMessages) != 0 || len(unowned.store.calls) != 0 {
+		t.Fatalf("no waiting run: failed = %v, calls = %v", unowned.chat.failedMessages, unowned.store.calls)
 	}
 }
 

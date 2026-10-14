@@ -7,9 +7,14 @@ import (
 )
 
 type stubResumeHost struct {
-	handled bool
-	err     error
-	calls   int
+	handled   bool
+	err       error
+	calls     int
+	abandoned []error
+}
+
+func (h *stubResumeHost) AbandonApprovalForm(_ context.Context, _ *Form, cause error) {
+	h.abandoned = append(h.abandoned, cause)
 }
 
 func (h *stubResumeHost) ResumeApprovalForm(context.Context, *Form) (bool, error) {
@@ -94,5 +99,52 @@ func TestRetryingResumeHostsKeepTheQueueRetryWhenTheOwningHostFails(t *testing.T
 func TestLastQueueAttemptOutsideAQueueTask(t *testing.T) {
 	if !lastQueueAttempt(context.Background()) {
 		t.Fatal("a resume outside a queue task has no retry left")
+	}
+}
+
+func TestResumeHostsAbandonTheConversationOnlyWhenGivingUp(t *testing.T) {
+	hostErr := errors.New("model unavailable")
+	for name, test := range map[string]struct {
+		retrying, lastAttempt bool
+		wantAbandoned         int
+	}{
+		"queue retry left":   {retrying: true, lastAttempt: false, wantAbandoned: 0},
+		"queue last attempt": {retrying: true, lastAttempt: true, wantAbandoned: 1},
+		"cannot retry":       {retrying: false, wantAbandoned: 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			host := &stubResumeHost{err: hostErr}
+			hosts := NewResumeHosts()
+			hosts.lastAttempt = func(context.Context) bool { return test.lastAttempt }
+			hosts.Register(host)
+			callback := hosts.ResumeCallback
+			if test.retrying {
+				callback = hosts.RetryingResumeCallback
+			}
+			_ = callback(func(context.Context, *Form) error { return nil })(context.Background(), &Form{ID: "form-1"})
+			if len(host.abandoned) != test.wantAbandoned || (test.wantAbandoned == 1 && !errors.Is(host.abandoned[0], hostErr)) {
+				t.Fatalf("abandoned = %v, want %d", host.abandoned, test.wantAbandoned)
+			}
+		})
+	}
+}
+
+func TestQueuedResumeCallbackRetriesTimeoutsThroughTheQueue(t *testing.T) {
+	var queued []string
+	fallbackCalls := 0
+	fallback := func(context.Context, *Form) error {
+		fallbackCalls++
+		return nil
+	}
+	queuedResume := QueuedResumeCallback(func(_ context.Context, formID string) error {
+		queued = append(queued, formID)
+		return nil
+	}, fallback)
+	if err := queuedResume(context.Background(), &Form{ID: "form-1"}); err != nil || len(queued) != 1 || queued[0] != "form-1" || fallbackCalls != 0 {
+		t.Fatalf("err = %v, queued = %v, fallback calls = %d; want the resume queued", err, queued, fallbackCalls)
+	}
+	unavailable := QueuedResumeCallback(func(context.Context, string) error { return errors.New("redis unavailable") }, fallback)
+	if err := unavailable(context.Background(), &Form{ID: "form-2"}); err != nil || fallbackCalls != 1 {
+		t.Fatalf("err = %v, fallback calls = %d; want the resume run right away", err, fallbackCalls)
 	}
 }

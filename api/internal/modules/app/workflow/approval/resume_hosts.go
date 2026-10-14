@@ -20,6 +20,13 @@ type ResumeHost interface {
 	ResumeApprovalForm(ctx context.Context, form *Form) (handled bool, err error)
 }
 
+// ResumeHostAbandoner is implemented by a host that can settle its waiting
+// conversation when it finally gives up on a form, so the conversation does
+// not keep waiting on a workflow that resumes without it.
+type ResumeHostAbandoner interface {
+	AbandonApprovalForm(ctx context.Context, form *Form, cause error)
+}
+
 // ResumeHosts routes approval resumes to the host that owns the workflow.
 // Hosts register after the approval task handlers, so it is consulted when a
 // resume runs, not when the handlers are registered.
@@ -76,6 +83,9 @@ func (h *ResumeHosts) resumeCallback(fallback ResumeCallback, retrying bool) Res
 					return fmt.Errorf("approval resume host could not take form %s: %w", form.ID, err)
 				}
 				logger.ErrorContext(ctx, "approval resume host could not take the form; resuming the workflow alone", "form_id", form.ID, "workflow_run_id", form.WorkflowRunID, err)
+				if abandoner, ok := host.(ResumeHostAbandoner); ok {
+					abandoner.AbandonApprovalForm(ctx, form, err)
+				}
 			}
 		}
 		if fallback == nil {
@@ -98,4 +108,23 @@ func lastQueueAttempt(ctx context.Context) bool {
 	retried, ok := asynq.GetRetryCount(ctx)
 	maxRetry, maxOK := asynq.GetMaxRetry(ctx)
 	return !ok || !maxOK || retried >= maxRetry
+}
+
+// QueuedResumeCallback hands a resume to the approval resume queue, so it is
+// retried like a submitted approval. When the queue cannot take it, the resume
+// runs right away through fallback.
+func QueuedResumeCallback(enqueue func(context.Context, string) error, fallback ResumeCallback) ResumeCallback {
+	return func(ctx context.Context, form *Form) error {
+		if enqueue != nil && form != nil {
+			err := enqueue(ctx, form.ID)
+			if err == nil {
+				return nil
+			}
+			logger.WarnContext(ctx, "approval resume could not be queued; resuming it now", "form_id", form.ID, "workflow_run_id", form.WorkflowRunID, err)
+		}
+		if fallback == nil {
+			return nil
+		}
+		return fallback(ctx, form)
+	}
 }

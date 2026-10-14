@@ -12,6 +12,7 @@ import (
 	chatruntime "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 // workflowApprovalWaitingStore is an optional persistence extension that finds
@@ -25,7 +26,18 @@ type externalWorkflowContinuationChatRuntime interface {
 	chatruntime.ExternalWorkflowApprovalContinuationBeginner
 }
 
-var _ approvalruntime.ResumeHost = (*RuntimeService)(nil)
+var (
+	_ approvalruntime.ResumeHost          = (*RuntimeService)(nil)
+	_ approvalruntime.ResumeHostAbandoner = (*RuntimeService)(nil)
+)
+
+// workflowApprovalAbandonedMessage is shown on a conversation whose approval
+// was completed while the conversation could not follow the workflow.
+const workflowApprovalAbandonedMessage = "The workflow approval was completed, but this conversation could not continue. Check the workflow run for its result."
+
+type messageFailer interface {
+	FailMessage(context.Context, chatruntime.Scope, chatruntime.FailMessageRequest) (*runtimemodel.Message, error)
+}
 
 // ResumeApprovalForm resumes a workflow approval completed outside the
 // conversation (an email or SMS approver, the approval page, or a timeout)
@@ -123,4 +135,37 @@ func workflowRunCaller(run *Run) chatruntime.Caller {
 		}
 	}
 	return caller
+}
+
+// AbandonApprovalForm settles the run and the message that wait on the form
+// when the approval resume gives up taking it: the workflow then resumes
+// alone, and the conversation reports that it could not follow it instead of
+// waiting forever.
+func (s *RuntimeService) AbandonApprovalForm(ctx context.Context, form *approvalruntime.Form, cause error) {
+	if s == nil || form == nil {
+		return
+	}
+	store, ok := s.store.(workflowApprovalWaitingStore)
+	if !ok {
+		return
+	}
+	ctx = context.WithoutCancel(ctx)
+	run, err := store.RunWaitingOnWorkflowApproval(ctx, form.WorkflowRunID)
+	if err != nil || run == nil || run.ConversationID == nil || run.MessageID == nil {
+		if err != nil {
+			logger.WarnContext(ctx, "failed to find the DigitalHuman run of an abandoned workflow approval", "workflow_run_id", form.WorkflowRunID, err)
+		}
+		return
+	}
+	logger.WarnContext(ctx, "DigitalHuman conversation stops following its workflow approval", "run_id", run.ID.String(), "workflow_run_id", form.WorkflowRunID, "cause", cause)
+	if failer, ok := s.chat.(messageFailer); ok {
+		if _, err := failer.FailMessage(ctx, runtimeScope(run), chatruntime.FailMessageRequest{
+			ConversationID: *run.ConversationID, MessageID: *run.MessageID, ErrorMessage: workflowApprovalAbandonedMessage,
+		}); err != nil {
+			logger.WarnContext(ctx, "failed to fail the message of an abandoned workflow approval", "run_id", run.ID.String(), err)
+		}
+	}
+	if err := s.store.FailRun(ctx, run.ID, "digital_human.run.execution_failed", workflowApprovalAbandonedMessage, s.now()); err != nil {
+		logger.WarnContext(ctx, "failed to fail the run of an abandoned workflow approval", "run_id", run.ID.String(), err)
+	}
 }
