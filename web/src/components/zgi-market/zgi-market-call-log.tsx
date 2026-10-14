@@ -46,6 +46,8 @@ const DATE_RANGE_DAYS: Record<DateRangeKey, number> = {
 const PER_PAGE = 20;
 const COLUMNS = 7;
 const STATUSES: MarketCallStatus[] = ['succeeded', 'tool_error', 'failed'];
+const SOURCES = ['console', 'webapp', 'external-api', 'channel', 'task'] as const;
+type KnownSource = (typeof SOURCES)[number];
 
 function points(micros: number): string {
   return marketAmount({ unit_price_micros: micros, currency: 'PTS' }).amount;
@@ -74,6 +76,7 @@ export function ZgiMarketCallLog() {
   const admin = meta.data?.admin === true;
   const [dateRange, setDateRange] = useState<DateRangeKey>('today');
   const [status, setStatus] = useState<MarketCallStatus | 'all'>('all');
+  const [source, setSource] = useState<KnownSource | 'all'>('all');
   const [page, setPage] = useState(1);
   const [refreshKey, setRefreshKey] = useState(() => Date.now());
   const [open, setOpen] = useState<string | null>(null);
@@ -87,8 +90,9 @@ export function ZgiMarketCallLog() {
       page,
       per_page: PER_PAGE,
       ...(status === 'all' ? {} : { status }),
+      ...(source === 'all' ? {} : { source }),
     };
-  }, [dateRange, status, page, refreshKey]);
+  }, [dateRange, status, source, page, refreshKey]);
   const logs = useZgiMarketCallLogs(query, admin);
   const data = logs.data;
   const summary = data?.summary;
@@ -100,6 +104,15 @@ export function ZgiMarketCallLog() {
     `${t(`market.callLogs.subjects.${row.subject_type}`)} · ${
       row.subject_name || t('market.callLogs.deletedSubject')
     }`;
+  const sourceLabel = (row: MarketCallLog) =>
+    (SOURCES as readonly string[]).includes(row.source)
+      ? t(`market.callLogs.sources.${row.source as KnownSource}`)
+      : t('market.callLogs.sources.unknown');
+  const person = (row: MarketCallLog) =>
+    row.user_name ||
+    (row.external_user_id
+      ? t('market.callLogs.externalUser', { id: row.external_user_id.slice(0, 12) })
+      : '');
   const cost = (row: MarketCallLog) => {
     switch (row.charge_state) {
       case 'charged':
@@ -169,6 +182,25 @@ export function ZgiMarketCallLog() {
                     {STATUSES.map(value => (
                       <SelectItem key={value} value={value}>
                         {t(`market.callLogs.status.${value}`)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={source}
+                  onValueChange={value => {
+                    setSource(value as KnownSource | 'all');
+                    setPage(1);
+                  }}
+                >
+                  <SelectTrigger className="w-full sm:w-[150px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">{t('market.callLogs.allSources')}</SelectItem>
+                    {SOURCES.map(value => (
+                      <SelectItem key={value} value={value}>
+                        {t(`market.callLogs.sources.${value}`)}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -270,8 +302,11 @@ export function ZgiMarketCallLog() {
                               <TableCell className="whitespace-nowrap text-sm">
                                 {formatDate(row.created_at, 'YYYY-MM-DD HH:mm:ss', { locale })}
                               </TableCell>
-                              <TableCell className="max-w-[200px] truncate text-sm">
-                                {subject(row)}
+                              <TableCell className="max-w-[220px] text-sm">
+                                <div className="truncate">{subject(row)}</div>
+                                <div className="truncate text-xs text-muted-foreground">
+                                  {[sourceLabel(row), person(row)].filter(Boolean).join(' · ')}
+                                </div>
                               </TableCell>
                               <TableCell className="text-sm">
                                 <div className="font-medium">{row.tool_name}</div>
@@ -324,6 +359,19 @@ export function ZgiMarketCallLog() {
                                         ))}
                                       </ul>
                                     </Detail>
+                                  ) : null}
+                                  {row.conversation_id ? (
+                                    <p className="text-xs text-muted-foreground">
+                                      {t('market.callLogs.detail.conversation')}:{' '}
+                                      <span className="font-mono">{row.conversation_id}</span>
+                                      {row.message_id ? (
+                                        <>
+                                          {' · '}
+                                          {t('market.callLogs.detail.message')}:{' '}
+                                          <span className="font-mono">{row.message_id}</span>
+                                        </>
+                                      ) : null}
+                                    </p>
                                   ) : null}
                                   {row.request_id ? (
                                     <p className="text-xs text-muted-foreground">

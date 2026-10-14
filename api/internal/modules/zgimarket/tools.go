@@ -713,7 +713,7 @@ func (t *Tools) secret(binding *ToolBinding) (string, error) {
 }
 
 // callTool calls one tool of a subject's bound listing at the gateway.
-func (t *Tools) callTool(ctx context.Context, organizationID uuid.UUID, name, tool string, arguments map[string]any) (*GatewayResult, error) {
+func (t *Tools) callTool(ctx context.Context, organizationID uuid.UUID, name, tool string, arguments map[string]any, scene CallScene) (*GatewayResult, error) {
 	if t.gateway == nil {
 		return nil, ErrMarketToolsUnavailable
 	}
@@ -729,7 +729,7 @@ func (t *Tools) callTool(ctx context.Context, organizationID uuid.UUID, name, to
 		return nil, ErrListingNotBindable
 	}
 	if offeringSlug, isAPI := strings.CutPrefix(slug, apiProviderPrefix); isAPI {
-		return t.callOperation(ctx, binding, offeringSlug, tool, arguments)
+		return t.callOperation(ctx, binding, offeringSlug, tool, arguments, scene)
 	}
 	item, bound := binding.item(slug)
 	if !bound {
@@ -741,13 +741,13 @@ func (t *Tools) callTool(ctx context.Context, organizationID uuid.UUID, name, to
 	}
 	started := t.now()
 	result, err := t.gateway.CallTool(ctx, slug, secret, tool, arguments)
-	t.logs.record(callTarget{binding: binding, item: item, tool: tool}, arguments, result, err, started, t.now())
+	t.logs.record(callTarget{binding: binding, item: item, tool: tool}, scene, arguments, result, err, started, t.now())
 	return result, err
 }
 
 // callOperation calls the operation of a bound API offering that the tool name stands for.
 // Arguments that do not fit the operation are answered as a tool error; nothing is called.
-func (t *Tools) callOperation(ctx context.Context, binding *ToolBinding, offeringSlug, tool string, arguments map[string]any) (*GatewayResult, error) {
+func (t *Tools) callOperation(ctx context.Context, binding *ToolBinding, offeringSlug, tool string, arguments map[string]any, scene CallScene) (*GatewayResult, error) {
 	item, bound := binding.offering(offeringSlug)
 	if !bound {
 		return nil, ErrListingNotBindable
@@ -771,6 +771,6 @@ func (t *Tools) callOperation(ctx context.Context, binding *ToolBinding, offerin
 	}
 	started := t.now()
 	result, err := t.gateway.CallOperation(ctx, offeringSlug, secret, request)
-	t.logs.record(callTarget{binding: binding, item: item, tool: tool}, arguments, result, err, started, t.now())
+	t.logs.record(callTarget{binding: binding, item: item, tool: tool}, scene, arguments, result, err, started, t.now())
 	return result, err
 }

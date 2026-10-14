@@ -374,6 +374,14 @@ export interface MarketCallLog {
   listing_title: string;
   offering_slug: string;
   tool_name: string;
+  /** The surface the conversation came from: console, webapp, external-api, channel, task. */
+  source: string;
+  user_id: string;
+  user_name: string;
+  external_user_id: string;
+  conversation_id: string;
+  message_id: string;
+  app_id: string;
   input: string;
   output: string;
   status: MarketCallStatus;
@@ -406,6 +414,7 @@ export interface MarketCallLogQuery {
   from: number;
   to: number;
   status?: MarketCallStatus;
+  source?: string;
   page?: number;
   per_page?: number;
 }
