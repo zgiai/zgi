@@ -120,6 +120,30 @@ func TestWorkflowContinuationFailsRunWhenWorkflowFinishedFailed(t *testing.T) {
 	}
 }
 
+func TestWorkflowContinuationSummaryReportsAnExpiredApproval(t *testing.T) {
+	var emitted []chatruntime.StreamEvent
+	runtime := &fakeWorkflowContinuationRuntime{}
+	lifecycle, _ := settledLifecycle(runtime, &emitted)
+	_ = lifecycle.handle("approval_expired", map[string]interface{}{"form_id": "form-1"})
+	_ = lifecycle.handle("workflow_finished", map[string]interface{}{"status": "succeeded", "outputs": map[string]interface{}{"__approval_form": map[string]interface{}{}}})
+	if err := lifecycle.finish(workflowContinuationStreamed, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(runtime.summarized) != 1 || runtime.summarized[0].ContinuationInstruction != workflowApprovalExpiredInstruction {
+		t.Fatalf("summaries = %#v, want the expired approval stated to the summary", runtime.summarized)
+	}
+
+	approved := &fakeWorkflowContinuationRuntime{}
+	lifecycle, _ = settledLifecycle(approved, &emitted)
+	_ = lifecycle.handle("workflow_finished", map[string]interface{}{"status": "succeeded"})
+	if err := lifecycle.finish(workflowContinuationStreamed, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(approved.summarized) != 1 || approved.summarized[0].ContinuationInstruction != "" {
+		t.Fatalf("summaries = %#v, want no expiry note for a decided approval", approved.summarized)
+	}
+}
+
 func TestWorkflowContinuationSettlesRunWhenStoppedOrFailed(t *testing.T) {
 	var emitted []chatruntime.StreamEvent
 	stopped, stoppedStore := settledLifecycle(&fakeWorkflowContinuationRuntime{}, &emitted)

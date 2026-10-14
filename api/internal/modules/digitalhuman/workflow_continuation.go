@@ -173,6 +173,10 @@ const (
 	workflowContinuationUnobserved
 )
 
+// workflowApprovalExpiredInstruction tells the summary how an approval that
+// timed out ended; the workflow outputs may still carry the unanswered form.
+const workflowApprovalExpiredInstruction = "The workflow approval expired before any approver approved or rejected it, and the workflow continued on its expiry path. Report that the approval timed out without a decision. Do not describe the request as approved, rejected, or still waiting for approval."
+
 // digitalHumanWorkflowContinuation mirrors the Agent continuation lifecycle:
 // it records resumed workflow events on the message, pauses again on a new
 // approval or question, and completes or fails the message when the
@@ -193,9 +197,12 @@ type digitalHumanWorkflowContinuation struct {
 
 	waitingStatus string
 	terminal      bool
-	runStatus     string
-	runOutputs    map[string]interface{}
-	runError      string
+	// approvalExpired records that an approval timed out without a decision, so
+	// the summary does not read the leftover approval form as still pending.
+	approvalExpired bool
+	runStatus       string
+	runOutputs      map[string]interface{}
+	runError        string
 	// answer is the final assistant answer once the continuation completes.
 	answer string
 }
@@ -223,6 +230,8 @@ func (l *digitalHumanWorkflowContinuation) handle(rawEventType string, rawPayloa
 		l.waitingStatus = runtimemodel.MessageStatusWaitingApproval
 	case "question_answer_requested":
 		l.waitingStatus = runtimemodel.MessageStatusWaitingQuestion
+	case "approval_expired":
+		l.approvalExpired = true
 	case "workflow_failed":
 		l.terminal = true
 		if l.runStatus == "" {
@@ -285,12 +294,16 @@ func (l *digitalHumanWorkflowContinuation) finish(resume workflowContinuationRes
 	if status == "" {
 		status = "succeeded"
 	}
-	result, err := l.runtime.SummarizeWorkflowApprovalContinuation(ctx, l.scope, l.continuation, chatruntime.WorkflowContinuationSummaryRequest{
+	summary := chatruntime.WorkflowContinuationSummaryRequest{
 		WorkflowRunID: l.continuation.WorkflowRunID,
 		Status:        status,
 		Outputs:       l.runOutputs,
 		Error:         l.runError,
-	}, func(event chatruntime.StreamEvent) error {
+	}
+	if l.approvalExpired {
+		summary.ContinuationInstruction = workflowApprovalExpiredInstruction
+	}
+	result, err := l.runtime.SummarizeWorkflowApprovalContinuation(ctx, l.scope, l.continuation, summary, func(event chatruntime.StreamEvent) error {
 		return l.emit(chatruntime.ProjectWorkflowContinuationEvent(l.continuation, event))
 	})
 	if err != nil {

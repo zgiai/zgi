@@ -70,12 +70,13 @@ func registerApprovalScheduledTasks(scheduler *pkgscheduler.Scheduler, service *
 		return
 	}
 	task := approvalruntime.NewTimeoutScanTask(0)
-	// A timed-out approval resumes through the same retried queue as a
-	// submitted one, so its conversation can follow the workflow too.
-	onTimeout := approvalruntime.QueuedResumeCallback(func(ctx context.Context, formID string) error {
+	// A timed-out approval of a durable pause resumes through the runtime
+	// outbox like a submission. A workflow without a durable pause resumes
+	// through the same retried queue, so its conversation can follow it too.
+	onLegacyTimeout := approvalruntime.QueuedResumeCallback(func(ctx context.Context, formID string) error {
 		return approvalruntime.EnqueueResumeTask(ctx, taskManager, formID)
 	}, hosts.ResumeCallback(handler.ResumeApprovalWorkflow))
-	taskHandler := approvalruntime.NewTimeoutScanHandler(service, onTimeout, 100)
+	taskHandler := approvalruntime.NewTimeoutScanHandler(service, taskManager, onLegacyTimeout, 100)
 	if err := scheduler.RegisterTask(task, taskHandler); err != nil {
 		logger.Error("Failed to register approval timeout scan task", err)
 		return

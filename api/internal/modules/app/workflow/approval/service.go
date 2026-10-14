@@ -717,22 +717,102 @@ func (s *Service) GetFormByID(ctx context.Context, formID string) (*Form, error)
 	return &form, nil
 }
 
-func (s *Service) MarkTimedOut(ctx context.Context, formID string) (*Form, error) {
-	var form Form
-	if err := s.db.WithContext(ctx).First(&form, "id = ?", formID).Error; err != nil {
-		return nil, fmt.Errorf("load approval form: %w", err)
+// MarkTimedOut times out a waiting approval form the same way a submission
+// completes it: in one transaction it marks the form, records an
+// approval_expired event and completes the form's pause reason, so a durable
+// pause becomes resumable and its resume is queued through the runtime outbox.
+// The approval node then follows its expired branch. A workflow without a
+// durable pause is reported for a direct resume.
+func (s *Service) MarkTimedOut(ctx context.Context, formID string) (*TimeoutResult, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("approval service is not initialized")
 	}
-	if form.Status != FormStatusWaiting {
-		return &form, nil
+	result := &TimeoutResult{}
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var form Form
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&form, "id = ?", formID).Error; err != nil {
+			return fmt.Errorf("load approval form: %w", err)
+		}
+		result.Form = &form
+		if form.Status != FormStatusWaiting {
+			return nil
+		}
+		if err := tx.Model(&Form{}).Where("id = ? AND status = ?", form.ID, FormStatusWaiting).
+			Update("status", FormStatusTimeout).Error; err != nil {
+			return fmt.Errorf("mark approval timeout: %w", err)
+		}
+		form.Status = FormStatusTimeout
+		result.TimedOut = true
+
+		pauseService := workflowpause.NewService(tx)
+		pauseRecord, reasons, _, err := pauseService.GetActiveByWorkflowRunID(ctx, form.WorkflowRunID)
+		if err != nil && !errors.Is(err, workflowpause.ErrPauseNotFound) {
+			return err
+		}
+		if err != nil || !activePauseHasFormID(reasons, form.ID) {
+			// No pause waits on this form: only a workflow without a durable
+			// pause resumes from the form itself.
+			durablePause, protocolErr := workflowRunUsesDurablePauseTx(ctx, tx, form.WorkflowRunID)
+			if protocolErr != nil {
+				return protocolErr
+			}
+			result.LegacyResume = !durablePause
+			return nil
+		}
+		event, err := pauseService.AppendEventPayloadTx(ctx, tx, workflowpause.AppendEventParams{
+			TenantID:                pauseRecord.TenantID,
+			AppID:                   pauseRecord.AppID,
+			WorkflowRunID:           form.WorkflowRunID,
+			EventType:               workflowpause.EventApprovalExpired,
+			EventData:               approvalExpiredEventData(&form),
+			PauseID:                 pauseRecord.ID,
+			PauseGeneration:         &pauseRecord.Generation,
+			ExpectedPauseID:         pauseRecord.ID,
+			ExpectedPauseGeneration: &pauseRecord.Generation,
+			ExpectedPauseRevision:   &pauseRecord.Revision,
+			IdempotencyKey:          "approval-expired:" + form.ID,
+		})
+		if err != nil {
+			return err
+		}
+		outbox, ready, err := pauseService.CompleteReasonsTx(ctx, tx, workflowpause.CompleteReasonsParams{
+			WorkflowRunID:     form.WorkflowRunID,
+			PauseID:           pauseRecord.ID,
+			ReasonType:        workflowpause.ReasonTypeApprovalRequired,
+			FormID:            form.ID,
+			SubmissionEventID: event.EventID,
+			TriggerID:         form.ID,
+		})
+		if err != nil {
+			return err
+		}
+		if !ready {
+			// Other approvals of the same pause are still pending.
+			_, err := pauseService.AppendNextPendingInteractionProjectionTx(ctx, tx, pauseRecord, event.EventID)
+			return err
+		}
+		result.Outbox = &workflowRuntimeOutboxRef{ID: outbox.ID, IdempotencyKey: outbox.IdempotencyKey, PayloadJSON: outbox.PayloadJSON}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	if err := s.db.WithContext(ctx).Model(&form).Update("status", FormStatusTimeout).Error; err != nil {
-		return nil, fmt.Errorf("mark approval timeout: %w", err)
-	}
-	form.Status = FormStatusTimeout
-	return &form, nil
+	return result, nil
 }
 
-func (s *Service) TimeoutExpiredForms(ctx context.Context, limit int) ([]*Form, error) {
+func approvalExpiredEventData(form *Form) map[string]interface{} {
+	return map[string]interface{}{
+		"form_id":          form.ID,
+		"approval_form_id": form.ID,
+		"workflow_run_id":  form.WorkflowRunID,
+		"node_id":          form.NodeID,
+		"node_title":       form.NodeTitle,
+		"reason":           FormStatusTimeout,
+		"expired_at":       form.ExpirationTime.Unix(),
+	}
+}
+
+func (s *Service) TimeoutExpiredForms(ctx context.Context, limit int) ([]*TimeoutResult, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("approval service is not initialized")
 	}
@@ -749,14 +829,14 @@ func (s *Service) TimeoutExpiredForms(ctx context.Context, limit int) ([]*Form, 
 		return nil, fmt.Errorf("load expired approval forms: %w", err)
 	}
 
-	timedOut := make([]*Form, 0, len(forms))
+	timedOut := make([]*TimeoutResult, 0, len(forms))
 	for i := range forms {
-		form, err := s.MarkTimedOut(ctx, forms[i].ID)
+		result, err := s.MarkTimedOut(ctx, forms[i].ID)
 		if err != nil {
 			return nil, err
 		}
-		if form.Status == FormStatusTimeout {
-			timedOut = append(timedOut, form)
+		if result.TimedOut {
+			timedOut = append(timedOut, result)
 		}
 	}
 	return timedOut, nil
