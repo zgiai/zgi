@@ -405,6 +405,34 @@ func (r *GormRepository) MarkStaleRunsUnknown(ctx context.Context, updatedBefore
 		}).Error
 }
 
+// ListWorkflowApprovalWaitingRuns returns interactive runs held by a generic
+// workflow approval, least recently checked first. Their approval can also be
+// completed outside the conversation, which the host must then observe.
+func (r *GormRepository) ListWorkflowApprovalWaitingRuns(ctx context.Context, updatedBefore time.Time, limit int) ([]*Run, error) {
+	if limit <= 0 {
+		limit = defaultOutboxBatch
+	}
+	items := make([]*Run, 0, limit)
+	if err := r.db.WithContext(ctx).Where(
+		"status = ? AND waiting_reason = ? AND waiting_approval_origin = ? AND conversation_id IS NOT NULL AND message_id IS NOT NULL AND updated_at < ?",
+		RunStatusWaiting, runtimemodel.MessageStatusWaitingApproval, workflowApprovalOrigin, updatedBefore,
+	).Order("updated_at ASC, id ASC").Limit(limit).Find(&items).Error; err != nil {
+		return nil, fmt.Errorf("list workflow approval waiting DigitalHuman runs: %w", err)
+	}
+	return items, nil
+}
+
+// TouchWaitingRun records that a waiting run was checked and is still waiting,
+// so the next check visits the other waiting runs first.
+func (r *GormRepository) TouchWaitingRun(ctx context.Context, runID uuid.UUID, now time.Time) error {
+	if err := r.db.WithContext(ctx).Model(&Run{}).
+		Where("id = ? AND status = ?", runID, RunStatusWaiting).
+		Update("updated_at", now).Error; err != nil {
+		return fmt.Errorf("touch waiting DigitalHuman run: %w", err)
+	}
+	return nil
+}
+
 func terminalRunStatus(status RunStatus) bool {
 	switch status {
 	case RunStatusSucceeded, RunStatusFailed, RunStatusCanceled, RunStatusUnknown:

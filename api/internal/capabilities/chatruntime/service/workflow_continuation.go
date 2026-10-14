@@ -306,6 +306,28 @@ type WorkflowContinuationSummaryRequest struct {
 }
 
 func (s *service) BeginWorkflowApprovalContinuation(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID) (*WorkflowApprovalContinuation, error) {
+	return s.beginWorkflowApprovalContinuation(ctx, scope, caller, config, conversationID, messageID, false)
+}
+
+// ExternalWorkflowApprovalContinuationBeginner is implemented by the
+// production ChatRuntime; hosts assert it to observe external approvals.
+type ExternalWorkflowApprovalContinuationBeginner interface {
+	BeginExternalWorkflowApprovalContinuation(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID) (*WorkflowApprovalContinuation, error)
+}
+
+var _ ExternalWorkflowApprovalContinuationBeginner = (*service)(nil)
+
+// BeginExternalWorkflowApprovalContinuation claims a message whose workflow
+// approval was completed outside the conversation (an email, SMS or approval
+// page approver), so the host can record how the resumed workflow went on.
+// It submits nothing, so it skips the inline-approval check that guards
+// conversation submissions; the caller must have verified that the workflow
+// left the approval this message waits on. Only one caller can claim the message.
+func (s *service) BeginExternalWorkflowApprovalContinuation(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID) (*WorkflowApprovalContinuation, error) {
+	return s.beginWorkflowApprovalContinuation(ctx, scope, caller, config, conversationID, messageID, true)
+}
+
+func (s *service) beginWorkflowApprovalContinuation(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID, external bool) (*WorkflowApprovalContinuation, error) {
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err
 	}
@@ -337,6 +359,9 @@ func (s *service) BeginWorkflowApprovalContinuation(ctx context.Context, scope S
 		state.Completed = true
 		return state, nil
 	}
+	if external && (state.Kind == "digital_human_task" || message.Status != runtimemodel.MessageStatusWaitingApproval) {
+		return nil, fmt.Errorf("%w: message is not waiting for an external workflow approval", ErrInvalidInput)
+	}
 	if state.Kind != "digital_human_task" {
 		if err := validateWorkflowContinuationBinding(state, config.WorkflowBindings); err != nil {
 			return nil, err
@@ -352,7 +377,7 @@ func (s *service) BeginWorkflowApprovalContinuation(ctx context.Context, scope S
 		// Generic workflow approvals retain the existing begin-and-stream path.
 		return state, nil
 	}
-	if message.Status == runtimemodel.MessageStatusWaitingApproval &&
+	if message.Status == runtimemodel.MessageStatusWaitingApproval && !external &&
 		!workflowContinuationAllowsInlineApproval(caller, state) {
 		return nil, fmt.Errorf("%w: this workflow approval must be completed through its configured approval channel", ErrInvalidInput)
 	}
@@ -373,9 +398,13 @@ func (s *service) BeginWorkflowApprovalContinuation(ctx context.Context, scope S
 					return err
 				}
 			}
-			return tx.Model(&runtimemodel.Message{}).
+			result := tx.Model(&runtimemodel.Message{}).
 				Where("id = ? AND deleted_at IS NULL AND status IN ?", message.ID, []string{runtimemodel.MessageStatusWaitingApproval, runtimemodel.MessageStatusWaitingQuestion}).
-				Updates(map[string]interface{}{"status": runtimemodel.MessageStatusStreaming}).Error
+				Updates(map[string]interface{}{"status": runtimemodel.MessageStatusStreaming})
+			if result.Error == nil && external && result.RowsAffected != 1 {
+				return fmt.Errorf("%w: workflow continuation message was already claimed", ErrInvalidInput)
+			}
+			return result.Error
 		})
 		if err != nil {
 			return nil, err
