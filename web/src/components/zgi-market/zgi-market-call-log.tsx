@@ -315,7 +315,10 @@ export function ZgiMarketCallLog() {
                                 <div className="font-medium">{row.tool_name}</div>
                                 <div className="text-xs text-muted-foreground">
                                   {row.listing_title || row.listing_slug}
-                                  {row.offering_slug ? ` · ${row.offering_slug}` : ''}
+                                  {row.offering_slug &&
+                                  row.offering_slug !== (row.listing_title || row.listing_slug)
+                                    ? ` · ${row.offering_slug}`
+                                    : ''}
                                 </div>
                               </TableCell>
                               <TableCell>

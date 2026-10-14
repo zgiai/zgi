@@ -265,7 +265,7 @@ const messages = {
   callLogs: {
     title: 'Market Call Log',
     subtitle:
-      'Every ZGI Market tool your agents and digital humans called: what they sent, what came back, and what it cost.',
+      'Every ZGI Market tool your agents, digital humans and market credentials called: what was sent, what came back, and what it cost.',
     adminOnly: 'Only organization owners and administrators can see the market call log.',
     loadFailed: 'The market call log could not be loaded.',
     retry: 'Retry',
