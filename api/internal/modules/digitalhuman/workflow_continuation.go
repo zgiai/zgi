@@ -377,6 +377,11 @@ func (l *digitalHumanWorkflowContinuation) settleRun(ctx context.Context, status
 	if l.settle == nil {
 		return
 	}
+	if status == runtimemodel.MessageStatusCompleted && strings.EqualFold(strings.TrimSpace(l.runStatus), "failed") {
+		// The summary of a failed workflow completes the message, but the run
+		// still reports the workflow outcome.
+		status = runtimemodel.MessageStatusError
+	}
 	l.settle(ctx, status, l.answer, metadata)
 }
 
@@ -484,7 +489,10 @@ func (s *RuntimeService) settleWorkflowContinuationRun(ctx context.Context, run 
 	switch status {
 	case runtimemodel.MessageStatusCompleted:
 		err = s.store.CompleteRunWithDelivery(ctx, run.ID, answer, executionTraceFromMetadata(metadata), s.now())
-	case runtimemodel.MessageStatusWaitingApproval, runtimemodel.MessageStatusWaitingQuestion:
+	case runtimemodel.MessageStatusWaitingApproval, runtimemodel.MessageStatusWaitingQuestion,
+		runtimemodel.MessageStatusWaitingBudget, runtimemodel.MessageStatusWaitingClientAction:
+		// The resumed Agent loop can also stop on a budget or client action; the
+		// run must stay waiting so those continuations can pick it up.
 		waiter, ok := s.store.(runWaitingStore)
 		if !ok {
 			err = fmt.Errorf("digital human waiting run resume is unavailable")

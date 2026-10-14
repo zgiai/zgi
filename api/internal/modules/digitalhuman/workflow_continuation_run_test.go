@@ -88,6 +88,38 @@ func TestWorkflowContinuationSettlesRunWhenPausedAgain(t *testing.T) {
 	}
 }
 
+func TestWorkflowContinuationKeepsRunWaitingOnBudgetOrClientAction(t *testing.T) {
+	for _, status := range []string{runtimemodel.MessageStatusWaitingBudget, runtimemodel.MessageStatusWaitingClientAction} {
+		t.Run(status, func(t *testing.T) {
+			runtime := &fakeWorkflowContinuationRuntime{summaryResult: &chatruntime.ChatResult{Status: status, Metadata: map[string]interface{}{}}}
+			var emitted []chatruntime.StreamEvent
+			lifecycle, store := settledLifecycle(runtime, &emitted)
+			_ = lifecycle.handle("workflow_finished", map[string]interface{}{"status": "succeeded"})
+			if err := lifecycle.finish(workflowContinuationStreamed, nil); err != nil {
+				t.Fatal(err)
+			}
+			if len(store.calls) != 1 || store.calls[0] != "waiting:"+status {
+				t.Fatalf("run store calls = %v, want the run waiting on %s", store.calls, status)
+			}
+		})
+	}
+}
+
+func TestWorkflowContinuationFailsRunWhenWorkflowFinishedFailed(t *testing.T) {
+	runtime := &fakeWorkflowContinuationRuntime{summaryResult: &chatruntime.ChatResult{
+		Status: runtimemodel.MessageStatusCompleted, Answer: "the workflow failed", Metadata: map[string]interface{}{},
+	}}
+	var emitted []chatruntime.StreamEvent
+	lifecycle, store := settledLifecycle(runtime, &emitted)
+	_ = lifecycle.handle("workflow_finished", map[string]interface{}{"status": "failed", "error": "node failed"})
+	if err := lifecycle.finish(workflowContinuationStreamed, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.calls) != 1 || store.calls[0] != "fail:digital_human.run.execution_failed" {
+		t.Fatalf("run store calls = %v, want the run failed after the failure summary", store.calls)
+	}
+}
+
 func TestWorkflowContinuationSettlesRunWhenStoppedOrFailed(t *testing.T) {
 	var emitted []chatruntime.StreamEvent
 	stopped, stoppedStore := settledLifecycle(&fakeWorkflowContinuationRuntime{}, &emitted)
