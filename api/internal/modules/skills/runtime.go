@@ -792,6 +792,9 @@ func resolveConnectorToolIdentity(
 	case tools.ToolInvokeFromAgent:
 		target = core.TargetRef{Type: core.TargetTypeAgent, ID: strings.TrimSpace(execCtx.AppID), Scope: execCtx.ConnectorTargetScope, VersionID: execCtx.ConnectorTargetVersionID}
 		interactive = connectorAgentRuntimeInteractive(execCtx.RuntimeParameters)
+	case tools.ToolInvokeFromDigitalHuman:
+		// The DigitalHuman target is resolved from the server-owned execution
+		// context below; an incomplete context fails target validation.
 	case tools.ToolInvokeFromWorkflow:
 		target = core.TargetRef{
 			Type:              core.TargetTypeWorkflow,

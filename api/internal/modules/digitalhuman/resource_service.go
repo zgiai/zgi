@@ -105,6 +105,15 @@ func buildResourceBindings(scope Scope, digitalHumanID, draftID uuid.UUID, input
 		if err != nil || strings.TrimSpace(input.ResourceRevision) == "" || len(input.ResourceRevision) > 255 || len(input.CredentialRef) > 512 || (!validBindingMode(match.Type, match.AccessMode) && !legacy) {
 			return nil, ErrResourceBindingInvalid
 		}
+		if match.Type == resourcebindings.BindingTypeWorkflow {
+			// Workflow bindings are keyed by the workflow Agent id, matching the key
+			// Skills authorization and binding verification derive at runtime.
+			workflowAgentID := strings.ToLower(stringMapValue(input.Metadata, "workflow_agent_id"))
+			if workflowAgentID == "" || (match.ParentResourceID != "" && !strings.EqualFold(match.ParentResourceID, workflowAgentID)) {
+				return nil, ErrResourceBindingInvalid
+			}
+			match.ParentResourceID = workflowAgentID
+		}
 		input.DisplayName, input.ResourceRevision, input.CredentialRef = strings.TrimSpace(input.DisplayName), strings.TrimSpace(input.ResourceRevision), strings.TrimSpace(input.CredentialRef)
 		if containsCredentialMaterial(input.Metadata) {
 			return nil, ErrResourceBindingInvalid

@@ -173,6 +173,8 @@ func normalizeToolInvokeFrom(value tools.ToolInvokeFrom) tools.ToolInvokeFrom {
 	switch value {
 	case tools.ToolInvokeFromAgent:
 		return tools.ToolInvokeFromAgent
+	case tools.ToolInvokeFromDigitalHuman:
+		return tools.ToolInvokeFromDigitalHuman
 	case tools.ToolInvokeFromWorkflow:
 		return tools.ToolInvokeFromWorkflow
 	default:

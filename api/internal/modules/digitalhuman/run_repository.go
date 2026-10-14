@@ -182,7 +182,7 @@ func (r *GormRepository) LinkRunMessage(ctx context.Context, runID, conversation
 func (r *GormRepository) ResumeWaitingRun(ctx context.Context, runID uuid.UUID, now time.Time) error {
 	result := r.db.WithContext(ctx).Model(&Run{}).
 		Where("id = ? AND status = ?", runID, RunStatusWaiting).
-		Updates(map[string]any{"status": RunStatusRunning, "waiting_reason": "", "updated_at": now})
+		Updates(map[string]any{"status": RunStatusRunning, "waiting_reason": "", "waiting_receipt": nil, "waiting_approval_origin": "", "updated_at": now})
 	if result.Error != nil {
 		return fmt.Errorf("resume DigitalHuman run: %w", result.Error)
 	}
@@ -275,10 +275,18 @@ func (r *GormRepository) MarkRunWaiting(ctx context.Context, runID uuid.UUID, re
 				if err != nil {
 					return err
 				}
-				if !matched {
-					return ErrRunConflict
+				if matched {
+					approvalOrigin = platformCLIApprovalOrigin
+				} else {
+					workflowMatched, err := runHasWorkflowContinuationMessage(tx, &run, runtimemodel.MessageStatusWaitingApproval)
+					if err != nil {
+						return err
+					}
+					if !workflowMatched {
+						return ErrRunConflict
+					}
+					approvalOrigin = workflowApprovalOrigin
 				}
-				approvalOrigin = platformCLIApprovalOrigin
 			}
 		}
 		result := tx.Model(&Run{}).Where("id = ? AND status = ?", runID, RunStatusRunning).

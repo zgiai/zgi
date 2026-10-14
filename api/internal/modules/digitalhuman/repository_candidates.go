@@ -209,7 +209,7 @@ func (r *GormRepository) listWorkflowCandidates(ctx context.Context, scope Scope
 			return nil, err
 		}
 		items = append(items, ResourceCandidate{
-			Type: resourcebindings.BindingTypeWorkflow, ResourceID: agentID,
+			Type: resourcebindings.BindingTypeWorkflow, ResourceID: agentID, ParentResourceID: agentID,
 			DisplayName: strings.TrimSpace(row.Name), Description: strings.TrimSpace(row.Description),
 			ResourceRevision: revision, AccessModes: []resourcebindings.AccessMode{resourcebindings.AccessModeExecute},
 			Metadata: metadata, Status: "published", Available: versionUUID != "",
