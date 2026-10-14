@@ -104,12 +104,10 @@ type RuntimeService struct {
 	taskService    TaskHandlerService
 	workflowRunner WorkflowContinuationRunner
 	workflowDB     *gorm.DB
-	// externalApprovalProbe overrides the durable workflow state reader in tests.
-	externalApprovalProbe externalWorkflowApprovalProbe
-	channelContext        ChannelContextRuntimeProvider
-	manualFiles           ManualInvocationFileValidator
-	linux                 LinuxExecutionRuntimeProvider
-	now                   func() time.Time
+	channelContext ChannelContextRuntimeProvider
+	manualFiles    ManualInvocationFileValidator
+	linux          LinuxExecutionRuntimeProvider
+	now            func() time.Time
 }
 
 func NewRuntimeService(store RunStore, resolver ExecutionResolver, brain BrainRuntimeAdapter, chat ChatRuntime, dispatcher RunDispatcher, options ...RuntimeServiceOption) *RuntimeService {
@@ -1318,7 +1316,6 @@ func (s *RuntimeService) Reconcile(ctx context.Context) error {
 		s.store.RequeueStaleRunOutbox(ctx, now.Add(-defaultOutboxLease), now),
 		s.DispatchPending(ctx, defaultOutboxBatch),
 		s.recoverCompletedRuns(ctx, now.Add(-completedRunRecoveryWindow), defaultOutboxBatch),
-		s.resumeExternalWorkflowApprovals(ctx, now, defaultOutboxBatch),
 		s.store.MarkStaleRunsUnknown(ctx, now.Add(-defaultStaleRunWindow), now),
 	)
 }

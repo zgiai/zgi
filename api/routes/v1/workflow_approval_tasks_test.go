@@ -16,6 +16,7 @@ func TestRegisterApprovalTaskHandlersIncludesConnectorResume(t *testing.T) {
 		nil,
 		&approvalruntime.Service{},
 		&workflow.WorkflowHandler{},
+		approvalruntime.NewResumeHosts(),
 	)
 
 	want := map[string]bool{

@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/container"
+	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	"github.com/zgiai/zgi/api/internal/modules/digitalhuman"
@@ -205,6 +206,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	})
 
 	// ---------- Workflow ----------
+	approvalResumeHosts := approvalruntime.NewResumeHosts()
 	workflowService := RegisterWorkflowRoutes(v1, WorkflowRouteDeps{
 		DB:                          db,
 		AccountService:              accountService,
@@ -224,6 +226,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		EngineFactory:               workflowEngineFactory,
 		AutomationRunnerSetter:      serviceContainer,
 		ShortLinkService:            serviceContainer.GetShortLinkService(),
+		ApprovalResumeHosts:         approvalResumeHosts,
 	})
 
 	if err := serviceContainer.EnsureConnectorDefinitions(context.Background()); err != nil {
@@ -271,6 +274,9 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		KnowledgeRetrievalService:           serviceContainer.GetKnowledgeRetrievalService(),
 		WorkflowService:                     workflowService,
 	})
+	if digitalHumanRuntime.Runtime != nil {
+		approvalResumeHosts.Register(digitalHumanRuntime.Runtime)
+	}
 	if automationBundle.DigitalHumanTaskReconciler != nil && digitalHumanRuntime.Runtime != nil {
 		automationBundle.DigitalHumanTaskReconciler.SetResultDeliverer(digitalHumanRuntime.Runtime)
 	}

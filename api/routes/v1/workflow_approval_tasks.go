@@ -15,7 +15,9 @@ type approvalTaskRegistry interface {
 	Register(taskType string, handler func(context.Context, *asynq.Task) error) bool
 }
 
-func registerApprovalTaskHandlers(registry approvalTaskRegistry, taskManager *queue.TaskManager, service *approvalruntime.Service, handler *workflowHandlerPkg.WorkflowHandler) {
+// registerApprovalTaskHandlers resumes submitted approvals through hosts, so a
+// conversation waiting on the workflow (a DigitalHuman run) resumes with it.
+func registerApprovalTaskHandlers(registry approvalTaskRegistry, taskManager *queue.TaskManager, service *approvalruntime.Service, handler *workflowHandlerPkg.WorkflowHandler, hosts *approvalruntime.ResumeHosts) {
 	if registry == nil || service == nil || handler == nil {
 		return
 	}
@@ -23,7 +25,7 @@ func registerApprovalTaskHandlers(registry approvalTaskRegistry, taskManager *qu
 	if taskManager != nil {
 		taskType = taskManager.GetTaskTypeWithPrefix(taskType)
 	}
-	taskHandler := approvalruntime.NewResumeTaskHandler(service, handler.ResumeApprovalWorkflow)
+	taskHandler := approvalruntime.NewResumeTaskHandler(service, hosts.ResumeCallback(handler.ResumeApprovalWorkflow))
 	if isNew := registry.Register(taskType, taskHandler); isNew {
 		logger.Info("Registered approval resume handler", map[string]interface{}{
 			"task_type": taskType,
@@ -63,12 +65,12 @@ func registerApprovalTaskHandlers(registry approvalTaskRegistry, taskManager *qu
 	}
 }
 
-func registerApprovalScheduledTasks(scheduler *pkgscheduler.Scheduler, service *approvalruntime.Service, handler *workflowHandlerPkg.WorkflowHandler, taskManager *queue.TaskManager) {
+func registerApprovalScheduledTasks(scheduler *pkgscheduler.Scheduler, service *approvalruntime.Service, handler *workflowHandlerPkg.WorkflowHandler, taskManager *queue.TaskManager, hosts *approvalruntime.ResumeHosts) {
 	if scheduler == nil || service == nil || handler == nil {
 		return
 	}
 	task := approvalruntime.NewTimeoutScanTask(0)
-	taskHandler := approvalruntime.NewTimeoutScanHandler(service, handler.ResumeApprovalWorkflow, 100)
+	taskHandler := approvalruntime.NewTimeoutScanHandler(service, hosts.ResumeCallback(handler.ResumeApprovalWorkflow), 100)
 	if err := scheduler.RegisterTask(task, taskHandler); err != nil {
 		logger.Error("Failed to register approval timeout scan task", err)
 		return

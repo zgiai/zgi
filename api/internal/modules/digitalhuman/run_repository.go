@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -405,32 +406,29 @@ func (r *GormRepository) MarkStaleRunsUnknown(ctx context.Context, updatedBefore
 		}).Error
 }
 
-// ListWorkflowApprovalWaitingRuns returns interactive runs held by a generic
-// workflow approval, least recently checked first. Their approval can also be
-// completed outside the conversation, which the host must then observe.
-func (r *GormRepository) ListWorkflowApprovalWaitingRuns(ctx context.Context, updatedBefore time.Time, limit int) ([]*Run, error) {
-	if limit <= 0 {
-		limit = defaultOutboxBatch
+// RunWaitingOnWorkflowApproval returns the interactive run held by a generic
+// workflow approval of this workflow run, or nil when no run waits on it.
+func (r *GormRepository) RunWaitingOnWorkflowApproval(ctx context.Context, workflowRunID string) (*Run, error) {
+	workflowRunID = strings.TrimSpace(workflowRunID)
+	if workflowRunID == "" {
+		return nil, nil
 	}
-	items := make([]*Run, 0, limit)
-	if err := r.db.WithContext(ctx).Where(
-		"status = ? AND waiting_reason = ? AND waiting_approval_origin = ? AND conversation_id IS NOT NULL AND message_id IS NOT NULL AND updated_at < ?",
-		RunStatusWaiting, runtimemodel.MessageStatusWaitingApproval, workflowApprovalOrigin, updatedBefore,
-	).Order("updated_at ASC, id ASC").Limit(limit).Find(&items).Error; err != nil {
-		return nil, fmt.Errorf("list workflow approval waiting DigitalHuman runs: %w", err)
-	}
-	return items, nil
-}
-
-// TouchWaitingRun records that a waiting run was checked and is still waiting,
-// so the next check visits the other waiting runs first.
-func (r *GormRepository) TouchWaitingRun(ctx context.Context, runID uuid.UUID, now time.Time) error {
+	var runs []*Run
 	if err := r.db.WithContext(ctx).Model(&Run{}).
-		Where("id = ? AND status = ?", runID, RunStatusWaiting).
-		Update("updated_at", now).Error; err != nil {
-		return fmt.Errorf("touch waiting DigitalHuman run: %w", err)
+		Joins("JOIN chat_runtime_messages ON chat_runtime_messages.id = digital_human_runs.message_id").
+		Where("digital_human_runs.status = ? AND digital_human_runs.waiting_reason = ? AND digital_human_runs.waiting_approval_origin = ? AND digital_human_runs.conversation_id IS NOT NULL",
+			RunStatusWaiting, runtimemodel.MessageStatusWaitingApproval, workflowApprovalOrigin).
+		Where("chat_runtime_messages.status = ? AND chat_runtime_messages.deleted_at IS NULL AND chat_runtime_messages.metadata->'agent_workflow_continuation'->>'workflow_run_id' = ?",
+			runtimemodel.MessageStatusWaitingApproval, workflowRunID).
+		Limit(2).Find(&runs).Error; err != nil {
+		return nil, fmt.Errorf("find DigitalHuman run waiting on workflow approval: %w", err)
 	}
-	return nil
+	if len(runs) != 1 {
+		// A workflow run belongs to one conversation message; anything else is
+		// not a hold this host can resume.
+		return nil, nil
+	}
+	return runs[0], nil
 }
 
 func terminalRunStatus(status RunStatus) bool {
