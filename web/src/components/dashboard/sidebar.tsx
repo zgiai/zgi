@@ -101,6 +101,19 @@ function buildDashboardGroups(t: ReturnType<typeof useT<'dashboard'>>) {
       ],
     },
     {
+      key: 'market-calls',
+      title: t('items.marketCallLogs'),
+      icon: Store,
+      items: [
+        {
+          key: 'market-calls',
+          title: t('items.marketCallLogs'),
+          href: '/dashboard/usage/market-calls',
+          icon: Store,
+        },
+      ],
+    },
+    {
       key: 'org',
       title: t('groups.org'),
       icon: Users,

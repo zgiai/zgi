@@ -37,6 +37,7 @@ type SecretSealer interface {
 type Tools struct {
 	proxy   *Proxy
 	store   toolBindingStore
+	logs    callLogStore
 	sealer  SecretSealer
 	gateway *gatewayClient
 	now     func() time.Time
@@ -70,7 +71,7 @@ type cachedCharge struct {
 // Proxy.WithTools.
 func NewTools(db *gorm.DB, sealer SecretSealer, gateway *GatewayConfig) (*Tools, error) {
 	tools := &Tools{
-		store: toolBindingStore{db: db}, sealer: sealer, now: time.Now,
+		store: toolBindingStore{db: db}, logs: callLogStore{db: db}, sealer: sealer, now: time.Now,
 		catalog: map[string]cachedCatalog{}, operations: map[string]cachedOperations{},
 		charges: map[string]cachedCharge{},
 	}
@@ -730,14 +731,18 @@ func (t *Tools) callTool(ctx context.Context, organizationID uuid.UUID, name, to
 	if offeringSlug, isAPI := strings.CutPrefix(slug, apiProviderPrefix); isAPI {
 		return t.callOperation(ctx, binding, offeringSlug, tool, arguments)
 	}
-	if _, bound := binding.item(slug); !bound {
+	item, bound := binding.item(slug)
+	if !bound {
 		return nil, ErrListingNotBindable
 	}
 	secret, err := t.secret(binding)
 	if err != nil {
 		return nil, err
 	}
-	return t.gateway.CallTool(ctx, slug, secret, tool, arguments)
+	started := t.now()
+	result, err := t.gateway.CallTool(ctx, slug, secret, tool, arguments)
+	t.logs.record(callTarget{binding: binding, item: item, tool: tool}, arguments, result, err, started, t.now())
+	return result, err
 }
 
 // callOperation calls the operation of a bound API offering that the tool name stands for.
@@ -764,5 +769,8 @@ func (t *Tools) callOperation(ctx context.Context, binding *ToolBinding, offerin
 	if err != nil {
 		return nil, err
 	}
-	return t.gateway.CallOperation(ctx, offeringSlug, secret, request)
+	started := t.now()
+	result, err := t.gateway.CallOperation(ctx, offeringSlug, secret, request)
+	t.logs.record(callTarget{binding: binding, item: item, tool: tool}, arguments, result, err, started, t.now())
+	return result, err
 }

@@ -579,10 +579,11 @@ func (g *gatewayClient) CallOperation(ctx context.Context, offeringSlug, secret 
 	if err != nil {
 		return nil, err
 	}
+	requestID := response.Header.Get(requestIDHeader)
 	if response.StatusCode < 200 || response.StatusCode > 299 {
-		return &GatewayResult{Text: marketFailure(response.StatusCode, content), IsError: true}, nil
+		return &GatewayResult{Text: marketFailure(response.StatusCode, content), IsError: true, RequestID: requestID}, nil
 	}
-	return &GatewayResult{Text: capResult(string(content))}, nil
+	return &GatewayResult{Text: capResult(string(content)), RequestID: requestID}, nil
 }
 
 // capResult bounds a tool result handed to the model and says so when it was cut.

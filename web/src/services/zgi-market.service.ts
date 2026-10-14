@@ -1,5 +1,7 @@
 import { BaseService } from '@/lib/http/services';
 import type {
+  MarketCallLogPage,
+  MarketCallLogQuery,
   MarketCategory,
   MarketConnection,
   MarketCredential,
@@ -188,6 +190,25 @@ class ZgiMarketService extends BaseService {
       `/connections/oauth/callback${query.startsWith('?') ? query : `?${query}`}`
     );
     return response.data.redirect;
+  }
+
+  /** The organization's market tool calls, newest first, for administrators. */
+  async getCallLogs(query: MarketCallLogQuery): Promise<MarketCallLogPage> {
+    const response = await this.request<MarketEnvelope<MarketCallLogPage>>(
+      'get',
+      '/call-logs',
+      undefined,
+      {
+        params: {
+          from: query.from,
+          to: query.to,
+          page: query.page ?? 1,
+          per_page: query.per_page ?? 20,
+          ...(query.status ? { status: query.status } : {}),
+        },
+      }
+    );
+    return response.data;
   }
 
   /** The activated MCP listings that may be bound, with the organization's connections. */

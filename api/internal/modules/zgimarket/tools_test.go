@@ -35,6 +35,8 @@ type fakeMarket struct {
 	items      bool
 	deleted    []string
 	failDelete bool
+	// charges answers calls/charges by request id; a request id it lacks is answered none.
+	charges map[string]map[string]any
 }
 
 // itemsListing is the API listing "items" as the market answers it, for a member and in public.
@@ -93,6 +95,17 @@ func (m *fakeMarket) handler(t *testing.T) http.HandlerFunc {
 				}},
 				"required_connectors": []map[string]any{},
 			})
+		case r.Method == http.MethodGet && path == "calls/charges":
+			answers := []map[string]any{}
+			for _, id := range strings.Split(r.URL.Query().Get("request_ids"), ",") {
+				charge, ok := m.charges[id]
+				if !ok {
+					charge = map[string]any{"state": "none", "amount_micros": 0, "lines": []any{}}
+				}
+				charge["request_id"] = id
+				answers = append(answers, charge)
+			}
+			data(http.StatusOK, map[string]any{"charges": answers})
 		case r.Method == http.MethodGet && path == "connections":
 			data(http.StatusOK, []map[string]any{{"id": 5, "connector_slug": "drive", "name": "Team drive", "status": "connected"}})
 		case r.Method == http.MethodPost && path == "bindings":
@@ -145,6 +158,7 @@ func (g *fakeGateway) handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/v1/gateway/") {
+		w.Header().Set(requestIDHeader, "api-"+strings.TrimPrefix(r.URL.Path, "/v1/gateway/"))
 		body, _ := io.ReadAll(r.Body) //nolint:errcheck // test server
 		g.mu.Lock()
 		g.requests = append(g.requests, strings.TrimSpace(r.Method+" "+r.URL.RequestURI()+" "+string(body)))
@@ -176,6 +190,8 @@ func (g *fakeGateway) handler(w http.ResponseWriter, r *http.Request) {
 		Params json.RawMessage `json:"params"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&request) //nolint:errcheck // test server
+	// Every POST is named; the tool call's own name is what a call log keeps.
+	w.Header().Set(requestIDHeader, "mcp-"+request.Method)
 	if len(request.ID) == 0 {
 		w.WriteHeader(http.StatusAccepted)
 		return
@@ -222,7 +238,7 @@ func newToolsFixture(t *testing.T, admin bool) *toolsFixture {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&ToolBinding{}))
+	require.NoError(t, db.AutoMigrate(&ToolBinding{}, &CallLog{}))
 	require.NoError(t, db.Exec(`CREATE TABLE workspaces (id text, organization_id text)`).Error)
 	require.NoError(t, db.Exec(`CREATE TABLE agents (id text, tenant_id text, deleted_at datetime)`).Error)
 	require.NoError(t, db.Exec(`CREATE TABLE digital_humans (id text, organization_id text, deleted_at datetime)`).Error)
