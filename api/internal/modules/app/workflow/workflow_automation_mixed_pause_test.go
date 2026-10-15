@@ -184,6 +184,13 @@ func TestEachAnswerWithoutANodeAnswersTheQuestionThatIsOpenNow(t *testing.T) {
 		t.Fatalf("second answer node = %q, want q2 rather than the question the first answer resolved", got)
 	}
 
+	alias := map[string]interface{}{"query": "second", "inputs.question_answer_node_id": "q2"}
+	aliased := map[string]interface{}{"question_answer_node_id": "q1", "inputs.question_answer_node_id": "q2", "query": "second"}
+	targetOpenQuestion(aliased, alias, q2)
+	if got := questionAnswerInputNodeID(aliased); got != "q2" {
+		t.Fatalf("aliased answer node = %q, want the node this answer names over the saved q1", got)
+	}
+
 	named := map[string]interface{}{"query": "third", "question_answer_node_id": "q3"}
 	explicit := map[string]interface{}{"query": "third", "question_answer_node_id": "q3"}
 	targetOpenQuestion(explicit, named, q2)
