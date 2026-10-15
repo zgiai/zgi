@@ -9,6 +9,7 @@ export const ORGANIZATION_SCOPED_CONSOLE_ROUTES = [
   '/console',
   '/console/skills',
   '/console/model',
+  '/console/market',
   '/console/connectors',
   '/console/work',
   '/console/work/chat',
@@ -20,6 +21,7 @@ export const ORGANIZATION_SCOPED_CONSOLE_ROUTES = [
 
 export const ORGANIZATION_SCOPED_CONSOLE_ROUTE_PREFIXES = [
   '/console/connectors/',
+  '/console/market/',
   '/console/work/app/',
 ] as const;
 

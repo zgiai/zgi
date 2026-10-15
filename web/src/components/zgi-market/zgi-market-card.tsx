@@ -39,7 +39,7 @@ export default function ZgiMarketCard({ listing, locale, activated }: ZgiMarketC
   const facts = [source, listing.current_version?.label].filter(Boolean);
   return (
     <Link
-      href={`/dashboard/market/catalog/${listing.kind}/${listing.slug}`}
+      href={`/console/market/catalog/${listing.kind}/${listing.slug}`}
       className="group flex h-full flex-col gap-3 rounded-lg border bg-background p-4 transition-colors hover:border-primary/40 hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       <div className="flex items-start gap-3">

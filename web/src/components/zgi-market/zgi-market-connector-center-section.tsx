@@ -128,7 +128,7 @@ export function ZgiMarketConnectorCenterSection() {
           </p>
         </div>
         <Link
-          href="/dashboard/market/catalog"
+          href="/console/market/catalog"
           className="shrink-0 text-sm font-medium text-primary hover:underline"
         >
           {t('market.tools.browse')}

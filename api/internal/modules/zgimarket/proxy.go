@@ -219,7 +219,7 @@ func (p *Proxy) Forward(c *gin.Context) {
 		response.FailWithMessage(c, response.ErrServiceUnavailable, "ZGI Market is not configured")
 		return
 	}
-	if p.meta(c) || p.install(c) || p.toolRoute(c) || p.callLogRoute(c) {
+	if p.meta(c) || p.install(c) || p.toolRoute(c) || p.callLogRoute(c) || p.activationRequestRoute(c) {
 		return
 	}
 	path, allowed := forwardable(c.Request.Method, c.Param("path"))

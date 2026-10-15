@@ -16,6 +16,7 @@ const messages = {
   memory: 'My AI memories',
   models: 'Models',
   modelPlaza: 'Model Plaza',
+  zgiMarket: 'ZGI Market',
   apiKeys: 'API Keys',
   usageAndQuota: 'Usage & Quota',
   invocationLogs: 'Request Logs',

@@ -205,6 +205,13 @@ export const ZGI_CONSOLE_SITE_MAP = [
     permissions: NO_PERMISSIONS,
   },
   {
+    href: '/console/market',
+    label: 'ZGI Market',
+    purpose: 'browse the ZGI Market, ask for an item to be activated, and activate it as an administrator',
+    scope: 'organization',
+    permissions: NO_PERMISSIONS,
+  },
+  {
     href: '/console/api-keys',
     label: 'API Keys',
     purpose: 'request developer access and manage personal workspace API keys',
