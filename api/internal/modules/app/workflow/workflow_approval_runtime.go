@@ -227,6 +227,11 @@ func (h *WorkflowHandler) resumeQuestionAnswerWorkflow(ctx context.Context, work
 	for key, value := range resumeInputs {
 		inputs[key] = value
 	}
+	if nodeID := pendingQuestionReasonNodeID(reasons); nodeID != "" && questionAnswerInputNodeID(inputs) == "" {
+		// An answer that does not name its node answers the pause's only open
+		// question. The pause's first node may be an approval of a mixed pause.
+		inputs["question_answer_node_id"] = nodeID
+	}
 	responseMode := pauseState.Request.ResponseMode
 	if responseMode == "" {
 		responseMode = "streaming"
@@ -347,6 +352,22 @@ func (h *WorkflowHandler) resumeQuestionAnswerWorkflow(ctx context.Context, work
 		h.executeWorkflowStream(ctx, run.TenantID, run.AgentID, req, run.CreatedBy, run.ID, run.ID, run.WorkflowID, systemInputs, run.SequenceNumber, resultChan, errorChan, doneChan, isDraft, runType, run.TriggeredFrom, nil)
 	}()
 	return h.drainApprovalResumeStream(ctx, pauseService, workflowService, run, resultChan, errorChan, doneChan, resumeStartedAt, runType, systemInputs, inputs, eventDispatcher)
+}
+
+// pendingQuestionReasonNodeID is the node of the pause's single pending
+// question, or empty when there is none or more than one.
+func pendingQuestionReasonNodeID(reasons []workflowpause.RunPauseReason) string {
+	nodeID := ""
+	for _, reason := range reasons {
+		if reason.Type != workflowpause.ReasonTypeQuestionAnswerRequired || reason.Status == workflowpause.RunPauseReasonStatusCompleted {
+			continue
+		}
+		if nodeID != "" {
+			return ""
+		}
+		nodeID = strings.TrimSpace(reason.NodeID)
+	}
+	return nodeID
 }
 
 // questionResumeAlreadyRecorded reports whether every interaction of the pause

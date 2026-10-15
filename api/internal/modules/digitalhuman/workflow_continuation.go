@@ -173,6 +173,12 @@ const (
 	workflowContinuationUnobserved
 )
 
+// workflowFinishedInstruction tells the summary that the workflow's requests
+// were settled while it was paused. The conversation still shows the workflow
+// tool call waiting on its approval or question, so without this the model
+// may ask the user for them again.
+const workflowFinishedInstruction = "The workflow has finished. Every approval and question it requested while paused was already settled, so do not ask the user for them again."
+
 // workflowApprovalExpiredInstruction tells the summary how an approval that
 // timed out ended; the workflow outputs may still carry the unanswered form.
 const workflowApprovalExpiredInstruction = "The workflow approval expired before any approver approved or rejected it, and the workflow continued on its expiry path. Report that the approval timed out without a decision. Do not describe the request as approved, rejected, or still waiting for approval."
@@ -300,8 +306,9 @@ func (l *digitalHumanWorkflowContinuation) finish(resume workflowContinuationRes
 		Outputs:       l.runOutputs,
 		Error:         l.runError,
 	}
+	summary.ContinuationInstruction = workflowFinishedInstruction
 	if l.approvalExpired {
-		summary.ContinuationInstruction = workflowApprovalExpiredInstruction
+		summary.ContinuationInstruction += " " + workflowApprovalExpiredInstruction
 	}
 	result, err := l.runtime.SummarizeWorkflowApprovalContinuation(ctx, l.scope, l.continuation, summary, func(event chatruntime.StreamEvent) error {
 		return l.emit(chatruntime.ProjectWorkflowContinuationEvent(l.continuation, event))

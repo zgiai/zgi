@@ -129,7 +129,7 @@ func TestWorkflowContinuationSummaryReportsAnExpiredApproval(t *testing.T) {
 	if err := lifecycle.finish(workflowContinuationStreamed, nil); err != nil {
 		t.Fatal(err)
 	}
-	if len(runtime.summarized) != 1 || runtime.summarized[0].ContinuationInstruction != workflowApprovalExpiredInstruction {
+	if len(runtime.summarized) != 1 || runtime.summarized[0].ContinuationInstruction != workflowFinishedInstruction+" "+workflowApprovalExpiredInstruction {
 		t.Fatalf("summaries = %#v, want the expired approval stated to the summary", runtime.summarized)
 	}
 
@@ -139,8 +139,8 @@ func TestWorkflowContinuationSummaryReportsAnExpiredApproval(t *testing.T) {
 	if err := lifecycle.finish(workflowContinuationStreamed, nil); err != nil {
 		t.Fatal(err)
 	}
-	if len(approved.summarized) != 1 || approved.summarized[0].ContinuationInstruction != "" {
-		t.Fatalf("summaries = %#v, want no expiry note for a decided approval", approved.summarized)
+	if len(approved.summarized) != 1 || approved.summarized[0].ContinuationInstruction != workflowFinishedInstruction {
+		t.Fatalf("summaries = %#v, want only the finished note for a decided approval", approved.summarized)
 	}
 }
 
