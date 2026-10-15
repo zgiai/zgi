@@ -254,3 +254,33 @@ func workflowContinuationTestJSON(t *testing.T, value interface{}) string {
 	}
 	return string(encoded)
 }
+
+func TestALaterApproverOnlyApprovalLeavesNoEarlierApprovalToken(t *testing.T) {
+	svc := &service{repos: &repository.Repositories{Message: &workflowContinuationCheckpointMessageRepo{}, Conversation: &workflowContinuationCheckpointConversationRepo{}}}
+	continuation := &WorkflowApprovalContinuation{
+		ConversationID: uuid.New(), MessageID: uuid.New(), WorkflowRunID: "run-1",
+		Caller:   Caller{Source: runtimemodel.ConversationSourceWebApp},
+		Metadata: map[string]interface{}{"agent_workflow_continuation": map[string]interface{}{"workflow_run_id": "run-1"}},
+	}
+	request := func(formID, token string, webapp bool) {
+		t.Helper()
+		form := map[string]interface{}{"id": formID, "token": token, "submit_methods": map[string]interface{}{"webapp": map[string]interface{}{"enabled": webapp}}}
+		if _, err := svc.RecordWorkflowApprovalContinuationEvent(t.Context(), continuation, "approval_requested", map[string]interface{}{
+			"workflow_run_id": "run-1", "node_id": "approval-" + formID, "form_id": formID, "approval_token": token, "approval_form": form,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	request("form-a", "token-a", true)
+	if metadata := workflowContinuationTestJSON(t, continuation.Metadata); !strings.Contains(metadata, "token-a") {
+		t.Fatalf("metadata = %s, want the inline approval's token", metadata)
+	}
+	request("form-b", "token-b", false)
+	metadata := workflowContinuationTestJSON(t, continuation.Metadata)
+	if strings.Contains(metadata, "token-a") || strings.Contains(metadata, "token-b") || !strings.Contains(metadata, "form-b") {
+		t.Fatalf("metadata = %s, want only the approver-only approval, without any token", metadata)
+	}
+	if continuation.UIApprovalAllowed {
+		t.Fatal("continuation still allows answering the approver-only approval inline")
+	}
+}

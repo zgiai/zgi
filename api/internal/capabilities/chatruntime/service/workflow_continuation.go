@@ -568,7 +568,13 @@ func (s *service) RecordWorkflowApprovalContinuationEvent(ctx context.Context, c
 		update["approval_form"] = eventPayload["approval_form"]
 		continuation.UIApprovalAllowed = allowed
 	}
-	metadata["agent_workflow_continuation"] = mergeWorkflowMap(workflowRecordFromAny(metadata["agent_workflow_continuation"]), update)
+	record := mergeWorkflowMap(workflowRecordFromAny(metadata["agent_workflow_continuation"]), update)
+	if eventType == "approval_requested" && !continuation.UIApprovalAllowed {
+		// The merge keeps a value an empty update would clear: drop the earlier
+		// approval's token so only the approval now waited on is described.
+		delete(record, "approval_token")
+	}
+	metadata["agent_workflow_continuation"] = record
 	continuation.Metadata = metadata
 	var updateErr error
 	if workflowContinuationMessageTerminal(continuation) {
