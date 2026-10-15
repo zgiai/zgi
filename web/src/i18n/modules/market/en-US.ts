@@ -263,6 +263,7 @@ const messages = {
     },
   },
   activation: {
+    freeForMembers: 'This item is free: any member may activate it.',
     request: 'Request activation',
     requestAgain: 'Request again',
     requestTitle: 'Request activation of "{name}"',

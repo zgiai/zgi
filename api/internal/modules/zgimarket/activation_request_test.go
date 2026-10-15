@@ -33,7 +33,9 @@ func newActivationFixture(t *testing.T) *activationFixture {
 		Config{ConsoleURL: "http://console.invalid"},
 		func(*gin.Context) string { return base.org.String() },
 		func(c *gin.Context) string { return c.GetHeader("X-Test-Account") },
-		func(_ *gin.Context, _, account string) (bool, bool, error) { return true, account == f.admin.String(), nil },
+		func(_ *gin.Context, _, account string) (bool, bool, error) {
+			return true, account == f.admin.String(), nil
+		},
 	).WithTools(base.tools)
 	base.engine = gin.New()
 	base.engine.Any("/workspaces/current/zgi-market/*path", proxy.Forward)

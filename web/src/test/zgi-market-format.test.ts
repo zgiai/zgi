@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 
 // prettier-ignore
 // @ts-ignore Node's direct TypeScript runner requires an explicit extension.
-import { chargedByUsage, highestPrice, knownMarketMeter, lowestPrice, marketAmount, marketDate, marketDisplayPrice, marketErrorCode, marketExternalUrl, marketPriceCap, marketSameOrigin, marketText, skillPackageSummary } from '../components/zgi-market/market-format.ts';
+import { chargedByUsage, highestPrice, knownMarketMeter, lowestPrice, marketAmount, marketDate, marketDisplayPrice, marketErrorCode, marketExternalUrl, marketFreeToActivate, marketPriceCap, marketSameOrigin, marketText, skillPackageSummary } from '../components/zgi-market/market-format.ts';
 // prettier-ignore
 // @ts-ignore Node's direct TypeScript runner requires an explicit extension.
 import { marketApiQuickStart, marketGatewayOrigin, marketMcpClientConfig, marketMcpServerUrl } from '../components/zgi-market/market-usage.ts';
@@ -337,4 +337,24 @@ assert.equal(
     'the current Agent does not have persistent authorization for this tool action'
   ),
   undefined
+);
+
+// A member activates what costs nothing: every applying price is zero and one is published.
+const zero = (unit_price_micros: number, offering_slug?: string) => ({
+  meter: 'request',
+  unit_price_micros,
+  per_quantity: 1,
+  currency: 'PTS' as const,
+  ...(offering_slug ? { offering_slug } : {}),
+});
+assert.equal(marketFreeToActivate({ kind: 'mcp', prices: [zero(0)] }), true);
+assert.equal(marketFreeToActivate({ kind: 'mcp', prices: [zero(1500)] }), false);
+assert.equal(marketFreeToActivate({ kind: 'mcp', prices: [] }), false);
+const freeApi = { kind: 'api' as const, prices: [zero(0, 'std'), zero(900, 'pro')] };
+assert.equal(marketFreeToActivate(freeApi, 'std'), true);
+assert.equal(marketFreeToActivate(freeApi, 'pro'), false);
+assert.equal(marketFreeToActivate(freeApi), false);
+assert.equal(
+  marketFreeToActivate({ kind: 'plugin', prices: [zero(0)], plugin: { members: [{}] } }),
+  false
 );

@@ -85,8 +85,11 @@ export function useZgiMarketSubscriptions() {
 export function useActivateZgiMarketListing() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (target: { listingId: number; offeringId?: number }) =>
-      zgiMarketService.activate(target.listingId, target.offeringId),
+    mutationFn: (target: {
+      listingId: number;
+      offeringId?: number;
+      listing?: { kind: MarketListingKind; slug: string };
+    }) => zgiMarketService.activate(target.listingId, target.offeringId, target.listing),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: keys.subscriptions }),
   });
 }

@@ -28,6 +28,9 @@ func (f *fakeInstaller) Installed(context.Context, string, string) ([]InstalledS
 	return []InstalledSkill{{Slug: "csv", SkillID: "csv-summary", Name: "CSV", Version: "1.0.0"}}, nil
 }
 
+// installListing is the skill listing installConsole's market answers with.
+var installListing = `{"id":7,"current_version":{"label":"1.2.0"}}`
+
 // installConsole is a console whose market holds one skill listing. subscription is the status
 // the market answers an install with, and digest the digest it states for the package.
 func installConsole(t *testing.T, member, admin bool, subscription int, digest string) (*gin.Engine, *fakeInstaller, *[]string) {
@@ -39,7 +42,7 @@ func installConsole(t *testing.T, member, admin bool, subscription int, digest s
 		switch path {
 		case "listings/skill/csv":
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"code":0,"data":{"id":7,"current_version":{"label":"1.2.0"}}}`) //nolint:errcheck // test server
+			_, _ = io.WriteString(w, `{"code":0,"data":`+installListing+`}`) //nolint:errcheck // test server
 		case "subscriptions":
 			body, _ := io.ReadAll(r.Body) //nolint:errcheck // test server
 			calls = append(calls, "body "+string(body))
@@ -101,8 +104,9 @@ func TestInstallSkillActivatesTheListingThenImportsItsPackage(t *testing.T) {
 func TestInstallSkillIsForAdministratorsOnly(t *testing.T) {
 	engine, installer, calls := installConsole(t, true, false, http.StatusCreated, packageDigest())
 	answer := send(engine, http.MethodPost, "/workspaces/current/zgi-market/installs/skills/csv", "", nil)
-	if answer.Code != http.StatusForbidden || len(*calls) != 0 || len(installer.packages) != 0 {
-		t.Fatalf("status = %d, calls = %v, imports = %d; want a refusal before the market is asked", answer.Code, *calls, len(installer.packages))
+	// The listing names no price, so it is not free: the member is refused once it is read.
+	if answer.Code != http.StatusForbidden || strings.Join(*calls, ",") != "GET listings/skill/csv as member" || len(installer.packages) != 0 {
+		t.Fatalf("status = %d, calls = %v, imports = %d; want a refusal after reading the listing", answer.Code, *calls, len(installer.packages))
 	}
 	// A member still sees what is installed.
 	listed := send(engine, http.MethodGet, "/workspaces/current/zgi-market/installs/skills", "", nil)
@@ -136,5 +140,23 @@ func TestInstallSkillRefusesADamagedPackageAndUnknownPaths(t *testing.T) {
 	}
 	if got := send(engine, http.MethodDelete, "/workspaces/current/zgi-market/installs/skills/csv", "", nil); got.Code != http.StatusNotFound {
 		t.Fatalf("DELETE = %d, want not found", got.Code)
+	}
+}
+
+func TestAMemberInstallsAFreeSkillButDoesNotReplaceOne(t *testing.T) {
+	installListing = `{"id":7,"current_version":{"label":"1.2.0"},"prices":[{"meter":"install","unit_price_micros":0}]}`
+	t.Cleanup(func() { installListing = `{"id":7,"current_version":{"label":"1.2.0"}}` })
+	engine, installer, calls := installConsole(t, true, false, http.StatusCreated, packageDigest())
+
+	replace := send(engine, http.MethodPost, "/workspaces/current/zgi-market/installs/skills/csv", `{"overwrite":true}`, nil)
+	if replace.Code != http.StatusForbidden || len(installer.packages) != 0 {
+		t.Fatalf("overwrite = %d, imports = %d; replacing a skill stays an administrator's", replace.Code, len(installer.packages))
+	}
+	answer := send(engine, http.MethodPost, "/workspaces/current/zgi-market/installs/skills/csv", "", nil)
+	if answer.Code != http.StatusOK || len(installer.packages) != 1 {
+		t.Fatalf("status = %d %s, imports = %d", answer.Code, answer.Body.String(), len(installer.packages))
+	}
+	if !strings.Contains(strings.Join(*calls, ","), "POST subscriptions as admin") {
+		t.Fatalf("calls = %v; a free skill is activated with the administrator's right", *calls)
 	}
 }

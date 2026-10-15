@@ -10,6 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import MarketEmptyState from '@/components/market/market-empty-state';
 import { MarketKindIcon } from '@/components/zgi-market/market-kind-icon';
+import { marketFreeToActivate } from '@/components/zgi-market/market-format';
 import { marketGatewayOrigin } from '@/components/zgi-market/market-usage';
 import { useMarketLabels } from '@/components/zgi-market/use-market-labels';
 import { ZgiMarketActivationRequest } from '@/components/zgi-market/zgi-market-activation-request';
@@ -165,9 +166,19 @@ export default function ZgiMarketListingPage({ params }: PageProps) {
         subscription.listing_id === data.id &&
         (!offering || subscription.offering_id === offering.id)
     );
+  // A free item, or a free offering of an API, costs the organization nothing: any member
+  // activates it.
+  const isFree = (offering?: MarketOffering) => marketFreeToActivate(data, offering?.slug);
+  const canActivate = (offering?: MarketOffering) => canAct || isFree(offering);
+  const freeNote = (offering?: MarketOffering) =>
+    !isAdmin && isFree(offering) ? hint(t('market.activation.freeForMembers')) : null;
   const run = (offering?: MarketOffering) =>
     activate.mutate(
-      { listingId: data.id, ...(offering ? { offeringId: offering.id } : {}) },
+      {
+        listingId: data.id,
+        ...(offering ? { offeringId: offering.id } : {}),
+        listing: { kind: data.kind, slug: data.slug },
+      },
       {
         onSuccess: () => {
           toast.success(t('market.catalog.activateDone'));
@@ -255,7 +266,7 @@ export default function ZgiMarketListingPage({ params }: PageProps) {
           ? t('market.catalog.installedVersion', { version: installedSkill.version })
           : t('market.catalog.installed')
       )
-    ) : canAct ? (
+    ) : canActivate() ? (
       <Button
         className="w-full"
         disabled={install.isPending || installedSkills.isPending}
@@ -276,10 +287,12 @@ export default function ZgiMarketListingPage({ params }: PageProps) {
           </Badge>
         ) : canAct ? (
           hint(t('market.catalog.installHint'))
+        ) : canActivate() ? (
+          freeNote()
         ) : (
           adminOnly
         )}
-        {conflict ? (
+        {conflict && canAct ? (
           <div role="alert" className="rounded-md border border-destructive/40 p-3">
             <p className="text-xs leading-5 text-destructive">
               {t('market.catalog.installConflict', { name: conflict })}
@@ -303,12 +316,12 @@ export default function ZgiMarketListingPage({ params }: PageProps) {
     if (only) {
       action = isActivated(only) ? (
         done(t('market.catalog.activated'))
-      ) : canAct ? (
+      ) : canActivate(only) ? (
         <Button className="w-full" disabled={activate.isPending} onClick={() => run(only)}>
           {t('market.catalog.activate')}
         </Button>
       ) : null;
-      actionNote = canAct ? null : adminOnly;
+      actionNote = canAct ? null : canActivate(only) ? freeNote(only) : adminOnly;
     } else {
       action = (
         <>
@@ -331,18 +344,28 @@ export default function ZgiMarketListingPage({ params }: PageProps) {
           ) : null}
         </>
       );
-      actionNote = canAct ? hint(t('market.catalog.detail.panel.perOffering')) : adminOnly;
+      const someFree = data.offerings.some(offering => isFree(offering));
+      actionNote = canAct ? (
+        hint(t('market.catalog.detail.panel.perOffering'))
+      ) : (
+        <>
+          {someFree ? hint(t('market.activation.freeForMembers')) : null}
+          {adminOnly}
+        </>
+      );
     }
   } else {
     action = isActivated() ? (
       done(t('market.catalog.activated'))
-    ) : canAct ? (
+    ) : canActivate() ? (
       <Button className="w-full" disabled={activate.isPending} onClick={() => run()}>
         {t('market.catalog.activate')}
       </Button>
     ) : null;
-    actionNote = !canAct ? (
+    actionNote = !canActivate() ? (
       adminOnly
+    ) : !canAct && !isActivated() ? (
+      freeNote()
     ) : data.kind === 'mcp' ? (
       <>
         {hint(t('market.catalog.detail.panel.mcpHint'))}
@@ -449,7 +472,8 @@ export default function ZgiMarketListingPage({ params }: PageProps) {
                   listing={data}
                   gatewayOrigin={gateway.origin}
                   isActivated={isActivated}
-                  onActivate={canAct ? run : undefined}
+                  onActivate={run}
+                  canActivate={offering => canActivate(offering)}
                   activating={activate.isPending}
                 />
               </TabsContent>
