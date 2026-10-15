@@ -129,6 +129,7 @@ func (c *QuotaClient) Close() error {
 
 func (c *QuotaClient) PreDeductQuota(ctx context.Context, req *PreDeductQuotaRequest) (*PreDeductQuotaResponse, error) {
 	grpcReq := &pb.PreDeductQuotaRequest{
+		ToolPostpaid:      req.ToolPostpaid,
 		OrganizationId:    req.OrganizationID,
 		EstimatedCredits:  req.EstimatedCredits,
 		ModelId:           req.ModelID,
@@ -230,13 +231,14 @@ func (c *QuotaClient) SettleQuota(ctx context.Context, req *SettleQuotaRequest) 
 	}
 
 	return &SettleQuotaResponse{
-		Success:         resp.Success,
-		ErrorCode:       resp.ErrorCode,
-		ErrorMessage:    resp.ErrorMessage,
-		RemainingQuota:  resp.RemainingQuota,
-		UsedQuota:       resp.UsedQuota,
-		RefundedCredits: resp.RefundedCredits,
-		SettledCredits:  resp.SettledCredits,
+		ToolSettlementJSON: resp.ToolSettlementJson,
+		Success:            resp.Success,
+		ErrorCode:          resp.ErrorCode,
+		ErrorMessage:       resp.ErrorMessage,
+		RemainingQuota:     resp.RemainingQuota,
+		UsedQuota:          resp.UsedQuota,
+		RefundedCredits:    resp.RefundedCredits,
+		SettledCredits:     resp.SettledCredits,
 	}, nil
 }
 
@@ -300,6 +302,7 @@ func (c *QuotaClient) CalculateDualCost(ctx context.Context, modelID, provider, 
 }
 
 type PreDeductQuotaRequest struct {
+	ToolPostpaid      bool
 	OrganizationID    string
 	EstimatedCredits  int64
 	ModelID           string
@@ -386,13 +389,14 @@ type SettleQuotaRequest struct {
 }
 
 type SettleQuotaResponse struct {
-	Success         bool
-	ErrorCode       string
-	ErrorMessage    string
-	RemainingQuota  int64
-	UsedQuota       int64
-	RefundedCredits int64
-	SettledCredits  int64
+	ToolSettlementJSON string
+	Success            bool
+	ErrorCode          string
+	ErrorMessage       string
+	RemainingQuota     int64
+	UsedQuota          int64
+	RefundedCredits    int64
+	SettledCredits     int64
 }
 
 type DualCostQuotaResponse struct {

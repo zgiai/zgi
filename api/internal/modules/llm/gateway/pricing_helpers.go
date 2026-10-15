@@ -366,6 +366,12 @@ func applyPricingQuoteToBillingContext(bc *BillingContext, quote PricingQuote) {
 	}
 	if len(quote.PricingSnapshot) > 0 && string(quote.PricingSnapshot) != "null" {
 		bc.PricingSnapshot = quote.PricingSnapshot
+		if bc.ToolSettlement != nil {
+			putToolSettlement(bc, bc.ToolSettlement)
+		}
+		if bc.ToolPostpaid {
+			markToolPostpaid(bc)
+		}
 	}
 }
 

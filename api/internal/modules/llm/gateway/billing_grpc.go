@@ -241,6 +241,7 @@ func (s *RemoteBilling) preDeductViaGRPC(ctx context.Context, bc *BillingContext
 	}
 
 	req := &PreDeductQuotaRequest{
+		ToolPostpaid:      bc.ToolPostpaid,
 		OrganizationID:    bc.OrganizationID,
 		EstimatedCredits:  bc.EstimatedCredits,
 		ModelID:           bc.ModelID.String(),
@@ -308,7 +309,14 @@ func (s *RemoteBilling) finalizeRemotePreDeductBinding(ctx context.Context, bc *
 		if err := s.localService.bindRemoteDeductionID(ctx, tx, bc); err != nil {
 			return err
 		}
-		return s.localService.updateAttemptStatus(ctx, tx, bc, billingAttemptStatusPre, nil, nil, nil)
+		if err := s.localService.updateAttemptStatus(ctx, tx, bc, billingAttemptStatusPre, nil, nil, nil); err != nil {
+			return err
+		}
+		if bc.ToolPostpaid {
+			markToolPostpaid(bc)
+			return s.localService.upsertUsageBill(ctx, tx, bc, usageBillStatusPartial, nil, nil)
+		}
+		return nil
 	}); err != nil {
 		// Provider pre-deduct has already committed remotely. Finish or durably
 		// queue the cleanup even if the client request was canceled meanwhile.
@@ -375,6 +383,10 @@ func (s *RemoteBilling) settleViaGRPC(ctx context.Context, bc *BillingContext) e
 	}
 	if strings.TrimSpace(bc.AttemptID) == "" {
 		return fmt.Errorf("missing attempt_id for settle (request_id=%s)", bc.RequestID)
+	}
+	if bc.ToolPostpaid || isToolPostpaidSnapshot(bc.PricingSnapshot) {
+		bc.ToolPostpaid = true
+		return s.FinalizePlatformProxySettlement(ctx, bc, nil)
 	}
 	terminal, err := s.isAttemptTerminal(ctx, bc.AttemptID)
 	if err != nil {
@@ -454,6 +466,15 @@ func (s *RemoteBilling) settleViaGRPC(ctx context.Context, bc *BillingContext) e
 		}
 		return fmt.Errorf("settle failed: %s", resp.ErrorMessage)
 	}
+	if strings.TrimSpace(resp.ToolSettlementJSON) != "" {
+		if err := s.mirrorPlatformTools(ctx, bc, json.RawMessage(resp.ToolSettlementJSON), bc.PricingSnapshot); err != nil {
+			if markErr := s.markAttemptSettleFailed(ctx, bc, "TOOL_MIRROR_PENDING", err.Error()); markErr != nil {
+				return fmt.Errorf("tool mirror failed: %v; persist retry: %w", err, markErr)
+			}
+			return err
+		}
+		return nil
+	}
 	if err := applyRemoteSettlementResult(bc, resp); err != nil {
 		if markErr := s.markAttemptSettleFailed(ctx, bc, "SETTLE_INVALID_RESPONSE", err.Error()); markErr != nil {
 			return fmt.Errorf("settle invalid response: %v (additionally failed to mark partial: %w)", err, markErr)
@@ -498,6 +519,11 @@ func (s *RemoteBilling) prepareRemoteSettlement(ctx context.Context, bc *Billing
 }
 
 func (s *RemoteBilling) finalizeRemoteSettlement(ctx context.Context, bc *BillingContext) error {
+	if (bc.ToolPostpaid || isToolPostpaidSnapshot(bc.PricingSnapshot)) && billingContextStatusIsSuccess(bc.Status) {
+		return fmt.Errorf("tool settlement requires authoritative JSON before finalizing mirror")
+	}
+	// Resolve route metadata before locking the billing transaction.
+	s.localService.applyRouteAttributionWithLookup(ctx, bc)
 	return s.localService.db.Transaction(func(tx *gorm.DB) error {
 		terminal, err := s.localService.lockAttemptForFinalization(ctx, tx, bc.AttemptID)
 		if err != nil {
@@ -538,7 +564,6 @@ func (s *RemoteBilling) finalizeRemoteSettlement(ctx context.Context, bc *Billin
 		if err := tx.WithContext(ctx).Model(&BillingAttempt{}).Where("attempt_id = ?", bc.AttemptID).Updates(map[string]interface{}{"settlement_state": settlementState, "console_settlement_id": strings.TrimSpace(bc.DeductionID), "console_settlement_status": settlementState, "settlement_next_retry_at": nil, "settlement_last_error_code": nil, "settlement_last_error_message": nil, "settlement_version": gorm.Expr("settlement_version + 1"), "updated_at": time.Now()}).Error; err != nil {
 			return err
 		}
-		s.localService.applyRouteAttributionWithLookup(ctx, bc)
 		finalizeMediaTimingSnapshot(bc)
 		if shouldMirrorRemoteUsageBill(bc) {
 			if err := s.localService.upsertUsageBill(ctx, tx, bc, usageBillStatusFromBillingContext(bc.Status), nil, nil); err != nil {
@@ -591,6 +616,10 @@ func (s *RemoteBilling) startPartialSettleReconcileWorker(ctx context.Context) {
 			logger.InfoContext(ctx, "remote billing reconcile worker stopped")
 			return
 		case <-ticker.C:
+			if err := s.reconcilePlatformTools(ctx); err != nil {
+				logger.ErrorContext(ctx, "platform tool mirror sweep failed", err)
+			}
+
 			if err := s.reconcilePendingSettlementQueries(ctx); err != nil {
 				logger.ErrorContext(ctx, "remote billing settlement query sweep failed", err)
 			}
@@ -717,6 +746,32 @@ func (s *RemoteBilling) mirrorQueriedSettlement(ctx context.Context, attempt *Bi
 	if len(result.PricingSnapshot) > 0 && !json.Valid(result.PricingSnapshot) {
 		return fmt.Errorf("invalid settlement pricing snapshot")
 	}
+	projection, err := toolProjectionFromQuery(result)
+	if err != nil {
+		return err
+	}
+	if len(projection) > 0 && string(projection) != "null" && strings.EqualFold(result.SettlementStatus, billingAttemptStatusRolledBack) {
+		return s.mirrorReleasedToolHold(ctx, attempt, result, projection)
+	}
+	if len(projection) > 0 && string(projection) != "null" {
+		if !strings.EqualFold(result.SettlementStatus, billingAttemptStatusSettled) {
+			return fmt.Errorf("authoritative tool settlement is still pending")
+		}
+		var projected toolSettlement
+		if json.Unmarshal(projection, &projected) != nil || projected.TotalCredits != result.SettledCredits {
+			return fmt.Errorf("authoritative settlement amount mismatch")
+		}
+		bc := &BillingContext{OrganizationID: attempt.OrganizationID.String(), AttemptID: attempt.AttemptID, RequestID: attempt.RequestID, DeductionID: result.SettlementID, BillingLane: UsageBillingLanePlatform}
+		if attempt.ModelID != nil {
+			bc.ModelID = *attempt.ModelID
+		}
+		if attempt.ProviderID != nil {
+			bc.ProviderID = *attempt.ProviderID
+		}
+		applyPlatformSettlementTokenUsage(bc, settlementFromQueryResult(result))
+		s.localService.enrichBillingContextCatalogFields(ctx, bc)
+		return s.mirrorPlatformTools(ctx, bc, projection, datatypes.JSON(result.PricingSnapshot))
+	}
 	return s.localService.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var current BillingAttempt
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("attempt_id = ?", attempt.AttemptID).First(&current).Error; err != nil {
@@ -762,9 +817,13 @@ func (s *RemoteBilling) mirrorQueriedSettlement(ctx context.Context, attempt *Bi
 		if current.ProviderID != nil {
 			bc.ProviderID = *current.ProviderID
 		}
-		if err := s.restorePartialUsageBillContext(ctx, bc); err != nil {
+		if err := s.restorePartialUsageBillContext(ctx, bc, tx); err != nil {
 			return err
 		}
+		if bc.ToolPostpaid {
+			return fmt.Errorf("authoritative tool settlement JSON is still pending")
+		}
+
 		s.localService.enrichBillingContextCatalogFields(ctx, bc)
 		settlement := settlementFromQueryResult(result)
 		applyPlatformSettlementTokenUsage(bc, settlement)
@@ -1392,9 +1451,13 @@ func (s *RemoteBilling) reconcileAttempt(ctx context.Context, attemptID string) 
 // intentionally not duplicated in billing_attempts. A failed remote settle has
 // already persisted that metadata in the partial usage bill, so reconciliation
 // can use it to replace the partial audit record with the final result.
-func (s *RemoteBilling) restorePartialUsageBillContext(ctx context.Context, bc *BillingContext) error {
+func (s *RemoteBilling) restorePartialUsageBillContext(ctx context.Context, bc *BillingContext, databases ...*gorm.DB) error {
+	db := s.localService.db
+	if len(databases) > 0 {
+		db = databases[0]
+	}
 	var bill UsageBill
-	err := s.localService.db.WithContext(ctx).Where("attempt_id = ?", bc.AttemptID).First(&bill).Error
+	err := db.WithContext(ctx).Where("attempt_id = ?", bc.AttemptID).First(&bill).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil
 	}
@@ -1441,6 +1504,7 @@ func (s *RemoteBilling) restorePartialUsageBillContext(ctx context.Context, bc *
 	bc.TotalTokens = int(bill.TotalTokens)
 	bc.PricingSource, bc.UsageSource = bill.PricingSource, bill.UsageSource
 	bc.PricingSnapshot = bill.PricingSnapshot
+	bc.ToolPostpaid = bc.ToolPostpaid || isToolPostpaidSnapshot(bill.PricingSnapshot)
 	bc.ResponseTime = bill.ResponseTimeMS
 	bc.RequestCreatedAt = bill.RequestCreatedAt
 	return nil

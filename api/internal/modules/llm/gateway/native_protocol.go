@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -236,6 +237,7 @@ func (s *llmGatewayServiceImpl) runNativeNonStream(
 	bodyFormat nativeUsageBodyFormat,
 	call func(context.Context, adapter.LLMProviderAdapter) (*adapter.RawResponse, error),
 ) (response *adapter.RawResponse, retErr error) {
+	ctx = withRequestedBillingTools(ctx, body)
 	startTime := time.Now()
 	traceCtx := ctx
 	var traceBillingCtx *BillingContext
@@ -330,8 +332,18 @@ func (s *llmGatewayServiceImpl) runNativeNonStream(
 			continue
 		}
 		response, err = call(ctx, providerAdapter)
+		observer := s.privateToolObserver(billingCtx, providerSelection, body)
+		if observer != nil {
+			if response != nil {
+				observer.Observe(response.Body)
+			}
+			s.recordPrivateToolObserver(ctx, observer, err != nil, billingCtx)
+		}
 		responseTime := time.Since(startTime).Milliseconds()
 		if err != nil {
+			if billingCtx.UseSystemProvider && errors.Is(err, adapter.ErrBillingSettleFailed) {
+				return nil, s.queuePlatformSettlementRecovery(ctx, billingCtx, err)
+			}
 			if adapter.IsCapabilityUnsupported(err) {
 				if rollbackErr := s.rollbackPreDeduction(ctx, billingCtx); rollbackErr != nil {
 					return nil, rollbackErr
@@ -409,6 +421,7 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 	usageFormat nativeUsageBodyFormat,
 	call func(context.Context, adapter.LLMProviderAdapter) (<-chan adapter.RawStreamEvent, error),
 ) (output <-chan adapter.RawStreamEvent, retErr error) {
+	ctx = withRequestedBillingTools(ctx, body)
 	startTime := time.Now()
 	traceCtx := ctx
 	var traceBillingCtx *BillingContext
@@ -508,6 +521,9 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 		}
 		streamChan, err := call(ctx, providerAdapter)
 		if err != nil {
+			if billingCtx.UseSystemProvider && errors.Is(err, adapter.ErrBillingSettleFailed) {
+				return nil, s.queuePlatformSettlementRecovery(ctx, billingCtx, err)
+			}
 			setBillingFailure(billingCtx, err)
 			if rollbackErr := s.rollbackPreDeduction(ctx, billingCtx); rollbackErr != nil {
 				return nil, rollbackErr
@@ -585,6 +601,7 @@ func (s *llmGatewayServiceImpl) handleNativeStreamBilling(
 		}
 	}
 
+	observer := s.privateToolObserver(billingCtx, providerSelection, requestBody)
 	var lastUsage *adapter.Usage
 	var lastSettlement *adapter.SettlementResult
 	doneSeen := false
@@ -594,6 +611,15 @@ func (s *llmGatewayServiceImpl) handleNativeStreamBilling(
 	var sawUsage bool
 	var collectedText strings.Builder
 	for event := range inputChan {
+		if billingCtx.UseSystemProvider {
+			if sentinel, ok := adapter.ConsoleSentinelFromBody(event.Data); ok && errors.Is(sentinel, adapter.ErrBillingSettleFailed) {
+				lastError = sentinel
+				break
+			}
+		}
+		if observer != nil {
+			observer.Observe(event.Data)
+		}
 		terminal := isNativeTerminalStreamEvent(usageFormat, event)
 		failed := isNativeFailureStreamEvent(usageFormat, event)
 		if event.Usage != nil && (hasBillableTokenUsage(event.Usage) || event.Usage.TotalTokens > 0) {
@@ -643,9 +669,14 @@ func (s *llmGatewayServiceImpl) handleNativeStreamBilling(
 		emit(event)
 	}
 
+	s.recordPrivateToolObserver(ctx, observer, lastError != nil, billingCtx)
 	responseTime := time.Since(startTime).Milliseconds()
 	traceOutput := collectedText.String()
 	if lastError != nil {
+		if billingCtx.UseSystemProvider && errors.Is(lastError, adapter.ErrBillingSettleFailed) {
+			emit(adapter.RawStreamEvent{Error: s.queuePlatformSettlementRecovery(ctx, billingCtx, lastError), Done: true})
+			return
+		}
 		reportLLMProviderFailureForSelection(ctx, lastError, "llm.provider.stream_failed", providerSelection, billingCtx, attemptIdx, true)
 		if err := s.handleProviderError(ctx, billingCtx, providerSelection, channelID, responseTime, attemptIdx, lastError); err != nil {
 			s.traceNativeLLMStreamOperation(ctx, traceName, nativeTraceOperation(traceName), requestBody, traceOutput, lastUsage, startTime, time.Time{}, billingCtx, err)

@@ -295,6 +295,12 @@ func (a *OpenAIAdapter) CreateResponseRaw(ctx context.Context, request *adapter.
 	if _, err := client.Responses.New(ctx, params, openaioption.WithResponseBodyInto(&raw)); err != nil {
 		return nil, fmt.Errorf("responses request failed: %w", normalizeOpenAISDKTransportError(err))
 	}
+	// A relay may answer with an HTTP 200 error envelope. Returning it as a
+	// successful response hides the provider's error and reports a missing
+	// usage instead, so surface it like the sibling native raw adapters do.
+	if err := embeddedRawProtocolError(raw, "application/json"); err != nil {
+		return nil, err
+	}
 
 	return &adapter.RawResponse{
 		Body:  raw,

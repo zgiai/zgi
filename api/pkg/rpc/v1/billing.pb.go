@@ -323,8 +323,10 @@ type PreDeductQuotaRequest struct {
 	ResourceName      string                 `protobuf:"bytes,11,opt,name=resource_name,json=resourceName,proto3" json:"resource_name,omitempty"`
 	ReservationPolicy string                 `protobuf:"bytes,12,opt,name=reservation_policy,json=reservationPolicy,proto3" json:"reservation_policy,omitempty"`
 	PricingSnapshot   string                 `protobuf:"bytes,13,opt,name=pricing_snapshot,json=pricingSnapshot,proto3" json:"pricing_snapshot,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// T4: zero-money attempt registration; actual token/tools settle together.
+	ToolPostpaid  bool `protobuf:"varint,14,opt,name=tool_postpaid,json=toolPostpaid,proto3" json:"tool_postpaid,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *PreDeductQuotaRequest) Reset() {
@@ -446,6 +448,13 @@ func (x *PreDeductQuotaRequest) GetPricingSnapshot() string {
 		return x.PricingSnapshot
 	}
 	return ""
+}
+
+func (x *PreDeductQuotaRequest) GetToolPostpaid() bool {
+	if x != nil {
+		return x.ToolPostpaid
+	}
+	return false
 }
 
 type PreDeductQuotaResponse struct {
@@ -801,16 +810,18 @@ func (x *SettleQuotaRequest) GetResourceName() string {
 }
 
 type SettleQuotaResponse struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	Success         bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
-	ErrorMessage    string                 `protobuf:"bytes,2,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
-	RemainingQuota  int64                  `protobuf:"varint,3,opt,name=remaining_quota,json=remainingQuota,proto3" json:"remaining_quota,omitempty"`
-	UsedQuota       int64                  `protobuf:"varint,4,opt,name=used_quota,json=usedQuota,proto3" json:"used_quota,omitempty"`
-	RefundedCredits int64                  `protobuf:"varint,5,opt,name=refunded_credits,json=refundedCredits,proto3" json:"refunded_credits,omitempty"`
-	SettledCredits  int64                  `protobuf:"varint,6,opt,name=settled_credits,json=settledCredits,proto3" json:"settled_credits,omitempty"`
-	ErrorCode       string                 `protobuf:"bytes,7,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Additive authoritative result for platform mirror consumers.
+	ToolSettlementJson string `protobuf:"bytes,8,opt,name=tool_settlement_json,json=toolSettlementJson,proto3" json:"tool_settlement_json,omitempty"`
+	Success            bool   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	ErrorMessage       string `protobuf:"bytes,2,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
+	RemainingQuota     int64  `protobuf:"varint,3,opt,name=remaining_quota,json=remainingQuota,proto3" json:"remaining_quota,omitempty"`
+	UsedQuota          int64  `protobuf:"varint,4,opt,name=used_quota,json=usedQuota,proto3" json:"used_quota,omitempty"`
+	RefundedCredits    int64  `protobuf:"varint,5,opt,name=refunded_credits,json=refundedCredits,proto3" json:"refunded_credits,omitempty"`
+	SettledCredits     int64  `protobuf:"varint,6,opt,name=settled_credits,json=settledCredits,proto3" json:"settled_credits,omitempty"`
+	ErrorCode          string `protobuf:"bytes,7,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *SettleQuotaResponse) Reset() {
@@ -841,6 +852,13 @@ func (x *SettleQuotaResponse) ProtoReflect() protoreflect.Message {
 // Deprecated: Use SettleQuotaResponse.ProtoReflect.Descriptor instead.
 func (*SettleQuotaResponse) Descriptor() ([]byte, []int) {
 	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *SettleQuotaResponse) GetToolSettlementJson() string {
+	if x != nil {
+		return x.ToolSettlementJson
+	}
+	return ""
 }
 
 func (x *SettleQuotaResponse) GetSuccess() bool {
@@ -1669,7 +1687,7 @@ const file_pkg_rpc_v1_billing_proto_rawDesc = "" +
 	"\x10reserved_credits\x18\x05 \x01(\x03R\x0freservedCredits\x12+\n" +
 	"\x11remaining_credits\x18\x06 \x01(\x03R\x10remainingCredits\x12\x1d\n" +
 	"\n" +
-	"error_code\x18\a \x01(\tR\terrorCode\"\xf0\x03\n" +
+	"error_code\x18\a \x01(\tR\terrorCode\"\x95\x04\n" +
 	"\x15PreDeductQuotaRequest\x12'\n" +
 	"\x0forganization_id\x18\x01 \x01(\tR\x0eorganizationId\x12+\n" +
 	"\x11estimated_credits\x18\x02 \x01(\x03R\x10estimatedCredits\x12\x19\n" +
@@ -1689,7 +1707,8 @@ const file_pkg_rpc_v1_billing_proto_rawDesc = "" +
 	"resourceId\x12#\n" +
 	"\rresource_name\x18\v \x01(\tR\fresourceName\x12-\n" +
 	"\x12reservation_policy\x18\f \x01(\tR\x11reservationPolicy\x12)\n" +
-	"\x10pricing_snapshot\x18\r \x01(\tR\x0fpricingSnapshot\"\xc2\x01\n" +
+	"\x10pricing_snapshot\x18\r \x01(\tR\x0fpricingSnapshot\x12#\n" +
+	"\rtool_postpaid\x18\x0e \x01(\bR\ftoolPostpaid\"\xc2\x01\n" +
 	"\x16PreDeductQuotaResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x1d\n" +
 	"\n" +
@@ -1740,8 +1759,9 @@ const file_pkg_rpc_v1_billing_proto_rawDesc = "" +
 	"\rresource_type\x18\x1c \x01(\tR\fresourceType\x12\x1f\n" +
 	"\vresource_id\x18\x1d \x01(\tR\n" +
 	"resourceId\x12#\n" +
-	"\rresource_name\x18\x1e \x01(\tR\fresourceName\"\x8f\x02\n" +
-	"\x13SettleQuotaResponse\x12\x18\n" +
+	"\rresource_name\x18\x1e \x01(\tR\fresourceName\"\xc1\x02\n" +
+	"\x13SettleQuotaResponse\x120\n" +
+	"\x14tool_settlement_json\x18\b \x01(\tR\x12toolSettlementJson\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12#\n" +
 	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\x12'\n" +
 	"\x0fremaining_quota\x18\x03 \x01(\x03R\x0eremainingQuota\x12\x1d\n" +

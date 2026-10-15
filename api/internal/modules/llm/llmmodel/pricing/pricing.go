@@ -20,6 +20,8 @@ var nonNegativeDecimalPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)(\.[0-9]+)?$
 
 type structuredPricing struct {
 	Version         int                               `json:"version,omitempty"`
+	SchemaVersion   int                               `json:"schema_version,omitempty"`
+	BillingLane     string                            `json:"billing_lane,omitempty"`
 	PricingVersion  string                            `json:"pricing_version,omitempty"`
 	CatalogOrigin   string                            `json:"catalog_origin,omitempty"`
 	DeploymentScope string                            `json:"deployment_scope"`
@@ -28,6 +30,7 @@ type structuredPricing struct {
 	PricePerImage   *float64                          `json:"price_per_image,omitempty"`
 	VideoGeneration *structuredVideoGenerationPricing `json:"video_generation,omitempty"`
 	Metered         []structuredMeteredPricing        `json:"metered,omitempty"`
+	Tools           *ToolPricingTools                 `json:"tools,omitempty"`
 	// ImageTokenPricing, when present, is the explicit switch that moves image
 	// generation from the flat per-image price onto upstream token usage.
 	ImageTokenPricing *structuredImageTokenPricing `json:"image_token_pricing,omitempty"`
@@ -214,15 +217,16 @@ func ValidateStructuredPricing(raw json.RawMessage) (bool, error) {
 	hasImagePrice := pricing.PricePerImage != nil
 	hasVideoGeneration := pricing.VideoGeneration != nil
 	hasMeteredPricing := len(pricing.Metered) > 0
+	hasToolPricing := pricing.Tools != nil && (len(pricing.Tools.Default) > 0 || len(pricing.Tools.Channels) > 0)
 	hasImageTokenPricing := pricing.ImageTokenPricing != nil
 	kindCount := 0
-	for _, present := range []bool{hasTokenTiers, hasImagePrice, hasVideoGeneration, hasMeteredPricing, hasImageTokenPricing} {
+	for _, present := range []bool{hasTokenTiers, hasImagePrice, hasVideoGeneration, hasMeteredPricing, hasToolPricing, hasImageTokenPricing} {
 		if present {
 			kindCount++
 		}
 	}
 	if kindCount == 0 && !hasRules {
-		return true, fmt.Errorf("invalid pricing: at least one of rules, token_tiers, price_per_image, image_token_pricing, video_generation, or metered is required")
+		return true, fmt.Errorf("invalid pricing: at least one of rules, token_tiers, price_per_image, image_token_pricing, video_generation, metered, or tools is required")
 	}
 	if hasRules {
 		if err := validatePricingRules(pricing.Rules); err != nil {
@@ -247,6 +251,11 @@ func ValidateStructuredPricing(raw json.RawMessage) (bool, error) {
 	}
 	if hasMeteredPricing {
 		if err := validateMeteredPricing(pricing.Metered); err != nil {
+			return true, err
+		}
+	}
+	if hasToolPricing {
+		if err := ValidateToolPricingContract(raw); err != nil {
 			return true, err
 		}
 	}

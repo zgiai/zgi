@@ -508,6 +508,9 @@ func (b *BillingService) preDeductPrivateChannelWallet(
 	if err != nil {
 		return err
 	}
+	if bc.ToolPostpaid {
+		return checkToolDebt(ctx, tx, bc)
+	}
 	if wallet.Status == channelWalletStatusDebt {
 		return ErrInsufficientBalance
 	}

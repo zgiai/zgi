@@ -292,6 +292,12 @@ func (s *llmGatewayServiceImpl) beginBillingAttempt(
 		billingCtx.PricingOperation = PricingOperationTranscription
 	}
 
+	if err := s.prepareToolBilling(ctx, billingCtx, providerSelection); err != nil {
+		return nil, err
+	}
+	if billingCtx.ToolPostpaid {
+		estimatedCredits = 0
+	}
 	decision, err := s.resolveBillingDecision(providerSelection, billingCtx)
 	if err != nil {
 		return nil, wrapBillingLaneMismatchError(err)
@@ -352,7 +358,7 @@ func (s *llmGatewayServiceImpl) checkBalanceAndPreDeduct(
 	billingProvider := s.billingProviderForDecision(decision)
 
 	// Check balance if using system provider
-	if useSystemProvider {
+	if useSystemProvider && !billingCtx.ToolPostpaid {
 		canSpend, err := s.billing.CheckBalance(ctx, shadowOrganizationID, ownerID, estimatedCredits)
 		if err != nil {
 			wrappedErr := wrapBillingPreDeductError(
@@ -387,7 +393,7 @@ func (s *llmGatewayServiceImpl) checkBalanceAndPreDeduct(
 
 			return organizationBalanceInsufficientError()
 		}
-	} else {
+	} else if !useSystemProvider {
 		if billingCtx.ChannelID == nil {
 			err := wrapBillingPreDeductError(
 				fmt.Errorf("missing channel_id for private channel balance check"),
@@ -501,6 +507,9 @@ func (s *llmGatewayServiceImpl) handleProviderError(
 	attemptIdx int,
 	err error,
 ) error {
+	if billingCtx.UseSystemProvider && errors.Is(err, adapter.ErrBillingSettleFailed) {
+		return s.queuePlatformSettlementRecovery(ctx, billingCtx, err)
+	}
 	s.recordUpstreamProviderError(ctx, providerSelection, billingCtx, err)
 	billingCtx.Status = "error"
 	setBillingFailure(billingCtx, err)
