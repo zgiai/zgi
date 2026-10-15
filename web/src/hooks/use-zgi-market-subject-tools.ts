@@ -31,7 +31,7 @@ export function marketItemKind(item: Pick<MarketToolBindingItem, 'kind'>): Marke
 
 /** Where the listing of a candidate or a bound item is shown. */
 export function marketItemHref(item: { kind?: MarketToolItemKind; slug: string }): string {
-  return `/dashboard/market/catalog/${item.kind === 'api' ? 'api' : 'mcp'}/${item.slug}`;
+  return `/console/market/catalog/${item.kind === 'api' ? 'api' : 'mcp'}/${item.slug}`;
 }
 
 /** One tool of a market row as its chip shows it. */

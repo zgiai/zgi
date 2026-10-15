@@ -110,7 +110,7 @@ export function ZgiMarketConnectorPickerGroup({
           {/* The way to the market also when something is activated: what is missing is there. */}
           {listings.length > 0 ? (
             <Link
-              href="/dashboard/market/catalog"
+              href="/console/market/catalog"
               className="ml-auto text-xs font-medium text-primary hover:underline"
             >
               {t('market.tools.browse')}
@@ -143,10 +143,7 @@ export function ZgiMarketConnectorPickerGroup({
       ) : listings.length === 0 ? (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-dashed bg-background/60 px-5 py-6 text-sm text-muted-foreground">
           <span>{t('market.tools.empty')}</span>
-          <Link
-            href="/dashboard/market/catalog"
-            className="font-medium text-primary hover:underline"
-          >
+          <Link href="/console/market/catalog" className="font-medium text-primary hover:underline">
             {t('market.tools.browse')}
           </Link>
         </div>

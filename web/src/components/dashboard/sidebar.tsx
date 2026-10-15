@@ -220,13 +220,6 @@ function buildDashboardGroups(t: ReturnType<typeof useT<'dashboard'>>) {
           href: '/dashboard/market/plugins',
           icon: AppWindow,
         },
-        {
-          key: 'zgi-market',
-          title: t('items.zgiMarket'),
-          href: '/dashboard/market/catalog',
-          icon: Store,
-          activePrefixes: ['/dashboard/market/catalog', '/dashboard/market/credentials'],
-        },
       ],
     },
   ] as NavGroup[];

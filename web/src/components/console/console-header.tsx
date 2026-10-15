@@ -59,6 +59,7 @@ export function ConsoleHeader({ hidden, onToggleMobileSidebar }: ConsoleHeaderPr
         title: tNav('fileRecognition'),
       },
       { match: path => path.startsWith('/console/skills'), title: tNav('skills') },
+      { match: path => path.startsWith('/console/market'), title: tNav('zgiMarket') },
       { match: path => path.startsWith('/console/connectors'), title: tNav('connectors') },
       { match: path => path.startsWith('/console/work/chat'), title: tNav('chat') },
       { match: path => path.startsWith('/console/work/image'), title: tNav('image') },
@@ -111,12 +112,6 @@ export function ConsoleHeader({ hidden, onToggleMobileSidebar }: ConsoleHeaderPr
       {
         match: path => path.startsWith('/dashboard/settings/parsers'),
         title: tDash('items.parserSettings'),
-      },
-      {
-        match: path =>
-          path.startsWith('/dashboard/market/catalog') ||
-          path.startsWith('/dashboard/market/credentials'),
-        title: tDash('items.zgiMarket'),
       },
       {
         match: path => path.startsWith('/dashboard/market'),

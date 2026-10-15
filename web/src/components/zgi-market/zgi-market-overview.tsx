@@ -72,7 +72,7 @@ function ListingLink({
   const { t, text } = useMarketLabels();
   return (
     <Link
-      href={`/dashboard/market/catalog/${kind}/${slug}`}
+      href={`/console/market/catalog/${kind}/${slug}`}
       className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
     >
       <span className="flex min-w-0 items-center gap-2">

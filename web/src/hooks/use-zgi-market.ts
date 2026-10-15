@@ -8,6 +8,8 @@ import {
 import { AGENT_KEYS, DIGITAL_HUMAN_KEYS } from '@/hooks/query-keys';
 import { zgiMarketService } from '@/services/zgi-market.service';
 import type {
+  MarketActivationRequestInput,
+  MarketActivationRequestQuery,
   MarketCallLogQuery,
   MarketListingKind,
   MarketListingQuery,
@@ -22,6 +24,7 @@ const keys = {
   listing: (kind: string, slug: string) => ['zgi-market', 'listing', kind, slug] as const,
   subscriptions: ['zgi-market', 'subscriptions'] as const,
   meta: ['zgi-market', 'meta'] as const,
+  activationRequests: ['zgi-market', 'activation-requests'] as const,
   installedSkills: ['zgi-market', 'installed-skills'] as const,
   connections: ['zgi-market', 'connections'] as const,
   credentials: ['zgi-market', 'credentials'] as const,
@@ -85,6 +88,35 @@ export function useActivateZgiMarketListing() {
     mutationFn: (target: { listingId: number; offeringId?: number }) =>
       zgiMarketService.activate(target.listingId, target.offeringId),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: keys.subscriptions }),
+  });
+}
+
+export function useZgiMarketActivationRequests(
+  query: MarketActivationRequestQuery = {},
+  enabled = true
+) {
+  return useQuery({
+    queryKey: [...keys.activationRequests, query],
+    queryFn: () => zgiMarketService.getActivationRequests(query),
+    enabled,
+    staleTime: 15 * 1000,
+  });
+}
+
+export function useRequestZgiMarketActivation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: MarketActivationRequestInput) => zgiMarketService.requestActivation(input),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: keys.activationRequests }),
+  });
+}
+
+export function useSettleZgiMarketActivationRequest() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (target: { id: string; action: 'approve' | 'reject' | 'cancel'; note?: string }) =>
+      zgiMarketService.settleActivationRequest(target.id, target.action, target.note),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: keys.activationRequests }),
   });
 }
 

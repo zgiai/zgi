@@ -70,7 +70,7 @@ export function ZgiMarketUsageGuide({ listing, gateway }: ZgiMarketUsageGuidePro
       <p>
         {t('market.catalog.detail.usage.credential', { env: MARKET_CREDENTIAL_ENV })}{' '}
         <Link
-          href="/dashboard/market/credentials"
+          href="/console/market/credentials"
           className="font-medium text-primary underline-offset-4 hover:underline"
         >
           {t('market.catalog.detail.usage.manageCredentials')}

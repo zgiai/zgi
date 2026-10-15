@@ -439,3 +439,49 @@ export interface MarketCallContent {
   request: MarketCallBody | null;
   response: MarketCallBody | null;
 }
+
+export type MarketActivationStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
+
+/** A member's request that an administrator activate a market item for the organization. */
+export interface MarketActivationRequest {
+  id: string;
+  requester_id: string;
+  requester_name: string;
+  listing_id: number;
+  listing_kind: MarketListingKind;
+  listing_slug: string;
+  listing_title: string;
+  /** The API offering asked for; 0 asks for the listing as a whole. */
+  offering_id: number;
+  offering_title: string;
+  reason: string;
+  status: MarketActivationStatus;
+  reviewer_id?: string | null;
+  reviewer_name: string;
+  review_note: string;
+  reviewed_at?: string | null;
+  created_at: string;
+}
+
+export interface MarketActivationRequestPage {
+  data: MarketActivationRequest[];
+  /** How many of the requests the caller may read are still pending. */
+  pending: number;
+}
+
+export interface MarketActivationRequestQuery {
+  status?: MarketActivationStatus;
+  listing_id?: number;
+  /** An administrator's own requests only. */
+  mine?: boolean;
+}
+
+export interface MarketActivationRequestInput {
+  listing_id: number;
+  listing_kind: MarketListingKind;
+  listing_slug: string;
+  listing_title: string;
+  offering_id?: number;
+  offering_title?: string;
+  reason: string;
+}

@@ -158,12 +158,12 @@ assert.equal(marketErrorCode(null), '');
 
 assert.equal(
   marketSameOrigin(
-    'https://pre.example.com/dashboard/market/catalog?connected=1',
+    'https://pre.example.com/console/market/catalog?connected=1',
     'https://pre.example.com'
   ),
   true
 );
-assert.equal(marketSameOrigin('/dashboard/market/catalog', 'https://pre.example.com'), true);
+assert.equal(marketSameOrigin('/console/market/catalog', 'https://pre.example.com'), true);
 assert.equal(
   marketSameOrigin(
     'https://market.example.com/console/organizations/0?error_code=X',

@@ -1,5 +1,9 @@
 import { BaseService } from '@/lib/http/services';
 import type {
+  MarketActivationRequest,
+  MarketActivationRequestInput,
+  MarketActivationRequestPage,
+  MarketActivationRequestQuery,
   MarketCallContent,
   MarketCallLogPage,
   MarketCallLogQuery,
@@ -97,6 +101,48 @@ class ZgiMarketService extends BaseService {
       'post',
       '/subscriptions',
       { listing_id: listingId, ...(offeringId ? { offering_id: offeringId } : {}) }
+    );
+    return response.data;
+  }
+
+  /** Members' requests to activate an item: an administrator reads everyone's, a member their own. */
+  async getActivationRequests(
+    query: MarketActivationRequestQuery = {}
+  ): Promise<MarketActivationRequestPage> {
+    const response = await this.request<MarketEnvelope<MarketActivationRequestPage>>(
+      'get',
+      '/activation-requests',
+      undefined,
+      {
+        params: {
+          ...(query.status ? { status: query.status } : {}),
+          ...(query.listing_id ? { listing_id: query.listing_id } : {}),
+          ...(query.mine ? { mine: 1 } : {}),
+        },
+      }
+    );
+    return response.data ?? { data: [], pending: 0 };
+  }
+
+  async requestActivation(input: MarketActivationRequestInput): Promise<MarketActivationRequest> {
+    const response = await this.request<MarketEnvelope<MarketActivationRequest>>(
+      'post',
+      '/activation-requests',
+      input
+    );
+    return response.data;
+  }
+
+  /** approve and reject are an administrator's; cancel is the requester's. */
+  async settleActivationRequest(
+    id: string,
+    action: 'approve' | 'reject' | 'cancel',
+    note = ''
+  ): Promise<MarketActivationRequest> {
+    const response = await this.request<MarketEnvelope<MarketActivationRequest>>(
+      'post',
+      `/activation-requests/${encodeURIComponent(id)}/${action}`,
+      note ? { note } : {}
     );
     return response.data;
   }

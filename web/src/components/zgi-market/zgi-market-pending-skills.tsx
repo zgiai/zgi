@@ -93,7 +93,7 @@ export function ZgiMarketPendingSkills() {
             className="flex items-center justify-between gap-3 rounded-md border bg-background px-3 py-2"
           >
             <Link
-              href={`/dashboard/market/catalog/skill/${skill.slug}`}
+              href={`/console/market/catalog/skill/${skill.slug}`}
               className="min-w-0 truncate font-mono text-xs hover:underline"
             >
               {skill.slug}

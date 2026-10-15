@@ -27,6 +27,7 @@ import {
   LoaderCircle,
   LockKeyhole,
   KeyRound,
+  Store,
 } from 'lucide-react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useT } from '@/i18n';
@@ -82,6 +83,7 @@ interface RootRouteItem {
 
 const ROOT_ROUTES = [
   { key: 'model-plaza', titleKey: 'modelPlaza', href: '/console/model', icon: LayoutGrid },
+  { key: 'zgi-market', titleKey: 'zgiMarket', href: '/console/market', icon: Store },
   { key: 'api-keys', titleKey: 'apiKeys', href: '/console/api-keys', icon: KeyRound },
 ] as const;
 

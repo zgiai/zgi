@@ -35,12 +35,14 @@ type SecretSealer interface {
 // digital humans, and lets the runtime call the bound tools at the market gateway with the
 // credential the market issued for that binding.
 type Tools struct {
-	proxy   *Proxy
-	store   toolBindingStore
-	logs    callLogStore
-	sealer  SecretSealer
-	gateway *gatewayClient
-	now     func() time.Time
+	proxy *Proxy
+	store toolBindingStore
+	logs  callLogStore
+	// requests are the members' requests to activate an item.
+	requests activationStore
+	sealer   SecretSealer
+	gateway  *gatewayClient
+	now      func() time.Time
 
 	mu         sync.Mutex
 	catalog    map[string]cachedCatalog
@@ -71,7 +73,7 @@ type cachedCharge struct {
 // Proxy.WithTools.
 func NewTools(db *gorm.DB, sealer SecretSealer, gateway *GatewayConfig) (*Tools, error) {
 	tools := &Tools{
-		store: toolBindingStore{db: db}, logs: callLogStore{db: db}, sealer: sealer, now: time.Now,
+		store: toolBindingStore{db: db}, logs: callLogStore{db: db}, requests: activationStore{db: db, now: time.Now}, sealer: sealer, now: time.Now,
 		catalog: map[string]cachedCatalog{}, operations: map[string]cachedOperations{},
 		charges: map[string]cachedCharge{},
 	}

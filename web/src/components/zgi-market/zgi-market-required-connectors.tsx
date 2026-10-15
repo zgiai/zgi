@@ -58,7 +58,7 @@ export function ZgiMarketRequiredConnectors({
   const connect = async (connector: MarketRequiredConnector) => {
     setPending(connector.slug);
     try {
-      const returnUrl = `${window.location.origin}/dashboard/market/catalog/${kind}/${slug}?connected=1`;
+      const returnUrl = `${window.location.origin}/console/market/catalog/${kind}/${slug}?connected=1`;
       const name = marketText(connector.title, locale) || connector.slug;
       // An authorization that was started and never finished keeps the name; it is replaced.
       for (const abandoned of connections.data ?? []) {
