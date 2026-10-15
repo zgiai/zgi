@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/capabilities/externalapikey"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
@@ -381,7 +382,7 @@ func (h *ExternalHandler) ListConversationMessages(c *gin.Context) {
 	inputsByMessage := digitalHumanRuntimeInputsByVisibleMessage(inputs)
 	responses := make([]runtimedto.MessageResponse, 0, len(items))
 	for _, item := range items {
-		response := digitalHumanMessageResponse(item)
+		response := digitalHumanMessageResponse(item, runtimemodel.ConversationSourceExternalAPI)
 		response.RuntimeInputs = inputsByMessage[item.ID]
 		if response.RuntimeInputs == nil {
 			response.RuntimeInputs = []runtimedto.RuntimeInputResponse{}
