@@ -351,6 +351,9 @@ func TestRunHeldByWorkflowApprovalFindsWaitingAndClaimedRuns(t *testing.T) {
 	create(RunStatusWaiting, platformCLIApprovalOrigin, runtimemodel.MessageStatusWaitingApproval, "workflow-run-3", false)
 	claimed := create(RunStatusRunning, "", runtimemodel.MessageStatusStreaming, "workflow-run-4", true)
 	create(RunStatusRunning, "", runtimemodel.MessageStatusStreaming, "workflow-run-5", false)
+	// The worker was lost after claiming the message but before the run.
+	halfClaimed := create(RunStatusWaiting, workflowApprovalOrigin, runtimemodel.MessageStatusStreaming, "workflow-run-6", true)
+	create(RunStatusWaiting, workflowApprovalOrigin, runtimemodel.MessageStatusStreaming, "workflow-run-7", false)
 	repo := NewRepository(db)
 	if run, retaken, err := repo.RunHeldByWorkflowApproval(t.Context(), "workflow-run-1"); err != nil || run == nil || run.ID != waiting.ID || retaken {
 		t.Fatalf("waiting run = %#v, retaken %v, err %v", run, retaken, err)
@@ -358,7 +361,10 @@ func TestRunHeldByWorkflowApprovalFindsWaitingAndClaimedRuns(t *testing.T) {
 	if run, retaken, err := repo.RunHeldByWorkflowApproval(t.Context(), "workflow-run-4"); err != nil || run == nil || run.ID != claimed.ID || !retaken {
 		t.Fatalf("externally claimed run = %#v, retaken %v, err %v; want it retaken", run, retaken, err)
 	}
-	for _, workflowRunID := range []string{"workflow-run-3", "workflow-run-5", "missing", ""} {
+	if run, retaken, err := repo.RunHeldByWorkflowApproval(t.Context(), "workflow-run-6"); err != nil || run == nil || run.ID != halfClaimed.ID || !retaken {
+		t.Fatalf("run left waiting by a lost claim = %#v, retaken %v, err %v; want it retaken", run, retaken, err)
+	}
+	for _, workflowRunID := range []string{"workflow-run-3", "workflow-run-5", "workflow-run-7", "missing", ""} {
 		if run, _, err := repo.RunHeldByWorkflowApproval(t.Context(), workflowRunID); err != nil || run != nil {
 			t.Fatalf("%q: run = %#v, err %v; want none (a platform approval, or a continuation the conversation runs)", workflowRunID, run, err)
 		}
@@ -379,6 +385,16 @@ func TestRetakenExternalApprovalFollowsTheWorkflowWithoutReleasingTheMessage(t *
 	f, handled, err := retake(t, &streamingApprovalRunner{events: []workflowEvent{{"workflow_finished", map[string]interface{}{"status": "succeeded"}}}}, nil)
 	if !handled || err != nil || !equalStrings(f.store.calls, []string{"complete:Done."}) {
 		t.Fatalf("retaken resume: handled %v, err %v, calls %v; want it completed without claiming the run again", handled, err, f.store.calls)
+	}
+
+	// A worker lost between claiming the message and the run leaves the run
+	// waiting: the retake starts it before following the workflow.
+	f = newExternalApprovalFixture(t, &streamingApprovalRunner{events: []workflowEvent{{"workflow_finished", map[string]interface{}{"status": "succeeded"}}}})
+	f.store.retaken = true
+	f.chat.summaryResult = &chatruntime.ChatResult{Status: runtimemodel.MessageStatusCompleted, Answer: "Done.", Metadata: map[string]interface{}{}}
+	handled, err = f.service.ResumeWorkflow(t.Context(), f.request())
+	if !handled || err != nil || !equalStrings(f.store.calls, []string{"resume", "complete:Done."}) {
+		t.Fatalf("half-claimed retake: handled %v, err %v, calls %v; want the run started and completed", handled, err, f.store.calls)
 	}
 
 	f, handled, err = retake(t, &streamingApprovalRunner{err: workflowpause.ErrResumeAlreadyRunning}, nil)

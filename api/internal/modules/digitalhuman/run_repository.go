@@ -409,7 +409,9 @@ func (r *GormRepository) MarkStaleRunsUnknown(ctx context.Context, updatedBefore
 // RunHeldByWorkflowApproval returns the interactive run of this workflow run
 // that a generic workflow approval holds: one still waiting on it, or one an
 // external approval resume already claimed (retaken=true) whose worker may
-// have been lost before the conversation settled. It returns nil when no run
+// have been lost before the conversation settled. A claimed run may still be
+// waiting: the message is claimed before the run, so a worker lost between
+// the two leaves the run for the retake to start. It returns nil when no run
 // is held.
 func (r *GormRepository) RunHeldByWorkflowApproval(ctx context.Context, workflowRunID string) (*Run, bool, error) {
 	workflowRunID = strings.TrimSpace(workflowRunID)
@@ -423,7 +425,8 @@ func (r *GormRepository) RunHeldByWorkflowApproval(ctx context.Context, workflow
 		return waiting, false, err
 	}
 	claimed, err := r.runHeldByWorkflow(ctx, workflowRunID,
-		"digital_human_runs.status = ? AND chat_runtime_messages.status = ?", RunStatusRunning, runtimemodel.MessageStatusStreaming)
+		"(digital_human_runs.status = ? OR (digital_human_runs.status = ? AND digital_human_runs.waiting_approval_origin = ?)) AND chat_runtime_messages.status = ?",
+		RunStatusRunning, RunStatusWaiting, workflowApprovalOrigin, runtimemodel.MessageStatusStreaming)
 	if err != nil || claimed == nil {
 		return nil, false, err
 	}

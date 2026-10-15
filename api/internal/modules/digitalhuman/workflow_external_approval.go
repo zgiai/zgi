@@ -95,7 +95,9 @@ func (s *RuntimeService) ResumeWorkflow(ctx context.Context, req approvalruntime
 	lifecycle.settle = func(settleCtx context.Context, status, answer string, metadata map[string]interface{}) {
 		s.settleWorkflowContinuationRun(settleCtx, run, status, answer, metadata)
 	}
-	if !retaken {
+	// A retaken run is normally running already; one whose worker was lost
+	// right after claiming the message is still waiting and starts here.
+	if run.Status == RunStatusWaiting {
 		waiter, ok := s.store.(runWaitingStore)
 		if !ok {
 			return true, lifecycle.abortBeforeResume(fmt.Errorf("digital human waiting run resume is unavailable"))
