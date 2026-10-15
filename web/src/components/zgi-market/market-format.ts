@@ -256,3 +256,22 @@ export function marketUnattendedRefusal(
     ? { kind: 'cost', max: match[1] as string, threshold: match[2] as string }
     : undefined;
 }
+
+/**
+ * Whether a member may activate the listing, or the offering of an API, without an administrator:
+ * every price that applies is zero. A listing without a published price is not free, an API is
+ * free per offering, and a plugin only when it has no members whose prices this page cannot see.
+ * The instance decides again before it activates.
+ */
+export function marketFreeToActivate(
+  listing: Pick<MarketListing, 'kind' | 'prices'> & { plugin?: { members?: unknown[] } | null },
+  offeringSlug?: string
+): boolean {
+  if (listing.kind === 'connector' || listing.kind === 'dataset') return false;
+  if (listing.kind === 'api' && !offeringSlug) return false;
+  if (listing.kind === 'plugin' && (listing.plugin?.members ?? []).length > 0) return false;
+  const applied = (listing.prices ?? []).filter(
+    price => !offeringSlug || !price.offering_slug || price.offering_slug === offeringSlug
+  );
+  return applied.length > 0 && applied.every(price => price.unit_price_micros === 0);
+}

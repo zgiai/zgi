@@ -236,6 +236,12 @@ func (p *Proxy) Forward(c *gin.Context) {
 		response.FailWithMessage(c, response.ErrInvalidParams, "Request body is too large")
 		return
 	}
+	if !who.admin && c.Request.Method == http.MethodPost && path == "subscriptions" {
+		// A free listing costs the organization nothing, so a member activates it too.
+		if forwarded, free := p.freeSubscription(c.Request.Context(), who, body); free {
+			who.admin, body = true, forwarded
+		}
+	}
 	callback := path == oauthCallbackPath
 	headers := c.Request.Header
 	query, named := p.nameOAuthRedirect(c.Request.Method, path, c.Request.URL.RawQuery, body)

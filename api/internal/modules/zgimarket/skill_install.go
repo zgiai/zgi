@@ -115,9 +115,16 @@ func (p *Proxy) installSkill(c *gin.Context, slug string) {
 	if !ok {
 		return
 	}
+	elevated := false
 	if !who.admin {
-		response.Fail(c, response.ErrPermissionDenied)
-		return
+		// A free skill costs the organization nothing, so a member installs it too. Replacing a
+		// skill the organization already has stays an administrator's decision.
+		listing, ok := p.describe(c.Request.Context(), who, "skill", slug)
+		if !ok || !pricesAreFree(listing.Prices, "") {
+			response.Fail(c, response.ErrPermissionDenied)
+			return
+		}
+		who.admin, elevated = true, true
 	}
 	var input struct {
 		Overwrite bool `json:"overwrite"`
@@ -125,6 +132,10 @@ func (p *Proxy) installSkill(c *gin.Context, slug string) {
 	body, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, installBodyLimit))
 	if err != nil || (len(strings.TrimSpace(string(body))) > 0 && json.Unmarshal(body, &input) != nil) {
 		response.Fail(c, response.ErrInvalidParams)
+		return
+	}
+	if elevated && input.Overwrite {
+		response.Fail(c, response.ErrPermissionDenied)
 		return
 	}
 	ctx := c.Request.Context()

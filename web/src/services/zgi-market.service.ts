@@ -96,11 +96,23 @@ class ZgiMarketService extends BaseService {
     return response.data ?? [];
   }
 
-  async activate(listingId: number, offeringId?: number): Promise<MarketSubscription> {
+  /**
+   * listing names the listing's kind and slug, which lets this instance tell a free listing a
+   * member may activate; the market itself takes only the ids.
+   */
+  async activate(
+    listingId: number,
+    offeringId?: number,
+    listing?: { kind: MarketListingKind; slug: string }
+  ): Promise<MarketSubscription> {
     const response = await this.request<MarketEnvelope<MarketSubscription>>(
       'post',
       '/subscriptions',
-      { listing_id: listingId, ...(offeringId ? { offering_id: offeringId } : {}) }
+      {
+        listing_id: listingId,
+        ...(offeringId ? { offering_id: offeringId } : {}),
+        ...(listing ? { listing_kind: listing.kind, listing_slug: listing.slug } : {}),
+      }
     );
     return response.data;
   }

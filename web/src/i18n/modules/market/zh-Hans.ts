@@ -243,6 +243,7 @@ const messages: MarketMessages = {
     },
   },
   activation: {
+    freeForMembers: '免费商品，成员可以直接开通。',
     request: '申请开通',
     requestAgain: '重新申请',
     requestTitle: '申请开通「{name}」',

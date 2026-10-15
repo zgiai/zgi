@@ -93,6 +93,8 @@ interface ZgiMarketApiSectionProps {
   isActivated: (offering: MarketOffering) => boolean;
   /** Undefined when the caller may not activate. */
   onActivate?: (offering: MarketOffering) => void;
+  /** Whether the caller may activate this offering; every one when not given. */
+  canActivate?: (offering: MarketOffering) => boolean;
   activating: boolean;
 }
 
@@ -102,6 +104,7 @@ export function ZgiMarketApiSection({
   gatewayOrigin,
   isActivated,
   onActivate,
+  canActivate,
   activating,
 }: ZgiMarketApiSectionProps) {
   const { t, meter, amount, per } = useMarketLabels();
@@ -135,7 +138,7 @@ export function ZgiMarketApiSection({
                   <Check className="size-3.5" aria-hidden="true" />
                   {t('market.catalog.activated')}
                 </Badge>
-              ) : onActivate ? (
+              ) : onActivate && (!canActivate || canActivate(offering)) ? (
                 <Button size="sm" disabled={activating} onClick={() => onActivate(offering)}>
                   {t('market.catalog.activate')}
                 </Button>
