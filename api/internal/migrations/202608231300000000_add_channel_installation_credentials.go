@@ -79,12 +79,18 @@ func down202608231300000000(schema *mschema.Builder) error {
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_installations_connection
 			ON public.channel_installations (organization_id, workspace_id, provider, connection_id)
 			WHERE deleted_at IS NULL;
-		ALTER TABLE public.channel_installations
-			ADD CONSTRAINT channel_installations_connection_id_fkey
-			FOREIGN KEY (connection_id) REFERENCES public.integration_connections(id) ON DELETE RESTRICT;
-		ALTER TABLE public.channel_delivery_outbox
-			ADD CONSTRAINT channel_delivery_outbox_connection_id_fkey
-			FOREIGN KEY (connection_id) REFERENCES public.integration_connections(id) ON DELETE RESTRICT;
+		DO $$
+		BEGIN
+			-- The legacy link only exists while integration_connections does.
+			IF to_regclass('public.integration_connections') IS NOT NULL THEN
+				ALTER TABLE public.channel_installations
+					ADD CONSTRAINT channel_installations_connection_id_fkey
+					FOREIGN KEY (connection_id) REFERENCES public.integration_connections(id) ON DELETE RESTRICT;
+				ALTER TABLE public.channel_delivery_outbox
+					ADD CONSTRAINT channel_delivery_outbox_connection_id_fkey
+					FOREIGN KEY (connection_id) REFERENCES public.integration_connections(id) ON DELETE RESTRICT;
+			END IF;
+		END $$;
 		CREATE TRIGGER trg_channel_installations_scope
 			BEFORE INSERT OR UPDATE ON public.channel_installations
 			FOR EACH ROW EXECUTE FUNCTION public.enforce_channel_scope_consistency();
