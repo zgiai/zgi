@@ -76,7 +76,9 @@ func (s *WebAppSessionSigner) Parse(token string, webAppID uuid.UUID) (WebAppAno
 			return nil, ErrInvalidWebAppSession
 		}
 		return s.secret, nil
-	}, jwtlib.WithIssuer(webAppSessionIssuer), jwtlib.WithAudience("digital-human-webapp:"+webAppID.String()), jwtlib.WithValidMethods([]string{jwtlib.SigningMethodHS256.Alg()}))
+	}, jwtlib.WithIssuer(webAppSessionIssuer), jwtlib.WithAudience("digital-human-webapp:"+webAppID.String()), jwtlib.WithValidMethods([]string{jwtlib.SigningMethodHS256.Alg()}),
+		// Validate expiry on the signer's clock, the one Issue stamped it with.
+		jwtlib.WithTimeFunc(s.now))
 	if err != nil || parsed == nil || !parsed.Valid || claims.Kind != webAppAnonymousSessionKind || claims.WebAppID != webAppID.String() {
 		return WebAppAnonymousSession{}, ErrInvalidWebAppSession
 	}
