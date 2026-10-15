@@ -211,6 +211,36 @@ func (s activationStore) settle(
 	return &row, nil
 }
 
+// settleActivated approves the pending requests the activation of an item answers: those for the
+// listing that name the activated offering or none. The member who activated it is their reviewer.
+func (s activationStore) settleActivated(ctx context.Context, organizationID uuid.UUID, listingID, offeringID uint64, actorID uuid.UUID) error {
+	now := s.now().UTC()
+	return s.db.WithContext(ctx).Model(&ActivationRequest{}).
+		Where("organization_id = ? AND listing_id = ? AND status = ? AND offering_id IN ?",
+			organizationID, listingID, ActivationPending, []uint64{0, offeringID}).
+		Updates(map[string]any{
+			"status": ActivationApproved, "reviewer_id": actorID, "reviewed_at": now, "updated_at": now,
+		}).Error
+}
+
+// closeActivated settles the requests a member's own activation of a free item answered. It is
+// best effort: the item is activated whatever becomes of them, and an administrator may still
+// answer them.
+func (p *Proxy) closeActivated(ctx context.Context, who caller, listingID, offeringID uint64) {
+	if p.tools == nil || listingID == 0 {
+		return
+	}
+	organizationID, errOrganization := uuid.Parse(who.organizationID)
+	accountID, errAccount := uuid.Parse(who.accountID)
+	if errOrganization != nil || errAccount != nil {
+		return
+	}
+	if err := p.tools.requests.settleActivated(ctx, organizationID, listingID, offeringID, accountID); err != nil {
+		logger.WarnContext(ctx, "the activation requests a free activation answered could not be settled",
+			"listing_id", listingID, "error", err.Error())
+	}
+}
+
 // nameAccounts fills in the requester's and the reviewer's names. A name that cannot be read is
 // left empty.
 func (s activationStore) nameAccounts(ctx context.Context, rows []*ActivationRequest) {

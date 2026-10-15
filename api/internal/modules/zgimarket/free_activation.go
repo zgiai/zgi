@@ -92,10 +92,11 @@ func (p *Proxy) freeToActivate(ctx context.Context, who caller, kind, slug strin
 	if !pricesAreFree(listing.Prices, offeringSlug) {
 		return false
 	}
-	if kind != "plugin" || listing.Plugin == nil {
+	if kind != "plugin" {
 		return true
 	}
-	if len(listing.Plugin.Members) > maxFreePluginMembers {
+	// A plugin whose members cannot be read may hold paid ones; it is not taken for free.
+	if listing.Plugin == nil || len(listing.Plugin.Members) > maxFreePluginMembers {
 		return false
 	}
 	for _, member := range listing.Plugin.Members {
@@ -107,10 +108,17 @@ func (p *Proxy) freeToActivate(ctx context.Context, who caller, kind, slug strin
 	return true
 }
 
+// freeActivation is a member's activation of a free listing: what is activated, and the body the
+// market takes for it.
+type freeActivation struct {
+	listingID, offeringID uint64
+	body                  []byte
+}
+
 // freeSubscription lets a member activate a free listing: given the body of POST subscriptions,
 // it reports whether the listing is free and returns the body the market takes. The page names
 // the listing's kind and slug beside its id, so it can be read; the market does not take them.
-func (p *Proxy) freeSubscription(ctx context.Context, who caller, body []byte) ([]byte, bool) {
+func (p *Proxy) freeSubscription(ctx context.Context, who caller, body []byte) (freeActivation, bool) {
 	var input struct {
 		ListingID   uint64 `json:"listing_id"`
 		OfferingID  uint64 `json:"offering_id"`
@@ -118,19 +126,19 @@ func (p *Proxy) freeSubscription(ctx context.Context, who caller, body []byte) (
 		ListingSlug string `json:"listing_slug"`
 	}
 	if json.Unmarshal(body, &input) != nil || input.ListingID == 0 {
-		return nil, false
+		return freeActivation{}, false
 	}
 	switch input.ListingKind {
 	case "api", "mcp", "plugin":
 	default:
-		return nil, false
+		return freeActivation{}, false
 	}
 	if !p.freeToActivate(ctx, who, input.ListingKind, input.ListingSlug, input.ListingID, input.OfferingID) {
-		return nil, false
+		return freeActivation{}, false
 	}
 	forwarded := `{"listing_id":` + strconv.FormatUint(input.ListingID, 10)
 	if input.OfferingID != 0 {
 		forwarded += `,"offering_id":` + strconv.FormatUint(input.OfferingID, 10)
 	}
-	return []byte(forwarded + "}"), true
+	return freeActivation{listingID: input.ListingID, offeringID: input.OfferingID, body: []byte(forwarded + "}")}, true
 }
