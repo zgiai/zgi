@@ -32,6 +32,10 @@ const (
 	// callSyncWindow is how far back the market's records are read; the market answers at most
 	// 31 days at a time.
 	callSyncWindow = 30 * 24 * time.Hour
+	// callSyncInterval is how long after a complete read of an organization's records the next
+	// read of its call logs skips asking the market again: every page and every filter of the log
+	// page reads the logs, and one read of the market can take several round trips to it.
+	callSyncInterval = 10 * time.Second
 )
 
 // CallLogCursor is how far the market's call records of one organization have been read.
@@ -66,6 +70,9 @@ type marketCallRecord struct {
 // syncLocks keeps one organization's reads of the market's records from running twice at once.
 var syncLocks sync.Map
 
+// syncedAt holds, by organization, when the market's records were last read to the end.
+var syncedAt sync.Map
+
 // syncDirectCalls reads the organization's call records written at the market since the last read
 // and logs the ones this instance did not make. A call this instance made is already logged under
 // the same request id, and an MCP handshake is no call of a tool; both are passed over.
@@ -74,11 +81,16 @@ func (t *Tools) syncDirectCalls(ctx context.Context, who caller, organizationID 
 	lock.(*sync.Mutex).Lock()
 	defer lock.(*sync.Mutex).Unlock()
 
+	now := t.now()
+	if last, found := syncedAt.Load(organizationID); found {
+		if elapsed := now.Sub(last.(time.Time)); elapsed >= 0 && elapsed < callSyncInterval {
+			return nil
+		}
+	}
 	var cursor CallLogCursor
 	if err := t.logs.db.WithContext(ctx).Where("organization_id = ?", organizationID).Limit(1).Find(&cursor).Error; err != nil {
 		return err
 	}
-	now := t.now()
 	from, to := now.Add(-callSyncWindow).UTC().Format(time.RFC3339), now.Add(time.Minute).UTC().Format(time.RFC3339)
 	after := cursor.AfterID
 	var credentials map[uint64]string
@@ -118,6 +130,7 @@ func (t *Tools) syncDirectCalls(ctx context.Context, who caller, organizationID 
 			}
 		}
 		if young || !page.HasMore {
+			syncedAt.Store(organizationID, now)
 			return nil
 		}
 	}
