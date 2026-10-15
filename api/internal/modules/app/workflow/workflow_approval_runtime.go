@@ -227,11 +227,7 @@ func (h *WorkflowHandler) resumeQuestionAnswerWorkflow(ctx context.Context, work
 	for key, value := range resumeInputs {
 		inputs[key] = value
 	}
-	if nodeID := pendingQuestionReasonNodeID(reasons); nodeID != "" && questionAnswerInputNodeID(inputs) == "" {
-		// An answer that does not name its node answers the pause's only open
-		// question. The pause's first node may be an approval of a mixed pause.
-		inputs["question_answer_node_id"] = nodeID
-	}
+	targetOpenQuestion(inputs, resumeInputs, reasons)
 	responseMode := pauseState.Request.ResponseMode
 	if responseMode == "" {
 		responseMode = "streaming"
@@ -352,6 +348,22 @@ func (h *WorkflowHandler) resumeQuestionAnswerWorkflow(ctx context.Context, work
 		h.executeWorkflowStream(ctx, run.TenantID, run.AgentID, req, run.CreatedBy, run.ID, run.ID, run.WorkflowID, systemInputs, run.SequenceNumber, resultChan, errorChan, doneChan, isDraft, runType, run.TriggeredFrom, nil)
 	}()
 	return h.drainApprovalResumeStream(ctx, pauseService, workflowService, run, resultChan, errorChan, doneChan, resumeStartedAt, runType, systemInputs, inputs, eventDispatcher)
+}
+
+// targetOpenQuestion points an answer that does not name its question node at
+// the pause's only open question. It decides from this answer alone: the
+// merged inputs also carry the request inputs saved with the pause, which can
+// still name the question a previous answer resolved. Without a node the
+// answer would fall back to the pause's first node, which may be the approval
+// of a mixed pause.
+func targetOpenQuestion(inputs, answer map[string]interface{}, reasons []workflowpause.RunPauseReason) {
+	if inputs == nil || questionAnswerInputNodeID(answer) != "" {
+		return
+	}
+	if nodeID := pendingQuestionReasonNodeID(reasons); nodeID != "" {
+		inputs["question_answer_node_id"] = nodeID
+		delete(inputs, "inputs.question_answer_node_id")
+	}
 }
 
 // pendingQuestionReasonNodeID is the node of the pause's single pending

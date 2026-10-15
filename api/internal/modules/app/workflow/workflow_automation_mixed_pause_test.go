@@ -163,3 +163,29 @@ func TestQuestionAnswerWithoutANodeAnswersTheOnlyOpenQuestion(t *testing.T) {
 		t.Fatalf("pending question node = %q, want none when several questions are open", got)
 	}
 }
+
+func TestEachAnswerWithoutANodeAnswersTheQuestionThatIsOpenNow(t *testing.T) {
+	q1 := []workflowpause.RunPauseReason{{Type: workflowpause.ReasonTypeQuestionAnswerRequired, NodeID: "q1", Status: workflowpause.RunPauseReasonStatusPending}}
+	first := map[string]interface{}{"query": "first"}
+	inputs := map[string]interface{}{"query": "first"}
+	targetOpenQuestion(inputs, first, q1)
+	if inputs["question_answer_node_id"] != "q1" {
+		t.Fatalf("first answer node = %v, want q1", inputs["question_answer_node_id"])
+	}
+
+	// The next pause keeps the first round's inputs as its request inputs.
+	q2 := []workflowpause.RunPauseReason{{Type: workflowpause.ReasonTypeQuestionAnswerRequired, NodeID: "q2", Status: workflowpause.RunPauseReasonStatusPending}}
+	second := map[string]interface{}{"query": "second"}
+	merged := map[string]interface{}{"question_answer_node_id": "q1", "inputs.question_answer_node_id": "q1", "query": "second"}
+	targetOpenQuestion(merged, second, q2)
+	if got := questionAnswerInputNodeID(merged); got != "q2" {
+		t.Fatalf("second answer node = %q, want q2 rather than the question the first answer resolved", got)
+	}
+
+	named := map[string]interface{}{"query": "third", "question_answer_node_id": "q3"}
+	explicit := map[string]interface{}{"query": "third", "question_answer_node_id": "q3"}
+	targetOpenQuestion(explicit, named, q2)
+	if explicit["question_answer_node_id"] != "q3" {
+		t.Fatalf("named answer node = %v, want the node the answer names", explicit["question_answer_node_id"])
+	}
+}
