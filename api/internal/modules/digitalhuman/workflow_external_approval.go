@@ -132,7 +132,9 @@ func (s *RuntimeService) followRetakenWorkflow(ctx context.Context, lifecycle *d
 	}
 	progress, err := s.workflowProgress().Read(ctx, workflowRunID)
 	if err != nil {
-		return errors.Join(resumeErr, err)
+		// The resume error stays text only: the queue drops a pause that is
+		// gone or not ready, and this conversation still has to settle.
+		return fmt.Errorf("read workflow %s progress after its resume (%v): %w", workflowRunID, resumeErr, err)
 	}
 	if len(progress) == 0 {
 		return fmt.Errorf("%w: %s", errWorkflowResumedElsewhere, workflowRunID)

@@ -34,10 +34,11 @@ func (s *externalApprovalRunStore) RunHeldByWorkflowApproval(_ context.Context, 
 
 type fakeWorkflowProgressReader struct {
 	progress []externalWorkflowProgress
+	err      error
 }
 
 func (r fakeWorkflowProgressReader) Read(context.Context, string) ([]externalWorkflowProgress, error) {
-	return r.progress, nil
+	return r.progress, r.err
 }
 
 func (s *externalApprovalRunStore) MarkRunWaiting(_ context.Context, _ uuid.UUID, reason string, _ time.Time) error {
@@ -406,6 +407,17 @@ func TestRetakenExternalApprovalFollowsTheWorkflowWithoutReleasingTheMessage(t *
 		[]externalWorkflowProgress{{EventType: "workflow_finished", Payload: map[string]interface{}{"status": "succeeded"}}})
 	if !handled || err != nil || !equalStrings(f.store.calls, []string{"complete:Done."}) {
 		t.Fatalf("workflow already finished: handled %v, err %v, calls %v; want the conversation settled from the workflow", handled, err, f.store.calls)
+	}
+
+	for _, pauseErr := range []error{workflowpause.ErrPauseNotFound, workflowpause.ErrPauseNotResumeReady} {
+		readErr := errors.New("database unavailable")
+		f = newExternalApprovalFixture(t, &streamingApprovalRunner{err: pauseErr})
+		f.store.waiting.Status, f.store.retaken = RunStatusRunning, true
+		f.service.progressReader = fakeWorkflowProgressReader{err: readErr}
+		handled, err = f.service.ResumeWorkflow(t.Context(), f.request())
+		if !handled || !errors.Is(err, readErr) || errors.Is(err, workflowpause.ErrPauseNotFound) || errors.Is(err, workflowpause.ErrPauseNotResumeReady) || len(f.store.calls) != 0 {
+			t.Fatalf("progress read failed after %v: handled %v, err %v, calls %v; want a retried error the queue does not drop", pauseErr, handled, err, f.store.calls)
+		}
 	}
 
 	f, handled, err = retake(t, &streamingApprovalRunner{err: workflowpause.ErrPauseNotFound}, nil)
