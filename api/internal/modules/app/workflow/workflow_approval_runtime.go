@@ -538,7 +538,7 @@ func (h *WorkflowHandler) drainApprovalResumeStream(ctx context.Context, pauseSe
 			if selection.event.EventType == workflowpause.EventApprovalExpired {
 				approvalExpired = true
 			}
-			eventData := sanitizeWorkflowEventData(selection.event.Data)
+			eventData := keepWorkflowEventStoredMarkers(sanitizeWorkflowEventData(selection.event.Data), selection.event.Data)
 			if selection.event.EventType == workflowpause.EventWorkflowFinished && run.RuntimeProtocolVersion >= workflowRuntimeProtocolVersionV2 {
 				// The executor terminal signal is transient. The done branch owns the
 				// durable FinalizeRun transaction and only publishes after it commits.
@@ -583,6 +583,14 @@ func (h *WorkflowHandler) drainApprovalResumeStream(ctx context.Context, pauseSe
 			if err := eventDispatcher.Dispatch(ctx, selection.event.EventType, eventData); err != nil {
 				if workflowResumeRunIsDurablyStopped(ctx, workflowService, run) {
 					return persistStoppedWorkflowAnswerAfterResume(ctx, answerSnapshots, conversationAnswer.String())
+				}
+				if workflowResumeEventLostToNewPause(ctx, pauseService, run, err) {
+					// The resumed workflow already saved its next pause, which
+					// released this execution before the drain reached an event it
+					// emitted earlier. The pause's own events are stored, so keep
+					// draining to deliver them, as the live stream does.
+					logger.WarnContext(ctx, "workflow event emitted before the next pause was not recorded", "workflow_run_id", run.ID, "event", selection.event.EventType, err)
+					continue
 				}
 				return err
 			}
@@ -652,6 +660,38 @@ func workflowResumeRunIsDurablyStopped(ctx context.Context, workflowService *Wor
 	defer cancel()
 	current, err := workflowService.workflowRunLogRepo.GetByID(lookupCtx, run.ID)
 	return err == nil && current != nil && strings.EqualFold(strings.TrimSpace(string(current.Status)), string(dto.WorkflowRunStatusStopped))
+}
+
+// keepWorkflowEventStoredMarkers restores the markers of an event that is
+// already stored (the pause events a resumed workflow saves with its next
+// pause). Sanitizing drops them, and the dispatcher would then try to store the
+// event again after the pause released this execution. The dispatcher strips
+// them before publishing.
+func keepWorkflowEventStoredMarkers(sanitized, source map[string]interface{}) map[string]interface{} {
+	for _, key := range []string{"__stored_sequence", "__stored_event_id", "__stored_event_payload"} {
+		if value, ok := source[key]; ok && value != nil {
+			sanitized[key] = value
+		}
+	}
+	return sanitized
+}
+
+// workflowResumeEventLostToNewPause reports whether a resumed execution lost
+// ownership because the workflow already saved a newer pause: another pause
+// than the one this execution claimed is active.
+func workflowResumeEventLostToNewPause(ctx context.Context, pauseService *workflowpause.Service, run *WorkflowRunLog, err error) bool {
+	if pauseService == nil || run == nil || !errors.Is(err, workflowpause.ErrExecutionOwnershipLost) {
+		return false
+	}
+	owner, ok := workflowExecutionOwnerFromContext(ctx)
+	resumedPauseID := strings.TrimSpace(owner.PauseID)
+	if !ok || resumedPauseID == "" {
+		return false
+	}
+	lookupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	pause, _, _, loadErr := pauseService.GetActiveByWorkflowRunID(lookupCtx, run.ID)
+	return loadErr == nil && pause != nil && pause.ID != resumedPauseID && pause.Status == workflowpause.RunPauseStatusPaused
 }
 
 func persistStoppedWorkflowAnswerAfterResume(ctx context.Context, snapshots *answerSnapshotWriter, answer string) error {

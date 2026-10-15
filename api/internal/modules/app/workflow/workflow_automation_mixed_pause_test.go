@@ -2,6 +2,8 @@ package workflow
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -187,5 +189,59 @@ func TestEachAnswerWithoutANodeAnswersTheQuestionThatIsOpenNow(t *testing.T) {
 	targetOpenQuestion(explicit, named, q2)
 	if explicit["question_answer_node_id"] != "q3" {
 		t.Fatalf("named answer node = %v, want the node the answer names", explicit["question_answer_node_id"])
+	}
+}
+
+func TestResumeKeepsDrainingWhenTheWorkflowAlreadyPausedAgain(t *testing.T) {
+	dsn := "file:" + strings.ReplaceAll(t.Name(), "/", "_") + "?mode=memory&cache=shared"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	if err != nil {
+		if strings.Contains(err.Error(), "requires cgo") {
+			t.Skipf("sqlite driver unavailable without cgo: %v", err)
+		}
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := autoMigrateWorkflowTest(db, &workflowpause.RunPause{}, &workflowpause.RunPauseReason{}); err != nil {
+		t.Fatal(err)
+	}
+	resumedAt := time.Now()
+	for _, pause := range []*workflowpause.RunPause{
+		{ID: "pause-q1", TenantID: "tenant-1", AppID: "app-1", WorkflowRunID: "run-1", NodeID: "q1", Reason: "question", StateJSON: `{}`, Generation: 1, Status: workflowpause.RunPauseStatusClosed, ResumedAt: &resumedAt},
+		{ID: "pause-q2", TenantID: "tenant-1", AppID: "app-1", WorkflowRunID: "run-1", NodeID: "q2", Reason: "question", StateJSON: `{}`, Generation: 2, Status: workflowpause.RunPauseStatusPaused},
+	} {
+		if err := db.Create(pause).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	service := workflowpause.NewService(db)
+	run := &WorkflowRunLog{ID: "run-1"}
+	lost := fmt.Errorf("persist workflow event batch: %w", workflowpause.ErrExecutionOwnershipLost)
+	resumedQ1 := withWorkflowExecutionOwner(context.Background(), workflowExecutionOwner{WorkflowRunID: "run-1", ExecutionID: "execution-1", Generation: 2, PauseID: "pause-q1", PauseGeneration: 1})
+	if !workflowResumeEventLostToNewPause(resumedQ1, service, run, lost) {
+		t.Fatal("an event lost to the next pause must not abort the resume")
+	}
+	resumedQ2 := withWorkflowExecutionOwner(context.Background(), workflowExecutionOwner{WorkflowRunID: "run-1", ExecutionID: "execution-2", Generation: 3, PauseID: "pause-q2", PauseGeneration: 2})
+	if workflowResumeEventLostToNewPause(resumedQ2, service, run, lost) {
+		t.Fatal("losing ownership while the resumed pause is still the active one is a real failure")
+	}
+	if workflowResumeEventLostToNewPause(context.Background(), service, run, lost) {
+		t.Fatal("an execution without a claimed pause cannot have lost it to the next pause")
+	}
+	if workflowResumeEventLostToNewPause(resumedQ1, service, run, errors.New("database unavailable")) {
+		t.Fatal("only an ownership loss can be explained by the next pause")
+	}
+}
+
+func TestResumeDrainKeepsTheMarkersOfStoredPauseEvents(t *testing.T) {
+	stored := &workflowpause.RunEventPayload{EventID: "event-13", Sequence: 13}
+	source := map[string]interface{}{
+		"node_id": "q2", "__approval_form": "internal", "__stored_sequence": 13, "__stored_event_id": "event-13", "__stored_event_payload": stored,
+	}
+	data := keepWorkflowEventStoredMarkers(sanitizeWorkflowEventData(source), source)
+	if data["__stored_sequence"] != 13 || data["__stored_event_id"] != "event-13" || data["__stored_event_payload"] != stored {
+		t.Fatalf("event data = %#v, want the stored markers kept so the event is not stored again", data)
+	}
+	if _, ok := data["__approval_form"]; ok || data["node_id"] != "q2" {
+		t.Fatalf("event data = %#v, want other internal fields still sanitized", data)
 	}
 }
