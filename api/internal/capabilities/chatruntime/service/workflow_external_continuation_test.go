@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -195,7 +197,7 @@ func TestContinuationWaitsOnTheApprovalItRecords(t *testing.T) {
 					"workflow_run_id": "run-1", "ui_approval_allowed": false, "approval_token": "",
 				}},
 			}
-			form := map[string]interface{}{"id": "form-2", "submit_methods": map[string]interface{}{"webapp": map[string]interface{}{"enabled": test.enabled}}}
+			form := map[string]interface{}{"id": "form-2", "token": "token-2", "submit_methods": map[string]interface{}{"webapp": map[string]interface{}{"enabled": test.enabled}}}
 			event, err := svc.RecordWorkflowApprovalContinuationEvent(t.Context(), continuation, "approval_requested", map[string]interface{}{
 				"node_id": "approval-2", "form_id": "form-2", "approval_token": "token-2", "approval_form": form,
 			})
@@ -206,9 +208,49 @@ func TestContinuationWaitsOnTheApprovalItRecords(t *testing.T) {
 			if record["ui_approval_allowed"] != test.enabled || continuation.UIApprovalAllowed != test.enabled || event.Payload["ui_approval_allowed"] != test.enabled {
 				t.Fatalf("record = %#v, event = %#v, want ui_approval_allowed %v", record, event.Payload, test.enabled)
 			}
-			if record["approval_token"] != "token-2" || record["approval_form"] == nil {
-				t.Fatalf("record = %#v, want the new approval's token and form", record)
+			if record["approval_form"] == nil {
+				t.Fatalf("record = %#v, want the new approval's form", record)
+			}
+			// The approval token opens the approval page: only an approval the
+			// conversation may answer carries it.
+			if leaked := strings.Contains(workflowContinuationTestJSON(t, event.Payload)+workflowContinuationTestJSON(t, record), "token-2"); leaked != test.enabled {
+				t.Fatalf("record = %#v, event = %#v, want the approval token exposed %v", record, event.Payload, test.enabled)
+			}
+			if test.enabled && record["approval_token"] != "token-2" {
+				t.Fatalf("record = %#v, want the new approval's token", record)
 			}
 		})
 	}
+}
+
+func TestContinuationEventsOtherThanAnAnswerableApprovalCarryNoApprovalToken(t *testing.T) {
+	svc := &service{repos: &repository.Repositories{Message: &workflowContinuationCheckpointMessageRepo{}, Conversation: &workflowContinuationCheckpointConversationRepo{}}}
+	continuation := &WorkflowApprovalContinuation{
+		ConversationID: uuid.New(), MessageID: uuid.New(), WorkflowRunID: "run-1",
+		Caller:   Caller{Source: runtimemodel.ConversationSourceWebApp},
+		Metadata: map[string]interface{}{"agent_workflow_continuation": map[string]interface{}{"workflow_run_id": "run-1"}},
+	}
+	event, err := svc.AppendWorkflowApprovalContinuationStreamEvent(t.Context(), continuation, "workflow_paused", map[string]interface{}{
+		"outputs": map[string]interface{}{
+			"__approval_token": "token-3", "approval_token": "token-3",
+			"__approval_form": map[string]interface{}{"id": "form-3", "token": "token-3"},
+			"text":            "kept",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := workflowContinuationTestJSON(t, event.Payload)
+	if strings.Contains(payload, "token-3") || !strings.Contains(payload, "kept") || !strings.Contains(payload, "form-3") {
+		t.Fatalf("event = %s, want the approval token stripped and the rest kept", payload)
+	}
+}
+
+func workflowContinuationTestJSON(t *testing.T, value interface{}) string {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(encoded)
 }

@@ -539,12 +539,7 @@ func (s *service) RecordWorkflowApprovalContinuationEvent(ctx context.Context, c
 		return nil, fmt.Errorf("%w: workflow continuation is required", ErrInvalidInput)
 	}
 	eventPayload := projectWorkflowContinuationEventPayload(continuation.Caller, eventType, workflowContinuationEventPayload(continuation, payload))
-	if eventType == "approval_requested" {
-		// An approval the workflow asks for while it continues (another approval
-		// node, or the approval left after a mixed pause's question) is exposed
-		// by the same rule as the workflow tool's first one.
-		eventPayload["ui_approval_allowed"] = workflowContinuationApprovalUIAllowed(continuation.Caller, eventPayload)
-	}
+	eventPayload = exposeWorkflowContinuationApproval(continuation.Caller, eventType, eventPayload)
 	eventPayload["conversation_id"] = continuation.ConversationID.String()
 	eventPayload["message_id"] = continuation.MessageID.String()
 	if _, ok := eventPayload["workflow_run_id"]; !ok && continuation.WorkflowRunID != "" {
@@ -616,12 +611,7 @@ func (s *service) AppendWorkflowApprovalContinuationStreamEvent(ctx context.Cont
 		return nil, fmt.Errorf("%w: workflow continuation is required", ErrInvalidInput)
 	}
 	eventPayload := projectWorkflowContinuationEventPayload(continuation.Caller, eventType, workflowContinuationEventPayload(continuation, payload))
-	if eventType == "approval_requested" {
-		// An approval the workflow asks for while it continues (another approval
-		// node, or the approval left after a mixed pause's question) is exposed
-		// by the same rule as the workflow tool's first one.
-		eventPayload["ui_approval_allowed"] = workflowContinuationApprovalUIAllowed(continuation.Caller, eventPayload)
-	}
+	eventPayload = exposeWorkflowContinuationApproval(continuation.Caller, eventType, eventPayload)
 	eventPayload["conversation_id"] = continuation.ConversationID.String()
 	eventPayload["message_id"] = continuation.MessageID.String()
 	if _, ok := eventPayload["workflow_run_id"]; !ok && continuation.WorkflowRunID != "" {
@@ -988,6 +978,63 @@ func workflowApprovalContinuationFromMetadata(metadata map[string]interface{}) *
 func boolFromWorkflowContinuation(value interface{}) bool {
 	allowed, _ := value.(bool)
 	return allowed
+}
+
+// exposeWorkflowContinuationApproval applies the workflow tool's approval
+// exposure to an event a continued workflow emits. An approval it requests (a
+// later approval node, or the approval left after a mixed pause's question)
+// is marked with whether the conversation may answer it inline, and only such
+// an approval keeps its credentials: the approval token is also the approval
+// page's access token, so an approval assigned to designated approvers, and
+// every other event (a pause carrying the run outputs, say), loses them.
+func exposeWorkflowContinuationApproval(caller Caller, eventType string, payload map[string]interface{}) map[string]interface{} {
+	if eventType == "approval_requested" {
+		allowed := workflowContinuationApprovalUIAllowed(caller, payload)
+		payload["ui_approval_allowed"] = allowed
+		if allowed {
+			return payload
+		}
+	}
+	stripped, _ := stripWorkflowApprovalCredentials(payload, false).(map[string]interface{})
+	if stripped == nil {
+		return payload
+	}
+	return stripped
+}
+
+// stripWorkflowApprovalCredentials drops approval tokens: approval_token and
+// its output alias anywhere, and token inside an approval form.
+func stripWorkflowApprovalCredentials(value interface{}, inApprovalForm bool) interface{} {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		stripped := make(map[string]interface{}, len(typed))
+		for key, child := range typed {
+			normalized := strings.ToLower(strings.TrimSpace(key))
+			if normalized == "approval_token" || normalized == "__approval_token" {
+				continue
+			}
+			childIsApprovalForm := inApprovalForm || normalized == "approval_form" || normalized == "__approval_form"
+			if childIsApprovalForm && normalized == "token" {
+				continue
+			}
+			stripped[key] = stripWorkflowApprovalCredentials(child, childIsApprovalForm)
+		}
+		return stripped
+	case []interface{}:
+		stripped := make([]interface{}, len(typed))
+		for index, child := range typed {
+			stripped[index] = stripWorkflowApprovalCredentials(child, inApprovalForm)
+		}
+		return stripped
+	default:
+		if inApprovalForm && value != nil {
+			// A typed approval form (a struct) is stripped through its JSON form.
+			if record := workflowApprovalRecordValue(value); len(record) > 0 {
+				return stripWorkflowApprovalCredentials(record, true)
+			}
+		}
+		return value
+	}
 }
 
 // workflowContinuationApprovalUIAllowed decides whether the conversation may
