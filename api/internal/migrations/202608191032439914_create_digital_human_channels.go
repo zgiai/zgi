@@ -12,7 +12,7 @@ const createDigitalHumanChannelsSQL = `
 		organization_id uuid NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
 		workspace_id uuid NOT NULL REFERENCES public.workspaces(id) ON DELETE CASCADE,
 		provider varchar(32) NOT NULL,
-		connection_id uuid NOT NULL,
+		connection_id uuid NOT NULL REFERENCES public.integration_connections(id) ON DELETE RESTRICT,
 		name varchar(128) NOT NULL,
 		external_tenant_id varchar(255) NOT NULL DEFAULT '',
 		external_bot_id varchar(255) NOT NULL DEFAULT '',
@@ -120,7 +120,7 @@ const createDigitalHumanChannelsSQL = `
 		inbound_event_id uuid NOT NULL REFERENCES public.channel_inbound_events(id) ON DELETE RESTRICT,
 		run_id uuid NOT NULL REFERENCES public.digital_human_runs(id) ON DELETE RESTRICT,
 		provider varchar(32) NOT NULL,
-		connection_id uuid NOT NULL,
+		connection_id uuid NOT NULL REFERENCES public.integration_connections(id) ON DELETE RESTRICT,
 		actor_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE RESTRICT,
 		subject_type varchar(32) NOT NULL,
 		subject_id uuid NOT NULL,
@@ -276,25 +276,6 @@ const createDigitalHumanChannelsSQL = `
 	CREATE TRIGGER trg_channel_delivery_outbox_scope
 		BEFORE INSERT OR UPDATE ON public.channel_delivery_outbox
 		FOR EACH ROW EXECUTE FUNCTION public.enforce_channel_scope_consistency();
-
-	-- Channels were first keyed by the legacy integration connection. A
-	-- database whose Connector retirement already removed integration_connections
-	-- skips the link; 202608231300000000 drops it either way.
-	DO $$
-	BEGIN
-		IF to_regclass('public.integration_connections') IS NOT NULL THEN
-			IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'channel_installations_connection_id_fkey') THEN
-				ALTER TABLE public.channel_installations
-					ADD CONSTRAINT channel_installations_connection_id_fkey
-					FOREIGN KEY (connection_id) REFERENCES public.integration_connections(id) ON DELETE RESTRICT;
-			END IF;
-			IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'channel_delivery_outbox_connection_id_fkey') THEN
-				ALTER TABLE public.channel_delivery_outbox
-					ADD CONSTRAINT channel_delivery_outbox_connection_id_fkey
-					FOREIGN KEY (connection_id) REFERENCES public.integration_connections(id) ON DELETE RESTRICT;
-			END IF;
-		END IF;
-	END $$;
 `
 
 func init() {
