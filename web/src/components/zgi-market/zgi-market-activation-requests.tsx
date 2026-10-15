@@ -62,7 +62,9 @@ export function ZgiMarketActivationRequests() {
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
 
-  const requests = useZgiMarketActivationRequests();
+  // One read answers at most 100 requests, newest first: the pending ones are read by themselves so
+  // that newer handled ones never push them out of the list.
+  const requests = useZgiMarketActivationRequests(tab === 'pending' ? { status: 'pending' } : {});
   const activate = useActivateZgiMarketListing();
   const install = useInstallZgiMarketSkill();
   const settle = useSettleZgiMarketActivationRequest();

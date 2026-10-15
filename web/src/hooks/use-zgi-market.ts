@@ -90,7 +90,11 @@ export function useActivateZgiMarketListing() {
       offeringId?: number;
       listing?: { kind: MarketListingKind; slug: string };
     }) => zgiMarketService.activate(target.listingId, target.offeringId, target.listing),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: keys.subscriptions }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: keys.subscriptions });
+      // A member's activation of a free item answers the requests for it.
+      void queryClient.invalidateQueries({ queryKey: keys.activationRequests });
+    },
   });
 }
 
@@ -152,6 +156,8 @@ export function useInstallZgiMarketSkill() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: keys.subscriptions });
       void queryClient.invalidateQueries({ queryKey: keys.installedSkills });
+      // A member's install of a free skill answers the requests for it.
+      void queryClient.invalidateQueries({ queryKey: keys.activationRequests });
       // The organization's skills and every binding picker read them.
       void queryClient.invalidateQueries({ queryKey: ['aichat'] });
       invalidateSkillCandidates(queryClient);
