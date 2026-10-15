@@ -539,6 +539,12 @@ func (s *service) RecordWorkflowApprovalContinuationEvent(ctx context.Context, c
 		return nil, fmt.Errorf("%w: workflow continuation is required", ErrInvalidInput)
 	}
 	eventPayload := projectWorkflowContinuationEventPayload(continuation.Caller, eventType, workflowContinuationEventPayload(continuation, payload))
+	if eventType == "approval_requested" {
+		// An approval the workflow asks for while it continues (another approval
+		// node, or the approval left after a mixed pause's question) is exposed
+		// by the same rule as the workflow tool's first one.
+		eventPayload["ui_approval_allowed"] = workflowContinuationApprovalUIAllowed(continuation.Caller, eventPayload)
+	}
 	eventPayload["conversation_id"] = continuation.ConversationID.String()
 	eventPayload["message_id"] = continuation.MessageID.String()
 	if _, ok := eventPayload["workflow_run_id"]; !ok && continuation.WorkflowRunID != "" {
@@ -557,10 +563,17 @@ func (s *service) RecordWorkflowApprovalContinuationEvent(ctx context.Context, c
 		return s.AppendWorkflowApprovalContinuationStreamEvent(ctx, continuation, eventType, eventPayload)
 	}
 	metadata := mergeWorkflowRunMetadata(continuation.Metadata, eventType, eventPayload)
-	metadata["agent_workflow_continuation"] = mergeWorkflowMap(
-		workflowRecordFromAny(metadata["agent_workflow_continuation"]),
-		map[string]interface{}{"status": workflowContinuationStatusFromEvent(eventType)},
-	)
+	update := map[string]interface{}{"status": workflowContinuationStatusFromEvent(eventType)}
+	if eventType == "approval_requested" {
+		// The continuation now waits on this approval: an in-conversation answer
+		// is checked against its exposure and submitted with its token.
+		allowed, _ := eventPayload["ui_approval_allowed"].(bool)
+		update["ui_approval_allowed"] = allowed
+		update["approval_token"] = firstNonEmptyString(eventPayload["approval_token"])
+		update["approval_form"] = eventPayload["approval_form"]
+		continuation.UIApprovalAllowed = allowed
+	}
+	metadata["agent_workflow_continuation"] = mergeWorkflowMap(workflowRecordFromAny(metadata["agent_workflow_continuation"]), update)
 	continuation.Metadata = metadata
 	var updateErr error
 	if workflowContinuationMessageTerminal(continuation) {
@@ -603,6 +616,12 @@ func (s *service) AppendWorkflowApprovalContinuationStreamEvent(ctx context.Cont
 		return nil, fmt.Errorf("%w: workflow continuation is required", ErrInvalidInput)
 	}
 	eventPayload := projectWorkflowContinuationEventPayload(continuation.Caller, eventType, workflowContinuationEventPayload(continuation, payload))
+	if eventType == "approval_requested" {
+		// An approval the workflow asks for while it continues (another approval
+		// node, or the approval left after a mixed pause's question) is exposed
+		// by the same rule as the workflow tool's first one.
+		eventPayload["ui_approval_allowed"] = workflowContinuationApprovalUIAllowed(continuation.Caller, eventPayload)
+	}
 	eventPayload["conversation_id"] = continuation.ConversationID.String()
 	eventPayload["message_id"] = continuation.MessageID.String()
 	if _, ok := eventPayload["workflow_run_id"]; !ok && continuation.WorkflowRunID != "" {
@@ -969,6 +988,69 @@ func workflowApprovalContinuationFromMetadata(metadata map[string]interface{}) *
 func boolFromWorkflowContinuation(value interface{}) bool {
 	allowed, _ := value.(bool)
 	return allowed
+}
+
+// workflowContinuationApprovalUIAllowed decides whether the conversation may
+// answer an approval requested while a workflow continues, the same way the
+// workflow tool exposes the first one: the console always may, a published
+// surface only when the approval accepts WebApp submissions, and a channel
+// only for a DigitalHuman conversation. An exposure the event already carries
+// is kept.
+func workflowContinuationApprovalUIAllowed(caller Caller, payload map[string]interface{}) bool {
+	if allowed, ok := payload["ui_approval_allowed"].(bool); ok {
+		return allowed
+	}
+	switch strings.ToLower(strings.TrimSpace(caller.Source)) {
+	case runtimemodel.ConversationSourceConsole:
+		return true
+	case runtimemodel.ConversationSourceWebApp, runtimemodel.ConversationSourceExternalAPI:
+		return workflowApprovalAcceptsWebApp(payload)
+	case runtimemodel.ConversationSourceChannel:
+		return caller.Type == runtimemodel.ConversationCallerDigitalHuman && workflowApprovalAcceptsWebApp(payload)
+	default:
+		return false
+	}
+}
+
+// workflowApprovalAcceptsWebApp reports whether the approval form accepts
+// WebApp submissions; an omitted webapp.enabled defaults to true for legacy
+// definitions.
+func workflowApprovalAcceptsWebApp(payload map[string]interface{}) bool {
+	methods := workflowApprovalRecordValue(payload["submit_methods"])
+	if len(methods) == 0 {
+		methods = workflowApprovalRecordValue(workflowApprovalRecordValue(payload["approval_form"])["submit_methods"])
+	}
+	rawWebApp, present := methods["webapp"]
+	if !present || rawWebApp == nil {
+		return false
+	}
+	webApp := workflowApprovalRecordValue(rawWebApp)
+	enabled, exists := webApp["enabled"]
+	if !exists || enabled == nil {
+		return true
+	}
+	value, ok := enabled.(bool)
+	return ok && value
+}
+
+// workflowApprovalRecordValue reads an approval record that live events may
+// carry as a typed struct and stored events as a decoded map.
+func workflowApprovalRecordValue(value interface{}) map[string]interface{} {
+	if value == nil {
+		return map[string]interface{}{}
+	}
+	if record, ok := value.(map[string]interface{}); ok {
+		return record
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return map[string]interface{}{}
+	}
+	record := map[string]interface{}{}
+	if err := json.Unmarshal(encoded, &record); err != nil {
+		return map[string]interface{}{}
+	}
+	return record
 }
 
 func workflowContinuationAllowsInlineApproval(caller Caller, continuation *WorkflowApprovalContinuation) bool {

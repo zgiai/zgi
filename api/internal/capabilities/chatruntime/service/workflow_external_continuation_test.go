@@ -144,3 +144,71 @@ func TestConversationContinuationClearsAnEarlierExternalClaim(t *testing.T) {
 		t.Fatalf("metadata = %#v, want the external claim recorded", metadata)
 	}
 }
+
+func TestContinuedApprovalExposureFollowsTheWorkflowToolRule(t *testing.T) {
+	digitalHumanID := uuid.New()
+	webApp := func(enabled interface{}) map[string]interface{} {
+		methods := map[string]interface{}{}
+		if enabled != nil {
+			methods["enabled"] = enabled
+		}
+		return map[string]interface{}{"approval_form": map[string]interface{}{"submit_methods": map[string]interface{}{"webapp": methods}}}
+	}
+	typed := map[string]interface{}{"submit_methods": struct {
+		WebApp struct {
+			Enabled *bool `json:"enabled"`
+		} `json:"webapp"`
+	}{}}
+	for name, test := range map[string]struct {
+		caller  Caller
+		payload map[string]interface{}
+		want    bool
+	}{
+		"console":                      {Caller{Source: runtimemodel.ConversationSourceConsole}, webApp(false), true},
+		"webapp approval on webapp":    {Caller{Source: runtimemodel.ConversationSourceWebApp}, webApp(true), true},
+		"email approval on webapp":     {Caller{Source: runtimemodel.ConversationSourceWebApp}, webApp(false), false},
+		"legacy approval on api":       {Caller{Source: runtimemodel.ConversationSourceExternalAPI}, webApp(nil), true},
+		"typed form on api":            {Caller{Source: runtimemodel.ConversationSourceExternalAPI}, typed, true},
+		"digital human channel":        {Caller{Source: runtimemodel.ConversationSourceChannel, Type: runtimemodel.ConversationCallerDigitalHuman, ID: &digitalHumanID}, webApp(true), true},
+		"agent channel":                {Caller{Source: runtimemodel.ConversationSourceChannel, Type: runtimemodel.ConversationCallerAgent}, webApp(true), false},
+		"already exposed by the event": {Caller{Source: runtimemodel.ConversationSourceWebApp}, map[string]interface{}{"ui_approval_allowed": true}, true},
+	} {
+		if got := workflowContinuationApprovalUIAllowed(test.caller, test.payload); got != test.want {
+			t.Fatalf("%s: ui approval allowed = %v, want %v", name, got, test.want)
+		}
+	}
+}
+
+func TestContinuationWaitsOnTheApprovalItRecords(t *testing.T) {
+	for name, test := range map[string]struct {
+		enabled bool
+	}{
+		"approval answered in the conversation": {true},
+		"approval kept with its approvers":      {false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc := &service{repos: &repository.Repositories{Message: &workflowContinuationCheckpointMessageRepo{}, Conversation: &workflowContinuationCheckpointConversationRepo{}}}
+			continuation := &WorkflowApprovalContinuation{
+				ConversationID: uuid.New(), MessageID: uuid.New(), WorkflowRunID: "run-1",
+				Caller: Caller{Source: runtimemodel.ConversationSourceExternalAPI},
+				Metadata: map[string]interface{}{"agent_workflow_continuation": map[string]interface{}{
+					"workflow_run_id": "run-1", "ui_approval_allowed": false, "approval_token": "",
+				}},
+			}
+			form := map[string]interface{}{"id": "form-2", "submit_methods": map[string]interface{}{"webapp": map[string]interface{}{"enabled": test.enabled}}}
+			event, err := svc.RecordWorkflowApprovalContinuationEvent(t.Context(), continuation, "approval_requested", map[string]interface{}{
+				"node_id": "approval-2", "form_id": "form-2", "approval_token": "token-2", "approval_form": form,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			record := continuation.Metadata["agent_workflow_continuation"].(map[string]interface{})
+			if record["ui_approval_allowed"] != test.enabled || continuation.UIApprovalAllowed != test.enabled || event.Payload["ui_approval_allowed"] != test.enabled {
+				t.Fatalf("record = %#v, event = %#v, want ui_approval_allowed %v", record, event.Payload, test.enabled)
+			}
+			if record["approval_token"] != "token-2" || record["approval_form"] == nil {
+				t.Fatalf("record = %#v, want the new approval's token and form", record)
+			}
+		})
+	}
+}
