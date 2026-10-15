@@ -83,9 +83,13 @@ export default function ZgiMarketListingPage({ params }: PageProps) {
     isAdmin && Boolean(listing.data?.id)
   );
   const settleRequest = useSettleZgiMarketActivationRequest();
-  const approveRequests = () => {
+  // Activating an offering answers the requests for it and for the item as a whole, never the
+  // requests for another offering of the same API.
+  const approveRequests = (offeringId = 0) => {
     for (const request of listingRequests.data?.data ?? []) {
-      settleRequest.mutate({ id: request.id, action: 'approve' });
+      if (request.offering_id === 0 || request.offering_id === offeringId) {
+        settleRequest.mutate({ id: request.id, action: 'approve' });
+      }
     }
   };
 
@@ -183,7 +187,7 @@ export default function ZgiMarketListingPage({ params }: PageProps) {
         onSuccess: () => {
           toast.success(t('market.catalog.activateDone'));
           installMembers(missingMemberSkills);
-          approveRequests();
+          approveRequests(offering?.id);
         },
         onError: () => toast.error(t('market.catalog.activateFailed')),
       }

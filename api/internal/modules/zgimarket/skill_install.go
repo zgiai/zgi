@@ -178,6 +178,10 @@ func (p *Proxy) installSkill(c *gin.Context, slug string) {
 		p.relay(c, subscription)
 		return
 	}
+	if elevated {
+		// The skill is activated now: the requests asking an administrator for it are answered.
+		p.closeActivated(ctx, who, described.Data.ID, 0)
+	}
 
 	archive, err := p.call(ctx, who, http.MethodGet, "skills/"+slug+"/package", nil, nil, packageBodyLimit)
 	if err != nil {

@@ -175,4 +175,26 @@ func TestCallsMadeWithACredentialOutsideThisInstanceAreReadFromTheMarket(t *test
 	assert.Equal(t, int64(5), count)
 	require.NoError(t, fixture.db.First(&cursor).Error)
 	assert.Equal(t, uint64(6), cursor.AfterID)
+
+	// Another page read at once does not ask the market for its records again.
+	asked := func() int {
+		fixture.market.mu.Lock()
+		defer fixture.market.mu.Unlock()
+		count := 0
+		for _, call := range fixture.market.calls {
+			if strings.HasPrefix(call, "GET calls ") {
+				count++
+			}
+		}
+		return count
+	}
+	before := asked()
+	fixture.tools.now = func() time.Time { return now.Add(time.Minute + 5*time.Second) }
+	status, _ = fixture.send(t, http.MethodGet, "call-logs?from="+from+"&to="+to+"&page=2", "")
+	require.Equal(t, http.StatusOK, status)
+	assert.Equal(t, before, asked(), "the records were read moments ago")
+	fixture.tools.now = func() time.Time { return now.Add(2 * time.Minute) }
+	status, _ = fixture.send(t, http.MethodGet, "call-logs?from="+from+"&to="+to, "")
+	require.Equal(t, http.StatusOK, status)
+	assert.Equal(t, before+1, asked(), "a later read asks again")
 }

@@ -236,10 +236,11 @@ func (p *Proxy) Forward(c *gin.Context) {
 		response.FailWithMessage(c, response.ErrInvalidParams, "Request body is too large")
 		return
 	}
+	var freed *freeActivation
 	if !who.admin && c.Request.Method == http.MethodPost && path == "subscriptions" {
 		// A free listing costs the organization nothing, so a member activates it too.
-		if forwarded, free := p.freeSubscription(c.Request.Context(), who, body); free {
-			who.admin, body = true, forwarded
+		if activation, free := p.freeSubscription(c.Request.Context(), who, body); free {
+			who.admin, body, freed = true, activation.body, &activation
 		}
 	}
 	callback := path == oauthCallbackPath
@@ -262,6 +263,10 @@ func (p *Proxy) Forward(c *gin.Context) {
 	if callback {
 		p.relayOAuthCallback(c, result)
 		return
+	}
+	if freed != nil && result.status >= http.StatusOK && result.status < http.StatusMultipleChoices {
+		// The item is activated now: the requests asking an administrator for it are answered.
+		p.closeActivated(c.Request.Context(), who, freed.listingID, freed.offeringID)
 	}
 	p.relay(c, result)
 }
