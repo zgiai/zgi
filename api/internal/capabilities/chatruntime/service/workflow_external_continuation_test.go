@@ -70,11 +70,15 @@ func TestExternalWorkflowContinuationClaimsADesignatedApproverApproval(t *testin
 	}
 	f.mock.ExpectBegin()
 	f.mock.ExpectExec(`UPDATE "chat_runtime_conversations"`).WillReturnResult(sqlmock.NewResult(0, 1))
-	f.mock.ExpectExec(`UPDATE "chat_runtime_messages"`).WillReturnResult(sqlmock.NewResult(0, 1))
+	f.mock.ExpectExec(`UPDATE "chat_runtime_messages" SET "metadata"`).WillReturnResult(sqlmock.NewResult(0, 1))
+	f.mock.ExpectExec(`UPDATE "chat_runtime_messages" SET "status"`).WillReturnResult(sqlmock.NewResult(0, 1))
 	f.mock.ExpectCommit()
 	continuation, err := f.svc.BeginExternalWorkflowApprovalContinuation(context.Background(), f.scope, f.caller, f.config, f.conversationID, f.message.ID)
 	if err != nil || continuation == nil || continuation.WorkflowRunID != "run-1" {
 		t.Fatalf("BeginExternalWorkflowApprovalContinuation() = %#v, %v", continuation, err)
+	}
+	if !workflowContinuationExternallyResumed(continuation.Metadata) {
+		t.Fatalf("continuation metadata = %#v, want the external claim recorded", continuation.Metadata)
 	}
 	if err := f.mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
@@ -85,7 +89,8 @@ func TestExternalWorkflowContinuationClaimsTheMessageOnce(t *testing.T) {
 	f := newExternalContinuationFixture(t, runtimemodel.MessageStatusWaitingApproval, "")
 	f.mock.ExpectBegin()
 	f.mock.ExpectExec(`UPDATE "chat_runtime_conversations"`).WillReturnResult(sqlmock.NewResult(0, 1))
-	f.mock.ExpectExec(`UPDATE "chat_runtime_messages"`).WillReturnResult(sqlmock.NewResult(0, 0))
+	f.mock.ExpectExec(`UPDATE "chat_runtime_messages" SET "metadata"`).WillReturnResult(sqlmock.NewResult(0, 1))
+	f.mock.ExpectExec(`UPDATE "chat_runtime_messages" SET "status"`).WillReturnResult(sqlmock.NewResult(0, 0))
 	f.mock.ExpectRollback()
 	if _, err := f.svc.BeginExternalWorkflowApprovalContinuation(context.Background(), f.scope, f.caller, f.config, f.conversationID, f.message.ID); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("second claim error = %v, want ErrInvalidInput", err)
@@ -107,5 +112,35 @@ func TestExternalWorkflowContinuationOnlyObservesWaitingWorkflowApprovals(t *tes
 		if err := f.mock.ExpectationsWereMet(); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
+	}
+}
+
+func TestExternalWorkflowContinuationRetakesItsOwnClaimAfterLosingTheWorker(t *testing.T) {
+	f := newExternalContinuationFixture(t, runtimemodel.MessageStatusStreaming, "")
+	f.message.Metadata["agent_workflow_continuation"].(map[string]interface{})[workflowContinuationExternalResumeKey] = true
+	continuation, err := f.svc.BeginExternalWorkflowApprovalContinuation(context.Background(), f.scope, f.caller, f.config, f.conversationID, f.message.ID)
+	if err != nil || continuation == nil || continuation.WorkflowRunID != "run-1" {
+		t.Fatalf("re-take = %#v, %v; want the externally claimed message taken over", continuation, err)
+	}
+	if err := f.mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("re-take wrote to the database: %v", err)
+	}
+
+	inline := newExternalContinuationFixture(t, runtimemodel.MessageStatusStreaming, "")
+	if _, err := inline.svc.BeginExternalWorkflowApprovalContinuation(context.Background(), inline.scope, inline.caller, inline.config, inline.conversationID, inline.message.ID); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("taking over a continuation the conversation started: err = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestConversationContinuationClearsAnEarlierExternalClaim(t *testing.T) {
+	metadata := map[string]interface{}{"agent_workflow_continuation": map[string]interface{}{"workflow_run_id": "run-1", workflowContinuationExternalResumeKey: true}}
+	if !markWorkflowContinuationExternalResume(metadata, false) || workflowContinuationExternallyResumed(metadata) {
+		t.Fatalf("metadata = %#v, want the external claim cleared", metadata)
+	}
+	if markWorkflowContinuationExternalResume(metadata, false) {
+		t.Fatal("clearing an absent claim must not rewrite the metadata")
+	}
+	if !markWorkflowContinuationExternalResume(metadata, true) || !workflowContinuationExternallyResumed(metadata) {
+		t.Fatalf("metadata = %#v, want the external claim recorded", metadata)
 	}
 }

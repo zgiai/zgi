@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	chatruntime "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/errors/failureprojection"
 	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
@@ -501,6 +502,33 @@ func (s *RuntimeService) resumeHeldWorkflowRun(ctx context.Context, run *Run) er
 	return nil
 }
 
+const (
+	workflowContinuationFailedCode    = "digital_human.run.execution_failed"
+	workflowContinuationFailedMessage = "The DigitalHuman continuation failed."
+)
+
+// workflowContinuationEndedFailed reports whether the message's workflow
+// continuation recorded a failed workflow. The summary of a failed workflow
+// still completes the message, so recovering a run from its message has to
+// read the workflow outcome.
+func workflowContinuationEndedFailed(metadata map[string]interface{}) bool {
+	workflowRunID, _ := workflowContinuationRecord(metadata)["workflow_run_id"].(string)
+	workflowRunID = strings.TrimSpace(workflowRunID)
+	if workflowRunID == "" {
+		return false
+	}
+	runs, _ := metadata["workflow_runs"].([]interface{})
+	for _, item := range runs {
+		run, _ := item.(map[string]interface{})
+		if id, _ := run["workflow_run_id"].(string); strings.TrimSpace(id) != workflowRunID {
+			continue
+		}
+		status, _ := run["status"].(string)
+		return failureprojection.IsFailureStatus(status)
+	}
+	return false
+}
+
 // settleWorkflowContinuationRun records where the continuation ended on the run:
 // completed, waiting again for another approval or question, or stopped/failed.
 func (s *RuntimeService) settleWorkflowContinuationRun(ctx context.Context, run *Run, status, answer string, metadata map[string]interface{}) {
@@ -522,7 +550,7 @@ func (s *RuntimeService) settleWorkflowContinuationRun(ctx context.Context, run 
 	case runtimemodel.MessageStatusStopped:
 		err = s.store.FailRun(ctx, run.ID, "digital_human.run.canceled", "The DigitalHuman run was stopped.", s.now())
 	default:
-		err = s.store.FailRun(ctx, run.ID, "digital_human.run.execution_failed", "The DigitalHuman continuation failed.", s.now())
+		err = s.store.FailRun(ctx, run.ID, workflowContinuationFailedCode, workflowContinuationFailedMessage, s.now())
 	}
 	if err != nil {
 		logger.WarnContext(ctx, "failed to settle digital human run after workflow continuation", "run_id", run.ID.String(), "status", status, err)

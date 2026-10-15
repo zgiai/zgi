@@ -104,6 +104,8 @@ type RuntimeService struct {
 	taskService    TaskHandlerService
 	workflowRunner WorkflowContinuationRunner
 	workflowDB     *gorm.DB
+	// progressReader overrides the durable workflow state reader in tests.
+	progressReader workflowProgressReader
 	channelContext ChannelContextRuntimeProvider
 	manualFiles    ManualInvocationFileValidator
 	linux          LinuxExecutionRuntimeProvider
@@ -1342,6 +1344,14 @@ func (s *RuntimeService) recoverCompletedRuns(ctx context.Context, updatedBefore
 			continue
 		}
 		if message == nil || message.Status != runtimemodel.MessageStatusCompleted {
+			continue
+		}
+		if workflowContinuationEndedFailed(message.Metadata) {
+			// A failed workflow's summary completes the message, but the run
+			// settles with the workflow, as the continuation does.
+			if failErr := s.store.FailRun(ctx, run.ID, workflowContinuationFailedCode, workflowContinuationFailedMessage, s.now()); failErr != nil && !errors.Is(failErr, ErrRunConflict) {
+				combined = errors.Join(combined, failErr)
+			}
 			continue
 		}
 		if finalizer, ok := s.memory.(memoryRuntimeFinalizer); ok {

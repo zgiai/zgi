@@ -22,13 +22,22 @@ import (
 type externalApprovalRunStore struct {
 	*fakeRunStore
 	waiting *Run
+	retaken bool
 	lookups []string
 	calls   []string
 }
 
-func (s *externalApprovalRunStore) RunWaitingOnWorkflowApproval(_ context.Context, workflowRunID string) (*Run, error) {
+func (s *externalApprovalRunStore) RunHeldByWorkflowApproval(_ context.Context, workflowRunID string) (*Run, bool, error) {
 	s.lookups = append(s.lookups, workflowRunID)
-	return s.waiting, nil
+	return s.waiting, s.retaken, nil
+}
+
+type fakeWorkflowProgressReader struct {
+	progress []externalWorkflowProgress
+}
+
+func (r fakeWorkflowProgressReader) Read(context.Context, string) ([]externalWorkflowProgress, error) {
+	return r.progress, nil
 }
 
 func (s *externalApprovalRunStore) MarkRunWaiting(_ context.Context, _ uuid.UUID, reason string, _ time.Time) error {
@@ -306,7 +315,7 @@ func TestAbandonedExternalApprovalFailsTheWaitingConversation(t *testing.T) {
 	}
 }
 
-func TestRunWaitingOnWorkflowApprovalMatchesTheMessageWorkflowRun(t *testing.T) {
+func TestRunHeldByWorkflowApprovalFindsWaitingAndClaimedRuns(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{DisableForeignKeyConstraintWhenMigrating: true})
 	if err != nil {
 		t.Fatal(err)
@@ -316,12 +325,19 @@ func TestRunWaitingOnWorkflowApprovalMatchesTheMessageWorkflowRun(t *testing.T) 
 	if err := db.AutoMigrate(&Run{}, &runtimemodel.Message{}); err != nil {
 		t.Fatal(err)
 	}
-	create := func(origin, workflowRunID string) *Run {
+	create := func(runStatus RunStatus, origin, messageStatus, workflowRunID string, externalResume bool) *Run {
 		run, message := platformWaitingRunFixture(t)
-		run.Status, run.WaitingReason, run.WaitingApprovalOrigin = RunStatusWaiting, runtimemodel.MessageStatusWaitingApproval, origin
+		run.Status, run.WaitingApprovalOrigin = runStatus, origin
+		if runStatus == RunStatusWaiting {
+			run.WaitingReason = runtimemodel.MessageStatusWaitingApproval
+		}
 		run.IdempotencyKey = run.ID.String()
 		run.InvocationEvent, run.RunSpec, run.ExecutionSnapshot, run.ExecutionTrace = datatypes.JSON(`{}`), datatypes.JSON(`{}`), datatypes.JSON(`{}`), datatypes.JSON(`{}`)
-		message.Metadata = map[string]interface{}{"agent_workflow_continuation": map[string]interface{}{"workflow_run_id": workflowRunID}}
+		continuation := map[string]interface{}{"workflow_run_id": workflowRunID}
+		if externalResume {
+			continuation["external_resume"] = true
+		}
+		message.Status, message.Metadata = messageStatus, map[string]interface{}{"agent_workflow_continuation": continuation}
 		if err := db.Create(run).Error; err != nil {
 			t.Fatal(err)
 		}
@@ -330,18 +346,55 @@ func TestRunWaitingOnWorkflowApprovalMatchesTheMessageWorkflowRun(t *testing.T) 
 		}
 		return run
 	}
-	held := create(workflowApprovalOrigin, "workflow-run-1")
-	create(workflowApprovalOrigin, "workflow-run-2")
-	create(platformCLIApprovalOrigin, "workflow-run-3")
+	waiting := create(RunStatusWaiting, workflowApprovalOrigin, runtimemodel.MessageStatusWaitingApproval, "workflow-run-1", false)
+	create(RunStatusWaiting, workflowApprovalOrigin, runtimemodel.MessageStatusWaitingApproval, "workflow-run-2", false)
+	create(RunStatusWaiting, platformCLIApprovalOrigin, runtimemodel.MessageStatusWaitingApproval, "workflow-run-3", false)
+	claimed := create(RunStatusRunning, "", runtimemodel.MessageStatusStreaming, "workflow-run-4", true)
+	create(RunStatusRunning, "", runtimemodel.MessageStatusStreaming, "workflow-run-5", false)
 	repo := NewRepository(db)
-	run, err := repo.RunWaitingOnWorkflowApproval(t.Context(), "workflow-run-1")
-	if err != nil || run == nil || run.ID != held.ID {
-		t.Fatalf("RunWaitingOnWorkflowApproval() = %#v, %v; want the run of that workflow", run, err)
+	if run, retaken, err := repo.RunHeldByWorkflowApproval(t.Context(), "workflow-run-1"); err != nil || run == nil || run.ID != waiting.ID || retaken {
+		t.Fatalf("waiting run = %#v, retaken %v, err %v", run, retaken, err)
 	}
-	for _, workflowRunID := range []string{"workflow-run-3", "missing", ""} {
-		if run, err := repo.RunWaitingOnWorkflowApproval(t.Context(), workflowRunID); err != nil || run != nil {
-			t.Fatalf("%q: run = %#v, err %v; want none", workflowRunID, run, err)
+	if run, retaken, err := repo.RunHeldByWorkflowApproval(t.Context(), "workflow-run-4"); err != nil || run == nil || run.ID != claimed.ID || !retaken {
+		t.Fatalf("externally claimed run = %#v, retaken %v, err %v; want it retaken", run, retaken, err)
+	}
+	for _, workflowRunID := range []string{"workflow-run-3", "workflow-run-5", "missing", ""} {
+		if run, _, err := repo.RunHeldByWorkflowApproval(t.Context(), workflowRunID); err != nil || run != nil {
+			t.Fatalf("%q: run = %#v, err %v; want none (a platform approval, or a continuation the conversation runs)", workflowRunID, run, err)
 		}
+	}
+}
+
+func TestRetakenExternalApprovalFollowsTheWorkflowWithoutReleasingTheMessage(t *testing.T) {
+	retake := func(t *testing.T, runner *streamingApprovalRunner, progress []externalWorkflowProgress) (externalApprovalFixture, bool, error) {
+		f := newExternalApprovalFixture(t, runner)
+		f.store.waiting.Status = RunStatusRunning
+		f.store.retaken = true
+		f.service.progressReader = fakeWorkflowProgressReader{progress: progress}
+		f.chat.summaryResult = &chatruntime.ChatResult{Status: runtimemodel.MessageStatusCompleted, Answer: "Done.", Metadata: map[string]interface{}{}}
+		handled, err := f.service.ResumeWorkflow(t.Context(), f.request())
+		return f, handled, err
+	}
+
+	f, handled, err := retake(t, &streamingApprovalRunner{events: []workflowEvent{{"workflow_finished", map[string]interface{}{"status": "succeeded"}}}}, nil)
+	if !handled || err != nil || !equalStrings(f.store.calls, []string{"complete:Done."}) {
+		t.Fatalf("retaken resume: handled %v, err %v, calls %v; want it completed without claiming the run again", handled, err, f.store.calls)
+	}
+
+	f, handled, err = retake(t, &streamingApprovalRunner{err: workflowpause.ErrResumeAlreadyRunning}, nil)
+	if !handled || !errors.Is(err, workflowpause.ErrResumeAlreadyRunning) || len(f.store.calls) != 0 || len(f.chat.paused) != 0 {
+		t.Fatalf("original worker alive: handled %v, err %v, calls %v, paused %v; want a retry with nothing touched", handled, err, f.store.calls, f.chat.paused)
+	}
+
+	f, handled, err = retake(t, &streamingApprovalRunner{err: workflowpause.ErrPauseNotFound},
+		[]externalWorkflowProgress{{EventType: "workflow_finished", Payload: map[string]interface{}{"status": "succeeded"}}})
+	if !handled || err != nil || !equalStrings(f.store.calls, []string{"complete:Done."}) {
+		t.Fatalf("workflow already finished: handled %v, err %v, calls %v; want the conversation settled from the workflow", handled, err, f.store.calls)
+	}
+
+	f, handled, err = retake(t, &streamingApprovalRunner{err: workflowpause.ErrPauseNotFound}, nil)
+	if !handled || !errors.Is(err, errWorkflowResumedElsewhere) || errors.Is(err, workflowpause.ErrPauseNotFound) || len(f.store.calls) != 0 || len(f.chat.paused) != 0 {
+		t.Fatalf("workflow running elsewhere: handled %v, err %v, calls %v; want a retried error the queue does not drop", handled, err, f.store.calls)
 	}
 }
 
@@ -355,4 +408,45 @@ func equalStrings(left, right []string) bool {
 		}
 	}
 	return true
+}
+
+type recoveringRunStore struct {
+	*externalApprovalRunStore
+	recoverable []*Run
+}
+
+func (s *recoveringRunStore) ListRecoverableRuns(context.Context, time.Time, int) ([]*Run, error) {
+	return s.recoverable, nil
+}
+
+func TestRecoveredFailedWorkflowContinuationFailsTheRun(t *testing.T) {
+	for name, test := range map[string]struct {
+		status string
+		want   string
+	}{
+		"failed workflow":    {"failed", "fail:" + workflowContinuationFailedCode},
+		"succeeded workflow": {"succeeded", "complete:Summary of the workflow."},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newExternalApprovalFixture(t, &streamingApprovalRunner{})
+			run := f.store.waiting
+			actorID := uuid.New()
+			run.ActorID, run.Status = &actorID, RunStatusRunning
+			store := &recoveringRunStore{externalApprovalRunStore: f.store, recoverable: []*Run{run}}
+			f.service.store = store
+			f.chat.recoveryMessage = &runtimemodel.Message{
+				ID: *run.MessageID, ConversationID: *run.ConversationID, Status: runtimemodel.MessageStatusCompleted, Answer: "Summary of the workflow.",
+				Metadata: map[string]interface{}{
+					"agent_workflow_continuation": map[string]interface{}{"workflow_run_id": "workflow-run"},
+					"workflow_runs":               []interface{}{map[string]interface{}{"workflow_run_id": "workflow-run", "status": test.status}},
+				},
+			}
+			if err := f.service.recoverCompletedRuns(t.Context(), time.Now(), 10); err != nil {
+				t.Fatal(err)
+			}
+			if !equalStrings(f.store.calls, []string{test.want}) {
+				t.Fatalf("run store calls = %v, want [%s]", f.store.calls, test.want)
+			}
+		})
+	}
 }

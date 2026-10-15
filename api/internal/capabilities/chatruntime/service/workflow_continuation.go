@@ -359,6 +359,16 @@ func (s *service) beginWorkflowApprovalContinuation(ctx context.Context, scope S
 		state.Completed = true
 		return state, nil
 	}
+	if external && state.Kind != "digital_human_task" && message.Status == runtimemodel.MessageStatusStreaming &&
+		workflowContinuationExternallyResumed(state.Metadata) {
+		// An external continuation already claimed this message and its worker
+		// was lost; the retried resume takes it over again. The workflow's own
+		// resume claim decides which worker actually runs it.
+		if err := validateWorkflowContinuationBinding(state, config.WorkflowBindings); err != nil {
+			return nil, err
+		}
+		return state, nil
+	}
 	if external && (state.Kind == "digital_human_task" || message.Status != runtimemodel.MessageStatusWaitingApproval) {
 		return nil, fmt.Errorf("%w: message is not waiting for an external workflow approval", ErrInvalidInput)
 	}
@@ -385,15 +395,23 @@ func (s *service) beginWorkflowApprovalContinuation(ctx context.Context, scope S
 		return nil, fmt.Errorf("%w: message is not waiting for workflow continuation", ErrInvalidInput)
 	}
 	if message.Status == runtimemodel.MessageStatusWaitingApproval || message.Status == runtimemodel.MessageStatusWaitingQuestion {
+		metadataChanged := false
 		if message.Status == runtimemodel.MessageStatusWaitingQuestion {
 			state.Metadata = workflowContinuationMetadataWithoutUserInputRequest(state.Metadata)
+			metadataChanged = true
+		}
+		// Record whether an external continuation holds the message, so a retried
+		// external resume can take it over again but never takes over one the
+		// conversation started.
+		if markWorkflowContinuationExternalResume(state.Metadata, external) {
+			metadataChanged = true
 		}
 		err = s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			txRepos := repository.NewRepositories(tx)
 			if err := txRepos.Conversation.StartStreaming(ctx, conversation.ID, scope.OrganizationID, scope.AccountID, message.ID); err != nil {
 				return err
 			}
-			if message.Status == runtimemodel.MessageStatusWaitingQuestion {
+			if metadataChanged {
 				if err := txRepos.Message.UpdateMetadata(ctx, message.ID, state.Metadata); err != nil {
 					return err
 				}
@@ -411,6 +429,41 @@ func (s *service) beginWorkflowApprovalContinuation(ctx context.Context, scope S
 		}
 	}
 	return state, nil
+}
+
+// workflowContinuationExternalResumeKey marks a continuation an external
+// approval resume claimed, in the message's agent_workflow_continuation.
+const workflowContinuationExternalResumeKey = "external_resume"
+
+func workflowContinuationExternallyResumed(metadata map[string]interface{}) bool {
+	record, _ := metadata["agent_workflow_continuation"].(map[string]interface{})
+	resumed, _ := record[workflowContinuationExternalResumeKey].(bool)
+	return resumed
+}
+
+// markWorkflowContinuationExternalResume sets or clears the marker and
+// reports whether the metadata changed.
+func markWorkflowContinuationExternalResume(metadata map[string]interface{}, external bool) bool {
+	record, ok := metadata["agent_workflow_continuation"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	if external {
+		if workflowContinuationExternallyResumed(metadata) {
+			return false
+		}
+		record = copyStringAnyMap(record)
+		record[workflowContinuationExternalResumeKey] = true
+		metadata["agent_workflow_continuation"] = record
+		return true
+	}
+	if _, present := record[workflowContinuationExternalResumeKey]; !present {
+		return false
+	}
+	record = copyStringAnyMap(record)
+	delete(record, workflowContinuationExternalResumeKey)
+	metadata["agent_workflow_continuation"] = record
+	return true
 }
 
 // claimDigitalHumanTaskApproval atomically claims a waiting task approval.

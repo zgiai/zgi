@@ -10,16 +10,22 @@ import (
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	chatruntime "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/errors/failureprojection"
 	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 	"github.com/zgiai/zgi/api/pkg/logger"
+	"gorm.io/gorm"
 )
 
 // workflowApprovalWaitingStore is an optional persistence extension that finds
 // the run a generic workflow approval holds.
 type workflowApprovalWaitingStore interface {
-	RunWaitingOnWorkflowApproval(context.Context, string) (*Run, error)
+	RunHeldByWorkflowApproval(context.Context, string) (*Run, bool, error)
 }
+
+// errWorkflowResumedElsewhere keeps a retaken resume queued while the workflow
+// runs in another execution: the queue drops the plain pause errors.
+var errWorkflowResumedElsewhere = errors.New("workflow is being resumed elsewhere; the conversation follows it once it pauses or finishes")
 
 type externalWorkflowContinuationChatRuntime interface {
 	workflowContinuationChatRuntime
@@ -60,7 +66,7 @@ func (s *RuntimeService) ResumeWorkflow(ctx context.Context, req approvalruntime
 	if !ok {
 		return false, nil
 	}
-	run, err := store.RunWaitingOnWorkflowApproval(ctx, req.WorkflowRunID)
+	run, retaken, err := store.RunHeldByWorkflowApproval(ctx, req.WorkflowRunID)
 	if err != nil || run == nil || run.ConversationID == nil || run.MessageID == nil {
 		return false, err
 	}
@@ -89,23 +95,50 @@ func (s *RuntimeService) ResumeWorkflow(ctx context.Context, req approvalruntime
 	lifecycle.settle = func(settleCtx context.Context, status, answer string, metadata map[string]interface{}) {
 		s.settleWorkflowContinuationRun(settleCtx, run, status, answer, metadata)
 	}
-	waiter, ok := s.store.(runWaitingStore)
-	if !ok {
-		return true, lifecycle.abortBeforeResume(fmt.Errorf("digital human waiting run resume is unavailable"))
-	}
-	if err := waiter.ResumeWaitingRun(ctx, run.ID, s.now()); err != nil {
-		// The run left waiting meanwhile (for example it was canceled), so it no
-		// longer follows this message.
-		lifecycle.settle = nil
-		return true, lifecycle.abortBeforeResume(err)
+	if !retaken {
+		waiter, ok := s.store.(runWaitingStore)
+		if !ok {
+			return true, lifecycle.abortBeforeResume(fmt.Errorf("digital human waiting run resume is unavailable"))
+		}
+		if err := waiter.ResumeWaitingRun(ctx, run.ID, s.now()); err != nil {
+			// The run left waiting meanwhile (for example it was canceled), so it no
+			// longer follows this message.
+			lifecycle.settle = nil
+			return true, lifecycle.abortBeforeResume(err)
+		}
 	}
 	resume, err := s.resumeHostedWorkflow(ctx, req, lifecycle.handle)
 	if workflowResumeNotStarted(err) {
+		if retaken {
+			return true, s.followRetakenWorkflow(ctx, lifecycle, req.WorkflowRunID, err)
+		}
 		// The workflow is still waiting (another approver on the same pause) or
 		// is resumed elsewhere; keep the conversation waiting on it.
 		return true, lifecycle.abortBeforeResume(err)
 	}
 	return true, lifecycle.finish(resume, err)
+}
+
+// followRetakenWorkflow settles a continuation whose earlier worker was lost
+// after it claimed the message, when this resume could not run the workflow
+// itself. It never puts the message back to waiting on the request it already
+// took: either another execution still holds the workflow, and the queue
+// retries, or the workflow moved on, and its durable state says where.
+func (s *RuntimeService) followRetakenWorkflow(ctx context.Context, lifecycle *digitalHumanWorkflowContinuation, workflowRunID string, resumeErr error) error {
+	if errors.Is(resumeErr, workflowpause.ErrResumeAlreadyRunning) {
+		return resumeErr
+	}
+	progress, err := s.workflowProgress().Read(ctx, workflowRunID)
+	if err != nil {
+		return errors.Join(resumeErr, err)
+	}
+	if len(progress) == 0 {
+		return fmt.Errorf("%w: %s", errWorkflowResumedElsewhere, workflowRunID)
+	}
+	for _, event := range progress {
+		_ = lifecycle.handle(event.EventType, event.Payload)
+	}
+	return lifecycle.finish(workflowContinuationStreamed, nil)
 }
 
 // resumeHostedWorkflow resumes the workflow the way the request was queued:
@@ -162,7 +195,7 @@ func (s *RuntimeService) AbandonWorkflowResume(ctx context.Context, req approval
 		return
 	}
 	ctx = context.WithoutCancel(ctx)
-	run, err := store.RunWaitingOnWorkflowApproval(ctx, req.WorkflowRunID)
+	run, _, err := store.RunHeldByWorkflowApproval(ctx, req.WorkflowRunID)
 	if err != nil || run == nil || run.ConversationID == nil || run.MessageID == nil {
 		if err != nil {
 			logger.WarnContext(ctx, "failed to find the DigitalHuman run of an abandoned workflow approval", "workflow_run_id", req.WorkflowRunID, err)
@@ -180,4 +213,101 @@ func (s *RuntimeService) AbandonWorkflowResume(ctx context.Context, req approval
 	if err := s.store.FailRun(ctx, run.ID, "digital_human.run.execution_failed", workflowApprovalAbandonedMessage, s.now()); err != nil {
 		logger.WarnContext(ctx, "failed to fail the run of an abandoned workflow approval", "run_id", run.ID.String(), err)
 	}
+}
+
+// externalWorkflowProgress is a workflow event that tells where a workflow
+// went, read from its durable state.
+type externalWorkflowProgress struct {
+	EventType string
+	Payload   map[string]interface{}
+}
+
+type workflowProgressReader interface {
+	// Read returns the workflow's terminal event, or the requests of the pause
+	// it waits on now; nothing while it runs or is being resumed.
+	Read(ctx context.Context, workflowRunID string) ([]externalWorkflowProgress, error)
+}
+
+func (s *RuntimeService) workflowProgress() workflowProgressReader {
+	if s.progressReader != nil {
+		return s.progressReader
+	}
+	return gormWorkflowProgressReader{db: s.workflowDB}
+}
+
+type gormWorkflowProgressReader struct {
+	db *gorm.DB
+}
+
+func (r gormWorkflowProgressReader) Read(ctx context.Context, workflowRunID string) ([]externalWorkflowProgress, error) {
+	if r.db == nil {
+		return nil, nil
+	}
+	var row struct {
+		Status  string
+		Outputs *string
+		Error   *string
+	}
+	if err := r.db.WithContext(ctx).Table("workflow_run_logs").Select("status, outputs, error").
+		Where("id = ? AND deleted_at IS NULL", workflowRunID).Take(&row).Error; err != nil {
+		return nil, fmt.Errorf("load workflow run log: %w", err)
+	}
+	if progress, terminal := terminalWorkflowProgress(row.Status, row.Outputs, row.Error); terminal {
+		return []externalWorkflowProgress{progress}, nil
+	}
+	pause, _, _, err := workflowpause.NewService(r.db).GetActiveByWorkflowRunID(ctx, workflowRunID)
+	if errors.Is(err, workflowpause.ErrPauseNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if pause.Status != workflowpause.RunPauseStatusPaused {
+		// Ready to resume or being resumed: not settled yet.
+		return nil, nil
+	}
+	var events []struct {
+		EventType string
+		EventData string
+	}
+	if err := r.db.WithContext(ctx).Model(&workflowpause.RunEvent{}).Select("event_type, event_data").
+		Where("workflow_run_id = ? AND pause_id = ? AND pause_generation = ? AND event_type IN ?", workflowRunID, pause.ID, pause.Generation,
+			[]string{workflowpause.EventApprovalRequested, workflowpause.EventQuestionAnswerRequested}).
+		Order("sequence ASC").Find(&events).Error; err != nil {
+		return nil, fmt.Errorf("load workflow pause requests: %w", err)
+	}
+	progress := make([]externalWorkflowProgress, 0, len(events))
+	for _, event := range events {
+		payload := map[string]interface{}{}
+		if err := json.Unmarshal([]byte(event.EventData), &payload); err != nil {
+			return nil, fmt.Errorf("decode workflow pause request: %w", err)
+		}
+		progress = append(progress, externalWorkflowProgress{EventType: event.EventType, Payload: payload})
+	}
+	return progress, nil
+}
+
+// terminalWorkflowProgress maps a terminal workflow run log to the event the
+// streamed continuation would have observed.
+func terminalWorkflowProgress(status string, outputs, runError *string) (externalWorkflowProgress, bool) {
+	normalized := strings.ToLower(strings.TrimSpace(status))
+	switch {
+	case normalized == "stopped":
+		return externalWorkflowProgress{EventType: "workflow_stopped", Payload: map[string]interface{}{}}, true
+	case failureprojection.IsFailureStatus(normalized) || normalized == "expired":
+		normalized = "failed"
+	case normalized != "succeeded" && normalized != "partial-succeeded":
+		return externalWorkflowProgress{}, false
+	}
+	payload := map[string]interface{}{"status": normalized}
+	if outputs != nil && strings.TrimSpace(*outputs) != "" {
+		var decoded map[string]interface{}
+		if json.Unmarshal([]byte(*outputs), &decoded) == nil && decoded != nil {
+			payload["outputs"] = decoded
+		}
+	}
+	if runError != nil && strings.TrimSpace(*runError) != "" {
+		payload["error"] = strings.TrimSpace(*runError)
+	}
+	return externalWorkflowProgress{EventType: "workflow_finished", Payload: payload}, true
 }
