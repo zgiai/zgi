@@ -995,17 +995,47 @@ func boolFromWorkflowContinuation(value interface{}) bool {
 // every other event (a pause carrying the run outputs, say), loses them.
 func exposeWorkflowContinuationApproval(caller Caller, eventType string, payload map[string]interface{}) map[string]interface{} {
 	if eventType == "approval_requested" {
+		normalizeWorkflowApprovalRequestedPayload(payload)
 		allowed := workflowContinuationApprovalUIAllowed(caller, payload)
 		payload["ui_approval_allowed"] = allowed
 		if allowed {
 			return payload
 		}
+		// The runner's own approval event carries the form's access token at
+		// its top level.
+		delete(payload, "token")
 	}
 	stripped, _ := stripWorkflowApprovalCredentials(payload, false).(map[string]interface{})
 	if stripped == nil {
 		return payload
 	}
 	return stripped
+}
+
+// normalizeWorkflowApprovalRequestedPayload gives an approval the workflow
+// runner requests while it continues (its form spread over the event, with the
+// access token at the top level) the approval_form and approval_token the
+// workflow tool's own approvals carry, so the continuation records, exposes
+// and strips both kinds the same way. The event's own fields are kept.
+func normalizeWorkflowApprovalRequestedPayload(payload map[string]interface{}) {
+	formID := strings.TrimSpace(firstNonEmptyString(payload["form_id"]))
+	if _, nested := payload["approval_form"]; !nested && formID != "" {
+		form := map[string]interface{}{"id": formID}
+		for _, key := range []string{"node_id", "node_title", "content", "fields", "actions", "submit_methods", "expires_at", "token"} {
+			if value, ok := payload[key]; ok && value != nil {
+				form[key] = value
+			}
+		}
+		payload["approval_form"] = form
+	}
+	if _, ok := payload["approval_form_id"]; !ok && formID != "" {
+		payload["approval_form_id"] = formID
+	}
+	if strings.TrimSpace(firstNonEmptyString(payload["approval_token"])) == "" {
+		if token := strings.TrimSpace(firstNonEmptyString(payload["token"])); token != "" {
+			payload["approval_token"] = token
+		}
+	}
 }
 
 // stripWorkflowApprovalCredentials drops approval tokens: approval_token and

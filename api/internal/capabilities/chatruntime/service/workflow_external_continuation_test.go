@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
+	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 )
 
 type externalContinuationFixture struct {
@@ -282,5 +283,81 @@ func TestALaterApproverOnlyApprovalLeavesNoEarlierApprovalToken(t *testing.T) {
 	}
 	if continuation.UIApprovalAllowed {
 		t.Fatal("continuation still allows answering the approver-only approval inline")
+	}
+}
+
+// runnerApprovalRequestedEvent mirrors workflow.buildApprovalRequestedEvent:
+// the approval the runner requests while a workflow continues spreads its form
+// over the event and carries the form's access token at the top level.
+func runnerApprovalRequestedEvent(formID, token string, webapp bool) map[string]interface{} {
+	return map[string]interface{}{
+		"form_id": formID, "workflow_run_id": "run-1", "node_id": "approval-" + formID, "node_title": "Approval",
+		"content": "Approve " + formID,
+		"fields":  []approvalruntime.FieldConfig{{Key: "review_notes", Type: "textarea", Label: "Review notes"}},
+		"actions": []approvalruntime.Action{{ID: "approve", Label: "Approve"}},
+		"submit_methods": map[string]interface{}{
+			"webapp": map[string]interface{}{"enabled": webapp},
+			"email":  map[string]interface{}{"enabled": !webapp},
+			"sms":    map[string]interface{}{"enabled": false},
+		},
+		"expires_at": int64(1792100000),
+		"token":      token,
+	}
+}
+
+func TestRunnerApprovalRequestsFollowTheApprovalExposureRule(t *testing.T) {
+	for name, test := range map[string]struct {
+		webapp bool
+	}{
+		"approval answered in the conversation": {true},
+		"approval kept with its approvers":      {false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc := &service{repos: &repository.Repositories{Message: &workflowContinuationCheckpointMessageRepo{}, Conversation: &workflowContinuationCheckpointConversationRepo{}}}
+			continuation := &WorkflowApprovalContinuation{
+				ConversationID: uuid.New(), MessageID: uuid.New(), WorkflowRunID: "run-1",
+				Caller:   Caller{Source: runtimemodel.ConversationSourceExternalAPI},
+				Metadata: map[string]interface{}{"agent_workflow_continuation": map[string]interface{}{"workflow_run_id": "run-1"}},
+			}
+			event, err := svc.RecordWorkflowApprovalContinuationEvent(t.Context(), continuation, "approval_requested", runnerApprovalRequestedEvent("form-2", "token-2", test.webapp))
+			if err != nil {
+				t.Fatal(err)
+			}
+			projected := ProjectWorkflowContinuationEvent(continuation, *event)
+			stream := workflowContinuationTestJSON(t, projected.Payload)
+			stored := workflowContinuationTestJSON(t, continuation.Metadata)
+			if strings.Contains(stream, "token-2") != test.webapp || strings.Contains(stored, "token-2") != test.webapp {
+				t.Fatalf("stream = %s, stored = %s; want the approval token exposed %v", stream, stored, test.webapp)
+			}
+			record := continuation.Metadata["agent_workflow_continuation"].(map[string]interface{})
+			form := workflowRecordFromAny(record["approval_form"])
+			if form["id"] != "form-2" || form["content"] != "Approve form-2" || record["ui_approval_allowed"] != test.webapp {
+				t.Fatalf("record = %#v, want it waiting on the runner's approval form-2", record)
+			}
+			if test.webapp && record["approval_token"] != "token-2" {
+				t.Fatalf("record = %#v, want the inline approval's token", record)
+			}
+		})
+	}
+}
+
+func TestARunnerApprovalReplacesTheApprovalTheContinuationWaitedOn(t *testing.T) {
+	svc := &service{repos: &repository.Repositories{Message: &workflowContinuationCheckpointMessageRepo{}, Conversation: &workflowContinuationCheckpointConversationRepo{}}}
+	continuation := &WorkflowApprovalContinuation{
+		ConversationID: uuid.New(), MessageID: uuid.New(), WorkflowRunID: "run-1",
+		Caller:   Caller{Source: runtimemodel.ConversationSourceWebApp},
+		Metadata: map[string]interface{}{"agent_workflow_continuation": map[string]interface{}{"workflow_run_id": "run-1"}},
+	}
+	for _, step := range []struct{ formID, token string }{{"form-1", "token-1"}, {"form-2", "token-2"}} {
+		if _, err := svc.RecordWorkflowApprovalContinuationEvent(t.Context(), continuation, "approval_requested", runnerApprovalRequestedEvent(step.formID, step.token, true)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	record := continuation.Metadata["agent_workflow_continuation"].(map[string]interface{})
+	if record["approval_token"] != "token-2" || workflowRecordFromAny(record["approval_form"])["id"] != "form-2" {
+		t.Fatalf("record = %#v, want the second approval's token and form", record)
+	}
+	if stored := workflowContinuationTestJSON(t, continuation.Metadata); strings.Contains(stored, "token-1") {
+		t.Fatalf("metadata = %s, want nothing left of the first approval's token", stored)
 	}
 }
