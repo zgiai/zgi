@@ -447,7 +447,9 @@ func decodeRuntimeResponse(response *http.Response, target any) error {
 		if gateway {
 			return &runtimeAgentUnanswered{err: fmt.Errorf("runtime agent returned HTTP %d", response.StatusCode)}
 		}
-		return fmt.Errorf("decode runtime agent response: %w", err)
+		// A reply cut off or timed out while it was read is no answer either:
+		// the agent may have acted on the request.
+		return &runtimeAgentUnanswered{err: fmt.Errorf("decode runtime agent response: %w", err)}
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 || envelope.Error != nil {
 		if envelope.Error == nil {
@@ -463,7 +465,7 @@ func decodeRuntimeResponse(response *http.Response, target any) error {
 		return nil
 	}
 	if err := json.Unmarshal(envelope.Data, target); err != nil {
-		return fmt.Errorf("decode runtime agent data: %w", err)
+		return &runtimeAgentUnanswered{err: fmt.Errorf("decode runtime agent data: %w", err)}
 	}
 	return nil
 }
