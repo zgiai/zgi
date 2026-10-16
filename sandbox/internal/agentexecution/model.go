@@ -22,8 +22,11 @@ var (
 	ErrLeaseHeld           = errors.New("agent runtime lease is held by another owner")
 	ErrCleanupClaimLost    = errors.New("agent runtime cleanup claim lost")
 	ErrJobClaimLost        = errors.New("agent execution job claim lost")
-	ErrOutputLimit         = errors.New("agent execution output limit exceeded")
-	ErrInvalidPath         = errors.New("invalid agent execution workspace path")
+	// ErrJobStartUnknown reports a job start whose request may have reached
+	// the backend although no answer came back; the job may be running.
+	ErrJobStartUnknown = errors.New("agent execution job start outcome unknown")
+	ErrOutputLimit     = errors.New("agent execution output limit exceeded")
+	ErrInvalidPath     = errors.New("invalid agent execution workspace path")
 )
 
 type BindingStatus string
