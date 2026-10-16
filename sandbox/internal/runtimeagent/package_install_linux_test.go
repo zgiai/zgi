@@ -92,11 +92,20 @@ func TestPackageTimeoutAndCancellationKillDescendants(t *testing.T) {
 			case <-time.After(2 * time.Second):
 				t.Fatal("installer did not terminate")
 			}
-			// A killed descendant may await PID 1 reaping, but must not run.
-			state, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-			if err == nil && !strings.Contains(string(state), ") Z ") {
-				_ = syscall.Kill(pid, syscall.SIGKILL)
-				t.Fatalf("descendant still running: %s", state)
+			// A killed descendant may await PID 1 reaping, but must not run. It
+			// is listed as running until the kernel schedules it to exit, which
+			// on a loaded host takes a moment.
+			stopDeadline := time.Now().Add(2 * time.Second)
+			for {
+				state, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+				if err != nil || strings.Contains(string(state), ") Z ") {
+					break
+				}
+				if !time.Now().Before(stopDeadline) {
+					_ = syscall.Kill(pid, syscall.SIGKILL)
+					t.Fatalf("descendant still running: %s", state)
+				}
+				time.Sleep(20 * time.Millisecond)
 			}
 		})
 	}

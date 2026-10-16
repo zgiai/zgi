@@ -116,7 +116,7 @@ func startProcess(parent context.Context, workDir string, spec agentexecution.Jo
 		result := processResult(waitErr, contextErr, process.canceled.Load())
 		// A detached background child must not keep writing while its temporary
 		// directory is reclaimed. Fail closed instead of deleting live data.
-		if err := ensureProcessGroupStopped(cmd.Process.Pid); err != nil {
+		if err := awaitProcessGroupStopped(cmd.Process.Pid, processGroupStopGrace); err != nil {
 			process.markTerminationFailure(errors.Join(err, cleanup(retainTemporary)))
 		} else if err := cleanup(discardTemporary); err != nil {
 			process.markTerminationFailure(fmt.Errorf("job temporary cleanup failed: %w", err))
@@ -131,6 +131,27 @@ func startProcess(parent context.Context, workDir string, spec agentexecution.Jo
 		close(process.done)
 	}()
 	return process, nil
+}
+
+// processGroupStopGrace is how long the rest of a job's process group may
+// take to exit after its leader: members killed with the group are still
+// listed as running until the kernel schedules them to exit, which on a loaded
+// host is not immediate.
+const processGroupStopGrace = 2 * time.Second
+
+var errProcessGroupRunning = errors.New("job process group is still running")
+
+// awaitProcessGroupStopped waits up to grace for the process group to have no
+// running member; one that outlives it (a detached background child) fails.
+func awaitProcessGroupStopped(group int, grace time.Duration) error {
+	deadline := time.Now().Add(grace)
+	for {
+		err := ensureProcessGroupStopped(group)
+		if !errors.Is(err, errProcessGroupRunning) || !time.Now().Before(deadline) {
+			return err
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 func ensureProcessGroupStopped(group int) error {
@@ -163,7 +184,7 @@ func ensureProcessGroupStopped(group int) error {
 			return err
 		}
 		if pgrp == group && fields[0] != "Z" && fields[0] != "X" {
-			return errors.New("job process group is still running")
+			return errProcessGroupRunning
 		}
 	}
 	return nil
