@@ -149,10 +149,14 @@ func applySnapshot(tx *gorm.DB, report Report, data snapshot, archive []byte) er
 	// target restrictions, claims, pending confirmations and provider state.
 	after := snapshot{}
 	size := 0
-	if _, err := readTables(tx, NativeTables(), after, &size); err != nil {
+	native, err := nativeTablesAtCheckpoint(tx)
+	if err != nil {
 		return err
 	}
-	for _, table := range NativeTables() {
+	if _, err := readTables(tx, native, after, &size); err != nil {
+		return err
+	}
+	for _, table := range native {
 		switch table {
 		case "connector_definitions", "connector_definition_versions", "connector_plugin_versions", "connector_schema_readiness", "connector_conversion_records":
 			continue
